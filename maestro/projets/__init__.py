@@ -64,6 +64,7 @@ from maestro.projets.application import (
     Modification,
     ResultatApplication,
     appliquer,
+    commiter_en_attente,
     diff_du_travail,
     verifier_perimetre,
 )
@@ -115,6 +116,7 @@ __all__ = [
     "appliquer",
     "canonique",
     "chemin_dans_racine",
+    "commiter_en_attente",
     "detecter_vcs",
     "diff_du_travail",
     "enregistre_secrets_du_projet",

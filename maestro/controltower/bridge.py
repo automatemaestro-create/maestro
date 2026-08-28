@@ -100,6 +100,14 @@ _SUFFIXE_REFUS = ":refus-outil"
 #: ne la fait pas changer de colonne) et donc même traitement.
 _SUFFIXE_ACTIVITE = ":activite"
 
+#: Suffixe des étapes de fusion dans le projet (#705 — cf.
+#: `maestro.engine.executor`, `SUFFIXE_ETAPE_FUSION`) : ce qui est arrivé au
+#: projet de l'utilisateur quand la tâche s'est soldée. Rangé avec `:relance` et
+#: `:refus-outil` — même nature (un fait rattaché à la tâche, qui ne la fait pas
+#: changer de colonne) et donc même traitement : le sort du projet n'est pas le
+#: verdict de la tâche.
+_SUFFIXE_FUSION = ":fusion"
+
 #: Suffixe des étapes de messagerie inter-agents (#44 — cf.
 #: `maestro.messaging.mailbox.consigne_message`, `SUFFIXE_ETAPE_MESSAGE`).
 _SUFFIXE_MESSAGE = ":message"
@@ -120,10 +128,11 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
       inter-agents** (entité AGENT_MESSAGE — handoff, notification…) ;
     - les étapes `planification`, `brief` (#318) et `reprise` (#96) et les étapes
       `<tache>:validation`, `<tache>:relance` (#91), `<tache>:refus-outil`
-      (#110) et `<tache>:activite` (#479) deviennent des **activités d'agent**
-      (l'orchestrateur cadre puis planifie, le moteur reprend un run interrompu,
-      un humain tranche, le moteur relance, la politique de permissions refuse un
-      outil, l'agent travaille — la raison voyage dans `detail`) ;
+      (#110), `<tache>:activite` (#479) et `<tache>:fusion` (#705) deviennent des
+      **activités d'agent** (l'orchestrateur cadre puis planifie, le moteur
+      reprend un run interrompu, un humain tranche, le moteur relance, la
+      politique de permissions refuse un outil, l'agent travaille, le travail
+      soldé rejoint le projet — la raison voyage dans `detail`) ;
       `planification`, `brief` et `reprise` portent sur le run entier, donc sans
       `tache_id` ;
     - les étapes `<tache>:debut` (#98) deviennent le **début** de leur tâche :
@@ -173,7 +182,13 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
     est_reference = etape.endswith(_SUFFIXE_REFERENCE)
     est_detail = etape.endswith(_SUFFIXE_DETAIL)
     est_activite = etape in _ETAPES_RUN or etape.endswith(
-        (_SUFFIXE_VALIDATION, _SUFFIXE_RELANCE, _SUFFIXE_REFUS, _SUFFIXE_ACTIVITE)
+        (
+            _SUFFIXE_VALIDATION,
+            _SUFFIXE_RELANCE,
+            _SUFFIXE_REFUS,
+            _SUFFIXE_ACTIVITE,
+            _SUFFIXE_FUSION,
+        )
     )
     if est_reference:
         type_evenement = EVENEMENT_TACHE_REFERENCE

@@ -160,6 +160,21 @@ function phraseEtapeAgent(evenement: Evenement): string {
       return evenement.detail
         ? `${qui ? `${qui} · ` : ""}${evenement.detail}`
         : `${qui ? `${qui} — ` : ""}arbitrage sur ${quoi}`;
+    // Ce qui est arrivé au **projet** de l'utilisateur quand la tâche s'est
+    // soldée (#705). Comme l'activité et l'arbitrage plus haut, la phrase est le
+    // `detail` — le résumé du diff fusionné, ou la cause du refus : le titre ne
+    // dirait que le nom de la tâche, que la carte du Kanban montre déjà, et
+    // tairait la seule chose que cette ligne apporte.
+    //
+    // Les trois issues sont rendues, « rien à fusionner » comprise : c'est elle
+    // qui répond quand un run vert laisse le projet vide, le défaut que #568 a
+    // mesuré et que le silence reproduirait.
+    case "fusion_faite":
+    case "fusion_sans_objet":
+    case "fusion_refusee":
+      return `${libelleStatut(evenement.statut)}${
+        evenement.detail ? ` — ${evenement.detail}` : ` : ${quoi}`
+      }`;
     case "terminee":
       return qui ? `${qui} a terminé : ${quoi}` : `${quoi} — terminé`;
     case "echec":

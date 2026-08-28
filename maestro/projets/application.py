@@ -85,7 +85,7 @@ _MAX_COMPTAGE_OCTETS = 1_000_000
 _MAX_LIGNES_RESUME = 40
 
 #: Identité portée par les DEUX commits que Maestro écrit dans le projet : le commit de rattrapage
-#: (`_commiter_en_attente`) et le commit de fusion (`_fusionner`, `--no-ff`). Le dépôt de
+#: (`commiter_en_attente`) et le commit de fusion (`_fusionner`, `--no-ff`). Le dépôt de
 #: l'utilisateur n'a aucune raison d'avoir une identité Git valable pour un agent, et un
 #: `user.email` absent ferait échouer la fusion au tout dernier geste. Posée par `-c`, donc jamais
 #: écrite dans sa configuration.
@@ -702,7 +702,7 @@ def _fusionner(racine: Path, diff: DiffProjet, espace: Path | None) -> tuple[str
     nomme ce qui bloque plutôt que de forcer.
     """
     if espace is not None and espace.is_dir():
-        _commiter_en_attente(espace, diff.branche)
+        commiter_en_attente(espace, diff.branche)
     _exige_racine_disponible(racine, diff.base)
     # `--no-ff` écrit un COMMIT de fusion : il lui faut une identité, exactement comme au commit de
     # rattrapage ci-dessus. Elle manquait ici (#333) — la moitié non couverte de ce que le
@@ -741,7 +741,7 @@ def _message_fusion(diff: DiffProjet) -> str:
     )
 
 
-def _commiter_en_attente(espace: Path, branche: str) -> None:
+def commiter_en_attente(espace: Path, branche: str) -> None:
     """Commite sur `branche` ce que le worktree porte encore, s'il porte quelque chose.
 
     Les hooks du dépôt ne sont **pas** contournés : ce sont ceux de
@@ -749,6 +749,20 @@ def _commiter_en_attente(espace: Path, branche: str) -> None:
     exactement raison de le faire — le refus remonte motivé plutôt que de passer
     en force. L'identité est posée par `-c` pour ne rien écrire dans la
     configuration du projet.
+
+    **Publique depuis #705**, et c'est le seul changement : elle a désormais deux
+    appelants, parce que la phrase « le worktree est retiré, jamais la branche —
+    c'est elle qui porte le travail jusqu'à la fusion » (`maestro.sandbox.projet`)
+    n'était vraie que si l'agent avait commité de lui-même. Le second appelant est
+    donc la **fin de vie du worktree**, qui la joue avant de démonter : sans elle,
+    `--force` emportait le travail non commité et la branche ne portait rien.
+
+    Une seule orthographe pour un seul geste : deux implémentations de « commiter
+    ce que le worktree porte encore » finiraient par diverger, et celle qui se
+    tromperait laisserait le travail d'un agent hors de la branche qu'on fusionne.
+    Chaque appelant garde en revanche sa **politique d'échec** — la fusion refuse
+    motivé, la fin de vie du worktree s'abstient en silence (elle vit dans un
+    `finally`, où lever masquerait la cause réelle de la tâche).
     """
     if _git(espace, "add", "-A").returncode != 0:
         raise ApplicationRefusee(

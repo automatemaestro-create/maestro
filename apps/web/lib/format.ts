@@ -258,6 +258,12 @@ const LIBELLES_STATUT: Record<string, string> = {
   refuse: "Refusée",
   refus_outil: "Outil refusé",
   arbitrage_outil: "Outil arbitré",
+  // Ce qui est arrivé au **projet** quand la tâche s'est soldée (#705). Trois
+  // libellés parce qu'il y a trois issues, et « rien à fusionner » en est une :
+  // la taire rendrait invisible un run vert sur un projet resté vide (#568).
+  fusion_faite: "Projet mis à jour",
+  fusion_sans_objet: "Rien à fusionner",
+  fusion_refusee: "Fusion refusée",
 };
 
 /** Le libellé d'un statut, ou le statut brut si le flux s'est enrichi. */
