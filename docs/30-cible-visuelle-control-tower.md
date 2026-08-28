@@ -452,6 +452,47 @@ Trois écarts entre ce que la règle **dit** et ce que le test **compte**, tranc
 C'est la formulation qui manquait à #191 : il a **épuré une fois** sans laisser de règle, et six
 mois plus tard le compte était refait. La règle ne dit pas « moins », elle dit **où**.
 
+### 4.4 Le premier écran que la règle a fait bouger — `/chat` (#690, 2026-08-28)
+
+Les deux dépassements du §4.2 étaient des **constats** : `/couts` et `/parametres` avaient trop de
+blocs, la règle a dit où les mettre. Le chantier « chat global pleine page » est le premier cas où
+elle a tranché **dans l'autre sens** — non pas « ce corps déborde » mais « ce corps donne la
+première place à autre chose que ce que la page existe pour porter ». Le chat est la seule porte
+d'entrée du produit depuis #666, et il était rendu comme un panneau parmi d'autres : « Cadrage en
+attente » occupait le haut de l'écran **même vide**, le fil défilait dans une boîte de `60vh`, et
+~270 px de vide restaient sous le composeur (mesuré en 1440×900).
+
+Ce que le cas apprend à la règle, en trois points :
+
+- **« quelle place ? » se pose aussi au bloc qui est déjà là.** La réponse n'a pas été de retirer le
+  cadrage — ce serait un retrait d'information, que le §4.1 n'admet pas — mais de le **déplacer** :
+  il garde la première place **quand il a quelque chose à dire**, et passe dans la colonne de
+  propriétés quand sa file est vide, où il continue d'expliquer *pourquoi* elle l'est. C'est la
+  première des deux réponses admises (une colonne, ou un second niveau), appliquée à un bloc qu'on ne
+  voulait pas perdre ;
+- **l'arbitrage prouvé change le compte, et c'est voulu.** `/chat` compte **2** blocs de corps files
+  pleines et **1** à file vide : le fil est le seul **permanent**, le cadrage disparaît, donc ne
+  compte pas dans le plafond. Le test n'a rien eu à apprendre pour le savoir — il monte l'écran deux
+  fois et regarde ce qui survit aux deux (§4.2). Un bloc qui prétendrait arbitrer sans disparaître
+  compterait comme les autres ;
+- **la règle vaut au-dessous du bloc.** « Temps réel connecté » n'était pas un bloc, c'était un
+  badge — et il occupait pourtant la place la plus visible de l'écran, l'en-tête du bloc principal,
+  pour n'apprendre rien, en le disant **deux fois** (la barre du cadre portait déjà l'état de la même
+  socket). Il est parti ; seule la coupure reste dite, parce qu'elle seule explique un fil qui ne
+  bouge plus. Formulé pour le prochain ticket : **une place se gagne, elle ne se garde pas parce
+  qu'on l'avait** — et un indicateur permanent d'un état **nominal** n'en gagne aucune.
+
+La troisième place a fait tout le travail : la colonne porte « Parler à », « Conversations » (#696),
+« Ouvert depuis ce fil » et le cadrage à file vide — quatre cartes, aucun plafond, et le corps rendu
+à la conversation.
+
+⚠ **Le tableau du §4.2 n'a pas été complété d'une ligne `/chat`**, et c'est délibéré : il est
+l'**état de départ** daté du 2026-08-25, compté à la main. Y ajouter une mesure d'aujourd'hui en
+ferait un tableau à deux dates dont personne ne saurait plus lequel des deux chiffres est le
+constat. La mesure courante vit dans `apps/web/tests/sobriete.test.tsx`, qui compte les dix écrans à
+chaque exécution — c'est justement ce qui distingue une règle opposable d'un tableau : personne ne
+recompte une doc.
+
 ---
 
 ## 5. Inventaire de l'outillage — éprouvé
