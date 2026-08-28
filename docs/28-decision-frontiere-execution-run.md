@@ -473,10 +473,11 @@ change vraiment est le sens du verdict `orphelin` :
 | Un hôte mort **sous les yeux de l'API** | reste `en_cours` jusqu'au seuil d'orphelinat, puis pour toujours | ramassé et soldé `echec` **avec sa cause** |
 | Machine endormie, process tué net, Redis muet au dernier instant | `orphelin` | `orphelin` — et c'est exactement ce que le verdict doit signaler |
 
-> ⚠ **La première ligne mélange deux gestes que le 2026-08-24 a séparés.** « Le run continue » reste
-> vrai des deux **accidents** — fenêtre fermée, API relancée — et a cessé de l'être de
-> `start.sh --stop`, qui **solde ses runs depuis #486** (§11). Le tableau est laissé tel qu'il a été
-> mesuré au 2026-08-24 ; c'est la ligne qui a vieilli d'un cas, pas la mesure.
+> ⚠ **La première ligne a vieilli deux fois, et elle n'en garde plus qu'un cas.** Le 2026-08-24 en a
+> détaché `start.sh --stop`, qui **solde ses runs depuis #486** (§11) ; le 2026-08-28 en a détaché la
+> **fenêtre du navigateur**, qui les solde depuis **#700** (§11.2). « Le run continue » n'est donc
+> plus vrai que de l'**API relancée** — et du crash, et du `SIGTERM`. Le tableau est laissé tel qu'il
+> a été mesuré au 2026-08-24 ; ce sont les gestes qui ont changé de camp, pas la mesure.
 
 Deux mesures relevées au passage, sur le poste de référence (Windows, 2026-08-24) : un hôte détaché
 s'arme en **1,3 s** quand Redis répond et **5,5 s** quand il ne répond pas (le premier battement est
@@ -515,6 +516,13 @@ fallait acheter d'avance, et elle est acquise.
 > qu'une direction. L'arbitrage complet est en
 > [docs/29 §5](./29-decision-run-objet-de-premier-plan.md).
 
+> ⚠ **Une ligne de cette section a été renversée le 2026-08-28 (#700), et c'est la première.** La
+> fenêtre du navigateur fermée n'est plus un accident : elle **solde**, comme `--stop`. Le
+> raisonnement de #470 tient tout entier — c'est sa **frontière** qui s'est déplacée, sous une mesure
+> qu'il n'avait pas (#699). Le §11.2 porte le renversement, ses raisons et son prix ; la table
+> ci-dessous **dit la règle en vigueur**, chaque ligne datée de ce qui l'a posée. Le texte qui
+> l'entoure est laissé tel qu'il a été écrit : ce qui a vieilli est nommé, pas réécrit.
+
 **Les trois gestes du §5 ne sont pas de même nature.** « Fermer la fenêtre, relancer l'API,
 `--stop` » : les deux premiers sont des **accidents** — personne n'a demandé d'arrêter le run, et
 les rendre inoffensifs est exactement ce que ce chantier a acheté. Le troisième est une
@@ -522,16 +530,23 @@ les rendre inoffensifs est exactement ce que ce chantier a acheté. Le troisièm
 qu'on voulait garder ? » ; elle ne l'est plus dès qu'on pose l'autre : « que devient un run qu'on
 voulait arrêter ? »
 
+> ⚠ Ce paragraphe **range la fenêtre du bon côté pour la mauvaise raison**, et #700 ne le corrige
+> qu'à moitié : la fenêtre a bien changé de camp, mais parce qu'elle est une décision — pas parce
+> que la distinction accident / décision aurait été fausse. Elle reste ce qui départage, à ceci près
+> qu'elle passe désormais entre **arrêter** et **redémarrer** (§11.2).
+
 **Ce qu'un run survivant à l'extinction coûte réellement.** Control Tower éteinte, il continue de
 consommer du quota et d'écrire dans le projet de l'utilisateur — sans écran pour le suivre, sans
 bouton pour l'arrêter, et sans rien qui signale son existence. Ce n'est pas la robustesse que le §5
 défendait, c'est son ombre portée : la survie devient une fuite dès qu'elle dépasse l'intention.
 
+**La table en vigueur** (les deux premières lignes revues au 2026-08-28, #700) :
+
 | Geste | Nature | Ce que devient le run |
 | --- | --- | --- |
-| Fenêtre du navigateur fermée (chien de garde #149) | accident | **continue** — inchangé, et c'est la propriété qu'on ne défait pas |
-| API relancée après une modification, crash | accident | **continue** — inchangé |
-| `start.sh --stop`, quitter l'enveloppe le jour où elle existe | **décision** | **soldé**, et reprenable au redémarrage (#439) |
+| Fenêtre du navigateur fermée (chien de garde #149) | **décision** — on quitte la Control Tower | **soldé**, et reprenable au redémarrage (#700) |
+| Démarrage (`arreter_session` rejouée par `start.sh`), crash, `SIGTERM` | accident | **continue** — c'est la propriété qu'on ne défait pas, et il n'en reste qu'elle |
+| `start.sh --stop`, quitter l'enveloppe le jour où elle existe | **décision** | **soldé**, et reprenable au redémarrage (#439, #486) |
 | Machine endormie | ni l'un ni l'autre | `orphelin` — inchangé, traité par #348 et #349 |
 
 **La distinction vit du côté qui sait.** `start.sh --stop` sait qu'il arrête exprès ; un `SIGTERM`
@@ -561,12 +576,18 @@ propre tâche (#444) —, hôte éteint **avec sa descendance** au bout du déla
 (`hote_detache._eteindre`), tâches soldées et battement retiré.
 
 **La distinction ne se déduit toujours d'aucun signal**, et c'est ce que cette forme achète : le
-`lifespan` de l'API — donc un `SIGTERM`, un plantage, la fenêtre du navigateur refermée par le chien
-de garde #149 — passe par `ServiceExecutions.fermer`, qui **ne touche à rien**. Un drapeau sur cette
-méthode-là aurait demandé à celui qui ne sait pas de deviner. Corollaire de forme : l'appel vit dans
-la seule branche `--stop` de `start.sh` et **surtout pas** dans `arreter_session`, que le démarrage
-rejoue pour remplacer la session précédente — l'y mettre aurait soldé les runs à chaque relance,
-c'est-à-dire fabriqué l'accident qu'on protège.
+`lifespan` de l'API — donc un `SIGTERM`, un plantage, l'API qu'on tue pour la relancer — passe par
+`ServiceExecutions.fermer`, qui **ne touche à rien**. Un drapeau sur cette méthode-là aurait demandé
+à celui qui ne sait pas de deviner. Corollaire de forme : l'appel vit dans les branches de `start.sh`
+qui **savent** qu'on arrête, et **surtout pas** dans `arreter_session`, que le démarrage rejoue pour
+remplacer la session précédente — l'y mettre aurait soldé les runs à chaque relance, c'est-à-dire
+fabriqué l'accident qu'on protège.
+
+> ⚠ Cette phrase citait la **fenêtre refermée par le chien de garde #149** parmi les arrêts subis, et
+> « la seule branche `--stop` » comme l'unique appelant : les deux ont été renversés le 2026-08-28
+> (§11.2). Ce qui n'a pas bougé est l'essentiel — l'API ne devine rien, `fermer` ne solde toujours
+> rien, et `arreter_session` reste hors du chemin. Le chien de garde pousse la porte **lui-même**,
+> avant de tuer l'API, exactement comme `--stop` : le savoir descend toujours de celui qui l'a.
 
 **Ce qui rend le run reprenable est une cause, pas un statut.** Le run est consigné `annulee` comme
 n'importe quelle interruption ; ce qui le distingue est `CAUSE_EXTINCTION`
@@ -579,3 +600,68 @@ re-solde le run avec la cause `annulation`), ce qui garde le garde-fou de #349 c
 
 **L'option annoncée plus haut existe déjà** : `MAESTRO_EXTINCTION=0` laisse délibérément tourner —
 sur un geste qui solde par défaut, et **en le disant**, jamais en silence.
+
+### 11.2 La fenêtre fermée change de camp (2026-08-28)
+
+> Écrit au ticket **#700**. Cette section **renverse** la première ligne de la table du §11 : fermer
+> la fenêtre du navigateur solde désormais les runs en vol, comme `--stop`. Elle ne reprend ni le
+> §5, ni les quatre options, ni une ligne de l'hôte détaché — et elle ne défait pas le raisonnement
+> de #470, dont elle déplace la **frontière** sous une mesure qu'il n'avait pas.
+
+**Ce que #470 ne pouvait pas savoir.** Sa table repose sur une prémisse : la survie du run
+*préserve* le travail. #699 l'a mesurée fausse le 2026-08-28 — le bus Redis est du **Pub/Sub
+éphémère** et le journal durable n'est alimenté que par la **pompe de l'API**. Un run qui survit à
+la fermeture de la fenêtre continue donc de consommer du quota **et perd définitivement son
+historique** : au retour, sa tâche finie est encore « en cours », la suivante n'a aucun statut, le
+compte de tâches est faux. La survie ne préserve plus le run, elle le rend **invisible et
+incorrigible** — c'est-à-dire exactement l'« ombre portée » que le §11 décrivait pour `--stop`, et
+qu'on découvre valable ici. L'accident n'est pas inoffensif ; il ne l'est plus, donc la ligne bouge.
+
+**Et la fenêtre n'était pas un accident.** C'est la seconde moitié, et elle se lisait déjà dans le
+script : le chien de garde #149 coupe **l'API et l'UI** dès que la fenêtre se ferme. Personne
+n'appelle « accident » un geste qui arrête délibérément les deux services ; le run était la seule
+chose qui survivait à un arrêt que `start.sh` tient pour volontaire **partout ailleurs**. Fermer la
+fenêtre de la Control Tower, c'est quitter la Control Tower. La distinction accident / décision de
+#470 reste donc entière — c'est son tracé qui était faux d'un cas.
+
+**La ligne de partage passe entre arrêter et redémarrer.** Ce qui reste un accident est le
+**démarrage** (`arreter_session`, rejouée par `start.sh` pour remplacer la session précédente), le
+crash et le `SIGTERM`. Trois raisons, et la première suffirait :
+
+1. **Un démarrage n'est pas un arrêt.** Solder dans `arreter_session` tuerait le run par le geste
+   même qui vient le reprendre en main. C'est le corollaire de forme du §11.1, et il ne bouge pas.
+2. **Le prix n'est pas symétrique.** La reprise (#349) ne repart **pas** de l'interruption : elle
+   rejoue **toutes** les tâches depuis la synthèse du brief approuvé — un run arrêté à 4 tâches sur 5
+   en coûte 5 —, et elle **refuse net** un run sans brief approuvé (`MOTIF_RELANCE_SANS_CADRAGE`),
+   c'est-à-dire tout run en `mode_brief: auto`. Solder à chaque relance ferait payer la reprise
+   intégrale au geste le plus fréquent du développement, et **perdrait sans retour** le travail des
+   runs sans cadrage.
+3. **La fenêtre d'invisibilité du redémarrage est bornée par lui-même.** L'API repart dans la
+   foulée : elle rejoue le journal, reprend la pompe, et le run **réapparaît à l'écran** — puis reste
+   interruptible, l'annulation voyageant par le **bus** que le process détaché écoute (#444) et non
+   par le registre d'hôtes que la nouvelle API n'a pas. Ce qu'elle perd est ce que le bus a diffusé
+   pendant la coupure, quelques secondes ; une fenêtre fermée, elle, ne fait repartir personne.
+
+**Ce qui a été livré est le déplacement d'un appel.** Rien n'est construit : `POST /api/extinction`
+(#486) et `solder_les_runs` (`scripts/controltower/start.sh`) sont inchangés. Le chien de garde les
+appelle **avant** de libérer les ports — après, l'API qui tient les hôtes détachés n'existe plus —,
+et il le fait **après** avoir retiré le jeton de session, pour qu'un `--stop` concurrent ne se
+dispute pas la fenêtre avec lui. Il y a donc **deux appelants et deux seulement**, les deux gestes
+d'arrêt ; `arreter_session` reste hors du chemin, et
+[`tests/test_extinction.py`](../tests/test_extinction.py) le garde par un invariant de forme prouvé
+sur échantillon fautif, faute de pouvoir jouer un chemin qui demande Redis, l'UI et une fenêtre.
+
+**Ce que l'arrêt fera se dit au démarrage**, et pas seulement au moment où il l'a fait : c'est là
+qu'on part travailler en sachant ce que fermer la fenêtre emportera, et là que l'option se présente.
+`MAESTRO_EXTINCTION=0` reste la sortie explicite pour laisser tourner — annoncée **des deux côtés**,
+jamais en silence. Une réserve de forme, dite plutôt que masquée : fermée par le chien de garde, la
+Control Tower nomme les runs qu'elle solde dans `navigateur.log` et non sur le terminal, qui a rendu
+la main depuis longtemps ; le démarrage imprime donc le chemin de ce journal avec l'annonce.
+
+**Ce que ça ne ferme pas.** La fenêtre de #699 est **réduite, pas fermée** : un crash de l'API, un
+`maestro-run --publier` hors Control Tower, une machine endormie continuent de publier dans le vide.
+Un cas neuf s'y ajoute, petit et à nommer : un **démarrage qui échoue après** `arreter_session` (API
+qui ne répond pas, UI qui ne compile pas) laisse le run de la session précédente sans écran, comme
+un crash — l'accident toléré est alors payé sans que la relance ait abouti. La durabilité du journal
+reste le sujet de #699, et la reprise **à l'endroit exact** de l'interruption reste la porte 4 du
+§10.5, toujours pas franchie.

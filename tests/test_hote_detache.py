@@ -1321,7 +1321,8 @@ def test_l_extinction_volontaire_emporte_ce_que_fermer_laisse_vivre(bouchon: Pat
     `fermer` qui se mettrait à tuer laisserait le second vert.
 
     `fermer` d'abord, parce que c'est ce que l'API subit (lifespan, `SIGTERM`,
-    fenêtre du navigateur refermée) : le battement doit **avancer** après lui, un
+    redémarrage qui remplace la session précédente) : le battement doit **avancer**
+    après lui, un
     process encore là mais figé ne serait pas une survie. `annuler` ensuite, parce
     que c'est le verbe par lequel passe l'extinction volontaire
     (`ServiceExecutions.eteindre` → `_solder` → `_hote.annuler`) — le repli franc y

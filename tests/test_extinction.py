@@ -1,13 +1,22 @@
-"""Éteindre Maestro solde ses runs — l'accident ne les touche pas (#486).
+"""Éteindre Maestro solde ses runs — l'accident ne les touche pas (#486, #700).
 
 La **cinquième porte** de [docs/28](../docs/28-decision-frontiere-execution-run.md),
 ouverte par la revue #470 et livrée ici. Depuis #441 un run de la Control Tower vit
 dans un process qui **survit à son API**, et c'était toute la valeur du chantier :
-fermer la fenêtre du navigateur, relancer après une modification, planter ne tuent
-plus le travail en cours. Mais les trois gestes que ce corollaire énumérait n'étaient
-pas de même nature — `start.sh --stop` n'est pas un accident, c'est une **décision**,
-et un run qui lui survit continue de consommer du quota et d'écrire dans le projet
-sans écran pour le suivre ni bouton pour l'arrêter.
+relancer après une modification, planter ne tuent plus le travail en cours. Mais les
+trois gestes que ce corollaire énumérait n'étaient pas de même nature — `start.sh
+--stop` n'est pas un accident, c'est une **décision**, et un run qui lui survit
+continue de consommer du quota et d'écrire dans le projet sans écran pour le suivre
+ni bouton pour l'arrêter.
+
+⚠ **Un quatrième contrôle a changé de camp avec #700** (docs/28 §11.2, 2026-08-28) :
+**fermer la fenêtre du navigateur solde aussi**. Deux choses l'ont fait basculer —
+#699 a mesuré que la survie ne préserve plus le run mais lui fait *perdre son
+historique* (bus Pub/Sub éphémère, journal durable alimenté par la seule pompe de
+l'API), et le chien de garde #149 coupait déjà l'API et l'UI avec la fenêtre, ce
+qu'on n'appelle pas un accident. Ce qui reste subi, et que ce fichier garde
+inchangé : le **redémarrage** (`arreter_session`, rejouée pour remplacer la session
+précédente), le plantage, le `SIGTERM`.
 
 **Ni Redis, ni réseau, ni appel de modèle, ni process de run** (`tests/conftest.py`,
 #195). L'app est la vraie (`create_app`), sur bus, journal et registre de battements
@@ -23,21 +32,28 @@ Ce que ce fichier garde, et qui ne se voit nulle part ailleurs :
    Jamais laissé `en_cours`, ce qui est le premier critère du ticket.
 
 ② **L'arrêt subi ne touche à rien**, et c'est la propriété qu'on ne défait pas
-   (#441/#451). Le `lifespan` de l'API — donc un `SIGTERM`, un plantage, le chien de
-   garde #149 — passe par `ServiceExecutions.fermer`, qui ne solde rien et ne demande
-   aucune extinction. Deux tests plutôt qu'un : ici l'API, et là-bas l'hôte, sur de
-   vrais process (`test_l_extinction_volontaire_emporte_ce_que_fermer_laisse_vivre`).
+   (#441/#451). Le `lifespan` de l'API — donc un `SIGTERM`, un plantage, l'API qu'on
+   tue pour la relancer — passe par `ServiceExecutions.fermer`, qui ne solde rien et
+   ne demande aucune extinction. Deux tests plutôt qu'un : ici l'API, et là-bas
+   l'hôte, sur de vrais process
+   (`test_l_extinction_volontaire_emporte_ce_que_fermer_laisse_vivre`).
 
 ③ **Ce qui a été éteint se reprend**, par le bouton existant (#349) et sur la seule
    foi de la **cause** — un run délibérément annulé, lui, reste refusé. Le
    laissez-passer est consommé à la reprise, ce qui garde le garde-fou du double clic.
 
-④ **`start.sh` ne solde que sur `--stop`.** Le script appelle la porte depuis une
-   **unique** ligne, gardée par le mode ; `arreter_session`, que le *démarrage* rejoue
-   pour remplacer la session précédente, ne peut donc pas la joindre — l'y mettre
-   solderait les runs à chaque relance, c'est-à-dire fabriquerait l'accident qu'on
-   protège. La vérification prouve son motif sur un échantillon fautif avant de
-   conclure.
+④ **`start.sh` solde depuis ses deux gestes d'arrêt, et depuis eux seuls.** La porte
+   est poussée par la branche `--stop` et par le chien de garde qui constate la
+   fenêtre fermée (#700) — dans les deux cas **avant** de libérer les ports, après
+   quoi l'API qui tient les hôtes n'existe plus. Jamais depuis `arreter_session`, que
+   le *démarrage* rejoue pour remplacer la session précédente : l'y mettre solderait
+   les runs à chaque relance, c'est-à-dire fabriquerait l'accident qu'on protège.
+   Vérifié par la **forme** du script — démarrer demande Redis, l'UI et une fenêtre,
+   et le chemin du chien de garde attend qu'un vrai navigateur s'ouvre puis se
+   ferme —, chaque contrôle prouvant son motif sur un **échantillon fautif** avant de
+   conclure. Ce que la forme ne dit pas, le comportement de `--stop` le dit : c'est
+   la **même** fonction `solder_les_runs` que les deux appelants invoquent, et les
+   tests ci-dessus l'exercent pour de vrai.
 """
 
 from __future__ import annotations
@@ -461,10 +477,15 @@ def test_un_run_deja_solde_n_est_pas_solde_une_seconde_fois() -> None:
 def test_l_arret_de_l_api_ne_solde_aucun_run() -> None:
     """**La propriété qu'on ne défait pas** : un accident ne touche pas au run.
 
-    Fermer la fenêtre du navigateur (le chien de garde #149 arrête l'API avec elle),
-    relancer après une modification, planter : ces trois-là passent par le `lifespan`,
-    donc par `ServiceExecutions.fermer`, qui dit seulement que le service se retire.
-    Sortir du `TestClient` **est** cet arrêt, joué par la vraie app.
+    Relancer après une modification (le démarrage tue l'API en place pour remplacer
+    la session précédente), planter, recevoir un `SIGTERM` : ceux-là passent par le
+    `lifespan`, donc par `ServiceExecutions.fermer`, qui dit seulement que le service
+    se retire. Sortir du `TestClient` **est** cet arrêt, joué par la vraie app.
+
+    ⚠ La fermeture de la fenêtre du navigateur ne fait plus partie de cette liste
+    depuis #700 : le chien de garde #149 pousse la porte de l'extinction *lui-même*
+    avant de tuer l'API, si bien que ce chemin-ci ne la voit jamais. Ce qui est gardé
+    ici est l'arrêt que personne n'a demandé, et lui seul.
 
     Deux assertions, et la seconde est celle qui garde vraiment. Le run reste
     `en_cours` — mais un run resterait aussi `en_cours` si on l'avait tué sans le
@@ -728,18 +749,41 @@ def _appels_a_solder(texte: str) -> list[int]:
     ]
 
 
-def test_le_soldage_n_a_qu_un_seul_appelant_et_il_est_garde_par_le_mode() -> None:
+def _bloc(texte: str, ouverture: str, fermeture: str) -> tuple[int, int]:
+    """Les rangs `[début, fin[` du bloc qui s'ouvre sur `ouverture`.
+
+    Découpage volontairement bête — la première ligne qui *est* `ouverture`, puis la
+    première qui *est* `fermeture` après elle, toutes deux en colonne 0. Le script
+    indente tout ce qu'il imbrique, donc un `}` ou un `fi` de premier niveau ferme
+    bien ce qu'on croit ; un analyseur de shell coûterait une dépendance pour lire
+    six lignes.
+    """
+    lignes = texte.splitlines()
+    debut = lignes.index(ouverture)
+    fin = lignes.index(fermeture, debut + 1)
+    return debut, fin
+
+
+def _region_arreter_session(texte: str) -> tuple[int, int]:
+    return _bloc(texte, "arreter_session() {", "}")
+
+
+def _region_chien_de_garde(texte: str) -> tuple[int, int]:
+    return _bloc(texte, 'if [ "$MODE" = "surveiller" ]; then', "fi")
+
+
+def test_le_soldage_a_deux_appelants_les_deux_gestes_d_arret() -> None:
     """L'invariant de forme du script, et il vaut mieux qu'un test de comportement.
 
-    `arreter_session` est **partagée** : le démarrage la rejoue pour remplacer la
-    session précédente, et le chien de garde l'imite en libérant les ports quand la
-    fenêtre se ferme. Y glisser le soldage solderait donc les runs à chaque relance
-    et à chaque fermeture de fenêtre — c'est-à-dire fabriquerait exactement l'accident
-    que #441 protège, par le correctif censé le préserver.
+    Arrêter la Control Tower solde ses runs, et il y a **deux** façons de l'arrêter
+    (#700) : `--stop`, et fermer la fenêtre du navigateur — que le chien de garde
+    #149 constate. Ni plus (un troisième appelant serait un chemin qui solde sans
+    qu'on sache lequel), ni moins.
 
-    On ne le vérifie pas en jouant ces chemins-là (démarrer demande Redis, l'UI et une
-    fenêtre) mais par une propriété plus forte : il n'y a **qu'un** appelant, et il
-    est sous le mode. Aucun autre chemin ne peut alors le joindre.
+    On ne le vérifie pas en jouant ces chemins-là — démarrer demande Redis et l'UI,
+    et le chien de garde attend qu'un vrai navigateur s'ouvre puis se ferme — mais
+    par une propriété plus forte : on **compte** les appelants et on dit où ils sont.
+    Aucun autre chemin ne peut alors joindre la porte.
 
     Le motif est prouvé sur un **échantillon fautif** avant de conclure : un `grep`
     qui ne trouve rien parce qu'il ne sait pas chercher rend le même vert qu'un
@@ -749,17 +793,146 @@ def test_le_soldage_n_a_qu_un_seul_appelant_et_il_est_garde_par_le_mode() -> Non
     lignes = texte.splitlines()
     appels = _appels_a_solder(texte)
 
-    assert len(appels) == 1, f"appels trouvés aux lignes {[r + 1 for r in appels]}"
-    assert '"$MODE" = "arreter"' in lignes[appels[0] - 1], (
-        "l'appel au soldage n'est plus gardé par le mode : la ligne qui le précède "
-        f"est {lignes[appels[0] - 1]!r}"
+    assert len(appels) == 2, f"appels trouvés aux lignes {[r + 1 for r in appels]}"
+
+    chien_debut, chien_fin = _region_chien_de_garde(texte)
+    dans_le_chien = [rang for rang in appels if chien_debut < rang < chien_fin]
+    hors_du_chien = [rang for rang in appels if rang not in dans_le_chien]
+    assert len(dans_le_chien) == 1, "le chien de garde ne solde plus la fenêtre fermée"
+    assert len(hors_du_chien) == 1
+    assert '"$MODE" = "arreter"' in lignes[hors_du_chien[0] - 1], (
+        "l'appel hors du chien de garde n'est plus gardé par le mode : la ligne qui "
+        f"le précède est {lignes[hors_du_chien[0] - 1]!r}"
     )
 
-    # L'échantillon fautif : le même script, l'appel glissé dans `arreter_session`.
+    # L'échantillon fautif : le même script, un appel glissé dans `arreter_session`.
     fautif = texte.replace(
         "arreter_session() {\n", "arreter_session() {\n  solder_les_runs\n", 1
     )
-    assert len(_appels_a_solder(fautif)) == 2, (
-        "le contrôle ne sait pas voir un second appelant : son verdict vert ne prouve "
+    assert len(_appels_a_solder(fautif)) == 3, (
+        "le contrôle ne sait pas voir un appelant de plus : son verdict vert ne "
+        "prouve rien."
+    )
+
+
+def test_arreter_session_ne_solde_jamais_car_le_demarrage_la_rejoue() -> None:
+    """Le seul accident qui reste, et la seule chose que #441 protège encore.
+
+    `arreter_session` est **partagée** : le démarrage la rejoue pour remplacer la
+    session en place. Y glisser le soldage solderait donc les runs à chaque relance —
+    le geste le plus fréquent du développement —, et la reprise (#349) ne repart pas
+    de l'interruption : elle rejoue *toutes* les tâches depuis le brief approuvé, et
+    **refuse net** un run qui n'en a pas (mode `auto`), dont le travail serait perdu
+    sans retour. C'est ce qui a tranché le sort de cette fonction en #700, quand les
+    deux autres gestes ont basculé.
+
+    Le contrôle porte sur le **corps de la fonction**, pas sur le fichier : c'est
+    exactement là que la régression s'écrirait, et un `grep` global dirait le
+    contraire de ce qu'on veut savoir maintenant qu'il y a deux appelants légitimes.
+    Motif prouvé sur un échantillon fautif, l'appel glissé dans ce corps-là.
+    """
+    texte = SCRIPT.read_text(encoding="utf-8")
+    debut, fin = _region_arreter_session(texte)
+    appels = _appels_a_solder(texte)
+
+    assert not [rang for rang in appels if debut < rang < fin], (
+        "`arreter_session` solde les runs : le démarrage les emporterait à chaque "
+        "relance."
+    )
+
+    fautif = texte.replace(
+        "arreter_session() {\n", "arreter_session() {\n  solder_les_runs\n", 1
+    )
+    debut_f, fin_f = _region_arreter_session(fautif)
+    assert [rang for rang in _appels_a_solder(fautif) if debut_f < rang < fin_f], (
+        "le contrôle ne sait pas voir un appel dans `arreter_session` : son verdict "
+        "vert ne prouve rien."
+    )
+
+
+def test_le_chien_de_garde_solde_avant_de_liberer_les_ports() -> None:
+    """L'ordre **est** le contenu de la décision, ici comme dans la branche `--stop`.
+
+    C'est l'API qui tient les hôtes détachés et sait les éteindre avec leur
+    descendance : libérer les ports d'abord, c'est la tuer, donc pousser ensuite une
+    porte que plus personne n'ouvre. L'appel partirait, `curl` ne trouverait rien, et
+    le script annoncerait « l'API ne répond pas » sur un arrêt qu'il vient lui-même
+    de rendre impossible — un run laissé en vol derrière un message rassurant.
+
+    Motif prouvé sur un échantillon fautif : les deux lignes permutées.
+    """
+    texte = SCRIPT.read_text(encoding="utf-8")
+
+    def _ordre_tenu(source: str) -> bool:
+        debut, fin = _region_chien_de_garde(source)
+        lignes = source.splitlines()[debut:fin]
+        solde = next(
+            i for i, ligne in enumerate(lignes) if ligne.strip() == "solder_les_runs"
+        )
+        libere = next(
+            i
+            for i, ligne in enumerate(lignes)
+            if ligne.strip().startswith("liberer_port")
+        )
+        return solde < libere
+
+    assert _ordre_tenu(texte), (
+        "le chien de garde libère les ports avant de solder : l'API qui tient les "
+        "hôtes est déjà morte quand la porte est poussée."
+    )
+
+    fautif = texte.replace(
+        '  solder_les_runs\n  liberer_port "$PORT_API" "API"\n',
+        '  liberer_port "$PORT_API" "API"\n  solder_les_runs\n',
+        1,
+    )
+    assert not _ordre_tenu(fautif), (
+        "le contrôle ne sait pas voir l'ordre inversé : son verdict vert ne prouve "
         "rien."
+    )
+
+
+@pytest.mark.skipif(BASH is None, reason="bash introuvable")
+def test_le_chien_de_garde_qui_abandonne_ne_solde_rien(tmp_path: Path) -> None:
+    """Sans fenêtre à surveiller, il n'y a **rien à arrêter** — donc rien à solder.
+
+    Le seul chemin du chien de garde qu'un test peut jouer de bout en bout : hors du
+    mode `isole`, il n'a pas de fenêtre à lui, renonce et sort en `1` sans rien
+    toucher. C'est ce qui prouve que le soldage est bien placé **après** ce renoncement
+    et après le contrôle du jeton, et non en tête du bloc : là, il solderait les runs
+    d'une session qu'il ne surveille même pas.
+
+    Le chemin crée son dossier de journaux avant de renoncer — c'est le script et non
+    le test : il vit sous `.maestro/`, gitignoré, et reste vide.
+    """
+    assert BASH is not None
+    fauxbin, appels = _fauxbin(tmp_path)
+    environnement = os.environ.copy()
+    environnement.pop("MAESTRO_BROWSER", None)
+    environnement.pop("MAESTRO_EXTINCTION", None)
+    environnement.update(
+        {
+            "PATH": os.pathsep.join([str(fauxbin), environnement.get("PATH", "")]),
+            "TMPDIR": str(tmp_path / "etat"),
+            "MAESTRO_BROWSER_DEFAUT": "firefox",
+            "MAESTRO_PORT_API": "18457",
+            "MAESTRO_PORT_UI": "13457",
+        }
+    )
+    acheve = subprocess.run(  # noqa: S603 - argv fixe, aucun shell
+        [BASH, str(SCRIPT), "--chien-de-garde", "jeton-de-test"],
+        cwd=str(RACINE),
+        env=environnement,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
+    )
+
+    assert acheve.returncode == 1, acheve.stdout
+    assert "pas de fenêtre isolée à surveiller" in acheve.stdout
+    journal = appels.read_text(encoding="utf-8") if appels.exists() else ""
+    assert "api/extinction" not in journal, (
+        "un chien de garde qui renonce a quand même soldé les runs"
     )

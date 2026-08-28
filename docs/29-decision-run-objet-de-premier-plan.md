@@ -164,6 +164,14 @@ sans écran pour le suivre ni bouton pour l'arrêter.
 > **sait** — `start.sh --stop` sait qu'il arrête exprès, un `SIGTERM` reçu par l'API ne le sait pas :
 > elle ne se déduit pas d'un signal.
 
+⚠ **Le verdict tient, son tracé a bougé d'un cas le 2026-08-28** (#700, [docs/28
+§11.2](./28-decision-frontiere-execution-run.md)) : **fermer la fenêtre du navigateur est une
+décision**, et solde donc les runs. Deux choses l'ont fait changer de camp — #699 a mesuré que la
+survie ne préserve plus le run mais lui fait *perdre son historique* (bus Pub/Sub éphémère, journal
+alimenté par la seule pompe de l'API), et le chien de garde #149 coupait déjà l'API et l'UI avec la
+fenêtre, ce qu'on n'appelle pas un accident. Ce qui reste subi : le **redémarrage**, le plantage, le
+`SIGTERM`. La phrase ci-dessus, qui range la fenêtre parmi les accidents, est celle du 2026-08-24.
+
 **Ce n'est aucune des quatre portes du §8 de docs/28, et c'est une cinquième.** Les quatre nommées
 d'avance rouvrent toutes la question dans le sens de **plus** de durabilité (Temporal) : un second
 run perdu par sommeil machine, l'exécution qui quitte la machine, des runs de plusieurs jours, une
