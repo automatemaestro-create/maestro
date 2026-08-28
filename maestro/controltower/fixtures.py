@@ -27,7 +27,7 @@ cycle de vie normal d'une fixture — elle tient la place d'une implémentation,
 puis lui cède la sienne : garder les deux ferait de la démo un écran nourri de
 faux à côté d'un vrai, et de la forme figée une seconde source à tenir d'accord.
 
-Les quatre types de trame du flux sont **réexportés** ici (`FRAGMENT_CHAT_*`) :
+Les types de trame du flux sont **réexportés** ici (`FRAGMENT_CHAT_*`) :
 ils vivent désormais avec le canal qui les émet, et ce module en garde le nom
 d'import pour ne pas casser ce qui les lisait à cette adresse.
 
@@ -46,6 +46,7 @@ from maestro.controltower.chat import (
     FRAGMENT_CHAT_DELTA,
     FRAGMENT_CHAT_ERREUR,
     FRAGMENT_CHAT_FIN,
+    FRAGMENT_CHAT_INTERROMPU,
 )
 
 #: Les types de trame du flux de chat, définis avec le canal qui les émet
@@ -56,6 +57,7 @@ __all__ = [
     "FRAGMENT_CHAT_DELTA",
     "FRAGMENT_CHAT_ERREUR",
     "FRAGMENT_CHAT_FIN",
+    "FRAGMENT_CHAT_INTERROMPU",
     "FixturesControlTower",
 ]
 

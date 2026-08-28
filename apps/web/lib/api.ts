@@ -20,6 +20,7 @@ import type {
   EntreeRegistreMcp,
   EtatAgent,
   FilChat,
+  FragmentChat,
   FriseRun,
   GrapheRun,
   IntegrationPoolMcp,
@@ -475,19 +476,48 @@ export function chargerFilChat(agent: string): Promise<FilChat> {
 }
 
 /**
- * Envoie un message utilisateur à l'agent (`POST /api/chat/{agent}/messages`,
- * #84) : la réponse est produite dans la requête, la paire message/réponse
- * rejoint le fil persisté et part en `chat.message` sur le WebSocket. Un échec
- * de réponse (502) ne perd pas le message utilisateur, déjà acquis au fil.
+ * Un échec survenu **après** que le message utilisateur a été acquis (#695) :
+ * trame `erreur` du flux, ou transport coupé en pleine réponse.
+ *
+ * Ce n'est pas un raffinement d'affichage, c'est ce qui décide d'un geste. Un
+ * refus d'`ErreurSource` tombe avant toute écriture : rien n'est parti, le
+ * brouillon revient dans la zone de saisie et l'utilisateur renvoie d'un Entrée.
+ * Ici le message **est au fil**, remettre son texte dans la saisie inviterait à
+ * l'envoyer une seconde fois — d'où deux classes plutôt qu'un message d'erreur
+ * qu'il faudrait relire pour trancher.
+ *
+ * `recu` porte ce qui avait été affiché quand le flux s'est arrêté : la trame
+ * `erreur` dit que ce texte est **à jeter** (`FluxInterrompu`, #693), et c'est la
+ * seule information qu'un client ne peut pas déduire de ce qu'il a sous les yeux.
+ */
+export class ErreurReponse extends Error {
+  readonly recu: string;
+
+  constructor(message: string, recu = "") {
+    super(message);
+    this.name = "ErreurReponse";
+    this.recu = recu;
+  }
+}
+
+/**
+ * Envoie un message utilisateur à l'agent et **consomme sa réponse au fil de
+ * l'eau** (`POST /api/chat/{agent}/flux`, #692/#695) : le flux SSE du canal, dont
+ * chaque `data: <json>` est un `FragmentChat` remis à `surTrame` dès qu'il
+ * arrive. La promesse est celle du contrat (docs/05 §6.5) — la concaténation des
+ * `delta` reconstitue le message de la trame `fin`.
+ *
+ * ⚠ **C'est la seule façon dont le navigateur parle à un fil**, et c'en est le
+ * point : `POST …/messages` reste servi par l'API — contrat publié (#84), et la
+ * voie de tout autre client —, mais l'écran n'en a plus qu'une. Le canal ne
+ * devient donc pas un « second chemin d'envoi » (la raison pour laquelle #269
+ * l'avait écarté) : il **remplace** le premier, il ne s'y ajoute pas. Le lot 2
+ * (#692) a levé ce qui l'empêchait, en donnant au flux un corps de requête.
  *
  * `sources` (#482) est la matière que le message embarque, **dans l'ordre où
  * l'écran l'a composée** : un fichier y voyage par l'`id` que
  * `televerserSources` lui a rendu, un dossier par son `chemin`, une page par sa
- * `valeur`. Omise ou vide, l'appel est exactement celui d'avant ce lot.
- *
- * Le refus emprunte le chemin motivé des sources et **non** celui d'`envoyerJson`
- * : une source refusée porte un `motif` et un `index`, et c'est l'index qui
- * permet au fil d'afficher le refus sur la source fautive plutôt qu'en bloc.
+ * `valeur`. Le corps est **exactement** celui de `POST …/messages`.
  *
  * `projetId` (#683) est le **projet de la fenêtre** d'où part le message. Ce
  * n'est pas une portée de lecture — le fil reste transverse (`useChat`), et
@@ -496,15 +526,25 @@ export function chargerFilChat(agent: string): Promise<FilChat> {
  * run dicté à l'orchestration appartient au projet où on l'a demandé, donc il
  * figure dans sa liste de runs et s'ouvre en détail. Omis, le run part sans
  * projet et n'apparaît alors dans la liste d'aucun (#277).
+ *
+ * Deux régimes d'échec, et ils ne se confondent pas — c'est ce qui permet à
+ * l'appelant de savoir si le message est **acquis** :
+ *
+ * - avant la première trame, le refus est un statut HTTP et emprunte le chemin
+ *   motivé des sources (`ErreurSource` : `motif`, `index`) — rien n'a été
+ *   persisté, le brouillon peut revenir dans la zone de saisie ;
+ * - après, le message utilisateur est au fil : une trame `erreur` ou une
+ *   coupure de transport lève une `ErreurReponse`, qui porte ce qui a été reçu.
  */
-export async function envoyerMessageChat(
+export async function diffuserMessageChat(
   agent: string,
   contenu: string,
   sources: SourceDeclaree[] = [],
   projetId: string | null = null,
+  surTrame: (trame: FragmentChat) => void = () => {},
 ): Promise<void> {
   const reponse = await fetch(
-    `${API_URL}/api/chat/${encodeURIComponent(agent)}/messages`,
+    `${API_URL}/api/chat/${encodeURIComponent(agent)}/flux`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -515,7 +555,93 @@ export async function envoyerMessageChat(
       }),
     },
   );
+  // Le backend tire sa première trame **avant** de rendre la réponse : un refus
+  // arrive donc en statut, jamais en flux ouvert sur une erreur (docs/05 §6.5).
   if (!reponse.ok) throw await refusSource(reponse, "envoi refusé");
+  await lireFluxChat(reponse, surTrame);
+}
+
+/**
+ * Draine un `text/event-stream` de chat, trame par trame.
+ *
+ * Le découpage est celui du SSE et rien d'autre : les trames sont séparées par
+ * une **ligne vide**, et seules les lignes `data: ` portent la charge utile. Un
+ * tampon est indispensable — rien ne garantit qu'un morceau du réseau contienne
+ * une trame entière, ni qu'il n'en contienne qu'une —, et il est vidé à la fin
+ * pour la trame que le serveur n'aurait pas suivie d'une ligne vide.
+ *
+ * Une trame illisible est **ignorée**, jamais fatale : même règle que le
+ * WebSocket (`useChat`), où le REST reste la vérité. Une coupure de transport,
+ * elle, remonte — l'appelant a du texte à l'écran et doit savoir qu'il s'arrête.
+ */
+async function lireFluxChat(
+  reponse: Response,
+  surTrame: (trame: FragmentChat) => void,
+): Promise<void> {
+  const corps = reponse.body;
+  if (corps === null) throw new ErreurReponse("flux de réponse vide.");
+  const lecteur = corps.getReader();
+  const decodeur = new TextDecoder();
+  let tampon = "";
+
+  const vider = (bloc: string) => {
+    for (const ligne of bloc.split("\n")) {
+      if (!ligne.startsWith("data:")) continue;
+      try {
+        surTrame(JSON.parse(ligne.slice("data:".length).trim()) as FragmentChat);
+      } catch {
+        // trame illisible : on l'ignore, le fil persisté reste la vérité
+      }
+    }
+  };
+
+  try {
+    for (;;) {
+      const { done, value } = await lecteur.read();
+      if (done) break;
+      tampon += decodeur.decode(value, { stream: true });
+      let coupure = tampon.indexOf("\n\n");
+      while (coupure !== -1) {
+        vider(tampon.slice(0, coupure));
+        tampon = tampon.slice(coupure + 2);
+        coupure = tampon.indexOf("\n\n");
+      }
+    }
+    if (tampon.trim() !== "") vider(tampon);
+  } catch (e) {
+    throw new ErreurReponse(
+      `la réponse s'est interrompue : ${e instanceof Error ? e.message : String(e)}`,
+    );
+  } finally {
+    lecteur.releaseLock();
+  }
+}
+
+/**
+ * **Arrête** la génération en vol (`POST …/flux/{echange}/arret`, #695).
+ *
+ * Rien n'est envoyé ici et rien n'est produit : c'est le seul verbe qui retire
+ * quelque chose au canal. Ce qui a déjà été reçu est **persisté** côté backend
+ * comme réponse, et le flux se clôt sur sa trame `interrompu` — l'appelant
+ * continue donc de lire jusqu'au bout au lieu d'abandonner sa requête.
+ *
+ * Ne rejette **jamais** : « rien à arrêter » (404) est le cas normal d'un clic
+ * arrivé au moment où la réponse tombait, et une panne de ce verbe ne doit pas
+ * masquer la réponse en train d'arriver. Le verdict se lit dans le flux, seul
+ * endroit qui sache ce qui a été retenu.
+ */
+export async function arreterFluxChat(
+  agent: string,
+  echange: string,
+): Promise<void> {
+  try {
+    await fetch(
+      `${API_URL}/api/chat/${encodeURIComponent(agent)}/flux/${encodeURIComponent(echange)}/arret`,
+      { method: "POST" },
+    );
+  } catch {
+    // le flux dira ce qu'il en est ; rien à rattraper ici
+  }
 }
 
 /**

@@ -1696,23 +1696,35 @@ export type RegistreConfiguration = {
  */
 export type PropositionPlaybookGlobale = PropositionPlaybook & { role: string };
 
-/** Types de trame d'un flux SSE de chat (maestro/controltower/fixtures.py). */
+/** Types de trame d'un flux SSE de chat (maestro/controltower/chat.py). */
 export const FRAGMENT_CHAT_DEBUT = "debut";
 export const FRAGMENT_CHAT_DELTA = "fragment";
 export const FRAGMENT_CHAT_FIN = "fin";
+export const FRAGMENT_CHAT_INTERROMPU = "interrompu";
 export const FRAGMENT_CHAT_ERREUR = "erreur";
 
 /**
- * Une trame du flux SSE d'un fil de chat (`GET /api/chat/{agent}/flux`, #183) :
+ * Une trame du flux SSE d'un fil de chat (`POST /api/chat/{agent}/flux`, #183) :
  * chaque `data: <json>` du `text/event-stream` en est une. `type` dit son rôle
- * (`debut` ouvre, `fragment` incrémente, `fin` clôt, `erreur` signale) ;
- * `auteur` est l'émetteur (l'agent) ; `delta` porte l'incrément de texte (vide
- * hors `fragment`) ; `message` le `MessageChat` complet reconstitué, posé sur la
- * seule trame `fin` (`null` ailleurs).
+ * (`debut` ouvre, `fragment` incrémente, `fin` clôt sur la réponse entière,
+ * `interrompu` clôt sur ce qui a été persisté d'une réponse **arrêtée** (#695),
+ * `erreur` signale qu'aucune réponse ne viendra) ; `auteur` est l'émetteur
+ * (l'agent) ; `delta` porte l'incrément de texte — vide hors `fragment`, où il
+ * porte la cause sur `erreur`.
  *
- * `conversation` (#694) dit **où** la réponse s'écrit, et voyage sur toutes les
- * trames — `debut` comprise : un fil affiché sait dès la première si ce qui
- * arrive est le sien, sans attendre le `MessageChat` de la trame `fin`.
+ * `message` porte un `MessageChat` complet sur les trames qui **bornent**
+ * l'échange : celui de l'utilisateur sur `debut` — avec ses sources et leur
+ * rapport de lecture (#692/#316) —, la réponse sur `fin`, et ce qui a été
+ * persisté de la réponse arrêtée sur `interrompu` (`null` quand l'arrêt précède
+ * le premier incrément). `null` sur `fragment` et `erreur`.
+ *
+ * `echange` (#695) nomme le flux lui-même et voyage sur **toutes** les trames :
+ * c'est lui qu'on rend à `POST …/flux/{echange}/arret` pour arrêter la
+ * génération.
+ *
+ * `conversation` (#694) dit **où** la réponse s'écrit, et voyage elle aussi sur
+ * toutes les trames — `debut` comprise : un fil affiché sait dès la première si
+ * ce qui arrive est le sien, sans attendre le `MessageChat` de la trame `fin`.
  */
 export type FragmentChat = {
   type: string;
@@ -1720,6 +1732,7 @@ export type FragmentChat = {
   auteur: string;
   delta: string;
   message: MessageChat | null;
+  echange: string;
   conversation?: string;
 };
 

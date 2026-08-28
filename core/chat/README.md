@@ -21,7 +21,14 @@ est consigné ici et le fil se relit par agent.
   `GET /api/chat/{agent}/flux` rend la même réponse en SSE, au fur et à mesure
   (#268 : un canal, valable pour les trois fils), et `POST /api/chat/{agent}/flux`
   fait de même pour un message qui embarque des **sources** — une URL ne pouvant
-  pas les déclarer (#692).
+  pas les déclarer (#692). Depuis #695 c'est par là que **la Control Tower**
+  parle à un fil : `POST …/messages` reste servi, mais l'écran n'a qu'une façon
+  d'envoyer, et la réponse s'y écrit sous les yeux.
+- `POST /api/chat/{agent}/flux/{echange}/arret` **arrête** une génération en vol
+  (#695) — le seul geste qui l'annule, une déconnexion la laissant s'achever
+  (#268). Ce qui a été produit avant l'arrêt est persisté ici comme réponse : un
+  fil peut donc porter une réponse **plus courte** que ce que l'agent aurait
+  écrit, et c'est une réponse comme une autre, pas une ligne à moitié écrite.
 - Chaque message est aussi diffusé en événement `chat.message` sur le bus
   (#46) — le WebSocket `/ws/evenements` porte le fil en temps réel — et
   transite par la messagerie inter-agents (#44, boîte de l'agent).
