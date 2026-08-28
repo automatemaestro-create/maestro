@@ -953,6 +953,23 @@ n'est donc plus une salle d'attente mais un **état de passage**, où le ticket 
      passer son **parent de suivi** « En cours » quand il était « À faire » (#517, §5.1) —
      best-effort, et à cet endroit précisément parce qu'il est le point de passage obligé des deux
      appelants de `/ticket-start`, session interactive comme session de run.
+   - **La veille de conception, quand le ticket touche un écran** (#714, [docs/30
+     §5.2](./30-cible-visuelle-control-tower.md)). `start-brief` rejoue `touche-surface` **sur la
+     vue qu'il vient de lire** — zéro aller de forge en plus — et imprime un bloc `surface
+     visible :` quand le ticket touche une surface **et** que la question n'a jamais été tranchée
+     dessus. `/ticket-start` **propose** alors `/design-veille <surface>` : un « oui » explicite,
+     **jamais** un lancement d'office (une veille coûte des recherches web, des captures et du
+     quota — ce qui est automatique est la **détection du manque**, jamais le verdict, même partage
+     que #562 et #612). C'est, avec le découpage d'un ticket trop gros, la **seule vraie pause** du
+     démarrage. La réponse — veille faite **ou** jugée inutile — s'enregistre par
+     `lib.sh veille-arbitre <iid>`, qui pose `veille::arbitree` **quel que soit le verdict** : sans
+     ça, « inutile ici » serait indiscernable de « personne n'y a pensé » et la question
+     reviendrait à chaque démarrage. Muet dans les deux autres cas, pour deux raisons distinctes —
+     « aucune surface visible » est l'abstention nominale, « déjà arbitré » est la promesse du
+     dispositif. **Rien de tout cela ne se joue en session de run** : la veille est un geste
+     **interactif**, `WebSearch`/`WebFetch` restant hors des deux allowlists (§11.7) ; le prompt de
+     session demande de ne pas la tenter, de **n'enregistrer aucun arbitrage**, et de nommer le
+     ticket dans le résumé final. `MAESTRO_VEILLE_SIGNAL=0` éteint le signalement.
    Une fois le cadrage résumé, l'agent **enchaîne directement sur l'implémentation** — le résumé
    n'est pas une pause d'autorisation, aucun « go » n'est attendu.
 3. Développement sur la branche (commits `Refs #<iid>`).
@@ -5424,6 +5441,26 @@ argv ticket par ticket, ce qui confine le renversement à quelques tickets par m
 détection amont de `queue.sh` (#612) un usage qu'elle n'avait pas ; ou l'employer partout, ce que
 rien dans cette mesure ne recommande. Dans les deux derniers cas, le merge automatique de ces PR-là
 demanderait un lecteur humain — c'est #418 qui l'a retiré, pas l'écriture qui l'a rendu inutile.
+
+**Un accès qui n'a pas été ouvert, et c'est une décision : le web** (#714, [docs/30
+§5.2](./30-cible-visuelle-control-tower.md)). `WebSearch` et `WebFetch` ne sont dans **aucune** des
+deux allowlists — ni `settings.run.json`, ni `.claude/settings.json`, dont l'`allow` d'un run est
+l'**union**. Ce n'est pas un trou à instruire au sens de cette section, c'est le régime voulu :
+`/design-veille` est le seul appelant qui en aurait besoin, et la veille de conception est un geste
+**interactif**. Trois raisons, dont une seule est technique — une session de run n'a **personne**
+pour répondre au « oui » que `/ticket-start` propose (§5), donc l'ouvrir reviendrait à lancer la
+veille d'office, ce que #714 exclut nommément ; une veille rend des **partis pris**, c'est-à-dire un
+jugement, du même bois que l'arbitrage de #562 et le rail de #617 ; et `mcp__chrome-maestro` passant
+déjà cette union, ouvrir la seule **recherche** donnerait une veille **à moitié** — captures sans
+références vérifiées —, or la règle de la commande est que ce qui n'est pas vérifié n'est pas cité.
+Le prompt de session (§11.3) le dit donc en toutes lettres : ne pas la tenter, **n'enregistrer aucun
+arbitrage** (ce serait fermer la question sans que personne l'ait jugée — le « marquer d'office » que
+#562 a écarté), et **nommer le ticket** dans le résumé final. ⚠ `tests/test_design_veille.py` garde
+les **deux** fichiers, parce que le changement plausible n'est pas « ouvrir le web aux runs » —
+personne ne le demandera — mais « ouvrir `WebSearch` dans `.claude/settings.json` pour éviter une
+confirmation à chaque `/design-veille` interactive » : geste légitime, effet non voulu, il ouvre le
+run du même coup. Une confirmation dans une session interactive n'est pas un défaut, il y a
+quelqu'un pour la donner.
 
 ### 11.8 Reprendre un run qui ne s'est pas terminé — `--resume`
 

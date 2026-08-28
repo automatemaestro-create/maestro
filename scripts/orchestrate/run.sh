@@ -2147,6 +2147,15 @@ Règles de ce run autonome :
     <chemin-du-fichier> ». Le ticket de reprise naît assigné — donc hors des plans d'un run, qui s'y
     ferait refuser la même écriture — et avec son état ; rejoué dans le même ticket, il complète le
     même ticket de reprise au lieu d'en ouvrir un second. Nomme-le dans ton résumé final.
+- LA VEILLE DE CONCEPTION EST UN GESTE INTERACTIF, et tu n'es pas dans une session interactive.
+  Si /ticket-start affiche un bloc « surface visible : », il PROPOSE de jouer /design-veille avant
+  de toucher un écran — une proposition qui attend un « oui » que personne ne te donnera. Ne la
+  joue pas : WebSearch et WebFetch ne sont dans aucune des deux allowlists de ce run, donc la
+  recherche te serait refusée, et une veille à moitié (captures sans références vérifiées) est
+  pire qu'aucune. N'enregistre AUCUN arbitrage non plus — « lib.sh veille-arbitre » fermerait la
+  question sans que personne l'ait jugée. Fais une seule chose : NOMME ce ticket dans ton résumé
+  final comme appelant une veille, et implémente en t'en tenant au socle (docs/30, tokens et
+  primitives du dépôt, aucune identité nouvelle).
 - POUR JOUER DES TESTS, l'endroit se choisit PAR FAMILLE DE SUITE, et l'écart se paie sur ton
   quota. Une suite d'OUTILLAGE — elle nomme un script du dépôt (worktree.sh, lib.sh, run.sh…) —
   se joue dans le conteneur Linux, « bash scripts/ci/pytest.sh tests/test_<suite>.py -q » : vingt
