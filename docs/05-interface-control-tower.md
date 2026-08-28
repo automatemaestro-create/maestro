@@ -2743,6 +2743,7 @@ direct), et le troisième canal qui s'y branche.
 {
   "type": "fragment",        // debut (ouvre) | fragment (incrémente) | fin (clôt) | erreur
   "agent": "qa",
+  "conversation": "origine", // où la réponse s'écrit (#694, §6.14) — sur TOUTES les trames
   "auteur": "agent",         // l'émetteur de la RÉPONSE — le même sur les quatre trames
   "delta": " morceau",       // incrément de texte ; vide hors `fragment` — porte la cause sur `erreur`
   "message": null            // MessageChat complet sur `debut` (l'utilisateur) et `fin` (la réponse)
@@ -3509,7 +3510,7 @@ Le premier lot du déménagement de `/composer` dans la conversation (#481) : un
   tokens s'épuise (§6.8). Absent ou vide, l'appel est exactement celui d'avant ce lot.
 - La réponse et `GET /api/chat/{agent}` rendent, sur chaque `MessageChat`, deux champs de plus :
   `sources` (la matière **résolue**, forme du §6.1) et `rapport` (le `RapportLecture` du §6.8,
-  `null` quand il n'y en a pas).
+  `null` quand il n'y en a pas). Un troisième les a rejoints depuis : `conversation` (§6.14).
 
 ```jsonc
 // POST /api/chat/qa/messages
@@ -3700,3 +3701,94 @@ route recoupée avec `GET /api/journal?run_id=…` entrée par entrée. Côté �
 L'écran qui consomme ce contrat est la **vue frise** (§2.4.4) : un tableau dont les lignes sont le
 temps et les colonnes les agents — un `<table>` et non une grille de `<div>`, pour que l'association
 `<th scope="col">` fasse porter à **chaque entrée son agent** sans le réécrire sur chaque carte.
+
+### 6.14 Un fil est une suite de conversations (#694) — **livré**
+
+Le lot 4 de #690, et la moitié backend de « il devrait être possible de démarrer un nouveau chat et
+voir l'historique ». Jusqu'ici un fil était un JSONL **éternel** par agent : on ne pouvait ni
+repartir de zéro, ni retrouver celui d'hier, ni nommer ce dont on avait parlé. L'écran, lui, ne
+bouge pas — il continue de lire la conversation courante ; il se sert de tout ceci au §2.11 (lot 6).
+
+- `GET /api/chat/{agent}/conversations` → les conversations du fil, **la plus récente d'abord** ;
+  jamais vide.
+- `POST /api/chat/{agent}/conversations` → `201` avec la carte de la conversation neuve.
+- `GET /api/chat/{agent}?conversation=<id>` → le fil de **cette** conversation ; sans le paramètre,
+  celui de la plus récente. La réponse **nomme** la conversation servie.
+- `POST /api/chat/{agent}/messages` et `POST …/flux` (#692) acceptent un `conversation` dans leur
+  corps, `GET …/flux` un `?conversation=` — absents, l'échange rejoint la plus récente. Chaque
+  `MessageChat` et **chaque trame** du flux (`debut` comprise) portent désormais leur
+  `conversation`.
+
+```jsonc
+// GET /api/chat/qa/conversations
+{
+  "agent": "qa",
+  "role": "QA / Testeur",
+  "conversations": [
+    { "agent": "qa",
+      "id": "20260828t143012-9f3a2b",      // l'identifiant porte son instant d'ouverture
+      "titre": "Vérifie le déploiement",   // DÉRIVÉ du premier message, "" tant que rien n'est dit
+      "debut": "2026-08-28T14:30:12+00:00",
+      "derniere": "2026-08-28T14:31:40+00:00",
+      "messages": 4 },
+    { "agent": "qa", "id": "origine", "titre": "Le fil d'avant",
+      "debut": "2026-08-01T09:00:00+00:00",
+      "derniere": "2026-08-27T18:12:00+00:00", "messages": 26 }
+  ]
+}
+```
+
+**`origine` est la conversation qu'un agent a par défaut, et c'est par elle que le passé survit.**
+Elle est stockée là où le fil l'a toujours été — `core/chat/<agent>.jsonl` —, les suivantes sous
+`core/chat/<agent>/<id>.jsonl`. Un fichier écrit avant ce lot **devient** donc une conversation sans
+être ni déplacé, ni réécrit, ni relu autrement : c'est le troisième critère du ticket, et c'est ce
+qui fait qu'un poste qui met à jour **continue** sa conversation au lieu d'en commencer une. Une
+installation qui n'ouvre jamais de seconde conversation écrit exactement les mêmes octets qu'avant.
+Corollaire à connaître : `origine` est toujours listée et toujours adressable, fût-elle vierge — « un
+agent sans aucune conversation » n'existe pas, donc « la plus récente » a toujours une réponse.
+
+**Les métadonnées sont dérivées, jamais tenues à part.** Le titre vient du premier message de
+l'utilisateur (son `resume`, donc « 2 source(s) jointe(s) : … » pour un message fait de seules
+sources — §6.12), les horodatages du premier et du dernier. Un fichier annexe qu'un JSONL antérieur
+n'aurait pas rendrait ces conversations-là sans titre ni date, et une migration qui les fabriquerait
+réécrirait ce que le critère interdit de toucher. Le seul fait qu'aucun message ne porte est
+l'**instant d'ouverture d'une conversation encore vide** : il voyage donc dans l'identifiant
+(`20260828t143012-9f3a2b`), d'où il se relit sans ouvrir un fichier. Le jour où le stockage passera
+en base (entité AGENT_MESSAGE, docs/03), les trois deviennent des colonnes sans que ce contrat bouge.
+
+**Ouvrir est idempotent tant que rien n'a été dit.** Si la plus récente est vierge, elle *est* la
+conversation neuve et c'est elle que le `201` rend. Sans cette règle, deux clics sur « nouvelle
+conversation » laisseraient un historique de fils vides derrière eux, et le premier clic sur un agent
+jamais contacté doublerait son `origine` avant qu'elle ait servi.
+
+**L'ordre est celui de la dernière activité, et ouvrir en est une.** C'est ce qui départage les deux
+lectures possibles de « la plus récente » : une conversation qu'on vient d'ouvrir passe devant celle
+qu'on quitte (sans quoi le premier message d'un nouveau fil retomberait dans l'ancien), et écrire
+dans une ancienne la ramène en tête (sans quoi « la conversation courante » serait figée sur la
+dernière ouverte). Les horodatages étant à la **seconde** — celle du journal, §6.13 —, l'ordre se
+départage à la milliseconde par la date du fichier : les deux gestes que le lot doit distinguer se
+suivent en bien moins d'une seconde, et sans départage l'ordre dépendrait de l'ordre alphabétique des
+identifiants, c'est-à-dire de rien. Le fait de domaine reste en tête de clé et décide seul dès qu'une
+seconde s'est écoulée.
+
+**Le répondeur ne voit que la conversation en cours** — et c'est ce qui donne son sens au bouton :
+« repartir de zéro avec le même agent » n'a de contenu que si le modèle ne reçoit pas non plus le fil
+d'avant. Le prompt est donc construit sur le fil de la conversation, jamais sur tout ce que l'agent a
+entendu.
+
+**Trois réponses à un identifiant, et elles ne se confondent pas.** Mal formé → `422` : c'est la
+garde de traversée de chemin, la **même** que pour un nom d'agent, parce qu'un identifiant venu de
+l'API désigne un fichier tout autant. Bien formé mais inconnu → `404` : on n'adresse pas un fil qui
+n'existe pas. Absent → ce n'est pas une erreur du tout, c'est le cas nominal, celui d'un appelant
+d'avant ce lot.
+
+⚠ **Le fil reste transverse au projet** (§2.9, #281) : une conversation n'acquiert **pas** de
+`projet_id`. `projet_id` voyage avec l'**envoi** (#683, §6.5) — il dit d'où part le message et à quoi
+appartient ce que la réponse *ouvre* —, jamais avec le fil. Et l'événement `chat.message` du
+WebSocket n'a pas changé : il ne porte pas la conversation, un client relisant le fil qu'il affiche.
+
+Implémentation : [`maestro/controltower/chat.py`](../maestro/controltower/chat.py) (`Conversation`,
+`ChatStore.conversations`/`courante`/`ouvrir`, `titre_conversation`, le champ `conversation` de
+`MessageChat` et de `FragmentChat`) et
+[`maestro/controltower/app.py`](../maestro/controltower/app.py) pour les routes. Tests différés au
+lot 8 de #690.

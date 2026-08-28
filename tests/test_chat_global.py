@@ -70,6 +70,7 @@ from fastapi.testclient import TestClient
 
 from maestro.controltower.app import create_app
 from maestro.controltower.chat import (
+    CONVERSATION_ORIGINE,
     FRAGMENT_CHAT_DEBUT,
     FRAGMENT_CHAT_DELTA,
     FRAGMENT_CHAT_FIN,
@@ -890,6 +891,9 @@ def test_le_fil_global_est_servi_sans_etre_au_catalogue(client_global) -> None:
     assert fil.json() == {
         "agent": NOM_ORCHESTRATION,
         "role": "Orchestrateur",
+        # Le fil global a des conversations comme les autres (#694) : sans
+        # précision on lit la plus récente, et un fil neuf n'a que son `origine`.
+        "conversation": CONVERSATION_ORIGINE,
         "messages": [],
     }
     assert NOM_ORCHESTRATION not in {

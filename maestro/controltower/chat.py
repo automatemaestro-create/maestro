@@ -7,10 +7,12 @@ par les endpoints `/api/chat` de l'app (`maestro.controltower.app`) :
 
 - `MessageChat` : un message du fil (auteur « utilisateur » ou l'agent), prêt à
   voyager en JSON — la forme du REST et du stockage ;
-- `ChatStore` : la persistance du fil, un fichier JSONL par agent
-  (`core/chat/<agent>.jsonl` au POC, racine remplaçable par `MAESTRO_CHAT_DIR`) —
-  en V1 elle passera en base (entité AGENT_MESSAGE, docs/03) sans changer ce
-  contrat ;
+- `Conversation` : un fil parmi ceux d'un agent (#694) — identifiant, titre
+  **dérivé** de son premier message, instants d'ouverture et de dernière
+  activité ;
+- `ChatStore` : la persistance des fils, un fichier JSONL par **conversation**
+  (`core/chat/` au POC, racine remplaçable par `MAESTRO_CHAT_DIR`) — en V1 elle
+  passera en base (entité AGENT_MESSAGE, docs/03) sans changer ce contrat ;
 - `RepondeurChat` : la production de la réponse — `RepondeurModele` confie le
   fil au fournisseur configuré (`ModelProvider.generate`), cadré par le playbook
   **courant** de l'agent (#76, rechargé à chaque message comme l'exécuteur) ;
@@ -78,11 +80,39 @@ endpoint pour déclarer, un état composé à garder entre les deux appels puis 
 ramasser, et elle éloignait le refus du moment de l'envoi. Un corps de POST fait
 la même chose sans rien garder, et laisse au refus la forme qu'il a déjà sur
 l'autre voie — un 422 `{motif, message, index}` (#315), levé **avant** la
-première trame parce que `_ouvrir` précède le premier `yield`.
+première trame parce que `_deposer` précède le premier `yield`.
 
 Deux verbes ne font pas deux chemins d'envoi : ils appellent tous deux
-`diffuser`, qui passe par `_ouvrir` puis `_repondre` comme `envoyer`. La règle du
-module vaut aussi pour ses entrées.
+`diffuser`, qui passe par `_deposer` puis `_repondre` comme `envoyer`. La règle
+du module vaut aussi pour ses entrées.
+
+## Un fil d'agent est une suite de conversations (#694)
+
+Le fil d'un agent n'est plus un JSONL éternel : c'est une **suite de
+conversations**, qu'on liste, qu'on rouvre, et dont on ouvre une neuve. Trois
+décisions tiennent tout le dispositif, et la troisième est la plus importante.
+
+**La conversation `origine` est celle qu'un agent a par défaut**, et elle est
+stockée là où le fil l'a toujours été — `<racine>/<agent>.jsonl`. Les
+conversations suivantes vivent sous `<racine>/<agent>/<id>.jsonl`. Un fichier
+écrit avant ce lot **devient** donc une conversation sans être ni déplacé, ni
+réécrit, ni relu autrement : c'est le critère 3 du ticket, et c'est ce qui fait
+qu'un poste qui met à jour continue sa conversation au lieu d'en commencer une.
+
+**Les métadonnées sont dérivées, jamais tenues à part.** Le titre vient du
+premier message, les horodatages du premier et du dernier — un fichier annexe
+qu'un JSONL antérieur n'aurait pas rendrait ces conversations-là sans titre ni
+date. Le seul fait qu'aucun message ne porte est l'**instant d'ouverture** d'une
+conversation encore vide : il voyage donc dans l'identifiant
+(`20260828t143012-9f3a2b`), d'où il se relit sans rien ouvrir. Le jour où le
+stockage passera en base, ces trois valeurs deviendront des colonnes sans que le
+contrat REST bouge.
+
+**Ouvrir est idempotent tant que rien n'a été dit** : si la conversation la plus
+récente est vide, elle *est* la conversation neuve — rouvrir n'en fabrique pas
+une seconde. Sans cette règle, cliquer deux fois sur « nouvelle conversation »
+laisserait derrière lui un historique de fils vides, et un agent jamais contacté
+verrait son `origine` doublée avant d'avoir servi.
 
 ## Ce qui découle d'un message est rattaché au fil (#268)
 
@@ -171,6 +201,29 @@ Incrementeur = Callable[[str], Awaitable[None]]
 #: (même garde que `maestro.agents.store`).
 _NOM_AGENT = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
+#: Identifiant de conversation admissible comme fichier — la **même** garde que
+#: pour un nom d'agent (#694) : une traversée de chemin ne devient pas acceptable
+#: parce que la valeur porte un autre nom, et celle-ci vient de l'API tout autant.
+_ID_CONVERSATION = _NOM_AGENT
+
+#: La conversation qu'un agent a **par défaut**, stockée là où le fil l'a
+#: toujours été (`<racine>/<agent>.jsonl`) : c'est par elle qu'un JSONL antérieur
+#: à #694 devient une conversation sans être ni déplacé ni réécrit. Elle est
+#: toujours adressable et toujours listée — vide tant que rien n'y a été dit —,
+#: si bien qu'« un agent sans aucune conversation » n'existe pas et que
+#: « la plus récente » a toujours une réponse.
+CONVERSATION_ORIGINE = "origine"
+
+#: L'instant d'ouverture porté par l'identifiant d'une conversation neuve
+#: (`<AAAAMMJJ>t<HHMMSS>-<hex>`) — le seul fait qu'aucun message ne peut dire
+#: d'une conversation encore vide, et donc la seule chose que l'identifiant a à
+#: porter. Absent d'`origine`, dont l'ouverture est celle de son premier message.
+_ID_OUVERTURE = re.compile(r"^(\d{4})(\d{2})(\d{2})t(\d{2})(\d{2})(\d{2})-")
+
+#: Longueur du titre dérivé d'une conversation : de quoi reconnaître un fil dans
+#: une liste, pas de quoi le résumer — le fil lui-même est à un clic.
+_LONGUEUR_TITRE = 60
+
 #: Longueur de l'`objet` des messages inter-agents dérivés du chat : la ligne
 #: « sujet » de la lettre (#44), un extrait — le contenu intégral vit en payload.
 _LONGUEUR_OBJET = 80
@@ -189,6 +242,57 @@ dis-le et oriente vers l'agent compétent."""
 def _horodatage() -> str:
     """Horodatage UTC ISO-8601, même précision que le journal (#8)."""
     return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def _nouvel_id_conversation() -> str:
+    """Un identifiant de conversation neuf, portant son instant d'ouverture (#694).
+
+    Deux propriétés, et la seconde est la raison d'être de la forme : il est un
+    slug (`_ID_CONVERSATION`), donc un nom de fichier sûr ; et il **porte sa
+    date**, donc une conversation encore vide a une place dans l'ordre et une
+    ligne de temps sans qu'aucun fichier annexe n'ait à la porter — un fichier
+    qu'un JSONL antérieur à ce lot n'aurait de toute façon pas. Le suffixe
+    aléatoire départage deux ouvertures dans la même seconde.
+    """
+    return f"{datetime.now(UTC):%Y%m%dt%H%M%S}-{uuid.uuid4().hex[:6]}"
+
+
+def _ouverture_de(identifiant: str) -> str:
+    """L'instant d'ouverture relu de `identifiant`, ou `""` s'il n'en porte pas.
+
+    `""` est la réponse pour `origine`, qui n'a jamais été « ouverte » : son
+    ouverture est celle de son premier message, et c'est `ChatStore` qui fait ce
+    repli — ici on ne rend que ce que l'identifiant dit.
+    """
+    trouve = _ID_OUVERTURE.match(identifiant)
+    if trouve is None:
+        return ""
+    annee, mois, jour, heure, minute, seconde = trouve.groups()
+    return f"{annee}-{mois}-{jour}T{heure}:{minute}:{seconde}+00:00"
+
+
+def titre_conversation(fil: Sequence[MessageChat]) -> str:
+    """Le titre **dérivé** d'une conversation : ce que son premier message dit.
+
+    Dérivé et non stocké, pour la raison qui commande tout le lot : un JSONL
+    écrit avant #694 n'a pas de titre à relire, et lui en fabriquer un
+    demanderait de le réécrire. Le premier message **de l'utilisateur** fait foi
+    — c'est lui qui dit de quoi on a voulu parler, là où une réponse d'agent
+    dirait ce qu'on lui a répondu ; à défaut, le premier message tout court.
+
+    Un message fait de seules sources (#482) rend son `resume` (« 2 source(s)
+    jointe(s) : … ») : nommer ce qui a été déposé est la seule chose vraie à
+    dire, jamais une phrase inventée. Une conversation vide rend `""` — l'écran
+    est le seul à savoir comment appeler un fil dont personne n'a rien dit.
+    """
+    premier = next((m for m in fil if m.auteur == UTILISATEUR), fil[0] if fil else None)
+    if premier is None:
+        return ""
+    texte = " ".join(premier.resume.split())
+    if len(texte) <= _LONGUEUR_TITRE:
+        return texte
+    coupe = texte[:_LONGUEUR_TITRE].rsplit(" ", 1)[0] or texte[:_LONGUEUR_TITRE]
+    return f"{coupe}…"
 
 
 def normaliser(texte: str) -> str:
@@ -272,6 +376,13 @@ class MessageChat:
 
     Ils sont **absents des lignes JSONL écrites avant #482**, que `from_dict`
     relit sans broncher : un fil persisté ne se réécrit pas.
+
+    `conversation` (#694) est le fil d'appartenance **à l'intérieur** de l'agent,
+    comme `agent` l'est à l'intérieur du dépôt — la même redondance avec le
+    chemin, et pour la même raison : une ligne se lit sans savoir d'où elle
+    vient, ce dont le passage en base (docs/03) aura besoin. À la relecture,
+    c'est le **chemin qui fait foi** (`ChatStore.fil`) : de deux traces d'un même
+    fait, une seule peut décider, sinon elles divergent.
     """
 
     agent: str
@@ -283,6 +394,7 @@ class MessageChat:
     sources: tuple[Source, ...] = ()
     rapport: RapportLecture | None = None
     contexte: str = ""
+    conversation: str = CONVERSATION_ORIGINE
 
     def to_dict(self) -> dict[str, Any]:
         """Réémet le message en dict JSON-sérialisable (la forme du REST).
@@ -294,6 +406,7 @@ class MessageChat:
         """
         return {
             "agent": self.agent,
+            "conversation": self.conversation,
             "auteur": self.auteur,
             "contenu": self.contenu,
             "horodatage": self.horodatage,
@@ -343,6 +456,9 @@ class MessageChat:
         rapport = data.get("rapport")
         return cls(
             agent=data["agent"],
+            # Une ligne d'avant #694 n'en porte pas : elle vient forcément du
+            # fichier historique, c'est-à-dire d'`origine`.
+            conversation=str(data.get("conversation") or CONVERSATION_ORIGINE),
             auteur=data.get("auteur", UTILISATEUR),
             contenu=data.get("contenu", ""),
             horodatage=data.get("horodatage", ""),
@@ -352,6 +468,49 @@ class MessageChat:
             rapport=rapport_depuis(rapport) if isinstance(rapport, Mapping) else None,
             contexte=str(data.get("contexte") or ""),
         )
+
+
+@dataclass(frozen=True)
+class Conversation:
+    """Un fil parmi ceux d'un agent (#694) — sa carte, pas son contenu.
+
+    C'est ce que rend `GET /api/chat/{agent}/conversations` : de quoi peupler une
+    liste d'historique sans charger un seul message.
+
+    - `id` — l'identifiant du fil, `origine` pour celui que l'agent a par défaut,
+      sinon un slug portant son instant d'ouverture ;
+    - `titre` — **dérivé** du premier message (`titre_conversation`), vide tant
+      que rien n'a été dit ;
+    - `debut` — l'ouverture : celle que porte l'identifiant, à défaut
+      l'horodatage du premier message, à défaut rien ;
+    - `derniere` — la dernière activité, c'est-à-dire le plus récent de
+      l'ouverture et du dernier message. C'est **lui** qui ordonne, donc qui
+      désigne « la plus récente » : ouvrir une conversation compte comme une
+      activité (sans quoi une conversation neuve serait immédiatement moins
+      récente que celle qu'on vient de quitter), et écrire dans une ancienne la
+      ramène en tête (sans quoi « la conversation courante » serait figée à la
+      dernière ouverte) ;
+    - `messages` — combien de messages elle porte ; `0` dit « vierge », l'état
+      qui rend `ChatStore.ouvrir` idempotent.
+    """
+
+    agent: str
+    id: str
+    titre: str = ""
+    debut: str = ""
+    derniere: str = ""
+    messages: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        """Réémet la carte en dict JSON-sérialisable (la forme du REST)."""
+        return {
+            "agent": self.agent,
+            "id": self.id,
+            "titre": self.titre,
+            "debut": self.debut,
+            "derniere": self.derniere,
+            "messages": self.messages,
+        }
 
 
 @dataclass(frozen=True)
@@ -391,6 +550,10 @@ class FragmentChat:
     `auteur` reste celui du **flux** — l'agent qui répond —, sur les quatre
     trames : c'est une propriété de la réponse en cours, pas du message
     transporté, lequel porte son propre `auteur`.
+
+    `conversation` (#694) dit **où** la réponse s'écrit : un client qui affiche
+    un fil sait ainsi si les incréments qui arrivent sont les siens, dès la trame
+    `debut` et sans attendre le `MessageChat` de la trame `fin`.
     """
 
     type: str
@@ -398,12 +561,14 @@ class FragmentChat:
     auteur: str = AUTEUR_AGENT
     delta: str = ""
     message: MessageChat | None = None
+    conversation: str = CONVERSATION_ORIGINE
 
     def to_dict(self) -> dict[str, Any]:
         """Réémet la trame en dict JSON-sérialisable (le `data:` du SSE)."""
         return {
             "type": self.type,
             "agent": self.agent,
+            "conversation": self.conversation,
             "auteur": self.auteur,
             "delta": self.delta,
             "message": self.message.to_dict() if self.message is not None else None,
@@ -411,12 +576,23 @@ class FragmentChat:
 
 
 class ChatStore:
-    """Persistance du fil de conversation, un fichier JSONL par agent.
+    """Persistance des fils, un fichier JSONL par **conversation** (#84, #694).
 
-    Append-only : chaque message s'ajoute en fin de fichier
-    (`<racine>/<agent>.jsonl`, une ligne JSON par message) — le fil se relit
-    dans l'ordre d'écriture. Un seul écrivain à la fois au POC (l'API Control
-    Tower) : le dépôt ne porte pas de verrou de concurrence.
+    Append-only : chaque message s'ajoute en fin de fichier — une ligne JSON par
+    message, le fil se relit dans l'ordre d'écriture. Un seul écrivain à la fois
+    au POC (l'API Control Tower) : le dépôt ne porte pas de verrou de
+    concurrence.
+
+    Deux emplacements, et c'est le cœur du lot : la conversation `origine` est
+    le fichier historique `<racine>/<agent>.jsonl`, les suivantes vivent sous
+    `<racine>/<agent>/<id>.jsonl`. Un fil écrit avant #694 est donc **déjà** une
+    conversation — il n'est ni déplacé, ni réécrit, ni relu autrement —, et une
+    installation qui n'ouvre jamais de seconde conversation écrit exactement les
+    mêmes octets qu'avant ce lot.
+
+    Les cartes rendues par `conversations` sont **dérivées** des messages
+    (titre, horodatages) : rien n'est tenu à part, donc rien ne manque à un
+    fichier antérieur.
     """
 
     def __init__(self, racine: Path) -> None:
@@ -424,7 +600,7 @@ class ChatStore:
 
     @property
     def racine(self) -> Path:
-        """La racine du dépôt (un fichier JSONL par agent)."""
+        """La racine du dépôt (fichiers et dossiers de conversations)."""
         return self._racine
 
     @classmethod
@@ -436,9 +612,9 @@ class ChatStore:
         return cls(Path(__file__).resolve().parents[2] / "core" / "chat")
 
     def ajouter(self, message: MessageChat) -> MessageChat:
-        """Ajoute `message` en fin de fil de son agent et le renvoie tel quel."""
-        chemin = self._chemin(message.agent)
-        self._racine.mkdir(parents=True, exist_ok=True)
+        """Ajoute `message` en fin de sa conversation et le renvoie tel quel."""
+        chemin = self._chemin(message.agent, message.conversation)
+        chemin.parent.mkdir(parents=True, exist_ok=True)
         with chemin.open("a", encoding="utf-8") as fichier:
             # `to_ligne` et non `to_dict` : le stockage garde en plus le contexte
             # extrait des sources (#482), que le REST n'emporte pas — sans lui, un
@@ -447,34 +623,162 @@ class ChatStore:
             fichier.write(json.dumps(message.to_ligne(), ensure_ascii=False) + "\n")
         return message
 
-    def fil(self, agent: str) -> tuple[MessageChat, ...]:
-        """Le fil de `agent`, dans l'ordre d'écriture (vide si jamais contacté)."""
-        chemin = self._chemin(agent)
+    def fil(self, agent: str, conversation: str | None = None) -> tuple[MessageChat, ...]:
+        """Le fil de `conversation`, dans l'ordre d'écriture (vide si rien n'y est dit).
+
+        Sans `conversation`, celui de la **plus récente** (`courante`) : c'est ce
+        qui fait qu'un appelant d'avant #694 lit toujours le même fil, un agent
+        n'en ayant alors qu'une.
+        """
+        identifiant = conversation or self.courante(agent)
+        chemin = self._chemin(agent, identifiant)
         if not chemin.is_file():
             return ()
         return tuple(
-            MessageChat.from_dict(json.loads(ligne))
+            # Le **chemin fait foi** : la clé stockée rend la ligne
+            # auto-descriptive (docs/03), elle ne décide pas où la ligne est.
+            MessageChat.from_dict({**json.loads(ligne), "conversation": identifiant})
             for ligne in chemin.read_text(encoding="utf-8").splitlines()
             if ligne.strip()
         )
 
-    def agents(self) -> tuple[str, ...]:
-        """Les noms d'agents ayant un fil persisté, triés (vide si aucun)."""
-        if not self._racine.is_dir():
-            return ()
+    def conversations(self, agent: str) -> tuple[Conversation, ...]:
+        """Les conversations de `agent`, **la plus récente d'abord**.
+
+        Jamais vide : `origine` en fait toujours partie, fût-elle vierge — un
+        agent a toujours au moins la conversation qu'on lui ouvre en lui parlant.
+
+        L'ordre est celui de la **dernière activité**, et il se départage à la
+        milliseconde par la date du fichier. Ce second terme n'est pas un luxe :
+        les horodatages sont à la **seconde** (celle du journal, #8), or les deux
+        gestes que le lot doit distinguer se suivent en bien moins d'une seconde
+        — on ouvre une conversation *puis* on y écrit, on quitte une conversation
+        *puis* on retourne dans l'ancienne. Sans départage, l'ordre dépendrait
+        alors de l'ordre alphabétique des identifiants, c'est-à-dire de rien. Le
+        fait de domaine reste en tête de clé et décide seul dès qu'une seconde
+        s'est écoulée ; la date du fichier ne tranche que ce qu'il ne peut pas
+        voir.
+        """
+        cartes = [self._carte(agent, identifiant) for identifiant in self._identifiants(agent)]
         return tuple(
             sorted(
-                chemin.stem
-                for chemin in self._racine.glob("*.jsonl")
-                if _NOM_AGENT.match(chemin.stem)
+                cartes,
+                key=lambda carte: (carte.derniere, self._touchee(agent, carte.id), carte.id),
+                reverse=True,
             )
         )
 
-    def _chemin(self, agent: str) -> Path:
-        """Le fichier du fil de `agent`, nom validé (jamais un chemin arbitraire)."""
+    def _touchee(self, agent: str, conversation: str) -> float:
+        """Quand le fichier d'une conversation a été écrit pour la dernière fois.
+
+        `0.0` quand il n'existe pas — le cas d'une `origine` jamais servie, qui
+        n'a de toute façon aucune activité à faire valoir.
+        """
+        chemin = self._chemin(agent, conversation)
+        return chemin.stat().st_mtime if chemin.is_file() else 0.0
+
+    def courante(self, agent: str) -> str:
+        """L'identifiant de la conversation la plus récente de `agent`.
+
+        « Sans précision, un envoi rejoint la plus récente » — c'est cette
+        réponse-là, et elle existe toujours (`origine` au pire).
+        """
+        return self.conversations(agent)[0].id
+
+    def existe(self, agent: str, conversation: str) -> bool:
+        """`conversation` est-elle adressable chez `agent` ? (`origine` l'est toujours.)
+
+        Lève `ValueError` sur un identifiant qui n'est pas un slug : la garde de
+        traversée de chemin passe **avant** la question de l'existence, sans quoi
+        un `../../etc` obtiendrait un « non » au lieu d'un refus.
+        """
+        chemin = self._chemin(agent, conversation)
+        return conversation == CONVERSATION_ORIGINE or chemin.is_file()
+
+    def ouvrir(self, agent: str) -> Conversation:
+        """Ouvre une conversation neuve chez `agent` et rend sa carte.
+
+        **Idempotent tant que rien n'a été dit** : si la plus récente est vierge,
+        elle *est* la conversation neuve et c'est elle qui revient. Sans cette
+        règle, deux clics sur « nouvelle conversation » laisseraient un
+        historique de fils vides, et le premier clic sur un agent jamais contacté
+        doublerait son `origine` avant qu'elle ait servi.
+        """
+        cartes = self.conversations(agent)
+        if cartes[0].messages == 0:
+            return cartes[0]
+        identifiant = _nouvel_id_conversation()
+        chemin = self._chemin(agent, identifiant)
+        while chemin.exists():  # deux ouvertures dans la même seconde
+            identifiant = _nouvel_id_conversation()
+            chemin = self._chemin(agent, identifiant)
+        chemin.parent.mkdir(parents=True, exist_ok=True)
+        chemin.touch()
+        return self._carte(agent, identifiant)
+
+    def agents(self) -> tuple[str, ...]:
+        """Les noms d'agents ayant au moins une conversation persistée, triés."""
+        if not self._racine.is_dir():
+            return ()
+        noms = {
+            chemin.stem
+            for chemin in self._racine.glob("*.jsonl")
+            if _NOM_AGENT.match(chemin.stem)
+        }
+        # Un agent dont on a ouvert une seconde conversation sans jamais écrire
+        # dans la première n'a **que** son dossier : le taire le ferait
+        # disparaître de l'inventaire au moment précis où il gagne un fil.
+        noms |= {
+            chemin.name
+            for chemin in self._racine.iterdir()
+            if chemin.is_dir() and _NOM_AGENT.match(chemin.name)
+        }
+        return tuple(sorted(noms))
+
+    def _carte(self, agent: str, identifiant: str) -> Conversation:
+        """La carte de `identifiant` — titre et horodatages **dérivés** de ses messages.
+
+        L'ouverture vient de l'identifiant quand il la porte (une conversation
+        vide en a donc une), sinon du premier message : c'est le cas d'`origine`,
+        qui n'a jamais été « ouverte » puisqu'elle a toujours été là.
+        """
+        fil = self.fil(agent, identifiant)
+        debut = _ouverture_de(identifiant) or (fil[0].horodatage if fil else "")
+        return Conversation(
+            agent=agent,
+            id=identifiant,
+            titre=titre_conversation(fil),
+            debut=debut,
+            derniere=max(debut, fil[-1].horodatage) if fil else debut,
+            messages=len(fil),
+        )
+
+    def _identifiants(self, agent: str) -> tuple[str, ...]:
+        """Les identifiants des conversations de `agent`, `origine` en tête."""
+        self._chemin(agent)  # valide le nom d'agent avant d'en faire un dossier
+        dossier = self._racine / agent
+        if not dossier.is_dir():
+            return (CONVERSATION_ORIGINE,)
+        return (CONVERSATION_ORIGINE, *sorted(
+            chemin.stem
+            for chemin in dossier.glob("*.jsonl")
+            # Un `origine.jsonl` égaré dans le dossier ne peut pas être une
+            # seconde `origine` : celle-ci vit au chemin historique, et elle seule.
+            if _ID_CONVERSATION.match(chemin.stem) and chemin.stem != CONVERSATION_ORIGINE
+        ))
+
+    def _chemin(self, agent: str, conversation: str = CONVERSATION_ORIGINE) -> Path:
+        """Le fichier d'une conversation — noms validés, jamais un chemin arbitraire."""
         if not _NOM_AGENT.match(agent):
             raise ValueError(f"nom d'agent invalide : {agent!r} (slug [a-z0-9_-] attendu).")
-        return self._racine / f"{agent}.jsonl"
+        if not _ID_CONVERSATION.match(conversation):
+            raise ValueError(
+                f"identifiant de conversation invalide : {conversation!r} "
+                "(slug [a-z0-9_-] attendu)."
+            )
+        if conversation == CONVERSATION_ORIGINE:
+            return self._racine / f"{agent}.jsonl"
+        return self._racine / agent / f"{conversation}.jsonl"
 
 
 class Redaction:
@@ -746,9 +1050,28 @@ class ServiceChat:
         # n'en ait besoin.
         self._lecteur = lecteur_sources if lecteur_sources is not None else extraire_sources
 
-    def fil(self, agent: str) -> tuple[MessageChat, ...]:
-        """Le fil persisté de `agent`, dans l'ordre d'écriture."""
-        return self._store.fil(agent)
+    def fil(self, agent: str, conversation: str | None = None) -> tuple[MessageChat, ...]:
+        """Le fil persisté d'une conversation de `agent`, dans l'ordre d'écriture.
+
+        Sans `conversation`, celui de la plus récente (#694).
+        """
+        return self._store.fil(agent, conversation)
+
+    def conversations(self, agent: str) -> tuple[Conversation, ...]:
+        """Les conversations de `agent`, la plus récente d'abord (#694)."""
+        return self._store.conversations(agent)
+
+    def courante(self, agent: str) -> str:
+        """L'identifiant de la conversation la plus récente de `agent` (#694)."""
+        return self._store.courante(agent)
+
+    def existe(self, agent: str, conversation: str) -> bool:
+        """`conversation` est-elle adressable chez `agent` ? (`ValueError` si mal formée.)"""
+        return self._store.existe(agent, conversation)
+
+    def ouvrir_conversation(self, agent: str) -> Conversation:
+        """Ouvre une conversation neuve chez `agent` — idempotente si la courante est vierge."""
+        return self._store.ouvrir(agent)
 
     async def envoyer(
         self,
@@ -757,6 +1080,7 @@ class ServiceChat:
         sources: Sequence[Mapping[str, Any] | Source] | None = None,
         *,
         projet_id: str | None = None,
+        conversation: str | None = None,
     ) -> tuple[MessageChat, MessageChat]:
         """Envoie `contenu` et ses `sources` à `agent` ; rend la paire (message, réponse).
 
@@ -789,9 +1113,14 @@ class ServiceChat:
         `RepondeurChat.produire`. Le fil ne devient pas cadré pour autant — il
         n'a pas de périmètre à respecter (#281) —, c'est ce qu'une réponse
         **ouvre** qui en a un.
+
+        `conversation` (#694) est le fil où l'échange se range ; sans précision,
+        **la plus récente**. Message et réponse y vont ensemble : ce sont les
+        deux moitiés d'un même tour, les séparer n'aurait aucun sens.
         """
-        message = await self._ouvrir(agent, contenu, sources)
-        return message, await self._repondre(agent, projet_id=projet_id)
+        fil = self._resoudre(agent, conversation)
+        message = await self._deposer(agent, contenu, sources, conversation=fil)
+        return message, await self._repondre(agent, conversation=fil, projet_id=projet_id)
 
     async def diffuser(
         self,
@@ -800,6 +1129,7 @@ class ServiceChat:
         sources: Sequence[Mapping[str, Any] | Source] | None = None,
         *,
         projet_id: str | None = None,
+        conversation: str | None = None,
     ) -> AsyncIterator[FragmentChat]:
         """Envoie `contenu` et ses `sources` à `agent`, réponse **au fur et à mesure** (#268).
 
@@ -812,7 +1142,7 @@ class ServiceChat:
 
         `sources` (#692) est la **même** matière, déclarée de la même façon et
         dans le même ordre, que sur `envoyer` : les deux voies mènent au même
-        `_ouvrir`, donc à la même chaîne d'ingestion, aux mêmes identifiants et
+        `_deposer`, donc à la même chaîne d'ingestion, aux mêmes identifiants et
         aux mêmes garde-fous. Ce qui la déclare est un corps de requête — voir
         l'arbitrage en tête de module.
 
@@ -833,13 +1163,18 @@ class ServiceChat:
         même raison : les deux voies mènent au **même** `_repondre`, donc un run
         ouvert depuis le flux se rattache comme un run ouvert depuis le POST. Le
         canal ne devient jamais un second chemin — c'est la règle du module.
+        `conversation` (#694) de même : elle est résolue une fois, ici, et
+        voyage sur **toutes** les trames, `debut` comprise.
         """
-        message = await self._ouvrir(agent, contenu, sources)
+        fil = self._resoudre(agent, conversation)
+        message = await self._deposer(agent, contenu, sources, conversation=fil)
         # La trame d'ouverture porte le message utilisateur **résolu** — ses
-        # sources et leur rapport de lecture (#316) —, que seul `_ouvrir` connaît
-        # et qu'aucune trame suivante ne redira. C'est le pendant, sur cette
-        # voie, de la paire que `POST …/messages` rend d'un coup (#692).
-        yield FragmentChat(type=FRAGMENT_CHAT_DEBUT, agent=agent.nom, message=message)
+        # sources et leur rapport de lecture (#316) —, que seul `_deposer`
+        # connaît et qu'aucune trame suivante ne redira. C'est le pendant, sur
+        # cette voie, de la paire que `POST …/messages` rend d'un coup (#692).
+        yield FragmentChat(
+            type=FRAGMENT_CHAT_DEBUT, agent=agent.nom, conversation=fil, message=message
+        )
 
         file: asyncio.Queue[str | None] = asyncio.Queue()
 
@@ -849,7 +1184,7 @@ class ServiceChat:
         async def produire() -> MessageChat:
             try:
                 return await self._repondre(
-                    agent, incrementer=incrementer, projet_id=projet_id
+                    agent, conversation=fil, incrementer=incrementer, projet_id=projet_id
                 )
             finally:
                 # La sentinelle passe par le même canal que les incréments : elle
@@ -863,13 +1198,22 @@ class ServiceChat:
                 delta = await file.get()
                 if delta is None:
                     break
-                yield FragmentChat(type=FRAGMENT_CHAT_DELTA, agent=agent.nom, delta=delta)
+                yield FragmentChat(
+                    type=FRAGMENT_CHAT_DELTA, agent=agent.nom, conversation=fil, delta=delta
+                )
             try:
                 reponse = await tache
             except ReponseIndisponible as exc:
-                yield FragmentChat(type=FRAGMENT_CHAT_ERREUR, agent=agent.nom, delta=str(exc))
+                yield FragmentChat(
+                    type=FRAGMENT_CHAT_ERREUR,
+                    agent=agent.nom,
+                    conversation=fil,
+                    delta=str(exc),
+                )
                 return
-            yield FragmentChat(type=FRAGMENT_CHAT_FIN, agent=agent.nom, message=reponse)
+            yield FragmentChat(
+                type=FRAGMENT_CHAT_FIN, agent=agent.nom, conversation=fil, message=reponse
+            )
         finally:
             if not tache.done():
                 # Fermeture prématurée (client parti) : on laisse la réponse
@@ -878,11 +1222,33 @@ class ServiceChat:
                 # never retrieved » dans les journaux de l'API.
                 tache.add_done_callback(lambda achevee: achevee.exception())
 
-    async def _ouvrir(
+    def _resoudre(self, agent: Agent, conversation: str | None) -> str:
+        """La conversation d'un échange : celle demandée, sinon la plus récente (#694).
+
+        Résolue **une fois par échange**, sur la voie commune, et jamais deux
+        fois : un envoi qui tomberait dans une conversation et une réponse dans
+        une autre couperait un tour en deux. Un identifiant mal formé lève
+        `ValueError` — c'est la garde de traversée de chemin, et l'appelant la
+        traduit en 422 comme un message vide.
+
+        La **forme** est donc vérifiée ici, avant toute écriture et avant même
+        la lecture des sources ; l'**existence** ne l'est pas : le dépôt est
+        append-only, une conversation bien formée mais jamais écrite naît à son
+        premier message. C'est l'API qui refuse d'en adresser une inconnue (404),
+        parce que c'est elle qui a des identifiants venus du dehors.
+        """
+        if not conversation:
+            return self._store.courante(agent.nom)
+        self._store.existe(agent.nom, conversation)  # lève si l'identifiant n'est pas un slug
+        return conversation
+
+    async def _deposer(
         self,
         agent: Agent,
         contenu: str,
         sources: Sequence[Mapping[str, Any] | Source] | None = None,
+        *,
+        conversation: str,
     ) -> MessageChat:
         """Persiste, achemine et diffuse le message utilisateur — le début des deux voies.
 
@@ -906,6 +1272,7 @@ class ServiceChat:
         matiere, rapport = await self._lire(declarees)
         message = MessageChat(
             agent=agent.nom,
+            conversation=conversation,
             auteur=UTILISATEUR,
             contenu=contenu,
             sources=matiere,
@@ -919,6 +1286,7 @@ class ServiceChat:
         self,
         agent: Agent,
         *,
+        conversation: str,
         incrementer: Incrementeur | None = None,
         projet_id: str | None = None,
     ) -> MessageChat:
@@ -929,11 +1297,16 @@ class ServiceChat:
         erreur du répondeur, comme une réponse vide, devient
         `ReponseIndisponible` : le message utilisateur est déjà acquis, relancer
         ne perd pas le fil.
+
+        Le fil confié au répondeur est celui de **la conversation en cours**
+        (#694), et non tout ce que l'agent a jamais entendu : c'est ce qui donne
+        son sens à « ouvrir une conversation neuve » — repartir de zéro avec le
+        même agent, ce qu'un fil éternel rendait impossible.
         """
         try:
             reponse = await self._repondeur.produire(
                 agent,
-                self._store.fil(agent.nom),
+                self._store.fil(agent.nom, conversation),
                 incrementer=incrementer,
                 projet_id=projet_id,
             )
@@ -949,6 +1322,7 @@ class ServiceChat:
 
         message = MessageChat(
             agent=agent.nom,
+            conversation=conversation,
             auteur=agent.nom,
             contenu=texte,
             run_id=reponse.run_id,

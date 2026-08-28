@@ -127,12 +127,14 @@ from maestro.controltower.causes import (
     detail_avec_cause,
 )
 from maestro.controltower.chat import (
+    CONVERSATION_ORIGINE,
     FRAGMENT_CHAT_DEBUT,
     FRAGMENT_CHAT_DELTA,
     FRAGMENT_CHAT_ERREUR,
     FRAGMENT_CHAT_FIN,
     UTILISATEUR,
     ChatStore,
+    Conversation,
     FluxInterrompu,
     FragmentChat,
     Incrementeur,
@@ -145,6 +147,7 @@ from maestro.controltower.chat import (
     ReponseIndisponible,
     ServiceChat,
     normaliser,
+    titre_conversation,
     transcription,
 )
 from maestro.controltower.events import (
@@ -258,6 +261,7 @@ __all__ = [
     "CAUSE_LIMITE_USAGE",
     "CAUSE_PLAFOND_COUT",
     "CAUSE_PLAFOND_TOURS",
+    "CONVERSATION_ORIGINE",
     "DELAI_ANNULATION_S",
     "EVENEMENT_AGENT_ACTIVITE",
     "EVENEMENT_AGENT_CAPACITE",
@@ -310,6 +314,7 @@ __all__ = [
     "ChatStore",
     "CoeurRun",
     "ControlTowerState",
+    "Conversation",
     "CoutAgent",
     "CoutExecutionResume",
     "CoutTacheAgregee",
@@ -380,6 +385,7 @@ __all__ = [
     "publieur_redis",
     "repondre_assistance",
     "solder_le_run",
+    "titre_conversation",
     "transcription",
     "validateur_redis",
     "vitalite",
