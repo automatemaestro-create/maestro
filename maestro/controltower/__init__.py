@@ -62,8 +62,18 @@ Sept briques, assemblées par l'app FastAPI (`maestro.controltower.app`) :
   du seul fichier où l'on va chercher la cause d'un démarrage raté ;
 - `maestro.controltower.assistance` : le canal d'**aide à l'utilisateur** (#123)
   — même infrastructure que le chat sur le fil réservé `assistance`, mais une
-  fiche hors catalogue (`AGENT_ASSISTANCE`) et un répondeur déterministe
-  (`RepondeurAssistance`) : les questions portent sur l'outil, pas sur le projet ;
+  fiche hors catalogue (`AGENT_ASSISTANCE`) : les questions portent sur l'outil,
+  pas sur le projet. Ce qu'il porte encore est le **repli** — `RepondeurAssistance`,
+  le déterministe de #123, qui répond sans fournisseur ni réseau (la démo #65) ;
+  le chemin nominal, lui, est `maestro.controltower.assistance_documentee`, où le
+  modèle lit la documentation du produit et cite ce qu'il a lu (#763/#764), la
+  table de mots-clés ayant cessé d'être un juge en #765. ⚠ Ce **juge** n'est donc
+  plus réexporté ici : `SUJETS_ASSISTANCE`, `SujetAssistance` et
+  `repondre_assistance` sont devenus un détail d'implémentation du repli, pas un
+  service que ce paquet offre — les trouver à ce niveau les ferait prendre pour un
+  juge disponible, ce qui est la façon la plus douce dont la table reviendrait sur
+  le chemin d'une question. Ils restent atteignables dans leur module, où la suite
+  qui garde le repli va les chercher ;
 - `maestro.controltower.orchestration` : le **fil global** (#268) — même
   infrastructure encore, sur le fil réservé `orchestrateur`, avec un répondeur
   qui **agit** (`RepondeurOrchestration`) : une demande de travail y est
@@ -91,10 +101,7 @@ from maestro.controltower.app import create_app, create_default_app
 from maestro.controltower.assistance import (
     AGENT_ASSISTANCE,
     NOM_ASSISTANCE,
-    SUJETS_ASSISTANCE,
     RepondeurAssistance,
-    SujetAssistance,
-    repondre_assistance,
 )
 from maestro.controltower.battement import (
     CLE_BATTEMENTS,
@@ -303,7 +310,6 @@ __all__ = [
     "SEUIL_ORPHELIN_S",
     "STATUTS_EXECUTION_TERMINAUX",
     "STATUTS_TACHE_TERMINAUX",
-    "SUJETS_ASSISTANCE",
     "UTILISATEUR",
     "VALIDATION_APPROUVEE",
     "VALIDATION_EN_ATTENTE",
@@ -374,7 +380,6 @@ __all__ = [
     "ServiceChat",
     "ServiceExecutions",
     "ServiceJournal",
-    "SujetAssistance",
     "ValidateurControlTower",
     "activer_publication",
     "agrege_couts",
@@ -392,7 +397,6 @@ __all__ = [
     "normaliser",
     "oublieur_redis",
     "publieur_redis",
-    "repondre_assistance",
     "solder_le_run",
     "titre_conversation",
     "transcription",

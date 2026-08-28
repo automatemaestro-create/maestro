@@ -37,7 +37,19 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   (`/api/chat/assistance`) — historique persisté et réponses en temps réel comme
   l'onglet Chat d'un agent. Il ne se ferme pas au clic extérieur (on le consulte *pendant*
   qu'on agit) et le shell réserve la bande qu'il occupe pour ne masquer aucune
-  action de la page ;
+  action de la page. ⚠ **Ce qui répond a changé, et le contrat d'affichage avec**
+  (#748, lots #763/#764/#765) : l'assistant ne reconnaissait la forme d'une phrase
+  que pour servir une réponse écrite d'avance — une **table de mots-clés**, qui
+  répondait avec aplomb sur un écran dès qu'un mot y traînait (« pipeline Jenkins »
+  ramenait la page Runs). Elle a cessé d'être un juge : le modèle **lit la
+  documentation du produit** (`docs/`, ce README) et répond à partir des seules
+  sections qu'il a demandées. Trois conséquences à l'écran — les réponses portent
+  un bloc **« Sources lues »**, construit à partir de ce qui lui a été passé et
+  jamais recopié de sa réponse ; il **dit qu'il ne sait pas** quand la
+  documentation ne porte rien, au lieu d'orienter vers l'écran le plus proche ; et
+  **sans fournisseur de modèle** (la démo #65, un poste non configuré) le panneau
+  répond quand même, par la table restée en **repli**, en annonçant qu'il n'a rien
+  lu — une réponse sans source ne peut donc pas se faire passer pour documentée ;
 - **Tableau de bord épuré** (#191, lot 2 de la navigation v2 #189) : l'essentiel
   en **un écran** — ce qui attend un arbitrage, quatre **indicateurs de tête**
   (run en cours, tâches par statut, agents occupés et libres, dépense),
