@@ -191,14 +191,29 @@ numéro de phase : elle **recouvre** les phases qu'elle accompagne au lieu de s'
 | Milestone | Contenu | Fenêtre | Suivi |
 |---|---|---|---|
 | **Control Tower v3 — socle visuel & pilotage** | Un **langage visuel** commun (icônes, cartes, densité) dont tous les autres écrans héritent, puis l'écran de pilotage : détail d'une tâche, tuiles de tête, section Tâches, Journal, carte de Kanban. Et, en amont, le **projet actif comme cadre** de la Control Tower (choix à l'entrée, bascule dans le shell, écrans filtrés) | 2027-04-29 → 2027-05-26 | **#242** — 8 lots (#245–#252) et **#276** — 6 lots (#277–#282) |
-| **Control Tower v3 — agents** | La fiche agent complète : création plein écran guidée par un **catalogue** de fournisseurs, modèles et efforts servi par l'API, compétences cadrées, permissions éditables, playbook publié et versionné, chat en direct, onglet Logs | 2027-05-27 → 2027-07-07 | **#243** — 15 lots (#253–#267) |
-| **Control Tower v3 — conversation & intégrations** | Chat global (le fil avec l'orchestration, puis l'écran), intégrations MCP sorties du fond des Paramètres avec une bibliothèque élargie, et un écran de validations qui se décide vite | 2027-07-08 → 2027-08-04 | **#244** — 6 lots (#268–#273) |
+| **Control Tower v3 — conversation & intégrations** | Chat global (le fil avec l'orchestration, puis l'écran), intégrations MCP sorties du fond des Paramètres avec une bibliothèque élargie, et un écran de validations qui se décide vite | 2027-05-27 → 2027-08-04 | **#244** — 6 lots (#268–#273) |
+| **Control Tower v3 — agents** | La fiche agent complète : création plein écran guidée par un **catalogue** de fournisseurs, modèles et efforts servi par l'API, compétences cadrées, permissions éditables, playbook publié et versionné, chat en direct, onglet Logs | 2027-08-05 → 2027-09-29 | **#243** — 15 lots (#253–#267) |
 
-Les fenêtres démarrent avec la Phase 8 et débordent de deux semaines la fin de la Phase 9 : comme
+Les fenêtres démarrent avec la Phase 8 et débordent de dix semaines la fin de la Phase 9 : comme
 ailleurs dans ce document, ce sont des repères de planification, pas des engagements. Les trois
 milestones s'enchaînent dans cet ordre parce qu'ils dépendent les uns des autres — le **langage
-visuel** du premier lot (#245) est ce dont les deux autres héritent, et le **streaming** de
-l'onglet Chat (#264) est ce que le chat global réutilise au lieu de le réimplémenter.
+visuel** du premier lot (#245) est ce dont les deux autres héritent, et le **streaming** du chat
+global (#268) est ce que l'onglet Chat de la fiche agent (#264) réutilise au lieu de le
+réimplémenter.
+
+> ⚠ **Les deux derniers milestones ont échangé leur place, et la dépendance a suivi** (#620,
+> arbitrage du 2026-08-27). L'ordre initial donnait « agents » en deuxième (2027-05-27 →
+> 2027-07-07) et faisait naître le streaming dans l'onglet Chat (#264), à charge pour le chat
+> global de le réutiliser. La revue d'usage du 2026-08-24 (#470,
+> [docs/29](./29-decision-run-objet-de-premier-plan.md)) a fait du chat la **seule porte
+> d'entrée**, et les chantiers nés de l'usage ont pris cette fenêtre-là : « agents » est reportée
+> au 2027-09-29, « conversation & intégrations » passe devant. Le chat global se retrouvait donc
+> premier, héritier d'un socle qui venait après lui. Ce qui a été inversé est le **sens** de la
+> dépendance, jamais sa nature : il y a toujours **une** implémentation du streaming, et une
+> seule. C'est fait — #268 l'a construite **comme un canal** plutôt que comme une particularité du
+> chat global (`ServiceChat.diffuser`, `GET /api/chat/{agent}/flux`), et #264 la réutilisera. Même
+> inversion pour la **mise en page conversationnelle** : construite par #269 (l'écran du chat
+> global), réutilisée par le lot 13 de « agents » (#265).
 
 > ⚠ **La demande est revenue, plus large, et la recherche l'a instruite** (#471,
 > [docs/30](./30-cible-visuelle-control-tower.md), mesures du 2026-08-25). Non plus « harmoniser ce
