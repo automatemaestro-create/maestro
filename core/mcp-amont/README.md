@@ -114,12 +114,17 @@ distinguant pas d'un amont en panne par la seule lecture de sa réponse.
 
 Ce n'est **pas** l'allowlist. Le garde-fou supply-chain de
 [docs/19](../../docs/19-securite-modele-de-menace.md) — *découverte ≠
-installation* — n'est pas levé : seule une entrée curée
-(`maestro/agents/mcp_registry.py`, `SEED`) est instanciable. Le registre dit
-« ce serveur existe », jamais « ce serveur est sûr ». La porte d'admission qui
-fait passer une entrée découverte dans l'allowlist est le lot 4 du parent
-(#678) ; la traduction `server.json` → entrée de bibliothèque est le lot 2
-(#676).
+installation* — n'est pas levé : une entrée de ce miroir est **visible et
+cherchable, jamais montable**. Le registre dit « ce serveur existe », jamais
+« ce serveur est sûr ».
+
+Ce qui la rend montable est un **geste humain tracé** : la porte d'admission
+(#678, [`maestro/agents/mcp_admission.py`](../../maestro/agents/mcp_admission.py),
+journal dans [`core/mcp/admissions.json`](../mcp/README.md)). Elle **fige**
+l'entrée traduite à la version admise — un rafraîchissement de ce miroir ne
+change donc jamais ce qui est monté, il produit au plus un **signal** que
+quelqu'un lira. La traduction `server.json` → entrée de bibliothèque est le lot 2
+(#676), la bibliothèque à deux sources le lot 3 (#677).
 
 Le `document` est stocké **verbatim** pour cette raison précise : un miroir qui
 remodèle sa source est un miroir qu'il faut remoissonner — dix minutes — chaque

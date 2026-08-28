@@ -11,7 +11,7 @@ agent** (#130), configurable **depuis la Control Tower** et alimenté par une
 
 ## Fonctionnement
 
-Trois fichiers cohabitent sous la racine (remplaçable par `MAESTRO_MCP_DIR`) :
+Quatre fichiers cohabitent sous la racine (remplaçable par `MAESTRO_MCP_DIR`) :
 
 - **`<agent>.json`** (`{"serveurs": [...]}`) — la déclaration **héritée** d'un
   agent (#104), un fichier par agent. Chaque serveur est une **commande locale**
@@ -22,6 +22,14 @@ Trois fichiers cohabitent sous la racine (remplaçable par `MAESTRO_MCP_DIR`) :
   fois** (secret par `${VAR}` compris), partageable entre agents.
 - **`activations.json`** (`{"<agent>": ["id", …]}`) — les intégrations du pool
   **activées** par agent (#130).
+- **`admissions.json`** (`{"admissions": [...]}`) — le **journal des admissions**
+  (#678, parent #673) : les entrées du registre MCP officiel qu'un humain a fait
+  entrer dans l'allowlist, chacune **figée** à la version admise, avec sa source
+  (nom amont, version, éditeur, dépôt, horodatage du miroir) et le geste (qui,
+  quand, pourquoi). Écrit par la Control Tower
+  (`maestro.agents.mcp_admission.MagasinAdmissions`) — c'est une **donnée
+  d'installation**, comme le pool, pas du code relu en revue comme le seed de
+  `maestro/agents/mcp_registry.py`.
 
 - **Composition** (`maestro.agents.mcp.McpStore.lire`) : pour un agent, la
   déclaration héritée **puis** les intégrations du pool activées pour lui. Sans
@@ -139,18 +147,57 @@ figure qu'au titre de la bibliothèque (#412).
   l'**instanciation** (`RegistreMcp.instancier`) le transforme en `ServeurMcp`
   montable — c'est l'unique voie template → liaison.
 - **Garde-fou supply-chain** ([docs/19](../../docs/19-securite-modele-de-menace.md)) :
-  *découverte ≠ installation*. Seule une entrée de l'**allowlist curée** (le seed
-  `SEED`, en clair et revu en revue de code) est instanciable — jamais de
-  `npx -y <pkg arbitraire>`.
+  *découverte ≠ installation*. Seule une entrée de l'**allowlist** est
+  instanciable — jamais de `npx -y <pkg arbitraire>`.
 - Exposé par l'API : `GET /api/mcp/registre` (liste + `?q=` recherche) et
   `GET /api/mcp/registre/{id}`. Recherche + garde-fou testés dans
   [`tests/test_mcp_registry.py`](../../tests/test_mcp_registry.py).
 
+### Trois sources, une allowlist (#677, #678)
+
+Depuis le parent #673 la bibliothèque **découvre** dans le registre MCP officiel
+au lieu d'une liste figée, sans qu'une entrée découverte devienne pour autant
+montable. Trois sources, et la table dit tout :
+
+| `source` | d'où | `curee` | montable |
+|---|---|---|---|
+| `curee` | `SEED`, écrit à la main, relu en revue de code | `true` | oui |
+| `admise` | le registre officiel, **plus** un geste humain tracé | `true` | oui |
+| `decouverte` | le registre officiel seul (miroir `core/mcp-amont/`) | `false` | **non** |
+
+⚠ `curee` (le booléen) et `source` (les trois valeurs) ne répondent pas à la même
+question : le booléen dit « **montable ?** » — c'est lui que le garde-fou lit —,
+la source dit « **d'où ça vient ?** ». Une admise est donc `curee: true` et
+`source: "admise"`, sans contradiction.
+
+La **porte d'admission** (`maestro.agents.mcp_admission`, #678) est le geste qui
+fait passer de la troisième ligne à la deuxième :
+
+- `POST /api/mcp/admissions` **admet** — enregistre l'entrée traduite **figée**
+  avec sa source et le geste. Le figement est le cœur : une nouvelle version
+  amont ne change **pas** la version admise, elle produit un signal ;
+- `POST /api/mcp/admissions/{id}/revocation` **révoque** — l'entrée sort de
+  l'allowlist, l'admission reste au journal (c'est ce qui permet aux refus de la
+  nommer), et **rien n'est démonté** : un serveur déjà dans le pool y reste, avec
+  son `alerte` ;
+- `GET /api/mcp/admissions` rend le journal, les **signaux** que l'amont a émis
+  depuis (`deprecated`, `deleted`, disparition, version plus récente) et la
+  **politique** qui garde la porte (`MAESTRO_MCP_ADMISSION_POLITIQUE` — le point
+  où une organisation branche sa revue ou son scan ; par défaut, le geste humain
+  suffit) ;
+- `POST /api/mcp/pool` refuse une découverte en **nommant le geste manquant**, et
+  une entrée révoquée en disant qui l'a retirée et quand.
+
+Rien n'est jamais retiré en silence, et rien n'est jamais retiré d'office : ce
+qui est automatique est la **détection** de l'écart, jamais le verdict.
+
 ## Secrets — jamais en clair, chiffrés côté serveur (#132)
 
 Contrairement aux dépôts voisins (données d'exécution non commitées), les
-déclarations écrites ici (`<agent>.json`, `pool.json`) sont de la
-**configuration versionnée** : elles se commitent avec le dépôt. Les **secrets
+déclarations écrites ici (`<agent>.json`, `pool.json`, `admissions.json`) sont de
+la **configuration versionnée** : elles se commitent avec le dépôt — et pour
+`admissions.json` c'est le point même du dispositif, un journal d'autorisations
+que l'équipe doit pouvoir relire. Les **secrets
 n'y figurent jamais en clair** — les valeurs d'`env`/`headers` référencent
 l'environnement (`${VARIABLE}`), résolu au montage. Depuis #132 (parent #102),
 la valeur elle-même vit dans le **coffre de l'agent**

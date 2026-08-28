@@ -74,6 +74,8 @@ function entree(
     version: "",
     depot: "",
     statut: "",
+    admission: null,
+    signaux: [],
     ...options,
   };
 }
@@ -103,7 +105,7 @@ vi.mock("@/lib/api", () => ({
   supprimerIntegrationPoolMcp: vi.fn(() => Promise.resolve()),
 }));
 
-/** La provenance servie par l'API sœur (#271, #677) — les deux sources, et quand. */
+/** La provenance servie par l'API sœur (#271, #677, #678) — les trois sources, et quand. */
 const PROVENANCE: ProvenanceRegistreMcp = {
   resume: "Sélection curée à la main.",
   sources: [{ libelle: "Dépôt MCP", url: "https://example.invalid/mcp" }],
@@ -111,6 +113,7 @@ const PROVENANCE: ProvenanceRegistreMcp = {
   tags: ["forge", "design", "recherche"],
   total: REGISTRE.length,
   total_curees: REGISTRE.length,
+  total_admises: 0,
   total_decouvertes: 0,
   provenances: [
     {
@@ -119,6 +122,14 @@ const PROVENANCE: ProvenanceRegistreMcp = {
       sources: [{ libelle: "Dépôt MCP", url: "https://example.invalid/mcp" }],
       revue_le: "2026-08-28",
       total: REGISTRE.length,
+    },
+    {
+      source: "admise",
+      resume: "Entrées admises par un geste humain tracé.",
+      total: 0,
+      revoquees: 0,
+      derniere_le: "",
+      signaux: 0,
     },
     {
       source: "decouverte",

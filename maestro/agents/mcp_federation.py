@@ -1,28 +1,39 @@
-"""Fédération de la bibliothèque MCP : le câblage des deux sources (#677, parent #673).
+"""Fédération de la bibliothèque MCP : le câblage des sources (#677, #678, parent #673).
 
-`maestro.agents.mcp_registry` sait **composer** deux sources ; il ne sait ni lire
+`maestro.agents.mcp_registry` sait **composer** ses sources ; il ne sait ni lire
 un disque ni parler à un registre, et c'est voulu — c'est une structure de
 données. Ce module est le câblage qui manque entre les trois pièces du chantier :
 
     miroir (lot 1, `mcp_amont`)
         → traduction (lot 2, `mcp_traduction`)
-            → bibliothèque à deux sources (lot 3, `mcp_registry`)
+            → bibliothèque à plusieurs sources (lot 3, `mcp_registry`)
+                → porte d'admission (lot 4, `mcp_admission`)
 
 ## Ce que la fédération garantit
 
 - **Elle ne lève jamais.** Un miroir absent, illisible, vide, une entrée
-  intraduisible : tout retombe sur la bibliothèque curée, qui est le
-  comportement d'avant le chantier. La Control Tower ne doit pas perdre sa
-  bibliothèque parce qu'un fichier de cache est corrompu — et le registre amont
-  est en **préversion**, « no uptime or data durability guarantees ».
+  intraduisible, un journal d'admissions corrompu : tout retombe sur la
+  bibliothèque curée, qui est le comportement d'avant le chantier. La Control
+  Tower ne doit pas perdre sa bibliothèque parce qu'un fichier de cache est
+  corrompu — et le registre amont est en **préversion**, « no uptime or data
+  durability guarantees ».
+  ⚠ Une exception à cette règle, et elle est nommée : un journal d'admissions
+  illisible retire de l'allowlist tout ce qu'il autorisait, donc la cause est
+  **rendue** (`Federation.cause_admissions`) au lieu d'être seulement
+  journalisée. Perdre une découverte est un affichage en moins ; perdre une
+  admission est un serveur qui ne monte plus, et personne ne doit avoir à
+  deviner pourquoi.
 - **Elle ne moissonne pas.** Elle *lit* le miroir déjà sur le disque. Déclencher
   un rafraîchissement ici mettrait dix minutes de réseau sur le chemin d'une
   requête d'écran ; `MiroirAmont.rafraichir_si_perime()` est le geste d'une
   boucle de fond, pas d'une lecture.
-- **Elle est mémoïsée sur l'empreinte du miroir** (mtime + taille), comme
-  `MiroirAmont.entrees()` l'est déjà. Traduire 25 000 entrées coûte trop cher
-  pour être refait par requête, et une empreinte — plutôt qu'une durée — fait
-  tomber la mémoire à l'instant même où elle mentirait.
+- **Elle est mémoïsée sur l'empreinte du miroir ET du journal d'admissions**
+  (mtime + taille de chacun), comme `MiroirAmont.entrees()` l'est déjà pour le
+  premier. Traduire 25 000 entrées coûte trop cher pour être refait par requête,
+  et une empreinte — plutôt qu'une durée — fait tomber la mémoire à l'instant
+  même où elle mentirait. Le journal en fait partie parce qu'une admission doit
+  être visible **tout de suite** : sur la seule empreinte du miroir, elle
+  n'apparaîtrait qu'au prochain rafraîchissement, une heure plus tard.
 
 ## Le seul refus qui n'est pas nommé par la traduction
 
@@ -48,16 +59,24 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Any
 
+from maestro.agents.mcp_admission import (
+    EtatAmontEntree,
+    MagasinAdmissions,
+    veiller,
+)
 from maestro.agents.mcp_amont import EntreeAmont, MiroirAmont
 from maestro.agents.mcp_registry import (
     PROVENANCE,
     SEED,
+    Admission,
     EntreeRegistre,
     Provenance,
     ProvenanceDecouverte,
     RegistreMcp,
+    SignalAmont,
 )
 
 _LOG = logging.getLogger(__name__)
@@ -95,6 +114,14 @@ class Federation:
     motifs: dict[str, int] = field(default_factory=dict)
     #: La cause d'une fédération qui n'a rien pu ajouter, vide sinon.
     cause: str = ""
+    #: Le nombre d'admissions **actives** au moment de la composition (#678).
+    admises: int = 0
+    #: Le nombre d'admissions **révoquées** encore au journal.
+    revoquees: int = 0
+    #: La cause d'un journal d'admissions illisible, vide sinon. Rendue à part de
+    #: `cause` parce qu'elle ne coûte pas la même chose : l'une prive d'un
+    #: affichage, l'autre prive d'un montage (voir l'en-tête du module).
+    cause_admissions: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """Réémet le compte rendu en dict JSON-sérialisable (forme publique API/UI)."""
@@ -105,6 +132,10 @@ class Federation:
             "motifs": dict(self.motifs),
             "ecartees": list(self.registre.decouvertes_ecartees),
             "cause": self.cause,
+            "admises": self.admises,
+            "revoquees": self.revoquees,
+            "signaux": [s.to_dict() for s in self.registre.signaux],
+            "cause_admissions": self.cause_admissions,
         }
 
 
@@ -193,25 +224,75 @@ def traduire_miroir(
     return tuple(retenues), traduites, refusees, motifs
 
 
+def lire_admissions(magasin: MagasinAdmissions | None = None) -> tuple[tuple[Admission, ...], str]:
+    """Le journal des admissions et sa cause d'échec — **sans jamais lever** (#678).
+
+    Rend `(admissions, cause)`. Un journal absent est l'état normal d'un projet
+    qui n'a rien admis, et rend `((), "")` ; un journal illisible rend `((),
+    "<cause>")`, ce qui **retire de l'allowlist** tout ce qu'il autorisait.
+
+    C'est le repli le plus prudent des deux et non le plus commode : servir une
+    allowlist qu'on ne sait pas relire entièrement, ce serait monter des serveurs
+    sur la foi d'un fichier corrompu. La cause remonte jusqu'à l'écran plutôt que
+    de rester dans un journal d'application — voir l'en-tête du module.
+    """
+    try:
+        magasin = magasin if magasin is not None else MagasinAdmissions.default()
+        return magasin.lister(), ""
+    except Exception as exc:  # noqa: BLE001 - un journal fautif ne coûte pas la bibliothèque
+        _LOG.warning("journal des admissions MCP illisible, allowlist réduite au seed : %s", exc)
+        return (), str(exc)
+
+
+def veille_du_miroir(
+    admissions: Iterable[Admission], entrees: Iterable[EntreeAmont]
+) -> tuple[SignalAmont, ...]:
+    """Ce que l'amont dit **aujourd'hui** des entrées admises **hier** (#678, critère 3).
+
+    Le seul endroit du chantier où les deux moitiés sont tenues ensemble : la
+    règle vit dans `mcp_admission.veiller`, la **table** (nom amont → version,
+    statut) se construit ici, parce que `mcp_admission` ne connaît pas le miroir
+    et n'a pas à le connaître pour dire ce qu'est un écart.
+    """
+    amont = {
+        entree.nom: EtatAmontEntree(version=entree.version, statut=entree.statut)
+        for entree in entrees
+    }
+    return veiller(admissions, amont)
+
+
 def federer(
     miroir: MiroirAmont | None = None,
     *,
     entrees_curees: Iterable[EntreeRegistre] = SEED,
     provenance: Provenance = PROVENANCE,
     traducteur: Traducteur | None = None,
+    magasin: MagasinAdmissions | None = None,
 ) -> Federation:
-    """La bibliothèque à deux sources, montée depuis le miroir déjà sur le disque.
+    """La bibliothèque à trois sources, montée depuis les fichiers déjà sur le disque.
 
     `miroir` par défaut est celui que la configuration désigne
-    (`MiroirAmont.default()` → `MAESTRO_MCP_AMONT_*`, sinon `core/mcp-amont/`).
+    (`MiroirAmont.default()` → `MAESTRO_MCP_AMONT_*`, sinon `core/mcp-amont/`),
+    `magasin` le journal des admissions (`MAESTRO_MCP_DIR`, sinon `core/mcp/`).
     **Ne moissonne pas** et **ne lève jamais** : sans miroir lisible, sans
     entrées, ou sans le module de traduction, elle rend la bibliothèque curée
     avec la cause en clair.
+
+    ⚠ Les admissions sont lues **même quand le miroir est absent**, et c'est
+    voulu : elles sont une allowlist locale, pas une vue du miroir. Un poste qui
+    n'a jamais moissonné doit continuer à monter ce qu'il a admis — ce que
+    l'entrée figée rend possible sans rien redemander à l'amont (#678, règle 1).
+    La **veille**, elle, ne joue que s'il y a un miroir : sans lui, il n'y a rien
+    à confronter, et « disparue de l'amont » serait faux pour tout le monde.
 
     Le résultat est mémoïsé par `federer_memo`, qui est ce que la Control Tower
     appelle ; cette fonction-ci refait le travail à chaque appel et reste la voie
     des tests, qui veulent un résultat déterminé et non un cache.
     """
+    admissions, cause_admissions = lire_admissions(magasin)
+    actives = tuple(a for a in admissions if a.active)
+    revoquees = tuple(a for a in admissions if not a.active)
+
     try:
         miroir = miroir if miroir is not None else MiroirAmont.default()
         entrees = miroir.entrees()
@@ -219,8 +300,11 @@ def federer(
     except Exception as exc:  # noqa: BLE001 - un miroir illisible ne coûte pas la bibliothèque
         _LOG.warning("miroir MCP illisible, bibliothèque curée seule : %s", exc)
         return Federation(
-            registre=RegistreMcp(entrees_curees, provenance),
+            registre=RegistreMcp(entrees_curees, provenance, admissions=admissions),
             cause=f"miroir illisible : {exc}",
+            admises=len(actives),
+            revoquees=len(revoquees),
+            cause_admissions=cause_admissions,
         )
 
     traducteur = traducteur or _traducteur()
@@ -230,6 +314,8 @@ def federer(
         entrees_curees,
         provenance,
         decouvertes=decouvertes,
+        admissions=admissions,
+        signaux=veille_du_miroir(actives, entrees),
         provenance_decouverte=ProvenanceDecouverte(
             amont=etat.amont or miroir.amont,
             rafraichi_le=etat.rafraichi_le,
@@ -246,48 +332,78 @@ def federer(
         refusees=refusees,
         motifs=motifs,
         cause=cause,
+        admises=len(actives),
+        revoquees=len(revoquees),
+        cause_admissions=cause_admissions,
     )
 
 
-#: La mémoire de `federer_memo` : `(empreinte du miroir) → Federation`. Portée du
-#: processus, et **une seule entrée** — la Control Tower n'a qu'un miroir.
-_MEMO: tuple[tuple[str, int, int], Federation] | None = None
+#: Le type d'une empreinte de fichier : chemin, mtime en nanosecondes, taille —
+#: `(-1, -1)` quand il n'existe pas, ce qui est un état comme un autre.
+Empreinte = tuple[str, int, int]
+
+#: La mémoire de `federer_memo` : `(empreintes des deux fichiers) → Federation`.
+#: Portée du processus, et **une seule entrée** — la Control Tower n'a qu'un
+#: miroir et qu'un journal.
+_MEMO: tuple[tuple[Empreinte, Empreinte], Federation] | None = None
 
 
-def federer_memo(miroir: MiroirAmont | None = None) -> Federation:
-    """`federer`, mémoïsé sur l'**empreinte** du miroir — ce que la Control Tower appelle.
+def _empreinte(chemin: Path) -> Empreinte:
+    """L'empreinte d'un fichier : chemin, mtime, taille — `(-1, -1)` s'il manque."""
+    try:
+        marque = chemin.stat()
+    except OSError:
+        return (str(chemin), -1, -1)
+    return (str(chemin), marque.st_mtime_ns, marque.st_size)
 
-    L'empreinte est celle du fichier d'entrées (chemin, mtime, taille), la même
-    que `MiroirAmont.entrees()` utilise : un rafraîchissement change les deux,
-    donc la fédération se refait **à l'instant** où le miroir bouge, et jamais
-    entre deux. Une durée d'expiration aurait servi une bibliothèque périmée
-    pendant sa fenêtre, et une fédération refaite par requête coûterait la
-    traduction de 25 000 entrées à chaque frappe de l'écran.
 
-    Sans miroir lisible, l'empreinte vaut `(chemin, -1, -1)` : la mémoire tient
+def federer_memo(
+    miroir: MiroirAmont | None = None, magasin: MagasinAdmissions | None = None
+) -> Federation:
+    """`federer`, mémoïsé sur les **empreintes** de ses deux fichiers sur disque.
+
+    Ce que la Control Tower appelle. L'empreinte est celle du fichier (chemin,
+    mtime, taille), la même que `MiroirAmont.entrees()` utilise : une écriture
+    change les deux, donc la fédération se refait **à l'instant** où l'une des
+    sources bouge, et jamais entre deux. Une durée d'expiration aurait servi une
+    bibliothèque périmée pendant sa fenêtre, et une fédération refaite par
+    requête coûterait la traduction de 25 000 entrées à chaque frappe de l'écran.
+
+    ⚠ **Deux fichiers et non un seul** depuis #678 : le journal des admissions
+    change à un rythme humain — un clic — quand le miroir change à l'heure. Sur
+    la seule empreinte du miroir, une entrée admise n'apparaîtrait qu'au
+    prochain rafraîchissement, c'est-à-dire jusqu'à une heure après le geste qui
+    l'a admise. La route qui écrit appelle en outre `oublier_memo()` : la
+    granularité d'un mtime dépend du système de fichiers, et une porte
+    d'admission ne se paie pas le luxe d'une fenêtre où elle mentirait.
+
+    Sans fichier lisible, l'empreinte vaut `(chemin, -1, -1)` : la mémoire tient
     donc aussi pour un miroir absent, qui est l'état normal d'un poste neuf.
     """
     global _MEMO
     miroir = miroir if miroir is not None else MiroirAmont.default()
-    chemin = miroir.racine / MiroirAmont.FICHIER_ENTREES
-    try:
-        marque = chemin.stat()
-        empreinte = (str(chemin), marque.st_mtime_ns, marque.st_size)
-    except OSError:
-        empreinte = (str(chemin), -1, -1)
-    if _MEMO is not None and _MEMO[0] == empreinte:
+    magasin = magasin if magasin is not None else MagasinAdmissions.default()
+    empreintes = (
+        _empreinte(miroir.racine / MiroirAmont.FICHIER_ENTREES),
+        _empreinte(magasin.chemin),
+    )
+    if _MEMO is not None and _MEMO[0] == empreintes:
         return _MEMO[1]
-    federation = federer(miroir)
-    _MEMO = (empreinte, federation)
+    federation = federer(miroir, magasin=magasin)
+    _MEMO = (empreintes, federation)
     return federation
 
 
 def oublier_memo() -> None:
-    """Vide la mémoire de `federer_memo` — pour les tests, jamais pour la production.
+    """Vide la mémoire de `federer_memo`.
 
-    En production la mémoire tombe d'elle-même sur l'empreinte du miroir ; un
-    test qui monte deux miroirs successifs au même chemin, lui, peut les écrire
-    dans la même nanoseconde.
+    Deux appelants, et le second n'est pas un test : les tests, qui montent deux
+    miroirs successifs au même chemin et peuvent les écrire dans la même
+    nanoseconde ; et les **routes d'admission** (#678), qui viennent d'écrire le
+    journal et doivent servir la bibliothèque neuve à la requête suivante, sans
+    dépendre de la granularité du mtime du système de fichiers.
+
+    Ailleurs en production, la mémoire tombe d'elle-même sur les empreintes.
     """
     global _MEMO
     _MEMO = None

@@ -86,6 +86,10 @@ const POOL: IntegrationPoolMcp[] = [
     mode_auth: MCP_MODE_OAUTH,
     procedure_url: "https://www.figma.com/developers",
     curee: true,
+    source: "curee",
+    admission: null,
+    signaux: [],
+    alerte: "",
     secrets: [
       {
         cle: "FIGMA_TOKEN",
@@ -104,6 +108,10 @@ const POOL: IntegrationPoolMcp[] = [
     mode_auth: MCP_MODE_TOKEN,
     procedure_url: "",
     curee: true,
+    source: "curee",
+    admission: null,
+    signaux: [],
+    alerte: "",
     secrets: [
       {
         cle: "GITLAB_TOKEN",
@@ -142,6 +150,8 @@ const REGISTRE: EntreeRegistreMcp[] = [
     version: "",
     depot: "",
     statut: "",
+    admission: null,
+    signaux: [],
   },
 ];
 
@@ -181,6 +191,7 @@ export function mocksApi() {
       tags: [],
       total: 0,
       total_curees: 0,
+      total_admises: 0,
       total_decouvertes: 0,
       provenances: [
         {
@@ -189,6 +200,14 @@ export function mocksApi() {
           sources: [],
           revue_le: "2026-08-28",
           total: 0,
+        },
+        {
+          source: "admise" as const,
+          resume: "",
+          total: 0,
+          revoquees: 0,
+          derniere_le: "",
+          signaux: 0,
         },
         {
           source: "decouverte" as const,

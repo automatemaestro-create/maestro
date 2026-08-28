@@ -407,8 +407,74 @@ export type VariableSecret = {
   secret: boolean;
 };
 
-/** La source d'une entrée de bibliothèque (#677) — curée à la main, ou découverte. */
-export type SourceRegistreMcp = "curee" | "decouverte";
+/**
+ * La source d'une entrée de bibliothèque : curée à la main (#677), découverte
+ * dans le registre officiel (#677), ou **admise** — une découverte qu'un geste
+ * humain tracé a fait entrer dans l'allowlist (#678).
+ *
+ * ⚠ À ne pas confondre avec `curee`, qui est le champ du garde-fou. La source
+ * dit **d'où ça vient**, `curee` dit **si c'est montable** : une entrée `admise`
+ * est `curee: true`. Pour savoir si on peut l'ajouter au pool, lire `curee` —
+ * jamais la source.
+ */
+export type SourceRegistreMcp = "curee" | "decouverte" | "admise";
+
+/**
+ * La trace d'une admission (#678) telle qu'elle voyage **sur une entrée** :
+ * qui, quand, depuis quelle source amont, et si elle vaut encore.
+ *
+ * Elle ne porte pas l'entrée qu'elle a figée — c'est celle qui la porte. La
+ * forme du journal (`GET /api/mcp/admissions`) l'emboîte dans l'autre sens
+ * (`AdmissionMcp`).
+ */
+export type TraceAdmissionMcp = {
+  id: string;
+  /** Le nom amont complet (`io.github.alice/serveur`) — la clé stable côté registre. */
+  nom_amont: string;
+  /** La version **épinglée** au moment de l'admission : c'est elle qu'on monte. */
+  version: string;
+  editeur: string;
+  depot: string;
+  /** Le registre moissonné dont l'entrée vient. */
+  amont: string;
+  /** L'horodatage du miroir au moment de l'admission — l'âge de la matière admise. */
+  miroir_le: string;
+  par: string;
+  le: string;
+  note: string;
+  /** Faux dès qu'elle est révoquée : c'est ce qui décide du montage. */
+  active: boolean;
+  revoquee_par: string;
+  revoquee_le: string;
+  /** Le motif de la **révocation** (vide tant qu'elle est active). */
+  motif: string;
+};
+
+/** Une admission telle que le journal la rend (#678) : sa trace **et** l'entrée figée. */
+export type AdmissionMcp = TraceAdmissionMcp & {
+  entree: EntreeRegistreMcp;
+};
+
+/**
+ * Ce que l'amont dit **aujourd'hui** d'une entrée admise **hier** (#678).
+ *
+ * Calculé à chaque composition de la bibliothèque, jamais persisté. Aucun de ces
+ * signaux ne retire quoi que ce soit : l'entrée reste montable telle qu'elle a
+ * été admise, le signal est là pour qu'un humain en décide — « jamais retirée en
+ * silence » ne veut pas dire « retirée d'office ».
+ */
+export type SignalAmontMcp = {
+  id: string;
+  genre:
+    | "amont_depreciee"
+    | "amont_supprimee"
+    | "amont_disparue"
+    | "version_nouvelle";
+  message: string;
+  /** La version que l'amont sert aujourd'hui (vide si l'entrée a disparu). */
+  version_amont: string;
+  statut_amont: string;
+};
 
 /**
  * Une entrée de la **bibliothèque** de serveurs MCP (`GET /api/mcp/registre`,
@@ -416,12 +482,15 @@ export type SourceRegistreMcp = "curee" | "decouverte";
  * d'auth (docs/21), variables à fournir (`secrets`) et lien de procédure côté
  * outil.
  *
- * La bibliothèque a **deux sources** depuis #677 et `curee` dit laquelle : seule
- * une entrée **curée** appartient à l'allowlist, donc est instanciable
- * (garde-fou supply-chain, docs/19). Une entrée découverte vient du miroir du
- * registre MCP officiel — elle se lit et se cherche, elle ne se monte pas, et
- * elle porte à la place les signaux de confiance de l'amont (`editeur`,
- * `version`, `depot`, `statut`).
+ * La bibliothèque a **trois sources** depuis #678, et deux champs qui ne
+ * répondent pas à la même question : `curee` dit si l'entrée appartient à
+ * l'allowlist — donc si elle est instanciable (garde-fou supply-chain,
+ * docs/19) —, `source` d'où elle vient. Une entrée **découverte** vient du
+ * miroir du registre MCP officiel : elle se lit et se cherche, elle ne se monte
+ * pas, et elle porte à la place les signaux de confiance de l'amont (`editeur`,
+ * `version`, `depot`, `statut`). Une entrée **admise** est la même chose, plus
+ * un geste humain tracé qui l'a fait entrer dans l'allowlist : elle est donc
+ * `curee: true` tout en venant de l'amont, et porte son `admission`.
  */
 export type EntreeRegistreMcp = {
   id: string;
@@ -442,9 +511,9 @@ export type EntreeRegistreMcp = {
   editeur: string;
   /** Palier d'usage (#271) : plus grand = plus courant. Clé du tri après la source. */
   popularite: number;
-  /** Dans l'allowlist curée — donc instanciable (#677). */
+  /** Dans l'allowlist — donc instanciable (#677). Vrai pour une curée **et** une admise (#678). */
   curee: boolean;
-  /** La même information en clair : un booléen nommé par la négative se lit mal (#677). */
+  /** D'où elle vient — **pas** la même question que `curee` (#677, #678). */
   source: SourceRegistreMcp;
   /** Version épinglée déclarée par l'amont — vide sur une entrée curée (#677). */
   version: string;
@@ -452,6 +521,10 @@ export type EntreeRegistreMcp = {
   depot: string;
   /** Statut amont (`active`/`deprecated`) — vide sur une entrée curée (#677). */
   statut: string;
+  /** Le geste qui l'a fait entrer dans l'allowlist — null sauf si `source === "admise"` (#678). */
+  admission: TraceAdmissionMcp | null;
+  /** Ce que l'amont dit d'elle depuis son admission — vide s'il n'a rien à dire (#678). */
+  signaux: SignalAmontMcp[];
 };
 
 /** Une source citée par la curation (#271) : d'où vient une entrée, où la revérifier. */
@@ -497,15 +570,38 @@ export type ProvenanceDecouverte = {
 };
 
 /**
+ * La provenance de la source **admise** (#678) : ce qu'un humain a fait entrer
+ * dans l'allowlist depuis le registre officiel.
+ *
+ * Elle ne se date ni par une revue de code (la curée) ni par un
+ * rafraîchissement de miroir (la découverte) mais par le **geste** :
+ * `derniere_le` est la date de la plus récente admission. `revoquees` compte ce
+ * qui a été retiré — gardé au journal et non effacé —, `signaux` ce que l'amont
+ * a dit depuis de ce qui reste.
+ */
+export type ProvenanceAdmise = {
+  source: "admise";
+  resume: string;
+  total: number;
+  revoquees: number;
+  derniere_le: string;
+  signaux: number;
+};
+
+/**
  * D'où vient la bibliothèque et quand elle a été revue
  * (`GET /api/mcp/registre/provenance`, #271). `tags` porte les pistes de
  * recherche — ce qu'on propose quand une recherche ne rend rien, plutôt que de
  * répéter qu'elle n'a rien trouvé.
  *
  * Les clés à plat décrivent la source **curée** et n'ont pas bougé de sens
- * (#677) ; `provenances` porte les **deux** sources côte à côte, et `total`
- * couvre désormais l'ensemble de ce que sert `GET /api/mcp/registre` sans
- * filtre — `total_curees`/`total_decouvertes` le détaillent.
+ * (#677) ; `provenances` porte les **trois** sources côte à côte (#678), et
+ * `total` couvre l'ensemble de ce que sert `GET /api/mcp/registre` sans filtre —
+ * `total_curees`/`total_admises`/`total_decouvertes` le détaillent.
+ *
+ * ⚠ `total_curees` compte le **seed seul** depuis #678 : une entrée admise
+ * bascule dans `total_admises` sans cesser d'être montable. C'est le seul
+ * chiffre de ce contrat dont la portée a changé.
  */
 export type ProvenanceRegistreMcp = {
   resume: string;
@@ -514,8 +610,9 @@ export type ProvenanceRegistreMcp = {
   tags: string[];
   total: number;
   total_curees: number;
+  total_admises: number;
   total_decouvertes: number;
-  provenances: [ProvenanceCuree, ProvenanceDecouverte];
+  provenances: [ProvenanceCuree, ProvenanceAdmise, ProvenanceDecouverte];
 };
 
 /**
@@ -548,6 +645,18 @@ export type IntegrationPoolMcp = {
   mode_auth: string | null;
   procedure_url: string;
   curee: boolean;
+  /** D'où vient l'entrée qui l'autorise — null si elle n'est plus dans la bibliothèque (#678). */
+  source: SourceRegistreMcp | null;
+  /** Le geste qui l'autorise, ou celui qui l'a **révoquée** — null pour une curée (#678). */
+  admission: TraceAdmissionMcp | null;
+  /** Ce que l'amont dit de son entrée depuis l'admission (#678). */
+  signaux: SignalAmontMcp[];
+  /**
+   * Pourquoi ce serveur est monté sans être dans l'allowlist — vide quand tout
+   * va bien (#678). Une révocation ne démonte rien : elle laisse cette phrase,
+   * qui nomme qui a révoqué, quand, et le geste pour retirer du pool.
+   */
+  alerte: string;
   secrets: EtatSecretPool[];
 };
 
@@ -555,6 +664,39 @@ export type IntegrationPoolMcp = {
 export type PoolMcp = {
   integrations: IntegrationPoolMcp[];
   erreur: string | null;
+};
+
+/**
+ * Le journal des admissions (`GET /api/mcp/admissions`, #678).
+ *
+ * Deux listes plutôt qu'une à filtrer, parce que ce ne sont pas les mêmes
+ * lectures : `admissions` répond à « qu'est-ce qu'on autorise ? », `revoquees` à
+ * « qu'a-t-on retiré, et pour quel motif ? ». `politique` nomme qui garde la
+ * porte — `defaut: true` veut dire que le geste humain suffit, faux qu'une
+ * politique d'entreprise a été branchée. `erreur` porte la cause d'un journal
+ * illisible : ce cas-là retire de l'allowlist tout ce qu'il autorisait, il ne se
+ * tait pas.
+ */
+export type JournalAdmissionsMcp = {
+  admissions: AdmissionMcp[];
+  revoquees: AdmissionMcp[];
+  signaux: SignalAmontMcp[];
+  politique: { nom: string; module: string; defaut: boolean };
+  erreur: string | null;
+};
+
+/**
+ * Ce qu'une révocation laisse debout (`DELETE /api/mcp/admissions/{id}`, #678).
+ *
+ * L'entrée sort de l'allowlist, **rien n'est démonté** : `pool.montee` dit si le
+ * serveur reste dans le pool projet et `pool.agents` chez qui il est activé.
+ * Casser un run en cours pour appliquer une décision d'allowlist serait un
+ * remède pire que le mal — ce qui est promis est « jamais sans le dire ».
+ */
+export type RevocationAdmissionMcp = {
+  admission: AdmissionMcp;
+  pool: { montee: boolean; agents: string[]; erreur: string | null };
+  message: string;
 };
 
 /**

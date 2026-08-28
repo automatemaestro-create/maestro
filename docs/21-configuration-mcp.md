@@ -228,6 +228,113 @@ sorti la bibliothèque des Paramètres et l'a renommé en conséquence
 du même écran est couvert à côté, par `apps/web/tests/integrations-pool.test.tsx`
 (#273) — dont les quatre modes d'auth du §2 ci-dessus, `sans_secret` compris.
 
+### 3.5 La porte d'admission (#678, parent #673)
+
+#271 avait élargi le registre de 4 à 29 entrées **sans lever le garde-fou**, et
+en nommait déjà la limite : une liste figée ne découvre rien. Le parent #673 y
+branche le **registre MCP officiel** (`registry.modelcontextprotocol.io`,
+25 333 serveurs mesurés le 2026-08-28) par un miroir local (#675), une traduction
+`server.json` → entrée de bibliothèque (#676) et une bibliothèque à deux sources
+(#677). Ce §-ci porte la pièce qui manquait, et qui tient la promesse : **la
+porte**.
+
+**Le problème que la porte résout, en une phrase.** L'allowlist portait deux
+rôles — « ce qu'on connaît » et « ce qu'on autorise » —, et c'est ce qui rendait
+la découverte impossible sans affaiblir l'installation. L'admission les sépare :
+le garde-fou de [docs/19](./19-securite-modele-de-menace.md) n'est pas levé, il
+devient **exact**.
+
+| `source` | d'où | `curee` | montable |
+|---|---|---|---|
+| `curee` | `SEED`, écrit à la main, relu en revue de code | `true` | oui |
+| `admise` | le registre officiel, **plus** un geste humain tracé | `true` | oui |
+| `decouverte` | le registre officiel seul | `false` | **non** |
+
+⚠ `curee` (le booléen) répond à « **montable ?** » — c'est lui que le garde-fou
+lit —, `source` à « **d'où ça vient ?** ». Une admise est donc `curee: true` et
+`source: "admise"`, sans contradiction ; et le filtre `source=curee` rend le
+**seed seul**, parce qu'un écran qui montre la provenance doit séparer ce qui a
+été relu en revue de code de ce qu'un clic a promu hier.
+
+**Ce que le registre officiel prouve, et ce qu'il ne prouve pas.** Il vérifie la
+**propriété du namespace** de l'éditeur (`io.github.<user>` par OAuth GitHub,
+`com.exemple` par preuve DNS/HTTP) et rien de plus : aucun scan, aucune caution.
+Il dit « ce serveur existe », jamais « ce serveur est sûr ». Ce qu'il change est
+la **qualité de la matière** : la règle de curation du §3.4 interdit d'écrire un
+`npx -y <paquet>` **de mémoire**, et un identifiant lu dans un enregistrement
+d'éditeur au namespace vérifié, à version épinglée, n'est pas de la mémoire — le
+motif de la règle cesse de s'appliquer sans que la règle s'affaiblisse.
+
+**Trois décisions, une par critère du ticket.**
+
+1. **L'admission fige l'entrée traduite.** Ce que la bibliothèque sert d'une
+   admise vient de l'enregistrement, pas du miroir d'aujourd'hui. Sans ce
+   figement, une nouvelle version amont changerait ce qu'on monte sans que
+   personne l'ait admis : l'admission autoriserait une version et en monterait
+   une autre. Promouvoir une version plus récente est un **nouveau geste**.
+2. **Rien ne disparaît en silence, et rien n'est retiré d'office.** Une admise
+   dont l'amont passe `deprecated`, `deleted`, ou qui sort du miroir, reste
+   servie **avec son signal** (`SignalAmont`, quatre genres). Retirer d'office
+   casserait un serveur monté sans le dire ; la décision appartient à qui a
+   admis. C'est le partage habituel de ce dépôt : ce qui est automatique est la
+   **détection**, jamais le verdict. ⚠ Un **miroir vide ne produit aucun
+   signal** — sans ce garde-fou, un poste qui n'a jamais moissonné déclarerait
+   « disparue de l'amont » toutes ses admissions d'un coup.
+3. **Une révocation ne s'oublie pas et ne démonte rien.** L'admission révoquée
+   reste au journal, ce qui permet au refus d'instanciation de **nommer** ce qui
+   s'est passé au lieu de rendre le refus d'un id inconnu ; et un serveur déjà
+   dans le pool y **reste**, avec son `alerte`. Couper un run en cours pour
+   appliquer une décision d'allowlist serait un remède pire que le mal : ce qui
+   est promis est « jamais sans le dire », pas « jamais sans casser ».
+
+**Le refus nomme le geste qui manque.** `RegistreMcp.instancier` et
+`POST /api/mcp/pool` distinguent trois causes là où il n'y en avait qu'une
+(« hors allowlist ») : une entrée **découverte** attend une admission — et la
+phrase dit où —, une entrée **révoquée** dit qui l'a retirée, quand et pourquoi,
+un id **inconnu** n'attend rien. La phrase vit à **un seul endroit**
+(`cause_non_instanciable`) et les deux appelants la relaient : deux formulations
+pour un même refus finiraient par se contredire. ⚠ La révocation est cherchée
+**avant** la découverte, parce qu'une entrée révoquée redevient une découverte —
+les deux causes sont vraies à la fois, et « personne ne l'a admise » est exact et
+trompeur sur une entrée qu'on a admise puis retirée.
+
+**Le contrat d'API** (figé ici, l'écran suit au lot #679) :
+
+| route | ce qu'elle fait |
+|---|---|
+| `GET /api/mcp/admissions` | le journal : actives, révoquées, `signaux` d'amont, `politique` qui garde la porte |
+| `POST /api/mcp/admissions` | **admet** (`registre_id`, `par`, `note`) → l'entrée telle que la bibliothèque la sert ensuite. 404 inconnue · 409 déjà curée / supprimée chez l'amont / refusée par la politique |
+| `POST /api/mcp/admissions/{id}/revocation` | **révoque** (`par`, `motif`) → l'admission + ce qui **reste monté** dans le pool. 404 jamais admise · 409 déjà révoquée |
+| `GET /api/mcp/registre?source=` | `toutes` (défaut) · `curee` · `admise` · `decouverte` — 422 sur une valeur inconnue |
+| `GET /api/mcp/registre/provenance` | **trois** provenances ; `total_curees`/`total_admises`/`total_decouvertes` |
+| `GET /api/mcp/pool` | chaque intégration porte désormais `source`, `admission`, `signaux` et `alerte` |
+
+⚠ Un `POST …/revocation` et non un `DELETE …/{id}` : **rien n'est effacé** (le
+journal garde tout), et le geste porte un corps — l'auteur, le motif — qu'un
+`DELETE` transporte mal.
+
+**Le point d'extension d'entreprise.** L'admission est l'endroit où une
+organisation veut glisser sa revue, son scan, son refus par éditeur : le contrat
+est un **callable** d'une ligne (`Candidature` → `VerdictPolitique`), injectable
+au service ou désigné par `MAESTRO_MCP_ADMISSION_POLITIQUE` (`module:attribut`).
+Le défaut accepte tout — le geste humain **est** la politique par défaut, et en
+inventer une plus stricte ici reviendrait à décider à la place de gens qu'on ne
+connaît pas. La politique passe **en dernier**, après les contrôles
+d'admissibilité (entrée inconnue, déjà curée, `deleted` chez l'amont, gabarit qui
+ne se monterait pas) : elle répond à « fait-on confiance ? », jamais à « cela
+existe-t-il ? ». Une valeur illisible **échoue au démarrage** au lieu de retomber
+en silence sur le défaut.
+
+**Où vivent les admissions.** Dans `core/mcp/admissions.json`, à côté du pool et
+des activations (`MAESTRO_MCP_DIR`) : c'est une **donnée d'installation**, pas du
+code — le `SEED` reste le socle relu en revue de code, et l'admission ne le
+touche pas. Un journal illisible **retire de l'allowlist** tout ce qu'il
+autorisait, et la cause remonte jusqu'à l'écran (`cause_admissions`) : perdre une
+découverte est un affichage en moins, perdre une admission est un serveur qui ne
+monte plus.
+
+**Couverture** : tests différés au lot 6 du parent (#680), comme les lots 1 à 3.
+
 ---
 
 *Références : [docs/15](./15-pilote-mcp-slack.md) (Slack), [docs/16](./16-pilote-mcp-tickets-gitlab.md) (GitLab), [docs/20](./20-pilote-mcp-figma.md) (Figma, dont §6 pour la voie officielle), [core/mcp/README.md](../core/mcp/README.md) (socle des déclarations).*

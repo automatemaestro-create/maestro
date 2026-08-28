@@ -81,8 +81,13 @@ def test_de_la_bibliotheque_au_pool_via_instanciation(registre, mcp_store):
 def test_un_serveur_hors_registre_ne_peut_pas_entrer_au_pool(registre):
     # Le garde-fou supply-chain (#131, docs/19) barre le parcours de config en
     # amont du pool : instancier est l'unique voie template → liaison, et elle
-    # refuse tout id hors allowlist curée.
-    with pytest.raises(ValueError, match="hors allowlist curée"):
+    # refuse tout id hors allowlist.
+    #
+    # ⚠ Le motif a perdu le mot « curée » avec #678 : l'allowlist n'est plus
+    # seulement le seed, elle contient aussi ce qu'une **admission** y a fait
+    # entrer. Ce qui est épinglé ici reste ce qui compte — le refus, et le fait
+    # qu'il nomme l'allowlist —, pas l'adjectif devenu faux.
+    with pytest.raises(ValueError, match="hors allowlist"):
         registre.instancier("kubernetes-prod")
 
 

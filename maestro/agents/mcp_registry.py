@@ -19,10 +19,17 @@ Deux notions à ne pas confondre (parent #129) :
 
 **Garde-fou supply-chain** (modèle de menace
 [docs/19](../../docs/19-securite-modele-de-menace.md)) :
-*découverte ≠ installation*. Seule une entrée de l'**allowlist curée** est
-instanciable — `instancier` refuse tout id inconnu du registre, jamais de
-`npx -y <pkg arbitraire>`. L'allowlist *est* le registre : une intégration
-n'existe pour Maestro que si elle a été curée ici, en clair, revue et versionnée.
+*découverte ≠ installation*. Seule une entrée de l'**allowlist** est
+instanciable — `instancier` refuse tout id qui n'y est pas, jamais de
+`npx -y <pkg arbitraire>`.
+
+⚠ Cette section décrit le dispositif d'origine, où l'allowlist *était* le
+registre : une intégration n'existait pour Maestro que si elle avait été curée
+ici, en clair, revue et versionnée. Ce n'est plus tout à fait vrai depuis #677
+(la bibliothèque **découvre** au-delà de l'allowlist) ni depuis #678 (un geste
+humain peut **faire entrer** une découverte dans l'allowlist) — voir les deux
+sections en bas de cet en-tête. Le garde-fou, lui, n'a pas bougé : il a
+seulement cessé de porter deux rôles à la fois.
 
 Le format d'entrée réutilise la forme `server.json` du **registre MCP officiel**
 (`registry.modelcontextprotocol.io` : nom/description + transport + gabarit
@@ -60,7 +67,8 @@ et il est écarté plutôt que déclaré à moitié.
 
 ## Deux sources, une seule recherche (#677, parent #673)
 
-La bibliothèque a désormais **deux sources** et les rend ensemble :
+La bibliothèque a **deux origines** et les rend ensemble (la porte d'admission,
+ci-dessous, en tire une troisième *source*) :
 
 - les entrées **curées** (`SEED`) — écrites à la main, relues en revue de code,
   versionnées. Elles *sont* l'allowlist, donc les seules instanciables ;
@@ -73,9 +81,57 @@ deux sources vivent dans **deux index séparés** : `instancier` et `get` ne
 regardent que l'index curé — ils n'ont pas eu une ligne à changer, et une entrée
 découverte est non instanciable *par construction* plutôt que par un test qu'on
 aurait pu oublier d'écrire. Ce qui compose est la **lecture** (`lister`,
-`rechercher`, `trouver`, `tags`), jamais l'instanciation. Le lot 4 (#678) rendra
-ce refus explicite et rattrapable par une porte d'admission ; d'ici là il est
-simplement muet, ce qui est le comportement d'aujourd'hui.
+`rechercher`, `trouver`, `tags`), jamais l'instanciation.
+
+## La porte d'admission (#678, parent #673)
+
+Une découverte n'est pas condamnée à le rester : un **geste humain tracé** la
+promeut dans l'allowlist. C'est l'`Admission`, et c'est ce qui tient la promesse
+du parent — *fédérer la découverte sans fédérer l'installation*. Le garde-fou de
+[docs/19](../../docs/19-securite-modele-de-menace.md) n'est pas levé, il devient
+**exact** : jusqu'ici l'allowlist portait deux rôles (« ce qu'on connaît » et
+« ce qu'on autorise »), elle n'en garde qu'un.
+
+Une entrée admise entre donc dans l'**index curé** — elle est montable, c'est
+tout le point — et se distingue malgré tout du seed, parce que les deux ne se
+relisent pas de la même façon : le seed est du **code** (revue de code), une
+admission est une **donnée d'installation** (un geste daté, signé, révocable).
+D'où trois sources et non deux :
+
+| `source` | d'où | `curee` | montable |
+|---|---|---|---|
+| `curee` | `SEED`, écrit à la main | `True` | oui |
+| `admise` | l'amont, **plus** un geste humain | `True` | oui |
+| `decouverte` | l'amont seul | `False` | **non** |
+
+⚠ `curee` (le booléen) et `source` (les trois valeurs) ne répondent pas à la
+même question, et les confondre est le seul piège de cette table : le booléen dit
+« **montable ?** » — c'est lui que le garde-fou lit —, la source dit « **d'où ça
+vient ?** » — c'est elle que l'écran affiche. Une admise est donc `curee: true`
+et `source: "admise"`, sans contradiction. Le filtre `source=curee` rend le seed
+**seul**, parce qu'un écran qui montre la provenance a besoin de séparer ce qui a
+été relu en revue de code de ce qu'un clic a promu hier.
+
+Trois règles portent l'admission, et chacune est un critère du ticket :
+
+1. **L'entrée admise est FIGÉE** (`Admission.entree`). Ce que la bibliothèque
+   sert d'une admise ne vient pas du miroir d'aujourd'hui mais de
+   l'enregistrement d'hier : une nouvelle version amont ne change **pas** la
+   version admise, elle produit un `SignalAmont` que quelqu'un lira. Sans ce
+   figement, l'admission autoriserait une version et en monterait une autre —
+   c'est-à-dire exactement le trou que la porte est censée fermer.
+2. **Rien ne disparaît en silence** (`SignalAmont`). Une admise dont l'amont
+   passe `deprecated`, `deleted`, ou qui sort du miroir, reste servie **avec son
+   signal** : la retirer d'office casserait un serveur monté sans le dire, et
+   nous n'avons pas à trancher à la place de qui l'a admise.
+3. **Une révocation ne s'oublie pas.** L'admission révoquée reste dans le
+   journal et le registre la garde de côté (`revocation_de`), pour que
+   `instancier` puisse **nommer** ce qui s'est passé plutôt que rendre le
+   « hors allowlist » d'un id inconnu.
+
+Le **magasin** (le disque), la **politique** (le point d'extension d'entreprise)
+et la **veille** (confronter une admission au miroir courant) vivent dans
+`maestro.agents.mcp_admission` — ici il n'y a que les structures de données.
 
 Trois règles portent la composition :
 
@@ -83,9 +139,9 @@ Trois règles portent la composition :
    curées ; une découverte n'a **aucun palier à inventer**, donc la source est
    la clé *primaire* du tri et non un effet de bord d'un `popularite` à zéro —
    sans quoi une curée à palier nul se retrouverait mêlée aux découvertes.
-2. **Le seed gagne toute collision.** Un id d'amont qui heurte `ID_RESERVES` ou
-   un id du seed est **écarté** : c'est le seed qui est instanciable, et le
-   masquer par une découverte le rendrait injoignable.
+2. **Le seed gagne toute collision.** Un id d'amont qui heurte `ID_RESERVES`, un
+   id du seed ou une entrée déjà admise est **écarté** : c'est l'index curé qui
+   est instanciable, et le masquer par une découverte le rendrait injoignable.
 3. **Une découverte fautive ne fait pas tomber la bibliothèque.** Le seed est du
    code : une entrée invalide y est un bug, et la construction lève. Le miroir
    est de la **donnée d'amont**, à des dizaines de milliers d'entrées : une
@@ -100,7 +156,7 @@ données, sans rien savoir ni du réseau ni du disque.
 from __future__ import annotations
 
 import unicodedata
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -156,17 +212,42 @@ USAGE_SPECIALISE = 30
 ID_RESERVES: frozenset[str] = frozenset({"provenance"})
 
 
-#: Les deux sources de la bibliothèque (#677). `curee` est l'allowlist écrite à
-#: la main — la seule instanciable ; `decouverte` est ce que le miroir du
-#: registre officiel a rapporté, visible et cherchable, jamais montable.
+#: Les trois sources de la bibliothèque (#677, #678). `curee` est l'allowlist
+#: écrite à la main ; `decouverte` est ce que le miroir du registre officiel a
+#: rapporté, visible et cherchable, jamais montable ; `admise` est une
+#: découverte qu'un **geste humain tracé** a promue dans l'allowlist — montable
+#: comme une curée, mais relue autrement (voir l'en-tête du module).
 SOURCE_CUREE = "curee"
 SOURCE_DECOUVERTE = "decouverte"
+SOURCE_ADMISE = "admise"
 
 #: Les valeurs qu'un filtre de source accepte. `toutes` est le **défaut** et il
 #: est nommé plutôt que sous-entendu par une absence : une route qui reçoit
-#: `source=` vide doit servir les deux sources, pas se demander laquelle.
+#: `source=` vide doit servir toutes les sources, pas se demander laquelle.
 SOURCE_TOUTES = "toutes"
-SOURCES: tuple[str, ...] = (SOURCE_TOUTES, SOURCE_CUREE, SOURCE_DECOUVERTE)
+SOURCES: tuple[str, ...] = (SOURCE_TOUTES, SOURCE_CUREE, SOURCE_DECOUVERTE, SOURCE_ADMISE)
+
+#: Ce que l'amont dit **aujourd'hui** d'une entrée admise **hier** (#678). Quatre
+#: genres, et aucun ne retire quoi que ce soit : ils signalent.
+#:
+#: - `amont_depreciee` : l'amont a passé l'entrée `deprecated` ;
+#: - `amont_supprimee` : l'amont l'a passée `deleted` (modération) et le miroir
+#:   la porte encore — défensif, `MiroirAmont` les retire normalement ;
+#: - `amont_disparue` : elle n'est plus dans le miroir. Les deux causes se
+#:   confondent à la lecture — retirée par la modération, ou plus servie — donc
+#:   le message les nomme toutes deux plutôt que d'en choisir une ;
+#: - `version_nouvelle` : l'amont publie une autre version que la version
+#:   admise. **Rien ne bouge** : promouvoir la nouvelle demande un nouveau geste.
+SIGNAL_DEPRECIEE = "amont_depreciee"
+SIGNAL_SUPPRIMEE = "amont_supprimee"
+SIGNAL_DISPARUE = "amont_disparue"
+SIGNAL_VERSION = "version_nouvelle"
+SIGNAUX: tuple[str, ...] = (
+    SIGNAL_DEPRECIEE,
+    SIGNAL_SUPPRIMEE,
+    SIGNAL_DISPARUE,
+    SIGNAL_VERSION,
+)
 
 
 @dataclass(frozen=True)
@@ -288,6 +369,41 @@ class VariableSecret:
 
 
 @dataclass(frozen=True)
+class SignalAmont:
+    """Un écart entre ce qui a été **admis** et ce que l'amont dit aujourd'hui (#678).
+
+    Il est **calculé**, jamais persisté : le journal des admissions enregistre un
+    geste humain, pas l'état d'un miroir qui bouge toutes les heures. C'est
+    `maestro.agents.mcp_admission.veiller` qui les produit, à chaque fédération,
+    en confrontant les admissions au miroir courant.
+
+    `genre` est un code stable (voir `SIGNAUX`) sur lequel une UI groupe ou
+    filtre ; `message` est la phrase qu'on montre. Les deux, jamais l'un sans
+    l'autre — c'est la règle des refus de la traduction (#676), pour la même
+    raison : un code seul n'apprend rien à qui lit, une phrase seule ne se compte
+    pas.
+    """
+
+    id: str
+    genre: str
+    message: str
+    #: La version que l'amont sert aujourd'hui (vide si l'entrée a disparu).
+    version_amont: str = ""
+    #: Le statut amont observé (`active`/`deprecated`/`deleted`), vide si disparue.
+    statut_amont: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Réémet le signal en dict JSON-sérialisable (forme publique API/UI)."""
+        return {
+            "id": self.id,
+            "genre": self.genre,
+            "message": self.message,
+            "version_amont": self.version_amont,
+            "statut_amont": self.statut_amont,
+        }
+
+
+@dataclass(frozen=True)
 class EntreeRegistre:
     """Un template de serveur MCP curé — forme `server.json` + métadonnées Maestro.
 
@@ -317,6 +433,13 @@ class EntreeRegistre:
     épinglée, le dépôt, le statut `active`/`deprecated`) et restent vides sur une
     entrée curée, dont ils ne diraient rien : le seed n'épingle pas de version,
     c'est la revue de code qui le date.
+
+    `admission` et `signaux` datent de la porte d'admission (#678) et sont posés
+    par `RegistreMcp`, jamais par l'appelant — même règle que `curee`, et pour la
+    même raison : une entrée qui se déclarerait admise elle-même serait une
+    entrée montable sans geste humain derrière. Le premier porte la traçabilité
+    (qui, quand, quelle version, quelle source) ; le second, ce que l'amont dit
+    d'elle **depuis** (dépréciation, disparition, version plus récente).
     """
 
     id: str
@@ -339,6 +462,22 @@ class EntreeRegistre:
     version: str = ""
     depot: str = ""
     statut: str = ""
+    admission: Admission | None = None
+    signaux: tuple[SignalAmont, ...] = ()
+
+    @property
+    def source(self) -> str:
+        """La provenance de l'entrée : `curee`, `admise` ou `decouverte` (#678).
+
+        Dérivée, jamais déclarée : `admission` et `curee` sont posés par
+        `RegistreMcp` selon l'argument qui a porté l'entrée, si bien qu'il n'y a
+        pas deux vérités à tenir d'accord. Une admise est `curee=True` **et**
+        `source="admise"` — le booléen répond à « montable ? », la source à
+        « d'où ça vient ? » (voir l'en-tête du module).
+        """
+        if self.admission is not None:
+            return SOURCE_ADMISE
+        return SOURCE_CUREE if self.curee else SOURCE_DECOUVERTE
 
     def vers_serveur(self, nom: str | None = None) -> ServeurMcp:
         """Instancie le template en `ServeurMcp` montable (gabarit `${VAR}` intact).
@@ -370,11 +509,17 @@ class EntreeRegistre:
         UI affiche pour guider la saisie.
 
         `curee` marque l'appartenance à l'allowlist, et depuis #677 il **dit la
-        vérité** au lieu de valoir `true` en dur : la bibliothèque a deux
-        sources, seule la première est instanciable. `source` le redit en clair
-        parce qu'un booléen nommé par la négative (« non curée ») se lit mal dans
-        une UI ; les deux sortent du même champ, il n'y a donc pas deux vérités à
-        tenir d'accord.
+        vérité** au lieu de valoir `true` en dur : la bibliothèque a plusieurs
+        sources, toutes ne sont pas instanciables. `source` ne le redit pas — il
+        dit **autre chose** depuis #678, et c'est le seul point de lecture
+        délicat de cette forme : une entrée `admise` est montable (`curee: true`)
+        tout en venant de l'amont (`source: "admise"`). Le booléen répond à
+        « montable ? », la source à « d'où ça vient ? ».
+
+        `admission` porte la trace du geste (qui, quand, quelle version, quelle
+        source amont) — **sans** l'entrée qu'il a figée, qui est celle-ci : la
+        réémettre ferait boucler la forme sur elle-même. `signaux` porte ce que
+        l'amont dit d'elle depuis.
         """
         return {
             "id": self.id,
@@ -394,20 +539,144 @@ class EntreeRegistre:
             "editeur": self.editeur,
             "popularite": self.popularite,
             "curee": self.curee,
-            "source": SOURCE_CUREE if self.curee else SOURCE_DECOUVERTE,
+            "source": self.source,
             "version": self.version,
             "depot": self.depot,
             "statut": self.statut,
+            "admission": self.admission.trace() if self.admission is not None else None,
+            "signaux": [s.to_dict() for s in self.signaux],
         }
 
 
+@dataclass(frozen=True)
+class Admission:
+    """Le **geste humain tracé** qui fait entrer une découverte dans l'allowlist (#678).
+
+    C'est la porte du parent #673 : le registre officiel dit « ce serveur
+    existe », jamais « ce serveur est sûr » — la seconde question reste la nôtre,
+    et cet objet est la réponse écrite. Il porte trois choses que rien d'autre ne
+    tient ensemble :
+
+    1. **l'entrée figée** (`entree`) — ce qui a été autorisé, au caractère près.
+       C'est elle que la bibliothèque sert, jamais la traduction du miroir
+       d'aujourd'hui : sinon une nouvelle version amont changerait ce qu'on monte
+       sans que personne l'ait admis, ce que le critère 3 du ticket interdit ;
+    2. **sa source** (`nom_amont`, `version`, `editeur`, `depot`, `amont`,
+       `miroir_le`) — d'où elle vient et de quand elle date. Un identifiant de
+       paquet lu dans un enregistrement d'éditeur au namespace vérifié n'est pas
+       de la mémoire, et c'est ce qui lève la règle de curation de #271 (« ne
+       jamais écrire un `npx -y <paquet>` de mémoire ») sans l'affaiblir ;
+    3. **le geste** (`par`, `le`, `note`) et sa **révocation** (`revoquee_par`,
+       `revoquee_le`, `motif`), qui ne s'efface pas : une admission révoquée
+       reste dans le journal, pour que le refus d'instanciation puisse dire ce
+       qui s'est passé au lieu de rendre le « hors allowlist » d'un id inconnu.
+
+    Immuable, comme tout ce module : révoquer produit une **nouvelle**
+    `Admission` (`replace`), et ré-admettre en produit une autre encore.
+    """
+
+    id: str
+    entree: EntreeRegistre
+    nom_amont: str = ""
+    version: str = ""
+    editeur: str = ""
+    depot: str = ""
+    #: Le registre moissonné dont l'entrée vient (`MiroirAmont.amont`).
+    amont: str = ""
+    #: L'horodatage du miroir au moment de l'admission (`EtatMiroir.rafraichi_le`) —
+    #: de quand datait la matière qu'on a admise, jamais quand on l'a admise.
+    miroir_le: str = ""
+    par: str = ""
+    le: str = ""
+    note: str = ""
+    revoquee_par: str = ""
+    revoquee_le: str = ""
+    motif: str = ""
+
+    @property
+    def active(self) -> bool:
+        """L'admission vaut-elle encore autorisation de monter ?
+
+        La révocation se lit sur `revoquee_le` et non sur un booléen à côté :
+        deux champs pour un seul fait finiraient par se contredire, et c'est
+        la panne que #365 a supprimée ailleurs dans ce dépôt.
+        """
+        return not self.revoquee_le
+
+    def trace(self) -> dict[str, Any]:
+        """La traçabilité **sans** l'entrée — ce qu'`EntreeRegistre.to_dict` emboîte.
+
+        Deux formes plutôt qu'une, et la raison est structurelle : l'entrée porte
+        son admission, l'admission porte son entrée. Réémettre les deux l'une
+        dans l'autre ferait boucler la forme publique. `trace()` est donc la vue
+        depuis l'entrée, `to_dict()` la vue depuis le journal.
+        """
+        return {
+            "id": self.id,
+            "nom_amont": self.nom_amont,
+            "version": self.version,
+            "editeur": self.editeur,
+            "depot": self.depot,
+            "amont": self.amont,
+            "miroir_le": self.miroir_le,
+            "par": self.par,
+            "le": self.le,
+            "note": self.note,
+            "active": self.active,
+            "revoquee_par": self.revoquee_par,
+            "revoquee_le": self.revoquee_le,
+            "motif": self.motif,
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        """La forme du **journal** (et du disque) : la trace, plus l'entrée figée."""
+        return {**self.trace(), "entree": self.entree.to_dict()}
+
+    @classmethod
+    def from_dict(cls, brut: Mapping[str, Any]) -> Admission:
+        """Relit une admission écrite par `to_dict` — **strict sur ce qui autorise**.
+
+        L'id et l'entrée figée sont ce qui fait entrer un serveur dans
+        l'allowlist : une ligne qui n'en porte pas n'est pas une admission
+        incomplète, c'est une autorisation qu'on ne sait pas lire, et on lève
+        (`ValueError`). Le reste est de la traçabilité : un champ absent vaut
+        vide, ce qui laisse relisible un journal écrit par une version
+        antérieure. L'`admission` et les `signaux` de l'entrée figée sont
+        **ignorés** à la relecture : le registre les repose, eux seuls savent
+        depuis quel argument l'entrée est arrivée.
+        """
+        id_ = _texte(brut.get("id"))
+        entree = brut.get("entree")
+        if not id_ or not isinstance(entree, Mapping):
+            raise ValueError(
+                f"admission MCP invalide : « id » et « entree » sont requis (lu : {id_!r})."
+            )
+        return cls(
+            id=id_,
+            entree=entree_depuis_dict(entree),
+            nom_amont=_texte(brut.get("nom_amont")),
+            version=_texte(brut.get("version")),
+            editeur=_texte(brut.get("editeur")),
+            depot=_texte(brut.get("depot")),
+            amont=_texte(brut.get("amont")),
+            miroir_le=_texte(brut.get("miroir_le")),
+            par=_texte(brut.get("par")),
+            le=_texte(brut.get("le")),
+            note=_texte(brut.get("note")),
+            revoquee_par=_texte(brut.get("revoquee_par")),
+            revoquee_le=_texte(brut.get("revoquee_le")),
+            motif=_texte(brut.get("motif")),
+        )
+
+
 class RegistreMcp:
-    """La bibliothèque : deux sources, une recherche, **un seul garde-fou**.
+    """La bibliothèque : trois sources, une recherche, **un seul garde-fou**.
 
     `rechercher` filtre par nom/tag (recherche libre, insensible à la casse et
-    aux accents) ; `trouver`/`lister` exposent les entrées des deux sources ;
-    `get`/`instancier` ne regardent que l'**allowlist curée**, et `instancier`
-    reste la seule voie template → liaison.
+    aux accents) ; `trouver`/`lister` exposent les entrées de toutes les
+    sources ; `get`/`instancier` ne regardent que l'**allowlist** — le seed et
+    ce qu'une admission y a fait entrer —, et `instancier` reste la seule voie
+    template → liaison.
 
     Construit par défaut sur le seed en code (`RegistreMcp.curee()`) ; la
     fédération (`maestro.agents.mcp_federation`), les tests (#134) et une V1 en
@@ -415,10 +684,17 @@ class RegistreMcp:
 
     ⚠ **La source d'une entrée est décidée par l'argument qui la porte**, jamais
     par le drapeau qu'elle porte : tout ce qui arrive par `decouvertes` est
-    marqué `curee=False` ici même. Se fier au drapeau de l'appelant laisserait
-    une entrée d'amont oubliée à `curee=True` — c'est-à-dire une entrée
-    présentée comme curée sans être dans l'allowlist, exactement le mensonge que
-    le garde-fou ne doit jamais dire.
+    marqué `curee=False` ici même, et tout ce qui arrive par `admissions` reçoit
+    son `admission` ici aussi. Se fier au drapeau de l'appelant laisserait une
+    entrée d'amont oubliée à `curee=True` — c'est-à-dire une entrée présentée
+    comme curée sans être dans l'allowlist, exactement le mensonge que le
+    garde-fou ne doit jamais dire.
+
+    ⚠ **Les admissions arrivent TOUTES par le même argument**, actives et
+    révoquées, et c'est le registre qui trie : le magasin est le journal, il
+    n'a pas à décider ce qui autorise. Une révoquée n'entre nulle part dans les
+    listes — elle est gardée de côté pour que `instancier` puisse **nommer** la
+    révocation au lieu de rendre le refus d'un id inconnu.
     """
 
     def __init__(
@@ -427,6 +703,8 @@ class RegistreMcp:
         provenance: Provenance | None = None,
         *,
         decouvertes: Iterable[EntreeRegistre] = (),
+        admissions: Iterable[Admission] = (),
+        signaux: Iterable[SignalAmont] = (),
         provenance_decouverte: ProvenanceDecouverte | None = None,
     ) -> None:
         index: dict[str, EntreeRegistre] = {}
@@ -446,9 +724,20 @@ class RegistreMcp:
             # Toute entrée curée doit être instanciable : on valide le gabarit
             # dès la construction, jamais un registre à moitié bon.
             entree.vers_serveur()
-            index[entree.id] = replace(entree, curee=True)
+            index[entree.id] = replace(entree, curee=True, admission=None)
         self._entrees = index
-        self._decouvertes, self._ecartees = self._indexe_decouvertes(decouvertes)
+        self._signaux = tuple(signaux)
+        self._signaux_par_id: dict[str, tuple[SignalAmont, ...]] = {}
+        for signal in self._signaux:
+            self._signaux_par_id[signal.id] = (
+                *self._signaux_par_id.get(signal.id, ()),
+                signal,
+            )
+        self._admissions, self._revoquees, self._admissions_ecartees = self._indexe_admissions(
+            admissions
+        )
+        self._decouvertes, ecartees = self._indexe_decouvertes(decouvertes)
+        self._ecartees = (*self._admissions_ecartees, *ecartees)
         self.provenance = provenance or PROVENANCE
         self.provenance_decouverte = replace(
             provenance_decouverte or ProvenanceDecouverte(),
@@ -465,6 +754,62 @@ class RegistreMcp:
         )
         self._foins = {e.id: _foin(e) for e in self._toutes}
 
+    def _indexe_admissions(
+        self, admissions: Iterable[Admission]
+    ) -> tuple[dict[str, Admission], dict[str, Admission], tuple[str, ...]]:
+        """Range les admissions, et **fait entrer les actives dans l'allowlist**.
+
+        Rend `(actives, révoquées, écartées)` et **complète `self._entrees`** au
+        passage : c'est le seul endroit où une entrée d'amont devient montable,
+        et le mettre ailleurs reviendrait à avoir deux portes d'admission.
+
+        Comme les découvertes, une admission fautive est **écartée et comptée**,
+        jamais propagée en exception : le journal est de la donnée d'installation
+        que la Control Tower écrit à chaud, pas du code relu en revue. Mais
+        l'asymétrie du lot 3 se resserre d'un cran ici, parce que ce qui est en
+        jeu n'est plus l'affichage mais le **montage** : une admission dont
+        l'id heurte le seed est écartée (le seed gagne, règle 2 du module), une
+        admission dont le gabarit ne se monterait pas l'est aussi — mieux vaut
+        une entrée absente de la bibliothèque qu'une entrée montable dont
+        personne n'a validé le gabarit.
+        """
+        actives: dict[str, Admission] = {}
+        revoquees: dict[str, Admission] = {}
+        ecartees: list[str] = []
+        for admission in admissions:
+            if not admission.active:
+                # Une révocation ne s'écarte pas : elle se garde de côté, c'est
+                # ce qui permet à `instancier` de nommer ce qui s'est passé.
+                revoquees[admission.id] = admission
+                continue
+            if admission.id in ID_RESERVES:
+                ecartees.append(f"{admission.id} (admission — id réservé par une route)")
+                continue
+            if admission.id in self._entrees:
+                ecartees.append(f"{admission.id} (admission — déjà curé, le seed gagne)")
+                continue
+            if admission.id in actives:
+                ecartees.append(f"{admission.id} (admission — doublon dans le journal)")
+                continue
+            entree = admission.entree
+            if entree.mode_auth not in MODES_AUTH:
+                ecartees.append(f"{admission.id} (admission — mode d'auth {entree.mode_auth!r})")
+                continue
+            try:
+                entree.vers_serveur()
+            except ValueError as exc:
+                ecartees.append(f"{admission.id} (admission — {exc})")
+                continue
+            actives[admission.id] = admission
+            self._entrees[admission.id] = replace(
+                entree,
+                id=admission.id,
+                curee=True,
+                admission=admission,
+                signaux=self._signaux_par_id.get(admission.id, ()),
+            )
+        return actives, revoquees, tuple(ecartees)
+
     def _indexe_decouvertes(
         self, decouvertes: Iterable[EntreeRegistre]
     ) -> tuple[dict[str, EntreeRegistre], tuple[str, ...]]:
@@ -472,18 +817,28 @@ class RegistreMcp:
 
         Rend l'index et les ids écartés avec leur cause. Quatre motifs d'écart,
         et l'ordre est celui de la gravité décroissante : un id **réservé** par
-        une route, une **collision avec le seed** (le curé gagne : c'est lui qui
-        est instanciable, le masquer le rendrait injoignable), un **doublon**
+        une route, une **collision avec l'allowlist** (le curé gagne : c'est lui
+        qui est instanciable, le masquer le rendrait injoignable), un **doublon**
         d'amont, et un gabarit qui **ne se monterait pas**. Ce dernier ne devrait
         pas arriver — la traduction valide déjà —, et c'est précisément pourquoi
         on le rattrape ici plutôt que de parier dessus : la bibliothèque entière
         tomberait sur une seule ligne fautive d'un fichier qu'on ne relit pas.
+
+        ⚠ Une entrée **admise** est dans l'allowlist, donc sa jumelle d'amont
+        tombe sous la collision — et c'est voulu : les deux sont la *même*
+        entrée, celle qui est servie est la version **figée** de l'admission et
+        non la traduction du miroir d'aujourd'hui (#678, règle 1). La cause le
+        dit avec un autre mot que « le seed gagne », faute de quoi on chercherait
+        au seed une entrée qui n'y est pas.
         """
         index: dict[str, EntreeRegistre] = {}
         ecartees: list[str] = []
         for entree in decouvertes:
             if entree.id in ID_RESERVES:
                 ecartees.append(f"{entree.id} (id réservé par une route)")
+                continue
+            if entree.id in self._admissions:
+                ecartees.append(f"{entree.id} (déjà admise — la version admise fait foi)")
                 continue
             if entree.id in self._entrees:
                 ecartees.append(f"{entree.id} (déjà curé — le seed gagne)")
@@ -508,9 +863,45 @@ class RegistreMcp:
 
         Nommées et non tues : une bibliothèque qui sert 24 998 entrées sur 25 000
         doit pouvoir dire lesquelles manquent, sinon l'écart entre le compte du
-        miroir et le sien est un mystère plutôt qu'une information.
+        miroir et le sien est un mystère plutôt qu'une information. Les
+        admissions écartées y figurent aussi, préfixées `admission —` : ce sont
+        les plus graves de toutes, puisqu'un geste humain les avait autorisées.
         """
         return self._ecartees
+
+    @property
+    def signaux(self) -> tuple[SignalAmont, ...]:
+        """Tout ce que l'amont dit des entrées admises **depuis** leur admission (#678)."""
+        return self._signaux
+
+    def admissions(self, *, revoquees: bool = False) -> tuple[Admission, ...]:
+        """Le journal des admissions **actives**, ou les révoquées (`revoquees=True`).
+
+        Deux listes et non une avec un drapeau à filtrer : les appelants sont
+        deux — l'écran des admissions veut les actives, l'audit d'une révocation
+        veut les autres —, et un seul verbe rendant tout obligerait chacun à
+        redire la règle de tri.
+        """
+        journal = self._revoquees if revoquees else self._admissions
+        return tuple(sorted(journal.values(), key=lambda a: (a.le, a.id)))
+
+    def admission_de(self, id: str) -> Admission | None:
+        """L'admission **active** qui a fait entrer `id` dans l'allowlist, ou None."""
+        return self._admissions.get(id)
+
+    def revocation_de(self, id: str) -> Admission | None:
+        """L'admission **révoquée** de `id`, ou None — ce qui nomme un refus (#678).
+
+        Gardée de côté et jamais listée : elle n'autorise plus rien, mais sans
+        elle un serveur retiré de l'allowlist se refuserait avec les mots d'un id
+        inconnu, et le pool d'un projet ne saurait pas dire *pourquoi* une
+        intégration montée hier n'est plus curée aujourd'hui.
+        """
+        return self._revoquees.get(id)
+
+    def signaux_de(self, id: str) -> tuple[SignalAmont, ...]:
+        """Ce que l'amont dit de l'entrée `id` depuis son admission — () si rien."""
+        return self._signaux_par_id.get(id, ())
 
     @classmethod
     def curee(cls) -> RegistreMcp:
@@ -524,27 +915,36 @@ class RegistreMcp:
     def lister(self, source: str = SOURCE_TOUTES) -> tuple[EntreeRegistre, ...]:
         """Les entrées de `source`, **curées d'abord puis les plus courantes** (`_rang`).
 
-        `source` vaut `toutes` (défaut), `curee` ou `decouverte` — une valeur
-        inconnue lève plutôt que de servir silencieusement autre chose que ce
-        qu'on lui demande.
+        `source` vaut `toutes` (défaut), `curee`, `admise` ou `decouverte` — une
+        valeur inconnue lève plutôt que de servir silencieusement autre chose que
+        ce qu'on lui demande.
+
+        ⚠ `curee` rend le **seed seul** depuis #678, pas tout ce qui est
+        montable : les admises ont leur propre valeur. C'est le filtre d'un écran
+        qui montre la provenance, et il n'y a pas d'ambiguïté à lever — ce qui
+        répond à « montable ? » est le champ `curee` d'une entrée, jamais le
+        filtre qui l'a servie.
         """
         if source == SOURCE_TOUTES:
             return self._toutes
-        if source == SOURCE_CUREE:
-            return tuple(e for e in self._toutes if e.curee)
-        if source == SOURCE_DECOUVERTE:
-            return tuple(e for e in self._toutes if not e.curee)
+        if source in SOURCES:
+            return tuple(e for e in self._toutes if e.source == source)
         raise ValueError(
             f"source de registre MCP inconnue : {source!r} (attendu : {', '.join(SOURCES)})."
         )
 
     def get(self, id: str) -> EntreeRegistre | None:
-        """L'entrée **curée** d'id `id`, ou None si elle n'est pas dans l'allowlist.
+        """L'entrée de l'**allowlist** d'id `id`, ou None si elle n'y est pas.
 
         ⚠ Volontairement aveugle aux découvertes, et c'est le garde-fou : ses
         appelants (`POST /api/mcp/pool`, l'enrichissement du pool) demandent « ce
         serveur est-il montable ? » et non « existe-t-il ? ». Pour la seconde
         question, `trouver`.
+
+        L'allowlist contient le seed **et** les entrées admises (#678) : c'est la
+        définition même de l'admission, et c'est pourquoi cette méthode n'a pas
+        eu une ligne à changer — les admises entrent dans le même index, en
+        amont d'elle.
         """
         return self._entrees.get(id)
 
@@ -573,7 +973,7 @@ class RegistreMcp:
         marchent (« tickets » vit dans les tags, mais « merge request » vit dans
         une description).
 
-        ⚠ C'est **notre** recherche qui joue sur les deux sources, et c'est la
+        ⚠ C'est **notre** recherche qui joue sur toutes les sources, et c'est la
         décision du parent (#673) : celle de l'amont est une sous-chaîne sur le
         seul nom (`feature flag` y rend zéro résultat sur 25 000 entrées). On
         moissonne chez lui, on cherche chez nous.
@@ -591,7 +991,7 @@ class RegistreMcp:
         cul-de-sac se sort en montrant *par quoi* on peut chercher, jamais en
         répétant que la requête est vide de résultats.
 
-        Les deux sources y contribuent, ce qui ne change rien aujourd'hui :
+        Toutes les sources y contribuent, ce qui ne change rien aujourd'hui :
         l'amont ne déclare aucun tag et la traduction n'en fabrique pas (#676).
         Composer quand même évite qu'un jour où il en déclarerait, la moitié des
         pistes reste invisible faute d'avoir pensé à toucher cette méthode.
@@ -599,22 +999,71 @@ class RegistreMcp:
         return tuple(sorted({tag for e in self._toutes for tag in e.tags}))
 
     def instancier(self, id: str, *, nom: str | None = None) -> ServeurMcp:
-        """Instancie l'entrée curée `id` en `ServeurMcp` montable — **garde-fou supply-chain**.
+        """Instancie l'entrée `id` de l'allowlist en `ServeurMcp` — **garde-fou supply-chain**.
 
-        Seule une entrée de l'allowlist curée est instanciable (docs/19,
-        découverte ≠ installation) : un `id` inconnu du registre lève
-        `ValueError` sans rien monter. C'est l'unique voie template → liaison ;
-        le montage effectif (résolution des `${VAR}`) reste le rôle de
-        `maestro.agents.mcp.resolus`.
+        Seule une entrée de l'allowlist est instanciable (docs/19, découverte ≠
+        installation) : un `id` qui n'y est pas lève `ValueError` sans rien
+        monter. C'est l'unique voie template → liaison ; le montage effectif
+        (résolution des `${VAR}`) reste le rôle de `maestro.agents.mcp.resolus`.
+
+        ⚠ **Le refus nomme le geste qui manque** (#678, critère 1). Trois causes
+        et non une, parce qu'elles n'appellent pas le même geste : une entrée
+        **découverte** attend une admission, une entrée **révoquée** attend une
+        décision qu'on a déjà prise une fois contre elle, un id **inconnu**
+        n'attend rien. Le « hors allowlist » unique d'avant les confondait, et
+        c'est ce qui rendait la découverte un cul-de-sac : rien à l'écran ne
+        disait qu'il existait une porte, ni où elle était.
         """
         entree = self._entrees.get(id)
         if entree is None:
-            raise ValueError(
-                f"serveur MCP {id!r} hors allowlist curée : non instanciable "
-                "(découverte ≠ installation — un serveur doit être curé dans le "
-                "registre avant d'être monté ; voir docs/19)."
-            )
+            raise ValueError(self.cause_non_instanciable(id))
         return entree.vers_serveur(nom=nom)
+
+    def cause_non_instanciable(self, id: str) -> str:
+        """Pourquoi `id` n'est pas montable — **la phrase, à un seul endroit**.
+
+        Publique parce qu'elle a deux appelants et qu'ils doivent dire la même
+        chose : `instancier`, qui lève, et `POST /api/mcp/pool`, qui refuse en
+        404 **avant** d'instancier. Recopier la phrase dans la route la ferait
+        diverger au premier ajustement — et c'est justement la phrase qui porte
+        le critère 1 du ticket, celle qui nomme le geste manquant.
+
+        ⚠ **La révocation est cherchée en premier, et l'ordre est le contenu de
+        la décision.** Une entrée révoquée redevient une découverte — plus rien
+        ne l'écarte de l'index d'amont —, donc les deux causes sont vraies à la
+        fois et la plus informative doit gagner : « personne ne l'a admise » est
+        exact et trompeur sur une entrée qu'on a admise puis retirée, où la
+        question n'est pas « comment l'admettre ? » mais « pourquoi l'a-t-on
+        sortie ? ». L'ordre inverse était la première version de ce code ; le
+        banc de vérification l'a prise en défaut.
+        """
+        revoquee = self._revoquees.get(id)
+        if revoquee is not None:
+            quand = revoquee.revoquee_le or "?"
+            qui = revoquee.revoquee_par or "?"
+            motif = f" — {revoquee.motif}" if revoquee.motif else ""
+            return (
+                f"serveur MCP {id!r} : son admission a été **révoquée** le {quand} "
+                f"par {qui}{motif}. Il n'est plus dans l'allowlist et n'est donc "
+                "plus instanciable ; le ré-admettre (POST /api/mcp/admissions) est "
+                "un nouveau geste, à poser en connaissance de la révocation."
+            )
+        decouverte = self._decouvertes.get(id)
+        if decouverte is not None:
+            version = f" (version {decouverte.version})" if decouverte.version else ""
+            return (
+                f"serveur MCP {id!r} découvert{version} mais **non admis** : non "
+                "instanciable. Une entrée du registre officiel n'est pas dans "
+                "l'allowlist tant qu'un humain ne l'y a pas fait entrer — c'est "
+                "l'admission (POST /api/mcp/admissions), un geste tracé qui fige "
+                "la version et enregistre qui l'a admise. Découverte ≠ "
+                "installation : voir docs/19."
+            )
+        return (
+            f"serveur MCP {id!r} hors allowlist : non instanciable (découverte ≠ "
+            "installation — un serveur doit être curé dans le registre, ou admis "
+            "depuis le registre officiel, avant d'être monté ; voir docs/19)."
+        )
 
 
 def _normalise(texte: str) -> str:
@@ -631,6 +1080,17 @@ def _foin(entree: EntreeRegistre) -> str:
     )
 
 
+#: Le rang de chaque source dans le tri (`_rang`) — **montables d'abord**, et
+#: parmi elles le seed avant les admises : ce qui a été relu en revue de code
+#: passe avant ce qu'un clic a promu hier. Un ordre et non un `bool`, parce
+#: qu'ils sont trois depuis #678.
+_RANG_SOURCE: dict[str, int] = {
+    SOURCE_CUREE: 0,
+    SOURCE_ADMISE: 1,
+    SOURCE_DECOUVERTE: 2,
+}
+
+
 def _rang(entree: EntreeRegistre) -> tuple[int, int, str]:
     """La clé de tri : **source**, puis palier d'usage décroissant, puis nom.
 
@@ -641,12 +1101,100 @@ def _rang(entree: EntreeRegistre) -> tuple[int, int, str]:
     critère du ticket exclut. À source et palier égaux, l'ordre reste
     alphabétique : stable, et sans faux gagnant.
     """
-    return (0 if entree.curee else 1, -entree.popularite, _normalise(entree.nom))
+    return (
+        _RANG_SOURCE.get(entree.source, len(_RANG_SOURCE)),
+        -entree.popularite,
+        _normalise(entree.nom),
+    )
 
 
 def _secrets(*variables: tuple[str, str, bool]) -> tuple[VariableSecret, ...]:
     """Petit constructeur du seed : `(clé, description, secret)` → `VariableSecret`."""
     return tuple(VariableSecret(cle, description, secret) for cle, description, secret in variables)
+
+
+def _texte(valeur: object) -> str:
+    """`valeur` si c'est une chaîne, sinon la chaîne vide — jamais un `str(dict)`."""
+    return valeur if isinstance(valeur, str) else ""
+
+
+def _table(valeur: object) -> dict[str, str]:
+    """Une table `str → str` lue d'un JSON — les valeurs non textuelles sont écartées."""
+    if not isinstance(valeur, Mapping):
+        return {}
+    return {str(cle): v for cle, v in valeur.items() if isinstance(v, str)}
+
+
+def _mots(valeur: object) -> tuple[str, ...]:
+    """Une liste de chaînes lue d'un JSON — les éléments non textuels sont écartés."""
+    if not isinstance(valeur, list):
+        return ()
+    return tuple(v for v in valeur if isinstance(v, str))
+
+
+def entree_depuis_dict(brut: Mapping[str, Any]) -> EntreeRegistre:
+    """Relit une `EntreeRegistre` écrite par `to_dict` — la moitié manquante du couple.
+
+    Le module savait **émettre** une entrée depuis #131 ; il n'avait jamais eu à
+    en relire une, le seed étant du code. La porte d'admission (#678) enregistre
+    l'entrée traduite sur le disque, donc il faut savoir la reprendre : c'est
+    cette fonction, et c'est le seul décodeur du dépôt pour cette forme (la
+    recopier ailleurs ferait deux lectures à tenir d'accord).
+
+    **Tolérant sur la forme, strict sur l'identité.** Un champ absent ou d'un
+    type inattendu prend son défaut — un journal écrit par une version
+    antérieure reste relisible, et le schéma amont bouge (préversion). L'`id`,
+    lui, est requis : sans identité, l'entrée n'est ni indexable ni révocable.
+
+    ⚠ `curee`, `admission` et `signaux` ne sont **pas** relus : ils sont posés
+    par `RegistreMcp` selon l'argument qui porte l'entrée (voir sa docstring).
+    Les relire ferait entrer dans l'allowlist une entrée qui s'y déclarerait
+    elle-même — précisément ce que la porte d'admission existe pour empêcher.
+    """
+    id_ = _texte(brut.get("id")).strip()
+    if not id_:
+        raise ValueError("entrée de registre MCP invalide : « id » requis.")
+    secrets_bruts = brut.get("secrets")
+    secrets: list[VariableSecret] = []
+    for secret in secrets_bruts if isinstance(secrets_bruts, list) else []:
+        if not isinstance(secret, Mapping):
+            continue
+        cle = _texte(secret.get("cle")).strip()
+        if cle:
+            secrets.append(
+                VariableSecret(
+                    cle=cle,
+                    description=_texte(secret.get("description")),
+                    secret=bool(secret.get("secret", True)),
+                )
+            )
+    brut_palier = brut.get("popularite")
+    # `isinstance(True, int)` est vrai en Python : un `true` JSON deviendrait un
+    # palier de 1, c'est-à-dire un rang de tri fabriqué à partir d'un booléen.
+    palier: int = 0
+    if isinstance(brut_palier, int) and not isinstance(brut_palier, bool):
+        palier = brut_palier
+    return EntreeRegistre(
+        id=id_,
+        nom=_texte(brut.get("nom")) or id_,
+        description=_texte(brut.get("description")),
+        mode_auth=_texte(brut.get("mode_auth")),
+        transport=_texte(brut.get("transport")),
+        commande=_texte(brut.get("commande")),
+        args=_mots(brut.get("args")),
+        url=_texte(brut.get("url")),
+        env=_table(brut.get("env")),
+        headers=_table(brut.get("headers")),
+        tags=_mots(brut.get("tags")),
+        secrets=tuple(secrets),
+        procedure_url=_texte(brut.get("procedure_url")),
+        optionnel=bool(brut.get("optionnel", False)),
+        editeur=_texte(brut.get("editeur")),
+        popularite=palier,
+        version=_texte(brut.get("version")),
+        depot=_texte(brut.get("depot")),
+        statut=_texte(brut.get("statut")),
+    )
 
 
 #: D'où vient cette liste, et quand elle a été revue (#271) — **affiché** au pied

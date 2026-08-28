@@ -89,6 +89,10 @@ function integrationFactice(
     mode_auth: "oauth_importe",
     procedure_url: "",
     curee: true,
+    source: "curee",
+    admission: null,
+    signaux: [],
+    alerte: "",
     secrets: [],
     ...partiel,
   };
