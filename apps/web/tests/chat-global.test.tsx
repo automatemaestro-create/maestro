@@ -518,10 +518,19 @@ describe("diffuserMessageChat", () => {
     const vues: string[] = [];
     let recu = "";
 
-    await diffuserMessageChat(AGENT_ORCHESTRATION, "Salut", [], null, (trame) => {
-      vues.push(trame.type);
-      recu += trame.delta;
-    });
+    // `""` pour la conversation (#696) : « la plus récente », c'est-à-dire le
+    // corps exact d'avant ce lot — ce que le test d'à côté vérifie à l'octet près.
+    await diffuserMessageChat(
+      AGENT_ORCHESTRATION,
+      "Salut",
+      [],
+      null,
+      "",
+      (trame) => {
+        vues.push(trame.type);
+        recu += trame.delta;
+      },
+    );
 
     expect(vues).toEqual(["debut", "fragment", "fragment", "fin"]);
     // La promesse du contrat (docs/05 §6.5), vue du client : les `delta` seuls
