@@ -1040,6 +1040,104 @@ gl_milestone_verdict() {
   gl_milestone_section "$titre" "$GL_MS_VERDICT_SECTION" "${2:-}"
 }
 
+# --- Convocation au bouclage (#758, chantier #756) ------------------------------------------------
+# gl_milestones_a_boucler -> les jalons qui ATTENDENT LEUR BOUCLAGE : ACTIFS, ENTIÈREMENT SOLDÉS, et
+# dont le VERDICT n'est pas consigné (#757). Lecture seule intégrale.
+#
+# Sortie TSV (en-tête préfixée « # » ignorable par les consommateurs machine) :
+#     titre <TAB> rail <TAB> criteres <TAB> fermes <TAB> total
+# Codes : 0 = il y en a (table sur stdout) · 3 = aucun, RIEN sur stdout · 1 = forge muette.
+#
+# MUET QUAND IL N'Y A RIEN — pas même la ligne d'en-tête, à la différence de `queue.sh
+# --non-arbitres`, qui la rend toujours. C'est la règle de `gc --auto`, et elle compte ici parce que
+# ce verbe est relayé par `doctor.sh` et `/backlog`, deux sorties qu'on lit en entier : signaler
+# l'abstention nominale apprend à ne plus lire les signalements.
+#
+# CE QU'IL REMPLACE. Un jalon soldé était jusqu'ici signalé par `doctor.sh` comme « à fermer » — le
+# seul endroit du dépôt qui en parlait, et il nommait la MAUVAISE action : la décision finale,
+# proposée en sautant le geste qui doit la précéder. C'est la deuxième raison pour laquelle le
+# bouclage a disparu (#756 : 14 jalons fermés sans bilan) — personne n'a jamais été CONVOQUÉ.
+#
+# IL NE BOUCLE RIEN, N'ÉCRIT RIEN ET NE FERME AUCUN JALON (`docs/10 §3.4`, inchangé). Il nomme ce
+# qui manque, et l'appelant propose `/milestone-bilan "<titre>"` : c'est le partage de #562, #612 et
+# #714 — ce qui est automatique est la DÉTECTION DU MANQUE, jamais le verdict.
+#
+# CONSÉQUENCE ASSUMÉE : un jalon soldé DONT LE VERDICT EST ÉCRIT sort du signalement, alors même
+# qu'il reste ouvert. Sa fermeture demeure une décision humaine, mais elle n'est plus rappelée — et
+# c'est voulu : le verdict est le geste qu'on pouvait oublier, la fermeture est celui qu'on prend en
+# le lisant. Re-signaler « à fermer » derrière un bouclage rendu ferait de la convocation un bruit
+# permanent, exactement ce que la règle du muet écarte.
+#
+# UN SEUL ALLER, DESCRIPTIONS COMPRISES. La question porte sur TOUS les jalons actifs, et sa réponse
+# est dans la liste qu'on vient de lire : payer une lecture de forge PAR JALON pour relire une
+# description qu'on tenait déjà est précisément le défaut que la moitié « sur une description DÉJÀ
+# LUE » de `gl_section_de` a été écrite pour éviter (#757). D'où le REST plutôt que le GraphQL de
+# `gl_milestones` : `open_issues`/`closed_issues` y sont des champs plats, et `description` voyage
+# dans la même réponse — là où une table TSV ne peut pas porter un corps multiligne.
+#
+# LA RÈGLE DE RECONNAISSANCE DU VERDICT N'EST PAS RECOPIÉE : c'est `gl_verdict_de`, rejoué sur la
+# description qu'on tient. Une seconde formulation de « ce jalon a-t-il un verdict ? » finirait par
+# ne plus rendre la même réponse que le verbe qui l'écrit — même raison que `gl_rail_de` (#617) et
+# `gl_arbitrage_de` (#562). Idem pour le rail et les critères.
+#
+# LA COLONNE `criteres` EST INFORMATIVE ET NE FILTRE RIEN. Elle coûte zéro aller de plus (la
+# description est déjà là) et dit ce dont le bouclage aura besoin : « un bouclage sans critère de
+# sortie n'est qu'une opinion » (#757). Un jalon SANS critères est convoqué comme les autres —
+# l'absence de critères est un manque à combler AU bouclage, jamais une raison de ne pas convoquer.
+gl_milestones_a_boucler() {
+  local flux titre fermes total corps desc rail criteres sortie=""
+  gh_require || return 1
+
+  # `state=open` NARROW À LA SOURCE : un jalon fermé n'attend plus rien, son moment de bouclage est
+  # passé. C'est la moitié « actif » de la règle, tenue par l'URL plutôt que par un filtre de plus.
+  #
+  # La moitié « ENTIÈREMENT SOLDÉ » est le `select` : total > 0 et fermés == total, écrit sur les
+  # champs plats de REST. La même règle vit dans l'awk de `gh_current_milestone` (`etat_jalon`), qui
+  # ne peut pas l'appeler — il répond à une AUTRE question (« lequel est courant ? ») et doit en
+  # outre distinguer le VIDE (#619). Elle vivait à un TROISIÈME endroit, l'awk de `doctor.sh` :
+  # celui-là disparaît avec ce verbe, que `doctor.sh` appelle désormais.
+  #
+  # LA DESCRIPTION VOYAGE EN BASE64, et c'est ce qui garde UNE LIGNE PAR JALON : un corps multiligne
+  # ne tient pas dans un TSV, et tout marqueur en clair qui le délimiterait serait un jour écrit par
+  # quelqu'un dans un cadrage de jalon. L'encodage est byte-transparent — donc l'UTF-8 des titres et
+  # des descriptions traverse intact, ce qu'aucun aller-retour de décodage ne garantirait (#141).
+  #
+  # La ligne est composée par INTERPOLATION et non par `@tsv`, qui échapperait les contre-obliques
+  # du TITRE : ce titre est la clé qu'on repasse à `/milestone-bilan`, il doit sortir au bit près.
+  flux="$(gh api "repos/$GL_GH_REPO/milestones?state=open&per_page=100" --jq '
+    .[]
+    | select((.closed_issues // 0) > 0 and (.open_issues // 0) == 0)
+    | "\(.title)\t\(.closed_issues)\t\((.open_issues // 0) + (.closed_issues // 0))\t\((.description // "") | @base64)"
+  ')" || {
+    echo "gl_milestones_a_boucler : jalons illisibles (forge muette) — rien n'est conclu." >&2
+    return 1
+  }
+  [ -n "$flux" ] || return 3
+
+  while IFS=$'\t' read -r titre fermes total corps; do
+    [ -n "$titre" ] || continue
+    # ⚠ ASYMÉTRIE DES ERREURS, dans le sens sûr : un décodage en échec (impossible en pratique,
+    # l'encodeur étant le `@base64` de la ligne du dessus) rend une description VIDE, donc un jalon
+    # CONVOQUÉ sans critères. Convoquer à tort coûte une ligne de plus à lire ; taire un jalon soldé
+    # coûte le bouclage même qu'on rétablit.
+    desc="$(printf '%s' "$corps" | base64 -d 2>/dev/null)"
+
+    # Verdict déjà consigné : ce jalon est bouclé, il n'y a plus personne à convoquer.
+    printf '%s\n' "$desc" | gl_verdict_de >/dev/null 2>&1 && continue
+
+    criteres=non
+    printf '%s\n' "$desc" | gl_criteres_de >/dev/null 2>&1 && criteres=oui
+    rail="$(gl_rail_de "$desc")"
+    sortie="$sortie$(printf '%s\t%s\t%s\t%s\t%s' "$titre" "$rail" "$criteres" "$fermes" "$total")"$'\n'
+  done <<EOF
+$flux
+EOF
+
+  [ -n "$sortie" ] || return 3
+  printf '# titre\trail\tcriteres\tfermes\ttotal\n'
+  printf '%s' "$sortie"
+}
+
 # --- Sous-tickets (découpage parent / lots) -------------------------------------------------------
 # Convention (docs/10-workflow-git.md §5.1) : un besoin qui dépasse ~1 session de travail est porté
 # par un ticket PARENT de suivi auquel ses lots sont rattachés en SUB-ISSUES natives — `Issue.parent`
@@ -7867,6 +7965,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     milestone-rail)    gl_milestone_rail "$@" ;;
     milestone-criteres) gl_milestone_criteres "$@" ;;
     milestone-verdict)  gl_milestone_verdict "$@" ;;
+    milestones-a-boucler) gl_milestones_a_boucler ;;
     issue-link)     gl_issue_link "$@" ;;
     subticket-add)   gl_subticket_add "$@" ;;
     subticket-order) gl_subticket_order "$@" ;;
@@ -7982,6 +8081,8 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "                                      fichier — idempotent. 0=lus/écrits, 3=aucun, muet — #757)" >&2
       echo "  milestone-verdict <titre> [<fichier>]   (lit le verdict de bouclage du jalon, ou le pose depuis le" >&2
       echo "                                      fichier — idempotent. 0=lu/écrit, 3=aucun, muet — #757)" >&2
+      echo "  milestones-a-boucler               (jalons actifs entièrement soldés SANS verdict consigné : titre/rail/" >&2
+      echo "                                      critères/fermés/total, TSV. 0=il y en a, 3=aucun et muet — #758)" >&2
       echo "  slug <titre> | branch-prefix <type> | host   (hôte de la forge, déduit du remote)" >&2
       echo "  Sous-tickets (découpage parent/lots, docs/10 §5.1) :" >&2
       echo "    issue-link <iid-parent> <iid-lot> [--parallele]  (rattache un lot à son parent — alias de" >&2

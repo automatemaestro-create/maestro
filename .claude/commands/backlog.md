@@ -38,6 +38,15 @@ n'ouvrir qu'en cas de doute.
    aucun), `auteur`, `relecteur` (CSV des relecteurs posés, `-` si personne), `branche`, `titre`.
    Rattache une PR à son ticket via l'`iid` extrait du nom de branche (`<type>/<iid>-<slug>`).
 
+3 bis. Récupère la **convocation au bouclage** :
+   `bash scripts/gitlab/lib.sh milestones-a-boucler`. Sortie **TSV**, une ligne d'en-tête préfixée
+   `#` (à ignorer) puis une ligne par jalon : `titre`, `rail` (`produit`/`outillage`), `criteres`
+   (`oui`/`non` — des critères de sortie sont-ils consignés dans la description du jalon ?),
+   `fermes`, `total`. Le verbe ne rend que les jalons **actifs, entièrement soldés, et dont le
+   verdict de bouclage n'est pas encore consigné** — un jalon déjà bouclé en sort. Il est **muet**
+   quand il n'y a rien (code 3, aucune sortie, pas même l'en-tête) : dans ce cas **ne le mentionne
+   pas du tout**, ni en bloc, ni dans la synthèse.
+
 4. Rends un **compte rendu Markdown** clair. Commence par le bloc **⏳ PR en attente de revue**,
    **en tête de sortie** : c'est lui qui déclenche la relecture. Une ligne par PR de la file, dans
    l'ordre rendu (la plus ancienne d'abord) : `PR #<numéro>` — titre, ticket `#<iid>`, **ancienneté**
@@ -90,6 +99,23 @@ n'ouvrir qu'en cas de doute.
    relecture. Formule-le ainsi (« 2 PR bloquées, la plus ancienne depuis 4 j ») plutôt qu'en
    « à relire » : envoyer quelqu'un relire une PR qu'un conflit bloque lui fait perdre son temps sur
    un diff qui va changer.
+
+6. **Si — et seulement si — l'étape 3 bis a rendu au moins une ligne**, termine par un bloc
+   **🏁 Jalon à boucler**. Une ligne par jalon : le titre, l'avancement `<fermes>/<total>`, le rail,
+   puis l'action — `/milestone-bilan "<titre>"`, qui démontre le livrable **sur pièces** et rend un
+   **verdict** (GO / GO avec réserves / NO-GO) avant la fermeture. Quand `criteres` vaut `non`,
+   dis-le sur sa ligne : sans critères de sortie, un bilan n'a rien contre quoi se mesurer et n'est
+   qu'une opinion (#757) — les poser vient d'abord
+   (`bash scripts/gitlab/lib.sh milestone-criteres "<titre>" <fichier>`).
+
+   Formule-le comme une **convocation**, pas comme un rappel de fermeture : ce qui manque à un jalon
+   soldé n'est pas le clic de fermeture, c'est le bilan qui doit le précéder — c'est la raison pour
+   laquelle le geste avait disparu du dépôt (14 jalons fermés sans bouclage, #756).
+
+   ⚠ **Tu ne boucles rien, ne rends aucun verdict et ne fermes aucun jalon.** La fermeture d'un
+   milestone reste une décision humaine (docs/10 §3.4) et le verdict est un jugement, jamais une
+   déduction : cette commande **propose la commande**, elle ne la joue pas. C'est le partage de
+   #562, #612 et #714 — ce qui est automatique est la **détection du manque**, jamais le verdict.
 
 Ne lance aucune commande d'écriture (`gh issue edit`, `gh pr merge`, `set-workflow`, `git push`…) :
 cette commande observe, elle n'agit pas.
