@@ -61,6 +61,28 @@
  *   le remettre dans la zone de saisie inviterait à l'envoyer deux fois. C'est
  *   `ErreurReponse` qui sépare ce cas d'un refus, où rien n'est parti.
  *
+ * ## Le fil se lit (#697)
+ *
+ * Trois choses, et la troisième est celle qu'on ne voit pas :
+ *
+ * - **le Markdown est rendu, du seul côté de l'agent** — voir
+ *   `chat/TexteMarkdown`, qui porte les deux décisions de fond (aucune chaîne de
+ *   HTML nulle part, et un titre de message n'est pas un titre du document). Ce
+ *   que l'utilisateur a tapé se relit tel qu'il l'a tapé ;
+ * - **les journées sont séparées** (`lib/journees`) : sans le trait daté, deux
+ *   bulles à trois jours d'écart se suivaient comme deux répliques ;
+ * - **les états transitoires ont une place, et elle est au PIED du fil.** C'est
+ *   le critère « lisibles sans faire sauter le fil », et le défaut n'était pas
+ *   qu'ils manquaient — c'est qu'ils s'inséraient **ailleurs que là où on
+ *   lit** : « Fil illisible » se posait *au-dessus* de la conversation, donc son
+ *   apparition poussait tous les messages vers le bas d'un coup ; l'échec d'envoi
+ *   se posait *sous* le composeur, c'est-à-dire sous une barre `sticky`, donc
+ *   hors de l'écran et en allongeant la page. Les deux rejoignent l'attente et la
+ *   réponse en cours à la fin du `<ol>`, dans l'ordre où ils arrivent : le fil
+ *   grandit **par le bas**, ce que le recollement suit déjà, et rien de ce qui
+ *   est déjà lu ne bouge. Aucun de ces états n'est annoncé deux fois — la région
+ *   live compte les messages (#538), les `role="alert"` disent les fautes.
+ *
  * ## Ce qu'il ne fait pas
  *
  * Il ne charge rien : le fil lui est **passé** (`useChat`, historique REST +
@@ -68,11 +90,20 @@
  * canal — seulement comment le rendre.
  */
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import { BulleFil } from "@/components/chat/BulleFil";
+import { SeparateurDeJour } from "@/components/chat/SeparateurDeJour";
 import { SourcesDuFil } from "@/components/chat/SourcesDuFil";
 import { SourcesDuMessage } from "@/components/chat/SourcesDuMessage";
+import { TexteMarkdown } from "@/components/chat/TexteMarkdown";
 import { RefusSource } from "@/components/composer/RefusSource";
 import {
   IconeFermer,
@@ -83,6 +114,7 @@ import {
 import {
   BadgeEtat,
   Bouton,
+  CLASSE_CONTROLE,
   EnTeteSection,
   LienRenvoi,
   type Icone,
@@ -93,6 +125,8 @@ import { mesureDesMessages } from "@/lib/annonces";
 import { ErreurReponse, ErreurSource } from "@/lib/api";
 import { ascenseurDe, estEnBas } from "@/lib/defilement";
 import { useEtatGlobal } from "@/lib/etatGlobal";
+import { useHorloge } from "@/lib/horloge";
+import { jourDe, libelleDuJour } from "@/lib/journees";
 import { entreeParLibelle, hrefRun } from "@/lib/navigation";
 import {
   CHAT_AUTEUR_UTILISATEUR,
@@ -172,6 +206,10 @@ export function Conversation({
   const [refusSource, setRefusSource] = useState<ErreurSource | null>(null);
   const [sourcesOuvertes, setSourcesOuvertes] = useState(false);
   const [survol, setSurvol] = useState(false);
+  // L'horloge partagée (#250) : elle ne sert qu'aux séparateurs de journée, qui
+  // disent « Aujourd'hui » et « Hier » — donc `null` tant qu'elle n'a pas
+  // démarré, et une date absolue en attendant (`lib/journees`).
+  const maintenant = useHorloge();
   // La sentinelle de fin de fil : elle ne sert qu'à désigner l'ascenseur qui
   // porte la conversation (`lib/defilement`). Depuis #691 le fil n'a plus de
   // conteneur défilant à lui, donc plus rien à tenir par une `ref`.
@@ -287,13 +325,30 @@ export function Conversation({
   const enTrainDEcrire =
     reponseEnCours !== null && reponseEnCours.texte !== "" ? reponseEnCours : null;
 
+  /**
+   * La journée que chaque message **ouvre**, ou `null` s'il ne fait que
+   * continuer celle du précédent (#697).
+   *
+   * Calculé ici plutôt que dans la boucle de rendu : c'est une propriété de la
+   * **suite** des messages et non de l'un d'eux, et un message ne peut pas
+   * répondre seul à « suis-je le premier de mon jour ? ». Deux règles y sont
+   * lisibles d'un coup — jamais de trait devant le premier message (il n'ouvre
+   * rien, il occupe une ligne), et un horodatage illisible ne compte pour aucune
+   * journée, donc n'en ouvre ni n'en ferme aucune (`lib/journees`).
+   */
+  const ouvertures = messages.map((message, index) => {
+    const jour = jourDe(message.horodatage);
+    if (jour === null || index === 0) return null;
+    return jour === jourDe(messages[index - 1].horodatage) ? null : jour;
+  });
+
   return (
     <section
       aria-label={libelle}
       className={
         "flex min-w-0 flex-1 flex-col gap-3 rounded-md " +
         (survol
-          ? "outline-dashed outline-2 outline-offset-4 outline-emerald-500 "
+          ? "outline-dashed outline-2 outline-offset-4 outline-accent "
           : "") +
         className
       }
@@ -356,14 +411,6 @@ export function Conversation({
         />
       )}
       {bandeau}
-      {erreur && (
-        <p
-          role="alert"
-          className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950 dark:text-rose-300"
-        >
-          Fil illisible : {erreur}
-        </p>
-      )}
       {/* Le fil **n'a plus d'ascenseur à lui** (#691) : plus de `max-h`, plus
           d'`overflow-y`, plus de cadre. Il s'étend, et c'est la page qui le
           parcourt — un seul ascenseur pour un seul contenu, là où la boîte en
@@ -383,23 +430,37 @@ export function Conversation({
         // et rien n'est donc jamais coupé en haut.
         className="flex flex-1 flex-col justify-end gap-3 py-1"
       >
+        {/* Les trois états d'un fil sans messages, sur les jetons du socle comme
+            les bulles (#697) : `text-neutral-500` valait 4,83:1 et
+            `text-neutral-400` 2,58:1 ailleurs dans le produit — c'est ce que
+            `texte-secondaire` remplace partout, avec ses deux thèmes. */}
         {chargement && (
-          <li className="text-sm text-neutral-500">Chargement du fil…</li>
+          <li className="text-corps text-texte-secondaire">Chargement du fil…</li>
         )}
         {filVide && accueil !== undefined && (
-          <li className="rounded-lg bg-neutral-100 px-3 py-2 text-sm text-neutral-700 dark:bg-neutral-800 dark:text-neutral-200">
+          <li className="rounded-lg bg-surface-creuse px-3 py-2 text-corps text-texte">
             {accueil}
           </li>
         )}
         {filVide && accueil === undefined && (
-          <li className="text-sm text-neutral-500">
+          <li className="text-corps text-texte-secondaire">
             Aucun message pour l&apos;instant — écrire ci-dessous engage la
             conversation.
           </li>
         )}
-        {messages.map((message, index) => (
-          <Bulle key={`${message.horodatage}-${index}`} message={message} />
-        ))}
+        {messages.map((message, index) => {
+          const ouverture = ouvertures[index];
+          return (
+            <Fragment key={`${message.horodatage}-${index}`}>
+              {ouverture !== null && (
+                <SeparateurDeJour
+                  libelle={libelleDuJour(ouverture, maintenant)}
+                />
+              )}
+              <Bulle message={message} />
+            </Fragment>
+          );
+        })}
         {/* La réponse qui s'écrit (#695) : une bulle d'interlocuteur ordinaire,
             à sa place dans le fil — c'est ce que « on voit la réponse
             s'écrire » veut dire. Elle disparaît sur la trame de clôture, où le
@@ -411,10 +472,43 @@ export function Conversation({
             que ça travaille. C'était le défaut de départ — un indicateur
             immobile sur toute la génération, où rien ne distinguait une réponse
             longue d'un blocage. Une bulle vide à curseur aurait pu tenir ce
-            rôle, mais elle dit « il a commencé » quand rien n'est encore venu. */}
+            rôle, mais elle dit « il a commencé » quand rien n'est encore venu.
+            `min-h-6` : la ligne réserve sa place et la rend d'un bloc quand la
+            bulle la remplace, au lieu de la céder par à-coups (#697). */}
         {envoi && enTrainDEcrire === null && (
-          <li className="text-sm italic text-neutral-500">
+          <li className="flex min-h-6 items-center text-corps italic text-texte-secondaire">
             {interlocuteur} répond…
+          </li>
+        )}
+        {/* Les deux fautes, au **pied du fil** et non de part et d'autre de lui
+            (#697) : « Fil illisible » se posait au-dessus de la conversation et
+            poussait tous les messages d'un coup ; l'échec d'envoi se posait sous
+            un composeur `sticky`, donc hors de l'écran. Ici, elles arrivent là
+            où l'œil est déjà, et le fil ne grandit que par le bas. */}
+        {erreur && (
+          <li
+            role="alert"
+            className="rounded-md border border-alerte bg-alerte-creux px-3 py-2 text-corps text-alerte-texte"
+          >
+            Fil illisible : {erreur}
+          </li>
+        )}
+        {echecEnvoi !== null && (
+          <li className="text-annexe text-alerte-texte" role="alert">
+            {echecEnvoi.cause}
+            {/* L'invitation à relancer (#695), et **seulement** quand le message
+                est acquis : ailleurs, le brouillon est déjà revenu dans la zone
+                de saisie et un Entrée suffit — le dire deux fois, dont une à
+                côté, ferait douter de ce qui est parti. Elle nomme le geste au
+                lieu de l'offrir : renvoyer d'ici recomposerait une demande que
+                le fil porte déjà, donc deux fois la même question. */}
+            {echecEnvoi.acquis && (
+              <>
+                {" "}
+                Votre message est resté au fil, et ce qui a été reçu de la
+                réponse aussi — redemandez pour relancer.
+              </>
+            )}
           </li>
         )}
       </ol>
@@ -494,11 +588,11 @@ export function Conversation({
             rows={2}
             placeholder={`Écrire à ${interlocuteur}… (Entrée envoie, Maj+Entrée saute une ligne)`}
             aria-label={`Message à ${interlocuteur}`}
-            className={
-              "w-full resize-y rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-sm " +
-              "text-neutral-900 shadow-sm focus:border-neutral-400 focus:outline-none " +
-              "dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100 dark:focus:border-neutral-600"
-            }
+            // L'apparence vient du socle (#697) : c'est le **même** contrôle que
+            // les champs du produit, et il n'en portait qu'une copie en couleurs
+            // brutes — dont un `focus:outline-none` qui retirait au clavier le
+            // seul repère que `CLASSE_CONTROLE` promet à chaque contrôle.
+            className={`${CLASSE_CONTROLE} resize-y`}
           />
           {/* Pendant qu'une réponse s'écrit, le bouton d'envoi **cède la
               place** à l'arrêt plutôt que de s'y ajouter : l'envoi est de toute
@@ -541,24 +635,6 @@ export function Conversation({
       {refusSource !== null && refusSource.index === null && (
         <RefusSource refus={refusSource} titre="Sources refusées" />
       )}
-      {echecEnvoi !== null && (
-        <p className="text-xs text-rose-600 dark:text-rose-400" role="alert">
-          {echecEnvoi.cause}
-          {/* L'invitation à relancer (#695), et **seulement** quand le message
-              est acquis : ailleurs, le brouillon est déjà revenu dans la zone
-              de saisie et un Entrée suffit — le dire deux fois, dont une à
-              côté, ferait douter de ce qui est parti. Elle nomme le geste au
-              lieu de l'offrir : renvoyer d'ici recomposerait une demande que le
-              fil porte déjà, donc deux fois la même question. */}
-          {echecEnvoi.acquis && (
-            <>
-              {" "}
-              Votre message est resté au fil, et ce qui a été reçu de la réponse
-              aussi — redemandez pour relancer.
-            </>
-          )}
-        </p>
-      )}
     </section>
   );
 }
@@ -579,24 +655,34 @@ export function Conversation({
  * la moitié qui compte : un texte arrêté ne se distingue pas d'une réponse
  * courte, c'est ce que `FluxInterrompu` a nommé côté canal (#693) et il faut le
  * dire à l'endroit où on vient de lire.
+ *
+ * ⚠ Elle rend le **même Markdown** que la bulle qui la remplacera (#697), et
+ * c'est ce qui la garde muette : rendre le texte brut pendant le flux puis le
+ * mettre en forme à la clôture reformaterait la réponse sous les yeux —
+ * paragraphes qui se recomposent, blocs de code qui apparaissent, hauteur qui
+ * change d'un coup. C'est exactement le saut que le second critère interdit. Le
+ * curseur est donc **passé** au rendu, qui le fond dans le dernier bloc plutôt
+ * que de l'ajouter dessous.
  */
 function BulleEnCours({ reponse }: { reponse: ReponseEnCours }) {
   return (
     <BulleFil auteur={reponse.auteur}>
-      <p className="whitespace-pre-wrap break-words">
-        {reponse.texte}
-        {!reponse.figee && (
-          <span
-            aria-hidden="true"
-            className={
-              "ms-0.5 inline-block h-3.5 w-0.5 translate-y-0.5 rounded-full bg-neutral-500 " +
-              "animate-pulse motion-reduce:animate-none dark:bg-neutral-400"
-            }
-          />
-        )}
-      </p>
+      <TexteMarkdown
+        texte={reponse.texte}
+        curseur={
+          reponse.figee ? undefined : (
+            <span
+              aria-hidden="true"
+              className={
+                "ms-0.5 inline-block h-3.5 w-0.5 translate-y-0.5 rounded-full bg-texte-secondaire " +
+                "animate-pulse motion-reduce:animate-none"
+              }
+            />
+          )
+        }
+      />
       {reponse.figee && (
-        <p className="mt-1 text-[11px] italic text-amber-700 dark:text-amber-300">
+        <p className="mt-1 text-micro italic text-attention-texte">
           Réponse interrompue — ce qui précède est incomplet.
         </p>
       )}
@@ -622,9 +708,17 @@ function Bulle({ message }: { message: MessageChat }) {
       utilisateur={utilisateur}
       horodatage={message.horodatage}
     >
-      {message.contenu !== "" && (
-        <p className="whitespace-pre-wrap break-words">{message.contenu}</p>
-      )}
+      {/* Le Markdown du **seul** côté de l'agent (#697) : c'est lui qui produit
+          des titres, des listes et du code, et c'est ce que le critère nomme.
+          Ce que l'utilisateur a tapé se relit tel qu'il l'a tapé — astérisques
+          comprises —, sur la seule surface du produit où il est l'auteur : le
+          reformater lui ferait dire autre chose que ce qu'il a écrit. */}
+      {message.contenu !== "" &&
+        (utilisateur ? (
+          <p className="whitespace-pre-wrap break-words">{message.contenu}</p>
+        ) : (
+          <TexteMarkdown texte={message.contenu} />
+        ))}
       {/* Ce que le message a porté, et ce qui en a été lu (#482, critères 1 et
           3) — sous le texte parce que c'est la pièce jointe qui accompagne le
           propos, et non l'inverse. Rend `null` quand il n'y a aucune source :
@@ -688,9 +782,13 @@ function Suite({ message }: { message: MessageChat }) {
     });
   }
 
+  // Sur les jetons du socle depuis #697, comme le reste de la bulle. Le
+  // `text-[11px]` d'origine **était** le pas `text-micro` (0,6875 rem), écrit à
+  // la main : c'est le symptôme que la doc du socle nomme pour dire qu'un pas
+  // manque — sauf qu'ici il ne manquait pas.
   return (
-    <div className="mt-2 flex flex-col gap-1 border-t border-neutral-200/70 pt-2 dark:border-neutral-700/70">
-      <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-neutral-500 dark:text-neutral-400">
+    <div className="mt-2 flex flex-col gap-1 border-t border-bord pt-2">
+      <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-micro text-texte-secondaire">
         {runId !== "" && (
           <span className="inline-flex items-center gap-1">
             <IconeRuns className="size-3.5 shrink-0" />
@@ -710,7 +808,7 @@ function Suite({ message }: { message: MessageChat }) {
           </span>
         )}
         {enAttente.length > 0 && (
-          <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-300">
+          <span className="inline-flex items-center gap-1 text-attention-texte">
             <IconeValidations className="size-3.5 shrink-0" />
             {enAttente.length === 1
               ? "1 validation attend votre arbitrage"

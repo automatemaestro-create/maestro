@@ -372,8 +372,15 @@ export function BoutonLien({
  * `bord` est le filet au repos, `bord-fort` celui du focus (le bord qui
  * **identifie un contrôle**, soumis à WCAG 1.4.11, là où le premier est
  * décoratif), et le contour d'accent double le tout pour qui navigue au clavier.
+ *
+ * **Exporté** depuis #697 pour la zone de saisie du fil, qui ne peut pas être un
+ * `ChampTexte` — elle porte son propre `onKeyDown` (Entrée envoie, Maj+Entrée
+ * saute une ligne), son `onPaste` (une capture collée devient une source) et pas
+ * d'étiquette visible. Elle recopiait donc ces classes à la main, en couleurs
+ * brutes : deux définitions du même contrôle, dont une seule suivait le socle.
+ * L'apparence se prend ici ; le comportement reste à l'appelant.
  */
-const CLASSE_CONTROLE =
+export const CLASSE_CONTROLE =
   "w-full rounded-md border border-bord bg-surface px-3 py-1.5 text-corps " +
   "text-texte shadow-sm placeholder:text-texte-secondaire " +
   "focus:border-bord-fort focus-visible:outline-2 focus-visible:outline-offset-1 " +
