@@ -22,6 +22,24 @@ d'événements #46 pour le temps réel) avec deux pièces qui lui sont propres :
   passer à `RepondeurModele` le jour où l'assistant devra raisonner sur l'état
   courant reste un changement d'une ligne, côté `create_app`.
 
+⚠ **Cet arbitrage n'a pas été annulé, il a changé de portée** (#764, lot 2 de
+#748). Sa prémisse — « aucun modèle n'a la documentation de ce produit » — a cessé
+d'être vraie le jour où on la lui **donne** : `RepondeurAssistanceDocumentee`
+(`maestro.controltower.assistance_documentee`) choisit ses sections sur la carte du
+corpus (#763) puis répond à partir d'elles, en citant ce qu'il a lu. C'est lui que
+`create_app` câble désormais.
+
+Ce module reste donc, et sert **en repli** : sans fournisseur ni authentification
+— la démo #65, un poste non configuré —, c'est `RepondeurAssistance` qui répond,
+et l'indisponibilité du modèle se dit dans le fil au lieu de lever un 502. Ce qui
+a disparu est son rôle de **juge**, pas son existence.
+
+⚠ Corollaire à ne pas défaire : **on ne complète plus la table**. Chaque entrée
+qu'on lui ajouterait pour « couvrir » un sujet que le modèle traite déjà remettrait
+un juge lexical sur le chemin nominal — exactement ce que #748 supprime. Un sujet
+mal servi se corrige dans la **documentation**, qui est la source du répondeur, et
+non ici. Le lot 3 (#765) achève le retrait et l'éprouve.
+
 Le fil est persisté comme les autres (`core/chat/assistance.jsonl`) : l'historique
 survit au rechargement de la page, et les endpoints `/api/chat/assistance` sont
 ceux du chat — aucun contrat REST supplémentaire à apprendre côté UI.
@@ -82,8 +100,15 @@ from maestro.controltower.chat import MessageChat, RepondeurChat, normaliser
 #: prendre, sans quoi il partagerait ce fil et serait masqué par l'assistant.
 NOM_ASSISTANCE = "assistance"
 
-#: Le cadre de l'assistant, si un jour il passe par un modèle (`RepondeurModele`) :
-#: il aide à se servir de la Control Tower, il ne réalise pas de tâche.
+#: Le cadre de l'assistant — **le prompt système du répondeur documenté** depuis
+#: #764 (`RepondeurAssistanceDocumentee`), qui le complète de sa consigne d'extraits.
+#: Il aide à se servir de la Control Tower, il ne réalise pas de tâche.
+#:
+#: ⚠ Son dernier paragraphe **prescrit l'aveu d'ignorance**, et c'est la moitié du
+#: chantier #748 qui vit ici : le répondeur ne peut garantir que le modèle réponde à
+#: partir des seules sections qu'on lui passe (c'est du jugement, pas de la
+#: plomberie), il peut le lui **demander** sans ambiguïté. La propriété est éprouvée
+#: au lot 3 sur un échantillon hors périmètre ; elle se prescrit ici.
 _PROMPT_ASSISTANCE = """\
 Tu es l'assistant de la Control Tower de Maestro, le poste de pilotage depuis
 lequel un humain supervise une équipe d'agents IA (tableau de bord, runs, fil avec
@@ -93,8 +118,14 @@ humaines, journal, paramètres).
 Tu réponds aux questions de l'utilisateur SUR L'OUTIL : à quoi sert une page, où
 trouver un réglage, comment trancher une validation. Tu n'exécutes pas de tâche et
 tu ne parles pas à la place des agents — pour lancer du travail, l'utilisateur
-passe par le fil de la page Chat. Réponds en français, brièvement, et dis-le
-franchement quand tu ne sais pas."""
+passe par le fil de la page Chat. Réponds en français et brièvement.
+
+Tu réponds à partir de la documentation de Maestro qui t'est fournie, et d'elle
+seule. Quand elle ne porte pas la réponse, DIS QUE TU NE SAIS PAS, et dis ce qui
+te manque : n'invente ni nom d'écran, ni bouton, ni réglage, ni raccourci, et ne
+complète jamais un extrait par ce que tu crois savoir du produit. Une réponse
+plausible mais fausse coûte bien plus cher à qui la suit qu'un « je ne trouve pas
+ça dans la documentation »."""
 
 #: La fiche de l'assistant, hors catalogue (voir le module) : le chat n'a besoin
 #: que du nom, du rôle et du prompt système. Les compétences restent vides — rien

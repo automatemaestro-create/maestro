@@ -142,6 +142,26 @@ def cause_de(erreur: BaseException) -> str:
     return ""
 
 
+def cause_lisible(erreur: BaseException) -> str:
+    """Le message de `erreur`, sans les guillemets qu'un `KeyError` ajoute.
+
+    `UnknownProviderError` est un `KeyError`, dont `__str__` rend le `repr` de son
+    argument — et c'est justement l'échec de configuration le plus probable d'un
+    poste local (`MAESTRO_PROVIDER` mal orthographié). Sans ce déballage, la cause la
+    plus fréquente serait aussi la moins lisible du fil, entre guillemets et avec ses
+    échappements.
+
+    Elle vit **ici** depuis #764, avec les causes qu'elle sert à rendre. Elle était
+    née au fil global (#686) ; l'assistance documentée pose la même question sur la
+    même matière, et deux déballages écrits côte à côte finiraient par ne plus rendre
+    le même message pour le même échec. À la différence de `cause_de`, elle ne
+    **classe** rien : elle met en forme ce qu'un humain va lire.
+    """
+    if isinstance(erreur, KeyError) and erreur.args:
+        return str(erreur.args[0])
+    return str(erreur)
+
+
 def detail_avec_cause(erreur: BaseException) -> tuple[str, str]:
     """Le couple `(detail, cause)` d'un échec — ce que les appelants consignent.
 
