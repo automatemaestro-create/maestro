@@ -46,6 +46,7 @@ rendu.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
@@ -53,6 +54,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -633,7 +635,9 @@ class Presentation:
         (self.racine / nom).write_bytes(octets_webm(taille))
         return nom
 
-    def construire(self, donnees: dict, **variables: str) -> subprocess.CompletedProcess[str]:
+    def construire(
+        self, donnees: dict, *options: str, **variables: str
+    ) -> subprocess.CompletedProcess[str]:
         fichier = self.racine / "presentation.json"
         fichier.write_text(json.dumps(donnees, ensure_ascii=False), encoding="utf-8")
         environnement = dict(os.environ)
@@ -648,7 +652,7 @@ class Presentation:
         environnement["PYTHONIOENCODING"] = "utf-8"
         environnement.update(variables)
         return subprocess.run(
-            [sys.executable, str(BUILD_PY), str(fichier), "--sortie", str(self.sortie)],
+            [sys.executable, str(BUILD_PY), str(fichier), "--sortie", str(self.sortie), *options],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -1300,3 +1304,148 @@ def test_la_commande_borne_ce_que_les_notes_acceptent() -> None:
     assert "Ce que la commande ne sait pas" in regle, (
         "la règle ne renvoie pas les limites méthodologiques vers le résumé du terminal"
     )
+
+
+# --------------------------------------------------------------------------------------------
+# L'ouverture de la présentation à la fin (#670)
+#
+# Ces tests-ci appellent `principal()` EN PROCESSUS, là où tout le reste du fichier passe par un
+# sous-processus. Ce n'est pas une inconséquence : `webbrowser.open()` essaie les navigateurs de
+# `_tryorder` **l'un après l'autre** et ne s'arrête qu'au premier qui répond `True`. Un `BROWSER`
+# bidon dans l'environnement ne neutralise donc rien — il échoue, puis la chaîne **retombe sur le
+# navigateur par défaut du poste**, et la suite ouvrirait une vraie fenêtre à chaque exécution.
+# Le seul point où l'ouvreur se neutralise vraiment est l'appel lui-même.
+# --------------------------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def build() -> Any:
+    """`build.py` en module — il ne vit dans aucun paquet, d'où le chargement par chemin."""
+    spec = importlib.util.spec_from_file_location("maestro_build_presentation", BUILD_PY)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def generer(build: Any, tmp_path: Path, *options: str) -> tuple[int, Path]:
+    donnees = tmp_path / "presentation.json"
+    donnees.write_text(json.dumps(donnees_minimales(), ensure_ascii=False), encoding="utf-8")
+    # Sous un sous-dossier qui n'existe pas encore : l'ouverture doit viser le fichier tel qu'il a
+    # été écrit, pas le chemin tel qu'il a été demandé.
+    sortie = tmp_path / "sous-dossier" / "presentation.html"
+    return build.principal([str(donnees), "--sortie", str(sortie), *options]), sortie
+
+
+def ouvreur_espion(build: Any, monkeypatch: pytest.MonkeyPatch, reponse: Any = True) -> list[str]:
+    """Remplace l'ouvreur par un mouchard. `reponse` peut être une exception, qui sera levée."""
+    appels: list[str] = []
+
+    def faux_open(adresse: str, *_args: Any, **_kwargs: Any) -> bool:
+        appels.append(adresse)
+        if isinstance(reponse, BaseException):
+            raise reponse
+        return reponse
+
+    monkeypatch.setattr(build.webbrowser, "open", faux_open)
+    return appels
+
+
+def test_sans_l_option_aucune_ouverture_n_est_tentee(
+    build: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Le script est appelé hors de la commande (rejeu à la main, autre script, CI) : une fenêtre
+    qui s'ouvre sans qu'on l'ait demandée est une régression, pas un service."""
+    appels = ouvreur_espion(build, monkeypatch)
+
+    code, sortie = generer(build, tmp_path)
+
+    assert code == 0
+    assert sortie.exists()
+    assert appels == [], "build.py a ouvert un navigateur sans qu'on le lui demande"
+    assert "ouvert" not in capsys.readouterr().out
+
+
+def test_l_option_ouvre_le_fichier_qui_vient_d_etre_ecrit(
+    build: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Ce qui s'ouvre doit être le fichier RÉELLEMENT écrit — `--sortie` le déplace — et l'adresse
+    passe en `file:///` : seule forme qui traverse un chemin Windows à lettre de lecteur et à
+    espaces sans se faire réinterpréter."""
+    appels = ouvreur_espion(build, monkeypatch)
+
+    code, sortie = generer(build, tmp_path, "--ouvrir")
+
+    assert code == 0
+    assert appels == [sortie.resolve().as_uri()]
+    assert appels[0].startswith("file:///")
+    assert "ouverte dans le navigateur par défaut" in capsys.readouterr().out
+
+
+def test_une_ouverture_qui_echoue_ne_change_ni_le_code_de_retour_ni_le_fichier(
+    build: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Le cœur du ticket : l'écriture est le livrable, l'ouverture un confort. Une génération
+    réussie ne devient jamais un échec faute d'avoir pu ouvrir une fenêtre — même statut que
+    `sync-main` ou que l'écriture de l'audit en fin de run."""
+    ouvreur_espion(build, monkeypatch, reponse=False)
+
+    code, sortie = generer(build, tmp_path, "--ouvrir")
+
+    assert code == 0, "une ouverture en échec a fait échouer une génération réussie"
+    assert "<html" in sortie.read_text(encoding="utf-8")
+    flux = capsys.readouterr()
+    assert "présentation écrite" in flux.out
+    assert "ouverture impossible" in flux.err
+    assert sortie.resolve().as_uri() in flux.err, (
+        "un échec qui ne nomme pas ce qu'il a tenté d'ouvrir n'apprend rien"
+    )
+
+
+def test_un_ouvreur_qui_leve_est_rattrape_comme_un_ouvreur_qui_refuse(
+    build: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`webbrowser.open` ne se contente pas de rendre `False` : il lève sur un poste sans session
+    graphique. Les deux échecs doivent coûter la même chose — rien."""
+    ouvreur_espion(build, monkeypatch, reponse=RuntimeError("pas de session graphique"))
+
+    code, sortie = generer(build, tmp_path, "--ouvrir")
+
+    assert code == 0
+    assert sortie.exists()
+    erreur = capsys.readouterr().err
+    assert "ouverture impossible" in erreur and "pas de session graphique" in erreur
+
+
+def blocs_de_code(markdown: str) -> str:
+    """Le contenu des blocs ```…``` d'un markdown, recollé — la prose reste dehors."""
+    dedans = False
+    lignes: list[str] = []
+    for ligne in markdown.splitlines():
+        if ligne.lstrip().startswith("```"):
+            dedans = not dedans
+            continue
+        if dedans:
+            lignes.append(ligne)
+    return "\n".join(lignes)
+
+
+def test_la_commande_passe_l_option_et_ne_porte_aucune_recette_d_ouverture() -> None:
+    """Règle de #310, gardée aussi par `tests/test_ci_local.py` : une recette recopiée dans un
+    prompt fige le comportement au jour où elle a été écrite et n'est testable par personne. La
+    logique de plateforme vit dans le script ; le prompt ne fait que passer l'option."""
+    recettes = ("Start-Process", "xdg-open", "os.startfile", "webbrowser.open", "cmd //c start")
+
+    # Le motif cherche un USAGE, jamais une MENTION — le prompt NOMME ces commandes en prose,
+    # précisément pour interdire de les écrire, et un motif qui ne ferait pas la différence
+    # obligerait à retirer soit l'interdiction, soit la garde. Ne balayer que les blocs de code
+    # est ce qui les sépare, et les DEUX moitiés se prouvent avant de conclure de l'absence.
+    recette = "Puis ouvre le fichier :\n```\npowershell -c Start-Process presentation.html\n```"
+    mention = "N'écris jamais la commande toi-même (`Start-Process`, `xdg-open`…)."
+    assert [r for r in recettes if r in blocs_de_code(recette)] == ["Start-Process"]
+    assert [r for r in recettes if r in blocs_de_code(mention)] == []
+
+    texte = COMMANDE.read_text(encoding="utf-8")
+    assert "--ouvrir" in texte, "/milestone-presentation ne passe plus l'option d'ouverture"
+    trouvees = [recette for recette in recettes if recette in blocs_de_code(texte)]
+    assert trouvees == [], f"recette d'ouverture réintroduite dans le prompt : {trouvees}"
