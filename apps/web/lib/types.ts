@@ -803,6 +803,11 @@ export type DefinitionAgent = {
  * que l'orchestration a ouvert en répondant. Chaînes vides partout ailleurs — un
  * message ordinaire ne rattache rien. Ce que le message **embarque** et ce qu'il
  * **ouvre** sont deux questions distinctes, portées par le même objet.
+ *
+ * `conversation` (#694) est le fil d'appartenance **à l'intérieur** de l'agent,
+ * comme `agent` l'est à l'intérieur du dépôt. L'API le sert toujours ; il est
+ * facultatif ici parce que les fils simulés des tests n'ont pas à le porter pour
+ * que le composant les rende.
  */
 export type MessageChat = {
   agent: string;
@@ -811,18 +816,56 @@ export type MessageChat = {
   horodatage: string;
   run_id: string;
   tache_id: string;
+  /** La conversation d'appartenance (#694) — `origine` pour celle d'un agent par défaut. */
+  conversation?: string;
   /** La matière résolue que le message embarque (#482) — absente ou vide : aucune. */
   sources?: SourceResolue[];
   /** Le rapport de lecture de cette matière (#316) — `null` quand il n'y en a pas. */
   rapport?: RapportLecture | null;
 };
 
+/**
+ * Une conversation d'un fil (`Conversation.to_dict`, #694) — sa carte, pas son
+ * contenu : de quoi peupler un historique sans charger un seul message.
+ *
+ * `titre` est **dérivé** du premier message et vaut `""` tant que rien n'a été
+ * dit — c'est l'écran qui décide comment appeler un fil vierge. `derniere` est
+ * la dernière activité, celle qui ordonne : la première conversation servie est
+ * donc celle qu'un envoi sans précision rejoindrait.
+ *
+ * Nommée `ConversationChat` et non `Conversation` — comme `FilChat`,
+ * `MessageChat` et `FragmentChat` — parce qu'un composant du dépôt porte déjà
+ * ce nom-là (`components/Conversation.tsx`) : l'écran qui affichera l'historique
+ * importera les deux.
+ */
+export type ConversationChat = {
+  agent: string;
+  id: string;
+  titre: string;
+  debut: string;
+  derniere: string;
+  messages: number;
+};
+
+/** Les conversations d'un fil (`GET /api/chat/{agent}/conversations`, #694). */
+export type ConversationsChat = {
+  agent: string;
+  role: string;
+  /** La plus récente d'abord ; jamais vide — un agent a toujours son `origine`. */
+  conversations: ConversationChat[];
+};
+
 /** Le fil complet d'un agent (`GET /api/chat/{agent}`, #84). */
 export type FilChat = {
   agent: string;
   role: string;
+  /** La conversation servie (#694) — celle demandée, sinon la plus récente. */
+  conversation?: string;
   messages: MessageChat[];
 };
+
+/** La conversation qu'un agent a par défaut (maestro/controltower/chat.py, #694). */
+export const CHAT_CONVERSATION_ORIGINE = "origine";
 
 /** L'auteur « humain » d'un message du fil (maestro/controltower/chat.py, #84). */
 export const CHAT_AUTEUR_UTILISATEUR = "utilisateur";
@@ -1678,6 +1721,10 @@ export const FRAGMENT_CHAT_ERREUR = "erreur";
  * `echange` (#695) nomme le flux lui-même et voyage sur **toutes** les trames :
  * c'est lui qu'on rend à `POST …/flux/{echange}/arret` pour arrêter la
  * génération.
+ *
+ * `conversation` (#694) dit **où** la réponse s'écrit, et voyage elle aussi sur
+ * toutes les trames — `debut` comprise : un fil affiché sait dès la première si
+ * ce qui arrive est le sien, sans attendre le `MessageChat` de la trame `fin`.
  */
 export type FragmentChat = {
   type: string;
@@ -1686,6 +1733,7 @@ export type FragmentChat = {
   delta: string;
   message: MessageChat | null;
   echange: string;
+  conversation?: string;
 };
 
 /**

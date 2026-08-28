@@ -2234,10 +2234,12 @@ décrit le comportement réel, pas une fixture.
   [docs/28 §11](./28-decision-frontiere-execution-run.md)) : chaque run que cette API porte est
   soldé `annulee` avec la cause `extinction`, son hôte éteint **avec sa descendance**, ses tâches
   soldées et son battement retiré. `200` même quand rien ne tournait (liste vide) : éteindre une
-  Control Tower au repos n'est pas une erreur. C'est la porte de l'arrêt **volontaire**, appelée par
-  `scripts/controltower/start.sh --stop` avant qu'il ne libère les ports — et la seule : l'arrêt
-  **subi** (fenêtre du navigateur refermée, API relancée, plantage) passe par le `lifespan`, qui ne
-  touche à rien. La distinction ne se déduit d'aucun signal, elle **descend** de l'appelant.
+  Control Tower au repos n'est pas une erreur. C'est la porte de l'arrêt **volontaire**, et la
+  seule : `scripts/controltower/start.sh` la pousse avant de libérer les ports, depuis ses **deux**
+  gestes d'arrêt — `--stop` et la **fermeture de la fenêtre** du navigateur (chien de garde #149,
+  #700). L'arrêt **subi** (démarrage qui remplace la session précédente, plantage, `SIGTERM`) passe,
+  lui, par le `lifespan`, qui ne touche à rien. La distinction ne se déduit d'aucun signal, elle
+  **descend** de l'appelant.
 
 ⚠ **`reprendre` et `relancer` ne sont pas le même geste**, et les confondre coûte un cadrage :
 `reprendre` rouvre la porte d'un run **vivant** qu'on avait suspendu — même `run_id`, même plan,
@@ -2354,12 +2356,13 @@ constat du 2026-08-17, dont deux du 22 juillet). L'hôte publie donc un **battem
 > **La frontière est tranchée par [doc 28](./28-decision-frontiere-execution-run.md)** (#350) et
 > **livrée** par le chantier #441 : l'exécution est sortie du process de l'API pour un **hôte de run
 > détaché**, devenu le défaut avec #446 (`MAESTRO_HOTE_RUN=process` ramène la tâche de fond). Un run
-> survit donc à l'arrêt **accidentel** de l'API — fermer la fenêtre du navigateur, relancer après
-> une modification, planter — mais **pas au sommeil de la machine**, qui reste traité par le
-> battement ci-dessous (on le voit) et par la relance sur brief de #349 (on le rattrape). Ni à
-> l'arrêt **volontaire** depuis #486 : `start.sh --stop` solde ses runs (`annulee`, cause
-> `extinction`) et les rend **reprenables** par le bouton « Reprendre » du panneau ci-dessous —
-> un run soldé de la sorte y figure au même titre qu'un orphelin.
+> survit donc à l'arrêt **accidentel** de l'API — relancer après une modification, planter — mais
+> **pas au sommeil de la machine**, qui reste traité par le battement ci-dessous (on le voit) et par
+> la relance sur brief de #349 (on le rattrape). Ni à l'arrêt **volontaire**, qui solde ses runs
+> (`annulee`, cause `extinction`) et les rend **reprenables** par le bouton « Reprendre » du panneau
+> ci-dessous — un run soldé de la sorte y figure au même titre qu'un orphelin. Deux gestes le
+> déclenchent : `start.sh --stop` depuis #486, et **fermer la fenêtre du navigateur** depuis #700,
+> qui l'a fait passer d'accident à décision ([docs/28 §11.2](./28-decision-frontiere-execution-run.md)).
 
 | `vitalite` | ce que ça dit | ce qu'on en fait |
 | --- | --- | --- |
@@ -2451,6 +2454,60 @@ pouvaient l'attraper — ils portent sur l'hôte, jamais sur le travail. La rép
 dans l'affichage mais dans la frontière d'exécution : **un hôte publie son issue en partant**,
 `--publier` compris (ci-dessus).
 
+⚠ **Un run survivait à l'arrêt de l'API, son HISTOIRE non** (#699). C'est l'autre moitié de la même
+promesse, et elle manquait : le bus est du **pub/sub, éphémère**, et le journal durable (#97)
+n'avait qu'un écrivain — la **pompe** de l'API, c'est-à-dire un *consommateur*. Un hôte détaché
+continue de publier pendant que l'API est arrêtée ; personne ne consomme, donc **rien n'est
+consigné**, et le rejeu au démarrage rebâtit fidèlement une projection trouée. Le cas n'a rien
+d'exotique : `start.sh` arrête et relance l'API à chaque `/control-tower`, précisément pendant que
+des runs détachés tournent.
+
+Constaté le 2026-08-28 sur le run `811d738020d5`, API arrêtée quinze minutes. Trois mensonges à
+l'écran, tous les trois issus de **deux** événements perdus :
+
+| ce que le tableau disait | ce qui était vrai | l'événement perdu |
+| --- | --- | --- |
+| `squelette-p1` « En cours », figée sur son étape de 11:29:56 | la tâche était finie | son `tache.statut` terminal |
+| `modele-persistance` sans statut (`autres`), mais recevant ses détails | elle avait démarré à 11:46 | son `tache.statut` « en_cours » |
+| progression : **1 tâche** | le run en portait deux, son plan cinq | le même — un `tache.detail` fait bouger une carte sans la faire entrer au compte |
+
+La deuxième ligne est la plus coûteuse à lire : une carte qui « se met à jour » sans jamais passer
+en cours se lit comme une tâche traitée **en parallèle**, alors que le plan la déclare dépendante de
+la première. Et la perte était **définitive** — `RunJournal` ne garde ses étapes qu'en mémoire, le
+`hote.log` du run était vide : il n'y avait rien à rejouer après coup, donc un rattrapage à la
+reprise n'était pas une option.
+
+**On consigne donc en publiant, plus en consommant.** La durabilité vit là où l'événement naît :
+`BusDurable` enveloppe le bus de tout producteur asynchrone (l'API elle-même, l'hôte détaché, les
+arbitres du moteur), et `bridge.publieur_redis` — le pont télémétrie, par lequel passe l'essentiel
+de ce qui a été perdu — écrit la liste et publie dans **un seul aller** (`MULTI`/`EXEC`). Trois
+choses à ne pas défaire :
+
+- la **pompe ne consigne plus rien**, et c'est la seconde moitié du remède, pas une conséquence :
+  un `Event` n'a pas d'identifiant, donc il n'existe aucun dédoublonnage, et deux écrivains auraient
+  **doublé** chaque ligne du journal requêtable au lieu d'en perdre. L'exactement-une-fois est
+  acquis par construction — un événement est publié une fois, donc consigné une fois ;
+- un `RedisEventBus` **nu** ne se construit plus pour publier : `bus_durable` est la fabrique de
+  production, et le bus reçu par `create_app` est enveloppé une fois pour toutes, sur son propre
+  journal. Corollaire pour qui garde la main sur le bus qu'il injecte (la démo #65) : ce qu'il
+  publie par sa **propre** référence est diffusé et projeté, mais pas consigné — il court-circuite
+  le producteur, donc le geste qui consigne ;
+- une consignation en panne reste **tracée sans couper le direct**. C'est la promesse que portait la
+  pompe, déplacée avec le geste : le flux temps réel et la projection valent mieux que rien, et le
+  seul prix est que cet événement-là manquera au prochain rejeu.
+
+L'ordre du journal est désormais celui des **publications** et non des réceptions de la pompe ; les
+deux coïncident pour un producteur unique, et ce qui compte reste vrai — le journal est append-only,
+donc son rejeu rend les mêmes rangs, donc les mêmes identifiants d'entrée (`j-0002`, §6.2) d'un
+redémarrage à l'autre.
+
+> **Couverture** : [`tests/test_publication_durable.py`](../tests/test_publication_durable.py) —
+> l'incident rejoué avec ses trois chiffres, le compte de tâches d'un run fini ramené à celui de son
+> plan, l'absence de doublon API en marche, et la clé partagée entre le publieur **synchrone** du
+> pont et la relecture **asynchrone** de l'API (même harnais que `CLE_BATTEMENTS`, #351). Chaque
+> assertion a son **échantillon fautif** — le dispositif d'avant, joué sur le même scénario —, sans
+> quoi elle vaudrait un ✓ sur une question jamais posée.
+
 **Un run perdu se reprend sur le cadrage déjà payé** (#349). Voir qu'un run est mort ne le rattrape
 pas : sans geste, la seule issue reste de tout reprendre à zéro, clarification comprise. Or ce
 qu'un run emporte n'est pas du temps machine mais un **brief validé par un humain** — sur le run
@@ -2464,8 +2521,14 @@ en conservant le **projet** et le **ticket** du run repris. Les **sources**, ell
 lues, il en est la synthèse validée. Les redéclarer serait repayer la lecture d'un contenu déjà
 présent dans le texte qu'on rejoue.
 
-Ce n'est **pas** une reprise à l'endroit exact de l'interruption : celle-là suppose une frontière
-d'exécution durable, et fait l'objet d'un cadrage à part (#350). Le run relancé est un **nouveau**
+Ce n'est **pas** une reprise à l'endroit exact de l'interruption, et ça reste vrai du comportement
+livré. En revanche la raison qu'on en donnait a vieilli : « celle-là suppose une frontière
+d'exécution durable » était la prémisse de la porte n° 4 de
+[docs/28 §8](./28-decision-frontiere-execution-run.md), et le cadrage #701 l'a **renversée** le
+2026-08-28 ([§12](./28-decision-frontiere-execution-run.md)) — reprendre sur l'état acquis ne
+demande pas Temporal, qui ne reprendrait d'ailleurs pas plus finement (les deux repartent de la
+dernière tâche **terminée**). Ce qui manque n'est pas une frontière, c'est un endroit où persister
+le plan exécutable et les sorties de tâches ; le chantier est ouvert. Le run relancé est un **nouveau**
 run, qui dit de qui il est la suite (`reprise_de`) — même relation, et même sens unique, que le
 fichier `reprise-de` entre deux runs d'orchestration ([docs/10 §11.8](./10-workflow-git.md)) : le run
 repris n'est jamais réécrit pour désigner son successeur. Il est en revanche **soldé** en `annulee`
@@ -2801,6 +2864,7 @@ navigateur, il l'a **remplacé** — c'est pour cela que le brancher dans un éc
 {
   "type": "fragment",        // debut (ouvre) | fragment (incrémente) | fin (clôt) | interrompu | erreur
   "agent": "qa",
+  "conversation": "origine", // où la réponse s'écrit (#694, §6.14) — sur TOUTES les trames
   "auteur": "agent",         // l'émetteur de la RÉPONSE — le même sur toutes les trames
   "delta": " morceau",       // incrément de texte ; vide hors `fragment` — porte la cause sur `erreur`
   "message": null,           // MessageChat complet sur `debut` (l'utilisateur), `fin` et `interrompu`
@@ -3591,7 +3655,7 @@ Le premier lot du déménagement de `/composer` dans la conversation (#481) : un
   tokens s'épuise (§6.8). Absent ou vide, l'appel est exactement celui d'avant ce lot.
 - La réponse et `GET /api/chat/{agent}` rendent, sur chaque `MessageChat`, deux champs de plus :
   `sources` (la matière **résolue**, forme du §6.1) et `rapport` (le `RapportLecture` du §6.8,
-  `null` quand il n'y en a pas).
+  `null` quand il n'y en a pas). Un troisième les a rejoints depuis : `conversation` (§6.14).
 
 ```jsonc
 // POST /api/chat/qa/messages
@@ -3782,3 +3846,94 @@ route recoupée avec `GET /api/journal?run_id=…` entrée par entrée. Côté �
 L'écran qui consomme ce contrat est la **vue frise** (§2.4.4) : un tableau dont les lignes sont le
 temps et les colonnes les agents — un `<table>` et non une grille de `<div>`, pour que l'association
 `<th scope="col">` fasse porter à **chaque entrée son agent** sans le réécrire sur chaque carte.
+
+### 6.14 Un fil est une suite de conversations (#694) — **livré**
+
+Le lot 4 de #690, et la moitié backend de « il devrait être possible de démarrer un nouveau chat et
+voir l'historique ». Jusqu'ici un fil était un JSONL **éternel** par agent : on ne pouvait ni
+repartir de zéro, ni retrouver celui d'hier, ni nommer ce dont on avait parlé. L'écran, lui, ne
+bouge pas — il continue de lire la conversation courante ; il se sert de tout ceci au §2.11 (lot 6).
+
+- `GET /api/chat/{agent}/conversations` → les conversations du fil, **la plus récente d'abord** ;
+  jamais vide.
+- `POST /api/chat/{agent}/conversations` → `201` avec la carte de la conversation neuve.
+- `GET /api/chat/{agent}?conversation=<id>` → le fil de **cette** conversation ; sans le paramètre,
+  celui de la plus récente. La réponse **nomme** la conversation servie.
+- `POST /api/chat/{agent}/messages` et `POST …/flux` (#692) acceptent un `conversation` dans leur
+  corps, `GET …/flux` un `?conversation=` — absents, l'échange rejoint la plus récente. Chaque
+  `MessageChat` et **chaque trame** du flux (`debut` comprise) portent désormais leur
+  `conversation`.
+
+```jsonc
+// GET /api/chat/qa/conversations
+{
+  "agent": "qa",
+  "role": "QA / Testeur",
+  "conversations": [
+    { "agent": "qa",
+      "id": "20260828t143012-9f3a2b",      // l'identifiant porte son instant d'ouverture
+      "titre": "Vérifie le déploiement",   // DÉRIVÉ du premier message, "" tant que rien n'est dit
+      "debut": "2026-08-28T14:30:12+00:00",
+      "derniere": "2026-08-28T14:31:40+00:00",
+      "messages": 4 },
+    { "agent": "qa", "id": "origine", "titre": "Le fil d'avant",
+      "debut": "2026-08-01T09:00:00+00:00",
+      "derniere": "2026-08-27T18:12:00+00:00", "messages": 26 }
+  ]
+}
+```
+
+**`origine` est la conversation qu'un agent a par défaut, et c'est par elle que le passé survit.**
+Elle est stockée là où le fil l'a toujours été — `core/chat/<agent>.jsonl` —, les suivantes sous
+`core/chat/<agent>/<id>.jsonl`. Un fichier écrit avant ce lot **devient** donc une conversation sans
+être ni déplacé, ni réécrit, ni relu autrement : c'est le troisième critère du ticket, et c'est ce
+qui fait qu'un poste qui met à jour **continue** sa conversation au lieu d'en commencer une. Une
+installation qui n'ouvre jamais de seconde conversation écrit exactement les mêmes octets qu'avant.
+Corollaire à connaître : `origine` est toujours listée et toujours adressable, fût-elle vierge — « un
+agent sans aucune conversation » n'existe pas, donc « la plus récente » a toujours une réponse.
+
+**Les métadonnées sont dérivées, jamais tenues à part.** Le titre vient du premier message de
+l'utilisateur (son `resume`, donc « 2 source(s) jointe(s) : … » pour un message fait de seules
+sources — §6.12), les horodatages du premier et du dernier. Un fichier annexe qu'un JSONL antérieur
+n'aurait pas rendrait ces conversations-là sans titre ni date, et une migration qui les fabriquerait
+réécrirait ce que le critère interdit de toucher. Le seul fait qu'aucun message ne porte est
+l'**instant d'ouverture d'une conversation encore vide** : il voyage donc dans l'identifiant
+(`20260828t143012-9f3a2b`), d'où il se relit sans ouvrir un fichier. Le jour où le stockage passera
+en base (entité AGENT_MESSAGE, docs/03), les trois deviennent des colonnes sans que ce contrat bouge.
+
+**Ouvrir est idempotent tant que rien n'a été dit.** Si la plus récente est vierge, elle *est* la
+conversation neuve et c'est elle que le `201` rend. Sans cette règle, deux clics sur « nouvelle
+conversation » laisseraient un historique de fils vides derrière eux, et le premier clic sur un agent
+jamais contacté doublerait son `origine` avant qu'elle ait servi.
+
+**L'ordre est celui de la dernière activité, et ouvrir en est une.** C'est ce qui départage les deux
+lectures possibles de « la plus récente » : une conversation qu'on vient d'ouvrir passe devant celle
+qu'on quitte (sans quoi le premier message d'un nouveau fil retomberait dans l'ancien), et écrire
+dans une ancienne la ramène en tête (sans quoi « la conversation courante » serait figée sur la
+dernière ouverte). Les horodatages étant à la **seconde** — celle du journal, §6.13 —, l'ordre se
+départage à la milliseconde par la date du fichier : les deux gestes que le lot doit distinguer se
+suivent en bien moins d'une seconde, et sans départage l'ordre dépendrait de l'ordre alphabétique des
+identifiants, c'est-à-dire de rien. Le fait de domaine reste en tête de clé et décide seul dès qu'une
+seconde s'est écoulée.
+
+**Le répondeur ne voit que la conversation en cours** — et c'est ce qui donne son sens au bouton :
+« repartir de zéro avec le même agent » n'a de contenu que si le modèle ne reçoit pas non plus le fil
+d'avant. Le prompt est donc construit sur le fil de la conversation, jamais sur tout ce que l'agent a
+entendu.
+
+**Trois réponses à un identifiant, et elles ne se confondent pas.** Mal formé → `422` : c'est la
+garde de traversée de chemin, la **même** que pour un nom d'agent, parce qu'un identifiant venu de
+l'API désigne un fichier tout autant. Bien formé mais inconnu → `404` : on n'adresse pas un fil qui
+n'existe pas. Absent → ce n'est pas une erreur du tout, c'est le cas nominal, celui d'un appelant
+d'avant ce lot.
+
+⚠ **Le fil reste transverse au projet** (§2.9, #281) : une conversation n'acquiert **pas** de
+`projet_id`. `projet_id` voyage avec l'**envoi** (#683, §6.5) — il dit d'où part le message et à quoi
+appartient ce que la réponse *ouvre* —, jamais avec le fil. Et l'événement `chat.message` du
+WebSocket n'a pas changé : il ne porte pas la conversation, un client relisant le fil qu'il affiche.
+
+Implémentation : [`maestro/controltower/chat.py`](../maestro/controltower/chat.py) (`Conversation`,
+`ChatStore.conversations`/`courante`/`ouvrir`, `titre_conversation`, le champ `conversation` de
+`MessageChat` et de `FragmentChat`) et
+[`maestro/controltower/app.py`](../maestro/controltower/app.py) pour les routes. Tests différés au
+lot 8 de #690.

@@ -137,7 +137,13 @@ Endpoints :
 - `PUT  /api/catalogue/{nom}` — remplace la définition d'un agent personnalisé ;
 - `DELETE /api/catalogue/{nom}` — supprime un agent personnalisé ;
 - `GET  /api/chat/{agent}` — le fil de conversation utilisateur ↔ agent (#84),
-  persisté et relu du `ChatStore` ;
+  persisté et relu du `ChatStore` ; `?conversation=` en désigne une (#694),
+  sinon la plus récente ;
+- `GET  /api/chat/{agent}/conversations` — les conversations de l'agent, la plus
+  récente d'abord (#694) : identifiant, titre dérivé, ouverture, dernière
+  activité, nombre de messages ;
+- `POST /api/chat/{agent}/conversations` — en ouvre une neuve et rend sa carte
+  (idempotent tant que la plus récente est vierge) ;
 - `POST /api/chat/{agent}/messages` — envoie un message à l'agent et rend la
   paire message/réponse (le fil est aussi diffusé en `chat.message` sur le
   WebSocket, réponse comprise) ; `assistance` (#123) y désigne le **canal
@@ -181,17 +187,22 @@ par la démo ; **501** en production tant que leur lot n'est pas livré) :
 
 Assemblage : une **pompe** unique s'abonne au bus (`EventBus`), projette chaque
 événement sur l'état (`ControlTowerState`), l'ajoute au journal requêtable
-(`ServiceJournal`, #478), le **consigne** au journal durable (`EventLog`, #97)
-puis le rediffuse aux WebSockets connectées — l'ordre « état d'abord, diffusion
-ensuite » garantit qu'un client qui reçoit un événement lit un REST déjà à jour.
-Au démarrage, le lifespan **rejoue** le journal pour reconstruire la projection
-(exécutions, grands livres, analytics, tâches, agents, validations) **et
-l'historique requêtable** d'avant un redémarrage de l'API : l'état survit à la
-vie du process (#97). `create_app` s'injecte bus, état et journal (les tests d'API
-tournent sur `InMemoryEventBus`/`InMemoryEventLog`, sans Redis) ;
-`create_default_app` câble le `RedisEventBus` et le `RedisEventLog` de production
-(canal `maestro.evenements`, alimenté par `maestro.controltower.bridge` côté
-moteur ; journal persistant sur la liste `maestro.evenements:journal`).
+(`ServiceJournal`, #478) puis le rediffuse aux WebSockets connectées — l'ordre
+« état d'abord, diffusion ensuite » garantit qu'un client qui reçoit un
+événement lit un REST déjà à jour. La **consignation** au journal durable
+(`EventLog`, #97) n'est plus la sienne depuis #699 : elle a lieu à la
+**publication** (`BusDurable`, dont `create_app` enveloppe le bus reçu), parce
+qu'un run vit hors de l'API et publie pendant qu'elle est arrêtée — faire
+dépendre la durabilité d'un consommateur vivant perdait alors tout, et
+définitivement. Au démarrage, le lifespan **rejoue** le journal pour
+reconstruire la projection (exécutions, grands livres, analytics, tâches,
+agents, validations) **et l'historique requêtable** d'avant un redémarrage de
+l'API : l'état survit à la vie du process (#97). `create_app` s'injecte bus, état
+et journal (les tests d'API tournent sur `InMemoryEventBus`/`InMemoryEventLog`,
+sans Redis) ; `create_default_app` câble le `RedisEventBus` et le
+`RedisEventLog` de production (canal `maestro.evenements`, alimenté par
+`maestro.controltower.bridge` côté moteur ; journal persistant sur la liste
+`maestro.evenements:journal`).
 """
 
 from __future__ import annotations
@@ -312,6 +323,7 @@ from maestro.controltower.orchestration import (
     apercu_de,
 )
 from maestro.controltower.persistence import (
+    BusDurable,
     EventLog,
     InMemoryEventLog,
     RedisEventLog,
@@ -626,11 +638,16 @@ class ChatEnvoiRequete(BaseModel):
     de projet, et rien d'autre. Le fil ne s'en trouve ni cadré ni filtré ; il
     n'intéresse que ce que la réponse **ouvre** — l'orchestration y rattache son
     run et y cadre son aperçu. Absent, le run part sans projet, comme avant.
+
+    `conversation` (#694) est le fil de l'agent où l'échange se range. Absent,
+    l'envoi rejoint la **plus récente** — le comportement d'avant ce lot, où un
+    agent n'avait qu'un fil.
     """
 
     contenu: str
     sources: list[dict[str, Any]] | None = None
     projet_id: str | None = None
+    conversation: str | None = None
 
 
 class SecretPoolRequete(BaseModel):
@@ -782,35 +799,32 @@ async def _pompe(
     bus: EventBus,
     state: ControlTowerState,
     diffusion: Diffusion,
-    event_log: EventLog,
     journal: ServiceJournal,
 ) -> None:
-    """Le seul consommateur du bus : projette sur l'état, **persiste**, puis rediffuse.
+    """Le seul consommateur du bus : projette sur l'état, indexe, puis rediffuse.
 
     Cet ordre rend le flux cohérent pour les clients : à réception d'un
     événement WebSocket, l'état REST le reflète déjà — le journal requêtable
     (#478) compris, d'où sa consignation **avant** la diffusion : un client qui
     recharge sur un événement qu'il vient de recevoir en direct doit le
-    retrouver dans son historique, jamais l'inverse. Chaque événement est
-    consigné au journal durable (#97) entre la projection et la diffusion —
-    c'est la mémoire longue qui, rejouée au démarrage, reconstruit l'état après
-    un redémarrage de l'API. Une panne de **persistance** (Redis injoignable le
-    temps d'un événement) est tracée mais n'interrompt pas le flux temps réel :
-    le seul risque est que cet événement manque au prochain rejeu. Une panne du
-    **bus**, elle, arrête le flux temps réel mais pas l'API : le REST continue
-    de servir l'état déjà projeté — la panne est tracée, pas avalée.
+    retrouver dans son historique, jamais l'inverse. Une panne du **bus** arrête
+    le flux temps réel mais pas l'API : le REST continue de servir l'état déjà
+    projeté — la panne est tracée, pas avalée.
+
+    ⚠ **Elle ne consigne plus au journal durable** (#699). Elle en fut le seul
+    écrivain de #97 à ce lot, et c'est ce qui faisait dépendre la durabilité
+    d'un **consommateur vivant** : le pub/sub Redis ne bufferise rien, donc tout
+    ce qu'un run détaché publiait pendant que l'API était arrêtée n'était
+    consigné par personne, puis perdu. La consignation a suivi la publication
+    (`persistence.BusDurable`, `bridge.publieur_redis`), et la retirer d'ici
+    n'est pas une conséquence mais la **moitié** du remède : deux écrivains sans
+    dédoublonnage — un `Event` n'a pas d'identifiant — auraient doublé chaque
+    ligne du journal requêtable au lieu d'en perdre.
     """
     try:
         async for event in bus.subscribe():
             state.appliquer(event)
             journal.consigner(event)
-            try:
-                await event_log.consigner(event)
-            except Exception:
-                _LOGGER.exception(
-                    "Échec de persistance d'un événement : il manquera au prochain "
-                    "rejeu au démarrage (flux temps réel et projection préservés)."
-                )
             diffusion.diffuser(event)
     except asyncio.CancelledError:
         raise
@@ -938,15 +952,24 @@ def create_app(
     Les tests en injectent un service sur dépôt temporaire, seule façon de fixer
     les racines explorables sans dépendre du poste qui joue la suite.
 
-    `event_log` (#97) est le **journal durable des événements** que la pompe
-    consigne et que le lifespan **rejoue au démarrage** pour reconstruire la
-    projection (exécutions, grands livres, analytics, tâches, agents,
-    validations) après un redémarrage de l'API — par défaut un journal mémoire
-    (pas de durabilité inter-redémarrage : la configuration des tests et d'une
-    démo mono-process). La production câble `RedisEventLog` via
-    `create_default_app`. Un état injecté (`state`) reste tel quel puis reçoit
-    le rejeu par-dessus (idempotent : les événements reconstruisent le même
-    état).
+    `event_log` (#97) est le **journal durable des événements** que le lifespan
+    **rejoue au démarrage** pour reconstruire la projection (exécutions, grands
+    livres, analytics, tâches, agents, validations) après un redémarrage de
+    l'API — par défaut un journal mémoire (pas de durabilité inter-redémarrage :
+    la configuration des tests et d'une démo mono-process). La production câble
+    `RedisEventLog` via `create_default_app`. Un état injecté (`state`) reste tel
+    quel puis reçoit le rejeu par-dessus (idempotent : les événements
+    reconstruisent le même état).
+
+    ⚠ Depuis #699 il est aussi ce que le **bus marie à la publication** : le bus
+    reçu est enveloppé dans un `BusDurable` sur ce journal-là, si bien que tout
+    ce que l'API publie est consigné à l'instant où elle le publie, et non plus
+    quand sa pompe le reçoit. Le bus passé ici doit donc être un **transport
+    nu** — l'envelopper une seconde fois en amont doublerait chaque ligne.
+    Corollaire pour un appelant qui garde la main sur le bus qu'il injecte (la
+    démo #65, quelques tests) : ce qu'il publie **par sa propre référence** est
+    diffusé et projeté comme avant, mais n'est pas consigné — il court-circuite
+    le producteur, donc le geste qui consigne.
 
     `journal` (#478) est le **journal requêtable** servi par `GET /api/journal` :
     l'index transverse, filtrable et paginé, des événements consignés. Il n'a
@@ -999,8 +1022,14 @@ def create_app(
     mono-process ; la **production** câble l'hôte détaché, résolu depuis
     l'environnement par `create_default_app` (#446).
     """
-    bus = bus if bus is not None else InMemoryEventBus()
     event_log = event_log if event_log is not None else InMemoryEventLog()
+    # Le mariage du transport et de la mémoire longue (#699), fait **ici** et une
+    # seule fois : tout ce qui publie en aval — routes, services, hôte en process
+    # — reçoit ce bus-là, donc consigne en publiant, sans que rien n'ait à s'en
+    # souvenir. Le journal n'appartient pas au bus : le lifespan le relit au
+    # démarrage et le referme en partant, d'où `possede_le_journal` laissé à
+    # False.
+    bus = BusDurable(bus if bus is not None else InMemoryEventBus(), event_log)
     journal = journal if journal is not None else ServiceJournal()
     battements = battements if battements is not None else RegistreBattementsMemoire()
     agents_store = agents_store if agents_store is not None else AgentStore.default()
@@ -1143,7 +1172,7 @@ def create_app(
                 "Rejeu du journal des événements impossible : démarrage sur la "
                 "projection courante (l'historique persisté n'a pas pu être relu)."
             )
-        pompe = asyncio.create_task(_pompe(bus, state, diffusion, event_log, journal))
+        pompe = asyncio.create_task(_pompe(bus, state, diffusion, journal))
         try:
             yield
         finally:
@@ -1183,19 +1212,22 @@ def create_app(
     async def eteindre() -> dict[str, Any]:
         """**Maestro s'éteint** : ses runs en vol sont soldés avec lui (#486).
 
-        La porte de l'arrêt **volontaire**, et la seule : `scripts/controltower/
-        start.sh --stop` l'appelle avant de libérer les ports, et la fermeture de
-        l'enveloppe le fera le jour où elle existera. Chaque hôte détaché est éteint
-        avec sa **descendance**, son run consigné `annulee` avec la cause
-        `extinction` — donc jamais laissé `en_cours` —, et ses tâches soldées avec
-        lui.
+        La porte de l'arrêt **volontaire**, et la seule. `scripts/controltower/
+        start.sh` la pousse avant de libérer les ports, depuis ses **deux** gestes
+        d'arrêt — `--stop`, et la **fermeture de la fenêtre** du navigateur par le
+        chien de garde #149 (#700) —, et la fermeture de l'enveloppe le fera le jour
+        où elle existera. Chaque hôte détaché est éteint avec sa **descendance**, son
+        run consigné `annulee` avec la cause `extinction` — donc jamais laissé
+        `en_cours` —, et ses tâches soldées avec lui.
 
-        ⚠ **Ce n'est pas l'arrêt de l'API.** Fermer la fenêtre du navigateur (#149),
-        relancer après une modification, planter : ces trois-là passent par le
-        `lifespan`, où l'hôte détaché ne touche à rien — c'est la propriété de #441
-        et elle n'est pas défaite. La distinction ne se déduit d'aucun signal reçu
-        ici : elle **descend** de l'appelant, seul à savoir qu'il arrête exprès
-        (docs/28 §11).
+        ⚠ **Ce n'est pas l'arrêt de l'API.** Relancer après une modification (le
+        démarrage remplace la session précédente), planter, recevoir un `SIGTERM` :
+        ceux-là passent par le `lifespan`, où l'hôte détaché ne touche à rien — c'est
+        la propriété de #441 et elle n'est pas défaite. La distinction ne se déduit
+        d'aucun signal reçu ici : elle **descend** de l'appelant, seul à savoir qu'il
+        arrête exprès (docs/28 §11). Fermer la fenêtre a changé de camp le
+        2026-08-28 parce que c'est un geste d'**arrêt** — pas parce que la
+        distinction aurait faibli (docs/28 §11.2).
 
         Rend les résumés des runs soldés — vide quand rien ne tournait, ce qui est
         le cas courant. `200` dans les deux cas : éteindre une Control Tower au
@@ -3343,18 +3375,91 @@ def create_app(
             return AGENT_ORCHESTRATION, orchestration
         return _exige_agent_du_catalogue(nom), chat
 
+    def _conversation_demandee(
+        service: ServiceChat, fiche: Agent, demandee: str | None
+    ) -> str:
+        """L'identifiant à servir : celui demandé, sinon la conversation courante (#694).
+
+        Trois réponses, et elles ne se confondent pas : un identifiant **mal
+        formé** est un 422 (la garde de traversée de chemin, note technique du
+        ticket — même famille qu'un message vide), un identifiant **bien formé
+        mais inconnu** est un 404 (on ne peut pas adresser un fil qui n'existe
+        pas), et l'absence n'est pas une erreur du tout — c'est le cas nominal,
+        celui d'un appelant d'avant ce lot.
+        """
+        if not demandee:
+            return service.courante(fiche.nom)
+        try:
+            connue = service.existe(fiche.nom, demandee)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if not connue:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"conversation inconnue : {demandee} "
+                    f"(voir GET /api/chat/{fiche.nom}/conversations)"
+                ),
+            )
+        return demandee
+
     @app.get("/api/chat/{agent}")
-    async def fil_chat(agent: str) -> dict[str, Any]:
+    async def fil_chat(agent: str, conversation: str | None = None) -> dict[str, Any]:
         """Le fil de conversation utilisateur ↔ agent (#84), relu de la persistance.
 
         Vide tant que l'agent n'a jamais été contacté ; 404 si l'agent n'est
         pas au catalogue. `assistance` (#123) désigne le canal d'aide.
+
+        `?conversation=` désigne **laquelle** de ses conversations relire (#694) ;
+        sans elle, la plus récente — donc, pour un agent qui n'en a qu'une, le
+        fil exact d'avant ce lot. 404 si l'identifiant est inconnu, 422 s'il est
+        mal formé. La réponse **nomme** la conversation servie, ce dont un client
+        qui n'en a demandé aucune a besoin pour savoir dans laquelle il est.
+        """
+        fiche, service = _canal_chat(agent)
+        fil = _conversation_demandee(service, fiche, conversation)
+        return {
+            "agent": fiche.nom,
+            "role": fiche.role,
+            "conversation": fil,
+            "messages": [m.to_dict() for m in service.fil(fiche.nom, fil)],
+        }
+
+    @app.get("/api/chat/{agent}/conversations")
+    async def conversations_chat(agent: str) -> dict[str, Any]:
+        """Les conversations d'un fil, **la plus récente d'abord** (#694).
+
+        De quoi peupler un historique sans charger un seul message : identifiant,
+        titre dérivé du premier message, ouverture, dernière activité et nombre
+        de messages. Jamais vide — un agent a toujours au moins la conversation
+        `origine`, fût-elle vierge —, et la première de la liste est celle qu'un
+        envoi sans précision rejoindrait. 404 si l'agent n'est pas au catalogue.
         """
         fiche, service = _canal_chat(agent)
         return {
             "agent": fiche.nom,
             "role": fiche.role,
-            "messages": [m.to_dict() for m in service.fil(fiche.nom)],
+            "conversations": [c.to_dict() for c in service.conversations(fiche.nom)],
+        }
+
+    @app.post("/api/chat/{agent}/conversations", status_code=201)
+    async def ouvrir_conversation_chat(agent: str) -> dict[str, Any]:
+        """Ouvre une conversation neuve sur un fil et rend sa carte (#694).
+
+        **Idempotent tant que rien n'a été dit** : si la plus récente est vierge,
+        elle *est* la conversation neuve et c'est elle qui revient — deux clics
+        sur « nouvelle conversation » ne laissent donc pas deux fils vides
+        derrière eux. Le 201 vaut pour les deux cas : la conversation demandée
+        existe et elle est prête, que l'appel l'ait créée ou reconnue.
+
+        L'écrire ne rend pas l'ancienne moins accessible : elle reste listée et
+        relisible par `?conversation=`. 404 si l'agent n'est pas au catalogue.
+        """
+        fiche, service = _canal_chat(agent)
+        return {
+            "agent": fiche.nom,
+            "role": fiche.role,
+            "conversation": service.ouvrir_conversation(fiche.nom).to_dict(),
         }
 
     @app.post("/api/chat/{agent}/messages", status_code=201)
@@ -3376,8 +3481,13 @@ def create_app(
         servie par `POST /api/sources` et `POST /api/executions` : c'est ce qui
         permet à l'écran de l'afficher sur la source fautive. Un message **sans
         texte mais avec des sources** est accepté — le dépôt *est* le message.
+
+        `conversation` (#694) range l'échange dans **un** des fils de l'agent ;
+        absente, il rejoint la plus récente. La réponse la nomme, et message
+        comme réponse la portent : les deux moitiés d'un tour vont ensemble.
         """
         fiche, service = _canal_chat(agent)
+        fil = _conversation_demandee(service, fiche, requete.conversation)
         try:
             message, reponse = await service.envoyer(
                 fiche,
@@ -3388,6 +3498,7 @@ def create_app(
                 # fait pas échouer un message. En dessous, plus personne n'a à se
                 # demander d'où vient la chaîne qu'il porte.
                 projet_id=projet_id_valide(requete.projet_id),
+                conversation=fil,
             )
         except SourceRefusee as exc:
             # Avant le `ValueError` nu dont elle hérite : une source refusée porte
@@ -3401,6 +3512,7 @@ def create_app(
         return {
             "agent": fiche.nom,
             "role": fiche.role,
+            "conversation": fil,
             "messages": [message.to_dict(), reponse.to_dict()],
         }
 
@@ -3409,6 +3521,7 @@ def create_app(
         contenu: str,
         sources: list[dict[str, Any]] | None,
         projet_id: str | None,
+        conversation: str | None,
     ) -> StreamingResponse:
         """Le flux SSE d'une réponse — la mécanique des **deux** verbes (#268, #692).
 
@@ -3432,12 +3545,21 @@ def create_app(
         bornes (422 `{motif, message, index}`, #315 — la forme que `POST
         …/messages` sert déjà, celle qui permet à l'écran d'afficher le refus sur
         la source fautive).
+
+        `conversation` désigne le fil où diffuser (#694) — même contrat que sur
+        `POST …/messages`, et **toutes** les trames la portent, `debut` comprise :
+        un client sait dès la première si ce qui arrive est le fil qu'il affiche.
+        Un identifiant inconnu est un 404, mal formé un 422, absent le cas
+        nominal (la conversation la plus récente).
         """
         fiche, service = _canal_chat(agent)
         projet = projet_id_valide(projet_id)
+        fil = _conversation_demandee(service, fiche, conversation)
 
         async def flux() -> AsyncIterator[str]:
-            async for trame in service.diffuser(fiche, contenu, sources, projet_id=projet):
+            async for trame in service.diffuser(
+                fiche, contenu, sources, projet_id=projet, conversation=fil
+            ):
                 yield f"data: {json.dumps(trame.to_dict(), ensure_ascii=False)}\n\n"
 
         try:
@@ -3463,7 +3585,10 @@ def create_app(
 
     @app.get("/api/chat/{agent}/flux")
     async def flux_chat(
-        agent: str, contenu: str = "", projet_id: str | None = None
+        agent: str,
+        contenu: str = "",
+        projet_id: str | None = None,
+        conversation: str | None = None,
     ) -> StreamingResponse:
         """Flux SSE d'une réponse de chat — le contrat #183, servi pour de bon (#268).
 
@@ -3480,8 +3605,11 @@ def create_app(
         nom-là désigne partout ailleurs une **portée** de lecture, avec ses mots
         réservés `tous`/`aucun` (#277), et deux contrats sous un même nom seraient
         la première façon de les confondre.
+
+        `?conversation=` désigne le fil où diffuser (#694), comme sur les deux
+        autres verbes ; absent, la conversation la plus récente.
         """
-        return await _flux_reponse(agent, contenu, None, projet_id)
+        return await _flux_reponse(agent, contenu, None, projet_id, conversation)
 
     @app.post("/api/chat/{agent}/flux")
     async def flux_chat_poste(agent: str, requete: ChatEnvoiRequete) -> StreamingResponse:
@@ -3499,8 +3627,18 @@ def create_app(
         `fin` : la paire que le POST rend d'un coup, rendue en deux trames. 404 si
         le fil n'existe pas, 422 sur un message vide, 422 motivé sur une source
         refusée.
+
+        Le corps porte aussi la `conversation` (#694) : mêmes clés que
+        `POST …/messages`, donc les deux façons de poster un message se
+        rattachent au fil de la même manière.
         """
-        return await _flux_reponse(agent, requete.contenu, requete.sources, requete.projet_id)
+        return await _flux_reponse(
+            agent,
+            requete.contenu,
+            requete.sources,
+            requete.projet_id,
+            requete.conversation,
+        )
 
     @app.post("/api/chat/{agent}/flux/{echange}/arret")
     async def arreter_flux_chat(agent: str, echange: str) -> dict[str, Any]:
@@ -3607,10 +3745,11 @@ def create_default_app() -> FastAPI:
 
     L'**hôte des runs** (#443) se choisit ici, et nulle part ailleurs. Depuis #446
     le défaut est l'hôte **détaché** : chaque run vit dans un process indépendant,
-    qui survit à l'arrêt **subi** de `maestro-api` — fermer la fenêtre du
-    navigateur, relancer après une modification, planter n'emportent plus le run.
-    Il ne survit pas à l'arrêt **volontaire** (#486, `POST /api/extinction`), qui
-    est une décision et non un accident.
+    qui survit à l'arrêt **subi** de `maestro-api` — relancer après une
+    modification, planter, recevoir un `SIGTERM` n'emportent plus le run. Il ne
+    survit pas à l'arrêt **volontaire** (#486, `POST /api/extinction`), qui est une
+    décision et non un accident : `start.sh --stop`, et depuis #700 la fermeture de
+    la fenêtre du navigateur.
     `MAESTRO_HOTE_RUN=process` ramène la tâche de fond de l'API, dont les runs
     meurent avec elle. C'est le seul endroit du dépôt qui *nomme* un hôte : le
     service ne connaît que le contrat, et le résoudre là où sont déjà résolus le

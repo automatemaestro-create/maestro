@@ -10,6 +10,9 @@ Sept briques, assemblées par l'app FastAPI (`maestro.controltower.app`) :
   événements (#97) — pendant persistant du bus éphémère, rejoué au démarrage
   pour reconstruire la projection après un redémarrage de l'API (liste Redis en
   production, mémoire pour les tests) ;
+- `BusDurable` / `bus_durable` : le bus qui **consigne en publiant** (#699) — la
+  durabilité d'un événement ne dépend plus d'un consommateur vivant, donc un run
+  qui publie pendant que l'API est arrêtée garde son histoire ;
 - `ControlTowerState` : la projection de l'état courant (tâches, agents,
   exécutions, validations) qui alimente les endpoints REST ;
 - `maestro.controltower.bridge` : le pont télémétrie (#8) → bus — chaque ligne
@@ -127,6 +130,7 @@ from maestro.controltower.causes import (
     detail_avec_cause,
 )
 from maestro.controltower.chat import (
+    CONVERSATION_ORIGINE,
     FRAGMENT_CHAT_DEBUT,
     FRAGMENT_CHAT_DELTA,
     FRAGMENT_CHAT_ERREUR,
@@ -134,6 +138,7 @@ from maestro.controltower.chat import (
     FRAGMENT_CHAT_INTERROMPU,
     UTILISATEUR,
     ChatStore,
+    Conversation,
     FluxInterrompu,
     FragmentChat,
     Incrementeur,
@@ -146,6 +151,7 @@ from maestro.controltower.chat import (
     ReponseIndisponible,
     ServiceChat,
     normaliser,
+    titre_conversation,
     transcription,
 )
 from maestro.controltower.events import (
@@ -213,9 +219,11 @@ from maestro.controltower.orchestration import (
 )
 from maestro.controltower.persistence import (
     CLE_JOURNAL_EVENEMENTS,
+    BusDurable,
     EventLog,
     InMemoryEventLog,
     RedisEventLog,
+    bus_durable,
 )
 from maestro.controltower.state import (
     CAPACITE_ACTIVE,
@@ -259,6 +267,7 @@ __all__ = [
     "CAUSE_LIMITE_USAGE",
     "CAUSE_PLAFOND_COUT",
     "CAUSE_PLAFOND_TOURS",
+    "CONVERSATION_ORIGINE",
     "DELAI_ANNULATION_S",
     "EVENEMENT_AGENT_ACTIVITE",
     "EVENEMENT_AGENT_CAPACITE",
@@ -309,9 +318,11 @@ __all__ = [
     "AnalyticsCouts",
     "ApercuOrchestration",
     "AreteGraphe",
+    "BusDurable",
     "ChatStore",
     "CoeurRun",
     "ControlTowerState",
+    "Conversation",
     "CoutAgent",
     "CoutExecutionResume",
     "CoutTacheAgregee",
@@ -370,6 +381,7 @@ __all__ = [
     "apercu_de",
     "appliquer_sous_validation",
     "batteur_redis",
+    "bus_durable",
     "cause_de",
     "create_app",
     "create_default_app",
@@ -382,6 +394,7 @@ __all__ = [
     "publieur_redis",
     "repondre_assistance",
     "solder_le_run",
+    "titre_conversation",
     "transcription",
     "validateur_redis",
     "vitalite",

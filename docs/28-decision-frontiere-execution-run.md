@@ -8,6 +8,12 @@
 > l'API — et garde, sans les repayer, l'annulation immédiate, le brief `humain` et la validation
 > humaine. **Temporal n'est pas écarté** : il est mis derrière une porte nommée (§8), et rien de ce
 > qui est construit ici n'est jeté le jour où on la franchit.
+>
+> **Deux révisions datées ont suivi, et aucune ne défait ce verdict.** Le **§11** (2026-08-24,
+> #470/#486) sépare l'accident de la décision : un run survit à l'accident, pas à l'extinction. Le
+> **§12** (2026-08-28, #701) franchit la porte n° 4 du §8 — la reprise à l'endroit exact — et
+> tranche l'**état acquis durable hors process, sans Temporal** : sur l'axe même de cette porte, O4
+> ne reprend pas plus finement. Il reste derrière les trois autres.
 
 ---
 
@@ -225,7 +231,9 @@ l'humain dans la boucle, et le moteur durable existe déjà pour la boucle de t�
   chantier laissé ouvert par #95, lot 2/5, plus l'étape de cadrage #318 qui lui est postérieure.
 
   ⚠ **Et il y a un piège que le dépôt a déjà rencontré et écrit.** Une attente humaine ne peut pas
-  vivre *dans* une activité : `guardrails.py:208-214` note qu'un validateur qui bloque la boucle est
+  vivre *dans* une activité — conclusion **confirmée le 2026-08-28** (§12.5), mais pour une autre
+  raison que celle donnée ici, et le pointeur ci-dessous a bougé depuis (la note est en
+  `maestro/engine/guardrails.py:427-433`) : `guardrails.py:208-214` note qu'un validateur qui bloque la boucle est
   « anodin en local, mais **fatal en mode durable (#96), où la boucle doit continuer à battre le
   cœur des activités : un worker qui ne bat plus est réputé mort et sa tâche relancée sous 30 s, en
   pleine question à l'opérateur** ». Une délibération humaine dure des minutes, un battement
@@ -351,6 +359,19 @@ O4 est derrière une porte. Les conditions qui la franchissent, nommées d'avanc
 
 Aucune de ces quatre conditions n'est remplie au 2026-08-23.
 
+> ⚠ **La n° 4 a été franchie le 2026-08-28 — et elle n'a pas mené à O4** (#701, **§12**). La
+> condition est bien remplie : la reprise exacte est demandée, #699 et #700 en font une urgence.
+> Mais sa formulation portait une prémisse fausse — « que Temporal fait nativement » était vrai au
+> sens où il était le **seul** mécanisme du dépôt à la faire, jamais au sens où il était le seul
+> possible. Sur l'axe même de cette porte, **O4 ne reprend pas plus finement** que l'option retenue :
+> les deux reprennent à la tâche terminée, une tâche en vol étant repayée des deux côtés
+> (`durable/workflow.py:117-118`). Le verdict du §12 est donc l'**état acquis durable hors process,
+> sans Temporal** ; O4 reste derrière les trois autres portes, intactes.
+>
+> Les conditions qui rouvriraient *cette* décision-là sont nommées au **§12.8**, et l'une d'elles ne
+> mène pas ici non plus : reprendre **au milieu** d'une tâche est une porte vers le découpage des
+> tâches, pas vers Temporal.
+
 > ⚠ **Il y en a une cinquième depuis le 2026-08-24, et elle va dans l'autre sens** (revue #470,
 > [docs/29 §5](./29-decision-run-objet-de-premier-plan.md)). Les quatre ci-dessus rouvrent toutes la
 > question vers **plus** de durabilité — elles mènent à O4. La cinquième demande **moins** de
@@ -473,10 +494,11 @@ change vraiment est le sens du verdict `orphelin` :
 | Un hôte mort **sous les yeux de l'API** | reste `en_cours` jusqu'au seuil d'orphelinat, puis pour toujours | ramassé et soldé `echec` **avec sa cause** |
 | Machine endormie, process tué net, Redis muet au dernier instant | `orphelin` | `orphelin` — et c'est exactement ce que le verdict doit signaler |
 
-> ⚠ **La première ligne mélange deux gestes que le 2026-08-24 a séparés.** « Le run continue » reste
-> vrai des deux **accidents** — fenêtre fermée, API relancée — et a cessé de l'être de
-> `start.sh --stop`, qui **solde ses runs depuis #486** (§11). Le tableau est laissé tel qu'il a été
-> mesuré au 2026-08-24 ; c'est la ligne qui a vieilli d'un cas, pas la mesure.
+> ⚠ **La première ligne a vieilli deux fois, et elle n'en garde plus qu'un cas.** Le 2026-08-24 en a
+> détaché `start.sh --stop`, qui **solde ses runs depuis #486** (§11) ; le 2026-08-28 en a détaché la
+> **fenêtre du navigateur**, qui les solde depuis **#700** (§11.2). « Le run continue » n'est donc
+> plus vrai que de l'**API relancée** — et du crash, et du `SIGTERM`. Le tableau est laissé tel qu'il
+> a été mesuré au 2026-08-24 ; ce sont les gestes qui ont changé de camp, pas la mesure.
 
 Deux mesures relevées au passage, sur le poste de référence (Windows, 2026-08-24) : un hôte détaché
 s'arme en **1,3 s** quand Redis répond et **5,5 s** quand il ne répond pas (le premier battement est
@@ -497,6 +519,11 @@ Aucune n'est franchie, et le chantier n'en a rapproché aucune :
 4. **une reprise à l'endroit exact de l'interruption** — toujours pas offerte, et toujours pas
    demandée ; #349 repart du brief.
 
+> ⚠ **Le point 4 a vieilli de quatre jours** : la reprise exacte a été **demandée le 2026-08-28**
+> (#699, #700, #701), et c'est la seule des quatre portes à avoir bougé. Le relevé ci-dessus est
+> laissé tel qu'il a été fait au 2026-08-24 ; la suite est au **§12**, qui la franchit **sans**
+> ouvrir O4.
+
 Ce que la livraison change pour O4 est ailleurs, et c'est le §5 qui l'annonçait : la Control Tower a
 **cessé de supposer que le run vit dans son process**. Lancer, annuler, recevoir le brief et la
 validation, transporter le `projet_id`, publier son issue en partant — tout cela passe désormais par
@@ -515,6 +542,13 @@ fallait acheter d'avance, et elle est acquise.
 > qu'une direction. L'arbitrage complet est en
 > [docs/29 §5](./29-decision-run-objet-de-premier-plan.md).
 
+> ⚠ **Une ligne de cette section a été renversée le 2026-08-28 (#700), et c'est la première.** La
+> fenêtre du navigateur fermée n'est plus un accident : elle **solde**, comme `--stop`. Le
+> raisonnement de #470 tient tout entier — c'est sa **frontière** qui s'est déplacée, sous une mesure
+> qu'il n'avait pas (#699). Le §11.2 porte le renversement, ses raisons et son prix ; la table
+> ci-dessous **dit la règle en vigueur**, chaque ligne datée de ce qui l'a posée. Le texte qui
+> l'entoure est laissé tel qu'il a été écrit : ce qui a vieilli est nommé, pas réécrit.
+
 **Les trois gestes du §5 ne sont pas de même nature.** « Fermer la fenêtre, relancer l'API,
 `--stop` » : les deux premiers sont des **accidents** — personne n'a demandé d'arrêter le run, et
 les rendre inoffensifs est exactement ce que ce chantier a acheté. Le troisième est une
@@ -522,16 +556,23 @@ les rendre inoffensifs est exactement ce que ce chantier a acheté. Le troisièm
 qu'on voulait garder ? » ; elle ne l'est plus dès qu'on pose l'autre : « que devient un run qu'on
 voulait arrêter ? »
 
+> ⚠ Ce paragraphe **range la fenêtre du bon côté pour la mauvaise raison**, et #700 ne le corrige
+> qu'à moitié : la fenêtre a bien changé de camp, mais parce qu'elle est une décision — pas parce
+> que la distinction accident / décision aurait été fausse. Elle reste ce qui départage, à ceci près
+> qu'elle passe désormais entre **arrêter** et **redémarrer** (§11.2).
+
 **Ce qu'un run survivant à l'extinction coûte réellement.** Control Tower éteinte, il continue de
 consommer du quota et d'écrire dans le projet de l'utilisateur — sans écran pour le suivre, sans
 bouton pour l'arrêter, et sans rien qui signale son existence. Ce n'est pas la robustesse que le §5
 défendait, c'est son ombre portée : la survie devient une fuite dès qu'elle dépasse l'intention.
 
+**La table en vigueur** (les deux premières lignes revues au 2026-08-28, #700) :
+
 | Geste | Nature | Ce que devient le run |
 | --- | --- | --- |
-| Fenêtre du navigateur fermée (chien de garde #149) | accident | **continue** — inchangé, et c'est la propriété qu'on ne défait pas |
-| API relancée après une modification, crash | accident | **continue** — inchangé |
-| `start.sh --stop`, quitter l'enveloppe le jour où elle existe | **décision** | **soldé**, et reprenable au redémarrage (#439) |
+| Fenêtre du navigateur fermée (chien de garde #149) | **décision** — on quitte la Control Tower | **soldé**, et reprenable au redémarrage (#700) |
+| Démarrage (`arreter_session` rejouée par `start.sh`), crash, `SIGTERM` | accident | **continue** — c'est la propriété qu'on ne défait pas, et il n'en reste qu'elle |
+| `start.sh --stop`, quitter l'enveloppe le jour où elle existe | **décision** | **soldé**, et reprenable au redémarrage (#439, #486) |
 | Machine endormie | ni l'un ni l'autre | `orphelin` — inchangé, traité par #348 et #349 |
 
 **La distinction vit du côté qui sait.** `start.sh --stop` sait qu'il arrête exprès ; un `SIGTERM`
@@ -561,12 +602,18 @@ propre tâche (#444) —, hôte éteint **avec sa descendance** au bout du déla
 (`hote_detache._eteindre`), tâches soldées et battement retiré.
 
 **La distinction ne se déduit toujours d'aucun signal**, et c'est ce que cette forme achète : le
-`lifespan` de l'API — donc un `SIGTERM`, un plantage, la fenêtre du navigateur refermée par le chien
-de garde #149 — passe par `ServiceExecutions.fermer`, qui **ne touche à rien**. Un drapeau sur cette
-méthode-là aurait demandé à celui qui ne sait pas de deviner. Corollaire de forme : l'appel vit dans
-la seule branche `--stop` de `start.sh` et **surtout pas** dans `arreter_session`, que le démarrage
-rejoue pour remplacer la session précédente — l'y mettre aurait soldé les runs à chaque relance,
-c'est-à-dire fabriqué l'accident qu'on protège.
+`lifespan` de l'API — donc un `SIGTERM`, un plantage, l'API qu'on tue pour la relancer — passe par
+`ServiceExecutions.fermer`, qui **ne touche à rien**. Un drapeau sur cette méthode-là aurait demandé
+à celui qui ne sait pas de deviner. Corollaire de forme : l'appel vit dans les branches de `start.sh`
+qui **savent** qu'on arrête, et **surtout pas** dans `arreter_session`, que le démarrage rejoue pour
+remplacer la session précédente — l'y mettre aurait soldé les runs à chaque relance, c'est-à-dire
+fabriqué l'accident qu'on protège.
+
+> ⚠ Cette phrase citait la **fenêtre refermée par le chien de garde #149** parmi les arrêts subis, et
+> « la seule branche `--stop` » comme l'unique appelant : les deux ont été renversés le 2026-08-28
+> (§11.2). Ce qui n'a pas bougé est l'essentiel — l'API ne devine rien, `fermer` ne solde toujours
+> rien, et `arreter_session` reste hors du chemin. Le chien de garde pousse la porte **lui-même**,
+> avant de tuer l'API, exactement comme `--stop` : le savoir descend toujours de celui qui l'a.
 
 **Ce qui rend le run reprenable est une cause, pas un statut.** Le run est consigné `annulee` comme
 n'importe quelle interruption ; ce qui le distingue est `CAUSE_EXTINCTION`
@@ -579,3 +626,403 @@ re-solde le run avec la cause `annulation`), ce qui garde le garde-fou de #349 c
 
 **L'option annoncée plus haut existe déjà** : `MAESTRO_EXTINCTION=0` laisse délibérément tourner —
 sur un geste qui solde par défaut, et **en le disant**, jamais en silence.
+
+### 11.2 La fenêtre fermée change de camp (2026-08-28)
+
+> Écrit au ticket **#700**. Cette section **renverse** la première ligne de la table du §11 : fermer
+> la fenêtre du navigateur solde désormais les runs en vol, comme `--stop`. Elle ne reprend ni le
+> §5, ni les quatre options, ni une ligne de l'hôte détaché — et elle ne défait pas le raisonnement
+> de #470, dont elle déplace la **frontière** sous une mesure qu'il n'avait pas.
+
+**Ce que #470 ne pouvait pas savoir.** Sa table repose sur une prémisse : la survie du run
+*préserve* le travail. #699 l'a mesurée fausse le 2026-08-28 — le bus Redis est du **Pub/Sub
+éphémère** et le journal durable n'est alimenté que par la **pompe de l'API**. Un run qui survit à
+la fermeture de la fenêtre continue donc de consommer du quota **et perd définitivement son
+historique** : au retour, sa tâche finie est encore « en cours », la suivante n'a aucun statut, le
+compte de tâches est faux. La survie ne préserve plus le run, elle le rend **invisible et
+incorrigible** — c'est-à-dire exactement l'« ombre portée » que le §11 décrivait pour `--stop`, et
+qu'on découvre valable ici. L'accident n'est pas inoffensif ; il ne l'est plus, donc la ligne bouge.
+
+**Et la fenêtre n'était pas un accident.** C'est la seconde moitié, et elle se lisait déjà dans le
+script : le chien de garde #149 coupe **l'API et l'UI** dès que la fenêtre se ferme. Personne
+n'appelle « accident » un geste qui arrête délibérément les deux services ; le run était la seule
+chose qui survivait à un arrêt que `start.sh` tient pour volontaire **partout ailleurs**. Fermer la
+fenêtre de la Control Tower, c'est quitter la Control Tower. La distinction accident / décision de
+#470 reste donc entière — c'est son tracé qui était faux d'un cas.
+
+**La ligne de partage passe entre arrêter et redémarrer.** Ce qui reste un accident est le
+**démarrage** (`arreter_session`, rejouée par `start.sh` pour remplacer la session précédente), le
+crash et le `SIGTERM`. Trois raisons, et la première suffirait :
+
+1. **Un démarrage n'est pas un arrêt.** Solder dans `arreter_session` tuerait le run par le geste
+   même qui vient le reprendre en main. C'est le corollaire de forme du §11.1, et il ne bouge pas.
+2. **Le prix n'est pas symétrique.** La reprise (#349) ne repart **pas** de l'interruption : elle
+   rejoue **toutes** les tâches depuis la synthèse du brief approuvé — un run arrêté à 4 tâches sur 5
+   en coûte 5 —, et elle **refuse net** un run sans brief approuvé (`MOTIF_RELANCE_SANS_CADRAGE`),
+   c'est-à-dire tout run en `mode_brief: auto`. Solder à chaque relance ferait payer la reprise
+   intégrale au geste le plus fréquent du développement, et **perdrait sans retour** le travail des
+   runs sans cadrage.
+3. **La fenêtre d'invisibilité du redémarrage est bornée par lui-même.** L'API repart dans la
+   foulée : elle rejoue le journal, reprend la pompe, et le run **réapparaît à l'écran** — puis reste
+   interruptible, l'annulation voyageant par le **bus** que le process détaché écoute (#444) et non
+   par le registre d'hôtes que la nouvelle API n'a pas. Ce qu'elle perd est ce que le bus a diffusé
+   pendant la coupure, quelques secondes ; une fenêtre fermée, elle, ne fait repartir personne.
+
+**Ce qui a été livré est le déplacement d'un appel.** Rien n'est construit : `POST /api/extinction`
+(#486) et `solder_les_runs` (`scripts/controltower/start.sh`) sont inchangés. Le chien de garde les
+appelle **avant** de libérer les ports — après, l'API qui tient les hôtes détachés n'existe plus —,
+et il le fait **après** avoir retiré le jeton de session, pour qu'un `--stop` concurrent ne se
+dispute pas la fenêtre avec lui. Il y a donc **deux appelants et deux seulement**, les deux gestes
+d'arrêt ; `arreter_session` reste hors du chemin, et
+[`tests/test_extinction.py`](../tests/test_extinction.py) le garde par un invariant de forme prouvé
+sur échantillon fautif, faute de pouvoir jouer un chemin qui demande Redis, l'UI et une fenêtre.
+
+**Ce que l'arrêt fera se dit au démarrage**, et pas seulement au moment où il l'a fait : c'est là
+qu'on part travailler en sachant ce que fermer la fenêtre emportera, et là que l'option se présente.
+`MAESTRO_EXTINCTION=0` reste la sortie explicite pour laisser tourner — annoncée **des deux côtés**,
+jamais en silence. Une réserve de forme, dite plutôt que masquée : fermée par le chien de garde, la
+Control Tower nomme les runs qu'elle solde dans `navigateur.log` et non sur le terminal, qui a rendu
+la main depuis longtemps ; le démarrage imprime donc le chemin de ce journal avec l'annonce.
+
+**Ce que ça ne ferme pas.** La fenêtre de #699 est **réduite, pas fermée** : un crash de l'API, un
+`maestro-run --publier` hors Control Tower, une machine endormie continuent de publier dans le vide.
+Un cas neuf s'y ajoute, petit et à nommer : un **démarrage qui échoue après** `arreter_session` (API
+qui ne répond pas, UI qui ne compile pas) laisse le run de la session précédente sans écran, comme
+un crash — l'accident toléré est alors payé sans que la relance ait abouti. La durabilité du journal
+reste le sujet de #699, et la reprise **à l'endroit exact** de l'interruption reste la porte 4 du
+§10.5, toujours pas franchie.
+
+> ⚠ **Les deux phrases ci-dessus ont été dépassées dans la journée**, et par les deux tickets
+> qu'elles nomment. #699 a été livré quatre minutes après cette section (`b8d885a`) : la
+> consignation a suivi la **publication**, donc la durabilité du journal ne dépend plus d'un
+> consommateur vivant. Et la porte 4 est **franchie** par #701, au **§12** — sans mener à O4. Ce
+> qui reste vrai ici : le cas neuf du démarrage qui échoue, et le fait que la reprise dont dispose
+> #700 est encore celle de #349. Le §12.7 reprend ce dernier point, qui est le prix assumé de cette
+> section jusqu'au chantier de reprise.
+
+---
+
+## 12. La porte n° 4 est franchie — la reprise exacte (2026-08-28)
+
+> Ticket **#701**. Décision datée du **2026-08-28**, sur `origin/main` à `b8d885a` — donc **après**
+> #700 (§11.2) et #699, livrés le même jour et pris en compte tels qu'ils sont dans `main`, pas tels
+> que leurs tickets les annonçaient (§12.7). Aucun code n'est livré par ce cadrage.
+>
+> **Verdict : l'état acquis devient durable hors du process, sans Temporal.** Un run interrompu
+> repart de ses tâches déjà abouties au lieu de rejouer depuis le brief. **O4 reste derrière sa
+> porte** — mais la porte a changé de serrure : le §8 la formulait comme « le besoin d'une reprise à
+> l'endroit exact », en supposant que ce besoin *appelait* Temporal. Il ne l'appelle pas, et le
+> §12.5 dit pourquoi : sur l'axe même de cette porte, **O4 ne reprend pas plus finement** que
+> l'option retenue.
+
+### 12.1 Ce qui a changé depuis le 2026-08-23
+
+La porte n° 4 du §8 — « une reprise à l'endroit exact de l'interruption » — était classée « toujours
+pas offerte, et **toujours pas demandée** » au §10.5. Elle a été **demandée le 2026-08-28**, et deux
+tickets du même jour l'ont rendue urgente plutôt que théorique. Tous deux ont été **livrés dans la
+journée**, avant que ce cadrage ne soit rendu — ce qui change ce qu'il reste à dire d'eux, et le
+§12.7 en tire les conséquences :
+
+- **#699** (livré, `b8d885a`) : le bus Redis est du Pub/Sub éphémère, et le journal durable (#97)
+  n'était alimenté que par la pompe de l'API — donc par un **consommateur**. Un run détaché qui
+  publiait pendant que l'API était arrêtée publiait **dans le vide** : rien n'était consigné, et le
+  rejeu au démarrage rebâtissait fidèlement une projection trouée. La consignation a suivi la
+  **publication** (`persistence.BusDurable`, `bridge.publieur_redis`), et la pompe ne consigne plus
+  rien (`app.py:808-814`) ;
+- **#700** (livré, `aa3e3c7`, §11.2) : fermer la fenêtre du navigateur **solde** désormais les runs
+  en vol, comme `--stop`. Or « reprenable » ne vaut que ce que vaut `ServiceExecutions.relancer`
+  (#349), qui crée un **nouveau** run reparti de la synthèse du brief et **rejoue toutes les
+  tâches**.
+
+Les trois tickets butent sur la même question, et elle est de frontière : sur un run arrêté à quatre
+tâches sur cinq, la Control Tower en repaie cinq. Le §11.2 le dit de son côté, et se conclut en
+renvoyant ici : « la reprise **à l'endroit exact** de l'interruption reste la porte 4 du §10.5,
+toujours pas franchie ». C'est cette phrase que la présente section périme.
+
+**Et le statu quo ne dégrade pas, il refuse.** `relancer` exige un brief approuvé
+(`MOTIF_RELANCE_SANS_CADRAGE`, `executions.py:261`) — mesuré sur `811d738020d5` le 2026-08-28 :
+`brief = None`, donc **non reprenable du tout**. Ce n'est pas un cas de bord : `ouvrir_un_run`, le
+lanceur du fil de chat (#268), part en `MODE_BRIEF_AUTO` et non en `humain`
+(`app.py:1099-1113`), pour une raison qui reste bonne — « le cadrage d'une demande **est** la
+conversation qu'on est en train d'avoir ». Et [docs/29 §4](./29-decision-run-objet-de-premier-plan.md)
+fait du chat **la seule porte d'entrée**. La reprise de #349 n'a donc aucune prise sur la porte qui
+devient le défaut. Le déménagement du brief dans le fil refermera ce trou pour les runs qu'on valide ;
+il ne le refermera pas pour ceux qui partent sans validation, et le refus de `relancer` est **binaire**.
+
+**Un troisième fait, qui ne se lit pas comme un coût.** Une tâche peut **écrire dans le projet de
+l'utilisateur** — `maestro.projets.application.appliquer` (`application.py:643`), après accord
+humain. Rejouer les cinq tâches d'un run arrêté à quatre ne coûte donc pas seulement le travail :
+cela **repose des questions déjà tranchées** et **réapplique** dans un projet déjà modifié. Ce
+n'est plus un argument de dépense, c'en est un de correction — et il n'était écrit nulle part.
+
+### 12.2 Ce que « reprendre » demande vraiment — l'état acquis, mesuré
+
+Le ticket #701 pose que le journal durable « porte des statuts et des étapes, pas des **sorties** ».
+C'est exact et vérifié : pour l'issue d'une tâche, `bridge.evenements_depuis_step` met l'`erreur`
+dans `detail` et **jamais** la `sortie` (`bridge.py:215-218`), et `Event` n'a aucun champ pour la
+porter (`events.py:263` et suivantes). ⚠ **#699 n'y a rien changé, et c'est à vérifier avant de le
+lire de travers** : il a déplacé **où** l'on consigne — de la consommation vers la publication —, pas
+**ce que** l'événement porte. Or `dep.sortie` est **littéralement** ce qui entre dans le prompt de la
+tâche suivante — le « tableau noir » de `_build_task_description` (`executor.py:1547-1551`). La
+Control Tower sait qu'une tâche a réussi ; elle ignore ce qu'elle a produit.
+
+**Mais le trou est plus large d'une moitié, et cette moitié manquait au ticket.** Depuis #490 le
+plan **est** persisté, en `run.plan` — sauf que `NoeudPlan` ne porte que `{id, titre, dependances,
+etapes}` (`plan_run.py:97-100`), quand `Task` porte en plus `description`, `competences_requises` et
+`format_sortie` (`schema.py:123-131`). Ces trois-là sont exactement ce dont l'exécution a besoin : la
+description **est** le prompt (`executor.py:376`, `1538`), les compétences font le routage
+(`executor.py:925`), le format cadre la sortie (`executor.py:1371`). Le graphe persisté suffit à
+**dessiner** un plan ; il ne suffit pas à en **reprendre** l'exécution.
+
+Reprendre demande donc **deux** choses hors process, pas une : le plan **exécutable** et les
+**sorties**.
+
+**Trois bonnes nouvelles, également vérifiées.**
+
+- **Le format existe déjà, et il voyage déjà entre process.** `TaskResult.to_dict`/`from_dict`
+  (`executor.py:200`, `230`) est ce que le mode durable sérialise pour passer les dépendances d'une
+  activité à l'autre (`activities.py:277`), et ce que `resultats_acquis` rend à une reprise
+  (`workflow.py:126-135`). Rien n'est à inventer : l'état acquis d'un run est **déjà** une valeur
+  JSON, dans ce dépôt, aujourd'hui.
+- **Aucun système de fichiers n'est à faire survivre.** `espace_de_travail` ouvre un espace **par
+  tâche**, dérivé du projet (worktree Git ou copie de périmètre), sous un `mkdtemp` démonté en
+  sortie (`sandbox/projet.py:93-138`). Une tâche ne reprend pas un répertoire : elle en dérive un
+  neuf. L'état à reconstruire est donc **purement des valeurs**.
+- **La granularité utile est la tâche terminée**, et c'est aussi celle de Temporal : « une tâche en
+  vol au moment de l'interruption n'y figure pas — elle n'a rien produit et sera reprise »
+  (`workflow.py:117-118`).
+
+**Une quatrième, qui aurait été mauvaise la veille.** Persister l'état acquis **par le bus** aurait
+hérité du défaut de #699 : la sortie d'une tâche qui se termine pendant une coupure de l'API aurait
+été perdue — c'est-à-dire trouée exactement au moment où l'on reprend. C'était, à l'heure où ce
+cadrage a commencé, un **prérequis** qui ordonnait les chantiers ; **#699 l'a levé le jour même**
+(`b8d885a`), en portant la consignation là où l'événement naît. Le chantier de reprise part donc
+d'un journal qui ne dépend plus d'un consommateur vivant, et c'est acquis sans qu'il ait à le payer.
+
+⚠ La leçon, elle, reste et vaut pour ce qu'on ajoutera : **tout ce qu'un run doit pouvoir relire
+après coup s'écrit du côté du producteur.** Un magasin d'état acquis branché sur la pompe
+recréerait le trou que #699 vient de fermer, à un endroit où il coûterait plus cher — la projection
+trouée se voit à l'écran, un état acquis troué se lit comme un run à moitié fait.
+
+### 12.3 Les trois options
+
+#### 12.3.1 (a) O4 — porter le chemin Control Tower sur `DurableEngine`/Temporal
+
+L'option instruite au §4.4, à réévaluer et non à recopier. Elle offre la reprise **et** la survie au
+sommeil de la machine, seule option à l'offrir. Son prix est au §12.5 : cinq portages et non trois,
+dont deux sont des incompatibilités de nature.
+
+Un fait de signature qui ne s'est pas amélioré : `DurableEngine.run(objective, *, journal)`
+(`engine.py:116`) n'accepte toujours ni `ticket`, ni `projet_id`, ni `mode_brief`, ni `porte` — les
+**quatre** que `OrchestrationEngine.run` prend en plus du journal (`loop.py:527-536`), et que l'hôte
+détaché passe tous (`hote_detache.py:1052-1078`).
+
+#### 12.3.2 (b) L'état acquis durable, sans Temporal
+
+Persister hors du process ce qu'un run a **payé** — le plan exécutable et les `TaskResult` aboutis —
+et reprendre en sautant ce qui est acquis. L'hôte du run écrit ; l'API relit et décide.
+
+- **Infra** : aucune dépendance nouvelle. Redis est déjà requis par la Control Tower pour le bus
+  (#46), le journal durable (#97), les boîtes (#44) et la file (#41).
+- **Annulation, brief `humain`, validation, projet, pause** : **intacts**. L'option ne touche pas au
+  moteur — elle ajoute un magasin et un verbe de reprise. C'est sa propriété principale : elle ne
+  paie **aucun** des cinq portages du §12.5.
+- **Survie** : au process de l'API **oui** (acquis depuis #446), à la machine **non** — mais au
+  réveil, la reprise repart de l'acquis au lieu du brief, ce qui est l'essentiel du gain que la
+  porte n° 4 demandait.
+- **Reprise exacte** : **oui**, à la granularité de la tâche terminée — la même que Temporal.
+- **Ce qu'elle n'achète pas** : la reprise **automatique**. Elle reprend sur un geste, celui que
+  `PanneauRunsPerdus` propose déjà (#349).
+
+#### 12.3.3 (c) Statu quo — relancer depuis le brief
+
+La ligne de base : `relancer` (#349) conserve le cadrage — sur `3ff0bcb065f9`, deux tours de
+clarification et une approbation, **2,52 $** et une vingtaine de minutes d'attention
+([docs/05](./05-interface-control-tower.md)) —, ce qui reste le poste le plus cher d'un run de démo
+(« ~1-5 $ », [docs/34 §3.3](./34-decision-agent-cli-tiers-acp.md)).
+
+Ce qu'il faudrait **ouvrir** pour tenir sur ce seul socle, et c'est ce qui l'écarte : étendre
+`relancer` aux runs sans brief approuvé — donc repartir de l'objectif brut, c'est-à-dire **sauter
+une validation que le run attendait encore**, sans que personne l'ait demandé. Le §12.1 le dit : le
+refus est binaire, et il porte sur la porte d'entrée qui devient le défaut. On paierait un
+contournement du point de contrôle **D5** pour éviter de construire ce que (b) construit une fois.
+
+⚠ **Ce socle-là n'est pas une hypothèse : c'est ce sur quoi #700 tourne aujourd'hui**, et il a été
+livré en le sachant — sa raison n° 2 (§11.2) nomme ce même refus pour garder le **démarrage** hors
+du chemin d'extinction. Le statu quo n'est donc pas écarté comme une option qu'on refuse, mais
+décrit comme l'état **en vigueur**, dont le §12.7 dit le prix et l'échéance.
+
+### 12.4 La comparaison, sur les axes du §4.5 — plus celui qu'il n'avait pas à juger
+
+| | **(c)** statu quo | **(b)** état acquis durable | **(a)** O4 Temporal |
+| --- | --- | --- | --- |
+| **Reprise exacte** | **non** — rejoue tout depuis le brief, et **refuse** sans brief approuvé | **oui**, à la tâche terminée | **oui**, à la tâche terminée — *pas plus fin* |
+| **Dépendance d'infra** | aucune | **aucune** (Redis déjà requis) | **Temporal requis** sur le chemin par défaut |
+| **Annulation** | `Task.cancel` via le bus (#444) | **inchangée** | **coopérative** — activités à instrumenter |
+| **Brief `humain` + validation** | marchent | **inchangés** | **réécrits** en `wait_condition` + `signal` (§12.5) |
+| **Rattachement au projet** | acquis (#222, #443) | **inchangé** | absent de la signature `DurableEngine.run` |
+| **Pause / reprendre (#477)** | acquise | **inchangée** | **absente** du durable — `porte` n'est pas un paramètre |
+| **Survit à l'arrêt de l'API** | oui (#446) | oui | oui |
+| **Survit au sommeil machine** | non | non — mais reprise **sur l'acquis** au réveil | **oui, reprise automatique** |
+| **Coût** | nul, et un contournement de D5 à payer | **faible, incrémental** | **élevé** — cinq portages (§12.5) |
+
+### 12.5 Les trois obstacles d'O4, réexaminés — et les deux qui manquaient
+
+**① Temporal en dépendance dure du chemin par défaut — tient, et pèse un peu plus.** Rien n'a changé
+côté Temporal ; ce qui a changé est autour. La panne n° 2 du §2 — la machine qui s'endort — est
+toujours là, et l'on adosserait la durabilité à Docker, c'est-à-dire à ce qui tombe avec elle. À une
+machine et un utilisateur devant, le change reste mauvais.
+
+**② L'annulation coopérative — tient, mais l'écart s'est réduit, et il faut le dire.** Le §4.5
+opposait `Task.cancel` **immédiat** à une cancellation coopérative. Depuis #444 l'annulation de la
+Control Tower **traverse déjà une frontière** : elle publie sur le bus, l'hôte détaché l'observe et
+annule sa propre tâche, sous `DELAI_ANNULATION_S = 5 s` (`executions.py:248`, `1014`). Le mécanisme
+réel reste `Task.cancel`, mais l'immédiateté de 2026-08-23 n'est déjà plus la référence. La
+régression subsiste — une activité de quarante minutes doit observer son contexte pour la voir —,
+elle est simplement moins large qu'écrit.
+
+**③ L'attente humaine dans une activité — tient, mais *pas pour la raison écrite*, et sa vraie forme
+est plus dure.** Le §4.4 cite `guardrails.py` : un validateur qui bloque la boucle est « fatal en
+mode durable, où la boucle doit continuer à battre le cœur des activités ». Deux corrections.
+
+D'abord le pointeur : la note vit en **`maestro/engine/guardrails.py:427-433`**. Le §4.4 la donnait à
+`guardrails.py:208-214`, où se trouve aujourd'hui tout autre chose (la docstring de
+`DemandeValidation`), et #701 a recopié cette référence — c'est le §4.4 qu'elle corrige, pas le
+ticket. Ensuite et surtout, **elle décrit le remède, pas le défaut** : un canal synchrone est
+exécuté `await asyncio.to_thread(canal, demande)`
+(`guardrails.py:433`) précisément pour ne pas bloquer la boucle. Le compagnon `_bat_le_coeur`
+(`activities.py:199-203`) continue donc de battre pendant la délibération, et `_avec_battement`
+enveloppe tout le travail de l'activité (`activities.py:279`). **Le battement tient.**
+
+Ce qui ne tient pas est ailleurs, et c'est plus qu'un réglage. Une activité est bornée par son
+`start_to_close_timeout` — `TIMEOUT_TACHE = 1 h` (`workflow.py:72`) — et une expiration est **rejouée**
+par `RELANCE_PERTE_WORKER` jusqu'à trois fois (`workflow.py:86-91`). Une délibération plus longue
+qu'une heure ferait donc **reposer la question à l'opérateur et repayer le travail de la tâche**. Or
+le §3 le rappelle : aucune des trois attentes n'a de time-out, l'attente est « indéfinie […], jamais
+un time-out silencieux » (`validation.py:88-91`) — **par décision**. Une attente indéfinie ne peut
+pas vivre sous un `start_to_close_timeout`, quelle qu'en soit la valeur : ce n'est pas un plafond à
+monter, c'est une incompatibilité de nature. La conclusion du §4.4 est donc **confirmée et
+renforcée** — les trois arbitres ne sont pas portés vers le durable, ils y sont **réécrits** en
+`workflow.wait_condition` sur un `@workflow.signal`.
+
+**④ Le parallélisme — obstacle non listé en 2026-08-23.** `--parallele` est refusé en mode durable :
+« le plafond global de concurrence n'est pas encore porté par le workflow » (`cli.py:333-339`). Or la
+Control Tower passe `max_parallele=ordre.parallelisme` à chaque run (`hote_detache.py:1054`). Le
+portage est à faire, et il n'était compté nulle part.
+
+**⑤ La pause — obstacle qui n'existait pas en 2026-08-23.** `PorteExecution` (#477,
+`engine/pause.py:45`) est câblée à la Control Tower et passée au moteur (`hote_detache.py:1077`).
+Elle n'a **aucun équivalent** côté durable : suspendre un run reviendrait à écrire une seconde fois,
+en `wait_condition`, ce que la boucle en process obtient d'un `asyncio.Event`. C'est le même poste
+que l'obstacle ③, sur un autre objet.
+
+**Bilan : cinq portages, pas trois** — le cadrage #318 en étape de workflow, les trois attentes
+humaines réécrites, le parallélisme, la signature (`projet_id`, `ticket`, `mode_brief`), la pause —
+plus une dépendance d'infra dure et une annulation dégradée.
+
+### 12.6 Décision
+
+**L'état acquis durable hors process (b) est retenu.**
+
+**① Ce qui est demandé est la reprise, pas Temporal — et sur cet axe, O4 ne fait pas mieux.** C'est
+le constat qui tranche, et il est vérifiable en une ligne de code : `resultats_acquis` exclut la
+tâche en vol, qui « n'a rien produit et sera reprise » (`workflow.py:117-118`). Temporal reprend à la
+tâche terminée ; (b) aussi. La porte n° 4 a été écrite en supposant que la reprise exacte *appelait*
+le workflow durable — ce qui était vrai au sens où Temporal était le **seul** mécanisme du dépôt qui
+la faisait, jamais au sens où il était le seul possible. On n'achète pas cinq portages et une
+dépendance d'infra pour une granularité qu'on obtient sans eux.
+
+**② Le format existe, le magasin manque.** `TaskResult` est déjà sérialisé et déjà transporté entre
+process (`activities.py:277`) ; le plan est déjà écrit, à trois champs près (§12.2). Ce qui manque
+n'est pas un modèle d'exécution, c'est un endroit où écrire et un verbe pour relire. Une option qui
+comble un trou nommé coûte moins qu'une qui change de frontière.
+
+**③ Elle ne paie aucune des propriétés qu'on utilise tous les jours.** Annulation, brief `humain`,
+validation, projet, pause : (b) n'y touche pas. C'est le même raisonnement qu'au §5 — ne pas payer
+une régression sur le quotidien pour un gain sur le rare —, appliqué à une liste devenue plus
+longue de deux entrées depuis (le parallélisme et la pause).
+
+**④ Et ce n'est pas (b) *au lieu de* O4, c'est (b) *avant* O4 — avec une honnêteté que le §5 n'avait
+pas à avoir.** Au §5, aucun lot n'était jeté le jour d'O4. Ici, une pièce le serait : le **magasin**,
+puisque Temporal fournirait l'état acquis par `resultats_acquis`. Ce n'est ni le format
+(`TaskResult`, que Temporal transporte déjà tel quel), ni le **verbe de reprise** côté Control Tower
+— « reprendre sur l'acquis ou relancer sur le brief » est une décision de produit, dont seule la
+source d'état changerait. Ce qui serait jeté est un `RPUSH`/`LRANGE` ; ce qui serait gardé est le
+contrat. Le change reste très favorable, et il vaut mieux l'écrire que le taire.
+
+**Corollaire, à écrire là où les précédents le sont** (docs/05, `executions.py`, `battement.py`) :
+**un run reprend là où il s'est arrêté, à la tâche près — pas au milieu d'une tâche.** Une tâche
+interrompue en vol est repayée en entier, et aucune des trois options ne fait mieux.
+
+### 12.7 Ce que ça change pour #699 et #700 — tous deux livrés avant ce cadrage
+
+**Les trois tickets sont nés le même jour ; les deux autres sont arrivés les premiers.** #700
+(`aa3e3c7`, 22:50) puis #699 (`b8d885a`, 22:54) étaient sur `main` quand cette section a été écrite.
+Elle ne les instruit donc pas, elle **constate** ce qu'ils ont tranché et dit ce qui reste.
+
+**#699 : la piste que ce cadrage aurait exigée est celle qui a été prise.** Il a porté la
+consignation du côté de la **publication** — `BusDurable` pour les producteurs asynchrones,
+`publieur_redis` pour le pont télémétrie, `RPUSH` et `PUBLISH` dans un seul `MULTI`/`EXEC` — et
+retiré celle de la pompe, « deux écrivains sans dédoublonnage auraient doublé chaque ligne au lieu
+d'en perdre ». C'est exactement la propriété dont le chantier de reprise a besoin, et elle est
+**acquise sans qu'il ait à la payer** (§12.2). L'alternative Redis Streams n'a pas eu à être
+tranchée.
+
+**#700 : sa question ouverte est refermée, et dans le sens de ce cadrage.** Sa note technique posait
+trois issues — ouvrir la relance aux runs sans brief, accepter de perdre leur travail, ou faire de
+la reprise à l'endroit exact un chantier à part. Il a retenu la **troisième** sans attendre ce
+cadrage, et sa §11.2 le dit en propres termes : « la reprise **à l'endroit exact** de l'interruption
+reste la porte 4 du §10.5, toujours pas franchie ». Ce §12 la franchit ; le renvoi est désormais
+dans les deux sens. La première issue est **écartée pour de bon** — repartir de l'objectif brut
+sauterait la validation que le run attendait (§12.3.3), et la reprise exacte la rend sans objet.
+
+**Mieux : #700 s'est appuyé sur le défaut que ce cadrage instruisait, pour tracer sa propre
+frontière.** Sa raison n° 2 de garder `arreter_session` hors du chemin est mot pour mot le constat
+du §12.1 — la relance « rejoue toutes les tâches » et « refuse net un run sans brief approuvé » —,
+et il en tire la conclusion juste : solder à chaque relance « perdrait sans retour le travail des
+runs sans cadrage ». Le même fait a servi deux décisions différentes le même jour, sans qu'aucune
+n'ait à attendre l'autre.
+
+**L'ordre que ce cadrage aurait prescrit était trop fort d'un cran, et les faits l'ont montré.**
+Écrire « #699 → #700 → le chantier » supposait une dépendance qui n'existe pas : #700 n'avait pas
+besoin de #699 pour être juste, il avait besoin de sa **mesure**, qu'il avait déjà. Ce qui est
+réellement forcé est plus étroit — **#699 avant le chantier de reprise**, et rien d'autre. Il est
+satisfait.
+
+⚠ **Un prix subsiste, et il n'appartient à personne des deux.** Depuis #700, fermer la fenêtre solde
+les runs en vol ; un run lancé depuis le chat (`MODE_BRIEF_AUTO`, `app.py:1099-1113`) ainsi soldé
+n'est **pas reprenable du tout** (`MOTIF_RELANCE_SANS_CADRAGE`). #700 a traité ce risque là où il
+pouvait — en gardant le **démarrage** hors du chemin, sa raison n° 2 —, mais il ne pouvait pas le
+traiter pour le geste qu'il ajoute, sauf à ne pas l'ajouter. C'est donc une conséquence assumée qui
+**vit jusqu'au chantier de reprise**, et qui doit être **dite au moment du geste** plutôt que
+découverte au retour : un run non reprenable qu'on solde en fermant la fenêtre doit être nommé comme
+tel. C'est le seul point que ce cadrage laisse à la charge de l'existant.
+
+**Ce que ce cadrage ne ferme pas** : la reprise **automatique** au réveil de la machine (elle reste
+derrière O4), la reprise **au milieu d'une tâche** (§12.8), et le découpage du chantier lui-même, qui
+est fait séparément — comme le §9 l'a été pour #441.
+
+### 12.8 Ce qui rouvrirait cette question-ci
+
+Le §8 garde ses portes vers O4 ; deux d'entre elles sont **inchangées et intactes** — l'exécution qui
+quitte la machine (n° 2), des runs plus longs qu'une journée (n° 3). La n° 1 (un second run perdu par
+sommeil machine) reste ouverte, avec une nuance : la reprise sur l'acquis en réduit le coût, donc il
+en faudra davantage pour que la balance penche. La n° 4 est **franchie**, et la réponse n'a pas été
+Temporal.
+
+Ce qui rouvrirait la décision de ce §12, nommé d'avance :
+
+1. **Un état acquis qui ment.** Une reprise repartie d'une sortie fausse, tronquée ou trouée. C'est
+   le risque **propre** à (b) : on reconstruit à la main un état que Temporal tiendrait par
+   construction. Un seul cas avéré, non imputable à un bug réparable, et la balance change.
+2. **Le besoin de reprendre au milieu d'une tâche.** Une tâche de quarante minutes interrompue à la
+   trente-huitième est repayée en entier. ⚠ Cette porte **ne mène pas à O4** — Temporal rejoue
+   l'activité entière lui aussi — mais vers le **découpage** des tâches ou un point de reprise
+   intra-tâche. La confondre avec la porte n° 4 ferait acheter Temporal pour ce qu'il ne donne pas.
+3. **Le jour où le magasin coûte plus cher qu'un worker.** Si maintenir l'état acquis revient à
+   réécrire à la main la moitié de ce que Temporal fait — reprise, requêtes d'état, exactement-une-
+   fois —, la comparaison du §12.4 s'inverse d'elle-même. C'est le critère de bascule honnête, et
+   c'est celui qu'il faut surveiller.
+4. **Une seconde machine.** Deux postes, ou un hôte partagé, et le magasin devient un état distribué
+   à tenir cohérent — ce pour quoi Temporal existe. C'est la porte n° 2 du §8, vue depuis ce §12 :
+   elle rouvre les deux décisions à la fois.

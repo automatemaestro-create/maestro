@@ -471,8 +471,8 @@ conditions qui rouvriraient la question.
 
 ⚠ **Ce dernier point n'est plus une intention : il est livré** (chantier #441, doc 28 §10).
 Depuis #446, un run lancé depuis la Control Tower vit dans un **process indépendant** qui
-survit à l'arrêt **accidentel** de `maestro-api` — fermer la fenêtre du navigateur, relancer
-après une modification, planter n'emportent plus le run —, y publie ses étapes, y bat son
+survit à l'arrêt **accidentel** de `maestro-api` — relancer après une modification, planter
+n'emportent plus le run —, y publie ses étapes, y bat son
 cœur et y consigne son issue en partant. `MAESTRO_HOTE_RUN=process` ramène la tâche de fond
 de l'API, dont les runs meurent avec elle. Ne pas confondre les deux frontières, qui
 répondent à deux questions différentes : `--durable` décide **de quoi tient la boucle
@@ -482,12 +482,16 @@ reste réservé à `maestro-run`, et le corollaire assumé du premier est qu'un 
 l'**accident**, **pas à l'extinction ni à sa machine** — c'est là, exactement, que la reprise
 automatique de Temporal resterait à acheter.
 
-⚠ **L'extinction est le mot que #486 a ajouté** (doc 28 §11) : `bash
-scripts/controltower/start.sh --stop` n'est pas un accident mais une **décision**, et il solde
-donc les runs en vol (`POST /api/extinction`) au lieu de les laisser consommer du quota sans
-écran pour les suivre. Ce qu'il a interrompu se reprend au redémarrage par le bouton
-« Reprendre » de la Control Tower ; `MAESTRO_EXTINCTION=0` laisse délibérément tourner, en le
-disant.
+⚠ **L'extinction est le mot que #486 a ajouté** (doc 28 §11) : arrêter la Control Tower n'est
+pas un accident mais une **décision**, et cela solde donc les runs en vol
+(`POST /api/extinction`) au lieu de les laisser consommer du quota sans écran pour les suivre.
+Deux gestes le font — `bash scripts/controltower/start.sh --stop`, et **fermer la fenêtre du
+navigateur** depuis #700 (doc 28 §11.2), la survie ayant cessé de préserver le run le jour où
+#699 a montré qu'elle lui faisait perdre son historique. Reste un accident, et lui seul : le
+**redémarrage** (qui remplace la session précédente), le plantage, le `SIGTERM`. Ce qui a été
+interrompu se reprend au redémarrage par le bouton « Reprendre » de la Control Tower ;
+`MAESTRO_EXTINCTION=0` laisse délibérément tourner, en le disant — au démarrage comme à
+l'arrêt.
 
 Le journal des événements n'a **pas de rétention bornée** (la liste croît avec l'historique,
 pour préserver l'historique complet) et la bascule vers PostgreSQL (entités RUN/TASK,
