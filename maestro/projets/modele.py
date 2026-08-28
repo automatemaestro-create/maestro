@@ -45,6 +45,20 @@ INCLUS_DEFAUT: tuple[str, ...] = (".",)
 #: (besoin A), ou un projet existant qu'on reprend (besoin B).
 ORIGINES: frozenset[str] = frozenset({"nouveau", "existant"})
 
+#: Identité portée par **tous** les commits que Maestro écrit dans le dépôt de
+#: l'utilisateur : le premier commit d'une mise sous Git (`maestro.projets.versionnement`,
+#: #704), le commit de rattrapage du travail non commité et le commit de fusion
+#: (`maestro.projets.application`, #227). Le dépôt de quelqu'un n'a aucune raison de porter
+#: une identité Git valable pour un agent, et un `user.email` absent ferait échouer
+#: l'écriture au tout dernier geste (#333). Elle est toujours posée par `-c`, donc jamais
+#: écrite dans la configuration du projet.
+#:
+#: Elle vit **ici**, avec les constantes inertes, et non dans l'un des deux modules qui
+#: s'en servent : deux orthographes de la même identité finiraient par diverger, et c'est
+#: l'auteur d'un historique qu'on lirait alors sous deux noms.
+AUTEUR_NOM = "Maestro"
+AUTEUR_COURRIEL = "maestro@localhost"
+
 #: Identifiant de projet admissible comme nom de fichier — même verrou que les
 #: autres dépôts (`maestro.agents.store`) : slug sûr, sans séparateur ni point,
 #: ce qui interdit toute traversée de chemin depuis un identifiant venu de l'API.

@@ -35,6 +35,14 @@ Quatre responsabilités, une par module :
   `maestro.controltower.validation.appliquer_sous_validation`, qui branche cette
   action sur la validation existante (EF-08) au lieu d'en inventer une.
 
+Un cinquième s'y est ajouté avec l'écriture en temps réel du projet (#704) :
+`maestro.projets.versionnement` — le **seul** endroit du dépôt qui écrive un
+`.git` dans le dossier de quelqu'un, et seulement quand on le lui demande
+(`initialiser_depot`, `ProjetStore.versionner`). Il ne défait pas EF-38 : la
+détection continue de constater Git sans jamais l'imposer, et c'est parce
+qu'elle s'y tient qu'il fallait un verbe à côté d'elle pour qu'un projet non
+versionné puisse **le devenir**.
+
 Deux modules s'y sont ajoutés avec le montage en mode isolé (#226), parce qu'ils
 répondent à des questions du **projet** et non de la sandbox : `perimetre`
 **applique** au disque les motifs que `modele` déclarait (quels chemins le
@@ -69,6 +77,8 @@ from maestro.projets.application import (
     verifier_perimetre,
 )
 from maestro.projets.modele import (
+    AUTEUR_COURRIEL,
+    AUTEUR_NOM,
     EXCLUS_DEFAUT,
     ID_PROJET,
     INCLUS_DEFAUT,
@@ -90,14 +100,22 @@ from maestro.projets.racine import (
 )
 from maestro.projets.secrets import enregistre_secrets_du_projet
 from maestro.projets.store import ProjetStore
+from maestro.projets.versionnement import (
+    MESSAGE_PREMIER_COMMIT,
+    VersionnementRefuse,
+    initialiser_depot,
+)
 
 __all__ = [
     "APPLICATION_APPROUVEE",
     "APPLICATION_REFUSEE",
     "APPLICATION_SANS_OBJET",
+    "AUTEUR_COURRIEL",
+    "AUTEUR_NOM",
     "EXCLUS_DEFAUT",
     "ID_PROJET",
     "INCLUS_DEFAUT",
+    "MESSAGE_PREMIER_COMMIT",
     "NATURE_AJOUT",
     "NATURE_MODIFICATION",
     "NATURE_SUPPRESSION",
@@ -113,6 +131,7 @@ __all__ = [
     "RacineRefusee",
     "ResultatApplication",
     "Vcs",
+    "VersionnementRefuse",
     "appliquer",
     "canonique",
     "chemin_dans_racine",
@@ -122,6 +141,7 @@ __all__ = [
     "enregistre_secrets_du_projet",
     "exclusions",
     "fichiers_exclus",
+    "initialiser_depot",
     "nouvel_id",
     "valider_racine",
     "verifier_perimetre",

@@ -60,7 +60,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from maestro.projets.modele import Projet
+from maestro.projets.modele import AUTEUR_COURRIEL, AUTEUR_NOM, Projet
 from maestro.projets.racine import RacineRefusee, chemin_dans_racine, valider_racine
 
 #: Les trois natures d'une modification, telles que l'UI les affiche.
@@ -84,13 +84,10 @@ _MAX_COMPTAGE_OCTETS = 1_000_000
 #: c'est la phrase du journal et de la notification qu'on borne.
 _MAX_LIGNES_RESUME = 40
 
-#: Identité portée par les DEUX commits que Maestro écrit dans le projet : le commit de rattrapage
-#: (`commiter_en_attente`) et le commit de fusion (`_fusionner`, `--no-ff`). Le dépôt de
-#: l'utilisateur n'a aucune raison d'avoir une identité Git valable pour un agent, et un
-#: `user.email` absent ferait échouer la fusion au tout dernier geste. Posée par `-c`, donc jamais
-#: écrite dans sa configuration.
-_AUTEUR_NOM = "Maestro"
-_AUTEUR_COURRIEL = "maestro@localhost"
+#: L'identité des deux commits que ce module écrit dans le projet — le commit de rattrapage
+#: (`commiter_en_attente`) et le commit de fusion (`_fusionner`, `--no-ff`) — vit dans
+#: `maestro.projets.modele` (`AUTEUR_NOM`, `AUTEUR_COURRIEL`), qu'elle partage depuis #704
+#: avec le premier commit d'une mise sous Git. Voir là-bas le pourquoi du `-c`.
 
 
 class ApplicationRefusee(RuntimeError):
@@ -706,16 +703,16 @@ def _fusionner(racine: Path, diff: DiffProjet, espace: Path | None) -> tuple[str
     _exige_racine_disponible(racine, diff.base)
     # `--no-ff` écrit un COMMIT de fusion : il lui faut une identité, exactement comme au commit de
     # rattrapage ci-dessus. Elle manquait ici (#333) — la moitié non couverte de ce que le
-    # commentaire de `_AUTEUR_NOM` annonce pourtant : « un user.email absent ferait échouer la
+    # commentaire d'`AUTEUR_NOM` annonce pourtant : « un user.email absent ferait échouer la
     # fusion au tout dernier geste ». C'est le geste en question, et il échouait pour de bon sur
     # tout dépôt sans identité (dépôt neuf, conteneur, runner CI) — en `fusion-refusee`, motif qui
     # désigne un conflit et envoyait donc chercher le problème là où il n'était pas.
     resultat = _git(
         racine,
         "-c",
-        f"user.name={_AUTEUR_NOM}",
+        f"user.name={AUTEUR_NOM}",
         "-c",
-        f"user.email={_AUTEUR_COURRIEL}",
+        f"user.email={AUTEUR_COURRIEL}",
         "merge",
         "--no-ff",
         "--no-edit",
@@ -773,9 +770,9 @@ def commiter_en_attente(espace: Path, branche: str) -> None:
     resultat = _git(
         espace,
         "-c",
-        f"user.name={_AUTEUR_NOM}",
+        f"user.name={AUTEUR_NOM}",
         "-c",
-        f"user.email={_AUTEUR_COURRIEL}",
+        f"user.email={AUTEUR_COURRIEL}",
         "commit",
         "-m",
         f"Maestro : travail de la tâche ({branche})",
