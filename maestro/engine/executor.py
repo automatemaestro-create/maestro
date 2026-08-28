@@ -2,9 +2,17 @@
 
 Isole de la boucle d'orchestration (`maestro.engine.loop`) tout ce qui concerne
 l'exécution d'**une** tâche : routage vers l'agent compétent, garde-fous (#9),
-production du livrable (runtime outillé ou appel texte), mesure d'usage (#8) et
-consignation au journal. La boucle, elle, ne garde que l'ordonnancement (plan,
-dépendances, parallélisme) et l'agrégation.
+production du livrable (runtime outillé ou appel texte), mesure d'usage (#8),
+**fusion du travail dans le projet** (#705) et consignation au journal. La
+boucle, elle, ne garde que l'ordonnancement (plan, dépendances, parallélisme) et
+l'agrégation.
+
+C'est ici que « solder une tâche » a lieu, donc ici que la branche
+`maestro/<tâche>` rejoint la branche de travail du projet dès que la tâche
+réussit (`_fusionne_dans_le_projet`) : le geste était écrit depuis #227 et
+n'avait aucun appelant en production. Ce module ne le réimplémente pas — il le
+**demande**, au seul instant où le verdict est connu et où la tâche suivante
+n'a pas encore monté son worktree.
 
 Cette frontière est **injectable** (`TaskExecutor`) : c'est elle qui permet de
 remplacer l'exécution en process (`LocalExecutor`, comportement historique) par une
@@ -53,13 +61,15 @@ from maestro.engine.guardrails import (
 )
 from maestro.engine.retry import PolitiqueRelance, est_transitoire
 from maestro.orchestrator.schema import Task
+from maestro.projets.application import ApplicationRefusee, appliquer, diff_du_travail
 from maestro.projets.modele import Projet
+from maestro.projets.racine import RacineRefusee
 from maestro.projets.store import ProjetStore
 from maestro.providers.arbitrage import Arbitre, ArbitreActe
 from maestro.providers.base import ModelProvider, UnsupportedCapability, stderr_de
 from maestro.router.classifier import TaskClassifier
 from maestro.router.router import Router
-from maestro.sandbox import ProducedFile
+from maestro.sandbox import ProducedFile, branche_de_tache
 from maestro.telemetry import (
     PlafondDepense,
     PlafondDepenseDepasse,
@@ -154,6 +164,32 @@ SUFFIXE_ETAPE_ACTIVITE = ":activite"
 #: la projection n'utilise que pour rafraîchir la dernière activité de l'agent
 #: (`_applique_activite`) — jamais le statut d'une tâche.
 STATUT_ACTIVITE = "activite"
+
+#: Suffixe des étapes de fusion dans le projet (#705) : `<task.id>:fusion`, une
+#: par tâche soldée en succès sur un projet **versionné** — le pont Control Tower
+#: les mue en activités d'agent, comme `:relance` et `:refus-outil`.
+#:
+#: Étape annexe et non statut de tâche, à dessein : ce qui arrive au projet de
+#: l'utilisateur ne décide pas de l'issue de la tâche. Une fusion refusée ne
+#: transforme pas en échec un travail qui a réussi (critère de #705) — elle se
+#: **dit**, à l'endroit exact où le reste de la vie de la tâche se dit déjà.
+SUFFIXE_ETAPE_FUSION = ":fusion"
+
+#: Statuts d'une étape `:fusion` (#705) — les trois issues, et il en faut trois.
+#:
+#: `fusion_faite` : la branche `maestro/<tâche>` est dans la branche de travail,
+#: le projet a avancé. `fusion_refusee` : Git ou le périmètre s'y est opposé — le
+#: projet est **intact** et la branche conserve le travail, la phrase dit
+#: laquelle des deux causes. `fusion_sans_objet` : la tâche a réussi sans rien
+#: apporter au projet.
+#:
+#: Ce troisième-là est le moins évident et le plus important : le taire serait
+#: reproduire exactement le défaut mesuré par #568 — un run vert dont la racine
+#: reste vide, sans que rien nulle part ne le dise. « Rien n'est arrivé dans le
+#: projet » est une information, pas une abstention nominale.
+STATUT_FUSION_FAITE = "fusion_faite"
+STATUT_FUSION_SANS_OBJET = "fusion_sans_objet"
+STATUT_FUSION_REFUSEE = "fusion_refusee"
 
 #: Délai de grâce accordé à l'annulation d'une réalisation en dépassement (#64) :
 #: le temps, dans le cas nominal, que le SDK ferme son sous-processus. Au-delà,
@@ -291,6 +327,18 @@ class LocalExecutor(TaskExecutor):
         # `maestro/<tâche>`, ou copie du périmètre) au lieu d'un répertoire vide.
         # None, ou tâche sans `projet_id` : le `mkdtemp()` historique.
         self._projets = projets
+        # Un verrou par projet (#705) : les tâches d'un même run tournent de front
+        # (le DAG de `maestro.engine.loop` lance tout ce qui n'attend personne),
+        # mais leurs fusions visent une **seule** racine, que Git exige propre et
+        # posée sur la branche de travail. Sans sérialisation, deux fusions
+        # simultanées se refuseraient mutuellement en `racine-occupee` — un refus
+        # qui ne dit rien du travail et perdrait une tâche sur deux.
+        # Portée assumée : ce process. Les exécuteurs distribués (`CeleryExecutor`,
+        # activité Temporal) montent un `LocalExecutor` par worker, donc par
+        # process — un verrou de dépôt serait un autre sujet, et l'inventer ici
+        # donnerait l'illusion de le traiter.
+        self._verrous_projet: dict[str, asyncio.Lock] = {}
+        self._boucle_verrous: asyncio.AbstractEventLoop | None = None
         # Serveurs MCP par agent (#104) : les déclarations sont relues à chaud
         # dans ce dépôt à chaque tâche — comme les playbooks (#78) — et montées
         # par la couche SDK sur les exécutions outillées de l'agent. None :
@@ -449,6 +497,13 @@ class LocalExecutor(TaskExecutor):
                 _ecoule_ms(debut), arbitrage_ms=deliberation.credit.ecoule_ms()
             ),
         )
+        # Le dernier mètre (#705) : la tâche est soldée, son worktree démonté et
+        # sa branche écrite — c'est le seul instant où « dès qu'elle est soldée »
+        # veut dire quelque chose. **Avant** l'étape terminale et non après : la
+        # tâche n'est annoncée terminée qu'une fois le geste tenté, et la boucle
+        # ne libère les tâches qui en dépendent qu'au retour de `execute`, donc
+        # leur worktree part d'une branche de base qui porte déjà ce travail.
+        await self._fusionne_dans_le_projet(task, result, journal)
         journal.consigne(
             etape=task.id,
             nom=task.titre,
@@ -552,6 +607,103 @@ class LocalExecutor(TaskExecutor):
         if task.projet_id is None or self._projets is None:
             return None
         return self._projets.lire(task.projet_id)
+
+    async def _fusionne_dans_le_projet(
+        self, task: Task, result: TaskResult, journal: RunJournal
+    ) -> None:
+        """Fusionne la branche de la tâche dans le projet dès qu'elle est soldée (#705, D2).
+
+        Le geste manquant du parent #703 : `maestro.projets.application` savait
+        déjà fusionner, `maestro.sandbox.projet` gardait déjà la branche — il n'y
+        avait **aucun appelant en production** (défaut B1 de #568). Le voici, et
+        c'est tout ce que ce lot ajoute : le calcul, le contrôle de périmètre et
+        l'écriture restent là où ils vivent.
+
+        Trois abstentions, toutes silencieuses parce qu'aucune n'a rien à
+        raconter :
+
+        - **tâche en échec** — rien n'est fusionné et la branche reste, intacte,
+          avec le travail que `_solder_la_branche` vient d'y commiter. C'est le
+          critère du ticket, et c'est aussi le seul sens possible : fusionner ce
+          qu'on vient de déclarer raté écrirait l'échec dans le projet ;
+        - **tâche sans projet** — il n'y a pas de racine où écrire ;
+        - **projet non versionné** — sa copie de travail a été refermée avec
+          l'espace (`runtime` la referme dans son `finally`), donc il n'y a plus
+          rien à recopier au moment où le verdict est connu. Ce n'est pas un
+          oubli mais la **portée** du lot : rendre un projet versionné est le lot
+          1 du parent (#704), après quoi ce chemin-ci le prend en charge sans une
+          ligne de plus.
+
+        Le projet est **relu** ici plutôt que retenu de `_produce` : même
+        application à chaud que les playbooks, et un projet supprimé entre-temps
+        vaut abstention, pas échec.
+        """
+        if not result.ok:
+            return
+        projet = self._projet(task)
+        if projet is None or not projet.versionne:
+            return
+        branche = branche_de_tache(task.id)
+        # Le travail est du sous-processus Git, pas de l'attente réseau : sans
+        # `to_thread` il bloquerait la boucle, donc les tâches qui tournent de
+        # front — et ce lot existe précisément pour qu'un run avance.
+        async with self._verrou_projet(projet.id):
+            statut, detail = await asyncio.to_thread(_fusion_du_travail, projet, branche)
+        self._consigne_fusion(task, result, branche, statut, detail, journal)
+
+    def _verrou_projet(self, projet_id: str) -> asyncio.Lock:
+        """Le verrou de fusion de `projet_id` — un seul merge à la fois par projet (#705).
+
+        Les verrous sont indexés par projet **et remis à neuf quand la boucle
+        d'événements change** : un `asyncio.Lock` se lie à la première boucle qui
+        l'attend et refuse la suivante, or rien n'interdit de réutiliser un
+        exécuteur d'un `asyncio.run` à l'autre. Repartir de zéro est sans risque —
+        deux boucles distinctes n'ont, par construction, aucune fusion en vol à se
+        disputer.
+        """
+        boucle = asyncio.get_running_loop()
+        if self._boucle_verrous is not boucle:
+            self._boucle_verrous = boucle
+            self._verrous_projet = {}
+        return self._verrous_projet.setdefault(projet_id, asyncio.Lock())
+
+    def _consigne_fusion(
+        self,
+        task: Task,
+        result: TaskResult,
+        branche: str,
+        statut: str,
+        detail: str,
+        journal: RunJournal,
+    ) -> None:
+        """Trace l'issue de la fusion au journal (#705) — donc au fil temps réel.
+
+        Étape dédiée `<task.id>:fusion` (même modèle que `:relance` et
+        `:refus-outil`), que le pont (`maestro.controltower.bridge`) mue en
+        activité d'agent : ce qui est arrivé au projet se lit au moment où ça se
+        produit, **sans faire changer la tâche de colonne**. `entree` porte le
+        geste tenté (la branche et sa cible), `sortie` ce qu'il en est advenu.
+
+        Consignée dans les **trois** cas, y compris « rien à fusionner » : c'est
+        la seule ligne qui réponde à « qu'est-ce qui est arrivé dans le projet ? »,
+        et la taire quand la réponse est « rien » rendrait invisible exactement le
+        défaut que #568 a mesuré — un run vert sur une racine vide.
+
+        Usage nul : le coût de la tâche est porté par son étape finale, et une
+        fusion ne dépense pas de modèle.
+        """
+        journal.consigne(
+            etape=f"{task.id}{SUFFIXE_ETAPE_FUSION}",
+            nom=f"Projet — {task.titre}",
+            agent=result.agent,
+            role=result.role,
+            statut=statut,
+            entree=f"fusion de {branche}",
+            sortie=detail,
+            usage=StepUsage(),
+            ticket=task.ticket,
+            projet_id=task.projet_id,
+        )
 
     async def _realise_gardee(
         self,
@@ -1424,6 +1576,51 @@ class LocalExecutor(TaskExecutor):
             system_prompt=playbook.contenu if playbook is not None else agent.prompt_systeme,
         )
         return sortie, ()
+
+
+def _fusion_du_travail(projet: Projet, branche: str) -> tuple[str, str]:
+    """Fusionne `branche` dans la branche de travail de `projet` ; rend statut et phrase (#705).
+
+    Synchrone et hors classe : c'est du sous-processus Git de bout en bout, joué
+    dans un thread par l'appelant. Elle **n'invente rien** — `diff_du_travail`
+    calcule, `appliquer` contrôle le périmètre (`verifier_perimetre`, EF-38) puis
+    fusionne. Le nom de branche vient de `branche_de_tache` et jamais d'ici : deux
+    orthographes de la convention finiraient par fusionner la branche d'une autre
+    tâche.
+
+    Le diff se lit **sur la branche** (`espace=None`) : le worktree est démonté
+    depuis longtemps quand le verdict de la tâche est connu, et ce que l'agent
+    avait laissé non commité y a été porté par `_solder_la_branche`.
+
+    Ne lève **jamais** : `TaskExecutor.execute` ne lève jamais non plus (contrat
+    cardinal du module), et une tâche qui vient de réussir n'a pas à échouer parce
+    que le projet de quelqu'un est occupé. Les deux refus motivés du socle
+    (`ApplicationRefusee`, `RacineRefusee`) portent leur cause ; le filet large
+    derrière eux n'est pas de la méfiance envers ces deux-là mais la tenue du
+    contrat — un `OSError` remonté d'un sous-processus ferait de ce geste annexe
+    la seule chose capable de casser `execute`.
+    """
+    try:
+        diff = diff_du_travail(projet, branche=branche)
+        appliquer(projet, diff)
+    except (ApplicationRefusee, RacineRefusee) as refus:
+        return (
+            STATUT_FUSION_REFUSEE,
+            f"fusion refusée ({refus.motif}) — le projet est intact et {branche} "
+            f"conserve le travail : {refus}",
+        )
+    except Exception as exc:  # cf. le docstring : `execute` ne lève jamais
+        return (
+            STATUT_FUSION_REFUSEE,
+            f"fusion abandonnée — le projet est intact et {branche} conserve le "
+            f"travail : {exc}",
+        )
+    if diff.vide:
+        return (
+            STATUT_FUSION_SANS_OBJET,
+            f"rien à fusionner : {branche} n'apporte aucun changement à {diff.base}.",
+        )
+    return STATUT_FUSION_FAITE, diff.resume()
 
 
 def _hors_arbitrage(arbitrage_ms: int) -> str:
