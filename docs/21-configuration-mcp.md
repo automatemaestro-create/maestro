@@ -1,7 +1,10 @@
 # Configuration MCP — ce qui dépend du client, ce qui dépend de l'outil (ticket #126)
 
-**Version :** 0.2 — §3 mis à jour après livraison du parent #129 (pool projet,
-bibliothèque curée, secrets chiffrés, écriture depuis la Control Tower).
+**Version :** 0.3 — §3 mis à jour après livraison du parent #129 (pool projet,
+bibliothèque curée, secrets chiffrés, écriture depuis la Control Tower), puis du
+parent #673 : la bibliothèque a **trois sources** et une **porte d'admission**
+(§3.5, §3.6), et le §3.4 est renversé sur les deux points que la fédération a
+rendus faux.
 
 > ⚠ **Revue datée (juillet 2026).** Ce qu'elle *classe* — les trois modes
 > d'authentification — n'a pas bougé et reste le contrat. Ce qu'elle *situe* a
@@ -147,9 +150,11 @@ place. L'architecture livrée, détaillée dans [docs/04 §6.4](./04-specificati
   est strictement préservé) et migration outillée (`migrer`).
 - **Bibliothèque curée** (#131) : un registre de templates recherchable
   (`GET /api/mcp/registre`), chaque entrée guidant sa configuration selon son
-  mode d'auth. **Garde-fou supply-chain** ([docs/19](./19-securite-modele-de-menace.md)) :
-  seule une entrée de l'allowlist curée est instanciable — *découverte ≠
-  installation*.
+  mode d'auth. **Garde-fou supply-chain**
+  ([docs/19 §2.3](./19-securite-modele-de-menace.md)) : seule une entrée de
+  l'**allowlist** est instanciable — *découverte ≠ installation*. ⚠ Depuis #673
+  la bibliothèque est plus large que l'allowlist (§3.5) : celle-ci est le seed
+  curé **plus** ce qu'un geste humain y a admis (§3.6).
 - **Secrets chiffrés côté serveur** (#132, parent #102) : le token vit dans le
   **coffre de l'agent**, chiffré au repos (Fernet), résolu au montage dans ce
   coffre seul (un agent ne voit que les siens). Les **trois parcours** du §3.2
@@ -167,21 +172,37 @@ pool → activation → coffre → montage ([tests/test_mcp_config.py](../tests/
 
 ### 3.4 La bibliothèque élargie (#271)
 
+> ⚠ **Cette section décrit le dispositif de #271, où la bibliothèque n'avait
+> qu'une source et où l'allowlist *était* le registre. Ce n'est plus vrai** : le
+> parent #673 lui a donné une seconde source — le miroir du registre MCP officiel
+> — et une **porte d'admission**. Ce qui suit reste exact de la **source curée**,
+> qui n'a pas bougé d'une ligne, et sa **règle de curation** est toujours en
+> vigueur (elle est citée depuis le code). Les deux énoncés que la fédération a
+> renversés sont corrigés sur place et signalés `↯`. La vue d'ensemble des trois
+> sources est au **[§3.5](#35-la-bibliothèque-fédérée-673)**, la porte
+> d'admission au **[§3.6](#36-la-porte-dadmission-678-parent-673)**.
+
 Le registre de #131 tenait en **quatre** entrées — les pilotes déjà versionnés
 dans `core/mcp/`. Suffisant pour prouver le mécanisme, trop étroit pour ce que
 la bibliothèque promet : rien n'y mettait en avant ce que l'écosystème utilise
 réellement, et on ne pouvait donc **rien y découvrir**. #271 l'élargit à une
 trentaine d'intégrations, sans toucher au garde-fou.
 
-**Ce qui est curé, et comment.** Le registre reste **curé, jamais moissonné** :
-aucun annuaire distant n'est branché, chaque entrée est écrite à la main, relue
-en revue de code et versionnée. La `PROVENANCE` (module `mcp_registry`) porte
-les sources et la **date de revue**, servies par
+**Ce qui est curé, et comment.** ↯ Cette liste-ci reste **curée** : chaque entrée
+est écrite à la main, relue en revue de code et versionnée. Elle n'est **plus la
+seule source** de la bibliothèque — un annuaire distant *est* branché depuis
+#673, moissonné dans un miroir local (§3.5) —, et c'est le seul mot de ce
+paragraphe que la fédération a renversé : *jamais moissonnée* était vrai de la
+bibliothèque entière, il ne l'est plus que de cette source-ci. La `PROVENANCE`
+(module `mcp_registry`) porte les sources et la **date de revue**, servies par
 `GET /api/mcp/registre/provenance` et **affichées** au pied de la bibliothèque —
 un registre curé qui ne dit pas d'où il vient demande une confiance qu'il ne
 justifie pas. Cette date se met à jour **dans le même commit** que la liste :
 une date qui ne bouge pas quand la liste bouge atteste une fraîcheur que
-personne n'a vérifiée.
+personne n'a vérifiée. Depuis #677 elle a deux sœurs — `ProvenanceDecouverte` et
+la provenance des admises —, rendues **à côté** et jamais fondues dans la
+sienne : une liste curée se date par sa revue humaine, un miroir par son dernier
+rafraîchissement, une admission par le geste qui l'a posée.
 
 **La règle de curation, qui est une règle de sécurité.** Un gabarit qu'on ne
 sait pas écrire **exactement** n'entre pas. Écrire `npx -y <paquet>` de mémoire,
@@ -208,11 +229,20 @@ les **tags** des intégrations les plus courantes (cliquables) et le retour à l
 liste entière, plutôt que de répéter que la requête ne donne rien.
 
 **Le garde-fou, lui, n'a pas bougé d'une ligne** : `instancier` reste l'unique
-voie template → liaison, l'allowlist *est* le registre, et `POST /api/mcp/pool`
-refuse toujours un id inconnu. Figurer dans la bibliothèque ne configure rien —
-le parcours reste bibliothèque → pool (geste humain, secret saisi) → activation
-par agent. Un registre trois fois plus grand rend ce point **plus** important,
-pas moins : c'est la découverte qui s'élargit, jamais l'installation.
+voie template → liaison, et `POST /api/mcp/pool` refuse toujours un id hors
+allowlist. Figurer dans la bibliothèque ne configure rien — le parcours reste
+bibliothèque → pool (geste humain, secret saisi) → activation par agent. Un
+registre trois fois plus grand rend ce point **plus** important, pas moins :
+c'est la découverte qui s'élargit, jamais l'installation.
+
+> ↯ **« L'allowlist *est* le registre » a cessé d'être vrai avec #677/#678**, et
+> c'est le renversement le plus facile à mal lire du chantier. Le garde-fou n'est
+> pas levé — il est devenu **exact**. Jusque-là l'allowlist portait deux rôles
+> (« ce qu'on connaît » et « ce qu'on autorise ») ; elle n'en garde qu'un.
+> L'allowlist est désormais **cette liste-ci, plus ce qu'un geste humain y a
+> admis** (§3.6), et la bibliothèque est strictement plus large qu'elle. C'est
+> pourquoi une entrée porte deux champs qui ne disent pas la même chose : `curee`
+> répond à « montable ? », `source` à « d'où ça vient ? ».
 
 **Couverture** : [tests/test_mcp_registry.py](../tests/test_mcp_registry.py) côté
 registre — les pilotes historiques vérifiés par **inclusion** et non par égalité
@@ -228,7 +258,134 @@ sorti la bibliothèque des Paramètres et l'a renommé en conséquence
 du même écran est couvert à côté, par `apps/web/tests/integrations-pool.test.tsx`
 (#273) — dont les quatre modes d'auth du §2 ci-dessus, `sans_secret` compris.
 
-### 3.5 La porte d'admission (#678, parent #673)
+### 3.5 La bibliothèque fédérée (#673)
+
+Le parent #673 donne une **seconde source** à la bibliothèque. Il ne lève pas le
+garde-fou : il lui rend son seul rôle. Ce qui est moissonné, ce qui est curé et
+ce qu'un humain autorise deviennent trois choses distinctes, et c'est cette
+distinction — pas le nombre d'entrées — qui est le contenu du chantier.
+
+**Ce qui est moissonné.** Le **registre MCP officiel**
+(`registry.modelcontextprotocol.io`, porté par Anthropic, GitHub, Microsoft et
+PulseMCP) est un catalogue de métadonnées en API publique non authentifiée, dont
+la documentation prévoit explicitement notre cas d'usage : un *aggregator* qui
+moissonne, persiste chez lui, et filtre selon sa propre politique. Mesuré le
+2026-08-28 : **25 333 serveurs**, `limit` plafonné à 100, pagination par
+`cursor`, ~1,3 s l'aller — soit **254 pages et ~10 minutes** pour un moissonnage
+complet.
+
+Deux mesures ont décidé du dessin, et il faut les connaître avant d'y toucher :
+
+1. **`search` amont ne porte que sur le nom** (`feature flag` y rend zéro
+   résultat sur 25 000 entrées), là où `RegistreMcp.rechercher` couvre nom,
+   éditeur, tags et description, accents repliés. On ne délègue donc **pas** la
+   recherche : *on moissonne chez lui, on cherche chez nous*.
+2. **Le registre est en préversion** et annonce « no uptime or data durability
+   guarantees ». Le miroir local (`maestro.agents.mcp_amont`, sous
+   `core/mcp-amont/`) n'est donc pas une optimisation de latence : c'est la seule
+   façon d'adosser un écran à cette source. `MiroirAmont.rafraichir` **ne lève
+   jamais** — sur panne il rend sa cause et laisse le miroir précédent **intact**.
+
+Le miroir garde le `server.json` **verbatim** ; `status` est le seul champ mutable
+de l'amont — une entrée `deprecated` y **reste** avec son statut (signalée, pas
+cachée), une entrée `deleted` en **sort** (modération : spam, malware, illégal).
+
+**Ce qui est traduit, et ce qui est refusé en le nommant.**
+`maestro.agents.mcp_traduction` convertit un `server.json` en entrée de
+bibliothèque, ou rend un **refus nommé** — jamais une entrée à moitié déclarée :
+`remotes[]` → transport `http`/`sse`, `packages[]` → `stdio` à version épinglée,
+`environmentVariables[].isSecret`/`isRequired` → `VariableSecret`. Le refus le
+plus important est celui que la règle de curation du §3.4 explique déjà :
+`maestro.agents.mcp.resolus` ne substitue les `${VAR}` que dans `env` et
+`headers`, jamais dans `args`, donc une entrée dont une variable vit en **argv**
+(`packageArguments`/`runtimeArguments`) est **non traduisible** — refusée sous le
+motif `variable_en_argv` plutôt que servie trouée. Ce n'est pas une hypothèse :
+le corpus capturé en porte **trois cas réels** (voir la couverture ci-dessous).
+
+**Ce qui est curé** n'a pas bougé (§3.4) — et reste le seul endroit où une entrée
+est écrite à la main, relue en revue de code et versionnée avec le dépôt.
+
+**Ce que la porte d'admission décide** : tout le reste. Une entrée découverte est
+**visible, cherchable, jamais montable** ; elle n'entre dans l'allowlist que par
+un geste humain tracé, décrit au §3.6. Le registre officiel vérifie la
+**propriété du namespace** de l'éditeur (`io.github.<user>` par OAuth GitHub,
+`com.exemple` par preuve DNS/HTTP) et **rien de plus** : il dit « ce serveur
+existe », jamais « ce serveur est sûr » ([docs/19
+§2.3](./19-securite-modele-de-menace.md)).
+
+**Trois sources, une allowlist** — le tableau qu'il faut avoir en tête :
+
+| Source | D'où elle vient | Montable ? | `curee` | `source` |
+|---|---|---|---|---|
+| **curée** | `SEED`, en code, relu en revue | oui | `true` | `curee` |
+| **admise** | l'amont, **plus** un geste humain tracé | oui | `true` | `admise` |
+| **découverte** | le miroir de l'amont, seul | **non** | `false` | `decouverte` |
+
+⚠ Le point de lecture délicat est là, et il n'y en a qu'un : une entrée
+**admise** est `curee: true` tout en venant de l'amont. Le booléen répond à
+« montable ? » — c'est **lui** que `POST /api/mcp/pool` regarde —, la source à
+« d'où ça vient ? ». Les lire à l'envers fermerait la porte à ce qu'un humain
+vient d'ouvrir, ou pire, ouvrirait celle d'une découverte que personne n'a
+admise.
+
+**Ce qui ne moissonne pas.** `mcp_federation.federer` *lit* le miroir déjà sur le
+disque et ne déclenche jamais de rafraîchissement : dix minutes de réseau sur le
+chemin d'une requête d'écran seraient une régression qu'aucun cache ne rattrape.
+Le rafraîchissement est le geste d'une boucle de fond
+(`MiroirAmont.rafraichir_si_perime`, périodicité ≥ 1 h comme la doc d'amont le
+demande). La composition est mémoïsée sur l'**empreinte** des deux fichiers
+(miroir et journal d'admissions) — une écriture la fait tomber à l'instant même
+où elle mentirait.
+
+**Ce qui ne tombe jamais.** Un miroir absent, illisible ou vide, une entrée
+intraduisible, un amont injoignable : tout retombe sur la bibliothèque curée,
+avec la cause en clair. Une seule exception, et elle est nommée — un **journal
+d'admissions illisible** retire de l'allowlist tout ce qu'il autorisait, donc sa
+cause est **rendue** (`Federation.cause_admissions`) et non seulement
+journalisée : perdre une découverte est un affichage en moins, perdre une
+admission est un serveur qui ne monte plus.
+
+**Couverture** (#680, le lot 6 du parent — les cinq autres ont différé leurs
+tests ici) :
+
+| suite | ce qu'elle garde |
+|---|---|
+| [tests/test_mcp_amont.py](../tests/test_mcp_amont.py) | le client et le miroir : pagination par `cursor`, incrément `updated_since`, `deleted` qui **sort** du miroir, amont injoignable qui laisse le miroir précédent **intact aux octets près** |
+| [tests/test_mcp_traduction.py](../tests/test_mcp_traduction.py) | la traduction, sur des documents écrits à la main **et** sur un corpus capturé (voir ci-dessous) |
+| [tests/test_mcp_federation.py](../tests/test_mcp_federation.py) | les trois sources, la porte d'admission, la veille, et le **garde-fou aux deux bouts** |
+| [apps/web/tests/integrations-bibliotheque.test.tsx](../apps/web/tests/integrations-bibliotheque.test.tsx) | l'écran : la troisième source, les signaux d'amont, les états réels de la provenance |
+
+⚠ **Aucun test ne parle au registre en direct**, et ce n'est pas une précaution
+de style : une suite adossée à un service en préversion rend un rouge qui
+n'apprend rien, et elle le rend le jour où l'on a le moins envie d'enquêter.
+L'amont est joué par un transport en mémoire qui n'ouvre aucune socket, et les
+échantillons sont **capturés puis versionnés** dans
+[tests/fixtures/mcp_amont/](../tests/fixtures/mcp_amont/) — 62 enveloppes
+verbatim, avec le script qui les recapture et le tableau de ce qu'elles couvrent.
+Un test qui vérifie « l'amont n'est pas appelé » compte les **appels**, jamais
+une durée.
+
+⚠ **Le corpus a renversé une mesure du parent, et il faut la corriger ici :
+#673 annonçait « les deux versions de schéma en circulation », il y en a
+cinq.** Capturées le 2026-08-28 sur 4 029 entrées : `2025-12-11`, `2025-10-17`,
+`2025-09-29`, `2025-07-09`, `2025-09-16`. `SCHEMAS_CONNUS` n'en déclare que deux,
+donc **14 des 62 entrées** du corpus portent l'avertissement « schéma amont
+inconnu » — et se traduisent quand même. C'est exactement ce que le module
+promet (un millésime hors table est **signalé**, jamais refusé), et c'est ce qui
+empêche la fédération de tomber le jour où l'amont publie un schéma de plus.
+Élargir `SCHEMAS_CONNUS` ferait taire l'avertissement ; ce n'est pas la même
+chose que le rendre inutile.
+
+⚠ **Le refus `variable_en_argv` est prouvé sur un échantillon fautif avant qu'on
+conclue de son absence.** Le corpus porte **trois entrées réelles** dont une
+variable vit en argv ; le test vérifie d'abord qu'elles sont refusées *pour cette
+cause* (en montrant que les mêmes documents, arguments retirés, passent), puis
+seulement ensuite balaie les entrées traduites pour établir qu'aucune ne laisse
+de gabarit dans ses `args`. L'ordre inverse rendrait un ✓ sur une question jamais
+posée — et un corpus recapturé plus étroit désarmerait le balayage en silence,
+raison pour laquelle un test garde la **couverture du corpus lui-même**.
+
+### 3.6 La porte d'admission (#678, parent #673)
 
 #271 avait élargi le registre de 4 à 29 entrées **sans lever le garde-fou**, et
 en nommait déjà la limite : une liste figée ne découvre rien. Le parent #673 y
@@ -298,7 +455,7 @@ pour un même refus finiraient par se contredire. ⚠ La révocation est cherch�
 les deux causes sont vraies à la fois, et « personne ne l'a admise » est exact et
 trompeur sur une entrée qu'on a admise puis retirée.
 
-**Le contrat d'API** (figé ici, l'écran suit au lot #679) :
+**Le contrat d'API** (figé ici, l'écran l'a suivi au lot #679) :
 
 | route | ce qu'elle fait |
 |---|---|
@@ -333,7 +490,10 @@ autorisait, et la cause remonte jusqu'à l'écran (`cause_admissions`) : perdre 
 découverte est un affichage en moins, perdre une admission est un serveur qui ne
 monte plus.
 
-**Couverture** : tests différés au lot 6 du parent (#680), comme les lots 1 à 3.
+**Couverture** : voir le §3.5 ci-dessus — les six lots du parent sont couverts
+ensemble par le lot 6 (#680), la porte d'admission par
+[tests/test_mcp_federation.py](../tests/test_mcp_federation.py) et son garde-fou
+par les deux bouts (`instancier` **et** `POST /api/mcp/pool`).
 
 ---
 

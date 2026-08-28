@@ -44,6 +44,7 @@ L'opérateur humain et le poste lui-même sont réputés de confiance (POC).
 | Lecture de l'environnement hôte depuis le conteneur | code exécuté dans le conteneur | Environnement minimal : seules les 3 variables d'auth fournisseur entrent (`ENV_TRANSMISES`) ; les secrets MCP voyagent résolus en mémoire, jamais dans l'environnement du conteneur | #108/#109 |
 | Action interdite via un outil | appel d'outil intégré ou MCP hors mandat | Politique **allow/deny par agent et par outil** : outils refusés retirés de la session, serveur MCP refusé jamais monté (secrets jamais résolus), le reste refusé **au vol** (hook PreToolUse) avec motif — violation tracée (`:refus-outil`), jamais fatale au run | #110 |
 | Config MCP ambiante montée à l'insu | config utilisateur/projet/plugin du CLI | `strict_mcp_config` : la session ne monte que la liste déclarée de l'agent | #104 |
+| **Serveur MCP arbitraire monté depuis un catalogue** | entrée de bibliothèque non curée, paquet typosquatté, annuaire tiers | **Allowlist** : `RegistreMcp.instancier` est l'unique voie template → liaison et n'accepte que l'allowlist ; `POST /api/mcp/pool` refuse avant elle. *Découverte ≠ installation* — **§2.3** | #131/#271/#678 |
 | Secret en clair dans le dépôt Git | déclaration MCP ou politique versionnée | Déclarations à références `${VAR}` seulement, littéraux masqués (`•••`) dans la forme publique ; `core/secrets/*` gitignoré ; politiques sans secret par construction | #104/#109 |
 
 Les trois mécanismes sont **cumulatifs et indépendants** : chacun s'active
@@ -136,6 +137,75 @@ pas ceux d'un contenu manipulé — un brief rédigé à partir d'une source hos
 **plausible**, et c'est exactement ce qu'on approuve sans relire. Ce qui borne les dégâts reste ce
 qui les bornait déjà : les actions sensibles derrière la validation (EF-08, EF-37) et la politique
 d'outils par agent (#110).
+
+### 2.3 Découverte ≠ installation : ce que la bibliothèque MCP garantit *(en vigueur — #131, #271, parent #673)*
+
+Ce garde-fou est cité depuis une douzaine d'endroits du dépôt sous la forme
+« voir docs/19 » ; il n'y était pas écrit. Le voici, avec ce que la **fédération**
+du parent #673 y change — et ce qu'elle n'y change pas.
+
+**La règle, en une phrase.** Un serveur MCP n'est montable que s'il appartient à
+l'**allowlist**. `RegistreMcp.instancier` en est l'unique voie (template →
+liaison) et `POST /api/mcp/pool` refuse **avant** elle, avec la même phrase, pour
+que deux formulations d'un même refus ne divergent pas. Figurer dans la
+bibliothèque ne configure rien : le parcours reste bibliothèque → pool (geste
+humain, secret saisi) → activation par agent.
+
+**Ce que la fédération change.** Jusqu'à #673 l'allowlist portait deux rôles —
+« ce qu'on connaît » et « ce qu'on autorise » —, et la découverte se limitait donc
+à 29 entrées écrites à la main. Depuis, la bibliothèque **découvre** dans un
+miroir du registre MCP officiel ([docs/21
+§3.5](./21-configuration-mcp.md)) : des milliers d'entrées, visibles et
+cherchables, **dont aucune n'est montable**. Le garde-fou n'est pas levé, il
+devient **exact** — l'allowlist ne garde qu'un rôle, autoriser.
+
+**Ce que le registre officiel prouve, et ce qu'il ne prouve pas.** C'est le point
+que ce paragraphe existe pour dire, parce qu'il est facile de lire un catalogue
+officiel comme une caution :
+
+- il **vérifie la propriété du namespace** de l'éditeur — `io.github.<compte>` par
+  OAuth GitHub, `com.exemple` par preuve DNS ou HTTP sur le domaine —, et il
+  publie une **version épinglée** avec l'enregistrement ;
+- il **ne vérifie pas la sûreté** : aucun scan, aucun audit, aucune caution sur
+  le code. Il dit « ce serveur existe », **jamais** « ce serveur est sûr ». Sa
+  modération retire *a posteriori* (spam, malware, illégal), ce qui est autre
+  chose qu'un contrôle *a priori*.
+
+La seconde question reste donc entièrement la nôtre, et c'est la **porte
+d'admission** ([docs/21 §3.6](./21-configuration-mcp.md)) qui y répond : un geste
+humain tracé (qui, quand, quelle version, quelle source) fait entrer une entrée
+découverte dans l'allowlist, en **figeant** la version admise. Une organisation
+qui veut y brancher sa revue ou son scan le fait par la politique d'admission,
+qui est le seul point d'extension prévu — le défaut du dépôt accepte tout,
+c'est-à-dire que le geste humain **est** la politique par défaut.
+
+**Ce que la fédération ne change pas — et pourquoi la règle de curation tient
+toujours.** [docs/21 §3.4](./21-configuration-mcp.md) interdit d'écrire un
+`npx -y <paquet>` **de mémoire** : c'est une invitation au typosquatting dans une
+allowlist. Le motif ne disparaît pas, il **cesse de s'appliquer** quand
+l'identifiant de paquet ne vient plus d'une mémoire mais d'un enregistrement
+d'éditeur au namespace vérifié, à version épinglée — et l'admission en garde la
+source pour qu'on puisse toujours revenir la vérifier. Fédérer n'affaiblit pas la
+curation : c'est ce qui en fait, pour la première fois, une curation **sourcée**.
+
+**Trois garde-fous de détail, qui sont des décisions et non des effets de bord :**
+
+- une entrée **`deleted` chez l'amont** (retirée par la modération) **sort** du
+  miroir et n'est jamais admissible ; une entrée `deprecated` reste visible,
+  **signalée** ;
+- une entrée dont une variable vit en **argv** est refusée — `maestro.agents.mcp.resolus`
+  ne substitue les `${VAR}` que dans `env` et `headers`, donc elle démarrerait sur
+  la chaîne littérale : un refus nommé plutôt qu'un serveur monté de travers ;
+- une **révocation ne démonte rien**. L'entrée sort de l'allowlist (elle n'est
+  plus instanciable, et le refus **nomme** la révocation), mais un serveur déjà
+  dans le pool y reste, avec son alerte — couper un run en cours pour appliquer
+  une décision d'allowlist serait un remède pire que le mal. Ce qui est promis
+  est « jamais sans le dire », pas « jamais sans casser ».
+
+**Limite assumée.** L'admission autorise un **gabarit**, pas un comportement :
+rien ici n'inspecte ce que le serveur fait une fois monté. Ce qui borne cela est
+ailleurs et n'a pas bougé — la politique d'outils par agent (#110), le coffre par
+agent (#109) et l'isolation d'exécution (#108).
 
 ## 3. Activation (récapitulatif)
 

@@ -91,9 +91,13 @@ def test_les_deux_forges_cohabitent_dans_la_bibliotheque() -> None:
     Il répond à « quelles intégrations existe-t-il ? », jamais à « laquelle ce
     projet utilise-t-il ? » — ce dernier point se lit dans `core/mcp/qa.json`
     seul, et c'est `tests/test_controltower.py` qui l'épingle. Garder les deux
-    n'est donc pas une hésitation : l'allowlist *est* le registre, donc en
+    n'est donc pas une hésitation : le seed **est** l'allowlist du dépôt, donc en
     sortir `gitlab` interdirait de monter un serveur GitLab, alors qu'un projet
-    outillé par Maestro n'est pas forcément sur la forge du nôtre.
+    outillé par Maestro n'est pas forcément sur la forge du nôtre. ⚠ Depuis #678
+    l'allowlist ne se réduit plus au seed — elle est le seed **plus** ce qu'un
+    geste humain y a admis —, mais l'argument tient au mot près : une admission
+    est un geste, pas un filet, et rien ne rattraperait une entrée qu'on aurait
+    sortie d'ici.
     """
     registre = RegistreMcp.curee()
     forges = [e.id for e in registre.rechercher("forge")]

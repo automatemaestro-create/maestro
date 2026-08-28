@@ -1479,7 +1479,8 @@ def test_le_registre_cure_garde_les_deux_forges_et_dit_la_meme_chose_que_qa_json
 
     # La bibliothèque (#131) répond à « quelles intégrations existe-t-il ? » :
     # les deux forges y sont, et retirer `gitlab` INTERDIRAIT de le monter —
-    # l'allowlist *est* le registre (docs/19, découverte ≠ installation).
+    # le seed **est** l'allowlist du dépôt (docs/19 §2.3, découverte ≠
+    # installation), et une admission (#678) est un geste, pas un filet.
     assert "github" in ids and "gitlab" in ids
     assert registre.instancier("gitlab").url == ""  # stdio : toujours montable
 

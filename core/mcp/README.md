@@ -91,10 +91,12 @@ deux réponses parce qu'il y a deux objets :
 - **Le registre curé est une bibliothèque** (#131) : il répond à *« quelles
   intégrations existe-t-il ? »*, jamais à *« laquelle ce projet utilise-t-il ? »*.
   Il porte donc **GitHub et GitLab côte à côte**, et c'est l'entrée **GitHub** qui
-  y manquait. Retirer `gitlab` aurait été la vraie dérive : l'allowlist *est* le
-  registre (garde-fou supply-chain ci-dessous), donc l'en sortir **interdirait**
-  de monter un serveur GitLab — alors qu'un projet outillé par Maestro n'est pas
-  forcément sur la forge du nôtre.
+  y manquait. Retirer `gitlab` aurait été la vraie dérive : le seed **est**
+  l'allowlist du dépôt (garde-fou supply-chain ci-dessous), donc l'en sortir
+  **interdirait** de monter un serveur GitLab — alors qu'un projet outillé par
+  Maestro n'est pas forcément sur la forge du nôtre. ⚠ Depuis #678 l'allowlist ne
+  se réduit plus au seed (« Trois sources, une allowlist » ci-dessous), mais
+  l'argument tient : une admission est un **geste**, pas un filet.
 
 Deux conséquences à connaître :
 

@@ -15,6 +15,9 @@ résolubles par personne, donc refusés plutôt que servis troués.
 
 from __future__ import annotations
 
+import json
+import re
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -34,6 +37,7 @@ from maestro.agents.mcp_traduction import (
     MOTIF_VALIDATION,
     MOTIF_VERSION,
     MOTIFS,
+    SCHEMAS_CONNUS,
     Refus,
     Traduction,
     deriver_mode_auth,
@@ -858,3 +862,265 @@ def test_une_traduction_vide_ne_pretend_ni_reussir_ni_nommer_une_cause() -> None
 
     assert vide.ok is False
     assert vide.resume() == "? refusée — cause inconnue"
+
+
+# ── Le corpus capturé : de vrais `server.json`, relus hors ligne (#680) ──────
+#
+# Tout ce qui précède est écrit à la main : des documents minimaux, taillés pour
+# éprouver une règle à la fois. C'est la bonne forme pour un cas de bord, et la
+# mauvaise pour répondre à « est-ce que ça tient sur ce que l'amont sert
+# vraiment ? » — un document fabriqué ne surprend jamais son auteur.
+#
+# Le corpus de `tests/fixtures/mcp_amont/` est donc **capturé** sur le registre
+# officiel puis versionné, et relu **hors ligne** : aucun test ne parle à l'amont
+# en direct, qui est en préversion et n'offre aucune garantie de disponibilité.
+# Voir le README de ce répertoire pour ce qui a été capturé, quand, et comment le
+# refaire.
+#
+# ⚠ **Ces balayages ne valent que si le corpus porte encore les formes fautives**
+# qu'ils prétendent attraper. Un corpus recapturé plus étroit rendrait les mêmes
+# ✓ sur des questions qui ne seraient plus posées — c'est exactement le piège que
+# ce dépôt évite ailleurs en prouvant un motif sur un échantillon fautif avant de
+# balayer. `test_le_corpus_porte_encore_les_formes_qu_il_doit_couvrir` est cette
+# preuve, et il est le premier de la série à dessein.
+
+
+CORPUS = Path(__file__).parent / "fixtures" / "mcp_amont" / "corpus.jsonl"
+
+#: Un `{placeholder}` d'amont, tel que le registre l'écrit dans ses arguments.
+#: Recopié plutôt qu'importé : un test qui emprunterait le motif du module
+#: vérifierait que le module s'accorde avec lui-même.
+_GABARIT_AMONT = re.compile(r"\{[^{}\s]+\}")
+
+
+def corpus() -> list[EntreeAmont]:
+    """Les entrées capturées, lues comme le miroir les lit (`EntreeAmont`)."""
+    lignes = CORPUS.read_text(encoding="utf-8").splitlines()
+    return [EntreeAmont.depuis_amont(json.loads(ligne)) for ligne in lignes if ligne.strip()]
+
+
+def millesime_de(amont: EntreeAmont) -> str:
+    """Le millésime du `$schema` du document capturé, «» s'il n'en porte pas."""
+    schema = amont.document.get("$schema", "")
+    return schema.split("/")[-2] if isinstance(schema, str) and "/" in schema else ""
+
+
+def test_le_corpus_porte_encore_les_formes_qu_il_doit_couvrir() -> None:
+    """Le garde-fou des balayages qui suivent : sans ces formes, ils ne prouvent rien."""
+    entrees = corpus()
+    assert len(entrees) >= 40, "corpus trop mince pour balayer quoi que ce soit"
+
+    traductions = {amont.nom: traduire_entree(amont) for amont in entrees}
+    motifs = {t.refus.motif for t in traductions.values() if t.refus is not None}
+    millesimes = {millesime_de(amont) for amont in entrees}
+    statuts = {amont.statut for amont in entrees}
+    transports = {t.entree.transport for t in traductions.values() if t.entree is not None}
+
+    # Les deux moitiés du contrat : ce qui se traduit, et ce qui se refuse.
+    assert any(t.ok for t in traductions.values())
+    assert MOTIF_ARGV in motifs, "plus aucun échantillon fautif en argv : le balayage serait vide"
+    assert MOTIF_SUPPRIMEE in motifs
+    assert MOTIF_REGISTRE in motifs
+    # Les deux millésimes que le module déclare connaître, et au moins un qu'il
+    # ne connaît pas — les trois branches de la lecture du `$schema`.
+    assert SCHEMAS_CONNUS <= millesimes
+    assert millesimes - SCHEMAS_CONNUS
+    assert {STATUT_ACTIF, STATUT_SUPPRIME, "deprecated"} <= statuts
+    assert {"http", "stdio"} <= transports
+
+
+def test_aucune_entree_reelle_ne_fait_lever_la_traduction() -> None:
+    """Le contrat du module sur 25 000 entrées : une entrée, **ou** un refus — jamais les deux."""
+    for amont in corpus():
+        traduction = traduire_entree(amont)
+        assert (traduction.entree is None) != (traduction.refus is None), amont.nom
+        assert traduction.nom == amont.nom or traduction.entree is not None
+
+
+def test_chaque_refus_du_corpus_porte_un_motif_connu_et_une_cause() -> None:
+    """Un code seul n'apprend rien à qui lit, une phrase seule ne se compte pas."""
+    for amont in corpus():
+        refus = traduire_entree(amont).refus
+        if refus is None:
+            continue
+        assert refus.motif in MOTIFS, amont.nom
+        assert refus.cause.strip(), amont.nom
+
+
+def test_toute_entree_traduite_du_corpus_est_reellement_instanciable() -> None:
+    """La promesse qui compte : ce que la traduction rend se **monte**, sans retouche.
+
+    `vers_serveur()` est la seule voie template → liaison, et elle valide. Le
+    balayage la joue sur de la matière réelle plutôt que sur des documents
+    taillés pour passer — c'est là que se verrait une forme d'amont qu'on croyait
+    savoir lire.
+    """
+    montes = 0
+    for amont in corpus():
+        entree = traduire_entree(amont).entree
+        if entree is None:
+            continue
+        entree.vers_serveur()
+        assert entree.mode_auth in MODES_AUTH, amont.nom
+        assert entree.id and entree.id == entree.id.lower(), amont.nom
+        montes += 1
+    assert montes >= 20
+
+
+def test_les_ids_derives_du_corpus_ne_se_heurtent_pas() -> None:
+    """Deux noms amont distincts ne doivent pas retomber sur le même slug."""
+    ids: dict[str, str] = {}
+    for amont in corpus():
+        entree = traduire_entree(amont).entree
+        if entree is None:
+            continue
+        assert entree.id not in ids, f"{amont.nom} et {ids.get(entree.id)} partagent {entree.id}"
+        ids[entree.id] = amont.nom
+
+
+def test_aucune_entree_traduite_du_corpus_ne_porte_de_valeur_en_clair() -> None:
+    """Une entrée de bibliothèque est un **gabarit** : toute variable déclarée y est référencée."""
+    for amont in corpus():
+        entree = traduire_entree(amont).entree
+        if entree is None:
+            continue
+        gabarit = " ".join([*entree.env.values(), *entree.headers.values(), entree.url])
+        for variable in entree.secrets:
+            assert f"${{{variable.cle}}}" in gabarit, f"{amont.nom} : {variable.cle}"
+
+
+# ── La variable en argv : prouvée fautive, puis conclue absente ──────────────
+
+
+def echantillons_fautifs_en_argv() -> list[EntreeAmont]:
+    """Les entrées du corpus que la traduction refuse pour `variable_en_argv`."""
+    return [a for a in corpus() if (traduire_entree(a).refus or Refus("", "")).motif == MOTIF_ARGV]
+
+
+def test_le_corpus_porte_de_vraies_variables_en_argv() -> None:
+    """La première moitié de la preuve : le défaut existe **dans le vrai catalogue**.
+
+    Le parent (#673) l'annonçait comme une minorité qu'on nommerait au lieu de la
+    taire ; ces entrées-là en sont la matière, capturées et non fabriquées.
+    """
+    fautifs = echantillons_fautifs_en_argv()
+    assert fautifs, "aucun échantillon fautif : le refus ne serait prouvé sur rien"
+    for amont in fautifs:
+        refus = traduire_entree(amont).refus
+        assert refus is not None
+        assert refus.motif == MOTIF_ARGV
+        # La cause **nomme la forme fautive** (`packages[0].packageArguments[2]`),
+        # sans quoi on ne saurait pas quoi regarder dans le document.
+        assert "Arguments" in refus.cause or "arguments" in refus.cause, refus.cause
+
+
+def test_le_meme_echantillon_traduit_une_fois_ses_arguments_retires() -> None:
+    """La seconde moitié : c'est bien **l'argv** qui refuse, et rien d'autre du document.
+
+    Sans ce contrôle, un refus dû à tout autre chose — un registre non supporté,
+    une version flottante — passerait pour une preuve du garde-fou argv. On
+    retire les seuls arguments et on regarde ce qui change : c'est la définition
+    d'une cause.
+    """
+    fautifs = echantillons_fautifs_en_argv()
+    assert fautifs
+    guerisons = 0
+    for amont in fautifs:
+        sans_argv = json.loads(json.dumps(amont.document))
+        for paquet in sans_argv.get("packages", []):
+            paquet.pop("packageArguments", None)
+            paquet.pop("runtimeArguments", None)
+        apres = traduire(sans_argv)
+        assert (apres.refus is None) or apres.refus.motif != MOTIF_ARGV, amont.nom
+        guerisons += 1 if apres.ok else 0
+    # Au moins un des échantillons ne devait son refus qu'à ses arguments : la
+    # démonstration serait creuse si tous restaient refusés pour une autre cause.
+    assert guerisons >= 1
+
+
+def test_aucune_entree_traduite_du_corpus_ne_laisse_de_gabarit_en_argv() -> None:
+    """La conclusion, **après** la preuve : ce qui passe ne porte aucun `${VAR}` en argv.
+
+    C'est le fait sur `maestro.agents.mcp.resolus` que le garde-fou protège — il
+    ne substitue les références que dans `env` et `headers`. Une variable restée
+    en argv ne serait remplacée par personne, et le serveur démarrerait sur la
+    chaîne littérale.
+    """
+    for amont in corpus():
+        entree = traduire_entree(amont).entree
+        if entree is None:
+            continue
+        for argument in entree.args:
+            # Les deux formes : la nôtre (`${VAR}`, que `resolus` ne traverse
+            # pas ici) et celle de l'amont (`{placeholder}`, qui l'aurait
+            # produite). Aucune ne doit survivre dans un `args`.
+            assert "${" not in argument, f"{amont.nom} : {argument}"
+            assert not _GABARIT_AMONT.search(argument), f"{amont.nom} : {argument}"
+
+
+# ── Les millésimes de schéma réellement en circulation ───────────────────────
+
+
+def test_les_millesimes_connus_du_corpus_ne_produisent_aucun_avertissement() -> None:
+    vus = 0
+    for amont in corpus():
+        if millesime_de(amont) not in SCHEMAS_CONNUS:
+            continue
+        vus += 1
+        notes = traduire_entree(amont).avertissements
+        assert not any("schéma amont inconnu" in note for note in notes), amont.nom
+    assert vus >= 2
+
+
+def test_les_millesimes_inconnus_sont_signales_sans_jamais_refuser() -> None:
+    """Mesure du 2026-08-28 : **cinq** millésimes circulent, pas deux.
+
+    Le parent (#673) en annonçait deux — `2025-12-11` et `2025-09-29`. Le corpus
+    capturé en porte trois autres (`2025-07-09`, `2025-09-16`, `2025-10-17`), et
+    c'est le genre de fait qu'un document fabriqué n'aurait jamais rendu. Rien
+    n'est cassé pour autant, et c'est ce que ce test épingle : un millésime hors
+    table est **signalé** et jamais refusé, donc la fédération ne tombe pas le
+    jour où l'amont publie un schéma de plus. Élargir `SCHEMAS_CONNUS` ferait
+    taire l'avertissement ; ce n'est pas la même chose que le rendre inutile.
+    """
+    inconnus = [a for a in corpus() if millesime_de(a) not in SCHEMAS_CONNUS]
+    assert len({millesime_de(a) for a in inconnus}) >= 1
+    signales = 0
+    for amont in inconnus:
+        traduction = traduire_entree(amont)
+        notes = [n for n in traduction.avertissements if "schéma amont inconnu" in n]
+        assert notes, amont.nom
+        signales += 1
+        if traduction.refus is not None:
+            assert traduction.refus.motif != MOTIF_VALIDATION or traduction.entree is None
+    assert signales == len(inconnus)
+
+
+def test_un_millesime_inconnu_n_empeche_pas_une_entree_de_se_monter() -> None:
+    """Le corollaire du précédent : signalé ne veut pas dire écarté."""
+    montees = [
+        traduire_entree(a).entree
+        for a in corpus()
+        if millesime_de(a) not in SCHEMAS_CONNUS and traduire_entree(a).ok
+    ]
+    assert montees, "aucune entrée d'un millésime inconnu ne passe : le signal serait un refus"
+    for entree in montees:
+        assert entree is not None
+        entree.vers_serveur()
+
+
+def test_une_entree_supprimee_du_corpus_est_refusee_par_son_statut() -> None:
+    """Les `deleted` du corpus sont **réelles** — retirées par la modération amont."""
+    supprimees = [a for a in corpus() if a.statut == STATUT_SUPPRIME]
+    assert supprimees
+    for amont in supprimees:
+        traduction = traduire_entree(amont)
+        assert traduction.refus is not None
+        assert traduction.refus.motif == MOTIF_SUPPRIMEE, amont.nom
+
+
+def test_une_entree_depreciee_du_corpus_se_traduit_quand_meme() -> None:
+    """`deprecated` est signalée, pas cachée : seul `deleted` retire (#675)."""
+    depreciees = [a for a in corpus() if a.statut == "deprecated"]
+    assert depreciees
+    assert any(traduire_entree(a).ok for a in depreciees)

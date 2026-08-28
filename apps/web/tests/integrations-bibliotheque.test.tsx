@@ -487,3 +487,464 @@ describe("la bibliothèque élargie (#271)", () => {
     ).toBeInTheDocument();
   });
 });
+
+/* ------------------------------------------------------------------ *
+ * Le lot 6 (#680) : ce que #679 avait laissé derrière lui
+ * ------------------------------------------------------------------ */
+
+/**
+ * #679 a livré l'écran en gardant **un seul** test — celui du garde-fou, parce
+ * qu'un écran qui proposerait le formulaire d'une découverte ferait saisir un
+ * token pour un ajout dont il connaît d'avance le refus. Tout le reste était
+ * différé ici, et « tout le reste » n'est pas de la décoration : c'est la
+ * **troisième source** (les admises, montables tout en venant de l'amont), les
+ * **signaux d'amont** qui disent ce qui a bougé depuis, et les branches de
+ * provenance qu'un poste réel rencontre — miroir en panne, miroir jamais
+ * moissonné, aucun amont branché.
+ */
+
+/** Monte la bibliothèque sur un registre et une provenance choisis pour le cas. */
+async function bibliothequeAvec(
+  entrees: EntreeRegistreMcp[],
+  provenance: ProvenanceRegistreMcp = PROVENANCE,
+) {
+  chargerRegistreMcp.mockImplementation(() => Promise.resolve(entrees));
+  chargerProvenanceRegistreMcp.mockResolvedValue(provenance);
+  return await bibliotheque();
+}
+
+/** La provenance des trois sources, dont on ne change que ce que le cas éprouve. */
+function provenanceAvec(
+  admiseModif: Partial<ProvenanceRegistreMcp["provenances"][1]> = {},
+  decouverteModif: Partial<ProvenanceRegistreMcp["provenances"][2]> = {},
+): ProvenanceRegistreMcp {
+  const [source, admiseBase, decouverteBase] = PROVENANCE.provenances;
+  return {
+    ...PROVENANCE,
+    provenances: [
+      source,
+      { ...admiseBase, ...admiseModif },
+      { ...decouverteBase, ...decouverteModif },
+    ],
+  };
+}
+
+/** Une entrée **admise** : montable (`curee`), et pourtant venue de l'amont. */
+function admise(options: Partial<EntreeRegistreMcp> = {}): EntreeRegistreMcp {
+  return entree("io-github-alice-veille", "veille", {
+    curee: true,
+    source: "admise",
+    editeur: "io.github.alice",
+    tags: [],
+    version: "1.4.0",
+    depot: "https://github.com/alice/veille",
+    statut: "active",
+    publie_le: "2026-07-14T08:30:00Z",
+    admission: {
+      id: "io-github-alice-veille",
+      nom_amont: "io.github.alice/veille",
+      version: "1.4.0",
+      editeur: "io.github.alice",
+      depot: "https://github.com/alice/veille",
+      amont: "https://registry.modelcontextprotocol.io",
+      miroir_le: "2026-08-28T06:00:00Z",
+      par: "alice",
+      le: "2026-08-28T10:15:00Z",
+      note: "revue faite",
+      active: true,
+      revoquee_par: "",
+      revoquee_le: "",
+      motif: "",
+    },
+    secrets: [{ cle: "MCP_VEILLE_TOKEN", description: "Jeton", secret: true }],
+    ...options,
+  });
+}
+
+async function ligneDeNom(nom: string) {
+  return (await screen.findByText(nom)).closest("li") as HTMLElement;
+}
+
+describe("la troisième source : ce qu'un geste humain a admis (#680)", () => {
+  it("montre l'entrée admise comme montable, sans la confondre avec une curée", async () => {
+    await bibliothequeAvec([entree("gitlab", "GitLab"), admise()]);
+    const ligne = await ligneDeNom("veille");
+
+    // ⚠ Le couple qui fait tout le sens du lot : `curee: true` répond à
+    // « montable ? », `source: "admise"` à « d'où ça vient ? ». Le badge dit la
+    // seconde, le formulaire prouve la première.
+    expect(within(ligne).getByText("Admise")).toBeInTheDocument();
+    expect(within(ligne).queryByText("Découverte")).not.toBeInTheDocument();
+    expect(
+      within(ligne).getByRole("button", { name: "Configurer" }),
+    ).toBeInTheDocument();
+    expect(
+      within(ligne).queryByRole("button", { name: "Examiner" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("déplie le formulaire de configuration, et non le panneau d'examen", async () => {
+    const utilisateur = userEvent.setup();
+    await bibliothequeAvec([admise()]);
+    const ligne = await ligneDeNom("veille");
+    await utilisateur.click(
+      within(ligne).getByRole("button", { name: "Configurer" }),
+    );
+
+    expect(ligne.querySelector("form")).not.toBeNull();
+    expect(within(ligne).getByLabelText(/MCP_VEILLE_TOKEN/)).toBeInTheDocument();
+    expect(
+      within(ligne).queryByRole("button", { name: /Admettre dans l'allowlist/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("porte la trace du geste : qui, quand, et pourquoi", async () => {
+    const utilisateur = userEvent.setup();
+    await bibliothequeAvec([admise()]);
+    const ligne = await ligneDeNom("veille");
+    await utilisateur.click(
+      within(ligne).getByRole("button", { name: "Configurer" }),
+    );
+
+    // Une allowlist locale sans trace serait une allowlist dont personne ne
+    // répond : c'est tout ce que la porte d'admission ajoute au garde-fou.
+    const mention = within(ligne).getByText(/Admise le/);
+    expect(mention).toHaveTextContent("28/08/2026");
+    expect(mention).toHaveTextContent("alice");
+    expect(mention).toHaveTextContent("revue faite");
+  });
+
+  it("compte les admises au pied, avec la date du dernier geste", async () => {
+    const region = await bibliothequeAvec(
+      [admise()],
+      provenanceAvec({
+        total: 2,
+        revoquees: 1,
+        derniere_le: "2026-08-28T10:15:00Z",
+        signaux: 3,
+      }),
+    );
+
+    // `findByText` et non `getByText` : la provenance est une **seconde**
+    // lecture réseau, qui se résout après le premier rendu de la région. Un
+    // `get` synchrone y serait vert ou rouge selon l'ordonnancement des
+    // promesses, c'est-à-dire un test qui ne dit rien.
+    const pied = await within(region).findByText(/2 entrées admises/);
+    expect(pied).toHaveTextContent("dernière le 28/08/2026");
+    expect(pied).toHaveTextContent("1 révoquée (gardée au journal)");
+  });
+
+  it("dit la porte jamais franchie plutôt qu'un zéro", async () => {
+    const region = await bibliothequeAvec([entree("gitlab", "GitLab")]);
+    expect(
+      await within(region).findByText(
+        /la porte existe, personne ne l'a franchie/,
+      ),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("les signaux d'amont : rien ne disparaît en silence (#680)", () => {
+  const SIGNAUX = [
+    ["amont_depreciee", "est passée « deprecated » chez l'amont"],
+    ["amont_supprimee", "a été supprimée chez l'amont"],
+    ["amont_disparue", "n'est plus dans le miroir du registre officiel"],
+    ["version_nouvelle", "l'amont publie « 2.0.0 »"],
+  ] as const;
+
+  it.each(SIGNAUX)(
+    "rend le signal %s sans qu'on ait à déplier",
+    async (genre, message) => {
+      await bibliothequeAvec([
+        admise({
+          signaux: [
+            {
+              id: "io-github-alice-veille",
+              genre,
+              message,
+              version_amont: "2.0.0",
+              statut_amont: "deprecated",
+            },
+          ],
+        }),
+      ]);
+      const ligne = await ligneDeNom("veille");
+
+      // Sans déplier : un écart qu'il faut chercher est un écart qu'on ne voit
+      // pas. C'est la moitié « jamais retirée en silence » du lot #678.
+      const signaux = within(ligne).getByRole("list", {
+        name: "Signaux d'amont",
+      });
+      expect(within(signaux).getByText(message)).toBeInTheDocument();
+    },
+  );
+
+  it("laisse l'entrée signalée parfaitement montable", async () => {
+    await bibliothequeAvec([
+      admise({
+        signaux: [
+          {
+            id: "io-github-alice-veille",
+            genre: "amont_supprimee",
+            message: "a été supprimée chez l'amont",
+            version_amont: "",
+            statut_amont: "deleted",
+          },
+        ],
+      }),
+    ]);
+    const ligne = await ligneDeNom("veille");
+
+    // La détection est automatique, jamais le verdict : retirer d'office
+    // casserait un serveur monté sans le dire.
+    expect(
+      within(ligne).getByRole("button", { name: "Configurer" }),
+    ).toBeInTheDocument();
+  });
+
+  it("n'affiche aucune liste de signaux quand l'amont n'a rien à dire", async () => {
+    await bibliothequeAvec([admise()]);
+    const ligne = await ligneDeNom("veille");
+    expect(
+      within(ligne).queryByRole("list", { name: "Signaux d'amont" }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("l'admission vue de l'écran (#680)", () => {
+  it("relit la bibliothèque et sa provenance après le geste", async () => {
+    const utilisateur = userEvent.setup();
+    // Avant : une découverte. Après le geste : la même entrée, admise.
+    chargerRegistreMcp.mockImplementation(() => Promise.resolve([REGISTRE[2]]));
+    chargerProvenanceRegistreMcp.mockResolvedValue(PROVENANCE);
+    await bibliotheque();
+    const appelsAvant = chargerRegistreMcp.mock.calls.length;
+
+    admettreEntreeMcp.mockImplementation(() => {
+      chargerRegistreMcp.mockImplementation(() => Promise.resolve([admise()]));
+      chargerProvenanceRegistreMcp.mockResolvedValue(
+        provenanceAvec(
+          { total: 1, derniere_le: "2026-08-28T10:15:00Z" },
+          { total: 0 },
+        ),
+      );
+      return Promise.resolve(undefined);
+    });
+
+    const ligne = await ligneDeNom("veille");
+    await utilisateur.click(
+      within(ligne).getByRole("button", { name: "Examiner" }),
+    );
+    await utilisateur.click(
+      within(ligne).getByRole("button", { name: /Admettre dans l'allowlist/ }),
+    );
+
+    // Le rechargement porte sur les **deux** lectures : sans la provenance, le
+    // pied continuerait de dire que personne n'a franchi la porte.
+    await waitFor(() =>
+      expect(chargerRegistreMcp.mock.calls.length).toBeGreaterThan(appelsAvant),
+    );
+    await waitFor(() =>
+      expect(chargerProvenanceRegistreMcp).toHaveBeenCalledTimes(2),
+    );
+    // Le panneau **reste ouvert** et change de contenu sous le même id : ce qui
+    // était à examiner devient configurable, sans que la ligne ait changé de
+    // place ni de nom, et sans que l'utilisateur ait à la rouvrir. C'est cela
+    // que la porte d'admission promet — et « Admise » est cherché **dans la
+    // ligne**, le pied de la bibliothèque portant le même mot pour sa source.
+    await waitFor(async () => {
+      const apres = await ligneDeNom("veille");
+      expect(within(apres).getByText("Admise")).toBeInTheDocument();
+      expect(apres.querySelector("form")).not.toBeNull();
+      expect(
+        within(apres).queryByRole("button", {
+          name: /Admettre dans l'allowlist/,
+        }),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  it("dit l'échec d'une admission au lieu de le passer sous silence", async () => {
+    const utilisateur = userEvent.setup();
+    admettreEntreeMcp.mockRejectedValue(
+      new Error("409 — déjà curé dans le seed, rien à admettre."),
+    );
+    await bibliothequeAvec([REGISTRE[2]]);
+    const ligne = await ligneDeNom("veille");
+    await utilisateur.click(
+      within(ligne).getByRole("button", { name: "Examiner" }),
+    );
+    await utilisateur.click(
+      within(ligne).getByRole("button", { name: /Admettre dans l'allowlist/ }),
+    );
+
+    const alerte = await within(ligne).findByRole("alert");
+    expect(alerte).toHaveTextContent("déjà curé dans le seed");
+    // Le bouton redevient actionnable : un refus n'est pas une impasse.
+    expect(
+      within(ligne).getByRole("button", { name: /Admettre dans l'allowlist/ }),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("les signaux de confiance quand l'amont ne déclare rien (#680)", () => {
+  it("nomme chaque signal absent au lieu d'escamoter sa ligne", async () => {
+    const utilisateur = userEvent.setup();
+    await bibliothequeAvec([
+      entree("nu", "nu", {
+        curee: false,
+        source: "decouverte",
+        editeur: "",
+        tags: [],
+        version: "",
+        depot: "",
+        statut: "",
+        publie_le: "",
+      }),
+    ]);
+    const ligne = await ligneDeNom("nu");
+    await utilisateur.click(
+      within(ligne).getByRole("button", { name: "Examiner" }),
+    );
+
+    // ⚠ « L'absence est muette, l'inconnu est nommé » — et ici l'inconnu **est**
+    // le sujet : un dépôt non déclaré est précisément ce qu'il faut savoir avant
+    // d'admettre. Une ligne qui disparaîtrait se lirait comme une ligne qu'on
+    // n'avait pas à montrer.
+    expect(
+      within(ligne).getByText("aucun namespace déclaré"),
+    ).toBeInTheDocument();
+    expect(within(ligne).getByText(/aucun dépôt déclaré/)).toBeInTheDocument();
+    expect(
+      within(ligne).getByText("aucune version déclarée"),
+    ).toBeInTheDocument();
+    expect(
+      within(ligne).getByText("date de publication inconnue"),
+    ).toBeInTheDocument();
+    // Un statut vide vaut « active » : l'amont ne le déclare que s'il a bougé.
+    expect(within(ligne).getByText("active")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["io.github.alice", "propriété prouvée par OAuth GitHub"],
+    ["exemple.fr", "propriété prouvée par DNS ou HTTP sur le domaine"],
+    ["Editeur Maison", "propriété vérifiée par le registre à la publication"],
+  ])("dit comment le namespace %s a été prouvé", async (editeur, preuve) => {
+    const utilisateur = userEvent.setup();
+    await bibliothequeAvec([
+      entree("sonde", "sonde", {
+        curee: false,
+        source: "decouverte",
+        editeur,
+        tags: [],
+      }),
+    ]);
+    const ligne = await ligneDeNom("sonde");
+    await utilisateur.click(
+      within(ligne).getByRole("button", { name: "Examiner" }),
+    );
+
+    // On ne devine rien au-delà de ce que le registre documente : un namespace
+    // dont on ignore le mode de preuve se dit « vérifié à la publication ».
+    //
+    // La preuve est cherchée sur **la ligne du signal** (le `<dd>` qui suit son
+    // `<dt>`) et non n'importe où dans le panneau : la phrase du critère 2 la
+    // répète en prose juste en dessous, et se contenter d'un `getByText` global
+    // passerait au vert sur un tableau de signaux qui aurait perdu sa ligne.
+    const libelle = within(ligne).getByText("Éditeur (namespace)");
+    expect(libelle.nextElementSibling).toHaveTextContent(preuve);
+  });
+
+  it("rend telle quelle une date que personne ne sait lire", async () => {
+    const utilisateur = userEvent.setup();
+    await bibliothequeAvec([
+      entree("sonde", "sonde", {
+        curee: false,
+        source: "decouverte",
+        editeur: "io.github.alice",
+        tags: [],
+        publie_le: "bientôt",
+      }),
+    ]);
+    const ligne = await ligneDeNom("sonde");
+    await utilisateur.click(
+      within(ligne).getByRole("button", { name: "Examiner" }),
+    );
+
+    // Un signal de confiance illisible reste un signal ; le masquer en ferait
+    // une absence, qui n'est pas la même information.
+    expect(within(ligne).getByText("bientôt")).toBeInTheDocument();
+  });
+});
+
+describe("la provenance de la découverte, dans ses états réels (#680)", () => {
+  it("dit qu'aucun registre amont n'est branché", async () => {
+    const region = await bibliothequeAvec(
+      [entree("gitlab", "GitLab")],
+      provenanceAvec({}, { amont: "", moissonnee: false, nombre: 0, total: 0 }),
+    );
+    expect(
+      await within(region).findByText(
+        /aucun registre amont n'est branché sur ce poste/,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("dit la cause d'un rafraîchissement en échec, et sa date", async () => {
+    const region = await bibliothequeAvec(
+      [entree("gitlab", "GitLab")],
+      provenanceAvec(
+        {},
+        {
+          moissonnee: false,
+          nombre: 0,
+          total: 0,
+          cause: "amont injoignable — registry.modelcontextprotocol.io muet",
+          echoue_le: "2026-08-28T09:00:00Z",
+        },
+      ),
+    );
+
+    // Un écran ouvert trois heures après la panne doit pouvoir la dire, plutôt
+    // que d'afficher une fraîcheur qu'il ne peut pas justifier.
+    const pied = await within(region).findByText(
+      /dernier rafraîchissement en échec/,
+    );
+    expect(pied).toHaveTextContent("28/08/2026");
+    expect(pied).toHaveTextContent("amont injoignable");
+  });
+
+  it("distingue « pas encore moissonné » d'une panne", async () => {
+    const region = await bibliothequeAvec(
+      [entree("gitlab", "GitLab")],
+      provenanceAvec(
+        {},
+        { moissonnee: false, nombre: 0, total: 0, rafraichi_le: "" },
+      ),
+    );
+
+    // L'état normal d'un poste neuf, et surtout **pas** une erreur : le dire
+    // comme une panne apprendrait à ne plus lire les pannes.
+    expect(
+      await within(region).findByText(/pas encore moissonné sur ce poste/),
+    ).toBeInTheDocument();
+    expect(within(region).queryByText(/en échec/)).not.toBeInTheDocument();
+  });
+});
+
+describe("la recherche porte sur les trois sources (#680)", () => {
+  it("trouve une découverte que personne n'a curée", async () => {
+    const utilisateur = userEvent.setup();
+    const region = await bibliotheque();
+    await utilisateur.type(champRecherche(), "veille");
+
+    // C'est la décision du parent #673 : la recherche de l'amont est une
+    // sous-chaîne sur le seul nom, la nôtre porte nom, éditeur, tags et
+    // description — on moissonne chez lui, on cherche chez nous.
+    await waitFor(() =>
+      expect(chargerRegistreMcp).toHaveBeenCalledWith("veille"),
+    );
+    expect(await within(region).findByText("veille")).toBeInTheDocument();
+    expect(within(region).queryByText("GitLab")).not.toBeInTheDocument();
+  });
+});
