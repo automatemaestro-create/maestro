@@ -13,7 +13,10 @@ Trois pièces :
   (forme `StepRecord.to_dict`) en événements — testable sans logger ni Redis ;
 - `JournalEventHandler` + `publieur_redis` : le branchement production — le
   handler publie chaque événement via un callable synchrone, typiquement le
-  `PUBLISH` Redis (le côté API consomme le canal via `RedisEventBus`) ;
+  `PUBLISH` Redis (le côté API consomme le canal via `RedisEventBus`). Depuis
+  #699 ce même geste **consigne** l'événement au journal durable : un producteur
+  qui vit hors de l'API ne peut pas dépendre d'un consommateur vivant pour que
+  son histoire survive ;
 - `solder_le_run(...)` (#446) : le seul événement qu'un hôte publie **de
   lui-même**, sans passer par le journal — son **issue**. Le journal ne parle que
   de tâches ; le cycle de vie du run, lui, n'a longtemps eu qu'un écrivain, le
@@ -48,6 +51,7 @@ from maestro.controltower.events import (
     ROLE_RUN,
     Event,
 )
+from maestro.controltower.persistence import CLE_JOURNAL_EVENEMENTS
 from maestro.detail_tache import SUFFIXE_ETAPE_DETAIL, etapes_depuis, liens_depuis
 from maestro.plan_run import NoeudPlan, noeuds_depuis
 from maestro.references import SUFFIXE_ETAPE_TICKET, ReferenceTicket
@@ -312,14 +316,33 @@ class JournalEventHandler(logging.Handler):
 
 
 def publieur_redis(
-    url: str | None = None, *, canal: str = CANAL_EVENEMENTS
+    url: str | None = None,
+    *,
+    canal: str = CANAL_EVENEMENTS,
+    cle: str = CLE_JOURNAL_EVENEMENTS,
 ) -> Callable[[Event], None]:
     """Construit le callable de publication Redis (synchrone) du pont.
 
     Client Redis **synchrone** (le handler logging l'est) sur l'instance du
     docker-compose par défaut — le pendant producteur du `RedisEventBus`
-    consommé par l'API. La connexion est paresseuse (ouverte au premier
-    `PUBLISH`).
+    consommé par l'API. La connexion est paresseuse (ouverte au premier appel).
+
+    ⚠ Il **consigne autant qu'il publie** depuis #699, et c'est le geste qui
+    porte tout le ticket : ce publieur-ci est celui du pont télémétrie, donc
+    celui par lequel passent les statuts de tâches, le plan du run, les détails
+    et l'issue (`solder_le_run`) d'un run **détaché** ou d'un
+    `maestro-run --publier`. Publier seul revenait à parler dans un canal
+    éphémère : l'API arrêtée, personne n'écoutait, donc rien n'était consigné et
+    l'historique du run était troué pour toujours.
+
+    Les deux gestes tiennent dans **un seul aller** (`MULTI`/`EXEC`), et ce n'est
+    pas qu'une économie : c'est ce qui rend impossible la moitié de panne — un
+    événement diffusé que le journal n'aurait pas, ou l'inverse. Une écriture
+    perdue l'est donc des deux côtés, ce qui est le seul état qu'on sache lire.
+    La liste est celle que l'API relit au démarrage
+    (`persistence.CLE_JOURNAL_EVENEMENTS`), et c'est le seul endroit où les deux
+    moitiés du dispositif se rejoignent — comme `CLE_BATTEMENTS` pour le
+    battement (#351).
     """
     # Import local : seule la publication Redis dépend du client.
     import redis
@@ -327,7 +350,14 @@ def publieur_redis(
     client = redis.Redis.from_url(url or REDIS_URL_DEFAUT)
 
     def publier(evenement: Event) -> None:
-        client.publish(canal, evenement.to_json())
+        charge = evenement.to_json()
+        tuyau = client.pipeline()
+        # Consigner **avant** de diffuser : un client qui reçoit l'événement en
+        # direct doit le retrouver dans l'historique, jamais l'inverse (même
+        # ordre que `BusDurable` et que la pompe avant elle).
+        tuyau.rpush(cle, charge)
+        tuyau.publish(canal, charge)
+        tuyau.execute()
 
     return publier
 

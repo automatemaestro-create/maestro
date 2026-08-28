@@ -181,17 +181,22 @@ par la démo ; **501** en production tant que leur lot n'est pas livré) :
 
 Assemblage : une **pompe** unique s'abonne au bus (`EventBus`), projette chaque
 événement sur l'état (`ControlTowerState`), l'ajoute au journal requêtable
-(`ServiceJournal`, #478), le **consigne** au journal durable (`EventLog`, #97)
-puis le rediffuse aux WebSockets connectées — l'ordre « état d'abord, diffusion
-ensuite » garantit qu'un client qui reçoit un événement lit un REST déjà à jour.
-Au démarrage, le lifespan **rejoue** le journal pour reconstruire la projection
-(exécutions, grands livres, analytics, tâches, agents, validations) **et
-l'historique requêtable** d'avant un redémarrage de l'API : l'état survit à la
-vie du process (#97). `create_app` s'injecte bus, état et journal (les tests d'API
-tournent sur `InMemoryEventBus`/`InMemoryEventLog`, sans Redis) ;
-`create_default_app` câble le `RedisEventBus` et le `RedisEventLog` de production
-(canal `maestro.evenements`, alimenté par `maestro.controltower.bridge` côté
-moteur ; journal persistant sur la liste `maestro.evenements:journal`).
+(`ServiceJournal`, #478) puis le rediffuse aux WebSockets connectées — l'ordre
+« état d'abord, diffusion ensuite » garantit qu'un client qui reçoit un
+événement lit un REST déjà à jour. La **consignation** au journal durable
+(`EventLog`, #97) n'est plus la sienne depuis #699 : elle a lieu à la
+**publication** (`BusDurable`, dont `create_app` enveloppe le bus reçu), parce
+qu'un run vit hors de l'API et publie pendant qu'elle est arrêtée — faire
+dépendre la durabilité d'un consommateur vivant perdait alors tout, et
+définitivement. Au démarrage, le lifespan **rejoue** le journal pour
+reconstruire la projection (exécutions, grands livres, analytics, tâches,
+agents, validations) **et l'historique requêtable** d'avant un redémarrage de
+l'API : l'état survit à la vie du process (#97). `create_app` s'injecte bus, état
+et journal (les tests d'API tournent sur `InMemoryEventBus`/`InMemoryEventLog`,
+sans Redis) ; `create_default_app` câble le `RedisEventBus` et le
+`RedisEventLog` de production (canal `maestro.evenements`, alimenté par
+`maestro.controltower.bridge` côté moteur ; journal persistant sur la liste
+`maestro.evenements:journal`).
 """
 
 from __future__ import annotations
@@ -312,6 +317,7 @@ from maestro.controltower.orchestration import (
     apercu_de,
 )
 from maestro.controltower.persistence import (
+    BusDurable,
     EventLog,
     InMemoryEventLog,
     RedisEventLog,
@@ -787,35 +793,32 @@ async def _pompe(
     bus: EventBus,
     state: ControlTowerState,
     diffusion: Diffusion,
-    event_log: EventLog,
     journal: ServiceJournal,
 ) -> None:
-    """Le seul consommateur du bus : projette sur l'état, **persiste**, puis rediffuse.
+    """Le seul consommateur du bus : projette sur l'état, indexe, puis rediffuse.
 
     Cet ordre rend le flux cohérent pour les clients : à réception d'un
     événement WebSocket, l'état REST le reflète déjà — le journal requêtable
     (#478) compris, d'où sa consignation **avant** la diffusion : un client qui
     recharge sur un événement qu'il vient de recevoir en direct doit le
-    retrouver dans son historique, jamais l'inverse. Chaque événement est
-    consigné au journal durable (#97) entre la projection et la diffusion —
-    c'est la mémoire longue qui, rejouée au démarrage, reconstruit l'état après
-    un redémarrage de l'API. Une panne de **persistance** (Redis injoignable le
-    temps d'un événement) est tracée mais n'interrompt pas le flux temps réel :
-    le seul risque est que cet événement manque au prochain rejeu. Une panne du
-    **bus**, elle, arrête le flux temps réel mais pas l'API : le REST continue
-    de servir l'état déjà projeté — la panne est tracée, pas avalée.
+    retrouver dans son historique, jamais l'inverse. Une panne du **bus** arrête
+    le flux temps réel mais pas l'API : le REST continue de servir l'état déjà
+    projeté — la panne est tracée, pas avalée.
+
+    ⚠ **Elle ne consigne plus au journal durable** (#699). Elle en fut le seul
+    écrivain de #97 à ce lot, et c'est ce qui faisait dépendre la durabilité
+    d'un **consommateur vivant** : le pub/sub Redis ne bufferise rien, donc tout
+    ce qu'un run détaché publiait pendant que l'API était arrêtée n'était
+    consigné par personne, puis perdu. La consignation a suivi la publication
+    (`persistence.BusDurable`, `bridge.publieur_redis`), et la retirer d'ici
+    n'est pas une conséquence mais la **moitié** du remède : deux écrivains sans
+    dédoublonnage — un `Event` n'a pas d'identifiant — auraient doublé chaque
+    ligne du journal requêtable au lieu d'en perdre.
     """
     try:
         async for event in bus.subscribe():
             state.appliquer(event)
             journal.consigner(event)
-            try:
-                await event_log.consigner(event)
-            except Exception:
-                _LOGGER.exception(
-                    "Échec de persistance d'un événement : il manquera au prochain "
-                    "rejeu au démarrage (flux temps réel et projection préservés)."
-                )
             diffusion.diffuser(event)
     except asyncio.CancelledError:
         raise
@@ -943,15 +946,24 @@ def create_app(
     Les tests en injectent un service sur dépôt temporaire, seule façon de fixer
     les racines explorables sans dépendre du poste qui joue la suite.
 
-    `event_log` (#97) est le **journal durable des événements** que la pompe
-    consigne et que le lifespan **rejoue au démarrage** pour reconstruire la
-    projection (exécutions, grands livres, analytics, tâches, agents,
-    validations) après un redémarrage de l'API — par défaut un journal mémoire
-    (pas de durabilité inter-redémarrage : la configuration des tests et d'une
-    démo mono-process). La production câble `RedisEventLog` via
-    `create_default_app`. Un état injecté (`state`) reste tel quel puis reçoit
-    le rejeu par-dessus (idempotent : les événements reconstruisent le même
-    état).
+    `event_log` (#97) est le **journal durable des événements** que le lifespan
+    **rejoue au démarrage** pour reconstruire la projection (exécutions, grands
+    livres, analytics, tâches, agents, validations) après un redémarrage de
+    l'API — par défaut un journal mémoire (pas de durabilité inter-redémarrage :
+    la configuration des tests et d'une démo mono-process). La production câble
+    `RedisEventLog` via `create_default_app`. Un état injecté (`state`) reste tel
+    quel puis reçoit le rejeu par-dessus (idempotent : les événements
+    reconstruisent le même état).
+
+    ⚠ Depuis #699 il est aussi ce que le **bus marie à la publication** : le bus
+    reçu est enveloppé dans un `BusDurable` sur ce journal-là, si bien que tout
+    ce que l'API publie est consigné à l'instant où elle le publie, et non plus
+    quand sa pompe le reçoit. Le bus passé ici doit donc être un **transport
+    nu** — l'envelopper une seconde fois en amont doublerait chaque ligne.
+    Corollaire pour un appelant qui garde la main sur le bus qu'il injecte (la
+    démo #65, quelques tests) : ce qu'il publie **par sa propre référence** est
+    diffusé et projeté comme avant, mais n'est pas consigné — il court-circuite
+    le producteur, donc le geste qui consigne.
 
     `journal` (#478) est le **journal requêtable** servi par `GET /api/journal` :
     l'index transverse, filtrable et paginé, des événements consignés. Il n'a
@@ -1004,8 +1016,14 @@ def create_app(
     mono-process ; la **production** câble l'hôte détaché, résolu depuis
     l'environnement par `create_default_app` (#446).
     """
-    bus = bus if bus is not None else InMemoryEventBus()
     event_log = event_log if event_log is not None else InMemoryEventLog()
+    # Le mariage du transport et de la mémoire longue (#699), fait **ici** et une
+    # seule fois : tout ce qui publie en aval — routes, services, hôte en process
+    # — reçoit ce bus-là, donc consigne en publiant, sans que rien n'ait à s'en
+    # souvenir. Le journal n'appartient pas au bus : le lifespan le relit au
+    # démarrage et le referme en partant, d'où `possede_le_journal` laissé à
+    # False.
+    bus = BusDurable(bus if bus is not None else InMemoryEventBus(), event_log)
     journal = journal if journal is not None else ServiceJournal()
     battements = battements if battements is not None else RegistreBattementsMemoire()
     agents_store = agents_store if agents_store is not None else AgentStore.default()
@@ -1148,7 +1166,7 @@ def create_app(
                 "Rejeu du journal des événements impossible : démarrage sur la "
                 "projection courante (l'historique persisté n'a pas pu être relu)."
             )
-        pompe = asyncio.create_task(_pompe(bus, state, diffusion, event_log, journal))
+        pompe = asyncio.create_task(_pompe(bus, state, diffusion, journal))
         try:
             yield
         finally:

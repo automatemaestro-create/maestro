@@ -26,8 +26,10 @@ injoignable…), l'exception remonte aux garde-fous qui **refusent** la demande 
 jamais d'action sensible sans accord explicite.
 
 Même bus que le reste de la Control Tower : `InMemoryEventBus` en test ou en
-mono-process, `RedisEventBus` en production (`validateur_redis`, pendant
-moteur du `publieur_redis` du pont télémétrie).
+mono-process, `bus_durable` en production (`validateur_redis`, pendant
+moteur du `publieur_redis` du pont télémétrie) — un bus Redis qui **consigne en
+publiant** depuis #699, faute de quoi une demande émise pendant une coupure de
+l'API ne laissait aucune trace.
 
 Depuis #227 ce canal porte un **second type d'action sensible** :
 `appliquer_sous_validation` soumet « appliquer ce travail dans mon projet ? »
@@ -48,8 +50,8 @@ from maestro.controltower.events import (
     EVENEMENT_VALIDATION_DEMANDE,
     Event,
     EventBus,
-    RedisEventBus,
 )
+from maestro.controltower.persistence import bus_durable
 from maestro.controltower.state import VALIDATION_APPROUVEE, VALIDATION_EN_ATTENTE
 from maestro.engine.guardrails import DemandeValidation, Guardrails, Validateur
 from maestro.projets.application import (
@@ -271,5 +273,10 @@ def validateur_redis(url: str | None = None) -> ValidateurControlTower:
     (celle du docker-compose par défaut), même canal `maestro.evenements` que
     consomme l'API (`maestro-api`). La connexion est paresseuse (ouverte à la
     première demande).
+
+    Le bus **consigne en publiant** depuis #699 (`bus_durable`) : une demande
+    d'arbitrage émise pendant que l'API est arrêtée n'atteignait personne et ne
+    laissait aucune trace, si bien qu'au retour l'écran ne montrait aucune
+    attente — pour un run qui, lui, attendait toujours.
     """
-    return ValidateurControlTower(RedisEventBus(url))
+    return ValidateurControlTower(bus_durable(url))
