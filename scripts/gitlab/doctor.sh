@@ -367,36 +367,50 @@ else
 fi
 
 # --- 8. Milestones de phase -----------------------------------------------------------------------
-# Dérives autour du milestone de phase (docs/10-workflow-git.md §3.4) : un ticket OUVERT sans
-# milestone (l'outillage pose la phase courante à la création — lib.sh current-milestone) ; un
-# milestone actif ENTIÈREMENT SOLDÉ (la phase est finie : sa fermeture — décision humaine, jamais
-# faite ici — est à faire pour que la phase suivante devienne la courante).
+# Dérives autour du milestone de phase (docs/10-workflow-git.md §3.4) : un jalon actif ENTIÈREMENT
+# SOLDÉ qui attend son BOUCLAGE ; un ticket OUVERT sans milestone (l'outillage pose la phase courante
+# à la création — lib.sh current-milestone).
 section "8. Milestones de phase"
-# `gl_milestones` plutôt qu'une requête GraphQL écrite ici : ses colonnes (titre, etat, debut,
-# echeance, fermes, total) sont le contrat commun aux deux forges, et « soldé » s'y lit en une
-# comparaison — total > 0 et fermés == total. La requête inline, elle, ne pouvait pas passer la
-# bascule : elle nommait `project(fullPath:…)`, un champ qui n'existe pas dans le schéma GitHub.
-ms_raw="$(gl_milestones 2>/dev/null)"
-if [ -z "$ms_raw" ]; then
-  warn "milestones illisibles (API muette) — contrôle ignoré"
-else
-  soldes="$(printf '%s\n' "$ms_raw" | awk -F'\t' '$1 !~ /^#/ && $2 == "active" && $6 > 0 && $5 == $6 { print $1 }')"
-  if [ -z "$soldes" ]; then
-    ok "aucun milestone actif entièrement soldé"
-  else
-    while IFS= read -r t; do
-      [ -z "$t" ] && continue
-      warn "milestone « $t » actif mais entièrement soldé → à fermer (décision humaine) pour que la phase suivante devienne la courante"
+
+# 8a. LE BOUCLAGE (#758, chantier #756).
+# ⚠ Ce contrôle nommait jusqu'ici la MAUVAISE action. Il disait « à fermer » — la décision finale —
+# en sautant le geste qui doit la précéder : démontrer le livrable sur pièces et rendre un verdict.
+# C'était le seul endroit du dépôt qui parlait d'un jalon soldé, et c'est la deuxième raison pour
+# laquelle le bouclage a disparu (14 jalons fermés sans bilan, constat de #756) : personne n'était
+# convoqué. Il dit désormais « à boucler, puis à fermer », et se tait sur un jalon déjà bouclé.
+#
+# LA RÈGLE N'EST PLUS RECOPIÉE ICI. « Actif ET entièrement soldé » vivait dans l'awk ci-dessous, en
+# TROISIÈME exemplaire ; elle vit maintenant dans `milestones-a-boucler`, qui pose en outre la
+# question que ce contrôle ne savait pas poser — le verdict est-il consigné ? Le verbe est MUET quand
+# il n'y a rien : le ✓ ci-dessous est donc le nôtre, pas le sien.
+#
+# RIEN N'EST LANCÉ NI ÉCRIT : la commande de bouclage est IMPRIMÉE, jamais jouée — doctor.sh est en
+# lecture seule (en-tête de ce fichier), et le verdict reste un jugement humain (#562, #612, #714).
+a_boucler="$(gl_milestones_a_boucler 2>/dev/null)"
+case $? in
+  0)
+    while IFS=$'\t' read -r ms_titre ms_rail ms_criteres ms_fermes ms_total; do
+      case "$ms_titre" in ''|'#'*) continue ;; esac
+      warn "milestone « $ms_titre » actif et entièrement soldé ($ms_fermes/$ms_total, rail $ms_rail) → à boucler, puis à fermer"
+      printf '    → /milestone-bilan "%s"  (démontre le livrable sur pièces et rend un verdict)\n' "$ms_titre"
+      # Un jalon sans critères de sortie se boucle quand même — l'absence est un manque à combler AU
+      # bouclage (#757), jamais une raison de ne pas convoquer. Mais elle se dit : sans critères,
+      # « le livrable est-il à la hauteur ? » n'a rien contre quoi se mesurer.
+      [ "$ms_criteres" = non ] && printf '    → aucun critère de sortie consigné : les poser d'\''abord (lib.sh milestone-criteres "%s" <fichier>)\n' "$ms_titre"
     done <<EOF
-$soldes
+$a_boucler
 EOF
-  fi
-  courant="$(gl_current_milestone 2>/dev/null)"
-  if [ -n "$courant" ]; then
-    ok "phase courante : « $courant » (milestone posé par /ticket-create sur les nouveaux tickets)"
-  else
-    warn "aucun milestone utilisable sur le rail produit (tous soldés ou vides, #619) — /ticket-create créera les prochains tickets sans milestone"
-  fi
+    ;;
+  3) ok "aucun jalon actif à boucler (soldé et sans verdict consigné)" ;;
+  *) warn "jalons illisibles (API muette) — contrôle du bouclage ignoré" ;;
+esac
+
+# 8b. LA PHASE COURANTE — celle que /ticket-create pose sur les nouveaux tickets.
+courant="$(gl_current_milestone 2>/dev/null)"
+if [ -n "$courant" ]; then
+  ok "phase courante : « $courant » (milestone posé par /ticket-create sur les nouveaux tickets)"
+else
+  warn "aucun milestone utilisable sur le rail produit (tous soldés ou vides, #619) — /ticket-create créera les prochains tickets sans milestone"
 fi
 
 if ! nomiles="$(gl_issues_sans_milestone 2>/dev/null)"; then

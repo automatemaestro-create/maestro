@@ -244,8 +244,11 @@ que la vue par milestone reflète l'avancement réel de chaque phase.
   simplement omise.
 - **Fin de phase** : un milestone actif dont tous les tickets sont fermés est **sauté** par le
   helper ; sa **fermeture** reste une **décision humaine** (jalon go/no-go de la roadmap) — aucune
-  commande ne ferme un milestone. `doctor.sh` (§7) signale les milestones actifs entièrement
-  soldés à fermer, ainsi que les tickets ouverts sans milestone.
+  commande ne ferme un milestone. Avant elle vient le **bouclage** : `doctor.sh` (§7) et `/backlog`
+  **convoquent au bilan** les milestones actifs entièrement soldés **dont le verdict n'est pas
+  consigné** (`lib.sh milestones-a-boucler`, #758) — un jalon déjà bouclé n'est plus signalé, et
+  rien n'est jamais bouclé, écrit ni fermé automatiquement. `doctor.sh` signale par ailleurs les
+  tickets ouverts sans milestone.
 
 #### Soldé et vide : deux abstentions, jamais une seule (#619)
 
