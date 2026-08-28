@@ -24,7 +24,7 @@ Vocabulaire du projet, par ordre alphabétique.
 
 **Handoff (passage de relais)** — Quand un agent confie une tâche ou sous-tâche à un autre et lui transmet le contexte nécessaire, sans repasser par l'orchestrateur.
 
-**Human-in-the-loop (HITL)** — Décision humaine insérée dans le flux automatique sur une action sensible. Le déclencheur est l'**acte** — un appel d'outil classé `ask` par la politique de permissions de l'agent, suspendu au vol par le hook `PreToolUse` — et non le texte de la tâche ([docs/04 §1.4bis](./04-specifications-agents.md)). Qui tranche est posé dans la politique : `auto`, `orchestrateur` ou `humain` (le défaut).
+**Human-in-the-loop (HITL)** — Décision humaine insérée dans le flux automatique sur une action sensible. Le déclencheur est l'**acte** — un appel d'outil classé `ask` par la politique de permissions de l'agent, suspendu au vol par le hook `PreToolUse` — et non le texte de la tâche ([docs/04 §1.4bis](./04-specifications-agents.md)). Qui tranche est posé dans la politique : `auto`, `orchestrateur` ou `humain` (le défaut) — le cran **`orchestrateur` est décidé mort** et retiré par #715 ([docs/31](./31-decision-cran-orchestrateur.md)).
 
 **LangGraph / CrewAI / AutoGen** — Frameworks d'orchestration multi-agents. Respectivement : graphe d'états (le plus mûr en production), équipages par rôles (le plus simple), conversations de groupe (débats entre agents).
 

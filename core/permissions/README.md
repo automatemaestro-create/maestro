@@ -35,7 +35,13 @@ chaud** à chaque tâche, comme les playbooks) :
     `allow`, qui passe en silence : le cran de ce qu'on veut voir sans vouloir
     l'arrêter. N'ayant besoin d'aucun décideur, il ne dépend d'aucun canal ;
   - `orchestrateur` : la machine tranche seule, sans réveiller personne. Elle
-    peut refuser ; elle ne peut approuver **que** ce cran-ci ;
+    peut refuser ; elle ne peut approuver **que** ce cran-ci.
+    ⚠ **Ne pas s'en servir : ce cran est décidé mort** ([docs/31](../../docs/31-decision-cran-orchestrateur.md),
+    #647). Il n'a **jamais eu de canal** — `Guardrails(orchestrateur=…)` n'est passé nulle
+    part en production —, si bien qu'une entrée qui le pose rend aujourd'hui
+    « aucun orchestrateur configuré — refus par défaut » : la politique promet une
+    décision et rend un refus, sans que rien n'avertisse au chargement. Son retrait
+    est #715 ; d'ici là, deux crans seulement — `auto` ou `humain` ;
   - `humain` : une personne, et personne d'autre. C'est le **défaut** — un cran
     non précisé escalade, il ne s'auto-approuve pas. L'orchestrateur n'est
     jamais consulté sur ces actes-là, donc son avis ne peut pas y devenir une
