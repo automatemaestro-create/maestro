@@ -110,9 +110,45 @@ après en avoir retiré un.
 Un verdict **illisible vaut un échange** : le texte du modèle est rendu tel quel
 et rien ne s'ouvre. Une réponse hors contrat coûte ainsi une reformulation, jamais
 un run — et jamais non plus un 502 sur une conversation que le modèle a pourtant
-tenue. Un fournisseur en **échec**, lui, n'est pas rattrapé ici : l'exception
-remonte et `ServiceChat` la traduit en `ReponseIndisponible` (502), comme pour le
-chat d'un agent. Le message franc est l'objet de #686.
+tenue.
+
+## Et quand le juge est injoignable, on le dit (#686)
+
+Le lot précédent a fait du modèle le seul juge de ce canal ; il laissait ouverte
+la question que cette décision pose : **que fait la porte d'entrée quand ce juge
+ne répond pas ?** La réponse est celle de #268, étendue d'un cran — un empêchement
+**ne lève pas, il se raconte dans le fil**. Une exception deviendrait ici une
+`ReponseIndisponible`, donc un 502 sans trace, sur la seule porte d'entrée du
+produit depuis #666 : l'auteur verrait sa demande partir et rien revenir.
+
+Le canal annonce donc qu'il ne peut pas juger, **en n'ouvrant ni ne proposant
+rien**. Trois choses tiennent ensemble.
+
+**La cause est nommée, et sa famille avec elle.** Un fournisseur muet et un
+fournisseur absent ne se réparent pas de la même façon, et l'utilisateur d'une
+Control Tower locale est aussi celui qui répare : l'un se réessaie, l'autre se
+configure, et les confondre fait renvoyer dix fois un message que rien n'attend.
+La famille se lit à **l'endroit** de l'échec, jamais à son texte : ce qui casse en
+*résolvant* le fournisseur (`provider_from_settings`) est un réglage — rien n'est
+encore parti sur le réseau —, ce qui casse en *appelant* `generate` est une
+indisponibilité. C'est la règle de `controltower.causes` (« la classification est
+un `isinstance`, pas une lecture de texte ») tenue d'un cran plus haut : ici c'est
+la **structure** qui classe, et aucune chaîne n'est examinée.
+
+**Aucun lexique ne prend le relais.** Le lexique retiré au lot 1 ne revient pas
+par la porte de service, et c'est pourquoi la phrase est **la même quel que soit
+le dernier message** : reconnaître qu'un « oui » était un accord demanderait
+précisément le juge qui manque. Un juge de secours moins bon que le titulaire,
+activé quand personne ne regarde, est la pire des combinaisons — il proposerait
+des runs sur les seules formulations qu'il sait reconnaître, et tairait les
+autres.
+
+**La demande, elle, est acquise.** `ServiceChat` persiste et diffuse le message
+d'utilisateur **avant** d'appeler le répondeur : ce qui est indisponible est la
+réponse, jamais la demande. Le fil garde donc le texte écrit *et* la phrase qui
+dit pourquoi rien n'a suivi — y compris quand le fournisseur tombe *entre* la
+proposition et l'accord, cas où le « oui » reste au fil sans rien ouvrir ni se
+perdre en silence.
 """
 
 from __future__ import annotations
@@ -252,6 +288,67 @@ _STATUTS_ACTIFS = frozenset(
 #: Un bloc de code Markdown, que les modèles posent volontiers autour d'un JSON
 #: qu'on leur a demandé nu.
 _FENCE = re.compile(r"```(?:json)?\s*(?P<corps>.+?)```", re.DOTALL)
+
+#: Ce que le canal répond quand il n'a pas pu juger (#686). L'ordre des trois
+#: morceaux **est** le contenu du message : la cause, ce qui n'a pas eu lieu, le
+#: geste qui répare. Le deuxième porte le critère — dire « je ne peux pas » sans
+#: dire « je n'ai rien ouvert » laisse chercher au tableau de bord un run qui
+#: n'existe pas. Et il parle du **message**, jamais de « votre demande » : savoir
+#: que c'en était une est précisément ce qui manque.
+_PHRASE_INJOIGNABLE = (
+    "Je ne peux pas juger votre message pour l'instant : {cause}. "
+    "Aucun run n'a été ouvert, et je ne vous en ai proposé aucun. {reparation}"
+)
+
+#: Le fournisseur est configuré mais n'a rien rendu — panne passagère, on
+#: réessaie. La phrase dit **où est la demande**, parce que c'est la question qui
+#: vient juste après « ça n'a pas marché » : le message est déjà au fil, il n'y a
+#: rien à retaper.
+_REPARATION_PASSAGERE = (
+    "Votre message reste dans ce fil : renvoyez-le tel quel quand le fournisseur "
+    "répondra à nouveau, vous n'avez rien à retaper."
+)
+
+#: Rien ne répondra tant que le réglage n'aura pas été posé — le dire évite dix
+#: renvois inutiles, et c'est toute la raison de séparer les deux familles. Les
+#: réglages sont **nommés** parce qu'ici celui qui lit est celui qui répare : une
+#: Control Tower locale n'a pas d'exploitant à qui transmettre.
+_REPARATION_CONFIGURATION = (
+    "Ce n'est pas une panne passagère mais un réglage absent : renseignez le "
+    "fournisseur de modèle (MAESTRO_PROVIDER et ses identifiants) dans la "
+    "configuration, puis renvoyez votre message — il reste dans ce fil."
+)
+
+
+class _JugeInjoignable(RuntimeError):
+    """Le juge n'a rendu **aucun** verdict, et ce que le fil doit en dire (#686).
+
+    Une exception plutôt qu'un quatrième `VERDICT_*` : les trois autres disent ce
+    que le modèle a *jugé*, celle-ci dit qu'il n'a rien jugé du tout. Les ranger
+    ensemble ferait passer une panne pour une décision, et il suffirait d'un `if`
+    oubliant le quatrième cas pour qu'un run s'ouvre sans juge.
+
+    Elle ne sort jamais du module : `produire` la rattrape et rend son texte au
+    fil, là où la laisser remonter la ferait traduire en `ReponseIndisponible`,
+    donc en 502 muet.
+    """
+
+    def __init__(self, cause: str, reparation: str) -> None:
+        super().__init__(_PHRASE_INJOIGNABLE.format(cause=cause, reparation=reparation))
+
+
+def _cause_lisible(echec: BaseException) -> str:
+    """Le message de `echec`, sans les guillemets qu'un `KeyError` ajoute.
+
+    `UnknownProviderError` est un `KeyError`, dont `__str__` rend le `repr` de son
+    argument — et c'est justement l'échec de configuration le plus probable d'un
+    poste local (`MAESTRO_PROVIDER` mal orthographié). Sans ce déballage, la cause
+    la plus fréquente serait aussi la moins lisible du fil, entre guillemets et
+    avec ses échappements.
+    """
+    if isinstance(echec, KeyError) and echec.args:
+        return str(echec.args[0])
+    return str(echec)
 
 
 def _accord(nombre: int, singulier: str, pluriel: str) -> str:
@@ -427,9 +524,10 @@ class RepondeurOrchestration(RepondeurChat):
     Un lancement qui échoue **ne lève pas** : il se raconte dans le fil. Une
     exception se traduirait en `ReponseIndisponible`, donc en 502 sans trace — or
     la demande, elle, est déjà persistée, et son auteur a besoin de lire pourquoi
-    rien ne s'est ouvert pour pouvoir reformuler. Un fournisseur en échec, lui,
-    n'est pas rattrapé : il n'y a alors ni réponse ni verdict, donc rien à
-    raconter (le message franc est l'objet de #686).
+    rien ne s'est ouvert pour pouvoir reformuler. **Un juge injoignable non plus**
+    (#686) : c'est le même invariant un cran plus tôt — l'empêchement porte alors
+    sur le verdict lui-même, et le canal dit qu'il ne peut pas juger au lieu de
+    laisser passer un 502.
     """
 
     def __init__(
@@ -468,9 +566,18 @@ class RepondeurOrchestration(RepondeurChat):
         **cadre** l'aperçu que le modèle reçoit, et il **rattache** le run que
         l'accord ouvre. Les dissocier ferait juger sur l'état d'un périmètre et
         travailler dans un autre.
+
+        Sans verdict du tout — juge injoignable (#686) —, le canal dit la cause
+        et s'arrête là. Le `LanceurRun` n'est alors pas atteint, et pas par une
+        garde qu'il faudrait tenir : il n'existe qu'**un** chemin vers lui, et il
+        part d'un verdict qui n'a pas été rendu.
         """
         redaction = _Redaction(incrementer)
-        verdict = await self._juger(agent, fil, projet_id)
+        try:
+            verdict = await self._juger(agent, fil, projet_id)
+        except _JugeInjoignable as injoignable:
+            await redaction.ecrire(str(injoignable))
+            return ReponseChat(contenu=redaction.texte)
         await redaction.ecrire(verdict.reponse)
         if verdict.nom == VERDICT_ACCORD:
             return await self._ouvrir_un_run(redaction, verdict.objectif, projet_id)
@@ -494,17 +601,54 @@ class RepondeurOrchestration(RepondeurChat):
         l'orchestration n'est pas au catalogue, donc n'a pas de playbook éditable
         — et le contrat de sortie n'est pas un texte que l'UI doit pouvoir
         réécrire.
+
+        Les trois façons de n'avoir **aucun** verdict lèvent `_JugeInjoignable`
+        plutôt que de remonter (#686), et la **famille** de la cause se lit à
+        l'endroit de l'échec : résoudre le fournisseur ne touche à aucun réseau,
+        donc ce qui casse là est un réglage ; `generate`, lui, part dehors, donc
+        ce qui casse là est une indisponibilité. Aucune chaîne n'est examinée pour
+        trancher — c'est la règle de `controltower.causes`, tenue ici par la
+        structure plutôt que par un `isinstance`.
+
+        Une **réponse vide** est rangée avec les indisponibilités et non avec les
+        verdicts illisibles, et la frontière est nette : un texte hors contrat est
+        un modèle qui a *parlé* (on l'affiche, on n'ouvre rien — `_verdict_depuis`),
+        un texte vide est un modèle qui n'a rien dit, donc rien à afficher, donc
+        le 502 « réponse vide » de `ServiceChat` que ce lot supprime.
+
+        Un échec de résolution **ne se mémorise pas** : `self._provider` reste
+        `None`, si bien que le message suivant retente. C'est ce qui rend la
+        phrase de réparation vraie — corriger la configuration suffit, sans
+        redémarrer la Control Tower.
         """
         if self._provider is None:
             from maestro.providers.factory import provider_from_settings
 
-            self._provider = provider_from_settings()
+            try:
+                self._provider = provider_from_settings()
+            except Exception as echec:  # noqa: BLE001 — la position classe, cf. docstring
+                raise _JugeInjoignable(
+                    f"aucun fournisseur de modèle n'est utilisable "
+                    f"({_cause_lisible(echec)})",
+                    _REPARATION_CONFIGURATION,
+                ) from echec
         etat = self._apercu(projet_id) if self._apercu is not None else ""
-        texte = await self._provider.generate(
-            _prompt(fil, etat),
-            model=agent.modele,
-            system_prompt=agent.prompt_systeme,
-        )
+        try:
+            texte = await self._provider.generate(
+                _prompt(fil, etat),
+                model=agent.modele,
+                system_prompt=agent.prompt_systeme,
+            )
+        except Exception as echec:  # noqa: BLE001 — la position classe, cf. docstring
+            raise _JugeInjoignable(
+                f"le fournisseur de modèle n'a pas répondu ({_cause_lisible(echec)})",
+                _REPARATION_PASSAGERE,
+            ) from echec
+        if not (texte or "").strip():
+            raise _JugeInjoignable(
+                "le fournisseur de modèle a rendu une réponse vide",
+                _REPARATION_PASSAGERE,
+            )
         return _verdict_depuis(texte)
 
     async def _ouvrir_un_run(
