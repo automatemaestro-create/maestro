@@ -420,6 +420,21 @@ export type VariableSecret = {
 export type SourceRegistreMcp = "curee" | "decouverte" | "admise";
 
 /**
+ * Les statuts que le registre officiel déclare sur une entrée (#679), et que le
+ * champ `statut` d'une entrée d'amont porte.
+ *
+ * ⚠ Il en existe un troisième, `deleted` (retiré par la modération amont), et
+ * il n'a **pas** de constante ici parce qu'il ne peut pas arriver à l'écran : le
+ * miroir l'exclut et la traduction le refuse (`maestro/agents/mcp_amont.py`,
+ * `mcp_traduction.py`). Une entrée déjà **admise** que l'amont passe `deleted`
+ * ne revient pas non plus sous ce statut — elle reste servie figée, avec un
+ * `SignalAmontMcp` de genre `amont_supprimee`, qui est la forme sous laquelle
+ * l'écran doit la traiter.
+ */
+export const MCP_STATUT_ACTIF = "active";
+export const MCP_STATUT_DEPRECIE = "deprecated";
+
+/**
  * La trace d'une admission (#678) telle qu'elle voyage **sur une entrée** :
  * qui, quand, depuis quelle source amont, et si elle vaut encore.
  *
@@ -521,6 +536,12 @@ export type EntreeRegistreMcp = {
   depot: string;
   /** Statut amont (`active`/`deprecated`) — vide sur une entrée curée (#677). */
   statut: string;
+  /**
+   * Date de publication déclarée par l'amont (ISO 8601) — vide sur une curée
+   * (#679). Le seul des signaux d'amont à répondre à « depuis quand ça
+   * existe ? » : une version épinglée dit *quoi*, pas *depuis quand*.
+   */
+  publie_le: string;
   /** Le geste qui l'a fait entrer dans l'allowlist — null sauf si `source === "admise"` (#678). */
   admission: TraceAdmissionMcp | null;
   /** Ce que l'amont dit d'elle depuis son admission — vide s'il n'a rien à dire (#678). */

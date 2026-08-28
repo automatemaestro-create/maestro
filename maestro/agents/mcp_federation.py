@@ -211,14 +211,18 @@ def traduire_miroir(
             motifs[motif] = motifs.get(motif, 0) + 1
             continue
         traduites += 1
-        # Les trois signaux que le `server.json` ne porte pas : ils vivent dans
-        # l'enveloppe du miroir, et c'est ici qu'on les recolle (critère 2).
+        # Les quatre signaux que le `server.json` ne porte pas : ils vivent dans
+        # l'enveloppe du miroir, et c'est ici qu'on les recolle (critère 2). La
+        # date de publication a rejoint les trois autres avec l'écran qui les
+        # montre (#679) — un signal qu'on ne recolle pas est un signal que le
+        # panneau ne peut pas afficher, et le miroir la portait déjà.
         retenues.append(
             replace(
                 entree,
                 version=amont.version,
                 statut=amont.statut,
                 depot=_depot(amont.document),
+                publie_le=amont.publie_le,
             )
         )
     return tuple(retenues), traduites, refusees, motifs

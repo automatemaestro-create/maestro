@@ -126,7 +126,16 @@ const POOL: IntegrationPoolMcp[] = [
   },
 ];
 
-/** La bibliothèque curée des deux sondes : une entrée, dépliable. */
+/**
+ * La bibliothèque des deux sondes : **une curée et une découverte** (#679).
+ *
+ * Les deux sources et pas une seule, pour la raison qui a déjà fait passer le
+ * pool de zéro à deux intégrations plus haut : un écran qui ne monte qu'un cas
+ * ne fait auditer qu'un cas. Une entrée découverte porte des balises que la
+ * curée n'a pas — son badge de source, son statut d'amont, un bouton dont le
+ * libellé n'est pas « Configurer » — et sans elle les sondes rendaient un vert
+ * qui ne parlait que de la moitié curée de la bibliothèque.
+ */
 const REGISTRE: EntreeRegistreMcp[] = [
   {
     id: "slack",
@@ -150,6 +159,35 @@ const REGISTRE: EntreeRegistreMcp[] = [
     version: "",
     depot: "",
     statut: "",
+    publie_le: "",
+    admission: null,
+    signaux: [],
+  },
+  {
+    id: "io-github-alice-veille",
+    nom: "veille",
+    description: "Suivre un flux d'actualités et le résumer.",
+    mode_auth: MCP_MODE_TOKEN,
+    transport: "http",
+    commande: "",
+    args: [],
+    url: "https://veille.example.invalid/mcp",
+    env: {},
+    headers: {},
+    tags: [],
+    secrets: [{ cle: "MCP_VEILLE_TOKEN", description: "Jeton", secret: true }],
+    procedure_url: "",
+    optionnel: true,
+    editeur: "io.github.alice",
+    popularite: 0,
+    // ⚠ `curee: false` **et** `source: "decouverte"` : c'est le booléen que
+    // l'écran lit pour décider du formulaire, la source pour le badge.
+    curee: false,
+    source: "decouverte",
+    version: "1.4.0",
+    depot: "https://github.com/alice/veille",
+    statut: "active",
+    publie_le: "2026-07-14T08:30:00Z",
     admission: null,
     signaux: [],
   },
@@ -184,22 +222,26 @@ export function mocksApi() {
     chargerCatalogue: async () => CATALOGUE,
     chargerSante: async () => ({ statut: "ok" }),
     chargerRegistreMcp: async () => REGISTRE,
+    // La provenance décrit un miroir **moissonné** (#679) : c'est la ligne de
+    // pied la plus fournie des trois états possibles, donc celle qui donne le
+    // plus de balises à auditer. Un miroir vide rendrait une phrase et rien
+    // d'autre.
     chargerProvenanceRegistreMcp: async () => ({
       resume: "",
       sources: [],
       revue_le: "2026-08-28",
       tags: [],
-      total: 0,
-      total_curees: 0,
+      total: 2,
+      total_curees: 1,
       total_admises: 0,
-      total_decouvertes: 0,
+      total_decouvertes: 1,
       provenances: [
         {
           source: "curee" as const,
           resume: "",
           sources: [],
           revue_le: "2026-08-28",
-          total: 0,
+          total: 1,
         },
         {
           source: "admise" as const,
@@ -211,15 +253,15 @@ export function mocksApi() {
         },
         {
           source: "decouverte" as const,
-          amont: "",
-          rafraichi_le: "",
-          moissonne_le: "",
-          nombre: 0,
+          amont: "https://registry.modelcontextprotocol.io",
+          rafraichi_le: "2026-08-28T06:00:00Z",
+          moissonne_le: "2026-08-27T06:00:00Z",
+          nombre: 3,
           retenues: 0,
-          moissonnee: false,
+          moissonnee: true,
           cause: "",
           echoue_le: "",
-          total: 0,
+          total: 1,
         },
       ] as const,
     }),
