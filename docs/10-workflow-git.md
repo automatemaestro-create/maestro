@@ -5407,6 +5407,9 @@ Trois conséquences pratiques :
   passerait peut-être la liste, et ce serait précisément l'échec. #188 a fait ce qu'il fallait :
   contenu de remplacement intégral dans la description de sa PR, section « Reste à appliquer à la
   main », plus un commentaire sur le ticket. Un humain l'applique ensuite en session interactive.
+  ⚠ **Elle fait désormais DEUX choses, jamais l'une à la place de l'autre** (#608) : elle rend le
+  correctif dans la PR — c'est là qu'il se relit — **et** elle le consigne dans un **ticket de
+  reprise**, parce qu'une PR se ferme au merge. Voir « Le support du résidu » plus bas.
 - **Mieux vaut ne pas l'y envoyer.** Un ticket dont un critère touche `.claude/**` se traite en
   session interactive dès le départ ; le mettre dans le périmètre d'un run autonome, c'est en
   garantir la part manquante. ⚠ **Cette ligne disait « `queue.sh` ne le détecte pas — c'est au
@@ -5441,10 +5444,81 @@ retenu, et c'est bien la mesure qui permet de le dire plutôt que de le supposer
   argument s'est **renforcé** avec #413 : le merge n'attend plus personne, donc le dernier moment où
   un humain aurait pu voir le diff avant `main` a disparu du chemin nominal.
 
-Ce qui reste à faire est donc inchangé — rendre le contenu dans la PR (#188). Ce qui pourrait encore
-être gagné est **en amont** : ne pas envoyer un tel ticket dans un run. ⚠ Cette ligne finissait par
-« ce que `queue.sh` ne détecte toujours pas » — **faux depuis #612**, qui signale les tickets nommant
-`.claude/`, et le geste qui les écarte pour de bon est de les **assigner** (§11.2).
+**Le support du résidu — un ticket, plus une description de PR** (chantier #608, 2026-08-27). ⚠ Cette
+place disait « ce qui reste à faire est donc inchangé — rendre le contenu dans la PR (#188) », et
+c'est **faux depuis #610**. La conduite n'a pas changé ; c'est son **contenant** qui a lâché. Rendre
+le correctif dans la description de la PR avait un lecteur tant qu'un **humain mergeait** : #418/#419
+le lui ont retiré, le pilote merge sans attendre personne, et la section « Reste à appliquer » finit
+dans le corps d'une PR fermée que plus rien ne rouvre. Le résidu ne disparaît pas — il devient
+**invisible**, ce qui est pire : rien n'échoue, rien n'est rouge, le ticket passe « Terminé » et le
+run se solde vert. Le paragraphe ci-dessus l'avait vu venir sans en tirer de conséquence outillée
+(« ⚠ cet argument s'est renforcé avec #413 ») ; ce chantier la tire.
+
+**Ce n'est pas un cas de bord** : run `20260827-094044`, **trois tickets, deux résidus** — #599
+(`.claude/commands/orchestrate.md`, PR mergée à 07:03) et #595 (`.claude/commands/ticket-finish.md`,
+PR mergée à 07:23) —, tous deux encore en place le lendemain. Les deux sessions avaient fait
+**exactement** ce qu'il fallait : ce qui a échoué n'est ni le prompt, ni la session, ni le garde-fou,
+c'est le support. Une description de PR est un contenant qui meurt au merge, et on lui confiait la
+seule information qui devait lui survivre.
+
+Le résidu quitte donc la description de la PR pour le **backlog** : un **ticket** est l'unité que ce
+dépôt emploie déjà pour « du travail qui reste » — il vit après le merge, il remonte dans
+`/backlog`, il se démarre par `/ticket-start`, et un `Closes` qui ne le vise pas ne peut pas le
+fermer. **Trois pièces, et la conduite reste la même — on rend le correctif, on ne contourne
+jamais :**
+
+- **À l'acte** (#610) — la session qui se fait refuser l'écriture crée le ticket de reprise portant
+  le correctif intégral : `bash scripts/gitlab/lib.sh reste-claude <iid-source> <fichier>`. Un
+  **verbe**, et non un `gh issue create` recopié dans un prompt (`tests/test_cycle_de_vie.py`
+  interdit déjà les écritures de forge sous `.claude/commands/**`). Le corps voyage par un
+  **fichier** (#233). Le ticket naît **assigné** — donc hors des plans de `queue.sh`, qui filtre sur
+  « À faire **et libre** » (§11.2), un run qui le prendrait se faisant refuser la même écriture — et
+  **pourvu d'un état** dans la foulée (#361), sans quoi il ne remonterait dans aucune vue. Il est
+  **idempotent par le ticket source** et non par une recherche (l'index de GitHub est asynchrone,
+  donc deux appels rapprochés y trouveraient « rien », c'est-à-dire le doublon que la propriété
+  interdit) : l'ancre est un commentaire de forme fixe — « ticket de reprise #\<n\> ». **Rejoué, il
+  AJOUTE** une section au lieu d'écraser le corps, chaque correctif reconnu à son empreinte `cksum` —
+  deux refus dans un même ticket sont deux correctifs, et remplacer perdrait le premier. Ses deux
+  refus (iid source inconnu, fichier absent ou vide) tombent **avant toute écriture**, ce qui rend
+  « refus » et « écriture partielle » mutuellement exclusifs. Pendant en lecture : `reste-claude-de
+  <iid-source>` (0 il en a un · 3 aucun · 1 illisible — « je n'ai pas su lire » n'est pas « il n'y en
+  a pas »).
+- **Le filet derrière** (#611) — le pilote, en terminant son run, **nomme** les tickets dont la
+  session a buté sur `.claude/` et dit si chacun a bien son ticket de reprise. Il existe parce qu'un
+  mécanisme qui ne tient que par une seule de ses deux extrémités a **déjà** échoué : les deux
+  sessions du run ci-dessus avaient fait ce qu'il fallait, ce qui manquait était un second regard, et
+  le pilote est le seul qui ne puisse pas l'oublier — il termine toujours là. La famille de refus est
+  **lue** (`journal.sh refus --claude`, le « blocage dur `.claude/` » que #307 classe déjà) et jamais
+  redéfinie : un `grep .claude/` recopié chez l'appelant aurait marché le premier jour et divergé le
+  suivant, et c'est cette version-là, la muette, qui se serait trompée sans le dire. Il **lit aussi
+  le journal du run repris** — un run tué n'imprime aucun résumé, donc ses résidus n'ont jamais été
+  nommés, et la reprise peut finir sans rebuter sur `.claude/`. Il **constate, il ne crée pas** : le
+  corps d'un ticket de reprise **est** le correctif, que le pilote n'a pas ; l'ouvrir d'office
+  donnerait un ticket vide de la seule chose qui compte, et le résidu serait perdu sous les
+  apparences d'un rattrapage. Best-effort et muet, au même titre que `gc` et qu'`audit.txt` (#530) :
+  ni le verdict du run ni son code de sortie n'en dépendent. `MAESTRO_ORCHESTRATE_RESTE_CLAUDE=0`
+  l'éteint.
+- **En amont** (#612) — ne pas envoyer un tel ticket dans un run reste ce qui se gagne le mieux, et
+  ce n'est plus au rédacteur du ticket de le dire : `queue.sh` **signale** les tickets du plan qui
+  nomment `.claude/` (voir la troisième conséquence ci-dessus, et §11.2 pour ses trois surfaces, la
+  mesure qui a tranché son motif et son **trou irréductible de 32 %**). Le geste qui les écarte pour
+  de bon reste l'**assignation** (§11.2).
+
+**Deux pistes écartées, et pourquoi.** ⚠ Aucune des deux n'est à rouvrir sans un fait nouveau.
+
+- **Bloquer le merge** sur la présence d'un résidu. Non : la PR est **saine** — ni conflit, ni job
+  rouge, ni commit manquant. `merge-mr` juge **la PR** (§8.8), et lui faire juger ce qui n'y est pas
+  reviendrait à immobiliser un run pour une raison étrangère à ce qu'il livre. Le résidu doit
+  **survivre** au merge, pas l'empêcher.
+- **Un `scripts/claude/appliquer.sh` allowlisté**. Déjà mesuré faisable et rejeté ci-dessus (#238) :
+  il ne passerait qu'en **cachant la cible au CLI**, un skill est du prompt et `/ticket-ship` en est
+  un, et le confinement invoqué ne couvre pas le bon moment — argument que #413 a renforcé.
+
+Le dispositif est gardé par [`tests/test_reste_claude.py`](../tests/test_reste_claude.py) (#613) —
+le verbe, la détection du filet, et un contrôle sur le dépôt vérifiant qu'aucun prompt ne prescrit de
+**contourner** le blocage — et, pour ce qui demande un plan et un run,
+[`tests/test_orchestrate.py`](../tests/test_orchestrate.py) : le signalement de `queue.sh` (présent,
+muet à vide, **plan inchangé**) et le bloc de fin de run (présent, muet, best-effort).
 
 ⚠ **Un régime ouvre bien `.claude/`, et il a fallu le mesurer pour le savoir** (#614, 2026-08-27).
 La conclusion de #238 était juste **et bornée** : son banc n'a jamais comparé que des `allow`, dans

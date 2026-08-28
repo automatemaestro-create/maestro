@@ -747,6 +747,17 @@ class Depot:
             reglages={"GH_TOKEN": "jeton-de-test", **(reglages or {})},
         )
 
+    def journal_sh(
+        self, *args: str, reglages: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        """`scripts/orchestrate/journal.sh` — déjà copié dans le dépôt jetable par `origine`.
+
+        Il y est lu HORS LIGNE : `refus` et `audit` ne parlent qu'aux fichiers d'un run, et
+        `racine_principale()` retombe sur la racine du script quand le dépôt n'a pas de worktree —
+        donc `<racine>/.maestro/orchestrate/`, celui que les tests écrivent.
+        """
+        return self._bash("scripts/orchestrate/journal.sh", *args, cwd=None, reglages=reglages)
+
     def bash_inline(
         self, script: str, reglages: dict[str, str] | None = None
     ) -> subprocess.CompletedProcess[str]:
