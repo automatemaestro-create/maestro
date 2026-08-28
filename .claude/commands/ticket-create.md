@@ -64,7 +64,11 @@ lieu d'inventer.
      ne se reproduit pas — 16 des 42 parents du dépôt n'ont jamais été arbitrés faute de ce geste.
    - **Mécanique** : crée d'abord le **parent** (étapes 5 à 9, section `## Sous-tickets` encore
      vide), puis chaque **sous-ticket** (étapes 5 à 9 pour chacun), lie chaque sous-ticket au
-     parent — `bash scripts/gitlab/lib.sh issue-link <iid-parent> <iid-sous-ticket>` — et termine
+     parent — `bash scripts/gitlab/lib.sh issue-link <iid-parent> <iid-sous-ticket>`, **suffixé de
+     `--parallele` pour un lot que tu marques « (parallèle) »** : depuis #393 le découpage se LIT
+     dans les sub-issues, où le marqueur est le label `lot::parallele` et non le titre d'une ligne
+     de checklist. Un lot rattaché sans son drapeau est séquentiel — la dégradation sûre, mais
+     muette, et la checklist ne la rattrapera pas. Puis termine
      en remplissant la checklist du parent (`- [ ] #<iid> — <titre>`, ou
      `- [ ] #<iid> — <titre> (parallèle)`, dans l'**ordre de réalisation**, lot tests en dernier)
      via `bash scripts/gitlab/lib.sh set-description <iid-parent> <fichier>` — jamais un
