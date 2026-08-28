@@ -525,6 +525,115 @@ forge — il rend une décision et propose de la consigner sur le ticket.
 
 ---
 
+### 5.2 Le maillon 0 se déclenche, le 2026-08-28 (#714)
+
+Livré, `/design-veille` **n'était appelé par rien**. Aucun prompt de `/ticket-start`,
+`/ticket-ship` ou `/orchestrate` ne le nommait : son déclencheur était une phrase de `CLAUDE.md`
+que la session est censée lire et appliquer. Ça marche — la veille a été jouée sur #709 sans qu'on
+la demande — mais c'est une **règle lue**, jamais un mécanisme, et c'est exactement le défaut que
+le §3.6 nomme pour écarter la checklist : *« une checklist qu'aucune machine ne vérifie ne tient
+pas »*. Le dépôt avait déjà une doc de langage visuel détaillée, et 18 recopies de carte sont
+passées par-dessus. Une commande que personne n'appelle est du même bois.
+
+**Ce qui est automatique est la détection du manque, jamais le verdict** — même partage que #562 et
+#612. Lancer la veille d'office serait le mauvais calcul évident : elle coûte des recherches web,
+des captures et du quota, et la jouer sur un correctif de hook serait du gaspillage pur. Le
+mécanisme est donc en trois pièces :
+
+| pièce | rôle |
+|---|---|
+| `lib.sh touche-surface <iid>` | **lit** — `0` touche (à proposer) · `4` touche mais déjà arbitré · `3` aucune surface |
+| `start-brief` (donc `/ticket-start`) | **propose**, sur la vue du ticket qu'il vient de lire — zéro aller de forge en plus |
+| `lib.sh veille-arbitre <iid>` | **enregistre** la réponse — veille faite **ou** jugée inutile |
+
+L'enregistrement est repris mot pour mot de `lot::arbitre` (#562), sa raison comprise : le label
+`veille::arbitree` est posé **quel que soit le verdict**, parce que sans lui « une veille est
+inutile ici » est **inexprimable** et que la question reviendrait à chaque démarrage, jusqu'à ce
+qu'on cesse de la lire — le défaut symétrique de celui qu'on corrige. **Un seul label et pas
+deux** : une veille faite laisse ses partis pris en commentaire du ticket, donc le label dit que la
+question a été posée et le commentaire dit la réponse. Deux labels seraient deux supports pour un
+seul fait, c'est-à-dire la panne que #365 a supprimée sur le cycle de vie.
+
+#### Le motif, mesuré avant d'être figé
+
+Vérité terrain : les **fichiers des commits** (technique de #544, rejouée par #612) — a touché une
+surface visible tout ticket dont un commit de `origin/main` a modifié `apps/web/{app,components}/**`
+ou `globals.css`. Mesure du 2026-08-28 sur les **155 tickets ayant des commits**, dont **33** ont
+touché la surface :
+
+| variante | VP | FP | FN | précision | rappel |
+|---|---:|---:|---:|---:|---:|
+| titre seul — `apps/web/` | 0 | 0 | 33 | — | 0 % |
+| `apps/web/` partout | 12 | 7 | 21 | 63 % | 36 % |
+| `apps/web/{app,components}/` partout | 6 | 1 | 27 | 86 % | 18 % |
+| vocabulaire (écran, interface, visuel…) | 30 | 43 | 3 | 41 % | **91 %** |
+| `agent::design` seul | 15 | 2 | 18 | **88 %** | 45 % |
+| route nommée seule | 14 | 3 | 19 | 82 % | 42 % |
+| **`agent::design` OU route nommée** *(retenu)* | 21 | 5 | 12 | 81 % | 64 % |
+
+**Trois évidences sont tombées, et aucune par principe :**
+
+1. **Le chemin** — l'analogie directe de `.claude/` (#612) — ne marche pas ici : 36 % de rappel, et
+   surtout il **n'ajoute rien** au motif retenu, « label OU route OU chemin » rendant le verdict
+   *identique* (21/5/12). Tout ticket nommant `apps/web/{app,components}/` porte déjà le label ou
+   une route : il est absorbé, donc absent du motif — une clause qui ne change aucun verdict est
+   une clause qu'on croira lire le jour où elle comptera.
+2. **Le vocabulaire de la surface** a le meilleur rappel de tous, **91 %**, et c'est ce qui le
+   disqualifie : il parle sur **249 des 562 tickets** du dépôt (44 %). Un signalement qui se
+   déclenche partout n'est plus lu, et le remède serait pire que le mal.
+3. **L'héritage du parent**, que #617 a établi pour le **rail** (8 lots sur 8 cohérents),
+   **dégrade** le motif ici : 81 %/64 % → 61 %/70 %. Mesuré, pas supposé — sur les 17 chantiers à
+   au moins deux lots, **7 sont panachés** (#244, #347, #472, #481, #488, #532, #573). Le rail est
+   une propriété du **chantier** ; la surface visible est une propriété du **lot**, un même
+   chantier mêlant un lot d'UI, un lot de moteur et un lot « tests + doc ». C'est aussi pourquoi la
+   proposition ne se fait **pas sur un parent de suivi** : `/ticket-start` y redirige vers un lot,
+   et la question se posera sur la surface que quelqu'un s'apprête réellement à retoucher.
+
+**Ce qu'il rate est nommé plutôt que découvert plus tard** — 12 des 33, et ils ont tous la même
+forme : #271, #349, #477, #478, #479, #480, #486, #489, #537, #573, #580, #581 décrivent une
+**fonctionnalité par son comportement** (« mettre un run en pause », « le fil accepte fichiers et
+images »), dont l'écran est la conséquence et jamais le sujet. C'est le symétrique exact du trou de
+#612, dont les critères « parlent du comportement et jamais du fichier ». Aucun motif textuel ne
+les attrapera : ce verbe réduit la **fréquence** de la surface retouchée sans référence, il ne la
+supprime pas — et la règle lue de `CLAUDE.md` reste **derrière** lui, elle n'est pas remplacée.
+C'est aussi pourquoi `veille-arbitre` **n'exige pas** que le motif ait parlé : refuser
+d'enregistrer un arbitrage rendu sur l'un de ces douze traiterait le trou connu du motif comme une
+erreur de l'utilisateur.
+
+**Les 81 % sont un plancher**, pour la raison de #612 : 2 des 5 faux positifs (#471, #708) sont des
+tickets de conception qui n'ont produit **que de la doc** — le signalement y était juste, et il
+compte ici comme une erreur. Reste **un seul faux positif franc sur 26** (#544, l'outillage de
+présentation).
+
+La **liste des routes** est celle de `apps/web/app/`, et `tests/test_design_veille.py` la compare
+aux répertoires réels : une liste recopiée à la main dérive au premier écran ajouté, et c'est
+précisément ce que ce ticket corrige ailleurs.
+
+#### L'accès web d'une session de run : tranché
+
+**La veille est un geste interactif.** `WebSearch` et `WebFetch` restent **hors des deux
+allowlists** — ni `scripts/orchestrate/settings.run.json`, ni `.claude/settings.json`, dont
+l'`allow` d'un run est l'**union** (docs/10 §11.7). Trois raisons, dont une seule est technique :
+
+- une session de run **n'a personne** pour répondre au « oui » que la proposition attend ; l'ouvrir
+  reviendrait à lancer la veille d'office, ce que ce ticket exclut nommément ;
+- une veille rend des **partis pris**, c'est-à-dire un jugement — du même bois que l'arbitrage de
+  #562 et le rail de #617, tous deux laissés à un humain ;
+- `mcp__chrome-maestro` passe déjà cette union : ouvrir la seule **recherche** donnerait une veille
+  **à moitié** — captures sans références vérifiées —, or la règle du §3 de la commande est que ce
+  qui n'est pas vérifié n'est pas cité.
+
+Le prompt de session de `run.sh` le dit donc en toutes lettres : ne pas tenter la veille, **ne pas
+enregistrer d'arbitrage** (ce serait fermer la question sans que personne l'ait jugée — le
+« marquer d'office » de #562), et **nommer le ticket dans le résumé final** comme en appelant une.
+⚠ Le changement plausible n'est pas « ouvrir le web aux runs », que personne ne demandera, mais
+« ouvrir `WebSearch` dans `.claude/settings.json` pour éviter une confirmation à chaque
+`/design-veille` interactive » : geste légitime, effet non voulu — il ouvre le run du même coup.
+`tests/test_design_veille.py` garde les deux fichiers pour cette raison-là. Une confirmation dans
+une session interactive n'est pas un défaut : il y a quelqu'un pour la donner.
+
+---
+
 ## 6. Recommandation
 
 ### 6.1 Direction visuelle retenue — « le même produit, avec du relief »

@@ -84,6 +84,15 @@ create_label "lot::arbitre"  "#0e8a16" "Parent de suivi : lots parallélisables 
 # ticket qui le porte.
 create_label "lot::parallele" "#0e8a16" "Lot parallélisable : ne dépend pas des lots marqués qui le précèdent"
 
+# veille:: — ce qu'on sait de la CONCEPTION VISUELLE du ticket, et rien d'autre (#714, docs/30 §5.2).
+# `veille::arbitree` est à `/design-veille` ce que `lot::arbitre` est au découpage, y compris dans sa
+# raison d'être : il est posé QUEL QUE SOIT LE VERDICT — veille faite, ou jugée inutile —, parce que
+# sans lui « une veille est inutile ici » est inexprimable et que `/ticket-start` reposerait la
+# question à chaque démarrage, jusqu'à ce qu'on cesse de la lire. UN SEUL label et pas deux : une
+# veille faite laisse ses partis pris en commentaire du ticket, donc le label dit que la question a
+# été posée et le commentaire dit la réponse.
+create_label "veille::arbitree" "#5319e7" "Veille de conception arbitrée : la question a été posée (faite ou jugée inutile)"
+
 echo "Labels prêts."
 
 echo

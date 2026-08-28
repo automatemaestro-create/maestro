@@ -64,7 +64,7 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
      le ticket devient le parent (section `## Sous-tickets`), les sous-tickets sont créés et liés
      selon la convention de `/ticket-create` (1-3 critères chacun, mergeables seuls sur `main`,
      lot final « tests + doc », `lib.sh issue-link`), puis on démarre le premier lot.
-     Contrairement à l'étape 5, c'est une **vraie pause** : attends la décision de l'utilisateur.
+     Contrairement à l'étape 6, c'est une **vraie pause** : attends la décision de l'utilisateur.
    - **Branche proposée sans préfixe** (label `type::` absent) : déduis le type du titre/de la
      description, ou demande à l'utilisateur si ambigu.
 
@@ -122,7 +122,31 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
    bloquer la branche déjà créée. Ne touche pas aux labels `type::`/`agent::`/`prio::` (triage, pas
    ce workflow).
 
-5. **Résumé court, puis enchaîne immédiatement sur l'implémentation** : nom de la branche, titre
+5. **Veille de conception — proposer, jamais lancer d'office** (#714, `docs/30 §5.2`). Si et
+   seulement si la sortie de l'étape 1 porte un bloc **`surface visible :`**, ce ticket touche un
+   écran de la Control Tower et la question « qu'est-ce qu'on vise ? » n'a jamais été tranchée
+   dessus. Alors, **et seulement alors** :
+   - **Demande** — une phrase, un « oui » explicite : jouer `/design-veille <surface>` avant
+     d'écrire l'interface, ou passer. Ne la lance **jamais** d'office : une veille coûte des
+     recherches web, des captures et du quota, et la jouer sur un correctif sans enjeu visuel
+     serait du gaspillage. C'est le partage de #562 et #612 — ce qui est automatique est la
+     **détection du manque**, jamais le verdict. Comme le découpage d'un ticket trop gros
+     (étape 1), et contrairement au résumé de l'étape 6, c'est une **vraie pause** : attends la
+     réponse.
+   - **Enregistre la réponse, quelle qu'elle soit** —
+     `bash scripts/gitlab/lib.sh veille-arbitre $ARGUMENTS` — dès que la personne a tranché, que
+     la veille ait été **faite** ou **jugée inutile**. Sans cet enregistrement, « inutile ici »
+     est indiscernable de « personne n'y a pensé » et la question reviendra à chaque démarrage,
+     jusqu'à ce qu'on cesse de la lire. N'enregistre **rien** tant que personne n'a répondu : un
+     arbitrage posé d'office ferme la question sans que personne l'ait jugée.
+   - **En session autonome** (run `/orchestrate`), personne ne lira la question : la veille est un
+     **geste interactif** — `WebSearch`/`WebFetch` ne sont dans aucune des deux allowlists d'un
+     run, donc elle ne peut pas être jouée. Ne la tente pas, **n'enregistre aucun arbitrage**, et
+     mentionne simplement dans ton résumé final que ce ticket appelait une veille.
+   - **Bloc absent** : il n'y a rien à demander — soit le ticket ne touche aucune surface visible,
+     soit l'arbitrage est déjà enregistré. Ne le mentionne pas, n'appelle pas le verbe, passe.
+
+6. **Résumé court, puis enchaîne immédiatement sur l'implémentation** : nom de la branche, titre
    du ticket, dates posées, critères d'acceptation ; pour un sous-ticket, le parent, le rang du
    lot, ses tests différés (« tests différés → #<iid> » : livrer sans tests est prévu, pas un
    oubli) et, s'il y en a, les **autres lots démarrables en parallèle** (`bash

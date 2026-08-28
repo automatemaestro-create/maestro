@@ -1338,6 +1338,168 @@ gl_touche_claude() {
   printf '%s\n' "$raw" | gl_touche_claude_de
 }
 
+# --- Ce qui touche une SURFACE VISIBLE : le déclencheur de /design-veille (#714, docs/30 §5.1) ---
+# `/design-veille` (#708) est le maillon 0 de la chaîne d'outillage visuel — les tokens, les
+# primitives, `sobriete.test.tsx` et `banc-mise-en-page` GARDENT ce qu'on a tenu, aucun ne dit ce
+# qu'on VISE. Livrée, elle n'était appelée par rien : ni prompt, ni script ne la nommait, et son
+# déclencheur était une phrase de `CLAUDE.md` que la session est censée lire. Ça marche (la veille a
+# été jouée sur #709 sans qu'on la demande) mais c'est une RÈGLE LUE, pas un mécanisme — exactement
+# le défaut que docs/30 §3.6 nomme pour écarter la checklist : « une checklist qu'aucune machine ne
+# vérifie ne tient pas ». Ce verbe est la machine.
+#
+# IL NE DÉCIDE RIEN, et c'est le partage de #612 : ce qui est automatique est la DÉTECTION DU
+# MANQUE, jamais le verdict. Lancer la veille d'office serait le mauvais calcul évident — elle coûte
+# des recherches web, des captures et du quota, et la jouer sur un correctif de hook serait du
+# gaspillage pur. Le verbe DIT ; `/ticket-start` PROPOSE ; un humain tranche.
+#
+# --- LE MOTIF EST MESURÉ, ET LA MESURE A ÉCARTÉ DEUX ÉVIDENCES ----------------------------------
+# Vérité terrain : les FICHIERS des commits (technique de #544, rejouée par #612) — a touché une
+# surface visible tout ticket dont un commit de `origin/main` a modifié
+# `apps/web/{app,components}/**` ou `globals.css`. Mesure du 2026-08-28 sur les 155 tickets ayant des
+# commits, dont 33 ont touché la surface :
+#
+#     variante                                   VP   FP   FN   précision   rappel
+#     titre seul — « apps/web/ »                  0    0   33         —       0 %
+#     « apps/web/ » partout                      12    7   21       63 %     36 %
+#     « apps/web/{app,components}/ » partout      6    1   27       86 %     18 %
+#     vocabulaire (écran, interface, visuel…)    30   43    3       41 %     91 %
+#     agent::design seul                         15    2   18       88 %     45 %
+#     route nommée seule                         14    3   19       82 %     42 %
+#     agent::design OU route  (ce qui est retenu) 21    5   12       81 %     64 %
+#
+# TROIS ÉVIDENCES SONT TOMBÉES, ET AUCUNE PAR PRINCIPE :
+#   1. LE CHEMIN, qui était l'analogie directe de `.claude/` (#612), NE MARCHE PAS ICI : 36 % de
+#      rappel, et surtout il n'ajoute RIEN au motif retenu — « agent::design OU route OU chemin »
+#      rend le verdict IDENTIQUE (21/5/12), tout ticket nommant `apps/web/{app,components}/`
+#      portant déjà le label ou une route. Il est donc absorbé, et absent du motif : une clause qui
+#      ne change aucun verdict est une clause qu'on croira lire le jour où elle comptera.
+#   2. LE VOCABULAIRE DE LA SURFACE (« écran », « interface », « Control Tower »…) a le meilleur
+#      rappel de tous — 91 % — et c'est ce qui le disqualifie : il parle sur 249 des 562 tickets du
+#      dépôt, soit 44 %. Un signalement qui se déclenche partout n'est plus lu, et le remède serait
+#      pire que le mal qu'il corrige.
+#   3. L'HÉRITAGE DU PARENT, que #617 a établi pour le RAIL (8 lots sur 8 cohérents), DÉGRADE le
+#      motif ici : 81 %/64 % → 61 %/70 %. Mesuré, pas supposé — sur les 17 chantiers à au moins deux
+#      lots, 7 sont PANACHÉS (#244, #347, #472, #481, #488, #532, #573). Le rail est une propriété du
+#      CHANTIER ; la surface visible est une propriété du LOT, un même chantier mêlant un lot d'UI,
+#      un lot de moteur et un lot « tests + doc ».
+#
+# CE QU'IL RATE EST NOMMÉ PLUTÔT QUE DÉCOUVERT PLUS TARD — 12 des 33, et ils ont tous la même
+# forme : #271, #349, #477, #478, #479, #480, #486, #489, #537, #573, #580, #581 décrivent une
+# FONCTIONNALITÉ PAR SON COMPORTEMENT (« mettre un run en pause », « le fil accepte fichiers et
+# images »), dont l'écran est la conséquence et jamais le sujet. C'est le symétrique exact du trou
+# de #612, dont les critères « parlent du comportement et jamais du fichier ». Aucun motif textuel
+# ne les attrapera : ce verbe réduit la fréquence de la surface retouchée sans référence, il ne la
+# supprime pas — et la règle lue de `CLAUDE.md` reste derrière lui, elle n'est pas remplacée.
+#
+# LES 81 % SONT UN PLANCHER, pour la raison de #612 : 2 des 5 faux positifs (#471, #708) sont des
+# tickets de conception qui n'ont produit QUE de la doc — le signalement y était juste, et il compte
+# ici comme une erreur. Reste un seul faux positif franc sur 26 (#544, l'outillage de présentation).
+#
+# LA LISTE DES ROUTES EST CELLE DE `apps/web/app/`, ET UN TEST LA TIENT À JOUR. Une liste à recopier
+# à la main est une liste qui dérive au premier écran ajouté ; `tests/test_design_veille.py` compare
+# celle-ci aux répertoires réels et rougit quand un écran manque — la même réponse que le dépôt fait
+# partout ailleurs à « une règle que personne ne vérifie ».
+GL_SURFACE_ROUTES="${GL_SURFACE_ROUTES:-agents|brief|chat|composer|couts|integrations|journal|parametres|projets|runs|validations}"
+GL_SURFACE_LABEL="${GL_SURFACE_LABEL:-agent::design}"
+
+# Le label qui ENREGISTRE que la question a été posée — repris mot pour mot de `lot::arbitre`
+# (#562), y compris sa raison : il est posé QUEL QUE SOIT LE VERDICT, parce que sans lui la réponse
+# « une veille est inutile ici » est INEXPRIMABLE et que la question reviendrait à chaque
+# démarrage, pour toujours — le défaut symétrique de celui qu'on corrige.
+#
+# UN SEUL LABEL, PAS DEUX. « Veille faite » et « veille jugée inutile » ne se distinguent pas ici :
+# une veille FAITE laisse ses partis pris en commentaire du ticket (`/design-veille` propose
+# `lib.sh issue-note`), donc le label dit « la question a été posée » et le commentaire dit « voici
+# la réponse ». Deux labels seraient deux supports pour un seul fait, c'est-à-dire la panne que #365
+# a supprimée sur le cycle de vie.
+GL_LABEL_VEILLE="${GL_LABEL_VEILLE:-veille::arbitree}"
+
+# gl_touche_surface_de — cœur du verdict, rejoué sur un ticket DÉJÀ LU (stdin = sortie de
+# gl_issue_raw), exactement comme `gl_touche_claude_de` et `gl_arbitrage_de`. Ce n'est pas une
+# commodité : `gl_start_brief` a DÉJÀ la vue du ticket qu'il vient de lire, et sans cette moitié le
+# préflight de `/ticket-start` paierait une lecture de forge de plus par démarrage — or #602 vient
+# de faire descendre `ensure` de 30 allers à 5, et on ne les rend pas un par un.
+#
+# Rend « <verdict><TAB><lignes><TAB><source> », source valant `label`, `route`, `label+route` ou `-`.
+# TROIS verdicts et TROIS codes, là où `touche-claude` en a deux, parce qu'il y a ici une troisième
+# réponse vraie : 0 = touche une surface ET la question n'a jamais été tranchée (il y a quelque chose
+# à proposer) · 4 = touche une surface mais l'arbitrage est enregistré (rien à proposer) · 3 = ne
+# touche aucune surface. Les fondre — rendre `-` sur un ticket déjà arbitré — ferait dire au verbe
+# « pas de surface visible » là où la vérité est « surface visible, question déjà réglée » : le
+# genre de raccourci qui se paie le jour où quelqu'un s'en sert pour autre chose que proposer.
+gl_touche_surface_de() {
+  local raw motif_route motif_label n_route n_label total source verdict
+  raw="$(cat)"
+  motif_route='(^|[^A-Za-z0-9_/])/('"$GL_SURFACE_ROUTES"')([^A-Za-z0-9_-]|$)'
+  # Le label se lit sur la SEULE ligne « labels: » de l'en-tête de la vue, jamais dans le corps :
+  # ce dépôt cite ses propres labels en prose à longueur de description, et un `agent::design`
+  # mentionné dans une note technique n'est pas un ticket de conception.
+  motif_label='^labels:.*'"$GL_SURFACE_LABEL"
+
+  n_route="$(printf '%s\n' "$raw" | grep -c -E "$motif_route")" || n_route=0
+  n_label="$(printf '%s\n' "$raw" | grep -c -E "$motif_label")" || n_label=0
+  total=$(( ${n_route:-0} + ${n_label:-0} ))
+
+  if [ "${n_label:-0}" -gt 0 ] && [ "${n_route:-0}" -gt 0 ]; then source="label+route"
+  elif [ "${n_label:-0}" -gt 0 ]; then source="label"
+  elif [ "${n_route:-0}" -gt 0 ]; then source="route"
+  else source="-"
+  fi
+
+  if [ "$total" -eq 0 ]; then
+    printf -- '-\t0\t-\n'
+    return 3
+  fi
+  # Déjà arbitré ? La question se lit dans la MÊME vue, sans lecture de plus.
+  if printf '%s\n' "$raw" | grep -q -E '^labels:.*'"$GL_LABEL_VEILLE"; then
+    verdict="arbitre"
+  else
+    verdict="touche"
+  fi
+  printf '%s\t%s\t%s\n' "$verdict" "$total" "$source"
+  [ "$verdict" = "touche" ] && return 0
+  return 4
+}
+
+# gl_touche_surface <iid> -> le même verdict sur un ticket qu'on lit pour l'occasion. UNE lecture.
+gl_touche_surface() {
+  local iid="$1"
+  if [ -z "$iid" ]; then echo "usage: gl_touche_surface <iid>" >&2; return 2; fi
+  local raw
+  raw="$(gl_issue_raw "$iid")" || return 1
+  printf '%s\n' "$raw" | gl_touche_surface_de
+}
+
+# gl_veille_arbitre <iid> -> ENREGISTRE que la question de la veille a été posée, en posant
+# `veille::arbitree`. Codes : 0 = posé (ou déjà là) · 1 = échec de lecture ou d'écriture.
+#
+# C'EST UN VERBE, ET PAS UN `gh issue edit --add-label` DANS UN PROMPT, pour la raison exacte de
+# `gl_arbitre` (#562) : `tests/test_cycle_de_vie.py` INTERDIT `--add-label` sous `.claude/commands/**`
+# — c'est par là qu'un prompt remettrait le cycle de vie sur l'issue, à côté de `set-workflow`, et la
+# garde est plus large que son motif à dessein.
+#
+# IL NE REFUSE PAS UN TICKET QUE LE MOTIF NE VOIT PAS, et c'est la différence avec `gl_arbitre`, qui
+# refuse un non-parent. La raison est dans la mesure : le motif rate 12 des 33 tickets qui ont touché
+# la surface. Refuser d'enregistrer un arbitrage rendu sur l'un d'eux reviendrait à traiter le trou
+# connu du motif comme une erreur de l'utilisateur. Il le DIT, il ne l'empêche pas.
+gl_veille_arbitre() {
+  local iid="$1"
+  if [ -z "$iid" ]; then echo "usage: gl_veille_arbitre <iid>" >&2; return 2; fi
+  local avant code
+  avant="$(gl_touche_surface "$iid")"; code=$?
+  if [ "$code" = 1 ] || [ "$code" = 2 ]; then return 1; fi
+  if [ "$code" = 4 ]; then
+    printf '#%s : arbitrage de veille déjà enregistré (« %s ») — rien à faire.\n' "$iid" "$GL_LABEL_VEILLE"
+    return 0
+  fi
+  gh_add_label "$iid" "$GL_LABEL_VEILLE" || return 1
+  printf '#%s : arbitrage de veille enregistré (« %s ») — la question ne sera plus posée au démarrage.\n' \
+    "$iid" "$GL_LABEL_VEILLE"
+  if [ "$code" = 3 ]; then
+    printf '  (le motif ne voyait aucune surface visible sur ce ticket — il en rate 12 sur 33, voir docs/30 §5.2)\n'
+  fi
+}
+
 # --- Fermeture du parent (#515, docs/10 §5.1) ---------------------------------------------------
 # Un parent de suivi ne porte ni branche ni code : aucune PR ne le ferme par un `Closes #`, et sa
 # fermeture était le SEUL geste du cycle d'un chantier resté manuel — §5.1 la décrivait comme « une
@@ -1854,6 +2016,34 @@ gl_start_brief() {
     fi
     deferred="$(printf '%s\n' "$raw" | grep -o '[Tt]ests différés[^#]*#[0-9]\+' | head -1 | grep -o '[0-9]\+$')"
     if [ -n "$deferred" ]; then printf 'tests différés → #%s\n' "$deferred"; fi
+  fi
+
+  # Surface visible ? (#714, docs/30 §5.2) — SUR LA VUE DÉJÀ LUE, zéro lecture de forge en plus.
+  #
+  # PLACÉ ICI, DONC JAMAIS SUR UN PARENT DE SUIVI : la branche parent rend la main plus haut, et
+  # c'est le bon comportement — un parent ne porte ni branche ni code, `/ticket-start` y redirige
+  # vers un lot, et la question se posera sur le lot, c'est-à-dire sur la surface que quelqu'un
+  # s'apprête réellement à retoucher. La mesure appuie ce choix plutôt qu'elle ne le contrarie :
+  # 7 chantiers sur 17 sont PANACHÉS, donc « ce chantier touche l'écran » ne dit rien de chacun de
+  # ses lots.
+  #
+  # MUET SUR LES DEUX AUTRES VERDICTS, et les deux silences n'ont pas la même raison : « aucune
+  # surface visible » est l'abstention nominale (la règle de `gc --auto` et de #517 — signaler ce
+  # qui ne se passe pas apprend à ne plus lire les signalements), « déjà arbitré » EST la promesse
+  # du ticket : la question ne se repose pas à chaque démarrage.
+  if [ "${MAESTRO_VEILLE_SIGNAL:-1}" != 0 ]; then
+    local surf surf_code surf_n surf_src
+    surf="$(printf '%s\n' "$raw" | gl_touche_surface_de)"; surf_code=$?
+    if [ "$surf_code" = 0 ]; then
+      surf_n="$(printf '%s' "$surf" | cut -f2)"
+      surf_src="$(printf '%s' "$surf" | cut -f3)"
+      printf '\nsurface visible : ce ticket en touche une (%s, %s ligne(s)) — la veille de conception\n' \
+        "$surf_src" "$surf_n"
+      printf '  n'\''a jamais été arbitrée dessus. `/design-veille <surface>` dit ce qu'\''on VISE ; les\n'
+      printf '  tokens, les primitives et les tests ne gardent que ce qu'\''on a déjà tenu.\n'
+      printf '  À PROPOSER, jamais à lancer d'\''office. Puis enregistrer la réponse — veille faite OU\n'
+      printf '  jugée inutile — par : bash scripts/gitlab/lib.sh veille-arbitre %s\n' "$iid"
+    fi
   fi
 
   # Branche proposée : préfixe depuis le label type:: + slug du titre.
@@ -7427,6 +7617,8 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     arbitrage)      gl_arbitrage "$@" ;;
     arbitre)        gl_arbitre "$@" ;;
     touche-claude)  gl_touche_claude "$@" ;;
+    touche-surface) gl_touche_surface "$@" ;;
+    veille-arbitre) gl_veille_arbitre "$@" ;;
     ferme-parent)   gl_ferme_parent "$@" ;;
     garde-fermeture) gl_garde_fermeture "$@" ;;
     demarre-parent) gl_demarre_parent "$@" ;;
@@ -7516,6 +7708,11 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "  issue-taken <iid> [username]       (0 + assignés si le ticket est « En cours » chez quelqu'un d'autre)" >&2
       echo "  touche-claude <iid>                (ce ticket nomme-t-il « .claude/ », où une session autonome ne peut" >&2
       echo "                                      pas écrire ? verdict + lignes. 0=touche, 3=non — docs/10 §11.7)" >&2
+      echo "  touche-surface <iid>               (ce ticket touche-t-il une surface visible, où /design-veille aurait" >&2
+      echo "                                      quelque chose à dire ? verdict + lignes + source. 0=touche (à proposer)," >&2
+      echo "                                      4=touche mais déjà arbitré, 3=non — docs/30 §5.2)" >&2
+      echo "  veille-arbitre <iid>               (enregistre que la question de la veille a été posée — veille faite OU" >&2
+      echo "                                      jugée inutile : pose « veille::arbitree », idempotent — docs/30 §5.2)" >&2
       echo "  current-milestone [produit|outillage] (titre du milestone courant du rail — le plus ancien actif portant" >&2
       echo "                                      encore un ticket ouvert ; soldé et vide sont sautés, chacun nommé sur stderr. Défaut produit)" >&2
       echo "  milestones                         (tous les milestones : titre/état/dates/avancement, TSV)" >&2
