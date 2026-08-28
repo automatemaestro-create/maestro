@@ -984,8 +984,9 @@ def test_aucun_prompt_ne_prescrit_le_merge_nu() -> None:
             for numero, ligne in enumerate(texte.splitlines(), start=1):
                 # ⚠ Un COMMENTAIRE de script est hors de portée, et c'est une borne et non un trou :
                 # `lib.sh` explique en commentaire pourquoi `gh pr merge --auto` n'est pas la voie
-                # retenue (la protection de branche n'existe pas sur ce plan, §8.8) — c'est
-                # exactement la mémoire que ce chantier demande d'écrire, et rien ne l'exécute.
+                # retenue (il merge hors du seul chemin de merge du dépôt, et reste aveugle au sha
+                # qui porte le vert — §8.8) — c'est exactement la mémoire que ce chantier demande
+                # d'écrire, et rien ne l'exécute.
                 # Les PROMPTS embarqués dans un script (`run.sh`, qui compose ce que lit une
                 # session) ne sont pas des commentaires : ils restent, eux, intégralement balayés.
                 if script and ligne.lstrip().startswith("#"):

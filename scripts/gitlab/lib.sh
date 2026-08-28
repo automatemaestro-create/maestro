@@ -4256,10 +4256,16 @@ gl_mr_conflict() {
 #
 # ⚠ POURQUOI PAS L'AUTO-MERGE NATIF DE GITHUB. `gh pr merge --auto` ne tient ses promesses que
 # derrière une protection de branche : ce sont les CHECKS REQUIS qui suspendent le merge jusqu'au
-# vert. Or la protection de branche n'existe pas sur un dépôt privé d'un compte Free (§8.8, mesuré
-# le 2026-08-14) et `allow_auto_merge` est à false sur ce dépôt. Activée telle quelle, la
-# fonctionnalité mergerait donc IMMÉDIATEMENT, pipeline rouge compris — exactement le faux verdict
-# que ce chantier existe pour empêcher. Les prérequis sont à notre charge, et ils vivent ici.
+# vert. Cette raison-là est TOMBÉE le 2026-08-28 — la protection est posée (#734, §8.8), après avoir
+# été indisponible sur un dépôt privé d'un compte Free (mesuré le 2026-08-14) ; `--auto` attendrait
+# donc désormais les six checks au lieu de merger IMMÉDIATEMENT, pipeline rouge compris.
+#
+# La conclusion, elle, NE BOUGE PAS, et c'est le piège de cette relecture : deux raisons portaient
+# le refus, une seule est tombée. `--auto` reste aveugle à ce qu'on vérifie ici en plus — que le
+# vert est porté par la TÊTE de la PR et non par un run antérieur —, et surtout il merge HORS de ce
+# verbe, c'est-à-dire hors du seul chemin de merge du dépôt : ce n'est pas une précaution autour de
+# l'interdit, c'est l'interdit lui-même. `allow_auto_merge` reste donc à false sur ce dépôt, et les
+# prérequis restent à notre charge — ils vivent ici.
 #
 # ⚠ `gh pr merge` RESTE REFUSÉ par la couche permissions et par le hook guard.sh, et ce n'est pas
 # une incohérence : ces deux filets jugent le TEXTE de la commande que la session lance, pas ce

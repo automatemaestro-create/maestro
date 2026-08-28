@@ -449,8 +449,11 @@ Neuf lots mergés du **2026-08-14 au 2026-08-18**, cinq jours :
 
 Le gain annoncé est tenu : **−1 146 lignes** d'outillage runner (`setup-runner.sh`,
 `ensure-runner.sh`, `clean-runner-containers.sh`) et, surtout, plus de machine à laisser allumée
-(§2.4). Le coût en CI facturée, lui, reste celui de §2.3 — la mesure n'a pas été refaite ici, et
-un dépôt privé continue de décompter ses minutes.
+(§2.4). Le coût en CI facturée, lui, restait celui de §2.3 tant que le dépôt était privé — il a
+**disparu le 2026-08-28** avec le passage en public (#734) : sur un dépôt public, les runners
+standard (`ubuntu-latest`, les six jobs de `ci.yml`) sont gratuits et **illimités**, et seuls les
+*larger runners*, qu'on n'utilise pas, restent facturés. Le quota de 2 000 min/mois du plan Free ne
+pèse que sur les dépôts **privés**.
 
 ### 12.4 Ce qu'elle a cassé, et qui n'était pas prévu
 
@@ -515,5 +518,6 @@ rejouable doit être correct.
   demande de changer les sorties, les tests qui les épinglent et la doc du même geste ; le faire
   côté doc seul la rendrait fausse sur ce qu'on lit à l'écran.
 - ~~La jointure de temps~~ — réparée par #400, voir §12.4 point 3.
-- **La protection de branche** — [`scripts/github/protect-main.sh`](../scripts/github/protect-main.sh)
-  est écrit mais n'a jamais été joué (docs/10 §8.8).
+- ~~**La protection de branche**~~ — [`scripts/github/protect-main.sh`](../scripts/github/protect-main.sh)
+  a été **joué le 2026-08-28** (#734), le passage du dépôt en public ayant levé le mur du plan Free.
+  Les six jobs de `ci.yml` sont désormais des checks requis sur `main` (docs/10 §8.8).
