@@ -10,7 +10,10 @@ périodique qui montre le flux temps réel.
 
 Le chat utilisateur ↔ agent (#84) répond en **scripté** (`RepondeurScripte` :
 aucun modèle appelé, aucune authentification requise) sur un fil **éphémère**
-(répertoire temporaire) : la démo n'écrit rien dans `core/chat/`.
+(répertoire temporaire) : la démo n'écrit rien dans `core/chat/`. Le **fil
+global** en fait autant depuis #685 : son répondeur réel confie désormais le
+jugement de l'intention au modèle, donc exige un fournisseur — ce que la démo
+n'a pas, et n'a jamais eu à avoir.
 
 Depuis #183, la démo est aussi le **backend de fixtures** des contrats d'API v2
 (routes des Phases 5/6 : exécutions, journal requêtable, registre de
@@ -385,6 +388,12 @@ async def _servir(hote: str, port: int) -> int:
         # fil éphémère — la démo ne laisse aucune trace dans core/chat/.
         chat_store=ChatStore(Path(tempfile.mkdtemp(prefix="maestro-chat-demo-"))),
         chat_repondeur=RepondeurScripte(),
+        # Le fil global (#268) passe par le modèle depuis #685 : sans ce
+        # répondeur scripté, le premier message de la démo résoudrait le
+        # fournisseur configuré — donc demanderait une authentification que la
+        # démo existe précisément pour éviter. C'est l'usage que le point
+        # d'injection `orchestration_repondeur` porte depuis l'origine.
+        orchestration_repondeur=RepondeurScripte(),
         # Capacités éphémères (#86) : activer/désactiver ou régler les instances
         # depuis l'UI de démo n'écrit rien dans core/capacite/.
         capacites=CapacityStore(Path(tempfile.mkdtemp(prefix="maestro-capacite-demo-"))),

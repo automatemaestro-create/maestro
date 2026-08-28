@@ -811,10 +811,12 @@ def create_app(
     `orchestration_repondeur` (#268) porte le **fil global**
     `/api/chat/orchestrateur` : un troisième `ServiceChat` sur les mêmes rouages,
     dont le répondeur par défaut (`RepondeurOrchestration`) **agit** — une demande
-    de travail y ouvre un run par le service d'exécutions de cette app, et la
-    réponse en porte l'identifiant. Il est construit **après** `executions`, dont
-    il tient son lanceur ; les tests en injectent un répondeur sans lanceur, ou un
-    lanceur factice, pour exercer le fil sans lancer de moteur.
+    de travail y est proposée par le modèle (#685), et l'accord de l'utilisateur y
+    ouvre un run par le service d'exécutions de cette app, dont la réponse porte
+    l'identifiant. Il est construit **après** `executions`, dont il tient son
+    lanceur ; c'est aussi le point d'injection qui permet de jouer le fil **sans
+    fournisseur** — la démo (#65) y met un répondeur scripté, les tests un
+    répondeur à fournisseur factice, ou sans lanceur.
 
     `analyseur` (#139) produit les propositions d'auto-amélioration servies par
     `POST /api/playbooks/{agent}/propositions` : à la demande, il analyse les

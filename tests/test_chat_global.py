@@ -1,4 +1,4 @@
-"""Tests du **fil global** — le canal `orchestrateur` (ticket #273, lot 6/6 de #244).
+"""Tests du **fil global** — le canal `orchestrateur` (tickets #273 puis #685).
 
 Le chat de la Control Tower avait deux canaux couverts et il lui en manquait un.
 `tests/test_chat.py` (#84) éprouve le `ServiceChat` — persistance, acheminement,
@@ -8,27 +8,37 @@ règle d'intention, ni son aperçu, ni son répondeur, ni la route qui le sert. 
 c'est le seul canal du produit qui **agit** — une phrase mal reconnue y ouvre un
 run, c'est-à-dire du quota et des écritures dans un projet.
 
-Aucun réseau, aucun modèle, aucun moteur : le lanceur de run est un double qui
-enregistre ce qu'on lui demande, et c'est exactement ce que le module permet en
-n'exigeant qu'un `LanceurRun` (« ouvre un run sur cet objectif »).
+Depuis #685 le juge a changé : le lexique (`_AMORCES`/`_VERBES_TRAVAIL`) est
+parti en entier, c'est le **modèle** qui rend le verdict avec sa réponse, et
+**aucun run ne s'ouvre sans accord explicite**. Ce que ces tests peuvent tenir
+sans modèle est donc exactement ce qui appartient au canal, et rien de ce qui
+appartient au jugement : le fournisseur est un double scripté, ce que le module
+permet en ne lui demandant qu'un `generate`.
+
+Aucun réseau, aucun modèle, aucun moteur : le lanceur de run est lui aussi un
+double qui enregistre ce qu'on lui demande, et c'est exactement ce que le module
+permet en n'exigeant qu'un `LanceurRun` (« ouvre un run sur cet objectif »).
 
 Couvre :
 
-① **la règle d'intention** et son asymétrie assumée — un verbe d'action en tête
-   ouvre un run, tout le reste est une conversation, **le doute compris**. Le
-   test porte les deux moitiés : ce qui doit ouvrir, et ce qui ne doit surtout
-   pas ;
+① **le canal ne filtre plus rien** — les cinq formulations du tableau de #682
+   atteignent le modèle et aboutissent à une proposition, sans qu'aucun run ne
+   s'ouvre ; un verdict illisible vaut un échange ;
 ② **l'aperçu** de l'orchestration : la phrase d'état, ses accords, et le fait
    qu'elle soit relue à chaque question plutôt que figée à la construction ;
-③ **le répondeur** : le run ouvert et **rattaché** à la réponse, un lancement en
-   échec raconté dans le fil au lieu d'être levé, et le canal sans lanceur qui le
-   dit plutôt que de faire semblant ;
+③ **le répondeur** : le run ouvert **sur l'objectif approuvé** et rattaché à la
+   réponse, un lancement en échec raconté dans le fil au lieu d'être levé, et le
+   canal sans lanceur qui le dit plutôt que de faire semblant ;
 ④ **le contrat SSE** vu du répondeur : la concaténation des incréments *est* le
    texte final — ce dont dépend un client qui reconstitue la réponse des `delta`
    seuls ;
 ⑤ **les endpoints** : `/api/chat/orchestrateur` sert un fil que le catalogue ne
    porte pas, le run ouvert voyage jusqu'au JSON et jusqu'au WebSocket, et le
    flux rend `debut`/`fragment`/`fin`.
+
+La couverture **exhaustive** du nouveau jugement — le banc des cinq formulations
+joué contre un modèle, le silence, le refus — est le lot 3 de #682 (#688), dont
+c'est la portée déclarée.
 """
 
 from __future__ import annotations
@@ -59,12 +69,12 @@ from maestro.controltower.events import (
 )
 from maestro.controltower.orchestration import (
     AGENT_ORCHESTRATION,
-    INTENTION_ECHANGE,
-    INTENTION_TRAVAIL,
     NOM_ORCHESTRATION,
+    VERDICT_ACCORD,
+    VERDICT_ECHANGE,
+    VERDICT_PROPOSITION,
     RepondeurOrchestration,
     apercu_de,
-    intention,
 )
 from maestro.controltower.projets import ServiceProjets
 from maestro.controltower.state import (
@@ -76,60 +86,241 @@ from maestro.controltower.state import (
 )
 from maestro.engine import RunReport
 from maestro.projets import ProjetStore
+from maestro.providers.base import ModelProvider
 
 UTILISATEUR = "utilisateur"
 
+#: L'objectif que le modèle reformule dans sa proposition, puis recopie quand
+#: l'utilisateur l'approuve. Il ne ressemble à **aucun** message du fil : c'est ce
+#: qui rend visible, à l'assertion, que ce n'est pas le message brut qui part.
+OBJECTIF = "Développer une application Windows d'agenda aux fonctionnalités de base"
 
-# ── ① la règle d'intention ────────────────────────────────────────────────────
+
+def _verdict(nom: str, reponse: str, objectif: str = "") -> str:
+    """La réponse du modèle telle que le contrat de `_PROMPT_ORCHESTRATION` la décrit."""
+    return json.dumps(
+        {"verdict": nom, "objectif": objectif, "reponse": reponse}, ensure_ascii=False
+    )
+
+
+def _propose(objectif: str = OBJECTIF) -> str:
+    """La phrase d'une proposition, telle que le fil la garde — la mémoire du canal."""
+    return f"J'ouvrirais un run sur : « {objectif} ». On y va ?"
+
+
+class JugeScripte(ModelProvider):
+    """Fournisseur factice : rend le verdict qu'on lui a posé, note ce qu'on lui donne.
+
+    Il enregistre les prompts pour que les tests puissent vérifier ce qui *atteint*
+    le juge — c'est la moitié de #685 qu'aucune assertion sur le verdict ne
+    couvrirait : le canal ne doit plus écarter une formulation avant l'appel.
+    """
+
+    name = "juge-scripte"
+
+    def __init__(self, reponse: str) -> None:
+        self.reponse = reponse
+        self.prompts: list[str] = []
+        self.systemes: list[str | None] = []
+
+    def supports(self, model: str) -> bool:
+        return True
+
+    async def generate(
+        self, prompt: str, *, model: str, system_prompt: str | None = None
+    ) -> str:
+        self.prompts.append(prompt)
+        self.systemes.append(system_prompt)
+        return self.reponse
+
+
+def _fil(*contenus: str) -> list[MessageChat]:
+    """Un fil dont les messages alternent utilisateur / orchestrateur, l'utilisateur d'abord."""
+    return [
+        MessageChat(
+            agent=NOM_ORCHESTRATION,
+            auteur=UTILISATEUR if rang % 2 == 0 else NOM_ORCHESTRATION,
+            contenu=contenu,
+        )
+        for rang, contenu in enumerate(contenus)
+    ]
+
+
+class LanceurEspion:
+    """Un `LanceurRun` qui note ce qu'on lui demande — aucun moteur, aucun quota.
+
+    Il note **les deux** arguments du contrat (#683) : l'objectif et le projet
+    de la fenêtre. Un double qui n'accepterait que le premier rendrait le canal
+    vert sur un lancement que le vrai service refuserait — et le répondeur
+    rattrapant toute exception du lanceur, l'échec se lirait « le lancement a
+    échoué » au lieu d'une erreur de signature.
+    """
+
+    def __init__(self, *, run_id: str = "run-42", statut: str = "en_cours") -> None:
+        self.objectifs: list[str] = []
+        self.projets: list[str | None] = []
+        self._resume = {"run_id": run_id, "statut": statut}
+
+    async def __call__(self, objectif: str, projet_id: str | None = None) -> dict[str, str]:
+        self.objectifs.append(objectif)
+        self.projets.append(projet_id)
+        return dict(self._resume)
+
+
+def _repondeur(
+    reponse_du_juge: str, *, lanceur: LanceurEspion | None = None, apercu: Any = None
+) -> tuple[RepondeurOrchestration, JugeScripte]:
+    """Le répondeur et son juge, montés ensemble — les tests ont besoin des deux."""
+    juge = JugeScripte(reponse_du_juge)
+    return (
+        RepondeurOrchestration(lanceur=lanceur, apercu=apercu, provider=juge),
+        juge,
+    )
+
+
+# ── ① le canal ne filtre plus rien, et n'ouvre rien de lui-même ───────────────
+#
+# Le lexique d'avant #685 tranchait **avant** tout appel modèle : les cinq
+# formulations ci-dessous rendaient `echange` et n'atteignaient jamais le juge.
+# Ce que ces tests tiennent est donc exactement ce qui appartient au canal — le
+# message arrive au modèle, et le verdict du modèle décide seul de la suite.
 
 
 @pytest.mark.parametrize(
     "demande",
     [
-        "Ajoute la pagination à la liste des projets",
-        "ajouter la pagination",
-        # Les amorces de politesse et de volonté tombent avant qu'on cherche le
-        # verbe — sans quoi la forme la plus courante d'une demande passerait
-        # pour une question.
-        "peux-tu corriger le tri des tâches",
-        "Bonjour, peux-tu corriger le tri",
-        "j'aimerais migrer la base",
-        "il faudrait documenter le module",
-        "Merci de déployer la version 1.2",
-        # L'accentuation et la casse ne changent rien : `normaliser` passe avant.
-        "DÉPLOIE la nouvelle image",
+        # Le tableau de #682, dans l'ordre : chaque ligne échouait pour une cause
+        # indépendante, et les quatre tenaient dans la phrase réellement envoyée.
+        "Génère une application d'agenda",
+        "J'aimerai ajouter la pagination",
+        "J'aimerais que tu ajoutes la pagination",
+        "Peux-tu me créer une application",
+        "Il faudrait que tu corriges le tri",
+        # Les témoins qui passaient déjà : ils doivent continuer de passer.
+        "Ajoute la pagination",
+        "Crée-moi une application d'agenda",
     ],
 )
-def test_un_verbe_d_action_en_tete_ouvre_un_run(demande: str) -> None:
-    assert intention(demande) == INTENTION_TRAVAIL
+def test_une_demande_de_travail_est_proposee_et_n_ouvre_aucun_run(demande: str) -> None:
+    """Critère 1 : une proposition, jamais un run — et la phrase atteint le juge."""
+    lanceur = LanceurEspion()
+    repondeur, juge = _repondeur(
+        _verdict(VERDICT_PROPOSITION, _propose(), OBJECTIF), lanceur=lanceur
+    )
+
+    reponse = asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil(demande)))
+
+    # L'échantillon fautif de #682 : c'est ici que le lexique s'arrêtait.
+    assert demande in juge.prompts[0]
+    # Proposer n'ouvre rien — le sujet même du lot.
+    assert lanceur.objectifs == []
+    assert reponse.run_id == ""
+    assert OBJECTIF in reponse.contenu
 
 
 @pytest.mark.parametrize(
-    "demande",
-    [
-        # Une question *sur* le travail n'est pas le travail.
-        "Comment ajouter une page ?",
-        "Où en sont les runs ?",
-        "Qu'est-ce qui attend mon arbitrage ?",
-        "merci",
-        "Bonjour",
-        "",
-        "   ",
-        # Le doute compte pour une conversation : rien ici ne commence par un
-        # verbe connu, et inventer une reconnaissance coûterait un run.
-        "la pagination de la liste des projets",
-        "le tri du Kanban est cassé",
-    ],
+    "demande", ["Comment ajouter une page ?", "Où en sont les runs ?", "merci"]
 )
-def test_tout_le_reste_est_une_conversation(demande: str) -> None:
-    """L'asymétrie du module : ne pas reconnaître coûte une phrase, reconnaître à tort un run."""
-    assert intention(demande) == INTENTION_ECHANGE
+def test_une_question_un_etat_ou_une_salutation_n_ouvrent_rien(demande: str) -> None:
+    """La seconde moitié du critère 1 : ce qui n'est pas un travail reste une conversation."""
+    lanceur = LanceurEspion()
+    repondeur, _ = _repondeur(
+        _verdict(VERDICT_ECHANGE, "Aucun run en cours."), lanceur=lanceur
+    )
+
+    reponse = asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil(demande)))
+
+    assert lanceur.objectifs == []
+    assert reponse.run_id == ""
 
 
-def test_une_amorce_seule_n_ouvre_rien() -> None:
-    """« bonjour » réduit à rien ne doit pas retomber sur le premier mot venu."""
-    assert intention("bonjour") == INTENTION_ECHANGE
-    assert intention("s'il te plaît") == INTENTION_ECHANGE
+def test_un_refus_n_ouvre_rien() -> None:
+    """Critère 2 : un « non » derrière une proposition laisse le fil intact."""
+    lanceur = LanceurEspion()
+    repondeur, _ = _repondeur(
+        _verdict(VERDICT_ECHANGE, "Entendu, je n'ouvre rien."), lanceur=lanceur
+    )
+
+    reponse = asyncio.run(
+        repondeur.produire(
+            AGENT_ORCHESTRATION,
+            _fil("Génère une application d'agenda", _propose(), "non"),
+        )
+    )
+
+    assert lanceur.objectifs == []
+    assert reponse.run_id == ""
+
+
+def test_un_verdict_illisible_vaut_un_echange() -> None:
+    """Une réponse hors contrat coûte une reformulation, jamais un run ni un 502.
+
+    C'est l'asymétrie du module portée à l'analyse : ce qu'on ne comprend pas ne
+    peut pas valoir un accord. Le texte du modèle est rendu tel quel — le canal
+    est depuis #666 la seule porte d'entrée, laisser l'utilisateur devant une
+    erreur serait pire que devant une phrase.
+    """
+    lanceur = LanceurEspion()
+    repondeur, _ = _repondeur("Bien sûr, je m'en occupe !", lanceur=lanceur)
+
+    reponse = asyncio.run(
+        repondeur.produire(AGENT_ORCHESTRATION, _fil("Ajoute la pagination"))
+    )
+
+    assert lanceur.objectifs == []
+    assert reponse.run_id == ""
+    assert reponse.contenu == "Bien sûr, je m'en occupe !"
+
+
+def test_un_verdict_inconnu_ne_vaut_pas_un_accord() -> None:
+    """La liste des verdicts est **blanche** : un mot inattendu retombe sur l'échange."""
+    lanceur = LanceurEspion()
+    repondeur, _ = _repondeur(
+        _verdict("lancer", "C'est parti.", OBJECTIF), lanceur=lanceur
+    )
+
+    asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil("oui")))
+
+    assert lanceur.objectifs == []
+
+
+def test_le_verdict_se_lit_aussi_dans_un_bloc_de_code() -> None:
+    """Les modèles encadrent volontiers un JSON qu'on leur a demandé nu."""
+    lanceur = LanceurEspion()
+    corps = _verdict(VERDICT_ACCORD, "C'est parti.", OBJECTIF)
+    repondeur, _ = _repondeur(f"Voici ma décision :\n```json\n{corps}\n```\n", lanceur=lanceur)
+
+    asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil("oui")))
+
+    assert lanceur.objectifs == [OBJECTIF]
+
+
+def test_le_prompt_porte_le_fil_entier_et_l_etat() -> None:
+    """La mémoire du canal est le fil (#685) : sa propre proposition, et la réponse.
+
+    Sans elle, juger « oui » demanderait un second lexique — juste après en avoir
+    retiré un. L'état de l'orchestration entre dans le même prompt : c'est ce qui
+    permet de répondre « où en est-on ? » sans voie séparée.
+    """
+    repondeur, juge = _repondeur(
+        _verdict(VERDICT_ACCORD, "C'est parti.", OBJECTIF),
+        lanceur=LanceurEspion(),
+        apercu=lambda projet_id=None: "1 run en cours, 3 tâches suivies.",
+    )
+
+    asyncio.run(
+        repondeur.produire(
+            AGENT_ORCHESTRATION,
+            _fil("Génère une application d'agenda", _propose(), "oui"),
+        )
+    )
+
+    prompt = juge.prompts[0]
+    assert "Génère une application d'agenda" in prompt
+    assert OBJECTIF in prompt
+    assert "1 run en cours, 3 tâches suivies." in prompt
+    # Le contrat de sortie voyage en prompt système, jamais mêlé à la conversation.
+    assert "verdict" in (juge.systemes[0] or "")
 
 
 # ── ② l'aperçu de l'orchestration ─────────────────────────────────────────────
@@ -251,51 +442,61 @@ def test_un_run_sans_projet_ne_compte_dans_l_apercu_d_aucun_projet() -> None:
     assert apercu().startswith("1 run en cours")
 
 
-# ── ③ le répondeur : ce qu'il ouvre, et ce qu'il n'ouvre pas ──────────────────
+# ── ③ le répondeur : ce qu'il ouvre, et sur quel objectif ─────────────────────
 
 
-class LanceurEspion:
-    """Un `LanceurRun` qui note ce qu'on lui demande — aucun moteur, aucun quota.
-
-    Il note **les deux** arguments du contrat (#683) : l'objectif et le projet
-    de la fenêtre. Un double qui n'accepterait que le premier rendrait le canal
-    vert sur un lancement que le vrai service refuserait — et le répondeur
-    rattrapant toute exception du lanceur, l'échec se lirait « le lancement a
-    échoué » au lieu d'une erreur de signature.
-    """
-
-    def __init__(self, *, run_id: str = "run-42", statut: str = "en_cours") -> None:
-        self.objectifs: list[str] = []
-        self.projets: list[str | None] = []
-        self._resume = {"run_id": run_id, "statut": statut}
-
-    async def __call__(self, objectif: str, projet_id: str | None = None) -> dict[str, str]:
-        self.objectifs.append(objectif)
-        self.projets.append(projet_id)
-        return dict(self._resume)
-
-
-def _fil(contenu: str) -> list[MessageChat]:
-    return [MessageChat(agent=NOM_ORCHESTRATION, auteur=UTILISATEUR, contenu=contenu)]
-
-
-def test_une_demande_de_travail_ouvre_un_run_et_le_rattache() -> None:
-    lanceur = LanceurEspion()
-    repondeur = RepondeurOrchestration(lanceur=lanceur)
-
-    reponse = asyncio.run(
-        repondeur.produire(
-            AGENT_ORCHESTRATION, _fil("Ajoute la pagination à la liste des projets")
-        )
+def _fil_approuve() -> list[MessageChat]:
+    """Le fil d'un accord : la demande, la proposition du canal, le « oui »."""
+    return _fil(
+        "J'aimerai que tu me génère le projet p1 comme une application windows d'agenda",
+        _propose(),
+        "oui",
     )
 
-    # L'objectif part **tel quel** : c'est la phrase de l'utilisateur qui est
-    # cadrée par le run, pas une reformulation faite ici.
-    assert lanceur.objectifs == ["Ajoute la pagination à la liste des projets"]
+
+def test_un_accord_ouvre_le_run_et_le_rattache() -> None:
+    lanceur = LanceurEspion()
+    repondeur, _ = _repondeur(
+        _verdict(VERDICT_ACCORD, "C'est parti.", OBJECTIF), lanceur=lanceur
+    )
+
+    reponse = asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil_approuve()))
+
+    assert lanceur.objectifs == [OBJECTIF]
     # Et la réponse porte le run : sans ce rattachement le fil dirait « c'est
     # parti » sans dire vers quoi.
     assert reponse.run_id == "run-42"
     assert "run-42" in reponse.contenu
+
+
+def test_l_objectif_lance_est_celui_qui_a_ete_approuve_pas_le_message_brut() -> None:
+    """Critère 3 : on ne lance pas autre chose que ce qui a été montré.
+
+    Le dernier message est « oui » — un objectif de run qui ne veut rien dire.
+    `_ouvrir_un_run` ne reçoit pas le fil, donc il ne *peut* pas le prendre : ce
+    qui part est la reformulation, et rien d'autre.
+    """
+    lanceur = LanceurEspion()
+    repondeur, _ = _repondeur(
+        _verdict(VERDICT_ACCORD, "C'est parti.", OBJECTIF), lanceur=lanceur
+    )
+
+    asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil_approuve()))
+
+    assert lanceur.objectifs == [OBJECTIF]
+    assert "oui" not in lanceur.objectifs
+
+
+def test_un_accord_sans_objectif_n_ouvre_rien() -> None:
+    """Un verdict qui se contredit — accord sans rien à lancer — ne retombe pas sur le brut."""
+    lanceur = LanceurEspion()
+    repondeur, _ = _repondeur(_verdict(VERDICT_ACCORD, "C'est parti."), lanceur=lanceur)
+
+    reponse = asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil_approuve()))
+
+    assert lanceur.objectifs == []
+    assert reponse.run_id == ""
+    assert "pas retrouvé l'objectif" in reponse.contenu
 
 
 def test_le_run_ouvert_appartient_au_projet_de_la_fenetre() -> None:
@@ -306,15 +507,17 @@ def test_le_run_ouvert_appartient_au_projet_de_la_fenetre() -> None:
     l'objectif, et rien n'est deviné : le répondeur transmet, il ne cherche pas.
     """
     lanceur = LanceurEspion()
-    repondeur = RepondeurOrchestration(lanceur=lanceur)
+    repondeur, _ = _repondeur(
+        _verdict(VERDICT_ACCORD, "C'est parti.", OBJECTIF), lanceur=lanceur
+    )
 
     asyncio.run(
         repondeur.produire(
-            AGENT_ORCHESTRATION, _fil("Ajoute la pagination"), projet_id="prj-depensio"
+            AGENT_ORCHESTRATION, _fil_approuve(), projet_id="prj-depensio"
         )
     )
 
-    assert lanceur.objectifs == ["Ajoute la pagination"]
+    assert lanceur.objectifs == [OBJECTIF]
     assert lanceur.projets == ["prj-depensio"]
 
 
@@ -326,25 +529,29 @@ def test_sans_projet_le_run_part_sans_projet() -> None:
     runs, quitte à ce qu'ils ne relèvent d'aucune vue de projet.
     """
     lanceur = LanceurEspion()
-    repondeur = RepondeurOrchestration(lanceur=lanceur)
-
-    reponse = asyncio.run(
-        repondeur.produire(AGENT_ORCHESTRATION, _fil("Ajoute la pagination"))
+    repondeur, _ = _repondeur(
+        _verdict(VERDICT_ACCORD, "C'est parti.", OBJECTIF), lanceur=lanceur
     )
+
+    reponse = asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil_approuve()))
 
     assert lanceur.projets == [None]
     assert reponse.run_id == "run-42"
 
 
-def test_la_voie_conversationnelle_cadre_son_apercu_sur_le_meme_projet() -> None:
-    """Les deux voies reçoivent le projet, faute de quoi la phrase et le run divergent."""
+def test_l_apercu_est_cadre_sur_le_projet_de_la_fenetre() -> None:
+    """Juger sur l'état d'un périmètre et travailler dans un autre serait la panne de #683."""
     vus: list[str | None] = []
 
     def apercu(projet_id: str | None = None) -> str:
         vus.append(projet_id)
         return "Aucun run en cours."
 
-    repondeur = RepondeurOrchestration(lanceur=LanceurEspion(), apercu=apercu)
+    repondeur, _ = _repondeur(
+        _verdict(VERDICT_ECHANGE, "Aucun run en cours."),
+        lanceur=LanceurEspion(),
+        apercu=apercu,
+    )
 
     asyncio.run(
         repondeur.produire(
@@ -355,33 +562,18 @@ def test_la_voie_conversationnelle_cadre_son_apercu_sur_le_meme_projet() -> None
     assert vus == ["prj-depensio"]
 
 
-def test_une_question_n_ouvre_aucun_run() -> None:
-    lanceur = LanceurEspion()
-    repondeur = RepondeurOrchestration(
-        lanceur=lanceur, apercu=lambda projet_id=None: "Aucun run en cours."
-    )
-
-    reponse = asyncio.run(
-        repondeur.produire(AGENT_ORCHESTRATION, _fil("Où en sont les runs ?"))
-    )
-
-    assert lanceur.objectifs == []
-    assert reponse.run_id == ""
-    # Elle répond avec ce qu'elle sait de l'état, puis dit ce qu'elle sait faire.
-    assert reponse.contenu.startswith("Aucun run en cours.")
-
-
 def test_un_lancement_en_echec_se_raconte_dans_le_fil() -> None:
     """Levée, l'exception deviendrait un 502 sans trace — or la demande est acquise."""
 
     async def lanceur_qui_echoue(objectif: str, projet_id: str | None = None) -> dict[str, str]:
         raise RuntimeError("objectif refusé : plafond hors bornes")
 
-    repondeur = RepondeurOrchestration(lanceur=lanceur_qui_echoue)
-
-    reponse = asyncio.run(
-        repondeur.produire(AGENT_ORCHESTRATION, _fil("Ajoute la pagination"))
+    repondeur = RepondeurOrchestration(
+        lanceur=lanceur_qui_echoue,
+        provider=JugeScripte(_verdict(VERDICT_ACCORD, "C'est parti.", OBJECTIF)),
     )
+
+    reponse = asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil_approuve()))
 
     assert reponse.run_id == ""
     assert "Le lancement a échoué" in reponse.contenu
@@ -389,30 +581,57 @@ def test_un_lancement_en_echec_se_raconte_dans_le_fil() -> None:
     assert "plafond hors bornes" in reponse.contenu
 
 
+def test_un_fournisseur_en_echec_n_est_pas_rattrape_ici() -> None:
+    """Sans verdict, il n'y a rien à raconter : l'exception remonte (502, #686)."""
+
+    class JugeEnPanne(ModelProvider):
+        name = "panne"
+
+        def supports(self, model: str) -> bool:
+            return True
+
+        async def generate(self, prompt, *, model, system_prompt=None):
+            raise RuntimeError("fournisseur indisponible")
+
+    lanceur = LanceurEspion()
+    repondeur = RepondeurOrchestration(lanceur=lanceur, provider=JugeEnPanne())
+
+    with pytest.raises(RuntimeError, match="fournisseur indisponible"):
+        asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil("Ajoute la pagination")))
+
+    assert lanceur.objectifs == []
+
+
 def test_sans_lanceur_le_canal_le_dit_au_lieu_de_faire_semblant() -> None:
-    repondeur = RepondeurOrchestration()
-
-    travail = asyncio.run(
-        repondeur.produire(AGENT_ORCHESTRATION, _fil("Ajoute la pagination"))
+    """Et il le dit **avant** le « oui » : proposer ce qu'on ne peut pas ouvrir ferait attendre."""
+    accord = RepondeurOrchestration(
+        provider=JugeScripte(_verdict(VERDICT_ACCORD, "C'est parti.", OBJECTIF))
     )
-    echange = asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil("Bonjour")))
+    proposition = RepondeurOrchestration(
+        provider=JugeScripte(
+            _verdict(VERDICT_PROPOSITION, f"J'ouvrirais : « {OBJECTIF} ».", OBJECTIF)
+        )
+    )
 
-    assert travail.run_id == ""
-    assert "Je ne peux pas ouvrir de run" in travail.contenu
-    assert "La demande est bien enregistrée" in travail.contenu
-    assert "pas encore l'ouvrir" in echange.contenu
+    ouvert = asyncio.run(accord.produire(AGENT_ORCHESTRATION, _fil_approuve()))
+    propose = asyncio.run(
+        proposition.produire(AGENT_ORCHESTRATION, _fil("Ajoute la pagination"))
+    )
+
+    assert ouvert.run_id == ""
+    assert "Je ne peux pas ouvrir de run" in ouvert.contenu
+    assert "La demande est bien enregistrée" in ouvert.contenu
+    assert "pas encore l'ouvrir" in propose.contenu
 
 
 def test_repondre_rend_le_texte_de_produire() -> None:
     """`repondre` est la voie courte : le même texte, sans le rattachement."""
-    repondeur = RepondeurOrchestration(lanceur=LanceurEspion())
+    repondeur, _ = _repondeur(
+        _verdict(VERDICT_ACCORD, "C'est parti.", OBJECTIF), lanceur=LanceurEspion()
+    )
 
-    texte = asyncio.run(
-        repondeur.repondre(AGENT_ORCHESTRATION, _fil("Ajoute la pagination"))
-    )
-    complet = asyncio.run(
-        repondeur.produire(AGENT_ORCHESTRATION, _fil("Ajoute la pagination"))
-    )
+    texte = asyncio.run(repondeur.repondre(AGENT_ORCHESTRATION, _fil_approuve()))
+    complet = asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil_approuve()))
 
     assert texte == complet.contenu
 
@@ -421,9 +640,13 @@ def test_repondre_rend_le_texte_de_produire() -> None:
 
 
 @pytest.mark.parametrize(
-    "demande", ["Ajoute la pagination à la liste des projets", "Où en sont les runs ?"]
+    "reponse_du_juge",
+    [
+        _verdict(VERDICT_ACCORD, "C'est parti.", OBJECTIF),
+        _verdict(VERDICT_ECHANGE, "Aucun run en cours."),
+    ],
 )
-def test_les_increments_reconstituent_exactement_la_reponse(demande: str) -> None:
+def test_les_increments_reconstituent_exactement_la_reponse(reponse_du_juge: str) -> None:
     """Ce dont dépend un client SSE : concaténer les `delta` rend la trame `fin`.
 
     Éprouvé sur les **deux** voies du répondeur — celle qui ouvre un run et celle
@@ -436,12 +659,12 @@ def test_les_increments_reconstituent_exactement_la_reponse(demande: str) -> Non
     async def incrementer(delta: str) -> None:
         incremente.append(delta)
 
-    repondeur = RepondeurOrchestration(
-        lanceur=LanceurEspion(), apercu=lambda projet_id=None: "Aucun run en cours."
-    )
+    repondeur, _ = _repondeur(reponse_du_juge, lanceur=LanceurEspion())
 
     reponse = asyncio.run(
-        repondeur.produire(AGENT_ORCHESTRATION, _fil(demande), incrementer=incrementer)
+        repondeur.produire(
+            AGENT_ORCHESTRATION, _fil_approuve(), incrementer=incrementer
+        )
     )
 
     assert incremente != []
@@ -450,13 +673,13 @@ def test_les_increments_reconstituent_exactement_la_reponse(demande: str) -> Non
 
 def test_sans_incrementeur_rien_n_est_publie_et_le_texte_est_le_meme() -> None:
     """`POST …/messages` passe par la même production, sans flux : elle doit tenir."""
-    repondeur = RepondeurOrchestration(lanceur=LanceurEspion())
-
-    reponse = asyncio.run(
-        repondeur.produire(AGENT_ORCHESTRATION, _fil("Ajoute la pagination"))
+    repondeur, _ = _repondeur(
+        _verdict(VERDICT_ACCORD, "C'est parti.", OBJECTIF), lanceur=LanceurEspion()
     )
 
-    assert reponse.contenu.startswith("J'ouvre un run sur cette demande.")
+    reponse = asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil_approuve()))
+
+    assert reponse.contenu.startswith("C'est parti.")
 
 
 # ── ⑤ les endpoints du fil global ─────────────────────────────────────────────
@@ -479,14 +702,22 @@ def lanceur() -> LanceurEspion:
 
 
 @pytest.fixture()
-def client_global(bus, depot_chat, lanceur):
-    """L'app avec un fil global branché sur un lanceur factice — aucun moteur."""
+def juge() -> JugeScripte:
+    """Le juge des tests d'endpoint : il accorde, pour que le run traverse la route."""
+    return JugeScripte(_verdict(VERDICT_ACCORD, "C'est parti.", OBJECTIF))
+
+
+@pytest.fixture()
+def client_global(bus, depot_chat, lanceur, juge):
+    """L'app avec un fil global branché sur un lanceur et un juge factices."""
     with TestClient(
         create_app(
             bus=bus,
             chat_store=depot_chat,
             orchestration_repondeur=RepondeurOrchestration(
-                lanceur=lanceur, apercu=lambda projet_id=None: "Aucun run en cours."
+                lanceur=lanceur,
+                apercu=lambda projet_id=None: "Aucun run en cours.",
+                provider=juge,
             ),
         )
     ) as client:
@@ -514,12 +745,11 @@ def test_le_fil_global_est_servi_sans_etre_au_catalogue(client_global) -> None:
     assert client_global.get("/api/chat/pas-un-agent").status_code == 404
 
 
-def test_une_demande_postee_au_fil_global_ouvre_un_run_et_le_porte(
+def test_un_accord_poste_au_fil_global_ouvre_un_run_et_le_porte(
     client_global, lanceur, depot_chat
 ) -> None:
     reponse = client_global.post(
-        f"/api/chat/{NOM_ORCHESTRATION}/messages",
-        json={"contenu": "Ajoute la pagination à la liste des projets"},
+        f"/api/chat/{NOM_ORCHESTRATION}/messages", json={"contenu": "oui"}
     )
 
     assert reponse.status_code == 201
@@ -528,7 +758,7 @@ def test_une_demande_postee_au_fil_global_ouvre_un_run_et_le_porte(
     # Le `run_id` voyage jusqu'au JSON du message persisté : c'est lui que
     # l'écran relit pour lister ce que le fil a ouvert (#269).
     assert repondu["run_id"] == "run-42"
-    assert lanceur.objectifs == ["Ajoute la pagination à la liste des projets"]
+    assert lanceur.objectifs == [OBJECTIF]
     # Le fil global a son propre fichier, sous le nom du canal.
     assert (depot_chat.racine / f"{NOM_ORCHESTRATION}.jsonl").is_file()
 
@@ -537,8 +767,7 @@ def test_le_run_ouvert_part_aussi_sur_le_websocket(client_global) -> None:
     """Un client temps réel apprend le rattachement sans rien relire."""
     with client_global.websocket_connect("/ws/evenements?projet=tous") as ws:
         client_global.post(
-            f"/api/chat/{NOM_ORCHESTRATION}/messages",
-            json={"contenu": "Corrige le tri des tâches"},
+            f"/api/chat/{NOM_ORCHESTRATION}/messages", json={"contenu": "vas-y"}
         )
         aller = ws.receive_json()
         retour = ws.receive_json()
@@ -548,10 +777,24 @@ def test_le_run_ouvert_part_aussi_sur_le_websocket(client_global) -> None:
     assert retour["agent"] == NOM_ORCHESTRATION and retour["run_id"] == "run-42"
 
 
-def test_une_question_postee_au_fil_global_n_ouvre_rien(client_global, lanceur) -> None:
-    reponse = client_global.post(
-        f"/api/chat/{NOM_ORCHESTRATION}/messages", json={"contenu": "Où en sont les runs ?"}
-    )
+def test_une_demande_postee_au_fil_global_n_ouvre_rien(bus, depot_chat, lanceur) -> None:
+    """La route ne court-circuite pas la règle : une proposition n'ouvre aucun run."""
+    with TestClient(
+        create_app(
+            bus=bus,
+            chat_store=depot_chat,
+            orchestration_repondeur=RepondeurOrchestration(
+                lanceur=lanceur,
+                provider=JugeScripte(
+                    _verdict(VERDICT_PROPOSITION, f"J'ouvrirais : « {OBJECTIF} ».", OBJECTIF)
+                ),
+            ),
+        )
+    ) as client:
+        reponse = client.post(
+            f"/api/chat/{NOM_ORCHESTRATION}/messages",
+            json={"contenu": "Génère une application d'agenda"},
+        )
 
     _, repondu = reponse.json()["messages"]
     assert repondu["run_id"] == ""
@@ -570,8 +813,7 @@ def _trames(reponse) -> list[dict]:
 def test_le_flux_du_fil_global_rend_debut_fragments_et_fin(client_global) -> None:
     """Le canal SSE vaut pour les trois fils — ici le global, qui agit en plus."""
     reponse = client_global.get(
-        f"/api/chat/{NOM_ORCHESTRATION}/flux",
-        params={"contenu": "Ajoute la pagination à la liste des projets"},
+        f"/api/chat/{NOM_ORCHESTRATION}/flux", params={"contenu": "oui"}
     )
 
     assert reponse.status_code == 200
@@ -605,7 +847,7 @@ def test_le_projet_de_la_fenetre_voyage_du_corps_jusqu_au_lanceur(
     """Le rattachement traverse la route sans rien perdre en chemin."""
     client_global.post(
         f"/api/chat/{NOM_ORCHESTRATION}/messages",
-        json={"contenu": "Ajoute la pagination", "projet_id": "prj-depensio"},
+        json={"contenu": "oui", "projet_id": "prj-depensio"},
     )
 
     assert lanceur.projets == ["prj-depensio"]
@@ -620,7 +862,7 @@ def test_un_projet_mal_forme_vaut_aucun_projet(client_global, lanceur) -> None:
     """
     reponse = client_global.post(
         f"/api/chat/{NOM_ORCHESTRATION}/messages",
-        json={"contenu": "Ajoute la pagination", "projet_id": "../../etc"},
+        json={"contenu": "oui", "projet_id": "../../etc"},
     )
 
     assert reponse.status_code == 201
@@ -636,7 +878,7 @@ def test_le_flux_porte_le_projet_comme_le_post(client_global, lanceur) -> None:
     """
     client_global.get(
         f"/api/chat/{NOM_ORCHESTRATION}/flux",
-        params={"contenu": "Ajoute la pagination", "projet_id": "prj-depensio"},
+        params={"contenu": "oui", "projet_id": "prj-depensio"},
     )
 
     assert lanceur.projets == ["prj-depensio"]
@@ -653,7 +895,7 @@ def test_le_fil_lui_meme_reste_transverse(client_global, depot_chat) -> None:
     with client_global.websocket_connect("/ws/evenements?projet=tous") as ws:
         client_global.post(
             f"/api/chat/{NOM_ORCHESTRATION}/messages",
-            json={"contenu": "Ajoute la pagination", "projet_id": "prj-depensio"},
+            json={"contenu": "oui", "projet_id": "prj-depensio"},
         )
         aller = ws.receive_json()
         retour = ws.receive_json()
@@ -670,7 +912,8 @@ def test_le_fil_lui_meme_reste_transverse(client_global, depot_chat) -> None:
 # `ouvrir_un_run` appelait `lancer(objectif)` sans projet, et le run naissait
 # orphelin. Ceux-ci montent donc l'app **sans** `orchestration_repondeur`, avec
 # un moteur muet et deux projets réellement déclarés, et lisent le résultat par
-# la route que l'écran interroge.
+# la route que l'écran interroge. Le fournisseur, lui, est substitué à la
+# fabrique : c'est le seul maillon qu'on ne peut pas laisser réel (#195).
 
 
 class MoteurMuet:
@@ -685,12 +928,14 @@ class MoteurMuet:
 
     def __init__(self) -> None:
         self.projets: list[str | None] = []
+        self.objectifs: list[str] = []
 
     def __call__(self, **reglages: Any) -> MoteurMuet:
         return self
 
     async def run(self, objectif: str, *, projet_id: str | None = None, **reste: Any) -> RunReport:
         self.projets.append(projet_id)
+        self.objectifs.append(objectif)
         return RunReport(objectif=objectif, resultats=())
 
 
@@ -724,7 +969,22 @@ def moteur() -> MoteurMuet:
 
 
 @pytest.fixture()
-def client_reel(bus, depot_chat, projets, moteur):
+def fournisseur_par_defaut(monkeypatch: pytest.MonkeyPatch) -> JugeScripte:
+    """Le juge que `RepondeurOrchestration` résoudra tout seul (#195 : aucun réseau).
+
+    Substitué sur la **fabrique** et non sur le répondeur, puisque c'est le
+    répondeur construit par `create_app` qu'on veut exercer ici — celui-là même
+    qui tient le lanceur réel de l'app.
+    """
+    juge = JugeScripte(_verdict(VERDICT_ACCORD, "C'est parti.", OBJECTIF))
+    monkeypatch.setattr(
+        "maestro.providers.factory.provider_from_settings", lambda *a, **k: juge
+    )
+    return juge
+
+
+@pytest.fixture()
+def client_reel(bus, depot_chat, projets, moteur, fournisseur_par_defaut):
     """L'app **entière** : vrai répondeur d'orchestration, vrai service d'exécutions."""
     with TestClient(
         create_app(
@@ -739,10 +999,9 @@ def client_reel(bus, depot_chat, projets, moteur):
 
 
 def _demander(client: TestClient, **corps: Any) -> str:
-    """Dicte une demande de travail au fil et rend le `run_id` que la réponse porte."""
+    """Approuve une proposition dans le fil et rend le `run_id` que la réponse porte."""
     reponse = client.post(
-        f"/api/chat/{NOM_ORCHESTRATION}/messages",
-        json={"contenu": "Ajoute la pagination à la liste des projets", **corps},
+        f"/api/chat/{NOM_ORCHESTRATION}/messages", json={"contenu": "oui", **corps}
     )
     assert reponse.status_code == 201
     return reponse.json()["messages"][1]["run_id"]
@@ -772,11 +1031,16 @@ def test_un_run_dicte_au_fil_figure_dans_la_liste_de_son_projet(
     assert run_id in _runs_de(client_reel, ici)
     assert run_id not in _runs_de(client_reel, ailleurs)
     assert run_id not in _runs_de(client_reel, "aucun")
+    # Ce que le moteur a réellement reçu — le projet (#683) et, depuis #685,
+    # l'objectif **approuvé** plutôt que le « oui » qui l'a approuvé. Les deux
+    # s'assertent ici parce que c'est la même question : ce qui est descendu
+    # jusqu'à la décomposition, une fois toute la chaîne traversée.
     assert moteur.projets == [ici]
+    assert moteur.objectifs == [OBJECTIF]
 
 
 def test_sans_projet_le_run_reste_introuvable_a_l_ecran(client_reel, projets) -> None:
-    """L'échantillon fautif : ce que faisait **tout** run du chat avant ce lot.
+    """L'échantillon fautif : ce que faisait **tout** run du chat avant #683.
 
     Sans rattachement, le run n'entre dans la vue d'aucun projet (`PorteeProjet`,
     #277) — il n'est atteignable que sous `aucun`, portée qu'aucun sélecteur de

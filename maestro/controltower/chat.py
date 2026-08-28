@@ -481,7 +481,7 @@ class RepondeurModele(RepondeurChat):
 
             self._provider = provider_from_settings()
         return await self._provider.generate(
-            _transcription(fil),
+            transcription(fil),
             model=agent.modele,
             system_prompt=f"{self._playbook_courant(agent)}\n\n{_CADRE_CONVERSATION}",
         )
@@ -820,8 +820,16 @@ class ServiceChat:
         )
 
 
-def _transcription(fil: Sequence[MessageChat]) -> str:
-    """Le fil rendu en prompt : la conversation puis la consigne de réponse."""
+def transcription(fil: Sequence[MessageChat]) -> str:
+    """Le fil rendu en prompt : la conversation puis la consigne de réponse.
+
+    Publique pour la même raison que `normaliser` : deux canaux la partagent
+    depuis #685 — le chat d'un agent (`RepondeurModele`) et le fil global, dont
+    le répondeur confie désormais au modèle le soin de juger l'intention. Une
+    seconde mise en forme du fil, écrite à côté, finirait par ne plus dire la
+    même conversation que celle-ci — à commencer par le contenu des sources, que
+    la boucle ci-dessous range **sous le message qui les a portées**.
+    """
     lignes: list[str] = []
     for message in fil:
         lignes.append(

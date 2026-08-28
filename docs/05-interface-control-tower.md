@@ -2810,12 +2810,21 @@ demande sans projet, dont le run n'est atteignable que sous `?projet=aucun`, por
 sélecteur de l'UI ne propose), sans quoi rien ne dirait que le premier ne passerait pas de toute
 façon.
 
-La reconnaissance est **délibérément conservatrice** — la demande doit commencer, politesses
-retirées, par un verbe d'action (« ajoute… », « peux-tu corriger… ») — parce que les deux erreurs
-ne coûtent pas la même chose : ne pas reconnaître une demande coûte une reformulation, la
-reconnaître à tort lance un run. Le run part en **brief `auto`** et non `humain` : le cadrage
-d'une demande *est* la conversation en cours, et renvoyer vers l'écran de validation de brief
-couperait le fil en deux — un lancement en `humain` reste la voie de qui veut valider avant.
+La reconnaissance a été **délibérément conservatrice** jusqu'à #685 — la demande devait commencer,
+politesses retirées, par un verbe d'une liste — au nom de l'asymétrie des deux erreurs : ne pas
+reconnaître coûte une reformulation, reconnaître à tort lance un run. Le lexique est **parti en
+entier** (#682/#685) : c'est le **modèle** qui juge, en un appel par message qui rend le texte de la
+réponse *et* son verdict, et **aucun run ne s'ouvre sans accord explicite** de l'utilisateur — une
+demande est *proposée* (le canal montre l'objectif qu'il enverrait), le run part sur cet objectif-là
+quand l'utilisateur l'approuve, et le silence n'est pas un accord. C'est cette validation
+systématique qui **dissout** l'asymétrie et permet au juge d'être large : un faux positif ne coûte
+plus qu'un « non ». Le run part en **brief `auto`** et non `humain` : le cadrage d'une demande *est*
+la conversation en cours, et renvoyer vers l'écran de validation de brief couperait le fil en deux —
+un lancement en `humain` reste la voie de qui veut valider avant.
+
+> La description complète du nouveau jugement — le banc des cinq formulations de #682, le refus, le
+> silence — vient avec le lot « tests + doc » du chantier (#688). Ce paragraphe dit ce qui a changé,
+> pas encore tout ce qui est garanti.
 
 > ⚠ **Depuis #483 (§2.7.5), cette réserve ne coupe plus rien** : un run lancé en brief `humain` se
 > valide **dans le fil**, pas sur un écran à part. Ce qui motivait le `auto` par défaut tient
@@ -2827,7 +2836,7 @@ couperait le fil en deux — un lancement en `humain` reste la voie de qui veut 
 {
   "agent": "orchestrateur",
   "auteur": "orchestrateur",
-  "contenu": "J'ouvre un run sur cette demande. Run 4f2a… ouvert, statut « en_cours ».",
+  "contenu": "C'est parti. Run 4f2a… ouvert, statut « en_cours ».",
   "horodatage": "2026-08-27T20:08:06+00:00",
   "run_id": "4f2a91c07b3d",   // ce que la réponse a ouvert ; "" quand rien
   "tache_id": ""              // idem, pour une tâche
@@ -2836,9 +2845,11 @@ couperait le fil en deux — un lancement en `humain` reste la voie de qui veut 
 
 Couverture (#273, lot 6 de #244) : [`tests/test_chat_global.py`](../tests/test_chat_global.py),
 sans réseau, sans modèle et **sans moteur** — le canal n'exige qu'un `LanceurRun` (« ouvre un run
-sur cet objectif »), donc un double suffit à éprouver ce qu'il ouvre. Quatre choses y sont gardées
-qu'aucun autre test ne voyait : la **règle d'intention** dans ses deux moitiés — ce qui doit ouvrir
-un run, et ce qui ne doit surtout pas, le doute compris —, l'**aperçu** relu à chaque question
+sur cet objectif ») et, depuis #685, qu'un `ModelProvider` : deux doubles suffisent à éprouver ce
+qu'il ouvre. Quatre choses y sont gardées qu'aucun autre test ne voyait : le fait que le canal **ne
+filtre plus rien** — les cinq formulations de #682 atteignent le juge et n'ouvrent aucun run tant
+qu'elles ne sont que proposées, et l'objectif lancé est celui qui a été **approuvé** —, l'**aperçu**
+relu à chaque question
 plutôt que figé à la construction de l'app, un **lancement en échec raconté dans le fil** au lieu
 d'être levé (levé, il deviendrait un 502 sans trace alors que la demande, elle, est déjà persistée),
 et le **contrat SSE** vu des deux bouts : côté répondeur, la concaténation des incréments *est* le
