@@ -27,14 +27,15 @@ toi-même.
 
 ### Aucun argument, ou `--max <n>` — préparer et faire lancer un run
 
-0. **Sur quoi va porter le run ?** *Avant tout le reste*, quatre lectures — hors ligne pour la
-   première, en lecture seule pour les quatre — qui préparent les **seules** questions que cette
+0. **Sur quoi va porter le run ?** *Avant tout le reste*, cinq lectures — hors ligne pour la
+   première, en lecture seule pour les cinq — qui préparent les **seules** questions que cette
    commande pose (au point 3) :
    ```
    bash scripts/orchestrate/status.sh --reprenables    # un run inachevé traîne-t-il ?
    bash scripts/orchestrate/queue.sh  --milestones     # quels milestones ont du travail ?
    bash scripts/orchestrate/queue.sh  --orphelins      # des tickets qu'une session morte a laissés ?
    bash scripts/orchestrate/queue.sh  --non-arbitres   # des parents dont les lots n'ont jamais été arbitrés ?
+   bash scripts/orchestrate/queue.sh  --touche-claude  # des tickets du plan où la session ne pourra pas écrire ?
    ```
    - **`--reprenables`** — sortie vide (le cas courant) : rien à reprendre, n'en parle pas. Une ou
      plusieurs lignes : un run précédent n'a pas fini son plan. TSV — `run-id`, `état`
@@ -43,9 +44,12 @@ toi-même.
      **dernier** de la liste est le plus récent, c'est le candidat.
    - **`--milestones`** — TSV (en-tête `#` à ignorer) : `titre`, `courant` (0/1), `à faire et
      libres`, `ouverts`, `échéance`, `rail`. Les candidats sont les lignes dont `à faire` **> 0**.
-     ⚠ Depuis #617 il y a **deux** lignes à `courant = 1`, une par **rail** — `produit` (moteur,
-     API, Control Tower) et `outillage` (workflow git, scripts, CI, orchestration) : un run porte
-     sur un rail, et le défaut sans consigne est le courant du rail **produit**. Le compte est
+     ⚠ Depuis #617 il y a **au plus deux** lignes à `courant = 1`, une par **rail** — `produit`
+     (moteur, API, Control Tower) et `outillage` (workflow git, scripts, CI, orchestration) : un
+     run porte sur un rail, et le défaut sans consigne est le courant du rail **produit**. **Au
+     plus**, et non exactement (#619) : un milestone à `à faire = 0` **perd** son `courant`, donc
+     un rail peut n'en avoir **aucun** — ce n'est pas une donnée manquante, c'est le verdict
+     « rien à prendre sur ce rail », à relayer tel quel (question (b)). Le compte est
      **indicatif** sur un point : un parent de suivi y compte pour un, alors que le run traitera
      ses lots.
    - **`--orphelins`** — sortie vide (le cas courant) : n'en parle pas. Une ou plusieurs lignes :
@@ -65,6 +69,15 @@ toi-même.
      dans ce plan), `marques` (toujours 0, sinon il ne serait pas listé), `lots` (sa checklist
      entière), `titre`. ⚠ La liste **dépend du milestone** : si la question (b) en retient un autre
      que le défaut, rejoue `--non-arbitres --milestone "<titre>"` avant de poser la question (d).
+   - **`--touche-claude`** — sortie vide (le cas courant) : n'en parle pas. Une ou plusieurs
+     lignes : ce sont des tickets **du plan qui nomment `.claude/`** (#612), où une session
+     autonome ne peut **pas** écrire — blocage dur du CLI, en amont de l'allowlist (#229/#238).
+     Leur correctif partira dans la **description de la PR** au lieu d'être appliqué (#188), et
+     depuis #418/#419 cette PR est mergée sans que personne ne l'ouvre : le résidu ne disparaît
+     pas, il devient **invisible**. TSV — `iid`, `parent` (`-` si le ticket n'est pas un lot),
+     `titre`. Ils **restent au plan** : écarter est une décision, et le geste existe déjà — les
+     assigner. ⚠ La liste **dépend du milestone**, comme `--non-arbitres` : si la question (b) en
+     retient un autre que le défaut, rejoue `--touche-claude --milestone "<titre>"`.
 
 1. **Montre le plan** de ce qui partirait par défaut : `bash scripts/orchestrate/run.sh --dry-run`
    (lecture seule, aucun quota). Il imprime l'ordre de traitement figé, ce qui serait fait pour
@@ -109,11 +122,37 @@ toi-même.
    précise dans l'intitulé que ce choix ne vaut **que** pour un run neuf — une reprise rejoue le
    plan de son run, milestone compris.
 
+   ⚠ **Un rail peut n'avoir AUCUNE ligne à `courant = 1`** (#619) : le courant d'un rail perd son
+   `1` dès qu'il n'a rien à prendre — soit qu'il soit **vide** (0 / 0, un contenant qu'on garde
+   parfois vide **à dessein**, comme la Phase 9), soit que tous ses « À faire » soient
+   **assignés**. Ce n'est pas une donnée manquante, c'est le verdict « **rien à prendre sur ce
+   rail** » : **dis-le en une phrase, en nommant le rail**, au lieu de recommander en silence un
+   milestone sur lequel le run planifierait zéro ticket. S'il reste des candidats sur **l'autre**
+   rail, propose-les en disant qu'ils changent de rail ; s'il n'en reste **nulle part**, ne lance
+   rien. `bash scripts/gitlab/lib.sh current-milestone produit` nomme sur stderr ce qu'il a sauté
+   et **pourquoi** — soldé → à *fermer*, vide → à *découper* : c'est ça qu'il faut relayer, et pas
+   un « aucun candidat » qui ne dit quoi faire ni de l'un ni de l'autre.
+
    ⚠ **Nommer le rail dans les intitulés n'est pas cosmétique** (#617) : un milestone d'outillage
    se traite mal en autonomie — une bonne part de ses tickets touche `.claude/**`, où l'écriture
    est **bloquée par le CLI** en amont de l'allowlist (#229/#238), donc la session rend son
    correctif dans sa PR au lieu de l'appliquer. Si l'utilisateur choisit le rail `outillage`,
    **dis-le en une phrase** avant de lancer — ce n'est pas un refus, c'est un régime à connaître.
+
+   ⚠ **Et le plan dit maintenant lesquels** (#612, docs/10 §11.2). La cinquième lecture du point 0
+   nomme les tickets **de ce plan** qui touchent `.claude/`. S'il y en a, **dis-le avec le feu
+   vert** — une ligne par ticket, iid et titre — en disant les deux choses qui vont avec : leur
+   correctif partira dans la **description de la PR** au lieu d'être appliqué (#188), et le pilote
+   merge sans que personne ne l'ouvre. Ce n'est **pas une question** : rien n'est à décider ici, la
+   commande n'écarte aucun ticket et n'en propose pas l'exclusion. Si l'utilisateur veut en écarter
+   un, le geste est de l'**assigner** (filtre « À faire **et** libre » de `queue.sh`) — dis-le en
+   une ligne, ne le fais pas de toi-même. **Muet quand la sortie est vide** : n'en parle pas.
+
+   ⚠ **Ne surtraite pas ce signal.** Il ne voit que ce que le ticket **dit** de lui-même, et c'est
+   mesuré : **68 % de rappel**, donc près d'un tiers des tickets qui toucheront `.claude/` n'y
+   figurent pas (docs/10 §11.2) ; et il ne distingue pas un **usage** d'une **mention**, ce qui est
+   impossible à l'heure du plan. Ne présente donc jamais son silence comme une garantie, ni sa
+   présence comme une certitude — c'est une **fréquence** qu'il réduit, pas un risque qu'il ferme.
 
    **(c) Reprendre des tickets orphelins ?** — seulement si le point 0 en a listé dont le `plafond`
    n'est **pas** `atteint`, et seulement pour un run **neuf** : le plan d'une reprise est figé, un

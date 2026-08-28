@@ -118,12 +118,20 @@ lieu d'inventer.
      regarde pour ce sujet.
 
    **Puis le milestone** : `bash scripts/gitlab/lib.sh current-milestone <rail>` avec `produit` ou
-   `outillage` (= le milestone **actif le plus ancien non soldé de ce rail** — un milestone dont
-   tous les tickets sont fermés est sauté, sa fermeture étant une décision humaine). **Signale le
-   rail retenu dans le résumé de l'étape 10** : c'est un jugement, il doit pouvoir être contredit.
-   Si l'utilisateur a explicitement demandé un autre milestone, respecte son choix. Si le helper ne
-   retourne rien (aucun milestone actif non soldé sur ce rail), **omets** simplement l'option — ne
-   bloque pas la création pour ça.
+   `outillage` (= le milestone **actif le plus ancien de ce rail qui porte encore un ticket
+   ouvert**). Deux milestones sont sautés, et le helper **nomme chaque saut sur stderr** avec sa
+   cause (#619) : le **soldé** (N fermés / N total — la phase est finie, sa fermeture est une
+   décision humaine) et le **vide** (0 / 0 — la phase n'est pas découpée, parfois **à dessein** :
+   la Phase 9 « reste un contenant vide à dessein », docs/06-roadmap.md). **Relaie ce que stderr
+   dit** dans le résumé de l'étape 10, au même titre que le rail : c'est ce qui explique pourquoi
+   le milestone retenu n'est pas celui qu'on attendait.
+
+   **Signale le rail retenu dans le résumé de l'étape 10** : c'est un jugement, il doit pouvoir
+   être contredit. Si l'utilisateur a explicitement demandé un autre milestone, respecte son choix
+   — c'est aussi le seul moyen de ranger le **premier** ticket d'une phase neuve dans son milestone
+   encore vide, et c'est le prix assumé du saut ci-dessus. Si le helper ne retourne rien (tous les
+   milestones du rail sont soldés ou vides), **omets** simplement l'option — ne bloque pas la
+   création pour ça.
 
 9. Crée le ticket. Le corps multi-lignes passe **par un fichier**, jamais sur la ligne de commande :
    la couche permissions découpe un appel sur ses sauts de ligne et ne matche aucune substitution
