@@ -1709,16 +1709,20 @@ depuis #516, à côté du pipeline et du Kanban.
 désormais le fil, branché sur le canal `orchestrateur` du lot 1 (#268, §6.5) —
 « poser une demande sans avoir à choisir d'abord à qui la poser ».
 
-**Ce que l'écran met en place**, dans les deux places de la règle de sobriété
-(docs/30 §4) : le **cadrage** (§2.7.5) puis le **fil** occupent deux des trois
-places de corps, tout ce qui les accompagne va dans la **colonne de propriétés**,
-qui est la seule sans plafond.
+**Ce que l'écran met en place**, dans les places de la règle de sobriété
+(docs/30 §4). ⚠ **Ce partage a changé avec #691** — voir « La conversation prend
+l'écran » ci-dessous, et docs/30 §4.4 pour ce que le cas `/chat` apprend à la
+règle : le **fil** est désormais le seul bloc **permanent** du corps, le
+**cadrage** (§2.7.5) n'y occupe une place que lorsqu'il a quelque chose à dire, et
+tout le reste va dans la **colonne de propriétés**, la seule des trois places sans
+plafond.
 
-- **Le cadrage en attente** (§2.7.5) — en tête, parce que c'est un run
-  **arrêté** qui attend là et que les trois surfaces d'acheminement du §2.1 mènent
-  ici : y arriver pour trouver le brief sous le pli éteindrait le renvoi qui vient
-  de nous y amener. Il reste visible quand la file est vide, où il dit *pourquoi*
-  elle l'est.
+- **Le cadrage en attente** (§2.7.5) — en tête **quand la file n'est pas vide**,
+  parce que c'est un run **arrêté** qui attend là et que les trois surfaces
+  d'acheminement du §2.1 mènent ici : y arriver pour trouver le brief sous le pli
+  éteindrait le renvoi qui vient de nous y amener. File vide, il passe dans la
+  colonne, où il continue de dire *pourquoi* elle l'est — il ne disparaît pas, il
+  **change de place**.
 - **Le fil** — conversation avec l'orchestration, historique persisté (donc
   retrouvé au rechargement) et réponse en direct par le WebSocket
   (`chat.message`). Un fil vide s'ouvre sur un mot d'accueil et quatre amorces
@@ -1728,6 +1732,54 @@ qui est la seule sans plafond.
   « Conversations » (§2.11 : en ouvrir une neuve, retrouver les précédentes) et
   « Ouvert depuis ce fil » (les runs que les messages du fil rattachent, du plus
   récent au plus ancien, avec leur nombre de tâches et le renvoi vers le run).
+
+#### La conversation prend l'écran (#691)
+
+Le reproche de la revue du 2026-08-28 était de mise en page, et il se mesurait :
+sur la stack de démo en 1440×900, « Cadrage en attente » occupait le haut de page,
+le fil était un conteneur borné `max-h-[60vh] min-h-64 overflow-y-auto`, et
+**~270 px de vide** restaient sous le composeur. Le fil défilait *dans sa boîte* :
+tourner la molette sur la page ne le touchait pas.
+
+Trois retraits, et le troisième est celui qu'on ne voit pas :
+
+- **le fil n'a plus d'ascenseur à lui.** Plus de `max-h`, plus d'`overflow-y`,
+  plus de cadre : il s'étend, et c'est l'ascenseur du `Shell` qui le parcourt — un
+  seul ascenseur pour un seul contenu, là où la boîte en donnait deux. Le `flex-1`
+  lui fait occuper la hauteur disponible quand la conversation est courte ; c'est
+  le couple `flex-1` **sans** `min-h-0` sur la colonne du corps qui rend les deux
+  comportements d'un coup (ajouter `min-h-0` par symétrie avec la chaîne du Kanban
+  de #248 rendrait exactement l'inverse). La bordure et le fond partent avec la
+  boîte : un cadre autour de ce qui occupe déjà tout l'écran ne délimite plus rien ;
+- **le composeur reste à quai.** Corollaire du premier retrait et pas un détail :
+  le fil défilant désormais avec la page, un composeur laissé en fin de flux
+  obligerait à redescendre tout l'historique avant de pouvoir écrire. `sticky
+  bottom-0` le colle au bas de l'ascenseur tant qu'il y a du fil sous lui, sur fond
+  opaque — sans quoi les bulles défileraient **sous** la zone de saisie, lisibles
+  au travers ;
+- **ce qui va bien ne s'affiche plus.** « Temps réel connecté » occupait la place
+  la plus visible de l'écran pour n'apprendre rien, et il l'occupait **deux fois**
+  (barre du cadre *et* en-tête du bloc). Seule la **coupure** reste dite —
+  « Reconnexion… » —, parce qu'elle seule explique un fil qui ne bouge plus. Même
+  règle que le reste de l'écran : une place se gagne, elle ne se garde pas parce
+  qu'on l'avait.
+
+⚠ **Le cadrage cède la première place, il ne la perd pas.** C'est une décision de
+*place* et non un retrait d'information : à file vide il passe dans la colonne de
+propriétés, et les deux réponses admises à un corps qui déborde sont bien
+celles-là — une colonne, ou un second niveau (docs/30 §4.4).
+
+> **Mesuré au banc** (`/banc-mise-en-page`, lot 8, 2026-08-29, fil de 20 messages,
+> quatre fenêtres — 375×667, 768×800, 1280×500 et 1536×900) : **RAS partout**,
+> aucun débordement horizontal, rien d'inatteignable, aucun conteneur qui rogne.
+> Le relevé nomme le porteur, et c'est le point du lot : dans la chaîne du fil
+> jusqu'à `<html>`, **un seul** élément défile — le cadre du `Shell`
+> (`overflow-y: auto`, 500 px visibles pour 2 518 px de contenu) —, le `<ol>` du
+> fil restant en `overflow-y: visible` / `max-height: none` à 2 268 px de haut. Le
+> composeur `sticky`, lui, est **dans l'écran** à la fenêtre courte (bas à 500 px
+> pour 500 px de fenêtre), celle-là même qui avait attrapé #306. C'est la
+> vérification que jsdom ne peut pas faire : `apps/web/tests/chat-pleine-page.test.tsx`
+> dit que la boîte n'est **pas déclarée**, le banc dit qu'elle n'est pas là.
 
 #### La mention change de destinataire, elle ne recopie rien
 
@@ -1840,6 +1892,45 @@ Implémentation : `apps/web/lib/useChat.ts` (la consommation), `apps/web/lib/api
 `apps/web/app/chat/page.tsx`, `apps/web/lib/orchestration.ts` (nom du canal,
 accueil, amorces, lecture d'une mention).
 
+#### Le fil se lit — Markdown, blocs de code, journées (#697)
+
+Le fil rendait le **texte brut** d'agents qui écrivent du Markdown en permanence :
+une réponse portant du code s'affichait avec ses backticks, sur toute la largeur
+disponible, sous un horodatage à la seconde et sans rien pour séparer deux jours.
+Quatre décisions, dont deux de sûreté :
+
+- **le Markdown est rendu, du seul côté de l'agent.** C'est lui qui produit des
+  titres, des listes et du code ; ce que l'utilisateur a tapé se relit **tel qu'il
+  l'a tapé**, astérisques comprises — sur la seule surface du produit où il est
+  l'auteur, le reformater lui ferait dire autre chose que ce qu'il a écrit ;
+- **rien de ce qu'un modèle écrit ne devient du balisage.** `lib/markdown` rend un
+  **arbre de données**, jamais une chaîne de HTML : il n'y a donc rien à assainir
+  et aucun `dangerouslySetInnerHTML` à écrire, et ce qu'un modèle écrirait en
+  balises ressort en toutes lettres. Les liens non suivables (`javascript:`) sont
+  refusés et laissés lisibles ; un titre de message ne devient jamais un `<h*>` du
+  document, qui n'a qu'un plan et ce n'est pas celui d'une réponse. L'analyseur est
+  écrit ici plutôt qu'emprunté — trois écarts à CommonMark sont assumés parce que
+  ce produit voit passer des `run_id` : `_` n'emphase pas, une emphase ne franchit
+  pas la fin de ligne, les listes sont plates ;
+- **les journées sont séparées** (`lib/journees`) : sans le trait daté, deux bulles
+  à trois jours d'écart se suivaient comme deux répliques ;
+- **les états transitoires sont au PIED du fil.** Le défaut n'était pas qu'ils
+  manquaient, c'est qu'ils s'inséraient **ailleurs que là où on lit** : « Fil
+  illisible » se posait *au-dessus* de la conversation, donc son apparition
+  poussait tous les messages d'un coup ; l'échec d'envoi *sous* un composeur
+  `sticky`, donc hors de l'écran. Les deux rejoignent la fin du `<ol>` : le fil ne
+  grandit plus que par le bas, ce que le recollement suit déjà.
+
+⚠ La bulle en cours rend le **même** Markdown que celle qui la remplacera : rendre
+le texte brut pendant le flux puis le mettre en forme à la clôture reformaterait la
+réponse sous les yeux — paragraphes qui se recomposent, hauteur qui change d'un
+coup. C'est aussi ce qui fait qu'aucun des deux chemins n'échappe à la règle de
+sûreté ci-dessus ; un rendu brut pendant le flux serait une seconde porte.
+
+> Ce lot **réalise et solde #265** (« Onglet Chat : une conversation qui se lit »,
+> lot 13 de #243) : depuis l'arbitrage #620 les deux surfaces montent le même
+> composant, il n'y avait donc pas deux fois le travail à faire.
+
 > L'**assistant flottant** (#123) passe par le même hook, donc par le même chemin
 > d'envoi, mais ne montre pas de rendu incrémental : son répondeur produit sa
 > réponse en **un seul** incrément (`RepondeurChat.produire` par défaut), il n'y a
@@ -1869,8 +1960,23 @@ pas, un flux cassé ne perd ni le message ni la portion reçue et le dit en
 `ErreurReponse`, et la réponse figée s'efface dès qu'une vraie réponse rejoint le
 fil. Côté canal, `tests/test_chat.py` (section ⑤) garde l'arrêt : la trame
 `interrompu`, la persistance de ce qui a été reçu, et « rien à arrêter » distingué
-d'un arrêt. Le reste de la couverture du chat global pleine page est différé au
-lot 8 (#698).
+d'un arrêt.
+
+Le **lot 8 (#698)** a soldé le reste, et il garde ce que les autres ne pouvaient
+pas garder : **ce que le chantier a retiré**. `apps/web/tests/chat-pleine-page.test.tsx`
+tient les quatre absences — le fil sans bornage ni au `<ol>` ni au-dessus de lui,
+l'état nominal qui ne se dit plus « ni une fois ni deux », les conversations à
+l'écran (#696), et le fil qui n'exécute rien de ce qu'un modèle écrit, dans la
+bulle **comme dans la réponse en cours**. Côté canal,
+`tests/test_chat_pleine_page.py` tient les quatre invariants des lots 2 à 4 (§6.5
+et §6.14). ⚠ Une absence est vraie pour **deux** raisons — la bonne, et le fait
+que la sonde ne regarde pas au bon endroit —, donc chaque sonde des deux fichiers
+**prouve son motif sur un échantillon fautif** avant de conclure (méthode de #534,
+#537 et #539) : la boîte d'avant #691 y est reconnue, le badge y est vu quand il
+est affiché, un fragment actif y est repéré, et un JSONL d'avant #694 y est
+vérifié sans son champ `conversation`. ⚠ **Aucune géométrie** n'y est mesurée
+(#308) — ce qui s'y observe est le contrat de mise en page *tel qu'il est écrit* ;
+l'effet reste le rôle de `/banc-mise-en-page`.
 
 ---
 
@@ -1992,9 +2098,13 @@ que fait déjà un changement de destinataire, le geste voisin dans la même col
 Implémentation : `apps/web/app/chat/page.tsx` (la carte et ses lignes),
 `apps/web/lib/useChat.ts` (la conversation servie, la liste, les deux verbes),
 `apps/web/lib/conversationOuverte.ts` (la mémoire du poste) et `apps/web/lib/api.ts` (les trois
-appels du §6.14). Tests différés au lot 8 de #690 ; le harnais, lui, a suivi
-(`apps/web/tests/aides.tsx` — le double de `useChat` porte une conversation par défaut, un fil sans
-historique ne faisant auditer qu'une colonne amputée).
+appels du §6.14). Le harnais avait suivi dès ce lot (`apps/web/tests/aides.tsx` — le double de
+`useChat` porte une conversation par défaut, un fil sans historique ne faisant auditer qu'une
+colonne amputée) ; la couverture, différée au lot 8, vit dans
+`apps/web/tests/chat-pleine-page.test.tsx` (③) : l'ordre servi qui n'est **pas** retrié ici, la
+conversation lue marquée `aria-current` et elle seule, le nom d'un fil vierge, et les deux gestes —
+en ouvrir une neuve, en rouvrir une précédente. Ce que l'écran ne décide pas (identifiant, ordre,
+idempotence) est gardé côté canal par `tests/test_chat_pleine_page.py` (④).
 
 ---
 
@@ -2985,13 +3095,13 @@ fonctionnalité** : c'est le transport, et lui seul, qui barrait le consommateur
 HTTP pour une seule mécanique** : `POST …/flux` pour un message qui embarque quelque chose, et le
 `GET` d'origine pour le cas sans source — seul verbe qu'un `EventSource` sache ouvrir, et contrat
 déjà publié (#183/#268), donc conservé plutôt que retiré. Ce ne sont pas deux chemins d'envoi : les
-deux verbes appellent le même `diffuser`, qui passe par `_ouvrir` puis `_repondre` comme `envoyer`.
+deux verbes appellent le même `diffuser`, qui passe par `_deposer` puis `_repondre` comme `envoyer`.
 
 L'autre option — un `GET` référençant une **composition déjà déclarée** — a été écartée : elle
 demandait un second endpoint pour déclarer, un état composé à garder entre les deux appels puis à
 ramasser, et elle éloignait le refus du moment de l'envoi. Un corps de POST fait la même chose sans
 rien garder, et laisse au refus la forme qu'il a déjà sur l'autre voie — le `422 {motif, message,
-index}` de #315, levé **avant** la première trame parce que `_ouvrir` précède le premier `yield`.
+index}` de #315, levé **avant** la première trame parce que `_deposer` précède le premier `yield`.
 L'arbitrage est écrit en tête de `maestro/controltower/chat.py` : c'est le genre de choix qu'on
 redécouvre.
 
@@ -3017,6 +3127,30 @@ blanc les suive. Et un flux **coupé en route** le dit (`FluxInterrompu`) au lie
 fil ne garde rien (le message n'est persisté qu'une fois la réponse entière), mais l'écran, lui,
 affiche un texte arrêté que rien ne distinguerait d'une réponse courte — la trame `erreur` porte
 donc la cause, et le client sait que ce qu'il montre est à jeter.
+
+##### Ce qui garde ce contrat (lot 8, #698)
+
+[`tests/test_chat_pleine_page.py`](../tests/test_chat_pleine_page.py), sections ① et ②.
+
+① — **le flux porte ce qu'un message porte.** `POST …/flux` accepte le corps de `POST …/messages`,
+sources comprises ; la trame `debut` rend le message de l'utilisateur **avec** ses sources et son
+rapport de lecture (et sans le `contexte`, que le rapatrier renverrait les documents entiers à
+chaque ouverture) ; une source refusée sort en `422 {motif, message, index}` **avant la première
+trame**, fil non écrit ; et les deux voies déposent le **même** message, comparé champ par champ
+hors horodatage — deux mécaniques d'envoi qui divergeraient d'un champ donneraient deux formes du
+même message dans un seul fil, et c'est le rechargement qui l'apprendrait. La `conversation` est
+vérifiée sur **toutes** les trames, `debut` comprise (§6.14).
+
+② — **la concaténation des `delta` est le message final.** C'est la propriété dont tout le reste
+dépend, et le seul endroit d'où elle se voit : ni la trame `fin`, ni le fil persisté ne disent
+comment le texte a été découpé. Éprouvée sur les quatre cas qui la cassent — un fournisseur qui
+streame, un qui **ne sait pas** (il traverse les deux étages sans être modifié et rend un incrément,
+celui de `generate`), un texte **vide** (aucun morceau, et pas un morceau vide), et les **blancs de
+bord**, dans les deux sens : écartés aux extrémités parce que `ServiceChat` rase le texte final,
+**republiés** dès qu'un morceau non blanc les suit — sans cette seconde moitié, « écarter les
+blancs » voudrait dire recoller les mots. Un flux coupé en route lève un `FluxInterrompu` qui le
+**nomme**, et un échec survenu **avant** le premier morceau reste l'échec qu'il est : il ne s'est
+rien affiché, le nommer « interrompu » ferait chercher un texte partiel qui n'existe pas.
 
 #### Le fil global — parler à l'orchestration (#268)
 
@@ -4003,5 +4137,16 @@ WebSocket n'a pas changé : il ne porte pas la conversation, un client relisant 
 Implémentation : [`maestro/controltower/chat.py`](../maestro/controltower/chat.py) (`Conversation`,
 `ChatStore.conversations`/`courante`/`ouvrir`, `titre_conversation`, le champ `conversation` de
 `MessageChat` et de `FragmentChat`) et
-[`maestro/controltower/app.py`](../maestro/controltower/app.py) pour les routes. Tests différés au
-lot 8 de #690.
+[`maestro/controltower/app.py`](../maestro/controltower/app.py) pour les routes.
+
+Couverture (lot 8, #698) : [`tests/test_chat_pleine_page.py`](../tests/test_chat_pleine_page.py),
+sections ③ et ④. ③ garde ce que ce lot promet de **ne pas** faire — un `<agent>.jsonl` écrit avant
+lui se relit sous `origine` et **ses octets ne bougent pas**, aucun fichier annexe n'apparaît à
+côté, et ses métadonnées se dérivent quand même (titre, dates, compte). La comparaison porte sur les
+**octets** et non sur ce qui se relit : un aller-retour qui ré-encoderait rendrait le même objet
+Python en ayant réécrit le fichier — le piège de #141, sur un autre objet. ⚠ La sonde vérifie
+**d'abord** que le fichier de l'échantillon ne porte pas de champ `conversation`, sans quoi elle
+dirait « la rétro-compatibilité marche » d'une question jamais posée. ④ garde l'ouverture : le
+`201`, l'idempotence tant que rien n'a été dit, l'ordre par dernière activité **dans les deux sens**
+(la neuve passe devant, écrire dans une ancienne la ramène), les deux fils qui ne se mélangent pas,
+et les trois réponses à un identifiant — `422` mal formé, `404` inconnu, absent = le cas nominal.

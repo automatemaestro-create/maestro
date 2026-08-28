@@ -6,10 +6,25 @@ est consigné ici et le fil se relit par agent.
 
 ## Fonctionnement
 
-- Un fichier par agent : `<agent>.jsonl` (append-only, une ligne JSON par
-  message — auteur « utilisateur » ou l'agent, contenu, horodatage, et depuis
-  #268 le `run_id`/`tache_id` que la réponse a **ouverts**, vides le reste du
-  temps).
+- Un fichier par **conversation** (append-only, une ligne JSON par message —
+  auteur « utilisateur » ou l'agent, contenu, horodatage, et depuis #268 le
+  `run_id`/`tache_id` que la réponse a **ouverts**, vides le reste du temps).
+  Un fil est une **suite de conversations** depuis #694 : la première, nommée
+  `origine`, est stockée là où le fil l'a toujours été — `<agent>.jsonl` —, les
+  suivantes sous `<agent>/<id>.jsonl`, l'identifiant portant son instant
+  d'ouverture (`20260828t143012-9f3a2b`).
+  ⚠ **Un fichier écrit avant #694 n'a rien à faire pour devenir une
+  conversation** : il n'est ni déplacé, ni réécrit, ni relu autrement — c'est le
+  chemin qui fait foi, et une ligne sans champ `conversation` vient forcément du
+  fichier historique. Une installation qui n'ouvre jamais de seconde conversation
+  écrit exactement les mêmes octets qu'avant. Les métadonnées d'une conversation
+  (titre, dates, nombre de messages) sont **dérivées** des messages, jamais
+  tenues dans un fichier annexe : un tel fichier manquerait précisément aux fils
+  d'avant le lot.
+- Conversations par HTTP : `GET /api/chat/{agent}/conversations` les liste (la
+  plus récente d'abord, jamais vide — un agent a toujours son `origine`),
+  `POST` en ouvre une neuve (`201`, idempotent tant que rien n'a été dit), et
+  `?conversation=<id>` cible un fil précis sur les lectures comme sur les envois.
 - Deux fils ne sont pas ceux d'un agent du catalogue, et portent les **noms
   réservés** correspondants : `assistance.jsonl` (le canal d'aide, #123) et
   `orchestrateur.jsonl` (le fil global, #268 — on y parle à l'orchestration,
@@ -41,5 +56,9 @@ commitées (voir `.gitignore`). En V1, ce stockage passera en base (entité
 
 Tests (#83) : le canal lui-même (persistance, répondeurs, flux d'un envoi)
 est couvert par `tests/test_chat.py` ; son exposition HTTP (REST `/api/chat`
-+ WebSocket `chat.message`) par `tests/test_controltower.py` (section ⑧).
++ WebSocket `chat.message`) par `tests/test_controltower.py` (section ⑧) ; et
+ce que le chantier « chat global pleine page » y a ajouté (#690, lot 8 #698)
+par `tests/test_chat_pleine_page.py` — le flux qui porte ses sources, les
+incréments dont la concaténation **est** le message final, et les conversations,
+`origine` comprise.
 Mode d'emploi : [guide de démarrage §6.4](../../docs/07-guide-de-demarrage.md).

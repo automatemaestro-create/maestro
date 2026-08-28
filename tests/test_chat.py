@@ -27,7 +27,10 @@ du parent #82) :
    ni fil, ni lettre, ni événement) et le **rapport de lecture** (ce qui a été lu,
    ce qui a été ignoré, ce que le REST rend et ce que seul le stockage garde) ;
 ⑤ **l'arrêt d'une génération en vol** (#695) — la logique critique du lot qui
-   consomme le flux, le reste de sa couverture étant différé au lot 8 (#698).
+   consomme le flux ; le reste de la couverture du chantier « chat global pleine
+   page » a été soldé par le lot 8 et vit dans `tests/test_chat_pleine_page.py`
+   (le flux qui porte ses sources, les incréments d'un répondeur modèle, les
+   conversations).
    Trois choses, et elles se cassent en silence : la trame `interrompu` clôt le
    flux, **ce qui a été reçu est persisté** comme réponse (« ce qui a déjà été
    reçu reste au fil » n'est pas un état d'écran), et « rien à arrêter » se
