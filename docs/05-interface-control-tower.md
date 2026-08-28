@@ -1792,24 +1792,59 @@ rattache rien et ne laisse aucun cadre vide.
 > les trois lectures d'un run sont une **bascule** et non trois routes
 > (`apps/web/lib/vuesRun.ts`), il n'existe donc aucune URL qui ouvre une tâche.
 
-#### Le direct passe par le WebSocket, pas encore par le flux SSE
+#### La réponse s'écrit en direct (#695)
 
-Le lot 1 a construit le canal de streaming (`GET /api/chat/{agent}/flux`, §6.5) et
-il attend son consommateur. Deux raisons de ne pas le brancher **ici**, et la
-seconde est dirimante. Ce serait un **second chemin d'envoi** côté navigateur,
-donc deux façons de parler à un fil — l'inverse de ce que ce lot vient d'unifier.
-Et surtout, ce chemin-là **ne sait pas porter de sources** : le flux prend son
-`contenu` en paramètre d'URL, quand `POST …/messages` accepte les `sources[]` de
-#482 — y basculer le fil ferait perdre en silence les pièces jointes, c'est-à-dire
-échanger un rendu incrémental contre une fonctionnalité. La réponse arrive donc
-dès qu'elle tombe, l'attente étant dite par « … répond… » ; le rendu incrémental
-appartient au lot qui consommera le canal, **dans le composant de fil partagé** —
-donc pour les deux fils à la fois, et une fois que le canal saura porter ce qu'un
-message porte.
+Le lot 1 avait construit le canal de streaming (§6.5) et il a attendu son
+consommateur jusqu'ici. Deux raisons de ne pas le brancher, et **les deux sont
+levées, chacune à sa façon**. Il ne savait pas porter de **sources** — son
+`contenu` voyageant en paramètre d'URL, y basculer un fil aurait perdu les pièces
+jointes en silence : #692 lui a donné `POST …/flux`, dont le corps est celui de
+`POST …/messages`. Et le brancher **ici** aurait été un second chemin d'envoi côté
+navigateur : il est donc branché **dans `lib/useChat`**, par où passent les trois
+surfaces de fil, si bien qu'il **remplace** le chemin d'envoi au lieu de s'y
+ajouter. « Une seule façon de parler à un fil » n'a pas bougé — c'est l'endroit du
+branchement qui la respecte, pas l'abstention.
 
-Implémentation : `apps/web/app/chat/page.tsx`, `apps/web/components/Conversation.tsx`,
-`apps/web/lib/orchestration.ts` (nom du canal, accueil, amorces, lecture d'une
-mention).
+Ce que l'écran y gagne, et ce qu'il devait tenir :
+
+- la **bulle se remplit**, à sa place dans le fil. « … répond… » ne couvre plus
+  que l'attente **avant le premier mot** — c'était le défaut de départ, un
+  indicateur immobile sur toute la génération où rien ne distinguait une réponse
+  longue d'un blocage ;
+- **le direct et le persisté ne se dédoublent pas.** La même paire arrive deux
+  fois — par le flux, puis par le fil que le `chat.message` du WebSocket fait
+  recharger — et `useChat` les fusionne en écartant le doublon (même auteur, même
+  horodatage, même contenu : c'est le même objet sérialisé deux fois) ;
+- **le suivi du bas reste un choix du lecteur.** Le fil recolle en bas à chaque
+  incrément, donc plusieurs fois par seconde ; ce qui permet de remonter lire
+  pendant que ça écrit est que le suivi se décide sur le **geste de défilement**
+  et non sur l'arrivée du contenu (`lib/defilement`, règle déjà posée pour les
+  messages) ;
+- **l'arrêt arrête pour de bon.** Le bouton « Interrompre » prend la place de
+  l'envoi tant qu'un échange est en vol et appelle `…/arret` (§6.5) : la
+  génération est annulée et ce qui a été reçu **rejoint le fil**. Le flux continue
+  d'être lu jusqu'à sa trame `interrompu` — abandonner la requête à la place
+  laisserait la production s'achever et la réponse entière tomber ensuite,
+  c'est-à-dire un arrêt qui n'arrête rien ;
+- **une coupure ne perd rien et le dit.** Le message utilisateur est acquis dès la
+  trame `debut`, la portion reçue reste affichée et **marquée incomplète** (rien
+  ne distinguerait sinon un texte arrêté d'une réponse courte, #693), et le
+  brouillon n'est **pas** remis dans la zone de saisie — le message est au fil, l'y
+  remettre inviterait à l'envoyer deux fois. C'est `ErreurReponse` qui sépare ce
+  cas d'un refus, où rien n'est parti. Le rattrapage d'avant est conservé :
+  rechargement REST et reconnexion WebSocket.
+
+Implémentation : `apps/web/lib/useChat.ts` (la consommation), `apps/web/lib/api.ts`
+(`diffuserMessageChat`, `arreterFluxChat`, `ErreurReponse`),
+`apps/web/components/Conversation.tsx` (la bulle qui s'écrit, l'arrêt),
+`apps/web/app/chat/page.tsx`, `apps/web/lib/orchestration.ts` (nom du canal,
+accueil, amorces, lecture d'une mention).
+
+> L'**assistant flottant** (#123) passe par le même hook, donc par le même chemin
+> d'envoi, mais ne montre pas de rendu incrémental : son répondeur produit sa
+> réponse en **un seul** incrément (`RepondeurChat.produire` par défaut), il n'y a
+> donc rien à écrire au fil de l'eau. Ce n'est pas une surface oubliée, c'est une
+> réponse qui n'arrive pas par morceaux.
 
 Couverture (#273, lot 6 de #244) : `apps/web/tests/chat-global.test.tsx`. Ce qu'il
 observe n'est pas le texte rendu mais **le canal demandé** à `useChat` — le double
@@ -1821,7 +1856,21 @@ de destinataire, elle ne recopie rien**. Le reste suit les quatre décisions de
 `mentionEnTete` — en tête, close par une espace, destinataire connu, casse
 ignorée, et rien dans le doute — puis « Ouvert depuis ce fil », qui **lit** les
 `run_id` du fil et n'y range jamais un run qui a simplement tourné pendant qu'on
-avait l'écran ouvert.
+avait l'écran ouvert. Depuis #695 il porte aussi le **direct à l'écran** : la
+bulle qui se remplit, l'attente réduite à l'avant-premier-mot, la réponse figée
+qui se dit, et l'arrêt offert à la place de l'envoi.
+
+La **couture flux → état**, elle, se juge sur le vrai hook et vit donc dans
+`apps/web/tests/chat-direct.test.tsx`, le seul fichier à défaire le double de
+`tests/setup.ts` (`vi.unmock`) — un fil immobile est exactement ce qu'il faut pour
+juger un écran, et exactement ce qui empêche de juger le hook. Il garde les trois
+invariants qui se cassent en silence : la réponse s'écrit **et** ne se dédouble
+pas, un flux cassé ne perd ni le message ni la portion reçue et le dit en
+`ErreurReponse`, et la réponse figée s'efface dès qu'une vraie réponse rejoint le
+fil. Côté canal, `tests/test_chat.py` (section ⑤) garde l'arrêt : la trame
+`interrompu`, la persistance de ce qui a été reçu, et « rien à arrêter » distingué
+d'un arrêt. Le reste de la couverture du chat global pleine page est différé au
+lot 8 (#698).
 
 ---
 
@@ -2855,6 +2904,13 @@ badge d'attente et des notifications (items 8/9 du cadrage).
 Le rendu **en streaming** d'une réponse de chat (items 2/4/12 : assistant, chat global, chat
 direct), et le troisième canal qui s'y branche.
 
+⚠ **Le canal a son consommateur depuis #695**, et c'est ce qui change la lecture de tout ce qui
+suit : `lib/useChat` envoie par `POST …/flux` et rend la réponse au fil de l'eau, pour les trois
+surfaces de fil d'un coup. Le canal ne s'est donc **pas ajouté** à `POST …/messages` côté
+navigateur, il l'a **remplacé** — c'est pour cela que le brancher dans un écran était refusé (#269,
+« une seule façon de parler à un fil ») et que le brancher dans le hook ne l'est pas. `POST
+…/messages` reste servi par l'API : contrat publié, et la voie de tout autre client.
+
 #### Le streaming est un canal, pas une particularité d'un fil
 
 `ServiceChat.diffuser` (`maestro/controltower/chat.py`) rend la réponse au fur et à mesure, pour
@@ -2868,16 +2924,19 @@ direct), et le troisième canal qui s'y branche.
 - `POST /api/chat/{agent}/flux` → `text/event-stream` — **même corps que `POST …/messages`**
   (`contenu`, `sources`, `projet_id`) et mêmes trames (#692). En plus des deux refus du GET, `422`
   motivé `{motif, message, index}` sur une source refusée, également tranché avant la première trame.
+- `POST /api/chat/{agent}/flux/{echange}/arret` → **arrête** la génération en vol (#695). `404`
+  quand il n'y a rien à arrêter — identifiant inconnu, ou échange qui vient de se terminer.
 
 ```jsonc
 // FragmentChat (une trame SSE)
 {
-  "type": "fragment",        // debut (ouvre) | fragment (incrémente) | fin (clôt) | erreur
+  "type": "fragment",        // debut (ouvre) | fragment (incrémente) | fin (clôt) | interrompu | erreur
   "agent": "qa",
   "conversation": "origine", // où la réponse s'écrit (#694, §6.14) — sur TOUTES les trames
-  "auteur": "agent",         // l'émetteur de la RÉPONSE — le même sur les quatre trames
+  "auteur": "agent",         // l'émetteur de la RÉPONSE — le même sur toutes les trames
   "delta": " morceau",       // incrément de texte ; vide hors `fragment` — porte la cause sur `erreur`
-  "message": null            // MessageChat complet sur `debut` (l'utilisateur) et `fin` (la réponse)
+  "message": null,           // MessageChat complet sur `debut` (l'utilisateur), `fin` et `interrompu`
+  "echange": "6dde09b6ebbe"  // le nom du flux — ce qu'on rend à `…/arret` (#695)
 }
 ```
 
@@ -2890,6 +2949,29 @@ chacune leur `MessageChat` — `debut` celui de l'utilisateur, `fin` la réponse
 `POST …/messages` rend d'un coup, rendue en deux temps. Sans la première, un client du flux
 enverrait des sources sans jamais savoir ce qui en a été lu, tronqué ou ignoré (le `rapport` de
 #316).
+
+##### S'arrêter à la demande n'est pas se déconnecter (#695)
+
+`POST …/flux/{echange}/arret` annule la production en cours et clôt le flux sur une trame
+**`interrompu`**. Ce n'est pas un retour sur l'arbitrage de #268 — « un client qui se déconnecte ne
+l'annule pas » — mais son pendant : une déconnexion est un **accident**, dont aucune intention ne se
+déduit, et la réponse déjà payée finit d'être produite, persistée et diffusée ; un arrêt est un
+**acte**, et il est le seul à annuler. Les deux régimes ne se ressemblent qu'à l'écran.
+
+Le principe de #268 — « la réponse a coûté ce qu'elle a coûté » — est **tenu jusque dans l'arrêt** :
+ce qui a été produit avant lui est **persisté comme réponse** et porté par la trame `interrompu`, au
+lieu d'être jeté. C'est ce qui donne son sens à « ce qui a déjà été reçu reste au fil » : la portion
+reçue n'est pas un état d'écran que le premier rechargement effacerait, c'est le message du fil — un
+fil peut donc porter une réponse plus courte que ce que l'agent aurait écrit, et c'est une réponse
+comme une autre. Rien reçu, rien persisté : trame `interrompu` sans message, le fil ne garde que la
+demande.
+
+`interrompu` est **distinct de `fin`** parce que les deux ne disent pas la même chose du texte
+qu'ils portent — `fin` annonce la réponse entière, celle dont la concaténation des `delta` répond ;
+`interrompu` annonce ce qui a été écrit avant l'arrêt. Les confondre ferait lire un texte tronqué
+comme une réponse complète, la faute même que `FluxInterrompu` évite de l'autre côté. Et une
+annulation arrivée **pendant** l'acheminement de la réponse complète ne double rien : le service
+regarde le fil avant d'écrire, et rend ce qui s'y trouve déjà.
 
 ##### Le flux porte ce qu'un message porte — un POST, pas une composition déclarée (#692)
 

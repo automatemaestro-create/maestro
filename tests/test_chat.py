@@ -25,7 +25,14 @@ du parent #82) :
    téléversement, ses octets sont rattachés à l'emplacement d'ingestion **du
    message**), les **plafonds refusés** (le refus tombe avant toute écriture —
    ni fil, ni lettre, ni événement) et le **rapport de lecture** (ce qui a été lu,
-   ce qui a été ignoré, ce que le REST rend et ce que seul le stockage garde).
+   ce qui a été ignoré, ce que le REST rend et ce que seul le stockage garde) ;
+⑤ **l'arrêt d'une génération en vol** (#695) — la logique critique du lot qui
+   consomme le flux, le reste de sa couverture étant différé au lot 8 (#698).
+   Trois choses, et elles se cassent en silence : la trame `interrompu` clôt le
+   flux, **ce qui a été reçu est persisté** comme réponse (« ce qui a déjà été
+   reçu reste au fil » n'est pas un état d'écran), et « rien à arrêter » se
+   distingue d'un arrêt — un identifiant inconnu comme un échange qui vient de
+   se terminer rendent `False` au lieu d'annuler autre chose.
 
 L'exposition HTTP du canal (REST `/api/chat` + WebSocket `chat.message`) est
 couverte dans `tests/test_controltower.py` (section ⑧), sources comprises.
@@ -44,12 +51,17 @@ from maestro.config import Settings
 from maestro.controltower.chat import (
     AUTEUR_AGENT,
     AUTEUR_UTILISATEUR,
+    FRAGMENT_CHAT_DELTA,
+    FRAGMENT_CHAT_FIN,
+    FRAGMENT_CHAT_INTERROMPU,
     UTILISATEUR,
     ChatStore,
     MessageChat,
+    Redaction,
     RepondeurChat,
     RepondeurModele,
     RepondeurScripte,
+    ReponseChat,
     ReponseIndisponible,
     ServiceChat,
 )
@@ -801,5 +813,90 @@ def test_un_message_sans_source_ne_cree_aucun_dossier(tmp_path):
 
         assert len(store.fil("qa")) == 2
         assert not racine_ingestion().exists()
+
+    asyncio.run(scenario())
+
+
+# ------------------------------------------------- ⑤ l'arrêt d'une génération (#695)
+
+
+class RepondeurLent(RepondeurChat):
+    """Écrit cinq morceaux en cédant la main entre chacun — de quoi arrêter au milieu.
+
+    Il surcharge `produire` comme le font les deux répondeurs réels : c'est la
+    seule façon d'obtenir plusieurs incréments, et donc la seule façon d'observer
+    un arrêt qui tombe **entre** deux.
+    """
+
+    MORCEAUX = ("un ", "deux ", "trois ", "quatre ", "cinq")
+
+    async def repondre(self, agent, fil):
+        return "".join(self.MORCEAUX).strip()
+
+    async def produire(self, agent, fil, *, incrementer=None, projet_id=None):
+        redaction = Redaction(incrementer)
+        for morceau in self.MORCEAUX:
+            await asyncio.sleep(0)
+            await redaction.ecrire(morceau)
+        return ReponseChat(contenu=redaction.texte)
+
+
+async def _diffuser_en_arretant(service, agent, apres):
+    """Draine un flux et demande l'arrêt après le `apres`-ième fragment."""
+    trames = []
+    fragments = 0
+    async for trame in service.diffuser(agent, "Vérifie la CI"):
+        trames.append(trame)
+        if trame.type != FRAGMENT_CHAT_DELTA:
+            continue
+        fragments += 1
+        if fragments == apres:
+            assert service.interrompre(trame.echange) is True
+    return trames
+
+
+def test_un_arret_clot_le_flux_et_persiste_ce_qui_a_ete_recu(tmp_path):
+    """« Ce qui a déjà été reçu reste au fil » — donc au fil persisté, pas à l'écran."""
+
+    async def scenario():
+        service, store, _, _ = _service(tmp_path, RepondeurLent())
+
+        trames = await _diffuser_en_arretant(service, _agent(), apres=2)
+
+        # Le flux se clôt sur `interrompu` et non sur `fin` : ce qu'il porte est
+        # un texte arrêté, pas une réponse complète — les confondre ferait lire
+        # l'un pour l'autre.
+        assert trames[-1].type == FRAGMENT_CHAT_INTERROMPU
+        assert FRAGMENT_CHAT_FIN not in [t.type for t in trames]
+
+        recu = "".join(t.delta for t in trames if t.type == FRAGMENT_CHAT_DELTA)
+        assert recu.strip() == "un deux"
+        # La trame porte le message **persisté**, et le fil le porte aussi : un
+        # rechargement ne fait donc pas disparaître ce qu'on venait de lire.
+        assert trames[-1].message is not None
+        assert trames[-1].message.contenu == recu.strip()
+        fil = store.fil("qa")
+        assert [m.auteur for m in fil] == [UTILISATEUR, "qa"]
+        assert fil[-1].contenu == recu.strip()
+
+    asyncio.run(scenario())
+
+
+def test_rien_a_arreter_se_distingue_d_un_arret(tmp_path):
+    """Un identifiant inconnu et un échange soldé ne sont pas des pannes.
+
+    Cliquer au moment où la réponse tombe est une course normale : le service
+    rend `False` et n'annule rien d'autre. Et le registre ne fuit pas — un
+    échange qui survivrait à son flux rendrait `True` pour toujours.
+    """
+
+    async def scenario():
+        service, _, _, _ = _service(tmp_path, RepondeurLent())
+
+        trames = [t async for t in service.diffuser(_agent(), "Vérifie la CI")]
+
+        assert trames[-1].type == FRAGMENT_CHAT_FIN
+        assert service.interrompre("jamais-vu") is False
+        assert service.interrompre(trames[-1].echange) is False
 
     asyncio.run(scenario())

@@ -23,7 +23,11 @@
  * ② l'écran : le fil global par défaut, la bascule par mention et par bouton, le
  *    bandeau qui dit où part le message, et le retour à l'orchestration ;
  * ③ « Ouvert depuis ce fil » — ce que la conversation a ouvert, **lu** des
- *    messages et jamais déduit de ce qui a tourné pendant qu'on regardait.
+ *    messages et jamais déduit de ce qui a tourné pendant qu'on regardait ;
+ * ④ **le direct à l'écran** (#695) — la bulle qui se remplit, l'attente qui ne
+ *    couvre plus que l'avant-premier-mot, la réponse figée qui se dit, et
+ *    l'arrêt offert à la place de l'envoi. La couture flux → état, elle, se juge
+ *    sur le **vrai** hook et vit donc dans `chat-direct.test.tsx`.
  *
  * ⚠ **Le parc monté ici porte l'orchestrateur** (#671), et ce n'est pas un détail
  * de fixture : c'est la forme que sert le mode réel — `GET /api/agents` rend les
@@ -44,7 +48,7 @@ import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import PageChat from "@/app/chat/page";
-import { envoyerMessageChat } from "@/lib/api";
+import { diffuserMessageChat } from "@/lib/api";
 import {
   AGENT_ORCHESTRATION,
   INTERLOCUTEUR_ORCHESTRATION,
@@ -435,17 +439,33 @@ describe("le projet de la fenêtre", () => {
   });
 });
 
-// ── ⑤ ce que l'appel REST porte (#683) ───────────────────────────────────────
+// ── ⑤ ce que l'appel REST porte (#683), et par où il passe (#695) ────────────
 
-describe("envoyerMessageChat", () => {
+describe("diffuserMessageChat", () => {
   /** Le corps JSON du dernier `fetch`, tel qu'il part sur le réseau. */
   function corpsEnvoye(appel: ReturnType<typeof vi.fn>): Record<string, unknown> {
     const [, init] = appel.mock.calls[0] as [string, RequestInit];
     return JSON.parse(String(init.body)) as Record<string, unknown>;
   }
 
-  function stubFetch(): ReturnType<typeof vi.fn> {
-    const fetch = vi.fn(async () => new Response("{}", { status: 201 }));
+  /** L'URL du dernier `fetch` — c'est elle qui dit par quel chemin on parle. */
+  function urlAppelee(appel: ReturnType<typeof vi.fn>): string {
+    return String((appel.mock.calls[0] as [string, RequestInit])[0]);
+  }
+
+  /** Un `text/event-stream` minimal : les trames données, séparées comme en SSE. */
+  function fluxDe(...trames: Record<string, unknown>[]): Response {
+    const corps = trames
+      .map((trame) => `data: ${JSON.stringify(trame)}\n\n`)
+      .join("");
+    return new Response(corps, {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    });
+  }
+
+  function stubFetch(reponse: () => Response): ReturnType<typeof vi.fn> {
+    const fetch = vi.fn(async () => reponse());
     vi.stubGlobal("fetch", fetch);
     return fetch;
   }
@@ -453,9 +473,14 @@ describe("envoyerMessageChat", () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it("porte le projet dans le corps de la requête", async () => {
-    const fetch = stubFetch();
+    const fetch = stubFetch(() => fluxDe({ type: "fin", delta: "", message: null }));
 
-    await envoyerMessageChat(AGENT_ORCHESTRATION, "Ajoute la pagination", [], "prj-depensio");
+    await diffuserMessageChat(
+      AGENT_ORCHESTRATION,
+      "Ajoute la pagination",
+      [],
+      "prj-depensio",
+    );
 
     expect(corpsEnvoye(fetch)).toMatchObject({
       contenu: "Ajoute la pagination",
@@ -464,13 +489,116 @@ describe("envoyerMessageChat", () => {
   });
 
   it("n'envoie rien de plus quand il n'y a pas de projet", async () => {
-    const fetch = stubFetch();
+    const fetch = stubFetch(() => fluxDe({ type: "fin", delta: "", message: null }));
 
-    await envoyerMessageChat(AGENT_ORCHESTRATION, "Ajoute la pagination");
+    await diffuserMessageChat(AGENT_ORCHESTRATION, "Ajoute la pagination");
 
     // L'appel d'avant le lot, à l'octet près : une clé `projet_id: null` ferait
     // dire au corps « aucun projet » là où l'ancien contrat ne disait rien, et
     // le rattachement est justement ce qui ne doit pas être deviné.
     expect(corpsEnvoye(fetch)).toEqual({ contenu: "Ajoute la pagination" });
+    // Et le chemin est **le flux** (#695) : c'est la seule façon dont le
+    // navigateur parle à un fil, `POST …/messages` restant servi pour d'autres
+    // clients. Un envoi qui repasserait par lui serait le second chemin que
+    // #269 avait écarté.
+    expect(urlAppelee(fetch)).toContain(
+      `/api/chat/${AGENT_ORCHESTRATION}/flux`,
+    );
+  });
+
+  it("rend les trames au fil de leur arrivée, et reconstitue la réponse", async () => {
+    stubFetch(() =>
+      fluxDe(
+        { type: "debut", agent: "orchestrateur", echange: "e1", delta: "", message: null },
+        { type: "fragment", agent: "orchestrateur", echange: "e1", delta: "Bon", message: null },
+        { type: "fragment", agent: "orchestrateur", echange: "e1", delta: "jour", message: null },
+        { type: "fin", agent: "orchestrateur", echange: "e1", delta: "", message: null },
+      ),
+    );
+    const vues: string[] = [];
+    let recu = "";
+
+    await diffuserMessageChat(AGENT_ORCHESTRATION, "Salut", [], null, (trame) => {
+      vues.push(trame.type);
+      recu += trame.delta;
+    });
+
+    expect(vues).toEqual(["debut", "fragment", "fragment", "fin"]);
+    // La promesse du contrat (docs/05 §6.5), vue du client : les `delta` seuls
+    // reconstituent la réponse — c'est ce qui permet d'afficher pendant que ça
+    // arrive sans rien réconcilier ensuite.
+    expect(recu).toBe("Bonjour");
+  });
+});
+
+// ── ⑥ le direct à l'écran (#695) ─────────────────────────────────────────────
+
+describe("la réponse s'écrit dans le fil", () => {
+  /** Le fil de messages, seul endroit où une bulle a le droit de se poser. */
+  function filDuChat() {
+    return screen.getByRole("list", {
+      name: `Messages échangés avec ${INTERLOCUTEUR_ORCHESTRATION}`,
+    });
+  }
+
+  it("remplit une bulle pendant que ça arrive, au lieu d'annoncer l'attente", () => {
+    poserFilAssistance({
+      messages: [messageFactice({ contenu: "Salut" })],
+      envoi: true,
+      reponseEnCours: {
+        auteur: AGENT_ORCHESTRATION,
+        texte: "Je regarde le",
+        figee: false,
+      },
+    });
+    monterLeChat();
+
+    // Le texte partiel est **dans le fil**, à la place où le message se posera :
+    // c'est ce que « on voit la réponse s'écrire » veut dire.
+    expect(within(filDuChat()).getByText("Je regarde le")).toBeInTheDocument();
+    // Et l'indicateur s'efface : le laisser à côté du texte qui arrive
+    // recréerait l'attente indistincte que ce lot supprime.
+    expect(screen.queryByText(/répond…/)).not.toBeInTheDocument();
+  });
+
+  it("dit « répond… » tant qu'aucun mot n'est arrivé", () => {
+    // Entre l'envoi et le premier incrément il n'y a rien à montrer — une bulle
+    // vide dirait « il a commencé » quand rien n'est encore venu.
+    poserFilAssistance({ envoi: true, reponseEnCours: null });
+    monterLeChat();
+
+    expect(screen.getByText(/répond…/)).toBeInTheDocument();
+  });
+
+  it("marque une réponse figée au lieu de la laisser passer pour complète", () => {
+    // La moitié qui compte de #693 vue de l'écran : un texte arrêté ne se
+    // distingue pas d'une réponse courte, il faut donc le dire là où on lit.
+    poserFilAssistance({
+      envoi: false,
+      reponseEnCours: {
+        auteur: AGENT_ORCHESTRATION,
+        texte: "Je regarde le",
+        figee: true,
+      },
+    });
+    monterLeChat();
+
+    expect(
+      screen.getByText("Réponse interrompue — ce qui précède est incomplet."),
+    ).toBeInTheDocument();
+  });
+
+  it("offre l'arrêt à la place de l'envoi tant qu'un échange est en vol", async () => {
+    const utilisateur = userEvent.setup();
+    const interrompre = vi.fn();
+    poserFilAssistance({ envoi: true, interrompre });
+    monterLeChat();
+
+    // À la place, et non à côté : l'envoi est de toute façon refusé pendant un
+    // échange, et un bouton inerte occuperait la seule place que la main vise.
+    expect(screen.queryByRole("button", { name: "Envoyer" })).toBeNull();
+    await utilisateur.click(screen.getByRole("button", { name: "Interrompre" }));
+
+    expect(interrompre).toHaveBeenCalledTimes(1);
   });
 });

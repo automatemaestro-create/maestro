@@ -15,6 +15,12 @@ import type { ReactNode } from "react";
 import { FournisseurEtatGlobal } from "@/lib/etatGlobal";
 import { AGENT_ORCHESTRATION } from "@/lib/orchestration";
 import { ecrireProjetActifId } from "@/lib/projetActif";
+// `import type` et pas autrement : `lib/useChat` importe `lib/api`, dont ce
+// fichier ne doit **jamais** provoquer l'évaluation (voir l'avertissement de
+// `tests/setup.ts` — un module déjà évalué rend les mocks locaux inopérants).
+// Le type est effacé à la compilation, donc rien n'est importé à l'exécution :
+// c'est déjà ce que fait `ControlTower` juste en dessous.
+import type { ReponseEnCours } from "@/lib/useChat";
 import type { ControlTower } from "@/lib/useControlTower";
 import {
   AGENT_SOURCE_DEFAUT,
@@ -153,8 +159,12 @@ export type FilFactice = {
   chargement: boolean;
   erreur: string | null;
   envoi: boolean;
+  /** La réponse en train de s'écrire (#695) — `null` quand rien ne coule. */
+  reponseEnCours: ReponseEnCours | null;
   /** Depuis #482 l'envoi porte aussi les **sources** déclarées du message. */
   envoyer: (contenu: string, sources?: SourceDeclaree[]) => Promise<void>;
+  /** L'arrêt d'une génération en vol (#695) — noté, jamais joué. */
+  interrompre: () => void;
   /** La conversation ouverte du fil (#696) — `""` tant que rien n'a été servi. */
   conversation: string;
   /** Les conversations du fil, la plus récente d'abord (#696). */
@@ -177,7 +187,9 @@ function filParDefaut(): FilFactice {
     chargement: false,
     erreur: null,
     envoi: false,
+    reponseEnCours: null,
     envoyer: async () => {},
+    interrompre: () => {},
     conversation: CHAT_CONVERSATION_ORIGINE,
     conversations: [conversationFactice()],
     nouvelleConversation: async () => {},

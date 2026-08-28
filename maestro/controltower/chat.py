@@ -114,6 +114,31 @@ une seconde. Sans cette règle, cliquer deux fois sur « nouvelle conversation �
 laisserait derrière lui un historique de fils vides, et un agent jamais contacté
 verrait son `origine` doublée avant d'avoir servi.
 
+## S'arrêter à la demande n'est pas se déconnecter (#695)
+
+Une génération en vol peut être **arrêtée** : `diffuser` nomme chaque échange
+(`FragmentChat.echange`), `ServiceChat.interrompre(echange)` annule la production
+et `POST /api/chat/{agent}/flux/{echange}/arret` en est le verbe HTTP.
+
+Ce n'est **pas** un retour sur l'arbitrage de #268 — « un client qui se
+déconnecte ne l'annule pas » — mais son pendant : une déconnexion est un
+accident, dont on ne peut pas déduire une intention, et la réponse déjà payée
+finit d'être produite ; un arrêt est un **acte**, et il est le seul à annuler.
+Les deux régimes cohabitent sans se contredire parce qu'ils ne se ressemblent
+qu'à l'écran.
+
+Le principe de #268 — « la réponse a coûté ce qu'elle a coûté » — est **tenu**
+jusque dans l'arrêt : ce qui a été produit avant lui est persisté comme réponse
+(trame `interrompu`, qui la porte), au lieu d'être jeté. C'est ce qui donne son
+sens à « ce qui a déjà été reçu reste au fil » : la portion reçue n'est pas un
+état d'écran que le premier rechargement effacerait, c'est le message du fil.
+Rien reçu, rien persisté — une trame `interrompu` sans message, et le fil ne
+garde que la demande.
+
+Une annulation arrivée **pendant** l'acheminement de la réponse complète ne
+double rien : `_conclure_arret` regarde le fil avant d'écrire, et rend ce qui s'y
+trouve déjà plutôt que d'y ajouter un second message.
+
 ## Ce qui découle d'un message est rattaché au fil (#268)
 
 Un `MessageChat` peut porter un `run_id` et un `tache_id` : la réponse de
@@ -180,14 +205,23 @@ UTILISATEUR = "utilisateur"
 AUTEUR_UTILISATEUR = "utilisateur"
 AUTEUR_AGENT = "agent"
 
-#: Les quatre types de trame d'un flux de réponse (docs/05 §6.5) : `debut` ouvre,
-#: `fragment` incrémente, `fin` clôt en portant le message complet, `erreur` dit
-#: qu'aucune réponse ne viendra. Ils vivent **ici**, avec le canal qui les émet,
-#: et non dans les fixtures qui les imitaient avant #268 : deux vocabulaires pour
-#: le même contrat, c'est la démo qui finit par diverger de ce que l'API sert.
+#: Les cinq types de trame d'un flux de réponse (docs/05 §6.5) : `debut` ouvre,
+#: `fragment` incrémente, `fin` clôt en portant le message complet, `interrompu`
+#: clôt un échange **arrêté à la demande** (#695) en portant ce qui en a été
+#: persisté, `erreur` dit qu'aucune réponse ne viendra. Ils vivent **ici**, avec
+#: le canal qui les émet, et non dans les fixtures qui les imitaient avant #268 :
+#: deux vocabulaires pour le même contrat, c'est la démo qui finit par diverger
+#: de ce que l'API sert.
+#:
+#: `interrompu` est distinct de `fin` parce que les deux ne disent pas la même
+#: chose du texte qu'ils portent : `fin` annonce la réponse **entière**, celle
+#: dont la concaténation des `delta` répond ; `interrompu` annonce ce qui a été
+#: écrit avant l'arrêt. Les confondre ferait lire un texte tronqué comme une
+#: réponse complète — la faute même que `FluxInterrompu` évite d'un autre côté.
 FRAGMENT_CHAT_DEBUT = "debut"
 FRAGMENT_CHAT_DELTA = "fragment"
 FRAGMENT_CHAT_FIN = "fin"
+FRAGMENT_CHAT_INTERROMPU = "interrompu"
 FRAGMENT_CHAT_ERREUR = "erreur"
 
 #: La publication d'un incrément de réponse — le seul geste que le canal demande
@@ -539,15 +573,22 @@ class FragmentChat:
     plutôt qu'une socket coupée, pour que le client sache **pourquoi** rien ne
     vient — le message utilisateur, lui, reste acquis.
 
-    `message` porte un `MessageChat` complet sur les deux trames qui en bornent
-    un : le message **utilisateur** sur `debut`, la **réponse** sur `fin`
-    (`None` sur `fragment` et `erreur`). Le premier est venu avec les sources
-    (#692) : sans lui, un client du flux aurait envoyé de la matière sans jamais
-    savoir ce qui en a été lu, tronqué ou ignoré (le `rapport` de #316), là où
-    `POST …/messages` rend la paire d'un seul coup. Le flux rend donc la même
-    paire, en deux trames.
+    `message` porte un `MessageChat` complet sur les trames qui **bornent** un
+    échange : le message **utilisateur** sur `debut`, la **réponse** sur `fin`,
+    et sur `interrompu` (#695) ce qui a été persisté de la réponse arrêtée —
+    `None` quand l'arrêt précède le premier incrément, comme sur `fragment` et
+    `erreur`. Le premier est venu avec les sources (#692) : sans lui, un client
+    du flux aurait envoyé de la matière sans jamais savoir ce qui en a été lu,
+    tronqué ou ignoré (le `rapport` de #316), là où `POST …/messages` rend la
+    paire d'un seul coup. Le flux rend donc la même paire, en deux trames.
 
-    `auteur` reste celui du **flux** — l'agent qui répond —, sur les quatre
+    `echange` nomme le flux lui-même (#695) et voyage sur **toutes** les trames :
+    c'est ce que le client rend à `POST …/flux/{echange}/arret` pour arrêter la
+    génération. Le poser sur `debut` seul aurait suffi au client d'aujourd'hui et
+    obligé chacun à le retenir ; il est une propriété du flux, comme `agent` et
+    `auteur`, et se lit donc sur la trame qu'on a sous la main.
+
+    `auteur` reste celui du **flux** — l'agent qui répond —, sur toutes les
     trames : c'est une propriété de la réponse en cours, pas du message
     transporté, lequel porte son propre `auteur`.
 
@@ -561,6 +602,7 @@ class FragmentChat:
     auteur: str = AUTEUR_AGENT
     delta: str = ""
     message: MessageChat | None = None
+    echange: str = ""
     conversation: str = CONVERSATION_ORIGINE
 
     def to_dict(self) -> dict[str, Any]:
@@ -572,6 +614,7 @@ class FragmentChat:
             "auteur": self.auteur,
             "delta": self.delta,
             "message": self.message.to_dict() if self.message is not None else None,
+            "echange": self.echange,
         }
 
 
@@ -1049,6 +1092,11 @@ class ServiceChat:
         # part sur le réseau, et `tests/conftest.py` (#195) exige qu'aucun test
         # n'en ait besoin.
         self._lecteur = lecteur_sources if lecteur_sources is not None else extraire_sources
+        # Les générations en vol, par identifiant d'échange (#695) : c'est le seul
+        # état que le service garde entre deux requêtes, et il ne dure que le temps
+        # d'un flux — `diffuser` l'inscrit à l'ouverture et le retire dans son
+        # `finally`, quelle que soit la façon dont l'échange se termine.
+        self._en_vol: dict[str, asyncio.Task[MessageChat]] = {}
 
     def fil(self, agent: str, conversation: str | None = None) -> tuple[MessageChat, ...]:
         """Le fil persisté d'une conversation de `agent`, dans l'ordre d'écriture.
@@ -1157,7 +1205,9 @@ class ServiceChat:
         vers le client dès qu'il existe, sans attendre le suivant. Un client qui
         se déconnecte en cours de route **ne l'annule pas** — la réponse a coûté
         ce qu'elle a coûté, elle finit d'être persistée et diffusée, et le fil la
-        rendra à la reconnexion.
+        rendra à la reconnexion. Seul un **arrêt demandé** l'annule
+        (`interrompre`, #695) : voir l'en-tête du module, une déconnexion est un
+        accident et un arrêt est un acte.
 
         `projet_id` (#683) suit le même chemin que dans `envoyer`, et pour la
         même raison : les deux voies mènent au **même** `_repondre`, donc un run
@@ -1168,12 +1218,20 @@ class ServiceChat:
         """
         fil = self._resoudre(agent, conversation)
         message = await self._deposer(agent, contenu, sources, conversation=fil)
+        # L'échange se nomme **après** le dépôt : un message refusé — conversation
+        # mal formée, message vide, source hors bornes — n'a jamais de flux, donc
+        # jamais d'identifiant à arrêter.
+        echange = uuid.uuid4().hex[:12]
         # La trame d'ouverture porte le message utilisateur **résolu** — ses
         # sources et leur rapport de lecture (#316) —, que seul `_deposer`
         # connaît et qu'aucune trame suivante ne redira. C'est le pendant, sur
         # cette voie, de la paire que `POST …/messages` rend d'un coup (#692).
         yield FragmentChat(
-            type=FRAGMENT_CHAT_DEBUT, agent=agent.nom, conversation=fil, message=message
+            type=FRAGMENT_CHAT_DEBUT,
+            agent=agent.nom,
+            conversation=fil,
+            echange=echange,
+            message=message,
         )
 
         file: asyncio.Queue[str | None] = asyncio.Queue()
@@ -1193,34 +1251,123 @@ class ServiceChat:
                 await file.put(None)
 
         tache = asyncio.create_task(produire())
+        self._en_vol[echange] = tache
+        # Ce que le client a **vu** — la seule mesure fiable de « ce qui a déjà
+        # été reçu », prise là où les trames partent pour de bon. `Redaction` en
+        # garantit l'autre moitié : la concaténation des incréments est
+        # exactement le texte de la réponse.
+        recu: list[str] = []
         try:
             while True:
                 delta = await file.get()
                 if delta is None:
                     break
+                recu.append(delta)
                 yield FragmentChat(
-                    type=FRAGMENT_CHAT_DELTA, agent=agent.nom, conversation=fil, delta=delta
+                    type=FRAGMENT_CHAT_DELTA,
+                    agent=agent.nom,
+                    conversation=fil,
+                    echange=echange,
+                    delta=delta,
                 )
             try:
                 reponse = await tache
+            except asyncio.CancelledError:
+                # Un arrêt demandé — et lui seul : si c'est **ce** générateur
+                # qu'on annule (client parti pendant l'attente), la tâche n'est
+                # pas annulée et l'annulation nous traverse comme avant.
+                if not tache.cancelled():
+                    raise
+                yield FragmentChat(
+                    type=FRAGMENT_CHAT_INTERROMPU,
+                    agent=agent.nom,
+                    conversation=fil,
+                    echange=echange,
+                    message=await self._conclure_arret(agent, "".join(recu), conversation=fil),
+                )
+                return
             except ReponseIndisponible as exc:
                 yield FragmentChat(
                     type=FRAGMENT_CHAT_ERREUR,
                     agent=agent.nom,
                     conversation=fil,
+                    echange=echange,
                     delta=str(exc),
                 )
                 return
             yield FragmentChat(
-                type=FRAGMENT_CHAT_FIN, agent=agent.nom, conversation=fil, message=reponse
+                type=FRAGMENT_CHAT_FIN,
+                agent=agent.nom,
+                conversation=fil,
+                echange=echange,
+                message=reponse,
             )
         finally:
+            self._en_vol.pop(echange, None)
             if not tache.done():
                 # Fermeture prématurée (client parti) : on laisse la réponse
                 # s'achever, mais plus personne n'attend son résultat — sans ce
                 # rattrapage, une `ReponseIndisponible` finirait en « exception
                 # never retrieved » dans les journaux de l'API.
                 tache.add_done_callback(lambda achevee: achevee.exception())
+
+    def interrompre(self, echange: str) -> bool:
+        """Arrête la génération en vol nommée par `echange` — rend `False` s'il n'y en a pas (#695).
+
+        Le **seul** geste qui annule une production : une déconnexion ne le fait
+        pas (voir `diffuser`). Synchrone à dessein — annuler est immédiat, ce qui
+        suit (persister ce qui a été reçu, clore le flux) appartient au générateur
+        qui tient l'échange, pas à celui qui demande l'arrêt.
+
+        `False` couvre les deux « rien à arrêter » qui ne se distinguent pas d'ici
+        et n'appellent pas deux conduites : un identifiant inconnu, et un échange
+        qui vient de se terminer. C'est une course normale — l'utilisateur clique
+        au moment où la réponse tombe —, et l'appelant HTTP la traite comme telle.
+        """
+        tache = self._en_vol.get(echange)
+        if tache is None or tache.done():
+            return False
+        tache.cancel()
+        return True
+
+    async def _conclure_arret(
+        self, agent: Agent, recu: str, *, conversation: str
+    ) -> MessageChat | None:
+        """Persiste ce qui a été reçu avant l'arrêt — la moitié « reste au fil » (#695).
+
+        Ce qui a été produit a été payé (principe de #268) : l'arrêt ne le jette
+        pas, il l'arrête. La portion reçue devient donc un message du fil, au même
+        titre qu'une réponse courte — persistée, acheminée, diffusée en
+        `chat.message` —, et non un état d'écran que le premier rechargement
+        effacerait.
+
+        Deux abstentions, et aucune n'est un cas de bord :
+
+        - **la réponse est déjà passée** — l'annulation a atteint la tâche pendant
+          `_acheminer`, après l'écriture au fil. On rend ce qui s'y trouve plutôt
+          que d'y ajouter un second message, ce qui donnerait deux réponses à une
+          question ;
+        - **rien n'a été reçu** — arrêt avant le premier incrément : il n'y a pas
+          de réponse tronquée, il n'y en a pas du tout, et le fil ne garde que la
+          demande.
+
+        `conversation` (#694) est celle de l'échange arrêté, résolue une fois par
+        `diffuser` : la portion reçue se range là où la question a été posée, et
+        nulle part ailleurs — la lire dans la conversation « courante » suffirait
+        presque toujours et écrirait dans la mauvaise dès qu'une autre a été
+        ouverte pendant la génération.
+        """
+        fil = self._store.fil(agent.nom, conversation)
+        if fil and fil[-1].auteur != UTILISATEUR:
+            return fil[-1]
+        texte = recu.strip()
+        if not texte:
+            return None
+        message = MessageChat(
+            agent=agent.nom, conversation=conversation, auteur=agent.nom, contenu=texte
+        )
+        await self._acheminer(message, agent, type_message=MESSAGE_REPONSE)
+        return message
 
     def _resoudre(self, agent: Agent, conversation: str | None) -> str:
         """La conversation d'un échange : celle demandée, sinon la plus récente (#694).

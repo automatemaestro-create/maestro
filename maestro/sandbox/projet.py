@@ -13,8 +13,11 @@ workspace jetable évitait, sans possibilité d'annuler) :
 - **projet versionné** → un **worktree Git** monté hors de la racine, sur une
   branche dédiée `maestro/<tâche>` créée depuis la branche de base déclarée
   (`Projet.vcs.branche_base`). En fin de tâche le **worktree est retiré, jamais
-  la branche** : c'est elle qui porte le travail jusqu'à la fusion, geste validé
-  du lot 7 (#219) ;
+  la branche** : c'est elle qui porte le travail jusqu'à la fusion, que
+  `maestro.engine.executor` demande dès que la tâche est soldée en succès
+  (#705). Pour qu'elle le porte réellement, ce qui reste non commité y est
+  **commité avant le démontage** (`_solder_la_branche`) — sans quoi le `--force`
+  du retrait l'emporterait et la branche survivrait vide ;
 - **projet non versionné** → une **copie** du périmètre déclaré, exclusions du
   socle respectées (`.git`, `node_modules`, `.env`, `**/secrets/**` —
   `maestro.projets.modele.EXCLUS_DEFAUT`) ;
@@ -50,6 +53,7 @@ from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 
+from maestro.projets.application import ApplicationRefusee, commiter_en_attente
 from maestro.projets.modele import Perimetre, Projet
 from maestro.projets.racine import valider_racine
 from maestro.sandbox.workspace import Workspace, isolated_workspace
@@ -106,8 +110,12 @@ def espace_de_travail(
 
     `keep=True` conserve l'espace (et, pour un projet versionné, le worktree
     monté) : l'inspection après coup en a besoin, et c'est alors à l'appelant de
-    faire le ménage. Sinon tout est démonté **même en cas d'exception** — le
-    worktree par `git worktree remove`, jamais par une suppression de branche.
+    faire le ménage — y compris de décider ce qu'il advient du travail non
+    commité, que le démontage aurait porté sur la branche. Sinon tout est démonté
+    **même en cas d'exception** — le travail encore en attente est d'abord
+    **commité sur la branche de la tâche** (`_solder_la_branche`, #705), puis le
+    worktree est retiré par `git worktree remove`, jamais par une suppression de
+    branche.
 
     Lève `RacineRefusee` si la racine du projet n'est plus admissible (EF-38) et
     `EspaceProjetIndisponible` si le montage échoue (Git absent, worktree refusé,
@@ -137,6 +145,7 @@ def espace_de_travail(
     finally:
         if not keep:
             if monte:
+                _solder_la_branche(chemin, _branche(tache_id))
                 _retirer_worktree(racine, chemin)
             shutil.rmtree(parent, ignore_errors=True)
 
@@ -224,6 +233,39 @@ def _monter_worktree(racine: Path, chemin: Path, branche: str, base: str) -> Non
             f"Worktree refusé pour la branche {branche!r} dans {racine} : "
             f"{_message_git(resultat)}",
         )
+
+
+def _solder_la_branche(chemin: Path, branche: str) -> None:
+    """Commite sur `branche` ce que le worktree porte encore, avant de le démonter (#705).
+
+    C'est ce qui rend **vraie** la phrase que ce module tient depuis #224 — « le
+    worktree est retiré, jamais la branche : c'est elle qui porte le travail
+    jusqu'à la fusion ». Elle ne l'était qu'à moitié : un agent outillé écrit des
+    fichiers, il ne fait pas forcément `git add`, et `git worktree remove --force`
+    emportait tout ce qui n'était pas commité. La branche survivait donc en ne
+    portant rien, et la fusion de #705 aurait fusionné le vide.
+
+    Le geste **n'est pas réécrit ici** : c'est `commiter_en_attente`
+    (`maestro.projets.application`), la seule orthographe de « commiter ce que le
+    worktree porte encore » — hooks de l'utilisateur non contournés, identité
+    posée par `-c`.
+
+    Best-effort et silencieux, exactement comme `_retirer_worktree` et pour la
+    même raison : ce geste vit dans un `finally`, et lever ici masquerait
+    l'exception qui a réellement condamné la tâche. Ce qui n'a pas pu être
+    commité — `pre-commit` de l'utilisateur qui refuse, index verrouillé — reste
+    hors de la branche, donc hors de la fusion, et le diff vide le dira à
+    l'appelant plutôt qu'une exception venue d'un démontage.
+
+    Il a lieu quel que soit le **verdict** de la tâche : une tâche en échec ne
+    fusionne rien (c'est le critère de #705), mais son travail mérite d'exister
+    sur sa branche plutôt que d'être emporté par le `--force`. Consigner l'échec
+    et détruire ce qui l'explique serait le pire des deux.
+    """
+    try:
+        commiter_en_attente(chemin, branche)
+    except ApplicationRefusee:
+        pass
 
 
 def _retirer_worktree(racine: Path, chemin: Path) -> None:

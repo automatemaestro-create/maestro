@@ -30,6 +30,7 @@ import {
   AMORCES_ASSISTANCE,
   ecouterOuvertureAssistant,
 } from "@/lib/assistance";
+import { ErreurReponse } from "@/lib/api";
 import { formatDateHeure, formatHeure } from "@/lib/format";
 import { CHAT_AUTEUR_UTILISATEUR, type MessageChat } from "@/lib/types";
 import { useChat } from "@/lib/useChat";
@@ -113,7 +114,11 @@ function PanneauAssistance({ fermer }: { fermer: () => void }) {
     } catch (e) {
       setErreurEnvoi(e instanceof Error ? e.message : String(e));
       // Le texte revient dans la zone de saisie (sauf si l'utilisateur a déjà
-      // repris la main) : relancer reste un simple Entrée.
+      // repris la main) : relancer reste un simple Entrée. **Sauf** si la
+      // question est déjà partie (#695) : l'envoi passe par le flux, dont
+      // l'échec peut survenir après que le message a rejoint le fil — le rendre
+      // à la saisie inviterait alors à poser deux fois la même question.
+      if (e instanceof ErreurReponse) return;
       setBrouillon((courant) => (courant === "" ? contenu : courant));
     }
   };
