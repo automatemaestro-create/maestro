@@ -28,10 +28,13 @@ import type {
   CoutExecution,
   CoutTache,
   CoutTacheAgregee,
+  CouloirFrise,
   DossierExplorateur,
+  EntreeFrise,
   EntreeJournal,
   EtatAgent,
   Evenement,
+  FriseRun,
   GrapheRun,
   MessageChat,
   NoeudGraphe,
@@ -540,6 +543,68 @@ export function grapheFactice(partiel: Partial<GrapheRun> = {}): GrapheRun {
     noeuds,
     aretes,
     niveaux,
+    ...partiel,
+  };
+}
+
+/** Une entrée de la frise d'activité d'un run (#355) — un message par défaut. */
+export function entreeFriseFactice(
+  partiel: Partial<EntreeFrise> = {},
+): EntreeFrise {
+  return {
+    id: "j-0001",
+    type: "message.inter_agents",
+    couloir: "developpeur",
+    agent: "developpeur",
+    role: "Développeur",
+    tache_id: "T-1",
+    titre: "Schéma",
+    statut: "",
+    objet: "handoff de developpeur à qa : à toi",
+    horodatage: "2026-08-28T10:00:00+00:00",
+    ...partiel,
+  };
+}
+
+/**
+ * La frise d'un run (#355), **dérivée de ses entrées** : les couloirs se
+ * déduisent du `couloir` que chaque entrée porte déjà, dans leur ordre
+ * d'apparition, et le repli ferme la liste.
+ *
+ * Rien n'y est retrié — le tri (instant, puis rang du journal) appartient au
+ * backend, et une fabrique qui le rejouerait finirait par le contredire. C'est
+ * la même règle que `grapheFactice`, et elle a ici une conséquence utile : un
+ * test qui veut vérifier que le front **n'invente pas d'ordre** pose ses entrées
+ * dans l'ordre qu'il veut lire.
+ *
+ * `total` suit le nombre d'entrées et `tronquee` s'en déduit : un test qui veut
+ * une frise bornée pose `total` explicitement.
+ */
+export function friseFactice(partiel: Partial<FriseRun> = {}): FriseRun {
+  const entrees: EntreeFrise[] = partiel.entrees ?? [];
+  const parCouloir = new Map<string, CouloirFrise>();
+  for (const entree of entrees) {
+    const couloir = parCouloir.get(entree.couloir);
+    if (couloir) couloir.entrees.push(entree.id);
+    else
+      parCouloir.set(entree.couloir, {
+        agent: entree.couloir,
+        role: entree.couloir === "" ? "" : entree.role,
+        repli: entree.couloir === "",
+        entrees: [entree.id],
+      });
+  }
+  const couloirs = [...parCouloir.values()].sort(
+    (a, b) => Number(a.repli) - Number(b.repli),
+  );
+  const total = partiel.total ?? entrees.length;
+  return {
+    run_id: "run-1",
+    entrees,
+    couloirs,
+    total,
+    plafond: 500,
+    tronquee: total > entrees.length,
     ...partiel,
   };
 }

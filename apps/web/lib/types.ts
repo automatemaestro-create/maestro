@@ -1236,6 +1236,100 @@ export type GrapheRun = {
   niveaux: string[][];
 };
 
+/**
+ * Le statut que la frise résout pour une **attente de validation humaine**
+ * (#355) — celui de la machine à états de docs/03 §3, que
+ * `maestro/controltower/progression.py` nomme depuis #473 et que le moteur
+ * n'émet pas : c'est la frise qui le produit, depuis `validation.demande`.
+ *
+ * Il est nommé ici parce que c'est **le** statut du troisième critère : une
+ * tâche en attente d'un humain doit se distinguer d'une tâche en cours, à
+ * l'œil. Le comparer à une chaîne écrite sur place le ferait diverger en
+ * silence le jour où le backend changera de mot.
+ */
+export const STATUT_EN_ATTENTE_VALIDATION = "en_attente_validation";
+
+/**
+ * La clé du **couloir de repli** d'une frise (#355) : ce qui n'a pas d'agent
+ * résoluble. Une chaîne vide, comme côté serveur — et il y a plus dedans qu'on
+ * ne croit : le moteur consigne `agent="—"` sur une tâche **jamais routée**
+ * (`_consigne_blocage`, #43), que le backend range ici plutôt que d'ouvrir un
+ * couloir nommé « — ».
+ */
+export const COULOIR_REPLI = "";
+
+/**
+ * Une entrée de la frise d'activité d'un run (#355) : un fait daté, attribué à
+ * un couloir.
+ *
+ * `id` est celui du journal requêtable (`j-0007`) : rien n'est créé, et les deux
+ * lectures se recoupent entrée par entrée. `type` reste le **type d'événement
+ * d'origine** — c'est lui qui sépare les deux flux que la frise mêle
+ * (`tache.statut` et `message.inter_agents`, plus les deux temps d'une
+ * validation).
+ *
+ * `statut` est le statut de tâche **résolu** par le backend, vide pour un
+ * message : c'est la seule valeur que la frise calcule, et celle qui distingue
+ * une tâche bloquée d'une tâche qui attend un humain et d'une tâche en cours.
+ *
+ * `couloir` est **toujours** l'un des couloirs servis : c'est l'invariant du
+ * deuxième critère (aucune entrée perdue faute de couloir), tenu côté serveur.
+ * `objet` est ce que l'entrée dit — le détail du journal, ou le titre de la
+ * tâche quand une issue réussie ne dit rien d'autre.
+ */
+export type EntreeFrise = {
+  id: string;
+  type: string;
+  couloir: string;
+  agent: string;
+  role: string;
+  tache_id: string;
+  titre: string;
+  statut: string;
+  objet: string;
+  horodatage: string;
+};
+
+/**
+ * Un couloir de la frise (#355) : un agent, et les **identifiants** des entrées
+ * qui lui reviennent — les entrées elles-mêmes vivent une fois, dans `entrees`.
+ *
+ * Un couloir vide est légitime : un agent du run qui n'a encore rien dit se lit
+ * comme tel, là où l'omettre le ferait apparaître en cours de route sans qu'on
+ * sache s'il était prévu. `repli` marque le couloir de ce qui n'a pas d'agent —
+ * il ferme toujours la liste, et n'existe que s'il a recueilli quelque chose.
+ */
+export type CouloirFrise = {
+  agent: string;
+  role: string;
+  repli: boolean;
+  entrees: string[];
+};
+
+/**
+ * La frise d'activité d'un run, servie par
+ * `GET /api/executions/{run_id}/frise` (#355) : la lecture qui dit **dans quel
+ * ordre**, là où le pipeline dit « quoi après quoi », le Kanban « combien dans
+ * quel état » et le journal « qu'a-t-il fait ».
+ *
+ * `entrees` est la chronologie, triée par le backend (instant, puis rang du
+ * journal — les horodatages sont à la seconde, donc deux entrées d'un run
+ * parallèle en partagent couramment un). `couloirs` la range par agent sans
+ * qu'aucun regroupement ne soit à refaire ici.
+ *
+ * `total` compte **avant** le plafond et `tronquee` dit s'il a mordu : la frise
+ * retient les entrées les plus récentes, et une borne muette ferait passer un
+ * run d'une heure pour un run de cinq cents lignes.
+ */
+export type FriseRun = {
+  run_id: string;
+  entrees: EntreeFrise[];
+  couloirs: CouloirFrise[];
+  total: number;
+  plafond: number;
+  tronquee: boolean;
+};
+
 /** Clés de tri et sens du journal requêtable (maestro/controltower/journal.py). */
 export const TRI_JOURNAL_HORODATAGE = "horodatage";
 export const TRI_JOURNAL_AGENT = "agent";

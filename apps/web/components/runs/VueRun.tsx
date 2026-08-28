@@ -63,6 +63,7 @@ import {
   LigneInterruption,
   LignePause,
 } from "@/components/runs/EtatRun";
+import { FriseRun } from "@/components/runs/FriseRun";
 import { JournalRun } from "@/components/runs/JournalRun";
 import { VuePipeline } from "@/components/runs/VuePipeline";
 import { RegionLive } from "@/components/RegionLive";
@@ -85,6 +86,7 @@ import type { ResumeExecution } from "@/lib/types";
 import { useTachesRun } from "@/lib/useTachesRun";
 import {
   VUES_RUN,
+  VUE_FRISE,
   VUE_JOURNAL,
   VUE_KANBAN,
   VUE_PIPELINE,
@@ -218,6 +220,26 @@ export function VueRun({ runId }: { runId: string }) {
               messageVide={
                 chargementTaches
                   ? "Chargement des tâches de ce run…"
+                  : messageVideDuRun(attente)
+              }
+            />
+          )}
+
+          {/* La frise (#355) : les statuts de tâche **et** les messages
+              inter-agents sur une même chronologie, en couloirs. Elle ne prend
+              ni `taches` ni `validations` — tout vient de
+              `GET /api/executions/{runId}/frise`, y compris le statut
+              `en_attente_validation` que le moteur n'émet pas : le redéduire
+              ici du fil des validations, comme le fait le pipeline
+              ci-dessus, ferait deux règles à tenir d'accord pour un fait qui
+              n'a qu'une source. */}
+          {vue === VUE_FRISE && (
+            <FriseRun
+              runId={runId}
+              revision={revision}
+              messageVide={
+                chargementTaches
+                  ? "Chargement de l'activité de ce run…"
                   : messageVideDuRun(attente)
               }
             />

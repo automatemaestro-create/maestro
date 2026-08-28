@@ -70,6 +70,7 @@ import {
 } from "@/lib/types";
 import {
   VUES_RUN,
+  VUE_FRISE,
   VUE_JOURNAL,
   VUE_KANBAN,
   VUE_PIPELINE,
@@ -424,7 +425,7 @@ describe("la checklist d'un nœud", () => {
   });
 });
 
-describe("l'arbitrage entre les trois lectures d'un run", () => {
+describe("l'arbitrage entre les lectures d'un run", () => {
   it("ouvre sur le pipeline", () => {
     // La question du Kanban est déjà à moitié répondue au-dessus de lui (la barre
     // de progression compte par compartiment) : ouvrir dessus, c'est ouvrir sur
@@ -432,23 +433,31 @@ describe("l'arbitrage entre les trois lectures d'un run", () => {
     expect(VUE_RUN_DEFAUT).toBe(VUE_PIPELINE);
   });
 
-  it("propose les trois : le flux, puis l'inventaire, puis le récit", () => {
+  it("propose les quatre : le flux, l'inventaire, l'activité, puis le récit", () => {
     // L'ordre *est* la décision. Le journal ferme la rangée (#516) : c'est ce que
     // #478 défendait en le posant sous les tâches — on le consulte après avoir vu
-    // où en est le run —, reporté sur la bascule au lieu d'un empilement.
+    // où en est le run —, reporté sur la bascule au lieu d'un empilement. La
+    // frise (#355) s'insère donc **avant** lui : elle répond encore à « où en
+    // est-on ? », dans le sens du temps, là où le journal est ce qu'on ouvre
+    // quand la vue d'ensemble ne suffit plus.
     expect(VUES_RUN.map((onglet) => onglet.cle)).toEqual([
       VUE_PIPELINE,
       VUE_KANBAN,
+      VUE_FRISE,
       VUE_JOURNAL,
     ]);
   });
 
   it("donne à chaque onglet la question à laquelle il répond", () => {
-    // « Pipeline », « Kanban » et « Journal » ne disent pas d'eux-mêmes lequel
-    // montre quoi, et c'est précisément la confusion que l'arbitrage devait lever.
-    const [pipeline, kanban, journal] = VUES_RUN;
+    // « Pipeline », « Kanban », « Frise » et « Journal » ne disent pas
+    // d'eux-mêmes lequel montre quoi, et c'est précisément la confusion que
+    // l'arbitrage devait lever. La paire frise/journal est la plus fine des
+    // quatre — les deux sont chronologiques —, d'où deux questions qui ne se
+    // recouvrent pas : *qui, quand, et à qui* contre *qu'a-t-il fait*.
+    const [pipeline, kanban, frise, journal] = VUES_RUN;
     expect(pipeline.question).toMatch(/Quoi après quoi/);
     expect(kanban.question).toMatch(/Combien dans quel état/);
+    expect(frise.question).toMatch(/Qui, quand, et à qui/);
     expect(journal.question).toMatch(/Qu'a-t-il fait/);
   });
 });

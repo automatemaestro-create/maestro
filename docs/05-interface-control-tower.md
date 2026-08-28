@@ -694,12 +694,13 @@ dessous. Ouvrir un run donne enfin son backlog — jusqu'ici le Kanban était ce
 **projet** (#248) et un run n'avait pas de vue à lui, si bien que dans un projet où
 plusieurs runs se succèdent, *ce que ce run avait fait* n'était visible nulle part.
 
-> ⚠ **Cette lecture est triple** : le **pipeline** (§2.4.4), le **Kanban** et le
-> **journal** coexistent sous une bascule, et c'est le pipeline qui ouvre. #491 l'a
-> rendue double, #516 y a ajouté la troisième position. Tout ce que dit cette
-> section vaut inchangé — la tête, le contenu du journal, l'appartenance par l'API,
-> le pouls du shell —, seul le corps de l'écran a désormais trois formes, dont on
-> ne voit **qu'une** à la fois. L'arbitrage est rendu en §2.4.4.
+> ⚠ **Cette lecture est quadruple** : le **pipeline** (§2.4.4), le **Kanban**, la
+> **frise** (§2.4.6) et le **journal** coexistent sous une bascule, et c'est le
+> pipeline qui ouvre. #491 l'a rendue double, #516 y a ajouté la troisième position,
+> #355 la quatrième. Tout ce que dit cette section vaut inchangé — la tête, le
+> contenu du journal, l'appartenance par l'API, le pouls du shell —, seul le corps
+> de l'écran a désormais quatre formes, dont on ne voit **qu'une** à la fois.
+> L'arbitrage est rendu en §2.4.4.
 
 **Le Kanban est réutilisé, pas réimplémenté.** C'est le composant de §2.2 :
 mêmes colonnes, mêmes cartes, même **détail sur place** (#251), même réassignation.
@@ -871,8 +872,21 @@ lectures, donc sous le pipeline, qui ouvre : un fil d'événements collé à un 
 lit comme le détail de ce graphe. Le troisième onglet applique au journal la deuxième
 décision ci-dessus, celle qui interdit l'empilement, et **conserve** ce que #478
 défendait — on consulte le journal après avoir vu où en est le run —, désormais dit par
-la **position** de l'onglet. Trois questions, trois onglets : « quoi après quoi », «
-combien dans quel état », « qu'a-t-il fait ». Détail en §2.4.2.
+la **position** de l'onglet. Détail en §2.4.2.
+
+**Et quatre depuis #355**, la **frise** (§2.4.6) s'insérant en **avant-dernier**. Quatre
+questions, quatre onglets : « quoi après quoi », « combien dans quel état », « qui,
+quand, et à qui », « qu'a-t-il fait ». La position n'est pas indifférente et c'est la
+règle de #516 qui la fixe : le journal ferme toujours la rangée parce qu'il est ce qu'on
+ouvre **en dernier**, quand la vue d'ensemble ne suffit plus ; la frise, elle, répond
+encore à « où en est-on ? », dans le sens du temps. La distinction frise/journal est la
+plus fine des quatre — les deux sont chronologiques et lisent la même source persistée —
+et elle tient en deux mots : ce qu'ils **retiennent** et comment ils le **rangent**. Le
+journal rend *tout* ce qu'un run a émis, du plus récent au plus ancien, en une colonne ;
+la frise ne retient que deux flux et les range **par agent**, dans le sens du temps.
+C'est dans cet écart que se lit le défaut qui a motivé le ticket : sur un fil, une
+attente de décision humaine est une ligne parmi cent ; sur une frise, c'est un couloir
+qui ne bouge plus.
 
 Trois options **écartées**, et pourquoi. **Une route par lecture**
 (`/runs/<id>/pipeline`, `…/kanban`, `…/journal`), sur le modèle des onglets d'une fiche
@@ -1035,6 +1049,74 @@ Couverture : `apps/web/tests/runs-liste.test.tsx` — `peutEtreInterrompu` sur l
 états en vol et les trois issues, la divergence avec `peutEtreSuspendu` sur l'orphelin,
 le premier clic qui n'envoie rien, la phrase qui ne paraît qu'armée, le refus affiché et
 désarmé, et la rangée `GestesRun` dans ses quatre configurations.
+
+#### 2.4.6 La frise d'activité — ce que les agents font et se disent (#355) — **livré**
+
+Le **troisième onglet** de la vue d'un run (§2.4.4), et la lecture qui manquait : pendant
+un run, on ne voyait pas ce qui se passe. Deux compteurs — tâches traitées, agents actifs
+—, puis le rapport à la fin ; entre les deux, **une attente de décision humaine était
+indiscernable d'un travail en cours**. Ce n'est pas une crainte : 53 minutes ont été
+perdues ainsi le 14 août, sans qu'aucun écran ne le dise.
+
+Elle consomme la frise de §6.13 et **n'invente rien** : le tri, le couloir de chaque
+entrée et le statut résolu sont servis. Elle ne prend d'ailleurs ni les tâches ni les
+validations que la vue a déjà en main — c'est la différence avec le pipeline, qui
+redéduit « ce nœud attend-il un humain ? » de la file des validations. Ici la réponse a
+**une seule source**, et deux règles à tenir d'accord n'auraient servi à rien.
+
+**Un tableau, et c'en est vraiment un.** Une frise en couloirs est un croisement à deux
+entrées — le **temps** en lignes, les **agents** en colonnes —, et c'est exactement ce
+qu'un `<table>` décrit. Le gain n'est pas cosmétique : l'association `<th scope="col">`
+fait que **chaque entrée porte son agent** (premier critère) sans qu'on le réécrive sur
+chaque carte, et un lecteur d'écran annonce la colonne en entrant dans la cellule. Une
+grille de `<div>` aurait dessiné la même chose en perdant ce qui la rend lisible. Le
+tableau défile **dans son propre conteneur** : un run à six agents ne fait pas déborder
+la page.
+
+**Les trois états, à l'œil et sans ouvrir de détail** — le troisième critère, celui qui a
+motivé le ticket. Une tâche **en cours**, une tâche **bloquée** et une tâche **en attente
+d'un humain** portent trois badges distincts, et la carte de la troisième est la seule
+**teintée** : le pipeline n'accorde sa seule teinte qu'à l'attente humaine, et `fondDe`
+au seul régime suspendu d'un run — teinter davantage reviendrait à ne rien signaler. Une
+**légende** nomme les trois côte à côte, et elle n'est pas décorative : « bloquée » et
+« en attente d'un humain » se ressemblent en ceci qu'aucune des deux n'avance, et c'est
+précisément la confusion à lever.
+
+| statut | ton | ce qu'il dit |
+| --- | --- | --- |
+| `en_cours` | `info`, pastille qui bat | la tâche travaille |
+| `en_attente_validation` | `attention`, **carte teintée** | elle attend un geste humain (§6.13) |
+| `bloquee` | `accent` | elle ne partira pas — une dépendance a manqué (#43) |
+| `terminee` / `echec` | `positif` / `alerte` | l'issue |
+| `approuve` / `refuse` | `positif` / `alerte` | l'issue d'une validation |
+| *(aucun)* | `neutre` | un **message** inter-agents — il n'a pas de statut de tâche |
+
+C'est un **cinquième** tableau d'apparence, et le dépôt en compte déjà quatre (colonne de
+Kanban, nœud de pipeline, segment de barre, badge de run) — chacun pour un motif écrit.
+Celui-ci a le sien : sa **population n'est pas la même**. La frise range des *entrées* et
+non des tâches, donc elle rencontre deux choses qu'aucun des quatre autres ne rencontre —
+un message, qui n'a pas de statut du tout, et l'issue d'une validation ; et elle a une
+contrainte à elle, garantir que les trois états ci-dessus se distinguent. Les tons des
+états **partagés** sont repris à l'identique du pipeline : une tâche lue « bloquée » en
+violet sur un onglet et en rouge sur l'autre serait une tâche dont on doute.
+
+**Le couloir « Sans agent » s'explique là où il apparaît.** Il recueille ce qu'aucun
+agent ne porte — et la cause n'est pas devinable : le moteur consigne un tiret sur une
+tâche **jamais routée**. Une ligne sous le tableau le dit, faute de quoi ce couloir se
+lirait comme un défaut d'affichage, alors qu'il est le couloir des tâches bloquées.
+
+**La borne se dit.** Quand la frise est tronquée (§6.13), l'écran annonce combien
+d'entrées sur combien et renvoie à l'onglet Journal, qui porte l'historique complet —
+« ce qui ne tient dans aucune des trois places est une ligne avec un renvoi »
+(docs/30 §4).
+
+Couverture : [`apps/web/tests/frise.test.tsx`](../apps/web/tests/frise.test.tsx) — les
+deux flux en lignes successives, l'objet qui ne se répète pas quand il redit le titre, le
+front qui **n'invente aucun ordre** (une frise servie à l'envers est rendue telle quelle),
+le rangement prouvé par l'**indice de cellule** et non par la présence du texte, le repli
+et son explication, l'invariant « aucune entrée perdue » vérifié ligne par ligne, les
+trois états côte à côte, la légende, la borne annoncée, et l'onglet inséré avant le
+journal — qui ferme toujours la rangée.
 
 ### 2.5 💰 Coûts & analytics
 
@@ -3164,11 +3246,11 @@ Une **lecture de plus** d'un run, à côté du Kanban et de la progression (§6.
 run suivi comme un pipeline GitHub Actions ou un flux n8n : l'action en cours, ce qu'elle enchaîne,
 ce qui part en parallèle.
 
-⚠ **À l'écran, la bascule de la vue d'un run a trois positions et non deux** (§2.4.2, §2.4.4) :
-pipeline, Kanban, **journal** — cette dernière ajoutée par #516, qui a sorti le journal du pied de
-la vue. La progression, elle, n'est pas un onglet : elle est **en tête**, au-dessus de la bascule,
-et se lit avec n'importe laquelle des trois. Le décompte de cette section est celui des **lectures
-servies par l'API**, pas celui des onglets.
+⚠ **À l'écran, la bascule de la vue d'un run a quatre positions et non deux** (§2.4.2, §2.4.4) :
+pipeline, Kanban, **frise** (§6.13, ajoutée par #355) et **journal** (ajouté par #516, qui l'a sorti
+du pied de la vue). La progression, elle, n'est pas un onglet : elle est **en tête**, au-dessus de la
+bascule, et se lit avec n'importe laquelle des quatre. Le décompte de cette section est celui des
+**lectures servies par l'API**, pas celui des onglets.
 
 - `GET /api/executions/{run_id}/graphe` → `GrapheRun` — le graphe du run. `404` si aucune trace
   reçue pour ce `run_id`, par la même porte que `/cout`.
@@ -3378,3 +3460,123 @@ fil **strictement vide** (ni message, ni lettre inter-agents, ni événement sur
 n'ont **jamais le même emplacement d'ingestion** ; et un fil relu du disque perd le `markdown` de son
 rapport — à dessein — mais **retrouve son contenu** par le champ `contexte`, sans quoi l'agent
 cesserait de voir le document dès le tour suivant.
+
+### 6.13 La frise d'activité d'un run — ce que les agents font et se disent (#355) — **livré**
+
+La **quatrième lecture** d'un run, et celle qui manquait. Le Kanban dit « combien dans quel état »
+(§6.1), le graphe « quoi après quoi » (§6.11), le journal « qu'a-t-il fait » (§6.2) ; aucune ne dit
+**qui, quand, et à qui**. Le défaut se mesure : pendant un run, une **attente de décision humaine
+était indiscernable d'un travail en cours** — 53 minutes perdues le 14 août sans qu'aucun écran ne le
+dise.
+
+- `GET /api/executions/{run_id}/frise` → `FriseRun` — la frise du run. `404` si aucune trace reçue
+  pour ce `run_id`, par la même porte que `/cout` et `/graphe`. **Pas de `?projet=`** : le run seul
+  suffit à désigner ce qu'on lit.
+
+```jsonc
+// FriseRun
+{
+  "run_id": "demo-live",
+  // La chronologie, TRIÉE PAR LE SERVEUR : instant, puis rang du journal.
+  "entrees": [
+    { "id": "j-0007",                     // l'id du journal requêtable (§6.2)
+      "type": "tache.statut",             // le type d'événement D'ORIGINE
+      "couloir": "developpeur",           // toujours l'un des `couloirs` ci-dessous
+      "agent": "developpeur", "role": "Développeur",
+      "tache_id": "api-crud", "titre": "API CRUD",
+      // Le statut RÉSOLU dans la machine à états (docs/03 §3) — vide pour un
+      // message. C'est la seule valeur que la frise calcule.
+      "statut": "en_cours",
+      "objet": "démarrage de la tâche",   // le détail, ou le titre s'il n'y en a pas
+      "horodatage": "2026-08-28T10:00:00+00:00" },
+    { "id": "j-0008", "type": "message.inter_agents", "couloir": "developpeur",
+      "agent": "developpeur", "role": "Développeur", "tache_id": "api-crud",
+      "titre": "API CRUD", "statut": "",
+      "objet": "handoff de developpeur à qa : à toi",
+      "horodatage": "2026-08-28T10:00:05+00:00" },
+    { "id": "j-0009", "type": "validation.demande", "couloir": "devops",
+      "agent": "devops", "role": "DevOps", "tache_id": "deploiement",
+      "titre": "Déployer", "statut": "en_attente_validation",
+      "objet": "déploiement en production",
+      "horodatage": "2026-08-28T10:01:00+00:00" }
+  ],
+  // Un couloir par agent du run, MUET COMPRIS ; `entrees` ne porte que des ids.
+  "couloirs": [
+    { "agent": "developpeur", "role": "Développeur", "repli": false,
+      "entrees": ["j-0007", "j-0008"] },
+    { "agent": "devops", "role": "DevOps", "repli": false, "entrees": ["j-0009"] },
+    { "agent": "qa", "role": "Testeur", "repli": false, "entrees": [] },
+    // Le repli ferme la liste, et n'existe que s'il a recueilli quelque chose.
+    { "agent": "", "role": "", "repli": true, "entrees": ["j-0011"] }
+  ],
+  "total": 4,        // AVANT le plafond
+  "plafond": 500,
+  "tronquee": false  // à `true`, ce sont les entrées les PLUS RÉCENTES qui sont rendues
+}
+```
+
+**Rien n'est créé : trois flux déjà persistés, assemblés.** `tache.statut` (le moteur consigne le
+démarrage et l'issue de chaque tâche, blocages compris — #43/#98), `message.inter_agents` (la
+messagerie journalise chaque passage de relais — #44) et les deux temps d'une validation (#48). La
+source est le **journal requêtable** (§6.2) et non la projection : il porte déjà l'identifiant stable
+que le tri exige, il est alimenté par le rejeu du journal durable **et** par la pompe, et il se filtre
+par run. Chaque entrée garde son `id` — les deux lectures ne peuvent donc pas se contredire.
+
+⚠ **`message.inter_agents` reste vide pour un run lancé depuis l'API**, et c'est la limite déjà
+nommée au §6.11 pour les arêtes : le relais n'existe que si une messagerie est injectée
+(`OrchestrationEngine(..., mailbox=…)`), or la Control Tower lance ses runs par
+`OrchestrationEngine.default()`, qui n'en injecte aucune. La frise **montre** ce flux dès qu'il
+existe (run CLI publié, démo) ; elle ne le fabrique pas.
+
+**Le tri se départage sur le rang, pas sur l'identifiant.** Les horodatages du dépôt sont à la
+**seconde** (`Event`, `StepRecord`, `AgentMessage` — tous les trois), donc sur un run parallèle deux
+entrées portent couramment le même instant, et un tri instable ferait sauter des lignes d'un
+rafraîchissement à l'autre — c'est-à-dire pendant qu'on regarde. Le départage est le rang du journal,
+figé à la consignation ; ce n'est **pas** la chaîne `j-0007`, où « j-10000 » précéderait « j-9999 »
+(la raison est écrite au §6.2 pour la pagination, elle vaut ici mot pour mot). Conséquence
+vérifiable : deux appels rendent le même ordre, quel que soit l'ordre d'arrivée.
+
+**Le couloir suppose de savoir à qui rattacher une entrée, et le piège n'est pas l'absence d'agent.**
+Le moteur consigne `agent="—"` sur une tâche **jamais routée** (`_consigne_blocage`) : un couloir
+nommé « — » serait absurde, et ce sont précisément les entrées du troisième critère. Le repli les
+recueille, elles y restent parfaitement lisibles — leur statut, lui, dit « bloquée ». Un couloir
+**vide** est légitime : un agent du run qui n'a encore rien dit se lit comme tel, là où l'omettre le
+ferait apparaître en cours de route sans qu'on sache s'il était prévu. Et le contrat que le deuxième
+critère écrit en toutes lettres tient par construction : **le `couloir` d'une entrée est toujours
+l'un des `couloirs` servis** — la déclaration ordonne les couloirs, elle ne les filtre jamais.
+
+**`en_attente_validation` est produit ici, et nulle part ailleurs.** Le moteur ne l'émet pas —
+[`progression.py`](../maestro/controltower/progression.py) le nomme depuis #473 sans que rien ne le
+produise —, et la file `GET /api/validations` en dit l'**état courant**, jamais la **seconde** où la
+tâche s'est arrêtée. Une frise a besoin de la seconde : `validation.demande` *est* ce changement de
+statut, vu du run. Aucun vocabulaire nouveau n'est inventé — la décision reprend au mot près les deux
+statuts (`approuve`, `refuse`) que le moteur écrit lui-même sur l'étape `<tâche>:validation`.
+
+**Ce qui n'y entre pas est un choix** : `agent.activite` (relances, refus d'outil, activité en cours
+de tâche) est le bruit de fond d'un run, ni changement d'état ni échange — l'y verser noierait les
+trois signaux que le ticket demande de distinguer. Le journal requêtable reste là pour qui veut tout.
+
+**Le direct passe par le canal existant, et la frise n'a pas d'événement à elle** — même doctrine que
+le graphe : elle se recompose à la lecture, donc `tache.statut`, `message.inter_agents` et
+`validation.demande` la font bouger sans second canal.
+
+**La borne se dit toujours.** `plafond` (500) retient les entrées les plus **récentes** — « pendant
+qu'ils le font » se lit par la fin —, `total` compte avant, `tronquee` dit si la borne a mordu. Une
+frise qui rendrait ses dernières lignes en silence ferait passer un run d'une heure pour un run de
+cinq cents lignes.
+
+Implémentation : [`maestro/controltower/frise.py`](../maestro/controltower/frise.py) (la composition,
+module feuille comme `progression.py`), `ServiceJournal.entrees_du_run` pour la source,
+`ControlTowerState.agents_du_run` pour les couloirs déclarés, et
+[`maestro/controltower/app.py`](../maestro/controltower/app.py) pour la route.
+
+Vérification : [`tests/test_frise_run.py`](../tests/test_frise_run.py) — la résolution d'une entrée
+(dont le tiret qui n'ouvre aucun couloir), le tri **prouvé par deux présentations inverses de la même
+matière**, les couloirs et l'invariant « aucune entrée perdue » vérifié par un **ensemble** et jamais
+par un décompte, les trois états côte à côte sur un même run, le plafond qui mord par la tête, et la
+route recoupée avec `GET /api/journal?run_id=…` entrée par entrée. Côté écran :
+[`apps/web/tests/frise.test.tsx`](../apps/web/tests/frise.test.tsx).
+
+L'écran qui consomme ce contrat est la **vue frise** (§2.4.4) : un tableau dont les lignes sont le
+temps et les colonnes les agents — un `<table>` et non une grille de `<div>`, pour que l'association
+`<th scope="col">` fasse porter à **chaque entrée son agent** sans le réécrire sur chaque carte.

@@ -20,6 +20,7 @@ import type {
   EntreeRegistreMcp,
   EtatAgent,
   FilChat,
+  FriseRun,
   GrapheRun,
   IntegrationPoolMcp,
   LancementExecution,
@@ -164,6 +165,27 @@ export function chargerCoutExecution(runId: string): Promise<CoutExecution> {
 export function chargerGrapheExecution(runId: string): Promise<GrapheRun> {
   return chargerJson<GrapheRun>(
     `/api/executions/${encodeURIComponent(runId)}/graphe`,
+  );
+}
+
+/**
+ * La frise d'activité d'une exécution (`GET /api/executions/{run_id}/frise`,
+ * #355) : les changements de statut de tâche **et** les messages inter-agents
+ * sur une même chronologie, rangés en couloirs — un par agent, plus un repli
+ * pour ce qui n'a pas d'agent résoluble.
+ *
+ * Tout ce qui sert à dessiner est **servi** : le tri (instant puis rang du
+ * journal, déterministe quel que soit l'ordre d'arrivée), le couloir de chaque
+ * entrée, et le statut résolu qui distingue une tâche bloquée d'une tâche qui
+ * attend un humain. Rien à regrouper ni à retrier ici.
+ *
+ * Pas de `?projet=`, par la même porte que `/graphe` et `/cout` : le run seul
+ * suffit à désigner ce qu'on lit. Se recharge sur le pouls du shell, la frise
+ * n'ayant pas de canal à elle.
+ */
+export function chargerFriseExecution(runId: string): Promise<FriseRun> {
+  return chargerJson<FriseRun>(
+    `/api/executions/${encodeURIComponent(runId)}/frise`,
   );
 }
 

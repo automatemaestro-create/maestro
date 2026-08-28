@@ -1,17 +1,29 @@
 /**
- * Les trois **lectures** d'un run et la bascule entre elles (#491, lot 3 de
- * #488 ; troisième position ajoutée par #516) — l'arbitrage que ces tickets
- * demandaient de rendre, écrit ici et une seule fois.
+ * Les quatre **lectures** d'un run et la bascule entre elles (#491, lot 3 de
+ * #488 ; troisième position ajoutée par #516, quatrième par #355) —
+ * l'arbitrage que ces tickets demandaient de rendre, écrit ici et une seule
+ * fois.
  *
  * ## Ce qui est tranché
  *
- * **Les trois vues coexistent, sous une bascule, et le pipeline est le défaut.**
+ * **Les quatre vues coexistent, sous une bascule, et le pipeline est le défaut.**
  * Elles ne se remplacent pas, parce qu'elles ne répondent pas à la même question
  * (docs/05 §2.4.2) : le pipeline dit **« quoi après quoi »**, le Kanban
- * **« combien dans quel état »**, le journal **« qu'a-t-il fait »**. Aucune ne se
- * déduit d'une autre — on ne lit pas un enchaînement dans cinq colonnes, on ne
- * compte pas un état dans un graphe, et ni l'un ni l'autre ne rend ce qu'un run
- * a *dit*.
+ * **« combien dans quel état »**, la frise **« qui, quand, et à qui »**, le
+ * journal **« qu'a-t-il fait »**. Aucune ne se déduit d'une autre — on ne lit pas
+ * un enchaînement dans cinq colonnes, on ne compte pas un état dans un graphe,
+ * et ni l'un ni l'autre ne rend ce qu'un run a *dit*.
+ *
+ * **La frise n'est pas le journal, et c'est la distinction la plus fine des
+ * quatre** (#355). Les deux sont chronologiques et lisent la même source
+ * persistée ; ce qui les sépare est ce qu'ils **retiennent** et comment ils le
+ * **rangent**. Le journal rend *tout* ce qu'un run a émis, du plus récent au
+ * plus ancien, en une colonne — c'est la trace, on l'ouvre pour chercher. La
+ * frise ne retient que deux flux — les changements de statut de tâche et les
+ * messages inter-agents — et les range **par agent**, dans le sens du temps :
+ * c'est une vue d'ensemble, on l'ouvre pour voir. Le défaut qui a motivé le
+ * ticket se lit dans cet écart : sur un fil, une attente de décision humaine est
+ * une ligne parmi cent ; sur une frise, c'est un couloir qui ne bouge plus.
  *
  * **Mais elles ne s'affichent jamais ensemble**, et c'est le cœur de l'arbitrage :
  * empilées, elles se concurrenceraient — les mêmes tâches deux fois sur le même
@@ -66,19 +78,27 @@
  * une régression à compenser.
  */
 
-import { IconeGraphe, IconeJournal, IconeTache } from "@/components/Icones";
+import {
+  IconeActivite,
+  IconeGraphe,
+  IconeJournal,
+  IconeTache,
+} from "@/components/Icones";
 import type { Icone } from "@/components/Primitives";
 
 /** Le flux du run : ses nœuds, ses arêtes, ses branches parallèles (#491). */
 export const VUE_PIPELINE = "pipeline";
 /** Ses tâches par statut, dans les colonnes du tableau de bord (#475). */
 export const VUE_KANBAN = "kanban";
+/** Ce que ses agents ont fait et se sont dit, en couloirs et dans le temps (#355). */
+export const VUE_FRISE = "frise";
 /** Ce qu'il a dit, dans l'ordre où il l'a dit — son journal persisté (#478). */
 export const VUE_JOURNAL = "journal";
 
 export type VueRunCle =
   | typeof VUE_PIPELINE
   | typeof VUE_KANBAN
+  | typeof VUE_FRISE
   | typeof VUE_JOURNAL;
 
 export type VueRunOnglet = {
@@ -92,10 +112,15 @@ export type VueRunOnglet = {
 };
 
 /**
- * L'ordre d'affichage : le flux d'abord, l'inventaire ensuite, le récit en
- * dernier. C'est l'ordre de lecture que #478 défendait quand le journal était au
- * pied de la vue — on le consulte après avoir vu où en est le run —, reporté sur
- * la bascule au lieu d'un empilement (#516).
+ * L'ordre d'affichage : le flux d'abord, l'inventaire ensuite, l'activité puis
+ * le récit. C'est l'ordre de lecture que #478 défendait quand le journal était
+ * au pied de la vue — on le consulte après avoir vu où en est le run —, reporté
+ * sur la bascule au lieu d'un empilement (#516).
+ *
+ * La **frise** s'insère en avant-dernier et non en dernier (#355) : elle répond
+ * encore à « où en est-on ? », dans le sens du temps, là où le journal est ce
+ * qu'on ouvre quand la vue d'ensemble ne suffit plus. Le journal ferme donc
+ * toujours la rangée, et la règle de #516 tient sans exception.
  */
 export const VUES_RUN: VueRunOnglet[] = [
   {
@@ -109,6 +134,13 @@ export const VUES_RUN: VueRunOnglet[] = [
     libelle: "Kanban",
     question: "Combien dans quel état : les tâches de ce run par colonne",
     icone: IconeTache,
+  },
+  {
+    cle: VUE_FRISE,
+    libelle: "Frise",
+    question:
+      "Qui, quand, et à qui : statuts et messages en couloirs, dans l'ordre du temps",
+    icone: IconeActivite,
   },
   {
     cle: VUE_JOURNAL,
