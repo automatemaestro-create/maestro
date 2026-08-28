@@ -2734,23 +2734,52 @@ direct), et le troisième canal qui s'y branche.
 - `GET /api/chat/{agent}/flux?contenu=…` → `text/event-stream` — chaque `data: <json>` est un
   `FragmentChat`. `404` si le fil n'existe pas, `422` sur un `contenu` vide (tranché **avant** la
   première trame : rien n'est persisté).
+- `POST /api/chat/{agent}/flux` → `text/event-stream` — **même corps que `POST …/messages`**
+  (`contenu`, `sources`, `projet_id`) et mêmes trames (#692). En plus des deux refus du GET, `422`
+  motivé `{motif, message, index}` sur une source refusée, également tranché avant la première trame.
 
 ```jsonc
 // FragmentChat (une trame SSE)
 {
   "type": "fragment",        // debut (ouvre) | fragment (incrémente) | fin (clôt) | erreur
   "agent": "qa",
-  "auteur": "agent",         // l'émetteur
+  "auteur": "agent",         // l'émetteur de la RÉPONSE — le même sur les quatre trames
   "delta": " morceau",       // incrément de texte ; vide hors `fragment` — porte la cause sur `erreur`
-  "message": null            // MessageChat complet sur la seule trame `fin`, null ailleurs
+  "message": null            // MessageChat complet sur `debut` (l'utilisateur) et `fin` (la réponse)
 }
 ```
 
-Deux propriétés à ne pas défaire. La concaténation des `delta` **reconstitue** le contenu de la
+Trois propriétés à ne pas défaire. La concaténation des `delta` **reconstitue** le contenu de la
 trame `fin` : c'est ce qui permet à un client d'afficher pendant que ça arrive sans rien
-réconcilier ensuite. Et une réponse impossible sort en trame **`erreur`**, jamais en statut HTTP :
+réconcilier ensuite. Une réponse impossible sort en trame **`erreur`**, jamais en statut HTTP :
 les en-têtes sont déjà partis quand elle se découvre, et le message utilisateur, lui, est déjà
-acquis — le fil ne perd rien, relancer suffit.
+acquis — le fil ne perd rien, relancer suffit. Et les trames qui **bornent** l'échange portent
+chacune leur `MessageChat` — `debut` celui de l'utilisateur, `fin` la réponse : c'est la paire que
+`POST …/messages` rend d'un coup, rendue en deux temps. Sans la première, un client du flux
+enverrait des sources sans jamais savoir ce qui en a été lu, tronqué ou ignoré (le `rapport` de
+#316).
+
+##### Le flux porte ce qu'un message porte — un POST, pas une composition déclarée (#692)
+
+Un message peut embarquer des **sources** (#482) et nommer le **projet** de la fenêtre (#683). Le
+POST les portait, le flux non — son `contenu` voyage en paramètre d'URL, où l'on ne peut
+raisonnablement déclarer ni identifiants de sources ni corps. Y basculer un fil aurait donc perdu
+les pièces jointes en silence, c'est-à-dire **échangé un rendu incrémental contre une
+fonctionnalité** : c'est le transport, et lui seul, qui barrait le consommateur (#695).
+
+`ServiceChat.diffuser` accepte donc les mêmes `sources` qu'`envoyer`, et le canal a **deux entrées
+HTTP pour une seule mécanique** : `POST …/flux` pour un message qui embarque quelque chose, et le
+`GET` d'origine pour le cas sans source — seul verbe qu'un `EventSource` sache ouvrir, et contrat
+déjà publié (#183/#268), donc conservé plutôt que retiré. Ce ne sont pas deux chemins d'envoi : les
+deux verbes appellent le même `diffuser`, qui passe par `_ouvrir` puis `_repondre` comme `envoyer`.
+
+L'autre option — un `GET` référençant une **composition déjà déclarée** — a été écartée : elle
+demandait un second endpoint pour déclarer, un état composé à garder entre les deux appels puis à
+ramasser, et elle éloignait le refus du moment de l'envoi. Un corps de POST fait la même chose sans
+rien garder, et laisse au refus la forme qu'il a déjà sur l'autre voie — le `422 {motif, message,
+index}` de #315, levé **avant** la première trame parce que `_ouvrir` précède le premier `yield`.
+L'arbitrage est écrit en tête de `maestro/controltower/chat.py` : c'est le genre de choix qu'on
+redécouvre.
 
 Le point d'extension est `RepondeurChat.produire(agent, fil, *, incrementer=…, projet_id=…)`, dont
 l'implémentation par défaut publie le texte de `repondre` en **un seul** incrément : tout répondeur
@@ -2776,8 +2805,8 @@ parle pas à un exécutant mais à l'orchestration.
 - Une **question** n'ouvre rien : elle est traitée en conversation (état des runs en cours, des
   tâches, des validations en attente). Un **refus** et un **silence** n'ouvrent rien non plus.
 - Le message porte le **projet de la fenêtre** (#683) — `projet_id` dans le corps de
-  `POST …/messages`, `?projet_id=` sur le flux : le run ouvert lui appartient, et l'aperçu rendu
-  aux questions est cadré sur lui.
+  `POST …/messages` comme de `POST …/flux`, `?projet_id=` sur le `GET …/flux` : le run ouvert lui
+  appartient, et l'aperçu rendu aux questions est cadré sur lui.
 
 ##### Ce que le fil ouvre appartient au projet de la fenêtre (#683)
 
