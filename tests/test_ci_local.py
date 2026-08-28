@@ -36,6 +36,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -355,9 +356,7 @@ class Clone:
         self.git("push", "--quiet", "origin", "main")
 
     # --- exécution ---
-    def _lance(
-        self, script: str, args: tuple[str, ...], reglages: dict[str, str]
-    ) -> subprocess.CompletedProcess[str]:
+    def environnement(self, reglages: dict[str, str]) -> dict[str, str]:
         environnement = os.environ.copy()
         environnement.update(
             {
@@ -369,16 +368,43 @@ class Clone:
             }
         )
         environnement.update(reglages)
+        return environnement
+
+    def _lance(
+        self, script: str, args: tuple[str, ...], reglages: dict[str, str]
+    ) -> subprocess.CompletedProcess[str]:
         assert BASH is not None
         return subprocess.run(  # noqa: S603
             [BASH, str(self.racine / "scripts" / "ci" / script), *args],
             cwd=str(self.racine),
-            env=environnement,
+            env=self.environnement(reglages),
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
             timeout=180,
+        )
+
+    def demarre(
+        self, *args: str, depuis: Path | None = None, **reglages: str
+    ) -> subprocess.Popen[str]:
+        """Le filet, lancé SANS l'attendre — de quoi en avoir deux en vol (#745).
+
+        `depuis` déplace le répertoire de travail : c'est ainsi qu'on lance un filet depuis un
+        worktree lié, le seul moyen d'éprouver que la file est bien globale au poste et non
+        propre à chaque répertoire de travail.
+        """
+        assert BASH is not None
+        base = depuis or self.racine
+        return subprocess.Popen(  # noqa: S603
+            [BASH, str(base / "scripts" / "ci" / "local.sh"), *args],
+            cwd=str(base),
+            env=self.environnement(reglages),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
         )
 
     def lance(self, *args: str, **reglages: str) -> subprocess.CompletedProcess[str]:
@@ -479,12 +505,21 @@ def clone(tmp_path: Path) -> Clone:
     git("init", "--bare", "--quiet", "--initial-branch=main", cwd=origin)
 
     (racine / "scripts" / "ci").mkdir(parents=True)
-    # Les TROIS fichiers du filet, pas seulement son point d'entrée : depuis #405 la plomberie du
-    # régime conteneur vit dans `pytest-regime.sh`, que `local.sh` ET `pytest.sh` sourcent. N'en
-    # copier qu'un rendrait le clone jetable incapable de démarrer — et surtout, ne pas copier
-    # `pytest.sh` reviendrait à tester un partage dont un seul des deux bénéficiaires est présent.
-    for fichier in ("local.sh", "pytest-regime.sh", "pytest.sh"):
+    # Les QUATRE fichiers du filet, pas seulement son point d'entrée : depuis #405 la plomberie du
+    # régime conteneur vit dans `pytest-regime.sh`, que `local.sh` ET `pytest.sh` sourcent, et
+    # depuis #745 la file d'attente vit dans `verrou.sh`. N'en copier qu'un rendrait le clone
+    # jetable incapable de démarrer — et surtout, ne pas copier `pytest.sh` reviendrait à tester un
+    # partage dont un seul des deux bénéficiaires est présent.
+    for fichier in ("local.sh", "pytest-regime.sh", "pytest.sh", "verrou.sh"):
         shutil.copy2(RACINE / "scripts" / "ci" / fichier, racine / "scripts" / "ci" / fichier)
+    # `verrou.sh` délègue la vivacité d'un processus à `pilote.sh` (#745) — PID recyclé, zombie,
+    # échelle de naissance qui dérive (#456) : la question a UNE réponse dans ce dépôt. Le clone
+    # jetable porte donc le fichier délégué, faute de quoi le filet ne se chargerait plus.
+    (racine / "scripts" / "orchestrate").mkdir(parents=True)
+    shutil.copy2(
+        RACINE / "scripts" / "orchestrate" / "pilote.sh",
+        racine / "scripts" / "orchestrate" / "pilote.sh",
+    )
     (racine / ".github" / "workflows").mkdir(parents=True)
     (racine / ".github" / "workflows" / "ci.yml").write_text(
         WORKFLOW_CI, encoding="utf-8", newline="\n"
@@ -2499,3 +2534,343 @@ def test_les_deux_prompts_donnent_la_forme_couverte_des_trois_maillons() -> None
             f"{debut} ne donne pas la forme couverte de {_formes_manquantes(bloc)} (#528) — "
             "aucune règle ne lèvera ces maillons, la session réessaiera donc la forme refusée"
         )
+
+
+# --- Un filet à la fois sur le poste (#745) -----------------------------------------------------
+#
+# N exécutions simultanées de `local.sh` ne sont pas un cas de bord depuis #455/#626 : un run à
+# concurrence 3 fait passer le filet à chacune de ses sessions avant de pousser, et une session
+# interactive peut en lancer un par-dessus. Trois filets se disputent alors le démon docker, les
+# cœurs et la mémoire — jusqu'à faire rougir des suites qui mesurent de la simultanéité RÉELLE
+# (#292/#313), c'est-à-dire à rendre un verdict faux. Ils se rangent donc en file.
+#
+# CE QUI DOIT ÊTRE SIMULTANÉ L'EST PAR UNE BARRIÈRE, JAMAIS PAR UN `sleep` (règle de #292). Le shim
+# `shellcheck` ci-dessous signale son entrée puis attend le départ donné par le test : tant que le
+# départ n'est pas donné, le filet qui a pris le verrou est DEDANS, et l'on peut observer ce que
+# fait l'autre sans courir contre l'ordonnanceur.
+#
+# Et le PIC de simultanéité se lit sans horloge : chaque filet pose SON marqueur (aucun fichier à
+# deux écrivains — c'est la leçon de #313, où un compteur partagé perdait des incréments), donc
+# « les deux marqueurs d'entrée existent alors qu'aucun de sortie n'existe » EST le pic de 2.
+SHIM_BARRIERE = """\
+#!/usr/bin/env bash
+printf 'shellcheck %s\\n' "$*" >> "$MAESTRO_FAUX_JOURNAL"
+nom="${MAESTRO_ESSAI_NOM:-?}"
+atelier="$MAESTRO_ESSAI_ATELIER"
+# Première entrée seulement : `mkdir` est atomique, donc le marqueur reste celui du premier appel
+# même si le filet appelle shellcheck une fois par fichier (#285).
+if mkdir "$atelier/$nom.entre" 2>/dev/null; then
+  : > "$atelier/$nom.debut"
+fi
+# La barrière, BORNÉE : un test qui oublierait de donner le départ doit échouer, jamais bloquer la
+# suite entière.
+n=0
+while [ ! -e "$atelier/go" ] && [ "$n" -lt 900 ]; do
+  sleep 0.1
+  n=$((n + 1))
+done
+: > "$atelier/$nom.fin"
+exit 0
+"""
+
+# Un « filet » réduit à sa file : il prend le verrou, le signale, et ne le rend QUE si on le lui
+# demande. Sans « garde », il sort sans trap — c'est-à-dire en laissant derrière lui exactement ce
+# que laisse un poste éteint ou un SIGKILL : un verrou périmé.
+#
+# La carte d'identité est écrite par `verrou.sh`/`pilote.sh` eux-mêmes, jamais fabriquée à la main :
+# un test qui la forgerait épinglerait sa propre idée du format, pas celui que le code écrit.
+PORTEUR = """\
+#!/usr/bin/env bash
+set -uo pipefail
+. "%(racine)s/scripts/ci/verrou.sh"
+verrou_ci_prend
+: > "$1"
+[ "${2:-}" = garde ] || exit 0
+n=0
+while [ ! -e "$1.stop" ] && [ "$n" -lt 900 ]; do
+  sleep 0.1
+  n=$((n + 1))
+done
+verrou_ci_rend
+"""
+
+
+def file_dattente(clone: Clone) -> Path:
+    """Le répertoire de la file — sous le RÉPERTOIRE GIT COMMUN, donc partagé par le clone et tous
+    ses worktrees (#745). C'est cette adresse-là que le test épingle : `.maestro/` ne conviendrait
+    pas (un worktree a le sien) et `.maestro/ci-local/` encore moins (rasé à chaque lancement)."""
+    return clone.racine / ".git" / "maestro-ci-file"
+
+
+def attend(condition, delai: float = 90.0, quoi: str = "") -> None:
+    """Attend un ÉVÉNEMENT, pas une durée : la boucle sort dès qu'il survient, et le délai n'est là
+    que pour transformer un blocage en échec lisible."""
+    limite = time.monotonic() + delai
+    while time.monotonic() < limite:
+        if condition():
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"jamais survenu en {delai} s : {quoi}")
+
+
+def prepare_barriere(clone: Clone) -> Path:
+    """Équipe le clone du shim-barrière et rend l'atelier où se posent les marqueurs."""
+    atelier = clone.tmp / "barriere"
+    atelier.mkdir(exist_ok=True)
+    clone.pose_shim("shellcheck", corps=SHIM_BARRIERE)
+    return atelier
+
+
+def lance_porteur(clone: Clone, temoin: Path, *, garde: bool) -> subprocess.Popen[str]:
+    """Un détenteur du verrou, vivant (`garde`) ou mort-né (verrou périmé laissé derrière)."""
+    script = clone.tmp / "porteur.sh"
+    script.write_text(PORTEUR % {"racine": clone.racine.as_posix()}, encoding="utf-8", newline="\n")
+    assert BASH is not None
+    args = [BASH, str(script), str(temoin)]
+    if garde:
+        args.append("garde")
+    return subprocess.Popen(  # noqa: S603
+        args,
+        cwd=str(clone.racine),
+        env=clone.environnement({}),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+
+
+def test_deux_filets_ne_jouent_jamais_ensemble(clone: Clone) -> None:
+    """Le cœur de #745 : le second filet ATTEND, il ne joue pas en parallèle.
+
+    Le pic de simultanéité vaut 1, et il est mesuré et non supposé : tant que A est retenu par la
+    barrière, B est vivant (il s'est inscrit dans la file) et n'est jamais entré dans le job.
+    """
+    clone.equipe_tout()
+    atelier = prepare_barriere(clone)
+
+    a = clone.demarre(
+        "--only", "shellcheck", MAESTRO_ESSAI_NOM="A", MAESTRO_ESSAI_ATELIER=str(atelier)
+    )
+    attend(lambda: (atelier / "A.debut").exists(), quoi="A entré dans le job")
+
+    b = clone.demarre(
+        "--only", "shellcheck", MAESTRO_ESSAI_NOM="B", MAESTRO_ESSAI_ATELIER=str(atelier)
+    )
+    # B s'inscrit dans la file : le témoin dit qu'il est VIVANT et qu'il attend, ce qu'un simple
+    # « B n'a rien joué » ne distinguerait pas de « B n'a pas encore démarré ».
+    attend(
+        lambda: any((file_dattente(clone) / "file").glob("*")),
+        quoi="B inscrit dans la file d'attente",
+    )
+    assert not (atelier / "B.debut").exists(), (
+        "B est entré dans le job pendant que A y était : les deux filets se recouvrent"
+    )
+
+    (atelier / "go").touch()
+    sortie_a = a.communicate(timeout=180)[0]
+    sortie_b = b.communicate(timeout=180)[0]
+
+    assert (atelier / "B.debut").exists(), (
+        "B n'a jamais joué : la file l'a bloqué au lieu de le faire attendre"
+    )
+    assert a.returncode == 0 and b.returncode == 0, f"A:{sortie_a}\nB:{sortie_b}"
+    assert "j'attends mon tour" in sortie_b
+    assert "tour venu après" in sortie_b
+    # A n'a rien attendu du tout : il était le premier.
+    assert "j'attends mon tour" not in sortie_a
+
+
+def test_l_attente_dit_le_rang_dans_la_file(clone: Clone) -> None:
+    """« Combien devant moi ? » — la moitié du message que deux filets ne peuvent pas montrer.
+
+    À deux, le second attend le PORTEUR et n'a personne devant lui dans la file : le rang ne
+    s'affiche qu'à partir du troisième. Sans ce test, la branche qui le compte n'est jouée nulle
+    part, alors que c'est elle qui distingue « j'attends une minute » de « j'attends trois filets ».
+    """
+    clone.equipe_tout()
+    atelier = prepare_barriere(clone)
+    files = file_dattente(clone) / "file"
+
+    def inscrits() -> int:
+        return len(list(files.glob("*"))) if files.exists() else 0
+
+    a = clone.demarre(
+        "--only", "shellcheck", MAESTRO_ESSAI_NOM="A", MAESTRO_ESSAI_ATELIER=str(atelier)
+    )
+    attend(lambda: (atelier / "A.debut").exists(), quoi="A entré dans le job")
+    b = clone.demarre(
+        "--only", "shellcheck", MAESTRO_ESSAI_NOM="B", MAESTRO_ESSAI_ATELIER=str(atelier)
+    )
+    # C n'est lancé qu'une fois B INSCRIT : sans cette attente, l'ordre des deux serait une course
+    # que l'ordonnanceur trancherait, et le rang observé changerait d'un lancement à l'autre.
+    attend(lambda: inscrits() >= 1, quoi="B inscrit dans la file")
+    c = clone.demarre(
+        "--only", "shellcheck", MAESTRO_ESSAI_NOM="C", MAESTRO_ESSAI_ATELIER=str(atelier)
+    )
+    attend(lambda: inscrits() >= 2, quoi="B et C tous deux en file derrière le porteur")
+
+    (atelier / "go").touch()
+    a.communicate(timeout=180)
+    sortie_b = b.communicate(timeout=180)[0]
+    sortie_c = c.communicate(timeout=180)[0]
+
+    # B attend le porteur, personne dans la file devant lui : le rang n'a rien à dire.
+    assert "j'attends mon tour (" in sortie_b, sortie_b
+    assert "1 devant moi" in sortie_c, (
+        f"le troisième filet doit dire combien de filets le précèdent — {sortie_c}"
+    )
+    assert (atelier / "C.debut").exists(), "C n'a jamais eu son tour"
+
+
+def test_sans_la_file_les_deux_filets_se_recouvrent(clone: Clone) -> None:
+    """Le motif prouvé sur un échantillon fautif : sans la file, le pic vaut 2.
+
+    Sans cette moitié, le test au-dessus rendrait un ✓ sur une question jamais posée — il suffirait
+    que la barrière retienne les deux filets pour la mauvaise raison (un shim cassé, un job jamais
+    joué) pour qu'il passe. Ici les DEUX marqueurs d'entrée existent alors qu'aucun de sortie n'a
+    été posé : c'est un pic de 2, observé sans horloge et sans `sleep` de synchronisation.
+    """
+    clone.equipe_tout()
+    atelier = prepare_barriere(clone)
+
+    a = clone.demarre(
+        "--only",
+        "shellcheck",
+        MAESTRO_CI_FILE="0",
+        MAESTRO_ESSAI_NOM="A",
+        MAESTRO_ESSAI_ATELIER=str(atelier),
+    )
+    b = clone.demarre(
+        "--only",
+        "shellcheck",
+        MAESTRO_CI_FILE="0",
+        MAESTRO_ESSAI_NOM="B",
+        MAESTRO_ESSAI_ATELIER=str(atelier),
+    )
+    attend(
+        lambda: (atelier / "A.debut").exists() and (atelier / "B.debut").exists(),
+        quoi="les deux filets entrés ensemble dans le job (pic de 2)",
+    )
+    assert not (atelier / "A.fin").exists() and not (atelier / "B.fin").exists()
+
+    (atelier / "go").touch()
+    a.communicate(timeout=180)
+    sortie_b = b.communicate(timeout=180)[0]
+    assert "j'attends mon tour" not in sortie_b, (
+        "MAESTRO_CI_FILE=0 doit rendre le filet d'avant #745"
+    )
+
+
+def test_la_file_est_globale_au_poste_pas_au_repertoire_de_travail(clone: Clone) -> None:
+    """Un filet lancé depuis un WORKTREE attend celui du clone principal.
+
+    C'est la moitié du ticket qui ne se voit pas : la panne à corriger vient d'un run qui mène
+    N tickets de front, donc de N worktrees. Une file rangée sous `<racine>/.maestro/` aurait été
+    verte au test précédent et parfaitement inutile en vrai — chaque répertoire de travail aurait
+    eu la sienne.
+    """
+    clone.equipe_tout()
+    atelier = prepare_barriere(clone)
+    worktree = clone.racine.parent / "worktree-essai"
+    clone.git("worktree", "add", "--quiet", "-b", "essai/745", str(worktree))
+
+    a = clone.demarre(
+        "--only", "shellcheck", MAESTRO_ESSAI_NOM="A", MAESTRO_ESSAI_ATELIER=str(atelier)
+    )
+    attend(lambda: (atelier / "A.debut").exists(), quoi="A entré dans le job")
+
+    b = clone.demarre(
+        "--only",
+        "shellcheck",
+        depuis=worktree,
+        MAESTRO_ESSAI_NOM="B",
+        MAESTRO_ESSAI_ATELIER=str(atelier),
+    )
+    attend(
+        lambda: any((file_dattente(clone) / "file").glob("*")),
+        quoi="le filet du worktree inscrit dans la MÊME file",
+    )
+    assert not (atelier / "B.debut").exists(), (
+        "le filet du worktree a joué pendant celui du clone principal : la file n'est pas partagée"
+    )
+
+    (atelier / "go").touch()
+    a.communicate(timeout=180)
+    sortie_b = b.communicate(timeout=180)[0]
+    assert "j'attends mon tour" in sortie_b
+    assert (atelier / "B.debut").exists()
+
+
+def test_un_verrou_perime_est_repris_et_le_dit(clone: Clone) -> None:
+    """Le porteur est mort sans rendre le verrou (poste éteint, SIGKILL) : on reprend.
+
+    Sans cette reprise, un seul filet tué bloquerait tous les suivants jusqu'au plafond — le remède
+    coûterait alors plus cher que le mal qu'il corrige.
+    """
+    clone.equipe_tout()
+    temoin = clone.tmp / "porteur.pris"
+    porteur = lance_porteur(clone, temoin, garde=False)
+    porteur.communicate(timeout=60)
+    assert temoin.exists(), "le porteur n'a jamais pris le verrou"
+    assert (file_dattente(clone) / "verrou").exists(), "le verrou périmé devait rester derrière lui"
+
+    resultat = clone.lance("--only", "shellcheck")
+    assert "verrou périmé" in resultat.stdout, resultat.stdout
+    assert "repris" in resultat.stdout
+    assert resultat.returncode == 0, resultat.stdout
+
+
+def test_au_plafond_le_filet_joue_quand_meme_et_le_dit_deux_fois(clone: Clone) -> None:
+    """Attendre indéfiniment serait pire : au plafond, on joue — mais jamais en silence.
+
+    Le dépassement se dit DEUX fois : pendant l'attente, et près du verdict. La seconde est la plus
+    importante — c'est celle qu'on relit quand un rouge inattendu tombe, et elle dit que la charge
+    peut en être la cause.
+    """
+    clone.equipe_tout()
+    temoin = clone.tmp / "porteur.pris"
+    porteur = lance_porteur(clone, temoin, garde=True)
+    try:
+        attend(lambda: temoin.exists(), quoi="le porteur a pris le verrou")
+        resultat = clone.lance(
+            "--only", "shellcheck", MAESTRO_CI_FILE_ATTENTE_MAX="1", MAESTRO_CI_FILE_RAPPEL="1"
+        )
+    finally:
+        Path(f"{temoin}.stop").touch()
+        porteur.communicate(timeout=60)
+
+    assert "plafond d'attente atteint" in resultat.stdout, resultat.stdout
+    assert "Joué en parallèle d'un autre filet" in resultat.stdout, (
+        "le résumé doit redire ce que l'attente a annoncé — c'est lui qu'on relit devant un rouge"
+    )
+    # Il a JOUÉ : renoncer au verrou n'est pas renoncer au verdict.
+    assert "OK" in ligne_du_job(resultat.stdout, "shellcheck")
+
+
+def test_list_ne_prend_jamais_de_tour(clone: Clone) -> None:
+    """`--list` et `--help` ne jouent rien : les faire patienter derrière un filet serait
+    absurde — la file serait plus longue sans que rien de plus soit protégé."""
+    clone.equipe_tout()
+    temoin = clone.tmp / "porteur.pris"
+    porteur = lance_porteur(clone, temoin, garde=True)
+    try:
+        attend(lambda: temoin.exists(), quoi="le porteur a pris le verrou")
+        resultat = clone.lance("--list")
+    finally:
+        Path(f"{temoin}.stop").touch()
+        porteur.communicate(timeout=60)
+
+    assert resultat.returncode == 0
+    assert "j'attends mon tour" not in resultat.stdout
+    assert "shellcheck" in resultat.stdout
+
+
+def test_le_verrou_est_rendu_meme_quand_un_job_rouge(clone: Clone) -> None:
+    """Un filet qui échoue rend son tour comme les autres — sinon le suivant paierait son échec."""
+    clone.equipe_tout()
+    resultat = clone.lance("--only", "shellcheck", MAESTRO_FAUX_SHELLCHECK_CODE="1")
+    assert resultat.returncode != 0
+    assert not (file_dattente(clone) / "verrou").exists(), "verrou gardé après un job rouge"
+    assert not any((file_dattente(clone) / "file").glob("*")), "entrée de file laissée derrière"
