@@ -151,6 +151,11 @@ Endpoints :
   (SSE, trames `debut`/`fragment`/`fin`/`erreur`, #268) : un canal, valable pour
   les trois fils ; `?projet_id=` y porte le même rattachement que le corps du
   POST — et n'est pas le `?projet=` des lectures, qui est une portée (#277) ;
+- `POST /api/chat/{agent}/flux` — le **même flux** pour un message qui embarque
+  des sources (#692) : corps de `POST …/messages`, réponse en `text/event-stream`.
+  Une URL ne pouvant porter ni identifiants de sources ni corps, le GET reste la
+  voie du cas sans source ; les deux verbes appellent le même `ServiceChat.diffuser`
+  (arbitrage écrit en tête de `maestro.controltower.chat`) ;
 - `WS   /ws/evenements` — le flux d'événements (statuts de tâches, activité
   des agents, messages inter-agents, validations, chat), au format
   `Event.to_dict`.
@@ -3393,38 +3398,39 @@ def create_app(
             "messages": [message.to_dict(), reponse.to_dict()],
         }
 
-    @app.get("/api/chat/{agent}/flux")
-    async def flux_chat(
-        agent: str, contenu: str = "", projet_id: str | None = None
+    async def _flux_reponse(
+        agent: str,
+        contenu: str,
+        sources: list[dict[str, Any]] | None,
+        projet_id: str | None,
     ) -> StreamingResponse:
-        """Flux SSE d'une réponse de chat — le contrat #183, servi pour de bon (#268).
+        """Le flux SSE d'une réponse — la mécanique des **deux** verbes (#268, #692).
 
-        `GET /api/chat/{agent}/flux?contenu=…` ouvre un `text/event-stream` : une
-        trame `debut`, des trames `fragment` (incréments `delta`), puis une trame
-        `fin` portant le `MessageChat` complet — chacune en `data: <json>`. Une
-        réponse impossible sort en trame `erreur` plutôt qu'en statut HTTP : les
-        en-têtes sont déjà partis quand elle se découvre, et le message
-        utilisateur, lui, est déjà persisté et diffusé.
+        Écrite une fois et appelée par `GET …/flux` comme par `POST …/flux` :
+        deux façons de déclarer l'envoi, un seul chemin d'envoi. Elle ouvre un
+        `text/event-stream` où chaque `data: <json>` est un `FragmentChat` —
+        `debut` (portant le message utilisateur), des `fragment` (incréments
+        `delta`), puis `fin` (portant la réponse complète). Une réponse
+        impossible sort en trame `erreur` plutôt qu'en statut HTTP : les en-têtes
+        sont déjà partis quand elle se découvre, et le message utilisateur, lui,
+        est déjà persisté et diffusé.
 
         Même échange que `POST …/messages` — même persistance, même messagerie,
         mêmes `chat.message` sur le WebSocket —, rendu au fur et à mesure. Le
         canal vaut pour les **trois** fils : un agent du catalogue, `assistance`
-        (#123) et `orchestrateur` (#268). 404 si le fil n'existe pas, 422 sur un
-        `contenu` vide (rien n'est persisté, et la question se tranche avant la
-        première trame).
+        (#123) et `orchestrateur` (#268). 404 si le fil n'existe pas.
 
-        `?projet_id=` porte le **projet de la fenêtre** (#683), comme le corps de
-        `POST …/messages` : un run ouvert par cette voie se rattache donc comme
-        un run ouvert par l'autre. Il n'est pas nommé `?projet=` à dessein — ce
-        nom-là désigne partout ailleurs une **portée** de lecture, avec ses mots
-        réservés `tous`/`aucun` (#277), et deux contrats sous un même nom seraient
-        la première façon de les confondre.
+        Deux refus se tranchent **avant** la première trame, donc en statut HTTP
+        et sans rien persister : un message vide (422 nu) et une source hors
+        bornes (422 `{motif, message, index}`, #315 — la forme que `POST
+        …/messages` sert déjà, celle qui permet à l'écran d'afficher le refus sur
+        la source fautive).
         """
         fiche, service = _canal_chat(agent)
         projet = projet_id_valide(projet_id)
 
         async def flux() -> AsyncIterator[str]:
-            async for trame in service.diffuser(fiche, contenu, projet_id=projet):
+            async for trame in service.diffuser(fiche, contenu, sources, projet_id=projet):
                 yield f"data: {json.dumps(trame.to_dict(), ensure_ascii=False)}\n\n"
 
         try:
@@ -3433,6 +3439,11 @@ def create_app(
             # ouvert sur une erreur — `diffuser` lève avant sa première trame.
             trames = flux()
             premiere = await anext(trames)
+        except SourceRefusee as exc:
+            # Avant le `ValueError` nu dont elle hérite, pour la raison qui vaut
+            # sur `POST …/messages` : aplatir le refus en chaîne perdrait l'index
+            # de la source fautive, donc l'endroit où l'écran doit l'afficher.
+            raise HTTPException(status_code=422, detail=_detail_refus(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -3442,6 +3453,47 @@ def create_app(
                 yield trame
 
         return StreamingResponse(flux_complet(), media_type="text/event-stream")
+
+    @app.get("/api/chat/{agent}/flux")
+    async def flux_chat(
+        agent: str, contenu: str = "", projet_id: str | None = None
+    ) -> StreamingResponse:
+        """Flux SSE d'une réponse de chat — le contrat #183, servi pour de bon (#268).
+
+        `GET /api/chat/{agent}/flux?contenu=…` : la voie **sans source**, et le
+        seul verbe qu'un `EventSource` sache ouvrir. Une URL ne pouvant porter ni
+        identifiants de sources ni corps, un message qui embarque de la matière
+        (#482) passe par `POST …/flux` — voir l'arbitrage en tête de
+        `maestro.controltower.chat`. Ce n'est pas une voie dégradée : c'est le cas
+        courant, gardé tel quel plutôt que retiré.
+
+        `?projet_id=` porte le **projet de la fenêtre** (#683), comme le corps de
+        `POST …/messages` : un run ouvert par cette voie se rattache donc comme
+        un run ouvert par l'autre. Il n'est pas nommé `?projet=` à dessein — ce
+        nom-là désigne partout ailleurs une **portée** de lecture, avec ses mots
+        réservés `tous`/`aucun` (#277), et deux contrats sous un même nom seraient
+        la première façon de les confondre.
+        """
+        return await _flux_reponse(agent, contenu, None, projet_id)
+
+    @app.post("/api/chat/{agent}/flux")
+    async def flux_chat_poste(agent: str, requete: ChatEnvoiRequete) -> StreamingResponse:
+        """Le flux d'une réponse pour un message qui **embarque** quelque chose (#692).
+
+        Même corps que `POST …/messages` — `contenu`, `sources` (#482),
+        `projet_id` (#683) — et même `text/event-stream` que `GET …/flux` : c'est
+        exactement l'envoi du POST, rendu au fur et à mesure au lieu d'être rendu
+        d'un coup. Le client n'a donc **pas** à choisir entre le direct et ses
+        pièces jointes, ce qui était le seul motif du choix écrit dans
+        `app/chat/page.tsx`.
+
+        Le message utilisateur **résolu** — ses sources et leur rapport de
+        lecture (#316) — voyage sur la trame `debut`, la réponse sur la trame
+        `fin` : la paire que le POST rend d'un coup, rendue en deux trames. 404 si
+        le fil n'existe pas, 422 sur un message vide, 422 motivé sur une source
+        refusée.
+        """
+        return await _flux_reponse(agent, requete.contenu, requete.sources, requete.projet_id)
 
     @app.websocket("/ws/evenements")
     async def evenements(websocket: WebSocket, projet: str | None = None) -> None:

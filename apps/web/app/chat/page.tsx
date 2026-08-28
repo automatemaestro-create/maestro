@@ -69,18 +69,21 @@
  * c'est exactement ce que le critère « les deux ne divergent pas » interdit
  * (voir `lib/orchestration`).
  *
- * **Le direct passe par le WebSocket, pas encore par le flux SSE.** Le lot 1 a
- * construit le canal de streaming (`GET /api/chat/{agent}/flux`, docs/05 §6.5) et
- * il attend son consommateur. Le brancher **ici** serait un second chemin d'envoi
- * côté navigateur, donc deux façons de parler à un fil — l'inverse de ce que ce
- * lot unifie —, et surtout ce chemin-là **ne sait pas porter de sources** : le
- * flux prend son `contenu` en paramètre d'URL, quand `POST …/messages` accepte
- * les `sources[]` de #482. Y basculer le fil perdrait les pièces jointes en
- * silence, c'est-à-dire échangerait un rendu incrémental contre une
- * fonctionnalité. La réponse arrive donc dès qu'elle tombe (`chat.message` sur le
- * bus, `useChat` recharge), l'attente étant dite par « … répond… » ; le rendu
- * incrémental est pour le lot qui consommera le canal, dans le composant de fil
- * partagé — une fois que le canal saura porter ce qu'un message porte.
+ * **Le direct passe par le WebSocket, pas encore par le flux SSE — et ce n'est
+ * plus le transport qui l'empêche.** Le lot 1 a construit le canal de streaming
+ * (docs/05 §6.5) et il attend son consommateur. Le brancher **ici** serait un
+ * second chemin d'envoi côté navigateur, donc deux façons de parler à un fil —
+ * l'inverse de ce que ce lot unifie. La raison qui s'ajoutait à celle-là est
+ * **levée** : le canal ne savait pas porter de sources, le `contenu` voyageant en
+ * paramètre d'URL quand `POST …/messages` accepte les `sources[]` de #482, si
+ * bien qu'y basculer le fil aurait perdu les pièces jointes en silence —
+ * c'est-à-dire échangé un rendu incrémental contre une fonctionnalité. Depuis
+ * #692 il y a **`POST …/flux`**, dont le corps est exactement celui de
+ * `POST …/messages` (`contenu`, `sources`, `projet_id`) : le choix ne se pose
+ * plus. En attendant son consommateur, la réponse arrive dès qu'elle tombe
+ * (`chat.message` sur le bus, `useChat` recharge) et l'attente est dite par
+ * « … répond… » ; le rendu incrémental est pour le lot qui consommera le canal
+ * (#695), dans le composant de fil partagé.
  */
 
 import { useMemo, useState } from "react";

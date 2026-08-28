@@ -45,6 +45,32 @@ capable de streamer le jour où la frontière `ModelProvider` l'exposera) n'a qu
 et `diffuser` passent tous deux par lui, donc persistent, acheminent et
 diffusent exactement de la même façon.
 
+## Le flux porte ce qu'un message porte — et pourquoi par un POST (#692)
+
+Un message peut embarquer des **sources** (#482) et nommer le **projet** de la
+fenêtre (#683). Le POST les portait, le flux non : `GET …/flux?contenu=…` prend
+son contenu en paramètre d'URL, où l'on ne peut raisonnablement déclarer ni
+identifiants de sources ni corps. Y basculer un fil aurait donc échangé un rendu
+incrémental contre une fonctionnalité — c'est le transport, et lui seul, qui
+barrait le consommateur.
+
+`diffuser` accepte donc les mêmes `sources` qu'`envoyer`, et le canal a **deux**
+entrées HTTP : `POST …/flux`, dont le corps est exactement celui de
+`POST …/messages`, et le `GET` d'origine, conservé pour le cas sans source — seul
+verbe qu'un `EventSource` sait ouvrir, et contrat déjà publié (#183/#268).
+
+L'autre option — un `GET` référençant une **composition déjà déclarée** — a été
+écartée, et c'est le genre de choix qu'on redécouvre : elle demandait un second
+endpoint pour déclarer, un état composé à garder entre les deux appels puis à
+ramasser, et elle éloignait le refus du moment de l'envoi. Un corps de POST fait
+la même chose sans rien garder, et laisse au refus la forme qu'il a déjà sur
+l'autre voie — un 422 `{motif, message, index}` (#315), levé **avant** la
+première trame parce que `_ouvrir` précède le premier `yield`.
+
+Deux verbes ne font pas deux chemins d'envoi : ils appellent tous deux
+`diffuser`, qui passe par `_ouvrir` puis `_repondre` comme `envoyer`. La règle du
+module vaut aussi pour ses entrées.
+
 ## Ce qui découle d'un message est rattaché au fil (#268)
 
 Un `MessageChat` peut porter un `run_id` et un `tache_id` : la réponse de
@@ -317,10 +343,21 @@ class FragmentChat:
     """Une trame du flux d'une réponse (docs/05 §6.5) — la forme du SSE.
 
     `type` est l'un des `FRAGMENT_CHAT_*` ; `delta` porte l'incrément de texte
-    (vide hors `fragment`), `message` le `MessageChat` complet sur la seule trame
-    `fin` (`None` ailleurs). Sur `erreur`, `delta` porte la cause : une trame
+    (vide hors `fragment`). Sur `erreur`, `delta` porte la cause : une trame
     plutôt qu'une socket coupée, pour que le client sache **pourquoi** rien ne
     vient — le message utilisateur, lui, reste acquis.
+
+    `message` porte un `MessageChat` complet sur les deux trames qui en bornent
+    un : le message **utilisateur** sur `debut`, la **réponse** sur `fin`
+    (`None` sur `fragment` et `erreur`). Le premier est venu avec les sources
+    (#692) : sans lui, un client du flux aurait envoyé de la matière sans jamais
+    savoir ce qui en a été lu, tronqué ou ignoré (le `rapport` de #316), là où
+    `POST …/messages` rend la paire d'un seul coup. Le flux rend donc la même
+    paire, en deux trames.
+
+    `auteur` reste celui du **flux** — l'agent qui répond —, sur les quatre
+    trames : c'est une propriété de la réponse en cours, pas du message
+    transporté, lequel porte son propre `auteur`.
     """
 
     type: str
@@ -598,18 +635,33 @@ class ServiceChat:
         return message, await self._repondre(agent, projet_id=projet_id)
 
     async def diffuser(
-        self, agent: Agent, contenu: str, *, projet_id: str | None = None
+        self,
+        agent: Agent,
+        contenu: str,
+        sources: Sequence[Mapping[str, Any] | Source] | None = None,
+        *,
+        projet_id: str | None = None,
     ) -> AsyncIterator[FragmentChat]:
-        """Envoie `contenu` à `agent` et rend la réponse **au fur et à mesure** (#268).
+        """Envoie `contenu` et ses `sources` à `agent`, réponse **au fur et à mesure** (#268).
 
         Le même échange que `envoyer` — mêmes persistance, messagerie et
-        diffusion `chat.message` —, rendu en trames : `debut`, autant de
-        `fragment` que le répondeur produit d'incréments, puis `fin` portant le
-        message complet. Une réponse impossible sort en trame `erreur` plutôt
-        qu'en exception : la socket est déjà ouverte et le message utilisateur
-        déjà acquis, dire pourquoi vaut mieux que couper. `ValueError` sur un
-        contenu vide reste levée **avant** la première trame, là où l'appelant
-        peut encore répondre 422.
+        diffusion `chat.message` —, rendu en trames : `debut` portant le message
+        utilisateur, autant de `fragment` que le répondeur produit d'incréments,
+        puis `fin` portant la réponse complète. Une réponse impossible sort en
+        trame `erreur` plutôt qu'en exception : la socket est déjà ouverte et le
+        message utilisateur déjà acquis, dire pourquoi vaut mieux que couper.
+
+        `sources` (#692) est la **même** matière, déclarée de la même façon et
+        dans le même ordre, que sur `envoyer` : les deux voies mènent au même
+        `_ouvrir`, donc à la même chaîne d'ingestion, aux mêmes identifiants et
+        aux mêmes garde-fous. Ce qui la déclare est un corps de requête — voir
+        l'arbitrage en tête de module.
+
+        Deux refus restent levés **avant** la première trame, là où l'appelant
+        peut encore répondre 422 plutôt que d'ouvrir un flux sur une erreur :
+        `ValueError` nu sur un message vide, et `SourceRefusee` sur une source
+        hors bornes — cette dernière portant son motif et son index, sans quoi
+        « une source a été refusée » n'apprendrait pas laquelle.
 
         La production tourne dans une tâche à part et publie ses incréments dans
         une file que ce générateur draine : c'est ce qui fait qu'un fragment part
@@ -623,8 +675,12 @@ class ServiceChat:
         ouvert depuis le flux se rattache comme un run ouvert depuis le POST. Le
         canal ne devient jamais un second chemin — c'est la règle du module.
         """
-        await self._ouvrir(agent, contenu)
-        yield FragmentChat(type=FRAGMENT_CHAT_DEBUT, agent=agent.nom)
+        message = await self._ouvrir(agent, contenu, sources)
+        # La trame d'ouverture porte le message utilisateur **résolu** — ses
+        # sources et leur rapport de lecture (#316) —, que seul `_ouvrir` connaît
+        # et qu'aucune trame suivante ne redira. C'est le pendant, sur cette
+        # voie, de la paire que `POST …/messages` rend d'un coup (#692).
+        yield FragmentChat(type=FRAGMENT_CHAT_DEBUT, agent=agent.nom, message=message)
 
         file: asyncio.Queue[str | None] = asyncio.Queue()
 
@@ -677,8 +733,11 @@ class ServiceChat:
         `envoyer` est ce qui fait qu'un fil diffusé (#268) applique les mêmes
         plafonds qu'un fil posté — deux entrées, un seul jeu de garde-fous.
 
-        `sources` est vide sur la voie du flux : `GET …/flux` ne porte qu'un
-        `contenu`, et rien ne déclare de matière sur une requête sans corps.
+        `sources` arrive désormais des **deux** voies (#692) : le corps de
+        `POST …/messages` comme celui de `POST …/flux`. Seul `GET …/flux` n'en
+        porte jamais — rien ne déclare de matière sur une requête sans corps —,
+        et c'est pour cette raison, et non par oubli, qu'il reste le verbe du cas
+        sans source.
         """
         contenu = contenu.strip()
         declarees = list(sources or ())
