@@ -19,11 +19,18 @@
  *
  * ① `mentionEnTete` — les quatre décisions du module, toutes du même ordre : ne
  *    rien faire dans le doute, une mention mal reconnue détournant un message
- *    vers le mauvais fil ;
+ *    vers le mauvais fil — et `destinatairesDuFil`, la liste qu'elle consulte ;
  * ② l'écran : le fil global par défaut, la bascule par mention et par bouton, le
  *    bandeau qui dit où part le message, et le retour à l'orchestration ;
  * ③ « Ouvert depuis ce fil » — ce que la conversation a ouvert, **lu** des
  *    messages et jamais déduit de ce qui a tourné pendant qu'on regardait.
+ *
+ * ⚠ **Le parc monté ici porte l'orchestrateur** (#671), et ce n'est pas un détail
+ * de fixture : c'est la forme que sert le mode réel — `GET /api/agents` rend les
+ * acteurs vus au journal, et l'orchestrateur en est un. Le parc d'avant
+ * (`[dev, qa]`) était celui de `--demo`, si bien que l'écran n'a jamais été
+ * éprouvé sur les données qu'il sert vraiment : le destinataire y était proposé
+ * deux fois, sous la même clé React, et rien ici ne le voyait.
  *
  * Ce que ce fichier ne couvre pas, et pourquoi : la mise en page conversationnelle
  * elle-même (bulles, sources d'un message, défilement) appartient à
@@ -40,6 +47,8 @@ import PageChat from "@/app/chat/page";
 import {
   AGENT_ORCHESTRATION,
   INTERLOCUTEUR_ORCHESTRATION,
+  ROLE_ORCHESTRATION,
+  destinatairesDuFil,
   mentionEnTete,
 } from "@/lib/orchestration";
 
@@ -55,10 +64,20 @@ import {
 
 const DESTINATAIRES = [AGENT_ORCHESTRATION, "dev", "qa"];
 
-/** L'écran, avec le parc d'agents que la colonne de droite propose. */
+/**
+ * L'écran, avec le parc d'agents que la colonne de droite propose — dans la forme
+ * que sert le mode réel : les exécutants, **puis l'orchestrateur**, que la
+ * projection range parmi les acteurs qu'elle a vus au journal (relevé sur
+ * `GET /api/agents` : `developpeur`, `bdd`, `devops`, `designer`, `qa`,
+ * `orchestrateur`).
+ */
 function monterLeChat(etat: Parameters<typeof rendreAvecEtat>[1] = {}) {
   return rendreAvecEtat(<PageChat />, {
-    agents: [agentFactice({ nom: "dev" }), agentFactice({ nom: "qa", role: "QA" })],
+    agents: [
+      agentFactice({ nom: "dev" }),
+      agentFactice({ nom: "qa", role: "QA" }),
+      agentFactice({ nom: AGENT_ORCHESTRATION, role: ROLE_ORCHESTRATION }),
+    ],
     ...etat,
   });
 }
@@ -124,6 +143,32 @@ describe("mentionEnTete (#269)", () => {
 
   it("rend une mention seule comme un brouillon vide", () => {
     expect(mentionEnTete("@qa ", DESTINATAIRES)).toEqual({ agent: "qa", reste: "" });
+  });
+});
+
+describe("destinatairesDuFil (#671)", () => {
+  it("met l'orchestration en tête, puis le parc dans son ordre", () => {
+    expect(destinatairesDuFil(["dev", "qa"])).toEqual([AGENT_ORCHESTRATION, "dev", "qa"]);
+  });
+
+  it("ne la propose qu'une fois quand le parc la porte — la forme du mode réel", () => {
+    // `GET /api/agents` rend les acteurs vus au journal, l'orchestrateur compris :
+    // le trouver là est le cas nominal, pas une donnée aberrante.
+    expect(destinatairesDuFil(["dev", "qa", AGENT_ORCHESTRATION])).toEqual([
+      AGENT_ORCHESTRATION,
+      "dev",
+      "qa",
+    ]);
+  });
+
+  it("laisse le reste du parc tel quel, doublons compris", () => {
+    // Un exécutant en double serait un défaut de la projection : l'écran le
+    // montre plutôt que de le masquer. Seule l'orchestration est retirée.
+    expect(destinatairesDuFil(["dev", "dev"])).toEqual([
+      AGENT_ORCHESTRATION,
+      "dev",
+      "dev",
+    ]);
   });
 });
 
@@ -206,6 +251,19 @@ describe("le chat global (#269)", () => {
 
     expect(canalCourant()).toBe(AGENT_ORCHESTRATION);
     expect(saisiePour(INTERLOCUTEUR_ORCHESTRATION)).toHaveValue("@personne bonjour");
+  });
+
+  it("ne propose l'orchestration qu'une fois, alors que le parc la porte", () => {
+    // La panne de #671, vue de l'écran : deux boutons pour un seul fil, et deux
+    // enfants React sous la clé `orchestrateur`. Le test d'à côté vérifie déjà
+    // la liste entière ; celui-ci nomme la question, pour qu'elle survive à une
+    // réécriture de l'autre.
+    monterLeChat();
+
+    const boutons = within(proprietesDuFil()).getAllByRole("button");
+    expect(boutons.filter((bouton) => bouton.textContent === "Orchestration")).toHaveLength(
+      1,
+    );
   });
 
   it("bascule aussi à la souris, l'orchestration en tête du parc", async () => {
