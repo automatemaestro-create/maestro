@@ -191,7 +191,9 @@ describe("le chat global (#269)", () => {
   it("propose des amorces qui montrent la frontière du fil, tant qu'il est vide", () => {
     monterLeChat();
 
-    // Deux ouvrent un run, deux n'ouvrent rien : c'est ce que le canal distingue.
+    // Deux mènent à une proposition de run, deux à une simple réponse : c'est la
+    // frontière que le canal distingue. Aucune n'ouvre de run à elle seule depuis
+    // #685 — c'est l'accord qui suit qui ouvre, jamais le texte de l'amorce.
     expect(
       screen.getByRole("button", { name: "Ajoute la pagination à la liste des projets" }),
     ).toBeInTheDocument();

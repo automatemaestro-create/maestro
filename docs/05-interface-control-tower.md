@@ -2767,12 +2767,14 @@ parle pas à un exécutant mais à l'orchestration.
   `GET /api/chat/orchestrateur/flux` — le contrat REST est **inchangé**, le nom du fil départage
   (comme `assistance`). Le fil est persisté (`core/chat/orchestrateur.jsonl`) et diffusé en
   `chat.message` comme les autres.
-- Une **demande de travail** y ouvre un run : la réponse porte alors son `run_id`, que
-  `MessageChat` et l'événement `chat.message` transportent tous deux. Les tâches apparaissent
-  ensuite au Kanban par les événements du run — la Control Tower n'a pas de `POST /api/taches`, et
-  n'en a pas besoin : une tâche naît de la décomposition, pas d'une écriture directe.
+- Une **demande de travail** y fait *proposer* un run — le canal montre l'objectif qu'il enverrait
+  et demande l'accord ; **rien n'est ouvert à cet instant** (#685). C'est le message d'**accord**
+  qui ouvre, et la réponse porte alors son `run_id`, que `MessageChat` et l'événement
+  `chat.message` transportent tous deux. Les tâches apparaissent ensuite au Kanban par les
+  événements du run — la Control Tower n'a pas de `POST /api/taches`, et n'en a pas besoin : une
+  tâche naît de la décomposition, pas d'une écriture directe.
 - Une **question** n'ouvre rien : elle est traitée en conversation (état des runs en cours, des
-  tâches, des validations en attente).
+  tâches, des validations en attente). Un **refus** et un **silence** n'ouvrent rien non plus.
 - Le message porte le **projet de la fenêtre** (#683) — `projet_id` dans le corps de
   `POST …/messages`, `?projet_id=` sur le flux : le run ouvert lui appartient, et l'aperçu rendu
   aux questions est cadré sur lui.
@@ -2822,14 +2824,63 @@ plus qu'un « non ». Le run part en **brief `auto`** et non `humain` : le cadra
 la conversation en cours, et renvoyer vers l'écran de validation de brief couperait le fil en deux —
 un lancement en `humain` reste la voie de qui veut valider avant.
 
-> La description complète du nouveau jugement — le banc des cinq formulations de #682, le refus, le
-> silence — vient avec le lot « tests + doc » du chantier (#688). Ce paragraphe dit ce qui a changé,
-> pas encore tout ce qui est garanti.
-
 > ⚠ **Depuis #483 (§2.7.5), cette réserve ne coupe plus rien** : un run lancé en brief `humain` se
 > valide **dans le fil**, pas sur un écran à part. Ce qui motivait le `auto` par défaut tient
 > toujours — une demande déjà formulée en conversation n'a pas à être recadrée —, mais le repli
 > n'est plus un aller-retour hors du fil, et c'est ce qui rend les deux régimes compatibles.
+
+**Ce qui est garanti, et par quoi** (#688). Le banc de #682 est joué **cause par cause** : chacune
+des cinq formulations porte en identifiant de cas la raison exacte pour laquelle le lexique la
+faisait taire (`verbe-hors-liste`, `amorce-sans-s`, `subordonnee-que-tu`, `pronom-objet-intercale`,
+`subordonnee-et-conjugaison`). Les séparer n'est pas cosmétique : **quatre de ces causes tenaient
+ensemble** dans la phrase réellement envoyée, si bien qu'un correctif n'en traitant qu'une ferait
+passer un banc groupé. À côté d'elles, deux témoins **positifs** (les formulations que le lexique
+reconnaissait déjà, pour qu'aucune reconnaissance acquise ne se perde) et trois témoins **négatifs**
+(`comment ajouter une page ?`, `où en sont les runs ?`, `merci`) — ces derniers sont la moitié qui
+interdit de rendre le banc vert en proposant un run sur tout.
+
+Le **protocole d'accord** est joué en **deux tours** sur un seul répondeur, seule forme où la
+décision du 2026-08-28 est visible : proposition → rien, puis accord → run. Trois branches partent
+du second tour et une seule ouvre — accord ; un **refus** n'ouvre rien, un **changement de sujet**
+non plus (ce qui montre qu'aucune proposition ne reste « en attente », prête à être ramassée par le
+message suivant quel qu'il soit), et le **silence** n'ouvre rien parce qu'il n'est pas un message :
+aucun verdict n'est rendu, et le répondeur ne garde aucune trace de l'objectif qu'il vient de
+proposer. Ce qui est lancé est enfin l'objectif **montré et approuvé** — le fil porte trois textes
+qui pourraient tous passer pour un objectif, un seul part.
+
+L'absence du lexique est gardée **structurellement**, sur l'arbre syntaxique et jamais par un
+`grep` : le module *doit* citer `_AMORCES` et `_VERBES_TRAVAIL` pour raconter leur retrait, et une
+garde textuelle se déclencherait sur la docstring même qui les documente. Elle porte sur les
+identifiants **Python**, ce qui écarte du même geste les `AMORCES_ORCHESTRATION` de `apps/web` — les
+amorces de conversation d'un fil vide, qui n'ont jamais été ce lexique. Sa moitié **comportementale**
+compte pour autant : le juge est appelé **une fois** sur chacune des cinq formulations, donc aucune
+voie rapide ne tranche avant lui.
+
+> **Ce que ces tests ne tiennent pas**, et l'assument : la qualité du jugement. Le juge y est un
+> double, donc « cette phrase est-elle une demande de travail ? » n'y est pas posée — ce qui est tenu
+> est qu'elle *atteint* le juge, que son verdict décide seul, et qu'aucun run ne part sans accord. Le
+> reste relève du prompt, et se mesure en usage.
+
+##### Quand le juge est injoignable, le canal le dit (#686)
+
+Faire du modèle le seul juge posait la question que ce lot tranche : **que fait la seule porte
+d'entrée du produit quand ce juge ne répond pas ?** Une exception deviendrait une `ReponseIndisponible`
+— un 502 sans trace (#666) —, donc l'empêchement **ne lève pas, il se raconte dans le fil**, en
+n'ouvrant **ni ne proposant** rien. Trois choses tiennent ensemble :
+
+- **la cause est nommée, et sa famille avec elle** — un fournisseur muet se réessaie, un fournisseur
+  absent se configure, et les confondre fait renvoyer dix fois un message que rien n'attend. La
+  famille se lit à l'**endroit** de l'échec et jamais à son texte : ce qui casse en *résolvant* le
+  fournisseur n'a touché aucun réseau, c'est un réglage ; ce qui casse en *appelant* `generate` est
+  une indisponibilité. C'est la structure qui classe, aucune chaîne n'est examinée ;
+- **aucun lexique ne prend le relais** — la phrase est **la même quel que soit le dernier message**,
+  parce que reconnaître qu'un « oui » était un accord demanderait précisément le juge qui manque. Un
+  juge de secours moins bon que le titulaire, activé quand personne ne regarde, serait la pire des
+  combinaisons ;
+- **la demande, elle, est acquise** — `ServiceChat` persiste et diffuse le message d'utilisateur
+  *avant* d'appeler le répondeur : ce qui est indisponible est la réponse, jamais la demande. Y
+  compris quand le fournisseur tombe **entre** la proposition et l'accord, cas où le « oui » reste au
+  fil sans rien ouvrir ni se perdre en silence.
 
 ```jsonc
 // MessageChat — deux champs de plus depuis #268, vides dans un fil ordinaire
@@ -2846,16 +2897,28 @@ un lancement en `humain` reste la voie de qui veut valider avant.
 Couverture (#273, lot 6 de #244) : [`tests/test_chat_global.py`](../tests/test_chat_global.py),
 sans réseau, sans modèle et **sans moteur** — le canal n'exige qu'un `LanceurRun` (« ouvre un run
 sur cet objectif ») et, depuis #685, qu'un `ModelProvider` : deux doubles suffisent à éprouver ce
-qu'il ouvre. Quatre choses y sont gardées qu'aucun autre test ne voyait : le fait que le canal **ne
+qu'il ouvre. Sept choses y sont gardées qu'aucun autre test ne voyait : le fait que le canal **ne
 filtre plus rien** — les cinq formulations de #682 atteignent le juge et n'ouvrent aucun run tant
 qu'elles ne sont que proposées, et l'objectif lancé est celui qui a été **approuvé** —, l'**aperçu**
 relu à chaque question
 plutôt que figé à la construction de l'app, un **lancement en échec raconté dans le fil** au lieu
 d'être levé (levé, il deviendrait un 502 sans trace alors que la demande, elle, est déjà persistée),
-et le **contrat SSE** vu des deux bouts : côté répondeur, la concaténation des incréments *est* le
+le **contrat SSE** vu des deux bouts : côté répondeur, la concaténation des incréments *est* le
 texte final ; côté endpoint, les `delta` du flux reconstituent la trame `fin`, sur les deux voies du
 canal — celle qui ouvre un run et celle qui converse, l'écriture par morceaux n'étant pas la même de
-part et d'autre.
+part et d'autre — et, depuis #688, le **protocole d'accord joué en deux tours** (proposition → rien,
+puis accord → run ; refus, changement de sujet et silence n'ouvrant rien), le **juge jouable sans
+fournisseur** (résolution paresseuse : la fabrique est appelée **zéro** fois à la construction et
+**une** au premier message — la sonde prouve son motif des deux côtés, sans quoi un ✓ répondrait à
+une question jamais posée) et l'**absence de retour du lexique**, gardée sur l'arbre syntaxique.
+
+⚠ Un piège à connaître avant d'y toucher : la garde du lexique **ne peut pas être un `grep`**. Le
+module et sa suite *doivent* citer `_AMORCES` et `_VERBES_TRAVAIL` pour raconter leur retrait — une
+garde textuelle rougirait sur la docstring même qui les documente, et la seule façon de la faire
+passer serait d'effacer l'explication. Elle lit donc les **identifiants** de l'arbre syntaxique, où
+un nom cité dans une chaîne ou un commentaire n'existe pas ; ce qui écarte du même geste les
+`AMORCES_ORCHESTRATION` de `apps/web/lib/orchestration.ts`, homonymes sans parenté — ce sont les
+amorces de conversation d'un fil vide.
 
 ### 6.6 Référence de ticket externe portée par une tâche (#187)
 

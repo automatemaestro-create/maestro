@@ -70,12 +70,68 @@ demande commençait, politesses retirées, par un verbe d'une liste. La liste é
 l'arbitraire même — « Crée-moi une app » lançait un run, « Génère-moi une app »
 n'en lançait aucun —, et #682 a mesuré **quatre** causes de silence dans une seule
 phrase réellement envoyée. Le lexique est parti en entier : ni juge, ni voie
-rapide, ni repli. C'est le même chemin que le moteur avait déjà fait en #585, où
-classer une tâche « sensible » par radicaux a été désarmé au profit d'un jugement
-— « développer une fonction de suppression n'est pas exécuter une suppression ».
+rapide, ni repli.
 
-Ce qui le remplace tient en **un appel modèle par message**, qui rend d'un coup
-le texte de la réponse **et** le verdict (`_Verdict`) :
+### L'arbitrage de #268, et pourquoi il a été renversé
+
+Il est écrit ici plutôt que laissé au ticket, parce qu'un arbitrage dont on ne
+garde que la conclusion se refait dans six mois. #268 avait tranché pour le
+lexique sur **quatre** appuis. Trois sont tombés, le quatrième a changé de sens :
+
+- **coût et latence** — un appel modèle par message paraissait cher. Il ne l'est
+  plus relativement à rien : les deux autres canaux du **même écran** le paient
+  déjà, et celui d'un agent exécutant passait par `RepondeurModele` pendant que
+  l'orchestrateur passait par une expression régulière ;
+- **reproductibilité** — elle est acquise autrement, par le point d'injection
+  `orchestration_repondeur` de `create_app`, sur lequel toute la suite du canal
+  s'appuie sans réseau ni authentification. Et l'argument se retournait : un
+  lexique n'est reproductible que dans un sens inutile — il se trompe **de façon
+  reproductible** ;
+- **« le vrai raisonnement a lieu dans le run »** — la décomposition est déjà un
+  appel modèle *à l'intérieur* du run. Le lexique était donc exactement ce qui
+  empêchait une demande légitime d'**atteindre** la partie intelligente ;
+- **l'asymétrie des erreurs** — ne pas reconnaître coûte une reformulation,
+  reconnaître à tort lance un run. Celui-là était juste, et c'est le seul. Mais
+  le lexique n'achetait pas de la *prudence*, il achetait de l'*arbitraire* :
+  même intention, verdict opposé selon le verbe employé.
+
+Ce qui a réglé le quatrième n'est donc pas une meilleure liste, c'est la seconde
+décision du 2026-08-28 — **tout run passe par un accord explicite**. La
+validation systématique **dissout** l'asymétrie : un faux positif ne coûte plus
+un run mais un « non ». C'est elle, et rien d'autre, qui autorise le juge à être
+*large* là où le lexique devait être timide ; les deux moitiés du chantier ne
+sont pas séparables, et un juge libéral sans la validation serait le pire des
+trois régimes.
+
+### Le précédent du moteur : le déclencheur passe du texte à l'acte
+
+Le moteur a fait ce chemin le premier, et c'est la même leçon. `engine.guardrails`
+classait une tâche « sensible » par **radicaux** (`deploi`, `supprim`,
+`destructi`) trouvés dans son titre et sa description ; **#585** l'a désarmé
+(`mots_sensibles` vide par défaut) sur un motif **mesuré** en **#568** — le mot
+venait du *brief* et se propageait à toutes les descriptions issues de la
+décomposition, si bien qu'un objectif demandant « une sous-commande **supprimer**
+une note » rendait **3 tâches sur 3** sensibles, « Rédiger le README » comprise.
+La docstring qui en est restée vaut ici mot pour mot :
+
+> Développer une fonction de suppression n'est pas exécuter une suppression.
+
+Ce qui l'a remplacé n'est pas une liste mieux tenue mais **deux canaux de
+jugement** (`maestro.providers.arbitrage`, chantier **#573**) : l'agent lève la
+main — l'outil MCP `demander_arbitrage(raison)`, **#582** — et l'acte est
+suspendu au moment où il a lieu — hook `PreToolUse`, **#583**. Le déclencheur a
+été déplacé **du texte vers l'acte**.
+
+Le chat global en est la **seconde application**, et le parallèle est exact : ici
+aussi le texte cesse d'être ce qui déclenche. Ce qui ouvre le run est l'**accord**
+de l'utilisateur — un acte —, et le texte n'est plus qu'une entrée soumise au
+jugement. La différence tient à qui arbitre : là-bas c'est l'humain qui suspend
+l'acte d'un agent, ici c'est l'humain qui autorise celui du canal.
+
+### Ce que le canal fait à la place
+
+Ce qui remplace le lexique tient en **un appel modèle par message**, qui rend d'un
+coup le texte de la réponse **et** le verdict (`_Verdict`) :
 
 - **proposition** — le dernier message est une demande de travail. Le canal
   reformule l'objectif qu'il enverrait et demande l'accord. **Rien n'est ouvert à
@@ -87,12 +143,13 @@ le texte de la réponse **et** le verdict (`_Verdict`) :
 
 Deux propriétés portent tout le reste :
 
-**Aucun run sans accord explicite.** C'est ce qui permet au modèle d'être
-*large* là où le lexique devait être timide : l'asymétrie des erreurs de #268 —
-ne pas reconnaître coûte une reformulation, reconnaître à tort coûte un run — est
-dissoute, un faux positif ne coûtant plus qu'un « non ». Le silence, lui, n'est
-pas un accord : une proposition sans réponse n'ouvre rien, parce que le run
-n'est ouvert que sur le verdict `accord` d'un message qui arrive.
+**Aucun run sans accord explicite.** Un refus n'ouvre rien, et le **silence n'est
+pas un accord** : une proposition sans réponse n'ouvre rien, parce que le run
+n'est ouvert que sur le verdict `accord` d'un **message qui arrive**. La
+propriété est structurelle et non gardée par un `if` — il n'existe qu'un chemin
+vers le lanceur, et il part d'un verdict, qu'aucun silence ne produit. Rien
+n'est mis « en attente » entre deux tours, ce qui ferait du message suivant, quel
+qu'il soit, un accord par ricochet.
 
 **Le fil est la seule mémoire.** Le répondeur reçoit le fil complet, donc sa
 propre proposition et la réponse de l'utilisateur : rien à stocker à côté, aucun
@@ -149,6 +206,37 @@ réponse, jamais la demande. Le fil garde donc le texte écrit *et* la phrase qu
 dit pourquoi rien n'a suivi — y compris quand le fournisseur tombe *entre* la
 proposition et l'accord, cas où le « oui » reste au fil sans rien ouvrir ni se
 perdre en silence.
+
+## Ce qui est gardé, et par quoi (#688)
+
+`tests/test_chat_global.py` tient le tout, sans réseau, sans modèle et sans
+moteur. Trois choses y méritent d'être connues avant d'y toucher :
+
+- le **banc de #682 est joué cause par cause**, chaque formulation portant en
+  identifiant de cas la raison exacte pour laquelle le lexique la faisait taire
+  (`verbe-hors-liste`, `amorce-sans-s`, `subordonnee-que-tu`,
+  `pronom-objet-intercale`, `subordonnee-et-conjugaison`). Les quatre dernières
+  causes tenaient **ensemble** dans la phrase réellement envoyée : les séparer est
+  ce qui empêche qu'un correctif n'en traite qu'une et que le banc passe quand
+  même. Ses témoins négatifs (`comment ajouter une page ?`, `où en sont les
+  runs ?`, `merci`) sont la moitié qui interdit de le rendre vert en proposant un
+  run sur tout ;
+- le **protocole d'accord est joué en deux tours** sur un seul répondeur, seule
+  forme où la décision du 2026-08-28 est visible : proposition → rien, puis
+  accord → run. Un test à verdict unique ne voit jamais l'intervalle entre les
+  deux, qui est précisément l'endroit où une régression se logerait ;
+- l'absence du lexique est gardée **structurellement**, sur l'arbre syntaxique et
+  jamais par un `grep` — ce module *doit* citer `_AMORCES` et `_VERBES_TRAVAIL`
+  pour raconter leur retrait, et une garde textuelle se déclencherait sur la
+  docstring même qui les documente. Elle porte sur les identifiants **Python**,
+  ce qui écarte du même geste les `AMORCES_ORCHESTRATION` de `apps/web`, qui sont
+  les amorces de conversation d'un fil vide et n'ont jamais été ce lexique.
+
+La moitié que ces tests **n'atteignent pas** est nommée plutôt que masquée : la
+qualité du jugement. Le juge y est un double, donc « cette phrase est-elle une
+demande de travail ? » n'y est pas posée — ce qui est tenu est qu'elle *atteint*
+le juge, que le verdict décide seul, et qu'aucun run ne part sans accord. Le
+reste relève du prompt, et se mesure en usage.
 """
 
 from __future__ import annotations
