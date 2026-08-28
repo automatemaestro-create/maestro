@@ -1,4 +1,4 @@
-"""Tests du **fil global** — le canal `orchestrateur` (tickets #273 puis #685).
+"""Tests du **fil global** — le canal `orchestrateur` (tickets #273, #685, #686).
 
 Le chat de la Control Tower avait deux canaux couverts et il lui en manquait un.
 `tests/test_chat.py` (#84) éprouve le `ServiceChat` — persistance, acheminement,
@@ -27,8 +27,11 @@ Couvre :
 ② **l'aperçu** de l'orchestration : la phrase d'état, ses accords, et le fait
    qu'elle soit relue à chaque question plutôt que figée à la construction ;
 ③ **le répondeur** : le run ouvert **sur l'objectif approuvé** et rattaché à la
-   réponse, un lancement en échec raconté dans le fil au lieu d'être levé, et le
-   canal sans lanceur qui le dit plutôt que de faire semblant ;
+   réponse, un lancement en échec raconté dans le fil au lieu d'être levé, le
+   canal sans lanceur qui le dit plutôt que de faire semblant, et — depuis #686 —
+   le **juge injoignable** qui se dit lui aussi : la cause nommée, sa famille
+   (panne passagère / réglage absent) lue à l'endroit de l'échec, rien d'ouvert
+   ni de proposé, et la même phrase sur un « oui » que sur une demande ;
 ④ **le contrat SSE** vu du répondeur : la concaténation des incréments *est* le
    texte final — ce dont dépend un client qui reconstitue la réponse des `delta`
    seuls ;
@@ -581,25 +584,112 @@ def test_un_lancement_en_echec_se_raconte_dans_le_fil() -> None:
     assert "plafond hors bornes" in reponse.contenu
 
 
-def test_un_fournisseur_en_echec_n_est_pas_rattrape_ici() -> None:
-    """Sans verdict, il n'y a rien à raconter : l'exception remonte (502, #686)."""
+class JugeEnPanne(ModelProvider):
+    """Un fournisseur qui lève — réseau coupé, authentification refusée (#686)."""
 
-    class JugeEnPanne(ModelProvider):
-        name = "panne"
+    name = "panne"
 
-        def supports(self, model: str) -> bool:
-            return True
+    def supports(self, model: str) -> bool:
+        return True
 
-        async def generate(self, prompt, *, model, system_prompt=None):
-            raise RuntimeError("fournisseur indisponible")
+    async def generate(self, prompt, *, model, system_prompt=None):
+        raise RuntimeError("fournisseur indisponible")
 
+
+class JugeMuet(ModelProvider):
+    """Un fournisseur qui répond, mais sans rien dire — la troisième panne (#686)."""
+
+    name = "muet"
+
+    def supports(self, model: str) -> bool:
+        return True
+
+    async def generate(self, prompt, *, model, system_prompt=None):
+        return "   \n"
+
+
+@pytest.mark.parametrize(
+    ("juge", "cause"),
+    [
+        (JugeEnPanne(), "fournisseur indisponible"),
+        (JugeMuet(), "réponse vide"),
+    ],
+)
+def test_un_fournisseur_injoignable_se_dit_dans_le_fil_et_n_ouvre_rien(
+    juge: ModelProvider, cause: str
+) -> None:
+    """Critère 1 : la cause est nommée, rien n'est ouvert **ni proposé**, aucun 502.
+
+    L'invariant de #268 monté d'un cran : un empêchement se raconte dans le fil.
+    Levée, l'exception deviendrait une `ReponseIndisponible` — 502 sans trace sur
+    la seule porte d'entrée du produit (#666).
+    """
+    lanceur = LanceurEspion()
+    repondeur = RepondeurOrchestration(lanceur=lanceur, provider=juge)
+
+    reponse = asyncio.run(
+        repondeur.produire(AGENT_ORCHESTRATION, _fil("Ajoute la pagination"))
+    )
+
+    assert cause in reponse.contenu
+    assert "Aucun run n'a été ouvert" in reponse.contenu
+    assert "je ne vous en ai proposé aucun" in reponse.contenu
+    # Passager : le geste qui répare est de renvoyer le message, qui est au fil.
+    assert "renvoyez-le tel quel" in reponse.contenu
+    assert reponse.run_id == ""
+    assert lanceur.objectifs == []
+
+
+def test_un_fournisseur_absent_est_un_reglage_et_non_une_panne_passagere(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Les deux familles ne se réparent pas pareil, et la structure les sépare.
+
+    Ce qui casse en **résolvant** le fournisseur n'a touché aucun réseau : c'est
+    un réglage, et réessayer ne sert à rien. Le classement ne lit aucune chaîne —
+    il tient à l'endroit de l'échec.
+    """
+
+    def sans_fournisseur() -> ModelProvider:
+        raise KeyError("MAESTRO_PROVIDER='inconnu' inconnu.")
+
+    monkeypatch.setattr(
+        "maestro.providers.factory.provider_from_settings", sans_fournisseur
+    )
+    lanceur = LanceurEspion()
+    repondeur = RepondeurOrchestration(lanceur=lanceur)
+
+    reponse = asyncio.run(
+        repondeur.produire(AGENT_ORCHESTRATION, _fil("Ajoute la pagination"))
+    )
+
+    assert "réglage absent" in reponse.contenu
+    assert "MAESTRO_PROVIDER" in reponse.contenu
+    # La cause est déballée du `repr` que `KeyError.__str__` ajoute : l'échec de
+    # configuration le plus probable serait sinon le moins lisible du fil.
+    assert "\"MAESTRO_PROVIDER='inconnu' inconnu.\"" not in reponse.contenu
+    assert lanceur.objectifs == []
+
+
+def test_un_oui_qui_ne_peut_pas_etre_juge_ne_lance_rien_et_le_dit() -> None:
+    """Le fournisseur tombe **entre** la proposition et l'accord (#686).
+
+    Et la phrase est **la même** que sur une demande quelconque : reconnaître ce
+    « oui » demanderait précisément le juge qui manque. C'est le critère 3 tenu
+    par l'absence de code — aucun lexique ne reprend la main quand le modèle se
+    tait.
+    """
     lanceur = LanceurEspion()
     repondeur = RepondeurOrchestration(lanceur=lanceur, provider=JugeEnPanne())
 
-    with pytest.raises(RuntimeError, match="fournisseur indisponible"):
-        asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil("Ajoute la pagination")))
+    sur_le_oui = asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil_approuve()))
+    sur_une_demande = asyncio.run(
+        repondeur.produire(AGENT_ORCHESTRATION, _fil("Ajoute la pagination"))
+    )
 
     assert lanceur.objectifs == []
+    assert sur_le_oui.run_id == ""
+    assert sur_le_oui.contenu == sur_une_demande.contenu
 
 
 def test_sans_lanceur_le_canal_le_dit_au_lieu_de_faire_semblant() -> None:
@@ -799,6 +889,48 @@ def test_une_demande_postee_au_fil_global_n_ouvre_rien(bus, depot_chat, lanceur)
     _, repondu = reponse.json()["messages"]
     assert repondu["run_id"] == ""
     assert lanceur.objectifs == []
+
+
+def test_un_fournisseur_injoignable_laisse_la_demande_acquise(
+    bus, depot_chat, lanceur
+) -> None:
+    """Critère 2 : l'indisponibilité concerne la réponse, jamais la demande (#686).
+
+    Le message d'utilisateur est persisté **et** diffusé avant que le répondeur ne
+    soit appelé : il reste au fil, son auteur relance sans retaper. Et la route
+    rend 201 avec la phrase franche, là où l'exception donnait un 502 muet — ce
+    n'est pas qu'un code, c'est la différence entre un fil qui explique et un fil
+    où rien ne revient.
+    """
+    with TestClient(
+        create_app(
+            bus=bus,
+            chat_store=depot_chat,
+            orchestration_repondeur=RepondeurOrchestration(
+                lanceur=lanceur, provider=JugeEnPanne()
+            ),
+        )
+    ) as client:
+        with client.websocket_connect("/ws/evenements?projet=tous") as ws:
+            reponse = client.post(
+                f"/api/chat/{NOM_ORCHESTRATION}/messages",
+                json={"contenu": "Génère une application d'agenda"},
+            )
+            aller = ws.receive_json()
+            retour = ws.receive_json()
+
+    assert reponse.status_code == 201
+    envoye, repondu = reponse.json()["messages"]
+    assert envoye["contenu"] == "Génère une application d'agenda"
+    assert "fournisseur indisponible" in repondu["contenu"]
+    assert repondu["run_id"] == "" and lanceur.objectifs == []
+    # Les deux messages sont au fil persisté, et les deux sont partis sur le bus.
+    assert [message.auteur for message in depot_chat.fil(NOM_ORCHESTRATION)] == [
+        UTILISATEUR,
+        NOM_ORCHESTRATION,
+    ]
+    assert aller["type"] == EVENEMENT_CHAT_MESSAGE
+    assert retour["type"] == EVENEMENT_CHAT_MESSAGE
 
 
 def _trames(reponse) -> list[dict]:
