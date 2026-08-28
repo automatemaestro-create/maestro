@@ -25,7 +25,7 @@ ambiant.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from time import monotonic
@@ -42,6 +42,7 @@ from claude_agent_sdk import (
     McpServerStatus,
     ResultMessage,
     SdkMcpTool,
+    StreamEvent,
     TextBlock,
     ToolUseBlock,
     create_sdk_mcp_server,
@@ -246,6 +247,42 @@ class ClaudeProvider(ModelProvider):
             stderr=stderr,
         )
         return await _collect_response(prompt, options, stderr=stderr)
+
+    async def generate_stream(
+        self,
+        prompt: str,
+        *,
+        model: str,
+        system_prompt: str | None = None,
+    ) -> AsyncIterator[str]:
+        """`generate`, rendu **par incréments** : le fournisseur de référence streame (#693).
+
+        Mêmes options que `generate` — texte seul, `tools=[]`, collecte du stderr
+        — plus `include_partial_messages`, le seul réglage qui sépare les deux :
+        il passe `--include-partial-messages` au CLI, qui émet alors les
+        événements bruts de l'API Anthropic au fil de la génération. Le texte se
+        lit dans les `content_block_delta` de type `text_delta` (`_delta_texte`),
+        c'est-à-dire dans le flux **du modèle** et non dans un découpage que nous
+        aurions inventé après coup.
+
+        Ce que ce chemin ne perd pas, et c'est la moitié qui ne se voit pas : le
+        `ResultMessage` final passe toujours par `report_usage`, donc **tokens,
+        coût et durée API sont comptés comme sur l'autre chemin** — un fil
+        diffusé coûte ce qu'il coûte et le grand livre le sait (`maestro.telemetry`,
+        d'où la trace Langfuse). Streamer une réponse ne doit pas revenir à la
+        rendre gratuite.
+        """
+        stderr = CollecteurStderr()
+        options = ClaudeAgentOptions(
+            model=model,
+            system_prompt=system_prompt,
+            env=self._auth_env(),
+            tools=[],
+            stderr=stderr,
+            include_partial_messages=True,
+        )
+        async for morceau in _stream_response(prompt, options, stderr=stderr):
+            yield morceau
 
     async def run_agent(
         self,
@@ -820,6 +857,88 @@ async def _collect_response(
         _avec_stderr(exc, stderr)
         raise
     return "".join(parts)
+
+
+async def _stream_response(
+    prompt: str,
+    options: ClaudeAgentOptions,
+    *,
+    stderr: CollecteurStderr | None = None,
+) -> AsyncIterator[str]:
+    """Déroule `query` en **incréments de texte**, usage signalé comme ailleurs (#693).
+
+    Le pendant streamé de `_collect_response`, et non une variante de celle-ci :
+    ce qu'elles absorbent n'est pas la même matière. Avec
+    `include_partial_messages`, le flux porte **les deux** — les `StreamEvent`
+    au fil de l'écriture, puis l'`AssistantMessage` complet qui les récapitule —
+    et prendre les deux compterait chaque phrase deux fois. Le texte vient donc
+    des seuls événements de flux, l'`AssistantMessage` ne servant plus qu'à
+    relever les outils pour `StepUsage.outils`.
+
+    ⚠ Le repli n'est pas un ornement : si le CLI n'émet **aucun** événement de
+    flux (version antérieure au drapeau, sortie sans partiels), ne lire que les
+    deltas rendrait une réponse **vide** — l'échec le plus coûteux qui soit, car
+    il ne ressemble pas à un échec : le fil dirait « l'agent a rendu une réponse
+    vide » sur une réponse que le modèle a bel et bien écrite. On rend alors, en
+    un seul morceau, le texte de l'`AssistantMessage` — c'est-à-dire exactement
+    ce que la frontière fait par défaut pour un fournisseur qui ne streame pas.
+    Le drapeau `diffuse` est ce qui empêche les deux sources de se cumuler.
+
+    L'usage (`ResultMessage`) et le stderr suivent le régime de l'autre chemin,
+    au mot près : un flux qui casse repart avec ce que le CLI a écrit (#346), et
+    `error_max_turns` reste mué en `TurnLimitReached` (#91) même si aucune borne
+    n'est posée ici — le chemin texte n'en fixe pas (`_erreur_plafond` nomme
+    alors le signal reçu).
+    """
+    parts: list[str] = []
+    outils: list[str] = []
+    diffuse = False
+    try:
+        async for message in query(prompt=prompt, options=options):
+            if isinstance(message, StreamEvent):
+                texte = _delta_texte(message.event)
+                if texte:
+                    diffuse = True
+                    yield texte
+            elif isinstance(message, AssistantMessage):
+                for block in message.content:
+                    if isinstance(block, TextBlock):
+                        parts.append(block.text)
+                    elif isinstance(block, ToolUseBlock) and block.name not in outils:
+                        outils.append(block.name)
+            elif isinstance(message, ResultMessage):
+                report_usage(_usage_from_result(message, tuple(outils)))
+    except Exception as exc:
+        if _MARQUEUR_MAX_TURNS in str(exc):
+            raise _avec_stderr(_erreur_plafond(None, exc), stderr) from exc
+        _avec_stderr(exc, stderr)
+        raise
+    if not diffuse and parts:
+        yield "".join(parts)
+
+
+def _delta_texte(evenement: object) -> str:
+    """Le texte porté par un événement de flux de l'API — `""` pour tout le reste (#693).
+
+    Un `StreamEvent` transporte l'événement **brut** de l'API Anthropic : seuls
+    les `content_block_delta` de type `text_delta` portent la réponse en train de
+    s'écrire. Tout le reste — `message_start`, `content_block_start`, `ping`,
+    deltas d'entrée d'outil, et ce que l'API ajoutera demain — ne dit rien du
+    texte et ne rend donc rien.
+
+    La lecture est **tolérante par construction** plutôt que gardée par un
+    schéma, et c'est la même règle que `maestro.providers.checklist` : un
+    événement d'une forme qu'on ne connaît pas encore vaut « rien à publier »,
+    jamais une exception au milieu d'une réponse. Une frontière qui casserait sur
+    un champ inattendu ferait d'une nouveauté d'API une panne de chat.
+    """
+    if not isinstance(evenement, dict) or evenement.get("type") != "content_block_delta":
+        return ""
+    delta = evenement.get("delta")
+    if not isinstance(delta, dict) or delta.get("type") != "text_delta":
+        return ""
+    texte = delta.get("text")
+    return texte if isinstance(texte, str) else ""
 
 
 async def _collect_response_pilotee(

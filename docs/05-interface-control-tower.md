@@ -2783,9 +2783,26 @@ redécouvre.
 
 Le point d'extension est `RepondeurChat.produire(agent, fil, *, incrementer=…, projet_id=…)`, dont
 l'implémentation par défaut publie le texte de `repondre` en **un seul** incrément : tout répondeur
-existant se diffuse donc sans changer une ligne. Le jour où la frontière `ModelProvider` exposera
-du streaming (elle ne le fait pas : `generate` rend un `str`), `RepondeurModele` n'aura que cette
-méthode à surcharger — le canal, lui, ne bouge pas.
+existant se diffuse donc sans changer une ligne. Deux le surchargent — l'orchestration (#268) et,
+depuis #693, **le répondeur modèle**.
+
+Ce second-là a demandé d'ouvrir la frontière un cran plus bas, et c'est le point à retenir : le
+canal existait, mais `ModelProvider.generate` rendait un `str`, donc un fil servi par le vrai modèle
+se diffusait **d'un bloc** — brancher le front sur le flux n'y aurait rien changé.
+`ModelProvider.generate_stream` (#693) est la génération par incréments de la frontière. Capacité
+optionnelle **honorée par tous**, à la différence de `run_agent` qui se refuse : son implémentation
+par défaut appelle `generate` et rend le texte entier en un morceau, si bien qu'un fournisseur qui
+ne sait pas streamer traverse les deux étages sans être modifié et que l'appelant n'a aucune
+capacité à tester avant d'appeler. Le fournisseur de référence (Anthropic) streame réellement ; le
+compatible OpenAI garde le défaut, faute d'avoir à emporter le SSE de son dialecte dans ce lot.
+
+⚠ La première propriété ci-dessus — la concaténation des `delta` **reconstitue** la trame `fin` —
+demande un geste, parce que `ServiceChat` rase le texte final : `chat.Redaction`, partagée par les
+deux répondeurs, écarte les blancs de tête et retient ceux de queue jusqu'à ce qu'un morceau non
+blanc les suive. Et un flux **coupé en route** le dit (`FluxInterrompu`) au lieu de se taire : le
+fil ne garde rien (le message n'est persisté qu'une fois la réponse entière), mais l'écran, lui,
+affiche un texte arrêté que rien ne distinguerait d'une réponse courte — la trame `erreur` porte
+donc la cause, et le client sait que ce qu'il montre est à jeter.
 
 #### Le fil global — parler à l'orchestration (#268)
 

@@ -39,11 +39,24 @@ Le point d'extension est `RepondeurChat.produire`, qui reçoit un `Incrementeur`
 — « voici un morceau de plus » — et rend une `ReponseChat` complète. Son
 implémentation par défaut appelle `repondre` et publie le texte **en un seul
 incrément** : tout répondeur existant se diffuse donc sans changer une ligne, et
-celui qui sait produire par morceaux (l'orchestration, #268 ; un fournisseur
-capable de streamer le jour où la frontière `ModelProvider` l'exposera) n'a que
-`produire` à surcharger. Le canal ne devient jamais un second chemin : `envoyer`
-et `diffuser` passent tous deux par lui, donc persistent, acheminent et
-diffusent exactement de la même façon.
+celui qui sait produire par morceaux n'a que `produire` à surcharger. Le canal ne
+devient jamais un second chemin : `envoyer` et `diffuser` passent tous deux par
+lui, donc persistent, acheminent et diffusent exactement de la même façon.
+
+Deux répondeurs le surchargent : l'orchestration (#268), qui écrit son verdict
+puis ce qu'elle a ouvert, et **le répondeur modèle** (#693), qui consomme les
+incréments du fournisseur. Ce second-là était le trou du dispositif — le point
+d'extension existait, personne ne le remplissait côté modèle, si bien qu'un fil
+servi par le vrai modèle se diffusait d'un bloc quoi qu'on branche en face. Il a
+fallu l'ouvrir un cran plus bas : `ModelProvider.generate_stream` (#693) est la
+génération par incréments de la frontière, dont l'implémentation par défaut rend
+le texte entier en un morceau — un fournisseur qui ne sait pas streamer traverse
+donc les deux étages sans être modifié, et rien ne se dégrade.
+
+Le contrat que les deux tiennent est celui de la trame `fin` : le message complet
+est **exactement** la concaténation des `delta`. `Redaction` en répond pour les
+deux — c'est sa seule raison d'être — et un flux coupé en route se signale
+(`FluxInterrompu`) au lieu de laisser lire un début de réponse comme une réponse.
 
 ## Le flux porte ce qu'un message porte — et pourquoi par un POST (#692)
 
@@ -201,6 +214,26 @@ class ReponseIndisponible(RuntimeError):
     Le message utilisateur, lui, est déjà persisté et diffusé : l'échec ne
     concerne que la réponse — l'API le traduit en 502, l'utilisateur peut
     relancer sans perdre le fil.
+    """
+
+
+class FluxInterrompu(RuntimeError):
+    """Le fournisseur a lâché **après** avoir publié des incréments (#693).
+
+    Un échec avant le premier incrément et un échec au milieu de la réponse se
+    ressemblent de l'intérieur — même exception, même 502 — et ne se ressemblent
+    pas du tout à l'écran : dans le premier cas il ne s'est rien affiché, dans le
+    second l'utilisateur a **sous les yeux un texte qui s'est arrêté**, que rien
+    ne distingue d'une réponse courte. Les confondre, c'est laisser lire comme
+    une réponse ce qui est un début de réponse.
+
+    Ce type ne change donc rien au traitement — `ServiceChat` l'enveloppe en
+    `ReponseIndisponible` comme n'importe quel échec de répondeur, et le fil ne
+    garde rien (voir `ServiceChat._repondre` : le message n'est persisté qu'une
+    fois la réponse **entière**, donc un flux coupé ne laisse jamais de moitié de
+    message dans le fil). Il change ce qui est **dit** : la cause nomme
+    l'interruption, elle voyage jusqu'à la trame `erreur` du flux, et le client
+    sait que ce qu'il affiche est à jeter.
     """
 
 
@@ -444,6 +477,80 @@ class ChatStore:
         return self._racine / f"{agent}.jsonl"
 
 
+class Redaction:
+    """Une réponse qui s'écrit par morceaux, et se diffuse au fur et à mesure (#268).
+
+    Chaque morceau part vers le flux dès qu'il est écrit (quand un incrémenteur
+    est là) **et** s'accumule : le texte final est **exactement** la concaténation
+    des incréments publiés, ce dont le contrat SSE dépend — la trame `fin` porte
+    le message complet, et un client doit pouvoir le reconstituer des `delta`
+    seuls.
+
+    Elle vit **ici** depuis #693, avec l'`Incrementeur` qu'elle sert, et non plus
+    chez l'orchestration qui l'avait écrite la première : deux répondeurs
+    produisent désormais par morceaux, et deux accumulateurs écrits côte à côte
+    finiraient par ne plus tenir le même invariant — celui-là est trop facile à
+    casser d'un `strip()` de plus pour être défini deux fois.
+
+    ⚠ « Exactement » demande un geste, et c'est le seul que cette classe ait.
+    `ServiceChat._repondre` **rase** le texte final ; publier tel quel un flux qui
+    commence ou finit par des blancs ferait donc mentir l'invariant d'un retour à
+    la ligne — assez pour qu'un client qui recolle ses `delta` n'obtienne pas la
+    trame `fin`. Les blancs de tête sont écartés, ceux de queue **retenus**
+    jusqu'à ce qu'un morceau non blanc les suive (ils sont alors intérieurs au
+    texte, et publiés avec lui) ou jusqu'à la fin (ils ne partent jamais). Rien
+    n'est ajouté, rien n'est réordonné : ce qui sort est le `strip()` du flux,
+    découpé là où le fournisseur l'a découpé.
+    """
+
+    def __init__(self, incrementer: Incrementeur | None) -> None:
+        self._incrementer = incrementer
+        self._morceaux: list[str] = []
+        # Les blancs de queue vus au dernier morceau : on ne sait pas encore
+        # s'ils sont intérieurs au texte ou à la fin de la réponse.
+        self._retenus = ""
+
+    async def ecrire(self, morceau: str) -> None:
+        """Ajoute `morceau` à la réponse et publie ce qui est acquis."""
+        candidat = self._retenus + morceau
+        if not self._morceaux:
+            candidat = candidat.lstrip()
+        corps = candidat.rstrip()
+        self._retenus = candidat[len(corps) :]
+        if not corps:
+            return
+        self._morceaux.append(corps)
+        if self._incrementer is not None:
+            await self._incrementer(corps)
+
+    @property
+    def texte(self) -> str:
+        """La réponse écrite jusqu'ici — la concaténation exacte des incréments publiés."""
+        return "".join(self._morceaux)
+
+    @property
+    def diffusee(self) -> bool:
+        """Un incrément est-il déjà parti ? — donc : y a-t-il du texte à l'écran ?"""
+        return bool(self._morceaux)
+
+    def interruption(self, cause: BaseException) -> BaseException:
+        """L'échec à relayer, **nommé** quand des incréments sont déjà partis (#693).
+
+        Rend `cause` telle quelle tant que rien n'a été publié : il ne s'est rien
+        affiché, l'échec est celui de n'importe quel répondeur et il n'y a rien à
+        ajouter. Une fois le premier incrément parti, l'échec change de nature —
+        pas de gravité — et devient un `FluxInterrompu` qui le dit, parce que
+        c'est la seule information que le client ne peut pas déduire : il voit du
+        texte, et rien ne lui apprendrait qu'il est incomplet.
+        """
+        if not self._morceaux:
+            return cause
+        return FluxInterrompu(
+            f"réponse interrompue après {len(self.texte)} caractère(s) déjà diffusé(s) "
+            f"— ce qui s'affiche est incomplet : {cause}"
+        )
+
+
 class RepondeurChat(ABC):
     """Production de la réponse d'un agent au fil — le point d'injection du chat.
 
@@ -511,17 +618,69 @@ class RepondeurModele(RepondeurChat):
         self._playbooks = playbooks
 
     async def repondre(self, agent: Agent, fil: Sequence[MessageChat]) -> str:
+        """La réponse en un aller — `produire` est la voie qui diffuse (#693)."""
+        return await self._resolu().generate(
+            transcription(fil),
+            model=agent.modele,
+            system_prompt=self._systeme(agent),
+        )
+
+    async def produire(
+        self,
+        agent: Agent,
+        fil: Sequence[MessageChat],
+        *,
+        incrementer: Incrementeur | None = None,
+        projet_id: str | None = None,
+    ) -> ReponseChat:
+        """La réponse du modèle, publiée **au fil de son arrivée** (#693).
+
+        Ce répondeur n'avait pas surchargé `produire`, donc l'implémentation par
+        défaut publiait la réponse en **un seul** incrément : un fil servi par le
+        vrai modèle se « diffusait » d'un bloc, et brancher le front sur le flux
+        n'y aurait rien changé. Il consomme désormais `generate_stream`, la
+        génération par incréments de la frontière — et comme celle-ci a une
+        implémentation par défaut, **un fournisseur qui ne sait pas streamer
+        produit exactement ce qu'il produisait avant** : un incrément, celui de
+        `generate`. Le comportement ne se dégrade donc jamais, il s'affine quand
+        le fournisseur sait le faire.
+
+        `projet_id` n'est pas lu : un répondeur qui parle sans rien ouvrir n'a
+        rien à rattacher (contrat de `RepondeurChat.produire`).
+
+        Le texte rendu est la concaténation **exacte** des incréments publiés —
+        `Redaction` en répond —, et un flux qui casse en cours de route lève un
+        échec qui le **nomme** : le fil, lui, ne garde rien (il n'est écrit qu'au
+        retour de cette méthode), mais l'écran, si.
+        """
+        redaction = Redaction(incrementer)
+        try:
+            async for morceau in self._resolu().generate_stream(
+                transcription(fil),
+                model=agent.modele,
+                system_prompt=self._systeme(agent),
+            ):
+                await redaction.ecrire(morceau)
+        except Exception as exc:
+            interrompu = redaction.interruption(exc)
+            if interrompu is exc:
+                raise
+            raise interrompu from exc
+        return ReponseChat(contenu=redaction.texte)
+
+    def _resolu(self) -> ModelProvider:
+        """Le fournisseur configuré, résolu au premier usage (`MAESTRO_PROVIDER`)."""
         if self._provider is None:
             # Import local : ne tire la couche fournisseur (SDK…) qu'au premier
             # message — l'app se construit et se teste sans elle.
             from maestro.providers.factory import provider_from_settings
 
             self._provider = provider_from_settings()
-        return await self._provider.generate(
-            transcription(fil),
-            model=agent.modele,
-            system_prompt=f"{self._playbook_courant(agent)}\n\n{_CADRE_CONVERSATION}",
-        )
+        return self._provider
+
+    def _systeme(self, agent: Agent) -> str:
+        """Le prompt système des deux voies : playbook courant + cadre de conversation."""
+        return f"{self._playbook_courant(agent)}\n\n{_CADRE_CONVERSATION}"
 
     def _playbook_courant(self, agent: Agent) -> str:
         """Le playbook effectif de `agent` : la version éditée (#76), sinon le code."""
