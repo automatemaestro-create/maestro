@@ -74,6 +74,7 @@ function entree(
     version: "",
     depot: "",
     statut: "",
+    publie_le: "",
     admission: null,
     signaux: [],
     ...options,
@@ -89,12 +90,28 @@ const REGISTRE = [
       { cle: "SLACK_TOKEN", description: "Jeton", secret: true },
     ],
   }),
+  // Une entrée **découverte** (#679) : elle vient du miroir du registre
+  // officiel, personne ne l'a admise, elle n'est donc pas montable.
+  entree("io-github-alice-veille", "veille", {
+    curee: false,
+    source: "decouverte",
+    editeur: "io.github.alice",
+    // Vide comme le rend la traduction : l'amont ne déclare pas de tags, et les
+    // fabriquer serait fabriquer de la métadonnée (`mcp_traduction._entree`).
+    tags: [],
+    version: "1.4.0",
+    depot: "https://github.com/alice/veille",
+    statut: "deprecated",
+    publie_le: "2026-07-14T08:30:00Z",
+    secrets: [{ cle: "MCP_VEILLE_TOKEN", description: "Jeton", secret: true }],
+  }),
 ];
 
 const chargerRegistreMcp = vi.fn();
 const chargerPoolMcp = vi.fn();
 const ajouterIntegrationPoolMcp = vi.fn();
 const chargerProvenanceRegistreMcp = vi.fn();
+const admettreEntreeMcp = vi.fn();
 
 vi.mock("@/lib/api", () => ({
   chargerRegistreMcp: (q?: string) => chargerRegistreMcp(q),
@@ -102,6 +119,10 @@ vi.mock("@/lib/api", () => ({
   chargerProvenanceRegistreMcp: () => chargerProvenanceRegistreMcp(),
   ajouterIntegrationPoolMcp: (charge: unknown) =>
     ajouterIntegrationPoolMcp(charge),
+  // Le mock de ce fichier est **total** (pas de `importOriginal`) : un export
+  // que la bibliothèque importe et qui manquerait ici ferait échouer l'accès,
+  // pas seulement le clic. La porte d'admission (#678) est arrivée avec #679.
+  admettreEntreeMcp: (charge: unknown) => admettreEntreeMcp(charge),
   supprimerIntegrationPoolMcp: vi.fn(() => Promise.resolve()),
 }));
 
@@ -112,16 +133,16 @@ const PROVENANCE: ProvenanceRegistreMcp = {
   revue_le: "2026-08-28",
   tags: ["forge", "design", "recherche"],
   total: REGISTRE.length,
-  total_curees: REGISTRE.length,
+  total_curees: 2,
   total_admises: 0,
-  total_decouvertes: 0,
+  total_decouvertes: 1,
   provenances: [
     {
       source: "curee",
       resume: "Sélection curée à la main.",
       sources: [{ libelle: "Dépôt MCP", url: "https://example.invalid/mcp" }],
       revue_le: "2026-08-28",
-      total: REGISTRE.length,
+      total: 2,
     },
     {
       source: "admise",
@@ -134,14 +155,14 @@ const PROVENANCE: ProvenanceRegistreMcp = {
     {
       source: "decouverte",
       amont: "https://registry.modelcontextprotocol.io",
-      rafraichi_le: "",
-      moissonne_le: "",
-      nombre: 0,
+      rafraichi_le: "2026-08-28T06:00:00Z",
+      moissonne_le: "2026-08-27T06:00:00Z",
+      nombre: 3,
       retenues: 0,
-      moissonnee: false,
+      moissonnee: true,
       cause: "",
       echoue_le: "",
-      total: 0,
+      total: 1,
     },
   ],
 };
@@ -165,6 +186,7 @@ beforeEach(() => {
   chargerPoolMcp.mockResolvedValue({ integrations: [], erreur: null });
   chargerProvenanceRegistreMcp.mockResolvedValue(PROVENANCE);
   ajouterIntegrationPoolMcp.mockResolvedValue(undefined);
+  admettreEntreeMcp.mockResolvedValue(undefined);
 });
 
 /**
@@ -339,6 +361,90 @@ describe("le formulaire de configuration comme formulaire", () => {
       within(formulaire).getByRole("button", { name: "Ajouter au pool" }),
     );
     expect(ajouterIntegrationPoolMcp).not.toHaveBeenCalled();
+  });
+});
+
+describe("les deux sources, sans les confondre (#679)", () => {
+  /**
+   * ⚠ Les tests de ce lot sont **différés au lot 6 du parent #673** — sauf
+   * celui-ci, et c'est la règle du dépôt qui le veut : un lot intermédiaire
+   * porte ses tests quand sa logique est critique. Elle l'est ici, parce que ce
+   * qui se vérifie est un **garde-fou** : `POST /api/mcp/pool` refuse une entrée
+   * hors allowlist (docs/19), donc un écran qui lui proposerait le formulaire
+   * ferait saisir un token pour un ajout dont il connaît d'avance le refus — et
+   * ferait passer pour installable ce que la sécurité du produit interdit.
+   *
+   * Ce qui décide n'est pas la source mais le champ `curee` : une entrée
+   * **admise** est `curee: true` tout en venant de l'amont. Les lire à l'envers
+   * fermerait la porte à ce qu'un humain vient d'ouvrir.
+   */
+  async function ligneDe(nom: string) {
+    return (await screen.findByText(nom)).closest("li") as HTMLElement;
+  }
+
+  it("n'offre pas la configuration d'une découverte, mais son examen", async () => {
+    await bibliotheque();
+    const ligne = await ligneDe("veille");
+
+    expect(within(ligne).getByText("Découverte")).toBeInTheDocument();
+    expect(
+      within(ligne).getByRole("button", { name: "Examiner" }),
+    ).toBeInTheDocument();
+    expect(
+      within(ligne).queryByRole("button", { name: "Configurer" }),
+    ).not.toBeInTheDocument();
+    // Le statut d'amont est signalé sur la ligne, sans déplier.
+    expect(within(ligne).getByText("Dépréciée")).toBeInTheDocument();
+  });
+
+  it("rend les signaux de confiance et l'admission au lieu du formulaire", async () => {
+    const utilisateur = userEvent.setup();
+    await bibliotheque();
+    const ligne = await ligneDe("veille");
+    await utilisateur.click(within(ligne).getByRole("button", { name: "Examiner" }));
+
+    // Les quatre signaux du critère 2 : éditeur/namespace, dépôt, version
+    // épinglée, date de publication.
+    expect(within(ligne).getByText("io.github.alice/veille")).toBeInTheDocument();
+    expect(
+      within(ligne).getByRole("link", { name: "https://github.com/alice/veille" }),
+    ).toBeInTheDocument();
+    expect(within(ligne).getByText("1.4.0")).toBeInTheDocument();
+    expect(within(ligne).getByText("14/07/2026")).toBeInTheDocument();
+
+    // Aucun champ de secret : l'ajout au pool serait refusé, le proposer serait
+    // promettre ce que le garde-fou interdit.
+    expect(
+      within(ligne).queryByLabelText(/MCP_VEILLE_TOKEN/),
+    ).not.toBeInTheDocument();
+    expect(ligne.querySelector("form")).toBeNull();
+
+    await utilisateur.click(
+      within(ligne).getByRole("button", { name: /Admettre dans l'allowlist/ }),
+    );
+    await waitFor(() =>
+      expect(admettreEntreeMcp).toHaveBeenCalledWith({
+        registre_id: "io-github-alice-veille",
+      }),
+    );
+    expect(ajouterIntegrationPoolMcp).not.toHaveBeenCalled();
+  });
+
+  it("dit les trois sources au pied, sans plus prétendre que rien n'est moissonné", async () => {
+    const region = await bibliotheque();
+
+    // La ligne curée n'a pas bougé de sens (#271) — mais elle ne parle plus que
+    // d'elle-même, et le pied porte les deux autres sources à côté.
+    expect(await within(region).findByText(/Revue le/)).toHaveTextContent(
+      "28/08/2026",
+    );
+    expect(
+      within(region).getByText(/3 entrées moissonnées, 1 servies ici/),
+    ).toBeInTheDocument();
+    expect(
+      within(region).getByText(/aucune entrée découverte n'a encore été admise/),
+    ).toBeInTheDocument();
+    expect(within(region).queryByText(/jamais moissonn/)).not.toBeInTheDocument();
   });
 });
 

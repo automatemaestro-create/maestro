@@ -425,14 +425,21 @@ class EntreeRegistre:
     tête (`USAGE_*`). Tous deux ont un défaut vide/nul : une entrée injectée par
     un test reste valide sans les porter.
 
-    `curee`, `version`, `depot` et `statut` datent de la fédération (#677). Le
-    premier dit **de quelle source** l'entrée vient ; il vaut `True` par défaut,
-    si bien que le seed et toute entrée écrite à la main restent curées sans
-    rien déclarer — la valeur qu'il portait déjà en dur dans `to_dict()`. Les
-    trois autres sont les signaux que **seul l'amont** fournit (la version
-    épinglée, le dépôt, le statut `active`/`deprecated`) et restent vides sur une
-    entrée curée, dont ils ne diraient rien : le seed n'épingle pas de version,
-    c'est la revue de code qui le date.
+    `curee`, `version`, `depot` et `statut` datent de la fédération (#677), et
+    `publie_le` de l'écran qui les montre (#679). Le premier dit **de quelle
+    source** l'entrée vient ; il vaut `True` par défaut, si bien que le seed et
+    toute entrée écrite à la main restent curées sans rien déclarer — la valeur
+    qu'il portait déjà en dur dans `to_dict()`. Les quatre autres sont les
+    signaux que **seul l'amont** fournit (la version épinglée, le dépôt, le
+    statut `active`/`deprecated`, la date de publication) et restent vides sur
+    une entrée curée, dont ils ne diraient rien : le seed n'épingle pas de
+    version, c'est la revue de code qui le date.
+
+    ⚠ `publie_le` est un horodatage **d'amont**, pas une date de revue : il dit
+    quand l'éditeur a publié *cette version-là*, ce qui est le seul des quatre
+    signaux à répondre à « depuis quand ça existe ? ». Une entrée admise le
+    garde figé avec le reste (#678) — l'âge de ce qu'on a admis ne bouge pas
+    quand l'amont republie.
 
     `admission` et `signaux` datent de la porte d'admission (#678) et sont posés
     par `RegistreMcp`, jamais par l'appelant — même règle que `curee`, et pour la
@@ -462,6 +469,7 @@ class EntreeRegistre:
     version: str = ""
     depot: str = ""
     statut: str = ""
+    publie_le: str = ""
     admission: Admission | None = None
     signaux: tuple[SignalAmont, ...] = ()
 
@@ -543,6 +551,7 @@ class EntreeRegistre:
             "version": self.version,
             "depot": self.depot,
             "statut": self.statut,
+            "publie_le": self.publie_le,
             "admission": self.admission.trace() if self.admission is not None else None,
             "signaux": [s.to_dict() for s in self.signaux],
         }
@@ -1194,6 +1203,7 @@ def entree_depuis_dict(brut: Mapping[str, Any]) -> EntreeRegistre:
         version=_texte(brut.get("version")),
         depot=_texte(brut.get("depot")),
         statut=_texte(brut.get("statut")),
+        publie_le=_texte(brut.get("publie_le")),
     )
 
 
@@ -1205,19 +1215,27 @@ def entree_depuis_dict(brut: Mapping[str, Any]) -> EntreeRegistre:
 #: atteste une fraîcheur que personne n'a vérifiée.
 #:
 #: ⚠ Depuis #677 cette provenance ne décrit plus la bibliothèque entière mais sa
-#: **source curée** — d'où « cette liste-ci » : la phrase disait « jamais
-#: moissonnée » d'un objet qui, lu au pied de l'écran, en compte désormais une
-#: qui l'est. Ce qui est curé reste curé et la promesse ne bouge pas ; c'est sa
-#: **portée** qui est nommée, parce qu'une moitié de vérité posée à côté de son
-#: contraire se lit comme une contradiction. La provenance du miroir est rendue
+#: **source curée** — d'où « cette liste-ci ». La provenance du miroir est rendue
 #: par `ProvenanceDecouverte`, à côté et jamais fondue dans celle-ci.
+#:
+#: ⚠ #679 a retiré **deux** morceaux de la phrase, et pour deux raisons qui ne se
+#: valent pas. « Jamais moissonnée » était encore *vrai de cette liste-ci* et
+#: #677 l'avait gardé en le bornant ; mais c'est la phrase que l'écran affiche au
+#: pied d'une bibliothèque **à deux sources**, dont l'une est moissonnée — une
+#: moitié de vérité posée à côté de son contraire se lit comme une contradiction,
+#: et borner la portée dans une docstring ne borne rien à l'écran. « C'est elle,
+#: et elle seule, qui est instanciable » était devenu **faux** : la porte
+#: d'admission (#678) fait entrer des entrées d'amont dans l'allowlist, et ce
+#: qu'il fallait dire à la place n'est pas la source mais l'allowlist elle-même.
+#: Ce qui reste — écrite à la main, relue en revue de code, versionnée — est ce
+#: qui distingue vraiment cette source, et rien de cela n'a bougé.
 PROVENANCE = Provenance(
     resume=(
         "Cette liste-ci est une sélection curée à la main parmi les serveurs MCP "
         "les plus utilisés de l'écosystème, d'après les annuaires publics "
-        "ci-dessous — jamais moissonnée : chaque entrée y est écrite, relue en "
-        "revue de code et versionnée avec le dépôt. C'est elle, et elle seule, "
-        "qui est instanciable."
+        "ci-dessous : chaque entrée y est écrite, relue en revue de code et "
+        "versionnée avec le dépôt. Est instanciable ce qui appartient à "
+        "l'allowlist — cette liste, plus ce qu'un geste humain y a admis."
     ),
     sources=(
         SourceCitee(
