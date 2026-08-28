@@ -5627,12 +5627,14 @@ Trois choses à savoir sur ce que la reprise fait du plan :
   repart à froid sur celle-là seulement. Un ticket « En cours » que le run repris n'avait **pas** en
   main appartient à quelqu'un d'autre : il reste sauté.
 - **La concurrence est rejouée, elle aussi.** Un run coupé alors qu'il avait quatre tickets en main se
-  reprend à quatre : le régime est lu dans le fichier `concurrence` du run repris, écrit à son
-  démarrage. Sans cela, [`/orchestrate --resume`](../.claude/commands/orchestrate.md) — qui ne passe
+  reprend à quatre : le régime est lu dans le fichier `concurrence` du run repris. Sans cela,
+  [`/orchestrate --resume`](../.claude/commands/orchestrate.md) — qui ne passe
   aucune option — le rejouerait en **séquentiel** : les tickets repris seraient bien tous traités, mais
   un par un, et la reprise ne serait plus le même run. Même raison que le plan figé. Un
   `--concurrence` explicite l'emporte, ce qui reste la façon de dérouler à la main, en séquentiel, un
-  run qui tournait à N.
+  run qui tournait à N. ⚠ Ce fichier a porté une valeur **fausse** pendant tout le temps où la
+  dérivation a été le régime par défaut, et la reprise en héritait — voir §11.10, « Ce que le fichier
+  enregistre ».
 - **Le journal est neuf.** `resume.tsv` s'écrit en tête de run, donc rejouer dans le répertoire du
   run repris effacerait son bilan. Le nouveau run porte un fichier `reprise-de` avec l'id de son
   prédécesseur, et `status.sh` l'affiche en en-tête : deux journaux partiels qui racontent la même
@@ -5854,6 +5856,28 @@ en invoquant une mesure qui n'existe pas.
 par-dessus une consigne serait le défaut symétrique de celui qu'on corrige, et recalculer sur le plan
 d'aujourd'hui déferait ce que #291 protège. `--concurrence 1` rend donc toujours le run séquentiel au
 bit près.
+
+**Ce que le fichier `concurrence` enregistre (#740).** Il porte la valeur **effectivement tenue**,
+quelle qu'en soit l'origine — c'est tout ce qu'une reprise en attend, et ce n'était pas le cas. #291
+l'écrit à la création du répertoire du run : juste tant que **toute** concurrence était explicite,
+donc arrêtée au dépouillement des options. #455 a introduit la dérivation **~250 lignes plus loin**
+— elle a besoin de la colonne `groupe`, donc d'un plan figé — sans déplacer cette écriture, si bien
+que le fichier gardait la valeur d'**avant** dérivation, c'est-à-dire le repli `1`. La dérivation
+étant depuis le **régime par défaut**, **tous les runs ordinaires enregistraient `1`**, et toute
+reprise repartait en séquentiel — en l'annonçant `séquentiel (du run repris)`, c'est-à-dire avec les
+mots d'un verdict. Deux runs réels y sont passés (`20260827-180008` et `20260828-162358`), et le
+défaut fausse aussi la mesure que **#625** doit produire. Défaut de **composition** : les deux
+moitiés étaient gardées, la couture ne l'était pas — seule la concurrence explicite était couverte,
+c'est-à-dire le seul cas qui était juste.
+
+Le fichier est donc **écrit deux fois** : posé au démarrage, puis **réécrit** une fois la valeur
+arrêtée, pour les **trois** origines. Deux choses à ne pas défaire — on **réécrit**, on ne **déplace**
+pas : un run coupé entre la création du répertoire et le plan doit laisser une valeur derrière lui,
+faute de quoi on remplacerait un mauvais régime par une **absence** de régime, et le cas est atteint
+pour de vrai (en `--detach`, le processus appelant crée le répertoire et sort sans jamais voir un
+plan) ; et la réécriture n'est **pas** conditionnée à l'origine `derivee`, sans quoi deux endroits du
+flux répondraient de ce que le fichier porte — une reprise réenregistre donc **aussi** ce qu'elle
+vient de relire, le run qui la reprendra relisant d'ici.
 
 **Le régime est annoncé avec son ORIGINE**, dans la ligne `plan :` comme dans `--dry-run` :
 

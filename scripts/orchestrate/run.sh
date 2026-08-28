@@ -169,7 +169,11 @@
 #   pid               la carte d'identité du pilote (#213) : PID, WINPID, naissance, hôte — posée au
 #                     démarrage, retirée à la sortie, et seule chose qui permette de TUER un run
 #   concurrence       le nombre de tickets en vol de ce run (#291), relu par `--resume` pour rejouer
-#                     le même run et non sa version séquentielle
+#                     le même run et non sa version séquentielle. Il porte la valeur EFFECTIVEMENT
+#                     tenue, quelle qu'en soit l'origine (#740) : posé au démarrage — le fichier doit
+#                     exister même si le run est coupé avant d'avoir un plan — puis RÉÉCRIT une fois
+#                     la dérivation de #455 faite, faute de quoi tout run dérivé y laisserait le
+#                     repli 1 et toute reprise repartirait en séquentiel
 #   .limite           le rendez-vous d'attente de la limite d'usage (#291) : « <fin epoch> <TAB>
 #                     reset|palier <TAB> <iid> ». Une seule attente pour les N sessions en vol
 #   .plafond          l'iid de la session qui a franchi le plafond des 5 h 30 (#291) — sa présence
@@ -2456,7 +2460,17 @@ RESUME="$RUN_DIR/resume.tsv"
 # La concurrence du run, laissée en clair : c'est ce qu'une reprise relit pour rejouer LE MÊME run et
 # non sa version séquentielle (#291). Un fichier d'une ligne plutôt qu'une colonne de plus au plan —
 # le plan décrit les tickets, jamais le régime du pilote, et une reprise joue le plan d'un autre run.
-printf '%s\n' "$CONCURRENCE" >"$RUN_DIR/concurrence"
+#
+# Pose PROVISOIRE : à cet endroit du flux, la valeur n'est arrêtée que si quelqu'un l'a choisie
+# (option, variable, run repris). La DÉRIVATION de #455 a besoin de la colonne `groupe` du plan, qui
+# n'est pas encore figé — elle a lieu ~250 lignes plus bas, et c'est là que le fichier est RÉÉCRIT
+# (#740, chercher « concurrence_enregistre »). Écrire deux fois plutôt que déplacer l'écriture est
+# délibéré : un run coupé entre ce point et le plan doit laisser une valeur derrière lui, faute de
+# quoi on remplacerait un mauvais régime par une absence de régime, et une reprise n'aurait plus
+# rien à relire. Le cas est atteint pour de vrai — en `--detach`, le processus appelant crée le
+# répertoire et sort sans jamais voir un plan.
+concurrence_enregistre() { printf '%s\n' "$CONCURRENCE" >"$RUN_DIR/concurrence"; }
+concurrence_enregistre
 # La file de merge du run (#419). `merge.tsv` est le fichier qu'une reprise relit — voir plus bas,
 # où elle est rechargée : ce qui a déjà été mergé ne l'est pas deux fois.
 MERGE_TSV="$RUN_DIR/merge.tsv"
@@ -2711,6 +2725,19 @@ if [ "$CONCURRENCE_ORIGINE" = derivee ]; then
     CONCURRENCE="$CONCURRENCE_PLAN"
   fi
 fi
+
+# Le fichier porte la concurrence EFFECTIVEMENT tenue, quelle qu'en soit l'origine (#740). C'est ici,
+# et nulle part ailleurs, que la valeur est arrêtée pour de bon : la réécrire au même endroit pour
+# les TROIS origines est ce qui fait qu'un seul point du flux répond de ce que le fichier porte —
+# rendre l'écriture conditionnelle à `derivee` laisserait deux endroits à tenir d'accord, et c'est
+# exactement le défaut de composition qu'on corrige (l'écriture de #291 était juste tant que toute
+# concurrence était explicite ; #455 a introduit la dérivation plus loin dans le flux sans déplacer
+# l'écriture, si bien que tous les runs ordinaires enregistraient le repli 1 — donc toute reprise
+# repartait en séquentiel, en l'annonçant « du run repris » comme s'il s'agissait d'un verdict).
+#
+# Une reprise réenregistre donc AUSSI ce qu'elle vient de relire : le run suivant relira d'ici, et
+# un maillon qui ne transmet pas fait perdre le régime au deuxième saut.
+concurrence_enregistre
 
 # Le régime de concurrence, dit avec SON ORIGINE (#455). « séquentiel » n'a pas le même sens selon
 # qu'il vient d'un verdict sur le plan (aucun ticket simultanable) ou d'une consigne : sans cette
