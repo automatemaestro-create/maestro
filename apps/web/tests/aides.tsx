@@ -13,6 +13,7 @@ import { render, type RenderResult } from "@testing-library/react";
 import type { ReactNode } from "react";
 
 import { FournisseurEtatGlobal } from "@/lib/etatGlobal";
+import { AGENT_ORCHESTRATION } from "@/lib/orchestration";
 import { ecrireProjetActifId } from "@/lib/projetActif";
 // `import type` et pas autrement : `lib/useChat` importe `lib/api`, dont ce
 // fichier ne doit **jamais** provoquer l'évaluation (voir l'avertissement de
@@ -23,6 +24,7 @@ import type { ReponseEnCours } from "@/lib/useChat";
 import type { ControlTower } from "@/lib/useControlTower";
 import {
   AGENT_SOURCE_DEFAUT,
+  CHAT_CONVERSATION_ORIGINE,
   EVENEMENT_TACHE_STATUT,
   EXECUTION_ANNULEE,
   EXECUTION_EN_COURS,
@@ -34,6 +36,7 @@ import type {
   CoutExecution,
   CoutTache,
   CoutTacheAgregee,
+  ConversationChat,
   CouloirFrise,
   DossierExplorateur,
   EntreeFrise,
@@ -162,8 +165,21 @@ export type FilFactice = {
   envoyer: (contenu: string, sources?: SourceDeclaree[]) => Promise<void>;
   /** L'arrêt d'une génération en vol (#695) — noté, jamais joué. */
   interrompre: () => void;
+  /** La conversation ouverte du fil (#696) — `""` tant que rien n'a été servi. */
+  conversation: string;
+  /** Les conversations du fil, la plus récente d'abord (#696). */
+  conversations: ConversationChat[];
+  /** Le geste « Nouvelle conversation » (#696). */
+  nouvelleConversation: () => Promise<void>;
+  /** Le retour sur une conversation existante (#696). */
+  ouvrirConversation: (id: string) => void;
 };
 
+// Le défaut porte **une** conversation et non zéro : l'API n'en rend jamais
+// aucune (un agent a toujours son `origine`, §6.14), et un défaut vide ferait
+// auditer une colonne de propriétés amputée de son historique — le même piège
+// que le pool MCP vide de `ecrans-reseau` (« un écran vide n'a presque pas de
+// balises »).
 function filParDefaut(): FilFactice {
   return {
     messages: [],
@@ -174,6 +190,25 @@ function filParDefaut(): FilFactice {
     reponseEnCours: null,
     envoyer: async () => {},
     interrompre: () => {},
+    conversation: CHAT_CONVERSATION_ORIGINE,
+    conversations: [conversationFactice()],
+    nouvelleConversation: async () => {},
+    ouvrirConversation: () => {},
+  };
+}
+
+/** Une carte de conversation, réduite à ce dont la colonne de propriétés se sert. */
+export function conversationFactice(
+  partiel: Partial<ConversationChat> = {},
+): ConversationChat {
+  return {
+    agent: AGENT_ORCHESTRATION,
+    id: CHAT_CONVERSATION_ORIGINE,
+    titre: "Ajoute la pagination à la liste des projets",
+    debut: "2026-07-28T10:00:00Z",
+    derniere: "2026-07-28T10:12:00Z",
+    messages: 4,
+    ...partiel,
   };
 }
 

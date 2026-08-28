@@ -12,6 +12,8 @@ import type {
   AnalyticsCouts,
   CoutExecution,
   ChoixSelecteur,
+  ConversationChat,
+  ConversationsChat,
   DecisionBrief,
   DeclarationProjet,
   DefinitionAgent,
@@ -470,9 +472,63 @@ export function reglerCapaciteAgent(
   );
 }
 
-/** Le fil de chat utilisateur ↔ agent (`GET /api/chat/{agent}`, #84), persisté. */
-export function chargerFilChat(agent: string): Promise<FilChat> {
-  return chargerJson<FilChat>(`/api/chat/${encodeURIComponent(agent)}`);
+/**
+ * Le fil de chat utilisateur ↔ agent (`GET /api/chat/{agent}`, #84), persisté.
+ *
+ * `conversation` (#694) désigne **laquelle** des conversations de l'agent relire ;
+ * omise, c'est la plus récente — donc, pour un agent qui n'en a qu'une, l'appel
+ * exact d'avant ce lot. La réponse **nomme** la conversation servie
+ * (`FilChat.conversation`), ce dont un appelant qui n'en a demandé aucune a
+ * besoin pour savoir dans laquelle il se trouve.
+ */
+export function chargerFilChat(
+  agent: string,
+  conversation: string = "",
+): Promise<FilChat> {
+  const fil = conversation
+    ? `?conversation=${encodeURIComponent(conversation)}`
+    : "";
+  return chargerJson<FilChat>(`/api/chat/${encodeURIComponent(agent)}${fil}`);
+}
+
+/**
+ * Les conversations d'un fil (`GET /api/chat/{agent}/conversations`, #694), la
+ * plus récente d'abord — de quoi peupler un historique **sans charger un seul
+ * message**.
+ *
+ * Jamais vide : un agent a toujours au moins sa conversation `origine`, fût-elle
+ * vierge. La première de la liste est celle qu'un envoi sans précision
+ * rejoindrait.
+ */
+export function chargerConversationsChat(
+  agent: string,
+): Promise<ConversationsChat> {
+  return chargerJson<ConversationsChat>(
+    `/api/chat/${encodeURIComponent(agent)}/conversations`,
+  );
+}
+
+/**
+ * Ouvre une conversation neuve sur le fil d'un agent (`POST
+ * /api/chat/{agent}/conversations`, #694) et rend sa carte.
+ *
+ * **Idempotent tant que rien n'a été dit** : si la plus récente est vierge, elle
+ * *est* la conversation neuve et c'est elle qui revient — deux clics sur
+ * « Nouvelle conversation » ne laissent donc pas deux fils vides derrière eux, et
+ * l'écran n'a aucune garde à tenir de son côté.
+ */
+export async function ouvrirConversationChat(
+  agent: string,
+): Promise<ConversationChat> {
+  const reponse = await fetch(
+    `${API_URL}/api/chat/${encodeURIComponent(agent)}/conversations`,
+    { method: "POST", headers: { "Content-Type": "application/json" } },
+  );
+  if (!reponse.ok) {
+    throw new Error(`ouverture refusée (${reponse.status})`);
+  }
+  const carte = (await reponse.json()) as { conversation: ConversationChat };
+  return carte.conversation;
 }
 
 /**
@@ -527,6 +583,12 @@ export class ErreurReponse extends Error {
  * figure dans sa liste de runs et s'ouvre en détail. Omis, le run part sans
  * projet et n'apparaît alors dans la liste d'aucun (#277).
  *
+ * `conversation` (#694, #696) range l'échange dans **un** des fils de l'agent —
+ * celui que l'écran montre, et non « le dernier écrit » : sans elle, un message
+ * posté depuis une conversation ancienne rejoindrait la plus récente, c'est-à-dire
+ * une autre que celle qu'on a sous les yeux. Omise, on retombe sur ce
+ * comportement nominal, celui d'un appelant d'avant ce lot.
+ *
  * Deux régimes d'échec, et ils ne se confondent pas — c'est ce qui permet à
  * l'appelant de savoir si le message est **acquis** :
  *
@@ -541,6 +603,7 @@ export async function diffuserMessageChat(
   contenu: string,
   sources: SourceDeclaree[] = [],
   projetId: string | null = null,
+  conversation: string = "",
   surTrame: (trame: FragmentChat) => void = () => {},
 ): Promise<void> {
   const reponse = await fetch(
@@ -552,6 +615,7 @@ export async function diffuserMessageChat(
         contenu,
         ...(sources.length > 0 && { sources }),
         ...(projetId !== null && { projet_id: projetId }),
+        ...(conversation !== "" && { conversation }),
       }),
     },
   );

@@ -65,18 +65,63 @@
  * de l'écran ce que l'utilisateur venait d'y lire. Il ne s'efface qu'à deux
  * moments : un nouvel envoi, ou l'arrivée au fil persisté d'une réponse au
  * message qu'il suivait — la seule chose qui puisse légitimement le remplacer.
+ *
+ * ## Un fil est une suite de conversations (#694, servi à l'écran par #696)
+ *
+ * Le hook tient trois choses de plus : *laquelle* est ouverte, la liste des
+ * autres, et les deux gestes qui les commandent — en ouvrir une neuve, revenir
+ * sur une ancienne. Cinq décisions à ne pas défaire :
+ *
+ * - **la conversation servie n'est pas celle qu'on demande.** `demandee` est ce
+ *   que la mémoire du poste réclame, `""` valant « la plus récente » ;
+ *   `conversation` est ce que l'API a **servi**, qu'elle nomme dans sa réponse.
+ *   Les deux ne se confondent pas : la seconde est la seule qui désigne toujours
+ *   quelque chose, et c'est elle qui décide de tout — où part l'envoi, laquelle
+ *   porte la marque dans l'historique ;
+ * - **la mémoire ne retient qu'un CHOIX, jamais un défaut.** On n'y écrit pas la
+ *   conversation servie à chaque chargement : on n'y écrit que lorsque quelqu'un
+ *   en désigne une (ouvrir une neuve, rouvrir une ancienne). Sans choix, un
+ *   rechargement de la page retombe sur « la plus récente », qui *est* celle
+ *   qu'on avait sous les yeux — écrire dans une conversation la ramène en tête
+ *   (docs/05 §6.14). Le troisième critère de #696 est donc tenu par les deux
+ *   moitiés à la fois, et la mémoire reste ce qui distingue « je relis un vieux
+ *   fil » de « je continue » ;
+ * - **une mémoire périmée n'est pas une panne.** Une conversation retenue d'une
+ *   visite passée a pu disparaître (fil purgé, poste rebranché sur une autre
+ *   API) : l'API répond alors `404`, et laisser l'écran sur « fil illisible »
+ *   pour un souvenir périmé serait le pire des deux. On l'oublie et on relit la
+ *   plus récente — une fois, jamais en boucle ;
+ * - **la liste se recharge quand le fil se recharge**, et c'est un fait de
+ *   conception : titre, dernière activité et nombre de messages sont **dérivés**
+ *   des messages (§6.14), donc ils changent exactement aux instants où le fil
+ *   change. Les découpler donnerait un historique qui retarde d'un message ;
+ * - **l'envoi part dans la conversation affichée**, pas dans « la plus
+ *   récente » : sans ce paramètre, écrire depuis un fil ancien rangerait le
+ *   message ailleurs que là où on l'a tapé.
+ *
+ * Prix assumé plutôt que masqué : changer de conversation **rouvre la socket**,
+ * la lecture dont l'effet dépend ayant changé d'identité. C'est exactement ce que
+ * fait déjà un changement de destinataire — le geste voisin, dans la même colonne
+ * — et le bus écouté est commun à toute la Control Tower : la reconnexion est
+ * immédiate et ne perd rien, chaque ouverture rechargeant le fil.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   arreterFluxChat,
+  chargerConversationsChat,
   chargerFilChat,
   diffuserMessageChat,
   ErreurReponse,
+  ouvrirConversationChat,
   urlEvenements,
   PORTEE_TOUS,
 } from "./api";
+import {
+  ecrireConversationOuverte,
+  useConversationOuverte,
+} from "./conversationOuverte";
 import {
   EVENEMENT_CHAT_MESSAGE,
   FRAGMENT_CHAT_DEBUT,
@@ -84,6 +129,7 @@ import {
   FRAGMENT_CHAT_ERREUR,
   FRAGMENT_CHAT_FIN,
   FRAGMENT_CHAT_INTERROMPU,
+  type ConversationChat,
   type Evenement,
   type MessageChat,
   type SourceDeclaree,
@@ -94,6 +140,19 @@ const DELAI_RECHARGEMENT_MS = 150;
 
 /** Plafond du backoff de reconnexion WebSocket (ms). */
 const RECONNEXION_MAX_MS = 10_000;
+
+/**
+ * Ce que l'API a servi, **et pour quel agent** (#696). L'agent est dans l'état
+ * plutôt qu'à côté parce que la question qu'on pose au rendu est « ceci
+ * appartient-il encore au destinataire affiché ? » — un couple répond, deux états
+ * séparés se désaccordent le temps d'un aller-retour.
+ */
+type Servie = { agent: string; id: string; cartes: ConversationChat[] };
+
+const RIEN_DE_SERVI: Servie = { agent: "", id: "", cartes: [] };
+
+/** Un tableau constant : le rendre neuf à chaque rendu ferait travailler les listes pour rien. */
+const AUCUNE_CARTE: ConversationChat[] = [];
 
 /**
  * L'identité d'un message pour la fusion direct ↔ persisté.
@@ -167,6 +226,21 @@ export type Chat = {
    * entière tomber ensuite, c'est-à-dire un arrêt qui n'arrête rien.
    */
   interrompre: () => void;
+  /**
+   * La conversation **servie** (#696) — celle qu'on lit et où part l'envoi.
+   * `""` tant que l'API n'a pas répondu : personne ne peut la nommer avant.
+   */
+  conversation: string;
+  /** Les conversations du fil, la plus récente d'abord (#696). Jamais filtrées. */
+  conversations: ConversationChat[];
+  /**
+   * Le geste « Nouvelle conversation » : ouvre un fil vierge chez le même agent
+   * et bascule dessus, la précédente restant intacte et listée. Idempotent —
+   * l'API rend la conversation vierge déjà en tête plutôt que d'en empiler une.
+   */
+  nouvelleConversation: () => Promise<void>;
+  /** Revient sur une conversation existante, désignée par son identifiant. */
+  ouvrirConversation: (id: string) => void;
 };
 
 export function useChat(agent: string, projetId: string | null = null): Chat {
@@ -179,6 +253,17 @@ export function useChat(agent: string, projetId: string | null = null): Chat {
   const [reponseEnCours, setReponseEnCours] = useState<ReponseEnCours | null>(
     null,
   );
+  // Ce qu'on **demande** — `""` valant « la plus récente ». Lu de la mémoire du
+  // poste, jamais recopié dans un état d'ici : c'est ce qui le rend insensible au
+  // remontage de la `key` de projet du `Shell` (#281), et ce qui évite d'avoir
+  // deux versions du même choix à tenir d'accord (`lib/conversationOuverte`).
+  const demandee = useConversationOuverte(agent);
+  // Ce que l'API a **servi**, avec l'agent auquel ça appartient : les deux
+  // voyagent ensemble pour qu'un changement de destinataire ne laisse jamais
+  // l'historique de l'un sous le nom de l'autre, fût-ce le temps d'un rendu.
+  const [servie, setServie] = useState<Servie>(RIEN_DE_SERVI);
+  const conversation = servie.agent === agent ? servie.id : "";
+  const conversations = servie.agent === agent ? servie.cartes : AUCUNE_CARTE;
 
   const rechargementPrevu = useRef<ReturnType<typeof setTimeout> | null>(null);
   /**
@@ -197,8 +282,23 @@ export function useChat(agent: string, projetId: string | null = null): Chat {
 
   const recharger = useCallback(async () => {
     try {
-      const fil = await chargerFilChat(agent);
+      const fil = await chargerFilChat(agent, demandee).catch(
+        async (echec: unknown) => {
+          // Mémoire périmée : la conversation retenue n'existe plus (fil purgé,
+          // poste rebranché sur une autre API). On l'oublie et on relit la plus
+          // récente, **une** fois — un second échec est une vraie panne et
+          // remonte comme telle.
+          if (demandee === "") throw echec;
+          ecrireConversationOuverte(agent, "");
+          return chargerFilChat(agent);
+        },
+      );
       setPersistes(fil.messages);
+      setServie((avant) => ({
+        agent,
+        id: fil.conversation ?? "",
+        cartes: avant.agent === agent ? avant.cartes : [],
+      }));
       // Ce que le flux a rendu et que le REST porte désormais : le garder
       // doublerait la ligne à chaque fusion.
       const vues = new Set(fil.messages.map(cleMessage));
@@ -221,7 +321,17 @@ export function useChat(agent: string, projetId: string | null = null): Chat {
     } finally {
       setChargement(false);
     }
-  }, [agent]);
+    // La liste suit le fil (voir l'en-tête) mais ne décide pas de sa lisibilité :
+    // un historique qui n'arrive pas laisse le précédent en place et se rattrape
+    // au rechargement suivant. Déclarer « fil illisible » par-dessus une
+    // conversation parfaitement lisible serait le pire des deux verdicts.
+    try {
+      const { conversations: cartes } = await chargerConversationsChat(agent);
+      setServie((avant) => (avant.agent === agent ? { ...avant, cartes } : avant));
+    } catch {
+      // Transitoire : même API que le fil, qui vient de répondre.
+    }
+  }, [agent, demandee]);
 
   const planifierRechargement = useCallback(() => {
     if (rechargementPrevu.current !== null) return;
@@ -318,6 +428,9 @@ export function useChat(agent: string, projetId: string | null = null): Chat {
           contenu,
           sources,
           projetId,
+          // La conversation **servie**, pas celle qu'on a demandée : c'est celle
+          // qu'on a sous les yeux, et un message se range là où on l'a tapé.
+          conversation,
           (trame) => {
             if (trame.echange !== "" && vol.echange === "") {
               vol.echange = trame.echange;
@@ -394,7 +507,7 @@ export function useChat(agent: string, projetId: string | null = null): Chat {
         await recharger();
       }
     },
-    [agent, projetId, recharger],
+    [agent, projetId, conversation, recharger],
   );
 
   const interrompre = useCallback(() => {
@@ -406,6 +519,34 @@ export function useChat(agent: string, projetId: string | null = null): Chat {
     }
     void arreterFluxChat(agent, vol.echange);
   }, [agent]);
+
+  /**
+   * Le geste « Nouvelle conversation » (#696). L'API décide **quelle** est la
+   * conversation neuve — elle rend celle déjà vierge en tête plutôt que d'en
+   * empiler une —, et c'est son identifiant qu'on retient : réclamer autre chose
+   * que ce qu'elle vient de nommer serait ré-inventer sa règle d'idempotence de
+   * ce côté-ci. Écrire dans la mémoire **est** la bascule : `demandee` en est
+   * abonné, la lecture suit toute seule.
+   */
+  const nouvelleConversation = useCallback(async () => {
+    const carte = await ouvrirConversationChat(agent);
+    setDirects([]);
+    ecrireConversationOuverte(agent, carte.id);
+  }, [agent]);
+
+  /**
+   * Revient sur une conversation existante. On **demande**, on ne pose pas : la
+   * lecture qui suit dira ce qui a réellement été servi, et c'est elle qui fait
+   * foi partout ailleurs — jusqu'à l'oublier si l'identifiant ne désigne plus
+   * rien.
+   */
+  const ouvrirConversation = useCallback(
+    (id: string) => {
+      setDirects([]);
+      ecrireConversationOuverte(agent, id);
+    },
+    [agent],
+  );
 
   const messages = useMemo(() => {
     if (directs.length === 0) return persistes;
@@ -422,5 +563,9 @@ export function useChat(agent: string, projetId: string | null = null): Chat {
     reponseEnCours,
     envoyer,
     interrompre,
+    conversation,
+    conversations,
+    nouvelleConversation,
+    ouvrirConversation,
   };
 }

@@ -83,6 +83,31 @@
  * n'a pas bougé — c'est l'endroit du branchement qui la respecte, pas
  * l'abstention. Cette page, elle, n'a rien eu à changer : elle passe un fil à
  * `Conversation`, et c'est le fil qui sait désormais s'écrire.
+ *
+ * ## Repartir de zéro, retrouver ce qui précède (#696)
+ *
+ * Le fil était un JSONL éternel par agent avant #694 ; l'API sait depuis le
+ * découper en **conversations**, et c'est ici que l'écran s'en sert. Deux gestes,
+ * une seule place : « Nouvelle conversation » et l'historique vont dans la
+ * **colonne de propriétés**, parce qu'une conversation ouverte est une propriété
+ * du fil et que c'est la seule des trois places sans plafond (docs/30 §4). En
+ * faire un quatrième bloc de corps ferait rougir `sobriete.test.tsx`, et ce
+ * serait le bon signal.
+ *
+ * Trois choses à ne pas défaire :
+ *
+ * - **l'historique est celui du destinataire courant.** Une mention `@dev`
+ *   change de fil (voir plus haut), donc de conversations : les mélanger
+ *   donnerait une liste où l'on ouvrirait le fil d'un autre agent sans le savoir.
+ *   C'est `useChat(destinataire)` qui le tient — l'écran ne trie rien ;
+ * - **rien n'est filtré par le projet actif.** Le fil reste transverse (#281), et
+ *   la conversation ouverte survit au changement de projet bien que la `key` du
+ *   `Shell` remonte tout ce qui est dessous : elle est relue de la mémoire du
+ *   poste (`lib/conversationOuverte`) et non tenue dans l'état de cette page, qui
+ *   ne survivrait pas au remontage ;
+ * - **la liste ne se recopie pas.** Titre, date et nombre de messages viennent de
+ *   la carte servie par l'API (`ConversationChat`, §6.14), jamais d'un décompte
+ *   refait ici sur les messages chargés — on n'en a qu'un fil sur N.
  */
 
 import { useMemo, useState } from "react";
@@ -93,7 +118,9 @@ import {
   IconeAgent,
   IconeChat,
   IconeFermer,
+  IconeHistorique,
   IconeObjectif,
+  IconePlus,
   IconeRuns,
 } from "@/components/Icones";
 import {
@@ -107,6 +134,8 @@ import {
 import { cheminOnglet } from "@/lib/agents";
 import { runsEnAttente } from "@/lib/brief";
 import { useEtatGlobal } from "@/lib/etatGlobal";
+import { formatHeureRelative } from "@/lib/format";
+import { useHorloge } from "@/lib/horloge";
 import { hrefRun } from "@/lib/navigation";
 import {
   ACCUEIL_ORCHESTRATION,
@@ -116,8 +145,8 @@ import {
   destinatairesDuFil,
   mentionEnTete,
 } from "@/lib/orchestration";
-import type { MessageChat } from "@/lib/types";
-import { useChat } from "@/lib/useChat";
+import type { ConversationChat, MessageChat } from "@/lib/types";
+import { useChat, type Chat } from "@/lib/useChat";
 
 export default function PageChat() {
   const { agents, taches, projet, executions } = useEtatGlobal();
@@ -295,12 +324,140 @@ export default function PageChat() {
             ))}
           </ul>
         </Carte>
+        {/* Après « Parler à », et l'ordre est causal : on choisit d'abord à qui
+            l'on parle, la liste ci-dessous étant celle de *son* fil (#696). */}
+        <Carte densite="aeree">
+          <EnTeteSection titre="Conversations" icone={IconeHistorique} />
+          <ConversationsDuFil fil={fil} />
+        </Carte>
         <Carte densite="aeree">
           <EnTeteSection titre="Ouvert depuis ce fil" icone={IconeRuns} />
           <SuitesDuFil messages={fil.messages} taches={taches} />
         </Carte>
       </aside>
     </div>
+  );
+}
+
+/**
+ * Le nom d'une conversation dont personne n'a encore rien dit — celui que
+ * l'écran donne, l'API laissant le titre **vide** tant que rien n'a été dit
+ * (`titre_conversation`, §6.14). Nommer ici plutôt que là-bas est le bon
+ * partage : le backend ne peut pas inventer une phrase qui n'a pas été
+ * prononcée, l'écran, lui, sait de quoi il s'agit — et il n'y en a jamais
+ * qu'une, l'ouverture étant idempotente sur une conversation déjà vierge.
+ *
+ * Ce n'est **pas** « Nouvelle conversation », qui est le nom du bouton juste
+ * au-dessus : deux commandes voisines sous un même nom accessible ne se
+ * distinguent plus à l'oreille, et un test qui viserait l'une prendrait l'autre.
+ */
+const CONVERSATION_VIERGE = "Conversation vierge";
+
+/**
+ * L'historique du fil et le geste qui en ouvre un neuf (#696) — les deux moitiés
+ * de « démarrer un nouveau chat et voir l'historique », dans la colonne de
+ * propriétés (voir l'en-tête de la page).
+ *
+ * Le composant ne **décide** de rien : `useChat` tient la conversation ouverte,
+ * la liste et les deux verbes ; l'API tient l'ordre (la plus récente d'abord) et
+ * l'idempotence de l'ouverture. Ce qui reste ici est ce qui se voit — comment on
+ * appelle un fil vierge, et lequel porte la marque du fil ouvert.
+ */
+function ConversationsDuFil({ fil }: { fil: Chat }) {
+  const maintenant = useHorloge();
+  const [ouverture, setOuverture] = useState(false);
+
+  const ouvrirNeuve = async () => {
+    setOuverture(true);
+    try {
+      await fil.nouvelleConversation();
+    } finally {
+      setOuverture(false);
+    }
+  };
+
+  return (
+    <>
+      <p className="mt-2 text-annexe text-neutral-500 dark:text-neutral-400">
+        Chaque conversation garde son fil. En ouvrir une neuve ne touche pas à la
+        précédente, qui reste listée ici et se rouvre d&apos;un clic.
+      </p>
+      <Bouton
+        variante="contour"
+        ton="accent"
+        icone={IconePlus}
+        occupe={ouverture}
+        onClick={() => void ouvrirNeuve()}
+        className="mt-3 w-full"
+      >
+        Nouvelle conversation
+      </Bouton>
+      {/* Liste vide = pas encore chargée : l'API n'en rend jamais aucune, un
+          agent ayant toujours au moins sa conversation `origine` (§6.14). On ne
+          rend donc rien plutôt qu'un « aucune conversation » qui serait faux. */}
+      {fil.conversations.length > 0 && (
+        <ul className="mt-3 flex flex-col gap-1">
+          {fil.conversations.map((carte) => (
+            <li key={carte.id}>
+              <LigneConversation
+                carte={carte}
+                ouverte={carte.id === fil.conversation}
+                maintenant={maintenant}
+                onClick={() => fil.ouvrirConversation(carte.id)}
+              />
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
+  );
+}
+
+/**
+ * Une conversation dans l'historique : son sujet, quand elle a bougé pour la
+ * dernière fois, et combien elle porte de messages.
+ *
+ * `aria-current` et non un simple fond coloré : « celle que je lis » doit
+ * s'entendre autant qu'elle se voit, et c'est l'attribut que les lecteurs
+ * d'écran annoncent pour l'élément courant d'une liste.
+ */
+function LigneConversation({
+  carte,
+  ouverte,
+  maintenant,
+  onClick,
+}: {
+  carte: ConversationChat;
+  ouverte: boolean;
+  maintenant: number | null;
+  onClick: () => void;
+}) {
+  const titre = carte.titre === "" ? CONVERSATION_VIERGE : carte.titre;
+  const quand = formatHeureRelative(carte.derniere, maintenant);
+  const combien =
+    carte.messages === 0
+      ? "vide"
+      : carte.messages === 1
+        ? "1 message"
+        : `${carte.messages} messages`;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-current={ouverte ? "true" : undefined}
+      className={
+        "flex w-full cursor-pointer flex-col items-start gap-0.5 rounded-md px-2 py-1.5 text-left " +
+        "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent " +
+        (ouverte
+          ? "bg-sky-50 text-sky-900 dark:bg-sky-950 dark:text-sky-100"
+          : "hover:bg-survol")
+      }
+    >
+      <span className="w-full truncate text-corps font-medium">{titre}</span>
+      <span className="text-annexe text-neutral-500 dark:text-neutral-400">
+        {quand === "" ? combien : `${quand} · ${combien}`}
+      </span>
+    </button>
   );
 }
 
