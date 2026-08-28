@@ -305,6 +305,32 @@ describe("la carte d'un run — la même sur les trois écrans", () => {
     expect(fondDe(REGIME_SUSPENDU)).not.toBe(fondDe(REGIME_TRAVAILLE));
     expect(fondDe(REGIME_EN_PAUSE)).toBe(fondDe(REGIME_TRAVAILLE));
   });
+
+  it("dit depuis combien de temps un run TOURNE, pas seulement quand il est parti", () => {
+    // Le second manque de #709 : la carte portait « démarré il y a 1 h », qui
+    // situe un instant passé, et rien qui réponde à « combien de temps ? ». La
+    // durée est **vivante** tant qu'aucune `fin` n'est posée.
+    carte(
+      runFactice({ debut: new Date(Date.now() - 65 * 60_000).toISOString() }),
+    );
+
+    expect(screen.getByText("1 h 05")).toBeInTheDocument();
+  });
+
+  it("fige la durée sur la fin, et n'ajoute « quand » que là", () => {
+    // Sur un run soldé, la durée ne dit pas s'il date d'hier ou du mois dernier :
+    // les deux faits sont distincts et coexistent. Sur un run en vol, ils seraient
+    // le même nombre écrit deux fois — d'où l'absence du second au-dessus.
+    carte(
+      runFactice({
+        statut: EXECUTION_TERMINEE,
+        debut: "2026-07-28T10:00:00Z",
+        fin: "2026-07-28T10:42:00Z",
+      }),
+    );
+
+    expect(screen.getByText("42 min")).toBeInTheDocument();
+  });
 });
 
 describe("l'avancement d'un run — compté par le backend, jamais ici", () => {
@@ -331,9 +357,72 @@ describe("l'avancement d'un run — compté par le backend, jamais ici", () => {
     expect(jauge).toHaveAttribute("aria-valuenow", "4");
     expect(jauge).toHaveAttribute("aria-valuemax", "7");
     expect(jauge).toHaveAttribute("aria-valuetext", "4 tâches soldées sur 7");
+    // L'acquis en tête depuis #709 : le compte commence par ce qu'il répond
+    // (« où en est-on ? ») et détaille ensuite.
     expect(
-      screen.getByText("3 terminées · 1 échec · 1 en cours · 2 à faire — 4/7 soldées"),
+      screen.getByText("4/7 soldées — 3 terminées · 1 échec · 1 en cours · 2 à faire"),
     ).toBeInTheDocument();
+  });
+
+  it("ne remplit la barre que de ce qui est ACQUIS — le reste est hachuré ou nu", () => {
+    // Le défaut de #709, dans sa forme la plus pure : **une** tâche, **en cours**.
+    // Le segment occupait 100 % de la largeur en aplat plein, donc l'œil lisait
+    // « terminé » pendant que la ligne d'en dessous disait « 0/1 soldée » — et que
+    // l'ARIA disait déjà la vérité (`aria-valuenow` vaut `soldees`).
+    barre(
+      runFactice({
+        nb_taches: 1,
+        progression: {
+          a_faire: 0,
+          en_cours: 1,
+          bloquees: 0,
+          terminees: 0,
+          echecs: 0,
+          autres: 0,
+          soldees: 0,
+          total: 1,
+        },
+      }),
+    );
+
+    const jauge = screen.getByRole("progressbar", { name: "Progression du run" });
+    expect(jauge).toHaveAttribute("aria-valuenow", "0");
+    const segments = Array.from(jauge.children) as HTMLElement[];
+    expect(segments).toHaveLength(1);
+    // Il occupe bien toute la largeur — la donnée n'a pas changé, l'encodage si :
+    // il est **teinté et hachuré**, jamais un aplat plein.
+    expect(segments[0].style.width).toBe("100%");
+    expect(segments[0].style.backgroundImage).toContain("repeating-linear-gradient");
+    expect(segments[0].className).not.toMatch(/\bbg-(positif|alerte)\b/);
+  });
+
+  it("ne dessine pas le reste à faire : c'est la piste", () => {
+    // Le pendant du test précédent, et la moitié qui rend « barre pleine = fini »
+    // vrai : un compartiment `a_faire` porte sa largeur pour que les proportions
+    // tiennent, mais aucune couleur — sinon le fond ne se distinguerait plus de
+    // ce qui reste à faire.
+    barre(
+      runFactice({
+        nb_taches: 2,
+        progression: {
+          a_faire: 1,
+          en_cours: 0,
+          bloquees: 0,
+          terminees: 1,
+          echecs: 0,
+          autres: 0,
+          soldees: 1,
+          total: 2,
+        },
+      }),
+    );
+
+    const jauge = screen.getByRole("progressbar", { name: "Progression du run" });
+    const segments = Array.from(jauge.children) as HTMLElement[];
+    expect(segments).toHaveLength(2);
+    expect(segments[0].className).toContain("bg-positif");
+    expect(segments[1].className.trim()).toBe("h-full");
+    expect(segments[1].style.backgroundImage).toBe("");
   });
 
   it("se rabat sur le nombre de tâches quand la progression manque", () => {

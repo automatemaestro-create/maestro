@@ -620,7 +620,9 @@ Trois précisions qui expliquent la forme :
 - **Un run qui travaille est bleu et bat ; un run terminé est vert et immobile.**
   Deux verts, dont un pulsant, auraient demandé de lire le libellé pour trancher, ce
   qu'un coup d'œil doit éviter. Le libellé est là quand même : la couleur appuie le
-  sens, elle ne le porte jamais seule.
+  sens, elle ne le porte jamais seule — et depuis #709 le badge porte un **glyphe
+  d'état** à la place de sa pastille : ◉ en marche, ⏸ en pause, ⚠ en attente, ✓ fini,
+  ✗ tombé. Même empreinte, une information de plus, et l'état se lit sans la couleur.
 - **Un run orphelin l'emporte sur un run suspendu**, et c'est le seul arbitrage
   discutable : un orphelin arrêté sur son brief *attend* bien, mais personne ne
   recevra la réponse. Il faut le **reprendre** (#349), pas lui répondre.
@@ -635,6 +637,31 @@ d'un backend antérieur n'en porte pas —, d'où le repli sur `nb_taches` : dir
 « 8 tâches » sans savoir où elles en sont vaut mieux qu'une barre inventée. Et un
 run **sans aucune tâche** le dit : c'est l'état normal d'un run arrêté sur son
 brief, pas le symptôme d'une lecture ratée.
+
+⚠ **La barre ne se remplit que de ce qui est ACQUIS** (#709). Jusque-là ses six
+compartiments étaient des aplats pleins, si bien qu'un run à **une** tâche **en
+cours** rendait une barre pleine sur toute sa largeur — soit, pour l'œil, un run
+terminé, pendant que la ligne d'en dessous disait « 0/1 soldée ». Ce n'était pas une
+erreur de calcul mais d'**encodage** : une barre déterminée affirme un pourcentage
+*achevé*, et la nôtre remplissait cet espace-là avec ce qui ne l'est pas. Elle disait
+d'ailleurs déjà la vérité au lecteur d'écran — `aria-valuenow` vaut `soldees` — et la
+mentait à l'œil ; le correctif aligne l'œil sur l'ARIA plutôt que d'inventer une
+sémantique. Trois régimes désormais : **plein** pour l'acquis (terminées, échecs, qui
+ne bougeront plus), **teinté et hachuré** pour ce qui est en vol (en cours, bloquées,
+autres — la *forme* fait ce que la teinte ne peut pas faire seule), et **rien** pour
+ce qui reste à faire, qui est la piste. Une barre pleine redevient synonyme de fini.
+Les hachures sont **statiques** : une bande animée aurait dit la même chose en mettant
+vingt lignes de la liste en mouvement.
+
+**Et la carte dit depuis combien de temps le run tourne.** Elle portait « démarré il y
+a 1 h », qui situe un instant passé, et rien qui réponde à « combien de temps ? ».
+Elle porte maintenant une **durée** (`formatDureeRun`) — vivante tant qu'aucune `fin`
+n'est posée, figée dessus ensuite —, marquée d'un chronomètre pour ne pas se lire
+comme une seconde date. « Quand » ne s'y ajoute que sur un run **soldé** : sur un run
+en vol, les deux seraient le même nombre écrit deux fois ; une fois soldé, la durée ne
+dit pas s'il date d'hier ou du mois dernier. Le rafraîchissement passe par l'horloge
+partagée (#250, un battement de 30 s pour toute l'application) et non par une minuterie
+par carte : la plus petite unité affichée est la minute.
 
 **Vide, l'écran n'est pas une panne** (§2.1.1) : il **nomme le projet** (convention
 #281), dit ce qui s'y inscrira et propose « Composer un objectif ». Une API

@@ -17,6 +17,7 @@ import {
   formatCout,
   formatCoutAxe,
   formatDuree,
+  formatDureeRun,
   formatHeure,
   formatTokens,
   libelleStatut,
@@ -93,5 +94,41 @@ describe("les autres formats de l'UI", () => {
   it("rend une heure lisible, et ne bute pas sur un horodatage vide", () => {
     expect(formatHeure("2026-07-28T10:03:00Z")).toMatch(/\d{2}:\d{2}/);
     expect(formatHeure("")).toBe("");
+  });
+});
+
+describe("combien de temps un run a tourné (#709)", () => {
+  const DEBUT = "2026-07-28T10:00:00Z";
+  const apres = (minutes: number) =>
+    new Date(Date.parse(DEBUT) + minutes * 60_000).toISOString();
+
+  it("prend `fin` pour terme quand le run est soldé, l'instant courant sinon", () => {
+    // Le partage qui compte : un run soldé a une durée **figée**, calculable sans
+    // horloge — donc juste dès le rendu serveur, sur la majorité d'une liste.
+    expect(formatDureeRun(DEBUT, apres(42), null)).toBe("42 min");
+    expect(formatDureeRun(DEBUT, null, Date.parse(apres(42)))).toBe("42 min");
+  });
+
+  it("écrit les heures comme une horloge, et les jours au-delà", () => {
+    expect(formatDureeRun(DEBUT, apres(64), null)).toBe("1 h 04");
+    expect(formatDureeRun(DEBUT, apres(60 * 27), null)).toBe("1 j 03 h");
+  });
+
+  it("dit « < 1 min » plutôt que « 0 min »", () => {
+    // Les deux ne se lisent pas pareil : un run qui vient de partir n'a pas
+    // tourné zéro minute. Même parti pris qu'`formatAttente` sous la minute.
+    expect(formatDureeRun(DEBUT, apres(0), null)).toBe("< 1 min");
+    // Une durée négative — horloges désaccordées, ou une `fin` antérieure au
+    // départ — tombe dans le même cas : on n'écrit jamais « -2 min ».
+    expect(formatDureeRun(DEBUT, "2026-07-28T09:00:00Z", null)).toBe("< 1 min");
+  });
+
+  it("ne rend rien plutôt qu'un zéro quand l'horloge n'a pas démarré", () => {
+    // Le seul cas vide : un run **en cours** au rendu serveur, où `Date.now()`
+    // ne vaut pas la même chose des deux côtés. `formatHeureRelative` retombe là
+    // sur l'heure absolue ; une durée vivante n'a pas d'équivalent immobile.
+    expect(formatDureeRun(DEBUT, null, null)).toBe("");
+    expect(formatDureeRun("", null, Date.now())).toBe("");
+    expect(formatDureeRun("pas une date", null, Date.now())).toBe("");
   });
 });
