@@ -751,8 +751,13 @@ def test_la_bibliotheque_sert_la_version_admise_et_non_celle_du_miroir(racines) 
     assert decouverte is not None
     ServiceAdmission(magasin).admettre(decouverte, par="alice")
 
-    # L'amont publie une version plus récente.
-    poser_miroir(miroir_racine, [amont("io.github.alice/veille", version="2.0.0")])
+    # L'amont publie une version plus récente. ⚠ On relit par le **miroir neuf**
+    # que `poser_miroir` rend, et non par celui d'avant : `MiroirAmont.entrees()`
+    # est mémoïsé sur `(mtime_ns, taille)`, or « 1.4.0 » et « 2.0.0 » pèsent le
+    # même nombre d'octets et la granularité du mtime dépend du système de
+    # fichiers. Le test passait sous Windows et échouait dans le conteneur Linux
+    # — la classe d'écart que #333 nomme, et la raison d'être d'`oublier_memo`.
+    miroir = poser_miroir(miroir_racine, [amont("io.github.alice/veille", version="2.0.0")])
     apres = federer(miroir, entrees_curees=[curee()], magasin=magasin)
 
     montable = apres.registre.get("io-github-alice-veille")
@@ -799,7 +804,9 @@ def test_une_admise_disparue_du_miroir_est_signalee_et_reste_montable(racines) -
     assert decouverte is not None
     ServiceAdmission(magasin).admettre(decouverte, par="alice")
 
-    poser_miroir(miroir_racine, [amont("io.github.bob/autre")])
+    # Miroir neuf, pour la même raison qu'au test précédent : ne pas dépendre de
+    # la résolution du mtime du système de fichiers.
+    miroir = poser_miroir(miroir_racine, [amont("io.github.bob/autre")])
     apres = federer(miroir, entrees_curees=[curee()], magasin=magasin)
 
     (signal,) = [s for s in apres.registre.signaux if s.genre == SIGNAL_DISPARUE]
