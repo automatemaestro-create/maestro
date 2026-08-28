@@ -463,11 +463,20 @@ export function chargerFilChat(agent: string): Promise<FilChat> {
  * Le refus emprunte le chemin motivé des sources et **non** celui d'`envoyerJson`
  * : une source refusée porte un `motif` et un `index`, et c'est l'index qui
  * permet au fil d'afficher le refus sur la source fautive plutôt qu'en bloc.
+ *
+ * `projetId` (#683) est le **projet de la fenêtre** d'où part le message. Ce
+ * n'est pas une portée de lecture — le fil reste transverse (`useChat`), et
+ * aucun `PORTEE_TOUS`/`PORTEE_AUCUN` n'a de sens ici : c'est l'identifiant du
+ * projet actif, et lui seul. Il ne sert qu'à ce que la réponse **ouvre** : un
+ * run dicté à l'orchestration appartient au projet où on l'a demandé, donc il
+ * figure dans sa liste de runs et s'ouvre en détail. Omis, le run part sans
+ * projet et n'apparaît alors dans la liste d'aucun (#277).
  */
 export async function envoyerMessageChat(
   agent: string,
   contenu: string,
   sources: SourceDeclaree[] = [],
+  projetId: string | null = null,
 ): Promise<void> {
   const reponse = await fetch(
     `${API_URL}/api/chat/${encodeURIComponent(agent)}/messages`,
@@ -477,6 +486,7 @@ export async function envoyerMessageChat(
       body: JSON.stringify({
         contenu,
         ...(sources.length > 0 && { sources }),
+        ...(projetId !== null && { projet_id: projetId }),
       }),
     },
   );

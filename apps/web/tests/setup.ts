@@ -46,6 +46,7 @@ import {
   navigations,
   noterCanal,
   noterPortee,
+  noterProjetDuFil,
   pageJournalCourante,
   porteesDemandees,
   poserChemin,
@@ -54,6 +55,7 @@ import {
   poserJournal,
   poserProjets,
   projetsDeclares,
+  projetsDuFil,
   routeurFactice,
 } from "./aides";
 
@@ -95,9 +97,13 @@ vi.mock("@/lib/useControlTower", async (original) => ({
 // pour la portée de `useControlTower` : le fil rendu est factice, mais celui
 // qu'on demande est exactement ce que le chat global promet — une mention
 // `@agent` change de destinataire au lieu de recopier le message (#269).
+// Le **projet** passé au fil l'est aussi (#683) : c'est lui qui rattache le run
+// que l'orchestration ouvre, donc ce qui décide qu'il figure — ou non — dans la
+// liste des runs de la fenêtre où on l'a demandé.
 vi.mock("@/lib/useChat", () => ({
-  useChat: (canal: string) => {
+  useChat: (canal: string, projetId: string | null = null) => {
     noterCanal(canal);
+    noterProjetDuFil(projetId);
     return filAssistanceCourant();
   },
 }));
@@ -155,6 +161,7 @@ beforeEach(() => {
   navigations.length = 0;
   porteesDemandees.length = 0;
   canauxDemandes.length = 0;
+  projetsDuFil.length = 0;
   window.localStorage.clear();
   document.documentElement.removeAttribute("data-theme");
   window.ResizeObserver = ResizeObserverFactice as unknown as typeof ResizeObserver;

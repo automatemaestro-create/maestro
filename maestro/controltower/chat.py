@@ -427,6 +427,7 @@ class RepondeurChat(ABC):
         fil: Sequence[MessageChat],
         *,
         incrementer: Incrementeur | None = None,
+        projet_id: str | None = None,
     ) -> ReponseChat:
         """La réponse complète, diffusée au passage si un `incrementer` est fourni.
 
@@ -440,6 +441,13 @@ class RepondeurChat(ABC):
         Le surcharger sert à deux choses, indépendantes : publier de vrais
         incréments au fil de la production, et rattacher au message ce que la
         réponse a **ouvert** (`ReponseChat.run_id`).
+
+        `projet_id` (#683) est le **projet de la fenêtre** d'où le message part —
+        ni une portée de lecture, ni une propriété du fil, qui reste transverse
+        (#281) : la valeur ne touche ni le message persisté ni l'événement
+        diffusé. Elle n'intéresse que le répondeur qui **agit** — l'orchestration
+        y rattache le run qu'elle ouvre —, d'où la valeur par défaut ici : un
+        répondeur qui n'ouvre rien n'a rien à en faire et n'a pas à la connaître.
         """
         texte = await self.repondre(agent, fil)
         if incrementer is not None and texte:
@@ -551,6 +559,8 @@ class ServiceChat:
         agent: Agent,
         contenu: str,
         sources: Sequence[Mapping[str, Any] | Source] | None = None,
+        *,
+        projet_id: str | None = None,
     ) -> tuple[MessageChat, MessageChat]:
         """Envoie `contenu` et ses `sources` à `agent` ; rend la paire (message, réponse).
 
@@ -578,11 +588,18 @@ class ServiceChat:
         non géré (une image, aujourd'hui) ressort en ligne « ignoré » du rapport,
         avec son motif. C'est la distinction de #316 — « rien à lire ici » et
         « je refuse de lire ça » ne se disent jamais pareil.
+
+        `projet_id` (#683) accompagne la **réponse** et non le message : voir
+        `RepondeurChat.produire`. Le fil ne devient pas cadré pour autant — il
+        n'a pas de périmètre à respecter (#281) —, c'est ce qu'une réponse
+        **ouvre** qui en a un.
         """
         message = await self._ouvrir(agent, contenu, sources)
-        return message, await self._repondre(agent)
+        return message, await self._repondre(agent, projet_id=projet_id)
 
-    async def diffuser(self, agent: Agent, contenu: str) -> AsyncIterator[FragmentChat]:
+    async def diffuser(
+        self, agent: Agent, contenu: str, *, projet_id: str | None = None
+    ) -> AsyncIterator[FragmentChat]:
         """Envoie `contenu` à `agent` et rend la réponse **au fur et à mesure** (#268).
 
         Le même échange que `envoyer` — mêmes persistance, messagerie et
@@ -600,6 +617,11 @@ class ServiceChat:
         se déconnecte en cours de route **ne l'annule pas** — la réponse a coûté
         ce qu'elle a coûté, elle finit d'être persistée et diffusée, et le fil la
         rendra à la reconnexion.
+
+        `projet_id` (#683) suit le même chemin que dans `envoyer`, et pour la
+        même raison : les deux voies mènent au **même** `_repondre`, donc un run
+        ouvert depuis le flux se rattache comme un run ouvert depuis le POST. Le
+        canal ne devient jamais un second chemin — c'est la règle du module.
         """
         await self._ouvrir(agent, contenu)
         yield FragmentChat(type=FRAGMENT_CHAT_DEBUT, agent=agent.nom)
@@ -611,7 +633,9 @@ class ServiceChat:
 
         async def produire() -> MessageChat:
             try:
-                return await self._repondre(agent, incrementer=incrementer)
+                return await self._repondre(
+                    agent, incrementer=incrementer, projet_id=projet_id
+                )
             finally:
                 # La sentinelle passe par le même canal que les incréments : elle
                 # arrive donc **après** eux, et le drainage ne peut pas s'arrêter
@@ -674,18 +698,26 @@ class ServiceChat:
         return message
 
     async def _repondre(
-        self, agent: Agent, *, incrementer: Incrementeur | None = None
+        self,
+        agent: Agent,
+        *,
+        incrementer: Incrementeur | None = None,
+        projet_id: str | None = None,
     ) -> MessageChat:
         """Produit la réponse, la persiste, l'achemine et la diffuse.
 
         Le seul endroit où le répondeur est appelé — `envoyer` et `diffuser` s'y
-        rejoignent, à l'incrémenteur près. Toute erreur du répondeur, comme une
-        réponse vide, devient `ReponseIndisponible` : le message utilisateur est
-        déjà acquis, relancer ne perd pas le fil.
+        rejoignent, à l'incrémenteur près, et depuis #683 au projet près. Toute
+        erreur du répondeur, comme une réponse vide, devient
+        `ReponseIndisponible` : le message utilisateur est déjà acquis, relancer
+        ne perd pas le fil.
         """
         try:
             reponse = await self._repondeur.produire(
-                agent, self._store.fil(agent.nom), incrementer=incrementer
+                agent,
+                self._store.fil(agent.nom),
+                incrementer=incrementer,
+                projet_id=projet_id,
             )
         except Exception as exc:
             raise ReponseIndisponible(

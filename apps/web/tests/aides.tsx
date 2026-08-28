@@ -194,6 +194,25 @@ export function canalCourant(): string | undefined {
   return canauxDemandes[canauxDemandes.length - 1];
 }
 
+/**
+ * Les projets passés à `useChat` depuis le début du test (#683).
+ *
+ * Le pendant de `canauxDemandes` pour l'autre moitié de l'appel : le hook est
+ * factice, mais **ce que l'écran lui donne** est observable, et c'est là qu'est
+ * la promesse du lot — un run dicté au fil appartient au projet de la fenêtre,
+ * faute de quoi il n'entre dans la vue d'aucun projet et devient introuvable.
+ */
+export const projetsDuFil: (string | null)[] = [];
+
+export function noterProjetDuFil(projetId: string | null): void {
+  projetsDuFil.push(projetId);
+}
+
+/** Le dernier projet passé au fil — celui de la fenêtre au moment de l'envoi. */
+export function projetDuFilCourant(): string | null | undefined {
+  return projetsDuFil[projetsDuFil.length - 1];
+}
+
 export function messageFactice(partiel: Partial<MessageChat> = {}): MessageChat {
   return {
     agent: "assistance",

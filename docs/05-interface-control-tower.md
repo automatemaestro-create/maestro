@@ -2643,7 +2643,7 @@ réconcilier ensuite. Et une réponse impossible sort en trame **`erreur`**, jam
 les en-têtes sont déjà partis quand elle se découvre, et le message utilisateur, lui, est déjà
 acquis — le fil ne perd rien, relancer suffit.
 
-Le point d'extension est `RepondeurChat.produire(agent, fil, *, incrementer=…)`, dont
+Le point d'extension est `RepondeurChat.produire(agent, fil, *, incrementer=…, projet_id=…)`, dont
 l'implémentation par défaut publie le texte de `repondre` en **un seul** incrément : tout répondeur
 existant se diffuse donc sans changer une ligne. Le jour où la frontière `ModelProvider` exposera
 du streaming (elle ne le fait pas : `generate` rend un `str`), `RepondeurModele` n'aura que cette
@@ -2664,6 +2664,42 @@ parle pas à un exécutant mais à l'orchestration.
   n'en a pas besoin : une tâche naît de la décomposition, pas d'une écriture directe.
 - Une **question** n'ouvre rien : elle est traitée en conversation (état des runs en cours, des
   tâches, des validations en attente).
+- Le message porte le **projet de la fenêtre** (#683) — `projet_id` dans le corps de
+  `POST …/messages`, `?projet_id=` sur le flux : le run ouvert lui appartient, et l'aperçu rendu
+  aux questions est cadré sur lui.
+
+##### Ce que le fil ouvre appartient au projet de la fenêtre (#683)
+
+Le fil est **transverse** (§2.9, #281) : il parle de l'outil, pas d'un projet, ni le message ni sa
+socket ne portent de périmètre — et cela ne change pas. Mais ce qu'il **ouvre** en a un : un run
+appartient à un projet (#222) et toutes les vues de travail sont cadrées sur le projet actif
+(#277). Tant que le lanceur ne recevait pas de projet, un run dicté au fil naissait **orphelin** —
+absent de la liste des runs de tout projet, refusé par la vue de détail (« Aucun run … sur … »),
+invisible au Kanban comme au journal —, pendant que l'orchestrateur l'annonçait « en cours ». Le
+défaut était un cas de bord tant que « Composer un objectif » existait ; depuis #666, où le chat est
+**la seule porte d'entrée**, il valait pour **tous** les runs.
+
+Trois décisions le tiennent :
+
+- **Le projet vient de la fenêtre, il n'est pas deviné.** Le backend n'a aucune notion de « projet
+  actif » — c'est un réglage du poste (`lib/projetActif`) —, donc l'écran l'envoie. Absent, le run
+  part sans projet comme avant : le rattachement est une **donnée** (#222), jamais une condition du
+  lancement, et un identifiant mal formé vaut « aucun projet » plutôt qu'un message refusé.
+- **`projet_id`, et surtout pas `projet`.** Ce dernier désigne partout ailleurs une **portée** de
+  lecture, avec ses mots réservés `tous`/`aucun` (§6.0bis) ; deux contrats sous un même nom seraient
+  la première façon de les confondre.
+- **L'aperçu est cadré par la même portée.** « 1 run en cours » comptait *tous* les runs du poste
+  quand l'écran d'à côté n'en montre qu'un projet : la phrase et la liste parlaient de deux
+  périmètres. Les trois compteurs (runs, tâches, validations) passent désormais par
+  `PorteeProjet.retient` — la règle écrite une fois —, et sans projet la phrase reste celle d'avant.
+
+Couverture : [`tests/test_chat_global.py`](../tests/test_chat_global.py) §⑥-⑦ et
+[`apps/web/tests/chat-global.test.tsx`](../apps/web/tests/chat-global.test.tsx). Le test décisif
+monte l'app **entière** — vrai répondeur, vrai service d'exécutions, deux projets déclarés — et lit
+le résultat par la route que l'écran interroge ; il est doublé de son **échantillon fautif** (une
+demande sans projet, dont le run n'est atteignable que sous `?projet=aucun`, portée qu'aucun
+sélecteur de l'UI ne propose), sans quoi rien ne dirait que le premier ne passerait pas de toute
+façon.
 
 La reconnaissance est **délibérément conservatrice** — la demande doit commencer, politesses
 retirées, par un verbe d'action (« ajoute… », « peux-tu corriger… ») — parce que les deux erreurs

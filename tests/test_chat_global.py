@@ -35,6 +35,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -64,6 +66,7 @@ from maestro.controltower.orchestration import (
     apercu_de,
     intention,
 )
+from maestro.controltower.projets import ServiceProjets
 from maestro.controltower.state import (
     EXECUTION_EN_ATTENTE_ARBITRAGE,
     EXECUTION_EN_COURS,
@@ -71,6 +74,8 @@ from maestro.controltower.state import (
     VALIDATION_EN_ATTENTE,
     ControlTowerState,
 )
+from maestro.engine import RunReport
+from maestro.projets import ProjetStore
 
 UTILISATEUR = "utilisateur"
 
@@ -130,8 +135,23 @@ def test_une_amorce_seule_n_ouvre_rien() -> None:
 # ── ② l'aperçu de l'orchestration ─────────────────────────────────────────────
 
 
-def _run(run_id: str, statut: str) -> Event:
-    return Event(type=EVENEMENT_EXECUTION_STATUT, run_id=run_id, statut=statut)
+def _run(run_id: str, statut: str, projet_id: str | None = None) -> Event:
+    return Event(
+        type=EVENEMENT_EXECUTION_STATUT, run_id=run_id, statut=statut, projet_id=projet_id
+    )
+
+
+def _tache(tache_id: str, run_id: str, projet_id: str | None = None) -> Event:
+    return Event(
+        type=EVENEMENT_TACHE_STATUT,
+        run_id=run_id,
+        tache_id=tache_id,
+        titre="Écrire les tests",
+        agent="qa",
+        role="QA / Testeur",
+        statut="en_cours",
+        projet_id=projet_id,
+    )
 
 
 def _validation(tache_id: str) -> Event:
@@ -152,17 +172,7 @@ def test_apercu_sans_rien_le_dit_en_une_phrase() -> None:
 def test_apercu_compte_les_runs_actifs_et_les_taches() -> None:
     state = ControlTowerState()
     state.appliquer(_run("run-1", EXECUTION_EN_COURS))
-    state.appliquer(
-        Event(
-            type=EVENEMENT_TACHE_STATUT,
-            run_id="run-1",
-            tache_id="T-1",
-            titre="Écrire les tests",
-            agent="qa",
-            role="QA / Testeur",
-            statut="en_cours",
-        )
-    )
+    state.appliquer(_tache("T-1", "run-1"))
 
     assert apercu_de(state)() == "1 run en cours, 1 tâche suivie."
 
@@ -202,18 +212,66 @@ def test_l_apercu_est_relu_a_chaque_question() -> None:
     assert apercu() != "Aucun run en cours."
 
 
+def test_l_apercu_ne_compte_que_ce_que_l_ecran_peut_montrer() -> None:
+    """La seconde moitié de #683 : la phrase et l'écran parlaient de deux périmètres.
+
+    Le fil annonçait « 1 run en cours » en comptant *tous* les runs du poste,
+    quand chaque vue de travail est cadrée sur le projet actif (#277) — d'où un
+    run annoncé en cours, absent de la liste et refusé par la vue de détail.
+    L'aperçu prend donc le projet de la fenêtre, et ses **trois** compteurs avec
+    lui : compter les runs d'un projet et les tâches de tous ferait une phrase
+    qui se contredit d'une virgule à l'autre.
+    """
+    state = ControlTowerState()
+    state.appliquer(_run("run-ici", EXECUTION_EN_COURS, projet_id="prj-ici"))
+    state.appliquer(_tache("T-ici", "run-ici", projet_id="prj-ici"))
+    state.appliquer(_run("run-ailleurs", EXECUTION_EN_COURS, projet_id="prj-ailleurs"))
+    state.appliquer(_tache("T-ailleurs", "run-ailleurs", projet_id="prj-ailleurs"))
+    apercu = apercu_de(state)
+
+    assert apercu("prj-ici") == "1 run en cours, 1 tâche suivie."
+    # L'échantillon fautif : sans portée, la phrase est celle d'avant le lot —
+    # elle compte les deux projets, donc annonce un travail que l'écran cadré
+    # sur « prj-ici » ne montre pas.
+    assert apercu() == "2 runs en cours, 2 tâches suivies."
+
+
+def test_un_run_sans_projet_ne_compte_dans_l_apercu_d_aucun_projet() -> None:
+    """La règle de portée, pas une seconde : `PorteeProjet.retient` ne devine rien.
+
+    C'est exactement le run que #683 a trouvé en vol — orphelin, donc dans la
+    vue d'aucun projet. Le compter dans celle du projet actif redirait le
+    mensonge que ce ticket supprime ; il reste visible sans portée.
+    """
+    state = ControlTowerState()
+    state.appliquer(_run("run-orphelin", EXECUTION_EN_COURS))
+    apercu = apercu_de(state)
+
+    assert apercu("prj-ici") == "Aucun run en cours."
+    assert apercu().startswith("1 run en cours")
+
+
 # ── ③ le répondeur : ce qu'il ouvre, et ce qu'il n'ouvre pas ──────────────────
 
 
 class LanceurEspion:
-    """Un `LanceurRun` qui note l'objectif reçu — aucun moteur, aucun quota."""
+    """Un `LanceurRun` qui note ce qu'on lui demande — aucun moteur, aucun quota.
+
+    Il note **les deux** arguments du contrat (#683) : l'objectif et le projet
+    de la fenêtre. Un double qui n'accepterait que le premier rendrait le canal
+    vert sur un lancement que le vrai service refuserait — et le répondeur
+    rattrapant toute exception du lanceur, l'échec se lirait « le lancement a
+    échoué » au lieu d'une erreur de signature.
+    """
 
     def __init__(self, *, run_id: str = "run-42", statut: str = "en_cours") -> None:
         self.objectifs: list[str] = []
+        self.projets: list[str | None] = []
         self._resume = {"run_id": run_id, "statut": statut}
 
-    async def __call__(self, objectif: str) -> dict[str, str]:
+    async def __call__(self, objectif: str, projet_id: str | None = None) -> dict[str, str]:
         self.objectifs.append(objectif)
+        self.projets.append(projet_id)
         return dict(self._resume)
 
 
@@ -240,9 +298,68 @@ def test_une_demande_de_travail_ouvre_un_run_et_le_rattache() -> None:
     assert "run-42" in reponse.contenu
 
 
+def test_le_run_ouvert_appartient_au_projet_de_la_fenetre() -> None:
+    """#683 : sans projet, un run dicté au fil n'entrait dans la vue d'aucun.
+
+    Le fil est transverse (#281) et le reste — mais ce qu'il **ouvre** a un
+    périmètre, et c'est la fenêtre qui le donne. Le projet part au lanceur avec
+    l'objectif, et rien n'est deviné : le répondeur transmet, il ne cherche pas.
+    """
+    lanceur = LanceurEspion()
+    repondeur = RepondeurOrchestration(lanceur=lanceur)
+
+    asyncio.run(
+        repondeur.produire(
+            AGENT_ORCHESTRATION, _fil("Ajoute la pagination"), projet_id="prj-depensio"
+        )
+    )
+
+    assert lanceur.objectifs == ["Ajoute la pagination"]
+    assert lanceur.projets == ["prj-depensio"]
+
+
+def test_sans_projet_le_run_part_sans_projet() -> None:
+    """Le comportement d'avant #683, gardé : un rattachement absent n'empêche rien.
+
+    Le projet est une **donnée** portée par le run (#222), jamais une condition
+    de son lancement — un poste sans projet actif doit continuer à ouvrir des
+    runs, quitte à ce qu'ils ne relèvent d'aucune vue de projet.
+    """
+    lanceur = LanceurEspion()
+    repondeur = RepondeurOrchestration(lanceur=lanceur)
+
+    reponse = asyncio.run(
+        repondeur.produire(AGENT_ORCHESTRATION, _fil("Ajoute la pagination"))
+    )
+
+    assert lanceur.projets == [None]
+    assert reponse.run_id == "run-42"
+
+
+def test_la_voie_conversationnelle_cadre_son_apercu_sur_le_meme_projet() -> None:
+    """Les deux voies reçoivent le projet, faute de quoi la phrase et le run divergent."""
+    vus: list[str | None] = []
+
+    def apercu(projet_id: str | None = None) -> str:
+        vus.append(projet_id)
+        return "Aucun run en cours."
+
+    repondeur = RepondeurOrchestration(lanceur=LanceurEspion(), apercu=apercu)
+
+    asyncio.run(
+        repondeur.produire(
+            AGENT_ORCHESTRATION, _fil("Où en sont les runs ?"), projet_id="prj-depensio"
+        )
+    )
+
+    assert vus == ["prj-depensio"]
+
+
 def test_une_question_n_ouvre_aucun_run() -> None:
     lanceur = LanceurEspion()
-    repondeur = RepondeurOrchestration(lanceur=lanceur, apercu=lambda: "Aucun run en cours.")
+    repondeur = RepondeurOrchestration(
+        lanceur=lanceur, apercu=lambda projet_id=None: "Aucun run en cours."
+    )
 
     reponse = asyncio.run(
         repondeur.produire(AGENT_ORCHESTRATION, _fil("Où en sont les runs ?"))
@@ -257,7 +374,7 @@ def test_une_question_n_ouvre_aucun_run() -> None:
 def test_un_lancement_en_echec_se_raconte_dans_le_fil() -> None:
     """Levée, l'exception deviendrait un 502 sans trace — or la demande est acquise."""
 
-    async def lanceur_qui_echoue(objectif: str) -> dict[str, str]:
+    async def lanceur_qui_echoue(objectif: str, projet_id: str | None = None) -> dict[str, str]:
         raise RuntimeError("objectif refusé : plafond hors bornes")
 
     repondeur = RepondeurOrchestration(lanceur=lanceur_qui_echoue)
@@ -320,7 +437,7 @@ def test_les_increments_reconstituent_exactement_la_reponse(demande: str) -> Non
         incremente.append(delta)
 
     repondeur = RepondeurOrchestration(
-        lanceur=LanceurEspion(), apercu=lambda: "Aucun run en cours."
+        lanceur=LanceurEspion(), apercu=lambda projet_id=None: "Aucun run en cours."
     )
 
     reponse = asyncio.run(
@@ -369,7 +486,7 @@ def client_global(bus, depot_chat, lanceur):
             bus=bus,
             chat_store=depot_chat,
             orchestration_repondeur=RepondeurOrchestration(
-                lanceur=lanceur, apercu=lambda: "Aucun run en cours."
+                lanceur=lanceur, apercu=lambda projet_id=None: "Aucun run en cours."
             ),
         )
     ) as client:
@@ -477,3 +594,200 @@ def test_un_contenu_vide_sort_en_422_sans_rien_persister(client_global, depot_ch
     assert reponse.status_code == 422
     assert client_global.get(f"/api/chat/{NOM_ORCHESTRATION}").json()["messages"] == []
     assert not (depot_chat.racine / f"{NOM_ORCHESTRATION}.jsonl").exists()
+
+
+# ── ⑥ le projet de la fenêtre, du corps de la requête jusqu'au run (#683) ─────
+
+
+def test_le_projet_de_la_fenetre_voyage_du_corps_jusqu_au_lanceur(
+    client_global, lanceur
+) -> None:
+    """Le rattachement traverse la route sans rien perdre en chemin."""
+    client_global.post(
+        f"/api/chat/{NOM_ORCHESTRATION}/messages",
+        json={"contenu": "Ajoute la pagination", "projet_id": "prj-depensio"},
+    )
+
+    assert lanceur.projets == ["prj-depensio"]
+
+
+def test_un_projet_mal_forme_vaut_aucun_projet(client_global, lanceur) -> None:
+    """Normalisé à la frontière (#222) : un identifiant douteux ne fait pas échouer un message.
+
+    Le rattachement est une donnée, pas une condition du lancement. Refuser le
+    message ferait dépendre une conversation de la bonne tenue d'un identifiant
+    que l'utilisateur n'a jamais tapé.
+    """
+    reponse = client_global.post(
+        f"/api/chat/{NOM_ORCHESTRATION}/messages",
+        json={"contenu": "Ajoute la pagination", "projet_id": "../../etc"},
+    )
+
+    assert reponse.status_code == 201
+    assert lanceur.projets == [None]
+
+
+def test_le_flux_porte_le_projet_comme_le_post(client_global, lanceur) -> None:
+    """Les deux voies mènent au même `_repondre` : un run ouvert par le flux se rattache aussi.
+
+    `?projet_id=` et non `?projet=` : ce dernier désigne partout ailleurs une
+    **portée** de lecture, avec ses mots réservés `tous`/`aucun` (#277), et deux
+    contrats sous un même nom seraient la première façon de les confondre.
+    """
+    client_global.get(
+        f"/api/chat/{NOM_ORCHESTRATION}/flux",
+        params={"contenu": "Ajoute la pagination", "projet_id": "prj-depensio"},
+    )
+
+    assert lanceur.projets == ["prj-depensio"]
+
+
+def test_le_fil_lui_meme_reste_transverse(client_global, depot_chat) -> None:
+    """Le projet accompagne la demande ; il n'entre ni dans le fil ni dans l'événement.
+
+    C'est la moitié de #281 que ce lot **ne** défait pas : un `chat.message` sans
+    `projet_id` est ce qui permet à une socket cadrée sur un projet de recevoir
+    quand même le fil. Le rattachement vit sur le **run** ouvert, jamais sur le
+    message qui l'a demandé.
+    """
+    with client_global.websocket_connect("/ws/evenements?projet=tous") as ws:
+        client_global.post(
+            f"/api/chat/{NOM_ORCHESTRATION}/messages",
+            json={"contenu": "Ajoute la pagination", "projet_id": "prj-depensio"},
+        )
+        aller = ws.receive_json()
+        retour = ws.receive_json()
+
+    assert aller["projet_id"] is None and retour["projet_id"] is None
+    persistes = depot_chat.fil(NOM_ORCHESTRATION)
+    assert [m.to_dict().get("projet_id") for m in persistes] == [None, None]
+
+
+# ── ⑦ le câblage réel : de la demande au run qui figure dans la liste (#683) ──
+#
+# Les tests ci-dessus injectent le répondeur, donc **court-circuitent** le
+# lanceur que l'app construit — or c'est précisément lui qui était en défaut :
+# `ouvrir_un_run` appelait `lancer(objectif)` sans projet, et le run naissait
+# orphelin. Ceux-ci montent donc l'app **sans** `orchestration_repondeur`, avec
+# un moteur muet et deux projets réellement déclarés, et lisent le résultat par
+# la route que l'écran interroge.
+
+
+class MoteurMuet:
+    """Moteur injecté à la place du vrai : il n'appelle rien et note son projet.
+
+    Volontairement plus court que le `MoteurDouble` de `tests/test_executions.py`
+    (dont ce n'est pas le sujet ici) : ce qui compte est que `projet_id` arrive
+    jusqu'au moteur, donc jusqu'aux tâches du plan. Il ne peut pas rendre un faux
+    vert — un service qui passerait le projet sous un autre nom lui ferait noter
+    `None`, et l'assertion tomberait.
+    """
+
+    def __init__(self) -> None:
+        self.projets: list[str | None] = []
+
+    def __call__(self, **reglages: Any) -> MoteurMuet:
+        return self
+
+    async def run(self, objectif: str, *, projet_id: str | None = None, **reste: Any) -> RunReport:
+        self.projets.append(projet_id)
+        return RunReport(objectif=objectif, resultats=())
+
+
+@pytest.fixture()
+def maison(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Un dossier utilisateur factice — même raison qu'en #221/#223.
+
+    Sous Windows le `tmp_path` de pytest vit dans `AppData/Local/Temp`, que la
+    validation de racine refuse à raison : sans cette isolation, déclarer un
+    projet échouerait pour une bonne raison, mais pas celle qu'on mesure ici.
+    """
+    maison = tmp_path / "maison"
+    maison.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: maison))
+    return maison
+
+
+@pytest.fixture()
+def projets(maison: Path, tmp_path: Path) -> ServiceProjets:
+    """Deux projets réellement **déclarés** : la portée n'accepte qu'eux (#277)."""
+    service = ServiceProjets(ProjetStore(tmp_path / "depot"))
+    for nom in ("depensio", "autre"):
+        (maison / nom).mkdir()
+        service.creer(nom, str(maison / nom))
+    return service
+
+
+@pytest.fixture()
+def moteur() -> MoteurMuet:
+    return MoteurMuet()
+
+
+@pytest.fixture()
+def client_reel(bus, depot_chat, projets, moteur):
+    """L'app **entière** : vrai répondeur d'orchestration, vrai service d'exécutions."""
+    with TestClient(
+        create_app(
+            bus=bus,
+            state=ControlTowerState(),
+            chat_store=depot_chat,
+            projets=projets,
+            fabrique_moteur=moteur,
+        )
+    ) as client:
+        yield client
+
+
+def _demander(client: TestClient, **corps: Any) -> str:
+    """Dicte une demande de travail au fil et rend le `run_id` que la réponse porte."""
+    reponse = client.post(
+        f"/api/chat/{NOM_ORCHESTRATION}/messages",
+        json={"contenu": "Ajoute la pagination à la liste des projets", **corps},
+    )
+    assert reponse.status_code == 201
+    return reponse.json()["messages"][1]["run_id"]
+
+
+def _runs_de(client: TestClient, portee: str) -> set[str]:
+    """Les runs que la liste de l'écran rend pour cette portée (`GET /api/executions`)."""
+    reponse = client.get("/api/executions", params={"projet": portee})
+    assert reponse.status_code == 200
+    return {run["run_id"] for run in reponse.json()}
+
+
+def test_un_run_dicte_au_fil_figure_dans_la_liste_de_son_projet(
+    client_reel, projets, moteur
+) -> None:
+    """Le défaut de #683, par le chemin exact où il se produisait.
+
+    Le run ouvert depuis le fil appartient au projet de la fenêtre : il figure
+    dans la liste des runs de ce projet — celle que l'écran lit —, il ne figure
+    pas dans celle du projet d'à côté, et son projet descend jusqu'au moteur,
+    donc jusqu'aux tâches du plan (#222).
+    """
+    ici, ailleurs = (p["id"] for p in projets.lister())
+
+    run_id = _demander(client_reel, projet_id=ici)
+
+    assert run_id in _runs_de(client_reel, ici)
+    assert run_id not in _runs_de(client_reel, ailleurs)
+    assert run_id not in _runs_de(client_reel, "aucun")
+    assert moteur.projets == [ici]
+
+
+def test_sans_projet_le_run_reste_introuvable_a_l_ecran(client_reel, projets) -> None:
+    """L'échantillon fautif : ce que faisait **tout** run du chat avant ce lot.
+
+    Sans rattachement, le run n'entre dans la vue d'aucun projet (`PorteeProjet`,
+    #277) — il n'est atteignable que sous `aucun`, portée qu'aucun sélecteur de
+    l'UI ne propose. C'est ce qui le rendait invisible dans la liste et
+    impossible à ouvrir en détail, alors même que l'orchestrateur l'annonçait en
+    cours. Le garder ici est ce qui empêche de croire que l'assertion précédente
+    passerait de toute façon.
+    """
+    ici, _ = (p["id"] for p in projets.lister())
+
+    run_id = _demander(client_reel)
+
+    assert run_id not in _runs_de(client_reel, ici)
+    assert run_id in _runs_de(client_reel, "aucun")
