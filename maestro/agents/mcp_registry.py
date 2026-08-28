@@ -1266,7 +1266,10 @@ PROVENANCE = Provenance(
 #: projet utilise-t-il ? ». Le **défaut du produit** est GitHub et se lit dans
 #: `core/mcp/qa.json` seul ; `gitlab` reste curé parce qu'un projet outillé par
 #: Maestro n'est pas forcément sur la forge du nôtre — et l'en retirer
-#: interdirait de le monter (l'allowlist *est* le registre).
+#: interdirait de le monter : le seed **est** l'allowlist du dépôt, et l'admission
+#: (#678) ne fait qu'y ajouter ce qu'un humain y fait entrer — elle ne rattraperait
+#: pas une entrée qu'on en aurait sortie, `gitlab` n'étant pas au registre amont
+#: sous cette forme.
 #:
 #: ⚠ **L'ordre de déclaration ci-dessous ne veut plus rien dire** depuis #271 :
 #: `lister`/`rechercher` trient par palier d'usage puis par nom. Il ne reste

@@ -1842,7 +1842,7 @@ groupe des ressources qui servent le travail, et non dans « Le poste ».
 | Place | Contenu |
 |---|---|
 | Bandeau de tête | **3 chiffres** — au pool projet, agents équipés (`n / total`, avec renvoi vers « Agents »), secrets à revoir |
-| Corps | **2 blocs** — le **pool projet** (identité, mode d'auth, état de chaque secret, retrait, *qui l'utilise*) et la **bibliothèque** curée recherchable |
+| Corps | **2 blocs** — le **pool projet** (identité, mode d'auth, état de chaque secret, retrait, *qui l'utilise*) et la **bibliothèque** recherchable, à **trois sources** depuis #679 (curées, admises, découvertes — [docs/21 §3.5](./21-configuration-mcp.md)) |
 | Colonne de propriétés | aucune — l'écran n'a pas de métadonnée à ranger, et s'en donner une ouvrirait la seule place sans plafond avant d'en avoir besoin |
 
 **« Qui l'utilise » est le troisième critère du ticket**, et c'est ce qui manquait
