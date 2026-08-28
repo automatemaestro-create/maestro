@@ -803,8 +803,9 @@ def test_les_increments_reconstituent_exactement_la_reponse(reponse_du_juge: str
 
     Éprouvé sur les **deux** voies du répondeur — celle qui ouvre un run et celle
     qui converse —, l'écriture par morceaux n'étant pas la même de part et
-    d'autre. Le `strip` final est celui de `_Redaction.texte`, d'où la
-    comparaison sur le texte ébarbé plutôt que sur la somme brute.
+    d'autre. L'ébarbage est celui de `chat.Redaction` (montée dans `chat` en #693,
+    où elle sert aussi le répondeur modèle), d'où la comparaison sur le texte
+    ébarbé plutôt que sur la somme brute.
     """
     incremente: list[str] = []
 

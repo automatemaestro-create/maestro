@@ -251,6 +251,7 @@ from maestro.agents.catalog import MODELE_EXECUTANT_DEFAUT, Agent
 from maestro.controltower.chat import (
     Incrementeur,
     MessageChat,
+    Redaction,
     RepondeurChat,
     ReponseChat,
     transcription,
@@ -574,31 +575,6 @@ def _prompt(fil: Sequence[MessageChat], etat: str) -> str:
     return f"État de l'orchestration : {etat}\n\n{conversation}"
 
 
-class _Redaction:
-    """Une réponse qui s'écrit par morceaux, et se diffuse au fur et à mesure.
-
-    Chaque morceau part vers le flux dès qu'il est écrit (quand un incrémenteur
-    est là) **et** s'accumule : le texte final est exactement la concaténation
-    des incréments, ce dont le contrat SSE dépend — la trame `fin` porte le
-    message complet, et un client doit pouvoir le reconstituer des `delta` seuls.
-    """
-
-    def __init__(self, incrementer: Incrementeur | None) -> None:
-        self._incrementer = incrementer
-        self._morceaux: list[str] = []
-
-    async def ecrire(self, morceau: str) -> None:
-        """Ajoute `morceau` à la réponse et le publie."""
-        self._morceaux.append(morceau)
-        if self._incrementer is not None:
-            await self._incrementer(morceau)
-
-    @property
-    def texte(self) -> str:
-        """La réponse écrite jusqu'ici — sans espace aux extrémités (cf. `ServiceChat`)."""
-        return "".join(self._morceaux).strip()
-
-
 class RepondeurOrchestration(RepondeurChat):
     """Le répondeur du fil global : il répond, et il peut ouvrir un run (#268, #685).
 
@@ -660,7 +636,7 @@ class RepondeurOrchestration(RepondeurChat):
         garde qu'il faudrait tenir : il n'existe qu'**un** chemin vers lui, et il
         part d'un verdict qui n'a pas été rendu.
         """
-        redaction = _Redaction(incrementer)
+        redaction = Redaction(incrementer)
         try:
             verdict = await self._juger(agent, fil, projet_id)
         except _JugeInjoignable as injoignable:
@@ -740,7 +716,7 @@ class RepondeurOrchestration(RepondeurChat):
         return _verdict_depuis(texte)
 
     async def _ouvrir_un_run(
-        self, redaction: _Redaction, objectif: str, projet_id: str | None
+        self, redaction: Redaction, objectif: str, projet_id: str | None
     ) -> ReponseChat:
         """Ouvre le run de `objectif`, dans son projet, et le rattache à la réponse.
 
