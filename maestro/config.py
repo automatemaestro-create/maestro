@@ -64,6 +64,19 @@ class Settings:
     #: Racine du dépôt des serveurs MCP déclarés par agent (`MAESTRO_MCP_DIR`), ou
     #: None : le dossier `core/mcp/` du dépôt (cf. maestro.agents.mcp, #104).
     mcp_dir: str | None = None
+    #: Racine du **miroir local du registre MCP officiel** (`MAESTRO_MCP_AMONT_DIR`),
+    #: ou None : le dossier `core/mcp-amont/` du dépôt (cf. maestro.agents.mcp_amont,
+    #: #675). C'est une donnée moissonnée, jamais versionnée.
+    mcp_amont_dir: str | None = None
+    #: Le registre officiel moissonné (`MAESTRO_MCP_AMONT_URL`), ou None :
+    #: `https://registry.modelcontextprotocol.io`. Déplaçable pour pointer un
+    #: miroir d'entreprise ou un double de test — jamais figé dans le code appelant.
+    mcp_amont_url: str | None = None
+    #: Périodicité du rafraîchissement du miroir, en secondes
+    #: (`MAESTRO_MCP_AMONT_PERIODE`), ou None : 1 h — ce que la doc d'*aggregator*
+    #: du registre demande (« regular but infrequent »). Planchée à 60 s : un
+    #: moissonnage par requête d'écran coûterait dix minutes d'amont par affichage.
+    mcp_amont_periode: str | None = None
     #: Racine du coffre des secrets par agent (`MAESTRO_SECRETS_DIR`), ou
     #: None : le dossier `core/secrets/` du dépôt (cf. maestro.agents.secrets,
     #: #109 — jamais versionné, scoping actif dès que la racine existe).
@@ -170,6 +183,9 @@ class Settings:
             chat_dir=(os.getenv("MAESTRO_CHAT_DIR") or "").strip() or None,
             capacite_dir=(os.getenv("MAESTRO_CAPACITE_DIR") or "").strip() or None,
             mcp_dir=(os.getenv("MAESTRO_MCP_DIR") or "").strip() or None,
+            mcp_amont_dir=(os.getenv("MAESTRO_MCP_AMONT_DIR") or "").strip() or None,
+            mcp_amont_url=(os.getenv("MAESTRO_MCP_AMONT_URL") or "").strip() or None,
+            mcp_amont_periode=(os.getenv("MAESTRO_MCP_AMONT_PERIODE") or "").strip() or None,
             secrets_dir=(os.getenv("MAESTRO_SECRETS_DIR") or "").strip() or None,
             secrets_key=(os.getenv("MAESTRO_SECRETS_KEY") or "").strip() or None,
             permissions_dir=(os.getenv("MAESTRO_PERMISSIONS_DIR") or "").strip() or None,

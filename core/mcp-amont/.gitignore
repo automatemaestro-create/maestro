@@ -1,0 +1,7 @@
+# Le miroir du registre MCP officiel (#675) est une DONNÉE moissonnée, pas du
+# code curé : 25 000 entrées écrites par une machine, réécrites à chaque
+# rafraîchissement. On ne le commite pas — à la différence du seed de
+# `maestro/agents/mcp_registry.py`, qui est une allowlist relue en revue de code.
+miroir.jsonl
+etat.json
+*.tmp
