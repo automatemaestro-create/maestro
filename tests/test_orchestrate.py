@@ -6870,6 +6870,132 @@ def test_un_run_ecrit_sa_concurrence_pour_celui_qui_le_reprendra(depot: Depot) -
     assert trace.read_text(encoding="utf-8").strip() == "2"
 
 
+# --- Le fichier porte la concurrence EFFECTIVEMENT utilisée (#740) -------------------------------
+#
+# Défaut de COMPOSITION entre #291 et #455, et c'est ce qui l'a rendu invisible : les deux moitiés
+# étaient gardées, la couture ne l'était pas. #291 écrit le fichier au démarrage — juste, tant que
+# toute concurrence était explicite, donc posée avant la création du répertoire. #455 a introduit la
+# DÉRIVATION ~250 lignes plus loin, une fois le plan figé (elle a besoin de sa colonne « groupe »),
+# sans déplacer l'écriture : le fichier gardait la valeur d'avant dérivation, c'est-à-dire le repli
+# 1. La dérivation étant depuis le régime PAR DÉFAUT, tous les runs ordinaires enregistraient 1, et
+# toute reprise repartait en séquentiel en annonçant « séquentiel (du run repris) » — un régime
+# annoncé comme un verdict alors que c'était une valeur fausse. Deux runs réels y sont passés.
+#
+# Le test d'au-dessus ne pouvait pas l'attraper : il passe `--concurrence 2`, c'est-à-dire le SEUL
+# cas qui était juste. D'où une garde sur les TROIS origines — c'est l'origine, et elle seule, qui
+# décide si la valeur du fichier est arrêtée avant ou après le point d'écriture.
+
+
+@pytest.mark.parametrize(
+    ("origine", "options", "attendu"),
+    [
+        # La dérivée : c'est ELLE que le défaut touchait, et elle seule. Le plan offre trois
+        # tickets simultanables (parents « - » distincts par construction, donc tous compatibles),
+        # la borne vaut 3 : le run tourne à 3 et doit l'enregistrer. Avant le correctif ce fichier
+        # dit « 1 » — c'est le motif, et ce cas doit rougir sans lui.
+        ("derivee", [], "3"),
+        # L'imposée : la valeur est posée au dépouillement des options, donc avant la création du
+        # répertoire. Elle était déjà juste ; elle est gardée ici pour que la seconde écriture ne
+        # puisse pas la défaire — réécrire pour les trois origines est précisément ce qui fait
+        # qu'UN SEUL point du flux répond de ce que le fichier porte.
+        ("imposee", ["--concurrence", "2"], "2"),
+    ],
+)
+def test_le_fichier_porte_la_concurrence_effectivement_utilisee(
+    depot: Depot, origine: str, options: list[str], attendu: str
+) -> None:
+    iids = (130, 131, 132)
+    _livrables(depot, iids)
+    plan = _plan_groupes(depot, [(r, i, "-", "haute", "-") for r, i in enumerate(iids, 1)])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", f"effective-{origine}", *options,
+                    env={"MAESTRO_CLAUDE_BIN": _stub_barriere(depot, ())})
+    assert r.returncode == 0, r.stdout + r.stderr
+    trace = depot.racine / f".maestro/orchestrate/effective-{origine}/concurrence"
+    assert trace.read_text(encoding="utf-8").strip() == attendu, (
+        f"le fichier doit porter le régime que le run a tenu ({origine}) — c'est tout ce qu'une "
+        "reprise en attend"
+    )
+
+
+def test_une_reprise_reenregistre_le_regime_qu_elle_a_relu(depot: Depot) -> None:
+    """La troisième origine. Elle transmet plutôt qu'elle ne décide — et c'est pour ça qu'elle
+    compte.
+
+    Une reprise se reprend : le run B relit le fichier de A, et le run C relira celui de B. Si B
+    n'enregistrait pas ce qu'il a relu, le régime se perdrait au deuxième maillon — la chaîne serait
+    juste une fois puis fausse pour toujours, ce qui est plus difficile à voir qu'une chaîne
+    toujours fausse.
+    """
+    iids = (130, 131)
+    _livrables(depot, iids)
+    dossier = _run_dir(depot, "20260828-090000",
+                       [(r, i, "-", "haute") for r, i in enumerate(iids, 1)],
+                       resume=[], age=7200)
+    (dossier / "concurrence").write_text("2\n", encoding="utf-8", newline="\n")
+    os.utime(dossier / "concurrence", (time.time() - 7200,) * 2)
+    r = depot.lance("run.sh", "--resume", "20260828-090000", "--run-id", "effective-reprise",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_barriere(depot, ())})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "2 en vol (du run repris)" in r.stdout, "le régime relu est bien celui qu'on annonce"
+    trace = depot.racine / ".maestro/orchestrate/effective-reprise/concurrence"
+    assert trace.read_text(encoding="utf-8").strip() == "2", (
+        "ce que la reprise a relu, elle doit le réenregistrer : le run suivant le relira d'ici"
+    )
+
+
+def test_le_fichier_existe_meme_si_le_run_est_coupe_avant_la_derivation(depot: Depot) -> None:
+    """Le prix du remède, et sa borne : on RÉÉCRIT le fichier, on ne le DÉPLACE pas.
+
+    Déplacer l'écriture après la dérivation serait plus court, et laisserait un run coupé entre la
+    création du répertoire et le plan SANS fichier du tout — on remplacerait un mauvais régime par
+    une absence de régime, et une reprise n'aurait plus rien à relire. Le cas est atteint pour de
+    vrai : en `--detach`, c'est le processus APPELANT qui crée le répertoire et sort avant d'avoir
+    jamais vu un plan ; la dérivation a lieu dans le processus détaché.
+    """
+    _livrables(depot, (130,))
+    plan = _plan_groupes(depot, [(1, 130, "-", "haute", "-")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "detache-tot", "--detach",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_barriere(depot, ()),
+                         "MAESTRO_ORCHESTRATE_SPAWN": _spawn_stub(depot)})
+    assert r.returncode == 0, r.stdout + r.stderr
+    trace = depot.racine / ".maestro/orchestrate/detache-tot/concurrence"
+    assert trace.is_file(), (
+        "le lanceur détaché n'a pas encore de plan, donc pas de dérivation — et laisse pourtant "
+        "un fichier derrière lui : une reprise doit toujours trouver une valeur"
+    )
+    assert trace.read_text(encoding="utf-8").strip().isdigit()
+
+
+def test_une_reprise_rejoue_le_regime_derive_du_run_qu_elle_reprend(depot: Depot) -> None:
+    """La panne telle qu'elle a été vécue, de bout en bout — deux runs, comme les deux vrais.
+
+    Les deux moitiés étaient vertes séparément : un run dérive bien (#455), une reprise rejoue bien
+    ce qu'elle lit (#291). C'est leur enchaînement qui échouait, et seul un test qui les enchaîne
+    pouvait le dire. Le run A dérive à 3 sur son plan puis s'arrête au premier ticket (`--max`) ;
+    la reprise B doit repartir avec plusieurs tickets en vol, et non un par un.
+    """
+    iids = (130, 131, 132)
+    _livrables(depot, iids)
+    plan = _plan_groupes(depot, [(r, i, "-", "haute", "-") for r, i in enumerate(iids, 1)])
+    a = depot.lance("run.sh", "--plan", plan, "--run-id", "chaine-a", "--max", "1",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_barriere(depot, ())})
+    assert a.returncode == 0, a.stdout + a.stderr
+    assert "3 en vol (dérivé du plan)" in a.stdout, "le run A tourne bien à trois"
+
+    # Les deux tickets que A n'a pas touchés. La barrière ne se lève que lorsque les DEUX sont
+    # partis : un pic de 2 ne peut donc pas être obtenu par un run séquentiel.
+    b = depot.lance("run.sh", "--resume", "chaine-a", "--run-id", "chaine-b",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_barriere(depot, (131, 132))})
+    assert b.returncode == 0, b.stdout + b.stderr
+    assert "3 en vol (du run repris)" in b.stdout, (
+        "la reprise doit relire le régime de A, pas le repli séquentiel"
+    )
+    assert _pic(depot) >= 2, (
+        "la reprise d'un run dérivé repartait en séquentiel : c'est la panne de #740, et elle a "
+        "coûté deux runs réels"
+    )
+
+
 # =====================================================================================
 # Le bloc se ré-ancre au lieu de se recopier (#325)
 # =====================================================================================
