@@ -97,9 +97,13 @@ import type { MessageChat } from "@/lib/types";
 import { useChat } from "@/lib/useChat";
 
 export default function PageChat() {
-  const { agents, taches } = useEtatGlobal();
+  const { agents, taches, projet } = useEtatGlobal();
   const [destinataire, setDestinataire] = useState(AGENT_ORCHESTRATION);
-  const fil = useChat(destinataire);
+  // Le projet **de cette fenêtre** part avec chaque message (#683) : c'est ce
+  // qui rattache au projet actif le run que l'orchestration ouvre, et donc ce
+  // qui le fait apparaître dans « Runs » au lieu de nulle part. Il voyage avec
+  // l'envoi, pas avec le fil, qui reste transverse (`lib/useChat`).
+  const fil = useChat(destinataire, projet.id);
 
   // L'orchestration en tête, puis les agents du parc — d'où elle est retirée,
   // le parc réel la portant comme acteur du journal (`destinatairesDuFil` en

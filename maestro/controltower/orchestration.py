@@ -46,6 +46,23 @@ recopie sur le `MessageChat` persisté **et** sur l'événement `chat.message`
 diffusé. Le fil garde donc le lien vers ce qu'il a déclenché, et un client temps
 réel l'apprend sans relire quoi que ce soit.
 
+## …et appartient au projet de la fenêtre (#683)
+
+Le fil est **transverse** (#281) : il parle de l'outil, pas d'un projet, et ni le
+message ni sa socket ne portent de périmètre. Mais ce qu'il **ouvre** en a un —
+un run appartient à un projet (#222), et toutes les vues de travail sont cadrées
+sur le projet actif (#277). Tant que le lanceur ne recevait pas de projet, un run
+dicté au fil naissait orphelin : absent de la liste des runs de tout projet,
+refusé par la vue de détail, invisible au Kanban et au journal. Le défaut était un
+cas de bord tant que « Composer un objectif » existait ; depuis #666, où le chat
+est **la seule porte d'entrée**, il valait pour **tous** les runs.
+
+D'où le `projet_id` qui accompagne la demande : il vient de la fenêtre, il n'est
+pas deviné, et il ne rend le fil ni cadré ni filtré — il ne touche ni le fil
+persisté, ni l'événement diffusé, ni la socket. Deux usages seulement, dans le
+répondeur : **rattacher** le run ouvert, et **cadrer** l'aperçu, pour que la
+phrase « où en est-on ? » compte ce que l'écran d'à côté peut montrer.
+
 ## Reconnaître une demande de travail — et le prix de se tromper
 
 `intention` tranche sur une règle courte : **la demande commence, une fois les
@@ -77,6 +94,7 @@ from maestro.controltower.chat import (
     normaliser,
 )
 from maestro.controltower.events import ACTEUR_RUN, ROLE_RUN
+from maestro.controltower.portee import PorteeProjet
 from maestro.controltower.state import (
     EXECUTION_EN_ATTENTE_ARBITRAGE,
     EXECUTION_EN_ATTENTE_BRIEF,
@@ -119,12 +137,17 @@ AGENT_ORCHESTRATION = Agent(
 
 #: Ouvrir un run sur un objectif, et rendre son résumé (dont `run_id`) — le seul
 #: geste que le canal demande à la couche d'exécution. `ServiceExecutions.lancer`
-#: le satisfait tel quel, une fois ses réglages liés par l'appelant.
-LanceurRun = Callable[[str], Awaitable[Mapping[str, Any]]]
+#: le satisfait tel quel, une fois ses réglages liés par l'appelant. Le second
+#: argument est le **projet de la fenêtre** d'où part la demande (#683), `None`
+#: quand il n'y en a pas : le run part alors sans projet, comme avant ce lot.
+LanceurRun = Callable[[str, str | None], Awaitable[Mapping[str, Any]]]
 
 #: L'état de l'orchestration en une phrase, pour répondre « où en est-on ? » sans
-#: donner à ce module la connaissance de la projection.
-ApercuOrchestration = Callable[[], str]
+#: donner à ce module la connaissance de la projection. Il prend le projet de la
+#: fenêtre (#683) — un `str | None`, jamais un objet de portée : ce module ne
+#: connaît ni la projection ni le contrat de lecture, il **transmet** ce que le
+#: fil lui a donné, l'appelant en fait une portée.
+ApercuOrchestration = Callable[[str | None], str]
 
 #: Les deux intentions que le canal distingue (voir le module).
 INTENTION_TRAVAIL = "travail"
@@ -157,17 +180,34 @@ def apercu_de(state: ControlTowerState) -> ApercuOrchestration:
     sans projection, tandis que la formule vit ici, avec le canal qui la dit. La
     lecture est refaite à chaque appel — un aperçu figé à la construction de
     l'app annoncerait l'état d'hier.
+
+    Elle est **cadrée sur le projet de la fenêtre** depuis #683, et c'est la
+    seconde moitié du défaut que ce ticket corrige : la phrase comptait *tous*
+    les runs du poste quand chaque écran ne montre que ceux du projet actif, si
+    bien que le fil annonçait « 1 run en cours » à propos d'un run que la liste
+    ne portait pas et que la vue de détail refusait d'ouvrir. Ce qu'elle compte
+    est désormais ce que l'écran peut montrer.
+
+    La portée est celle du contrat de lecture (#277) — `PorteeProjet.retient`,
+    la règle écrite une fois — et non un filtre de plus : les trois compteurs de
+    la phrase (runs actifs, tâches suivies, validations en attente) passent par
+    la **même**, faute de quoi une seule phrase mélangerait deux périmètres.
+    Sans projet — un client qui n'en envoie pas, un poste qui n'en a pas —, elle
+    reste **transverse**, c'est-à-dire exactement la phrase d'avant ce lot.
     """
 
-    def apercu() -> str:
-        actifs = [run for run in state.executions() if run.statut in _STATUTS_ACTIFS]
-        attentes = sum(1 for validation in state.validations() if validation.en_attente)
+    def apercu(projet_id: str | None = None) -> str:
+        portee = PorteeProjet.projet(projet_id) if projet_id else PorteeProjet.tous()
+        actifs = [run for run in state.executions(portee) if run.statut in _STATUTS_ACTIFS]
+        attentes = sum(
+            1 for validation in state.validations(portee) if validation.en_attente
+        )
         if not actifs:
             phrase = "Aucun run en cours."
         else:
             phrase = (
                 f"{_accord(len(actifs), 'run en cours', 'runs en cours')}, "
-                f"{_accord(len(state.taches()), 'tâche suivie', 'tâches suivies')}."
+                f"{_accord(len(state.taches(portee)), 'tâche suivie', 'tâches suivies')}."
             )
         if attentes:
             phrase += f" {_accord(attentes, 'validation attend', 'validations attendent')} "
@@ -365,19 +405,29 @@ class RepondeurOrchestration(RepondeurChat):
         fil: Sequence[MessageChat],
         *,
         incrementer: Incrementeur | None = None,
+        projet_id: str | None = None,
     ) -> ReponseChat:
-        """Répond au dernier message, en ouvrant un run si c'en est une demande."""
+        """Répond au dernier message, en ouvrant un run si c'en est une demande.
+
+        `projet_id` est le **projet de la fenêtre** d'où part la demande (#683).
+        Il traverse les deux voies, parce que les deux le doivent pour la même
+        raison : la voie active y **rattache** le run qu'elle ouvre, la voie
+        conversationnelle y **cadre** l'aperçu qu'elle rend. Les dissocier ferait
+        annoncer l'état d'un périmètre et travailler dans un autre.
+        """
         demande = fil[-1].contenu if fil else ""
         redaction = _Redaction(incrementer)
         if intention(demande) != INTENTION_TRAVAIL:
-            await self._echanger(redaction, demande)
+            await self._echanger(redaction, demande, projet_id)
             return ReponseChat(contenu=redaction.texte)
-        return await self._ouvrir_un_run(redaction, demande)
+        return await self._ouvrir_un_run(redaction, demande, projet_id)
 
-    async def _echanger(self, redaction: _Redaction, demande: str) -> None:
+    async def _echanger(
+        self, redaction: _Redaction, demande: str, projet_id: str | None = None
+    ) -> None:
         """La voie conversationnelle : ce qu'on sait de l'état, puis ce qu'on sait faire."""
         if self._apercu is not None:
-            await redaction.ecrire(self._apercu())
+            await redaction.ecrire(self._apercu(projet_id))
             await redaction.ecrire(" ")
         await redaction.ecrire(
             "Dites-moi le travail à faire — « ajoute la pagination à la liste des "
@@ -392,8 +442,18 @@ class RepondeurOrchestration(RepondeurChat):
         else:
             await redaction.ecrire("Le suivi reste dans ce fil.")
 
-    async def _ouvrir_un_run(self, redaction: _Redaction, demande: str) -> ReponseChat:
-        """La voie active : ouvrir le run de `demande` et le rattacher à la réponse."""
+    async def _ouvrir_un_run(
+        self, redaction: _Redaction, demande: str, projet_id: str | None = None
+    ) -> ReponseChat:
+        """La voie active : ouvrir le run de `demande`, dans son projet, et le rattacher.
+
+        Le run **hérite du projet de la fenêtre** (#683) : il apparaît donc dans
+        la liste des runs de ce projet et s'ouvre en détail, là où un run sans
+        projet n'entrait dans la vue d'aucun (`PorteeProjet.retient`) — c'est-à-dire
+        nulle part, le chat étant depuis #666 la seule porte d'entrée. Rien n'est
+        deviné : `projet_id` est ce que la fenêtre a envoyé, `None` quand elle n'a
+        pas de projet, et le run part alors sans projet comme avant ce lot.
+        """
         if self._lanceur is None:
             await redaction.ecrire(
                 "Je ne peux pas ouvrir de run depuis ce fil : aucune exécution n'y "
@@ -403,7 +463,7 @@ class RepondeurOrchestration(RepondeurChat):
 
         await redaction.ecrire("J'ouvre un run sur cette demande.")
         try:
-            resume = await self._lanceur(demande)
+            resume = await self._lanceur(demande, projet_id)
         except Exception as echec:
             # Nommé dans le fil plutôt que levé : voir la classe. Un objectif
             # refusé (vide, plafond hors bornes) et un moteur qui ne démarre pas

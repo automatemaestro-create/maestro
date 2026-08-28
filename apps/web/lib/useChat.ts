@@ -21,6 +21,17 @@
  * d'assistance, `maestro/controltower/app.py`), il n'a donc pas de périmètre à
  * respecter. Toute vue qui, elle, montre le **travail** passe par
  * `useControlTower` et son projet actif.
+ *
+ * **Ce que le fil ne cadre pas, il le transporte** (#683). `projetId` est le
+ * projet de la fenêtre : il part avec **l'envoi**, jamais avec la lecture du fil
+ * ni avec la socket — rien de ce qui précède ne change. Il ne sert qu'à ce qu'un
+ * message **ouvre** : un run dicté à l'orchestration appartient au projet où on
+ * l'a demandé, faute de quoi il n'entre dans la vue d'aucun projet et devient
+ * introuvable à l'écran (le défaut de #683, devenu le cas nominal depuis que le
+ * chat est la seule porte d'entrée, #666). Le hook ne va pas le chercher
+ * lui-même : il le reçoit de l'appelant, seul à savoir s'il est monté sous un
+ * projet — l'assistant flottant et l'onglet Chat d'un agent n'ouvrent aucun run
+ * et n'ont donc rien à passer.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -64,7 +75,7 @@ export type Chat = {
   envoyer: (contenu: string, sources?: SourceDeclaree[]) => Promise<void>;
 };
 
-export function useChat(agent: string): Chat {
+export function useChat(agent: string, projetId: string | null = null): Chat {
   const [messages, setMessages] = useState<MessageChat[]>([]);
   const [connecte, setConnecte] = useState(false);
   const [chargement, setChargement] = useState(true);
@@ -160,7 +171,7 @@ export function useChat(agent: string): Chat {
     async (contenu: string, sources: SourceDeclaree[] = []) => {
       setEnvoi(true);
       try {
-        await envoyerMessageChat(agent, contenu, sources);
+        await envoyerMessageChat(agent, contenu, sources, projetId);
         // La paire message/réponse arrivera aussi par le WebSocket ; ce
         // rechargement direct rend l'UI réactive même si la socket est coupée.
         await recharger();
@@ -168,7 +179,7 @@ export function useChat(agent: string): Chat {
         setEnvoi(false);
       }
     },
-    [agent, recharger],
+    [agent, projetId, recharger],
   );
 
   return { messages, connecte, chargement, erreur, envoi, envoyer };

@@ -39,11 +39,12 @@
  * de `/verify`.
  */
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import PageChat from "@/app/chat/page";
+import { envoyerMessageChat } from "@/lib/api";
 import {
   AGENT_ORCHESTRATION,
   INTERLOCUTEUR_ORCHESTRATION,
@@ -58,6 +59,8 @@ import {
   canauxDemandes,
   messageFactice,
   poserFilAssistance,
+  projetDuFilCourant,
+  projetFactice,
   rendreAvecEtat,
   tacheFactice,
 } from "./aides";
@@ -388,5 +391,74 @@ describe("« Ouvert depuis ce fil » (#268/#269)", () => {
     });
 
     expect(screen.getByText(/Rien encore\./)).toBeInTheDocument();
+  });
+});
+
+// ── ④ le projet de la fenêtre part avec le message (#683) ────────────────────
+
+describe("le projet de la fenêtre", () => {
+  it("accompagne chaque message du fil", () => {
+    const projet = projetFactice({ id: "prj-depensio", nom: "Dépensio" });
+
+    rendreAvecEtat(<PageChat />, { agents: [] }, projet);
+
+    // C'est ce que l'écran donne au fil, et c'est tout ce qui manquait : sans
+    // lui, le run ouvert par l'orchestration ne relevait d'aucun projet, donc
+    // n'entrait dans la liste d'aucun et refusait de s'ouvrir en détail — alors
+    // même que le fil l'annonçait en cours.
+    expect(projetDuFilCourant()).toBe("prj-depensio");
+  });
+
+  it("suit le destinataire quand la mention change de fil", async () => {
+    const utilisateur = userEvent.setup();
+    const projet = projetFactice({ id: "prj-depensio" });
+    rendreAvecEtat(<PageChat />, { agents: [agentFactice({ nom: "dev" })] }, projet);
+
+    await utilisateur.type(saisiePour(INTERLOCUTEUR_ORCHESTRATION), "@dev ");
+
+    // Le canal change, le cadre non : on parle à quelqu'un d'autre **depuis la
+    // même fenêtre**, donc depuis le même projet.
+    expect(canalCourant()).toBe("dev");
+    expect(projetDuFilCourant()).toBe("prj-depensio");
+  });
+});
+
+// ── ⑤ ce que l'appel REST porte (#683) ───────────────────────────────────────
+
+describe("envoyerMessageChat", () => {
+  /** Le corps JSON du dernier `fetch`, tel qu'il part sur le réseau. */
+  function corpsEnvoye(appel: ReturnType<typeof vi.fn>): Record<string, unknown> {
+    const [, init] = appel.mock.calls[0] as [string, RequestInit];
+    return JSON.parse(String(init.body)) as Record<string, unknown>;
+  }
+
+  function stubFetch(): ReturnType<typeof vi.fn> {
+    const fetch = vi.fn(async () => new Response("{}", { status: 201 }));
+    vi.stubGlobal("fetch", fetch);
+    return fetch;
+  }
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("porte le projet dans le corps de la requête", async () => {
+    const fetch = stubFetch();
+
+    await envoyerMessageChat(AGENT_ORCHESTRATION, "Ajoute la pagination", [], "prj-depensio");
+
+    expect(corpsEnvoye(fetch)).toMatchObject({
+      contenu: "Ajoute la pagination",
+      projet_id: "prj-depensio",
+    });
+  });
+
+  it("n'envoie rien de plus quand il n'y a pas de projet", async () => {
+    const fetch = stubFetch();
+
+    await envoyerMessageChat(AGENT_ORCHESTRATION, "Ajoute la pagination");
+
+    // L'appel d'avant le lot, à l'octet près : une clé `projet_id: null` ferait
+    // dire au corps « aucun projet » là où l'ancien contrat ne disait rien, et
+    // le rattachement est justement ce qui ne doit pas être deviné.
+    expect(corpsEnvoye(fetch)).toEqual({ contenu: "Ajoute la pagination" });
   });
 });

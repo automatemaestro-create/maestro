@@ -126,10 +126,13 @@ Endpoints :
   d'aide** — mêmes endpoints, fiche hors catalogue et réponses sans modèle
   (`maestro.controltower.assistance`) — et `orchestrateur` (#268) le **fil
   global** : on y adresse une demande à l'orchestration, qui répond et **ouvre
-  un run** quand c'en est une (`maestro.controltower.orchestration`) ;
+  un run** quand c'en est une (`maestro.controltower.orchestration`). Le corps
+  porte le `projet_id` de la fenêtre (#683) : le run ouvert **appartient** au
+  projet actif, donc il figure dans sa liste de runs et s'ouvre en détail ;
 - `GET  /api/chat/{agent}/flux` — la même réponse rendue **au fur et à mesure**
   (SSE, trames `debut`/`fragment`/`fin`/`erreur`, #268) : un canal, valable pour
-  les trois fils ;
+  les trois fils ; `?projet_id=` y porte le même rattachement que le corps du
+  POST — et n'est pas le `?projet=` des lectures, qui est une portée (#277) ;
 - `WS   /ws/evenements` — le flux d'événements (statuts de tâches, activité
   des agents, messages inter-agents, validations, chat), au format
   `Event.to_dict`.
@@ -194,6 +197,7 @@ from maestro.agents.permissions import PermissionStore
 from maestro.agents.playbooks import PLAYBOOK_DEFAUTS, PlaybookStore
 from maestro.agents.secrets import SecretStore
 from maestro.agents.store import NOMS_RESERVES, AgentDefinition, AgentStore, catalogue
+from maestro.appartenance import projet_id_valide
 from maestro.config import ConfigError, Settings, load_settings
 from maestro.controltower import selecteur
 from maestro.controltower.analytics import PAS_HEURE, PAS_VALIDES, agrege_couts
@@ -572,10 +576,18 @@ class ChatEnvoiRequete(BaseModel):
     pour la même raison : un fichier y voyage par l'`id` que `POST /api/sources`
     lui a rendu, seule façon d'en désigner de vrais octets. Absente ou vide, le
     fil est exactement celui d'avant ce lot.
+
+    `projet_id` (#683) est le **projet de la fenêtre** d'où part le message —
+    à ne pas confondre avec le `?projet=` des lectures (#277), qui est une
+    portée et porte les mots réservés `tous`/`aucun` : ici c'est un identifiant
+    de projet, et rien d'autre. Le fil ne s'en trouve ni cadré ni filtré ; il
+    n'intéresse que ce que la réponse **ouvre** — l'orchestration y rattache son
+    run et y cadre son aperçu. Absent, le run part sans projet, comme avant.
     """
 
     contenu: str
     sources: list[dict[str, Any]] | None = None
+    projet_id: str | None = None
 
 
 class SecretPoolRequete(BaseModel):
@@ -974,7 +986,7 @@ def create_app(
         hote=hote_run,
     )
 
-    async def ouvrir_un_run(objectif: str) -> dict[str, Any]:
+    async def ouvrir_un_run(objectif: str, projet_id: str | None = None) -> dict[str, Any]:
         """Le lanceur du fil global (#268) — un run sur l'objectif dicté au chat.
 
         `MODE_BRIEF_AUTO` et non le `humain` des lancements par l'écran : le
@@ -982,8 +994,17 @@ def create_app(
         et renvoyer vers un écran de validation de brief pour la poursuivre
         couperait le fil en deux. Le run part donc, brief rédigé sans attendre ;
         l'écran des exécutions reste la voie de celui qui veut le valider avant.
+
+        `projet_id` (#683) est le projet de la fenêtre, transmis par le message
+        et **normalisé à la frontière** (`envoyer_chat`). Il est passé à `lancer`
+        exactement comme le fait `POST /api/executions` — même paramètre, même
+        validation de forme (`projet_id_valide`), donc une seule règle pour les
+        deux portes d'entrée. Sans projet, le run part sans projet : le
+        rattachement est une donnée, jamais une condition du lancement (#222).
         """
-        return await executions.lancer(objectif, mode_brief=MODE_BRIEF_AUTO)
+        return await executions.lancer(
+            objectif, projet_id=projet_id, mode_brief=MODE_BRIEF_AUTO
+        )
 
     # Le fil global (#268) : mêmes rouages que le chat — persistance, messagerie,
     # bus —, un répondeur qui peut ouvrir un run, et rien de plus côté REST. Il se
@@ -2934,7 +2955,14 @@ def create_app(
         fiche, service = _canal_chat(agent)
         try:
             message, reponse = await service.envoyer(
-                fiche, requete.contenu, requete.sources
+                fiche,
+                requete.contenu,
+                requete.sources,
+                # Normalisé **ici**, à la frontière, comme tout ce qui entre
+                # (#222) : un identifiant mal formé vaut « aucun projet » et ne
+                # fait pas échouer un message. En dessous, plus personne n'a à se
+                # demander d'où vient la chaîne qu'il porte.
+                projet_id=projet_id_valide(requete.projet_id),
             )
         except SourceRefusee as exc:
             # Avant le `ValueError` nu dont elle hérite : une source refusée porte
@@ -2952,7 +2980,9 @@ def create_app(
         }
 
     @app.get("/api/chat/{agent}/flux")
-    async def flux_chat(agent: str, contenu: str = "") -> StreamingResponse:
+    async def flux_chat(
+        agent: str, contenu: str = "", projet_id: str | None = None
+    ) -> StreamingResponse:
         """Flux SSE d'une réponse de chat — le contrat #183, servi pour de bon (#268).
 
         `GET /api/chat/{agent}/flux?contenu=…` ouvre un `text/event-stream` : une
@@ -2968,11 +2998,19 @@ def create_app(
         (#123) et `orchestrateur` (#268). 404 si le fil n'existe pas, 422 sur un
         `contenu` vide (rien n'est persisté, et la question se tranche avant la
         première trame).
+
+        `?projet_id=` porte le **projet de la fenêtre** (#683), comme le corps de
+        `POST …/messages` : un run ouvert par cette voie se rattache donc comme
+        un run ouvert par l'autre. Il n'est pas nommé `?projet=` à dessein — ce
+        nom-là désigne partout ailleurs une **portée** de lecture, avec ses mots
+        réservés `tous`/`aucun` (#277), et deux contrats sous un même nom seraient
+        la première façon de les confondre.
         """
         fiche, service = _canal_chat(agent)
+        projet = projet_id_valide(projet_id)
 
         async def flux() -> AsyncIterator[str]:
-            async for trame in service.diffuser(fiche, contenu):
+            async for trame in service.diffuser(fiche, contenu, projet_id=projet):
                 yield f"data: {json.dumps(trame.to_dict(), ensure_ascii=False)}\n\n"
 
         try:
