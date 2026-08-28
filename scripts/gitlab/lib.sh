@@ -782,6 +782,264 @@ $desc"
   printf 'milestone « %s » : rail « %s » → « %s ».\n' "$title" "$courant" "$rail"
 }
 
+# --- Critères de sortie et verdict d'un jalon (#757, chantier #756) -------------------------------
+# Un bouclage sans critère de sortie n'est qu'une opinion. Les quatre démos de bilan (#10, #50, #88,
+# #112) en avaient un, écrit dans le tableau des jalons de `docs/06` ; les Phases 4 à 8 n'en ont
+# AUCUN, et c'est la première raison pour laquelle le geste a disparu — 14 jalons fermés sans
+# bouclage (constat de #756).
+#
+# Ce bloc pose le SUPPORT des deux moitiés du bouclage — ce qu'on attend du jalon, et ce qu'on a
+# conclu — et le VERBE qui les lit et les écrit.
+#
+# LE SUPPORT EST LA DESCRIPTION DU JALON, comme le marqueur `rail:` de #617 : elle est lue par les
+# humains, déjà lue par une machine, et elle vit avec le jalon qu'elle décrit. Ce n'est ni un
+# identifiant figé (règle de #358 : tout se résout par son nom), ni une variable nommant UN jalon —
+# qu'il faudrait changer à chaque phase soldée. Deux sections reconnues, « ## Critères de sortie »
+# et « ## Verdict ».
+#
+# C'EST UN VERBE, et non un `gh api --method PATCH` recopié dans les prompts, pour la raison exacte
+# qui a fait de `milestone-rail` un verbe (#617) et de `arbitre` un verbe (#562) :
+# `tests/test_cycle_de_vie.py` INTERDIT les écritures de forge sous `.claude/commands/**`, et le
+# support peut bouger — un prompt qui appellerait `gh` directement serait à retrouver, un verbe non.
+#
+# SANS SECTION, C'EST UNE ABSTENTION : code 3, rien sur stdout, MUETTE. Un jalon qui n'a pas encore
+# de critères est le cas nominal (14 jalons fermés n'en ont pas), pas une panne — même partage que
+# `gl_touche_claude_de`, où « il ne le nomme pas » est une RÉPONSE.
+#
+# UNE SECTION PRÉSENTE MAIS VIDE COMPTE POUR ABSENTE, et ce n'est pas un détail de mise en forme :
+# le lot 2 convoque au bouclage les jalons « soldés ET sans verdict ». Si un titre de section nu
+# suffisait à faire taire la convocation, il suffirait d'écrire « ## Verdict » et rien dessous pour
+# éteindre le mécanisme pour toujours, sans que rien ne le dise.
+#
+# L'ÉCRITURE NE TOUCHE QU'À SA SECTION. La description porte déjà le marqueur `rail:` de #617 en
+# TÊTE, et l'écraser reclasserait le jalon dans le mauvais rail sans que rien ne le signale — c'est
+# le même garde-fou que `gl_milestone_rail`, qui préserve la description pour ne pas payer un rail
+# au prix d'un bilan. Une section nouvelle s'ajoute donc EN QUEUE : c'est la seule place qui ne peut
+# pas déranger un marqueur de tête, et le cadrage en prose du jalon garde la première lecture.
+GL_MS_CRITERES_SECTION="${MAESTRO_MS_CRITERES_SECTION:-Critères de sortie}"
+GL_MS_VERDICT_SECTION="${MAESTRO_MS_VERDICT_SECTION:-Verdict}"
+
+# GL_SECTION_PROG — LA RÈGLE DE RECONNAISSANCE, et le SEUL endroit du dépôt où elle vit.
+#
+# Un seul programme awk pour les DEUX gestes, pilotés par `GL_SECTION_MODE` : `lire` rend le corps
+# de la section, `poser` rend la description entière avec la section remplacée (ou ajoutée en
+# queue). Deux programmes — un pour lire, un pour écrire — auraient été plus courts à écrire et
+# c'est exactement le piège : ils portent alors DEUX fois la question « où commence et où finit
+# cette section ? », et le jour où l'une des deux réponses bouge, le verbe lit une section et en
+# réécrit une autre. Même raison que `gl_rail_de` (#617) et `gl_arbitrage_de` (#562).
+#
+# LA SECTION VA DE SON TITRE AU PROCHAIN TITRE DE RANG ÉGAL OU SUPÉRIEUR, ce qui est la lecture
+# markdown ordinaire : une sous-section « ### Réserves » sous « ## Verdict » lui appartient, une
+# « ## Autre chose » la ferme. Le rang du titre d'ouverture n'est donc pas imposé (`##` est la forme
+# documentée, mais un `#` ou un `###` est reconnu et refermé au bon endroit) — refuser un rang
+# inattendu ferait rendre « aucun verdict » sur un jalon qui en porte un, c'est-à-dire le pire des
+# deux échecs pour une convocation qui doit dire « il en manque un ».
+#
+# La comparaison passe par `tolower()` des deux côtés. ⚠ C'est un repli ASCII (mawk comme gawk ne
+# replient pas les accents) : « ## Critères de sortie » et « ## critères de sortie » sont reconnus,
+# « ## CRITÈRES DE SORTIE » ne l'est pas. La forme documentée est celle des constantes ci-dessus.
+GL_SECTION_PROG='
+BEGIN {
+  titre = tolower(ENVIRON["GL_SECTION_TITRE"])
+  gsub(/^[ \t]+|[ \t]+$/, "", titre)
+  mode  = ENVIRON["GL_SECTION_MODE"]
+  n = 0; tete = 0; queue = 0; niveau = 0; dans = 0
+}
+{
+  # Les fins de ligne Windows sont retirees ici, une fois : la forge rend ce quon lui a donne, et
+  # un CR colle au dernier mot ferait echouer la comparaison du titre sans rien montrer.
+  ligne = $0; sub(/\r$/, "", ligne)
+  L[++n] = ligne
+
+  # Une ligne de titre markdown ? Son rang est son nombre de dieses, son intitule ce qui suit.
+  lvl = 0; intitule = ""
+  if (ligne ~ /^[ \t]*#+([ \t]|$)/) {
+    t = ligne; sub(/^[ \t]+/, "", t)
+    while (substr(t, lvl + 1, 1) == "#") lvl++
+    intitule = substr(t, lvl + 1)
+    sub(/^[ \t]+/, "", intitule)
+    sub(/[ \t]*:?[ \t]*$/, "", intitule)
+  }
+  if (lvl == 0) next
+
+  if (!tete && tolower(intitule) == titre) { tete = n; niveau = lvl; dans = 1; next }
+  if (dans && lvl <= niveau) { queue = n - 1; dans = 0 }
+}
+END {
+  if (tete && !queue) queue = n          # la section court jusqua la fin de la description
+
+  if (mode == "lire") {
+    if (!tete) exit 3
+    deb = tete + 1; fin = queue
+    while (deb <= fin && L[deb] ~ /^[ \t]*$/) deb++
+    while (fin >= deb && L[fin] ~ /^[ \t]*$/) fin--
+    if (fin < deb) exit 3                # titre nu, rien dessous : une section vide ne repond rien
+    for (i = deb; i <= fin; i++) print L[i]
+    exit 0
+  }
+
+  # mode "poser" : le corps arrive par un FICHIER et jamais par lenvironnement — un contenu
+  # multiligne passe mal dune plateforme a lautre, et lappelant tient deja ce fichier en main.
+  f = ENVIRON["GL_SECTION_CORPS_FICHIER"]
+  m = 0
+  while ((getline l < f) > 0) { sub(/\r$/, "", l); C[++m] = l }
+  close(f)
+  cd = 1; cf = m
+  while (cd <= cf && C[cd] ~ /^[ \t]*$/) cd++
+  while (cf >= cd && C[cf] ~ /^[ \t]*$/) cf--
+  if (cf < cd) exit 4                    # corps vide : refuse, jamais ecrit
+
+  if (tete) {
+    for (i = 1; i <= tete; i++) print L[i]
+    print ""
+    for (i = cd; i <= cf; i++) print C[i]
+    # Une ligne blanche avant ce qui suit, sil y a quelque chose : cest ce qui rend le geste
+    # IDEMPOTENT, la lecture retirant ensuite les blanches de bord quelle vient de poser.
+    if (queue < n) {
+      if (L[queue + 1] !~ /^[ \t]*$/) print ""
+      for (i = queue + 1; i <= n; i++) print L[i]
+    }
+  } else {
+    fin = n
+    while (fin >= 1 && L[fin] ~ /^[ \t]*$/) fin--
+    for (i = 1; i <= fin; i++) print L[i]
+    if (fin >= 1) print ""
+    print "## " ENVIRON["GL_SECTION_TITRE"]
+    print ""
+    for (i = cd; i <= cf; i++) print C[i]
+  }
+  exit 0
+}
+'
+
+# gl_section_de <titre-de-section> — cœur de la lecture, rejoué sur une description DÉJÀ LUE
+# (stdin), exactement comme `gl_arbitrage_de` et `gl_touche_claude_de` le sont sur un ticket déjà lu.
+# Ce n'est pas une commodité : le lot 2 (#758) doit répondre « quels jalons soldés n'ont pas de
+# verdict ? » sur TOUS les jalons, et sans cette moitié il paierait une lecture de forge PAR JALON
+# pour une question dont la réponse est dans la liste qu'il vient de lire une fois.
+# Codes : 0 = section présente et non vide (corps sur stdout) · 3 = absente ou vide, RIEN sur stdout.
+gl_section_de() {
+  local titre="$1"
+  if [ -z "$titre" ]; then echo "usage: gl_section_de <titre-de-section>" >&2; return 2; fi
+  GL_SECTION_TITRE="$titre" GL_SECTION_MODE=lire awk "$GL_SECTION_PROG"
+}
+
+# gl_criteres_de / gl_verdict_de — les deux sections reconnues, sur une description déjà lue.
+gl_criteres_de() { gl_section_de "$GL_MS_CRITERES_SECTION"; }
+gl_verdict_de()  { gl_section_de "$GL_MS_VERDICT_SECTION"; }
+
+# gl_milestone_numero_desc <titre-exact> -> « <numero>\n<description> », en UN aller.
+#
+# ⚠ Ici la lecture NE PEUT PAS passer par `gl_milestones` comme le fait `gl_milestone_rail` : cette
+# table rend une colonne `rail` (un mot), jamais le corps de la description (multiligne, donc hors
+# d'un TSV). Le numéro et la description viennent donc du même appel REST — un seul —, et pas de
+# deux comme dans `gl_milestone_rail`, qui liste pour le numéro puis relit le jalon pour son corps.
+gl_milestone_numero_desc() {
+  local titre="$1" brut
+  brut="$(GL_MS_TITRE="$titre" gh api "repos/$GL_GH_REPO/milestones?state=all&per_page=100" \
+    --jq 'map(select(.title == env.GL_MS_TITRE))
+          | if length == 0 then empty else "\(.[0].number)\n\(.[0].description // "")" end' \
+    2>/dev/null)"
+  [ -n "$brut" ] || return 1
+  printf '%s\n' "$brut"
+}
+
+# gl_milestone_section <titre-jalon> <titre-section> [<fichier>] — LIT la section (sans fichier) ou
+# la POSE (avec). Le moteur commun de `milestone-criteres` et `milestone-verdict`.
+#
+# Codes : 0 = lue (corps sur stdout) / écrite / déjà à jour · 3 = section absente ou vide, rien sur
+# stdout · 2 = usage, fichier introuvable ou vide · 1 = jalon inconnu ou échec côté forge.
+#
+# LES REFUS GRATUITS TOMBENT AVANT LA FORGE (règle de `gl_reste_claude`) : un fichier absent ou
+# blanc se voit sans rien demander à personne, et refuser là garantit qu'un refus ne laisse rien
+# derrière lui.
+#
+# CE VERBE NE SAIT PAS RETIRER UNE SECTION, et c'est une décision. `milestone-rail` a un geste
+# inverse parce que son marqueur a deux valeurs (« produit » est l'absence du marqueur) ; ici
+# l'absence est l'état initial de 14 jalons et rien ne demande d'y revenir. Inventer un retrait
+# serait offrir un moyen d'effacer un verdict rendu, sans que personne l'ait demandé.
+gl_milestone_section() {
+  local titre_jalon="$1" titre_section="$2" fichier="${3:-}"
+  local brut numero desc nouvelle geste rc
+  if [ -z "$titre_jalon" ] || [ -z "$titre_section" ]; then
+    echo "usage: gl_milestone_section <titre-exact-du-jalon> <titre-de-section> [<fichier>]" >&2
+    return 2
+  fi
+  if [ -n "$fichier" ]; then
+    if [ ! -f "$fichier" ]; then
+      echo "gl_milestone_section : fichier introuvable : $fichier" >&2
+      echo "  Le texte voyage par un FICHIER, jamais sur la ligne de commande (couche permissions)." >&2
+      return 2
+    fi
+    if ! grep -q '[^[:space:]]' "$fichier"; then
+      echo "gl_milestone_section : « $fichier » est vide — une section vide ne dit rien, et ce verbe ne sait pas RETIRER une section." >&2
+      return 2
+    fi
+  fi
+  gh_require || return 1
+
+  brut="$(gl_milestone_numero_desc "$titre_jalon")" || {
+    echo "gl_milestone_section : aucun jalon intitulé « $titre_jalon »" >&2; return 1; }
+  numero="${brut%%$'\n'*}"
+  # Une description VIDE ne laisse aucun saut de ligne dans la réponse : sans ce départage, le
+  # numéro du jalon serait pris pour son corps, et une première pose écraserait « 17 » par sa
+  # section en croyant préserver un cadrage.
+  case "$brut" in
+    *$'\n'*) desc="${brut#*$'\n'}" ;;
+    *)       desc="" ;;
+  esac
+
+  if [ -z "$fichier" ]; then
+    printf '%s\n' "$desc" | GL_SECTION_TITRE="$titre_section" GL_SECTION_MODE=lire awk "$GL_SECTION_PROG"
+    return $?
+  fi
+
+  # Le geste se nomme AVANT l'écriture, sur la description qu'on a déjà : aucun aller de plus.
+  if printf '%s\n' "$desc" | GL_SECTION_TITRE="$titre_section" GL_SECTION_MODE=lire \
+       awk "$GL_SECTION_PROG" >/dev/null 2>&1; then
+    geste="section mise à jour"
+  else
+    geste="section créée"
+  fi
+
+  nouvelle="$(printf '%s\n' "$desc" | GL_SECTION_TITRE="$titre_section" GL_SECTION_MODE=poser \
+    GL_SECTION_CORPS_FICHIER="$fichier" awk "$GL_SECTION_PROG")"; rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "gl_milestone_section : recomposition impossible pour « $titre_section » — rien n'a été écrit." >&2
+    return 1
+  fi
+  if [ "$nouvelle" = "$desc" ]; then
+    printf 'jalon « %s » : « %s » — déjà à jour, rien à écrire.\n' "$titre_jalon" "$titre_section"
+    return 0
+  fi
+
+  gh api --method PATCH "repos/$GL_GH_REPO/milestones/$numero" \
+    --raw-field description="$nouvelle" >/dev/null || {
+      echo "gl_milestone_section : échec de l'écriture sur « $titre_jalon » — la section n'y est PAS." >&2
+      return 1; }
+  printf 'jalon « %s » : « %s » — %s.\n' "$titre_jalon" "$titre_section" "$geste"
+}
+
+# gl_milestone_criteres <titre-exact> [<fichier>] -> LIT les critères de sortie du jalon, ou les
+# POSE depuis le fichier. Idempotent : reposer le même contenu n'écrit rien et le dit.
+gl_milestone_criteres() {
+  local titre="$1"
+  if [ -z "$titre" ]; then
+    echo "usage: gl_milestone_criteres <titre-exact-du-jalon> [<fichier>]" >&2; return 2
+  fi
+  gl_milestone_section "$titre" "$GL_MS_CRITERES_SECTION" "${2:-}"
+}
+
+# gl_milestone_verdict <titre-exact> [<fichier>] -> LIT le verdict de bouclage du jalon, ou le POSE
+# depuis le fichier. Mêmes codes, même idempotence.
+gl_milestone_verdict() {
+  local titre="$1"
+  if [ -z "$titre" ]; then
+    echo "usage: gl_milestone_verdict <titre-exact-du-jalon> [<fichier>]" >&2; return 2
+  fi
+  gl_milestone_section "$titre" "$GL_MS_VERDICT_SECTION" "${2:-}"
+}
+
 # --- Sous-tickets (découpage parent / lots) -------------------------------------------------------
 # Convention (docs/10-workflow-git.md §5.1) : un besoin qui dépasse ~1 session de travail est porté
 # par un ticket PARENT de suivi auquel ses lots sont rattachés en SUB-ISSUES natives — `Issue.parent`
@@ -7607,6 +7865,8 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     milestones)        gl_milestones ;;
     milestone-issues)  gl_milestone_issues "$@" ;;
     milestone-rail)    gl_milestone_rail "$@" ;;
+    milestone-criteres) gl_milestone_criteres "$@" ;;
+    milestone-verdict)  gl_milestone_verdict "$@" ;;
     issue-link)     gl_issue_link "$@" ;;
     subticket-add)   gl_subticket_add "$@" ;;
     subticket-order) gl_subticket_order "$@" ;;
@@ -7718,6 +7978,10 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "  milestones                         (tous les milestones : titre/état/dates/avancement, TSV)" >&2
       echo "  milestone-issues <titre-exact>     (tickets d'un milestone : iid/statut/type/agent/prio/titre, TSV)" >&2
       echo "  milestone-rail <titre> <rail>      (pose le rail produit|outillage d'un milestone — idempotent)" >&2
+      echo "  milestone-criteres <titre> [<fichier>]  (lit les critères de sortie du jalon, ou les pose depuis le" >&2
+      echo "                                      fichier — idempotent. 0=lus/écrits, 3=aucun, muet — #757)" >&2
+      echo "  milestone-verdict <titre> [<fichier>]   (lit le verdict de bouclage du jalon, ou le pose depuis le" >&2
+      echo "                                      fichier — idempotent. 0=lu/écrit, 3=aucun, muet — #757)" >&2
       echo "  slug <titre> | branch-prefix <type> | host   (hôte de la forge, déduit du remote)" >&2
       echo "  Sous-tickets (découpage parent/lots, docs/10 §5.1) :" >&2
       echo "    issue-link <iid-parent> <iid-lot> [--parallele]  (rattache un lot à son parent — alias de" >&2
