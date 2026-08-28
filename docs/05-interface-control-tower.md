@@ -2402,6 +2402,60 @@ pouvaient l'attraper — ils portent sur l'hôte, jamais sur le travail. La rép
 dans l'affichage mais dans la frontière d'exécution : **un hôte publie son issue en partant**,
 `--publier` compris (ci-dessus).
 
+⚠ **Un run survivait à l'arrêt de l'API, son HISTOIRE non** (#699). C'est l'autre moitié de la même
+promesse, et elle manquait : le bus est du **pub/sub, éphémère**, et le journal durable (#97)
+n'avait qu'un écrivain — la **pompe** de l'API, c'est-à-dire un *consommateur*. Un hôte détaché
+continue de publier pendant que l'API est arrêtée ; personne ne consomme, donc **rien n'est
+consigné**, et le rejeu au démarrage rebâtit fidèlement une projection trouée. Le cas n'a rien
+d'exotique : `start.sh` arrête et relance l'API à chaque `/control-tower`, précisément pendant que
+des runs détachés tournent.
+
+Constaté le 2026-08-28 sur le run `811d738020d5`, API arrêtée quinze minutes. Trois mensonges à
+l'écran, tous les trois issus de **deux** événements perdus :
+
+| ce que le tableau disait | ce qui était vrai | l'événement perdu |
+| --- | --- | --- |
+| `squelette-p1` « En cours », figée sur son étape de 11:29:56 | la tâche était finie | son `tache.statut` terminal |
+| `modele-persistance` sans statut (`autres`), mais recevant ses détails | elle avait démarré à 11:46 | son `tache.statut` « en_cours » |
+| progression : **1 tâche** | le run en portait deux, son plan cinq | le même — un `tache.detail` fait bouger une carte sans la faire entrer au compte |
+
+La deuxième ligne est la plus coûteuse à lire : une carte qui « se met à jour » sans jamais passer
+en cours se lit comme une tâche traitée **en parallèle**, alors que le plan la déclare dépendante de
+la première. Et la perte était **définitive** — `RunJournal` ne garde ses étapes qu'en mémoire, le
+`hote.log` du run était vide : il n'y avait rien à rejouer après coup, donc un rattrapage à la
+reprise n'était pas une option.
+
+**On consigne donc en publiant, plus en consommant.** La durabilité vit là où l'événement naît :
+`BusDurable` enveloppe le bus de tout producteur asynchrone (l'API elle-même, l'hôte détaché, les
+arbitres du moteur), et `bridge.publieur_redis` — le pont télémétrie, par lequel passe l'essentiel
+de ce qui a été perdu — écrit la liste et publie dans **un seul aller** (`MULTI`/`EXEC`). Trois
+choses à ne pas défaire :
+
+- la **pompe ne consigne plus rien**, et c'est la seconde moitié du remède, pas une conséquence :
+  un `Event` n'a pas d'identifiant, donc il n'existe aucun dédoublonnage, et deux écrivains auraient
+  **doublé** chaque ligne du journal requêtable au lieu d'en perdre. L'exactement-une-fois est
+  acquis par construction — un événement est publié une fois, donc consigné une fois ;
+- un `RedisEventBus` **nu** ne se construit plus pour publier : `bus_durable` est la fabrique de
+  production, et le bus reçu par `create_app` est enveloppé une fois pour toutes, sur son propre
+  journal. Corollaire pour qui garde la main sur le bus qu'il injecte (la démo #65) : ce qu'il
+  publie par sa **propre** référence est diffusé et projeté, mais pas consigné — il court-circuite
+  le producteur, donc le geste qui consigne ;
+- une consignation en panne reste **tracée sans couper le direct**. C'est la promesse que portait la
+  pompe, déplacée avec le geste : le flux temps réel et la projection valent mieux que rien, et le
+  seul prix est que cet événement-là manquera au prochain rejeu.
+
+L'ordre du journal est désormais celui des **publications** et non des réceptions de la pompe ; les
+deux coïncident pour un producteur unique, et ce qui compte reste vrai — le journal est append-only,
+donc son rejeu rend les mêmes rangs, donc les mêmes identifiants d'entrée (`j-0002`, §6.2) d'un
+redémarrage à l'autre.
+
+> **Couverture** : [`tests/test_publication_durable.py`](../tests/test_publication_durable.py) —
+> l'incident rejoué avec ses trois chiffres, le compte de tâches d'un run fini ramené à celui de son
+> plan, l'absence de doublon API en marche, et la clé partagée entre le publieur **synchrone** du
+> pont et la relecture **asynchrone** de l'API (même harnais que `CLE_BATTEMENTS`, #351). Chaque
+> assertion a son **échantillon fautif** — le dispositif d'avant, joué sur le même scénario —, sans
+> quoi elle vaudrait un ✓ sur une question jamais posée.
+
 **Un run perdu se reprend sur le cadrage déjà payé** (#349). Voir qu'un run est mort ne le rattrape
 pas : sans geste, la seule issue reste de tout reprendre à zéro, clarification comprise. Or ce
 qu'un run emporte n'est pas du temps machine mais un **brief validé par un humain** — sur le run

@@ -155,9 +155,9 @@ from maestro.controltower.causes import CAUSE_ANNULATION, detail_avec_cause
 from maestro.controltower.events import (
     EVENEMENT_EXECUTION_STATUT,
     EventBus,
-    RedisEventBus,
 )
 from maestro.controltower.hote import DemarrageHoteRate, HoteMort, HoteRun, OrdreRun
+from maestro.controltower.persistence import BusDurable, bus_durable
 from maestro.controltower.state import (
     EXECUTION_ANNULEE,
     EXECUTION_ECHEC,
@@ -1149,7 +1149,7 @@ async def _observer_ordres(
     propre: EventBus | None = None
     try:
         if bus is None:
-            bus = propre = RedisEventBus(load_settings().redis_url)
+            bus = propre = bus_durable(load_settings().redis_url)
         flux = bus.subscribe()
         async for event in flux:
             if event.type != EVENEMENT_EXECUTION_STATUT:
@@ -1187,7 +1187,7 @@ async def _observer_ordres(
                 await propre.close()
 
 
-def _bus_du_run() -> RedisEventBus | None:
+def _bus_du_run() -> BusDurable | None:
     """Le bus de ce process — **un seul**, pour le guet et les trois attentes (#445).
 
     Celui de la config, comme le battement et la publication : même Redis, même
@@ -1195,6 +1195,12 @@ def _bus_du_run() -> RedisEventBus | None:
     pour un run porté par l'API. Un seul objet parce qu'un seul suffit —
     `RedisEventBus.subscribe` ouvre un `pubsub` par appel sur un client partagé, si
     bien que quatre abonnements concurrents tiennent sur une connexion.
+
+    Il est **durable** depuis #699 (`bus_durable`) : ce que ce process publie est
+    consigné au journal à l'instant où il le publie. C'est ici que la nuance
+    compte le plus — ce process **survit à l'arrêt de l'API** (#441/#446), donc
+    il est celui qui publie le plus souvent dans le vide, et son histoire ne peut
+    pas dépendre d'un consommateur qui, précisément, n'est pas là.
 
     **Ne lève jamais**, et c'est le point. Cette fonction reprend la charge que
     `_observer_ordres` portait pour son propre compte : l'ouverture était
@@ -1212,7 +1218,7 @@ def _bus_du_run() -> RedisEventBus | None:
     from maestro.config import load_settings
 
     try:
-        return RedisEventBus(load_settings().redis_url)
+        return bus_durable(load_settings().redis_url)
     except Exception as exc:  # noqa: BLE001 - un bus manquant se dit, il n'emporte rien
         print(
             f"Bus d'événements indisponible — {type(exc).__name__} : {exc} "

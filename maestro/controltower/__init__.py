@@ -10,6 +10,9 @@ Sept briques, assemblées par l'app FastAPI (`maestro.controltower.app`) :
   événements (#97) — pendant persistant du bus éphémère, rejoué au démarrage
   pour reconstruire la projection après un redémarrage de l'API (liste Redis en
   production, mémoire pour les tests) ;
+- `BusDurable` / `bus_durable` : le bus qui **consigne en publiant** (#699) — la
+  durabilité d'un événement ne dépend plus d'un consommateur vivant, donc un run
+  qui publie pendant que l'API est arrêtée garde son histoire ;
 - `ControlTowerState` : la projection de l'état courant (tâches, agents,
   exécutions, validations) qui alimente les endpoints REST ;
 - `maestro.controltower.bridge` : le pont télémétrie (#8) → bus — chaque ligne
@@ -210,9 +213,11 @@ from maestro.controltower.orchestration import (
 )
 from maestro.controltower.persistence import (
     CLE_JOURNAL_EVENEMENTS,
+    BusDurable,
     EventLog,
     InMemoryEventLog,
     RedisEventLog,
+    bus_durable,
 )
 from maestro.controltower.state import (
     CAPACITE_ACTIVE,
@@ -305,6 +310,7 @@ __all__ = [
     "AnalyticsCouts",
     "ApercuOrchestration",
     "AreteGraphe",
+    "BusDurable",
     "ChatStore",
     "CoeurRun",
     "ControlTowerState",
@@ -364,6 +370,7 @@ __all__ = [
     "apercu_de",
     "appliquer_sous_validation",
     "batteur_redis",
+    "bus_durable",
     "cause_de",
     "create_app",
     "create_default_app",

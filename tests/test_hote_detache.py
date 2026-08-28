@@ -735,8 +735,12 @@ def sans_redis(monkeypatch: pytest.MonkeyPatch) -> None:
     quand même, mais la suite aurait tenté le réseau, ce qu'elle promet de ne
     jamais faire (`tests/conftest.py`). Un bus tari est la forme fidèle de ce qui
     doit arriver : le guet n'écoute plus, et le run continue.
+
+    La couture est `bus_durable` depuis #699 : ce process publie hors de l'API,
+    donc son bus consigne en publiant — un `RedisEventBus` nu ouvrirait bien un
+    pubsub, mais laisserait perdre tout ce qu'il publie pendant que l'API dort.
     """
-    monkeypatch.setattr(hote_detache, "RedisEventBus", lambda *_a, **_k: BusQuiSeReferme())
+    monkeypatch.setattr(hote_detache, "bus_durable", lambda *_a, **_k: BusQuiSeReferme())
 
 
 def deroule(monkeypatch: pytest.MonkeyPatch, bus: Any, atelier: Path, **ordre_kw: Any):
@@ -1466,7 +1470,7 @@ def test_le_guet_referme_le_bus_qu_il_a_ouvert_lui_meme(
     trentième run. Le bus **passé**, lui, appartient à l'appelant (test ci-dessus).
     """
     propre = BusScripte([])
-    monkeypatch.setattr(hote_detache, "RedisEventBus", lambda *_a, **_k: propre)
+    monkeypatch.setattr(hote_detache, "bus_durable", lambda *_a, **_k: propre)
 
     assert asyncio.run(hote_detache._observer_ordres(RUN)) is False
     assert propre.ferme is True
@@ -1817,7 +1821,7 @@ def test_ouvrir_le_bus_ne_leve_jamais(monkeypatch: pytest.MonkeyPatch) -> None:
     def refuse(*_args: Any, **_kwargs: Any) -> None:
         raise RuntimeError("redis absent")
 
-    monkeypatch.setattr(hote_detache, "RedisEventBus", refuse)
+    monkeypatch.setattr(hote_detache, "bus_durable", refuse)
 
     assert hote_detache._bus_du_run() is None
 

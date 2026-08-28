@@ -24,8 +24,8 @@ avoir rien décomposé — la moitié gratuite du run (le brief) protège la moi
 payante (les tâches).
 
 Même bus que le reste de la Control Tower : `InMemoryEventBus` en test ou en
-mono-process, `RedisEventBus` en production (`arbitre_brief_redis`, pendant exact
-de `validateur_redis`).
+mono-process, `bus_durable` en production (`arbitre_brief_redis`, pendant exact
+de `validateur_redis`) — le bus Redis qui **consigne en publiant** (#699).
 """
 
 from __future__ import annotations
@@ -41,8 +41,8 @@ from maestro.controltower.events import (
     EVENEMENT_BRIEF_REPONSES,
     Event,
     EventBus,
-    RedisEventBus,
 )
+from maestro.controltower.persistence import bus_durable
 from maestro.controltower.state import (
     BRIEF_APPROUVE,
     EXECUTION_EN_ATTENTE_BRIEF,
@@ -285,8 +285,12 @@ def arbitre_clarification_redis(
     raison : c'est ce qui permet à un run lancé **hors** de l'API
     (`maestro-run --publier --brief humain`) d'être questionné depuis la Control
     Tower comme un run qu'elle a lancé.
+
+    Bus **durable** depuis #699, comme les deux autres fabriques de production :
+    ce qu'un run publie pendant que l'API est arrêtée est consigné à la
+    publication, donc rejoué au démarrage suivant.
     """
-    return ArbitreClarificationControlTower(RedisEventBus(url))
+    return ArbitreClarificationControlTower(bus_durable(url))
 
 
 def arbitre_brief_redis(url: str | None = None) -> ArbitreBriefControlTower:
@@ -297,5 +301,9 @@ def arbitre_brief_redis(url: str | None = None) -> ArbitreBriefControlTower:
     (`maestro-api`). La connexion est paresseuse (ouverte à la première demande).
     C'est ce qui permet à un run **hors API** (`maestro-run --publier --brief
     humain`) d'être arbitré depuis la Control Tower comme un run qu'elle a lancé.
+
+    Bus **durable** depuis #699 (`bus_durable`) : une demande de brief émise
+    pendant une coupure de l'API laisse désormais sa trace au journal, au lieu
+    de disparaître avec le canal éphémère qui la portait.
     """
-    return ArbitreBriefControlTower(RedisEventBus(url))
+    return ArbitreBriefControlTower(bus_durable(url))
