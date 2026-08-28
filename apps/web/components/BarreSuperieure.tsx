@@ -91,26 +91,25 @@ export function BarreSuperieure({
       </h1>
 
       <div className="ml-auto flex items-center gap-2 sm:gap-3">
-        <span
-          className={
-            "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium " +
-            (connecte
-              ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
-              : "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300")
-          }
-        >
-          <span
-            className={
-              "size-1.5 rounded-full " +
-              (connecte
-                ? "bg-emerald-500"
-                : "animate-pulse motion-reduce:animate-none bg-amber-500")
-            }
-          />
-          <span className="hidden sm:inline">
-            {connecte ? "Temps réel connecté" : "Reconnexion…"}
+        {/* ⚠ **Ce qui va bien ne s'affiche plus** (#691). Cette pastille a porté
+            « Temps réel connecté » en permanence depuis #117, sur les onze
+            écrans, à la place la plus visible de la fenêtre — pour dire, en
+            régime nominal, que rien n'allait mal. La revue du 2026-08-28 l'a
+            nommée deux fois sur `/chat`, où l'en-tête du fil la doublait ; le
+            fil a rendu la sienne, celle-ci se tait.
+            Ce qui reste est ce qui **apprend** quelque chose : la coupure. Elle
+            explique un écran qui ne bouge plus, et c'est la seule chose que
+            l'utilisateur ne peut pas déduire de ce qu'il voit. Même règle que le
+            reste du produit (docs/30 §4) : une place se gagne, elle ne se garde
+            pas parce qu'on l'avait.
+            Le texte reste masqué sous `sm` — la pastille seule y suffit, et le
+            titre de page a la priorité sur une fenêtre étroite. */}
+        {!connecte && (
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+            <span className="size-1.5 animate-pulse rounded-full bg-amber-500 motion-reduce:animate-none" />
+            <span className="hidden sm:inline">Reconnexion…</span>
           </span>
-        </span>
+        )}
 
         {/* Masqué sur les écrans les plus étroits : le titre de page y a la
             priorité, et le coût reste lisible dans la page elle-même.
