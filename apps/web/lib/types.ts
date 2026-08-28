@@ -407,12 +407,21 @@ export type VariableSecret = {
   secret: boolean;
 };
 
+/** La source d'une entrée de bibliothèque (#677) — curée à la main, ou découverte. */
+export type SourceRegistreMcp = "curee" | "decouverte";
+
 /**
- * Une entrée du **registre curé** de serveurs MCP (`GET /api/mcp/registre`,
+ * Une entrée de la **bibliothèque** de serveurs MCP (`GET /api/mcp/registre`,
  * #131) : un template recherchable portant transport, gabarit `${VAR}`, mode
  * d'auth (docs/21), variables à fournir (`secrets`) et lien de procédure côté
- * outil. `curee: true` marque l'appartenance à l'allowlist — seule une entrée
- * servie ici est instanciable (garde-fou supply-chain, docs/19).
+ * outil.
+ *
+ * La bibliothèque a **deux sources** depuis #677 et `curee` dit laquelle : seule
+ * une entrée **curée** appartient à l'allowlist, donc est instanciable
+ * (garde-fou supply-chain, docs/19). Une entrée découverte vient du miroir du
+ * registre MCP officiel — elle se lit et se cherche, elle ne se monte pas, et
+ * elle porte à la place les signaux de confiance de l'amont (`editeur`,
+ * `version`, `depot`, `statut`).
  */
 export type EntreeRegistreMcp = {
   id: string;
@@ -431,9 +440,18 @@ export type EntreeRegistreMcp = {
   optionnel: boolean;
   /** Qui publie ce serveur (#271) — une intégration se choisit aussi sur son éditeur. */
   editeur: string;
-  /** Palier d'usage (#271) : plus grand = plus courant. C'est la clé du tri. */
+  /** Palier d'usage (#271) : plus grand = plus courant. Clé du tri après la source. */
   popularite: number;
+  /** Dans l'allowlist curée — donc instanciable (#677). */
   curee: boolean;
+  /** La même information en clair : un booléen nommé par la négative se lit mal (#677). */
+  source: SourceRegistreMcp;
+  /** Version épinglée déclarée par l'amont — vide sur une entrée curée (#677). */
+  version: string;
+  /** URL du dépôt déclarée par l'amont — vide sur une entrée curée (#677). */
+  depot: string;
+  /** Statut amont (`active`/`deprecated`) — vide sur une entrée curée (#677). */
+  statut: string;
 };
 
 /** Une source citée par la curation (#271) : d'où vient une entrée, où la revérifier. */
@@ -443,10 +461,51 @@ export type SourceCitee = {
 };
 
 /**
+ * La provenance de la source **curée** : d'où vient la liste, quand elle a été
+ * revue, et combien d'entrées elle sert (#271, #677).
+ */
+export type ProvenanceCuree = {
+  source: "curee";
+  resume: string;
+  sources: SourceCitee[];
+  revue_le: string;
+  total: number;
+};
+
+/**
+ * La provenance de la source **découverte** (#677) : quel registre a été
+ * moissonné, quand, et ce qu'il en reste. Elle ne répond pas à la même question
+ * que la curée — une liste écrite à la main se date par sa revue humaine, un
+ * miroir par son rafraîchissement.
+ *
+ * `nombre` est ce que le miroir porte, `total` ce que la bibliothèque en sert :
+ * l'écart (entrées non traduisibles, collisions avec le seed) est à montrer, pas
+ * à masquer. `moissonnee` est faux tant qu'aucune entrée n'en est sortie —
+ * c'est-à-dire l'état normal d'un poste qui n'a pas encore moissonné.
+ */
+export type ProvenanceDecouverte = {
+  source: "decouverte";
+  amont: string;
+  rafraichi_le: string;
+  moissonne_le: string;
+  nombre: number;
+  retenues: number;
+  moissonnee: boolean;
+  cause: string;
+  echoue_le: string;
+  total: number;
+};
+
+/**
  * D'où vient la bibliothèque et quand elle a été revue
  * (`GET /api/mcp/registre/provenance`, #271). `tags` porte les pistes de
  * recherche — ce qu'on propose quand une recherche ne rend rien, plutôt que de
  * répéter qu'elle n'a rien trouvé.
+ *
+ * Les clés à plat décrivent la source **curée** et n'ont pas bougé de sens
+ * (#677) ; `provenances` porte les **deux** sources côte à côte, et `total`
+ * couvre désormais l'ensemble de ce que sert `GET /api/mcp/registre` sans
+ * filtre — `total_curees`/`total_decouvertes` le détaillent.
  */
 export type ProvenanceRegistreMcp = {
   resume: string;
@@ -454,6 +513,9 @@ export type ProvenanceRegistreMcp = {
   revue_le: string;
   tags: string[];
   total: number;
+  total_curees: number;
+  total_decouvertes: number;
+  provenances: [ProvenanceCuree, ProvenanceDecouverte];
 };
 
 /**

@@ -40,6 +40,7 @@ import type {
   ResumeExecution,
   Sante,
   SourceDeclaree,
+  SourceRegistreMcp,
   Tache,
   TeleversementSources,
   Validation,
@@ -576,21 +577,31 @@ async function envoyerJsonEtLire<T>(
 }
 
 /**
- * La bibliothèque curée de serveurs MCP (`GET /api/mcp/registre`, #131),
- * recherchable par nom/tag (`q` vide → tout le registre). Chaque entrée guide
- * sa configuration selon son mode d'auth ; seule une entrée servie ici est
- * instanciable (garde-fou supply-chain, docs/19).
+ * La bibliothèque de serveurs MCP (`GET /api/mcp/registre`, #131), recherchable
+ * par nom/tag/éditeur (`q` vide → tout le registre). Chaque entrée guide sa
+ * configuration selon son mode d'auth.
+ *
+ * Elle a **deux sources** depuis #677 : `source` n'en demande qu'une (`curee` ou
+ * `decouverte`), et sans elle les deux viennent, curées d'abord. Seule une
+ * entrée **curée** est instanciable (garde-fou supply-chain, docs/19) — `curee`
+ * le dit sur chaque entrée.
  */
-export function chargerRegistreMcp(q = ""): Promise<EntreeRegistreMcp[]> {
-  const requete = q.trim() ? `?q=${encodeURIComponent(q.trim())}` : "";
+export function chargerRegistreMcp(
+  q = "",
+  source?: SourceRegistreMcp,
+): Promise<EntreeRegistreMcp[]> {
+  const parametres = new URLSearchParams();
+  if (q.trim()) parametres.set("q", q.trim());
+  if (source) parametres.set("source", source);
+  const requete = parametres.size ? `?${parametres}` : "";
   return chargerJson<EntreeRegistreMcp[]>(`/api/mcp/registre${requete}`);
 }
 
 /**
  * La provenance de la bibliothèque (`GET /api/mcp/registre/provenance`, #271) :
- * d'où vient la liste, quand elle a été revue, et les tags par lesquels
- * chercher. Route sœur et non enveloppe : `chargerRegistreMcp` rend toujours
- * une liste nue.
+ * d'où vient chaque source, quand elle a été revue ou rafraîchie, et les tags
+ * par lesquels chercher. Route sœur et non enveloppe : `chargerRegistreMcp`
+ * rend toujours une liste nue.
  */
 export function chargerProvenanceRegistreMcp(): Promise<ProvenanceRegistreMcp> {
   return chargerJson<ProvenanceRegistreMcp>("/api/mcp/registre/provenance");

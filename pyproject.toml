@@ -165,6 +165,20 @@ ignore_missing_imports = true
 module = ["maestro.queue.worker"]
 disallow_untyped_decorators = false
 
+# La traduction des entrées d'amont (#676) est le lot 2 du parent #673 ; la
+# fédération (#677, lot 3) l'importe **paresseusement** pour rester mergeable
+# seule sur `main` tant que la PR du lot 2 est ouverte. Sans cette dérogation,
+# mypy refuse un import qui n'existe pas encore.
+#
+# ⚠ À retirer une fois #676 mergé — et son retrait ne casse rien : elle ne
+# décrit qu'un module absent, donc elle n'a plus d'effet dès qu'il est là. Un
+# `# type: ignore` en ligne aurait été le choix évident et le mauvais : `strict`
+# implique `warn_unused_ignores`, donc il aurait fait **rougir** le pipeline le
+# jour où le module arrive — un piège posé pour le lot suivant.
+[[tool.mypy.overrides]]
+module = ["maestro.agents.mcp_traduction"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 

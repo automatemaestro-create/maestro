@@ -69,11 +69,16 @@ Endpoints :
   la proposition devient la version courante (chargée à chaud, #78) et quitte les brouillons ;
 - `POST /api/playbooks/{agent}/propositions/{numero}/rejeter` — écarte la proposition sans
   toucher à la version courante ;
-- `GET  /api/mcp/registre` — la bibliothèque curée de serveurs MCP (#131) :
-  templates recherchables (`q`, par nom/tag) portant transport, gabarit `${VAR}`,
-  mode d'auth (docs/21), variables à fournir et procédure côté outil ; seule une
-  entrée servie ici est instanciable (garde-fou supply-chain, docs/19) ;
-- `GET  /api/mcp/registre/{id}` — une entrée curée (404 hors allowlist) ;
+- `GET  /api/mcp/registre` — la bibliothèque de serveurs MCP (#131), **à deux
+  sources** depuis #677 : templates recherchables (`q`, par nom/tag/éditeur)
+  portant transport, gabarit `${VAR}`, mode d'auth (docs/21), variables à
+  fournir et procédure côté outil. `source=toutes|curee|decouverte` n'en sert
+  qu'une ; `curee` dit d'où vient chaque entrée, et seule une entrée **curée**
+  est instanciable (garde-fou supply-chain, docs/19) ;
+- `GET  /api/mcp/registre/provenance` — les **deux** provenances : le seed relu
+  à la main avec sa date de revue, le miroir avec son rafraîchissement et son
+  compte (#271, #677) ;
+- `GET  /api/mcp/registre/{id}` — une entrée, curée ou découverte (404 sinon) ;
 - `GET  /api/mcp/pool` — le **pool projet** des intégrations MCP configurées
   (#133) : chaque intégration avec son mode d'auth et l'état (présent/valide)
   de ses secrets côté coffre projet — jamais une valeur de secret ;
@@ -192,7 +197,13 @@ from pydantic import BaseModel
 from maestro.agents.capacity import CapaciteAgent, CapacityStore
 from maestro.agents.catalog import DEFAULT_AGENTS, Agent
 from maestro.agents.mcp import IntegrationMcp, McpStore, references_env
-from maestro.agents.mcp_registry import RegistreMcp
+from maestro.agents.mcp_federation import federer_memo
+from maestro.agents.mcp_registry import (
+    SOURCE_CUREE,
+    SOURCE_DECOUVERTE,
+    SOURCE_TOUTES,
+    RegistreMcp,
+)
 from maestro.agents.permissions import PermissionStore
 from maestro.agents.playbooks import PLAYBOOK_DEFAUTS, PlaybookStore
 from maestro.agents.secrets import SecretStore
@@ -834,11 +845,15 @@ def create_app(
     secrets masquées) — par défaut celui de la config (`MAESTRO_MCP_DIR`, sinon
     `core/mcp/` du dépôt) : le même que montent moteur et workers.
 
-    `registre_mcp` (#131) est la **bibliothèque curée** de serveurs MCP servie
-    par `/api/mcp/registre` : des templates recherchables (nom/tag) portant
-    transport, gabarit `${VAR}`, mode d'auth (docs/21) et procédure côté outil —
-    par défaut le seed en code (`RegistreMcp.curee()`, l'allowlist supply-chain
-    du garde-fou docs/19). Les tests en injectent un registre restreint.
+    `registre_mcp` (#131) est la **bibliothèque** de serveurs MCP servie par
+    `/api/mcp/registre` : des templates recherchables (nom/tag/éditeur) portant
+    transport, gabarit `${VAR}`, mode d'auth (docs/21) et procédure côté outil.
+    Par défaut elle est **fédérée** (#677) : le seed curé en code — l'allowlist
+    supply-chain du garde-fou docs/19, seule instanciable — plus les entrées
+    découvertes dans le miroir du registre officiel, s'il y en a un sur le
+    disque. Sans miroir, le résultat est exactement le seed d'avant. Un registre
+    **injecté** court-circuite la fédération : c'est ainsi que les tests servent
+    une allowlist restreinte, et la valeur injectée est alors la seule servie.
 
     `secrets` (#132/#133) est le **coffre chiffré** des secrets d'intégrations :
     l'UI d'écriture (`POST /api/mcp/pool`) y pose les secrets du pool projet
@@ -928,7 +943,20 @@ def create_app(
     agents_store = agents_store if agents_store is not None else AgentStore.default()
     capacites = capacites if capacites is not None else CapacityStore.default()
     mcp = mcp if mcp is not None else McpStore.default()
-    registre_mcp = registre_mcp if registre_mcp is not None else RegistreMcp.curee()
+    # La bibliothèque MCP a **deux sources** depuis #677 : le seed curé (en code)
+    # et le miroir du registre officiel (sur le disque). Un registre **injecté**
+    # l'emporte toujours — c'est ainsi que les tests servent une allowlist
+    # restreinte, et rien de ce qui suit ne s'applique à eux. Sinon on fédère à
+    # la lecture, mémoïsé sur l'empreinte du miroir : la bibliothèque suit donc
+    # un rafraîchissement sans redémarrage, et ne repaie la traduction de
+    # 25 000 entrées qu'au moment où le miroir a effectivement bougé.
+    registre_mcp_injecte = registre_mcp
+
+    def registre() -> RegistreMcp:
+        """La bibliothèque du moment : celle injectée, sinon la fédérée (mémoïsée)."""
+        if registre_mcp_injecte is not None:
+            return registre_mcp_injecte
+        return federer_memo().registre
     secrets = secrets if secrets is not None else SecretStore.default()
     permissions = permissions if permissions is not None else PermissionStore.default()
     projets = projets if projets is not None else ServiceProjets.default()
@@ -2266,7 +2294,7 @@ def create_app(
         est **présent** dans le coffre projet et **valide** (un token OAuth
         expiré ne l'est plus). Aucune valeur de secret n'est jamais réémise.
         """
-        entree = registre_mcp.get(integration.id)
+        entree = registre().get(integration.id)
         requis = (
             {v.cle: v for v in entree.secrets}
             if entree is not None
@@ -2434,28 +2462,58 @@ def create_app(
         return definition
 
     @app.get("/api/mcp/registre")
-    async def mcp_registre(q: str = "") -> list[dict[str, Any]]:
-        """La bibliothèque curée de serveurs MCP (#131), recherchable par nom/tag.
+    async def mcp_registre(q: str = "", source: str = SOURCE_TOUTES) -> list[dict[str, Any]]:
+        """La bibliothèque de serveurs MCP (#131, #271), **à deux sources** depuis #677.
 
-        `q` filtre par nom, id, description ou tag (recherche libre, insensible
-        à la casse et aux accents ; vide → tout le registre). Chaque entrée est
-        un **template** : transport, gabarit d'exécution `${VAR}` (jamais de
-        secret), mode d'auth (docs/21), variables à fournir (`secrets`) et lien
-        de procédure côté outil (`procedure_url`) — de quoi guider la
-        configuration. `curee: true` marque l'appartenance à l'allowlist : seule
-        une entrée servie ici est instanciable (garde-fou supply-chain, docs/19).
+        `q` filtre par nom, id, éditeur, description ou tag (recherche libre,
+        insensible à la casse et aux accents ; vide → tout le registre). Chaque
+        entrée est un **template** : transport, gabarit d'exécution `${VAR}`
+        (jamais de secret), mode d'auth (docs/21), variables à fournir
+        (`secrets`) et lien de procédure côté outil (`procedure_url`) — de quoi
+        guider la configuration.
+
+        `source` sert à n'en demander qu'une : `toutes` (défaut), `curee` ou
+        `decouverte` — une valeur inconnue est un **422**, jamais une liste
+        silencieusement autre que celle demandée. Sans le paramètre, la réponse
+        est celle d'avant #677 **augmentée** des entrées découvertes : les
+        curées viennent d'abord (tri `_rang`), donc un appelant qui ignore le
+        paramètre lit toujours la même tête de liste.
+
+        `curee` (et son doublon lisible `source`) marque l'appartenance à
+        l'allowlist : seule une entrée **curée** est instanciable (garde-fou
+        supply-chain, docs/19). Une entrée découverte se lit, se cherche, et
+        porte ses signaux d'amont (`editeur`, `version`, `depot`, `statut`) —
+        elle ne se monte pas.
         """
-        return [e.to_dict() for e in registre_mcp.rechercher(q)]
+        try:
+            entrees = registre().rechercher(q, source)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return [e.to_dict() for e in entrees]
 
     @app.get("/api/mcp/registre/provenance")
     async def mcp_registre_provenance() -> dict[str, Any]:
         """D'où vient la bibliothèque, quand elle a été revue, et par quoi chercher (#271).
 
-        Le critère 1 demande que la provenance de la liste et sa date de revue
-        soient **dites à l'écran** : un registre curé sans provenance affichée
-        demande une confiance qu'il ne justifie pas. `tags` est la sortie du
-        cul-de-sac du critère 2 — les pistes qu'une recherche sans résultat
-        propose, plutôt que de répéter qu'elle n'a rien trouvé.
+        Le critère 1 de #271 demande que la provenance de la liste et sa date de
+        revue soient **dites à l'écran** : un registre curé sans provenance
+        affichée demande une confiance qu'il ne justifie pas. `tags` est la
+        sortie du cul-de-sac du critère 2 — les pistes qu'une recherche sans
+        résultat propose, plutôt que de répéter qu'elle n'a rien trouvé.
+
+        Depuis #677 la bibliothèque a **deux sources**, donc deux provenances, et
+        elles ne répondent pas à la même question : la curée se date par sa
+        **revue humaine**, la découverte par le **rafraîchissement** du miroir et
+        le nombre d'entrées qu'il porte. `provenances` les rend côte à côte ;
+        `moissonnee` dit si le miroir a effectivement rapporté quelque chose —
+        c'est ce qui fait cesser le « jamais moissonnée » du critère 5 du parent
+        sans le remplacer par une promesse que personne n'a tenue.
+
+        ⚠ Les clés historiques (`resume`, `sources`, `revue_le`, `tags`,
+        `total`) sont **conservées à plat et inchangées de sens** : elles parlent
+        de la curation, que l'écran affiche déjà. L'ajout est purement additif —
+        `total` reste le compte servi par `GET /api/mcp/registre` sans filtre, et
+        `total_curees`/`total_decouvertes` le détaillent.
 
         ⚠ La forme de `GET /api/mcp/registre` n'a **pas** bougé : elle rend
         toujours une liste nue. Emballer la liste pour y loger la provenance
@@ -2464,20 +2522,43 @@ def create_app(
         du registre (`ID_RESERVES`), donc aucune entrée ne peut être masquée par
         cette route et l'ordre de déclaration ci-dessous ne porte aucune règle.
         """
+        courant = registre()
+        curees = courant.lister(SOURCE_CUREE)
+        decouvertes = courant.lister(SOURCE_DECOUVERTE)
         return {
-            **registre_mcp.provenance.to_dict(),
-            "tags": list(registre_mcp.tags()),
-            "total": len(registre_mcp.lister()),
+            **courant.provenance.to_dict(),
+            "tags": list(courant.tags()),
+            "total": len(curees) + len(decouvertes),
+            "total_curees": len(curees),
+            "total_decouvertes": len(decouvertes),
+            "provenances": [
+                {
+                    **courant.provenance.to_dict(),
+                    "source": SOURCE_CUREE,
+                    "total": len(curees),
+                },
+                {
+                    **courant.provenance_decouverte.to_dict(),
+                    "total": len(decouvertes),
+                },
+            ],
         }
 
     @app.get("/api/mcp/registre/{id}")
     async def mcp_registre_entree(id: str) -> dict[str, Any]:
-        """Une entrée curée du registre MCP (#131) — 404 si l'id est hors allowlist."""
-        entree = registre_mcp.get(id)
+        """Une entrée du registre MCP (#131) — 404 si l'id n'est d'**aucune** des deux sources.
+
+        Sert une entrée découverte aussi bien qu'une curée (#677) : c'est la
+        fiche de ce que l'écran vient de lister, et `curee` y dit laquelle des
+        deux on regarde. Ouvrir cette lecture n'ouvre aucune voie de montage —
+        `instancier` ne passe pas par ici, et `POST /api/mcp/pool` continue de
+        n'accepter que l'allowlist curée.
+        """
+        entree = registre().trouver(id)
         if entree is None:
             raise HTTPException(
                 status_code=404,
-                detail=f"serveur MCP inconnu du registre curé : {id} (voir GET /api/mcp/registre)",
+                detail=f"serveur MCP inconnu du registre : {id} (voir GET /api/mcp/registre)",
             )
         return entree.to_dict()
 
@@ -2505,7 +2586,7 @@ def create_app(
         valeur de secret vide est ignorée (le secret reste à configurer). 404 si
         l'id est hors registre, 422 si une valeur/échéance est invalide.
         """
-        entree = registre_mcp.get(requete.registre_id)
+        entree = registre().get(requete.registre_id)
         if entree is None:
             raise HTTPException(
                 status_code=404,
@@ -2515,7 +2596,7 @@ def create_app(
                 ),
             )
         try:
-            serveur = registre_mcp.instancier(requete.registre_id, nom=requete.nom or None)
+            serveur = registre().instancier(requete.registre_id, nom=requete.nom or None)
             integration = IntegrationMcp(id=requete.registre_id, serveur=serveur)
             pool = [i for i in mcp.pool() if i.id != integration.id]
             pool.append(integration)

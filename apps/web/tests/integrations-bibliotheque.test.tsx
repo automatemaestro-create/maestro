@@ -41,6 +41,7 @@ import {
   MCP_MODE_APPAIRAGE,
   MCP_MODE_TOKEN,
   type EntreeRegistreMcp,
+  type ProvenanceRegistreMcp,
 } from "@/lib/types";
 
 /** Une entrée du registre réduite à ce dont l'UI se sert. */
@@ -69,6 +70,10 @@ function entree(
     editeur: `Éditeur ${nom}`,
     popularite: 50,
     curee: true,
+    source: "curee",
+    version: "",
+    depot: "",
+    statut: "",
     ...options,
   };
 }
@@ -98,13 +103,36 @@ vi.mock("@/lib/api", () => ({
   supprimerIntegrationPoolMcp: vi.fn(() => Promise.resolve()),
 }));
 
-/** La provenance servie par l'API sœur (#271) — d'où vient la liste, et quand. */
-const PROVENANCE = {
+/** La provenance servie par l'API sœur (#271, #677) — les deux sources, et quand. */
+const PROVENANCE: ProvenanceRegistreMcp = {
   resume: "Sélection curée à la main.",
   sources: [{ libelle: "Dépôt MCP", url: "https://example.invalid/mcp" }],
   revue_le: "2026-08-28",
   tags: ["forge", "design", "recherche"],
   total: REGISTRE.length,
+  total_curees: REGISTRE.length,
+  total_decouvertes: 0,
+  provenances: [
+    {
+      source: "curee",
+      resume: "Sélection curée à la main.",
+      sources: [{ libelle: "Dépôt MCP", url: "https://example.invalid/mcp" }],
+      revue_le: "2026-08-28",
+      total: REGISTRE.length,
+    },
+    {
+      source: "decouverte",
+      amont: "https://registry.modelcontextprotocol.io",
+      rafraichi_le: "",
+      moissonne_le: "",
+      nombre: 0,
+      retenues: 0,
+      moissonnee: false,
+      cause: "",
+      echoue_le: "",
+      total: 0,
+    },
+  ],
 };
 
 /** Le registre curé, filtré comme le fait l'API (`?q=`). */
