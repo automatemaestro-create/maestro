@@ -28,24 +28,42 @@
 #   bash scripts/controltower/start.sh --stop              # arrête seulement (et SOLDE les runs en vol)
 #   bash scripts/controltower/start.sh --diagnostic-navigateur  # dit quel navigateur serait ouvert
 #
-# ⚠ « --stop » N'EST PAS COMME LES DEUX AUTRES ARRÊTS (#486, docs/28 §11). Depuis
-# #441 un run de la Control Tower vit dans un process détaché qui SURVIT à son API :
-# fermer la fenêtre du navigateur (le chien de garde ci-dessous) et relancer après
-# une modification sont des ACCIDENTS — personne n'a demandé d'arrêter le run —, et
-# les rendre inoffensifs est toute la raison d'être de ce mécanisme. « --stop » est
-# une DÉCISION : il solde donc les runs en vol avant de libérer les ports (chaque
-# hôte détaché éteint AVEC SA DESCENDANCE, son run consigné « annulée » et non
-# laissé « en cours »). Ce que l'extinction a interrompu se reprend au redémarrage
-# par le bouton « Reprendre » de la Control Tower.
+# ⚠ ARRÊTER LA CONTROL TOWER SOLDE SES RUNS (#700, docs/28 §11) — les DEUX gestes
+# d'arrêt, « --stop » comme la fermeture de la fenêtre du navigateur. Depuis #441 un
+# run vit dans un process détaché qui SURVIT à son API, et c'est ce qui rend
+# inoffensifs le redémarrage après une modification, le crash et le SIGTERM :
+# personne, là, n'a demandé d'arrêter le run. Fermer la fenêtre n'est pas de
+# ceux-là — c'est le geste par lequel on quitte la Control Tower, et le chien de
+# garde ci-dessous coupe déjà l'API et l'UI avec elle. Le run était la seule chose
+# qui survivait à un arrêt que ce script tient pour volontaire partout ailleurs, et
+# #699 a mesuré ce que cette survie coûte : sans API pour pomper le bus (Pub/Sub
+# ÉPHÉMÈRE), le run continue de consommer du quota et PERD son historique — au
+# retour, sa tâche finie est encore « en cours ». La survie ne le préservait plus,
+# elle le rendait invisible et incorrigible (#486 le prévoyait pour « --stop » sous
+# le nom d'« ombre portée » ; on le découvre valable pour la fenêtre fermée).
+#
+# Les deux gestes appellent donc « POST /api/extinction » AVANT de libérer les ports
+# — chaque hôte détaché éteint AVEC SA DESCENDANCE, son run consigné « annulée » et
+# non laissé « en cours ». Ce qu'ils ont interrompu se reprend au redémarrage par le
+# bouton « Reprendre » de la Control Tower.
+#
+# LA LIGNE DE PARTAGE PASSE ENTRE ARRÊTER ET REDÉMARRER, jamais entre les deux
+# gestes d'arrêt : l'appel vit dans ces deux branches-là et SURTOUT PAS dans
+# « arreter_session », que le démarrage rejoue pour remplacer la session précédente.
+# L'y mettre solderait les runs à chaque relance — le geste le plus fréquent du
+# développement —, et la reprise (#349) ne repart pas de l'interruption : elle
+# rejoue TOUTES les tâches depuis la synthèse du brief approuvé, et refuse net un run
+# qui n'en a pas (mode « auto »), dont le travail serait perdu sans retour. Le
+# redémarrage reste donc l'unique accident toléré, et sa fenêtre d'invisibilité est
+# bornée par lui-même : l'API qui repart rejoue le journal, retrouve le run à
+# l'écran, et l'interrompt par le BUS que le process écoute (#444) — là où une
+# fenêtre fermée ne fait repartir personne.
 #
 # La distinction vit ICI et pas dans l'API, parce que c'est ici qu'on la connaît :
 # un SIGTERM reçu par l'API ne dit pas s'il vient d'un arrêt propre ou d'un
-# gestionnaire de tâches. D'où l'appel EXPLICITE à « POST /api/extinction », placé
-# dans la seule branche « --stop » — surtout pas dans « arreter_session », que le
-# démarrage rejoue pour nettoyer la session précédente : l'y mettre solderait les
-# runs à chaque relance, c'est-à-dire exactement l'accident qu'on protège.
-# MAESTRO_EXTINCTION=0 laisse délibérément tourner (annoncé, jamais silencieux) ;
-# MAESTRO_EXTINCTION_DELAI déplace le plafond d'attente (20 s).
+# gestionnaire de tâches. MAESTRO_EXTINCTION=0 laisse délibérément tourner (annoncé
+# au démarrage comme à l'arrêt, jamais silencieux) ; MAESTRO_EXTINCTION_DELAI
+# déplace le plafond d'attente (20 s).
 #
 # Tout le reste est IDENTIQUE dans les deux modes : mêmes ports (donc mêmes
 # dossiers de logs et profil de navigateur indexés dessus), même nettoyage des
@@ -210,12 +228,14 @@ arreter_session() {
   liberer_port "$PORT_UI" "UI"
 }
 
-# Solde les runs en vol — l'arrêt VOLONTAIRE, et lui seul (#486, docs/28 §11).
+# Solde les runs en vol — l'arrêt VOLONTAIRE, et lui seul (#486, #700, docs/28 §11).
 #
-# Appelée AVANT arreter_session, qui va tuer l'API : c'est elle qui tient les hôtes
-# détachés et sait les éteindre avec leur descendance. Et appelée DEPUIS LA SEULE
-# BRANCHE « --stop », jamais depuis arreter_session, que le démarrage rejoue pour
-# nettoyer la session précédente — l'y mettre solderait les runs à chaque relance.
+# Appelée AVANT qu'on tue l'API : c'est elle qui tient les hôtes détachés et sait les
+# éteindre avec leur descendance. Deux appelants, et deux seulement — la branche
+# « --stop » et le chien de garde qui constate la fenêtre fermée : les deux façons
+# d'arrêter la Control Tower. Jamais depuis arreter_session, que le DÉMARRAGE rejoue
+# pour remplacer la session précédente — l'y mettre solderait les runs à chaque
+# relance, c'est-à-dire fabriquerait l'accident qu'on protège.
 #
 # Best-effort de bout en bout : une API qui ne répond pas (déjà arrêtée, ou dont la
 # fenêtre vient d'être fermée) n'empêche pas d'arrêter le reste. On le DIT, en
@@ -658,7 +678,13 @@ if [ "$MODE" = "surveiller" ]; then
     exit 0
   fi
   echo "[chien de garde] fenêtre fermée — arrêt de la Control Tower"
+  # Le jeton part d'abord : à partir d'ici la session n'est plus à personne, et un
+  # « --stop » lancé pendant l'extinction ne se disputera pas la fenêtre avec nous.
   rm -f "$FICHIER_SESSION" "$FICHIER_CHIEN"
+  # Fermer la fenêtre EST un arrêt de la Control Tower (#700) : on solde ses runs
+  # comme « --stop », et AVANT de libérer les ports — après, l'API qui tient les
+  # hôtes détachés n'existe plus. C'est le second des deux appelants, et le dernier.
+  solder_les_runs
   liberer_port "$PORT_API" "API"
   liberer_port "$PORT_UI" "UI"
   exit 0
@@ -698,7 +724,8 @@ fi
 # ── Nettoyage puis démarrage ─────────────────────────────────────────────────
 # L'extinction des runs vient AVANT le nettoyage (qui tue l'API, seule à tenir les
 # hôtes) et **seulement** sur « --stop » : un démarrage rejoue arreter_session pour
-# remplacer la session précédente, et c'est l'accident que #441 protège.
+# remplacer la session précédente, et c'est le seul accident que #441 protège encore
+# (#700 — la fermeture de la fenêtre, elle, solde depuis le chien de garde).
 if [ "$MODE" = "arreter" ]; then
   solder_les_runs
 fi
@@ -781,4 +808,16 @@ if [ "$ARRET_AUTO" = 1 ]; then
   echo "  arrêt : fermer la fenêtre du navigateur (ou bash scripts/controltower/start.sh --stop)"
 else
   echo "  arrêt : bash scripts/controltower/start.sh --stop"
+fi
+# Ce que l'arrêt fera des runs en vol se dit AU DÉMARRAGE, pas seulement au moment
+# où il l'a fait (#700) : c'est ici qu'on part travailler en sachant ce que fermer
+# la fenêtre emportera, et c'est ici que l'option se présente. Fermée par le chien
+# de garde, la Control Tower nomme ce qu'elle solde dans navigateur.log — le
+# terminal, lui, a déjà rendu la main.
+if [ "${MAESTRO_EXTINCTION:-1}" = "0" ]; then
+  echo "  ⚠ runs en vol : MAESTRO_EXTINCTION=0 — l'arrêt ne les soldera PAS, ils continueront sans écran pour les suivre"
+elif [ "$ARRET_AUTO" = 1 ]; then
+  echo "  runs en vol : soldés par l'arrêt (fermeture comprise), reprenables au redémarrage — trace : $LOG_DIR_REL/navigateur.log ; MAESTRO_EXTINCTION=0 pour laisser tourner"
+else
+  echo "  runs en vol : soldés par l'arrêt, reprenables au redémarrage (MAESTRO_EXTINCTION=0 pour laisser tourner)"
 fi
