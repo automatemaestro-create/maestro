@@ -188,6 +188,55 @@ export function formatAttente(
   return `depuis le ${formatDateHeure(horodatage)}`;
 }
 
+/**
+ * **Combien de temps un run a tourné** (#709) — « 12 min », « 1 h 04 », « 3 j 04 h ».
+ *
+ * Troisième format de temps du module, et le seul qui mesure un **intervalle
+ * entre deux faits du run** plutôt qu'un écart à maintenant : `formatHeureRelative`
+ * situe un fait passé (« il y a 1 h »), `formatAttente` mesure une attente qui
+ * dure (« depuis 3 min »), celui-ci répond à « combien de temps ». La carte d'un
+ * run portait les deux premiers et pas le troisième, si bien que « démarré il y a
+ * 1 h » tenait lieu de durée — vrai par accident sur un run en cours, faux dès
+ * qu'il est soldé, où l'âge du **départ** n'a plus rien à voir avec le temps passé.
+ *
+ * Le terme est `fin` quand le run est soldé — la durée est alors un **fait figé**,
+ * calculable sans horloge, ce qui est le cas de la majorité d'une liste — et
+ * `maintenant` tant qu'il tourne. D'où le seul cas qui rend la **chaîne vide** :
+ * un run **en cours** avant que l'horloge n'ait démarré (rendu serveur, première
+ * image). `formatHeureRelative` retombe là sur l'heure absolue ; ici il n'existe
+ * aucun repli — une durée vivante n'a pas d'équivalent immobile —, donc on n'écrit
+ * rien plutôt qu'un zéro, et la durée paraît au premier battement.
+ *
+ * Sous la minute on écrit « < 1 min » et jamais « 0 min » : les deux se lisent
+ * différemment, et un run qui vient de partir n'a pas tourné zéro minute. Au-delà
+ * de l'heure les minutes sont **sur deux chiffres** (« 1 h 04 ») — c'est une durée
+ * qu'on lit comme une horloge, pas un nombre qu'on additionne.
+ */
+export function formatDureeRun(
+  debut: string,
+  fin: string | null,
+  maintenant: number | null,
+): string {
+  if (!debut) return "";
+  const depart = new Date(debut).getTime();
+  if (Number.isNaN(depart)) return "";
+  const terme = fin ? new Date(fin).getTime() : maintenant;
+  if (terme === null || Number.isNaN(terme)) return "";
+  // Une durée négative (horloges désaccordées entre le poste et le backend, ou
+  // une `fin` antérieure au `debut`) tombe dans le même cas que « à la minute ».
+  const duree = terme - depart;
+  if (duree < MINUTE_MS) return "< 1 min";
+  if (duree < HEURE_MS) return `${Math.floor(duree / MINUTE_MS)} min`;
+  if (duree < JOUR_MS) {
+    const heures = Math.floor(duree / HEURE_MS);
+    const minutes = Math.floor((duree % HEURE_MS) / MINUTE_MS);
+    return `${heures} h ${String(minutes).padStart(2, "0")}`;
+  }
+  const jours = Math.floor(duree / JOUR_MS);
+  const heures = Math.floor((duree % JOUR_MS) / HEURE_MS);
+  return `${jours} j ${String(heures).padStart(2, "0")} h`;
+}
+
 /** Libellés français des statuts de tâche (machine à états docs/03 §3). */
 const LIBELLES_STATUT: Record<string, string> = {
   assignee: "Assignée",

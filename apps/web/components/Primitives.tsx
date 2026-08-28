@@ -749,6 +749,7 @@ export function BadgeEtat({
   ton = "neutre",
   contour = false,
   pastille = false,
+  icone: Glyphe,
   pulse = false,
   className = "",
   children,
@@ -758,7 +759,19 @@ export function BadgeEtat({
   contour?: boolean;
   /** Une pastille de couleur devant le libellé (états en direct). */
   pastille?: boolean;
-  /** La pastille bat — une reconnexion en cours, pas un état stable. */
+  /**
+   * Un **glyphe d'état** à la place de la pastille (#709) — la forme dit ce que
+   * la couleur seule ne dit pas : ✓ cerclé, ◉ en marche, ✗ barré se distinguent
+   * en noir et blanc comme pour qui ne sépare pas le vert du rouge, là où deux
+   * pastilles ne diffèrent que par leur teinte. C'est le premier des trois
+   * manques mesurés par docs/30 §1.6, et il se comble **à empreinte égale** :
+   * le glyphe occupe la place de la pastille, il ne s'ajoute pas à elle.
+   *
+   * L'emporte sur `pastille` quand les deux sont donnés — en montrer deux
+   * ferait chercher lequel porte l'état.
+   */
+  icone?: Icone;
+  /** La pastille — ou le glyphe — bat : ce qui travaille, pas un état stable. */
   pulse?: boolean;
   className?: string;
   children: ReactNode;
@@ -772,13 +785,22 @@ export function BadgeEtat({
     .join(" ");
   return (
     <span className={classes}>
-      {pastille && (
-        <span
+      {Glyphe ? (
+        <Glyphe
           aria-hidden="true"
-          className={`size-1.5 shrink-0 rounded-full ${TON_PASTILLE[ton]} ${
+          className={`size-3.5 shrink-0 ${
             pulse ? "animate-pulse motion-reduce:animate-none" : ""
           }`}
         />
+      ) : (
+        pastille && (
+          <span
+            aria-hidden="true"
+            className={`size-1.5 shrink-0 rounded-full ${TON_PASTILLE[ton]} ${
+              pulse ? "animate-pulse motion-reduce:animate-none" : ""
+            }`}
+          />
+        )
       )}
       {children}
     </span>

@@ -45,15 +45,21 @@ import Link from "next/link";
 import { useState } from "react";
 
 import {
+  IconeAlerte,
   IconeArret,
+  IconeChrono,
   IconeFlecheDroite,
   IconePause,
   IconeReprise,
+  IconeStatutEchec,
+  IconeStatutEnCours,
+  IconeStatutTerminee,
 } from "@/components/Icones";
 import {
   BadgeEtat,
   Bouton,
   Carte,
+  type Icone,
   type TonBadge,
   type TonCarte,
 } from "@/components/Primitives";
@@ -78,6 +84,7 @@ import {
 } from "@/lib/execution";
 import {
   formatCout,
+  formatDureeRun,
   formatHeureRelative,
   libelleCause,
   libelleStatutExecution,
@@ -154,13 +161,20 @@ export function fondDe(regime: RegimeRun): TonCarte {
 }
 
 /**
- * Le badge d'un run — son ton, son libellé, et s'il bat.
+ * Le badge d'un run — son ton, son **glyphe**, son libellé, et s'il bat.
  *
  * **La pastille ne bat que pour ce qui travaille**, et c'est là que se joue le
  * critère « un run en cours se distingue d'un run soldé » (#474) : un run qui
  * avance est bleu et bat, un run terminé est vert et immobile. Deux verts, dont un
  * pulsant, auraient demandé de lire le libellé pour trancher — ce qui est
  * précisément ce qu'un coup d'œil doit éviter.
+ *
+ * ⚠ #709 remplace la pastille par un **glyphe d'état**, à empreinte égale : la
+ * pastille disait la couleur, le glyphe dit la forme. C'est le premier des trois
+ * manques que docs/30 §1.6 relève sur tout le produit, et la veille de #709 l'a
+ * revérifié en direct sur la liste de runs de GitHub Actions — ✓ plein, ◉ cerclé,
+ * ⊘ barré s'y lisent sans la couleur. Le pulse suit le glyphe : ce qui portait le
+ * battement portait déjà l'état.
  */
 export function BadgeRun({
   run,
@@ -173,9 +187,9 @@ export function BadgeRun({
   attente: CauseAttente | null;
   className?: string;
 }) {
-  const { ton, libelle, pulse } = apparence(run, regime, attente);
+  const { ton, libelle, icone, pulse } = apparence(run, regime, attente);
   return (
-    <BadgeEtat ton={ton} pastille pulse={pulse} className={className}>
+    <BadgeEtat ton={ton} icone={icone} pulse={pulse} className={className}>
       {libelle}
     </BadgeEtat>
   );
@@ -185,31 +199,67 @@ function apparence(
   run: ResumeExecution,
   regime: RegimeRun,
   attente: CauseAttente | null,
-): { ton: TonBadge; libelle: string; pulse: boolean } {
+): { ton: TonBadge; libelle: string; icone: Icone; pulse: boolean } {
   if (regime === REGIME_TRAVAILLE) {
-    return { ton: "info", libelle: "En cours", pulse: true };
+    return {
+      ton: "info",
+      libelle: "En cours",
+      icone: IconeStatutEnCours,
+      pulse: true,
+    };
   }
   if (regime === REGIME_EN_PAUSE) {
     // Neutre et immobile, à dessein : le run est vivant et personne ne l'attend
     // — c'est le seul état arrêté qui ne demande rien. Le faire pulser dirait
     // qu'il avance, le mettre en « attention » qu'il manque une décision.
-    return { ton: "neutre", libelle: "En pause", pulse: false };
+    return {
+      ton: "neutre",
+      libelle: "En pause",
+      icone: IconePause,
+      pulse: false,
+    };
   }
   if (regime === REGIME_SUSPENDU && attente !== null) {
-    return { ton: "attention", libelle: ATTENTES[attente].libelle, pulse: false };
+    return {
+      ton: "attention",
+      libelle: ATTENTES[attente].libelle,
+      icone: IconeAlerte,
+      pulse: false,
+    };
   }
   if (regime === REGIME_INTERROMPU) {
-    return { ton: "alerte", libelle: "Interrompu", pulse: false };
+    return {
+      ton: "alerte",
+      libelle: "Interrompu",
+      icone: IconeArret,
+      pulse: false,
+    };
   }
   // Soldé : le statut porte l'issue, et les trois ne se valent pas — un run
-  // terminé n'est pas un run annulé, un run en échec appelle une lecture.
-  const ton: TonBadge =
-    run.statut === EXECUTION_TERMINEE
-      ? "positif"
-      : run.statut === EXECUTION_ECHEC
-        ? "alerte"
-        : "neutre";
-  return { ton, libelle: libelleStatutExecution(run.statut), pulse: false };
+  // terminé n'est pas un run annulé, un run en échec appelle une lecture. Le
+  // glyphe suit le même partage : ✓, ✗, et l'arrêt pour ce qu'on a coupé.
+  if (run.statut === EXECUTION_TERMINEE) {
+    return {
+      ton: "positif",
+      libelle: libelleStatutExecution(run.statut),
+      icone: IconeStatutTerminee,
+      pulse: false,
+    };
+  }
+  if (run.statut === EXECUTION_ECHEC) {
+    return {
+      ton: "alerte",
+      libelle: libelleStatutExecution(run.statut),
+      icone: IconeStatutEchec,
+      pulse: false,
+    };
+  }
+  return {
+    ton: "neutre",
+    libelle: libelleStatutExecution(run.statut),
+    icone: IconeArret,
+    pulse: false,
+  };
 }
 
 /**
@@ -230,7 +280,7 @@ export function LigneAttente({
   const page = entreeParLibelle(ATTENTES[attente].page);
   return (
     <p
-      className={`flex flex-wrap items-center gap-x-2 gap-y-1 text-annexe text-amber-800 dark:text-amber-300 ${className}`}
+      className={`flex flex-wrap items-center gap-x-2 gap-y-1 text-annexe text-attention-texte ${className}`}
     >
       <span>
         {ATTENTES[attente].phrase}
@@ -270,7 +320,7 @@ export function LignePause({
   if (regime !== REGIME_EN_PAUSE) return null;
   return (
     <p
-      className={`text-annexe text-neutral-600 dark:text-neutral-400 ${className}`}
+      className={`text-annexe text-texte-secondaire ${className}`}
     >
       {"Aucune tâche nouvelle n'est lancée ; celles qui étaient en vol vont à leur terme. Le run reprendra son plan là où il en est."}
     </p>
@@ -342,7 +392,7 @@ export function BoutonsPause({
             : "Mettre en pause"}
       </Bouton>
       {erreur && (
-        <span className="mt-1 block text-annexe text-rose-600 dark:text-rose-400">
+        <span className="mt-1 block text-annexe text-alerte-texte">
           {erreur}
         </span>
       )}
@@ -421,7 +471,7 @@ export function BoutonInterrompre({
           >
             Laisser tourner
           </Bouton>
-          <span className="text-annexe text-neutral-500 dark:text-neutral-400">
+          <span className="text-annexe text-texte-secondaire">
             {
               "Les tâches en vol sont tuées là où elles en sont et perdent leur travail. C'est sans retour."
             }
@@ -438,7 +488,7 @@ export function BoutonInterrompre({
         </Bouton>
       )}
       {erreur && (
-        <span className="mt-1 block text-annexe text-rose-600 dark:text-rose-400">
+        <span className="mt-1 block text-annexe text-alerte-texte">
           {erreur}
         </span>
       )}
@@ -504,7 +554,7 @@ export function LigneCause({
   if (libelle === null) return null;
   return (
     <p
-      className={`text-annexe text-rose-700 dark:text-rose-400 ${className}`}
+      className={`text-annexe text-alerte-texte ${className}`}
       // Le run est soldé : `role="status"` annoncerait un changement en cours.
       // C'est un fait acquis qu'on lit, pas une alerte qui survient.
     >
@@ -528,7 +578,7 @@ export function LigneInterruption({
 }) {
   if (regime !== REGIME_INTERROMPU) return null;
   return (
-    <p className={`text-annexe text-rose-700 dark:text-rose-400 ${className}`}>
+    <p className={`text-annexe text-alerte-texte ${className}`}>
       Son hôte ne répond plus (#348)
       {estRelancable(run)
         ? " — son brief a été validé, il peut repartir depuis le tableau de bord."
@@ -538,9 +588,45 @@ export function LigneInterruption({
 }
 
 /**
+ * Les hachures d'un segment **en vol** — dessinées avec la couleur de la surface,
+ * donc justes dans les deux thèmes sans un `dark:` ni un token de plus.
+ *
+ * Statiques, et c'est un choix : une bande animée aurait dit la même chose en
+ * mettant vingt lignes de la liste en mouvement (docs/30 §3.4 — le mouvement se
+ * garde, il ne s'ajoute pas sans raison). N'ayant aucune animation, elle
+ * n'appelle aucun `motion-reduce:`.
+ */
+const HACHURE =
+  "repeating-linear-gradient(135deg, var(--surface) 0 2px, transparent 2px 5px)";
+
+/**
+ * Comment un compartiment occupe la barre. C'est **le fond de #709** : jusque-là
+ * les six étaient des aplats pleins, si bien qu'un run à une seule tâche en cours
+ * rendait une barre **pleine sur toute sa largeur** — soit, pour l'œil, un run
+ * terminé, pendant que la ligne d'en dessous disait « 0/1 soldée ».
+ *
+ * Ce n'était pas une erreur de calcul mais d'**encodage** : une barre déterminée
+ * affirme un pourcentage *achevé* (guide des contrôles de progression de
+ * Microsoft, relu à la veille de #709), et la nôtre remplissait cet espace-là avec
+ * ce qui n'est pas achevé. Elle disait d'ailleurs déjà la vérité au lecteur
+ * d'écran — `aria-valuenow` vaut `soldees` — et la mentait à l'œil : ce qui suit
+ * aligne l'œil sur l'ARIA, il n'invente aucune sémantique.
+ *
+ * - `plein` — l'acquis, et lui seul : une tâche terminée ou en échec ne bougera
+ *   plus. C'est ce qui remplit la barre.
+ * - `en-vol` — teinté et **hachuré** : présent, compté, visiblement pas fini. La
+ *   forme fait le travail que la teinte ne peut pas faire seule.
+ * - `piste` — rien n'est dessiné, le fond reste visible. Une barre pleine
+ *   redevient donc synonyme de « fini ».
+ */
+type Remplissage = "plein" | "en-vol" | "piste";
+
+/**
  * Les compartiments de la progression (#473), **dans l'ordre où la barre les
  * empile** : ce qui est acquis à gauche, ce qui reste à droite — de sorte que la
- * barre se remplit dans le sens de la lecture.
+ * barre se remplit dans le sens de la lecture. #709 y range `a_faire` en dernier,
+ * puisqu'il n'est plus dessiné : il *est* la piste, et un trou au milieu de la
+ * barre se lirait comme une donnée.
  *
  * Chaque segment porte son libellé au singulier et au pluriel : la couleur appuie
  * le sens, elle ne le porte jamais seule (règle des primitives — deux teintes se
@@ -549,38 +635,50 @@ export function LigneInterruption({
 const SEGMENTS = [
   {
     cle: "terminees",
-    couleur: "bg-emerald-500",
+    couleur: "bg-positif",
+    remplissage: "plein",
     singulier: "terminée",
     pluriel: "terminées",
   },
-  { cle: "echecs", couleur: "bg-rose-500", singulier: "échec", pluriel: "échecs" },
   {
-    cle: "bloquees",
-    couleur: "bg-amber-500",
-    singulier: "bloquée",
-    pluriel: "bloquées",
+    cle: "echecs",
+    couleur: "bg-alerte",
+    remplissage: "plein",
+    singulier: "échec",
+    pluriel: "échecs",
   },
   {
     cle: "en_cours",
-    couleur: "bg-sky-500",
+    couleur: "bg-info/45",
+    remplissage: "en-vol",
     singulier: "en cours",
     pluriel: "en cours",
   },
   {
-    cle: "a_faire",
-    couleur: "bg-neutral-300 dark:bg-neutral-700",
-    singulier: "à faire",
-    pluriel: "à faire",
+    cle: "bloquees",
+    couleur: "bg-attention/45",
+    remplissage: "en-vol",
+    singulier: "bloquée",
+    pluriel: "bloquées",
   },
   {
     cle: "autres",
-    couleur: "bg-neutral-400 dark:bg-neutral-500",
+    couleur: "bg-texte-secondaire/40",
+    remplissage: "en-vol",
     singulier: "autre",
     pluriel: "autres",
+  },
+  {
+    cle: "a_faire",
+    couleur: "",
+    remplissage: "piste",
+    singulier: "à faire",
+    pluriel: "à faire",
   },
 ] as const satisfies readonly {
   cle: keyof Progression;
   couleur: string;
+  remplissage: Remplissage;
   singulier: string;
   pluriel: string;
 }[];
@@ -619,9 +717,7 @@ export function Avancement({
   if (progression === undefined || progression.total === 0) {
     const nb = progression?.total ?? run.nb_taches;
     return (
-      <p
-        className={`chiffre mt-1.5 ${format.compte} text-neutral-500 dark:text-neutral-400`}
-      >
+      <p className={`chiffre mt-1.5 ${format.compte} text-texte-secondaire`}>
         {nb === 0 ? "Aucune tâche" : `${nb} tâche${nb > 1 ? "s" : ""}`}
       </p>
     );
@@ -641,26 +737,32 @@ export function Avancement({
         aria-valuemax={progression.total}
         aria-valuenow={progression.soldees}
         aria-valuetext={`${progression.soldees} tâche${progression.soldees > 1 ? "s" : ""} soldée${progression.soldees > 1 ? "s" : ""} sur ${progression.total}`}
-        className={`mt-2 flex ${format.barre} w-full overflow-hidden rounded-full bg-neutral-200 dark:bg-neutral-800`}
+        className={`mt-2 flex ${format.barre} w-full overflow-hidden rounded-full bg-bord`}
       >
         {parts.map((segment) => (
           <div
             key={segment.cle}
-            className={`h-full ${segment.couleur}`}
-            style={{ width: `${(segment.valeur / progression.total) * 100}%` }}
+            className={`h-full ${segment.couleur}`.trimEnd()}
+            style={{
+              width: `${(segment.valeur / progression.total) * 100}%`,
+              ...(segment.remplissage === "en-vol"
+                ? { backgroundImage: HACHURE }
+                : null),
+            }}
           />
         ))}
       </div>
-      <p
-        className={`chiffre mt-1 ${format.compte} text-neutral-500 dark:text-neutral-400`}
-      >
-        {parts
+      <p className={`chiffre mt-1 ${format.compte} text-texte-secondaire`}>
+        {`${progression.soldees}/${progression.total} soldée${progression.soldees > 1 ? "s" : ""}`}
+        {/* L'acquis en tête, le détail après — même lecture que la barre. Dans
+            l'autre sens, « 1 en cours — 0/1 soldée » faisait commencer par ce qui
+            n'est pas fini le compte qui existe pour dire où l'on en est. */}
+        {` — ${parts
           .map(
             (segment) =>
               `${segment.valeur} ${segment.valeur > 1 ? segment.pluriel : segment.singulier}`,
           )
-          .join(" · ")}
-        {` — ${progression.soldees}/${progression.total} soldée${progression.soldees > 1 ? "s" : ""}`}
+          .join(" · ")}`}
       </p>
     </>
   );
@@ -694,6 +796,15 @@ export function CarteRun({
     regime === REGIME_SUSPENDU ? causeDAttente(run, attendUneValidation) : null;
   const nom = run.objectif || run.run_id;
   const vue = hrefRun(run.run_id);
+  // Combien de temps il a tourné — vivante tant qu'aucune `fin` n'est posée,
+  // figée dessus ensuite. Le discriminant est `fin` et non le régime : la durée
+  // est un fait du run, pas de la façon dont on le range (un run interrompu dont
+  // personne n'a posé la fin continue donc de compter, et c'est ce qu'on veut dire).
+  const duree = formatDureeRun(run.debut, run.fin, maintenant);
+  // « Quand » ne s'ajoute que là où il apprend quelque chose. Sur un run en vol,
+  // « démarré il y a 1 h » et « 1 h 04 » sont le même nombre écrit deux fois ;
+  // sur un run soldé, la durée ne dit pas s'il date d'hier ou du mois dernier.
+  const quand = run.fin && run.debut ? formatHeureRelative(run.debut, maintenant) : "";
 
   return (
     <Carte balise="li" ton={fondDe(regime)}>
@@ -704,7 +815,7 @@ export function CarteRun({
           {vue ? (
             <Link
               href={vue}
-              className="rounded hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 dark:focus-visible:outline-sky-400"
+              className="rounded hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info"
             >
               {nom}
             </Link>
@@ -715,10 +826,34 @@ export function CarteRun({
         <BadgeRun run={run} regime={regime} attente={attente} />
       </div>
 
-      <p className="chiffre mt-0.5 truncate text-annexe text-neutral-500 dark:text-neutral-400">
-        {run.run_id}
-        {run.debut ? ` · ${formatHeureRelative(run.debut, maintenant)}` : ""}
-        {` · ${formatCout(run.cout_usd)}`}
+      {/* La ligne de faits (#709) — identifiant, durée, quand, coût, chacun
+          séparé d'un point que le lecteur d'écran ignore. Elle reprend le rythme
+          à deux lignes de la liste de runs de GitHub Actions (docs/30 §1.1), où
+          le titre est en gras et où une seule ligne grise porte tout le reste ;
+          ce qu'on y ajoute est la **durée**, que la carte ne portait pas. */}
+      <p className="chiffre mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-annexe text-texte-secondaire">
+        <span className="min-w-0 truncate">{run.run_id}</span>
+        {duree !== "" && (
+          <>
+            <span aria-hidden="true">·</span>
+            <span className="inline-flex items-center gap-1 whitespace-nowrap">
+              <IconeChrono aria-hidden="true" className="size-3.5 shrink-0" />
+              {/* Le glyphe dit « durée » à l'œil ; il ne dit rien à qui écoute,
+                  d'où le mot, sans quoi « 1 h 04 » arriverait nu entre deux
+                  autres nombres de la même ligne. */}
+              <span className="sr-only">a tourné </span>
+              {duree}
+            </span>
+          </>
+        )}
+        {quand !== "" && (
+          <>
+            <span aria-hidden="true">·</span>
+            <span className="whitespace-nowrap">{quand}</span>
+          </>
+        )}
+        <span aria-hidden="true">·</span>
+        <span className="whitespace-nowrap">{formatCout(run.cout_usd)}</span>
       </p>
 
       <Avancement run={run} />
