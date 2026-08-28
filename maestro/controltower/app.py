@@ -69,22 +69,35 @@ Endpoints :
   la proposition devient la version courante (chargée à chaud, #78) et quitte les brouillons ;
 - `POST /api/playbooks/{agent}/propositions/{numero}/rejeter` — écarte la proposition sans
   toucher à la version courante ;
-- `GET  /api/mcp/registre` — la bibliothèque de serveurs MCP (#131), **à deux
-  sources** depuis #677 : templates recherchables (`q`, par nom/tag/éditeur)
+- `GET  /api/mcp/registre` — la bibliothèque de serveurs MCP (#131), **à trois
+  sources** depuis #678 : templates recherchables (`q`, par nom/tag/éditeur)
   portant transport, gabarit `${VAR}`, mode d'auth (docs/21), variables à
-  fournir et procédure côté outil. `source=toutes|curee|decouverte` n'en sert
-  qu'une ; `curee` dit d'où vient chaque entrée, et seule une entrée **curée**
-  est instanciable (garde-fou supply-chain, docs/19) ;
-- `GET  /api/mcp/registre/provenance` — les **deux** provenances : le seed relu
-  à la main avec sa date de revue, le miroir avec son rafraîchissement et son
-  compte (#271, #677) ;
-- `GET  /api/mcp/registre/{id}` — une entrée, curée ou découverte (404 sinon) ;
+  fournir et procédure côté outil. `source=toutes|curee|admise|decouverte` n'en
+  sert qu'une ; `curee` (le booléen) dit ce qui est **montable**, `source` dit
+  **d'où ça vient** — garde-fou supply-chain, docs/19 ;
+- `GET  /api/mcp/registre/provenance` — les **trois** provenances : le seed relu
+  à la main avec sa date de revue, les admissions avec leur dernier geste, le
+  miroir avec son rafraîchissement et son compte (#271, #677, #678) ;
+- `GET  /api/mcp/registre/{id}` — une entrée, quelle que soit sa source (404 sinon) ;
+- `GET  /api/mcp/admissions` — le **journal des admissions** (#678) : ce qu'un
+  humain a fait entrer dans l'allowlist (actives et révoquées), les signaux que
+  l'amont a émis depuis, et la politique qui garde la porte ;
+- `POST /api/mcp/admissions` — **admet** une entrée découverte : enregistre
+  l'entrée traduite figée avec sa source (nom amont, version épinglée, éditeur,
+  dépôt, horodatage du miroir) et le geste (qui, quand, pourquoi) ;
+- `POST /api/mcp/admissions/{id}/revocation` — **révoque** une admission :
+  l'entrée sort de l'allowlist, rien n'est effacé ni démonté, et la réponse dit
+  ce qui reste monté (un `POST` parce qu'une révocation est un acte tracé, pas
+  une suppression) ;
 - `GET  /api/mcp/pool` — le **pool projet** des intégrations MCP configurées
   (#133) : chaque intégration avec son mode d'auth et l'état (présent/valide)
-  de ses secrets côté coffre projet — jamais une valeur de secret ;
+  de ses secrets côté coffre projet — jamais une valeur de secret —, plus depuis
+  #678 son `admission`, ses `signaux` d'amont et son `alerte` si elle n'est plus
+  dans l'allowlist ;
 - `POST /api/mcp/pool` — ajoute (ou reconfigure) une intégration au pool depuis
-  la bibliothèque : instancie l'entrée curée (garde-fou supply-chain) et pose
-  ses secrets **une seule fois** dans le coffre projet chiffré (#133) ;
+  la bibliothèque : instancie l'entrée de l'allowlist (garde-fou supply-chain)
+  et pose ses secrets **une seule fois** dans le coffre projet chiffré (#133).
+  Un 404 y **nomme le geste manquant** — l'admission — depuis #678 ;
 - `DELETE /api/mcp/pool/{id}` — retire une intégration du pool, désactive son id
   chez chaque agent et purge les secrets qu'elle était seule à référencer ;
 - `PUT  /api/mcp/activations/{agent}` — fixe les intégrations du pool **activées**
@@ -197,8 +210,15 @@ from pydantic import BaseModel
 from maestro.agents.capacity import CapaciteAgent, CapacityStore
 from maestro.agents.catalog import DEFAULT_AGENTS, Agent
 from maestro.agents.mcp import IntegrationMcp, McpStore, references_env
-from maestro.agents.mcp_federation import federer_memo
+from maestro.agents.mcp_admission import (
+    MOTIF_NON_ADMISE,
+    RefusAdmission,
+    ServiceAdmission,
+    etat_politique,
+)
+from maestro.agents.mcp_federation import federer_memo, oublier_memo
 from maestro.agents.mcp_registry import (
+    SOURCE_ADMISE,
     SOURCE_CUREE,
     SOURCE_DECOUVERTE,
     SOURCE_TOUTES,
@@ -632,6 +652,35 @@ class IntegrationPoolRequete(BaseModel):
     secrets: list[SecretPoolRequete] = []
 
 
+class AdmissionRequete(BaseModel):
+    """Corps de l'admission d'une entrée découverte dans l'allowlist (#678).
+
+    `registre_id` désigne l'entrée **découverte** à admettre — celle que l'écran
+    vient de lister avec ses signaux de confiance (éditeur, version, dépôt,
+    statut). `par` est qui admet, `note` pourquoi : l'admission est un geste
+    **tracé**, et une trace sans auteur ni raison ne sert à rien six mois plus
+    tard. Aucun des deux n'est **exigé** — refuser une admission faute de nom
+    n'ajouterait aucune sécurité (rien ne prouve un nom saisi ici) et
+    déplacerait la porte du côté du formulaire.
+    """
+
+    registre_id: str
+    par: str = ""
+    note: str = ""
+
+
+class RevocationRequete(BaseModel):
+    """Corps de la révocation d'une admission (#678).
+
+    `par` et `motif` sont la trace du geste inverse — pourquoi on retire de
+    l'allowlist ce qu'on y avait fait entrer. Ils ne conditionnent rien : ce qui
+    compte est que la révocation ait lieu, pas qu'elle soit bien remplie.
+    """
+
+    par: str = ""
+    motif: str = ""
+
+
 class ActivationsMcpRequete(BaseModel):
     """Corps de l'activation des intégrations du pool pour un agent (#133).
 
@@ -776,6 +825,7 @@ def create_app(
     capacites: CapacityStore | None = None,
     mcp: McpStore | None = None,
     registre_mcp: RegistreMcp | None = None,
+    admissions: ServiceAdmission | None = None,
     secrets: SecretStore | None = None,
     permissions: PermissionStore | None = None,
     projets: ServiceProjets | None = None,
@@ -945,8 +995,9 @@ def create_app(
     agents_store = agents_store if agents_store is not None else AgentStore.default()
     capacites = capacites if capacites is not None else CapacityStore.default()
     mcp = mcp if mcp is not None else McpStore.default()
-    # La bibliothèque MCP a **deux sources** depuis #677 : le seed curé (en code)
-    # et le miroir du registre officiel (sur le disque). Un registre **injecté**
+    # La bibliothèque MCP a **trois sources** depuis #678 : le seed curé (en
+    # code), les entrées admises (le journal, sur le disque) et le miroir du
+    # registre officiel (sur le disque aussi). Un registre **injecté**
     # l'emporte toujours — c'est ainsi que les tests servent une allowlist
     # restreinte, et rien de ce qui suit ne s'applique à eux. Sinon on fédère à
     # la lecture, mémoïsé sur l'empreinte du miroir : la bibliothèque suit donc
@@ -959,6 +1010,15 @@ def create_app(
         if registre_mcp_injecte is not None:
             return registre_mcp_injecte
         return federer_memo().registre
+
+    # La **porte d'admission** (#678) : le geste humain tracé qui fait entrer une
+    # entrée découverte dans l'allowlist. Le service écrit le journal
+    # (`admissions.json`, à côté du pool) ; la bibliothèque le relit à la
+    # composition suivante. ⚠ Un `registre_mcp` **injecté** ne relit rien : c'est
+    # une allowlist figée, donc les routes d'admission écrivent bien mais leur
+    # effet ne s'y verra pas — le contrat d'un registre injecté est justement de
+    # ne dépendre d'aucun disque.
+    admissions = admissions if admissions is not None else ServiceAdmission.default()
     secrets = secrets if secrets is not None else SecretStore.default()
     permissions = permissions if permissions is not None else PermissionStore.default()
     projets = projets if projets is not None else ServiceProjets.default()
@@ -2295,8 +2355,18 @@ def create_app(
         correspond), et pour **chaque** variable `${VAR}` requise, si son secret
         est **présent** dans le coffre projet et **valide** (un token OAuth
         expiré ne l'est plus). Aucune valeur de secret n'est jamais réémise.
+
+        Depuis #678 elle porte aussi **ce qui a changé sous elle** : `admission`
+        (par quel geste elle est montable), `signaux` (ce que l'amont en dit
+        depuis), et `alerte` quand elle n'est plus dans l'allowlist — révoquée,
+        ou disparue de la bibliothèque. C'est la moitié « sans le dire » du
+        critère 2 : le serveur reste monté, mais l'écran qui le liste ne peut
+        plus l'afficher comme si de rien n'était. `curee: false` le disait déjà
+        et ne suffisait pas — il ne dit pas *pourquoi*, et une intégration
+        montée hier qui devient « non curée » sans un mot se lit comme un bug.
         """
-        entree = registre().get(integration.id)
+        courant = registre()
+        entree = courant.get(integration.id)
         requis = (
             {v.cle: v for v in entree.secrets}
             if entree is not None
@@ -2317,11 +2387,38 @@ def create_app(
                     "expire_le": etat["expire_le"] if etat is not None else None,
                 }
             )
+        revocation = courant.revocation_de(integration.id)
+        if entree is not None:
+            alerte = ""
+        elif revocation is not None:
+            alerte = (
+                f"admission révoquée le {revocation.revoquee_le or '?'} par "
+                f"{revocation.revoquee_par or '?'}"
+                f"{f' — {revocation.motif}' if revocation.motif else ''} : ce serveur "
+                "reste monté mais n'est plus dans l'allowlist. Le retirer du pool : "
+                f"DELETE /api/mcp/pool/{integration.id}."
+            )
+        else:
+            alerte = (
+                "ce serveur est monté mais ne figure plus dans la bibliothèque : "
+                "il a pu être retiré du seed, ou son entrée admise être devenue "
+                "illisible. Il reste monté tel qu'il a été configuré."
+            )
         return {
             **integration.to_dict(),
             "mode_auth": entree.mode_auth if entree is not None else None,
             "procedure_url": entree.procedure_url if entree is not None else "",
             "curee": entree is not None,
+            "source": entree.source if entree is not None else None,
+            "admission": (
+                entree.admission.trace()
+                if entree is not None and entree.admission is not None
+                else revocation.trace()
+                if revocation is not None
+                else None
+            ),
+            "signaux": [s.to_dict() for s in courant.signaux_de(integration.id)],
+            "alerte": alerte,
             "secrets": secrets_etat,
         }
 
@@ -2465,7 +2562,7 @@ def create_app(
 
     @app.get("/api/mcp/registre")
     async def mcp_registre(q: str = "", source: str = SOURCE_TOUTES) -> list[dict[str, Any]]:
-        """La bibliothèque de serveurs MCP (#131, #271), **à deux sources** depuis #677.
+        """La bibliothèque de serveurs MCP (#131, #271), **à trois sources** depuis #678.
 
         `q` filtre par nom, id, éditeur, description ou tag (recherche libre,
         insensible à la casse et aux accents ; vide → tout le registre). Chaque
@@ -2474,18 +2571,20 @@ def create_app(
         (`secrets`) et lien de procédure côté outil (`procedure_url`) — de quoi
         guider la configuration.
 
-        `source` sert à n'en demander qu'une : `toutes` (défaut), `curee` ou
-        `decouverte` — une valeur inconnue est un **422**, jamais une liste
-        silencieusement autre que celle demandée. Sans le paramètre, la réponse
-        est celle d'avant #677 **augmentée** des entrées découvertes : les
-        curées viennent d'abord (tri `_rang`), donc un appelant qui ignore le
+        `source` sert à n'en demander qu'une : `toutes` (défaut), `curee`,
+        `admise` ou `decouverte` — une valeur inconnue est un **422**, jamais
+        une liste silencieusement autre que celle demandée. Sans le paramètre,
+        la réponse est celle d'avant #677 **augmentée** : curées d'abord, puis
+        admises, puis découvertes (tri `_rang`), donc un appelant qui ignore le
         paramètre lit toujours la même tête de liste.
 
-        `curee` (et son doublon lisible `source`) marque l'appartenance à
-        l'allowlist : seule une entrée **curée** est instanciable (garde-fou
-        supply-chain, docs/19). Une entrée découverte se lit, se cherche, et
-        porte ses signaux d'amont (`editeur`, `version`, `depot`, `statut`) —
-        elle ne se monte pas.
+        ⚠ `curee` et `source` ne disent **pas** la même chose (#678) : le
+        booléen marque l'appartenance à l'**allowlist** — c'est lui qui répond à
+        « montable ? », garde-fou supply-chain, docs/19 —, la source dit d'où
+        l'entrée vient. Une entrée `admise` est donc `curee: true` : un humain
+        l'a fait entrer par la porte d'admission. Une entrée `decouverte` se
+        lit, se cherche, porte ses signaux d'amont (`editeur`, `version`,
+        `depot`, `statut`) — et ne se monte pas.
         """
         try:
             entrees = registre().rechercher(q, source)
@@ -2503,19 +2602,32 @@ def create_app(
         sortie du cul-de-sac du critère 2 — les pistes qu'une recherche sans
         résultat propose, plutôt que de répéter qu'elle n'a rien trouvé.
 
-        Depuis #677 la bibliothèque a **deux sources**, donc deux provenances, et
-        elles ne répondent pas à la même question : la curée se date par sa
-        **revue humaine**, la découverte par le **rafraîchissement** du miroir et
-        le nombre d'entrées qu'il porte. `provenances` les rend côte à côte ;
+        Depuis #677 la bibliothèque a plusieurs sources, donc plusieurs
+        provenances, et elles ne répondent pas à la même question : la curée se
+        date par sa **revue humaine**, la découverte par le **rafraîchissement**
+        du miroir et le nombre d'entrées qu'il porte. `provenances` les rend côte à côte ;
         `moissonnee` dit si le miroir a effectivement rapporté quelque chose —
         c'est ce qui fait cesser le « jamais moissonnée » du critère 5 du parent
         sans le remplacer par une promesse que personne n'a tenue.
+
+        Depuis #678 il y a **trois** sources, donc une troisième provenance : les
+        entrées **admises**, qui ne se datent ni par une revue de code ni par un
+        rafraîchissement de miroir mais par le **geste** qui les a fait entrer.
+        `derniere_le` est la date de la plus récente, `revoquees` ce qu'on a
+        retiré, `signaux` ce que l'amont dit de tout ça depuis — l'écran a de
+        quoi dire l'état de l'allowlist locale sans recharger le journal entier.
 
         ⚠ Les clés historiques (`resume`, `sources`, `revue_le`, `tags`,
         `total`) sont **conservées à plat et inchangées de sens** : elles parlent
         de la curation, que l'écran affiche déjà. L'ajout est purement additif —
         `total` reste le compte servi par `GET /api/mcp/registre` sans filtre, et
-        `total_curees`/`total_decouvertes` le détaillent.
+        `total_curees`/`total_admises`/`total_decouvertes` le détaillent.
+
+        ⚠ `total_curees` compte le **seed seul** : une entrée admise n'y est plus,
+        elle est dans `total_admises`. C'est le seul endroit du contrat où un
+        chiffre a changé de portée, et la raison est la même que pour le filtre
+        `source=curee` — ce qui répond à « montable ? » n'est pas la source mais
+        le champ `curee` de chaque entrée.
 
         ⚠ La forme de `GET /api/mcp/registre` n'a **pas** bougé : elle rend
         toujours une liste nue. Emballer la liste pour y loger la provenance
@@ -2526,18 +2638,34 @@ def create_app(
         """
         courant = registre()
         curees = courant.lister(SOURCE_CUREE)
+        admises = courant.lister(SOURCE_ADMISE)
         decouvertes = courant.lister(SOURCE_DECOUVERTE)
+        journal = courant.admissions()
         return {
             **courant.provenance.to_dict(),
             "tags": list(courant.tags()),
-            "total": len(curees) + len(decouvertes),
+            "total": len(courant.lister()),
             "total_curees": len(curees),
+            "total_admises": len(admises),
             "total_decouvertes": len(decouvertes),
             "provenances": [
                 {
                     **courant.provenance.to_dict(),
                     "source": SOURCE_CUREE,
                     "total": len(curees),
+                },
+                {
+                    "source": SOURCE_ADMISE,
+                    "resume": (
+                        "Entrées du registre officiel qu'un humain a fait entrer dans "
+                        "l'allowlist par un geste tracé — chacune figée à la version "
+                        "admise, avec sa source et qui l'a admise. Révocable ; une "
+                        "nouvelle version amont ne remplace rien sans un nouveau geste."
+                    ),
+                    "total": len(admises),
+                    "revoquees": len(courant.admissions(revoquees=True)),
+                    "derniere_le": max((a.le for a in journal), default=""),
+                    "signaux": len(courant.signaux),
                 },
                 {
                     **courant.provenance_decouverte.to_dict(),
@@ -2548,13 +2676,13 @@ def create_app(
 
     @app.get("/api/mcp/registre/{id}")
     async def mcp_registre_entree(id: str) -> dict[str, Any]:
-        """Une entrée du registre MCP (#131) — 404 si l'id n'est d'**aucune** des deux sources.
+        """Une entrée du registre MCP (#131) — 404 si l'id n'est d'**aucune** source.
 
-        Sert une entrée découverte aussi bien qu'une curée (#677) : c'est la
-        fiche de ce que l'écran vient de lister, et `curee` y dit laquelle des
-        deux on regarde. Ouvrir cette lecture n'ouvre aucune voie de montage —
-        `instancier` ne passe pas par ici, et `POST /api/mcp/pool` continue de
-        n'accepter que l'allowlist curée.
+        Sert une entrée découverte ou admise aussi bien qu'une curée (#677,
+        #678) : c'est la fiche de ce que l'écran vient de lister, `source` dit
+        laquelle des trois on regarde et `curee` si elle est montable. Ouvrir
+        cette lecture n'ouvre aucune voie de montage — `instancier` ne passe pas
+        par ici, et `POST /api/mcp/pool` continue de n'accepter que l'allowlist.
         """
         entree = registre().trouver(id)
         if entree is None:
@@ -2563,6 +2691,155 @@ def create_app(
                 detail=f"serveur MCP inconnu du registre : {id} (voir GET /api/mcp/registre)",
             )
         return entree.to_dict()
+
+    def _impact_pool(id: str) -> dict[str, Any]:
+        """Ce qu'une révocation de `id` laisse **debout** dans le pool projet (#678).
+
+        Le « sans le dire » du critère 2 : révoquer ne démonte rien — casser un
+        run en cours pour appliquer une décision d'allowlist serait un remède
+        pire que le mal —, donc la route doit dire ce qui reste monté, chez qui,
+        et par quel geste le retirer. Un pool illisible n'est pas une raison de
+        faire échouer la révocation : on rend l'ignorance plutôt qu'une fausse
+        réponse (`erreur` non nul, `montee` faux).
+        """
+        try:
+            pool = mcp.pool()
+        except ValueError as exc:
+            return {"montee": False, "agents": [], "erreur": str(exc)}
+        if not any(i.id == id for i in pool):
+            return {"montee": False, "agents": [], "erreur": None}
+        agents = [agent for agent in mcp.agents() if id in mcp.activations(agent)]
+        return {"montee": True, "agents": sorted(agents), "erreur": None}
+
+    @app.get("/api/mcp/admissions")
+    async def mcp_admissions() -> dict[str, Any]:
+        """Le journal des admissions (#678) : ce qu'un humain a fait entrer dans l'allowlist.
+
+        `admissions` porte les **actives** (ce qui est montable aujourd'hui) et
+        `revoquees` ce qui l'a été puis retiré, avec qui, quand et pourquoi. Les
+        deux listes plutôt qu'une à filtrer : ce ne sont pas les mêmes lectures —
+        l'une répond à « qu'est-ce qu'on autorise ? », l'autre à « qu'a-t-on
+        retiré, et pour quel motif ? ».
+
+        `signaux` porte ce que l'amont dit **depuis** de ces entrées
+        (dépréciation, suppression, disparition, version plus récente) : rien
+        n'est jamais retiré en silence, c'est le critère 3 du ticket. `politique`
+        nomme qui garde la porte — une porte dont on ignore le gardien n'en est
+        pas une, et le défaut du dépôt (le geste humain suffit) doit se
+        distinguer d'une politique d'entreprise branchée.
+
+        `erreur` porte la cause si le journal est illisible : ce cas-là **retire
+        de l'allowlist** tout ce qu'il autorisait, il ne se tait pas.
+        """
+        courant = registre()
+        try:
+            journal = admissions.lister()
+            erreur = None
+        except ValueError as exc:
+            journal, erreur = (), str(exc)
+        return {
+            "admissions": [a.to_dict() for a in journal if a.active],
+            "revoquees": [a.to_dict() for a in journal if not a.active],
+            "signaux": [s.to_dict() for s in courant.signaux],
+            "politique": etat_politique(admissions.politique),
+            "erreur": erreur,
+        }
+
+    @app.post("/api/mcp/admissions", status_code=201)
+    async def admettre_entree(requete: AdmissionRequete) -> dict[str, Any]:
+        """**Admet** une entrée découverte dans l'allowlist — le geste du ticket (#678).
+
+        C'est la porte : après elle, et seulement après elle, `POST
+        /api/mcp/pool` accepte l'entrée. Elle enregistre l'entrée **traduite et
+        figée** avec sa source (nom amont, version épinglée, éditeur, dépôt,
+        horodatage du miroir) et le geste (qui, quand, pourquoi).
+
+        Rend l'entrée telle que la bibliothèque la sert **après** l'admission —
+        `curee: true`, `source: "admise"`, `admission` renseignée : l'appelant
+        n'a pas à recharger pour savoir ce qu'il a obtenu.
+
+        404 si l'id n'est d'aucune source (une entrée que la traduction a refusée
+        n'est pas dans la bibliothèque, donc pas admissible — la porte ne fabrique
+        pas ce que le gabarit ne sait pas exprimer) ; 409 si elle est déjà curée
+        au seed, supprimée chez l'amont, ou refusée par la politique. Ré-admettre
+        une entrée déjà admise **à la même version** est idempotent ; à une autre
+        version, c'est le nouveau geste qui promeut cette version-là.
+        """
+        courant = registre()
+        entree = courant.trouver(requete.registre_id)
+        if entree is None:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"serveur MCP inconnu de la bibliothèque : {requete.registre_id} — "
+                    "rien à admettre. Une entrée que la traduction a refusée n'y "
+                    "figure pas (voir GET /api/mcp/registre)."
+                ),
+            )
+        provenance = courant.provenance_decouverte
+        try:
+            admission = admissions.admettre(
+                entree,
+                par=requete.par,
+                note=requete.note,
+                amont=provenance.amont,
+                miroir_le=provenance.rafraichi_le,
+            )
+        except RefusAdmission as exc:
+            raise HTTPException(status_code=409, detail=exc.cause) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        # Le journal vient de changer : la bibliothèque doit servir l'entrée
+        # admise **à la requête suivante**, sans attendre que le mtime du
+        # système de fichiers se distingue (cf. `federer_memo`).
+        oublier_memo()
+        admise = registre().trouver(admission.id)
+        return admise.to_dict() if admise is not None else admission.to_dict()
+
+    @app.post("/api/mcp/admissions/{id}/revocation")
+    async def revoquer_admission(id: str, requete: RevocationRequete) -> dict[str, Any]:
+        """**Révoque** une admission (#678, critère 2) — sans rien démonter.
+
+        ⚠ Un `POST …/revocation` et non un `DELETE …/{id}`, pour deux raisons qui
+        vont dans le même sens : **rien n'est effacé** — l'admission reste au
+        journal avec qui l'a révoquée, quand et pourquoi, et c'est ce qui permet
+        au refus d'instanciation de la nommer —, et le geste porte un corps
+        (l'auteur, le motif) qu'un `DELETE` transporte mal, certains
+        intermédiaires HTTP le laissant tomber en route.
+
+        L'entrée sort de l'allowlist : `POST /api/mcp/pool` la refuse à nouveau,
+        et `instancier` **nomme** la révocation au lieu de rendre le refus d'un
+        id inconnu.
+
+        ⚠ Un serveur **déjà monté** dans le pool projet y reste, et la réponse le
+        dit (`pool`) : les agents qui l'ont activée, et le geste pour le retirer
+        (`DELETE /api/mcp/pool/{id}`). Le démonter d'office couperait un run en
+        cours pour appliquer une décision d'allowlist ; ce qui est promis est
+        « jamais sans le dire », pas « jamais sans casser ».
+
+        404 si l'id n'a jamais été admis (une entrée curée du seed se retire en
+        revue de code, pas ici), 409 si l'admission est déjà révoquée.
+        """
+        try:
+            admission = admissions.revoquer(id, par=requete.par, motif=requete.motif)
+        except RefusAdmission as exc:
+            code = 404 if exc.motif == MOTIF_NON_ADMISE else 409
+            raise HTTPException(status_code=code, detail=exc.cause) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        oublier_memo()
+        impact = _impact_pool(id)
+        return {
+            "admission": admission.to_dict(),
+            "pool": impact,
+            "message": (
+                f"« {id} » est sortie de l'allowlist mais reste montée dans le pool "
+                "projet : rien n'a été démonté. Pour la retirer aussi du pool, "
+                f"DELETE /api/mcp/pool/{id}."
+                if impact["montee"]
+                else f"« {id} » est sortie de l'allowlist ; elle n'était pas dans le pool."
+            ),
+        }
 
     @app.get("/api/mcp/pool")
     async def mcp_pool() -> dict[str, Any]:
@@ -2580,21 +2857,30 @@ def create_app(
     async def ajouter_integration_pool(requete: IntegrationPoolRequete) -> dict[str, Any]:
         """Ajoute (ou reconfigure) une intégration du registre dans le pool projet (#133).
 
-        Le parcours **configuration** du critère 1 : instancie l'entrée **curée**
-        `registre_id` (garde-fou supply-chain — 404 si hors allowlist, docs/19),
-        l'inscrit au pool (remplacement si l'id y est déjà — reconfiguration) et
-        pose ses secrets **une seule fois** dans le coffre projet chiffré, selon
-        le mode d'auth de l'entrée (token statique/appairage/OAuth importé). Une
-        valeur de secret vide est ignorée (le secret reste à configurer). 404 si
-        l'id est hors registre, 422 si une valeur/échéance est invalide.
+        Le parcours **configuration** du critère 1 : instancie l'entrée de
+        l'**allowlist** `registre_id` (garde-fou supply-chain — 404 si elle n'y
+        est pas, docs/19), l'inscrit au pool (remplacement si l'id y est déjà —
+        reconfiguration) et pose ses secrets **une seule fois** dans le coffre
+        projet chiffré, selon le mode d'auth de l'entrée (token
+        statique/appairage/OAuth importé). Une valeur de secret vide est ignorée
+        (le secret reste à configurer). 404 si l'id est hors allowlist, 422 si
+        une valeur/échéance est invalide.
+
+        ⚠ Le 404 **nomme le geste qui manque** depuis #678 : une entrée
+        découverte y renvoie vers l'admission (`POST /api/mcp/admissions`), une
+        entrée révoquée dit qui l'a retirée et quand. La phrase vient de
+        `RegistreMcp.cause_non_instanciable` et n'est pas recopiée ici — c'est
+        exactement celle que lèverait `instancier` deux lignes plus bas, et deux
+        formulations pour un même refus finiraient par se contredire.
         """
-        entree = registre().get(requete.registre_id)
+        courant = registre()
+        entree = courant.get(requete.registre_id)
         if entree is None:
             raise HTTPException(
                 status_code=404,
                 detail=(
-                    f"serveur MCP inconnu du registre curé : {requete.registre_id} "
-                    "(découverte ≠ installation, docs/19 ; voir GET /api/mcp/registre)."
+                    f"{courant.cause_non_instanciable(requete.registre_id)} "
+                    "Voir GET /api/mcp/registre."
                 ),
             )
         try:

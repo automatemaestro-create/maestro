@@ -77,6 +77,14 @@ class Settings:
     #: du registre demande (« regular but infrequent »). Planchée à 60 s : un
     #: moissonnage par requête d'écran coûterait dix minutes d'amont par affichage.
     mcp_amont_periode: str | None = None
+    #: La **politique d'admission** d'une entrée découverte
+    #: (`MAESTRO_MCP_ADMISSION_POLITIQUE`, forme « module:attribut »), ou None :
+    #: le geste humain suffit (cf. maestro.agents.mcp_admission, #678). C'est le
+    #: point où une organisation branche sa revue, son scan ou son refus par
+    #: éditeur — une valeur illisible **échoue au démarrage** plutôt que de
+    #: retomber en silence sur le défaut, une politique qu'on croit active et qui
+    #: ne l'est pas étant pire que pas de politique.
+    mcp_admission_politique: str | None = None
     #: Racine du coffre des secrets par agent (`MAESTRO_SECRETS_DIR`), ou
     #: None : le dossier `core/secrets/` du dépôt (cf. maestro.agents.secrets,
     #: #109 — jamais versionné, scoping actif dès que la racine existe).
@@ -186,6 +194,9 @@ class Settings:
             mcp_amont_dir=(os.getenv("MAESTRO_MCP_AMONT_DIR") or "").strip() or None,
             mcp_amont_url=(os.getenv("MAESTRO_MCP_AMONT_URL") or "").strip() or None,
             mcp_amont_periode=(os.getenv("MAESTRO_MCP_AMONT_PERIODE") or "").strip() or None,
+            mcp_admission_politique=(
+                (os.getenv("MAESTRO_MCP_ADMISSION_POLITIQUE") or "").strip() or None
+            ),
             secrets_dir=(os.getenv("MAESTRO_SECRETS_DIR") or "").strip() or None,
             secrets_key=(os.getenv("MAESTRO_SECRETS_KEY") or "").strip() or None,
             permissions_dir=(os.getenv("MAESTRO_PERMISSIONS_DIR") or "").strip() or None,

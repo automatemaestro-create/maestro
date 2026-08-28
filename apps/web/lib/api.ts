@@ -23,6 +23,7 @@ import type {
   FriseRun,
   GrapheRun,
   IntegrationPoolMcp,
+  JournalAdmissionsMcp,
   LancementExecution,
   PageExplorateur,
   PageJournal,
@@ -38,6 +39,7 @@ import type {
   RefusProjet,
   ReponsesBrief,
   ResumeExecution,
+  RevocationAdmissionMcp,
   Sante,
   SourceDeclaree,
   SourceRegistreMcp,
@@ -581,10 +583,11 @@ async function envoyerJsonEtLire<T>(
  * par nom/tag/éditeur (`q` vide → tout le registre). Chaque entrée guide sa
  * configuration selon son mode d'auth.
  *
- * Elle a **deux sources** depuis #677 : `source` n'en demande qu'une (`curee` ou
- * `decouverte`), et sans elle les deux viennent, curées d'abord. Seule une
- * entrée **curée** est instanciable (garde-fou supply-chain, docs/19) — `curee`
- * le dit sur chaque entrée.
+ * Elle a **trois sources** depuis #678 : `source` n'en demande qu'une (`curee`,
+ * `admise` ou `decouverte`), et sans elle les trois viennent, curées d'abord
+ * puis admises puis découvertes. Ce qui est **montable** se lit sur le champ
+ * `curee` de chaque entrée (garde-fou supply-chain, docs/19) — jamais sur la
+ * source, une entrée `admise` étant `curee: true`.
  */
 export function chargerRegistreMcp(
   q = "",
@@ -608,9 +611,65 @@ export function chargerProvenanceRegistreMcp(): Promise<ProvenanceRegistreMcp> {
 }
 
 /**
+ * Le journal des admissions (`GET /api/mcp/admissions`, #678) : ce qu'un humain
+ * a fait entrer dans l'allowlist depuis le registre officiel (actives et
+ * révoquées), ce que l'amont en dit depuis, et la politique qui garde la porte.
+ */
+export function chargerAdmissionsMcp(): Promise<JournalAdmissionsMcp> {
+  return chargerJson<JournalAdmissionsMcp>("/api/mcp/admissions");
+}
+
+/**
+ * **Admet** une entrée découverte dans l'allowlist (`POST /api/mcp/admissions`,
+ * #678) : le geste humain tracé sans lequel rien de découvert n'est montable.
+ *
+ * Enregistre l'entrée traduite **figée** avec sa source (nom amont, version
+ * épinglée, éditeur, dépôt, horodatage du miroir) et le geste (`par`, `note`).
+ * Rend l'entrée telle que la bibliothèque la sert ensuite — `curee: true`,
+ * `source: "admise"` —, donc il n'y a rien à recharger pour l'afficher.
+ *
+ * Ré-admettre à la **même version** est sans effet ; à une autre version, c'est
+ * le nouveau geste qui promeut cette version-là — une version amont plus récente
+ * ne remplace jamais la version admise toute seule.
+ */
+export function admettreEntreeMcp(corps: {
+  registre_id: string;
+  par?: string;
+  note?: string;
+}): Promise<EntreeRegistreMcp> {
+  return envoyerJsonEtLire<EntreeRegistreMcp>(
+    "/api/mcp/admissions",
+    corps,
+    "admission refusée",
+  );
+}
+
+/**
+ * **Révoque** une admission (`POST /api/mcp/admissions/{id}/revocation`, #678).
+ *
+ * L'entrée sort de l'allowlist et redevient non montable ; l'admission n'est
+ * **pas effacée** (elle reste au journal, ce qui permet aux refus de la nommer)
+ * et un serveur déjà monté dans le pool **n'est pas démonté** — la réponse dit
+ * ce qui reste debout et chez quels agents. D'où un `POST` et non un `DELETE` :
+ * c'est un acte tracé, pas une suppression.
+ */
+export function revoquerAdmissionMcp(
+  id: string,
+  corps: { par?: string; motif?: string } = {},
+): Promise<RevocationAdmissionMcp> {
+  return envoyerJsonEtLire<RevocationAdmissionMcp>(
+    `/api/mcp/admissions/${encodeURIComponent(id)}/revocation`,
+    corps,
+    "révocation refusée",
+  );
+}
+
+/**
  * Le pool projet des intégrations MCP configurées (`GET /api/mcp/pool`, #133) :
  * chaque intégration avec son mode d'auth et l'état (présent/valide) de ses
- * secrets côté coffre projet — jamais une valeur de secret.
+ * secrets côté coffre projet — jamais une valeur de secret —, plus depuis #678
+ * son `admission`, ses `signaux` d'amont et son `alerte` si elle n'est plus dans
+ * l'allowlist (révoquée : elle reste montée, et l'écran doit le dire).
  */
 export function chargerPoolMcp(): Promise<PoolMcp> {
   return chargerJson<PoolMcp>("/api/mcp/pool");
@@ -618,8 +677,12 @@ export function chargerPoolMcp(): Promise<PoolMcp> {
 
 /**
  * Ajoute (ou reconfigure) une intégration du registre dans le pool projet
- * (`POST /api/mcp/pool`, #133) : instancie l'entrée curée et pose ses secrets
- * **une seule fois** dans le coffre projet chiffré. Rend l'intégration créée.
+ * (`POST /api/mcp/pool`, #133) : instancie l'entrée de l'**allowlist** (curée ou
+ * admise) et pose ses secrets **une seule fois** dans le coffre projet chiffré.
+ * Rend l'intégration créée.
+ *
+ * Une entrée découverte y est refusée, et le message d'erreur **nomme le geste
+ * manquant** depuis #678 : l'admettre d'abord (`admettreEntreeMcp`).
  */
 export function ajouterIntegrationPoolMcp(corps: {
   registre_id: string;
