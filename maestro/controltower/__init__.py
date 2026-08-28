@@ -63,8 +63,9 @@ Sept briques, assemblées par l'app FastAPI (`maestro.controltower.app`) :
   (`RepondeurAssistance`) : les questions portent sur l'outil, pas sur le projet ;
 - `maestro.controltower.orchestration` : le **fil global** (#268) — même
   infrastructure encore, sur le fil réservé `orchestrateur`, avec un répondeur
-  qui **agit** (`RepondeurOrchestration`) : une demande de travail y ouvre un
-  run, dont l'identifiant reste attaché au message ;
+  qui **agit** (`RepondeurOrchestration`) : une demande de travail y est
+  **proposée** par le modèle (#685), et le run qu'elle ouvre une fois approuvée
+  garde son identifiant attaché au message ;
 - `create_app` / `create_default_app` : l'app FastAPI (REST + WebSocket) et sa
   déclinaison de production (`maestro-api`).
 """
@@ -142,6 +143,7 @@ from maestro.controltower.chat import (
     ReponseIndisponible,
     ServiceChat,
     normaliser,
+    transcription,
 )
 from maestro.controltower.events import (
     CANAL_EVENEMENTS,
@@ -195,15 +197,16 @@ from maestro.controltower.hote_en_process import DerouleurRun, HoteRunEnProcess
 from maestro.controltower.journal import EntreeJournal, ServiceJournal
 from maestro.controltower.orchestration import (
     AGENT_ORCHESTRATION,
-    INTENTION_ECHANGE,
-    INTENTION_TRAVAIL,
     NOM_ORCHESTRATION,
     ROLE_ORCHESTRATION,
+    VERDICT_ACCORD,
+    VERDICT_ECHANGE,
+    VERDICT_PROPOSITION,
+    VERDICTS,
     ApercuOrchestration,
     LanceurRun,
     RepondeurOrchestration,
     apercu_de,
-    intention,
 )
 from maestro.controltower.persistence import (
     CLE_JOURNAL_EVENEMENTS,
@@ -276,8 +279,6 @@ __all__ = [
     "HOTES_RUN",
     "HOTE_RUN_DETACHE",
     "HOTE_RUN_EN_PROCESS",
-    "INTENTION_ECHANGE",
-    "INTENTION_TRAVAIL",
     "NOM_ASSISTANCE",
     "NOM_ORCHESTRATION",
     "PAS_HEURE",
@@ -294,6 +295,10 @@ __all__ = [
     "VALIDATION_APPROUVEE",
     "VALIDATION_EN_ATTENTE",
     "VALIDATION_REFUSEE",
+    "VERDICTS",
+    "VERDICT_ACCORD",
+    "VERDICT_ECHANGE",
+    "VERDICT_PROPOSITION",
     "VITALITE_INDETERMINE",
     "VITALITE_ORPHELIN",
     "VITALITE_VIVANT",
@@ -365,13 +370,13 @@ __all__ = [
     "detail_avec_cause",
     "evenements_depuis_step",
     "graphe_du_run",
-    "intention",
     "moteur_par_defaut",
     "normaliser",
     "oublieur_redis",
     "publieur_redis",
     "repondre_assistance",
     "solder_le_run",
+    "transcription",
     "validateur_redis",
     "vitalite",
 ]

@@ -63,26 +63,64 @@ persisté, ni l'événement diffusé, ni la socket. Deux usages seulement, dans 
 répondeur : **rattacher** le run ouvert, et **cadrer** l'aperçu, pour que la
 phrase « où en est-on ? » compte ce que l'écran d'à côté peut montrer.
 
-## Reconnaître une demande de travail — et le prix de se tromper
+## Le modèle juge, l'utilisateur tranche (#685)
 
-`intention` tranche sur une règle courte : **la demande commence, une fois les
-formules de politesse retirées, par un verbe d'action**. « Ajoute la pagination »,
-« peux-tu corriger le tri », « je voudrais migrer la base » ouvrent un run ;
-« comment ajouter une page ? », « où en sont les runs ? », « merci » n'en ouvrent
-pas.
+Ce canal a reconnu les demandes de travail par un **lexique** jusqu'à #685 : une
+demande commençait, politesses retirées, par un verbe d'une liste. La liste était
+l'arbitraire même — « Crée-moi une app » lançait un run, « Génère-moi une app »
+n'en lançait aucun —, et #682 a mesuré **quatre** causes de silence dans une seule
+phrase réellement envoyée. Le lexique est parti en entier : ni juge, ni voie
+rapide, ni repli. C'est le même chemin que le moteur avait déjà fait en #585, où
+classer une tâche « sensible » par radicaux a été désarmé au profit d'un jugement
+— « développer une fonction de suppression n'est pas exécuter une suppression ».
 
-Le choix vient de l'**asymétrie des deux erreurs**, pas d'une conviction sur le
-langage : ne pas reconnaître une demande coûte une reformulation, la reconnaître à
-tort lance un run — du quota, des écritures dans un projet, un arrêt à faire à la
-main. En cas de doute on **répond** donc, en proposant d'ouvrir le run : c'est une
-phrase de plus, jamais un run de trop. Un modèle jugerait mieux ; il jugerait aussi
-plus lentement, plus cher, et sans reproductibilité — et le raisonnement qui compte
-vraiment, celui qui découpe l'objectif en tâches, a déjà lieu **dans** le run.
+Ce qui le remplace tient en **un appel modèle par message**, qui rend d'un coup
+le texte de la réponse **et** le verdict (`_Verdict`) :
+
+- **proposition** — le dernier message est une demande de travail. Le canal
+  reformule l'objectif qu'il enverrait et demande l'accord. **Rien n'est ouvert à
+  cet instant** ;
+- **accord** — le dernier message approuve une proposition faite juste avant dans
+  ce fil. Le run part alors, sur l'objectif **tel qu'il a été montré** ;
+- **échange** — tout le reste : question, demande d'état, salutation, refus,
+  message obscur. Rien ne s'ouvre.
+
+Deux propriétés portent tout le reste :
+
+**Aucun run sans accord explicite.** C'est ce qui permet au modèle d'être
+*large* là où le lexique devait être timide : l'asymétrie des erreurs de #268 —
+ne pas reconnaître coûte une reformulation, reconnaître à tort coûte un run — est
+dissoute, un faux positif ne coûtant plus qu'un « non ». Le silence, lui, n'est
+pas un accord : une proposition sans réponse n'ouvre rien, parce que le run
+n'est ouvert que sur le verdict `accord` d'un message qui arrive.
+
+**Le fil est la seule mémoire.** Le répondeur reçoit le fil complet, donc sa
+propre proposition et la réponse de l'utilisateur : rien à stocker à côté, aucun
+état de session, aucun second lexique pour lire « oui » / « vas-y » / « plutôt
+pas » — juger l'accord est du même ordre que juger la demande, et c'est le même
+appel qui le fait.
+
+Et l'objectif lancé est **celui que le modèle a recopié de sa proposition**, pas
+le dernier message : `_ouvrir_un_run` ne connaît que `_Verdict.objectif`, si bien
+qu'un « oui » ne peut structurellement pas partir comme objectif de run. On a
+écarté de le **vérifier** contre le fil (chercher la reformulation dans les
+messages précédents) : ce serait un second juge, en expression régulière, juste
+après en avoir retiré un.
+
+Un verdict **illisible vaut un échange** : le texte du modèle est rendu tel quel
+et rien ne s'ouvre. Une réponse hors contrat coûte ainsi une reformulation, jamais
+un run — et jamais non plus un 502 sur une conversation que le modèle a pourtant
+tenue. Un fournisseur en **échec**, lui, n'est pas rattrapé ici : l'exception
+remonte et `ServiceChat` la traduit en `ReponseIndisponible` (502), comme pour le
+chat d'un agent. Le message franc est l'objet de #686.
 """
 
 from __future__ import annotations
 
+import json
+import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from maestro.agents.catalog import MODELE_EXECUTANT_DEFAUT, Agent
@@ -91,7 +129,7 @@ from maestro.controltower.chat import (
     MessageChat,
     RepondeurChat,
     ReponseChat,
-    normaliser,
+    transcription,
 )
 from maestro.controltower.events import ACTEUR_RUN, ROLE_RUN
 from maestro.controltower.portee import PorteeProjet
@@ -102,6 +140,7 @@ from maestro.controltower.state import (
     EXECUTION_EN_COURS,
     ControlTowerState,
 )
+from maestro.providers.base import ModelProvider
 
 #: Le nom du fil global — la clé de stockage (`core/chat/orchestrateur.jsonl`), le
 #: segment d'URL des endpoints `/api/chat/{agent}` et le `agent` des événements
@@ -113,16 +152,64 @@ NOM_ORCHESTRATION = ACTEUR_RUN
 #: Son rôle affiché, le même que celui du journal (`events.ROLE_RUN`).
 ROLE_ORCHESTRATION = ROLE_RUN
 
-#: Le cadre de l'orchestration si un jour elle passe par un modèle
-#: (`RepondeurModele`) : elle coordonne, elle n'exécute pas.
+#: Les trois verdicts que le modèle rend **avec** sa réponse (voir le module).
+#: `VERDICT_ECHANGE` garde le mot de l'`INTENTION_ECHANGE` d'avant #685 : c'est la
+#: même situation — rien ne s'ouvre — et le vocabulaire du fil n'a pas de raison
+#: de changer parce que le juge a changé.
+VERDICT_PROPOSITION = "proposition"
+VERDICT_ACCORD = "accord"
+VERDICT_ECHANGE = "echange"
+
+#: Les seuls verdicts admis. Tout autre mot — comme toute réponse hors contrat —
+#: retombe sur `VERDICT_ECHANGE` : la liste est **blanche**, jamais noire, parce
+#: qu'on ne maîtrise pas ce qu'un modèle peut écrire dans ce champ et qu'un mot
+#: inattendu ne doit jamais pouvoir valoir un accord.
+VERDICTS = frozenset({VERDICT_PROPOSITION, VERDICT_ACCORD, VERDICT_ECHANGE})
+
+#: Le cadre de l'orchestration : ce qu'elle est, et le contrat de sa réponse.
+#: Il existait depuis #268 « si un jour elle passe par un modèle » et n'avait
+#: jamais été branché ; #685 le branche et lui ajoute le verdict, puisque c'est le
+#: **même** appel qui rend la réponse et la décision.
 _PROMPT_ORCHESTRATION = """\
 Tu es l'orchestrateur de Maestro : tu reçois les demandes de l'utilisateur, tu les
 cadres et tu les confies à l'équipe d'agents (Développeur, QA, DevOps, BDD,
 Design). Tu n'exécutes pas le travail toi-même et tu ne parles pas à la place des
 agents — tu ouvres le travail, tu en rends compte et tu dis où il en est.
 
-Réponds en français, brièvement. Quand la demande est un travail à faire, dis ce
-que tu ouvres ; quand c'est une question sur l'état, réponds avec ce que tu sais."""
+Ouvrir un run coûte du quota et écrit dans le projet de l'utilisateur : tu n'en
+ouvres JAMAIS un de ta propre initiative. Tu proposes, et c'est l'utilisateur qui
+accepte.
+
+Réponds toujours par un seul objet JSON, sans rien autour :
+
+{"verdict": "proposition|accord|echange", "objectif": "...", "reponse": "..."}
+
+Le verdict :
+- "proposition" — le dernier message de l'utilisateur est une demande de travail,
+  sous n'importe quelle forme : impératif, question, souhait, subordonnée
+  ("génère-moi une application d'agenda", "j'aimerai que tu ajoutes la
+  pagination", "il faudrait que tu corriges le tri", "peux-tu me créer une
+  application"). Sois large : un run proposé de trop coûte un "non", une demande
+  légitime non reconnue coûte à l'utilisateur de se reformuler sans savoir
+  pourquoi.
+- "accord" — le dernier message approuve une proposition que TU viens de faire
+  dans ce fil ("oui", "vas-y", "ok lance"). Sans proposition juste avant, ce
+  n'est jamais un accord.
+- "echange" — tout le reste : question sur l'outil ou sur le travail, demande
+  d'état, salutation, refus ("non", "plutôt pas"), message que tu ne comprends
+  pas. Dans le doute, c'est "echange".
+
+L'objectif :
+- sur "proposition", l'objectif que tu enverrais au run — une phrase complète et
+  autonome, qui reformule la demande sans rien inventer ;
+- sur "accord", recopie MOT POUR MOT l'objectif de la proposition que
+  l'utilisateur vient d'approuver ;
+- vide sur "echange".
+
+La réponse : le texte affiché à l'utilisateur, en français, bref. Sur
+"proposition", il énonce l'objectif et demande explicitement l'accord. Sur
+"accord", il confirme que le run part. Sur "echange", il répond — en s'appuyant
+sur l'état de l'orchestration quand la question porte dessus."""
 
 #: La fiche de l'orchestration, hors catalogue (voir le module) : le chat n'a
 #: besoin que du nom, du rôle et du prompt système. Les compétences restent vides
@@ -149,10 +236,6 @@ LanceurRun = Callable[[str, str | None], Awaitable[Mapping[str, Any]]]
 #: fil lui a donné, l'appelant en fait une portée.
 ApercuOrchestration = Callable[[str | None], str]
 
-#: Les deux intentions que le canal distingue (voir le module).
-INTENTION_TRAVAIL = "travail"
-INTENTION_ECHANGE = "echange"
-
 #: Les statuts sous lesquels un run **n'est pas soldé** : il tourne, ou il attend
 #: quelqu'un. Les quatre comptent pour « en cours » dans l'aperçu — de la place
 #: où l'on pose la question, un run qui attend un arbitrage est un run en cours,
@@ -165,6 +248,10 @@ _STATUTS_ACTIFS = frozenset(
         EXECUTION_EN_ATTENTE_ARBITRAGE,
     }
 )
+
+#: Un bloc de code Markdown, que les modèles posent volontiers autour d'un JSON
+#: qu'on leur a demandé nu.
+_FENCE = re.compile(r"```(?:json)?\s*(?P<corps>.+?)```", re.DOTALL)
 
 
 def _accord(nombre: int, singulier: str, pluriel: str) -> str:
@@ -194,6 +281,13 @@ def apercu_de(state: ControlTowerState) -> ApercuOrchestration:
     la **même**, faute de quoi une seule phrase mélangerait deux périmètres.
     Sans projet — un client qui n'en envoie pas, un poste qui n'en a pas —, elle
     reste **transverse**, c'est-à-dire exactement la phrase d'avant ce lot.
+
+    Depuis #685 elle n'est plus rendue telle quelle à l'utilisateur : elle entre
+    dans le **prompt**, en tête du fil, et c'est le modèle qui la reprend quand la
+    question porte dessus. Elle reste lue à chaque message, y compris sur une
+    demande de travail — la construire coûte une lecture en mémoire, et savoir ce
+    qui tourne déjà est ce qui permet de répondre « un run est déjà en cours
+    là-dessus » plutôt que d'en proposer un second.
     """
 
     def apercu(projet_id: str | None = None) -> str:
@@ -216,135 +310,83 @@ def apercu_de(state: ControlTowerState) -> ApercuOrchestration:
 
     return apercu
 
-#: Les amorces retirées avant de chercher le verbe : politesses et formulations
-#: de volonté. Sans elles, « peux-tu corriger le tri » ne commencerait pas par un
-#: verbe d'action et passerait pour une question — alors que c'en est une demande.
-#: Elles sont **normalisées** (`chat.normaliser`), donc sans accents ni apostrophes.
-_AMORCES: tuple[str, ...] = (
-    "bonjour",
-    "salut",
-    "merci de",
-    "merci",
-    "s il te plait",
-    "stp",
-    "peux tu",
-    "pourrais tu",
-    "est ce que tu peux",
-    "est ce que tu pourrais",
-    "tu peux",
-    "tu pourrais",
-    "j aimerais",
-    "je voudrais",
-    "je veux",
-    "il faut",
-    "il faudrait",
-    "on doit",
-    "on devrait",
-    "on aimerait",
-    "j ai besoin de",
-    "besoin de",
-    "pour moi",
-    "maintenant",
-    "aussi",
-    "ensuite",
-    "puis",
-    "et",
-)
 
-#: Les verbes qui ouvrent une demande de travail, à l'impératif comme à
-#: l'infinitif — les deux façons dont on dicte une tâche. Normalisés, donc sans
-#: accents ; les formes en « -e » couvrent l'impératif (« ajoute ») et les formes
-#: en « -er » l'infinitif (« ajouter »), qui suit les amorces de volonté.
-_VERBES_TRAVAIL: tuple[str, ...] = (
-    "ajoute",
-    "ajouter",
-    "cree",
-    "creer",
-    "construis",
-    "construire",
-    "corrige",
-    "corriger",
-    "deploie",
-    "deployer",
-    "developpe",
-    "developper",
-    "documente",
-    "documenter",
-    "ecris",
-    "ecrire",
-    "enleve",
-    "enlever",
-    "fais",
-    "faire",
-    "implemente",
-    "implementer",
-    "integre",
-    "integrer",
-    "lance",
-    "lancer",
-    "migre",
-    "migrer",
-    "mets",
-    "mettre",
-    "optimise",
-    "optimiser",
-    "prepare",
-    "preparer",
-    "refactorise",
-    "refactoriser",
-    "regle",
-    "regler",
-    "remplace",
-    "remplacer",
-    "renomme",
-    "renommer",
-    "repare",
-    "reparer",
-    "redige",
-    "rediger",
-    "supprime",
-    "supprimer",
-    "teste",
-    "tester",
-    "traduis",
-    "traduire",
-)
+@dataclass(frozen=True)
+class _Verdict:
+    """Ce qu'un appel modèle rend : ce que le canal dit, et ce qu'il en conclut.
 
-
-def _sans_amorce(demande: str) -> str:
-    """La demande normalisée, débarrassée de ses amorces de politesse en tête.
-
-    Répété tant qu'une amorce tombe : « bonjour, peux-tu ajouter… » en porte
-    deux. Le nombre de tours est borné par la longueur du texte, chaque passe en
-    retirant au moins un mot.
+    `nom` est l'un des `VERDICT_*`, `reponse` le texte affiché, `objectif` la
+    reformulation — celle qui est **proposée**, puis celle qui est **lancée**
+    quand l'utilisateur l'a approuvée. Les trois viennent du même appel : séparer
+    « juger » de « répondre » en ferait deux, dont le second devrait redire au
+    modèle ce que le premier vient de décider.
     """
-    texte = demande
-    encore = True
-    while encore and texte:
-        encore = False
-        for amorce in _AMORCES:
-            if texte == amorce:
-                return ""
-            if texte.startswith(f"{amorce} "):
-                texte = texte[len(amorce) + 1 :]
-                encore = True
-                break
-    return texte
+
+    nom: str
+    reponse: str
+    objectif: str = ""
 
 
-def intention(demande: str) -> str:
-    """`INTENTION_TRAVAIL` si `demande` est un travail à ouvrir, sinon `INTENTION_ECHANGE`.
+def _objet_json(texte: str) -> Any:
+    """Le premier objet JSON de `texte` — nu, en bloc de code, ou noyé dans la prose.
 
-    La règle et sa justification sont dans le module : commence-t-elle, une fois
-    les politesses retirées, par un verbe d'action ? Tout le reste — questions,
-    salutations, demandes d'état — est une conversation, et **le doute compte
-    comme une conversation**.
+    La borne de la sous-chaîne est la **dernière** accolade fermante et non un
+    comptage de profondeur : les deux champs de texte du contrat (`reponse`,
+    `objectif`) portent de la prose écrite d'après un message humain, donc des
+    accolades sont possibles *dans les chaînes*, où un compteur les prendrait pour
+    de la structure et couperait l'objet en plein milieu. Le décodage tranche
+    ensuite — un candidat mal formé lève et le suivant est essayé.
     """
-    texte = _sans_amorce(normaliser(demande))
-    if not texte:
-        return INTENTION_ECHANGE
-    premier = texte.split(" ", 1)[0]
-    return INTENTION_TRAVAIL if premier in _VERBES_TRAVAIL else INTENTION_ECHANGE
+    candidats = [texte.strip()]
+    fence = _FENCE.search(texte)
+    if fence is not None:
+        candidats.append(fence.group("corps").strip())
+    debut, fin = texte.find("{"), texte.rfind("}")
+    if debut != -1 and fin > debut:
+        candidats.append(texte[debut : fin + 1])
+    for candidat in candidats:
+        try:
+            return json.loads(candidat)
+        except json.JSONDecodeError:
+            continue
+    return None
+
+
+def _verdict_depuis(texte: str) -> _Verdict:
+    """Le verdict lu dans la réponse du modèle — **un verdict illisible est un échange**.
+
+    Rendre une erreur ferait d'une réponse hors contrat un 502, sur un canal qui
+    est depuis #666 la seule porte d'entrée : le modèle a parlé, on affiche ce
+    qu'il a dit, et on n'ouvre rien. C'est l'asymétrie du module appliquée à
+    l'analyse plutôt qu'au jugement — ce qu'on ne comprend pas ne peut jamais
+    valoir un accord.
+    """
+    charge = _objet_json(texte)
+    if not isinstance(charge, Mapping):
+        return _Verdict(nom=VERDICT_ECHANGE, reponse=texte.strip())
+    nom = str(charge.get("verdict") or "").strip().lower()
+    return _Verdict(
+        nom=nom if nom in VERDICTS else VERDICT_ECHANGE,
+        # Le texte brut en repli : un objet bien formé mais sans phrase à
+        # afficher laisserait le fil muet, et `ServiceChat` refuse une réponse
+        # vide (502). Mieux vaut montrer ce que le modèle a écrit.
+        reponse=str(charge.get("reponse") or "").strip() or texte.strip(),
+        objectif=str(charge.get("objectif") or "").strip(),
+    )
+
+
+def _prompt(fil: Sequence[MessageChat], etat: str) -> str:
+    """Le fil rendu en prompt, précédé de l'état de l'orchestration quand on l'a.
+
+    La conversation passe par `chat.transcription` — la **même** mise en forme
+    que le chat d'un agent, sources comprises — et l'état vient en tête plutôt
+    qu'en queue : la consigne de réponse ferme la transcription, et glisser un
+    fait après elle le ferait lire comme une instruction de plus.
+    """
+    conversation = transcription(fil)
+    if not etat:
+        return conversation
+    return f"État de l'orchestration : {etat}\n\n{conversation}"
 
 
 class _Redaction:
@@ -373,17 +415,21 @@ class _Redaction:
 
 
 class RepondeurOrchestration(RepondeurChat):
-    """Le répondeur du fil global : il répond, et il peut ouvrir un run (#268).
+    """Le répondeur du fil global : il répond, et il peut ouvrir un run (#268, #685).
 
-    `lanceur` ouvre le run d'une demande de travail (`LanceurRun`) ; sans lui, le
-    canal reste conversationnel et le dit. `apercu` rend l'état de l'orchestration
-    en une phrase pour les questions du type « où en est-on ? » ; sans lui, la
-    réponse se borne à orienter.
+    `lanceur` ouvre le run approuvé (`LanceurRun`) ; sans lui, le canal reste
+    conversationnel et le dit. `apercu` rend l'état de l'orchestration en une
+    phrase, qui entre dans le prompt ; sans lui, le modèle juge sur le seul fil.
+    `provider` est le fournisseur du jugement — résolu **paresseusement** comme
+    dans `RepondeurModele` : construire le répondeur ne coûte rien et ne lève
+    aucune erreur de configuration, ce dont dépend `create_app`.
 
     Un lancement qui échoue **ne lève pas** : il se raconte dans le fil. Une
     exception se traduirait en `ReponseIndisponible`, donc en 502 sans trace — or
     la demande, elle, est déjà persistée, et son auteur a besoin de lire pourquoi
-    rien ne s'est ouvert pour pouvoir reformuler.
+    rien ne s'est ouvert pour pouvoir reformuler. Un fournisseur en échec, lui,
+    n'est pas rattrapé : il n'y a alors ni réponse ni verdict, donc rien à
+    raconter (le message franc est l'objet de #686).
     """
 
     def __init__(
@@ -391,9 +437,11 @@ class RepondeurOrchestration(RepondeurChat):
         *,
         lanceur: LanceurRun | None = None,
         apercu: ApercuOrchestration | None = None,
+        provider: ModelProvider | None = None,
     ) -> None:
         self._lanceur = lanceur
         self._apercu = apercu
+        self._provider = provider
 
     async def repondre(self, agent: Agent, fil: Sequence[MessageChat]) -> str:
         """La réponse seule — `produire` est la voie complète (rattachement compris)."""
@@ -407,45 +455,68 @@ class RepondeurOrchestration(RepondeurChat):
         incrementer: Incrementeur | None = None,
         projet_id: str | None = None,
     ) -> ReponseChat:
-        """Répond au dernier message, en ouvrant un run si c'en est une demande.
+        """Répond au dernier message, et ouvre le run que l'utilisateur vient d'approuver.
+
+        Un seul appel modèle (`_juger`), dont le verdict décide de la suite :
+        seul `VERDICT_ACCORD` ouvre quelque chose. Une **proposition** n'ouvre
+        rien — c'est tout le sujet de #685 —, et un message qui ne vient pas
+        n'ouvre rien non plus, faute de verdict à rendre : le silence n'est pas un
+        accord parce qu'il n'est pas un message.
 
         `projet_id` est le **projet de la fenêtre** d'où part la demande (#683).
-        Il traverse les deux voies, parce que les deux le doivent pour la même
-        raison : la voie active y **rattache** le run qu'elle ouvre, la voie
-        conversationnelle y **cadre** l'aperçu qu'elle rend. Les dissocier ferait
-        annoncer l'état d'un périmètre et travailler dans un autre.
+        Il sert deux fois, et les deux le doivent pour la même raison : il
+        **cadre** l'aperçu que le modèle reçoit, et il **rattache** le run que
+        l'accord ouvre. Les dissocier ferait juger sur l'état d'un périmètre et
+        travailler dans un autre.
         """
-        demande = fil[-1].contenu if fil else ""
         redaction = _Redaction(incrementer)
-        if intention(demande) != INTENTION_TRAVAIL:
-            await self._echanger(redaction, demande, projet_id)
-            return ReponseChat(contenu=redaction.texte)
-        return await self._ouvrir_un_run(redaction, demande, projet_id)
-
-    async def _echanger(
-        self, redaction: _Redaction, demande: str, projet_id: str | None = None
-    ) -> None:
-        """La voie conversationnelle : ce qu'on sait de l'état, puis ce qu'on sait faire."""
-        if self._apercu is not None:
-            await redaction.ecrire(self._apercu(projet_id))
-            await redaction.ecrire(" ")
-        await redaction.ecrire(
-            "Dites-moi le travail à faire — « ajoute la pagination à la liste des "
-            "projets », « corrige le tri des tâches » — et j'ouvre un run : je "
-            "découpe l'objectif en tâches et je les confie aux agents compétents. "
-        )
-        if self._lanceur is None:
+        verdict = await self._juger(agent, fil, projet_id)
+        await redaction.ecrire(verdict.reponse)
+        if verdict.nom == VERDICT_ACCORD:
+            return await self._ouvrir_un_run(redaction, verdict.objectif, projet_id)
+        if verdict.nom == VERDICT_PROPOSITION and self._lanceur is None:
+            # Prévenir **avant** le « oui » : proposer un run qu'on ne pourra pas
+            # ouvrir ferait attendre l'utilisateur pour un refus au tour suivant.
             await redaction.ecrire(
-                "⚠ Aucune exécution n'est branchée sur ce fil pour l'instant : je "
+                " ⚠ Aucune exécution n'est branchée sur ce fil pour l'instant : je "
                 "peux en parler, pas encore l'ouvrir."
             )
-        else:
-            await redaction.ecrire("Le suivi reste dans ce fil.")
+        return ReponseChat(contenu=redaction.texte)
+
+    async def _juger(
+        self, agent: Agent, fil: Sequence[MessageChat], projet_id: str | None
+    ) -> _Verdict:
+        """L'appel modèle — fournisseur résolu au premier usage (import local, comme #84).
+
+        Le prompt système est celui de la fiche (`_PROMPT_ORCHESTRATION`), qui
+        porte le contrat de la réponse ; le prompt d'utilisateur est le fil, précédé
+        de l'état. Aucun `PlaybookStore` ici, contrairement à `RepondeurModele` :
+        l'orchestration n'est pas au catalogue, donc n'a pas de playbook éditable
+        — et le contrat de sortie n'est pas un texte que l'UI doit pouvoir
+        réécrire.
+        """
+        if self._provider is None:
+            from maestro.providers.factory import provider_from_settings
+
+            self._provider = provider_from_settings()
+        etat = self._apercu(projet_id) if self._apercu is not None else ""
+        texte = await self._provider.generate(
+            _prompt(fil, etat),
+            model=agent.modele,
+            system_prompt=agent.prompt_systeme,
+        )
+        return _verdict_depuis(texte)
 
     async def _ouvrir_un_run(
-        self, redaction: _Redaction, demande: str, projet_id: str | None = None
+        self, redaction: _Redaction, objectif: str, projet_id: str | None
     ) -> ReponseChat:
-        """La voie active : ouvrir le run de `demande`, dans son projet, et le rattacher.
+        """Ouvre le run de `objectif`, dans son projet, et le rattache à la réponse.
+
+        `objectif` est **la reformulation approuvée** et jamais le dernier message
+        (#685) : la méthode ne reçoit pas le fil, donc un « oui » ne peut pas
+        partir comme objectif de run même par accident. Un objectif vide est un
+        verdict qui se contredit — accord sans rien à lancer : on le dit et on
+        n'ouvre rien, plutôt que de retomber sur le message brut.
 
         Le run **hérite du projet de la fenêtre** (#683) : il apparaît donc dans
         la liste des runs de ce projet et s'ouvre en détail, là où un run sans
@@ -454,16 +525,21 @@ class RepondeurOrchestration(RepondeurChat):
         deviné : `projet_id` est ce que la fenêtre a envoyé, `None` quand elle n'a
         pas de projet, et le run part alors sans projet comme avant ce lot.
         """
+        if not objectif:
+            await redaction.ecrire(
+                " Je n'ai pas retrouvé l'objectif que vous venez d'approuver : "
+                "redites-moi le travail à faire et je vous le proposerai à nouveau."
+            )
+            return ReponseChat(contenu=redaction.texte)
         if self._lanceur is None:
             await redaction.ecrire(
-                "Je ne peux pas ouvrir de run depuis ce fil : aucune exécution n'y "
+                " Je ne peux pas ouvrir de run depuis ce fil : aucune exécution n'y "
                 "est branchée. La demande est bien enregistrée ici."
             )
             return ReponseChat(contenu=redaction.texte)
 
-        await redaction.ecrire("J'ouvre un run sur cette demande.")
         try:
-            resume = await self._lanceur(demande, projet_id)
+            resume = await self._lanceur(objectif, projet_id)
         except Exception as echec:
             # Nommé dans le fil plutôt que levé : voir la classe. Un objectif
             # refusé (vide, plafond hors bornes) et un moteur qui ne démarre pas

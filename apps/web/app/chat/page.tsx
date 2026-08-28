@@ -336,7 +336,7 @@ function SuitesDuFil({
       <div className="mt-3">
         <EtatVide
           icone={IconeRuns}
-          message="Rien encore. Une demande de travail — « ajoute la pagination à la liste des projets » — ouvre un run, et il apparaît ici avec ses tâches."
+          message="Rien encore. Dites le travail à faire — « ajoute la pagination à la liste des projets » — et l'orchestrateur vous proposera un run : une fois que vous l'aurez approuvé, il apparaît ici avec ses tâches."
         />
       </div>
     );
