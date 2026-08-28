@@ -66,6 +66,32 @@ export const AMORCES_ORCHESTRATION: string[] = [
   "Qu'est-ce qui attend mon arbitrage ?",
 ];
 
+/**
+ * Les destinataires que `/chat` propose : l'orchestration en tête, puis le parc.
+ * C'est l'ordre du menu (`/chat` avant `/agents`) et celui de l'usage — on
+ * s'adresse à l'orchestration par défaut, à un exécutant par exception.
+ *
+ * **Elle est retirée du parc plutôt qu'ajoutée à côté**, parce qu'elle y figure :
+ * `GET /api/agents` rend les acteurs vus au journal, et l'orchestrateur en est un
+ * (`events.ACTEUR_RUN`) — c'est ce que supposent déjà la répartition par agent et
+ * le panneau des coûts, où sa planification est une dépense comme une autre. La
+ * réserve de `maestro.agents.store.NOMS_RESERVES` interdit qu'un agent
+ * *personnalisé* prenne ce nom ; elle ne promet pas que le parc n'en porte aucun.
+ * Le prendre pour un exécutant donnait deux entrées pour un seul fil, et deux
+ * enfants React sous la même clé (#671).
+ *
+ * Le doublon ne se voyait ni en `--demo` ni en test, dont les parcs n'ont jamais
+ * porté l'orchestrateur : seul le mode réel sert cette forme-là. C'est pourquoi la
+ * règle vit ici, éprouvable sans monter d'écran, et pourquoi le parc des tests
+ * d'écran porte désormais l'orchestrateur.
+ *
+ * Le reste du parc passe **tel quel** : un exécutant en double serait un défaut de
+ * la projection, que l'écran masquerait au lieu de le montrer.
+ */
+export function destinatairesDuFil(parc: readonly string[]): string[] {
+  return [AGENT_ORCHESTRATION, ...parc.filter((nom) => nom !== AGENT_ORCHESTRATION)];
+}
+
 /** Le caractère qui ouvre une mention. */
 const MENTION = "@";
 

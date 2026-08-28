@@ -90,6 +90,7 @@ import {
   AGENT_ORCHESTRATION,
   AMORCES_ORCHESTRATION,
   INTERLOCUTEUR_ORCHESTRATION,
+  destinatairesDuFil,
   mentionEnTete,
 } from "@/lib/orchestration";
 import type { MessageChat } from "@/lib/types";
@@ -100,11 +101,11 @@ export default function PageChat() {
   const [destinataire, setDestinataire] = useState(AGENT_ORCHESTRATION);
   const fil = useChat(destinataire);
 
-  // L'orchestration en tête, puis les agents du parc : c'est l'ordre du menu
-  // (`/chat` avant `/agents`) et celui de l'usage — on s'adresse à
-  // l'orchestration par défaut, à un exécutant par exception.
+  // L'orchestration en tête, puis les agents du parc — d'où elle est retirée,
+  // le parc réel la portant comme acteur du journal (`destinatairesDuFil` en
+  // donne la raison, #671).
   const destinataires = useMemo(
-    () => [AGENT_ORCHESTRATION, ...agents.map((agent) => agent.nom)],
+    () => destinatairesDuFil(agents.map((agent) => agent.nom)),
     [agents],
   );
 
