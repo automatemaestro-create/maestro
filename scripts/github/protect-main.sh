@@ -7,16 +7,19 @@
 # à rejouer sur un dépôt neuf plutôt qu'à recliquer dans une interface dont personne ne se
 # souviendra six mois plus tard. Idempotent (PUT complet), sans aucune écriture en `--check`.
 #
-# ⚠ CE RÉGLAGE N'EST PAS EN PLACE AUJOURD'HUI, et ce n'est pas un oubli. La protection de branche
-# n'existe pas sur un dépôt PRIVÉ d'un compte GitHub Free ; ni GitHub Pro ni le passage en public
-# n'ont été retenus (décision utilisateur, 2026-08-14, docs/10 §8.8). Aucun garde-fou DE LA FORGE
-# n'empêche donc de merger une PR au rouge — les six verdicts se lisent sur la PR, et le pipeline
-# vert est éprouvé un cran plus haut, par `lib.sh merge-mr`, seul chemin de merge du dépôt : aucun
-# merge non vérifié (docs/10 §6, #417). Ce que ce script poserait, c'est ce même contrôle là où
-# aucune main ne peut le contourner.
-# Ce script est écrit sans être joué à dessein : il rend cette décision réversible en une commande
-# le jour où le plan change, au lieu d'une enquête à refaire. `--check` répond 3 et dit laquelle
-# des deux causes (plan, jeton) bloque.
+# ⚠ CE RÉGLAGE EST EN PLACE DEPUIS LE 2026-08-28 (#734). Il ne l'était pas jusque-là, et ce n'était
+# pas un oubli : la protection de branche n'existe pas sur un dépôt PRIVÉ d'un compte GitHub Free,
+# et ni GitHub Pro ni le passage en public n'avaient été retenus (décision utilisateur, 2026-08-14,
+# docs/10 §8.8). Le dépôt est passé **public** le 2026-08-28 pour une raison qui n'était pas
+# celle-ci — le quota de 2 000 min/mois d'Actions, qui ne pèse que sur les dépôts privés —, et la
+# protection est venue avec : c'est la seconde des deux issues d'alors, choisie quatorze jours plus
+# tard pour un autre motif. Le script écrit sans être joué a fait exactement ce pour quoi il était
+# écrit — rendre la bascule réversible en une commande, au lieu d'une enquête à refaire.
+#
+# Ce qu'il ajoute à `lib.sh merge-mr` (docs/10 §6, #417) : merge-mr refuse déjà un pipeline rouge et
+# va plus loin que la forge en exigeant un vert porté par la TÊTE de la PR. Mais il ne protège que
+# ce qui PASSE PAR LUI. La protection, elle, est opposable à un clic dans l'interface web comme à un
+# `gh pr merge` lancé à la main. Les deux se cumulent, aucun ne remplace l'autre.
 #
 # Usage :
 #   bash scripts/github/protect-main.sh            # pose (ou repose) la protection
@@ -65,8 +68,9 @@ expliquer_refus() {
   Cause : le PLAN du compte. La protection de branche — comme les rulesets — n'existe pas sur un
   dépôt PRIVÉ d'un compte GitHub Free : seulement sur un dépôt public, ou avec GitHub Pro / Team /
   Enterprise. Aucun jeton ne lève ça.
-  Remèdes : souscrire GitHub Pro sur le compte propriétaire, ou passer le dépôt en public — la
-  visibilité a été arbitrée « privé » par #335, c'est donc une décision et pas un réglage.
+  Remèdes : souscrire GitHub Pro sur le compte propriétaire, ou passer le dépôt en public.
+  Sur CE dépôt la question est tranchée depuis le 2026-08-28 : il est public (#734). Voir ce
+  message ici signifie donc qu'on joue le script sur un AUTRE dépôt, encore privé.
 EOF
   elif printf '%s' "$corps" | grep -q "not accessible by personal access token"; then
     cat >&2 <<'EOF'
@@ -140,12 +144,19 @@ fi
 # workflow : `strict: true` obligerait à ramener `main` dans chaque PR avant de merger, alors que
 # le rattrapage d'une branche en retard est ici un geste jugé au cas par cas (/mr-fix, docs/10 §8.3).
 #
-# `enforce_admins: false` — ce n'est pas une porte de sortie de confort, c'est ce qui LAISSE VIVRE
-# LE MIROIR : jusqu'à la bascule d'`origin` (#343), la branche `main` de ce dépôt est alimentée par
-# le miroir push depuis GitLab, qui pousse directement dessus. Une branche protégée refuse les
-# pushes directs — sauf aux administrateurs quand `enforce_admins` est faux, et le compte du miroir
-# est le propriétaire. Le passer à `true` est un geste délibéré, à faire le jour où plus rien ne
-# pousse sur `main` en dehors des merges de PR.
+# `enforce_admins: true` — depuis #734, et c'est le geste que la version précédente de ce commentaire
+# annonçait « à faire le jour où plus rien ne pousse sur `main` en dehors des merges de PR ». Ce jour
+# est passé : la valeur était `false` pour LAISSER VIVRE LE MIROIR push depuis GitLab, qui poussait
+# directement sur `main` et qui est parti avec la bascule d'`origin` (#343), puis avec l'outillage
+# GitLab (#344). La laisser à `false` aujourd'hui ne protégerait plus rien d'existant — elle
+# rendrait seulement la protection inopposable au compte propriétaire, c'est-à-dire au seul compte
+# qui merge, ce qui la viderait de son objet : ce dépôt n'a pas d'autre administrateur.
+#
+# ⚠ Ce n'est PAS une porte fermée à clé sur soi-même, et c'est ce qui rend le choix tenable : un
+# administrateur peut toujours modifier ou retirer la protection elle-même. L'échappatoire existe
+# donc encore, mais elle devient un geste DÉLIBÉRÉ et VISIBLE (une écriture sur la règle, relisible
+# dans les journaux du dépôt) au lieu d'un contournement silencieux au moment du merge. C'est
+# exactement la propriété qu'on cherche.
 corps_json() {
   local contextes="" c
   for c in "${CHECKS[@]}"; do
@@ -154,7 +165,7 @@ corps_json() {
   cat <<EOF
 {
   "required_status_checks": { "strict": false, "contexts": [$contextes] },
-  "enforce_admins": false,
+  "enforce_admins": true,
   "required_pull_request_reviews": null,
   "restrictions": null
 }

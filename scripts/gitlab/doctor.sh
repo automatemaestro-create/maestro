@@ -325,11 +325,16 @@ fi
 # les rend NORMALISÉES (true|false|-) : elles vivent dans la protection de branche de `main` et
 # dans `delete_branch_on_merge`.
 #
-# L'absence de protection de branche est une DÉCISION documentée (docs/10 §8.8, 2026-08-14) — la
-# protection de branche n'existe pas sur un dépôt privé d'un compte Free, ni GitHub Pro ni le passage
-# en public n'ont été retenus, et `scripts/github/protect-main.sh` attend écrit-mais-non-joué le jour
-# où le plan change. Le rendre en ⚠ ferait de ce bilan un fichier durablement jaune, sur un point que
-# personne ne compte corriger — et `--strict` échouerait en CI pour dire une chose qu'on sait déjà.
+# ⚠ L'ABSENCE DE PROTECTION A CHANGÉ DE SENS LE 2026-08-28 (#734). Tant que le dépôt était privé sur
+# un compte Free, elle était une DÉCISION documentée (docs/10 §8.8, 2026-08-14) : la protection
+# n'existait pas sur ce plan, `protect-main.sh` attendait écrit-mais-non-joué, et la rendre en ⚠
+# aurait fait de ce bilan un fichier durablement jaune sur un point que personne ne comptait
+# corriger — `--strict` aurait échoué en CI pour dire une chose qu'on savait déjà.
+#
+# Le dépôt est public et la protection est POSÉE. Son absence n'est donc plus une décision mais une
+# DÉRIVE : quelqu'un l'a retirée, ou un dépôt neuf ne l'a pas encore reçue. Elle se répare en une
+# commande, ce qui est exactement le critère qui sépare ici un `info` d'un `warn` — et un `--strict`
+# qui échoue dessus dit quelque chose qu'on ne sait PAS déjà.
 section "6. Garde-fous de merge du dépôt"
 declare -A REGLAGE=()
 while IFS=$'\t' read -r cle valeur; do
@@ -343,10 +348,11 @@ if [ "${#REGLAGE[@]}" = 0 ]; then
 else
   case "${REGLAGE[pipeline_requis]:--}" in
     true)  ok "protection de branche sur main : les checks CI sont requis — aucun merge au rouge" ;;
-    false) info "aucune protection de branche sur main — décision assumée (dépôt privé, compte Free : docs/10 §8.8)"
-           printf '    → aucun merge non vérifié : faute de checks requis, le pipeline vert est éprouvé\n'
-           printf '      par « lib.sh merge-mr », seul chemin de merge du dépôt (docs/10 §6, #417)\n'
-           printf '    → le jour où le plan change : bash scripts/github/protect-main.sh\n' ;;
+    false) warn "aucune protection de branche sur main : un merge au rouge redevient possible hors de nos chemins"
+           printf '    → posée le 2026-08-28 (#734, docs/10 §8.8) — son absence est une dérive, plus une décision\n'
+           printf '    → « lib.sh merge-mr » tient toujours la règle POUR LES SESSIONS ; ce qui manque est\n'
+           printf '      ce qui la tenait pour un clic dans l'"'"'interface web (docs/10 §6, #417)\n'
+           printf '    → réparer : bash scripts/github/protect-main.sh\n' ;;
     *)     warn "protection de branche de main illisible — contrôle ignoré" ;;
   esac
   case "${REGLAGE[suppression_branche]:--}" in

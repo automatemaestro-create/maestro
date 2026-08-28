@@ -1131,9 +1131,13 @@ Ce que chacun porte :
   ⚠ **Ce n'est pas un verrou, et ça ne peut pas en être un.** La demande d'origine était
   d'*empêcher* la fermeture ; c'est impossible sur ce dépôt, pour deux raisons indépendantes
   mesurées le 2026-08-20 : les **rulesets ne visent que branches et tags** — il n'existe aucune
-  règle portant sur la fermeture d'une issue —, et ils sont de toute façon **indisponibles**
-  (`GET /repos/:owner/:repo/rulesets` répond **HTTP 403** « Upgrade to GitHub Pro or make this
-  repository public », le mur de #338, §8.8). D'où une **correction a posteriori** : la fermeture a
+  règle portant sur la fermeture d'une issue —, et ils étaient alors de surcroît **indisponibles**
+  (`GET /repos/:owner/:repo/rulesets` répondait **HTTP 403** « Upgrade to GitHub Pro or make this
+  repository public », le mur de #338, §8.8). ⚠ **La seconde raison est tombée le 2026-08-28**, le
+  dépôt étant passé public (#734) : les rulesets sont désormais disponibles. **La première suffit**,
+  et c'est elle qui portait la conclusion — aucun ruleset ne sait porter sur la fermeture d'une
+  issue, donc il n'y a toujours rien à verrouiller. Ne pas relire la levée du 403 comme une piste
+  rouverte. D'où une **correction a posteriori** : la fermeture a
   lieu, puis elle est annulée. C'est à annoncer ainsi partout — un verrou annoncé qui n'en est pas
   un est pire que pas de verrou. Cinq choses à connaître avant d'y toucher :
 
@@ -1407,8 +1411,13 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
   pendant que le geste **vérifié** passe. Lever le `deny` mettrait un merge au rouge à un `gh` près,
   pour zéro gain — aucun appelant légitime n'a besoin de la commande nue, `merge-mr` passant par
   l'API REST. ⚠ **L'auto-merge natif de GitHub n'est pas davantage une option** : `gh pr merge
-  --auto` ne tient ses promesses que derrière une protection de branche, qui n'existe pas sur ce
-  plan (§8.8) — activé tel quel, il mergerait **immédiatement**, pipeline rouge compris.
+  --auto` ne tient ses promesses que derrière une protection de branche, qui n'existait pas sur ce
+  plan quand ces lignes ont été écrites (§8.8) — activé tel quel, il aurait mergé **immédiatement**,
+  pipeline rouge compris. **La protection existe depuis #734**, donc `--auto` attendrait désormais
+  les six checks : la raison qui l'écartait est tombée, la **conclusion ne bouge pas**. Il resterait
+  aveugle à ce que `merge-mr` vérifie en plus — que le vert est porté par la **tête de la PR** —, et
+  surtout il **merge sans repasser par le seul chemin de merge du dépôt**, ce qui est l'interdit
+  lui-même et non une précaution autour de lui.
 
   **Deux conséquences, à ne pas enterrer** — elles ne sont pas des effets de bord, ce sont les
   décisions de cadrage du chantier (utilisateur, 2026-08-21) :
@@ -1572,14 +1581,17 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
     la relecture), l'état `draft`/`ready`, le statut du pipeline, l'auteur et le relecteur s'il en
     a été posé un à la main (colonne à « - » sinon, cas désormais normal). C'est **elle seule** qui
     porte le signal de revue.
-- **Une PR au pipeline rouge n'est pas mergeable — et c'est NOUS qui le tenons, pas la forge.** Du
+- **Une PR au pipeline rouge n'est pas mergeable — et depuis #734 DEUX gardiens le tiennent.** Du
   temps de GitLab, le réglage projet `only_allow_merge_if_pipeline_succeeds=true` (complété par
   `allow_merge_on_skipped_pipeline=false`) faisait appliquer la règle par **GitLab lui-même** : le
-  bouton de merge restait grisé. **Ce réglage n'a pas d'équivalent joué côté GitHub** — son pendant
-  est la protection de branche, indisponible sur un dépôt privé d'un compte Free (§8.8, mesuré le
-  2026-08-14). La règle n'a pas changé, son gardien si : c'est le **quatrième prérequis de
-  `merge-mr`** (premier point de cette section), qui compare en plus le sha du run à la **tête de la
-  PR** — ce que la protection de branche, elle, n'aurait pas fait.
+  bouton de merge restait grisé. Son pendant GitHub — la protection de branche — a été
+  **indisponible** tant que le dépôt était privé sur un compte Free (§8.8, mesuré le 2026-08-14),
+  puis **posé le 2026-08-28** avec le passage en public. Entre les deux, la règle n'a jamais changé,
+  seul son gardien : GitLab, puis **nous seuls**, puis les deux. Le nôtre est le **quatrième
+  prérequis de `merge-mr`** (premier point de cette section), qui compare en plus le sha du run à la
+  **tête de la PR** — ce que la protection de branche, elle, ne fait pas. Les deux se cumulent et
+  aucun ne rend l'autre inutile : la protection couvre ce qui **ne passe pas** par nos chemins
+  (un clic dans l'interface web), `merge-mr` couvre ce que la protection **ne sait pas juger**.
 
 **Adossement à la couche permissions (Claude Code).** Ces garde-fous ne reposent pas que sur les
 consignes des commandes : ils sont aussi **filtrés par l'allowlist** [`.claude/settings.json`](../.claude/settings.json)
@@ -1902,10 +1914,12 @@ verdict réellement lu, celui qui conditionne le merge. Trois conséquences prat
 - **La case « Pipeline CI verte » de la PR est vide au premier passage**, et c'est normal :
   `/ticket-finish` pousse **puis** ouvre la PR, donc le pipeline naît *après* le constat (§6).
 
-Le garde-fou de merge **de la forge** n'est, lui, **pas posé**, et c'est une décision documentée :
-la protection de branche n'existe pas sur un dépôt privé d'un compte Free (§8.8). Les six verdicts
-se lisent sur la PR — et la règle « pas de merge au rouge » est tenue **par nous**, dans
-`lib.sh merge-mr`, quatrième prérequis (§6).
+Le garde-fou de merge **de la forge** est, lui, **posé depuis le 2026-08-28** (#734) : les six jobs
+sont des **checks requis** sur `main`, `enforce_admins` compris. Il ne remplace pas le nôtre — la
+règle « pas de merge au rouge » reste tenue dans `lib.sh merge-mr`, quatrième prérequis (§6), seul à
+exiger que le vert soit porté par la **tête de la PR** — il le double là où nos chemins ne passent
+pas. Avant cette date, la protection n'existait pas sur un dépôt privé d'un compte Free (§8.8) et le
+nôtre était le seul.
 
 ### 8.1 Aucun runner à tenir allumé (#344)
 
@@ -2645,14 +2659,16 @@ croisement des deux, et une différence de comportement d'un outil (`ln -s` cont
 pipeline, avec git, est ce qui a permis de trancher les cinq causes de #333 — c'est reproductible
 en quelques lignes de Docker et ça n'a pas besoin d'être versionné.
 
-### 8.8 La CI GitHub en autorité — déclencheur et protection de `main` (#338)
+### 8.8 La CI GitHub en autorité — déclencheur et protection de `main` (#338, #734)
 
 L'expérience de §8.6 a rendu son verdict, la migration est décidée (#335), et
 [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) cesse d'être un miroir dont personne ne
-lit le verdict. Le ticket visait deux choses — le **déclencheur** et la **protection de `main`** — et
-n'en a obtenu qu'une : le déclencheur est en place, la protection est **écartée faute d'exister sur
-ce plan**. Le reste de la section explique les deux, plus un piège dans lequel il ne faut tomber
-qu'une fois, de préférence en le lisant plutôt qu'en le vivant.
+lit le verdict. #338 visait deux choses — le **déclencheur** et la **protection de `main`** — et n'en
+a obtenu qu'une : le déclencheur est en place, la protection **écartée faute d'exister sur ce plan**.
+**#734 a livré la seconde**, quatorze jours plus tard et par un chemin qui n'était pas celui qu'on
+cherchait — le passage du dépôt en **public**, décidé pour le quota d'Actions. Le reste de la section
+explique les deux, plus un piège dans lequel il ne faut tomber qu'une fois, de préférence en le
+lisant plutôt qu'en le vivant.
 
 > Pendant la migration, `.gitlab-ci.yml` est resté en place et a fait foi pour les MR GitLab ; les
 > deux CI ont coexisté jusqu'à la bascule d'`origin` (#343). La CI GitLab et les 1 146 lignes
@@ -2673,60 +2689,92 @@ depuis #418 la commande passe la PR en **prête** avant de merger (§6), mais le
 chemin — la PR est ouverte en brouillon puis levée, et sans les `types:` par défaut le pipeline ne
 naîtrait qu'à la levée, donc trop tard pour être attendu.
 
-**La protection de `main` : écartée, et c'est une décision.** Le pendant de
-`only_allow_merge_if_pipeline_succeeds` (§8.1) **n'est pas en place**, parce qu'il n'est pas
-disponible : mesuré le 2026-08-14 sur `/rulesets` et `/rules/branches/main`, deux endpoints en
-**lecture seule** qui répondent « *Upgrade to GitHub Pro or make this repository public to enable
-this feature* ». La protection de branche, rulesets compris, **n'existe pas sur un dépôt privé d'un
-compte GitHub Free** — et le compte propriétaire `automatemaestro-create` est un compte personnel au
-plan Free, tandis que #335 a arbitré le dépôt **privé**. Les deux issues possibles ont été
-présentées et **toutes deux refusées** (utilisateur, 2026-08-14) : GitHub Pro (~4 $/mois) et le
-passage en public (qui aurait renversé l'arbitrage de visibilité de #335).
+**La protection de `main` : écartée en 2026-08-14, POSÉE le 2026-08-28 (#734).** Les deux moitiés se
+lisent ensemble, et l'ordre compte pour qui relit.
 
-> ⚠ **Aucun garde-fou de la FORGE n'empêche de merger une PR au rouge sur ce dépôt.** Ce n'est pas
-> un oubli ni un blocage à lever : c'est le régime choisi.
+*Ce qui s'est passé d'abord.* Le pendant de `only_allow_merge_if_pipeline_succeeds` (§8.1) n'était
+pas en place parce qu'il n'était **pas disponible** : mesuré le 2026-08-14 sur `/rulesets` et
+`/rules/branches/main`, deux endpoints en **lecture seule** qui répondent « *Upgrade to GitHub Pro or
+make this repository public to enable this feature* ». La protection de branche, rulesets compris,
+**n'existe pas sur un dépôt privé d'un compte GitHub Free** — et le compte propriétaire
+`automatemaestro-create` est un compte personnel au plan Free, tandis que #335 avait arbitré le
+dépôt **privé**. Les deux issues possibles ont été présentées et **toutes deux refusées**
+(utilisateur, 2026-08-14) : GitHub Pro (~4 $/mois) et le passage en public.
 
-⚠ **Mais il y en a un, et c'est le nôtre** (#415/#417, chantier #413). Ce paragraphe a dit « aucun
-garde-fou technique » jusqu'à ce chantier, et c'est devenu faux : ce que la protection de branche
-aurait tenu — « pas de merge tant que les checks ne sont pas verts » — est désormais tenu par
-**`lib.sh merge-mr`**, qui refuse un pipeline rouge (code `4`) et va plus loin que la protection en
-exigeant un vert porté par la **tête de la PR** et non par un run antérieur (§6). La correction
-compte parce qu'elle a une conséquence pratique : `protect-main.sh` n'est plus le seul recours si un
-merge au rouge se produit, et l'arbitrage des 4 $/mois se pose autrement.
+*Ce qui a changé.* Le dépôt est passé **public le 2026-08-28**, et **pas pour cette raison-là** :
+le motif était le **quota d'Actions**, qui ne pèse que sur les dépôts privés du plan Free (2 000
+min/mois ; sur un dépôt public, les runners standard sont gratuits et illimités — seuls les *larger
+runners* restent facturés, et ce dépôt n'en utilise aucun). La protection est venue **avec**, comme
+conséquence. C'est donc la seconde des deux issues de 2026-08-14, choisie quatorze jours plus tard
+pour un autre motif — à ne pas relire comme un revirement sur la visibilité, qui n'a jamais été
+rediscutée pour elle-même.
 
-⚠ **Et parce que ce garde-fou n'est PAS dans la forge, il ne protège que ce qui passe par lui.** Une
-protection de branche est opposable à tout le monde — un clic dans l'interface web, un `gh pr merge`
-lancé à la main, une intégration tierce. `merge-mr` ne l'est qu'aux chemins du dépôt : c'est
-pourquoi `gh pr merge` reste en `deny` côté permissions **et** dans `guard.sh` (§6), et pourquoi la
-question du plan payant n'est pas close par ce chantier — elle est seulement moins urgente. La
-différence entre les deux régimes ne s'annule pas, elle se déplace : de « rien ne tient la règle » à
-« la règle est tenue **pour les sessions**, jamais pour un humain pressé devant l'interface web ».
+> ⚠ **Le déclencheur du chantier n'était pas théorique.** Les cinq PR ouvertes ce jour-là étaient
+> **rouges sur leurs cinq jobs, en 3 à 4 secondes chacun** — non pas des tests en échec mais
+> « *The job was not started because recent account payments have failed* ». Ce mode de panne
+> **ressemble à un rouge de tests** et `/mr-fix` n'y peut rien : il n'y a ni conflit, ni job à
+> relancer utilement. Passer public l'a supprimé, vérifié en relançant la CI de !729 — les cinq
+> jobs verts, `web-build` `skipped`.
 
-Ce que le régime laisse par ailleurs, et qui n'est pas rien : les six verdicts sont **rapportés sur
-la PR** et restent lisibles. La CI rejoint ainsi le régime que ce dépôt applique à la **revue**
-(§6) — aucune approbation obligatoire, aucun relecteur posé d'office, c'est la **visibilité** qui
-déclenche le geste. La règle « on ne merge pas au rouge » n'a jamais changé ; ce qui a changé deux
-fois, c'est son gardien : la forge, puis personne, puis nous.
+**Ce que la protection ajoute, et ce qu'elle ne remplace pas.** Ce paragraphe a dit « aucun garde-fou
+technique » jusqu'à #415/#417 (chantier #413), et c'était devenu faux : ce que la protection aurait
+tenu — « pas de merge tant que les checks ne sont pas verts » — était déjà tenu par **`lib.sh
+merge-mr`**, qui refuse un pipeline rouge (code `4`) et va **plus loin** que la forge en exigeant un
+vert porté par la **tête de la PR** et non par un run antérieur (§6). Les deux se **cumulent**, et
+aucun ne rend l'autre inutile :
 
-**Le réglage reste écrit et rejouable**, dans
+| | `merge-mr` | protection de branche |
+|---|---|---|
+| portée | les chemins du dépôt | **tout le monde** — clic dans l'UI web, `gh pr merge` à la main, intégration tierce |
+| exigence | vert **sur la tête de la PR** | vert, quel que soit le sha qui le porte |
+
+C'est la ligne « portée » qui vient de basculer. Jusqu'ici la règle était tenue **pour les sessions,
+jamais pour un humain pressé devant l'interface web** ; elle l'est désormais pour les deux. Rien
+n'est retiré pour autant : `gh pr merge` reste en `deny` côté permissions **et** dans `guard.sh`
+(§6), et `merge-mr` reste le seul chemin de merge — la protection ne sait pas juger *quel* sha porte
+le vert, ce que lui sait faire.
+
+**Le réglage est écrit, joué et rejouable**, dans
 [`scripts/github/protect-main.sh`](../scripts/github/protect-main.sh) — **source unique**, au même
 titre que `bootstrap.sh` côté GitLab, et pour la même raison : un réglage cliqué dans une interface
-n'est ni relisible, ni rejouable, ni attribuable six mois plus tard. L'écrire sans le jouer est
-délibéré — c'est ce qui rend la décision ci-dessus **réversible en une commande** le jour où le plan
-change, au lieu d'une enquête à refaire. Idempotent, `--check` pour un diagnostic sans écriture,
-code `3` quand le dépôt a répondu mais que le réglage manque (par opposition à `1`, qui dit que
-l'outil manque).
+n'est ni relisible, ni rejouable, ni attribuable six mois plus tard. Avoir écrit le script **sans le
+jouer** a fait exactement ce pour quoi il était écrit : la bascule a coûté **une commande** au lieu
+d'une enquête à refaire. Idempotent (PUT complet), `--check` pour un diagnostic sans écriture, code
+`3` quand le dépôt a répondu mais que le réglage manque (par opposition à `1`, qui dit que l'outil
+manque).
 
 ```bash
-bash scripts/github/protect-main.sh --check    # ce qui est requis aujourd'hui — répond 3
-bash scripts/github/protect-main.sh            # poserait les six checks (bloqué par le plan)
+bash scripts/github/protect-main.sh --check    # ce qui est requis aujourd'hui — répond 0, « Conforme »
+bash scripts/github/protect-main.sh            # repose les six checks (idempotent)
 ```
 
-Un **second** obstacle attend derrière le premier, et le script les nomme séparément parce qu'ils
+Trois valeurs du corps `PUT`, et chacune est une décision :
+
+- **`strict: false`** — « require branches to be up to date before merging » n'est **pas** activé,
+  par fidélité à GitLab (`only_allow_merge_if_pipeline_succeeds` seul) et par cohérence avec le
+  workflow : `strict: true` obligerait à ramener `main` dans chaque PR avant de merger, alors que le
+  rattrapage d'une branche en retard se juge ici au cas par cas (`/mr-fix`, §8.3).
+- **`required_pull_request_reviews: null`** — **aucune revue obligatoire**, et ce n'est pas un
+  relâchement : ce dépôt ne pose **aucun relecteur d'office** (#196, §6). Exiger une approbation
+  bloquerait `merge-mr` sur chaque PR, c'est-à-dire tout le cycle, pour un geste que personne n'est
+  désigné pour faire.
+- **`enforce_admins: true`** — depuis #734. La valeur était `false` pour **laisser vivre le miroir**
+  push depuis GitLab, qui poussait directement sur `main` ; il est parti avec la bascule d'`origin`
+  (#343) puis l'outillage GitLab (#344), et le commentaire du script annonçait déjà le geste « pour
+  le jour où plus rien ne pousse sur `main` en dehors des merges de PR ». La laisser à `false`
+  aujourd'hui ne protégerait plus rien d'existant : elle rendrait la protection inopposable au
+  compte propriétaire, **c'est-à-dire au seul compte qui merge**, ce qui la viderait de son objet.
+  ⚠ Ce n'est pas une porte fermée à clé sur soi-même — un administrateur peut toujours **modifier ou
+  retirer la protection elle-même** : l'échappatoire existe encore, mais elle devient un geste
+  **délibéré et visible** au lieu d'un contournement silencieux au moment du merge.
+
+Un **second** obstacle attendait derrière le premier, et le script les nomme séparément parce qu'ils
 n'ont pas le même remède — GitHub rend le même `403` dans les deux cas : le PAT fine-grained du
-projet n'a pas la permission `Administration` sur le dépôt (GitHub la nomme dans son en-tête,
-`administration=read` pour lire et `write` pour poser), à régler dans les réglages du jeton, qui vit
-dans le `GH_CONFIG_DIR` du projet (§7.4). Lever le plan sans lever le jeton ne suffirait donc pas.
+projet peut n'avoir pas la permission `Administration` sur le dépôt (GitHub la nomme dans son
+en-tête, `administration=read` pour lire et `write` pour poser), à régler dans les réglages du jeton,
+qui vit dans le `GH_CONFIG_DIR` du projet (§7.4). Il ne s'est pas présenté à la pose du 2026-08-28,
+le jeton actif portant déjà le droit ; il reste écrit parce que **lever le plan sans lever le jeton
+ne suffirait pas**, et que c'est ce qu'on relira sur un dépôt neuf.
 
 **Le piège : un check requis qui n'est jamais rapporté bloque la PR pour toujours.** GitLab attache
 un filtre de chemins à **un job** (`web-build` ne tourne que si `apps/web/**` change) ; GitHub

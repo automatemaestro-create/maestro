@@ -984,8 +984,9 @@ def test_aucun_prompt_ne_prescrit_le_merge_nu() -> None:
             for numero, ligne in enumerate(texte.splitlines(), start=1):
                 # ⚠ Un COMMENTAIRE de script est hors de portée, et c'est une borne et non un trou :
                 # `lib.sh` explique en commentaire pourquoi `gh pr merge --auto` n'est pas la voie
-                # retenue (la protection de branche n'existe pas sur ce plan, §8.8) — c'est
-                # exactement la mémoire que ce chantier demande d'écrire, et rien ne l'exécute.
+                # retenue (il merge hors du seul chemin de merge du dépôt, et reste aveugle au sha
+                # qui porte le vert — §8.8) — c'est exactement la mémoire que ce chantier demande
+                # d'écrire, et rien ne l'exécute.
                 # Les PROMPTS embarqués dans un script (`run.sh`, qui compose ce que lit une
                 # session) ne sont pas des commentaires : ils restent, eux, intégralement balayés.
                 if script and ligne.lstrip().startswith("#"):
@@ -1490,3 +1491,94 @@ def test_ticket_ship_herite_du_ramassage_sans_le_reimplementer() -> None:
         assert verbe not in aplati, (
             f"`/ticket-ship` ne doit pas ré-implémenter le ramassage — trouvé : {verbe}"
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# La protection de branche, posée le 2026-08-28 (#734)
+#
+# Elle a été ÉCRITE SANS ÊTRE JOUÉE de #338 au 2026-08-27 — indisponible sur un dépôt privé d'un
+# compte Free —, et le passage du dépôt en public l'a rendue posable. Ce changement d'état déplace
+# ce qu'il faut garder : tant que rien n'était posé, un décalage entre `ci.yml` et `protect-main.sh`
+# ne coûtait rien ; il coûte désormais une PR INDÉFINIMENT NON MERGEABLE, que personne ne peut
+# débloquer d'un clic — c'est le piège que docs/10 §8.8 et `ci.yml` nomment tous les deux, et qui
+# n'avait jusqu'ici aucun gardien.
+#
+# Les deux tests ci-dessous sont du TEXTE et ne touchent ni réseau ni forge : ils lisent les deux
+# fichiers du dépôt et comparent. C'est voulu — la question posée n'est pas « GitHub accepte-t-il ce
+# corps ? » mais « ces deux listes disent-elles la même chose ? », qui se répond hors ligne.
+
+
+def _jobs_de_ci_yml() -> list[str]:
+    """Les noms de job de `.github/workflows/ci.yml`, lus à l'indentation du bloc `jobs:`.
+
+    Volontairement naïf — deux espaces, un nom, `:` — parce que c'est exactement la forme sous
+    laquelle GitHub rapporte un nom de check, et qu'un parseur YAML complet dirait la même chose en
+    ajoutant une dépendance à une suite qui n'en a aucune.
+    """
+    texte = (RACINE / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    dans_jobs = False
+    jobs: list[str] = []
+    for ligne in texte.splitlines():
+        if ligne.startswith("jobs:"):
+            dans_jobs = True
+            continue
+        if dans_jobs and ligne and not ligne.startswith((" ", "#")):
+            break  # un bloc de premier niveau après `jobs:` : on en est sorti
+        trouve = re.match(r"^  ([a-zA-Z0-9_-]+):\s*$", ligne)
+        if dans_jobs and trouve:
+            jobs.append(trouve.group(1))
+    return jobs
+
+
+def test_les_checks_requis_sont_exactement_les_jobs_de_ci_yml() -> None:
+    """Un job renommé d'un seul côté rend TOUTE PR non mergeable, et rien ne le dirait.
+
+    Le check requis ne serait plus jamais rapporté sous son ancien nom : la PR attend un verdict qui
+    n'arrivera pas, et aucun clic ne la débloque. Symétriquement, un job **ajouté** à `ci.yml` sans
+    être requis serait un contrôle qu'on croit bloquant et qui ne bloque rien — l'inverse, et tout
+    aussi silencieux. D'où une **égalité**, et non une inclusion.
+    """
+    script = (RACINE / "scripts" / "github" / "protect-main.sh").read_text(encoding="utf-8")
+    declaration = re.search(r"^CHECKS=\(([^)]*)\)", script, re.MULTILINE)
+    assert declaration, "la liste CHECKS a disparu de protect-main.sh"
+    checks = declaration.group(1).split()
+    jobs = _jobs_de_ci_yml()
+
+    # Le motif prouve d'abord qu'il a trouvé quelque chose : deux listes vides satisferaient
+    # l'égalité sans avoir rien vérifié.
+    assert len(jobs) >= 5, f"lecture de ci.yml suspecte — {jobs}"
+    assert sorted(checks) == sorted(jobs), (
+        "les checks requis et les jobs de ci.yml ont divergé — toute PR deviendrait non "
+        f"mergeable.\n  requis : {sorted(checks)}\n  jobs   : {sorted(jobs)}"
+    )
+
+
+def test_la_protection_est_opposable_au_proprietaire() -> None:
+    """`enforce_admins: true` — sans quoi la protection ne couvre pas le seul compte qui merge.
+
+    La valeur était `false` pour laisser vivre le miroir push depuis GitLab, parti avec #343/#344.
+    La remettre à `false` rendrait la protection inopposable à l'administrateur, c'est-à-dire à tout
+    le monde sur ce dépôt : elle ne garderait plus que ce que `merge-mr` garde déjà, et le gain de
+    #734 — couvrir ce qui NE PASSE PAS par nos chemins — disparaîtrait sans qu'aucun test ne
+    rougisse.
+
+    On vérifie aussi les deux valeurs qui doivent rester en place : exiger une revue bloquerait
+    `merge-mr` sur chaque PR (aucun relecteur n'est posé d'office, #196), et `strict: true`
+    imposerait de ramener `main` dans chaque PR avant de merger (docs/10 §8.3).
+    """
+    script = (RACINE / "scripts" / "github" / "protect-main.sh").read_text(encoding="utf-8")
+    corps = re.search(r"corps_json\(\).*?\nEOF", script, re.DOTALL)
+    assert corps, "le corps du PUT a changé de forme — revoir ce test avec"
+    texte = corps.group(0)
+
+    assert '"enforce_admins": true' in texte, (
+        "enforce_admins doit rester à true : à false, la protection ne couvre pas le compte "
+        "propriétaire, seul compte qui merge sur ce dépôt (#734)"
+    )
+    assert '"required_pull_request_reviews": null' in texte, (
+        "aucune revue obligatoire — ce dépôt ne pose aucun relecteur d'office (#196), et l'exiger "
+        "bloquerait merge-mr sur chaque PR"
+    )
+    assert '"strict": false' in texte, (
+        "strict doit rester false — sinon chaque PR devrait ramener main avant de merger (§8.3)"
+    )

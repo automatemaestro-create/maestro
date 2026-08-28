@@ -225,8 +225,8 @@ Un dernier, qui n'en est **pas tout à fait un** : fermer un **parent de suivi**
 lots ouverts n'est pas empêché — c'est **annulé après coup**. La fermeture a lieu, puis le parent est
 **rouvert** dans la foulée avec un commentaire nommant les lots restants, quel que soit l'auteur du
 clic ([docs/10 §5.1](./docs/10-workflow-git.md)). Ce n'est pas un verrou et ça ne peut pas en être
-un : les règles de dépôt de GitHub ne visent que branches et tags, et elles sont de toute façon
-indisponibles ici ([§8.8](./docs/10-workflow-git.md)). À l'inverse, il n'y a **rien à faire** pour
+un : les règles de dépôt de GitHub ne visent que branches et tags — aucune ne porte sur la fermeture
+d'une issue ([§8.8](./docs/10-workflow-git.md)). À l'inverse, il n'y a **rien à faire** pour
 fermer un chantier fini : le parent se ferme tout seul quand son dernier lot se ferme.
 
 Ces règles sont doublées par la couche permissions de [`.claude/settings.json`](./.claude/settings.json)

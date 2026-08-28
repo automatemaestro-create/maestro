@@ -99,12 +99,14 @@ jobs:
   # requis dont le WORKFLOW ne se déclenche pas n'est jamais rapporté du tout, et la PR reste
   # bloquée pour toujours, sans rien à cliquer pour la débloquer.
   #
-  # ⚠ La branch protection est ÉCARTÉE aujourd'hui (#338, docs/10 §8.8 : indisponible sur un dépôt
-  # privé d'un compte Free, et ni Pro ni le passage en public n'ont été retenus) — mais la
-  # structure reste écrite pour elle, parce que c'est la seule qui la rende posable plus tard sans
-  # rien casser. Ne jamais remplacer ce portier par un `paths:` de workflow, et ne jamais ajouter
-  # de `paths:`/`paths-ignore:` au bloc `on:` : le jour où la protection est posée, ce serait une
-  # PR indéfiniment non mergeable, découverte sous la pression plutôt qu'ici.
+  # ⚠ La branch protection est POSÉE depuis le 2026-08-28 (#734, docs/10 §8.8) : les six jobs de ce
+  # fichier sont des CHECKS REQUIS sur `main`. Elle a été écartée de #338 au 2026-08-27, faute
+  # d'exister sur un dépôt privé d'un compte Free — la structure était écrite pour elle avant de
+  # l'être, et c'est ce qui a permis de la poser en une commande sans rien casser. Le piège
+  # ci-dessus n'est donc plus théorique : ne jamais remplacer ce portier par un `paths:` de
+  # workflow, et ne jamais ajouter de `paths:`/`paths-ignore:` au bloc `on:` — ce serait aujourd'hui
+  # une PR indéfiniment non mergeable, découverte sous la pression plutôt qu'ici. Même règle pour
+  # le RENOMMAGE d'un job : la liste `CHECKS` de `scripts/github/protect-main.sh` le nomme.
   #
   # Le calcul se fait en git nu, sans action tierce : une dépendance de plus dans la chaîne
   # d'approvisionnement se justifie mal pour trois lignes de `git diff`.
