@@ -57,13 +57,51 @@ entrée : `maestro.agents.mcp.resolus` ne résout les `${VAR}` que dans `env` et
 `headers`, **jamais dans `args`** — un serveur dont le paramètre est un argument
 de ligne de commande (`filesystem`, `postgres`) n'est donc pas gabaritable ici,
 et il est écarté plutôt que déclaré à moitié.
+
+## Deux sources, une seule recherche (#677, parent #673)
+
+La bibliothèque a désormais **deux sources** et les rend ensemble :
+
+- les entrées **curées** (`SEED`) — écrites à la main, relues en revue de code,
+  versionnées. Elles *sont* l'allowlist, donc les seules instanciables ;
+- les entrées **découvertes** — traduites du miroir du registre MCP officiel
+  (`maestro.agents.mcp_amont`, lot 1 ; `maestro.agents.mcp_traduction`, lot 2),
+  visibles et cherchables, **jamais montables**.
+
+⚠ **La composition ne touche pas au garde-fou, et c'est tout son dessin.** Les
+deux sources vivent dans **deux index séparés** : `instancier` et `get` ne
+regardent que l'index curé — ils n'ont pas eu une ligne à changer, et une entrée
+découverte est non instanciable *par construction* plutôt que par un test qu'on
+aurait pu oublier d'écrire. Ce qui compose est la **lecture** (`lister`,
+`rechercher`, `trouver`, `tags`), jamais l'instanciation. Le lot 4 (#678) rendra
+ce refus explicite et rattrapable par une porte d'admission ; d'ici là il est
+simplement muet, ce qui est le comportement d'aujourd'hui.
+
+Trois règles portent la composition :
+
+1. **Curées d'abord** (`_rang`). Le palier d'usage (`USAGE_*`) reste le rang des
+   curées ; une découverte n'a **aucun palier à inventer**, donc la source est
+   la clé *primaire* du tri et non un effet de bord d'un `popularite` à zéro —
+   sans quoi une curée à palier nul se retrouverait mêlée aux découvertes.
+2. **Le seed gagne toute collision.** Un id d'amont qui heurte `ID_RESERVES` ou
+   un id du seed est **écarté** : c'est le seed qui est instanciable, et le
+   masquer par une découverte le rendrait injoignable.
+3. **Une découverte fautive ne fait pas tomber la bibliothèque.** Le seed est du
+   code : une entrée invalide y est un bug, et la construction lève. Le miroir
+   est de la **donnée d'amont**, à des dizaines de milliers d'entrées : une
+   entrée qui ne se valide pas est comptée et écartée, jamais propagée en
+   exception. Les deux moitiés de cette asymétrie sont voulues.
+
+Le **câblage** (lire le miroir, le traduire, en dater la provenance) ne vit pas
+ici mais dans `maestro.agents.mcp_federation` : ce module reste une structure de
+données, sans rien savoir ni du réseau ni du disque.
 """
 
 from __future__ import annotations
 
 import unicodedata
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from maestro.agents.mcp import ServeurMcp, valide_serveur
@@ -118,6 +156,19 @@ USAGE_SPECIALISE = 30
 ID_RESERVES: frozenset[str] = frozenset({"provenance"})
 
 
+#: Les deux sources de la bibliothèque (#677). `curee` est l'allowlist écrite à
+#: la main — la seule instanciable ; `decouverte` est ce que le miroir du
+#: registre officiel a rapporté, visible et cherchable, jamais montable.
+SOURCE_CUREE = "curee"
+SOURCE_DECOUVERTE = "decouverte"
+
+#: Les valeurs qu'un filtre de source accepte. `toutes` est le **défaut** et il
+#: est nommé plutôt que sous-entendu par une absence : une route qui reçoit
+#: `source=` vide doit servir les deux sources, pas se demander laquelle.
+SOURCE_TOUTES = "toutes"
+SOURCES: tuple[str, ...] = (SOURCE_TOUTES, SOURCE_CUREE, SOURCE_DECOUVERTE)
+
+
 @dataclass(frozen=True)
 class SourceCitee:
     """Une source de la curation : d'où vient une entrée, et où la revérifier."""
@@ -151,6 +202,68 @@ class Provenance:
             "resume": self.resume,
             "sources": [s.to_dict() for s in self.sources],
             "revue_le": self.revue_le,
+        }
+
+
+@dataclass(frozen=True)
+class ProvenanceDecouverte:
+    """D'où viennent les entrées **découvertes**, et de quand elles datent (#677).
+
+    Le pendant de `Provenance` pour la seconde source, et il ne répond pas à la
+    même question : une liste curée se date par sa **revue humaine**, un miroir
+    par son **dernier rafraîchissement** et le **nombre** d'entrées qu'il porte.
+    Confondre les deux dans un seul objet obligerait chacun à porter les champs
+    vides de l'autre, et l'écran à deviner lesquels sont significatifs.
+
+    Les champs recopient ceux d'`EtatMiroir` (`maestro.agents.mcp_amont`) plutôt
+    que d'importer le miroir : ce module ne connaît ni le disque ni le réseau, et
+    c'est `mcp_federation` qui fait la conversion — un seul endroit à corriger si
+    l'état du miroir gagne un champ.
+
+    ⚠ `retenues` n'est pas `nombre`. Le miroir compte ce qu'il a rapporté, la
+    bibliothèque ce qu'elle a **su traduire et garder** : l'écart (entrées non
+    traduisibles, collisions avec le seed) est une information à montrer, pas un
+    trou à masquer en n'exposant qu'un seul chiffre.
+    """
+
+    #: Le registre moissonné, ou "" quand aucun miroir n'est branché.
+    amont: str = ""
+    #: Horodatage ISO du dernier rafraîchissement réussi du miroir.
+    rafraichi_le: str = ""
+    #: Horodatage ISO du dernier moissonnage **complet**.
+    moissonne_le: str = ""
+    #: Le nombre d'entrées que le miroir porte.
+    nombre: int = 0
+    #: Le nombre d'entrées effectivement servies par la bibliothèque.
+    retenues: int = 0
+    #: La dernière cause d'échec du miroir, vide quand tout va bien.
+    cause: str = ""
+    #: Horodatage ISO de ce dernier échec.
+    echoue_le: str = ""
+
+    @property
+    def moissonnee(self) -> bool:
+        """Un miroir a-t-il déjà rapporté quelque chose ?
+
+        La question que la `PROVENANCE` curée résout par une phrase figée
+        (« jamais moissonnée ») et que le critère 5 du parent demande de rendre
+        vraie. Un miroir branché mais vide répond **non** : ce qui compte est
+        qu'une entrée en soit sortie, pas qu'une URL soit configurée.
+        """
+        return bool(self.rafraichi_le and self.nombre)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Réémet la provenance de la découverte en dict JSON-sérialisable."""
+        return {
+            "source": SOURCE_DECOUVERTE,
+            "amont": self.amont,
+            "rafraichi_le": self.rafraichi_le,
+            "moissonne_le": self.moissonne_le,
+            "nombre": self.nombre,
+            "retenues": self.retenues,
+            "moissonnee": self.moissonnee,
+            "cause": self.cause,
+            "echoue_le": self.echoue_le,
         }
 
 
@@ -195,6 +308,15 @@ class EntreeRegistre:
     communautaire), le second est le repère d'usage qui met les plus courants en
     tête (`USAGE_*`). Tous deux ont un défaut vide/nul : une entrée injectée par
     un test reste valide sans les porter.
+
+    `curee`, `version`, `depot` et `statut` datent de la fédération (#677). Le
+    premier dit **de quelle source** l'entrée vient ; il vaut `True` par défaut,
+    si bien que le seed et toute entrée écrite à la main restent curées sans
+    rien déclarer — la valeur qu'il portait déjà en dur dans `to_dict()`. Les
+    trois autres sont les signaux que **seul l'amont** fournit (la version
+    épinglée, le dépôt, le statut `active`/`deprecated`) et restent vides sur une
+    entrée curée, dont ils ne diraient rien : le seed n'épingle pas de version,
+    c'est la revue de code qui le date.
     """
 
     id: str
@@ -213,6 +335,10 @@ class EntreeRegistre:
     optionnel: bool = False
     editeur: str = ""
     popularite: int = 0
+    curee: bool = True
+    version: str = ""
+    depot: str = ""
+    statut: str = ""
 
     def vers_serveur(self, nom: str | None = None) -> ServeurMcp:
         """Instancie le template en `ServeurMcp` montable (gabarit `${VAR}` intact).
@@ -241,8 +367,14 @@ class EntreeRegistre:
 
         Le gabarit d'exécution est réémis **tel quel** : ses valeurs d'`env`/
         `headers` sont des références `${VAR}`, pas des secrets — c'est ce qu'une
-        UI affiche pour guider la saisie. `curee: true` marque l'appartenance à
-        l'allowlist (toute entrée servie par ce registre y est, par définition).
+        UI affiche pour guider la saisie.
+
+        `curee` marque l'appartenance à l'allowlist, et depuis #677 il **dit la
+        vérité** au lieu de valoir `true` en dur : la bibliothèque a deux
+        sources, seule la première est instanciable. `source` le redit en clair
+        parce qu'un booléen nommé par la négative (« non curée ») se lit mal dans
+        une UI ; les deux sortent du même champ, il n'y a donc pas deux vérités à
+        tenir d'accord.
         """
         return {
             "id": self.id,
@@ -261,27 +393,41 @@ class EntreeRegistre:
             "optionnel": self.optionnel,
             "editeur": self.editeur,
             "popularite": self.popularite,
-            "curee": True,
+            "curee": self.curee,
+            "source": SOURCE_CUREE if self.curee else SOURCE_DECOUVERTE,
+            "version": self.version,
+            "depot": self.depot,
+            "statut": self.statut,
         }
 
 
 class RegistreMcp:
-    """La bibliothèque : des entrées curées, recherchables et **instanciables sous garde-fou**.
+    """La bibliothèque : deux sources, une recherche, **un seul garde-fou**.
 
     `rechercher` filtre par nom/tag (recherche libre, insensible à la casse et
-    aux accents) ; `get`/`lister` exposent les entrées ; `instancier` est la
-    **seule** voie template → liaison, et elle applique le garde-fou
-    supply-chain : un id absent de l'allowlist curée est refusé.
+    aux accents) ; `trouver`/`lister` exposent les entrées des deux sources ;
+    `get`/`instancier` ne regardent que l'**allowlist curée**, et `instancier`
+    reste la seule voie template → liaison.
 
-    Construit par défaut sur le seed en code (`RegistreMcp.curee()`) ; les tests
-    (#134) et une V1 en base peuvent en injecter un autre — le contrat ne change
-    pas.
+    Construit par défaut sur le seed en code (`RegistreMcp.curee()`) ; la
+    fédération (`maestro.agents.mcp_federation`), les tests (#134) et une V1 en
+    base peuvent en injecter un autre — le contrat ne change pas.
+
+    ⚠ **La source d'une entrée est décidée par l'argument qui la porte**, jamais
+    par le drapeau qu'elle porte : tout ce qui arrive par `decouvertes` est
+    marqué `curee=False` ici même. Se fier au drapeau de l'appelant laisserait
+    une entrée d'amont oubliée à `curee=True` — c'est-à-dire une entrée
+    présentée comme curée sans être dans l'allowlist, exactement le mensonge que
+    le garde-fou ne doit jamais dire.
     """
 
     def __init__(
         self,
         entrees: Iterable[EntreeRegistre],
         provenance: Provenance | None = None,
+        *,
+        decouvertes: Iterable[EntreeRegistre] = (),
+        provenance_decouverte: ProvenanceDecouverte | None = None,
     ) -> None:
         index: dict[str, EntreeRegistre] = {}
         for entree in entrees:
@@ -300,40 +446,143 @@ class RegistreMcp:
             # Toute entrée curée doit être instanciable : on valide le gabarit
             # dès la construction, jamais un registre à moitié bon.
             entree.vers_serveur()
-            index[entree.id] = entree
+            index[entree.id] = replace(entree, curee=True)
         self._entrees = index
+        self._decouvertes, self._ecartees = self._indexe_decouvertes(decouvertes)
         self.provenance = provenance or PROVENANCE
+        self.provenance_decouverte = replace(
+            provenance_decouverte or ProvenanceDecouverte(),
+            retenues=len(self._decouvertes),
+        )
+        # La botte de foin et l'ordre sont calculés **une fois**. `rechercher`
+        # est O(n) par requête et `_foin` fait une décomposition NFKD par
+        # entrée : à 29 entrées curées personne ne l'a jamais vu, à des dizaines
+        # de milliers d'entrées d'amont c'est le coût de chaque frappe au
+        # clavier de l'écran. Le registre étant immuable, il n'y a rien à
+        # invalider — la mémoire tenue est celle d'un index, pas d'un cache.
+        self._toutes = tuple(
+            sorted((*self._entrees.values(), *self._decouvertes.values()), key=_rang)
+        )
+        self._foins = {e.id: _foin(e) for e in self._toutes}
+
+    def _indexe_decouvertes(
+        self, decouvertes: Iterable[EntreeRegistre]
+    ) -> tuple[dict[str, EntreeRegistre], tuple[str, ...]]:
+        """Indexe les entrées découvertes — **sans jamais lever** (règle 3 du module).
+
+        Rend l'index et les ids écartés avec leur cause. Quatre motifs d'écart,
+        et l'ordre est celui de la gravité décroissante : un id **réservé** par
+        une route, une **collision avec le seed** (le curé gagne : c'est lui qui
+        est instanciable, le masquer le rendrait injoignable), un **doublon**
+        d'amont, et un gabarit qui **ne se monterait pas**. Ce dernier ne devrait
+        pas arriver — la traduction valide déjà —, et c'est précisément pourquoi
+        on le rattrape ici plutôt que de parier dessus : la bibliothèque entière
+        tomberait sur une seule ligne fautive d'un fichier qu'on ne relit pas.
+        """
+        index: dict[str, EntreeRegistre] = {}
+        ecartees: list[str] = []
+        for entree in decouvertes:
+            if entree.id in ID_RESERVES:
+                ecartees.append(f"{entree.id} (id réservé par une route)")
+                continue
+            if entree.id in self._entrees:
+                ecartees.append(f"{entree.id} (déjà curé — le seed gagne)")
+                continue
+            if entree.id in index:
+                ecartees.append(f"{entree.id} (doublon d'amont)")
+                continue
+            if entree.mode_auth not in MODES_AUTH:
+                ecartees.append(f"{entree.id} (mode d'auth {entree.mode_auth!r})")
+                continue
+            try:
+                entree.vers_serveur()
+            except ValueError as exc:
+                ecartees.append(f"{entree.id} ({exc})")
+                continue
+            index[entree.id] = replace(entree, curee=False)
+        return index, tuple(ecartees)
+
+    @property
+    def decouvertes_ecartees(self) -> tuple[str, ...]:
+        """Les entrées d'amont écartées à la construction, avec leur cause.
+
+        Nommées et non tues : une bibliothèque qui sert 24 998 entrées sur 25 000
+        doit pouvoir dire lesquelles manquent, sinon l'écart entre le compte du
+        miroir et le sien est un mystère plutôt qu'une information.
+        """
+        return self._ecartees
 
     @classmethod
     def curee(cls) -> RegistreMcp:
-        """Le registre curé : le seed en code (`SEED`) et la provenance qui le date."""
+        """Le registre curé : le seed en code (`SEED`) et la provenance qui le date.
+
+        Une seule source, donc le comportement d'avant #677 **au bit près** :
+        c'est ce que les tests et les appelants qui n'ont pas de miroir attendent.
+        """
         return cls(SEED, PROVENANCE)
 
-    def lister(self) -> tuple[EntreeRegistre, ...]:
-        """Toutes les entrées curées, **les plus courantes d'abord** (`_rang`)."""
-        return tuple(sorted(self._entrees.values(), key=_rang))
+    def lister(self, source: str = SOURCE_TOUTES) -> tuple[EntreeRegistre, ...]:
+        """Les entrées de `source`, **curées d'abord puis les plus courantes** (`_rang`).
+
+        `source` vaut `toutes` (défaut), `curee` ou `decouverte` — une valeur
+        inconnue lève plutôt que de servir silencieusement autre chose que ce
+        qu'on lui demande.
+        """
+        if source == SOURCE_TOUTES:
+            return self._toutes
+        if source == SOURCE_CUREE:
+            return tuple(e for e in self._toutes if e.curee)
+        if source == SOURCE_DECOUVERTE:
+            return tuple(e for e in self._toutes if not e.curee)
+        raise ValueError(
+            f"source de registre MCP inconnue : {source!r} (attendu : {', '.join(SOURCES)})."
+        )
 
     def get(self, id: str) -> EntreeRegistre | None:
-        """L'entrée d'id `id`, ou None si elle n'est pas dans l'allowlist curée."""
+        """L'entrée **curée** d'id `id`, ou None si elle n'est pas dans l'allowlist.
+
+        ⚠ Volontairement aveugle aux découvertes, et c'est le garde-fou : ses
+        appelants (`POST /api/mcp/pool`, l'enrichissement du pool) demandent « ce
+        serveur est-il montable ? » et non « existe-t-il ? ». Pour la seconde
+        question, `trouver`.
+        """
         return self._entrees.get(id)
 
-    def rechercher(self, requete: str = "") -> tuple[EntreeRegistre, ...]:
+    def trouver(self, id: str) -> EntreeRegistre | None:
+        """L'entrée d'id `id` **quelle que soit sa source**, curée d'abord, ou None.
+
+        Ce que sert `GET /api/mcp/registre/{id}` : la fiche d'une entrée que
+        l'écran vient de lister. Elle porte `curee` — donc le lecteur sait ce
+        qu'il regarde — et n'ouvre aucune voie de montage, `instancier` ne
+        passant pas par ici.
+        """
+        return self._entrees.get(id) or self._decouvertes.get(id)
+
+    def rechercher(
+        self, requete: str = "", source: str = SOURCE_TOUTES
+    ) -> tuple[EntreeRegistre, ...]:
         """Les entrées dont le nom, l'éditeur, un tag (ou l'id/la description) porte `requete`.
 
         Recherche libre, insensible à la casse et aux accents ; une requête vide
-        rend tout le registre. Le résultat est trié **les plus courants d'abord**
-        (#271) : sur une bibliothèque de plusieurs dizaines d'entrées, l'ordre de
-        déclaration ne veut plus rien dire pour qui cherche « base de données ».
-        Id et description restent dans la botte de foin bien que le critère ne
-        nomme que nom/éditeur/tags : c'est un sur-ensemble, et le retirer ferait
-        échouer des recherches qui marchent (« tickets » vit dans les tags, mais
-        « merge request » vit dans une description).
+        rend tout le registre. Le résultat est trié **curées d'abord, puis les
+        plus courantes** (#271, #677) : sur une bibliothèque de plusieurs
+        dizaines de milliers d'entrées, l'ordre de déclaration ne veut plus rien
+        dire pour qui cherche « base de données ». Id et description restent dans
+        la botte de foin bien que le critère ne nomme que nom/éditeur/tags :
+        c'est un sur-ensemble, et le retirer ferait échouer des recherches qui
+        marchent (« tickets » vit dans les tags, mais « merge request » vit dans
+        une description).
+
+        ⚠ C'est **notre** recherche qui joue sur les deux sources, et c'est la
+        décision du parent (#673) : celle de l'amont est une sous-chaîne sur le
+        seul nom (`feature flag` y rend zéro résultat sur 25 000 entrées). On
+        moissonne chez lui, on cherche chez nous.
         """
         besoin = _normalise(requete)
+        candidates = self.lister(source)
         if not besoin:
-            return self.lister()
-        trouvees = (e for e in self._entrees.values() if besoin in _foin(e))
-        return tuple(sorted(trouvees, key=_rang))
+            return candidates
+        return tuple(e for e in candidates if besoin in self._foins[e.id])
 
     def tags(self) -> tuple[str, ...]:
         """Tous les tags du registre, dédoublonnés et triés — les pistes de recherche.
@@ -341,8 +590,13 @@ class RegistreMcp:
         Ce que l'UI propose quand une recherche ne rend rien (#271) : un
         cul-de-sac se sort en montrant *par quoi* on peut chercher, jamais en
         répétant que la requête est vide de résultats.
+
+        Les deux sources y contribuent, ce qui ne change rien aujourd'hui :
+        l'amont ne déclare aucun tag et la traduction n'en fabrique pas (#676).
+        Composer quand même évite qu'un jour où il en déclarerait, la moitié des
+        pistes reste invisible faute d'avoir pensé à toucher cette méthode.
         """
-        return tuple(sorted({tag for e in self._entrees.values() for tag in e.tags}))
+        return tuple(sorted({tag for e in self._toutes for tag in e.tags}))
 
     def instancier(self, id: str, *, nom: str | None = None) -> ServeurMcp:
         """Instancie l'entrée curée `id` en `ServeurMcp` montable — **garde-fou supply-chain**.
@@ -377,9 +631,17 @@ def _foin(entree: EntreeRegistre) -> str:
     )
 
 
-def _rang(entree: EntreeRegistre) -> tuple[int, str]:
-    """La clé de tri : palier d'usage décroissant, puis nom (stable, sans faux gagnant)."""
-    return (-entree.popularite, _normalise(entree.nom))
+def _rang(entree: EntreeRegistre) -> tuple[int, int, str]:
+    """La clé de tri : **source**, puis palier d'usage décroissant, puis nom.
+
+    La source passe en tête depuis #677, et c'est une décision et non un détail :
+    le palier `USAGE_*` est le rang **des curées**, une découverte n'en ayant
+    aucun à inventer. Trier sur le seul `popularite` rangerait donc les
+    découvertes (palier `0`) parmi les curées de palier `0` — mélange que le
+    critère du ticket exclut. À source et palier égaux, l'ordre reste
+    alphabétique : stable, et sans faux gagnant.
+    """
+    return (0 if entree.curee else 1, -entree.popularite, _normalise(entree.nom))
 
 
 def _secrets(*variables: tuple[str, str, bool]) -> tuple[VariableSecret, ...]:
@@ -393,12 +655,21 @@ def _secrets(*variables: tuple[str, str, bool]) -> tuple[VariableSecret, ...]:
 #: ⚠ `revue_le` se met à jour **avec le seed**, dans le même commit : une date
 #: qui ne bouge pas quand la liste bouge est pire qu'une date absente, elle
 #: atteste une fraîcheur que personne n'a vérifiée.
+#:
+#: ⚠ Depuis #677 cette provenance ne décrit plus la bibliothèque entière mais sa
+#: **source curée** — d'où « cette liste-ci » : la phrase disait « jamais
+#: moissonnée » d'un objet qui, lu au pied de l'écran, en compte désormais une
+#: qui l'est. Ce qui est curé reste curé et la promesse ne bouge pas ; c'est sa
+#: **portée** qui est nommée, parce qu'une moitié de vérité posée à côté de son
+#: contraire se lit comme une contradiction. La provenance du miroir est rendue
+#: par `ProvenanceDecouverte`, à côté et jamais fondue dans celle-ci.
 PROVENANCE = Provenance(
     resume=(
-        "Sélection curée à la main parmi les serveurs MCP les plus utilisés de "
-        "l'écosystème, d'après les annuaires publics ci-dessous — jamais "
-        "moissonnée : chaque entrée est écrite, relue en revue de code et "
-        "versionnée avec le dépôt."
+        "Cette liste-ci est une sélection curée à la main parmi les serveurs MCP "
+        "les plus utilisés de l'écosystème, d'après les annuaires publics "
+        "ci-dessous — jamais moissonnée : chaque entrée y est écrite, relue en "
+        "revue de code et versionnée avec le dépôt. C'est elle, et elle seule, "
+        "qui est instanciable."
     ),
     sources=(
         SourceCitee(
