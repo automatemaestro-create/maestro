@@ -13,6 +13,12 @@ périmètre autorisé, ou un `vcs` inventé. Un projet posé à la main dans le
 fichier reste possible — le POC n'a pas de gardien à l'écriture disque — mais
 tout ce qui passe par le code passe par `creer`/`ecrire`.
 
+Deux méthodes seulement touchent au dossier de l'utilisateur, et toutes deux
+parce qu'on le leur a demandé : `creer(origine="nouveau")` crée la racine
+manquante (besoin A de docs/24 §2.1), et `versionner` la met sous Git (#704).
+Les lectures, elles, ne créent jamais rien — `detecter_vcs` constate Git sans
+l'imposer (EF-38), et c'est ce qui rend le second geste explicite.
+
 Un seul écrivain à la fois au POC (l'API Control Tower, #223) : le dépôt ne
 porte pas de verrou de concurrence, comme ses voisins.
 """
@@ -34,6 +40,7 @@ from maestro.projets.modele import (
     nouvel_id,
 )
 from maestro.projets.racine import canonique, detecter_vcs, valider_racine
+from maestro.projets.versionnement import initialiser_depot
 
 #: Nombre de tirages d'identifiant avant d'abandonner. Une collision sur 8 hex
 #: est déjà improbable ; dix de suite signalerait un dépôt en panne, pas de la
@@ -183,6 +190,33 @@ class ProjetStore:
         )
         os.replace(temporaire, chemin)
         return propre
+
+    def versionner(self, id_: str, *, branche: str = "") -> Projet:
+        """Met le projet `id_` sous Git s'il ne l'est pas, et enregistre son `Vcs` (#704).
+
+        Le geste **explicite** que `detecter_vcs` s'interdit : rien d'autre dans
+        le code n'initialise un dépôt dans le dossier de quelqu'un. La racine est
+        revalidée puis initialisée par `maestro.projets.versionnement`, et c'est
+        `detecter_vcs` qui constate le résultat — le `Vcs` stocké est celui du
+        disque, jamais un `Vcs` fabriqué ici.
+
+        Un projet **déjà versionné** est rendu tel quel : aucune commande Git,
+        aucune écriture, pas même un `modifie_le` rafraîchi. Un projet déclaré
+        non versionné dont la racine est passée sous Git entre-temps est
+        **rattrapé** sans qu'aucun dépôt soit créé — c'est la déclaration qui
+        avait pris du retard, pas le disque.
+
+        Lève `RacineRefusee` si la racine n'est plus admissible (EF-38),
+        `VersionnementRefuse` motivée si l'initialisation échoue — la racine
+        restant alors dans l'état d'avant — et `ValueError` si le projet n'est
+        pas dans le dépôt.
+        """
+        projet = self.lire(id_)
+        if projet is None:
+            raise ValueError(f"projet inconnu : {id_!r} — rien à mettre sous Git.")
+        if projet.versionne:
+            return projet
+        return self.ecrire(replace(projet, vcs=initialiser_depot(projet.racine, branche=branche)))
 
     def supprimer(self, id_: str) -> bool:
         """Retire le projet `id_` du dépôt ; False s'il n'y était pas (rien à faire).
