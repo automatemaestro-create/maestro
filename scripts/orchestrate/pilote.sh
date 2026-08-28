@@ -89,10 +89,17 @@ pilote_windows() {
 # Le nom de la commande est entre parenthèses et peut contenir des espaces (« (Isolated Web Co) ») :
 # on découpe donc APRÈS la dernière parenthèse fermante, jamais en comptant les champs depuis le
 # début. Le reste commence au champ 3, la naissance y est donc le 20e.
+# ⚠ La redirection est enveloppée dans un groupe, et le `2>/dev/null` porte sur LUI (#745). Une
+# redirection d'entrée qui échoue est signalée par le SHELL, pas par la commande : le `2>/dev/null`
+# accroché au seul `read` ne l'attrape pas, et « /proc/1234/stat: No such file or directory » sortait
+# sur le stderr de l'appelant. Sans conséquence tant que ces fonctions ne servaient qu'à des
+# processus vivants ; visible dès qu'on interroge un processus qui vient de disparaître — le cas
+# NOMINAL de la file de `scripts/ci/verrou.sh`. Le contrat des trois lectures ci-dessous dit déjà
+# « rien si la lecture échoue, c'est un cas normal » : le message le contredisait.
 pilote_naissance() {
   local s n
   local -a champs
-  read -r s <"/proc/$1/stat" 2>/dev/null || return 1
+  { read -r s <"/proc/$1/stat"; } 2>/dev/null || return 1
   s="${s##*) }"
   # Découpage sans fork : le reste commence au champ 3, la naissance y est donc la 20e.
   read -r -a champs <<<"$s"
@@ -113,7 +120,8 @@ pilote_naissance() {
 # sans /proc, Windows en particulier, où l'état n'existe pas : 1, et la suite tranche comme avant.
 pilote_zombie() {
   local s
-  read -r s <"/proc/$1/stat" 2>/dev/null || return 1
+  # Groupe + redirection : voir `pilote_naissance` (#745).
+  { read -r s <"/proc/$1/stat"; } 2>/dev/null || return 1
   s="${s##*) }"
   case "$s" in 'Z' | 'Z '*) return 0 ;; *) return 1 ;; esac
 }
@@ -122,7 +130,8 @@ pilote_zombie() {
 # ailleurs — et c'est très bien : hors Windows, personne n'en a l'usage.
 pilote_winpid() {
   local w
-  read -r w <"/proc/$1/winpid" 2>/dev/null || return 1
+  # Groupe + redirection : voir `pilote_naissance` (#745).
+  { read -r w <"/proc/$1/winpid"; } 2>/dev/null || return 1
   printf '%s' "$w"
 }
 

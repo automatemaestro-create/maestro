@@ -70,6 +70,15 @@ CI_YML="$RACINE/.github/workflows/ci.yml"
 # shellcheck disable=SC1091  # le lint appelle shellcheck fichier par fichier (#285) : la source
 # n'est pas sur sa ligne de commande, donc `source=` ne serait pas suivi de toute façon.
 . "$RACINE/scripts/ci/pytest-regime.sh"
+
+# UN FILET À LA FOIS SUR LE POSTE (#745). N exécutions simultanées ne sont pas un cas de bord depuis
+# #455/#626 — un run à concurrence 3 fait passer le filet à chacune de ses sessions avant de pousser —
+# et elles se disputent alors le démon docker, les cœurs et la mémoire, jusqu'à faire rougir des
+# suites qui mesurent de la simultanéité réelle (#292/#313). Les filets se rangent donc en file :
+# celui-ci attend son tour, puis joue seul. Détail et sortie de secours dans le fichier.
+#
+# shellcheck disable=SC1091  # même raison qu'au-dessus.
+. "$RACINE/scripts/ci/verrou.sh"
 # JOURNAUX SOUS LA RACINE DU WORKTREE (#234), pas dans ${TMPDIR:-/tmp}. Quand un job échoue, le
 # renvoi vers son journal est la seule information qui dise POURQUOI — et c'est justement celle
 # qu'une session autonome (docs/10 §11) n'a pas le droit d'aller chercher : un chemin absolu hors du
@@ -174,6 +183,14 @@ MAESTRO_DOCKER_DEMARRAGE=0 n'essaie jamais de démarrer le démon.
 Workers : « -n auto » dans le conteneur, comme la CI. En natif, min(cœurs, $PYTEST_WORKERS_PLAFOND) :
 au-delà c'est la mémoire du poste qui borne, pas les cœurs (#285). MAESTRO_PYTEST_WORKERS déplace
 ce plafond et vaut pour les deux régimes.
+
+UN FILET À LA FOIS (#745) : si un autre filet tourne déjà sur ce poste — clone principal ou n'importe
+lequel de ses worktrees —, celui-ci fait la QUEUE et joue dès que l'autre a terminé. Il ne refuse
+jamais et ne se saute jamais ; il le dit, et rappelle son attente toutes les $VERROU_CI_RAPPEL s.
+Trois filets qui se partagent les cœurs, la mémoire et le démon docker rendent des verdicts qu'aucun
+des trois ne contrôle — une suite qui mesure de la simultanéité réelle rougit alors sans cause.
+MAESTRO_CI_FILE=0 joue sans attendre ; MAESTRO_CI_FILE_ATTENTE_MAX (défaut $VERROU_CI_MAX s) borne
+l'attente, au-delà de laquelle le filet joue QUAND MÊME en l'annonçant dans son résumé.
 USAGE
 }
 
@@ -976,11 +993,6 @@ joue_etage() {
   return 0
 }
 
-# Table rase à chaque lancement (#234) : dans /tmp le système faisait le ménage, sous la racine
-# personne ne le ferait — les journaux s'y accumuleraient. Et un `pytest.log` d'hier laissé à côté
-# d'un run qui n'a pas joué pytest est pire qu'absent : il ment sur ce qui vient d'être vérifié.
-rm -rf "$LOG_DIR"
-mkdir -p "$LOG_DIR"
 branche="$(git -C "$RACINE" rev-parse --abbrev-ref HEAD 2>/dev/null)"
 printf '\n%sFilet CI local%s — %s\n' "$C_B" "$C_0" "$RACINE"
 printf 'branche : %s · les mêmes contrôles que .github/workflows/ci.yml, avec le venv et le Node du dépôt\n' "${branche:-?}"
@@ -989,6 +1001,38 @@ if [ "$MODE_PYTEST" = complet ]; then
 else
   printf 'pytest  : périmètre du diff (--complet pour la suite entière et sa couverture)\n\n'
 fi
+
+# LA FILE (#745) — ici, et pas plus tôt. Après l'en-tête, pour qu'on sache ce qui attend avant de
+# lire qu'on attend ; après l'analyse des options, pour que `--list` et `--help` — qui ne jouent rien
+# — ne prennent jamais de tour ; et AVANT tout le reste, y compris le choix du régime pytest, qui
+# peut démarrer Docker Desktop et construire l'image : deux filets qui construisent la même image en
+# même temps, c'est déjà la charge qu'on cherche à éviter.
+#
+# Le trap est posé avec la prise : un filet interrompu (Ctrl-C, `timeout` de l'appelant) qui garderait
+# son verrou bloquerait le suivant jusqu'à ce que la reprise de verrou périmé le rattrape — elle le
+# ferait, mais un tour de file plus tard et pour rien.
+trap verrou_ci_rend EXIT INT TERM
+verrou_ci_prend
+VERROU_CI_CODE=$?
+
+# Un repli SUBI nomme sa cause, un choix reste muet — même partage que le régime pytest, où un
+# `--natif` voulu s'annonce sobrement quand un repli avertit d'un facteur vingt (#425).
+# `MAESTRO_CI_FILE=0` est un choix ; un dépôt qui ne se laisse pas interroger n'en est pas un, et il
+# faut l'apprendre ICI : sans cette ligne, un filet joué sans file serait indiscernable d'un filet
+# qui a attendu son tour. Le plafond d'attente (code 2), lui, se dit deux fois — la seconde près du
+# verdict, seul endroit qu'on relit devant un rouge inattendu.
+if [ "$VERROU_CI_CODE" = 1 ] && [ "$VERROU_CI_ACTIF" != 0 ]; then
+  printf '  %s⚠%s %s — joué sans attendre de tour\n\n' "$C_Y" "$C_0" "$VERROU_CI_MOTIF"
+fi
+
+# Table rase à chaque lancement (#234) : dans /tmp le système faisait le ménage, sous la racine
+# personne ne le ferait — les journaux s'y accumuleraient. Et un `pytest.log` d'hier laissé à côté
+# d'un run qui n'a pas joué pytest est pire qu'absent : il ment sur ce qui vient d'être vérifié.
+#
+# APRÈS la file, jamais avant : un filet qui attend son tour ne doit pas effacer le journal du filet
+# qui, lui, est en train de tourner — c'est le journal de celui-là qu'on ira lire s'il rougit.
+rm -rf "$LOG_DIR"
+mkdir -p "$LOG_DIR"
 
 joue_etage lint "$ETAGE_LINT"
 
@@ -1047,6 +1091,15 @@ if [ "$PYTEST_JOUE" = 1 ] && [ "$PYTEST_REGIME" = natif ]; then
   else
     printf '%spytest a joué en NATIF%s (demandé) — pas de contrôle croisé Windows/Linux.\n\n' "$C_Y" "$C_0"
   fi
+fi
+# Le filet a-t-il joué SEUL ? (#745) Dit ici, au même titre que le périmètre réduit et le régime
+# natif, et pour la même raison : c'est une limite de ce que ce vert-là couvre. Un filet qui a
+# renoncé à attendre tourne en même temps qu'un autre, donc sur une machine qu'il ne mesure pas —
+# et une suite qui mesure de la simultanéité réelle (#292/#313) peut rougir pour cette seule raison.
+# La sortie volontaire (MAESTRO_CI_FILE=0) reste muette : c'est un choix, pas un repli subi.
+if [ "$VERROU_CI_CODE" = 2 ]; then
+  printf '%sJoué en parallèle d'\''un autre filet%s — %s.\n' "$C_Y" "$C_0" "$VERROU_CI_MOTIF"
+  printf 'Un rouge peut donc venir de la charge et non du code : le rejouer seul tranche.\n\n'
 fi
 # Ce que ce clone n'a pas pris du dépôt (#216) : dit ici, jamais installé — c'est la contrepartie du
 # principe « aucune installation dans le dos ». Le cas historique (pytest-xdist absent, #214) en est

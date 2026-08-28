@@ -2424,6 +2424,95 @@ shellcheck manque (« `winget install koalaman.shellcheck` (ou `docker pull …`
 | `-x` pour garder le lien entre fichiers | **Écarté** : 34 s, le découpage ne rapporte plus rien (ci-dessus). |
 
 
+#### Un filet à la fois sur le poste — les suivants font la queue (#745)
+
+**Deux `local.sh` ne tournent jamais ensemble sur une machine.** Le second annonce qu'il attend,
+puis joue seul dès que le premier a rendu son verdict. Il ne refuse jamais, et on ne le saute
+jamais : **sérialiser, pas refuser**.
+
+Ce n'est pas un cas de bord, c'est le régime **nominal** depuis #455/#626 — un run tourne à
+concurrence 3, chaque session passe le filet avant de pousser (§6), et une session interactive peut
+en lancer un par-dessus. Trois filets en vol, ce sont trois `docker run … pytest -n auto` sur le
+même démon, trois `npm run build` et trois `ruff`/`mypy` qui se disputent les mêmes cœurs et la même
+mémoire — alors que le régime conteneur passe `-n auto` **précisément parce qu'il suppose la machine
+à lui** (#372), et que le plafond natif `min(cœurs, 8)` vient déjà d'une contrainte de **mémoire**
+(#285).
+
+Ce que ça coûte n'est pas d'abord du temps, c'est le **verdict**.
+[`tests/test_orchestrate.py`](../tests/test_orchestrate.py) mesure de la simultanéité *réelle* —
+barrières, pics, vrais processus lancés puis tués (#292/#313) — et **rougit sous charge sans qu'une
+ligne de code soit en cause**. C'était déjà un piège connu et non outillé (« rejouer le test seul
+avant d'enquêter ») ; `local.sh` porte le principe dans son propre en-tête : *un filet qui ment est
+pire que pas de filet*.
+
+**La file vit sous le répertoire git commun** (`git rev-parse --git-common-dir`), donc dans le
+`.git` du clone principal — partagé **par définition** avec tous ses worktrees. C'est la portée
+qu'on veut, et c'est le seul repère qui l'offre sans recopier une troisième fois `depot_principal`.
+Deux emplacements ont été écartés pour une raison qui se vérifie : `<racine>/.maestro/ci-local/` est
+**rasé à chaque lancement** (#234) — le prochain filet effacerait le verrou de celui qui tourne — et
+`<racine>/.maestro/` en général est **propre à chaque worktree**, c'est-à-dire exactement la panne à
+corriger. C'est aussi ce que garde le test : une file rangée sous la racine aurait été verte sur
+deux filets du même dossier, et parfaitement inutile en vrai.
+
+**L'exclusion est portée par un `mkdir`**, seul geste atomique dont on dispose — `flock` n'existe
+pas sous MSYS, et la création exclusive est déjà le mécanisme du rendez-vous `.limite` d'un run
+(#291). La **file**, elle, ne porte pas l'exclusion mais l'**ordre** (FIFO, une entrée par candidat,
+nommée `<instant>-<pid>` pour que le tri lexical soit le tri chronologique) et surtout le **droit de
+reprendre un verrou périmé** : sans elle, deux candidats jugeant le même verrou mort le retireraient
+tous les deux, et le second effacerait le verrou que le premier vient de prendre.
+
+**Un verrou périmé se reprend.** Le porteur peut être mort sans qu'aucun trap n'ait tourné (SIGKILL,
+extinction du poste — cf. `STATUS_DLL_INIT_FAILED_LOGOFF`, la fausse piste de #623). La vivacité est
+**déléguée à [`scripts/orchestrate/pilote.sh`](../scripts/orchestrate/pilote.sh)**, seul endroit du
+dépôt qui sache écrire une carte d'identité et la relire — PID recyclé, zombie non ramassé, échelle
+de naissance qui dérive en cours de route (#456), WINPID sous MSYS. Chacun de ces pièges a coûté un
+ticket ; en réécrire ici un `kill -0` de trois lignes serait la seconde formule, et deux formules qui
+divergent se remarquent trop tard. La reprise **relit la carte avant de retirer** : entre le verdict
+« mort » et le retrait, le verrou a pu changer de main, et retirer un verrou *vivant* ferait tourner
+deux filets — l'inverse exact de ce qu'on protège.
+
+**L'attente se dit**, jamais muette : qui tient le verrou (pid, racine de son répertoire de
+travail), depuis quand, et combien de candidats sont devant — puis un rappel toutes les 30 s. Une
+attente muette de plusieurs minutes passe pour un blocage, et c'est déjà la raison pour laquelle la
+construction de l'image est annoncée (#425).
+
+**Ce qui reste hors du verrou**, et pourquoi :
+
+| Hors file | Raison |
+|---|---|
+| `--list`, `--help` | Ils ne jouent rien. Les faire patienter derrière un filet allongerait la file sans rien protéger. |
+| [`scripts/ci/pytest.sh`](../scripts/ci/pytest.sh) | **Tranché : il ne fait pas la queue.** Il vise l'inverse du filet — une boucle courte qu'on regarde tourner (§8.4bis) — et l'asseoir plusieurs minutes derrière un filet lui retirerait sa raison d'être. Il lance bien le même conteneur, mais sur une **cible** et non sur la suite : le prix est assumé et écrit ici plutôt que payé en surprise. |
+| Le plafond d'attente | Au-delà d'une heure, **on joue quand même** (voir ci-dessous). |
+
+Le verrou couvre en revanche le **filet entier**, d'un bout à l'autre — pas seulement `pytest` et
+`web-build`. Il est pris **après** l'en-tête et l'analyse des options (pour qu'on sache *ce qui*
+attend avant de lire *qu'*on attend) mais **avant tout le reste**, y compris le choix du régime
+pytest, qui peut démarrer Docker Desktop et **construire l'image** : deux filets qui construisent la
+même image en même temps, c'est déjà la charge qu'on cherche à éviter. La table rase du journal
+(#234) passe elle aussi **après** la prise — un filet qui attend son tour ne doit pas effacer le
+journal du filet qui, lui, tourne, et c'est celui-là qu'on ira lire s'il rougit.
+
+**Le plafond d'attente est un choix, et il se dit deux fois.** À `MAESTRO_CI_FILE_ATTENTE_MAX`
+(défaut **3600 s**), le filet **joue quand même**, en parallèle — pendant l'attente, puis **près du
+verdict**, au même titre que le périmètre réduit et le régime natif, et pour la même raison : c'est
+une limite de ce que ce vert-là couvre. Échouer à la place remplacerait un verdict *peut-être*
+faussé par **pas** de verdict, juste avant un push : le remède serait pire que le mal.
+
+**Sorties explicites** — `MAESTRO_CI_FILE=0` joue sans attendre (comportement d'avant #745, et il
+reste **muet** : c'est un choix, pas un repli subi, à la différence d'un dépôt illisible qui, lui,
+nomme sa cause) ; `MAESTRO_CI_FILE_ATTENTE_MAX` déplace le plafond ; `MAESTRO_CI_FILE_RAPPEL` et
+`MAESTRO_CI_FILE_PAS` règlent les rappels et le pas de sondage.
+
+Gardé par [`tests/test_ci_local.py`](../tests/test_ci_local.py), où **ce qui doit être simultané
+l'est par une barrière et jamais par un `sleep`** (règle de #292) : le shim `shellcheck` signale son
+entrée puis attend un départ donné par le test, si bien que le filet qui tient le verrou est
+*dedans* pendant qu'on observe l'autre, sans courir contre l'ordonnanceur. Le pic se lit sans
+horloge — chaque filet pose **son** marqueur, aucun fichier à deux écrivains (leçon de #313) — et le
+test **prouve son motif** : le même scénario à `MAESTRO_CI_FILE=0` montre les deux marqueurs
+d'entrée posés ensemble, c'est-à-dire un pic de **2**. Sans cette moitié, un shim cassé ou un job
+jamais joué rendrait un ✓ sur une question jamais posée.
+
+
 ### 8.4bis Itérer sur une suite : le lanceur, et où jouer selon la famille (#405)
 
 #372 a mis le job pytest du filet dans un conteneur Linux, mais **le régime n'était joignable que
