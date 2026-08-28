@@ -45,7 +45,7 @@
  * canal — seulement comment le rendre.
  */
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { BulleFil } from "@/components/chat/BulleFil";
 import { SourcesDuFil } from "@/components/chat/SourcesDuFil";
@@ -63,6 +63,7 @@ import {
 import { RegionLive } from "@/components/RegionLive";
 import { mesureDesMessages } from "@/lib/annonces";
 import { ErreurSource } from "@/lib/api";
+import { ascenseurDe, estEnBas } from "@/lib/defilement";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import { entreeParLibelle, hrefRun } from "@/lib/navigation";
 import {
@@ -125,14 +126,45 @@ export function Conversation({
   const [refusSource, setRefusSource] = useState<ErreurSource | null>(null);
   const [sourcesOuvertes, setSourcesOuvertes] = useState(false);
   const [survol, setSurvol] = useState(false);
-  const liste = useRef<HTMLOListElement | null>(null);
+  // La sentinelle de fin de fil : elle ne sert qu'à désigner l'ascenseur qui
+  // porte la conversation (`lib/defilement`). Depuis #691 le fil n'a plus de
+  // conteneur défilant à lui, donc plus rien à tenir par une `ref`.
+  const pied = useRef<HTMLDivElement | null>(null);
+  const ascenseur = useRef<HTMLElement | null>(null);
+  // Le lecteur suit-il encore la conversation ? Une `ref` et non un état : sa
+  // valeur ne change rien à ce qui est rendu, et la relire à chaque événement de
+  // défilement ferait un rendu par cran de molette.
+  const suit = useRef(true);
+
+  /** Ramène la vue au bas du fil — sans condition, l'appelant ayant tranché. */
+  const collerEnBas = useCallback(() => {
+    const cadre = ascenseur.current;
+    if (cadre === null) return;
+    cadre.scrollTop = cadre.scrollHeight;
+  }, []);
+
+  // Qui défile, et le lecteur suit-il ? Résolu une fois au montage : l'ascenseur
+  // est celui du cadre (`Shell`), il ne change pas sous les pieds du fil.
+  useEffect(() => {
+    const cadre = ascenseurDe(pied.current);
+    ascenseur.current = cadre;
+    if (cadre === null) return;
+    // Le suivi se décide **avant** l'arrivée du message, sur le geste du
+    // lecteur : mesurer après coup dirait toujours « trop loin du bas », le
+    // nouveau contenu venant précisément d'allonger la page.
+    const surDefilement = () => {
+      suit.current = estEnBas(cadre);
+    };
+    cadre.addEventListener("scroll", surDefilement, { passive: true });
+    return () => cadre.removeEventListener("scroll", surDefilement);
+  }, []);
 
   // Le fil suit la conversation : chaque nouveau message (et l'indicateur
-  // d'attente) ramène la vue en bas, comme une messagerie.
+  // d'attente) ramène la vue en bas, comme une messagerie — **sauf** si le
+  // lecteur est remonté lire, auquel cas il garde sa place (note de #265).
   useEffect(() => {
-    const conteneur = liste.current;
-    if (conteneur !== null) conteneur.scrollTop = conteneur.scrollHeight;
-  }, [messages, envoi]);
+    if (suit.current) collerEnBas();
+  }, [messages, envoi, collerEnBas]);
 
   const soumettre = async (texte: string) => {
     const contenu = texte.trim();
@@ -142,6 +174,10 @@ export function Conversation({
     setErreurEnvoi(null);
     setRefusSource(null);
     setBrouillon("");
+    // Écrire, c'est reprendre le fil : quel que soit l'endroit où on lisait, on
+    // veut voir partir son propre message. Le suivi reprend donc ici, et c'est
+    // le seul endroit où il se rétablit sans geste de défilement.
+    suit.current = true;
     try {
       // Le téléversement **avant** l'envoi : le message ne porte que des
       // identifiants, ce qui garantit qu'un fichier n'atterrit jamais ailleurs
@@ -213,15 +249,21 @@ export function Conversation({
         icone={icone}
         titre={titre}
         aside={
+          /* Ce qui va **bien** ne s'affiche plus (#691). Le badge disait
+             « Temps réel connecté » en permanence, dans l'en-tête du bloc
+             principal de l'écran, pour n'apprendre rien — et il le disait une
+             seconde fois, la barre supérieure du cadre portant déjà l'état de la
+             même socket. Seule la **coupure** reste dite : c'est elle qui
+             explique un fil qui ne bouge plus, et elle seule justifie d'occuper
+             la place. Même règle que le reste de l'écran (docs/30 §4) : une
+             place se gagne, elle ne se garde pas parce qu'on l'avait. */
           <span className="flex flex-wrap items-center gap-2">
             {entete}
-            <BadgeEtat
-              ton={connecte ? "positif" : "attention"}
-              pastille
-              pulse={!connecte}
-            >
-              {connecte ? "Temps réel connecté" : "Reconnexion…"}
-            </BadgeEtat>
+            {!connecte && (
+              <BadgeEtat ton="attention" pastille pulse>
+                Reconnexion…
+              </BadgeEtat>
+            )}
           </span>
         }
       />
@@ -246,10 +288,24 @@ export function Conversation({
           Fil illisible : {erreur}
         </p>
       )}
+      {/* Le fil **n'a plus d'ascenseur à lui** (#691) : plus de `max-h`, plus
+          d'`overflow-y`, plus de cadre. Il s'étend, et c'est la page qui le
+          parcourt — un seul ascenseur pour un seul contenu, là où la boîte en
+          donnait deux, dont l'intérieur ne bougeait pas quand on tournait la
+          molette sur la page. Le `flex-1` est ce qui lui fait occuper la
+          hauteur disponible quand la conversation est courte : sans lui, un fil
+          de deux messages laisserait le composeur au milieu de l'écran et un
+          vide dessous (~270 px mesurés avant ce lot).
+          La bordure et le fond partent avec la boîte : un cadre autour de ce
+          qui occupe déjà tout l'écran ne délimite plus rien. */}
       <ol
-        ref={liste}
         aria-label={`Messages échangés avec ${interlocuteur}`}
-        className="flex max-h-[60vh] min-h-64 flex-col gap-2 overflow-y-auto rounded-md border border-neutral-200 bg-neutral-50 p-3 dark:border-neutral-800 dark:bg-neutral-950"
+        // `justify-end` : la conversation s'empile **depuis le bas**, comme une
+        // messagerie — deux messages se posent au-dessus du composeur au lieu de
+        // flotter en haut d'un écran vide. Sans effet dès que le fil dépasse la
+        // hauteur disponible : il n'y a alors plus d'espace libre à distribuer,
+        // et rien n'est donc jamais coupé en haut.
+        className="flex flex-1 flex-col justify-end gap-3 py-1"
       >
         {chargement && (
           <li className="text-sm text-neutral-500">Chargement du fil…</li>
@@ -274,6 +330,11 @@ export function Conversation({
           </li>
         )}
       </ol>
+      {/* La sentinelle de fin de fil : elle ne rend rien, elle **désigne**
+          l'ascenseur qui porte la conversation (`lib/defilement`). Hors du
+          `<ol>` à dessein — un `<li>` vide y serait annoncé comme un message de
+          plus par les lecteurs d'écran. */}
+      <div ref={pied} aria-hidden="true" />
       {filVide && amorces.length > 0 && (
         <div className="flex flex-wrap gap-2">
           {amorces.map((amorce) => (
@@ -288,14 +349,36 @@ export function Conversation({
           ))}
         </div>
       )}
+      {/* Le composeur reste **à quai** (#691) : le fil défilant désormais avec la
+          page, le laisser en fin de flux obligerait à redescendre tout
+          l'historique avant de pouvoir écrire. `sticky bottom-0` le colle au bas
+          de l'ascenseur du cadre tant qu'il y a du fil sous lui, et le rend à sa
+          place naturelle une fois le bas atteint — donc rien ne recouvre jamais
+          le dernier message.
+          Le fond opaque n'est pas décoratif : sans lui, les bulles défileraient
+          **sous** la zone de saisie, lisibles au travers. */}
       <form
         onSubmit={(e) => {
           e.preventDefault();
           void soumettre(brouillon);
         }}
-        className="flex flex-col gap-2"
+        className="sticky bottom-0 z-10 flex flex-col gap-2 border-t border-bord bg-background pt-3 pb-2"
       >
-        <div className="flex items-end gap-2">
+        {/* `pe-14` : la réserve du bouton flottant de l'assistant (#123), qui
+            occupe les 64 derniers pixels de la fenêtre en bas à droite. Tant que
+            le composeur était en fin de flux, le `pb-24` du `Shell` l'en tenait
+            à distance ; à quai (#691), c'est à cette hauteur-là qu'il vit, et le
+            bouton « Envoyer » passait **sous** le flottant — mesuré à 375 px :
+            33 px de recouvrement, moitié droite du bouton inerte (le flottant est
+            en `z-30`, le composeur en `z-10`).
+            La réserve est **inconditionnelle** à dessein : le flottant est calé
+            sur la fenêtre, pas sur la colonne, si bien qu'un point de rupture
+            aurait raison sur `/chat` — où la colonne de propriétés éloigne le
+            composeur — et tort sur l'onglet Chat d'une fiche agent, où il court
+            jusqu'au bord (mesuré : bord droit à 1416 px pour un flottant qui
+            commence à 1376). Deux surfaces, un seul composant : la règle qui vaut
+            pour les deux est celle qui ne dépend pas de la mise en page. */}
+        <div className="flex items-end gap-2 pe-14">
           <textarea
             value={brouillon}
             onChange={(e) =>

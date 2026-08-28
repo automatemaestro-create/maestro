@@ -23,14 +23,34 @@
  * décision **D5** de #218 tient, rien n'est décomposé avant validation humaine,
  * et les deux routes de §6.10 sont celles d'avant.
  *
- * **Le cadrage passe avant le fil**, et l'ordre est le contenu de la décision :
- * c'est un run **arrêté** qui attend là, et les trois surfaces d'acheminement
- * (§2.1 — panneau du tableau de bord, cloche, carte de run) mènent ici par
- * `PAGE_DU_CADRAGE`. Y arriver pour trouver le brief sous le pli reviendrait à
- * éteindre le renvoi qui vient de nous amener. Il reste visible quand la file
- * est vide, où il dit *pourquoi* elle l'est : la page ne recopie pas la règle de
- * `runsEnAttente` pour se cacher elle-même, et deux blocs de corps sur les trois
- * que la règle de sobriété autorise (#539, docs/30 §4) laissent la place.
+ * **Le cadrage passe avant le fil quand il a quelque chose à dire**, et l'ordre
+ * est le contenu de la décision : c'est un run **arrêté** qui attend là, et les
+ * trois surfaces d'acheminement (§2.1 — panneau du tableau de bord, cloche,
+ * carte de run) mènent ici par `PAGE_DU_CADRAGE`. Y arriver pour trouver le
+ * brief sous le pli reviendrait à éteindre le renvoi qui vient de nous amener.
+ *
+ * ⚠ **Ce que #691 a changé, et pourquoi.** Jusqu'à la revue du 2026-08-28 ce
+ * bloc occupait le haut de l'écran **même la file vide**, où il disait *pourquoi*
+ * elle l'était — c'est-à-dire dans le cas nominal, où il repoussait vers le bas
+ * le seul élément que cette page existe pour porter. Le chat est la porte
+ * d'entrée du produit depuis #666 ; il ne pouvait pas rester le second bloc de
+ * son propre écran. La file vide n'est donc plus **effacée** mais **déplacée**,
+ * dans la colonne de propriétés — la seule des trois places sans plafond
+ * (docs/30 §4), et l'une des deux seules réponses admises à un corps qui déborde
+ * avec le second niveau ; jamais un retrait d'information. Ce qui n'a pas bougé :
+ * la page ne **recopie** pas la règle de `runsEnAttente`, elle l'**appelle** —
+ * deux formulations de « ce qui attend » finiraient par ne plus désigner la même
+ * file, et l'écran montrerait le cadrage au moment où il n'y en a pas.
+ *
+ * ## La conversation prend l'écran (#691)
+ *
+ * Le fil n'a **plus d'ascenseur à lui**. `components/Conversation` le bornait à
+ * `max-h-[60vh]` dans une boîte défilante : deux ascenseurs pour un contenu,
+ * dont l'intérieur ne bougeait pas quand on tournait la molette sur la page, et
+ * ~270 px de vide sous le composeur. Il s'étend désormais, et c'est l'ascenseur
+ * du `Shell` qui le parcourt — d'où le `flex-1` **sans** `min-h-0` sur la racine
+ * de cette page (voir le commentaire du rendu : c'est le couple qui fait à la
+ * fois « remplir » et « déborder », et l'ajout de `min-h-0` rendrait l'inverse).
  *
  * ## Trois choix, et ce qu'ils écartent
  *
@@ -83,6 +103,7 @@ import {
   LienRenvoi,
 } from "@/components/Primitives";
 import { cheminOnglet } from "@/lib/agents";
+import { runsEnAttente } from "@/lib/brief";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import { hrefRun } from "@/lib/navigation";
 import {
@@ -97,7 +118,7 @@ import type { MessageChat } from "@/lib/types";
 import { useChat } from "@/lib/useChat";
 
 export default function PageChat() {
-  const { agents, taches, projet } = useEtatGlobal();
+  const { agents, taches, projet, executions } = useEtatGlobal();
   const [destinataire, setDestinataire] = useState(AGENT_ORCHESTRATION);
   // Le projet **de cette fenêtre** part avec chaque message (#683) : c'est ce
   // qui rattache au projet actif le run que l'orchestration ouvre, et donc ce
@@ -116,6 +137,12 @@ export default function PageChat() {
   const global = destinataire === AGENT_ORCHESTRATION;
   const interlocuteur = global ? INTERLOCUTEUR_ORCHESTRATION : destinataire;
 
+  // Y a-t-il un run **arrêté** qui attend un geste ? La même règle que le fil de
+  // cadrage lui-même (`runsEnAttente`, `lib/brief`) — appelée, jamais recopiée :
+  // deux formulations de « ce qui attend » finiraient par ne plus désigner la
+  // même file, et l'écran montrerait le cadrage au moment où il n'y en a pas.
+  const cadrageEnAttente = runsEnAttente(executions).length > 0;
+
   /**
    * Chaque frappe passe ici : une mention close par une espace change le
    * destinataire et quitte le brouillon, tout le reste passe tel quel. Écrire
@@ -130,25 +157,47 @@ export default function PageChat() {
   };
 
   return (
-    // Le corps à gauche, la colonne de propriétés à droite (#539) — deux places
-    // de corps (le cadrage, puis le fil) et tout ce qui les accompagne dans la
-    // troisième, la seule sans plafond. `items-start` : la colonne se cale en
-    // haut plutôt que de s'étirer sur la hauteur du fil.
-    <div className="grid gap-6 @4xl:grid-cols-3 @4xl:items-start">
-      <div className="flex min-w-0 flex-col gap-6 @4xl:col-span-2">
-        <section
-          aria-label="Cadrage en attente"
-          className="flex min-w-0 flex-col gap-3"
-        >
-          <EnTeteSection titre="Cadrage en attente" icone={IconeObjectif} />
-          <p className="text-corps text-neutral-600 dark:text-neutral-400">
-            Avant de parler du travail, on le cadre : le brief se relit et se
-            corrige ici même, les questions du Chef de projet s&apos;y répondent,
-            et l&apos;accord — ou le refus — s&apos;y donne. Rien n&apos;est
-            décomposé avant.
-          </p>
-          <FilDeCadrage />
-        </section>
+    // Le corps à gauche, la colonne de propriétés à droite (#539) — mais
+    // **la conversation seule** occupe désormais le corps, et elle prend la
+    // hauteur (#691).
+    //
+    // `flex-1` sans `min-h-0` : c'est ce couple qui donne les deux comportements
+    // demandés d'un seul coup. `flex-1` fait remplir la hauteur du cadre quand la
+    // conversation est courte — plus de vide sous le composeur ; l'absence de
+    // `min-h-0` (donc `min-height: auto`) l'empêche de se comprimer sous son
+    // contenu quand elle est longue, si bien qu'elle déborde et que c'est
+    // l'ascenseur du `Shell` qui la parcourt. Ajouter `min-h-0` ici, par symétrie
+    // avec la chaîne du Kanban (#248), rendrait exactement l'inverse.
+    <div className="flex flex-1 flex-col gap-6 @4xl:flex-row">
+      <div className="flex min-w-0 flex-1 flex-col gap-6">
+        {/* Le cadrage garde la **première place quand il a quelque chose à
+            dire**, et la rend quand il n'a rien (#691) : c'est un run arrêté qui
+            attend là, et les trois surfaces d'acheminement de §2.1 mènent ici par
+            `PAGE_DU_CADRAGE` — y arriver pour trouver le brief sous le pli
+            éteindrait le renvoi qui vient de nous amener.
+            ⚠ Ce qui change par rapport à #483, et la raison : ce bloc occupait le
+            haut de l'écran **même vide**, pour dire pourquoi il l'était — c'est-
+            à-dire le cas nominal, où il repoussait vers le bas le seul élément
+            que la page existe pour porter. Il ne disparaît pas pour autant : à
+            file vide il passe dans la colonne de propriétés, la seule des trois
+            places sans plafond (docs/30 §4). Les deux réponses à un corps qui
+            déborde sont une colonne ou un second niveau, jamais un retrait
+            d'information — et « pourquoi la file est vide » reste écrit. */}
+        {cadrageEnAttente && (
+          <section
+            aria-label="Cadrage en attente"
+            className="flex min-w-0 flex-col gap-3"
+          >
+            <EnTeteSection titre="Cadrage en attente" icone={IconeObjectif} />
+            <p className="text-corps text-neutral-600 dark:text-neutral-400">
+              Avant de parler du travail, on le cadre : le brief se relit et se
+              corrige ici même, les questions du Chef de projet s&apos;y
+              répondent, et l&apos;accord — ou le refus — s&apos;y donne. Rien
+              n&apos;est décomposé avant.
+            </p>
+            <FilDeCadrage />
+          </section>
+        )}
         <Conversation
           fil={fil}
           interlocuteur={interlocuteur}
@@ -193,10 +242,36 @@ export default function PageChat() {
           }
         />
       </div>
+      {/* La troisième place — celle qui s'allonge sans plafond (docs/30 §4).
+          Largeur fixe en grand format : la conversation garde le reste, au lieu
+          du tiers que lui laissait la grille de #269.
+          **Collante et bornée**, exactement comme celle de `/couts` et pour la
+          raison qu'y garde `sobriete.test.tsx` : depuis que le fil prend
+          l'écran, la page défile pour de bon, et une colonne posée en haut
+          d'une page de 1400 px s'en irait avec elle — on perdrait le choix du
+          destinataire au bout de dix messages. La collante appelle le plafond :
+          une surface collante plus haute que la fenêtre voit son bas rester
+          définitivement sous le pli, aucun défilement ne le ramenant puisque
+          c'est le défilement qui la fige (classe de bug de #306). Les deux
+          utilitaires vont donc ensemble, et jamais l'un sans l'autre. */}
       <aside
         aria-label="Propriétés du fil"
-        className="flex min-w-0 flex-col gap-6"
+        className={
+          "flex min-w-0 flex-col gap-6 @4xl:w-80 @4xl:shrink-0 " +
+          "@4xl:sticky @4xl:top-20 @4xl:max-h-[calc(100dvh-6rem)] @4xl:self-start @4xl:overflow-y-auto"
+        }
       >
+        {/* Le cadrage à file vide (#691) : il ne disparaît pas, il change de
+            place — voir le corps ci-dessus. Ce qu'il dit ici est ce qu'il disait
+            là-bas : pourquoi la file est vide, et par où on y met quelque chose. */}
+        {!cadrageEnAttente && (
+          <Carte densite="aeree">
+            <EnTeteSection titre="Cadrage en attente" icone={IconeObjectif} />
+            <div className="mt-3">
+              <FilDeCadrage />
+            </div>
+          </Carte>
+        )}
         <Carte densite="aeree">
           <EnTeteSection titre="Parler à" icone={IconeAgent} />
           <p className="mt-2 text-annexe text-neutral-500 dark:text-neutral-400">

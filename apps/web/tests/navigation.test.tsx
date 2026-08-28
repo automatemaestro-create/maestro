@@ -312,9 +312,15 @@ describe("la barre supérieure (BarreSuperieure)", () => {
     );
   });
 
-  it("annonce le flux temps réel connecté, puis la reconnexion", () => {
+  it("se tait quand le flux temps réel va bien, et n'annonce que la coupure", () => {
+    // #691 : la pastille disait « Temps réel connecté » en permanence, sur les
+    // onze écrans, à la place la plus visible de la fenêtre — pour n'apprendre
+    // rien. Ce test **s'est inversé** avec le composant, et c'est le sens du
+    // ticket : seule la coupure justifie d'occuper la place, parce qu'elle seule
+    // explique quelque chose que l'utilisateur ne peut pas déduire de son écran.
     const { unmount } = rendreAvecEtat(barre(), { connecte: true });
-    expect(screen.getByText("Temps réel connecté")).toBeInTheDocument();
+    expect(screen.queryByText("Temps réel connecté")).not.toBeInTheDocument();
+    expect(screen.queryByText("Reconnexion…")).not.toBeInTheDocument();
     unmount();
 
     rendreAvecEtat(barre(), { connecte: false });

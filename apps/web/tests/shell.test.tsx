@@ -95,12 +95,17 @@ describe("le shell applicatif (Shell)", () => {
     // La barre supérieure lit le statut de connexion et le coût cumulé dans le
     // contexte, pas dans son propre hook : c'est ce qui évite d'ouvrir une
     // WebSocket par composant.
+    //
+    // ⚠ Le témoin a changé avec #691 : la pastille ne dit plus rien quand tout
+    // va bien, donc « Temps réel connecté » ne prouve plus rien. C'est la
+    // **coupure** qui sert de preuve — elle n'apparaît que si la barre a bien lu
+    // le `connecte` du contexte —, et le coût cumulé confirme la seconde moitié.
     poserEtatGlobal({
-      connecte: true,
+      connecte: false,
       couts: [coutExecutionFactice({ total: usageFactice({ cout_usd: 1.25 }) })],
     });
     await monterShell();
-    expect(screen.getByText("Temps réel connecté")).toBeInTheDocument();
+    expect(screen.getByText("Reconnexion…")).toBeInTheDocument();
     expect(
       screen.getByText(/Coût cumulé/, {
         selector: "[data-guide='cout-cumule']",
