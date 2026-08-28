@@ -84,7 +84,12 @@ technique du ticket) : ce qui ne se monterait pas est un refus, pas une entrée.
 Ce lot ne touche **ni `SEED` ni le contrat public de `EntreeRegistre.to_dict()`** —
 la fédération (fusion des deux sources, admission, provenance) arrive au lot 3.
 
-Tests différés → lot 6 du parent (#680).
+Tests : [`tests/test_mcp_traduction.py`](../../tests/test_mcp_traduction.py). Ils
+n'étaient pas prévus dans ce lot (ils étaient différés au lot 6 du parent, #680),
+mais le seuil de couverture du job CI `pytest` est un plancher **global** : 285
+instructions non couvertes le font passer sous 90 %, et un lot ne peut pas
+différer ce qui bloque sa propre PR. Le lot 6 garde le reste — la doc, et ce qui
+demande les lots 3 à 5 pour être éprouvé de bout en bout.
 """
 
 from __future__ import annotations
