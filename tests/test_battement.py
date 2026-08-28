@@ -730,8 +730,8 @@ def test_le_coeur_ne_rebat_pas_un_run_qui_a_deja_consigne_son_issue():
 def test_l_arret_de_l_api_n_efface_aucun_battement():
     """La panne du 2026-08-14, jouée jusqu'à son verdict.
 
-    L'API s'arrête avec un run en vol — fenêtre du navigateur fermée, machine
-    endormie. Le run meurt avec elle, et rien ne publie « je suis mort » : sa
+    L'API s'arrête avec un run en vol — machine endormie, plantage. Le run meurt
+    avec elle, et rien ne publie « je suis mort » : sa
     projection en reste à `en_cours`. Ce qui reste, et **doit** rester, c'est son
     dernier battement — il vieillit, et c'est lui qui rendra `orphelin` là où le
     journal durable rendait `en_cours` pour toujours.

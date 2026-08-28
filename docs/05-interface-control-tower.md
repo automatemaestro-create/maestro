@@ -2185,10 +2185,12 @@ décrit le comportement réel, pas une fixture.
   [docs/28 §11](./28-decision-frontiere-execution-run.md)) : chaque run que cette API porte est
   soldé `annulee` avec la cause `extinction`, son hôte éteint **avec sa descendance**, ses tâches
   soldées et son battement retiré. `200` même quand rien ne tournait (liste vide) : éteindre une
-  Control Tower au repos n'est pas une erreur. C'est la porte de l'arrêt **volontaire**, appelée par
-  `scripts/controltower/start.sh --stop` avant qu'il ne libère les ports — et la seule : l'arrêt
-  **subi** (fenêtre du navigateur refermée, API relancée, plantage) passe par le `lifespan`, qui ne
-  touche à rien. La distinction ne se déduit d'aucun signal, elle **descend** de l'appelant.
+  Control Tower au repos n'est pas une erreur. C'est la porte de l'arrêt **volontaire**, et la
+  seule : `scripts/controltower/start.sh` la pousse avant de libérer les ports, depuis ses **deux**
+  gestes d'arrêt — `--stop` et la **fermeture de la fenêtre** du navigateur (chien de garde #149,
+  #700). L'arrêt **subi** (démarrage qui remplace la session précédente, plantage, `SIGTERM`) passe,
+  lui, par le `lifespan`, qui ne touche à rien. La distinction ne se déduit d'aucun signal, elle
+  **descend** de l'appelant.
 
 ⚠ **`reprendre` et `relancer` ne sont pas le même geste**, et les confondre coûte un cadrage :
 `reprendre` rouvre la porte d'un run **vivant** qu'on avait suspendu — même `run_id`, même plan,
@@ -2305,12 +2307,13 @@ constat du 2026-08-17, dont deux du 22 juillet). L'hôte publie donc un **battem
 > **La frontière est tranchée par [doc 28](./28-decision-frontiere-execution-run.md)** (#350) et
 > **livrée** par le chantier #441 : l'exécution est sortie du process de l'API pour un **hôte de run
 > détaché**, devenu le défaut avec #446 (`MAESTRO_HOTE_RUN=process` ramène la tâche de fond). Un run
-> survit donc à l'arrêt **accidentel** de l'API — fermer la fenêtre du navigateur, relancer après
-> une modification, planter — mais **pas au sommeil de la machine**, qui reste traité par le
-> battement ci-dessous (on le voit) et par la relance sur brief de #349 (on le rattrape). Ni à
-> l'arrêt **volontaire** depuis #486 : `start.sh --stop` solde ses runs (`annulee`, cause
-> `extinction`) et les rend **reprenables** par le bouton « Reprendre » du panneau ci-dessous —
-> un run soldé de la sorte y figure au même titre qu'un orphelin.
+> survit donc à l'arrêt **accidentel** de l'API — relancer après une modification, planter — mais
+> **pas au sommeil de la machine**, qui reste traité par le battement ci-dessous (on le voit) et par
+> la relance sur brief de #349 (on le rattrape). Ni à l'arrêt **volontaire**, qui solde ses runs
+> (`annulee`, cause `extinction`) et les rend **reprenables** par le bouton « Reprendre » du panneau
+> ci-dessous — un run soldé de la sorte y figure au même titre qu'un orphelin. Deux gestes le
+> déclenchent : `start.sh --stop` depuis #486, et **fermer la fenêtre du navigateur** depuis #700,
+> qui l'a fait passer d'accident à décision ([docs/28 §11.2](./28-decision-frontiere-execution-run.md)).
 
 | `vitalite` | ce que ça dit | ce qu'on en fait |
 | --- | --- | --- |

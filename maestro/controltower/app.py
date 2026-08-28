@@ -1188,19 +1188,22 @@ def create_app(
     async def eteindre() -> dict[str, Any]:
         """**Maestro s'éteint** : ses runs en vol sont soldés avec lui (#486).
 
-        La porte de l'arrêt **volontaire**, et la seule : `scripts/controltower/
-        start.sh --stop` l'appelle avant de libérer les ports, et la fermeture de
-        l'enveloppe le fera le jour où elle existera. Chaque hôte détaché est éteint
-        avec sa **descendance**, son run consigné `annulee` avec la cause
-        `extinction` — donc jamais laissé `en_cours` —, et ses tâches soldées avec
-        lui.
+        La porte de l'arrêt **volontaire**, et la seule. `scripts/controltower/
+        start.sh` la pousse avant de libérer les ports, depuis ses **deux** gestes
+        d'arrêt — `--stop`, et la **fermeture de la fenêtre** du navigateur par le
+        chien de garde #149 (#700) —, et la fermeture de l'enveloppe le fera le jour
+        où elle existera. Chaque hôte détaché est éteint avec sa **descendance**, son
+        run consigné `annulee` avec la cause `extinction` — donc jamais laissé
+        `en_cours` —, et ses tâches soldées avec lui.
 
-        ⚠ **Ce n'est pas l'arrêt de l'API.** Fermer la fenêtre du navigateur (#149),
-        relancer après une modification, planter : ces trois-là passent par le
-        `lifespan`, où l'hôte détaché ne touche à rien — c'est la propriété de #441
-        et elle n'est pas défaite. La distinction ne se déduit d'aucun signal reçu
-        ici : elle **descend** de l'appelant, seul à savoir qu'il arrête exprès
-        (docs/28 §11).
+        ⚠ **Ce n'est pas l'arrêt de l'API.** Relancer après une modification (le
+        démarrage remplace la session précédente), planter, recevoir un `SIGTERM` :
+        ceux-là passent par le `lifespan`, où l'hôte détaché ne touche à rien — c'est
+        la propriété de #441 et elle n'est pas défaite. La distinction ne se déduit
+        d'aucun signal reçu ici : elle **descend** de l'appelant, seul à savoir qu'il
+        arrête exprès (docs/28 §11). Fermer la fenêtre a changé de camp le
+        2026-08-28 parce que c'est un geste d'**arrêt** — pas parce que la
+        distinction aurait faibli (docs/28 §11.2).
 
         Rend les résumés des runs soldés — vide quand rien ne tournait, ce qui est
         le cas courant. `200` dans les deux cas : éteindre une Control Tower au
@@ -3688,10 +3691,11 @@ def create_default_app() -> FastAPI:
 
     L'**hôte des runs** (#443) se choisit ici, et nulle part ailleurs. Depuis #446
     le défaut est l'hôte **détaché** : chaque run vit dans un process indépendant,
-    qui survit à l'arrêt **subi** de `maestro-api` — fermer la fenêtre du
-    navigateur, relancer après une modification, planter n'emportent plus le run.
-    Il ne survit pas à l'arrêt **volontaire** (#486, `POST /api/extinction`), qui
-    est une décision et non un accident.
+    qui survit à l'arrêt **subi** de `maestro-api` — relancer après une
+    modification, planter, recevoir un `SIGTERM` n'emportent plus le run. Il ne
+    survit pas à l'arrêt **volontaire** (#486, `POST /api/extinction`), qui est une
+    décision et non un accident : `start.sh --stop`, et depuis #700 la fermeture de
+    la fenêtre du navigateur.
     `MAESTRO_HOTE_RUN=process` ramène la tâche de fond de l'API, dont les runs
     meurent avec elle. C'est le seul endroit du dépôt qui *nomme* un hôte : le
     service ne connaît que le contrat, et le résoudre là où sont déjà résolus le

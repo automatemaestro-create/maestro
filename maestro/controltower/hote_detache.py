@@ -1,17 +1,20 @@
 """L'hôte détaché : le run vit dans un process que l'API ne possède pas (#443).
 
 L'implémentation de `HoteRun` qui **survit à son lanceur**. Arrêter `maestro-api`
-par accident — fermer la fenêtre du navigateur (le chien de garde #149 arrête
-l'API avec elle), relancer après une modification, planter — n'arrête plus le
-run : c'est la panne de chaque heure de développement, et docs/28 §5 la donne
-comme la première raison d'écrire ce module.
+par accident — relancer après une modification, planter, recevoir un `SIGTERM` —
+n'arrête plus le run : c'est la panne de chaque heure de développement, et
+docs/28 §5 la donne comme la première raison d'écrire ce module.
 
-⚠ **Le troisième geste de cette liste en est sorti (#486, docs/28 §11)** :
-`start.sh --stop` n'est pas un accident mais une **décision**, et il solde
-désormais les runs en vol au lieu de les laisser tourner sans écran pour les
-suivre. Le corollaire à jour se lit donc : **un run survit à l'accident, pas à
-l'extinction — ni à sa machine.** Rien de ce module n'est défait pour autant, et
-c'est le point : l'extinction volontaire entre par une porte explicite
+⚠ **Deux gestes ont quitté cette liste, et ce sont les deux façons d'arrêter la
+Control Tower** — `start.sh --stop` (#486, docs/28 §11) puis, le 2026-08-28, la
+**fermeture de la fenêtre du navigateur** (#700, docs/28 §11.2), que le chien de
+garde #149 ne pouvait pas tenir pour un accident puisqu'il coupe déjà l'API et
+l'UI avec elle. Aucun des deux n'est un accident : ce sont des **décisions**, et
+elles soldent les runs en vol au lieu de les laisser tourner sans écran pour les
+suivre — d'autant que la survie leur fait *perdre leur historique* depuis la
+mesure de #699. Le corollaire à jour se lit donc : **un run survit à l'accident,
+pas à l'extinction — ni à sa machine.** Rien de ce module n'est défait pour
+autant, et c'est le point : l'extinction volontaire entre par une porte explicite
 (`POST /api/extinction` → `ServiceExecutions.eteindre`) et se sert de `_eteindre`
 ci-dessous, qui existait déjà. Ce qui **subit** l'arrêt de l'API passe, lui,
 toujours par `fermer` — qui ne fait toujours rien.

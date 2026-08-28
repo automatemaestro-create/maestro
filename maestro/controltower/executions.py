@@ -38,8 +38,8 @@ protocole de révocation côté workers) et aucune dépendance d'infrastructure
 ajoutée à `maestro-api` —, et l'hôte détaché ne repaie ni l'une ni l'autre :
 l'annulation reste `Task.cancel`, à un aller Redis près (#444), et le process fils
 est le même interpréteur dans le même `.venv`. Ce qu'il supprime est la panne de
-chaque heure : fermer la fenêtre du navigateur, relancer l'API, planter n'arrête
-plus le run.
+chaque heure : relancer l'API après une modification, planter n'arrête plus le
+run.
 
 Le corollaire n'a pas disparu, il a **changé de portée** : un run survit à
 l'**accident**, pas à l'**extinction** — ni à sa machine ; sa trace, elle, survit
@@ -47,11 +47,16 @@ aux trois (journal durable #97). La tâche de fond reste disponible et se nomme
 (`MAESTRO_HOTE_RUN=process`) ; le contrat REST ne dépend d'aucun des deux.
 
 ⚠ L'**extinction** est le mot que #486 a ajouté à ce corollaire, et il ne défait
-rien de ce qui précède (docs/28 §11) : `start.sh --stop` n'est pas un accident
-mais une décision, et laisser tourner un run après avoir éteint la Control Tower
+rien de ce qui précède (docs/28 §11) : arrêter la Control Tower n'est pas un
+accident mais une décision, et laisser tourner un run après l'avoir éteinte
 revient à le laisser consommer du quota sans écran pour le suivre ni bouton pour
-l'arrêter. Elle entre donc par une porte explicite — `eteindre`, plus bas —, et
-`fermer` (l'arrêt **subi**) continue de ne toucher à rien.
+l'arrêter — et, depuis la mesure de #699, à lui faire *perdre son historique*, le
+bus étant éphémère et le journal durable alimenté par la seule pompe de l'API.
+Elle entre donc par une porte explicite — `eteindre`, plus bas —, et `fermer`
+(l'arrêt **subi**) continue de ne toucher à rien. **Deux gestes** la poussent
+depuis #700 : `start.sh --stop` et la **fermeture de la fenêtre** du navigateur,
+qui arrête déjà l'API et l'UI et n'était donc pas l'accident qu'on croyait
+(docs/28 §11.2). Ce qui reste subi : le redémarrage, le plantage, le `SIGTERM`.
 
 Depuis #442, cette frontière a un **nom** et n'est plus un détail
 d'implémentation du service : `maestro.controltower.hote` porte le contrat
