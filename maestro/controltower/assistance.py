@@ -15,12 +15,11 @@ d'événements #46 pour le temps réel) avec deux pièces qui lui sont propres :
   budget et n'apparaît ni au routage ni au Kanban. Il n'a de l'`Agent` que ce
   dont le chat a besoin : un nom (la clé du fil), un rôle et un prompt système.
 - `RepondeurAssistance` : la production de la réponse, **déterministe et sans
-  modèle**. Un choix assumé au POC : les questions portent sur un produit dont
-  aucun modèle n'a la documentation, donc des réponses écrites ici sont plus
+  modèle**. Un choix assumé au POC : les questions portaient sur un produit dont
+  aucun modèle n'avait la documentation, donc des réponses écrites ici étaient plus
   justes qu'une génération — et le canal marche à l'identique dans la démo (#65),
-  sans fournisseur ni authentification. Le contrat étant celui de `RepondeurChat`,
-  passer à `RepondeurModele` le jour où l'assistant devra raisonner sur l'état
-  courant reste un changement d'une ligne, côté `create_app`.
+  sans fournisseur ni authentification. ⚠ Cette phrase décrit le **repli**
+  d'aujourd'hui, plus le régime nominal : lire la suite avant de s'y fier.
 
 ⚠ **Cet arbitrage n'a pas été annulé, il a changé de portée** (#764, lot 2 de
 #748). Sa prémisse — « aucun modèle n'a la documentation de ce produit » — a cessé
@@ -38,7 +37,30 @@ a disparu est son rôle de **juge**, pas son existence.
 qu'on lui ajouterait pour « couvrir » un sujet que le modèle traite déjà remettrait
 un juge lexical sur le chemin nominal — exactement ce que #748 supprime. Un sujet
 mal servi se corrige dans la **documentation**, qui est la source du répondeur, et
-non ici. Le lot 3 (#765) achève le retrait et l'éprouve.
+non ici.
+
+⚠ **Le retrait est achevé, et il est GARDÉ** (#765, lot 3 de #748). Deux choses
+qu'on ne retrouverait pas en lisant ce module seul :
+
+- la table n'est plus **offerte** — `maestro.controltower` ne réexporte plus
+  `SUJETS_ASSISTANCE`, `SujetAssistance` ni `repondre_assistance`. Ils restent ici,
+  où le repli les consulte ; les trouver au niveau du paquet les ferait prendre
+  pour un juge disponible, ce qui est la façon la plus douce dont la table
+  reviendrait ;
+- la règle est tenue **structurellement**, dans `tests/test_assistance.py` : la
+  garde balaie `maestro/**/*.py` et vérifie qu'aucun module hors celui-ci n'écrit
+  ces noms — cherchés dans l'**arbre syntaxique**, jamais par un `grep`, qui
+  condamnerait la docstring que vous lisez (même construction que #688 sur le fil
+  global). `RepondeurAssistance` n'en fait volontairement pas partie : le repli est
+  voulu, et `assistance_documentee` comme `app` le nomment à dessein. La
+  distinction que garde ce lot tient en une phrase — **le répondeur de secours est
+  permis partout, le juge nulle part**.
+
+Ce que la garde ne peut pas tenir est nommé plutôt que masqué : que le modèle
+s'abstienne pour de bon sur une question hors périmètre relève du prompt
+(`_PROMPT_ASSISTANCE`, dernier paragraphe) et se mesure en usage. Le banc de #765
+tient ce qui l'entoure — la question atteint le modèle sans que rien ne tranche
+avant lui, et son aveu arrive **intact**, jamais rattrapé par une réponse de table.
 
 Le fil est persisté comme les autres (`core/chat/assistance.jsonl`) : l'historique
 survit au rechargement de la page, et les endpoints `/api/chat/assistance` sont
@@ -516,6 +538,11 @@ _ORIENTATION = (
 def sujet_assistance(question: str) -> SujetAssistance | None:
     """Le sujet le mieux couvert par `question`, ou `None` si aucun ne ressort.
 
+    ⚠ **Ce n'est plus un juge, c'est le tri du repli** (#765). Rien hors de ce
+    module ne l'appelle, et une garde de `tests/test_assistance.py` le tient : sur
+    le chemin nominal, le sujet d'une question est décidé par le modèle qui lit la
+    documentation, jamais par une correspondance de mots.
+
     Séparé de `repondre_assistance` parce que « quel sujet ? » et « quel texte ? »
     sont deux questions : la seconde se réécrit quand l'interface bouge — elle
     l'a fait en #684 —, la première est le contrat, et c'est elle que les tests
@@ -532,18 +559,28 @@ def sujet_assistance(question: str) -> SujetAssistance | None:
 
 
 def repondre_assistance(question: str) -> str:
-    """La réponse d'aide à `question` : le sujet le mieux couvert, sinon l'orientation."""
+    """La réponse **de repli** à `question` : le sujet le mieux couvert, sinon l'orientation.
+
+    Appelée par `RepondeurAssistance` et par personne d'autre (#765) : ce qu'elle
+    rend n'arrive à l'utilisateur que lorsque aucun fournisseur n'est joignable, et
+    `RepondeurAssistanceDocumentee` le **dit** alors dans le fil, au-dessus.
+    """
     sujet = sujet_assistance(question)
     return sujet.reponse if sujet is not None else _ORIENTATION
 
 
 class RepondeurAssistance(RepondeurChat):
-    """Le répondeur du canal d'assistance : déterministe, sans modèle ni réseau.
+    """Le répondeur de **repli** du canal : déterministe, sans modèle ni réseau.
 
     Ne lit que le **dernier** message utilisateur du fil : chaque question d'aide
     se suffit à elle-même, et l'absence de contexte accumulé rend la réponse
     reproductible — la même question donne la même réponse, en démo comme en
     production.
+
+    ⚠ Il n'est plus le titulaire depuis #764 : `create_app` le passe en `repli=` à
+    `RepondeurAssistanceDocumentee`. C'est le seul symbole de ce module qu'un autre
+    module a le droit de nommer — les tenants du jugement lexical, eux, restent
+    ici (#765).
     """
 
     async def repondre(self, agent: Agent, fil: Sequence[MessageChat]) -> str:
