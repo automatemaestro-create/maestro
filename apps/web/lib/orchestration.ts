@@ -48,16 +48,34 @@ export const INTERLOCUTEUR_ORCHESTRATION = "l'orchestration";
  * persisté) pour la raison qui vaut déjà pour l'assistant (`lib/assistance`) :
  * ouvrir l'écran ne doit rien écrire, et un fil réellement vide doit rester
  * distinguable d'une conversation.
+ *
+ * ⚠ Il **promet ce que le canal fait**, et pas un cran de plus (#688) : il
+ * annonçait « j'ouvre un run » quand, depuis #685, le canal *propose* et attend
+ * un accord explicite. Une promesse d'accueil en avance sur le code est la pire
+ * espèce de documentation périmée — elle est lue par l'utilisateur, avant tout
+ * le reste, et c'est elle qui fixe ce qu'il croira avoir demandé.
  */
 export const ACCUEIL_ORCHESTRATION =
-  "Dites ce qu'il y a à faire — j'ouvre un run, je découpe l'objectif en tâches et je les confie aux agents compétents. Une question sur l'état en cours n'ouvre rien : j'y réponds. Pour vous adresser à un agent précis sans quitter cet écran, commencez par « @ » suivi de son nom.";
+  "Dites ce qu'il y a à faire — je vous propose un objectif, et j'ouvre le run dès que vous l'approuvez : je le découpe alors en tâches que je confie aux agents compétents. Rien ne part sans votre accord. Une question sur l'état en cours n'ouvre rien : j'y réponds. Pour vous adresser à un agent précis sans quitter cet écran, commencez par « @ » suivi de son nom.";
 
 /**
  * Des amorces proposées tant que la conversation n'a pas commencé. Elles montrent
  * le périmètre du fil mieux qu'une phrase d'explication — et, ici, la **frontière
- * qui compte** : une demande de travail ouvre un run, une question n'ouvre rien
- * (`maestro/controltower/orchestration.py`). Les deux premières ouvrent, les deux
- * dernières non.
+ * qui compte** : une demande de travail se fait **proposer** un run, une question
+ * n'en propose aucun (`maestro/controltower/orchestration.py`). Les deux premières
+ * mènent à une proposition, les deux dernières à une réponse.
+ *
+ * ⚠ Depuis #685, **aucune des quatre n'ouvre un run à elle seule** : le canal
+ * montre l'objectif qu'il enverrait et attend un accord explicite, le silence
+ * n'en étant pas un. La frontière que ces amorces donnent à voir est donc celle
+ * entre « proposer » et « converser », plus celle entre « lancer » et « ne pas
+ * lancer » — la seconde ne dépend plus du texte mais de l'accord qui suit.
+ *
+ * ⚠ Ce ne sont **pas** le lexique retiré en #685 : celui-là jugeait les demandes
+ * côté Python (`_AMORCES`/`_VERBES_TRAVAIL`) et n'existe plus. L'homonymie est
+ * gênante et assumée — `AMORCES_ASSISTANCE` porte le même nom pour la même
+ * chose —, et c'est pour elle que la garde de `tests/test_chat_global.py` lit des
+ * identifiants Python plutôt que de chercher du texte.
  */
 export const AMORCES_ORCHESTRATION: string[] = [
   "Ajoute la pagination à la liste des projets",

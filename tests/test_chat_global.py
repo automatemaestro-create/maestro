@@ -37,15 +37,29 @@ Couvre :
    seuls ;
 ⑤ **les endpoints** : `/api/chat/orchestrateur` sert un fil que le catalogue ne
    porte pas, le run ouvert voyage jusqu'au JSON et jusqu'au WebSocket, et le
-   flux rend `debut`/`fragment`/`fin`.
+   flux rend `debut`/`fragment`/`fin` ;
+⑥-⑦ **le projet de la fenêtre** (#683), du corps de la requête jusqu'au run qui
+   figure dans la liste de l'écran ;
+⑧ **le protocole d'accord joué en entier** (#688) : deux tours sur le même
+   répondeur, où la proposition n'ouvre rien et où seul l'accord ouvre — le
+   refus, le changement de sujet et le **silence** ne faisant rien ;
+⑨ **le juge jouable sans fournisseur** (#688) : la résolution est paresseuse et
+   `orchestration_repondeur` est le point par lequel toute cette suite juge sans
+   modèle, ce dont dépend la règle de `tests/conftest.py` (#195) ;
+⑩ **le lexique ne revient pas** (#688) : les symboles retirés en #685 ne sont ni
+   définis ni référencés, y compris comme repli — cherchés dans l'arbre
+   syntaxique, jamais par un `grep` qui condamnerait les prose qui les racontent.
 
-La couverture **exhaustive** du nouveau jugement — le banc des cinq formulations
-joué contre un modèle, le silence, le refus — est le lot 3 de #682 (#688), dont
-c'est la portée déclarée.
+Ce que ces tests **ne** peuvent pas tenir, et l'assument : la qualité du jugement
+lui-même. Le juge est un double, donc « cette phrase est-elle une demande de
+travail ? » n'est pas une question qu'on pose ici — on tient que la phrase
+**atteint** le juge, que son verdict décide seul, et qu'aucun run ne part sans
+accord. Le reste est du ressort du prompt, et se mesure en usage.
 """
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import json
 from pathlib import Path
@@ -189,21 +203,46 @@ def _repondeur(
 # message arrive au modèle, et le verdict du modèle décide seul de la suite.
 
 
-@pytest.mark.parametrize(
-    "demande",
-    [
-        # Le tableau de #682, dans l'ordre : chaque ligne échouait pour une cause
-        # indépendante, et les quatre tenaient dans la phrase réellement envoyée.
-        "Génère une application d'agenda",
-        "J'aimerai ajouter la pagination",
-        "J'aimerais que tu ajoutes la pagination",
-        "Peux-tu me créer une application",
-        "Il faudrait que tu corriges le tri",
-        # Les témoins qui passaient déjà : ils doivent continuer de passer.
-        "Ajoute la pagination",
-        "Crée-moi une application d'agenda",
-    ],
-)
+#: Le banc de #682, **cause par cause** : la formulation, et la raison précise
+#: pour laquelle le lexique la faisait taire. La cause est portée par l'`id` du
+#: cas plutôt que par un commentaire, si bien que la sortie de pytest nomme celle
+#: qui vient de lâcher — un banc dont les cinq lignes s'appelleraient `demande0`
+#: à `demande4` dirait qu'il a rougi, jamais **laquelle** garde (#688).
+#:
+#: Les quatre premières causes tenaient **ensemble** dans la phrase réellement
+#: envoyée (« J'aimerai que tu me génère le projet p1 … ») : les éprouver séparées
+#: est ce qui empêche qu'un correctif n'en traite qu'une et que le banc passe
+#: quand même.
+BANC_682 = [
+    pytest.param("Génère une application d'agenda", id="verbe-hors-liste"),
+    pytest.param("J'aimerai ajouter la pagination", id="amorce-sans-s"),
+    pytest.param("J'aimerais que tu ajoutes la pagination", id="subordonnee-que-tu"),
+    pytest.param("Peux-tu me créer une application", id="pronom-objet-intercale"),
+    pytest.param("Il faudrait que tu corriges le tri", id="subordonnee-et-conjugaison"),
+]
+
+#: Les témoins **positifs** du tableau : ceux que le lexique reconnaissait déjà.
+#: Ils sont à part parce qu'ils ne prouvent pas la même chose — les cinq d'au-
+#: dessus disent qu'un silence a cessé, ceux-ci qu'aucune reconnaissance acquise
+#: n'a été perdue en chemin. Fondus dans un seul banc, un correctif qui les aurait
+#: cassés tous les deux se lirait comme un banc à moitié rouge.
+TEMOINS_QUI_PASSAIENT_DEJA = [
+    pytest.param("Ajoute la pagination", id="imperatif-nu"),
+    pytest.param("Crée-moi une application d'agenda", id="imperatif-avec-pronom"),
+]
+
+#: Les témoins **négatifs** : ce qui n'est pas une demande de travail et ne doit
+#: produire aucune proposition. Ils sont la moitié qui empêche de rendre le banc
+#: vert en proposant un run sur tout — un juge qui propose toujours passerait les
+#: sept cas ci-dessus et échouerait ici.
+TEMOINS_NEGATIFS = [
+    pytest.param("Comment ajouter une page ?", id="question-sur-l-outil"),
+    pytest.param("Où en sont les runs ?", id="demande-d-etat"),
+    pytest.param("merci", id="salutation"),
+]
+
+
+@pytest.mark.parametrize("demande", BANC_682 + TEMOINS_QUI_PASSAIENT_DEJA)
 def test_une_demande_de_travail_est_proposee_et_n_ouvre_aucun_run(demande: str) -> None:
     """Critère 1 : une proposition, jamais un run — et la phrase atteint le juge."""
     lanceur = LanceurEspion()
@@ -221,9 +260,32 @@ def test_une_demande_de_travail_est_proposee_et_n_ouvre_aucun_run(demande: str) 
     assert OBJECTIF in reponse.contenu
 
 
-@pytest.mark.parametrize(
-    "demande", ["Comment ajouter une page ?", "Où en sont les runs ?", "merci"]
-)
+@pytest.mark.parametrize("demande", BANC_682)
+def test_le_canal_ne_tranche_plus_avant_le_juge(demande: str) -> None:
+    """La moitié de #685 qu'aucune assertion sur le verdict ne couvre (#688).
+
+    Le lexique rendait son verdict **sans appeler personne** : les cinq
+    formulations n'atteignaient jamais le modèle. Ce que ce test tient est donc
+    l'inverse exact — le canal appelle le juge **une fois**, sur le fil entier, et
+    quel que soit le verdict qui reviendra. Il ne peut pas se confondre avec le
+    test au-dessus : celui-là scripte une proposition et vérifie ce qui en sort,
+    celui-ci vérifie qu'il y a **eu** un appel, et le scripte en `echange` — le
+    verdict le moins favorable, celui que le lexique rendait.
+    """
+    lanceur = LanceurEspion()
+    repondeur, juge = _repondeur(
+        _verdict(VERDICT_ECHANGE, "Je ne suis pas sûr de comprendre."), lanceur=lanceur
+    )
+
+    asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil(demande)))
+
+    assert len(juge.prompts) == 1
+    assert demande in juge.prompts[0]
+    # Et même écarté, rien ne s'ouvre : le canal n'a pas de seconde voie.
+    assert lanceur.objectifs == []
+
+
+@pytest.mark.parametrize("demande", TEMOINS_NEGATIFS)
 def test_une_question_un_etat_ou_une_salutation_n_ouvrent_rien(demande: str) -> None:
     """La seconde moitié du critère 1 : ce qui n'est pas un travail reste une conversation."""
     lanceur = LanceurEspion()
@@ -1187,3 +1249,381 @@ def test_sans_projet_le_run_reste_introuvable_a_l_ecran(client_reel, projets) ->
 
     assert run_id not in _runs_de(client_reel, ici)
     assert run_id in _runs_de(client_reel, "aucun")
+
+
+# ── ⑧ le protocole d'accord, joué de bout en bout (#688) ──────────────────────
+#
+# Les tests d'au-dessus scriptent **un** verdict et regardent ce qui en sort ;
+# ceux-ci jouent les **deux tours** sur le même répondeur, parce que c'est là que
+# vit la décision du 2026-08-28 : proposer et lancer sont deux messages, et rien
+# entre les deux ne tient d'état. Un test à verdict unique ne peut pas le dire —
+# il ne voit jamais l'intervalle où la panne se logerait.
+
+
+class JugeEnSequence(ModelProvider):
+    """Un fournisseur qui rend une réponse **différente à chaque appel** (#688).
+
+    C'est ce qui manquait pour éprouver le protocole : `JugeScripte` rend toujours
+    le même verdict, donc ne peut pas jouer « je propose, puis j'accorde ». Il
+    garde les prompts pour qu'on puisse vérifier ce que le second tour a vu — le
+    fil étant la **seule** mémoire du canal, la proposition doit y être.
+
+    Épuisé, il **lève** au lieu de répéter la dernière réponse : un tour de trop
+    est un test qui ne dit plus ce qu'il croit dire, et le silencieux serait de
+    rejouer un accord.
+    """
+
+    name = "juge-en-sequence"
+
+    def __init__(self, *reponses: str) -> None:
+        self._reponses = list(reponses)
+        self.prompts: list[str] = []
+
+    def supports(self, model: str) -> bool:
+        return True
+
+    async def generate(
+        self, prompt: str, *, model: str, system_prompt: str | None = None
+    ) -> str:
+        self.prompts.append(prompt)
+        if not self._reponses:
+            raise AssertionError("le juge a été appelé plus de fois que prévu")
+        return self._reponses.pop(0)
+
+
+#: Le « oui » tel qu'un utilisateur l'écrit — assez long pour qu'on voie, à
+#: l'assertion, qu'il n'est **pas** ce qui part au lanceur. Un « oui » nu se
+#: confondrait avec une troncature ; celui-ci ne peut se confondre avec rien.
+ACCORD_ECRIT = "oui vas-y, fonce"
+
+
+def test_la_proposition_puis_l_accord_n_ouvrent_qu_au_second_tour() -> None:
+    """Critère 2, joué en entier : proposition → rien, puis accord → run (#688).
+
+    Le même répondeur, deux messages, un fil qui grandit entre les deux. C'est
+    l'invariant « aucun run ne s'ouvre sans accord explicite » sous sa seule forme
+    complète : après le premier tour le lanceur est **intact**, et c'est le second
+    message — pas le premier, pas le temps qui passe — qui ouvre.
+    """
+    lanceur = LanceurEspion()
+    juge = JugeEnSequence(
+        _verdict(VERDICT_PROPOSITION, _propose(), OBJECTIF),
+        _verdict(VERDICT_ACCORD, "C'est parti.", OBJECTIF),
+    )
+    repondeur = RepondeurOrchestration(lanceur=lanceur, provider=juge)
+    demande = "J'aimerai que tu me génère le projet p1 comme une application d'agenda"
+
+    propose = asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil(demande)))
+    # Le premier tour n'a rien ouvert : c'est le sujet même du chantier.
+    assert lanceur.objectifs == []
+    assert propose.run_id == ""
+
+    ouvert = asyncio.run(
+        repondeur.produire(
+            AGENT_ORCHESTRATION, _fil(demande, _propose(), ACCORD_ECRIT)
+        )
+    )
+
+    assert lanceur.objectifs == [OBJECTIF]
+    assert ouvert.run_id == "run-42"
+    # Le fil est la seule mémoire : le second appel a bien reçu la proposition du
+    # premier. Sans elle, juger « oui vas-y » demanderait un second lexique.
+    assert _propose() in juge.prompts[1]
+
+
+@pytest.mark.parametrize(
+    ("verdict_du_second_tour", "suite"),
+    [
+        pytest.param(
+            _verdict(VERDICT_ECHANGE, "Entendu, je n'ouvre rien."),
+            "plutôt pas, finalement",
+            id="refus",
+        ),
+        pytest.param(
+            _verdict(VERDICT_ECHANGE, "Aucun run en cours."),
+            "au fait, où en sont les runs ?",
+            id="on-parle-d-autre-chose",
+        ),
+    ],
+)
+def test_apres_une_proposition_tout_ce_qui_n_est_pas_un_accord_n_ouvre_rien(
+    verdict_du_second_tour: str, suite: str
+) -> None:
+    """Critère 2 : seul l'accord ouvre — un refus comme un changement de sujet ne font rien.
+
+    Le second cas est le plus utile des deux : il montre qu'une proposition ne
+    reste pas « en attente » derrière le fil, prête à être ramassée par le message
+    suivant quel qu'il soit. Le run n'est ouvert que sur le verdict `accord` d'un
+    message qui arrive, jamais sur une intention qu'on aurait mise de côté.
+    """
+    lanceur = LanceurEspion()
+    juge = JugeEnSequence(
+        _verdict(VERDICT_PROPOSITION, _propose(), OBJECTIF), verdict_du_second_tour
+    )
+    repondeur = RepondeurOrchestration(lanceur=lanceur, provider=juge)
+
+    asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil("Ajoute la pagination")))
+    reponse = asyncio.run(
+        repondeur.produire(
+            AGENT_ORCHESTRATION, _fil("Ajoute la pagination", _propose(), suite)
+        )
+    )
+
+    assert lanceur.objectifs == []
+    assert reponse.run_id == ""
+
+
+def test_le_silence_n_est_pas_un_accord() -> None:
+    """Critère 2 : une proposition sans réponse n'ouvre rien, et ne laisse rien derrière.
+
+    Le silence n'est pas un message, donc aucun verdict n'est rendu, donc rien ne
+    s'ouvre — la propriété est **structurelle** et c'est ce que ce test montre
+    plutôt que de laisser passer le temps : après la proposition, le juge n'a été
+    appelé qu'une fois et le répondeur ne garde aucune trace de l'objectif qu'il
+    vient de proposer. Sans cette seconde assertion le test serait une tautologie
+    (« on n'a rien appelé, donc rien ne s'est passé ») ; avec elle il interdit le
+    correctif le plus tentant — mémoriser la dernière proposition pour la
+    ramasser plus tard, qui ferait du silence un accord différé.
+    """
+    lanceur = LanceurEspion()
+    juge = JugeEnSequence(_verdict(VERDICT_PROPOSITION, _propose(), OBJECTIF))
+    repondeur = RepondeurOrchestration(lanceur=lanceur, provider=juge)
+
+    asyncio.run(
+        repondeur.produire(AGENT_ORCHESTRATION, _fil("Génère une application d'agenda"))
+    )
+
+    assert lanceur.objectifs == []
+    assert len(juge.prompts) == 1
+    # Aucun état de session : le répondeur porte **exactement** les trois
+    # collaborateurs qu'on lui a passés, et pas un attribut de plus où loger une
+    # proposition en attente. C'est cette forme-là qu'on garde plutôt qu'une
+    # recherche de l'objectif dans `vars()` — un objectif rangé dans un objet
+    # imbriqué y échapperait, alors qu'un attribut nouveau, lui, se voit toujours.
+    assert set(vars(repondeur)) == {"_lanceur", "_apercu", "_provider"}
+
+
+def test_l_objectif_lance_est_celui_qui_a_ete_montre_pas_ce_que_le_fil_contient() -> None:
+    """Critère 2, dernière moitié : on lance ce qui a été **montré et approuvé**.
+
+    Le fil porte trois textes qui pourraient tous passer pour un objectif — la
+    demande d'origine, la proposition, le « oui vas-y, fonce ». Un seul part, et
+    c'est celui que le modèle a recopié de sa proposition. `_ouvrir_un_run` ne
+    reçoit pas le fil, donc la garantie tient à la **forme du code** et non à une
+    vérification qu'il faudrait tenir à jour.
+    """
+    lanceur = LanceurEspion()
+    demande = "J'aimerai que tu me génère le projet p1"
+    juge = JugeEnSequence(
+        _verdict(VERDICT_PROPOSITION, _propose(), OBJECTIF),
+        _verdict(VERDICT_ACCORD, "C'est parti.", OBJECTIF),
+    )
+    repondeur = RepondeurOrchestration(lanceur=lanceur, provider=juge)
+
+    asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil(demande)))
+    asyncio.run(
+        repondeur.produire(
+            AGENT_ORCHESTRATION, _fil(demande, _propose(), ACCORD_ECRIT)
+        )
+    )
+
+    assert lanceur.objectifs == [OBJECTIF]
+    # Aucun des textes du fil n'a pu partir comme objectif de run.
+    for texte in (demande, _propose(), ACCORD_ECRIT):
+        assert texte not in lanceur.objectifs
+
+
+# ── ⑨ le juge est jouable sans fournisseur (#688, règle de tests/conftest.py) ──
+
+
+def test_construire_le_canal_ne_resout_aucun_fournisseur(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Critère 3 : ni réseau ni authentification pour **monter** le canal (#195).
+
+    La résolution est paresseuse — c'est ce dont `create_app` dépend : une Control
+    Tower doit démarrer sur un poste sans clé, et n'échouer qu'au message qui
+    demande un jugement. Le test prouve son motif en deux temps plutôt qu'en
+    affirmant l'absence d'appel : la fabrique est comptée, elle est à **zéro** à
+    la construction, et à **un** dès le premier message — sans cette seconde
+    moitié, une sonde mal branchée rendrait un ✓ sur une question jamais posée.
+    """
+    appels: list[int] = []
+
+    def fabrique_comptee() -> ModelProvider:
+        appels.append(1)
+        raise RuntimeError("aucun fournisseur configuré")
+
+    monkeypatch.setattr(
+        "maestro.providers.factory.provider_from_settings", fabrique_comptee
+    )
+
+    repondeur = RepondeurOrchestration(lanceur=LanceurEspion())
+
+    assert appels == []
+
+    asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil("Ajoute la pagination")))
+
+    assert appels == [1]
+
+
+def test_le_point_d_injection_dispense_l_app_de_tout_fournisseur(
+    bus, depot_chat, lanceur, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Critère 3 : `orchestration_repondeur` est ce par quoi la suite juge sans modèle.
+
+    Toute la couverture du canal passe par lui — c'est ce qui permet à
+    `tests/conftest.py` d'exiger qu'aucun test n'ait besoin d'un backend. La
+    fabrique est ici **piégée** : elle fait rougir le test si quoi que ce soit,
+    du montage de l'app jusqu'au run ouvert, tente de résoudre un fournisseur.
+    """
+
+    def fabrique_interdite() -> ModelProvider:
+        raise AssertionError("un fournisseur a été résolu : la suite sort du bocal")
+
+    monkeypatch.setattr(
+        "maestro.providers.factory.provider_from_settings", fabrique_interdite
+    )
+
+    with TestClient(
+        create_app(
+            bus=bus,
+            chat_store=depot_chat,
+            orchestration_repondeur=RepondeurOrchestration(
+                lanceur=lanceur,
+                provider=JugeScripte(_verdict(VERDICT_ACCORD, "C'est parti.", OBJECTIF)),
+            ),
+        )
+    ) as client:
+        reponse = client.post(
+            f"/api/chat/{NOM_ORCHESTRATION}/messages", json={"contenu": ACCORD_ECRIT}
+        )
+
+    assert reponse.status_code == 201
+    assert lanceur.objectifs == [OBJECTIF]
+
+
+# ── ⑩ le lexique est parti, et rien ne le fait revenir (#688) ─────────────────
+#
+# La moitié **comportementale** de ce critère vit plus haut
+# (`test_le_canal_ne_tranche_plus_avant_le_juge` : le juge est appelé sur chacune
+# des cinq formulations, donc aucune voie rapide ne tranche avant lui). Ce qui
+# suit en est la moitié **structurelle** : les symboles retirés ne sont ni
+# définis ni référencés nulle part, y compris comme repli.
+
+#: Les noms du lexique retiré en #685. Ils sont assez distinctifs pour être
+#: cherchés dans tout le dépôt sans risque de collision — à la différence de
+#: `intention`, mot français courant dont le dépôt parle légitimement (le brief
+#: du Chef de projet « reformule l'intention »), et qui n'est donc cherché que
+#: dans le module et sa suite.
+LEXIQUE_RETIRE = ("_AMORCES", "_VERBES_TRAVAIL", "_sans_amorce")
+LEXIQUE_RETIRE_LOCAL = LEXIQUE_RETIRE + ("intention", "INTENTION_TRAVAIL", "INTENTION_ECHANGE")
+
+#: `AMORCES_ORCHESTRATION` / `AMORCES_ASSISTANCE` (côté TypeScript) ne sont **pas**
+#: ce lexique : ce sont les amorces de conversation proposées sur un fil vide. Le
+#: motif porte sur des identifiants **Python**, ce qui rend la confusion
+#: impossible — et c'est pourquoi il passe par l'arbre syntaxique plutôt que par
+#: un `grep`, qui les aurait ramassées toutes les deux.
+RACINE_DEPOT = Path(__file__).resolve().parents[1]
+
+
+def _identifiants_python(source: str) -> set[str]:
+    """Les noms **effectivement écrits en code** dans `source` (jamais en prose).
+
+    Un `grep` ne distingue pas un usage d'une mention, or ce module *doit* citer
+    le lexique pour raconter pourquoi il a été retiré — la garde le condamnerait
+    sur la docstring même qui le documente. L'arbre syntaxique tranche : un nom
+    cité dans une chaîne ou un commentaire n'y est pas un identifiant.
+    """
+    arbre = ast.parse(source)
+    noms: set[str] = set()
+    for noeud in ast.walk(arbre):
+        if isinstance(noeud, ast.Name):
+            noms.add(noeud.id)
+        elif isinstance(noeud, ast.Attribute):
+            noms.add(noeud.attr)
+        elif isinstance(noeud, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            noms.add(noeud.name)
+        elif isinstance(noeud, ast.arg):
+            noms.add(noeud.arg)
+    return noms
+
+
+def test_le_motif_du_lexique_reconnait_un_echantillon_fautif() -> None:
+    """Avant de balayer : la sonde attrape-t-elle ce qu'elle prétend chercher ?
+
+    Sans cette preuve, un motif mal écrit rendrait un ✓ vert sur tout le dépôt en
+    ne cherchant rien (règle de `tests/test_cycle_de_vie.py`). L'échantillon porte
+    les trois formes par lesquelles le lexique reviendrait : une constante, une
+    fonction, un appel — et, en regard, la **mention** en docstring, qui elle doit
+    passer.
+    """
+    fautif = _identifiants_python(
+        '"""On parle de `_VERBES_TRAVAIL` dans cette prose, et de _AMORCES aussi."""\n'
+        "_VERBES_TRAVAIL = ['ajoute', 'cree']\n"
+        "def _sans_amorce(message):\n"
+        "    return intention(message)\n"
+    )
+
+    assert {"_VERBES_TRAVAIL", "_sans_amorce", "intention"} <= fautif
+    # Et la moitié qui sépare l'usage de la mention : `_AMORCES` n'est ici que
+    # cité dans la docstring, donc la sonde ne le voit pas.
+    assert "_AMORCES" not in fautif
+
+
+def test_aucune_trace_du_lexique_ne_subsiste_dans_le_module_ni_sa_suite() -> None:
+    """Critère de doc 3 : ni juge, ni voie rapide, ni repli (#682/#685).
+
+    Le module et sa suite sont regardés de près — c'est là que le lexique
+    reviendrait, et c'est là que le mot `intention` serait le signe qu'il est
+    revenu. Ailleurs, le mot est légitime et n'est pas cherché.
+    """
+    for chemin in (
+        RACINE_DEPOT / "maestro" / "controltower" / "orchestration.py",
+        RACINE_DEPOT / "tests" / "test_chat_global.py",
+    ):
+        ecrits = _identifiants_python(chemin.read_text(encoding="utf-8"))
+        survivants = sorted(set(LEXIQUE_RETIRE_LOCAL) & ecrits)
+        assert survivants == [], f"{chemin.name} porte encore {survivants}"
+
+
+def test_le_lexique_n_a_pas_non_plus_reparu_ailleurs_dans_le_depot() -> None:
+    """Le repli se poserait volontiers **à côté** du module, dans un helper à lui.
+
+    D'où le balayage de tout le Python du dépôt sur les trois noms distinctifs :
+    une « voie rapide » extraite dans `maestro/controltower/lexique.py` passerait
+    la garde d'au-dessus sans être vue. Les mentions en prose sont invisibles à
+    l'arbre syntaxique, donc ce fichier-ci et la docstring du module — qui
+    doivent raconter le retrait — ne se condamnent pas eux-mêmes.
+    """
+    fautifs: list[str] = []
+    balayes: list[str] = []
+    for chemin in sorted(RACINE_DEPOT.glob("maestro/**/*.py")) + sorted(
+        RACINE_DEPOT.glob("tests/**/*.py")
+    ):
+        balayes.append(chemin.relative_to(RACINE_DEPOT).as_posix())
+        ecrits = _identifiants_python(chemin.read_text(encoding="utf-8"))
+        for nom in sorted(set(LEXIQUE_RETIRE) & ecrits):
+            fautifs.append(f"{chemin.relative_to(RACINE_DEPOT).as_posix()} : {nom}")
+
+    # Le balayage a bien eu lieu : un glob qui ne ramènerait rien rendrait ce
+    # test vert sans avoir rien regardé — c'est le ✓ sur une question jamais
+    # posée que la maison refuse. Le module visé en fait nommément partie.
+    assert "maestro/controltower/orchestration.py" in balayes
+    assert len(balayes) > 50
+    assert fautifs == []
+
+
+def test_le_module_n_expose_aucun_juge_lexical() -> None:
+    """La surface publique le dit aussi : plus rien à appeler pour « classer » un texte.
+
+    `dir()` plutôt que la source : c'est ce qu'un appelant peut atteindre, donc ce
+    qu'un repli irait chercher. Les trois verdicts, eux, sont **là** — sans quoi
+    ce test passerait sur un module vide (le vert d'une question jamais posée).
+    """
+    from maestro.controltower import orchestration
+
+    surface = set(dir(orchestration))
+
+    assert surface & set(LEXIQUE_RETIRE_LOCAL) == set()
+    assert {"VERDICT_PROPOSITION", "VERDICT_ACCORD", "VERDICT_ECHANGE"} <= surface
