@@ -195,6 +195,22 @@ class ServiceJournal:
         """Ajoute `event` en fin de journal, au rang suivant."""
         self._entrees.append(EntreeJournal.depuis(event, len(self._entrees) + 1))
 
+    def entrees_du_run(self, run_id: str) -> list[EntreeJournal]:
+        """Les entrées du run `run_id`, dans l'ordre des rangs — vide s'il n'en a pas.
+
+        Le pendant **objet** de `page(run_id=…)`, pour ce qui compose une lecture
+        plutôt que pour ce qui la sert : `page` rend des dicts déjà paginés et
+        triés pour le REST, là où la frise d'un run (#355) a besoin des entrées
+        elles-mêmes — leur `rang`, que la forme JSON ne porte pas, est la clé de
+        départage de son tri. Passer par `page` l'aurait obligée à reconstruire
+        des `EntreeJournal` depuis leur propre sérialisation, en devinant un rang
+        que l'identifiant ne rend pas (`LARGEUR_ENTREE`).
+
+        Sans filtre de portée : l'appelant a déjà résolu le run, et un run
+        appartient à un projet — pas ses entrées une à une.
+        """
+        return [entree for entree in self._entrees if entree.run_id == run_id]
+
     def page(
         self,
         *,

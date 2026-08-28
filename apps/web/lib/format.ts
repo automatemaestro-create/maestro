@@ -237,10 +237,20 @@ export function formatDureeRun(
   return `${jours} j ${String(heures).padStart(2, "0")} h`;
 }
 
-/** Libellés français des statuts de tâche (machine à états docs/03 §3). */
+/**
+ * Libellés français des statuts de tâche (machine à états docs/03 §3).
+ *
+ * `en_attente_validation` s'y est ajouté avec la frise d'activité (#355), et
+ * c'est le seul de la table que le **moteur** n'émet pas : la frise le résout
+ * depuis `validation.demande`, qui est l'instant où la tâche s'arrête sur un
+ * humain. Sans lui, le statut du troisième critère se serait affiché brut —
+ * « en_attente_validation », en toutes lettres et sans accent, à côté de
+ * « Bloquée » et « En cours ».
+ */
 const LIBELLES_STATUT: Record<string, string> = {
   assignee: "Assignée",
   en_cours: "En cours",
+  en_attente_validation: "Attente humaine",
   bloquee: "Bloquée",
   terminee: "Terminée",
   echec: "Échec",

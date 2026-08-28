@@ -743,6 +743,38 @@ class ControlTowerState:
         execution = self._executions.get(run_id)
         return frozenset() if execution is None else execution.taches_vues
 
+    def agents_du_run(self, run_id: str) -> dict[str, str]:
+        """Les agents que le run `run_id` a employés (agent → rôle), dans l'ordre (#355).
+
+        Ce sont les **couloirs** de la frise d'activité : un par agent que le run
+        a routé, y compris ceux qui n'ont encore rien dit — une file muette est
+        une information, là où un couloir qui apparaîtrait en cours de route ne
+        dirait pas s'il était prévu.
+
+        L'ordre est celui de `taches()`, c'est-à-dire de la **première apparition**
+        de chaque tâche, et non celui de `taches_vues`, qui est un `frozenset` et
+        rendrait des couloirs dont l'ordre changerait d'un appel à l'autre — le
+        repli du graphe (#490) s'en garde déjà, pour la même raison.
+
+        La projection rend ici ce qu'elle sait — les agents portés par les tâches
+        du run — et **ne tranche pas** ce qui fait un couloir : le tiret que le
+        moteur consigne sur une tâche jamais routée (`_consigne_blocage`) en fait
+        partie, et c'est la frise qui le reconnaît pour une absence
+        (`frise.AGENT_ABSENT`). Cette règle-là vit à un seul endroit, chez celui
+        qui dessine ; l'appliquer aussi ici en ferait deux à tenir d'accord.
+
+        Un rôle est retenu au **premier** non vide : une tâche bloquée porte
+        « non exécutée », qui n'est pas le rôle de l'agent.
+        """
+        vues = self.taches_du_run(run_id)
+        couloirs: dict[str, str] = {}
+        for tache in self._taches.values():
+            if tache.id not in vues or not tache.agent:
+                continue
+            if not couloirs.get(tache.agent):
+                couloirs[tache.agent] = tache.role
+        return couloirs
+
     def progression(self, run_id: str) -> Progression:
         """Où en est le run `run_id` : ses tâches réparties par compartiment (#473).
 

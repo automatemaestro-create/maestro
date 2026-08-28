@@ -247,6 +247,7 @@ from maestro.controltower.executions import (
     ServiceExecutions,
 )
 from maestro.controltower.fixtures import FixturesControlTower
+from maestro.controltower.frise import frise_du_run
 from maestro.controltower.hote import (
     HOTE_RUN_DETACHE,
     HOTE_RUN_EN_PROCESS,
@@ -1710,6 +1711,50 @@ def create_app(
         if state.execution(run_id) is None:
             raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
         return state.graphe(run_id).to_dict()
+
+    @app.get("/api/executions/{run_id}/frise")
+    async def frise_execution(run_id: str) -> dict[str, Any]:
+        """La **frise d'activité** d'une exécution (#355) : ce que les agents font et se disent.
+
+        La quatrième lecture d'un run, à côté du Kanban (« combien dans quel
+        état »), de la progression (« où en est-on ») et du graphe (« quoi après
+        quoi ») : celle qui dit **dans quel ordre**. Les changements de statut de
+        tâche et les messages inter-agents sur une même frise, triés dans le
+        temps, chaque entrée portant son agent, son horodatage et son objet.
+
+        Les entrées sont rangées en **couloirs** — un par agent que le run a
+        employé, y compris muet —, et un couloir de **repli** recueille ce qui n'a
+        pas d'agent résoluble : une tâche bloquée n'a jamais été routée, donc le
+        moteur y consigne un tiret (`_consigne_blocage`), qui n'est pas un nom
+        d'agent. Chaque entrée porte son `couloir`, et ce couloir est toujours
+        dans la liste servie : aucune entrée ne se perd faute de file.
+
+        Une tâche **bloquée**, une tâche **en attente de validation humaine** et
+        une tâche **en cours** portent trois `statut` distincts — c'est le cas
+        d'usage qui a motivé le ticket : une attente de décision y cesse d'être
+        indiscernable d'un travail en cours. `en_attente_validation` est résolu
+        depuis `validation.demande`, qui **est** l'instant où la tâche s'arrête
+        sur un humain ; la file `GET /api/validations` en dit l'état courant, pas
+        la seconde.
+
+        Rien n'est créé : les trois flux fusionnés sont déjà persistés et déjà
+        servis par `GET /api/journal?run_id=…`, dont chaque entrée garde ici son
+        identifiant. Comme le graphe, la frise **n'a pas d'événement à elle** :
+        elle se recompose à la lecture, donc la mise à jour en direct passe par
+        le flux existant, sans second canal.
+
+        Bornée à `PLAFOND_FRISE` entrées, les plus **récentes** : `total` et
+        `tronquee` disent ce qui a été laissé de côté — une borne muette ferait
+        passer un run d'une heure pour un run de cinq cents lignes. 404 si aucune
+        trace reçue pour ce `run_id`.
+        """
+        if state.execution(run_id) is None:
+            raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
+        return frise_du_run(
+            run_id,
+            journal.entrees_du_run(run_id),
+            agents=state.agents_du_run(run_id),
+        ).to_dict()
 
     @app.post("/api/sources/apercu")
     async def apercu_ingestion(
