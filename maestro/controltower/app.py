@@ -137,7 +137,13 @@ Endpoints :
 - `PUT  /api/catalogue/{nom}` — remplace la définition d'un agent personnalisé ;
 - `DELETE /api/catalogue/{nom}` — supprime un agent personnalisé ;
 - `GET  /api/chat/{agent}` — le fil de conversation utilisateur ↔ agent (#84),
-  persisté et relu du `ChatStore` ;
+  persisté et relu du `ChatStore` ; `?conversation=` en désigne une (#694),
+  sinon la plus récente ;
+- `GET  /api/chat/{agent}/conversations` — les conversations de l'agent, la plus
+  récente d'abord (#694) : identifiant, titre dérivé, ouverture, dernière
+  activité, nombre de messages ;
+- `POST /api/chat/{agent}/conversations` — en ouvre une neuve et rend sa carte
+  (idempotent tant que la plus récente est vierge) ;
 - `POST /api/chat/{agent}/messages` — envoie un message à l'agent et rend la
   paire message/réponse (le fil est aussi diffusé en `chat.message` sur le
   WebSocket, réponse comprise) ; `assistance` (#123) y désigne le **canal
@@ -615,11 +621,16 @@ class ChatEnvoiRequete(BaseModel):
     de projet, et rien d'autre. Le fil ne s'en trouve ni cadré ni filtré ; il
     n'intéresse que ce que la réponse **ouvre** — l'orchestration y rattache son
     run et y cadre son aperçu. Absent, le run part sans projet, comme avant.
+
+    `conversation` (#694) est le fil de l'agent où l'échange se range. Absent,
+    l'envoi rejoint la **plus récente** — le comportement d'avant ce lot, où un
+    agent n'avait qu'un fil.
     """
 
     contenu: str
     sources: list[dict[str, Any]] | None = None
     projet_id: str | None = None
+    conversation: str | None = None
 
 
 class SecretPoolRequete(BaseModel):
@@ -3332,18 +3343,91 @@ def create_app(
             return AGENT_ORCHESTRATION, orchestration
         return _exige_agent_du_catalogue(nom), chat
 
+    def _conversation_demandee(
+        service: ServiceChat, fiche: Agent, demandee: str | None
+    ) -> str:
+        """L'identifiant à servir : celui demandé, sinon la conversation courante (#694).
+
+        Trois réponses, et elles ne se confondent pas : un identifiant **mal
+        formé** est un 422 (la garde de traversée de chemin, note technique du
+        ticket — même famille qu'un message vide), un identifiant **bien formé
+        mais inconnu** est un 404 (on ne peut pas adresser un fil qui n'existe
+        pas), et l'absence n'est pas une erreur du tout — c'est le cas nominal,
+        celui d'un appelant d'avant ce lot.
+        """
+        if not demandee:
+            return service.courante(fiche.nom)
+        try:
+            connue = service.existe(fiche.nom, demandee)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if not connue:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"conversation inconnue : {demandee} "
+                    f"(voir GET /api/chat/{fiche.nom}/conversations)"
+                ),
+            )
+        return demandee
+
     @app.get("/api/chat/{agent}")
-    async def fil_chat(agent: str) -> dict[str, Any]:
+    async def fil_chat(agent: str, conversation: str | None = None) -> dict[str, Any]:
         """Le fil de conversation utilisateur ↔ agent (#84), relu de la persistance.
 
         Vide tant que l'agent n'a jamais été contacté ; 404 si l'agent n'est
         pas au catalogue. `assistance` (#123) désigne le canal d'aide.
+
+        `?conversation=` désigne **laquelle** de ses conversations relire (#694) ;
+        sans elle, la plus récente — donc, pour un agent qui n'en a qu'une, le
+        fil exact d'avant ce lot. 404 si l'identifiant est inconnu, 422 s'il est
+        mal formé. La réponse **nomme** la conversation servie, ce dont un client
+        qui n'en a demandé aucune a besoin pour savoir dans laquelle il est.
+        """
+        fiche, service = _canal_chat(agent)
+        fil = _conversation_demandee(service, fiche, conversation)
+        return {
+            "agent": fiche.nom,
+            "role": fiche.role,
+            "conversation": fil,
+            "messages": [m.to_dict() for m in service.fil(fiche.nom, fil)],
+        }
+
+    @app.get("/api/chat/{agent}/conversations")
+    async def conversations_chat(agent: str) -> dict[str, Any]:
+        """Les conversations d'un fil, **la plus récente d'abord** (#694).
+
+        De quoi peupler un historique sans charger un seul message : identifiant,
+        titre dérivé du premier message, ouverture, dernière activité et nombre
+        de messages. Jamais vide — un agent a toujours au moins la conversation
+        `origine`, fût-elle vierge —, et la première de la liste est celle qu'un
+        envoi sans précision rejoindrait. 404 si l'agent n'est pas au catalogue.
         """
         fiche, service = _canal_chat(agent)
         return {
             "agent": fiche.nom,
             "role": fiche.role,
-            "messages": [m.to_dict() for m in service.fil(fiche.nom)],
+            "conversations": [c.to_dict() for c in service.conversations(fiche.nom)],
+        }
+
+    @app.post("/api/chat/{agent}/conversations", status_code=201)
+    async def ouvrir_conversation_chat(agent: str) -> dict[str, Any]:
+        """Ouvre une conversation neuve sur un fil et rend sa carte (#694).
+
+        **Idempotent tant que rien n'a été dit** : si la plus récente est vierge,
+        elle *est* la conversation neuve et c'est elle qui revient — deux clics
+        sur « nouvelle conversation » ne laissent donc pas deux fils vides
+        derrière eux. Le 201 vaut pour les deux cas : la conversation demandée
+        existe et elle est prête, que l'appel l'ait créée ou reconnue.
+
+        L'écrire ne rend pas l'ancienne moins accessible : elle reste listée et
+        relisible par `?conversation=`. 404 si l'agent n'est pas au catalogue.
+        """
+        fiche, service = _canal_chat(agent)
+        return {
+            "agent": fiche.nom,
+            "role": fiche.role,
+            "conversation": service.ouvrir_conversation(fiche.nom).to_dict(),
         }
 
     @app.post("/api/chat/{agent}/messages", status_code=201)
@@ -3365,8 +3449,13 @@ def create_app(
         servie par `POST /api/sources` et `POST /api/executions` : c'est ce qui
         permet à l'écran de l'afficher sur la source fautive. Un message **sans
         texte mais avec des sources** est accepté — le dépôt *est* le message.
+
+        `conversation` (#694) range l'échange dans **un** des fils de l'agent ;
+        absente, il rejoint la plus récente. La réponse la nomme, et message
+        comme réponse la portent : les deux moitiés d'un tour vont ensemble.
         """
         fiche, service = _canal_chat(agent)
+        fil = _conversation_demandee(service, fiche, requete.conversation)
         try:
             message, reponse = await service.envoyer(
                 fiche,
@@ -3377,6 +3466,7 @@ def create_app(
                 # fait pas échouer un message. En dessous, plus personne n'a à se
                 # demander d'où vient la chaîne qu'il porte.
                 projet_id=projet_id_valide(requete.projet_id),
+                conversation=fil,
             )
         except SourceRefusee as exc:
             # Avant le `ValueError` nu dont elle hérite : une source refusée porte
@@ -3390,12 +3480,16 @@ def create_app(
         return {
             "agent": fiche.nom,
             "role": fiche.role,
+            "conversation": fil,
             "messages": [message.to_dict(), reponse.to_dict()],
         }
 
     @app.get("/api/chat/{agent}/flux")
     async def flux_chat(
-        agent: str, contenu: str = "", projet_id: str | None = None
+        agent: str,
+        contenu: str = "",
+        projet_id: str | None = None,
+        conversation: str | None = None,
     ) -> StreamingResponse:
         """Flux SSE d'une réponse de chat — le contrat #183, servi pour de bon (#268).
 
@@ -3419,12 +3513,19 @@ def create_app(
         nom-là désigne partout ailleurs une **portée** de lecture, avec ses mots
         réservés `tous`/`aucun` (#277), et deux contrats sous un même nom seraient
         la première façon de les confondre.
+
+        `?conversation=` désigne le fil où diffuser (#694) — même contrat que le
+        corps du POST, et **toutes** les trames la portent, `debut` comprise :
+        un client sait dès la première si ce qui arrive est le fil qu'il affiche.
         """
         fiche, service = _canal_chat(agent)
         projet = projet_id_valide(projet_id)
+        fil = _conversation_demandee(service, fiche, conversation)
 
         async def flux() -> AsyncIterator[str]:
-            async for trame in service.diffuser(fiche, contenu, projet_id=projet):
+            async for trame in service.diffuser(
+                fiche, contenu, projet_id=projet, conversation=fil
+            ):
                 yield f"data: {json.dumps(trame.to_dict(), ensure_ascii=False)}\n\n"
 
         try:
