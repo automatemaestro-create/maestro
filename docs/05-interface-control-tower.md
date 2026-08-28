@@ -2472,8 +2472,14 @@ en conservant le **projet** et le **ticket** du run repris. Les **sources**, ell
 lues, il en est la synthèse validée. Les redéclarer serait repayer la lecture d'un contenu déjà
 présent dans le texte qu'on rejoue.
 
-Ce n'est **pas** une reprise à l'endroit exact de l'interruption : celle-là suppose une frontière
-d'exécution durable, et fait l'objet d'un cadrage à part (#350). Le run relancé est un **nouveau**
+Ce n'est **pas** une reprise à l'endroit exact de l'interruption, et ça reste vrai du comportement
+livré. En revanche la raison qu'on en donnait a vieilli : « celle-là suppose une frontière
+d'exécution durable » était la prémisse de la porte n° 4 de
+[docs/28 §8](./28-decision-frontiere-execution-run.md), et le cadrage #701 l'a **renversée** le
+2026-08-28 ([§12](./28-decision-frontiere-execution-run.md)) — reprendre sur l'état acquis ne
+demande pas Temporal, qui ne reprendrait d'ailleurs pas plus finement (les deux repartent de la
+dernière tâche **terminée**). Ce qui manque n'est pas une frontière, c'est un endroit où persister
+le plan exécutable et les sorties de tâches ; le chantier est ouvert. Le run relancé est un **nouveau**
 run, qui dit de qui il est la suite (`reprise_de`) — même relation, et même sens unique, que le
 fichier `reprise-de` entre deux runs d'orchestration ([docs/10 §11.8](./10-workflow-git.md)) : le run
 repris n'est jamais réécrit pour désigner son successeur. Il est en revanche **soldé** en `annulee`
