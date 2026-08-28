@@ -1724,7 +1724,8 @@ qui est la seule sans plafond.
   (`chat.message`). Un fil vide s'ouvre sur un mot d'accueil et quatre amorces
   choisies pour montrer la **frontière qui compte** : les deux premières ouvrent
   un run, les deux dernières sont des questions et n'ouvrent rien.
-- **La colonne** — « Parler à » (les destinataires, l'orchestration en tête) et
+- **La colonne** — « Parler à » (les destinataires, l'orchestration en tête),
+  « Conversations » (§2.11 : en ouvrir une neuve, retrouver les précédentes) et
   « Ouvert depuis ce fil » (les runs que les messages du fil rattachent, du plus
   récent au plus ancien, avec leur nombre de tâches et le renvoi vers le run).
 
@@ -1878,6 +1879,73 @@ les quatre états du bloc, le retrait et son échec, et surtout les **trois** é
 de « qui l'utilise », l'ignorance comprise : rendre un catalogue muet comme un
 pool sans utilisateur ferait retirer une intégration en croyant qu'elle ne sert à
 rien, c'est-à-dire se tromper **sur la question même** que cet écran pose.
+
+---
+
+### 2.11 💬 Conversations — en ouvrir une neuve, retrouver les précédentes *(#696 — **livré**)*
+
+Le lot 6 de #690, et la moitié écran de « il devrait être possible de démarrer un nouveau chat et
+voir l'historique » (revue du 2026-08-28). Le §6.14 a découpé le fil en **conversations** côté API et
+laissait l'écran inchangé ; il s'en sert ici. Avant ce lot, `/chat` n'offrait aucun geste pour
+repartir de zéro, et un fil de cinquante messages ne se relisait pas pour retrouver la demande
+d'avant-hier — le seul rattrapage était « Ouvert depuis ce fil », qui ne liste que les **runs**.
+
+**Une carte, dans la colonne de propriétés.** « Conversations » se pose entre « Parler à » et
+« Ouvert depuis ce fil » : un bouton **Nouvelle conversation**, puis la liste, la plus récente
+d'abord. L'emplacement est tranché par la règle des trois places ([docs/30 §4](./30-cible-visuelle-control-tower.md)) — une
+conversation ouverte est une **propriété du fil**, et la colonne est la seule des trois sans
+plafond. En faire un quatrième bloc de corps ferait rougir `apps/web/tests/sobriete.test.tsx`, et ce
+serait le bon signal. L'ordre dans la colonne est causal : on choisit d'abord *à qui* l'on parle, la
+liste étant celle de **son** fil.
+
+**Un fil vierge s'appelle « Conversation vierge », et c'est l'écran qui le nomme.** L'API laisse le
+titre vide tant que rien n'a été dit (§6.14) — elle ne peut pas inventer une phrase qui n'a pas été
+prononcée. Ce nom n'est **pas** « Nouvelle conversation », qui est celui du bouton juste au-dessus :
+deux commandes voisines sous un même nom accessible ne se distinguent plus à l'oreille. La ligne
+ouverte porte `aria-current`, et pas seulement un fond coloré : « celle que je lis » doit s'entendre
+autant qu'elle se voit.
+
+**La mémoire ne retient qu'un choix, jamais un défaut** — et c'est ce qui tient « la conversation
+ouverte survit à un rechargement ». On n'écrit dans le `localStorage`
+(`apps/web/lib/conversationOuverte.ts`, une clé **par agent**, même espace de noms que le thème #118
+et le projet actif #279) que lorsque quelqu'un *désigne* une conversation : en ouvrir une neuve, en
+rouvrir une ancienne. Sans choix, un rechargement retombe sur « la plus récente », qui *est* celle
+qu'on avait sous les yeux — écrire dans une conversation la ramène en tête (§6.14). Les deux moitiés
+tiennent le critère ensemble, et la mémoire reste ce qui distingue « je relis un vieux fil » de « je
+continue ». Elle est **lue par abonnement** (`useConversationOuverte`, `useSyncExternalStore` comme
+`lib/horloge`) et non recopiée dans un état de la page : c'est ce qui la rend insensible au
+remontage de la `key` de projet du `Shell` (#281) — un état de page ne survivrait pas au changement
+de projet, le stockage, si.
+
+**Une mémoire périmée n'est pas une panne.** Une conversation retenue d'une visite passée a pu
+disparaître (fil purgé, poste rebranché sur une autre API) : l'API répond `404`, et laisser l'écran
+sur « fil illisible » pour un souvenir périmé serait le pire des deux verdicts. On l'oublie et on
+relit la plus récente, **une** fois — un second échec est une vraie panne et remonte comme telle.
+Même partage pour la liste : un historique qui n'arrive pas laisse le précédent en place et se
+rattrape au rechargement suivant, plutôt que de déclarer illisible une conversation parfaitement
+lisible.
+
+**L'historique est celui du destinataire courant**, et rien n'y est filtré par le projet actif. Une
+mention `@dev` change de fil (§2.9), donc de conversations : c'est `useChat(destinataire)` qui le
+tient, l'écran ne trie rien. Et le fil reste **transverse** (#281) — un `projet_id` voyage avec
+l'envoi, jamais avec la lecture. Corollaire assumé : la conversation ouverte est une propriété du
+**fil** et non de la vue, donc l'onglet Chat de la fiche `dev` et le `@dev` du chat global montrent
+la même — ils lisent le même stockage par le même chemin, exactement comme le §2.9 l'exige des
+messages.
+
+**Deux prix, dits plutôt que masqués.** La liste se recharge **quand le fil se recharge** : titre,
+dernière activité et nombre de messages sont dérivés des messages (§6.14), donc ils changent aux
+mêmes instants — les découpler donnerait un historique qui retarde d'un message. Et changer de
+conversation **rouvre la socket**, la lecture dont l'effet dépend ayant changé d'identité ; c'est ce
+que fait déjà un changement de destinataire, le geste voisin dans la même colonne, et le bus écouté
+étant commun à toute la Control Tower la reconnexion ne perd rien.
+
+Implémentation : `apps/web/app/chat/page.tsx` (la carte et ses lignes),
+`apps/web/lib/useChat.ts` (la conversation servie, la liste, les deux verbes),
+`apps/web/lib/conversationOuverte.ts` (la mémoire du poste) et `apps/web/lib/api.ts` (les trois
+appels du §6.14). Tests différés au lot 8 de #690 ; le harnais, lui, a suivi
+(`apps/web/tests/aides.tsx` — le double de `useChat` porte une conversation par défaut, un fil sans
+historique ne faisant auditer qu'une colonne amputée).
 
 ---
 

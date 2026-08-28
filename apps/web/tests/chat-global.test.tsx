@@ -90,29 +90,39 @@ function saisiePour(interlocuteur: string): HTMLTextAreaElement {
   return screen.getByLabelText(`Message à ${interlocuteur}`) as HTMLTextAreaElement;
 }
 
-/** La colonne de propriétés (#539) — deux cartes : « Parler à », puis les runs. */
+/**
+ * La colonne de propriétés (#539) — « Parler à », « Conversations » (#696) puis
+ * les runs ouverts depuis le fil.
+ */
 function proprietesDuFil(): HTMLElement {
   return screen.getByRole("complementary", { name: "Propriétés du fil" });
 }
 
 /**
- * Les lignes de « Ouvert depuis ce fil ».
+ * Une carte de la colonne, désignée par le **titre** qu'elle porte.
  *
- * Ciblées par le titre de leur carte et non par le rang de la liste : la colonne
- * en porte deux (les destinataires en sont une), et un test qui prendrait « la
- * dernière » changerait de sujet le jour où une troisième carte s'ajoute.
+ * Jamais par son rang : la colonne en portait deux, elle en porte trois depuis
+ * #696, et un test qui prendrait « la dernière » changerait de sujet à chaque
+ * ajout. C'est aussi ce qui garde chaque assertion sur *sa* carte — depuis que
+ * l'historique en pose une, « tous les boutons de la colonne » ne désigne plus
+ * les destinataires.
  */
-function ouvertsDepuisLeFil(): HTMLElement[] {
+function carteDeLaColonne(titre: string): HTMLElement {
   const carte = within(proprietesDuFil())
     .getAllByRole("article")
     .find(
       (candidate) =>
-        within(candidate).queryByRole("heading", {
-          name: "Ouvert depuis ce fil",
-        }) !== null,
+        within(candidate).queryByRole("heading", { name: titre }) !== null,
     );
-  if (carte === undefined) throw new Error("carte « Ouvert depuis ce fil » absente");
-  return within(carte).queryAllByRole("listitem");
+  if (carte === undefined) throw new Error(`carte « ${titre} » absente`);
+  return carte;
+}
+
+/** Les lignes de « Ouvert depuis ce fil ». */
+function ouvertsDepuisLeFil(): HTMLElement[] {
+  return within(carteDeLaColonne("Ouvert depuis ce fil")).queryAllByRole(
+    "listitem",
+  );
 }
 
 // ── ① la mention, hors de tout écran ─────────────────────────────────────────
@@ -265,7 +275,7 @@ describe("le chat global (#269)", () => {
     // réécriture de l'autre.
     monterLeChat();
 
-    const boutons = within(proprietesDuFil()).getAllByRole("button");
+    const boutons = within(carteDeLaColonne("Parler à")).getAllByRole("button");
     expect(boutons.filter((bouton) => bouton.textContent === "Orchestration")).toHaveLength(
       1,
     );
@@ -274,19 +284,19 @@ describe("le chat global (#269)", () => {
   it("bascule aussi à la souris, l'orchestration en tête du parc", async () => {
     const utilisateur = userEvent.setup();
     monterLeChat();
-    const proprietes = proprietesDuFil();
+    const parlerA = carteDeLaColonne("Parler à");
 
     expect(
-      within(proprietes)
+      within(parlerA)
         .getAllByRole("button")
         .map((bouton) => bouton.textContent),
     ).toEqual(["Orchestration", "@dev", "@qa"]);
 
-    await utilisateur.click(within(proprietes).getByRole("button", { name: "@qa" }));
+    await utilisateur.click(within(parlerA).getByRole("button", { name: "@qa" }));
 
     expect(canalCourant()).toBe("qa");
     expect(
-      within(proprietes).getByRole("button", { name: "@qa" }),
+      within(parlerA).getByRole("button", { name: "@qa" }),
     ).toHaveAttribute("aria-pressed", "true");
   });
 
