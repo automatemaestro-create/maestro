@@ -35,6 +35,18 @@ La seule comparaison de chaînes de ce module est la **résolution d'un identifi
 dans un index — un test d'appartenance à une clé, au même titre qu'un parseur de
 format connu. Elle ne juge aucune intention humaine (docs/10, règle du 2026-08-28).
 
+⚠ **Et ce n'est pas non plus l'assemblage du prompt.** De `maestro.sources.extraction`
+on reprend `estimer_tokens` — le budget, c'est-à-dire ce que la note du ticket
+demandait — mais **pas `contexte_markdown`**, et c'est une décision et non un oubli :
+son préambule déclare le contenu « fourni par l'utilisateur », « pas fiable », à
+signaler plutôt qu'à suivre (ENF-13). C'est juste d'un document téléversé et **faux**
+de la documentation du produit, qui est dans le dépôt et relue au merge — dire au
+modèle de s'en méfier reviendrait à saper la source même dont le chantier veut qu'il
+réponde. La protection qu'apporte l'encadrement est ici obtenue autrement, et plus
+tôt : ce qui vient du modèle est un **identifiant**, jamais un chemin, et il ne
+résout que dans l'index (décision 4). Encadrer les sections retenues reste possible
+au lot 2, qui assemble le prompt — c'est là que la question se pose.
+
 ## Quatre décisions, et leurs raisons
 
 **1. Les sections ne s'emboîtent pas.** Une section court de son titre jusqu'au
