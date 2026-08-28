@@ -150,6 +150,19 @@ if [ "$1" = "api" ] && [ "$2" = "graphql" ]; then
       # « clé:<TAB>valeur », « -- », corps) : un helper Python la retraduit en JSON, parce qu'un
       # bouchon shell n'a pas à porter un encodeur — les titres et les corps portent des accents.
       case "$requete" in
+        # ⚠ AVANT la vue canonique, dont le motif « body } » l'absorberait : `gh_reste_source`
+        # (#610) demande le titre ET LES COMMENTAIRES, et un ticket décrit par un test n'en porte
+        # aucun. Lui servir la vue canonique répondrait « aucun ticket de reprise » à qui pose la
+        # question — le contraire d'un silence, et un ✓ sur une question jamais posée. Le défaut
+        # était le même dans l'autre double, où #610 l'a corrigé ; il vivait encore ici, faute
+        # d'appelant. Sans fixture : le ticket EXISTE et n'a pas de ticket de reprise — le cas que
+        # le filet doit signaler.
+        *"comments(first: 100)"*)
+          if [ -f "$FIX/reprise-$iid.json" ]; then cat "$FIX/reprise-$iid.json"; else
+            printf '{"data":{"repository":{"issue":{"title":"Ticket %s",' "$iid"
+            printf '"comments":{"nodes":[]}}}}}'
+          fi
+          exit 0 ;;
         *"body }"*)
           [ -f "$FIX/issue-$iid.txt" ] || exit 1
           exec "$MAESTRO_STUB_PYTHON" "$FIX/vue_en_json.py" "$FIX/issue-$iid.txt" ;;
@@ -346,6 +359,22 @@ class Depot:
     numeros_jalons: dict[str, int] = field(default_factory=dict)
 
     # --- Mise en place de l'état GitLab simulé ---------------------------------------------------
+    def reprise(self, iid: int, numero: int | None) -> None:
+        """Ce que `gh_reste_source` (#610) répond sur un ticket : son titre, et son ANCRE s'il en a.
+
+        L'ancre est un commentaire dont la forme est un contrat — « ticket de reprise #<n> » —,
+        partagé entre l'écriture (`gl_reste_ancre`) et la lecture (`gh_reste_source`). C'est elle,
+        et rien d'autre, qui dit qu'un résidu a trouvé un support qui survit au merge.
+        """
+        corps = (f"Écriture refusée sous `.claude/` : … son **ticket de reprise #{numero}**, "
+                 "qui lui survit (#608).") if numero is not None else ""
+        noeuds = f'[{{"body":"{corps}"}}]' if corps else "[]"
+        (self.fixtures / f"reprise-{iid}.json").write_text(
+            f'{{"data":{{"repository":{{"issue":{{"title":"Ticket {iid}",'
+            f'"comments":{{"nodes":{noeuds}}}}}}}}}}}',
+            encoding="utf-8",
+        )
+
     def milestone(self, titre: str) -> None:
         self.milestones([(titre, "active", 3, 10)])
 
@@ -417,12 +446,18 @@ class Depot:
         parent: int | None = None,
         lots: list[tuple[int, str, bool]] | None = None,
         labels_sup: str = "",
+        corps_sup: str = "",
     ) -> None:
         """Déclare un ticket : son statut, ses labels, et son rôle éventuel de lot ou de parent.
 
         `labels_sup` ajoute des labels à la liste de base — il n'existe que pour `lot::arbitre`
         (#562), qui est un fait porté par le PARENT et non par son découpage : sans lui, le seul
         chemin testable serait celui du marqueur, c'est-à-dire la moitié de la règle.
+
+        `corps_sup` ajoute des lignes à la DESCRIPTION, et n'existe que pour `--touche-claude`
+        (#612), dont le motif balaie le ticket entier — titre compris. Ce qu'il permet de tester
+        est justement ce qu'un titre ne dirait pas : un ticket dont seule la description nomme
+        `.claude/` doit être signalé au même titre qu'un autre.
 
         LE DÉCOUPAGE VIT DANS L'EN-TÊTE ET NULLE PART AILLEURS (#395) : les lignes `parent:` et
         `lot:` que `gh_issue_raw` pose depuis `Issue.parent` et `Issue.subIssues`. Le corps garde
@@ -431,6 +466,8 @@ class Depot:
         branché sur la prose.
         """
         corps = f"Sous-ticket de #{parent} — lot 1/5.\n" if parent else ""
+        if corps_sup:
+            corps += corps_sup if corps_sup.endswith("\n") else corps_sup + "\n"
         entetes = f"parent:\t{parent}\n" if parent else ""
         if lots:
             # La coche vaut « - » : le `state:` de ces doubles est toujours `open`, et c'est de
@@ -6106,6 +6143,119 @@ def test_le_check_est_muet_quand_tout_est_arbitre(depot: Depot) -> None:
     assert "non-arbitre" not in depot.lance("queue.sh").stdout
 
 
+# --- Ce que la session ne pourra pas écrire : `--touche-claude` (#612, chantier #608) -------------
+#
+# Une session autonome ne peut pas écrire sous `.claude/` — blocage dur du CLI, en amont de
+# l'allowlist (#229/#238) —, et son correctif part alors dans la description de sa PR (#188), que le
+# pilote merge sans que personne ne l'ouvre. §11.7 disait la conduite depuis #238 sans l'outiller :
+# « `queue.sh` ne le détecte pas — c'est au rédacteur du ticket de le dire ».
+#
+# CE SIGNALEMENT N'ÉCARTE RIEN, et c'est ce que ces tests gardent en premier : le ticket reste au
+# plan. Écarter est une décision, et son geste existe déjà — l'assigner (#621).
+
+
+def _touche_claude(sortie: str) -> list[list[str]]:
+    return [ligne.split("\t") for ligne in sortie.splitlines()
+            if ligne and not ligne.startswith("#")]
+
+
+def _plan_avec_claude(depot: Depot, *, dans_le_corps: bool = True) -> None:
+    """Trois tickets au plan, dont un seul nomme `.claude/` — et jamais dans son titre.
+
+    Le motif balaie le ticket entier (titre compris), mais c'est la DESCRIPTION qui est le cas
+    réel : un titre dit ce que le ticket fait, la description dit où il le fait.
+    """
+    depot.milestone("Phase X")
+    depot.ticket(600, "Un ticket ordinaire")
+    depot.ticket(
+        601,
+        "Le plan signale ce que la session ne pourra pas écrire",
+        corps_sup=("Modifier `.claude/commands/orchestrate.md` pour relayer le signalement."
+                   if dans_le_corps else "Rien à écrire ailleurs que dans scripts/."),
+    )
+    depot.ticket(602, "Un autre ticket ordinaire")
+    depot.publie()
+
+
+def test_le_ticket_qui_nomme_claude_est_signale_avec_son_titre(depot: Depot) -> None:
+    """Le cas nominal — TSV « iid, parent, titre », le parent valant « - » hors lot.
+
+    Le titre est là parce qu'une liste d'iid ne se lit pas : c'est au feu vert de `/orchestrate` que
+    cette sortie est relayée, et « #601 » seul n'apprend rien à qui décide.
+    """
+    _plan_avec_claude(depot)
+    lignes = _touche_claude(depot.lance("queue.sh", "--touche-claude").stdout)
+    assert lignes == [
+        ["601", "-", "Le plan signale ce que la session ne pourra pas écrire"]
+    ], lignes
+
+
+def test_un_plan_sans_claude_est_muet(depot: Depot) -> None:
+    """L'échantillon fautif du motif : le MÊME plan, à la seule ligne de description près.
+
+    Sans cette moitié, le test ci-dessus passerait aussi bien sur un signalement qui parlerait de
+    tous les tickets — et un signalement qui parle à chaque run cesse d'être lu.
+    """
+    _plan_avec_claude(depot, dans_le_corps=False)
+    assert _touche_claude(depot.lance("queue.sh", "--touche-claude").stdout) == []
+    assert "touche-claude" not in depot.lance("queue.sh").stdout
+    assert "ne peut pas y écrire" not in depot.lance("queue.sh", "--check").stderr
+
+
+def test_le_signalement_necarte_aucun_ticket_du_plan(depot: Depot) -> None:
+    """LE test du ticket : signaler n'est pas écarter, et le plan doit le prouver.
+
+    Écarter #601 « pour son bien » retirerait d'un run, sans que personne l'ait voulu, un ticket
+    dont une part est peut-être parfaitement traitable. Le geste qui écarte est l'assignation, et
+    lui seul.
+    """
+    _plan_avec_claude(depot)
+    sortie = depot.lance("queue.sh").stdout
+    assert [ligne[1] for ligne in _lignes_du_plan(sortie)] == ["600", "601", "602"], (
+        "le ticket signalé RESTE au plan, à sa place"
+    )
+    assert "# touche-claude\t601\t" in sortie, "et le plan porte la réserve, en commentaire"
+
+
+def test_le_plan_reste_identique_a_deux_appels_avec_le_signalement_claude(depot: Depot) -> None:
+    """La règle 4 de `queue.sh` : deux appels sur le même backlog rendent le même plan.
+
+    Elle est ce dont dépend la reprise d'un run sur SON plan (#291) — un signalement qui la
+    casserait ferait diverger un run repris de celui qu'il reprend.
+    """
+    _plan_avec_claude(depot)
+    assert depot.lance("queue.sh").stdout == depot.lance("queue.sh").stdout
+
+
+def test_le_check_nomme_les_tickets_et_dit_quils_restent(depot: Depot) -> None:
+    """Le verbe de la ligne compte : un `--check` qui dirait « écartés » mentirait sur le run.
+
+    Et il nomme le geste — assigner —, faute de quoi la seule conduite lisible serait d'espérer que
+    la session s'en sorte.
+    """
+    _plan_avec_claude(depot)
+    r = depot.lance("queue.sh", "--check")
+    assert "ne peut pas y écrire" in r.stderr
+    assert "#601" in r.stderr
+    assert "RESTENT au" in r.stderr, "le signalement dit ce qu'il ne fait pas"
+    assert "assigner" in r.stderr, "et le geste qui, lui, écarte"
+
+
+def test_le_verbe_rend_le_meme_verdict_que_le_plan(depot: Depot) -> None:
+    """La règle vit UNE FOIS (`gl_touche_claude_de`), et `queue.sh` la rejoue sur sa vue en cache.
+
+    Deux définitions de « touche `.claude/` » finiraient par diverger, et c'est la muette — celle
+    du plan, que personne ne relit ligne à ligne — qui se serait trompée. Ce test les compare sur
+    les deux tickets qui les séparent.
+    """
+    _plan_avec_claude(depot)
+    assert depot.lib("touche-claude", "601").returncode == 0
+    assert depot.lib("touche-claude", "601").stdout.split("\t")[0] == "touche"
+    assert depot.lib("touche-claude", "600").returncode == 3, (
+        "« il ne le nomme pas » est une RÉPONSE"
+    )
+
+
 # --- Lot 2 : l'ordonnanceur (#289) ----------------------------------------------------------------
 
 
@@ -7511,3 +7661,179 @@ def test_sans_mrfix_une_pr_bloquee_reste_bloquee_avec_sa_cause(depot: Depot) -> 
     assert ligne[3] == "bloquee"
     assert ligne[7] == "0", "aucune session de déblocage n'a été ouverte"
     assert not (dossier / "130-mrfix.resultat.txt").exists()
+
+
+# --- Le filet du pilote : les résidus `.claude/` nommés en fin de run (#611, chantier #608) ------
+#
+# Une session ne peut pas écrire sous `.claude/` et rend son correctif dans la description de sa PR
+# (#188) ; depuis #610 elle le consigne EN PLUS dans un ticket de reprise, la PR fermant au merge.
+# Ce bloc est le filet derrière cette conduite, et il existe parce qu'un mécanisme qui ne tient que
+# par une seule de ses deux extrémités a DÉJÀ échoué : run `20260827-094044`, trois tickets, deux
+# résidus (#599, #595), mergés en vingt minutes, encore en place le lendemain. Les deux sessions
+# avaient fait ce qu'il fallait — ce qui manquait était un second regard, et le pilote est le seul
+# qui ne puisse pas l'oublier : il termine toujours là.
+#
+# IL CONSTATE, IL NE CRÉE PAS : le corps d'un ticket de reprise EST le correctif, que le pilote n'a
+# pas. L'ouvrir d'office donnerait un ticket vide de la seule chose qui compte.
+
+BLOC_RESIDUS = "Reste à appliquer sous .claude/"
+
+
+def _stub_residu(depot: Depot, cible: str = ".claude/commands/ticket-finish.md") -> str:
+    """Un bouchon qui livre son ticket ET laisse derrière lui un refus d'écriture sous `.claude/`.
+
+    C'est la trace exacte que le CLI dépose : un `permission_denials` portant l'outil de fichier et
+    sa cible. Le pilote ne la relit pas lui-même — il la demande à `journal.sh refus --claude`, seul
+    endroit du dépôt où « blocage dur `.claude/` » est défini.
+    """
+    gabarit = _statut_json("%s", "En revue")
+    return _claude_stub(depot, f"""
+        iid=$(printf '%s\\n' "$@" | grep -o 'GitLab #[0-9]*' | head -1 | tr -dc '0-9')
+        printf '{gabarit}' "$iid" > "$MAESTRO_FIXTURES/owner-$iid.json"
+        printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":2,'
+        printf '"permission_denials":[{{"tool_name":"Edit","tool_use_id":"t0",'
+        printf '"tool_input":{{"file_path":"{cible}"}}}}]}}\\n'
+        exit 0
+    """)
+
+
+def _run_avec_residu(depot: Depot, run_id: str, **env: str) -> subprocess.CompletedProcess:
+    depot.ticket(130, "Ticket 130")
+    depot.mr("feat/130-ticket-130", "opened")
+    plan = _plan(depot, [(1, 130, "-", "haute")])
+    return depot.lance("run.sh", "--plan", plan, "--run-id", run_id,
+                       env={"MAESTRO_CLAUDE_BIN": _stub_residu(depot), **env})
+
+
+def test_le_resume_signale_un_residu_sans_ticket_de_reprise(depot: Depot) -> None:
+    """Le seul cas qui appelle un geste, donc le seul qui porte SA CIBLE et SA COMMANDE.
+
+    Sans savoir quel fichier a été refusé, « poser un ticket de reprise » n'est pas une instruction
+    exécutable : le corps du ticket EST le correctif, et le pilote ne peut pas l'inventer.
+    """
+    r = _run_avec_residu(depot, "residu")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert BLOC_RESIDUS in r.stdout, "le résidu part avec la PR mergée sans que rien ne le dise"
+    assert "AUCUN ticket de reprise" in r.stdout
+    bloc = r.stdout.split(BLOC_RESIDUS, 1)[1]
+    assert "#130" in bloc
+    assert ".claude/commands/ticket-finish.md" in bloc, "la cible, sinon le geste est aveugle"
+    assert "lib.sh reste-claude 130" in bloc, "et la commande qui le pose"
+
+
+def test_le_resume_confirme_le_ticket_de_reprise_quand_il_existe(depot: Depot) -> None:
+    """L'autre moitié : une session qui a fait ce qu'il fallait ne doit pas être signalée en rouge.
+
+    Le pilote lit l'ANCRE posée sur le ticket source (« ticket de reprise #<n> »), et c'est la même
+    forme des deux côtés — l'écriture la pose, la lecture la relit, une seule définition.
+    """
+    depot.reprise(130, 653)
+    r = _run_avec_residu(depot, "avec-reprise")
+    assert r.returncode == 0, r.stdout + r.stderr
+    bloc = r.stdout.split(BLOC_RESIDUS, 1)[1]
+    assert "ticket de reprise #653" in bloc
+    assert "AUCUN" not in bloc, "un résidu consigné n'appelle aucun geste"
+
+
+def test_un_run_sans_residu_ne_dit_rien(depot: Depot) -> None:
+    """L'échantillon fautif du bloc : le MÊME run, sans le refus.
+
+    Un signalement qui parle à chaque run cesse d'être lu — c'est la règle de `gc --auto`, et sans
+    cette moitié le test ci-dessus passerait aussi sur un bloc imprimé en toutes circonstances.
+    """
+    depot.ticket(130, "Ticket 130")
+    depot.mr("feat/130-ticket-130", "opened")
+    plan = _plan(depot, [(1, 130, "-", "haute")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "propre",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_livre(depot)})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert BLOC_RESIDUS not in r.stdout, "un run sain ne parle pas de résidus"
+
+
+def test_un_refus_qui_nest_pas_une_ecriture_sous_claude_ne_declenche_rien(depot: Depot) -> None:
+    """La famille est LUE, jamais redéfinie — et ce test le prouve par ce qui ne la déclenche pas.
+
+    Un `Bash` dont la commande NOMME `.claude/` est un refus de commande, pas une écriture bloquée.
+    Un `grep .claude/` recopié dans le pilote les confondrait, et enverrait ouvrir un ticket de
+    reprise pour un correctif qui n'existe pas.
+    """
+    depot.ticket(130, "Ticket 130")
+    depot.mr("feat/130-ticket-130", "opened")
+    gabarit = _statut_json("%s", "En revue")
+    claude = _claude_stub(depot, f"""
+        iid=$(printf '%s\\n' "$@" | grep -o 'GitLab #[0-9]*' | head -1 | tr -dc '0-9')
+        printf '{gabarit}' "$iid" > "$MAESTRO_FIXTURES/owner-$iid.json"
+        printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":2,'
+        printf '"permission_denials":[{{"tool_name":"Bash","tool_use_id":"t0",'
+        printf '"tool_input":{{"command":"cat .claude/settings.json"}}}}]}}\\n'
+        exit 0
+    """)
+    plan = _plan(depot, [(1, 130, "-", "haute")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "bash-claude",
+                    env={"MAESTRO_CLAUDE_BIN": claude})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert BLOC_RESIDUS not in r.stdout
+
+
+def test_le_filet_est_best_effort_et_ne_touche_ni_au_verdict_ni_au_code_de_sortie(
+    depot: Depot,
+) -> None:
+    """Même statut qu'`audit.txt` (#530) et que `gc` : il signale, il ne juge pas.
+
+    On casse `journal.sh` — la seule source du filet — et l'on exige que le run se termine
+    exactement comme sans lui : verdict du ticket inchangé, code de sortie inchangé. Un filet qui
+    ferait échouer un run à cause de sa propre panne coûterait plus qu'il ne rapporte.
+    """
+    (depot.racine / "scripts/orchestrate/journal.sh").write_text(
+        "#!/usr/bin/env bash\nexit 1\n", encoding="utf-8", newline="\n"
+    )
+    r = _run_avec_residu(depot, "casse")
+    assert r.returncode == 0, r.stdout + r.stderr
+    resume = (depot.racine / ".maestro/orchestrate/casse/resume.tsv").read_text(encoding="utf-8")
+    assert "130\tOK" in resume, "le verdict du ticket ne dépend pas du filet"
+    assert BLOC_RESIDUS not in r.stdout, "muet plutôt que bruyant quand il ne sait pas"
+
+
+def test_le_commutateur_eteint_le_filet(depot: Depot) -> None:
+    """`MAESTRO_ORCHESTRATE_RESTE_CLAUDE=0` — la sortie de secours, comme pour tout signalement."""
+    r = _run_avec_residu(depot, "eteint", MAESTRO_ORCHESTRATE_RESTE_CLAUDE="0")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert BLOC_RESIDUS not in r.stdout
+
+
+def test_le_filet_lit_aussi_le_journal_du_run_repris(depot: Depot) -> None:
+    """LE cas que ce filet doit attraper, et non un cas de bord (leçon de #593).
+
+    Un run tué n'imprime aucun résumé : ses résidus n'ont jamais été nommés. Sa reprise rouvre les
+    sessions en vol, qui peuvent finir SANS rebuter sur `.claude/` — le résidu passerait alors
+    ENTRE les deux runs, chacun ayant de bonnes raisons de se taire. Les deux journaux sont donc
+    demandés ensemble, et c'est `journal.sh refus` qui les agrège.
+    """
+    depot.ticket(130, "Ticket coupé", statut="En revue")
+    depot.ticket(131, "Ticket 131")
+    depot.mr("feat/131-ticket-131", "opened")
+    coupe = _run_dir(
+        depot, "20260730-100000",
+        [(1, 130, "-", "haute"), (2, 131, "-", "moyenne")],
+        resume=[(130, "OK", 99, 600, "3.50", "-")],
+        age=4000,
+    )
+    (coupe / "130.json").write_text(
+        json.dumps({
+            "type": "result", "subtype": "success", "is_error": False, "total_cost_usd": 3.5,
+            "permission_denials": _refus(".claude/commands/orchestrate.md", outil="Edit"),
+        }, ensure_ascii=False, separators=(",", ":")),
+        encoding="utf-8", newline="\n",
+    )
+    claude = _claude_stub(depot, f"""
+        printf '%s' '{_statut_json("131", "En revue")}' > "$MAESTRO_FIXTURES/owner-131.json"
+        printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":2}}'
+        exit 0
+    """)
+    r = depot.lance("run.sh", "--resume", "20260730-100000", "--run-id", "suite",
+                    env={"MAESTRO_CLAUDE_BIN": claude})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert BLOC_RESIDUS in r.stdout, (
+        "le résidu du run coupé n'a jamais été nommé — sa reprise est le dernier moment pour ça"
+    )
+    assert "#130" in r.stdout.split(BLOC_RESIDUS, 1)[1]

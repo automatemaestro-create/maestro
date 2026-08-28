@@ -206,6 +206,32 @@ session **finit dans le clone principal**, pas là où elle a travaillé. C'est 
       constat, pas un échec. Et ce n'est **pas** une promesse de merge : le brouillon n'est qu'**un**
       des quatre prérequis de `merge-mr`, qui refusera toujours une PR levée mais rouge, en conflit,
       ou qui ne ferme pas son ticket (#415).
+   5. **T'es-tu fait refuser une écriture sous `.claude/` pendant ce ticket ?** (#608, docs/10
+      §11.7.) Si oui — et seulement si oui —, **deux gestes, jamais l'un à la place de l'autre** :
+      - **RENDS** le correctif intégral dans la description de la PR, sous une section
+        `## Reste à appliquer à la main` : contenu de remplacement complet (pas « modifier la ligne
+        12 », mais l'avant et l'après), fichier par fichier. C'est là qu'il se **relit** — tu
+        l'ajoutes au fichier préparé au point 2, avant l'appel du point 3.
+      - **CONSIGNE-LE** dans un ticket de reprise, parce que c'est ce qui lui **survit** : écris le
+        correctif dans un fichier avec l'outil `Write` (dans `.maestro/session/`), puis
+        ```
+        bash scripts/gitlab/lib.sh reste-claude <iid-du-ticket> <chemin-du-fichier>
+        ```
+        Le ticket de reprise naît **assigné** — donc hors des plans d'un run, qui s'y ferait
+        refuser la même écriture — et avec son **état** ; rejoué sur le même ticket source, il
+        **complète** le même ticket de reprise au lieu d'en ouvrir un second. **Nomme-le dans ton
+        résumé final** (étape 15).
+
+      ⚠ **C'est ici que le geste est le plus facile à oublier, et ici qu'il coûte le plus cher** :
+      depuis #418 cette commande **merge** la PR quelques minutes plus tard (étape 13), et la
+      description où le correctif était rendu se ferme avec elle — plus rien ne la rouvre. Rien
+      n'échoue, rien n'est rouge, le ticket passe « Terminé » : c'est ce qui rend la perte
+      **invisible** (run `20260827-094044` : trois tickets, deux résidus, mergés en vingt minutes,
+      encore en place le lendemain). Le ticket, lui, vit après le merge.
+
+      ⚠ **Et ne contourne pas le blocage** pour t'éviter ces deux gestes : ni `printf > fichier`,
+      ni `cp`, ni script tiers. Il vient du **CLI**, pas de l'allowlist, et c'est lui qui empêche
+      une boucle sans surveillance de réécrire les instructions que la boucle suivante exécutera.
 
 10. **Ne pose aucun relecteur sur la PR** (#196) — la désignation d'un relecteur est un **geste
    humain**, jamais automatique : n'appelle pas `lib.sh set-reviewer` et n'utilise pas
@@ -413,7 +439,9 @@ session **finit dans le clone principal**, pas là où elle a travaillé. C'est 
    l'étape 6 (et le rebase proposé si un conflit est probable), les cases de la checklist
    cochées et celles restées vides (avec un mot sur pourquoi), et le temps loggé le cas
    échéant. Si un refus du garde-fou de l'étape 3 a été **franchi sur demande explicite**,
-   dis-le en tête du résumé (quel motif, et qui l'a demandé).
+   dis-le en tête du résumé (quel motif, et qui l'a demandé). Et si l'étape 9.5 a joué, **nomme le
+   ticket de reprise** (#608) — la PR qui portait le correctif vient d'être mergée, ce ticket est
+   le seul endroit où il vit encore.
 
    **Jamais de ✅ global.** Une clôture dont la PR est restée ouverte sur un pipeline rouge n'est
    pas « terminée avec une réserve » : elle est **inachevée**, et le dire avec ce mot-là est tout ce
