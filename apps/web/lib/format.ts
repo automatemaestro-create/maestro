@@ -103,6 +103,29 @@ export function formatHeure(horodatage: string): string {
   return date.toLocaleTimeString("fr-FR");
 }
 
+/**
+ * L'heure **à la minute** d'un horodatage ISO — l'horodatage d'une bulle du fil
+ * (#697), et le seul endroit du produit qui renonce aux secondes.
+ *
+ * Ce n'est pas une variante de goût de `formatHeure` : les deux répondent à des
+ * questions différentes. Une ligne de journal, une entrée de frise et un
+ * événement d'activité se **corrèlent** — l'ordre à la seconde y est
+ * l'information, et deux entrées de la même seconde disent quelque chose. Une
+ * bulle de conversation se **situe** : « 10:03:47 » y donne trois chiffres de
+ * précision que personne ne lit, sur la ligne même qui doit s'effacer devant le
+ * message. La seconde n'est pas perdue pour autant — l'infobulle de la bulle
+ * porte la date et l'heure complètes (`formatDateHeure`).
+ */
+export function formatHeureCourte(horodatage: string): string {
+  if (!horodatage) return "";
+  const date = new Date(horodatage);
+  if (Number.isNaN(date.getTime())) return horodatage;
+  return date.toLocaleTimeString("fr-FR", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 /** La date et l'heure locales d'un horodatage ISO du backend (chaîne vide si absent). */
 export function formatDateHeure(horodatage: string): string {
   if (!horodatage) return "";

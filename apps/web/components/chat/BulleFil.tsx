@@ -20,12 +20,36 @@
  *   éditables, non — et le rétrécir ferait de la correction un travail de
  *   contorsion, c'est-à-dire la friction qui fait approuver sans lire (docs/05
  *   §2.7.4). D'où `pleineLargeur`, demandé au cas par cas.
+ *
+ * ## Ce que #697 y change : la largeur de lecture, et les jetons du socle
+ *
+ * **Une borne en `ch` s'ajoute au pourcentage**, et c'est le critère « largeur
+ * de lecture bornée ». Depuis #691 le fil occupe l'écran : 70 % d'une colonne
+ * large font des lignes de 110 caractères, où l'œil perd son retour à la ligne —
+ * la mesure confortable tient entre 60 et 75. Le pourcentage **reste** pour les
+ * écrans étroits, où il est la contrainte qui mord ; les deux se composent par
+ * `min()`, donc c'est toujours la plus serrée des deux qui décide. La borne ne
+ * s'applique pas à `pleineLargeur` : un brief est un formulaire, pas de la
+ * prose.
+ *
+ * **Les couleurs viennent des jetons** (`globals.css`, #533) et non plus de la
+ * palette brute. Ce n'était pas cosmétique : la bulle de l'utilisateur portait le
+ * `bg-emerald-600` + blanc à **3,65:1** que #535 a retiré des boutons, et son
+ * pied `text-neutral-400` à 2,58:1. `bg-accent` / `text-sur-ton` valent 5,36:1
+ * en clair et 8,00:1 en sombre, mesurés et gardés par `tests/contraste.test.ts`.
+ *
+ * ⚠ Le pied de la bulle de l'utilisateur s'écrit donc en `text-sur-ton` **plein**
+ * et non dans une teinte affaiblie : sa discrétion vient de sa **taille**
+ * (`text-micro`, le pas que le socle réserve à l'horodatage — « lisible, pas
+ * lu »), jamais d'un contraste rabaissé. C'est la règle du socle appliquée ici :
+ * un `text-sur-ton/70` aurait l'air plus sobre et sortirait du barème sans que
+ * rien ne le dise.
  */
 
 import type { ReactNode } from "react";
 
 import { Infobulle } from "@/components/Infobulle";
-import { formatDateHeure, formatHeure } from "@/lib/format";
+import { formatDateHeure, formatHeureCourte } from "@/lib/format";
 
 export function BulleFil({
   auteur,
@@ -47,20 +71,23 @@ export function BulleFil({
     <li className={"flex " + (utilisateur ? "justify-end" : "justify-start")}>
       <div
         className={
-          "rounded-lg px-3 py-2 text-sm shadow-sm " +
-          (pleineLargeur ? "w-full " : "max-w-[85%] sm:max-w-[70%] ") +
+          // `shadow-sm` est celle de `Carte` (`Primitives`) et pas une ombre
+          // inventée ici : c'est la seule élévation du socle, et une bulle est
+          // une surface posée sur la page au même titre qu'une carte.
+          "min-w-0 rounded-lg px-3 py-2 text-corps shadow-sm " +
+          (pleineLargeur
+            ? "w-full "
+            : "max-w-[85%] sm:max-w-[min(70%,72ch)] ") +
           (utilisateur
-            ? "bg-emerald-600 text-white dark:bg-emerald-700"
-            : "border border-neutral-200 bg-white text-neutral-900 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100")
+            ? "bg-accent text-sur-ton"
+            : "border border-bord bg-surface text-texte")
         }
       >
         {children}
         <p
           className={
-            "mt-1 text-right text-[10px] " +
-            (utilisateur
-              ? "text-emerald-100"
-              : "text-neutral-400 dark:text-neutral-500")
+            "mt-1 text-right text-micro " +
+            (utilisateur ? "text-sur-ton" : "text-texte-secondaire")
           }
         >
           {utilisateur ? "vous" : auteur}
@@ -68,7 +95,9 @@ export function BulleFil({
             <>
               {" · "}
               <Infobulle texte={formatDateHeure(horodatage)}>
-                <time dateTime={horodatage}>{formatHeure(horodatage)}</time>
+                <time dateTime={horodatage}>
+                  {formatHeureCourte(horodatage)}
+                </time>
               </Infobulle>
             </>
           )}

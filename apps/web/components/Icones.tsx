@@ -223,6 +223,20 @@ export function IconeCoche(props: Props) {
   );
 }
 
+/**
+ * Emporter ce qu'on regarde — la copie d'un bloc de code du fil (#697). Deux
+ * feuillets décalés : le geste se reconnaît sans libellé, et le libellé est là
+ * de toute façon (règle du jeu : l'icône double, elle ne porte jamais seule).
+ */
+export function IconeCopier(props: Props) {
+  return (
+    <Trait {...props}>
+      <rect x="9" y="9" width="11.5" height="11.5" rx="2" />
+      <path d="M5.5 15H4.75A1.25 1.25 0 0 1 3.5 13.75V4.75A1.25 1.25 0 0 1 4.75 3.5h9A1.25 1.25 0 0 1 15 4.75V5.5" />
+    </Trait>
+  );
+}
+
 export function IconeAide(props: Props) {
   return (
     <Trait {...props}>
