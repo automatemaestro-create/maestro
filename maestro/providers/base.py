@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections import deque
-from collections.abc import Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -268,10 +268,56 @@ class ModelProvider(ABC):
     ) -> str:
         """Exécute un appel modèle et renvoie le texte assemblé de la réponse.
 
-        C'est la couture minimale du POC ; elle grandira (streaming, outils,
-        sous-agents) sans changer la nature de la frontière.
+        La couture minimale du POC, et le seul appel que tout fournisseur doit
+        savoir servir. Le **streaming** est venu s'ajouter à côté d'elle
+        (`generate_stream`, #693) plutôt qu'à sa place : rendre le texte d'un
+        bloc reste la façon normale de demander une réponse dont on n'a rien à
+        faire avant qu'elle soit entière.
         """
         raise NotImplementedError
+
+    async def generate_stream(
+        self,
+        prompt: str,
+        *,
+        model: str,
+        system_prompt: str | None = None,
+    ) -> AsyncIterator[str]:
+        """Le même appel que `generate`, rendu **par incréments** (#693).
+
+        La frontière expose ici ce que `generate` ne pouvait pas dire : une
+        réponse qui s'écrit. L'appelant reçoit les morceaux dans l'ordre où le
+        fournisseur les produit, et **la concaténation des morceaux est
+        exactement ce que `generate` aurait rendu** — c'est le seul invariant du
+        canal, et celui dont dépend le contrat de la trame `fin` du flux de chat
+        (`maestro.controltower.chat`, docs/05 §6.5) : un client qui recolle les
+        `delta` doit retomber sur le message complet, sans un caractère de plus
+        ni de moins, sans réordonnancement.
+
+        **Capacité optionnelle, et honorée par tous** — c'est ce qui la distingue
+        de `run_agent`, qui se refuse (`UnsupportedCapability`) quand un
+        fournisseur ne sait pas l'exécuter. Ici l'implémentation par défaut *est*
+        une réponse valide : elle appelle `generate` et rend le texte entier en
+        **un seul** morceau. Un fournisseur qui ne sait pas streamer continue donc
+        de fonctionner sans être modifié, et l'appelant n'a aucune capacité à
+        tester avant d'appeler — il consomme des incréments, il y en a un ou
+        cent. C'est le pendant exact, à l'étage fournisseur, de ce que
+        `RepondeurChat.produire` fait à l'étage répondeur.
+
+        Un texte vide ne rend **aucun** morceau plutôt qu'un morceau vide : « le
+        modèle n'a rien dit » se lit à l'absence d'incréments, et non à un
+        fragment qui ferait croire à un début de réponse.
+
+        Un fournisseur qui **échoue en cours de flux** lève, comme `generate` :
+        les morceaux déjà rendus l'ont été, et c'est à l'appelant de décider ce
+        qu'il en fait — les publier puis se taire est précisément ce que le canal
+        de chat interdit (`Redaction.interruption`, #693). La frontière ne
+        rattrape rien et ne rejoue rien : elle ne sait pas si ce qui est déjà
+        parti a été montré à quelqu'un.
+        """
+        texte = await self.generate(prompt, model=model, system_prompt=system_prompt)
+        if texte:
+            yield texte
 
     async def run_agent(
         self,

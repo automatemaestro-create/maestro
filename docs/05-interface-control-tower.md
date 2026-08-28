@@ -2734,6 +2734,9 @@ direct), et le troisième canal qui s'y branche.
 - `GET /api/chat/{agent}/flux?contenu=…` → `text/event-stream` — chaque `data: <json>` est un
   `FragmentChat`. `404` si le fil n'existe pas, `422` sur un `contenu` vide (tranché **avant** la
   première trame : rien n'est persisté).
+- `POST /api/chat/{agent}/flux` → `text/event-stream` — **même corps que `POST …/messages`**
+  (`contenu`, `sources`, `projet_id`) et mêmes trames (#692). En plus des deux refus du GET, `422`
+  motivé `{motif, message, index}` sur une source refusée, également tranché avant la première trame.
 
 ```jsonc
 // FragmentChat (une trame SSE)
@@ -2741,23 +2744,66 @@ direct), et le troisième canal qui s'y branche.
   "type": "fragment",        // debut (ouvre) | fragment (incrémente) | fin (clôt) | erreur
   "agent": "qa",
   "conversation": "origine", // où la réponse s'écrit (#694, §6.14) — sur TOUTES les trames
-  "auteur": "agent",         // l'émetteur
+  "auteur": "agent",         // l'émetteur de la RÉPONSE — le même sur les quatre trames
   "delta": " morceau",       // incrément de texte ; vide hors `fragment` — porte la cause sur `erreur`
-  "message": null            // MessageChat complet sur la seule trame `fin`, null ailleurs
+  "message": null            // MessageChat complet sur `debut` (l'utilisateur) et `fin` (la réponse)
 }
 ```
 
-Deux propriétés à ne pas défaire. La concaténation des `delta` **reconstitue** le contenu de la
+Trois propriétés à ne pas défaire. La concaténation des `delta` **reconstitue** le contenu de la
 trame `fin` : c'est ce qui permet à un client d'afficher pendant que ça arrive sans rien
-réconcilier ensuite. Et une réponse impossible sort en trame **`erreur`**, jamais en statut HTTP :
+réconcilier ensuite. Une réponse impossible sort en trame **`erreur`**, jamais en statut HTTP :
 les en-têtes sont déjà partis quand elle se découvre, et le message utilisateur, lui, est déjà
-acquis — le fil ne perd rien, relancer suffit.
+acquis — le fil ne perd rien, relancer suffit. Et les trames qui **bornent** l'échange portent
+chacune leur `MessageChat` — `debut` celui de l'utilisateur, `fin` la réponse : c'est la paire que
+`POST …/messages` rend d'un coup, rendue en deux temps. Sans la première, un client du flux
+enverrait des sources sans jamais savoir ce qui en a été lu, tronqué ou ignoré (le `rapport` de
+#316).
+
+##### Le flux porte ce qu'un message porte — un POST, pas une composition déclarée (#692)
+
+Un message peut embarquer des **sources** (#482) et nommer le **projet** de la fenêtre (#683). Le
+POST les portait, le flux non — son `contenu` voyage en paramètre d'URL, où l'on ne peut
+raisonnablement déclarer ni identifiants de sources ni corps. Y basculer un fil aurait donc perdu
+les pièces jointes en silence, c'est-à-dire **échangé un rendu incrémental contre une
+fonctionnalité** : c'est le transport, et lui seul, qui barrait le consommateur (#695).
+
+`ServiceChat.diffuser` accepte donc les mêmes `sources` qu'`envoyer`, et le canal a **deux entrées
+HTTP pour une seule mécanique** : `POST …/flux` pour un message qui embarque quelque chose, et le
+`GET` d'origine pour le cas sans source — seul verbe qu'un `EventSource` sache ouvrir, et contrat
+déjà publié (#183/#268), donc conservé plutôt que retiré. Ce ne sont pas deux chemins d'envoi : les
+deux verbes appellent le même `diffuser`, qui passe par `_ouvrir` puis `_repondre` comme `envoyer`.
+
+L'autre option — un `GET` référençant une **composition déjà déclarée** — a été écartée : elle
+demandait un second endpoint pour déclarer, un état composé à garder entre les deux appels puis à
+ramasser, et elle éloignait le refus du moment de l'envoi. Un corps de POST fait la même chose sans
+rien garder, et laisse au refus la forme qu'il a déjà sur l'autre voie — le `422 {motif, message,
+index}` de #315, levé **avant** la première trame parce que `_ouvrir` précède le premier `yield`.
+L'arbitrage est écrit en tête de `maestro/controltower/chat.py` : c'est le genre de choix qu'on
+redécouvre.
 
 Le point d'extension est `RepondeurChat.produire(agent, fil, *, incrementer=…, projet_id=…)`, dont
 l'implémentation par défaut publie le texte de `repondre` en **un seul** incrément : tout répondeur
-existant se diffuse donc sans changer une ligne. Le jour où la frontière `ModelProvider` exposera
-du streaming (elle ne le fait pas : `generate` rend un `str`), `RepondeurModele` n'aura que cette
-méthode à surcharger — le canal, lui, ne bouge pas.
+existant se diffuse donc sans changer une ligne. Deux le surchargent — l'orchestration (#268) et,
+depuis #693, **le répondeur modèle**.
+
+Ce second-là a demandé d'ouvrir la frontière un cran plus bas, et c'est le point à retenir : le
+canal existait, mais `ModelProvider.generate` rendait un `str`, donc un fil servi par le vrai modèle
+se diffusait **d'un bloc** — brancher le front sur le flux n'y aurait rien changé.
+`ModelProvider.generate_stream` (#693) est la génération par incréments de la frontière. Capacité
+optionnelle **honorée par tous**, à la différence de `run_agent` qui se refuse : son implémentation
+par défaut appelle `generate` et rend le texte entier en un morceau, si bien qu'un fournisseur qui
+ne sait pas streamer traverse les deux étages sans être modifié et que l'appelant n'a aucune
+capacité à tester avant d'appeler. Le fournisseur de référence (Anthropic) streame réellement ; le
+compatible OpenAI garde le défaut, faute d'avoir à emporter le SSE de son dialecte dans ce lot.
+
+⚠ La première propriété ci-dessus — la concaténation des `delta` **reconstitue** la trame `fin` —
+demande un geste, parce que `ServiceChat` rase le texte final : `chat.Redaction`, partagée par les
+deux répondeurs, écarte les blancs de tête et retient ceux de queue jusqu'à ce qu'un morceau non
+blanc les suive. Et un flux **coupé en route** le dit (`FluxInterrompu`) au lieu de se taire : le
+fil ne garde rien (le message n'est persisté qu'une fois la réponse entière), mais l'écran, lui,
+affiche un texte arrêté que rien ne distinguerait d'une réponse courte — la trame `erreur` porte
+donc la cause, et le client sait que ce qu'il montre est à jeter.
 
 #### Le fil global — parler à l'orchestration (#268)
 
@@ -2777,8 +2823,8 @@ parle pas à un exécutant mais à l'orchestration.
 - Une **question** n'ouvre rien : elle est traitée en conversation (état des runs en cours, des
   tâches, des validations en attente). Un **refus** et un **silence** n'ouvrent rien non plus.
 - Le message porte le **projet de la fenêtre** (#683) — `projet_id` dans le corps de
-  `POST …/messages`, `?projet_id=` sur le flux : le run ouvert lui appartient, et l'aperçu rendu
-  aux questions est cadré sur lui.
+  `POST …/messages` comme de `POST …/flux`, `?projet_id=` sur le `GET …/flux` : le run ouvert lui
+  appartient, et l'aperçu rendu aux questions est cadré sur lui.
 
 ##### Ce que le fil ouvre appartient au projet de la fenêtre (#683)
 
@@ -3668,9 +3714,10 @@ bouge pas — il continue de lire la conversation courante ; il se sert de tout 
 - `POST /api/chat/{agent}/conversations` → `201` avec la carte de la conversation neuve.
 - `GET /api/chat/{agent}?conversation=<id>` → le fil de **cette** conversation ; sans le paramètre,
   celui de la plus récente. La réponse **nomme** la conversation servie.
-- `POST /api/chat/{agent}/messages` accepte un `conversation` dans son corps, `GET …/flux` un
-  `?conversation=` — absents, l'échange rejoint la plus récente. Chaque `MessageChat` et **chaque
-  trame** du flux (`debut` comprise) portent désormais leur `conversation`.
+- `POST /api/chat/{agent}/messages` et `POST …/flux` (#692) acceptent un `conversation` dans leur
+  corps, `GET …/flux` un `?conversation=` — absents, l'échange rejoint la plus récente. Chaque
+  `MessageChat` et **chaque trame** du flux (`debut` comprise) portent désormais leur
+  `conversation`.
 
 ```jsonc
 // GET /api/chat/qa/conversations

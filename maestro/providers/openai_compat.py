@@ -14,6 +14,16 @@ le moteur replie alors sur le livrable texte. Sans boucle agentique, **aucun
 plafond de tours ne s'applique ici** (#239) : le `tours=1` remonté à la télémétrie
 mesure l'aller-retour HTTP (un appel = un tour), il ne borne rien.
 
+La **génération par incréments** (`generate_stream`, #693) n'est pas surchargée
+ici, et c'est un choix : ce fournisseur hérite de l'implémentation par défaut de
+la frontière, qui rend le texte entier en un morceau — donc exactement le
+comportement d'avant #693, sans une ligne à changer. Streamer pour de vrai
+demanderait de parler le `stream: true` du dialecte, c'est-à-dire de lire un SSE
+et d'en recoller les `choices[].delta.content` : un vrai bout de protocole, que
+le lot de la frontière n'avait pas à emporter. Ce n'est pas une capacité refusée
+(rien ne casse, l'appelant n'a rien à tester), c'est une capacité **pas encore
+affinée** — et le jour où elle le sera, seul ce fichier bougera.
+
 L'authentification passe par le slot
 `Credentials` : une clé API envoyée en `Bearer` si fournie, sinon aucune en-tête —
 le cas des endpoints locaux sans auth (Ollama, vLLM). Un endpoint qui exige une

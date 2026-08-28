@@ -19,7 +19,9 @@ est consigné ici et le fil se relit par agent.
   (`maestro/controltower/app.py`) — `POST /api/chat/{agent}/messages` envoie
   et persiste la paire message/réponse, `GET /api/chat/{agent}` relit le fil,
   `GET /api/chat/{agent}/flux` rend la même réponse en SSE, au fur et à mesure
-  (#268 : un canal, valable pour les trois fils).
+  (#268 : un canal, valable pour les trois fils), et `POST /api/chat/{agent}/flux`
+  fait de même pour un message qui embarque des **sources** — une URL ne pouvant
+  pas les déclarer (#692).
 - Chaque message est aussi diffusé en événement `chat.message` sur le bus
   (#46) — le WebSocket `/ws/evenements` porte le fil en temps réel — et
   transite par la messagerie inter-agents (#44, boîte de l'agent).
