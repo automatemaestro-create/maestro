@@ -248,6 +248,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from maestro.agents.catalog import MODELE_EXECUTANT_DEFAUT, Agent
+from maestro.controltower.causes import cause_lisible
 from maestro.controltower.chat import (
     Incrementeur,
     MessageChat,
@@ -424,20 +425,6 @@ class _JugeInjoignable(RuntimeError):
 
     def __init__(self, cause: str, reparation: str) -> None:
         super().__init__(_PHRASE_INJOIGNABLE.format(cause=cause, reparation=reparation))
-
-
-def _cause_lisible(echec: BaseException) -> str:
-    """Le message de `echec`, sans les guillemets qu'un `KeyError` ajoute.
-
-    `UnknownProviderError` est un `KeyError`, dont `__str__` rend le `repr` de son
-    argument — et c'est justement l'échec de configuration le plus probable d'un
-    poste local (`MAESTRO_PROVIDER` mal orthographié). Sans ce déballage, la cause
-    la plus fréquente serait aussi la moins lisible du fil, entre guillemets et
-    avec ses échappements.
-    """
-    if isinstance(echec, KeyError) and echec.args:
-        return str(echec.args[0])
-    return str(echec)
 
 
 def _accord(nombre: int, singulier: str, pluriel: str) -> str:
@@ -693,7 +680,7 @@ class RepondeurOrchestration(RepondeurChat):
             except Exception as echec:  # noqa: BLE001 — la position classe, cf. docstring
                 raise _JugeInjoignable(
                     f"aucun fournisseur de modèle n'est utilisable "
-                    f"({_cause_lisible(echec)})",
+                    f"({cause_lisible(echec)})",
                     _REPARATION_CONFIGURATION,
                 ) from echec
         etat = self._apercu(projet_id) if self._apercu is not None else ""
@@ -705,7 +692,7 @@ class RepondeurOrchestration(RepondeurChat):
             )
         except Exception as echec:  # noqa: BLE001 — la position classe, cf. docstring
             raise _JugeInjoignable(
-                f"le fournisseur de modèle n'a pas répondu ({_cause_lisible(echec)})",
+                f"le fournisseur de modèle n'a pas répondu ({cause_lisible(echec)})",
                 _REPARATION_PASSAGERE,
             ) from echec
         if not (texte or "").strip():

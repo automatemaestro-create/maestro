@@ -259,6 +259,7 @@ from maestro.controltower.assistance import (
     NOM_ASSISTANCE,
     RepondeurAssistance,
 )
+from maestro.controltower.assistance_documentee import RepondeurAssistanceDocumentee
 from maestro.controltower.auto_amelioration import (
     AnalyseurEchecs,
     RevisionIndisponible,
@@ -890,9 +891,12 @@ def create_app(
 
     `assistance_repondeur` (#123) porte le **canal d'aide** `/api/chat/assistance` :
     un second `ServiceChat` sur le même fil persisté, la même messagerie et le même
-    bus que le chat, mais avec son propre répondeur — par défaut
-    `RepondeurAssistance`, déterministe et sans modèle (les questions portent sur
-    l'outil, pas sur le projet ; voir `maestro.controltower.assistance`).
+    bus que le chat, mais avec son propre répondeur — depuis #764
+    `RepondeurAssistanceDocumentee`, qui choisit ses sections dans la documentation
+    du produit (#763) et cite ce qu'il a lu, avec le déterministe
+    `RepondeurAssistance` en **repli** quand aucun fournisseur n'est joignable
+    (démo #65). Les questions portent sur l'outil, pas sur le projet ; voir
+    `maestro.controltower.assistance_documentee`.
 
     `orchestration_repondeur` (#268) porte le **fil global**
     `/api/chat/orchestrateur` : un troisième `ServiceChat` sur les mêmes rouages,
@@ -1094,10 +1098,19 @@ def create_app(
     # répondeur change, l'assistant ne parlant pas du projet mais de l'outil. Le
     # dépôt en fait partie : l'assistance sert les mêmes endpoints, donc le même
     # contrat, et lui refuser les sources ferait dépendre un 422 du nom du fil.
+    #
+    # Il est servi par le **répondeur documenté** depuis #764 : le modèle choisit ses
+    # sections sur la carte de `docs/` (#763) puis répond à partir d'elles, en citant
+    # ce qu'il a lu. Le déterministe de #123 lui est passé en **repli** plutôt que
+    # d'être remplacé — sans fournisseur ni authentification (démo #65), le canal
+    # répond encore, et le dit. Construire ce répondeur ne résout aucun fournisseur
+    # et ne lit aucun fichier : les deux sont paresseux, comme partout ailleurs ici.
     assistance = ServiceChat(
         store=chat_store,
         repondeur=(
-            assistance_repondeur if assistance_repondeur is not None else RepondeurAssistance()
+            assistance_repondeur
+            if assistance_repondeur is not None
+            else RepondeurAssistanceDocumentee(repli=RepondeurAssistance())
         ),
         mailbox=mailbox,
         bus=bus,
