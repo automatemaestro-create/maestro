@@ -156,7 +156,7 @@ chose qui te reste à juger est la **prose**.
 
 8. **Génère la présentation** avec le python du venv (jamais le python système) :
    ```
-   .venv/Scripts/python.exe scripts/presentation/build.py <dossier-de-travail>/presentation.json
+   .venv/Scripts/python.exe scripts/presentation/build.py <dossier-de-travail>/presentation.json --ouvrir
    ```
    Sans `--sortie`, le fichier va dans `docs/presentations/<slug-du-milestone>.html`. Le script
    imprime le chemin écrit, sa taille, et **le compte de clips intégrés sur clips demandés** avec
@@ -165,7 +165,14 @@ chose qui te reste à juger est la **prose**.
    repli. `MAESTRO_PRESENTATION_VIDEO_MAX` (Mio, par clip) et `MAESTRO_PRESENTATION_MAX` (Mio,
    fichier entier) déplacent les plafonds ; `0` vaut « aucun ».
 
-9. **Regarde le résultat avant de le livrer** : ouvre le fichier produit et vérifie qu'il tient
+   **`--ouvrir` ouvre la présentation** dans le navigateur par défaut du poste une fois le fichier
+   écrit : la commande vient de passer plusieurs minutes à la produire, elle n'a pas à laisser son
+   lecteur la retrouver dans un explorateur. L'ouverture est **best-effort** — aucun effet sur le
+   code de retour, et un échec nomme ce qu'il a tenté d'ouvrir. N'écris **jamais** la commande
+   d'ouverture toi-même (`Start-Process`, `open`, `xdg-open`…) : la logique de plateforme vit dans
+   le script, seul à connaître le chemin réellement écrit.
+
+9. **Regarde le résultat avant de le livrer** — l'étape 8 vient de l'ouvrir : vérifie qu'il tient
    debout (pas de section vide, pas de vignette hors sujet, pas de `null` affiché tel quel, les
    clips se lisent, **une image s'ouvre en grand au clic et se referme par `Échap`**). Si le skill
    `verify` est disponible, un coup d'œil au rendu via navigateur vaut mieux qu'une lecture du

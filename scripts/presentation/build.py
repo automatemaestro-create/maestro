@@ -6,7 +6,8 @@ commande `/milestone-presentation`). Sortie : un fichier HTML **autonome** — C
 en ligne, images et vidéos en `data:`, aucune ressource externe — lisible en
 thème clair comme sombre.
 
-    .venv/Scripts/python.exe scripts/presentation/build.py <donnees.json> [--sortie <fichier.html>]
+    .venv/Scripts/python.exe scripts/presentation/build.py <donnees.json>
+        [--sortie <fichier.html>] [--ouvrir]
 
 Le gabarit vit ici, pas dans le prompt de la commande : c'est ce qui rend le
 rendu stable d'une génération à l'autre. La commande fournit la matière (quels
@@ -24,6 +25,7 @@ import os
 import re
 import sys
 import unicodedata
+import webbrowser
 from collections import Counter
 from datetime import date
 from html import escape
@@ -1238,6 +1240,44 @@ def construire(donnees: dict[str, Any], racine_captures: Path) -> str:
     return page(rendre_demonstrations(clips), notes)
 
 
+def ouvrir_dans_navigateur(cible: Path) -> bool:
+    r"""
+    Ouvre la présentation dans le navigateur par défaut du poste. Rend `True` si l'ouverture a été
+    prise en charge.
+
+    **Best-effort, et c'est le contenu de la fonction** : elle rattrape tout au lieu de laisser
+    remonter, parce qu'une génération réussie ne doit jamais devenir un échec faute d'avoir pu
+    ouvrir une fenêtre — même statut que `sync-main` (docs/10 §9.3) ou que l'écriture de l'audit en
+    fin de run. Le fichier est déjà sur le disque quand on arrive ici ; tout ce qu'un échec coûte
+    est un double-clic.
+
+    L'adresse passe par `as_uri()` et jamais par le chemin nu : sous Windows celui-ci porte une
+    lettre de lecteur et des espaces (`E:\Projects Solutions\…`), que seule la forme
+    `file:///` encodée traverse les trois plateformes sans se faire réinterpréter — et c'est
+    exactement la famille de pièges où ce dépôt s'est déjà fait prendre (conversion de chemin
+    MSYS). La cible est **nommée dans les deux messages** : un échec qui ne dit pas ce qu'il a
+    tenté d'ouvrir n'apprend rien, et c'est aussi ce qui rend l'ouverture observable en test sans
+    lancer un vrai navigateur.
+    """
+    try:
+        adresse = cible.resolve().as_uri()
+    except (OSError, ValueError) as erreur:
+        print(f"[build] ⚠ ouverture impossible ({cible}) : {erreur}", file=sys.stderr)
+        return False
+    try:
+        ouverte = webbrowser.open(adresse)
+    except Exception as erreur:  # noqa: BLE001 — aucune ouverture ne vaut de perdre le fichier
+        print(f"[build] ⚠ ouverture impossible ({adresse}) : {erreur}", file=sys.stderr)
+        return False
+    if not ouverte:
+        print(
+            f"[build] ⚠ ouverture impossible ({adresse}) — aucun navigateur joignable ; "
+            "le fichier est écrit, à ouvrir à la main",
+            file=sys.stderr,
+        )
+    return ouverte
+
+
 def principal(argv: list[str] | None = None) -> int:
     analyseur = argparse.ArgumentParser(
         description="Génère la présentation HTML autonome d'un milestone.",
@@ -1250,6 +1290,14 @@ def principal(argv: list[str] | None = None) -> int:
         type=Path,
         default=None,
         help="fichier HTML à écrire (défaut : docs/presentations/<slug-du-milestone>.html)",
+    )
+    analyseur.add_argument(
+        "--ouvrir",
+        action="store_true",
+        help=(
+            "ouvrir la présentation dans le navigateur par défaut une fois écrite "
+            "(best-effort : un échec n'est jamais fatal)"
+        ),
     )
     args = analyseur.parse_args(argv)
 
@@ -1278,6 +1326,13 @@ def principal(argv: list[str] | None = None) -> int:
 
     taille_ko = round(len(html.encode("utf-8")) / 1024)
     print(f"[build] présentation écrite : {sortie} ({taille_ko} Ko)")
+
+    # Après l'annonce du fichier, et sans jamais peser sur le code de retour : l'ouverture est un
+    # confort, l'écriture est le livrable. Rien n'est tenté sans l'option — le script est appelé
+    # hors de la commande (rejeu à la main, autre script, CI), et une fenêtre qui s'ouvre sans
+    # qu'on l'ait demandée est une régression, pas un service.
+    if args.ouvrir and ouvrir_dans_navigateur(sortie):
+        print("[build] ouverte dans le navigateur par défaut")
     return 0
 
 
