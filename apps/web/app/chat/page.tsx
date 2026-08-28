@@ -69,21 +69,20 @@
  * c'est exactement ce que le critère « les deux ne divergent pas » interdit
  * (voir `lib/orchestration`).
  *
- * **Le direct passe par le WebSocket, pas encore par le flux SSE — et ce n'est
- * plus le transport qui l'empêche.** Le lot 1 a construit le canal de streaming
- * (docs/05 §6.5) et il attend son consommateur. Le brancher **ici** serait un
- * second chemin d'envoi côté navigateur, donc deux façons de parler à un fil —
- * l'inverse de ce que ce lot unifie. La raison qui s'ajoutait à celle-là est
- * **levée** : le canal ne savait pas porter de sources, le `contenu` voyageant en
- * paramètre d'URL quand `POST …/messages` accepte les `sources[]` de #482, si
- * bien qu'y basculer le fil aurait perdu les pièces jointes en silence —
- * c'est-à-dire échangé un rendu incrémental contre une fonctionnalité. Depuis
- * #692 il y a **`POST …/flux`**, dont le corps est exactement celui de
- * `POST …/messages` (`contenu`, `sources`, `projet_id`) : le choix ne se pose
- * plus. En attendant son consommateur, la réponse arrive dès qu'elle tombe
- * (`chat.message` sur le bus, `useChat` recharge) et l'attente est dite par
- * « … répond… » ; le rendu incrémental est pour le lot qui consommera le canal
- * (#695), dans le composant de fil partagé.
+ * **Le direct passe par le flux SSE — et pas par cette page (#695).** Le lot 1
+ * avait construit le canal de streaming (docs/05 §6.5) ; deux raisons l'ont tenu
+ * sans consommateur, et les deux sont levées, chacune à sa façon. Il ne savait
+ * pas porter de **sources** — son `contenu` voyageant en paramètre d'URL quand
+ * `POST …/messages` accepte les `sources[]` de #482, si bien qu'y basculer le fil
+ * aurait perdu les pièces jointes en silence, c'est-à-dire échangé un rendu
+ * incrémental contre une fonctionnalité : #692 lui a donné `POST …/flux`, dont le
+ * corps est exactement celui du POST. Et le brancher **ici** aurait été un second
+ * chemin d'envoi côté navigateur, donc deux façons de parler à un fil : il est
+ * donc branché dans **`lib/useChat`**, par où passent les trois surfaces de fil,
+ * si bien qu'il **remplace** le chemin d'envoi au lieu de s'y ajouter. La règle
+ * n'a pas bougé — c'est l'endroit du branchement qui la respecte, pas
+ * l'abstention. Cette page, elle, n'a rien eu à changer : elle passe un fil à
+ * `Conversation`, et c'est le fil qui sait désormais s'écrire.
  */
 
 import { useMemo, useState } from "react";

@@ -148,14 +148,20 @@ Endpoints :
   porte le `projet_id` de la fenêtre (#683) : le run ouvert **appartient** au
   projet actif, donc il figure dans sa liste de runs et s'ouvre en détail ;
 - `GET  /api/chat/{agent}/flux` — la même réponse rendue **au fur et à mesure**
-  (SSE, trames `debut`/`fragment`/`fin`/`erreur`, #268) : un canal, valable pour
-  les trois fils ; `?projet_id=` y porte le même rattachement que le corps du
-  POST — et n'est pas le `?projet=` des lectures, qui est une portée (#277) ;
+  (SSE, trames `debut`/`fragment`/`fin`/`interrompu`/`erreur`, #268) : un canal,
+  valable pour les trois fils ; `?projet_id=` y porte le même rattachement que le
+  corps du POST — et n'est pas le `?projet=` des lectures, qui est une portée
+  (#277) ;
 - `POST /api/chat/{agent}/flux` — le **même flux** pour un message qui embarque
   des sources (#692) : corps de `POST …/messages`, réponse en `text/event-stream`.
   Une URL ne pouvant porter ni identifiants de sources ni corps, le GET reste la
   voie du cas sans source ; les deux verbes appellent le même `ServiceChat.diffuser`
   (arbitrage écrit en tête de `maestro.controltower.chat`) ;
+- `POST /api/chat/{agent}/flux/{echange}/arret` — **arrête** la génération en vol
+  (#695). Rien n'y est envoyé : c'est le seul verbe qui retire quelque chose au
+  canal, et le seul geste qui annule une production — une déconnexion, elle, la
+  laisse s'achever (#268). Ce qui a été reçu avant l'arrêt est **persisté** comme
+  réponse et porté par la trame `interrompu` ; 404 quand il n'y a rien à arrêter ;
 - `WS   /ws/evenements` — le flux d'événements (statuts de tâches, activité
   des agents, messages inter-agents, validations, chat), au format
   `Event.to_dict`.
@@ -3410,7 +3416,8 @@ def create_app(
         deux façons de déclarer l'envoi, un seul chemin d'envoi. Elle ouvre un
         `text/event-stream` où chaque `data: <json>` est un `FragmentChat` —
         `debut` (portant le message utilisateur), des `fragment` (incréments
-        `delta`), puis `fin` (portant la réponse complète). Une réponse
+        `delta`), puis `fin` (portant la réponse complète) ou `interrompu`
+        (portant ce qui a été persisté d'une réponse arrêtée, #695). Une réponse
         impossible sort en trame `erreur` plutôt qu'en statut HTTP : les en-têtes
         sont déjà partis quand elle se découvre, et le message utilisateur, lui,
         est déjà persisté et diffusé.
@@ -3494,6 +3501,35 @@ def create_app(
         refusée.
         """
         return await _flux_reponse(agent, requete.contenu, requete.sources, requete.projet_id)
+
+    @app.post("/api/chat/{agent}/flux/{echange}/arret")
+    async def arreter_flux_chat(agent: str, echange: str) -> dict[str, Any]:
+        """Arrête la génération en vol de `echange` — le geste, pas l'accident (#695).
+
+        L'`echange` est celui que les trames du flux portent (`FragmentChat`). La
+        génération est annulée, **ce qui en a déjà été reçu est persisté** comme
+        réponse et le flux se clôt sur une trame `interrompu` qui la porte : la
+        portion reçue reste au fil au lieu d'être un état d'écran.
+
+        Ce n'est pas un second chemin d'envoi — rien n'est envoyé ici, et rien
+        n'est produit : c'est le seul verbe qui **retire** quelque chose au canal.
+        Il n'annule pas non plus ce qu'une déconnexion laisse vivre (arbitrage de
+        #268, repris en tête de `maestro.controltower.chat`) : une déconnexion est
+        un accident dont aucune intention ne se déduit, un arrêt est un acte.
+
+        404 si le fil n'existe pas, et 404 aussi quand il n'y a **rien à
+        arrêter** — identifiant inconnu ou échange qui vient de se terminer. Les
+        deux se ressemblent d'ici et appellent la même conduite côté client :
+        cliquer au moment où la réponse tombe est une course normale, pas une
+        panne.
+        """
+        _, service = _canal_chat(agent)
+        if not service.interrompre(echange):
+            raise HTTPException(
+                status_code=404,
+                detail=f"aucune génération en vol pour l'échange {echange!r}.",
+            )
+        return {"agent": agent, "echange": echange, "arrete": True}
 
     @app.websocket("/ws/evenements")
     async def evenements(websocket: WebSocket, projet: str | None = None) -> None:

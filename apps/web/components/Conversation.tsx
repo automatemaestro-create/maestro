@@ -38,6 +38,29 @@
  *   de dépôt qui n'accepterait rien ;
  * - **ce qu'une réponse a ouvert** (#268/#269) : voir `Suite` en bas de fichier.
  *
+ * ## La réponse s'écrit sous les yeux (#695)
+ *
+ * `fil.reponseEnCours` est le texte que le canal SSE est en train de rendre : il
+ * s'affiche dans une bulle d'interlocuteur ordinaire, à sa place dans le fil,
+ * pendant que le curseur dit que ça continue. L'indicateur « … répond… » ne
+ * couvre donc plus que l'attente **avant** le premier mot, au lieu de couvrir
+ * toute la génération — c'est ce qui distinguait mal une réponse longue d'un
+ * blocage.
+ *
+ * Trois propriétés que le composant tient, et qui se défont facilement :
+ *
+ * - **le suivi du bas reste un choix du lecteur**. Le fil recolle en bas à
+ *   chaque incrément, donc plusieurs fois par seconde, ce qui rendrait
+ *   impossible de remonter lire pendant que ça écrit ; c'est le `suit` de
+ *   `lib/defilement`, posé sur le geste de défilement et non sur l'arrivée du
+ *   contenu, qui l'en empêche — et il valait déjà pour les messages ;
+ * - **une réponse figée se voit**. Un flux cassé laisse un texte arrêté que rien
+ *   ne distinguerait d'une réponse courte (#693) : la bulle le dit, sous le
+ *   texte, à l'endroit où on vient de lire ;
+ * - **un échec après l'envoi ne rend pas le brouillon**. Le message est au fil ;
+ *   le remettre dans la zone de saisie inviterait à l'envoyer deux fois. C'est
+ *   `ErreurReponse` qui sépare ce cas d'un refus, où rien n'est parti.
+ *
  * ## Ce qu'il ne fait pas
  *
  * Il ne charge rien : le fil lui est **passé** (`useChat`, historique REST +
@@ -51,7 +74,12 @@ import { BulleFil } from "@/components/chat/BulleFil";
 import { SourcesDuFil } from "@/components/chat/SourcesDuFil";
 import { SourcesDuMessage } from "@/components/chat/SourcesDuMessage";
 import { RefusSource } from "@/components/composer/RefusSource";
-import { IconeRuns, IconeTache, IconeValidations } from "@/components/Icones";
+import {
+  IconeFermer,
+  IconeRuns,
+  IconeTache,
+  IconeValidations,
+} from "@/components/Icones";
 import {
   BadgeEtat,
   Bouton,
@@ -62,7 +90,7 @@ import {
 } from "@/components/Primitives";
 import { RegionLive } from "@/components/RegionLive";
 import { mesureDesMessages } from "@/lib/annonces";
-import { ErreurSource } from "@/lib/api";
+import { ErreurReponse, ErreurSource } from "@/lib/api";
 import { ascenseurDe, estEnBas } from "@/lib/defilement";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import { entreeParLibelle, hrefRun } from "@/lib/navigation";
@@ -71,7 +99,7 @@ import {
   VALIDATION_EN_ATTENTE,
   type MessageChat,
 } from "@/lib/types";
-import type { Chat } from "@/lib/useChat";
+import type { Chat, ReponseEnCours } from "@/lib/useChat";
 import { useSourcesComposees } from "@/lib/useSourcesComposees";
 
 export function Conversation({
@@ -119,10 +147,28 @@ export function Conversation({
   surSaisie?: (texte: string) => string;
   className?: string;
 }) {
-  const { messages, connecte, chargement, erreur, envoi, envoyer } = fil;
+  const {
+    messages,
+    connecte,
+    chargement,
+    erreur,
+    envoi,
+    reponseEnCours,
+    envoyer,
+    interrompre,
+  } = fil;
   const composition = useSourcesComposees();
   const [brouillon, setBrouillon] = useState("");
-  const [erreurEnvoi, setErreurEnvoi] = useState<string | null>(null);
+  /**
+   * Ce qui a manqué au dernier envoi, et si le message a **quand même** rejoint
+   * le fil. Les deux ensemble parce qu'ils ne se déduisent pas l'un de l'autre
+   * et que l'écran a besoin des deux : la cause à afficher, et le fait que la
+   * relance consiste à redemander plutôt qu'à renvoyer (#695).
+   */
+  const [echecEnvoi, setEchecEnvoi] = useState<{
+    cause: string;
+    acquis: boolean;
+  } | null>(null);
   const [refusSource, setRefusSource] = useState<ErreurSource | null>(null);
   const [sourcesOuvertes, setSourcesOuvertes] = useState(false);
   const [survol, setSurvol] = useState(false);
@@ -159,19 +205,22 @@ export function Conversation({
     return () => cadre.removeEventListener("scroll", surDefilement);
   }, []);
 
-  // Le fil suit la conversation : chaque nouveau message (et l'indicateur
-  // d'attente) ramène la vue en bas, comme une messagerie — **sauf** si le
-  // lecteur est remonté lire, auquel cas il garde sa place (note de #265).
+  // Le fil suit la conversation : chaque nouveau message, l'indicateur d'attente
+  // et **chaque incrément de la réponse en cours** (#695) ramènent la vue en
+  // bas, comme une messagerie — **sauf** si le lecteur est remonté lire, auquel
+  // cas il garde sa place (note de #265). C'est ce qui fait qu'une réponse qui
+  // s'écrit n'arrache pas la lecture de celui qui est remonté : le suivi se
+  // décide sur son geste, pas sur l'arrivée du texte.
   useEffect(() => {
     if (suit.current) collerEnBas();
-  }, [messages, envoi, collerEnBas]);
+  }, [messages, envoi, reponseEnCours?.texte, collerEnBas]);
 
   const soumettre = async (texte: string) => {
     const contenu = texte.trim();
     // Un message fait de **sources seules** est légitime : déposer un cahier des
     // charges *est* le message. Sans texte ni source, il n'y a rien à envoyer.
     if ((contenu === "" && composition.sources.length === 0) || envoi) return;
-    setErreurEnvoi(null);
+    setEchecEnvoi(null);
     setRefusSource(null);
     setBrouillon("");
     // Écrire, c'est reprendre le fil : quel que soit l'endroit où on lisait, on
@@ -190,16 +239,37 @@ export function Conversation({
       composition.vider();
       setSourcesOuvertes(false);
     } catch (e) {
-      // Deux régimes qui ne s'affichent pas au même endroit : un refus **de
-      // source** porte un motif et souvent un index — il se rend sur la ligne
-      // fautive, sous la saisie —, là où un échec d'envoi ordinaire (502, panne
-      // réseau) reste une phrase sous le formulaire.
+      // Trois régimes, et le troisième est venu avec le direct (#695) — ce qui
+      // les sépare n'est pas la gravité mais **ce qu'il reste à faire** :
+      //
+      // - un refus **de source** porte un motif et souvent un index : il se rend
+      //   sur la ligne fautive, sous la saisie ;
+      // - un refus d'envoi ordinaire (422, backend injoignable) reste une phrase
+      //   sous le formulaire. Dans ces deux cas rien n'est parti, donc le texte
+      //   revient dans la zone de saisie (sauf si l'utilisateur a déjà repris la
+      //   main) : rien ne se perd, relancer reste un simple Entrée, et les
+      //   sources n'ont pas bougé — c'est le sens de « la saisie est conservée »
+      //   quand la matière représente le plus gros du geste ;
+      // - une **réponse manquée** (`ErreurReponse`) est d'un autre ordre : le
+      //   message est **au fil**, la portion reçue est restée à l'écran, et
+      //   remettre le texte dans la saisie inviterait à envoyer deux fois la
+      //   même demande. On dit ce qui manque, et on invite à relancer — sans
+      //   rien recomposer à la place de l'utilisateur.
       if (e instanceof ErreurSource) setRefusSource(e);
-      else setErreurEnvoi(e instanceof Error ? e.message : String(e));
-      // Le texte revient dans la zone de saisie (sauf si l'utilisateur a déjà
-      // repris la main) : rien ne se perd, relancer reste un simple Entrée. Les
-      // sources, elles, n'ont pas bougé — c'est le sens de « la saisie est
-      // conservée » quand la matière représente le plus gros du geste.
+      else
+        setEchecEnvoi({
+          cause: e instanceof Error ? e.message : String(e),
+          acquis: e instanceof ErreurReponse,
+        });
+      if (e instanceof ErreurReponse) {
+        // Le message est parti **avec sa matière** : la composition se vide donc
+        // comme après un envoi réussi. La garder inviterait à joindre une
+        // seconde fois des sources que le fil porte déjà — la même faute que
+        // rendre le brouillon, sur l'autre moitié du geste.
+        composition.vider();
+        setSourcesOuvertes(false);
+        return;
+      }
       setBrouillon((courant) => (courant === "" ? contenu : courant));
       if (composition.sources.length > 0) setSourcesOuvertes(true);
     }
@@ -210,6 +280,12 @@ export function Conversation({
     transfert !== null && Array.from(transfert.types).includes("Files");
 
   const filVide = !chargement && messages.length === 0;
+  // La réponse a-t-elle **commencé** à s'écrire ? Le texte fait foi, pas la
+  // présence du flux : entre la trame d'ouverture et le premier incrément, il
+  // n'y a rien à montrer, et une bulle vide dirait « il a commencé » alors que
+  // c'est encore l'attente que l'indicateur nomme mieux.
+  const enTrainDEcrire =
+    reponseEnCours !== null && reponseEnCours.texte !== "" ? reponseEnCours : null;
 
   return (
     <section
@@ -324,7 +400,19 @@ export function Conversation({
         {messages.map((message, index) => (
           <Bulle key={`${message.horodatage}-${index}`} message={message} />
         ))}
-        {envoi && (
+        {/* La réponse qui s'écrit (#695) : une bulle d'interlocuteur ordinaire,
+            à sa place dans le fil — c'est ce que « on voit la réponse
+            s'écrire » veut dire. Elle disparaît sur la trame de clôture, où le
+            message persisté prend le relais sans clignotement (`useChat` : la
+            fusion écarte le doublon). */}
+        {enTrainDEcrire !== null && <BulleEnCours reponse={enTrainDEcrire} />}
+        {/* « … répond… » ne couvre plus que l'attente **avant le premier
+            mot** : dès qu'un incrément arrive, c'est le texte lui-même qui dit
+            que ça travaille. C'était le défaut de départ — un indicateur
+            immobile sur toute la génération, où rien ne distinguait une réponse
+            longue d'un blocage. Une bulle vide à curseur aurait pu tenir ce
+            rôle, mais elle dit « il a commencé » quand rien n'est encore venu. */}
+        {envoi && enTrainDEcrire === null && (
           <li className="text-sm italic text-neutral-500">
             {interlocuteur} répond…
           </li>
@@ -412,13 +500,32 @@ export function Conversation({
               "dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100 dark:focus:border-neutral-600"
             }
           />
-          <Bouton
-            type="submit"
-            disabled={brouillon.trim() === "" && composition.sources.length === 0}
-            occupe={envoi}
-          >
-            {envoi ? "Envoi…" : "Envoyer"}
-          </Bouton>
+          {/* Pendant qu'une réponse s'écrit, le bouton d'envoi **cède la
+              place** à l'arrêt plutôt que de s'y ajouter : l'envoi est de toute
+              façon refusé tant qu'un échange est en vol (`soumettre`), donc un
+              bouton inerte à côté d'une action possible ne ferait qu'occuper la
+              seule place que la main vise. Et l'arrêt arrête pour de bon — il
+              annule la génération côté canal (#695) et ce qui a été reçu
+              rejoint le fil ; ce n'est pas un simple « je cesse de regarder ». */}
+          {envoi ? (
+            <Bouton
+              variante="contour"
+              ton="neutre"
+              icone={IconeFermer}
+              onClick={interrompre}
+            >
+              Interrompre
+            </Bouton>
+          ) : (
+            <Bouton
+              type="submit"
+              disabled={
+                brouillon.trim() === "" && composition.sources.length === 0
+              }
+            >
+              Envoyer
+            </Bouton>
+          )}
         </div>
         <SourcesDuMessage
           composition={composition}
@@ -434,12 +541,66 @@ export function Conversation({
       {refusSource !== null && refusSource.index === null && (
         <RefusSource refus={refusSource} titre="Sources refusées" />
       )}
-      {erreurEnvoi && (
+      {echecEnvoi !== null && (
         <p className="text-xs text-rose-600 dark:text-rose-400" role="alert">
-          {erreurEnvoi}
+          {echecEnvoi.cause}
+          {/* L'invitation à relancer (#695), et **seulement** quand le message
+              est acquis : ailleurs, le brouillon est déjà revenu dans la zone
+              de saisie et un Entrée suffit — le dire deux fois, dont une à
+              côté, ferait douter de ce qui est parti. Elle nomme le geste au
+              lieu de l'offrir : renvoyer d'ici recomposerait une demande que le
+              fil porte déjà, donc deux fois la même question. */}
+          {echecEnvoi.acquis && (
+            <>
+              {" "}
+              Votre message est resté au fil, et ce qui a été reçu de la réponse
+              aussi — redemandez pour relancer.
+            </>
+          )}
         </p>
       )}
     </section>
+  );
+}
+
+/**
+ * La réponse en train de s'écrire (#695) — la bulle de l'interlocuteur, avant
+ * qu'elle ne soit un message du fil.
+ *
+ * Elle emprunte `BulleFil` comme les autres, et c'est le point : ce qui s'écrit
+ * doit se poser exactement là où le message se posera, sans quoi la clôture du
+ * flux ferait sauter la bulle d'un cadre à l'autre. Elle n'a **pas
+ * d'horodatage** — un message en cours n'en a pas encore, et `BulleFil` le
+ * prévoit.
+ *
+ * Le curseur est décoratif (`aria-hidden`) : il dit « ça continue » à l'œil,
+ * là où le lecteur d'écran a la région live du fil (#538), qui compte les
+ * messages au lieu de relire chaque incrément. Et la mention d'interruption est
+ * la moitié qui compte : un texte arrêté ne se distingue pas d'une réponse
+ * courte, c'est ce que `FluxInterrompu` a nommé côté canal (#693) et il faut le
+ * dire à l'endroit où on vient de lire.
+ */
+function BulleEnCours({ reponse }: { reponse: ReponseEnCours }) {
+  return (
+    <BulleFil auteur={reponse.auteur}>
+      <p className="whitespace-pre-wrap break-words">
+        {reponse.texte}
+        {!reponse.figee && (
+          <span
+            aria-hidden="true"
+            className={
+              "ms-0.5 inline-block h-3.5 w-0.5 translate-y-0.5 rounded-full bg-neutral-500 " +
+              "animate-pulse motion-reduce:animate-none dark:bg-neutral-400"
+            }
+          />
+        )}
+      </p>
+      {reponse.figee && (
+        <p className="mt-1 text-[11px] italic text-amber-700 dark:text-amber-300">
+          Réponse interrompue — ce qui précède est incomplet.
+        </p>
+      )}
+    </BulleFil>
   );
 }
 
