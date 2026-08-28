@@ -497,6 +497,32 @@ rien sur la mise en page »), qui a produit `banc-mise-en-page` plutôt qu'une c
 5. **Figma**, en appoint : explorer une direction sur 2-3 écrans avant de coder. **Jamais comme
    source de vérité** — le lien mécanique vers le code n'existe pas sur ce plan.
 
+#### Le maillon 0, ajouté le 2026-08-28 (#708) — `/design-veille`
+
+Cette chaîne est complète pour **garder**, et muette sur ce qu'on **vise**. C'est le trou que ce
+§5.1 laissait : les cinq maillons répondent à « est-ce que ça tient ? », aucun à « à quoi devrait
+ressembler cette surface ? ». La seule réponse jamais donnée est le **banc du §1** — dressé une
+fois, le 2026-08-25, en prose, et rejouable par personne. Six mois plus tard, une demande arrivant
+sur une surface (« revois le design de la carte d'un run ») n'avait rien entre le goût du moment et
+la réécriture d'une note de recherche.
+
+**`/design-veille <surface>`** est ce geste-là, à l'échelle d'une surface : références cherchées sur
+le web et **vérifiées en direct**, prendre / laisser référence par référence, confrontation au
+socle, puis **3 à 5 partis pris**. Il vient **avant** les cinq maillons ci-dessus — il ne contraint
+rien, donc il ne s'insère pas dans leur ordre : il est ce qu'ils gardent.
+
+Trois choses qu'il reprend de cette note et qu'il ne faut pas défaire :
+
+- **ce qui n'est pas vérifié n'est pas cité** — la règle qui a fait écarter Temporal et Langfuse au
+  §1, les deux références fonctionnellement les plus proches, plutôt que de les décrire de mémoire ;
+- **le socle se relève avant la recherche**, jamais après : relevé après, il n'est plus une
+  contrainte mais un filtre appliqué à des idées auxquelles on s'est déjà attaché ;
+- **aucune identité nouvelle** (§6.1) — « il n'y a pas de style à aller chercher, il y a un socle à
+  tenir » (§1.6) reste le verdict du banc, et la veille ne le rouvre pas surface par surface.
+
+Il ne rejoue aucun des cinq : ni contraste, ni géométrie, ni accessibilité. Il n'écrit ni code ni
+forge — il rend une décision et propose de la consigner sur le ticket.
+
 ---
 
 ## 6. Recommandation
