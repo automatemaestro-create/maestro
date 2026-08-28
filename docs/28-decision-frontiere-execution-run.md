@@ -8,6 +8,12 @@
 > l'API — et garde, sans les repayer, l'annulation immédiate, le brief `humain` et la validation
 > humaine. **Temporal n'est pas écarté** : il est mis derrière une porte nommée (§8), et rien de ce
 > qui est construit ici n'est jeté le jour où on la franchit.
+>
+> **Deux révisions datées ont suivi, et aucune ne défait ce verdict.** Le **§11** (2026-08-24,
+> #470/#486) sépare l'accident de la décision : un run survit à l'accident, pas à l'extinction. Le
+> **§12** (2026-08-28, #701) franchit la porte n° 4 du §8 — la reprise à l'endroit exact — et
+> tranche l'**état acquis durable hors process, sans Temporal** : sur l'axe même de cette porte, O4
+> ne reprend pas plus finement. Il reste derrière les trois autres.
 
 ---
 
@@ -225,7 +231,9 @@ l'humain dans la boucle, et le moteur durable existe déjà pour la boucle de t�
   chantier laissé ouvert par #95, lot 2/5, plus l'étape de cadrage #318 qui lui est postérieure.
 
   ⚠ **Et il y a un piège que le dépôt a déjà rencontré et écrit.** Une attente humaine ne peut pas
-  vivre *dans* une activité : `guardrails.py:208-214` note qu'un validateur qui bloque la boucle est
+  vivre *dans* une activité — conclusion **confirmée le 2026-08-28** (§12.5), mais pour une autre
+  raison que celle donnée ici, et le pointeur ci-dessous a bougé depuis (la note est en
+  `maestro/engine/guardrails.py:427-433`) : `guardrails.py:208-214` note qu'un validateur qui bloque la boucle est
   « anodin en local, mais **fatal en mode durable (#96), où la boucle doit continuer à battre le
   cœur des activités : un worker qui ne bat plus est réputé mort et sa tâche relancée sous 30 s, en
   pleine question à l'opérateur** ». Une délibération humaine dure des minutes, un battement
@@ -350,6 +358,19 @@ O4 est derrière une porte. Les conditions qui la franchissent, nommées d'avanc
    d'exécution durable (cadrage #350). »
 
 Aucune de ces quatre conditions n'est remplie au 2026-08-23.
+
+> ⚠ **La n° 4 a été franchie le 2026-08-28 — et elle n'a pas mené à O4** (#701, **§12**). La
+> condition est bien remplie : la reprise exacte est demandée, #699 et #700 en font une urgence.
+> Mais sa formulation portait une prémisse fausse — « que Temporal fait nativement » était vrai au
+> sens où il était le **seul** mécanisme du dépôt à la faire, jamais au sens où il était le seul
+> possible. Sur l'axe même de cette porte, **O4 ne reprend pas plus finement** que l'option retenue :
+> les deux reprennent à la tâche terminée, une tâche en vol étant repayée des deux côtés
+> (`durable/workflow.py:117-118`). Le verdict du §12 est donc l'**état acquis durable hors process,
+> sans Temporal** ; O4 reste derrière les trois autres portes, intactes.
+>
+> Les conditions qui rouvriraient *cette* décision-là sont nommées au **§12.8**, et l'une d'elles ne
+> mène pas ici non plus : reprendre **au milieu** d'une tâche est une porte vers le découpage des
+> tâches, pas vers Temporal.
 
 > ⚠ **Il y en a une cinquième depuis le 2026-08-24, et elle va dans l'autre sens** (revue #470,
 > [docs/29 §5](./29-decision-run-objet-de-premier-plan.md)). Les quatre ci-dessus rouvrent toutes la
@@ -497,6 +518,11 @@ Aucune n'est franchie, et le chantier n'en a rapproché aucune :
 4. **une reprise à l'endroit exact de l'interruption** — toujours pas offerte, et toujours pas
    demandée ; #349 repart du brief.
 
+> ⚠ **Le point 4 a vieilli de quatre jours** : la reprise exacte a été **demandée le 2026-08-28**
+> (#699, #700, #701), et c'est la seule des quatre portes à avoir bougé. Le relevé ci-dessus est
+> laissé tel qu'il a été fait au 2026-08-24 ; la suite est au **§12**, qui la franchit **sans**
+> ouvrir O4.
+
 Ce que la livraison change pour O4 est ailleurs, et c'est le §5 qui l'annonçait : la Control Tower a
 **cessé de supposer que le run vit dans son process**. Lancer, annuler, recevoir le brief et la
 validation, transporter le `projet_id`, publier son issue en partant — tout cela passe désormais par
@@ -579,3 +605,293 @@ re-solde le run avec la cause `annulation`), ce qui garde le garde-fou de #349 c
 
 **L'option annoncée plus haut existe déjà** : `MAESTRO_EXTINCTION=0` laisse délibérément tourner —
 sur un geste qui solde par défaut, et **en le disant**, jamais en silence.
+
+---
+
+## 12. La porte n° 4 est franchie — la reprise exacte (2026-08-28)
+
+> Ticket **#701**. Décision datée du **2026-08-28**, sur `origin/main` à `03522b0`. Aucun code n'est
+> livré par ce cadrage.
+>
+> **Verdict : l'état acquis devient durable hors du process, sans Temporal.** Un run interrompu
+> repart de ses tâches déjà abouties au lieu de rejouer depuis le brief. **O4 reste derrière sa
+> porte** — mais la porte a changé de serrure : le §8 la formulait comme « le besoin d'une reprise à
+> l'endroit exact », en supposant que ce besoin *appelait* Temporal. Il ne l'appelle pas, et le
+> §12.5 dit pourquoi : sur l'axe même de cette porte, **O4 ne reprend pas plus finement** que
+> l'option retenue.
+
+### 12.1 Ce qui a changé depuis le 2026-08-23
+
+La porte n° 4 du §8 — « une reprise à l'endroit exact de l'interruption » — était classée « toujours
+pas offerte, et **toujours pas demandée** » au §10.5. Elle a été **demandée le 2026-08-28**, et deux
+tickets du même jour l'ont rendue urgente plutôt que théorique :
+
+- **#699** : le bus Redis est du Pub/Sub éphémère, et le journal durable (#97) n'est alimenté que
+  par la pompe de l'API (`_pompe`, `app.py:786-813`, **seul appelant** de `event_log.consigner`,
+  lancée dans le `lifespan`, `app.py:1151`). Un run détaché qui publie pendant que l'API est
+  arrêtée publie **dans le vide** : rien n'est consigné, et le rejeu au démarrage rebâtit fidèlement
+  une projection trouée ;
+- **#700** : l'accident cesse d'être toléré — tout arrêt de la Control Tower soldera ses runs, qui
+  « seront reprenables au retour ». Or « reprenable » ne vaut aujourd'hui que ce que vaut
+  `ServiceExecutions.relancer` (#349), qui crée un **nouveau** run reparti de la synthèse du brief et
+  **rejoue toutes les tâches**.
+
+Les trois tickets butent sur la même question, et elle est de frontière : sur un run arrêté à quatre
+tâches sur cinq, la Control Tower en repaie cinq.
+
+**Et le statu quo ne dégrade pas, il refuse.** `relancer` exige un brief approuvé
+(`MOTIF_RELANCE_SANS_CADRAGE`, `executions.py:261`) — mesuré sur `811d738020d5` le 2026-08-28 :
+`brief = None`, donc **non reprenable du tout**. Ce n'est pas un cas de bord : `ouvrir_un_run`, le
+lanceur du fil de chat (#268), part en `MODE_BRIEF_AUTO` et non en `humain`
+(`app.py:1099-1113`), pour une raison qui reste bonne — « le cadrage d'une demande **est** la
+conversation qu'on est en train d'avoir ». Et [docs/29 §4](./29-decision-run-objet-de-premier-plan.md)
+fait du chat **la seule porte d'entrée**. La reprise de #349 n'a donc aucune prise sur la porte qui
+devient le défaut. Le déménagement du brief dans le fil refermera ce trou pour les runs qu'on valide ;
+il ne le refermera pas pour ceux qui partent sans validation, et le refus de `relancer` est **binaire**.
+
+**Un troisième fait, qui ne se lit pas comme un coût.** Une tâche peut **écrire dans le projet de
+l'utilisateur** — `maestro.projets.application.appliquer` (`application.py:643`), après accord
+humain. Rejouer les cinq tâches d'un run arrêté à quatre ne coûte donc pas seulement le travail :
+cela **repose des questions déjà tranchées** et **réapplique** dans un projet déjà modifié. Ce
+n'est plus un argument de dépense, c'en est un de correction — et il n'était écrit nulle part.
+
+### 12.2 Ce que « reprendre » demande vraiment — l'état acquis, mesuré
+
+Le ticket #701 pose que le journal durable « porte des statuts et des étapes, pas des **sorties** ».
+C'est exact et vérifié : pour l'issue d'une tâche, `bridge.evenements_depuis_step` met l'`erreur`
+dans `detail` et **jamais** la `sortie` (`bridge.py:211-214`), et `Event` n'a aucun champ pour la
+porter (`events.py:263` et suivantes). Or `dep.sortie` est **littéralement** ce qui entre dans le prompt de la
+tâche suivante — le « tableau noir » de `_build_task_description` (`executor.py:1547-1551`). La
+Control Tower sait qu'une tâche a réussi ; elle ignore ce qu'elle a produit.
+
+**Mais le trou est plus large d'une moitié, et cette moitié manquait au ticket.** Depuis #490 le
+plan **est** persisté, en `run.plan` — sauf que `NoeudPlan` ne porte que `{id, titre, dependances,
+etapes}` (`plan_run.py:97-100`), quand `Task` porte en plus `description`, `competences_requises` et
+`format_sortie` (`schema.py:123-131`). Ces trois-là sont exactement ce dont l'exécution a besoin : la
+description **est** le prompt (`executor.py:376`, `1538`), les compétences font le routage
+(`executor.py:925`), le format cadre la sortie (`executor.py:1371`). Le graphe persisté suffit à
+**dessiner** un plan ; il ne suffit pas à en **reprendre** l'exécution.
+
+Reprendre demande donc **deux** choses hors process, pas une : le plan **exécutable** et les
+**sorties**.
+
+**Trois bonnes nouvelles, également vérifiées.**
+
+- **Le format existe déjà, et il voyage déjà entre process.** `TaskResult.to_dict`/`from_dict`
+  (`executor.py:200`, `230`) est ce que le mode durable sérialise pour passer les dépendances d'une
+  activité à l'autre (`activities.py:277`), et ce que `resultats_acquis` rend à une reprise
+  (`workflow.py:126-135`). Rien n'est à inventer : l'état acquis d'un run est **déjà** une valeur
+  JSON, dans ce dépôt, aujourd'hui.
+- **Aucun système de fichiers n'est à faire survivre.** `espace_de_travail` ouvre un espace **par
+  tâche**, dérivé du projet (worktree Git ou copie de périmètre), sous un `mkdtemp` démonté en
+  sortie (`sandbox/projet.py:93-138`). Une tâche ne reprend pas un répertoire : elle en dérive un
+  neuf. L'état à reconstruire est donc **purement des valeurs**.
+- **La granularité utile est la tâche terminée**, et c'est aussi celle de Temporal : « une tâche en
+  vol au moment de l'interruption n'y figure pas — elle n'a rien produit et sera reprise »
+  (`workflow.py:117-118`).
+
+**Une mauvaise, et elle commande l'ordre des chantiers.** Persister l'état acquis **par le bus**
+hériterait du défaut de #699 : la sortie d'une tâche qui se termine pendant une coupure de l'API
+serait perdue — c'est-à-dire trouée exactement au moment où l'on reprend. La consignation doit donc
+cesser de dépendre d'un consommateur vivant **avant** qu'on lui confie de quoi reprendre, ou passer
+par un chemin d'écriture qui ne traverse pas la pompe.
+
+### 12.3 Les trois options
+
+#### 12.3.1 (a) O4 — porter le chemin Control Tower sur `DurableEngine`/Temporal
+
+L'option instruite au §4.4, à réévaluer et non à recopier. Elle offre la reprise **et** la survie au
+sommeil de la machine, seule option à l'offrir. Son prix est au §12.5 : cinq portages et non trois,
+dont deux sont des incompatibilités de nature.
+
+Un fait de signature qui ne s'est pas amélioré : `DurableEngine.run(objective, *, journal)`
+(`engine.py:116`) n'accepte toujours ni `ticket`, ni `projet_id`, ni `mode_brief`, ni `porte` — les
+**quatre** que `OrchestrationEngine.run` prend en plus du journal (`loop.py:527-536`), et que l'hôte
+détaché passe tous (`hote_detache.py:1052-1078`).
+
+#### 12.3.2 (b) L'état acquis durable, sans Temporal
+
+Persister hors du process ce qu'un run a **payé** — le plan exécutable et les `TaskResult` aboutis —
+et reprendre en sautant ce qui est acquis. L'hôte du run écrit ; l'API relit et décide.
+
+- **Infra** : aucune dépendance nouvelle. Redis est déjà requis par la Control Tower pour le bus
+  (#46), le journal durable (#97), les boîtes (#44) et la file (#41).
+- **Annulation, brief `humain`, validation, projet, pause** : **intacts**. L'option ne touche pas au
+  moteur — elle ajoute un magasin et un verbe de reprise. C'est sa propriété principale : elle ne
+  paie **aucun** des cinq portages du §12.5.
+- **Survie** : au process de l'API **oui** (acquis depuis #446), à la machine **non** — mais au
+  réveil, la reprise repart de l'acquis au lieu du brief, ce qui est l'essentiel du gain que la
+  porte n° 4 demandait.
+- **Reprise exacte** : **oui**, à la granularité de la tâche terminée — la même que Temporal.
+- **Ce qu'elle n'achète pas** : la reprise **automatique**. Elle reprend sur un geste, celui que
+  `PanneauRunsPerdus` propose déjà (#349).
+
+#### 12.3.3 (c) Statu quo — relancer depuis le brief
+
+La ligne de base : `relancer` (#349) conserve le cadrage — sur `3ff0bcb065f9`, deux tours de
+clarification et une approbation, **2,52 $** et une vingtaine de minutes d'attention
+([docs/05](./05-interface-control-tower.md)) —, ce qui reste le poste le plus cher d'un run de démo
+(« ~1-5 $ », [docs/34 §3.3](./34-decision-agent-cli-tiers-acp.md)).
+
+Ce qu'il faudrait **ouvrir** pour que #700 soit tenable sur ce socle, et c'est ce qui l'écarte :
+étendre `relancer` aux runs sans brief approuvé — donc repartir de l'objectif brut, c'est-à-dire
+**sauter une validation que le run attendait encore**, sans que personne l'ait demandé. Le §12.1 le
+dit : le refus est binaire, et il porte sur la porte d'entrée qui devient le défaut. On paierait un
+contournement du point de contrôle **D5** pour éviter de construire ce que (b) construit une fois.
+
+### 12.4 La comparaison, sur les axes du §4.5 — plus celui qu'il n'avait pas à juger
+
+| | **(c)** statu quo | **(b)** état acquis durable | **(a)** O4 Temporal |
+| --- | --- | --- | --- |
+| **Reprise exacte** | **non** — rejoue tout depuis le brief, et **refuse** sans brief approuvé | **oui**, à la tâche terminée | **oui**, à la tâche terminée — *pas plus fin* |
+| **Dépendance d'infra** | aucune | **aucune** (Redis déjà requis) | **Temporal requis** sur le chemin par défaut |
+| **Annulation** | `Task.cancel` via le bus (#444) | **inchangée** | **coopérative** — activités à instrumenter |
+| **Brief `humain` + validation** | marchent | **inchangés** | **réécrits** en `wait_condition` + `signal` (§12.5) |
+| **Rattachement au projet** | acquis (#222, #443) | **inchangé** | absent de la signature `DurableEngine.run` |
+| **Pause / reprendre (#477)** | acquise | **inchangée** | **absente** du durable — `porte` n'est pas un paramètre |
+| **Survit à l'arrêt de l'API** | oui (#446) | oui | oui |
+| **Survit au sommeil machine** | non | non — mais reprise **sur l'acquis** au réveil | **oui, reprise automatique** |
+| **Coût** | nul, et un contournement de D5 à payer | **faible, incrémental** | **élevé** — cinq portages (§12.5) |
+
+### 12.5 Les trois obstacles d'O4, réexaminés — et les deux qui manquaient
+
+**① Temporal en dépendance dure du chemin par défaut — tient, et pèse un peu plus.** Rien n'a changé
+côté Temporal ; ce qui a changé est autour. La panne n° 2 du §2 — la machine qui s'endort — est
+toujours là, et l'on adosserait la durabilité à Docker, c'est-à-dire à ce qui tombe avec elle. À une
+machine et un utilisateur devant, le change reste mauvais.
+
+**② L'annulation coopérative — tient, mais l'écart s'est réduit, et il faut le dire.** Le §4.5
+opposait `Task.cancel` **immédiat** à une cancellation coopérative. Depuis #444 l'annulation de la
+Control Tower **traverse déjà une frontière** : elle publie sur le bus, l'hôte détaché l'observe et
+annule sa propre tâche, sous `DELAI_ANNULATION_S = 5 s` (`executions.py:248`, `1014`). Le mécanisme
+réel reste `Task.cancel`, mais l'immédiateté de 2026-08-23 n'est déjà plus la référence. La
+régression subsiste — une activité de quarante minutes doit observer son contexte pour la voir —,
+elle est simplement moins large qu'écrit.
+
+**③ L'attente humaine dans une activité — tient, mais *pas pour la raison écrite*, et sa vraie forme
+est plus dure.** Le §4.4 cite `guardrails.py` : un validateur qui bloque la boucle est « fatal en
+mode durable, où la boucle doit continuer à battre le cœur des activités ». Deux corrections.
+
+D'abord le pointeur : la note vit en **`maestro/engine/guardrails.py:427-433`**. Le §4.4 la donnait à
+`guardrails.py:208-214`, où se trouve aujourd'hui tout autre chose (la docstring de
+`DemandeValidation`), et #701 a recopié cette référence — c'est le §4.4 qu'elle corrige, pas le
+ticket. Ensuite et surtout, **elle décrit le remède, pas le défaut** : un canal synchrone est
+exécuté `await asyncio.to_thread(canal, demande)`
+(`guardrails.py:433`) précisément pour ne pas bloquer la boucle. Le compagnon `_bat_le_coeur`
+(`activities.py:199-203`) continue donc de battre pendant la délibération, et `_avec_battement`
+enveloppe tout le travail de l'activité (`activities.py:279`). **Le battement tient.**
+
+Ce qui ne tient pas est ailleurs, et c'est plus qu'un réglage. Une activité est bornée par son
+`start_to_close_timeout` — `TIMEOUT_TACHE = 1 h` (`workflow.py:72`) — et une expiration est **rejouée**
+par `RELANCE_PERTE_WORKER` jusqu'à trois fois (`workflow.py:86-91`). Une délibération plus longue
+qu'une heure ferait donc **reposer la question à l'opérateur et repayer le travail de la tâche**. Or
+le §3 le rappelle : aucune des trois attentes n'a de time-out, l'attente est « indéfinie […], jamais
+un time-out silencieux » (`validation.py:88-91`) — **par décision**. Une attente indéfinie ne peut
+pas vivre sous un `start_to_close_timeout`, quelle qu'en soit la valeur : ce n'est pas un plafond à
+monter, c'est une incompatibilité de nature. La conclusion du §4.4 est donc **confirmée et
+renforcée** — les trois arbitres ne sont pas portés vers le durable, ils y sont **réécrits** en
+`workflow.wait_condition` sur un `@workflow.signal`.
+
+**④ Le parallélisme — obstacle non listé en 2026-08-23.** `--parallele` est refusé en mode durable :
+« le plafond global de concurrence n'est pas encore porté par le workflow » (`cli.py:333-339`). Or la
+Control Tower passe `max_parallele=ordre.parallelisme` à chaque run (`hote_detache.py:1054`). Le
+portage est à faire, et il n'était compté nulle part.
+
+**⑤ La pause — obstacle qui n'existait pas en 2026-08-23.** `PorteExecution` (#477,
+`engine/pause.py:45`) est câblée à la Control Tower et passée au moteur (`hote_detache.py:1077`).
+Elle n'a **aucun équivalent** côté durable : suspendre un run reviendrait à écrire une seconde fois,
+en `wait_condition`, ce que la boucle en process obtient d'un `asyncio.Event`. C'est le même poste
+que l'obstacle ③, sur un autre objet.
+
+**Bilan : cinq portages, pas trois** — le cadrage #318 en étape de workflow, les trois attentes
+humaines réécrites, le parallélisme, la signature (`projet_id`, `ticket`, `mode_brief`), la pause —
+plus une dépendance d'infra dure et une annulation dégradée.
+
+### 12.6 Décision
+
+**L'état acquis durable hors process (b) est retenu.**
+
+**① Ce qui est demandé est la reprise, pas Temporal — et sur cet axe, O4 ne fait pas mieux.** C'est
+le constat qui tranche, et il est vérifiable en une ligne de code : `resultats_acquis` exclut la
+tâche en vol, qui « n'a rien produit et sera reprise » (`workflow.py:117-118`). Temporal reprend à la
+tâche terminée ; (b) aussi. La porte n° 4 a été écrite en supposant que la reprise exacte *appelait*
+le workflow durable — ce qui était vrai au sens où Temporal était le **seul** mécanisme du dépôt qui
+la faisait, jamais au sens où il était le seul possible. On n'achète pas cinq portages et une
+dépendance d'infra pour une granularité qu'on obtient sans eux.
+
+**② Le format existe, le magasin manque.** `TaskResult` est déjà sérialisé et déjà transporté entre
+process (`activities.py:277`) ; le plan est déjà écrit, à trois champs près (§12.2). Ce qui manque
+n'est pas un modèle d'exécution, c'est un endroit où écrire et un verbe pour relire. Une option qui
+comble un trou nommé coûte moins qu'une qui change de frontière.
+
+**③ Elle ne paie aucune des propriétés qu'on utilise tous les jours.** Annulation, brief `humain`,
+validation, projet, pause : (b) n'y touche pas. C'est le même raisonnement qu'au §5 — ne pas payer
+une régression sur le quotidien pour un gain sur le rare —, appliqué à une liste devenue plus
+longue de deux entrées depuis (le parallélisme et la pause).
+
+**④ Et ce n'est pas (b) *au lieu de* O4, c'est (b) *avant* O4 — avec une honnêteté que le §5 n'avait
+pas à avoir.** Au §5, aucun lot n'était jeté le jour d'O4. Ici, une pièce le serait : le **magasin**,
+puisque Temporal fournirait l'état acquis par `resultats_acquis`. Ce n'est ni le format
+(`TaskResult`, que Temporal transporte déjà tel quel), ni le **verbe de reprise** côté Control Tower
+— « reprendre sur l'acquis ou relancer sur le brief » est une décision de produit, dont seule la
+source d'état changerait. Ce qui serait jeté est un `RPUSH`/`LRANGE` ; ce qui serait gardé est le
+contrat. Le change reste très favorable, et il vaut mieux l'écrire que le taire.
+
+**Corollaire, à écrire là où les précédents le sont** (docs/05, `executions.py`, `battement.py`) :
+**un run reprend là où il s'est arrêté, à la tâche près — pas au milieu d'une tâche.** Une tâche
+interrompue en vol est repayée en entier, et aucune des trois options ne fait mieux.
+
+### 12.7 Ce que ça change pour #699 et #700, et dans quel ordre
+
+**L'ordre est forcé, et c'est le §12.2 qui le force** : #699 → #700 → le chantier de reprise.
+
+**#699 change de nature : de bug, il devient prérequis.** Sa piste — « consigner au journal durable
+**du côté de la publication** plutôt que de la consommation » — est **validée par ce cadrage**, et
+pour une raison qui dépasse le tableau qu'il répare : tant que la consignation dépend d'un
+consommateur vivant, tout état acquis persisté par ce chemin sera troué **exactement pendant la
+coupure**, c'est-à-dire au seul moment où l'on reprend. Ce qui reste ouvert chez lui : le choix entre
+consigner à la publication et passer le bus en Redis Streams — ce cadrage ne le tranche pas, il
+exige seulement que le résultat soit indépendant de la présence de l'API.
+
+**#700 est débloqué : sa question ouverte est tranchée.** Il proposait trois issues — ouvrir la
+relance aux runs sans brief, accepter de perdre le travail de ces runs, ou faire de la reprise à
+l'endroit exact un chantier à part. **C'est la troisième**, et #700 n'a plus à attendre : il solde,
+il annonce, et il se contente de #349 dans l'intervalle. La première est **écartée** — repartir de
+l'objectif brut sauterait la validation que le run attendait (§12.3.3), et la reprise exacte la
+rendra sans objet.
+
+**Le prix de cet ordre est réel, daté, et il se dit.** Entre la livraison de #700 et celle du
+chantier de reprise, un run lancé depuis le chat (`MODE_BRIEF_AUTO`) qu'une extinction solde n'est
+**pas reprenable du tout**. C'est une régression assumée par rapport à « il continuait de tourner »,
+et elle doit être **annoncée à l'utilisateur au moment du geste**, pas découverte au retour : le
+deuxième critère de #700 — « chaque run interrompu est nommé, et son caractère reprenable avec lui »
+— porte donc, pour ces runs-là, la mention qu'ils ne le sont pas.
+
+**Ce que ce cadrage ne ferme pas** : la reprise **automatique** au réveil de la machine (elle reste
+derrière O4), la reprise **au milieu d'une tâche** (§12.8), et le découpage du chantier lui-même, qui
+est fait séparément — comme le §9 l'a été pour #441.
+
+### 12.8 Ce qui rouvrirait cette question-ci
+
+Le §8 garde ses portes vers O4 ; deux d'entre elles sont **inchangées et intactes** — l'exécution qui
+quitte la machine (n° 2), des runs plus longs qu'une journée (n° 3). La n° 1 (un second run perdu par
+sommeil machine) reste ouverte, avec une nuance : la reprise sur l'acquis en réduit le coût, donc il
+en faudra davantage pour que la balance penche. La n° 4 est **franchie**, et la réponse n'a pas été
+Temporal.
+
+Ce qui rouvrirait la décision de ce §12, nommé d'avance :
+
+1. **Un état acquis qui ment.** Une reprise repartie d'une sortie fausse, tronquée ou trouée. C'est
+   le risque **propre** à (b) : on reconstruit à la main un état que Temporal tiendrait par
+   construction. Un seul cas avéré, non imputable à un bug réparable, et la balance change.
+2. **Le besoin de reprendre au milieu d'une tâche.** Une tâche de quarante minutes interrompue à la
+   trente-huitième est repayée en entier. ⚠ Cette porte **ne mène pas à O4** — Temporal rejoue
+   l'activité entière lui aussi — mais vers le **découpage** des tâches ou un point de reprise
+   intra-tâche. La confondre avec la porte n° 4 ferait acheter Temporal pour ce qu'il ne donne pas.
+3. **Le jour où le magasin coûte plus cher qu'un worker.** Si maintenir l'état acquis revient à
+   réécrire à la main la moitié de ce que Temporal fait — reprise, requêtes d'état, exactement-une-
+   fois —, la comparaison du §12.4 s'inverse d'elle-même. C'est le critère de bascule honnête, et
+   c'est celui qu'il faut surveiller.
+4. **Une seconde machine.** Deux postes, ou un hôte partagé, et le magasin devient un état distribué
+   à tenir cohérent — ce pour quoi Temporal existe. C'est la porte n° 2 du §8, vue depuis ce §12 :
+   elle rouvre les deux décisions à la fois.
