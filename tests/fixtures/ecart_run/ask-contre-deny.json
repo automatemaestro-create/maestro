@@ -1,0 +1,21 @@
+{
+  "$comment": [
+    "ÉCHANTILLON FAUTIF n°3 pour `scripts/orchestrate/ecart-run.sh --regles` (#789).",
+    "",
+    "Il n'éprouve qu'une chose, et c'est la distinction que ce verbe existe pour porter : `ask` et",
+    "`deny` refusent tous deux en run, mais ils ne disent pas la même chose de l'ÉCART. Un `deny`",
+    "est un interdit des deux côtés — pas un écart. Un `ask` est approuvable en interactif — donc",
+    "l'écart lui-même. `journal.sh refus` a raison de les confondre (pour classer un refus DÉJÀ",
+    "survenu, aucun répondant n'était là dans les deux cas) ; les confondre ICI rangerait G1 tout",
+    "entier parmi les interdits voulus, c'est-à-dire hors de ce que le chantier vient corriger.",
+    "",
+    "Ce qu'il doit produire : `pwd` en « ecart » (couvert par un `ask`, avec la mention",
+    "« approuvable en interactif, refusé sec en run »), `rm -rf build` en « voulu » (couvert par un",
+    "`deny`), et `curl` en « voulu » par sa seule raison écrite — aucune règle ne le nomme."
+  ],
+  "permissions": {
+    "allow": ["Bash(echo:*)"],
+    "ask": ["Bash(pwd:*)"],
+    "deny": ["Bash(rm:*)"]
+  }
+}

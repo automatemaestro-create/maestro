@@ -1022,6 +1022,11 @@ def monte_depot(tmp_path: Path) -> Depot:
         # `reprendre-en-cours` (#329) lui demande d'où sort le ticket qu'on reprend : le journal
         # d'un run est le seul endroit qui sache dire quel run l'a laissé là, et avec quel verdict.
         "scripts/orchestrate/journal.sh",
+        # La lecture des blocs de permissions et le matching des règles, que `journal.sh` partage
+        # depuis #789 avec `ecart-run.sh`. Sans eux, `refus` n'a plus de `matche()` : il rangerait
+        # tout en « inclassé » au lieu d'échouer, c'est-à-dire un vert qui ne garde plus rien.
+        "scripts/orchestrate/permissions.sh",
+        "scripts/orchestrate/permissions.awk",
         # Le monteur du projet Projects v2 (#359) : c'est lui qui pose les six options du champ
         # Status, donc le seul endroit du dépôt où le VOCABULAIRE du cycle de vie est écrit deux
         # fois (ici et dans `gl_workflow_label`). Voir tests/test_cycle_de_vie.py.

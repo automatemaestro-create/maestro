@@ -1,0 +1,22 @@
+{
+  "$comment": [
+    "ÉCHANTILLON FAUTIF n°2 pour `scripts/orchestrate/ecart-run.sh --regles` (#789).",
+    "",
+    "L'autre moitié de l'épreuve : une allowlist qui ne couvre RIEN du catalogue. Elle vérifie que",
+    "la classe déclarée est bien un REPLI et non le verdict — sans elle, on ne saurait pas si",
+    "« voulu » vient de la raison écrite ou d'une règle qu'on croit lire.",
+    "",
+    "Ce qu'elle doit produire : les gestes sans raison écrite en « ecart », les huit refus mérités",
+    "en « voulu » (dont `merge-mr` et `pipeline-wait`, que le `deny` du dépôt ne porte plus ici),",
+    "et le code de sortie 3.",
+    "",
+    "La règle `echo` n'est pas du décor : un fichier au bloc `allow` VIDE serait rejeté comme une",
+    "lecture ratée (code 1), et c'est voulu — on doit pouvoir distinguer « rien ne couvre » de",
+    "« rien n'a été lu »."
+  ],
+  "permissions": {
+    "allow": ["Bash(echo:*)"],
+    "ask": [],
+    "deny": []
+  }
+}
