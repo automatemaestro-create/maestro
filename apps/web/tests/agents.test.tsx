@@ -47,9 +47,27 @@ import { ficheCatalogueFactice, navigations, poserChemin } from "./aides";
 // `creerAgent` est déclaré parce que l'écran de création l'importe — jamais
 // appelé ici, ces tests portant sur les sorties et non sur le `POST`.
 const catalogue = vi.hoisted(() => ({ fiches: [] as unknown[] }));
-vi.mock("@/lib/api", () => ({
+// ⚠ Ce mock est **total** (pas d'`importOriginal`) : il *remplace* celui de
+// `setup.ts`, donc ce qu'il n'énumère pas n'existe pas — c'est la leçon de #249,
+// et elle mord ici. L'écran de création monte `FormulaireDefinition`, qui lit le
+// catalogue des fournisseurs depuis #487 : sans cette entrée, les cinq tests de
+// l'écran tombent sur « No "chargerFournisseurs" export is defined ».
+//
+// Le défaut n'était visible d'aucune des deux PR qui l'ont créé : #487 a rendu
+// la lecture obligatoire, #810 a monté ce formulaire dans ces tests-là, et
+// chacune était **verte seule**. Le rouge n'est né que de leur rencontre sur
+// `main` — d'où sa réparation ici plutôt qu'un signalement.
+//
+// L'import est chargé **dans** la fabrique : `vi.mock` est hissé au-dessus des
+// imports du fichier, donc y nommer `fournisseursDuPoste` lèverait un « Cannot
+// access before initialization » (même contrainte que `tests/ecrans-reseau.ts`).
+vi.mock("@/lib/api", async () => ({
   chargerCatalogue: async () => catalogue.fiches,
   creerAgent: async () => undefined,
+  chargerFournisseurs: async () => {
+    const { fournisseursDuPoste } = await import("./aides");
+    return fournisseursDuPoste();
+  },
 }));
 
 /** Monte la liste et attend la fin de son chargement différé d'un tick. */
