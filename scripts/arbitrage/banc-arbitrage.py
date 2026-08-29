@@ -40,6 +40,13 @@ issues du hook et leur invariant sont éprouvés dans `tests/test_permissions.py
 ⑥a — mais elles font qu'une station en panne se voit comme une panne, et non
 comme un banc qui semble réfléchir pendant quatre minutes.
 
+⚠ Ce qui fait qu'une panne « se voit » est le **témoin de vie** du run (cf.
+`_attend` et `DELAI_S`), jamais un plafond court : un plafond court fait dépendre
+le verdict de la charge de la machine, et c'est ainsi que le banc a rendu
+« chaîne NON exercée » en CI sur une chaîne intacte. Ne pas le raccourcir à
+nouveau pour « voir les pannes plus vite » — c'est le témoin qui le fait, sans
+rien coûter au vert.
+
 Ni réseau, ni Redis, ni quota : bus mémoire, plan constant, fournisseur local.
 
 Usage :
@@ -132,9 +139,25 @@ PLAN = json.dumps(
 OBJECTIF = "Retoucher le bandeau de la maquette Control Tower"
 
 #: Le temps que le banc s'accorde pour voir la carte arriver dans la file, puis
-#: pour voir le run se solder après la décision. Généreux au regard de ce qui s'y
-#: joue (un aller de bus mémoire), assez court pour qu'une panne rende la main.
-DELAI_S = 20.0
+#: pour voir le run se solder après la décision.
+#:
+#: ⚠ Ce plafond a valu 20 s, et cette valeur faisait dépendre le verdict de la
+#: CHARGE DE LA MACHINE. Elle portait deux exigences contraires à la fois —
+#: « assez court pour qu'une panne rende la main » et « assez long pour survivre
+#: à la charge » — et c'est la seconde qui cédait : le parcours coûte ~1 s au
+#: poste, ~5 s sous `--cov` (le job `pytest` de la CI l'ajoute) et **16,2 s**
+#: sous `--cov` avec des workers en surnombre, mesuré au conteneur. Sur les
+#: 4 vCPU d'un exécutant hébergé, où `-n auto` fait tourner quatre workers
+#: tracés, il franchit 20 s : le banc rendait alors « chaîne NON exercée » sur
+#: une chaîne intacte — un filet qui ment, pire que pas de filet.
+#:
+#: Les deux exigences sont donc séparées, et **c'est le partage qui compte, pas
+#: le chiffre** : rendre la main vite est le rôle du témoin de vie passé à
+#: `_attend` (une panne se voit dès que le run meurt, sans attendre le plafond),
+#: si bien que ce plafond n'a plus qu'à être hors d'atteinte. Il est borné par
+#: le banc lui-même — le run ne survit pas à `borne_hook_s` (60 s) — donc 90 s
+#: ne se paie jamais en vert, et ne se paie qu'une fois sur un run qui se fige.
+DELAI_S = 90.0
 
 
 class ConstantProvider(ModelProvider):
@@ -237,15 +260,46 @@ class Releve:
         }
 
 
-def _attend(lecture, predicat, delai: float = DELAI_S):
-    """Rejoue `lecture` jusqu'à ce que `predicat` accepte — None si le délai tombe."""
+def _attend(lecture, predicat, delai: float = DELAI_S, vivant=None):
+    """Rejoue `lecture` jusqu'à ce que `predicat` accepte — None si le délai tombe.
+
+    `vivant`, quand il est fourni, dit si ce qu'on attend peut **encore** arriver.
+    C'est lui qui fait qu'une panne rend la main tout de suite, rôle que le délai
+    tenait auparavant en étant court — au prix de rendre le verdict sensible à la
+    charge (cf. `DELAI_S`). Une attente qui dure n'est plus une panne : c'est une
+    machine lente, et le banc n'a rien à en dire.
+    """
     limite = time.monotonic() + delai
     while time.monotonic() < limite:
         valeur = lecture()
         if predicat(valeur):
             return valeur
+        if vivant is not None and not vivant():
+            # Une dernière lecture avant de conclure : la valeur a pu paraître
+            # entre la lecture précédente et la mort de ce qui la produisait.
+            valeur = lecture()
+            return valeur if predicat(valeur) else None
         time.sleep(0.02)
     return None
+
+
+def _cause_du_run(run) -> str:
+    """Pourquoi la carte n'est jamais venue — la cause du run, jamais un mot générique.
+
+    Le relevé rendait « parcours interrompu » et **jetait** l'exception que le run
+    portait : la seule panne que le banc ne savait pas nommer était la sienne, et
+    c'est ce qui a rendu son premier rouge de CI illisible (il a fallu trois runs
+    de conteneur pour établir qu'aucune exception n'était en cause).
+    """
+    if not run.done():
+        run.cancel()
+        return f"le run court toujours après {DELAI_S:.0f} s"
+    if run.cancelled():
+        return "le run a été annulé"
+    exc = run.exception()
+    if exc is not None:
+        return f"le run s'est arrêté sur {type(exc).__name__} : {exc}"
+    return "le run s'est soldé sans jamais suspendre d'acte"
 
 
 def _politique() -> PolitiqueOutils | None:
@@ -412,13 +466,15 @@ def joue() -> Releve:
             def file() -> list[dict[str, Any]]:
                 return client.get("/api/validations?projet=tous").json()
 
-            attente = _attend(file, lambda v: bool(v))
+            # Le témoin de vie est le run lui-même : tant qu'il court, la carte
+            # peut encore venir et l'attente n'apprend rien ; dès qu'il meurt,
+            # elle n'apprendra plus rien et le banc conclut sans délai.
+            attente = _attend(file, lambda v: bool(v), vivant=lambda: not run.done())
             carte = attente[0] if attente else None
             _station_file(releve, carte)
 
             if carte is None:
-                run.cancel()
-                releve.erreur = "aucune demande n'a atteint la file — parcours interrompu"
+                releve.erreur = "aucune demande n'a atteint la file — " + _cause_du_run(run)
                 return releve
 
             code = client.post(

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -153,3 +154,60 @@ def test_un_journal_sans_trace_d_arbitrage_est_un_echec(banc):
     banc._station_journal(releve, RunJournal(run_id="vide"), None)
 
     assert not releve.ok
+
+
+# --- ③ Le verdict ne dépend pas de la charge de la machine ------------------------------
+
+
+def test_l_attente_rend_la_main_des_que_le_run_est_mort(banc):
+    """Une panne se voit par le **témoin de vie**, pas en raccourcissant le plafond.
+
+    C'est le partage que le banc avait fondu dans une seule constante : « assez
+    court pour qu'une panne rende la main » et « assez long pour survivre à la
+    charge » sont contraires, et c'est la seconde qui cédait — le parcours coûte
+    16,2 s sous `--cov` et workers en surnombre, contre un plafond de 20 s. Le
+    témoin tient la première, ce qui libère le plafond pour la seconde.
+    """
+    debut = time.monotonic()
+
+    assert banc._attend(list, bool, vivant=lambda: False) is None
+
+    ecoule = time.monotonic() - debut
+    assert ecoule < 5.0, f"un run mort doit rendre la main sans attendre le plafond ({ecoule:.1f}s)"
+    assert banc.DELAI_S >= 60.0, "le plafond doit être hors d'atteinte d'une machine lente"
+
+
+def test_une_carte_lente_n_est_pas_abandonnee_tant_que_le_run_vit(banc):
+    """L'autre moitié : tant que le run court, la carte peut encore venir.
+
+    Sans ce contre-exemple, un témoin de vie trop pressé rendrait le banc rouge
+    sur une machine lente — la panne même qu'on corrige, par l'autre bout.
+    """
+    lectures = iter([[], [], [{"tache_id": "t"}]])
+
+    assert banc._attend(lambda: next(lectures, []), bool, vivant=lambda: True) == [
+        {"tache_id": "t"}
+    ]
+
+
+def test_une_carte_qui_ne_vient_jamais_nomme_la_cause_du_run(banc):
+    """Le banc doit nommer **sa propre** panne — c'est la seule qu'il taisait.
+
+    Le relevé rendait « parcours interrompu » en jetant l'exception que le run
+    portait : il a fallu trois runs de conteneur pour établir qu'aucune exception
+    n'était en cause. Les trois issues se distinguent, parce qu'elles n'appellent
+    pas le même geste — attendre, corriger le code, ou chercher pourquoi aucun
+    acte n'a été suspendu.
+    """
+    from concurrent.futures import Future
+
+    court_toujours: Future = Future()
+    assert "court toujours" in banc._cause_du_run(court_toujours)
+
+    tombe: Future = Future()
+    tombe.set_exception(RuntimeError("bus fermé"))
+    assert "RuntimeError : bus fermé" in banc._cause_du_run(tombe)
+
+    solde: Future = Future()
+    solde.set_result(None)
+    assert "sans jamais suspendre" in banc._cause_du_run(solde)
