@@ -79,6 +79,27 @@ Un **quatrième canal** repart vers l'agent : `demander_arbitrage(raison)` (#582
 
 ⚠ Tout ceci ne vaut que sur le **chemin outillé** (§1.5) : une exécution texte n'a ni outils ni répertoire, donc aucun acte à intercepter. C'est le playbook, et lui seul, qui l'y tient.
 
+#### 1.4ter Ce qu'un agent peut **écrire** pendant sa tâche
+
+Le canal ci-dessus **soumet un acte** ; trois autres ne soumettent rien — ils **consignent**. La règle qui les départage tient en une question, et elle rend le même verdict cinq fois ([docs/31 §2](./31-decision-surface-ecriture-agents.md)) : *le verbe écrit-il une **observation**, ou une **décision sur le plan** ?* Une observation dit ce qui est, s'ajoute, ne retire rien, et le moteur peut l'ignorer sans que le run change de sens — **ouverte**. Une décision sur le plan dit ce qui doit être, et change ce qu'un humain a approuvé — **fermée**, et elle ne se rouvre que par un point d'approbation (D5).
+
+| L'agent écrit… | Verbe | Ce qu'il en obtient |
+| --- | --- | --- |
+| ce qu'il **découvre** | `consigne_ticket` (#187) | une étape `<tache>:ticket` |
+| ce qu'il **prévoit** | sa checklist (#489), via `TodoWrite` | une étape `<tache>:detail` |
+| ce qu'il **subit** | `mcp__maestro__signaler_blocage(raison)` (#719) | une étape `<tache>:blocage`, et **rien d'autre** |
+| ce qu'il veut **transmettre** | `mcp__maestro__ecrire_a_un_pair(destinataire, message)` (#720) | une étape `<tache>:message`, notifiée en best-effort |
+
+Les deux derniers sont servis par le **même serveur MCP in-process** que `demander_arbitrage` (nom réservé `maestro`), donc gouvernés par la **même** politique de permissions : une liste `allow` fermée qui ne les cite pas, ou un `deny` dessus, retire à l'agent la possibilité de les appeler, et le refus est tracé comme les autres. C'est la distinction à retenir face aux produits qui font tenir ce genre de garde-fou par le prompt : **chez nous la description règle l'usage normal, le droit est tenu ailleurs** — un modèle qui n'obéit pas à la description ne franchit rien.
+
+Trois choses que ces verbes ne font **pas**, et qui sont le contenu de la décision :
+
+- **ils n'attendent rien.** `signaler_blocage` est une *déclaration*, pas une *demande* : il consigne et rend la main, l'agent poursuit comme il peut. C'est ce qui le sépare de `demander_arbitrage`, qui suspend l'appel le temps qu'une personne tranche — et de #647, à qui appartient un canal « question » dont la réponse serait du texte ;
+- **ils ne touchent pas au graphe du plan.** Créer une tâche, changer un statut ou un propriétaire, recruter : les trois sont **refusés**, avec leurs motifs et leurs conditions de réouverture en docs/31 §3.3-§3.5. Un agent qui découvre en travaillant qu'il faudrait une tâche de plus ne peut que… le dire — la demande ne disparaît pas, **elle change de destinataire** : elle va à l'humain qui lit la frise, au lieu de s'exécuter en silence ;
+- **ils ne promettent pas de livraison.** Un mot adressé est une **trace adressée** : le journal livre, le pub/sub ne fait que notifier, et il n'y a ni accusé de réception ni réponse (docs/03 § `AGENT_MESSAGE`). La description de l'outil le dit à l'agent en toutes lettres — un agent qui croirait être lu attendrait une réponse qui ne viendra jamais.
+
+Enfin, **une raison vide n'est pas consignée** : « il est bloqué » est exactement ce que la frise montrait déjà, et la seule chose que le verbe apporte est le motif — celui qu'aucune règle de détection ne saura produire. Une règle sait dire « bloquée depuis 40 minutes » ; elle ne saura jamais dire « le dépôt de recette refuse mes identifiants ».
+
 ### 1.5 Deux chemins d'exécution, un seul rôle
 
 Un même agent s'exécute de deux façons, et les deux doivent porter le même métier :

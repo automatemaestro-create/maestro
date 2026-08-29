@@ -176,7 +176,7 @@ CANAL_EN_ERREUR = (
 #: l'inviterait à réessayer sur un canal sans lecteur.
 #:
 #: Il ne rend rien, mais il peut **lever** : ce que le fournisseur sert alors est
-#: `COURRIER_EN_ERREUR`, et c'est le seul cas qui apprenne quelque chose à
+#: `CANAL_EN_ERREUR`, et c'est le seul cas qui apprenne quelque chose à
 #: l'agent. La différence avec `Arbitre` tient en un mot — celui-là transporte
 #: une **décision**, celui-ci une **écriture**.
 Courrier = Callable[[str, str], Awaitable[None]]

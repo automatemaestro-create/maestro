@@ -470,7 +470,7 @@ class ClaudeProvider(ModelProvider):
         suspendu à une décision, l'appel rend la main aussitôt.
 
         Ce qu'il livre est une **trace adressée**, jamais une livraison, et
-        `DESCRIPTION_COURRIER` le dit à l'agent : le transport est un pub/sub
+        `courrier.DESCRIPTION_OUTIL` le dit à l'agent : le transport est un pub/sub
         éphémère sans rejeu ni accusé de réception, et un agent n'existe que
         pendant sa tâche. C'est aussi pourquoi l'issue de la publication ne
         remonte pas jusqu'ici — elle ne prouverait rien de plus que son échec.

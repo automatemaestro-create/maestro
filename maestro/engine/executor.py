@@ -1047,7 +1047,7 @@ class LocalExecutor(TaskExecutor):
                 objet=message,
             )
             # La livraison d'abord — si celle-ci lève, l'agent doit l'apprendre
-            # (le fournisseur lui sert `COURRIER_EN_ERREUR`) : c'est la seule
+            # (le fournisseur lui sert `courrier.CANAL_EN_ERREUR`) : c'est la seule
             # promesse de ce verbe, et la seule dont l'échec change quelque chose.
             consigne_message(journal, mot, role=agent.role, projet_id=task.projet_id)
             if self._mailbox is None:
