@@ -532,8 +532,8 @@ Aucune de ces quatre conditions n'est remplie au 2026-08-28.
 
 ## 11. Où cette décision est écrite ailleurs
 
-**Le lot 1 (#737) a livré**, et cette section dit désormais où — l'énoncé « rien ne change encore dans
-le code ni dans les contrats » était vrai le jour du cadrage et ne l'est plus :
+**Les trois lots ont livré**, et cette section dit désormais où — l'énoncé « rien ne change encore
+dans le code ni dans les contrats » était vrai le jour du cadrage et ne l'est plus :
 
 - [docs/05 §2.6](./05-interface-control-tower.md) — le contrat d'API des attentes et de la vitalité,
   où le champ du §5.3 **s'est déclaré** : `en_souffrance` sur le `ResumeExecution`, à côté de
@@ -547,9 +547,23 @@ Côté code, le verdict vit dans [`maestro/controltower/souffrance.py`](../maest
 — un module à lui plutôt qu'un ajout à `battement.py`, dont l'en-tête revendique de tenir en une
 phrase et dont aucun battement n'entre dans ce jugement. Il est servi par `_avec_vitalite`
 (`executions.py`) et **dit une fois** au journal de l'API par `_veiller`, troisième passager du
-réveil du §5.2. Restent le tri à l'écran (**#738**) et les **tests** (**#739**), à qui revient
-d'éprouver en propre la survie à un redémarrage, le run au travail qui ne porte jamais le verdict, et
-l'attente levée par un refus autant que par un accord.
+réveil du §5.2. Le tri à l'écran est dans `apps/web/components/PanneauRunsImmobiles.tsx` (**#738**) —
+un bloc et non un quatrième panneau, la règle des trois places (#539) plafonnant le corps du tableau
+de bord.
+
+Côté **filet**, [`tests/test_souffrance.py`](../tests/test_souffrance.py) (**#739**) porte les trois
+vérifications que le §9 réclamait en propre au lot final, et le §9 se lit désormais dans les deux
+sens : ce qu'il exigeait, ce fichier le nomme section par section. Deux choses qu'il vaut de savoir
+avant d'y toucher. La table des trois attentes y est **redite** plutôt qu'empruntée à
+`tests/test_arbitrage_visible.py` — là-bas les horodatages de suspension sont fixes, ici l'**âge** de
+l'attente est la variable qu'on fait varier autour du seuil —, et ce qui rend le doublon sûr n'est
+pas la discipline mais la **confrontation** à `STATUTS_EXECUTION_EN_ATTENTE`, le mécanisme que #572 a
+conçu pour ça : une quatrième attente fait rougir les deux tables, ou aucune. Et le test du run **au
+travail** prouve son motif sur un échantillon fautif avant de conclure — sans quoi « le verdict est
+`False` » serait vrai de n'importe quel run, c'est-à-dire un ✓ sur une question jamais posée. Le
+versant écran est dans `apps/web/tests/runs-immobiles.test.tsx`, où le verdict est **lu** et jamais
+recalculé : une formule recopiée côté client se périmerait à la première correction du seuil, que le
+§5.4 annonce d'avance.
 
 **Sur la numérotation, et c'est un constat, pas une prévision.** #354 et #647 ont été instruits en
 parallèle de celui-ci et ont **tous deux pris `31`** — `31-decision-surface-ecriture-agents.md` et

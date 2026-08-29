@@ -4,10 +4,16 @@
  * ⚠ Le panneau qu'elle monte s'appelle `PanneauRunsImmobiles` depuis #738, qui lui
  * a confié le **second** verdict de surveillance : les runs qu'on a laissés
  * attendre y sont rangés à côté des runs perdus, sous deux familles nommées et
- * deux gestes distincts. Ce fichier n'en couvre que la première — la couverture du
- * verdict d'attente est le lot #739, comme le reste des tests du chantier — et il
- * a suivi le nom du composant parce qu'un fichier qui garde `PanneauRunsPerdus`
- * enverrait chercher un composant qui n'existe plus.
+ * deux gestes distincts. Le fichier a suivi le nom du composant, parce qu'un
+ * fichier qui garde `PanneauRunsPerdus` enverrait chercher un composant qui
+ * n'existe plus.
+ *
+ * Il couvre donc **les deux familles** depuis #739, en trois temps : la règle des
+ * runs perdus et leur panneau (#351), la règle du second verdict (#738), puis ce
+ * que sa carte rend (#739, dernier bloc). Le versant backend du second verdict est
+ * dans `tests/test_souffrance.py`, et le partage est celui que ce fichier tient
+ * déjà pour le premier — le seuil, ses écarts et le sens du verdict vivent dans
+ * `maestro/controltower/souffrance.py`, jamais recopiés ici.
  *
  * Deux couches, et c'est la première qui porte le sujet. `lib/execution.ts` décide
  * **ce qu'on propose de reprendre** ; le panneau ne fait que le rendre. Une erreur
@@ -35,7 +41,9 @@ import {
   PanneauRunsImmobiles,
   TITRE_RUNS_IMMOBILES,
 } from "@/components/PanneauRunsImmobiles";
+import { ATTENTES } from "@/components/runs/EtatRun";
 import {
+  causeDAttente,
   estEnSouffrance,
   estEteint,
   estOrphelin,
@@ -47,7 +55,9 @@ import {
   CAUSE_ANNULATION,
   CAUSE_EXTINCTION,
   EXECUTION_ANNULEE,
+  EXECUTION_EN_ATTENTE_ARBITRAGE,
   EXECUTION_EN_ATTENTE_BRIEF,
+  EXECUTION_EN_ATTENTE_REPONSES,
   EXECUTION_EN_COURS,
   EXECUTION_TERMINEE,
   VITALITE_INDETERMINE,
@@ -315,7 +325,7 @@ describe("le panneau — ce qu'on voit et ce qu'on déclenche", () => {
 });
 
 /* ------------------------------------------------------------------ *
- * Le second verdict (#738) — le strict nécessaire, le reste au lot #739
+ * Le second verdict (#738) — la règle de tri
  * ------------------------------------------------------------------ */
 
 /**
@@ -336,10 +346,10 @@ function runEnSouffrance(partiel: Partial<ResumeExecution> = {}): ResumeExecutio
 }
 
 /**
- * Ce que ce lot doit garder **maintenant**, la couverture complète étant différée
- * au lot #739 : la règle de tri et la propriété **négative** du critère 2 — pas de
- * carte oui/non. Une propriété négative qu'on n'écrit pas au moment où elle est
- * vraie est une propriété que le prochain lot ajoutera sans s'en apercevoir.
+ * Ce que #738 a gardé **le jour même** : la règle de tri et la propriété
+ * **négative** du critère 2 — pas de carte oui/non. Une propriété négative qu'on
+ * n'écrit pas au moment où elle est vraie est une propriété que le prochain lot
+ * ajoutera sans s'en apercevoir.
  */
 describe("la règle — ce qu'on signale comme laissé en attente", () => {
   it("retient un run vivant que personne n'a fait avancer", () => {
@@ -437,5 +447,110 @@ describe("le panneau — deux familles, deux gestes", () => {
       .map((titre) => titre.textContent ?? "");
     expect(titres[0]).toContain("Personne n'a répondu");
     expect(titres[1]).toContain("Leur hôte s'est tu");
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * La part différée à #739 — ce que la carte d'un run laissé en attente dit
+ * ------------------------------------------------------------------ */
+
+/**
+ * Le pendant, côté écran, de `tests/test_souffrance.py`.
+ *
+ * #738 avait gardé la **règle** de tri et la propriété négative du critère 2 ; ce
+ * qui restait est ce que la carte *rend* — et c'est là que se joue le reproche
+ * d'origine du chantier. Huit endroits affichaient déjà `attente_depuis` sans que
+ * personne sache **ce que** le run attendait ni **si** l'attente était anormale :
+ * une carte qui dirait « en attente · il y a 3 h » sans nommer le geste manquant
+ * reproduirait cet écran-là dans un panneau d'alerte, ce qui serait pire.
+ */
+describe("la carte — ce que le run attend, et depuis quand", () => {
+  it.each([
+    [EXECUTION_EN_ATTENTE_BRIEF, "Brief à valider"],
+    [EXECUTION_EN_ATTENTE_REPONSES, "Questions en attente"],
+    [EXECUTION_EN_ATTENTE_ARBITRAGE, "Validation en attente"],
+  ])("nomme ce que le run attend — %s", (statut, libelle) => {
+    // Le libellé n'est pas réécrit dans le panneau : il vient de la table
+    // `ATTENTES` d'`EtatRun`, sous laquelle le badge, la ligne d'attente et la
+    // liste des runs nomment déjà la même chose. Ce test lit donc la table plutôt
+    // que la chaîne, sinon il figerait ici un vocabulaire qui vit ailleurs — et
+    // deux formulations du même état finiraient par diverger.
+    rendreAvecEtat(
+      <PanneauRunsImmobiles
+        executions={[runEnSouffrance({ statut })]}
+        relancer={vi.fn()}
+      />,
+    );
+
+    const attente = screen.getByRole("list", { name: "Personne n'a répondu" });
+    expect(attente.textContent).toContain(libelle);
+    expect(Object.values(ATTENTES).map((a) => a.libelle)).toContain(libelle);
+  });
+
+  it("couvre les trois attentes du backend, et pas une de moins", () => {
+    // Le filet dont hérite une **quatrième** attente : le backend en tient la
+    // liste (`STATUTS_EXECUTION_EN_ATTENTE`, éprouvée par
+    // `tests/test_souffrance.py`), et `causeDAttente` doit savoir nommer chacune.
+    // Sans cette confrontation, une attente nouvelle tomberait sur le repli
+    // « en attente » — un run signalé sans qu'on sache ce qu'il réclame.
+    const statuts = [
+      EXECUTION_EN_ATTENTE_BRIEF,
+      EXECUTION_EN_ATTENTE_REPONSES,
+      EXECUTION_EN_ATTENTE_ARBITRAGE,
+    ];
+    for (const statut of statuts) {
+      expect(causeDAttente(runEnSouffrance({ statut }), false)).not.toBeNull();
+    }
+  });
+
+  it("dit l'ancienneté à l'œil comme à l'oreille, jamais par le seul glyphe", () => {
+    // Le chrono est une icône, donc muette pour qui écoute : la carte porte le
+    // mot « attend depuis » en `sr-only`. Sans lui, la ligne se lirait « Cadrer la
+    // reprise du CRM · a1b2… · Brief à valider · il y a 15 j », où la dernière
+    // valeur n'est rattachée à rien.
+    rendreAvecEtat(
+      <PanneauRunsImmobiles executions={[runEnSouffrance()]} relancer={vi.fn()} />,
+    );
+
+    expect(
+      screen.getByRole("list", { name: "Personne n'a répondu" }).textContent,
+    ).toContain("attend depuis");
+  });
+
+  it("ne montre aucune ancienneté quand le backend n'en donne pas", () => {
+    // Le cas qu'`en_souffrance` traite en signalant quand même (un horodatage
+    // illisible rend `true`, cf. `souffrance.py`) : le run **doit** rester
+    // affiché, et c'est seulement le « depuis quand » qui manque. Inventer un
+    // repli — « depuis longtemps », ou l'heure de début — dirait un fait qu'on n'a
+    // pas, sur la carte même qui existe pour ne plus rien affirmer de faux.
+    rendreAvecEtat(
+      <PanneauRunsImmobiles
+        executions={[runEnSouffrance({ attente_depuis: null })]}
+        relancer={vi.fn()}
+      />,
+    );
+
+    const attente = screen.getByRole("list", { name: "Personne n'a répondu" });
+    expect(within(attente).getAllByRole("listitem")).toHaveLength(1);
+    expect(attente.textContent).toContain("Brief à valider");
+    expect(attente.textContent).not.toContain("attend depuis");
+  });
+
+  it("ne compte par famille que lorsqu'il y en a deux", () => {
+    // Seule, une famille répète au mot près le compte de l'en-tête, et deux fois
+    // le même nombre à deux lignes d'écart se lit comme deux chiffres. Le compte
+    // par famille n'a de sens qu'**en face de l'autre**.
+    rendreAvecEtat(
+      <PanneauRunsImmobiles
+        executions={[runEnSouffrance(), runEnSouffrance({ run_id: "b2c3d4e5f6a1" })]}
+        relancer={vi.fn()}
+      />,
+    );
+
+    const [chapeau, famille] = screen
+      .getAllByRole("heading")
+      .map((titre) => titre.textContent ?? "");
+    expect(chapeau).toContain("2");
+    expect(famille).toBe("Personne n'a répondu");
   });
 });
