@@ -536,6 +536,24 @@ il n'y a plus de sélecteur d'agent en tête de trois pages différentes.
   agents » ou par **Échap** ; un brouillon commencé se signale avant d'être
   perdu, sur ces deux sorties comme sur la fermeture de l'onglet. Une création
   réussie mène à la fiche de l'agent né, pas à la liste.
+
+  **Deux entrées, une seule création** (#257) : au-dessus des champs, une
+  **intention en une phrase** et un bouton **Générer** — l'assistant propose
+  alors rôle, compétences, playbook et, quand le registre les reconnaît,
+  fournisseur et modèle (`POST /api/catalogue/generation`). Trois choses à
+  ne pas confondre. La proposition arrive **dans les champs**, comme une saisie :
+  elle se relit, se corrige mot à mot, se **régénère** ou s'**abandonne** (le
+  formulaire retrouve alors ce qu'il portait avant) — et **rien n'est
+  enregistré** tant que « Créer l'agent » n'a pas été cliqué, c'est le principe
+  des propositions de playbook ([docs/22](./22-auto-amelioration-playbooks.md))
+  appliqué à la définition entière. Le **fournisseur suggéré est confronté au
+  registre** avant d'atteindre l'écran : un nom que Maestro ne saurait pas
+  résoudre est écarté et le champ reste vide (« réglages par défaut »), jamais
+  rempli d'un nom plausible — c'est la règle que la sonde du poste (#487) tient
+  déjà sur les mêmes deux champs. Et un
+  **échec** — quota, réseau, fournisseur muet ou réponse hors contrat — laisse le
+  formulaire exactement en l'état et le dit : on réessaie, ou on remplit à la
+  main.
 - **Fiche agent**, quatre onglets — l'ordre va de l'identité de l'agent à la
   conversation avec lui :
 

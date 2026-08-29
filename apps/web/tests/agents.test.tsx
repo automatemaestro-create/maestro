@@ -46,11 +46,35 @@ import { ficheCatalogueFactice, navigations, poserChemin } from "./aides";
 // débranché (`setup.ts`), c'est la fixture qui décide de ce qu'elle affiche.
 // `creerAgent` est déclaré parce que l'écran de création l'importe — jamais
 // appelé ici, ces tests portant sur les sorties et non sur le `POST`.
+//
+// ⚠ Ce mock est **complet** (pas d'`importOriginal`) : il prend le pas sur celui
+// de `setup.ts`, donc tout ce que l'écran de création appelle doit être déclaré
+// ici — y compris ce qu'il n'appelle qu'au montage, où l'omission ne se voit ni
+// au lint ni au build. C'est ce qui manquait à `chargerFournisseurs` (#487,
+// appelé par `FormulaireDefinition` dès le premier rendu) : le lot qui l'a
+// introduit et celui qui a amené `CreationAgentEcran` dans ce fichier étaient
+// verts chacun de son côté, et faux ensemble. Il rend ici ce que `setup.ts`
+// rendrait, `poserFournisseurs` compris — deux catalogues factices se
+// contrediraient.
+// `genererDefinitionAgent` (#257) l'accompagne : jamais appelé ici, ces tests ne
+// touchant pas au bouton « Générer », mais un mock qui ne le porterait pas
+// lèverait au premier test qui le fera.
+//
+// L'import de `./aides` est **dans** la factory : `vi.mock` est hoisté au-dessus
+// des imports du fichier, donc une constante importée en tête n'y serait pas
+// encore initialisée.
 const catalogue = vi.hoisted(() => ({ fiches: [] as unknown[] }));
-vi.mock("@/lib/api", () => ({
-  chargerCatalogue: async () => catalogue.fiches,
-  creerAgent: async () => undefined,
-}));
+vi.mock("@/lib/api", async () => {
+  const { fournisseursDuPoste } = await import("./aides");
+  return {
+    chargerCatalogue: async () => catalogue.fiches,
+    chargerFournisseurs: async () => fournisseursDuPoste(),
+    creerAgent: async () => undefined,
+    genererDefinitionAgent: async () => {
+      throw new Error("génération non scriptée dans ce fichier de tests");
+    },
+  };
+});
 
 /** Monte la liste et attend la fin de son chargement différé d'un tick. */
 async function rendreListe(
