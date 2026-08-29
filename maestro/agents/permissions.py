@@ -32,18 +32,26 @@ l'arbitrage), et `ask` l'emporte sur `allow`, donc un outil cité en `ask` est
 arbitré **même** quand une liste `allow` fermée ne le cite pas — sinon le cran
 du milieu serait lettre morte dès qu'une politique ferme sa liste.
 
-Et depuis #586, une entrée `ask` porte **qui la tranche** : `auto`,
-`orchestrateur` ou `humain` (`maestro.decideur`). Le cran est posé ici, à froid
-et versionné avec le dépôt, parce qu'un « et si l'orchestrateur répondait
-lui-même ? » décidé au vol par un LLM ne serait ni traçable ni testable. Deux
-formes se relisent donc pour `ask` — une **liste** (`["Bash"]`, tout `humain` :
-c'est le fichier d'avant ce lot, au bit près) ou un **objet**
-(`{"Bash": "auto"}`) —, et il n'y en a qu'une en écriture : `to_dict` réémet
-toujours l'objet, seule forme qui porte l'information entière. Un cran absent
-vaut `humain` (*un cran non précisé escalade, il ne s'auto-approuve pas*) ; un
-cran **inconnu** est une erreur franche, comme toute politique douteuse — le
-repli tolérant vit chez `decideur_depuis`, pour ce qui se relit après coup et ne
-peut plus être corrigé.
+Et depuis #586, une entrée `ask` porte **qui la tranche** : `auto` ou `humain`
+(`maestro.decideur`). Le cran est posé ici, à froid et versionné avec le dépôt,
+parce qu'un « et si la machine répondait elle-même ? » décidé au vol par un LLM ne
+serait ni traçable ni testable. Deux formes se relisent donc pour `ask` — une
+**liste** (`["Bash"]`, tout `humain` : c'est le fichier d'avant ce lot, au bit
+près) ou un **objet** (`{"Bash": "auto"}`) —, et il n'y en a qu'une en écriture :
+`to_dict` réémet toujours l'objet, seule forme qui porte l'information entière. Un
+cran absent vaut `humain` (*un cran non précisé escalade, il ne s'auto-approuve
+pas*) ; un cran **inconnu** est une erreur franche, comme toute politique douteuse
+— le repli tolérant vit chez `decideur_depuis`, pour ce qui se relit après coup et
+ne peut plus être corrigé.
+
+⚠ Un troisième cran, `orchestrateur`, a été retiré par #715 (décision de cadrage
+#647, [docs/31](../../docs/31-decision-cran-orchestrateur.md)) : il n'avait aucun
+canal en production, et promettait donc une décision là où il rendait un refus.
+Une politique qui l'écrit **échoue franchement au chargement** depuis — c'est le
+versant écriture de l'asymétrie ci-dessus, et il est **acquis sans une ligne à
+tenir** : l'ensemble admissible est `tuple(Decideur)` (`_ask_validee`), donc il
+s'est réduit tout seul en même temps que l'énumération. Ne pas y substituer une
+liste en dur, qui serait un second endroit à tenir d'accord.
 
 **Ce module est devenu le déclencheur de l'arbitrage humain, et le déclencheur
 est l'acte.** C'est le renversement du parent #573 : ce qui suspend un appel est
@@ -517,12 +525,18 @@ def _ask_validee(data: Mapping[str, Any], *, agent: str) -> tuple[EntreeArbitrag
     code qu'avant et rend la même chose.
 
     En **objet**, chaque clé est validée comme une entrée et chaque valeur doit
-    être l'un des trois crans. Un cran inconnu est refusé **avec la liste de ce
+    être l'un des crans admis. Un cran inconnu est refusé **avec la liste de ce
     qui est admis** : c'est le seul message qui évite d'aller chercher les
     valeurs dans le code, et ce fichier est celui d'un garde-fou — on n'en
     applique jamais une version approximative. Le repli tolérant existe, mais
     ailleurs et pour autre chose (`decideur_depuis`, sur ce qui se relit après
     coup et ne peut plus être corrigé).
+
+    ⚠ L'ensemble admis est lu de `tuple(Decideur)`, jamais recopié : c'est ce qui
+    a fait échouer d'office les politiques écrivant `"orchestrateur"` quand #715 a
+    retiré ce cran, sans qu'une seule ligne d'ici ait à bouger. Le message d'erreur
+    se compose de la même source, donc il ne peut pas nommer un cran qui n'existe
+    plus.
     """
     brut = data.get("ask", [])
     if not isinstance(brut, Mapping):

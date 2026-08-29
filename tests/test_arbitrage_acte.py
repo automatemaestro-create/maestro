@@ -23,10 +23,17 @@ et ont différé le reste ici. Ce fichier porte ce reste, en trois blocs :
    le fail-safe **sur ce chemin-là** (second critère du ticket). C'est le canal le
    plus récent et le seul qui reparte *vers* l'agent : il n'invente aucun garde-fou,
    il atteint le même `Guardrails.demande_validation`, donc le même refus par défaut.
-   Ce qui le distingue est sa **provenance**, portée par un champ — et le ticket
-   demande que l'orchestrateur ne puisse jamais approuver à la place d'une personne :
-   une demande d'agent ne portant aucun cran, elle retombe sur `humain`, donc le
-   canal de l'orchestrateur n'est pas sur son chemin.
+   Ce qui le distingue est sa **provenance**, portée par un champ — et une demande
+   d'agent ne portant **aucun cran** (elle ne vient pas d'une politique), elle
+   retombe sur `humain`, le défaut.
+
+   ⚠ Ce chemin portait un test de plus, du temps où un cran `orchestrateur`
+   existait : on y câblait une machine qui approuve tout pour vérifier qu'elle
+   n'était **pas consultée**. #715 a retiré ce cran et son canal, donc il n'y a
+   plus rien à ne pas consulter — la garantie tient faute de sujet, et ce qui la
+   portait vraiment reste éprouvé deux fois ici : le défaut d'une demande d'agent
+   (`test_le_cran_par_defaut_d_une_demande_est_humain`) et le fail-safe sans
+   validateur juste au-dessus.
 
 Aucun appel réseau : plans constants, fournisseurs factices, dépôts sur répertoire
 temporaire. Le harnais est celui de `tests/test_permissions.py` — mêmes doubles,
@@ -194,17 +201,6 @@ class ValidateurEnregistreur:
     def __call__(self, demande: DemandeValidation) -> bool:
         self.demandes.append(demande)
         return self.decision
-
-
-class _Mouchard:
-    """Un canal de décision qui approuverait tout, et qui compte ses appels."""
-
-    def __init__(self) -> None:
-        self.vues: list[DemandeValidation] = []
-
-    def __call__(self, demande: DemandeValidation) -> bool:
-        self.vues.append(demande)
-        return True
 
 
 def _ecrire_politique(racine: Path, agent: str, politique: dict) -> None:
@@ -512,29 +508,6 @@ def test_sans_validateur_la_demande_de_l_agent_est_refusee(store):
     # Et un refus ne condamne pas la tâche : ce serait punir la prudence de
     # l'agent qui a levé la main.
     assert all(r.ok for r in report.resultats)
-
-
-def test_l_orchestrateur_ne_repond_pas_a_la_place_d_un_humain_sur_ce_canal(store):
-    """Le second critère du ticket, sur le canal le plus récent.
-
-    Une demande d'agent ne porte **aucun cran** — elle n'en a pas à porter, elle
-    ne vient pas d'une politique — donc elle retombe sur `humain`, le défaut. La
-    garantie n'est alors pas une vérification qu'on aurait pu oublier d'écrire :
-    le canal de l'orchestrateur n'est pas sur le chemin, et il n'est pas consulté
-    du tout. On câble un orchestrateur qui approuverait n'importe quoi, et on
-    vérifie qu'il n'a rien vu.
-    """
-    orchestrateur = _Mouchard()
-    provider = LeveLaMain()
-
-    asyncio.run(
-        _moteur(provider, store, Guardrails(orchestrateur=orchestrateur), PLAN_568).run(
-            OBJECTIF_568, journal=RunJournal(run_id="run-agent-orchestrateur")
-        )
-    )
-
-    assert all(not approuve for approuve, _ in provider.lu)
-    assert orchestrateur.vues == []
 
 
 def test_le_cran_par_defaut_d_une_demande_est_humain():
