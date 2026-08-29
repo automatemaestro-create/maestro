@@ -728,11 +728,35 @@ export type RevocationAdmissionMcp = {
  * profil expose est permis ; `ask` suspend l'appel le temps qu'une personne
  * tranche — l'outil n'est pas interdit, il est arbitré. Une politique écrite
  * avant #580 arrive avec `ask` vide, donc sous le régime d'hier.
+ *
+ * ⚠ `ask` est un **objet** `{outil: décideur}` et non une liste : depuis #586
+ * une entrée arbitrée porte **qui la tranche** (`auto` ou `humain`), et
+ * `PolitiqueOutils.to_dict` n'émet que cette forme-là — y compris quand toutes
+ * ses entrées sont au défaut. Le type disait `string[]` jusqu'à #262, si bien
+ * que l'écran plantait à la première politique servie ; la lecture, elle,
+ * accepte encore les deux formes côté API.
  */
 export type PolitiquePermissions = {
   allow: string[];
-  ask: string[];
+  ask: Record<string, string>;
   deny: string[];
+};
+
+/**
+ * Un outil **réellement exposé** à un agent (`permissions_outils`, #262) : de
+ * quoi suggérer une entrée de politique au lieu d'en faire retrouver le nom
+ * exact ailleurs. `origine` dit d'où il vient — `integre` (outil du profil du
+ * rôle), `maestro` (un verbe du serveur in-process : arbitrage, blocage,
+ * courrier) ou `mcp` (un serveur MCP monté pour l'agent, cité en entier, donc
+ * couvrant tous ses outils).
+ *
+ * Une suggestion ne restreint rien : un outil MCP précis se désigne à la
+ * frappe, et seule la **forme** de l'entrée est jugée à l'écriture.
+ */
+export type OutilExpose = {
+  nom: string;
+  origine: string;
+  libelle: string;
 };
 
 /**
@@ -772,8 +796,11 @@ export type ReglagesModele = {
  * la cause si le pool stocké est invalide, et `mcp_activations` les ids du pool
  * **activés** pour cet agent — de quoi remplacer l'affichage lecture seule par
  * des interrupteurs par agent. `permissions` (#110) porte la politique
- * allow/deny effective appliquée à l'exécution (null : aucune politique — tout
- * permis) ; `permissions_erreur` la cause si la politique stockée est invalide.
+ * allow/ask/deny effective appliquée à l'exécution (null : aucune politique —
+ * tout permis) ; `permissions_erreur` la cause si la politique stockée est
+ * invalide, et `permissions_outils` (#262) les outils réellement exposés à
+ * l'agent, servis avec la fiche pour que l'écran suggère ce qu'il y a à
+ * désigner.
  * `effort` (#253) est le niveau d'effort demandé au modèle (null : aucun
  * réglage — le régime par défaut du fournisseur) ; ce que le fournisseur retenu
  * admet se lit sur `GET /api/fournisseurs`, jamais dans une liste écrite ici.
@@ -797,6 +824,7 @@ export type AgentCatalogue = {
   mcp_activations: string[];
   permissions: PolitiquePermissions | null;
   permissions_erreur: string | null;
+  permissions_outils: OutilExpose[];
 };
 
 /** La fiche avec sa définition complète (`GET /api/catalogue/{nom}`). */

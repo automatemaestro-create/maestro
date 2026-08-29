@@ -358,6 +358,38 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   d'accord auraient défait ce que #255 venait d'unifier. Enfin `MAESTRO_MODEL`
   **prime** sur une surcharge de modèle, comme il prime sur celui d'un agent
   personnalisé — c'est une bascule globale — mais ne touche pas à l'effort ;
+- **Les permissions d'un agent s'éditent** (#262, lot 10 de #243, onglet **MCP &
+  permissions**) : la politique allow/ask/deny que le moteur applique à
+  l'exécution se règle depuis la fiche (`PUT /api/permissions/<agent>`, source
+  `core/permissions/<agent>.json`), là où il fallait éditer le fichier à la main
+  puis relancer. `allow` et `deny` sont deux `ChampJetons` (#256) — la brique
+  était là, il n'y avait qu'à s'en servir — nourris par les outils **réellement
+  exposés** à cet agent, servis avec la fiche (`permissions_outils` : ceux de son
+  profil, les verbes du serveur `maestro`, ses serveurs MCP montés). Cinq choses
+  portent le lot. Chaque geste **écrit**, sans bouton « Enregistrer » et comme
+  les interrupteurs MCP juste au-dessus, l'état local ne bougeant qu'**après**
+  l'accord de l'API : une entrée refusée s'efface d'elle-même en laissant à
+  l'écran le motif du dépôt, qui **nomme la liste et l'entrée** — un « politique
+  refusée » de notre cru n'apprendrait rien. On **suggère sans restreindre**
+  (règle de #256 et des champs de #487) : un outil MCP précis se désigne à la
+  frappe, et ce que rien d'exposé n'explique est *signalé* — jamais refusé, un
+  serveur désactivé depuis et une faute de frappe se ressemblant ici. La règle de
+  portée qui décide de ce signalement vit dans `lib/permissions.ts` et non dans
+  le JSX : un préfixe qui ne vaut qu'aux frontières `__` ne se voit ni au lint,
+  ni au typage, ni à l'écran (`mcp__slack` ne dit rien de `mcp__slackbot`), et
+  c'est le pendant exact de `_correspond` côté moteur. Une politique **invalide**
+  reste diagnostiquée comme avant — et se **corrige d'ici** : elle n'est
+  appliquée à rien tant qu'elle est illisible, l'écriture ne relit pas ce qu'elle
+  remplace, donc « Repartir d'une politique vide » débloque l'écran là où un
+  aller-retour échouerait sur le fichier même qu'on répare. Enfin `ask`
+  s'**affiche mais ne s'édite pas** : une entrée arbitrée porte **qui la tranche**
+  (#586), un cran qui se pose à froid — l'ajouter à moitié la ferait retomber en
+  silence sur le défaut, qui est le plus fermé des deux. ⚠ Au passage, la section
+  **rendait `ask` comme une liste** (`entrees.length`, `entrees.map`) alors que
+  `PolitiqueOutils.to_dict` l'émet en **objet** depuis #586 — donc une
+  `TypeError` au rendu dès qu'un agent avait une politique, `ask` vide comprise,
+  puisque l'objet est toujours servi. Le type le disait `string[]`, ce qui l'a
+  rendu invisible au typage ; il dit désormais `Record<string, string>` ;
 - **Chat par agent** (#85, lot 2 de #82) : l'onglet **Chat** d'une fiche agent
   ouvre le fil de conversation avec lui (#84, API `/api/chat`) — envoi,
   réponse de l'agent (cadrée par son playbook courant) et réception en temps

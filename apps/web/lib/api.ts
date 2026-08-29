@@ -35,6 +35,7 @@ import type {
   PasSerie,
   PlaybookDetail,
   PlaybookFiche,
+  PolitiquePermissions,
   PoolMcp,
   Projet,
   PropositionPlaybook,
@@ -993,6 +994,27 @@ export function definirActivationsMcp(
     `/api/mcp/activations/${encodeURIComponent(agent)}`,
     { integrations },
     "activation refusée",
+    "PUT",
+  );
+}
+
+/**
+ * Écrit la politique de permissions d'un agent (`PUT /api/permissions/{agent}`,
+ * #262) : remplacement intégral des trois listes, écrit dans
+ * `core/permissions/<agent>.json` et relu à chaud par le moteur.
+ *
+ * Le refus d'une entrée mal formée arrive **motivé** (422, la cause exacte du
+ * dépôt) : c'est ce texte que la section affiche, il nomme la liste et l'entrée
+ * en faute. Le message par défaut ne sert donc qu'aux refus sans corps.
+ */
+export function definirPermissions(
+  agent: string,
+  politique: PolitiquePermissions,
+): Promise<void> {
+  return envoyerJson(
+    `/api/permissions/${encodeURIComponent(agent)}`,
+    politique,
+    "politique refusée",
     "PUT",
   );
 }

@@ -561,7 +561,7 @@ il n'y a plus de sélecteur d'agent en tête de trois pages différentes.
 | --- | --- | --- |
 | 🤖 **Profil** | identité (nom, rôle, modèle, compétences/tags), prompt système éditable, statistiques (tâches traitées, taux de réussite, coût moyen) ; suppression d'un agent personnalisé | page `/catalogue` |
 | 📖 **Playbook** | éditeur avec **historique des versions** et retour arrière (EF-25). L'historique porte aussi les **propositions d'auto-amélioration** en attente — brouillons issus des échecs d'un run, à appliquer ou rejeter au clic ([docs/22](./22-auto-amelioration-playbooks.md)) | page `/playbooks` |
-| 🔌 **MCP & permissions** | serveurs MCP de l'agent et politique allow/deny effective ([docs/21](./21-configuration-mcp.md)) | n'avait aucune page à soi — seulement le bas de la fiche du catalogue |
+| 🔌 **MCP & permissions** | serveurs MCP de l'agent (interrupteur par intégration du pool, #133) et **politique allow/ask/deny éditable** (#262) : `allow` et `deny` s'ajoutent et se retirent entrée par entrée, les outils réellement exposés à l'agent en suggestion, `ask` affichée avec son décideur ([docs/21](./21-configuration-mcp.md), `core/permissions/README.md`) | n'avait aucune page à soi — seulement le bas de la fiche du catalogue |
 | 💬 **Chat** | conversation directe avec l'agent (EF-19) | page `/chat/<agent>` |
 
 L'**activation/désactivation** et le **contrôle de capacité** (**+ / −**
