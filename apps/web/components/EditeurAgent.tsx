@@ -50,9 +50,11 @@ import {
 import { formatDateHeure } from "@/lib/format";
 import {
   AGENT_SOURCE_DEFAUT,
+  type AgentCatalogue,
   type AgentCatalogueDetail,
   type CatalogueFournisseurs,
   type DefinitionAgent,
+  type FournisseurCatalogue,
   type IntegrationPoolMcp,
   type ServeurMcp,
 } from "@/lib/types";
@@ -63,10 +65,19 @@ import { Interrupteur } from "./parametres/SectionParametres";
 const SLUG_NOM = /^[a-z0-9][a-z0-9_-]*$/;
 
 /**
- * Les champs du formulaire. Les compétences y sont une **liste** depuis #256, et
- * plus la chaîne virgulée d'avant : c'est la saisie qui change de forme, pas le
- * contrat d'API (`DefinitionAgent.competences` reste une liste de chaînes — elle
- * l'a toujours été, la chaîne n'existait qu'ici, entre la frappe et l'envoi).
+ * Les champs du formulaire.
+ *
+ * `fournisseur`, `modele` et `effort` sont **liés** depuis #255 : le premier
+ * borne ce que le deuxième offre, et le deuxième décide si le troisième existe.
+ * La chaîne vide y vaut « rien de choisi », que `definitionDepuis` rend en
+ * `null` — le **défaut légitime** d'un agent qui suit le fournisseur et le
+ * modèle de l'exécution (`MAESTRO_PROVIDER`\`MAESTRO_MODEL`), et non un trou de
+ * configuration : les listes l'offrent explicitement.
+ *
+ * Les `competences` sont une **liste** depuis #256, et plus la chaîne virgulée
+ * d'avant : c'est la saisie qui change de forme, pas le contrat d'API
+ * (`DefinitionAgent.competences` a toujours été une liste de chaînes — la
+ * chaîne n'existait qu'ici, entre la frappe et l'envoi).
  */
 type Champs = {
   role: string;
@@ -74,6 +85,7 @@ type Champs = {
   playbook: string;
   modele: string;
   fournisseur: string;
+  effort: string;
 };
 
 const CHAMPS_VIERGES: Champs = {
@@ -82,6 +94,7 @@ const CHAMPS_VIERGES: Champs = {
   playbook: "",
   modele: "",
   fournisseur: "",
+  effort: "",
 };
 
 function champsDepuis(fiche: AgentCatalogueDetail): Champs {
@@ -91,6 +104,7 @@ function champsDepuis(fiche: AgentCatalogueDetail): Champs {
     playbook: fiche.playbook,
     modele: fiche.modele ?? "",
     fournisseur: fiche.fournisseur ?? "",
+    effort: fiche.effort ?? "",
   };
 }
 
@@ -104,6 +118,7 @@ function definitionDepuis(champs: Champs): DefinitionAgent {
     playbook: champs.playbook,
     modele: champs.modele.trim() || null,
     fournisseur: champs.fournisseur.trim() || null,
+    effort: champs.effort.trim() || null,
   };
 }
 
@@ -161,41 +176,150 @@ function useCataloguePoste(): CatalogueFournisseurs | null {
 }
 
 /**
- * Le vocabulaire des compétences **déjà en usage** dans le catalogue (#256).
+ * Le catalogue d'agents, lu **une fois** pour ce formulaire (#255, #256).
  *
- * Même contrat que `useCataloguePoste` juste au-dessus, et pour la même raison :
- * il **propose**, il ne restreint pas. Un échec ne remonte nulle part — mais il
- * rend `null` et non `[]`, et la nuance porte tout le signalement : une liste
- * vide dirait « le catalogue ne connaît aucune compétence », donc *toutes* les
- * compétences saisies seraient inédites, donc l'écran alerterait sur chacune.
- * `null` dit « on ne sait pas », et on se tait (`inedites`).
+ * Deux champs en vivent, et c'est la raison de ce hook unique plutôt que d'un
+ * par usage : le **rôle** y prend les rôles déjà portés (#255), les
+ * **compétences** le vocabulaire déjà en usage (#256). Deux hooks, ce serait
+ * deux `GET /api/catalogue` par montage pour une réponse identique.
+ *
+ * Best-effort, comme `useCataloguePoste` : sans catalogue, les deux champs
+ * restent ce qu'ils étaient, en saisie libre. Ce sont des listes **alimentées**
+ * et non fermées — un rôle comme une compétence inédits doivent rester
+ * saisissables —, d'où des suggestions et jamais un `<select>`.
+ *
+ * ⚠ Il rend `null` et non `[]` tant que la lecture n'a pas abouti, et la nuance
+ * porte tout le signalement de #256 : une liste vide dirait « le catalogue ne
+ * connaît aucune compétence », donc *toutes* celles saisies seraient inédites,
+ * donc l'écran alerterait sur chacune. `null` dit « on ne sait pas », et on se
+ * tait (`inedites`).
  */
-function useVocabulaireCompetences(): string[] | null {
-  const [vocabulaire, setVocabulaire] = useState<string[] | null>(null);
+function useCatalogueAgents(): AgentCatalogue[] | null {
+  const [fiches, setFiches] = useState<AgentCatalogue[] | null>(null);
   useEffect(() => {
     let vivant = true;
     void chargerCatalogue()
-      .then((fiches) => {
-        if (vivant) setVocabulaire(vocabulaireDuCatalogue(fiches));
+      .then((recu) => {
+        if (vivant) setFiches(recu);
       })
       .catch(() => {
-        // Sans catalogue, le champ reste un champ à jetons sans suggestions ni
-        // signalement. Rien à dire : l'utilisateur n'a rien demandé.
+        // Sans catalogue, les deux champs sont ceux d'avant : saisie libre,
+        // aucune suggestion, aucun signalement. Personne n'a rien demandé.
       });
     return () => {
       vivant = false;
     };
   }, []);
-  return vocabulaire;
+  return fiches;
 }
 
-/** Les modèles vus **sur ce poste**, dédoublonnés dans l'ordre du catalogue. */
-function modelesDuPoste(catalogue: CatalogueFournisseurs | null): string[] {
-  const vus = new Set<string>();
-  for (const fournisseur of catalogue?.fournisseurs ?? []) {
-    for (const modele of fournisseur.modeles_ici) vus.add(modele);
+/**
+ * Les **rôles connus** — ceux que portent les agents du catalogue (#255).
+ *
+ * La source est `GET /api/catalogue` et rien d'autre : les rôles ne sont
+ * déclarés nulle part ailleurs, et une liste écrite ici serait une seconde
+ * définition qui dériverait au premier agent créé.
+ */
+function rolesConnus(fiches: AgentCatalogue[] | null): string[] {
+  const vus: string[] = [];
+  for (const fiche of fiches ?? []) {
+    const role = fiche.role.trim();
+    if (role !== "" && !vus.includes(role)) vus.push(role);
   }
-  return [...vus];
+  return vus;
+}
+
+/** Un modèle proposé par le champ, et d'où il vient (gamme annoncée ou poste). */
+type OptionModele = { nom: string; libelle: string; ici: boolean };
+
+/** La fiche du fournisseur choisi, ou `null` (aucun choix, ou hors registre). */
+function fournisseurDe(
+  catalogue: CatalogueFournisseurs | null,
+  nom: string,
+): FournisseurCatalogue | null {
+  if (!catalogue || nom === "") return null;
+  return catalogue.fournisseurs.find((f) => f.nom === nom) ?? null;
+}
+
+/**
+ * Les modèles que le champ **offre**, pour le fournisseur choisi — critère 2 :
+ * « le modèle n'offre que les siens ».
+ *
+ * Deux moitiés qui ne se confondent pas, comme partout dans ce catalogue : la
+ * **gamme annoncée** par le registre (`modeles`, avec son libellé lisible) puis
+ * ce que la **sonde a vu ici** pour ce fournisseur (`modeles_ici`) et que la
+ * gamme ne nommait pas — un serveur local sert des modèles que personne n'a
+ * listés.
+ *
+ * Sans fournisseur choisi, l'offre reste celle d'avant #255 : ce que le poste
+ * sert, tous fournisseurs confondus. Ce n'est pas une exception à la règle mais
+ * sa lecture exacte — « les siens » suppose un « il », et l'agent qui n'en
+ * nomme aucun suit celui de l'exécution.
+ */
+function modelesOfferts(
+  catalogue: CatalogueFournisseurs | null,
+  nomFournisseur: string,
+): OptionModele[] {
+  if (!catalogue) return [];
+  if (nomFournisseur === "") {
+    const offerts: OptionModele[] = [];
+    for (const fournisseur of catalogue.fournisseurs) {
+      for (const modele of fournisseur.modeles_ici) {
+        if (!offerts.some((o) => o.nom === modele)) {
+          offerts.push({ nom: modele, libelle: modele, ici: true });
+        }
+      }
+    }
+    return offerts;
+  }
+  const fournisseur = fournisseurDe(catalogue, nomFournisseur);
+  if (!fournisseur) return [];
+  const offerts: OptionModele[] = fournisseur.modeles.map((modele) => ({
+    nom: modele.nom,
+    libelle: modele.libelle || modele.nom,
+    ici: fournisseur.modeles_ici.includes(modele.nom),
+  }));
+  for (const modele of fournisseur.modeles_ici) {
+    if (!offerts.some((o) => o.nom === modele)) {
+      offerts.push({ nom: modele, libelle: modele, ici: true });
+    }
+  }
+  return offerts;
+}
+
+/**
+ * Les efforts admis **sur ce modèle** — miroir exact de
+ * `ModelProvider.efforts_admis` : vide pour un modèle **hors gamme**, parce
+ * qu'on ne sait rien de ce qu'il accepte et que supposer serait le seul moyen
+ * d'envoyer un réglage qu'un endpoint refuserait.
+ *
+ * Vide aussi tant qu'aucun fournisseur n'est choisi : l'effort se règle sur le
+ * modèle d'un fournisseur nommé, et c'est l'exécution qui tranchera pour un
+ * agent qui suit ses défauts.
+ */
+function effortsDe(
+  catalogue: CatalogueFournisseurs | null,
+  nomFournisseur: string,
+  nomModele: string,
+): string[] {
+  const fournisseur = fournisseurDe(catalogue, nomFournisseur);
+  if (!fournisseur || nomModele === "") return [];
+  return fournisseur.modeles.find((m) => m.nom === nomModele)?.efforts ?? [];
+}
+
+/** L'effort gardé s'il reste admis, sinon vide — jamais un réglage impossible. */
+function effortRetenu(
+  catalogue: CatalogueFournisseurs | null,
+  nomFournisseur: string,
+  nomModele: string,
+  effort: string,
+): string {
+  // Catalogue pas encore arrivé : on ne juge pas, on garde. Vider ici
+  // effacerait le réglage d'une fiche au premier rendu, avant toute question.
+  if (effort === "" || !catalogue) return effort;
+  return effortsDe(catalogue, nomFournisseur, nomModele).includes(effort)
+    ? effort
+    : "";
 }
 
 /**
@@ -315,7 +439,29 @@ function SignalementInedites({
   );
 }
 
-/** Les champs communs de la définition (création comme modification). */
+/**
+ * Les champs communs de la définition (création comme modification).
+ *
+ * Depuis #255 quatre d'entre eux sont **liés**, et l'ordre à l'écran est celui
+ * de la dépendance : rôle, puis **fournisseur → modèle → effort**. Chaque
+ * maillon borne le suivant, si bien qu'on ne peut plus composer une
+ * configuration qui n'existe pas.
+ *
+ * ⚠ Le fournisseur est passé du champ libre de #487 à un `<select>`, et c'est
+ * un renversement assumé plutôt qu'un oubli : l'argument de #487 — « la sonde
+ * suggère, elle ne restreint pas » — portait sur le **modèle**
+ * (`OpenAICompatProvider.supports` accepte tout nom non vide, un endpoint sert
+ * ce qu'il veut), jamais sur le fournisseur, dont le **registre est
+ * exhaustif** : un nom qui n'y est pas ne s'exécute pas, donc le laisser saisir
+ * n'offrait que la faute de frappe. Le modèle, lui, garde sa saisie libre
+ * **quand le fournisseur l'admet** (`modeles_libres`) — les deux champs du
+ * contrat se lisent ensemble, et c'est ce qui décide de la forme du champ.
+ *
+ * Les **compétences**, elles, sont passées de la chaîne virgulée au champ à
+ * jetons (#256) : elles ne bornent rien et ne sont bornées par rien — c'est un
+ * vocabulaire ouvert, pas une chaîne de dépendances —, d'où des suggestions et
+ * un signalement plutôt qu'une liste fermée.
+ */
 function FormulaireDefinition({
   champs,
   setChamps,
@@ -326,33 +472,253 @@ function FormulaireDefinition({
   desactive: boolean;
 }) {
   const catalogue = useCataloguePoste();
-  const vocabulaire = useVocabulaireCompetences();
+  // Une seule lecture du catalogue d'agents, deux usages : les rôles (#255) et
+  // le vocabulaire des compétences (#256).
+  const fiches = useCatalogueAgents();
+  const roles = rolesConnus(fiches);
+  const vocabulaire = fiches === null ? null : vocabulaireDuCatalogue(fiches);
+  /**
+   * Ce qu'un changement de fournisseur a **retiré**, en toutes lettres. Vider un
+   * champ sans le dire serait la moitié muette du critère 2 : c'est le
+   * « visiblement » qui distingue l'invalidation du sabotage silencieux.
+   *
+   * On retient **ce qui a été vidé** et pas seulement la phrase, pour que
+   * l'annonce cesse d'elle-même dès que ce n'est plus vrai — « Annuler les
+   * modifications » restaure les champs sans passer par ce composant, et un
+   * message qui survivrait à la restauration dirait le contraire de l'écran.
+   */
+  const [invalidation, setInvalidation] = useState<{
+    texte: string;
+    modele: string;
+    effort: string;
+  } | null>(null);
+  const invalidationVisible =
+    invalidation !== null &&
+    (invalidation.modele === "" || champs.modele === "") &&
+    (invalidation.effort === "" || champs.effort === "");
   // Deux formulaires peuvent cohabiter sur la page (création + fiche) : des
   // identifiants dérivés, jamais écrits en dur — deux `<datalist>` de même id
   // rendraient les suggestions de l'un dans l'autre.
   const prefixe = useId();
-  const idFournisseurs = `${prefixe}-fournisseurs`;
   const idModeles = `${prefixe}-modeles`;
+  const idRoles = `${prefixe}-roles`;
   const idPoste = `${prefixe}-poste`;
   const idCompetences = `${prefixe}-competences`;
-  const modeles = modelesDuPoste(catalogue);
   const inconnues = inedites(champs.competences, vocabulaire);
+
+  const fournisseur = fournisseurDe(catalogue, champs.fournisseur);
+  const modeles = modelesOfferts(catalogue, champs.fournisseur);
+  const efforts = effortsDe(catalogue, champs.fournisseur, champs.modele);
+  // Gamme **fermée** : le champ devient un `<select>`, rien d'autre n'étant
+  // recevable. Gamme libre (le cas des deux fournisseurs d'aujourd'hui) : une
+  // liste qui propose sans interdire.
+  const modeleFerme = fournisseur !== null && !fournisseur.modeles_libres;
+  // Une valeur stockée que le registre ne connaît plus reste **représentable** :
+  // sans cette option, ouvrir la fiche d'un agent réécrirait sa définition en
+  // silence au premier enregistrement — une perte de données déguisée en menu.
+  const fournisseurInconnu =
+    catalogue !== null && champs.fournisseur !== "" && fournisseur === null;
+
+  /**
+   * Changer de fournisseur, et **invalider ce qui devient impossible** (critère 2).
+   *
+   * Un modèle que le nouveau fournisseur n'offre pas est retiré, jamais laissé
+   * en place : `claude-opus-5` conservé après un passage à `openai` est
+   * exactement « une configuration qui n'existe pas ». L'effort suit son
+   * modèle, faute de quoi il resterait un réglage orphelin que l'exécution
+   * écarterait sans rien dire (`ModelProvider.effort_admis`).
+   */
+  const changerFournisseur = (nom: string) => {
+    const suivant: Champs = { ...champs, fournisseur: nom };
+    const retires: string[] = [];
+    let modeleRetire = "";
+    let effortRetire = "";
+    // Tant que le catalogue n'est pas là, on ne juge rien : on ne sait pas
+    // encore ce que ce fournisseur offre. Et « aucun fournisseur » n'invalide
+    // aucun modèle — c'est l'exécution qui tranchera.
+    if (catalogue !== null && nom !== "" && champs.modele !== "") {
+      if (!modelesOfferts(catalogue, nom).some((m) => m.nom === champs.modele)) {
+        modeleRetire = champs.modele;
+        retires.push(`le modèle « ${champs.modele} »`);
+        suivant.modele = "";
+      }
+    }
+    suivant.effort = effortRetenu(catalogue, nom, suivant.modele, champs.effort);
+    if (suivant.effort !== champs.effort) {
+      effortRetire = champs.effort;
+      retires.push(`l’effort « ${champs.effort} »`);
+    }
+    setInvalidation(
+      retires.length > 0
+        ? {
+            texte:
+              `${retires.join(" et ")} — ${
+                nom === "" ? "sans objet ici" : `impossible chez « ${nom} »`
+              }. ` +
+              (fournisseurDe(catalogue, nom)?.modeles_libres
+                ? "Un autre nom reste saisissable."
+                : "Choisissez-en un dans la liste."),
+            modele: modeleRetire,
+            effort: effortRetire,
+          }
+        : null,
+    );
+    setChamps(suivant);
+  };
+
+  /** Changer de modèle : l'effort ne survit que si le nouveau modèle l'admet. */
+  const changerModele = (nom: string) => {
+    setInvalidation(null);
+    setChamps({
+      ...champs,
+      modele: nom,
+      effort: effortRetenu(catalogue, champs.fournisseur, nom, champs.effort),
+    });
+  };
+
   return (
     <div className="flex flex-col gap-3">
-      <label className={CLASSE_LIBELLE + " sm:max-w-sm"}>
-        Rôle
-        <input
-          type="text"
-          value={champs.role}
-          onChange={(e) => setChamps({ ...champs, role: e.target.value })}
-          disabled={desactive}
-          placeholder="Développeur front"
-          className={CLASSE_CHAMP}
-        />
-      </label>
-      {/* Hors de la grille à deux colonnes : un champ à jetons porte ses jetons,
-          ses suggestions et son signalement, donc une hauteur qui n'a rien à
-          voir avec celle d'une saisie sur une ligne. */}
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className={CLASSE_LIBELLE}>
+          Rôle
+          <input
+            type="text"
+            value={champs.role}
+            onChange={(e) => setChamps({ ...champs, role: e.target.value })}
+            disabled={desactive}
+            placeholder="Développeur front"
+            list={roles.length > 0 ? idRoles : undefined}
+            className={CLASSE_CHAMP}
+          />
+          {roles.length > 0 && (
+            // Une liste **alimentée**, jamais fermée : un rôle inédit se saisit
+            // tel quel, et c'est ce que le critère 1 demande explicitement.
+            <datalist id={idRoles}>
+              {roles.map((role) => (
+                <option key={role} value={role} />
+              ))}
+            </datalist>
+          )}
+        </label>
+        <label className={CLASSE_LIBELLE}>
+          Fournisseur
+          <select
+            value={champs.fournisseur}
+            onChange={(e) => changerFournisseur(e.target.value)}
+            disabled={desactive}
+            aria-describedby={catalogue ? idPoste : undefined}
+            className={CLASSE_CHAMP + " font-mono"}
+          >
+            {/* Le défaut légitime, offert explicitement (note du ticket) : un
+                agent sans fournisseur propre suit celui de l'exécution. */}
+            <option value="">— défaut de l’exécution</option>
+            {/* Seuls les fournisseurs du **registre** sont proposés : un outil
+                trouvé ici que Maestro ne sait pas piloter est montré par
+                `ResumeDuPoste`, jamais suggéré — le proposer serait le seul vrai
+                mensonge possible de cet écran. */}
+            {(catalogue?.fournisseurs ?? []).map((f) => (
+              <option key={f.nom} value={f.nom}>
+                {f.nom} — {f.present_ici ? SUPPORTE_ICI : SUPPORTE_AILLEURS}
+              </option>
+            ))}
+            {fournisseurInconnu && (
+              <option value={champs.fournisseur}>
+                {champs.fournisseur} — inconnu du registre
+              </option>
+            )}
+          </select>
+        </label>
+        <label className={CLASSE_LIBELLE}>
+          Modèle
+          {modeleFerme ? (
+            <select
+              value={champs.modele}
+              onChange={(e) => changerModele(e.target.value)}
+              disabled={desactive}
+              aria-describedby={catalogue ? idPoste : undefined}
+              className={CLASSE_CHAMP + " font-mono"}
+            >
+              <option value="">— défaut de l’exécution</option>
+              {modeles.map((modele) => (
+                <option key={modele.nom} value={modele.nom}>
+                  {modele.libelle}
+                  {modele.ici ? " — servi ici" : ""}
+                </option>
+              ))}
+              {champs.modele !== "" &&
+                !modeles.some((m) => m.nom === champs.modele) && (
+                  <option value={champs.modele}>
+                    {champs.modele} — hors gamme
+                  </option>
+                )}
+            </select>
+          ) : (
+            <>
+              <input
+                type="text"
+                value={champs.modele}
+                onChange={(e) => changerModele(e.target.value)}
+                disabled={desactive}
+                placeholder="claude-sonnet-5"
+                list={modeles.length > 0 ? idModeles : undefined}
+                aria-describedby={catalogue ? idPoste : undefined}
+                className={CLASSE_CHAMP + " font-mono"}
+              />
+              {modeles.length > 0 && (
+                <datalist id={idModeles}>
+                  {modeles.map((modele) => (
+                    <option
+                      key={modele.nom}
+                      value={modele.nom}
+                      label={modele.ici ? "servi ici" : modele.libelle}
+                    />
+                  ))}
+                </datalist>
+              )}
+            </>
+          )}
+        </label>
+        {/* Le sélecteur d'effort n'existe que si le modèle en admet (critère 3) :
+            un modèle hors gamme n'annonce rien, donc le champ disparaît plutôt
+            que d'offrir un réglage que l'exécution écarterait. */}
+        {efforts.length > 0 && (
+          <label className={CLASSE_LIBELLE}>
+            Effort
+            <select
+              value={champs.effort}
+              onChange={(e) =>
+                setChamps({ ...champs, effort: e.target.value })
+              }
+              disabled={desactive}
+              className={CLASSE_CHAMP + " font-mono"}
+            >
+              {/* La valeur par défaut du sélecteur : aucun réglage, donc le
+                  régime par défaut du fournisseur — ce que `effort: null` veut
+                  dire de bout en bout. */}
+              <option value="">— défaut du fournisseur</option>
+              {efforts.map((effort) => (
+                <option key={effort} value={effort}>
+                  {effort}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+      </div>
+      {invalidationVisible && invalidation && (
+        <p
+          role="status"
+          className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300"
+        >
+          {invalidation.texte}
+        </p>
+      )}
+      <ResumeDuPoste catalogue={catalogue} id={idPoste} />
+      {/* Hors de la grille, et après la chaîne fournisseur → modèle → effort :
+          un champ à jetons porte ses jetons, ses suggestions et son
+          signalement, donc une hauteur qui n'a rien à voir avec celle d'une
+          saisie sur une ligne. Il ne borne rien et n'est borné par rien — sa
+          place n'est pas dans la chaîne, elle est à côté. */}
       <ChampJetons
         id={idCompetences}
         libelle="Compétences"
@@ -391,61 +757,6 @@ function FormulaireDefinition({
           ) : null
         }
       />
-      <div className="grid gap-3 sm:grid-cols-2">
-        <label className={CLASSE_LIBELLE}>
-          Modèle (vide : modèle par défaut des exécutants)
-          <input
-            type="text"
-            value={champs.modele}
-            onChange={(e) => setChamps({ ...champs, modele: e.target.value })}
-            disabled={desactive}
-            placeholder="claude-sonnet-5"
-            list={modeles.length > 0 ? idModeles : undefined}
-            aria-describedby={catalogue ? idPoste : undefined}
-            className={CLASSE_CHAMP + " font-mono"}
-          />
-          {modeles.length > 0 && (
-            <datalist id={idModeles}>
-              {modeles.map((modele) => (
-                <option key={modele} value={modele} label="servi ici" />
-              ))}
-            </datalist>
-          )}
-        </label>
-        <label className={CLASSE_LIBELLE}>
-          Fournisseur (déclaratif au POC)
-          <input
-            type="text"
-            value={champs.fournisseur}
-            onChange={(e) =>
-              setChamps({ ...champs, fournisseur: e.target.value })
-            }
-            disabled={desactive}
-            placeholder="claude"
-            list={catalogue ? idFournisseurs : undefined}
-            aria-describedby={catalogue ? idPoste : undefined}
-            className={CLASSE_CHAMP + " font-mono"}
-          />
-          {catalogue && (
-            // Seuls les fournisseurs du **registre** sont proposés : un outil
-            // trouvé ici que Maestro ne sait pas piloter est montré par
-            // `ResumeDuPoste`, jamais suggéré — le proposer serait le seul vrai
-            // mensonge possible de cet écran.
-            <datalist id={idFournisseurs}>
-              {catalogue.fournisseurs.map((fournisseur) => (
-                <option
-                  key={fournisseur.nom}
-                  value={fournisseur.nom}
-                  label={
-                    fournisseur.present_ici ? SUPPORTE_ICI : SUPPORTE_AILLEURS
-                  }
-                />
-              ))}
-            </datalist>
-          )}
-        </label>
-      </div>
-      <ResumeDuPoste catalogue={catalogue} id={idPoste} />
       <label className={CLASSE_LIBELLE}>
         Playbook (les instructions du rôle — son prompt système)
         <textarea

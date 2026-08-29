@@ -40,7 +40,7 @@ import { afterEach, beforeEach, vi } from "vitest";
 import {
   CATALOGUE_POSTE_NU,
   canauxDemandes,
-  catalogueAgentsCourant,
+  catalogueAgents,
   cheminCourant,
   etatGlobalCourant,
   filAssistanceCourant,
@@ -142,10 +142,12 @@ vi.mock("@/lib/api", async (importOriginal) => {
     // défaut est un **poste nu** — la sonde ne trouve rien, les deux champs
     // restent en saisie libre, et tout test écrit avant ce lot dit encore vrai.
     chargerFournisseurs: () => Promise.resolve(fournisseursDuPoste()),
-    // #256 : le même formulaire lit le catalogue d'agents pour en tirer le
-    // vocabulaire des compétences déjà en usage. Défaut : catalogue **vide**,
-    // l'analogue du poste nu — aucune suggestion, aucun signalement.
-    chargerCatalogue: () => Promise.resolve(catalogueAgentsCourant()),
+    // #255 : le même formulaire lit les **rôles connus** dans le catalogue des
+    // agents. Défaut vide — aucun rôle suggéré, le champ reste celui d'avant —,
+    // et les 18 fichiers qui mockent `@/lib/api` chez eux gardent le pas sur
+    // cette déclaration. #256 lit la **même** réponse pour en tirer le
+    // vocabulaire des compétences : une lecture, deux usages, un seul mock.
+    chargerCatalogue: () => Promise.resolve(catalogueAgents()),
   };
 });
 
