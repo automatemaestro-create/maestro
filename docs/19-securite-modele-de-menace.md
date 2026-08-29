@@ -216,7 +216,7 @@ dans le `.env` et les dépôts `core/` :
 |---|---|---|
 | Mode isolé (#108) | `MAESTRO_ISOLATION=conteneur` (+ image construite : `docker build -t maestro-sandbox:latest infra/sandbox`) — [docs/17 §4](./17-isolation-execution.md) | exécution sur l'hôte |
 | Coffre par agent (#109) | écrire le **premier** `core/secrets/<agent>.json` (bascule pour **tous** les agents) — [docs/18 §3](./18-secrets-par-agent.md) | environnement du process |
-| Permissions (#110, #580) | écrire `core/permissions/<agent>.json` (`{"allow": [...], "ask": {"<outil>": "<décideur>"}, "deny": [...]}`) — [README](../core/permissions/README.md) | tout permis (outils du profil) |
+| Permissions (#110, #580) | écrire `core/permissions/<agent>.json` (`{"allow": [...], "ask": {"<outil>": "<décideur>"}, "deny": [...]}`) — **ou l'onglet MCP & permissions de la fiche agent** depuis #262, qui écrit le même fichier (`PUT /api/permissions/<agent>`, mêmes règles de validation) — [README](../core/permissions/README.md) | tout permis (outils du profil) |
 
 Racines remplaçables (`MAESTRO_ISOLATION_*`, `MAESTRO_SECRETS_DIR`,
 `MAESTRO_PERMISSIONS_DIR`) : cf. `.env.example`. En distribué (#41), moteur et
