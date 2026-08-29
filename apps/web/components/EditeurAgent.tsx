@@ -23,7 +23,9 @@
 import Link from "next/link";
 import { useCallback, useEffect, useId, useState } from "react";
 
+import { ChampJetons } from "@/components/ChampJetons";
 import {
+  IconeAlerte,
   IconeAssistant,
   IconeMcp,
   IconePermissions,
@@ -46,9 +48,16 @@ import {
   modifierAgent,
   supprimerAgent,
 } from "@/lib/api";
+import {
+  competenceProche,
+  inedites,
+  normaliserCompetence,
+  vocabulaireDuCatalogue,
+} from "@/lib/competences";
 import { formatDateHeure } from "@/lib/format";
 import {
   AGENT_SOURCE_DEFAUT,
+  type AgentCatalogue,
   type AgentCatalogueDetail,
   type CatalogueFournisseurs,
   type DefinitionAgent,
@@ -64,7 +73,7 @@ import { Interrupteur } from "./parametres/SectionParametres";
 const SLUG_NOM = /^[a-z0-9][a-z0-9_-]*$/;
 
 /**
- * Les champs du formulaire (les compétences virgulées).
+ * Les champs du formulaire.
  *
  * `fournisseur`, `modele` et `effort` sont **liés** depuis #255 : le premier
  * borne ce que le deuxième offre, et le deuxième décide si le troisième existe.
@@ -72,10 +81,15 @@ const SLUG_NOM = /^[a-z0-9][a-z0-9_-]*$/;
  * `null` — le **défaut légitime** d'un agent qui suit le fournisseur et le
  * modèle de l'exécution (`MAESTRO_PROVIDER`\`MAESTRO_MODEL`), et non un trou de
  * configuration : les listes l'offrent explicitement.
+ *
+ * Les `competences` sont une **liste** depuis #256, et plus la chaîne virgulée
+ * d'avant : c'est la saisie qui change de forme, pas le contrat d'API
+ * (`DefinitionAgent.competences` a toujours été une liste de chaînes — la
+ * chaîne n'existait qu'ici, entre la frappe et l'envoi).
  */
 type Champs = {
   role: string;
-  competences: string;
+  competences: string[];
   playbook: string;
   modele: string;
   fournisseur: string;
@@ -84,7 +98,7 @@ type Champs = {
 
 const CHAMPS_VIERGES: Champs = {
   role: "",
-  competences: "",
+  competences: [],
   playbook: "",
   modele: "",
   fournisseur: "",
@@ -94,7 +108,7 @@ const CHAMPS_VIERGES: Champs = {
 function champsDepuis(fiche: AgentCatalogueDetail): Champs {
   return {
     role: fiche.role,
-    competences: fiche.competences.join(", "),
+    competences: fiche.competences,
     playbook: fiche.playbook,
     modele: fiche.modele ?? "",
     fournisseur: fiche.fournisseur ?? "",
@@ -106,7 +120,10 @@ function champsDepuis(fiche: AgentCatalogueDetail): Champs {
 function champsDepuisProposition(proposition: DefinitionAgentProposee): Champs {
   return {
     role: proposition.role,
-    competences: proposition.competences.join(", "),
+    // La proposition rend déjà une liste, et le champ en est une depuis #256 :
+    // elle se pose telle quelle, comme celle d'une fiche existante. La joindre en
+    // chaîne virgulée n'aurait plus de lecteur — les jetons se corrigent un par un.
+    competences: proposition.competences,
     playbook: proposition.playbook,
     // `null` — le modèle n'a rien proposé que le registre reconnaisse — devient
     // la chaîne vide, que les listes liées de #255 lisent déjà « défaut de
@@ -126,9 +143,8 @@ function definitionDepuis(champs: Champs): DefinitionAgent {
   return {
     role: champs.role.trim(),
     competences: champs.competences
-      .split(",")
-      .map((c) => c.trim())
-      .filter(Boolean),
+      .map(normaliserCompetence)
+      .filter((c) => c !== ""),
     playbook: champs.playbook,
     modele: champs.modele.trim() || null,
     fournisseur: champs.fournisseur.trim() || null,
@@ -190,39 +206,57 @@ function useCataloguePoste(): CatalogueFournisseurs | null {
 }
 
 /**
- * Les **rôles connus** — ceux que portent les agents du catalogue (#255).
+ * Le catalogue d'agents, lu **une fois** pour ce formulaire (#255, #256).
  *
- * Best-effort, comme `useCataloguePoste` : sans catalogue le champ reste ce
- * qu'il était, une saisie libre. C'est bien une **liste alimentée** et non une
- * liste fermée — un rôle inédit doit rester saisissable, c'est tout l'objet du
- * critère 1 —, d'où la `<datalist>` et non un `<select>`.
+ * Deux champs en vivent, et c'est la raison de ce hook unique plutôt que d'un
+ * par usage : le **rôle** y prend les rôles déjà portés (#255), les
+ * **compétences** le vocabulaire déjà en usage (#256). Deux hooks, ce serait
+ * deux `GET /api/catalogue` par montage pour une réponse identique.
  *
- * La source est `GET /api/catalogue` et rien d'autre : les rôles ne sont
- * déclarés nulle part ailleurs, et une liste écrite ici serait une seconde
- * définition qui dériverait au premier agent créé.
+ * Best-effort, comme `useCataloguePoste` : sans catalogue, les deux champs
+ * restent ce qu'ils étaient, en saisie libre. Ce sont des listes **alimentées**
+ * et non fermées — un rôle comme une compétence inédits doivent rester
+ * saisissables —, d'où des suggestions et jamais un `<select>`.
+ *
+ * ⚠ Il rend `null` et non `[]` tant que la lecture n'a pas abouti, et la nuance
+ * porte tout le signalement de #256 : une liste vide dirait « le catalogue ne
+ * connaît aucune compétence », donc *toutes* celles saisies seraient inédites,
+ * donc l'écran alerterait sur chacune. `null` dit « on ne sait pas », et on se
+ * tait (`inedites`).
  */
-function useRolesConnus(): string[] {
-  const [roles, setRoles] = useState<string[]>([]);
+function useCatalogueAgents(): AgentCatalogue[] | null {
+  const [fiches, setFiches] = useState<AgentCatalogue[] | null>(null);
   useEffect(() => {
     let vivant = true;
     void chargerCatalogue()
-      .then((fiches) => {
-        const vus: string[] = [];
-        for (const fiche of fiches) {
-          const role = fiche.role.trim();
-          if (role !== "" && !vus.includes(role)) vus.push(role);
-        }
-        if (vivant) setRoles(vus);
+      .then((recu) => {
+        if (vivant) setFiches(recu);
       })
       .catch(() => {
-        // Sans catalogue, le champ rôle est celui d'avant #255 : une saisie
-        // libre sans suggestion. Rien à signaler — personne n'a rien demandé.
+        // Sans catalogue, les deux champs sont ceux d'avant : saisie libre,
+        // aucune suggestion, aucun signalement. Personne n'a rien demandé.
       });
     return () => {
       vivant = false;
     };
   }, []);
-  return roles;
+  return fiches;
+}
+
+/**
+ * Les **rôles connus** — ceux que portent les agents du catalogue (#255).
+ *
+ * La source est `GET /api/catalogue` et rien d'autre : les rôles ne sont
+ * déclarés nulle part ailleurs, et une liste écrite ici serait une seconde
+ * définition qui dériverait au premier agent créé.
+ */
+function rolesConnus(fiches: AgentCatalogue[] | null): string[] {
+  const vus: string[] = [];
+  for (const fiche of fiches ?? []) {
+    const role = fiche.role.trim();
+    if (role !== "" && !vus.includes(role)) vus.push(role);
+  }
+  return vus;
 }
 
 /** Un modèle proposé par le champ, et d'où il vient (gamme annoncée ou poste). */
@@ -365,6 +399,76 @@ function ResumeDuPoste({
   );
 }
 
+/** Au-delà, le signalement se compte au lieu de se dérouler ligne à ligne. */
+const INEDITES_NOMMEES = 5;
+
+/**
+ * Ce que le formulaire dit d'une compétence que le catalogue ne connaît pas
+ * (#256) — et ce qu'il n'en dit pas.
+ *
+ * Il la **signale**, il ne la refuse pas : la valeur part telle quelle, le
+ * bouton d'enregistrement ne bouge pas. Deux raisons, et la seconde est celle
+ * que les notes du ticket demandaient d'aller vérifier dans le routeur — les
+ * deux signaux n'ont pas la même tolérance (`lib/competences.ts`) : la règle de
+ * recouvrement apparie au mot près, le classifieur lit la même compétence en
+ * texte et peut la rapprocher. Une compétence inédite n'est donc pas perdue,
+ * elle est seulement privée du signal déterministe. Et un vocabulaire ne
+ * s'enrichit que si quelqu'un a le droit d'y ajouter un mot.
+ *
+ * Le voisin le plus proche est **nommé** quand il y en a un, parce que c'est là
+ * qu'est le vrai coût : « React » et « react » sont le même mot pour qui le lit
+ * et deux compétences étrangères pour une intersection d'ensembles.
+ */
+function SignalementInedites({
+  inconnues,
+  vocabulaire,
+  remplacer,
+  desactive,
+}: {
+  inconnues: string[];
+  vocabulaire: string[];
+  remplacer: (ancienne: string, nouvelle: string) => void;
+  desactive: boolean;
+}) {
+  const nommees = inconnues.slice(0, INEDITES_NOMMEES);
+  const enPlus = inconnues.length - nommees.length;
+  return (
+    <>
+      {nommees.map((jeton) => {
+        const proche = competenceProche(jeton, vocabulaire);
+        return (
+          <p key={jeton} className="flex flex-wrap items-center gap-x-1 gap-y-1">
+            <IconeAlerte aria-hidden="true" className="size-3.5 shrink-0" />
+            <span>
+              « {jeton} » est inédite : aucun agent du catalogue ne la déclare.
+              {proche !== null
+                ? ` Le catalogue connaît « ${proche} » — au mot près, ce ne sont pas la même.`
+                : " Elle n'appariera que les tâches qui l'écrivent à l'identique."}
+            </span>
+            {proche !== null && (
+              <Bouton
+                variante="contour"
+                ton="attention"
+                taille="petite"
+                disabled={desactive}
+                onClick={() => remplacer(jeton, proche)}
+              >
+                Reprendre « {proche} »
+              </Bouton>
+            )}
+          </p>
+        );
+      })}
+      {enPlus > 0 && (
+        <p>
+          … et {enPlus} autre{enPlus > 1 ? "s" : ""} que le catalogue ne connaît
+          pas encore.
+        </p>
+      )}
+    </>
+  );
+}
+
 /**
  * Les champs communs de la définition (création comme modification).
  *
@@ -382,6 +486,11 @@ function ResumeDuPoste({
  * n'offrait que la faute de frappe. Le modèle, lui, garde sa saisie libre
  * **quand le fournisseur l'admet** (`modeles_libres`) — les deux champs du
  * contrat se lisent ensemble, et c'est ce qui décide de la forme du champ.
+ *
+ * Les **compétences**, elles, sont passées de la chaîne virgulée au champ à
+ * jetons (#256) : elles ne bornent rien et ne sont bornées par rien — c'est un
+ * vocabulaire ouvert, pas une chaîne de dépendances —, d'où des suggestions et
+ * un signalement plutôt qu'une liste fermée.
  */
 function FormulaireDefinition({
   champs,
@@ -393,7 +502,11 @@ function FormulaireDefinition({
   desactive: boolean;
 }) {
   const catalogue = useCataloguePoste();
-  const roles = useRolesConnus();
+  // Une seule lecture du catalogue d'agents, deux usages : les rôles (#255) et
+  // le vocabulaire des compétences (#256).
+  const fiches = useCatalogueAgents();
+  const roles = rolesConnus(fiches);
+  const vocabulaire = fiches === null ? null : vocabulaireDuCatalogue(fiches);
   /**
    * Ce qu'un changement de fournisseur a **retiré**, en toutes lettres. Vider un
    * champ sans le dire serait la moitié muette du critère 2 : c'est le
@@ -420,6 +533,8 @@ function FormulaireDefinition({
   const idModeles = `${prefixe}-modeles`;
   const idRoles = `${prefixe}-roles`;
   const idPoste = `${prefixe}-poste`;
+  const idCompetences = `${prefixe}-competences`;
+  const inconnues = inedites(champs.competences, vocabulaire);
 
   const fournisseur = fournisseurDe(catalogue, champs.fournisseur);
   const modeles = modelesOfferts(catalogue, champs.fournisseur);
@@ -514,19 +629,6 @@ function FormulaireDefinition({
               ))}
             </datalist>
           )}
-        </label>
-        <label className={CLASSE_LIBELLE}>
-          Compétences (séparées par des virgules)
-          <input
-            type="text"
-            value={champs.competences}
-            onChange={(e) =>
-              setChamps({ ...champs, competences: e.target.value })
-            }
-            disabled={desactive}
-            placeholder="frontend, react, css"
-            className={CLASSE_CHAMP}
-          />
         </label>
         <label className={CLASSE_LIBELLE}>
           Fournisseur
@@ -642,6 +744,49 @@ function FormulaireDefinition({
         </p>
       )}
       <ResumeDuPoste catalogue={catalogue} id={idPoste} />
+      {/* Hors de la grille, et après la chaîne fournisseur → modèle → effort :
+          un champ à jetons porte ses jetons, ses suggestions et son
+          signalement, donc une hauteur qui n'a rien à voir avec celle d'une
+          saisie sur une ligne. Il ne borne rien et n'est borné par rien — sa
+          place n'est pas dans la chaîne, elle est à côté. */}
+      <ChampJetons
+        id={idCompetences}
+        libelle="Compétences"
+        valeurs={champs.competences}
+        onChange={(competences) => setChamps({ ...champs, competences })}
+        suggestions={vocabulaire ?? []}
+        signales={new Set(inconnues)}
+        motSignal="inédite"
+        nomElement="la compétence"
+        vide="Aucune compétence pour l'instant : saisir un mot, puis Entrée."
+        desactive={desactive}
+        placeholder="frontend"
+        aide={
+          <>
+            À quoi elles servent : le routeur <strong>auto-assigne</strong> une
+            tâche en confrontant, <strong>au mot près</strong>, les compétences
+            qu&apos;elle demande à celles de chaque agent. Un mot qui ne tombe
+            pas juste ne compte pour rien.
+          </>
+        }
+        avertissement={
+          inconnues.length > 0 ? (
+            <SignalementInedites
+              inconnues={inconnues}
+              vocabulaire={vocabulaire ?? []}
+              remplacer={(ancienne, nouvelle) =>
+                setChamps({
+                  ...champs,
+                  competences: champs.competences.map((c) =>
+                    c === ancienne ? nouvelle : c,
+                  ),
+                })
+              }
+              desactive={desactive}
+            />
+          ) : null
+        }
+      />
       <label className={CLASSE_LIBELLE}>
         Playbook (les instructions du rôle — son prompt système)
         <textarea
@@ -819,11 +964,15 @@ export function CreationAgent({
   // Un brouillon, c'est une saisie qui a commencé : le nom, n'importe quel champ,
   // ou l'intention (#257) — elle aussi est une saisie qu'on perdrait en quittant,
   // et la seule qui puisse exister avant que les champs soient remplis. Les
-  // espaces seuls n'en font pas un — il n'y aurait rien à perdre.
+  // espaces seuls n'en font pas un — il n'y aurait rien à perdre. Les compétences
+  // sont une liste depuis #256 : un jeton posé compte, une liste vide non — même
+  // règle que pour une chaîne d'espaces.
   const brouillon =
     nom.trim() !== "" ||
     intention.trim() !== "" ||
-    Object.values(champs).some((valeur) => valeur.trim() !== "");
+    Object.values(champs).some((valeur) =>
+      Array.isArray(valeur) ? valeur.length > 0 : valeur.trim() !== "",
+    );
   useEffect(() => {
     onBrouillon?.(brouillon);
   }, [brouillon, onBrouillon]);

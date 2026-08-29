@@ -52,6 +52,7 @@ import {
 // débranché (`setup.ts`), c'est la fixture qui décide de ce qu'elle affiche.
 // `creerAgent` est déclaré parce que l'écran de création l'importe — jamais
 // appelé ici, ces tests portant sur les sorties et non sur le `POST`.
+//
 const catalogue = vi.hoisted(() => ({ fiches: [] as unknown[] }));
 // ⚠ Ce mock est **total** (pas d'`importOriginal`) : il *remplace* celui de
 // `setup.ts`, donc ce qu'il n'énumère pas n'existe pas — c'est la leçon de #249,

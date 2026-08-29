@@ -487,7 +487,7 @@ export function fournisseursDuPoste(): CatalogueFournisseurs {
   return cataloguePoste;
 }
 
-// --- Catalogue des agents (rôles connus du formulaire, #255) ----------------
+// --- Catalogue des agents (rôles connus, vocabulaire — #255, #256) ----------
 
 let catalogueAgentsPose: AgentCatalogue[] = [];
 
@@ -502,6 +502,8 @@ let catalogueAgentsPose: AgentCatalogue[] = [];
  *
  * Sans ce point d'entrée, tout test montant le formulaire d'agent partirait sur
  * un vrai `fetch` depuis #255, qui y lit les rôles déjà portés par le catalogue.
+ * #256 lit la **même** réponse pour en tirer le vocabulaire des compétences
+ * déjà en usage : deux lectures du formulaire, une seule fixture.
  */
 export function poserCatalogueAgents(fiches: AgentCatalogue[]): void {
   catalogueAgentsPose = fiches;
