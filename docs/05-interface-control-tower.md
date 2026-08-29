@@ -1281,6 +1281,31 @@ masqué : `vitalite` a exactement la même propriété et le dépôt l'a accept�
 un **point de départ nommé, pas une loi** — une règle qui crie trop se règle en déplaçant ce chiffre,
 jamais en ajoutant un juge qui trierait ses propres cris (docs/33 §4.3).
 
+**Le verdict se dit aussi quand personne ne regarde.** Le réveil du service
+(`ServiceExecutions._veiller`, troisième passager de la tâche qui portait déjà le battement et le
+ramassage) écrit **une ligne de journal** par attente au-delà du seuil, et rien d'autre : #355 a rendu
+l'attente lisible *pour qui regarde*, et #568 a perdu 31 % de son temps de mur devant un écran
+allumé. Ce qui est mémorisé n'est **pas le verdict** — il se recalcule à chaque tour et à chaque
+lecture, c'est la propriété qu'on ne défait pas — mais le fait de l'avoir **annoncé** : le réveil
+repasse toutes les 30 s, donc une attente d'une heure vaudrait cent-vingt lignes identiques. La
+mémoire s'oublie dès que l'attente est tranchée, si bien qu'un run qui repart puis se ressuspend est
+signalé de nouveau : c'est une **autre** attente, et le run de #568 en portait trois d'affilée.
+
+Couverture (#739) : [`tests/test_souffrance.py`](../tests/test_souffrance.py) — la règle éprouvée
+comme l'est `vitalite`, sans horloge ni processus (l'instant est un argument), et les **trois
+vérifications propres au dispositif** que [docs/33 §9](./33-decision-surveillance-run.md) réclame au
+lot final : le verdict **survit à un redémarrage** de l'API sans que rien ne soit écrit (les deux
+moitiés sont vérifiées — il revient, *et* rien n'a été persisté pour qu'il revienne, sans quoi le
+test passerait encore le jour où quelqu'un le stockerait) ; un run **au travail** ne le porte jamais,
+sur un échantillon prouvé fautif d'abord (il travaille depuis vingt-quatre fois le seuil, donc une
+règle fondée sur la durée s'y allumerait) ; et il **se lève sur toute issue, refus compris**, la
+moitié qu'on oublie — plus son pendant, une autre demande en vol qui laisse le run suspendu. La
+table des trois attentes est **confrontée** à `STATUTS_EXECUTION_EN_ATTENTE`, comme celle de #572 :
+une quatrième attente hérite du filet ou fait rougir la confrontation. Côté écran,
+`apps/web/tests/runs-immobiles.test.tsx` porte le tri (#738) et ce que la carte rend (#739) —
+notamment que le verdict y est **lu** et jamais recalculé, une formule recopiée côté client se
+périmant à la première correction du seuil.
+
 **Un écran qui se décide vite** (#272, lot 5 de #244). Une validation est bloquante : le moteur est
 en pause et un run attend derrière. Trois décisions le disent, et une seule fois chacune.
 
