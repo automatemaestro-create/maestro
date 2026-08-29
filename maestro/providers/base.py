@@ -517,7 +517,7 @@ class ModelProvider(ABC):
         non à l'appelant. Et un callback qui lève **ne peut pas être avalé en
         silence** : la seule promesse de ce verbe étant l'écriture, son échec est
         la seule nouvelle qui change quelque chose pour l'agent
-        (`maestro.providers.courrier.COURRIER_EN_ERREUR`) — mais il ne doit pas
+        (`maestro.providers.courrier.CANAL_EN_ERREUR`) — mais il ne doit pas
         pour autant tuer la tâche.
 
         Ce qui est promis à l'agent est une **trace adressée**, jamais une

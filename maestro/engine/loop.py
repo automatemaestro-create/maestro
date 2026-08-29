@@ -254,7 +254,15 @@ class RunReport:
         )
 
     def synthese(self) -> str:
-        """Rend l'agrégat en Markdown : récap chiffré puis livrable par tâche."""
+        """Rend l'agrégat en Markdown : récap chiffré puis livrable par tâche.
+
+        Chaque section porte le `task_id` de sa tâche (#721). `tache_id` est la
+        clé partout où l'on mesure — journal, JSON du rapport, grand livre,
+        télémétrie —, et cette surface-ci était **l'exception** que docs/31 §6
+        nomme : celle qu'un humain lit. Sans elle, deux tâches de même titre
+        routées vers le même rôle rendent deux sections indiscernables, et le
+        rapport dit qu'il s'est passé deux choses sans dire lesquelles.
+        """
         lignes = [
             f"# Synthèse — {self.objectif}",
             "",
@@ -280,6 +288,19 @@ class RunReport:
                 etat = "[échec]"
             competences = ", ".join(r.competences_requises)
             lignes.append(f"## {etat} {r.titre}")
+            # La clé de la tâche, imprimée ici et nulle part ailleurs jusqu'à
+            # #721 : c'est la **dette d'un refus**. docs/31 §6 écarte l'identité
+            # d'instance (pas de `slot_id`) au motif que `tache_id` la porte déjà
+            # partout où l'on mesure — journal, JSON du rapport, grand livre,
+            # métadonnées Langfuse. Une seule surface y échappait, celle-ci : deux
+            # tâches de même titre routées vers le même rôle y rendaient deux
+            # sections rigoureusement identiques, et rien ne disait laquelle on
+            # lisait. Le remède n'est donc pas de nommer l'instance — ce serait un
+            # champ dans `Task`, dans le journal, dans les événements, dans les
+            # projections et dans le grand livre — mais **d'imprimer la clé qu'on
+            # a déjà**. Quand deux remèdes traitent le même symptôme et que l'un
+            # coûte cent fois l'autre, le symptôme ne justifie pas le second.
+            lignes.append(f"- Tâche : `{r.task_id}`")
             lignes.append(f"- Agent : {r.role} (`{r.agent}`) — compétences : {competences}")
             if r.worker:
                 lignes.append(f"- Worker : `{r.worker}`")
