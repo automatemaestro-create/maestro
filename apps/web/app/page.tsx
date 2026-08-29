@@ -47,7 +47,7 @@ import { BanniereErreurApi } from "@/components/BanniereErreurApi";
 import { FilActivite } from "@/components/FilActivite";
 import { IndicateursTableauDeBord } from "@/components/IndicateursTableauDeBord";
 import { PanneauBriefs } from "@/components/PanneauBriefs";
-import { PanneauRunsPerdus } from "@/components/PanneauRunsPerdus";
+import { PanneauRunsImmobiles } from "@/components/PanneauRunsImmobiles";
 import { PanneauValidations } from "@/components/PanneauValidations";
 import { PosteVide } from "@/components/PosteVide";
 import { RegionLive } from "@/components/RegionLive";
@@ -142,8 +142,11 @@ export default function TableauDeBord() {
           {/* Après les deux : ceux-là retiennent du travail **vivant**, un run
               perdu ne retient plus rien — son hôte est tombé. L'urgence n'est pas
               la même, et ce qui attend quelqu'un passe avant ce qui l'attendait
-              (#349). */}
-          <PanneauRunsPerdus executions={executions} relancer={relancerRun} />
+              (#349). Depuis #738 ce bloc porte aussi les runs **qu'on a laissés
+              attendre**, rangés avant les perdus par ce même arbitrage — et là,
+              plutôt qu'un quatrième panneau, parce que le corps du tableau de
+              bord est plafonné à trois blocs de plein format (#539). */}
+          <PanneauRunsImmobiles executions={executions} relancer={relancerRun} />
           <IndicateursTableauDeBord
             taches={taches}
             agents={agents}

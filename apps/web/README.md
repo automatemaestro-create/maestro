@@ -134,7 +134,7 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   forme. Seuls les **soldés** sont bornés — au jour, puis à cinq, le reste étant
   dans la liste des runs — parce que c'est le seul groupe qui grossit sans fin ;
   le groupe *interrompus* s'ajoute aux trois du ticket parce que `regimeDuRun` en
-  rend quatre et que le panneau « Runs interrompus » ne montre que les
+  rend quatre et que le panneau « Runs qui n'avancent plus » ne montre que les
   **récupérables** (#349) ;
 - **Kanban** des tâches par statut (machine à états docs/03 §3), qui a **pris la
   place** du tableau de bord de #248 (lot 4 de #242) à #476, où il est devenu la

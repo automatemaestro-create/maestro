@@ -138,8 +138,9 @@ compte que le résumé rend déjà.
 
 ### 3.2 Les trois mots du ticket, une fois démêlés
 
-- **Agents morts** → c'est `vitalite`, **livré** (#348), rendu par `PanneauRunsPerdus.tsx:48-84` avec
-  son geste (« Reprendre »). Rien à faire.
+- **Agents morts** → c'est `vitalite`, **livré** (#348), rendu par `PanneauRunsImmobiles.tsx` avec
+  son geste (« Reprendre ») — le fichier s'appelait `PanneauRunsPerdus.tsx` jusqu'à #738, qui lui a
+  confié le second verdict. Rien à faire.
 - **Blocages** → coupé en deux ci-dessus. La tâche bloquée est *voir* ; le run suspendu est le sujet.
 - **Pauses** → **écartées, et c'est une décision.** Une pause est le seul de ces états où **quelqu'un
   a déjà décidé** : elle est posée par un geste humain explicite (`POST /api/executions/{run_id}/pause`,
@@ -401,13 +402,28 @@ Troisième objet, même règle, même conclusion. **La file de validations est p
 
 Il n'y a rien à inventer : le seul verdict de surveillance existant, `vitalite`, ne passe **pas** par
 la file. Il est servi sur le résumé du run (`GET /api/executions`) et rendu par
-[`PanneauRunsPerdus.tsx:48-84`](../apps/web/components/PanneauRunsPerdus.tsx), qui **sort** les runs
+[`PanneauRunsImmobiles.tsx`](../apps/web/components/PanneauRunsImmobiles.tsx), qui **sort** les runs
 orphelins de la liste et leur attache leur geste.
 
 > **Une alerte est un état de run rendu visible, jamais une carte à trancher.**
 
 C'est la forme retenue, et elle a le mérite d'avoir déjà été jugée bonne sur la seule question du
 même genre.
+
+**#738 l'a appliquée**, et le panneau y a gagné son nom actuel — il s'appelait *Runs interrompus*
+(`PanneauRunsPerdus.tsx`) tant qu'il ne portait qu'un verdict. Il en range désormais **deux**, sous
+deux familles nommées et deux gestes distincts : « Personne n'a répondu » renvoie vers le run,
+« Leur hôte s'est tu » garde son bouton. Deux points valent d'être notés, parce qu'ils ne se
+déduisaient pas de la décision :
+
+- **le verdict du backend ne décide pas seul de ce qu'on signale.** `en_souffrance` juge une attente
+  et rien d'autre, donc il dit `true` sur des runs à qui l'écran n'a rien d'utile à proposer — un
+  **orphelin** arrêté sur son brief (personne ne recevra la réponse : il est dans l'autre famille) et
+  un run **en pause**, où quelqu'un a déjà décidé (§3.2). L'écran les écarte en rejouant `regimeDuRun`,
+  la règle qu'il tient depuis #474, plutôt qu'en réécrivant trois conditions à côté ;
+- **un bloc, pas deux.** Le corps du tableau de bord est plafonné à trois blocs de plein format
+  (#539, docs/30 §4) et en porte déjà trois d'arbitrage : un quatrième panneau était la réponse
+  évidente et la mauvaise.
 
 ### 7.4 `supervision.py` est-il le véhicule ? Pas en l'état — et le best-effort reste
 
@@ -464,7 +480,7 @@ pose, et le troisième vient après les deux — l'arbitrage a été **rendu**, 
 | Lot | Ce qu'il fait |
 | --- | --- |
 | **#737** | Le verdict : `en_souffrance` (fonction pure + constante motivée), posé sur le résumé de run à côté de `vitalite`, et le contrat d'API dans docs/05 |
-| **#738** | L'écran le **trie** : un run en souffrance sort de la liste, comme un orphelin sort par `PanneauRunsPerdus` |
+| **#738** | L'écran le **trie** : un run en souffrance sort de la liste, comme un orphelin en sort — même bloc, deux familles (`PanneauRunsImmobiles`, §7.3) |
 | **#739** | Tests + doc |
 
 **Quatre choses à ne pas défaire dans ce chantier :**

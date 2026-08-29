@@ -239,18 +239,40 @@ reste que ce qui se lit d'un coup d'œil, dans cet ordre :
    tous les trois en silence le 2026-08-28, quand #484 a retiré l'entrée de menu
    qu'ils nommaient — ce jour-là aucun des trois n'a eu à changer.
 2. **Validations en attente** — ce qui demande un arbitrage humain.
-3. **Runs interrompus** (#349, #486, §6.1) — les runs **orphelins ou éteints dont
-   le brief a été approuvé**, avec le bouton qui les reprend sur ce cadrage. Après
-   les deux précédents, et pour une raison de nature : ceux-là retiennent du travail
-   **vivant**, un run perdu ne retient plus rien. Rien ne s'affiche quand il n'y a
-   rien à récupérer — ni sur un run `indetermine` (on ne sait pas : le proposer
-   serait deviner), ni sur un run sans brief approuvé (il n'a rien à rejouer). Le
-   second état vient de #486 : un run que `start.sh --stop` a soldé (cause
-   `extinction`) se retrouve **ici** au redémarrage, par le **même** bouton — sa
-   ligne dit « arrêté avec Maestro » là où un orphelin dit « hôte muet », les deux
-   menant au même geste parce que ce qui se rejoue est un cadrage. Un run
-   **délibérément annulé**, lui, n'y figure pas : personne ne veut se voir
-   reproposer un run qu'il vient d'arrêter.
+3. **Runs qui n'avancent plus** (#349, #486, #738, §6.1) — les runs que **plus rien
+   ne fait avancer**, rangés en **deux familles** parce que les deux verdicts de
+   surveillance (§6.1) ne désignent pas les mêmes runs et n'appellent pas le même
+   geste. Après les deux panneaux précédents, et pour une raison de nature : ceux-là
+   retiennent du travail **vivant**, un run perdu ne retient plus rien. Rien ne
+   s'affiche quand les deux familles sont vides.
+
+   - **« Personne n'a répondu »** (#738) — les runs `en_souffrance` (§2.6), c'est-à-dire
+     suspendus sur un humain au-delà du seuil. Le geste est d'**aller voir le run**,
+     jamais de trancher : la réponse à une attente n'est ni oui ni non (« répondre »,
+     « relever le budget », « annuler », « rien »), donc ces runs ne passent **pas**
+     par la file de validations, qui porte des actes à décider ([docs/33
+     §7.2](./33-decision-surveillance-run.md)). La ligne dit **ce que le run attend**
+     et depuis quand — le tri fait le signal, l'ancienneté ne dit que de combien.
+     N'y figurent ni un orphelin (personne ne recevrait la réponse : il est dans la
+     famille suivante), ni un run **en pause**, où quelqu'un a déjà décidé ;
+   - **« Leur hôte s'est tu »** (#349, #486) — les runs **orphelins ou éteints dont
+     le brief a été approuvé**, avec le bouton qui les reprend sur ce cadrage. Rien
+     ne s'affiche sur un run `indetermine` (on ne sait pas : le proposer serait
+     deviner), ni sur un run sans brief approuvé (il n'a rien à rejouer). Le second
+     état vient de #486 : un run que `start.sh --stop` a soldé (cause `extinction`)
+     se retrouve **ici** au redémarrage, par le **même** bouton — sa ligne dit
+     « arrêté avec Maestro » là où un orphelin dit « hôte muet », les deux menant au
+     même geste parce que ce qui se rejoue est un cadrage. Un run **délibérément
+     annulé**, lui, n'y figure pas : personne ne veut se voir reproposer un run qu'il
+     vient d'arrêter.
+
+   ⚠ **Un bloc, pas deux**, et c'est la règle des trois places qui tranche (#539,
+   [docs/30 §4](./30-cible-visuelle-control-tower.md)) : le corps de cet écran est
+   plafonné à trois blocs de plein format et il en porte déjà trois d'arbitrage. Un
+   quatrième panneau était la réponse évidente et la mauvaise — ce qui déborde
+   s'étend dans un bloc existant. Le panneau a changé de **nom** en changeant de
+   contenu (il s'appelait *Runs interrompus* jusqu'à #738) : un chapeau qui ne
+   couvre que la moitié de ce qu'il range est la première chose qui dérive.
 4. **Indicateurs de tête** — quatre tuiles : run en cours, tâches par statut,
    agents occupés et libres, dépense. Chaque tuile met en valeur **le chiffre
    qu'on vient y chercher** : la tuile Agents répond « combien travaillent,
@@ -362,7 +384,7 @@ troisième écran a eu à la rendre.
 dans le ticket.** #476 en nomme trois — en cours, suspendus, soldés du jour — mais
 `regimeDuRun` en rend **cinq**, et un régime sans groupe ne dégrade pas
 l'affichage : il fait **disparaître** ces runs-là de l'écran. *Interrompu* a donc
-été ajouté avec #476, parce que le panneau « Runs interrompus » qui le précède
+été ajouté avec #476, parce que le panneau « Runs qui n'avancent plus » qui le précède
 (item 3) ne montre que les **récupérables** — orphelin *et* brief approuvé (#349) —,
 si bien qu'un run mort avant validation de son cadrage ne serait nulle part. *En
 pause* a été ajouté par **#480**, pour la raison exacte et sur une panne réelle :
@@ -390,10 +412,13 @@ rendu serveur n'a pas d'instant (#250), le groupe apparaît donc au premier batt
 
 **Il ne décide de rien**, et c'est ce qui le sépare des trois panneaux qui le
 précèdent : ceux-là portent le geste qui lève une attente, celui-ci porte l'état. Un
-run interrompu peut donc paraître deux fois sur l'écran — dans « Runs interrompus »
-avec son bouton, et ici avec son état. C'est la superposition que le Kanban avait déjà
-avec les validations, et elle est voulue : ce qui appelle un geste passe devant, ce qui
-décrit l'état se lit d'un bloc.
+run interrompu peut donc paraître deux fois sur l'écran — dans « Runs qui n'avancent
+plus » avec son bouton, et ici avec son état. C'est la superposition que le Kanban
+avait déjà avec les validations, et elle est voulue : ce qui appelle un geste passe
+devant, ce qui décrit l'état se lit d'un bloc. Depuis #738 elle vaut aussi pour un run
+**en souffrance** : il sort de la liste dans le panneau, avec son renvoi, et le groupe
+*Suspendus* continue de le montrer parmi les autres — le premier dit qu'on l'a oublié,
+le second où il en est.
 
 Composant : `apps/web/components/runs/EtatDesRuns.tsx`. Couverture (#480) :
 `apps/web/tests/etat-des-runs.test.tsx` — l'exhaustivité de la table, les cinq
@@ -2691,7 +2716,7 @@ n'a pas encore de cadrage, seulement une proposition (`cadrage-absent`, ci-desso
 ⚠ **Un run publié hors de l'API lisait ce tableau à l'envers**, et c'est l'écart que #446 a refermé.
 Rien ne publiait le cycle de vie d'un run de ce côté-là — `execution.statut` n'était émis que par le
 service de pilotage —, donc un `maestro-run --publier --brief humain` **terminé** se retrouvait
-`orphelin` **avec** un brief approuvé : il apparaissait dans *Runs interrompus* et se relançait, ce
+`orphelin` **avec** un brief approuvé : il apparaissait dans *Runs qui n'avancent plus* et se relançait, ce
 qui donnait un second run pour un travail déjà fait. Ni le verdict ni la règle d'affichage ne
 pouvaient l'attraper — ils portent sur l'hôte, jamais sur le travail. La réponse n'était donc pas
 dans l'affichage mais dans la frontière d'exécution : **un hôte publie son issue en partant**,
@@ -2793,7 +2818,7 @@ pas un run vivant, et refuser rendrait la route inutile précisément pour les q
 qui l'ont motivée. Le rapport de coûts penche du même côté que le seuil ci-dessus : rejouer un run
 qui travaillait encore coûte un run en double, qu'on annule ; refuser coûte le cadrage,
 définitivement. L'**UI**, elle, ne propose le geste que sur `orphelin` — et, depuis #486, sur un run
-**éteint** (panneau *Runs interrompus* du tableau de bord, §2.1) : proposer sur une absence
+**éteint** (panneau *Runs qui n'avancent plus* du tableau de bord, §2.1) : proposer sur une absence
 d'information serait deviner, ce que le troisième verdict existe pour refuser.
 
 Le quatrième refus est le seul qui ne porte pas sur la vitalité, et il compte autant : un run mort
@@ -2836,7 +2861,7 @@ Trois conséquences qui font le contrat :
   durable (#97) : un run suspendu le reste **à travers un redémarrage de l'API**, et l'ordre de
   reprise atteint un process que l'API n'a pas lancé ;
 - **un run suspendu bat toujours** (#348). Sans quoi il ressortirait `orphelin` au bout d'une
-  demi-heure et *Runs interrompus* proposerait de le relancer depuis son brief — c'est-à-dire de
+  demi-heure et *Runs qui n'avancent plus* proposerait de le relancer depuis son brief — c'est-à-dire de
   repayer le cadrage d'un run qui n'a rien perdu. Il reste **annulable** pour la même raison qu'un
   run arrêté sur son brief l'est : ne plus pouvoir arrêter ce qu'on a suspendu serait une impasse —
   et depuis #467 (§2.4.5) le bouton d'interruption s'affiche bien à côté de celui de reprise.
@@ -2868,7 +2893,7 @@ codes, plus un sixième arrivé avec #486 :
 | `limite_usage` | le fournisseur a refusé de servir : quota, 429, solde épuisé | attendre la fenêtre suivante, puis relancer |
 | `hote_non_demarre` | le process du run n'est jamais parti (#443) | ni tâche, ni coût, ni journal à lire — regarder la machine |
 | `annulation` | quelqu'un a interrompu, ou refusé le brief | rien à réparer |
-| `extinction` | **Maestro s'est éteint** en emportant le run (#486, `start.sh --stop`) | le **reprendre** au redémarrage (§2.1, panneau *Runs interrompus*) |
+| `extinction` | **Maestro s'est éteint** en emportant le run (#486, `start.sh --stop`) | le **reprendre** au redémarrage (§2.1, panneau *Runs qui n'avancent plus*) |
 
 Le sixième est le seul dont l'écran tire une **conséquence** et pas seulement une
 phrase, et c'est ce qui justifie de ne pas l'avoir fondu dans `annulation` : le statut

@@ -342,7 +342,7 @@ export function LignePause({
  *
  * Le bouton se **désarme pendant l'appel** et rend le refus de l'API sous lui :
  * un 409 « déjà suspendue » se lit, il ne se devine pas. C'est le patron de
- * `PanneauRunsPerdus`, à une différence près — ici la carte ne disparaît pas au
+ * `PanneauRunsImmobiles`, à une différence près — ici la carte ne disparaît pas au
  * succès, c'est le badge qui bascule.
  */
 export function BoutonsPause({
