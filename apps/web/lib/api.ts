@@ -10,6 +10,7 @@ import type {
   AgentCatalogue,
   AgentCatalogueDetail,
   AnalyticsCouts,
+  CatalogueFournisseurs,
   CoutExecution,
   ChoixSelecteur,
   ConversationChat,
@@ -398,6 +399,17 @@ export function rejeterPropositionPlaybook(
 /** Le catalogue d'agents (#72) : les agents par défaut du code puis les personnalisés. */
 export function chargerCatalogue(): Promise<AgentCatalogue[]> {
   return chargerJson<AgentCatalogue[]>("/api/catalogue");
+}
+
+/**
+ * Le catalogue des fournisseurs (`GET /api/fournisseurs`, #487) : ce que Maestro
+ * supporte (le registre du code) éclairé par ce qui est **présent sur ce poste**
+ * (la sonde — CLI sur le `PATH`, serveur local qui répond, clé dans
+ * l'environnement). Sert les suggestions du formulaire d'agent ; un échec n'y
+ * est jamais bloquant, les champs restent en saisie libre.
+ */
+export function chargerFournisseurs(): Promise<CatalogueFournisseurs> {
+  return chargerJson<CatalogueFournisseurs>("/api/fournisseurs");
 }
 
 /** La définition complète d'un agent du catalogue, playbook compris. */

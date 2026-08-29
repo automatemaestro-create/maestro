@@ -280,6 +280,16 @@ Deux articulations avec le reste de la roadmap :
   endroit où se rendre. Son prix avait été nommé et refusé pour un autre usage
   ([docs/28 §7](./28-decision-frontiere-execution-run.md)) ; le payer ici est un choix, rendu en
   [docs/29 §7](./29-decision-run-objet-de-premier-plan.md).
+  ⚠ **L'ordre a été tenu autrement que prévu** (livré le 2026-08-29) : #487 est arrivé le premier,
+  #253 n'ayant encore rien livré. Plutôt que d'ouvrir la seconde source que son critère 3 interdit,
+  la sonde a **créé l'endroit où se rendre** — `GET /api/fournisseurs`
+  ([`maestro/controltower/fournisseurs.py`](../maestro/controltower/fournisseurs.py)), dont la
+  colonne « supporté » est lue du **registre du code** (`available_providers()`), exactement ce que
+  demande le critère 2 de #253. Ce qui reste à #253 s'ajoute donc **en colonnes de cette
+  charge-là** — les **modèles** d'un fournisseur et les **niveaux d'effort** d'un modèle, puis
+  l'effort porté par la définition d'un agent — et surtout pas sur une route à lui : `modeles_ici`
+  dit ce que la **sonde** a vu sur ce poste, jamais ce que Maestro supporte, et les deux colonnes ne
+  se confondent nulle part.
 
 > **Tickets : les quatre milestones sont découpés**, comme la vague front et pour la même raison —
 > ils portent sur un produit et un outillage qui **existent**, il n'y a rien à attendre pour les

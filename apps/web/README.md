@@ -226,7 +226,28 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   **personnalisés** qu'on y crée, puis modifie et supprime depuis l'onglet
   **Profil** de leur fiche (formulaire complet : nom, rôle, compétences,
   fournisseur/modèle, playbook). Un agent personnalisé est persisté hors du code
-  et chargé par les moteurs construits ensuite ;
+  et chargé par les moteurs construits ensuite. Depuis #487 les champs
+  **fournisseur** et **modèle** ne sont plus deux cases vides : ils proposent ce
+  qui existe (API `/api/fournisseurs`), en distinguant deux colonnes qui ne se
+  confondent jamais — *supporté par Maestro* vient du **registre du code**
+  (`maestro/providers/registry.py`), *présent ici* de la **sonde du poste**
+  (`maestro/poste.py`) : un CLI d'agent résolu sur le `PATH`, un serveur de
+  modèles local qui répond (Ollama et ses modèles, #113), une clé de fournisseur
+  dans l'environnement. Trois choses à ne pas défaire. La sonde est **gratuite et
+  sans effet de bord** — elle n'exécute aucun binaire, ne joint que la boucle
+  locale, n'écrit rien, et un poste nu rend une liste vide sans erreur. Les deux
+  champs restent en **saisie libre** (`<input list=…>` et non `<select>`) : la
+  sonde **suggère, elle ne restreint pas**, `OpenAICompatProvider.supports`
+  acceptant tout nom non vide — un `<select>` rendrait insaisissable ce que le
+  catalogue ignore. Et un outil trouvé ici que Maestro ne sait pas piloter est
+  **montré sans être proposé**
+  ([docs/34](../../docs/34-decision-agent-cli-tiers-acp.md)) : le taire ferait
+  croire qu'il n'est pas là, le proposer serait le seul vrai mensonge de cet
+  écran. Ce que la sonde ne peut pas savoir est écrit **sous les champs** et
+  rattaché à eux (`aria-describedby`) plutôt que deviné — la validité d'une clé,
+  la version d'un binaire, et le fait que le `PATH` du process qui sert l'API
+  n'est pas celui de votre terminal, si bien qu'une **absence n'est pas un
+  constat** ;
 - **Chat par agent** (#85, lot 2 de #82) : l'onglet **Chat** d'une fiche agent
   ouvre le fil de conversation avec lui (#84, API `/api/chat`) — envoi,
   réponse de l'agent (cadrée par son playbook courant) et réception en temps

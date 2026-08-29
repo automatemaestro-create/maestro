@@ -36,6 +36,7 @@ maestro-run --publier --validation-ui "<objectif>"
 | GET | `/api/sante` | vitalité du service |
 | GET | `/api/taches` | tâches : statut, agent assigné, coût détaillé — tokens, durée (source du Kanban). `?projet=` requis, `?run=` facultatif et **additif** (#473) : les tâches d'un run |
 | GET | `/api/agents` | agents : libre/occupé, tâche courante, compteurs, coût cumulé |
+| GET | `/api/fournisseurs` | catalogue des fournisseurs (#487) : **supporté par Maestro** (le registre du code) × **présent ici** (la sonde du poste — CLI sur le `PATH`, serveur local qui répond, clé dans l'environnement). `hors_registre` porte ce que le poste a de plus, `incertitudes` ce que la sonde ne peut pas savoir. Gratuite et sans effet de bord : aucun binaire exécuté, aucun endpoint distant joint, aucune écriture |
 | GET | `/api/executions` | runs connus, récents d'abord : état, objectif, **progression** par statut de tâche (#473), début, coût |
 | GET | `/api/executions/{run_id}` | détail d'une exécution : résumé (progression comprise), trace et coût agrégé |
 | GET | `/api/executions/{run_id}/cout` | grand livre du run (#57, critère MVP n°6) : coût par tâche (tokens entrée/sortie, coût estimé, durée), part de planification et agrégat |

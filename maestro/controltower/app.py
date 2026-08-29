@@ -301,6 +301,7 @@ from maestro.controltower.executions import (
     ServiceExecutions,
 )
 from maestro.controltower.fixtures import FixturesControlTower
+from maestro.controltower.fournisseurs import catalogue as catalogue_fournisseurs
 from maestro.controltower.frise import frise_du_run
 from maestro.controltower.hote import (
     HOTE_RUN_DETACHE,
@@ -358,6 +359,7 @@ from maestro.engine.brief import MODE_BRIEF_AUTO, MODE_BRIEF_HUMAIN
 from maestro.messaging import InMemoryMailbox, Mailbox, RedisMailbox
 from maestro.orchestrator.errors import BriefValidationError
 from maestro.orchestrator.schema import validate_brief
+from maestro.poste import SondePoste
 from maestro.projets import RacineRefusee, canonique, valider_racine
 from maestro.references import ReferenceTicket
 from maestro.sources import DepotTeleversements, SourceRefusee, apercu_sources
@@ -863,6 +865,7 @@ def create_app(
     televersements: DepotTeleversements | None = None,
     lecteur_sources: LecteurSources | None = None,
     hote_run: HoteRun | None = None,
+    sonde_poste: SondePoste | None = None,
 ) -> FastAPI:
     """Construit l'app FastAPI de la Control Tower autour d'un bus et d'un état.
 
@@ -1016,6 +1019,13 @@ def create_app(
     part sur le réseau : `tests/conftest.py` (#195) exige qu'aucun test n'en ait
     besoin.
 
+    `sonde_poste` (#487) est ce qui répond à « qu'est-ce qui est déjà installé
+    ici ? » pour `GET /api/fournisseurs` — par défaut `SondePoste()`, qui lit le
+    `PATH`, l'environnement et la boucle locale. Injectable parce qu'elle sort du
+    process : `tests/conftest.py` (#195) exige qu'aucun test n'ait besoin d'un
+    backend, et la suite lui donne donc un poste décrit plutôt que le vrai. Elle
+    n'est appelée qu'à la requête — une API qu'on ne consulte pas ne sonde rien.
+
     `hote_run` (#442) est **où** les exécutions se déroulent : le contrat d'hôte
     de run (`maestro.controltower.hote`). Même point d'injection que
     `fabrique_moteur`, et pour une raison voisine : la fabrique décide de *quoi*
@@ -1038,6 +1048,9 @@ def create_app(
     battements = battements if battements is not None else RegistreBattementsMemoire()
     agents_store = agents_store if agents_store is not None else AgentStore.default()
     capacites = capacites if capacites is not None else CapacityStore.default()
+    # Construire la sonde ne sonde rien (#487) : elle n'a ni état ni cache, et ne
+    # regarde le poste qu'au moment où `GET /api/fournisseurs` le demande.
+    sonde_poste = sonde_poste if sonde_poste is not None else SondePoste()
     mcp = mcp if mcp is not None else McpStore.default()
     # La bibliothèque MCP a **trois sources** depuis #678 : le seed curé (en
     # code), les entrées admises (le journal, sur le disque) et le miroir du
@@ -3253,6 +3266,24 @@ def create_app(
             return projets.supprimer(id_projet)
         except (ValueError, ProjetInconnu) as exc:
             raise _refus_projet(exc) from exc
+
+    @app.get("/api/fournisseurs")
+    async def fournisseurs() -> dict[str, Any]:
+        """Le catalogue des fournisseurs (#487) : le registre, éclairé par le poste.
+
+        Deux colonnes qui ne se confondent pas — *supporté par Maestro* (le
+        registre du code fait foi) et *présent ici* (ce que la sonde a trouvé sur
+        cette machine : un CLI sur le `PATH`, un serveur local qui répond, une
+        clé dans l'environnement). Un outil trouvé que Maestro ne sait pas
+        piloter sort dans `hors_registre` : montré, jamais proposé.
+
+        La sonde est **gratuite et sans effet de bord** : elle ne démarre rien,
+        n'installe rien, n'écrit rien, ne joint que la boucle locale et
+        n'exécute aucun binaire. Ce qu'elle ne peut pas savoir remonte dans
+        `incertitudes` et dans le champ homonyme de chaque constat, plutôt que
+        d'être deviné. Un poste nu rend des listes vides et un 200.
+        """
+        return catalogue_fournisseurs(await sonde_poste.rapport())
 
     @app.get("/api/catalogue")
     async def catalogue_liste() -> list[dict[str, Any]]:
