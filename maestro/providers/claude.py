@@ -406,25 +406,33 @@ class ClaudeProvider(ModelProvider):
         ajouterait une latence sur l'information qu'on veut la plus fraîche, pour
         borner un débit qui ne déborde pas.
 
-        `on_arbitrage` (#582) monte sur la session un **serveur MCP in-process**
-        (`maestro.providers.arbitrage`) portant le seul outil
-        `demander_arbitrage(raison)` : l'agent qui s'apprête à quelque chose
-        d'irréversible lève la main, l'appel attend la décision et la lui rend.
-        C'est le seul des quatre canaux qui reparte vers l'agent, et le seul dont
-        une panne se traduit en **refus servi** plutôt qu'en silence.
+        `on_arbitrage` (#582) fait porter au **serveur MCP in-process** `maestro`
+        (`maestro.providers.arbitrage`) l'outil `demander_arbitrage(raison)` :
+        l'agent qui s'apprête à quelque chose d'irréversible lève la main, l'appel
+        attend la décision et la lui rend. C'est le seul des quatre canaux qui
+        reparte vers l'agent, et le seul dont une panne se traduit en **refus
+        servi** plutôt qu'en silence.
+
+        Ce serveur porte **N outils** depuis #718, et non plus un seul : ce qui
+        décide de son contenu est `_outils_maestro`, ce qui décide de son montage
+        est `_serveurs_mcp`. Le partage n'est pas cosmétique — c'est lui qui rend
+        deux verbes ajoutés séparément (#719, #720) réellement indépendants, au
+        lieu de les faire se croiser ici. Un serveur **sans aucun outil** n'est
+        pas monté du tout, `demander_arbitrage` seul est monté exactement comme
+        avant.
 
         Trois choix à ne pas défaire dans ce montage. Le serveur n'est **pas
-        ajouté à `attendus`** : `_attend_serveurs_mcp` existe pour le serveur
-        externe qui met du temps à venir — un `npx -y` qui télécharge (#105) —,
-        or un serveur SDK est servi **en process** par le SDK lui-même
-        (`type: "sdk"`, déclaré au CLI dès l'initialisation) : il n'a rien à
-        connecter, et l'y inscrire n'ajouterait qu'un risque de 60 s d'attente
-        sur un canal dont l'absence ne doit jamais arrêter une tâche. Le
-        **routage** n'a donc pas bougé non plus — session pilotée si et seulement
-        si l'agent déclare des serveurs, exactement comme avant ce lot. Et il est
-        monté **après** les serveurs déclarés, si bien qu'une déclaration
-        homonyme ne peut pas masquer le canal d'un garde-fou (nom réservé,
-        `arbitrage.NOM_SERVEUR`).
+        ajouté à `attendus`** (`_attendus_mcp` ne connaît que les serveurs
+        déclarés) : `_attend_serveurs_mcp` existe pour le serveur externe qui met
+        du temps à venir — un `npx -y` qui télécharge (#105) —, or un serveur SDK
+        est servi **en process** par le SDK lui-même (`type: "sdk"`, déclaré au
+        CLI dès l'initialisation) : il n'a rien à connecter, et l'y inscrire
+        n'ajouterait qu'un risque de 60 s d'attente sur un canal dont l'absence ne
+        doit jamais arrêter une tâche. Le **routage** n'a donc pas bougé non plus
+        — session pilotée si et seulement si l'agent déclare des serveurs,
+        exactement comme avant ce lot. Et il est monté **après** les serveurs
+        déclarés, si bien qu'une déclaration homonyme ne peut pas masquer le canal
+        d'un garde-fou (nom réservé, `arbitrage.NOM_SERVEUR`).
 
         Une politique de permissions (#110) le régit **comme n'importe quel
         outil** : une liste `allow` fermée qui ne le cite pas, ou un `deny`
@@ -447,13 +455,10 @@ class ClaudeProvider(ModelProvider):
             cli_path = self._isolation.shim
             env |= self._isolation.env_sandbox(workspace, projet=projet)
         stderr = CollecteurStderr()
-        serveurs: dict[str, McpServerConfig] = {
-            s.nom: _config_mcp_sdk(s) for s in mcp_serveurs
-        }
-        if on_arbitrage is not None:
-            # En dernier, à dessein : le nom est réservé, et une déclaration
-            # homonyme ne masque pas le canal d'un garde-fou.
-            serveurs[NOM_SERVEUR] = _serveur_arbitrage(on_arbitrage, credit_arbitrage)
+        serveurs = _serveurs_mcp(
+            mcp_serveurs,
+            _outils_maestro(on_arbitrage=on_arbitrage, credit=credit_arbitrage),
+        )
         options = ClaudeAgentOptions(
             model=model,
             system_prompt=system_prompt,
@@ -507,7 +512,7 @@ class ClaudeProvider(ModelProvider):
             return await _collect_response_pilotee(
                 prompt,
                 options,
-                attendus=frozenset(s.nom for s in mcp_serveurs),
+                attendus=_attendus_mcp(mcp_serveurs),
                 plafond_tours=plafond_tours,
                 stderr=stderr,
                 regulateur=regulateur,
@@ -588,20 +593,82 @@ def _fenetre_arbitrage(credit: CreditArbitrage | None) -> Iterator[None]:
         yield
 
 
-def _serveur_arbitrage(
-    on_arbitrage: Arbitre, credit: CreditArbitrage | None = None
-) -> McpServerConfig:
-    """Le serveur MCP **in-process** qui porte l'outil d'arbitrage (#582).
+def _outils_maestro(
+    *,
+    on_arbitrage: Arbitre | None = None,
+    credit: CreditArbitrage | None = None,
+) -> list[SdkMcpTool[Any]]:
+    """Les outils que le serveur `maestro` a **effectivement** à porter (#718).
+
+    Le point d'extension du serveur, et le seul : un verbe nouveau (#719, #720)
+    s'y ajoute en un `if` et une ligne, sans toucher ni à `run_agent`, ni au
+    porte-outils, ni au montage. C'est tout l'objet de ce lot — deux verbes
+    écrits en parallèle se croiseraient ici, sur deux lignes voisines, plutôt
+    qu'au milieu du corps de `run_agent`.
+
+    Chaque outil est **conditionné à son canal** : sans callback, personne n'est
+    au bout du fil, et servir à l'agent un verbe qui n'aboutit nulle part est
+    pire que ne pas le lui servir. La liste rendue peut donc être vide — c'est
+    un état normal, que `_serveurs_mcp` traite comme tel.
+    """
+    outils: list[SdkMcpTool[Any]] = []
+    if on_arbitrage is not None:
+        outils.append(_outil_arbitrage(on_arbitrage, credit))
+    return outils
+
+
+def _serveur_maestro(outils: Sequence[SdkMcpTool[Any]]) -> McpServerConfig:
+    """Le serveur MCP **in-process** `maestro` et les N outils qu'il porte (#582, #718).
 
     In-process (`type: "sdk"`) et non stdio : il n'y a ni processus à lancer ni
-    connexion à attendre — le SDK le sert lui-même, et le callback qu'il ferme
-    vit dans la boucle du moteur, là où sont le garde-fou et le journal. C'est
-    aussi pourquoi il ne rejoint jamais les `attendus` de
-    `_attend_serveurs_mcp` (cf. `run_agent`).
+    connexion à attendre — le SDK le sert lui-même, et les callbacks que ses
+    outils ferment vivent dans la boucle du moteur, là où sont le garde-fou et le
+    journal. C'est aussi pourquoi il ne rejoint jamais les `attendus` de
+    `_attend_serveurs_mcp` (cf. `run_agent` et `_attendus_mcp`).
+
+    Il ne décide de rien : ni de ce qu'il porte (`_outils_maestro`), ni du fait
+    qu'on le monte (`_serveurs_mcp`). Un outil de plus ne se voit donc pas ici,
+    et un serveur vide n'y arrive jamais.
     """
-    return create_sdk_mcp_server(
-        name=NOM_SERVEUR, tools=[_outil_arbitrage(on_arbitrage, credit)]
-    )
+    return create_sdk_mcp_server(name=NOM_SERVEUR, tools=list(outils))
+
+
+def _serveurs_mcp(
+    mcp_serveurs: Sequence[ServeurMcp],
+    outils_maestro: Sequence[SdkMcpTool[Any]],
+) -> dict[str, McpServerConfig]:
+    """Les serveurs MCP de la session : ceux que l'agent déclare, puis le nôtre (#582, #718).
+
+    Deux invariants du montage vivent ici, et nulle part ailleurs :
+
+    - **en dernier**, à dessein : le nom est réservé (`arbitrage.NOM_SERVEUR`),
+      et une déclaration homonyme (`core/mcp/<agent>.json`) ne masque pas le
+      canal d'un garde-fou. C'est le sens sûr des deux ;
+    - **rien à monter, rien de monté** : un serveur sans outil serait un canal
+      qui promet sans servir — l'agent y lirait une surface d'écriture vide, et
+      la politique de permissions gouvernerait un nom qui ne répond à personne.
+      L'absence de canal, elle, n'a jamais à arrêter une tâche (règle de #582) :
+      on ne monte pas, et rien d'autre ne change.
+
+    Le troisième invariant — le serveur reste **hors des `attendus`** — se lit
+    dans `_attendus_mcp`, qui ne connaît que les serveurs déclarés.
+    """
+    serveurs: dict[str, McpServerConfig] = {s.nom: _config_mcp_sdk(s) for s in mcp_serveurs}
+    if outils_maestro:
+        serveurs[NOM_SERVEUR] = _serveur_maestro(outils_maestro)
+    return serveurs
+
+
+def _attendus_mcp(mcp_serveurs: Sequence[ServeurMcp]) -> frozenset[str]:
+    """Les serveurs dont on attend la connexion — les **déclarés**, et eux seuls (#582).
+
+    Le serveur `maestro` en est absent par construction : il n'est pas dans
+    `mcp_serveurs`, il n'a rien à connecter, et l'attendre ferait risquer 60 s de
+    silence (`_attend_serveurs_mcp`) sur un canal dont l'absence ne doit jamais
+    arrêter une tâche. Séparé de `_serveurs_mcp` pour que l'invariant se vérifie
+    sans monter de session — pas parce que le calcul serait compliqué.
+    """
+    return frozenset(s.nom for s in mcp_serveurs)
 
 
 def _hook_permissions(
