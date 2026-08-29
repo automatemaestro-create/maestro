@@ -1,0 +1,36 @@
+{
+  "$comment": [
+    "ÉCHANTILLON FAUTIF n°1 pour `scripts/orchestrate/ecart-run.sh --regles` (#789).",
+    "",
+    "Une allowlist qui couvre TOUT le catalogue, y compris les refus mérités. Elle n'est pas un",
+    "régime qu'on souhaite : c'est le jeu de règles qui doit faire BASCULER le verdict du rapport,",
+    "et sans cette bascule « aucun écart » serait indiscernable d'un rapport mal branché — le pire",
+    "des verdicts, parce qu'il rassure (règle de #534/#537, reprise à l'en-tête du verbe).",
+    "",
+    "Ce qu'elle doit produire : les 18 gestes en « couvert », le code de sortie 0 — et les huit",
+    "refus MÉRITÉS signalés en CONTRADICTION, parce qu'une règle qui bénirait `rm` ou `merge-mr`",
+    "doit se voir, jamais s'avaler en silence."
+  ],
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch",
+      "Bash(pwd:*)",
+      "Bash(cut:*)",
+      "Bash(tr:*)",
+      "Bash(chmod:*)",
+      "Bash(git mv:*)",
+      "Bash(git merge-base:*)",
+      "Bash(git check-ignore:*)",
+      "Bash(python -c:*)",
+      "Bash(for:*)",
+      "Bash(curl:*)",
+      "Bash(python -:*)",
+      "Bash(rm:*)",
+      "Bash(bash:*)",
+      "Bash(PYTHONPATH=. .venv/Scripts/python.exe:*)"
+    ],
+    "ask": [],
+    "deny": []
+  }
+}

@@ -59,6 +59,11 @@ SCRIPTS = (
     "scripts/orchestrate/pilote.sh",
     "scripts/orchestrate/journal.sh",
     "scripts/orchestrate/settings.run.json",
+    # La lecture des blocs de permissions et le matching des règles, partagés depuis #789 entre
+    # `journal.sh refus` et `ecart-run.sh` : sans eux dans le dépôt jetable, le classement des
+    # refus n'a plus de `matche()` et retombe en « inclassé » — un vert qui ne garderait plus rien.
+    "scripts/orchestrate/permissions.sh",
+    "scripts/orchestrate/permissions.awk",
 )
 
 # Le bouchon `gh`. Il ne cherche pas à imiter GitHub : il répond au strict nécessaire, en lisant
