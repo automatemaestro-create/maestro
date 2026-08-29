@@ -252,6 +252,7 @@ from pydantic import BaseModel
 from maestro.agents import DEFAULT_TOOLS, TOOLED_PROFILES
 from maestro.agents.capacity import CapaciteAgent, CapacityStore
 from maestro.agents.catalog import DEFAULT_AGENTS, Agent
+from maestro.agents.lexique_playbook import lexique_dict
 from maestro.agents.mcp import IntegrationMcp, McpStore, references_env
 from maestro.agents.mcp_admission import (
     MOTIF_NON_ADMISE,
@@ -283,6 +284,7 @@ from maestro.controltower.assistance import (
 from maestro.controltower.assistance_documentee import RepondeurAssistanceDocumentee
 from maestro.controltower.auto_amelioration import (
     AnalyseurEchecs,
+    RedacteurPlaybook,
     RevisionIndisponible,
     echecs_du_run,
 )
@@ -588,6 +590,20 @@ class PlaybookPropositionRequete(BaseModel):
     """
 
     run_id: str
+
+
+class PlaybookRedactionRequete(BaseModel):
+    """Corps d'une demande de rédaction assistée (#261) : le brouillon, et ce qu'on en veut.
+
+    `contenu` est le texte **en cours d'édition**, pas la version publiée : l'assistance
+    travaille sur ce que l'utilisateur a sous les yeux. `consigne` est libre et
+    facultative — sans elle, la demande reste « complète et structure ». Les bornes
+    (`BROUILLON_MAX`, `CONSIGNE_MAX`) sont vérifiées par le rédacteur, comme #257 borne
+    l'intention côté générateur.
+    """
+
+    contenu: str
+    consigne: str | None = None
 
 
 class AgentCreationRequete(BaseModel):
@@ -921,6 +937,7 @@ def create_app(
     assistance_repondeur: RepondeurChat | None = None,
     orchestration_repondeur: RepondeurChat | None = None,
     analyseur: AnalyseurEchecs | None = None,
+    redacteur_playbook: RedacteurPlaybook | None = None,
     generateur_agent: GenerateurDefinitionAgent | None = None,
     capacites: CapacityStore | None = None,
     mcp: McpStore | None = None,
@@ -988,6 +1005,13 @@ def create_app(
     échecs d'un run via la couche fournisseur et enregistre un brouillon (#138).
     Par défaut il partage le dépôt `playbooks` et résout son fournisseur par
     config ; les tests (#137) en injectent un à fournisseur factice.
+
+    `redacteur_playbook` (#261) produit les réécritures servies par
+    `POST /api/playbooks/{agent}/redaction` : à partir du brouillon en cours dans
+    l'éditeur et d'une consigne libre, le modèle rend une version réécrite —
+    **rien n'est enregistré**, ni version ni proposition, l'éditeur l'affiche en
+    différentiel et l'utilisateur décide. Par défaut il résout son fournisseur
+    par config ; les tests en injectent un factice.
 
     `generateur_agent` (#257) produit les définitions d'agent proposées par
     `POST /api/catalogue/generation` : à partir d'une intention en une phrase, le
@@ -1168,6 +1192,9 @@ def create_app(
     )
     playbooks = playbooks if playbooks is not None else PlaybookStore.default()
     analyseur = analyseur if analyseur is not None else AnalyseurEchecs(playbooks=playbooks)
+    redacteur_playbook = (
+        redacteur_playbook if redacteur_playbook is not None else RedacteurPlaybook()
+    )
     generateur_agent = (
         generateur_agent if generateur_agent is not None else GenerateurDefinitionAgent()
     )
@@ -2335,6 +2362,21 @@ def create_app(
         """Les playbooks des agents (#76) : version courante et provenance de chacun."""
         return [_fiche_playbook(agent, avec_contenu=False) for agent in PLAYBOOK_DEFAUTS]
 
+    @app.get("/api/playbooks/lexique")
+    async def lexique_playbook() -> dict[str, list[dict[str, object]]]:
+        """Structures et tournures récurrentes des playbooks du dépôt (#261).
+
+        Ce que l'éditeur propose en cours de frappe. **Dérivé** des documents livrés
+        avec le paquet (`maestro.agents.lexique_playbook`), jamais recopié côté front :
+        renommer une section dans `_socle.md` change ce qui est proposé, sans toucher
+        une ligne de TypeScript.
+
+        Déclarée **avant** `/api/playbooks/{agent}`, sans quoi « lexique » serait pris
+        pour un nom d'agent et rendrait un 404 (même précaution que la route littérale
+        `/api/playbooks/propositions`).
+        """
+        return lexique_dict()
+
     @app.get("/api/playbooks/{agent}")
     async def playbook_courant(agent: str) -> dict[str, Any]:
         """Le playbook courant d'un agent : le contenu effectivement chargé par le moteur."""
@@ -2481,6 +2523,34 @@ def create_app(
         except RevisionIndisponible as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         return proposition.to_dict()
+
+    @app.post("/api/playbooks/{agent}/redaction")
+    async def rediger_playbook(
+        agent: str, requete: PlaybookRedactionRequete
+    ) -> dict[str, Any]:
+        """Réécrit le **brouillon en cours** d'un playbook, sans rien enregistrer (#261).
+
+        Le pendant « au clavier » de la proposition d'après-run : même cadre, même
+        fournisseur, mais la matière est le texte que l'utilisateur a sous les yeux et
+        le résultat lui revient — l'éditeur l'affiche en différentiel, l'applique à son
+        brouillon s'il le veut, et la publication reste le geste séparé qu'elle a
+        toujours été (`PUT /api/playbooks/{agent}`).
+
+        **Aucune écriture**, en succès comme en échec : ni version, ni proposition en
+        brouillon. 404 si l'agent n'a pas de playbook, 422 si le brouillon est vide ou
+        hors bornes, 502 si la génération échoue — dans tous les cas le texte de
+        l'utilisateur est intact, il n'a jamais quitté son écran.
+        """
+        _exige_playbook_connu(agent)
+        try:
+            redaction = await redacteur_playbook.proposer_redaction(
+                _agent_du_catalogue(agent), requete.contenu, requete.consigne
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RevisionIndisponible as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return redaction.to_dict()
 
     @app.post("/api/playbooks/{agent}/restaurer")
     async def restaurer_playbook(
