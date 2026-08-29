@@ -1104,7 +1104,7 @@ export const MODE_BRIEF_HUMAIN = "humain";
  * `orphelin` s'est resserré avec #446 : un hôte publie désormais son **issue** en
  * partant, donc ce verdict ne désigne plus un run terminé dont personne n'a écrit
  * la fin, mais un run mort **sans avoir pu le dire**. C'est exactement celui que
- * le panneau *Runs interrompus* propose de relancer (#349).
+ * le panneau *Runs qui n'avancent plus* propose de relancer (#349).
  *
  * `indetermine` n'est pas une commodité mais le refus explicite de deviner : le run
  * n'a **jamais** battu (trace antérieure à #348, registre injoignable), donc on ne
@@ -1347,6 +1347,29 @@ export type ResumeExecution = {
    * travaille d'un run mort trois jours plus tôt — les deux affichent `en_cours`.
    */
   vitalite?: string | null;
+  /**
+   * Ce run **attend-il quelqu'un depuis trop longtemps** (#737, `docs/05 §2.6`) ?
+   *
+   * Le **second** verdict de veille, et il ne répond pas de la même question que
+   * le précédent : `vitalite` dit si l'**hôte** du run est encore là, celui-ci si
+   * le **run avance**. Un run suspendu sur un humain depuis une heure est
+   * `vivant` *et* en souffrance — c'est la paire exacte qu'a portée le run de
+   * #568 pendant que rien ne le signalait.
+   *
+   * Booléen et non ternaire : le troisième état — « il attend, mais pas depuis
+   * trop longtemps » — est déjà porté par le `statut`, et le reporter ici serait
+   * un second support pour un même fait. Un run soldé rend donc `false` comme un
+   * run au travail, si long soit-il : ce verdict juge l'**attente**, jamais la
+   * durée.
+   *
+   * Il est **dérivé de `statut` + `attente_depuis`, jamais stocké** : il se
+   * recalcule à chaque lecture et survit à un redémarrage de l'API sans que rien
+   * ne soit persisté. Le seuil et ses écarts (horodatage illisible → `true`,
+   * l'inverse de `vitalite`) vivent dans `maestro/controltower/souffrance.py` ;
+   * l'écran ne les redéduit jamais — `estEnSouffrance` (`lib/execution`) ne fait
+   * que lire ce champ. Absent des flux antérieurs au lot, d'où l'optionnel.
+   */
+  en_souffrance?: boolean;
   /**
    * Le cadrage de ce run a-t-il été **approuvé par un humain** (#349) ? Distinct de
    * « le run a un brief » : dès que le brief est soumis, le détail en porte un —

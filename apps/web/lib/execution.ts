@@ -48,6 +48,30 @@ export function estOrphelin(execution: ResumeExecution): boolean {
 }
 
 /**
+ * Ce run **attend-il quelqu'un depuis trop longtemps** (#737) ?
+ *
+ * Le frère du précédent sur l'**autre** question, et les deux ne se recouvrent
+ * pas : `estOrphelin` demande « son hôte est-il là ? », celui-ci « ce run
+ * avance-t-il ? ». Un run suspendu sur un humain depuis une heure est `vivant`
+ * *et* en souffrance — c'est même la paire qu'a portée le run de #568.
+ *
+ * Strictement le verdict du backend, pour la raison exacte qui vaut au-dessus :
+ * le seuil (15 min, `SEUIL_SOUFFRANCE_S`) et ses écarts — un horodatage illisible
+ * rend `true`, l'inverse de `vitalite`, parce que « suspendu depuis on ne sait
+ * quand » est pire que « suspendu depuis vingt minutes » — vivent dans
+ * `maestro/controltower/souffrance.py`. Comparer `attente_depuis` ici donnerait
+ * une seconde règle qui se périmerait à la première correction du seuil, et
+ * `docs/33 §5.4` dit d'avance que ce chiffre bougera.
+ *
+ * L'absence du champ vaut **non** : une trace relue d'un backend antérieur au lot
+ * ne porte pas de verdict, et en inventer un reviendrait à faire ici le calcul
+ * que le paragraphe précédent refuse.
+ */
+export function estEnSouffrance(execution: ResumeExecution): boolean {
+  return execution.en_souffrance === true;
+}
+
+/**
  * Ce run a-t-il été emporté par l'**extinction de Maestro** (#486) ?
  *
  * Le second cas d'un run qu'on peut reprendre, et il ne ressemble pas au premier :
@@ -349,4 +373,48 @@ export function regimeDuRun(
     return REGIME_SUSPENDU;
   }
   return REGIME_TRAVAILLE;
+}
+
+/**
+ * Les runs **qu'on a laissés attendre**, dans l'ordre du backend (#738).
+ *
+ * Le pendant de `runsRelancables` sur l'autre verdict, et sa seconde moitié est
+ * tout le sujet : le verdict du backend **ne suffit pas à décider ce qu'on
+ * signale**. `en_souffrance` juge une attente et rien d'autre, si bien qu'il dit
+ * `true` sur des runs à qui l'écran n'a rien à proposer d'utile — et le module
+ * les nomme lui-même :
+ *
+ * - un run **orphelin** arrêté sur son brief attend bien, mais **personne ne
+ *   recevra la réponse** : il faut le *reprendre* (#349), pas aller lui répondre.
+ *   C'est le deuxième cran de `regimeDuRun`, écrit là depuis #474 ;
+ * - un run **en pause** est le seul état arrêté où **quelqu'un a déjà décidé**
+ *   (`docs/33 §3.2` : « alerter dessus, ce serait alerter sur l'exercice d'une
+ *   commande qu'on offre »). Le backend l'assume comme un faux positif — la pause
+ *   est un drapeau à côté du statut, pas dedans — et l'écran, lui, a déjà tranché
+ *   que la pause l'emporte sur l'attente ;
+ * - un run **soldé** n'attend plus rien, et le verdict rend `false` de lui-même.
+ *
+ * D'où le filtre : le régime **suspendu**, qui est exactement « ni soldé, ni
+ * orphelin, ni en pause, et il attend quelqu'un ». Ce n'est pas une seconde règle
+ * écrite ici mais **celle du dépôt**, rejouée — l'ordre de ses quatre questions
+ * *est* la décision, et la recopier en trois `!estOrphelin(…) && …` la ferait
+ * diverger au premier régime ajouté.
+ *
+ * `attendUneValidation` n'est pas demandé, et ce n'est pas un oubli : ce filtre-ci
+ * n'écarte jamais un run que le verdict a retenu — `en_souffrance` implique un
+ * `statut` d'attente (`STATUTS_EXECUTION_EN_ATTENTE`), donc `causeDAttente`
+ * répond déjà sans l'appariement par les tâches, qui n'est là que comme filet
+ * (#571). Le demander obligerait le panneau à connaître les tâches du projet pour
+ * une réponse identique.
+ *
+ * Aucun tri, comme au-dessus : `GET /api/executions` rend ses résumés récents
+ * d'abord et retrier localement poserait une seconde règle d'ordre pour rien.
+ */
+export function runsEnSouffrance(
+  executions: ResumeExecution[],
+): ResumeExecution[] {
+  return executions.filter(
+    (execution) =>
+      estEnSouffrance(execution) && regimeDuRun(execution) === REGIME_SUSPENDU,
+  );
 }
