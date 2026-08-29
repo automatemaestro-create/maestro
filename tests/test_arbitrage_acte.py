@@ -98,6 +98,7 @@ class _Executant(ModelProvider):
         self, prompt, *, model, system_prompt=None, workspace, tools,
         mcp_serveurs=(), politique=None, on_refus=None, on_arbitrage_acte=None,
         on_activite=None, on_etapes=None, on_arbitrage=None, credit_arbitrage=None,
+        on_courrier=None,
         plafond_tours=None, projet=None,
     ):
         (Path(workspace) / "livrable.txt").write_text("contenu", encoding="utf-8")
@@ -129,6 +130,7 @@ class AppelleUnOutilAsk(_Executant):
         self, prompt, *, model, system_prompt=None, workspace, tools,
         mcp_serveurs=(), politique=None, on_refus=None, on_arbitrage_acte=None,
         on_activite=None, on_etapes=None, on_arbitrage=None, credit_arbitrage=None,
+        on_courrier=None,
         plafond_tours=None, projet=None,
     ):
         if self.SANS_ACTE in prompt:
@@ -173,6 +175,7 @@ class LeveLaMain(_Executant):
         self, prompt, *, model, system_prompt=None, workspace, tools,
         mcp_serveurs=(), politique=None, on_refus=None, on_arbitrage_acte=None,
         on_activite=None, on_etapes=None, on_arbitrage=None, credit_arbitrage=None,
+        on_courrier=None,
         plafond_tours=None, projet=None,
     ):
         if on_arbitrage is not None:

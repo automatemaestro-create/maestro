@@ -92,6 +92,7 @@ class OutilleEnregistreur(ModelProvider):
         mcp_serveurs=(), politique=None, on_refus=None, on_arbitrage_acte=None,
         on_activite=None, on_etapes=None,
         on_arbitrage=None, credit_arbitrage=None,
+        on_courrier=None,
         plafond_tours=None, projet=None,
     ):
         self.run_calls.append({"prompt": prompt, "system_prompt": system_prompt})

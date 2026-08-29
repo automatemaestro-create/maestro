@@ -86,6 +86,18 @@ from maestro.providers.base import (
     attache_stderr,
 )
 from maestro.providers.checklist import est_checklist, etapes_depuis_outil
+from maestro.providers.courrier import (
+    COURRIER_EN_ERREUR,
+    DESCRIPTION_COURRIER,
+    DESTINATAIRE_MANQUANT,
+    DESTINATAIRE_RESERVE,
+    MESSAGE_MANQUANT,
+    MOT_CONSIGNE,
+    NOM_OUTIL_COURRIER,
+    SCHEMA_COURRIER,
+    Courrier,
+    destinataire_reserve,
+)
 from maestro.sandbox.container import IsolationConfig
 
 if TYPE_CHECKING:  # imports de typage seuls — pas de dépendance d'exécution vers agents
@@ -300,6 +312,7 @@ class ClaudeProvider(ModelProvider):
         on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,
         on_arbitrage: Arbitre | None = None,
         credit_arbitrage: CreditArbitrage | None = None,
+        on_courrier: Courrier | None = None,
         plafond_tours: int | None = PLAFOND_TOURS_DEFAUT,
         projet: Projet | None = None,
     ) -> str:
@@ -448,6 +461,20 @@ class ClaudeProvider(ModelProvider):
         la durée soit celle du blocage. En particulier, elle se **referme quand le
         hook cesse d'attendre**, pas quand la demande aboutit : la demande reste
         en vol, l'agent, lui, a repris son travail.
+
+        `on_courrier` (#720, `maestro.providers.courrier`) fait porter au même
+        serveur l'outil `ecrire_a_un_pair(destinataire, message)` : l'agent
+        adresse un mot à un autre agent du run, l'appelant le **consigne** au
+        journal et le **publie** en best-effort sur la boîte du destinataire.
+        C'est un canal de plus qui repart vers l'agent, et le seul à ce jour qui
+        n'**attende** rien — d'où l'absence de fenêtre de crédit : personne n'est
+        suspendu à une décision, l'appel rend la main aussitôt.
+
+        Ce qu'il livre est une **trace adressée**, jamais une livraison, et
+        `DESCRIPTION_COURRIER` le dit à l'agent : le transport est un pub/sub
+        éphémère sans rejeu ni accusé de réception, et un agent n'existe que
+        pendant sa tâche. C'est aussi pourquoi l'issue de la publication ne
+        remonte pas jusqu'ici — elle ne prouverait rien de plus que son échec.
         """
         env = self._auth_env()
         cli_path: Path | None = None
@@ -457,7 +484,11 @@ class ClaudeProvider(ModelProvider):
         stderr = CollecteurStderr()
         serveurs = _serveurs_mcp(
             mcp_serveurs,
-            _outils_maestro(on_arbitrage=on_arbitrage, credit=credit_arbitrage),
+            _outils_maestro(
+                on_arbitrage=on_arbitrage,
+                credit=credit_arbitrage,
+                on_courrier=on_courrier,
+            ),
         )
         options = ClaudeAgentOptions(
             model=model,
@@ -577,6 +608,65 @@ def _outil_arbitrage(
     return demander_arbitrage
 
 
+def _outil_courrier(on_courrier: Courrier) -> SdkMcpTool[Any]:
+    """L'outil `ecrire_a_un_pair(destinataire, message)` servi à l'agent (#720).
+
+    Un verbe de plus sur le porte-outils (#718), et le seul à ce jour qui
+    n'attende **rien** : il consigne et rend la main. Toute la forme de ce qu'il rend vit dans
+    `maestro.providers.courrier`, avec le reste du vocabulaire, pour rester
+    lisible sans monter de session SDK — et pour que la promesse qu'on tient
+    (une trace adressée) s'écrive au même endroit que la réserve qui l'impose.
+
+    Quatre réponses se ressemblent et n'ont pas la même cause ; aucune n'est
+    rendue en **erreur d'outil**, ce qui inviterait l'agent à rejouer un appel
+    dont on vient de lui dire ce qu'il faut en faire :
+
+    - **destinataire vide** : côté transport, c'est la *diffusion* — le mot
+      partirait dans toutes les boîtes, celle du relais de handoff comprise. On
+      ne l'écrit pas et on demande un nom ;
+    - **destinataire réservé** : `AGENT_RELAIS` n'est pas un pair mais la boucle
+      elle-même (cf. `courrier.destinataire_reserve`). Même refus, autre motif —
+      et le texte dit où aller à la place ;
+    - **message vide** : rien n'a été soumis à personne, donc rien n'est refusé.
+      C'est un champ à remplir, pas une décision ;
+    - **canal en erreur** : le callback a levé. On le dit — c'est le seul cas où
+      l'agent apprend que *rien* n'a été écrit, donc le seul qui change quelque
+      chose pour lui — et on ne laisse surtout pas l'exception remonter : elle
+      tuerait la tâche au moment précis où l'agent essayait d'être utile.
+
+    Aucune fenêtre de crédit d'arbitrage ici (#584), et ce n'est pas un oubli :
+    ce verbe ne **suspend** rien. Le crédit mesure le temps qu'un agent passe à
+    attendre une personne ; ici personne n'est attendu, et la seule attente est
+    celle d'une écriture de journal.
+
+    L'outil est rendu **séparément de son serveur**, comme `_outil_arbitrage` et
+    pour la même raison : ce qui décide ici tient en une poignée de lignes, et
+    les éprouver ne doit coûter ni CLI, ni sous-processus, ni quota (tests →
+    #721).
+    """
+
+    @tool(NOM_OUTIL_COURRIER, DESCRIPTION_COURRIER, SCHEMA_COURRIER)
+    async def ecrire_a_un_pair(args: dict[str, Any]) -> dict[str, Any]:
+        destinataire = str(args.get("destinataire") or "").strip()
+        message = str(args.get("message") or "").strip()
+        if not destinataire:
+            texte = DESTINATAIRE_MANQUANT
+        elif destinataire_reserve(destinataire):
+            texte = DESTINATAIRE_RESERVE.format(relais=destinataire)
+        elif not message:
+            texte = MESSAGE_MANQUANT.format(destinataire=destinataire)
+        else:
+            try:
+                await on_courrier(destinataire, message)
+            except Exception as exc:  # noqa: BLE001 — servi à l'agent, jamais une tâche tuée
+                texte = COURRIER_EN_ERREUR.format(cause=exc)
+            else:
+                texte = MOT_CONSIGNE.format(destinataire=destinataire)
+        return {"content": [{"type": "text", "text": texte}]}
+
+    return ecrire_a_un_pair
+
+
 @contextmanager
 def _fenetre_arbitrage(credit: CreditArbitrage | None) -> Iterator[None]:
     """Ouvre la fenêtre d'attente du crédit quand il y en a un (#584), sinon ne fait rien.
@@ -597,6 +687,7 @@ def _outils_maestro(
     *,
     on_arbitrage: Arbitre | None = None,
     credit: CreditArbitrage | None = None,
+    on_courrier: Courrier | None = None,
 ) -> list[SdkMcpTool[Any]]:
     """Les outils que le serveur `maestro` a **effectivement** à porter (#718).
 
@@ -610,10 +701,16 @@ def _outils_maestro(
     au bout du fil, et servir à l'agent un verbe qui n'aboutit nulle part est
     pire que ne pas le lui servir. La liste rendue peut donc être vide — c'est
     un état normal, que `_serveurs_mcp` traite comme tel.
+
+    Les deux canaux sont **indépendants** : un run peut servir l'arbitrage sans
+    le courrier, l'inverse, les deux ou aucun. Rien ici ne les ordonne, et
+    l'ordre de la liste n'a pas de sens pour le SDK — c'est celui de la lecture.
     """
     outils: list[SdkMcpTool[Any]] = []
     if on_arbitrage is not None:
         outils.append(_outil_arbitrage(on_arbitrage, credit))
+    if on_courrier is not None:
+        outils.append(_outil_courrier(on_courrier))
     return outils
 
 

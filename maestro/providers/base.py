@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, ClassVar, TypeVar
 
 from maestro.deliberation import CreditArbitrage
 from maestro.providers.arbitrage import Arbitre, ArbitreActe
+from maestro.providers.courrier import Courrier
 
 if TYPE_CHECKING:  # imports de typage seuls — pas de dépendance d'exécution vers agents
     from maestro.agents.mcp import ServeurMcp
@@ -335,6 +336,7 @@ class ModelProvider(ABC):
         on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,
         on_arbitrage: Arbitre | None = None,
         credit_arbitrage: CreditArbitrage | None = None,
+        on_courrier: Courrier | None = None,
         plafond_tours: int | None = PLAFOND_TOURS_DEFAUT,
         projet: Projet | None = None,
     ) -> str:
@@ -473,6 +475,34 @@ class ModelProvider(ABC):
 
         Capacité optionnelle : sans ce canal, l'arbitrage fonctionne exactement
         comme avant et son temps reste compté dans celui de la tâche.
+
+        `on_courrier` (#720, `maestro.providers.courrier`) est un canal de plus
+        qui va **vers** l'agent : un fournisseur qui l'honore lui expose un outil
+        `ecrire_a_un_pair(destinataire, message)` et appelle ce canal quand
+        l'agent s'en sert. Il ne transporte **rien en retour** — l'appelant
+        consigne le mot au journal du run et le publie en best-effort sur la
+        boîte du destinataire, puis rend la main : l'agent n'attend pas, et
+        aucune décision ne lui est due.
+
+        Deux exigences, et elles ne ressemblent à aucune des précédentes. Le
+        fournisseur doit **refuser lui-même** ce qui n'est pas adressable — un
+        destinataire vide vaut *diffusion* côté transport, et l'identité de la
+        boucle n'est pas un pair — parce que ces refus se répondent à l'agent et
+        non à l'appelant. Et un callback qui lève **ne peut pas être avalé en
+        silence** : la seule promesse de ce verbe étant l'écriture, son échec est
+        la seule nouvelle qui change quelque chose pour l'agent
+        (`maestro.providers.courrier.COURRIER_EN_ERREUR`) — mais il ne doit pas
+        pour autant tuer la tâche.
+
+        Ce qui est promis à l'agent est une **trace adressée**, jamais une
+        livraison : le transport est un pub/sub éphémère (pas de rejeu, abonné
+        requis avant publication) et un agent n'existe que pendant sa tâche. Un
+        fournisseur qui expose ce verbe doit donc le présenter ainsi — c'est la
+        réserve de docs/31 §3.2, et elle est dans la description de l'outil.
+
+        Capacité optionnelle au second degré, comme `on_etapes` et
+        `on_arbitrage` : un fournisseur sans outillage n'expose rien et le moteur
+        ne s'en aperçoit pas.
 
         `plafond_tours` (#239) borne la boucle agentique — dépassé ⇒
         `TurnLimitReached`. Il est **fourni par l'appelant** (le profil de

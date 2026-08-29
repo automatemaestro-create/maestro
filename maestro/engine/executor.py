@@ -60,6 +60,12 @@ from maestro.engine.guardrails import (
     Guardrails,
 )
 from maestro.engine.retry import PolitiqueRelance, est_transitoire
+from maestro.messaging.mailbox import (
+    MESSAGE_NOTIFICATION,
+    AgentMessage,
+    Mailbox,
+    consigne_message,
+)
 from maestro.orchestrator.schema import Task
 from maestro.projets.application import ApplicationRefusee, appliquer, diff_du_travail
 from maestro.projets.modele import Projet
@@ -67,6 +73,7 @@ from maestro.projets.racine import RacineRefusee
 from maestro.projets.store import ProjetStore
 from maestro.providers.arbitrage import Arbitre, ArbitreActe
 from maestro.providers.base import ModelProvider, UnsupportedCapability, stderr_de
+from maestro.providers.courrier import Courrier
 from maestro.router.classifier import TaskClassifier
 from maestro.router.router import Router
 from maestro.sandbox import ProducedFile, branche_de_tache
@@ -319,8 +326,17 @@ class LocalExecutor(TaskExecutor):
         permissions: PermissionStore | None = None,
         relance: PolitiqueRelance | None = None,
         projets: ProjetStore | None = None,
+        mailbox: Mailbox | None = None,
     ) -> None:
         self._provider = provider
+        # Messagerie inter-agents (#44) vue de l'exécuteur (#720) : la boîte sur
+        # laquelle **notifier** le mot qu'un agent adresse à un pair. None — le
+        # cas courant, un run se lance sans `--messagerie` — n'éteint pas le
+        # verbe : le journal est la livraison, le pub/sub n'est que la
+        # notification (docs/31 §3.2), donc un run sans transport écrit la trace
+        # et n'a personne à prévenir. C'est exactement le régime du pair absent,
+        # qui est le cas nominal et non le cas dégradé.
+        self._mailbox = mailbox
         # Dépôt des projets (#224, EF-36) : quand une tâche porte un `projet_id`
         # (#222), le projet est relu ici — à chaud, comme les autres dépôts — et
         # l'espace de travail en est **dérivé** (worktree Git sur une branche
@@ -941,6 +957,75 @@ class LocalExecutor(TaskExecutor):
 
         return arbitre
 
+    def _courrier(self, task: Task, agent: Agent, journal: RunJournal) -> Courrier:
+        """Le canal par lequel un agent écrit un mot à un pair (#720).
+
+        Rend au fournisseur un `Courrier` — un destinataire, un message, rien en
+        retour — qui fait **les deux gestes**, dans cet ordre :
+
+        1. `consigne_message` : une étape `<task.id>:message` au journal du run,
+           que le pont (#46) mue en `message.inter_agents` et que la frise (#355)
+           reçoit sans travail de son côté ;
+        2. `mailbox.publish` : la notification en direct, **best-effort**.
+
+        ⚠ **L'ordre est inversé par rapport au handoff, et c'est le contenu de la
+        décision.** `HandoffRelais.annonce` publie *puis* consigne, et abandonne
+        tout — trace comprise — si la publication échoue : la trace y est
+        conditionnée à la notification. Ici c'est l'inverse, parce que la réserve
+        de docs/31 §3.2 le renverse : *le journal est la livraison, le pub/sub
+        n'est que la notification*. Écrire d'abord donne au passage une propriété
+        qu'on ne rattraperait pas autrement — un pair qui reçoit la notification
+        est certain que la trace existe déjà.
+
+        **Le pair absent est le cas nominal, pas le cas d'erreur**, et il ne
+        produit même pas d'exception : le transport est un pub/sub éphémère, donc
+        publier dans une boîte que personne n'écoute *réussit* et le message
+        disparaît. Sans transport du tout (`mailbox=None`, le cas courant), il
+        n'y a personne à prévenir et la trace est écrite tout de même. Un
+        transport en panne, enfin, est **avalé** ici et non remonté : la
+        promesse — l'écriture — est déjà tenue, et la seule chose que l'agent
+        ferait d'un échec de notification serait de réessayer, c'est-à-dire de
+        dupliquer la trace sur un canal qui n'a toujours pas de lecteur.
+
+        Ce que l'agent **ne fournit pas** est ce dont il ne répond pas :
+        l'expéditeur (`agent.nom`), la tâche (`task.id`) et le run
+        (`journal.run_id`) sont fermés ici, comme dans `_arbitre`. Un agent qui
+        les écrirait pourrait signer d'un autre nom, ou rattacher son mot à la
+        tâche d'un tiers.
+
+        Le type est `notification` et non `requete` : ce verbe **n'attend pas de
+        réponse** — un canal « question » dont la réponse serait du texte est le
+        sujet de #647, pas celui-ci —, et une `requete` promettrait une paire que
+        rien ici ne referme. `payload` reste vide : il n'y a aucune charge utile
+        structurée à porter, et `consigne_message` ne le lit pas.
+
+        Rien de tout ceci ne touche au graphe du plan (docs/31 §5) : une étape de
+        journal s'ajoute, aucune tâche n'est créée, aucun statut posé, personne
+        n'est réassigné.
+        """
+
+        async def courrier(destinataire: str, message: str) -> None:
+            mot = AgentMessage(
+                type=MESSAGE_NOTIFICATION,
+                de_agent=agent.nom,
+                a_agent=destinataire,
+                tache_id=task.id,
+                run_id=journal.run_id,
+                objet=message,
+            )
+            # La livraison d'abord — si celle-ci lève, l'agent doit l'apprendre
+            # (le fournisseur lui sert `COURRIER_EN_ERREUR`) : c'est la seule
+            # promesse de ce verbe, et la seule dont l'échec change quelque chose.
+            consigne_message(journal, mot, role=agent.role, projet_id=task.projet_id)
+            if self._mailbox is None:
+                return
+            try:
+                await self._mailbox.publish(mot)
+            except Exception:  # noqa: BLE001 — la notification n'échoue ni l'appel ni la tâche
+                return
+
+        return courrier
+
     def _consigne_validation(
         self,
         task: Task,
@@ -1509,6 +1594,15 @@ class LocalExecutor(TaskExecutor):
         de canal non plus : une décision qu'on ne pourrait pas consigner serait
         une décision prise nulle part.
 
+        Le **mot à un pair** (#720) suit ce chemin-là aussi : il est servi comme
+        un outil, donc il n'existe que là où il y en a. Sans `journal`, pas de
+        canal — et ici c'est plus qu'une trace manquante : le journal *est* la
+        livraison, un verbe qui n'écrirait nulle part ne tiendrait plus rien de
+        ce que sa description promet. La **messagerie**, elle, n'est pas
+        requise : `mailbox=None` — le cas courant — laisse le verbe consigner et
+        n'a personne à notifier, ce qui est exactement le régime du pair absent
+        (docs/31 §3.2).
+
         Le **projet** de la tâche (#224) n'équipe lui aussi que le chemin
         outillé : c'est de lui qu'est dérivé l'espace de travail (worktree ou
         copie). Le chemin texte ne produit aucun fichier — il n'a pas d'espace
@@ -1564,6 +1658,14 @@ class LocalExecutor(TaskExecutor):
                     # Le crédit descend, la mémoire non (#584) : le fournisseur
                     # mesure une attente, il n'a pas à connaître les demandes.
                     credit_arbitrage=deliberation.credit,
+                    # Le journal suffit, la messagerie n'est pas requise (#720) :
+                    # c'est lui qui livre, le transport ne fait que notifier.
+                    # Sans journal en revanche, il n'y aurait nulle part où
+                    # écrire — et un verbe qui ne consigne rien ne tient plus
+                    # aucune des promesses de sa description.
+                    on_courrier=(
+                        None if journal is None else self._courrier(task, agent, journal)
+                    ),
                     projet=self._projet(task),
                     tache_id=task.id,
                 )

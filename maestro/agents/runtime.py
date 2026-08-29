@@ -32,6 +32,7 @@ from maestro.projets.modele import Projet
 from maestro.projets.secrets import enregistre_secrets_du_projet
 from maestro.providers.arbitrage import Arbitre, ArbitreActe
 from maestro.providers.base import PLAFOND_TOURS_DEFAUT, ModelProvider
+from maestro.providers.courrier import Courrier
 from maestro.sandbox import ProducedFile, espace_de_travail
 
 #: Outils confiés par défaut à un rôle outillé : lire/écrire/éditer des fichiers,
@@ -199,6 +200,7 @@ class AgentRuntime:
         on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,
         on_arbitrage: Arbitre | None = None,
         credit_arbitrage: CreditArbitrage | None = None,
+        on_courrier: Courrier | None = None,
         projet: Projet | None = None,
         tache_id: str = "",
     ) -> AgentOutcome:
@@ -273,6 +275,15 @@ class AgentRuntime:
         n'est ni celui qui mesure ni celui qui décompte. None : le temps
         d'arbitrage reste compté dans celui de la tâche, comme avant #584.
 
+        `on_courrier` (#720) est le sixième, et il traverse comme les autres, dans
+        le sens de `on_arbitrage` : c'est l'agent qui **écrit** à un pair, le
+        fournisseur qui lui expose l'outil, et l'appelant qui consigne le mot au
+        journal et le publie sur la boîte du destinataire. Le runtime n'est ni
+        celui qui écrit ni celui qui poste — il ne connaît ni la tâche, ni le
+        run, ni le nom sous lequel l'agent signe, et c'est précisément pour ça
+        que ces trois champs ne sont pas demandés à l'agent. None : le verbe
+        n'est pas servi, et l'agent produit son livrable sans lui, comme avant.
+
         `projet` (#224, EF-36) est le **projet dans lequel la tâche travaille** :
         l'espace de travail en est alors dérivé — worktree Git sur la branche
         `maestro/<tache_id>` si le projet est versionné, copie de son périmètre
@@ -326,6 +337,7 @@ class AgentRuntime:
                 on_etapes=on_etapes,
                 on_arbitrage=on_arbitrage,
                 credit_arbitrage=credit_arbitrage,
+                on_courrier=on_courrier,
                 plafond_tours=self._plafond_tours,
                 projet=projet,
             )
