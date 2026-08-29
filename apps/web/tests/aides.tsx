@@ -837,6 +837,10 @@ export function ficheCatalogueFactice(
     fournisseur: null,
     effort: null,
     source: AGENT_SOURCE_DEFAUT,
+    // Par défaut la fiche d'un agent du code **non surchargé** (#259) : les
+    // trois réglages viennent du code, donc les trois sont hérités.
+    herite: ["fournisseur", "modele", "effort"],
+    reglages_du_code: { fournisseur: null, modele: null, effort: null },
     cree_le: null,
     modifie_le: null,
     mcp_serveurs: [],

@@ -736,9 +736,33 @@ export type PolitiquePermissions = {
 };
 
 /**
+ * Les trois réglages de modèle d'un agent — ce qu'une surcharge peut porter
+ * (#259). `null` n'y est pas un réglage vide mais un réglage **hérité** :
+ * l'agent suit ce que le code (ou l'exécution) dit de lui.
+ */
+export type ReglagesModele = {
+  fournisseur: string | null;
+  modele: string | null;
+  effort: string | null;
+};
+
+/**
  * Une fiche du catalogue d'agents (`GET /api/catalogue`, #72) : les agents par
- * défaut du code (`source` « defaut ») et les personnalisés persistés
- * (« personnalise »). Les dates ne sont posées que sur les personnalisés ;
+ * défaut du code (`source` « defaut »), ceux du code dont les réglages de
+ * modèle ont été **surchargés** (« defaut_surcharge », #259) et les
+ * personnalisés persistés (« personnalise »).
+ *
+ * Les trois réglages servis sont les **effectifs** : la surcharge d'abord, le
+ * code ensuite. `herite` nomme ceux qui restent au code — de quoi les marquer
+ * comme tels plutôt que de le faire deviner — et `reglages_du_code` dit ce que
+ * le code vaut pour chacun, y compris recouvert : c'est ce qu'un retour au
+ * défaut rendrait. Sur un agent personnalisé, `herite` est vide et
+ * `reglages_du_code` null — il ne tient rien du code, sa définition est son
+ * réglage.
+ *
+ * Les dates : `cree_le` n'est posée que sur les personnalisés ; `modifie_le`
+ * porte la date de la définition sur un personnalisé, celle de la surcharge sur
+ * un agent du code (null s'il n'en a pas).
  * `modele` null signifie « le modèle par défaut des exécutants » et
  * `fournisseur` est déclaratif au POC (le moteur est mono-fournisseur).
  * `mcp_serveurs` (#104) liste les serveurs MCP **effectifs** montés pour l'agent
@@ -762,6 +786,8 @@ export type AgentCatalogue = {
   fournisseur: string | null;
   effort: string | null;
   source: string;
+  herite: string[];
+  reglages_du_code: ReglagesModele | null;
   cree_le: string | null;
   modifie_le: string | null;
   mcp_serveurs: ServeurMcp[];
@@ -974,9 +1000,20 @@ export const CHAT_AUTEUR_UTILISATEUR = "utilisateur";
 export const PLAYBOOK_SOURCE_DEFAUT = "defaut";
 export const PLAYBOOK_SOURCE_STOCKAGE = "stockage";
 
-/** Provenances d'une fiche du catalogue d'agents (maestro/controltower/app.py, #72). */
+/**
+ * Provenances d'une fiche du catalogue d'agents (maestro/agents/store.py, #72).
+ * **Trois** depuis #259 : un agent du code dont on a surchargé les réglages de
+ * modèle n'est ni tout à fait « du code » — il ne suit plus le code sur ces
+ * points-là — ni « personnalisé », puisqu'il n'a pas été dupliqué.
+ */
 export const AGENT_SOURCE_DEFAUT = "defaut";
+export const AGENT_SOURCE_SURCHARGE = "defaut_surcharge";
 export const AGENT_SOURCE_PERSONNALISE = "personnalise";
+
+/** Vrai pour un agent défini par le code, surchargé ou non (#259). */
+export function estAgentDuCode(source: string): boolean {
+  return source === AGENT_SOURCE_DEFAUT || source === AGENT_SOURCE_SURCHARGE;
+}
 
 /** Statuts d'agent exposés par l'API (maestro/controltower/state.py). */
 export const AGENT_LIBRE = "libre";

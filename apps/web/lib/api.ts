@@ -41,6 +41,7 @@ import type {
   ProvenanceRegistreMcp,
   RapportLecture,
   RefusProjet,
+  ReglagesModele,
   ReponsesBrief,
   ResumeExecution,
   RevocationAdmissionMcp,
@@ -462,6 +463,44 @@ export function supprimerAgent(nom: string): Promise<void> {
     `/api/catalogue/${encodeURIComponent(nom)}`,
     undefined,
     "suppression refusée",
+    "DELETE",
+  );
+}
+
+/**
+ * Surcharge les réglages de modèle d'un agent **du code**
+ * (`PUT /api/catalogue/{nom}/reglages`, #259), sans le dupliquer.
+ *
+ * Rôle, compétences et playbook restent au code et continuent d'en suivre les
+ * évolutions : seuls les trois réglages sont recouverts. Le corps est
+ * l'**intégrale** et pas un diff — un réglage à `null` retourne au code —, si
+ * bien que tout mettre à `null` revient à `annulerSurcharge`.
+ */
+export function surchargerAgent(
+  nom: string,
+  reglages: ReglagesModele,
+): Promise<void> {
+  return envoyerJson(
+    `/api/catalogue/${encodeURIComponent(nom)}/reglages`,
+    reglages,
+    "surcharge refusée",
+    "PUT",
+  );
+}
+
+/**
+ * Annule la surcharge d'un agent du code : retour à ses réglages du code
+ * (`DELETE /api/catalogue/{nom}/reglages`, #259).
+ *
+ * ⚠ Annule, ne supprime pas — l'agent reste au catalogue. À ne pas confondre
+ * avec `supprimerAgent`, qui fait disparaître un agent personnalisé et que le
+ * serveur refuse sur un agent du code.
+ */
+export function annulerSurchargeAgent(nom: string): Promise<void> {
+  return envoyerJson(
+    `/api/catalogue/${encodeURIComponent(nom)}/reglages`,
+    undefined,
+    "retour au défaut refusé",
     "DELETE",
   );
 }

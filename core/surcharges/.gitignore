@@ -1,0 +1,4 @@
+# Les surcharges de réglages écrites à chaud (API #259) sont des données
+# d'exécution, pas du code : on ne les commite pas.
+*.json
+*.tmp

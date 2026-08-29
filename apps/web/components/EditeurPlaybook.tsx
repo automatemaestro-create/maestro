@@ -146,8 +146,12 @@ export function EditeurPlaybook({
           className="mb-2"
           aside={
             <span className="chiffre text-annexe text-neutral-500 dark:text-neutral-400">
+              {/* « version d'origine » et non « du code » depuis #259 :
+                  l'onglet sert aussi les agents personnalisés, dont l'origine
+                  est le playbook de leur définition et non un document du
+                  dépôt — le mot doit valoir pour les deux. */}
               {jamaisEdite
-                ? "version du code (jamais édité)"
+                ? "version d’origine (jamais éditée)"
                 : `version ${fiche.version}` +
                   (fiche.cree_le ? ` · ${formatDateHeure(fiche.cree_le)}` : "")}
             </span>
@@ -212,7 +216,8 @@ export function EditeurPlaybook({
         />
         {versions.length === 0 && (
           <p className="mb-1 text-sm text-neutral-500">
-            Aucune version publiée : l&apos;agent suit encore le playbook du code.
+            Aucune version publiée : l&apos;agent suit encore son playbook
+            d&apos;origine.
           </p>
         )}
         {(propositions.length > 0 || versions.length > 0) && (
