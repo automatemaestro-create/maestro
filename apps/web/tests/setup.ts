@@ -40,6 +40,7 @@ import { afterEach, beforeEach, vi } from "vitest";
 import {
   CATALOGUE_POSTE_NU,
   canauxDemandes,
+  catalogueAgents,
   cheminCourant,
   etatGlobalCourant,
   filAssistanceCourant,
@@ -51,6 +52,7 @@ import {
   noterProjetDuFil,
   pageJournalCourante,
   porteesDemandees,
+  poserCatalogueAgents,
   poserChemin,
   poserEtatGlobal,
   poserFilAssistance,
@@ -140,6 +142,11 @@ vi.mock("@/lib/api", async (importOriginal) => {
     // défaut est un **poste nu** — la sonde ne trouve rien, les deux champs
     // restent en saisie libre, et tout test écrit avant ce lot dit encore vrai.
     chargerFournisseurs: () => Promise.resolve(fournisseursDuPoste()),
+    // #255 : le même formulaire lit les **rôles connus** dans le catalogue des
+    // agents. Défaut vide — aucun rôle suggéré, le champ reste celui d'avant —,
+    // et les 18 fichiers qui mockent `@/lib/api` chez eux gardent le pas sur
+    // cette déclaration.
+    chargerCatalogue: () => Promise.resolve(catalogueAgents()),
   };
 });
 
@@ -166,6 +173,7 @@ beforeEach(() => {
   poserProjets([]);
   poserJournal([]);
   poserFournisseurs(CATALOGUE_POSTE_NU);
+  poserCatalogueAgents([]);
   navigations.length = 0;
   porteesDemandees.length = 0;
   canauxDemandes.length = 0;

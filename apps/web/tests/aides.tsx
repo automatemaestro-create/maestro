@@ -487,6 +487,30 @@ export function fournisseursDuPoste(): CatalogueFournisseurs {
   return cataloguePoste;
 }
 
+// --- Catalogue des agents (rôles connus du formulaire, #255) ----------------
+
+let catalogueAgentsPose: AgentCatalogue[] = [];
+
+/**
+ * Ce que `chargerCatalogue` rendra — le mock vit dans `setup.ts`, au même titre
+ * que celui des fournisseurs.
+ *
+ * Le défaut est **vide**, comme `poserProjets`/`poserJournal` et contrairement à
+ * `CATALOGUE_POSTE_NU` : un poste nu garde une gamme (le registre ne dépend pas
+ * de la machine), là où un catalogue d'agents vide est un état parfaitement
+ * ordinaire. Un test qui regarde les rôles proposés pose le sien.
+ *
+ * Sans ce point d'entrée, tout test montant le formulaire d'agent partirait sur
+ * un vrai `fetch` depuis #255, qui y lit les rôles déjà portés par le catalogue.
+ */
+export function poserCatalogueAgents(fiches: AgentCatalogue[]): void {
+  catalogueAgentsPose = fiches;
+}
+
+export function catalogueAgents(): AgentCatalogue[] {
+  return catalogueAgentsPose;
+}
+
 // --- Journal persisté (#478) -----------------------------------------------
 
 let entreesJournal: EntreeJournal[] = [];
