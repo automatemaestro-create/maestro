@@ -125,8 +125,13 @@ Endpoints :
 - `PUT  /api/projets/{id}` — remplace la déclaration (l'intégrale, pas un diff) ;
 - `DELETE /api/projets/{id}` — oublie un projet, sans jamais toucher au dossier
   sur le disque ;
+- `GET  /api/fournisseurs` — ce qui existe côté modèles (#253) : les fournisseurs
+  du **registre**, leurs modèles annoncés et, pour chacun, les niveaux d'effort
+  admis (liste vide quand le fournisseur n'expose pas ce réglage) ; `modeles_libres`
+  dit qu'un nom hors gamme reste recevable ;
 - `GET  /api/catalogue` — le catalogue d'agents (#72, EF-03) : les agents par
   défaut du code et les personnalisés persistés, avec leur provenance, leurs
+  réglages de modèle (`fournisseur`/`modele`/`effort` — #253), leurs
   serveurs MCP déclarés (#104, lecture seule — `mcp_serveurs`/`mcp_erreur`) et
   leur politique de permissions effective (#110, lecture seule —
   `permissions`/`permissions_erreur`) ;
@@ -359,6 +364,7 @@ from maestro.messaging import InMemoryMailbox, Mailbox, RedisMailbox
 from maestro.orchestrator.errors import BriefValidationError
 from maestro.orchestrator.schema import validate_brief
 from maestro.projets import RacineRefusee, canonique, valider_racine
+from maestro.providers import catalogue_fournisseurs
 from maestro.references import ReferenceTicket
 from maestro.sources import DepotTeleversements, SourceRefusee, apercu_sources
 
@@ -565,6 +571,11 @@ class AgentCreationRequete(BaseModel):
 
     `modele` est optionnel (None : le modèle par défaut des exécutants) ;
     `fournisseur` est déclaratif au POC (le moteur est mono-fournisseur).
+    `effort` (#253) est le niveau d'effort demandé au modèle — ce que le
+    fournisseur retenu admet se lit sur `GET /api/fournisseurs`. Il n'est **pas
+    validé ici** : un effort que le fournisseur ne connaît pas est ignoré à
+    l'exécution, sans erreur, plutôt que de faire échouer l'enregistrement d'une
+    définition par ailleurs correcte.
     """
 
     nom: str
@@ -573,6 +584,7 @@ class AgentCreationRequete(BaseModel):
     playbook: str
     modele: str | None = None
     fournisseur: str | None = None
+    effort: str | None = None
 
 
 class AgentModificationRequete(BaseModel):
@@ -587,6 +599,7 @@ class AgentModificationRequete(BaseModel):
     playbook: str
     modele: str | None = None
     fournisseur: str | None = None
+    effort: str | None = None
 
 
 class ProjetRequete(BaseModel):
@@ -2558,6 +2571,11 @@ def create_app(
         `source` « defaut », sans dates : la définition vit dans le code
         (`maestro.agents.catalog`), seule l'édition de son playbook passe par
         le stockage versionné (`/api/playbooks`).
+
+        `effort` (#253) est celui du code — `None` pour les cinq agents par
+        défaut, aucun n'en déclarant. La clé est **présente quand même**, comme
+        `fournisseur` : les deux formes de fiche doivent porter les mêmes champs,
+        faute de quoi un client aurait à deviner selon la `source`.
         """
         fiche: dict[str, Any] = {
             "nom": agent.nom,
@@ -2565,6 +2583,7 @@ def create_app(
             "competences": sorted(agent.competences),
             "modele": agent.modele,
             "fournisseur": None,
+            "effort": agent.effort,
             "source": "defaut",
             "cree_le": None,
             "modifie_le": None,
@@ -3254,6 +3273,27 @@ def create_app(
         except (ValueError, ProjetInconnu) as exc:
             raise _refus_projet(exc) from exc
 
+    @app.get("/api/fournisseurs")
+    async def fournisseurs_liste() -> list[dict[str, Any]]:
+        """Ce qui existe vraiment côté modèles (#253) : fournisseurs, modèles, efforts.
+
+        La vue que le formulaire d'agent consomme pour proposer au lieu de faire
+        saisir. Chaque fiche porte le **nom** du fournisseur (celui à écrire dans
+        `fournisseur`), ses **modèles** annoncés — nom, libellé, et les **niveaux
+        d'effort** admis sur chacun, liste vide quand le fournisseur n'expose pas
+        ce réglage — et `modeles_libres`, qui dit qu'un nom hors gamme reste
+        recevable (le cas d'`openai`, qui fédère des endpoints aux nommages
+        hétéroclites : gamme vide **et** libre, c'est-à-dire « saisis le nom »).
+
+        La source est le **registre des fournisseurs**
+        (`maestro.providers.registry.catalogue_fournisseurs`) et rien d'autre :
+        inscrire un fournisseur au registre suffit à le faire apparaître ici, donc
+        à l'écran, sans toucher à cette fonction ni au front. Lecture seule, sans
+        credentials ni réseau — le catalogue dit ce qui *peut* être choisi, il ne
+        vérifie pas qu'une clé est en place.
+        """
+        return [fiche.to_dict() for fiche in catalogue_fournisseurs()]
+
     @app.get("/api/catalogue")
     async def catalogue_liste() -> list[dict[str, Any]]:
         """Le catalogue d'agents (#72) : les agents par défaut puis les personnalisés.
@@ -3307,6 +3347,7 @@ def create_app(
                     playbook=requete.playbook,
                     modele=requete.modele,
                     fournisseur=requete.fournisseur,
+                    effort=requete.effort,
                 )
             )
         except ValueError as exc:
@@ -3332,6 +3373,7 @@ def create_app(
                     playbook=requete.playbook,
                     modele=requete.modele,
                     fournisseur=requete.fournisseur,
+                    effort=requete.effort,
                 )
             )
         except ValueError as exc:

@@ -16,6 +16,13 @@ ticket #69) via `provider_from_settings` — c'est ce que consomment les raccour
 une classe qui implémente `ModelProvider`, l'enregistrer via `register`, et
 l'inscrire dans la fabrique (`maestro.providers.factory`) — sans toucher au
 moteur.
+
+Ce même geste le rend **proposable** (#253) : `catalogue_fournisseurs()` rend la
+gamme déclarée par chaque fournisseur enregistré — modèles, et pour chacun les
+niveaux d'effort admis —, servie telle quelle par `GET /api/fournisseurs`. Une
+classe qui déclare ses `MODELES` apparaît donc dans le formulaire d'agent sans
+qu'aucune liste ne soit recopiée dans le front. Importer ce paquet suffit à
+peupler le registre : c'est ce qui rend la vue complète où qu'on l'appelle.
 """
 
 from __future__ import annotations
@@ -25,7 +32,9 @@ from maestro.providers.base import (
     AuthMode,
     CollecteurStderr,
     Credentials,
+    FournisseurDisponible,
     McpServerUnavailable,
+    ModeleDisponible,
     ModelProvider,
     ModelSpec,
     TurnLimitReached,
@@ -40,6 +49,7 @@ from maestro.providers.registry import (
     ProviderFactory,
     UnknownProviderError,
     available_providers,
+    catalogue_fournisseurs,
     register,
     resolve_provider,
     unregister,
@@ -51,9 +61,11 @@ __all__ = [
     "ClaudeProvider",
     "CollecteurStderr",
     "Credentials",
+    "FournisseurDisponible",
     "McpServerUnavailable",
     "ModelProvider",
     "ModelSpec",
+    "ModeleDisponible",
     "OpenAICompatError",
     "OpenAICompatProvider",
     "ProviderFactory",
@@ -62,6 +74,7 @@ __all__ = [
     "UnsupportedCapability",
     "attache_stderr",
     "available_providers",
+    "catalogue_fournisseurs",
     "default_model",
     "provider_from_settings",
     "register",

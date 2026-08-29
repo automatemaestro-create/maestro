@@ -2,8 +2,11 @@
 
 Matérialise la moitié « configuration » d'EF-03 (création d'agents personnalisés,
 parent #70) : la définition d'un agent — nom, rôle, playbook, compétences,
-fournisseur/modèle — devient un document **persisté hors du code**, créé et modifié
-depuis l'API Control Tower (`maestro.controltower.app`, endpoints `/api/catalogue`).
+fournisseur/modèle/effort — devient un document **persisté hors du code**, créé et
+modifié depuis l'API Control Tower (`maestro.controltower.app`, endpoints
+`/api/catalogue`). Ce que ces trois réglages de modèle peuvent valoir se lit, lui,
+sur `GET /api/fournisseurs` (#253) — le dépôt stocke un choix, il ne dit pas
+l'offre.
 Au POC le dépôt est sur fichiers (`core/agents/<nom>.json`) ; en V1 il passera en
 base (table AGENT, docs/03) sans changer ce contrat.
 
@@ -62,6 +65,14 @@ class AgentDefinition:
     un fournisseur unique (`MAESTRO_PROVIDER`), le champ prépare l'exécution
     multi-fournisseurs sans la promettre. `cree_le`/`modifie_le` sont posés par
     le dépôt à l'écriture (ISO 8601, UTC).
+
+    `effort` (#253) est le troisième réglage de modèle, à côté de `fournisseur`
+    et `modele` — et lui, contrairement au fournisseur, **atteint l'exécution**
+    (`Agent.effort`, puis la frontière). Il est stocké **tel qu'il a été posé**,
+    sans confrontation à ce que le fournisseur admet : le dépôt ne connaît aucun
+    fournisseur, et un catalogue qui bouge (modèle changé, gamme élargie) ne doit
+    pas rendre invalide une définition écrite hier. Le tri se fait à
+    l'exécution, où il est **ignoré sans erreur** s'il n'a plus cours.
     """
 
     nom: str
@@ -70,6 +81,7 @@ class AgentDefinition:
     playbook: str
     modele: str | None = None
     fournisseur: str | None = None
+    effort: str | None = None
     cree_le: str = ""
     modifie_le: str = ""
 
@@ -77,7 +89,10 @@ class AgentDefinition:
         """La définition muée en `Agent` du catalogue, routable et exécutable.
 
         `modele_impose` (#69, `MAESTRO_MODEL`) prime sur le modèle de la
-        définition — même bascule globale que pour les agents par défaut.
+        définition — même bascule globale que pour les agents par défaut. Elle ne
+        touche **pas** à l'effort (#253) : `MAESTRO_MODEL` bascule le modèle, et
+        un effort n'est pas un modèle — l'écraser au passage retirerait en silence
+        un réglage que personne n'a demandé de retirer.
         """
         return Agent(
             nom=self.nom,
@@ -85,6 +100,7 @@ class AgentDefinition:
             competences=frozenset(self.competences),
             modele=modele_impose or self.modele or MODELE_EXECUTANT_DEFAUT,
             prompt_systeme=self.playbook,
+            effort=self.effort,
         )
 
     def to_dict(self, *, avec_playbook: bool = True) -> dict[str, Any]:
@@ -95,6 +111,7 @@ class AgentDefinition:
             "competences": list(self.competences),
             "modele": self.modele,
             "fournisseur": self.fournisseur,
+            "effort": self.effort,
             "cree_le": self.cree_le,
             "modifie_le": self.modifie_le,
         }
@@ -104,7 +121,12 @@ class AgentDefinition:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AgentDefinition:
-        """Reconstruit une définition depuis sa forme `to_dict` (le fichier stocké)."""
+        """Reconstruit une définition depuis sa forme `to_dict` (le fichier stocké).
+
+        `effort` est lu en `get` comme les autres réglages optionnels : les
+        fichiers écrits avant #253 n'en portent pas, et se relisent sans
+        migration ni valeur par défaut inventée.
+        """
         return cls(
             nom=data["nom"],
             role=data["role"],
@@ -112,6 +134,7 @@ class AgentDefinition:
             playbook=data.get("playbook", ""),
             modele=data.get("modele"),
             fournisseur=data.get("fournisseur"),
+            effort=data.get("effort"),
             cree_le=data.get("cree_le", ""),
             modifie_le=data.get("modifie_le", ""),
         )
@@ -230,7 +253,14 @@ def catalogue(store: AgentStore | None = None, modele: str | None = None) -> tup
 
 
 def _valide(definition: AgentDefinition) -> AgentDefinition:
-    """La définition normalisée (compétences épurées), ou `ValueError` si invalide."""
+    """La définition normalisée (compétences épurées), ou `ValueError` si invalide.
+
+    L'`effort` (#253) est **normalisé, jamais refusé** : épuré, et ramené à `None`
+    s'il ne reste rien — une chaîne vide et « pas de réglage » ne doivent pas
+    coexister dans le dépôt, sans quoi l'UI aurait deux façons de dire la même
+    absence. Le refuser, en revanche, exigerait de connaître ici le fournisseur et
+    sa gamme du jour ; c'est la frontière qui tranche, et elle ignore.
+    """
     if not _NOM_AGENT.match(definition.nom):
         raise ValueError(
             f"nom d'agent invalide : {definition.nom!r} (slug [a-z0-9_-] attendu)."
@@ -251,7 +281,13 @@ def _valide(definition: AgentDefinition) -> AgentDefinition:
             f"aucune compétence pour l'agent {definition.nom!r} : il ne serait "
             "jamais retenu par les règles de routage."
         )
-    return replace(definition, role=definition.role.strip(), competences=competences)
+    effort = (definition.effort or "").strip() or None
+    return replace(
+        definition,
+        role=definition.role.strip(),
+        competences=competences,
+        effort=effort,
+    )
 
 
 def _maintenant() -> str:
