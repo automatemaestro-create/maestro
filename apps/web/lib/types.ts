@@ -875,6 +875,31 @@ export type DefinitionAgent = {
 };
 
 /**
+ * Une définition d'agent **proposée** (`POST /api/catalogue/generation`, #257).
+ *
+ * Ce n'est pas un agent : rien n'a été créé côté backend, et rien ne le sera
+ * tant que l'utilisateur n'aura pas cliqué « Créer l'agent » — c'est le principe
+ * des propositions de playbook (#111/#140) appliqué à la définition entière. Les
+ * champs arrivent donc dans le formulaire comme un **brouillon**, modifiable,
+ * régénérable, abandonnable.
+ *
+ * `nom` est une commodité (libre au moment de la réponse, pas réservé pour
+ * autant) ; `fournisseur` et `modele` sont `null` quand le modèle n'a rien
+ * proposé que le registre reconnaisse — un champ vide, que le formulaire lit
+ * « réglages par défaut », jamais un nom inventé. `intention` est la phrase dont
+ * la proposition est née : c'est ce que l'écran ré-affiche pour régénérer.
+ */
+export type DefinitionAgentProposee = {
+  intention: string;
+  nom: string;
+  role: string;
+  competences: string[];
+  playbook: string;
+  fournisseur: string | null;
+  modele: string | null;
+};
+
+/**
  * Un modèle annoncé par un fournisseur (`GET /api/fournisseurs`, #253).
  *
  * `nom` est l'identifiant à écrire dans `DefinitionAgent.modele` (la chaîne

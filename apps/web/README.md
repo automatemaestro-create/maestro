@@ -286,6 +286,25 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   **hors gamme** n'annonce rien, donc pas de sélecteur — pendant que l'exécution
   reste seule à trancher (`effort_admis`), un catalogue qui bouge ne devant pas
   invalider une définition écrite hier ;
+- **Génération assistée d'une définition** (#257, lot 5 de #243, écran
+  `/agents/nouveau`) : une **intention en une phrase** et un bouton « Générer »
+  proposent la définition complète — rôle, compétences, playbook, et
+  fournisseur/modèle suggérés (API `POST /api/catalogue/generation`). Trois
+  propriétés portent le lot. **Rien n'est enregistré** : la proposition remplit
+  les champs du formulaire ci-dessus, comme une saisie, et l'agent naît du
+  `POST /api/catalogue` ordinaire — c'est le principe des propositions de
+  playbook (#111/#140), une suggestion n'est pas une version. Elle est donc
+  **modifiable mot à mot**, **régénérable**, et **abandonnable** — abandonner rend
+  au formulaire ce qu'il portait avant la proposition, l'intention restant en
+  place. Le fournisseur et le modèle proposés sont **reconfrontés au registre**
+  côté backend avant de revenir : un nom que Maestro ne saurait pas résoudre est
+  écarté et le champ retombe sur « défaut de l'exécution », jamais rempli d'un
+  nom plausible. C'est la règle du tiret précédent — le registre est exhaustif —
+  tenue une seconde fois, là où c'est un **modèle** qui écrit : sans elle, la
+  chaîne de listes liées de #255 serait contournée par la seule entrée qui ne
+  passe pas par elle. Et un **échec** (quota, réseau, fournisseur muet, réponse
+  hors contrat) laisse le formulaire **intact** et le dit : l'écriture des champs
+  n'a lieu qu'après une réponse complète ;
 - **Un playbook s'écrit à un seul endroit, et un agent du code se règle sans
   être cloné** (#259, lot 7 de #243) — deux relevés de revue sur l'onglet Profil,
   et une même racine : *la même valeur à deux endroits*.
@@ -406,6 +425,16 @@ Deux règles s'appliquent à l'ajout d'une icône :
   endroits — « 🤖 dev » n'apprenait rien à qui ne le voyait pas ; ces lignes
   disent maintenant « Agent dev ».
 
+Les cinq `IconeRole*` (#258) sont le seul groupe **choisi par une donnée** : la
+liste des agents pose sur chaque carte l'icône du **rôle** plutôt que celle de
+l'agent, qui répétait d'une carte à l'autre la seule chose qu'elles ont en
+commun. La table qui les associe vit dans `lib/vueAgents.ts` et elle est
+**fermée** — les cinq libellés de `maestro/agents/catalog.py`, et rien d'autre.
+Le rôle d'un agent personnalisé est du texte libre : en déduire une icône
+reviendrait à juger du texte au lexique, ce que ce dépôt s'interdit (#746), et
+une icône fausse est pire qu'une générique — elle affirme. L'inconnu retombe donc
+sur `IconeAgent`, qui reste vraie.
+
 ### Les primitives — `components/Primitives.tsx`
 
 Sept briques, et le `className` qu'on n'écrit plus :
@@ -420,11 +449,23 @@ Sept briques, et le `className` qu'on n'écrit plus :
 | `BadgeEtat` | la pastille d'état (compte, statut, provenance, temps réel) |
 | `EtatVide` | ce qui manque, et par où l'obtenir |
 
-Une huitième vit **à côté**, dans son propre fichier :
-`components/BasculeDeVues.tsx` (#539) — plusieurs lectures d'un même bloc, une à
-la fois. Elle n'est pas dans `Primitives.tsx` pour la raison qui en écarte aussi
-`Infobulle` : elle appelle un hook (`useId`), et ce fichier-là est partagé avec
-des composants serveur.
+Deux autres vivent **à côté**, chacune dans son fichier — elles appellent des
+hooks (`useId`, `useState`), et `Primitives.tsx` est partagé avec des composants
+serveur, où aucun hook ne peut tourner (la raison qui en écarte aussi
+`Infobulle`) :
+
+| Brique | Ce qu'elle porte |
+| --- | --- |
+| `BasculeDeVues` (#539) | plusieurs lectures d'un même bloc, une à la fois |
+| `ChampJetons` (#256) | une valeur qui est une **liste de mots** : jetons retirables, vocabulaire proposé, mot inconnu signalé |
+
+`ChampJetons` complète la famille des champs, et sa différence avec eux est le
+sujet du ticket qui l'a fait naître : il porte un **avertissement** en plus de
+l'aide — annoncé avec le champ comme l'est une erreur, mais **sans**
+`aria-invalid`, parce que la valeur passe. Elle est seulement inhabituelle, et
+poser `aria-invalid` sur ce qu'on accepte annoncerait un refus qui n'arrivera
+pas. Ses jetons vivent **hors du `<label>`** : dedans, leur texte entrerait dans
+le nom accessible du contrôle (« Compétences react retirer css retirer »).
 
 Les briques de #245 portent leurs variants `dark:` **elles-mêmes** ; celles de
 #535 n'en portent **aucun** — elles sont écrites sur les tokens de #533, qui

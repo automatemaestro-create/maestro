@@ -145,6 +145,11 @@ Endpoints :
   compris) ;
 - `POST /api/catalogue` — crée un agent personnalisé (persisté hors du code,
   routable et exécutable par les moteurs construits ensuite) ;
+- `POST /api/catalogue/generation` — **propose** une définition d'agent à partir
+  d'une intention en une phrase (#257) : rôle, compétences, playbook et réglages
+  suggérés, confrontés au registre des fournisseurs. Rien n'est créé — la
+  proposition est un brouillon que le formulaire reçoit, et la création reste le
+  `POST /api/catalogue` ci-dessus ;
 - `PUT  /api/catalogue/{nom}` — remplace la définition d'un agent personnalisé ;
 - `DELETE /api/catalogue/{nom}` — supprime un agent personnalisé ;
 - `PUT  /api/catalogue/{nom}/reglages` — surcharge les réglages de modèle d'un
@@ -331,6 +336,10 @@ from maestro.controltower.executions import (
 from maestro.controltower.fixtures import FixturesControlTower
 from maestro.controltower.fournisseurs import catalogue as catalogue_fournisseurs
 from maestro.controltower.frise import frise_du_run
+from maestro.controltower.generation_agent import (
+    GenerateurDefinitionAgent,
+    GenerationIndisponible,
+)
 from maestro.controltower.hote import (
     HOTE_RUN_DETACHE,
     HOTE_RUN_EN_PROCESS,
@@ -646,6 +655,18 @@ class SurchargeRequete(BaseModel):
     effort: str | None = None
 
 
+class AgentGenerationRequete(BaseModel):
+    """Corps d'une génération assistée de définition (#257) : l'intention, en une phrase.
+
+    Un seul champ, et c'est le sujet du lot : décrire ce qu'on veut plutôt que
+    remplir rôle, compétences et playbook. La borne de longueur est posée par le
+    générateur (`INTENTION_MAX`) et non ici — c'est lui qui la connaît, et le
+    dépassement est un 422 au même titre qu'une intention vide.
+    """
+
+    intention: str
+
+
 class ProjetRequete(BaseModel):
     """Corps de déclaration d'un projet (#223) : sa racine sur le disque et son périmètre.
 
@@ -906,6 +927,7 @@ def create_app(
     assistance_repondeur: RepondeurChat | None = None,
     orchestration_repondeur: RepondeurChat | None = None,
     analyseur: AnalyseurEchecs | None = None,
+    generateur_agent: GenerateurDefinitionAgent | None = None,
     capacites: CapacityStore | None = None,
     mcp: McpStore | None = None,
     registre_mcp: RegistreMcp | None = None,
@@ -979,6 +1001,13 @@ def create_app(
     échecs d'un run via la couche fournisseur et enregistre un brouillon (#138).
     Par défaut il partage le dépôt `playbooks` et résout son fournisseur par
     config ; les tests (#137) en injectent un à fournisseur factice.
+
+    `generateur_agent` (#257) produit les définitions d'agent proposées par
+    `POST /api/catalogue/generation` : à partir d'une intention en une phrase, le
+    modèle propose rôle, compétences, playbook et réglages — **rien n'est
+    enregistré**, la proposition est un brouillon que le formulaire reçoit et que
+    l'utilisateur crée par le `POST /api/catalogue` ordinaire. Par défaut il
+    résout son fournisseur par config ; les tests en injectent un factice.
 
     `capacites` (#86) est le dépôt du contrôle de capacité servi par
     `POST /api/agents/{nom}/capacite` — par défaut celui de la config
@@ -1152,6 +1181,9 @@ def create_app(
     )
     playbooks = playbooks if playbooks is not None else PlaybookStore.default()
     analyseur = analyseur if analyseur is not None else AnalyseurEchecs(playbooks=playbooks)
+    generateur_agent = (
+        generateur_agent if generateur_agent is not None else GenerateurDefinitionAgent()
+    )
     mailbox = mailbox if mailbox is not None else InMemoryMailbox()
     chat_store = chat_store if chat_store is not None else ChatStore.default()
     # Un seul dépôt de téléversement (#317) pour la route qui reçoit les octets et
@@ -3537,6 +3569,33 @@ def create_app(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         state.ajouter_agent(definition.nom, definition.role)
         return _fiche_personnalise(definition, avec_playbook=True)
+
+    @app.post("/api/catalogue/generation")
+    async def generer_definition_agent(requete: AgentGenerationRequete) -> dict[str, Any]:
+        """Propose une définition d'agent à partir d'une intention (#257) — sans rien créer.
+
+        Le modèle rend rôle, compétences, playbook et — confrontés au registre
+        (#253) — un fournisseur et un modèle. La réponse est un **brouillon** : elle
+        n'écrit rien, n'ajoute aucun agent au catalogue et ne réserve aucun nom. La
+        création reste le `POST /api/catalogue` ordinaire, à partir des champs que
+        l'utilisateur a relus (et modifiés) dans le formulaire.
+
+        Le `nom` proposé est libre **au moment de la réponse** : les noms réservés
+        et les agents personnalisés existants en sont écartés. Ce n'est pas une
+        réservation — un homonyme créé entre-temps rendra le 409 habituel.
+
+        422 si l'intention est vide ou plus longue qu'une phrase, 502 si le modèle
+        est injoignable, muet, ou répond hors contrat : dans les trois cas rien
+        n'est écrit et l'appel se rejoue sans conséquence.
+        """
+        pris = set(NOMS_RESERVES) | {d.nom for d in agents_store.lister()}
+        try:
+            proposition = await generateur_agent.proposer(requete.intention, noms_pris=pris)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except GenerationIndisponible as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return proposition.to_dict()
 
     @app.put("/api/catalogue/{nom}")
     async def modifier_agent(nom: str, requete: AgentModificationRequete) -> dict[str, Any]:

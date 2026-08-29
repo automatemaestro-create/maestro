@@ -18,6 +18,7 @@ import type {
   DecisionBrief,
   DeclarationProjet,
   DefinitionAgent,
+  DefinitionAgentProposee,
   DetailExecution,
   DisponibiliteSelecteur,
   EntreeRegistreMcp,
@@ -439,6 +440,26 @@ export function creerAgent(
   definition: DefinitionAgent,
 ): Promise<void> {
   return envoyerJson("/api/catalogue", { nom, ...definition }, "création refusée");
+}
+
+/**
+ * **Propose** une définition d'agent à partir d'une intention en une phrase
+ * (`POST /api/catalogue/generation`, #257) — sans rien créer.
+ *
+ * L'appel rend un brouillon (rôle, compétences, playbook, et les réglages que le
+ * registre reconnaît) ; l'agent, lui, naît du `creerAgent` ci-dessus, une fois
+ * que l'utilisateur a relu. Un échec — quota, réseau, fournisseur muet ou hors
+ * contrat — rejette avec le message du backend et **ne touche à rien** : c'est ce
+ * qui permet à l'appelant de laisser le formulaire exactement en l'état.
+ */
+export function genererDefinitionAgent(
+  intention: string,
+): Promise<DefinitionAgentProposee> {
+  return envoyerJsonEtLire<DefinitionAgentProposee>(
+    "/api/catalogue/generation",
+    { intention },
+    "génération refusée",
+  );
 }
 
 /**

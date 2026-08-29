@@ -11,6 +11,11 @@
  * existante) et `McpEtPermissionsAgent` (onglet MCP & permissions). Un agent
  * créé ou modifié vaut pour les moteurs construits ensuite.
  *
+ * Depuis #257 la création a **deux entrées** et non plus une : les champs qu'on
+ * remplit, et une intention en une phrase que l'assistant transforme en
+ * définition proposée (`AssistantDefinition`). La seconde n'ajoute aucun chemin
+ * d'écriture — elle remplit les champs de la première, qui reste seule à créer.
+ *
  * **Ce que #259 a déplacé, et pourquoi.** Le Profil portait un champ Playbook
  * alors que l'onglet Playbook existe depuis #190 : deux chemins d'écriture pour
  * la même valeur, dont un aveugle au versionnement et à l'historique. Le champ
@@ -27,13 +32,16 @@
 import Link from "next/link";
 import { type ReactNode, useCallback, useEffect, useId, useState } from "react";
 
+import { ChampJetons } from "@/components/ChampJetons";
 import {
+  IconeAlerte,
+  IconeAssistant,
   IconeMcp,
   IconePermissions,
   IconePlaybooks,
 } from "@/components/Icones";
 import { Infobulle } from "@/components/Infobulle";
-import { Bouton, EnTeteSection } from "@/components/Primitives";
+import { Bouton, EnTeteSection, classesCarte } from "@/components/Primitives";
 import {
   CHEMIN_CREATION_AGENT,
   cheminOnglet,
@@ -46,16 +54,25 @@ import {
   chargerFournisseurs,
   creerAgent,
   definirActivationsMcp,
+  genererDefinitionAgent,
   modifierAgent,
   supprimerAgent,
   surchargerAgent,
 } from "@/lib/api";
+import {
+  competenceProche,
+  inedites,
+  normaliserCompetence,
+  vocabulaireDuCatalogue,
+} from "@/lib/competences";
 import { formatDateHeure } from "@/lib/format";
 import {
   AGENT_SOURCE_SURCHARGE,
+  type AgentCatalogue,
   type AgentCatalogueDetail,
   type CatalogueFournisseurs,
   type DefinitionAgent,
+  type DefinitionAgentProposee,
   estAgentDuCode,
   type FournisseurCatalogue,
   type IntegrationPoolMcp,
@@ -69,7 +86,7 @@ import { Interrupteur } from "./parametres/SectionParametres";
 const SLUG_NOM = /^[a-z0-9][a-z0-9_-]*$/;
 
 /**
- * Les champs du formulaire (les compétences virgulées).
+ * Les champs du formulaire.
  *
  * `fournisseur`, `modele` et `effort` sont **liés** depuis #255 : le premier
  * borne ce que le deuxième offre, et le deuxième décide si le troisième existe.
@@ -77,10 +94,15 @@ const SLUG_NOM = /^[a-z0-9][a-z0-9_-]*$/;
  * `null` — le **défaut légitime** d'un agent qui suit le fournisseur et le
  * modèle de l'exécution (`MAESTRO_PROVIDER`\`MAESTRO_MODEL`), et non un trou de
  * configuration : les listes l'offrent explicitement.
+ *
+ * Les `competences` sont une **liste** depuis #256, et plus la chaîne virgulée
+ * d'avant : c'est la saisie qui change de forme, pas le contrat d'API
+ * (`DefinitionAgent.competences` a toujours été une liste de chaînes — la
+ * chaîne n'existait qu'ici, entre la frappe et l'envoi).
  */
 type Champs = {
   role: string;
-  competences: string;
+  competences: string[];
   playbook: string;
   modele: string;
   fournisseur: string;
@@ -89,7 +111,7 @@ type Champs = {
 
 const CHAMPS_VIERGES: Champs = {
   role: "",
-  competences: "",
+  competences: [],
   playbook: "",
   modele: "",
   fournisseur: "",
@@ -99,11 +121,33 @@ const CHAMPS_VIERGES: Champs = {
 function champsDepuis(fiche: AgentCatalogueDetail): Champs {
   return {
     role: fiche.role,
-    competences: fiche.competences.join(", "),
+    competences: fiche.competences,
     playbook: fiche.playbook,
     modele: fiche.modele ?? "",
     fournisseur: fiche.fournisseur ?? "",
     effort: fiche.effort ?? "",
+  };
+}
+
+/** Les champs tels que la génération assistée les propose (#257). */
+function champsDepuisProposition(proposition: DefinitionAgentProposee): Champs {
+  return {
+    role: proposition.role,
+    // La proposition rend déjà une liste, et le champ en est une depuis #256 :
+    // elle se pose telle quelle, comme celle d'une fiche existante. La joindre en
+    // chaîne virgulée n'aurait plus de lecteur — les jetons se corrigent un par un.
+    competences: proposition.competences,
+    playbook: proposition.playbook,
+    // `null` — le modèle n'a rien proposé que le registre reconnaisse — devient
+    // la chaîne vide, que les listes liées de #255 lisent déjà « défaut de
+    // l'exécution ». C'est la même absence, pas une seconde.
+    modele: proposition.modele ?? "",
+    fournisseur: proposition.fournisseur ?? "",
+    // L'effort n'est **pas** proposé (#257) : il ne se règle que sur les modèles
+    // qui l'admettent, et le sélecteur de #255 n'apparaît qu'alors, sur son
+    // défaut. Le faire suggérer par le modèle demanderait de lui passer la gamme
+    // d'efforts par modèle pour qu'il rende, au mieux, ce défaut-là.
+    effort: "",
   };
 }
 
@@ -112,9 +156,8 @@ function definitionDepuis(champs: Champs): DefinitionAgent {
   return {
     role: champs.role.trim(),
     competences: champs.competences
-      .split(",")
-      .map((c) => c.trim())
-      .filter(Boolean),
+      .map(normaliserCompetence)
+      .filter((c) => c !== ""),
     playbook: champs.playbook,
     modele: champs.modele.trim() || null,
     fournisseur: champs.fournisseur.trim() || null,
@@ -193,39 +236,57 @@ function useCataloguePoste(): CatalogueFournisseurs | null {
 }
 
 /**
- * Les **rôles connus** — ceux que portent les agents du catalogue (#255).
+ * Le catalogue d'agents, lu **une fois** pour ce formulaire (#255, #256).
  *
- * Best-effort, comme `useCataloguePoste` : sans catalogue le champ reste ce
- * qu'il était, une saisie libre. C'est bien une **liste alimentée** et non une
- * liste fermée — un rôle inédit doit rester saisissable, c'est tout l'objet du
- * critère 1 —, d'où la `<datalist>` et non un `<select>`.
+ * Deux champs en vivent, et c'est la raison de ce hook unique plutôt que d'un
+ * par usage : le **rôle** y prend les rôles déjà portés (#255), les
+ * **compétences** le vocabulaire déjà en usage (#256). Deux hooks, ce serait
+ * deux `GET /api/catalogue` par montage pour une réponse identique.
  *
- * La source est `GET /api/catalogue` et rien d'autre : les rôles ne sont
- * déclarés nulle part ailleurs, et une liste écrite ici serait une seconde
- * définition qui dériverait au premier agent créé.
+ * Best-effort, comme `useCataloguePoste` : sans catalogue, les deux champs
+ * restent ce qu'ils étaient, en saisie libre. Ce sont des listes **alimentées**
+ * et non fermées — un rôle comme une compétence inédits doivent rester
+ * saisissables —, d'où des suggestions et jamais un `<select>`.
+ *
+ * ⚠ Il rend `null` et non `[]` tant que la lecture n'a pas abouti, et la nuance
+ * porte tout le signalement de #256 : une liste vide dirait « le catalogue ne
+ * connaît aucune compétence », donc *toutes* celles saisies seraient inédites,
+ * donc l'écran alerterait sur chacune. `null` dit « on ne sait pas », et on se
+ * tait (`inedites`).
  */
-function useRolesConnus(): string[] {
-  const [roles, setRoles] = useState<string[]>([]);
+function useCatalogueAgents(): AgentCatalogue[] | null {
+  const [fiches, setFiches] = useState<AgentCatalogue[] | null>(null);
   useEffect(() => {
     let vivant = true;
     void chargerCatalogue()
-      .then((fiches) => {
-        const vus: string[] = [];
-        for (const fiche of fiches) {
-          const role = fiche.role.trim();
-          if (role !== "" && !vus.includes(role)) vus.push(role);
-        }
-        if (vivant) setRoles(vus);
+      .then((recu) => {
+        if (vivant) setFiches(recu);
       })
       .catch(() => {
-        // Sans catalogue, le champ rôle est celui d'avant #255 : une saisie
-        // libre sans suggestion. Rien à signaler — personne n'a rien demandé.
+        // Sans catalogue, les deux champs sont ceux d'avant : saisie libre,
+        // aucune suggestion, aucun signalement. Personne n'a rien demandé.
       });
     return () => {
       vivant = false;
     };
   }, []);
-  return roles;
+  return fiches;
+}
+
+/**
+ * Les **rôles connus** — ceux que portent les agents du catalogue (#255).
+ *
+ * La source est `GET /api/catalogue` et rien d'autre : les rôles ne sont
+ * déclarés nulle part ailleurs, et une liste écrite ici serait une seconde
+ * définition qui dériverait au premier agent créé.
+ */
+function rolesConnus(fiches: AgentCatalogue[] | null): string[] {
+  const vus: string[] = [];
+  for (const fiche of fiches ?? []) {
+    const role = fiche.role.trim();
+    if (role !== "" && !vus.includes(role)) vus.push(role);
+  }
+  return vus;
 }
 
 /** Un modèle proposé par le champ, et d'où il vient (gamme annoncée ou poste). */
@@ -368,6 +429,76 @@ function ResumeDuPoste({
   );
 }
 
+/** Au-delà, le signalement se compte au lieu de se dérouler ligne à ligne. */
+const INEDITES_NOMMEES = 5;
+
+/**
+ * Ce que le formulaire dit d'une compétence que le catalogue ne connaît pas
+ * (#256) — et ce qu'il n'en dit pas.
+ *
+ * Il la **signale**, il ne la refuse pas : la valeur part telle quelle, le
+ * bouton d'enregistrement ne bouge pas. Deux raisons, et la seconde est celle
+ * que les notes du ticket demandaient d'aller vérifier dans le routeur — les
+ * deux signaux n'ont pas la même tolérance (`lib/competences.ts`) : la règle de
+ * recouvrement apparie au mot près, le classifieur lit la même compétence en
+ * texte et peut la rapprocher. Une compétence inédite n'est donc pas perdue,
+ * elle est seulement privée du signal déterministe. Et un vocabulaire ne
+ * s'enrichit que si quelqu'un a le droit d'y ajouter un mot.
+ *
+ * Le voisin le plus proche est **nommé** quand il y en a un, parce que c'est là
+ * qu'est le vrai coût : « React » et « react » sont le même mot pour qui le lit
+ * et deux compétences étrangères pour une intersection d'ensembles.
+ */
+function SignalementInedites({
+  inconnues,
+  vocabulaire,
+  remplacer,
+  desactive,
+}: {
+  inconnues: string[];
+  vocabulaire: string[];
+  remplacer: (ancienne: string, nouvelle: string) => void;
+  desactive: boolean;
+}) {
+  const nommees = inconnues.slice(0, INEDITES_NOMMEES);
+  const enPlus = inconnues.length - nommees.length;
+  return (
+    <>
+      {nommees.map((jeton) => {
+        const proche = competenceProche(jeton, vocabulaire);
+        return (
+          <p key={jeton} className="flex flex-wrap items-center gap-x-1 gap-y-1">
+            <IconeAlerte aria-hidden="true" className="size-3.5 shrink-0" />
+            <span>
+              « {jeton} » est inédite : aucun agent du catalogue ne la déclare.
+              {proche !== null
+                ? ` Le catalogue connaît « ${proche} » — au mot près, ce ne sont pas la même.`
+                : " Elle n'appariera que les tâches qui l'écrivent à l'identique."}
+            </span>
+            {proche !== null && (
+              <Bouton
+                variante="contour"
+                ton="attention"
+                taille="petite"
+                disabled={desactive}
+                onClick={() => remplacer(jeton, proche)}
+              >
+                Reprendre « {proche} »
+              </Bouton>
+            )}
+          </p>
+        );
+      })}
+      {enPlus > 0 && (
+        <p>
+          … et {enPlus} autre{enPlus > 1 ? "s" : ""} que le catalogue ne connaît
+          pas encore.
+        </p>
+      )}
+    </>
+  );
+}
+
 /**
  * Les trois réglages de modèle — **fournisseur → modèle → effort** —, liés
  * depuis #255 : chaque maillon borne le suivant, si bien qu'on ne peut plus
@@ -388,6 +519,11 @@ function ResumeDuPoste({
  * n'offrait que la faute de frappe. Le modèle, lui, garde sa saisie libre
  * **quand le fournisseur l'admet** (`modeles_libres`) — les deux champs du
  * contrat se lisent ensemble, et c'est ce qui décide de la forme du champ.
+ *
+ * Les **compétences**, elles, sont passées de la chaîne virgulée au champ à
+ * jetons (#256) : elles ne bornent rien et ne sont bornées par rien — c'est un
+ * vocabulaire ouvert, pas une chaîne de dépendances —, d'où des suggestions et
+ * un signalement plutôt qu'une liste fermée.
  */
 function ChampsDuModele({
   champs,
@@ -654,8 +790,15 @@ function FormulaireDefinition({
   /** Le nom de l'agent s'il existe déjà — alors son playbook s'édite ailleurs. */
   agent?: string;
 }) {
-  const roles = useRolesConnus();
-  const idRoles = `${useId()}-roles`;
+  // Une seule lecture du catalogue d'agents, deux usages : les rôles (#255) et
+  // le vocabulaire des compétences (#256).
+  const fiches = useCatalogueAgents();
+  const roles = rolesConnus(fiches);
+  const vocabulaire = fiches === null ? null : vocabulaireDuCatalogue(fiches);
+  const prefixe = useId();
+  const idRoles = `${prefixe}-roles`;
+  const idCompetences = `${prefixe}-competences`;
+  const inconnues = inedites(champs.competences, vocabulaire);
 
   return (
     <div className="flex flex-col gap-3">
@@ -664,42 +807,70 @@ function FormulaireDefinition({
         setChamps={setChamps}
         desactive={desactive}
         enTete={
+          <label className={CLASSE_LIBELLE}>
+            Rôle
+            <input
+              type="text"
+              value={champs.role}
+              onChange={(e) => setChamps({ ...champs, role: e.target.value })}
+              disabled={desactive}
+              placeholder="Développeur front"
+              list={roles.length > 0 ? idRoles : undefined}
+              className={CLASSE_CHAMP}
+            />
+            {roles.length > 0 && (
+              // Une liste **alimentée**, jamais fermée : un rôle inédit se
+              // saisit tel quel, et c'est ce que le critère 1 de #255 demande.
+              <datalist id={idRoles}>
+                {roles.map((role) => (
+                  <option key={role} value={role} />
+                ))}
+              </datalist>
+            )}
+          </label>
+        }
+      />
+      {/* Hors de la grille, et après la chaîne fournisseur → modèle → effort :
+          un champ à jetons porte ses jetons, ses suggestions et son
+          signalement, donc une hauteur qui n'a rien à voir avec celle d'une
+          saisie sur une ligne. Il ne borne rien et n'est borné par rien — sa
+          place n'est pas dans la chaîne, elle est à côté. */}
+      <ChampJetons
+        id={idCompetences}
+        libelle="Compétences"
+        valeurs={champs.competences}
+        onChange={(competences) => setChamps({ ...champs, competences })}
+        suggestions={vocabulaire ?? []}
+        signales={new Set(inconnues)}
+        motSignal="inédite"
+        nomElement="la compétence"
+        vide="Aucune compétence pour l'instant : saisir un mot, puis Entrée."
+        desactive={desactive}
+        placeholder="frontend"
+        aide={
           <>
-            <label className={CLASSE_LIBELLE}>
-              Rôle
-              <input
-                type="text"
-                value={champs.role}
-                onChange={(e) => setChamps({ ...champs, role: e.target.value })}
-                disabled={desactive}
-                placeholder="Développeur front"
-                list={roles.length > 0 ? idRoles : undefined}
-                className={CLASSE_CHAMP}
-              />
-              {roles.length > 0 && (
-                // Une liste **alimentée**, jamais fermée : un rôle inédit se
-                // saisit tel quel, et c'est ce que le critère 1 de #255 demande.
-                <datalist id={idRoles}>
-                  {roles.map((role) => (
-                    <option key={role} value={role} />
-                  ))}
-                </datalist>
-              )}
-            </label>
-            <label className={CLASSE_LIBELLE}>
-              Compétences (séparées par des virgules)
-              <input
-                type="text"
-                value={champs.competences}
-                onChange={(e) =>
-                  setChamps({ ...champs, competences: e.target.value })
-                }
-                disabled={desactive}
-                placeholder="frontend, react, css"
-                className={CLASSE_CHAMP}
-              />
-            </label>
+            À quoi elles servent : le routeur <strong>auto-assigne</strong> une
+            tâche en confrontant, <strong>au mot près</strong>, les compétences
+            qu&apos;elle demande à celles de chaque agent. Un mot qui ne tombe
+            pas juste ne compte pour rien.
           </>
+        }
+        avertissement={
+          inconnues.length > 0 ? (
+            <SignalementInedites
+              inconnues={inconnues}
+              vocabulaire={vocabulaire ?? []}
+              remplacer={(ancienne, nouvelle) =>
+                setChamps({
+                  ...champs,
+                  competences: champs.competences.map((c) =>
+                    c === ancienne ? nouvelle : c,
+                  ),
+                })
+              }
+              desactive={desactive}
+            />
+          ) : null
         }
       />
       {agent === undefined ? (
@@ -721,6 +892,123 @@ function FormulaireDefinition({
         </label>
       ) : (
         <RenvoiPlaybook agent={agent} />
+      )}
+    </div>
+  );
+}
+
+/**
+ * La génération assistée (#257) : une intention en une phrase, une définition
+ * proposée dans le formulaire ci-dessous.
+ *
+ * Trois choses que ce bloc ne fait pas, et qui sont le ticket :
+ *
+ * 1. **il n'enregistre rien** — la proposition remplit les champs, et rien
+ *    d'autre ne se passe tant que « Créer l'agent » n'a pas été cliqué. C'est le
+ *    principe des propositions de playbook (#111/#140) : une suggestion n'est pas
+ *    une version ;
+ * 2. **il ne se substitue pas au formulaire** — les champs restent ceux qu'on
+ *    remplit à la main, et la proposition y arrive comme une saisie ordinaire,
+ *    donc modifiable mot à mot ;
+ * 3. **il ne touche à rien quand il échoue** — quota, réseau, fournisseur muet :
+ *    le message est rendu ici, le formulaire garde exactement ce qu'il portait.
+ *
+ * Il est **en tête** et non en pied : c'est une porte d'entrée, pas une action
+ * de fin de saisie. Sa surface est `creuse` — un contenant en retrait du fond —
+ * pour qu'il se lise comme une aide posée devant le formulaire et non comme une
+ * seconde section de plein rang.
+ */
+function AssistantDefinition({
+  intention,
+  setIntention,
+  enCours,
+  propose,
+  erreur,
+  generer,
+  abandonner,
+  desactive,
+}: {
+  intention: string;
+  setIntention: (intention: string) => void;
+  /** Une génération est en vol : le champ et les deux boutons attendent. */
+  enCours: boolean;
+  /** Une proposition est en place dans le formulaire (régénérable, abandonnable). */
+  propose: boolean;
+  erreur: string | null;
+  generer: () => void;
+  abandonner: () => void;
+  /** La création est en cours : tout le formulaire est figé, celui-ci compris. */
+  desactive: boolean;
+}) {
+  const pret = intention.trim() !== "" && !enCours && !desactive;
+  return (
+    <div
+      className={classesCarte({
+        ton: "creuse",
+        className: "flex flex-col gap-2",
+      })}
+    >
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+        <label className={CLASSE_LIBELLE + " min-w-0 flex-1"}>
+          Décrire l&apos;agent en une phrase
+          <input
+            type="text"
+            value={intention}
+            onChange={(e) => setIntention(e.target.value)}
+            // Entrée génère : c'est le geste attendu dans un champ à une ligne
+            // suivi d'un seul bouton. `preventDefault` parce que le champ vit
+            // dans une page qui porte d'autres actions — valider ici ne doit rien
+            // déclencher d'autre.
+            onKeyDown={(e) => {
+              if (e.key !== "Enter") return;
+              e.preventDefault();
+              if (pret) generer();
+            }}
+            disabled={enCours || desactive}
+            placeholder="Un agent qui relit mes migrations SQL avant de les appliquer"
+            className={CLASSE_CHAMP}
+          />
+        </label>
+        <Bouton
+          icone={IconeAssistant}
+          disabled={!pret}
+          occupe={enCours}
+          onClick={generer}
+        >
+          {enCours ? "Génération…" : propose ? "Régénérer" : "Générer"}
+        </Bouton>
+      </div>
+      {propose ? (
+        <div
+          role="status"
+          className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-neutral-600 dark:text-neutral-400"
+        >
+          <span>
+            Proposition en brouillon : relisez et corrigez ci-dessous. Rien
+            n&apos;est enregistré tant que vous n&apos;avez pas créé
+            l&apos;agent.
+          </span>
+          <Bouton
+            variante="contour"
+            ton="neutre"
+            taille="petite"
+            disabled={enCours || desactive}
+            onClick={abandonner}
+          >
+            Abandonner la proposition
+          </Bouton>
+        </div>
+      ) : (
+        <p className={CLASSE_ANNEXE}>
+          L&apos;assistant remplit le formulaire ci-dessous — rôle, compétences,
+          playbook et réglages suggérés — sans rien enregistrer.
+        </p>
+      )}
+      {erreur && (
+        <p className="text-xs text-rose-600 dark:text-rose-400" role="alert">
+          {erreur} — le formulaire est intact, vous pouvez réessayer ou remplir
+          les champs à la main.
+        </p>
       )}
     </div>
   );
@@ -772,20 +1060,67 @@ export function CreationAgent({
   const [champs, setChamps] = useState<Champs>(CHAMPS_VIERGES);
   const [enCours, setEnCours] = useState(false);
   const [erreur, setErreur] = useState<string | null>(null);
+  const [intention, setIntention] = useState("");
+  const [generation, setGeneration] = useState(false);
+  const [erreurGeneration, setErreurGeneration] = useState<string | null>(null);
+  // Ce que le formulaire portait **avant** la première proposition — ce que
+  // « Abandonner » restitue. Posé une seule fois : régénérer remplace la
+  // proposition, il ne réécrit pas le point de retour, sans quoi abandonner après
+  // trois essais rendrait le troisième au lieu de la saisie d'origine.
+  const [avant, setAvant] = useState<{ nom: string; champs: Champs } | null>(
+    null,
+  );
 
   const format = SLUG_NOM.test(nom);
   const reserve = estNomAgentReserve(nom);
   const nomValide = format && !reserve;
   const pret = nomValide && champsComplets(champs);
 
-  // Un brouillon, c'est une saisie qui a commencé : le nom ou n'importe quel
-  // champ. Les espaces seuls n'en font pas un — il n'y aurait rien à perdre.
+  // Un brouillon, c'est une saisie qui a commencé : le nom, n'importe quel champ,
+  // ou l'intention (#257) — elle aussi est une saisie qu'on perdrait en quittant,
+  // et la seule qui puisse exister avant que les champs soient remplis. Les
+  // espaces seuls n'en font pas un — il n'y aurait rien à perdre. Les compétences
+  // sont une liste depuis #256 : un jeton posé compte, une liste vide non — même
+  // règle que pour une chaîne d'espaces.
   const brouillon =
     nom.trim() !== "" ||
-    Object.values(champs).some((valeur) => valeur.trim() !== "");
+    intention.trim() !== "" ||
+    Object.values(champs).some((valeur) =>
+      Array.isArray(valeur) ? valeur.length > 0 : valeur.trim() !== "",
+    );
   useEffect(() => {
     onBrouillon?.(brouillon);
   }, [brouillon, onBrouillon]);
+
+  /**
+   * Demande une proposition et la pose dans les champs (#257).
+   *
+   * L'écriture n'a lieu qu'**après** la réponse : un échec — quota, réseau,
+   * fournisseur muet ou hors contrat — ne fait que poser un message, et le
+   * formulaire garde ce qu'il portait, à la virgule près.
+   */
+  const generer = async () => {
+    setGeneration(true);
+    setErreurGeneration(null);
+    try {
+      const proposition = await genererDefinitionAgent(intention);
+      setAvant((precedent) => precedent ?? { nom, champs });
+      setNom(proposition.nom);
+      setChamps(champsDepuisProposition(proposition));
+    } catch (e) {
+      setErreurGeneration(e instanceof Error ? e.message : String(e));
+    } finally {
+      setGeneration(false);
+    }
+  };
+
+  /** Rend au formulaire ce qu'il portait avant la proposition — l'intention reste. */
+  const abandonner = () => {
+    setNom(avant?.nom ?? "");
+    setChamps(avant?.champs ?? CHAMPS_VIERGES);
+    setAvant(null);
+    setErreurGeneration(null);
+  };
 
   const creer = async () => {
     setEnCours(true);
@@ -808,13 +1143,26 @@ export function CreationAgent({
     >
       {/* Pas d'en-tête ici depuis #254 : la création a son écran, et c'est lui
           qui la titre — le redire ferait deux titres pour une seule page. */}
+      <AssistantDefinition
+        intention={intention}
+        setIntention={setIntention}
+        enCours={generation}
+        propose={avant !== null}
+        erreur={erreurGeneration}
+        generer={() => void generer()}
+        abandonner={abandonner}
+        desactive={enCours}
+      />
       <label className={CLASSE_LIBELLE + " sm:max-w-xs"}>
         Nom (identifiant unique : minuscules, chiffres, - ou _)
         <input
           type="text"
           value={nom}
           onChange={(e) => setNom(e.target.value)}
-          disabled={enCours}
+          // Figé aussi pendant une génération (#257) : la réponse va écrire dans
+          // ce champ, et une saisie faite entre-temps serait perdue sans que
+          // personne l'ait décidé.
+          disabled={enCours || generation}
           placeholder="dev-front"
           className={CLASSE_CHAMP + " font-mono"}
         />
@@ -835,10 +1183,14 @@ export function CreationAgent({
       <FormulaireDefinition
         champs={champs}
         setChamps={setChamps}
-        desactive={enCours}
+        desactive={enCours || generation}
       />
       <div className="flex flex-wrap items-center gap-3">
-        <Bouton disabled={!pret} occupe={enCours} onClick={() => void creer()}>
+        <Bouton
+          disabled={!pret || generation}
+          occupe={enCours}
+          onClick={() => void creer()}
+        >
           {enCours ? "Création…" : "Créer l'agent"}
         </Bouton>
         <span className="text-xs text-neutral-500 dark:text-neutral-400">
