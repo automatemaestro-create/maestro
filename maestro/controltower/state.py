@@ -354,7 +354,7 @@ class EtatValidation:
     ⚠ **Le champ est constant sur la file, et il reste là** (#715). Un troisième
     cran, `orchestrateur`, justifiait cette distinction — *une demande en attente
     d'orchestrateur et une demande en attente d'une personne n'appellent pas le
-    même geste* — et il a été retiré (décision #647, docs/31 §6). Or un acte
+    même geste* — et il a été retiré (décision #647, docs/32 §6). Or un acte
     `auto` **n'atteint jamais cette file** : le hook le court-circuite
     (`maestro.providers.claude`), trace, et ne compose aucune demande. Donc
     **aucune validation en attente ne peut porter autre chose que `humain`**.

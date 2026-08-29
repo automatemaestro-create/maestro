@@ -45,7 +45,7 @@ pas*) ; un cran **inconnu** est une erreur franche, comme toute politique douteu
 ne peut plus être corrigé.
 
 ⚠ Un troisième cran, `orchestrateur`, a été retiré par #715 (décision de cadrage
-#647, [docs/31](../../docs/31-decision-cran-orchestrateur.md)) : il n'avait aucun
+#647, [docs/32](../../docs/32-decision-cran-orchestrateur.md)) : il n'avait aucun
 canal en production, et promettait donc une décision là où il rendait un refus.
 Une politique qui l'écrit **échoue franchement au chargement** depuis — c'est le
 versant écriture de l'asymétrie ci-dessus, et il est **acquis sans une ligne à

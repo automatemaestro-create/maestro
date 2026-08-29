@@ -371,7 +371,7 @@ fort trouverait une liste Python ordinaire.
 
 ### 7.1 Ce que #647 a laissé derrière lui
 
-[docs/31 §3](./31-decision-cran-orchestrateur.md) (**#647**) **retire** le cran `orchestrateur`, et
+[docs/32 §3](./32-decision-cran-orchestrateur.md) (**#647**) **retire** le cran `orchestrateur`, et
 son §4 conclut : pas d'escalade, « parce qu'après ① il n'y a plus de milieu d'où escalader ». Le
 routage à trois crans n'en a donc plus que deux — `auto` et `humain` — et **aucun canal machine sur
 aucun chemin**.
@@ -512,7 +512,8 @@ avoir construit le premier pour un cas mesuré. Elle est au §10 comme porte, pa
 ## 10. Ce qui rouvrirait la décision
 
 Nommé d'avance, même patron que [docs/28 §8](./28-decision-frontiere-execution-run.md),
-[docs/29 §10](./29-decision-run-objet-de-premier-plan.md) et les deux notes de docs/31.
+[docs/29 §10](./29-decision-run-objet-de-premier-plan.md), [docs/31 §9](./31-decision-surface-ecriture-agents.md)
+et [docs/32 §8](./32-decision-cran-orchestrateur.md).
 
 1. **La datation de la pause** se rouvre à la **première pause oubliée mesurée** — un run suspendu
    plus longtemps que son travail, tenant un hôte pour rien. Le remède est alors un champ, pas un
@@ -567,15 +568,18 @@ recalculé : une formule recopiée côté client se périmerait à la première 
 
 **Sur la numérotation, et c'est un constat, pas une prévision.** #354 et #647 ont été instruits en
 parallèle de celui-ci et ont **tous deux pris `31`** — `31-decision-surface-ecriture-agents.md` et
-`31-decision-cran-orchestrateur.md` cohabitent sur `main` depuis les merges `952bd60` et `6702f2b`.
+`31-decision-cran-orchestrateur.md` ont cohabité sur `main` depuis les merges `952bd60` et `6702f2b`.
 Le doublon n'a été arbitré par personne : chacune des deux PR était juste seule, et git ne signale
 rien puisque les noms de fichiers diffèrent.
 
-Cette note prend donc **33** et **laisse `32` libre à dessein** — c'est le numéro qui permet de
-défaire le doublon sans en créer un autre : l'une des deux notes de `31` devient `32`, et la série
-redevient contiguë `31 · 32 · 33`. Prendre `32` ici aurait fermé cette porte et forcé la correction
-à sauter en `34`. Le renommage est **#742**, et il ne relève pas de ce cadrage : il touche deux
-documents qui ne sont pas les siens.
+Cette note prend donc **33** et **laissait `32` libre à dessein** — c'est le numéro qui permettait de
+défaire le doublon sans en créer un autre. Prendre `32` ici aurait fermé cette porte et forcé la
+correction à sauter en `34`. **#742 l'a empruntée** le 2026-08-29 : le cran `orchestrateur` est passé
+en [docs/32](./32-decision-cran-orchestrateur.md), la surface d'écriture garde
+[docs/31](./31-decision-surface-ecriture-agents.md), et la série est contiguë `31 · 32 · 33`.
+L'arbitrage — laquelle cède son numéro — s'est joué au **compte des renvois** et non au tirage : 26
+pour la surface d'écriture contre 13 pour le cran, la note la plus citée gardant le numéro que le
+plus de textes nomment déjà.
 
 ⚠ La leçon est plus large que le symptôme, et elle vaut pour le prochain chantier mené à plusieurs
 cadrages parallèles : **le numéro d'un document se réserve au moment où l'on ouvre le ticket, pas au
