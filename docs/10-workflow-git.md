@@ -292,6 +292,19 @@ fait de `milestone-rail` un verbe (#617) : les écritures de forge sont interdit
 d'écrire « ## Verdict » et rien dessous pour éteindre la convocation **pour toujours** ; et
 l'écriture n'ajoute qu'**en queue**, le marqueur `rail:` de tête devant survivre.
 
+⚠ **Écris les deux titres dans leur forme documentée** — « ## Critères de sortie », « ## Verdict ».
+La reconnaissance replie la casse par le `tolower()` d'awk, et ce repli **n'est pas portable sur une
+lettre accentuée** : mesuré le **2026-08-29** sous la même locale `C.UTF-8`, `gawk 5.2.1` replie
+`CRITÈRES` en `critères` là où `mawk 1.3.4` — celui du conteneur du filet local — le laisse tel
+quel, parce qu'il replie **octet par octet**. `## CRITÈRES DE SORTIE` est donc reconnu par l'awk du
+runner `ubuntu-latest` et ignoré par le filet local. Ce n'est pas la « limite assumée » que le banc
+manuel de #757 avait notée (« ni sous mawk ni sous gawk ») : c'est un **écart entre
+implémentations**, et c'est pire qu'une limite — la même description se lit différemment selon la
+machine. La portée est étroite : seul « Critères de sortie » porte un accent, « ## VERDICT » est
+reconnu partout. `tests/test_milestone_bilan.py` n'assert donc **rien** sur ce cas — pincer l'une ou
+l'autre branche serait rouge sur la moitié des machines — et garde ce qui vaut des deux côtés. La
+forme documentée passe partout ; le remède, si on le veut un jour, est un ticket à lui seul.
+
 **La convocation** est `lib.sh milestones-a-boucler` (#758) : les jalons **actifs, entièrement
 soldés, et sans verdict consigné**, relayés par `doctor.sh` (§7) et `/backlog`. Elle disait jusque-là
 « à fermer » — la décision finale, proposée en sautant le geste qui doit la précéder —, et c'est

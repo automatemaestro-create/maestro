@@ -341,18 +341,39 @@ def test_une_description_a_retours_windows_se_lit_comme_les_autres(depot: Depot)
     assert acheve.stdout.rstrip("\n") == "GO.", "aucun CR ne colle au corps rendu"
 
 
-def test_la_casse_accentuee_reste_une_limite_assumee(depot: Depot) -> None:
-    """`tolower()` ne replie pas les accents, ni sous mawk ni sous gawk — limite, pas oubli.
+def test_la_casse_est_tolereee_mais_jamais_l_orthographe(depot: Depot) -> None:
+    """La casse ASCII se replie, un titre mal orthographié ne se rattrape pas.
 
-    Ce test la CONSIGNE plutôt que de la découvrir : la forme documentée est celle des constantes
-    de `lib.sh`, et une casse ASCII est tolérée. Le jour où quelqu'un veut lever la limite, c'est
-    ce test qu'il édite — et il saura pourquoi elle était là.
+    ⚠ ET LA CASSE D'UNE LETTRE ACCENTUÉE N'EST PAS PORTABLE — c'est une mesure de ce ticket, et
+    elle CORRIGE le banc manuel du lot 1, qui donnait « `tolower()` ne replie pas les accents, ni
+    sous mawk ni sous gawk » pour une limite assumée. Elle n'en est pas une : c'est un **écart entre
+    implémentations**, mesuré le 2026-08-29 sous la même locale `C.UTF-8` — `gawk 5.2.1` replie
+    `CRITÈRES` en `critères`, `mawk 1.3.4` le laisse tel quel, parce qu'il replie octet par octet.
+    Le job `pytest` de la PR #798 l'a rendu visible en échouant : il a rendu `0` là où le conteneur
+    du filet local attendait `3`.
+
+    Ce test n'assert donc RIEN sur ce cas-là : pincer l'une ou l'autre branche le rendrait rouge sur
+    la moitié des machines, et pincer la « bonne » n'existe pas. Il assert ce qui est **vrai des
+    deux côtés**, et c'est le contrat qui compte — la forme documentée (les constantes de `lib.sh`)
+    est reconnue partout, sa variante en casse ASCII aussi, et l'accent perdu ne l'est nulle part.
+
+    La portée du désaccord est étroite et vaut d'être sue : seul « Critères de sortie » porte un
+    accent, donc seul lui diverge — « ## VERDICT » est reconnu partout. Le remède n'est pas dans ce
+    lot (tests + doc) : écrire les deux sections dans leur forme documentée suffit, et `docs/10
+    §3.4` le dit.
     """
     depot.pose_etat(jalons=[jalon(JALON, "## critères de sortie\n\n- C1\n", fermes=3)])
-    assert depot.lib("milestone-criteres", JALON).returncode == 0, "casse ASCII : reconnue"
+    assert depot.lib("milestone-criteres", JALON).returncode == 0, "casse ASCII : repliée"
 
-    depot.pose_etat(jalons=[jalon(JALON, "## CRITÈRES DE SORTIE\n\n- C1\n", fermes=3)])
-    assert depot.lib("milestone-criteres", JALON).returncode == 3, "accent majuscule : non reconnu"
+    # Sans accent, la MAJUSCULE se replie des deux côtés — c'est ce qui isole la variable : ce qui
+    # diverge plus haut est l'accent, jamais la casse.
+    depot.pose_etat(jalons=[jalon(JALON, "## VERDICT\n\nGO.\n", fermes=3)])
+    assert depot.lib("milestone-verdict", JALON).returncode == 0, "majuscule ASCII : repliée"
+
+    # Et un titre dont l'accent MANQUE n'est pas le même titre : le repli de casse n'est pas un
+    # rattrapage d'orthographe, sous aucun awk.
+    depot.pose_etat(jalons=[jalon(JALON, "## Criteres de sortie\n\n- C1\n", fermes=3)])
+    assert depot.lib("milestone-criteres", JALON).returncode == 3, "accent absent : autre titre"
 
 
 # =================================================================================================
