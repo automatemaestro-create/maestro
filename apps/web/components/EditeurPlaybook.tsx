@@ -67,6 +67,10 @@
  * d'historique est en lecture seule (#260), il n'y a rien à y compléter ni à y
  * réécrire — le sélecteur referme donc la liste de complétions en passant la
  * main à l'aperçu.
+ *
+ * `aria-controls` reste posé même liste fermée : `role="combobox"` l'exige
+ * (`jsx-a11y/role-has-required-aria-props`, en `error` depuis #537), là où
+ * `aria-activedescendant` ne désigne une option que quand il y en a une.
  */
 
 import {
@@ -632,9 +636,9 @@ export function EditeurPlaybook({
               spellCheck={false}
               role="combobox"
               aria-expanded={completions.length > 0}
+              aria-controls={idListe}
               aria-autocomplete="list"
               {...(completions.length > 0 && {
-                "aria-controls": idListe,
                 "aria-activedescendant": `${idListe}-${choisie}`,
               })}
               className={`${HAUTEUR_ZONE} w-full resize-y rounded-md border border-bord bg-surface p-3 font-mono text-annexe leading-relaxed text-texte shadow-sm focus:border-bord-fort focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent disabled:opacity-50`}
