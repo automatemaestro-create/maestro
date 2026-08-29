@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, ClassVar, TypeVar
 
 from maestro.deliberation import CreditArbitrage
 from maestro.providers.arbitrage import Arbitre, ArbitreActe
+from maestro.providers.blocage import Signaleur
 from maestro.providers.courrier import Courrier
 
 if TYPE_CHECKING:  # imports de typage seuls — pas de dépendance d'exécution vers agents
@@ -335,6 +336,7 @@ class ModelProvider(ABC):
         on_activite: Callable[[str], None] | None = None,
         on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,
         on_arbitrage: Arbitre | None = None,
+        on_blocage: Signaleur | None = None,
         credit_arbitrage: CreditArbitrage | None = None,
         on_courrier: Courrier | None = None,
         plafond_tours: int | None = PLAFOND_TOURS_DEFAUT,
@@ -457,6 +459,30 @@ class ModelProvider(ABC):
         panne d'observation ne coûte qu'une ligne de journal ; une panne du
         canal de décision laisserait l'agent sans réponse devant l'action même
         qu'il jugeait irréversible.
+
+        `on_blocage` (#719, `maestro.providers.blocage`) part lui aussi **de**
+        l'agent, et c'est le seul des cinq qui n'en revienne pas : un fournisseur
+        qui l'honore expose un outil `signaler_blocage(raison)`, appelle ce canal
+        quand l'agent s'en sert, et **rend la main immédiatement**. Rien n'est
+        soumis à personne, rien n'est attendu, l'agent n'est jamais suspendu — un
+        verbe qui attendrait serait un troisième canal d'arbitrage à tenir
+        d'accord avec les deux autres (docs/31 §3.1), et c'est exactement ce que
+        la signature synchrone de `Signaleur` rend inexprimable.
+
+        Il **n'a donc pas de fenêtre de crédit** (`credit_arbitrage` ci-dessous)
+        et n'en aura jamais : on ne mesure que les attentes, et celle-ci n'existe
+        pas. Capacité optionnelle au second degré, comme `on_etapes` et
+        `on_arbitrage`.
+
+        L'exigence sur l'échec est celle du canal d'arbitrage et non celle des
+        canaux d'observation, pour une raison qui leur est commune : l'agent
+        **attend un accusé**, même s'il n'attend pas de réponse. Un callback qui
+        lève ne remonte donc pas (il tuerait la tâche à l'instant où l'agent
+        coopère) mais ne se tait pas non plus — le fournisseur lui dit que sa
+        raison **n'a pas** été consignée
+        (`maestro.providers.blocage.CANAL_EN_ERREUR`), faute de quoi il la croit
+        transmise et ne la répète pas dans son compte-rendu final, seul endroit
+        qui lui reste.
 
         `credit_arbitrage` (#584, `maestro.deliberation`) est le seul canal qui
         ne transporte ni observation ni décision : il transporte du **temps**. Le

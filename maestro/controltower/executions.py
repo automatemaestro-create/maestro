@@ -146,6 +146,15 @@ même tâche porte depuis #446 le **ramassage** (`_ramasser`), pour la raison qu
 fait mettre le battement là : ce qui doit être fait à chaque période l'est par un
 seul réveil, jamais par une tâche d'horloge de plus.
 
+Depuis #737 elle porte, pour cette même raison, la **veille d'attente**
+(`_veiller`) — et c'est bien l'**autre** question. Le battement prouve que l'hôte
+d'un run est vivant, jamais que le run avance : un run suspendu sur un humain bat
+normalement, donc ressort `vivant`, exactement comme un run qui travaille (#568,
+treize minutes de blocage muet). `en_souffrance`
+(`maestro.controltower.souffrance`) juge l'**attente**, se sert sur le résumé à
+côté de `vitalite`, et se dit une fois au journal quand personne ne regarde. Il ne
+décide de rien : c'est ce qui autorise son seuil serré.
+
 Et depuis #349 elle cesse d'être irrattrapable : `relancer` rejoue un run non
 soldé **sur son brief approuvé**, en mode `sans`, sans repasser par la
 clarification ni par la validation. Ce qu'un run mort emporte n'est pas du temps
@@ -199,6 +208,7 @@ from maestro.controltower.events import (
 from maestro.controltower.hote import DemarrageHoteRate, HoteRun, OrdreRun
 from maestro.controltower.hote_en_process import HoteRunEnProcess
 from maestro.controltower.portee import PorteeProjet, PorteeRun
+from maestro.controltower.souffrance import SEUIL_SOUFFRANCE_S, en_souffrance
 from maestro.controltower.state import (
     EXECUTION_ANNULEE,
     EXECUTION_ECHEC,
@@ -326,6 +336,13 @@ class ServiceExecutions:
     battements. Les deux sont injectables **pour les tests**, pas comme réglage de
     déploiement : y toucher est un choix de code, comme `DELAI_ANNULATION_S`.
 
+    `seuil_souffrance_s` (#737) est l'autre seuil de la veille — l'attente au-delà
+    de laquelle un run suspendu sur un humain est dit **en souffrance** (défaut :
+    `SEUIL_SOUFFRANCE_S`). Même régime d'injection que le précédent, et même
+    absence de câblage de déploiement ; ce qu'il juge, en revanche, est l'autre
+    question : `seuil_orphelin_s` répond de l'**hôte** du run, celui-ci de son
+    **avancement** (`maestro.controltower.souffrance`).
+
     `hote` (#442) est **l'hôte de run** : ce à quoi le service confie une
     exécution, et à qui il ne demande que de la lancer, de l'annuler, de dire ce
     qu'il porte encore et ce qu'il a vu mourir (`maestro.controltower.hote`).
@@ -354,6 +371,7 @@ class ServiceExecutions:
         lecteur_sources: LecteurSources | None = None,
         battements: RegistreBattements | None = None,
         seuil_orphelin_s: float = SEUIL_ORPHELIN_S,
+        seuil_souffrance_s: float = SEUIL_SOUFFRANCE_S,
         periode_battement_s: float = PERIODE_BATTEMENT_S,
         hote: HoteRun | None = None,
     ) -> None:
@@ -373,8 +391,16 @@ class ServiceExecutions:
             battements if battements is not None else RegistreBattementsMemoire()
         )
         self._seuil_orphelin_s = seuil_orphelin_s
+        self._seuil_souffrance_s = seuil_souffrance_s
         self._periode_battement_s = periode_battement_s
         self._coeur: asyncio.Task[None] | None = None
+        # Les runs dont la souffrance a **déjà été dite** (#737) — de quoi ne la
+        # dire qu'une fois par attente, là où le réveil repasse toutes les 30 s.
+        # Ce n'est pas le verdict qu'on mémorise (il se recalcule à chaque tour,
+        # et c'est la propriété qu'on ne défait pas) mais le fait de l'avoir
+        # **annoncé** : un run qui repart puis se ressuspend est signalé à
+        # nouveau, parce qu'il s'agit alors d'une autre attente.
+        self._souffrances_dites: set[str] = set()
         # L'hôte des runs (#442) — leur seul registre : le service ne tient plus
         # aucune tâche, il demande à l'hôte ce qu'il porte. Par défaut celui en
         # process, construit autour du déroulement de ce service : c'est le seul
@@ -480,13 +506,32 @@ class ServiceExecutions:
     def _avec_vitalite(
         self, resume: dict[str, Any], battements: Mapping[str, str]
     ) -> dict[str, Any]:
-        """Ajoute le verdict de vitalité à un résumé, sans toucher au reste."""
+        """Ajoute les **deux verdicts de veille** à un résumé, sans toucher au reste.
+
+        Ils répondent de deux questions qu'il ne faut pas confondre (docs/33
+        §5.3) : `vitalite` (#348) dit si l'**hôte** du run est encore là,
+        `en_souffrance` (#737) si le **run** avance. Un run suspendu sur un humain
+        depuis une heure est `vivant` *et* en souffrance — c'est même la paire
+        exacte qu'a portée le run de #568 pendant que rien ne le signalait.
+
+        Ils sont posés **ici**, par le même chemin, bien que leur coût diffère :
+        la vitalité demande un registre qui vit hors du process, la souffrance se
+        lit dans le résumé déjà en main. Les séparer pour cette seule raison
+        donnerait une liste qui saurait qu'un run souffre pendant que l'écran de
+        ce run ne le saurait pas — la couture que `resume_vivant` existe pour
+        éviter.
+        """
         return {
             **resume,
             "vitalite": vitalite(
                 str(resume["statut"]),
                 battements.get(str(resume["run_id"])),
                 seuil_s=self._seuil_orphelin_s,
+            ),
+            "en_souffrance": en_souffrance(
+                str(resume["statut"]),
+                resume.get("attente_depuis"),
+                seuil_s=self._seuil_souffrance_s,
             ),
         }
 
@@ -1272,6 +1317,22 @@ class ServiceExecutions:
         tour où on le solde. Il n'a pas de tâche à lui pour la raison qui a fait
         n'en donner qu'une au cœur — ce qui se fait à chaque période se fait sur un
         seul réveil.
+
+        La **veille d'attente** (#737) est le troisième passager du même réveil, et
+        pour la même raison. Trois propriétés en font le bon endroit, et aucune
+        n'appartient aux candidats écartés — l'orchestrateur et l'hôte du run, qui
+        meurent tous deux avec ce qu'ils veilleraient (docs/33 §5.1) : il **survit
+        aux runs** qu'il regarde, il itère déjà **exactement** l'ensemble utile, et
+        il vit dans le processus qui tient la projection, seul endroit où
+        `attente_depuis` est connu pour tous les runs à la fois. Il ne coûte rien
+        de plus : le résumé est déjà en main pour le test de terminalité.
+
+        ⚠ **La portée est celle du réveil, et elle se dit** (docs/33 §5.2) : la
+        veille couvre les runs **portés par cet hôte**, c'est-à-dire ceux d'une API
+        vivante. Un `maestro-run` en ligne de commande sans API n'a pas de veilleur
+        — et n'en avait pas non plus avant. Le verdict servi sur le résumé, lui,
+        couvre tout ce que la projection connaît : ce sont deux couvertures et non
+        une incohérence.
         """
         while True:
             await asyncio.sleep(self._periode_battement_s)
@@ -1279,8 +1340,61 @@ class ServiceExecutions:
             for run_id in self._hote.runs_en_vol():
                 resume = self.resume(run_id)
                 if resume is not None and resume["statut"] in STATUTS_EXECUTION_TERMINAUX:
+                    self._souffrances_dites.discard(run_id)
                     continue
+                if resume is not None:
+                    self._veiller(resume)
                 await self._battement(run_id)
+
+    def _veiller(self, resume: dict[str, Any]) -> None:
+        """Dit **une fois** qu'un run est en souffrance — et rien d'autre (#737).
+
+        « L'alerte est ce qui reste vrai quand personne ne regarde » (docs/33
+        §4.1) : #355 a rendu l'attente lisible *pour qui regarde*, et le run de
+        #568 a perdu 31 % de son temps de mur devant un écran allumé. Une ligne de
+        journal est ce qui subsiste sans onglet ouvert.
+
+        Trois choses qu'elle ne fait pas, et chacune est un choix :
+
+        - elle ne **publie aucun événement** et n'écrit rien dans la projection. Le
+          verdict est une fonction pure d'un état durable : le journaliser, ce
+          serait se donner deux sources pour une vérité, et la seconde se
+          périmerait (docs/33 §8). C'est déjà le régime de `vitalite`, qui n'est
+          tracée nulle part et ne manque à personne ;
+        - elle n'**agit sur rien** — n'annule, ne reprend, ne relance, ne notifie
+          personne hors de l'écran. C'est ce qui autorise le seuil serré de
+          `SEUIL_SOUFFRANCE_S` ; un canal hors écran se branchera un jour en
+          **consommateur** de ce verdict, jamais en le redérivant (docs/33 §10) ;
+        - elle ne **crie pas en boucle**. Le réveil repasse toutes les 30 s, donc
+          une attente d'une heure vaudrait cent-vingt lignes identiques ; une règle
+          qui crie trop se règle en déplaçant son seuil, pas en ajoutant un juge
+          pour trier ses propres cris (docs/33 §4.3). D'où la mémoire de ce qui a
+          déjà été dit — celle de l'**annonce**, jamais du verdict, qui se
+          recalcule à chaque tour et à chaque lecture.
+        """
+        run_id = str(resume["run_id"])
+        if not en_souffrance(
+            str(resume["statut"]),
+            resume.get("attente_depuis"),
+            seuil_s=self._seuil_souffrance_s,
+        ):
+            # L'attente a été tranchée (accord **ou** refus, #571) ou le run n'en a
+            # jamais porté : on oublie l'annonce, si bien qu'une prochaine attente
+            # sera dite à son tour.
+            self._souffrances_dites.discard(run_id)
+            return
+        if run_id in self._souffrances_dites:
+            return
+        self._souffrances_dites.add(run_id)
+        _LOGGER.warning(
+            "Run %s suspendu sur un humain depuis %s (statut %s) : plus de %.0f min "
+            "sans que rien n'avance. Rien n'est annulé ni relancé — c'est un "
+            "signalement, le geste reste humain.",
+            run_id,
+            resume.get("attente_depuis") or "un instant inconnu",
+            resume["statut"],
+            self._seuil_souffrance_s / 60,
+        )
 
     async def _ramasser(self) -> None:
         """Solde les runs dont l'hôte est mort **sans publier d'issue** (#446).

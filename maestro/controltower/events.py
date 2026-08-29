@@ -95,6 +95,22 @@ EVENEMENT_TACHE_REFERENCE = "tache.reference"
 #: cours de route une étape ou une maquette à ouvrir doit pouvoir le dire sans
 #: faire changer sa tâche de colonne au Kanban : ni statut, ni agent, ni coût.
 EVENEMENT_TACHE_DETAIL = "tache.detail"
+#: `tache.blocage` (#719) porte le blocage qu'un **agent déclare** en cours de
+#: tâche : `detail` en donne la raison, telle qu'il l'a écrite. Même forme que
+#: `tache.reference` et `tache.detail`, et pour la même raison — ni statut, ni
+#: agent, ni coût ne changent : un agent qui bute n'est pas une tâche bloquée, et
+#: docs/31 §3.4 lui refuse explicitement le droit de changer son propre statut,
+#: qui condamnerait tout son aval par la cascade de #43 alors qu'il travaille
+#: encore.
+#:
+#: ⚠ Il lui fallait un type à lui plutôt que de rejoindre `agent.activite`, et
+#: c'est la frise (#355) qui l'impose : elle écarte `agent.activite` à dessein
+#: — le **bruit de fond** d'un run —, si bien qu'un blocage rangé là serait
+#: consigné puis invisible, exactement l'inverse de ce que ce verbe existe pour
+#: faire. L'y verser en bloc noierait à l'inverse les signaux que #355 demande de
+#: distinguer. Un type distinct est la seule voie qui montre le blocage **sans**
+#: défaire ce tri.
+EVENEMENT_TACHE_BLOCAGE = "tache.blocage"
 EVENEMENT_AGENT_ACTIVITE = "agent.activite"
 EVENEMENT_AGENT_CAPACITE = "agent.capacite"
 EVENEMENT_MESSAGE_INTER_AGENTS = "message.inter_agents"
@@ -338,8 +354,11 @@ class Event:
     # et aucun consommateur n'a à faire la différence.
     outil: str = ""
     arguments: dict[str, str] | None = None
-    # **Qui tranche** l'acte soumis (#586) : `auto`, `orchestrateur` ou `humain`
-    # (`maestro.decideur`), porté par le seul `validation.demande` et vide
+    # **Qui tranche** l'acte soumis (#586) : `auto` ou `humain`
+    # (`maestro.decideur` — un troisième cran, `orchestrateur`, a été retiré par
+    # #715, mais des événements déjà émis le portent : ce champ est de la donnée
+    # durable, `str` et non `Decideur`, et il n'a donc pas rétréci avec
+    # l'énumération), porté par le seul `validation.demande` et vide
     # partout ailleurs. Chaîne vide plutôt que `humain`, pour la raison
     # de `outil`/`cause`/`reprise_de` : un seul événement en parle, et « cet
     # événement ne dit rien d'un décideur » n'est pas « cet acte revient à une

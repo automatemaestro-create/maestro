@@ -516,14 +516,24 @@ Aucune de ces quatre conditions n'est remplie au 2026-08-28.
 
 ## 11. Où cette décision est écrite ailleurs
 
-Rien ne change encore dans le code ni dans les contrats — le verdict est #737, la décision est cette
-note, et faire dire à la documentation un état que le code n'a pas serait le défaut inverse de celui
-qu'on répare. Deux endroits décrivent la surveillance telle qu'elle est, et restent donc **exacts** :
+**Le lot 1 (#737) a livré**, et cette section dit désormais où — l'énoncé « rien ne change encore dans
+le code ni dans les contrats » était vrai le jour du cadrage et ne l'est plus :
 
 - [docs/05 §2.6](./05-interface-control-tower.md) — le contrat d'API des attentes et de la vitalité,
-  où le champ du §5.3 viendra se déclarer ;
+  où le champ du §5.3 **s'est déclaré** : `en_souffrance` sur le `ResumeExecution`, à côté de
+  `vitalite`, avec la table qui sépare les deux verdicts et les quatre points du §9 relus comme un
+  contrat. Le §6.1 le porte dans la forme JSON, là où `vitalite` est déclarée champ par champ ;
 - [docs/24 §2.4](./24-projets-locaux-et-poste-de-travail.md) — « ⚠ La **vitalité** ne peut pas tenir
-  ce rôle », qui est le constat d'où part cette note.
+  ce rôle », qui est le constat d'où part cette note, et qui reste **exact** : la vitalité ne le tient
+  toujours pas, c'est son frère qui le tient.
+
+Côté code, le verdict vit dans [`maestro/controltower/souffrance.py`](../maestro/controltower/souffrance.py)
+— un module à lui plutôt qu'un ajout à `battement.py`, dont l'en-tête revendique de tenir en une
+phrase et dont aucun battement n'entre dans ce jugement. Il est servi par `_avec_vitalite`
+(`executions.py`) et **dit une fois** au journal de l'API par `_veiller`, troisième passager du
+réveil du §5.2. Restent le tri à l'écran (**#738**) et les **tests** (**#739**), à qui revient
+d'éprouver en propre la survie à un redémarrage, le run au travail qui ne porte jamais le verdict, et
+l'attente levée par un refus autant que par un accord.
 
 **Sur la numérotation, et c'est un constat, pas une prévision.** #354 et #647 ont été instruits en
 parallèle de celui-ci et ont **tous deux pris `31`** — `31-decision-surface-ecriture-agents.md` et

@@ -232,6 +232,7 @@ from maestro.controltower.persistence import (
     RedisEventLog,
     bus_durable,
 )
+from maestro.controltower.souffrance import SEUIL_SOUFFRANCE_S, en_souffrance
 from maestro.controltower.state import (
     CAPACITE_ACTIVE,
     CAPACITE_DESACTIVE,
@@ -308,6 +309,7 @@ __all__ = [
     "PERIODE_BATTEMENT_S",
     "ROLE_ORCHESTRATION",
     "SEUIL_ORPHELIN_S",
+    "SEUIL_SOUFFRANCE_S",
     "STATUTS_EXECUTION_TERMINAUX",
     "STATUTS_TACHE_TERMINAUX",
     "UTILISATEUR",
@@ -391,6 +393,7 @@ __all__ = [
     "create_app",
     "create_default_app",
     "detail_avec_cause",
+    "en_souffrance",
     "evenements_depuis_step",
     "graphe_du_run",
     "moteur_par_defaut",

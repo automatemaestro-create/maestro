@@ -48,7 +48,7 @@ from maestro.controltower.state import (
     EXECUTION_EN_ATTENTE_REPONSES,
     EXECUTION_EN_COURS,
 )
-from maestro.decideur import ACTEUR_ORCHESTRATEUR, Decideur
+from maestro.decideur import ACTEUR_ORCHESTRATEUR
 from maestro.engine import MODE_BRIEF_HUMAIN, OrchestrationEngine
 from maestro.engine.brief import (
     TOURS_CLARIFICATION_DEFAUT,
@@ -610,14 +610,21 @@ def test_l_evenement_de_questions_annonce_le_plafond(brief_a_questions):
 
 
 def test_le_canal_de_clarification_est_celui_de_l_orchestrateur(brief_a_questions):
-    """La moitié « répondre à une demande d'information » du critère de #586.
+    """La moitié « répondre à une demande d'information » du critère de #586 — **celle qui survit**.
 
-    L'orchestrateur ne peut pas approuver un acte classé `humain` — mais deux
-    pouvoirs lui restent, et ce canal-ci en est un : répondre à une question
-    n'est pas approuver un acte. Il tient donc, et il tient **sous le même nom**
-    que le cran de décision (`maestro.decideur.ACTEUR_ORCHESTRATEUR`), sans quoi
-    la trace de ce qu'un même acteur a fait se lirait comme celle de deux
-    acteurs qui se ressemblent.
+    De ce critère, #715 a retiré la première moitié (trancher un acte : un cran
+    qui n'a jamais eu de canal) et laissé celle-ci, vivante et branchée — répondre
+    à une question n'est pas approuver un acte. Le canal tient donc, et il tient
+    **sous le même nom** (`maestro.decideur.ACTEUR_ORCHESTRATEUR`), sans quoi la
+    trace de ce qu'un même acteur a fait se lirait comme celle de deux acteurs qui
+    se ressemblent.
+
+    ⚠ La chaîne d'égalités s'arrêtait auparavant sur `Decideur.ORCHESTRATEUR` : le
+    nom était le **miroir** du cran. Le membre d'énumération est parti, donc ce
+    dernier maillon aussi — c'est le *lien* qui disparaît, pas la valeur. On vérifie
+    donc explicitement qu'elle n'a pas bougé (`"orchestrateur"`, au caractère
+    près) : c'est ce qui fait qu'il n'y a **aucune migration de donnée**, et un
+    renommage en fabriquerait une là où il n'y en a aucune.
 
     L'autre moitié de ce test est ce que le canal **ne transporte pas** : des
     questions et des réponses de texte libre, jamais un oui/non sur un acte —
@@ -631,7 +638,7 @@ def test_le_canal_de_clarification_est_celui_de_l_orchestrateur(brief_a_question
         )
     )
 
-    assert event.agent == ACTEUR_BRIEF == ACTEUR_ORCHESTRATEUR == Decideur.ORCHESTRATEUR
+    assert event.agent == ACTEUR_BRIEF == ACTEUR_ORCHESTRATEUR == "orchestrateur"
     # Aucune approbation ne voyage ici : ni décideur, ni acte à trancher.
     assert event.decideur == ""
     assert event.outil == "" and event.arguments is None

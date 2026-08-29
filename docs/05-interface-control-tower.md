@@ -1200,6 +1200,62 @@ laisserait un run refusé « en attente » pour toujours) ; et une **autre deman
 laisse suspendu, faute de quoi trancher la première de trois lui rendrait un « en cours » qu'il ne
 mérite pas.
 
+**Et depuis #737, l'attente est jugée et plus seulement datée.** `attente_depuis` était lisible en
+huit endroits d'`apps/web/` — **tous** via `formatHeureRelative`, **aucun** ne le comparant à quoi
+que ce soit : le fait était lisible, il n'était pas opposable, et c'est ce qui a laissé le run de
+#568 figé 31 % de son temps de mur. Le résumé porte donc un second verdict de surveillance à côté de
+`vitalite` (§6.1), servi par le même chemin :
+
+```jsonc
+// ResumeExecution — les deux verdicts de veille, et ils ne répondent pas de la même question
+"vitalite": "vivant",        // l'HÔTE du run bat-il encore ? (#348) — null sur un run soldé
+"en_souffrance": true        // le RUN avance-t-il ? (#737) — booléen, jamais null
+```
+
+| | `vitalite` (#348) | `en_souffrance` (#737) |
+| --- | --- | --- |
+| la question | son hôte est-il là ? | ce run avance-t-il ? |
+| ce qu'il lit | le dernier battement | `statut` + `attente_depuis` |
+| le seuil | 30 min (`SEUIL_ORPHELIN_S`) | **15 min** (`SEUIL_SOUFFRANCE_S`) |
+| donnée illisible | `indetermine` — on ne sait pas | **`true`** — l'inverse, et c'est voulu |
+| sur un run soldé | `null` | `false` |
+
+Quatre points **sont** le contrat, et chacun se lit dans l'autre sens comme une chose à ne pas
+défaire ([docs/33 §5.3, §5.4, §9](./33-decision-surveillance-run.md)) :
+
+- **il est dérivé, jamais stocké.** Aucun champ d'`EtatExecution`, aucun type d'événement, aucune
+  migration : le verdict se recalcule depuis la projection, elle-même rejouée depuis le journal
+  durable au démarrage de l'API. Il **survit donc à un redémarrage** sans que rien ne soit persisté,
+  et le stocker donnerait deux vérités dont la seconde se périmerait ;
+- **il juge l'attente, jamais la durée.** Un run qui travaille depuis six heures ne le porte pas — il
+  n'attend personne. C'est la confusion exacte que `vitalite` a évitée, et elle se refabriquerait en
+  comparant `debut` au lieu d'`attente_depuis` ;
+- **un seul seuil pour les trois attentes.** Un brief, des réponses et un arbitrage n'ont pas la même
+  urgence intuitive, mais le dépôt a déjà tranché que « depuis quand attend-il ? » n'a qu'**une**
+  réponse (un seul `attente_depuis`) ; en écrire trois rouvrirait cette décision par la bande ;
+- **il n'agit sur rien** — il n'annule, ne reprend, ne relance rien, et **ne passe pas par la file de
+  validations** de cet écran, qui porte des **actes à décider** (règle de #647). C'est précisément ce
+  qui autorise un seuil deux fois plus serré que celui de l'orphelinat : là-bas se tromper *détruit*
+  (on propose de reprendre un run vivant depuis son cadrage), ici un faux positif coûte une ligne
+  qu'on regarde et qu'on oublie, quand un faux négatif coûte les 31 % de #568.
+
+⚠ **Le verdict binaire est un choix.** Le troisième état — « il attend, mais pas depuis trop
+longtemps » — est **déjà porté par le statut** (`en_attente_brief` / `en_attente_reponses` /
+`en_attente_arbitrage`) ; le reporter dans le verdict serait un second support pour un même fait,
+c'est-à-dire la panne que #365 a supprimée sur le cycle de vie.
+
+⚠ **Portée annoncée**, comme celle de `gc` et de `reconcile-workflow` ([docs/10 §9.2](./10-workflow-git.md)) :
+la surveillance couvre les runs connus d'une **API vivante**. Un `maestro-run` en ligne de commande
+sans API n'a pas de veilleur — et n'en avait pas non plus avant. Ce n'est pas une régression, mais ça
+se dit. Le verdict servi sur le résumé couvre tout ce que la projection connaît ; le **signalement**
+au journal de l'API, lui, ne couvre que les runs qu'elle héberge : deux couvertures, pas une
+incohérence.
+
+**Un seuil déplacé rend les verdicts passés non reproductibles**, et le prix est nommé plutôt que
+masqué : `vitalite` a exactement la même propriété et le dépôt l'a acceptée. `SEUIL_SOUFFRANCE_S` est
+un **point de départ nommé, pas une loi** — une règle qui crie trop se règle en déplaçant ce chiffre,
+jamais en ajoutant un juge qui trierait ses propres cris (docs/33 §4.3).
+
 **Un écran qui se décide vite** (#272, lot 5 de #244). Une validation est bloquante : le moteur est
 en pause et un run attend derrière. Trois décisions le disent, et une seule fois chacune.
 
@@ -2453,6 +2509,13 @@ repaie une planification, sous un **nouveau** `run_id`.
   // vivant | orphelin | indetermine  ← l'hôte du run bat-il encore ? (#348)
   // null sur un run soldé : la question ne se pose pas
   "vitalite": "vivant",
+  // Le **second** verdict de veille (#737), et il répond de l'autre question :
+  // `vitalite` dit si l'HÔTE est là, celui-ci si le RUN avance. `true` quand le
+  // run est suspendu sur un humain depuis plus de `SEUIL_SOUFFRANCE_S` (15 min).
+  // Booléen, jamais null : un run soldé — ou au travail, si long soit-il — rend
+  // `false`. Dérivé de `statut` + `attente_depuis`, donc **jamais stocké** : ni
+  // champ de projection, ni événement, ni migration (§2.6, docs/33 §5.3).
+  "en_souffrance": false,
   "mode_brief": "humain",                  // le régime posé au lancement (#320)
   // Depuis quand le run attend un geste humain (#321) — l'horodatage de
   // l'événement qui l'a suspendu, `null` dès qu'il repart ou qu'il est soldé.
@@ -2553,7 +2616,9 @@ constat du 2026-08-17, dont deux du 22 juillet). L'hôte publie donc un **battem
 minutes (#568) : un run suspendu sur une attente humaine est porté par un hôte qui bat
 normalement, donc il ressort `vivant` — exactement comme un run qui travaille. Seuls
 les statuts **terminaux** rendent la question sans objet. « Attend-il quelqu'un ? » se
-lit sur le **statut** (les trois `en_attente_*` ci-dessus), jamais ici.
+lit sur le **statut** (les trois `en_attente_*` ci-dessus), jamais ici — et « attend-il
+depuis trop longtemps ? » sur `en_souffrance`, le second verdict de veille (#737,
+§2.6), qui est le frère de celui-ci sur l'autre question et non son remplaçant.
 
 Deux choix qui expliquent le reste. Le seuil est **généreux** (30 min, soixante battements
 manqués) : rater un orphelin coûte un run affiché en cours un peu trop longtemps, déclarer orphelin

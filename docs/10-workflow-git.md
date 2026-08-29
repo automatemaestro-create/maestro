@@ -250,6 +250,99 @@ que la vue par milestone reflète l'avancement réel de chaque phase.
   rien n'est jamais bouclé, écrit ni fermé automatiquement. `doctor.sh` signale par ailleurs les
   tickets ouverts sans milestone.
 
+#### Le bouclage : le livrable se démontre sur pièces, puis rend un verdict (#756)
+
+**Avant la fermeture vient le bouclage**, et c'est un geste que le dépôt a eu quatre fois puis perdu
+sans que personne ne le décide : #10 (Phase 0 → [docs/11](./11-demo-poc.md)), #50 (MVP →
+[docs/12](./12-demo-mvp.md)), #88 (V1 → [docs/13](./13-demo-v1.md)) et #112 (V2 →
+[docs/23](./23-demo-v2.md), le 2026-07-23). Depuis : **14 milestones fermés, aucun bouclage**.
+
+Trois causes, et aucune n'est une décision. **Ça n'a jamais été un mécanisme** — quatre tickets
+écrits à la main, aucune commande, aucun test, aucune ligne qui le demande ; le seul renvoi était le
+paragraphe ci-dessus, c'est-à-dire un pointeur vers un tableau, et *une checklist qu'aucune machine
+ne vérifie ne tient pas* ([docs/30 §3.6](./30-cible-visuelle-control-tower.md)). **Le tableau des
+jalons de [docs/06](./06-roadmap.md) s'arrête à la Phase 3** : une démo servait à *trancher* une
+question, les phases suivantes n'en portaient plus — le rituel ne s'est pas arrêté, sa raison d'être
+s'est éteinte. Et **`/milestone-presentation` (#142) a pris la place sans prendre la fonction** :
+elle *montre* ce qui a été construit, elle n'*exerce* rien et ne conclut sur rien.
+
+Ce que l'absence a laissé passer, sur pièces : les contrats d'API de [docs/05 §6](./05-interface-control-tower.md)
+**figés sans être servis** pendant des mois, et un run produit terminé **vert avec un projet vide**
+(#568) — découvert en s'en servant, par aucun filet.
+
+**Deux commandes, dans cet ordre, et jamais une seule.**
+
+| geste | commande | ce qu'elle fait | ce qu'elle n'écrit pas |
+|---|---|---|---|
+| **exercer** | `/milestone-bilan "<titre>"` (#759) | monte la stack, prend les captures, joue les verbes et les suites, rattache chaque critère à sa pièce, **propose** un verdict, écrit `docs/bilans/<slug>.md` | rien côté forge : rien n'y est encore arbitré |
+| **enregistrer** | `/milestone-verdict "<titre>"` (#760) | prend la réponse d'une personne, la consigne dans la section `## Verdict` du jalon, **propose** chaque réserve en ticket | ne ferme aucun jalon, ne rejoue aucune pièce |
+
+Elles sont **deux et non deux étapes de la même** : un bilan est long, l'arbitrage n'arrive pas
+toujours dans la foulée, et enchaîner l'enregistrement à la fin du bilan perdrait tout verdict que
+personne n'a arbitré dans la même session — la panne de #608 recréée sur l'objet qu'on protège. Le
+rapport, lui, attend : c'est un document.
+
+**Le support est la description du jalon**, comme le marqueur `rail:` ci-dessous : deux sections
+reconnues, `## Critères de sortie` et `## Verdict`, lues et posées par
+`lib.sh milestone-criteres <titre> [<fichier>]` et `lib.sh milestone-verdict <titre> [<fichier>]`
+(#757). Ce sont des **verbes** et non un `gh api` recopié dans les prompts, pour la raison qui a
+fait de `milestone-rail` un verbe (#617) : les écritures de forge sont interdites sous
+`.claude/commands/**`, et le support peut bouger. Sans section, c'est une **abstention muette**
+(code 3) ; une section **présente mais vide compte pour absente**, faute de quoi il suffirait
+d'écrire « ## Verdict » et rien dessous pour éteindre la convocation **pour toujours** ; et
+l'écriture n'ajoute qu'**en queue**, le marqueur `rail:` de tête devant survivre.
+
+⚠ **Écris les deux titres dans leur forme documentée** — « ## Critères de sortie », « ## Verdict ».
+La reconnaissance replie la casse par le `tolower()` d'awk, et ce repli **n'est pas portable sur une
+lettre accentuée** : mesuré le **2026-08-29** sous la même locale `C.UTF-8`, `gawk 5.2.1` replie
+`CRITÈRES` en `critères` là où `mawk 1.3.4` — celui du conteneur du filet local — le laisse tel
+quel, parce qu'il replie **octet par octet**. `## CRITÈRES DE SORTIE` est donc reconnu par l'awk du
+runner `ubuntu-latest` et ignoré par le filet local. Ce n'est pas la « limite assumée » que le banc
+manuel de #757 avait notée (« ni sous mawk ni sous gawk ») : c'est un **écart entre
+implémentations**, et c'est pire qu'une limite — la même description se lit différemment selon la
+machine. La portée est étroite : seul « Critères de sortie » porte un accent, « ## VERDICT » est
+reconnu partout. `tests/test_milestone_bilan.py` n'assert donc **rien** sur ce cas — pincer l'une ou
+l'autre branche serait rouge sur la moitié des machines — et garde ce qui vaut des deux côtés. La
+forme documentée passe partout ; le remède, si on le veut un jour, est un ticket à lui seul.
+
+**La convocation** est `lib.sh milestones-a-boucler` (#758) : les jalons **actifs, entièrement
+soldés, et sans verdict consigné**, relayés par `doctor.sh` (§7) et `/backlog`. Elle disait jusque-là
+« à fermer » — la décision finale, proposée en sautant le geste qui doit la précéder —, et c'est
+pourquoi personne n'a jamais été *convoqué*. Un jalon déjà bouclé **sort du signalement** alors même
+qu'il reste ouvert : le verdict est le geste qu'on pouvait oublier, la fermeture est celui qu'on
+prend en le lisant, et re-signaler indéfiniment ferait de la convocation un bruit permanent.
+
+Quatre choses à ne pas défaire :
+
+- **La fermeture reste une décision humaine**, et le bouclage ne la prend pas davantage qu'une autre
+  commande. Ce qu'il produit est ce qui manquait *avant* elle. Donner à une machine le geste final
+  défairait, du même mouvement, le jalon go/no-go de la roadmap.
+- **Ce qui est automatique est la détection du manque, jamais le verdict** — même partage que
+  l'arbitrage des lots (#562), le signalement `.claude/` (#612) et la veille de conception (#714).
+  Un `NO-GO` posé par une machine sur une phase entière serait le contraire de ce dispositif.
+- **Un bouclage sans critère de sortie n'est qu'une opinion** : `/milestone-bilan` **s'arrête** sur
+  un jalon qui n'en porte pas, et **n'écrit pas les critères lui-même** — des critères rédigés à
+  l'heure du bilan sont taillés sur ce qui a été livré, c'est l'examen écrit après l'épreuve et il
+  rendra toujours un `GO`. Ils se posent quand la phase se **cadre**.
+- **Un critère qu'aucune pièce ne couvre est nommé comme tel, jamais coché**, et il vaut réserve à
+  lui seul. C'est ce ✓-là qui a laissé quatorze jalons se fermer sur « ça a été écrit » — *lire le
+  code n'est pas l'exercer*.
+
+Deux limites assumées plutôt que masquées. Le **rapport n'est pas commité** (décision alignée sur
+`/milestone-presentation`), donc son chemin dans la section consignée est un renvoi **local** que
+personne d'autre n'ouvrira : c'est pourquoi la section `## Verdict` doit **se suffire à elle-même**
+— verdict, date, état du jalon, compte de critères, et chaque réserve **avec son sort** (`→ #<iid>`
+ou « acceptée telle quelle »), une réserve muette étant indiscernable d'un oubli. Et un **ticket de
+réserve va au milestone COURANT, jamais au jalon qu'on vient de boucler** : l'y inscrire le
+**dé-solderait** (`open_issues > 0`), donc le rendrait non fermable, et le bouclage se retournerait
+contre lui-même. La règle tient par le **défaut** de `/ticket-create`, à qui l'on indique le *rail*
+et jamais un `--milestone`.
+
+Gardé par [`tests/test_milestone_bilan.py`](../tests/test_milestone_bilan.py) (#761), dont le pivot
+est le seul invariant **observable** de tout le dispositif — un verdict consigné éteint la
+convocation — et qui **prouve d'abord que le jalon était convoqué**, sans quoi « plus convoqué »
+serait vrai d'un jalon qui ne l'a jamais été.
+
 #### Soldé et vide : deux abstentions, jamais une seule (#619)
 
 Un milestone est écarté pour **l'une ou l'autre** de deux raisons, que `current-milestone` **nomme

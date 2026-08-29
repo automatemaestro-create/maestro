@@ -40,6 +40,7 @@ from maestro.controltower.events import (
     EVENEMENT_EXECUTION_STATUT,
     EVENEMENT_MESSAGE_INTER_AGENTS,
     EVENEMENT_RUN_PLAN,
+    EVENEMENT_TACHE_BLOCAGE,
     EVENEMENT_TACHE_DETAIL,
     EVENEMENT_TACHE_REASSIGNATION,
     EVENEMENT_TACHE_REFERENCE,
@@ -344,13 +345,27 @@ class EtatValidation:
     porte pas — validation de tâche, application d'un diff —, qui reste alors
     rendue exactement comme avant ce lot.
 
-    `decideur` (#586) dit **qui doit trancher** cet acte : `auto`,
-    `orchestrateur` ou `humain`. Vide pour une demande qui n'en porte pas, où
-    l'écran retrouve exactement le rendu d'avant ce lot. Il ne remplace pas
-    `statut` et ne s'en déduit pas : celui-là dit *où en est* la demande
-    (en attente, approuvée, refusée), celui-ci *de qui* la réponse doit venir —
-    une demande en attente d'orchestrateur et une demande en attente d'une
-    personne portent le même statut et n'appellent pas le même geste.
+    `decideur` (#586) dit **qui doit trancher** cet acte : `auto` ou `humain`.
+    Vide pour une demande qui n'en porte pas, où l'écran retrouve exactement le
+    rendu d'avant ce lot. Il ne remplace pas `statut` et ne s'en déduit pas :
+    celui-là dit *où en est* la demande (en attente, approuvée, refusée),
+    celui-ci *de qui* la réponse doit venir.
+
+    ⚠ **Le champ est constant sur la file, et il reste là** (#715). Un troisième
+    cran, `orchestrateur`, justifiait cette distinction — *une demande en attente
+    d'orchestrateur et une demande en attente d'une personne n'appellent pas le
+    même geste* — et il a été retiré (décision #647, docs/31 §6). Or un acte
+    `auto` **n'atteint jamais cette file** : le hook le court-circuite
+    (`maestro.providers.claude`), trace, et ne compose aucune demande. Donc
+    **aucune validation en attente ne peut porter autre chose que `humain`**.
+
+    C'est ce qui a **refermé** un manque plutôt que de l'ouvrir : `decideur` était
+    servi ici et absent de tout `apps/web/`, et la distinction que l'écran ne
+    savait pas faire n'a plus d'objet — afficher un champ constant serait payer
+    #586 une seconde fois. Le champ, lui, ne se retire pas : c'est de la **donnée
+    durable**, le journal est rejoué, et des demandes déjà consignées portent la
+    chaîne du cran retiré. Ce qui a été supprimé est le routage, jamais la mémoire
+    de ce qui a été décidé.
     """
 
     tache_id: str
@@ -971,7 +986,15 @@ class ControlTowerState:
             self._applique_reference(event)
         elif event.type == EVENEMENT_TACHE_DETAIL:
             self._applique_detail(event)
-        elif event.type in {EVENEMENT_AGENT_ACTIVITE, EVENEMENT_MESSAGE_INTER_AGENTS}:
+        elif event.type in {
+            EVENEMENT_AGENT_ACTIVITE,
+            EVENEMENT_MESSAGE_INTER_AGENTS,
+            # Un blocage déclaré (#719) rafraîchit la **dernière activité** de
+            # son agent et rien d'autre : il vient de parler, donc il est vivant
+            # — et sa tâche ne bouge pas d'une colonne, ce qui est tout l'objet
+            # de son type distinct (docs/31 §3.4).
+            EVENEMENT_TACHE_BLOCAGE,
+        }:
             self._applique_activite(event)
         elif event.type == EVENEMENT_AGENT_CAPACITE:
             self._applique_capacite(event)

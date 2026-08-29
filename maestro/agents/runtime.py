@@ -32,6 +32,7 @@ from maestro.projets.modele import Projet
 from maestro.projets.secrets import enregistre_secrets_du_projet
 from maestro.providers.arbitrage import Arbitre, ArbitreActe
 from maestro.providers.base import PLAFOND_TOURS_DEFAUT, ModelProvider
+from maestro.providers.blocage import Signaleur
 from maestro.providers.courrier import Courrier
 from maestro.sandbox import ProducedFile, espace_de_travail
 
@@ -199,6 +200,7 @@ class AgentRuntime:
         on_activite: Callable[[str], None] | None = None,
         on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,
         on_arbitrage: Arbitre | None = None,
+        on_blocage: Signaleur | None = None,
         credit_arbitrage: CreditArbitrage | None = None,
         on_courrier: Courrier | None = None,
         projet: Projet | None = None,
@@ -268,21 +270,30 @@ class AgentRuntime:
         celui qui décide : la décision appartient au `Guardrails` du moteur, seul
         endroit où vit le fail-safe.
 
-        `credit_arbitrage` (#584) traverse aussi, et c'est le seul des cinq qui
+        `on_blocage` (#719) est le cinquième et traverse pour la même raison que
+        les quatre autres, dans le sens du précédent — de l'agent vers
+        l'appelant — mais **sans retour** : l'agent déclare qu'il bute, le
+        fournisseur lui expose l'outil, l'appelant consigne. Le runtime n'est ni
+        l'un ni l'autre, et il n'a en particulier rien à attendre : ce verbe ne
+        suspend personne, à la différence de celui du dessus. None : l'outil
+        n'est pas servi du tout, plutôt que servi sans aboutir.
+
+        `credit_arbitrage` (#584) traverse aussi, et c'est le seul des six qui
         ne porte ni observation ni décision mais du **temps** : le fournisseur y
         ouvre une fenêtre autour de chaque attente d'arbitrage, l'appelant en
         déduit le délai qu'il a posé sur la tâche. Le runtime, une fois de plus,
         n'est ni celui qui mesure ni celui qui décompte. None : le temps
         d'arbitrage reste compté dans celui de la tâche, comme avant #584.
 
-        `on_courrier` (#720) est le sixième, et il traverse comme les autres, dans
-        le sens de `on_arbitrage` : c'est l'agent qui **écrit** à un pair, le
-        fournisseur qui lui expose l'outil, et l'appelant qui consigne le mot au
-        journal et le publie sur la boîte du destinataire. Le runtime n'est ni
-        celui qui écrit ni celui qui poste — il ne connaît ni la tâche, ni le
-        run, ni le nom sous lequel l'agent signe, et c'est précisément pour ça
-        que ces trois champs ne sont pas demandés à l'agent. None : le verbe
-        n'est pas servi, et l'agent produit son livrable sans lui, comme avant.
+        `on_courrier` (#720) est le septième, et il traverse pour la même raison,
+        dans le sens de `on_blocage` et **sans retour** comme lui : c'est l'agent
+        qui **écrit** à un pair, le fournisseur qui lui expose l'outil, et
+        l'appelant qui consigne le mot au journal puis le publie sur la boîte du
+        destinataire. Le runtime n'est ni celui qui écrit ni celui qui poste — il
+        ne connaît ni la tâche, ni le run, ni le nom sous lequel l'agent signe, et
+        c'est précisément pour ça que ces trois champs ne sont pas demandés à
+        l'agent. None : le verbe n'est pas servi du tout, plutôt que servi sans
+        aboutir.
 
         `projet` (#224, EF-36) est le **projet dans lequel la tâche travaille** :
         l'espace de travail en est alors dérivé — worktree Git sur la branche
@@ -336,6 +347,7 @@ class AgentRuntime:
                 on_activite=on_activite,
                 on_etapes=on_etapes,
                 on_arbitrage=on_arbitrage,
+                on_blocage=on_blocage,
                 credit_arbitrage=credit_arbitrage,
                 on_courrier=on_courrier,
                 plafond_tours=self._plafond_tours,
