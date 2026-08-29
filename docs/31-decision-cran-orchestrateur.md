@@ -388,11 +388,18 @@ Aucune des trois n'est ouverte aujourd'hui, et la première ne peut pas l'être 
 
 ## 9. Où cette décision est écrite ailleurs
 
-Trois endroits énoncent les trois crans et **ne changent pas encore** — le retrait est #715, la
-décision est cette note, et faire dire à la documentation un état que le code n'a pas serait le
-défaut inverse de celui qu'on répare. Chacun reçoit donc un **pointeur** vers ici, pour qu'un lot
-voisin ne bâtisse pas sur un cran décidé mort :
+Trois endroits énonçaient les trois crans. Tant que le code en avait trois, ils gardaient l'énoncé et
+recevaient un simple **pointeur** vers ici — faire dire à la documentation un état que le code n'a
+pas est le défaut inverse de celui qu'on répare. **#715 ayant retiré le cran, les trois énoncent
+désormais deux crans**, et le pointeur reste pour dire ce qui a été retiré et pourquoi :
 
 - [docs/01 §5](./01-architecture-technique.md) — modèle d'autonomie et de contrôle, item « human-in-the-loop » ;
 - [docs/08](./08-glossaire.md) — l'entrée HITL ;
 - [`core/permissions/README.md`](../core/permissions/README.md) — le contrat du fichier de politique.
+
+⚠ Un quatrième endroit ne se réécrit **pas** au passé et c'est délibéré : les docstrings de
+`maestro/decideur.py`, `maestro/engine/guardrails.py` et `maestro/agents/permissions.py` gardent le
+retrait **nommé sur place**, avec son motif. Le prix du retrait est un lien délié
+(`ACTEUR_ORCHESTRATEUR`, §3.4) et une asymétrie à ne pas attendrir (§7) : ni l'un ni l'autre ne se
+lit dans un diff, et les laisser se perdre en commentaire supprimé rendrait le prochain
+« pourquoi ce littéral ? » sans réponse.

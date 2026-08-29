@@ -9,7 +9,6 @@ chaud** à chaque tâche, comme les playbooks) :
   "allow": [],
   "ask": {
     "mcp__slack__send_message": "humain",
-    "Bash": "orchestrateur",
     "Grep": "auto"
   },
   "deny": ["mcp__slack__chat_delete"]
@@ -29,28 +28,29 @@ chaud** à chaque tâche, comme les playbooks) :
   session (un outil retiré avant l'ouverture n'atteindrait jamais le point de
   contrôle censé le suspendre), et son appel est soumis à un arbitrage.
 - **Qui arbitre est dans la politique** (#586) : `ask` s'écrit alors en objet
-  `{"<outil>": "<décideur>"}`, avec trois crans et un seul défaut —
+  `{"<outil>": "<décideur>"}`, avec deux crans et un seul défaut —
   - `auto` : personne n'est sollicité, l'appel passe. Il est **tracé** quand
     même (journal + fil temps réel), et c'est toute la différence avec un
     `allow`, qui passe en silence : le cran de ce qu'on veut voir sans vouloir
-    l'arrêter. N'ayant besoin d'aucun décideur, il ne dépend d'aucun canal ;
-  - `orchestrateur` : la machine tranche seule, sans réveiller personne. Elle
-    peut refuser ; elle ne peut approuver **que** ce cran-ci.
-    ⚠ **Ne pas s'en servir : ce cran est décidé mort** ([docs/31](../../docs/31-decision-cran-orchestrateur.md),
-    #647). Il n'a **jamais eu de canal** — `Guardrails(orchestrateur=…)` n'est passé nulle
-    part en production —, si bien qu'une entrée qui le pose rend aujourd'hui
-    « aucun orchestrateur configuré — refus par défaut » : la politique promet une
-    décision et rend un refus, sans que rien n'avertisse au chargement. Son retrait
-    est #715 ; d'ici là, deux crans seulement — `auto` ou `humain` ;
+    l'arrêter. N'ayant besoin d'aucun décideur, il ne dépend d'aucun canal.
+    ⚠ Ce n'est pas « la machine approuve » : c'est une décision **humaine
+    différée**, prise à froid et versionnée avec le dépôt ;
   - `humain` : une personne, et personne d'autre. C'est le **défaut** — un cran
-    non précisé escalade, il ne s'auto-approuve pas. L'orchestrateur n'est
-    jamais consulté sur ces actes-là, donc son avis ne peut pas y devenir une
-    approbation (EF-08/ENF-04 : refuser est le défaut sûr, approuver ne l'est
-    jamais).
+    non précisé escalade, il ne s'auto-approuve pas (EF-08/ENF-04 : refuser est
+    le défaut sûr, approuver ne l'est jamais).
 
-  Fail-safe porte par porte : pas de canal pour le cran demandé, ou canal en
-  panne ⇒ **refus**. Un décideur inconnu dans le fichier est refusé avec sa
-  cause — un garde-fou ne s'applique jamais à moitié.
+  ⚠ **Un troisième cran, `orchestrateur`, a été retiré** ([docs/31](../../docs/31-decision-cran-orchestrateur.md),
+  décision #647, retrait #715). Il n'a **jamais eu de canal** en production, si
+  bien qu'une entrée qui le posait rendait « aucun orchestrateur configuré — refus
+  par défaut » : la politique promettait une décision et rendait un refus, sans
+  que rien n'avertisse au chargement. Depuis le retrait, une politique qui l'écrit
+  **échoue franchement au chargement**, avec la liste des crans admis — le
+  fichier qu'on charge peut encore être corrigé. ⚠ Les actes qui lui revenaient
+  remontent au **défaut**, `humain` : `auto` n'hérite de rien.
+
+  Fail-safe : pas de canal humain, ou canal en panne ⇒ **refus**. Un décideur
+  inconnu dans le fichier est refusé avec sa cause — un garde-fou ne s'applique
+  jamais à moitié.
 - Liste absente = liste vide, `ask` comprise : un fichier écrit avant #580 se
   relit sous le régime d'hier. `ask` écrite en **liste** (`["Bash"]`, la forme
   d'avant #586) reste admise et vaut `humain` partout ; la relecture accepte les
@@ -66,9 +66,13 @@ effective, en lecture seule.
 
 Un appel **arbitré** laisse la même trace, sous un statut à lui
 (`arbitrage_outil`) : approuvé, refusé ou encore en attente, ce n'est pas un
-refus. L'étape en nomme le **décideur** — « Outil arbitré (orchestrateur) » —,
-et le tient de cette politique-ci et non du texte du motif : qui a tranché se
-lit, il ne se déduit pas.
+refus. L'étape en nomme le **décideur** — « Outil arbitré (humain) » —, et le
+tient de cette politique-ci et non du texte du motif : qui a tranché se lit, il
+ne se déduit pas. ⚠ Le champ reste porté même si `humain` est désormais la seule
+valeur qu'une **attente** puisse porter (un `auto` n'atteint jamais la file, le
+hook le court-circuite) : le journal est **rejoué**, et des étapes déjà écrites
+nomment le cran retiré. Ce qui a été supprimé est le routage, jamais la mémoire
+de ce qui a été décidé.
 
 Ce dossier est **versionné** avec le dépôt (aucun secret n'y figure). Racine
 remplaçable via `MAESTRO_PERMISSIONS_DIR` (cf. `.env.example`). Contrat et

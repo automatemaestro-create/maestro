@@ -338,8 +338,11 @@ class Event:
     # et aucun consommateur n'a à faire la différence.
     outil: str = ""
     arguments: dict[str, str] | None = None
-    # **Qui tranche** l'acte soumis (#586) : `auto`, `orchestrateur` ou `humain`
-    # (`maestro.decideur`), porté par le seul `validation.demande` et vide
+    # **Qui tranche** l'acte soumis (#586) : `auto` ou `humain`
+    # (`maestro.decideur` — un troisième cran, `orchestrateur`, a été retiré par
+    # #715, mais des événements déjà émis le portent : ce champ est de la donnée
+    # durable, `str` et non `Decideur`, et il n'a donc pas rétréci avec
+    # l'énumération), porté par le seul `validation.demande` et vide
     # partout ailleurs. Chaîne vide plutôt que `humain`, pour la raison
     # de `outil`/`cause`/`reprise_de` : un seul événement en parle, et « cet
     # événement ne dit rien d'un décideur » n'est pas « cet acte revient à une

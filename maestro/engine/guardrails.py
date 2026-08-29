@@ -52,22 +52,28 @@ là où la sienne n'est qu'un canal **de plus** dont le silence ne prouve rien.
 C'est aussi pourquoi désarmer les mots-clés ne déplace pas le garde-fou vers
 l'agent : le déclencheur nominal reste une règle à nous, appliquée à l'acte.
 
-Depuis #586, ce canal a aussi **trois portes** au lieu d'une, et c'est le
+Depuis #586, ce canal a aussi **deux portes** au lieu d'une, et c'est le
 `decideur` de la demande qui dit laquelle (`maestro.decideur`) :
 
 - `auto` — personne n'est sollicité, la demande est accordée d'office. Le cran
   de ce qu'on veut **voir** sans vouloir l'arrêter : la décision est consignée
   comme les autres, aucun validateur n'est appelé ;
-- `orchestrateur` — la machine tranche seule, par `orchestrateur` ;
 - `humain` — le `validateur`, et lui seul. C'est le défaut, y compris pour une
-  demande qui ne dit rien de son décideur.
+  demande qui ne dit rien de son décideur — ou qui porte un cran qu'on ne sait
+  plus relire.
 
-L'asymétrie d'EF-08/ENF-04 tient au **routage** et non à un contrôle qu'on
-aurait pu oublier d'écrire : sur le cran `humain`, `orchestrateur` n'est pas sur
-le chemin — il n'est pas consulté, donc son avis, fût-il « oui », ne peut pas
-devenir une approbation. Et le fail-safe vaut porte par porte : pas
-d'orchestrateur pour un acte qui lui revient, pas de validateur pour un acte
-humain, l'un ou l'autre en panne — refus, toujours.
+Il y avait une troisième porte, `orchestrateur`, retirée par #715 (décision de
+cadrage #647, [docs/31](../../docs/31-decision-cran-orchestrateur.md)) : aucun
+appelant de production n'a jamais fourni le canal, si bien qu'un acte qui lui
+était classé rendait invariablement un refus. L'asymétrie d'EF-08/ENF-04 en sort
+**plus forte** — elle tenait au **routage** (sur le cran `humain`, le canal
+machine n'était pas sur le chemin, donc son avis, fût-il « oui », ne pouvait pas
+devenir une approbation) ; elle n'a désormais plus de sujet du tout : *il n'existe
+aucun canal machine sur aucun chemin*. Une propriété qu'on ne peut pas violer
+faute de sujet est plus forte qu'une propriété tenue par un routage correct.
+
+Le fail-safe, lui, n'a pas bougé : pas de validateur pour un acte humain, ou un
+validateur en panne — refus, toujours.
 
 À côté d'eux, et pour la même raison — ce sont les **limites du run**, elles
 n'ont pas à vivre dans un troisième endroit —, `GardeFousIngestion` (#315,
@@ -251,12 +257,18 @@ class DemandeValidation:
     indiscernables, et une déclaration d'agent finirait par se lire comme une
     classification.
 
-    `decideur` (#586) dit **qui doit trancher** : `auto`, `orchestrateur` ou
-    `humain` (`maestro.decideur`). À ne pas confondre avec `origine`, qui est
-    la question d'à côté et d'avant — celle-là dit *qui a demandé*, celle-ci
-    *qui répond*, et les deux se combinent librement (un agent peut lever la
-    main sur un acte qui revient à l'orchestrateur, notre classification peut
-    désigner un humain).
+    `decideur` (#586) dit **qui doit trancher** : `auto` ou `humain`
+    (`maestro.decideur` — un troisième cran, `orchestrateur`, a été retiré par
+    #715). À ne pas confondre avec `origine`, qui est la question d'à côté et
+    d'avant — celle-là dit *qui a demandé*, celle-ci *qui répond*, et les deux se
+    combinent librement (un agent peut lever la main sur un acte que la politique
+    laisse passer, notre classification peut désigner un humain).
+
+    ⚠ Le champ porte de la **donnée durable** et ne se réduit pas à l'ensemble
+    admissible d'une politique : le journal est rejoué, et des événements déjà
+    émis portent la chaîne `"orchestrateur"`. C'est le routage qui a été retiré,
+    jamais la mémoire de ce qui a été décidé — `decideur_depuis` relit ces
+    valeurs-là vers `humain`, le cran le plus fermé.
 
     Le défaut est `humain`, et c'est le critère du ticket plutôt qu'un choix de
     commodité : un producteur qui ne dit rien de son décideur escalade, il ne
@@ -296,17 +308,13 @@ class Guardrails:
     None ; `validateur` est le canal de la décision humaine — absent, toute
     action sensible est refusée (fail-safe).
 
-    `orchestrateur` (#586) est le canal du **cran du milieu** : ce que la
-    machine tranche seule, sans réveiller personne, quand la politique l'a
-    explicitement classé ainsi. Absent, un acte qui lui revient est refusé — même
-    fail-safe que le validateur humain, et pour la même raison : ne trouver
-    personne à qui demander n'a jamais autorisé une action sensible.
-
-    Il n'est **jamais** consulté sur un acte classé `humain`. Ce n'est pas une
-    règle qu'on applique, c'est un chemin qu'il n'emprunte pas
-    (`demande_validation`) : un orchestrateur qui approuverait tout ne peut rien
-    approuver de ce qui appartient à une personne, parce qu'on ne lui pose pas
-    la question.
+    ⚠ Un second canal `orchestrateur` a existé ici (#586), pour le **cran du
+    milieu** — *ce que la machine tranche seule*. Il est parti avec son cran
+    (#715, décision #647) : **aucun des cinq sites de production** qui montent un
+    `Guardrails` ne l'a jamais fourni, si bien que le fail-safe le refusait à
+    chaque fois. Ne pas le rétablir sans rouvrir la décision (docs/31 §8) : il n'y
+    a désormais **aucun canal machine** sur aucun chemin de `demande_validation`,
+    et c'est ce qui rend l'invariant d'EF-08 insurpassable plutôt que bien routé.
 
     `mots_sensibles` pilote la classification par mots-clés et est **vide par
     défaut** (#585) : elle ne se déclenche donc plus d'elle-même, l'arbitrage
@@ -320,16 +328,14 @@ class Guardrails:
     là où cette liste absente ne retire aucun contrôle — elle retire un
     déclencheur que le hook `PreToolUse` a remplacé par un meilleur. Le
     fail-safe, lui, est ailleurs et n'a pas bougé : il porte sur `validateur` et
-    sur `orchestrateur`, et frappe toute demande qui atteint
-    `demande_validation`, quel qu'en soit le producteur — et désormais quelle
-    qu'en soit la porte.
+    frappe toute demande qui atteint `demande_validation`, quel qu'en soit le
+    producteur.
     """
 
     plafond_cout_usd: float | None = None
     plafond_tokens: int | None = None
     timeout_s: float | None = None
     validateur: Validateur | None = None
-    orchestrateur: Validateur | None = None
     mots_sensibles: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -367,34 +373,30 @@ class Guardrails:
     async def demande_validation(self, demande: DemandeValidation) -> tuple[bool, str]:
         """Soumet la demande à **son** décideur ; renvoie (approuvée ?, détail traçable).
 
-        Trois portes, et c'est `demande.decideur` qui dit laquelle (#586) — le
+        Deux issues, et c'est `demande.decideur` qui dit laquelle (#586) — le
         cran étant posé dans la politique, à froid, jamais déduit ici :
 
         - `auto` : accordée **d'office**, sans qu'aucun canal soit appelé. Elle
           n'en est pas moins tracée : c'est ce qui distingue ce cran d'un
           `allow`, où l'appel passe en silence ;
-        - `orchestrateur` : soumise à `self.orchestrateur` ;
-        - `humain` (le défaut) : soumise à `self.validateur`, comme depuis #9.
+        - **tout le reste** : soumise à `self.validateur`, comme depuis #9. C'est
+          le défaut `humain`, et c'est aussi où retombe un cran qu'on ne sait plus
+          relire — l'ancien `orchestrateur` compris (#715).
 
-        Fail-safe, inchangé et désormais porte par porte : sans le canal qui
-        correspond au cran, ou si ce canal lève une exception, la demande est
-        **refusée** — jamais d'action sensible sans accord explicite. Le détail
-        est destiné au journal et au message d'erreur de la tâche, et **nomme
-        qui a tranché** : c'est ce qui rend la décision lisible là où elle est
-        consignée, le champ restant la source.
+        Fail-safe, inchangé : sans validateur, ou si ce canal lève une exception,
+        la demande est **refusée** — jamais d'action sensible sans accord
+        explicite. Le détail est destiné au journal et au message d'erreur de la
+        tâche, et **nomme qui a tranché** : c'est ce qui rend la décision lisible
+        là où elle est consignée, le champ restant la source.
 
-        ⚠ Sur le cran `humain`, `self.orchestrateur` n'est pas appelé — pas
-        « appelé puis ignoré ». La différence est tout le garde-fou : il n'y a
-        aucun endroit où une approbation d'orchestrateur pourrait être prise
-        pour une approbation humaine, fût-ce par erreur de relecture.
+        ⚠ La condition est **`is AUTO`**, jamais « n'est pas `HUMAIN` » : elle
+        nomme la seule issue qui approuve sans personne, et tout ce qui n'est pas
+        exactement elle escalade. Écrite à l'envers, un cran retiré demain — ou une
+        valeur qu'on ne sait pas relire — deviendrait un laissez-passer par le
+        simple fait de ne plus être reconnu.
         """
-        decideur = decideur_depuis(demande.decideur)
-        if decideur is Decideur.AUTO:
+        if decideur_depuis(demande.decideur) is Decideur.AUTO:
             return True, DETAIL_AUTO
-        if decideur is Decideur.ORCHESTRATEUR:
-            return await _tranche(
-                self.orchestrateur, demande, nom="orchestrateur", par="l'orchestrateur"
-            )
         return await _tranche(
             self.validateur, demande, nom="validateur humain", par="le validateur humain"
         )
@@ -406,10 +408,15 @@ async def _tranche(
     """Soumet `demande` à `canal` et rend (approuvée ?, détail) — **fail-safe compris**.
 
     Le corps de `demande_validation` d'avant #586, extrait tel quel pour servir
-    les deux portes qui existent désormais : le validateur humain et
-    l'orchestrateur. L'extraction n'est pas cosmétique — deux copies de ce
-    fail-safe seraient deux endroits où l'oublier, et c'est précisément le genre
-    de règle dont on découvre l'absence après coup.
+    les deux portes d'alors : le validateur humain et l'orchestrateur.
+
+    ⚠ **Il reste extrait bien qu'il ne serve plus qu'un appelant** (#715), et
+    c'est délibéré : ce qu'il porte est le **fail-safe** — canal absent ou canal
+    en panne ⇒ refus —, c'est-à-dire la règle dont deux copies seraient deux
+    endroits où l'oublier. Le remettre en ligne parce qu'il n'y a plus qu'une
+    porte défairait la raison même de son extraction, et rendrait au passage la
+    règle indissociable du routage qui l'appelle. Un fail-safe se lit mieux seul,
+    et il se teste seul.
 
     Les textes du cran humain sont **inchangés au caractère près** (« aucun
     validateur humain configuré — refus par défaut », « approuvée par le

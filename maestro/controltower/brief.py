@@ -66,13 +66,19 @@ from maestro.telemetry import redact_secrets
 #: même cadrage illisible.
 #:
 #: Depuis #586 le nom vient de `maestro.decideur`, et ce n'est pas un rangement :
-#: c'est **le même acteur** que le cran de décision `orchestrateur`, et le lien
-#: est le contenu d'un critère du chantier #573 — *l'orchestrateur peut refuser
-#: seul et répondre à une demande d'information*. Ce canal-ci **est** la moitié
-#: « demande d'information » de cette phrase (`brief.questions` /
-#: `brief.reponses`, #321), et elle ne lui est pas retirée : répondre à une
-#: question n'est pas approuver un acte. Deux constantes littérales laisseraient
-#: croire à deux acteurs qui se ressemblent.
+#: ce canal-ci **est** la moitié « demande d'information » du critère du chantier
+#: #573 — *l'orchestrateur peut refuser seul et répondre à une demande
+#: d'information* (`brief.questions` / `brief.reponses`, #321).
+#:
+#: ⚠ De cette phrase, #715 a retiré la **première** moitié — trancher un acte, un
+#: cran qui n'a jamais eu de canal (décision #647,
+#: [docs/31](../../docs/31-decision-cran-orchestrateur.md)) — et **laissé
+#: celle-ci**, vivante et branchée : répondre à une question n'est pas approuver
+#: un acte. L'import ne change donc pas de source, mais `ACTEUR_ORCHESTRATEUR` y
+#: est désormais un **littéral** et non plus le miroir d'un membre d'énumération :
+#: il n'y a plus de cran auquel se comparer, et la valeur — `"orchestrateur"`, au
+#: caractère près — n'a pas bougé, donc aucune trace déjà consignée n'est à
+#: migrer.
 ACTEUR_BRIEF = ACTEUR_ORCHESTRATEUR
 ROLE_BRIEF = "Orchestrateur"
 

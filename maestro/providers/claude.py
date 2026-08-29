@@ -626,10 +626,12 @@ def _hook_permissions(
 
     Depuis #586, l'arbitrage a un **décideur** (`DecisionOutil.decideur`), et le
     hook en applique un lui-même : `auto` — celui qui ne désigne personne — est
-    tracé puis laissé passer, sans canal ni attente. Les deux autres
-    (`orchestrateur`, `humain`) partent sur `on_arbitrage_acte` : le hook ne
-    sait pas *qui* est au bout, et n'a pas à le savoir — c'est le garde-fou qui
-    route (`maestro.engine.guardrails`), sur le cran que la demande porte.
+    tracé puis laissé passer, sans canal ni attente. Tout le reste (`humain`, le
+    défaut) part sur `on_arbitrage_acte` : le hook ne sait pas *qui* est au bout,
+    et n'a pas à le savoir — c'est le garde-fou qui route
+    (`maestro.engine.guardrails`), sur le cran que la demande porte. Ce partage
+    n'a pas bougé quand #715 a retiré le cran `orchestrateur` : le hook ne
+    connaissait déjà que `auto` et « les autres ».
 
     ⚠ `on_arbitrage_acte` n'est pas `on_arbitrage` (#582) : celui-ci intercepte
     un acte, celui-là relaie une demande que l'agent a formulée. Ils aboutissent
