@@ -417,11 +417,20 @@ export function projetsDeclares(): Projet[] {
  * rien de détecté. C'est le contrat de la sonde (« un poste sans aucun outil
  * rend une liste vide sans erreur »), donc l'état à partir duquel tout test
  * d'avant #487 continue de dire vrai.
+ *
+ * Les colonnes du **registre** (#253) restent peuplées dans cet état : un poste
+ * nu ne vide pas la gamme que Maestro annonce, c'est précisément ce que les deux
+ * moitiés de la fiche distinguent.
  */
 export const CATALOGUE_POSTE_NU: CatalogueFournisseurs = {
   fournisseurs: [
     {
       nom: "claude",
+      modeles: [
+        { nom: "claude-opus-5", libelle: "Opus 5", efforts: ["high", "xhigh"] },
+        { nom: "claude-sonnet-5", libelle: "Sonnet 5", efforts: ["high"] },
+      ],
+      modeles_libres: true,
       supporte: true,
       present_ici: false,
       utilisable_ici: false,
@@ -429,7 +438,11 @@ export const CATALOGUE_POSTE_NU: CatalogueFournisseurs = {
       constats: [],
     },
     {
+      // Gamme vide **et** libre : « saisis le nom que sert ton endpoint »,
+      // jamais « rien à proposer » (#253).
       nom: "openai",
+      modeles: [],
+      modeles_libres: true,
       supporte: true,
       present_ici: false,
       utilisable_ici: false,
@@ -798,6 +811,7 @@ export function ficheCatalogueFactice(
     competences: [],
     modele: null,
     fournisseur: null,
+    effort: null,
     source: AGENT_SOURCE_DEFAUT,
     cree_le: null,
     modifie_le: null,

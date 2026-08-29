@@ -25,7 +25,11 @@ import { describe, expect, it } from "vitest";
 import { CreationAgent } from "@/components/EditeurAgent";
 import type { CatalogueFournisseurs } from "@/lib/types";
 
-import { constatPosteFactice, poserFournisseurs } from "./aides";
+import {
+  CATALOGUE_POSTE_NU,
+  constatPosteFactice,
+  poserFournisseurs,
+} from "./aides";
 
 const OLLAMA = constatPosteFactice({
   genre: "serveur_local",
@@ -49,16 +53,16 @@ const GEMINI = constatPosteFactice({
 const POSTE_EQUIPE: CatalogueFournisseurs = {
   fournisseurs: [
     {
+      ...CATALOGUE_POSTE_NU.fournisseurs[0],
       nom: "claude",
-      supporte: true,
       present_ici: false,
       utilisable_ici: false,
       modeles_ici: [],
       constats: [],
     },
     {
+      ...CATALOGUE_POSTE_NU.fournisseurs[1],
       nom: "openai",
-      supporte: true,
       present_ici: true,
       utilisable_ici: true,
       modeles_ici: ["qwen2.5:3b", "llama3:8b"],

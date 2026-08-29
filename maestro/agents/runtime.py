@@ -78,6 +78,13 @@ class RoleProfile:
     agent n'est plus borné en tours, la boucle s'arrêtant quand il a fini, quand il
     échoue ou quand on l'annule. Le champ reste pour qu'une borne puisse être posée
     — c'est le retrait du *défaut*, pas du réglage.
+
+    `effort` (#253) vit ici pour la même raison que `modele` : c'est un réglage du
+    rôle, pas du fournisseur. Il ne lui ressemble pourtant pas — `plafond_tours`
+    **borne** et tue au dépassement, un effort ne fait que doser. `None` par
+    défaut, et aucun profil du dépôt n'en déclare : ce que règle ce champ, ce sont
+    les agents définis hors du code (`maestro.agents.store`), dont l'effort arrive
+    par `execute(effort=…)`.
     """
 
     nom: str
@@ -90,6 +97,7 @@ class RoleProfile:
     consigne_finale: str
     workspace_prefix: str
     plafond_tours: int | None = PLAFOND_TOURS_DEFAUT
+    effort: str | None = None
 
 
 @dataclass(frozen=True)
@@ -155,12 +163,17 @@ class AgentRuntime:
         tools: Sequence[str] | None = None,
         system_prompt: str | None = None,
         plafond_tours: int | None = None,
+        effort: str | None = None,
     ) -> None:
         self._provider = provider
         self._profile = profile
         self._model = model or profile.modele
         self._tools = tuple(tools) if tools is not None else profile.outils
         self._system_prompt = system_prompt or profile.prompt_systeme
+        # Même surcharge que `model` et `system_prompt` (#253) : le câblage peut
+        # poser un effort sur un rôle qui n'en déclare pas. `None` des deux côtés
+        # = pas de réglage, donc rien de passé au fournisseur.
+        self._effort = effort or profile.effort
         # Surcharge du plafond du profil, comme `model`/`tools` : le câblage peut
         # poser une borne sur un rôle qui n'en a pas — plus aucun n'en a (#494) —
         # sans toucher à son profil. `None` des deux côtés = pas de borne.
@@ -205,6 +218,7 @@ class AgentRuntime:
         on_courrier: Courrier | None = None,
         projet: Projet | None = None,
         tache_id: str = "",
+        effort: str | None = None,
     ) -> AgentOutcome:
         """Réalise la tâche `description` de bout en bout et renvoie le livrable.
 
@@ -307,6 +321,18 @@ class AgentRuntime:
         avant que l'agent ne démarre, et le projet est passé au fournisseur, qui
         en a besoin pour **monter** cet espace en mode isolé sans jamais monter
         la racine (`maestro.sandbox.container`).
+
+        `effort` (#253) remplace, pour **cette exécution**, l'effort du runtime —
+        même canal à chaud que `system_prompt` pour les playbooks, et pour la même
+        raison : le réglage vit sur la définition de l'agent, que l'exécuteur
+        relit à chaque tâche, quand le runtime est construit une fois pour toutes.
+        None : celui câblé à la construction (le plus souvent aucun).
+
+        Ce que le runtime en fait tient en une règle, et elle n'est pas la sienne :
+        il demande au **fournisseur** si l'effort est admis sur le modèle
+        (`effort_admis`) et ne transmet le mot-clé que si la réponse est non nulle.
+        Un fournisseur qui n'expose pas ce réglage n'en reçoit donc jamais un — il
+        n'a rien à ignorer, rien à connaître, et sa signature d'hier suffit.
         """
         description = description.strip()
         if not description:
@@ -328,6 +354,10 @@ class AgentRuntime:
         # dans un résumé d'agent ou une trace.
         if projet is not None:
             enregistre_secrets_du_projet(projet)
+        # Le mot-clé ne part que s'il a quelque chose à dire (#253) : hors réglage
+        # admis, l'appel au fournisseur est au bit près celui d'avant ce lot.
+        reglage = self._provider.effort_admis(self._model, effort or self._effort)
+        reglage_effort = {"effort": reglage} if reglage else {}
         with espace_de_travail(
             projet,
             tache_id=tache_id,
@@ -352,6 +382,7 @@ class AgentRuntime:
                 on_courrier=on_courrier,
                 plafond_tours=self._plafond_tours,
                 projet=projet,
+                **reglage_effort,
             )
             # Capture *dans* le contexte : hors `keep`, l'espace disparaît à la sortie.
             fichiers = ws.produced_files()

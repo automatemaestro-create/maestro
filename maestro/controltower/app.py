@@ -125,8 +125,17 @@ Endpoints :
 - `PUT  /api/projets/{id}` — remplace la déclaration (l'intégrale, pas un diff) ;
 - `DELETE /api/projets/{id}` — oublie un projet, sans jamais toucher au dossier
   sur le disque ;
+- `GET  /api/fournisseurs` — ce qui existe côté modèles (#253) **et ce qui est
+  déjà là** (#487) : les fournisseurs du **registre**, leurs modèles annoncés et,
+  pour chacun, les niveaux d'effort admis (liste vide quand le fournisseur
+  n'expose pas ce réglage) ; `modeles_libres` dit qu'un nom hors gamme reste
+  recevable ; et, sur la même ligne, ce que la **sonde du poste** en a trouvé
+  (`present_ici`, `utilisable_ici`, `modeles_ici`, `constats`), plus
+  `hors_registre` — l'outillage présent que Maestro ne sait pas piloter — et les
+  `incertitudes` de la sonde ;
 - `GET  /api/catalogue` — le catalogue d'agents (#72, EF-03) : les agents par
   défaut du code et les personnalisés persistés, avec leur provenance, leurs
+  réglages de modèle (`fournisseur`/`modele`/`effort` — #253), leurs
   serveurs MCP déclarés (#104, lecture seule — `mcp_serveurs`/`mcp_erreur`) et
   leur politique de permissions effective (#110, lecture seule —
   `permissions`/`permissions_erreur`) ;
@@ -567,6 +576,11 @@ class AgentCreationRequete(BaseModel):
 
     `modele` est optionnel (None : le modèle par défaut des exécutants) ;
     `fournisseur` est déclaratif au POC (le moteur est mono-fournisseur).
+    `effort` (#253) est le niveau d'effort demandé au modèle — ce que le
+    fournisseur retenu admet se lit sur `GET /api/fournisseurs`. Il n'est **pas
+    validé ici** : un effort que le fournisseur ne connaît pas est ignoré à
+    l'exécution, sans erreur, plutôt que de faire échouer l'enregistrement d'une
+    définition par ailleurs correcte.
     """
 
     nom: str
@@ -575,6 +589,7 @@ class AgentCreationRequete(BaseModel):
     playbook: str
     modele: str | None = None
     fournisseur: str | None = None
+    effort: str | None = None
 
 
 class AgentModificationRequete(BaseModel):
@@ -589,6 +604,7 @@ class AgentModificationRequete(BaseModel):
     playbook: str
     modele: str | None = None
     fournisseur: str | None = None
+    effort: str | None = None
 
 
 class ProjetRequete(BaseModel):
@@ -2571,6 +2587,11 @@ def create_app(
         `source` « defaut », sans dates : la définition vit dans le code
         (`maestro.agents.catalog`), seule l'édition de son playbook passe par
         le stockage versionné (`/api/playbooks`).
+
+        `effort` (#253) est celui du code — `None` pour les cinq agents par
+        défaut, aucun n'en déclarant. La clé est **présente quand même**, comme
+        `fournisseur` : les deux formes de fiche doivent porter les mêmes champs,
+        faute de quoi un client aurait à deviner selon la `source`.
         """
         fiche: dict[str, Any] = {
             "nom": agent.nom,
@@ -2578,6 +2599,7 @@ def create_app(
             "competences": sorted(agent.competences),
             "modele": agent.modele,
             "fournisseur": None,
+            "effort": agent.effort,
             "source": "defaut",
             "cree_le": None,
             "modifie_le": None,
@@ -3269,19 +3291,34 @@ def create_app(
 
     @app.get("/api/fournisseurs")
     async def fournisseurs() -> dict[str, Any]:
-        """Le catalogue des fournisseurs (#487) : le registre, éclairé par le poste.
+        """Le catalogue des fournisseurs (#253 + #487) : le registre, éclairé par le poste.
 
-        Deux colonnes qui ne se confondent pas — *supporté par Maestro* (le
-        registre du code fait foi) et *présent ici* (ce que la sonde a trouvé sur
-        cette machine : un CLI sur le `PATH`, un serveur local qui répond, une
-        clé dans l'environnement). Un outil trouvé que Maestro ne sait pas
-        piloter sort dans `hors_registre` : montré, jamais proposé.
+        **Une route, deux moitiés qui ne se confondent pas.** *Supporté par
+        Maestro* vient du **registre des fournisseurs**
+        (`maestro.providers.registry.catalogue_fournisseurs`, #253) et de rien
+        d'autre : chaque fiche porte le **nom** à écrire dans `fournisseur`, ses
+        **modèles** annoncés — nom, libellé, et les **niveaux d'effort** admis sur
+        chacun, liste vide quand le fournisseur n'expose pas ce réglage — et
+        `modeles_libres`, qui dit qu'un nom hors gamme reste recevable (le cas
+        d'`openai`, qui fédère des endpoints aux nommages hétéroclites : gamme
+        vide **et** libre, c'est-à-dire « saisis le nom »). Inscrire un
+        fournisseur au registre suffit à le faire apparaître ici, donc à l'écran,
+        sans toucher à cette fonction ni au front.
 
-        La sonde est **gratuite et sans effet de bord** : elle ne démarre rien,
-        n'installe rien, n'écrit rien, ne joint que la boucle locale et
-        n'exécute aucun binaire. Ce qu'elle ne peut pas savoir remonte dans
+        *Présent ici* vient de la **sonde** (#487) : ce qui arme le fournisseur
+        sur cette machine — un CLI sur le `PATH`, un serveur local qui répond,
+        une clé dans l'environnement —, avec `modeles_ici`, les modèles que la
+        sonde a **vus**, à ne jamais confondre avec la gamme annoncée. Un outil
+        trouvé que Maestro ne sait pas piloter sort dans `hors_registre` :
+        montré, jamais proposé.
+
+        Les deux sont **lecture seule** et **sans effet de bord** : rien n'est
+        démarré, installé ni écrit, aucun binaire n'est exécuté, aucune clé n'est
+        validée (la sonde ne joint que la boucle locale ; le registre ne joint
+        rien du tout). Ce que la sonde ne peut pas savoir remonte dans
         `incertitudes` et dans le champ homonyme de chaque constat, plutôt que
-        d'être deviné. Un poste nu rend des listes vides et un 200.
+        d'être deviné. Un poste nu rend le registre entier, des colonnes de poste
+        vides et un 200.
         """
         return catalogue_fournisseurs(await sonde_poste.rapport())
 
@@ -3338,6 +3375,7 @@ def create_app(
                     playbook=requete.playbook,
                     modele=requete.modele,
                     fournisseur=requete.fournisseur,
+                    effort=requete.effort,
                 )
             )
         except ValueError as exc:
@@ -3363,6 +3401,7 @@ def create_app(
                     playbook=requete.playbook,
                     modele=requete.modele,
                     fournisseur=requete.fournisseur,
+                    effort=requete.effort,
                 )
             )
         except ValueError as exc:

@@ -45,6 +45,7 @@ from maestro.poste import (
     SondePoste,
     lire_locale,
 )
+from maestro.providers import ClaudeProvider
 
 # --- Harnais ---------------------------------------------------------------
 
@@ -310,6 +311,27 @@ def test_le_catalogue_part_du_registre_et_non_du_poste() -> None:
 
     assert [f["nom"] for f in vue["fournisseurs"]] == ["claude", "openai"]
     assert all(f["supporte"] and not f["present_ici"] for f in vue["fournisseurs"])
+
+
+def test_la_meme_ligne_porte_la_gamme_du_registre_et_ce_que_le_poste_a() -> None:
+    # #253 et #487 se rendent au même endroit : `modeles` est ce que **Maestro**
+    # annonce (lu du registre, sans credentials ni réseau), `modeles_ici` ce que
+    # la **sonde** a vu. Les confondre ferait proposer un modèle absent d'ici, ou
+    # cacher une gamme entière parce que la machine est nue — et deux routes pour
+    # les deux moitiés seraient la double source que le critère 3 interdit.
+    sonde = _sonde(reponses={f"{OLLAMA_DEFAUT}/api/tags": _tags("qwen2.5:3b")})
+
+    par_nom = {f["nom"]: f for f in catalogue(_rapport(sonde))["fournisseurs"]}
+    claude = par_nom["claude"]
+    assert [m["nom"] for m in claude["modeles"]] == [
+        m.nom for m in ClaudeProvider.MODELES
+    ]
+    assert claude["modeles"][0]["efforts"]  # les efforts admis, par modèle
+    assert claude["modeles_ici"] == []  # rien de claude sur ce poste
+    # Gamme vide **et** libre : « saisis le nom », jamais « rien à proposer ».
+    assert par_nom["openai"]["modeles"] == []
+    assert par_nom["openai"]["modeles_libres"] is True
+    assert par_nom["openai"]["modeles_ici"] == ["qwen2.5:3b"]
 
 
 def test_le_catalogue_distingue_supporte_et_present_ici() -> None:

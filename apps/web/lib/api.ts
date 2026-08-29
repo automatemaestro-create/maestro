@@ -396,20 +396,28 @@ export function rejeterPropositionPlaybook(
   );
 }
 
-/** Le catalogue d'agents (#72) : les agents par défaut du code puis les personnalisés. */
-export function chargerCatalogue(): Promise<AgentCatalogue[]> {
-  return chargerJson<AgentCatalogue[]>("/api/catalogue");
-}
-
 /**
- * Le catalogue des fournisseurs (`GET /api/fournisseurs`, #487) : ce que Maestro
- * supporte (le registre du code) éclairé par ce qui est **présent sur ce poste**
- * (la sonde — CLI sur le `PATH`, serveur local qui répond, clé dans
- * l'environnement). Sert les suggestions du formulaire d'agent ; un échec n'y
- * est jamais bloquant, les champs restent en saisie libre.
+ * Le catalogue des fournisseurs (`GET /api/fournisseurs`, #253 + #487) : ce qui
+ * existe côté modèles, **et** ce qui est déjà là sur cette machine.
+ *
+ * Deux moitiés sur la même ligne, jamais confondues : ce que Maestro **supporte**
+ * vient du registre des fournisseurs du moteur — leurs modèles et, par modèle,
+ * les niveaux d'effort admis ; un fournisseur ajouté au registre apparaît ici
+ * sans qu'on touche à l'UI —, et ce qui est **présent ici** vient de la sonde du
+ * poste (CLI sur le `PATH`, serveur local qui répond, clé dans l'environnement).
+ *
+ * C'est la source du formulaire d'agent — il **propose** au lieu de faire saisir
+ * — et un échec n'y est jamais bloquant : les champs restent en saisie libre. À
+ * ne pas confondre avec `chargerCatalogue`, qui rend les **agents** ; celui-ci
+ * rend ce parmi quoi on choisit en les définissant.
  */
 export function chargerFournisseurs(): Promise<CatalogueFournisseurs> {
   return chargerJson<CatalogueFournisseurs>("/api/fournisseurs");
+}
+
+/** Le catalogue d'agents (#72) : les agents par défaut du code puis les personnalisés. */
+export function chargerCatalogue(): Promise<AgentCatalogue[]> {
+  return chargerJson<AgentCatalogue[]>("/api/catalogue");
 }
 
 /** La définition complète d'un agent du catalogue, playbook compris. */

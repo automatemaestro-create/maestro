@@ -233,7 +233,12 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   (`maestro/providers/registry.py`), *présent ici* de la **sonde du poste**
   (`maestro/poste.py`) : un CLI d'agent résolu sur le `PATH`, un serveur de
   modèles local qui répond (Ollama et ses modèles, #113), une clé de fournisseur
-  dans l'environnement. Trois choses à ne pas défaire. La sonde est **gratuite et
+  dans l'environnement. Les deux colonnes voyagent sur **une seule ligne par
+  fournisseur** et sur **une seule route** : la gamme annoncée et les niveaux
+  d'effort admis (#253) y sont les champs `modeles`/`modeles_libres`, ce que la
+  sonde a vu le champ `modeles_ici` — ouvrir une seconde route pour l'autre
+  moitié recréerait la double source que ce dispositif existe pour éviter.
+  Trois choses à ne pas défaire. La sonde est **gratuite et
   sans effet de bord** — elle n'exécute aucun binaire, ne joint que la boucle
   locale, n'écrit rien, et un poste nu rend une liste vide sans erreur. Les deux
   champs restent en **saisie libre** (`<input list=…>` et non `<select>`) : la

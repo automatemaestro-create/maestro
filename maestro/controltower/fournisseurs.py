@@ -21,48 +21,60 @@ Les deux colonnes ne se confondent jamais, et c'est tout l'intérêt :
 Ce que le catalogue **ne fait pas** : deviner. Les incertitudes de la sonde
 remontent telles quelles, jusqu'à l'écran (critère 4).
 
-⚠ **Cette route est l'endroit où se rendre que #253 doit meubler.** Le catalogue
-demandé par #253 — les **modèles** d'un fournisseur et les **niveaux d'effort**
-d'un modèle, lus du registre — s'ajoute *ici*, en colonnes de la même charge :
-`modeles_ici` est ce que la **sonde** a vu sur ce poste, jamais ce que Maestro
-supporte. Ouvrir une seconde route pour l'autre moitié recréerait exactement la
-double source que ce module existe pour éviter.
+⚠ **Cette route est l'endroit où se rend #253, et il s'y est rendu.** Le
+catalogue demandé par #253 — les **modèles** d'un fournisseur et les **niveaux
+d'effort** d'un modèle, lus du registre — est *ici*, en colonnes de la même
+charge : `modeles` et `modeles_libres` sont ce que **Maestro** annonce
+(`FournisseurDisponible.to_dict`, réémis tel quel plutôt que recopié),
+`modeles_ici` ce que la **sonde** a vu sur ce poste. Ouvrir une seconde route
+pour l'autre moitié recréerait exactement la double source que ce module existe
+pour éviter — c'est pourquoi les deux tickets se sont rejoints sur celle-ci au
+lieu d'en tenir chacun une.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from maestro.poste import Constat, RapportSonde
+
+if TYPE_CHECKING:  # typage seul — l'import réel reste paresseux (voir `_registre`)
+    from maestro.providers import FournisseurDisponible
 
 
 def catalogue(rapport: RapportSonde) -> dict[str, Any]:
     """La charge de `GET /api/fournisseurs` : le registre, éclairé par le poste."""
-    supportes = _noms_supportes()
     return {
-        "fournisseurs": [_fournisseur(nom, rapport) for nom in supportes],
+        "fournisseurs": [_fournisseur(fiche, rapport) for fiche in _registre()],
         "hors_registre": [_en_clair(c) for c in rapport.hors_registre],
         "incertitudes": list(rapport.incertitudes),
     }
 
 
-def _fournisseur(nom: str, rapport: RapportSonde) -> dict[str, Any]:
-    """Un fournisseur du registre, avec ce que le poste en dit."""
-    constats = rapport.par_fournisseur(nom)
-    modeles: list[str] = []
+def _fournisseur(fiche: FournisseurDisponible, rapport: RapportSonde) -> dict[str, Any]:
+    """Un fournisseur du registre, avec sa gamme annoncée et ce que le poste en dit.
+
+    Les deux moitiés arrivent par deux chemins qu'on ne mélange pas : la fiche du
+    registre est **réémise telle qu'elle se sérialise elle-même**
+    (`FournisseurDisponible.to_dict`, #253) — la recopier champ à champ ferait
+    ici une seconde définition de la gamme —, et les colonnes du poste sont
+    calculées sur les constats de la sonde (#487).
+    """
+    constats = rapport.par_fournisseur(fiche.nom)
+    modeles_ici: list[str] = []
     for constat in constats:
         for modele in constat.modeles:
-            if modele not in modeles:
-                modeles.append(modele)
+            if modele not in modeles_ici:
+                modeles_ici.append(modele)
     return {
-        "nom": nom,
+        **fiche.to_dict(),
         # Toujours vrai ici : la liste part du registre. Le champ est explicite
         # pour que le front n'ait pas à le déduire de l'endroit où il a lu la
         # ligne — c'est la moitié « supporté par Maestro » du critère 3.
         "supporte": True,
         "present_ici": bool(constats),
         "utilisable_ici": any(c.utilisable for c in constats),
-        "modeles_ici": modeles,
+        "modeles_ici": modeles_ici,
         "constats": [_en_clair(c) for c in constats],
     }
 
@@ -87,17 +99,21 @@ def _en_clair(constat: Constat) -> dict[str, Any]:
     }
 
 
-def _noms_supportes() -> tuple[str, ...]:
-    """Les fournisseurs enregistrés — le registre du code fait foi, jamais une liste.
+def _registre() -> tuple[FournisseurDisponible, ...]:
+    """Les fiches du registre — le code fait foi, jamais une liste recopiée ici.
+
+    C'est `catalogue_fournisseurs()` (#253) et rien d'autre : nom, gamme annoncée
+    et efforts admis viennent de la **classe** du fournisseur, donc se lisent sans
+    credentials, sans réseau et sans rien construire. Un fournisseur ajouté au
+    registre apparaît ici sans qu'on touche à ce fichier ni au front.
 
     Import **paresseux**, comme partout dans le dépôt : charger
     `maestro.providers` tire le SDK Claude, prix qu'on paie au premier appel et
-    non au chargement de l'API. Un fournisseur ajouté au registre apparaît ici
-    sans qu'on touche à ce fichier ni au front.
+    non au chargement de l'API.
     """
-    from maestro.providers import available_providers
+    from maestro.providers import catalogue_fournisseurs
 
-    return tuple(available_providers())
+    return tuple(catalogue_fournisseurs())
 
 
 __all__ = ["catalogue"]
