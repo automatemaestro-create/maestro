@@ -39,7 +39,7 @@ chaud** à chaque tâche, comme les playbooks) :
     non précisé escalade, il ne s'auto-approuve pas (EF-08/ENF-04 : refuser est
     le défaut sûr, approuver ne l'est jamais).
 
-  ⚠ **Un troisième cran, `orchestrateur`, a été retiré** ([docs/31](../../docs/31-decision-cran-orchestrateur.md),
+  ⚠ **Un troisième cran, `orchestrateur`, a été retiré** ([docs/32](../../docs/32-decision-cran-orchestrateur.md),
   décision #647, retrait #715). Il n'a **jamais eu de canal** en production, si
   bien qu'une entrée qui le posait rendait « aucun orchestrateur configuré — refus
   par défaut » : la politique promettait une décision et rendait un refus, sans

@@ -63,7 +63,7 @@ Depuis #586, ce canal a aussi **deux portes** au lieu d'une, et c'est le
   plus relire.
 
 Il y avait une troisième porte, `orchestrateur`, retirée par #715 (décision de
-cadrage #647, [docs/31](../../docs/31-decision-cran-orchestrateur.md)) : aucun
+cadrage #647, [docs/32](../../docs/32-decision-cran-orchestrateur.md)) : aucun
 appelant de production n'a jamais fourni le canal, si bien qu'un acte qui lui
 était classé rendait invariablement un refus. L'asymétrie d'EF-08/ENF-04 en sort
 **plus forte** — elle tenait au **routage** (sur le cran `humain`, le canal
@@ -312,7 +312,7 @@ class Guardrails:
     milieu** — *ce que la machine tranche seule*. Il est parti avec son cran
     (#715, décision #647) : **aucun des cinq sites de production** qui montent un
     `Guardrails` ne l'a jamais fourni, si bien que le fail-safe le refusait à
-    chaque fois. Ne pas le rétablir sans rouvrir la décision (docs/31 §8) : il n'y
+    chaque fois. Ne pas le rétablir sans rouvrir la décision (docs/32 §8) : il n'y
     a désormais **aucun canal machine** sur aucun chemin de `demande_validation`,
     et c'est ce qui rend l'invariant d'EF-08 insurpassable plutôt que bien routé.
 
