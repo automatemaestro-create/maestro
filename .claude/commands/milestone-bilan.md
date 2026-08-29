@@ -211,6 +211,16 @@ Deux règles gouvernent tout le reste, et rien de ce qui suit ne les défait :
    Puis **pose la question** : le verdict proposé est-il celui qu'on retient ? C'est la seule
    chose que cette commande attend d'une personne, et elle ne va pas plus loin sans elle.
 
+   **Nomme la suite dans la même phrase** : `/milestone-verdict "<titre-exact>"` (#760) prend la
+   réponse, la consigne dans la section `## Verdict` du jalon — d'où la convocation de `/backlog`
+   et de `doctor.sh` la lira, et cessera de signaler — et **propose** chaque réserve en ticket, une
+   par une. Elle ne ferme pas davantage le jalon que celle-ci.
+
+   Elle est une commande à part et non tes étapes 10 et suivantes pour une raison qui est le sujet
+   même de ce dispositif : un bilan est long, l'arbitrage n'arrive pas toujours dans la foulée, et
+   un verdict qui attendrait la fin de **ta** session serait perdu avec elle. Le rapport, lui,
+   attend — c'est un document. Ne t'y substitue pas : ton travail s'arrête sur la question.
+
 ## Ce que la commande ne sait pas
 
 À dire dans le résumé quand le cas se présente, plutôt que de le laisser deviner :
@@ -238,3 +248,11 @@ matériau des étapes 2 et 3 ; `milestone-criteres "<titre>" <fichier>` et
 `milestone-verdict "<titre>" <fichier>` **écrivent** dans le jalon — le premier fabriquerait
 l'examen après l'épreuve (étape 3), le second consignerait un verdict que personne n'a arbitré.
 Tu les **nommes** à qui doit les jouer ; tu ne les joues pas.
+
+⚠ **« Personne n'a arbitré » est la raison de cet interdit, et elle a une fin.** L'écriture du
+verdict n'est pas défendue en soi : elle est défendue **ici**, parce qu'à cet instant la seule
+conclusion qui existe est la tienne. Une fois qu'une personne a tranché, le même verbe devient le
+geste juste — et c'est `/milestone-verdict` qui le joue, jamais toi, même si la réponse arrive dans
+la seconde qui suit ta question. Ce n'est pas une formalité : la commande qui enregistre propose
+aussi les réserves en tickets et vérifie que la convocation a cessé, et refaire ici la moitié qu'on
+a sous la main laisserait l'autre moitié à personne.
