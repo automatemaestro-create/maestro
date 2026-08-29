@@ -7,19 +7,27 @@
  *   du registre du code, « présent ici » de la sonde, et un outil trouvé sur la
  *   machine que Maestro ne sait pas piloter est **montré sans être proposé**.
  *   C'est le seul vrai mensonge que cet écran pourrait dire ;
- * - **la sonde suggère, elle ne restreint pas** : les deux champs restent en
- *   saisie libre. `OpenAICompatProvider.supports` accepte tout nom non vide, et
- *   un endpoint peut servir un modèle que personne n'a listé — un `<select>`
- *   rendrait insaisissable ce que le catalogue ignore ;
+ * - **la sonde suggère, elle ne restreint pas** — voir la nuance ci-dessous ;
  * - **ce que la sonde ne peut pas savoir est à l'écran**, pas seulement dans la
  *   charge de l'API : une absence n'est pas un constat, et le `PATH` du process
  *   qui sert l'API n'est pas celui du terminal.
+ *
+ * ⚠ **La deuxième promesse a été partagée en deux par #255**, et ce fichier
+ * garde le partage plutôt que l'ancienne formule. « Les deux champs restent en
+ * saisie libre » recouvrait deux cas que le contrat de #253 distingue :
+ *
+ * - le **modèle** reste libre quand le fournisseur l'admet (`modeles_libres`) —
+ *   `OpenAICompatProvider.supports` accepte tout nom non vide, et un endpoint
+ *   peut servir un modèle que personne n'a listé ;
+ * - le **fournisseur**, lui, n'a jamais été dans ce cas : le registre est
+ *   **exhaustif**, un nom qui n'y figure pas ne s'exécute pas. Le laisser en
+ *   saisie libre n'offrait que la faute de frappe, d'où le `<select>` de #255.
  *
  * Le réseau est débranché par `tests/setup.ts`, qui sert `fournisseursDuPoste()`
  * — un **poste nu** par défaut, ce qui est le contrat de la sonde.
  */
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { CreationAgent } from "@/components/EditeurAgent";
@@ -75,21 +83,43 @@ const POSTE_EQUIPE: CatalogueFournisseurs = {
   ],
 };
 
-/** Monte le formulaire de création et attend que le catalogue soit arrivé. */
+/**
+ * Monte le formulaire de création et attend que le catalogue soit arrivé.
+ *
+ * Le repère est la **liste des fournisseurs peuplée** et non plus la présence
+ * d'une `<datalist>` : depuis #255 le champ modèle n'en porte une que si le
+ * fournisseur choisi offre quelque chose, ce qui n'est pas le cas au premier
+ * rendu d'un formulaire vierge sur un poste nu.
+ */
 async function rendreFormulaire() {
   const vue = render(<CreationAgent onCreation={() => {}} />);
   await waitFor(() =>
-    expect(vue.container.querySelector("datalist")).not.toBeNull(),
+    expect(
+      within(screen.getByLabelText(/^Fournisseur/)).getAllByRole("option")
+        .length,
+    ).toBeGreaterThan(1),
   );
   return vue;
 }
 
-/** Les couples valeur → libellé d'une `<datalist>`, dans l'ordre du rendu. */
-function options(racine: HTMLElement, apres: string): [string, string][] {
-  const champ = screen.getByLabelText(new RegExp(apres, "i"));
-  const liste = racine.querySelector<HTMLDataListElement>(
-    `#${CSS.escape(champ.getAttribute("list") ?? "")}`,
-  );
+/** Les couples valeur → texte des options d'un `<select>`, dans l'ordre du rendu. */
+function optionsListe(nom: RegExp): [string, string][] {
+  const champ = screen.getByLabelText(nom);
+  return within(champ)
+    .getAllByRole("option")
+    .map((o) => [o.getAttribute("value") ?? "", o.textContent ?? ""]);
+}
+
+/**
+ * Les couples valeur → libellé d'une `<datalist>`, dans l'ordre du rendu — vide
+ * si le champ n'en porte aucune, ce qui est un état attendu (rien à proposer)
+ * et non un oubli : sans cette garde, `#` seul part en `SyntaxError`.
+ */
+function suggestions(racine: HTMLElement, nom: RegExp): [string, string][] {
+  const champ = screen.getByLabelText(nom);
+  const id = champ.getAttribute("list");
+  if (!id) return [];
+  const liste = racine.querySelector<HTMLDataListElement>(`#${CSS.escape(id)}`);
   return [...(liste?.querySelectorAll("option") ?? [])].map((o) => [
     o.getAttribute("value") ?? "",
     o.getAttribute("label") ?? "",
@@ -99,11 +129,12 @@ function options(racine: HTMLElement, apres: string): [string, string][] {
 describe("le formulaire d'agent, éclairé par le poste (#487)", () => {
   it("propose les fournisseurs du registre en disant lesquels sont ici", async () => {
     poserFournisseurs(POSTE_EQUIPE);
-    const { container } = await rendreFormulaire();
+    await rendreFormulaire();
 
-    expect(options(container, "^Fournisseur")).toEqual([
-      ["claude", "supporté par Maestro · absent d'ici"],
-      ["openai", "supporté par Maestro · présent ici"],
+    expect(optionsListe(/^Fournisseur/)).toEqual([
+      ["", "— défaut de l’exécution"],
+      ["claude", "claude — supporté par Maestro · absent d'ici"],
+      ["openai", "openai — supporté par Maestro · présent ici"],
     ]);
   });
 
@@ -111,7 +142,9 @@ describe("le formulaire d'agent, éclairé par le poste (#487)", () => {
     poserFournisseurs(POSTE_EQUIPE);
     const { container } = await rendreFormulaire();
 
-    expect(options(container, "^Modèle").map(([valeur]) => valeur)).toEqual([
+    // Aucun fournisseur choisi : l'offre est celle du poste, tous fournisseurs
+    // confondus — « les siens » suppose un « il » (#255).
+    expect(suggestions(container, /^Modèle/).map(([valeur]) => valeur)).toEqual([
       "qwen2.5:3b",
       "llama3:8b",
     ]);
@@ -119,24 +152,26 @@ describe("le formulaire d'agent, éclairé par le poste (#487)", () => {
 
   it("montre l'outil non supporté sans jamais le proposer", async () => {
     poserFournisseurs(POSTE_EQUIPE);
-    const { container } = await rendreFormulaire();
+    await rendreFormulaire();
 
     expect(screen.getByText(/Gemini CLI/)).toBeInTheDocument();
-    expect(
-      options(container, "^Fournisseur").map(([valeur]) => valeur),
-    ).not.toContain("gemini");
+    expect(optionsListe(/^Fournisseur/).map(([valeur]) => valeur)).not.toContain(
+      "gemini",
+    );
   });
 
-  it("laisse les deux champs en saisie libre", async () => {
+  it("garde le modèle en saisie libre tant que le fournisseur l'admet", async () => {
     poserFournisseurs(POSTE_EQUIPE);
     await rendreFormulaire();
 
-    // Un `<select>` aurait rendu insaisissable ce que le catalogue ignore.
+    // Les deux fournisseurs d'aujourd'hui sont `modeles_libres` : un `<select>`
+    // rendrait insaisissable ce que le catalogue ignore.
+    expect(screen.getByLabelText(/^Modèle/)).toHaveProperty("tagName", "INPUT");
+    // Le fournisseur, lui, est borné par le registre — voir l'en-tête.
     expect(screen.getByLabelText(/^Fournisseur/)).toHaveProperty(
       "tagName",
-      "INPUT",
+      "SELECT",
     );
-    expect(screen.getByLabelText(/^Modèle/)).toHaveProperty("tagName", "INPUT");
   });
 
   it("dit à l'écran ce que la sonde ne peut pas savoir", async () => {
@@ -164,12 +199,13 @@ describe("le formulaire d'agent, éclairé par le poste (#487)", () => {
 
   it("sur un poste nu, ne propose aucun modèle et le dit", async () => {
     // Le défaut de `setup.ts` : deux fournisseurs au registre, rien de détecté.
-    const { container } = await rendreFormulaire();
+    await rendreFormulaire();
 
     expect(screen.getByLabelText(/^Modèle/)).not.toHaveAttribute("list");
-    expect(options(container, "^Fournisseur")).toEqual([
-      ["claude", "supporté par Maestro · absent d'ici"],
-      ["openai", "supporté par Maestro · absent d'ici"],
+    expect(optionsListe(/^Fournisseur/)).toEqual([
+      ["", "— défaut de l’exécution"],
+      ["claude", "claude — supporté par Maestro · absent d'ici"],
+      ["openai", "openai — supporté par Maestro · absent d'ici"],
     ]);
     expect(
       screen.getByText(/aucun fournisseur armé n’a été détecté/),
