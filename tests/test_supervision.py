@@ -157,6 +157,7 @@ class Publieur(ModelProvider):
         on_activite=None,
         on_etapes=None,
         on_arbitrage=None, on_blocage=None, credit_arbitrage=None,
+        on_courrier=None,
         plafond_tours=None,
         projet=None,
     ):

@@ -287,13 +287,27 @@ class RedisMailbox(Mailbox):
         await self._client.aclose()
 
 
-def consigne_message(journal: RunJournal, message: AgentMessage, *, role: str = "") -> None:
+def consigne_message(
+    journal: RunJournal,
+    message: AgentMessage,
+    *,
+    role: str = "",
+    projet_id: str | None = None,
+) -> None:
     """Journalise `message` dans la télémétrie (#8) — l'échange devient traçable (EF-34).
 
     Consigne une étape `<tache>:message` au journal de l'exécution : la ligne
     JSON part dans les traces comme les autres étapes, et le pont Control Tower
     (#46) la convertit en événement `message.inter_agents` visible dans le flux
     temps réel. `role` est le rôle de l'expéditeur quand il est connu.
+
+    `projet_id` (#222, ajouté par #720) est le projet de la tâche qui a produit
+    le message. Il est **facultatif** parce que tout message n'en a pas un — le
+    handoff annonce l'issue d'une tâche qui peut n'appartenir à aucun projet —,
+    mais un appelant qui le connaît doit le passer : le projet est un critère de
+    filtre, et une étape qui ne le porte pas disparaît des vues qui s'y
+    restreignent. C'est la règle que l'exécuteur applique déjà à ses étapes
+    annexes (`maestro.engine.executor._consigne_validation`).
     """
     destinataire = message.a_agent or "diffusion"
     journal.consigne(
@@ -305,4 +319,5 @@ def consigne_message(journal: RunJournal, message: AgentMessage, *, role: str = 
         entree="",
         sortie=f"{message.type} de {message.de_agent} à {destinataire} : {message.objet}",
         usage=StepUsage(),
+        projet_id=projet_id,
     )

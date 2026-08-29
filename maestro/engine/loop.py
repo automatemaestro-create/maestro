@@ -397,7 +397,10 @@ class OrchestrationEngine:
         # les limites de débit d'un fournisseur sur un plan très large.
         self._max_parallele = max_parallele
         # Messagerie inter-agents (#44) — None : pas de handoff par message, la
-        # synchronisation des dépendances reste purement en process.
+        # synchronisation des dépendances reste purement en process. Elle est
+        # aussi passée à l'exécuteur local (#720), qui y notifie les mots qu'un
+        # agent adresse à un pair : là non plus, None ne retire rien d'essentiel
+        # — le journal reste la livraison, et il n'y a alors personne à prévenir.
         self._mailbox = mailbox
         # Frontière d'exécution (#41) : en process par défaut ; un exécuteur injecté
         # (ex. `maestro.queue.CeleryExecutor`) distribue les tâches à des workers.
@@ -406,6 +409,11 @@ class OrchestrationEngine:
         # chaud ; ignorés si un exécuteur est injecté (en distribué, chaque worker
         # câble les siens — `relance` (#91) comprise, cf.
         # maestro.queue.worker.configurer_worker).
+        # La `mailbox` descend aussi (#720) : c'est la **même** que celle du relais
+        # de handoff, et pour deux usages qui ne se confondent pas — la boucle y
+        # annonce les fins de tâche, l'exécuteur y notifie le mot qu'un agent
+        # adresse à un pair. Deux transports séparés donneraient deux moitiés de
+        # messagerie ; un seul, deux producteurs, chacun avec sa promesse.
         self._executor = (
             executor
             if executor is not None
@@ -421,6 +429,7 @@ class OrchestrationEngine:
                 permissions=permissions,
                 relance=relance,
                 projets=projets,
+                mailbox=mailbox,
             )
         )
 
