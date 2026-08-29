@@ -250,6 +250,19 @@ décision, prise ici : **oui, mais après #253** (le catalogue depuis le registr
 la détection n'aurait aucun endroit où se rendre. D'où sa place au milestone « Control Tower v3 —
 agents » plutôt qu'au chantier des runs, et une priorité `moyenne` là où les autres sont `haute`.
 
+> **Livré le 2026-08-29 — et le prix payé est plus étroit que celui qui avait été nommé.** La sonde
+> (`maestro/poste.py`) **n'exécute aucun binaire** : elle résout un nom sur le `PATH` et s'arrête
+> là. C'est ce qui la tient hors du coût d'AionUi — la version d'un exécutable, l'incompatibilité de
+> runtime, le diagnostic de démarrage supposent tous de *lancer* ce qu'on vient de trouver. La
+> version est donc **dite inconnue** plutôt que devinée, et c'est le critère 4 du ticket qui rend
+> cette abstention tenable : ce que la sonde ne peut pas savoir est écrit à l'écran, jusque dans le
+> formulaire d'agent. Trois autres abstentions du même ordre : rien n'est détecté **par le nom d'un
+> processus** (leçon de #213 — un `claude.exe` peut être la session interactive de l'utilisateur),
+> **seule la boucle locale est jointe** (un endpoint distant configuré est nommé, jamais appelé :
+> le joindre enverrait la clé sur le réseau), et une **clé présente ne prétend pas être valide**
+> (le vérifier coûterait un appel facturé). L'**ordre** avec #253, lui, a été tenu autrement que
+> prévu — voir [docs/06](./06-roadmap.md).
+
 ## 8. Ce qui n'est pas tranché ici
 
 - **Les limites de tours et de budget (demande 7).** Elles existent et sont **déjà réglables** —

@@ -38,10 +38,12 @@ import { cleanup } from "@testing-library/react";
 import { afterEach, beforeEach, vi } from "vitest";
 
 import {
+  CATALOGUE_POSTE_NU,
   canauxDemandes,
   cheminCourant,
   etatGlobalCourant,
   filAssistanceCourant,
+  fournisseursDuPoste,
   installerMatchMedia,
   navigations,
   noterCanal,
@@ -52,6 +54,7 @@ import {
   poserChemin,
   poserEtatGlobal,
   poserFilAssistance,
+  poserFournisseurs,
   poserJournal,
   poserProjets,
   projetsDeclares,
@@ -133,6 +136,10 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...reel,
     chargerProjets: () => Promise.resolve(projetsDeclares()),
     chargerJournal: () => Promise.resolve(pageJournalCourante()),
+    // #487 : le formulaire d'agent demande au poste ce qui y est installé. Le
+    // défaut est un **poste nu** — la sonde ne trouve rien, les deux champs
+    // restent en saisie libre, et tout test écrit avant ce lot dit encore vrai.
+    chargerFournisseurs: () => Promise.resolve(fournisseursDuPoste()),
   };
 });
 
@@ -158,6 +165,7 @@ beforeEach(() => {
   poserChemin("/");
   poserProjets([]);
   poserJournal([]);
+  poserFournisseurs(CATALOGUE_POSTE_NU);
   navigations.length = 0;
   porteesDemandees.length = 0;
   canauxDemandes.length = 0;

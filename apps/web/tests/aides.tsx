@@ -33,6 +33,8 @@ import {
 import type {
   AgentCatalogue,
   AreteGraphe,
+  CatalogueFournisseurs,
+  ConstatPoste,
   CoutExecution,
   CoutTache,
   CoutTacheAgregee,
@@ -406,6 +408,83 @@ export function poserProjets(liste: Projet[]): void {
 
 export function projetsDeclares(): Projet[] {
   return projets;
+}
+
+// --- Catalogue des fournisseurs, éclairé par le poste (#487) ---------------
+
+/**
+ * Le catalogue par défaut : **un poste nu**, deux fournisseurs au registre et
+ * rien de détecté. C'est le contrat de la sonde (« un poste sans aucun outil
+ * rend une liste vide sans erreur »), donc l'état à partir duquel tout test
+ * d'avant #487 continue de dire vrai.
+ *
+ * Les colonnes du **registre** (#253) restent peuplées dans cet état : un poste
+ * nu ne vide pas la gamme que Maestro annonce, c'est précisément ce que les deux
+ * moitiés de la fiche distinguent.
+ */
+export const CATALOGUE_POSTE_NU: CatalogueFournisseurs = {
+  fournisseurs: [
+    {
+      nom: "claude",
+      modeles: [
+        { nom: "claude-opus-5", libelle: "Opus 5", efforts: ["high", "xhigh"] },
+        { nom: "claude-sonnet-5", libelle: "Sonnet 5", efforts: ["high"] },
+      ],
+      modeles_libres: true,
+      supporte: true,
+      present_ici: false,
+      utilisable_ici: false,
+      modeles_ici: [],
+      constats: [],
+    },
+    {
+      // Gamme vide **et** libre : « saisis le nom que sert ton endpoint »,
+      // jamais « rien à proposer » (#253).
+      nom: "openai",
+      modeles: [],
+      modeles_libres: true,
+      supporte: true,
+      present_ici: false,
+      utilisable_ici: false,
+      modeles_ici: [],
+      constats: [],
+    },
+  ],
+  hors_registre: [],
+  incertitudes: [],
+};
+
+/** Un constat de sonde, valeurs par défaut complètes (patron des fabriques). */
+export function constatPosteFactice(
+  champs: Partial<ConstatPoste> = {},
+): ConstatPoste {
+  return {
+    genre: "cli",
+    cle: "cli:claude",
+    libelle: "Claude Code",
+    fournisseur: "claude",
+    utilisable: true,
+    detail: "runtime des agents Claude",
+    origine: "/usr/local/bin/claude",
+    modeles: [],
+    incertitude: null,
+    ...champs,
+  };
+}
+
+let cataloguePoste: CatalogueFournisseurs = CATALOGUE_POSTE_NU;
+
+/**
+ * Ce que `chargerFournisseurs` rendra — le mock vit dans `setup.ts`, au même
+ * titre que celui des hooks temps réel : le formulaire d'agent lit ce catalogue
+ * à chaque montage, aucun test n'a donc à monter de faux serveur pour lui.
+ */
+export function poserFournisseurs(catalogue: CatalogueFournisseurs): void {
+  cataloguePoste = catalogue;
+}
+
+export function fournisseursDuPoste(): CatalogueFournisseurs {
+  return cataloguePoste;
 }
 
 // --- Journal persisté (#478) -----------------------------------------------

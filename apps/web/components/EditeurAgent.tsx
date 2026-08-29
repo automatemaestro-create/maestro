@@ -15,7 +15,7 @@
  */
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 
 import {
   IconeMcp,
@@ -28,6 +28,7 @@ import { Bouton, EnTeteSection } from "@/components/Primitives";
 import { cheminOnglet } from "@/lib/agents";
 import {
   chargerAgentCatalogue,
+  chargerFournisseurs,
   creerAgent,
   definirActivationsMcp,
   modifierAgent,
@@ -37,6 +38,7 @@ import { formatDateHeure } from "@/lib/format";
 import {
   AGENT_SOURCE_DEFAUT,
   type AgentCatalogueDetail,
+  type CatalogueFournisseurs,
   type DefinitionAgent,
   type IntegrationPoolMcp,
   type ServeurMcp,
@@ -106,6 +108,97 @@ const CLASSE_CHAMP =
 const CLASSE_LIBELLE =
   "flex flex-col gap-1 text-xs font-medium text-neutral-600 dark:text-neutral-400";
 
+const CLASSE_ANNEXE = "text-xs text-neutral-500 dark:text-neutral-400";
+
+/** Le libellé d'une option de fournisseur — les deux colonnes du catalogue (#487). */
+const SUPPORTE_ICI = "supporté par Maestro · présent ici";
+const SUPPORTE_AILLEURS = "supporté par Maestro · absent d'ici";
+
+/**
+ * Ce que le poste propose au formulaire (`GET /api/fournisseurs`, #487).
+ *
+ * **Best-effort par construction** : un échec ne remonte nulle part et ne
+ * bloque rien. Les deux champs restent en saisie libre — c'est un choix, pas un
+ * repli : `OpenAICompatProvider.supports` accepte tout nom non vide, et un
+ * endpoint peut servir un modèle que personne n'a listé. La sonde **suggère**,
+ * elle ne restreint pas. Un `<select>` ferait l'inverse et rendrait
+ * insaisissable ce que le catalogue ignore.
+ */
+function useCataloguePoste(): CatalogueFournisseurs | null {
+  const [catalogue, setCatalogue] = useState<CatalogueFournisseurs | null>(null);
+  useEffect(() => {
+    let vivant = true;
+    void chargerFournisseurs()
+      .then((recu) => {
+        if (vivant) setCatalogue(recu);
+      })
+      .catch(() => {
+        // Sans catalogue, le formulaire est celui d'avant #487 : deux champs
+        // libres. Rien à signaler — l'utilisateur n'a rien demandé.
+      });
+    return () => {
+      vivant = false;
+    };
+  }, []);
+  return catalogue;
+}
+
+/** Les modèles vus **sur ce poste**, dédoublonnés dans l'ordre du catalogue. */
+function modelesDuPoste(catalogue: CatalogueFournisseurs | null): string[] {
+  const vus = new Set<string>();
+  for (const fournisseur of catalogue?.fournisseurs ?? []) {
+    for (const modele of fournisseur.modeles_ici) vus.add(modele);
+  }
+  return [...vus];
+}
+
+/**
+ * Ce que la sonde a trouvé, en une ligne — et ce qu'elle ne peut pas savoir.
+ *
+ * Les trois états du catalogue sont **nommés séparément** parce qu'ils appellent
+ * trois gestes différents : ce qui est armé ici se choisit tel quel, ce qui est
+ * là sans être supporté ne se choisit pas du tout, et « rien trouvé » n'est pas
+ * « rien installé » — d'où les incertitudes rendues telles quelles, jamais
+ * résumées en « détection partielle ».
+ */
+function ResumeDuPoste({
+  catalogue,
+  id,
+}: {
+  catalogue: CatalogueFournisseurs | null;
+  id: string;
+}) {
+  if (!catalogue) return null;
+  const armes = catalogue.fournisseurs.filter((f) => f.utilisable_ici);
+  const horsRegistre = catalogue.hors_registre;
+  return (
+    <div id={id} className={"flex flex-col gap-1 " + CLASSE_ANNEXE}>
+      <p>
+        <span className="font-medium">Sur ce poste : </span>
+        {armes.length > 0
+          ? armes
+              .map(
+                (f) =>
+                  `${f.nom} (${f.constats.map((c) => c.libelle).join(", ")})`,
+              )
+              .join(" · ")
+          : "aucun fournisseur armé n’a été détecté."}
+      </p>
+      {horsRegistre.length > 0 && (
+        <p>
+          <span className="font-medium">Présent, non supporté : </span>
+          {horsRegistre.map((c) => `${c.libelle} — ${c.detail}`).join(" · ")}
+        </p>
+      )}
+      {catalogue.incertitudes.map((incertitude) => (
+        <p key={incertitude} className="italic">
+          {incertitude}
+        </p>
+      ))}
+    </div>
+  );
+}
+
 /** Les champs communs de la définition (création comme modification). */
 function FormulaireDefinition({
   champs,
@@ -116,6 +209,15 @@ function FormulaireDefinition({
   setChamps: (champs: Champs) => void;
   desactive: boolean;
 }) {
+  const catalogue = useCataloguePoste();
+  // Deux formulaires peuvent cohabiter sur la page (création + fiche) : des
+  // identifiants dérivés, jamais écrits en dur — deux `<datalist>` de même id
+  // rendraient les suggestions de l'un dans l'autre.
+  const prefixe = useId();
+  const idFournisseurs = `${prefixe}-fournisseurs`;
+  const idModeles = `${prefixe}-modeles`;
+  const idPoste = `${prefixe}-poste`;
+  const modeles = modelesDuPoste(catalogue);
   return (
     <div className="flex flex-col gap-3">
       <div className="grid gap-3 sm:grid-cols-2">
@@ -151,8 +253,17 @@ function FormulaireDefinition({
             onChange={(e) => setChamps({ ...champs, modele: e.target.value })}
             disabled={desactive}
             placeholder="claude-sonnet-5"
+            list={modeles.length > 0 ? idModeles : undefined}
+            aria-describedby={catalogue ? idPoste : undefined}
             className={CLASSE_CHAMP + " font-mono"}
           />
+          {modeles.length > 0 && (
+            <datalist id={idModeles}>
+              {modeles.map((modele) => (
+                <option key={modele} value={modele} label="servi ici" />
+              ))}
+            </datalist>
+          )}
         </label>
         <label className={CLASSE_LIBELLE}>
           Fournisseur (déclaratif au POC)
@@ -163,11 +274,31 @@ function FormulaireDefinition({
               setChamps({ ...champs, fournisseur: e.target.value })
             }
             disabled={desactive}
-            placeholder="anthropic"
+            placeholder="claude"
+            list={catalogue ? idFournisseurs : undefined}
+            aria-describedby={catalogue ? idPoste : undefined}
             className={CLASSE_CHAMP + " font-mono"}
           />
+          {catalogue && (
+            // Seuls les fournisseurs du **registre** sont proposés : un outil
+            // trouvé ici que Maestro ne sait pas piloter est montré par
+            // `ResumeDuPoste`, jamais suggéré — le proposer serait le seul vrai
+            // mensonge possible de cet écran.
+            <datalist id={idFournisseurs}>
+              {catalogue.fournisseurs.map((fournisseur) => (
+                <option
+                  key={fournisseur.nom}
+                  value={fournisseur.nom}
+                  label={
+                    fournisseur.present_ici ? SUPPORTE_ICI : SUPPORTE_AILLEURS
+                  }
+                />
+              ))}
+            </datalist>
+          )}
         </label>
       </div>
+      <ResumeDuPoste catalogue={catalogue} id={idPoste} />
       <label className={CLASSE_LIBELLE}>
         Playbook (les instructions du rôle — son prompt système)
         <textarea

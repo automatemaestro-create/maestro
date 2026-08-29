@@ -777,6 +777,59 @@ export type AgentCatalogue = {
 export type AgentCatalogueDetail = AgentCatalogue & { playbook: string };
 
 /**
+ * Un fait mesuré sur le poste par la sonde (#487) : un CLI résolu sur le `PATH`,
+ * un serveur de modèles local qui répond, une clé présente dans l'environnement.
+ * N'existe que pour ce qui est **présent** — un poste nu rend zéro constat.
+ * `utilisable` distingue le présent-et-prêt du présent-mais-empêché (un serveur
+ * qui écoute sans répondre, un endpoint distant que la sonde ne joint pas), et
+ * `incertitude` dit ce qu'elle ne peut pas savoir plutôt que de le deviner :
+ * jamais la valeur d'une clé, jamais la version d'un binaire qu'il faudrait
+ * lancer pour la lire.
+ */
+export type ConstatPoste = {
+  /** « cli », « serveur_local » ou « cle ». */
+  genre: string;
+  cle: string;
+  libelle: string;
+  fournisseur: string | null;
+  utilisable: boolean;
+  detail: string;
+  origine: string | null;
+  modeles: string[];
+  incertitude: string | null;
+};
+
+/**
+ * Un fournisseur du catalogue (`GET /api/fournisseurs`, #253 + #487) : le
+ * registre du code dit qu'il est **supporté** et annonce sa gamme, la sonde dit
+ * s'il est **présent ici**. Les deux colonnes ne se confondent jamais — c'est ce
+ * qui permet de proposer un fournisseur armé sur cette machine sans cacher celui
+ * qui ne l'est pas encore, et c'est aussi pourquoi la fiche du registre est
+ * **reprise telle quelle** (`Fournisseur`) au lieu d'être recopiée : `modeles`
+ * est ce que Maestro annonce, `modeles_ici` ce que la sonde a vu.
+ */
+export type FournisseurCatalogue = Fournisseur & {
+  supporte: boolean;
+  present_ici: boolean;
+  utilisable_ici: boolean;
+  /** Les modèles que la sonde a **vus ici** (un serveur local les nomme). */
+  modeles_ici: string[];
+  constats: ConstatPoste[];
+};
+
+/**
+ * Le catalogue complet. `hors_registre` porte ce que le poste a de plus que
+ * Maestro — un agent CLI tiers non branché (docs/34) : montré, jamais proposé.
+ * `incertitudes` porte ce qui pèse sur les **absences** (le `PATH` du process
+ * qui sert l'API n'est pas celui de votre terminal).
+ */
+export type CatalogueFournisseurs = {
+  fournisseurs: FournisseurCatalogue[];
+  hors_registre: ConstatPoste[];
+  incertitudes: string[];
+};
+
+/**
  * Les champs éditables d'un agent personnalisé (#73) : le corps de
  * `POST /api/catalogue` (avec le nom en plus) et de `PUT /api/catalogue/{nom}`
  * (le nom vit dans l'URL — c'est la clé de routage, il ne change pas).
@@ -821,6 +874,10 @@ export type ModeleFournisseur = {
  * (le cas d'`openai`, qui fédère des endpoints aux nommages hétéroclites) veut
  * dire « saisis le nom que sert ton endpoint », là où gamme vide et fermée
  * voudrait dire « rien à proposer ».
+ *
+ * C'est la **moitié registre** de `FournisseurCatalogue`, qui l'étend des
+ * colonnes du poste (#487) : la route en rend une seule ligne par fournisseur,
+ * ce type dit ce qu'elle en doit au code plutôt qu'à la machine.
  */
 export type Fournisseur = {
   nom: string;
