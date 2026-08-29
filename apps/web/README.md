@@ -353,6 +353,16 @@ Deux règles s'appliquent à l'ajout d'une icône :
   endroits — « 🤖 dev » n'apprenait rien à qui ne le voyait pas ; ces lignes
   disent maintenant « Agent dev ».
 
+Les cinq `IconeRole*` (#258) sont le seul groupe **choisi par une donnée** : la
+liste des agents pose sur chaque carte l'icône du **rôle** plutôt que celle de
+l'agent, qui répétait d'une carte à l'autre la seule chose qu'elles ont en
+commun. La table qui les associe vit dans `lib/vueAgents.ts` et elle est
+**fermée** — les cinq libellés de `maestro/agents/catalog.py`, et rien d'autre.
+Le rôle d'un agent personnalisé est du texte libre : en déduire une icône
+reviendrait à juger du texte au lexique, ce que ce dépôt s'interdit (#746), et
+une icône fausse est pire qu'une générique — elle affirme. L'inconnu retombe donc
+sur `IconeAgent`, qui reste vraie.
+
 ### Les primitives — `components/Primitives.tsx`
 
 Sept briques, et le `className` qu'on n'écrit plus :
