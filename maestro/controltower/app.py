@@ -103,6 +103,10 @@ Endpoints :
 - `PUT  /api/mcp/activations/{agent}` — fixe les intégrations du pool **activées**
   pour un agent (#133) : l'écriture derrière l'interrupteur par agent qui
   remplace l'affichage lecture seule des serveurs MCP ;
+- `PUT  /api/permissions/{agent}` — écrit la politique allow/ask/deny d'un agent
+  (#262, source `core/permissions/<agent>.json`) : remplacement intégral, 422
+  **motivé** sur une entrée mal formée, et aucune lecture préalable — c'est ce
+  qui permet de réparer depuis l'écran une politique que le moteur refuse ;
 - `GET  /api/projets` — les projets déclarés de l'utilisateur (#223, EF-35) :
   racine canonicalisée sur le disque, origine, `vcs` détecté et périmètre ;
 - `GET  /api/projets/explorateur` — l'**explorateur de dossiers servi par
@@ -137,8 +141,10 @@ Endpoints :
   défaut du code et les personnalisés persistés, avec leur provenance, leurs
   réglages de modèle (`fournisseur`/`modele`/`effort` — #253), leurs
   serveurs MCP déclarés (#104, lecture seule — `mcp_serveurs`/`mcp_erreur`) et
-  leur politique de permissions effective (#110, lecture seule —
-  `permissions`/`permissions_erreur`) ;
+  leur politique de permissions effective (#110 —
+  `permissions`/`permissions_erreur`, écrite par `PUT /api/permissions/{agent}`
+  depuis #262, qui sert avec elle les outils **réellement exposés** à l'agent
+  dans `permissions_outils`) ;
 - `GET  /api/catalogue/{nom}` — la définition complète d'un agent (playbook
   compris) ;
 - `POST /api/catalogue` — crée un agent personnalisé (persisté hors du code,
@@ -243,6 +249,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from maestro.agents import DEFAULT_TOOLS, TOOLED_PROFILES
 from maestro.agents.capacity import CapaciteAgent, CapacityStore
 from maestro.agents.catalog import DEFAULT_AGENTS, Agent
 from maestro.agents.mcp import IntegrationMcp, McpStore, references_env
@@ -260,7 +267,7 @@ from maestro.agents.mcp_registry import (
     SOURCE_TOUTES,
     RegistreMcp,
 )
-from maestro.agents.permissions import PermissionStore
+from maestro.agents.permissions import PermissionStore, entree_valide
 from maestro.agents.playbooks import PLAYBOOK_DEFAUTS, PlaybookStore
 from maestro.agents.secrets import SecretStore
 from maestro.agents.store import NOMS_RESERVES, AgentDefinition, AgentStore, catalogue
@@ -379,6 +386,9 @@ from maestro.orchestrator.errors import BriefValidationError
 from maestro.orchestrator.schema import validate_brief
 from maestro.poste import SondePoste
 from maestro.projets import RacineRefusee, canonique, valider_racine
+from maestro.providers.arbitrage import OUTIL_ARBITRAGE
+from maestro.providers.blocage import OUTIL_BLOCAGE
+from maestro.providers.courrier import OUTIL_COURRIER
 from maestro.references import ReferenceTicket
 from maestro.sources import DepotTeleversements, SourceRefusee, apercu_sources
 
@@ -761,6 +771,30 @@ class ActivationsMcpRequete(BaseModel):
     integrations: list[str]
 
 
+class PolitiquePermissionsRequete(BaseModel):
+    """Corps de la politique de permissions écrite pour un agent (#262).
+
+    Remplacement intégral, comme les activations MCP au-dessus : les trois
+    listes deviennent la politique de l'agent, toutes vides valant « rien
+    d'interdit, rien d'arbitré, tout ce que le profil expose ».
+
+    Les valeurs ne sont **pas** jugées ici : le modèle ne fixe que la forme du
+    corps, et c'est `PermissionStore.ecrire` qui refuse une entrée mal formée
+    avec **son** motif (« entrée deny 'mon outil' — nom d'outil attendu… »).
+    Recopier la règle en validateur Pydantic donnerait deux définitions de ce
+    qu'est une entrée admissible, dont la seconde finirait par diverger du
+    moteur qui l'applique.
+
+    `ask` accepte les deux formes que la lecture accepte (#586) — objet
+    `{"<outil>": "<décideur>"}` ou liste, `humain` par défaut : un client qui
+    renvoie ce qu'il a lu d'une politique d'avant ce lot n'a rien à convertir.
+    """
+
+    allow: list[str] = []
+    ask: dict[str, str] | list[str] = {}
+    deny: list[str] = []
+
+
 class Diffusion:
     """Fan-out des événements vers les WebSockets connectées, **à leur portée**.
 
@@ -992,10 +1026,13 @@ def create_app(
     moteur et workers au montage. Les tests en injectent un coffre temporaire.
 
     `permissions` (#110) est le dépôt des politiques allow/ask/deny par agent,
-    affichées en **lecture seule** sur les fiches du catalogue (`permissions`,
-    la politique effective appliquée à l'exécution) — par défaut celui de la
-    config (`MAESTRO_PERMISSIONS_DIR`, sinon `core/permissions/` du dépôt) :
-    le même que relisent moteur et workers.
+    servies sur les fiches du catalogue (`permissions`, la politique effective
+    appliquée à l'exécution) et **écrites** depuis leur onglet MCP & permissions
+    (#262, `PUT /api/permissions/{agent}`) — par défaut celui de la config
+    (`MAESTRO_PERMISSIONS_DIR`, sinon `core/permissions/` du dépôt) : le même que
+    relisent moteur et workers, d'où l'application à la tâche suivante sans
+    redémarrage. Les tests en injectent un dépôt temporaire, comme pour le
+    coffre.
 
     `projets` (#223) porte le CRUD des projets de l'utilisateur et l'explorateur
     de dossiers servis par `/api/projets` — par défaut le service de la config
@@ -2593,8 +2630,55 @@ def create_app(
             "mcp_activations": activations,
         }
 
+    def _outils_exposes(nom: str) -> list[dict[str, str]]:
+        """Ce que l'agent `nom` peut réellement appeler — de quoi **suggérer** (#262).
+
+        Trois origines, et aucune n'est écrite en dur ici : les outils
+        **intégrés** de son profil de rôle (`RoleProfile.outils`, `DEFAULT_TOOLS`
+        pour un agent hors des profils outillés), les verbes du serveur
+        in-process **maestro** (arbitrage, blocage, courrier — leurs constantes
+        existent précisément pour qu'une politique les désigne, #805) et les
+        **serveurs MCP** effectivement montés pour lui, cités en entier
+        (`mcp__<serveur>`, qui couvre tous leurs outils).
+
+        Une suggestion n'est jamais une contrainte : la saisie reste libre — un
+        outil MCP précis (`mcp__slack__send_message`) se désigne à la frappe,
+        et l'API ne juge que la **forme** de l'entrée. On écarte en revanche les
+        noms qu'elle refuserait (`entree_valide`) : proposer une entrée
+        impossible à écrire serait pire que de n'en proposer aucune.
+
+        Les serveurs MCP se lisent au mieux : une source invalide a déjà sa
+        cause dans `mcp_erreur`, et une liste de suggestions n'est pas l'endroit
+        où la redire.
+        """
+        profil = next((p for p in TOOLED_PROFILES if p.nom == nom), None)
+        outils: list[dict[str, str]] = [
+            {"nom": outil, "origine": "integre", "libelle": "outil intégré du profil"}
+            for outil in (profil.outils if profil is not None else DEFAULT_TOOLS)
+        ]
+        outils += [
+            {"nom": OUTIL_ARBITRAGE, "origine": "maestro", "libelle": "demander un arbitrage"},
+            {"nom": OUTIL_BLOCAGE, "origine": "maestro", "libelle": "signaler un blocage"},
+            {"nom": OUTIL_COURRIER, "origine": "maestro", "libelle": "écrire à un pair"},
+        ]
+        try:
+            serveurs = mcp.lire(nom)
+        except ValueError:
+            serveurs = ()
+        for serveur in serveurs:
+            entree = f"mcp__{serveur.nom}"
+            if entree_valide(entree):
+                outils.append(
+                    {
+                        "nom": entree,
+                        "origine": "mcp",
+                        "libelle": f"serveur MCP {serveur.nom} (tous ses outils)",
+                    }
+                )
+        return outils
+
     def _volet_permissions(nom: str) -> dict[str, Any]:
-        """Le volet « permissions » d'une fiche catalogue (#110), lecture seule.
+        """Le volet « permissions » d'une fiche catalogue (#110), **écrivable** depuis #262.
 
         `permissions` porte la politique allow/ask/deny effective (celle que le
         moteur applique à l'exécution — None : aucune politique, tout ce que
@@ -2603,14 +2687,26 @@ def create_app(
         visibilité que `mcp_erreur`. Les **trois** listes sont servies depuis
         #580, `ask` comprise et vide par défaut : une politique écrite avant ce
         lot se relit sous le régime d'hier.
+
+        `permissions_outils` (#262) est ce que l'agent peut réellement appeler :
+        de quoi **suggérer** des entrées à qui règle la politique, plutôt que de
+        lui faire retrouver les noms exacts ailleurs. Servi **avec la fiche**, et
+        pas par une route à lui : c'est la même question, posée du même écran, au
+        même moment — un second aller n'apprendrait rien de plus.
         """
+        outils = _outils_exposes(nom)
         try:
             politique = permissions.lire(nom)
         except ValueError as exc:
-            return {"permissions": None, "permissions_erreur": str(exc)}
+            return {
+                "permissions": None,
+                "permissions_erreur": str(exc),
+                "permissions_outils": outils,
+            }
         return {
             "permissions": politique.to_dict() if politique is not None else None,
             "permissions_erreur": None,
+            "permissions_outils": outils,
         }
 
     def _fiche_defaut(agent: Agent, *, avec_playbook: bool) -> dict[str, Any]:
@@ -3103,6 +3199,35 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {"agent": agent, "integrations": list(activees)}
+
+    @app.put("/api/permissions/{agent}")
+    async def definir_permissions(
+        agent: str, requete: PolitiquePermissionsRequete
+    ) -> dict[str, Any]:
+        """Écrit la politique allow/ask/deny d'un agent (#262) — remplacement intégral.
+
+        L'écriture derrière la fiche, là où la section était en lecture seule
+        depuis #110 : régler ce qu'un agent a le droit d'appeler ne demande plus
+        d'éditer `core/permissions/<agent>.json` à la main puis de relancer. La
+        politique écrite vaut pour la **tâche suivante** — l'exécuteur la relit à
+        chaud, comme les playbooks.
+
+        404 si l'agent n'est pas au catalogue (une politique orpheline ne serait
+        jamais appliquée), 422 sur une entrée mal formée, **avec la cause exacte
+        du dépôt** : c'est ce motif que l'écran affiche, et il nomme la liste et
+        l'entrée en faute.
+
+        ⚠ Elle ne lit **pas** la politique en place avant de la remplacer, et
+        c'est ce qui permet de réparer depuis l'écran un fichier que `lire`
+        refuse — un `GET` préalable échouerait précisément là où le geste est
+        nécessaire.
+        """
+        _exige_agent_du_catalogue(agent)
+        try:
+            politique = permissions.ecrire(agent, requete.model_dump())
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {"agent": agent, "permissions": politique.to_dict()}
 
     # --- Projets de l'utilisateur (#223) : CRUD et explorateur de dossiers ---
     def _refus_projet(exc: Exception, *, explorateur: bool = False) -> HTTPException:

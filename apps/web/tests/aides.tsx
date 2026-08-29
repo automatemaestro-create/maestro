@@ -848,6 +848,7 @@ export function ficheCatalogueFactice(
     mcp_activations: [],
     permissions: null,
     permissions_erreur: null,
+    permissions_outils: [],
     ...partiel,
   };
 }
