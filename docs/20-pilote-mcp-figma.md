@@ -350,6 +350,15 @@ ne peut donc pas s'y exprimer à la granularité de l'outil : soit on laisse
 soit on le barre en `deny` pour un usage **lecture seule** du serveur officiel
 (design-to-code) en gardant la création au pont communautaire.
 
+⚠ **Ce choix en deux termes a une troisième issue depuis #716**, et elle
+n'existait pas quand ce relevé a été écrit : le cran du milieu. `use_figma` — et
+les quatre autres écritures confirmées au catalogue ci-dessus — sont classés
+`ask` / `humain` dans [`core/permissions/designer.json`](../core/permissions/designer.json),
+le reste du serveur `ask` / `auto`. L'édition insécable du canvas d'équipe est
+donc **vue avant de partir**, sans que le designer perde son outil primaire ni
+que le garde-fou se réduise au prompt du rôle. Le raisonnement entrée par entrée
+est dans [le README du dossier](../core/permissions/README.md).
+
 Les deux voies sont **démontrées en réel** (§4 pour le pont communautaire,
 ci-dessus pour l'officielle). Elles ont d'abord coexisté en serveurs
 optionnels (#125) ; depuis le ticket #128, la voie officielle est la **seule
@@ -384,7 +393,9 @@ design-to-code supérieure.
   n'expose **aucun outil de suppression dédié** (limite structurelle relevée
   au §6 : l'édition passe par le seul `use_figma`, insécable). La politique
   reste en place, vide — le garde-fou « il propose, il ne remplace pas »
-  (docs/04 §3.5) est porté par le prompt du rôle ;
+  (docs/04 §3.5) est porté par le prompt du rôle. *(Vide jusqu'à #716, qui l'a
+  armée du cran du milieu — voir la note du §6 : le prompt du rôle n'est plus
+  seul.)* ;
 - les tests ancrés sur l'ancien mode
   ([tests/test_mcp.py](../tests/test_mcp.py), section ⑥) sont réécrits :
   déclaration officielle seule et sans secret en clair, token expurgé, serveur

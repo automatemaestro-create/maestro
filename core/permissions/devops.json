@@ -1,0 +1,8 @@
+{
+  "allow": [],
+  "ask": {
+    "mcp__slack": "humain",
+    "Bash": "auto"
+  },
+  "deny": []
+}

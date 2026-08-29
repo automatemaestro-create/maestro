@@ -143,6 +143,19 @@ date : il n'est pas réécrit. Le déclencheur nominal est désormais l'**acte**
 un outil classé `ask` dans la politique de l'agent (chantier #573) —, et c'est un
 motif nommant l'outil qui apparaîtrait à la ligne « Raison ».
 
+⚠ **Et cet acte-là est maintenant classé** (#716) :
+[`core/permissions/devops.json`](../core/permissions/devops.json) met
+`mcp__slack` en `ask` / `humain` — le canal qui atteint des personnes hors du
+système, et dont rien ne se retire. Deux conséquences à ne pas confondre. Une
+**tâche** devops qui appelle un outil Slack est désormais suspendue le temps
+qu'on tranche, lecture de canal comprise (le serveur est classé en entier, faute
+d'un nom d'outil vérifiable dans le dépôt — [le README du dossier](../core/permissions/README.md)
+dit pourquoi). La **notification de supervision**, elle, ne l'est pas :
+`NotificateurRun` appelle `AgentRuntime.execute` **sans politique**, donc sans
+hook — ce qui évite qu'une notification annonçant « validation en attente »
+attende elle-même une validation. Rejouer ce pilote ne coûte donc aucun
+arbitrage de plus.
+
 ### 4.2 Événements postés sur le canal (vérifiés)
 
 **1. Validation humaine en attente** — posté *avant* l'attente de la décision
