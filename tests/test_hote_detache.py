@@ -416,9 +416,24 @@ def _releve(atelier: Path, run_id: str, nom: str) -> dict[str, Any]:
     L'attente est celle du reste de la suite — un **fait observable**, jamais une
     durée —, et la lecture échoue franchement : un relevé absent n'est pas un
     relevé vide, et le confondre rendrait vert un test qui n'a rien mesuré.
+
+    Le fait attendu est le relevé **écrit**, jamais le fichier **créé** : un
+    `write_text` ouvre — donc crée, vide — avant d'écrire, si bien qu'attendre
+    `exists()` rendait la main dans cette fenêtre-là et faisait lever `json.loads`
+    sur une chaîne vide, au hasard de la charge (pipeline du 2026-08-29, un runner
+    sous `-n auto`). Peser le fichier laisse `json.loads` seul juge du contenu :
+    un relevé tronqué lève toujours franchement, un relevé jamais écrit se dit
+    avec son message d'attente.
     """
     fichier = atelier / run_id / nom
-    _attendre(fichier.exists, f"{run_id} n'a jamais écrit son relevé {nom}.")
+
+    def ecrit() -> bool:
+        try:
+            return fichier.stat().st_size > 0
+        except OSError:
+            return False
+
+    _attendre(ecrit, f"{run_id} n'a jamais écrit son relevé {nom}.")
     return json.loads(fichier.read_text(encoding="utf-8"))
 
 
