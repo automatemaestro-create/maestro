@@ -56,7 +56,7 @@ from maestro.config import ConfigError, Settings
 from maestro.decideur import Decideur
 from maestro.deliberation import CreditArbitrage
 from maestro.detail_tache import EtapeTache
-from maestro.providers import blocage
+from maestro.providers import blocage, courrier
 from maestro.providers.activite import Geste, RegulateurActivite
 from maestro.providers.arbitrage import (
     CANAL_EN_ERREUR,
@@ -87,18 +87,6 @@ from maestro.providers.base import (
     attache_stderr,
 )
 from maestro.providers.checklist import est_checklist, etapes_depuis_outil
-from maestro.providers.courrier import (
-    COURRIER_EN_ERREUR,
-    DESCRIPTION_COURRIER,
-    DESTINATAIRE_MANQUANT,
-    DESTINATAIRE_RESERVE,
-    MESSAGE_MANQUANT,
-    MOT_CONSIGNE,
-    NOM_OUTIL_COURRIER,
-    SCHEMA_COURRIER,
-    Courrier,
-    destinataire_reserve,
-)
 from maestro.sandbox.container import IsolationConfig
 
 if TYPE_CHECKING:  # imports de typage seuls — pas de dépendance d'exécution vers agents
@@ -314,7 +302,7 @@ class ClaudeProvider(ModelProvider):
         on_arbitrage: Arbitre | None = None,
         on_blocage: blocage.Signaleur | None = None,
         credit_arbitrage: CreditArbitrage | None = None,
-        on_courrier: Courrier | None = None,
+        on_courrier: courrier.Courrier | None = None,
         plafond_tours: int | None = PLAFOND_TOURS_DEFAUT,
         projet: Projet | None = None,
     ) -> str:
@@ -620,7 +608,7 @@ def _outil_arbitrage(
     return demander_arbitrage
 
 
-def _outil_courrier(on_courrier: Courrier) -> SdkMcpTool[Any]:
+def _outil_courrier(on_courrier: courrier.Courrier) -> SdkMcpTool[Any]:
     """L'outil `ecrire_a_un_pair(destinataire, message)` servi à l'agent (#720).
 
     Un verbe de plus sur le porte-outils (#718), et le seul à ce jour qui
@@ -657,23 +645,23 @@ def _outil_courrier(on_courrier: Courrier) -> SdkMcpTool[Any]:
     #721).
     """
 
-    @tool(NOM_OUTIL_COURRIER, DESCRIPTION_COURRIER, SCHEMA_COURRIER)
+    @tool(courrier.NOM_OUTIL, courrier.DESCRIPTION_OUTIL, courrier.SCHEMA_ENTREE)
     async def ecrire_a_un_pair(args: dict[str, Any]) -> dict[str, Any]:
         destinataire = str(args.get("destinataire") or "").strip()
         message = str(args.get("message") or "").strip()
         if not destinataire:
-            texte = DESTINATAIRE_MANQUANT
-        elif destinataire_reserve(destinataire):
-            texte = DESTINATAIRE_RESERVE.format(relais=destinataire)
+            texte = courrier.DESTINATAIRE_MANQUANT
+        elif courrier.destinataire_reserve(destinataire):
+            texte = courrier.DESTINATAIRE_RESERVE.format(relais=destinataire)
         elif not message:
-            texte = MESSAGE_MANQUANT.format(destinataire=destinataire)
+            texte = courrier.MESSAGE_MANQUANT.format(destinataire=destinataire)
         else:
             try:
                 await on_courrier(destinataire, message)
             except Exception as exc:  # noqa: BLE001 — servi à l'agent, jamais une tâche tuée
-                texte = COURRIER_EN_ERREUR.format(cause=exc)
+                texte = courrier.CANAL_EN_ERREUR.format(cause=exc)
             else:
-                texte = MOT_CONSIGNE.format(destinataire=destinataire)
+                texte = courrier.MOT_CONSIGNE.format(destinataire=destinataire)
         return {"content": [{"type": "text", "text": texte}]}
 
     return ecrire_a_un_pair
@@ -744,7 +732,7 @@ def _outils_maestro(
     on_arbitrage: Arbitre | None = None,
     on_blocage: blocage.Signaleur | None = None,
     credit: CreditArbitrage | None = None,
-    on_courrier: Courrier | None = None,
+    on_courrier: courrier.Courrier | None = None,
 ) -> list[SdkMcpTool[Any]]:
     """Les outils que le serveur `maestro` a **effectivement** à porter (#718).
 

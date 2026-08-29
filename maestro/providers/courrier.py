@@ -21,12 +21,19 @@ D'où le partage retenu, repris du handoff qui le pratique déjà :
 
     Le journal est la livraison ; le pub/sub n'est que la notification.
 
+⚠ Ses constantes portent les **mêmes noms** que celles de son voisin
+`maestro.providers.blocage` (#719) — `NOM_OUTIL`, `DESCRIPTION_OUTIL`,
+`SCHEMA_ENTREE`, `CANAL_EN_ERREUR` —, et c'est délibéré : `claude.py` les importe
+**qualifiées** (`courrier.NOM_OUTIL`), si bien que le vocabulaire de chaque verbe
+se lit avec le nom du verbe devant. Les distinguer par un suffixe aurait marché
+tout aussi bien pour deux verbes, et aurait obligé le troisième à en inventer un.
+
 Trois conséquences, et elles se lisent toutes ici plutôt que dans le code du
 fournisseur — ce module porte le vocabulaire, `maestro.providers.claude` la seule
 machinerie SDK, `maestro.engine.executor` la construction du message et son
 journal :
 
-- **la description dit cette vérité** (`DESCRIPTION_COURRIER`). C'est un critère
+- **la description dit cette vérité** (`DESCRIPTION_OUTIL`). C'est un critère
   du ticket et non une formule de style : un agent qui croirait être lu
   attendrait une réponse qui ne viendra pas, et ouvrir ce verbe en le présentant
   comme une messagerie fiable ajouterait un troisième producteur à un canal qui
@@ -66,14 +73,14 @@ from maestro.providers.arbitrage import NOM_SERVEUR
 #: Nom de l'outil tel que l'agent l'appelle, une fois préfixé par son serveur.
 #: Un verbe à l'infinitif, comme `demander_arbitrage` : c'est ce que l'agent
 #: fait, pas ce que le moteur en tire.
-NOM_OUTIL_COURRIER = "ecrire_a_un_pair"
+NOM_OUTIL = "ecrire_a_un_pair"
 
 #: Le nom complet de l'outil dans une session SDK (`mcp__<serveur>__<outil>`) —
 #: donc la forme sous laquelle une politique de permissions (#110) le désigne.
 #: Le serveur est celui de l'arbitrage : nom réservé, porte-outils depuis #718,
 #: et une seule définition de ce nom dans le dépôt (deux supports pour un même
 #: fait sont la panne que #365 a supprimée ailleurs).
-OUTIL_COURRIER = f"mcp__{NOM_SERVEUR}__{NOM_OUTIL_COURRIER}"
+OUTIL_COURRIER = f"mcp__{NOM_SERVEUR}__{NOM_OUTIL}"
 
 #: Ce que l'agent lit pour savoir **quand** appeler l'outil, et surtout **ce
 #: qu'il obtient**. Les deux moitiés comptent, et la seconde est un critère du
@@ -81,7 +88,7 @@ OUTIL_COURRIER = f"mcp__{NOM_SERVEUR}__{NOM_OUTIL_COURRIER}"
 #: dernière phrase règle le débit — même parti pris que `demander_arbitrage`,
 #: qui se présente comme un recours et non comme une étape : un verbe appelé par
 #: acquit de conscience remplirait la frise de mots que personne n'a demandés.
-DESCRIPTION_COURRIER = (
+DESCRIPTION_OUTIL = (
     "Adresse un mot à un autre agent du run : ce que tu viens de découvrir et qui "
     "le concerne, une contrainte qu'il rencontrera, une information qu'il ne "
     "trouvera pas dans sa propre tâche. Donne dans « destinataire » le nom de "
@@ -100,7 +107,7 @@ DESCRIPTION_COURRIER = (
 #: la tâche et le run **ne sont pas demandés à l'agent**, ils sont fermés par
 #: l'exécuteur (`maestro.engine.executor._courrier`), seul à les connaître et
 #: seul à en répondre. Un agent qui les fournirait pourrait signer d'un autre nom.
-SCHEMA_COURRIER: dict[str, type] = {"destinataire": str, "message": str}
+SCHEMA_ENTREE: dict[str, type] = {"destinataire": str, "message": str}
 
 #: Ce que lit l'agent dont le mot est parti. Il dit les trois choses dans
 #: l'ordre où elles comptent : c'est écrit et durable, ce n'est pas garanti lu,
@@ -152,7 +159,7 @@ MESSAGE_MANQUANT = (
 #: promesse de ce verbe est la consignation, donc son échec est la seule nouvelle
 #: qui change quelque chose pour lui. On ne laisse pas non plus l'exception
 #: remonter : elle tuerait la tâche au moment où l'agent essayait d'être utile.
-COURRIER_EN_ERREUR = (
+CANAL_EN_ERREUR = (
     "Le mot n'a pas pu être consigné ({cause}) — rien n'a été écrit ni adressé. "
     "Poursuis ta tâche, et redis dans ton compte-rendu final ce que tu voulais "
     "transmettre."
