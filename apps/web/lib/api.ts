@@ -30,6 +30,7 @@ import type {
   IntegrationPoolMcp,
   JournalAdmissionsMcp,
   LancementExecution,
+  LexiquePlaybook,
   PageExplorateur,
   PageJournal,
   PasSerie,
@@ -41,6 +42,7 @@ import type {
   PropositionPlaybookDetail,
   ProvenanceRegistreMcp,
   RapportLecture,
+  RedactionPlaybook,
   RefusProjet,
   ReponsesBrief,
   ResumeExecution,
@@ -394,6 +396,38 @@ export function rejeterPropositionPlaybook(
     `/api/playbooks/${encodeURIComponent(agent)}/propositions/${numero}/rejeter`,
     undefined,
     "rejet refusé",
+  );
+}
+
+/**
+ * Le lexique d'écriture d'un playbook (#261) : structures et tournures que les
+ * playbooks du dépôt ont en commun, dont l'éditeur tire ses complétions.
+ *
+ * Il ne dépend d'aucun agent — c'est le vocabulaire du dépôt, pas celui d'un
+ * rôle — et ne change qu'avec les documents livrés : l'éditeur le charge une
+ * fois à l'ouverture.
+ */
+export function chargerLexiquePlaybook(): Promise<LexiquePlaybook> {
+  return chargerJson<LexiquePlaybook>("/api/playbooks/lexique");
+}
+
+/**
+ * Demande à l'assistant une réécriture du **brouillon en cours** (#261), guidée
+ * par une consigne libre facultative.
+ *
+ * ⚠ **N'écrit rien** : ni version, ni proposition en brouillon. La réponse est
+ * un candidat que l'éditeur affiche en différentiel ; l'appliquer ne touche que
+ * le texte de la zone d'édition, et publier reste `ecrirePlaybook`.
+ */
+export function redigerPlaybook(
+  agent: string,
+  contenu: string,
+  consigne?: string,
+): Promise<RedactionPlaybook> {
+  return envoyerJsonEtLire<RedactionPlaybook>(
+    `/api/playbooks/${encodeURIComponent(agent)}/redaction`,
+    { contenu, ...(consigne !== undefined && consigne !== "" && { consigne }) },
+    "rédaction refusée",
   );
 }
 

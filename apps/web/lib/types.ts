@@ -365,6 +365,43 @@ export type PropositionPlaybookDetail = PropositionPlaybook & {
 };
 
 /**
+ * Une entrée du lexique d'écriture (`GET /api/playbooks/lexique`, #261) : un
+ * titre de section ou une tournure que les playbooks du dépôt ont en commun.
+ *
+ * `roles` est le nombre de playbooks livrés où elle figure — l'éditeur s'en sert
+ * pour ordonner ses propositions et pour dire d'où elles viennent : une
+ * suggestion dont on voit la provenance se refuse en connaissance de cause.
+ */
+export type EntreeLexique = {
+  texte: string;
+  roles: number;
+};
+
+/**
+ * Le lexique servi à l'éditeur (#261). **Dérivé** des documents livrés avec le
+ * paquet, jamais recopié ici : `structures` porte les titres de section
+ * (`## Mission`, `## Méthode`…), `tournures` les phrases récurrentes du régime
+ * de travail commun aux agents.
+ */
+export type LexiquePlaybook = {
+  structures: EntreeLexique[];
+  tournures: EntreeLexique[];
+};
+
+/**
+ * Une réécriture proposée par l'assistant (`POST /api/playbooks/{agent}/redaction`,
+ * #261) : le document réécrit **intégral** et ce que le modèle dit en avoir changé.
+ *
+ * Sans numéro ni date, à la différence d'une `PropositionPlaybook` : ce n'est pas
+ * une version, ni même un brouillon stocké, mais un candidat en vol — tant que
+ * personne ne l'a appliqué à son brouillon, il n'existe nulle part ailleurs.
+ */
+export type RedactionPlaybook = {
+  contenu: string;
+  justification: string;
+};
+
+/**
  * Un serveur MCP déclaré pour un agent (`ServeurMcp.to_dict`, #104) : une
  * commande locale (`type` « stdio » : commande + args + env) ou un endpoint
  * distant (« sse »/« http » : url + headers). Forme publique : les valeurs

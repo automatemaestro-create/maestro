@@ -221,6 +221,30 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   chaud** (#78, EF-26) : le moteur relit la version courante à chaque tâche —
   elle vaut pour l'exécution suivante sans redémarrage, et la version utilisée
   est tracée sur chaque résultat (`playbook_version`, journal compris) ;
+- **Rédaction assistée du playbook** (#261, lot 9 de #243, onglet **Playbook**) :
+  l'éditeur aide à écrire, à deux échelles et sans jamais publier. En cours de
+  frappe, il propose des **complétions** — structures de section et tournures que
+  les playbooks du dépôt ont en commun (`lib/completionsPlaybook`, servies par
+  `GET /api/playbooks/lexique`) : `Tab` accepte, `Échap` ou la frappe suivante
+  ignore, `↑`/`↓` choisissent. À la demande, un bouton **Assistant** fait réécrire
+  le brouillon par le modèle (`POST /api/playbooks/{agent}/redaction`), avec une
+  consigne libre facultative, et le rend en **différentiel** ligne à ligne
+  (`lib/diff`) avant toute application. Quatre choses portent le lot. Les
+  complétions sont **locales et déterministes**, jamais un appel modèle par
+  frappe : une proposition qui arrive une seconde trop tard déplace le curseur de
+  quelqu'un qui a déjà continué, et se facturerait au caractère tapé — le modèle
+  intervient à l'autre bout, sur un geste explicite. Ce qu'elles proposent est
+  **dérivé du dépôt et jamais recopié** (`maestro.agents.lexique_playbook` relit
+  les documents livrés) : une constante côté front mentirait au premier playbook
+  modifié, sans que rien ne le signale ; le seuil est la **récurrence** — présent
+  dans au moins deux playbooks —, si bien qu'une singularité d'un rôle n'est pas
+  diffusée aux autres. **Rien n'est publié** : accepter une complétion ou
+  appliquer une réécriture ne touche que la zone d'édition, la version en vigueur
+  ne bougeant que par « Publier » — et c'est pour cela que l'assistance ne passe
+  **pas** par les propositions stockées de #111/#140, dont l'application *publie*
+  une version. Enfin `Entrée` n'est jamais capturée par la liste de complétions :
+  dans une zone de texte elle insère un saut de ligne, et la voler à quelqu'un qui
+  rédige coûterait plus que l'aide n'apporte ;
 - **Catalogue des agents** (#73, EF-03) : la liste `/agents` montre le catalogue
   effectif (#72, API `/api/catalogue`) — ceux du code en lecture seule, et les
   **personnalisés** qu'on y crée, puis modifie et supprime depuis l'onglet
