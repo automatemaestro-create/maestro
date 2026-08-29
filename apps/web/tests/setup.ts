@@ -145,7 +145,8 @@ vi.mock("@/lib/api", async (importOriginal) => {
     // #255 : le même formulaire lit les **rôles connus** dans le catalogue des
     // agents. Défaut vide — aucun rôle suggéré, le champ reste celui d'avant —,
     // et les 18 fichiers qui mockent `@/lib/api` chez eux gardent le pas sur
-    // cette déclaration.
+    // cette déclaration. #256 lit la **même** réponse pour en tirer le
+    // vocabulaire des compétences : une lecture, deux usages, un seul mock.
     chargerCatalogue: () => Promise.resolve(catalogueAgents()),
   };
 });

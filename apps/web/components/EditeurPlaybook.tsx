@@ -3,19 +3,45 @@
 /**
  * L'éditeur du playbook d'un agent (ticket #77) : le contenu courant en
  * édition libre, publié comme nouvelle version (`PUT /api/playbooks/{agent}`),
- * et l'historique des versions consultable avec restauration d'une version
- * antérieure (`POST /api/playbooks/{agent}/restaurer`, EF-24/EF-25).
+ * et l'historique — versions publiées **et** propositions en attente —
+ * consultable depuis un sélecteur, avec restauration d'une version antérieure
+ * (`POST /api/playbooks/{agent}/restaurer`, EF-24/EF-25).
  *
  * Le dépôt est append-only (#76) : publier comme restaurer créent une version
  * de plus, rien n'est jamais réécrit — la restauration est donc toujours
- * réversible, aucune confirmation n'est demandée.
+ * réversible, aucune confirmation n'est demandée. Depuis #260 l'écran le **dit**
+ * au lieu de le supposer : c'est ce qui rend une publication sans regret.
  *
  * L'historique porte aussi les **propositions** d'auto-amélioration en attente
- * (#111/#140) : des brouillons suggérés à partir des échecs d'un run, affichés
- * à part des versions humaines, avec leur justification. Ils ne sont jamais
+ * (#111/#140) : des brouillons suggérés à partir des échecs d'un run, rangés à
+ * part des versions humaines, avec leur justification. Ils ne sont jamais
  * chargés par le moteur tant qu'on ne les a pas appliqués au clic (le contenu
  * devient alors la version courante, chargée à chaud #78) ; un rejet les retire
  * sans toucher à la version courante.
+ *
+ * Ce que #260 y change, et pourquoi — trois relevés de la revue d'usage :
+ *
+ * - **Le texte d'aide parlait du modèle interne.** « Une publication crée une
+ *   nouvelle version ; les moteurs construits ensuite la chargent » est exact et
+ *   n'apprend rien à qui regarde son agent. Ce qu'il faut dire est *à partir de
+ *   quand* la publication s'applique, et la réponse vient du moteur :
+ *   l'exécuteur relit la version courante **à chaque tâche** (#78), donc une
+ *   tâche déjà en cours garde la version avec laquelle elle a démarré.
+ *
+ * - **Le numéro de version manquait dans certains états.** Il est désormais dans
+ *   l'en-tête *et* sur le bouton, pendant l'envoi comme avant, et **y compris
+ *   quand le playbook est encore celui du code** — qui est la version `v0`, pas
+ *   une absence de version. Un bouton « Publier » qui ne dit pas ce qu'il va
+ *   créer demande de faire confiance ; celui-ci nomme la version qu'il produit.
+ *
+ * - **L'historique s'empilait sous l'éditeur.** Il tient maintenant dans un
+ *   sélecteur en haut à droite, et choisir une entrée **remplace** la zone
+ *   d'édition par sa lecture seule, à la même hauteur. C'est le point : la
+ *   consultation ne pousse plus rien vers le bas et l'écran ne change pas de
+ *   taille selon le nombre de versions, là où la liste dépliée grandissait à
+ *   chaque publication. Les modifications en cours ne sont pas perdues pour
+ *   autant — elles vivent dans l'état de l'éditeur, pas dans le DOM affiché, et
+ *   reviennent telles quelles avec lui.
  *
  * ## La rédaction assistée (#261)
  *
@@ -36,9 +62,21 @@
  * C'est le troisième critère de #261, et c'est pour lui que l'assistance ne passe
  * pas par les propositions stockées de #111/#140 : les appliquer *publie* une
  * version (voir `maestro.controltower.auto_amelioration`).
+ *
+ * Les deux aides vivent **dans l'édition** et nulle part ailleurs : une entrée
+ * d'historique est en lecture seule (#260), il n'y a rien à y compléter ni à y
+ * réécrire — le sélecteur referme donc la liste de complétions en passant la
+ * main à l'aperçu.
  */
 
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import {
   IconeAssistant,
@@ -83,6 +121,44 @@ import {
   type VersionPlaybook,
 } from "@/lib/types";
 
+/* ------------------------------------------------------------------ *
+ * Ce que le sélecteur désigne
+ * ------------------------------------------------------------------ */
+
+/** L'éditeur lui-même : le texte en vigueur, modifiable. */
+const CLE_COURANTE = "courante";
+
+const cleVersion = (numero: number) => `v:${numero}`;
+const cleProposition = (numero: number) => `p:${numero}`;
+
+type Entree = { genre: "version" | "proposition"; numero: number };
+
+/**
+ * La clé d'une option relue. Les deux familles sont numérotées **séparément**
+ * (`v3` et `p3` coexistent, #111) : le préfixe n'est donc pas décoratif, c'est
+ * lui qui dit à quelle API la demander.
+ */
+function decoderCle(cle: string): Entree | null {
+  const separateur = cle.indexOf(":");
+  if (separateur < 0) return null;
+  const numero = Number(cle.slice(separateur + 1));
+  if (!Number.isFinite(numero)) return null;
+  const prefixe = cle.slice(0, separateur);
+  if (prefixe === "v") return { genre: "version", numero };
+  if (prefixe === "p") return { genre: "proposition", numero };
+  return null;
+}
+
+/** L'apparence du sélecteur d'historique — le socle, en compact. */
+const CLASSE_SELECTEUR =
+  `${CIBLE_MINIMALE} max-w-64 rounded-md border border-bord bg-surface px-2 py-1 ` +
+  "text-annexe text-texte shadow-sm focus:border-bord-fort " +
+  "focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent " +
+  "disabled:opacity-50 [&>option]:bg-surface [&>optgroup]:bg-surface";
+
+/** La zone de texte et son aperçu partagent la même hauteur : l'écran ne saute pas. */
+const HAUTEUR_ZONE = "h-96";
+
 export function EditeurPlaybook({
   agent,
   onPublication,
@@ -102,6 +178,17 @@ export function EditeurPlaybook({
   const [chargement, setChargement] = useState(true);
   const [enCours, setEnCours] = useState(false);
   const [erreur, setErreur] = useState<string | null>(null);
+
+  // Ce que le sélecteur montre : l'éditeur, ou une entrée de l'historique en
+  // lecture seule. Son contenu se charge à la demande (les deux listes REST ne
+  // portent que les métadonnées), d'où l'état de chargement propre à l'aperçu.
+  const [selection, setSelection] = useState(CLE_COURANTE);
+  const [apercu, setApercu] = useState<string | null>(null);
+  const [chargementApercu, setChargementApercu] = useState(false);
+  const [erreurApercu, setErreurApercu] = useState<string | null>(null);
+  // La dernière entrée demandée : deux choix rapprochés ne doivent pas laisser
+  // la réponse la plus lente s'afficher sous le libellé de l'autre.
+  const demande = useRef(CLE_COURANTE);
 
   // Rédaction assistée (#261). Le lexique est chargé une fois — c'est le
   // vocabulaire du dépôt, pas celui de l'agent, et il ne change qu'avec les
@@ -269,11 +356,53 @@ export function EditeurPlaybook({
     setErreurRedaction(null);
   };
 
+  /** Refermer l'aperçu : on revient au texte en vigueur, modifications comprises. */
+  const revenirALEdition = useCallback(() => {
+    demande.current = CLE_COURANTE;
+    setSelection(CLE_COURANTE);
+    setApercu(null);
+    setErreurApercu(null);
+    setChargementApercu(false);
+  }, []);
+
+  const choisir = async (cle: string) => {
+    demande.current = cle;
+    if (cle === CLE_COURANTE) {
+      revenirALEdition();
+      return;
+    }
+    const entree = decoderCle(cle);
+    if (entree === null) return;
+    // La zone d'édition cède la place à l'aperçu : une liste de complétions
+    // restée ouverte reviendrait avec elle, sans que personne ait retapé.
+    fermerCompletions();
+    setSelection(cle);
+    setApercu(null);
+    setErreurApercu(null);
+    setChargementApercu(true);
+    try {
+      const detail =
+        entree.genre === "version"
+          ? await chargerVersionPlaybook(agent, entree.numero)
+          : await chargerPropositionPlaybook(agent, entree.numero);
+      if (demande.current === cle) setApercu(detail.contenu);
+    } catch (e) {
+      if (demande.current === cle) {
+        setErreurApercu(e instanceof Error ? e.message : String(e));
+      }
+    } finally {
+      if (demande.current === cle) setChargementApercu(false);
+    }
+  };
+
   // Publication, restauration et application d'une proposition partagent la même
   // mécanique : l'action, puis rechargement (fiche + historique + propositions)
   // et resynchronisation de l'éditeur sur la nouvelle version courante.
   // `resynchroniser: false` pour le rejet, qui ne change pas la version courante :
   // l'éditeur garde alors les modifications en cours de l'utilisateur.
+  //
+  // Toutes referment l'aperçu — l'entrée consultée vient d'être appliquée,
+  // restaurée ou écartée : la laisser à l'écran montrerait un état révolu.
   const executer = async (
     action: () => Promise<void>,
     { resynchroniser = true }: { resynchroniser?: boolean } = {},
@@ -284,6 +413,7 @@ export function EditeurPlaybook({
       await action();
       const nouvelleFiche = await recharger();
       if (resynchroniser) setContenu(nouvelleFiche.contenu);
+      revenirALEdition();
       await onPublication?.();
     } catch (e) {
       setErreur(e instanceof Error ? e.message : String(e));
@@ -293,11 +423,11 @@ export function EditeurPlaybook({
   };
 
   if (chargement) {
-    return <p className="text-sm text-neutral-500">Chargement du playbook…</p>;
+    return <p className="text-corps text-texte-secondaire">Chargement du playbook…</p>;
   }
   if (fiche === null) {
     return (
-      <p className="text-sm text-rose-600 dark:text-rose-400" role="alert">
+      <p className="text-corps text-alerte-texte" role="alert">
         Playbook illisible : {erreur}
       </p>
     );
@@ -305,6 +435,29 @@ export function EditeurPlaybook({
 
   const modifie = contenu !== fiche.contenu;
   const jamaisEdite = fiche.source === PLAYBOOK_SOURCE_DEFAUT;
+  const prochaine = fiche.version + 1;
+
+  // Le plus récent d'abord, dans les deux familles.
+  const propositionsRecentes = [...propositions].reverse();
+  // La version courante n'entre pas dans l'historique consultable : son contenu
+  // *est* celui de l'éditeur, et l'offrir deux fois ferait chercher la
+  // différence entre les deux.
+  const versionsPassees = [...versions]
+    .reverse()
+    .filter((v) => v.version !== fiche.version);
+  const historiqueVide =
+    versionsPassees.length === 0 && propositionsRecentes.length === 0;
+
+  const entree = decoderCle(selection);
+  const versionConsultee =
+    entree?.genre === "version"
+      ? (versionsPassees.find((v) => v.version === entree.numero) ?? null)
+      : null;
+  const propositionConsultee =
+    entree?.genre === "proposition"
+      ? (propositionsRecentes.find((p) => p.version === entree.numero) ?? null)
+      : null;
+  const enConsultation = versionConsultee !== null || propositionConsultee !== null;
 
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-4">
@@ -316,153 +469,358 @@ export function EditeurPlaybook({
           titre={`Playbook${fiche.role ? ` · ${fiche.role}` : ""}`}
           className="mb-2"
           aside={
-            <span className="chiffre text-annexe text-neutral-500 dark:text-neutral-400">
-              {jamaisEdite
-                ? "version du code (jamais édité)"
-                : `version ${fiche.version}` +
-                  (fiche.cree_le ? ` · ${formatDateHeure(fiche.cree_le)}` : "")}
-            </span>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              {/* Critère 2 : la version en vigueur se lit sans rien ouvrir, et
+                  « playbook du code » en est une — la v0, pas un trou. */}
+              <span className="chiffre text-annexe text-texte-secondaire">
+                en vigueur : v{fiche.version}
+                {jamaisEdite
+                  ? " · playbook du code"
+                  : fiche.cree_le
+                    ? ` · ${formatDateHeure(fiche.cree_le)}`
+                    : ""}
+              </span>
+              {propositionsRecentes.length > 0 && (
+                <BadgeEtat ton="accent" className="chiffre">
+                  {propositionsRecentes.length} en attente
+                </BadgeEtat>
+              )}
+              {historiqueVide ? (
+                <span className="text-annexe text-texte-secondaire">
+                  Aucune version antérieure
+                </span>
+              ) : (
+                // Le libellé **entoure** le sélecteur plutôt que de le viser par
+                // `htmlFor` : deux fiches agent montées ensemble résoudraient le
+                // même identifiant (voir `CadreChamp` dans les primitives).
+                <label className="flex items-center gap-1.5 text-annexe text-texte-secondaire">
+                  <IconeHistorique className="size-4 shrink-0" />
+                  Historique
+                  <select
+                    value={selection}
+                    disabled={enCours}
+                    onChange={(e) => void choisir(e.target.value)}
+                    className={CLASSE_SELECTEUR}
+                  >
+                    <option value={CLE_COURANTE}>
+                      Version en vigueur · v{fiche.version}
+                    </option>
+                    {/* Les propositions d'abord : elles attendent une décision. */}
+                    {propositionsRecentes.length > 0 && (
+                      <optgroup label="Propositions en attente">
+                        {propositionsRecentes.map((proposition) => (
+                          <option
+                            key={cleProposition(proposition.version)}
+                            value={cleProposition(proposition.version)}
+                          >
+                            p{proposition.version} · {proposition.provenance} ·{" "}
+                            {formatDateHeure(proposition.cree_le)}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {versionsPassees.length > 0 && (
+                      <optgroup label="Versions publiées">
+                        {versionsPassees.map((version) => (
+                          <option
+                            key={cleVersion(version.version)}
+                            value={cleVersion(version.version)}
+                          >
+                            v{version.version} · {formatDateHeure(version.cree_le)}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                  </select>
+                </label>
+              )}
+            </div>
           }
         />
-        <textarea
-          ref={zone}
-          value={contenu}
-          onChange={(e) => saisir(e.target.value, e.target.selectionStart)}
-          onKeyDown={clavier}
-          onBlur={fermerCompletions}
-          disabled={enCours}
-          aria-label="Contenu du playbook"
-          spellCheck={false}
-          role="combobox"
-          aria-expanded={completions.length > 0}
-          aria-controls={idListe}
-          aria-autocomplete="list"
-          {...(completions.length > 0 && {
-            "aria-activedescendant": `${idListe}-${choisie}`,
-          })}
-          className="h-96 w-full resize-y rounded-md border border-neutral-200 bg-white p-3 font-mono text-xs leading-relaxed shadow-sm focus:border-neutral-400 focus:outline-none disabled:opacity-50 dark:border-neutral-800 dark:bg-neutral-900 dark:focus:border-neutral-600"
-        />
-        {completions.length > 0 && (
-          <ListeCompletions
-            id={idListe}
-            completions={completions}
-            choisie={choisie}
-            surChoix={accepterCompletion}
+
+        {enConsultation ? (
+          <ApercuHistorique
+            titre={
+              versionConsultee
+                ? `Version ${versionConsultee.version}`
+                : `Proposition ${propositionConsultee?.version}`
+            }
+            reference={
+              versionConsultee
+                ? `v${versionConsultee.version}`
+                : `p${propositionConsultee?.version}`
+            }
+            provenance={propositionConsultee?.provenance}
+            creeLe={(versionConsultee ?? propositionConsultee)?.cree_le ?? ""}
+            justification={propositionConsultee?.justification}
+            contenu={apercu}
+            chargement={chargementApercu}
+            erreur={erreurApercu}
+            editionModifiee={modifie}
+            enCours={enCours}
+            explication={
+              versionConsultee
+                ? `Restaurer republie ce texte comme version ${prochaine} : la version ${fiche.version} reste dans l’historique, rien n’est écrasé.`
+                : `Appliquer publie ce texte comme version ${prochaine}. Rejeter l’écarte sans toucher à la version en vigueur.`
+            }
+            actions={
+              versionConsultee ? (
+                <Bouton
+                  variante="contour"
+                  ton="attention"
+                  taille="petite"
+                  disabled={enCours}
+                  onClick={() =>
+                    void executer(() =>
+                      restaurerPlaybook(agent, versionConsultee.version),
+                    )
+                  }
+                >
+                  Restaurer la version {versionConsultee.version}
+                </Bouton>
+              ) : (
+                propositionConsultee && (
+                  <>
+                    <Bouton
+                      taille="petite"
+                      disabled={enCours}
+                      onClick={() =>
+                        void executer(() =>
+                          appliquerPropositionPlaybook(
+                            agent,
+                            propositionConsultee.version,
+                          ),
+                        )
+                      }
+                    >
+                      Appliquer
+                    </Bouton>
+                    <Bouton
+                      variante="contour"
+                      ton="alerte"
+                      taille="petite"
+                      disabled={enCours}
+                      onClick={() =>
+                        void executer(
+                          () =>
+                            rejeterPropositionPlaybook(
+                              agent,
+                              propositionConsultee.version,
+                            ),
+                          { resynchroniser: false },
+                        )
+                      }
+                    >
+                      Rejeter
+                    </Bouton>
+                  </>
+                )
+              )
+            }
+            revenir={revenirALEdition}
           />
+        ) : (
+          <>
+            <textarea
+              ref={zone}
+              value={contenu}
+              onChange={(e) => saisir(e.target.value, e.target.selectionStart)}
+              onKeyDown={clavier}
+              onBlur={fermerCompletions}
+              disabled={enCours}
+              aria-label="Contenu du playbook"
+              spellCheck={false}
+              role="combobox"
+              aria-expanded={completions.length > 0}
+              aria-autocomplete="list"
+              {...(completions.length > 0 && {
+                "aria-controls": idListe,
+                "aria-activedescendant": `${idListe}-${choisie}`,
+              })}
+              className={`${HAUTEUR_ZONE} w-full resize-y rounded-md border border-bord bg-surface p-3 font-mono text-annexe leading-relaxed text-texte shadow-sm focus:border-bord-fort focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent disabled:opacity-50`}
+            />
+            {completions.length > 0 && (
+              <ListeCompletions
+                id={idListe}
+                completions={completions}
+                choisie={choisie}
+                surChoix={accepterCompletion}
+              />
+            )}
+            <div className="mt-2 flex flex-wrap items-center gap-3">
+              {/* Critère 2 : le numéro que le clic va créer, dans tous les états
+                  — pendant l'envoi compris, où le libellé changeait de sujet. */}
+              <Bouton
+                disabled={!modifie || !contenu.trim()}
+                occupe={enCours}
+                onClick={() => void executer(() => ecrirePlaybook(agent, contenu))}
+              >
+                {enCours
+                  ? `Publication de la version ${prochaine}…`
+                  : `Publier la version ${prochaine}`}
+              </Bouton>
+              {modifie && !enCours && (
+                <Bouton
+                  variante="contour"
+                  ton="neutre"
+                  onClick={() => setContenu(fiche.contenu)}
+                >
+                  Annuler les modifications
+                </Bouton>
+              )}
+              <Bouton
+                variante="contour"
+                ton="neutre"
+                icone={IconeAssistant}
+                disabled={enCours}
+                aria-expanded={assistant}
+                onClick={() => (assistant ? fermerAssistant() : setAssistant(true))}
+              >
+                Assistant
+              </Bouton>
+            </div>
+            {assistant && (
+              <PanneauAssistant
+                consigne={consigne}
+                setConsigne={setConsigne}
+                brouillonVide={!contenu.trim()}
+                enCours={redactionEnCours}
+                redaction={redaction}
+                avant={contenu}
+                erreur={erreurRedaction}
+                demander={() => void demanderRedaction()}
+                appliquer={appliquerRedaction}
+                fermer={fermerAssistant}
+              />
+            )}
+            {/* Critère 1 : ce que publier fait, et à partir de quand. « À partir
+                de quand » vient du moteur — l'exécuteur relit la version
+                courante à chaque tâche (#78) —, pas d'une formule prudente. */}
+            <p className="mt-2 text-annexe text-texte-secondaire">
+              {modifie && (
+                <span className="font-medium text-texte">
+                  Modifications non publiées.{" "}
+                </span>
+              )}
+              Publier enregistre ce texte comme version {prochaine} : les tâches
+              lancées ensuite l’utiliseront, celles déjà en cours gardent la
+              version avec laquelle elles ont démarré. Rien n’est écrasé — chaque
+              version reste consultable et restaurable depuis l’historique.
+            </p>
+          </>
         )}
-        <div className="mt-2 flex flex-wrap items-center gap-3">
-          <Bouton
-            disabled={!modifie || !contenu.trim()}
-            occupe={enCours}
-            onClick={() => void executer(() => ecrirePlaybook(agent, contenu))}
-          >
-            {enCours
-              ? "Envoi…"
-              : `Publier la version ${fiche.version + 1}`}
-          </Bouton>
-          {modifie && !enCours && (
-            <Bouton
-              variante="contour"
-              ton="neutre"
-              onClick={() => setContenu(fiche.contenu)}
-            >
-              Annuler les modifications
-            </Bouton>
-          )}
-          <Bouton
-            variante="contour"
-            ton="neutre"
-            icone={IconeAssistant}
-            disabled={enCours}
-            aria-expanded={assistant}
-            onClick={() => (assistant ? fermerAssistant() : setAssistant(true))}
-          >
-            Assistant
-          </Bouton>
-          <span className="text-xs text-neutral-500 dark:text-neutral-400">
-            {modifie
-              ? "Modifications non publiées."
-              : "Une publication crée une nouvelle version ; les moteurs construits ensuite la chargent."}
-          </span>
-        </div>
-        {assistant && (
-          <PanneauAssistant
-            consigne={consigne}
-            setConsigne={setConsigne}
-            brouillonVide={!contenu.trim()}
-            enCours={redactionEnCours}
-            redaction={redaction}
-            avant={contenu}
-            erreur={erreurRedaction}
-            demander={() => void demanderRedaction()}
-            appliquer={appliquerRedaction}
-            fermer={fermerAssistant}
-          />
-        )}
+
+        {/* L'échec d'une action se dit **hors** des deux états : une restauration
+            refusée laisse l'aperçu ouvert, et son message serait alors invisible
+            s'il vivait dans la seule branche de l'éditeur. */}
         {erreur && (
-          <p className="mt-2 text-xs text-rose-600 dark:text-rose-400" role="alert">
+          <p className="mt-2 text-annexe text-alerte-texte" role="alert">
             {erreur}
           </p>
         )}
       </section>
+    </div>
+  );
+}
 
-      <section aria-label={`Historique du playbook de ${agent}`}>
-        <EnTeteSection
-          niveau={3}
-          icone={IconeHistorique}
-          className="mb-2"
-          titre={
-            <>
-              Historique
-              <BadgeEtat className="chiffre">{versions.length}</BadgeEtat>
-              {propositions.length > 0 && (
-                <BadgeEtat ton="accent" className="chiffre normal-case">
-                  {propositions.length} en attente
-                </BadgeEtat>
-              )}
-            </>
-          }
+/**
+ * Une entrée de l'historique en lecture seule, **à la place** de l'éditeur : le
+ * repère (`v2`, `p4`), sa date, ce qu'on peut en faire, et le texte à la même
+ * hauteur que la zone d'édition. Occuper la place plutôt que s'ajouter dessous
+ * est tout ce que le critère 3 demande — c'est la liste dépliée qui mangeait
+ * l'écran, pas la consultation elle-même.
+ */
+function ApercuHistorique({
+  titre,
+  reference,
+  provenance,
+  creeLe,
+  justification,
+  contenu,
+  chargement,
+  erreur,
+  editionModifiee,
+  enCours,
+  explication,
+  actions,
+  revenir,
+}: {
+  titre: string;
+  reference: string;
+  /** L'origine d'une proposition — absente sur une version publiée. */
+  provenance?: string;
+  creeLe: string;
+  justification?: string;
+  contenu: string | null;
+  chargement: boolean;
+  erreur: string | null;
+  /** L'éditeur porte des modifications non publiées : le dire rassure sur leur sort. */
+  editionModifiee: boolean;
+  enCours: boolean;
+  explication: string;
+  actions: ReactNode;
+  revenir: () => void;
+}) {
+  return (
+    <div className="rounded-md border border-bord bg-surface-creuse p-3 shadow-sm">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <span className="chiffre font-mono text-annexe font-medium text-texte">
+          {reference}
+        </span>
+        {provenance && <BadgeEtat ton="accent">{provenance}</BadgeEtat>}
+        {creeLe && (
+          <span className="text-annexe text-texte-secondaire">
+            {formatDateHeure(creeLe)}
+          </span>
+        )}
+        <div className="ml-auto flex flex-wrap gap-2">
+          {actions}
+          <Bouton
+            variante="contour"
+            ton="neutre"
+            taille="petite"
+            disabled={enCours}
+            onClick={revenir}
+          >
+            Revenir à l’édition
+          </Bouton>
+        </div>
+      </div>
+      {justification && (
+        <p className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap text-annexe text-texte">
+          {justification}
+        </p>
+      )}
+      {erreur ? (
+        <p className="mt-2 text-annexe text-alerte-texte" role="alert">
+          {erreur}
+        </p>
+      ) : chargement || contenu === null ? (
+        <p
+          className={`mt-2 ${HAUTEUR_ZONE} rounded-md border border-bord bg-surface p-3 text-annexe text-texte-secondaire`}
+        >
+          Chargement du texte…
+        </p>
+      ) : (
+        // La même zone que l'éditeur, en `readOnly` — et non un `<pre>` qui
+        // défile : une zone défilante doit être atteignable au clavier (WCAG 2.2
+        // §2.1.1), ce qu'un bloc de texte n'obtient qu'avec un `tabIndex` posé
+        // sur un élément non interactif. Un `textarea` l'est nativement, se
+        // copie, et donne à la lecture le cadre exact de l'écriture.
+        // `readOnly` et surtout pas `disabled` : un champ désactivé sort de la
+        // tabulation, donc son texte cesse d'être atteignable.
+        <textarea
+          value={contenu}
+          readOnly
+          aria-label={`Contenu de ${titre.toLowerCase()}`}
+          spellCheck={false}
+          className={`mt-2 ${HAUTEUR_ZONE} w-full resize-y rounded-md border border-bord bg-surface p-3 font-mono text-annexe leading-relaxed text-texte shadow-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent`}
         />
-        {versions.length === 0 && (
-          <p className="mb-1 text-sm text-neutral-500">
-            Aucune version publiée : l&apos;agent suit encore le playbook du code.
-          </p>
-        )}
-        {(propositions.length > 0 || versions.length > 0) && (
-          <ul className="flex flex-col gap-1">
-            {/* Les propositions d'abord : elles attendent une décision. */}
-            {[...propositions].reverse().map((proposition) => (
-              <LigneProposition
-                key={`p${proposition.version}`}
-                agent={agent}
-                proposition={proposition}
-                enCours={enCours}
-                appliquer={(numero) =>
-                  void executer(() => appliquerPropositionPlaybook(agent, numero))
-                }
-                rejeter={(numero) =>
-                  void executer(
-                    () => rejeterPropositionPlaybook(agent, numero),
-                    { resynchroniser: false },
-                  )
-                }
-              />
-            ))}
-            {[...versions].reverse().map((version) => (
-              <LigneVersion
-                key={version.version}
-                agent={agent}
-                version={version}
-                courante={version.version === fiche.version}
-                enCours={enCours}
-                restaurer={(numero) =>
-                  void executer(() => restaurerPlaybook(agent, numero))
-                }
-              />
-            ))}
-          </ul>
-        )}
-      </section>
+      )}
+      <p className="mt-2 text-annexe text-texte-secondaire">
+        Lecture seule. {explication}
+        {editionModifiee && " Vos modifications non publiées sont conservées."}
+      </p>
     </div>
   );
 }
@@ -609,7 +967,7 @@ function PanneauAssistant({
         </p>
       )}
       {erreur && (
-        <p className="mt-2 text-annexe text-rose-600 dark:text-rose-400" role="alert">
+        <p className="mt-2 text-annexe text-alerte-texte" role="alert">
           {erreur} — votre brouillon est intact, vous pouvez réessayer.
         </p>
       )}
@@ -691,7 +1049,7 @@ function Differentiel({
               <span aria-hidden className="mr-2 select-none opacity-60">
                 {entree.type === "ajout" ? "+" : entree.type === "retrait" ? "−" : " "}
               </span>
-              {entree.texte || " "}
+              {entree.texte || " "}
             </p>
           ),
         )}
@@ -709,176 +1067,5 @@ function Differentiel({
         </span>
       </div>
     </div>
-  );
-}
-
-/**
- * Une proposition en attente : visuellement distincte des versions (cadre violet,
- * étiquette de provenance, justification en clair), et tranchée au clic —
- * appliquer (elle devient la version courante) ou rejeter (elle disparaît).
- */
-function LigneProposition({
-  agent,
-  proposition,
-  enCours,
-  appliquer,
-  rejeter,
-}: {
-  agent: string;
-  proposition: PropositionPlaybook;
-  enCours: boolean;
-  appliquer: (numero: number) => void;
-  rejeter: (numero: number) => void;
-}) {
-  const [contenu, setContenu] = useState<string | null>(null);
-  const [ouverte, setOuverte] = useState(false);
-  const [erreur, setErreur] = useState<string | null>(null);
-
-  // Comme pour une version, le contenu candidat se charge à la première
-  // consultation (la liste des propositions ne porte que les métadonnées).
-  const basculer = async () => {
-    if (!ouverte && contenu === null) {
-      try {
-        setContenu(
-          (await chargerPropositionPlaybook(agent, proposition.version)).contenu,
-        );
-      } catch (e) {
-        setErreur(e instanceof Error ? e.message : String(e));
-        return;
-      }
-    }
-    setErreur(null);
-    setOuverte(!ouverte);
-  };
-
-  return (
-    <li className="rounded-md border border-violet-300 bg-violet-50 px-3 py-2 text-sm shadow-sm dark:border-violet-900 dark:bg-violet-950">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span className="font-mono text-xs font-medium">
-          p{proposition.version}
-        </span>
-        <span className="rounded-full bg-violet-200 px-2 text-xs text-violet-900 dark:bg-violet-900 dark:text-violet-200">
-          {proposition.provenance}
-        </span>
-        <span className="text-xs text-neutral-500 dark:text-neutral-400">
-          {formatDateHeure(proposition.cree_le)}
-        </span>
-        <div className="ml-auto flex gap-2">
-          <button
-            type="button"
-            onClick={() => void basculer()}
-            className="rounded-md border border-violet-300 px-2 py-1 text-xs text-violet-800 hover:bg-violet-100 dark:border-violet-800 dark:text-violet-300 dark:hover:bg-violet-900"
-          >
-            {ouverte ? "Masquer" : "Voir"}
-          </button>
-          <Bouton
-            taille="petite"
-            disabled={enCours}
-            onClick={() => appliquer(proposition.version)}
-          >
-            Appliquer
-          </Bouton>
-          <Bouton
-            variante="contour"
-            ton="alerte"
-            taille="petite"
-            disabled={enCours}
-            onClick={() => rejeter(proposition.version)}
-          >
-            Rejeter
-          </Bouton>
-        </div>
-      </div>
-      {proposition.justification && (
-        <p className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap text-xs text-violet-900 dark:text-violet-200">
-          {proposition.justification}
-        </p>
-      )}
-      {erreur && (
-        <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{erreur}</p>
-      )}
-      {ouverte && contenu !== null && (
-        <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap rounded-md bg-white p-2 font-mono text-xs text-neutral-700 dark:bg-neutral-950 dark:text-neutral-300">
-          {contenu}
-        </pre>
-      )}
-    </li>
-  );
-}
-
-function LigneVersion({
-  agent,
-  version,
-  courante,
-  enCours,
-  restaurer,
-}: {
-  agent: string;
-  version: VersionPlaybook;
-  /** La version courante ne se restaure pas : elle est déjà en vigueur. */
-  courante: boolean;
-  enCours: boolean;
-  restaurer: (version: number) => void;
-}) {
-  const [contenu, setContenu] = useState<string | null>(null);
-  const [ouverte, setOuverte] = useState(false);
-  const [erreur, setErreur] = useState<string | null>(null);
-
-  // Le contenu d'une version passée se charge à la première consultation
-  // (l'historique REST ne porte que les métadonnées).
-  const basculer = async () => {
-    if (!ouverte && contenu === null) {
-      try {
-        setContenu((await chargerVersionPlaybook(agent, version.version)).contenu);
-      } catch (e) {
-        setErreur(e instanceof Error ? e.message : String(e));
-        return;
-      }
-    }
-    setErreur(null);
-    setOuverte(!ouverte);
-  };
-
-  return (
-    <li className="rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span className="font-mono text-xs font-medium">v{version.version}</span>
-        {courante && (
-          <span className="rounded-full bg-emerald-100 px-2 text-xs text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-            courante
-          </span>
-        )}
-        <span className="text-xs text-neutral-500 dark:text-neutral-400">
-          {formatDateHeure(version.cree_le)}
-        </span>
-        <div className="ml-auto flex gap-2">
-          <button
-            type="button"
-            onClick={() => void basculer()}
-            className="rounded-md border border-neutral-300 px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800"
-          >
-            {ouverte ? "Masquer" : "Voir"}
-          </button>
-          {!courante && (
-            <button
-              type="button"
-              disabled={enCours}
-              onClick={() => restaurer(version.version)}
-              className="rounded-md border border-amber-300 px-2 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-50 dark:border-amber-800 dark:text-amber-400 dark:hover:bg-amber-950"
-            >
-              Restaurer
-            </button>
-          )}
-        </div>
-      </div>
-      {erreur && (
-        <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{erreur}</p>
-      )}
-      {ouverte && contenu !== null && (
-        <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap rounded-md bg-neutral-50 p-2 font-mono text-xs text-neutral-700 dark:bg-neutral-950 dark:text-neutral-300">
-          {contenu}
-        </pre>
-      )}
-    </li>
   );
 }
