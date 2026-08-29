@@ -732,6 +732,7 @@ export function ficheCatalogueFactice(
     competences: [],
     modele: null,
     fournisseur: null,
+    effort: null,
     source: AGENT_SOURCE_DEFAUT,
     cree_le: null,
     modifie_le: null,

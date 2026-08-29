@@ -750,6 +750,9 @@ export type PolitiquePermissions = {
  * des interrupteurs par agent. `permissions` (#110) porte la politique
  * allow/deny effective appliquée à l'exécution (null : aucune politique — tout
  * permis) ; `permissions_erreur` la cause si la politique stockée est invalide.
+ * `effort` (#253) est le niveau d'effort demandé au modèle (null : aucun
+ * réglage — le régime par défaut du fournisseur) ; ce que le fournisseur retenu
+ * admet se lit sur `GET /api/fournisseurs`, jamais dans une liste écrite ici.
  */
 export type AgentCatalogue = {
   nom: string;
@@ -757,6 +760,7 @@ export type AgentCatalogue = {
   competences: string[];
   modele: string | null;
   fournisseur: string | null;
+  effort: string | null;
   source: string;
   cree_le: string | null;
   modifie_le: string | null;
@@ -783,6 +787,45 @@ export type DefinitionAgent = {
   playbook: string;
   modele: string | null;
   fournisseur: string | null;
+  /**
+   * Le niveau d'effort demandé au modèle (#253). **Facultatif** dans le corps —
+   * l'API le met à null quand il est absent —, le temps que le formulaire le
+   * propose ; les valeurs recevables se lisent sur `GET /api/fournisseurs`.
+   */
+  effort?: string | null;
+};
+
+/**
+ * Un modèle annoncé par un fournisseur (`GET /api/fournisseurs`, #253).
+ *
+ * `nom` est l'identifiant à écrire dans `DefinitionAgent.modele` (la chaîne
+ * exacte qu'attend le fournisseur), `libelle` le nom lisible. `efforts` liste
+ * les niveaux d'effort admis **sur ce modèle** : une liste vide dit que ce
+ * modèle ne se règle pas en effort, pas qu'on l'ignore.
+ */
+export type ModeleFournisseur = {
+  nom: string;
+  libelle: string;
+  efforts: string[];
+};
+
+/**
+ * Un fournisseur de modèles disponible (`GET /api/fournisseurs`, #253).
+ *
+ * La source est le **registre des fournisseurs** du moteur : un fournisseur qui
+ * s'y inscrit apparaît ici, donc à l'écran, sans qu'aucune liste ne soit écrite
+ * côté front. `nom` est l'identifiant à écrire dans `DefinitionAgent.fournisseur`.
+ *
+ * `modeles` est la gamme annoncée et `modeles_libres` dit qu'un nom **hors**
+ * gamme reste recevable — les deux se lisent ensemble : gamme vide *et* libre
+ * (le cas d'`openai`, qui fédère des endpoints aux nommages hétéroclites) veut
+ * dire « saisis le nom que sert ton endpoint », là où gamme vide et fermée
+ * voudrait dire « rien à proposer ».
+ */
+export type Fournisseur = {
+  nom: string;
+  modeles: ModeleFournisseur[];
+  modeles_libres: boolean;
 };
 
 /**
