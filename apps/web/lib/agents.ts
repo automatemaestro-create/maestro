@@ -72,6 +72,38 @@ export function cheminOnglet(
 }
 
 /**
+ * L'écran de **création** d'un agent (#254) : une route à part entière, servie
+ * par `app/agents/nouveau/`, et non plus un formulaire déplié sous la liste.
+ *
+ * Il est écrit ici, à côté de `cheminOnglet`, pour la raison qui a fait naître
+ * ce module : la liste y mène, l'écran s'y trouve, et un test le confronte au
+ * dossier réel — trois endroits qui doivent dire le même chemin.
+ */
+export const CHEMIN_CREATION_AGENT = "/agents/nouveau";
+
+/**
+ * Le segment que cette route occupe **sous** `/agents`, dérivé du chemin plutôt
+ * que réécrit : les deux ne peuvent pas diverger.
+ */
+const SEGMENT_CREATION = CHEMIN_CREATION_AGENT.split("/").filter(Boolean)[1];
+
+/**
+ * Vrai si ce nom d'agent est celui que la route de création occupe déjà.
+ *
+ * ⚠ C'est la contrepartie assumée d'une route **statique** sous `/agents` : un
+ * segment fixe l'emporte sur le segment dynamique `[nom]`, donc un agent qui
+ * s'appellerait « nouveau » verrait `/agents/nouveau` rendre la création au lieu
+ * de sa fiche. Sa fiche resterait atteignable (`cheminOnglet` écrit toujours les
+ * trois segments, `/agents/nouveau/profil`), mais l'ambiguïté n'a aucune raison
+ * d'être créée : le nom est refusé à la saisie, avec sa cause. Rien n'est
+ * rétroactif — un agent déjà nommé ainsi (créé par l'API) n'est pas touché,
+ * seule son adresse courte est prise.
+ */
+export function estNomAgentReserve(nom: string): boolean {
+  return nom.trim().toLowerCase() === SEGMENT_CREATION;
+}
+
+/**
  * L'onglet que porte un chemin de fiche (`/agents/<nom>/<onglet>`) — ce qui
  * permet à la barre d'onglets de se marquer active sans que la page le lui
  * dise. Hors d'une fiche, ou sur `/agents/<nom>` nu, c'est le défaut.

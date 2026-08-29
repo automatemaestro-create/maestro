@@ -6,7 +6,8 @@
  * playbook — branché sur l'API du lot 1 (#72, `/api/catalogue`).
  *
  * Trois entrées, une par facette de la fiche agent (#190) : `CreationAgent`
- * (nouvel agent personnalisé, `POST`), `EditeurAgent` (onglet Profil — fiche
+ * (nouvel agent personnalisé, `POST` — sur **son propre écran** depuis #254,
+ * `components/CreationAgentEcran`), `EditeurAgent` (onglet Profil — fiche
  * existante, modification `PUT` et suppression `DELETE` d'un agent
  * personnalisé ; les agents par défaut, définis par le code, sont montrés en
  * lecture seule, leur playbook s'éditant sur l'onglet Playbook) et
@@ -21,11 +22,14 @@ import {
   IconeMcp,
   IconePermissions,
   IconePlaybooks,
-  IconePlus,
 } from "@/components/Icones";
 import { Infobulle } from "@/components/Infobulle";
 import { Bouton, EnTeteSection } from "@/components/Primitives";
-import { cheminOnglet } from "@/lib/agents";
+import {
+  CHEMIN_CREATION_AGENT,
+  cheminOnglet,
+  estNomAgentReserve,
+} from "@/lib/agents";
 import {
   chargerAgentCatalogue,
   creerAgent,
@@ -191,17 +195,38 @@ function FormulaireDefinition({
 /** Le formulaire « nouvel agent » : la définition complète, nom compris (`POST`). */
 export function CreationAgent({
   onCreation,
+  onBrouillon,
 }: {
   /** Prévenir la page qu'un agent est né : elle recharge et sélectionne sa fiche. */
   onCreation: (nom: string) => void | Promise<void>;
+  /**
+   * Prévenir le cadre qu'une saisie est **commencée et non enregistrée** (#254).
+   *
+   * C'est lui, et non le formulaire, qui porte les sorties — le retour à la
+   * liste, la touche Échap, la fermeture de l'onglet — donc lui qui doit savoir
+   * s'il y a quelque chose à perdre. Le formulaire garde son état ; il n'en
+   * publie que ce fait-là.
+   */
+  onBrouillon?: (brouillon: boolean) => void;
 }) {
   const [nom, setNom] = useState("");
   const [champs, setChamps] = useState<Champs>(CHAMPS_VIERGES);
   const [enCours, setEnCours] = useState(false);
   const [erreur, setErreur] = useState<string | null>(null);
 
-  const nomValide = SLUG_NOM.test(nom);
+  const format = SLUG_NOM.test(nom);
+  const reserve = estNomAgentReserve(nom);
+  const nomValide = format && !reserve;
   const pret = nomValide && champsComplets(champs);
+
+  // Un brouillon, c'est une saisie qui a commencé : le nom ou n'importe quel
+  // champ. Les espaces seuls n'en font pas un — il n'y aurait rien à perdre.
+  const brouillon =
+    nom.trim() !== "" ||
+    Object.values(champs).some((valeur) => valeur.trim() !== "");
+  useEffect(() => {
+    onBrouillon?.(brouillon);
+  }, [brouillon, onBrouillon]);
 
   const creer = async () => {
     setEnCours(true);
@@ -222,7 +247,8 @@ export function CreationAgent({
       aria-label="Nouvel agent"
       className="flex min-w-0 flex-1 flex-col gap-4"
     >
-      <EnTeteSection titre="Nouvel agent personnalisé" icone={IconePlus} />
+      {/* Pas d'en-tête ici depuis #254 : la création a son écran, et c'est lui
+          qui la titre — le redire ferait deux titres pour une seule page. */}
       <label className={CLASSE_LIBELLE + " sm:max-w-xs"}>
         Nom (identifiant unique : minuscules, chiffres, - ou _)
         <input
@@ -234,10 +260,17 @@ export function CreationAgent({
           className={CLASSE_CHAMP + " font-mono"}
         />
       </label>
-      {nom !== "" && !nomValide && (
+      {nom !== "" && !format && (
         <p className="-mt-2 text-xs text-amber-700 dark:text-amber-400">
           Nom hors format : commencer par une lettre ou un chiffre, en
           minuscules sans espace ni accent (ex. « dev-front »).
+        </p>
+      )}
+      {reserve && (
+        <p className="-mt-2 text-xs text-amber-700 dark:text-amber-400">
+          « {nom} » est l&apos;adresse de cette page ({CHEMIN_CREATION_AGENT}) :
+          un agent qui le porterait n&apos;y serait plus atteignable. Choisir un
+          autre nom.
         </p>
       )}
       <FormulaireDefinition
