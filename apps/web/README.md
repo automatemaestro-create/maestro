@@ -286,6 +286,25 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   **hors gamme** n'annonce rien, donc pas de sélecteur — pendant que l'exécution
   reste seule à trancher (`effort_admis`), un catalogue qui bouge ne devant pas
   invalider une définition écrite hier ;
+- **Génération assistée d'une définition** (#257, lot 5 de #243, écran
+  `/agents/nouveau`) : une **intention en une phrase** et un bouton « Générer »
+  proposent la définition complète — rôle, compétences, playbook, et
+  fournisseur/modèle suggérés (API `POST /api/catalogue/generation`). Trois
+  propriétés portent le lot. **Rien n'est enregistré** : la proposition remplit
+  les champs du formulaire ci-dessus, comme une saisie, et l'agent naît du
+  `POST /api/catalogue` ordinaire — c'est le principe des propositions de
+  playbook (#111/#140), une suggestion n'est pas une version. Elle est donc
+  **modifiable mot à mot**, **régénérable**, et **abandonnable** — abandonner rend
+  au formulaire ce qu'il portait avant la proposition, l'intention restant en
+  place. Le fournisseur et le modèle proposés sont **reconfrontés au registre**
+  côté backend avant de revenir : un nom que Maestro ne saurait pas résoudre est
+  écarté et le champ retombe sur « défaut de l'exécution », jamais rempli d'un
+  nom plausible. C'est la règle du tiret précédent — le registre est exhaustif —
+  tenue une seconde fois, là où c'est un **modèle** qui écrit : sans elle, la
+  chaîne de listes liées de #255 serait contournée par la seule entrée qui ne
+  passe pas par elle. Et un **échec** (quota, réseau, fournisseur muet, réponse
+  hors contrat) laisse le formulaire **intact** et le dit : l'écriture des champs
+  n'a lieu qu'après une réponse complète ;
 - **Chat par agent** (#85, lot 2 de #82) : l'onglet **Chat** d'une fiche agent
   ouvre le fil de conversation avec lui (#84, API `/api/chat`) — envoi,
   réponse de l'agent (cadrée par son playbook courant) et réception en temps

@@ -13,6 +13,11 @@
  * lecture seule, leur playbook s'éditant sur l'onglet Playbook) et
  * `McpEtPermissionsAgent` (onglet MCP & permissions). Un agent créé ou modifié
  * vaut pour les moteurs construits ensuite.
+ *
+ * Depuis #257 la création a **deux entrées** et non plus une : les champs qu'on
+ * remplit, et une intention en une phrase que l'assistant transforme en
+ * définition proposée (`AssistantDefinition`). La seconde n'ajoute aucun chemin
+ * d'écriture — elle remplit les champs de la première, qui reste seule à créer.
  */
 
 import Link from "next/link";
@@ -21,12 +26,13 @@ import { useCallback, useEffect, useId, useState } from "react";
 import { ChampJetons } from "@/components/ChampJetons";
 import {
   IconeAlerte,
+  IconeAssistant,
   IconeMcp,
   IconePermissions,
   IconePlaybooks,
 } from "@/components/Icones";
 import { Infobulle } from "@/components/Infobulle";
-import { Bouton, EnTeteSection } from "@/components/Primitives";
+import { Bouton, EnTeteSection, classesCarte } from "@/components/Primitives";
 import {
   CHEMIN_CREATION_AGENT,
   cheminOnglet,
@@ -38,6 +44,7 @@ import {
   chargerFournisseurs,
   creerAgent,
   definirActivationsMcp,
+  genererDefinitionAgent,
   modifierAgent,
   supprimerAgent,
 } from "@/lib/api";
@@ -54,6 +61,7 @@ import {
   type AgentCatalogueDetail,
   type CatalogueFournisseurs,
   type DefinitionAgent,
+  type DefinitionAgentProposee,
   type FournisseurCatalogue,
   type IntegrationPoolMcp,
   type ServeurMcp,
@@ -105,6 +113,28 @@ function champsDepuis(fiche: AgentCatalogueDetail): Champs {
     modele: fiche.modele ?? "",
     fournisseur: fiche.fournisseur ?? "",
     effort: fiche.effort ?? "",
+  };
+}
+
+/** Les champs tels que la génération assistée les propose (#257). */
+function champsDepuisProposition(proposition: DefinitionAgentProposee): Champs {
+  return {
+    role: proposition.role,
+    // La proposition rend déjà une liste, et le champ en est une depuis #256 :
+    // elle se pose telle quelle, comme celle d'une fiche existante. La joindre en
+    // chaîne virgulée n'aurait plus de lecteur — les jetons se corrigent un par un.
+    competences: proposition.competences,
+    playbook: proposition.playbook,
+    // `null` — le modèle n'a rien proposé que le registre reconnaisse — devient
+    // la chaîne vide, que les listes liées de #255 lisent déjà « défaut de
+    // l'exécution ». C'est la même absence, pas une seconde.
+    modele: proposition.modele ?? "",
+    fournisseur: proposition.fournisseur ?? "",
+    // L'effort n'est **pas** proposé (#257) : il ne se règle que sur les modèles
+    // qui l'admettent, et le sélecteur de #255 n'apparaît qu'alors, sur son
+    // défaut. Le faire suggérer par le modèle demanderait de lui passer la gamme
+    // d'efforts par modèle pour qu'il rende, au mieux, ce défaut-là.
+    effort: "",
   };
 }
 
@@ -777,6 +807,123 @@ function FormulaireDefinition({
   );
 }
 
+/**
+ * La génération assistée (#257) : une intention en une phrase, une définition
+ * proposée dans le formulaire ci-dessous.
+ *
+ * Trois choses que ce bloc ne fait pas, et qui sont le ticket :
+ *
+ * 1. **il n'enregistre rien** — la proposition remplit les champs, et rien
+ *    d'autre ne se passe tant que « Créer l'agent » n'a pas été cliqué. C'est le
+ *    principe des propositions de playbook (#111/#140) : une suggestion n'est pas
+ *    une version ;
+ * 2. **il ne se substitue pas au formulaire** — les champs restent ceux qu'on
+ *    remplit à la main, et la proposition y arrive comme une saisie ordinaire,
+ *    donc modifiable mot à mot ;
+ * 3. **il ne touche à rien quand il échoue** — quota, réseau, fournisseur muet :
+ *    le message est rendu ici, le formulaire garde exactement ce qu'il portait.
+ *
+ * Il est **en tête** et non en pied : c'est une porte d'entrée, pas une action
+ * de fin de saisie. Sa surface est `creuse` — un contenant en retrait du fond —
+ * pour qu'il se lise comme une aide posée devant le formulaire et non comme une
+ * seconde section de plein rang.
+ */
+function AssistantDefinition({
+  intention,
+  setIntention,
+  enCours,
+  propose,
+  erreur,
+  generer,
+  abandonner,
+  desactive,
+}: {
+  intention: string;
+  setIntention: (intention: string) => void;
+  /** Une génération est en vol : le champ et les deux boutons attendent. */
+  enCours: boolean;
+  /** Une proposition est en place dans le formulaire (régénérable, abandonnable). */
+  propose: boolean;
+  erreur: string | null;
+  generer: () => void;
+  abandonner: () => void;
+  /** La création est en cours : tout le formulaire est figé, celui-ci compris. */
+  desactive: boolean;
+}) {
+  const pret = intention.trim() !== "" && !enCours && !desactive;
+  return (
+    <div
+      className={classesCarte({
+        ton: "creuse",
+        className: "flex flex-col gap-2",
+      })}
+    >
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+        <label className={CLASSE_LIBELLE + " min-w-0 flex-1"}>
+          Décrire l&apos;agent en une phrase
+          <input
+            type="text"
+            value={intention}
+            onChange={(e) => setIntention(e.target.value)}
+            // Entrée génère : c'est le geste attendu dans un champ à une ligne
+            // suivi d'un seul bouton. `preventDefault` parce que le champ vit
+            // dans une page qui porte d'autres actions — valider ici ne doit rien
+            // déclencher d'autre.
+            onKeyDown={(e) => {
+              if (e.key !== "Enter") return;
+              e.preventDefault();
+              if (pret) generer();
+            }}
+            disabled={enCours || desactive}
+            placeholder="Un agent qui relit mes migrations SQL avant de les appliquer"
+            className={CLASSE_CHAMP}
+          />
+        </label>
+        <Bouton
+          icone={IconeAssistant}
+          disabled={!pret}
+          occupe={enCours}
+          onClick={generer}
+        >
+          {enCours ? "Génération…" : propose ? "Régénérer" : "Générer"}
+        </Bouton>
+      </div>
+      {propose ? (
+        <div
+          role="status"
+          className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-neutral-600 dark:text-neutral-400"
+        >
+          <span>
+            Proposition en brouillon : relisez et corrigez ci-dessous. Rien
+            n&apos;est enregistré tant que vous n&apos;avez pas créé
+            l&apos;agent.
+          </span>
+          <Bouton
+            variante="contour"
+            ton="neutre"
+            taille="petite"
+            disabled={enCours || desactive}
+            onClick={abandonner}
+          >
+            Abandonner la proposition
+          </Bouton>
+        </div>
+      ) : (
+        <p className={CLASSE_ANNEXE}>
+          L&apos;assistant remplit le formulaire ci-dessous — rôle, compétences,
+          playbook et réglages suggérés — sans rien enregistrer.
+        </p>
+      )}
+      {erreur && (
+        <p className="text-xs text-rose-600 dark:text-rose-400" role="alert">
+          {erreur} — le formulaire est intact, vous pouvez réessayer ou remplir
+          les champs à la main.
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** Le formulaire « nouvel agent » : la définition complète, nom compris (`POST`). */
 export function CreationAgent({
   onCreation,
@@ -798,24 +945,67 @@ export function CreationAgent({
   const [champs, setChamps] = useState<Champs>(CHAMPS_VIERGES);
   const [enCours, setEnCours] = useState(false);
   const [erreur, setErreur] = useState<string | null>(null);
+  const [intention, setIntention] = useState("");
+  const [generation, setGeneration] = useState(false);
+  const [erreurGeneration, setErreurGeneration] = useState<string | null>(null);
+  // Ce que le formulaire portait **avant** la première proposition — ce que
+  // « Abandonner » restitue. Posé une seule fois : régénérer remplace la
+  // proposition, il ne réécrit pas le point de retour, sans quoi abandonner après
+  // trois essais rendrait le troisième au lieu de la saisie d'origine.
+  const [avant, setAvant] = useState<{ nom: string; champs: Champs } | null>(
+    null,
+  );
 
   const format = SLUG_NOM.test(nom);
   const reserve = estNomAgentReserve(nom);
   const nomValide = format && !reserve;
   const pret = nomValide && champsComplets(champs);
 
-  // Un brouillon, c'est une saisie qui a commencé : le nom ou n'importe quel
-  // champ. Les espaces seuls n'en font pas un — il n'y aurait rien à perdre.
-  // Les compétences sont une liste depuis #256 : un jeton posé compte, et une
-  // liste vide ne compte pas — même règle que pour une chaîne d'espaces.
+  // Un brouillon, c'est une saisie qui a commencé : le nom, n'importe quel champ,
+  // ou l'intention (#257) — elle aussi est une saisie qu'on perdrait en quittant,
+  // et la seule qui puisse exister avant que les champs soient remplis. Les
+  // espaces seuls n'en font pas un — il n'y aurait rien à perdre. Les compétences
+  // sont une liste depuis #256 : un jeton posé compte, une liste vide non — même
+  // règle que pour une chaîne d'espaces.
   const brouillon =
     nom.trim() !== "" ||
+    intention.trim() !== "" ||
     Object.values(champs).some((valeur) =>
       Array.isArray(valeur) ? valeur.length > 0 : valeur.trim() !== "",
     );
   useEffect(() => {
     onBrouillon?.(brouillon);
   }, [brouillon, onBrouillon]);
+
+  /**
+   * Demande une proposition et la pose dans les champs (#257).
+   *
+   * L'écriture n'a lieu qu'**après** la réponse : un échec — quota, réseau,
+   * fournisseur muet ou hors contrat — ne fait que poser un message, et le
+   * formulaire garde ce qu'il portait, à la virgule près.
+   */
+  const generer = async () => {
+    setGeneration(true);
+    setErreurGeneration(null);
+    try {
+      const proposition = await genererDefinitionAgent(intention);
+      setAvant((precedent) => precedent ?? { nom, champs });
+      setNom(proposition.nom);
+      setChamps(champsDepuisProposition(proposition));
+    } catch (e) {
+      setErreurGeneration(e instanceof Error ? e.message : String(e));
+    } finally {
+      setGeneration(false);
+    }
+  };
+
+  /** Rend au formulaire ce qu'il portait avant la proposition — l'intention reste. */
+  const abandonner = () => {
+    setNom(avant?.nom ?? "");
+    setChamps(avant?.champs ?? CHAMPS_VIERGES);
+    setAvant(null);
+    setErreurGeneration(null);
+  };
 
   const creer = async () => {
     setEnCours(true);
@@ -838,13 +1028,26 @@ export function CreationAgent({
     >
       {/* Pas d'en-tête ici depuis #254 : la création a son écran, et c'est lui
           qui la titre — le redire ferait deux titres pour une seule page. */}
+      <AssistantDefinition
+        intention={intention}
+        setIntention={setIntention}
+        enCours={generation}
+        propose={avant !== null}
+        erreur={erreurGeneration}
+        generer={() => void generer()}
+        abandonner={abandonner}
+        desactive={enCours}
+      />
       <label className={CLASSE_LIBELLE + " sm:max-w-xs"}>
         Nom (identifiant unique : minuscules, chiffres, - ou _)
         <input
           type="text"
           value={nom}
           onChange={(e) => setNom(e.target.value)}
-          disabled={enCours}
+          // Figé aussi pendant une génération (#257) : la réponse va écrire dans
+          // ce champ, et une saisie faite entre-temps serait perdue sans que
+          // personne l'ait décidé.
+          disabled={enCours || generation}
           placeholder="dev-front"
           className={CLASSE_CHAMP + " font-mono"}
         />
@@ -865,10 +1068,14 @@ export function CreationAgent({
       <FormulaireDefinition
         champs={champs}
         setChamps={setChamps}
-        desactive={enCours}
+        desactive={enCours || generation}
       />
       <div className="flex flex-wrap items-center gap-3">
-        <Bouton disabled={!pret} occupe={enCours} onClick={() => void creer()}>
+        <Bouton
+          disabled={!pret || generation}
+          occupe={enCours}
+          onClick={() => void creer()}
+        >
           {enCours ? "Création…" : "Créer l'agent"}
         </Bouton>
         <span className="text-xs text-neutral-500 dark:text-neutral-400">

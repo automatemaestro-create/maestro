@@ -65,6 +65,10 @@ const catalogue = vi.hoisted(() => ({ fiches: [] as unknown[] }));
 // chacune était **verte seule**. Le rouge n'est né que de leur rencontre sur
 // `main` — d'où sa réparation ici plutôt qu'un signalement.
 //
+// `genererDefinitionAgent` (#257) est là pour la même raison, un lot plus tard :
+// jamais appelé ici — ces tests ne touchent pas au bouton « Générer » —, mais un
+// mock qui ne le porterait pas lèverait au premier test qui le fera.
+//
 // L'import est chargé **dans** la fabrique : `vi.mock` est hissé au-dessus des
 // imports du fichier, donc y nommer `fournisseursDuPoste` lèverait un « Cannot
 // access before initialization » (même contrainte que `tests/ecrans-reseau.ts`).
@@ -74,6 +78,9 @@ vi.mock("@/lib/api", async () => ({
   chargerFournisseurs: async () => {
     const { fournisseursDuPoste } = await import("./aides");
     return fournisseursDuPoste();
+  },
+  genererDefinitionAgent: async () => {
+    throw new Error("génération non scriptée dans ce fichier de tests");
   },
 }));
 
