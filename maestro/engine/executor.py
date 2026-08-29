@@ -165,6 +165,39 @@ SUFFIXE_ETAPE_ACTIVITE = ":activite"
 #: (`_applique_activite`) — jamais le statut d'une tâche.
 STATUT_ACTIVITE = "activite"
 
+#: Suffixe des étapes de **blocage déclaré par l'agent** (#719) :
+#: `<task.id>:blocage`, une par appel de `signaler_blocage`
+#: (`maestro.providers.blocage`) — le pont Control Tower les mue en événements
+#: `tache.blocage`.
+#:
+#: ⚠ À ne pas confondre avec le blocage **hérité** de #43
+#: (`maestro.engine.loop._consigne_blocage`), qui porte `STATUT_BLOQUEE` sur une
+#: tâche que rien n'a jamais exécutée parce qu'une dépendance a échoué. Les deux
+#: mots se ressemblent et disent le contraire l'un de l'autre : là-bas la tâche
+#: est morte avant de commencer, ici **l'agent travaille et parle**.
+#:
+#: C'est pourquoi c'est une étape annexe et jamais un statut de tâche : docs/31
+#: §3.4 **refuse** à un agent le droit de changer son propre statut, précisément
+#: parce qu'un « bloquée » posé par lui condamnerait tout son aval par la cascade
+#: de #43 alors qu'il peut encore aboutir. Il déclare ce qu'il **subit**, il ne
+#: décide pas de son sort.
+SUFFIXE_ETAPE_BLOCAGE = ":blocage"
+
+#: Statut des étapes de blocage déclaré (#719) — un mot à lui, et il ne pouvait
+#: pas être `bloquee`.
+#:
+#: `bloquee` est le statut de tâche de docs/03 §3, celui de la cascade de #43 :
+#: le porter ici ferait lire « cette tâche est morte » là où la vérité est « son
+#: agent bute et le dit, en travaillant encore ». La frise le rend tel quel
+#: (`maestro.controltower.frise`), et une ligne qui annoncerait un abandon au
+#: moment précis où quelqu'un demande de l'aide serait pire que le silence
+#: qu'elle remplace.
+#:
+#: Il ne déplace aucune carte : le pont range ces étapes sous `tache.blocage`,
+#: que la projection n'utilise que pour rafraîchir la dernière activité de
+#: l'agent — jamais le statut d'une tâche.
+STATUT_BLOCAGE_SIGNALE = "blocage_signale"
+
 #: Suffixe des étapes de fusion dans le projet (#705) : `<task.id>:fusion`, une
 #: par tâche soldée en succès sur un projet **versionné** — le pont Control Tower
 #: les mue en activités d'agent, comme `:relance` et `:refus-outil`.
@@ -1388,6 +1421,51 @@ class LocalExecutor(TaskExecutor):
             projet_id=task.projet_id,
         )
 
+    def _consigne_blocage_signale(
+        self,
+        task: Task,
+        agent: Agent,
+        raison: str,
+        journal: RunJournal,
+    ) -> None:
+        """Trace le blocage qu'un agent **déclare** (#719) — donc au fil temps réel.
+
+        Étape dédiée `<task.id>:blocage` (même modèle que `:activite` et
+        `:refus-outil`), que le pont (`maestro.controltower.bridge`) mue en
+        événement `tache.blocage`. `sortie` porte la raison telle que l'agent l'a
+        écrite : c'est **le seul signal qu'aucune règle de détection ne saura
+        produire**. Une règle sait dire « bloquée depuis 40 minutes » ; elle ne
+        saura jamais dire « le dépôt de recette refuse mes identifiants ».
+
+        Usage nul, et c'est un critère du ticket : déclarer ne dépense rien, donc
+        rien n'entre au grand livre — le pont écarte de lui-même la mesure de ces
+        étapes, comme il le fait déjà pour `:ticket` et `:detail`.
+
+        La tâche ne **change pas de colonne** au passage (cf.
+        `SUFFIXE_ETAPE_BLOCAGE`) : un agent qui bute n'est pas une tâche bloquée,
+        et c'est tout ce qui sépare ce verbe de celui que docs/31 §3.4 refuse.
+
+        `raison` vide n'est pas consignée — mais on ne devrait pas l'y voir : le
+        fournisseur l'a déjà écartée et l'a dit à l'agent
+        (`maestro.providers.blocage.RAISON_MANQUANTE`). Le contrôle est ici quand
+        même parce que ce chemin a **deux entrées** — l'outil MCP, et un appelant
+        direct — et qu'une ligne de frise vide se lirait comme une panne
+        d'affichage (règle de `_consigne_activite`).
+        """
+        if not raison.strip():
+            return
+        journal.consigne(
+            etape=f"{task.id}{SUFFIXE_ETAPE_BLOCAGE}",
+            nom=f"Blocage signalé — {task.titre}",
+            agent=agent.nom,
+            role=agent.role,
+            statut=STATUT_BLOCAGE_SIGNALE,
+            entree="",
+            sortie=raison,
+            usage=StepUsage(),
+            projet_id=task.projet_id,
+        )
+
     def _consigne_etapes(
         self,
         task: Task,
@@ -1560,6 +1638,19 @@ class LocalExecutor(TaskExecutor):
                     ),
                     on_arbitrage=(
                         None if journal is None else self._arbitre(task, agent, journal)
+                    ),
+                    # Sans journal, pas de canal (#719) : ce verbe ne fait
+                    # **que** consigner — à la différence de l'arbitrage
+                    # au-dessus, dont la décision garde l'acte même sans trace.
+                    # L'exposer sans journal servirait à l'agent un outil qui
+                    # n'aboutit nulle part, ce que `_outils_maestro` évite en ne
+                    # le montant pas du tout.
+                    on_blocage=(
+                        None
+                        if journal is None
+                        else lambda raison: self._consigne_blocage_signale(
+                            task, agent, raison, journal
+                        )
                     ),
                     # Le crédit descend, la mémoire non (#584) : le fournisseur
                     # mesure une attente, il n'a pas à connaître les demandes.

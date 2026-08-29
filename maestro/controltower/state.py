@@ -40,6 +40,7 @@ from maestro.controltower.events import (
     EVENEMENT_EXECUTION_STATUT,
     EVENEMENT_MESSAGE_INTER_AGENTS,
     EVENEMENT_RUN_PLAN,
+    EVENEMENT_TACHE_BLOCAGE,
     EVENEMENT_TACHE_DETAIL,
     EVENEMENT_TACHE_REASSIGNATION,
     EVENEMENT_TACHE_REFERENCE,
@@ -971,7 +972,15 @@ class ControlTowerState:
             self._applique_reference(event)
         elif event.type == EVENEMENT_TACHE_DETAIL:
             self._applique_detail(event)
-        elif event.type in {EVENEMENT_AGENT_ACTIVITE, EVENEMENT_MESSAGE_INTER_AGENTS}:
+        elif event.type in {
+            EVENEMENT_AGENT_ACTIVITE,
+            EVENEMENT_MESSAGE_INTER_AGENTS,
+            # Un blocage déclaré (#719) rafraîchit la **dernière activité** de
+            # son agent et rien d'autre : il vient de parler, donc il est vivant
+            # — et sa tâche ne bouge pas d'une colonne, ce qui est tout l'objet
+            # de son type distinct (docs/31 §3.4).
+            EVENEMENT_TACHE_BLOCAGE,
+        }:
             self._applique_activite(event)
         elif event.type == EVENEMENT_AGENT_CAPACITE:
             self._applique_capacite(event)

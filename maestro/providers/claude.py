@@ -56,6 +56,7 @@ from maestro.config import ConfigError, Settings
 from maestro.decideur import Decideur
 from maestro.deliberation import CreditArbitrage
 from maestro.detail_tache import EtapeTache
+from maestro.providers import blocage
 from maestro.providers.activite import Geste, RegulateurActivite
 from maestro.providers.arbitrage import (
     CANAL_EN_ERREUR,
@@ -299,6 +300,7 @@ class ClaudeProvider(ModelProvider):
         on_activite: Callable[[str], None] | None = None,
         on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,
         on_arbitrage: Arbitre | None = None,
+        on_blocage: blocage.Signaleur | None = None,
         credit_arbitrage: CreditArbitrage | None = None,
         plafond_tours: int | None = PLAFOND_TOURS_DEFAUT,
         projet: Projet | None = None,
@@ -413,13 +415,22 @@ class ClaudeProvider(ModelProvider):
         reparte vers l'agent, et le seul dont une panne se traduit en **refus
         servi** plutôt qu'en silence.
 
+        `on_blocage` (#719) fait porter au **même** serveur l'outil
+        `signaler_blocage(raison)` (`maestro.providers.blocage`) : l'agent qui
+        bute le dit, tout de suite, avec sa raison. C'est le **contraire** du
+        précédent sur le seul point qui compte — il n'attend rien et ne suspend
+        jamais l'agent —, et c'est ce qui le laisse gratuit : aucune attente à
+        mesurer, donc aucun `credit_arbitrage` à lui passer. Il ne touche pas non
+        plus au statut de la tâche (docs/31 §3.4 : ce serait fausser la cascade
+        de #43) ; il consigne, et l'agent poursuit.
+
         Ce serveur porte **N outils** depuis #718, et non plus un seul : ce qui
         décide de son contenu est `_outils_maestro`, ce qui décide de son montage
         est `_serveurs_mcp`. Le partage n'est pas cosmétique — c'est lui qui rend
         deux verbes ajoutés séparément (#719, #720) réellement indépendants, au
         lieu de les faire se croiser ici. Un serveur **sans aucun outil** n'est
         pas monté du tout, `demander_arbitrage` seul est monté exactement comme
-        avant.
+        avant, et un seul des deux canaux armé ne monte que **son** verbe.
 
         Trois choix à ne pas défaire dans ce montage. Le serveur n'est **pas
         ajouté à `attendus`** (`_attendus_mcp` ne connaît que les serveurs
@@ -457,7 +468,11 @@ class ClaudeProvider(ModelProvider):
         stderr = CollecteurStderr()
         serveurs = _serveurs_mcp(
             mcp_serveurs,
-            _outils_maestro(on_arbitrage=on_arbitrage, credit=credit_arbitrage),
+            _outils_maestro(
+                on_arbitrage=on_arbitrage,
+                on_blocage=on_blocage,
+                credit=credit_arbitrage,
+            ),
         )
         options = ClaudeAgentOptions(
             model=model,
@@ -577,6 +592,50 @@ def _outil_arbitrage(
     return demander_arbitrage
 
 
+def _outil_blocage(on_blocage: blocage.Signaleur) -> SdkMcpTool[Any]:
+    """L'outil `signaler_blocage(raison)` servi à l'agent (#719).
+
+    Le jumeau de `_outil_arbitrage` à une chose près, et c'est **toute** la
+    différence : il n'y a **aucun `await`**. L'appel consigne et rend la main
+    dans le même tour ; l'agent n'est jamais suspendu, personne n'est sollicité,
+    rien ne lui répondra. Le vocabulaire est importé **qualifié**
+    (`blocage.NOM_OUTIL`…) parce que les deux verbes nomment leurs constantes
+    pareil — deux `RAISON_MANQUANTE` dans le même fichier finiraient par se
+    servir l'une pour l'autre, et l'agent lirait le message de l'autre canal.
+
+    Deux issues, et aucune n'est rendue en **erreur d'outil** — même raison
+    qu'en #582 : une erreur invite à réessayer, or il n'y a rien à réessayer ici.
+
+    - **raison vide** : rien n'est consigné et on le lui dit. Consigner « bloqué,
+      sans plus » remplirait la frise du seul fait qu'elle montrait déjà (le
+      troisième critère de #355), en lui ôtant le seul que ce verbe apporte ;
+    - **canal en erreur** : le callback a levé. On le lui dit aussi, et surtout
+      on ne laisse pas l'exception remonter — elle tuerait la tâche à l'instant
+      précis où l'agent signale qu'il a un problème, ce qui est la pire des
+      façons de lui apprendre à parler.
+
+    Rendu **séparément de son serveur** comme son jumeau : ce qui décide tient en
+    quelques lignes, et les éprouver ne doit coûter ni CLI, ni sous-processus, ni
+    quota (tests → #721).
+    """
+
+    @tool(blocage.NOM_OUTIL, blocage.DESCRIPTION_OUTIL, blocage.SCHEMA_ENTREE)
+    async def signaler_blocage(args: dict[str, Any]) -> dict[str, Any]:
+        raison = str(args.get("raison") or "").strip()
+        if not raison:
+            texte = blocage.RAISON_MANQUANTE
+        else:
+            try:
+                on_blocage(raison)
+            except Exception as exc:  # noqa: BLE001 — dit à l'agent, jamais une tâche tuée
+                texte = blocage.CANAL_EN_ERREUR.format(cause=exc)
+            else:
+                texte = blocage.BLOCAGE_CONSIGNE
+        return {"content": [{"type": "text", "text": texte}]}
+
+    return signaler_blocage
+
+
 @contextmanager
 def _fenetre_arbitrage(credit: CreditArbitrage | None) -> Iterator[None]:
     """Ouvre la fenêtre d'attente du crédit quand il y en a un (#584), sinon ne fait rien.
@@ -596,6 +655,7 @@ def _fenetre_arbitrage(credit: CreditArbitrage | None) -> Iterator[None]:
 def _outils_maestro(
     *,
     on_arbitrage: Arbitre | None = None,
+    on_blocage: blocage.Signaleur | None = None,
     credit: CreditArbitrage | None = None,
 ) -> list[SdkMcpTool[Any]]:
     """Les outils que le serveur `maestro` a **effectivement** à porter (#718).
@@ -614,6 +674,8 @@ def _outils_maestro(
     outils: list[SdkMcpTool[Any]] = []
     if on_arbitrage is not None:
         outils.append(_outil_arbitrage(on_arbitrage, credit))
+    if on_blocage is not None:
+        outils.append(_outil_blocage(on_blocage))
     return outils
 
 
