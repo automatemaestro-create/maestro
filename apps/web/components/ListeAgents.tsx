@@ -10,18 +10,25 @@
  * `/playbooks` arrive ici avec `?onglet=playbook`, et les cartes visent alors
  * directement cet onglet — un signet sur l'ancienne page continue donc de
  * mener au bon endroit, sans détour par le profil.
+ *
+ * Depuis #254 la **création** n'est plus ici : elle a son écran
+ * (`CHEMIN_CREATION_AGENT`), et cette page n'en garde que la porte — en tête,
+ * avant les cartes.
  */
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import { BanniereErreurApi } from "@/components/BanniereErreurApi";
-import { CreationAgent } from "@/components/EditeurAgent";
 import { IconeAgent, IconeAgents, IconePlus } from "@/components/Icones";
-import { classesCarte, EnTeteSection } from "@/components/Primitives";
+import {
+  BoutonLien,
+  classesCarte,
+  EnTeteSection,
+} from "@/components/Primitives";
 import { chargerCatalogue } from "@/lib/api";
 import {
+  CHEMIN_CREATION_AGENT,
   type CleOngletAgent,
   cheminOnglet,
   ONGLET_AGENT_DEFAUT,
@@ -34,9 +41,7 @@ export function ListeAgents({
 }: {
   ongletCible?: CleOngletAgent;
 }) {
-  const router = useRouter();
   const [fiches, setFiches] = useState<AgentCatalogue[]>([]);
-  const [creation, setCreation] = useState(false);
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState<string | null>(null);
 
@@ -78,40 +83,33 @@ export function ListeAgents({
         }
       />
 
+      {/* Le geste d'abord, le catalogue ensuite (#254). Il était **sous** les
+          cartes : plus il y avait d'agents, plus il fallait descendre pour en
+          créer un. Il est aussi **hors** du chargement — créer un agent ne
+          dépend pas de la lecture du catalogue, et un bouton qui apparaît après
+          coup déplace ce qu'on s'apprêtait à cliquer. */}
+      <div>
+        <BoutonLien href={CHEMIN_CREATION_AGENT} icone={IconePlus}>
+          Nouvel agent
+        </BoutonLien>
+      </div>
+
       {chargement ? (
         <p className="text-corps text-neutral-500">Chargement du catalogue…</p>
       ) : (
-        <>
-          <ul className="grid gap-3 @md:grid-cols-2 @3xl:grid-cols-3">
-            {fiches.map((fiche) => (
-              <li key={fiche.nom}>
-                <CarteAgent fiche={fiche} onglet={ongletCible} />
-              </li>
-            ))}
-            {fiches.length === 0 && (
-              <li className="text-corps text-neutral-500">
-                Aucun agent au catalogue — en créer un ci-dessous.
-              </li>
-            )}
-          </ul>
-
-          {creation ? (
-            <CreationAgent
-              onCreation={(nom) => router.push(cheminOnglet(nom))}
-            />
-          ) : (
-            <div>
-              <button
-                type="button"
-                onClick={() => setCreation(true)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-neutral-300 px-3 py-2 text-corps font-medium text-neutral-600 shadow-sm hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-900"
-              >
-                <IconePlus className="size-4 shrink-0" />
-                Nouvel agent
-              </button>
-            </div>
+        <ul className="grid gap-3 @md:grid-cols-2 @3xl:grid-cols-3">
+          {fiches.map((fiche) => (
+            <li key={fiche.nom}>
+              <CarteAgent fiche={fiche} onglet={ongletCible} />
+            </li>
+          ))}
+          {fiches.length === 0 && (
+            <li className="text-corps text-neutral-500">
+              Aucun agent au catalogue — « Nouvel agent », en tête de page, en
+              crée un.
+            </li>
           )}
-        </>
+        </ul>
       )}
     </>
   );

@@ -527,8 +527,15 @@ L'entrée de menu **Agents** (`/agents`) mène à la **liste** ; chaque carte ou
 il n'y a plus de sélecteur d'agent en tête de trois pages différentes.
 
 - **Liste** : les agents du catalogue (ceux du code, en lecture seule, et les
-  personnalisés), avec **créer un agent**. Arrivée avec `?onglet=<onglet>` (par
+  personnalisés), avec la porte de **création en tête** — avant les cartes, et
+  sans attendre la lecture du catalogue. Arrivée avec `?onglet=<onglet>` (par
   une redirection de la v1), les cartes visent directement cet onglet.
+- **Création** (`/agents/nouveau`, #254) : un **écran** et non un dépliant sous
+  la liste — le cadre reste en place (barre latérale, barre supérieure, titre
+  « Agents »), seule la zone de contenu change. On en sort par « Tous les
+  agents » ou par **Échap** ; un brouillon commencé se signale avant d'être
+  perdu, sur ces deux sorties comme sur la fermeture de l'onglet. Une création
+  réussie mène à la fiche de l'agent né, pas à la liste.
 - **Fiche agent**, quatre onglets — l'ordre va de l'identité de l'agent à la
   conversation avec lui :
 
