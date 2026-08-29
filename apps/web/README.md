@@ -240,11 +240,15 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   moitié recréerait la double source que ce dispositif existe pour éviter.
   Trois choses à ne pas défaire. La sonde est **gratuite et
   sans effet de bord** — elle n'exécute aucun binaire, ne joint que la boucle
-  locale, n'écrit rien, et un poste nu rend une liste vide sans erreur. Les deux
-  champs restent en **saisie libre** (`<input list=…>` et non `<select>`) : la
-  sonde **suggère, elle ne restreint pas**, `OpenAICompatProvider.supports`
-  acceptant tout nom non vide — un `<select>` rendrait insaisissable ce que le
-  catalogue ignore. Et un outil trouvé ici que Maestro ne sait pas piloter est
+  locale, n'écrit rien, et un poste nu rend une liste vide sans erreur. Le champ
+  **modèle** reste en **saisie libre** (`<input list=…>` et non `<select>`)
+  **tant que le fournisseur l'admet** (`modeles_libres`) : la sonde **suggère,
+  elle ne restreint pas**, `OpenAICompatProvider.supports` acceptant tout nom non
+  vide — un `<select>` rendrait insaisissable ce que le catalogue ignore. ⚠ Cette
+  liberté-là n'a **jamais valu pour le fournisseur**, et #255 l'a tranché : le
+  registre est **exhaustif**, un nom qui n'y figure pas ne s'exécute pas, si bien
+  que la saisie libre n'y offrait que la faute de frappe (voir le paragraphe
+  suivant). Et un outil trouvé ici que Maestro ne sait pas piloter est
   **montré sans être proposé**
   ([docs/34](../../docs/34-decision-agent-cli-tiers-acp.md)) : le taire ferait
   croire qu'il n'est pas là, le proposer serait le seul vrai mensonge de cet
@@ -253,6 +257,35 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   la version d'un binaire, et le fait que le `PATH` du process qui sert l'API
   n'est pas celui de votre terminal, si bien qu'une **absence n'est pas un
   constat** ;
+- **Le formulaire d'agent en listes liées** (#255, lot 3 de #243) : quatre champs
+  qui étaient quatre chaînes indépendantes deviennent une **chaîne de
+  dépendances**, pour qu'on ne puisse plus composer une configuration qui
+  n'existe pas. Le **rôle** se choisit dans une liste *alimentée* par les rôles
+  des agents du catalogue (`/api/catalogue`, seule source — les rôles ne sont
+  déclarés nulle part ailleurs), la **saisie libre restant possible** pour un
+  rôle inédit : c'est une `<datalist>`, jamais un menu fermé. Le **fournisseur**
+  vient **avant** le modèle et devient un `<select>` alimenté par le registre,
+  augmenté de l'option explicite « **défaut de l'exécution** » — un agent sans
+  fournisseur ni modèle propre suit `MAESTRO_PROVIDER`/`MAESTRO_MODEL`, et c'est
+  un **défaut légitime** qu'il fallait offrir plutôt que laisser deviner. Le
+  **modèle** n'offre alors que **les siens** — la gamme annoncée du fournisseur
+  choisi, plus ce que la sonde a vu **pour lui** —, et sa forme suit le contrat :
+  `<select>` fermé si `modeles_libres` est faux, champ libre sinon. L'**effort**
+  n'apparaît que si le modèle en **admet**, sur sa valeur par défaut (« défaut du
+  fournisseur », c'est-à-dire `effort: null`), et disparaît sinon. Quatre choses à
+  ne pas défaire. Changer de fournisseur **invalide visiblement** un modèle
+  devenu impossible — vidé *et* annoncé dans une région `role="status"` : le
+  laisser en place était le défaut à corriger, le vider en silence en serait un
+  autre. Une valeur stockée que le registre ne connaît plus reste
+  **représentable** (option « inconnu du registre ») : sans elle, ouvrir une
+  fiche réécrirait sa définition au premier enregistrement — une perte de données
+  déguisée en menu. Rien n'est jugé **tant que le catalogue n'est pas arrivé**
+  (ni modèle vidé, ni effort retiré), faute de quoi le premier rendu d'une fiche
+  effacerait ses réglages avant toute question. Et le front **ne valide pas
+  l'effort à l'écriture** : il reprend `ModelProvider.efforts_admis` — un modèle
+  **hors gamme** n'annonce rien, donc pas de sélecteur — pendant que l'exécution
+  reste seule à trancher (`effort_admis`), un catalogue qui bouge ne devant pas
+  invalider une définition écrite hier ;
 - **Chat par agent** (#85, lot 2 de #82) : l'onglet **Chat** d'une fiche agent
   ouvre le fil de conversation avec lui (#84, API `/api/chat`) — envoi,
   réponse de l'agent (cadrée par son playbook courant) et réception en temps
@@ -1085,15 +1118,20 @@ suites de runs, le troisième en montant les écrans du menu (#537) :
   valeur neutre — c'est ce que rend un backend antérieur au lot qui les a ajoutés,
   donc le cas qu'un écran doit savoir traiter ;
 - **la liste des lectures non mockées est plus longue qu'on ne croit** :
-  `chargerCatalogue` (Agents, Paramètres › Fournisseurs), `chargerSante`
-  (Paramètres › Général), `chargerPoolMcp`/`chargerRegistreMcp` (Paramètres ›
+  `chargerSante` (Paramètres › Général),
+  `chargerPoolMcp`/`chargerRegistreMcp` (Paramètres ›
   MCP), `chargerExplorateur`/`chargerDisponibiliteSelecteur` (Composer) et
   `chargerExecution` (Valider le brief). Un test qui rend un **écran entier**
   plutôt qu'un composant les rencontre toutes. Et `useAnalyticsCouts` (page
   Coûts) se mocke **au hook** et non à l'API, parce qu'il ouvre sa propre
   WebSocket et se reconnecte en backoff : la couper à la source laisserait la
   promesse « aucun test n'a besoin de backend » tenue par un `fetch` qui échoue
-  et des minuteurs qui survivent au test.
+  et des minuteurs qui survivent au test. `chargerCatalogue` a **quitté cette
+  liste** avec #255 : le formulaire d'agent y lit désormais les rôles connus,
+  donc *tout* test le montant partait sur un vrai `fetch`. Son défaut dans
+  `setup.ts` est un catalogue **vide** — comme `poserProjets`/`poserJournal`, et
+  contrairement à `CATALOGUE_POSTE_NU` : un poste nu garde une gamme (le registre
+  ne dépend pas de la machine), là où zéro agent est un état ordinaire.
 
 Quelques tests méritent d'être connus parce qu'ils gardent des invariants
 qu'aucun outil n'attrape — ni le lint, ni le build, ni un rendu :
@@ -1145,4 +1183,15 @@ qu'aucun outil n'attrape — ni le lint, ni le build, ni un rendu :
   cite des émojis dans ses commentaires (« l'ancien 📁 »), et c'est ce que
   l'utilisateur voit qui est en cause. C'est ce garde-fou qui a rattrapé le
   panneau de détail (#251), écrit avant que le socle ne soit posé et qui signait
-  encore ses lignes d'un 🤖 et d'un glyphe par nature de lien.
+  encore ses lignes d'un 🤖 et d'un glyphe par nature de lien ;
+- ceux qui jouent la **transition** des listes liées du formulaire d'agent
+  (`agent-listes-liees.test.tsx`, #255). L'invalidation d'un modèle devenu
+  impossible ne s'observe **pas sur un rendu figé** : il faut choisir un
+  fournisseur, saisir un modèle, puis en changer — c'est le seul moyen de
+  distinguer « vidé » de « jamais rempli », et « annoncé » de « vidé en
+  silence ». Le double de catalogue y porte à dessein **deux gammes
+  dissemblables** : un modèle sans effort à côté d'un modèle qui s'y règle (sans
+  quoi « le sélecteur suit le modèle » serait indiscernable de « il suit le
+  fournisseur »), et une gamme **fermée** (`modeles_libres: false`) qu'aucun
+  fournisseur du registre n'a aujourd'hui — la seule façon d'empêcher cette
+  branche de mourir sans qu'on s'en aperçoive le jour où l'un le deviendra.
