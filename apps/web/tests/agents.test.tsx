@@ -40,7 +40,13 @@ import {
 import { entreeCourante, MENU } from "@/lib/navigation";
 import { REDIRECTIONS_NAVIGATION_V1 } from "@/next.config";
 
-import { ficheCatalogueFactice, navigations, poserChemin } from "./aides";
+import {
+  agentFactice,
+  ficheCatalogueFactice,
+  navigations,
+  poserChemin,
+  rendreAvecEtat,
+} from "./aides";
 
 // La liste des agents charge le catalogue par le REST : le réseau reste
 // débranché (`setup.ts`), c'est la fixture qui décide de ce qu'elle affiche.
@@ -71,13 +77,24 @@ vi.mock("@/lib/api", async () => ({
   },
 }));
 
-/** Monte la liste et attend la fin de son chargement différé d'un tick. */
+/**
+ * Monte la liste et attend la fin de son chargement différé d'un tick.
+ *
+ * Sous `FournisseurEtatGlobal` depuis #258 : la liste lit désormais **deux**
+ * sources — le catalogue par le REST (ce qu'un agent est) et le parc par le
+ * contexte du shell (ce qu'il fait). Le parc est passé ici pour que les cartes
+ * portent un état ; sans lui elles rendraient « État inconnu », ce qui est le
+ * comportement voulu mais pas celui que la plupart de ces cas observent.
+ */
 async function rendreListe(
   fiches: ReturnType<typeof ficheCatalogueFactice>[],
   props: Parameters<typeof ListeAgents>[0] = {},
+  parc: ReturnType<typeof agentFactice>[] = fiches.map((fiche) =>
+    agentFactice({ nom: fiche.nom, role: fiche.role }),
+  ),
 ) {
   catalogue.fiches = fiches;
-  render(<ListeAgents {...props} />);
+  rendreAvecEtat(<ListeAgents {...props} />, { agents: parc });
   await waitFor(() =>
     expect(screen.queryByText("Chargement du catalogue…")).toBeNull(),
   );
@@ -273,7 +290,7 @@ describe("la liste des agents (ListeAgents)", () => {
     // Elle n'en dépend pas, et un bouton qui apparaît après coup déplace ce
     // qu'on s'apprêtait à cliquer. On ne laisse donc pas passer le tick.
     catalogue.fiches = [];
-    render(<ListeAgents />);
+    rendreAvecEtat(<ListeAgents />);
     expect(screen.getByText("Chargement du catalogue…")).toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: /Nouvel agent/ }),
