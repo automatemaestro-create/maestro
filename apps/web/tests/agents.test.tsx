@@ -46,9 +46,23 @@ import { ficheCatalogueFactice, navigations, poserChemin } from "./aides";
 // débranché (`setup.ts`), c'est la fixture qui décide de ce qu'elle affiche.
 // `creerAgent` est déclaré parce que l'écran de création l'importe — jamais
 // appelé ici, ces tests portant sur les sorties et non sur le `POST`.
+//
+// ⚠ Ce mock **remplace** celui de `tests/setup.ts` au lieu de s'y ajouter : tout
+// ce que l'écran de création lit doit donc y figurer, sans quoi vitest lève
+// « No "…" export is defined on the mock » au premier rendu. C'est ce qui est
+// arrivé à `chargerFournisseurs` (#487) quand la création a pris son propre
+// écran (#254/#810) : le formulaire est monté ici depuis, et les cinq tests de
+// l'écran de création échouaient sur son absence.
+// La fabrique est **hissée** : elle ne peut lire aucun import du fichier, d'où
+// le poste nu écrit ici en littéral plutôt que repris de `./aides`.
 const catalogue = vi.hoisted(() => ({ fiches: [] as unknown[] }));
 vi.mock("@/lib/api", () => ({
   chargerCatalogue: async () => catalogue.fiches,
+  chargerFournisseurs: async () => ({
+    fournisseurs: [],
+    hors_registre: [],
+    incertitudes: [],
+  }),
   creerAgent: async () => undefined,
 }));
 

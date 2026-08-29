@@ -18,7 +18,9 @@
 import Link from "next/link";
 import { useCallback, useEffect, useId, useState } from "react";
 
+import { ChampJetons } from "@/components/ChampJetons";
 import {
+  IconeAlerte,
   IconeMcp,
   IconePermissions,
   IconePlaybooks,
@@ -32,12 +34,19 @@ import {
 } from "@/lib/agents";
 import {
   chargerAgentCatalogue,
+  chargerCatalogue,
   chargerFournisseurs,
   creerAgent,
   definirActivationsMcp,
   modifierAgent,
   supprimerAgent,
 } from "@/lib/api";
+import {
+  competenceProche,
+  inedites,
+  normaliserCompetence,
+  vocabulaireDuCatalogue,
+} from "@/lib/competences";
 import { formatDateHeure } from "@/lib/format";
 import {
   AGENT_SOURCE_DEFAUT,
@@ -53,10 +62,15 @@ import { Interrupteur } from "./parametres/SectionParametres";
 /** Miroir du slug accepté par le backend (`_NOM_AGENT`, maestro/agents/store.py). */
 const SLUG_NOM = /^[a-z0-9][a-z0-9_-]*$/;
 
-/** Les champs du formulaire, tous en texte libre (les compétences virgulées). */
+/**
+ * Les champs du formulaire. Les compétences y sont une **liste** depuis #256, et
+ * plus la chaîne virgulée d'avant : c'est la saisie qui change de forme, pas le
+ * contrat d'API (`DefinitionAgent.competences` reste une liste de chaînes — elle
+ * l'a toujours été, la chaîne n'existait qu'ici, entre la frappe et l'envoi).
+ */
 type Champs = {
   role: string;
-  competences: string;
+  competences: string[];
   playbook: string;
   modele: string;
   fournisseur: string;
@@ -64,7 +78,7 @@ type Champs = {
 
 const CHAMPS_VIERGES: Champs = {
   role: "",
-  competences: "",
+  competences: [],
   playbook: "",
   modele: "",
   fournisseur: "",
@@ -73,7 +87,7 @@ const CHAMPS_VIERGES: Champs = {
 function champsDepuis(fiche: AgentCatalogueDetail): Champs {
   return {
     role: fiche.role,
-    competences: fiche.competences.join(", "),
+    competences: fiche.competences,
     playbook: fiche.playbook,
     modele: fiche.modele ?? "",
     fournisseur: fiche.fournisseur ?? "",
@@ -85,9 +99,8 @@ function definitionDepuis(champs: Champs): DefinitionAgent {
   return {
     role: champs.role.trim(),
     competences: champs.competences
-      .split(",")
-      .map((c) => c.trim())
-      .filter(Boolean),
+      .map(normaliserCompetence)
+      .filter((c) => c !== ""),
     playbook: champs.playbook,
     modele: champs.modele.trim() || null,
     fournisseur: champs.fournisseur.trim() || null,
@@ -147,6 +160,35 @@ function useCataloguePoste(): CatalogueFournisseurs | null {
   return catalogue;
 }
 
+/**
+ * Le vocabulaire des compétences **déjà en usage** dans le catalogue (#256).
+ *
+ * Même contrat que `useCataloguePoste` juste au-dessus, et pour la même raison :
+ * il **propose**, il ne restreint pas. Un échec ne remonte nulle part — mais il
+ * rend `null` et non `[]`, et la nuance porte tout le signalement : une liste
+ * vide dirait « le catalogue ne connaît aucune compétence », donc *toutes* les
+ * compétences saisies seraient inédites, donc l'écran alerterait sur chacune.
+ * `null` dit « on ne sait pas », et on se tait (`inedites`).
+ */
+function useVocabulaireCompetences(): string[] | null {
+  const [vocabulaire, setVocabulaire] = useState<string[] | null>(null);
+  useEffect(() => {
+    let vivant = true;
+    void chargerCatalogue()
+      .then((fiches) => {
+        if (vivant) setVocabulaire(vocabulaireDuCatalogue(fiches));
+      })
+      .catch(() => {
+        // Sans catalogue, le champ reste un champ à jetons sans suggestions ni
+        // signalement. Rien à dire : l'utilisateur n'a rien demandé.
+      });
+    return () => {
+      vivant = false;
+    };
+  }, []);
+  return vocabulaire;
+}
+
 /** Les modèles vus **sur ce poste**, dédoublonnés dans l'ordre du catalogue. */
 function modelesDuPoste(catalogue: CatalogueFournisseurs | null): string[] {
   const vus = new Set<string>();
@@ -203,6 +245,76 @@ function ResumeDuPoste({
   );
 }
 
+/** Au-delà, le signalement se compte au lieu de se dérouler ligne à ligne. */
+const INEDITES_NOMMEES = 5;
+
+/**
+ * Ce que le formulaire dit d'une compétence que le catalogue ne connaît pas
+ * (#256) — et ce qu'il n'en dit pas.
+ *
+ * Il la **signale**, il ne la refuse pas : la valeur part telle quelle, le
+ * bouton d'enregistrement ne bouge pas. Deux raisons, et la seconde est celle
+ * que les notes du ticket demandaient d'aller vérifier dans le routeur — les
+ * deux signaux n'ont pas la même tolérance (`lib/competences.ts`) : la règle de
+ * recouvrement apparie au mot près, le classifieur lit la même compétence en
+ * texte et peut la rapprocher. Une compétence inédite n'est donc pas perdue,
+ * elle est seulement privée du signal déterministe. Et un vocabulaire ne
+ * s'enrichit que si quelqu'un a le droit d'y ajouter un mot.
+ *
+ * Le voisin le plus proche est **nommé** quand il y en a un, parce que c'est là
+ * qu'est le vrai coût : « React » et « react » sont le même mot pour qui le lit
+ * et deux compétences étrangères pour une intersection d'ensembles.
+ */
+function SignalementInedites({
+  inconnues,
+  vocabulaire,
+  remplacer,
+  desactive,
+}: {
+  inconnues: string[];
+  vocabulaire: string[];
+  remplacer: (ancienne: string, nouvelle: string) => void;
+  desactive: boolean;
+}) {
+  const nommees = inconnues.slice(0, INEDITES_NOMMEES);
+  const enPlus = inconnues.length - nommees.length;
+  return (
+    <>
+      {nommees.map((jeton) => {
+        const proche = competenceProche(jeton, vocabulaire);
+        return (
+          <p key={jeton} className="flex flex-wrap items-center gap-x-1 gap-y-1">
+            <IconeAlerte aria-hidden="true" className="size-3.5 shrink-0" />
+            <span>
+              « {jeton} » est inédite : aucun agent du catalogue ne la déclare.
+              {proche !== null
+                ? ` Le catalogue connaît « ${proche} » — au mot près, ce ne sont pas la même.`
+                : " Elle n'appariera que les tâches qui l'écrivent à l'identique."}
+            </span>
+            {proche !== null && (
+              <Bouton
+                variante="contour"
+                ton="attention"
+                taille="petite"
+                disabled={desactive}
+                onClick={() => remplacer(jeton, proche)}
+              >
+                Reprendre « {proche} »
+              </Bouton>
+            )}
+          </p>
+        );
+      })}
+      {enPlus > 0 && (
+        <p>
+          … et {enPlus} autre{enPlus > 1 ? "s" : ""} que le catalogue ne connaît
+          pas encore.
+        </p>
+      )}
+    </>
+  );
+}
+
 /** Les champs communs de la définition (création comme modification). */
 function FormulaireDefinition({
   champs,
@@ -214,6 +326,7 @@ function FormulaireDefinition({
   desactive: boolean;
 }) {
   const catalogue = useCataloguePoste();
+  const vocabulaire = useVocabulaireCompetences();
   // Deux formulaires peuvent cohabiter sur la page (création + fiche) : des
   // identifiants dérivés, jamais écrits en dur — deux `<datalist>` de même id
   // rendraient les suggestions de l'un dans l'autre.
@@ -221,34 +334,64 @@ function FormulaireDefinition({
   const idFournisseurs = `${prefixe}-fournisseurs`;
   const idModeles = `${prefixe}-modeles`;
   const idPoste = `${prefixe}-poste`;
+  const idCompetences = `${prefixe}-competences`;
   const modeles = modelesDuPoste(catalogue);
+  const inconnues = inedites(champs.competences, vocabulaire);
   return (
     <div className="flex flex-col gap-3">
+      <label className={CLASSE_LIBELLE + " sm:max-w-sm"}>
+        Rôle
+        <input
+          type="text"
+          value={champs.role}
+          onChange={(e) => setChamps({ ...champs, role: e.target.value })}
+          disabled={desactive}
+          placeholder="Développeur front"
+          className={CLASSE_CHAMP}
+        />
+      </label>
+      {/* Hors de la grille à deux colonnes : un champ à jetons porte ses jetons,
+          ses suggestions et son signalement, donc une hauteur qui n'a rien à
+          voir avec celle d'une saisie sur une ligne. */}
+      <ChampJetons
+        id={idCompetences}
+        libelle="Compétences"
+        valeurs={champs.competences}
+        onChange={(competences) => setChamps({ ...champs, competences })}
+        suggestions={vocabulaire ?? []}
+        signales={new Set(inconnues)}
+        motSignal="inédite"
+        nomElement="la compétence"
+        vide="Aucune compétence pour l'instant : saisir un mot, puis Entrée."
+        desactive={desactive}
+        placeholder="frontend"
+        aide={
+          <>
+            À quoi elles servent : le routeur <strong>auto-assigne</strong> une
+            tâche en confrontant, <strong>au mot près</strong>, les compétences
+            qu&apos;elle demande à celles de chaque agent. Un mot qui ne tombe
+            pas juste ne compte pour rien.
+          </>
+        }
+        avertissement={
+          inconnues.length > 0 ? (
+            <SignalementInedites
+              inconnues={inconnues}
+              vocabulaire={vocabulaire ?? []}
+              remplacer={(ancienne, nouvelle) =>
+                setChamps({
+                  ...champs,
+                  competences: champs.competences.map((c) =>
+                    c === ancienne ? nouvelle : c,
+                  ),
+                })
+              }
+              desactive={desactive}
+            />
+          ) : null
+        }
+      />
       <div className="grid gap-3 sm:grid-cols-2">
-        <label className={CLASSE_LIBELLE}>
-          Rôle
-          <input
-            type="text"
-            value={champs.role}
-            onChange={(e) => setChamps({ ...champs, role: e.target.value })}
-            disabled={desactive}
-            placeholder="Développeur front"
-            className={CLASSE_CHAMP}
-          />
-        </label>
-        <label className={CLASSE_LIBELLE}>
-          Compétences (séparées par des virgules)
-          <input
-            type="text"
-            value={champs.competences}
-            onChange={(e) =>
-              setChamps({ ...champs, competences: e.target.value })
-            }
-            disabled={desactive}
-            placeholder="frontend, react, css"
-            className={CLASSE_CHAMP}
-          />
-        </label>
         <label className={CLASSE_LIBELLE}>
           Modèle (vide : modèle par défaut des exécutants)
           <input
@@ -352,9 +495,13 @@ export function CreationAgent({
 
   // Un brouillon, c'est une saisie qui a commencé : le nom ou n'importe quel
   // champ. Les espaces seuls n'en font pas un — il n'y aurait rien à perdre.
+  // Les compétences sont une liste depuis #256 : un jeton posé compte, et une
+  // liste vide ne compte pas — même règle que pour une chaîne d'espaces.
   const brouillon =
     nom.trim() !== "" ||
-    Object.values(champs).some((valeur) => valeur.trim() !== "");
+    Object.values(champs).some((valeur) =>
+      Array.isArray(valeur) ? valeur.length > 0 : valeur.trim() !== "",
+    );
   useEffect(() => {
     onBrouillon?.(brouillon);
   }, [brouillon, onBrouillon]);

@@ -334,11 +334,23 @@ Sept briques, et le `className` qu'on n'écrit plus :
 | `BadgeEtat` | la pastille d'état (compte, statut, provenance, temps réel) |
 | `EtatVide` | ce qui manque, et par où l'obtenir |
 
-Une huitième vit **à côté**, dans son propre fichier :
-`components/BasculeDeVues.tsx` (#539) — plusieurs lectures d'un même bloc, une à
-la fois. Elle n'est pas dans `Primitives.tsx` pour la raison qui en écarte aussi
-`Infobulle` : elle appelle un hook (`useId`), et ce fichier-là est partagé avec
-des composants serveur.
+Deux autres vivent **à côté**, chacune dans son fichier — elles appellent des
+hooks (`useId`, `useState`), et `Primitives.tsx` est partagé avec des composants
+serveur, où aucun hook ne peut tourner (la raison qui en écarte aussi
+`Infobulle`) :
+
+| Brique | Ce qu'elle porte |
+| --- | --- |
+| `BasculeDeVues` (#539) | plusieurs lectures d'un même bloc, une à la fois |
+| `ChampJetons` (#256) | une valeur qui est une **liste de mots** : jetons retirables, vocabulaire proposé, mot inconnu signalé |
+
+`ChampJetons` complète la famille des champs, et sa différence avec eux est le
+sujet du ticket qui l'a fait naître : il porte un **avertissement** en plus de
+l'aide — annoncé avec le champ comme l'est une erreur, mais **sans**
+`aria-invalid`, parce que la valeur passe. Elle est seulement inhabituelle, et
+poser `aria-invalid` sur ce qu'on accepte annoncerait un refus qui n'arrivera
+pas. Ses jetons vivent **hors du `<label>`** : dedans, leur texte entrerait dans
+le nom accessible du contrôle (« Compétences react retirer css retirer »).
 
 Les briques de #245 portent leurs variants `dark:` **elles-mêmes** ; celles de
 #535 n'en portent **aucun** — elles sont écrites sur les tokens de #533, qui

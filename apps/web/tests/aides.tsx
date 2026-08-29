@@ -487,6 +487,27 @@ export function fournisseursDuPoste(): CatalogueFournisseurs {
   return cataloguePoste;
 }
 
+// --- Catalogue d'agents (#256) ---------------------------------------------
+
+let catalogueAgents: AgentCatalogue[] = [];
+
+/**
+ * Ce que `chargerCatalogue` rendra — le mock vit dans `setup.ts`, au même titre
+ * que celui des fournisseurs juste au-dessus, et pour la même raison : depuis
+ * #256, le champ « Compétences » du formulaire d'agent lit le catalogue à chaque
+ * montage pour en tirer le **vocabulaire déjà en usage**.
+ *
+ * Le défaut est un catalogue **vide** — l'analogue du « poste nu » : aucune
+ * suggestion, et tout test écrit avant ce lot dit encore vrai.
+ */
+export function poserCatalogueAgents(fiches: AgentCatalogue[]): void {
+  catalogueAgents = fiches;
+}
+
+export function catalogueAgentsCourant(): AgentCatalogue[] {
+  return catalogueAgents;
+}
+
 // --- Journal persisté (#478) -----------------------------------------------
 
 let entreesJournal: EntreeJournal[] = [];
