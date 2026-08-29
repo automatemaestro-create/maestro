@@ -32,6 +32,7 @@ from maestro.projets.modele import Projet
 from maestro.projets.secrets import enregistre_secrets_du_projet
 from maestro.providers.arbitrage import Arbitre, ArbitreActe
 from maestro.providers.base import PLAFOND_TOURS_DEFAUT, ModelProvider
+from maestro.providers.blocage import Signaleur
 from maestro.sandbox import ProducedFile, espace_de_travail
 
 #: Outils confiés par défaut à un rôle outillé : lire/écrire/éditer des fichiers,
@@ -198,6 +199,7 @@ class AgentRuntime:
         on_activite: Callable[[str], None] | None = None,
         on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,
         on_arbitrage: Arbitre | None = None,
+        on_blocage: Signaleur | None = None,
         credit_arbitrage: CreditArbitrage | None = None,
         projet: Projet | None = None,
         tache_id: str = "",
@@ -266,7 +268,15 @@ class AgentRuntime:
         celui qui décide : la décision appartient au `Guardrails` du moteur, seul
         endroit où vit le fail-safe.
 
-        `credit_arbitrage` (#584) traverse aussi, et c'est le seul des cinq qui
+        `on_blocage` (#719) est le cinquième et traverse pour la même raison que
+        les quatre autres, dans le sens du précédent — de l'agent vers
+        l'appelant — mais **sans retour** : l'agent déclare qu'il bute, le
+        fournisseur lui expose l'outil, l'appelant consigne. Le runtime n'est ni
+        l'un ni l'autre, et il n'a en particulier rien à attendre : ce verbe ne
+        suspend personne, à la différence de celui du dessus. None : l'outil
+        n'est pas servi du tout, plutôt que servi sans aboutir.
+
+        `credit_arbitrage` (#584) traverse aussi, et c'est le seul des six qui
         ne porte ni observation ni décision mais du **temps** : le fournisseur y
         ouvre une fenêtre autour de chaque attente d'arbitrage, l'appelant en
         déduit le délai qu'il a posé sur la tâche. Le runtime, une fois de plus,
@@ -325,6 +335,7 @@ class AgentRuntime:
                 on_activite=on_activite,
                 on_etapes=on_etapes,
                 on_arbitrage=on_arbitrage,
+                on_blocage=on_blocage,
                 credit_arbitrage=credit_arbitrage,
                 plafond_tours=self._plafond_tours,
                 projet=projet,

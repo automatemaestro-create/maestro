@@ -44,6 +44,7 @@ from maestro.controltower.events import (
     EVENEMENT_EXECUTION_STATUT,
     EVENEMENT_MESSAGE_INTER_AGENTS,
     EVENEMENT_RUN_PLAN,
+    EVENEMENT_TACHE_BLOCAGE,
     EVENEMENT_TACHE_DETAIL,
     EVENEMENT_TACHE_REFERENCE,
     EVENEMENT_TACHE_STATUT,
@@ -120,6 +121,12 @@ _SUFFIXE_REFERENCE = SUFFIXE_ETAPE_TICKET
 #: `maestro.detail_tache.consigne_detail`).
 _SUFFIXE_DETAIL = SUFFIXE_ETAPE_DETAIL
 
+#: Suffixe des étapes de **blocage déclaré par l'agent** (#719 — cf.
+#: `maestro.engine.executor`, `SUFFIXE_ETAPE_BLOCAGE`). Recopié plutôt
+#: qu'importé, comme `:activite`, `:relance`, `:debut` et `:refus-outil` : ce
+#: pont est la couche basse de la Control Tower et n'importe pas le moteur.
+_SUFFIXE_BLOCAGE = ":blocage"
+
 
 def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
     """Convertit une ligne de journal (`StepRecord.to_dict`) en événements du bus.
@@ -145,6 +152,11 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
       portent que la **description**, les **étapes** et les **liens utiles** de
       la tâche, sans rien changer d'autre — c'est ainsi qu'un agent la renseigne
       en cours de route sans la faire changer de colonne ;
+    - les étapes `<tache>:blocage` (#719) deviennent un `tache.blocage` : elles
+      ne portent que **la raison pour laquelle l'agent dit qu'il bute**, sans
+      rien changer d'autre. Même forme que les deux précédentes et pour la même
+      raison — un agent qui bute n'est pas une tâche bloquée (la cascade de #43
+      appartient au moteur, docs/31 §3.4) ;
     - toute autre étape est l'issue d'une **tâche** : événement `tache.statut`
       portant statut, agent, rôle et coût rapporté (#8).
 
@@ -181,6 +193,7 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
     est_debut = etape.endswith(_SUFFIXE_DEBUT)
     est_reference = etape.endswith(_SUFFIXE_REFERENCE)
     est_detail = etape.endswith(_SUFFIXE_DETAIL)
+    est_blocage = etape.endswith(_SUFFIXE_BLOCAGE)
     est_activite = etape in _ETAPES_RUN or etape.endswith(
         (
             _SUFFIXE_VALIDATION,
@@ -202,6 +215,16 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
         tache_id = etape.removesuffix(_SUFFIXE_DETAIL)
         detail = str(record.get("sortie") or "")
         # Idem : renseigner une tâche ne dépense rien.
+        mesure = None
+        cout_brut = None
+    elif est_blocage:
+        type_evenement = EVENEMENT_TACHE_BLOCAGE
+        tache_id = etape.removesuffix(_SUFFIXE_BLOCAGE)
+        detail = str(record.get("sortie") or "")
+        # Idem : déclarer qu'on bute ne dépense rien. C'est le troisième critère
+        # de #719 — la déclaration est gratuite au grand livre, faute de quoi
+        # dire qu'on est bloqué coûterait, et un agent aurait une raison de se
+        # taire.
         mesure = None
         cout_brut = None
     elif est_message:
