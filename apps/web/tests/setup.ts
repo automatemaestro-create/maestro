@@ -38,10 +38,13 @@ import { cleanup } from "@testing-library/react";
 import { afterEach, beforeEach, vi } from "vitest";
 
 import {
+  CATALOGUE_POSTE_NU,
   canauxDemandes,
+  catalogueAgents,
   cheminCourant,
   etatGlobalCourant,
   filAssistanceCourant,
+  fournisseursDuPoste,
   installerMatchMedia,
   navigations,
   noterCanal,
@@ -49,9 +52,11 @@ import {
   noterProjetDuFil,
   pageJournalCourante,
   porteesDemandees,
+  poserCatalogueAgents,
   poserChemin,
   poserEtatGlobal,
   poserFilAssistance,
+  poserFournisseurs,
   poserJournal,
   poserProjets,
   projetsDeclares,
@@ -133,6 +138,16 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...reel,
     chargerProjets: () => Promise.resolve(projetsDeclares()),
     chargerJournal: () => Promise.resolve(pageJournalCourante()),
+    // #487 : le formulaire d'agent demande au poste ce qui y est installé. Le
+    // défaut est un **poste nu** — la sonde ne trouve rien, les deux champs
+    // restent en saisie libre, et tout test écrit avant ce lot dit encore vrai.
+    chargerFournisseurs: () => Promise.resolve(fournisseursDuPoste()),
+    // #255 : le même formulaire lit les **rôles connus** dans le catalogue des
+    // agents. Défaut vide — aucun rôle suggéré, le champ reste celui d'avant —,
+    // et les 18 fichiers qui mockent `@/lib/api` chez eux gardent le pas sur
+    // cette déclaration. #256 lit la **même** réponse pour en tirer le
+    // vocabulaire des compétences : une lecture, deux usages, un seul mock.
+    chargerCatalogue: () => Promise.resolve(catalogueAgents()),
   };
 });
 
@@ -158,6 +173,8 @@ beforeEach(() => {
   poserChemin("/");
   poserProjets([]);
   poserJournal([]);
+  poserFournisseurs(CATALOGUE_POSTE_NU);
+  poserCatalogueAgents([]);
   navigations.length = 0;
   porteesDemandees.length = 0;
   canauxDemandes.length = 0;

@@ -221,6 +221,55 @@ Restent pour la suite : la **liaison d'outils** scopés (au POC, un agent person
 exécute par le chemin texte, sans runtime outillé) et l'**exécution multi-fournisseurs**
 (le champ `fournisseur` est déclaratif, le moteur exécute sur `MAESTRO_PROVIDER`).
 
+### 4.1 Régler un agent du code sans le dupliquer (#259)
+
+Créer un agent n'est pas la seule façon d'en changer un. Un agent **du code**
+(`maestro/agents/catalog.py`) accepte une **surcharge** de ses trois réglages de
+modèle — `fournisseur`, `modele`, `effort` — persistée à côté de lui
+(`core/surcharges/<nom>.json`, racine remplaçable par `MAESTRO_SURCHARGES_DIR`)
+et posée par `PUT /api/catalogue/{nom}/reglages` depuis l'onglet **Profil** de sa
+fiche. Le catalogue en compte donc **trois** états et non deux : « du code »,
+« du code, **surchargé** », « personnalisé ».
+
+Ce que la surcharge **ne touche pas** est le sujet : rôle, compétences et
+playbook restent définis par le code et continuent d'en suivre les évolutions.
+Sans ce troisième état, changer le modèle d'un rôle du code imposait de le
+**dupliquer** — recopier son playbook pour ne toucher qu'un réglage —, après quoi
+les deux exemplaires divergent en silence et la copie ne bénéficie plus d'aucune
+amélioration du rôle. Ce qui n'est pas surchargé est **hérité**, et l'API le dit
+(`herite`, `reglages_du_code`) plutôt que de le laisser deviner.
+
+⚠ Une surcharge **s'annule** (`DELETE /api/catalogue/{nom}/reglages` : l'agent
+redevient celui du code, il reste au catalogue) ; un agent personnalisé **se
+supprime** (il disparaît). Les deux gestes ne se confondent pas, et l'API refuse
+chacun sur l'objet de l'autre. Un agent personnalisé ne se surcharge pas non
+plus : sa définition *est* son réglage, et s'édite par `PUT /api/catalogue/{nom}`.
+
+`MAESTRO_MODEL` (#69) prime sur une surcharge de modèle, comme il prime sur celui
+d'un agent personnalisé — c'est une bascule globale — mais ne touche pas à
+l'effort. Et comme partout, aucun des trois réglages n'est confronté à ce que le
+fournisseur admet au moment de l'écriture : le tri se fait à l'exécution, qui
+ignore sans erreur (`ModelProvider.effort_admis`) — une gamme qui bouge ne doit
+pas rendre invalide une surcharge écrite hier.
+
+### 4.2 Un playbook s'écrit à un seul endroit (#259)
+
+Le **playbook** d'un agent — du code comme personnalisé — s'édite et se versionne
+sur l'**onglet Playbook** de sa fiche (`/api/playbooks/{agent}`, #76/#77), et
+nulle part ailleurs. L'onglet Profil ne le porte plus qu'**à la création**, où
+l'agent n'a pas encore d'onglet où aller ; ensuite il y **renvoie**.
+
+C'est ce qui a rendu `/api/playbooks` symétrique : il ne connaissait que les cinq
+rôles du code et refusait un agent personnalisé, dont le playbook n'avait donc
+que le champ du Profil pour s'écrire — sans version ni historique. Pour un agent
+personnalisé, le `playbook` de sa **définition** (#72) joue désormais le rôle que
+le document Markdown livré joue pour un rôle du code : l'**origine**, celle qui
+vaut tant que rien n'a été publié (`source: "defaut"`), que la première version
+publiée recouvre (`source: "stockage"`). Le moteur, lui, n'a jamais fait la
+différence — `LocalExecutor` lit la version courante quel que soit l'agent et
+retombe sur son prompt sinon : ce lot a rattrapé l'API sur lui, il n'a rien
+changé à l'exécution.
+
 ---
 
 ## 5. Coordination et communication entre agents

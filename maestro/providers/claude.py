@@ -35,6 +35,7 @@ from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     ClaudeSDKClient,
+    EffortLevel,
     HookContext,
     HookJSONOutput,
     HookMatcher,
@@ -82,6 +83,7 @@ from maestro.providers.base import (
     CollecteurStderr,
     Credentials,
     McpServerUnavailable,
+    ModeleDisponible,
     ModelProvider,
     TurnLimitReached,
     attache_stderr,
@@ -117,6 +119,22 @@ _MCP_SONDAGE_S: float = 0.5
 
 _E = TypeVar("_E", bound=BaseException)
 
+#: Niveaux d'effort admis par les modèles Claude (#253), du plus économe au plus
+#: dépensier. C'est **l'ensemble fermé de l'Agent SDK** (`EffortLevel`) et non une
+#: liste de notre cru : le CLI refuserait tout autre mot, et c'est le même
+#: vocabulaire que le `--effort` des sessions autonomes (#217). Les cinq valent
+#: pour toute la gamme — ce qui se répète ici sans coût, plutôt que de faire
+#: dépendre d'un raccourci le jour où un modèle n'en admettra qu'une partie.
+#:
+#: Le tuple est **typé sur le littéral du SDK**, et c'est ce qui fait la couture :
+#: la frontière transporte l'effort en `str` — le vocabulaire est celui du
+#: fournisseur, la couche agnostique n'a pas à le connaître — quand le SDK exige
+#: son type fermé. Le passage de l'un à l'autre se fait en **retenant l'élément de
+#: ce tuple** (`_effort_sdk`) plutôt qu'en forçant le type de la chaîne reçue : le
+#: contrôle et la conversion sont alors le même geste, et un mot hors liste ne
+#: peut pas se glisser dans les options du CLI.
+EFFORTS: tuple[EffortLevel, ...] = ("low", "medium", "high", "xhigh", "max")
+
 
 def _resolve_auth_mode(settings: Settings) -> AuthMode:
     """Applique la règle de précédence pour déterminer le mode d'authentification.
@@ -144,6 +162,23 @@ class ClaudeProvider(ModelProvider):
 
     #: Préfixe des identifiants de modèles Claude (ex. `claude-opus-5`).
     _MODEL_PREFIX: ClassVar[str] = "claude-"
+
+    #: Gamme annoncée au catalogue (#253) — ce que l'UI proposera. Elle **n'est
+    #: pas** la définition de ce que le fournisseur accepte : `supports()` reste
+    #: le préfixe `claude-`, si bien qu'un modèle plus récent que cette liste
+    #: s'exécute encore en le nommant à la main. Annoncer une gamme sert à
+    #: proposer, jamais à interdire — et c'est pourquoi `MODELES_LIBRES` est vrai.
+    MODELES: ClassVar[tuple[ModeleDisponible, ...]] = (
+        ModeleDisponible("claude-opus-5", "Opus 5", EFFORTS),
+        ModeleDisponible("claude-opus-4-8", "Opus 4.8", EFFORTS),
+        ModeleDisponible("claude-sonnet-5", "Sonnet 5", EFFORTS),
+        ModeleDisponible("claude-haiku-4-5", "Haiku 4.5", EFFORTS),
+        ModeleDisponible("claude-fable-5", "Fable 5", EFFORTS),
+    )
+
+    #: Un modèle hors gamme reste exécutable (cf. `MODELES`) — il n'aura
+    #: simplement aucun effort admis, faute de savoir ce qu'il accepte.
+    MODELES_LIBRES: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -200,6 +235,19 @@ class ClaudeProvider(ModelProvider):
     def supports(self, model: str) -> bool:
         return model.startswith(self._MODEL_PREFIX)
 
+    def _effort_sdk(self, model: str, effort: str | None) -> EffortLevel | None:
+        """L'effort admis sur `model`, rendu dans le type fermé du SDK (#253).
+
+        Passe par `effort_admis` — la règle vit là, une seule fois — puis **rend
+        l'élément d'`EFFORTS`** correspondant au lieu de la chaîne reçue : c'est
+        ce qui fait du contrôle et de la conversion un seul geste, sans `cast`
+        qui affirmerait au vérificateur de types ce que le code ne prouve pas.
+        `None` en sortie laisse l'option du SDK vide, donc le CLI au régime qu'il
+        aurait eu sans ce lot.
+        """
+        retenu = self.effort_admis(model, effort)
+        return next((niveau for niveau in EFFORTS if niveau == retenu), None)
+
     def _auth_env(self) -> dict[str, str]:
         """Traduit les `Credentials` en variables d'environnement pour le CLI.
 
@@ -228,6 +276,7 @@ class ClaudeProvider(ModelProvider):
         *,
         model: str,
         system_prompt: str | None = None,
+        effort: str | None = None,
     ) -> str:
         """Appel modèle **texte seul** : aucun outil n'est exposé au CLI sous-jacent.
 
@@ -238,6 +287,14 @@ class ClaudeProvider(ModelProvider):
         `stderr=` (#346) branche la collecte bornée du stderr du CLI : sans elle,
         un sous-processus qui meurt ne laisse que « Check stderr output for
         details » sur un flux que personne n'écoutait.
+
+        `effort` (#253) alimente l'option homonyme du SDK, qui passe `--effort` au
+        CLI. Il est **re-tamisé ici** (`_effort_sdk`, qui appelle `effort_admis`)
+        et pas seulement chez l'appelant : ce fournisseur s'appelle aussi
+        directement (chat, routeur, auto-amélioration), et une valeur hors de
+        `EFFORTS` ferait échouer le CLI sur un réglage qui n'est qu'un conseil. Le
+        tamis n'est pas une seconde règle — c'est la même, appelée là où le SDK
+        est monté, et c'est aussi elle qui rend le type fermé qu'il exige.
         """
         stderr = CollecteurStderr()
         options = ClaudeAgentOptions(
@@ -246,6 +303,7 @@ class ClaudeProvider(ModelProvider):
             env=self._auth_env(),
             tools=[],
             stderr=stderr,
+            effort=self._effort_sdk(model, effort),
         )
         return await _collect_response(prompt, options, stderr=stderr)
 
@@ -255,6 +313,7 @@ class ClaudeProvider(ModelProvider):
         *,
         model: str,
         system_prompt: str | None = None,
+        effort: str | None = None,
     ) -> AsyncIterator[str]:
         """`generate`, rendu **par incréments** : le fournisseur de référence streame (#693).
 
@@ -281,6 +340,7 @@ class ClaudeProvider(ModelProvider):
             tools=[],
             stderr=stderr,
             include_partial_messages=True,
+            effort=self._effort_sdk(model, effort),
         )
         async for morceau in _stream_response(prompt, options, stderr=stderr):
             yield morceau
@@ -305,6 +365,7 @@ class ClaudeProvider(ModelProvider):
         on_courrier: courrier.Courrier | None = None,
         plafond_tours: int | None = PLAFOND_TOURS_DEFAUT,
         projet: Projet | None = None,
+        effort: str | None = None,
     ) -> str:
         """Lance une exécution *agentique outillée* de l'Agent SDK dans `workspace`.
 
@@ -474,6 +535,13 @@ class ClaudeProvider(ModelProvider):
         éphémère sans rejeu ni accusé de réception, et un agent n'existe que
         pendant sa tâche. C'est aussi pourquoi l'issue de la publication ne
         remonte pas jusqu'ici — elle ne prouverait rien de plus que son échec.
+
+        `effort` (#253) alimente l'option homonyme du SDK (`--effort` du CLI),
+        après le même tamis que sur `generate` : c'est un **conseil de dépense**,
+        au même titre que le modèle, et pas une borne — à la différence de
+        `plafond_tours`, un effort mal réglé ne tue aucune tâche, il la rend
+        seulement plus ou moins fouillée. À `None` — le défaut — rien n'est passé
+        et le CLI garde le régime qu'il aurait eu sans ce lot.
         """
         env = self._auth_env()
         cli_path: Path | None = None
@@ -501,6 +569,7 @@ class ClaudeProvider(ModelProvider):
             allowed_tools=list(tools),
             permission_mode="bypassPermissions",
             max_turns=plafond_tours,
+            effort=self._effort_sdk(model, effort),
             mcp_servers=serveurs,
             strict_mcp_config=True,
             hooks=(

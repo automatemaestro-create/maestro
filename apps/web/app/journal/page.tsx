@@ -26,6 +26,13 @@
  *   pas de liste à maintenir quand le backend enrichit le flux, et aucune option
  *   morte qui ne rendrait jamais un résultat.
  *
+ * Deux de ses pièces ne lui appartiennent plus depuis #266, parce qu'un second
+ * écran en a eu besoin à l'identique : `optionsTache` est passée dans
+ * `lib/journal` — « comment s'appelle cette tâche ? » doit avoir une seule
+ * réponse d'un écran à l'autre — et la liste déroulante de filtre dans
+ * `Primitives`. Rien n'a changé de comportement : ce sont les mêmes fonctions, à
+ * un endroit où deux appelants peuvent les lire.
+ *
  * Enfin le fil **part de l'historique persisté** (#478) et non plus du seul
  * WebSocket. C'était le défaut que cette page portait depuis sa création : elle
  * ne contenait que ce qui était passé par la socket depuis son ouverture, donc
@@ -48,7 +55,13 @@ import { useMemo, useState } from "react";
 
 import { BanniereErreurApi } from "@/components/BanniereErreurApi";
 import { FilActivite } from "@/components/FilActivite";
-import { Bouton, Carte, Champ, ChampListe } from "@/components/Primitives";
+import {
+  Bouton,
+  Carte,
+  Champ,
+  ListeFiltre,
+  type OptionFiltre,
+} from "@/components/Primitives";
 import { RegionLive } from "@/components/RegionLive";
 import { mesureDesEvenements } from "@/lib/annonces";
 import { useEtatGlobal } from "@/lib/etatGlobal";
@@ -57,20 +70,25 @@ import {
   libelleTypeEvenement,
   resumeEvenement,
 } from "@/lib/evenements";
-import { fusionnerJournal } from "@/lib/journal";
+import { fusionnerJournal, optionsTache } from "@/lib/journal";
 import { type Evenement } from "@/lib/types";
 import { useJournal } from "@/lib/useJournal";
 
 /** La valeur du choix « tout » d'une liste déroulante — jamais un vrai filtre. */
 const TOUS = "";
 
-/** Un choix de liste déroulante : ce qu'on filtre, et comment on le nomme. */
-type Option = { valeur: string; libelle: string };
+/**
+ * Aucun filtre de contrat sur cette page : elle rend le journal du **projet
+ * actif** en entier, et tout le tri qu'elle propose se fait ensuite, côté écran.
+ * Une constante de module plutôt qu'un littéral, pour ne pas fabriquer un objet
+ * neuf à chaque rendu là où le hook lit des champs.
+ */
+const SANS_FILTRE = {};
 
 export default function PageJournal() {
   const { projet, portee, evenements: direct, connecte, erreur, revision } =
     useEtatGlobal();
-  const historique = useJournal(portee, null, revision);
+  const historique = useJournal(portee, SANS_FILTRE, revision);
 
   // L'historique d'abord, le direct qu'il n'a pas encore rattrapé par-dessus :
   // c'est ce qui fait qu'un rechargement ne perd rien **et** qu'un événement
@@ -276,45 +294,8 @@ export default function PageJournal() {
   );
 }
 
-/** Une liste déroulante de filtre, choix « tout » en tête. */
-function ListeFiltre({
-  id,
-  libelle,
-  tout,
-  options,
-  valeur,
-  surChoix,
-}: {
-  id: string;
-  libelle: string;
-  /** Le libellé du choix neutre — « Tous les agents », « Toutes les tâches »… */
-  tout: string;
-  options: Option[];
-  valeur: string;
-  surChoix: (valeur: string) => void;
-}) {
-  return (
-    <ChampListe
-      id={id}
-      libelle={libelle}
-      value={valeur}
-      onChange={(e) => surChoix(e.target.value)}
-      // Rien à filtrer tant que le fil est vide : la liste n'aurait que son
-      // choix neutre, autant la désigner comme inerte.
-      disabled={options.length === 0}
-    >
-      <option value={TOUS}>{tout}</option>
-      {options.map((option) => (
-        <option key={option.valeur} value={option.valeur}>
-          {option.libelle}
-        </option>
-      ))}
-    </ChampListe>
-  );
-}
-
 /** Les types présents dans le fil, nommés en français et triés par libellé. */
-function optionsType(evenements: Evenement[]): Option[] {
+function optionsType(evenements: Evenement[]): OptionFiltre[] {
   const presents = new Set(
     evenements.map((evenement) => evenement.type).filter(Boolean),
   );
@@ -324,33 +305,13 @@ function optionsType(evenements: Evenement[]): Option[] {
 }
 
 /** Les agents ayant émis quelque chose, par ordre alphabétique. */
-function optionsAgent(evenements: Evenement[]): Option[] {
+function optionsAgent(evenements: Evenement[]): OptionFiltre[] {
   const presents = new Set(
     evenements.map((evenement) => evenement.agent).filter(Boolean),
   );
   return [...presents]
     .sort((a, b) => a.localeCompare(b, "fr"))
     .map((valeur) => ({ valeur, libelle: valeur }));
-}
-
-/**
- * Les tâches apparues dans le fil. Le titre n'accompagne pas tous les
- * événements d'une même tâche (`tache.reference` n'en porte pas) : le premier
- * rencontré fait foi, l'identifiant sert de repli en attendant.
- */
-function optionsTache(evenements: Evenement[]): Option[] {
-  const parId = new Map<string, string>();
-  for (const evenement of evenements) {
-    const id = evenement.tache_id;
-    if (!id) continue;
-    const connu = parId.get(id);
-    if (connu === undefined || (connu === id && evenement.titre)) {
-      parId.set(id, evenement.titre || id);
-    }
-  }
-  return [...parId.entries()]
-    .map(([valeur, libelle]) => ({ valeur, libelle }))
-    .sort((a, b) => a.libelle.localeCompare(b.libelle, "fr"));
 }
 
 /**

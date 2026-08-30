@@ -2180,6 +2180,30 @@ Règles de ce run autonome :
   pourrait pas jouer la veille non plus — et il SURVIT à la fermeture du tien, ce qu'un résumé de
   fin de session ne fait pas : ce processus s'arrête à la fin de ton tour, et ton ticket se ferme
   au merge dans l'heure. Nomme-le quand même dans ton résumé final.
+- TU N'AS PAS D'ACCÈS WEB DU TOUT, PAS MÊME POUR UNE URL QUE TON TICKET CITE. C'est le second
+  versant de la règle ci-dessus, et il ne relève pas de la veille : « WebFetch <une URL nommée dans
+  le ticket> » est refusé lui aussi (#792, docs/10 §11.7). La raison ne tient pas à ta prudence,
+  qui n'est pas en cause : une règle de permission ne borne qu'un PRÉFIXE, donc elle ne sait pas
+  vérifier que l'URL vient d'un humain plutôt que de toi — et ce que tu produis part dans « main »
+  sans qu'un humain relise. Ne le tente donc pas : une session l'a fait et y a perdu un tour. Ce que
+  tu fais à la place, dans l'ordre : la référence est SOUVENT déjà dans le dépôt (cherche-la avec
+  « grep -rn » avant de conclure qu'elle manque) ; sinon, implémente ce que le ticket décrit sans
+  elle, et NOMME dans ton résumé final l'URL qui t'aurait servi et ce qu'elle t'aurait appris. Une
+  référence qui doit devenir durable entre dans le dépôt par un geste humain — entrée versionnée et
+  relue, ou porte d'admission (#678) —, jamais par une lecture à chaud au milieu d'un run.
+- N'ENTAME PAS /ticket-abandon, même si le ticket te paraît sans objet (déjà fait, doublon,
+  périmé). Sa dernière étape ferme l'issue et « gh issue close » attend ici une approbation que
+  personne ne te donnera — mais l'étape d'AVANT a déjà posé « Abandonné » : tu laisserais un ticket
+  abandonné ET OUVERT, que ferme-parent compte comme un lot encore ouvert, si bien que son parent
+  ne se refermerait plus jamais. La commande demande de toute façon une confirmation humaine
+  explicite, et juger qu'un ticket est sans objet est une décision de BACKLOG, pas de session. Fais
+  une seule chose : sors sur ORCHESTRATE: ECHEC en disant pourquoi, et laisse quelqu'un trancher.
+- POUR DÉFAIRE UNE MANŒUVRE RATÉE, un seul geste t'est ouvert : « git restore <fichier> », qui vise
+  un fichier NOMMÉ. « git reset --hard », « git clean » et « git stash » sont refusés ici, pour une
+  raison commune : ils jettent d'un coup, sans rattrapage, du travail que plus rien ne retrouve.
+  Le stash est même le pire des trois — il vit dans le dépôt commun, invisible pour le ramassage
+  des worktrees, qui tient alors le tien pour propre et l'emporte avec ton travail. Si tu veux
+  mettre du travail de côté, COMMITE-LE : la branche est à toi.
 - POUR JOUER DES TESTS, l'endroit se choisit PAR FAMILLE DE SUITE, et l'écart se paie sur ton
   quota. Une suite d'OUTILLAGE — elle nomme un script du dépôt (worktree.sh, lib.sh, run.sh…) —
   se joue dans le conteneur Linux, « bash scripts/ci/pytest.sh tests/test_<suite>.py -q » : vingt

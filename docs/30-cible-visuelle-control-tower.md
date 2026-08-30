@@ -650,30 +650,49 @@ La **liste des routes** est celle de `apps/web/app/`, et `tests/test_design_veil
 aux répertoires réels : une liste recopiée à la main dérive au premier écran ajouté, et c'est
 précisément ce que ce ticket corrige ailleurs.
 
-#### L'accès web d'une session de run : tranché
+#### L'accès web d'une session de run : tranché, puis réexaminé (#714, #792)
 
 **La veille est un geste interactif.** `WebSearch` et `WebFetch` restent **hors des deux
-allowlists** — ni `scripts/orchestrate/settings.run.json`, ni `.claude/settings.json`, dont
-l'`allow` d'un run est l'**union** (docs/10 §11.7). Trois raisons, dont une seule est technique :
+allowlists** — ni `scripts/orchestrate/settings.run.json`, ni `.claude/settings.json`, dont l'`allow`
+d'un run est l'**union** (docs/10 §11.7). #792 a repris la question **geste par geste**, là où #714
+les avait tranchés d'un bloc : les deux restent fermés, mais un seul des deux l'est pour les raisons
+écrites ici.
+
+**`WebSearch` — confirmé.** Trois raisons, dont une seule est technique :
 
 - une session de run **n'a personne** pour répondre au « oui » que la proposition attend ; l'ouvrir
-  reviendrait à lancer la veille d'office, ce que ce ticket exclut nommément ;
+  reviendrait à lancer la veille d'office, ce que #714 exclut nommément ;
 - une veille rend des **partis pris**, c'est-à-dire un jugement — du même bois que l'arbitrage de
   #562 et le rail de #617, tous deux laissés à un humain ;
 - `mcp__chrome-maestro` passe déjà cette union : ouvrir la seule **recherche** donnerait une veille
   **à moitié** — captures sans références vérifiées —, or la règle du §3 de la commande est que ce
   qui n'est pas vérifié n'est pas cité.
 
+La mesure les appuie plutôt qu'elle ne les contredit : **zéro** `WebSearch` sur les 56 refus du
+journal (38 sessions) — aucune session ne l'a jamais demandé. Et le support de survie du **lot 5**
+(#795) ne les affaiblit pas, alors qu'on pouvait le croire : faire **survivre** une question n'est
+pas y répondre. La veille reste jouée par un humain, plus tard ; ce qui change est qu'elle ne se
+perd plus en route.
+
+⚠ **`WebFetch` est fermé lui aussi, mais pas pour ces raisons-là** — et c'est ce que #792 a corrigé.
+Le seul usage jamais mesuré n'est pas une veille : #271 l'a demandé pour lire une **référence citée
+par son propre ticket**, geste déterministe qui ne rend aucun parti pris. Sa raison propre — une
+règle ne borne qu'un préfixe, donc ne sait pas vérifier que l'URL vient d'un humain, et le produit
+d'un run est mergé sans relecture depuis #418/#419 — est écrite en **[docs/10
+§11.7](./10-workflow-git.md)** avec sa forme couverte. Elle n'a pas sa place dans cette note : ce
+n'est pas une question de conception visuelle, et l'y laisser est précisément ce qui a fait
+trancher d'un bloc deux gestes différents.
+
 Le prompt de session de `run.sh` le dit donc en toutes lettres : ne pas tenter la veille, **ne pas
 enregistrer d'arbitrage** (ce serait fermer la question sans que personne l'ait jugée — le
 « marquer d'office » de #562), et **différer la question dans un ticket de veille** (§5.3). La
 troisième moitié était, jusqu'à #795, « nommer le ticket dans le résumé final » : les sessions l'ont
 fait, et personne ne l'a lu.
-⚠ Le changement plausible n'est pas « ouvrir le web aux runs », que personne ne demandera, mais
-« ouvrir `WebSearch` dans `.claude/settings.json` pour éviter une confirmation à chaque
-`/design-veille` interactive » : geste légitime, effet non voulu — il ouvre le run du même coup.
-`tests/test_design_veille.py` garde les deux fichiers pour cette raison-là. Une confirmation dans
-une session interactive n'est pas un défaut : il y a quelqu'un pour la donner.
+⚠ Le changement plausible n'est pas « ouvrir le web aux runs » mais « ouvrir `WebSearch` dans
+`.claude/settings.json` pour éviter une confirmation à chaque `/design-veille` interactive » : geste
+légitime, effet non voulu — il ouvre le run du même coup. `tests/test_design_veille.py` garde les
+deux fichiers pour cette raison-là. Une confirmation dans une session interactive n'est pas un
+défaut : il y a quelqu'un pour la donner.
 
 ### 5.3 La question différée, faute de répondant — 2026-08-30 (#795)
 

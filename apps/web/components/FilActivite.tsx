@@ -10,12 +10,15 @@
  * rend la liste qu'on lui donne, et c'est précisément pour cela que l'historique
  * et le direct se lisent dans la même ligne, avec le même vocabulaire.
  *
- * Quatre réglages, tous optionnels : `limite` en fait un **aperçu** de quelques
+ * Cinq réglages, tous optionnels : `limite` en fait un **aperçu** de quelques
  * lignes plutôt qu'un panneau de plein format (tableau de bord épuré, #191),
- * `renvoi` porte le lien vers la page qui héberge le fil complet, et
+ * `renvoi` porte le lien vers la page qui héberge le fil complet,
  * `titre`/`messageVide` nomment le fil quand ce n'est pas celui du tableau de
  * bord — le journal **d'un run** (#478) parle du run, pas de « l'activité en
- * direct » de tout le projet.
+ * direct » de tout le projet — et `niveau` le range dans la hiérarchie du
+ * document : un fil qui est **une sous-partie** d'un écran est un `h3`, ce dont
+ * l'onglet Logs d'un agent (#266) a besoin, lui qui rend un fil par tâche sous
+ * un titre commun. C'est le sens qui change, pas l'apparence (`EnTeteSection`).
  */
 
 import { IconeActivite } from "@/components/Icones";
@@ -30,6 +33,7 @@ export function FilActivite({
   renvoi,
   titre = "Activité en direct",
   messageVide = "Aucun événement reçu pour l'instant.",
+  niveau = 2,
 }: {
   evenements: Evenement[];
   /** Nombre d'entrées affichées ; toutes par défaut. */
@@ -40,6 +44,8 @@ export function FilActivite({
   titre?: string;
   /** Ce que dit le fil vide : « pas encore » ne s'explique pas partout pareil. */
   messageVide?: string;
+  /** Son rang dans le document : section de page (2) ou sous-partie (3). */
+  niveau?: 2 | 3;
 }) {
   // La limite borne des **lignes**, pas des événements : une rafale repliée
   // (#250) en occupe une seule. Le compte masqué, lui, reste en événements —
@@ -57,6 +63,7 @@ export function FilActivite({
       <EnTeteSection
         titre={titre}
         icone={IconeActivite}
+        niveau={niveau}
         className="mb-2"
         aside={
           renvoi ? (

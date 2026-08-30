@@ -8,6 +8,13 @@ l'agnosticisme modèle (objectif O7, ENF-11) : la bascule d'un agent sur ce
 fournisseur se fait par la config seule, sans toucher au moteur ni à la logique
 d'agent.
 
+Le **niveau d'effort** (#253) n'est pas non plus servi ici, et il se refuse
+autrement : il n'est pas *refusé*, il est **absent du catalogue** — ce fournisseur
+n'annonce aucun effort, l'appelant ne lui en passe donc aucun, et un agent réglé
+sur un effort s'exécute ici sans erreur ni réglage. C'est la démonstration du
+contrat de `ModelProvider.effort_admis` : ignorer proprement n'est pas une bonne
+volonté d'implémentation, c'est ce que la déclaration produit.
+
 Capacités : `generate` (texte) seulement — l'exécution *agentique outillée*
 (`run_agent`) reste refusée (`UnsupportedCapability`, comportement de la base) et
 le moteur replie alors sur le livrable texte. Sans boucle agentique, **aucun
@@ -38,7 +45,7 @@ from typing import Any, ClassVar
 import httpx2
 
 from maestro.config import Settings
-from maestro.providers.base import AuthMode, Credentials, ModelProvider
+from maestro.providers.base import AuthMode, Credentials, ModeleDisponible, ModelProvider
 from maestro.providers.registry import register
 from maestro.telemetry import StepUsage, report_usage
 
@@ -62,6 +69,15 @@ class OpenAICompatProvider(ModelProvider):
     """Adaptateur générique des endpoints compatibles OpenAI, derrière l'abstraction."""
 
     name: ClassVar[str] = "openai"
+
+    #: Aucune gamme annoncée, et **des noms libres** (#253) : ce dialecte fédère
+    #: des endpoints choisis par configuration (`OPENAI_BASE_URL`) dont les
+    #: nommages n'ont rien de commun — `gpt-*` ici, `llama3:8b` sur un Ollama
+    #: local, `org/modele` sur un routeur. Les deux attributs se lisent ensemble :
+    #: gamme vide **et** libre veut dire « saisis le nom que sert ton endpoint »,
+    #: là où une gamme vide et fermée voudrait dire « rien à proposer ».
+    MODELES: ClassVar[tuple[ModeleDisponible, ...]] = ()
+    MODELES_LIBRES: ClassVar[bool] = True
 
     def __init__(self, credentials: Credentials, *, base_url: str = DEFAULT_BASE_URL) -> None:
         self._credentials = credentials
@@ -103,8 +119,19 @@ class OpenAICompatProvider(ModelProvider):
         *,
         model: str,
         system_prompt: str | None = None,
+        effort: str | None = None,
     ) -> str:
-        """Appel modèle texte : un tour de chat completions, sans outil ni streaming."""
+        """Appel modèle texte : un tour de chat completions, sans outil ni streaming.
+
+        `effort` (#253) est **accepté et ignoré**, et c'est le comportement voulu :
+        ce fournisseur n'annonce aucun effort (`MODELES` vide), donc l'appelant ne
+        lui en transmet jamais un — le paramètre n'est ici que pour honorer la
+        signature de la frontière, et pour qu'un appel direct qui en passerait un
+        n'échoue pas. Rien n'est ajouté au corps envoyé à l'endpoint : quelques
+        implémentations du dialecte exposent un `reasoning_effort`, la plupart
+        non, et un champ inconnu se solde par un 400 — envoyer au hasard
+        casserait l'usage nominal (un Ollama local) pour servir l'exception.
+        """
         messages: list[dict[str, str]] = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})

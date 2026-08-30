@@ -29,7 +29,7 @@ existe pour tenir.
 ## Il y en avait trois, et le cran du milieu est parti (#715)
 
 Un cran `orchestrateur` a existé entre les deux — *la machine tranche, seule* —,
-retiré par la décision de cadrage #647 ([docs/31](../docs/31-decision-cran-orchestrateur.md))
+retiré par la décision de cadrage #647 ([docs/32](../docs/32-decision-cran-orchestrateur.md))
 sur trois faits mesurés : il avait une **population de zéro** (aucune entrée `ask`
 dans le dépôt), **aucun canal de production** ne le servait (les cinq sites qui
 montent un `Guardrails` ne passent que plafonds, délai et `validateur`), et il
@@ -116,7 +116,7 @@ DECIDEUR_DEFAUT = Decideur.HUMAIN
 #: `ACTEUR_ORCHESTRATEUR = str(Decideur.ORCHESTRATEUR)` — avec ce motif : « *c'est
 #: le même acteur que le cran de décision `orchestrateur` […] deux constantes
 #: littérales laisseraient croire à deux acteurs qui se ressemblent* ». Le membre
-#: d'énumération est parti (le cran n'avait aucun canal, docs/31 §3), donc le lien
+#: d'énumération est parti (le cran n'avait aucun canal, docs/32 §3), donc le lien
 #: aussi : il n'y a plus de second acteur auquel se comparer, et #586 reste vrai
 #: pour l'autre moitié de ce qu'il disait de l'orchestrateur — *il peut répondre à
 #: une demande d'information*, ce canal-ci, qui ne lui est pas retiré (répondre à
