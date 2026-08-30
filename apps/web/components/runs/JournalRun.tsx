@@ -46,7 +46,7 @@ export function JournalRun({
   direct: Evenement[];
   revision: number;
 }) {
-  const historique = useJournal(portee, runId, revision);
+  const historique = useJournal(portee, { runId }, revision);
 
   const evenements = useMemo(
     () =>
