@@ -523,6 +523,56 @@ export function ChampListe({
   );
 }
 
+/** Un choix de filtre : la valeur portée, et comment on la nomme à l'écran. */
+export type OptionFiltre = { valeur: string; libelle: string };
+
+/**
+ * Une liste déroulante de **filtre** : les choix offerts, précédés du choix
+ * neutre qui ne filtre rien. Elle vit ici depuis #266, où la page Journal (#249)
+ * et l'onglet Logs d'un agent en ont eu besoin à l'identique — deux copies d'une
+ * même liste finissent par ne plus se désactiver au même moment ni proposer leur
+ * choix neutre au même endroit.
+ *
+ * Deux comportements que l'appelant n'a pas à redire : le choix neutre porte la
+ * **chaîne vide**, ce qui en fait un `value` légitime pour un `select` contrôlé
+ * sans introduire de sentinelle à connaître ; et la liste se **désactive** quand
+ * il n'y a rien à proposer — sans quoi elle offrirait un unique choix qui ne
+ * change rien, ce qui se lit comme une panne plutôt que comme un fil vide.
+ */
+export function ListeFiltre({
+  id,
+  libelle,
+  tout,
+  options,
+  valeur,
+  surChoix,
+}: {
+  id: string;
+  libelle: string;
+  /** Le libellé du choix neutre — « Tous les agents », « Toutes les tâches »… */
+  tout: string;
+  options: OptionFiltre[];
+  valeur: string;
+  surChoix: (valeur: string) => void;
+}) {
+  return (
+    <ChampListe
+      id={id}
+      libelle={libelle}
+      value={valeur}
+      onChange={(e) => surChoix(e.target.value)}
+      disabled={options.length === 0}
+    >
+      <option value="">{tout}</option>
+      {options.map((option) => (
+        <option key={option.valeur} value={option.valeur}>
+          {option.libelle}
+        </option>
+      ))}
+    </ChampListe>
+  );
+}
+
 /** Une saisie sur plusieurs lignes. */
 export function ChampTexte({
   id,

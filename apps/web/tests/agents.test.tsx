@@ -108,15 +108,23 @@ async function rendreListe(
 }
 
 describe("les facettes d'un agent (lib/agents)", () => {
-  it("reprend les trois anciennes pages, plus MCP & permissions", () => {
+  it("reprend les trois anciennes pages, puis ce qui n'en avait aucune", () => {
     // Profil ← /catalogue, Playbook ← /playbooks, Chat ← /chat/<agent> ; MCP &
     // permissions n'avait aucune page à soi et n'en gagne pas une, seulement
-    // une facette de la fiche.
+    // une facette de la fiche. Logs (#266) non plus, et pour une raison plus
+    // forte : ce qu'un agent faisait ne se lisait *nulle part* à son échelle,
+    // seulement dans le fil global du tableau de bord, tous agents confondus.
+    //
+    // L'ordre est le contenu de l'assertion et pas un détail : les quatre
+    // premiers vont du plus stable au plus vivant, et Logs ferme la rangée
+    // parce que c'est la trace — on l'ouvre en dernier, quand les autres ne
+    // suffisent plus (même place que le journal dans la bascule d'un run, #516).
     expect(ONGLETS_AGENT.map((onglet) => onglet.cle)).toEqual([
       "profil",
       "playbook",
       "mcp",
       "chat",
+      "logs",
     ]);
   });
 

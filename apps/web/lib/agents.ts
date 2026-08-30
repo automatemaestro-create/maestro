@@ -7,20 +7,23 @@
  * onglet précis) et les routes `/agents/[nom]/[onglet]` lisent toutes cette
  * liste — ajouter une facette à un agent se fait ici, pas dans trois endroits.
  *
- * Les quatre onglets reprennent les trois anciennes pages — `/catalogue`
- * (profil), `/playbooks` (playbook), `/chat` (chat) — plus les serveurs MCP et
- * les permissions, qui n'avaient jusqu'ici aucune page à eux.
+ * Les quatre premiers onglets reprennent les trois anciennes pages —
+ * `/catalogue` (profil), `/playbooks` (playbook), `/chat` (chat) — plus les
+ * serveurs MCP et les permissions, qui n'avaient jusqu'ici aucune page à eux.
+ * Le cinquième, **Logs** (#266), n'en reprend aucune : ce qu'un agent fait ne se
+ * lisait que dans le fil global du tableau de bord, tous agents confondus.
  */
 
 import {
   IconeAgent,
   IconeChat,
+  IconeJournal,
   IconeMcp,
   IconePlaybooks,
 } from "@/components/Icones";
 import type { Icone } from "@/components/Primitives";
 
-export type CleOngletAgent = "profil" | "playbook" | "mcp" | "chat";
+export type CleOngletAgent = "profil" | "playbook" | "mcp" | "chat" | "logs";
 
 export type OngletAgent = {
   cle: CleOngletAgent;
@@ -33,12 +36,21 @@ export type OngletAgent = {
   icone: Icone;
 };
 
-/** L'ordre d'affichage : de l'identité de l'agent à la conversation avec lui. */
+/**
+ * L'ordre d'affichage : de l'identité de l'agent à ce qu'il en a fait.
+ *
+ * Les quatre premiers vont du plus stable au plus vivant — qui il est, ce qu'on
+ * lui a appris, ce qu'on lui a permis, ce qu'on lui dit. **Logs ferme la
+ * rangée** (#266) pour la même raison que le journal ferme la bascule d'un run
+ * (`lib/vuesRun`, #516) : c'est la trace, on l'ouvre en dernier, quand ce que
+ * les quatre autres montrent ne suffit plus à comprendre ce qui s'est passé.
+ */
 export const ONGLETS_AGENT: OngletAgent[] = [
   { cle: "profil", libelle: "Profil", icone: IconeAgent },
   { cle: "playbook", libelle: "Playbook", icone: IconePlaybooks },
   { cle: "mcp", libelle: "MCP & permissions", icone: IconeMcp },
   { cle: "chat", libelle: "Chat", icone: IconeChat },
+  { cle: "logs", libelle: "Logs", icone: IconeJournal },
 ];
 
 /** L'onglet servi quand aucun n'est demandé — `/agents/<nom>` y redirige. */

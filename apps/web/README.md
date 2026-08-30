@@ -190,7 +190,7 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
 - **Fiche agent à onglets** (#190, lot 1 de la navigation v2 #189) : l'entrée de
   menu **Agents** mène à la liste (`/agents`) et chaque agent ouvre **une** fiche
   dont les facettes tiennent en onglets — Profil, Playbook, MCP & permissions,
-  Chat (`/agents/<nom>/<onglet>`). Les trois pages qui regardaient le même objet
+  Chat, puis **Logs** depuis #266 (`/agents/<nom>/<onglet>`). Les trois pages qui regardaient le même objet
   par trois chemins ont fusionné : `/catalogue`, `/playbooks` et `/chat/<agent>`
   sont **redirigés vers le bon onglet** (`next.config.ts`, aucun signet ne casse)
   et `?onglet=` porte l'intention jusqu'à la liste quand l'URL d'origine ne
@@ -310,6 +310,30 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   réponse de l'agent (cadrée par son playbook courant) et réception en temps
   réel par le WebSocket (`chat.message`). Le fil est persisté côté backend :
   l'historique se recharge au retour sur l'onglet ;
+- **Logs par agent** (#266, lot 14 de #243) : l'onglet **Logs** d'une fiche agent
+  montre ce qu'il fait et ce qu'il a fait — le direct **et** l'historique
+  persisté, **groupés par tâche**, la tâche la plus récemment active en tête et un
+  groupe « Hors tâche » pour ce qui n'en relève pas (planification, capacité).
+  Jusque-là l'activité d'un agent ne se lisait que dans le fil global du tableau
+  de bord, tous agents confondus, et disparaissait au rechargement. Trois choses à
+  connaître. **Le filtre par agent est servi par l'API** (`GET
+  /api/journal?agent=…`, filtre déjà au contrat #183) et jamais appliqué après
+  coup : une page de journal est plafonnée à 200 entrées, donc refiltrer une page
+  du projet entier ne montrerait d'un agent discret que le silence des autres —
+  même raisonnement qu'en #478 pour le `run_id`. **La ligne n'est pas réécrite** :
+  `FilActivite` rend ici ce qu'il rend au tableau de bord, sur `/journal` et dans
+  la vue d'un run, donc les résumés lisibles de #250 et le dépli qui rend les
+  identifiants ; il gagne seulement un `niveau`, pour être une sous-partie (`h3`)
+  sous le titre commun. **Le « niveau » est la famille d'une ligne, pas une
+  sévérité de plus** (`lib/evenements`, `NIVEAUX_LOG`) : *erreur*, *refus*,
+  *décision*, *info* — c'est-à-dire exactement les quatre choses que le ticket
+  demande de couvrir, si bien que « qu'est-ce qu'on lui a refusé ? » s'isole d'un
+  choix. Une échelle « erreur / avertissement / info » aurait été le réflexe et ne
+  permettait justement pas cette question-là ; la sévérité ne sert plus qu'à
+  **ordonner** la liste, dérivée du fil comme toutes les autres (#249 : aucune
+  option morte). Le **renvoi vers la tâche** mène à son run (`hrefRun`, éteint
+  tant que la page n'existe pas) : il n'y a pas de route par tâche dans la Control
+  Tower, une tâche s'ouvre en panneau dans la vue de son run ;
 - **Chat global** (#269, lot 2 de #244, docs/05 §2.9) : `/chat` sert le fil avec
   l'**orchestration** (canal `orchestrateur`, #268) — poser une demande sans avoir
   à choisir d'abord à qui la poser. Trois choses à connaître avant d'y toucher.
