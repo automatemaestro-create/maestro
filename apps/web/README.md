@@ -246,11 +246,11 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   dans une zone de texte elle insère un saut de ligne, et la voler à quelqu'un qui
   rédige coûterait plus que l'aide n'apporte ;
 - **Catalogue des agents** (#73, EF-03) : la liste `/agents` montre le catalogue
-  effectif (#72, API `/api/catalogue`) — ceux du code en lecture seule, et les
-  **personnalisés** qu'on y crée, puis modifie et supprime depuis l'onglet
-  **Profil** de leur fiche (formulaire complet : nom, rôle, compétences,
-  fournisseur/modèle, playbook). Un agent personnalisé est persisté hors du code
-  et chargé par les moteurs construits ensuite. Depuis #487 les champs
+  effectif (#72, API `/api/catalogue`) — ceux du code, et les **personnalisés**
+  qu'on y crée, puis modifie et supprime depuis l'onglet **Profil** de leur fiche
+  (nom, rôle, compétences, fournisseur/modèle/effort). Un agent personnalisé est
+  persisté hors du code et chargé par les moteurs construits ensuite. Depuis #487
+  les champs
   **fournisseur** et **modèle** ne sont plus deux cases vides : ils proposent ce
   qui existe (API `/api/fournisseurs`), en distinguant deux colonnes qui ne se
   confondent jamais — *supporté par Maestro* vient du **registre du code**
@@ -329,6 +329,59 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   passe pas par elle. Et un **échec** (quota, réseau, fournisseur muet, réponse
   hors contrat) laisse le formulaire **intact** et le dit : l'écriture des champs
   n'a lieu qu'après une réponse complète ;
+- **Un playbook s'écrit à un seul endroit, et un agent du code se règle sans
+  être cloné** (#259, lot 7 de #243) — deux relevés de revue sur l'onglet Profil,
+  et une même racine : *la même valeur à deux endroits*.
+
+  **Le champ Playbook quitte le Profil.** Il y vivait alors que l'onglet Playbook
+  existe depuis #190 : deux chemins d'écriture pour la même valeur, dont un
+  aveugle au versionnement et à l'historique — on pouvait écraser une version
+  publiée sans jamais voir qu'elle existait. Il ne subsiste qu'**à la création**,
+  où l'agent n'a pas encore d'onglet où aller ; partout ailleurs un **renvoi**
+  vers l'onglet Playbook prend sa place. Retirer le champ sans dire où sa valeur
+  s'écrit désormais aurait supprimé le doublon *et* le chemin. ⚠ Cela imposait
+  d'abord que l'onglet **existe pour tout le monde** : `/api/playbooks` ne
+  connaissait que les cinq rôles du code (`PLAYBOOK_DEFAUTS`) et **404-ait sur un
+  agent personnalisé**, dont le champ du Profil était donc irremplaçable. Ce
+  n'était pas une extension du moteur mais son rattrapage :
+  `LocalExecutor._playbook_courant` lit `PlaybookStore.lire(agent)` sans regarder
+  d'où vient l'agent — une version publiée pour un agent personnalisé
+  s'appliquait **déjà**, elle n'était simplement pas publiable. Le playbook de sa
+  définition (#72) joue désormais le rôle que le document Markdown joue pour un
+  rôle du code : l'**origine**, celle qui vaut tant que rien n'a été publié, et
+  que `source: "defaut" | "stockage"` distingue. Le Profil continue de renvoyer
+  ce playbook tel quel dans son `PUT` — la définition est remplacée en entier, ne
+  pas le renvoyer l'effacerait — mais il ne l'édite plus.
+
+  **Un agent du code accepte une surcharge.** Sa fiche était entièrement en
+  lecture seule, si bien que changer son modèle — un besoin courant — n'avait
+  qu'un contournement : le **dupliquer** en agent personnalisé, c'est-à-dire
+  recopier son playbook pour ne toucher qu'un réglage, après quoi les deux
+  exemplaires divergent en silence et la copie cesse de suivre le code. D'où le
+  **troisième état** du catalogue, « du code, **surchargé** »
+  (`AGENT_SOURCE_SURCHARGE`, API `PUT`/`DELETE /api/catalogue/{nom}/reglages`,
+  dépôt `core/surcharges/`) : l'identité reste au code — rôle, compétences,
+  playbook en suivent les évolutions —, seuls les trois réglages de modèle se
+  posent. Cinq choses à ne pas défaire. Ce qui n'est **pas** surchargé est
+  **marqué « hérité du code »** avec la valeur que le code lui donne (`herite`,
+  `reglages_du_code`), et c'est le **serveur** qui tranche : une valeur affichée
+  peut venir du code *ou* avoir été surchargée à l'identique, et la recalculer à
+  l'écran rendrait les deux indiscernables. Une surcharge **s'annule, elle ne
+  supprime pas** — l'agent reste au catalogue —, et la **suppression demeure
+  réservée aux personnalisés** : `DELETE /api/catalogue/{nom}` refuse un agent du
+  code en 403, `DELETE …/reglages` refuse un personnalisé pour la raison
+  symétrique (sa définition *est* son réglage, un second chemin d'écriture serait
+  le doublon qu'on vient de supprimer côté playbook). Le corps du `PUT` est
+  l'**intégrale et pas un diff** : un réglage absent retourne au code, si bien
+  que tout vider revient à annuler — et le dépôt ne stocke jamais une surcharge
+  vide, faute de quoi « surchargé avec rien » existerait à côté de « du code »,
+  deux états indiscernables dont l'un afficherait pourtant l'agent comme modifié.
+  Les trois `<select>` sont **ceux de #255** (`ChampsDuModele`, extrait plutôt que
+  recopié) : la chaîne fournisseur → modèle → effort, son invalidation et son
+  résumé du poste valent ici sans une ligne de plus, et deux chaînes à tenir
+  d'accord auraient défait ce que #255 venait d'unifier. Enfin `MAESTRO_MODEL`
+  **prime** sur une surcharge de modèle, comme il prime sur celui d'un agent
+  personnalisé — c'est une bascule globale — mais ne touche pas à l'effort ;
 - **Les permissions d'un agent s'éditent** (#262, lot 10 de #243, onglet **MCP &
   permissions**) : la politique allow/ask/deny que le moteur applique à
   l'exécution se règle depuis la fiche (`PUT /api/permissions/<agent>`, source

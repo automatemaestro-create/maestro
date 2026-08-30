@@ -61,6 +61,12 @@ class Settings:
     #: Racine du dépôt des capacités d'agents (`MAESTRO_CAPACITE_DIR`), ou
     #: None : le dossier `core/capacite/` du dépôt (cf. maestro.agents.capacity, #86).
     capacite_dir: str | None = None
+    #: Racine du dépôt des **surcharges** d'agents du code (`MAESTRO_SURCHARGES_DIR`),
+    #: ou None : le dossier `core/surcharges/` du dépôt (cf. maestro.agents.store, #259).
+    #: Distinct d'`agents_dir` : celui-ci stocke des définitions d'agents
+    #: personnalisés, celui-là les seuls réglages de modèle posés sur un agent du
+    #: code — les mêler ferait d'une surcharge un agent, ce qu'elle n'est pas.
+    surcharges_dir: str | None = None
     #: Racine du dépôt des serveurs MCP déclarés par agent (`MAESTRO_MCP_DIR`), ou
     #: None : le dossier `core/mcp/` du dépôt (cf. maestro.agents.mcp, #104).
     mcp_dir: str | None = None
@@ -190,6 +196,7 @@ class Settings:
             agents_dir=(os.getenv("MAESTRO_AGENTS_DIR") or "").strip() or None,
             chat_dir=(os.getenv("MAESTRO_CHAT_DIR") or "").strip() or None,
             capacite_dir=(os.getenv("MAESTRO_CAPACITE_DIR") or "").strip() or None,
+            surcharges_dir=(os.getenv("MAESTRO_SURCHARGES_DIR") or "").strip() or None,
             mcp_dir=(os.getenv("MAESTRO_MCP_DIR") or "").strip() or None,
             mcp_amont_dir=(os.getenv("MAESTRO_MCP_AMONT_DIR") or "").strip() or None,
             mcp_amont_url=(os.getenv("MAESTRO_MCP_AMONT_URL") or "").strip() or None,

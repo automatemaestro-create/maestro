@@ -138,10 +138,12 @@ Endpoints :
   `hors_registre` — l'outillage présent que Maestro ne sait pas piloter — et les
   `incertitudes` de la sonde ;
 - `GET  /api/catalogue` — le catalogue d'agents (#72, EF-03) : les agents par
-  défaut du code et les personnalisés persistés, avec leur provenance, leurs
-  réglages de modèle (`fournisseur`/`modele`/`effort` — #253), leurs
-  serveurs MCP déclarés (#104, lecture seule — `mcp_serveurs`/`mcp_erreur`) et
-  leur politique de permissions effective (#110 —
+  défaut du code et les personnalisés persistés, avec leur provenance
+  (`source`, **trois** valeurs depuis #259 : `defaut`, `defaut_surcharge`,
+  `personnalise`), leurs réglages de modèle **effectifs**
+  (`fournisseur`/`modele`/`effort` — #253) et d'où chacun vient (`herite`,
+  `reglages_du_code` — #259), leurs serveurs MCP déclarés (#104, lecture seule —
+  `mcp_serveurs`/`mcp_erreur`) et leur politique de permissions effective (#110 —
   `permissions`/`permissions_erreur`, écrite par `PUT /api/permissions/{agent}`
   depuis #262, qui sert avec elle les outils **réellement exposés** à l'agent
   dans `permissions_outils`) ;
@@ -156,6 +158,13 @@ Endpoints :
   `POST /api/catalogue` ci-dessus ;
 - `PUT  /api/catalogue/{nom}` — remplace la définition d'un agent personnalisé ;
 - `DELETE /api/catalogue/{nom}` — supprime un agent personnalisé ;
+- `PUT  /api/catalogue/{nom}/reglages` — surcharge les réglages de modèle d'un
+  agent **du code** (#259) sans le dupliquer : le rôle, les compétences et le
+  playbook restent au code et continuent d'en suivre les évolutions ; ce qui
+  n'est pas envoyé reste hérité ;
+- `DELETE /api/catalogue/{nom}/reglages` — **annule** cette surcharge (retour aux
+  réglages du code). Annuler n'est pas supprimer : l'agent reste au catalogue, et
+  la suppression demeure réservée aux personnalisés ;
 - `GET  /api/chat/{agent}` — le fil de conversation utilisateur ↔ agent (#84),
   persisté et relu du `ChatStore` ; `?conversation=` en désigne une (#694),
   sinon la plus récente ;
@@ -269,9 +278,19 @@ from maestro.agents.mcp_registry import (
     RegistreMcp,
 )
 from maestro.agents.permissions import PermissionStore, entree_valide
-from maestro.agents.playbooks import PLAYBOOK_DEFAUTS, PlaybookStore
+from maestro.agents.playbooks import PLAYBOOK_DEFAUTS, PlaybookDefaut, PlaybookStore
 from maestro.agents.secrets import SecretStore
-from maestro.agents.store import NOMS_RESERVES, AgentDefinition, AgentStore, catalogue
+from maestro.agents.store import (
+    AGENT_SOURCE_DEFAUT,
+    AGENT_SOURCE_PERSONNALISE,
+    AGENT_SOURCE_SURCHARGE,
+    NOMS_RESERVES,
+    AgentDefinition,
+    AgentStore,
+    SurchargeAgent,
+    SurchargeStore,
+    catalogue,
+)
 from maestro.appartenance import projet_id_valide
 from maestro.config import ConfigError, Settings, load_settings
 from maestro.controltower import selecteur
@@ -642,6 +661,26 @@ class AgentModificationRequete(BaseModel):
     effort: str | None = None
 
 
+class SurchargeRequete(BaseModel):
+    """Corps de surcharge des réglages d'un agent du code (#259) : les trois, entiers.
+
+    Un remplacement et pas un diff, comme `AgentModificationRequete` : ce qui
+    n'est pas envoyé est **hérité du code**, pas « laissé tel quel ». Sans cette
+    règle, retirer une surcharge de modèle en laissant celle d'effort demanderait
+    un verbe de plus, et « champ absent » voudrait dire deux choses selon le
+    réglage. Pour tout rendre au code, `DELETE` sur la même URL.
+
+    Aucun des trois n'est validé ici — même raison qu'à la création d'un agent :
+    ce que le fournisseur admet se lit sur `GET /api/fournisseurs`, se trie à
+    l'exécution, et une gamme qui bouge ne doit pas rendre irrecevable une
+    surcharge par ailleurs correcte.
+    """
+
+    fournisseur: str | None = None
+    modele: str | None = None
+    effort: str | None = None
+
+
 class AgentGenerationRequete(BaseModel):
     """Corps d'une génération assistée de définition (#257) : l'intention, en une phrase.
 
@@ -931,6 +970,7 @@ def create_app(
     state: ControlTowerState | None = None,
     playbooks: PlaybookStore | None = None,
     agents_store: AgentStore | None = None,
+    surcharges: SurchargeStore | None = None,
     mailbox: Mailbox | None = None,
     chat_store: ChatStore | None = None,
     chat_repondeur: RepondeurChat | None = None,
@@ -972,6 +1012,13 @@ def create_app(
     (`MAESTRO_AGENTS_DIR`, sinon `core/agents/` du dépôt). L'état par défaut se
     construit sur le catalogue **effectif** : les agents personnalisés déjà
     persistés sont présents dès le démarrage, comme ceux du code.
+
+    `surcharges` (#259) est le dépôt des **surcharges** posées sur les agents du
+    code — les trois réglages de modèle qu'on peut leur changer sans les
+    dupliquer (`MAESTRO_SURCHARGES_DIR`, sinon `core/surcharges/`). Distinct
+    d'`agents_store` : celui-ci stocke des agents, celui-là des réglages posés
+    sur des agents qui existent déjà. Le catalogue effectif les applique, donc
+    l'état de démarrage les porte aussi.
 
     `mailbox`, `chat_store` et `chat_repondeur` (#84) portent le chat
     utilisateur ↔ agent des endpoints `/api/chat` : la messagerie inter-agents
@@ -1153,6 +1200,7 @@ def create_app(
     journal = journal if journal is not None else ServiceJournal()
     battements = battements if battements is not None else RegistreBattementsMemoire()
     agents_store = agents_store if agents_store is not None else AgentStore.default()
+    surcharges = surcharges if surcharges is not None else SurchargeStore.default()
     capacites = capacites if capacites is not None else CapacityStore.default()
     # Construire la sonde ne sonde rien (#487) : elle n'a ni état ni cache, et ne
     # regarde le poste qu'au moment où `GET /api/fournisseurs` le demande.
@@ -1188,7 +1236,9 @@ def create_app(
     state = (
         state
         if state is not None
-        else ControlTowerState(catalogue(agents_store), capacites=capacites.lister())
+        else ControlTowerState(
+            catalogue(agents_store, surcharges=surcharges), capacites=capacites.lister()
+        )
     )
     playbooks = playbooks if playbooks is not None else PlaybookStore.default()
     analyseur = analyseur if analyseur is not None else AnalyseurEchecs(playbooks=playbooks)
@@ -2322,31 +2372,63 @@ def create_app(
         await bus.publish(event)
         return demande.to_dict()
 
-    def _exige_playbook_connu(agent: str) -> None:
-        """404 si `agent` n'est pas un agent à playbook (la clé de `PLAYBOOK_DEFAUTS`).
+    def _playbook_origine(agent: str) -> PlaybookDefaut | None:
+        """Le playbook **d'origine** de `agent` — code ou personnalisé —, None si inconnu.
 
-        L'API n'édite que les playbooks des rôles du catalogue : pas de création
-        de playbook orphelin par une simple faute de frappe dans l'URL.
+        Deux origines, un seul contrat (#259) : pour un agent du code, le
+        document Markdown livré (`PLAYBOOK_DEFAUTS`, #295) ; pour un agent
+        personnalisé, le `playbook` de sa définition (#72), celui qu'on a saisi
+        en le créant. Dans les deux cas c'est le contenu qui vaut **tant que
+        rien n'a été publié** dans le stockage versionné.
+
+        Cette symétrie n'est pas une extension du moteur, c'est le rattrapage
+        d'un retard de l'API sur lui : `LocalExecutor._playbook_courant` lit
+        `PlaybookStore.lire(agent)` sans regarder d'où vient l'agent, et retombe
+        sur son `prompt_systeme` sinon — une version publiée pour un agent
+        personnalisé s'appliquait donc **déjà**, elle n'était simplement pas
+        publiable. C'est ce qui rendait l'onglet Playbook 404 sur un agent
+        personnalisé, et donc son champ du Profil irremplaçable ; #259 le
+        remplace, il fallait d'abord qu'il y ait où aller.
         """
-        if agent not in PLAYBOOK_DEFAUTS:
+        defaut = PLAYBOOK_DEFAUTS.get(agent)
+        if defaut is not None:
+            return defaut
+        definition = _personnalise_ou_none(agent)
+        if definition is None:
+            return None
+        return PlaybookDefaut(
+            agent=agent, role=definition.role, contenu=definition.playbook
+        )
+
+    def _exige_playbook_connu(agent: str) -> PlaybookDefaut:
+        """404 si `agent` n'est pas un agent du catalogue — et son origine sinon.
+
+        L'API n'édite que les playbooks des agents du catalogue, du code comme
+        personnalisés : pas de création de playbook orphelin par une simple
+        faute de frappe dans l'URL.
+        """
+        origine = _playbook_origine(agent)
+        if origine is None:
             raise HTTPException(
                 status_code=404,
                 detail=f"playbook inconnu : {agent} (voir GET /api/playbooks)",
             )
+        return origine
 
     def _fiche_playbook(agent: str, *, avec_contenu: bool) -> dict[str, Any]:
         """La fiche du playbook d'un agent : version courante et provenance.
 
         `version` 0 et `source` « defaut » tant que le playbook n'a jamais été
-        édité : le contenu effectif est alors le prompt du code (#76, repli).
+        édité : le contenu effectif est alors celui d'origine (#76, repli) — le
+        prompt du code, ou la définition pour un agent personnalisé (#259).
         `provenance` est celle de la version courante (« humain » — une proposition
-        n'est jamais courante, #111), None quand le contenu vient du code.
+        n'est jamais courante, #111), None quand le contenu vient de l'origine.
         """
-        defaut = PLAYBOOK_DEFAUTS[agent]
+        origine = _playbook_origine(agent)
         courant = playbooks.lire(agent)
         fiche: dict[str, Any] = {
             "agent": agent,
-            "role": defaut.role,
+            "role": origine.role if origine else agent,
             "version": courant.version if courant else 0,
             "nb_versions": len(playbooks.numeros(agent)),
             "source": "stockage" if courant else "defaut",
@@ -2354,13 +2436,24 @@ def create_app(
             "cree_le": courant.cree_le if courant else None,
         }
         if avec_contenu:
-            fiche["contenu"] = courant.contenu if courant else defaut.contenu
+            fiche["contenu"] = (
+                courant.contenu if courant else (origine.contenu if origine else "")
+            )
         return fiche
 
     @app.get("/api/playbooks")
     async def playbooks_liste() -> list[dict[str, Any]]:
-        """Les playbooks des agents (#76) : version courante et provenance de chacun."""
-        return [_fiche_playbook(agent, avec_contenu=False) for agent in PLAYBOOK_DEFAUTS]
+        """Les playbooks des agents (#76) : version courante et provenance de chacun.
+
+        Les agents du code d'abord, puis les personnalisés — l'ordre du
+        catalogue. Ces derniers y figurent depuis #259 : leur playbook s'édite
+        et se versionne comme les autres, l'onglet Playbook étant devenu le
+        chemin d'écriture unique.
+        """
+        return [
+            _fiche_playbook(agent, avec_contenu=False)
+            for agent in (*PLAYBOOK_DEFAUTS, *(d.nom for d in agents_store.lister()))
+        ]
 
     @app.get("/api/playbooks/lexique")
     async def lexique_playbook() -> dict[str, list[dict[str, object]]]:
@@ -2475,15 +2568,16 @@ def create_app(
     def _agent_du_catalogue(nom: str) -> Agent:
         """La fiche catalogue de `nom` (modèle, prompt du code) — un rôle du code au pire.
 
-        Sert à l'analyse d'auto-amélioration, qui a besoin du modèle de l'agent. Les
-        playbooks n'existent que pour les rôles du code (`_exige_playbook_connu`), toujours
-        présents dans `DEFAULT_AGENTS` : le repli garantit une fiche même si le catalogue
-        effectif ne renvoyait pas ce nom.
+        Sert à l'analyse d'auto-amélioration, qui a besoin du modèle de l'agent. Le
+        catalogue effectif est interrogé **d'abord** — c'est lui qui porte les
+        surcharges (#259) et les agents personnalisés, dont `_exige_playbook_connu`
+        accepte désormais le playbook —, `DEFAULT_AGENTS` restant le repli qui
+        garantit une fiche aux rôles du code si le catalogue ne renvoyait pas ce nom.
         """
-        for agent in (*catalogue(agents_store), *DEFAULT_AGENTS):
+        for agent in (*catalogue(agents_store, surcharges=surcharges), *DEFAULT_AGENTS):
             if agent.nom == nom:
                 return agent
-        # Injoignable en pratique : `_exige_playbook_connu` a déjà garanti un rôle du code.
+        # Injoignable en pratique : `_exige_playbook_connu` a déjà garanti un agent connu.
         raise HTTPException(  # pragma: no cover - garanti connu en amont
             status_code=404, detail=f"agent inconnu : {nom}"
         )
@@ -2780,27 +2874,44 @@ def create_app(
         }
 
     def _fiche_defaut(agent: Agent, *, avec_playbook: bool) -> dict[str, Any]:
-        """La fiche catalogue d'un agent par défaut : sa définition « du code ».
+        """La fiche catalogue d'un agent du code — surchargé ou non (#259).
 
-        `source` « defaut », sans dates : la définition vit dans le code
-        (`maestro.agents.catalog`), seule l'édition de son playbook passe par
-        le stockage versionné (`/api/playbooks`).
+        La définition vit dans le code (`maestro.agents.catalog`) : rôle,
+        compétences et playbook n'en bougent pas ici (le playbook s'édite par le
+        stockage versionné, `/api/playbooks`). Ce qui bouge, ce sont les **trois
+        réglages de modèle**, qu'une surcharge peut recouvrir sans dupliquer
+        l'agent — d'où le troisième état de `source` : « defaut » tant que rien
+        n'est posé, « defaut_surcharge » dès qu'un réglage l'est.
 
-        `effort` (#253) est celui du code — `None` pour les cinq agents par
-        défaut, aucun n'en déclarant. La clé est **présente quand même**, comme
-        `fournisseur` : les deux formes de fiche doivent porter les mêmes champs,
-        faute de quoi un client aurait à deviner selon la `source`.
+        Les valeurs servies sont donc les **effectives** (surcharge d'abord,
+        code ensuite), et trois clés disent d'où elles viennent : `herite` nomme
+        les réglages qui restent au code — de quoi les marquer comme tels
+        plutôt que de le faire deviner —, `reglages_du_code` donne ce que le
+        code dit de chacun, y compris quand il est recouvert (c'est ce que
+        « revenir au défaut » rendrait), et `modifie_le` porte la date de la
+        surcharge, ou None si l'agent n'en a pas. `cree_le` reste None : un
+        agent du code n'est pas créé, il est là.
+
+        Les deux formes de fiche portent les **mêmes champs**, ici comme depuis
+        #253 : un client n'a jamais à deviner ses clés d'après la `source`.
         """
+        surcharge = surcharges.lire(agent.nom)
         fiche: dict[str, Any] = {
             "nom": agent.nom,
             "role": agent.role,
             "competences": sorted(agent.competences),
-            "modele": agent.modele,
-            "fournisseur": None,
-            "effort": agent.effort,
-            "source": "defaut",
+            "modele": surcharge.modele or agent.modele,
+            "fournisseur": surcharge.fournisseur,
+            "effort": surcharge.effort if surcharge.effort is not None else agent.effort,
+            "source": AGENT_SOURCE_DEFAUT if surcharge.vide else AGENT_SOURCE_SURCHARGE,
+            "herite": list(surcharge.herite()),
+            "reglages_du_code": {
+                "fournisseur": None,
+                "modele": agent.modele,
+                "effort": agent.effort,
+            },
             "cree_le": None,
-            "modifie_le": None,
+            "modifie_le": surcharge.modifie_le or None,
             **_volet_mcp(agent.nom),
             **_volet_permissions(agent.nom),
         }
@@ -2811,9 +2922,18 @@ def create_app(
     def _fiche_personnalise(
         definition: AgentDefinition, *, avec_playbook: bool
     ) -> dict[str, Any]:
-        """La fiche catalogue d'un agent personnalisé : sa définition persistée (#72)."""
+        """La fiche catalogue d'un agent personnalisé : sa définition persistée (#72).
+
+        `herite` est **vide** et `reglages_du_code` **null** : un agent
+        personnalisé ne tient rien du code, sa définition est son réglage. Les
+        deux clés sont servies quand même — voir `_fiche_defaut` : une fiche
+        dont les champs dépendraient de la `source` obligerait chaque client à
+        les deviner.
+        """
         fiche = definition.to_dict(avec_playbook=avec_playbook)
-        fiche["source"] = "personnalise"
+        fiche["source"] = AGENT_SOURCE_PERSONNALISE
+        fiche["herite"] = []
+        fiche["reglages_du_code"] = None
         fiche.update(_volet_mcp(definition.nom))
         fiche.update(_volet_permissions(definition.nom))
         return fiche
@@ -2848,6 +2968,41 @@ def create_app(
                 detail=f"agent personnalisé inconnu : {nom} (voir GET /api/catalogue)",
             )
         return definition
+
+    def _exige_du_code(nom: str) -> Agent:
+        """L'agent du code `nom`, ou l'erreur HTTP qui explique son absence (#259).
+
+        Le **symétrique** d'`_exige_personnalise`, et ses refus se répondent :
+        403 sur un agent personnalisé — sa définition *est* son réglage et
+        s'édite par `PUT /api/catalogue/{nom}` ; le surcharger ouvrirait un
+        second chemin d'écriture vers les trois mêmes valeurs, le doublon même
+        que #259 supprime côté playbook. 403 aussi sur `orchestrateur` et
+        `assistance`, qui n'ont pas de fiche au catalogue. 404 sur un inconnu.
+        """
+        agent = next((a for a in DEFAULT_AGENTS if a.nom == nom), None)
+        if agent is not None:
+            return agent
+        if _personnalise_ou_none(nom) is not None:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"agent personnalisé : {nom} — ses réglages font partie de sa "
+                    "définition et se modifient via PUT /api/catalogue/{nom} ; "
+                    "seul un agent du code se surcharge."
+                ),
+            )
+        if nom in NOMS_RESERVES:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"acteur système : {nom} — hors catalogue, il n'a pas de "
+                    "réglage de modèle à surcharger."
+                ),
+            )
+        raise HTTPException(
+            status_code=404,
+            detail=f"agent inconnu : {nom} (voir GET /api/catalogue)",
+        )
 
     @app.get("/api/mcp/registre")
     async def mcp_registre(q: str = "", source: str = SOURCE_TOUTES) -> list[dict[str, Any]]:
@@ -3675,8 +3830,53 @@ def create_app(
         _exige_personnalise(nom)
         agents_store.supprimer(nom)
         capacites.supprimer(nom)
+        surcharges.supprimer(nom)
         state.retirer_agent(nom)
         return {"nom": nom, "supprime": True}
+
+    @app.put("/api/catalogue/{nom}/reglages")
+    async def surcharger_agent(nom: str, requete: SurchargeRequete) -> dict[str, Any]:
+        """Surcharge les réglages de modèle d'un agent du code (#259), sans le dupliquer.
+
+        Le troisième état du catalogue : l'agent reste celui du code — rôle,
+        compétences et playbook continuent d'en venir et d'en suivre les
+        évolutions —, seuls `fournisseur`, `modele` et `effort` sont recouverts.
+        Ce qui n'est pas envoyé retourne au code et se relit dans `herite`.
+        Poser les trois à `null` **annule** la surcharge, comme `DELETE`.
+
+        `modele` et `effort` valent pour les moteurs construits ensuite ;
+        `fournisseur` reste déclaratif au POC. 403 sur un agent personnalisé
+        (ses réglages s'éditent par `PUT /api/catalogue/{nom}`) ou un acteur
+        système, 404 sur un nom inconnu.
+        """
+        agent = _exige_du_code(nom)
+        surcharges.ecrire(
+            SurchargeAgent(
+                nom=nom,
+                fournisseur=requete.fournisseur,
+                modele=requete.modele,
+                effort=requete.effort,
+            )
+        )
+        return _fiche_defaut(agent, avec_playbook=True)
+
+    @app.delete("/api/catalogue/{nom}/reglages")
+    async def annuler_surcharge(nom: str) -> dict[str, Any]:
+        """Annule la surcharge d'un agent du code : retour à ses réglages du code (#259).
+
+        ⚠ **Annule, ne supprime pas** — et c'est tout le sujet du critère 3 de
+        #259 : l'agent reste au catalogue, il redevient simplement celui du
+        code. La suppression, elle, reste réservée aux agents personnalisés
+        (`DELETE /api/catalogue/{nom}`, qui refuse un agent du code en 403).
+        Deux verbes voisins pour deux gestes que rien ne doit confondre.
+
+        Idempotent : annuler une surcharge absente rend la même fiche, sans
+        erreur — il n'y a rien à signaler à qui demande un état déjà atteint.
+        403/404 comme `PUT`.
+        """
+        agent = _exige_du_code(nom)
+        surcharges.supprimer(nom)
+        return _fiche_defaut(agent, avec_playbook=True)
 
     def _exige_agent_du_catalogue(nom: str) -> Agent:
         """La fiche catalogue de `nom` (défaut ou personnalisé), ou l'erreur 404.

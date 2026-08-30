@@ -30,9 +30,15 @@
  *
  * - **Le numéro de version manquait dans certains états.** Il est désormais dans
  *   l'en-tête *et* sur le bouton, pendant l'envoi comme avant, et **y compris
- *   quand le playbook est encore celui du code** — qui est la version `v0`, pas
+ *   quand le playbook est encore celui d'origine** — qui est la version `v0`, pas
  *   une absence de version. Un bouton « Publier » qui ne dit pas ce qu'il va
  *   créer demande de faire confiance ; celui-ci nomme la version qu'il produit.
+ *
+ * Depuis #259 l'onglet sert **tous** les agents, personnalisés compris, et le
+ * mot « origine » a remplacé « du code » pour cette raison : l'origine d'un
+ * agent personnalisé est le playbook de sa définition (#72), pas un document du
+ * dépôt. C'est ce qui a fait de cet onglet le **seul** chemin d'écriture d'un
+ * playbook — le champ du Profil, qui l'ignorait, a disparu.
  *
  * - **L'historique s'empilait sous l'éditeur.** Il tient maintenant dans un
  *   sélecteur en haut à droite, et choisir une entrée **remplace** la zone
@@ -475,11 +481,14 @@ export function EditeurPlaybook({
           aside={
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
               {/* Critère 2 : la version en vigueur se lit sans rien ouvrir, et
-                  « playbook du code » en est une — la v0, pas un trou. */}
+                  le playbook d'origine en est une — la v0, pas un trou.
+                  « d'origine » et non « du code » depuis #259 : l'onglet sert
+                  aussi les agents personnalisés, dont l'origine est le playbook
+                  de leur définition et non un document du dépôt. */}
               <span className="chiffre text-annexe text-texte-secondaire">
                 en vigueur : v{fiche.version}
                 {jamaisEdite
-                  ? " · playbook du code"
+                  ? " · playbook d’origine"
                   : fiche.cree_le
                     ? ` · ${formatDateHeure(fiche.cree_le)}`
                     : ""}
