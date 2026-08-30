@@ -2160,6 +2160,17 @@ Règles de ce run autonome :
   question sans que personne l'ait jugée. Fais une seule chose : NOMME ce ticket dans ton résumé
   final comme appelant une veille, et implémente en t'en tenant au socle (docs/30, tokens et
   primitives du dépôt, aucune identité nouvelle).
+- TU N'AS PAS D'ACCÈS WEB DU TOUT, PAS MÊME POUR UNE URL QUE TON TICKET CITE. C'est le second
+  versant de la règle ci-dessus, et il ne relève pas de la veille : « WebFetch <une URL nommée dans
+  le ticket> » est refusé lui aussi (#792, docs/10 §11.7). La raison ne tient pas à ta prudence,
+  qui n'est pas en cause : une règle de permission ne borne qu'un PRÉFIXE, donc elle ne sait pas
+  vérifier que l'URL vient d'un humain plutôt que de toi — et ce que tu produis part dans « main »
+  sans qu'un humain relise. Ne le tente donc pas : une session l'a fait et y a perdu un tour. Ce que
+  tu fais à la place, dans l'ordre : la référence est SOUVENT déjà dans le dépôt (cherche-la avec
+  « grep -rn » avant de conclure qu'elle manque) ; sinon, implémente ce que le ticket décrit sans
+  elle, et NOMME dans ton résumé final l'URL qui t'aurait servi et ce qu'elle t'aurait appris. Une
+  référence qui doit devenir durable entre dans le dépôt par un geste humain — entrée versionnée et
+  relue, ou porte d'admission (#678) —, jamais par une lecture à chaud au milieu d'un run.
 - POUR JOUER DES TESTS, l'endroit se choisit PAR FAMILLE DE SUITE, et l'écart se paie sur ton
   quota. Une suite d'OUTILLAGE — elle nomme un script du dépôt (worktree.sh, lib.sh, run.sh…) —
   se joue dans le conteneur Linux, « bash scripts/ci/pytest.sh tests/test_<suite>.py -q » : vingt
