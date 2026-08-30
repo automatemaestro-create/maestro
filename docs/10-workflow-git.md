@@ -2609,6 +2609,56 @@ d'entrée posés ensemble, c'est-à-dire un pic de **2**. Sans cette moitié, un
 jamais joué rendrait un ✓ sur une question jamais posée.
 
 
+#### L'autre faux rouge : un test qui s'accroche à une horloge murale (#648)
+
+#745 traite le cas où **la charge fausse une mesure de simultanéité**. Il en existe un second,
+symétrique et plus banal : un test qui n'a **rien** à mesurer, mais qui fabrique une transition avec
+un minuteur — et qui court alors contre le démarrage de ce qu'il observe.
+
+**Le cas.** `test_merge_automatique.py::test_une_naissance_qui_aboutit_le_dit_quand_meme` (#595)
+faisait apparaître le run *pendant* que `pipeline-wait` boucle, au moyen d'un `threading.Timer(2.0)`
+côté Python, pour que la naissance soit mesurée **au-delà du délai court** et que le verbe imprime
+« run né après … ». Ce que la course mesurait en pratique était le **temps de démarrage du
+sous-processus** : sous seize workers, `bash` + le chargement de `lib.sh` + le premier appel au `gh`
+factice dépassent les deux secondes, si bien que le **premier** sondage voyait déjà le run né. Le
+verbe rendait alors `0` et `success` — tout allait bien — mais sans la ligne, et l'assertion tombait.
+
+**Mesuré le 2026-08-27** : la suite seule (`pytest.sh`, 63 tests) verte deux fois ; `local.sh`
+(944 tests, 16 workers) **rouge trois fois de suite**, toujours ce seul test, toujours sur
+`assert "run né après" in r.stderr` avec `r.stderr == ""`. Le défaut est **antérieur** au chantier
+qui l'a rencontré : la même sonde rejouée sur le code d'`origin/main` rougit à l'identique — #393
+n'a fait que le rendre visible en mettant huit suites dans le périmètre du filet, et il a payé trois
+rejeux du filet puis la reconstruction d'`origin/main` dans son worktree pour établir que le rouge
+n'était pas le sien.
+
+**La règle, et elle généralise celle de #292.** *Ce qui doit être ordonné l'est par une barrière,
+jamais par un `sleep`* valait pour la **simultanéité** ; elle vaut à l'identique pour une
+**transition**. Un décor qui change « au bout de deux secondes » est une horloge murale de plus,
+simplement déguisée en décor. Le double `gh` sait donc faire dépendre sa réponse du **rang de
+l'appel** — `regle_run(..., apres=N)` placée avant `regle_run_absent(...)` rend le run « absent aux
+N premiers sondages, présent ensuite » (`rang` dans [`tests/harnais_forge.py`](../tests/harnais_forge.py)) —
+et la transition est **produite** au lieu d'être espérée. L'attente que le verbe nomme est alors
+celle qu'il **compte lui-même** (`attendu`, incrémenté du pas de sondage), pas celle qu'une machine
+chargée lui a fait subir : plus aucune assertion ne dépend d'une durée.
+
+Deux détails qui font le mécanisme, et qu'on ne défait pas : le rang se lit dans le **journal du
+double**, déjà écrit une ligne par appel avant tout choix de réponse — un compteur à part serait un
+second support du même fait, et le journal est le seul qui survive au `pose_etat` d'un test ; et il
+se compte **depuis le décor**, sans quoi la seconde phase d'un A/B hériterait des appels de la
+première et verrait sa transition arriver un sondage trop tôt, en silence.
+
+Le test **prouve son motif avant de conclure** (#534/#537) : même verbe, même décor, seul le rang
+d'apparition change — né au **premier** sondage, le run ne doit **rien** faire dire. Et le rang
+s'atteste par un **compte de sondages**, jamais par un chronomètre, exactement comme les gains de
+#577/#602 se gardent en comptant les allers vers la forge.
+
+> **Pourquoi ça compte au-delà d'un test.** Un rouge qu'on apprend à ignorer ne garde plus rien. Le
+> filet local est censé rendre le verdict de la CI avant de pousser ; un job rouge qui **ne dépend
+> pas du diff** enseigne à pousser quand même, et le jour où le rouge est réel il sera lu comme le
+> même bruit. C'est la même phrase que #745, prise par l'autre bout : *un filet qui ment est pire
+> que pas de filet*.
+
+
 ### 8.4bis Itérer sur une suite : le lanceur, et où jouer selon la famille (#405)
 
 #372 a mis le job pytest du filet dans un conteneur Linux, mais **le régime n'était joignable que
@@ -3117,6 +3167,11 @@ du code `6` le nomme, avec la branche déjà substituée dans la commande.
 | `pipeline-wait`, sur `6` | le délai de naissance est épuisé | la durée, le numéro de la PR, et la commande de dispatch |
 | `pipeline-wait`, sur `0`/`3` | le run est né **après** le délai court | « run né après 18min21 — le déclencheur a tardé » : sans cette ligne, une clôture qui aboutit ne dirait jamais qu'elle a attendu vingt minutes |
 | console du run | une PR reste en naissance plus de 10 min (`MAESTRO_ORCHESTRATE_NAISSANCE_SIGNAL`) | la durée, le nombre de tentatives, **« ce n'est ni un rouge ni un conflit, rien à débloquer »**, et la commande de dispatch — **une seule fois**, la règle de `merge_annonce` valant ici aussi : un drain qui répète « pas encore » à chaque passe est un drain qu'on cesse de lire |
+
+> La deuxième ligne — « run né après … » — se garde par le **rang du sondage** et non par un
+> minuteur : le double `gh` rend le run absent aux N premiers appels, présent ensuite. La première
+> écriture de ce test s'accrochait à une horloge murale et rougissait sous charge sans qu'une ligne
+> de code soit en cause (#648, §8.4).
 
 Le drain final annonce en outre **avant** chaque attente qu'elle peut tenir une demi-heure : c'est le
 seul endroit où le run patiente pour une naissance (une passe ne repasse pas sur une PR qui n'a rien
@@ -6632,7 +6687,8 @@ couper une résolution de conflit au milieu n'économiserait que du temps de mur
 
 > **Tests.** [`tests/test_merge_automatique.py`](../tests/test_merge_automatique.py) garde les
 > verbes (les quatre prérequis un par un, les codes de `pipeline-wait` — **naissance comprise**,
-> avec l'A/B qui prouve qu'un vieux vert n'est plus pris pour le run attendu (§8.9) —, l'ordre de
+> avec l'A/B qui prouve qu'un vieux vert n'est plus pris pour le run attendu (§8.9), et une
+> naissance tardive observée **au rang du sondage** et jamais à l'horloge, #648 §8.4 —, l'ordre de
 > `merge-order` sur le graphe de #299, le `deny` et son message) ;
 > [`tests/test_orchestrate.py`](../tests/test_orchestrate.py) garde le pilote — l'entrée en file, le
 > merge qui aboutit, la **sérialisation** (mesurée par une barrière et des relevés par écrivain,

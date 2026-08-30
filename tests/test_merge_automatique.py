@@ -38,7 +38,6 @@ from __future__ import annotations
 import json
 import re
 import subprocess
-import threading
 from pathlib import Path
 
 import pytest
@@ -525,6 +524,12 @@ def test_un_run_id_illisible_n_est_pas_une_attente(depot: Depot) -> None:
 # Ce que ces tests gardent n'est PAS un chronomètre — un test qui mesurerait des minutes mesurerait
 # la charge de la machine. Ce sont les trois décisions : deux délais qui ne partagent pas un
 # chiffre, un run identifié par le sha qu'on attend, et un code qui ne route vers rien.
+#
+# ⚠ Le principe valait pour les DURÉES et pas encore pour les TRANSITIONS, et c'est ce que #648
+# corrige : faire apparaître un run « au bout de deux secondes » est une horloge murale de plus,
+# simplement déguisée en décor. Une transition s'obtient donc par le RANG DE L'APPEL — le double
+# répond « absent » aux N premiers sondages et « présent » ensuite (`regle_run(..., apres=N)`) —,
+# jamais par un minuteur qui court contre le démarrage d'un sous-processus.
 
 # Deux délais volontairement DIFFÉRENTS et tous deux courts : ce qu'on observe est lequel des deux
 # s'applique, jamais leur valeur de production.
@@ -533,6 +538,16 @@ NAISSANCE = {"MAESTRO_PIPELINE_SONDAGE": "1",
              "MAESTRO_PIPELINE_NAISSANCE_PR": "4"}
 SHA_TETE = "a" * 40
 SHA_AVANT = "0" * 40
+
+
+def sondages(depot: Depot, branche: str = "chore/1-x") -> list[str]:
+    """Les lectures du dernier run de la branche — exactement un appel par sondage du verbe.
+
+    C'est par ce COMPTE que le rang d'apparition se vérifie (#648). Un chronomètre dirait la charge
+    de la machine ; le nombre de sondages, lui, est ce que la boucle a réellement fait, et c'est
+    déjà la règle du dépôt partout où l'on veut garder un gain sans le mesurer en secondes (#602).
+    """
+    return [ligne for ligne in depot.appels() if f"actions/runs?branch={branche}" in ligne]
 
 
 def test_un_run_pas_encore_ne_sous_une_pr_ouverte_rend_six_et_non_cinq(depot: Depot) -> None:
@@ -628,28 +643,55 @@ def test_une_naissance_qui_aboutit_le_dit_quand_meme(depot: Depot) -> None:
     seuil est le délai COURT : en deçà, la naissance est celle du régime normal (le run naît après
     la PR, c'est la règle et non une anomalie) et l'annoncer apprendrait à ne plus lire l'annonce.
 
-    Le run apparaît en cours de route, comme dans la vraie vie : l'état du `gh` factice est réécrit
-    pendant que le verbe boucle. C'est la seule façon d'observer la TRANSITION, qu'un état figé ne
-    peut pas produire.
+    Le run apparaît en cours de route, comme dans la vraie vie : c'est la seule façon d'observer la
+    TRANSITION, qu'un état figé ne peut pas produire.
+
+    ⚠ ET ELLE S'OBSERVE AU RANG DU SONDAGE, JAMAIS À L'HORLOGE (#648). Le run apparaissait ici au
+    bout de deux secondes, par un `threading.Timer` posé côté test ; ce que cette course mesurait
+    en pratique était le **temps de démarrage du sous-processus** — sous seize workers, `bash` + le
+    chargement de `lib.sh` + le premier appel au `gh` factice dépassent les deux secondes, si bien
+    que le PREMIER sondage voyait déjà le run né. Le verbe rendait alors `0` et `success` — donc
+    tout allait bien — mais sans la ligne, et l'assertion tombait. Un **faux rouge**, c'est-à-dire
+    le pire des rouges : il n'apprend rien sur le code et il apprend à pousser quand même.
+    Le double fait donc apparaître le run au TROISIÈME sondage (`apres=2`), et l'attente que le
+    verbe nomme est celle qu'il compte lui-même (`attendu`, incrémenté du pas de sondage), pas
+    celle qu'une machine chargée lui a fait subir : aucune assertion ne dépend plus d'une durée.
+
+    L'A/B est le test, et il **prouve son motif avant de conclure** : même verbe, même décor, seul
+    le rang d'apparition change. Né au premier sondage, le run ne doit RIEN faire dire — sans cette
+    moitié, une sonde débranchée rendrait un ✓ sur une question jamais posée (#534/#537).
     """
+    # Le témoin : la naissance du régime NORMAL (le run est déjà là au premier sondage), qui ne
+    # s'annonce pas — l'annoncer apprendrait à ne plus lire l'annonce.
     depot.pose_etat(
         graphql=[regle_pr("chore/1-x", pr=PR, sha=SHA_TETE, ferme=(1,))],
-        rest=[regle_run_absent("chore/1-x")],
+        rest=[regle_run("chore/1-x", sha=SHA_TETE)],
     )
-    # Deux secondes : au-delà du délai court (1 s), en deçà de la naissance sous PR (4 s).
-    minuteur = threading.Timer(
-        2.0, lambda: depot.pose_etat(rest=[regle_run("chore/1-x", sha=SHA_TETE)])
+    temoin = depot.lib("pipeline-wait", "chore/1-x", "--timeout", "600", reglages=NAISSANCE)
+    assert temoin.returncode == 0, temoin.stdout + temoin.stderr
+    assert "run né après" not in temoin.stderr, (
+        "un run né tout de suite ne doit RIEN faire dire : c'est ce qui prouve que la ligne du cas "
+        f"suivant vient bien de la naissance tardive\n{temoin.stderr}"
     )
-    minuteur.start()
-    try:
-        r = depot.lib("pipeline-wait", "chore/1-x", "--timeout", "600", reglages=NAISSANCE)
-    finally:
-        minuteur.cancel()
+    avant = len(sondages(depot))
+    assert avant == 1, f"le témoin voit le run du premier coup : {sondages(depot)}"
+
+    # Le cas : deux sondages « absent », le run n'apparaît qu'au troisième. L'attente comptée par le
+    # verbe vaut alors 2 s — au-delà du délai court (1 s), en deçà de la naissance sous PR (4 s).
+    depot.pose_etat(
+        rest=[regle_run("chore/1-x", sha=SHA_TETE, apres=2), regle_run_absent("chore/1-x")],
+    )
+    r = depot.lib("pipeline-wait", "chore/1-x", "--timeout", "600", reglages=NAISSANCE)
     assert r.returncode == 0, f"le run est né, l'attente doit aboutir\n{r.stdout}{r.stderr}"
     assert r.stdout.strip() == "success"
     assert "run né après" in r.stderr, (
         "une naissance plus longue que le délai court doit être NOMMÉE — c'est ce que le résumé de "
         f"clôture relaie\n{r.stderr}"
+    )
+    assert len(sondages(depot)) - avant == 3, (
+        "la transition doit tomber au TROISIÈME sondage, et c'est ce COMPTE qui l'atteste : plus "
+        "tôt, l'attente du verbe ne dépasse pas le délai court et la ligne n'a pas lieu d'être ; "
+        f"plus tard, `apres` ne compte pas ce qu'il annonce\n{sondages(depot)[avant:]}"
     )
 
 

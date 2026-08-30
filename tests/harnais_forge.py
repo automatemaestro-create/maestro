@@ -13,6 +13,14 @@ vérifie qu'aucune écriture n'a lieu). Il écrit ses réponses en **octets UTF-
 #141 est venu d'un décodage approximatif sous Windows, on ne le réintroduit pas dans le harnais. Ce
 qui est testé à travers lui, c'est la **décision** des helpers, jamais l'API GitHub elle-même.
 
+**Une réponse peut dépendre du RANG de l'appel** (`apres`, #648), et c'est la seule façon d'éprouver
+un verbe qui SONDE en boucle : `regle_run(..., apres=2)` placée avant `regle_run_absent(...)` rend
+le run « absent aux deux premiers sondages, présent ensuite ». La transition est alors **produite
+par le double**, là où un minuteur côté test la fait courir contre le démarrage du sous-processus —
+course que la charge de la machine tranche, et qui a rendu un **faux rouge** sous seize workers
+(#648, même leçon que le `sleep` interdit de #292). Le rang se lit dans le journal, depuis le
+dernier `pose_etat` ; voir `rang` dans le `gh` factice.
+
 **Un dépôt jetable** est monté dans `tmp_path`, sur lequel les VRAIS scripts sont lancés — même
 parti pris que [`test_setup.py`](test_setup.py) et [`test_worktree.py`](test_worktree.py). Rien
 n'est jamais écrit dans le dépôt de travail (`HOME` est lui aussi redirigé).
@@ -120,12 +128,54 @@ def compact(obj):
     return json.dumps(obj, separators=(",", ":"), ensure_ascii=False) + "\n"
 
 
+def rang(fragments):
+    """Combien d'appels ont DÉJÀ reçu ces fragments depuis que le décor courant est posé (#648).
+
+    C'est ce qui permet à une règle de dépendre du RANG de l'appel plutôt que d'une horloge. Un
+    verbe qui SONDE en boucle — `pipeline-wait` en tête — ne montre sa transition que si quelque
+    chose change entre deux sondages : « le run apparaît au troisième » est une transition que le
+    double PRODUIT, là où « le run apparaît deux secondes après le départ » est une course entre un
+    minuteur du test et le démarrage d'un sous-processus, que la charge de la machine tranche.
+
+    DEUX PRÉCISIONS, ET ELLES FONT LE MÉCANISME.
+    · Le rang se lit dans le JOURNAL, déjà écrit une ligne par appel et AVANT tout choix de
+      réponse — donc l'appel courant y est, et c'est pourquoi on en retire un. Un compteur à part
+      serait un second support du même fait, et le journal est le seul qui survive au `pose_etat`
+      d'un test, qui réécrit l'état de bout en bout.
+    · Il se compte DEPUIS LE DÉCOR (`appels_avant_decor`, posé par `pose_etat`). Sans cette
+      origine, un test qui pose deux décors verrait le second hériter des appels du premier : la
+      transition arriverait un sondage trop tôt, en silence, et l'ordre des phases d'un A/B
+      deviendrait un piège que rien ne signale.
+
+    Le motif porte sur la LIGNE ENTIÈRE du journal (arguments joints par des tabulations), quand
+    `repond` matche sur le seul sujet — chemin REST ou texte de requête. C'est plus large, et c'est
+    assumé : les fragments qui s'en servent désignent un chemin, qu'aucun autre appel ne porte.
+    """
+    if not journal:
+        sys.stderr.buffer.write(
+            "faux gh : une règle « apres » sans MAESTRO_FAUX_GH_JOURNAL — le rang d'un appel se "
+            "lit dans le journal, il n'a pas d'autre source.\n".encode("utf-8")
+        )
+        raise SystemExit(1)
+    with open(journal, encoding="utf-8") as f:
+        lignes = f.read().splitlines()[etat.get("appels_avant_decor", 0):]
+    vus = [ligne for ligne in lignes if all(fragment in ligne for fragment in fragments)]
+    return max(len(vus) - 1, 0)
+
+
 def repond(regles, sujet):
     for regle in regles:
-        if all(fragment in sujet for fragment in regle.get("contient", [])):
-            if "brut" in regle:
-                return regle["brut"]
-            return compact(regle["reponse"])
+        if not all(fragment in sujet for fragment in regle.get("contient", [])):
+            continue
+        # « absent aux N premiers appels, présent ensuite » (#648) : une règle `apres` ne s'applique
+        # qu'à partir du (N+1)ᵉ appel qui la vise, les règles suivantes répondant avant elle. Le
+        # journal n'est relu QUE si la clé est là — une suite qui ne s'en sert pas ne paie rien.
+        apres = regle.get("apres", 0)
+        if apres and rang(regle["contient"]) < apres:
+            continue
+        if "brut" in regle:
+            return regle["brut"]
+        return compact(regle["reponse"])
     return None
 
 
@@ -705,14 +755,21 @@ def regle_run(
     statut: str = "completed",
     conclusion: str = "success",
     run: int = 900,
+    apres: int = 0,
 ) -> dict:
     """Le dernier run Actions d'une branche (`gh_pipeline_latest`), côté REST.
 
     `statut`/`conclusion` sont ceux de GitHub, pas le vocabulaire normalisé de `lib.sh` : la
     traduction est faite par `gh_etat_run`, et la traverser est tout l'intérêt — un test qui
     poserait directement « success » sauterait la moitié qui peut se tromper.
+
+    `apres=N` fait apparaître ce run au **(N+1)ᵉ sondage seulement** — « absent aux N premiers,
+    présent ensuite » (#648, cf. `rang` dans le double). Placée **avant** `regle_run_absent`, la
+    règle laisse celle-ci répondre tant que le rang n'y est pas : c'est ainsi qu'on observe une
+    NAISSANCE, qu'un état figé ne peut pas produire et qu'un minuteur ne produit que sur une
+    machine au repos.
     """
-    return {
+    regle: dict[str, object] = {
         "contient": [f"actions/runs?branch={branche}"],
         "reponse": {"workflow_runs": [{
             "id": run,
@@ -722,6 +779,9 @@ def regle_run(
             "html_url": f"https://github.com/{DEPOT}/actions/runs/{run}",
         }]},
     }
+    if apres:
+        regle["apres"] = apres
+    return regle
 
 
 def regle_run_absent(branche: str) -> dict:
@@ -842,8 +902,16 @@ class Depot:
 
     # --- pilotage du gh factice ---
     def pose_etat(self, **entrees: object) -> None:
-        """Remplace tout ou partie de l'état du gh factice (`graphql`, `rest`, `issues`…)."""
+        """Remplace tout ou partie de l'état du gh factice (`graphql`, `rest`, `issues`…).
+
+        Pose au passage l'**origine des rangs** (#648) : le nombre d'appels déjà reçus à l'instant
+        où ce décor est posé. Une règle `apres=N` compte donc « les N premiers appels **de ce
+        décor** », et un test qui en pose deux ne voit pas le second hériter des appels du premier.
+        Sans cette origine, l'ordre des phases d'un A/B décalerait la transition d'autant — un
+        piège d'autant plus mauvais qu'il ne se voit qu'à la relecture.
+        """
         self.etat.update(entrees)
+        self.etat["appels_avant_decor"] = len(self.appels())
         self.etat_json.write_text(
             json.dumps(self.etat, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n"
         )
