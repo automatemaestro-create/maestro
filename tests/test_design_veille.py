@@ -56,6 +56,7 @@ RUN_SH = RACINE / "scripts" / "orchestrate" / "run.sh"
 BOOTSTRAP = RACINE / "scripts" / "gitlab" / "bootstrap.sh"
 REGLAGES_RUN = RACINE / "scripts" / "orchestrate" / "settings.run.json"
 REGLAGES_DEPOT = RACINE / ".claude" / "settings.json"
+DOC30 = RACINE / "docs" / "30-cible-visuelle-control-tower.md"
 
 
 @pytest.fixture
@@ -388,15 +389,27 @@ def test_le_prompt_ne_lance_jamais_la_veille_doffice() -> None:
 
 
 def test_lacces_web_reste_hors_des_allowlists_dun_run() -> None:
-    """La veille est un GESTE INTERACTIF, et c'est la décision du critère 4 de #714.
+    """Les deux gestes restent fermés — arbitrés SÉPARÉMENT, et pas pour la même raison (#792).
 
-    Trois raisons, dont une seule est technique. Une session de run n'a personne pour répondre au
-    « oui » que la proposition attend, donc l'ouvrir reviendrait à la lancer d'office — ce que le
-    ticket exclut nommément. Une veille rend des PARTIS PRIS, c'est-à-dire un jugement, du même
-    bois que l'arbitrage de #562 et le rail de #617. Et `mcp__chrome-maestro` passant déjà l'union
-    des deux allowlists, ouvrir la seule recherche donnerait une veille à moitié — captures sans
-    références vérifiées —, or la règle du §3 de la commande est que ce qui n'est pas vérifié n'est
-    pas cité.
+    #714 les avait tranchés d'un bloc, sous la veille ; #792 a repris la question geste par geste et
+    les confirme fermés **tous les deux**, ce qui n'était pas acquis d'avance.
+
+    **`WebSearch`** — les trois raisons de #714 tiennent. Une session de run n'a personne pour
+    répondre au « oui » que la proposition attend, donc l'ouvrir reviendrait à lancer la veille
+    d'office, ce que le ticket exclut nommément. Une veille rend des PARTIS PRIS, c'est-à-dire un
+    jugement, du même bois que l'arbitrage de #562 et le rail de #617. Et `mcp__chrome-maestro`
+    passant déjà l'union des deux allowlists, ouvrir la seule recherche donnerait une veille à
+    moitié — captures sans références vérifiées —, or ce qui n'est pas vérifié n'est pas cité. La
+    mesure les appuie : **zéro** `WebSearch` sur les 56 refus du journal, aucune session ne l'a
+    jamais demandé.
+
+    **`WebFetch`** — fermé aussi, mais **pas pour ces raisons-là**, et c'est ce que #792 a corrigé.
+    Le seul usage jamais mesuré n'est pas une veille (#271 : lire une référence citée par son
+    propre ticket), donc « personne ne le demandera » était faux et la raison écrite ne couvrait pas
+    le seul cas observé. Sa raison propre : une règle ne borne qu'un PRÉFIXE, donc ne sait pas
+    vérifier que l'URL vient d'un humain (raison de `curl`, #528), et depuis #418/#419 le produit
+    d'un run part dans `main` sans relecture. Forme couverte : référence versionnée, ou porte
+    d'admission humaine (#678) — ce que #271 a fini par faire.
 
     ⚠ IL REGARDE LES DEUX FICHIERS PARCE QUE L'`allow` D'UN RUN EST LEUR UNION (docs/10 §11.7), et
     c'est là que ce test gagne sa place : le changement plausible n'est pas « ouvrir le web aux
@@ -406,18 +419,39 @@ def test_lacces_web_reste_hors_des_allowlists_dun_run() -> None:
     session interactive n'est pas un défaut — il y a quelqu'un pour la donner, et c'est le régime
     dans lequel #708 vit déjà.
 
-    ⚠ Il n'interdit pas d'y revenir : il demande qu'on le fasse EXPRÈS. Le renverser, c'est éditer
-    ce test avec sa raison — pas découvrir six mois plus tard qu'un run fait des recherches web que
-    personne n'a décidées.
+    ⚠ Il n'interdit pas d'y revenir : il demande qu'on le fasse EXPRÈS, et désormais geste par
+    geste — rouvrir `WebFetch` au motif que la veille reste fermée serait reprendre l'amalgame que
+    #792 a défait.
     """
     for chemin in (REGLAGES_RUN, REGLAGES_DEPOT):
         allow = json.loads(chemin.read_text(encoding="utf-8"))["permissions"]["allow"]
-        assert not [r for r in allow if r.startswith(("WebSearch", "WebFetch"))], (
-            f"{chemin.name} ouvre l'accès web : c'est le renversement d'une décision de #714 "
-            "(docs/30 §5.2) — à faire expressément, pas par distraction"
-        )
+        for geste, verdict in (
+            ("WebSearch", "la veille est un geste interactif (#714), confirmé par #792"),
+            ("WebFetch", "l'URL d'un humain n'est pas exprimable dans une règle (#792)"),
+        ):
+            assert not [r for r in allow if r.startswith(geste)], (
+                f"{chemin.name} ouvre « {geste} » : c'est le renversement d'un verdict — {verdict} "
+                "(docs/30 §5.2, docs/10 §11.7) —, à faire expressément, pas par distraction"
+            )
         # Contre-exemple : la liste lue est bien la bonne, et le motif y trouve ce qu'il doit.
         assert any(r.startswith("Bash(") for r in allow), "allowlist vide ou mal lue : test creux"
+
+
+def test_le_verdict_sur_le_web_est_ecrit_geste_par_geste() -> None:
+    """Un verdict « on ne change rien » ne laisse aucun diff : seule sa RAISON écrite le distingue.
+
+    Et ici il en faut deux, distinctes, sans quoi rouvrir l'un des gestes se ferait au motif tiré de
+    l'autre. La note de conception porte les trois raisons de la veille ; docs/10 §11.7 porte celle
+    qui est propre à `WebFetch`, parce que ce n'est pas une question de conception visuelle — l'y
+    laisser est précisément ce qui avait fait trancher d'un bloc deux gestes différents.
+    """
+    note = DOC30.read_text(encoding="utf-8")
+    assert "#792" in note and "geste par geste" in note
+    assert "pas pour ces raisons-là" in note or "pas pour ces raisons" in note
+
+    workflow = (RACINE / "docs" / "10-workflow-git.md").read_text(encoding="utf-8")
+    assert "borne qu'un préfixe" in workflow or "ne borne qu'un préfixe" in workflow
+    assert "#678" in workflow, "la forme couverte de WebFetch — une porte d'admission humaine"
 
 
 def test_le_prompt_de_run_ecarte_la_veille() -> None:
@@ -432,3 +466,9 @@ def test_le_prompt_de_run_ecarte_la_veille() -> None:
     assert "GESTE INTERACTIF" in texte
     assert "N'enregistre AUCUN arbitrage" in texte
     assert "WebSearch et WebFetch ne sont dans aucune" in texte
+
+    # Le SECOND VERSANT (#792), et il ne se déduit pas du premier : une session peut fort bien
+    # comprendre « pas de veille » et tenter quand même de lire une URL que son ticket lui donne.
+    # C'est arrivé une fois (#271), et le tour perdu est exactement ce que cette ligne évite.
+    assert "PAS MÊME POUR UNE URL QUE TON TICKET CITE" in texte
+    assert "grep -rn" in texte, "ce qu'il faut faire à la place — la référence est souvent déjà là"

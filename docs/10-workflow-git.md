@@ -5306,6 +5306,48 @@ jamais depuis une session — voir §11.11.
 
 ### 11.7 Après un run : instruire les refus de permission
 
+**Ce qui manque à un run n'est pas une permission, c'est un répondant** (#788, 2026-08-30). Le
+constat tient en deux lignes, et il fixe la portée de tout ce qui suit — sans lui, les deux
+allowlists se lisent comme un seul et même objet, et la conclusion qu'on en tire est fausse :
+
+> Une session **interactive**, c'est `allow` **+ une personne qui approuve tout le reste**.
+> Une session de **run**, c'est `allow`, **point final**.
+
+La même liste ne décrit donc pas le même objet. En interactif elle ne retire que de la
+**friction** — ce qui n'y est pas se demande, et quelqu'un répond. En run elle **définit la
+frontière** — ce qui n'y est pas n'existe pas. **À liste identique, un run est plus contraint qu'une
+session interactive**, et aucun ajout de règle ne referme cet écart-là : l'union des deux fichiers
+faisait **86 règles** au moment du chantier, et l'allonger ne fabrique pas de répondant. C'est
+pourquoi la première question du rapport ci-dessous porte sur le bloc `ask` et non sur le bloc
+`allow` — un `ask` sans personne pour répondre est un `deny` qui ne dit pas son nom, et c'est
+l'écart qu'aucune lecture de l'`allow` ne montre, parce qu'il vit dans un autre bloc.
+
+Quatre conséquences, et ce sont les cinq écarts de #788 :
+
+| | Ce qui le comble | Où |
+| --- | --- | --- |
+| **G1** les `ask` sans répondant + les trous mesurés | une **règle** | plus bas (#790) |
+| **G2** l'écriture sous `.claude/` | un **arbitrage** — rendu, et négatif | plus bas (#791) |
+| **G3** `WebSearch` / `WebFetch` | un **arbitrage** — rendu, et négatif pour les deux | plus bas (#792) |
+| **G4** les questions qu'un run rencontre sans pouvoir y répondre | **différer** la question au lieu de la perdre | #795, [docs/30 §5.2](./30-cible-visuelle-control-tower.md) |
+| **G5** `merge-mr` / `pipeline-wait` | **rien — et c'est voulu** | fin de section |
+
+L'écart ne se relit donc pas de mémoire, il se **rejoue** — au même titre que `guard.sh --check`
+répond à « le `deny` du run a-t-il dérivé de celui du dépôt ? » :
+
+```bash
+bash scripts/orchestrate/ecart-run.sh          # le rapport, en clair
+bash scripts/orchestrate/ecart-run.sh --tsv    # le même inventaire, lisible par un script
+```
+
+Il confronte chaque geste aux règles **là où elles vivent** (les deux fichiers, jamais une copie qui
+dériverait), distingue l'**écart** de l'**interdit voulu**, et rend `0` quand plus aucun écart n'est
+imputable aux listes — l'état atteint le 2026-08-30. Son motif se prouve avant qu'on le croie, sur
+des **échantillons fautifs versionnés** (`tests/fixtures/ecart_run/`) : une allowlist qui couvre
+tout doit faire basculer le verdict, une qui ne couvre rien doit laisser les écarts. Sans cette
+moitié, « aucun écart » serait indiscernable d'un rapport mal branché — le pire des verdicts, parce
+qu'il rassure. `tests/test_ecart_run.py` (#793) garde l'ensemble.
+
 L'`allow` de `settings.run.json` se complète **à partir des refus observés**, jamais à l'aveugle.
 Chaque session laisse ce qu'elle n'a pas pu faire dans `permission_denials`, à la fin de son
 `<iid>.json` — et depuis #180 la liste se lit **en clair**, sans script, dans la vue que le run
@@ -5925,6 +5967,35 @@ sortie serait **indépassable** : cinq refus voulus le tiendraient à `3` pour t
 qui ne peut pas descendre n'apprend plus rien. Le **défaut reste « écart »**, donc une sixième règle
 `ask` ajoutée demain sortira à trancher sans que personne ait à y penser — c'est ce que prouve
 l'échantillon `ask-contre-deny.json`, où `pwd` mis en `ask` sort en écart faute de verdict.
+
+#### G5 — ce qui n'est pas un écart, et ne doit pas le devenir (#788, #419)
+
+⚠ **À lire avant d'ajouter une règle qui autoriserait `merge-mr` ou `pipeline-wait` à une session de
+run.** Les deux ressemblent à un trou — deux verbes du dépôt refusés à une session qui, en
+interactif, les joue sans difficulté — et c'en est l'**inverse** : `guard.sh` les refuse depuis
+#419, à dessein, pour deux raisons qu'aucune bonne volonté de prompt ne change et dont chacune
+suffirait.
+
+- **Attendre un pipeline dans une session, c'est brûler du quota à ne rien faire** — en tenant, le
+  temps de l'attente, un worktree et un créneau de concurrence. Le pilote, lui, attend **hors
+  quota** : c'est un script shell, et c'est toute la raison pour laquelle il en est un (§11.1).
+- **À N tickets en vol, N sessions qui mergent périment mutuellement leur verdict de conflit.** Un
+  merge déplace `origin/main` ; le verdict que les autres viennent d'obtenir ne vaut plus rien.
+  Le pilote **sérialise** — sa file s'arrête au premier merge réussi d'une passe, précisément pour
+  ça (§11.11).
+
+**La parité serait donc ici une régression**, et c'est le seul point du chantier #788 qui risque
+d'être « corrigé » par erreur. Ce n'est pas non plus un manque de confiance envers les sessions :
+le geste n'est pas moins vérifié parce qu'il est ailleurs — `merge-mr` vérifie tout autant, et
+`/ticket-finish` l'appelle bien depuis une session **interactive**, où aucune des deux raisons ne
+joue (personne d'autre ne merge en même temps, et le quota d'une session interactive n'est pas
+celui d'un run qui en fait tourner trois).
+
+Trois endroits le disent, et il faut les trois : le **`deny`** de `settings.run.json` le refuse
+nommément — l'ordre de décision est le plus restrictif d'abord, si bien que la règle de préfixe
+`Bash(bash scripts/gitlab/lib.sh:*)` ne le rouvre pas —, `ecart-run.sh` le range en **« INTERDIT
+VOULU »** avec sa raison plutôt que dans la colonne des manquants, et cette section-ci l'écrit pour
+qui lirait la doc avant de toucher à la règle. `tests/test_ecart_run.py` garde les trois.
 
 ### 11.8 Reprendre un run qui ne s'est pas terminé — `--resume`
 
