@@ -495,6 +495,112 @@ ensemble par le lot 6 (#680), la porte d'admission par
 [tests/test_mcp_federation.py](../tests/test_mcp_federation.py) et son garde-fou
 par les deux bouts (`instancier` **et** `POST /api/mcp/pool`).
 
+### 3.7 Tout se règle depuis la fiche de l'agent (#263, lot 11/15 de #243)
+
+L'activation par agent était **déjà en écriture** depuis #133 : chaque
+intégration du pool porte un interrupteur sur la fiche. Ce qui manquait n'était
+pas un mécanisme mais **le reste du geste** — et les trois manques étaient du
+même genre : l'écran montrait un état sans donner le moyen de le changer.
+
+| ce qu'on voulait faire | avant #263 | depuis |
+|---|---|---|
+| voir ce dont l'agent dispose | une liste plate d'interrupteurs, à déplier un par un | **actives en tête**, disponibles ensuite, comptées |
+| ajouter une intégration absente du pool | sortir vers `/integrations`, chercher, configurer, revenir activer | la bibliothèque **sur place**, et l'ajout **active dans la foulée** |
+| traiter une déclaration héritée | un bloc « lecture seule (à migrer vers le pool) » qu'aucun écran ne migrait | **un bouton**, `POST /api/mcp/migration/{agent}` |
+
+**Le partage entre les deux écrans est celui de la portée du geste**, et c'est ce
+qui décide ce que la fiche n'a pas le droit de faire. L'écran **Intégrations**
+règle le *projet* : ajouter au pool, reconfigurer un secret, **retirer du pool**
+— ce dernier désactive chez tous les agents et purge les secrets, donc il n'a pas
+sa place sur la page d'un agent, où son effet dépasserait ce qu'on croit régler.
+La **fiche** règle *cet agent* : activer, désactiver, migrer ses héritées. Elle
+ajoute au pool aussi, et c'est la seule exception — équiper un agent d'une
+intégration qui n'existe pas encore est **une** intention, pas deux, et la scinder
+était exactement le détour qu'on supprime.
+
+⚠ **Le corollaire doit être écrit à l'écran** : éteindre un interrupteur
+**désactive pour cet agent seul**, l'intégration reste au pool avec son secret.
+C'est la question qu'un interrupteur pose forcément — « si je l'éteins, est-ce
+que je perds la configuration ? » — et la laisser sans réponse fait hésiter sur
+le seul geste qui ne coûte rien.
+
+⚠ **La bibliothèque montée sur la fiche est celle de `/integrations`, importée
+telle quelle** (`components/integrations/BibliothequeMcp`). En recopier une
+version allégée rejouerait #231 (le `<form>` qui borne la détection du
+gestionnaire de mots de passe, le panneau oublié quand son entrée quitte les
+résultats) et ferait deux vérités sur ce qui est montable. Elle est **repliée
+derrière un bouton** : on n'arrive pas sur cet onglet pour chercher une
+intégration, on y arrive pour voir ce que l'agent a.
+
+⚠ **Aucune seconde porte sur les secrets.** Le secret se saisit une fois, chiffré
+côté serveur, et n'est jamais réémis (§3.2) : la fiche en montre l'**état**
+(« secret à configurer ») et renvoie vers l'écran qui le pose.
+
+**La migration, et les quatre choses qu'elle a coûtées.** `McpStore.migrer`
+existait depuis #130 — testé, documenté, et **sans aucun appelant** : ni route, ni
+CLI, ni écran. Le rebrancher tel quel était impossible, et c'est le premier point.
+
+1. **`migrer` remplace, `migrer_agent` ajoute.** `composer_migration` compose le
+   pool à partir des *seuls* fichiers hérités, et `ecrire_pool` est un
+   remplacement intégral : sur un projet dont le pool est vivant, migrer un agent
+   aurait effacé tout ce que la Control Tower y avait ajouté. `migrer_agent(agent)`
+   greffe au lieu d'écrire par-dessus, et laisse les activations des autres agents
+   en place.
+2. **Le fichier part, et c'est le contenu du geste.** Tant qu'il est là, l'héritée
+   reste **autoritaire** à la lecture (`McpStore.lire`, collision de `serveur.nom`)
+   : une migration qui le laisserait ne changerait rien à ce qui est monté, et le
+   bloc « hérités » resterait affiché. Elle serait invisible.
+3. **L'id vient de la bibliothèque quand elle décrit exactement le serveur.**
+   `figma-officiel` et `slack` s'en tirent seuls (leur nom de serveur *est* l'id de
+   leur entrée), mais `forge` — le serveur GitHub de `qa.json` — entrerait au pool
+   sous un id inconnu du registre, donc `curee: false`, sans mode d'auth et **sous
+   une alerte**, pour une opération parfaitement saine. L'API rapproche donc chaque
+   serveur d'une entrée de l'allowlist par **égalité stricte** de la déclaration
+   instanciée *sous le nom du serveur d'origine* — jamais une ressemblance, qui
+   donnerait à une intégration la fiche et les secrets d'une autre — et **conserve
+   le nom** : c'est le préfixe d'outils (`mcp__<nom>__…`) que les playbooks
+   emploient déjà, le renommer changerait le comportement de l'agent au milieu
+   d'une migration qui promet de ne rien changer.
+4. **Il restait une troisième cause à l'`alerte` du pool**, qui n'en nommait que
+   deux (retirée du seed, admission illisible). Une intégration migrée que la
+   bibliothèque ne décrit pas arrive par ce chemin sans que rien n'ait disparu :
+   la phrase la nomme, faute de quoi l'écran ferait lire un incident.
+
+**Aucun secret n'est demandé ni redemandé** par la migration : une déclaration
+héritée porte déjà ses références `${VAR}`, résolues au montage exactement comme
+avant. C'est ce qui en fait un geste et non un formulaire.
+
+**Le contrat d'API** :
+
+| route | ce qu'elle fait |
+|---|---|
+| `POST /api/mcp/migration/{agent}` | migre `core/mcp/{agent}.json` vers le pool → `{ajoutees, reprises, activations, fichier_retire}`. 404 agent hors catalogue · 422 rien à migrer ou source invalide (rien n'est écrit) |
+| `GET /api/catalogue/{nom}` | porte `mcp_herites` : les serveurs de la **seule** déclaration héritée |
+
+⚠ `ajoutees` et `reprises` sont **deux listes et non un total** : la seconde
+porte ce que le pool avait déjà sous la même déclaration — le partage entre
+agents que le pool existe pour permettre. Les fondre ferait annoncer « 2
+intégrations ajoutées au projet » à une migration qui n'en a créé qu'une.
+
+⚠ `mcp_herites` est **servi et non déduit**. L'écran le calculait en retranchant
+des serveurs montés ceux des intégrations activées, rapprochés par leur **nom** :
+une intégration renommée à l'ajout au pool ne concorde plus, et l'héritée
+réapparaît comme un serveur de plus. La question « qu'y a-t-il dans le fichier ? »
+se pose au fichier.
+
+**Couverture.** Les états de bord de l'écran sont **différés au lot 15** du
+parent #243. Les quatre gestes du ticket, eux, sont livrés avec lui
+([apps/web/tests/agent-mcp.test.tsx](../apps/web/tests/agent-mcp.test.tsx)) : la
+règle de docs/10 §5.1 le permet quand la logique est critique, et elle l'est —
+**aucun test ne montait cet écran**, ni celui-ci ni ses ancêtres dans
+`EditeurAgent`, alors qu'il écrit dans le pool projet et dans les activations.
+Il a d'ailleurs payé immédiatement : le compte rendu de migration vivait dans le
+bloc des déclarations héritées, c'est-à-dire **dans ce que la migration
+supprime** — une migration réussie recharge la fiche, remonte la section, et le
+bloc disparaît avec son message. On cliquait, tout s'évanouissait, et rien ne
+disait ce qui venait de se passer. Un compte rendu ne peut pas vivre dans ce que
+le geste efface : il est remonté au composant qui survit au rechargement.
+
 ---
 
 *Références : [docs/15](./15-pilote-mcp-slack.md) (Slack), [docs/16](./16-pilote-mcp-tickets-gitlab.md) (GitLab), [docs/20](./20-pilote-mcp-figma.md) (Figma, dont §6 pour la voie officielle), [core/mcp/README.md](../core/mcp/README.md) (socle des déclarations).*

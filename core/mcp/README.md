@@ -35,8 +35,25 @@ Quatre fichiers cohabitent sous la racine (remplaçable par `MAESTRO_MCP_DIR`) :
   déclaration héritée **puis** les intégrations du pool activées pour lui. Sans
   activation, le résultat est exactement la déclaration héritée — la
   **rétro-compatibilité** du #104 (le pool n'est pas lu). En cas de collision de
-  `serveur.nom`, l'héritée l'emporte. Migration héritée → pool **outillée**
-  (`composer_migration`/`migrer`), jamais imposée.
+  `serveur.nom`, l'héritée l'emporte. Migration héritée → pool **outillée**,
+  jamais imposée — et **deux outils**, qui ne visent pas la même situation :
+  - `composer_migration`/`migrer` (#130) composent **tout le dépôt d'un coup**,
+    et le pool qu'ils écrivent *est* le résultat : c'est un **remplacement
+    intégral**, donc l'outil d'un projet qui n'a encore rien au pool (sur un pool
+    vivant, il effacerait ce que la Control Tower y a ajouté depuis) ;
+  - `migrer_agent(agent)` (#263) traite **un agent** et **ajoute** : les
+    intégrations déjà là restent, celles de l'agent s'y greffent — mutualisées
+    quand leur déclaration stockée est identique à une intégration existante —,
+    ses activations s'ajoutent aux siennes sans écraser celles des autres, et son
+    `<agent>.json` part. C'est ce que joue `POST /api/mcp/migration/{agent}`,
+    donc le bouton « Migrer vers le pool projet » de la fiche d'un agent.
+    L'API y rapproche au passage chaque serveur d'une entrée de la
+    **bibliothèque** dont l'instanciation lui est *exactement* égale, et l'inscrit
+    sous l'**id de cette entrée** en gardant son nom de montage : sans quoi le
+    serveur `forge` de `qa.json` entrerait au pool hors bibliothèque, sans mode
+    d'auth et sous une alerte, alors qu'il *est* l'entrée `github`.
+    **Aucun secret n'est redemandé** — une déclaration héritée porte déjà ses
+    références `${VAR}`, résolues au montage comme avant.
 - **Validé à la lecture** : une source invalide (déclaration, pool, activation
   vers une intégration absente du pool) est refusée avec sa cause exacte —
   échec de tâche propre, jamais un montage à moitié.
@@ -49,8 +66,14 @@ Quatre fichiers cohabitent sous la racine (remplaçable par `MAESTRO_MCP_DIR`) :
 - **Écriture** : le pool et les activations sont **écrivables**
   (`ecrire_pool`/`ecrire_activations`, atomiques et versionnés) — la Control
   Tower en devient la source (#133), en remplacement de l'édition manuelle du
-  fichier. La fiche agent de la page `/catalogue` reste la vue **lecture seule**
-  de la composition (valeurs masquées).
+  fichier. Deux écrans s'en partagent la charge depuis #263, et la frontière est
+  celle de la **portée du geste** : l'écran **Intégrations** règle le *projet*
+  (ajouter au pool, reconfigurer un secret, retirer du pool — ce qui désactive
+  partout), l'onglet **MCP & permissions** d'un agent règle *cet agent* (activer,
+  désactiver, migrer ses déclarations héritées) — et il ajoute au pool aussi,
+  parce qu'équiper un agent d'une intégration qui n'existe pas encore est une
+  seule intention et non deux. Un interrupteur éteint sur une fiche **ne retire
+  rien du pool**, et l'écran le dit là où le geste se fait.
 
 ## Déclarations en place
 

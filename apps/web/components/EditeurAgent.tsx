@@ -5,11 +5,18 @@
  * le formulaire de définition — rôle, compétences, fournisseur/modèle/effort —
  * branché sur l'API du lot 1 (#72, `/api/catalogue`).
  *
- * Trois entrées, une par facette de la fiche agent (#190) : `CreationAgent`
+ * Deux entrées, une par facette de la **définition** (#190) : `CreationAgent`
  * (nouvel agent personnalisé, `POST` — sur **son propre écran** depuis #254,
- * `components/CreationAgentEcran`), `EditeurAgent` (onglet Profil — fiche
- * existante) et `McpEtPermissionsAgent` (onglet MCP & permissions). Un agent
- * créé ou modifié vaut pour les moteurs construits ensuite.
+ * `components/CreationAgentEcran`) et `EditeurAgent` (onglet Profil — fiche
+ * existante). Un agent créé ou modifié vaut pour les moteurs construits
+ * ensuite.
+ *
+ * L'onglet **MCP & permissions** vivait ici jusqu'à #263 et a son fichier
+ * (`components/OngletMcpAgent`) : il n'est plus une vue de la fiche mais
+ * l'endroit où les intégrations d'un agent se règlent — bibliothèque, ajout,
+ * migration des déclarations héritées. La politique de permissions, passée en
+ * écriture par #262, l'a suivi. Ce fichier-ci reste le formulaire de
+ * définition.
  *
  * Depuis #257 la création a **deux entrées** et non plus une : les champs qu'on
  * remplit, et une intention en une phrase que l'assistant transforme en
@@ -36,12 +43,9 @@ import { ChampJetons } from "@/components/ChampJetons";
 import {
   IconeAlerte,
   IconeAssistant,
-  IconeMcp,
-  IconePermissions,
   IconePlaybooks,
 } from "@/components/Icones";
-import { Infobulle } from "@/components/Infobulle";
-import { Bouton, EnTeteSection, classesCarte } from "@/components/Primitives";
+import { Bouton, classesCarte } from "@/components/Primitives";
 import {
   CHEMIN_CREATION_AGENT,
   cheminOnglet,
@@ -53,8 +57,6 @@ import {
   chargerCatalogue,
   chargerFournisseurs,
   creerAgent,
-  definirActivationsMcp,
-  definirPermissions,
   genererDefinitionAgent,
   modifierAgent,
   supprimerAgent,
@@ -67,7 +69,6 @@ import {
   vocabulaireDuCatalogue,
 } from "@/lib/competences";
 import { formatDateHeure } from "@/lib/format";
-import { entreesHorsPortee } from "@/lib/permissions";
 import {
   AGENT_SOURCE_SURCHARGE,
   type AgentCatalogue,
@@ -77,13 +78,8 @@ import {
   type DefinitionAgentProposee,
   estAgentDuCode,
   type FournisseurCatalogue,
-  type IntegrationPoolMcp,
-  type PolitiquePermissions,
   type ReglagesModele,
-  type ServeurMcp,
 } from "@/lib/types";
-
-import { Interrupteur } from "./parametres/SectionParametres";
 
 /** Miroir du slug accepté par le backend (`_NOM_AGENT`, maestro/agents/store.py). */
 const SLUG_NOM = /^[a-z0-9][a-z0-9_-]*$/;
@@ -1409,469 +1405,6 @@ export function EditeurAgent({
         )}
       </section>
     </div>
-  );
-}
-
-/**
- * L'onglet MCP & permissions d'un agent (#190) : ce que l'agent peut appeler —
- * les serveurs MCP qu'on lui active, et la politique d'outils que le moteur
- * applique à l'exécution.
- *
- * Ces deux sections étaient reléguées en bas de la fiche du catalogue, après le
- * formulaire de définition et son bouton de suppression : elles n'avaient de
- * page nulle part. Le contenu est inchangé — seul l'endroit l'est.
- */
-export function McpEtPermissionsAgent({ nom }: { nom: string }) {
-  const [fiche, setFiche] = useState<AgentCatalogueDetail | null>(null);
-  const [chargement, setChargement] = useState(true);
-  const [erreur, setErreur] = useState<string | null>(null);
-
-  // Chargement différé d'un tick (même mécanique que useControlTower) :
-  // l'effet lui-même ne déclenche aucun setState synchrone.
-  useEffect(() => {
-    let abandonne = false;
-    const tick = setTimeout(() => {
-      chargerAgentCatalogue(nom)
-        .then((nouvelle) => {
-          if (!abandonne) setFiche(nouvelle);
-        })
-        .catch((e) => {
-          if (!abandonne) setErreur(e instanceof Error ? e.message : String(e));
-        })
-        .finally(() => {
-          if (!abandonne) setChargement(false);
-        });
-    }, 0);
-    return () => {
-      abandonne = true;
-      clearTimeout(tick);
-    };
-  }, [nom]);
-
-  if (chargement) {
-    return <p className="text-sm text-neutral-500">Chargement de la fiche…</p>;
-  }
-  if (fiche === null) {
-    return (
-      <p className="text-sm text-rose-600 dark:text-rose-400" role="alert">
-        Fiche illisible : {erreur}
-      </p>
-    );
-  }
-  return (
-    <div className="flex min-w-0 flex-1 flex-col gap-4">
-      <SectionServeursMcp fiche={fiche} />
-      <SectionPermissions fiche={fiche} />
-    </div>
-  );
-}
-
-/**
- * La politique de permissions d'un agent (#110), **en écriture** depuis #262 :
- * ce que le moteur applique à l'exécution se règle ici, au lieu d'éditer
- * `core/permissions/<agent>.json` à la main puis de relancer.
- *
- * Deux listes s'éditent — `allow` et `deny` —, la troisième s'affiche : une
- * entrée `ask` porte **qui la tranche** (#586), un cran qui se pose à froid et
- * dont le choix n'est pas de ce lot. La montrer quand même est la règle de
- * #580 : n'en rendre que deux ferait passer un outil arbitré pour un outil sans
- * contrainte, puisqu'il n'apparaîtrait dans aucune.
- *
- * Chaque geste écrit — pas de bouton « Enregistrer » —, comme les interrupteurs
- * MCP juste au-dessus : l'état local ne bouge qu'**après** l'accord de l'API, si
- * bien qu'une entrée refusée s'efface d'elle-même en laissant son motif à
- * l'écran. C'est ce motif-là qui est utile (il nomme la liste et l'entrée en
- * faute), pas un « politique refusée » de notre cru.
- *
- * Une politique **invalide** reste diagnostiquée comme avant — et se corrige
- * d'ici : le moteur la refuse en bloc, donc rien n'est appliqué, et le seul
- * geste qui débloque est de la remplacer. L'écriture ne relisant pas ce qu'elle
- * écrase, elle aboutit sur un fichier que la lecture refuse.
- */
-function SectionPermissions({ fiche }: { fiche: AgentCatalogueDetail }) {
-  const prefixe = useId();
-  const [politique, setPolitique] = useState<PolitiquePermissions>(
-    fiche.permissions ?? { allow: [], ask: {}, deny: [] },
-  );
-  // La cause du refus de lecture, effacée dès qu'une écriture a repris la main :
-  // la fiche, elle, garde celle du chargement — c'est un instantané, pas l'état.
-  const [invalide, setInvalide] = useState(fiche.permissions_erreur);
-  const [dediee, setDediee] = useState(fiche.permissions !== null);
-  const [enCours, setEnCours] = useState(false);
-  const [erreur, setErreur] = useState<string | null>(null);
-
-  const outils = fiche.permissions_outils;
-  const suggestions = outils.map((outil) => outil.nom);
-  const askEntrees = Object.entries(politique.ask);
-
-  /** Écrit la politique voulue ; l'état local ne suit qu'en cas d'accord. */
-  const enregistrer = async (voulue: PolitiquePermissions) => {
-    setEnCours(true);
-    setErreur(null);
-    try {
-      await definirPermissions(fiche.nom, voulue);
-      setPolitique(voulue);
-      setInvalide(null);
-      setDediee(true);
-    } catch (e) {
-      setErreur(e instanceof Error ? e.message : String(e));
-    } finally {
-      setEnCours(false);
-    }
-  };
-
-  return (
-    <section aria-label={`Permissions de ${fiche.nom}`}>
-      <EnTeteSection
-        niveau={3}
-        titre="Permissions"
-        icone={IconePermissions}
-        className="mb-2"
-      />
-      {invalide !== null ? (
-        <div className="flex flex-col gap-2">
-          <p
-            role="alert"
-            className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800 dark:border-rose-900 dark:bg-rose-950 dark:text-rose-300"
-          >
-            Politique invalide : {invalide}
-          </p>
-          <p className="text-xs text-neutral-500 dark:text-neutral-400">
-            Tant qu&apos;elle est illisible, elle n&apos;est appliquée à rien —
-            le moteur refuse la tâche plutôt que d&apos;exécuter sous une
-            politique douteuse. Repartir d&apos;une politique vide la remplace
-            ici même ; les entrées voulues se réajoutent ensuite.
-          </p>
-          <div>
-            <Bouton
-              variante="contour"
-              ton="neutre"
-              taille="petite"
-              disabled={enCours}
-              onClick={() =>
-                void enregistrer({ allow: [], ask: {}, deny: [] })
-              }
-            >
-              Repartir d&apos;une politique vide
-            </Bouton>
-          </div>
-        </div>
-      ) : (
-        <div className="flex flex-col gap-3">
-          {!dediee && (
-            <p className="text-xs text-neutral-500 dark:text-neutral-400">
-              Aucune politique dédiée : l&apos;agent dispose de tous les outils
-              que son profil expose. La première entrée ajoutée ci-dessous en
-              crée une.
-            </p>
-          )}
-          <ChampJetons
-            id={`${prefixe}-allow`}
-            libelle="allow — liste fermée"
-            valeurs={politique.allow}
-            onChange={(allow) => void enregistrer({ ...politique, allow })}
-            suggestions={suggestions}
-            signales={entreesHorsPortee(politique.allow, outils)}
-            motSignal="hors des outils exposés"
-            nomElement="l'entrée allow"
-            vide="Vide — tout ce que le profil expose est permis (hors deny et ask)."
-            desactive={enCours}
-            placeholder="Read"
-            aide="Non vide, elle ferme la liste : tout ce qui n'y figure pas est refusé, sauf ce qu'ask cite — qui est arbitré, pas refusé."
-          />
-          <ChampJetons
-            id={`${prefixe}-deny`}
-            libelle="deny — l'emporte sur tout"
-            valeurs={politique.deny}
-            onChange={(deny) => void enregistrer({ ...politique, deny })}
-            suggestions={suggestions}
-            signales={entreesHorsPortee(politique.deny, outils)}
-            motSignal="hors des outils exposés"
-            nomElement="l'entrée deny"
-            vide="Vide — aucun outil interdit."
-            desactive={enCours}
-            placeholder="mcp__slack__chat_delete"
-            aide="Un outil intégré refusé est retiré de la session ; un serveur MCP refusé en entier n'est jamais monté, ses secrets ne sont même pas résolus."
-          />
-          <ListeArbitrages entrees={askEntrees} agent={fiche.nom} />
-        </div>
-      )}
-      {erreur && (
-        <p className="mt-2 text-xs text-rose-600 dark:text-rose-400" role="alert">
-          {erreur}
-        </p>
-      )}
-      <p className="mt-3 text-xs text-neutral-500 dark:text-neutral-400">
-        Politique effective, appliquée à l&apos;exécution :{" "}
-        <strong>deny l&apos;emporte sur ask, qui l&apos;emporte sur allow</strong>{" "}
-        (un appel refusé est tracé au fil d&apos;activité sans condamner le run).
-        Une entrée vaut pour l&apos;outil exact ou, aux frontières{" "}
-        <code className="font-mono">__</code>, pour tout ce qu&apos;elle
-        préfixe : <code className="font-mono">mcp__slack</code> couvre tous les
-        outils du serveur.
-      </p>
-      <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
-        Écrite dans{" "}
-        <code className="font-mono">core/permissions/{fiche.nom}.json</code>,{" "}
-        <strong>versionné avec le dépôt</strong> : chaque enregistrement modifie
-        un fichier suivi par git — celui du dossier de travail où tourne cette
-        Control Tower, à commiter comme le reste. Elle vaut pour la tâche
-        suivante, sans redémarrage.
-      </p>
-    </section>
-  );
-}
-
-/**
- * Les entrées `ask` de la politique, avec **qui les tranche** (#586) — affichées
- * et non éditées.
- *
- * Le cran (`auto`/`humain`) est une décision prise à froid, et l'écran ne sait
- * pas encore la poser ; l'ajouter à moitié — une entrée qu'on pourrait créer
- * sans choisir son décideur — la ferait retomber sur le défaut sans le dire,
- * alors que le défaut *est* le cran le plus fermé. Le fichier reste donc la
- * porte d'entrée de cette liste-là, et la section le nomme.
- */
-function ListeArbitrages({
-  entrees,
-  agent,
-}: {
-  entrees: [string, string][];
-  agent: string;
-}) {
-  return (
-    <div className="flex flex-col gap-1">
-      <span className="text-annexe font-medium text-texte-secondaire">
-        ask — soumis à arbitrage
-      </span>
-      {entrees.length === 0 ? (
-        <p className="text-annexe text-texte-secondaire">
-          Vide — aucun outil soumis à arbitrage.
-        </p>
-      ) : (
-        <ul className="flex flex-wrap gap-1">
-          {entrees.map(([outil, decideur]) => (
-            <li key={outil}>
-              <span className="inline-flex items-center gap-1 rounded-full bg-attention-creux px-2 py-0.5 text-annexe text-attention-texte">
-                {outil}
-                <span className="font-medium">— {decideur}</span>
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-      <p className="text-annexe text-texte-secondaire">
-        Un outil arbitré n&apos;est pas interdit : il reste monté, son appel est
-        suspendu le temps qu&apos;on tranche. Le cran se pose dans{" "}
-        <code className="font-mono">core/permissions/{agent}.json</code>{" "}
-        — il n&apos;est pas réglable ici.
-      </p>
-    </div>
-  );
-}
-
-/**
- * Les serveurs MCP d'un agent (#133) : la section est passée **en écriture**.
- * Chaque intégration du **pool projet** (configurée une fois depuis les
- * Paramètres) porte un interrupteur qui l'active ou la désactive **pour cet
- * agent** — ce qui remplace l'ancien affichage lecture seule. Les déclarations
- * **héritées** (`core/mcp/<agent>.json`) restent affichées en lecture seule
- * pendant la migration. Une source invalide affiche sa cause exacte.
- */
-function SectionServeursMcp({ fiche }: { fiche: AgentCatalogueDetail }) {
-  const [activations, setActivations] = useState<string[]>(
-    fiche.mcp_activations,
-  );
-  const [enCours, setEnCours] = useState<string | null>(null);
-  const [erreur, setErreur] = useState<string | null>(null);
-
-  const basculer = async (id: string) => {
-    const cible = activations.includes(id)
-      ? activations.filter((a) => a !== id)
-      : [...activations, id];
-    setEnCours(id);
-    setErreur(null);
-    try {
-      await definirActivationsMcp(fiche.nom, cible);
-      setActivations(cible);
-    } catch (e) {
-      setErreur(e instanceof Error ? e.message : String(e));
-    } finally {
-      setEnCours(null);
-    }
-  };
-
-  // Les serveurs hérités (fichier `<agent>.json`) : ceux montés qui ne viennent
-  // pas d'une intégration du pool activée — encore en lecture seule (migration).
-  const nomsPoolActives = new Set(
-    fiche.mcp_pool
-      .filter((i) => activations.includes(i.id))
-      .map((i) => i.serveur.nom),
-  );
-  const herites = fiche.mcp_serveurs.filter((s) => !nomsPoolActives.has(s.nom));
-
-  return (
-    <section aria-label={`Serveurs MCP de ${fiche.nom}`}>
-      <EnTeteSection
-        niveau={3}
-        titre="Serveurs MCP"
-        icone={IconeMcp}
-        className="mb-2"
-      />
-      {fiche.mcp_pool_erreur !== null && (
-        <p
-          role="alert"
-          className="mb-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800 dark:border-rose-900 dark:bg-rose-950 dark:text-rose-300"
-        >
-          Pool invalide : {fiche.mcp_pool_erreur}
-        </p>
-      )}
-      {fiche.mcp_pool.length === 0 ? (
-        <p className="text-xs text-neutral-500 dark:text-neutral-400">
-          Aucune intégration au pool projet. Ajoutez-en depuis l&apos;écran{" "}
-          <Link
-            href="/integrations"
-            className="font-medium text-emerald-700 underline dark:text-emerald-400"
-          >
-            Intégrations
-          </Link>
-          , puis activez-les ici pour cet agent.
-        </p>
-      ) : (
-        <ul className="flex flex-col gap-2">
-          {fiche.mcp_pool.map((integration) => (
-            <LigneActivation
-              key={integration.id}
-              integration={integration}
-              actif={activations.includes(integration.id)}
-              enCours={enCours === integration.id}
-              basculer={() => void basculer(integration.id)}
-            />
-          ))}
-        </ul>
-      )}
-      {erreur && (
-        <p className="mt-2 text-xs text-rose-600 dark:text-rose-400" role="alert">
-          {erreur}
-        </p>
-      )}
-      {fiche.mcp_erreur !== null && (
-        <p
-          role="alert"
-          className="mt-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800 dark:border-rose-900 dark:bg-rose-950 dark:text-rose-300"
-        >
-          Déclaration invalide : {fiche.mcp_erreur}
-        </p>
-      )}
-      {herites.length > 0 && (
-        <div className="mt-3">
-          <p className="mb-1 text-xs font-medium text-neutral-500 dark:text-neutral-400">
-            Hérités de{" "}
-            <code className="font-mono">core/mcp/{fiche.nom}.json</code> —
-            lecture seule (à migrer vers le pool)
-          </p>
-          <ul className="flex flex-col gap-2">
-            {herites.map((serveur) => (
-              <li
-                key={serveur.nom}
-                className="rounded-md border border-neutral-200 bg-white px-3 py-2 text-xs dark:border-neutral-800 dark:bg-neutral-900"
-              >
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-medium">{serveur.nom}</span>
-                  <span className="rounded-full bg-neutral-100 px-2 py-0.5 font-mono text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
-                    {serveur.type}
-                  </span>
-                  {serveur.optionnel ? (
-                    <Infobulle
-                      texte="Serveur omis du montage (sans échec) tant que son secret n'est pas fourni"
-                      className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
-                    >
-                      optionnel
-                    </Infobulle>
-                  ) : null}
-                  <code className="truncate font-mono text-neutral-600 dark:text-neutral-400">
-                    {serveur.type === "stdio"
-                      ? [serveur.commande, ...serveur.args].join(" ")
-                      : serveur.url}
-                  </code>
-                </div>
-                <CouplesMasques
-                  libelle={serveur.type === "stdio" ? "env" : "headers"}
-                  valeurs={
-                    serveur.type === "stdio" ? serveur.env : serveur.headers
-                  }
-                />
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </section>
-  );
-}
-
-/** Un interrupteur d'activation d'une intégration du pool pour l'agent (#133). */
-function LigneActivation({
-  integration,
-  actif,
-  enCours,
-  basculer,
-}: {
-  integration: IntegrationPoolMcp;
-  actif: boolean;
-  enCours: boolean;
-  basculer: () => void;
-}) {
-  // Un secret manquant ou expiré : l'intégration s'active, mais on prévient
-  // qu'elle ne montera pas tant que son secret n'est pas (re)configuré.
-  const secretManquant = integration.secrets.find((s) => !s.present || !s.valide);
-  return (
-    <li className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-neutral-200 bg-white px-3 py-2 text-xs dark:border-neutral-800 dark:bg-neutral-900">
-      <Interrupteur
-        libelle={`Activer ${integration.serveur.nom} pour cet agent`}
-        actif={actif}
-        desactive={enCours}
-        basculer={basculer}
-      />
-      <span className="font-medium">{integration.serveur.nom}</span>
-      <span className="rounded-full bg-neutral-100 px-2 py-0.5 font-mono text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
-        {integration.serveur.type}
-      </span>
-      {actif && secretManquant && (
-        <Infobulle
-          texte="Configurer le secret sur l'écran Intégrations"
-          className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
-        >
-          secret à configurer
-        </Infobulle>
-      )}
-    </li>
-  );
-}
-
-/** Les paires clé → valeur (masquée) d'un serveur : env (stdio) ou headers (distant). */
-function CouplesMasques({
-  libelle,
-  valeurs,
-}: {
-  libelle: string;
-  valeurs: ServeurMcp["env"];
-}) {
-  const couples = Object.entries(valeurs);
-  if (couples.length === 0) {
-    return null;
-  }
-  return (
-    <dl className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-neutral-500 dark:text-neutral-400">
-      {couples.map(([cle, valeur]) => (
-        <div key={cle} className="flex gap-1">
-          <dt className="font-mono">
-            {libelle}.{cle}
-          </dt>
-          <dd className="font-mono">= {valeur}</dd>
-        </div>
-      ))}
-    </dl>
   );
 }
 
