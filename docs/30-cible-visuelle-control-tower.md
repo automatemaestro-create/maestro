@@ -774,6 +774,49 @@ Ce qui manque est son **appelant** — il n'y a pas de verbe de lecture `veille-
 
 ---
 
+### 5.3 Veilles jouées
+
+Le banc du §1 a été dressé **une fois**, en prose, et n'était rejouable par personne — c'est le
+défaut que `/design-veille` corrige. Il serait absurde de le reproduire à l'échelle des surfaces :
+les veilles jouées se consignent donc ici, datées, avec **ce qui a été vérifié** et **ce qui ne
+l'a pas été**. Le détail vit sur le ticket ; cette table dit qu'elle a eu lieu et ce qu'elle a
+tranché.
+
+#### Le composeur de conversation — 2026-08-30 (#724, lot 1 de #722)
+
+Surface : le `<form>` à quai de `Conversation.tsx` et `SourcesDuMessage.tsx`, montés par **deux**
+écrans (`/chat` et l'onglet Chat d'une fiche agent). Décision complète en commentaire de **#722**.
+
+**Vérifié en direct** (captures et mesures) : **ChatGPT** — contrôles *dans* le cadre en 44×44, `+`
+à gauche ouvrant un menu, envoi à droite ; croissance mesurée **52 px au repos → 256 px à vingt
+lignes**, `max-height: 192px` puis défilement interne. **Perplexity** — **deux étages dans un seul
+cadre** : texte pleine largeur en haut, *tous* les contrôles sur un rail en bas (y=73).
+**Zulip** (vue publique) — la barre porte **sa destination** en clair plutôt qu'un placeholder qui
+s'efface.
+
+**Non vérifié, donc non cité** : Slack et Linear (composeurs derrière authentification), GitHub
+(« Sign in to comment », pourtant au banc du §1.1), le composeur *déployé* de Zulip. Aucun parti
+pris ne s'appuie dessus — règle de #471.
+
+**Quatre partis pris**, tranchant les quatre points que le ticket exigeait : un cadre à deux étages
+*(place de l'envoi)* · un bouton unique en tête de rail ouvrant les trois gestes existants
+*(pièces jointes)* · croissance bornée puis défilement interne, la poignée `resize-y` disparaît
+*(croissance)* · le raccourci clavier quitte le `placeholder` pour le rail *(raccourci)*.
+
+**Refusés sur place, avec leur raison** : le rayon en gélule (28 px chez ChatGPT) — c'est une
+identité, et la direction du §6.1 est « le même produit, avec du relief » ; les chips de mode et le
+sélecteur de modèle de Perplexity — le §4 plafonne le corps, et `PARLER À` fait déjà ce travail
+dans la colonne ; le composeur replié de Zulip — un seul fil à l'écran, replier coûterait un clic
+pour rien.
+
+**Un manque du socle, pas un refus** → **#832**. `CadreChamp` rend *toujours* un libellé visible et
+`Primitives.tsx` ne connaît pas `sr-only` : les **trois** composeurs du produit contournent donc la
+primitive avec la même classe recopiée hors palette (`focus:border-emerald-500`), dont deux
+identiques au mot près (`SourcesDuMessage.tsx:44`, `ComposerObjectif.tsx:62`). Le même refus sur
+trois surfaces n'est plus un refus — c'est la mécanique du §2.2, prise à sa source.
+
+---
+
 ## 6. Recommandation
 
 ### 6.1 Direction visuelle retenue — « le même produit, avec du relief »
