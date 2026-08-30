@@ -1,8 +1,9 @@
 /**
  * Résumé et tri d'importance des événements du flux temps réel (`WS
  * /ws/evenements`, #46). Partagé entre le fil d'activité du tableau de bord
- * (#47) et le centre de notifications déroulant (#119) : « qui fait quoi » se
- * lit à l'identique aux deux endroits, et le second n'a qu'à filtrer le notable.
+ * (#47), le centre de notifications déroulant (#119) et l'onglet Logs d'un agent
+ * (#266) : « qui fait quoi » se lit à l'identique aux trois endroits, et chacun
+ * n'a qu'à trier — le notable pour la cloche, le **niveau** pour les logs.
  */
 
 import {
@@ -425,6 +426,110 @@ export function estNotableNotification(evenement: Evenement): boolean {
     default:
       return false;
   }
+}
+
+/* ------------------------------------------------------------------ *
+ * Le niveau d'une ligne (#266)
+ * ------------------------------------------------------------------ */
+
+/** Ce qui a échoué ou s'est arrêté. */
+export const NIVEAU_ERREUR = "erreur";
+/** Ce que la politique de permissions a écarté. */
+export const NIVEAU_REFUS = "refus";
+/** Ce qu'un humain a tranché, ou attend de trancher. */
+export const NIVEAU_DECISION = "decision";
+/** Le travail ordinaire : gestes, statuts, messages. */
+export const NIVEAU_INFO = "info";
+
+export type NiveauLog =
+  | typeof NIVEAU_ERREUR
+  | typeof NIVEAU_REFUS
+  | typeof NIVEAU_DECISION
+  | typeof NIVEAU_INFO;
+
+/**
+ * Les quatre niveaux, du plus au moins pressant — l'ordre du filtre de l'onglet
+ * Logs (#266).
+ *
+ * **Le niveau est la FAMILLE, pas une sévérité de plus.** C'était l'arbitrage du
+ * ticket : « erreur / avertissement / info » aurait été le réflexe, mais aucun de
+ * ces trois mots ne permet d'isoler *les refus*, qui sont la question qu'on pose
+ * le plus souvent à un journal d'agent (« qu'est-ce qu'on lui a interdit ? »).
+ * Les quatre valeurs ci-dessous sont donc exactement les quatre choses que le
+ * ticket promet de couvrir — appels d'outil, refus de permission, décisions,
+ * erreurs —, si bien que chacune s'isole d'un choix. La sévérité, elle, ne sert
+ * plus qu'à les **ordonner**.
+ *
+ * Elles se lisent sur le `statut` du bus plutôt que sur le type d'événement, et
+ * c'est là que vit le sens : un `agent.activite` est tour à tour un geste, un
+ * refus, un arbitrage ou une fusion refusée selon le seul statut qu'il porte
+ * (`maestro/engine/executor.py`, `STATUT_*`).
+ */
+export const NIVEAUX_LOG: { cle: NiveauLog; libelle: string }[] = [
+  { cle: NIVEAU_ERREUR, libelle: "Erreur" },
+  { cle: NIVEAU_REFUS, libelle: "Refus" },
+  { cle: NIVEAU_DECISION, libelle: "Décision" },
+  { cle: NIVEAU_INFO, libelle: "Info" },
+];
+
+/**
+ * Ce qui a échoué : une tâche ou une étape en échec, une exécution en échec
+ * (`EXECUTION_ECHEC` vaut le même mot), une tâche que la cascade de #43 a tuée
+ * avant qu'elle démarre, une fusion que Git ou le périmètre a repoussée (#705).
+ */
+const STATUTS_ERREUR = new Set(["echec", "bloquee", "fusion_refusee"]);
+
+/**
+ * Le refus d'un **appel d'outil** par la politique allow/deny (#110,
+ * `STATUT_REFUS_OUTIL`). Il est seul de sa famille, et il la mérite : c'est le
+ * seul événement qui dise ce que l'agent n'a **pas** pu faire.
+ */
+const STATUTS_REFUS = new Set(["refus_outil"]);
+
+/**
+ * Ce qui passe par un humain. Les trois premiers sont l'issue d'une étape
+ * `:validation` ou d'un arbitrage sur un acte (#583) ; le quatrième est un
+ * blocage que l'agent **déclare** (#719) — il travaille encore et demande de
+ * l'aide, ce qui est une décision attendue et non une panne : le ranger en
+ * erreur annoncerait un abandon à l'instant précis où quelqu'un appelle.
+ */
+const STATUTS_DECISION = new Set([
+  "approuve",
+  "refuse",
+  "arbitrage_outil",
+  "blocage_signale",
+]);
+
+/** Les deux canaux qui *sont* une décision humaine, quel que soit leur statut. */
+const TYPES_DECISION = new Set<string>([
+  EVENEMENT_VALIDATION_DEMANDE,
+  EVENEMENT_VALIDATION_DECISION,
+]);
+
+/**
+ * Le niveau d'une ligne de journal (#266) — la famille dont elle relève.
+ *
+ * Même contrat que `libelleStatut` et `libelleTypeEvenement` : ce que le front
+ * ne sait pas classer retombe sur `info` plutôt que de disparaître. Un niveau
+ * fourre-tout est le prix d'un flux qui s'enrichit côté backend sans que ce
+ * module le sache ; une ligne escamotée par un filtre serait bien pire, le
+ * propre d'un journal étant qu'on y cherche ce qu'on n'attendait pas.
+ */
+export function niveauEvenement(evenement: Evenement): NiveauLog {
+  if (STATUTS_REFUS.has(evenement.statut)) return NIVEAU_REFUS;
+  if (STATUTS_ERREUR.has(evenement.statut)) return NIVEAU_ERREUR;
+  if (
+    STATUTS_DECISION.has(evenement.statut) ||
+    TYPES_DECISION.has(evenement.type)
+  ) {
+    return NIVEAU_DECISION;
+  }
+  return NIVEAU_INFO;
+}
+
+/** Le nom lisible d'un niveau — ce que la liste déroulante du filtre propose. */
+export function libelleNiveau(niveau: NiveauLog): string {
+  return NIVEAUX_LOG.find(({ cle }) => cle === niveau)?.libelle ?? niveau;
 }
 
 /**

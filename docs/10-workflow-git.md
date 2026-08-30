@@ -5740,14 +5740,65 @@ forme des appels — porte sur une liste qui, dans ce régime, ne dit plus rien 
 refus **durs** de `guard.sh`. On échange une liste blanche contre une liste noire, ce qui est un
 renversement de politique et pas un réglage.
 
-**Rien n'a donc été levé ici** : #614 mesure, il ne décide pas (même partage que l'audit de run,
-§11.12). Trois suites possibles, dans l'ordre où elles élargissent la surface — garder la conduite
-actuelle (le résidu devient un ticket de reprise, #608) ; n'employer `bypassPermissions` que pour les
-**tickets qui touchent `.claude/`**, choisis au lancement de la session puisque `run.sh` construit son
-argv ticket par ticket, ce qui confine le renversement à quelques tickets par mois et donne à la
-détection amont de `queue.sh` (#612) un usage qu'elle n'avait pas ; ou l'employer partout, ce que
-rien dans cette mesure ne recommande. Dans les deux derniers cas, le merge automatique de ces PR-là
-demanderait un lecteur humain — c'est #418 qui l'a retiré, pas l'écriture qui l'a rendu inutile.
+**Rien n'a été levé par #614** : il mesure, il ne décide pas (même partage que l'audit de run,
+§11.12). Trois suites étaient possibles, dans l'ordre où elles élargissent la surface — garder la
+conduite actuelle (le résidu devient un ticket de reprise, #608) ; n'employer `bypassPermissions` que
+pour les **tickets qui touchent `.claude/`**, choisis au lancement de la session puisque `run.sh`
+construit son argv ticket par ticket, ce qui confine le renversement à quelques tickets par mois et
+donne à la détection amont de `queue.sh` (#612) un usage qu'elle n'avait pas ; ou l'employer partout,
+ce que rien dans cette mesure ne recommande.
+
+#### Le verdict : on n'ouvre pas — la conduite de #608 est maintenue (#791, 2026-08-30)
+
+Le banc est **rejoué** avant de conclure, plutôt que relu : même CLI **2.1.215**, `claude-haiku-4-5`,
+**0,21 $** pour cinq variantes, et le verdict de #614 revient **au bit près** — `nu` · `cible` ·
+`absolue` · `hook` refusés, `bypass` ouvre `Write` **et** `Edit`, le hook tirant toujours (`sonde.txt`
+jamais atteint). La mesure tenait ; ce qui manquait n'était pas une mesure de plus, c'était le
+**prix des deux côtés**, jamais chiffré face à face.
+
+| | **statu quo** — le résidu devient un ticket de reprise (#608) | **ouverture** — `bypassPermissions` |
+| --- | --- | --- |
+| ce qu'on paie | **5 butées** `.claude/` sur les **78 sessions** du journal — #595, #599, #612, #619, #392 —, chacune coûtant une session interactive de reprise (#668 en est une) | l'`allow` **cesse de contraindre** : **86 règles** (49 dépôt + 39 run, union) tombent à **0** |
+| quand | **les 5 sont dans les 3 premiers runs du 2026-08-27**, avant que #622/#624/#628/#634 n'entrent en service le jour même. **0 sur les 63 sessions suivantes** — 9 runs, jusqu'au 2026-08-29 | à chaque session, dès le premier ticket |
+| ce qui reste | la détection amont de #612 rate **32 %** des cas (§11.2), donc le dispositif de reprise reste nécessaire **de toute façon** | **9 gestes** refusés par `guard.sh` en hook — les 8 `deny` de `settings.run.json`, que `--check` tient alignés, plus `reset --hard`, `--no-verify` et le commit sur `main` — mais il **ne juge que les appels `Bash`** (son mode hook sort en `0` sur tout autre outil) |
+| ce qui passerait | — | **3 des 5 `ask`** du dépôt deviennent des **oui silencieux** : `git clean`, `gh issue close`, `mcp__chrome-maestro__browser_run_code_unsafe`. Les deux autres (`--no-verify`, `reset --hard`) sont rattrapés par `guard.sh` |
+
+**Quatre raisons, et la quatrième aurait suffi.**
+
+- **Le statu quo ne coûte plus rien de mesurable.** 5 butées sur 15 sessions (33 %) avant le
+  dispositif, **0 sur 63 après**. ⚠ La coïncidence est datée mais la causalité n'est **pas** établie —
+  la nature des tickets traités a pu changer autant que le dispositif. Peu importe : le sens de la
+  conclusion n'en dépend pas, **0 sur 63 est le coût observé quelle qu'en soit la cause**, et on
+  n'échange pas une politique entière contre un gain qu'on ne sait plus mesurer. Portée annoncée
+  comme partout ailleurs : le journal ne garde que les **dix derniers runs** (§11.3), ces chiffres
+  ne parlent donc que du 2026-08-27 au 2026-08-29.
+- **Le prix n'est pas d'ouvrir `.claude/`, c'est de renverser la politique.** Tout le travail
+  d'instruction de cette section — les familles de refus, les trous comblés un par un, la forme des
+  appels — porte sur une liste qui ne dirait plus rien. On échange une **liste blanche de 86 règles**
+  contre une **liste noire de 9 gestes**, ce qui est un changement de nature et pas un réglage.
+- **Cette liste noire est plus courte qu'elle n'en a l'air.** `guard.sh` ne juge que `Bash` : tout
+  outil non-`Bash` — `Write`, `Edit`, les serveurs MCP — passe **sans examen**. C'est ce qui fait des
+  trois `ask` ci-dessus des oui silencieux, et `git clean` efface précisément ce que le dispositif de
+  #327 existe pour sauver : du travail non commité.
+- **Elle trancherait par effet de bord une question qu'un autre lot arbitre.** `WebSearch` et
+  `WebFetch` ne sont barrés que par l'`allow` (#714, plus bas) — donc sous `bypassPermissions` **le
+  web s'ouvre aux runs**. Ce n'est pas une hypothèse : le journal porte **un refus `WebFetch`**
+  (#271, vers `raw.githubusercontent.com`) qui aurait abouti. Ouvrir `.claude/` reviendrait à
+  répondre « oui » à #792 sans l'avoir instruit, et un régime qui tranche par effet de bord ce qu'un
+  ticket arbitre est une régression de méthode avant d'être une régression de sécurité.
+
+**La piste médiane a été examinée, pas écartée d'un mot.** Réserver `bypassPermissions` aux tickets
+que #612 signale est la seule des trois qui bornait le renversement — et elle ne tient pas : son
+trou de **32 %** oblige à garder le dispositif de reprise (on paierait les deux), ces tickets-là sont
+précisément ceux que #621 tient **hors des runs** par assignation (on ouvrirait un régime pour des
+tickets qui ne devraient pas s'y trouver), et le merge automatique de ces PR demanderait un lecteur
+humain — c'est #418 qui l'a retiré, pas l'écriture qui l'a rendu inutile.
+
+⚠ **Ce verdict se rouvre sur un fait, pas sur une intuition** : que les butées `.claude/`
+reprennent (le filet de #611 les nomme en fin de run, c'est là qu'on le verra), ou que `guard.sh`
+apprenne à juger autre chose que `Bash`. Les deux se mesurent ; en attendant, la conduite est celle
+de #608 — **on rend le correctif dans la PR et on ouvre le ticket de reprise, on ne contourne
+jamais**.
 
 **Un accès qui n'a pas été ouvert, et c'est une décision : le web** (#714, [docs/30
 §5.2](./30-cible-visuelle-control-tower.md)). `WebSearch` et `WebFetch` ne sont dans **aucune** des

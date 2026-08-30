@@ -2,31 +2,42 @@
 
 /**
  * Création et configuration d'un agent du catalogue (ticket #73, EF-03) :
- * le formulaire de définition — rôle, compétences, fournisseur/modèle,
- * playbook — branché sur l'API du lot 1 (#72, `/api/catalogue`).
+ * le formulaire de définition — rôle, compétences, fournisseur/modèle/effort —
+ * branché sur l'API du lot 1 (#72, `/api/catalogue`).
  *
  * Deux entrées, une par facette de la **définition** (#190) : `CreationAgent`
  * (nouvel agent personnalisé, `POST` — sur **son propre écran** depuis #254,
  * `components/CreationAgentEcran`) et `EditeurAgent` (onglet Profil — fiche
- * existante, modification `PUT` et suppression `DELETE` d'un agent
- * personnalisé ; les agents par défaut, définis par le code, sont montrés en
- * lecture seule, leur playbook s'éditant sur l'onglet Playbook). Un agent créé
- * ou modifié vaut pour les moteurs construits ensuite.
+ * existante). Un agent créé ou modifié vaut pour les moteurs construits
+ * ensuite.
  *
  * L'onglet **MCP & permissions** vivait ici jusqu'à #263 et a son fichier
  * (`components/OngletMcpAgent`) : il n'est plus une vue de la fiche mais
  * l'endroit où les intégrations d'un agent se règlent — bibliothèque, ajout,
- * migration des déclarations héritées. Ce fichier-ci reste le formulaire de
+ * migration des déclarations héritées. La politique de permissions, passée en
+ * écriture par #262, l'a suivi. Ce fichier-ci reste le formulaire de
  * définition.
  *
  * Depuis #257 la création a **deux entrées** et non plus une : les champs qu'on
  * remplit, et une intention en une phrase que l'assistant transforme en
  * définition proposée (`AssistantDefinition`). La seconde n'ajoute aucun chemin
  * d'écriture — elle remplit les champs de la première, qui reste seule à créer.
+ *
+ * **Ce que #259 a déplacé, et pourquoi.** Le Profil portait un champ Playbook
+ * alors que l'onglet Playbook existe depuis #190 : deux chemins d'écriture pour
+ * la même valeur, dont un aveugle au versionnement et à l'historique. Le champ
+ * n'existe donc plus qu'**à la création** — là où l'agent n'a pas encore
+ * d'onglet où aller —, et partout ailleurs un `RenvoiPlaybook` prend sa place.
+ *
+ * Et le Profil d'un agent **du code** n'est plus en lecture seule : ses trois
+ * réglages de modèle se **surchargent** (`FicheDefaut`), le reste de sa
+ * définition continuant de venir du code. Le seul contournement d'avant était
+ * de le dupliquer en agent personnalisé — c'est-à-dire d'en recopier le
+ * playbook pour changer un modèle, après quoi la copie cesse de suivre le code.
  */
 
 import Link from "next/link";
-import { useCallback, useEffect, useId, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useId, useState } from "react";
 
 import { ChampJetons } from "@/components/ChampJetons";
 import {
@@ -34,13 +45,14 @@ import {
   IconeAssistant,
   IconePlaybooks,
 } from "@/components/Icones";
-import { Bouton, EnTeteSection, classesCarte } from "@/components/Primitives";
+import { Bouton, classesCarte } from "@/components/Primitives";
 import {
   CHEMIN_CREATION_AGENT,
   cheminOnglet,
   estNomAgentReserve,
 } from "@/lib/agents";
 import {
+  annulerSurchargeAgent,
   chargerAgentCatalogue,
   chargerCatalogue,
   chargerFournisseurs,
@@ -48,6 +60,7 @@ import {
   genererDefinitionAgent,
   modifierAgent,
   supprimerAgent,
+  surchargerAgent,
 } from "@/lib/api";
 import {
   competenceProche,
@@ -57,13 +70,15 @@ import {
 } from "@/lib/competences";
 import { formatDateHeure } from "@/lib/format";
 import {
-  AGENT_SOURCE_DEFAUT,
+  AGENT_SOURCE_SURCHARGE,
   type AgentCatalogue,
   type AgentCatalogueDetail,
   type CatalogueFournisseurs,
   type DefinitionAgent,
   type DefinitionAgentProposee,
+  estAgentDuCode,
   type FournisseurCatalogue,
+  type ReglagesModele,
 } from "@/lib/types";
 
 /** Miroir du slug accepté par le backend (`_NOM_AGENT`, maestro/agents/store.py). */
@@ -145,6 +160,23 @@ function definitionDepuis(champs: Champs): DefinitionAgent {
     playbook: champs.playbook,
     modele: champs.modele.trim() || null,
     fournisseur: champs.fournisseur.trim() || null,
+    effort: champs.effort.trim() || null,
+  };
+}
+
+/**
+ * Les trois réglages de modèle seuls, épurés (#259) — ce qu'une surcharge porte.
+ *
+ * La chaîne vide y devient `null`, qui veut dire **hérité** et non « vide » :
+ * c'est le même mot que `definitionDepuis` emploie pour « suit l'exécution »,
+ * et côté agent du code il veut dire « suit le code ». Les trois à `null`, le
+ * dépôt retire la surcharge — poser une surcharge qui ne surcharge rien et
+ * l'annuler sont le même geste.
+ */
+function reglagesDepuis(champs: Champs): ReglagesModele {
+  return {
+    fournisseur: champs.fournisseur.trim() || null,
+    modele: champs.modele.trim() || null,
     effort: champs.effort.trim() || null,
   };
 }
@@ -467,12 +499,15 @@ function SignalementInedites({
 }
 
 /**
- * Les champs communs de la définition (création comme modification).
+ * Les trois réglages de modèle — **fournisseur → modèle → effort** —, liés
+ * depuis #255 : chaque maillon borne le suivant, si bien qu'on ne peut plus
+ * composer une configuration qui n'existe pas.
  *
- * Depuis #255 quatre d'entre eux sont **liés**, et l'ordre à l'écran est celui
- * de la dépendance : rôle, puis **fournisseur → modèle → effort**. Chaque
- * maillon borne le suivant, si bien qu'on ne peut plus composer une
- * configuration qui n'existe pas.
+ * Extrait de `FormulaireDefinition` par #259, qui en a un **second** appelant :
+ * la fiche d'un agent du code, dont ces trois réglages se surchargent alors que
+ * son rôle, ses compétences et son playbook restent au code. Les recopier
+ * aurait donné deux chaînes à tenir d'accord, et #255 venait précisément de
+ * n'en faire qu'une.
  *
  * ⚠ Le fournisseur est passé du champ libre de #487 à un `<select>`, et c'est
  * un renversement assumé plutôt qu'un oubli : l'argument de #487 — « la sonde
@@ -489,21 +524,26 @@ function SignalementInedites({
  * vocabulaire ouvert, pas une chaîne de dépendances —, d'où des suggestions et
  * un signalement plutôt qu'une liste fermée.
  */
-function FormulaireDefinition({
+function ChampsDuModele({
   champs,
   setChamps,
   desactive,
+  marqueur,
+  enTete,
 }: {
   champs: Champs;
   setChamps: (champs: Champs) => void;
   desactive: boolean;
+  /**
+   * Ce qui s'affiche sous chaque réglage — d'où il vient (#259). Rend `null`
+   * là où il n'y a rien à dire : sur un agent personnalisé, aucun des trois ne
+   * tient de qui que ce soit.
+   */
+  marqueur?: (reglage: "fournisseur" | "modele" | "effort") => ReactNode;
+  /** Ce qui précède les trois champs dans la même grille (rôle, compétences…). */
+  enTete?: ReactNode;
 }) {
   const catalogue = useCataloguePoste();
-  // Une seule lecture du catalogue d'agents, deux usages : les rôles (#255) et
-  // le vocabulaire des compétences (#256).
-  const fiches = useCatalogueAgents();
-  const roles = rolesConnus(fiches);
-  const vocabulaire = fiches === null ? null : vocabulaireDuCatalogue(fiches);
   /**
    * Ce qu'un changement de fournisseur a **retiré**, en toutes lettres. Vider un
    * champ sans le dire serait la moitié muette du critère 2 : c'est le
@@ -528,10 +568,7 @@ function FormulaireDefinition({
   // rendraient les suggestions de l'un dans l'autre.
   const prefixe = useId();
   const idModeles = `${prefixe}-modeles`;
-  const idRoles = `${prefixe}-roles`;
   const idPoste = `${prefixe}-poste`;
-  const idCompetences = `${prefixe}-competences`;
-  const inconnues = inedites(champs.competences, vocabulaire);
 
   const fournisseur = fournisseurDe(catalogue, champs.fournisseur);
   const modeles = modelesOfferts(catalogue, champs.fournisseur);
@@ -606,27 +643,7 @@ function FormulaireDefinition({
   return (
     <div className="flex flex-col gap-3">
       <div className="grid gap-3 sm:grid-cols-2">
-        <label className={CLASSE_LIBELLE}>
-          Rôle
-          <input
-            type="text"
-            value={champs.role}
-            onChange={(e) => setChamps({ ...champs, role: e.target.value })}
-            disabled={desactive}
-            placeholder="Développeur front"
-            list={roles.length > 0 ? idRoles : undefined}
-            className={CLASSE_CHAMP}
-          />
-          {roles.length > 0 && (
-            // Une liste **alimentée**, jamais fermée : un rôle inédit se saisit
-            // tel quel, et c'est ce que le critère 1 demande explicitement.
-            <datalist id={idRoles}>
-              {roles.map((role) => (
-                <option key={role} value={role} />
-              ))}
-            </datalist>
-          )}
-        </label>
+        {enTete}
         <label className={CLASSE_LIBELLE}>
           Fournisseur
           <select
@@ -654,6 +671,7 @@ function FormulaireDefinition({
               </option>
             )}
           </select>
+          {marqueur?.("fournisseur")}
         </label>
         <label className={CLASSE_LIBELLE}>
           Modèle
@@ -704,6 +722,7 @@ function FormulaireDefinition({
               )}
             </>
           )}
+          {marqueur?.("modele")}
         </label>
         {/* Le sélecteur d'effort n'existe que si le modèle en admet (critère 3) :
             un modèle hors gamme n'annonce rien, donc le champ disparaît plutôt
@@ -729,6 +748,7 @@ function FormulaireDefinition({
                 </option>
               ))}
             </select>
+            {marqueur?.("effort")}
           </label>
         )}
       </div>
@@ -741,6 +761,74 @@ function FormulaireDefinition({
         </p>
       )}
       <ResumeDuPoste catalogue={catalogue} id={idPoste} />
+    </div>
+  );
+}
+
+/**
+ * Les champs communs de la définition d'un agent **personnalisé** : son
+ * identité (rôle, compétences), ses trois réglages de modèle, et son playbook.
+ *
+ * ⚠ Le playbook n'est éditable qu'**à la création** depuis #259, et c'est le
+ * critère 1 : partout ailleurs il s'écrit sur l'onglet Playbook, qui le
+ * versionne et en garde l'historique (#190) — deux chemins d'écriture pour la
+ * même valeur, dont un aveugle aux versions, étaient une occasion permanente
+ * d'écraser sans le savoir. `agent` porte ce partage : absent, l'agent n'existe
+ * pas encore, il n'a donc pas d'onglet où aller et le champ est le seul endroit
+ * possible ; présent, le champ cède la place au **renvoi** vers cet onglet.
+ */
+function FormulaireDefinition({
+  champs,
+  setChamps,
+  desactive,
+  agent,
+}: {
+  champs: Champs;
+  setChamps: (champs: Champs) => void;
+  desactive: boolean;
+  /** Le nom de l'agent s'il existe déjà — alors son playbook s'édite ailleurs. */
+  agent?: string;
+}) {
+  // Une seule lecture du catalogue d'agents, deux usages : les rôles (#255) et
+  // le vocabulaire des compétences (#256).
+  const fiches = useCatalogueAgents();
+  const roles = rolesConnus(fiches);
+  const vocabulaire = fiches === null ? null : vocabulaireDuCatalogue(fiches);
+  const prefixe = useId();
+  const idRoles = `${prefixe}-roles`;
+  const idCompetences = `${prefixe}-competences`;
+  const inconnues = inedites(champs.competences, vocabulaire);
+
+  return (
+    <div className="flex flex-col gap-3">
+      <ChampsDuModele
+        champs={champs}
+        setChamps={setChamps}
+        desactive={desactive}
+        enTete={
+          <label className={CLASSE_LIBELLE}>
+            Rôle
+            <input
+              type="text"
+              value={champs.role}
+              onChange={(e) => setChamps({ ...champs, role: e.target.value })}
+              disabled={desactive}
+              placeholder="Développeur front"
+              list={roles.length > 0 ? idRoles : undefined}
+              className={CLASSE_CHAMP}
+            />
+            {roles.length > 0 && (
+              // Une liste **alimentée**, jamais fermée : un rôle inédit se
+              // saisit tel quel, et c'est ce que le critère 1 de #255 demande.
+              <datalist id={idRoles}>
+                {roles.map((role) => (
+                  <option key={role} value={role} />
+                ))}
+              </datalist>
+            )}
+          </label>
+        }
+      />
       {/* Hors de la grille, et après la chaîne fournisseur → modèle → effort :
           un champ à jetons porte ses jetons, ses suggestions et son
           signalement, donc une hauteur qui n'a rien à voir avec celle d'une
@@ -784,22 +872,26 @@ function FormulaireDefinition({
           ) : null
         }
       />
-      <label className={CLASSE_LIBELLE}>
-        Playbook (les instructions du rôle — son prompt système)
-        <textarea
-          value={champs.playbook}
-          onChange={(e) => setChamps({ ...champs, playbook: e.target.value })}
-          disabled={desactive}
-          spellCheck={false}
-          placeholder={"Tu es développeur front de l'équipe.\n- Livre du code testé…"}
-          className={
-            "h-64 w-full resize-y rounded-md border border-neutral-200 bg-white p-3 " +
-            "font-mono text-xs leading-relaxed text-neutral-900 shadow-sm " +
-            "focus:border-neutral-400 focus:outline-none disabled:opacity-50 " +
-            "dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100 dark:focus:border-neutral-600"
-          }
-        />
-      </label>
+      {agent === undefined ? (
+        <label className={CLASSE_LIBELLE}>
+          Playbook (les instructions du rôle — son prompt système)
+          <textarea
+            value={champs.playbook}
+            onChange={(e) => setChamps({ ...champs, playbook: e.target.value })}
+            disabled={desactive}
+            spellCheck={false}
+            placeholder={"Tu es développeur front de l'équipe.\n- Livre du code testé…"}
+            className={
+              "h-64 w-full resize-y rounded-md border border-neutral-200 bg-white p-3 " +
+              "font-mono text-xs leading-relaxed text-neutral-900 shadow-sm " +
+              "focus:border-neutral-400 focus:outline-none disabled:opacity-50 " +
+              "dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100 dark:focus:border-neutral-600"
+            }
+          />
+        </label>
+      ) : (
+        <RenvoiPlaybook agent={agent} />
+      )}
     </div>
   );
 }
@@ -918,6 +1010,31 @@ function AssistantDefinition({
         </p>
       )}
     </div>
+  );
+}
+
+/**
+ * Le renvoi vers l'onglet Playbook — ce qui remplace le champ retiré (#259).
+ *
+ * Retirer un champ sans dire où sa valeur s'écrit désormais, ce serait la
+ * moitié muette du critère 1 : on aurait supprimé le doublon **et** le chemin.
+ * Le patron est celui que `FicheDefaut` tenait déjà pour les agents du code —
+ * il devient celui de tout le monde.
+ */
+function RenvoiPlaybook({ agent }: { agent: string }) {
+  return (
+    <p className="rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
+      Les instructions de cet agent — son playbook — s&apos;éditent (et se
+      versionnent) depuis l&apos;onglet{" "}
+      <Link
+        href={cheminOnglet(agent, "playbook")}
+        className="inline-flex items-center gap-1 font-medium text-neutral-900 underline dark:text-neutral-200"
+      >
+        <IconePlaybooks className="size-3.5 shrink-0" />
+        Playbook
+      </Link>
+      , seul endroit où elles s&apos;écrivent.
+    </p>
   );
 }
 
@@ -1182,8 +1299,14 @@ export function EditeurAgent({
     );
   }
 
-  if (fiche.source === AGENT_SOURCE_DEFAUT) {
-    return <FicheDefaut fiche={fiche} />;
+  // Deux sources sur trois mènent ici depuis #259 : un agent du code, surchargé
+  // ou non, se règle sur `FicheDefaut` — c'est elle qui sait ce qui est hérité.
+  if (estAgentDuCode(fiche.source)) {
+    // `key` sur le nom : passer d'un agent du code à un autre **remonte** la
+    // fiche, donc repart de ses réglages. Sans lui, l'état de saisie du
+    // précédent survivrait à la navigation — on éditerait les réglages d'un
+    // agent en croyant régler l'autre.
+    return <FicheDefaut key={fiche.nom} fiche={fiche} recharger={recharger} />;
   }
 
   const modifie =
@@ -1212,6 +1335,7 @@ export function EditeurAgent({
           champs={champs}
           setChamps={setChamps}
           desactive={enCours}
+          agent={nom}
         />
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <Bouton
@@ -1285,10 +1409,90 @@ export function EditeurAgent({
 }
 
 /**
- * La fiche en lecture seule d'un agent par défaut : défini par le code, ni
- * modifiable ni supprimable ici — seul son playbook s'édite, onglet Playbook.
+ * La fiche d'un agent **du code** : son identité en lecture seule, ses trois
+ * réglages de modèle **surchargeables** (#259).
+ *
+ * Ce qui a changé, et pourquoi. Cette fiche était entièrement en lecture seule,
+ * si bien que changer de modèle sur un agent par défaut — un besoin courant —
+ * n'avait qu'un contournement : le **dupliquer** en agent personnalisé, c'est-à-
+ * dire recopier son playbook pour ne toucher qu'un réglage, après quoi les deux
+ * exemplaires divergent en silence et la copie cesse de suivre le code.
+ *
+ * Le partage tient en une ligne : **l'identité reste au code, les réglages se
+ * posent.** Rôle, compétences et playbook viennent de
+ * `maestro.agents.catalog` et continuent d'en suivre les évolutions ;
+ * fournisseur, modèle et effort se surchargent, et ce qui n'est **pas**
+ * surchargé est marqué « hérité du code » plutôt que d'être présenté comme un
+ * choix qu'on aurait fait.
+ *
+ * ⚠ Trois boutons, trois gestes distincts, et le troisième est le sujet du
+ * critère 3 : « Annuler les modifications » revient à l'état affiché (local),
+ * « Revenir aux réglages du code » **annule la surcharge** côté serveur, et
+ * **aucun** ne supprime — la suppression reste réservée aux agents
+ * personnalisés, et le serveur la refuse ici en 403.
  */
-function FicheDefaut({ fiche }: { fiche: AgentCatalogueDetail }) {
+function FicheDefaut({
+  fiche,
+  recharger,
+}: {
+  fiche: AgentCatalogueDetail;
+  /** Relire la fiche après écriture : la surcharge normalisée par le dépôt. */
+  recharger: () => Promise<AgentCatalogueDetail>;
+}) {
+  // L'état de saisie part de la fiche et n'est resynchronisé qu'après une
+  // écriture (`ecrire`). Passer d'un agent du code à un autre est traité par le
+  // `key` de l'appelant, qui remonte le composant : un `useEffect` qui
+  // recopierait la fiche dans l'état à chaque changement serait un rendu en
+  // cascade, et surtout un second endroit d'où l'état peut bouger.
+  const [champs, setChamps] = useState<Champs>(() => champsDepuis(fiche));
+  const [enCours, setEnCours] = useState(false);
+  const [erreur, setErreur] = useState<string | null>(null);
+
+  const reglages = reglagesDepuis(champs);
+  const modifie =
+    JSON.stringify(reglages) !== JSON.stringify(reglagesDepuis(champsDepuis(fiche)));
+  const surcharge = fiche.source === AGENT_SOURCE_SURCHARGE;
+
+  const ecrire = async (action: () => Promise<void>) => {
+    setEnCours(true);
+    setErreur(null);
+    try {
+      await action();
+      setChamps(champsDepuis(await recharger()));
+    } catch (e) {
+      setErreur(e instanceof Error ? e.message : String(e));
+    } finally {
+      setEnCours(false);
+    }
+  };
+
+  /**
+   * D'où vient ce réglage — la moitié « marqué comme tel » du critère 2.
+   *
+   * Le serveur tranche (`herite`), l'écran ne le redéduit pas : une valeur
+   * affichée peut venir du code **ou** avoir été surchargée à l'identique, et
+   * seule la première est « héritée » — la comparer au code ici rendrait les
+   * deux indiscernables, et l'écran mentirait sur ce qui suit le code.
+   */
+  const marqueur = (reglage: "fournisseur" | "modele" | "effort") => {
+    const duCode = fiche.reglages_du_code?.[reglage] ?? null;
+    if (fiche.herite.includes(reglage)) {
+      return (
+        <span className={CLASSE_ANNEXE}>
+          hérité du code{duCode !== null ? ` — ${duCode}` : ""}
+        </span>
+      );
+    }
+    return (
+      <span className={CLASSE_ANNEXE}>
+        surchargé — le code dit{" "}
+        <span className="font-mono">
+          {duCode ?? "aucun réglage"}
+        </span>
+      </span>
+    );
+  };
+
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-4">
       <section aria-label={`Fiche de ${fiche.nom}`}>
@@ -1298,10 +1502,15 @@ function FicheDefaut({ fiche }: { fiche: AgentCatalogueDetail }) {
             Définition
           </h3>
           <span className="rounded-full bg-neutral-200 px-2 text-xs text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
-            agent du code
+            {surcharge ? "agent du code, surchargé" : "agent du code"}
+          </span>
+          <span className={CLASSE_ANNEXE}>
+            {surcharge && fiche.modifie_le
+              ? `surchargé le ${formatDateHeure(fiche.modifie_le)}`
+              : ""}
           </span>
         </div>
-        <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+        <dl className="mb-3 grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
           <div>
             <dt className="text-xs font-medium text-neutral-500 dark:text-neutral-400">
               Rôle
@@ -1323,40 +1532,63 @@ function FicheDefaut({ fiche }: { fiche: AgentCatalogueDetail }) {
               ))}
             </dd>
           </div>
-          <div>
-            <dt className="text-xs font-medium text-neutral-500 dark:text-neutral-400">
-              Modèle
-            </dt>
-            <dd className="mt-1 font-mono text-xs">
-              {fiche.modele ?? "modèle par défaut des exécutants"}
-            </dd>
-          </div>
         </dl>
-        <p className="mt-3 rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
-          Agent par défaut, défini par le code : ni modifiable ni supprimable
-          ici. Ses instructions s&apos;éditent (et se versionnent) depuis
-          l&apos;onglet{" "}
-          <Link
-            href={cheminOnglet(fiche.nom, "playbook")}
-            className="inline-flex items-center gap-1 font-medium text-neutral-900 underline dark:text-neutral-200"
-          >
-            <IconePlaybooks className="size-3.5 shrink-0" />
-            Playbook
-          </Link>
-          .
-        </p>
-      </section>
-      <section aria-label={`Playbook du code de ${fiche.nom}`}>
-        <EnTeteSection
-          niveau={3}
-          titre="Playbook du code"
-          icone={IconePlaybooks}
-          className="mb-2"
+        {/* Le modèle n'est plus une ligne de `<dl>` : c'est un réglage, et les
+            trois se règlent avec la même chaîne liée que partout ailleurs. */}
+        <ChampsDuModele
+          champs={champs}
+          setChamps={setChamps}
+          desactive={enCours}
+          marqueur={marqueur}
         />
-        <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-md bg-neutral-50 p-3 font-mono text-xs text-neutral-700 dark:bg-neutral-950 dark:text-neutral-300">
-          {fiche.playbook}
-        </pre>
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <Bouton
+            disabled={!modifie}
+            occupe={enCours}
+            onClick={() =>
+              void ecrire(() => surchargerAgent(fiche.nom, reglages))
+            }
+          >
+            {enCours ? "Envoi…" : "Enregistrer les réglages"}
+          </Bouton>
+          {modifie && !enCours && (
+            <Bouton
+              variante="contour"
+              ton="neutre"
+              onClick={() => setChamps(champsDepuis(fiche))}
+            >
+              Annuler les modifications
+            </Bouton>
+          )}
+          {surcharge && !modifie && (
+            <Bouton
+              variante="contour"
+              ton="neutre"
+              occupe={enCours}
+              onClick={() =>
+                void ecrire(() => annulerSurchargeAgent(fiche.nom))
+              }
+            >
+              Revenir aux réglages du code
+            </Bouton>
+          )}
+          <span className={CLASSE_ANNEXE}>
+            {modifie
+              ? "Réglages non enregistrés."
+              : "Le rôle, les compétences et le playbook restent définis par le code."}
+          </span>
+        </div>
+        {erreur && (
+          <p className="mt-2 text-xs text-rose-600 dark:text-rose-400" role="alert">
+            {erreur}
+          </p>
+        )}
       </section>
+      {/* Plus de recopie du playbook ici (#259) : il se lit et s'écrit sur son
+          onglet, qui le versionne. Un `<pre>` de plus n'était pas un second
+          chemin d'écriture, mais c'était bien le même contenu à deux endroits —
+          et celui-ci ne savait pas dire quelle version le moteur charge. */}
+      <RenvoiPlaybook agent={fiche.nom} />
     </div>
   );
 }

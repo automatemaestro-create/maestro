@@ -365,6 +365,43 @@ export type PropositionPlaybookDetail = PropositionPlaybook & {
 };
 
 /**
+ * Une entrée du lexique d'écriture (`GET /api/playbooks/lexique`, #261) : un
+ * titre de section ou une tournure que les playbooks du dépôt ont en commun.
+ *
+ * `roles` est le nombre de playbooks livrés où elle figure — l'éditeur s'en sert
+ * pour ordonner ses propositions et pour dire d'où elles viennent : une
+ * suggestion dont on voit la provenance se refuse en connaissance de cause.
+ */
+export type EntreeLexique = {
+  texte: string;
+  roles: number;
+};
+
+/**
+ * Le lexique servi à l'éditeur (#261). **Dérivé** des documents livrés avec le
+ * paquet, jamais recopié ici : `structures` porte les titres de section
+ * (`## Mission`, `## Méthode`…), `tournures` les phrases récurrentes du régime
+ * de travail commun aux agents.
+ */
+export type LexiquePlaybook = {
+  structures: EntreeLexique[];
+  tournures: EntreeLexique[];
+};
+
+/**
+ * Une réécriture proposée par l'assistant (`POST /api/playbooks/{agent}/redaction`,
+ * #261) : le document réécrit **intégral** et ce que le modèle dit en avoir changé.
+ *
+ * Sans numéro ni date, à la différence d'une `PropositionPlaybook` : ce n'est pas
+ * une version, ni même un brouillon stocké, mais un candidat en vol — tant que
+ * personne ne l'a appliqué à son brouillon, il n'existe nulle part ailleurs.
+ */
+export type RedactionPlaybook = {
+  contenu: string;
+  justification: string;
+};
+
+/**
  * Un serveur MCP déclaré pour un agent (`ServeurMcp.to_dict`, #104) : une
  * commande locale (`type` « stdio » : commande + args + env) ou un endpoint
  * distant (« sse »/« http » : url + headers). Forme publique : les valeurs
@@ -747,17 +784,65 @@ export type RevocationAdmissionMcp = {
  * profil expose est permis ; `ask` suspend l'appel le temps qu'une personne
  * tranche — l'outil n'est pas interdit, il est arbitré. Une politique écrite
  * avant #580 arrive avec `ask` vide, donc sous le régime d'hier.
+ *
+ * ⚠ `ask` est un **objet** `{outil: décideur}` et non une liste : depuis #586
+ * une entrée arbitrée porte **qui la tranche** (`auto` ou `humain`), et
+ * `PolitiqueOutils.to_dict` n'émet que cette forme-là — y compris quand toutes
+ * ses entrées sont au défaut. Le type disait `string[]` jusqu'à #262, si bien
+ * que l'écran plantait à la première politique servie ; la lecture, elle,
+ * accepte encore les deux formes côté API.
  */
 export type PolitiquePermissions = {
   allow: string[];
-  ask: string[];
+  ask: Record<string, string>;
   deny: string[];
 };
 
 /**
+ * Un outil **réellement exposé** à un agent (`permissions_outils`, #262) : de
+ * quoi suggérer une entrée de politique au lieu d'en faire retrouver le nom
+ * exact ailleurs. `origine` dit d'où il vient — `integre` (outil du profil du
+ * rôle), `maestro` (un verbe du serveur in-process : arbitrage, blocage,
+ * courrier) ou `mcp` (un serveur MCP monté pour l'agent, cité en entier, donc
+ * couvrant tous ses outils).
+ *
+ * Une suggestion ne restreint rien : un outil MCP précis se désigne à la
+ * frappe, et seule la **forme** de l'entrée est jugée à l'écriture.
+ */
+export type OutilExpose = {
+  nom: string;
+  origine: string;
+  libelle: string;
+};
+
+/**
+ * Les trois réglages de modèle d'un agent — ce qu'une surcharge peut porter
+ * (#259). `null` n'y est pas un réglage vide mais un réglage **hérité** :
+ * l'agent suit ce que le code (ou l'exécution) dit de lui.
+ */
+export type ReglagesModele = {
+  fournisseur: string | null;
+  modele: string | null;
+  effort: string | null;
+};
+
+/**
  * Une fiche du catalogue d'agents (`GET /api/catalogue`, #72) : les agents par
- * défaut du code (`source` « defaut ») et les personnalisés persistés
- * (« personnalise »). Les dates ne sont posées que sur les personnalisés ;
+ * défaut du code (`source` « defaut »), ceux du code dont les réglages de
+ * modèle ont été **surchargés** (« defaut_surcharge », #259) et les
+ * personnalisés persistés (« personnalise »).
+ *
+ * Les trois réglages servis sont les **effectifs** : la surcharge d'abord, le
+ * code ensuite. `herite` nomme ceux qui restent au code — de quoi les marquer
+ * comme tels plutôt que de le faire deviner — et `reglages_du_code` dit ce que
+ * le code vaut pour chacun, y compris recouvert : c'est ce qu'un retour au
+ * défaut rendrait. Sur un agent personnalisé, `herite` est vide et
+ * `reglages_du_code` null — il ne tient rien du code, sa définition est son
+ * réglage.
+ *
+ * Les dates : `cree_le` n'est posée que sur les personnalisés ; `modifie_le`
+ * porte la date de la définition sur un personnalisé, celle de la surcharge sur
+ * un agent du code (null s'il n'en a pas).
  * `modele` null signifie « le modèle par défaut des exécutants » et
  * `fournisseur` est déclaratif au POC (le moteur est mono-fournisseur).
  * `mcp_serveurs` (#104) liste les serveurs MCP **effectifs** montés pour l'agent
@@ -771,8 +856,11 @@ export type PolitiquePermissions = {
  * la cause si le pool stocké est invalide, et `mcp_activations` les ids du pool
  * **activés** pour cet agent — de quoi remplacer l'affichage lecture seule par
  * des interrupteurs par agent. `permissions` (#110) porte la politique
- * allow/deny effective appliquée à l'exécution (null : aucune politique — tout
- * permis) ; `permissions_erreur` la cause si la politique stockée est invalide.
+ * allow/ask/deny effective appliquée à l'exécution (null : aucune politique —
+ * tout permis) ; `permissions_erreur` la cause si la politique stockée est
+ * invalide, et `permissions_outils` (#262) les outils réellement exposés à
+ * l'agent, servis avec la fiche pour que l'écran suggère ce qu'il y a à
+ * désigner.
  * `effort` (#253) est le niveau d'effort demandé au modèle (null : aucun
  * réglage — le régime par défaut du fournisseur) ; ce que le fournisseur retenu
  * admet se lit sur `GET /api/fournisseurs`, jamais dans une liste écrite ici.
@@ -785,6 +873,8 @@ export type AgentCatalogue = {
   fournisseur: string | null;
   effort: string | null;
   source: string;
+  herite: string[];
+  reglages_du_code: ReglagesModele | null;
   cree_le: string | null;
   modifie_le: string | null;
   mcp_serveurs: ServeurMcp[];
@@ -795,6 +885,7 @@ export type AgentCatalogue = {
   mcp_activations: string[];
   permissions: PolitiquePermissions | null;
   permissions_erreur: string | null;
+  permissions_outils: OutilExpose[];
 };
 
 /** La fiche avec sa définition complète (`GET /api/catalogue/{nom}`). */
@@ -1023,9 +1114,20 @@ export const CHAT_AUTEUR_UTILISATEUR = "utilisateur";
 export const PLAYBOOK_SOURCE_DEFAUT = "defaut";
 export const PLAYBOOK_SOURCE_STOCKAGE = "stockage";
 
-/** Provenances d'une fiche du catalogue d'agents (maestro/controltower/app.py, #72). */
+/**
+ * Provenances d'une fiche du catalogue d'agents (maestro/agents/store.py, #72).
+ * **Trois** depuis #259 : un agent du code dont on a surchargé les réglages de
+ * modèle n'est ni tout à fait « du code » — il ne suit plus le code sur ces
+ * points-là — ni « personnalisé », puisqu'il n'a pas été dupliqué.
+ */
 export const AGENT_SOURCE_DEFAUT = "defaut";
+export const AGENT_SOURCE_SURCHARGE = "defaut_surcharge";
 export const AGENT_SOURCE_PERSONNALISE = "personnalise";
+
+/** Vrai pour un agent défini par le code, surchargé ou non (#259). */
+export function estAgentDuCode(source: string): boolean {
+  return source === AGENT_SOURCE_DEFAUT || source === AGENT_SOURCE_SURCHARGE;
+}
 
 /** Statuts d'agent exposés par l'API (maestro/controltower/state.py). */
 export const AGENT_LIBRE = "libre";

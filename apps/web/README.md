@@ -190,7 +190,7 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
 - **Fiche agent à onglets** (#190, lot 1 de la navigation v2 #189) : l'entrée de
   menu **Agents** mène à la liste (`/agents`) et chaque agent ouvre **une** fiche
   dont les facettes tiennent en onglets — Profil, Playbook, MCP & permissions,
-  Chat (`/agents/<nom>/<onglet>`). Les trois pages qui regardaient le même objet
+  Chat, puis **Logs** depuis #266 (`/agents/<nom>/<onglet>`). Les trois pages qui regardaient le même objet
   par trois chemins ont fusionné : `/catalogue`, `/playbooks` et `/chat/<agent>`
   sont **redirigés vers le bon onglet** (`next.config.ts`, aucun signet ne casse)
   et `?onglet=` porte l'intention jusqu'à la liste quand l'URL d'origine ne
@@ -235,12 +235,36 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   chaud** (#78, EF-26) : le moteur relit la version courante à chaque tâche —
   elle vaut pour l'exécution suivante sans redémarrage, et la version utilisée
   est tracée sur chaque résultat (`playbook_version`, journal compris) ;
+- **Rédaction assistée du playbook** (#261, lot 9 de #243, onglet **Playbook**) :
+  l'éditeur aide à écrire, à deux échelles et sans jamais publier. En cours de
+  frappe, il propose des **complétions** — structures de section et tournures que
+  les playbooks du dépôt ont en commun (`lib/completionsPlaybook`, servies par
+  `GET /api/playbooks/lexique`) : `Tab` accepte, `Échap` ou la frappe suivante
+  ignore, `↑`/`↓` choisissent. À la demande, un bouton **Assistant** fait réécrire
+  le brouillon par le modèle (`POST /api/playbooks/{agent}/redaction`), avec une
+  consigne libre facultative, et le rend en **différentiel** ligne à ligne
+  (`lib/diff`) avant toute application. Quatre choses portent le lot. Les
+  complétions sont **locales et déterministes**, jamais un appel modèle par
+  frappe : une proposition qui arrive une seconde trop tard déplace le curseur de
+  quelqu'un qui a déjà continué, et se facturerait au caractère tapé — le modèle
+  intervient à l'autre bout, sur un geste explicite. Ce qu'elles proposent est
+  **dérivé du dépôt et jamais recopié** (`maestro.agents.lexique_playbook` relit
+  les documents livrés) : une constante côté front mentirait au premier playbook
+  modifié, sans que rien ne le signale ; le seuil est la **récurrence** — présent
+  dans au moins deux playbooks —, si bien qu'une singularité d'un rôle n'est pas
+  diffusée aux autres. **Rien n'est publié** : accepter une complétion ou
+  appliquer une réécriture ne touche que la zone d'édition, la version en vigueur
+  ne bougeant que par « Publier » — et c'est pour cela que l'assistance ne passe
+  **pas** par les propositions stockées de #111/#140, dont l'application *publie*
+  une version. Enfin `Entrée` n'est jamais capturée par la liste de complétions :
+  dans une zone de texte elle insère un saut de ligne, et la voler à quelqu'un qui
+  rédige coûterait plus que l'aide n'apporte ;
 - **Catalogue des agents** (#73, EF-03) : la liste `/agents` montre le catalogue
-  effectif (#72, API `/api/catalogue`) — ceux du code en lecture seule, et les
-  **personnalisés** qu'on y crée, puis modifie et supprime depuis l'onglet
-  **Profil** de leur fiche (formulaire complet : nom, rôle, compétences,
-  fournisseur/modèle, playbook). Un agent personnalisé est persisté hors du code
-  et chargé par les moteurs construits ensuite. Depuis #487 les champs
+  effectif (#72, API `/api/catalogue`) — ceux du code, et les **personnalisés**
+  qu'on y crée, puis modifie et supprime depuis l'onglet **Profil** de leur fiche
+  (nom, rôle, compétences, fournisseur/modèle/effort). Un agent personnalisé est
+  persisté hors du code et chargé par les moteurs construits ensuite. Depuis #487
+  les champs
   **fournisseur** et **modèle** ne sont plus deux cases vides : ils proposent ce
   qui existe (API `/api/fournisseurs`), en distinguant deux colonnes qui ne se
   confondent jamais — *supporté par Maestro* vient du **registre du code**
@@ -319,11 +343,120 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   passe pas par elle. Et un **échec** (quota, réseau, fournisseur muet, réponse
   hors contrat) laisse le formulaire **intact** et le dit : l'écriture des champs
   n'a lieu qu'après une réponse complète ;
+- **Un playbook s'écrit à un seul endroit, et un agent du code se règle sans
+  être cloné** (#259, lot 7 de #243) — deux relevés de revue sur l'onglet Profil,
+  et une même racine : *la même valeur à deux endroits*.
+
+  **Le champ Playbook quitte le Profil.** Il y vivait alors que l'onglet Playbook
+  existe depuis #190 : deux chemins d'écriture pour la même valeur, dont un
+  aveugle au versionnement et à l'historique — on pouvait écraser une version
+  publiée sans jamais voir qu'elle existait. Il ne subsiste qu'**à la création**,
+  où l'agent n'a pas encore d'onglet où aller ; partout ailleurs un **renvoi**
+  vers l'onglet Playbook prend sa place. Retirer le champ sans dire où sa valeur
+  s'écrit désormais aurait supprimé le doublon *et* le chemin. ⚠ Cela imposait
+  d'abord que l'onglet **existe pour tout le monde** : `/api/playbooks` ne
+  connaissait que les cinq rôles du code (`PLAYBOOK_DEFAUTS`) et **404-ait sur un
+  agent personnalisé**, dont le champ du Profil était donc irremplaçable. Ce
+  n'était pas une extension du moteur mais son rattrapage :
+  `LocalExecutor._playbook_courant` lit `PlaybookStore.lire(agent)` sans regarder
+  d'où vient l'agent — une version publiée pour un agent personnalisé
+  s'appliquait **déjà**, elle n'était simplement pas publiable. Le playbook de sa
+  définition (#72) joue désormais le rôle que le document Markdown joue pour un
+  rôle du code : l'**origine**, celle qui vaut tant que rien n'a été publié, et
+  que `source: "defaut" | "stockage"` distingue. Le Profil continue de renvoyer
+  ce playbook tel quel dans son `PUT` — la définition est remplacée en entier, ne
+  pas le renvoyer l'effacerait — mais il ne l'édite plus.
+
+  **Un agent du code accepte une surcharge.** Sa fiche était entièrement en
+  lecture seule, si bien que changer son modèle — un besoin courant — n'avait
+  qu'un contournement : le **dupliquer** en agent personnalisé, c'est-à-dire
+  recopier son playbook pour ne toucher qu'un réglage, après quoi les deux
+  exemplaires divergent en silence et la copie cesse de suivre le code. D'où le
+  **troisième état** du catalogue, « du code, **surchargé** »
+  (`AGENT_SOURCE_SURCHARGE`, API `PUT`/`DELETE /api/catalogue/{nom}/reglages`,
+  dépôt `core/surcharges/`) : l'identité reste au code — rôle, compétences,
+  playbook en suivent les évolutions —, seuls les trois réglages de modèle se
+  posent. Cinq choses à ne pas défaire. Ce qui n'est **pas** surchargé est
+  **marqué « hérité du code »** avec la valeur que le code lui donne (`herite`,
+  `reglages_du_code`), et c'est le **serveur** qui tranche : une valeur affichée
+  peut venir du code *ou* avoir été surchargée à l'identique, et la recalculer à
+  l'écran rendrait les deux indiscernables. Une surcharge **s'annule, elle ne
+  supprime pas** — l'agent reste au catalogue —, et la **suppression demeure
+  réservée aux personnalisés** : `DELETE /api/catalogue/{nom}` refuse un agent du
+  code en 403, `DELETE …/reglages` refuse un personnalisé pour la raison
+  symétrique (sa définition *est* son réglage, un second chemin d'écriture serait
+  le doublon qu'on vient de supprimer côté playbook). Le corps du `PUT` est
+  l'**intégrale et pas un diff** : un réglage absent retourne au code, si bien
+  que tout vider revient à annuler — et le dépôt ne stocke jamais une surcharge
+  vide, faute de quoi « surchargé avec rien » existerait à côté de « du code »,
+  deux états indiscernables dont l'un afficherait pourtant l'agent comme modifié.
+  Les trois `<select>` sont **ceux de #255** (`ChampsDuModele`, extrait plutôt que
+  recopié) : la chaîne fournisseur → modèle → effort, son invalidation et son
+  résumé du poste valent ici sans une ligne de plus, et deux chaînes à tenir
+  d'accord auraient défait ce que #255 venait d'unifier. Enfin `MAESTRO_MODEL`
+  **prime** sur une surcharge de modèle, comme il prime sur celui d'un agent
+  personnalisé — c'est une bascule globale — mais ne touche pas à l'effort ;
+- **Les permissions d'un agent s'éditent** (#262, lot 10 de #243, onglet **MCP &
+  permissions**) : la politique allow/ask/deny que le moteur applique à
+  l'exécution se règle depuis la fiche (`PUT /api/permissions/<agent>`, source
+  `core/permissions/<agent>.json`), là où il fallait éditer le fichier à la main
+  puis relancer. `allow` et `deny` sont deux `ChampJetons` (#256) — la brique
+  était là, il n'y avait qu'à s'en servir — nourris par les outils **réellement
+  exposés** à cet agent, servis avec la fiche (`permissions_outils` : ceux de son
+  profil, les verbes du serveur `maestro`, ses serveurs MCP montés). Cinq choses
+  portent le lot. Chaque geste **écrit**, sans bouton « Enregistrer » et comme
+  les interrupteurs MCP juste au-dessus, l'état local ne bougeant qu'**après**
+  l'accord de l'API : une entrée refusée s'efface d'elle-même en laissant à
+  l'écran le motif du dépôt, qui **nomme la liste et l'entrée** — un « politique
+  refusée » de notre cru n'apprendrait rien. On **suggère sans restreindre**
+  (règle de #256 et des champs de #487) : un outil MCP précis se désigne à la
+  frappe, et ce que rien d'exposé n'explique est *signalé* — jamais refusé, un
+  serveur désactivé depuis et une faute de frappe se ressemblant ici. La règle de
+  portée qui décide de ce signalement vit dans `lib/permissions.ts` et non dans
+  le JSX : un préfixe qui ne vaut qu'aux frontières `__` ne se voit ni au lint,
+  ni au typage, ni à l'écran (`mcp__slack` ne dit rien de `mcp__slackbot`), et
+  c'est le pendant exact de `_correspond` côté moteur. Une politique **invalide**
+  reste diagnostiquée comme avant — et se **corrige d'ici** : elle n'est
+  appliquée à rien tant qu'elle est illisible, l'écriture ne relit pas ce qu'elle
+  remplace, donc « Repartir d'une politique vide » débloque l'écran là où un
+  aller-retour échouerait sur le fichier même qu'on répare. Enfin `ask`
+  s'**affiche mais ne s'édite pas** : une entrée arbitrée porte **qui la tranche**
+  (#586), un cran qui se pose à froid — l'ajouter à moitié la ferait retomber en
+  silence sur le défaut, qui est le plus fermé des deux. ⚠ Au passage, la section
+  **rendait `ask` comme une liste** (`entrees.length`, `entrees.map`) alors que
+  `PolitiqueOutils.to_dict` l'émet en **objet** depuis #586 — donc une
+  `TypeError` au rendu dès qu'un agent avait une politique, `ask` vide comprise,
+  puisque l'objet est toujours servi. Le type le disait `string[]`, ce qui l'a
+  rendu invisible au typage ; il dit désormais `Record<string, string>` ;
 - **Chat par agent** (#85, lot 2 de #82) : l'onglet **Chat** d'une fiche agent
   ouvre le fil de conversation avec lui (#84, API `/api/chat`) — envoi,
   réponse de l'agent (cadrée par son playbook courant) et réception en temps
   réel par le WebSocket (`chat.message`). Le fil est persisté côté backend :
   l'historique se recharge au retour sur l'onglet ;
+- **Logs par agent** (#266, lot 14 de #243) : l'onglet **Logs** d'une fiche agent
+  montre ce qu'il fait et ce qu'il a fait — le direct **et** l'historique
+  persisté, **groupés par tâche**, la tâche la plus récemment active en tête et un
+  groupe « Hors tâche » pour ce qui n'en relève pas (planification, capacité).
+  Jusque-là l'activité d'un agent ne se lisait que dans le fil global du tableau
+  de bord, tous agents confondus, et disparaissait au rechargement. Trois choses à
+  connaître. **Le filtre par agent est servi par l'API** (`GET
+  /api/journal?agent=…`, filtre déjà au contrat #183) et jamais appliqué après
+  coup : une page de journal est plafonnée à 200 entrées, donc refiltrer une page
+  du projet entier ne montrerait d'un agent discret que le silence des autres —
+  même raisonnement qu'en #478 pour le `run_id`. **La ligne n'est pas réécrite** :
+  `FilActivite` rend ici ce qu'il rend au tableau de bord, sur `/journal` et dans
+  la vue d'un run, donc les résumés lisibles de #250 et le dépli qui rend les
+  identifiants ; il gagne seulement un `niveau`, pour être une sous-partie (`h3`)
+  sous le titre commun. **Le « niveau » est la famille d'une ligne, pas une
+  sévérité de plus** (`lib/evenements`, `NIVEAUX_LOG`) : *erreur*, *refus*,
+  *décision*, *info* — c'est-à-dire exactement les quatre choses que le ticket
+  demande de couvrir, si bien que « qu'est-ce qu'on lui a refusé ? » s'isole d'un
+  choix. Une échelle « erreur / avertissement / info » aurait été le réflexe et ne
+  permettait justement pas cette question-là ; la sévérité ne sert plus qu'à
+  **ordonner** la liste, dérivée du fil comme toutes les autres (#249 : aucune
+  option morte). Le **renvoi vers la tâche** mène à son run (`hrefRun`, éteint
+  tant que la page n'existe pas) : il n'y a pas de route par tâche dans la Control
+  Tower, une tâche s'ouvre en panneau dans la vue de son run ;
 - **Chat global** (#269, lot 2 de #244, docs/05 §2.9) : `/chat` sert le fil avec
   l'**orchestration** (canal `orchestrateur`, #268) — poser une demande sans avoir
   à choisir d'abord à qui la poser. Trois choses à connaître avant d'y toucher.

@@ -30,19 +30,23 @@ import type {
   IntegrationPoolMcp,
   JournalAdmissionsMcp,
   LancementExecution,
+  LexiquePlaybook,
   MigrationMcp,
   PageExplorateur,
   PageJournal,
   PasSerie,
   PlaybookDetail,
   PlaybookFiche,
+  PolitiquePermissions,
   PoolMcp,
   Projet,
   PropositionPlaybook,
   PropositionPlaybookDetail,
   ProvenanceRegistreMcp,
   RapportLecture,
+  RedactionPlaybook,
   RefusProjet,
+  ReglagesModele,
   ReponsesBrief,
   ResumeExecution,
   RevocationAdmissionMcp,
@@ -399,6 +403,38 @@ export function rejeterPropositionPlaybook(
 }
 
 /**
+ * Le lexique d'écriture d'un playbook (#261) : structures et tournures que les
+ * playbooks du dépôt ont en commun, dont l'éditeur tire ses complétions.
+ *
+ * Il ne dépend d'aucun agent — c'est le vocabulaire du dépôt, pas celui d'un
+ * rôle — et ne change qu'avec les documents livrés : l'éditeur le charge une
+ * fois à l'ouverture.
+ */
+export function chargerLexiquePlaybook(): Promise<LexiquePlaybook> {
+  return chargerJson<LexiquePlaybook>("/api/playbooks/lexique");
+}
+
+/**
+ * Demande à l'assistant une réécriture du **brouillon en cours** (#261), guidée
+ * par une consigne libre facultative.
+ *
+ * ⚠ **N'écrit rien** : ni version, ni proposition en brouillon. La réponse est
+ * un candidat que l'éditeur affiche en différentiel ; l'appliquer ne touche que
+ * le texte de la zone d'édition, et publier reste `ecrirePlaybook`.
+ */
+export function redigerPlaybook(
+  agent: string,
+  contenu: string,
+  consigne?: string,
+): Promise<RedactionPlaybook> {
+  return envoyerJsonEtLire<RedactionPlaybook>(
+    `/api/playbooks/${encodeURIComponent(agent)}/redaction`,
+    { contenu, ...(consigne !== undefined && consigne !== "" && { consigne }) },
+    "rédaction refusée",
+  );
+}
+
+/**
  * Le catalogue des fournisseurs (`GET /api/fournisseurs`, #253 + #487) : ce qui
  * existe côté modèles, **et** ce qui est déjà là sur cette machine.
  *
@@ -484,6 +520,44 @@ export function supprimerAgent(nom: string): Promise<void> {
     `/api/catalogue/${encodeURIComponent(nom)}`,
     undefined,
     "suppression refusée",
+    "DELETE",
+  );
+}
+
+/**
+ * Surcharge les réglages de modèle d'un agent **du code**
+ * (`PUT /api/catalogue/{nom}/reglages`, #259), sans le dupliquer.
+ *
+ * Rôle, compétences et playbook restent au code et continuent d'en suivre les
+ * évolutions : seuls les trois réglages sont recouverts. Le corps est
+ * l'**intégrale** et pas un diff — un réglage à `null` retourne au code —, si
+ * bien que tout mettre à `null` revient à `annulerSurcharge`.
+ */
+export function surchargerAgent(
+  nom: string,
+  reglages: ReglagesModele,
+): Promise<void> {
+  return envoyerJson(
+    `/api/catalogue/${encodeURIComponent(nom)}/reglages`,
+    reglages,
+    "surcharge refusée",
+    "PUT",
+  );
+}
+
+/**
+ * Annule la surcharge d'un agent du code : retour à ses réglages du code
+ * (`DELETE /api/catalogue/{nom}/reglages`, #259).
+ *
+ * ⚠ Annule, ne supprime pas — l'agent reste au catalogue. À ne pas confondre
+ * avec `supprimerAgent`, qui fait disparaître un agent personnalisé et que le
+ * serveur refuse sur un agent du code.
+ */
+export function annulerSurchargeAgent(nom: string): Promise<void> {
+  return envoyerJson(
+    `/api/catalogue/${encodeURIComponent(nom)}/reglages`,
+    undefined,
+    "retour au défaut refusé",
     "DELETE",
   );
 }
@@ -974,6 +1048,27 @@ export function migrerDeclarationsMcp(agent: string): Promise<MigrationMcp> {
     `/api/mcp/migration/${encodeURIComponent(agent)}`,
     {},
     "migration refusée",
+  );
+}
+
+/**
+ * Écrit la politique de permissions d'un agent (`PUT /api/permissions/{agent}`,
+ * #262) : remplacement intégral des trois listes, écrit dans
+ * `core/permissions/<agent>.json` et relu à chaud par le moteur.
+ *
+ * Le refus d'une entrée mal formée arrive **motivé** (422, la cause exacte du
+ * dépôt) : c'est ce texte que la section affiche, il nomme la liste et l'entrée
+ * en faute. Le message par défaut ne sert donc qu'aux refus sans corps.
+ */
+export function definirPermissions(
+  agent: string,
+  politique: PolitiquePermissions,
+): Promise<void> {
+  return envoyerJson(
+    `/api/permissions/${encodeURIComponent(agent)}`,
+    politique,
+    "politique refusée",
+    "PUT",
   );
 }
 

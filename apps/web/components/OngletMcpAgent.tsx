@@ -54,8 +54,9 @@
  */
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 
+import { ChampJetons } from "@/components/ChampJetons";
 import { IconeMcp, IconePermissions } from "@/components/Icones";
 import { Infobulle } from "@/components/Infobulle";
 import {
@@ -70,12 +71,15 @@ import { Interrupteur } from "@/components/parametres/SectionParametres";
 import {
   chargerAgentCatalogue,
   definirActivationsMcp,
+  definirPermissions,
   migrerDeclarationsMcp,
 } from "@/lib/api";
+import { entreesHorsPortee } from "@/lib/permissions";
 import type {
   AgentCatalogueDetail,
   IntegrationPoolMcp,
   MigrationMcp,
+  PolitiquePermissions,
   ServeurMcp,
 } from "@/lib/types";
 
@@ -674,24 +678,59 @@ function CouplesMasques({
  * ------------------------------------------------------------------ */
 
 /**
- * La politique de permissions d'un agent (#110), en lecture seule : la
- * politique allow/ask/deny par outil que le moteur applique à l'exécution
- * (`core/permissions/<agent>.json`, versionnée avec le dépôt). Une politique
- * invalide affiche sa cause exacte.
+ * La politique de permissions d'un agent (#110), **en écriture** depuis #262 :
+ * ce que le moteur applique à l'exécution se règle ici, au lieu d'éditer
+ * `core/permissions/<agent>.json` à la main puis de relancer.
  *
- * Les **trois** listes sont rendues depuis #580, `ask` comprise, alors même
- * qu'aucun appelant ne consulte encore le verdict d'arbitrage : n'en montrer
- * que deux ferait passer un outil arbitré pour un outil sans contrainte,
- * puisqu'il n'apparaîtrait dans aucune.
+ * Deux listes s'éditent — `allow` et `deny` —, la troisième s'affiche : une
+ * entrée `ask` porte **qui la tranche** (#586), un cran qui se pose à froid et
+ * dont le choix n'est pas de ce lot. La montrer quand même est la règle de
+ * #580 : n'en rendre que deux ferait passer un outil arbitré pour un outil sans
+ * contrainte, puisqu'il n'apparaîtrait dans aucune.
  *
- * L'absence de politique se dit explicitement : la section était muette quand
- * tout allait bien, ce qui se lisait comme un panneau de plus tout en bas de la
- * fiche du catalogue ; sur son propre onglet (#190), le silence passerait pour
- * un chargement raté.
+ * Chaque geste écrit — pas de bouton « Enregistrer » —, comme les interrupteurs
+ * MCP juste au-dessus : l'état local ne bouge qu'**après** l'accord de l'API, si
+ * bien qu'une entrée refusée s'efface d'elle-même en laissant son motif à
+ * l'écran. C'est ce motif-là qui est utile (il nomme la liste et l'entrée en
+ * faute), pas un « politique refusée » de notre cru.
+ *
+ * Une politique **invalide** reste diagnostiquée comme avant — et se corrige
+ * d'ici : le moteur la refuse en bloc, donc rien n'est appliqué, et le seul
+ * geste qui débloque est de la remplacer. L'écriture ne relisant pas ce qu'elle
+ * écrase, elle aboutit sur un fichier que la lecture refuse.
  */
 function SectionPermissions({ fiche }: { fiche: AgentCatalogueDetail }) {
-  const sansPolitique =
-    fiche.permissions_erreur === null && fiche.permissions === null;
+  const prefixe = useId();
+  const [politique, setPolitique] = useState<PolitiquePermissions>(
+    fiche.permissions ?? { allow: [], ask: {}, deny: [] },
+  );
+  // La cause du refus de lecture, effacée dès qu'une écriture a repris la main :
+  // la fiche, elle, garde celle du chargement — c'est un instantané, pas l'état.
+  const [invalide, setInvalide] = useState(fiche.permissions_erreur);
+  const [dediee, setDediee] = useState(fiche.permissions !== null);
+  const [enCours, setEnCours] = useState(false);
+  const [erreur, setErreur] = useState<string | null>(null);
+
+  const outils = fiche.permissions_outils;
+  const suggestions = outils.map((outil) => outil.nom);
+  const askEntrees = Object.entries(politique.ask);
+
+  /** Écrit la politique voulue ; l'état local ne suit qu'en cas d'accord. */
+  const enregistrer = async (voulue: PolitiquePermissions) => {
+    setEnCours(true);
+    setErreur(null);
+    try {
+      await definirPermissions(fiche.nom, voulue);
+      setPolitique(voulue);
+      setInvalide(null);
+      setDediee(true);
+    } catch (e) {
+      setErreur(e instanceof Error ? e.message : String(e));
+    } finally {
+      setEnCours(false);
+    }
+  };
+
   return (
     <section aria-label={`Permissions de ${fiche.nom}`}>
       <EnTeteSection
@@ -700,82 +739,144 @@ function SectionPermissions({ fiche }: { fiche: AgentCatalogueDetail }) {
         icone={IconePermissions}
         className="mb-2"
       />
-      {fiche.permissions_erreur !== null ? (
-        <p
-          role="alert"
-          className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800 dark:border-rose-900 dark:bg-rose-950 dark:text-rose-300"
-        >
-          Politique invalide : {fiche.permissions_erreur}
-        </p>
-      ) : sansPolitique ? (
-        <p className="text-xs text-neutral-500 dark:text-neutral-400">
-          Aucune politique dédiée : l&apos;agent dispose de tous les outils que
-          son profil expose.
-        </p>
-      ) : (
-        fiche.permissions !== null && (
-          <div className="flex flex-col gap-2">
-            <ListeEntreesPolitique
-              libelle="allow"
-              vide="vide — tout ce que le profil expose est permis (hors deny)"
-              entrees={fiche.permissions.allow}
-              classeEntree="bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
-            />
-            <ListeEntreesPolitique
-              libelle="ask"
-              vide="vide — aucun outil soumis à arbitrage"
-              entrees={fiche.permissions.ask}
-              classeEntree="bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
-            />
-            <ListeEntreesPolitique
-              libelle="deny"
-              vide="vide — aucun outil interdit"
-              entrees={fiche.permissions.deny}
-              classeEntree="bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300"
-            />
+      {invalide !== null ? (
+        <div className="flex flex-col gap-2">
+          <p
+            role="alert"
+            className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800 dark:border-rose-900 dark:bg-rose-950 dark:text-rose-300"
+          >
+            Politique invalide : {invalide}
+          </p>
+          <p className="text-xs text-neutral-500 dark:text-neutral-400">
+            Tant qu&apos;elle est illisible, elle n&apos;est appliquée à rien —
+            le moteur refuse la tâche plutôt que d&apos;exécuter sous une
+            politique douteuse. Repartir d&apos;une politique vide la remplace
+            ici même ; les entrées voulues se réajoutent ensuite.
+          </p>
+          <div>
+            <Bouton
+              variante="contour"
+              ton="neutre"
+              taille="petite"
+              disabled={enCours}
+              onClick={() =>
+                void enregistrer({ allow: [], ask: {}, deny: [] })
+              }
+            >
+              Repartir d&apos;une politique vide
+            </Bouton>
           </div>
-        )
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {!dediee && (
+            <p className="text-xs text-neutral-500 dark:text-neutral-400">
+              Aucune politique dédiée : l&apos;agent dispose de tous les outils
+              que son profil expose. La première entrée ajoutée ci-dessous en
+              crée une.
+            </p>
+          )}
+          <ChampJetons
+            id={`${prefixe}-allow`}
+            libelle="allow — liste fermée"
+            valeurs={politique.allow}
+            onChange={(allow) => void enregistrer({ ...politique, allow })}
+            suggestions={suggestions}
+            signales={entreesHorsPortee(politique.allow, outils)}
+            motSignal="hors des outils exposés"
+            nomElement="l'entrée allow"
+            vide="Vide — tout ce que le profil expose est permis (hors deny et ask)."
+            desactive={enCours}
+            placeholder="Read"
+            aide="Non vide, elle ferme la liste : tout ce qui n'y figure pas est refusé, sauf ce qu'ask cite — qui est arbitré, pas refusé."
+          />
+          <ChampJetons
+            id={`${prefixe}-deny`}
+            libelle="deny — l'emporte sur tout"
+            valeurs={politique.deny}
+            onChange={(deny) => void enregistrer({ ...politique, deny })}
+            suggestions={suggestions}
+            signales={entreesHorsPortee(politique.deny, outils)}
+            motSignal="hors des outils exposés"
+            nomElement="l'entrée deny"
+            vide="Vide — aucun outil interdit."
+            desactive={enCours}
+            placeholder="mcp__slack__chat_delete"
+            aide="Un outil intégré refusé est retiré de la session ; un serveur MCP refusé en entier n'est jamais monté, ses secrets ne sont même pas résolus."
+          />
+          <ListeArbitrages entrees={askEntrees} agent={fiche.nom} />
+        </div>
       )}
-      <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
-        Politique effective, appliquée à l&apos;exécution (deny l&apos;emporte
-        sur ask, qui l&apos;emporte sur allow ; un appel refusé est tracé au fil
-        d&apos;activité sans condamner le run). Déclarée dans{" "}
-        <code className="font-mono">core/permissions/{fiche.nom}.json</code> —
-        lecture seule à ce lot.
+      {erreur && (
+        <p className="mt-2 text-xs text-rose-600 dark:text-rose-400" role="alert">
+          {erreur}
+        </p>
+      )}
+      <p className="mt-3 text-xs text-neutral-500 dark:text-neutral-400">
+        Politique effective, appliquée à l&apos;exécution :{" "}
+        <strong>deny l&apos;emporte sur ask, qui l&apos;emporte sur allow</strong>{" "}
+        (un appel refusé est tracé au fil d&apos;activité sans condamner le run).
+        Une entrée vaut pour l&apos;outil exact ou, aux frontières{" "}
+        <code className="font-mono">__</code>, pour tout ce qu&apos;elle
+        préfixe : <code className="font-mono">mcp__slack</code> couvre tous les
+        outils du serveur.
+      </p>
+      <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+        Écrite dans{" "}
+        <code className="font-mono">core/permissions/{fiche.nom}.json</code>,{" "}
+        <strong>versionné avec le dépôt</strong> : chaque enregistrement modifie
+        un fichier suivi par git — celui du dossier de travail où tourne cette
+        Control Tower, à commiter comme le reste. Elle vaut pour la tâche
+        suivante, sans redémarrage.
       </p>
     </section>
   );
 }
 
-/** Une liste d'entrées (allow, ask ou deny) de la politique, ou son état « vide ». */
-function ListeEntreesPolitique({
-  libelle,
-  vide,
+/**
+ * Les entrées `ask` de la politique, avec **qui les tranche** (#586) — affichées
+ * et non éditées.
+ *
+ * Le cran (`auto`/`humain`) est une décision prise à froid, et l'écran ne sait
+ * pas encore la poser ; l'ajouter à moitié — une entrée qu'on pourrait créer
+ * sans choisir son décideur — la ferait retomber sur le défaut sans le dire,
+ * alors que le défaut *est* le cran le plus fermé. Le fichier reste donc la
+ * porte d'entrée de cette liste-là, et la section le nomme.
+ */
+function ListeArbitrages({
   entrees,
-  classeEntree,
+  agent,
 }: {
-  libelle: string;
-  vide: string;
-  entrees: string[];
-  classeEntree: string;
+  entrees: [string, string][];
+  agent: string;
 }) {
   return (
-    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xs">
-      <span className="font-mono font-medium text-neutral-600 dark:text-neutral-400">
-        {libelle}
+    <div className="flex flex-col gap-1">
+      <span className="text-annexe font-medium text-texte-secondaire">
+        ask — soumis à arbitrage
       </span>
       {entrees.length === 0 ? (
-        <span className="text-neutral-500 dark:text-neutral-400">{vide}</span>
+        <p className="text-annexe text-texte-secondaire">
+          Vide — aucun outil soumis à arbitrage.
+        </p>
       ) : (
-        entrees.map((entree) => (
-          <code
-            key={entree}
-            className={`rounded-full px-2 py-0.5 font-mono ${classeEntree}`}
-          >
-            {entree}
-          </code>
-        ))
+        <ul className="flex flex-wrap gap-1">
+          {entrees.map(([outil, decideur]) => (
+            <li key={outil}>
+              <span className="inline-flex items-center gap-1 rounded-full bg-attention-creux px-2 py-0.5 text-annexe text-attention-texte">
+                {outil}
+                <span className="font-medium">— {decideur}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
       )}
+      <p className="text-annexe text-texte-secondaire">
+        Un outil arbitré n&apos;est pas interdit : il reste monté, son appel est
+        suspendu le temps qu&apos;on tranche. Le cran se pose dans{" "}
+        <code className="font-mono">core/permissions/{agent}.json</code>{" "}
+        — il n&apos;est pas réglable ici.
+      </p>
     </div>
   );
 }

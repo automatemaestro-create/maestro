@@ -61,8 +61,34 @@ chaud** à chaque tâche, comme les playbooks) :
 À l'exécution, un appel refusé produit un **refus propre** : l'agent reçoit le
 motif et poursuit sa tâche (le run n'est jamais condamné), la violation est
 tracée au journal (étape `<tâche>:refus-outil`) et au fil temps réel de la
-Control Tower. La fiche agent du catalogue (UI) affiche la politique
-effective, en lecture seule.
+Control Tower.
+
+**Ce fichier s'édite depuis la Control Tower** (#262) — onglet « MCP &
+permissions » de la fiche agent, `PUT /api/permissions/<agent>` : les listes
+`allow` et `deny` s'y ajoutent et s'y retirent entrée par entrée, avec en
+suggestion les outils **réellement exposés** à cet agent (ceux de son profil,
+les verbes du serveur `maestro`, ses serveurs MCP montés). Quatre choses à
+connaître :
+
+- l'écran **suggère sans restreindre** : un outil MCP précis se désigne à la
+  frappe, seule la **forme** de l'entrée est jugée, et ce que rien d'exposé
+  n'explique est *signalé* — jamais refusé (un serveur désactivé depuis, un
+  outil à venir et une faute de frappe se ressemblent ici) ;
+- la **validation est la même dans les deux sens** (`politique_validee`) : ce
+  que l'écran écrit, le moteur sait le relire, et une entrée mal formée est
+  refusée **avec son motif** sans que le fichier bouge ;
+- l'écriture **ne relit pas** ce qu'elle remplace — c'est ce qui permet de
+  réparer depuis l'écran une politique devenue illisible, là où un aller-retour
+  échouerait sur le fichier même qu'on vient corriger ;
+- la liste **`ask` s'affiche mais ne s'édite pas** : son cran (`auto`/`humain`)
+  est une décision prise à froid, et la poser à moitié — une entrée créée sans
+  choisir son décideur — la ferait retomber en silence sur le défaut. Elle se
+  règle ici, dans le fichier.
+
+⚠ Ce dossier étant **versionné** (voir plus bas), chaque enregistrement modifie
+un fichier suivi par git — celui du dossier de travail où tourne la Control
+Tower, un worktree ayant le sien (docs/10 §9) : la modification est à commiter
+comme le reste, et l'écran le dit.
 
 Un appel **arbitré** laisse la même trace, sous un statut à lui
 (`arbitrage_outil`) : approuvé, refusé ou encore en attente, ce n'est pas un
