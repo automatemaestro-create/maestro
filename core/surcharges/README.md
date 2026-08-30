@@ -54,4 +54,10 @@ commitées (voir `.gitignore`). Moteur, workers et API Control Tower doivent voi
 le même stockage au POC (fichiers partagés). En V1, ce stockage passera en base
 (champs de l'entité `AGENT`, docs/03) sans changer le contrat.
 
-Tests (#259) : différés au lot 15 du chantier #243.
+Tests (#259) : `tests/test_surcharge_agent.py`, livrés par le lot 15 du chantier
+#243 (#267). Trois étages, dans l'ordre où une surcharge traverse le produit — le
+**dépôt** (la surcharge vide qui ne se stocke pas, `herite()`, le refus d'un nom
+hors `NOMS_DU_CODE`), le **catalogue effectif** (le seul chemin par lequel elle
+atteint l'exécution : `MAESTRO_MODEL` prime sur le modèle et pas sur l'effort, le
+fournisseur reste déclaratif), et les **deux routes** (les trois états de
+`source`, `herite`/`reglages_du_code`, et surtout *annuler n'est pas supprimer*).

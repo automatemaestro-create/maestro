@@ -77,6 +77,8 @@ flowchart LR
     AgentDetail --> Mcp[Onglet MCP & permissions]
     Integrations -. qui l'utilise .-> Mcp
     AgentDetail --> AgentChat[Onglet Chat]
+    AgentDetail --> AgentLogs[Onglet Logs]
+    AgentLogs -. les mêmes lignes .-> Journal
     Tasks --> TaskDetail[Détail d'une tâche]
     TaskDetail --> Approve
 ```
@@ -526,10 +528,22 @@ L'entrée de menu **Agents** (`/agents`) mène à la **liste** ; chaque carte ou
 (`/agents/<agent>/<onglet>`). C'est le point d'entrée unique vers un agent —
 il n'y a plus de sélecteur d'agent en tête de trois pages différentes.
 
-- **Liste** : les agents du catalogue (ceux du code, en lecture seule, et les
-  personnalisés), avec la porte de **création en tête** — avant les cartes, et
-  sans attendre la lecture du catalogue. Arrivée avec `?onglet=<onglet>` (par
-  une redirection de la v1), les cartes visent directement cet onglet.
+- **Liste** : les agents du catalogue — ceux du code et les personnalisés —, en
+  **cartes épurées** (#258) : icône du **rôle** et non de l'agent, statut,
+  charge, et l'origine sous le rôle. Deux sources y sont jointes, le catalogue
+  REST (la définition) et le parc du contexte (l'état) : un agent que le parc ne
+  connaît pas n'affiche aucun plafond d'instances plutôt qu'un « 1 » inventé.
+  Filtres et tri (rôle, origine, état) vivent dans `lib/vueAgents.ts`. La porte
+  de **création** est **en tête** — avant les cartes, et sans attendre la lecture
+  du catalogue. Arrivée avec `?onglet=<onglet>` (par une redirection de la v1),
+  les cartes visent directement cet onglet.
+
+  ⚠ **Un agent du code n'est plus en lecture seule** (#259) : ses trois réglages
+  de modèle se **surchargent** sans le dupliquer, d'où une **troisième**
+  provenance — « du code, surchargé » — à côté de « du code » et
+  « personnalisé ». Le filtre par origine n'en propose que deux, à dessein : la
+  question qu'on lui pose est « qui vient du code ? », et un agent surchargé y
+  répond oui.
 - **Création** (`/agents/nouveau`, #254) : un **écran** et non un dépliant sous
   la liste — le cadre reste en place (barre latérale, barre supérieure, titre
   « Agents »), seule la zone de contenu change. On en sort par « Tous les
@@ -554,15 +568,17 @@ il n'y a plus de sélecteur d'agent en tête de trois pages différentes.
   **échec** — quota, réseau, fournisseur muet ou réponse hors contrat — laisse le
   formulaire exactement en l'état et le dit : on réessaie, ou on remplit à la
   main.
-- **Fiche agent**, quatre onglets — l'ordre va de l'identité de l'agent à la
-  conversation avec lui :
+- **Fiche agent**, cinq onglets — l'ordre va de l'identité de l'agent à la trace
+  de ce qu'il a fait, en passant par ce qu'on lui a appris, ce qu'on lui a permis
+  et ce qu'on lui dit :
 
 | Onglet | Contenu | Vient de |
 | --- | --- | --- |
-| 🤖 **Profil** | identité (nom, rôle, modèle, compétences/tags), prompt système éditable, statistiques (tâches traitées, taux de réussite, coût moyen) ; suppression d'un agent personnalisé | page `/catalogue` |
-| 📖 **Playbook** | éditeur avec **historique des versions** et retour arrière (EF-25). L'historique porte aussi les **propositions d'auto-amélioration** en attente — brouillons issus des échecs d'un run, à appliquer ou rejeter au clic ([docs/22](./22-auto-amelioration-playbooks.md)) | page `/playbooks` |
-| 🔌 **MCP & permissions** | serveurs MCP de l'agent (interrupteur par intégration du pool, #133) et **politique allow/ask/deny éditable** (#262) : `allow` et `deny` s'ajoutent et se retirent entrée par entrée, les outils réellement exposés à l'agent en suggestion, `ask` affichée avec son décideur ([docs/21](./21-configuration-mcp.md), `core/permissions/README.md`) | n'avait aucune page à soi — seulement le bas de la fiche du catalogue |
-| 💬 **Chat** | conversation directe avec l'agent (EF-19) | page `/chat/<agent>` |
+| 🤖 **Profil** | identité (nom, rôle, **compétences en jetons** #256) et les **trois réglages de modèle en listes liées** — fournisseur → modèle → effort (#255, voir ci-dessous) ; statistiques (tâches traitées, taux de réussite, coût moyen) ; suppression d'un agent personnalisé. Sur un agent **du code**, les trois réglages se **surchargent** sans le dupliquer et chacun dit d'où il vient — « hérité du code » ou « surchargé » (#259). Le **playbook ne s'édite plus ici** : un renvoi mène à son onglet, seul endroit où il s'écrit — il ne subsiste qu'à la création, où l'agent n'a pas encore de fiche | page `/catalogue` |
+| 📖 **Playbook** | éditeur avec **historique des versions** et retour arrière (EF-25), dont la **publication se lit** (#260) : version en vigueur sans rien ouvrir, playbook d'origine compté comme une v0 et non comme un trou, historique replié dans un sélecteur — la version courante n'y figure pas, son contenu *est* celui de l'éditeur. L'historique porte aussi les **propositions d'auto-amélioration** en attente — brouillons issus des échecs d'un run, à appliquer ou rejeter au clic ([docs/22](./22-auto-amelioration-playbooks.md)). **Rédaction assistée** (#261) : complétions **locales et déterministes** servies par le lexique des playbooks livrés (`GET /api/playbooks/lexique`, Tab pour accepter), et un assistant qui rend une réécriture en **différentiel** (`POST /api/playbooks/{agent}/redaction`) — l'appliquer envoie le texte dans la zone d'édition, publier reste un geste à part | page `/playbooks` |
+| 🔌 **MCP & permissions** | serveurs MCP de l'agent (interrupteur par intégration du pool, #133) et **politique allow/ask/deny éditable** (#262) : `allow` et `deny` s'ajoutent et se retirent entrée par entrée — chaque geste écrit, sans bouton « Enregistrer », et l'écran ne bouge qu'après l'accord de l'API —, les outils réellement exposés à l'agent en suggestion, `ask` affichée avec son décideur mais **non éditable** (le cran se pose à froid dans le fichier). Une politique **invalide** se répare d'ici : l'écriture ne relit pas ce qu'elle écrase ([docs/21](./21-configuration-mcp.md), `core/permissions/README.md`) | n'avait aucune page à soi — seulement le bas de la fiche du catalogue |
+| 💬 **Chat** | conversation directe avec l'agent (EF-19), sur le **composant de fil du produit** — celui du chat global, jamais une seconde mise en page (§2.9) : la réponse **s'écrit en direct** (#264) et le fil **se lit** (Markdown, blocs de code, journées, largeur de lecture — #265) | page `/chat/<agent>` |
+| 📜 **Logs** | ce que l'agent a **réellement fait** (#266) : les lignes du Journal filtrées **par l'API** (`GET /api/journal?agent=…`) et non triées après coup, **groupées par tâche** — ce qui ne relève d'aucune tâche prend sa place sous « Hors tâche » —, avec un filtre par **niveau** (erreur, refus, décision, info). Le niveau est la *famille* d'une ligne et non une sévérité : c'est ce qui permet d'isoler « qu'est-ce qu'on lui a refusé ? » d'un seul choix | aucune page — l'activité d'un agent ne se lisait que dans le fil global, tous agents confondus |
 
 L'**activation/désactivation** et le **contrôle de capacité** (**+ / −**
 instances, EF-21) se règlent dans **Paramètres › Agents & capacité** ; le tableau
@@ -577,6 +593,37 @@ la tuile « Agents » du tableau de bord compte les agents au travail **sur le p
 nomme le parc comme partagé. Le jour où un agent deviendrait propre à un projet — un catalogue par
 projet, une capacité par projet — c'est ici et au §6.0 qu'il faudrait revenir, pas dans un
 composant.
+
+#### 2.3.1 Fournisseur, modèle, effort — une chaîne, pas trois champs (#253, #255)
+
+Les réglages de modèle d'un agent sont **trois** depuis #253 — le troisième,
+l'**effort**, était jusque-là un réglage d'exécution — et ils forment une
+**chaîne de dépendances** que l'écran tient : le fournisseur borne le modèle, le
+modèle décide de l'effort. L'objectif du lot tient en une phrase : *on ne peut
+plus composer une configuration qui n'existe pas*.
+
+- **Le fournisseur** se choisit dans une liste fermée sur le registre
+  (`GET /api/fournisseurs`, §6.4bis), plus l'option « défaut de l'exécution » —
+  qui est un choix légitime et non un trou : l'agent suit alors `MAESTRO_PROVIDER`.
+- **Le modèle** n'offre que la gamme du fournisseur retenu. Une gamme **fermée**
+  (`modeles_libres: false`) donne un `<select>` ; une gamme **libre** — le cas de
+  Claude, dont la liste propose sans interdire — donne un champ de saisie à
+  suggestions, si bien qu'un modèle plus récent que le registre reste nommable.
+  Changer de fournisseur **invalide visiblement** un modèle devenu impossible :
+  le champ se vide et le dit, plutôt que de garder une valeur que rien ne sert.
+- **L'effort** n'apparaît que si le modèle en admet. Une liste `efforts` vide est
+  une réponse à part entière — « ce modèle ne se règle pas en effort » — et non
+  « on ne sait pas ; un modèle **hors gamme** n'annonce rien, donc n'ouvre pas le
+  champ : supposer serait le seul moyen d'envoyer un réglage qu'un endpoint
+  refuserait.
+
+Le poste est la **seconde colonne** de cette lecture (#487) : la même ligne dit
+ce que Maestro **sait faire** (le registre) et ce que ce poste-ci **a déjà** (la
+sonde), sans jamais proposer ce qui n'est pas supporté. Ce que la sonde ne peut
+pas savoir est écrit à l'écran, rattaché aux deux champs concernés.
+
+Rien de tout cela n'est recopié dans le front : inscrire un fournisseur au
+registre suffit à le faire apparaître, avec sa gamme et ses efforts.
 
 Ajouter une facette à un agent se fait dans `apps/web/lib/agents.ts` : la barre
 d'onglets, les cartes de la liste et la route dynamique la lisent toutes.
@@ -3148,6 +3195,88 @@ badge d'attente et des notifications (items 8/9 du cadrage).
   "justification": "…"                       // raison liée aux échecs analysés
 }
 ```
+
+### 6.4bis Catalogue des fournisseurs, modèles et efforts (#253) — **livré**
+
+Ce que Maestro **sait faire** et ce que ce poste-ci **a déjà**, en une lecture.
+C'est la source unique des listes liées du formulaire d'agent (§2.3.1) : aucune
+liste de fournisseurs ni de modèles n'est recopiée dans le front, et inscrire un
+fournisseur au registre suffit à l'y faire apparaître.
+
+- `GET /api/fournisseurs` → `CatalogueFournisseurs`. Lecture seule, sans
+  credentials ni réseau — la gamme se lit sur les **classes** enregistrées —,
+  et **200 sur un poste nu** : ne rien trouver est une réponse.
+
+```jsonc
+// CatalogueFournisseurs
+{
+  "fournisseurs": [
+    {
+      "nom": "claude",                       // la clé du REGISTRE, à écrire dans `fournisseur`
+      "modeles": [                           // la gamme ANNONCÉE (peut être vide)
+        {
+          "nom": "claude-opus-5",            // la chaîne exacte attendue par le fournisseur
+          "libelle": "Opus 5",               // repli sur `nom` s'il n'y en a pas
+          "efforts": ["low", "medium", "high", "xhigh", "max"]
+                                             // VIDE = « ce modèle ne se règle pas en effort »,
+                                             // jamais « on ne sait pas » ; vide aussi hors gamme
+        }
+      ],
+      "modeles_libres": true,                // un nom hors gamme reste recevable
+      "supporte": true,                      // toujours vrai : il vient du registre
+      "present_ici": true,                   // la sonde du poste l'a trouvé (#487)
+      "utilisable_ici": true,
+      "modeles_ici": ["qwen2.5:3b"],         // ce que ce poste sert, distinct de `modeles`
+      "constats": [ /* ce que la sonde a vu, sans aucune valeur de secret */ ]
+    }
+  ],
+  "hors_registre": ["cli:gemini"],           // vu sur le poste, non supporté — montré, jamais proposé
+  "incertitudes": ["…"]                      // ce que la sonde ne peut pas savoir, dit à l'écran
+}
+```
+
+Deux pièges que ce contrat évite, et qu'il ne faut pas défaire : une gamme
+**vide et libre** (`openai`) veut dire « saisis le nom », pas « aucun modèle » ;
+et un fournisseur enregistré sans gamme déclarée est rendu **avec une gamme
+vide plutôt qu'omis** — il est résolvable, donc il existe pour qui appelle.
+
+L'**effort** est un réglage d'**agent** depuis ce lot (`AgentDefinition.effort`,
+`SurchargeAgent.effort`), pas d'exécution. Il ne part vers le fournisseur que
+lorsque `ModelProvider.effort_admis` rend une valeur — filtre unique : un effort
+obsolète ou un modèle changé depuis sont écartés **sans erreur**, le réglage
+étant un conseil et non une condition d'exécution.
+
+### 6.4ter Régler un agent depuis sa fiche — surcharge et permissions — **livré**
+
+Les deux écritures que la vague #243 a ouvertes derrière la fiche agent. Toutes
+deux sont des **remplacements intégraux**, jamais des diffs, comme
+`PUT /api/catalogue/{nom}`.
+
+- `PUT /api/catalogue/{nom}/reglages` (#259) → la fiche de l'agent. Corps :
+  `{fournisseur, modele, effort}`, chacun facultatif. Surcharge les trois
+  réglages de modèle d'un agent **du code** sans le dupliquer ; ce qui n'est pas
+  envoyé retourne au code et se relit dans `herite`. Poser les trois à `null`
+  **annule** la surcharge, comme le `DELETE`. `403` sur un agent personnalisé
+  (ses réglages *sont* sa définition, `PUT /api/catalogue/{nom}`) ou un acteur
+  système, `404` sur un inconnu.
+- `DELETE /api/catalogue/{nom}/reglages` (#259) → la fiche. **Annule, ne supprime
+  pas** : l'agent reste au catalogue et redevient celui du code. Idempotent —
+  deux verbes voisins pour deux gestes que rien ne doit confondre, la
+  suppression restant réservée aux agents personnalisés.
+- `PUT /api/permissions/{agent}` (#262) → `{agent, permissions}`. Corps
+  `{allow: [], ask: {} | [], deny: []}`. `404` hors catalogue — une politique
+  orpheline ne serait jamais appliquée —, `422` **motivé par le dépôt** : le
+  message nomme la liste et l'entrée en faute, et c'est lui que l'écran affiche.
+  La politique vaut pour la **tâche suivante**, relue à chaud. Elle **ne lit pas**
+  ce qu'elle remplace, et c'est ce qui permet de réparer depuis l'écran un
+  fichier que la lecture refuse.
+
+La fiche du catalogue porte les **mêmes clés** dans ses trois provenances — un
+client n'a jamais à les deviner d'après `source` : `herite` nomme les réglages
+restés au code, `reglages_du_code` donne ce que le code dit de chacun (c'est ce
+que « revenir au défaut » rendrait), `permissions_outils` suggère ce que l'agent
+peut réellement appeler, et `permissions_erreur` porte la cause exacte quand la
+politique stockée est illisible.
 
 ### 6.5 Flux SSE d'un fil de chat — et le **fil global** (#268) — **livré**
 

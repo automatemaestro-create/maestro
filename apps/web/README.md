@@ -235,6 +235,20 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   chaud** (#78, EF-26) : le moteur relit la version courante à chaque tâche —
   elle vaut pour l'exécution suivante sans redémarrage, et la version utilisée
   est tracée sur chaque résultat (`playbook_version`, journal compris) ;
+- **Une publication versionnée qui se lit** (#260, lot 8 de #243) : l'historique
+  avait tout — il occupait simplement tout l'écran, et ce qu'on venait y chercher
+  ne s'y lisait pas. La **version en vigueur** se lit désormais sans rien ouvrir
+  (« en vigueur : v3 »), le **playbook d'origine** est compté comme une v0 et non
+  comme un trou — « d'origine » et non « du code », l'onglet servant aussi les
+  agents personnalisés —, et l'historique est **replié dans un sélecteur** qui
+  range les propositions en attente avant les versions publiées : elles attendent
+  une décision. Un point à ne pas défaire : **la version courante n'entre pas
+  dans l'historique consultable**, son contenu *étant* celui de l'éditeur —
+  l'offrir deux fois ferait chercher la différence entre les deux. Chaque geste
+  dit ce qu'il fait avant d'être cliqué (« Publier la version 4 », « Restaurer
+  republie ce texte comme version 4 : la version 3 reste dans l'historique »), et
+  un brouillon modifié le signale — un texte à l'écran qu'on croit en vigueur est
+  le seul vrai danger d'un éditeur de prompt système ;
 - **Rédaction assistée du playbook** (#261, lot 9 de #243, onglet **Playbook**) :
   l'éditeur aide à écrire, à deux échelles et sans jamais publier. En cours de
   frappe, il propose des **complétions** — structures de section et tournures que
@@ -259,6 +273,37 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   une version. Enfin `Entrée` n'est jamais capturée par la liste de complétions :
   dans une zone de texte elle insère un saut de ligne, et la voler à quelqu'un qui
   rédige coûterait plus que l'aide n'apporte ;
+- **Créer un agent prend l'écran** (#254, lot 2 de #243) : la création est une
+  **route à elle** (`/agents/nouveau`) et non un dépliant sous la liste — le
+  cadre reste en place (barre latérale, barre supérieure, titre « Agents »),
+  seule la zone de contenu change, et la porte passe **en tête de liste**, avant
+  les cartes et sans attendre la lecture du catalogue. On en sort par « Tous les
+  agents » ou par **Échap** ; un **brouillon commencé** se signale avant d'être
+  perdu, sur ces deux sorties comme sur la fermeture de l'onglet — et l'intention
+  de l'assistant compte comme un brouillon, c'est une saisie qu'on perdrait
+  aussi. Une création réussie mène à la **fiche de l'agent né**, pas à la liste :
+  un agent créé sans fiche ouverte serait un agent créé à l'aveugle. Le nom que
+  la route occupe (`nouveau`) est refusé à la saisie, faute de quoi l'agent qui
+  le porterait ne serait plus atteignable ;
+- **Les compétences se saisissent en jetons** (#256, lot 4 de #243) : la chaîne
+  virgulée d'avant est devenue un `ChampJetons` alimenté par le **vocabulaire du
+  catalogue** — ce que les agents connus déclarent déjà, dédoublonné
+  (`lib/competences`). Une compétence **inédite** est **signalée sans être
+  refusée** : elle n'apparaît nulle part ailleurs, ce qui vaut d'être dit, mais
+  l'interdire fermerait la porte au premier agent d'un domaine neuf. Le
+  signalement est un `avertissement` et non une `erreur` — pas d'`aria-invalid`
+  sur un champ qu'on accepte, sans quoi on annoncerait un refus qui n'arrivera
+  pas ;
+- **La liste des agents, en cartes épurées** (#258, lot 6 de #243) : icône du
+  **rôle** et non de l'agent (`lib/vueAgents`, table fermée sur les rôles du
+  code), statut, charge, et l'origine sous le rôle. Deux sources y sont jointes —
+  le catalogue REST pour la définition, le parc du contexte pour l'état — et un
+  agent que le parc ne connaît pas n'affiche **aucun** plafond d'instances plutôt
+  qu'un « 1 » inventé. ⚠ L'origine a **trois** valeurs depuis #259 : « du code »,
+  « du code, surchargé » et « personnalisé » — un agent dont on a réglé le modèle
+  n'est pas devenu personnalisé, il n'a pas été dupliqué. Le filtre par origine
+  n'en propose que deux, à dessein : la question qu'on lui pose est « qui vient
+  du code ? », et un agent surchargé y répond oui ;
 - **Catalogue des agents** (#73, EF-03) : la liste `/agents` montre le catalogue
   effectif (#72, API `/api/catalogue`) — ceux du code, et les **personnalisés**
   qu'on y crée, puis modifie et supprime depuis l'onglet **Profil** de leur fiche
@@ -432,7 +477,18 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   ouvre le fil de conversation avec lui (#84, API `/api/chat`) — envoi,
   réponse de l'agent (cadrée par son playbook courant) et réception en temps
   réel par le WebSocket (`chat.message`). Le fil est persisté côté backend :
-  l'historique se recharge au retour sur l'onglet ;
+  l'historique se recharge au retour sur l'onglet. Depuis #269 il ne porte
+  **plus sa mise en page** : bulles, saisie, région live, dépôt de sources et
+  rattachements vivent dans `components/Conversation`, que le chat **global**
+  monte de la même façon — les deux surfaces de fil ne peuvent plus diverger,
+  puisqu'il n'y en a qu'une. Il en hérite donc les deux lots 12 et 13 de #243
+  sans une ligne à lui : la **réponse s'écrit en direct** (#264 — « … répond… »
+  ne couvre que l'attente *avant le premier mot*, ensuite c'est le texte
+  lui-même qui dit que ça travaille) et le **fil se lit** (#265 — Markdown,
+  blocs de code, séparateurs de journée, largeur de lecture). Ce qui lui reste
+  en propre est ce qui lui appartient : le nom de l'agent étant porté par
+  l'en-tête de la fiche, le titre du fil donne le **rôle** plutôt que de répéter
+  le nom ;
 - **Logs par agent** (#266, lot 14 de #243) : l'onglet **Logs** d'une fiche agent
   montre ce qu'il fait et ce qu'il a fait — le direct **et** l'historique
   persisté, **groupés par tâche**, la tâche la plus récemment active en tête et un
@@ -489,7 +545,24 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   typage rend une section sans contenu impossible à compiler. Ce qui est réglable
   l'est **vraiment** ici (la capacité des agents, #86 ; le thème et le repli de la
   sidebar) ; ce qui ne l'est pas encore dit d'où ça se règle aujourd'hui — jamais
-  un lien mort ni un interrupteur sans effet ;
+  un lien mort ni un interrupteur sans effet.
+
+  ⚠ **Un renvoi vieillit avec ce qu'il désigne**, et « Fournisseurs & modèles »
+  l'a montré : la section est restée en place pendant que le contrat qu'elle
+  affiche changeait trois fois, et sa panne était silencieuse — la table
+  s'affichait, elle était simplement fausse. Elle est réalignée par le lot final
+  de #243 : une colonne **Effort** (troisième réglage depuis #253, tu par une vue
+  qui prétendait résumer ce que chaque agent consomme), une **provenance en
+  clair** (`defaut_surcharge` s'affichait tel quel), et les **deux héritages
+  distingués** — « Hérité » veut dire *de l'exécution*
+  (`MAESTRO_PROVIDER`/`MAESTRO_MODEL`), « du code » veut dire *de la définition
+  livrée*, et les dire d'un même mot ferait chercher dans le `.env` ce qui est
+  écrit dans `maestro/agents/catalog.py`. La provenance ne se **redéduit** pas en
+  comparant la valeur affichée à celle du code : un réglage surchargé *à
+  l'identique* ne suit plus le code, et seule la clé `herite` que l'API sert les
+  distingue. Enfin le renvoi mène à l'**onglet Profil** de la fiche
+  (`/agents/<nom>/profil`) et non à la « page Catalogue » de #73, que la fiche à
+  onglets a absorbée en #190 ;
 - **Validations** : la page `/validations` liste les demandes de #48 sorties du
   tableau de bord, en attente comme déjà tranchées.
 
@@ -1180,10 +1253,11 @@ soumis au reste du filet (contraste, mouvement, taille des cibles, lint), et
 
 Posée par le ticket #124 (lot final de la refonte #116, où les tests des lots 1
 à 7 étaient différés — convention docs/10 §5.1), étendue par #193 à la
-navigation v2 (#189, même convention). **Vitest + Testing Library** sur un DOM
-`jsdom` : ces tests portent sur le comportement et le rendu, pas sur le pixel —
-le bout en bout dans un vrai navigateur reste le rôle du skill `/verify`, et la
-géométrie celui du skill `/banc-mise-en-page` (voir ci-dessus).
+navigation v2 (#189, même convention), puis par **#267** à la fiche agent v3
+(#243, où les lots #253→#266 ont livré sans tests). **Vitest + Testing Library**
+sur un DOM `jsdom` : ces tests portent sur le comportement et le rendu, pas sur
+le pixel — le bout en bout dans un vrai navigateur reste le rôle du skill
+`/verify`, et la géométrie celui du skill `/banc-mise-en-page` (voir ci-dessus).
 
 | Fichier | Ce qu'il couvre |
 | --- | --- |
@@ -1195,8 +1269,22 @@ géométrie celui du skill `/banc-mise-en-page` (voir ci-dessus).
 | `tests/guide.test.tsx` | Déclenchement unique, étapes, sortie clavier, ancres et pages réelles (#122, #193) |
 | `tests/assistant.test.tsx` | Ouverture, envoi, échec d'envoi, non-fermeture au clic extérieur (#123) |
 | `tests/shell.test.tsx` | La composition : les sept lots effectivement branchés dans le cadre |
-| `tests/agents.test.tsx` | La fiche agent à onglets, la liste, et la survie des chemins v1 par redirection (#190, testé en #193) |
+| `tests/agents.test.tsx` | La fiche agent à onglets, la liste, et la survie des chemins v1 par redirection (#190, testé en #193) ; puis le **cadre** de l'écran de création (#254) — sa route, la porte en tête de liste, la sortie par Échap, la garde du brouillon, le nom que la route occupe |
+| `tests/agent-onglets.test.tsx` | L'**aiguillage** des cinq facettes (`ContenuOngletAgent`, #190 relu par #267) : chaque onglet ouvre *le bon* composant, une seule facette à la fois, et la table des repères se compare à `ONGLETS_AGENT` — un onglet déclaré sans être branché rougit. Le typage n'y suffit pas : le `switch` est exhaustif par construction, mais il accepterait sans un mot qu'un cas monte le composant du voisin — deux lignes de copier-coller, invisibles au lint comme au build |
+| `tests/agent-creation.test.tsx` | La création **jusqu'au bout** (#254, #257, testés en #267), là où `agents.test.tsx` n'en garde que le cadre : la définition composée puis envoyée, la fiche née ouverte sur son profil, « rien de choisi » rendu en `null` (le défaut légitime, pas un trou), la saisie gardée sur un refus ; puis l'assistant — il remplit **à partir de l'intention**, ce qu'il pose reste modifiable mot à mot, l'abandon rend l'état d'**avant** (pas celui d'un essai précédent), et un échec **ne touche à rien** |
+| `tests/agent-fournisseurs.test.tsx` | Le formulaire d'agent **éclairé par le poste** (#487, #253) : les deux colonnes qui ne se confondent pas — *supporté par Maestro* (registre) et *présent ici* (sonde) —, l'outil non supporté montré sans jamais être proposé, la saisie libre gardée là où le fournisseur l'admet, et ce que la sonde ne peut pas savoir dit à l'écran, rattaché aux deux champs qu'il concerne |
+| `tests/agent-listes-liees.test.tsx` | La **chaîne** fournisseur → modèle → effort (#255) : le rôle proposé sans enfermer, l'offre de modèles restreinte au fournisseur choisi, la gamme fermée qui ferme le champ, l'**invalidation visible** d'un modèle devenu impossible (elle ne s'observe qu'en jouant la transition, jamais sur un rendu figé), et l'effort qui n'apparaît que sur un modèle qui en admet — `efforts` vide voulant dire « ne se règle pas », et un modèle hors gamme n'annonçant rien |
+| `tests/agent-playbook.test.tsx` | L'onglet **Playbook** (#260, #261, testés en #267) : la publication qui se lit — version en vigueur sans rien ouvrir, playbook d'origine compté comme une v0, **la version courante absente de l'historique consultable** (l'offrir deux fois ferait chercher la différence entre les deux), les trois gestes de l'historique avec leur explication ; puis la rédaction assistée — complétions **locales** triées par récurrence, `Tab` accepte, `Échap` se tait sans rien effacer, lexique indisponible qui ne casse pas l'éditeur, et l'assistant dont le différentiel **ne publie rien** : appliquer envoie le texte dans la zone d'édition, publier reste un geste à part |
 | `tests/agent-mcp.test.tsx` | L'onglet **MCP & permissions** (#263) : les deux groupes séparés (actives en tête), la phrase qui dit qu'éteindre un interrupteur **ne retire pas du pool**, la migration des déclarations héritées, et l'ajout depuis la fiche **qui active dans la foulée**. La couverture complète revient au lot 15 de #243 — ce fichier est là parce qu'**aucun test ne montait cet écran**, ni celui-ci ni ses ancêtres dans `EditeurAgent`, alors qu'il écrit dans le pool projet. Il a déjà payé : le compte rendu de migration vivait dans le bloc des héritées, c'est-à-dire **dans ce que la migration supprime** — on cliquait, tout s'évanouissait sans un mot |
+| `tests/agent-permissions.test.tsx` | Les **permissions** de l'onglet MCP & permissions (#262, testées en #267 ; `lib/permissions` est gardé à part par `permissions.test.ts`) : chaque geste écrit — sans bouton « Enregistrer » —, l'état local ne suit qu'**après** l'accord de l'API, si bien qu'une entrée refusée s'efface d'elle-même en laissant le motif **du dépôt**, qui nomme la liste et l'entrée en faute ; les **trois** listes rendues dont `ask` en lecture (n'en montrer que deux ferait passer un outil arbitré pour un outil sans contrainte), les trois vides et leurs trois sens, et la **réparation** d'une politique invalide — le seul geste qui débloque, possible parce que l'écriture ne relit pas ce qu'elle écrase |
+| `tests/agent-chat.test.tsx` | L'onglet **Chat** (#264, #265, testés en #267), et lui seul — le fil est couvert par `chat-*` et `fil-lisible` : le **canal demandé** à `useChat` est le nom de la fiche et rien d'autre (seule preuve qui existe, le contenu rendu venant du fil factice), il suit la fiche quand on change d'agent, et l'onglet monte le **composant de fil commun** au lieu d'en redessiner un second. Plus ce que #264/#265 lui donnent : l'attente avant le premier mot, le texte qui prend le relais, la réponse interrompue gardée en le disant, et les fautes **au pied du fil** |
+| `tests/agent-logs.test.tsx` | L'onglet **Logs** (#266, testé en #267) : le filtre `agent` **passé à l'API** et jamais appliqué après coup — observé sur ce qui est *demandé*, la seule façon de le prouver —, le groupement par tâche dans l'ordre du fil avec « Hors tâche » à sa place, le filtre par niveau dans l'ordre de `NIVEAUX_LOG` et non celui de l'alphabet (« qu'est-ce qu'on lui a refusé ? » doit s'isoler d'un choix), et les **trois silences qui ne se confondent pas** — lecture en vol, agent qui n'a rien fait, filtre trop étroit. Un détail que le rendu et la liste déroulante ne disent pas pareil : « Hors tâche » s'affiche mais n'est pas filtrable, faute d'identifiant à passer |
+| `tests/competences.test.ts` | `lib/competences` (#256) : la normalisation, le découpage d'une saisie collée, et le vocabulaire dérivé du catalogue — le formulaire lui-même est couvert par `agent-listes-liees` et `agent-creation` |
+| `tests/permissions.test.ts` | `lib/permissions` (#262) : `couvre` et ses frontières `__` (`mcp__slack` couvre ses outils, jamais `mcp__slackbot__x`), `entreeConnue` et `entreesHorsPortee` — ce qui se signale sans s'interdire |
+| `tests/parametres-fournisseurs.test.tsx` | La section **Fournisseurs & modèles** des Paramètres (#121), réalignée par #267 sur le contrat de la vague : ce n'est pas un lot qui a livré sans tests mais un écran **qui n'a pas bougé** pendant que le contrat qu'il affiche changeait trois fois — et sa panne est silencieuse, la table s'affichant, fausse. Les trois réglages servis (effort compris), la provenance en clair (`defaut_surcharge` s'affichait tel quel, et `libelleOrigine` disait « personnalisé » d'un agent qui ne l'est pas), les **deux héritages distingués** — du code / de l'exécution —, et la provenance qui ne se **redéduit** pas en comparant la valeur au code : un réglage surchargé *à l'identique* ne suit plus le code, et seul `herite` les sépare. Le filtre par origine y est jugé aussi : « Du code » doit retenir un agent surchargé |
+| `tests/arbitrage.test.tsx` | L'arbitrage d'une tâche **vu de l'interface** (#572, pendant de `test_arbitrage_visible.py`), sur la panne muette de #568 : un run dormait sur trois demandes pendant que l'écran affirmait « aucune validation en attente ». Les **trois attentes humaines** éprouvées par une table confrontée à deux sources qui ne se recouvrent pas — une quatrième ajoutée d'un côté hérite du filet ou fait rougir —, l'**ordre des questions** (le statut du run avant l'appariement par les tâches, qui reste en filet), et l'écran qui rend la demande sans rien changer de son côté |
+| `tests/composer-sources.test.tsx` | Ce que #319 avait laissé au lot final (#323) : le **rapport de lecture** rendu seul (c'est le composant, non l'écran, qui décide de ce qui se voit d'une extraction), les **verrous du geste** (pas d'aperçu sans source, pas de lancement sans objectif, rien de cliquable pendant un appel), et le **vocabulaire** de `lib/sources` — les trois types, les trois états, et les deux déclarations que `composer.test.tsx` n'exerçait pas |
+| `tests/projet-cadre.test.tsx` | Le projet actif en **cadre de tous les écrans** (#281) : la **portée demandée** — la promesse ne se lit pas dans ce qu'un écran affiche (les données sont factices) mais dans ce qu'il demande, et `tous` ne passe plus jamais —, et le **changement de projet**, qui doit emporter aussi ce que les *pages* tiennent : un filtre du Journal posé sur une tâche de l'ancien projet est exactement le « compteur figé » du critère |
 | `tests/tableau-de-bord.test.tsx` | Le tableau de bord épuré — ce qui reste, ce qui renvoie ailleurs — et le ticket externe dans les tables de coûts (#191/#192, testés en #193) ; puis le **second niveau de `/couts`** (#539) : la vue par tâche à l'ouverture, la bascule vers la vue par exécution **sans quitter le bloc** (c'est un second niveau, pas une navigation), la répartition par agent rangée dans la colonne de propriétés, et le bloc qui s'efface quand la période n'a ni tâche ni exécution — les chiffres, eux, restent |
 | `tests/ticket-externe.test.tsx` | Le filtrage d'URL et les cartes du Kanban (#192, livré avec le lot : logique critique) |
 | `tests/detail-tache.test.tsx` | Le panneau de détail d'une tâche : description, étapes en checklist, liens filtrés et rendus selon leur nature, et la carte laissée intacte quand il n'y a rien à ouvrir (#251, livré avec le lot : filtrage d'URL et absence totale) |

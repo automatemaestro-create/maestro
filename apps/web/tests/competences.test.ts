@@ -1,10 +1,12 @@
 /**
  * Le vocabulaire des compétences (#256, lot 4/15 de #243).
  *
- * ⚠ Les tests du lot sont **différés au lot 15** (« tests + doc ») : ce fichier
- * ne couvre pas le formulaire, seulement `lib/competences` — la part **pure**,
- * et la seule dont une erreur ne se verrait nulle part. Le reste (le champ à
- * jetons, ce que l'écran signale) attend son lot.
+ * ⚠ Ce fichier ne couvre pas le formulaire, seulement `lib/competences` — la part
+ * **pure**, et la seule dont une erreur ne se verrait nulle part. Le reste (le
+ * champ à jetons, ce que l'écran signale) était différé au lot 15 (« tests +
+ * doc ») et l'a rejoint : il se lit dans `agent-listes-liees.test.tsx` (le
+ * vocabulaire proposé, la saisie inédite qui passe) et `agent-creation.test.tsx`
+ * (les jetons qui deviennent la liste envoyée à l'API).
  *
  * Pourquoi celle-ci quand même : c'est de l'arithmétique de chaînes — des seuils
  * de distance d'édition, une transposition qui doit compter pour un geste et non
