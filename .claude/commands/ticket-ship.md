@@ -124,18 +124,13 @@ doute). Les **garde-fous** priment sur l'automatisation : suis les étapes dans 
 8. **Sous-ticket d'un parent de suivi ?** Vérifie : `bash scripts/gitlab/lib.sh parent-of <iid>`.
    Si un parent est trouvé (convention `docs/10-workflow-git.md` §5.1), prépare l'**annonce de la
    suite** pour le résumé final :
-   - Liste les lots : `bash scripts/gitlab/lib.sh subtickets <iid-parent>`. Profites-en pour
-     **cocher** dans la checklist du parent les lots à l'état « Terminé » encore décochés. Le lot
-     que tu viens de shipper en fait partie **s'il a été mergé** (verdict `0` à l'étape 7) : le
-     workflow `issues: closed` (#377) est asynchrone, donc `subtickets` peut encore le rendre
-     « En revue » quelques secondes après le merge — coche-le sur le **verdict du merge**, qui est
-     l'information fraîche, et jamais l'inverse (un lot **non** mergé ne se coche pas).
-     **Relis et réécris la description uniquement via les helpers** :
-     `bash scripts/gitlab/lib.sh get-description <iid-parent> > <fichier>`, tu édites le fichier,
-     puis `bash scripts/gitlab/lib.sh set-description <iid-parent> <fichier>`. N'improvise
-     **jamais** une lecture du type `gh issue view --json body | python` : elle corrompt
-     l'UTF-8 en mojibake (« â€” » au lieu de « — ») et l'a déjà repoussé dans un parent (#141).
-     Mise à jour idempotente : ne **décoche jamais** une case déjà cochée.
+   - Liste les lots : `bash scripts/gitlab/lib.sh subtickets <iid-parent>`. **N'écris rien dans la
+     description du parent** : depuis #389 les lots sont des sub-issues natives, et la coche de la
+     table est **dérivée de l'état** de chaque lot (fermé = coché) — il n'y a plus de checklist à
+     tenir au fil de l'eau, donc plus de synchronisation à faire ici. La lecture peut rendre le lot
+     que tu viens de shipper encore « En revue » quelques secondes après le merge, le workflow
+     `issues: closed` (#377) étant asynchrone : c'est le **verdict du merge** (étape 7) qui fait foi
+     pour ton résumé, jamais cette table.
    - Demande les lots ouverts que rien ne bloque :
      `bash scripts/gitlab/lib.sh startables <iid-parent>` (les lots marqués « (parallèle) » ne se
      bloquent pas entre eux — docs/10 §5.1). S'il en reste, annonce-les **démarrables dès
