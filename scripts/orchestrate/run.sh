@@ -2160,6 +2160,19 @@ Règles de ce run autonome :
   question sans que personne l'ait jugée. Fais une seule chose : NOMME ce ticket dans ton résumé
   final comme appelant une veille, et implémente en t'en tenant au socle (docs/30, tokens et
   primitives du dépôt, aucune identité nouvelle).
+- N'ENTAME PAS /ticket-abandon, même si le ticket te paraît sans objet (déjà fait, doublon,
+  périmé). Sa dernière étape ferme l'issue et « gh issue close » attend ici une approbation que
+  personne ne te donnera — mais l'étape d'AVANT a déjà posé « Abandonné » : tu laisserais un ticket
+  abandonné ET OUVERT, que ferme-parent compte comme un lot encore ouvert, si bien que son parent
+  ne se refermerait plus jamais. La commande demande de toute façon une confirmation humaine
+  explicite, et juger qu'un ticket est sans objet est une décision de BACKLOG, pas de session. Fais
+  une seule chose : sors sur ORCHESTRATE: ECHEC en disant pourquoi, et laisse quelqu'un trancher.
+- POUR DÉFAIRE UNE MANŒUVRE RATÉE, un seul geste t'est ouvert : « git restore <fichier> », qui vise
+  un fichier NOMMÉ. « git reset --hard », « git clean » et « git stash » sont refusés ici, pour une
+  raison commune : ils jettent d'un coup, sans rattrapage, du travail que plus rien ne retrouve.
+  Le stash est même le pire des trois — il vit dans le dépôt commun, invisible pour le ramassage
+  des worktrees, qui tient alors le tien pour propre et l'emporte avec ton travail. Si tu veux
+  mettre du travail de côté, COMMITE-LE : la branche est à toi.
 - POUR JOUER DES TESTS, l'endroit se choisit PAR FAMILLE DE SUITE, et l'écart se paie sur ton
   quota. Une suite d'OUTILLAGE — elle nomme un script du dépôt (worktree.sh, lib.sh, run.sh…) —
   se joue dans le conteneur Linux, « bash scripts/ci/pytest.sh tests/test_<suite>.py -q » : vingt

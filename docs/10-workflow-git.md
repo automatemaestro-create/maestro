@@ -5769,6 +5769,71 @@ confirmation à chaque `/design-veille` interactive » : geste légitime, effet 
 run du même coup. Une confirmation dans une session interactive n'est pas un défaut, il y a
 quelqu'un pour la donner.
 
+**Un `ask` du dépôt est un `deny` en run, et les cinq sont tranchés** (#790, lot 2 de #788).
+`.claude/settings.json` met cinq gestes en `ask` — `gh issue close`, `git commit --no-verify`,
+`git reset --hard`, `git clean`, `browser_run_code_unsafe`. En interactif une personne approuve ; en
+run il n'y a **personne**, donc c'est un refus sec qui ne dit pas son nom, et c'est l'écart
+qu'aucune lecture de l'`allow` ne montre puisqu'il vit dans un autre bloc. Les cinq **restent
+refusés**, chacun pour une raison qui lui est propre — elles sont écrites une par une dans le
+commentaire d'en-tête de `settings.run.json`, à côté des règles qu'elles justifient. Ce qui a changé
+n'est donc pas le régime mais son statut : un **refus voulu** a remplacé un arbitrage en attente, et
+c'est la nuance qui distingue « on a regardé » de « personne n'y a pensé ».
+
+Le seul qui appelait vraiment un arbitrage est `gh issue close`, le seul **mesuré** (#273) :
+aujourd'hui un run ne peut pas abandonner un ticket. Trois choses l'ont tranché, et la première
+suffirait — **lever la règle ne donnerait pas le geste**, `/ticket-abandon` demandant lui-même une
+confirmation humaine explicite (étape 4) que la règle ne fait que redoubler ; aucune règle de
+préfixe ne borne l'**iid**, donc `Bash(gh issue close:*)` donnerait la fermeture de n'importe quel
+ticket, y compris ceux des sessions voisines en vol ; et le plan d'un run ne prend que des tickets
+« À faire » et libres, si bien qu'un ticket sans objet qui s'y trouve est une erreur de **backlog**,
+pas une décision de session. ⚠ **Mais le statu quo avait un coût**, et c'est lui qui fait de ce
+verdict un changement plutôt qu'une phrase : le refus tombe à l'**étape 7** de `/ticket-abandon`,
+après que l'étape 6 a posé « Abandonné ». Une session qui entame la séquence laisse donc un ticket
+**abandonné ET ouvert** — hors des plans (`queue.sh` ne prend que « À faire ») mais compté **lot
+ouvert** par `ferme-parent` (#515) et par `garde-fermeture` (#394), qui jugent la **fermeture** et
+jamais l'état : son parent ne se refermerait plus jamais. Un refus franc valant mieux qu'un refus
+tardif, le prompt de session (§11.3) dit désormais de **ne pas entamer** la commande, exactement
+comme il le dit de `/design-veille`. Le besoin — « ce ticket est sans objet » — est un jugement sans
+répondant, donc G4 : il se traite au lot 5 (#795).
+
+**Les trous, eux, se comblent par une règle — huit, toutes en lecture ou bornées au worktree** :
+`pwd` (5 refus, le maillon le plus refusé de tout le journal), `cut`, `tr`, `git merge-base`,
+`git check-ignore`, `git mv`, `chmod` et `git restore`. Les raisons sont dans le fichier ; trois
+choses se disent ici. **`git restore` est le seul ajout non mesuré** — il vient du verdict de
+`git reset --hard`, qui le désigne comme forme couverte, *une forme couverte qu'aucune règle ne
+couvre étant une fausse promesse* — et il n'élargit rien, `Bash(git checkout:*)` autorisant déjà le
+même geste et davantage. **`git mv` n'avait aucune forme couverte** : `rm` est refusé et `git rm`
+n'est dans aucune des deux listes, donc un renommage n'était pas faisable du tout. Et
+**`.claude/settings.json` n'a pas bougé** : c'est une conséquence des cinq verdicts, pas une
+précaution — une session **interactive** continue de demander ces huit gestes, ce qui est de la
+friction, et elle a un répondant. ⚠ Ce qu'il ne faut pas en attendre, dans la ligne de #528 : la
+plupart de ces refus portaient **aussi** un `cd <chemin absolu>` en tête. Une règle retire le
+**maillon**, jamais l'**échappée** — les deux se corrigent séparément, et la seconde par la forme
+(#307).
+
+**Ce qui reste dehors, et n'est pas un oubli.** Les refus **mérités** déjà tranchés — `for`, `curl`,
+`python -` en heredoc (#528), `rm`, `bash <chemin absolu>`, le préfixe de variable `VAR=…` (#307) —
+sont nommés dans le fichier pour qu'on voie qu'ils ont été regardés, et rien n'y touche. `python -c`,
+que #788 rangeait parmi les trous, est **arbitré et reste refusé** : de la double raison de #528,
+celle qui ne tient pas au heredoc vaut telle quelle — `python` nu n'est pas le venv du dépôt.
+`git stash` n'est pas ajouté, pour deux raisons dont la première suffit : ses deux refus portent un
+`cd "../.."`, donc ce n'est pas le verbe qui a été refusé ; et un stash vit dans `refs/stash` du
+dépôt **commun**, invisible pour les deux mesures de `worktree.sh gc` (fichiers non commités,
+commits absents du serveur), si bien qu'un worktree dont le travail est stashé passe pour propre —
+donc **ramassable**, travail compris. `bash scripts/github/…` non plus : le répertoire mêle des
+scripts one-shot de migration et du **provisionnement** (`bootstrap-project.sh`, `protect-main.sh`),
+et une règle de répertoire donnerait le second pour couvrir le premier, dont le besoin est éteint.
+
+**Le rapport de #789 le dit tout seul, et c'est ce qui garde le verdict lisible.** `ecart-run.sh`
+confronte chaque geste aux règles **là où elles vivent** : les huit y basculent en « couvert » du
+seul fait que la règle est là, sans rien à tenir d'accord à la main. Q1 y gagne la distinction que
+Q2 avait déjà — un `ask` **assumé** s'affiche encore (la règle est toujours là, l'écart
+run ↔ interactif aussi) mais ne compte plus parmi ce qui attend un arbitrage, sans quoi le code de
+sortie serait **indépassable** : cinq refus voulus le tiendraient à `3` pour toujours, et un code
+qui ne peut pas descendre n'apprend plus rien. Le **défaut reste « écart »**, donc une sixième règle
+`ask` ajoutée demain sortira à trancher sans que personne ait à y penser — c'est ce que prouve
+l'échantillon `ask-contre-deny.json`, où `pwd` mis en `ask` sort en écart faute de verdict.
+
 ### 11.8 Reprendre un run qui ne s'est pas terminé — `--resume`
 
 Un run s'interrompt de plusieurs façons, et aucune n'est rare : console fermée, machine éteinte,
