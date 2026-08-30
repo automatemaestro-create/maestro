@@ -198,6 +198,20 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   agent — servi pour de bon depuis #269 (voir ci-dessous). Les onglets sont
   déclarés une seule fois (`lib/agents.ts`), comme le menu l'est dans
   `lib/navigation.ts` ;
+- **Les intégrations d'un agent se règlent sur sa fiche** (#263, lot 11 de #243,
+  [docs/21 §3.7](../../docs/21-configuration-mcp.md)) : l'onglet **MCP &
+  permissions** (`components/OngletMcpAgent.tsx`, sorti d'`EditeurAgent` à ce
+  lot) liste les intégrations **actives** de l'agent en tête, distinctes de
+  celles du pool restées inactives ; il monte la **bibliothèque de
+  `/integrations`** — la même, importée telle quelle : en recopier une version
+  allégée rejouerait #231 — derrière un bouton, et ce qu'on y ajoute est
+  **activé dans la foulée** ; et il donne son issue au bloc des déclarations
+  **héritées**, qui disait « à migrer vers le pool » sans qu'aucun écran ne
+  migre (`POST /api/mcp/migration/{agent}`, additif et sans un secret à
+  ressaisir). ⚠ Le partage avec l'écran Intégrations est celui de la **portée du
+  geste** : le *retrait du pool* désactive chez tous les agents et purge les
+  secrets, donc il reste là-bas ; ici un interrupteur éteint **désactive pour cet
+  agent seul**, et l'écran le dit à l'endroit où on l'éteint ;
 - **Une seule porte d'entrée** (#484, lot 3 de #481, docs/05 §1) : « Composer un
   objectif » (#319) et « Valider le brief » (#322) **ont quitté le menu** le
   2026-08-28, et « Chat » a pris leur place en tête — le fil sait faire ce
@@ -1182,6 +1196,7 @@ géométrie celui du skill `/banc-mise-en-page` (voir ci-dessus).
 | `tests/assistant.test.tsx` | Ouverture, envoi, échec d'envoi, non-fermeture au clic extérieur (#123) |
 | `tests/shell.test.tsx` | La composition : les sept lots effectivement branchés dans le cadre |
 | `tests/agents.test.tsx` | La fiche agent à onglets, la liste, et la survie des chemins v1 par redirection (#190, testé en #193) |
+| `tests/agent-mcp.test.tsx` | L'onglet **MCP & permissions** (#263) : les deux groupes séparés (actives en tête), la phrase qui dit qu'éteindre un interrupteur **ne retire pas du pool**, la migration des déclarations héritées, et l'ajout depuis la fiche **qui active dans la foulée**. La couverture complète revient au lot 15 de #243 — ce fichier est là parce qu'**aucun test ne montait cet écran**, ni celui-ci ni ses ancêtres dans `EditeurAgent`, alors qu'il écrit dans le pool projet. Il a déjà payé : le compte rendu de migration vivait dans le bloc des héritées, c'est-à-dire **dans ce que la migration supprime** — on cliquait, tout s'évanouissait sans un mot |
 | `tests/tableau-de-bord.test.tsx` | Le tableau de bord épuré — ce qui reste, ce qui renvoie ailleurs — et le ticket externe dans les tables de coûts (#191/#192, testés en #193) ; puis le **second niveau de `/couts`** (#539) : la vue par tâche à l'ouverture, la bascule vers la vue par exécution **sans quitter le bloc** (c'est un second niveau, pas une navigation), la répartition par agent rangée dans la colonne de propriétés, et le bloc qui s'efface quand la période n'a ni tâche ni exécution — les chiffres, eux, restent |
 | `tests/ticket-externe.test.tsx` | Le filtrage d'URL et les cartes du Kanban (#192, livré avec le lot : logique critique) |
 | `tests/detail-tache.test.tsx` | Le panneau de détail d'une tâche : description, étapes en checklist, liens filtrés et rendus selon leur nature, et la carte laissée intacte quand il n'y a rien à ouvrir (#251, livré avec le lot : filtrage d'URL et absence totale) |

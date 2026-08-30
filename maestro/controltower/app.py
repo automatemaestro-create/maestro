@@ -103,6 +103,11 @@ Endpoints :
 - `PUT  /api/mcp/activations/{agent}` — fixe les intégrations du pool **activées**
   pour un agent (#133) : l'écriture derrière l'interrupteur par agent qui
   remplace l'affichage lecture seule des serveurs MCP ;
+- `POST /api/mcp/migration/{agent}` — migre la déclaration **héritée**
+  `core/mcp/{agent}.json` vers le pool projet (#263) : ses serveurs y entrent
+  (sous l'id de leur entrée de bibliothèque quand elle les décrit exactement),
+  l'agent les active et le fichier part. **Additif** — le reste du pool et les
+  autres agents ne bougent pas — et sans aucun secret à ressaisir ;
 - `PUT  /api/permissions/{agent}` — écrit la politique allow/ask/deny d'un agent
   (#262, source `core/permissions/<agent>.json`) : remplacement intégral, 422
   **motivé** sur une entrée mal formée, et aucune lecture préalable — c'est ce
@@ -142,8 +147,10 @@ Endpoints :
   (`source`, **trois** valeurs depuis #259 : `defaut`, `defaut_surcharge`,
   `personnalise`), leurs réglages de modèle **effectifs**
   (`fournisseur`/`modele`/`effort` — #253) et d'où chacun vient (`herite`,
-  `reglages_du_code` — #259), leurs serveurs MCP déclarés (#104, lecture seule —
-  `mcp_serveurs`/`mcp_erreur`) et leur politique de permissions effective (#110 —
+  `reglages_du_code` — #259), leurs serveurs MCP effectifs (#104 —
+  `mcp_serveurs`/`mcp_erreur`), ce que leur **seule déclaration héritée** porte
+  encore (#263 — `mcp_herites`, ce que la migration ferait passer au pool) et
+  leur politique de permissions effective (#110 —
   `permissions`/`permissions_erreur`, écrite par `PUT /api/permissions/{agent}`
   depuis #262, qui sert avec elle les outils **réellement exposés** à l'agent
   dans `permissions_outils`) ;
@@ -262,7 +269,7 @@ from maestro.agents import DEFAULT_TOOLS, TOOLED_PROFILES
 from maestro.agents.capacity import CapaciteAgent, CapacityStore
 from maestro.agents.catalog import DEFAULT_AGENTS, Agent
 from maestro.agents.lexique_playbook import lexique_dict
-from maestro.agents.mcp import IntegrationMcp, McpStore, references_env
+from maestro.agents.mcp import IntegrationMcp, McpStore, ServeurMcp, references_env
 from maestro.agents.mcp_admission import (
     MOTIF_NON_ADMISE,
     RefusAdmission,
@@ -2717,10 +2724,15 @@ def create_app(
                 f"DELETE /api/mcp/pool/{integration.id}."
             )
         else:
+            # ⚠ Trois causes, pas deux (#263) : une intégration **migrée** d'une
+            # déclaration héritée que la bibliothèque ne reconnaît pas arrive ici
+            # par un chemin parfaitement normal. Ne nommer que les deux premières
+            # ferait lire « quelque chose a disparu » là où rien n'a bougé.
             alerte = (
-                "ce serveur est monté mais ne figure plus dans la bibliothèque : "
-                "il a pu être retiré du seed, ou son entrée admise être devenue "
-                "illisible. Il reste monté tel qu'il a été configuré."
+                "ce serveur est monté mais ne figure pas dans la bibliothèque : "
+                "il a pu être retiré du seed, son entrée admise devenir illisible, "
+                "ou provenir d'une déclaration de fichier migrée qu'aucune entrée "
+                "ne décrit. Il reste monté tel qu'il a été configuré."
             )
         return {
             **integration.to_dict(),
@@ -2773,15 +2785,28 @@ def create_app(
         projet** (les intégrations configurables, avec l'état de leurs secrets)
         et `mcp_activations` les ids **activés** pour cet agent — de quoi
         remplacer l'affichage lecture seule par des interrupteurs par agent (#133).
+
+        `mcp_herites` (#263) porte les serveurs de la **seule** déclaration
+        héritée. Il est servi parce que l'écran ne peut pas le déduire :
+        retrancher des serveurs montés ceux des intégrations activées se fait par
+        leur **nom**, et une intégration renommée à l'ajout au pool fait alors
+        réapparaître l'héritée comme un serveur de plus. C'est aussi ce sur quoi
+        la fiche décide de proposer la migration — donc une liste qu'on lit, pas
+        qu'on devine.
         """
         try:
             serveurs = mcp.lire(nom)
             volet_serveurs: dict[str, Any] = {
                 "mcp_serveurs": [s.to_dict() for s in serveurs],
+                "mcp_herites": [s.to_dict() for s in mcp.heritees(nom)],
                 "mcp_erreur": None,
             }
         except ValueError as exc:
-            volet_serveurs = {"mcp_serveurs": [], "mcp_erreur": str(exc)}
+            volet_serveurs = {
+                "mcp_serveurs": [],
+                "mcp_herites": [],
+                "mcp_erreur": str(exc),
+            }
         pool = _pool_mcp()
         try:
             activations = list(mcp.activations(nom))
@@ -3424,6 +3449,80 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {"agent": agent, "integrations": list(activees)}
+
+    def _id_registre_de(serveur: ServeurMcp) -> str | None:
+        """L'entrée de l'allowlist qui décrit **exactement** ce serveur, s'il y en a une (#263).
+
+        Ce qu'une migration gagne à la poser : l'intégration migrée entre au pool
+        sous l'id de son entrée, donc avec son mode d'auth, sa procédure et ses
+        variables — la même ligne que si elle avait été ajoutée depuis la
+        bibliothèque. Sans elle, `figma-officiel` et `slack` y arriveraient bien
+        (leur nom de serveur *est* l'id de leur entrée) mais `forge`, qui nomme le
+        serveur GitHub autrement, entrerait hors bibliothèque et porterait une
+        alerte pour une situation parfaitement saine.
+
+        Le rapprochement est une **égalité stricte** sur la déclaration
+        instanciée *sous le nom du serveur d'origine*, jamais une ressemblance :
+        un id de registre qui décrirait autre chose donnerait à l'intégration la
+        fiche et les secrets d'un autre serveur. Le nom, lui, est **conservé** —
+        c'est le préfixe d'outils (`mcp__<nom>__…`) que les playbooks emploient
+        déjà, et le renommer au passage changerait le comportement d'un agent au
+        milieu d'une migration qui prétend ne rien changer.
+        """
+        for entree in registre().lister(SOURCE_TOUTES):
+            if not entree.curee:
+                continue  # hors allowlist : ce serait promettre ce que le pool refuse
+            try:
+                if entree.vers_serveur(nom=serveur.nom) == serveur:
+                    return entree.id
+            except ValueError:
+                continue
+        return None
+
+    @app.post("/api/mcp/migration/{agent}")
+    async def migrer_declarations_mcp(agent: str) -> dict[str, Any]:
+        """Migre la déclaration héritée `core/mcp/{agent}.json` vers le pool projet (#263).
+
+        L'issue qui manquait au bloc « hérités » de la fiche d'un agent : ses
+        serveurs rejoignent le **pool**, activés pour lui, et le fichier part.
+        Additif (`McpStore.migrer_agent`) — le pool et les activations des autres
+        agents ne bougent pas —, et **mutualisant** : un serveur déjà au pool sous
+        la même déclaration est repris, pas dupliqué. Chaque serveur que la
+        bibliothèque décrit exactement entre sous l'**id de son entrée**, donc
+        avec son mode d'auth et l'état de ses secrets.
+
+        Aucun secret n'est demandé ni redemandé : une déclaration héritée porte
+        déjà ses références `${VAR}`, qui se résolvent au montage comme avant.
+        C'est ce qui fait de la migration un geste et non un formulaire.
+
+        404 si l'agent n'est pas au catalogue, 422 s'il n'a rien à migrer ou si
+        une source est invalide (rien n'est écrit dans ce cas).
+        """
+        _exige_agent_du_catalogue(agent)
+        try:
+            heritees = mcp.heritees(agent)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        ids = {
+            serveur.nom: id_registre
+            for serveur in heritees
+            if (id_registre := _id_registre_de(serveur)) is not None
+        }
+        try:
+            migration = mcp.migrer_agent(agent, ids=ids)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        try:
+            etats = {e.cle: e.to_dict() for e in secrets.etat_projet()}
+        except ValueError:
+            etats = {}
+        return {
+            "agent": migration.agent,
+            "ajoutees": [_integration_pool_dict(i, etats) for i in migration.ajoutees],
+            "reprises": [_integration_pool_dict(i, etats) for i in migration.reprises],
+            "activations": list(migration.activations),
+            "fichier_retire": migration.fichier_retire,
+        }
 
     @app.put("/api/permissions/{agent}")
     async def definir_permissions(
