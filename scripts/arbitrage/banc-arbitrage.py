@@ -203,9 +203,25 @@ class ProviderQuiJoueLeHook(ModelProvider):
     async def run_agent(
         self, prompt, *, model, system_prompt=None, workspace, tools,
         mcp_serveurs=(), politique=None, on_refus=None, on_arbitrage_acte=None,
-        on_activite=None, on_etapes=None, on_arbitrage=None, credit_arbitrage=None,
-        plafond_tours=None, projet=None,
+        on_activite=None, on_etapes=None, on_arbitrage=None, on_blocage=None,
+        credit_arbitrage=None, on_courrier=None, plafond_tours=None, projet=None,
+        effort=None, **_,
     ):
+        """Les canaux que le banc n'écoute pas sont nommés, le reste est absorbé.
+
+        `on_blocage` (#799), `on_courrier` (#800) et `effort` (#808) sont arrivés
+        dans `ModelProvider.run_agent` pendant que cette branche vieillissait, et
+        un mot-clé de plus faisait lever l'appel **avant** le premier acte : le
+        run se soldait sans rien suspendre, et le banc rendait « chaîne NON
+        exercée » sur une chaîne intacte — le faux négatif exact que la
+        docstring met en garde de ne pas fabriquer.
+
+        D'où le `**_` : la signature du fournisseur s'enrichit à chaque lot
+        d'agents, et aucun de ces enrichissements ne change ce que ce banc
+        mesure. Il n'affaiblit pas le verdict — ce qui protège le banc d'un
+        double complaisant est le garde-fou juste en dessous (pas de politique,
+        pas de run) et le fait que la décision reste rendue par le vrai hook.
+        """
         if politique is None:
             raise RuntimeError(
                 f"aucune politique lue pour l'agent {AGENT!r} — "
