@@ -103,3 +103,10 @@ de ce qui a été décidé.
 Ce dossier est **versionné** avec le dépôt (aucun secret n'y figure). Racine
 remplaçable via `MAESTRO_PERMISSIONS_DIR` (cf. `.env.example`). Contrat et
 sémantique : `maestro/agents/permissions.py` et `maestro/decideur.py`.
+
+Tests : `tests/test_permissions.py` pour la **lecture** et l'application
+(sémantique, arbitrage, montage runtime, moteur, refus au vol, journal), et
+`tests/test_permissions_ecriture.py` pour ce que #262 a ouvert — le dépôt en
+écriture, le point de passage unique de la validation, la route
+`PUT /api/permissions/{agent}` et les suggestions servies avec la fiche. L'écran
+qui s'en sert est gardé par `apps/web/tests/agent-permissions.test.tsx`.

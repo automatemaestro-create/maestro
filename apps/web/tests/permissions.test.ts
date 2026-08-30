@@ -1,11 +1,13 @@
 /**
  * La règle de portée d'une entrée de politique (#262, `lib/permissions`).
  *
- * Tests différés au lot 15 pour tout le reste du ticket — sauf ceci, pour la
- * raison qui a valu son test à `lib/competences` (#256) : un appariement de
- * préfixe ne se voit ni au lint, ni au typage, ni à l'écran. Un `mcp__slack`
- * qui couvrirait `mcp__slackbot` ne se remarquerait qu'en production, sur un
- * agent qui perdrait un serveur sans que personne l'ait demandé.
+ * Ce fichier ne garde que la **règle**, pour la raison qui a valu son test à
+ * `lib/competences` (#256) : un appariement de préfixe ne se voit ni au lint, ni
+ * au typage, ni à l'écran. Un `mcp__slack` qui couvrirait `mcp__slackbot` ne se
+ * remarquerait qu'en production, sur un agent qui perdrait un serveur sans que
+ * personne l'ait demandé. Le reste du ticket était différé au lot 15 et l'a
+ * rejoint : l'**écran** dans `agent-permissions.test.tsx`, l'**écriture** côté
+ * dépôt et API dans `tests/test_permissions_ecriture.py`.
  *
  * Le pendant Python (`_correspond`) décide du même appariement à l'exécution :
  * ce qui est gardé ici est que l'écran dise la même chose que le moteur.

@@ -46,6 +46,8 @@ import {
   AGENT_OCCUPE,
   AGENT_SOURCE_DEFAUT,
   AGENT_SOURCE_PERSONNALISE,
+  AGENT_SOURCE_SURCHARGE,
+  estAgentDuCode,
   type AgentCatalogue,
   type EtatAgent,
 } from "@/lib/types";
@@ -97,12 +99,30 @@ export function iconeDuRole(role: string): Icone {
  * L'origine
  * ------------------------------------------------------------------ */
 
-/** Ce qu'on lit sous le rôle : d'où vient la fiche. */
+/**
+ * Ce qu'on lit sous le rôle : d'où vient la fiche — **trois** provenances (#259).
+ *
+ * Un agent du code dont on a surchargé les réglages de modèle n'est ni tout à
+ * fait « du code » — il ne suit plus le code sur ces points-là — ni
+ * « personnalisé », puisqu'il n'a pas été dupliqué. Le rendre « personnalisé »
+ * disait l'inverse du chantier : que le régler l'avait détaché du code, alors que
+ * son rôle, ses compétences et son playbook continuent d'en venir.
+ */
 export function libelleOrigine(source: string): string {
-  return source === AGENT_SOURCE_DEFAUT ? "du code" : "personnalisé";
+  if (source === AGENT_SOURCE_DEFAUT) return "du code";
+  if (source === AGENT_SOURCE_SURCHARGE) return "du code, surchargé";
+  return "personnalisé";
 }
 
-/** Les origines proposées au filtre — celles que l'API distingue, et pas plus. */
+/**
+ * Les origines proposées au filtre — **deux**, quand l'API en distingue trois.
+ *
+ * C'est délibéré : la question qu'on pose à ce filtre est « qui vient du code ? »,
+ * et un agent surchargé y répond oui. En faire une troisième entrée obligerait à
+ * cocher deux cases pour une seule question, et surtout ferait disparaître un
+ * agent du code de la réponse « Du code » — le contraire de ce qu'on demande.
+ * `estAgentDuCode` porte la règle, ici comme partout ailleurs.
+ */
 export const ORIGINES_AGENT: ReadonlyArray<{ valeur: string; libelle: string }> =
   [
     { valeur: AGENT_SOURCE_DEFAUT, libelle: "Du code" },
@@ -287,10 +307,20 @@ function correspond(ligne: LigneAgent, filtres: FiltresAgents): boolean {
     return false;
   }
   if (filtres.role !== "" && ligne.fiche.role !== filtres.role) return false;
-  if (filtres.origine !== "" && ligne.fiche.source !== filtres.origine) {
+  // « Du code » retient les **deux** états du code (#259) : un agent dont on a
+  // surchargé le modèle vient toujours du code, et l'égalité stricte le faisait
+  // disparaître de la seule réponse où on le cherche.
+  if (filtres.origine !== "" && !correspondOrigine(ligne.fiche.source, filtres.origine)) {
     return false;
   }
   return filtres.etat === "" || ligne.etat.cle === filtres.etat;
+}
+
+/** La source `source` répond-elle à l'origine demandée au filtre (#259) ? */
+function correspondOrigine(source: string, demandee: string): boolean {
+  return demandee === AGENT_SOURCE_DEFAUT
+    ? estAgentDuCode(source)
+    : source === demandee;
 }
 
 /** Le rang d'un état dans `ETATS_AGENT` — l'ordre du tri, écrit une seule fois. */
