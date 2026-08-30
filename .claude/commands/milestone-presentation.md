@@ -79,8 +79,11 @@ chose qui te reste à juger est la **prose**.
    Le script écrit un manifeste `captures.json` à **deux listes** :
    - `pages` — `cle`, `href`, `libelle`, `fichier`, `complet`, `erreur`. `complet: false` signale
      une page photographiée avant d'être peuplée : regarde-la avant de la retenir.
-   - `videos` — `cle`, `libelle`, `fichier`, `duree_ms`, `octets`, `complet`, `erreur`. Les
-     parcours sont déclarés dans `scripts/presentation/parcours.mjs`.
+   - `videos` — `cle`, `libelle`, `fichier`, `duree_ms`, `octets`, `gestes`, `gestes_joues`,
+     `complet`, `erreur`. Les parcours sont déclarés dans `scripts/presentation/parcours.mjs`.
+     `gestes_joues` (#830) dit combien de gestes déclarés ont réellement joué : c'est lui qui
+     sépare un clip **écourté** (au moins un geste, conservé) d'un clip **muet** (aucun geste —
+     écarté à la source, donc `fichier: null`).
 
    **Un parcours en échec laisse sa ligne** avec son erreur : c'est ainsi qu'on sait qu'il a été
    tenté. Lis-la, ne la recopie pas telle quelle — voir l'étape 6.
@@ -113,8 +116,12 @@ chose qui te reste à juger est la **prose**.
        ticket du milestone n'a touché l'écran du parcours (étape 4), le clip illustre une
        fonctionnalité que cette phase n'a pas changée. Une vignette hors sujet dessert la
        présentation ; une vidéo hors sujet la dessert deux fois plus.
-     Un parcours `complet: false` a été **écourté** (page non prête, geste en échec) mais son clip
-     existe : regarde-le avant de le retenir — il montre ce qu'il a eu le temps de montrer.
+     Un parcours `complet: false` a été **écourté** (un geste en échec, ou le plafond du clip
+     atteint) mais son clip existe et il a joué `gestes_joues` gestes sur `gestes` : regarde-le
+     avant de le retenir — il montre ce qu'il a eu le temps de montrer. Une page qui n'était pas
+     prête n'écourte plus rien depuis #830 : les gestes sont joués quand même, et un parcours qui
+     n'en a joué **aucun** n'arrive pas jusqu'ici — son clip est écarté à la source, il est déjà
+     couvert par la première puce.
      Renseigne `affiche` seulement si tu veux imposer une image de repli : sans elle, le rendu
      prend la capture de même clé, et à défaut un cartouche qui nomme le clip.
 
