@@ -71,6 +71,7 @@ import {
   MCP_MODE_SANS_SECRET,
   MCP_STATUT_DEPRECIE,
   type EntreeRegistreMcp,
+  type IntegrationPoolMcp,
   type ProvenanceAdmise,
   type ProvenanceDecouverte,
   type ProvenanceRegistreMcp,
@@ -152,7 +153,14 @@ export function BibliothequeMcp({
   onAjout,
 }: {
   idsPool: Set<string>;
-  onAjout: () => void;
+  /**
+   * L'ajout au pool a abouti — avec **l'intégration créée** (#263). L'écran
+   * Intégrations n'en fait rien (il recharge le pool entier), la fiche d'un
+   * agent en a besoin : « ajouter puis activer dans la foulée » suppose de
+   * savoir *quel id* activer, et le redemander au pool serait une seconde
+   * vérité à rapprocher de la première.
+   */
+  onAjout: (integration: IntegrationPoolMcp) => void;
 }) {
   const [q, setQ] = useState("");
   const [entrees, setEntrees] = useState<EntreeRegistreMcp[]>([]);
@@ -328,9 +336,9 @@ export function BibliothequeMcp({
               basculer={() =>
                 setOuverte((o) => (o === entree.id ? null : entree.id))
               }
-              onAjout={() => {
+              onAjout={(integration) => {
                 setOuverte(null);
-                onAjout();
+                onAjout(integration);
               }}
               onAdmission={apresAdmission}
             />
@@ -487,7 +495,7 @@ function EntreeBibliotheque({
   dejaAuPool: boolean;
   ouverte: boolean;
   basculer: () => void;
-  onAjout: () => void;
+  onAjout: (integration: IntegrationPoolMcp) => void;
   onAdmission: () => void;
 }) {
   // ⚠ `curee` et non `source` : c'est le champ du garde-fou (voir l'en-tête).
@@ -802,7 +810,7 @@ function FormulaireConfiguration({
 }: {
   entree: EntreeRegistreMcp;
   dejaAuPool: boolean;
-  onAjout: () => void;
+  onAjout: (integration: IntegrationPoolMcp) => void;
 }) {
   const [valeurs, setValeurs] = useState<Record<string, string>>({});
   const [echeance, setEcheance] = useState("");
@@ -830,8 +838,7 @@ function FormulaireConfiguration({
             : {}),
         }))
         .filter((s) => s.valeur !== "");
-      await ajouterIntegrationPoolMcp({ registre_id: entree.id, secrets });
-      onAjout();
+      onAjout(await ajouterIntegrationPoolMcp({ registre_id: entree.id, secrets }));
     } catch (e) {
       setErreur(e instanceof Error ? e.message : String(e));
       setEnCours(false);

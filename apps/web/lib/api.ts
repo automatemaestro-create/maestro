@@ -30,6 +30,7 @@ import type {
   IntegrationPoolMcp,
   JournalAdmissionsMcp,
   LancementExecution,
+  MigrationMcp,
   PageExplorateur,
   PageJournal,
   PasSerie,
@@ -955,6 +956,24 @@ export function definirActivationsMcp(
     { integrations },
     "activation refusée",
     "PUT",
+  );
+}
+
+/**
+ * Migre la déclaration **héritée** `core/mcp/{agent}.json` vers le pool projet
+ * (`POST /api/mcp/migration/{agent}`, #263) : ses serveurs y entrent, l'agent les
+ * active et le fichier part. L'issue du bloc « hérités », en un geste.
+ *
+ * **Additive** : le reste du pool et les autres agents ne bougent pas, et un
+ * serveur déjà au pool sous la même déclaration est repris plutôt que dupliqué.
+ * Aucun secret n'est redemandé — une déclaration héritée porte déjà ses
+ * références `${VAR}`, qui se résolvent au montage comme avant.
+ */
+export function migrerDeclarationsMcp(agent: string): Promise<MigrationMcp> {
+  return envoyerJsonEtLire<MigrationMcp>(
+    `/api/mcp/migration/${encodeURIComponent(agent)}`,
+    {},
+    "migration refusée",
   );
 }
 

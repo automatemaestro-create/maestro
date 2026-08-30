@@ -688,6 +688,25 @@ export type PoolMcp = {
 };
 
 /**
+ * Ce qu'une migration héritée → pool a fait (`POST /api/mcp/migration/{agent}`,
+ * #263) : les intégrations **créées** au pool, celles qui y étaient déjà et ont
+ * été **reprises** (même déclaration — le partage entre agents que le pool
+ * existe pour permettre), l'ensemble activé de l'agent après coup, et le sort du
+ * fichier hérité.
+ *
+ * Deux listes et non un total : « 2 intégrations ajoutées au projet » serait
+ * faux d'une migration qui en a créé une et retrouvé l'autre, et c'est
+ * précisément ce que l'écran doit savoir dire.
+ */
+export type MigrationMcp = {
+  agent: string;
+  ajoutees: IntegrationPoolMcp[];
+  reprises: IntegrationPoolMcp[];
+  activations: string[];
+  fichier_retire: boolean;
+};
+
+/**
  * Le journal des admissions (`GET /api/mcp/admissions`, #678).
  *
  * Deux listes plutôt qu'une à filtrer, parce que ce ne sont pas les mêmes
@@ -743,7 +762,11 @@ export type PolitiquePermissions = {
  * `fournisseur` est déclaratif au POC (le moteur est mono-fournisseur).
  * `mcp_serveurs` (#104) liste les serveurs MCP **effectifs** montés pour l'agent
  * (héritage `<agent>.json` composé avec le pool activé) ; `mcp_erreur` porte la
- * cause si une source est invalide. `mcp_pool` (#133) est le **pool projet** des
+ * cause si une source est invalide. `mcp_herites` (#263) porte les serveurs de la
+ * **seule** déclaration héritée — ce que la migration ferait passer au pool, servi
+ * plutôt que déduit : les retrancher des serveurs montés se fait par leur *nom*,
+ * et une intégration renommée à l'ajout ferait alors réapparaître l'héritée.
+ * `mcp_pool` (#133) est le **pool projet** des
  * intégrations configurables (avec l'état de leurs secrets), `mcp_pool_erreur`
  * la cause si le pool stocké est invalide, et `mcp_activations` les ids du pool
  * **activés** pour cet agent — de quoi remplacer l'affichage lecture seule par
@@ -765,6 +788,7 @@ export type AgentCatalogue = {
   cree_le: string | null;
   modifie_le: string | null;
   mcp_serveurs: ServeurMcp[];
+  mcp_herites: ServeurMcp[];
   mcp_erreur: string | null;
   mcp_pool: IntegrationPoolMcp[];
   mcp_pool_erreur: string | null;

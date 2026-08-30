@@ -13,12 +13,10 @@
 
 import { useRouter } from "next/navigation";
 
-import {
-  EditeurAgent,
-  McpEtPermissionsAgent,
-} from "@/components/EditeurAgent";
+import { EditeurAgent } from "@/components/EditeurAgent";
 import { EditeurPlaybook } from "@/components/EditeurPlaybook";
 import { FilChat } from "@/components/FilChat";
+import { McpEtPermissionsAgent } from "@/components/OngletMcpAgent";
 import type { CleOngletAgent } from "@/lib/agents";
 
 export function ContenuOngletAgent({

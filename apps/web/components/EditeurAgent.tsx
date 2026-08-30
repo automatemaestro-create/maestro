@@ -5,14 +5,19 @@
  * le formulaire de définition — rôle, compétences, fournisseur/modèle,
  * playbook — branché sur l'API du lot 1 (#72, `/api/catalogue`).
  *
- * Trois entrées, une par facette de la fiche agent (#190) : `CreationAgent`
+ * Deux entrées, une par facette de la **définition** (#190) : `CreationAgent`
  * (nouvel agent personnalisé, `POST` — sur **son propre écran** depuis #254,
- * `components/CreationAgentEcran`), `EditeurAgent` (onglet Profil — fiche
+ * `components/CreationAgentEcran`) et `EditeurAgent` (onglet Profil — fiche
  * existante, modification `PUT` et suppression `DELETE` d'un agent
  * personnalisé ; les agents par défaut, définis par le code, sont montrés en
- * lecture seule, leur playbook s'éditant sur l'onglet Playbook) et
- * `McpEtPermissionsAgent` (onglet MCP & permissions). Un agent créé ou modifié
- * vaut pour les moteurs construits ensuite.
+ * lecture seule, leur playbook s'éditant sur l'onglet Playbook). Un agent créé
+ * ou modifié vaut pour les moteurs construits ensuite.
+ *
+ * L'onglet **MCP & permissions** vivait ici jusqu'à #263 et a son fichier
+ * (`components/OngletMcpAgent`) : il n'est plus une vue de la fiche mais
+ * l'endroit où les intégrations d'un agent se règlent — bibliothèque, ajout,
+ * migration des déclarations héritées. Ce fichier-ci reste le formulaire de
+ * définition.
  *
  * Depuis #257 la création a **deux entrées** et non plus une : les champs qu'on
  * remplit, et une intention en une phrase que l'assistant transforme en
@@ -27,11 +32,8 @@ import { ChampJetons } from "@/components/ChampJetons";
 import {
   IconeAlerte,
   IconeAssistant,
-  IconeMcp,
-  IconePermissions,
   IconePlaybooks,
 } from "@/components/Icones";
-import { Infobulle } from "@/components/Infobulle";
 import { Bouton, EnTeteSection, classesCarte } from "@/components/Primitives";
 import {
   CHEMIN_CREATION_AGENT,
@@ -43,7 +45,6 @@ import {
   chargerCatalogue,
   chargerFournisseurs,
   creerAgent,
-  definirActivationsMcp,
   genererDefinitionAgent,
   modifierAgent,
   supprimerAgent,
@@ -63,11 +64,7 @@ import {
   type DefinitionAgent,
   type DefinitionAgentProposee,
   type FournisseurCatalogue,
-  type IntegrationPoolMcp,
-  type ServeurMcp,
 } from "@/lib/types";
-
-import { Interrupteur } from "./parametres/SectionParametres";
 
 /** Miroir du slug accepté par le backend (`_NOM_AGENT`, maestro/agents/store.py). */
 const SLUG_NOM = /^[a-z0-9][a-z0-9_-]*$/;
@@ -1284,372 +1281,6 @@ export function EditeurAgent({
         )}
       </section>
     </div>
-  );
-}
-
-/**
- * L'onglet MCP & permissions d'un agent (#190) : ce que l'agent peut appeler —
- * les serveurs MCP qu'on lui active, et la politique d'outils que le moteur
- * applique à l'exécution.
- *
- * Ces deux sections étaient reléguées en bas de la fiche du catalogue, après le
- * formulaire de définition et son bouton de suppression : elles n'avaient de
- * page nulle part. Le contenu est inchangé — seul l'endroit l'est.
- */
-export function McpEtPermissionsAgent({ nom }: { nom: string }) {
-  const [fiche, setFiche] = useState<AgentCatalogueDetail | null>(null);
-  const [chargement, setChargement] = useState(true);
-  const [erreur, setErreur] = useState<string | null>(null);
-
-  // Chargement différé d'un tick (même mécanique que useControlTower) :
-  // l'effet lui-même ne déclenche aucun setState synchrone.
-  useEffect(() => {
-    let abandonne = false;
-    const tick = setTimeout(() => {
-      chargerAgentCatalogue(nom)
-        .then((nouvelle) => {
-          if (!abandonne) setFiche(nouvelle);
-        })
-        .catch((e) => {
-          if (!abandonne) setErreur(e instanceof Error ? e.message : String(e));
-        })
-        .finally(() => {
-          if (!abandonne) setChargement(false);
-        });
-    }, 0);
-    return () => {
-      abandonne = true;
-      clearTimeout(tick);
-    };
-  }, [nom]);
-
-  if (chargement) {
-    return <p className="text-sm text-neutral-500">Chargement de la fiche…</p>;
-  }
-  if (fiche === null) {
-    return (
-      <p className="text-sm text-rose-600 dark:text-rose-400" role="alert">
-        Fiche illisible : {erreur}
-      </p>
-    );
-  }
-  return (
-    <div className="flex min-w-0 flex-1 flex-col gap-4">
-      <SectionServeursMcp fiche={fiche} />
-      <SectionPermissions fiche={fiche} />
-    </div>
-  );
-}
-
-/**
- * La politique de permissions d'un agent (#110), en lecture seule : la
- * politique allow/ask/deny par outil que le moteur applique à l'exécution
- * (`core/permissions/<agent>.json`, versionnée avec le dépôt). Une politique
- * invalide affiche sa cause exacte.
- *
- * Les **trois** listes sont rendues depuis #580, `ask` comprise, alors même
- * qu'aucun appelant ne consulte encore le verdict d'arbitrage : n'en montrer
- * que deux ferait passer un outil arbitré pour un outil sans contrainte,
- * puisqu'il n'apparaîtrait dans aucune.
- *
- * L'absence de politique se dit désormais explicitement : la section était
- * muette quand tout allait bien, ce qui se lisait comme un panneau de plus tout
- * en bas de la fiche du catalogue ; sur son propre onglet (#190), le silence
- * passerait pour un chargement raté.
- */
-function SectionPermissions({ fiche }: { fiche: AgentCatalogueDetail }) {
-  const sansPolitique =
-    fiche.permissions_erreur === null && fiche.permissions === null;
-  return (
-    <section aria-label={`Permissions de ${fiche.nom}`}>
-      <EnTeteSection
-        niveau={3}
-        titre="Permissions"
-        icone={IconePermissions}
-        className="mb-2"
-      />
-      {fiche.permissions_erreur !== null ? (
-        <p
-          role="alert"
-          className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800 dark:border-rose-900 dark:bg-rose-950 dark:text-rose-300"
-        >
-          Politique invalide : {fiche.permissions_erreur}
-        </p>
-      ) : sansPolitique ? (
-        <p className="text-xs text-neutral-500 dark:text-neutral-400">
-          Aucune politique dédiée : l&apos;agent dispose de tous les outils que
-          son profil expose.
-        </p>
-      ) : (
-        fiche.permissions !== null && (
-          <div className="flex flex-col gap-2">
-            <ListeEntreesPolitique
-              libelle="allow"
-              vide="vide — tout ce que le profil expose est permis (hors deny)"
-              entrees={fiche.permissions.allow}
-              classeEntree="bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
-            />
-            <ListeEntreesPolitique
-              libelle="ask"
-              vide="vide — aucun outil soumis à arbitrage"
-              entrees={fiche.permissions.ask}
-              classeEntree="bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
-            />
-            <ListeEntreesPolitique
-              libelle="deny"
-              vide="vide — aucun outil interdit"
-              entrees={fiche.permissions.deny}
-              classeEntree="bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300"
-            />
-          </div>
-        )
-      )}
-      <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
-        Politique effective, appliquée à l&apos;exécution (deny l&apos;emporte
-        sur ask, qui l&apos;emporte sur allow ; un appel refusé est tracé au fil
-        d&apos;activité sans condamner le run). Déclarée dans{" "}
-        <code className="font-mono">core/permissions/{fiche.nom}.json</code> —
-        lecture seule à ce lot.
-      </p>
-    </section>
-  );
-}
-
-/** Une liste d'entrées (allow, ask ou deny) de la politique, ou son état « vide ». */
-function ListeEntreesPolitique({
-  libelle,
-  vide,
-  entrees,
-  classeEntree,
-}: {
-  libelle: string;
-  vide: string;
-  entrees: string[];
-  classeEntree: string;
-}) {
-  return (
-    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xs">
-      <span className="font-mono font-medium text-neutral-600 dark:text-neutral-400">
-        {libelle}
-      </span>
-      {entrees.length === 0 ? (
-        <span className="text-neutral-500 dark:text-neutral-400">{vide}</span>
-      ) : (
-        entrees.map((entree) => (
-          <code
-            key={entree}
-            className={`rounded-full px-2 py-0.5 font-mono ${classeEntree}`}
-          >
-            {entree}
-          </code>
-        ))
-      )}
-    </div>
-  );
-}
-
-/**
- * Les serveurs MCP d'un agent (#133) : la section est passée **en écriture**.
- * Chaque intégration du **pool projet** (configurée une fois depuis les
- * Paramètres) porte un interrupteur qui l'active ou la désactive **pour cet
- * agent** — ce qui remplace l'ancien affichage lecture seule. Les déclarations
- * **héritées** (`core/mcp/<agent>.json`) restent affichées en lecture seule
- * pendant la migration. Une source invalide affiche sa cause exacte.
- */
-function SectionServeursMcp({ fiche }: { fiche: AgentCatalogueDetail }) {
-  const [activations, setActivations] = useState<string[]>(
-    fiche.mcp_activations,
-  );
-  const [enCours, setEnCours] = useState<string | null>(null);
-  const [erreur, setErreur] = useState<string | null>(null);
-
-  const basculer = async (id: string) => {
-    const cible = activations.includes(id)
-      ? activations.filter((a) => a !== id)
-      : [...activations, id];
-    setEnCours(id);
-    setErreur(null);
-    try {
-      await definirActivationsMcp(fiche.nom, cible);
-      setActivations(cible);
-    } catch (e) {
-      setErreur(e instanceof Error ? e.message : String(e));
-    } finally {
-      setEnCours(null);
-    }
-  };
-
-  // Les serveurs hérités (fichier `<agent>.json`) : ceux montés qui ne viennent
-  // pas d'une intégration du pool activée — encore en lecture seule (migration).
-  const nomsPoolActives = new Set(
-    fiche.mcp_pool
-      .filter((i) => activations.includes(i.id))
-      .map((i) => i.serveur.nom),
-  );
-  const herites = fiche.mcp_serveurs.filter((s) => !nomsPoolActives.has(s.nom));
-
-  return (
-    <section aria-label={`Serveurs MCP de ${fiche.nom}`}>
-      <EnTeteSection
-        niveau={3}
-        titre="Serveurs MCP"
-        icone={IconeMcp}
-        className="mb-2"
-      />
-      {fiche.mcp_pool_erreur !== null && (
-        <p
-          role="alert"
-          className="mb-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800 dark:border-rose-900 dark:bg-rose-950 dark:text-rose-300"
-        >
-          Pool invalide : {fiche.mcp_pool_erreur}
-        </p>
-      )}
-      {fiche.mcp_pool.length === 0 ? (
-        <p className="text-xs text-neutral-500 dark:text-neutral-400">
-          Aucune intégration au pool projet. Ajoutez-en depuis l&apos;écran{" "}
-          <Link
-            href="/integrations"
-            className="font-medium text-emerald-700 underline dark:text-emerald-400"
-          >
-            Intégrations
-          </Link>
-          , puis activez-les ici pour cet agent.
-        </p>
-      ) : (
-        <ul className="flex flex-col gap-2">
-          {fiche.mcp_pool.map((integration) => (
-            <LigneActivation
-              key={integration.id}
-              integration={integration}
-              actif={activations.includes(integration.id)}
-              enCours={enCours === integration.id}
-              basculer={() => void basculer(integration.id)}
-            />
-          ))}
-        </ul>
-      )}
-      {erreur && (
-        <p className="mt-2 text-xs text-rose-600 dark:text-rose-400" role="alert">
-          {erreur}
-        </p>
-      )}
-      {fiche.mcp_erreur !== null && (
-        <p
-          role="alert"
-          className="mt-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800 dark:border-rose-900 dark:bg-rose-950 dark:text-rose-300"
-        >
-          Déclaration invalide : {fiche.mcp_erreur}
-        </p>
-      )}
-      {herites.length > 0 && (
-        <div className="mt-3">
-          <p className="mb-1 text-xs font-medium text-neutral-500 dark:text-neutral-400">
-            Hérités de{" "}
-            <code className="font-mono">core/mcp/{fiche.nom}.json</code> —
-            lecture seule (à migrer vers le pool)
-          </p>
-          <ul className="flex flex-col gap-2">
-            {herites.map((serveur) => (
-              <li
-                key={serveur.nom}
-                className="rounded-md border border-neutral-200 bg-white px-3 py-2 text-xs dark:border-neutral-800 dark:bg-neutral-900"
-              >
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-medium">{serveur.nom}</span>
-                  <span className="rounded-full bg-neutral-100 px-2 py-0.5 font-mono text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
-                    {serveur.type}
-                  </span>
-                  {serveur.optionnel ? (
-                    <Infobulle
-                      texte="Serveur omis du montage (sans échec) tant que son secret n'est pas fourni"
-                      className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
-                    >
-                      optionnel
-                    </Infobulle>
-                  ) : null}
-                  <code className="truncate font-mono text-neutral-600 dark:text-neutral-400">
-                    {serveur.type === "stdio"
-                      ? [serveur.commande, ...serveur.args].join(" ")
-                      : serveur.url}
-                  </code>
-                </div>
-                <CouplesMasques
-                  libelle={serveur.type === "stdio" ? "env" : "headers"}
-                  valeurs={
-                    serveur.type === "stdio" ? serveur.env : serveur.headers
-                  }
-                />
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </section>
-  );
-}
-
-/** Un interrupteur d'activation d'une intégration du pool pour l'agent (#133). */
-function LigneActivation({
-  integration,
-  actif,
-  enCours,
-  basculer,
-}: {
-  integration: IntegrationPoolMcp;
-  actif: boolean;
-  enCours: boolean;
-  basculer: () => void;
-}) {
-  // Un secret manquant ou expiré : l'intégration s'active, mais on prévient
-  // qu'elle ne montera pas tant que son secret n'est pas (re)configuré.
-  const secretManquant = integration.secrets.find((s) => !s.present || !s.valide);
-  return (
-    <li className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-neutral-200 bg-white px-3 py-2 text-xs dark:border-neutral-800 dark:bg-neutral-900">
-      <Interrupteur
-        libelle={`Activer ${integration.serveur.nom} pour cet agent`}
-        actif={actif}
-        desactive={enCours}
-        basculer={basculer}
-      />
-      <span className="font-medium">{integration.serveur.nom}</span>
-      <span className="rounded-full bg-neutral-100 px-2 py-0.5 font-mono text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
-        {integration.serveur.type}
-      </span>
-      {actif && secretManquant && (
-        <Infobulle
-          texte="Configurer le secret sur l'écran Intégrations"
-          className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
-        >
-          secret à configurer
-        </Infobulle>
-      )}
-    </li>
-  );
-}
-
-/** Les paires clé → valeur (masquée) d'un serveur : env (stdio) ou headers (distant). */
-function CouplesMasques({
-  libelle,
-  valeurs,
-}: {
-  libelle: string;
-  valeurs: ServeurMcp["env"];
-}) {
-  const couples = Object.entries(valeurs);
-  if (couples.length === 0) {
-    return null;
-  }
-  return (
-    <dl className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-neutral-500 dark:text-neutral-400">
-      {couples.map(([cle, valeur]) => (
-        <div key={cle} className="flex gap-1">
-          <dt className="font-mono">
-            {libelle}.{cle}
-          </dt>
-          <dd className="font-mono">= {valeur}</dd>
-        </div>
-      ))}
-    </dl>
   );
 }
 

@@ -842,6 +842,7 @@ export function ficheCatalogueFactice(
     cree_le: null,
     modifie_le: null,
     mcp_serveurs: [],
+    mcp_herites: [],
     mcp_erreur: null,
     mcp_pool: [],
     mcp_pool_erreur: null,
