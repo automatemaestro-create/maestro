@@ -28,6 +28,11 @@
  * **Même règle pour un parcours** : il laisse sa ligne avec son erreur, les
  * autres parcours continuent, et les captures ne s'en aperçoivent pas. Le code
  * de retour ne dépend donc que des captures.
+ *
+ * Un parcours qui n'a joué **aucun** geste va plus loin : sa ligne reste, mais
+ * son clip n'est pas sauvegardé (#830). Un enregistrement immobile ne démontre
+ * rien, et le proposer à la sélection revenait à faire passer la panne pour une
+ * démonstration — c'est ainsi que le tournage de #545 est mort en silence.
  */
 
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
@@ -56,16 +61,54 @@ const VIEWPORT = { width: 1440, height: 900 };
 /** Délai laissé au scénario de démo pour peupler l'écran une fois les données là (ms). */
 const REPOS_MS = 1500;
 
-/** Attente max du signal « page prête » (WebSocket ouverte, plus de placeholder). */
+/** Attente max du signal « page prête » pour une CAPTURE (WebSocket ouverte, plus de placeholder). */
 const PRET_MS = 20_000;
 
 /**
- * Marqueurs de l'UI qui disent qu'une page est vraiment prête à être photographiée :
- * la barre supérieure affiche « Temps réel connecté » (WebSocket ouverte) et plus aucun
- * placeholder « Chargement… » ne subsiste. Sans cette attente, les captures montrent l'état
- * transitoire « Reconnexion… / Chargement de l'état… » — c'est-à-dire rien.
+ * La même attente pour un PARCOURS — une tranche courte, et jamais le plafond du clip (#830).
+ *
+ * Elle valait `PRET_MS` jusqu'ici, borné par ce qu'il restait du clip : quand le signal
+ * n'arrivait pas, le `waitForFunction` **consommait tout le budget** avant le premier geste et
+ * le clip ne montrait qu'un écran immobile. Une tranche courte suffit ici parce que la série de
+ * captures a déjà visité chaque route (serveur réchauffé), et surtout parce que ce n'est plus
+ * une condition d'entrée : les gestes sont joués même si elle expire, chacun avec sa propre
+ * patience — un `attendre` s'ancre sur un texte de l'écran, c'est lui qui sait dire si la page
+ * est là.
  */
-const MARQUEUR_CONNECTE = "Temps réel connecté";
+const PRET_PARCOURS_MS = 5_000;
+
+/**
+ * Ce qui dit qu'une page de la Control Tower est prête à être photographiée ou filmée.
+ *
+ * ⚠ **Le signal a changé de sens avec #830**, et c'est la moitié qui compte. Il s'est appuyé de
+ * #142 à #829 sur la présence de « Temps réel connecté » dans la barre supérieure — pastille que
+ * **#691 a retirée** (« ce qui va bien ne s'affiche plus »), si bien que le signal n'arrivait
+ * plus jamais : 10/10 captures en « données incomplètes » et 5/5 parcours immobiles, sans un
+ * code de retour rouge pour le dire. Le marqueur ne reviendra pas — `apps/web/tests/navigation`
+ * garde désormais son **absence**.
+ *
+ * Trois conditions, dont deux sont des absences : c'est pourquoi la première ne peut pas manquer.
+ *
+ *   1. `ANCRE_CONTENU` — le `<main id>` du shell (`ID_CONTENU_PRINCIPAL`, `components/Shell`),
+ *      **avec du texte dedans**. Positive, et elle porte tout le reste : sans elle, un document
+ *      vide (bootstrap client planté, porte d'entrée de #279 faute de projet actif) satisferait
+ *      les deux absences suivantes et se ferait passer pour une page prête.
+ *   2. `MARQUEUR_COUPURE` **absent** — la pastille que #691 a gardée, la seule qui apprenne encore
+ *      quelque chose : elle dit la WebSocket fermée. Son absence est donc « temps réel établi »,
+ *      c'est-à-dire exactement ce que l'ancien marqueur disait à l'endroit.
+ *   3. `MARQUEUR_CHARGEMENT` absent — plus aucun placeholder « Chargement… » en attente de données.
+ *
+ * Les deux marqueurs sont épinglés par la suite de `apps/web` — `Reconnexion…` dans les **deux
+ * sens** (`navigation.test.tsx`), `ID_CONTENU_PRINCIPAL` importé par `a11y` et `sobriete` —, là où
+ * « Temps réel connecté » ne l'était par personne du côté qui le rendait. `tests/test_presentation`
+ * referme le lien depuis ici (le script attend ce que l'UI rend, prouvé sur le cas de #691).
+ *
+ * Note de mesure : le texte de la pastille vit sous `hidden sm:inline`, donc hors de `innerText`
+ * en dessous de 640 px. Le `VIEWPORT` de la série fait 1440 px de large — la condition 2 est lue
+ * à la largeur où elle a un sens, et n'a pas à être vraie ailleurs.
+ */
+const ANCRE_CONTENU = "contenu-principal";
+const MARQUEUR_COUPURE = "Reconnexion…";
 const MARQUEUR_CHARGEMENT = "Chargement";
 
 /**
@@ -225,17 +268,20 @@ async function nouveauContexte(navigateur, extra = {}) {
 }
 
 /**
- * Attend le signal « page prête » — WebSocket ouverte, plus de placeholder.
- * Lève si le signal ne vient pas : c'est à l'appelant de décider s'il
- * photographie/filme quand même.
+ * Attend le signal « page prête » (voir ANCRE_CONTENU). Lève si le signal ne
+ * vient pas : c'est à l'appelant de décider s'il photographie/filme quand même.
  */
 async function attendrePret(page, delai) {
   await page.waitForFunction(
-    ([connecte, chargement]) => {
+    ([ancre, coupure, chargement]) => {
+      const contenu = document.getElementById(ancre);
+      // La condition positive d'abord, et seule à pouvoir répondre « non » sur
+      // un document vide : les deux absences qui suivent y seraient vraies.
+      if (contenu === null || contenu.innerText.trim() === "") return false;
       const texte = document.body.innerText;
-      return texte.includes(connecte) && !texte.includes(chargement);
+      return !texte.includes(coupure) && !texte.includes(chargement);
     },
-    [MARQUEUR_CONNECTE, MARQUEUR_CHARGEMENT],
+    [ANCRE_CONTENU, MARQUEUR_COUPURE, MARQUEUR_CHARGEMENT],
     { timeout: delai },
   );
 }
@@ -356,21 +402,29 @@ async function jouerGeste(page, geste, echeance) {
 }
 
 /**
- * Joue la suite de gestes. Rend `null` si elle est allée au bout, sinon le motif
- * de l'arrêt — plafond atteint, ou geste en échec. Ne lève jamais : un parcours
- * écourté garde son clip, qui montre ce qu'il a eu le temps de montrer.
+ * Joue la suite de gestes et rend `{ joues, motif }` — le **nombre** de gestes
+ * allés au bout, et `null` si la suite entière a joué, sinon le motif de l'arrêt
+ * (plafond atteint, ou geste en échec). Ne lève jamais.
+ *
+ * C'est le compte qui est neuf (#830), et il porte la distinction que le seul
+ * `motif` ne savait pas faire : un clip **écourté** en cours de route a montré
+ * quelque chose et se garde ; un clip qui n'a joué **aucun** geste ne démontre
+ * rien et n'a pas à être proposé à la sélection. Les deux rendaient jusqu'ici la
+ * même ligne de manifeste, `complet: false`.
  */
 async function jouerGestes(page, gestes, echeance) {
+  let joues = 0;
   for (const [rang, geste] of gestes.entries()) {
     const position = `geste ${rang + 1}/${gestes.length}`;
-    if (reste(echeance) <= 0) return `durée plafonnée atteinte au ${position}`;
+    if (reste(echeance) <= 0) return { joues, motif: `durée plafonnée atteinte au ${position}` };
     try {
       await jouerGeste(page, geste, echeance);
     } catch (erreur) {
-      return `${position} (${geste.type}) : ${erreur.message}`;
+      return { joues, motif: `${position} (${geste.type}) : ${erreur.message}` };
     }
+    joues += 1;
   }
-  return null;
+  return { joues, motif: null };
 }
 
 /**
@@ -383,10 +437,23 @@ async function jouerGestes(page, gestes, echeance) {
  * comprises. C'est ce que « durée plafonnée par clip » veut dire, et c'est aussi
  * ce qui empêche une page qui ne se peuple jamais de tenir la caméra vingt
  * secondes sur un écran vide.
+ *
+ * ⚠ **La page prête n'est plus une condition d'entrée des gestes** (#830). Elle
+ * l'était, avec une raison qui se tenait — « les gestes s'ancrent sur des textes
+ * que cette page n'a pas, les jouer ne ferait que consommer le plafond en
+ * échouant » — mais qui supposait le signal juste. Il ne l'était plus, et les
+ * deux moitiés du défaut se répondaient : l'attente mangeait tout le budget,
+ * puis son échec abandonnait les gestes. Le clip sortait immobile, conservé, et
+ * `complet: false` ne le distinguait pas d'un clip écourté à mi-parcours.
+ * Aujourd'hui l'attente est **courte** (`PRET_PARCOURS_MS`), son échec n'est
+ * qu'un avertissement, et c'est le **compte de gestes joués** qui tranche :
+ * aucun geste ⇒ le clip est **écarté** (`fichier: null`, ligne conservée avec sa
+ * cause) plutôt que proposé à la sélection.
  */
 async function filmer(navigateur, base, sortie, dossierBrut, parcours) {
   const { cle, libelle, route } = parcours;
   const plafond = parcours.duree_max_ms ?? DUREE_MAX_MS_DEFAUT;
+  const gestes = parcours.gestes ?? [];
   const fichier = `${cle}.webm`;
   const url = new URL(route, base).href;
   const debut = Date.now();
@@ -399,38 +466,56 @@ async function filmer(navigateur, base, sortie, dossierBrut, parcours) {
     });
     const page = await contexte.newPage();
     const echeance = Date.now() + plafond;
-    let motif = null;
+    let alerte = null;
     try {
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: patience(echeance) });
-      await attendrePret(page, patience(echeance, PRET_MS));
+      await attendrePret(page, patience(echeance, PRET_PARCOURS_MS));
     } catch (erreur) {
-      // Le clip est conservé — même règle que la capture d'une page à moitié
-      // peuplée : il montre au moins ce que la page a su rendre. Les gestes,
-      // eux, sont abandonnés : ils s'ancrent sur des textes que cette page n'a
-      // pas, et les jouer ne ferait que consommer le plafond en échouant.
-      motif = `page non prête : ${erreur.message}`;
+      // Consigné, jamais bloquant : on tente les gestes quand même. S'ils
+      // jouent, la page était là et le signal seul avait tort ; s'ils ne
+      // jouent pas, c'est le compte ci-dessous qui écarte le clip — et il dit
+      // « aucun geste joué », ce qu'une attente en échec ne prouvait pas.
+      alerte = `page non prête : ${erreur.message}`;
     }
-    motif = motif ?? (await jouerGestes(page, parcours.gestes ?? [], echeance));
+    const { joues, motif } = await jouerGestes(page, gestes, echeance);
 
     const video = page.video();
     await page.close();
     await contexte.close();
     contexte = null;
     if (!video) throw new Error("aucun enregistrement ouvert pour cette page");
+
+    const duree = Date.now() - debut;
+    const commun = { cle, libelle, duree_ms: duree, gestes: gestes.length, gestes_joues: joues };
+    if (alerte) console.error(`[parcours] ⚠ ${libelle} : ${alerte}`);
+
+    // Un parcours qui n'a joué aucun de ses gestes ne démontre rien : le clip
+    // n'est pas sauvegardé du tout. La LIGNE reste, avec sa cause — c'est la
+    // règle de #545 (« jamais tenté » et « tenté, échoué » restent distincts),
+    // et `build.py` sait déjà traverser un `fichier: null` sans rien inventer.
+    if (gestes.length > 0 && joues === 0) {
+      await video.delete().catch(() => {});
+      const cause = [motif, alerte].filter(Boolean).join(" — ") || "cause inconnue";
+      const erreur = `aucun geste joué (0/${gestes.length}) : ${cause}`;
+      console.error(`[parcours] ⚠ ${libelle} : ${erreur} — clip écarté`);
+      return { ...commun, fichier: null, octets: null, complet: false, erreur };
+    }
+
     await video.saveAs(join(sortie, fichier));
     await video.delete().catch(() => {});
 
     const { size } = await stat(join(sortie, fichier));
-    const duree = Date.now() - debut;
-    if (motif) console.error(`[parcours] ⚠ ${libelle} : ${motif} — clip écourté, conservé`);
+    if (motif) {
+      console.error(
+        `[parcours] ⚠ ${libelle} : ${motif} — clip écourté (${joues}/${gestes.length}), conservé`,
+      );
+    }
     console.error(
-      `[parcours] ${libelle} → ${fichier} (${(duree / 1000).toFixed(1)} s, ${Math.round(size / 1024)} Kio)`,
+      `[parcours] ${libelle} → ${fichier} (${(duree / 1000).toFixed(1)} s, ${Math.round(size / 1024)} Kio, ${joues}/${gestes.length} geste(s))`,
     );
     return {
-      cle,
-      libelle,
+      ...commun,
       fichier,
-      duree_ms: duree,
       octets: size,
       complet: motif === null,
       erreur: motif,
@@ -444,6 +529,12 @@ async function filmer(navigateur, base, sortie, dossierBrut, parcours) {
       fichier: null,
       duree_ms: Date.now() - debut,
       octets: null,
+      gestes: gestes.length,
+      // `null` et non `0` : rien n'a été **joué** parce que rien n'a pu
+      // **commencer** — l'enregistrement n'a jamais ouvert. « Zéro geste sur
+      // une page qu'on a vue » et « aucune page » sont deux pannes qui ne se
+      // soignent pas pareil, et le bilan de fin les nomme séparément.
+      gestes_joues: null,
       complet: false,
       erreur: erreur.message,
     };
@@ -539,6 +630,17 @@ async function principal() {
   const filmes = videos.filter((v) => v.fichier).length;
   if (args.videos) {
     console.error(`[parcours] ${filmes}/${videos.length} parcours filmé(s) dans ${sortie}`);
+    // Les muets sont NOMMÉS, et séparément du compte (#830) : « 0/5 filmés » se
+    // lit comme une panne de tournage, alors que la cause est ailleurs — la page
+    // ne rendait pas ce que les gestes visaient. Le code de retour reste celui
+    // des captures ; ce qui manquait n'était pas un rouge, c'était une phrase.
+    const muets = videos.filter((v) => !v.fichier && v.gestes_joues === 0 && v.gestes > 0);
+    if (muets.length > 0) {
+      console.error(
+        `[parcours] ⚠ ${muets.length} parcours n'a/n'ont joué aucun geste — clip(s) écarté(s) : ` +
+          muets.map((v) => v.cle).join(", "),
+      );
+    }
   }
   // Zéro capture = échec : l'appelant doit pouvoir enchaîner sur le repli
   // « présentation sans visuels » plutôt que de croire la série réussie. Les

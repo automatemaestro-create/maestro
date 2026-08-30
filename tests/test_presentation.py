@@ -373,8 +373,12 @@ besoin_de_node = pytest.mark.skipif(NODE is None, reason="node introuvable")
 #:
 #:   FAUX_ECHEC_CONTEXTE_VIDEO=<n>  le n-ième contexte vidéo refuse de s'ouvrir → échec DUR :
 #:                                  aucun clip, la ligne doit rester au manifeste avec son erreur.
-#:   FAUX_PAGE_NON_PRETE_VIDEO=<n>  la page du n-ième clip n'atteint jamais son marqueur → échec
-#:                                  DOUX : le clip est conservé, écourté, `complet: false`.
+#:   FAUX_PAGE_NON_PRETE_VIDEO=<n>  la page du n-ième clip n'atteint jamais son signal de page
+#:                                  prête → depuis #830 ce n'est plus qu'un AVERTISSEMENT : les
+#:                                  gestes sont joués quand même, et le clip est complet.
+#:   FAUX_GESTES_OK_VIDEO=<n>:<k>   les gestes du n-ième clip cessent de répondre après le k-ième
+#:                                  (#830) — `1:0` fabrique le clip MUET (aucun geste, écarté),
+#:                                  `1:2` le clip ÉCOURTÉ en cours de route (conservé).
 #:   FAUX_ECHEC_CAPTURES=1          toutes les captures échouent → c'est le seul cas qui doit
 #:                                  changer le code de retour.
 FAUX_PLAYWRIGHT = """\
@@ -386,6 +390,9 @@ const { dirname } = require("node:path");
 const echecContexte = Number(process.env.FAUX_ECHEC_CONTEXTE_VIDEO || 0);
 const pageNonPrete = Number(process.env.FAUX_PAGE_NON_PRETE_VIDEO || 0);
 const echecCaptures = process.env.FAUX_ECHEC_CAPTURES === "1";
+// « <rang>:<k> » — NaN quand la variable est absente, ce qui ne matche aucun rang.
+const gestesRegle = String(process.env.FAUX_GESTES_OK_VIDEO || "").split(":").map(Number);
+const [gestesRang, gestesMax] = gestesRegle;
 let contextesVideo = 0;
 
 function ecrire(chemin, contenu) {
@@ -394,12 +401,20 @@ function ecrire(chemin, contenu) {
 }
 
 function faussePage(rangVideo) {
+  // Ce que le stub compte est ce que `jouerGeste` APPELLE : `waitFor` pour un
+  // « attendre », `click` pour un « cliquer », `evaluate` pour un « defiler ».
+  let gestes = 0;
+  const geste = () => {
+    if (!rangVideo || rangVideo !== gestesRang) return;
+    if (gestes >= gestesMax) throw new Error("geste impossible (faux)");
+    gestes += 1;
+  };
   const locator = {
     first: () => locator,
     filter: () => locator,
     async count() { return 1; },
-    async click() {},
-    async waitFor() {},
+    async click() { geste(); },
+    async waitFor() { geste(); },
   };
   return {
     async goto() {
@@ -409,7 +424,7 @@ function faussePage(rangVideo) {
       if (rangVideo && rangVideo === pageNonPrete) throw new Error("marqueur absent (faux)");
     },
     async waitForTimeout() {},
-    async evaluate() {},
+    async evaluate() { geste(); },
     async screenshot({ path }) { ecrire(path, "capture-factice"); },
     getByText: () => locator,
     locator: () => locator,
@@ -533,6 +548,12 @@ def test_le_manifeste_porte_les_deux_listes(tmp_path: Path, maison_playwright: P
     assert all(page["fichier"] for page in manifeste["pages"])
     assert [clip["cle"] for clip in manifeste["videos"]] == cles_de_parcours()
     assert all(clip["fichier"] and clip["complet"] for clip in manifeste["videos"])
+    # Le compte de gestes (#830) : il porte la distinction « écourté » / « muet », et un clip
+    # nominal les a tous joués. `> 0` n'est pas décoratif — sans lui, un parcours qui aurait perdu
+    # ses gestes rendrait « 0 == 0 » et passerait pour complet.
+    assert all(
+        clip["gestes_joues"] == clip["gestes"] > 0 for clip in manifeste["videos"]
+    ), "un parcours nominal n'a pas joué tous ses gestes"
     # Le dossier de travail de Playwright ne survit pas à la série.
     assert not (sortie / "videos-brutes").exists()
 
@@ -561,6 +582,11 @@ def test_un_parcours_en_echec_laisse_sa_ligne_au_manifeste(
     assert echoue["complet"] is False
     assert "enregistrement impossible" in echoue["erreur"]
     assert not (sortie / f"{echoue['cle']}.webm").exists()
+    # …et il ne se confond pas avec le clip MUET de #830, qui lui aussi sort sans fichier : ici
+    # rien n'a pu COMMENCER, d'où `null` et non `0`. Les deux ne se soignent pas pareil, et le
+    # bilan de fin ne compte que les seconds.
+    assert echoue["gestes_joues"] is None
+    assert "aucun geste" not in processus.stderr
 
     # Les autres continuent : c'est la seconde moitié de la règle.
     autres = clips[:1] + clips[2:]
@@ -572,21 +598,81 @@ def test_un_parcours_en_echec_laisse_sa_ligne_au_manifeste(
 
 
 @besoin_de_node
-def test_une_page_non_prete_garde_son_clip_ecourte(
+def test_une_page_non_prete_ne_coupe_plus_les_gestes(
     tmp_path: Path, maison_playwright: Path
 ) -> None:
-    """L'autre régime d'échec, et il ne se confond pas avec le précédent : la page n'atteint pas
-    son marqueur, les gestes sont abandonnés — mais le clip EXISTE et montre ce que la page a su
-    rendre. `complet: false` laisse l'appelant décider de le retenir."""
+    """Le renversement de #830, et la moitié qui a tué le tournage de #545.
+
+    La page qui n'atteint pas son signal faisait deux choses, toutes deux fausses : elle mangeait
+    le budget du clip en attente, puis son échec ABANDONNAIT les gestes — d'où cinq clips immobiles
+    conservés, `complet: false`, indiscernables d'un clip écourté à mi-parcours. L'attente n'est
+    plus qu'un avertissement : les gestes sont joués, et s'ils jouent, le clip est complet — le
+    signal seul avait tort.
+    """
     sortie = tmp_path / "captures"
-    _, manifeste = tourner(sortie, maison_playwright, FAUX_PAGE_NON_PRETE_VIDEO="1")
+    processus, manifeste = tourner(sortie, maison_playwright, FAUX_PAGE_NON_PRETE_VIDEO="1")
+
+    malgre_tout = manifeste["videos"][0]
+    assert malgre_tout["fichier"], "le clip d'une page non prête n'a pas été tourné"
+    assert (sortie / malgre_tout["fichier"]).exists()
+    assert malgre_tout["gestes_joues"] == malgre_tout["gestes"] > 0, (
+        "les gestes ont encore été abandonnés parce que la page n'était pas prête"
+    )
+    assert malgre_tout["complet"] is True
+    assert malgre_tout["erreur"] is None
+    # L'avertissement n'est pas perdu pour autant : il se lit, il ne décide plus.
+    assert "page non prête" in processus.stderr
+    assert all(c["complet"] for c in manifeste["videos"][1:])
+
+
+@besoin_de_node
+def test_un_clip_sans_aucun_geste_est_ecarte_et_dit_pourquoi(
+    tmp_path: Path, maison_playwright: Path
+) -> None:
+    """Le critère : un clip qui n'a joué AUCUN geste ne démontre rien, donc il n'est pas proposé.
+
+    Ce n'est pas de la propreté : c'est ce qui rend la panne visible. Un enregistrement immobile
+    conservé sous `complet: false` se sélectionne comme les autres — et c'est ainsi que deux
+    présentations de jalon sont parties sans une démonstration valide, sans une ligne rouge.
+    La LIGNE reste (règle de #545) : « jamais tenté » et « tenté, muet » ne se confondent pas.
+    """
+    sortie = tmp_path / "captures"
+    processus, manifeste = tourner(sortie, maison_playwright, FAUX_GESTES_OK_VIDEO="1:0")
+
+    assert [c["cle"] for c in manifeste["videos"]] == cles_de_parcours(), "un parcours a disparu"
+
+    muet = manifeste["videos"][0]
+    assert muet["gestes_joues"] == 0 and muet["gestes"] > 0
+    assert muet["fichier"] is None, "un clip immobile est encore proposé à la sélection"
+    assert muet["octets"] is None
+    assert muet["complet"] is False
+    assert muet["erreur"].startswith("aucun geste joué")
+    # Écarté veut dire écarté : rien n'est laissé sur le disque non plus.
+    assert not (sortie / f"{muet['cle']}.webm").exists()
+    # …et il est NOMMÉ dans le compte rendu, séparément du « n/N filmé(s) » : un tournage muet ne
+    # se lit pas comme une panne de tournage, sa cause est ailleurs.
+    assert "aucun geste" in processus.stderr and muet["cle"] in processus.stderr
+
+    # Les autres continuent, et les captures ne s'en aperçoivent pas (règle de #545).
+    assert all(c["fichier"] and c["complet"] for c in manifeste["videos"][1:])
+    assert processus.returncode == 0, processus.stderr
+
+
+@besoin_de_node
+def test_un_clip_ecourte_en_cours_de_route_reste_conserve(
+    tmp_path: Path, maison_playwright: Path
+) -> None:
+    """L'autre moitié du même critère, et elle seule prouve que l'écart n'est pas devenu aveugle :
+    un parcours qui a joué DEUX gestes sur six a montré quelque chose — il garde son clip."""
+    sortie = tmp_path / "captures"
+    _, manifeste = tourner(sortie, maison_playwright, FAUX_GESTES_OK_VIDEO="1:2")
 
     ecourte = manifeste["videos"][0]
+    assert ecourte["gestes_joues"] == 2 and ecourte["gestes"] > 2
     assert ecourte["fichier"], "un clip écourté se conserve — il montre ce qu'il a pu montrer"
     assert (sortie / ecourte["fichier"]).exists()
     assert ecourte["complet"] is False
-    assert ecourte["erreur"].startswith("page non prête")
-    assert all(c["complet"] for c in manifeste["videos"][1:])
+    assert ecourte["erreur"].startswith("geste 3/")
 
 
 @besoin_de_node
@@ -612,6 +698,91 @@ def test_seules_les_captures_decident_du_code_de_retour(
     processus, manifeste = tourner(sortie, maison_playwright, FAUX_ECHEC_CAPTURES="1")
     assert processus.returncode == 1
     assert all(page["fichier"] is None and page["erreur"] for page in manifeste["pages"])
+
+
+# --- Le signal de page prête tient à l'UI, et cette garde-là manquait (#830) ----------------------
+#
+# Ces quatre tests-ci ne demandent ni node ni navigateur : ils confrontent les constantes de
+# `captures.mjs` aux fichiers qui les rendent. C'est la moitié qui a manqué pendant tout #691→#830 —
+# le script attendait « Temps réel connecté », la pastille a été retirée, et RIEN n'a rougi : ni la
+# suite de `apps/web` (qui garde son absence, donc allait bien), ni celle-ci (qui ne regardait que
+# les décisions du script, contre un stub qui répond toujours). Un signal qui vit des deux côtés
+# d'une frontière doit être gardé sur la frontière.
+
+BARRE_SUPERIEURE = RACINE / "apps" / "web" / "components" / "BarreSuperieure.tsx"
+SHELL_TSX = RACINE / "apps" / "web" / "components" / "Shell.tsx"
+
+
+def constante_mjs(nom: str) -> str:
+    """La valeur d'une constante chaîne de `captures.mjs` — LUE, jamais recopiée ici.
+
+    Recopier la valeur ferait un test qui se met d'accord avec lui-même : il resterait vert le jour
+    où le script change de marqueur sans que l'UI suive, c'est-à-dire le seul jour qui compte.
+    """
+    trouve = re.search(
+        rf'^const {nom} = "([^"]*)";', CAPTURES_MJS.read_text(encoding="utf-8"), re.MULTILINE
+    )
+    assert trouve is not None, f"{nom} n'est plus une constante chaîne de captures.mjs"
+    return trouve.group(1)
+
+
+def test_le_motif_du_marqueur_distingue_le_rendu_du_commentaire() -> None:
+    """Prouver le motif sur l'échantillon fautif AVANT de balayer — et l'échantillon est réel :
+    c'est `BarreSuperieure.tsx` d'aujourd'hui, où #691 a laissé son explication.
+
+    Le motif lâche (« la chaîne est quelque part dans le fichier ») aurait répondu « tout va bien »
+    après #691 : le texte y est resté, en commentaire, et ailleurs dans `apps/web` en libellé d'un
+    écran vide. Seul le motif serré — un nœud de texte JSX, `>…<` — voit la différence entre ce que
+    l'application RACONTE et ce qu'elle REND, et c'est celui-là qui aurait attrapé la panne.
+    """
+    texte = BARRE_SUPERIEURE.read_text(encoding="utf-8")
+
+    assert "Temps réel connecté" in texte, "l'échantillon a changé : #691 ne s'explique plus ici"
+    assert ">Temps réel connecté<" not in texte, "le marqueur de #142 serait donc encore rendu ?"
+    # …et le motif serré reconnaît bien ce qui EST rendu, sans quoi il refuserait tout.
+    assert ">Reconnexion…<" in texte
+
+
+def test_l_ancre_de_page_prete_est_celle_que_le_shell_pose() -> None:
+    """La condition positive du signal : le `<main id>` du shell. Le script en tient une copie —
+    c'est une frontière, pas un import —, et la copie doit valoir l'original."""
+    ancre = constante_mjs("ANCRE_CONTENU")
+    pose = re.search(
+        r'^export const ID_CONTENU_PRINCIPAL = "([^"]*)";',
+        SHELL_TSX.read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    assert pose is not None, "components/Shell.tsx n'exporte plus ID_CONTENU_PRINCIPAL"
+    assert ancre == pose.group(1), (
+        f"captures.mjs attend #{ancre} quand le shell pose #{pose.group(1)} : le signal de page "
+        "prête ne peut plus arriver, et les parcours filmés ne joueront aucun geste (#830)"
+    )
+
+
+def test_le_marqueur_de_coupure_est_encore_rendu_par_la_barre_superieure() -> None:
+    """L'autre condition, celle dont l'ABSENCE dit « temps réel établi ». Elle ne vaut que si le
+    marqueur existe : une pastille retirée rend la condition vraie pour toujours, y compris sur une
+    application coupée — l'inverse exact de ce qu'on attend d'elle."""
+    marqueur = constante_mjs("MARQUEUR_COUPURE")
+    assert f">{marqueur}<" in BARRE_SUPERIEURE.read_text(encoding="utf-8"), (
+        f"« {marqueur} » n'est plus rendu par components/BarreSuperieure.tsx : le signal de page "
+        "prête de captures.mjs est à changer, comme il l'a été à #830 après #691"
+    )
+
+
+def test_l_ancien_marqueur_n_est_plus_une_chaine_du_script() -> None:
+    """Le pendant : ce que #691 a retiré ne sert plus de signal. Le garder « au cas où » ramènerait
+    la panne — une condition qui ne peut jamais être satisfaite.
+
+    Même partage que partout ailleurs dans ce dépôt : le motif cherche un USAGE (une chaîne JS,
+    entre guillemets droits) et jamais une MENTION — `captures.mjs` raconte la panne de #830 en
+    prose, avec des guillemets français, et doit pouvoir continuer.
+    """
+    texte = CAPTURES_MJS.read_text(encoding="utf-8")
+    assert "« Temps réel connecté »" in texte, "le script n'explique plus d'où vient son signal"
+    assert '"Temps réel connecté"' not in texte, (
+        "captures.mjs attend encore, en dur, le marqueur que #691 a retiré de la barre supérieure"
+    )
 
 
 # ==================================================================================================
