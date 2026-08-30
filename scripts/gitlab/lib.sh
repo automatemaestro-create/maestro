@@ -1856,6 +1856,250 @@ gl_veille_arbitre() {
   fi
 }
 
+# --- La veille DIFFÉRÉE, quand personne n'est là pour l'arbitrer (#795, chantier #788) ----------
+#
+# `gl_veille_arbitre` ci-dessus suppose un répondant. Une session de run n'en a pas : le prompt lui
+# dit de ne pas jouer la veille, de n'enregistrer aucun arbitrage, et de NOMMER le ticket dans son
+# résumé final. Elle le fait — et c'est là que tout se perd, parce qu'un résumé de fin de session
+# meurt avec la console d'un run `--detach`, que `journal.sh gc` ne garde que dix runs, et que le
+# ticket, lui, se ferme au merge dans l'heure qui suit.
+#
+# C'EST LE DÉFAUT DE #608, À L'IDENTIQUE, ET SON DIAGNOSTIC SE TRANSPOSE MOT POUR MOT : ce qui a
+# lâché n'est pas la conduite mais son CONTENANT. Ce verbe est donc le décalque de `gl_reste_claude`
+# et n'invente rien — même ancre par commentaire, même empreinte de rejeu, même naissance assignée.
+#
+# --- LA MESURE (2026-08-30, sur les 76 tickets livrés par un run du journal) ---------------------
+# 13 d'entre eux touchaient une surface visible ; AUCUN des 76 ne porte `veille::arbitree`. Et
+# depuis que le mécanisme existe (#714, mergé le 2026-08-28 à 16:15), les deux runs qui ont suivi
+# ont livré QUATRE tickets à surface visible — #679, #696, #697, #698 — dont pas un n'a été arbitré.
+# Le résumé de #698 dit, en toutes lettres : « Ce ticket appelle une veille. » Personne ne l'a lu.
+# La conduite était tenue ; c'est l'écrit qui n'a survécu à rien.
+#
+# --- UNE SEULE DES QUATRE QUESTIONS SE CONSIGNE, ET LE CRITÈRE N'EST PAS LEUR IMPORTANCE ---------
+# Le parent (#788, G4) nomme quatre questions qu'un run rencontre sans répondant. Elles ne se
+# valent pas, et ce qui les sépare est une propriété VÉRIFIABLE : la question se repose-t-elle
+# d'elle-même au passage suivant ?
+#
+#   · la veille (#714)                  NON — le ticket se ferme au merge, `start-brief` ne
+#                                       repassera jamais dessus. La question meurt AVEC son objet,
+#                                       et l'écran reste, écrit sans référence : c'est la seule
+#                                       des quatre dont l'occasion est DÉTRUITE. → ce verbe.
+#   · l'orphelin (#327)                 OUI — `worktree.sh gc --auto` la repose à chaque run, à
+#                                       chaque `/ticket-start` et à chaque `/branch-cleanup`, plus
+#                                       `doctor.sh` (dérive 4d) et `queue.sh --orphelins`.
+#   · l'arbitrage des lots (#562)       OUI — `queue.sh` rejoue `gl_arbitrage_de` sur la vue du
+#                                       parent à CHAQUE planification, et le plan porte ses lignes
+#                                       `# non-arbitre` que l'en-tête du run imprime.
+#   · le milestone / le rail (#617)     OUI — rechoisi à chaque run, et le défaut est un choix
+#                                       ÉCRIT (le courant du rail produit), annoncé dans le plan
+#                                       comme dans l'en-tête. Un défaut appliqué n'est pas une
+#                                       question perdue.
+#
+# UNE QUESTION QUI SE REPOSE N'EST PAS PERDUE, ELLE EST EN ATTENTE. Leur ouvrir un ticket à chacune
+# fabriquerait, à chaque run, le doublon d'un signalement déjà vivant et gratuit — et trois d'entre
+# eux s'accumuleraient sans que rien ne les referme. Ne pas écrire est ici le verdict, pas l'oubli.
+#
+# CE QU'IL NE FAIT PAS : il n'arbitre rien. Poser `veille::arbitree` fermerait la question sans que
+# personne l'ait jugée — c'est le « marquer d'office » que #562 a écarté nommément, et la
+# distinction entre CONSIGNER et TRANCHER est tout le sujet de ce verbe.
+#
+# LE FICHIER EST OBLIGATOIRE, pour la raison exacte de `gl_reste_claude` : la session a quelque
+# chose que personne d'autre n'a — ce qu'elle a fait à l'écran FAUTE de référence, et sur quoi la
+# veille devra revenir. Sans lui, le ticket ne dirait rien de plus que `touche-surface`, que
+# n'importe qui rejoue en une seconde.
+GL_VEILLE_LABELS="${MAESTRO_VEILLE_LABELS:-type::doc,agent::design,prio::moyenne}"
+# Le rail est SU par construction : une veille porte sur un écran de la Control Tower, donc sur le
+# produit (#617, docs/10 §3.4). C'est l'inverse de `GL_RESTE_RAIL`, et c'est le seul réglage du
+# décalque qui change de valeur — la raison, elle, est la même : il n'est pas deviné.
+GL_VEILLE_RAIL="${MAESTRO_VEILLE_RAIL:-produit}"
+
+# gl_veille_differe <iid-source> <fichier> -> crée (ou complète) le ticket de veille du ticket
+# source. Codes : 0 créé / mis à jour / déjà à jour · 2 usage · 3 iid source inconnu · 4 fichier
+# absent ou vide · 1 échec côté forge. Les deux REFUS (3 et 4) tombent AVANT toute écriture.
+gl_veille_differe() {
+  local source="$1" fichier="$2"
+  if [ -z "$source" ] || [ -z "$fichier" ]; then
+    echo "usage: gl_veille_differe <iid-source> <fichier>" >&2; return 2
+  fi
+  # Le contrôle GRATUIT d'abord (règle de `gl_reste_claude`) : refuser sans avoir rien demandé à la
+  # forge est ce qui garantit qu'un refus ne laisse rien derrière lui.
+  if [ ! -f "$fichier" ]; then
+    echo "gl_veille_differe : fichier introuvable : $fichier" >&2
+    echo "  Le constat EST le corps du ticket : l'écrire d'abord (outil Write), puis passer son CHEMIN." >&2
+    return 4
+  fi
+  if [ ! -s "$fichier" ]; then
+    echo "gl_veille_differe : $fichier est vide — un ticket de veille sans constat n'apprend rien de" >&2
+    echo "  plus que « lib.sh touche-surface $source », que n'importe qui rejoue." >&2
+    return 4
+  fi
+  case "$source" in
+    ''|*[!0-9]*)
+      echo "gl_veille_differe : « $source » n'est pas un iid de ticket — rien n'a été écrit." >&2
+      return 3 ;;
+  esac
+
+  local vue rc titre veille empreinte
+  vue="$(gh_reste_source "$source" "ticket de veille" "gl_veille_differe")"; rc=$?
+  if [ "$rc" -ne 0 ]; then return "$rc"; fi
+  titre="${vue%%$'\t'*}"
+  veille="${vue##*$'\t'}"
+
+  empreinte="$(cksum < "$fichier" | awk '{ printf "%s-%s", $1, $2 }')"
+  if [ -z "$empreinte" ]; then
+    echo "gl_veille_differe : empreinte de « $fichier » illisible (cksum absent ?)" >&2; return 1
+  fi
+
+  if [ -n "$veille" ]; then
+    gl_veille_complete "$source" "$veille" "$fichier" "$empreinte"
+    return $?
+  fi
+  gl_veille_cree "$source" "$titre" "$fichier" "$empreinte"
+}
+
+# gl_veille_complete <source> <veille> <fichier> <empreinte> — la voie du REJEU. Une session qui
+# revient sur le même ticket (reprise après limite d'usage) ne doit pas ouvrir un second ticket de
+# veille, et un constat enrichi doit s'AJOUTER plutôt qu'écraser le premier.
+gl_veille_complete() {
+  local source="$1" veille="$2" fichier="$3" empreinte="$4" corps
+  # Brouillon relu par personne — il repart tel quel vers la forge : temporaire du système, pas
+  # `.maestro/` (règle #234, docs/10 §8.5).
+  corps="$(mktemp "${TMPDIR:-/tmp}/maestro-veille.XXXXXX")" || return 1
+  if ! gl_get_description "$veille" > "$corps" || [ ! -s "$corps" ]; then
+    rm -f "$corps"
+    echo "gl_veille_differe : #$veille (ticket de veille de #$source) illisible ou vide — rien réécrit." >&2
+    return 1
+  fi
+  if grep -q "empreinte $empreinte" "$corps"; then
+    rm -f "$corps"
+    printf 'Ticket de veille #%s : ce constat y est déjà (empreinte %s) — rien à écrire.\n' \
+      "$veille" "$empreinte"
+    gl_issue_url "$veille"
+    return 0
+  fi
+  gl_reste_section "$fichier" "$empreinte" "Constat" >> "$corps"
+  if ! gl_set_description "$veille" "$corps" >/dev/null; then
+    rm -f "$corps"
+    echo "gl_veille_differe : échec de la mise à jour de #$veille — le constat n'y est PAS." >&2
+    return 1
+  fi
+  rm -f "$corps"
+  printf 'Ticket de veille #%s complété (constat ajouté, empreinte %s) — aucun doublon ouvert.\n' \
+    "$veille" "$empreinte"
+  gl_issue_url "$veille"
+}
+
+# gl_veille_cree <source> <titre-source> <fichier> <empreinte> — la voie de la CRÉATION.
+#
+# MÊME ORDRE D'ÉCRITURES que `gl_reste_cree`, et pour la même raison : création, puis ANCRE, puis
+# état. Un rejeu qui suit un échec ne doit jamais ouvrir un second ticket, donc l'ancre passe avant
+# tout ce qui peut encore échouer.
+gl_veille_cree() {
+  local source="$1" titre_source="$2" fichier="$3" empreinte="$4"
+  local user milestone corps nouveau note titre
+  user="$(gl_current_user)" || {
+    echo "gl_veille_differe : compte de la forge indéterminable — le ticket naîtrait LIBRE, donc prenable par un run qui ne peut pas jouer de veille. Rien n'a été écrit." >&2
+    return 1
+  }
+  # Best-effort, comme dans /ticket-create : l'absence de jalon est une dérive que doctor.sh
+  # signale, jamais une raison de perdre le constat. Et sur le rail produit elle est NORMALE
+  # (#619 : un contenant vide à dessein ne rend aucun courant).
+  milestone="$(gl_current_milestone "$GL_VEILLE_RAIL" 2>/dev/null)" || milestone=""
+
+  corps="$(mktemp "${TMPDIR:-/tmp}/maestro-veille.XXXXXX")" || return 1
+  gl_veille_entete "$source" "$titre_source" > "$corps"
+  gl_reste_section "$fichier" "$empreinte" "Constat" >> "$corps"
+
+  # Le titre dit le GESTE ATTENDU et non le constat : c'est une ligne de `/backlog`, et « veille
+  # non jouée » y décrirait un passé dont personne ne saurait quoi faire.
+  titre="Veille de conception à jouer (#$source) — $titre_source"
+  nouveau="$(gh_create_issue "$titre" "$corps" "$GL_VEILLE_LABELS" "$milestone" "$user")" || {
+    rm -f "$corps"
+    echo "gl_veille_differe : création du ticket de veille de #$source en échec — rien n'a été écrit." >&2
+    return 1
+  }
+  rm -f "$corps"
+
+  note="$(mktemp "${TMPDIR:-/tmp}/maestro-veille-note.XXXXXX")" || return 1
+  gl_veille_ancre "$nouveau" > "$note"
+  if ! gl_issue_note "$source" "$note" >/dev/null; then
+    rm -f "$note"
+    printf 'Ticket de veille #%s créé, MAIS #%s ne le nomme pas : un rejeu ouvrirait un doublon.\n' \
+      "$nouveau" "$source" >&2
+    printf '  Réparer en postant le lien sur #%s, ou vérifier avant de rejouer.\n' "$source" >&2
+    return 1
+  fi
+  rm -f "$note"
+
+  if ! gl_project_add "$nouveau" >/dev/null 2>&1; then
+    printf 'Ticket de veille #%s créé et lié à #%s, MAIS SANS ÉTAT — il ne remonte dans aucune vue.\n' \
+      "$nouveau" "$source" >&2
+    printf '  Rejouer : bash scripts/gitlab/lib.sh project-add %s\n' "$nouveau" >&2
+    gl_issue_url "$nouveau"
+    return 1
+  fi
+
+  printf 'Ticket de veille #%s créé pour #%s — assigné à @%s, « À faire »%s.\n' \
+    "$nouveau" "$source" "$user" "${milestone:+, jalon « $milestone »}"
+  printf '  La question est DIFFÉRÉE, pas tranchée : « %s » n'\''a été posé sur #%s par personne.\n' \
+    "$GL_LABEL_VEILLE" "$source"
+  gl_issue_url "$nouveau"
+}
+
+# gl_veille_entete <source> <titre-source> — l'en-tête du corps, écrit UNE FOIS à la création.
+#
+# Il dit le GESTE et son RÉGIME. Sans le second, ce ticket est repris par le prochain run, qui
+# échouera exactement là où la session d'origine s'est abstenue — ce n'est pas une crainte, c'est
+# la mesure de #724 : un lot qui EST une veille a fait sauter tous les lots suivants de son parent
+# (run `20260828-215853`), et resté « À faire » il rééchouait à chaque run.
+gl_veille_entete() {
+  local source="$1" titre_source="$2"
+  cat <<ENTETE
+Veille de conception à jouer, différée de #$source — $titre_source
+
+Ce ticket porte une **question qu'une session autonome n'a pas pu faire trancher**. \`/ticket-start\`
+a signalé une **surface visible** sur #$source et proposé \`/design-veille\` : une proposition qui
+attend un « oui » que personne ne donne dans un run. La session a fait ce qu'il fallait — elle n'a
+ni joué la veille (\`WebSearch\`/\`WebFetch\` sont hors des deux allowlists d'un run, et une veille à
+moitié est pire qu'aucune), ni enregistré d'arbitrage, ce qui aurait fermé la question sans que
+personne l'ait jugée.
+
+Il existe parce qu'un **résumé de fin de session ne survit à rien** (#608, transposé par #795) : un
+run \`--detach\` se termine dans une console que personne ne regarde, \`journal.sh gc\` ne garde que
+dix runs, et le ticket source se ferme au merge dans l'heure. Mesuré le 2026-08-30 : sur les 76
+tickets livrés par un run, **13 touchaient une surface visible et pas un seul n'a été arbitré**.
+
+⚠ **La surface est DÉJÀ LIVRÉE.** La veille se joue donc sur pièces — l'écran existe, il a été
+implémenté en s'en tenant au socle (docs/30, tokens et primitives du dépôt, aucune identité
+nouvelle) faute de références vérifiées. Ce qu'elle rend est un **jugement sur ce qui est là**, et
+ses partis pris ouvrent leurs propres tickets s'ils appellent une reprise.
+
+**Pour le solder**, en session **interactive** :
+
+1. \`/design-veille <surface>\` — la surface est nommée dans le constat ci-dessous.
+2. Consigner les partis pris (la commande propose \`lib.sh issue-note\`).
+3. \`bash scripts/gitlab/lib.sh veille-arbitre $source\` — c'est le ticket **source** qu'on arbitre,
+   et cet enregistrement est ce qui empêche la question de revenir à chaque démarrage.
+
+⚠ Il naît **assigné**, et ce n'est pas un détail de forme : c'est ce qui le tient hors des plans de
+\`queue.sh\`, qui filtre sur « À faire **et** libre ». Un run qui le prendrait ne pourrait pas jouer
+la veille — il échouerait, et ferait sauter les lots suivants de son parent (mesuré, #724). Le
+libérer sans l'avoir jouée le rendrait prenable.
+
+ENTETE
+}
+
+# gl_veille_ancre <iid-veille> — le commentaire posé sur le ticket SOURCE. Sa forme est un contrat :
+# c'est « ticket de veille #<n> » que relit `gl_veille_differe` au tour suivant, et c'est aussi ce
+# qui rend le lien visible dans les deux sens sur un ticket qui va se fermer.
+gl_veille_ancre() {
+  cat <<ANCRE
+Surface visible signalée au démarrage, sans personne pour arbitrer la veille : ce run n'a ni joué
+\`/design-veille\`, ni enregistré d'arbitrage. La question est **différée**, pas tranchée — elle vit
+dans son **ticket de veille #$1**, qui survit à la fermeture de celui-ci (#795).
+ANCRE
+}
+
 # --- Fermeture du parent (#515, docs/10 §5.1) ---------------------------------------------------
 # Un parent de suivi ne porte ni branche ni code : aucune PR ne le ferme par un `Closes #`, et sa
 # fermeture était le SEUL geste du cycle d'un chantier resté manuel — §5.1 la décrivait comme « une
@@ -2974,11 +3218,18 @@ ci-dessous, puis \`/ticket-ship\`.
 ENTETE
 }
 
-# gl_reste_section <fichier> <empreinte> — une section par correctif. L'empreinte est en clair dans
-# le titre de section : c'est elle que le rejeu relit, et elle doit rester greppable sur UNE ligne.
+# gl_reste_section <fichier> <empreinte> [libellé] — une section par correctif. L'empreinte est en
+# clair dans le titre de section : c'est elle que le rejeu relit, et elle doit rester greppable sur
+# UNE ligne.
+#
+# LE LIBELLÉ EST OPTIONNEL ET VAUT « Correctif » : c'est la mécanique du rejeu qui est partagée avec
+# la veille différée (#795), jamais le mot. Un « ## Correctif » en tête d'un ticket de veille
+# annoncerait un patch à appliquer là où il n'y a qu'un constat — et une seconde fonction n'aurait
+# fait que deux définitions d'une empreinte que l'écriture et la relecture doivent partager au
+# caractère près.
 gl_reste_section() {
-  local fichier="$1" empreinte="$2"
-  printf '\n## Correctif — empreinte %s\n\n' "$empreinte"
+  local fichier="$1" empreinte="$2" libelle="${3:-Correctif}"
+  printf '\n## %s — empreinte %s\n\n' "$libelle" "$empreinte"
   cat "$fichier"
   printf '\n'
 }
@@ -6449,22 +6700,28 @@ gh_issue_note() {
 #
 # Le marqueur est cherché APRÈS la clé « comments » : le titre voyage dans la même réponse, et un
 # ticket dont le titre parlerait de tickets de reprise ne doit pas passer pour en avoir un.
+#
+# LES DEUX DERNIERS ARGUMENTS SONT OPTIONNELS et servent le décalque de #795 : la veille différée
+# pose la même question (« ce ticket existe-t-il, et a-t-il déjà son ticket ? ») sur une ANCRE
+# différente — « ticket de veille #<n> ». Ce qui se partage est la lecture en UN aller ; le contrat
+# d'ancre, lui, reste propre à chaque appelant, et c'est pourquoi il entre par un argument plutôt
+# que d'être écrit deux fois. Sans eux, la fonction est celle de #610 au caractère près.
 gh_reste_source() {
-  local iid="$1" raw titre reprise
-  if [ -z "$iid" ]; then echo "usage: gh_reste_source <iid>" >&2; return 2; fi
+  local iid="$1" ancre="${2:-ticket de reprise}" verbe="${3:-gl_reste_claude}" raw titre reprise
+  if [ -z "$iid" ]; then echo "usage: gh_reste_source <iid> [libellé-ancre] [verbe]" >&2; return 2; fi
   raw="$(gh_graphql_read '{ '"$(gh_depot_gql)"' { issue(number:'"$iid"') { title comments(first: 100) { nodes { body } } } } }')" || return 1
   case "$raw" in
     *'"issue":null'*)
-      echo "gl_reste_claude : ticket source #$iid introuvable dans $GL_GH_REPO — rien n'a été écrit." >&2
+      echo "$verbe : ticket source #$iid introuvable dans $GL_GH_REPO — rien n'a été écrit." >&2
       return 3 ;;
   esac
   titre="$(printf '%s' "$raw" | gl_json_string_field title)"
   if [ -z "$titre" ]; then
-    echo "gl_reste_claude : ticket source #$iid illisible (titre absent) — rien n'a été écrit." >&2
+    echo "$verbe : ticket source #$iid illisible (titre absent) — rien n'a été écrit." >&2
     return 1
   fi
   reprise="$(printf '%s' "$raw" | sed 's/.*"comments"//' \
-             | grep -o 'ticket de reprise #[0-9][0-9]*' | head -1 | grep -o '[0-9][0-9]*$')"
+             | grep -o "$ancre #[0-9][0-9]*" | head -1 | grep -o '[0-9][0-9]*$')"
   printf '%s\t%s\n' "$titre" "$reprise"
 }
 
@@ -7978,6 +8235,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     touche-claude)  gl_touche_claude "$@" ;;
     touche-surface) gl_touche_surface "$@" ;;
     veille-arbitre) gl_veille_arbitre "$@" ;;
+    veille-differe) gl_veille_differe "$@" ;;
     ferme-parent)   gl_ferme_parent "$@" ;;
     garde-fermeture) gl_garde_fermeture "$@" ;;
     demarre-parent) gl_demarre_parent "$@" ;;
@@ -8072,6 +8330,9 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "                                      4=touche mais déjà arbitré, 3=non — docs/30 §5.2)" >&2
       echo "  veille-arbitre <iid>               (enregistre que la question de la veille a été posée — veille faite OU" >&2
       echo "                                      jugée inutile : pose « veille::arbitree », idempotent — docs/30 §5.2)" >&2
+      echo "  veille-differe <iid> <fichier>     (DIFFÈRE la veille faute de répondant — crée le ticket de veille portant" >&2
+      echo "                                      le constat du fichier, assigné donc hors des plans d'un run. N'arbitre" >&2
+      echo "                                      RIEN : « veille::arbitree » n'est pas posé — docs/30 §5.3)" >&2
       echo "  current-milestone [produit|outillage] (titre du milestone courant du rail — le plus ancien actif portant" >&2
       echo "                                      encore un ticket ouvert ; soldé et vide sont sautés, chacun nommé sur stderr. Défaut produit)" >&2
       echo "  milestones                         (tous les milestones : titre/état/dates/avancement, TSV)" >&2

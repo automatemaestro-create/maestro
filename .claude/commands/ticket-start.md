@@ -141,8 +141,15 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
      arbitrage posé d'office ferme la question sans que personne l'ait jugée.
    - **En session autonome** (run `/orchestrate`), personne ne lira la question : la veille est un
      **geste interactif** — `WebSearch`/`WebFetch` ne sont dans aucune des deux allowlists d'un
-     run, donc elle ne peut pas être jouée. Ne la tente pas, **n'enregistre aucun arbitrage**, et
-     mentionne simplement dans ton résumé final que ce ticket appelait une veille.
+     run, donc elle ne peut pas être jouée. Ne la tente pas, **n'enregistre aucun arbitrage** — et
+     **diffère-la au lieu de la perdre** (#795, docs/30 §5.3) : une fois le ticket implémenté,
+     écris avec l'outil `Write` un constat qui nomme la **surface** touchée et ce que tu as décidé
+     à l'écran faute de référence, puis `bash scripts/gitlab/lib.sh veille-differe <iid>
+     <fichier>`. Le ticket de veille naît **assigné** — donc hors des plans d'un run, qui ne
+     pourrait pas jouer la veille non plus — et il **survit** à la fermeture du tien, ce qu'un
+     résumé de fin de session ne fait pas : mesuré le 2026-08-30, sur 76 tickets livrés par un
+     run, 13 touchaient une surface visible et **aucun** n'a été arbitré. Nomme-le quand même dans
+     ton résumé final.
    - **Bloc absent** : il n'y a rien à demander — soit le ticket ne touche aucune surface visible,
      soit l'arbitrage est déjà enregistré. Ne le mentionne pas, n'appelle pas le verbe, passe.
 
