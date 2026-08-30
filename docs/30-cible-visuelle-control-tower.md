@@ -666,12 +666,92 @@ l'`allow` d'un run est l'**union** (docs/10 §11.7). Trois raisons, dont une seu
 
 Le prompt de session de `run.sh` le dit donc en toutes lettres : ne pas tenter la veille, **ne pas
 enregistrer d'arbitrage** (ce serait fermer la question sans que personne l'ait jugée — le
-« marquer d'office » de #562), et **nommer le ticket dans le résumé final** comme en appelant une.
+« marquer d'office » de #562), et **différer la question dans un ticket de veille** (§5.3). La
+troisième moitié était, jusqu'à #795, « nommer le ticket dans le résumé final » : les sessions l'ont
+fait, et personne ne l'a lu.
 ⚠ Le changement plausible n'est pas « ouvrir le web aux runs », que personne ne demandera, mais
 « ouvrir `WebSearch` dans `.claude/settings.json` pour éviter une confirmation à chaque
 `/design-veille` interactive » : geste légitime, effet non voulu — il ouvre le run du même coup.
 `tests/test_design_veille.py` garde les deux fichiers pour cette raison-là. Une confirmation dans
 une session interactive n'est pas un défaut : il y a quelqu'un pour la donner.
+
+### 5.3 La question différée, faute de répondant — 2026-08-30 (#795)
+
+#714 a donné à la veille un **déclencheur**. Il lui manquait un **contenant** : en run, la question
+était posée puis perdue.
+
+#### La mesure — 2026-08-30, sur les 76 tickets livrés par un run du journal
+
+| ce qu'on compte | n |
+| --- | --- |
+| tickets livrés par un run (`resume.tsv`, verdict `OK`) | 76 |
+| ...qui touchaient une **surface visible** (`lib.sh touche-surface`) | **13** |
+| ...portant `veille::arbitree` | **0** |
+| livrés **depuis** que le mécanisme existe (#714, mergé le 2026-08-28 à 16:15) | 4 — #679, #696, #697, #698 |
+| ...arbitrés | **0** |
+
+⚠ **Ce n'est pas un défaut de conduite, et c'est ce qui rend le constat concluant.** Les sessions
+ont fait exactement ce que le prompt leur demandait. Le résumé de #698 porte, en toutes lettres :
+
+> « **Veille de conception non jouée** : `start-brief` a signalé une surface visible sur #698. […]
+> je ne l'ai ni jouée ni arbitrée, pour ne pas fermer la question sans que personne l'ait jugée.
+> **Ce ticket appelle une veille.** »
+
+Personne ne l'a lu. Un run `--detach` se termine dans une console que personne ne regarde,
+`journal.sh gc` ne garde que **dix runs**, et le ticket se ferme au merge dans l'heure. C'est le
+diagnostic de #608 mot pour mot : **ce qui a lâché n'est pas la conduite mais son contenant.**
+
+#### Le remède : `lib.sh veille-differe <iid> <fichier>`
+
+Décalque de `reste-claude` (#610), et il n'invente rien — même ancre par commentaire sur le ticket
+source (« ticket de veille #<n> », relue au tour suivant : l'index de recherche de GitHub est
+asynchrone, donc une recherche rendrait des doublons), même empreinte `cksum` qui rend un rejeu à
+l'identique **muet** et un constat enrichi **additif**, même naissance **assignée** — ce qui le tient
+hors des plans de `queue.sh` (« À faire **et** libre »).
+
+⚠ **L'assignation compte double ici**, et c'est mesuré : un ticket de veille laissé libre serait pris
+par le run suivant, qui ne peut pas jouer de veille — il échouerait, et **ferait sauter les lots
+suivants de son parent** (#724, run `20260828-215853`). Le libérer sans l'avoir jouée le rend
+prenable.
+
+Trois choses à ne pas défaire :
+
+- **le fichier est obligatoire**, comme pour `reste-claude` : ce que la session a d'irremplaçable est
+  ce qu'elle a décidé à l'écran **faute de référence**. Sans lui, le ticket n'apprendrait rien de
+  plus que `touche-surface`, que n'importe qui rejoue en une seconde ;
+- **il n'arbitre rien** — `veille::arbitree` n'est pas posé, et le ticket de veille le dit. Consigner
+  n'est pas trancher : poser le label fermerait la question sans que personne l'ait jugée, c'est-à-
+  dire le « marquer d'office » que #562 a écarté nommément ;
+- **la veille se joue sur pièces** : la surface est déjà livrée quand quelqu'un ouvre le ticket. Ce
+  qu'elle rend est un jugement sur ce qui est là, et ses partis pris ouvrent leurs propres tickets.
+
+#### Une seule des quatre questions se consigne — et le critère n'est pas leur importance
+
+#788 (G4) nomme quatre questions qu'un run rencontre sans répondant. Ce qui les sépare est une
+propriété **vérifiable dans le code**, pas un jugement sur leur poids : *la question se repose-t-elle
+d'elle-même au passage suivant ?*
+
+| question | posée par | se repose ? | par quoi | verdict |
+| --- | --- | --- | --- | --- |
+| **veille de conception** | `/ticket-start` (#714) | **non, jamais** | le ticket se ferme au merge — `start-brief` ne repassera plus dessus | **consignée** (`veille-differe`) |
+| reprendre un orphelin | `/orchestrate` (#327) | oui | `worktree.sh gc --auto` à **chaque** run, `/ticket-start` et `/branch-cleanup` ; plus `doctor.sh` (dérive 4d) et `queue.sh --orphelins` | rien à écrire |
+| arbitrer les lots (`lot::arbitre`) | `/orchestrate` (#562) | oui | `queue.sh` rejoue `gl_arbitrage_de` sur la vue du parent à **chaque** planification ; le plan porte ses lignes `# non-arbitre`, que l'en-tête du run imprime | rien à écrire |
+| choisir le milestone / le rail | `/orchestrate` (#617, #619) | oui | rechoisi à chaque run ; et le défaut est un choix **écrit** (le courant du rail produit), annoncé dans le plan comme dans l'en-tête | rien à écrire |
+
+**Une question qui se repose n'est pas perdue, elle est en attente.** Seule la veille voit son
+**occasion détruite** : le ticket se ferme, et l'écran reste, écrit sans référence. Ouvrir un ticket
+pour les trois autres fabriquerait à chaque run le doublon d'un signalement déjà vivant et gratuit,
+et ces doublons s'accumuleraient sans que rien ne les referme. **Ne pas écrire est ici le verdict,
+pas l'oubli** — et c'est pour qu'on ne vienne pas le « corriger » qu'il est écrit ici, comme G5 l'est
+dans #788.
+
+#### Ce qui n'a pas été fait, et pourquoi
+
+Le précédent #608 a **trois** pièces ; celle-ci en a deux. Le **filet du pilote** (#611 — nommer en
+fin de run les tickets ayant buté, et dire si chacun a bien son ticket) n'a pas d'équivalent ici. Il
+serait jouable : `lib.sh touche-surface <iid>` répond depuis le pilote, qui pourrait donc constater.
+Ce qui manque est son **appelant** — il n'y a pas de verbe de lecture `veille-differee-de`, et en
+écrire un sans appelant serait du code mort. C'est un ticket à part entière, pas une omission.
 
 ---
 
