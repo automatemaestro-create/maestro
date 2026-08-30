@@ -26,16 +26,12 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
      silence. Dis qui l'a pris et oriente vers un ticket libre (`/backlog`, section « Libres »).
      Ne le reprends que sur **demande explicite** de l'utilisateur (la personne a lâché le sujet,
      ticket resté « En cours » à l'abandon) — dans ce cas seulement, enchaîne les étapes 2 à 5.
-   - **Parent de suivi** (la sortie liste une checklist `## Sous-tickets`) : il ne porte ni
-     branche ni code — ne le démarre pas. Coche au passage (`- [x]`) les lots « Terminé » encore
-     décochés dans sa description. **Relis et réécris la description uniquement via les helpers**
-     (`bash scripts/gitlab/lib.sh get-description <iid> > <fichier>`, tu édites le fichier, puis
-     `bash scripts/gitlab/lib.sh set-description <iid> <fichier>`) : n'improvise **jamais** une
-     lecture du type `gh issue view --json body | python`, qui corrompt l'UTF-8 en mojibake
-     (« â€” » au lieu de « — ») et l'a déjà repoussé dans un parent — voir #141. Mise à jour
-     idempotente : ne jamais décocher une case cochée. Puis appuie-toi sur la section **« lots
-     démarrables maintenant »** de la sortie : elle liste **tous** les lots « À faire » que rien ne
-     bloque — pas seulement le premier, les lots marqués **« (parallèle) »** ne se bloquant pas
+   - **Parent de suivi** (la sortie liste ses **lots**) : il ne porte ni branche ni code — ne le
+     démarre pas, et **ne touche pas à sa description** : ses lots sont des sub-issues natives
+     (#389), leur ordre et leur état viennent de la forge, et la coche est dérivée de l'état d'un
+     lot (fermé = coché) depuis #390 — il n'y a plus rien à synchroniser à la main. Appuie-toi
+     directement sur la section **« lots démarrables maintenant »** de la sortie : elle liste
+     **tous** les lots « À faire » que rien ne bloque — pas seulement le premier, les lots marqués **« (parallèle) »** ne se bloquant pas
      entre eux (docs/10 §5.1). Démarre le **premier de cette liste** en reprenant l'étape 1 avec
      son iid, et **annonce les autres** comme prenables en parallèle par quelqu'un d'autre. **Ne
      pose pas l'état du parent à la main** : le `begin` du lot (étape 4) le passe « En cours » s'il
@@ -61,9 +57,11 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
      d'acceptation, ou des livrables indépendants. Un besoin multi-facettes qui tient en une
      session (ex. un script + sa doc) se démarre tel quel, au besoin avec une checklist interne
      dans sa description. Au-delà du seuil, ne l'enchaîne pas tel quel : propose le découpage —
-     le ticket devient le parent (section `## Sous-tickets`), les sous-tickets sont créés et liés
-     selon la convention de `/ticket-create` (1-3 critères chacun, mergeables seuls sur `main`,
-     lot final « tests + doc », `lib.sh issue-link`), puis on démarre le premier lot.
+     le ticket devient le parent (sa description garde l'objectif, rien de plus), les sous-tickets
+     sont créés puis **rattachés en sub-issues** selon la convention de `/ticket-create` (1-3
+     critères chacun, mergeables seuls sur `main`, lot final « tests + doc »,
+     `lib.sh issue-link <parent> <lot> [--parallele]` puis `lib.sh subticket-order`), puis on
+     démarre le premier lot.
      Contrairement à l'étape 6, c'est une **vraie pause** : attends la décision de l'utilisateur.
    - **Branche proposée sans préfixe** (label `type::` absent) : déduis le type du titre/de la
      description, ou demande à l'utilisateur si ambigu.

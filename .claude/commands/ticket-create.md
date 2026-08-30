@@ -34,11 +34,14 @@ lieu d'inventer.
    plus de 3-4 critères d'acceptation, ou plusieurs livrables indépendants — ne crée pas un
    ticket monolithique : crée un **ticket parent de suivi + des sous-tickets liés** :
    - **Parent de suivi** : un ticket du type du besoin dont la description porte l'objectif
-     global et une section `## Sous-tickets` — la checklist **ordonnée** des lots (remplie une
-     fois les sous-tickets créés). Le parent ne porte ni branche ni code ; il reste ouvert tant
-     qu'un lot l'est — lot tests final compris — et **se ferme tout seul** quand le dernier se
-     ferme (#515, docs/10 §5.1). Rien à prévoir pour ça : c'est l'événement `issues: closed` qui
-     le fait, pas la checklist.
+     global, et **rien d'autre** — les lots lui sont rattachés en **sub-issues natives** (#389),
+     que GitHub rend lui-même au-dessus de la description, dans l'ordre et avec leur état. Ne
+     recrée **aucune** section `## Sous-tickets` : elle a été retirée des 47 parents du dépôt par
+     #395, et plus aucun parseur ne la lit — la réécrire fabriquerait un second support, c'est-à-dire
+     un parent dont la moitié des lots viendrait d'un côté et l'autre moitié de l'autre. Le parent
+     ne porte ni branche ni code ; il reste ouvert tant qu'un lot l'est — lot tests final compris —
+     et **se ferme tout seul** quand le dernier se ferme (#515, docs/10 §5.1). Rien à prévoir pour
+     ça : c'est l'événement `issues: closed` qui le fait.
    - **Sous-tickets** : un par lot d'~1 session, **1 à 3 critères d'acceptation chacun**, et
      surtout chaque lot **mergeable directement sur `main` sans casser l'existant** (code additif
      ou inoffensif tant que les lots suivants manquent). La description de chaque sous-ticket
@@ -47,33 +50,44 @@ lieu d'inventer.
    - **Tests différés** : les tests sont un **sous-ticket dédié** — par défaut le **lot final
      « tests + doc »**. Les lots intermédiaires n'embarquent des tests que si leur logique est
      critique, et portent la mention « Tests différés → #<iid-du-lot-tests> ».
-   - **Lots parallélisables** : suffixe le titre du lot dans la checklist du parent par
-     **`(parallèle)`** quand il **ne dépend pas** des lots parallèles qui le précèdent — c'est le
-     cas courant, les lots étant déjà additifs et mergeables seuls sur `main`. `/ticket-start` ne
-     bloque alors plus ces lots entre eux : deux personnes peuvent les prendre en même temps. Le
-     marqueur est **facultatif** ; un lot **sans** marqueur reste barré tant que tout ce qui le
-     précède n'est pas livré — c'est ce qu'on veut pour le **lot final « tests + doc »** (jamais
-     marqué) et pour un lot socle dont les suivants dépendent réellement.
+   - **Lots parallélisables** : passe **`--parallele`** au rattachement du lot (étape « Mécanique »
+     ci-dessous) quand il **ne dépend pas** des lots parallèles qui le précèdent — c'est le cas
+     courant, les lots étant déjà additifs et mergeables seuls sur `main`. Le drapeau pose le label
+     `lot::parallele` sur le **lot**, seul support du marqueur depuis #389 : il ne peut pas vivre
+     dans le titre du sous-ticket, dont `lib.sh` dérive le slug de branche — un « (parallèle) »
+     salirait tous les noms de branches. `/ticket-start` ne bloque alors plus ces lots entre eux :
+     deux personnes peuvent les prendre en même temps. Le marqueur est **facultatif** ; un lot
+     **sans** label reste barré tant que tout ce qui le précède n'est pas livré — c'est ce qu'on
+     veut pour le **lot final « tests + doc »** (jamais marqué) et pour un lot socle dont les
+     suivants dépendent réellement.
 
-     **La question se pose toujours, et sa réponse s'enregistre** (#562) : une fois la checklist
-     remplie, enregistre l'arbitrage sur le **parent** — `bash scripts/gitlab/lib.sh arbitre
+     **La question se pose toujours, et sa réponse s'enregistre** (#562) : une fois les lots
+     rattachés, enregistre l'arbitrage sur le **parent** — `bash scripts/gitlab/lib.sh arbitre
      <iid-parent>`, qui pose le label `lot::arbitre` — **quel qu'ait été ton verdict**, y compris
      « aucun lot n'est parallélisable ». Sans ce label, « aucun marqueur » est ambigu : il veut dire indifféremment
      « les lots dépendent vraiment les uns des autres » ou « personne n'y a pensé », et
      `/orchestrate` reproposera l'arbitrage à chaque run. Le poser ici est ce qui fait que le manque
      ne se reproduit pas — 16 des 42 parents du dépôt n'ont jamais été arbitrés faute de ce geste.
-   - **Mécanique** : crée d'abord le **parent** (étapes 5 à 9, section `## Sous-tickets` encore
-     vide), puis chaque **sous-ticket** (étapes 5 à 9 pour chacun), lie chaque sous-ticket au
-     parent — `bash scripts/gitlab/lib.sh issue-link <iid-parent> <iid-sous-ticket>`, **suffixé de
-     `--parallele` pour un lot que tu marques « (parallèle) »** : depuis #393 le découpage se LIT
-     dans les sub-issues, où le marqueur est le label `lot::parallele` et non le titre d'une ligne
-     de checklist. Un lot rattaché sans son drapeau est séquentiel — la dégradation sûre, mais
-     muette, et la checklist ne la rattrapera pas. Puis termine
-     en remplissant la checklist du parent (`- [ ] #<iid> — <titre>`, ou
-     `- [ ] #<iid> — <titre> (parallèle)`, dans l'**ordre de réalisation**, lot tests en dernier)
-     via `bash scripts/gitlab/lib.sh set-description <iid-parent> <fichier>` — jamais un
-     `--description "$(cat …)"`, que la couche permissions refuse (substitution `$(…)`) et qui
-     n'existe pas des deux côtés.
+   - **Mécanique** : crée d'abord le **parent** (étapes 5 à 9), puis chaque **sous-ticket**
+     (étapes 5 à 9 pour chacun), puis rattache les lots **un par un, dans l'ordre de réalisation** :
+     ```
+     bash scripts/gitlab/lib.sh issue-link <iid-parent> <iid-lot> [--parallele]
+     ```
+     Un appel par lot, jamais une boucle. Un lot rattaché sans son drapeau est séquentiel — la
+     dégradation sûre, mais muette, et plus aucune checklist ne la rattrapera. Le verbe est
+     **idempotent** (un lot déjà rattaché à ce parent est un succès) et **refuse** un lot déjà
+     rattaché ailleurs — une anomalie qui cesse d'être muette.
+     Termine par l'**ordre**, qui n'est pas de l'affichage : `queue.sh` garde les lots d'un parent
+     contigus **dans cet ordre**, et `startables` juge « ce lot est-il démarrable ? » sur ce qui le
+     **précède**. Un seul appel, tous les lots nommés, lot tests en dernier :
+     ```
+     bash scripts/gitlab/lib.sh subticket-order <iid-parent> <iid-lot-1> <iid-lot-2> …
+     ```
+     Le verbe refuse **en bloc** si l'un des iid n'est pas un lot de ce parent : un ordre posé à
+     moitié laisserait le plan dans un état que personne n'a voulu.
+     ⚠ **N'écris rien dans la description du parent** pour décrire ses lots — ni checklist, ni
+     liste, ni `set-description` : la relation, son ordre, l'état de chaque lot et le marqueur
+     viennent tous de la forge depuis #389.
 
    Si le besoin tient en une session, continue simplement : **ticket unique**, même s'il est
    multi-facettes — matérialise alors les facettes par une **checklist interne** dans la
@@ -170,12 +184,12 @@ lieu d'inventer.
    dans aucune vue et personne ne le retrouvera.
 
 10. Termine par un résumé court : l'IID et l'URL du ticket créé, ses labels et son milestone —
-   pour un découpage : le parent et chaque sous-ticket avec son rang dans la checklist. Mentionne
+   pour un découpage : le parent et chaque sous-ticket avec son rang dans le découpage, et le
+   marqueur `lot::parallele` là où il a été posé. Mentionne
    `project-add` **seulement s'il a échoué** : c'est le cas nominal qui n'a pas à occuper le
    résumé, et l'anomalie qui doit s'y voir — un ticket sans état est à traiter, pas à consigner.
    Puis la suite :
    - si l'utilisateur a demandé (explicitement ou par le contexte de la conversation) de
      **réaliser** le travail, enchaîne directement sur `/ticket-start <iid>` sans attendre de
-     « go » (pour un découpage : sur le **premier sous-ticket** de la checklist, jamais sur le
-     parent) ;
+     « go » (pour un découpage : sur le **premier lot**, jamais sur le parent) ;
    - sinon, propose simplement `/ticket-start <iid>` pour démarrer plus tard.

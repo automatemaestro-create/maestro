@@ -66,8 +66,8 @@ toi-même.
      parallélisables (#562). Le marqueur `(parallèle)` étant **facultatif** (#160), leurs lots
      partiront un par un — un séquentiel que le run n'a pas choisi, qu'il a **subi**, et qui ne se
      distingue d'un séquentiel voulu par rien. TSV — `parent`, `au-plan` (combien de ses lots sont
-     dans ce plan), `marques` (toujours 0, sinon il ne serait pas listé), `lots` (sa checklist
-     entière), `titre`. ⚠ La liste **dépend du milestone** : si la question (b) en retient un autre
+     dans ce plan), `marques` (toujours 0, sinon il ne serait pas listé), `lots` (son découpage
+     entier), `titre`. ⚠ La liste **dépend du milestone** : si la question (b) en retient un autre
      que le défaut, rejoue `--non-arbitres --milestone "<titre>"` avant de poser la question (d).
    - **`--touche-claude`** — sortie vide (le cas courant) : n'en parle pas. Une ou plusieurs
      lignes : ce sont des tickets **du plan qui nomment `.claude/`** (#612), où une session
@@ -184,19 +184,20 @@ toi-même.
    lots de ce parent sont au plan sur combien au total.
 
    Une fois le go donné, **pour chaque parent retenu** :
-   1. lis ses lots — `bash scripts/gitlab/lib.sh subtickets <parent>` pour la checklist, et la
-      description de chaque lot si son titre ne suffit pas à trancher ;
+   1. lis ses lots — `bash scripts/gitlab/lib.sh subtickets <parent>`, et la description de chaque
+      lot si son titre ne suffit pas à trancher ;
    2. décide, lot par lot, s'il **ne dépend pas** des lots parallèles qui le précèdent. Le cas
       courant est qu'il n'en dépende pas — les lots sont additifs et mergeables seuls sur `main` —
       mais un **lot socle** dont les suivants héritent, et le **lot final « tests + doc »**, ne se
       marquent jamais ;
-   3. écris les marqueurs **par les helpers**, jamais à la main :
+   3. pose le marqueur **sur le lot**, un appel par lot retenu :
       ```
-      bash scripts/gitlab/lib.sh get-description <parent> > <fichier>   # tu édites le fichier
-      bash scripts/gitlab/lib.sh set-description <parent> <fichier>
+      bash scripts/gitlab/lib.sh issue-link <parent> <lot> --parallele
       ```
-      suffixe ` (parallèle)` aux titres retenus **dans la checklist `## Sous-tickets`**, et ne
-      touche à rien d'autre — surtout pas aux coches, tenues au fil de l'eau par `/ticket-ship` ;
+      Le verbe rattache (idempotent : le lot l'est déjà) puis pose le label `lot::parallele`, seul
+      support du marqueur depuis #389. **N'écris rien dans la description du parent** : elle ne
+      porte plus de checklist depuis #395, et un `set-description` y réintroduirait un support que
+      plus rien ne lit ;
    4. enregistre l'arbitrage sur le parent, **quel qu'ait été ton verdict** :
       ```
       bash scripts/gitlab/lib.sh arbitre <parent>
@@ -206,7 +207,7 @@ toi-même.
       Le verbe refuse un ticket qui n'est pas un parent, et reposer le label ne coûte rien.
 
    L'ordre compte, comme pour les orphelins : **tout ceci a lieu AVANT le lancement**, sans quoi le
-   run figerait son plan sur une checklist non arbitrée et les marqueurs ne serviraient qu'au run
+   run figerait son plan sur un découpage non arbitré et les marqueurs ne serviraient qu'au run
    suivant.
 
    **Dis ce qui va être arrêté.** Lancer ou reprendre commence par **tuer les runs encore en vol**
@@ -265,7 +266,7 @@ toi-même.
    mesuré**, et le passage de 2 à 3 ne l'a pas mesuré — c'est une **décision** prise sur deux runs à
    concurrence 3 sans incident, l'**asymétrie des erreurs** ne tranchant plus entre les deux valeurs,
    et **#625** doit produire le chiffre qui manque), et « `séquentiel — aucun ticket simultanable
-   dans ce plan` » est un **verdict** sur les checklists des parents, à ne pas confondre avec « ce
+   dans ce plan` » est un **verdict** sur le découpage des parents, à ne pas confondre avec « ce
    plan est antérieur à la colonne groupe », qui dit qu'on ne peut pas savoir.
 
    ⚠ **Deux choses à ne relayer sous aucune forme**, l'une et l'autre démenties : « le run
