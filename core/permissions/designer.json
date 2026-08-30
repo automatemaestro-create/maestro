@@ -1,4 +1,13 @@
 {
   "allow": [],
+  "ask": {
+    "mcp__figma-officiel__use_figma": "humain",
+    "mcp__figma-officiel__generate_figma_design": "humain",
+    "mcp__figma-officiel__generate_diagram": "humain",
+    "mcp__figma-officiel__create_new_file": "humain",
+    "mcp__figma-officiel__upload_assets": "humain",
+    "mcp__figma-officiel": "auto",
+    "Bash": "auto"
+  },
   "deny": []
 }

@@ -379,6 +379,19 @@ sans ambiguïté : demandes en attente, temps de séjour, taux d'approbation. �
 proche de 1** ne dit pas « il faut une machine pour trancher » — il dit que ces actes-là méritaient
 `auto`, ce qui coûte une ligne de politique et aucun canal.
 
+⚠ **#716 est fait, et la porte n'en est pas ouverte pour autant** — c'est la moitié du fait qu'il
+fallait ne pas confondre. La **population existe** : les cinq agents du catalogue portent des entrées
+`ask` motivées ([`core/permissions/README.md`](../core/permissions/README.md)), et la chaîne est
+exercée de bout en bout par un banc rejouable (`scripts/arbitrage/banc-arbitrage.py`). Mais **rien
+n'a encore été mesuré**, et deux propriétés de ces entrées bornent d'avance ce qui pourra l'être :
+les crans `auto` — le plus gros de la population, `Bash` chez les cinq — **n'atteignent jamais la
+file** (le hook les court-circuite, ils ne font que tracer), et les trois entrées `humain` portent
+toutes sur un **serveur MCP**, donc ne se déclenchent que là où un connecteur est armé de son secret.
+La file ne peut donc déborder que sur un déploiement qui poste vraiment dans Slack, écrit vraiment
+dans la forge ou dessine vraiment dans Figma. C'est le fait à produire avant de rouvrir quoi que ce
+soit — et **ce n'est pas un reproche fait à #716**, dont l'objet était de créer la population, pas
+de la faire déborder.
+
 **Porte 2 — un acte dont le verdict dépend des arguments.** Le cas `rm -rf {chemin}`. La réponse
 n'est alors **pas** ce cran-ci mais une **portée** sur l'entrée de politique (§3.1a) : déterministe,
 testable, évaluée là où le cran l'est déjà, sans canal ni fournisseur ni traversée de frontière
@@ -390,7 +403,8 @@ C'est la seule porte qui rouvrirait vraiment une passe modèle — et elle deman
 ce que le §3.1b refuse : un garde-fou gardé par un LLM. Elle ne se franchit pas sans renverser #586
 explicitement, comme cette note renverse #586 explicitement.
 
-Aucune des trois n'est ouverte aujourd'hui, et la première ne peut pas l'être avant #716.
+Aucune des trois n'est ouverte aujourd'hui. La première ne pouvait pas l'être avant #716 ; depuis, ce
+qui lui manque n'est plus une population mais une **mesure**.
 
 ## 9. Où cette décision est écrite ailleurs
 

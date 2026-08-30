@@ -20,6 +20,17 @@ violations tracées » :
    forme inattendue, entrée malformée — une politique douteuse est refusée
    avec sa cause, jamais appliquée à moitié), nom d'agent verrouillé, racine
    configurable (`MAESTRO_PERMISSIONS_DIR`) ;
+②bis **ce que le dépôt versionné dit, et pas seulement qu'il se lit** (#716) :
+   jusque-là ce fichier n'exigeait des politiques commitées que d'être *valides*,
+   ce qui restait vrai d'un dossier sans une seule entrée `ask` — c'est-à-dire de
+   la chaîne d'arbitrage **dormante** que #716 a trouvée. S'y ajoutent donc quatre
+   exigences que la validité ne porte pas : chaque entrée `ask` est **motivée en
+   une ligne** dans `core/permissions/README.md`, avec le cran que le fichier
+   pose (le tableau et le JSON ne peuvent plus diverger) ; le cran est **écrit**
+   et non laissé au défaut (`ask` en objet, la forme de #586) ; le canal par
+   lequel un agent lève la main (#582) n'est **jamais** classé ; et l'ordre des
+   entrées du designer *est* la règle — le cas particulier avant le fourre-tout,
+   éprouvé par son contre-exemple ;
 ③ **application au montage** (runtime, #110) : les outils intégrés refusés
    sont retirés de la session avant son ouverture, un serveur MCP entièrement
    refusé n'est jamais monté (ses secrets ne sont même pas résolus), un refus
@@ -67,11 +78,13 @@ violations tracées » :
 
 import asyncio
 import json
+import re
 from pathlib import Path
 
 import pytest
 
 from maestro.agents import QA_PROFILE, AgentRuntime
+from maestro.agents.catalog import DEFAULT_AGENTS
 from maestro.agents.mcp import ServeurMcp
 from maestro.agents.permissions import (
     DecisionOutil,
@@ -95,6 +108,7 @@ from maestro.providers import claude as claude_mod
 from maestro.providers.arbitrage import (
     BORNE_HOOK_S,
     MARGE_MIN_S,
+    OUTIL_ARBITRAGE,
     BornesArbitrage,
     motif_approbation,
     motif_refus,
@@ -663,6 +677,159 @@ def test_les_politiques_versionnees_du_depot_sont_valides():
     depot = PermissionStore(Path(__file__).resolve().parents[1] / "core" / "permissions")
     for agent in depot.agents():
         depot.lire(agent)  # validée à la lecture : lire() lèverait sinon
+
+
+# --- ②bis Ce que le dépôt versionné DIT, et pas seulement qu'il se lit (#716) ------------
+
+#: Le dossier réel — celui que lisent les vrais runs, jamais un dépôt de test.
+DEPOT_VERSIONNE = Path(__file__).resolve().parents[1] / "core" / "permissions"
+
+#: Un en-tête d'agent dans le README (« ### `designer` »).
+_SECTION_AGENT = re.compile(r"^### `([a-z0-9][a-z0-9_-]*)`\s*$")
+
+#: Une ligne de tableau « | `<outil>` | `<cran>` | <motif> | ».
+_LIGNE_MOTIF = re.compile(r"^\|\s*`([^`]+)`\s*\|\s*`([^`]+)`\s*\|\s*(\S.*?)\s*\|$")
+
+
+def _motifs(texte: str) -> dict[str, dict[str, tuple[str, str]]]:
+    """Les entrées motivées du README : `{agent: {outil: (cran, motif)}}`.
+
+    Lecture volontairement **stricte** : une section se referme au premier titre
+    de niveau 2, et une ligne qui n'a pas les trois cellules attendues n'est pas
+    lue « à moitié », elle n'est pas lue. C'est ce qui permet à ce relevé
+    d'échouer, donc de garder quelque chose — un parseur tolérant rendrait un ✓
+    sur une question jamais posée.
+    """
+    trouve: dict[str, dict[str, tuple[str, str]]] = {}
+    agent = ""
+    for ligne in texte.splitlines():
+        entete = _SECTION_AGENT.match(ligne)
+        if entete:
+            agent = entete.group(1)
+            trouve.setdefault(agent, {})
+            continue
+        if ligne.startswith("## "):
+            agent = ""
+            continue
+        cellule = _LIGNE_MOTIF.match(ligne)
+        if agent and cellule:
+            outil, cran, motif = cellule.groups()
+            trouve[agent][outil] = (cran, motif)
+    return trouve
+
+
+def test_le_releve_des_motifs_voit_ce_qui_manque():
+    """Le motif prouvé sur un échantillon fautif, avant de balayer le vrai README.
+
+    Sans cette moitié, le test d'en dessous serait vert aussi bien parce que tout
+    est motivé que parce que le parseur ne trouve jamais rien.
+    """
+    bon = (
+        "### `qa`\n\n"
+        "| Acte | Cran | Pourquoi |\n| --- | --- | --- |\n"
+        "| `Bash` | `auto` | Parce que le nom ne dit rien de l'acte. |\n"
+    )
+    assert _motifs(bon) == {"qa": {"Bash": ("auto", "Parce que le nom ne dit rien de l'acte.")}}
+
+    # Une entrée non motivée disparaît du relevé — c'est ce qui fera rougir.
+    ampute = bon.replace("| `Bash` | `auto` | Parce que le nom ne dit rien de l'acte. |\n", "")
+    assert _motifs(ampute) == {"qa": {}}
+
+    # Et une section se referme : sans ça, le reste du README tomberait sur le
+    # dernier agent nommé, et n'importe quelle ligne de tableau le « motiverait ».
+    hors = bon + "\n## Autre chose\n\n| `Write` | `humain` | Ailleurs. |\n"
+    assert _motifs(hors)["qa"] == {"Bash": ("auto", "Parce que le nom ne dit rien de l'acte.")}
+
+
+def test_chaque_entree_ask_versionnee_est_motivee_avec_son_cran():
+    """Critère de #716 : une entrée `ask` que personne n'a motivée est illisible.
+
+    Le tableau du README et les fichiers JSON ne peuvent plus diverger : ajouter
+    une entrée sans l'expliquer, la retirer sans retirer sa ligne, ou changer son
+    cran d'un seul côté fait rougir. C'est ce qui distingue une règle écrite d'une
+    règle *tenue* — une doc qu'aucune machine ne relit dérive au premier ajout.
+    """
+    depot = PermissionStore(DEPOT_VERSIONNE)
+    posees = {}
+    for agent in depot.agents():
+        politique = depot.lire(agent)
+        if politique.ask:
+            posees[agent] = {str(entree): str(entree.decideur) for entree in politique.ask}
+
+    # La prémisse de #716, et le constat qui l'a ouvert : sans une seule entrée
+    # `ask` dans le dépôt, toute la chaîne d'arbitrage reste dormante.
+    assert posees, "aucune entrée `ask` versionnée — la chaîne d'arbitrage dort (#716)"
+
+    motifs = _motifs((DEPOT_VERSIONNE / "README.md").read_text(encoding="utf-8"))
+    documentes = {
+        agent: {outil: cran for outil, (cran, _) in table.items()}
+        for agent, table in motifs.items()
+        if table
+    }
+    assert documentes == posees
+
+    for agent, table in motifs.items():
+        for outil, (_, motif) in table.items():
+            assert len(motif) >= 60, f"{agent} / {outil} : motif trop court pour dire pourquoi"
+
+
+def test_le_cran_est_ecrit_dans_le_fichier_jamais_laisse_au_defaut():
+    """Second critère de #716 : `ask` en **objet**, donc un cran posé et non hérité.
+
+    La forme liste (`["Bash"]`) reste admise par le contrat — c'est le fichier
+    d'avant #586, relu au bit près — mais elle ne convient pas ici : elle vaut
+    `humain` *partout* sans que le fichier le dise, et un cran qu'on ne lit pas
+    dans le fichier est un cran que personne n'a choisi.
+    """
+    for chemin in sorted(DEPOT_VERSIONNE.glob("*.json")):
+        ask = json.loads(chemin.read_text(encoding="utf-8")).get("ask", {})
+        assert isinstance(ask, dict), (
+            f"{chemin.name} : `ask` en liste — la forme d'avant #586, où le cran "
+            "retombe sur « humain » sans que le fichier l'écrive."
+        )
+        for outil, cran in ask.items():
+            assert cran in tuple(Decideur), f"{chemin.name} : cran {cran!r} de {outil!r}"
+
+
+def test_le_canal_par_lequel_l_agent_leve_la_main_n_est_jamais_classe():
+    """`demander_arbitrage` (#582) reste sous `allow`, et les deux autres crans disent pourquoi.
+
+    En `ask` on arbitrerait la demande d'arbitrage — circulaire ; en `deny` on
+    couperait le seul canal qui part *de* l'agent *vers* nous.
+    """
+    depot = PermissionStore(DEPOT_VERSIONNE)
+    for agent in depot.agents():
+        decision = depot.lire(agent).decide(OUTIL_ARBITRAGE)
+        assert decision.verdict is Verdict.PASSE, f"{agent} classe {OUTIL_ARBITRAGE}"
+
+
+def test_les_politiques_versionnees_nomment_des_agents_du_catalogue():
+    """Un fichier au nom d'un agent jamais routé serait **mort**, et jamais signalé.
+
+    `PermissionStore.lire` n'est appelé qu'avec `decision.agent.nom` : un
+    `developer.json` ou un `orchestrateur.json` ne serait lu par personne, et
+    « pas de fichier = pas de politique » ne distingue pas les deux cas.
+    """
+    connus = {agent.nom for agent in DEFAULT_AGENTS}
+    assert set(PermissionStore(DEPOT_VERSIONNE).agents()) <= connus
+
+
+def test_chez_le_designer_l_ecriture_passe_avant_le_fourre_tout():
+    """L'ordre des entrées **est** la règle : la première qui couvre l'outil gagne.
+
+    Les cinq écritures du serveur Figma officiel sont classées `humain`, le
+    serveur entier `auto` — donc les lectures passent en étant vues, et un outil
+    d'écriture ajouté demain au catalogue serait au moins vu, jamais silencieux.
+    """
+    politique = PermissionStore(DEPOT_VERSIONNE).lire("designer")
+
+    assert politique.decideur("mcp__figma-officiel__use_figma") is Decideur.HUMAIN
+    assert politique.decideur("mcp__figma-officiel__get_metadata") is Decideur.AUTO
+
+    # Le contre-exemple, sans lequel l'assertion ci-dessus ne prouve pas l'ordre :
+    # fourre-tout d'abord, et l'écriture retombe en `auto` — silencieusement.
+    inversee = PolitiqueOutils(ask=tuple(reversed(politique.ask)))
+    assert inversee.decideur("mcp__figma-officiel__use_figma") is Decideur.AUTO
 
 
 # --- ③ Application au montage (runtime) -------------------------------------------------
