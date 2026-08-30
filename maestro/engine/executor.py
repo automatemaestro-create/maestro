@@ -1685,6 +1685,14 @@ class LocalExecutor(TaskExecutor):
         outillé : c'est de lui qu'est dérivé l'espace de travail (worktree ou
         copie). Le chemin texte ne produit aucun fichier — il n'a pas d'espace
         de travail du tout.
+
+        L'**effort** (#253) est le seul réglage de cette liste à équiper les
+        **deux** chemins, et c'est normal : il ne parle ni d'outils, ni d'espace,
+        ni de canal — il parle du modèle, comme `agent.modele`, et il voyage donc
+        exactement là où celui-ci voyage. Il est relu sur la fiche de l'agent à
+        chaque tâche, comme le playbook, plutôt que figé au câblage du runtime.
+        Ce qu'un fournisseur n'admet pas ne lui est jamais transmis
+        (`ModelProvider.effort_admis`) : ni ici, ni dans le runtime.
         """
         deliberation = deliberation if deliberation is not None else Deliberation()
         runtime = self._runtimes.get(agent.nom)
@@ -1759,14 +1767,20 @@ class LocalExecutor(TaskExecutor):
                     ),
                     projet=self._projet(task),
                     tache_id=task.id,
+                    effort=agent.effort,
                 )
                 return outcome.resume, outcome.fichiers
             except UnsupportedCapability:
                 pass  # fournisseur texte-seul : repli sur le livrable texte
+        # Le mot-clé ne part que s'il a quelque chose à dire (#253) : sur un
+        # fournisseur qui n'annonce aucun effort — le cas de tout adaptateur
+        # texte-seul — l'appel est au bit près celui d'avant ce lot.
+        reglage = self._provider.effort_admis(agent.modele, agent.effort)
         sortie = await self._provider.generate(
             _build_task_prompt(description, task.format_sortie),
             model=agent.modele,
             system_prompt=playbook.contenu if playbook is not None else agent.prompt_systeme,
+            **({"effort": reglage} if reglage else {}),
         )
         return sortie, ()
 

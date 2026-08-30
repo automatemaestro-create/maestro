@@ -160,8 +160,8 @@ TSV
 # c'est elle qui rejouera toute seule quand le lot 2 aura élargi la liste.
 GESTES=$(
   cat <<'TSV'
-ecart	outil	WebSearch	#788 G3 · #714	/design-veille ne se joue jamais en run : un ticket à surface visible est implémenté sans référence vérifiée. Décision au lot 4 (#792).
-ecart	outil	WebFetch	#788 G3 · mesuré 1×	Même écart que WebSearch, et le seul des deux qu'un run ait déjà demandé.
+voulu	outil	WebSearch	#788 G3 · #714 · tranché au lot 4 (#792)	Confirmé fermé : une veille rend des PARTIS PRIS — un jugement, laissé à un humain comme l'arbitrage de #562 et le rail de #617 — et « chrome-maestro » passant déjà l'union, ouvrir la seule recherche donnerait une veille à moitié. Jamais demandé : 0 refus sur 56. Forme couverte : la question SURVIT au run (lot 5, #795), un humain joue /design-veille ensuite.
+voulu	outil	WebFetch	#788 G3 · mesuré 1× (#271) · tranché au lot 4 (#792)	Fermé aussi, mais par une raison qui lui est PROPRE : #714 le rangeait sous la veille, or le seul usage mesuré n'en est pas une — lire une référence citée par le ticket. « L'URL vient d'un humain » n'est pas exprimable dans une règle, qui ne borne qu'un préfixe (raison de curl, #528), et le produit d'un run est mergé sans relecture (#418/#419). Forme couverte : référence versionnée, ou porte d'admission humaine (#678) — ce que #271 a fini par faire.
 ecart	bash	pwd	mesuré 5× (#484, #695, #696, #739, #256)	Lecture pure. Le premier geste après un « cd » dont on doute.
 ecart	bash	cut -f2	mesuré 1× (#698)	Découper une ligne TSV — le pendant de « awk »/« sed », déjà autorisés.
 ecart	bash	tr -d ' '	mesuré 1× (#698)	Lecture pure, bornée au tube.
@@ -499,10 +499,15 @@ else
     printf '  G2  écriture sous « .claude/ »                 → INVÉRIFIABLE ICI : le banc a disparu.\n'
   fi
   web_ouvert=$(awk -F'\t' '($3 == "WebSearch" || $3 == "WebFetch") && $1 == "couvert" { n++ } END { print n + 0 }' "$TMP.q2")
-  if [ "$web_ouvert" -eq 0 ]; then
-    printf '  G3  WebSearch / WebFetch                      → REPRODUIT : hors des DEUX allowlists.\n'
-  else
+  web_voulu=$(awk -F'\t' '($3 == "WebSearch" || $3 == "WebFetch") && $1 == "voulu" { n++ } END { print n + 0 }' "$TMP.q2")
+  if [ "$web_ouvert" -gt 0 ]; then
     printf '  G3  WebSearch / WebFetch                      → NE SE REPRODUIT PLUS : %s des deux est couvert.\n' "$web_ouvert"
+  elif [ "$web_voulu" -eq 2 ]; then
+    printf '  G3  WebSearch / WebFetch                      → INTERDIT VOULU, pas un écart : tranché au lot 4\n'
+    printf '      (#792). Les deux restent hors des DEUX allowlists, chacun avec SA raison et sa forme\n'
+    printf '      couverte (Q2) — celle de WebFetch n%sétant pas celle de la veille.\n' "'"
+  else
+    printf '  G3  WebSearch / WebFetch                      → REPRODUIT : hors des DEUX allowlists.\n'
   fi
   printf '  G4  les questions sans répondant              → recensées ci-dessous.\n'
   while IFS=$'\t' read -r question ou survie; do

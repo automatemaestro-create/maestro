@@ -26,7 +26,7 @@ d'acceptation du ticket #9 :
    n'en dit rien. Le fail-safe est celui de ③ (canal absent ou en panne ⇒ refus).
 
    ⚠ Il y avait une troisième porte, `orchestrateur`, retirée par #715 (décision
-   #647, docs/31) — et ce que ces tests éprouvent a **changé de nature avec elle**.
+   #647, docs/32) — et ce que ces tests éprouvent a **changé de nature avec elle**.
    Avant, l'invariant d'EF-08 était « la machine ne peut pas approuver un acte
    classé `humain` », et il tenait par le **routage** : on le vérifiait en câblant
    un orchestrateur qui approuve tout, seul canal monté, et en constatant qu'on ne

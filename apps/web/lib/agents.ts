@@ -7,20 +7,23 @@
  * onglet précis) et les routes `/agents/[nom]/[onglet]` lisent toutes cette
  * liste — ajouter une facette à un agent se fait ici, pas dans trois endroits.
  *
- * Les quatre onglets reprennent les trois anciennes pages — `/catalogue`
- * (profil), `/playbooks` (playbook), `/chat` (chat) — plus les serveurs MCP et
- * les permissions, qui n'avaient jusqu'ici aucune page à eux.
+ * Les quatre premiers onglets reprennent les trois anciennes pages —
+ * `/catalogue` (profil), `/playbooks` (playbook), `/chat` (chat) — plus les
+ * serveurs MCP et les permissions, qui n'avaient jusqu'ici aucune page à eux.
+ * Le cinquième, **Logs** (#266), n'en reprend aucune : ce qu'un agent fait ne se
+ * lisait que dans le fil global du tableau de bord, tous agents confondus.
  */
 
 import {
   IconeAgent,
   IconeChat,
+  IconeJournal,
   IconeMcp,
   IconePlaybooks,
 } from "@/components/Icones";
 import type { Icone } from "@/components/Primitives";
 
-export type CleOngletAgent = "profil" | "playbook" | "mcp" | "chat";
+export type CleOngletAgent = "profil" | "playbook" | "mcp" | "chat" | "logs";
 
 export type OngletAgent = {
   cle: CleOngletAgent;
@@ -33,12 +36,21 @@ export type OngletAgent = {
   icone: Icone;
 };
 
-/** L'ordre d'affichage : de l'identité de l'agent à la conversation avec lui. */
+/**
+ * L'ordre d'affichage : de l'identité de l'agent à ce qu'il en a fait.
+ *
+ * Les quatre premiers vont du plus stable au plus vivant — qui il est, ce qu'on
+ * lui a appris, ce qu'on lui a permis, ce qu'on lui dit. **Logs ferme la
+ * rangée** (#266) pour la même raison que le journal ferme la bascule d'un run
+ * (`lib/vuesRun`, #516) : c'est la trace, on l'ouvre en dernier, quand ce que
+ * les quatre autres montrent ne suffit plus à comprendre ce qui s'est passé.
+ */
 export const ONGLETS_AGENT: OngletAgent[] = [
   { cle: "profil", libelle: "Profil", icone: IconeAgent },
   { cle: "playbook", libelle: "Playbook", icone: IconePlaybooks },
   { cle: "mcp", libelle: "MCP & permissions", icone: IconeMcp },
   { cle: "chat", libelle: "Chat", icone: IconeChat },
+  { cle: "logs", libelle: "Logs", icone: IconeJournal },
 ];
 
 /** L'onglet servi quand aucun n'est demandé — `/agents/<nom>` y redirige. */
@@ -69,6 +81,38 @@ export function cheminOnglet(
   onglet: CleOngletAgent = ONGLET_AGENT_DEFAUT,
 ): string {
   return `/agents/${encodeURIComponent(nom)}/${onglet}`;
+}
+
+/**
+ * L'écran de **création** d'un agent (#254) : une route à part entière, servie
+ * par `app/agents/nouveau/`, et non plus un formulaire déplié sous la liste.
+ *
+ * Il est écrit ici, à côté de `cheminOnglet`, pour la raison qui a fait naître
+ * ce module : la liste y mène, l'écran s'y trouve, et un test le confronte au
+ * dossier réel — trois endroits qui doivent dire le même chemin.
+ */
+export const CHEMIN_CREATION_AGENT = "/agents/nouveau";
+
+/**
+ * Le segment que cette route occupe **sous** `/agents`, dérivé du chemin plutôt
+ * que réécrit : les deux ne peuvent pas diverger.
+ */
+const SEGMENT_CREATION = CHEMIN_CREATION_AGENT.split("/").filter(Boolean)[1];
+
+/**
+ * Vrai si ce nom d'agent est celui que la route de création occupe déjà.
+ *
+ * ⚠ C'est la contrepartie assumée d'une route **statique** sous `/agents` : un
+ * segment fixe l'emporte sur le segment dynamique `[nom]`, donc un agent qui
+ * s'appellerait « nouveau » verrait `/agents/nouveau` rendre la création au lieu
+ * de sa fiche. Sa fiche resterait atteignable (`cheminOnglet` écrit toujours les
+ * trois segments, `/agents/nouveau/profil`), mais l'ambiguïté n'a aucune raison
+ * d'être créée : le nom est refusé à la saisie, avec sa cause. Rien n'est
+ * rétroactif — un agent déjà nommé ainsi (créé par l'API) n'est pas touché,
+ * seule son adresse courte est prise.
+ */
+export function estNomAgentReserve(nom: string): boolean {
+  return nom.trim().toLowerCase() === SEGMENT_CREATION;
 }
 
 /**

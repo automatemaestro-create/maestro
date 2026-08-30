@@ -72,7 +72,7 @@ from maestro.telemetry import redact_secrets
 #:
 #: ⚠ De cette phrase, #715 a retiré la **première** moitié — trancher un acte, un
 #: cran qui n'a jamais eu de canal (décision #647,
-#: [docs/31](../../docs/31-decision-cran-orchestrateur.md)) — et **laissé
+#: [docs/32](../../docs/32-decision-cran-orchestrateur.md)) — et **laissé
 #: celle-ci**, vivante et branchée : répondre à une question n'est pas approuver
 #: un acte. L'import ne change donc pas de source, mais `ACTEUR_ORCHESTRATEUR` y
 #: est désormais un **littéral** et non plus le miroir d'un membre d'énumération :

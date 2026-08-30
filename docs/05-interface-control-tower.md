@@ -527,8 +527,33 @@ L'entrée de menu **Agents** (`/agents`) mène à la **liste** ; chaque carte ou
 il n'y a plus de sélecteur d'agent en tête de trois pages différentes.
 
 - **Liste** : les agents du catalogue (ceux du code, en lecture seule, et les
-  personnalisés), avec **créer un agent**. Arrivée avec `?onglet=<onglet>` (par
+  personnalisés), avec la porte de **création en tête** — avant les cartes, et
+  sans attendre la lecture du catalogue. Arrivée avec `?onglet=<onglet>` (par
   une redirection de la v1), les cartes visent directement cet onglet.
+- **Création** (`/agents/nouveau`, #254) : un **écran** et non un dépliant sous
+  la liste — le cadre reste en place (barre latérale, barre supérieure, titre
+  « Agents »), seule la zone de contenu change. On en sort par « Tous les
+  agents » ou par **Échap** ; un brouillon commencé se signale avant d'être
+  perdu, sur ces deux sorties comme sur la fermeture de l'onglet. Une création
+  réussie mène à la fiche de l'agent né, pas à la liste.
+
+  **Deux entrées, une seule création** (#257) : au-dessus des champs, une
+  **intention en une phrase** et un bouton **Générer** — l'assistant propose
+  alors rôle, compétences, playbook et, quand le registre les reconnaît,
+  fournisseur et modèle (`POST /api/catalogue/generation`). Trois choses à
+  ne pas confondre. La proposition arrive **dans les champs**, comme une saisie :
+  elle se relit, se corrige mot à mot, se **régénère** ou s'**abandonne** (le
+  formulaire retrouve alors ce qu'il portait avant) — et **rien n'est
+  enregistré** tant que « Créer l'agent » n'a pas été cliqué, c'est le principe
+  des propositions de playbook ([docs/22](./22-auto-amelioration-playbooks.md))
+  appliqué à la définition entière. Le **fournisseur suggéré est confronté au
+  registre** avant d'atteindre l'écran : un nom que Maestro ne saurait pas
+  résoudre est écarté et le champ reste vide (« réglages par défaut »), jamais
+  rempli d'un nom plausible — c'est la règle que la sonde du poste (#487) tient
+  déjà sur les mêmes deux champs. Et un
+  **échec** — quota, réseau, fournisseur muet ou réponse hors contrat — laisse le
+  formulaire exactement en l'état et le dit : on réessaie, ou on remplit à la
+  main.
 - **Fiche agent**, quatre onglets — l'ordre va de l'identité de l'agent à la
   conversation avec lui :
 
@@ -536,7 +561,7 @@ il n'y a plus de sélecteur d'agent en tête de trois pages différentes.
 | --- | --- | --- |
 | 🤖 **Profil** | identité (nom, rôle, modèle, compétences/tags), prompt système éditable, statistiques (tâches traitées, taux de réussite, coût moyen) ; suppression d'un agent personnalisé | page `/catalogue` |
 | 📖 **Playbook** | éditeur avec **historique des versions** et retour arrière (EF-25). L'historique porte aussi les **propositions d'auto-amélioration** en attente — brouillons issus des échecs d'un run, à appliquer ou rejeter au clic ([docs/22](./22-auto-amelioration-playbooks.md)) | page `/playbooks` |
-| 🔌 **MCP & permissions** | serveurs MCP de l'agent et politique allow/deny effective ([docs/21](./21-configuration-mcp.md)) | n'avait aucune page à soi — seulement le bas de la fiche du catalogue |
+| 🔌 **MCP & permissions** | serveurs MCP de l'agent (interrupteur par intégration du pool, #133) et **politique allow/ask/deny éditable** (#262) : `allow` et `deny` s'ajoutent et se retirent entrée par entrée, les outils réellement exposés à l'agent en suggestion, `ask` affichée avec son décideur ([docs/21](./21-configuration-mcp.md), `core/permissions/README.md`) | n'avait aucune page à soi — seulement le bas de la fiche du catalogue |
 | 💬 **Chat** | conversation directe avec l'agent (EF-19) | page `/chat/<agent>` |
 
 L'**activation/désactivation** et le **contrôle de capacité** (**+ / −**

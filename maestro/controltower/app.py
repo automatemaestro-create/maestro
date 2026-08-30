@@ -103,6 +103,10 @@ Endpoints :
 - `PUT  /api/mcp/activations/{agent}` — fixe les intégrations du pool **activées**
   pour un agent (#133) : l'écriture derrière l'interrupteur par agent qui
   remplace l'affichage lecture seule des serveurs MCP ;
+- `PUT  /api/permissions/{agent}` — écrit la politique allow/ask/deny d'un agent
+  (#262, source `core/permissions/<agent>.json`) : remplacement intégral, 422
+  **motivé** sur une entrée mal formée, et aucune lecture préalable — c'est ce
+  qui permet de réparer depuis l'écran une politique que le moteur refuse ;
 - `GET  /api/projets` — les projets déclarés de l'utilisateur (#223, EF-35) :
   racine canonicalisée sur le disque, origine, `vcs` détecté et périmètre ;
 - `GET  /api/projets/explorateur` — l'**explorateur de dossiers servi par
@@ -125,17 +129,42 @@ Endpoints :
 - `PUT  /api/projets/{id}` — remplace la déclaration (l'intégrale, pas un diff) ;
 - `DELETE /api/projets/{id}` — oublie un projet, sans jamais toucher au dossier
   sur le disque ;
+- `GET  /api/fournisseurs` — ce qui existe côté modèles (#253) **et ce qui est
+  déjà là** (#487) : les fournisseurs du **registre**, leurs modèles annoncés et,
+  pour chacun, les niveaux d'effort admis (liste vide quand le fournisseur
+  n'expose pas ce réglage) ; `modeles_libres` dit qu'un nom hors gamme reste
+  recevable ; et, sur la même ligne, ce que la **sonde du poste** en a trouvé
+  (`present_ici`, `utilisable_ici`, `modeles_ici`, `constats`), plus
+  `hors_registre` — l'outillage présent que Maestro ne sait pas piloter — et les
+  `incertitudes` de la sonde ;
 - `GET  /api/catalogue` — le catalogue d'agents (#72, EF-03) : les agents par
-  défaut du code et les personnalisés persistés, avec leur provenance, leurs
-  serveurs MCP déclarés (#104, lecture seule — `mcp_serveurs`/`mcp_erreur`) et
-  leur politique de permissions effective (#110, lecture seule —
-  `permissions`/`permissions_erreur`) ;
+  défaut du code et les personnalisés persistés, avec leur provenance
+  (`source`, **trois** valeurs depuis #259 : `defaut`, `defaut_surcharge`,
+  `personnalise`), leurs réglages de modèle **effectifs**
+  (`fournisseur`/`modele`/`effort` — #253) et d'où chacun vient (`herite`,
+  `reglages_du_code` — #259), leurs serveurs MCP déclarés (#104, lecture seule —
+  `mcp_serveurs`/`mcp_erreur`) et leur politique de permissions effective (#110 —
+  `permissions`/`permissions_erreur`, écrite par `PUT /api/permissions/{agent}`
+  depuis #262, qui sert avec elle les outils **réellement exposés** à l'agent
+  dans `permissions_outils`) ;
 - `GET  /api/catalogue/{nom}` — la définition complète d'un agent (playbook
   compris) ;
 - `POST /api/catalogue` — crée un agent personnalisé (persisté hors du code,
   routable et exécutable par les moteurs construits ensuite) ;
+- `POST /api/catalogue/generation` — **propose** une définition d'agent à partir
+  d'une intention en une phrase (#257) : rôle, compétences, playbook et réglages
+  suggérés, confrontés au registre des fournisseurs. Rien n'est créé — la
+  proposition est un brouillon que le formulaire reçoit, et la création reste le
+  `POST /api/catalogue` ci-dessus ;
 - `PUT  /api/catalogue/{nom}` — remplace la définition d'un agent personnalisé ;
 - `DELETE /api/catalogue/{nom}` — supprime un agent personnalisé ;
+- `PUT  /api/catalogue/{nom}/reglages` — surcharge les réglages de modèle d'un
+  agent **du code** (#259) sans le dupliquer : le rôle, les compétences et le
+  playbook restent au code et continuent d'en suivre les évolutions ; ce qui
+  n'est pas envoyé reste hérité ;
+- `DELETE /api/catalogue/{nom}/reglages` — **annule** cette surcharge (retour aux
+  réglages du code). Annuler n'est pas supprimer : l'agent reste au catalogue, et
+  la suppression demeure réservée aux personnalisés ;
 - `GET  /api/chat/{agent}` — le fil de conversation utilisateur ↔ agent (#84),
   persisté et relu du `ChatStore` ; `?conversation=` en désigne une (#694),
   sinon la plus récente ;
@@ -229,8 +258,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from maestro.agents import DEFAULT_TOOLS, TOOLED_PROFILES
 from maestro.agents.capacity import CapaciteAgent, CapacityStore
 from maestro.agents.catalog import DEFAULT_AGENTS, Agent
+from maestro.agents.lexique_playbook import lexique_dict
 from maestro.agents.mcp import IntegrationMcp, McpStore, references_env
 from maestro.agents.mcp_admission import (
     MOTIF_NON_ADMISE,
@@ -246,10 +277,20 @@ from maestro.agents.mcp_registry import (
     SOURCE_TOUTES,
     RegistreMcp,
 )
-from maestro.agents.permissions import PermissionStore
-from maestro.agents.playbooks import PLAYBOOK_DEFAUTS, PlaybookStore
+from maestro.agents.permissions import PermissionStore, entree_valide
+from maestro.agents.playbooks import PLAYBOOK_DEFAUTS, PlaybookDefaut, PlaybookStore
 from maestro.agents.secrets import SecretStore
-from maestro.agents.store import NOMS_RESERVES, AgentDefinition, AgentStore, catalogue
+from maestro.agents.store import (
+    AGENT_SOURCE_DEFAUT,
+    AGENT_SOURCE_PERSONNALISE,
+    AGENT_SOURCE_SURCHARGE,
+    NOMS_RESERVES,
+    AgentDefinition,
+    AgentStore,
+    SurchargeAgent,
+    SurchargeStore,
+    catalogue,
+)
 from maestro.appartenance import projet_id_valide
 from maestro.config import ConfigError, Settings, load_settings
 from maestro.controltower import selecteur
@@ -262,6 +303,7 @@ from maestro.controltower.assistance import (
 from maestro.controltower.assistance_documentee import RepondeurAssistanceDocumentee
 from maestro.controltower.auto_amelioration import (
     AnalyseurEchecs,
+    RedacteurPlaybook,
     RevisionIndisponible,
     echecs_du_run,
 )
@@ -301,7 +343,12 @@ from maestro.controltower.executions import (
     ServiceExecutions,
 )
 from maestro.controltower.fixtures import FixturesControlTower
+from maestro.controltower.fournisseurs import catalogue as catalogue_fournisseurs
 from maestro.controltower.frise import frise_du_run
+from maestro.controltower.generation_agent import (
+    GenerateurDefinitionAgent,
+    GenerationIndisponible,
+)
 from maestro.controltower.hote import (
     HOTE_RUN_DETACHE,
     HOTE_RUN_EN_PROCESS,
@@ -358,7 +405,11 @@ from maestro.engine.brief import MODE_BRIEF_AUTO, MODE_BRIEF_HUMAIN
 from maestro.messaging import InMemoryMailbox, Mailbox, RedisMailbox
 from maestro.orchestrator.errors import BriefValidationError
 from maestro.orchestrator.schema import validate_brief
+from maestro.poste import SondePoste
 from maestro.projets import RacineRefusee, canonique, valider_racine
+from maestro.providers.arbitrage import OUTIL_ARBITRAGE
+from maestro.providers.blocage import OUTIL_BLOCAGE
+from maestro.providers.courrier import OUTIL_COURRIER
 from maestro.references import ReferenceTicket
 from maestro.sources import DepotTeleversements, SourceRefusee, apercu_sources
 
@@ -560,11 +611,30 @@ class PlaybookPropositionRequete(BaseModel):
     run_id: str
 
 
+class PlaybookRedactionRequete(BaseModel):
+    """Corps d'une demande de rédaction assistée (#261) : le brouillon, et ce qu'on en veut.
+
+    `contenu` est le texte **en cours d'édition**, pas la version publiée : l'assistance
+    travaille sur ce que l'utilisateur a sous les yeux. `consigne` est libre et
+    facultative — sans elle, la demande reste « complète et structure ». Les bornes
+    (`BROUILLON_MAX`, `CONSIGNE_MAX`) sont vérifiées par le rédacteur, comme #257 borne
+    l'intention côté générateur.
+    """
+
+    contenu: str
+    consigne: str | None = None
+
+
 class AgentCreationRequete(BaseModel):
     """Corps de création d'un agent personnalisé (#72) : sa définition complète.
 
     `modele` est optionnel (None : le modèle par défaut des exécutants) ;
     `fournisseur` est déclaratif au POC (le moteur est mono-fournisseur).
+    `effort` (#253) est le niveau d'effort demandé au modèle — ce que le
+    fournisseur retenu admet se lit sur `GET /api/fournisseurs`. Il n'est **pas
+    validé ici** : un effort que le fournisseur ne connaît pas est ignoré à
+    l'exécution, sans erreur, plutôt que de faire échouer l'enregistrement d'une
+    définition par ailleurs correcte.
     """
 
     nom: str
@@ -573,6 +643,7 @@ class AgentCreationRequete(BaseModel):
     playbook: str
     modele: str | None = None
     fournisseur: str | None = None
+    effort: str | None = None
 
 
 class AgentModificationRequete(BaseModel):
@@ -587,6 +658,39 @@ class AgentModificationRequete(BaseModel):
     playbook: str
     modele: str | None = None
     fournisseur: str | None = None
+    effort: str | None = None
+
+
+class SurchargeRequete(BaseModel):
+    """Corps de surcharge des réglages d'un agent du code (#259) : les trois, entiers.
+
+    Un remplacement et pas un diff, comme `AgentModificationRequete` : ce qui
+    n'est pas envoyé est **hérité du code**, pas « laissé tel quel ». Sans cette
+    règle, retirer une surcharge de modèle en laissant celle d'effort demanderait
+    un verbe de plus, et « champ absent » voudrait dire deux choses selon le
+    réglage. Pour tout rendre au code, `DELETE` sur la même URL.
+
+    Aucun des trois n'est validé ici — même raison qu'à la création d'un agent :
+    ce que le fournisseur admet se lit sur `GET /api/fournisseurs`, se trie à
+    l'exécution, et une gamme qui bouge ne doit pas rendre irrecevable une
+    surcharge par ailleurs correcte.
+    """
+
+    fournisseur: str | None = None
+    modele: str | None = None
+    effort: str | None = None
+
+
+class AgentGenerationRequete(BaseModel):
+    """Corps d'une génération assistée de définition (#257) : l'intention, en une phrase.
+
+    Un seul champ, et c'est le sujet du lot : décrire ce qu'on veut plutôt que
+    remplir rôle, compétences et playbook. La borne de longueur est posée par le
+    générateur (`INTENTION_MAX`) et non ici — c'est lui qui la connaît, et le
+    dépassement est un 422 au même titre qu'une intention vide.
+    """
+
+    intention: str
 
 
 class ProjetRequete(BaseModel):
@@ -722,6 +826,30 @@ class ActivationsMcpRequete(BaseModel):
     integrations: list[str]
 
 
+class PolitiquePermissionsRequete(BaseModel):
+    """Corps de la politique de permissions écrite pour un agent (#262).
+
+    Remplacement intégral, comme les activations MCP au-dessus : les trois
+    listes deviennent la politique de l'agent, toutes vides valant « rien
+    d'interdit, rien d'arbitré, tout ce que le profil expose ».
+
+    Les valeurs ne sont **pas** jugées ici : le modèle ne fixe que la forme du
+    corps, et c'est `PermissionStore.ecrire` qui refuse une entrée mal formée
+    avec **son** motif (« entrée deny 'mon outil' — nom d'outil attendu… »).
+    Recopier la règle en validateur Pydantic donnerait deux définitions de ce
+    qu'est une entrée admissible, dont la seconde finirait par diverger du
+    moteur qui l'applique.
+
+    `ask` accepte les deux formes que la lecture accepte (#586) — objet
+    `{"<outil>": "<décideur>"}` ou liste, `humain` par défaut : un client qui
+    renvoie ce qu'il a lu d'une politique d'avant ce lot n'a rien à convertir.
+    """
+
+    allow: list[str] = []
+    ask: dict[str, str] | list[str] = {}
+    deny: list[str] = []
+
+
 class Diffusion:
     """Fan-out des événements vers les WebSockets connectées, **à leur portée**.
 
@@ -842,12 +970,15 @@ def create_app(
     state: ControlTowerState | None = None,
     playbooks: PlaybookStore | None = None,
     agents_store: AgentStore | None = None,
+    surcharges: SurchargeStore | None = None,
     mailbox: Mailbox | None = None,
     chat_store: ChatStore | None = None,
     chat_repondeur: RepondeurChat | None = None,
     assistance_repondeur: RepondeurChat | None = None,
     orchestration_repondeur: RepondeurChat | None = None,
     analyseur: AnalyseurEchecs | None = None,
+    redacteur_playbook: RedacteurPlaybook | None = None,
+    generateur_agent: GenerateurDefinitionAgent | None = None,
     capacites: CapacityStore | None = None,
     mcp: McpStore | None = None,
     registre_mcp: RegistreMcp | None = None,
@@ -863,6 +994,7 @@ def create_app(
     televersements: DepotTeleversements | None = None,
     lecteur_sources: LecteurSources | None = None,
     hote_run: HoteRun | None = None,
+    sonde_poste: SondePoste | None = None,
 ) -> FastAPI:
     """Construit l'app FastAPI de la Control Tower autour d'un bus et d'un état.
 
@@ -880,6 +1012,13 @@ def create_app(
     (`MAESTRO_AGENTS_DIR`, sinon `core/agents/` du dépôt). L'état par défaut se
     construit sur le catalogue **effectif** : les agents personnalisés déjà
     persistés sont présents dès le démarrage, comme ceux du code.
+
+    `surcharges` (#259) est le dépôt des **surcharges** posées sur les agents du
+    code — les trois réglages de modèle qu'on peut leur changer sans les
+    dupliquer (`MAESTRO_SURCHARGES_DIR`, sinon `core/surcharges/`). Distinct
+    d'`agents_store` : celui-ci stocke des agents, celui-là des réglages posés
+    sur des agents qui existent déjà. Le catalogue effectif les applique, donc
+    l'état de démarrage les porte aussi.
 
     `mailbox`, `chat_store` et `chat_repondeur` (#84) portent le chat
     utilisateur ↔ agent des endpoints `/api/chat` : la messagerie inter-agents
@@ -914,6 +1053,20 @@ def create_app(
     Par défaut il partage le dépôt `playbooks` et résout son fournisseur par
     config ; les tests (#137) en injectent un à fournisseur factice.
 
+    `redacteur_playbook` (#261) produit les réécritures servies par
+    `POST /api/playbooks/{agent}/redaction` : à partir du brouillon en cours dans
+    l'éditeur et d'une consigne libre, le modèle rend une version réécrite —
+    **rien n'est enregistré**, ni version ni proposition, l'éditeur l'affiche en
+    différentiel et l'utilisateur décide. Par défaut il résout son fournisseur
+    par config ; les tests en injectent un factice.
+
+    `generateur_agent` (#257) produit les définitions d'agent proposées par
+    `POST /api/catalogue/generation` : à partir d'une intention en une phrase, le
+    modèle propose rôle, compétences, playbook et réglages — **rien n'est
+    enregistré**, la proposition est un brouillon que le formulaire reçoit et que
+    l'utilisateur crée par le `POST /api/catalogue` ordinaire. Par défaut il
+    résout son fournisseur par config ; les tests en injectent un factice.
+
     `capacites` (#86) est le dépôt du contrôle de capacité servi par
     `POST /api/agents/{nom}/capacite` — par défaut celui de la config
     (`MAESTRO_CAPACITE_DIR`, sinon `core/capacite/` du dépôt) : le même que
@@ -944,10 +1097,13 @@ def create_app(
     moteur et workers au montage. Les tests en injectent un coffre temporaire.
 
     `permissions` (#110) est le dépôt des politiques allow/ask/deny par agent,
-    affichées en **lecture seule** sur les fiches du catalogue (`permissions`,
-    la politique effective appliquée à l'exécution) — par défaut celui de la
-    config (`MAESTRO_PERMISSIONS_DIR`, sinon `core/permissions/` du dépôt) :
-    le même que relisent moteur et workers.
+    servies sur les fiches du catalogue (`permissions`, la politique effective
+    appliquée à l'exécution) et **écrites** depuis leur onglet MCP & permissions
+    (#262, `PUT /api/permissions/{agent}`) — par défaut celui de la config
+    (`MAESTRO_PERMISSIONS_DIR`, sinon `core/permissions/` du dépôt) : le même que
+    relisent moteur et workers, d'où l'application à la tâche suivante sans
+    redémarrage. Les tests en injectent un dépôt temporaire, comme pour le
+    coffre.
 
     `projets` (#223) porte le CRUD des projets de l'utilisateur et l'explorateur
     de dossiers servis par `/api/projets` — par défaut le service de la config
@@ -1016,6 +1172,13 @@ def create_app(
     part sur le réseau : `tests/conftest.py` (#195) exige qu'aucun test n'en ait
     besoin.
 
+    `sonde_poste` (#487) est ce qui répond à « qu'est-ce qui est déjà installé
+    ici ? » pour `GET /api/fournisseurs` — par défaut `SondePoste()`, qui lit le
+    `PATH`, l'environnement et la boucle locale. Injectable parce qu'elle sort du
+    process : `tests/conftest.py` (#195) exige qu'aucun test n'ait besoin d'un
+    backend, et la suite lui donne donc un poste décrit plutôt que le vrai. Elle
+    n'est appelée qu'à la requête — une API qu'on ne consulte pas ne sonde rien.
+
     `hote_run` (#442) est **où** les exécutions se déroulent : le contrat d'hôte
     de run (`maestro.controltower.hote`). Même point d'injection que
     `fabrique_moteur`, et pour une raison voisine : la fabrique décide de *quoi*
@@ -1037,7 +1200,11 @@ def create_app(
     journal = journal if journal is not None else ServiceJournal()
     battements = battements if battements is not None else RegistreBattementsMemoire()
     agents_store = agents_store if agents_store is not None else AgentStore.default()
+    surcharges = surcharges if surcharges is not None else SurchargeStore.default()
     capacites = capacites if capacites is not None else CapacityStore.default()
+    # Construire la sonde ne sonde rien (#487) : elle n'a ni état ni cache, et ne
+    # regarde le poste qu'au moment où `GET /api/fournisseurs` le demande.
+    sonde_poste = sonde_poste if sonde_poste is not None else SondePoste()
     mcp = mcp if mcp is not None else McpStore.default()
     # La bibliothèque MCP a **trois sources** depuis #678 : le seed curé (en
     # code), les entrées admises (le journal, sur le disque) et le miroir du
@@ -1069,10 +1236,18 @@ def create_app(
     state = (
         state
         if state is not None
-        else ControlTowerState(catalogue(agents_store), capacites=capacites.lister())
+        else ControlTowerState(
+            catalogue(agents_store, surcharges=surcharges), capacites=capacites.lister()
+        )
     )
     playbooks = playbooks if playbooks is not None else PlaybookStore.default()
     analyseur = analyseur if analyseur is not None else AnalyseurEchecs(playbooks=playbooks)
+    redacteur_playbook = (
+        redacteur_playbook if redacteur_playbook is not None else RedacteurPlaybook()
+    )
+    generateur_agent = (
+        generateur_agent if generateur_agent is not None else GenerateurDefinitionAgent()
+    )
     mailbox = mailbox if mailbox is not None else InMemoryMailbox()
     chat_store = chat_store if chat_store is not None else ChatStore.default()
     # Un seul dépôt de téléversement (#317) pour la route qui reçoit les octets et
@@ -2197,31 +2372,63 @@ def create_app(
         await bus.publish(event)
         return demande.to_dict()
 
-    def _exige_playbook_connu(agent: str) -> None:
-        """404 si `agent` n'est pas un agent à playbook (la clé de `PLAYBOOK_DEFAUTS`).
+    def _playbook_origine(agent: str) -> PlaybookDefaut | None:
+        """Le playbook **d'origine** de `agent` — code ou personnalisé —, None si inconnu.
 
-        L'API n'édite que les playbooks des rôles du catalogue : pas de création
-        de playbook orphelin par une simple faute de frappe dans l'URL.
+        Deux origines, un seul contrat (#259) : pour un agent du code, le
+        document Markdown livré (`PLAYBOOK_DEFAUTS`, #295) ; pour un agent
+        personnalisé, le `playbook` de sa définition (#72), celui qu'on a saisi
+        en le créant. Dans les deux cas c'est le contenu qui vaut **tant que
+        rien n'a été publié** dans le stockage versionné.
+
+        Cette symétrie n'est pas une extension du moteur, c'est le rattrapage
+        d'un retard de l'API sur lui : `LocalExecutor._playbook_courant` lit
+        `PlaybookStore.lire(agent)` sans regarder d'où vient l'agent, et retombe
+        sur son `prompt_systeme` sinon — une version publiée pour un agent
+        personnalisé s'appliquait donc **déjà**, elle n'était simplement pas
+        publiable. C'est ce qui rendait l'onglet Playbook 404 sur un agent
+        personnalisé, et donc son champ du Profil irremplaçable ; #259 le
+        remplace, il fallait d'abord qu'il y ait où aller.
         """
-        if agent not in PLAYBOOK_DEFAUTS:
+        defaut = PLAYBOOK_DEFAUTS.get(agent)
+        if defaut is not None:
+            return defaut
+        definition = _personnalise_ou_none(agent)
+        if definition is None:
+            return None
+        return PlaybookDefaut(
+            agent=agent, role=definition.role, contenu=definition.playbook
+        )
+
+    def _exige_playbook_connu(agent: str) -> PlaybookDefaut:
+        """404 si `agent` n'est pas un agent du catalogue — et son origine sinon.
+
+        L'API n'édite que les playbooks des agents du catalogue, du code comme
+        personnalisés : pas de création de playbook orphelin par une simple
+        faute de frappe dans l'URL.
+        """
+        origine = _playbook_origine(agent)
+        if origine is None:
             raise HTTPException(
                 status_code=404,
                 detail=f"playbook inconnu : {agent} (voir GET /api/playbooks)",
             )
+        return origine
 
     def _fiche_playbook(agent: str, *, avec_contenu: bool) -> dict[str, Any]:
         """La fiche du playbook d'un agent : version courante et provenance.
 
         `version` 0 et `source` « defaut » tant que le playbook n'a jamais été
-        édité : le contenu effectif est alors le prompt du code (#76, repli).
+        édité : le contenu effectif est alors celui d'origine (#76, repli) — le
+        prompt du code, ou la définition pour un agent personnalisé (#259).
         `provenance` est celle de la version courante (« humain » — une proposition
-        n'est jamais courante, #111), None quand le contenu vient du code.
+        n'est jamais courante, #111), None quand le contenu vient de l'origine.
         """
-        defaut = PLAYBOOK_DEFAUTS[agent]
+        origine = _playbook_origine(agent)
         courant = playbooks.lire(agent)
         fiche: dict[str, Any] = {
             "agent": agent,
-            "role": defaut.role,
+            "role": origine.role if origine else agent,
             "version": courant.version if courant else 0,
             "nb_versions": len(playbooks.numeros(agent)),
             "source": "stockage" if courant else "defaut",
@@ -2229,13 +2436,39 @@ def create_app(
             "cree_le": courant.cree_le if courant else None,
         }
         if avec_contenu:
-            fiche["contenu"] = courant.contenu if courant else defaut.contenu
+            fiche["contenu"] = (
+                courant.contenu if courant else (origine.contenu if origine else "")
+            )
         return fiche
 
     @app.get("/api/playbooks")
     async def playbooks_liste() -> list[dict[str, Any]]:
-        """Les playbooks des agents (#76) : version courante et provenance de chacun."""
-        return [_fiche_playbook(agent, avec_contenu=False) for agent in PLAYBOOK_DEFAUTS]
+        """Les playbooks des agents (#76) : version courante et provenance de chacun.
+
+        Les agents du code d'abord, puis les personnalisés — l'ordre du
+        catalogue. Ces derniers y figurent depuis #259 : leur playbook s'édite
+        et se versionne comme les autres, l'onglet Playbook étant devenu le
+        chemin d'écriture unique.
+        """
+        return [
+            _fiche_playbook(agent, avec_contenu=False)
+            for agent in (*PLAYBOOK_DEFAUTS, *(d.nom for d in agents_store.lister()))
+        ]
+
+    @app.get("/api/playbooks/lexique")
+    async def lexique_playbook() -> dict[str, list[dict[str, object]]]:
+        """Structures et tournures récurrentes des playbooks du dépôt (#261).
+
+        Ce que l'éditeur propose en cours de frappe. **Dérivé** des documents livrés
+        avec le paquet (`maestro.agents.lexique_playbook`), jamais recopié côté front :
+        renommer une section dans `_socle.md` change ce qui est proposé, sans toucher
+        une ligne de TypeScript.
+
+        Déclarée **avant** `/api/playbooks/{agent}`, sans quoi « lexique » serait pris
+        pour un nom d'agent et rendrait un 404 (même précaution que la route littérale
+        `/api/playbooks/propositions`).
+        """
+        return lexique_dict()
 
     @app.get("/api/playbooks/{agent}")
     async def playbook_courant(agent: str) -> dict[str, Any]:
@@ -2335,15 +2568,16 @@ def create_app(
     def _agent_du_catalogue(nom: str) -> Agent:
         """La fiche catalogue de `nom` (modèle, prompt du code) — un rôle du code au pire.
 
-        Sert à l'analyse d'auto-amélioration, qui a besoin du modèle de l'agent. Les
-        playbooks n'existent que pour les rôles du code (`_exige_playbook_connu`), toujours
-        présents dans `DEFAULT_AGENTS` : le repli garantit une fiche même si le catalogue
-        effectif ne renvoyait pas ce nom.
+        Sert à l'analyse d'auto-amélioration, qui a besoin du modèle de l'agent. Le
+        catalogue effectif est interrogé **d'abord** — c'est lui qui porte les
+        surcharges (#259) et les agents personnalisés, dont `_exige_playbook_connu`
+        accepte désormais le playbook —, `DEFAULT_AGENTS` restant le repli qui
+        garantit une fiche aux rôles du code si le catalogue ne renvoyait pas ce nom.
         """
-        for agent in (*catalogue(agents_store), *DEFAULT_AGENTS):
+        for agent in (*catalogue(agents_store, surcharges=surcharges), *DEFAULT_AGENTS):
             if agent.nom == nom:
                 return agent
-        # Injoignable en pratique : `_exige_playbook_connu` a déjà garanti un rôle du code.
+        # Injoignable en pratique : `_exige_playbook_connu` a déjà garanti un agent connu.
         raise HTTPException(  # pragma: no cover - garanti connu en amont
             status_code=404, detail=f"agent inconnu : {nom}"
         )
@@ -2383,6 +2617,34 @@ def create_app(
         except RevisionIndisponible as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         return proposition.to_dict()
+
+    @app.post("/api/playbooks/{agent}/redaction")
+    async def rediger_playbook(
+        agent: str, requete: PlaybookRedactionRequete
+    ) -> dict[str, Any]:
+        """Réécrit le **brouillon en cours** d'un playbook, sans rien enregistrer (#261).
+
+        Le pendant « au clavier » de la proposition d'après-run : même cadre, même
+        fournisseur, mais la matière est le texte que l'utilisateur a sous les yeux et
+        le résultat lui revient — l'éditeur l'affiche en différentiel, l'applique à son
+        brouillon s'il le veut, et la publication reste le geste séparé qu'elle a
+        toujours été (`PUT /api/playbooks/{agent}`).
+
+        **Aucune écriture**, en succès comme en échec : ni version, ni proposition en
+        brouillon. 404 si l'agent n'a pas de playbook, 422 si le brouillon est vide ou
+        hors bornes, 502 si la génération échoue — dans tous les cas le texte de
+        l'utilisateur est intact, il n'a jamais quitté son écran.
+        """
+        _exige_playbook_connu(agent)
+        try:
+            redaction = await redacteur_playbook.proposer_redaction(
+                _agent_du_catalogue(agent), requete.contenu, requete.consigne
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RevisionIndisponible as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return redaction.to_dict()
 
     @app.post("/api/playbooks/{agent}/restaurer")
     async def restaurer_playbook(
@@ -2532,8 +2794,55 @@ def create_app(
             "mcp_activations": activations,
         }
 
+    def _outils_exposes(nom: str) -> list[dict[str, str]]:
+        """Ce que l'agent `nom` peut réellement appeler — de quoi **suggérer** (#262).
+
+        Trois origines, et aucune n'est écrite en dur ici : les outils
+        **intégrés** de son profil de rôle (`RoleProfile.outils`, `DEFAULT_TOOLS`
+        pour un agent hors des profils outillés), les verbes du serveur
+        in-process **maestro** (arbitrage, blocage, courrier — leurs constantes
+        existent précisément pour qu'une politique les désigne, #805) et les
+        **serveurs MCP** effectivement montés pour lui, cités en entier
+        (`mcp__<serveur>`, qui couvre tous leurs outils).
+
+        Une suggestion n'est jamais une contrainte : la saisie reste libre — un
+        outil MCP précis (`mcp__slack__send_message`) se désigne à la frappe,
+        et l'API ne juge que la **forme** de l'entrée. On écarte en revanche les
+        noms qu'elle refuserait (`entree_valide`) : proposer une entrée
+        impossible à écrire serait pire que de n'en proposer aucune.
+
+        Les serveurs MCP se lisent au mieux : une source invalide a déjà sa
+        cause dans `mcp_erreur`, et une liste de suggestions n'est pas l'endroit
+        où la redire.
+        """
+        profil = next((p for p in TOOLED_PROFILES if p.nom == nom), None)
+        outils: list[dict[str, str]] = [
+            {"nom": outil, "origine": "integre", "libelle": "outil intégré du profil"}
+            for outil in (profil.outils if profil is not None else DEFAULT_TOOLS)
+        ]
+        outils += [
+            {"nom": OUTIL_ARBITRAGE, "origine": "maestro", "libelle": "demander un arbitrage"},
+            {"nom": OUTIL_BLOCAGE, "origine": "maestro", "libelle": "signaler un blocage"},
+            {"nom": OUTIL_COURRIER, "origine": "maestro", "libelle": "écrire à un pair"},
+        ]
+        try:
+            serveurs = mcp.lire(nom)
+        except ValueError:
+            serveurs = ()
+        for serveur in serveurs:
+            entree = f"mcp__{serveur.nom}"
+            if entree_valide(entree):
+                outils.append(
+                    {
+                        "nom": entree,
+                        "origine": "mcp",
+                        "libelle": f"serveur MCP {serveur.nom} (tous ses outils)",
+                    }
+                )
+        return outils
+
     def _volet_permissions(nom: str) -> dict[str, Any]:
-        """Le volet « permissions » d'une fiche catalogue (#110), lecture seule.
+        """Le volet « permissions » d'une fiche catalogue (#110), **écrivable** depuis #262.
 
         `permissions` porte la politique allow/ask/deny effective (celle que le
         moteur applique à l'exécution — None : aucune politique, tout ce que
@@ -2542,32 +2851,67 @@ def create_app(
         visibilité que `mcp_erreur`. Les **trois** listes sont servies depuis
         #580, `ask` comprise et vide par défaut : une politique écrite avant ce
         lot se relit sous le régime d'hier.
+
+        `permissions_outils` (#262) est ce que l'agent peut réellement appeler :
+        de quoi **suggérer** des entrées à qui règle la politique, plutôt que de
+        lui faire retrouver les noms exacts ailleurs. Servi **avec la fiche**, et
+        pas par une route à lui : c'est la même question, posée du même écran, au
+        même moment — un second aller n'apprendrait rien de plus.
         """
+        outils = _outils_exposes(nom)
         try:
             politique = permissions.lire(nom)
         except ValueError as exc:
-            return {"permissions": None, "permissions_erreur": str(exc)}
+            return {
+                "permissions": None,
+                "permissions_erreur": str(exc),
+                "permissions_outils": outils,
+            }
         return {
             "permissions": politique.to_dict() if politique is not None else None,
             "permissions_erreur": None,
+            "permissions_outils": outils,
         }
 
     def _fiche_defaut(agent: Agent, *, avec_playbook: bool) -> dict[str, Any]:
-        """La fiche catalogue d'un agent par défaut : sa définition « du code ».
+        """La fiche catalogue d'un agent du code — surchargé ou non (#259).
 
-        `source` « defaut », sans dates : la définition vit dans le code
-        (`maestro.agents.catalog`), seule l'édition de son playbook passe par
-        le stockage versionné (`/api/playbooks`).
+        La définition vit dans le code (`maestro.agents.catalog`) : rôle,
+        compétences et playbook n'en bougent pas ici (le playbook s'édite par le
+        stockage versionné, `/api/playbooks`). Ce qui bouge, ce sont les **trois
+        réglages de modèle**, qu'une surcharge peut recouvrir sans dupliquer
+        l'agent — d'où le troisième état de `source` : « defaut » tant que rien
+        n'est posé, « defaut_surcharge » dès qu'un réglage l'est.
+
+        Les valeurs servies sont donc les **effectives** (surcharge d'abord,
+        code ensuite), et trois clés disent d'où elles viennent : `herite` nomme
+        les réglages qui restent au code — de quoi les marquer comme tels
+        plutôt que de le faire deviner —, `reglages_du_code` donne ce que le
+        code dit de chacun, y compris quand il est recouvert (c'est ce que
+        « revenir au défaut » rendrait), et `modifie_le` porte la date de la
+        surcharge, ou None si l'agent n'en a pas. `cree_le` reste None : un
+        agent du code n'est pas créé, il est là.
+
+        Les deux formes de fiche portent les **mêmes champs**, ici comme depuis
+        #253 : un client n'a jamais à deviner ses clés d'après la `source`.
         """
+        surcharge = surcharges.lire(agent.nom)
         fiche: dict[str, Any] = {
             "nom": agent.nom,
             "role": agent.role,
             "competences": sorted(agent.competences),
-            "modele": agent.modele,
-            "fournisseur": None,
-            "source": "defaut",
+            "modele": surcharge.modele or agent.modele,
+            "fournisseur": surcharge.fournisseur,
+            "effort": surcharge.effort if surcharge.effort is not None else agent.effort,
+            "source": AGENT_SOURCE_DEFAUT if surcharge.vide else AGENT_SOURCE_SURCHARGE,
+            "herite": list(surcharge.herite()),
+            "reglages_du_code": {
+                "fournisseur": None,
+                "modele": agent.modele,
+                "effort": agent.effort,
+            },
             "cree_le": None,
-            "modifie_le": None,
+            "modifie_le": surcharge.modifie_le or None,
             **_volet_mcp(agent.nom),
             **_volet_permissions(agent.nom),
         }
@@ -2578,9 +2922,18 @@ def create_app(
     def _fiche_personnalise(
         definition: AgentDefinition, *, avec_playbook: bool
     ) -> dict[str, Any]:
-        """La fiche catalogue d'un agent personnalisé : sa définition persistée (#72)."""
+        """La fiche catalogue d'un agent personnalisé : sa définition persistée (#72).
+
+        `herite` est **vide** et `reglages_du_code` **null** : un agent
+        personnalisé ne tient rien du code, sa définition est son réglage. Les
+        deux clés sont servies quand même — voir `_fiche_defaut` : une fiche
+        dont les champs dépendraient de la `source` obligerait chaque client à
+        les deviner.
+        """
         fiche = definition.to_dict(avec_playbook=avec_playbook)
-        fiche["source"] = "personnalise"
+        fiche["source"] = AGENT_SOURCE_PERSONNALISE
+        fiche["herite"] = []
+        fiche["reglages_du_code"] = None
         fiche.update(_volet_mcp(definition.nom))
         fiche.update(_volet_permissions(definition.nom))
         return fiche
@@ -2615,6 +2968,41 @@ def create_app(
                 detail=f"agent personnalisé inconnu : {nom} (voir GET /api/catalogue)",
             )
         return definition
+
+    def _exige_du_code(nom: str) -> Agent:
+        """L'agent du code `nom`, ou l'erreur HTTP qui explique son absence (#259).
+
+        Le **symétrique** d'`_exige_personnalise`, et ses refus se répondent :
+        403 sur un agent personnalisé — sa définition *est* son réglage et
+        s'édite par `PUT /api/catalogue/{nom}` ; le surcharger ouvrirait un
+        second chemin d'écriture vers les trois mêmes valeurs, le doublon même
+        que #259 supprime côté playbook. 403 aussi sur `orchestrateur` et
+        `assistance`, qui n'ont pas de fiche au catalogue. 404 sur un inconnu.
+        """
+        agent = next((a for a in DEFAULT_AGENTS if a.nom == nom), None)
+        if agent is not None:
+            return agent
+        if _personnalise_ou_none(nom) is not None:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"agent personnalisé : {nom} — ses réglages font partie de sa "
+                    "définition et se modifient via PUT /api/catalogue/{nom} ; "
+                    "seul un agent du code se surcharge."
+                ),
+            )
+        if nom in NOMS_RESERVES:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"acteur système : {nom} — hors catalogue, il n'a pas de "
+                    "réglage de modèle à surcharger."
+                ),
+            )
+        raise HTTPException(
+            status_code=404,
+            detail=f"agent inconnu : {nom} (voir GET /api/catalogue)",
+        )
 
     @app.get("/api/mcp/registre")
     async def mcp_registre(q: str = "", source: str = SOURCE_TOUTES) -> list[dict[str, Any]]:
@@ -3037,6 +3425,35 @@ def create_app(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {"agent": agent, "integrations": list(activees)}
 
+    @app.put("/api/permissions/{agent}")
+    async def definir_permissions(
+        agent: str, requete: PolitiquePermissionsRequete
+    ) -> dict[str, Any]:
+        """Écrit la politique allow/ask/deny d'un agent (#262) — remplacement intégral.
+
+        L'écriture derrière la fiche, là où la section était en lecture seule
+        depuis #110 : régler ce qu'un agent a le droit d'appeler ne demande plus
+        d'éditer `core/permissions/<agent>.json` à la main puis de relancer. La
+        politique écrite vaut pour la **tâche suivante** — l'exécuteur la relit à
+        chaud, comme les playbooks.
+
+        404 si l'agent n'est pas au catalogue (une politique orpheline ne serait
+        jamais appliquée), 422 sur une entrée mal formée, **avec la cause exacte
+        du dépôt** : c'est ce motif que l'écran affiche, et il nomme la liste et
+        l'entrée en faute.
+
+        ⚠ Elle ne lit **pas** la politique en place avant de la remplacer, et
+        c'est ce qui permet de réparer depuis l'écran un fichier que `lire`
+        refuse — un `GET` préalable échouerait précisément là où le geste est
+        nécessaire.
+        """
+        _exige_agent_du_catalogue(agent)
+        try:
+            politique = permissions.ecrire(agent, requete.model_dump())
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {"agent": agent, "permissions": politique.to_dict()}
+
     # --- Projets de l'utilisateur (#223) : CRUD et explorateur de dossiers ---
     def _refus_projet(exc: Exception, *, explorateur: bool = False) -> HTTPException:
         """Un refus du service des projets en `HTTPException` — motif compris.
@@ -3254,6 +3671,39 @@ def create_app(
         except (ValueError, ProjetInconnu) as exc:
             raise _refus_projet(exc) from exc
 
+    @app.get("/api/fournisseurs")
+    async def fournisseurs() -> dict[str, Any]:
+        """Le catalogue des fournisseurs (#253 + #487) : le registre, éclairé par le poste.
+
+        **Une route, deux moitiés qui ne se confondent pas.** *Supporté par
+        Maestro* vient du **registre des fournisseurs**
+        (`maestro.providers.registry.catalogue_fournisseurs`, #253) et de rien
+        d'autre : chaque fiche porte le **nom** à écrire dans `fournisseur`, ses
+        **modèles** annoncés — nom, libellé, et les **niveaux d'effort** admis sur
+        chacun, liste vide quand le fournisseur n'expose pas ce réglage — et
+        `modeles_libres`, qui dit qu'un nom hors gamme reste recevable (le cas
+        d'`openai`, qui fédère des endpoints aux nommages hétéroclites : gamme
+        vide **et** libre, c'est-à-dire « saisis le nom »). Inscrire un
+        fournisseur au registre suffit à le faire apparaître ici, donc à l'écran,
+        sans toucher à cette fonction ni au front.
+
+        *Présent ici* vient de la **sonde** (#487) : ce qui arme le fournisseur
+        sur cette machine — un CLI sur le `PATH`, un serveur local qui répond,
+        une clé dans l'environnement —, avec `modeles_ici`, les modèles que la
+        sonde a **vus**, à ne jamais confondre avec la gamme annoncée. Un outil
+        trouvé que Maestro ne sait pas piloter sort dans `hors_registre` :
+        montré, jamais proposé.
+
+        Les deux sont **lecture seule** et **sans effet de bord** : rien n'est
+        démarré, installé ni écrit, aucun binaire n'est exécuté, aucune clé n'est
+        validée (la sonde ne joint que la boucle locale ; le registre ne joint
+        rien du tout). Ce que la sonde ne peut pas savoir remonte dans
+        `incertitudes` et dans le champ homonyme de chaque constat, plutôt que
+        d'être deviné. Un poste nu rend le registre entier, des colonnes de poste
+        vides et un 200.
+        """
+        return catalogue_fournisseurs(await sonde_poste.rapport())
+
     @app.get("/api/catalogue")
     async def catalogue_liste() -> list[dict[str, Any]]:
         """Le catalogue d'agents (#72) : les agents par défaut puis les personnalisés.
@@ -3307,12 +3757,40 @@ def create_app(
                     playbook=requete.playbook,
                     modele=requete.modele,
                     fournisseur=requete.fournisseur,
+                    effort=requete.effort,
                 )
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         state.ajouter_agent(definition.nom, definition.role)
         return _fiche_personnalise(definition, avec_playbook=True)
+
+    @app.post("/api/catalogue/generation")
+    async def generer_definition_agent(requete: AgentGenerationRequete) -> dict[str, Any]:
+        """Propose une définition d'agent à partir d'une intention (#257) — sans rien créer.
+
+        Le modèle rend rôle, compétences, playbook et — confrontés au registre
+        (#253) — un fournisseur et un modèle. La réponse est un **brouillon** : elle
+        n'écrit rien, n'ajoute aucun agent au catalogue et ne réserve aucun nom. La
+        création reste le `POST /api/catalogue` ordinaire, à partir des champs que
+        l'utilisateur a relus (et modifiés) dans le formulaire.
+
+        Le `nom` proposé est libre **au moment de la réponse** : les noms réservés
+        et les agents personnalisés existants en sont écartés. Ce n'est pas une
+        réservation — un homonyme créé entre-temps rendra le 409 habituel.
+
+        422 si l'intention est vide ou plus longue qu'une phrase, 502 si le modèle
+        est injoignable, muet, ou répond hors contrat : dans les trois cas rien
+        n'est écrit et l'appel se rejoue sans conséquence.
+        """
+        pris = set(NOMS_RESERVES) | {d.nom for d in agents_store.lister()}
+        try:
+            proposition = await generateur_agent.proposer(requete.intention, noms_pris=pris)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except GenerationIndisponible as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return proposition.to_dict()
 
     @app.put("/api/catalogue/{nom}")
     async def modifier_agent(nom: str, requete: AgentModificationRequete) -> dict[str, Any]:
@@ -3332,6 +3810,7 @@ def create_app(
                     playbook=requete.playbook,
                     modele=requete.modele,
                     fournisseur=requete.fournisseur,
+                    effort=requete.effort,
                 )
             )
         except ValueError as exc:
@@ -3351,8 +3830,53 @@ def create_app(
         _exige_personnalise(nom)
         agents_store.supprimer(nom)
         capacites.supprimer(nom)
+        surcharges.supprimer(nom)
         state.retirer_agent(nom)
         return {"nom": nom, "supprime": True}
+
+    @app.put("/api/catalogue/{nom}/reglages")
+    async def surcharger_agent(nom: str, requete: SurchargeRequete) -> dict[str, Any]:
+        """Surcharge les réglages de modèle d'un agent du code (#259), sans le dupliquer.
+
+        Le troisième état du catalogue : l'agent reste celui du code — rôle,
+        compétences et playbook continuent d'en venir et d'en suivre les
+        évolutions —, seuls `fournisseur`, `modele` et `effort` sont recouverts.
+        Ce qui n'est pas envoyé retourne au code et se relit dans `herite`.
+        Poser les trois à `null` **annule** la surcharge, comme `DELETE`.
+
+        `modele` et `effort` valent pour les moteurs construits ensuite ;
+        `fournisseur` reste déclaratif au POC. 403 sur un agent personnalisé
+        (ses réglages s'éditent par `PUT /api/catalogue/{nom}`) ou un acteur
+        système, 404 sur un nom inconnu.
+        """
+        agent = _exige_du_code(nom)
+        surcharges.ecrire(
+            SurchargeAgent(
+                nom=nom,
+                fournisseur=requete.fournisseur,
+                modele=requete.modele,
+                effort=requete.effort,
+            )
+        )
+        return _fiche_defaut(agent, avec_playbook=True)
+
+    @app.delete("/api/catalogue/{nom}/reglages")
+    async def annuler_surcharge(nom: str) -> dict[str, Any]:
+        """Annule la surcharge d'un agent du code : retour à ses réglages du code (#259).
+
+        ⚠ **Annule, ne supprime pas** — et c'est tout le sujet du critère 3 de
+        #259 : l'agent reste au catalogue, il redevient simplement celui du
+        code. La suppression, elle, reste réservée aux agents personnalisés
+        (`DELETE /api/catalogue/{nom}`, qui refuse un agent du code en 403).
+        Deux verbes voisins pour deux gestes que rien ne doit confondre.
+
+        Idempotent : annuler une surcharge absente rend la même fiche, sans
+        erreur — il n'y a rien à signaler à qui demande un état déjà atteint.
+        403/404 comme `PUT`.
+        """
+        agent = _exige_du_code(nom)
+        surcharges.supprimer(nom)
+        return _fiche_defaut(agent, avec_playbook=True)
 
     def _exige_agent_du_catalogue(nom: str) -> Agent:
         """La fiche catalogue de `nom` (défaut ou personnalisé), ou l'erreur 404.
