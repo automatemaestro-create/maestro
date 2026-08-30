@@ -50,8 +50,10 @@
 #     Il ne mesure aucune durée, n'ouvre aucune socket et n'écrit aucun fichier.
 #
 # --- Ce que ce verbe ne fait pas ---------------------------------------------------------------------
-# Il ne TRANCHE pas. Les cinq `ask` sans répondant et le geste que #788 range parmi les trous sans
-# que sa forme couverte soit tranchée sortent en « à arbitrer », qui est le travail du lot 2 (#790) ;
+# Il ne TRANCHE pas — il RAPPORTE les verdicts rendus ailleurs, et signale ce qui n'en a pas encore.
+# Les cinq `ask` sans répondant et le `python -c` que #788 rangeait parmi les trous ont été tranchés
+# par le lot 2 (#790), qui les a tous laissés refusés avec leur raison — elle vit dans le `$comment`
+# de settings.run.json, jamais ici, ce fichier n'en portant que le REFLET (« assume », « voulu ») ;
 # le régime de permission face à `.claude/` est celui du lot 3 (#791) ; l'accès web celui du lot 4
 # (#792) ; la survie d'une question celui du lot 5 (#795). Un inventaire qui déciderait à leur place
 # rendrait leur arbitrage sans objet — et l'aurait rendu sans que personne le juge.
@@ -116,14 +118,24 @@ USAGE
 # --- Q1 : ce qu'un `ask` empêche, quand personne n'est là pour répondre -----------------------------
 # Le bloc `ask` est LU dans le dépôt — c'est lui qui fait foi, et une règle nouvelle sortira même
 # sans entrée ici. Ce catalogue n'ajoute que la conséquence, qui ne se déduit d'aucune règle : ce
-# qu'un run ne peut donc pas faire. Une note manquante rend « — », jamais un silence.
+# qu'un run ne peut donc pas faire — et, depuis #790, le VERDICT rendu sur elle.
+# Colonnes : règle <TAB> verdict <TAB> conséquence.
+#
+#   assume  tranché, et la règle reste : un refus VOULU, écrit, avec sa forme couverte. Il
+#           s'affiche encore — la règle est toujours là, l'écart run ↔ interactif aussi —
+#           mais il ne compte plus parmi ce qui attend un arbitrage.
+#   ecart   personne ne l'a tranché. C'EST LE DÉFAUT, et c'est voulu : une sixième règle
+#           `ask` ajoutée demain sort à trancher sans que personne ait à y penser, là où
+#           un défaut « assumé » la ferait entrer en silence dans les refus bénis.
+#
+# Une note manquante rend « ecart » et « — », jamais un silence.
 NOTES_ASK=$(
   cat <<'TSV'
-Bash(gh issue close:*)	abandonner un ticket — /ticket-abandon est hors de portée d'un run. Mesuré : refusé à la session de #273 (« gh issue close 663 --reason not planned »).
-Bash(git commit --no-verify:*)	committer malgré le hook commit-msg. L'interdit est juste ; ce qui manque est quelqu'un pour juger le cas légitime.
-Bash(git reset --hard:*)	repartir d'un arbre propre après une manœuvre ratée. Le run n'a que « git restore », que le prompt lui indique.
-Bash(git clean:*)	retirer les fichiers non suivis d'un essai — le worktree les garde jusqu'à son ramassage.
-mcp__chrome-maestro__browser_run_code_unsafe	exécuter du JS dans la page pendant une vérification de bout en bout.
+Bash(gh issue close:*)	assume	abandonner un ticket — /ticket-abandon est hors de portée d'un run. Mesuré : refusé à la session de #273 (« gh issue close 663 --reason not planned »). VERDICT #790 — RESTE REFUSÉ : lever la règle ne donnerait pas le geste (/ticket-abandon demande lui-même une confirmation humaine, étape 4), aucune règle de préfixe ne borne l'iid, et le plan d'un run ne prend que des tickets « À faire » et libres. Le besoin — « ce ticket est sans objet » — est un jugement sans répondant, donc G4, donc le lot 5 (#795). Le prompt de run.sh dit désormais de NE PAS ENTAMER la séquence : le refus tombant à l'étape 7, après que l'étape 6 a posé « Abandonné », elle laisserait un ticket abandonné ET OUVERT, compté lot ouvert par ferme-parent (#515).
+Bash(git commit --no-verify:*)	assume	committer malgré le hook commit-msg. L'interdit est juste ; ce qui manque est quelqu'un pour juger le cas légitime. VERDICT #790 — RESTE REFUSÉ : il contourne la convention de commit, donc le Refs/Closes dont dépendent la fermeture du ticket au merge et le rattachement écran ↔ ticket de ecrans-touches.sh (#544). En run, un commit sans Closes produit une PR qui ne ferme rien — un échec silencieux, découvert au merge. Forme couverte : un message conforme, le hook nommant ce qui manque.
+Bash(git reset --hard:*)	assume	repartir d'un arbre propre après une manœuvre ratée. VERDICT #790 — RESTE REFUSÉ : il jette l'arbre entier d'un coup et, avec une ref, des COMMITS — c'est-à-dire ce que worktree.sh gc refuse de ramasser (#503) et ce que la reprise d'orphelin sauve (#327). Forme couverte : « git restore <fichier> », qui vise un fichier NOMMÉ — la règle a été ajoutée par ce même lot, une forme couverte qu'aucune règle ne couvre étant une fausse promesse.
+Bash(git clean:*)	assume	retirer les fichiers non suivis d'un essai — le worktree les garde jusqu'à son ramassage. VERDICT #790 — RESTE REFUSÉ : même famille que rm, et la même raison — aucune règle de préfixe ne borne sa cible, donc « git clean -fdx » emporterait le .env du worktree, les liens .venv/.tools, node_modules et l'atelier .maestro/session/, c'est-à-dire tout ce que worktree.sh vient d'y monter. Et le besoin n'existe pas : un fichier non suivi ne gêne ni le commit (on choisit ce qu'on git add) ni la PR.
+mcp__chrome-maestro__browser_run_code_unsafe	assume	exécuter du JS dans la page pendant une vérification de bout en bout. VERDICT #790 — RESTE REFUSÉ : sa forme couverte est DÉJÀ autorisée, et c'est déjà celle que le dépôt emploie partout — browser_evaluate, que la règle nue mcp__chrome-maestro couvre et qui n'est pas en ask (skill banc-mise-en-page, docs/30 §3.3). Ce qui reste dehors est le JS arbitraire hors fonction, dont aucune vérification n'a eu besoin en 38 sessions de journal.
 TSV
 )
 
@@ -138,23 +150,26 @@ TSV
 #
 #   ecart     rien ne le couvre et il devrait l'être — un humain l'approuverait au prompt ;
 #   voulu     rien ne le couvre et c'est le but, la raison est écrite et la forme couverte existe ;
-#   arbitrer  #788 le range parmi les trous, mais une règle déjà tranchée s'y applique. Le lot 2.
+#   arbitrer  #788 le range parmi les trous, mais une règle déjà tranchée s'y applique. Sans
+#             occupant depuis que #790 a arbitré `python -c` ; la classe RESTE, parce que c'est
+#             elle qui rendra visible la prochaine contradiction entre le parent et les règles.
 #
-# Les comptes « mesurés » viennent de `journal.sh refus --tous` (27 sessions, 40 refus, 2026-08-29).
+# Les comptes « mesurés » viennent de `journal.sh refus --tous` (38 sessions, 56 refus, 2026-08-30,
+# relevé au lot 2 ; 27 sessions et 40 refus au lot 1, le 2026-08-29).
 # Ils datent la ligne ; ils ne la fondent pas — c'est la confrontation aux règles qui tranche, et
 # c'est elle qui rejouera toute seule quand le lot 2 aura élargi la liste.
 GESTES=$(
   cat <<'TSV'
 voulu	outil	WebSearch	#788 G3 · #714 · tranché au lot 4 (#792)	Confirmé fermé : une veille rend des PARTIS PRIS — un jugement, laissé à un humain comme l'arbitrage de #562 et le rail de #617 — et « chrome-maestro » passant déjà l'union, ouvrir la seule recherche donnerait une veille à moitié. Jamais demandé : 0 refus sur 56. Forme couverte : la question SURVIT au run (lot 5, #795), un humain joue /design-veille ensuite.
 voulu	outil	WebFetch	#788 G3 · mesuré 1× (#271) · tranché au lot 4 (#792)	Fermé aussi, mais par une raison qui lui est PROPRE : #714 le rangeait sous la veille, or le seul usage mesuré n'en est pas une — lire une référence citée par le ticket. « L'URL vient d'un humain » n'est pas exprimable dans une règle, qui ne borne qu'un préfixe (raison de curl, #528), et le produit d'un run est mergé sans relecture (#418/#419). Forme couverte : référence versionnée, ou porte d'admission humaine (#678) — ce que #271 a fini par faire.
-ecart	bash	pwd	mesuré 3× (#484, #695, #696)	Lecture pure. Le premier geste après un « cd » dont on doute.
-ecart	bash	cut -f2	mesuré 1×	Découper une ligne TSV — le pendant de « awk »/« sed », déjà autorisés.
-ecart	bash	tr -d ' '	mesuré 1×	Lecture pure, bornée au tube.
-ecart	bash	chmod +x scripts/x.sh	mesuré 1×	Rendre exécutable un script qu'on vient d'écrire ; borné au worktree.
-ecart	bash	git mv a b	mesuré 1×	Renommer un fichier suivi, quand « git add » et « git rm » sont autorisés.
-ecart	bash	git merge-base main HEAD	mesuré 1×	Lecture pure de l'historique.
-ecart	bash	git check-ignore -v x	mesuré 1×	Lecture pure du .gitignore.
-arbitrer	bash	python -c 'print(1)'	#788 G1 · mesuré 1×	#788 le range parmi les trous, mais #528 a tranché « python » nu pour une raison qui vaut ici : ce n'est pas le venv du dépôt, que CLAUDE.md impose. La forme couverte existe déjà — « .venv/Scripts/python.exe -c … ». À trancher au lot 2.
+ecart	bash	pwd	mesuré 5× (#484, #695, #696, #739, #256)	Lecture pure. Le premier geste après un « cd » dont on doute.
+ecart	bash	cut -f2	mesuré 1× (#698)	Découper une ligne TSV — le pendant de « awk »/« sed », déjà autorisés.
+ecart	bash	tr -d ' '	mesuré 1× (#698)	Lecture pure, bornée au tube.
+ecart	bash	chmod +x scripts/x.sh	mesuré 1× (#393)	Rendre exécutable un script qu'on vient d'écrire ; borné au worktree. Le cas mesuré est un double de « gh » monté dans l'atelier de session, qui RETIRE des écritures de forge au lieu d'en ajouter.
+ecart	bash	git mv a b	mesuré 1× (#270)	Renommer un fichier suivi. Sans lui le geste n'est pas faisable DU TOUT : « rm » est refusé et « git rm » n'est dans aucune des deux listes — contrairement à ce que cette ligne a dit jusqu'à #790, il n'y avait pas de forme couverte.
+ecart	bash	git merge-base main HEAD	mesuré 1× (#698)	Lecture pure de l'historique.
+ecart	bash	git check-ignore -v x	mesuré 1× (#268)	Lecture pure du .gitignore.
+voulu	bash	python -c 'print(1)'	#790 · #528 · mesuré 2×	#788 le rangeait parmi les trous ; ARBITRÉ par #790, il RESTE REFUSÉ. De la double raison de #528, celle qui ne tient pas au heredoc vaut telle quelle : « python » nu n'est pas le venv du dépôt, que CLAUDE.md impose, et hors venv la collecte échoue dès l'import. Forme couverte : « .venv/Scripts/python.exe -c … », déjà autorisée.
 voulu	bash	for f in a b; do echo $f; done	#528	Une règle est un préfixe de COMMANDE, une tête de boucle n'en est pas une : « Bash(for:*) » bénirait la forme sans rien juger de ce qu'elle répète. Forme couverte : une commande qui prend la liste, ou un appel par élément.
 voulu	bash	curl -s http://x/y	#528	Le pouvoir de curl est dans son ARGUMENT, là où une règle borne un préfixe — et c'est la seule forme capable d'envoyer le worktree hors de la machine. Forme couverte : « node -e "fetch(…)" » en boucle locale.
 voulu	bash	python - <<'PY'	#528	Deux fois refusé plutôt qu'une : heredoc (immatchable par construction) et « python » nu hors venv. Forme couverte : Write dans .maestro/session/ puis .venv/Scripts/python.exe <fichier>.
@@ -325,7 +340,7 @@ classe() { LC_ALL=C awk -v regles="$TMP" "$(perm_awk)$AWK_CLASSE"; }
 # ajoutée demain doit sortir ici sans qu'on y pense. Le catalogue n'ajoute que la conséquence.
 awk -F'\t' -v notes="$NOTES_ASK" '
   BEGIN { n = split(notes, l, "\n"); for (i = 1; i <= n; i++) { p = index(l[i], "\t"); if (p) note[substr(l[i], 1, p - 1)] = substr(l[i], p + 1) } }
-  $1 == "ask" { print $3 "\t" $2 "\t" (($3 in note) ? note[$3] : "—") }
+  $1 == "ask" { print $3 "\t" $2 "\t" (($3 in note) ? note[$3] : "ecart\t—") }
 ' "$TMP" | sort -u > "$TMP.q1"
 
 printf '%s\n' "$GESTES" | classe > "$TMP.q2"
@@ -342,14 +357,24 @@ fi
 # aurait disparu serait orpheline, et c'est cela qu'on refuse de laisser passer.
 regles_claude="$(awk -F'\t' '$1 == "allow" && $3 ~ /\.claude/ { print $3 " [" $2 "]" }' "$TMP")"
 nb_ecart="$(awk -F'\t' '$1 == "ecart" { n++ } END { print n + 0 }' "$TMP.q2")"
+# G1 porte sur les gestes SHELL, G3 sur les deux outils web : les compter dans les deux ferait lire
+# « il reste des trous d'allowlist » là où il reste une décision sur le web. La colonne 2 est le type
+# de geste, posé au catalogue — on ne redéduit rien du nom.
+nb_ecart_g1="$(awk -F'\t' '$1 == "ecart" && $2 == "bash" { n++ } END { print n + 0 }' "$TMP.q2")"
 nb_arbitrer="$(awk -F'\t' '$1 == "arbitrer" { n++ } END { print n + 0 }' "$TMP.q2")"
-nb_ask="$(wc -l < "$TMP.q1" | tr -d ' ')"
+# Deux comptes, et la distinction est tout l'objet de #790 : `nb_ask_total` est ce que le dépôt
+# met en `ask` — l'écart run ↔ interactif, qui ne disparaît pas parce qu'on l'a assumé — tandis que
+# `nb_ask` ne retient que ce qui ATTEND ENCORE un arbitrage, et c'est lui qui entre dans le code de
+# sortie. Les confondre rendrait le code 3 indépassable : cinq refus voulus le tiendraient pour
+# toujours, et un code qui ne peut pas descendre n'apprend plus rien.
+nb_ask_total="$(wc -l < "$TMP.q1" | tr -d ' ')"
+nb_ask="$(awk -F'\t' '$3 != "assume" { n++ } END { print n + 0 }' "$TMP.q1")"
 
 if [ "$MODE" = tsv ]; then
   # Une colonne de plus qu'en clair : la CONTRADICTION (un geste déclaré « voulu » que les règles
   # couvrent). La taire ici ferait du mode machine une vue plus pauvre que le rapport sur le seul
   # point où le catalogue et les règles se désavouent — c'est-à-dire là où il faut regarder.
-  awk -F'\t' '{ print "Q1\tecart\t" $1 "\task [" $2 "]\t" $3 "\t" }' "$TMP.q1"
+  awk -F'\t' '{ print "Q1\t" $3 "\t" $1 "\task [" $2 "]\t" $4 "\t" }' "$TMP.q1"
   # $6/$7 portent la règle qui couvre et son origine (la colonne « par » est elle-même tabulée),
   # $8 dit d'où vient le verdict, $9 la contradiction — c'est celle-là qu'on rend.
   awk -F'\t' '{ print "Q2\t" $1 "\t" $3 "\t" $4 "\t" $5 "\t" $9 }' "$TMP.q2"
@@ -380,16 +405,28 @@ else
   printf '  « allow », point final. À liste identique, un run est plus contraint (#788).\n'
 
   printf '\n── Q1. Ce que le dépôt met en « ask » — approuvable en interactif, refusé SEC en run\n'
-  if [ "$nb_ask" -eq 0 ]; then
+  if [ "$nb_ask_total" -eq 0 ]; then
     printf '  Aucune règle « ask » — rien ne dépend ici d'\''un répondant absent.\n'
   else
-    printf '  %s règle(s). Un « ask » sans personne pour répondre est un « deny » qui ne dit pas son nom ;\n' "$nb_ask"
+    printf '  %s règle(s). Un « ask » sans personne pour répondre est un « deny » qui ne dit pas son nom ;\n' "$nb_ask_total"
     printf '  c'\''est l'\''écart qu'\''aucune lecture de « allow » ne montre, parce qu'\''il vit dans un autre bloc.\n\n'
-    while IFS=$'\t' read -r regle ou note; do
-      printf '  ÉCART  %s  [%s]\n' "$regle" "$ou"
+    while IFS=$'\t' read -r regle ou verdict note; do
+      if [ "$verdict" = assume ]; then
+        printf '  ASSUMÉ %s  [%s]\n' "$regle" "$ou"
+      else
+        printf '  ÉCART  %s  [%s]\n' "$regle" "$ou"
+      fi
       printf '         ce qu'\''un run ne peut donc pas faire : %s\n' "$note"
     done < "$TMP.q1"
-    printf '\n  → à trancher au lot 2 (#790) : lever, remplacer par un geste borné, ou assumer par écrit.\n'
+    if [ "$nb_ask" -eq 0 ]; then
+      printf '\n  → les %s sont TRANCHÉS (#790) et restent refusés, chacun pour une raison qui lui\n' "$nb_ask_total"
+      printf '    est propre — le détail argumenté vit dans le commentaire d'\''en-tête de\n'
+      printf '    settings.run.json. Ils restent listés ici parce que la règle, elle, est toujours là :\n'
+      printf '    ce qui a changé est qu'\''un refus VOULU a remplacé un arbitrage en attente. Un\n'
+      printf '    « ask » ajouté demain sortira en ÉCART, faute d'\''un verdict au catalogue.\n'
+    else
+      printf '\n  → %s à trancher : lever, remplacer par un geste borné, ou assumer par écrit (#790).\n' "$nb_ask"
+    fi
   fi
 
   printf '\n── Q2. Ce qu'\''aucun « allow » ne couvre — geste par geste\n'
@@ -443,9 +480,15 @@ else
   printf '    famille : bash scripts/orchestrate/journal.sh refus --tous --claude\n'
 
   printf '\n── Les cinq écarts de #788, sur l'\''état actuel du dépôt\n'
-  printf '  G1  ask sans répondant + trous d'\''allowlist  → %s règle(s) « ask », %s geste(s) sans règle,\n' \
-    "$nb_ask" "$nb_ecart"
-  printf '      %s à arbitrer. REPRODUIT.\n' "$nb_arbitrer"
+  if [ "$nb_ask" -eq 0 ] && [ "$nb_ecart_g1" -eq 0 ] && [ "$nb_arbitrer" -eq 0 ]; then
+    printf '  G1  ask sans répondant + trous d'\''allowlist  → TRAITÉ (#790) : les %s règle(s) « ask »\n' "$nb_ask_total"
+    printf '      sont assumées par écrit et plus aucun geste shell n'\''est sans règle. L'\''écart demeure —\n'
+    printf '      un run reste plus contraint qu'\''une session interactive —, il n'\''est plus SUBI.\n'
+  else
+    printf '  G1  ask sans répondant + trous d'\''allowlist  → %s règle(s) « ask » dont %s assumée(s) par\n' \
+      "$nb_ask_total" "$((nb_ask_total - nb_ask))"
+    printf '      écrit, %s geste(s) shell sans règle, %s à arbitrer. REPRODUIT.\n' "$nb_ecart_g1" "$nb_arbitrer"
+  fi
   if [ "$nb_arbitrer" -gt 0 ]; then
     printf '      ⚠ diffère de #788 sur %s geste(s) : rangé(s) parmi les trous par le parent, ils tombent\n' "$nb_arbitrer"
     printf '        sous une règle déjà tranchée ailleurs. Le rapport ne choisit pas — il le dit (lot 2).\n'
@@ -488,7 +531,7 @@ EOF
     printf '      alors que #788 les donne pour interdits l'\''un comme l'\''autre. À regarder.\n'
   fi
 
-  printf '\n  Bilan : %s écart(s) imputable(s) aux listes — %s en Q1, %s en Q2, dont %s à arbitrer.\n' \
+  printf '\n  Bilan : %s écart(s) EN ATTENTE d'\''arbitrage — %s en Q1, %s en Q2, dont %s à arbitrer.\n' \
     "$((nb_ask + nb_ecart + nb_arbitrer))" "$nb_ask" "$((nb_ecart + nb_arbitrer))" "$nb_arbitrer"
   printf '  Q3 n'\''y entre pas : aucune règle ne comble ce que le CLI refuse en amont (voir l'\''en-tête).\n'
 
