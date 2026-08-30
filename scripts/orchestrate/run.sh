@@ -2087,6 +2087,19 @@ lance_session() {
 # encore en place le lendemain — rien n'échoue, rien n'est rouge, et c'est ce qui rend la perte
 # invisible. Le prompt prescrit donc l'appel à `lib.sh reste-claude` EN PLUS du rendu dans la PR, et
 # jamais à sa place : la PR reste le lieu de la revue, le ticket est ce qui lui survit.
+#
+# Et une QUESTION de plus, qui n'est pas un refus (#795, chantier #788) : la veille de conception.
+# Le prompt la nommait déjà — ne pas la jouer, n'enregistrer aucun arbitrage — et concluait sur
+# « NOMME ce ticket dans ton résumé final », c'est-à-dire sur le contenant que #608 venait de juger
+# insuffisant pour le résidu `.claude/`. Les sessions ont TENU cette conduite : le résumé de #698
+# dit « Ce ticket appelle une veille » en toutes lettres. Personne ne l'a lu. Mesure du 2026-08-30
+# sur les 76 tickets livrés par un run du journal : 13 touchaient une surface visible, AUCUN des 76
+# ne porte `veille::arbitree`, et les quatre livrés depuis que le mécanisme existe (#679, #696,
+# #697, #698) ont perdu la question exactement de la même façon.
+#
+# Le prompt prescrit donc `lib.sh veille-differe` EN PLUS du résumé, jamais à sa place, et la
+# distinction qu'il porte est celle de tout le lot : CONSIGNER n'est pas TRANCHER. Le ticket de
+# veille diffère la question ; `veille-arbitre` la fermerait, et reste interdit ici.
 prompt_ticket() {
   cat <<PROMPT
 Tu traites intégralement le ticket GitLab #$1 de ce dépôt, seul et sans supervision humaine.
@@ -2157,9 +2170,16 @@ Règles de ce run autonome :
   joue pas : WebSearch et WebFetch ne sont dans aucune des deux allowlists de ce run, donc la
   recherche te serait refusée, et une veille à moitié (captures sans références vérifiées) est
   pire qu'aucune. N'enregistre AUCUN arbitrage non plus — « lib.sh veille-arbitre » fermerait la
-  question sans que personne l'ait jugée. Fais une seule chose : NOMME ce ticket dans ton résumé
-  final comme appelant une veille, et implémente en t'en tenant au socle (docs/30, tokens et
-  primitives du dépôt, aucune identité nouvelle).
+  question sans que personne l'ait jugée. Implémente en t'en tenant au socle (docs/30, tokens et
+  primitives du dépôt, aucune identité nouvelle), puis DIFFÈRE la question au lieu de la perdre :
+  écris avec l'outil Write, dans « .maestro/session/ », un constat qui nomme la SURFACE touchée et
+  ce que tu as décidé à l'écran faute de référence, puis « bash scripts/gitlab/lib.sh
+  veille-differe <iid-du-ticket> <chemin-du-fichier> ». Ce constat est la seule chose que
+  personne d'autre n'a : sans lui le ticket de veille n'apprendrait rien de plus que « lib.sh
+  touche-surface ». Le ticket de veille naît assigné — donc hors des plans d'un run, qui ne
+  pourrait pas jouer la veille non plus — et il SURVIT à la fermeture du tien, ce qu'un résumé de
+  fin de session ne fait pas : ce processus s'arrête à la fin de ton tour, et ton ticket se ferme
+  au merge dans l'heure. Nomme-le quand même dans ton résumé final.
 - TU N'AS PAS D'ACCÈS WEB DU TOUT, PAS MÊME POUR UNE URL QUE TON TICKET CITE. C'est le second
   versant de la règle ci-dessus, et il ne relève pas de la veille : « WebFetch <une URL nommée dans
   le ticket> » est refusé lui aussi (#792, docs/10 §11.7). La raison ne tient pas à ta prudence,
