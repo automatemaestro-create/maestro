@@ -17,10 +17,12 @@ from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
 from maestro.deliberation import CreditArbitrage
 from maestro.providers.arbitrage import Arbitre, ArbitreActe
+from maestro.providers.blocage import Signaleur
+from maestro.providers.courrier import Courrier
 
 if TYPE_CHECKING:  # imports de typage seuls — pas de dépendance d'exécution vers agents
     from maestro.agents.mcp import ServeurMcp
@@ -241,6 +243,61 @@ class ModelSpec:
     model: str
 
 
+@dataclass(frozen=True)
+class ModeleDisponible:
+    """Un modèle qu'un fournisseur annonce servir, et les efforts qu'il y admet (#253).
+
+    C'est la fiche que le catalogue rend à l'UI : `nom` est l'identifiant passé
+    à `ModelSpec.model` (la chaîne exacte que le fournisseur attend), `libelle`
+    le nom lisible, `efforts` les niveaux d'effort **admis sur ce modèle**.
+
+    `efforts` est **vide quand le fournisseur n'expose pas ce réglage**, et c'est
+    une réponse à part entière : elle dit « ce modèle ne se règle pas en effort »,
+    pas « on ne sait pas ». La granularité est le modèle et non le fournisseur
+    parce que rien ne garantit qu'un fournisseur règle de la même façon toute sa
+    gamme — un fournisseur dont tous les modèles partagent la liste la répète, ce
+    qui ne coûte rien et n'oblige personne à défaire une structure le jour où ce
+    ne sera plus vrai.
+    """
+
+    nom: str
+    libelle: str = ""
+    efforts: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        """Réémet la fiche en dict JSON-sérialisable (forme servie par l'API)."""
+        return {
+            "nom": self.nom,
+            "libelle": self.libelle or self.nom,
+            "efforts": list(self.efforts),
+        }
+
+
+@dataclass(frozen=True)
+class FournisseurDisponible:
+    """Un fournisseur du registre, tel que le catalogue le rend (#253).
+
+    `modeles` est la gamme **annoncée** ; `modeles_libres` dit qu'un nom hors de
+    cette gamme reste recevable. Les deux ensemble sont ce qui rend la liste vide
+    lisible : `openai` fédère des endpoints aux nommages hétéroclites (`gpt-*`,
+    `llama3:8b`, `org/modele`) et ne peut en préjuger — sa gamme est vide **et**
+    libre, ce qui veut dire « saisis le nom », jamais « aucun modèle ». Un
+    fournisseur à gamme vide et non libre, lui, n'a rien à proposer.
+    """
+
+    nom: str
+    modeles: tuple[ModeleDisponible, ...] = ()
+    modeles_libres: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        """Réémet la fiche en dict JSON-sérialisable (forme servie par l'API)."""
+        return {
+            "nom": self.nom,
+            "modeles": [m.to_dict() for m in self.modeles],
+            "modeles_libres": self.modeles_libres,
+        }
+
+
 class ModelProvider(ABC):
     """Frontière entre le moteur d'agents et un fournisseur d'IA.
 
@@ -252,6 +309,58 @@ class ModelProvider(ABC):
 
     #: Nom stable du fournisseur, tel que référencé par `ModelSpec.provider`.
     name: ClassVar[str]
+
+    #: Gamme annoncée par le fournisseur (#253) : ce que le catalogue rend à l'UI,
+    #: et **la seule source** de la liste des modèles — un fournisseur ajouté au
+    #: registre apparaît sans qu'aucune liste ne soit recopiée ailleurs. Déclarée
+    #: sur la **classe** et non sur l'instance : la lire ne doit demander ni
+    #: credentials, ni réseau, ni configuration (le catalogue répond avant qu'un
+    #: seul fournisseur soit construit).
+    MODELES: ClassVar[tuple[ModeleDisponible, ...]] = ()
+
+    #: Un nom de modèle hors de `MODELES` est-il recevable (#253) ? Vrai pour un
+    #: adaptateur qui fédère des endpoints dont il ne peut pas préjuger — c'est
+    #: `supports()` qui tranche à l'exécution, cet indicateur ne fait que le dire
+    #: d'avance à l'UI. Faux par défaut : annoncer une gamme, c'est s'y tenir.
+    MODELES_LIBRES: ClassVar[bool] = False
+
+    @classmethod
+    def catalogue(cls) -> FournisseurDisponible:
+        """La fiche de ce fournisseur pour le catalogue (#253) — sans rien construire."""
+        return FournisseurDisponible(
+            nom=cls.name, modeles=cls.MODELES, modeles_libres=cls.MODELES_LIBRES
+        )
+
+    @classmethod
+    def efforts_admis(cls, model: str) -> tuple[str, ...]:
+        """Les niveaux d'effort que ce fournisseur admet sur `model` (vide : aucun).
+
+        Vide aussi pour un modèle **hors gamme** — on ne sait rien de ce qu'il
+        admet, et supposer serait le seul moyen d'envoyer un réglage qu'un
+        endpoint refuserait.
+        """
+        for modele in cls.MODELES:
+            if modele.nom == model:
+                return modele.efforts
+        return ()
+
+    @classmethod
+    def effort_admis(cls, model: str, effort: str | None) -> str | None:
+        """`effort` s'il est admis sur `model`, sinon `None` — le **filtre unique** (#253).
+
+        C'est ici, et nulle part ailleurs, que se décide « ce fournisseur
+        connaît-il cet effort ? ». Ses deux appelants — le runtime outillé et
+        l'exécuteur texte — ne transmettent le réglage au fournisseur **que**
+        lorsque ce verbe rend une valeur : un fournisseur qui n'expose aucun
+        effort n'en reçoit donc jamais, et l'ignorer proprement ne dépend pas de
+        sa bonne volonté mais de la construction. Un effort inconnu (valeur
+        obsolète restée sur la définition d'un agent, modèle changé depuis) suit
+        exactement le même chemin : il est écarté, sans erreur — le réglage est
+        un **conseil**, jamais une condition d'exécution.
+        """
+        if not effort:
+            return None
+        return effort if effort in cls.efforts_admis(model) else None
 
     @abstractmethod
     def supports(self, model: str) -> bool:
@@ -265,6 +374,7 @@ class ModelProvider(ABC):
         *,
         model: str,
         system_prompt: str | None = None,
+        effort: str | None = None,
     ) -> str:
         """Exécute un appel modèle et renvoie le texte assemblé de la réponse.
 
@@ -273,6 +383,14 @@ class ModelProvider(ABC):
         (`generate_stream`, #693) plutôt qu'à sa place : rendre le texte d'un
         bloc reste la façon normale de demander une réponse dont on n'a rien à
         faire avant qu'elle soit entière.
+
+        `effort` (#253) est le niveau d'effort demandé au modèle, tel qu'il est
+        porté par la définition de l'agent. Il n'arrive ici **que s'il est
+        admis** — l'appelant le passe au tamis de `effort_admis`, qui est le seul
+        endroit où la question se tranche — si bien qu'un fournisseur sans
+        `MODELES` n'en voit jamais un seul. C'est aussi pourquoi il porte un
+        défaut : un fournisseur tiers qui l'ignore reste conforme sans changer
+        une ligne, et le réglage n'est jamais une condition d'exécution.
         """
         raise NotImplementedError
 
@@ -282,6 +400,7 @@ class ModelProvider(ABC):
         *,
         model: str,
         system_prompt: str | None = None,
+        effort: str | None = None,
     ) -> AsyncIterator[str]:
         """Le même appel que `generate`, rendu **par incréments** (#693).
 
@@ -315,7 +434,14 @@ class ModelProvider(ABC):
         rattrape rien et ne rejoue rien : elle ne sait pas si ce qui est déjà
         parti a été montré à quelqu'un.
         """
-        texte = await self.generate(prompt, model=model, system_prompt=system_prompt)
+        # Le mot-clé ne voyage que s'il a quelque chose à dire (#253) : sans
+        # effort demandé, l'appel est **au bit près** celui d'avant ce lot, et un
+        # fournisseur qui n'a pas surchargé `generate` avec ce paramètre continue
+        # de streamer sans changer une ligne.
+        reglage = {"effort": effort} if effort else {}
+        texte = await self.generate(
+            prompt, model=model, system_prompt=system_prompt, **reglage
+        )
         if texte:
             yield texte
 
@@ -334,9 +460,12 @@ class ModelProvider(ABC):
         on_activite: Callable[[str], None] | None = None,
         on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,
         on_arbitrage: Arbitre | None = None,
+        on_blocage: Signaleur | None = None,
         credit_arbitrage: CreditArbitrage | None = None,
+        on_courrier: Courrier | None = None,
         plafond_tours: int | None = PLAFOND_TOURS_DEFAUT,
         projet: Projet | None = None,
+        effort: str | None = None,
     ) -> str:
         """Exécution *agentique outillée* : renvoie le compte-rendu final de l'agent.
 
@@ -456,6 +585,30 @@ class ModelProvider(ABC):
         canal de décision laisserait l'agent sans réponse devant l'action même
         qu'il jugeait irréversible.
 
+        `on_blocage` (#719, `maestro.providers.blocage`) part lui aussi **de**
+        l'agent, et c'est le seul des cinq qui n'en revienne pas : un fournisseur
+        qui l'honore expose un outil `signaler_blocage(raison)`, appelle ce canal
+        quand l'agent s'en sert, et **rend la main immédiatement**. Rien n'est
+        soumis à personne, rien n'est attendu, l'agent n'est jamais suspendu — un
+        verbe qui attendrait serait un troisième canal d'arbitrage à tenir
+        d'accord avec les deux autres (docs/31 §3.1), et c'est exactement ce que
+        la signature synchrone de `Signaleur` rend inexprimable.
+
+        Il **n'a donc pas de fenêtre de crédit** (`credit_arbitrage` ci-dessous)
+        et n'en aura jamais : on ne mesure que les attentes, et celle-ci n'existe
+        pas. Capacité optionnelle au second degré, comme `on_etapes` et
+        `on_arbitrage`.
+
+        L'exigence sur l'échec est celle du canal d'arbitrage et non celle des
+        canaux d'observation, pour une raison qui leur est commune : l'agent
+        **attend un accusé**, même s'il n'attend pas de réponse. Un callback qui
+        lève ne remonte donc pas (il tuerait la tâche à l'instant où l'agent
+        coopère) mais ne se tait pas non plus — le fournisseur lui dit que sa
+        raison **n'a pas** été consignée
+        (`maestro.providers.blocage.CANAL_EN_ERREUR`), faute de quoi il la croit
+        transmise et ne la répète pas dans son compte-rendu final, seul endroit
+        qui lui reste.
+
         `credit_arbitrage` (#584, `maestro.deliberation`) est le seul canal qui
         ne transporte ni observation ni décision : il transporte du **temps**. Le
         fournisseur qui honore l'un ou l'autre des deux canaux d'arbitrage
@@ -474,6 +627,34 @@ class ModelProvider(ABC):
         Capacité optionnelle : sans ce canal, l'arbitrage fonctionne exactement
         comme avant et son temps reste compté dans celui de la tâche.
 
+        `on_courrier` (#720, `maestro.providers.courrier`) est un canal de plus
+        qui va **vers** l'agent : un fournisseur qui l'honore lui expose un outil
+        `ecrire_a_un_pair(destinataire, message)` et appelle ce canal quand
+        l'agent s'en sert. Il ne transporte **rien en retour** — l'appelant
+        consigne le mot au journal du run et le publie en best-effort sur la
+        boîte du destinataire, puis rend la main : l'agent n'attend pas, et
+        aucune décision ne lui est due.
+
+        Deux exigences, et elles ne ressemblent à aucune des précédentes. Le
+        fournisseur doit **refuser lui-même** ce qui n'est pas adressable — un
+        destinataire vide vaut *diffusion* côté transport, et l'identité de la
+        boucle n'est pas un pair — parce que ces refus se répondent à l'agent et
+        non à l'appelant. Et un callback qui lève **ne peut pas être avalé en
+        silence** : la seule promesse de ce verbe étant l'écriture, son échec est
+        la seule nouvelle qui change quelque chose pour l'agent
+        (`maestro.providers.courrier.CANAL_EN_ERREUR`) — mais il ne doit pas
+        pour autant tuer la tâche.
+
+        Ce qui est promis à l'agent est une **trace adressée**, jamais une
+        livraison : le transport est un pub/sub éphémère (pas de rejeu, abonné
+        requis avant publication) et un agent n'existe que pendant sa tâche. Un
+        fournisseur qui expose ce verbe doit donc le présenter ainsi — c'est la
+        réserve de docs/31 §3.2, et elle est dans la description de l'outil.
+
+        Capacité optionnelle au second degré, comme `on_etapes` et
+        `on_arbitrage` : un fournisseur sans outillage n'expose rien et le moteur
+        ne s'en aperçoit pas.
+
         `plafond_tours` (#239) borne la boucle agentique — dépassé ⇒
         `TurnLimitReached`. Il est **fourni par l'appelant** (le profil de
         l'agent, via `AgentRuntime`) et non lu dans une constante du fournisseur :
@@ -483,6 +664,13 @@ class ModelProvider(ABC):
         n'est **pas borné** (#494, `PLAFOND_TOURS_DEFAUT` valant `None`) : le
         défaut est l'absence de borne, et un fournisseur ne doit donc pas en
         inventer une — celui qui en veut une la reçoit.
+
+        `effort` (#253) est le niveau d'effort demandé au modèle, porté par la
+        définition de l'agent et passé par le runtime. Comme sur `generate`, il
+        n'arrive ici **que s'il est admis** (`effort_admis`), et le runtime ne
+        transmet même pas le mot-clé quand il n'y a rien à transmettre : un
+        fournisseur outillé qui ne connaît pas ce réglage — le nôtre d'hier, ou
+        celui d'un tiers — n'a rien à changer pour rester conforme.
 
         Capacité **optionnelle** : la base la refuse (`UnsupportedCapability`) ; un
         fournisseur outillé (Claude via l'Agent SDK) la surcharge. Le moteur reste

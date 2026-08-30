@@ -1,19 +1,34 @@
-"""Auto-amélioration des playbooks — analyse post-run des échecs → proposition (ticket #139).
+"""Propositions de playbook — les deux voies qui mènent à une version révisée (#139, #261).
 
-Deuxième lot de l'axe « auto-amélioration des playbooks » (#111), au-dessus du stockage
-des propositions en brouillon (#138). **À la demande** — jamais en fin de run, par prudence
-sur le coût —, l'analyse relit les échecs consignés d'un run pour un agent donné et confie
-à la couche d'abstraction fournisseur (`ModelProvider.generate`, #32/#69) la rédaction d'une
-**version révisée** de son playbook. Le résultat est enregistré comme **proposition en
-brouillon** (`PlaybookStore.proposer`, provenance « proposition ») : il ne devient jamais la
-version courante et n'est jamais chargé par le moteur tant qu'une action humaine ne l'a pas
-appliqué (lot UI #140).
+Ce module porte l'axe « auto-amélioration des playbooks » (#111), au-dessus du stockage des
+propositions en brouillon (#138). Une **proposition** y est toujours la même chose : un
+playbook révisé **intégral** accompagné de sa justification, produit par la couche
+d'abstraction fournisseur (`ModelProvider.generate`, #32/#69), que personne n'a encore
+endossé. Seule la **matière** de départ change, et c'est ce qui distingue les deux voies :
 
-Le point d'entrée est l'endpoint `POST /api/playbooks/{agent}/propositions` de l'app
-(`maestro.controltower.app`) : il extrait les échecs du run (`echecs_du_run`) puis délègue à
-`AnalyseurEchecs`. Comme le répondeur du chat (#84), l'analyseur résout son fournisseur
-paresseusement — le construire ne coûte rien et les tests (#137) injectent un fournisseur
-factice.
+- `AnalyseurEchecs` (#139) part des **échecs consignés d'un run**. Sa proposition est
+  enregistrée en brouillon (`PlaybookStore.proposer`, provenance « proposition ») : elle
+  survit à la page, attend une décision, et n'est jamais chargée par le moteur tant qu'une
+  action humaine ne l'a pas appliquée (lot UI #140). Point d'entrée :
+  `POST /api/playbooks/{agent}/propositions`.
+- `RedacteurPlaybook` (#261) part du **brouillon en cours de frappe** dans l'éditeur, et
+  d'une consigne libre facultative (« resserre les garde-fous », « ajoute une section
+  Méthode »). Sa proposition n'est **rien enregistrer du tout** : elle est rendue à
+  l'éditeur, qui l'affiche en différentiel et laisse l'utilisateur l'appliquer à son
+  brouillon — ou la jeter. Point d'entrée : `POST /api/playbooks/{agent}/redaction`.
+
+⚠ **Pourquoi la seconde n'écrit pas**, alors que la première écrit : une proposition d'après
+run naît sans que personne regarde l'écran, il faut donc qu'elle attende quelque part ; une
+réécriture demandée au clavier a son destinataire devant elle, et la stocker numéroterait
+dans un dépôt append-only des brouillons dont la moitié seront jetés dans la seconde. Surtout,
+appliquer une proposition stockée **publie une version** (`appliquer_proposition`) : c'est
+exactement ce que le critère « rien n'est publié sans geste explicite » de #261 interdit à
+l'assistance de faire. Ce qui est mutualisé est donc le **cadre** — le format de réponse
+(justification, marqueur, document intégral), son découpage, la classe d'échec et la
+résolution paresseuse du fournisseur — et non le geste d'écriture.
+
+Comme le répondeur du chat (#84), les deux résolvent leur fournisseur paresseusement : les
+construire ne coûte rien, et les tests (#137) leur injectent un fournisseur factice.
 """
 
 from __future__ import annotations
@@ -48,12 +63,56 @@ Réponds EXACTEMENT dans ce format, sans rien d'autre :
 3. Le playbook révisé intégral en Markdown (le document complet, pas un diff), et rien après."""
 
 
+#: Cadre système de la **rédaction assistée** (#261) : même contrat de réponse que l'analyse
+#: — une justification, le marqueur, le document intégral — parce que c'est le même objet
+#: qu'on produit. Ce qui change est la matière : un brouillon en cours d'écriture plutôt que
+#: les échecs d'un run, et une consigne libre que l'utilisateur a tapée juste avant.
+_CADRE_REDACTION = """\
+Tu es un expert en conception de playbooks d'agents autonomes. On te confie le brouillon de
+playbook qu'une personne est en train d'écrire, et éventuellement ce qu'elle te demande d'en
+faire. Ta tâche : rendre une version COMPLÈTE et améliorée de ce brouillon.
+
+Respecte ce qui est déjà écrit : garde le rôle, le ton, les garde-fous et les sections que
+l'auteur a posés ; complète, reformule et structure, ne repars pas de zéro. Si le brouillon
+est très court, développe-le sans inventer de mission qu'il ne porte pas.
+
+Réponds EXACTEMENT dans ce format, sans rien d'autre :
+1. Une justification de 2 à 4 phrases décrivant ce que tu as changé et pourquoi.
+2. Sur une ligne seule, le marqueur : ===PLAYBOOK===
+3. Le playbook réécrit intégral en Markdown (le document complet, pas un diff), et rien après."""
+
+#: Bornes de la demande de rédaction. Le brouillon est plafonné loin au-dessus d'un playbook
+#: réel (les documents livrés pèsent ~5 ko) : la borne écarte un envoi aberrant, elle ne
+#: rationne pas l'écriture. La consigne est alignée sur l'intention de #257.
+BROUILLON_MAX = 40_000
+CONSIGNE_MAX = 500
+
+
 class RevisionIndisponible(RuntimeError):
     """La proposition n'a pas pu être produite (fournisseur en échec, réponse inexploitable).
 
     L'analyse est à la demande et sans effet de bord tant qu'elle échoue : rien n'est
     stocké. L'API la traduit en 502 — l'utilisateur peut relancer sans conséquence.
     """
+
+
+class _AppelModele:
+    """La part commune aux deux voies : un fournisseur résolu au **premier usage**.
+
+    Construire un analyseur ou un rédacteur ne doit rien coûter — l'app en instancie à
+    chaque démarrage, y compris là où aucun fournisseur n'est configuré (démo, tests). La
+    résolution passe donc par un import local, au moment où l'appel a réellement lieu.
+    """
+
+    def __init__(self, *, provider: ModelProvider | None = None) -> None:
+        self._provider = provider
+
+    async def _generer(self, prompt: str, *, modele: str, cadre: str) -> str:
+        if self._provider is None:
+            from maestro.providers.factory import provider_from_settings
+
+            self._provider = provider_from_settings()
+        return await self._provider.generate(prompt, model=modele, system_prompt=cadre)
 
 
 @dataclass(frozen=True)
@@ -84,7 +143,7 @@ def echecs_du_run(execution: EtatExecution, agent: str) -> tuple[EchecTache, ...
     )
 
 
-class AnalyseurEchecs:
+class AnalyseurEchecs(_AppelModele):
     """Produit une proposition de révision de playbook à partir des échecs d'un run.
 
     Confie la rédaction au fournisseur configuré (#32/#69, résolu paresseusement comme le
@@ -99,7 +158,7 @@ class AnalyseurEchecs:
         provider: ModelProvider | None = None,
         playbooks: PlaybookStore | None = None,
     ) -> None:
-        self._provider = provider
+        super().__init__(provider=provider)
         self._playbooks = playbooks if playbooks is not None else PlaybookStore.default()
 
     async def proposer_revision(
@@ -117,7 +176,7 @@ class AnalyseurEchecs:
         base = self._playbooks.prompt_systeme(agent.nom, _playbook_du_code(agent))
         prompt = _prompt_analyse(agent, run_id, echecs, base)
         try:
-            texte = await self._generer(prompt, modele=agent.modele)
+            texte = await self._generer(prompt, modele=agent.modele, cadre=_CADRE_ANALYSE)
         except Exception as exc:
             raise RevisionIndisponible(
                 f"l'analyse des échecs de {agent.nom} a échoué : {exc}"
@@ -126,13 +185,68 @@ class AnalyseurEchecs:
         justification = _justification(run_id, echecs, rationale)
         return self._playbooks.proposer(agent.nom, contenu, justification)
 
-    async def _generer(self, prompt: str, *, modele: str) -> str:
-        """L'appel modèle, fournisseur résolu au premier usage (import local, comme #84)."""
-        if self._provider is None:
-            from maestro.providers.factory import provider_from_settings
 
-            self._provider = provider_from_settings()
-        return await self._provider.generate(prompt, model=modele, system_prompt=_CADRE_ANALYSE)
+@dataclass(frozen=True)
+class RedactionProposee:
+    """Une réécriture proposée à l'éditeur : le document entier, et pourquoi il a changé.
+
+    Volontairement **sans numéro ni date** — ce n'est pas une version, ni même une
+    proposition stockée, mais un candidat en vol : tant que personne ne l'a appliqué à son
+    brouillon, il n'existe nulle part ailleurs que dans la réponse HTTP.
+    """
+
+    contenu: str
+    justification: str
+
+    def to_dict(self) -> dict[str, str]:
+        return {"contenu": self.contenu, "justification": self.justification}
+
+
+class RedacteurPlaybook(_AppelModele):
+    """Réécrit le **brouillon en cours** d'un playbook, sans rien enregistrer (#261).
+
+    Le pendant « au clavier » de `AnalyseurEchecs` : même cadre de réponse, même classe
+    d'échec, même fournisseur — mais la matière est le texte que l'utilisateur a sous les
+    yeux, et le résultat lui revient pour qu'il en décide. Aucun dépôt n'est touché, ni
+    celui des versions ni celui des propositions.
+    """
+
+    async def proposer_redaction(
+        self, agent: Agent, brouillon: str, consigne: str | None = None
+    ) -> RedactionProposee:
+        """Propose une réécriture de `brouillon` pour `agent`, guidée par `consigne`.
+
+        Lève `ValueError` si le brouillon est vide ou hors bornes (rien à réécrire, ou
+        envoi aberrant) et `RevisionIndisponible` si le fournisseur échoue ou rend une
+        réponse inexploitable — dans les deux cas le brouillon de l'utilisateur est
+        intact, il n'a jamais quitté son écran.
+        """
+        texte = brouillon.strip()
+        if not texte:
+            raise ValueError("brouillon vide : rien à réécrire.")
+        if len(texte) > BROUILLON_MAX:
+            raise ValueError(
+                f"brouillon trop long ({len(texte)} caractères, maximum {BROUILLON_MAX})."
+            )
+        demande = (consigne or "").strip()
+        if len(demande) > CONSIGNE_MAX:
+            raise ValueError(
+                f"consigne trop longue ({len(demande)} caractères, maximum {CONSIGNE_MAX})."
+            )
+        prompt = _prompt_redaction(agent, texte, demande)
+        try:
+            reponse = await self._generer(
+                prompt, modele=agent.modele, cadre=_CADRE_REDACTION
+            )
+        except Exception as exc:
+            raise RevisionIndisponible(
+                f"la rédaction assistée du playbook de {agent.nom} a échoué : {exc}"
+            ) from exc
+        rationale, contenu = _decouper(reponse)
+        return RedactionProposee(
+            contenu=contenu,
+            justification=rationale or "Le modèle n'a pas motivé sa réécriture.",
+        )
 
 
 def _playbook_du_code(agent: Agent) -> str:
@@ -164,6 +278,26 @@ def _prompt_analyse(
         f"Échecs consignés lors du run {run_id} :\n\n"
         f"{lignes}\n\n"
         "Propose la version révisée du playbook selon le format demandé."
+    )
+
+
+def _prompt_redaction(agent: Agent, brouillon: str, consigne: str) -> str:
+    """Le prompt de rédaction : le rôle, le brouillon tel quel, la consigne si elle existe.
+
+    Le brouillon est passé **sans retouche** — c'est le texte que l'utilisateur a sous les
+    yeux, et la réécriture doit pouvoir s'y comparer ligne à ligne dans le différentiel de
+    l'éditeur. Sans consigne, la demande reste ouverte : compléter et structurer.
+    """
+    demande = (
+        f"Ce que l'auteur demande :\n\n{consigne}"
+        if consigne
+        else "L'auteur n'a pas précisé sa demande : complète et structure ce brouillon."
+    )
+    return (
+        f"Brouillon de playbook pour l'agent {agent.role} ({agent.nom}) :\n\n"
+        f"{brouillon}\n\n"
+        f"{demande}\n\n"
+        "Rends la version réécrite selon le format demandé."
     )
 
 

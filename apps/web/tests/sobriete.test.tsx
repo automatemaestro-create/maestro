@@ -50,6 +50,7 @@ import { fileURLToPath } from "node:url";
 import { cleanup, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { TITRE_RUNS_IMMOBILES } from "@/components/PanneauRunsImmobiles";
 import { ID_CONTENU_PRINCIPAL } from "@/components/Shell";
 import { marquerGuideVu } from "@/lib/guide";
 import { MENU } from "@/lib/navigation";
@@ -415,7 +416,7 @@ describe("les blocs d'arbitrage (docs/30 §4.1)", () => {
     const places = placesDe(contenuPrincipal());
     expect(places.corps).not.toContain("Briefs en attente");
     expect(places.corps).not.toContain("Validations en attente");
-    expect(places.corps).not.toContain("Runs interrompus");
+    expect(places.corps).not.toContain(TITRE_RUNS_IMMOBILES);
     // Et ce qui reste tient tout seul dans le plafond : c'est l'acquis de #191
     // qu'il s'agissait de protéger, et que #476 n'a pas défait.
     expect(places.corps.length, places.corps.join(" · ")).toBeLessThanOrEqual(

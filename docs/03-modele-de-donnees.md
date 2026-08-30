@@ -263,6 +263,10 @@ Les messages échangés dans un run, y compris les conversations utilisateur ↔
 ### AGENT_MESSAGE
 Les **messages inter-agents** (la « boîte aux lettres » / mailbox). Champs : `from_agent`, `to_agent` (`null` si diffusion/broadcast), `type` (`handoff`, `requete`, `reponse`, `notification`), `task_id` (contexte), `payload`, `statut` (`envoye`, `lu`, `traite`). Support de la messagerie directe et du protocole A2A (EF-31 à EF-34). Omis du diagramme ER ci-dessus pour la lisibilité, comme `MEMORY_CHUNK`.
 
+⚠ **Un agent en est producteur depuis #720**, et ça change ce que l'entité promet. Jusque-là les deux seuls appelants étaient la **machinerie** — le relais de handoff et le chat ; l'outil `ecrire_a_un_pair` en fait un troisième, à l'initiative de l'agent. Ce qu'il pose est un message `notification` dont le texte voyage dans **`objet`** (`payload` reste vide : il n'y a aucune charge utile structurée à porter), rattaché à sa `task_id` et à son `run_id`, l'expéditeur étant **fermé par l'exécuteur** et jamais demandé à l'agent — qui pourrait sinon signer d'un autre nom.
+
+⚠ **`lu` et `traite` ne sont assignés nulle part**, et la persistance qu'ils attendent n'existe pas encore : il n'y a **aucun accusé de réception**. Le transport est un pub/sub éphémère — pas de rejeu, abonné requis avant la publication —, or un agent n'existe que pendant sa tâche. D'où le partage retenu par [docs/31 §3.2](./31-decision-surface-ecriture-agents.md), qui est ce qui rend l'entité honnête : **le journal est la livraison, le pub/sub n'est que la notification**. Tout message est donc consigné en étape `<task_id>:message` — durable, relue après coup — *avant* d'être publié, et un message adressé à un pair absent existe malgré tout. Ce qui est offert est une **trace adressée**, jamais une livraison ; la promesse ne changera que le jour où le transport gagnera sa persistance.
+
 ---
 
 ## 3. Cycle de vie d'une tâche (machine à états)

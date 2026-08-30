@@ -35,6 +35,7 @@ from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     ClaudeSDKClient,
+    EffortLevel,
     HookContext,
     HookJSONOutput,
     HookMatcher,
@@ -56,6 +57,7 @@ from maestro.config import ConfigError, Settings
 from maestro.decideur import Decideur
 from maestro.deliberation import CreditArbitrage
 from maestro.detail_tache import EtapeTache
+from maestro.providers import blocage, courrier
 from maestro.providers.activite import Geste, RegulateurActivite
 from maestro.providers.arbitrage import (
     CANAL_EN_ERREUR,
@@ -81,6 +83,7 @@ from maestro.providers.base import (
     CollecteurStderr,
     Credentials,
     McpServerUnavailable,
+    ModeleDisponible,
     ModelProvider,
     TurnLimitReached,
     attache_stderr,
@@ -116,6 +119,22 @@ _MCP_SONDAGE_S: float = 0.5
 
 _E = TypeVar("_E", bound=BaseException)
 
+#: Niveaux d'effort admis par les modèles Claude (#253), du plus économe au plus
+#: dépensier. C'est **l'ensemble fermé de l'Agent SDK** (`EffortLevel`) et non une
+#: liste de notre cru : le CLI refuserait tout autre mot, et c'est le même
+#: vocabulaire que le `--effort` des sessions autonomes (#217). Les cinq valent
+#: pour toute la gamme — ce qui se répète ici sans coût, plutôt que de faire
+#: dépendre d'un raccourci le jour où un modèle n'en admettra qu'une partie.
+#:
+#: Le tuple est **typé sur le littéral du SDK**, et c'est ce qui fait la couture :
+#: la frontière transporte l'effort en `str` — le vocabulaire est celui du
+#: fournisseur, la couche agnostique n'a pas à le connaître — quand le SDK exige
+#: son type fermé. Le passage de l'un à l'autre se fait en **retenant l'élément de
+#: ce tuple** (`_effort_sdk`) plutôt qu'en forçant le type de la chaîne reçue : le
+#: contrôle et la conversion sont alors le même geste, et un mot hors liste ne
+#: peut pas se glisser dans les options du CLI.
+EFFORTS: tuple[EffortLevel, ...] = ("low", "medium", "high", "xhigh", "max")
+
 
 def _resolve_auth_mode(settings: Settings) -> AuthMode:
     """Applique la règle de précédence pour déterminer le mode d'authentification.
@@ -143,6 +162,23 @@ class ClaudeProvider(ModelProvider):
 
     #: Préfixe des identifiants de modèles Claude (ex. `claude-opus-5`).
     _MODEL_PREFIX: ClassVar[str] = "claude-"
+
+    #: Gamme annoncée au catalogue (#253) — ce que l'UI proposera. Elle **n'est
+    #: pas** la définition de ce que le fournisseur accepte : `supports()` reste
+    #: le préfixe `claude-`, si bien qu'un modèle plus récent que cette liste
+    #: s'exécute encore en le nommant à la main. Annoncer une gamme sert à
+    #: proposer, jamais à interdire — et c'est pourquoi `MODELES_LIBRES` est vrai.
+    MODELES: ClassVar[tuple[ModeleDisponible, ...]] = (
+        ModeleDisponible("claude-opus-5", "Opus 5", EFFORTS),
+        ModeleDisponible("claude-opus-4-8", "Opus 4.8", EFFORTS),
+        ModeleDisponible("claude-sonnet-5", "Sonnet 5", EFFORTS),
+        ModeleDisponible("claude-haiku-4-5", "Haiku 4.5", EFFORTS),
+        ModeleDisponible("claude-fable-5", "Fable 5", EFFORTS),
+    )
+
+    #: Un modèle hors gamme reste exécutable (cf. `MODELES`) — il n'aura
+    #: simplement aucun effort admis, faute de savoir ce qu'il accepte.
+    MODELES_LIBRES: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -199,6 +235,19 @@ class ClaudeProvider(ModelProvider):
     def supports(self, model: str) -> bool:
         return model.startswith(self._MODEL_PREFIX)
 
+    def _effort_sdk(self, model: str, effort: str | None) -> EffortLevel | None:
+        """L'effort admis sur `model`, rendu dans le type fermé du SDK (#253).
+
+        Passe par `effort_admis` — la règle vit là, une seule fois — puis **rend
+        l'élément d'`EFFORTS`** correspondant au lieu de la chaîne reçue : c'est
+        ce qui fait du contrôle et de la conversion un seul geste, sans `cast`
+        qui affirmerait au vérificateur de types ce que le code ne prouve pas.
+        `None` en sortie laisse l'option du SDK vide, donc le CLI au régime qu'il
+        aurait eu sans ce lot.
+        """
+        retenu = self.effort_admis(model, effort)
+        return next((niveau for niveau in EFFORTS if niveau == retenu), None)
+
     def _auth_env(self) -> dict[str, str]:
         """Traduit les `Credentials` en variables d'environnement pour le CLI.
 
@@ -227,6 +276,7 @@ class ClaudeProvider(ModelProvider):
         *,
         model: str,
         system_prompt: str | None = None,
+        effort: str | None = None,
     ) -> str:
         """Appel modèle **texte seul** : aucun outil n'est exposé au CLI sous-jacent.
 
@@ -237,6 +287,14 @@ class ClaudeProvider(ModelProvider):
         `stderr=` (#346) branche la collecte bornée du stderr du CLI : sans elle,
         un sous-processus qui meurt ne laisse que « Check stderr output for
         details » sur un flux que personne n'écoutait.
+
+        `effort` (#253) alimente l'option homonyme du SDK, qui passe `--effort` au
+        CLI. Il est **re-tamisé ici** (`_effort_sdk`, qui appelle `effort_admis`)
+        et pas seulement chez l'appelant : ce fournisseur s'appelle aussi
+        directement (chat, routeur, auto-amélioration), et une valeur hors de
+        `EFFORTS` ferait échouer le CLI sur un réglage qui n'est qu'un conseil. Le
+        tamis n'est pas une seconde règle — c'est la même, appelée là où le SDK
+        est monté, et c'est aussi elle qui rend le type fermé qu'il exige.
         """
         stderr = CollecteurStderr()
         options = ClaudeAgentOptions(
@@ -245,6 +303,7 @@ class ClaudeProvider(ModelProvider):
             env=self._auth_env(),
             tools=[],
             stderr=stderr,
+            effort=self._effort_sdk(model, effort),
         )
         return await _collect_response(prompt, options, stderr=stderr)
 
@@ -254,6 +313,7 @@ class ClaudeProvider(ModelProvider):
         *,
         model: str,
         system_prompt: str | None = None,
+        effort: str | None = None,
     ) -> AsyncIterator[str]:
         """`generate`, rendu **par incréments** : le fournisseur de référence streame (#693).
 
@@ -280,6 +340,7 @@ class ClaudeProvider(ModelProvider):
             tools=[],
             stderr=stderr,
             include_partial_messages=True,
+            effort=self._effort_sdk(model, effort),
         )
         async for morceau in _stream_response(prompt, options, stderr=stderr):
             yield morceau
@@ -299,9 +360,12 @@ class ClaudeProvider(ModelProvider):
         on_activite: Callable[[str], None] | None = None,
         on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,
         on_arbitrage: Arbitre | None = None,
+        on_blocage: blocage.Signaleur | None = None,
         credit_arbitrage: CreditArbitrage | None = None,
+        on_courrier: courrier.Courrier | None = None,
         plafond_tours: int | None = PLAFOND_TOURS_DEFAUT,
         projet: Projet | None = None,
+        effort: str | None = None,
     ) -> str:
         """Lance une exécution *agentique outillée* de l'Agent SDK dans `workspace`.
 
@@ -413,13 +477,22 @@ class ClaudeProvider(ModelProvider):
         reparte vers l'agent, et le seul dont une panne se traduit en **refus
         servi** plutôt qu'en silence.
 
+        `on_blocage` (#719) fait porter au **même** serveur l'outil
+        `signaler_blocage(raison)` (`maestro.providers.blocage`) : l'agent qui
+        bute le dit, tout de suite, avec sa raison. C'est le **contraire** du
+        précédent sur le seul point qui compte — il n'attend rien et ne suspend
+        jamais l'agent —, et c'est ce qui le laisse gratuit : aucune attente à
+        mesurer, donc aucun `credit_arbitrage` à lui passer. Il ne touche pas non
+        plus au statut de la tâche (docs/31 §3.4 : ce serait fausser la cascade
+        de #43) ; il consigne, et l'agent poursuit.
+
         Ce serveur porte **N outils** depuis #718, et non plus un seul : ce qui
         décide de son contenu est `_outils_maestro`, ce qui décide de son montage
         est `_serveurs_mcp`. Le partage n'est pas cosmétique — c'est lui qui rend
         deux verbes ajoutés séparément (#719, #720) réellement indépendants, au
         lieu de les faire se croiser ici. Un serveur **sans aucun outil** n'est
         pas monté du tout, `demander_arbitrage` seul est monté exactement comme
-        avant.
+        avant, et un seul des deux canaux armé ne monte que **son** verbe.
 
         Trois choix à ne pas défaire dans ce montage. Le serveur n'est **pas
         ajouté à `attendus`** (`_attendus_mcp` ne connaît que les serveurs
@@ -448,6 +521,27 @@ class ClaudeProvider(ModelProvider):
         la durée soit celle du blocage. En particulier, elle se **referme quand le
         hook cesse d'attendre**, pas quand la demande aboutit : la demande reste
         en vol, l'agent, lui, a repris son travail.
+
+        `on_courrier` (#720, `maestro.providers.courrier`) fait porter au même
+        serveur l'outil `ecrire_a_un_pair(destinataire, message)` : l'agent
+        adresse un mot à un autre agent du run, l'appelant le **consigne** au
+        journal et le **publie** en best-effort sur la boîte du destinataire.
+        C'est un canal de plus qui repart vers l'agent, et le seul à ce jour qui
+        n'**attende** rien — d'où l'absence de fenêtre de crédit : personne n'est
+        suspendu à une décision, l'appel rend la main aussitôt.
+
+        Ce qu'il livre est une **trace adressée**, jamais une livraison, et
+        `courrier.DESCRIPTION_OUTIL` le dit à l'agent : le transport est un pub/sub
+        éphémère sans rejeu ni accusé de réception, et un agent n'existe que
+        pendant sa tâche. C'est aussi pourquoi l'issue de la publication ne
+        remonte pas jusqu'ici — elle ne prouverait rien de plus que son échec.
+
+        `effort` (#253) alimente l'option homonyme du SDK (`--effort` du CLI),
+        après le même tamis que sur `generate` : c'est un **conseil de dépense**,
+        au même titre que le modèle, et pas une borne — à la différence de
+        `plafond_tours`, un effort mal réglé ne tue aucune tâche, il la rend
+        seulement plus ou moins fouillée. À `None` — le défaut — rien n'est passé
+        et le CLI garde le régime qu'il aurait eu sans ce lot.
         """
         env = self._auth_env()
         cli_path: Path | None = None
@@ -457,7 +551,12 @@ class ClaudeProvider(ModelProvider):
         stderr = CollecteurStderr()
         serveurs = _serveurs_mcp(
             mcp_serveurs,
-            _outils_maestro(on_arbitrage=on_arbitrage, credit=credit_arbitrage),
+            _outils_maestro(
+                on_arbitrage=on_arbitrage,
+                on_blocage=on_blocage,
+                credit=credit_arbitrage,
+                on_courrier=on_courrier,
+            ),
         )
         options = ClaudeAgentOptions(
             model=model,
@@ -470,6 +569,7 @@ class ClaudeProvider(ModelProvider):
             allowed_tools=list(tools),
             permission_mode="bypassPermissions",
             max_turns=plafond_tours,
+            effort=self._effort_sdk(model, effort),
             mcp_servers=serveurs,
             strict_mcp_config=True,
             hooks=(
@@ -577,6 +677,109 @@ def _outil_arbitrage(
     return demander_arbitrage
 
 
+def _outil_courrier(on_courrier: courrier.Courrier) -> SdkMcpTool[Any]:
+    """L'outil `ecrire_a_un_pair(destinataire, message)` servi à l'agent (#720).
+
+    Un verbe de plus sur le porte-outils (#718), et le seul à ce jour qui
+    n'attende **rien** : il consigne et rend la main. Toute la forme de ce qu'il rend vit dans
+    `maestro.providers.courrier`, avec le reste du vocabulaire, pour rester
+    lisible sans monter de session SDK — et pour que la promesse qu'on tient
+    (une trace adressée) s'écrive au même endroit que la réserve qui l'impose.
+
+    Quatre réponses se ressemblent et n'ont pas la même cause ; aucune n'est
+    rendue en **erreur d'outil**, ce qui inviterait l'agent à rejouer un appel
+    dont on vient de lui dire ce qu'il faut en faire :
+
+    - **destinataire vide** : côté transport, c'est la *diffusion* — le mot
+      partirait dans toutes les boîtes, celle du relais de handoff comprise. On
+      ne l'écrit pas et on demande un nom ;
+    - **destinataire réservé** : `AGENT_RELAIS` n'est pas un pair mais la boucle
+      elle-même (cf. `courrier.destinataire_reserve`). Même refus, autre motif —
+      et le texte dit où aller à la place ;
+    - **message vide** : rien n'a été soumis à personne, donc rien n'est refusé.
+      C'est un champ à remplir, pas une décision ;
+    - **canal en erreur** : le callback a levé. On le dit — c'est le seul cas où
+      l'agent apprend que *rien* n'a été écrit, donc le seul qui change quelque
+      chose pour lui — et on ne laisse surtout pas l'exception remonter : elle
+      tuerait la tâche au moment précis où l'agent essayait d'être utile.
+
+    Aucune fenêtre de crédit d'arbitrage ici (#584), et ce n'est pas un oubli :
+    ce verbe ne **suspend** rien. Le crédit mesure le temps qu'un agent passe à
+    attendre une personne ; ici personne n'est attendu, et la seule attente est
+    celle d'une écriture de journal.
+
+    L'outil est rendu **séparément de son serveur**, comme `_outil_arbitrage` et
+    pour la même raison : ce qui décide ici tient en une poignée de lignes, et
+    les éprouver ne doit coûter ni CLI, ni sous-processus, ni quota (tests →
+    #721).
+    """
+
+    @tool(courrier.NOM_OUTIL, courrier.DESCRIPTION_OUTIL, courrier.SCHEMA_ENTREE)
+    async def ecrire_a_un_pair(args: dict[str, Any]) -> dict[str, Any]:
+        destinataire = str(args.get("destinataire") or "").strip()
+        message = str(args.get("message") or "").strip()
+        if not destinataire:
+            texte = courrier.DESTINATAIRE_MANQUANT
+        elif courrier.destinataire_reserve(destinataire):
+            texte = courrier.DESTINATAIRE_RESERVE.format(relais=destinataire)
+        elif not message:
+            texte = courrier.MESSAGE_MANQUANT.format(destinataire=destinataire)
+        else:
+            try:
+                await on_courrier(destinataire, message)
+            except Exception as exc:  # noqa: BLE001 — servi à l'agent, jamais une tâche tuée
+                texte = courrier.CANAL_EN_ERREUR.format(cause=exc)
+            else:
+                texte = courrier.MOT_CONSIGNE.format(destinataire=destinataire)
+        return {"content": [{"type": "text", "text": texte}]}
+
+    return ecrire_a_un_pair
+
+
+def _outil_blocage(on_blocage: blocage.Signaleur) -> SdkMcpTool[Any]:
+    """L'outil `signaler_blocage(raison)` servi à l'agent (#719).
+
+    Le jumeau de `_outil_arbitrage` à une chose près, et c'est **toute** la
+    différence : il n'y a **aucun `await`**. L'appel consigne et rend la main
+    dans le même tour ; l'agent n'est jamais suspendu, personne n'est sollicité,
+    rien ne lui répondra. Le vocabulaire est importé **qualifié**
+    (`blocage.NOM_OUTIL`…) parce que les deux verbes nomment leurs constantes
+    pareil — deux `RAISON_MANQUANTE` dans le même fichier finiraient par se
+    servir l'une pour l'autre, et l'agent lirait le message de l'autre canal.
+
+    Deux issues, et aucune n'est rendue en **erreur d'outil** — même raison
+    qu'en #582 : une erreur invite à réessayer, or il n'y a rien à réessayer ici.
+
+    - **raison vide** : rien n'est consigné et on le lui dit. Consigner « bloqué,
+      sans plus » remplirait la frise du seul fait qu'elle montrait déjà (le
+      troisième critère de #355), en lui ôtant le seul que ce verbe apporte ;
+    - **canal en erreur** : le callback a levé. On le lui dit aussi, et surtout
+      on ne laisse pas l'exception remonter — elle tuerait la tâche à l'instant
+      précis où l'agent signale qu'il a un problème, ce qui est la pire des
+      façons de lui apprendre à parler.
+
+    Rendu **séparément de son serveur** comme son jumeau : ce qui décide tient en
+    quelques lignes, et les éprouver ne doit coûter ni CLI, ni sous-processus, ni
+    quota (tests → #721).
+    """
+
+    @tool(blocage.NOM_OUTIL, blocage.DESCRIPTION_OUTIL, blocage.SCHEMA_ENTREE)
+    async def signaler_blocage(args: dict[str, Any]) -> dict[str, Any]:
+        raison = str(args.get("raison") or "").strip()
+        if not raison:
+            texte = blocage.RAISON_MANQUANTE
+        else:
+            try:
+                on_blocage(raison)
+            except Exception as exc:  # noqa: BLE001 — dit à l'agent, jamais une tâche tuée
+                texte = blocage.CANAL_EN_ERREUR.format(cause=exc)
+            else:
+                texte = blocage.BLOCAGE_CONSIGNE
+        return {"content": [{"type": "text", "text": texte}]}
+
+    return signaler_blocage
+
+
 @contextmanager
 def _fenetre_arbitrage(credit: CreditArbitrage | None) -> Iterator[None]:
     """Ouvre la fenêtre d'attente du crédit quand il y en a un (#584), sinon ne fait rien.
@@ -596,7 +799,9 @@ def _fenetre_arbitrage(credit: CreditArbitrage | None) -> Iterator[None]:
 def _outils_maestro(
     *,
     on_arbitrage: Arbitre | None = None,
+    on_blocage: blocage.Signaleur | None = None,
     credit: CreditArbitrage | None = None,
+    on_courrier: courrier.Courrier | None = None,
 ) -> list[SdkMcpTool[Any]]:
     """Les outils que le serveur `maestro` a **effectivement** à porter (#718).
 
@@ -610,10 +815,18 @@ def _outils_maestro(
     au bout du fil, et servir à l'agent un verbe qui n'aboutit nulle part est
     pire que ne pas le lui servir. La liste rendue peut donc être vide — c'est
     un état normal, que `_serveurs_mcp` traite comme tel.
+
+    Les deux canaux sont **indépendants** : un run peut servir l'arbitrage sans
+    le courrier, l'inverse, les deux ou aucun. Rien ici ne les ordonne, et
+    l'ordre de la liste n'a pas de sens pour le SDK — c'est celui de la lecture.
     """
     outils: list[SdkMcpTool[Any]] = []
     if on_arbitrage is not None:
         outils.append(_outil_arbitrage(on_arbitrage, credit))
+    if on_blocage is not None:
+        outils.append(_outil_blocage(on_blocage))
+    if on_courrier is not None:
+        outils.append(_outil_courrier(on_courrier))
     return outils
 
 

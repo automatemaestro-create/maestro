@@ -92,6 +92,26 @@ c'est « l'allowlist n'existe plus » — seuls subsistent les refus DURS de `gu
 `guard.sh --check` garde alignés sur les `deny` du dépôt. C'est une décision de politique,
 et ce script ne la prend pas : il mesure.
 
+RÉSULTAT DU 2026-08-30 (#791 — CLI 2.1.215, claude-haiku-4-5, 0,21 $ pour les cinq
+variantes de règle et de régime) : code 0, **identique à #614 au bit près**. Même CLI, trois
+jours plus tard : `nu`/`cible`/`absolue`/`hook` refusés, `bypass` ouvre `Write` ET `Edit`,
+le hook tire toujours (`sonde.txt` jamais atteint). Rejouer n'a rien appris de neuf sur la
+porte — c'était le but : le ticket devait décider, et on ne décide pas sur une mesure qu'on
+n'a pas revue.
+
+    ⚠ ET LA DÉCISION A ÉTÉ PRISE : ON N'OUVRE PAS. Ce script mesure toujours sans décider,
+    mais la question qu'il éclairait est tranchée — la conduite reste celle de #608 (le
+    résidu devient un ticket de reprise). Les deux coûts, chiffrés côte à côte : 5 butées
+    `.claude/` sur les 78 sessions du journal, TOUTES dans les 3 premiers runs du
+    2026-08-27 et ZÉRO sur les 63 sessions suivantes, contre 86 règles `allow` ramenées à 0
+    et 3 des 5 `ask` du dépôt devenus des oui silencieux (`git clean`, `gh issue close`,
+    `browser_run_code_unsafe` — `guard.sh` ne juge que les appels Bash). Et l'ouverture
+    trancherait par effet de bord l'accès web d'un run, que #792 arbitre séparément : le
+    journal porte un refus `WebFetch` qui aurait abouti. Analyse complète en docs/10 §11.7.
+
+    Ce script garde tout son sens : c'est lui qui rouvrirait le dossier si le CLI changeait
+    de comportement. Un verdict différent de « code 0 » est un fait nouveau, à instruire.
+
 Rejouer coûte ~0,15 $ et quelques minutes ; `--garder` laisse les répertoires d'essai sur
 disque pour inspection.
 """

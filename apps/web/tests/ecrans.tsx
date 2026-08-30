@@ -135,7 +135,7 @@ export function peuplerEtat(): void {
 /**
  * Le même projet, **files d'arbitrage vides** : rien n'attend de décision
  * humaine (#539). C'est l'état dans lequel les blocs d'arbitrage
- * (`PanneauBriefs`, `PanneauValidations`, `PanneauRunsPerdus`) rendent `null`,
+ * (`PanneauBriefs`, `PanneauValidations`, `PanneauRunsImmobiles`) rendent `null`,
  * et c'est ce qui rend leur exemption du plafond **vérifiable** au lieu d'être
  * déclarée : un bloc qui prétend arbitrer et reste là compte comme les autres.
  *

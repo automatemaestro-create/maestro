@@ -60,6 +60,12 @@ from maestro.engine.guardrails import (
     Guardrails,
 )
 from maestro.engine.retry import PolitiqueRelance, est_transitoire
+from maestro.messaging.mailbox import (
+    MESSAGE_NOTIFICATION,
+    AgentMessage,
+    Mailbox,
+    consigne_message,
+)
 from maestro.orchestrator.schema import Task
 from maestro.projets.application import ApplicationRefusee, appliquer, diff_du_travail
 from maestro.projets.modele import Projet
@@ -67,6 +73,7 @@ from maestro.projets.racine import RacineRefusee
 from maestro.projets.store import ProjetStore
 from maestro.providers.arbitrage import Arbitre, ArbitreActe
 from maestro.providers.base import ModelProvider, UnsupportedCapability, stderr_de
+from maestro.providers.courrier import Courrier
 from maestro.router.classifier import TaskClassifier
 from maestro.router.router import Router
 from maestro.sandbox import ProducedFile, branche_de_tache
@@ -164,6 +171,39 @@ SUFFIXE_ETAPE_ACTIVITE = ":activite"
 #: la projection n'utilise que pour rafraîchir la dernière activité de l'agent
 #: (`_applique_activite`) — jamais le statut d'une tâche.
 STATUT_ACTIVITE = "activite"
+
+#: Suffixe des étapes de **blocage déclaré par l'agent** (#719) :
+#: `<task.id>:blocage`, une par appel de `signaler_blocage`
+#: (`maestro.providers.blocage`) — le pont Control Tower les mue en événements
+#: `tache.blocage`.
+#:
+#: ⚠ À ne pas confondre avec le blocage **hérité** de #43
+#: (`maestro.engine.loop._consigne_blocage`), qui porte `STATUT_BLOQUEE` sur une
+#: tâche que rien n'a jamais exécutée parce qu'une dépendance a échoué. Les deux
+#: mots se ressemblent et disent le contraire l'un de l'autre : là-bas la tâche
+#: est morte avant de commencer, ici **l'agent travaille et parle**.
+#:
+#: C'est pourquoi c'est une étape annexe et jamais un statut de tâche : docs/31
+#: §3.4 **refuse** à un agent le droit de changer son propre statut, précisément
+#: parce qu'un « bloquée » posé par lui condamnerait tout son aval par la cascade
+#: de #43 alors qu'il peut encore aboutir. Il déclare ce qu'il **subit**, il ne
+#: décide pas de son sort.
+SUFFIXE_ETAPE_BLOCAGE = ":blocage"
+
+#: Statut des étapes de blocage déclaré (#719) — un mot à lui, et il ne pouvait
+#: pas être `bloquee`.
+#:
+#: `bloquee` est le statut de tâche de docs/03 §3, celui de la cascade de #43 :
+#: le porter ici ferait lire « cette tâche est morte » là où la vérité est « son
+#: agent bute et le dit, en travaillant encore ». La frise le rend tel quel
+#: (`maestro.controltower.frise`), et une ligne qui annoncerait un abandon au
+#: moment précis où quelqu'un demande de l'aide serait pire que le silence
+#: qu'elle remplace.
+#:
+#: Il ne déplace aucune carte : le pont range ces étapes sous `tache.blocage`,
+#: que la projection n'utilise que pour rafraîchir la dernière activité de
+#: l'agent — jamais le statut d'une tâche.
+STATUT_BLOCAGE_SIGNALE = "blocage_signale"
 
 #: Suffixe des étapes de fusion dans le projet (#705) : `<task.id>:fusion`, une
 #: par tâche soldée en succès sur un projet **versionné** — le pont Control Tower
@@ -319,8 +359,17 @@ class LocalExecutor(TaskExecutor):
         permissions: PermissionStore | None = None,
         relance: PolitiqueRelance | None = None,
         projets: ProjetStore | None = None,
+        mailbox: Mailbox | None = None,
     ) -> None:
         self._provider = provider
+        # Messagerie inter-agents (#44) vue de l'exécuteur (#720) : la boîte sur
+        # laquelle **notifier** le mot qu'un agent adresse à un pair. None — le
+        # cas courant, un run se lance sans `--messagerie` — n'éteint pas le
+        # verbe : le journal est la livraison, le pub/sub n'est que la
+        # notification (docs/31 §3.2), donc un run sans transport écrit la trace
+        # et n'a personne à prévenir. C'est exactement le régime du pair absent,
+        # qui est le cas nominal et non le cas dégradé.
+        self._mailbox = mailbox
         # Dépôt des projets (#224, EF-36) : quand une tâche porte un `projet_id`
         # (#222), le projet est relu ici — à chaud, comme les autres dépôts — et
         # l'espace de travail en est **dérivé** (worktree Git sur une branche
@@ -941,6 +990,75 @@ class LocalExecutor(TaskExecutor):
 
         return arbitre
 
+    def _courrier(self, task: Task, agent: Agent, journal: RunJournal) -> Courrier:
+        """Le canal par lequel un agent écrit un mot à un pair (#720).
+
+        Rend au fournisseur un `Courrier` — un destinataire, un message, rien en
+        retour — qui fait **les deux gestes**, dans cet ordre :
+
+        1. `consigne_message` : une étape `<task.id>:message` au journal du run,
+           que le pont (#46) mue en `message.inter_agents` et que la frise (#355)
+           reçoit sans travail de son côté ;
+        2. `mailbox.publish` : la notification en direct, **best-effort**.
+
+        ⚠ **L'ordre est inversé par rapport au handoff, et c'est le contenu de la
+        décision.** `HandoffRelais.annonce` publie *puis* consigne, et abandonne
+        tout — trace comprise — si la publication échoue : la trace y est
+        conditionnée à la notification. Ici c'est l'inverse, parce que la réserve
+        de docs/31 §3.2 le renverse : *le journal est la livraison, le pub/sub
+        n'est que la notification*. Écrire d'abord donne au passage une propriété
+        qu'on ne rattraperait pas autrement — un pair qui reçoit la notification
+        est certain que la trace existe déjà.
+
+        **Le pair absent est le cas nominal, pas le cas d'erreur**, et il ne
+        produit même pas d'exception : le transport est un pub/sub éphémère, donc
+        publier dans une boîte que personne n'écoute *réussit* et le message
+        disparaît. Sans transport du tout (`mailbox=None`, le cas courant), il
+        n'y a personne à prévenir et la trace est écrite tout de même. Un
+        transport en panne, enfin, est **avalé** ici et non remonté : la
+        promesse — l'écriture — est déjà tenue, et la seule chose que l'agent
+        ferait d'un échec de notification serait de réessayer, c'est-à-dire de
+        dupliquer la trace sur un canal qui n'a toujours pas de lecteur.
+
+        Ce que l'agent **ne fournit pas** est ce dont il ne répond pas :
+        l'expéditeur (`agent.nom`), la tâche (`task.id`) et le run
+        (`journal.run_id`) sont fermés ici, comme dans `_arbitre`. Un agent qui
+        les écrirait pourrait signer d'un autre nom, ou rattacher son mot à la
+        tâche d'un tiers.
+
+        Le type est `notification` et non `requete` : ce verbe **n'attend pas de
+        réponse** — un canal « question » dont la réponse serait du texte est le
+        sujet de #647, pas celui-ci —, et une `requete` promettrait une paire que
+        rien ici ne referme. `payload` reste vide : il n'y a aucune charge utile
+        structurée à porter, et `consigne_message` ne le lit pas.
+
+        Rien de tout ceci ne touche au graphe du plan (docs/31 §5) : une étape de
+        journal s'ajoute, aucune tâche n'est créée, aucun statut posé, personne
+        n'est réassigné.
+        """
+
+        async def courrier(destinataire: str, message: str) -> None:
+            mot = AgentMessage(
+                type=MESSAGE_NOTIFICATION,
+                de_agent=agent.nom,
+                a_agent=destinataire,
+                tache_id=task.id,
+                run_id=journal.run_id,
+                objet=message,
+            )
+            # La livraison d'abord — si celle-ci lève, l'agent doit l'apprendre
+            # (le fournisseur lui sert `courrier.CANAL_EN_ERREUR`) : c'est la seule
+            # promesse de ce verbe, et la seule dont l'échec change quelque chose.
+            consigne_message(journal, mot, role=agent.role, projet_id=task.projet_id)
+            if self._mailbox is None:
+                return
+            try:
+                await self._mailbox.publish(mot)
+            except Exception:  # noqa: BLE001 — la notification n'échoue ni l'appel ni la tâche
+                return
+
+        return courrier
+
     def _consigne_validation(
         self,
         task: Task,
@@ -1388,6 +1506,51 @@ class LocalExecutor(TaskExecutor):
             projet_id=task.projet_id,
         )
 
+    def _consigne_blocage_signale(
+        self,
+        task: Task,
+        agent: Agent,
+        raison: str,
+        journal: RunJournal,
+    ) -> None:
+        """Trace le blocage qu'un agent **déclare** (#719) — donc au fil temps réel.
+
+        Étape dédiée `<task.id>:blocage` (même modèle que `:activite` et
+        `:refus-outil`), que le pont (`maestro.controltower.bridge`) mue en
+        événement `tache.blocage`. `sortie` porte la raison telle que l'agent l'a
+        écrite : c'est **le seul signal qu'aucune règle de détection ne saura
+        produire**. Une règle sait dire « bloquée depuis 40 minutes » ; elle ne
+        saura jamais dire « le dépôt de recette refuse mes identifiants ».
+
+        Usage nul, et c'est un critère du ticket : déclarer ne dépense rien, donc
+        rien n'entre au grand livre — le pont écarte de lui-même la mesure de ces
+        étapes, comme il le fait déjà pour `:ticket` et `:detail`.
+
+        La tâche ne **change pas de colonne** au passage (cf.
+        `SUFFIXE_ETAPE_BLOCAGE`) : un agent qui bute n'est pas une tâche bloquée,
+        et c'est tout ce qui sépare ce verbe de celui que docs/31 §3.4 refuse.
+
+        `raison` vide n'est pas consignée — mais on ne devrait pas l'y voir : le
+        fournisseur l'a déjà écartée et l'a dit à l'agent
+        (`maestro.providers.blocage.RAISON_MANQUANTE`). Le contrôle est ici quand
+        même parce que ce chemin a **deux entrées** — l'outil MCP, et un appelant
+        direct — et qu'une ligne de frise vide se lirait comme une panne
+        d'affichage (règle de `_consigne_activite`).
+        """
+        if not raison.strip():
+            return
+        journal.consigne(
+            etape=f"{task.id}{SUFFIXE_ETAPE_BLOCAGE}",
+            nom=f"Blocage signalé — {task.titre}",
+            agent=agent.nom,
+            role=agent.role,
+            statut=STATUT_BLOCAGE_SIGNALE,
+            entree="",
+            sortie=raison,
+            usage=StepUsage(),
+            projet_id=task.projet_id,
+        )
+
     def _consigne_etapes(
         self,
         task: Task,
@@ -1509,10 +1672,27 @@ class LocalExecutor(TaskExecutor):
         de canal non plus : une décision qu'on ne pourrait pas consigner serait
         une décision prise nulle part.
 
+        Le **mot à un pair** (#720) suit ce chemin-là aussi : il est servi comme
+        un outil, donc il n'existe que là où il y en a. Sans `journal`, pas de
+        canal — et ici c'est plus qu'une trace manquante : le journal *est* la
+        livraison, un verbe qui n'écrirait nulle part ne tiendrait plus rien de
+        ce que sa description promet. La **messagerie**, elle, n'est pas
+        requise : `mailbox=None` — le cas courant — laisse le verbe consigner et
+        n'a personne à notifier, ce qui est exactement le régime du pair absent
+        (docs/31 §3.2).
+
         Le **projet** de la tâche (#224) n'équipe lui aussi que le chemin
         outillé : c'est de lui qu'est dérivé l'espace de travail (worktree ou
         copie). Le chemin texte ne produit aucun fichier — il n'a pas d'espace
         de travail du tout.
+
+        L'**effort** (#253) est le seul réglage de cette liste à équiper les
+        **deux** chemins, et c'est normal : il ne parle ni d'outils, ni d'espace,
+        ni de canal — il parle du modèle, comme `agent.modele`, et il voyage donc
+        exactement là où celui-ci voyage. Il est relu sur la fiche de l'agent à
+        chaque tâche, comme le playbook, plutôt que figé au câblage du runtime.
+        Ce qu'un fournisseur n'admet pas ne lui est jamais transmis
+        (`ModelProvider.effort_admis`) : ni ici, ni dans le runtime.
         """
         deliberation = deliberation if deliberation is not None else Deliberation()
         runtime = self._runtimes.get(agent.nom)
@@ -1561,19 +1741,46 @@ class LocalExecutor(TaskExecutor):
                     on_arbitrage=(
                         None if journal is None else self._arbitre(task, agent, journal)
                     ),
+                    # Sans journal, pas de canal (#719) : ce verbe ne fait
+                    # **que** consigner — à la différence de l'arbitrage
+                    # au-dessus, dont la décision garde l'acte même sans trace.
+                    # L'exposer sans journal servirait à l'agent un outil qui
+                    # n'aboutit nulle part, ce que `_outils_maestro` évite en ne
+                    # le montant pas du tout.
+                    on_blocage=(
+                        None
+                        if journal is None
+                        else lambda raison: self._consigne_blocage_signale(
+                            task, agent, raison, journal
+                        )
+                    ),
                     # Le crédit descend, la mémoire non (#584) : le fournisseur
                     # mesure une attente, il n'a pas à connaître les demandes.
                     credit_arbitrage=deliberation.credit,
+                    # Le journal suffit, la messagerie n'est pas requise (#720) :
+                    # c'est lui qui livre, le transport ne fait que notifier.
+                    # Sans journal en revanche, il n'y aurait nulle part où
+                    # écrire — et un verbe qui ne consigne rien ne tient plus
+                    # aucune des promesses de sa description.
+                    on_courrier=(
+                        None if journal is None else self._courrier(task, agent, journal)
+                    ),
                     projet=self._projet(task),
                     tache_id=task.id,
+                    effort=agent.effort,
                 )
                 return outcome.resume, outcome.fichiers
             except UnsupportedCapability:
                 pass  # fournisseur texte-seul : repli sur le livrable texte
+        # Le mot-clé ne part que s'il a quelque chose à dire (#253) : sur un
+        # fournisseur qui n'annonce aucun effort — le cas de tout adaptateur
+        # texte-seul — l'appel est au bit près celui d'avant ce lot.
+        reglage = self._provider.effort_admis(agent.modele, agent.effort)
         sortie = await self._provider.generate(
             _build_task_prompt(description, task.format_sortie),
             model=agent.modele,
             system_prompt=playbook.contenu if playbook is not None else agent.prompt_systeme,
+            **({"effort": reglage} if reglage else {}),
         )
         return sortie, ()
 

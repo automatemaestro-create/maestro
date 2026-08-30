@@ -1,6 +1,12 @@
-# 31 — Le cran « orchestrateur » de l'arbitrage : note de décision
+# 32 — Le cran « orchestrateur » de l'arbitrage : note de décision
 
 > Ticket #647. Décision datée du **2026-08-28**, sur `origin/main` à `1bef04a`.
+>
+> ⚠ Cette note est née **`31`** et porte **`32`** depuis #742 : #354 et #647 ont été instruits en
+> parallèle et ont pris le même numéro, chacun sur une PR juste isolément. Elle a cédé le `31` à
+> [docs/31](./31-decision-surface-ecriture-agents.md), deux fois plus citée qu'elle
+> ([docs/33 §11](./33-decision-surveillance-run.md) porte le constat et la leçon). Rien de la
+> décision n'a bougé — un vieux lien vers `31-decision-cran-orchestrateur.md` arrive ici.
 >
 > **Trois arbitrages, rendus sur trois mesures.** ① Le cran `orchestrateur` est **retiré**, pas
 > branché : il recouvre deux choses dont l'une *est* `auto` et dont l'autre est un LLM qui garde un

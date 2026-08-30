@@ -83,6 +83,27 @@ Un **quatrième canal** repart vers l'agent : `demander_arbitrage(raison)` (#582
 
 ⚠ Tout ceci ne vaut que sur le **chemin outillé** (§1.5) : une exécution texte n'a ni outils ni répertoire, donc aucun acte à intercepter. C'est le playbook, et lui seul, qui l'y tient.
 
+#### 1.4ter Ce qu'un agent peut **écrire** pendant sa tâche
+
+Le canal ci-dessus **soumet un acte** ; trois autres ne soumettent rien — ils **consignent**. La règle qui les départage tient en une question, et elle rend le même verdict cinq fois ([docs/31 §2](./31-decision-surface-ecriture-agents.md)) : *le verbe écrit-il une **observation**, ou une **décision sur le plan** ?* Une observation dit ce qui est, s'ajoute, ne retire rien, et le moteur peut l'ignorer sans que le run change de sens — **ouverte**. Une décision sur le plan dit ce qui doit être, et change ce qu'un humain a approuvé — **fermée**, et elle ne se rouvre que par un point d'approbation (D5).
+
+| L'agent écrit… | Verbe | Ce qu'il en obtient |
+| --- | --- | --- |
+| ce qu'il **découvre** | `consigne_ticket` (#187) | une étape `<tache>:ticket` |
+| ce qu'il **prévoit** | sa checklist (#489), via `TodoWrite` | une étape `<tache>:detail` |
+| ce qu'il **subit** | `mcp__maestro__signaler_blocage(raison)` (#719) | une étape `<tache>:blocage`, et **rien d'autre** |
+| ce qu'il veut **transmettre** | `mcp__maestro__ecrire_a_un_pair(destinataire, message)` (#720) | une étape `<tache>:message`, notifiée en best-effort |
+
+Les deux derniers sont servis par le **même serveur MCP in-process** que `demander_arbitrage` (nom réservé `maestro`), donc gouvernés par la **même** politique de permissions : une liste `allow` fermée qui ne les cite pas, ou un `deny` dessus, retire à l'agent la possibilité de les appeler, et le refus est tracé comme les autres. C'est la distinction à retenir face aux produits qui font tenir ce genre de garde-fou par le prompt : **chez nous la description règle l'usage normal, le droit est tenu ailleurs** — un modèle qui n'obéit pas à la description ne franchit rien.
+
+Trois choses que ces verbes ne font **pas**, et qui sont le contenu de la décision :
+
+- **ils n'attendent rien.** `signaler_blocage` est une *déclaration*, pas une *demande* : il consigne et rend la main, l'agent poursuit comme il peut. C'est ce qui le sépare de `demander_arbitrage`, qui suspend l'appel le temps qu'une personne tranche — et de #647, à qui appartient un canal « question » dont la réponse serait du texte ;
+- **ils ne touchent pas au graphe du plan.** Créer une tâche, changer un statut ou un propriétaire, recruter : les trois sont **refusés**, avec leurs motifs et leurs conditions de réouverture en docs/31 §3.3-§3.5. Un agent qui découvre en travaillant qu'il faudrait une tâche de plus ne peut que… le dire — la demande ne disparaît pas, **elle change de destinataire** : elle va à l'humain qui lit la frise, au lieu de s'exécuter en silence ;
+- **ils ne promettent pas de livraison.** Un mot adressé est une **trace adressée** : le journal livre, le pub/sub ne fait que notifier, et il n'y a ni accusé de réception ni réponse (docs/03 § `AGENT_MESSAGE`). La description de l'outil le dit à l'agent en toutes lettres — un agent qui croirait être lu attendrait une réponse qui ne viendra jamais.
+
+Enfin, **une raison vide n'est pas consignée** : « il est bloqué » est exactement ce que la frise montrait déjà, et la seule chose que le verbe apporte est le motif — celui qu'aucune règle de détection ne saura produire. Une règle sait dire « bloquée depuis 40 minutes » ; elle ne saura jamais dire « le dépôt de recette refuse mes identifiants ».
+
 ### 1.5 Deux chemins d'exécution, un seul rôle
 
 Un même agent s'exécute de deux façons, et les deux doivent porter le même métier :
@@ -203,6 +224,55 @@ par les moteurs construits ensuite ([guide de démarrage §6.3](./07-guide-de-de
 Restent pour la suite : la **liaison d'outils** scopés (au POC, un agent personnalisé
 exécute par le chemin texte, sans runtime outillé) et l'**exécution multi-fournisseurs**
 (le champ `fournisseur` est déclaratif, le moteur exécute sur `MAESTRO_PROVIDER`).
+
+### 4.1 Régler un agent du code sans le dupliquer (#259)
+
+Créer un agent n'est pas la seule façon d'en changer un. Un agent **du code**
+(`maestro/agents/catalog.py`) accepte une **surcharge** de ses trois réglages de
+modèle — `fournisseur`, `modele`, `effort` — persistée à côté de lui
+(`core/surcharges/<nom>.json`, racine remplaçable par `MAESTRO_SURCHARGES_DIR`)
+et posée par `PUT /api/catalogue/{nom}/reglages` depuis l'onglet **Profil** de sa
+fiche. Le catalogue en compte donc **trois** états et non deux : « du code »,
+« du code, **surchargé** », « personnalisé ».
+
+Ce que la surcharge **ne touche pas** est le sujet : rôle, compétences et
+playbook restent définis par le code et continuent d'en suivre les évolutions.
+Sans ce troisième état, changer le modèle d'un rôle du code imposait de le
+**dupliquer** — recopier son playbook pour ne toucher qu'un réglage —, après quoi
+les deux exemplaires divergent en silence et la copie ne bénéficie plus d'aucune
+amélioration du rôle. Ce qui n'est pas surchargé est **hérité**, et l'API le dit
+(`herite`, `reglages_du_code`) plutôt que de le laisser deviner.
+
+⚠ Une surcharge **s'annule** (`DELETE /api/catalogue/{nom}/reglages` : l'agent
+redevient celui du code, il reste au catalogue) ; un agent personnalisé **se
+supprime** (il disparaît). Les deux gestes ne se confondent pas, et l'API refuse
+chacun sur l'objet de l'autre. Un agent personnalisé ne se surcharge pas non
+plus : sa définition *est* son réglage, et s'édite par `PUT /api/catalogue/{nom}`.
+
+`MAESTRO_MODEL` (#69) prime sur une surcharge de modèle, comme il prime sur celui
+d'un agent personnalisé — c'est une bascule globale — mais ne touche pas à
+l'effort. Et comme partout, aucun des trois réglages n'est confronté à ce que le
+fournisseur admet au moment de l'écriture : le tri se fait à l'exécution, qui
+ignore sans erreur (`ModelProvider.effort_admis`) — une gamme qui bouge ne doit
+pas rendre invalide une surcharge écrite hier.
+
+### 4.2 Un playbook s'écrit à un seul endroit (#259)
+
+Le **playbook** d'un agent — du code comme personnalisé — s'édite et se versionne
+sur l'**onglet Playbook** de sa fiche (`/api/playbooks/{agent}`, #76/#77), et
+nulle part ailleurs. L'onglet Profil ne le porte plus qu'**à la création**, où
+l'agent n'a pas encore d'onglet où aller ; ensuite il y **renvoie**.
+
+C'est ce qui a rendu `/api/playbooks` symétrique : il ne connaissait que les cinq
+rôles du code et refusait un agent personnalisé, dont le playbook n'avait donc
+que le champ du Profil pour s'écrire — sans version ni historique. Pour un agent
+personnalisé, le `playbook` de sa **définition** (#72) joue désormais le rôle que
+le document Markdown livré joue pour un rôle du code : l'**origine**, celle qui
+vaut tant que rien n'a été publié (`source: "defaut"`), que la première version
+publiée recouvre (`source: "stockage"`). Le moteur, lui, n'a jamais fait la
+différence — `LocalExecutor` lit la version courante quel que soit l'agent et
+retombe sur son prompt sinon : ce lot a rattrapé l'API sur lui, il n'a rien
+changé à l'exécution.
 
 ---
 

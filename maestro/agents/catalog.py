@@ -32,6 +32,14 @@ class Agent:
     `competences_requises` d'une tâche pour l'auto-assignation. `prompt_systeme`
     dérive du playbook (docs/04 §3) et cadre l'exécution ; `modele` est le modèle
     conseillé par défaut (POC Claude), remplaçable sans changer le rôle.
+
+    `effort` (#253) est le niveau d'effort demandé au modèle — le réglage frère de
+    `modele`, et servi par la même source : ce que le fournisseur admet se lit au
+    catalogue (`GET /api/fournisseurs`). `None` — le cas de tous les agents du
+    code — laisse au fournisseur le régime qu'il aurait sans ce réglage ; une
+    valeur que le fournisseur retenu n'admet pas est **ignorée sans erreur**
+    (`ModelProvider.effort_admis`), un effort étant un conseil de dépense et
+    jamais une condition d'exécution.
     """
 
     nom: str
@@ -39,6 +47,7 @@ class Agent:
     competences: frozenset[str]
     modele: str
     prompt_systeme: str
+    effort: str | None = None
 
     def couverture(self, competences_requises: frozenset[str]) -> int:
         """Nombre de compétences requises que cet agent possède (score de routage)."""

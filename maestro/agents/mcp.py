@@ -29,6 +29,19 @@ ni activation, le résultat est exactement la déclaration héritée — la
 formes cohabitent, l'héritée restant autoritaire à la lecture tant que son
 fichier n'est pas retiré.
 
+⚠ Deux migrations cohabitent, et elles ne visent pas la même situation (#263) :
+
+- `migrer()` **compose tout le dépôt d'un coup** et le pool qu'il écrit *est* le
+  résultat — c'est un remplacement intégral, donc l'outil d'un projet qui n'a
+  encore rien au pool (un `ecrire_pool` de plus effacerait ce que la Control
+  Tower y a ajouté depuis) ;
+- `migrer_agent(agent)` traite **un agent** et **ajoute** : les intégrations déjà
+  au pool y restent, celles de l'agent s'y greffent (mutualisées quand la
+  déclaration stockée est identique à une intégration existante), ses activations
+  s'y ajoutent sans écraser les autres, et son fichier hérité part. C'est le
+  geste que la fiche d'un agent propose, un agent à la fois, sur un pool vivant.
+
+
 Le montage vit dans la couche SDK (`ModelProvider.run_agent(mcp_serveurs=...)`,
 fournisseur Claude via l'Agent SDK) : l'exécuteur relit ce dépôt **à chaud** à
 chaque tâche — comme les playbooks (#78) — et confie la liste au runtime
@@ -218,6 +231,26 @@ class IntegrationMcp:
         )
 
 
+@dataclass(frozen=True)
+class MigrationAgent:
+    """Ce qu'une migration héritée → pool a fait pour **un** agent (#263).
+
+    Le résultat est rendu en trois listes parce que les trois se lisent
+    différemment côté écran : `ajoutees` sont les intégrations que la migration a
+    **créées** au pool, `reprises` celles qu'elle y a **retrouvées** (même
+    déclaration stockée — le partage entre agents que le pool existe pour
+    permettre), et `activations` l'ensemble activé de l'agent **après** coup.
+    Les fondre en une seule ferait dire « 2 intégrations ajoutées au projet » à
+    une migration qui n'en a créé qu'une.
+    """
+
+    agent: str
+    ajoutees: tuple[IntegrationMcp, ...]
+    reprises: tuple[IntegrationMcp, ...]
+    activations: tuple[str, ...]
+    fichier_retire: bool
+
+
 class McpStore:
     """Dépôt des configurations MCP, sur fichiers (`<racine>/…`).
 
@@ -297,6 +330,22 @@ class McpStore:
             composee.append(serveur)
             noms.add(serveur.nom)
         return tuple(composee)
+
+    def heritees(self, agent: str) -> tuple[ServeurMcp, ...]:
+        """Les serveurs de la **seule** déclaration héritée `<agent>.json` (#104) — () si absente.
+
+        La moitié que `lire` compose avec le pool, rendue **seule** (#263). Ce
+        n'est pas une commodité : la fiche d'un agent doit dire ce que son
+        fichier hérité porte *encore*, et le déduire de la composition — les
+        serveurs montés moins ceux des intégrations activées, rapprochés par leur
+        **nom** — se trompe dès qu'une intégration du pool a été renommée à
+        l'ajout (le nom ne concorde plus, l'héritée réapparaît). La question
+        « qu'y a-t-il dans le fichier ? » se pose donc au fichier.
+
+        Lève `ValueError` (cause exacte, agent nommé) si le fichier est illisible
+        ou invalide — même validation à la lecture que `lire`.
+        """
+        return self._lire_fichier_agent(agent)
 
     def pool(self) -> tuple[IntegrationMcp, ...]:
         """Le pool projet des intégrations MCP (`pool.json`), validé — () si absent (#130).
@@ -417,9 +466,7 @@ class McpStore:
         for agent in self._agents_fichiers():
             ids_agent: list[str] = []
             for serveur in self._lire_fichier_agent(agent):
-                signature = json.dumps(
-                    serveur.to_stored_dict(), sort_keys=True, ensure_ascii=False
-                )
+                signature = _signature(serveur)
                 id_ = id_par_signature.get(signature)
                 if id_ is None:
                     id_ = _id_libre(serveur.nom, ids_pris)
@@ -449,6 +496,88 @@ class McpStore:
             for agent in activations:
                 self._chemin(agent).unlink(missing_ok=True)
         return integrations
+
+    def migrer_agent(
+        self,
+        agent: str,
+        *,
+        ids: Mapping[str, str] | None = None,
+        retirer_fichier: bool = True,
+    ) -> MigrationAgent:
+        """Migre la déclaration héritée d'**un** agent vers le pool, en ajoutant (#263).
+
+        Le geste que la fiche d'un agent propose, et le pendant *additif* de
+        `migrer` (voir l'en-tête du module) : chaque serveur de `<agent>.json`
+        rejoint le pool — **mutualisé** avec une intégration existante quand leur
+        déclaration stockée est identique, créé sinon —, l'agent l'active, et son
+        fichier hérité est retiré. Rien d'autre ne bouge : les intégrations du
+        pool restent, les activations des autres agents aussi, et celles que cet
+        agent avait déjà sont **conservées** (l'ensemble est une union, jamais un
+        remplacement).
+
+        Le fichier part par défaut, et c'est le contenu du geste : le laisser
+        rendrait la migration invisible — l'héritée reste autoritaire à la
+        lecture (`lire`), donc le serveur monté resterait celui du fichier et le
+        bloc « hérités » de l'écran ne disparaîtrait pas. `retirer_fichier=False`
+        n'existe que pour éprouver la coexistence.
+
+        `ids` propose un id d'intégration par **nom de serveur**, pour un serveur
+        que l'appelant sait reconnaître (l'API rapproche la déclaration d'une
+        entrée de la bibliothèque, #131 — sans quoi une intégration migrée serait
+        montée sans mode d'auth ni fiche, hors de l'allowlist en apparence). Le
+        dépôt, lui, ne connaît aucun registre : il prend l'id proposé s'il est
+        libre, dérive du `serveur.nom` sinon — jamais l'inverse.
+
+        Lève `ValueError` **sans rien écrire** si l'agent n'a pas de déclaration
+        héritée, si son nom est hors slug, ou si une source est invalide.
+        """
+        heritees = self.heritees(agent)
+        if not heritees:
+            raise ValueError(
+                f"aucune déclaration héritée à migrer pour l'agent {agent!r} "
+                f"({agent}.json absent) — son pool est déjà la seule source."
+            )
+        pool = list(self.pool())
+        id_par_signature = {_signature(i.serveur): i.id for i in pool}
+        ids_pris = {i.id for i in pool}
+        ajoutees: list[IntegrationMcp] = []
+        reprises: list[IntegrationMcp] = []
+        a_activer: list[str] = []
+        for serveur in heritees:
+            signature = _signature(serveur)
+            id_ = id_par_signature.get(signature)
+            if id_ is None:
+                propose = (ids or {}).get(serveur.nom) or serveur.nom
+                if not _ID_INTEGRATION.match(propose):
+                    propose = serveur.nom
+                id_ = _id_libre(propose, ids_pris)
+                ids_pris.add(id_)
+                id_par_signature[signature] = id_
+                integration = IntegrationMcp(id=id_, serveur=serveur)
+                pool.append(integration)
+                ajoutees.append(integration)
+            else:
+                reprises.append(next(i for i in pool if i.id == id_))
+            if id_ not in a_activer:
+                a_activer.append(id_)
+        # L'écriture du pool passe en premier : elle valide tout ce qu'on ajoute
+        # et lève sans rien écrire, donc une déclaration fautive n'a pas laissé
+        # d'activation orpheline derrière elle — ce que `lire` refuserait ensuite.
+        self.ecrire_pool(pool)
+        activations = list(self.activations(agent))
+        for id_ in a_activer:
+            if id_ not in activations:
+                activations.append(id_)
+        self.ecrire_activations(agent, activations)
+        if retirer_fichier:
+            self._chemin(agent).unlink(missing_ok=True)
+        return MigrationAgent(
+            agent=agent,
+            ajoutees=tuple(ajoutees),
+            reprises=tuple(reprises),
+            activations=tuple(activations),
+            fichier_retire=retirer_fichier,
+        )
 
     def agents(self) -> tuple[str, ...]:
         """Les noms des agents ayant une configuration MCP, triés (vide si aucun).
@@ -662,6 +791,19 @@ def _doublons(noms: Any) -> list[str]:
     """Les valeurs apparaissant plus d'une fois dans `noms`, triées (vide si aucune)."""
     vus = list(noms)
     return sorted({nom for nom in vus if vus.count(nom) > 1})
+
+
+def _signature(serveur: ServeurMcp) -> str:
+    """L'empreinte d'une déclaration : deux serveurs de même signature sont **la même**.
+
+    C'est ce qui permet aux deux migrations de **mutualiser** — deux agents qui
+    déclarent Figma à l'identique partagent une intégration au lieu d'en créer
+    deux (#130), et migrer un second agent retrouve celle que le premier a posée
+    (#263). La forme **stockée** et non la publique : celle-ci masque les
+    littéraux, donc deux serveurs qui ne diffèrent que par une valeur en clair y
+    seraient confondus.
+    """
+    return json.dumps(serveur.to_stored_dict(), sort_keys=True, ensure_ascii=False)
 
 
 def _id_libre(base: str, pris: set[str]) -> str:

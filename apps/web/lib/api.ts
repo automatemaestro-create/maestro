@@ -10,6 +10,7 @@ import type {
   AgentCatalogue,
   AgentCatalogueDetail,
   AnalyticsCouts,
+  CatalogueFournisseurs,
   CoutExecution,
   ChoixSelecteur,
   ConversationChat,
@@ -17,6 +18,7 @@ import type {
   DecisionBrief,
   DeclarationProjet,
   DefinitionAgent,
+  DefinitionAgentProposee,
   DetailExecution,
   DisponibiliteSelecteur,
   EntreeRegistreMcp,
@@ -28,18 +30,23 @@ import type {
   IntegrationPoolMcp,
   JournalAdmissionsMcp,
   LancementExecution,
+  LexiquePlaybook,
+  MigrationMcp,
   PageExplorateur,
   PageJournal,
   PasSerie,
   PlaybookDetail,
   PlaybookFiche,
+  PolitiquePermissions,
   PoolMcp,
   Projet,
   PropositionPlaybook,
   PropositionPlaybookDetail,
   ProvenanceRegistreMcp,
   RapportLecture,
+  RedactionPlaybook,
   RefusProjet,
+  ReglagesModele,
   ReponsesBrief,
   ResumeExecution,
   RevocationAdmissionMcp,
@@ -395,6 +402,57 @@ export function rejeterPropositionPlaybook(
   );
 }
 
+/**
+ * Le lexique d'écriture d'un playbook (#261) : structures et tournures que les
+ * playbooks du dépôt ont en commun, dont l'éditeur tire ses complétions.
+ *
+ * Il ne dépend d'aucun agent — c'est le vocabulaire du dépôt, pas celui d'un
+ * rôle — et ne change qu'avec les documents livrés : l'éditeur le charge une
+ * fois à l'ouverture.
+ */
+export function chargerLexiquePlaybook(): Promise<LexiquePlaybook> {
+  return chargerJson<LexiquePlaybook>("/api/playbooks/lexique");
+}
+
+/**
+ * Demande à l'assistant une réécriture du **brouillon en cours** (#261), guidée
+ * par une consigne libre facultative.
+ *
+ * ⚠ **N'écrit rien** : ni version, ni proposition en brouillon. La réponse est
+ * un candidat que l'éditeur affiche en différentiel ; l'appliquer ne touche que
+ * le texte de la zone d'édition, et publier reste `ecrirePlaybook`.
+ */
+export function redigerPlaybook(
+  agent: string,
+  contenu: string,
+  consigne?: string,
+): Promise<RedactionPlaybook> {
+  return envoyerJsonEtLire<RedactionPlaybook>(
+    `/api/playbooks/${encodeURIComponent(agent)}/redaction`,
+    { contenu, ...(consigne !== undefined && consigne !== "" && { consigne }) },
+    "rédaction refusée",
+  );
+}
+
+/**
+ * Le catalogue des fournisseurs (`GET /api/fournisseurs`, #253 + #487) : ce qui
+ * existe côté modèles, **et** ce qui est déjà là sur cette machine.
+ *
+ * Deux moitiés sur la même ligne, jamais confondues : ce que Maestro **supporte**
+ * vient du registre des fournisseurs du moteur — leurs modèles et, par modèle,
+ * les niveaux d'effort admis ; un fournisseur ajouté au registre apparaît ici
+ * sans qu'on touche à l'UI —, et ce qui est **présent ici** vient de la sonde du
+ * poste (CLI sur le `PATH`, serveur local qui répond, clé dans l'environnement).
+ *
+ * C'est la source du formulaire d'agent — il **propose** au lieu de faire saisir
+ * — et un échec n'y est jamais bloquant : les champs restent en saisie libre. À
+ * ne pas confondre avec `chargerCatalogue`, qui rend les **agents** ; celui-ci
+ * rend ce parmi quoi on choisit en les définissant.
+ */
+export function chargerFournisseurs(): Promise<CatalogueFournisseurs> {
+  return chargerJson<CatalogueFournisseurs>("/api/fournisseurs");
+}
+
 /** Le catalogue d'agents (#72) : les agents par défaut du code puis les personnalisés. */
 export function chargerCatalogue(): Promise<AgentCatalogue[]> {
   return chargerJson<AgentCatalogue[]>("/api/catalogue");
@@ -421,6 +479,26 @@ export function creerAgent(
 }
 
 /**
+ * **Propose** une définition d'agent à partir d'une intention en une phrase
+ * (`POST /api/catalogue/generation`, #257) — sans rien créer.
+ *
+ * L'appel rend un brouillon (rôle, compétences, playbook, et les réglages que le
+ * registre reconnaît) ; l'agent, lui, naît du `creerAgent` ci-dessus, une fois
+ * que l'utilisateur a relu. Un échec — quota, réseau, fournisseur muet ou hors
+ * contrat — rejette avec le message du backend et **ne touche à rien** : c'est ce
+ * qui permet à l'appelant de laisser le formulaire exactement en l'état.
+ */
+export function genererDefinitionAgent(
+  intention: string,
+): Promise<DefinitionAgentProposee> {
+  return envoyerJsonEtLire<DefinitionAgentProposee>(
+    "/api/catalogue/generation",
+    { intention },
+    "génération refusée",
+  );
+}
+
+/**
  * Remplace la définition d'un agent personnalisé (`PUT /api/catalogue/{nom}`) :
  * l'intégrale, pas un diff — le nom, clé de routage, ne change pas.
  */
@@ -442,6 +520,44 @@ export function supprimerAgent(nom: string): Promise<void> {
     `/api/catalogue/${encodeURIComponent(nom)}`,
     undefined,
     "suppression refusée",
+    "DELETE",
+  );
+}
+
+/**
+ * Surcharge les réglages de modèle d'un agent **du code**
+ * (`PUT /api/catalogue/{nom}/reglages`, #259), sans le dupliquer.
+ *
+ * Rôle, compétences et playbook restent au code et continuent d'en suivre les
+ * évolutions : seuls les trois réglages sont recouverts. Le corps est
+ * l'**intégrale** et pas un diff — un réglage à `null` retourne au code —, si
+ * bien que tout mettre à `null` revient à `annulerSurcharge`.
+ */
+export function surchargerAgent(
+  nom: string,
+  reglages: ReglagesModele,
+): Promise<void> {
+  return envoyerJson(
+    `/api/catalogue/${encodeURIComponent(nom)}/reglages`,
+    reglages,
+    "surcharge refusée",
+    "PUT",
+  );
+}
+
+/**
+ * Annule la surcharge d'un agent du code : retour à ses réglages du code
+ * (`DELETE /api/catalogue/{nom}/reglages`, #259).
+ *
+ * ⚠ Annule, ne supprime pas — l'agent reste au catalogue. À ne pas confondre
+ * avec `supprimerAgent`, qui fait disparaître un agent personnalisé et que le
+ * serveur refuse sur un agent du code.
+ */
+export function annulerSurchargeAgent(nom: string): Promise<void> {
+  return envoyerJson(
+    `/api/catalogue/${encodeURIComponent(nom)}/reglages`,
+    undefined,
+    "retour au défaut refusé",
     "DELETE",
   );
 }
@@ -913,6 +1029,45 @@ export function definirActivationsMcp(
     `/api/mcp/activations/${encodeURIComponent(agent)}`,
     { integrations },
     "activation refusée",
+    "PUT",
+  );
+}
+
+/**
+ * Migre la déclaration **héritée** `core/mcp/{agent}.json` vers le pool projet
+ * (`POST /api/mcp/migration/{agent}`, #263) : ses serveurs y entrent, l'agent les
+ * active et le fichier part. L'issue du bloc « hérités », en un geste.
+ *
+ * **Additive** : le reste du pool et les autres agents ne bougent pas, et un
+ * serveur déjà au pool sous la même déclaration est repris plutôt que dupliqué.
+ * Aucun secret n'est redemandé — une déclaration héritée porte déjà ses
+ * références `${VAR}`, qui se résolvent au montage comme avant.
+ */
+export function migrerDeclarationsMcp(agent: string): Promise<MigrationMcp> {
+  return envoyerJsonEtLire<MigrationMcp>(
+    `/api/mcp/migration/${encodeURIComponent(agent)}`,
+    {},
+    "migration refusée",
+  );
+}
+
+/**
+ * Écrit la politique de permissions d'un agent (`PUT /api/permissions/{agent}`,
+ * #262) : remplacement intégral des trois listes, écrit dans
+ * `core/permissions/<agent>.json` et relu à chaud par le moteur.
+ *
+ * Le refus d'une entrée mal formée arrive **motivé** (422, la cause exacte du
+ * dépôt) : c'est ce texte que la section affiche, il nomme la liste et l'entrée
+ * en faute. Le message par défaut ne sert donc qu'aux refus sans corps.
+ */
+export function definirPermissions(
+  agent: string,
+  politique: PolitiquePermissions,
+): Promise<void> {
+  return envoyerJson(
+    `/api/permissions/${encodeURIComponent(agent)}`,
+    politique,
+    "politique refusée",
     "PUT",
   );
 }

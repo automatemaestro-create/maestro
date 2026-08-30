@@ -45,7 +45,7 @@ pas*) ; un cran **inconnu** est une erreur franche, comme toute politique douteu
 ne peut plus être corrigé.
 
 ⚠ Un troisième cran, `orchestrateur`, a été retiré par #715 (décision de cadrage
-#647, [docs/31](../../docs/31-decision-cran-orchestrateur.md)) : il n'avait aucun
+#647, [docs/32](../../docs/32-decision-cran-orchestrateur.md)) : il n'avait aucun
 canal en production, et promettait donc une décision là où il rendait un refus.
 Une politique qui l'écrit **échoue franchement au chargement** depuis — c'est le
 versant écriture de l'asymétrie ci-dessus, et il est **acquis sans une ligne à
@@ -79,11 +79,20 @@ sa cause, jamais appliquée à moitié) et **relu à chaud** à chaque tâche pa
 l'exécuteur — corriger une politique vaut pour la tâche suivante, sans
 redémarrage. Pas de fichier = pas de politique = tout permis. En V1 le dépôt
 passera en base sans changer ce contrat.
+
+Depuis #262 il s'**écrit** aussi (`PermissionStore.ecrire`, `PUT
+/api/permissions/{agent}`) : régler ce qu'un agent a le droit d'appeler ne
+demande plus d'éditer le fichier à la main puis de relancer. La validation est
+la **même dans les deux sens** (`politique_validee`) — un écran ne peut donc pas
+écrire ce que le moteur refuserait de relire —, et l'écriture ne relit pas ce
+qu'elle remplace, seule façon de réparer depuis l'écran une politique devenue
+illisible.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -430,6 +439,12 @@ class PermissionStore:
     vaut pour la tâche suivante, sans redémarrage. `lire` valide le fichier et
     lève `ValueError` avec sa cause exacte s'il est invalide — on n'applique
     jamais une politique douteuse (ni ne l'ignore en silence).
+
+    Le dépôt est **écrivable** depuis #262 (`ecrire`) : la Control Tower en
+    devient la source, comme le pool MCP voisin l'est depuis #133. L'écriture
+    valide d'abord et écrit atomiquement ensuite, et **ne relit jamais** ce
+    qu'elle remplace — c'est ce qui permet de réparer depuis l'écran une
+    politique que `lire` refuse.
     """
 
     def __init__(self, racine: Path) -> None:
@@ -465,17 +480,46 @@ class PermissionStore:
                 f"politique de permissions illisible pour l'agent {agent!r} "
                 f"({chemin.name}) : {exc}"
             ) from exc
-        if not isinstance(data, dict):
-            raise ValueError(
-                f"politique de permissions invalide pour l'agent {agent!r} "
-                f'({chemin.name}) : objet {{"allow": [...], "ask": [...], '
-                '"deny": [...]} attendu.'
-            )
-        return PolitiqueOutils(
-            allow=_liste_validee(data, "allow", agent=agent),
-            ask=_ask_validee(data, agent=agent),
-            deny=_liste_validee(data, "deny", agent=agent),
+        return politique_validee(data, agent=agent, source=chemin.name)
+
+    def ecrire(
+        self, agent: str, politique: PolitiqueOutils | Mapping[str, Any]
+    ) -> PolitiqueOutils:
+        """Écrit la politique de `agent` (remplacement intégral). La renvoie (#262).
+
+        Le pendant en écriture de `lire`, et **la même validation** :
+        `politique_validee` juge ce qu'on s'apprête à écrire avant que rien ne
+        touche le disque, si bien qu'une entrée mal formée est refusée avec son
+        motif exact — le même qu'à la lecture — et que le fichier reste celui
+        d'avant. Un dépôt qui n'écrirait qu'à moitié une politique de garde-fou
+        serait pire que pas d'écriture du tout.
+
+        Accepte les deux formes, et c'est voulu : un `PolitiqueOutils` construit
+        en Python, ou le **dict brut** venu de l'API — celui-là n'est pas encore
+        une politique, et le passer tel quel est ce qui permet à l'écran de
+        recevoir la cause exacte (« décideur inconnu », « entrée deny … ») plutôt
+        qu'un refus générique de désérialisation.
+
+        Écriture **atomique** (fichier temporaire puis renommage) et lisible
+        (indentée), comme le dépôt MCP voisin : c'est de la configuration
+        versionnée avec le dépôt Git, relue par une machine comme par un humain.
+
+        ⚠ Écrire **ne relit pas** ce qui est en place, à dessein : c'est ce qui
+        permet de **corriger depuis l'écran** une politique invalide, là où un
+        aller-retour lecture → écriture échouerait sur le fichier même qu'on
+        vient réparer.
+        """
+        data = politique.to_dict() if isinstance(politique, PolitiqueOutils) else politique
+        propre = politique_validee(data, agent=agent)
+        chemin = self._chemin(agent)
+        self._racine.mkdir(parents=True, exist_ok=True)
+        temporaire = chemin.with_suffix(chemin.suffix + ".tmp")
+        temporaire.write_text(
+            json.dumps(propre.to_dict(), ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
         )
+        os.replace(temporaire, chemin)
+        return propre
 
     def agents(self) -> tuple[str, ...]:
         """Les noms des agents ayant une politique stockée, triés (vide si aucun)."""
@@ -494,6 +538,47 @@ class PermissionStore:
         if not _NOM_AGENT.match(agent):
             raise ValueError(f"nom d'agent invalide : {agent!r} (slug [a-z0-9_-] attendu).")
         return self._racine / f"{agent}.json"
+
+
+def entree_valide(entree: str) -> bool:
+    """`entree` a-t-elle la forme d'un nom d'outil admissible en politique ?
+
+    La même règle que `_valide_entree`, en question plutôt qu'en refus (#262) :
+    ce qui suggère des entrées (la fiche agent) doit pouvoir écarter ce que
+    l'écriture refuserait — un serveur MCP dont le nom sort du slug n'est pas
+    désignable, et le proposer ne ferait qu'offrir une entrée impossible.
+    """
+    return bool(entree) and all(
+        _ENTREE.match(segment) for segment in entree.split("__")
+    )
+
+
+def politique_validee(
+    data: Any, *, agent: str, source: str | None = None
+) -> PolitiqueOutils:
+    """La politique portée par `data`, **validée** — `ValueError` avec sa cause sinon.
+
+    Le point de passage unique des deux sens : `PermissionStore.lire` la relit
+    d'un fichier, `PermissionStore.ecrire` juge ce qu'on s'apprête à y mettre
+    (#262). Une seule définition de « politique admissible », donc pas de fichier
+    qu'on écrirait et qu'on ne saurait plus relire — ni l'inverse, un écran qui
+    refuserait ce que le moteur accepte déjà.
+
+    `source` nomme le fichier quand il y en a un : à la lecture il aide à
+    trouver quoi corriger, à l'écriture il n'existe pas encore — le corps refusé
+    vient de l'appel, pas du disque.
+    """
+    if not isinstance(data, Mapping):
+        ou = f" ({source})" if source else ""
+        raise ValueError(
+            f"politique de permissions invalide pour l'agent {agent!r}"
+            f'{ou} : objet {{"allow": [...], "ask": [...], "deny": [...]}} attendu.'
+        )
+    return PolitiqueOutils(
+        allow=_liste_validee(data, "allow", agent=agent),
+        ask=_ask_validee(data, agent=agent),
+        deny=_liste_validee(data, "deny", agent=agent),
+    )
 
 
 def _liste_validee(data: Mapping[str, Any], cle: str, *, agent: str) -> tuple[str, ...]:

@@ -365,6 +365,43 @@ export type PropositionPlaybookDetail = PropositionPlaybook & {
 };
 
 /**
+ * Une entrée du lexique d'écriture (`GET /api/playbooks/lexique`, #261) : un
+ * titre de section ou une tournure que les playbooks du dépôt ont en commun.
+ *
+ * `roles` est le nombre de playbooks livrés où elle figure — l'éditeur s'en sert
+ * pour ordonner ses propositions et pour dire d'où elles viennent : une
+ * suggestion dont on voit la provenance se refuse en connaissance de cause.
+ */
+export type EntreeLexique = {
+  texte: string;
+  roles: number;
+};
+
+/**
+ * Le lexique servi à l'éditeur (#261). **Dérivé** des documents livrés avec le
+ * paquet, jamais recopié ici : `structures` porte les titres de section
+ * (`## Mission`, `## Méthode`…), `tournures` les phrases récurrentes du régime
+ * de travail commun aux agents.
+ */
+export type LexiquePlaybook = {
+  structures: EntreeLexique[];
+  tournures: EntreeLexique[];
+};
+
+/**
+ * Une réécriture proposée par l'assistant (`POST /api/playbooks/{agent}/redaction`,
+ * #261) : le document réécrit **intégral** et ce que le modèle dit en avoir changé.
+ *
+ * Sans numéro ni date, à la différence d'une `PropositionPlaybook` : ce n'est pas
+ * une version, ni même un brouillon stocké, mais un candidat en vol — tant que
+ * personne ne l'a appliqué à son brouillon, il n'existe nulle part ailleurs.
+ */
+export type RedactionPlaybook = {
+  contenu: string;
+  justification: string;
+};
+
+/**
  * Un serveur MCP déclaré pour un agent (`ServeurMcp.to_dict`, #104) : une
  * commande locale (`type` « stdio » : commande + args + env) ou un endpoint
  * distant (« sse »/« http » : url + headers). Forme publique : les valeurs
@@ -688,6 +725,25 @@ export type PoolMcp = {
 };
 
 /**
+ * Ce qu'une migration héritée → pool a fait (`POST /api/mcp/migration/{agent}`,
+ * #263) : les intégrations **créées** au pool, celles qui y étaient déjà et ont
+ * été **reprises** (même déclaration — le partage entre agents que le pool
+ * existe pour permettre), l'ensemble activé de l'agent après coup, et le sort du
+ * fichier hérité.
+ *
+ * Deux listes et non un total : « 2 intégrations ajoutées au projet » serait
+ * faux d'une migration qui en a créé une et retrouvé l'autre, et c'est
+ * précisément ce que l'écran doit savoir dire.
+ */
+export type MigrationMcp = {
+  agent: string;
+  ajoutees: IntegrationPoolMcp[];
+  reprises: IntegrationPoolMcp[];
+  activations: string[];
+  fichier_retire: boolean;
+};
+
+/**
  * Le journal des admissions (`GET /api/mcp/admissions`, #678).
  *
  * Deux listes plutôt qu'une à filtrer, parce que ce ne sont pas les mêmes
@@ -728,28 +784,86 @@ export type RevocationAdmissionMcp = {
  * profil expose est permis ; `ask` suspend l'appel le temps qu'une personne
  * tranche — l'outil n'est pas interdit, il est arbitré. Une politique écrite
  * avant #580 arrive avec `ask` vide, donc sous le régime d'hier.
+ *
+ * ⚠ `ask` est un **objet** `{outil: décideur}` et non une liste : depuis #586
+ * une entrée arbitrée porte **qui la tranche** (`auto` ou `humain`), et
+ * `PolitiqueOutils.to_dict` n'émet que cette forme-là — y compris quand toutes
+ * ses entrées sont au défaut. Le type disait `string[]` jusqu'à #262, si bien
+ * que l'écran plantait à la première politique servie ; la lecture, elle,
+ * accepte encore les deux formes côté API.
  */
 export type PolitiquePermissions = {
   allow: string[];
-  ask: string[];
+  ask: Record<string, string>;
   deny: string[];
 };
 
 /**
+ * Un outil **réellement exposé** à un agent (`permissions_outils`, #262) : de
+ * quoi suggérer une entrée de politique au lieu d'en faire retrouver le nom
+ * exact ailleurs. `origine` dit d'où il vient — `integre` (outil du profil du
+ * rôle), `maestro` (un verbe du serveur in-process : arbitrage, blocage,
+ * courrier) ou `mcp` (un serveur MCP monté pour l'agent, cité en entier, donc
+ * couvrant tous ses outils).
+ *
+ * Une suggestion ne restreint rien : un outil MCP précis se désigne à la
+ * frappe, et seule la **forme** de l'entrée est jugée à l'écriture.
+ */
+export type OutilExpose = {
+  nom: string;
+  origine: string;
+  libelle: string;
+};
+
+/**
+ * Les trois réglages de modèle d'un agent — ce qu'une surcharge peut porter
+ * (#259). `null` n'y est pas un réglage vide mais un réglage **hérité** :
+ * l'agent suit ce que le code (ou l'exécution) dit de lui.
+ */
+export type ReglagesModele = {
+  fournisseur: string | null;
+  modele: string | null;
+  effort: string | null;
+};
+
+/**
  * Une fiche du catalogue d'agents (`GET /api/catalogue`, #72) : les agents par
- * défaut du code (`source` « defaut ») et les personnalisés persistés
- * (« personnalise »). Les dates ne sont posées que sur les personnalisés ;
+ * défaut du code (`source` « defaut »), ceux du code dont les réglages de
+ * modèle ont été **surchargés** (« defaut_surcharge », #259) et les
+ * personnalisés persistés (« personnalise »).
+ *
+ * Les trois réglages servis sont les **effectifs** : la surcharge d'abord, le
+ * code ensuite. `herite` nomme ceux qui restent au code — de quoi les marquer
+ * comme tels plutôt que de le faire deviner — et `reglages_du_code` dit ce que
+ * le code vaut pour chacun, y compris recouvert : c'est ce qu'un retour au
+ * défaut rendrait. Sur un agent personnalisé, `herite` est vide et
+ * `reglages_du_code` null — il ne tient rien du code, sa définition est son
+ * réglage.
+ *
+ * Les dates : `cree_le` n'est posée que sur les personnalisés ; `modifie_le`
+ * porte la date de la définition sur un personnalisé, celle de la surcharge sur
+ * un agent du code (null s'il n'en a pas).
  * `modele` null signifie « le modèle par défaut des exécutants » et
  * `fournisseur` est déclaratif au POC (le moteur est mono-fournisseur).
  * `mcp_serveurs` (#104) liste les serveurs MCP **effectifs** montés pour l'agent
  * (héritage `<agent>.json` composé avec le pool activé) ; `mcp_erreur` porte la
- * cause si une source est invalide. `mcp_pool` (#133) est le **pool projet** des
+ * cause si une source est invalide. `mcp_herites` (#263) porte les serveurs de la
+ * **seule** déclaration héritée — ce que la migration ferait passer au pool, servi
+ * plutôt que déduit : les retrancher des serveurs montés se fait par leur *nom*,
+ * et une intégration renommée à l'ajout ferait alors réapparaître l'héritée.
+ * `mcp_pool` (#133) est le **pool projet** des
  * intégrations configurables (avec l'état de leurs secrets), `mcp_pool_erreur`
  * la cause si le pool stocké est invalide, et `mcp_activations` les ids du pool
  * **activés** pour cet agent — de quoi remplacer l'affichage lecture seule par
  * des interrupteurs par agent. `permissions` (#110) porte la politique
- * allow/deny effective appliquée à l'exécution (null : aucune politique — tout
- * permis) ; `permissions_erreur` la cause si la politique stockée est invalide.
+ * allow/ask/deny effective appliquée à l'exécution (null : aucune politique —
+ * tout permis) ; `permissions_erreur` la cause si la politique stockée est
+ * invalide, et `permissions_outils` (#262) les outils réellement exposés à
+ * l'agent, servis avec la fiche pour que l'écran suggère ce qu'il y a à
+ * désigner.
+ * `effort` (#253) est le niveau d'effort demandé au modèle (null : aucun
+ * réglage — le régime par défaut du fournisseur) ; ce que le fournisseur retenu
+ * admet se lit sur `GET /api/fournisseurs`, jamais dans une liste écrite ici.
  */
 export type AgentCatalogue = {
   nom: string;
@@ -757,20 +871,78 @@ export type AgentCatalogue = {
   competences: string[];
   modele: string | null;
   fournisseur: string | null;
+  effort: string | null;
   source: string;
+  herite: string[];
+  reglages_du_code: ReglagesModele | null;
   cree_le: string | null;
   modifie_le: string | null;
   mcp_serveurs: ServeurMcp[];
+  mcp_herites: ServeurMcp[];
   mcp_erreur: string | null;
   mcp_pool: IntegrationPoolMcp[];
   mcp_pool_erreur: string | null;
   mcp_activations: string[];
   permissions: PolitiquePermissions | null;
   permissions_erreur: string | null;
+  permissions_outils: OutilExpose[];
 };
 
 /** La fiche avec sa définition complète (`GET /api/catalogue/{nom}`). */
 export type AgentCatalogueDetail = AgentCatalogue & { playbook: string };
+
+/**
+ * Un fait mesuré sur le poste par la sonde (#487) : un CLI résolu sur le `PATH`,
+ * un serveur de modèles local qui répond, une clé présente dans l'environnement.
+ * N'existe que pour ce qui est **présent** — un poste nu rend zéro constat.
+ * `utilisable` distingue le présent-et-prêt du présent-mais-empêché (un serveur
+ * qui écoute sans répondre, un endpoint distant que la sonde ne joint pas), et
+ * `incertitude` dit ce qu'elle ne peut pas savoir plutôt que de le deviner :
+ * jamais la valeur d'une clé, jamais la version d'un binaire qu'il faudrait
+ * lancer pour la lire.
+ */
+export type ConstatPoste = {
+  /** « cli », « serveur_local » ou « cle ». */
+  genre: string;
+  cle: string;
+  libelle: string;
+  fournisseur: string | null;
+  utilisable: boolean;
+  detail: string;
+  origine: string | null;
+  modeles: string[];
+  incertitude: string | null;
+};
+
+/**
+ * Un fournisseur du catalogue (`GET /api/fournisseurs`, #253 + #487) : le
+ * registre du code dit qu'il est **supporté** et annonce sa gamme, la sonde dit
+ * s'il est **présent ici**. Les deux colonnes ne se confondent jamais — c'est ce
+ * qui permet de proposer un fournisseur armé sur cette machine sans cacher celui
+ * qui ne l'est pas encore, et c'est aussi pourquoi la fiche du registre est
+ * **reprise telle quelle** (`Fournisseur`) au lieu d'être recopiée : `modeles`
+ * est ce que Maestro annonce, `modeles_ici` ce que la sonde a vu.
+ */
+export type FournisseurCatalogue = Fournisseur & {
+  supporte: boolean;
+  present_ici: boolean;
+  utilisable_ici: boolean;
+  /** Les modèles que la sonde a **vus ici** (un serveur local les nomme). */
+  modeles_ici: string[];
+  constats: ConstatPoste[];
+};
+
+/**
+ * Le catalogue complet. `hors_registre` porte ce que le poste a de plus que
+ * Maestro — un agent CLI tiers non branché (docs/34) : montré, jamais proposé.
+ * `incertitudes` porte ce qui pèse sur les **absences** (le `PATH` du process
+ * qui sert l'API n'est pas celui de votre terminal).
+ */
+export type CatalogueFournisseurs = {
+  fournisseurs: FournisseurCatalogue[];
+  hors_registre: ConstatPoste[];
+  incertitudes: string[];
+};
 
 /**
  * Les champs éditables d'un agent personnalisé (#73) : le corps de
@@ -783,6 +955,74 @@ export type DefinitionAgent = {
   playbook: string;
   modele: string | null;
   fournisseur: string | null;
+  /**
+   * Le niveau d'effort demandé au modèle (#253). **Facultatif** dans le corps —
+   * l'API le met à null quand il est absent —, le temps que le formulaire le
+   * propose ; les valeurs recevables se lisent sur `GET /api/fournisseurs`.
+   */
+  effort?: string | null;
+};
+
+/**
+ * Une définition d'agent **proposée** (`POST /api/catalogue/generation`, #257).
+ *
+ * Ce n'est pas un agent : rien n'a été créé côté backend, et rien ne le sera
+ * tant que l'utilisateur n'aura pas cliqué « Créer l'agent » — c'est le principe
+ * des propositions de playbook (#111/#140) appliqué à la définition entière. Les
+ * champs arrivent donc dans le formulaire comme un **brouillon**, modifiable,
+ * régénérable, abandonnable.
+ *
+ * `nom` est une commodité (libre au moment de la réponse, pas réservé pour
+ * autant) ; `fournisseur` et `modele` sont `null` quand le modèle n'a rien
+ * proposé que le registre reconnaisse — un champ vide, que le formulaire lit
+ * « réglages par défaut », jamais un nom inventé. `intention` est la phrase dont
+ * la proposition est née : c'est ce que l'écran ré-affiche pour régénérer.
+ */
+export type DefinitionAgentProposee = {
+  intention: string;
+  nom: string;
+  role: string;
+  competences: string[];
+  playbook: string;
+  fournisseur: string | null;
+  modele: string | null;
+};
+
+/**
+ * Un modèle annoncé par un fournisseur (`GET /api/fournisseurs`, #253).
+ *
+ * `nom` est l'identifiant à écrire dans `DefinitionAgent.modele` (la chaîne
+ * exacte qu'attend le fournisseur), `libelle` le nom lisible. `efforts` liste
+ * les niveaux d'effort admis **sur ce modèle** : une liste vide dit que ce
+ * modèle ne se règle pas en effort, pas qu'on l'ignore.
+ */
+export type ModeleFournisseur = {
+  nom: string;
+  libelle: string;
+  efforts: string[];
+};
+
+/**
+ * Un fournisseur de modèles disponible (`GET /api/fournisseurs`, #253).
+ *
+ * La source est le **registre des fournisseurs** du moteur : un fournisseur qui
+ * s'y inscrit apparaît ici, donc à l'écran, sans qu'aucune liste ne soit écrite
+ * côté front. `nom` est l'identifiant à écrire dans `DefinitionAgent.fournisseur`.
+ *
+ * `modeles` est la gamme annoncée et `modeles_libres` dit qu'un nom **hors**
+ * gamme reste recevable — les deux se lisent ensemble : gamme vide *et* libre
+ * (le cas d'`openai`, qui fédère des endpoints aux nommages hétéroclites) veut
+ * dire « saisis le nom que sert ton endpoint », là où gamme vide et fermée
+ * voudrait dire « rien à proposer ».
+ *
+ * C'est la **moitié registre** de `FournisseurCatalogue`, qui l'étend des
+ * colonnes du poste (#487) : la route en rend une seule ligne par fournisseur,
+ * ce type dit ce qu'elle en doit au code plutôt qu'à la machine.
+ */
+export type Fournisseur = {
+  nom: string;
+  modeles: ModeleFournisseur[];
+  modeles_libres: boolean;
 };
 
 /**
@@ -874,9 +1114,20 @@ export const CHAT_AUTEUR_UTILISATEUR = "utilisateur";
 export const PLAYBOOK_SOURCE_DEFAUT = "defaut";
 export const PLAYBOOK_SOURCE_STOCKAGE = "stockage";
 
-/** Provenances d'une fiche du catalogue d'agents (maestro/controltower/app.py, #72). */
+/**
+ * Provenances d'une fiche du catalogue d'agents (maestro/agents/store.py, #72).
+ * **Trois** depuis #259 : un agent du code dont on a surchargé les réglages de
+ * modèle n'est ni tout à fait « du code » — il ne suit plus le code sur ces
+ * points-là — ni « personnalisé », puisqu'il n'a pas été dupliqué.
+ */
 export const AGENT_SOURCE_DEFAUT = "defaut";
+export const AGENT_SOURCE_SURCHARGE = "defaut_surcharge";
 export const AGENT_SOURCE_PERSONNALISE = "personnalise";
+
+/** Vrai pour un agent défini par le code, surchargé ou non (#259). */
+export function estAgentDuCode(source: string): boolean {
+  return source === AGENT_SOURCE_DEFAUT || source === AGENT_SOURCE_SURCHARGE;
+}
 
 /** Statuts d'agent exposés par l'API (maestro/controltower/state.py). */
 export const AGENT_LIBRE = "libre";
@@ -1104,7 +1355,7 @@ export const MODE_BRIEF_HUMAIN = "humain";
  * `orphelin` s'est resserré avec #446 : un hôte publie désormais son **issue** en
  * partant, donc ce verdict ne désigne plus un run terminé dont personne n'a écrit
  * la fin, mais un run mort **sans avoir pu le dire**. C'est exactement celui que
- * le panneau *Runs interrompus* propose de relancer (#349).
+ * le panneau *Runs qui n'avancent plus* propose de relancer (#349).
  *
  * `indetermine` n'est pas une commodité mais le refus explicite de deviner : le run
  * n'a **jamais** battu (trace antérieure à #348, registre injoignable), donc on ne
@@ -1347,6 +1598,29 @@ export type ResumeExecution = {
    * travaille d'un run mort trois jours plus tôt — les deux affichent `en_cours`.
    */
   vitalite?: string | null;
+  /**
+   * Ce run **attend-il quelqu'un depuis trop longtemps** (#737, `docs/05 §2.6`) ?
+   *
+   * Le **second** verdict de veille, et il ne répond pas de la même question que
+   * le précédent : `vitalite` dit si l'**hôte** du run est encore là, celui-ci si
+   * le **run avance**. Un run suspendu sur un humain depuis une heure est
+   * `vivant` *et* en souffrance — c'est la paire exacte qu'a portée le run de
+   * #568 pendant que rien ne le signalait.
+   *
+   * Booléen et non ternaire : le troisième état — « il attend, mais pas depuis
+   * trop longtemps » — est déjà porté par le `statut`, et le reporter ici serait
+   * un second support pour un même fait. Un run soldé rend donc `false` comme un
+   * run au travail, si long soit-il : ce verdict juge l'**attente**, jamais la
+   * durée.
+   *
+   * Il est **dérivé de `statut` + `attente_depuis`, jamais stocké** : il se
+   * recalcule à chaque lecture et survit à un redémarrage de l'API sans que rien
+   * ne soit persisté. Le seuil et ses écarts (horodatage illisible → `true`,
+   * l'inverse de `vitalite`) vivent dans `maestro/controltower/souffrance.py` ;
+   * l'écran ne les redéduit jamais — `estEnSouffrance` (`lib/execution`) ne fait
+   * que lire ce champ. Absent des flux antérieurs au lot, d'où l'optionnel.
+   */
+  en_souffrance?: boolean;
   /**
    * Le cadrage de ce run a-t-il été **approuvé par un humain** (#349) ? Distinct de
    * « le run a un brief » : dès que le brief est soumis, le détail en porte un —

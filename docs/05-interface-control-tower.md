@@ -77,6 +77,8 @@ flowchart LR
     AgentDetail --> Mcp[Onglet MCP & permissions]
     Integrations -. qui l'utilise .-> Mcp
     AgentDetail --> AgentChat[Onglet Chat]
+    AgentDetail --> AgentLogs[Onglet Logs]
+    AgentLogs -. les mêmes lignes .-> Journal
     Tasks --> TaskDetail[Détail d'une tâche]
     TaskDetail --> Approve
 ```
@@ -239,18 +241,40 @@ reste que ce qui se lit d'un coup d'œil, dans cet ordre :
    tous les trois en silence le 2026-08-28, quand #484 a retiré l'entrée de menu
    qu'ils nommaient — ce jour-là aucun des trois n'a eu à changer.
 2. **Validations en attente** — ce qui demande un arbitrage humain.
-3. **Runs interrompus** (#349, #486, §6.1) — les runs **orphelins ou éteints dont
-   le brief a été approuvé**, avec le bouton qui les reprend sur ce cadrage. Après
-   les deux précédents, et pour une raison de nature : ceux-là retiennent du travail
-   **vivant**, un run perdu ne retient plus rien. Rien ne s'affiche quand il n'y a
-   rien à récupérer — ni sur un run `indetermine` (on ne sait pas : le proposer
-   serait deviner), ni sur un run sans brief approuvé (il n'a rien à rejouer). Le
-   second état vient de #486 : un run que `start.sh --stop` a soldé (cause
-   `extinction`) se retrouve **ici** au redémarrage, par le **même** bouton — sa
-   ligne dit « arrêté avec Maestro » là où un orphelin dit « hôte muet », les deux
-   menant au même geste parce que ce qui se rejoue est un cadrage. Un run
-   **délibérément annulé**, lui, n'y figure pas : personne ne veut se voir
-   reproposer un run qu'il vient d'arrêter.
+3. **Runs qui n'avancent plus** (#349, #486, #738, §6.1) — les runs que **plus rien
+   ne fait avancer**, rangés en **deux familles** parce que les deux verdicts de
+   surveillance (§6.1) ne désignent pas les mêmes runs et n'appellent pas le même
+   geste. Après les deux panneaux précédents, et pour une raison de nature : ceux-là
+   retiennent du travail **vivant**, un run perdu ne retient plus rien. Rien ne
+   s'affiche quand les deux familles sont vides.
+
+   - **« Personne n'a répondu »** (#738) — les runs `en_souffrance` (§2.6), c'est-à-dire
+     suspendus sur un humain au-delà du seuil. Le geste est d'**aller voir le run**,
+     jamais de trancher : la réponse à une attente n'est ni oui ni non (« répondre »,
+     « relever le budget », « annuler », « rien »), donc ces runs ne passent **pas**
+     par la file de validations, qui porte des actes à décider ([docs/33
+     §7.2](./33-decision-surveillance-run.md)). La ligne dit **ce que le run attend**
+     et depuis quand — le tri fait le signal, l'ancienneté ne dit que de combien.
+     N'y figurent ni un orphelin (personne ne recevrait la réponse : il est dans la
+     famille suivante), ni un run **en pause**, où quelqu'un a déjà décidé ;
+   - **« Leur hôte s'est tu »** (#349, #486) — les runs **orphelins ou éteints dont
+     le brief a été approuvé**, avec le bouton qui les reprend sur ce cadrage. Rien
+     ne s'affiche sur un run `indetermine` (on ne sait pas : le proposer serait
+     deviner), ni sur un run sans brief approuvé (il n'a rien à rejouer). Le second
+     état vient de #486 : un run que `start.sh --stop` a soldé (cause `extinction`)
+     se retrouve **ici** au redémarrage, par le **même** bouton — sa ligne dit
+     « arrêté avec Maestro » là où un orphelin dit « hôte muet », les deux menant au
+     même geste parce que ce qui se rejoue est un cadrage. Un run **délibérément
+     annulé**, lui, n'y figure pas : personne ne veut se voir reproposer un run qu'il
+     vient d'arrêter.
+
+   ⚠ **Un bloc, pas deux**, et c'est la règle des trois places qui tranche (#539,
+   [docs/30 §4](./30-cible-visuelle-control-tower.md)) : le corps de cet écran est
+   plafonné à trois blocs de plein format et il en porte déjà trois d'arbitrage. Un
+   quatrième panneau était la réponse évidente et la mauvaise — ce qui déborde
+   s'étend dans un bloc existant. Le panneau a changé de **nom** en changeant de
+   contenu (il s'appelait *Runs interrompus* jusqu'à #738) : un chapeau qui ne
+   couvre que la moitié de ce qu'il range est la première chose qui dérive.
 4. **Indicateurs de tête** — quatre tuiles : run en cours, tâches par statut,
    agents occupés et libres, dépense. Chaque tuile met en valeur **le chiffre
    qu'on vient y chercher** : la tuile Agents répond « combien travaillent,
@@ -362,7 +386,7 @@ troisième écran a eu à la rendre.
 dans le ticket.** #476 en nomme trois — en cours, suspendus, soldés du jour — mais
 `regimeDuRun` en rend **cinq**, et un régime sans groupe ne dégrade pas
 l'affichage : il fait **disparaître** ces runs-là de l'écran. *Interrompu* a donc
-été ajouté avec #476, parce que le panneau « Runs interrompus » qui le précède
+été ajouté avec #476, parce que le panneau « Runs qui n'avancent plus » qui le précède
 (item 3) ne montre que les **récupérables** — orphelin *et* brief approuvé (#349) —,
 si bien qu'un run mort avant validation de son cadrage ne serait nulle part. *En
 pause* a été ajouté par **#480**, pour la raison exacte et sur une panne réelle :
@@ -390,10 +414,13 @@ rendu serveur n'a pas d'instant (#250), le groupe apparaît donc au premier batt
 
 **Il ne décide de rien**, et c'est ce qui le sépare des trois panneaux qui le
 précèdent : ceux-là portent le geste qui lève une attente, celui-ci porte l'état. Un
-run interrompu peut donc paraître deux fois sur l'écran — dans « Runs interrompus »
-avec son bouton, et ici avec son état. C'est la superposition que le Kanban avait déjà
-avec les validations, et elle est voulue : ce qui appelle un geste passe devant, ce qui
-décrit l'état se lit d'un bloc.
+run interrompu peut donc paraître deux fois sur l'écran — dans « Runs qui n'avancent
+plus » avec son bouton, et ici avec son état. C'est la superposition que le Kanban
+avait déjà avec les validations, et elle est voulue : ce qui appelle un geste passe
+devant, ce qui décrit l'état se lit d'un bloc. Depuis #738 elle vaut aussi pour un run
+**en souffrance** : il sort de la liste dans le panneau, avec son renvoi, et le groupe
+*Suspendus* continue de le montrer parmi les autres — le premier dit qu'on l'a oublié,
+le second où il en est.
 
 Composant : `apps/web/components/runs/EtatDesRuns.tsx`. Couverture (#480) :
 `apps/web/tests/etat-des-runs.test.tsx` — l'exhaustivité de la table, les cinq
@@ -501,18 +528,57 @@ L'entrée de menu **Agents** (`/agents`) mène à la **liste** ; chaque carte ou
 (`/agents/<agent>/<onglet>`). C'est le point d'entrée unique vers un agent —
 il n'y a plus de sélecteur d'agent en tête de trois pages différentes.
 
-- **Liste** : les agents du catalogue (ceux du code, en lecture seule, et les
-  personnalisés), avec **créer un agent**. Arrivée avec `?onglet=<onglet>` (par
-  une redirection de la v1), les cartes visent directement cet onglet.
-- **Fiche agent**, quatre onglets — l'ordre va de l'identité de l'agent à la
-  conversation avec lui :
+- **Liste** : les agents du catalogue — ceux du code et les personnalisés —, en
+  **cartes épurées** (#258) : icône du **rôle** et non de l'agent, statut,
+  charge, et l'origine sous le rôle. Deux sources y sont jointes, le catalogue
+  REST (la définition) et le parc du contexte (l'état) : un agent que le parc ne
+  connaît pas n'affiche aucun plafond d'instances plutôt qu'un « 1 » inventé.
+  Filtres et tri (rôle, origine, état) vivent dans `lib/vueAgents.ts`. La porte
+  de **création** est **en tête** — avant les cartes, et sans attendre la lecture
+  du catalogue. Arrivée avec `?onglet=<onglet>` (par une redirection de la v1),
+  les cartes visent directement cet onglet.
+
+  ⚠ **Un agent du code n'est plus en lecture seule** (#259) : ses trois réglages
+  de modèle se **surchargent** sans le dupliquer, d'où une **troisième**
+  provenance — « du code, surchargé » — à côté de « du code » et
+  « personnalisé ». Le filtre par origine n'en propose que deux, à dessein : la
+  question qu'on lui pose est « qui vient du code ? », et un agent surchargé y
+  répond oui.
+- **Création** (`/agents/nouveau`, #254) : un **écran** et non un dépliant sous
+  la liste — le cadre reste en place (barre latérale, barre supérieure, titre
+  « Agents »), seule la zone de contenu change. On en sort par « Tous les
+  agents » ou par **Échap** ; un brouillon commencé se signale avant d'être
+  perdu, sur ces deux sorties comme sur la fermeture de l'onglet. Une création
+  réussie mène à la fiche de l'agent né, pas à la liste.
+
+  **Deux entrées, une seule création** (#257) : au-dessus des champs, une
+  **intention en une phrase** et un bouton **Générer** — l'assistant propose
+  alors rôle, compétences, playbook et, quand le registre les reconnaît,
+  fournisseur et modèle (`POST /api/catalogue/generation`). Trois choses à
+  ne pas confondre. La proposition arrive **dans les champs**, comme une saisie :
+  elle se relit, se corrige mot à mot, se **régénère** ou s'**abandonne** (le
+  formulaire retrouve alors ce qu'il portait avant) — et **rien n'est
+  enregistré** tant que « Créer l'agent » n'a pas été cliqué, c'est le principe
+  des propositions de playbook ([docs/22](./22-auto-amelioration-playbooks.md))
+  appliqué à la définition entière. Le **fournisseur suggéré est confronté au
+  registre** avant d'atteindre l'écran : un nom que Maestro ne saurait pas
+  résoudre est écarté et le champ reste vide (« réglages par défaut »), jamais
+  rempli d'un nom plausible — c'est la règle que la sonde du poste (#487) tient
+  déjà sur les mêmes deux champs. Et un
+  **échec** — quota, réseau, fournisseur muet ou réponse hors contrat — laisse le
+  formulaire exactement en l'état et le dit : on réessaie, ou on remplit à la
+  main.
+- **Fiche agent**, cinq onglets — l'ordre va de l'identité de l'agent à la trace
+  de ce qu'il a fait, en passant par ce qu'on lui a appris, ce qu'on lui a permis
+  et ce qu'on lui dit :
 
 | Onglet | Contenu | Vient de |
 | --- | --- | --- |
-| 🤖 **Profil** | identité (nom, rôle, modèle, compétences/tags), prompt système éditable, statistiques (tâches traitées, taux de réussite, coût moyen) ; suppression d'un agent personnalisé | page `/catalogue` |
-| 📖 **Playbook** | éditeur avec **historique des versions** et retour arrière (EF-25). L'historique porte aussi les **propositions d'auto-amélioration** en attente — brouillons issus des échecs d'un run, à appliquer ou rejeter au clic ([docs/22](./22-auto-amelioration-playbooks.md)) | page `/playbooks` |
-| 🔌 **MCP & permissions** | serveurs MCP de l'agent et politique allow/deny effective ([docs/21](./21-configuration-mcp.md)) | n'avait aucune page à soi — seulement le bas de la fiche du catalogue |
-| 💬 **Chat** | conversation directe avec l'agent (EF-19) | page `/chat/<agent>` |
+| 🤖 **Profil** | identité (nom, rôle, **compétences en jetons** #256) et les **trois réglages de modèle en listes liées** — fournisseur → modèle → effort (#255, voir ci-dessous) ; statistiques (tâches traitées, taux de réussite, coût moyen) ; suppression d'un agent personnalisé. Sur un agent **du code**, les trois réglages se **surchargent** sans le dupliquer et chacun dit d'où il vient — « hérité du code » ou « surchargé » (#259). Le **playbook ne s'édite plus ici** : un renvoi mène à son onglet, seul endroit où il s'écrit — il ne subsiste qu'à la création, où l'agent n'a pas encore de fiche | page `/catalogue` |
+| 📖 **Playbook** | éditeur avec **historique des versions** et retour arrière (EF-25), dont la **publication se lit** (#260) : version en vigueur sans rien ouvrir, playbook d'origine compté comme une v0 et non comme un trou, historique replié dans un sélecteur — la version courante n'y figure pas, son contenu *est* celui de l'éditeur. L'historique porte aussi les **propositions d'auto-amélioration** en attente — brouillons issus des échecs d'un run, à appliquer ou rejeter au clic ([docs/22](./22-auto-amelioration-playbooks.md)). **Rédaction assistée** (#261) : complétions **locales et déterministes** servies par le lexique des playbooks livrés (`GET /api/playbooks/lexique`, Tab pour accepter), et un assistant qui rend une réécriture en **différentiel** (`POST /api/playbooks/{agent}/redaction`) — l'appliquer envoie le texte dans la zone d'édition, publier reste un geste à part | page `/playbooks` |
+| 🔌 **MCP & permissions** | serveurs MCP de l'agent (interrupteur par intégration du pool, #133) et **politique allow/ask/deny éditable** (#262) : `allow` et `deny` s'ajoutent et se retirent entrée par entrée — chaque geste écrit, sans bouton « Enregistrer », et l'écran ne bouge qu'après l'accord de l'API —, les outils réellement exposés à l'agent en suggestion, `ask` affichée avec son décideur mais **non éditable** (le cran se pose à froid dans le fichier). Une politique **invalide** se répare d'ici : l'écriture ne relit pas ce qu'elle écrase ([docs/21](./21-configuration-mcp.md), `core/permissions/README.md`) | n'avait aucune page à soi — seulement le bas de la fiche du catalogue |
+| 💬 **Chat** | conversation directe avec l'agent (EF-19), sur le **composant de fil du produit** — celui du chat global, jamais une seconde mise en page (§2.9) : la réponse **s'écrit en direct** (#264) et le fil **se lit** (Markdown, blocs de code, journées, largeur de lecture — #265) | page `/chat/<agent>` |
+| 📜 **Logs** | ce que l'agent a **réellement fait** (#266) : les lignes du Journal filtrées **par l'API** (`GET /api/journal?agent=…`) et non triées après coup, **groupées par tâche** — ce qui ne relève d'aucune tâche prend sa place sous « Hors tâche » —, avec un filtre par **niveau** (erreur, refus, décision, info). Le niveau est la *famille* d'une ligne et non une sévérité : c'est ce qui permet d'isoler « qu'est-ce qu'on lui a refusé ? » d'un seul choix | aucune page — l'activité d'un agent ne se lisait que dans le fil global, tous agents confondus |
 
 L'**activation/désactivation** et le **contrôle de capacité** (**+ / −**
 instances, EF-21) se règlent dans **Paramètres › Agents & capacité** ; le tableau
@@ -527,6 +593,37 @@ la tuile « Agents » du tableau de bord compte les agents au travail **sur le p
 nomme le parc comme partagé. Le jour où un agent deviendrait propre à un projet — un catalogue par
 projet, une capacité par projet — c'est ici et au §6.0 qu'il faudrait revenir, pas dans un
 composant.
+
+#### 2.3.1 Fournisseur, modèle, effort — une chaîne, pas trois champs (#253, #255)
+
+Les réglages de modèle d'un agent sont **trois** depuis #253 — le troisième,
+l'**effort**, était jusque-là un réglage d'exécution — et ils forment une
+**chaîne de dépendances** que l'écran tient : le fournisseur borne le modèle, le
+modèle décide de l'effort. L'objectif du lot tient en une phrase : *on ne peut
+plus composer une configuration qui n'existe pas*.
+
+- **Le fournisseur** se choisit dans une liste fermée sur le registre
+  (`GET /api/fournisseurs`, §6.4bis), plus l'option « défaut de l'exécution » —
+  qui est un choix légitime et non un trou : l'agent suit alors `MAESTRO_PROVIDER`.
+- **Le modèle** n'offre que la gamme du fournisseur retenu. Une gamme **fermée**
+  (`modeles_libres: false`) donne un `<select>` ; une gamme **libre** — le cas de
+  Claude, dont la liste propose sans interdire — donne un champ de saisie à
+  suggestions, si bien qu'un modèle plus récent que le registre reste nommable.
+  Changer de fournisseur **invalide visiblement** un modèle devenu impossible :
+  le champ se vide et le dit, plutôt que de garder une valeur que rien ne sert.
+- **L'effort** n'apparaît que si le modèle en admet. Une liste `efforts` vide est
+  une réponse à part entière — « ce modèle ne se règle pas en effort » — et non
+  « on ne sait pas ; un modèle **hors gamme** n'annonce rien, donc n'ouvre pas le
+  champ : supposer serait le seul moyen d'envoyer un réglage qu'un endpoint
+  refuserait.
+
+Le poste est la **seconde colonne** de cette lecture (#487) : la même ligne dit
+ce que Maestro **sait faire** (le registre) et ce que ce poste-ci **a déjà** (la
+sonde), sans jamais proposer ce qui n'est pas supporté. Ce que la sonde ne peut
+pas savoir est écrit à l'écran, rattaché aux deux champs concernés.
+
+Rien de tout cela n'est recopié dans le front : inscrire un fournisseur au
+registre suffit à le faire apparaître, avec sa gamme et ses efforts.
 
 Ajouter une facette à un agent se fait dans `apps/web/lib/agents.ts` : la barre
 d'onglets, les cartes de la liste et la route dynamique la lisent toutes.
@@ -1255,6 +1352,31 @@ incohérence.
 masqué : `vitalite` a exactement la même propriété et le dépôt l'a acceptée. `SEUIL_SOUFFRANCE_S` est
 un **point de départ nommé, pas une loi** — une règle qui crie trop se règle en déplaçant ce chiffre,
 jamais en ajoutant un juge qui trierait ses propres cris (docs/33 §4.3).
+
+**Le verdict se dit aussi quand personne ne regarde.** Le réveil du service
+(`ServiceExecutions._veiller`, troisième passager de la tâche qui portait déjà le battement et le
+ramassage) écrit **une ligne de journal** par attente au-delà du seuil, et rien d'autre : #355 a rendu
+l'attente lisible *pour qui regarde*, et #568 a perdu 31 % de son temps de mur devant un écran
+allumé. Ce qui est mémorisé n'est **pas le verdict** — il se recalcule à chaque tour et à chaque
+lecture, c'est la propriété qu'on ne défait pas — mais le fait de l'avoir **annoncé** : le réveil
+repasse toutes les 30 s, donc une attente d'une heure vaudrait cent-vingt lignes identiques. La
+mémoire s'oublie dès que l'attente est tranchée, si bien qu'un run qui repart puis se ressuspend est
+signalé de nouveau : c'est une **autre** attente, et le run de #568 en portait trois d'affilée.
+
+Couverture (#739) : [`tests/test_souffrance.py`](../tests/test_souffrance.py) — la règle éprouvée
+comme l'est `vitalite`, sans horloge ni processus (l'instant est un argument), et les **trois
+vérifications propres au dispositif** que [docs/33 §9](./33-decision-surveillance-run.md) réclame au
+lot final : le verdict **survit à un redémarrage** de l'API sans que rien ne soit écrit (les deux
+moitiés sont vérifiées — il revient, *et* rien n'a été persisté pour qu'il revienne, sans quoi le
+test passerait encore le jour où quelqu'un le stockerait) ; un run **au travail** ne le porte jamais,
+sur un échantillon prouvé fautif d'abord (il travaille depuis vingt-quatre fois le seuil, donc une
+règle fondée sur la durée s'y allumerait) ; et il **se lève sur toute issue, refus compris**, la
+moitié qu'on oublie — plus son pendant, une autre demande en vol qui laisse le run suspendu. La
+table des trois attentes est **confrontée** à `STATUTS_EXECUTION_EN_ATTENTE`, comme celle de #572 :
+une quatrième attente hérite du filet ou fait rougir la confrontation. Côté écran,
+`apps/web/tests/runs-immobiles.test.tsx` porte le tri (#738) et ce que la carte rend (#739) —
+notamment que le verdict y est **lu** et jamais recalculé, une formule recopiée côté client se
+périmant à la première correction du seuil.
 
 **Un écran qui se décide vite** (#272, lot 5 de #244). Une validation est bloquante : le moteur est
 en pause et un run attend derrière. Trois décisions le disent, et une seule fois chacune.
@@ -2691,7 +2813,7 @@ n'a pas encore de cadrage, seulement une proposition (`cadrage-absent`, ci-desso
 ⚠ **Un run publié hors de l'API lisait ce tableau à l'envers**, et c'est l'écart que #446 a refermé.
 Rien ne publiait le cycle de vie d'un run de ce côté-là — `execution.statut` n'était émis que par le
 service de pilotage —, donc un `maestro-run --publier --brief humain` **terminé** se retrouvait
-`orphelin` **avec** un brief approuvé : il apparaissait dans *Runs interrompus* et se relançait, ce
+`orphelin` **avec** un brief approuvé : il apparaissait dans *Runs qui n'avancent plus* et se relançait, ce
 qui donnait un second run pour un travail déjà fait. Ni le verdict ni la règle d'affichage ne
 pouvaient l'attraper — ils portent sur l'hôte, jamais sur le travail. La réponse n'était donc pas
 dans l'affichage mais dans la frontière d'exécution : **un hôte publie son issue en partant**,
@@ -2793,7 +2915,7 @@ pas un run vivant, et refuser rendrait la route inutile précisément pour les q
 qui l'ont motivée. Le rapport de coûts penche du même côté que le seuil ci-dessus : rejouer un run
 qui travaillait encore coûte un run en double, qu'on annule ; refuser coûte le cadrage,
 définitivement. L'**UI**, elle, ne propose le geste que sur `orphelin` — et, depuis #486, sur un run
-**éteint** (panneau *Runs interrompus* du tableau de bord, §2.1) : proposer sur une absence
+**éteint** (panneau *Runs qui n'avancent plus* du tableau de bord, §2.1) : proposer sur une absence
 d'information serait deviner, ce que le troisième verdict existe pour refuser.
 
 Le quatrième refus est le seul qui ne porte pas sur la vitalité, et il compte autant : un run mort
@@ -2836,7 +2958,7 @@ Trois conséquences qui font le contrat :
   durable (#97) : un run suspendu le reste **à travers un redémarrage de l'API**, et l'ordre de
   reprise atteint un process que l'API n'a pas lancé ;
 - **un run suspendu bat toujours** (#348). Sans quoi il ressortirait `orphelin` au bout d'une
-  demi-heure et *Runs interrompus* proposerait de le relancer depuis son brief — c'est-à-dire de
+  demi-heure et *Runs qui n'avancent plus* proposerait de le relancer depuis son brief — c'est-à-dire de
   repayer le cadrage d'un run qui n'a rien perdu. Il reste **annulable** pour la même raison qu'un
   run arrêté sur son brief l'est : ne plus pouvoir arrêter ce qu'on a suspendu serait une impasse —
   et depuis #467 (§2.4.5) le bouton d'interruption s'affiche bien à côté de celui de reprise.
@@ -2868,7 +2990,7 @@ codes, plus un sixième arrivé avec #486 :
 | `limite_usage` | le fournisseur a refusé de servir : quota, 429, solde épuisé | attendre la fenêtre suivante, puis relancer |
 | `hote_non_demarre` | le process du run n'est jamais parti (#443) | ni tâche, ni coût, ni journal à lire — regarder la machine |
 | `annulation` | quelqu'un a interrompu, ou refusé le brief | rien à réparer |
-| `extinction` | **Maestro s'est éteint** en emportant le run (#486, `start.sh --stop`) | le **reprendre** au redémarrage (§2.1, panneau *Runs interrompus*) |
+| `extinction` | **Maestro s'est éteint** en emportant le run (#486, `start.sh --stop`) | le **reprendre** au redémarrage (§2.1, panneau *Runs qui n'avancent plus*) |
 
 Le sixième est le seul dont l'écran tire une **conséquence** et pas seulement une
 phrase, et c'est ce qui justifie de ne pas l'avoir fondu dans `annulation` : le statut
@@ -3073,6 +3195,88 @@ badge d'attente et des notifications (items 8/9 du cadrage).
   "justification": "…"                       // raison liée aux échecs analysés
 }
 ```
+
+### 6.4bis Catalogue des fournisseurs, modèles et efforts (#253) — **livré**
+
+Ce que Maestro **sait faire** et ce que ce poste-ci **a déjà**, en une lecture.
+C'est la source unique des listes liées du formulaire d'agent (§2.3.1) : aucune
+liste de fournisseurs ni de modèles n'est recopiée dans le front, et inscrire un
+fournisseur au registre suffit à l'y faire apparaître.
+
+- `GET /api/fournisseurs` → `CatalogueFournisseurs`. Lecture seule, sans
+  credentials ni réseau — la gamme se lit sur les **classes** enregistrées —,
+  et **200 sur un poste nu** : ne rien trouver est une réponse.
+
+```jsonc
+// CatalogueFournisseurs
+{
+  "fournisseurs": [
+    {
+      "nom": "claude",                       // la clé du REGISTRE, à écrire dans `fournisseur`
+      "modeles": [                           // la gamme ANNONCÉE (peut être vide)
+        {
+          "nom": "claude-opus-5",            // la chaîne exacte attendue par le fournisseur
+          "libelle": "Opus 5",               // repli sur `nom` s'il n'y en a pas
+          "efforts": ["low", "medium", "high", "xhigh", "max"]
+                                             // VIDE = « ce modèle ne se règle pas en effort »,
+                                             // jamais « on ne sait pas » ; vide aussi hors gamme
+        }
+      ],
+      "modeles_libres": true,                // un nom hors gamme reste recevable
+      "supporte": true,                      // toujours vrai : il vient du registre
+      "present_ici": true,                   // la sonde du poste l'a trouvé (#487)
+      "utilisable_ici": true,
+      "modeles_ici": ["qwen2.5:3b"],         // ce que ce poste sert, distinct de `modeles`
+      "constats": [ /* ce que la sonde a vu, sans aucune valeur de secret */ ]
+    }
+  ],
+  "hors_registre": ["cli:gemini"],           // vu sur le poste, non supporté — montré, jamais proposé
+  "incertitudes": ["…"]                      // ce que la sonde ne peut pas savoir, dit à l'écran
+}
+```
+
+Deux pièges que ce contrat évite, et qu'il ne faut pas défaire : une gamme
+**vide et libre** (`openai`) veut dire « saisis le nom », pas « aucun modèle » ;
+et un fournisseur enregistré sans gamme déclarée est rendu **avec une gamme
+vide plutôt qu'omis** — il est résolvable, donc il existe pour qui appelle.
+
+L'**effort** est un réglage d'**agent** depuis ce lot (`AgentDefinition.effort`,
+`SurchargeAgent.effort`), pas d'exécution. Il ne part vers le fournisseur que
+lorsque `ModelProvider.effort_admis` rend une valeur — filtre unique : un effort
+obsolète ou un modèle changé depuis sont écartés **sans erreur**, le réglage
+étant un conseil et non une condition d'exécution.
+
+### 6.4ter Régler un agent depuis sa fiche — surcharge et permissions — **livré**
+
+Les deux écritures que la vague #243 a ouvertes derrière la fiche agent. Toutes
+deux sont des **remplacements intégraux**, jamais des diffs, comme
+`PUT /api/catalogue/{nom}`.
+
+- `PUT /api/catalogue/{nom}/reglages` (#259) → la fiche de l'agent. Corps :
+  `{fournisseur, modele, effort}`, chacun facultatif. Surcharge les trois
+  réglages de modèle d'un agent **du code** sans le dupliquer ; ce qui n'est pas
+  envoyé retourne au code et se relit dans `herite`. Poser les trois à `null`
+  **annule** la surcharge, comme le `DELETE`. `403` sur un agent personnalisé
+  (ses réglages *sont* sa définition, `PUT /api/catalogue/{nom}`) ou un acteur
+  système, `404` sur un inconnu.
+- `DELETE /api/catalogue/{nom}/reglages` (#259) → la fiche. **Annule, ne supprime
+  pas** : l'agent reste au catalogue et redevient celui du code. Idempotent —
+  deux verbes voisins pour deux gestes que rien ne doit confondre, la
+  suppression restant réservée aux agents personnalisés.
+- `PUT /api/permissions/{agent}` (#262) → `{agent, permissions}`. Corps
+  `{allow: [], ask: {} | [], deny: []}`. `404` hors catalogue — une politique
+  orpheline ne serait jamais appliquée —, `422` **motivé par le dépôt** : le
+  message nomme la liste et l'entrée en faute, et c'est lui que l'écran affiche.
+  La politique vaut pour la **tâche suivante**, relue à chaud. Elle **ne lit pas**
+  ce qu'elle remplace, et c'est ce qui permet de réparer depuis l'écran un
+  fichier que la lecture refuse.
+
+La fiche du catalogue porte les **mêmes clés** dans ses trois provenances — un
+client n'a jamais à les deviner d'après `source` : `herite` nomme les réglages
+restés au code, `reglages_du_code` donne ce que le code dit de chacun (c'est ce
+que « revenir au défaut » rendrait), `permissions_outils` suggère ce que l'agent
+peut réellement appeler, et `permissions_erreur` porte la cause exacte quand la
+politique stockée est illisible.
 
 ### 6.5 Flux SSE d'un fil de chat — et le **fil global** (#268) — **livré**
 

@@ -9,16 +9,19 @@
  * n'avaient jusqu'ici de place que tout en bas de la fiche du catalogue. Ce
  * fichier ne fait que les aiguiller et leur donner ce qu'une page leur donnait
  * (la navigation après suppression, notamment).
+ *
+ * `OngletLogs` (#266) est le seul à ne reprendre aucune page : ce qu'un agent
+ * faisait ne se lisait nulle part à son échelle. Il suit néanmoins la même règle
+ * — le composant vit dans `components/`, cet aiguillage ne fait que le nommer.
  */
 
 import { useRouter } from "next/navigation";
 
-import {
-  EditeurAgent,
-  McpEtPermissionsAgent,
-} from "@/components/EditeurAgent";
+import { EditeurAgent } from "@/components/EditeurAgent";
 import { EditeurPlaybook } from "@/components/EditeurPlaybook";
 import { FilChat } from "@/components/FilChat";
+import { OngletLogs } from "@/components/OngletLogs";
+import { McpEtPermissionsAgent } from "@/components/OngletMcpAgent";
 import type { CleOngletAgent } from "@/lib/agents";
 
 export function ContenuOngletAgent({
@@ -37,6 +40,8 @@ export function ContenuOngletAgent({
       return <McpEtPermissionsAgent nom={nom} />;
     case "chat":
       return <FilChat agent={nom} />;
+    case "logs":
+      return <OngletLogs nom={nom} />;
   }
 }
 

@@ -9,7 +9,7 @@
  * **la table des groupes doit rester exhaustive**. Un régime sans groupe ne
  * dégrade pas l'affichage, il fait **disparaître** ces runs-là du tableau de
  * bord. C'est l'argument qui a fait ajouter « Interrompus » à #476 — le panneau
- * « Runs interrompus » qui précède ne montre que les récupérables (#349) —, et
+ * « Runs qui n'avancent plus » qui précède ne montre que les récupérables (#349) —, et
  * c'est le même qui a fait ajouter « En pause » ici : #477 a créé ce régime
  * **après** le merge de #476, si bien que suspendre un run le retirait de l'écran
  * qui existe pour dire où l'on en est. Le premier test ci-dessous balaie
@@ -298,7 +298,7 @@ describe("l'écran quand rien ne tourne", () => {
 
 describe("il ne décide de rien", () => {
   it("porte l'état d'un run interrompu, jamais le bouton qui le reprend", () => {
-    // Ce qui appelle un geste passe devant (« Runs interrompus », #349), ce qui
+    // Ce qui appelle un geste passe devant (« Runs qui n'avancent plus », #349), ce qui
     // décrit l'état se lit d'un bloc — un run peut donc paraître deux fois sur
     // l'écran, et c'est voulu.
     monter([

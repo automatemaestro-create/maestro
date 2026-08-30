@@ -48,6 +48,29 @@ d'outil, activité en cours de tâche) est le **bruit de fond** d'un run, pas un
 changement d'état ni un échange — l'y verser noierait les trois signaux que le
 ticket demande de distinguer. Le journal requêtable reste là pour qui veut tout.
 
+Pourquoi le blocage déclaré y entre quand même (#719)
+-----------------------------------------------------
+
+`tache.blocage` est le quatrième flux, et il n'affaiblit pas la règle ci-dessus :
+il en est le cas limite qui l'explique. Un agent qui appelle `signaler_blocage`
+ne produit pas du bruit de fond — il fait le geste **rare et délibéré** de dire
+*pourquoi* il n'avance pas, et c'est précisément le signal dont l'absence a
+coûté les 53 minutes du 14 août. Une règle de détection sait dire « bloquée
+depuis 40 minutes » ; elle ne saura jamais dire « le dépôt de recette refuse mes
+identifiants ».
+
+⚠ C'est aussi pour cela qu'il lui fallait un **type à lui** (docs/31 §3.1) : la
+note de #719 annonçait que « la frise reçoit l'entrée sans travail de son côté »,
+ce qui n'était pas exact — la frise filtre par type, et un blocage rangé sous
+`agent.activite` aurait été consigné puis **invisible ici**, l'inverse exact de
+ce que le verbe existe pour faire. Ouvrir `agent.activite` en bloc pour l'y faire
+entrer aurait noyé les trois autres. Un type distinct est la seule voie qui
+montre le blocage **sans** défaire le tri.
+
+Il ne dit rien du **statut** de la tâche, qui ne bouge pas : un agent qui bute
+n'est pas une tâche `bloquee` au sens de la cascade de #43 — celle-là n'a jamais
+été exécutée, celui-ci travaille encore et parle.
+
 Le couloir de repli, et pourquoi il n'est pas une commodité
 -----------------------------------------------------------
 
@@ -94,6 +117,7 @@ from typing import Any
 
 from maestro.controltower.events import (
     EVENEMENT_MESSAGE_INTER_AGENTS,
+    EVENEMENT_TACHE_BLOCAGE,
     EVENEMENT_TACHE_STATUT,
     EVENEMENT_VALIDATION_DECISION,
     EVENEMENT_VALIDATION_DEMANDE,
@@ -127,6 +151,7 @@ TYPES_FRISE = frozenset(
         EVENEMENT_MESSAGE_INTER_AGENTS,
         EVENEMENT_VALIDATION_DEMANDE,
         EVENEMENT_VALIDATION_DECISION,
+        EVENEMENT_TACHE_BLOCAGE,
     }
 )
 
@@ -149,10 +174,19 @@ def _statut_de(entree: EntreeJournal) -> str:
     `approuvee`/`refusee` du bus, qui sont le vocabulaire de la *file* de
     validation et non celui d'une tâche.
 
+    Un `tache.blocage` (#719) porte le sien aussi, et le porte **tel quel** :
+    `blocage_signale` (`maestro.engine.executor`). Ce mot n'est pas `bloquee`, à
+    dessein — le rendre en `bloquee` ferait lire « cette tâche est morte » là où
+    la vérité est « son agent bute et le dit, en travaillant encore », c'est-à-dire
+    afficher la cascade de #43 au moment précis où quelqu'un demande de l'aide.
+    Ce n'est pas non plus un mot du vocabulaire de docs/03 §3, et la famille des
+    décisions de validation ci-dessus ne l'est déjà pas : ce champ dit le statut
+    de l'**entrée**, pas celui de la carte.
+
     Un message n'a pas de statut de tâche : il rend la chaîne vide, et c'est
     ainsi qu'une vue distingue les deux flux sans interpréter le type.
     """
-    if entree.type == EVENEMENT_TACHE_STATUT:
+    if entree.type in (EVENEMENT_TACHE_STATUT, EVENEMENT_TACHE_BLOCAGE):
         return entree.statut
     if entree.type == EVENEMENT_VALIDATION_DEMANDE:
         return STATUT_EN_ATTENTE_VALIDATION

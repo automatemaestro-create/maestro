@@ -30,10 +30,13 @@
  * Il ne **décide** de rien **en propre**, et cela le distingue des trois panneaux qui
  * le précèdent (§2.1) : ceux-là portent le geste qui lève une attente — trancher un
  * brief, arbitrer une tâche, reprendre un run perdu —, celui-ci montre. Un run
- * interrompu peut donc paraître deux fois sur l'écran, dans « Runs interrompus » avec
- * son bouton et ici avec son état : c'est la même superposition que le Kanban avait
- * avec les validations, et elle est voulue — ce qui appelle un geste passe devant, ce
- * qui décrit l'état reste lisible d'un bloc.
+ * interrompu peut donc paraître deux fois sur l'écran, dans « Runs qui n'avancent
+ * plus » avec son bouton et ici avec son état : c'est la même superposition que le
+ * Kanban avait avec les validations, et elle est voulue — ce qui appelle un geste
+ * passe devant, ce qui décrit l'état reste lisible d'un bloc. Depuis #738 elle vaut
+ * aussi pour un run **suspendu depuis trop longtemps**, que ce panneau-là sort de la
+ * liste et que le groupe « Suspendus » ci-dessous continue de montrer parmi les
+ * autres : le premier dit qu'on l'a oublié, le second où il en est.
  *
  * ⚠ « En propre » compte depuis #477, puis #467 : `CarteRun` porte les **ordres du
  * run** (le mettre en pause, l'interrompre), et cet écran en hérite en la rendant. Ce
@@ -79,8 +82,8 @@ import type {
  * règle à tenir ici, parce qu'un régime sans groupe ne dégrade pas l'affichage :
  * il fait **disparaître** ces runs-là du tableau de bord. Le critère de #476 en
  * nommait trois (en cours, suspendus, soldés du jour) ; **interrompu** a été
- * ajouté avec lui, le panneau « Runs interrompus » qui précède ne montrant que
- * les **récupérables** (orphelin *et* brief approuvé, #349) — un run mort avant
+ * ajouté avec lui, le panneau « Runs qui n'avancent plus » qui précède ne montrant
+ * que les **récupérables** (orphelin *et* brief approuvé, #349) — un run mort avant
  * validation de son cadrage n'aurait été nulle part. **En pause** a été ajouté
  * par #480 pour la raison exacte : #477 a créé le régime après le merge de ce
  * lot-ci, et suspendre un run le retirait alors de l'écran qui existe pour dire

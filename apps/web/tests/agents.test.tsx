@@ -20,13 +20,17 @@
  *   l'extérieur, et retombent sur le profil plutôt que sur un écran vide.
  */
 
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import { CreationAgentEcran } from "@/components/CreationAgentEcran";
 import { ListeAgents } from "@/components/ListeAgents";
 import { OngletsAgent } from "@/components/OngletsAgent";
 import {
+  CHEMIN_CREATION_AGENT,
   cheminOnglet,
+  estNomAgentReserve,
   estOngletAgent,
   ONGLET_AGENT_DEFAUT,
   ONGLETS_AGENT,
@@ -36,37 +40,91 @@ import {
 import { entreeCourante, MENU } from "@/lib/navigation";
 import { REDIRECTIONS_NAVIGATION_V1 } from "@/next.config";
 
-import { ficheCatalogueFactice, poserChemin } from "./aides";
+import {
+  agentFactice,
+  ficheCatalogueFactice,
+  navigations,
+  poserChemin,
+  rendreAvecEtat,
+} from "./aides";
 
 // La liste des agents charge le catalogue par le REST : le réseau reste
 // débranché (`setup.ts`), c'est la fixture qui décide de ce qu'elle affiche.
+// `creerAgent` est déclaré parce que l'écran de création l'importe — jamais
+// appelé ici, ces tests portant sur les sorties et non sur le `POST`.
+//
 const catalogue = vi.hoisted(() => ({ fiches: [] as unknown[] }));
-vi.mock("@/lib/api", () => ({
+// ⚠ Ce mock est **total** (pas d'`importOriginal`) : il *remplace* celui de
+// `setup.ts`, donc ce qu'il n'énumère pas n'existe pas — c'est la leçon de #249,
+// et elle mord ici. L'écran de création monte `FormulaireDefinition`, qui lit le
+// catalogue des fournisseurs depuis #487 : sans cette entrée, les cinq tests de
+// l'écran tombent sur « No "chargerFournisseurs" export is defined ».
+//
+// Le défaut n'était visible d'aucune des deux PR qui l'ont créé : #487 a rendu
+// la lecture obligatoire, #810 a monté ce formulaire dans ces tests-là, et
+// chacune était **verte seule**. Le rouge n'est né que de leur rencontre sur
+// `main` — d'où sa réparation ici plutôt qu'un signalement.
+//
+// `genererDefinitionAgent` (#257) est là pour la même raison, un lot plus tard :
+// jamais appelé ici — ces tests ne touchent pas au bouton « Générer » —, mais un
+// mock qui ne le porterait pas lèverait au premier test qui le fera.
+//
+// L'import est chargé **dans** la fabrique : `vi.mock` est hissé au-dessus des
+// imports du fichier, donc y nommer `fournisseursDuPoste` lèverait un « Cannot
+// access before initialization » (même contrainte que `tests/ecrans-reseau.ts`).
+vi.mock("@/lib/api", async () => ({
   chargerCatalogue: async () => catalogue.fiches,
+  creerAgent: async () => undefined,
+  chargerFournisseurs: async () => {
+    const { fournisseursDuPoste } = await import("./aides");
+    return fournisseursDuPoste();
+  },
+  genererDefinitionAgent: async () => {
+    throw new Error("génération non scriptée dans ce fichier de tests");
+  },
 }));
 
-/** Monte la liste et attend la fin de son chargement différé d'un tick. */
+/**
+ * Monte la liste et attend la fin de son chargement différé d'un tick.
+ *
+ * Sous `FournisseurEtatGlobal` depuis #258 : la liste lit désormais **deux**
+ * sources — le catalogue par le REST (ce qu'un agent est) et le parc par le
+ * contexte du shell (ce qu'il fait). Le parc est passé ici pour que les cartes
+ * portent un état ; sans lui elles rendraient « État inconnu », ce qui est le
+ * comportement voulu mais pas celui que la plupart de ces cas observent.
+ */
 async function rendreListe(
   fiches: ReturnType<typeof ficheCatalogueFactice>[],
   props: Parameters<typeof ListeAgents>[0] = {},
+  parc: ReturnType<typeof agentFactice>[] = fiches.map((fiche) =>
+    agentFactice({ nom: fiche.nom, role: fiche.role }),
+  ),
 ) {
   catalogue.fiches = fiches;
-  render(<ListeAgents {...props} />);
+  rendreAvecEtat(<ListeAgents {...props} />, { agents: parc });
   await waitFor(() =>
     expect(screen.queryByText("Chargement du catalogue…")).toBeNull(),
   );
 }
 
 describe("les facettes d'un agent (lib/agents)", () => {
-  it("reprend les trois anciennes pages, plus MCP & permissions", () => {
+  it("reprend les trois anciennes pages, puis ce qui n'en avait aucune", () => {
     // Profil ← /catalogue, Playbook ← /playbooks, Chat ← /chat/<agent> ; MCP &
     // permissions n'avait aucune page à soi et n'en gagne pas une, seulement
-    // une facette de la fiche.
+    // une facette de la fiche. Logs (#266) non plus, et pour une raison plus
+    // forte : ce qu'un agent faisait ne se lisait *nulle part* à son échelle,
+    // seulement dans le fil global du tableau de bord, tous agents confondus.
+    //
+    // L'ordre est le contenu de l'assertion et pas un détail : les quatre
+    // premiers vont du plus stable au plus vivant, et Logs ferme la rangée
+    // parce que c'est la trace — on l'ouvre en dernier, quand les autres ne
+    // suffisent plus (même place que le journal dans la bascule d'un run, #516).
     expect(ONGLETS_AGENT.map((onglet) => onglet.cle)).toEqual([
       "profil",
       "playbook",
       "mcp",
       "chat",
+      "logs",
     ]);
   });
 
@@ -223,8 +281,146 @@ describe("la liste des agents (ListeAgents)", () => {
     await rendreListe([]);
     expect(screen.getByText(/Aucun agent au catalogue/)).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /Nouvel agent/ }),
+      screen.getByRole("link", { name: /Nouvel agent/ }),
+    ).toHaveAttribute("href", CHEMIN_CREATION_AGENT);
+  });
+
+  it("met la porte de création en tête, avant les cartes (#254)", async () => {
+    // Le reproche du ticket, pris littéralement : le bouton était **sous** les
+    // cartes, donc d'autant plus loin qu'il y avait d'agents. L'ordre du DOM est
+    // ce qui le dit — c'est aussi celui que suit la tabulation.
+    await rendreListe([
+      ficheCatalogueFactice({ nom: "dev" }),
+      ficheCatalogueFactice({ nom: "qa", role: "Testeur" }),
+    ]);
+    const porte = screen.getByRole("link", { name: /Nouvel agent/ });
+    const premiere = screen.getByRole("link", { name: /dev/ });
+    expect(
+      porte.compareDocumentPosition(premiere) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("offre la création avant même que le catalogue soit lu", () => {
+    // Elle n'en dépend pas, et un bouton qui apparaît après coup déplace ce
+    // qu'on s'apprêtait à cliquer. On ne laisse donc pas passer le tick.
+    catalogue.fiches = [];
+    rendreAvecEtat(<ListeAgents />);
+    expect(screen.getByText("Chargement du catalogue…")).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /Nouvel agent/ }),
     ).toBeInTheDocument();
+  });
+});
+
+describe("l'écran de création (#254)", () => {
+  const monter = () => {
+    poserChemin(CHEMIN_CREATION_AGENT);
+    return render(<CreationAgentEcran />);
+  };
+
+  /** Écrit dans le champ « Nom » — le geste le plus court qui fait un brouillon. */
+  const commencerUneSaisie = async (
+    utilisateur: ReturnType<typeof userEvent.setup>,
+  ) => {
+    await utilisateur.type(
+      screen.getByRole("textbox", { name: /Nom/ }),
+      "dev-front",
+    );
+  };
+
+  it("est servi par une route à lui", async () => {
+    // La constante et le dossier doivent dire le même chemin : rien à
+    // l'exécution ne le signalerait, la liste mènerait simplement à un 404.
+    const { existsSync } = await import("node:fs");
+    const path = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const page = path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "..",
+      "app",
+      ...CHEMIN_CREATION_AGENT.split("/").filter(Boolean),
+      "page.tsx",
+    );
+    expect(existsSync(page), `« ${CHEMIN_CREATION_AGENT} » n'a pas de page`).toBe(
+      true,
+    );
+  });
+
+  it("garde le cadre : la page reste sous l'entrée « Agents »", () => {
+    // Le premier critère du ticket vu du menu — barre latérale et barre
+    // supérieure restent en place, seul le contenu change.
+    expect(entreeCourante(CHEMIN_CREATION_AGENT)?.href).toBe("/agents");
+  });
+
+  it("revient à la liste sans rien demander quand rien n'est saisi", () => {
+    monter();
+    const retour = screen.getByRole("link", { name: /Tous les agents/ });
+    expect(retour).toHaveAttribute("href", "/agents");
+    // `fireEvent` rend faux quand le clic a été retenu : sans brouillon, le lien
+    // est suivi comme un lien — rien à demander, rien à intercepter. (jsdom note
+    // au passage qu'il ne sait pas naviguer ; c'est précisément la preuve que le
+    // défaut n'a pas été empêché.)
+    expect(fireEvent.click(retour)).toBe(true);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("quitte sur Échap", async () => {
+    const utilisateur = userEvent.setup();
+    monter();
+    await utilisateur.keyboard("{Escape}");
+    expect(navigations).toContain("/agents");
+  });
+
+  it("signale le brouillon avant de le perdre, par le retour comme par Échap", async () => {
+    const utilisateur = userEvent.setup();
+    monter();
+    await commencerUneSaisie(utilisateur);
+
+    await utilisateur.keyboard("{Escape}");
+    expect(screen.getByRole("alert")).toHaveTextContent(/Brouillon non enregistré/);
+    expect(navigations).not.toContain("/agents");
+
+    // Reprendre la saisie retire la question et laisse le brouillon en place.
+    await utilisateur.click(screen.getByRole("button", { name: /Reprendre la saisie/ }));
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("textbox", { name: /Nom/ })).toHaveValue("dev-front");
+
+    // Le lien de retour pose la même question, et ne navigue pas de lui-même.
+    await utilisateur.click(screen.getByRole("link", { name: /Tous les agents/ }));
+    expect(screen.getByRole("alert")).toHaveTextContent(/Brouillon non enregistré/);
+    expect(navigations).not.toContain("/agents");
+
+    // Abandonner reste un geste explicite.
+    await utilisateur.click(
+      screen.getByRole("button", { name: /Quitter sans enregistrer/ }),
+    );
+    expect(navigations).toContain("/agents");
+  });
+
+  it("ne tranche pas la question sur une frappe répétée d'Échap", async () => {
+    // Un second Échap retire la question au lieu de valider la perte : rien ne
+    // se perd sur une touche qu'on relâche deux fois.
+    const utilisateur = userEvent.setup();
+    monter();
+    await commencerUneSaisie(utilisateur);
+    await utilisateur.keyboard("{Escape}");
+    await utilisateur.keyboard("{Escape}");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(navigations).not.toContain("/agents");
+  });
+
+  it("refuse le nom que la route de création occupe déjà", async () => {
+    const utilisateur = userEvent.setup();
+    monter();
+    await utilisateur.type(
+      screen.getByRole("textbox", { name: /Nom/ }),
+      "nouveau",
+    );
+    expect(estNomAgentReserve("Nouveau ")).toBe(true);
+    expect(estNomAgentReserve("nouveau-2")).toBe(false);
+    expect(screen.getByText(/est l'adresse de cette page/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Créer l'agent/ })).toBeDisabled();
   });
 });
 

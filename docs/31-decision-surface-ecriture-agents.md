@@ -393,6 +393,10 @@ coûterait un champ dans `Task`, dans le journal, dans les événements, dans le
 le grand livre. Quand deux remèdes traitent le même symptôme et que l'un coûte cent fois l'autre,
 le symptôme ne justifie pas le second. C'est un critère du lot final (§8).
 
+> ⚠ **Livré depuis** : `RunReport.synthese` imprime une ligne « Tâche » portant le `task_id` sous le
+> titre de chaque section (#721). La prévision « le remède tient en un champ dans un f-string » s'est
+> vérifiée au mot près — une ligne, aucun champ ajouté nulle part.
+
 > **Verdict : pas d'identité d'instance. L'instance, c'est la tâche.**
 
 **L'effet sur la frise d'activité (#355) — et il est favorable.** #355 est en cours et a fait le
@@ -438,6 +442,7 @@ n'obéit pas à la description **ne franchit rien**.
 
 La décision engage du code — deux verbes —, donc le quatrième critère du ticket appelle un
 découpage. **Parent de suivi #717**, quatre lots, milestone « Collaboration inter-agents ».
+**Les quatre sont livrés** — ce qu'ils ont tenu et ce qu'ils ont corrigé est au **§10**.
 
 | Lot | Ce qu'il fait | ∥ |
 | --- | --- | --- |
@@ -488,3 +493,107 @@ Nommé d'avance, pour qu'on n'ait pas à re-débattre — même patron que
    reprendre entière.
 
 Aucune de ces quatre conditions n'est remplie au 2026-08-28.
+
+---
+
+## 10. La suite — le chantier livré (2026-08-29)
+
+> Écrit au lot final **#721**, le lendemain de la décision. Cette section ne révise ni le verdict
+> ni les cinq instructions du §3 — ils tiennent — mais rend leur **contrepartie constatée** : ce que
+> la note avait bien vu, les **quatre endroits où elle s'est trompée en route**, et l'état de ses
+> portes. Les chiffres sont relevés sur le dépôt, jamais recopiés du plan.
+
+### 10.1 Ce qui a été livré
+
+Les trois premiers lots ont été mergés le **2026-08-29**, de `2ea2ed6` (le porte-outils) à
+`4950464` (le mot à un pair). Le quatrième est la PR qui porte cette section.
+
+| Lot | Livré | Taille |
+| --- | --- | --- |
+| **#718** — le porte-outils | `_outils_maestro` / `_serveur_maestro` / `_serveurs_mcp` séparés dans `maestro/providers/claude.py` : ce que le serveur **porte**, et ce qui décide de le **monter**, cessent d'être la même fonction. Aucun changement de comportement. | +103 / −36, **1 fichier** |
+| **#719** — déclarer un blocage | `maestro/providers/blocage.py` (le vocabulaire), `_outil_blocage` (l'outil), `LocalExecutor._consigne_blocage_signale` (l'étape `<tache>:blocage`), `tache.blocage` jusqu'à la frise. | +436 / −21 |
+| **#720** — écrire à un pair | `maestro/providers/courrier.py`, `_outil_courrier`, `LocalExecutor._courrier` : consigne **puis** publie, `mailbox` descendue jusqu'à l'exécuteur. | +466 / −3 |
+| **#721** — tests et doc | [`tests/test_surface_ecriture_agents.py`](../tests/test_surface_ecriture_agents.py) (les trois critères, chacun avec son témoin), le `task_id` de la synthèse, cette section, docs/03 et docs/04. | cette PR |
+
+### 10.2 Ce que la note avait bien vu
+
+Trois prévisions, tenues et **mesurables** :
+
+- **« le passer à N est un travail de plomberie réel mais borné, sans changement de
+  comportement »** (§4). Le lot 1 pèse **un seul fichier**, +103 / −36, et n'a touché ni
+  `run_agent`, ni le montage, ni `demander_arbitrage`. Les deux verbes suivants s'y sont ajoutés
+  « en un `if` et une ligne », comme annoncé ;
+- **« le remède tient en un champ dans un f-string »** (§6). Une ligne dans `RunReport.synthese`,
+  et aucun champ ajouté à `Task`, au journal, aux événements, aux projections ni au grand livre —
+  c'est-à-dire exactement le coût que l'identité d'instance aurait fait payer ;
+- **« gratuit au grand livre »** (§3.1, §3.2). Les deux étapes portent un `StepUsage()` vide et le
+  pont écarte leur mesure, comme il le fait déjà pour `:ticket` et `:detail`.
+
+### 10.3 Les quatre corrections en route
+
+**① « La frise reçoit l'entrée sans travail de son côté » était faux.** Le §3.1 comptait le blocage
+pour une entrée de plus dans la frise de #355, « qui la reçoit sans travail ». La frise **filtre par
+type** (`TYPES_FRISE`) et écarte `agent.activite` à dessein — le bruit de fond d'un run. Un blocage
+rangé là aurait été consigné puis **invisible**, sans que rien n'échoue : le verbe aurait *paru*
+marcher. D'où un type à lui, `tache.blocage`, ajouté à `TYPES_FRISE` — la seule voie qui le montre
+sans défaire le tri de #355, ouvrir `agent.activite` en bloc faisant entrer relances et refus
+d'outil avec lui. C'est la correction la plus utile du chantier, et elle n'aurait produit **aucun
+symptôme** : le prix d'une note qui suppose une projection au lieu de l'ouvrir.
+
+**② Le statut a dû être inventé, et il ne pouvait pas s'appeler `bloquee`.** Le §3.4 refuse à un
+agent le droit de changer son propre statut ; il n'en tirait pas que le verbe du §3.1 aurait besoin
+d'un statut d'étape **à lui**. `loop.py` porte déjà un `_consigne_blocage` (#43) — le blocage
+*hérité*, une tâche que rien n'a jamais exécutée parce qu'une dépendance a échoué. Le nôtre en est
+le contraire : **l'agent travaille et parle**. Rendre `bloquee` aurait affiché « cette tâche est
+morte » au moment précis où quelqu'un demande de l'aide, et condamné tout son aval par la cascade de
+#43. D'où `blocage_signale`, et une projection qui ne fait que rafraîchir la dernière activité de
+l'agent — il vient de parler, donc il est vivant.
+
+**③ « On le reconduit tel quel » ne valait que pour le partage, pas pour l'ordre.** Le §3.2 tire son
+remède du handoff, qui fait les deux gestes — `publish` *puis* `consigne_message` — et conclut « c'est
+le bon partage, et on le reconduit tel quel ». Le **partage** est bien reconduit ; l'**ordre** a dû
+être inversé. Le handoff abandonne tout, trace comprise, si la publication échoue
+([`handoff.py:123-127`](../maestro/messaging/handoff.py)) : la trace y est *conditionnée* à la
+notification. Or la phrase qui porte toute la décision est « **le journal est la livraison** » — donc
+consigner d'abord, publier ensuite, et avaler l'échec de la publication. Sans cette inversion,
+« un mot adressé à un pair absent est consigné malgré tout » aurait été **faux** dès que le
+transport tombe. Les deux ordres sont indiscernables tant que le transport répond, ce qui est
+exactement pourquoi le lot final l'éprouve sur un transport **en panne**.
+
+**④ Le marqueur ∥ a coûté un renommage — et il valait quand même son prix.** #719 et #720 ne se
+sont pas croisés dans le code, comme le §8 le prévoyait (« aucun ne lit l'autre »). Ils se sont
+croisés dans le **vocabulaire** : chacun a nommé ses constantes à sa façon, l'un par des noms nus
+(`DESCRIPTION_OUTIL`) et l'autre par des suffixes (`DESCRIPTION_COURRIER`). Les deux règlent la
+collision aussi bien pour deux verbes ; celle par suffixes oblige le troisième à en inventer un de
+plus. C'est le lot arrivé le premier sur `main` qui l'a emporté, et l'autre a été renommé dans la
+foulée (`32d0a28`). La leçon n'est pas de renoncer au marqueur — les deux lots ont bien été écrits
+en parallèle — mais que **l'indépendance du code n'emporte pas celle des conventions** : ce que deux
+lots ∥ partagent toujours, c'est le fichier qui les monte.
+
+### 10.4 Ce que le lot final a ajouté au-delà de ses trois critères
+
+Deux constats faits en écrivant les tests, tous deux corrigés ici :
+
+- **`OUTIL_BLOCAGE` et `OUTIL_COURRIER` n'avaient aucun lecteur.** Les deux constantes existent pour
+  que la politique de permissions désigne les verbes (§7 : « un outil MCP s'appelle
+  `mcp__maestro__<nom>`, donc une politique le cite, l'autorise ou le refuse »), et elles n'étaient
+  référencées **nulle part** — ni code, ni test, ni politique d'exemple. Un renommage de `NOM_OUTIL`
+  les aurait suivies en silence, et une politique écrite sur l'ancien nom aurait cessé de désigner
+  quoi que ce soit, c'est-à-dire **n'aurait plus rien interdit**, sans que rien ne rougisse. Le nom
+  littéral est désormais figé par un test ;
+- **quatre références pointaient des constantes disparues** au renommage de ④
+  (`COURRIER_EN_ERREUR`, `DESCRIPTION_COURRIER`), dans `executor.py`, `base.py`, `claude.py` et
+  `courrier.py` lui-même. Rien ne casse — ce sont des commentaires —, mais un lecteur qui cherche le
+  nom cité ne trouve rien, ce qui est la façon la plus sûre de faire douter du reste.
+
+### 10.5 Les quatre portes du §9, au 2026-08-29
+
+Aucune n'est franchie, et le chantier n'en a rapprochée aucune :
+
+1. **« Créer une tâche »** — les deux motifs du refus tiennent : `plafond_cout_usd` est toujours
+   `None` par défaut, et la planification n'est toujours pas plafonnée ;
+2. **l'identité d'instance** — l'exécution reste adossée à la tâche. La dette du §6 étant payée, il
+   ne reste **aucun** symptôme à invoquer pour la rouvrir ailleurs qu'en #356 (ACP) ;
+3. **« écrire à un pair » se re-jugera** si le transport gagne la persistance — `lu` et `traite`
+   restent définis et assignés nulle part, la réserve du §3.2 est donc entière ;
+4. **le canal** — aucun exécuteur non-MCP n'est un chemin de production.

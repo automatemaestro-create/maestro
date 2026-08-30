@@ -97,6 +97,12 @@ RACINE="$(cd "$ICI/../.." && pwd)"
 SETTINGS_RUN="$RACINE/scripts/orchestrate/settings.run.json"
 SETTINGS_DEPOT="$RACINE/.claude/settings.json"
 
+# La lecture des blocs de permissions et le matching des règles sont PARTAGÉS avec `ecart-run.sh`
+# (#789) : deux verbes qui posent la même question au même corpus doivent en tirer le même verdict,
+# faute de quoi l'un enverrait élargir une allowlist que l'autre juge suffisante.
+# shellcheck source=scripts/orchestrate/permissions.sh
+. "$ICI/permissions.sh"
+
 # Le journal est celui du CLONE PRINCIPAL, d'où qu'on le lise (#307). C'est là que `run.sh` est
 # lancé et donc là qu'il écrit ; depuis un worktree, `$RACINE/.maestro/orchestrate` désigne un
 # répertoire vide, et la seule façon d'atteindre le vrai journal serait un CHEMIN ABSOLU — que la
@@ -342,15 +348,10 @@ commande_gc() {
 }
 
 # bloc_de <fichier json> <allow|ask|deny> : les règles d'un bloc, une par ligne, préfixées du nom du
-# bloc. Même lecture que le `deny_de` de `guard.sh` — et volontairement pas une copie figée ici : le
-# classement doit suivre les règles réellement en vigueur, sinon il se périme sans que rien ne le
+# bloc. La lecture vit dans `permissions.sh` depuis #789 — volontairement pas une copie figée ici :
+# le classement doit suivre les règles réellement en vigueur, sinon il se périme sans que rien ne le
 # dise, ce qui est exactement le défaut que #307 est venu corriger.
-bloc_de() {
-  [ -f "$1" ] || return 0
-  awk -v bloc="$2" '$0 ~ "\"" bloc "\"[[:space:]]*:" { dans = 1 } dans { print; if (/\]/) exit }' \
-    "$1" 2>/dev/null |
-    grep -o '"[^"]*"' | tr -d '"' | grep -v "^$2\$" | sed "s/^/$2	/"
-}
+bloc_de() { perm_bloc "$1" "$2"; }
 
 # --- refus : l'agrégat des permission_denials ---------------------------------------------------------
 # Deux passes, parce qu'elles ne lisent pas la même chose. La PREMIÈRE ouvre un `<iid>.json` — un
@@ -506,46 +507,10 @@ function nettoie(seg) {
   return seg
 }
 
-# matche(seg, regles, n, large) : une de ces règles couvre-t-elle ce maillon ? On rejoue le matching
-# du CLI, qui est un matching de PRÉFIXE DE COMMANDE : `Bash(git status:*)` couvre « git status » et
-# tout ce qui commence par « git status » ; sans `:*` la règle est exacte. Le maillon est jugé sur
-# son TEXTE et non sur son premier mot — une règle borne « command -v » ou « bash scripts/… »,
-# qu'un verbe seul ne rendrait pas.
-#
-# `large` sert les règles `ask`/`deny`, et l'écart est délibéré : leurs OPTIONS peuvent être
-# n'importe où dans la commande. Le CLI comprend les options, un préfixe non — sans cela
-# `git commit --no-edit --no-verify` échapperait à `Bash(git commit --no-verify:*)`, et le refus
-# VOULU qu'il déclenche irait grossir « inclassé ». La tête de la règle, elle, reste un préfixe :
-# la relâcher aussi ferait tomber `git commit -m "clean up"` sous `Bash(git clean:*)`.
-function matche(seg, regles, n, large,   i, r, p, k, mots, j, tete, ok) {
-  for (i = 1; i <= n; i++) {
-    r = regles[i]
-    if (r !~ /^Bash\(.*\)$/) continue
-    p = substr(r, 6, length(r) - 6)
-    if (p !~ /:\*$/) { if (seg == p) return 1; continue }
-    p = substr(p, 1, length(p) - 2)
-    if (!large) {
-      if (seg == p || index(seg, p " ") == 1) return 1
-      continue
-    }
-    k = split(p, mots, /[ \t]+/)
-    tete = ""
-    for (j = 1; j <= k && substr(mots[j], 1, 1) != "-"; j++)
-      tete = tete (tete == "" ? "" : " ") mots[j]
-    if (tete != "" && seg != tete && index(seg, tete " ") != 1) continue
-    ok = 1
-    for (; j <= k; j++) if (seg !~ ("(^|[ \t])" mots[j] "([ \t]|$)")) { ok = 0; break }
-    if (ok) return 1
-  }
-  return 0
-}
-
-# outil_couvert(nom) : l'outil lui-même est-il autorisé, nu (« Write ») ou paramétré (« Write(…) ») ?
-function outil_couvert(nom,   i) {
-  for (i = 1; i <= n_allow; i++)
-    if (allow[i] == nom || index(allow[i], nom "(") == 1) return 1
-  return 0
-}
+# `matche(seg, regles, n, large)` et `outil_couvert(nom, regles, n)` sont définies dans
+# `scripts/orchestrate/permissions.awk`, concaténé DEVANT ce programme (#789) : `ecart-run.sh` pose
+# la même question aux mêmes règles, et deux implémentations finiraient par ne plus rendre le même
+# verdict sur la même règle — celui-là même qui décide si l'on va élargir une allowlist.
 
 # chemin_hors(cmd) : l'appel vise-t-il un chemin hors du répertoire de travail ? C'est le TEXTE qui
 # le dit, et il suffit : le journal ne sait pas où était le worktree, et n'en a pas besoin — une
@@ -673,7 +638,7 @@ NF >= 3 {
     if (outil ~ /^(Write|Edit|NotebookEdit|MultiEdit)$/ && cible ~ /(^|[\/\\])\.claude[\/\\]/) {
       claude_n++
       famille = "claude"
-    } else if (!outil_couvert(outil)) {
+    } else if (!outil_couvert(outil, allow, n_allow)) {
       famille = "trou"
       if (!(outil in nu_n)) nb_nu++
       nu_n[outil]++
@@ -891,14 +856,16 @@ EOF
   # git/gh du dépôt, et les ignorer rangerait chaque `git status` refusé en trou d'allowlist.
   # Le fichier va dans le temporaire du système et non sous `.maestro/` : c'est un brouillon de
   # calcul que personne n'ouvre, et la règle de §8.5 ne vise que ce qu'un script invite à lire.
-  local regles f bloc
+  local regles
   regles="$(mktemp "${TMPDIR:-/tmp}/maestro-allow.XXXXXX" 2>/dev/null)" || regles=""
   if [ -n "$regles" ]; then
     trap 'rm -f "$regles" 2>/dev/null' RETURN
-    for f in "$SETTINGS_RUN" "$SETTINGS_DEPOT"; do
-      for bloc in allow ask deny; do bloc_de "$f" "$bloc"; done
-    done | sort -u > "$regles"
+    perm_union "$SETTINGS_RUN" "$SETTINGS_DEPOT" > "$regles"
   fi
+
+  # Le matching lui-même arrive de `permissions.awk`, concaténé DEVANT le programme (#789).
+  local prog
+  prog="$(perm_awk)$AWK_AGREGE"
 
   # LC_ALL=C : le tri et les comptes se font sur des octets, comme partout ailleurs dans ce dépôt.
   if [ -n "$mode" ]; then
@@ -906,12 +873,12 @@ EOF
     # CODE (3) plutôt que par une sortie vide, qu'un appelant ne pourrait pas distinguer d'un échec.
     local tsv
     tsv="$(printf '%s' "$brut" | LC_ALL=C awk -v portee="$portee" -v regles="$regles" \
-      -v mode="$mode" "$AWK_AGREGE")"
+      -v mode="$mode" "$prog")"
     [ -n "$tsv" ] || return 3
     printf '%s\n' "$tsv"
     return 0
   fi
-  printf '%s' "$brut" | LC_ALL=C awk -v portee="$portee" -v regles="$regles" "$AWK_AGREGE"
+  printf '%s' "$brut" | LC_ALL=C awk -v portee="$portee" -v regles="$regles" "$prog"
   return 0
 }
 

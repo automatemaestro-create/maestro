@@ -307,6 +307,79 @@ export function IconeAgent(props: Props) {
   );
 }
 
+/* ------------------------------------------------------------------ *
+ * Rôles d'agent — ce que l'agent fait, et non qu'il est un agent (#258)
+ * ------------------------------------------------------------------ */
+
+/*
+ * `IconeAgent` dit « c'est un agent » : posée sur chaque carte de la liste, elle
+ * répétait la seule chose que toutes les cartes ont en commun — le reproche de
+ * la revue (« les icônes sont répétitives »). Ces cinq-là disent **lequel**, et
+ * ne se ressemblent donc pas entre elles : c'est leur raison d'être.
+ *
+ * Elles couvrent les cinq rôles que `maestro/agents/catalog.py` déclare, et
+ * elles s'arrêtent là. Le rôle d'un agent personnalisé est du texte libre :
+ * `iconeDuRole` (lib/agents) retombe alors sur `IconeAgent`, qui reste vraie.
+ */
+
+/** Rôle « Développeur » — les chevrons du code. */
+export function IconeRoleDeveloppeur(props: Props) {
+  return (
+    <Trait {...props}>
+      <path d="m8 8-4.5 4L8 16" />
+      <path d="m16 8 4.5 4L16 16" />
+      <path d="m13.5 4.5-3 15" />
+    </Trait>
+  );
+}
+
+/** Rôle « Base de données » — le cylindre. */
+export function IconeRoleBaseDeDonnees(props: Props) {
+  return (
+    <Trait {...props}>
+      <ellipse cx="12" cy="5.75" rx="7.5" ry="3.25" />
+      <path d="M4.5 5.75v12.5c0 1.8 3.36 3.25 7.5 3.25s7.5-1.45 7.5-3.25V5.75" />
+      <path d="M4.5 12c0 1.8 3.36 3.25 7.5 3.25s7.5-1.45 7.5-3.25" />
+    </Trait>
+  );
+}
+
+/** Rôle « DevOps » — la boucle continue de la livraison. */
+export function IconeRoleDevops(props: Props) {
+  return (
+    <Trait {...props}>
+      <path d="M4.5 12a7.5 7.5 0 0 1 12.8-5.3l2.2 2.1" />
+      <path d="M19.5 12a7.5 7.5 0 0 1-12.8 5.3l-2.2-2.1" />
+      <path d="M19.8 4.5v4.3h-4.3" />
+      <path d="M4.2 19.5v-4.3h4.3" />
+    </Trait>
+  );
+}
+
+/** Rôle « Designer » — la règle et le crayon. */
+export function IconeRoleDesign(props: Props) {
+  return (
+    <Trait {...props}>
+      <path d="M4 20h16" />
+      <path d="M6.5 16.5 16 7a2.12 2.12 0 0 1 3 3l-9.5 9.5" />
+      <path d="m14 9 3 3" />
+      <path d="M4 12h4.5" />
+      <path d="M4 4h9" />
+    </Trait>
+  );
+}
+
+/** Rôle « QA / Testeur » — la loupe qui vérifie. */
+export function IconeRoleQa(props: Props) {
+  return (
+    <Trait {...props}>
+      <circle cx="10.5" cy="10.5" r="6.5" />
+      <path d="m15.25 15.25 5.25 5.25" />
+      <path d="m7.75 10.5 2 2 3.5-3.5" />
+    </Trait>
+  );
+}
+
 /** Un serveur MCP — l'ancien 🔌. */
 export function IconeMcp(props: Props) {
   return (

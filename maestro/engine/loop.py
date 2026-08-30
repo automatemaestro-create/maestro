@@ -254,7 +254,15 @@ class RunReport:
         )
 
     def synthese(self) -> str:
-        """Rend l'agrégat en Markdown : récap chiffré puis livrable par tâche."""
+        """Rend l'agrégat en Markdown : récap chiffré puis livrable par tâche.
+
+        Chaque section porte le `task_id` de sa tâche (#721). `tache_id` est la
+        clé partout où l'on mesure — journal, JSON du rapport, grand livre,
+        télémétrie —, et cette surface-ci était **l'exception** que docs/31 §6
+        nomme : celle qu'un humain lit. Sans elle, deux tâches de même titre
+        routées vers le même rôle rendent deux sections indiscernables, et le
+        rapport dit qu'il s'est passé deux choses sans dire lesquelles.
+        """
         lignes = [
             f"# Synthèse — {self.objectif}",
             "",
@@ -280,6 +288,19 @@ class RunReport:
                 etat = "[échec]"
             competences = ", ".join(r.competences_requises)
             lignes.append(f"## {etat} {r.titre}")
+            # La clé de la tâche, imprimée ici et nulle part ailleurs jusqu'à
+            # #721 : c'est la **dette d'un refus**. docs/31 §6 écarte l'identité
+            # d'instance (pas de `slot_id`) au motif que `tache_id` la porte déjà
+            # partout où l'on mesure — journal, JSON du rapport, grand livre,
+            # métadonnées Langfuse. Une seule surface y échappait, celle-ci : deux
+            # tâches de même titre routées vers le même rôle y rendaient deux
+            # sections rigoureusement identiques, et rien ne disait laquelle on
+            # lisait. Le remède n'est donc pas de nommer l'instance — ce serait un
+            # champ dans `Task`, dans le journal, dans les événements, dans les
+            # projections et dans le grand livre — mais **d'imprimer la clé qu'on
+            # a déjà**. Quand deux remèdes traitent le même symptôme et que l'un
+            # coûte cent fois l'autre, le symptôme ne justifie pas le second.
+            lignes.append(f"- Tâche : `{r.task_id}`")
             lignes.append(f"- Agent : {r.role} (`{r.agent}`) — compétences : {competences}")
             if r.worker:
                 lignes.append(f"- Worker : `{r.worker}`")
@@ -397,7 +418,10 @@ class OrchestrationEngine:
         # les limites de débit d'un fournisseur sur un plan très large.
         self._max_parallele = max_parallele
         # Messagerie inter-agents (#44) — None : pas de handoff par message, la
-        # synchronisation des dépendances reste purement en process.
+        # synchronisation des dépendances reste purement en process. Elle est
+        # aussi passée à l'exécuteur local (#720), qui y notifie les mots qu'un
+        # agent adresse à un pair : là non plus, None ne retire rien d'essentiel
+        # — le journal reste la livraison, et il n'y a alors personne à prévenir.
         self._mailbox = mailbox
         # Frontière d'exécution (#41) : en process par défaut ; un exécuteur injecté
         # (ex. `maestro.queue.CeleryExecutor`) distribue les tâches à des workers.
@@ -406,6 +430,11 @@ class OrchestrationEngine:
         # chaud ; ignorés si un exécuteur est injecté (en distribué, chaque worker
         # câble les siens — `relance` (#91) comprise, cf.
         # maestro.queue.worker.configurer_worker).
+        # La `mailbox` descend aussi (#720) : c'est la **même** que celle du relais
+        # de handoff, et pour deux usages qui ne se confondent pas — la boucle y
+        # annonce les fins de tâche, l'exécuteur y notifie le mot qu'un agent
+        # adresse à un pair. Deux transports séparés donneraient deux moitiés de
+        # messagerie ; un seul, deux producteurs, chacun avec sa promesse.
         self._executor = (
             executor
             if executor is not None
@@ -421,6 +450,7 @@ class OrchestrationEngine:
                 permissions=permissions,
                 relance=relance,
                 projets=projets,
+                mailbox=mailbox,
             )
         )
 

@@ -55,12 +55,19 @@ MOI = "MaestroAgents"          # le compte d'automatisation partagé (cf. GL_BOT
 # « consultatif » l'est resté. Les lectures en sont volontairement absentes — lire est le travail
 # normal d'un bilan de santé ou d'un garde-fou.
 #
-# Le premier motif couvre TOUTES les écritures de l'API REST d'un coup : `gh api -X <MÉTHODE>` est
-# la forme unique qu'elles prennent (PATCH d'un ticket, POST d'un commentaire…), et une liste de
+# Les DEUX premiers motifs couvrent toutes les écritures de l'API REST d'un coup — une liste de
 # chemins se serait périmée au premier verbe ajouté.
+#
+# ⚠ IL EN FAUT DEUX, ET C'EST UNE CORRECTION (#761). `gh api -X <MÉTHODE>` était annoncé ici comme
+# « la forme unique » des écritures REST, et ce ne l'était plus : `gl_milestone_rail` (#617) puis
+# `gl_milestone_section` (#757) écrivent la description d'un jalon par `gh api --method PATCH`,
+# la forme longue du même drapeau. Un verbe qui l'emploie passait donc pour LECTURE SEULE aux yeux
+# d'`ecritures()` — c'est-à-dire un ✓ sur une question jamais posée, exactement ce que cette liste
+# existe pour empêcher. Le double, lui, lisait ces appels comme des GET : voir `methode()`.
 ECRITURES = (
-    "api\t-X", "pr\tcreate", "pr\tedit", "pr\tmerge", "pr\tclose", "pr\tready",
-    "issue\tcreate", "issue\tedit", "issue\tclose", "issue\tcomment", "label\tcreate",
+    "api\t-X", "api\t--method", "pr\tcreate", "pr\tedit", "pr\tmerge", "pr\tclose",
+    "pr\tready", "issue\tcreate", "issue\tedit", "issue\tclose", "issue\tcomment",
+    "label\tcreate",
 )
 
 # --- Le gh factice --------------------------------------------------------------------------------
@@ -68,8 +75,10 @@ ECRITURES = (
 # Les réponses GraphQL/REST sont choisies par la PREMIÈRE règle dont tous les fragments `contient`
 # apparaissent dans la requête — les règles les plus spécifiques se placent donc en tête.
 FAUX_GH = r'''
+import base64
 import json
 import os
+import re
 import sys
 
 with open(os.environ["MAESTRO_FAUX_GH"], encoding="utf-8") as f:
@@ -269,11 +278,104 @@ def chemin_api(args):
     return ""
 
 
+def methode(args):
+    """La méthode HTTP d'un `gh api`, quelle que soit la forme du drapeau (#761).
+
+    ⚠ LES DEUX FORMES SONT DANS LE DÉPÔT, et n'en connaître qu'une revient à lire une écriture
+    comme une lecture : `-X PATCH` partout, `--method PATCH` dans les deux verbes qui écrivent la
+    DESCRIPTION d'un jalon (`gl_milestone_rail` #617, `gl_milestone_section` #757). Cf. `ECRITURES`.
+    """
+    for drapeau in ("-X", "--method"):
+        if drapeau in args:
+            i = args.index(drapeau)
+            if i + 1 < len(args):
+                return args[i + 1].upper()
+    return ""
+
+
+def valeur_champ(args, nom):
+    """La valeur d'un `-f/-F/--field/--raw-field <nom>=<valeur>` — le corps d'une écriture REST."""
+    for i, a in enumerate(args):
+        if a in ("-f", "-F", "--field", "--raw-field") and i + 1 < len(args):
+            cle, sep, valeur = args[i + 1].partition("=")
+            if sep and cle == nom:
+                return valeur
+    return None
+
+
+def jalons_rest(chemin, meth, args):
+    """Les jalons, servis NATIVEMENT quand un test en décrit (`etat["jalons"]`) — jamais par règle.
+
+    C'est le même parti pris que la vue canonique d'un ticket plus haut, et pour la même raison en
+    plus forte : les deux lectures de jalons de `lib.sh` passent par `gh api --jq`, or le double
+    N'EXÉCUTE PAS jq. Une règle statique obligerait donc chaque test à écrire à la main le résultat
+    déjà filtré — c'est-à-dire à recopier la sélection du verbe qu'il prétend éprouver, et à rester
+    vert le jour où elle change. Le double joue donc jq, une fois, ici :
+
+    * ``milestones?state=all`` → « <numero>\\n<description> » du jalon dont le titre est celui de
+      **$GL_MS_TITRE** — la variable que `gl_milestone_numero_desc` pose sur `gh` lui-même, donc la
+      sélection est faite sur la MÊME donnée que la vraie ;
+    * ``milestones?state=open`` → une ligne TSV par jalon **entièrement soldé**
+      (``closed > 0 et open == 0``), description en base64, comme le `@base64` du verbe ;
+    * ``milestones/<n>`` → la description seule, ce que `gl_milestone_rail` lit pour la préserver ;
+    * ``PATCH milestones/<n>`` → la description est **conservée dans l'état**, si bien qu'une pose
+      se relit. Sans cette moitié, l'aller-retour et l'idempotence ne seraient pas éprouvables.
+
+    ⚠ CE QUE LA FIDÉLITÉ DU DOUBLE NE COUVRE PAS : le texte du programme jq lui-même. Il est gardé
+    à part, par lecture de `lib.sh` (`test_le_double_rejoue_la_selection_du_verbe`) — sans quoi une
+    sélection modifiée dans le verbe laisserait ce double rendre l'ancienne, et la suite verte.
+
+    ⚠ UNE ÉCRITURE NE SURVIT PAS À UN `pose_etat` : celui-ci réécrit le fichier depuis l'état que le
+    test tient en mémoire, où le PATCH n'est jamais remonté. Repeupler les jalons APRÈS une pose est
+    donc un décor neuf, jamais une relecture — ce qui est le comportement voulu, mais se sait.
+    """
+    jalons = etat.get("jalons")
+    if jalons is None or "/milestones" not in chemin:
+        return
+    if meth == "PATCH":
+        numero = chemin.rsplit("/", 1)[-1]
+        for jalon in jalons:
+            if str(jalon.get("number")) == numero:
+                description = valeur_champ(args, "description")
+                if description is not None:
+                    jalon["description"] = description
+                with open(os.environ["MAESTRO_FAUX_GH"], "w", encoding="utf-8") as f:
+                    json.dump(etat, f, ensure_ascii=False, indent=2)
+                sortie(compact({"number": jalon["number"], "title": jalon["title"]}))
+        sortie(compact({"message": "Not Found"}), code=1)
+    if "state=all" in chemin:
+        vise = os.environ.get("GL_MS_TITRE", "")
+        for jalon in jalons:
+            if jalon["title"] == vise:
+                sortie(str(jalon["number"]) + "\n" + jalon.get("description", "") + "\n")
+        sortie()                       # `empty` en jq : sortie vide, code 0
+    if re.fullmatch(r".*/milestones/\d+", chemin):
+        numero = chemin.rsplit("/", 1)[-1]
+        for jalon in jalons:
+            if str(jalon.get("number")) == numero:
+                sortie(jalon.get("description", "") + "\n")
+        sortie(compact({"message": "Not Found"}), code=1)
+    if "state=open" in chemin:
+        lignes = []
+        for jalon in jalons:
+            if jalon.get("state", "open") != "open":
+                continue
+            fermes, ouverts = jalon.get("closed_issues", 0), jalon.get("open_issues", 0)
+            if not (fermes > 0 and ouverts == 0):
+                continue
+            corps = base64.b64encode(jalon.get("description", "").encode("utf-8")).decode("ascii")
+            lignes.append("\t".join([jalon["title"], str(fermes), str(fermes + ouverts), corps]))
+        sortie("".join(ligne + "\n" for ligne in lignes))
+    sortie(code=1)
+
+
 if args[:1] == ["api"]:
     chemin = chemin_api(args)
-    # ÉCRITURE : `gh api -X <MÉTHODE>`. Le double rend le minimum que lib.sh lit — un « number » —,
-    # sauf si une règle `ecritures` décrit autre chose (un refus, une URL précise).
-    if "-X" in args and args[args.index("-X") + 1] in ("POST", "PATCH", "PUT", "DELETE"):
+    meth = methode(args)
+    jalons_rest(chemin, meth, args)
+    # ÉCRITURE : `gh api -X <MÉTHODE>` ou `--method`. Le double rend le minimum que lib.sh lit —
+    # un « number » —, sauf si une règle `ecritures` décrit autre chose (un refus, une URL précise).
+    if meth in ("POST", "PATCH", "PUT", "DELETE"):
         reponse = repond(etat.get("ecritures", []), chemin)
         if reponse is not None:
             sortie(reponse, code=etat.get("ecriture_code", 0))
@@ -641,6 +743,50 @@ def regle_merge(pr: int = 42, merge: bool = True) -> dict:
     return {"contient": [f"pulls/{pr}/merge"], "reponse": corps}
 
 
+# --- Les jalons et leur description (#761, chantier #756) -----------------------------------------
+# Un jalon se décrit ici comme un ticket se décrit par `corps_ticket` : en clair, dans les mots du
+# test. Ce qu'il devient côté API — le `@base64` de la description, la sélection par titre, la
+# persistance d'un PATCH — est le travail de `jalons_rest` dans le `gh` factice.
+
+
+def jalon(
+    titre: str,
+    description: str = "",
+    ouverts: int = 0,
+    fermes: int = 0,
+    numero: int = 17,
+    etat: str = "open",
+) -> dict:
+    """Un jalon du dépôt jetable, dans la forme que sert `jalons_rest`.
+
+    Les défauts décrivent le cas qui intéresse le bouclage : un jalon **actif et entièrement soldé**
+    se fabrique en donnant `fermes` seul. Un jalon **vide** (`0/0`) et un jalon **en cours**
+    (`ouverts > 0`) sont les deux abstentions à côté, et ils se décrivent aussi bien — c'est ce qui
+    permet de vérifier que la convocation ne les prend pas.
+    """
+    return {
+        "number": numero,
+        "title": titre,
+        "description": description,
+        "state": etat,
+        "open_issues": ouverts,
+        "closed_issues": fermes,
+    }
+
+
+def description_du_jalon(depot: Depot, titre: str) -> str:
+    """La description du jalon telle que l'état du double la porte APRÈS d'éventuelles écritures.
+
+    C'est la relecture qui donne son sens au PATCH persistant : sans elle, on ne pourrait vérifier
+    ce qui a été écrit qu'en relisant le journal — donc l'appel, et jamais son effet.
+    """
+    etat = json.loads(depot.etat_json.read_text(encoding="utf-8"))
+    for entree in etat.get("jalons", []):
+        if entree["title"] == titre:
+            return entree.get("description", "")
+    raise AssertionError(f"aucun jalon « {titre} » dans l'état du double")
+
+
 def corps_ticket(
     titre: str,
     labels: str,
@@ -876,6 +1022,11 @@ def monte_depot(tmp_path: Path) -> Depot:
         # `reprendre-en-cours` (#329) lui demande d'où sort le ticket qu'on reprend : le journal
         # d'un run est le seul endroit qui sache dire quel run l'a laissé là, et avec quel verdict.
         "scripts/orchestrate/journal.sh",
+        # La lecture des blocs de permissions et le matching des règles, que `journal.sh` partage
+        # depuis #789 avec `ecart-run.sh`. Sans eux, `refus` n'a plus de `matche()` : il rangerait
+        # tout en « inclassé » au lieu d'échouer, c'est-à-dire un vert qui ne garde plus rien.
+        "scripts/orchestrate/permissions.sh",
+        "scripts/orchestrate/permissions.awk",
         # Le monteur du projet Projects v2 (#359) : c'est lui qui pose les six options du champ
         # Status, donc le seul endroit du dépôt où le VOCABULAIRE du cycle de vie est écrit deux
         # fois (ici et dans `gl_workflow_label`). Voir tests/test_cycle_de_vie.py.

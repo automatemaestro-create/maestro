@@ -138,8 +138,9 @@ compte que le résumé rend déjà.
 
 ### 3.2 Les trois mots du ticket, une fois démêlés
 
-- **Agents morts** → c'est `vitalite`, **livré** (#348), rendu par `PanneauRunsPerdus.tsx:48-84` avec
-  son geste (« Reprendre »). Rien à faire.
+- **Agents morts** → c'est `vitalite`, **livré** (#348), rendu par `PanneauRunsImmobiles.tsx` avec
+  son geste (« Reprendre ») — le fichier s'appelait `PanneauRunsPerdus.tsx` jusqu'à #738, qui lui a
+  confié le second verdict. Rien à faire.
 - **Blocages** → coupé en deux ci-dessus. La tâche bloquée est *voir* ; le run suspendu est le sujet.
 - **Pauses** → **écartées, et c'est une décision.** Une pause est le seul de ces états où **quelqu'un
   a déjà décidé** : elle est posée par un geste humain explicite (`POST /api/executions/{run_id}/pause`,
@@ -370,7 +371,7 @@ fort trouverait une liste Python ordinaire.
 
 ### 7.1 Ce que #647 a laissé derrière lui
 
-[docs/31 §3](./31-decision-cran-orchestrateur.md) (**#647**) **retire** le cran `orchestrateur`, et
+[docs/32 §3](./32-decision-cran-orchestrateur.md) (**#647**) **retire** le cran `orchestrateur`, et
 son §4 conclut : pas d'escalade, « parce qu'après ① il n'y a plus de milieu d'où escalader ». Le
 routage à trois crans n'en a donc plus que deux — `auto` et `humain` — et **aucun canal machine sur
 aucun chemin**.
@@ -401,13 +402,28 @@ Troisième objet, même règle, même conclusion. **La file de validations est p
 
 Il n'y a rien à inventer : le seul verdict de surveillance existant, `vitalite`, ne passe **pas** par
 la file. Il est servi sur le résumé du run (`GET /api/executions`) et rendu par
-[`PanneauRunsPerdus.tsx:48-84`](../apps/web/components/PanneauRunsPerdus.tsx), qui **sort** les runs
+[`PanneauRunsImmobiles.tsx`](../apps/web/components/PanneauRunsImmobiles.tsx), qui **sort** les runs
 orphelins de la liste et leur attache leur geste.
 
 > **Une alerte est un état de run rendu visible, jamais une carte à trancher.**
 
 C'est la forme retenue, et elle a le mérite d'avoir déjà été jugée bonne sur la seule question du
 même genre.
+
+**#738 l'a appliquée**, et le panneau y a gagné son nom actuel — il s'appelait *Runs interrompus*
+(`PanneauRunsPerdus.tsx`) tant qu'il ne portait qu'un verdict. Il en range désormais **deux**, sous
+deux familles nommées et deux gestes distincts : « Personne n'a répondu » renvoie vers le run,
+« Leur hôte s'est tu » garde son bouton. Deux points valent d'être notés, parce qu'ils ne se
+déduisaient pas de la décision :
+
+- **le verdict du backend ne décide pas seul de ce qu'on signale.** `en_souffrance` juge une attente
+  et rien d'autre, donc il dit `true` sur des runs à qui l'écran n'a rien d'utile à proposer — un
+  **orphelin** arrêté sur son brief (personne ne recevra la réponse : il est dans l'autre famille) et
+  un run **en pause**, où quelqu'un a déjà décidé (§3.2). L'écran les écarte en rejouant `regimeDuRun`,
+  la règle qu'il tient depuis #474, plutôt qu'en réécrivant trois conditions à côté ;
+- **un bloc, pas deux.** Le corps du tableau de bord est plafonné à trois blocs de plein format
+  (#539, docs/30 §4) et en porte déjà trois d'arbitrage : un quatrième panneau était la réponse
+  évidente et la mauvaise.
 
 ### 7.4 `supervision.py` est-il le véhicule ? Pas en l'état — et le best-effort reste
 
@@ -464,7 +480,7 @@ pose, et le troisième vient après les deux — l'arbitrage a été **rendu**, 
 | Lot | Ce qu'il fait |
 | --- | --- |
 | **#737** | Le verdict : `en_souffrance` (fonction pure + constante motivée), posé sur le résumé de run à côté de `vitalite`, et le contrat d'API dans docs/05 |
-| **#738** | L'écran le **trie** : un run en souffrance sort de la liste, comme un orphelin sort par `PanneauRunsPerdus` |
+| **#738** | L'écran le **trie** : un run en souffrance sort de la liste, comme un orphelin en sort — même bloc, deux familles (`PanneauRunsImmobiles`, §7.3) |
 | **#739** | Tests + doc |
 
 **Quatre choses à ne pas défaire dans ce chantier :**
@@ -496,7 +512,8 @@ avoir construit le premier pour un cas mesuré. Elle est au §10 comme porte, pa
 ## 10. Ce qui rouvrirait la décision
 
 Nommé d'avance, même patron que [docs/28 §8](./28-decision-frontiere-execution-run.md),
-[docs/29 §10](./29-decision-run-objet-de-premier-plan.md) et les deux notes de docs/31.
+[docs/29 §10](./29-decision-run-objet-de-premier-plan.md), [docs/31 §9](./31-decision-surface-ecriture-agents.md)
+et [docs/32 §8](./32-decision-cran-orchestrateur.md).
 
 1. **La datation de la pause** se rouvre à la **première pause oubliée mesurée** — un run suspendu
    plus longtemps que son travail, tenant un hôte pour rien. Le remède est alors un champ, pas un
@@ -516,8 +533,8 @@ Aucune de ces quatre conditions n'est remplie au 2026-08-28.
 
 ## 11. Où cette décision est écrite ailleurs
 
-**Le lot 1 (#737) a livré**, et cette section dit désormais où — l'énoncé « rien ne change encore dans
-le code ni dans les contrats » était vrai le jour du cadrage et ne l'est plus :
+**Les trois lots ont livré**, et cette section dit désormais où — l'énoncé « rien ne change encore
+dans le code ni dans les contrats » était vrai le jour du cadrage et ne l'est plus :
 
 - [docs/05 §2.6](./05-interface-control-tower.md) — le contrat d'API des attentes et de la vitalité,
   où le champ du §5.3 **s'est déclaré** : `en_souffrance` sur le `ResumeExecution`, à côté de
@@ -531,21 +548,38 @@ Côté code, le verdict vit dans [`maestro/controltower/souffrance.py`](../maest
 — un module à lui plutôt qu'un ajout à `battement.py`, dont l'en-tête revendique de tenir en une
 phrase et dont aucun battement n'entre dans ce jugement. Il est servi par `_avec_vitalite`
 (`executions.py`) et **dit une fois** au journal de l'API par `_veiller`, troisième passager du
-réveil du §5.2. Restent le tri à l'écran (**#738**) et les **tests** (**#739**), à qui revient
-d'éprouver en propre la survie à un redémarrage, le run au travail qui ne porte jamais le verdict, et
-l'attente levée par un refus autant que par un accord.
+réveil du §5.2. Le tri à l'écran est dans `apps/web/components/PanneauRunsImmobiles.tsx` (**#738**) —
+un bloc et non un quatrième panneau, la règle des trois places (#539) plafonnant le corps du tableau
+de bord.
+
+Côté **filet**, [`tests/test_souffrance.py`](../tests/test_souffrance.py) (**#739**) porte les trois
+vérifications que le §9 réclamait en propre au lot final, et le §9 se lit désormais dans les deux
+sens : ce qu'il exigeait, ce fichier le nomme section par section. Deux choses qu'il vaut de savoir
+avant d'y toucher. La table des trois attentes y est **redite** plutôt qu'empruntée à
+`tests/test_arbitrage_visible.py` — là-bas les horodatages de suspension sont fixes, ici l'**âge** de
+l'attente est la variable qu'on fait varier autour du seuil —, et ce qui rend le doublon sûr n'est
+pas la discipline mais la **confrontation** à `STATUTS_EXECUTION_EN_ATTENTE`, le mécanisme que #572 a
+conçu pour ça : une quatrième attente fait rougir les deux tables, ou aucune. Et le test du run **au
+travail** prouve son motif sur un échantillon fautif avant de conclure — sans quoi « le verdict est
+`False` » serait vrai de n'importe quel run, c'est-à-dire un ✓ sur une question jamais posée. Le
+versant écran est dans `apps/web/tests/runs-immobiles.test.tsx`, où le verdict est **lu** et jamais
+recalculé : une formule recopiée côté client se périmerait à la première correction du seuil, que le
+§5.4 annonce d'avance.
 
 **Sur la numérotation, et c'est un constat, pas une prévision.** #354 et #647 ont été instruits en
 parallèle de celui-ci et ont **tous deux pris `31`** — `31-decision-surface-ecriture-agents.md` et
-`31-decision-cran-orchestrateur.md` cohabitent sur `main` depuis les merges `952bd60` et `6702f2b`.
+`31-decision-cran-orchestrateur.md` ont cohabité sur `main` depuis les merges `952bd60` et `6702f2b`.
 Le doublon n'a été arbitré par personne : chacune des deux PR était juste seule, et git ne signale
 rien puisque les noms de fichiers diffèrent.
 
-Cette note prend donc **33** et **laisse `32` libre à dessein** — c'est le numéro qui permet de
-défaire le doublon sans en créer un autre : l'une des deux notes de `31` devient `32`, et la série
-redevient contiguë `31 · 32 · 33`. Prendre `32` ici aurait fermé cette porte et forcé la correction
-à sauter en `34`. Le renommage est **#742**, et il ne relève pas de ce cadrage : il touche deux
-documents qui ne sont pas les siens.
+Cette note prend donc **33** et **laissait `32` libre à dessein** — c'est le numéro qui permettait de
+défaire le doublon sans en créer un autre. Prendre `32` ici aurait fermé cette porte et forcé la
+correction à sauter en `34`. **#742 l'a empruntée** le 2026-08-29 : le cran `orchestrateur` est passé
+en [docs/32](./32-decision-cran-orchestrateur.md), la surface d'écriture garde
+[docs/31](./31-decision-surface-ecriture-agents.md), et la série est contiguë `31 · 32 · 33`.
+L'arbitrage — laquelle cède son numéro — s'est joué au **compte des renvois** et non au tirage : 26
+pour la surface d'écriture contre 13 pour le cran, la note la plus citée gardant le numéro que le
+plus de textes nomment déjà.
 
 ⚠ La leçon est plus large que le symptôme, et elle vaut pour le prochain chantier mené à plusieurs
 cadrages parallèles : **le numéro d'un document se réserve au moment où l'on ouvre le ticket, pas au

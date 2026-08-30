@@ -280,6 +280,16 @@ Deux articulations avec le reste de la roadmap :
   endroit où se rendre. Son prix avait été nommé et refusé pour un autre usage
   ([docs/28 §7](./28-decision-frontiere-execution-run.md)) ; le payer ici est un choix, rendu en
   [docs/29 §7](./29-decision-run-objet-de-premier-plan.md).
+  ⚠ **L'ordre a été tenu autrement que prévu** (livré le 2026-08-29) : #487 est arrivé le premier,
+  #253 n'ayant encore rien livré. Plutôt que d'ouvrir la seconde source que son critère 3 interdit,
+  la sonde a **créé l'endroit où se rendre** — `GET /api/fournisseurs`
+  ([`maestro/controltower/fournisseurs.py`](../maestro/controltower/fournisseurs.py)), dont la
+  colonne « supporté » est lue du **registre du code** (`available_providers()`), exactement ce que
+  demande le critère 2 de #253. Ce qui reste à #253 s'ajoute donc **en colonnes de cette
+  charge-là** — les **modèles** d'un fournisseur et les **niveaux d'effort** d'un modèle, puis
+  l'effort porté par la définition d'un agent — et surtout pas sur une route à lui : `modeles_ici`
+  dit ce que la **sonde** a vu sur ce poste, jamais ce que Maestro supporte, et les deux colonnes ne
+  se confondent nulle part.
 
 > **Tickets : les quatre milestones sont découpés**, comme la vague front et pour la même raison —
 > ils portent sur un produit et un outillage qui **existent**, il n'y a rien à attendre pour les
@@ -316,3 +326,36 @@ Deux articulations avec le reste de la roadmap :
 > Phase 2 → [docs/13](./13-demo-v1.md), **Phase 3 → [docs/23](./23-demo-v2.md)** (verdict :
 > **NO-GO sur LangGraph**, rester sur l'Agent SDK adossé à Temporal pour la durabilité — la
 > porte reste ouverte si de vrais flux d'état complexes apparaissent).
+
+### Où vivent les critères de sortie et le verdict, depuis #756
+
+Ce tableau s'est **arrêté à la Phase 3**, et c'est l'une des trois raisons pour lesquelles le
+bouclage de fin de phase a disparu du dépôt : une démo servait à trancher une question, les phases
+suivantes n'en portaient plus, et **14 milestones se sont fermés sans bilan**. Les quatre documents
+ci-dessus restent les bilans qui ont tenu — ils ont tenu parce que c'étaient des **documents**.
+
+Le geste est désormais un **mécanisme**, décrit en entier dans
+[docs/10 §3.4](./10-workflow-git.md) et rappelé ici pour que le tableau reste vivant :
+
+- **Les critères de sortie d'une phase vivent dans la description de son milestone**, en section
+  `## Critères de sortie` — posés quand la phase se **cadre**, par une personne
+  (`bash scripts/gitlab/lib.sh milestone-criteres "<titre>" <fichier>`). Ce sont eux, et non ce
+  tableau, qui font foi au bouclage. Un jalon qui n'en porte pas ne peut pas être bouclé : *un
+  bouclage sans critère de sortie n'est qu'une opinion*, et des critères rédigés à l'heure du bilan
+  seraient l'examen écrit après l'épreuve.
+- **Le verdict rendu vit dans la même description**, en section `## Verdict` — `GO`,
+  `GO avec réserves` ou `NO-GO`, avec sa date, le compte de critères tenus / en défaut / non
+  couverts, et chaque réserve **avec son sort** (ticket ouvert, ou acceptée telle quelle). C'est
+  cette section que la convocation (`lib.sh milestones-a-boucler`) interroge pour cesser de
+  signaler le jalon.
+- **Le rapport qui l'a produit** est `docs/bilans/<slug>.md`, écrit par `/milestone-bilan` et
+  **non commité** — comme les présentations de milestone. La section `## Verdict` doit donc se
+  suffire à elle-même : c'est elle qui survit.
+- **La fermeture du milestone reste une décision humaine**, prise en lisant ce verdict. Aucune
+  commande ne ferme un milestone.
+
+> **Reste dû.** Le jalon **« Fin Phase 7 »** ci-dessus n'a **jamais rendu son verdict**, alors que
+> les Phases 7 **et** 8 sont fermées — c'est le premier bouclage en retard que ce mécanisme
+> rattrape. C'est un **arbitrage produit** et non un mécanisme : il se rend en bouclant la phase
+> (`/milestone-bilan "Phase 7 …"`), il est **hors du périmètre de #756**, et il n'a **pas encore de
+> ticket** au 2026-08-29.

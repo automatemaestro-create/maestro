@@ -250,6 +250,99 @@ que la vue par milestone reflète l'avancement réel de chaque phase.
   rien n'est jamais bouclé, écrit ni fermé automatiquement. `doctor.sh` signale par ailleurs les
   tickets ouverts sans milestone.
 
+#### Le bouclage : le livrable se démontre sur pièces, puis rend un verdict (#756)
+
+**Avant la fermeture vient le bouclage**, et c'est un geste que le dépôt a eu quatre fois puis perdu
+sans que personne ne le décide : #10 (Phase 0 → [docs/11](./11-demo-poc.md)), #50 (MVP →
+[docs/12](./12-demo-mvp.md)), #88 (V1 → [docs/13](./13-demo-v1.md)) et #112 (V2 →
+[docs/23](./23-demo-v2.md), le 2026-07-23). Depuis : **14 milestones fermés, aucun bouclage**.
+
+Trois causes, et aucune n'est une décision. **Ça n'a jamais été un mécanisme** — quatre tickets
+écrits à la main, aucune commande, aucun test, aucune ligne qui le demande ; le seul renvoi était le
+paragraphe ci-dessus, c'est-à-dire un pointeur vers un tableau, et *une checklist qu'aucune machine
+ne vérifie ne tient pas* ([docs/30 §3.6](./30-cible-visuelle-control-tower.md)). **Le tableau des
+jalons de [docs/06](./06-roadmap.md) s'arrête à la Phase 3** : une démo servait à *trancher* une
+question, les phases suivantes n'en portaient plus — le rituel ne s'est pas arrêté, sa raison d'être
+s'est éteinte. Et **`/milestone-presentation` (#142) a pris la place sans prendre la fonction** :
+elle *montre* ce qui a été construit, elle n'*exerce* rien et ne conclut sur rien.
+
+Ce que l'absence a laissé passer, sur pièces : les contrats d'API de [docs/05 §6](./05-interface-control-tower.md)
+**figés sans être servis** pendant des mois, et un run produit terminé **vert avec un projet vide**
+(#568) — découvert en s'en servant, par aucun filet.
+
+**Deux commandes, dans cet ordre, et jamais une seule.**
+
+| geste | commande | ce qu'elle fait | ce qu'elle n'écrit pas |
+|---|---|---|---|
+| **exercer** | `/milestone-bilan "<titre>"` (#759) | monte la stack, prend les captures, joue les verbes et les suites, rattache chaque critère à sa pièce, **propose** un verdict, écrit `docs/bilans/<slug>.md` | rien côté forge : rien n'y est encore arbitré |
+| **enregistrer** | `/milestone-verdict "<titre>"` (#760) | prend la réponse d'une personne, la consigne dans la section `## Verdict` du jalon, **propose** chaque réserve en ticket | ne ferme aucun jalon, ne rejoue aucune pièce |
+
+Elles sont **deux et non deux étapes de la même** : un bilan est long, l'arbitrage n'arrive pas
+toujours dans la foulée, et enchaîner l'enregistrement à la fin du bilan perdrait tout verdict que
+personne n'a arbitré dans la même session — la panne de #608 recréée sur l'objet qu'on protège. Le
+rapport, lui, attend : c'est un document.
+
+**Le support est la description du jalon**, comme le marqueur `rail:` ci-dessous : deux sections
+reconnues, `## Critères de sortie` et `## Verdict`, lues et posées par
+`lib.sh milestone-criteres <titre> [<fichier>]` et `lib.sh milestone-verdict <titre> [<fichier>]`
+(#757). Ce sont des **verbes** et non un `gh api` recopié dans les prompts, pour la raison qui a
+fait de `milestone-rail` un verbe (#617) : les écritures de forge sont interdites sous
+`.claude/commands/**`, et le support peut bouger. Sans section, c'est une **abstention muette**
+(code 3) ; une section **présente mais vide compte pour absente**, faute de quoi il suffirait
+d'écrire « ## Verdict » et rien dessous pour éteindre la convocation **pour toujours** ; et
+l'écriture n'ajoute qu'**en queue**, le marqueur `rail:` de tête devant survivre.
+
+⚠ **Écris les deux titres dans leur forme documentée** — « ## Critères de sortie », « ## Verdict ».
+La reconnaissance replie la casse par le `tolower()` d'awk, et ce repli **n'est pas portable sur une
+lettre accentuée** : mesuré le **2026-08-29** sous la même locale `C.UTF-8`, `gawk 5.2.1` replie
+`CRITÈRES` en `critères` là où `mawk 1.3.4` — celui du conteneur du filet local — le laisse tel
+quel, parce qu'il replie **octet par octet**. `## CRITÈRES DE SORTIE` est donc reconnu par l'awk du
+runner `ubuntu-latest` et ignoré par le filet local. Ce n'est pas la « limite assumée » que le banc
+manuel de #757 avait notée (« ni sous mawk ni sous gawk ») : c'est un **écart entre
+implémentations**, et c'est pire qu'une limite — la même description se lit différemment selon la
+machine. La portée est étroite : seul « Critères de sortie » porte un accent, « ## VERDICT » est
+reconnu partout. `tests/test_milestone_bilan.py` n'assert donc **rien** sur ce cas — pincer l'une ou
+l'autre branche serait rouge sur la moitié des machines — et garde ce qui vaut des deux côtés. La
+forme documentée passe partout ; le remède, si on le veut un jour, est un ticket à lui seul.
+
+**La convocation** est `lib.sh milestones-a-boucler` (#758) : les jalons **actifs, entièrement
+soldés, et sans verdict consigné**, relayés par `doctor.sh` (§7) et `/backlog`. Elle disait jusque-là
+« à fermer » — la décision finale, proposée en sautant le geste qui doit la précéder —, et c'est
+pourquoi personne n'a jamais été *convoqué*. Un jalon déjà bouclé **sort du signalement** alors même
+qu'il reste ouvert : le verdict est le geste qu'on pouvait oublier, la fermeture est celui qu'on
+prend en le lisant, et re-signaler indéfiniment ferait de la convocation un bruit permanent.
+
+Quatre choses à ne pas défaire :
+
+- **La fermeture reste une décision humaine**, et le bouclage ne la prend pas davantage qu'une autre
+  commande. Ce qu'il produit est ce qui manquait *avant* elle. Donner à une machine le geste final
+  défairait, du même mouvement, le jalon go/no-go de la roadmap.
+- **Ce qui est automatique est la détection du manque, jamais le verdict** — même partage que
+  l'arbitrage des lots (#562), le signalement `.claude/` (#612) et la veille de conception (#714).
+  Un `NO-GO` posé par une machine sur une phase entière serait le contraire de ce dispositif.
+- **Un bouclage sans critère de sortie n'est qu'une opinion** : `/milestone-bilan` **s'arrête** sur
+  un jalon qui n'en porte pas, et **n'écrit pas les critères lui-même** — des critères rédigés à
+  l'heure du bilan sont taillés sur ce qui a été livré, c'est l'examen écrit après l'épreuve et il
+  rendra toujours un `GO`. Ils se posent quand la phase se **cadre**.
+- **Un critère qu'aucune pièce ne couvre est nommé comme tel, jamais coché**, et il vaut réserve à
+  lui seul. C'est ce ✓-là qui a laissé quatorze jalons se fermer sur « ça a été écrit » — *lire le
+  code n'est pas l'exercer*.
+
+Deux limites assumées plutôt que masquées. Le **rapport n'est pas commité** (décision alignée sur
+`/milestone-presentation`), donc son chemin dans la section consignée est un renvoi **local** que
+personne d'autre n'ouvrira : c'est pourquoi la section `## Verdict` doit **se suffire à elle-même**
+— verdict, date, état du jalon, compte de critères, et chaque réserve **avec son sort** (`→ #<iid>`
+ou « acceptée telle quelle »), une réserve muette étant indiscernable d'un oubli. Et un **ticket de
+réserve va au milestone COURANT, jamais au jalon qu'on vient de boucler** : l'y inscrire le
+**dé-solderait** (`open_issues > 0`), donc le rendrait non fermable, et le bouclage se retournerait
+contre lui-même. La règle tient par le **défaut** de `/ticket-create`, à qui l'on indique le *rail*
+et jamais un `--milestone`.
+
+Gardé par [`tests/test_milestone_bilan.py`](../tests/test_milestone_bilan.py) (#761), dont le pivot
+est le seul invariant **observable** de tout le dispositif — un verdict consigné éteint la
+convocation — et qui **prouve d'abord que le jalon était convoqué**, sans quoi « plus convoqué »
+serait vrai d'un jalon qui ne l'a jamais été.
+
 #### Soldé et vide : deux abstentions, jamais une seule (#619)
 
 Un milestone est écarté pour **l'une ou l'autre** de deux raisons, que `current-milestone` **nomme
@@ -5213,6 +5306,48 @@ jamais depuis une session — voir §11.11.
 
 ### 11.7 Après un run : instruire les refus de permission
 
+**Ce qui manque à un run n'est pas une permission, c'est un répondant** (#788, 2026-08-30). Le
+constat tient en deux lignes, et il fixe la portée de tout ce qui suit — sans lui, les deux
+allowlists se lisent comme un seul et même objet, et la conclusion qu'on en tire est fausse :
+
+> Une session **interactive**, c'est `allow` **+ une personne qui approuve tout le reste**.
+> Une session de **run**, c'est `allow`, **point final**.
+
+La même liste ne décrit donc pas le même objet. En interactif elle ne retire que de la
+**friction** — ce qui n'y est pas se demande, et quelqu'un répond. En run elle **définit la
+frontière** — ce qui n'y est pas n'existe pas. **À liste identique, un run est plus contraint qu'une
+session interactive**, et aucun ajout de règle ne referme cet écart-là : l'union des deux fichiers
+faisait **86 règles** au moment du chantier, et l'allonger ne fabrique pas de répondant. C'est
+pourquoi la première question du rapport ci-dessous porte sur le bloc `ask` et non sur le bloc
+`allow` — un `ask` sans personne pour répondre est un `deny` qui ne dit pas son nom, et c'est
+l'écart qu'aucune lecture de l'`allow` ne montre, parce qu'il vit dans un autre bloc.
+
+Quatre conséquences, et ce sont les cinq écarts de #788 :
+
+| | Ce qui le comble | Où |
+| --- | --- | --- |
+| **G1** les `ask` sans répondant + les trous mesurés | une **règle** | plus bas (#790) |
+| **G2** l'écriture sous `.claude/` | un **arbitrage** — rendu, et négatif | plus bas (#791) |
+| **G3** `WebSearch` / `WebFetch` | un **arbitrage** — rendu, et négatif pour les deux | plus bas (#792) |
+| **G4** les questions qu'un run rencontre sans pouvoir y répondre | **différer** la question au lieu de la perdre | #795, [docs/30 §5.2](./30-cible-visuelle-control-tower.md) |
+| **G5** `merge-mr` / `pipeline-wait` | **rien — et c'est voulu** | fin de section |
+
+L'écart ne se relit donc pas de mémoire, il se **rejoue** — au même titre que `guard.sh --check`
+répond à « le `deny` du run a-t-il dérivé de celui du dépôt ? » :
+
+```bash
+bash scripts/orchestrate/ecart-run.sh          # le rapport, en clair
+bash scripts/orchestrate/ecart-run.sh --tsv    # le même inventaire, lisible par un script
+```
+
+Il confronte chaque geste aux règles **là où elles vivent** (les deux fichiers, jamais une copie qui
+dériverait), distingue l'**écart** de l'**interdit voulu**, et rend `0` quand plus aucun écart n'est
+imputable aux listes — l'état atteint le 2026-08-30. Son motif se prouve avant qu'on le croie, sur
+des **échantillons fautifs versionnés** (`tests/fixtures/ecart_run/`) : une allowlist qui couvre
+tout doit faire basculer le verdict, une qui ne couvre rien doit laisser les écarts. Sans cette
+moitié, « aucun écart » serait indiscernable d'un rapport mal branché — le pire des verdicts, parce
+qu'il rassure. `tests/test_ecart_run.py` (#793) garde l'ensemble.
+
 L'`allow` de `settings.run.json` se complète **à partir des refus observés**, jamais à l'aveugle.
 Chaque session laisse ce qu'elle n'a pas pu faire dans `permission_denials`, à la fin de son
 `<iid>.json` — et depuis #180 la liste se lit **en clair**, sans script, dans la vue que le run
@@ -5647,34 +5782,220 @@ forme des appels — porte sur une liste qui, dans ce régime, ne dit plus rien 
 refus **durs** de `guard.sh`. On échange une liste blanche contre une liste noire, ce qui est un
 renversement de politique et pas un réglage.
 
-**Rien n'a donc été levé ici** : #614 mesure, il ne décide pas (même partage que l'audit de run,
-§11.12). Trois suites possibles, dans l'ordre où elles élargissent la surface — garder la conduite
-actuelle (le résidu devient un ticket de reprise, #608) ; n'employer `bypassPermissions` que pour les
-**tickets qui touchent `.claude/`**, choisis au lancement de la session puisque `run.sh` construit son
-argv ticket par ticket, ce qui confine le renversement à quelques tickets par mois et donne à la
-détection amont de `queue.sh` (#612) un usage qu'elle n'avait pas ; ou l'employer partout, ce que
-rien dans cette mesure ne recommande. Dans les deux derniers cas, le merge automatique de ces PR-là
-demanderait un lecteur humain — c'est #418 qui l'a retiré, pas l'écriture qui l'a rendu inutile.
+**Rien n'a été levé par #614** : il mesure, il ne décide pas (même partage que l'audit de run,
+§11.12). Trois suites étaient possibles, dans l'ordre où elles élargissent la surface — garder la
+conduite actuelle (le résidu devient un ticket de reprise, #608) ; n'employer `bypassPermissions` que
+pour les **tickets qui touchent `.claude/`**, choisis au lancement de la session puisque `run.sh`
+construit son argv ticket par ticket, ce qui confine le renversement à quelques tickets par mois et
+donne à la détection amont de `queue.sh` (#612) un usage qu'elle n'avait pas ; ou l'employer partout,
+ce que rien dans cette mesure ne recommande.
 
-**Un accès qui n'a pas été ouvert, et c'est une décision : le web** (#714, [docs/30
-§5.2](./30-cible-visuelle-control-tower.md)). `WebSearch` et `WebFetch` ne sont dans **aucune** des
-deux allowlists — ni `settings.run.json`, ni `.claude/settings.json`, dont l'`allow` d'un run est
-l'**union**. Ce n'est pas un trou à instruire au sens de cette section, c'est le régime voulu :
-`/design-veille` est le seul appelant qui en aurait besoin, et la veille de conception est un geste
-**interactif**. Trois raisons, dont une seule est technique — une session de run n'a **personne**
-pour répondre au « oui » que `/ticket-start` propose (§5), donc l'ouvrir reviendrait à lancer la
-veille d'office, ce que #714 exclut nommément ; une veille rend des **partis pris**, c'est-à-dire un
-jugement, du même bois que l'arbitrage de #562 et le rail de #617 ; et `mcp__chrome-maestro` passant
-déjà cette union, ouvrir la seule **recherche** donnerait une veille **à moitié** — captures sans
-références vérifiées —, or la règle de la commande est que ce qui n'est pas vérifié n'est pas cité.
-Le prompt de session (§11.3) le dit donc en toutes lettres : ne pas la tenter, **n'enregistrer aucun
-arbitrage** (ce serait fermer la question sans que personne l'ait jugée — le « marquer d'office » que
-#562 a écarté), et **nommer le ticket** dans le résumé final. ⚠ `tests/test_design_veille.py` garde
-les **deux** fichiers, parce que le changement plausible n'est pas « ouvrir le web aux runs » —
-personne ne le demandera — mais « ouvrir `WebSearch` dans `.claude/settings.json` pour éviter une
-confirmation à chaque `/design-veille` interactive » : geste légitime, effet non voulu, il ouvre le
-run du même coup. Une confirmation dans une session interactive n'est pas un défaut, il y a
-quelqu'un pour la donner.
+#### Le verdict : on n'ouvre pas — la conduite de #608 est maintenue (#791, 2026-08-30)
+
+Le banc est **rejoué** avant de conclure, plutôt que relu : même CLI **2.1.215**, `claude-haiku-4-5`,
+**0,21 $** pour cinq variantes, et le verdict de #614 revient **au bit près** — `nu` · `cible` ·
+`absolue` · `hook` refusés, `bypass` ouvre `Write` **et** `Edit`, le hook tirant toujours (`sonde.txt`
+jamais atteint). La mesure tenait ; ce qui manquait n'était pas une mesure de plus, c'était le
+**prix des deux côtés**, jamais chiffré face à face.
+
+| | **statu quo** — le résidu devient un ticket de reprise (#608) | **ouverture** — `bypassPermissions` |
+| --- | --- | --- |
+| ce qu'on paie | **5 butées** `.claude/` sur les **78 sessions** du journal — #595, #599, #612, #619, #392 —, chacune coûtant une session interactive de reprise (#668 en est une) | l'`allow` **cesse de contraindre** : **86 règles** (49 dépôt + 39 run, union) tombent à **0** |
+| quand | **les 5 sont dans les 3 premiers runs du 2026-08-27**, avant que #622/#624/#628/#634 n'entrent en service le jour même. **0 sur les 63 sessions suivantes** — 9 runs, jusqu'au 2026-08-29 | à chaque session, dès le premier ticket |
+| ce qui reste | la détection amont de #612 rate **32 %** des cas (§11.2), donc le dispositif de reprise reste nécessaire **de toute façon** | **9 gestes** refusés par `guard.sh` en hook — les 8 `deny` de `settings.run.json`, que `--check` tient alignés, plus `reset --hard`, `--no-verify` et le commit sur `main` — mais il **ne juge que les appels `Bash`** (son mode hook sort en `0` sur tout autre outil) |
+| ce qui passerait | — | **3 des 5 `ask`** du dépôt deviennent des **oui silencieux** : `git clean`, `gh issue close`, `mcp__chrome-maestro__browser_run_code_unsafe`. Les deux autres (`--no-verify`, `reset --hard`) sont rattrapés par `guard.sh` |
+
+**Quatre raisons, et la quatrième aurait suffi.**
+
+- **Le statu quo ne coûte plus rien de mesurable.** 5 butées sur 15 sessions (33 %) avant le
+  dispositif, **0 sur 63 après**. ⚠ La coïncidence est datée mais la causalité n'est **pas** établie —
+  la nature des tickets traités a pu changer autant que le dispositif. Peu importe : le sens de la
+  conclusion n'en dépend pas, **0 sur 63 est le coût observé quelle qu'en soit la cause**, et on
+  n'échange pas une politique entière contre un gain qu'on ne sait plus mesurer. Portée annoncée
+  comme partout ailleurs : le journal ne garde que les **dix derniers runs** (§11.3), ces chiffres
+  ne parlent donc que du 2026-08-27 au 2026-08-29.
+- **Le prix n'est pas d'ouvrir `.claude/`, c'est de renverser la politique.** Tout le travail
+  d'instruction de cette section — les familles de refus, les trous comblés un par un, la forme des
+  appels — porte sur une liste qui ne dirait plus rien. On échange une **liste blanche de 86 règles**
+  contre une **liste noire de 9 gestes**, ce qui est un changement de nature et pas un réglage.
+- **Cette liste noire est plus courte qu'elle n'en a l'air.** `guard.sh` ne juge que `Bash` : tout
+  outil non-`Bash` — `Write`, `Edit`, les serveurs MCP — passe **sans examen**. C'est ce qui fait des
+  trois `ask` ci-dessus des oui silencieux, et `git clean` efface précisément ce que le dispositif de
+  #327 existe pour sauver : du travail non commité.
+- **Elle trancherait par effet de bord une question qu'un autre lot arbitre.** `WebSearch` et
+  `WebFetch` ne sont barrés que par l'`allow` (#714, plus bas) — donc sous `bypassPermissions` **le
+  web s'ouvre aux runs**. Ce n'est pas une hypothèse : le journal porte **un refus `WebFetch`**
+  (#271, vers `raw.githubusercontent.com`) qui aurait abouti. Ouvrir `.claude/` reviendrait à
+  répondre « oui » à #792 sans l'avoir instruit, et un régime qui tranche par effet de bord ce qu'un
+  ticket arbitre est une régression de méthode avant d'être une régression de sécurité.
+
+**La piste médiane a été examinée, pas écartée d'un mot.** Réserver `bypassPermissions` aux tickets
+que #612 signale est la seule des trois qui bornait le renversement — et elle ne tient pas : son
+trou de **32 %** oblige à garder le dispositif de reprise (on paierait les deux), ces tickets-là sont
+précisément ceux que #621 tient **hors des runs** par assignation (on ouvrirait un régime pour des
+tickets qui ne devraient pas s'y trouver), et le merge automatique de ces PR demanderait un lecteur
+humain — c'est #418 qui l'a retiré, pas l'écriture qui l'a rendu inutile.
+
+⚠ **Ce verdict se rouvre sur un fait, pas sur une intuition** : que les butées `.claude/`
+reprennent (le filet de #611 les nomme en fin de run, c'est là qu'on le verra), ou que `guard.sh`
+apprenne à juger autre chose que `Bash`. Les deux se mesurent ; en attendant, la conduite est celle
+de #608 — **on rend le correctif dans la PR et on ouvre le ticket de reprise, on ne contourne
+jamais**.
+
+**Un accès qui n'a pas été ouvert, et c'est une décision : le web** (#714, réexaminé et
+**confirmé** par #792, [docs/30 §5.2](./30-cible-visuelle-control-tower.md)). `WebSearch` et
+`WebFetch` ne sont dans **aucune** des deux allowlists — ni `settings.run.json`, ni
+`.claude/settings.json`, dont l'`allow` d'un run est l'**union**. Ce n'est pas un trou à instruire au
+sens de cette section, c'est le régime voulu. ⚠ Mais **les deux ne sont pas le même geste**, et #714
+les avait tranchés d'un bloc, sous la veille de conception : #792 les a repris séparément, et c'est
+la seule chose qui a bougé — les deux restent fermés, l'un des deux pour une autre raison.
+
+**`WebSearch` — fermé, et les raisons de #714 tiennent.** Une veille rend des **partis pris**,
+c'est-à-dire un jugement, du même bois que l'arbitrage de #562 et le rail de #617 ; une session de
+run n'a **personne** pour répondre au « oui » que `/ticket-start` propose (§5), donc l'ouvrir
+reviendrait à lancer la veille d'office ; et `mcp__chrome-maestro` passant déjà cette union, ouvrir
+la seule **recherche** donnerait une veille **à moitié** — captures sans références vérifiées —, or
+la règle de la commande est que ce qui n'est pas vérifié n'est pas cité. La mesure les appuie :
+**zéro** `WebSearch` sur les 56 refus du journal (38 sessions) — aucune session ne l'a jamais
+demandé, donc l'ouvrir répondrait à un besoin que rien n'a manifesté. ⚠ Le **lot 5** (#795) ne les
+affaiblit pas, et c'est pour le savoir que ce lot vient après lui : faire **survivre** une question
+n'est pas y répondre. La veille reste jouée par un humain, plus tard ; ce que #795 change est
+qu'elle ne se perd plus en route.
+
+**Ce que ce refus coûte, car il coûte quelque chose** : tout ticket à surface visible traité
+par un run est implémenté **sans référence vérifiée**, en s'en tenant au socle (docs/30 §6.1,
+tokens et primitives du dépôt). C'est réel et assumé — mais l'ouverture ne le rembourserait pas,
+puisqu'elle achèterait des partis pris que personne n'aurait arbitrés. Ce qui le rembourse est
+que la question **survive** au run (#795), pour être tranchée par quelqu'un.
+
+**`WebFetch` — fermé aussi, mais sa raison n'est pas celle-là.** #714 le rangeait sous la veille ;
+or le seul usage jamais mesuré n'en est pas une. Un run l'a demandé **une fois** — #271
+« Bibliothèque MCP élargie », pour lire `raw.githubusercontent.com/modelcontextprotocol/…` —,
+c'est-à-dire une **référence citée par le ticket qu'il implémentait** : déterministe et vérifiable,
+tout le contraire d'un jugement. La raison écrite ne couvrait donc pas le seul cas observé, et #714
+se trompait en avançant que « personne ne le demandera ». Ce qui le ferme est autre chose, et vaut
+mieux : la propriété qui rendrait le geste sûr — *l'URL vient du ticket, donc d'un humain* — **n'est
+pas exprimable dans une règle**, qui ne borne qu'un préfixe (`WebFetch(domain:…)` borne le domaine,
+jamais la provenance). C'est mot pour mot la raison de `curl` en #528 — *le pouvoir est dans
+l'argument* — et celle de la tête de boucle : la règle bénirait la forme sans rien juger de ce
+qu'elle rapporte. S'y ajoute ce que #714 n'invoque pas : depuis #418/#419 le produit d'un run est
+**mergé sans relecture humaine**, si bien qu'une page distante influencerait du code qui part dans
+`main` sans que personne ne l'ait lue.
+
+**La forme couverte existe, et le dépôt l'avait déjà choisie.** #271 a livré sans : le registre MCP
+est fait d'entrées **curées, écrites à la main et relues en revue** (`SEED`), et les entrées
+**découvertes** passent par un miroir versionné puis par une **porte d'admission** — un geste humain
+tracé (#677, #678). C'est la règle générale dont ce refus est un cas : du contenu venu d'internet
+peut être *visible*, jamais *actionnable* sans qu'un humain l'ait admis. Ce que l'interdit coûte est
+donc borné et connu — une session qui veut lire une URL citée par son ticket perd un tour à
+découvrir la règle. C'est un défaut de **prompt**, pas de liste, et le prompt de session le dit
+désormais (§11.3) au lieu de le laisser découvrir.
+
+**Aucun des deux fichiers n'est touché, et c'est le verdict.** La question « lequel ? » se pose quand
+même, parce qu'elle se reposera : ouvrir pour le seul run passerait par `settings.run.json`, que
+l'interactif ne lit pas ; ouvrir dans `.claude/settings.json` ouvre **les deux** par l'union, et
+c'est le geste piégeux que `tests/test_design_veille.py` garde — « ouvrir `WebSearch` dans
+`.claude/settings.json` pour éviter une confirmation à chaque `/design-veille` interactive » est
+légitime en intention et non voulu en effet. Une confirmation dans une session interactive n'est pas
+un défaut : il y a quelqu'un pour la donner. Le test n'interdit pas d'y revenir — il demande qu'on le
+fasse **exprès**, en l'éditant avec sa raison, plutôt que de découvrir six mois plus tard qu'un run
+lit des pages que personne n'a décidées. `bash scripts/orchestrate/ecart-run.sh` (#789) range
+désormais les deux gestes en **refus voulu** avec leur raison, à côté de `curl` et de `merge-mr` :
+ils sortent du compte des écarts, qui passe de 15 à 13.
+
+**Un `ask` du dépôt est un `deny` en run, et les cinq sont tranchés** (#790, lot 2 de #788).
+`.claude/settings.json` met cinq gestes en `ask` — `gh issue close`, `git commit --no-verify`,
+`git reset --hard`, `git clean`, `browser_run_code_unsafe`. En interactif une personne approuve ; en
+run il n'y a **personne**, donc c'est un refus sec qui ne dit pas son nom, et c'est l'écart
+qu'aucune lecture de l'`allow` ne montre puisqu'il vit dans un autre bloc. Les cinq **restent
+refusés**, chacun pour une raison qui lui est propre — elles sont écrites une par une dans le
+commentaire d'en-tête de `settings.run.json`, à côté des règles qu'elles justifient. Ce qui a changé
+n'est donc pas le régime mais son statut : un **refus voulu** a remplacé un arbitrage en attente, et
+c'est la nuance qui distingue « on a regardé » de « personne n'y a pensé ».
+
+Le seul qui appelait vraiment un arbitrage est `gh issue close`, le seul **mesuré** (#273) :
+aujourd'hui un run ne peut pas abandonner un ticket. Trois choses l'ont tranché, et la première
+suffirait — **lever la règle ne donnerait pas le geste**, `/ticket-abandon` demandant lui-même une
+confirmation humaine explicite (étape 4) que la règle ne fait que redoubler ; aucune règle de
+préfixe ne borne l'**iid**, donc `Bash(gh issue close:*)` donnerait la fermeture de n'importe quel
+ticket, y compris ceux des sessions voisines en vol ; et le plan d'un run ne prend que des tickets
+« À faire » et libres, si bien qu'un ticket sans objet qui s'y trouve est une erreur de **backlog**,
+pas une décision de session. ⚠ **Mais le statu quo avait un coût**, et c'est lui qui fait de ce
+verdict un changement plutôt qu'une phrase : le refus tombe à l'**étape 7** de `/ticket-abandon`,
+après que l'étape 6 a posé « Abandonné ». Une session qui entame la séquence laisse donc un ticket
+**abandonné ET ouvert** — hors des plans (`queue.sh` ne prend que « À faire ») mais compté **lot
+ouvert** par `ferme-parent` (#515) et par `garde-fermeture` (#394), qui jugent la **fermeture** et
+jamais l'état : son parent ne se refermerait plus jamais. Un refus franc valant mieux qu'un refus
+tardif, le prompt de session (§11.3) dit désormais de **ne pas entamer** la commande, exactement
+comme il le dit de `/design-veille`. Le besoin — « ce ticket est sans objet » — est un jugement sans
+répondant, donc G4 : il se traite au lot 5 (#795).
+
+**Les trous, eux, se comblent par une règle — huit, toutes en lecture ou bornées au worktree** :
+`pwd` (5 refus, le maillon le plus refusé de tout le journal), `cut`, `tr`, `git merge-base`,
+`git check-ignore`, `git mv`, `chmod` et `git restore`. Les raisons sont dans le fichier ; trois
+choses se disent ici. **`git restore` est le seul ajout non mesuré** — il vient du verdict de
+`git reset --hard`, qui le désigne comme forme couverte, *une forme couverte qu'aucune règle ne
+couvre étant une fausse promesse* — et il n'élargit rien, `Bash(git checkout:*)` autorisant déjà le
+même geste et davantage. **`git mv` n'avait aucune forme couverte** : `rm` est refusé et `git rm`
+n'est dans aucune des deux listes, donc un renommage n'était pas faisable du tout. Et
+**`.claude/settings.json` n'a pas bougé** : c'est une conséquence des cinq verdicts, pas une
+précaution — une session **interactive** continue de demander ces huit gestes, ce qui est de la
+friction, et elle a un répondant. ⚠ Ce qu'il ne faut pas en attendre, dans la ligne de #528 : la
+plupart de ces refus portaient **aussi** un `cd <chemin absolu>` en tête. Une règle retire le
+**maillon**, jamais l'**échappée** — les deux se corrigent séparément, et la seconde par la forme
+(#307).
+
+**Ce qui reste dehors, et n'est pas un oubli.** Les refus **mérités** déjà tranchés — `for`, `curl`,
+`python -` en heredoc (#528), `rm`, `bash <chemin absolu>`, le préfixe de variable `VAR=…` (#307) —
+sont nommés dans le fichier pour qu'on voie qu'ils ont été regardés, et rien n'y touche. `python -c`,
+que #788 rangeait parmi les trous, est **arbitré et reste refusé** : de la double raison de #528,
+celle qui ne tient pas au heredoc vaut telle quelle — `python` nu n'est pas le venv du dépôt.
+`git stash` n'est pas ajouté, pour deux raisons dont la première suffit : ses deux refus portent un
+`cd "../.."`, donc ce n'est pas le verbe qui a été refusé ; et un stash vit dans `refs/stash` du
+dépôt **commun**, invisible pour les deux mesures de `worktree.sh gc` (fichiers non commités,
+commits absents du serveur), si bien qu'un worktree dont le travail est stashé passe pour propre —
+donc **ramassable**, travail compris. `bash scripts/github/…` non plus : le répertoire mêle des
+scripts one-shot de migration et du **provisionnement** (`bootstrap-project.sh`, `protect-main.sh`),
+et une règle de répertoire donnerait le second pour couvrir le premier, dont le besoin est éteint.
+
+**Le rapport de #789 le dit tout seul, et c'est ce qui garde le verdict lisible.** `ecart-run.sh`
+confronte chaque geste aux règles **là où elles vivent** : les huit y basculent en « couvert » du
+seul fait que la règle est là, sans rien à tenir d'accord à la main. Q1 y gagne la distinction que
+Q2 avait déjà — un `ask` **assumé** s'affiche encore (la règle est toujours là, l'écart
+run ↔ interactif aussi) mais ne compte plus parmi ce qui attend un arbitrage, sans quoi le code de
+sortie serait **indépassable** : cinq refus voulus le tiendraient à `3` pour toujours, et un code
+qui ne peut pas descendre n'apprend plus rien. Le **défaut reste « écart »**, donc une sixième règle
+`ask` ajoutée demain sortira à trancher sans que personne ait à y penser — c'est ce que prouve
+l'échantillon `ask-contre-deny.json`, où `pwd` mis en `ask` sort en écart faute de verdict.
+
+#### G5 — ce qui n'est pas un écart, et ne doit pas le devenir (#788, #419)
+
+⚠ **À lire avant d'ajouter une règle qui autoriserait `merge-mr` ou `pipeline-wait` à une session de
+run.** Les deux ressemblent à un trou — deux verbes du dépôt refusés à une session qui, en
+interactif, les joue sans difficulté — et c'en est l'**inverse** : `guard.sh` les refuse depuis
+#419, à dessein, pour deux raisons qu'aucune bonne volonté de prompt ne change et dont chacune
+suffirait.
+
+- **Attendre un pipeline dans une session, c'est brûler du quota à ne rien faire** — en tenant, le
+  temps de l'attente, un worktree et un créneau de concurrence. Le pilote, lui, attend **hors
+  quota** : c'est un script shell, et c'est toute la raison pour laquelle il en est un (§11.1).
+- **À N tickets en vol, N sessions qui mergent périment mutuellement leur verdict de conflit.** Un
+  merge déplace `origin/main` ; le verdict que les autres viennent d'obtenir ne vaut plus rien.
+  Le pilote **sérialise** — sa file s'arrête au premier merge réussi d'une passe, précisément pour
+  ça (§11.11).
+
+**La parité serait donc ici une régression**, et c'est le seul point du chantier #788 qui risque
+d'être « corrigé » par erreur. Ce n'est pas non plus un manque de confiance envers les sessions :
+le geste n'est pas moins vérifié parce qu'il est ailleurs — `merge-mr` vérifie tout autant, et
+`/ticket-finish` l'appelle bien depuis une session **interactive**, où aucune des deux raisons ne
+joue (personne d'autre ne merge en même temps, et le quota d'une session interactive n'est pas
+celui d'un run qui en fait tourner trois).
+
+Trois endroits le disent, et il faut les trois : le **`deny`** de `settings.run.json` le refuse
+nommément — l'ordre de décision est le plus restrictif d'abord, si bien que la règle de préfixe
+`Bash(bash scripts/gitlab/lib.sh:*)` ne le rouvre pas —, `ecart-run.sh` le range en **« INTERDIT
+VOULU »** avec sa raison plutôt que dans la colonne des manquants, et cette section-ci l'écrit pour
+qui lirait la doc avant de toucher à la règle. `tests/test_ecart_run.py` garde les trois.
 
 ### 11.8 Reprendre un run qui ne s'est pas terminé — `--resume`
 

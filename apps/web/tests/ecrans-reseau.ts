@@ -32,6 +32,7 @@ import {
   coutExecutionFactice,
   coutTacheAgregeeFactice,
   ficheCatalogueFactice,
+  fournisseursDuPoste,
   pageExplorateurFactice,
   pageJournalCourante,
   projetsDeclares,
@@ -217,6 +218,9 @@ export function mocksApi() {
     // Reconduits : ces mocks **remplacent** ceux de `tests/setup.ts`.
     chargerProjets: async () => projetsDeclares(),
     chargerJournal: async () => pageJournalCourante(),
+    // Reconduit pour la même raison (#487) : sans lui, le formulaire d'agent
+    // partirait sur un vrai `fetch` depuis l'écran « Agents ».
+    chargerFournisseurs: async () => fournisseursDuPoste(),
     // Ce que le setup ne couvre pas, et sans quoi plusieurs écrans se liraient
     // à l'état « bannière d'erreur ».
     chargerCatalogue: async () => CATALOGUE,
