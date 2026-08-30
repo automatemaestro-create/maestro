@@ -84,8 +84,11 @@ TROUS_COMBLES = (
     "git merge-base main HEAD",
     "git check-ignore -v x",
 )
-# Ce qui doit RESTER refusé — refus mérités de #307/#528, plus les deux gestes de G5. Un test qui
-# ne vérifierait que les ajouts laisserait passer une règle trop large qui les avalerait au passage.
+# Ce qui doit RESTER refusé — refus mérités de #307/#528/#829, plus les deux gestes de G5. Un test
+# qui ne vérifierait que les ajouts laisserait passer une règle trop large qui les avalerait au
+# passage. Les deux derniers viennent de #829 : leur verdict ne laisse AUCUN diff de règle derrière
+# lui (rien n'a été ajouté à l'`allow`), donc rien ne le distinguerait, dans six mois, d'une
+# question que personne n'a posée — c'est ce que le docstring dit déjà des cinq `ask`.
 REFUS_MERITES = (
     "python -c 'print(1)'",
     "for f in a b; do echo $f; done",
@@ -94,6 +97,8 @@ REFUS_MERITES = (
     "rm -rf build",
     "bash /c/tmp/x.sh",
     "PYTHONPATH=. .venv/Scripts/python.exe x.py",
+    "mv a b",
+    "while read f; do echo $f; done",
 )
 G5 = (
     "bash scripts/gitlab/lib.sh merge-mr 42",

@@ -7,9 +7,19 @@
     "et sans cette bascule « aucun écart » serait indiscernable d'un rapport mal branché — le pire",
     "des verdicts, parce qu'il rassure (règle de #534/#537, reprise à l'en-tête du verbe).",
     "",
-    "Ce qu'elle doit produire : les 18 gestes en « couvert », le code de sortie 0 — et les huit",
-    "refus MÉRITÉS signalés en CONTRADICTION, parce qu'une règle qui bénirait `rm` ou `merge-mr`",
-    "doit se voir, jamais s'avaler en silence."
+    "Ce qu'elle doit produire : les 20 gestes en « couvert », le code de sortie 0 — et les 13 refus",
+    "MÉRITÉS signalés en CONTRADICTION, parce qu'une règle qui bénirait `rm` ou `merge-mr` doit se",
+    "voir, jamais s'avaler en silence.",
+    "",
+    "Les deux dernières règles couvrent les maillons tranchés par #829 (`mv`, `while`). Elles sont",
+    "ici pour la MÊME raison que `Bash(rm:*)` : cet échantillon doit couvrir TOUT le catalogue, sans",
+    "quoi un refus mérité non couvert sortirait « voulu » par sa raison écrite — c'est-à-dire le bon",
+    "verdict pour la mauvaise cause, et l'épreuve ne prouverait plus que le rapport LIT les règles.",
+    "",
+    "⚠ Les deux comptes ci-dessus se recomptent, ils ne se devinent pas : le second valait « huit »",
+    "alors que le rapport en rendait onze, un écart hérité qui a survécu à deux lots. Un contrat",
+    "écrit faux dans l'échantillon qui sert à ne pas croire un « aucun écart » est exactement ce que",
+    "cet échantillon existe pour empêcher."
   ],
   "permissions": {
     "allow": [
@@ -28,7 +38,9 @@
       "Bash(python -:*)",
       "Bash(rm:*)",
       "Bash(bash:*)",
-      "Bash(PYTHONPATH=. .venv/Scripts/python.exe:*)"
+      "Bash(PYTHONPATH=. .venv/Scripts/python.exe:*)",
+      "Bash(mv:*)",
+      "Bash(while:*)"
     ],
     "ask": [],
     "deny": []

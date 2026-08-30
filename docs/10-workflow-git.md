@@ -5968,6 +5968,44 @@ qui ne peut pas descendre n'apprend plus rien. Le **défaut reste « écart »**
 `ask` ajoutée demain sortira à trancher sans que personne ait à y penser — c'est ce que prouve
 l'échantillon `ask-contre-deny.json`, où `pwd` mis en `ask` sort en écart faute de verdict.
 
+**Deux maillons de plus, le même exercice (#829).** Le run `20260830-074902` en a laissé deux
+qu'**aucun verdict antérieur ne couvrait**. Les deux **restent refusés**, et c'est écrit dans le
+`$comment` du fichier plutôt que supposé — un maillon non instruit revient à chaque run, et personne
+ne sait, en le voyant, s'il a été **regardé** ou **oublié**.
+
+| maillon | refus | verdict |
+| --- | --- | --- |
+| `mv` | 1 (#263) | **refus mérité** — même famille que `rm`, et `git mv` n'en est pas le doublon |
+| `while` | 1 (#267) | **refus mérité** — il **suit** `for` (#528), plus une raison propre |
+
+- **`mv` n'est pas `git mv`, et l'écart entre les deux *est* la borne.** Aucune règle de préfixe ne
+  borne sa **cible** — `Bash(mv:*)` sortirait du worktree —, et il **écrase** sa destination sans
+  rien dire, ce que `rm` ne fait même pas. Ce qui rendait `git mv` instruisable en #790 est que
+  **git** le borne : source suivie, destination dans le dépôt, refus franc au-delà — une borne qui
+  ne tient à aucune règle, donc qu'aucune règle ne lui retire. Formes couvertes : `git mv` pour un
+  fichier **suivi**, `Write` au nouveau chemin pour un fichier que la session vient d'écrire
+  (*réécrire vaut déplacer*, déjà la raison du verdict de `rm`). ⚠ **La mesure dit mieux que le
+  verdict** : la *même* session, dans le *même* répertoire, a vu tomber `git mv` — pourtant
+  autorisé. La forme couverte était donc déjà dans sa main, et ce qui a fait tomber les deux appels
+  est le `cd "<chemin absolu>"` qu'ils portaient en tête, c'est-à-dire l'**échappée** de #307, que
+  ce verdict ne prétend pas corriger.
+- **`while` suit `for`, et ajoute une raison qui lui est propre.** La première est celle de #528, à
+  l'identique : une tête de boucle n'est pas une commande, donc `Bash(while:*)` bénirait la **forme**
+  sans rien juger de ce qu'elle répète — et le CLI découpant sur `;`, les maillons `do <commande>`
+  et `done` resteraient à couvrir. La seconde pèse plus lourd : un `for` itère une liste **écrite**,
+  qu'on lit dans la commande même ; un `while` itère sur une **condition**, donc rien ne le borne, et
+  `while true; do … ; done` est la boucle sans fin que `settings.run.json` existe pour empêcher
+  (#169). Son jumeau `until [ -s … ]; do sleep 3; done` est d'ailleurs nommé refus mérité **depuis
+  #179** — les attentes actives, qui ont coûté le run de #131 : l'autoriser sous le nom `while`
+  rouvrirait par la porte ce que #179 a fermé par la fenêtre. Forme couverte : celle de `for`.
+
+Comme les trois de #528, ces deux-là **restent** dans la liste « maillons qu'aucune règle ne
+couvre » de `journal.sh refus` — elle ne se vide que par une **règle**, et les vieux runs y sont
+relus contre les règles d'aujourd'hui. Ce qui doit bouger est leur **fréquence** dans les runs
+postérieurs. `ecart-run.sh` les range en « VOULU » avec leur raison, et `tests/test_ecart_run.py`
+les garde parmi les refus mérités : ce verdict n'ajoutant **aucune** règle, rien d'autre ne le
+distinguerait, dans six mois, d'une question que personne n'a posée.
+
 #### G5 — ce qui n'est pas un écart, et ne doit pas le devenir (#788, #419)
 
 ⚠ **À lire avant d'ajouter une règle qui autoriserait `merge-mr` ou `pipeline-wait` à une session de
