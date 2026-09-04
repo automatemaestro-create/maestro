@@ -48,6 +48,7 @@ from maestro.controltower.events import (
     EVENEMENT_TACHE_DETAIL,
     EVENEMENT_TACHE_REFERENCE,
     EVENEMENT_TACHE_STATUT,
+    EVENEMENT_TACHE_USAGE,
     REDIS_URL_DEFAUT,
     ROLE_RUN,
     Event,
@@ -57,6 +58,7 @@ from maestro.detail_tache import SUFFIXE_ETAPE_DETAIL, etapes_depuis, liens_depu
 from maestro.plan_run import NoeudPlan, noeuds_depuis
 from maestro.references import SUFFIXE_ETAPE_TICKET, ReferenceTicket
 from maestro.telemetry import LOGGER_NAME, redact_secrets
+from maestro.telemetry.journal import SUFFIXE_ETAPE_USAGE
 from maestro.telemetry.usage import StepUsage
 
 _LOGGER = logging.getLogger("maestro.controltower")
@@ -127,6 +129,15 @@ _SUFFIXE_DETAIL = SUFFIXE_ETAPE_DETAIL
 #: pont est la couche basse de la Control Tower et n'importe pas le moteur.
 _SUFFIXE_BLOCAGE = ":blocage"
 
+#: Suffixe des **relevés d'usage** d'une tâche en cours (#835). **Importé** et non
+#: recopié, à la différence des suffixes du moteur ci-dessus : il vit avec le
+#: format de ligne (`maestro.telemetry.journal`), que ce pont lit déjà, et un
+#: relevé mal reconnu ne serait pas une ligne perdue mais une ligne **comptée
+#: double** — la règle par défaut (« toute autre étape est l'issue d'une
+#: tâche ») en ferait un `tache.statut` porteur d'usage, donc une entrée du
+#: grand livre.
+_SUFFIXE_USAGE = SUFFIXE_ETAPE_USAGE
+
 
 def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
     """Convertit une ligne de journal (`StepRecord.to_dict`) en événements du bus.
@@ -157,6 +168,10 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
       rien changer d'autre. Même forme que les deux précédentes et pour la même
       raison — un agent qui bute n'est pas une tâche bloquée (la cascade de #43
       appartient au moteur, docs/31 §3.4) ;
+    - les relevés `<tache>:usage` (#835) deviennent un `tache.usage` : ce que la
+      tâche **en cours** a consommé jusqu'ici, mesure d'usage **conservée** —
+      c'est tout leur objet — mais sous un type que les lecteurs comptables du
+      flux ne comptent pas, parce qu'elle est un cumul et non une part ;
     - toute autre étape est l'issue d'une **tâche** : événement `tache.statut`
       portant statut, agent, rôle et coût rapporté (#8).
 
@@ -194,6 +209,7 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
     est_reference = etape.endswith(_SUFFIXE_REFERENCE)
     est_detail = etape.endswith(_SUFFIXE_DETAIL)
     est_blocage = etape.endswith(_SUFFIXE_BLOCAGE)
+    est_usage = etape.endswith(_SUFFIXE_USAGE)
     est_activite = etape in _ETAPES_RUN or etape.endswith(
         (
             _SUFFIXE_VALIDATION,
@@ -227,6 +243,13 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
         # taire.
         mesure = None
         cout_brut = None
+    elif est_usage:
+        type_evenement = EVENEMENT_TACHE_USAGE
+        tache_id = etape.removesuffix(_SUFFIXE_USAGE)
+        detail = str(record.get("sortie") or "")
+        # La mesure est **gardée**, et c'est tout l'objet du relevé (#835) : la
+        # projection y lit le coût partiel de la tâche. Elle n'entre au grand
+        # livre par aucun chemin — le type est hors des lecteurs comptables.
     elif est_message:
         type_evenement = EVENEMENT_MESSAGE_INTER_AGENTS
         tache_id = etape.removesuffix(_SUFFIXE_MESSAGE)

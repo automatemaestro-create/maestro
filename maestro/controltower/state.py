@@ -45,6 +45,7 @@ from maestro.controltower.events import (
     EVENEMENT_TACHE_REASSIGNATION,
     EVENEMENT_TACHE_REFERENCE,
     EVENEMENT_TACHE_STATUT,
+    EVENEMENT_TACHE_USAGE,
     EVENEMENT_VALIDATION_DECISION,
     EVENEMENT_VALIDATION_DEMANDE,
     Brief,
@@ -184,6 +185,23 @@ STATUTS_TACHE_TERMINAUX = frozenset({STATUT_TERMINEE, STATUT_ECHEC, STATUT_BLOQU
 _AGENTS_NON_EXECUTANTS = frozenset({"", "—"})
 
 
+def _solde_le_cout(event: Event) -> bool:
+    """Cet événement **solde**-t-il le coût de sa tâche (#835) ?
+
+    C'est l'issue d'une tâche qui solde : un `tache.statut` porteur d'une mesure
+    — ou du seul raccourci `cout_usd`, pour un producteur minimaliste. Un
+    `tache.statut` sans rien (le `:debut`, une réassignation) ne solde pas, et
+    un `tache.usage` non plus, par définition : il relève, il ne clôt pas. La
+    règle est écrite **une fois** parce que deux lecteurs en dépendent — la
+    carte de la tâche (`cout_partiel`) et le cumul du run (`EtatExecution.cout_usd`) —
+    et qu'un relevé tenu pour soldé d'un côté et en cours de l'autre ferait
+    diverger la carte et la tuile du même écran.
+    """
+    return event.type == EVENEMENT_TACHE_STATUT and (
+        event.usage is not None or event.cout_usd is not None
+    )
+
+
 @dataclass
 class EtatTache:
     """La ligne « tâche » de la projection : de quoi peupler une carte Kanban.
@@ -192,7 +210,15 @@ class EtatTache:
     titre, agent assigné, statut, coût). `cout_usd` reste None tant qu'aucune
     télémétrie n'a rapporté de coût (inconnu ≠ nul) ; `usage` en est la mesure
     détaillée (tokens entrée/sortie, coût, durée — #57), posée par le dernier
-    passage de la tâche qui en a rapporté une. La ventilation par exécution
+    passage de la tâche qui en a rapporté une. Depuis #835, ce passage peut être
+    un **relevé en cours** (`tache.usage`) et non l'issue de la tâche :
+    `cout_partiel` le dit — `True` tant que le montant est ce que la tâche a
+    consommé *jusqu'ici*, `False` dès que son `tache.statut` final l'a soldé.
+    Trois lectures qu'il permet de ne pas confondre : `0.0` partiel, une tâche
+    en cours qui n'a **rien consommé encore** (mesuré) ; `None` partiel, une
+    tâche en cours dont le fournisseur n'a **pas encore tarifé** la dépense
+    (les tokens sont dans `usage`) ; `None` non partiel, un coût **inconnu**.
+    La ventilation par exécution
     reste du côté du grand livre du run (`EtatExecution.cout`). `ticket` porte
     la référence du ticket externe dont relève la tâche (#187, contrat #183) —
     None tant qu'aucune n'a été transportée par un événement (inconnu ≠ absent) ;
@@ -214,6 +240,7 @@ class EtatTache:
     role: str = ""
     run_id: str = ""
     cout_usd: float | None = None
+    cout_partiel: bool = False
     usage: StepUsage | None = None
     ticket: ReferenceTicket | None = None
     projet_id: str | None = None
@@ -232,6 +259,7 @@ class EtatTache:
             "role": self.role,
             "run_id": self.run_id,
             "cout_usd": self.cout_usd,
+            "cout_partiel": self.cout_partiel,
             "usage": self.usage.to_dict() if self.usage is not None else None,
             "ticket": self.ticket.to_dict() if self.ticket is not None else None,
             "projet_id": self.projet_id,
@@ -416,8 +444,10 @@ class EtatExecution:
 
     Pendant API du `RunJournal` (#8) : la trace consultable d'un run — étapes,
     statuts, coûts — reliée aux tâches par `tache_id`. `cout_usd` agrège les
-    coûts rapportés par les événements du run ; `cout` en est la vue
-    comptable (#57) : le grand livre du run, coût par tâche et agrégat.
+    coûts rapportés par les événements du run, **relevés en cours compris**
+    depuis #835 (voir la propriété) ; `cout` en est la vue comptable (#57) : le
+    grand livre du run, coût par tâche et agrégat — soldé seulement, chaque
+    ligne comptée une fois.
 
     `objectif`, `statut` et `fin` portent le **cycle de vie du run** (#185) : ils
     sont posés par les événements `execution.statut` que publie le pilotage par
@@ -565,6 +595,11 @@ class EtatExecution:
             "statut": self.statut,
             "nb_taches": self.nb_taches,
             "cout_usd": self.cout_usd,
+            # Le cumul ci-dessus comprend-il un relevé en cours (#835) ? Dans
+            # le **résumé**, pour la raison de l'attente et de la pause : c'est
+            # la liste des runs qui montre lequel dépense encore, et un
+            # booléen n'y pèse rien.
+            "cout_partiel": self.cout_partiel,
             "ticket": ticket_en_dict(self.ticket),
             "projet_id": self.projet_id,
             "sources": sources_en_liste(self.sources),
@@ -603,11 +638,50 @@ class EtatExecution:
             "fin": self.fin,
         }
 
+    def _couts(self) -> tuple[list[float], dict[str, float | None]]:
+        """Les coûts **soldés** du run, et le dernier **relevé** de chaque tâche en cours (#835).
+
+        Un relevé (`tache.usage`) porte un cumul, jamais une part : on ne
+        l'additionne pas, on garde le **dernier** par tâche, et on l'oublie dès
+        que l'issue de la tâche l'a soldé (`_solde_le_cout`) — ce qui a été
+        relevé est alors compris dans le coût soldé, et le compter encore le
+        compterait deux fois. Un relevé qui reste sans issue (hôte mort en plein
+        travail) reste compté : c'est le meilleur état connu de ce que ce run a
+        dépensé, et il reste marqué partiel, ce qui est la vérité.
+        """
+        soldes: list[float] = []
+        releves: dict[str, float | None] = {}
+        for event in self.evenements:
+            if event.type == EVENEMENT_TACHE_USAGE:
+                if event.tache_id:
+                    releves[event.tache_id] = event.cout_usd
+                continue
+            if event.cout_usd is not None:
+                soldes.append(event.cout_usd)
+            if event.tache_id and _solde_le_cout(event):
+                releves.pop(event.tache_id, None)
+        return soldes, releves
+
     @property
     def cout_usd(self) -> float | None:
-        """Coût cumulé rapporté par les événements du run (None si aucun)."""
-        couts = [e.cout_usd for e in self.evenements if e.cout_usd is not None]
-        return sum(couts) if couts else None
+        """Coût cumulé du run : le soldé, plus ce que ses tâches en cours ont relevé (#835).
+
+        None si rien n'est connu — ni coût soldé, ni relevé tarifé. Un relevé à
+        coût inconnu (fournisseur qui ne tarife qu'à l'issue) n'ajoute rien mais
+        n'efface rien non plus : le cumul est alors un **plancher**, et
+        `cout_partiel` le dit. C'est ce qui fait bouger le montant d'un run entre
+        deux lectures pendant qu'une tâche travaille, là où il restait figé sur
+        la fin de la tâche précédente.
+        """
+        soldes, releves = self._couts()
+        connus = soldes + [cout for cout in releves.values() if cout is not None]
+        return sum(connus) if connus else None
+
+    @property
+    def cout_partiel(self) -> bool:
+        """Le cumul comprend-il un relevé en cours (#835) — donc un montant encore en mouvement ?"""
+        _, releves = self._couts()
+        return bool(releves)
 
     @property
     def cout(self) -> RunCost:
@@ -886,6 +960,7 @@ class ControlTowerState:
             agent=tache.agent,
             role=tache.role,
             cout_usd=tache.cout_usd,
+            cout_partiel=tache.cout_partiel,
             duree_ms=tache.usage.duree_ms if tache.usage is not None else None,
             etapes=tuple(tache.etapes),
         )
@@ -986,6 +1061,8 @@ class ControlTowerState:
             self._applique_reference(event)
         elif event.type == EVENEMENT_TACHE_DETAIL:
             self._applique_detail(event)
+        elif event.type == EVENEMENT_TACHE_USAGE:
+            self._applique_usage(event)
         elif event.type in {
             EVENEMENT_AGENT_ACTIVITE,
             EVENEMENT_MESSAGE_INTER_AGENTS,
@@ -1028,6 +1105,10 @@ class ControlTowerState:
             tache.cout_usd = event.cout_usd
         if event.usage is not None:
             tache.usage = event.usage
+        if _solde_le_cout(event):
+            # L'issue de la tâche solde ce que ses relevés (#835) montraient en
+            # cours de route : le montant n'est plus un « jusqu'ici ».
+            tache.cout_partiel = False
         if event.ticket is not None:
             tache.ticket = event.ticket
         self._pose_detail(tache, event)
@@ -1128,6 +1209,37 @@ class ControlTowerState:
             return
         tache = self._taches.setdefault(event.tache_id, EtatTache(id=event.tache_id))
         self._pose_detail(tache, event)
+        if event.projet_id is not None:
+            # Même raison qu'en `_applique_reference` : l'appartenance au projet
+            # (#222) voyage sur tous les événements de tâche, celui-ci compris.
+            tache.projet_id = event.projet_id
+        tache.run_id = event.run_id or tache.run_id
+
+    def _applique_usage(self, event: Event) -> None:
+        """Pose le **coût partiel** d'une tâche en cours (#835) — et **rien d'autre**.
+
+        Le quatrième événement de tâche qui ne touche ni statut, ni agent, ni
+        colonne du Kanban, après `tache.reference`, `tache.detail` et
+        `tache.blocage` : une tâche qui dépense ne bouge pas. Il pose ce que la
+        tâche a consommé **jusqu'ici** — `usage` en entier, `cout_usd` en
+        raccourci, `None` compris : un relevé sans coût dit « consommé, pas
+        encore tarifé », et remplacer par lui le `0.0` du relevé d'ouverture est
+        une information, pas une perte — et marque le montant **partiel**, ce
+        que le `tache.statut` final défera en le soldant.
+
+        Le dernier relevé fait foi (un cumul remplace le précédent, il ne s'y
+        ajoute pas), ce qui rend le rejeu du journal durable (#97) idempotent :
+        rejouer la même séquence rend le même état. La tâche est **créée** si
+        elle est encore inconnue, comme pour les trois autres — l'événement peut
+        précéder la première étape consignée.
+        """
+        if not event.tache_id:
+            return
+        tache = self._taches.setdefault(event.tache_id, EtatTache(id=event.tache_id))
+        tache.cout_usd = event.cout_usd
+        if event.usage is not None:
+            tache.usage = event.usage
+        tache.cout_partiel = True
         if event.projet_id is not None:
             # Même raison qu'en `_applique_reference` : l'appartenance au projet
             # (#222) voyage sur tous les événements de tâche, celui-ci compris.

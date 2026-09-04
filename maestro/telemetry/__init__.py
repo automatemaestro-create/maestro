@@ -43,7 +43,13 @@ from maestro.telemetry.costs import (
     TaskCost,
     resume_controle_depense,
 )
-from maestro.telemetry.journal import LOGGER_NAME, RunJournal, StepRecord
+from maestro.telemetry.journal import (
+    LOGGER_NAME,
+    SUFFIXE_ETAPE_USAGE,
+    RunJournal,
+    StepRecord,
+    est_releve_usage,
+)
 from maestro.telemetry.langfuse import (
     activer_export_langfuse,
     evaluer_run_langfuse,
@@ -55,12 +61,14 @@ from maestro.telemetry.usage import (
     UsageCollector,
     collect_usage,
     report_usage,
+    usage_en_cours,
 )
 
 __all__ = [
     "ETAPE_PLANIFICATION",
     "LOGGER_NAME",
     "MARQUEUR_SECRET",
+    "SUFFIXE_ETAPE_USAGE",
     "PlafondDepense",
     "PlafondDepenseDepasse",
     "RunCost",
@@ -72,9 +80,11 @@ __all__ = [
     "activer_export_langfuse",
     "collect_usage",
     "enregistre_secret",
+    "est_releve_usage",
     "evaluer_run_langfuse",
     "redact_secrets",
     "report_usage",
     "resume_controle_depense",
     "scores_depuis_journal",
+    "usage_en_cours",
 ]

@@ -906,6 +906,44 @@ fil habillait un `en_cours` en « dev — <titre> en cours », c'est-à-dire qu'
 redisait ce que le Kanban montre déjà **en taisant la salve**, seule information que
 la ligne apporte : on aurait ajouté du trafic sans lever le silence.
 
+**Ce qu'il dépense, pendant qu'il le dépense** (#835, lot 1/4 de #834). La salve
+disait ce que l'agent *fait* ; rien ne disait ce qu'il *coûte* avant l'issue de la
+tâche — `cout_usd: null` sur la carte en cours, et le total du run figé sur la fin de
+la tâche précédente (mesuré le 2026-08-30 : **5,26 $ inchangés pendant 12 minutes**
+d'une tâche qui consommait). La cause était en amont de l'écran : le SDK Claude ne
+signalait l'usage qu'une fois, au `ResultMessage`, alors que chaque `AssistantMessage`
+porte déjà le bloc `usage` de **son** appel d'API. Le fournisseur le signale désormais
+**tour par tour** (tokens, dédupliqués par identifiant de message), puis le **reste**
+au résultat — si bien que tours plus reste font exactement ce que le résultat seul
+faisait : le total soldé n'a pas bougé d'un token, `appels`/`tours`/`outils` non plus.
+Le moteur **relève** ce cumul au journal (`<tache>:usage`, à la cadence des salves, et
+une fois à l'ouverture de chaque tentative), le pont le mue en `tache.usage`, et la
+projection le pose sur la carte comme **coût partiel** : `cout_partiel: true` tant que
+le montant est un « jusqu'ici », `false` dès que l'issue l'a soldé. Trois lectures
+que la carte ne confond plus — `0` partiel, *rien consommé encore* (mesuré) ; `null`
+partiel, *consommé mais pas encore tarifé* (les tokens sont dans `usage`) ; `null` non
+partiel, *inconnu*. Le résumé du run (`GET /api/executions`) cumule le soldé **et** le
+dernier relevé de chaque tâche en cours, et porte le même `cout_partiel`.
+
+Trois choses à ne pas défaire. Un relevé est un **cumul**, jamais une part : il est
+**émis sans être conservé** (`RunJournal.releve`), donc hors de `usage_totale`, du
+grand livre et du plafond de dépense qui le relit — par construction, et non par un
+filtre à retenir ; les deux lecteurs du logger qui n'en veulent pas (Langfuse, le pont)
+le reconnaissent à son suffixe, qui vit avec le format de ligne
+(`maestro.telemetry.journal`). Côté Control Tower, `tache.usage` est un **type à lui**
+pour la même raison : les lecteurs comptables du flux (`EtatExecution.cout`, la vue
+analytique) additionnent l'usage des `tache.statut` et des activités, et un cumul rangé
+là compterait chaque tour autant de fois qu'il a été relevé — le grand livre reste
+donc soldé seulement, seul le `cout_usd` du résumé bouge en vol. Enfin, le **coût en
+vol reste inconnu tant que le fournisseur ne l'a pas tarifé** : le SDK Claude ne tarife
+qu'au résultat, et la comptabilité n'évalue aucun prix (docs/09 §4.2 en donne une
+grille indicative, à dessein hors du code). Ce qui bouge pendant la tâche est donc
+d'abord les **tokens** ; le montant suit dès qu'un fournisseur tarife par appel, sans
+qu'une ligne ne change. Une conséquence assumée : le plafond **en tokens** (#113) a
+désormais prise **pendant** une tâche, au tour où il est franchi, et non plus après
+qu'elle a tout dépensé. Couverture (critique seulement, le reste → #838) :
+`tests/test_usage_en_vol.py`.
+
 **Pourquoi il s'est arrêté.** Un run soldé en échec porte désormais sa **cause
 nommée**, lue à l'identique dans la liste (§2.4.1) et dans la vue (`LigneCause`,
 montée aux deux endroits). Le moteur les connaissait — plafond de tours (#91),
@@ -4295,7 +4333,10 @@ statuts (`approuve`, `refuse`) que le moteur écrit lui-même sur l'étape `<tâ
 
 **Ce qui n'y entre pas est un choix** : `agent.activite` (relances, refus d'outil, activité en cours
 de tâche) est le bruit de fond d'un run, ni changement d'état ni échange — l'y verser noierait les
-trois signaux que le ticket demande de distinguer. Le journal requêtable reste là pour qui veut tout.
+trois signaux que le ticket demande de distinguer. `tache.usage` (#835, le relevé de ce qu'une tâche
+en cours a consommé) reste dehors pour la même raison : c'est une jauge qui bouge, pas un fait qui
+arrive — elle se lit sur la carte et sur le résumé du run. Le journal requêtable reste là pour qui
+veut tout.
 
 **Le direct passe par le canal existant, et la frise n'a pas d'événement à elle** — même doctrine que
 le graphe : elle se recompose à la lecture, donc `tache.statut`, `message.inter_agents` et

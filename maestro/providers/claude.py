@@ -25,8 +25,9 @@ ambiant.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable, Iterator, Sequence
+from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from time import monotonic
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, cast
@@ -1156,12 +1157,18 @@ async def _collect_response(
 
     `regulateur` (#479) publie l'activité au fil du flux — None quand personne
     n'écoute. `on_etapes` (#489) reçoit la checklist de l'agent, même régime.
+
+    L'usage est signalé **tour par tour** depuis #835 (`_CompteurTours`), et non
+    plus une fois au `ResultMessage` : c'est ce qui permet au moteur de relever
+    ce qu'une tâche a consommé pendant qu'elle tourne. Le total soldé n'a pas
+    bougé d'un token — voir `_absorbe`.
     """
     parts: list[str] = []
     outils: list[str] = []
+    compteur = _CompteurTours()
     try:
         async for message in query(prompt=prompt, options=options):
-            _absorbe(message, parts, outils, regulateur, on_etapes)
+            _absorbe(message, parts, outils, regulateur, on_etapes, compteur=compteur)
     except Exception as exc:
         if _MARQUEUR_MAX_TURNS in str(exc):
             raise _avec_stderr(_erreur_plafond(plafond_tours, exc), stderr) from exc
@@ -1282,12 +1289,13 @@ async def _collect_response_pilotee(
     """
     parts: list[str] = []
     outils: list[str] = []
+    compteur = _CompteurTours()
     try:
         async with ClaudeSDKClient(options) as client:
             await _attend_serveurs_mcp(client, attendus)
             await client.query(prompt)
             async for message in client.receive_response():
-                _absorbe(message, parts, outils, regulateur, on_etapes)
+                _absorbe(message, parts, outils, regulateur, on_etapes, compteur=compteur)
                 if isinstance(message, ResultMessage) and message.is_error:
                     detail = message.result or message.subtype
                     if _MARQUEUR_MAX_TURNS in message.subtype:
@@ -1349,6 +1357,8 @@ def _absorbe(
     outils: list[str],
     regulateur: RegulateurActivite | None = None,
     on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,
+    *,
+    compteur: _CompteurTours | None = None,
 ) -> None:
     """Absorbe un message du flux SDK : texte et outils relevés, usage signalé (#8).
 
@@ -1356,6 +1366,28 @@ def _absorbe(
     blocs texte s'ajoutent à `parts`, chaque outil vu une fois à `outils`, et le
     `ResultMessage` remonte tokens/coût/durée via `report_usage` — y compris sur
     un résultat en échec (le coût d'un `error_max_turns` compte au grand livre).
+
+    Avec `compteur` (#835), l'usage est signalé **au fil des tours** et non plus
+    d'un bloc à la fin : chaque `AssistantMessage` porte le bloc `usage` de
+    l'appel d'API qui l'a produit, et ce que ce tour **ajoute** au cumul part
+    aussitôt vers le collecteur (tokens seulement — le SDK ne tarife qu'au
+    résultat, donc le coût reste inconnu jusque-là, ce que `None` dit sans
+    tricher). Le `ResultMessage` ne signale plus alors que le **reste** : son
+    total moins ce que les tours ont déjà déclaré. Deux propriétés en découlent,
+    et c'est pour elles que le reste est calculé plutôt que le résultat ignoré :
+
+    - le **total soldé est celui d'avant, au token près** — tours plus reste font
+      exactement le résultat, quoi que les tours aient dit (un résultat sans
+      `usage` reprend même ce qu'ils ont déclaré) —, si bien que le grand livre,
+      Langfuse et `appels`/`tours`/`outils`, portés par le seul résultat, ne
+      bougent pas ;
+    - une session **coupée avant son résultat** (CLI mort, plafond crevé) garde
+      désormais les tokens de ses tours dans le collecteur, là où elle n'y
+      laissait rien : c'est ce que les relances agrègent, et ce qui donne prise
+      au plafond en tokens **pendant** une tâche au lieu d'après.
+
+    Sans `compteur`, le comportement est celui d'avant ce lot — un seul
+    signalement, au résultat.
 
     C'est aussi, depuis #479, **le seul endroit où le flux est observé**, donc le
     seul d'où l'activité peut partir : `regulateur` reçoit chaque bloc d'outil et
@@ -1391,8 +1423,13 @@ def _absorbe(
                     _publie_etapes(on_etapes, block.input)
                 if block.name not in outils:
                     outils.append(block.name)
+        if compteur is not None:
+            ajout = compteur.releve(message)
+            if ajout is not None:
+                report_usage(ajout)
     elif isinstance(message, ResultMessage):
-        report_usage(_usage_from_result(message, tuple(outils)))
+        total = _usage_from_result(message, tuple(outils))
+        report_usage(total if compteur is None else compteur.reste(total))
 
 
 def _publie_etapes(
@@ -1446,19 +1483,107 @@ def _usage_from_result(result: ResultMessage, outils: tuple[str, ...]) -> StepUs
     `total_cost_usd` peut être None (le coût reste alors « inconnu », pas nul).
     """
     usage: dict[str, Any] = result.usage or {}
-    tokens_entree = sum(
-        int(usage.get(cle) or 0)
-        for cle in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
-    )
     return StepUsage(
         appels=1,
-        tokens_entree=tokens_entree,
+        tokens_entree=_tokens_entree(usage),
         tokens_sortie=int(usage.get("output_tokens") or 0),
         cout_usd=result.total_cost_usd,
         duree_api_ms=result.duration_api_ms,
         tours=result.num_turns,
         outils=outils,
     )
+
+
+def _tokens_entree(usage: Mapping[str, Any]) -> int:
+    """Les tokens d'entrée d'un bloc `usage` de l'API : prompt direct **et** cache.
+
+    La même somme pour un tour (`AssistantMessage.usage`) et pour le résultat
+    (`ResultMessage.usage`) — le SDK décompose les deux de la même façon, et
+    c'est ce qui permet au reste du résultat (#835) de tomber juste.
+    """
+    return sum(
+        int(usage.get(cle) or 0)
+        for cle in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
+    )
+
+
+class _CompteurTours:
+    """Ce que les tours d'une session ont consommé jusqu'ici, tour par tour (#835).
+
+    Le SDK ne tarife qu'au `ResultMessage`, mais chaque `AssistantMessage` porte
+    déjà le bloc `usage` de **son** appel d'API : c'est la seule matière
+    disponible pendant qu'une tâche tourne, et personne ne la lisait. Le compteur
+    la lit, et `releve` rend ce que le tour **ajoute** au cumul — c'est cet ajout
+    que `_absorbe` signale au collecteur, jamais le cumul (le collecteur
+    additionne, et lui signaler deux fois un cumul compterait double).
+
+    Deux précautions, parce que le flux n'est pas une liste propre de tours :
+
+    - le CLI peut émettre **plusieurs** `AssistantMessage` pour un même appel
+      d'API (un par bloc de contenu), chacun portant le même `usage` : ils sont
+      **dédupliqués par `message_id`**, et pour un même identifiant c'est le
+      **maximum** de chaque compteur qui tient — un usage qui se complète au fil
+      des blocs monte, il ne redescend pas, et le cumul reste monotone ;
+    - un message **sans identifiant** (double de test, SDK plus ancien) est
+      compté tel quel, additivement : ne pas le compter serait taire un tour.
+
+    Chaque tour compte aussi pour **un** dans `tours` — c'est ce qui permet à un
+    relevé de dire « 3 tours » pendant que la tâche tourne —, et `appels` reste à
+    zéro : un tour est un appel d'API, pas une invocation du fournisseur, et c'est
+    le résultat seul qui pose `appels=1`, `outils`, la durée API et le coût.
+
+    `reste` rend ce que le résultat porte **en plus** des tours déclarés, pour que
+    tours plus reste fassent exactement le résultat — y compris quand celui-ci en
+    dit moins qu'eux (résultat sans `usage`, tours de sous-agents non repris,
+    `num_turns` qui ne compte pas comme les messages) : le reste est alors
+    négatif, et le total soldé est celui du résultat, comme avant ce lot.
+    """
+
+    def __init__(self) -> None:
+        self._par_message: dict[str, StepUsage] = {}
+        self._anonymes = StepUsage()
+        self.total = StepUsage()
+
+    def releve(self, message: Any) -> StepUsage | None:
+        """Enregistre l'usage du tour `message` et rend ce qu'il ajoute — None si rien."""
+        brut = getattr(message, "usage", None)
+        if not isinstance(brut, Mapping):
+            return None
+        tour = StepUsage(
+            tokens_entree=_tokens_entree(brut),
+            tokens_sortie=int(brut.get("output_tokens") or 0),
+            tours=1,
+        )
+        identifiant = getattr(message, "message_id", None)
+        if isinstance(identifiant, str) and identifiant:
+            connu = self._par_message.get(identifiant, StepUsage())
+            self._par_message[identifiant] = StepUsage(
+                tokens_entree=max(connu.tokens_entree, tour.tokens_entree),
+                tokens_sortie=max(connu.tokens_sortie, tour.tokens_sortie),
+                tours=1,
+            )
+        else:
+            self._anonymes = self._anonymes.fusion(tour)
+        avant = self.total
+        cumul = self._anonymes
+        for usage in self._par_message.values():
+            cumul = cumul.fusion(usage)
+        self.total = cumul
+        ajout = StepUsage(
+            tokens_entree=cumul.tokens_entree - avant.tokens_entree,
+            tokens_sortie=cumul.tokens_sortie - avant.tokens_sortie,
+            tours=cumul.tours - avant.tours,
+        )
+        return ajout if (ajout.tokens_total or ajout.tours) else None
+
+    def reste(self, resultat: StepUsage) -> StepUsage:
+        """Ce que `resultat` porte en plus des tours déjà signalés (tours + reste = résultat)."""
+        return replace(
+            resultat,
+            tokens_entree=resultat.tokens_entree - self.total.tokens_entree,
+            tokens_sortie=resultat.tokens_sortie - self.total.tokens_sortie,
+            tours=resultat.tours - self.total.tours,
+        )
 
 
 # Auto-enregistrement : importer ce module suffit à rendre « claude » résolvable.
