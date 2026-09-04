@@ -61,6 +61,7 @@ from maestro.detail_tache import (
     EtapeTache,
     LienUtile,
 )
+from maestro.engine.executor import STATUT_EN_COURS
 from maestro.plan_run import NoeudPlan
 from maestro.telemetry.usage import StepUsage
 
@@ -145,8 +146,16 @@ async def _avancer_tache(
     description: str = "",
     checklist: Sequence[EtapeTache] = (),
     liens: Sequence[LienUtile] = (),
+    gestes: Sequence[str] = (),
 ) -> None:
     """Fait avancer une tâche à travers `etapes` ; usage/coût posés sur la dernière.
+
+    `gestes` (#837) sont les `agent.activite` que l'agent consigne **pendant**
+    que la tâche est `en_cours` — un par geste, publiés juste après ce statut
+    et avant le suivant. C'est ce qui donne à la tâche un **signe de vie**
+    (#836) : sans eux, la carte, le nœud et le couloir d'une tâche en cours
+    restent immobiles, et l'écran que ce lot est là pour montrer n'aurait rien
+    à montrer. Vides par défaut : une tâche sans geste est la tâche d'avant.
 
     `ticket` (#183) rattache la tâche à un ticket externe : la référence voyage
     avec chaque événement de statut — de quoi montrer le lien sur la carte du
@@ -189,6 +198,22 @@ async def _avancer_tache(
             )
         )
         await asyncio.sleep(PAUSE_ENTRE_STATUTS_S)
+        if statut != STATUT_EN_COURS:
+            continue
+        for geste in gestes:
+            await bus.publish(
+                Event(
+                    type=EVENEMENT_AGENT_ACTIVITE,
+                    run_id=RUN_ID,
+                    tache_id=tache_id,
+                    titre=titre,
+                    agent=agent,
+                    role=role,
+                    detail=geste,
+                    projet_id=projet_id,
+                )
+            )
+            await asyncio.sleep(PAUSE_ENTRE_STATUTS_S)
 
 
 async def _scenario(bus: EventBus) -> None:
@@ -371,6 +396,13 @@ async def _scenario(bus: EventBus) -> None:
                 duree_ms=9000,
                 tours=1,
                 outils=("Bash",),
+            ),
+            # Deux gestes pendant `en_cours` (#837) : le seul moment de la démo
+            # où une tâche **travaille** assez longtemps pour qu'on voie son
+            # signe de vie compter, sur le nœud, la carte et le couloir.
+            gestes=(
+                "Lance la suite de santé : GET /sante, puis GET /contacts",
+                "Relit les réponses — 200 partout, latence sous 50 ms",
             ),
         )
         print(f"[scenario] pulsation QA n°{n} publiée", flush=True)

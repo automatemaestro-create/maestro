@@ -134,7 +134,8 @@ export function formatDateHeure(horodatage: string): string {
   return date.toLocaleString("fr-FR");
 }
 
-const MINUTE_MS = 60_000;
+const SECONDE_MS = 1_000;
+const MINUTE_MS = 60 * SECONDE_MS;
 const HEURE_MS = 60 * MINUTE_MS;
 const JOUR_MS = 24 * HEURE_MS;
 const SEMAINE_MS = 7 * JOUR_MS;
@@ -169,6 +170,43 @@ export function formatHeureRelative(
   if (age < JOUR_MS) return `il y a ${Math.floor(age / HEURE_MS)} h`;
   if (age < SEMAINE_MS) return `il y a ${Math.floor(age / JOUR_MS)} j`;
   return formatDateHeure(horodatage);
+}
+
+/**
+ * L'**ancienneté d'un signe de vie** (#837) — « à l'instant », « il y a 12 s »,
+ * puis « il y a 3 min » comme `formatHeureRelative`.
+ *
+ * Le seul format de temps du module qui descende **sous la minute**, et c'est ce
+ * qui le justifie : un signe de vie (#836) est le dernier geste d'un agent sur
+ * une tâche qui travaille, et ces gestes tombent toutes les 5 à 15 secondes —
+ * « il y a 12 s » dit « ça bouge », « il y a 3 min » dit « ça s'est peut-être
+ * arrêté », et c'est cette différence qu'on lit d'un coup d'œil. Sous la minute,
+ * `formatHeureRelative` rendait l'heure absolue (juste pour une ligne de journal,
+ * qu'on corrèle) ; ici l'heure absolue obligerait à faire la soustraction, ce
+ * que le format existe pour éviter — même raison que `formatAttente`.
+ *
+ * Sous la seconde, on dit « à l'instant » : un âge négatif (horloges désaccordées
+ * entre le poste et le backend) tombe dans le même cas, on n'écrit pas « il y a
+ * -2 s ». Au-delà de la minute, on **délègue** à `formatHeureRelative` plutôt que
+ * de recopier ses paliers : deux tables de paliers finiraient par diverger.
+ *
+ * `maintenant` vient de l'appelant (`useHorlogeFine`, au pas de la seconde) pour
+ * les raisons qui valent déjà au-dessus : fonction pure, un seul instant partagé
+ * par tous les signes de l'écran, et `null` tant que l'horloge n'a pas démarré —
+ * on rend alors l'heure absolue, identique sur le serveur et dans le navigateur.
+ */
+export function formatAnciennete(
+  horodatage: string,
+  maintenant: number | null,
+): string {
+  if (!horodatage) return "";
+  const date = new Date(horodatage);
+  if (Number.isNaN(date.getTime())) return horodatage;
+  if (maintenant === null) return formatHeure(horodatage);
+  const age = maintenant - date.getTime();
+  if (age < SECONDE_MS) return "à l'instant";
+  if (age < MINUTE_MS) return `il y a ${Math.floor(age / SECONDE_MS)} s`;
+  return formatHeureRelative(horodatage, maintenant);
 }
 
 /**
