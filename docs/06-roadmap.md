@@ -124,7 +124,9 @@ d'exécution ; l'utilisateur reçoit une copie de fichiers à recopier lui-même
 
 > ✅ **Décidé le 2026-08-04.** Les sept décisions D1 à D7 ont été rendues, conformes aux
 > recommandations du cadrage ([docs/24 §8](./24-projets-locaux-et-poste-de-travail.md)) : oui aux
-> projets locaux (D1), écriture par worktree ou copie + diff sous validation humaine (D2), le
+> projets locaux (D1), écriture par worktree ou copie + diff sous validation humaine (D2 —
+> **révisée le 2026-09-04** par #703 : fusion continue sous un accord par run si versionné,
+> écriture en place sinon, [docs/24 §2.4](./24-projets-locaux-et-poste-de-travail.md)), le
 > bureau est une **enveloppe** et non la finalité (D3), lanceur puis Tauri (D4), brief validé
 > avant décomposition (D5), ordre 7 → 8 → 9 (D6), Phases 5 et 6 **inchangées** (D7).
 
@@ -317,7 +319,7 @@ Deux articulations avec le reste de la roadmap :
 | Fin Phase 1 | Le parallélisme et l'auto-assignation tiennent-ils la charge cible ? |
 | Fin Phase 2 | Les coûts sont-ils maîtrisés et l'UI suffisante au pilotage quotidien ? |
 | Fin Phase 3 | Faut-il un framework d'orchestration dédié (LangGraph) ou rester sur l'Agent SDK ? |
-| ~~Avant Phase 7~~ **tranché le 2026-08-04** | Maestro travaille-t-il sur les **projets locaux** de l'utilisateur, et selon quel patron d'écriture ? → **oui**, par worktree/branche si versionné et copie + diff sinon, l'application restant une action sensible *(D1/D2, #218)* |
+| ~~Avant Phase 7~~ **tranché le 2026-08-04** | Maestro travaille-t-il sur les **projets locaux** de l'utilisateur, et selon quel patron d'écriture ? → **oui**, par worktree/branche si versionné et copie + diff sinon, l'application restant une action sensible *(D1/D2, #218)* — *D2 révisée le 2026-09-04 (#703) : fusion continue sous un accord par run si versionné, écriture en place sinon ([docs/24 §2.4](./24-projets-locaux-et-poste-de-travail.md))* |
 | ~~Avant Phase 9~~ **tranché le 2026-08-04** | L'**application de bureau** est-elle la finalité, ou une enveloppe autour d'un produit qui reste web ? → **une enveloppe** ; lanceur/installeur d'abord, Tauri ensuite, Electron écarté *(D3/D4, #218)* |
 | **Fin Phase 7** | La Phase **10 — Continuité & multi-projet** se confirme-t-elle, et avec quel périmètre ? |
 

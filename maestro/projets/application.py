@@ -22,6 +22,10 @@ Deux chemins, ceux de la décision **D2**
 - **projet non versionné** → le diff est la comparaison de la **copie** avec la
   racine, et l'appliquer c'est y recopier les fichiers. Sans historique pour
   revenir en arrière, c'est le diff montré à l'humain qui fait office de filet.
+  ⚠ Ce chemin n'a **plus d'appelant dans le moteur** depuis #839 (D2 révisée,
+  docs/24 §2.4) : un projet non versionné se remplit en place, sans copie ni
+  diff. Il ne reste joignable que par `appliquer_sous_validation`, à qui l'on
+  passe un espace explicite.
 
 Quatre partis pris à connaître avant d'y toucher :
 

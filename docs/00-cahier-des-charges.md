@@ -149,8 +149,8 @@ L'utilisateur passe ainsi du rôle d'« opérateur » (qui exécute) à celui de
 > temporaire **détruit en fin d'exécution**.
 
 - **EF-35 (DOIT)** — Un **projet** désigne une **racine sur le disque de l'utilisateur** (dossier neuf à créer, ou dépôt existant), avec son périmètre d'inclusion/exclusion. Tâches, exécutions et coûts s'y rattachent.
-- **EF-36 (DOIT)** — Les agents **ne travaillent jamais directement** dans la racine du projet : chaque tâche opère dans un espace dérivé (branche/worktree Git si le projet est versionné, copie sinon).
-- **EF-37 (DOIT)** — L'**application des modifications** dans le projet de l'utilisateur est une **action sensible** : elle passe par la validation humaine (EF-08), diff à l'appui.
+- **EF-36 (DOIT)** — Les agents **ne travaillent jamais directement** dans la racine d'un projet **versionné** : chaque tâche opère dans un worktree Git sur sa branche `maestro/<tâche>`, **fusionnée dans la base dès que la tâche est soldée** (#705). Un projet **non versionné** se remplit **en place**, une tâche à la fois et derrière une frontière d'écriture *(D2 révisée le 2026-09-04 par #703 — [docs/24 §2.4](./24-projets-locaux-et-poste-de-travail.md))*.
+- **EF-37 (DOIT)** — L'**application des modifications** dans le projet de l'utilisateur est une **action sensible** : elle passe par la validation humaine (EF-08), diff à l'appui — **une fois par run et par projet**, à la première fusion (#706). Sans objet pour un projet non versionné, qui n'a pas de moment de fusion où l'accrocher ([docs/24 §2.4](./24-projets-locaux-et-poste-de-travail.md)).
 - **EF-38 (DOIT)** — Le système **refuse** une racine hors périmètre autorisé (racine de disque, dossier utilisateur nu, chemins sensibles) et empêche toute écriture au-dessus de la racine déclarée.
 
 ### 4.10 Composition de l'objectif : sources et brief *(**livré** — [docs/24 §3](./24-projets-locaux-et-poste-de-travail.md), **Phase 8**)*
@@ -181,7 +181,7 @@ L'utilisateur passe ainsi du rôle d'« opérateur » (qui exécute) à celui de
 | ENF-10 | **Expérience** | Interface **multilingue** (français par défaut, autres langues activables via internationalisation / i18n), claire et compréhensible par un profil non technique. |
 | ENF-11 | **Agnosticisme modèle** | Le moteur d'agents est isolé derrière une **couche d'abstraction fournisseur** : la config d'un agent porte `fournisseur + modèle + credentials`. Aucun couplage dur à un fournisseur unique. |
 | ENF-12 | **Installabilité** *(retenu, [docs/24 §4](./24-projets-locaux-et-poste-de-travail.md) — D3/D4, **Phase 9**)* | Le mode de distribution (local/bureau *vs* serveur) ne change que des **réglages** — persistance, authentification, isolation — jamais le code applicatif : un seul front, un seul backend. |
-| ENF-13 | **Intégrité du projet de l'utilisateur** *(retenu, [docs/24 §2.5](./24-projets-locaux-et-poste-de-travail.md) — D1/D2, **Phase 7**)* | Aucun travail d'agent n'atteint le projet sans passer par une validation humaine ; un projet versionné garde son retour arrière natif. Le contenu lu dans un projet est une **donnée**, jamais une consigne. |
+| ENF-13 | **Intégrité du projet de l'utilisateur** *(retenu, [docs/24 §2.5](./24-projets-locaux-et-poste-de-travail.md) — D1/D2, **Phase 7**)* | Aucun travail d'agent n'atteint un projet **versionné** sans un accord humain (un par run et par projet, #706), et ce projet garde son retour arrière natif ; un projet **non versionné** se remplit en place, borné par la frontière d'écriture et dit au journal *(D2 révisée, [docs/24 §2.4](./24-projets-locaux-et-poste-de-travail.md))*. Le contenu lu dans un projet est une **donnée**, jamais une consigne. |
 
 ---
 
@@ -205,7 +205,7 @@ L'utilisateur passe ainsi du rôle d'« opérateur » (qui exécute) à celui de
 | Sur-ingénierie initiale | Moyen | Commencer par le pattern orchestrateur-workers natif ; complexifier seulement si mesurablement utile. |
 | Collisions sur ressources partagées | Moyen | Verrous/locks sur ressources, branches Git par tâche, file de tâches. |
 | Dépendance forte à un fournisseur | Élevé | **Couche d'abstraction modèle de premier ordre** (choix fournisseur + modèle par agent, ENF-11/O7) ; outils standard (MCP). |
-| **Perte de travail dans le projet de l'utilisateur** *(Phase 7)* | Élevé | Travail hors de la racine (branche/copie), application sous validation humaine (EF-36/EF-37), périmètre déclaré et racines interdites (EF-38). |
+| **Perte de travail dans le projet de l'utilisateur** *(Phase 7)* | Élevé | Projet versionné : travail hors de la racine et fusion sous accord humain ; projet non versionné : écriture en place sérialisée et bornée par la frontière d'écriture (EF-36/EF-37, D2 révisée) ; périmètre déclaré et racines interdites (EF-38). |
 | **Prompt injection par le contenu lu** (code du projet, document téléversé) *(Phases 7-8)* | Moyen | Contenu traité comme donnée et non comme consigne ; actions sensibles maintenues derrière la validation ; politique d'outils par agent. |
 | **Empaquetage d'une cible mouvante** *(Phase 9)* | Moyen | Le bureau vient **après** le projet local et l'ingestion ; d'abord un lanceur/installeur, l'enveloppe native ensuite ([docs/24 §4.8](./24-projets-locaux-et-poste-de-travail.md)). |
 

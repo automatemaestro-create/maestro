@@ -52,10 +52,12 @@ lues dans le projet de l'utilisateur — pas seulement celles de Maestro.
 Le reste de la phase vit ailleurs et s'appuie sur ce socle : le `projet_id` porté
 par la tâche et le run (#222, `maestro.engine`), l'API et l'explorateur de
 dossiers (#223, `maestro.controltower.projets`), l'espace de travail dérivé —
-worktree Git ou copie (#224, `maestro.sandbox.projet`), l'écran Projets (#225,
-`apps/web`) et le montage en mode isolé (#226, `maestro.sandbox.container`). Les
-agents ne travaillent **jamais** directement dans la racine (EF-36) : rien ici
-n'ouvre cette porte, on ne fait que déclarer où le projet se trouve.
+worktree Git, ou la racine elle-même pour un projet non versionné (#224 puis #839,
+`maestro.sandbox`), l'écran Projets (#225, `apps/web`) et le montage en mode isolé
+(#226, `maestro.sandbox.container`). Un projet versionné n'est **jamais** écrit en
+direct (EF-36, D2 révisée par #703) : rien ici n'ouvre sa racine à un agent —
+`versionnement` y pose un `.git` sur demande, et c'est tout ce que ce paquet écrit
+chez l'utilisateur.
 """
 
 from __future__ import annotations
