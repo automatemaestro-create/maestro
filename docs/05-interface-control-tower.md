@@ -1503,9 +1503,10 @@ porte d'entrée et la sortie de « Projets » du menu sont au §2.0.1 (#279, #28
 Le premier des quatre écrans ci-dessus est **spécifié et implémenté** ; l'application des livrables
 l'est aussi, par l'écran de validation du §2.6, composer un objectif depuis #319 (§2.7.3) et valider
 le brief depuis #322 (§2.7.4). Les quatre y sont donc, et la réserve de l'encadré est levée.
-Implémentation : `apps/web/app/projets/page.tsx` et `apps/web/components/projets/`, contre les six
-routes du §6.7 ; couverture `apps/web/tests/projets.test.tsx` côté UI,
-[`tests/test_projets_api.py`](../tests/test_projets_api.py) côté API.
+Implémentation : `apps/web/app/projets/page.tsx` et `apps/web/components/projets/`, contre les
+routes du §6.7 (six à l'origine, la mise sous Git de #855 en plus) ; couverture
+`apps/web/tests/projets.test.tsx` côté UI, [`tests/test_projets_api.py`](../tests/test_projets_api.py)
+côté API.
 
 **Place dans la navigation** — l'écran a d'abord eu une entrée **« Projets »** juste après le
 tableau de bord ; elle a été **retirée** par #280 (§2.0.1), le projet étant le cadre des écrans et
@@ -1533,6 +1534,21 @@ visé n'existe pas encore — origine « nouveau » — se résout **sans except
 **parent** vient de l'explorateur et l'utilisateur ne saisit qu'un **nom de dossier**, refusé s'il
 contient un séparateur. Le §2.7.2 ajoute deux raccourcis vers un dossier lointain, sans changer
 qui valide quoi.
+
+**Mettre sous Git** (#855) — sur une carte « Non versionné », et sur elle seule, un bouton
+**« Mettre sous Git »** qui s'arme **en deux temps**, comme la suppression : le premier clic ouvre
+une confirmation qui **dit ce qui va être fait** — `git init` dans la racine affichée, puis un
+premier commit « Maestro : état initial du projet » de **toute la racine**, le `.gitignore` du
+projet respecté, et ce que ça change ensuite (les agents travailleront dans un espace dérivé du
+dépôt, la fusion de leur travail demandera un accord — [docs/24 §2.4](./24-projets-locaux-et-poste-de-travail.md)) —,
+le second appelle `POST /api/projets/{id}/versionner` (§6.7). C'est le **seul geste de l'écran qui
+écrive dans le dossier de l'utilisateur**, d'où une confirmation là où déclarer ou modifier n'en
+demandent pas. Rien n'est envoyé — le `vcs` se **constate**, il ne se déclare pas (EF-38) — et la
+liste se **relit** après, comme après toute écriture : c'est elle qui montre `git · <branche>`. Un
+refus s'affiche **sur la carte**, avec sa phrase, son motif (`depot-englobant`, `commit-refuse`,
+`git-indisponible`…) et le conseil qui va avec ; le projet reste non versionné et le geste se
+repropose. Un seul geste s'arme à la fois : armer la suppression range la mise sous Git, et
+inversement.
 
 **Un refus est une réponse** (EF-38), et il en porte trois choses : la **phrase** du backend, le
 **geste** qui en sort quand l'écran le connaît (élargir `MAESTRO_EXPLORATEUR_RACINES`, descendre
@@ -3619,6 +3635,20 @@ comportement réel.
 - `DELETE /api/projets/{id}` → `{ "id": …, "supprime": true }` — oublie la déclaration et **ne
   touche jamais au dossier sur le disque** : oublier un projet n'est pas supprimer le travail de
   l'utilisateur.
+- `POST /api/projets/{id}/versionner` → `Projet` (#855) — met un projet **non versionné** sous Git
+  par le verbe de #704 (`ProjetStore.versionner`, [docs/24 §2.4](./24-projets-locaux-et-poste-de-travail.md)) :
+  `git init` puis un **premier commit** « Maestro : état initial du projet » de toute la racine,
+  `git add -A` donc le `.gitignore` du projet **respecté**, pour que la branche de base résolve.
+  Rend la fiche **relue**, `vcs` constaté. **Sans corps** : le `vcs` ne se déclare pas (EF-38), il
+  se déclenche — c'est ce qui distingue ce geste d'un `PUT` élargi, et un `vcs` envoyé n'est ni lu
+  ni stocké. Un projet **déjà versionné** rend sa fiche telle quelle (aucune commande, `modifie_le`
+  intact) ; un refus porte son **motif**, jamais un 500 : `404` `projet-inconnu`, `409`
+  `depot-englobant` (la racine est dans un autre dépôt — l'**état du disque** s'oppose au geste),
+  `422` `commit-refuse` (un `pre-commit` de l'utilisateur a refusé : la racine est dans l'état
+  d'avant, le `.git` né compris), `init-refuse`, `vcs-introuvable` ou une racine devenue inadmissible
+  (`dossier-absent`…), `503` `git-indisponible` (le **poste** n'a pas Git). Le seul geste de la
+  famille qui **écrive dans le dossier de l'utilisateur** — sur demande explicite, et nulle part
+  ailleurs (déclaration, lecture et exécution ne posent aucun `.git`).
 - `GET /api/projets/explorateur?chemin=…` → `PageExplorateur` — énumère les **dossiers** de
   `chemin` ; **sans `chemin`**, les **points d'entrée** (#278, voir ci-dessous).
 - `GET /api/projets/selecteur` → `DisponibiliteSelecteur` (#278) — le dialogue de dossier **natif

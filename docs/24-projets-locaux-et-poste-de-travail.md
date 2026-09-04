@@ -239,11 +239,17 @@ Control Tower (`origine: nouveau`), donc le cas le plus courant du premier run.
   une racine contenue dans un autre dépôt (`depot-englobant`), et un échec laisse la racine dans
   l'état d'avant, avec son motif — le `.git` qu'il venait de créer compris, objets en lecture
   seule inclus (défaut propre à Windows, trouvé et corrigé par les tests de #707).
-  ⚠ **Il n'a pas encore d'appelant côté produit** : aucune route ni geste d'UI ne l'expose
-  (constat du 2026-08-30 sur #703 — `PUT /api/projets/{id}` ne prend pas le `vcs`), donc un projet
-  créé non versionné depuis la Control Tower ne peut le devenir que par un `git init` à la main,
-  que `versionner` rattrape ensuite. Le geste qui le rend joignable — route + geste d'UI — est
-  **#855**, hors du chantier #703.
+  **Et il est joignable depuis le produit** (#855, hors du chantier #703) : entre #704 et #855 il
+  n'avait **aucun appelant côté produit** (constat du 2026-08-30 sur #703 — `PUT /api/projets/{id}`
+  ne prend pas le `vcs`), donc un projet créé non versionné depuis la Control Tower ne pouvait le
+  devenir que par un `git init` à la main, que `versionner` rattrapait ensuite. Depuis #855, la
+  route `POST /api/projets/{id}/versionner` ([docs/05 §6.7](./05-interface-control-tower.md))
+  appelle le verbe et traduit ses refus — **sans corps**, le `vcs` restant constaté et jamais
+  déclaré (EF-38) : c'est ce qui la distingue d'un `PUT` élargi —, et l'écran Projets
+  ([docs/05 §2.7.1](./05-interface-control-tower.md)) propose **« Mettre sous Git »** sur une carte
+  « Non versionné », derrière une confirmation qui dit ce qui va être fait (`git init`, premier
+  commit de toute la racine, `.gitignore` respecté) et affiche le motif d'un refus sur la carte.
+  Le geste reste **explicite** de bout en bout : rien ne le déclenche à la place de l'utilisateur.
 
 ⚠ **Un garde-fou qu'on ne voit pas ne garde rien, et celui-ci a été invisible.** La règle d'EF-37
 est juste et le mécanisme a toujours fonctionné : la tâche s'arrêtait bien, personne n'a
