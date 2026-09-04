@@ -35,6 +35,17 @@
  *   du ticket est là, et c'est le défaut d'origine du chantier — le 2026-08-14,
  *   une attente de décision est restée 53 minutes indiscernable d'un travail en
  *   cours (#355).
+ * - **Le nœud en cours vit, et lui seul** (#837, lot 3 de #834). Entre `en_cours`
+ *   et son issue, une boîte ne changeait pas d'un pixel pendant toute la durée
+ *   de sa tâche — douze minutes mesurées sur un run réel — alors que son agent
+ *   consignait un geste toutes les quelques secondes. Le nœud porte donc le
+ *   **signe de vie** que #836 sert (`activite` : dernier geste et son
+ *   ancienneté, `components/SigneDeVie`), à une condition de plus, posée ici et
+ *   non côté serveur : que la boîte soit dessinée **en cours** — l'attente
+ *   humaine l'emporte sur le signe comme elle l'emporte sur l'état
+ *   (`lib/graphe.etatDuNoeud`), une tâche arrêtée sur quelqu'un ne « bougeant »
+ *   pas quel qu'ait été son dernier geste. Rien d'autre n'a bougé sur la boîte,
+ *   et un run soldé rend le dessin d'avant ce lot.
  *
  * ⚠ Un graphe **ne se lit pas s'il déborde** (note technique du ticket). Deux
  * réponses, et aucune ne consiste à tout montrer plus petit : le dessin vit dans
@@ -79,6 +90,7 @@ import {
 } from "@/components/Primitives";
 import { ATTENTES } from "@/components/runs/EtatRun";
 import type { Reassigner } from "@/components/SelecteurReassignation";
+import { LigneSigneDeVie } from "@/components/SigneDeVie";
 import { detailDe, normaliserEtapes } from "@/lib/detailTache";
 import { ATTENTE_VALIDATION } from "@/lib/execution";
 import { formatCout, formatDuree } from "@/lib/format";
@@ -805,6 +817,15 @@ function NoeudCarte({
         {noeud.agent || "Agent non assigné"}
         {noeud.role ? ` · ${noeud.role}` : ""}
       </p>
+
+      {/* Le signe de vie (#837) — sur la boîte dessinée **en cours**, et sur
+          elle seule : le serveur ne le sert déjà que pour une tâche `en_cours`,
+          et la vue y ajoute sa propre réserve, l'attente humaine, qui l'emporte
+          sur le signe comme sur l'état. Une ligne dans la place existante ; une
+          boîte qui ne travaille pas est la boîte d'avant ce lot. */}
+      {etat === NOEUD_EN_COURS && noeud.activite && (
+        <LigneSigneDeVie signe={noeud.activite} className="mt-1.5" />
+      )}
 
       {/* La checklist qui se coche en direct — premier critère du ticket. La
           rangée dit *combien*, la ligne dessous dit *quoi* ; la liste entière

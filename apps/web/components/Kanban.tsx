@@ -19,6 +19,14 @@
  * l'objet dense qu'on lit en diagonale sur cinq colonnes, et une tâche sans
  * détail reste exactement la carte d'avant — pas de bouton, pas de curseur qui
  * promet une ouverture, pas de cadre vide.
+ *
+ * Une carte dont la tâche **travaille** porte son **signe de vie** (#837, lot 3
+ * de #834) : le dernier geste de l'agent et son ancienneté, qui compte à la
+ * seconde (`components/SigneDeVie`). La carte ne décide pas si elle en a un —
+ * c'est la projection qui ne sert `activite` que sur une tâche `en_cours`
+ * (#836), et le shell relit ses tâches en entier à chaque battement, jamais par
+ * retouche locale : ce que la carte lit est toujours d'accord avec son statut.
+ * Une tâche qui ne travaille pas rend donc la carte d'avant, au pixel près.
  */
 
 import { useRef, useState, type MouseEvent } from "react";
@@ -42,6 +50,7 @@ import {
   SelecteurReassignation,
   type Reassigner,
 } from "@/components/SelecteurReassignation";
+import { LigneSigneDeVie } from "@/components/SigneDeVie";
 import { detailDe } from "@/lib/detailTache";
 import {
   BadgeEtat,
@@ -357,6 +366,11 @@ function CarteTache({
         Agent {tache.agent || "non assigné"}
         {tache.role ? ` · ${tache.role}` : ""}
       </p>
+      {/* Le signe de vie (#837) : servi seulement sur une tâche qui travaille
+          — la carte le montre quand elle l'a, et n'en déduit rien sinon. */}
+      {tache.activite && (
+        <LigneSigneDeVie signe={tache.activite} className="mt-1" />
+      )}
       <p className="chiffre mt-0.5 flex justify-between gap-2 text-annexe text-neutral-500 dark:text-neutral-400">
         <span>{libelleStatut(tache.statut)}</span>
         <span>

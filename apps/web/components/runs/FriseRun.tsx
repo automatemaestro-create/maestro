@@ -51,6 +51,17 @@
  * n'existe que parce que l'agrégat le résout depuis `validation.demande`, et le
  * redéduire du fil des validations côté client ferait deux règles à tenir
  * d'accord.
+ *
+ * ## Le couloir qui travaille le dit dans son en-tête (#837)
+ *
+ * Le tri ci-dessus a un coût, mesuré par #836 : ~220 lignes de journal, **3**
+ * sur la frise, et pas un pixel qui bouge pendant les douze minutes d'une
+ * tâche. Le remède n'est pas d'ouvrir `agent.activite` — la raison de l'écarter
+ * tient —, c'est l'**attribut** que le backend a donné au couloir : `activite`,
+ * le dernier geste de son agent sur une tâche qui travaille, `null` sinon.
+ * L'en-tête le rend (`components/SigneDeVie`) sous le nom et le rôle — une
+ * ligne de plus dans la place existante, **jamais une entrée** : `entrees` ne
+ * change pas, le tri non plus, et un couloir arrêté est l'en-tête d'avant.
  */
 
 import type { ReactNode } from "react";
@@ -72,6 +83,7 @@ import {
   type Icone,
   type TonBadge,
 } from "@/components/Primitives";
+import { LigneSigneDeVie } from "@/components/SigneDeVie";
 import { formatHeure, libelleStatut } from "@/lib/format";
 import type { CouloirFrise, EntreeFrise, FriseRun as Frise } from "@/lib/types";
 import { COULOIR_REPLI, STATUT_EN_ATTENTE_VALIDATION } from "@/lib/types";
@@ -330,6 +342,17 @@ function EnTeteCouloir({ couloir }: { couloir: CouloirFrise }) {
         <span className="block truncate text-micro font-normal text-neutral-500 dark:text-neutral-400">
           {couloir.role}
         </span>
+      )}
+      {/* Le signe de vie du couloir (#837) : un attribut de l'en-tête, servi
+          seulement quand une tâche de l'agent travaille. Borné en largeur —
+          une cellule de tableau s'élargit sinon jusqu'au libellé entier, et
+          c'est la colonne qui se déformerait, pas la ligne qui se tronquerait. */}
+      {couloir.activite && (
+        <LigneSigneDeVie
+          signe={couloir.activite}
+          taille="micro"
+          className="mt-0.5 max-w-48 font-normal"
+        />
       )}
       <span className="sr-only">
         {couloir.entrees.length} entrée(s) dans ce couloir
