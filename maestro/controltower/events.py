@@ -111,6 +111,21 @@ EVENEMENT_TACHE_DETAIL = "tache.detail"
 #: distinguer. Un type distinct est la seule voie qui montre le blocage **sans**
 #: défaire ce tri.
 EVENEMENT_TACHE_BLOCAGE = "tache.blocage"
+#: `tache.usage` (#835) porte ce qu'une tâche **en cours** a consommé jusqu'ici :
+#: `usage` en est le cumul (tokens, tours, et le coût si le fournisseur l'a déjà
+#: tarifé), `cout_usd` le raccourci scalaire. Même forme que `tache.reference`,
+#: `tache.detail` et `tache.blocage`, et pour la même raison — ni statut, ni
+#: agent ne changent : une tâche qui dépense ne change pas de colonne.
+#:
+#: ⚠ C'est le seul événement dont l'usage est un **cumul** et non une part, et
+#: c'est ce qui lui vaut un type à lui : les trois lecteurs comptables du flux
+#: (`EtatExecution.cout`, `analytics.agrege_couts`, et le `cout_usd` d'un run)
+#: additionnent l'usage des `tache.statut`, `agent.activite` et messages — y
+#: ranger un cumul compterait chaque tour autant de fois qu'il a été relevé. Un
+#: type distinct les laisse hors du grand livre par construction, et la
+#: projection en fait ce qu'il est : le **coût partiel** de la tâche, que son
+#: `tache.statut` final remplace.
+EVENEMENT_TACHE_USAGE = "tache.usage"
 EVENEMENT_AGENT_ACTIVITE = "agent.activite"
 EVENEMENT_AGENT_CAPACITE = "agent.capacite"
 EVENEMENT_MESSAGE_INTER_AGENTS = "message.inter_agents"

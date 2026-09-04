@@ -43,7 +43,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass, replace
-from time import perf_counter
+from time import monotonic, perf_counter
 from typing import Any
 
 from maestro.agents import default_runtimes
@@ -91,6 +91,7 @@ from maestro.projets.application import (
 from maestro.projets.modele import Projet
 from maestro.projets.racine import RacineRefusee
 from maestro.projets.store import ProjetStore
+from maestro.providers.activite import PERIODE_ACTIVITE_S
 from maestro.providers.arbitrage import Arbitre, ArbitreActe
 from maestro.providers.base import ModelProvider, UnsupportedCapability, stderr_de
 from maestro.providers.courrier import Courrier
@@ -103,6 +104,7 @@ from maestro.telemetry import (
     RunJournal,
     StepUsage,
     collect_usage,
+    usage_en_cours,
 )
 
 #: Statuts terminaux d'une tâche, alignés sur la machine à états (docs/03 §3).
@@ -191,6 +193,28 @@ SUFFIXE_ETAPE_ACTIVITE = ":activite"
 #: la projection n'utilise que pour rafraîchir la dernière activité de l'agent
 #: (`_applique_activite`) — jamais le statut d'une tâche.
 STATUT_ACTIVITE = "activite"
+
+#: Statut des **relevés d'usage** d'une tâche en cours (#835) — `<task.id>:usage`,
+#: le suffixe vivant avec le format de ligne (`maestro.telemetry.journal`,
+#: `SUFFIXE_ETAPE_USAGE`) et non ici : c'est le journal qui l'émet
+#: (`RunJournal.releve`), le moteur ne le compose pas. Un mot à lui, pour la
+#: raison de `STATUT_ACTIVITE` :
+#: `en_cours` ferait redire au fil ce que le Kanban montre déjà, et la seule
+#: information de la ligne est **ce qui a été consommé**.
+#:
+#: Le relevé est la seconde étape émise *pendant* une tâche — la salve d'activité
+#: (#479) dit ce que l'agent **fait**, le relevé dit ce qu'il **dépense** —, et
+#: elle emprunte le même canal (journal → pont #46 → bus). Ce qui la distingue de
+#: tout le reste du journal : elle porte un **cumul**, jamais une part, et c'est
+#: pourquoi `RunJournal.releve` l'émet sans la conserver — voir là-bas.
+STATUT_USAGE = "usage"
+
+#: Fenêtre minimale entre deux relevés d'usage d'une même tâche (#835) : celle
+#: des salves d'activité, et non une seconde cadence à régler — les deux disent
+#: « la tâche vit » et n'ont aucune raison de battre à des rythmes différents.
+#: Un relevé sauté ne perd rien : le suivant porte le cumul, et l'étape finale
+#: solde tout. Le **premier** relevé d'une tentative part sans attendre.
+PERIODE_RELEVE_S = PERIODE_ACTIVITE_S
 
 #: Suffixe des étapes de **blocage déclaré par l'agent** (#719) :
 #: `<task.id>:blocage`, une par appel de `signaler_blocage`
@@ -568,7 +592,13 @@ class LocalExecutor(TaskExecutor):
             )
             else None
         )
-        with collect_usage(plafond=plafond) as recolte:
+        # Le relevé d'usage en cours (#835) : à chaque mesure que le fournisseur
+        # signale, le cumul de la tâche part au journal — donc à la Control
+        # Tower — au lieu d'attendre l'étape finale. Armé sur le collecteur de
+        # **cette** exécution, d'où sa vie ici : le cumul qu'il relève couvre
+        # toutes les tentatives, comme celui que l'étape finale portera.
+        releve = _ReleveUsage(self, task, journal)
+        with collect_usage(plafond=plafond, on_mesure=releve.mesure) as recolte:
             refus = _refus_plafond_creve(task, plafond)
             if refus is not None:
                 result = refus
@@ -582,6 +612,7 @@ class LocalExecutor(TaskExecutor):
                         erreur=decision.raison,
                     )
                 else:
+                    releve.agent = decision.agent
                     entree = _build_task_description(task, dependances)
                     # Application à chaud (#78, #104, #110) : playbook courant,
                     # serveurs MCP déclarés et politique de permissions sont
@@ -1484,6 +1515,13 @@ class LocalExecutor(TaskExecutor):
             self._consigne_etapes(task, agent, suivi.etapes(), journal)
         while True:
             self._consigne_debut(task, agent, tentative, max_tentatives, journal)
+            # Le relevé d'ouverture (#835) : ce que la tâche a déjà consommé à
+            # l'instant où la tentative part — rien à la première (et c'est
+            # **mesuré**, pas inconnu : le coût vaut alors 0), le cumul des
+            # tentatives précédentes sur une relance. C'est ce qui distingue,
+            # dès la colonne « En cours », une tâche qui n'a encore rien
+            # dépensé d'une tâche dont on ne sait rien.
+            self._releve_usage(task, agent, journal, usage_en_cours())
             try:
                 sortie, fichiers = await self._produce(
                     agent, task, description, playbook, serveurs_mcp, politique, journal,
@@ -1822,6 +1860,43 @@ class LocalExecutor(TaskExecutor):
             entree="",
             sortie=texte,
             usage=StepUsage(),
+            projet_id=task.projet_id,
+        )
+
+    def _releve_usage(
+        self,
+        task: Task,
+        agent: Agent,
+        journal: RunJournal,
+        usage: StepUsage,
+    ) -> None:
+        """Relève au journal ce que la tâche a consommé **jusqu'ici** (#835) — donc au fil.
+
+        Ligne `<task.id>:usage`, émise par `RunJournal.releve` et jamais conservée
+        dans ses étapes (elle porte un cumul, pas une part — voir là-bas), que le
+        pont (`maestro.controltower.bridge`) mue en événement `tache.usage` : la
+        projection y lit le **coût partiel** de la tâche et le cumul du run le
+        reflète, sans attendre l'étape finale qui le soldera.
+
+        `usage` est le cumul du collecteur de `execute`, toutes tentatives
+        confondues. Une mesure **vide** — aucun appel, aucun token, aucun tour —
+        est relevée à coût **zéro** et non inconnu : on sait qu'il n'y a rien eu,
+        et c'est le troisième critère du ticket — une tâche qui n'a encore rien
+        consommé ne doit pas se lire comme une tâche dont le coût n'est pas connu.
+        Dès qu'un tour a été consommé, le coût est celui que le fournisseur a déjà
+        tarifé, et `None` s'il ne l'a pas encore fait (le SDK Claude ne tarife
+        qu'au résultat) : les tokens, eux, sont toujours là.
+        """
+        if not usage.appels and not usage.tokens_total and not usage.tours:
+            usage = replace(usage, cout_usd=0.0)
+        journal.releve(
+            tache_id=task.id,
+            nom=task.titre,
+            agent=agent.nom,
+            role=agent.role,
+            statut=STATUT_USAGE,
+            usage=usage,
+            sortie=_resume_releve(usage),
             projet_id=task.projet_id,
         )
 
@@ -2286,6 +2361,70 @@ def _refus_plafond_creve(task: Task, plafond: PlafondDepense | None) -> TaskResu
     except PlafondDepenseDepasse as exc:
         return _echec(task, agent="—", role="non exécutée", score=0, erreur=str(exc))
     return None
+
+
+def _resume_releve(usage: StepUsage) -> str:
+    """Ce qu'un relevé d'usage (#835) **dit** — la ligne que le fil d'activité rend.
+
+    Une phrase courte et sans unité inventée : les tokens consommés, les tours
+    joués, et le coût s'il est déjà tarifé. « rien consommé encore » pour une
+    mesure vide, plutôt qu'un « 0 token » qui se lirait comme un compteur en
+    panne.
+    """
+    if not usage.appels and not usage.tokens_total and not usage.tours:
+        return "rien consommé encore"
+    morceaux = [f"{usage.tokens_total} tokens"]
+    if usage.tours:
+        morceaux.append(f"{usage.tours} tour(s)")
+    if usage.cout_usd is not None:
+        morceaux.append(f"{usage.cout_usd:.4f} $ engagés")
+    else:
+        morceaux.append("coût pas encore tarifé")
+    return " · ".join(morceaux)
+
+
+class _ReleveUsage:
+    """L'observateur du collecteur d'une exécution (#835) : relève à débit borné.
+
+    Rappelé par le collecteur à chaque mesure (`collect_usage(on_mesure=…)`), il
+    relève le cumul au journal **au plus une fois par fenêtre** — celle des salves
+    d'activité, `PERIODE_RELEVE_S` — et la première fois sans attendre. Sauter un
+    relevé ne perd rien (le suivant porte le cumul, l'étape finale solde tout) ;
+    en émettre un par appel d'API doublerait le trafic d'une tâche bavarde pour
+    des chiffres que personne ne lit à cette cadence.
+
+    `agent` est posé par `execute` **après** le routage : aucune mesure ne peut
+    arriver avant (le fournisseur n'a pas encore été appelé), et un relevé sans
+    agent n'aurait personne à nommer — il est donc tu, par sûreté et non par
+    règle. `horloge` est injectable pour les tests, comme celle du régulateur.
+    """
+
+    def __init__(
+        self,
+        executeur: LocalExecutor,
+        task: Task,
+        journal: RunJournal,
+        *,
+        horloge: Callable[[], float] = monotonic,
+        periode_s: float = PERIODE_RELEVE_S,
+    ) -> None:
+        self._executeur = executeur
+        self._task = task
+        self._journal = journal
+        self._horloge = horloge
+        self._periode_s = max(0.0, periode_s)
+        self._dernier: float | None = None
+        self.agent: Agent | None = None
+
+    def mesure(self, cumul: StepUsage) -> None:
+        """Le rappel du collecteur : relève `cumul` si la fenêtre le permet."""
+        if self.agent is None:
+            return
+        maintenant = self._horloge()
+        if self._dernier is not None and maintenant - self._dernier < self._periode_s:
+            return
+        self._dernier = maintenant
+        self._executeur._releve_usage(self._task, self.agent, self._journal, cumul)
 
 
 def _avec_stderr_cli(cause: str, stderr_cli: str | None) -> str:

@@ -165,6 +165,10 @@ class EtatNoeud:
     agent: str = ""
     role: str = ""
     cout_usd: float | None = None
+    # Le coût ci-dessus est-il **partiel** (#835) — celui d'une tâche qui tourne
+    # encore, relevé pendant qu'il se dépense — ou soldé par l'issue de la
+    # tâche ? Posé par la projection, qui seule sait ce qui a été relevé.
+    cout_partiel: bool = False
     duree_ms: int | None = None
     etapes: tuple[EtapeTache, ...] = ()
     activite: SigneDeVie | None = None
@@ -194,6 +198,7 @@ class NoeudGraphe:
     agent: str = ""
     role: str = ""
     cout_usd: float | None = None
+    cout_partiel: bool = False
     duree_ms: int | None = None
     etapes: tuple[EtapeTache, ...] = ()
     activite: SigneDeVie | None = None
@@ -212,6 +217,10 @@ class NoeudGraphe:
             "agent": self.agent,
             "role": self.role,
             "cout_usd": self.cout_usd,
+            # Le même coût que la carte de la tâche, avec la même réserve
+            # (#835) : `true` tant que la tâche tourne et que le montant est un
+            # relevé en cours, `false` dès que son issue l'a soldé.
+            "cout_partiel": self.cout_partiel,
             "duree_ms": self.duree_ms,
             "etapes": etapes_en_liste(self.etapes),
             # `null` sur un nœud qui ne travaille pas (#836) : un client qui
@@ -448,6 +457,7 @@ def graphe_du_run(
                 agent=etat.agent,
                 role=etat.role,
                 cout_usd=etat.cout_usd,
+                cout_partiel=etat.cout_partiel,
                 duree_ms=etat.duree_ms,
                 etapes=_etapes_du_noeud(noeud, etat),
                 activite=etat.activite,

@@ -38,6 +38,30 @@ from maestro.telemetry.usage import StepUsage
 #: Logger d'émission du journal (une ligne JSON par étape).
 LOGGER_NAME = "maestro.trace"
 
+#: Suffixe des **relevés d'usage** d'une tâche en cours (#835) : `<tache>:usage`,
+#: une ligne à chaque fois que le moteur relève ce que la tâche a consommé
+#: jusqu'ici — tokens, appels, tours, outils, et le coût quand le fournisseur
+#: l'a déjà tarifé. Il vit **ici**, avec le format de ligne, et non dans le
+#: moteur : quatre lecteurs de ce format doivent le reconnaître (le pont Control
+#: Tower, l'exporteur Langfuse, le moteur qui l'émet, et ce journal qui le tient
+#: hors de ses étapes), et un suffixe recopié quatre fois serait quatre chaînes à
+#: tenir d'accord pour une ligne qui, mal reconnue, **compte double**.
+#:
+#: ⚠ Un relevé n'est pas une étape. Il porte un **cumul** (« jusqu'ici ») là où
+#: une étape porte une **part** (« ce que cette étape a coûté ») — les additionner
+#: compterait chaque tour autant de fois qu'il y a eu de relevés après lui. C'est
+#: pourquoi `RunJournal.releve` l'émet sans le conserver : `records`,
+#: `usage_totale`, le grand livre (`RunCost.depuis_journal`) et le plafond de
+#: dépense qui le relit ne le voient jamais, par construction et non par filtre.
+#: Les deux lecteurs du **logger** qui ne veulent pas de lui le reconnaissent à
+#: ce suffixe (`est_releve_usage`).
+SUFFIXE_ETAPE_USAGE = ":usage"
+
+
+def est_releve_usage(etape: str) -> bool:
+    """Cette étape est-elle un relevé d'usage en cours (#835), et non une étape du run ?"""
+    return etape.endswith(SUFFIXE_ETAPE_USAGE)
+
 
 @dataclass(frozen=True)
 class StepRecord:
@@ -201,5 +225,52 @@ class RunJournal:
             plan=list(plan),
         )
         self._records.append(record)
+        self._logger.info(json.dumps(record.to_dict(), ensure_ascii=False))
+        return record
+
+    def releve(
+        self,
+        *,
+        tache_id: str,
+        nom: str,
+        agent: str,
+        role: str,
+        statut: str,
+        usage: StepUsage,
+        sortie: str = "",
+        projet_id: str | None = None,
+    ) -> StepRecord:
+        """Émet un **relevé d'usage** de la tâche `tache_id` en cours (#835) — sans le conserver.
+
+        Même ligne JSON qu'une étape (le pont Control Tower la lit avec le même
+        lecteur), sous l'étape `<tache_id>:usage`, et `usage` y est un **cumul** :
+        ce que la tâche a consommé jusqu'ici, toutes tentatives confondues.
+
+        ⚠ Il n'entre pas dans `records`, et ce n'est pas un oubli : un relevé
+        n'est pas une étape du run, c'est la lecture d'une jauge que l'étape
+        finale de la tâche remplacera. Le garder ferait compter chaque tour
+        autant de fois qu'il aura été relevé — dans `usage_totale`, dans le grand
+        livre, donc dans le **plafond de dépense** qui le relit à chaque mesure
+        (`PlafondDepense`, #56), et dans la reprise d'un run (#96). Tenu dehors,
+        aucun de ces lecteurs n'a de règle à connaître ; seuls ceux du logger en
+        ont une (`est_releve_usage`).
+
+        Le texte de `sortie` est expurgé comme les autres — il ne porte que des
+        chiffres, mais la règle du journal ne fait pas d'exception.
+        """
+        record = StepRecord(
+            run_id=self.run_id,
+            etape=f"{tache_id}{SUFFIXE_ETAPE_USAGE}",
+            nom=nom,
+            agent=agent,
+            role=role,
+            statut=statut,
+            horodatage=datetime.now(UTC).isoformat(timespec="seconds"),
+            entree="",
+            sortie=redact_secrets(sortie),
+            erreur=None,
+            usage=usage,
+            projet_id=projet_id,
+        )
         self._logger.info(json.dumps(record.to_dict(), ensure_ascii=False))
         return record
