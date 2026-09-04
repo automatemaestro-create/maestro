@@ -1064,6 +1064,38 @@ sous les yeux** (un compteur temps réel) porte la classe `chiffre`
 elle, le passage de « 1 » à « 8 » élargit la valeur et fait sauter la ligne
 autour d'elle.
 
+### L'ascenseur discret — `app/globals.css` et `lib/ascenseur.ts` (#725)
+
+Le socle ne disait rien des ascenseurs, si bien que les **seize surfaces
+défilantes** du produit rendaient celui du système — et qu'une colonne de
+propriétés collante et bornée (`/chat`, `/couts`) portait le sien **à côté** de
+celui de la page. Depuis #725 la règle vit dans `globals.css`, une fois, et tout
+écran en hérite sans une ligne à lui :
+
+- **au repos la barre ne se voit pas ; elle se montre** sous le pointeur
+  (`:hover`), quand le focus est dedans (`:focus-within`, le pendant clavier du
+  survol) et **pendant le défilement** — `data-defilement`, posé par
+  `lib/ascenseur` sur l'élément qui vient de défiler et retiré après un court
+  repos, parce que CSS n'a aucun état pour « défile en ce moment » et que c'est
+  le seul moment où le tactile la voit ;
+- **discrète, jamais absente** : elle garde sa place (`thin`, jamais `none`),
+  reste une cible pointable et n'empêche aucun défilement — un retrait pur
+  effacerait l'information qu'une surface bornée continue sous le pli, la classe
+  de bug de #306 ;
+- **aucune couleur nouvelle** : le pouce emprunte `--bord-fort`, le token qui
+  identifie un contrôle, déjà mesuré ≥ 3:1 sur les deux surfaces des deux thèmes
+  par `contraste.test.ts` — une teinte à elle aurait eu à entrer dans la palette
+  et à y déclarer sa paire ;
+- **deux moteurs, un seul actif** : `scrollbar-width` / `scrollbar-color` quand
+  le navigateur les connaît, `::-webkit-scrollbar` seulement sinon — Chromium
+  ignore les pseudo-éléments dès que `scrollbar-color` est posé, d'où un
+  `@supports` qui choisit au lieu de superposer.
+
+Le `Shell` n'est pas exempté : son ascenseur reste le repère de défilement de la
+page, il se montre simplement quand on regarde le contenu plutôt qu'en
+permanence. Ce que jsdom ne voit pas — aucun `overflow` calculé (#308) — se
+vérifie au navigateur avec `/banc-mise-en-page`.
+
 ### Le rendu des montants — `lib/format.ts`
 
 Même principe, pour ce qui se lit plutôt que pour ce qui s'habille : les
