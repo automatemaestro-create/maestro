@@ -287,6 +287,13 @@ const LIBELLES_STATUT: Record<string, string> = {
   fusion_faite: "Projet mis à jour",
   fusion_sans_objet: "Rien à fusionner",
   fusion_refusee: "Fusion refusée",
+  // Les issues que #705 laissait muettes (#839) : la tâche est tombée avant la
+  // fusion, l'agent a écrit **dans la racine** d'un projet non versionné (ou n'y
+  // a rien déposé), la tâche nomme un projet que le dépôt ne connaît plus.
+  fusion_non_tentee: "Fusion non tentée",
+  ecriture_en_place: "Projet écrit en place",
+  ecriture_sans_objet: "Rien d'écrit dans le projet",
+  projet_introuvable: "Projet introuvable",
 };
 
 /** Le libellé d'un statut, ou le statut brut si le flux s'est enrichi. */

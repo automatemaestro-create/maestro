@@ -90,6 +90,7 @@ from maestro.providers.base import (
 )
 from maestro.providers.checklist import est_checklist, etapes_depuis_outil
 from maestro.sandbox.container import IsolationConfig
+from maestro.sandbox.en_place import FrontiereEcriture, frontiere_de
 
 if TYPE_CHECKING:  # imports de typage seuls — pas de dépendance d'exécution vers agents
     from maestro.agents.mcp import ServeurMcp
@@ -548,6 +549,12 @@ class ClaudeProvider(ModelProvider):
         if self._isolation is not None:
             cli_path = self._isolation.shim
             env |= self._isolation.env_sandbox(workspace, projet=projet)
+        # La frontière d'écriture du régime en place (#839) : armée si et
+        # seulement si `workspace` **est** la racine du projet — un projet non
+        # versionné se remplit dans sa racine, et ce que la copie garantissait
+        # par absence doit l'être ici par refus. Worktree et `mkdtemp()` n'en
+        # reçoivent aucune : leur régime ne bouge pas.
+        frontiere = frontiere_de(workspace, projet)
         stderr = CollecteurStderr()
         serveurs = _serveurs_mcp(
             mcp_serveurs,
@@ -583,6 +590,7 @@ class ClaudeProvider(ModelProvider):
                                     on_arbitrage_acte,
                                     self._arbitrage,
                                     credit_arbitrage,
+                                    frontiere=frontiere,
                                 )
                             ],
                             # Posée, jamais subie (#583) : la borne par défaut du
@@ -592,7 +600,9 @@ class ClaudeProvider(ModelProvider):
                         )
                     ]
                 }
-                if politique is not None
+                # Sans politique ni frontière, pas de hook du tout — le régime
+                # d'avant #110, au bit près.
+                if politique is not None or frontiere is not None
                 else None
             ),
         )
@@ -885,11 +895,13 @@ def _attendus_mcp(mcp_serveurs: Sequence[ServeurMcp]) -> frozenset[str]:
 
 
 def _hook_permissions(
-    politique: PolitiqueOutils,
+    politique: PolitiqueOutils | None,
     on_refus: Callable[[str, str], None] | None,
     on_arbitrage_acte: ArbitreActe | None = None,
     bornes: BornesArbitrage | None = None,
     credit: CreditArbitrage | None = None,
+    *,
+    frontiere: FrontiereEcriture | None = None,
 ) -> Callable[[HookInput, str | None, HookContext], Any]:
     """Le hook PreToolUse : applique la politique de l'agent, et **arme l'arbitrage** (#110, #583).
 
@@ -903,6 +915,17 @@ def _hook_permissions(
     - `ARBITRAGE` → l'appel est **suspendu** : la demande part sur
       `on_arbitrage_acte` avec l'outil et ses arguments (`maestro.acte`, #581),
       et l'issue décide. Approuvée, l'appel passe ; refusée, `deny` motivé.
+
+    `frontiere` (#839) est la **frontière d'écriture** du régime en place — celui
+    où l'espace de travail est la racine d'un projet non versionné
+    (`maestro.sandbox.en_place`). Elle est consultée **avant** la politique, sur
+    les seuls outils de fichiers : un chemin qui sort de la racine, passe par un
+    lien symbolique ou que le périmètre exclut est refusé par le même `deny`
+    motivé qu'un refus de politique, tracé par le même `on_refus`. Avant et non
+    après, parce qu'un appel que la frontière interdit n'a pas à déranger un
+    humain : un `ask` sur `Write` ne s'arbitre pas pour un `.env`. Elle est le
+    seul motif d'un hook **sans politique** (`politique=None`) : sans elle il
+    n'y aurait rien à consulter, et le hook n'est alors même pas monté.
 
     Depuis #586, l'arbitrage a un **décideur** (`DecisionOutil.decideur`), et le
     hook en applique un lui-même : `auto` — celui qui ne désigne personne — est
@@ -1027,6 +1050,12 @@ def _hook_permissions(
     ) -> HookJSONOutput:
         outil = str(input_data.get("tool_name") or "")
         if not outil:
+            return {}
+        if frontiere is not None:
+            motif_frontiere = frontiere.refus(outil, input_data.get("tool_input"))
+            if motif_frontiere is not None:
+                return refuse(outil, motif_frontiere)
+        if politique is None:
             return {}
         decision = politique.decide(outil)
         if decision.verdict is Verdict.PASSE:

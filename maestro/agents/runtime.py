@@ -311,16 +311,19 @@ class AgentRuntime:
 
         `projet` (#224, EF-36) est le **projet dans lequel la tâche travaille** :
         l'espace de travail en est alors dérivé — worktree Git sur la branche
-        `maestro/<tache_id>` si le projet est versionné, copie de son périmètre
-        sinon — et jamais sa racine elle-même (`maestro.sandbox.projet`). None
-        (une tâche sans `projet_id`) : le répertoire temporaire vide d'avant.
-        `tache_id` ne sert qu'à nommer cette branche et ce répertoire.
+        `maestro/<tache_id>` hors de la racine si le projet est versionné, **la
+        racine elle-même** sinon (#839, `maestro.sandbox.en_place` : l'agent y
+        écrit en place, et rien n'est retiré à la fermeture). None (une tâche
+        sans `projet_id`) : le répertoire temporaire vide d'avant. `tache_id` ne
+        sert qu'à nommer cette branche et ce répertoire.
 
         Deux autres choses en dépendent (#226), inertes elles aussi sans lui :
         les **secrets du projet** sont enregistrés auprès de la rédaction (#109)
         avant que l'agent ne démarre, et le projet est passé au fournisseur, qui
-        en a besoin pour **monter** cet espace en mode isolé sans jamais monter
-        la racine (`maestro.sandbox.container`).
+        en a besoin pour **monter** cet espace en mode isolé (avec ses masques —
+        et sans jamais monter la racine d'un projet versionné,
+        `maestro.sandbox.container`) et pour armer, en place, la **frontière
+        d'écriture** sur ses outils de fichiers.
 
         `effort` (#253) remplace, pour **cette exécution**, l'effort du runtime —
         même canal à chaud que `system_prompt` pour les playbooks, et pour la même

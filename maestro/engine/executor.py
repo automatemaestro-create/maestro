@@ -231,6 +231,33 @@ STATUT_FUSION_FAITE = "fusion_faite"
 STATUT_FUSION_SANS_OBJET = "fusion_sans_objet"
 STATUT_FUSION_REFUSEE = "fusion_refusee"
 
+#: Les issues que #705 laissait **muettes**, et que #839 fait parler — parce que
+#: « consignée dans les trois cas » était vrai de la fusion et faux de ses
+#: abstentions : elles sortaient **avant** la consigne, si bien qu'un projet non
+#: versionné ne produisait aucune étape `:fusion` et qu'un run de 8,80 $ pouvait
+#: se solder vert sur une racine vide sans qu'une ligne le dise (mesure du
+#: 2026-08-30 sur `cc2d8e447f83`, commentaire de #703).
+#:
+#: `fusion_non_tentee` : la tâche a échoué sur un projet versionné — rien n'est
+#: fusionné, la branche conserve le travail commité au démontage. Distinct de
+#: `fusion_sans_objet` (une tâche réussie qui n'apporte rien) : « rien à
+#: fusionner » sur une tâche en échec enverrait chercher un diff vide là où c'est
+#: la tâche qui est tombée. `ecriture_en_place` : projet non versionné, l'agent a
+#: travaillé **dans la racine** — la phrase nomme ce qui y est. `ecriture_sans_objet` :
+#: même régime, la tâche a réussi **sans rien y déposer** — la ligne qui répond
+#: quand un run vert laisse le projet vide. `projet_introuvable` : la tâche
+#: nomme un projet que le dépôt ne connaît plus — la tâche a travaillé dans un
+#: `mkdtemp()` et rien n'a atteint aucune racine, ce qu'il faut dire plutôt que
+#: laisser croire à un projet rempli.
+STATUT_FUSION_NON_TENTEE = "fusion_non_tentee"
+STATUT_ECRITURE_EN_PLACE = "ecriture_en_place"
+STATUT_ECRITURE_SANS_OBJET = "ecriture_sans_objet"
+STATUT_PROJET_INTROUVABLE = "projet_introuvable"
+
+#: Nombre de chemins cités dans la phrase d'une écriture en place, au-delà duquel
+#: on compte au lieu de lister — la ligne du journal est lue à l'écran, pas grepée.
+_CHEMINS_CITES_MAX = 8
+
 #: Délai de grâce accordé à l'annulation d'une réalisation en dépassement (#64) :
 #: le temps, dans le cas nominal, que le SDK ferme son sous-processus. Au-delà,
 #: la tâche est détachée — le time-out ne dépend jamais de sa coopération.
@@ -522,7 +549,17 @@ class LocalExecutor(TaskExecutor):
                     else:
                         # Contrôle de capacité (#86) : l'agent au complet retient
                         # la tâche jusqu'à la libération d'un créneau d'instance.
-                        async with self._creneau_capacite(decision.agent.nom):
+                        # Puis l'atelier du projet (#839) : une seule tâche à la
+                        # fois dans la racine d'un projet non versionné — pris
+                        # **après** le créneau et jamais avant, l'ordre inverse
+                        # pouvant s'interbloquer (une tâche tenant l'atelier en
+                        # attendant un créneau qu'une autre tient en attendant
+                        # l'atelier). Hors de l'échéance de `_realise_gardee` :
+                        # attendre son tour n'est pas travailler.
+                        async with (
+                            self._creneau_capacite(decision.agent.nom),
+                            self._atelier_projet(task),
+                        ):
                             result = await self._realise_gardee(
                                 decision.agent,
                                 task,
@@ -600,6 +637,41 @@ class LocalExecutor(TaskExecutor):
             return nullcontext()
         return self._jauge.creneau(nom, lambda: capacites.lire(nom).instances)
 
+    def _atelier_projet(self, task: Task) -> AbstractAsyncContextManager[None]:
+        """L'atelier de `task` : la racine d'un projet non versionné, une tâche à la fois (#839).
+
+        C'est le régime de concurrence du projet non versionné, **écrit** parce que
+        le ticket l'exige : **sérialisation par projet**. Les trois options —
+        sous-dossier par tâche, verrou, sérialisation — ont été pesées ainsi : un
+        sous-dossier par tâche salirait le projet de l'utilisateur de dossiers
+        nommés d'après des identifiants de tâche et empêcherait une tâche de
+        partir du travail de la précédente (le défaut B2 de #568, recréé) ; un
+        verrou par fichier ne protège pas d'un `rm`, d'un `mv` ni d'un
+        `npm install` qui réécrit un arbre. Reste la sérialisation : c'est la
+        réponse **exacte** à l'objection de D2 — « cinq agents en parallèle dans
+        un même arbre » — sans en changer le support, et un projet non versionné
+        est le plus souvent neuf et petit, donc la perte de parallélisme y coûte
+        peu. Le worktree d'un projet **versionné** garde tout son parallélisme :
+        les arbres sont séparés par construction, la fusion (#705) est le seul
+        geste sérialisé, et c'est le **même verrou** (`_verrou_projet`) qui sert
+        ici — les deux usages ne se rencontrent jamais, un projet étant l'un ou
+        l'autre.
+
+        Portée à connaître : le verrou est celui **de ce processus**. Deux runs
+        lancés séparément sur le même projet non versionné (deux hôtes détachés,
+        `maestro.controltower.hote_detache`) ne sont pas sérialisés entre eux —
+        un verrou de fichier dans la racine salirait le projet, hors de la racine
+        il faudrait l'indexer par poste ; ni l'un ni l'autre n'a été jugé
+        nécessaire tant que la Control Tower lance un run à la fois par projet.
+
+        `nullcontext()` — donc aucun effet — pour une tâche sans projet, un dépôt
+        non câblé, un projet introuvable ou un projet versionné.
+        """
+        projet = self._projet(task)
+        if projet is None or projet.versionne:
+            return nullcontext()
+        return self._verrou_projet(projet.id)
+
     def _serveurs_mcp(self, agent: str) -> tuple[ServeurMcp, ...]:
         """Les serveurs MCP déclarés pour `agent`, relus à chaque tâche (#104).
 
@@ -668,37 +740,85 @@ class LocalExecutor(TaskExecutor):
         c'est tout ce que ce lot ajoute : le calcul, le contrôle de périmètre et
         l'écriture restent là où ils vivent.
 
-        Trois abstentions, toutes silencieuses parce qu'aucune n'a rien à
-        raconter :
+        **Et depuis #839, aucune issue n'est muette.** #705 tenait trois abstentions
+        pour « sans rien à raconter » et sortait avant la consigne — or l'une des
+        trois était exactement le défaut que #568 avait mesuré : un projet non
+        versionné ne produisait **aucune** étape `:fusion`, et un run de 46 min
+        pouvait se solder vert sur une racine vide sans qu'une ligne le dise. La
+        seule abstention qui reste silencieuse est la tâche **sans projet** — il
+        n'y a pas de racine dont parler, et une ligne « aucun projet » sur chaque
+        tâche de chaque run sans projet serait du bruit sur tous les écrans. Tout
+        le reste se **dit**, par une étape `:fusion` dont le statut nomme le cas :
 
-        - **tâche en échec** — rien n'est fusionné et la branche reste, intacte,
-          avec le travail que `_solder_la_branche` vient d'y commiter. C'est le
-          critère du ticket, et c'est aussi le seul sens possible : fusionner ce
-          qu'on vient de déclarer raté écrirait l'échec dans le projet ;
-        - **tâche sans projet** — il n'y a pas de racine où écrire ;
-        - **projet non versionné** — sa copie de travail a été refermée avec
-          l'espace (`runtime` la referme dans son `finally`), donc il n'y a plus
-          rien à recopier au moment où le verdict est connu. Ce n'est pas un
-          oubli mais la **portée** du lot : rendre un projet versionné est le lot
-          1 du parent (#704), après quoi ce chemin-ci le prend en charge sans une
-          ligne de plus.
+        - **projet introuvable** — la tâche nomme un projet que le dépôt ne
+          connaît plus ; elle a travaillé dans un `mkdtemp()` (règle de
+          `_projet`) et rien n'a atteint aucune racine (`projet_introuvable`) ;
+        - **projet non versionné** — l'agent a travaillé **dans la racine**
+          (`maestro.sandbox.en_place`) : la phrase nomme ce qui y a été écrit
+          (`ecriture_en_place`), ou dit que la tâche a réussi sans rien y déposer
+          (`ecriture_sans_objet`) — c'est **cette** ligne qui manquait. Sur une
+          tâche en échec, ce qui a été écrit avant la chute reste dans la racine
+          et n'est pas recensé (le livrable d'un échec est vide) : la ligne le
+          dit sans compter ;
+        - **tâche en échec** sur un projet versionné — rien n'est fusionné et la
+          branche reste, intacte, avec le travail que `_solder_la_branche` vient
+          d'y commiter (`fusion_non_tentee`). C'est le critère de #705, et le
+          seul sens possible : fusionner ce qu'on vient de déclarer raté écrirait
+          l'échec dans le projet ;
+        - **tâche réussie** sur un projet versionné — la fusion, comme avant.
 
         Le projet est **relu** ici plutôt que retenu de `_produce` : même
         application à chaud que les playbooks, et un projet supprimé entre-temps
-        vaut abstention, pas échec.
+        vaut « introuvable », pas échec.
         """
-        if not result.ok:
+        if task.projet_id is None or self._projets is None:
             return
         projet = self._projet(task)
-        if projet is None or not projet.versionne:
+        if projet is None:
+            self._consigne_fusion(
+                task,
+                result,
+                STATUT_PROJET_INTROUVABLE,
+                entree=f"projet {task.projet_id}",
+                detail=(
+                    f"projet {task.projet_id} introuvable dans le dépôt : la tâche a "
+                    "travaillé dans un espace jetable et rien n'a atteint aucune racine."
+                ),
+                journal=journal,
+            )
+            return
+        if not projet.versionne:
+            statut, detail = _ecriture_en_place(projet, result)
+            self._consigne_fusion(
+                task,
+                result,
+                statut,
+                entree=f"écriture en place dans {projet.racine}",
+                detail=detail,
+                journal=journal,
+            )
             return
         branche = branche_de_tache(task.id)
+        entree = f"fusion de {branche}"
+        if not result.ok:
+            self._consigne_fusion(
+                task,
+                result,
+                STATUT_FUSION_NON_TENTEE,
+                entree=entree,
+                detail=(
+                    f"tâche en échec : rien n'est fusionné — le projet est intact et "
+                    f"{branche} conserve le travail commité au démontage."
+                ),
+                journal=journal,
+            )
+            return
         # Le travail est du sous-processus Git, pas de l'attente réseau : sans
         # `to_thread` il bloquerait la boucle, donc les tâches qui tournent de
         # front — et ce lot existe précisément pour qu'un run avance.
         async with self._verrou_projet(projet.id):
             statut, detail = await asyncio.to_thread(_fusion_du_travail, projet, branche)
-        self._consigne_fusion(task, result, branche, statut, detail, journal)
+        self._consigne_fusion(task, result, statut, entree=entree, detail=detail, journal=journal)
 
     def _verrou_projet(self, projet_id: str) -> asyncio.Lock:
         """Le verrou de fusion de `projet_id` — un seul merge à la fois par projet (#705).
@@ -720,26 +840,31 @@ class LocalExecutor(TaskExecutor):
         self,
         task: Task,
         result: TaskResult,
-        branche: str,
         statut: str,
+        *,
+        entree: str,
         detail: str,
         journal: RunJournal,
     ) -> None:
-        """Trace l'issue de la fusion au journal (#705) — donc au fil temps réel.
+        """Trace ce qui est arrivé au projet au journal (#705, #839) — donc au fil temps réel.
 
         Étape dédiée `<task.id>:fusion` (même modèle que `:relance` et
         `:refus-outil`), que le pont (`maestro.controltower.bridge`) mue en
         activité d'agent : ce qui est arrivé au projet se lit au moment où ça se
         produit, **sans faire changer la tâche de colonne**. `entree` porte le
-        geste tenté (la branche et sa cible), `sortie` ce qu'il en est advenu.
+        geste tenté (la branche et sa cible, ou la racine écrite en place),
+        `sortie` ce qu'il en est advenu. Le suffixe reste `:fusion` pour une
+        écriture en place : c'est le nom que le pont et l'écran connaissent, et
+        la question posée est la même — *qu'est-ce qui est arrivé dans le
+        projet ?* —, seul le statut dit par quel chemin.
 
-        Consignée dans les **trois** cas, y compris « rien à fusionner » : c'est
-        la seule ligne qui réponde à « qu'est-ce qui est arrivé dans le projet ? »,
-        et la taire quand la réponse est « rien » rendrait invisible exactement le
-        défaut que #568 a mesuré — un run vert sur une racine vide.
+        Consignée dans **tous** les cas, « rien » compris : c'est la seule ligne
+        qui réponde à cette question, et la taire quand la réponse est « rien »
+        rendrait invisible exactement le défaut que #568 a mesuré — un run vert
+        sur une racine vide.
 
-        Usage nul : le coût de la tâche est porté par son étape finale, et une
-        fusion ne dépense pas de modèle.
+        Usage nul : le coût de la tâche est porté par son étape finale, et ni
+        une fusion ni un recensement ne dépensent de modèle.
         """
         journal.consigne(
             etape=f"{task.id}{SUFFIXE_ETAPE_FUSION}",
@@ -747,7 +872,7 @@ class LocalExecutor(TaskExecutor):
             agent=result.agent,
             role=result.role,
             statut=statut,
-            entree=f"fusion de {branche}",
+            entree=entree,
             sortie=detail,
             usage=StepUsage(),
             ticket=task.ticket,
@@ -1828,6 +1953,38 @@ def _fusion_du_travail(projet: Projet, branche: str) -> tuple[str, str]:
             f"rien à fusionner : {branche} n'apporte aucun changement à {diff.base}.",
         )
     return STATUT_FUSION_FAITE, diff.resume()
+
+
+def _ecriture_en_place(projet: Projet, result: TaskResult) -> tuple[str, str]:
+    """Ce qui est arrivé à la racine d'un projet **non versionné** ; rend statut et phrase (#839).
+
+    Rien n'est calculé sur le disque : le livrable de la tâche (`result.fichiers`,
+    le recensement de `EspaceEnPlace.produced_files`) **est** la réponse — ce qui
+    a changé dans la racine depuis que l'agent y est entré, exclusions et liens
+    écartés. Une tâche en **échec** n'a pas de livrable (le résultat d'un échec
+    est vide par contrat) : ce qu'elle a écrit avant de tomber est dans la
+    racine, et la phrase le dit sans prétendre le compter.
+    """
+    racine = projet.racine
+    if not result.ok:
+        return (
+            STATUT_ECRITURE_EN_PLACE,
+            f"tâche en échec : ce que l'agent a écrit avant d'échouer est resté dans "
+            f"{racine} — rien n'en est retiré, et rien n'est recensé.",
+        )
+    chemins = [fichier.chemin for fichier in result.fichiers]
+    if not chemins:
+        return (
+            STATUT_ECRITURE_SANS_OBJET,
+            f"rien n'a été écrit dans {racine} : la tâche a réussi sans y déposer un fichier.",
+        )
+    cites = ", ".join(chemins[:_CHEMINS_CITES_MAX])
+    if len(chemins) > _CHEMINS_CITES_MAX:
+        cites += f" … (+{len(chemins) - _CHEMINS_CITES_MAX})"
+    return (
+        STATUT_ECRITURE_EN_PLACE,
+        f"{len(chemins)} fichier(s) écrit(s) dans {racine} : {cites}",
+    )
 
 
 def _hors_arbitrage(arbitrage_ms: int) -> str:

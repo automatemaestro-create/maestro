@@ -140,6 +140,22 @@ C'est **la** décision structurante de ce chantier. Trois options :
 > l'est. Le chantier n'invente donc pas de mécanisme de sûreté : il **branche un nouveau type
 > d'action sur celui qui existe**, avec le diff en pièce jointe de la demande.
 
+> ⚠ **L'option C est renversée pour le projet non versionné (#839, décision du 2026-08-30) — la
+> révision complète de D2 est le lot #707.** Mesurée sur le run réel `cc2d8e447f83`, la copie +
+> diff **ne livrait rien, et ne l'a jamais fait** : la copie était refermée par le `finally` du
+> runtime avant qu'un diff puisse être approuvé — 46 min, 8,80 $, zéro fichier dans la racine, et
+> pas une ligne au journal. Son filet (annuler) n'a pas d'objet sur un projet neuf, le cas nominal.
+> Un projet **non versionné** se remplit donc **dans sa racine, en place**
+> (`maestro/sandbox/en_place.py`), et l'objection de l'option A est **traitée** plutôt qu'ignorée :
+> les tâches d'un même projet sont **sérialisées** (une seule à la fois dans l'arbre, verrou par
+> projet du moteur), ce que la copie garantissait par absence — racine, liens symboliques,
+> exclusions du périmètre — est garanti par **refus** sur les outils de fichiers de l'agent
+> (`FrontiereEcriture`, hook `PreToolUse`), le mode isolé monte la racine **avec ses masques**, et
+> le journal dit ce qui est arrivé au projet **dans tous les cas**, l'abstention comprise. Le projet
+> **versionné** ne change pas : option B, worktree + branche + fusion (#705). Ce renversement
+> **change la portée de #706** : un projet non versionné n'a plus de diff à faire approuver,
+> l'écriture étant continue.
+
 ⚠ **Un garde-fou qu'on ne voit pas ne garde rien, et celui-ci a été invisible.** La phrase
 ci-dessus est juste et le mécanisme a toujours fonctionné : la tâche s'arrêtait bien, personne n'a
 jamais écrit dans un projet sans accord. Ce qui manquait est l'autre moitié — **la demande

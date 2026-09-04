@@ -129,6 +129,15 @@ consigné au journal, comme les autres échecs.
 > Rien du reste du tableau ne bouge. Le projet de l'utilisateur devient au passage un **actif à
 > protéger** au même titre que le poste hôte : voir
 > [docs/19 §2.1](./19-securite-modele-de-menace.md).
+>
+> ⚠ **Depuis #839, « la racine n'est jamais montée » ne vaut plus que pour un projet
+> versionné.** Un projet **non versionné** travaille **dans sa racine** (régime en place,
+> [docs/24 §2.4](./24-projets-locaux-et-poste-de-travail.md), `maestro/sandbox/en_place.py`) :
+> son espace de travail *est* la racine, elle est donc montée sur `/workspace` — **avec ses
+> masques**, ce qui fait du conteneur l'endroit où les exclusions du périmètre deviennent une
+> clôture dure (sur l'hôte, la frontière d'écriture ne confronte que les outils de fichiers de
+> l'agent, jamais `Bash`). `MAESTRO_SANDBOX_PROJET` n'est alors pas transmise : il n'y a rien à
+> refuser au dernier mètre. La révision de la doctrine est le lot #707.
 
 ## 5. Limites connues (assumées au POC)
 

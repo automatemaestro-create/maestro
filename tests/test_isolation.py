@@ -25,10 +25,12 @@ procédure manuelle est documentée dans docs/19, §Vérification) :
    le seul endroit du contrat de [docs/17 §3](../docs/17-isolation-execution.md)
    que la Phase 7 déplace. Une tâche rattachée à un projet monte l'espace
    **dérivé** de ce projet (#224) **à la place** du répertoire jetable, jamais
-   en plus ; la **racine du projet n'est jamais montée**, refusée deux fois — au
-   câblage du protocole (`env_sandbox`) et au dernier mètre avant `docker run`
-   (`commande_docker`), la seule porte que rien ne contourne — et sur des chemins
-   **résolus**, pour qu'un `..` ou une casse différente ne passent pas ; les
+   en plus ; la **racine d'un projet versionné n'est jamais montée**, refusée
+   deux fois — au câblage du protocole (`env_sandbox`) et au dernier mètre avant
+   `docker run` (`commande_docker`), la seule porte que rien ne contourne — et
+   sur des chemins **résolus**, pour qu'un `..` ou une casse différente ne
+   passent pas ; celle d'un projet **non versionné** est l'espace de travail
+   lui-même depuis #839 (régime en place), montée **avec ses masques** ; les
    chemins **exclus** du périmètre sont recouverts d'un montage vide en lecture
    seule, un périmètre qui en excède le plafond étant un refus franc plutôt
    qu'un montage à moitié.
@@ -40,7 +42,7 @@ from pathlib import Path
 import pytest
 
 from maestro.config import ConfigError, Settings
-from maestro.projets.modele import Perimetre, Projet
+from maestro.projets.modele import Perimetre, Projet, Vcs
 from maestro.providers import ClaudeProvider, Credentials
 from maestro.providers import claude as claude_mod
 from maestro.sandbox import container
@@ -357,6 +359,12 @@ def test_sans_projet_le_protocole_reste_celui_d_avant(shim_resolu, tmp_path):
     assert set(env) == {ENV_IMAGE, ENV_RESEAU, ENV_WORKSPACE}
 
 
+#: Un projet **versionné** : c'est pour lui que la racine n'est jamais montée —
+#: son espace est un worktree hors de la racine (#224). Le refus ci-dessous est
+#: le sien depuis #839 ; un projet non versionné travaille **dans** sa racine.
+_VERSIONNE = Vcs(type="git", branche_base="main")
+
+
 def test_avec_un_projet_la_racine_est_transmise_pour_etre_refusee(shim_resolu, tmp_path):
     """Elle voyage pour que le shim la vérifie au dernier mètre, jamais pour être montée."""
     racine = tmp_path / "depensio"
@@ -365,20 +373,20 @@ def test_avec_un_projet_la_racine_est_transmise_pour_etre_refusee(shim_resolu, t
     espace.mkdir()
     config = IsolationConfig.from_settings(_settings(isolation="conteneur"))
 
-    env = config.env_sandbox(espace, projet=_projet_sur(racine))
+    env = config.env_sandbox(espace, projet=_projet_sur(racine, vcs=_VERSIONNE))
 
     assert env[ENV_PROJET] == str(racine.resolve())
     assert env[ENV_WORKSPACE] == str(espace)
 
 
 def test_un_espace_de_travail_egal_a_la_racine_est_refuse_au_cablage(shim_resolu, tmp_path):
-    """EF-36 dans sa forme la plus courte : les agents travaillent hors de la racine."""
+    """EF-36 dans sa forme la plus courte : sur un projet versionné, jamais dans la racine."""
     racine = tmp_path / "depensio"
     racine.mkdir()
     config = IsolationConfig.from_settings(_settings(isolation="conteneur"))
 
     with pytest.raises(ConfigError, match="racine du projet"):
-        config.env_sandbox(racine, projet=_projet_sur(racine))
+        config.env_sandbox(racine, projet=_projet_sur(racine, vcs=_VERSIONNE))
 
 
 def test_un_espace_de_travail_dans_la_racine_est_refuse_au_cablage(shim_resolu, tmp_path):
@@ -387,7 +395,32 @@ def test_un_espace_de_travail_dans_la_racine_est_refuse_au_cablage(shim_resolu, 
     config = IsolationConfig.from_settings(_settings(isolation="conteneur"))
 
     with pytest.raises(ConfigError, match="racine du projet"):
-        config.env_sandbox(racine / "dedans", projet=_projet_sur(racine))
+        config.env_sandbox(racine / "dedans", projet=_projet_sur(racine, vcs=_VERSIONNE))
+
+
+def test_la_racine_d_un_projet_non_versionne_est_montee_avec_ses_masques(shim_resolu, tmp_path):
+    """Le régime en place (#839) : l'espace **est** la racine, et les exclusions y sont dures.
+
+    `ENV_PROJET` n'est pas transmise — il n'y a rien à refuser, et la transmettre
+    ferait refuser au dernier mètre le montage même qu'on vient de décider. Le
+    même projet, versionné, reste refusé : c'est le régime qui décide, pas le
+    chemin.
+    """
+    racine = tmp_path / "depensio"
+    racine.mkdir()
+    (racine / ".env").write_text("SECRET=1\n", encoding="utf-8")
+    config = IsolationConfig.from_settings(_settings(isolation="conteneur"))
+
+    env = config.env_sandbox(racine, projet=_projet_sur(racine))
+
+    assert env[ENV_WORKSPACE] == str(racine)
+    assert ENV_PROJET not in env
+    assert "f:.env" in env[ENV_MASQUES]
+    montages = _montages(commande_docker(env, []))
+    assert montages[0] == f"{racine}:{POINT_MONTAGE}"
+    assert any(m.endswith(f"{POINT_MONTAGE}/.env:ro") for m in montages[1:])
+    with pytest.raises(ConfigError, match="racine du projet"):
+        config.env_sandbox(racine, projet=_projet_sur(racine, vcs=_VERSIONNE))
 
 
 def test_un_detour_par_double_point_ne_contourne_pas_le_refus(shim_resolu, tmp_path):
@@ -397,7 +430,7 @@ def test_un_detour_par_double_point_ne_contourne_pas_le_refus(shim_resolu, tmp_p
     config = IsolationConfig.from_settings(_settings(isolation="conteneur"))
 
     with pytest.raises(ConfigError, match="racine du projet"):
-        config.env_sandbox(racine / ".." / "depensio", projet=_projet_sur(racine))
+        config.env_sandbox(racine / ".." / "depensio", projet=_projet_sur(racine, vcs=_VERSIONNE))
 
 
 def test_le_dernier_metre_avant_docker_refuse_aussi_la_racine(tmp_path):

@@ -169,10 +169,16 @@ function phraseEtapeAgent(evenement: Evenement): string {
     //
     // Les trois issues sont rendues, « rien à fusionner » comprise : c'est elle
     // qui répond quand un run vert laisse le projet vide, le défaut que #568 a
-    // mesuré et que le silence reproduirait.
+    // mesuré et que le silence reproduirait. #839 en ajoute quatre — les
+    // abstentions que #705 taisait, dont l'écriture **en place** d'un projet non
+    // versionné — et la même règle vaut : le `detail` est la phrase.
     case "fusion_faite":
     case "fusion_sans_objet":
     case "fusion_refusee":
+    case "fusion_non_tentee":
+    case "ecriture_en_place":
+    case "ecriture_sans_objet":
+    case "projet_introuvable":
       return `${libelleStatut(evenement.statut)}${
         evenement.detail ? ` — ${evenement.detail}` : ` : ${quoi}`
       }`;
@@ -475,9 +481,16 @@ export const NIVEAUX_LOG: { cle: NiveauLog; libelle: string }[] = [
 /**
  * Ce qui a échoué : une tâche ou une étape en échec, une exécution en échec
  * (`EXECUTION_ECHEC` vaut le même mot), une tâche que la cascade de #43 a tuée
- * avant qu'elle démarre, une fusion que Git ou le périmètre a repoussée (#705).
+ * avant qu'elle démarre, une fusion que Git ou le périmètre a repoussée (#705),
+ * une tâche qui nomme un projet que le dépôt ne connaît plus (#839 — son travail
+ * n'a atteint aucune racine, et personne ne l'a décidé).
  */
-const STATUTS_ERREUR = new Set(["echec", "bloquee", "fusion_refusee"]);
+const STATUTS_ERREUR = new Set([
+  "echec",
+  "bloquee",
+  "fusion_refusee",
+  "projet_introuvable",
+]);
 
 /**
  * Le refus d'un **appel d'outil** par la politique allow/deny (#110,
