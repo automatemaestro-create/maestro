@@ -30,6 +30,7 @@ import { MenuAide } from "@/components/MenuAide";
 import { RegionArbitrage } from "@/components/RegionLive";
 import { ChoixProjet, EcranOuverture } from "@/components/projets/ChoixProjet";
 import { SelecteurProjet } from "@/components/projets/SelecteurProjet";
+import { ecouterDefilement } from "@/lib/ascenseur";
 import { FournisseurEtatGlobal } from "@/lib/etatGlobal";
 import { FournisseurProjetActif, useProjetActif } from "@/lib/etatProjetActif";
 import {
@@ -49,6 +50,11 @@ import type { Projet } from "@/lib/types";
 export const ID_CONTENU_PRINCIPAL = "contenu-principal";
 
 export function Shell({ children }: { children: React.ReactNode }) {
+  // L'ascenseur discret du socle (#725) se montre pendant le défilement, et CSS
+  // n'a aucun état pour le dire : `lib/ascenseur` marque l'élément qui défile.
+  // Posé ici, **au-dessus** de la garde du projet — la porte d'entrée défile
+  // aussi (`ChoixProjet`), et il n'y a qu'un document à écouter.
+  useEffect(() => ecouterDefilement(document), []);
   return (
     <FournisseurProjetActif>
       <PorteProjet>{children}</PorteProjet>
