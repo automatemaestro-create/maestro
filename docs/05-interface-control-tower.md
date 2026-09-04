@@ -1477,7 +1477,11 @@ rejouant exactement le décalage d'un cran contre lequel elle existe.
   la demande de validation porte simplement un champ `diff` de plus (fichiers touchés, lignes
   ajoutées/supprimées, branche fusionnée), que le panneau des validations affiche avant la
   décision. Sur refus, **rien n'est écrit** et le travail reste consultable : la branche de tâche
-  n'est jamais supprimée, la copie reste où elle est.
+  n'est jamais supprimée, la copie reste où elle est. Depuis #706 c'est le **moteur** qui pose la
+  question, **une fois par run et par projet**, à la première fusion d'une tâche soldée (#705) —
+  même écran, même pièce jointe —, et l'accord vaut pour les fusions suivantes du run, refus
+  compris ; une fusion non accordée laisse sa branche et se lit `fusion_non_accordee` dans le
+  journal du run ([docs/24 §2.4](./24-projets-locaux-et-poste-de-travail.md)).
 
 > ⚠ **Les deux écrans de la Phase 8 ont quitté le menu le 2026-08-28** (#484, lot 3 de #481) —
 > « Composer un objectif » et « Valider le brief » —, et l'encadré ci-dessus décrit donc l'état

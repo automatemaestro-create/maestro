@@ -14,6 +14,20 @@ n'avait aucun appelant en production. Ce module ne le réimplémente pas — il 
 **demande**, au seul instant où le verdict est connu et où la tâche suivante
 n'a pas encore monté son worktree.
 
+Et c'est ici que se joue le **régime d'accord humain** de cette écriture continue
+(#706) : **un accord par run et par projet**, demandé à la **première** fusion —
+diff sous les yeux, par le validateur de toujours (EF-08) — et valant pour toutes
+les fusions suivantes du run dans ce projet, refus compris (`_accord_de_fusion`).
+Pas un accord par tâche (cinq tâches feraient cinq attentes humaines, et une
+fusion en attente retient tout ce qui dépend de la tâche : la branche de base n'a
+pas avancé), pas une propriété du projet (un accord donné hors de tout run porte
+sur rien de vu, et le `vcs` d'un projet est détecté, jamais déclaré), pas rien du
+tout (ce serait écrire chez l'utilisateur sans qu'il l'ait accordé une seule
+fois — l'objection que le ticket nomme). Un accord **non rendu** ne perd rien :
+la branche `maestro/<tâche>` n'est jamais supprimée, l'étape `:fusion` la nomme
+avec le geste de rattrapage, et la Control Tower montre l'attente (#571) puis
+l'issue.
+
 Cette frontière est **injectable** (`TaskExecutor`) : c'est elle qui permet de
 remplacer l'exécution en process (`LocalExecutor`, comportement historique) par une
 exécution **distribuée** via la file de tâches (ticket #41,
@@ -67,7 +81,13 @@ from maestro.messaging.mailbox import (
     consigne_message,
 )
 from maestro.orchestrator.schema import Task
-from maestro.projets.application import ApplicationRefusee, appliquer, diff_du_travail
+from maestro.projets.application import (
+    ApplicationRefusee,
+    DiffProjet,
+    appliquer,
+    diff_du_travail,
+    verifier_perimetre,
+)
 from maestro.projets.modele import Projet
 from maestro.projets.racine import RacineRefusee
 from maestro.projets.store import ProjetStore
@@ -231,6 +251,17 @@ STATUT_FUSION_FAITE = "fusion_faite"
 STATUT_FUSION_SANS_OBJET = "fusion_sans_objet"
 STATUT_FUSION_REFUSEE = "fusion_refusee"
 
+#: L'issue que #706 ajoute : la fusion n'a pas eu lieu parce que l'**accord
+#: humain** du run n'a pas été donné — refusé par une personne, refusé par défaut
+#: (aucun validateur, canal en panne : le fail-safe de #9), ou **jamais rendu**
+#: (run interrompu pendant l'attente). Distinct de `fusion_refusee`, qui est un
+#: refus de Git ou du périmètre : ici le projet est intact parce que quelqu'un —
+#: ou personne — l'a voulu, et la phrase nomme la cause, la branche qui conserve
+#: le travail et le geste qui le rattrape. « Non accordée » plutôt que « refusée
+#: par l'humain » : les trois causes ont la même conséquence, et c'est la phrase
+#: qui porte la cause.
+STATUT_FUSION_NON_ACCORDEE = "fusion_non_accordee"
+
 #: Les issues que #705 laissait **muettes**, et que #839 fait parler — parce que
 #: « consignée dans les trois cas » était vrai de la fusion et faux de ses
 #: abstentions : elles sortaient **avant** la consigne, si bien qu'un projet non
@@ -257,6 +288,22 @@ STATUT_PROJET_INTROUVABLE = "projet_introuvable"
 #: Nombre de chemins cités dans la phrase d'une écriture en place, au-delà duquel
 #: on compte au lieu de lister — la ligne du journal est lue à l'écran, pas grepée.
 _CHEMINS_CITES_MAX = 8
+
+
+@dataclass(frozen=True)
+class _AccordFusion:
+    """Ce qu'un run a obtenu à sa première fusion dans un projet (#706), et de quelle tâche.
+
+    `detail` est le motif rendu par les garde-fous (« approuvée par le validateur
+    humain », « aucun validateur humain configuré — refus par défaut »…), repris
+    tel quel dans les phrases des fusions suivantes ; `tache_id` dit à quelle
+    tâche la question a été posée, pour que la ligne d'une tâche ultérieure
+    renvoie à la décision et non à elle-même.
+    """
+
+    approuve: bool
+    detail: str
+    tache_id: str
 
 #: Délai de grâce accordé à l'annulation d'une réalisation en dépassement (#64) :
 #: le temps, dans le cas nominal, que le SDK ferme son sous-processus. Au-delà,
@@ -415,6 +462,14 @@ class LocalExecutor(TaskExecutor):
         # donnerait l'illusion de le traiter.
         self._verrous_projet: dict[str, asyncio.Lock] = {}
         self._boucle_verrous: asyncio.AbstractEventLoop | None = None
+        # L'accord d'écriture continue (#706), retenu **par run et par projet** :
+        # ce que le validateur a répondu à la première fusion — oui, non, ou
+        # refus par défaut — et à quelle tâche. Une seule question par run, et
+        # ce qui en revient vaut pour toutes les fusions suivantes du run dans ce
+        # projet, sans redemander. Indexé par `run_id` : un exécuteur qui sert
+        # plusieurs runs ne fait pas hériter à l'un l'accord de l'autre. Jamais
+        # purgé, comme `MemoireArbitrage` : deux chaînes et un booléen par run.
+        self._accords_fusion: dict[tuple[str, str], _AccordFusion] = {}
         # Serveurs MCP par agent (#104) : les déclarations sont relues à chaud
         # dans ce dépôt à chaque tâche — comme les playbooks (#78) — et montées
         # par la couche SDK sur les exécutions outillées de l'agent. None :
@@ -765,7 +820,10 @@ class LocalExecutor(TaskExecutor):
           d'y commiter (`fusion_non_tentee`). C'est le critère de #705, et le
           seul sens possible : fusionner ce qu'on vient de déclarer raté écrirait
           l'échec dans le projet ;
-        - **tâche réussie** sur un projet versionné — la fusion, comme avant.
+        - **tâche réussie** sur un projet versionné — la fusion, **sous l'accord
+          du run** (#706, `_accord_de_fusion`) : demandé à la première, avec le
+          diff, retenu pour les suivantes ; non accordé, la branche reste et la
+          ligne dit comment la rattraper (`fusion_non_accordee`).
 
         Le projet est **relu** ici plutôt que retenu de `_produce` : même
         application à chaud que les playbooks, et un projet supprimé entre-temps
@@ -815,10 +873,138 @@ class LocalExecutor(TaskExecutor):
             return
         # Le travail est du sous-processus Git, pas de l'attente réseau : sans
         # `to_thread` il bloquerait la boucle, donc les tâches qui tournent de
-        # front — et ce lot existe précisément pour qu'un run avance.
+        # front — et ce lot existe précisément pour qu'un run avance. L'accord
+        # (#706) se demande **sous le verrou** : deux tâches du même run soldées
+        # ensemble ne posent qu'une question, la seconde trouvant la réponse
+        # retenue par la première — et tant que la question est ouverte, rien
+        # d'autre ne s'écrit dans ce projet, ce qui est exactement ce qu'elle
+        # demande.
         async with self._verrou_projet(projet.id):
-            statut, detail = await asyncio.to_thread(_fusion_du_travail, projet, branche)
+            diff, statut, detail = await asyncio.to_thread(_diff_a_fusionner, projet, branche)
+            if diff is not None:
+                try:
+                    accord = await self._accord_de_fusion(task, result, projet, diff, journal)
+                except asyncio.CancelledError:
+                    # Le run est interrompu pendant l'attente : l'accord n'est ni
+                    # donné ni refusé, il n'est **pas rendu**. La branche reste,
+                    # et cette ligne est la seule qui le dira à qui rouvre le run.
+                    self._consigne_fusion(
+                        task,
+                        result,
+                        STATUT_FUSION_NON_ACCORDEE,
+                        entree=entree,
+                        detail=_phrase_non_accordee(
+                            "accord non rendu, run interrompu pendant l'attente",
+                            branche,
+                            diff.base,
+                        ),
+                        journal=journal,
+                    )
+                    raise
+                if accord.approuve:
+                    statut, detail = await asyncio.to_thread(
+                        _applique_la_fusion, projet, diff, branche
+                    )
+                else:
+                    statut = STATUT_FUSION_NON_ACCORDEE
+                    cause = (
+                        accord.detail
+                        if accord.tache_id == task.id
+                        else (
+                            f"accord refusé pour ce run à la tâche {accord.tache_id} "
+                            f"({accord.detail})"
+                        )
+                    )
+                    detail = _phrase_non_accordee(cause, branche, diff.base)
         self._consigne_fusion(task, result, statut, entree=entree, detail=detail, journal=journal)
+
+    async def _accord_de_fusion(
+        self,
+        task: Task,
+        result: TaskResult,
+        projet: Projet,
+        diff: DiffProjet,
+        journal: RunJournal,
+    ) -> _AccordFusion:
+        """L'accord humain d'écrire dans `projet` au nom de ce run (#706) — demandé une fois.
+
+        C'est **le** régime d'accord de l'écriture continue, et il tient en une
+        phrase : un run demande une fois, à sa première fusion dans un projet,
+        et ce qu'on lui répond vaut pour toutes ses fusions suivantes dans ce
+        projet. Pourquoi là et pas ailleurs :
+
+        - **pas par tâche** — le parent #703 veut un projet qui avance *pendant*
+          le run ; une question par tâche ferait d'un run de cinq tâches cinq
+          attentes humaines (#568 en a mesuré le prix : 31 % du temps de mur
+          perdu sur trois arbitrages), et chacune retient les tâches d'aval,
+          dont le worktree doit partir d'une base qui porte déjà ce travail ;
+        - **pas une propriété du projet** — un accord donné hors de tout run
+          porte sur rien de vu (EF-37 veut le diff sous les yeux), le `vcs` d'un
+          projet est détecté et jamais déclaré (une propriété déclarée serait
+          une surface d'API et d'UI de plus, donc un autre lot), et un accord
+          permanent est « ne rien demander du tout » dès la seconde fois ;
+        - **pas au brief** — tous les runs n'en ont pas (la CLI), il n'y a pas
+          encore de diff, et le brief est un contrat de périmètre, pas
+          d'écriture. C'est l'évolution naturelle si un jour l'attente au milieu
+          du run gêne, et elle se posera sur cette mémoire-ci ;
+        - **la première fusion**, donc — le premier instant où la question a un
+          objet (un diff), posée par le validateur de toujours (EF-08, le même
+          que le déploiement et l'arbitrage d'un acte), avec `run_id` et
+          `projet_id` (#570) pour qu'elle atteigne l'écran : c'était le défaut B3
+          de #568, corrigé en amont par #570, dont ce lot dépend sans le refaire.
+
+        Ce qui en revient vaut pour le run **quel que soit le verdict** — oui,
+        non, ou refus par défaut du fail-safe (#9 : aucun validateur, canal en
+        panne). Redemander après un non ferait dire non N fois ; retenir un refus
+        par défaut dit la vérité du déploiement (personne ne peut répondre) à
+        chaque fusion sans la redemander. Ce qui n'est **pas** retenu est ce qui
+        n'a pas été rendu : un run interrompu pendant l'attente lève
+        `CancelledError`, que l'appelant consigne et laisse remonter — le run
+        suivant sur le même projet repose la question.
+
+        La décision est consignée sur `<tâche>:validation` comme les deux autres
+        provenances (#9, #582) : même entité APPROVAL, et c'est là que la Control
+        Tower lit qui a tranché. Le `titre` dit ce qui est demandé — écrire dans
+        le projet au fil du run —, la `description` est le diff de cette première
+        fusion, la `raison` dit la portée de l'accord.
+        """
+        cle = (journal.run_id, projet.id)
+        retenu = self._accords_fusion.get(cle)
+        if retenu is not None:
+            return retenu
+        demande = DemandeValidation(
+            task_id=task.id,
+            titre=f"Écrire dans le projet {projet.nom} au fil de ce run",
+            description=diff.resume(),
+            agent=result.agent,
+            role=result.role,
+            raison=(
+                f"écriture continue dans le projet « {projet.nom} » : première fusion "
+                f"de ce run ({diff.branche} → {diff.base}, {diff.fichiers} fichier(s), "
+                f"+{diff.ajouts} / −{diff.suppressions}) — l'accord vaut pour toutes "
+                f"les fusions suivantes de ce run dans ce projet"
+            ),
+            diff=diff,
+            # D'où vient la demande (#570) : sans ces deux-là elle est montrable
+            # et jamais montrée — le défaut B3 de #568, dont ce lot dépend.
+            run_id=journal.run_id,
+            projet_id=projet.id,
+            origine=ORIGINE_POLITIQUE,
+        )
+        approuve, detail = await self._guardrails.demande_validation(demande)
+        self._consigne_validation(
+            task,
+            agent=result.agent,
+            role=result.role,
+            nom=f"Accord d'écriture dans le projet — {task.titre}",
+            raison=demande.raison,
+            approuve=approuve,
+            detail=detail,
+            journal=journal,
+        )
+        accord = _AccordFusion(approuve=approuve, detail=detail, tache_id=task.id)
+        self._accords_fusion[cle] = accord
+        return accord
 
     def _verrou_projet(self, projet_id: str) -> asyncio.Lock:
         """Le verrou de fusion de `projet_id` — un seul merge à la fois par projet (#705).
@@ -1043,7 +1229,8 @@ class LocalExecutor(TaskExecutor):
         approuve, detail = await self._guardrails.demande_validation(demande)
         self._consigne_validation(
             task,
-            agent,
+            agent=agent.nom,
+            role=agent.role,
             nom=f"Validation humaine — {task.titre}",
             raison=raison,
             approuve=approuve,
@@ -1104,7 +1291,8 @@ class LocalExecutor(TaskExecutor):
             approuve, detail = await self._guardrails.demande_validation(demande)
             self._consigne_validation(
                 task,
-                agent,
+                agent=agent.nom,
+                role=agent.role,
                 nom=f"Arbitrage demandé par l'agent — {task.titre}",
                 raison=demande.raison,
                 approuve=approuve,
@@ -1187,15 +1375,16 @@ class LocalExecutor(TaskExecutor):
     def _consigne_validation(
         self,
         task: Task,
-        agent: Agent,
         *,
+        agent: str,
+        role: str,
         nom: str,
         raison: str,
         approuve: bool,
         detail: str,
         journal: RunJournal,
     ) -> None:
-        """Trace une décision de validation au journal (#9) — les deux provenances.
+        """Trace une décision de validation au journal (#9) — les trois provenances.
 
         Étape dédiée `<task.id>:validation`, statuts alignés sur l'entité
         APPROVAL de docs/03, que la décision soit oui ou non. Depuis #582 ce
@@ -1206,6 +1395,11 @@ class LocalExecutor(TaskExecutor):
         provenance sans qu'un consommateur ait à la déduire d'une tournure de
         phrase.
 
+        Depuis #706 l'accord d'écriture dans le projet passe par ici aussi —
+        troisième provenance, même entité —, et c'est pour lui que l'agent est
+        reçu par son nom et son rôle plutôt que par sa fiche : à l'heure de la
+        fusion, l'agent n'est plus qu'un résultat.
+
         `entree` porte la raison, `sortie` le détail de la décision. Usage nul :
         délibérer ne dépense pas — le coût de la tâche est porté par son étape
         finale.
@@ -1213,8 +1407,8 @@ class LocalExecutor(TaskExecutor):
         journal.consigne(
             etape=f"{task.id}{SUFFIXE_ETAPE_VALIDATION}",
             nom=nom,
-            agent=agent.nom,
-            role=agent.role,
+            agent=agent,
+            role=role,
             statut=(
                 STATUT_VALIDATION_APPROUVE if approuve else STATUT_VALIDATION_REFUSE
             ),
@@ -1910,23 +2104,30 @@ class LocalExecutor(TaskExecutor):
         return sortie, ()
 
 
-def _fusion_du_travail(projet: Projet, branche: str) -> tuple[str, str]:
-    """Fusionne `branche` dans la branche de travail de `projet` ; rend statut et phrase (#705).
+def _diff_a_fusionner(projet: Projet, branche: str) -> tuple[DiffProjet | None, str, str]:
+    """Ce que `branche` apporterait à la branche de travail de `projet`, ou pourquoi rien.
 
-    Synchrone et hors classe : c'est du sous-processus Git de bout en bout, joué
-    dans un thread par l'appelant. Elle **n'invente rien** — `diff_du_travail`
-    calcule, `appliquer` contrôle le périmètre (`verifier_perimetre`, EF-38) puis
-    fusionne. Le nom de branche vient de `branche_de_tache` et jamais d'ici : deux
-    orthographes de la convention finiraient par fusionner la branche d'une autre
-    tâche.
+    Première moitié de la fusion (#705, coupée en deux par #706 pour loger
+    l'accord entre les deux), synchrone et hors classe comme la seconde
+    (`_applique_la_fusion`) : du sous-processus Git, joué dans un thread par
+    l'appelant. Rend le diff, **et rien d'autre**, quand il y a quelque chose à
+    faire approuver ; sinon `None` avec le statut et la phrase à consigner —
+    diff vide (`fusion_sans_objet` : déranger quelqu'un pour approuver zéro
+    fichier userait la seule chose qui rend l'accord utile), périmètre ou Git
+    qui refuse (`fusion_refusee` : on ne fait pas approuver ce qu'on refusera
+    d'écrire — la règle de `appliquer_sous_validation`, reprise telle quelle).
 
-    Le diff se lit **sur la branche** (`espace=None`) : le worktree est démonté
-    depuis longtemps quand le verdict de la tâche est connu, et ce que l'agent
-    avait laissé non commité y a été porté par `_solder_la_branche`.
+    Elle **n'invente rien** — `diff_du_travail` calcule, `verifier_perimetre`
+    contrôle (EF-38). Le diff se lit **sur la branche** (`espace=None`) : le
+    worktree est démonté depuis longtemps quand le verdict de la tâche est
+    connu, et ce que l'agent avait laissé non commité y a été porté par
+    `_solder_la_branche`. Le nom de branche vient de `branche_de_tache` et
+    jamais d'ici : deux orthographes de la convention finiraient par fusionner
+    la branche d'une autre tâche.
 
     Ne lève **jamais** : `TaskExecutor.execute` ne lève jamais non plus (contrat
-    cardinal du module), et une tâche qui vient de réussir n'a pas à échouer parce
-    que le projet de quelqu'un est occupé. Les deux refus motivés du socle
+    cardinal du module), et une tâche qui vient de réussir n'a pas à échouer
+    parce que le projet de quelqu'un est occupé. Les deux refus motivés du socle
     (`ApplicationRefusee`, `RacineRefusee`) portent leur cause ; le filet large
     derrière eux n'est pas de la méfiance envers ces deux-là mais la tenue du
     contrat — un `OSError` remonté d'un sous-processus ferait de ce geste annexe
@@ -1934,25 +2135,64 @@ def _fusion_du_travail(projet: Projet, branche: str) -> tuple[str, str]:
     """
     try:
         diff = diff_du_travail(projet, branche=branche)
+        if diff.vide:
+            return (
+                None,
+                STATUT_FUSION_SANS_OBJET,
+                f"rien à fusionner : {branche} n'apporte aucun changement à {diff.base}.",
+            )
+        verifier_perimetre(projet, diff)
+    except (ApplicationRefusee, RacineRefusee) as refus:
+        return None, STATUT_FUSION_REFUSEE, _phrase_refus(branche, refus)
+    except Exception as exc:  # cf. le docstring : `execute` ne lève jamais
+        return None, STATUT_FUSION_REFUSEE, _phrase_abandon(branche, exc)
+    return diff, "", ""
+
+
+def _applique_la_fusion(projet: Projet, diff: DiffProjet, branche: str) -> tuple[str, str]:
+    """Fusionne `diff` — la branche de tâche — dans la branche de travail ; rend statut et phrase.
+
+    Seconde moitié, jouée **sur accord seulement** (#706) : `appliquer` contrôle
+    le périmètre une seconde fois (EF-38 — il ne sait pas qu'on l'a déjà fait,
+    et c'est très bien : c'est lui qui écrit) puis fusionne. Même contrat de
+    non-levée que la première moitié, pour la même raison.
+    """
+    try:
         appliquer(projet, diff)
     except (ApplicationRefusee, RacineRefusee) as refus:
-        return (
-            STATUT_FUSION_REFUSEE,
-            f"fusion refusée ({refus.motif}) — le projet est intact et {branche} "
-            f"conserve le travail : {refus}",
-        )
+        return STATUT_FUSION_REFUSEE, _phrase_refus(branche, refus)
     except Exception as exc:  # cf. le docstring : `execute` ne lève jamais
-        return (
-            STATUT_FUSION_REFUSEE,
-            f"fusion abandonnée — le projet est intact et {branche} conserve le "
-            f"travail : {exc}",
-        )
-    if diff.vide:
-        return (
-            STATUT_FUSION_SANS_OBJET,
-            f"rien à fusionner : {branche} n'apporte aucun changement à {diff.base}.",
-        )
+        return STATUT_FUSION_REFUSEE, _phrase_abandon(branche, exc)
     return STATUT_FUSION_FAITE, diff.resume()
+
+
+def _phrase_refus(branche: str, refus: ApplicationRefusee | RacineRefusee) -> str:
+    """La phrase d'un refus motivé du socle — inchangée depuis #705, au caractère près."""
+    return (
+        f"fusion refusée ({refus.motif}) — le projet est intact et {branche} "
+        f"conserve le travail : {refus}"
+    )
+
+
+def _phrase_abandon(branche: str, exc: Exception) -> str:
+    """La phrase du filet large — inchangée depuis #705, au caractère près."""
+    return (
+        f"fusion abandonnée — le projet est intact et {branche} conserve le "
+        f"travail : {exc}"
+    )
+
+
+def _phrase_non_accordee(cause: str, branche: str, base: str) -> str:
+    """La phrase d'une fusion sans accord (#706) : la cause, la branche, le rattrapage.
+
+    Le rattrapage est nommé parce que c'est le critère — un accord non rendu ne
+    perd rien —, et c'est un geste Git ordinaire : la branche est dans le dépôt
+    de l'utilisateur, à fusionner quand il le voudra.
+    """
+    return (
+        f"fusion non accordée — {cause}. Le projet est intact et {branche} conserve "
+        f"le travail ; à rattraper à la main : git merge {branche} depuis {base}."
+    )
 
 
 def _ecriture_en_place(projet: Projet, result: TaskResult) -> tuple[str, str]:

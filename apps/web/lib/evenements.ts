@@ -176,6 +176,9 @@ function phraseEtapeAgent(evenement: Evenement): string {
     case "fusion_sans_objet":
     case "fusion_refusee":
     case "fusion_non_tentee":
+    // Et #706 la fusion **non accordée** — l'accord du run refusé, ou jamais
+    // rendu : la phrase nomme la cause et la branche qui conserve le travail.
+    case "fusion_non_accordee":
     case "ecriture_en_place":
     case "ecriture_sans_objet":
     case "projet_introuvable":
