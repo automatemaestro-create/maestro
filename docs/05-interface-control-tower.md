@@ -1127,7 +1127,8 @@ comme elle l'emporte sur l'état (`lib/graphe.etatDuNoeud`) — une tâche arrê
 quelqu'un ne « bouge » pas, quel qu'ait été son dernier geste. Un run soldé rend le
 dessin d'avant ce lot. La démo publie deux gestes pendant la pulsation QA, seul moment
 où une de ses tâches travaille assez longtemps pour qu'on voie le signe compter.
-Tests différés au lot 4 de #834.
+Couverture (#838) : [`apps/web/tests/signe-de-vie.test.tsx`](../apps/web/tests/signe-de-vie.test.tsx)
+côté écran — détail en §6.13bis —, `tests/test_run_qui_travaille.py` côté contrat.
 
 Deux notes de lecture, jamais confondues : `plan_connu: false` dit que le run n'a pas
 publié son plan (nœuds reconstruits, aucune arête connue) ; `plat: true` qu'il n'a
@@ -4556,9 +4557,14 @@ au JSON près une fois l'attribut retiré, les trois lectures de la carte de co�
 deux, le cumul du run qui bouge, et la route — carte, nœud et couloir servant le **même** signe, un
 geste appliqué entre deux lectures qui change les trois sans toucher aux entrées, un run soldé qui
 rend exactement la vue d'avant. `tests/test_usage_en_vol.py` garde le critique de #835 (total
-soldé identique, relevé jamais compté deux fois). Côté écran, la ligne de #837 (§2.4.4) est un
-lot d'interface dont la suite Vitest reste à poser — **#871** : ce lot ne pouvait pas la viser
-depuis une branche où le composant n'existe pas encore, et la reprise a son propre ticket.
+soldé identique, relevé jamais compté deux fois). Côté écran, la ligne de #837 (§2.4.4) est gardée
+par [`apps/web/tests/signe-de-vie.test.tsx`](../apps/web/tests/signe-de-vie.test.tsx) — le format
+sous la minute (prouvé sur le format d'avant, qui taisait l'âge), l'ancienneté qui avance à
+l'horloge factice sans rechargement, un seul timer pour tous les signes montés et l'horloge à 30 s
+qui n'en suit pas le pas, puis les trois surfaces : le signe sur la seule boîte qui travaille
+(un nœud arrêté que le payload doterait d'un signe est l'échantillon fautif, et la vue ne le montre
+pas), effacé dès que la tâche attend un humain, la carte du Kanban, l'en-tête du couloir sans une
+ligne de plus, et un run soldé sans aucun `[data-signe-de-vie]`.
 
 ### 6.14 Un fil est une suite de conversations (#694) — **livré**
 

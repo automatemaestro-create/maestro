@@ -550,10 +550,13 @@ pris tiennent au banc du §1 ; jusque-là ils valent comme décision, pas comme 
 **Ce qui le garde.** Côté contrat, `tests/test_run_qui_travaille.py` (#838) compte la présence des
 champs et le contenu des payloads — jamais une durée —, et chaque contrôle y rougit d'abord sur la
 forme d'**avant** (un couloir en cours sans signe, une carte en vol restée `null`, `TYPES_FRISE`
-ouvert en bloc) avant d'être cru sur la forme livrée. Côté écran, la ligne a été vérifiée sur des
-vues factices à la livraison de #837 ; sa suite Vitest est le reliquat du lot final, consigné dans
-**#871** — le composant n'existant pas encore sur la branche qui posait les tests, un test qui
-l'importerait aurait rougi la CI de la PR pour une raison étrangère à ce qu'elle livrait.
+ouvert en bloc) avant d'être cru sur la forme livrée. Côté écran,
+`apps/web/tests/signe-de-vie.test.tsx` (#838) garde la ligne là où elle se monte — la seule boîte
+qui travaille, la carte, l'en-tête du couloir — et ce qui la fait compter, à l'**horloge factice**
+(deux vraies secondes d'attente mesureraient la machine) ; son échantillon fautif est un nœud
+arrêté que le payload doterait d'un signe, que la vue refuse de montrer. La règle des trois places
+n'a rien eu à apprendre : `sobriete.test.tsx` et `a11y.test.tsx` comptent le même nombre de places
+qu'avant #837.
 
 ---
 
