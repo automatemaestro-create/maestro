@@ -156,6 +156,29 @@ C'est **la** décision structurante de ce chantier. Trois options :
 > **change la portée de #706** : un projet non versionné n'a plus de diff à faire approuver,
 > l'écriture étant continue.
 
+> **Le régime d'accord humain de l'écriture continue est tranché (#706, 2026-09-04).** Pour un
+> projet **versionné**, la fusion de chaque tâche soldée (#705) ne demande pas un accord par tâche
+> mais **un accord par run et par projet**, demandé à la **première fusion** — diff sous les yeux,
+> par le validateur de toujours (EF-08), avec `run_id` et `projet_id` (#570) pour qu'il atteigne
+> l'écran — et valant pour toutes les fusions suivantes du run dans ce projet, **refus compris**.
+> Trois formes écartées, avec leur raison : l'accord **par tâche** ferait d'un run de cinq tâches
+> cinq attentes humaines, chacune retenant les tâches d'aval (leur worktree part de la base, qui
+> n'a pas avancé) — c'est le prix que #568 a mesuré, 31 % du temps de mur ; l'accord porté par une
+> **propriété du projet** serait donné hors de tout run, sur rien de vu, sur un `vcs` qui est
+> détecté et jamais déclaré, et vaudrait « ne rien demander » dès la seconde fois ; **ne rien
+> demander** ferait écrire chez l'utilisateur sans qu'il l'ait accordé une seule fois. Le brief
+> (#320) est l'évolution naturelle si l'attente au milieu du run gêne, pas le point de départ :
+> tous les runs n'en ont pas, et il n'y a pas encore de diff. Un accord **non rendu** ne perd
+> rien : la branche `maestro/<tâche>` n'est jamais supprimée, l'étape `:fusion`
+> (`fusion_non_accordee`) la nomme avec le geste de rattrapage (`git merge` depuis la branche de
+> base), le run se lit « en attente d'arbitrage » (#571) tant que la question est ouverte, et un
+> run interrompu pendant l'attente laisse la même ligne sans rien retenir — le suivant repose la
+> question. Un projet **non versionné** n'a pas d'accord, et c'est la décision de #839 : l'écriture
+> y est continue et en place, il n'y a pas de moment de fusion où l'accrocher, et ce qui le garde
+> est la frontière d'écriture et la sérialisation. Le régime vit dans
+> `LocalExecutor._accord_de_fusion` (`maestro/engine/executor.py`) ; la révision complète de D2
+> reste le lot #707.
+
 ⚠ **Un garde-fou qu'on ne voit pas ne garde rien, et celui-ci a été invisible.** La phrase
 ci-dessus est juste et le mécanisme a toujours fonctionné : la tâche s'arrêtait bien, personne n'a
 jamais écrit dans un projet sans accord. Ce qui manquait est l'autre moitié — **la demande

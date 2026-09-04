@@ -36,6 +36,13 @@ Depuis #227 ce canal porte un **second type d'action sensible** :
 au même validateur, **diff en pièce jointe** (EF-37, docs/24 §2.4). Rien du
 mécanisme ci-dessus n'a changé pour l'accueillir — c'était le but : la Phase 7
 n'invente pas de garde-fou, elle branche une action de plus sur celui qui existe.
+
+Et depuis #706 c'est le **moteur** qui pose cette question en production
+(`LocalExecutor._accord_de_fusion`) — **une fois par run et par projet**, à la
+première fusion d'une tâche soldée (#705), la réponse valant pour les fusions
+suivantes du run. `appliquer_sous_validation` reste le geste unitaire — une
+application, un accord — que `tests/test_application_projet.py` éprouve ; la
+cadence, elle, est au moteur.
 """
 
 from __future__ import annotations

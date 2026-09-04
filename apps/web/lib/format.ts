@@ -291,6 +291,11 @@ const LIBELLES_STATUT: Record<string, string> = {
   // fusion, l'agent a écrit **dans la racine** d'un projet non versionné (ou n'y
   // a rien déposé), la tâche nomme un projet que le dépôt ne connaît plus.
   fusion_non_tentee: "Fusion non tentée",
+  // L'accord humain d'écrire dans le projet n'a pas été donné (#706) — refusé,
+  // refusé par défaut, ou jamais rendu : le projet est intact et la branche
+  // conserve le travail. Ni une erreur ni un refus de Git : une décision, ou
+  // son absence, et la phrase porte la cause.
+  fusion_non_accordee: "Fusion non accordée",
   ecriture_en_place: "Projet écrit en place",
   ecriture_sans_objet: "Rien d'écrit dans le projet",
   projet_introuvable: "Projet introuvable",
