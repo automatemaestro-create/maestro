@@ -134,6 +134,12 @@ Endpoints :
 - `PUT  /api/projets/{id}` — remplace la déclaration (l'intégrale, pas un diff) ;
 - `DELETE /api/projets/{id}` — oublie un projet, sans jamais toucher au dossier
   sur le disque ;
+- `POST /api/projets/{id}/versionner` — met un projet **non versionné** sous
+  Git (#855, verbe de #704) : `git init` puis un premier commit de toute la
+  racine, `.gitignore` respecté, et rend la fiche relue — `vcs` constaté. Sans
+  corps : le `vcs` ne se déclare pas (EF-38), il se déclenche. Un projet déjà
+  versionné rend sa fiche telle quelle ; un refus (`depot-englobant` 409,
+  `commit-refuse` 422, `git-indisponible` 503…) porte son motif, jamais un 500 ;
 - `GET  /api/fournisseurs` — ce qui existe côté modèles (#253) **et ce qui est
   déjà là** (#487) : les fournisseurs du **registre**, leurs modèles annoncés et,
   pour chacun, les niveaux d'effort admis (liste vide quand le fournisseur
@@ -413,7 +419,7 @@ from maestro.messaging import InMemoryMailbox, Mailbox, RedisMailbox
 from maestro.orchestrator.errors import BriefValidationError
 from maestro.orchestrator.schema import validate_brief
 from maestro.poste import SondePoste
-from maestro.projets import RacineRefusee, canonique, valider_racine
+from maestro.projets import RacineRefusee, VersionnementRefuse, canonique, valider_racine
 from maestro.providers.arbitrage import OUTIL_ARBITRAGE
 from maestro.providers.blocage import OUTIL_BLOCAGE
 from maestro.providers.courrier import OUTIL_COURRIER
@@ -3768,6 +3774,36 @@ def create_app(
         try:
             return projets.supprimer(id_projet)
         except (ValueError, ProjetInconnu) as exc:
+            raise _refus_projet(exc) from exc
+
+    @app.post("/api/projets/{id_projet}/versionner")
+    async def versionner_projet(id_projet: str) -> dict[str, Any]:
+        """Met un projet non versionné sous Git et rend sa fiche relue (#855).
+
+        Le geste qui fait passer un projet du régime « écriture en place » (#839)
+        au régime « worktree + fusion sous accord » (#705/#706, docs/24 §2.4) :
+        `git init` puis un premier commit de toute la racine — `git add -A`, donc
+        le `.gitignore` du projet respecté — pour que la branche de base résolve.
+        Rien n'est réimplémenté ici : la route appelle le verbe de #704
+        (`ProjetStore.versionner`) et traduit ses refus.
+
+        **Sans corps**, à dessein : le `vcs` n'est jamais un champ de requête
+        (EF-38 — constaté sur le disque, jamais déclaré), et c'est ce qui
+        distingue ce geste d'un `PUT` élargi. Un projet **déjà versionné** rend
+        sa fiche telle quelle (aucune commande, `modifie_le` intact). 404 si le
+        projet est inconnu ; un refus porte son **motif** — `depot-englobant`
+        (409, la racine est dans un autre dépôt), `commit-refuse` (422, un
+        `pre-commit` de l'utilisateur a dit non — la racine est dans l'état
+        d'avant), `git-indisponible` (503, le poste n'a pas Git), ou une racine
+        devenue inadmissible (`dossier-absent`…) — jamais un 500.
+
+        Joué **hors de la boucle d'événements** : le premier commit indexe tout ce
+        que la racine porte, jusqu'à cinq minutes sur un projet lourd, et une
+        route qui bloquerait la boucle figerait les flux SSE des autres écrans.
+        """
+        try:
+            return await asyncio.to_thread(projets.versionner, id_projet)
+        except (ValueError, ProjetInconnu, VersionnementRefuse) as exc:
             raise _refus_projet(exc) from exc
 
     @app.get("/api/fournisseurs")

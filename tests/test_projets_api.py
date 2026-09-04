@@ -29,7 +29,19 @@ second critère du ticket : les routes, leurs formes JSON et surtout leurs
    commencer (les points d'entrée, avec leur origine) : deux notions qui se
    confondaient avant lui, et dont la séparation est tout le lot. L'invariant
    qui les tient : élargir l'explorable n'ouvre **aucune** brèche dans EF-38, et
-   `MAESTRO_EXPLORATEUR_RACINES` reste une **restriction**.
+   `MAESTRO_EXPLORATEUR_RACINES` reste une **restriction** ;
+⑥ la **mise sous Git** (#855) — `POST /api/projets/{id}/versionner`, le seul
+   geste du service qui écrive dans le dossier de l'utilisateur, et qui ne fait
+   qu'appeler le verbe de #704. Ce qui s'y mesure : la fiche rendue est **relue**
+   (le `vcs` constaté, la base qui résout, le `.gitignore` du projet respecté par
+   le premier commit), un projet déjà versionné est rendu **tel quel** sans
+   qu'aucun `git` soit appelé (un `.git` minimal suffit à le prouver), la route
+   est **sans corps** (un `vcs` envoyé n'est ni lu ni stocké — EF-38), et chaque
+   refus porte son **motif** et son code — 404 `projet-inconnu`, 422
+   `dossier-absent` et `commit-refuse` (la racine dans l'état d'avant, `.git` né
+   compris), 409 `depot-englobant`, 503 `git-indisponible` —, **jamais un 500**.
+   Les tests qui posent un vrai dépôt exigent `git` (sauté sinon, erreur franche
+   en CI par le conftest) et coupent la configuration globale du poste (#333).
 
 Ni réseau, ni Redis, ni Docker : l'app FastAPI tourne sur le bus mémoire via le
 TestClient de Starlette, sur un dépôt de projets jetable et des racines
@@ -41,6 +53,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -49,7 +62,7 @@ from fastapi.testclient import TestClient
 
 from maestro.controltower import ControlTowerState, InMemoryEventBus, create_app
 from maestro.controltower.projets import ServiceProjets
-from maestro.projets import ProjetStore
+from maestro.projets import MESSAGE_PREMIER_COMMIT, ProjetStore, versionnement
 
 
 @pytest.fixture(autouse=True)
@@ -847,3 +860,240 @@ def test_un_chemin_saisi_hors_atelier_reste_explorable_par_defaut(
 
     assert reponse.status_code == 200, reponse.text
     assert reponse.json()["chemin"] == lointain.resolve().as_posix()
+
+
+# --- ⑥ La mise sous Git d'un projet non versionné (#855) ---------------------
+
+GIT = shutil.which("git")
+
+#: Les tests qui posent un **vrai** dépôt — `git init`, un commit, un hook — ne
+#: se jouent pas sans `git` ; ceux qui n'ont besoin que d'un `.git` minimal ou
+#: d'un refus rendu avant toute commande tournent partout.
+avec_git = pytest.mark.skipif(GIT is None, reason="git introuvable")
+
+
+@pytest.fixture()
+def _git_isole(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Coupe la configuration Git globale du poste (#333) : ni identité, ni `core.hooksPath`.
+
+    Le premier commit pose son identité par `-c` ; ce qui reste à couper est ce
+    qu'un poste pourrait ajouter — un `pre-commit` global, un `init.templateDir`
+    — et qui ferait dépendre le verdict de la machine qui joue la suite.
+    """
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "gitconfig-absent"))
+
+
+def _git(cwd: Path, *arguments: str) -> str:
+    """Lance `git` dans `cwd` et rend sa sortie — échoue le test si Git échoue."""
+    resultat = subprocess.run(  # noqa: S603 - arguments fixes, aucun contenu externe
+        [GIT or "git", *arguments],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    assert resultat.returncode == 0, f"git {' '.join(arguments)} : {resultat.stderr}"
+    return resultat.stdout
+
+
+def _projet_nu(client: TestClient, atelier: Path, nom: str = "agenda") -> tuple[Path, dict]:
+    """Un dossier **sans** `.git` et un fichier, déclaré : ce que l'écran propose de versionner.
+
+    Le point de départ des tests du geste, nominal comme refusé.
+    """
+    racine = _dossier(atelier, nom)
+    (racine / "README.md").write_text("# Agenda\n", encoding="utf-8")
+    fiche = _declarer(client, "Agenda", racine)
+    assert fiche["vcs"] is None
+    return racine, fiche
+
+
+@avec_git
+@pytest.mark.usefixtures("_git_isole")
+def test_versionner_met_le_projet_sous_git_et_rend_la_fiche_relue(
+    client: TestClient, atelier: Path
+) -> None:
+    """Le geste de #704 par la route : `git init`, premier commit de toute la racine, fiche relue.
+
+    Ce que la confirmation de l'écran promet est vérifié ici sur le disque : le
+    commit porte la racine telle qu'elle est, `.gitignore` **respecté** — un
+    fichier ignoré n'entre pas dans l'index —, et la racine ressort **propre**,
+    condition pour que `maestro.projets.application` accepte d'y fusionner.
+    """
+    racine, fiche = _projet_nu(client, atelier)
+    (racine / ".gitignore").write_text("secret.txt\n", encoding="utf-8")
+    (racine / "secret.txt").write_text("mot de passe", encoding="utf-8")
+
+    reponse = client.post(f"/api/projets/{fiche['id']}/versionner")
+
+    assert reponse.status_code == 200, reponse.text
+    corps = reponse.json()
+    assert corps["vcs"] is not None and corps["vcs"]["type"] == "git"
+    assert corps["vcs"]["branche_base"] != ""  # la base **résout** : un `HEAD` né
+    assert corps["id"] == fiche["id"] and corps["cree_le"] == fiche["cree_le"]
+    # La fiche rendue est celle du dépôt, relue : `GET` dit exactement la même chose.
+    assert client.get(f"/api/projets/{fiche['id']}").json() == corps
+    # Sur le disque : un seul commit, celui de Maestro, qui porte la racine — sauf l'ignoré.
+    assert _git(racine, "log", "--format=%s").splitlines() == [MESSAGE_PREMIER_COMMIT]
+    suivis = _git(racine, "ls-files").split()
+    assert "README.md" in suivis and ".gitignore" in suivis
+    assert "secret.txt" not in suivis
+    assert _git(racine, "status", "--porcelain").strip() == ""
+
+
+def test_un_projet_deja_versionne_est_rendu_tel_quel_sans_commande(
+    client: TestClient, atelier: Path
+) -> None:
+    """Idempotent : un second clic ne coûte ni commande Git, ni écriture, ni `modifie_le`.
+
+    Le `.git` est **minimal** (un `HEAD`, un `config`) et aucun `git` n'est
+    disponible pour ce test : si la route lançait la moindre commande sur un
+    projet déjà versionné, elle échouerait ici au lieu de rendre la fiche.
+    """
+    racine = _dossier(atelier, "versionne")
+    _depot_git(racine, branche="develop")
+    fiche = _declarer(client, "Versionné", racine)
+    assert fiche["vcs"]["branche_base"] == "develop"
+
+    reponse = client.post(f"/api/projets/{fiche['id']}/versionner")
+
+    assert reponse.status_code == 200, reponse.text
+    assert reponse.json() == fiche  # `modifie_le` compris : rien n'a été écrit
+
+
+def test_la_route_est_sans_corps_un_vcs_envoye_n_est_ni_lu_ni_stocke(
+    client: TestClient, atelier: Path
+) -> None:
+    """EF-38 : le `vcs` se **constate**, il ne se déclare pas — la route déclenche, sans corps.
+
+    C'est ce qui la distingue d'un `PUT` élargi : un client qui annoncerait une
+    autre branche ne change rien à ce que le disque dit.
+    """
+    racine = _dossier(atelier, "versionne")
+    _depot_git(racine, branche="develop")
+    fiche = _declarer(client, "Versionné", racine)
+
+    reponse = client.post(
+        f"/api/projets/{fiche['id']}/versionner",
+        json={"vcs": {"type": "git", "branche_base": "menteur", "distant": None}},
+    )
+
+    assert reponse.status_code == 200, reponse.text
+    assert reponse.json()["vcs"]["branche_base"] == "develop"
+    assert client.get(f"/api/projets/{fiche['id']}").json()["vcs"]["branche_base"] == "develop"
+
+
+def test_versionner_un_projet_inconnu_rend_404_motive(client: TestClient) -> None:
+    reponse = client.post("/api/projets/prj-fantome/versionner")
+
+    assert reponse.status_code == 404, reponse.text
+    assert reponse.json()["detail"]["motif"] == "projet-inconnu"
+
+
+def test_une_racine_disparue_est_refusee_avec_son_motif_avant_toute_commande(
+    client: TestClient, atelier: Path
+) -> None:
+    """`RacineRefusee` (EF-38) remonte comme un refus, jamais un 500 — et rien n'est créé.
+
+    La racine est **revalidée** avant d'écrire chez l'utilisateur : le fichier du
+    dépôt s'édite à la main, et un dossier déclaré peut avoir disparu depuis.
+    Aucun `git` n'est nécessaire — le refus tombe avant la première commande.
+    """
+    racine = _dossier(atelier, "ephemere")
+    fiche = _declarer(client, "Éphémère", racine)
+    racine.rmdir()
+
+    reponse = client.post(f"/api/projets/{fiche['id']}/versionner")
+
+    assert reponse.status_code == 422, reponse.text
+    detail = reponse.json()["detail"]
+    assert detail["motif"] == "dossier-absent"
+    assert detail["message"]
+    assert not racine.exists()  # un refus ne crée rien — ni dossier, ni `.git`
+    assert client.get(f"/api/projets/{fiche['id']}").json()["vcs"] is None
+
+
+@avec_git
+@pytest.mark.usefixtures("_git_isole")
+def test_une_racine_dans_un_autre_depot_est_refusee_en_409_motive(
+    client: TestClient, atelier: Path
+) -> None:
+    """`depot-englobant` : l'**état du disque** s'oppose au geste — 409, et rien n'a bougé.
+
+    Un dépôt imbriqué modifierait le dépôt du dessus (un lien de sous-module là
+    où il avait des fichiers) ; ni la saisie (422) ni une frontière (403) ne
+    sont en cause, d'où le code des refus d'état.
+    """
+    monorepo = _dossier(atelier, "monorepo")
+    _git(monorepo, "init", "--quiet")
+    racine = _dossier(monorepo, "paquets/agenda")
+    (racine / "app.py").write_text("x\n", encoding="utf-8")
+    fiche = _declarer(client, "Agenda", racine)
+    assert fiche["vcs"] is None  # `detecter_vcs` ne regarde que `<racine>/.git`
+
+    reponse = client.post(f"/api/projets/{fiche['id']}/versionner")
+
+    assert reponse.status_code == 409, reponse.text
+    detail = reponse.json()["detail"]
+    assert detail["motif"] == "depot-englobant"
+    assert "monorepo" in detail["message"]  # le message nomme le dépôt du dessus
+    assert not (racine / ".git").exists()
+    assert client.get(f"/api/projets/{fiche['id']}").json()["vcs"] is None
+
+
+@avec_git
+def test_un_premier_commit_refuse_remonte_en_422_motive_et_laisse_la_racine_intacte(
+    client: TestClient, atelier: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Les hooks de l'utilisateur tiennent, et leur refus est une **réponse** — pas un 500.
+
+    Un `core.hooksPath` global dont le `pre-commit` refuse tout : le `.git` né
+    ici repart avec l'échec, le reste de la racine n'a pas bougé, et la
+    déclaration n'a rien enregistré.
+    """
+    hooks = _dossier(tmp_path, "hooks")
+    hook = hooks / "pre-commit"
+    hook.write_text("#!/bin/sh\necho 'refusé par le pre-commit' >&2\nexit 1\n", encoding="utf-8")
+    os.chmod(hook, 0o755)
+    config = tmp_path / "gitconfig-hooks"
+    config.write_text(f"[core]\n\thooksPath = {hooks.as_posix()}\n", encoding="utf-8")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
+    racine, fiche = _projet_nu(client, atelier)
+
+    reponse = client.post(f"/api/projets/{fiche['id']}/versionner")
+
+    assert reponse.status_code == 422, reponse.text
+    detail = reponse.json()["detail"]
+    assert detail["motif"] == "commit-refuse"
+    assert "pre-commit" in detail["message"]
+    assert not (racine / ".git").exists()  # le `.git` né ici est reparti avec l'échec
+    assert (racine / "README.md").read_text(encoding="utf-8") == "# Agenda\n"
+    assert client.get(f"/api/projets/{fiche['id']}").json()["vcs"] is None
+
+
+def test_un_poste_sans_git_repond_503_motive(
+    client: TestClient, atelier: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`git-indisponible` : ni la saisie ni le disque, c'est le **poste** — 503, motif compris.
+
+    Le binaire absent est simulé au niveau du sous-processus (le seul endroit où
+    `versionnement` le rencontre), après la déclaration — qui, elle, ne lance
+    jamais `git`.
+    """
+    racine, fiche = _projet_nu(client, atelier)
+
+    def _pas_de_git(*_args: object, **_kwargs: object) -> None:
+        raise FileNotFoundError(2, "git introuvable")
+
+    monkeypatch.setattr(versionnement.subprocess, "run", _pas_de_git)
+
+    reponse = client.post(f"/api/projets/{fiche['id']}/versionner")
+
+    assert reponse.status_code == 503, reponse.text
+    detail = reponse.json()["detail"]
+    assert detail["motif"] == "git-indisponible"
+    assert "git introuvable" in detail["message"]
+    assert not (racine / ".git").exists()
+    assert client.get(f"/api/projets/{fiche['id']}").json()["vcs"] is None
