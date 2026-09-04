@@ -2,13 +2,11 @@
 
 C'est le module qui change ce que fait le moteur. Jusqu'ici une tâche travaillait
 dans un `tempfile.mkdtemp()` **vide** (`maestro.sandbox.workspace`) : l'agent ne
-voyait jamais le projet de l'utilisateur. Ici il le voit — sans jamais écrire
-dedans.
+voyait jamais le projet de l'utilisateur. Ici il le voit.
 
 La décision **D2** ([docs/24 §2.4](../../docs/24-projets-locaux-et-poste-de-travail.md))
-fixe le patron et écarte explicitement l'écriture directe dans la racine (cinq
-agents en parallèle dans un même arbre ramèneraient les collisions que le
-workspace jetable évitait, sans possibilité d'annuler) :
+fixait le patron pour les deux cas ; depuis #839 elle ne tient plus que pour le
+premier, et le second est un régime à lui (`maestro.sandbox.en_place`) :
 
 - **projet versionné** → un **worktree Git** monté hors de la racine, sur une
   branche dédiée `maestro/<tâche>` créée depuis la branche de base déclarée
@@ -18,23 +16,29 @@ workspace jetable évitait, sans possibilité d'annuler) :
   (#705). Pour qu'elle le porte réellement, ce qui reste non commité y est
   **commité avant le démontage** (`_solder_la_branche`) — sans quoi le `--force`
   du retrait l'emporterait et la branche survivrait vide ;
-- **projet non versionné** → une **copie** du périmètre déclaré, exclusions du
-  socle respectées (`.git`, `node_modules`, `.env`, `**/secrets/**` —
-  `maestro.projets.modele.EXCLUS_DEFAUT`) ;
+- **projet non versionné** → **la racine elle-même**, en place (#839) : rien
+  n'est copié, rien n'est retiré, ce que l'agent écrit est dans le projet
+  pendant qu'il l'écrit. La copie du périmètre que D2 prescrivait (option C)
+  ne livrait rien — refermée avant qu'un diff puisse être approuvé, 8,80 $ pour
+  zéro fichier sur le run `cc2d8e447f83` — et son filet (annuler) n'a pas
+  d'objet sur un projet neuf. Ce que la copie garantissait par absence, la
+  racine le garantit par **refus** (`FrontiereEcriture`) et le moteur
+  **sérialise** les tâches d'un même projet (une seule à la fois dans l'arbre) ;
 - **tâche sans projet** → le `mkdtemp()` d'avant, inchangé.
 
-Trois invariants tiennent l'ensemble, et ce sont eux qu'il ne faut pas défaire :
+Trois invariants tiennent le worktree, et ce sont eux qu'il ne faut pas défaire :
 
 1. **le chemin de travail est hors de la racine** — vérifié, pas supposé
    (`_verifie_hors_racine`), parce qu'un `TMPDIR` posé *dans* le projet suffirait
-   à faire de la copie une écriture en place ;
+   à faire du worktree une écriture en place, dans un arbre que la branche ne
+   porterait plus ;
 2. **la racine est revalidée ici** (`valider_racine`, EF-38) et pas seulement à la
    déclaration : le dépôt des projets est un dossier de fichiers JSON qu'on peut
    éditer à la main (`maestro.projets.store`), donc la dernière porte avant
-   qu'un agent n'écrive est celle-ci ;
-3. **aucun lien symbolique n'est suivi** à la copie — c'est le vecteur d'évasion
-   nommé par docs/24 §2.5, et un lien vers `~/.ssh` recopié dans l'espace de
-   travail serait exactement la fuite qu'on prétend fermer.
+   qu'un agent n'écrive est celle-ci — elle vaut pour les **deux** régimes ;
+3. **aucun lien symbolique n'est suivi** — c'est le vecteur d'évasion nommé par
+   docs/24 §2.5 ; le régime en place le tient à l'écriture et au recensement
+   (`maestro.sandbox.en_place`).
 
 Le mécanisme est éprouvé sur ce dépôt — `scripts/git/worktree.sh` fait cela pour
 les sessions Claude Code (docs/10 §9) — mais le besoin est ici plus étroit : pas
@@ -44,18 +48,18 @@ réutilise pas.
 
 from __future__ import annotations
 
-import os
 import re
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
 from maestro.projets.application import ApplicationRefusee, commiter_en_attente
-from maestro.projets.modele import Perimetre, Projet
+from maestro.projets.modele import Projet
 from maestro.projets.racine import valider_racine
+from maestro.sandbox.en_place import EspaceEnPlace
 from maestro.sandbox.workspace import Workspace, isolated_workspace
 
 #: Préfixe des branches de tâche (docs/24 §2.4) : une branche `maestro/<tâche>`
@@ -105,8 +109,8 @@ def espace_de_travail(
 
     `projet=None` — une tâche sans `projet_id` — rend exactement l'espace jetable
     d'avant (`isolated_workspace`) : ce chemin-là ne change pas. Sinon l'espace
-    est **dérivé** du projet : worktree Git s'il est versionné, copie du périmètre
-    sinon, dans les deux cas **hors de la racine**.
+    est **dérivé** du projet : worktree Git **hors de la racine** s'il est
+    versionné, **la racine elle-même** sinon (#839, `maestro.sandbox.en_place`).
 
     `keep=True` conserve l'espace (et, pour un projet versionné, le worktree
     monté) : l'inspection après coup en a besoin, et c'est alors à l'appelant de
@@ -115,11 +119,16 @@ def espace_de_travail(
     **même en cas d'exception** — le travail encore en attente est d'abord
     **commité sur la branche de la tâche** (`_solder_la_branche`, #705), puis le
     worktree est retiré par `git worktree remove`, jamais par une suppression de
-    branche.
+    branche. En place, `keep` n'a pas d'objet : la racine n'est **jamais**
+    démontée ni nettoyée, une exception y laisse ce qui a été écrit — c'est le
+    critère du ticket (« rien n'est perdu à la fermeture de l'espace »), et le
+    `rmtree` d'un `finally` est précisément ce qui a effacé le livrable de
+    `squelette-p1` le 2026-08-28 (#568).
 
-    Lève `RacineRefusee` si la racine du projet n'est plus admissible (EF-38) et
-    `EspaceProjetIndisponible` si le montage échoue (Git absent, worktree refusé,
-    répertoire temporaire situé dans la racine).
+    Lève `RacineRefusee` si la racine du projet n'est plus admissible (EF-38) —
+    dans les deux régimes, c'est la dernière porte avant qu'un agent n'écrive —
+    et `EspaceProjetIndisponible` si le montage du worktree échoue (Git absent,
+    worktree refusé, répertoire temporaire situé dans la racine).
     """
     if projet is None:
         with isolated_workspace(prefix=prefix, keep=keep) as ws:
@@ -127,20 +136,20 @@ def espace_de_travail(
         return
 
     racine = valider_racine(projet.racine)
-    versionne = projet.versionne
+    if not projet.versionne:
+        # `derive` et non `EspaceEnPlace(path=…)` : la racine n'est pas vide, et
+        # sans cette empreinte de départ tout le projet de l'utilisateur
+        # ressortirait en « fichiers produits » du rapport de run.
+        yield EspaceEnPlace.derive(racine, perimetre=projet.perimetre)
+        return
+
     parent = Path(tempfile.mkdtemp(prefix=prefix))
     chemin = parent / _slug(tache_id)
     monte = False
     try:
         _verifie_hors_racine(chemin, racine)
-        if versionne:
-            _monter_worktree(racine, chemin, _branche(tache_id), _base(projet))
-            monte = True
-        else:
-            _copier_perimetre(racine, chemin, projet.perimetre)
-        # `derive` et non `Workspace(path=…)` : l'espace n'est pas vide, et sans
-        # cette empreinte de départ tout le projet de l'utilisateur ressortirait
-        # en « fichiers produits » du rapport de run.
+        _monter_worktree(racine, chemin, _branche(tache_id), _base(projet))
+        monte = True
         yield Workspace.derive(chemin)
     finally:
         if not keep:
@@ -184,11 +193,13 @@ def _base(projet: Projet) -> str:
 
 
 def _verifie_hors_racine(chemin: Path, racine: Path) -> None:
-    """Refuse un espace de travail situé **dans** la racine du projet (critère #224).
+    """Refuse un worktree situé **dans** la racine du projet (critère #224).
 
     Le cas paraît impossible — le chemin sort de `mkdtemp()` — mais il ne l'est
-    pas : un `TMPDIR`/`TEMP` pointant dans le projet suffit, et l'espace « dérivé »
-    deviendrait alors une écriture en place, exactement ce que D2 écarte.
+    pas : un `TMPDIR`/`TEMP` pointant dans le projet suffit, et le worktree
+    deviendrait alors une écriture en place dans un arbre que la branche ne
+    porte pas — exactement ce que D2 écarte pour un projet versionné. Le régime
+    en place (#839) ne passe pas par ici : sa racine **est** son espace.
     """
     try:
         chemin.resolve().relative_to(racine)
@@ -319,142 +330,3 @@ def _message_git(resultat: subprocess.CompletedProcess[str]) -> str:
     """Le message d'erreur de Git, en une ligne (stderr, à défaut stdout)."""
     brut = (resultat.stderr or resultat.stdout or "").strip()
     return " ".join(brut.split()) or f"code de retour {resultat.returncode}"
-
-
-# --------------------------------------------------------------------------- #
-# Projet non versionné : une copie du périmètre
-# --------------------------------------------------------------------------- #
-
-
-def _copier_perimetre(racine: Path, destination: Path, perimetre: Perimetre) -> None:
-    """Recopie le périmètre déclaré de `racine` dans `destination` (copie + diff, D2).
-
-    Le périmètre est appliqué ici pour la première fois : le socle (#221) le
-    **déclarait**, ce lot l'**exécute**. `exclus` l'emporte sur `inclus`, comme
-    l'annonce `Perimetre` — un dossier exclu n'est même pas parcouru, ce qui vaut
-    autant pour la sûreté (rien sous `secrets/` n'est seulement lu) que pour le
-    temps de copie (`node_modules` n'est jamais énuméré).
-    """
-    destination.mkdir(parents=True, exist_ok=True)
-    exclus = _motifs_compiles(perimetre.exclus)
-    inclus = _motifs_compiles(perimetre.inclus)
-    for relatif in _fichiers_du_perimetre(racine, exclus, inclus):
-        cible = destination / relatif
-        cible.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(racine / relatif, cible)
-
-
-def _fichiers_du_perimetre(
-    racine: Path,
-    exclus: tuple[re.Pattern[str], ...],
-    inclus: tuple[re.Pattern[str], ...],
-) -> Iterator[str]:
-    """Les chemins relatifs (POSIX) des fichiers du périmètre, dans l'ordre du parcours.
-
-    Parcours itératif (pas récursif) : un projet réel a des arborescences
-    profondes et la pile de Python n'est pas le bon endroit pour en dépendre.
-    **Aucun lien symbolique n'est suivi ni recopié** — ni fichier ni dossier :
-    c'est le vecteur d'évasion de docs/24 §2.5, et le suivre recopierait dans
-    l'espace de travail ce que la racine était censée borner.
-
-    On descend partout où l'exclusion ne l'interdit pas, et c'est `inclus` qui
-    tranche fichier par fichier : la traversée d'un dossier vide de contenu
-    retenu ne coûte qu'un `scandir`, là où deviner à l'avance si un motif peut
-    encore matcher plus bas demanderait un second langage de motifs.
-    """
-    pile = [""]
-    while pile:
-        relatif_dossier = pile.pop()
-        base = racine / relatif_dossier if relatif_dossier else racine
-        try:
-            with os.scandir(base) as entrees:
-                triees = sorted(entrees, key=lambda entree: entree.name)
-        except OSError:  # dossier devenu illisible : sauté, jamais fatal
-            continue
-        for entree in triees:
-            relatif = f"{relatif_dossier}/{entree.name}" if relatif_dossier else entree.name
-            if entree.is_symlink() or _correspond(relatif, exclus):
-                continue
-            if entree.is_dir():
-                pile.append(relatif)
-            elif entree.is_file() and _sous_inclusion(relatif, inclus):
-                yield relatif
-
-
-def _correspond(relatif: str, motifs: tuple[re.Pattern[str], ...]) -> bool:
-    """`relatif` est-il visé par l'un des motifs ?"""
-    return any(motif.match(relatif) for motif in motifs)
-
-
-def _sous_inclusion(relatif: str, inclus: tuple[re.Pattern[str], ...]) -> bool:
-    """`relatif` est-il inclus, lui **ou l'un de ses dossiers parents** ?
-
-    Inclure un dossier inclut son contenu — c'est ce qu'attend quiconque écrit
-    `inclus: ["src"]`, et c'est ce qui fait tenir le défaut `["."]`.
-    """
-    morceaux = relatif.split("/")
-    return any(
-        _correspond("/".join(morceaux[: profondeur + 1]), inclus)
-        for profondeur in range(len(morceaux))
-    )
-
-
-def _motifs_compiles(motifs: Sequence[str]) -> tuple[re.Pattern[str], ...]:
-    """Compile les motifs d'un périmètre en expressions régulières ancrées."""
-    return tuple(
-        _compile(normalise) for motif in motifs for normalise in _normalisations(motif)
-    )
-
-
-def _normalisations(motif: str) -> tuple[str, ...]:
-    """Les formes normalisées d'un motif de périmètre — une, parfois deux.
-
-    Trois conventions, celles de `.gitignore` parce que c'est ce qu'un
-    utilisateur écrit sans y penser :
-
-    - `.` (et la chaîne vide) désigne **tout** — c'est `INCLUS_DEFAUT` ;
-    - un motif **sans `/`** vaut à **toute profondeur** : `node_modules` attrape
-      `apps/web/node_modules`, `.env` attrape `services/api/.env` ;
-    - un motif finissant par `/**` vise aussi **le dossier lui-même**, sans quoi
-      `**/secrets/**` exclurait le contenu de `secrets/` mais pas son nom, et le
-      dossier serait parcouru pour rien.
-    """
-    normalise = motif.strip().replace("\\", "/")
-    while normalise.startswith("./"):
-        normalise = normalise[2:]
-    normalise = normalise.rstrip("/")
-    if normalise in ("", "."):
-        return ("**",)
-    if "/" not in normalise:
-        normalise = f"**/{normalise}"
-    if normalise.endswith("/**"):
-        return (normalise, normalise[: -len("/**")])
-    return (normalise,)
-
-
-def _compile(normalise: str) -> re.Pattern[str]:
-    """Un motif normalisé en expression régulière ancrée sur le chemin entier.
-
-    `**` traverse les séparateurs, `*` et `?` s'arrêtent au segment — la
-    distinction qui manque à `fnmatch`, dont le `*` avale les `/` et ferait
-    d'`*.py` un motif récursif. Les classes `[…]` ne sont pas gérées : elles ne
-    servent à rien dans un périmètre de projet, et les faire semblant de gérer
-    coûterait plus cher qu'un motif de plus.
-    """
-    segments = normalise.split("/")
-    dernier = len(segments) - 1
-    morceaux = [
-        (".*" if index == dernier else "(?:[^/]+/)*")
-        if segment == "**"
-        else _segment(segment) + ("" if index == dernier else "/")
-        for index, segment in enumerate(segments)
-    ]
-    return re.compile("".join(morceaux) + r"\Z")
-
-
-def _segment(segment: str) -> str:
-    """Un segment de motif (sans `/`) en fragment d'expression régulière."""
-    return "".join(
-        "[^/]*" if caractere == "*" else "[^/]" if caractere == "?" else re.escape(caractere)
-        for caractere in segment
-    )

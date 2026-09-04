@@ -31,16 +31,20 @@ conséquences, portées ici :
   annoncé par docs/17 §3 se matérialise **à la place** du répertoire jetable sur
   `/workspace`, il ne s'y ajoute pas un troisième chemin (ce serait monter deux
   fois le même répertoire) ;
-- la **racine du projet n'est jamais montée** — ni ici ni ailleurs. C'est vérifié
-  plutôt que supposé, et deux fois : au câblage du protocole (`env_sandbox`) et
-  au dernier mètre avant `docker run` (`commande_docker`), qui est la seule porte
-  que rien ne contourne ;
+- la **racine d'un projet versionné n'est jamais montée** — ni ici ni ailleurs.
+  C'est vérifié plutôt que supposé, et deux fois : au câblage du protocole
+  (`env_sandbox`) et au dernier mètre avant `docker run` (`commande_docker`),
+  qui est la seule porte que rien ne contourne. ⚠ Depuis #839 la restriction
+  vaut pour le projet **versionné** : un projet non versionné travaille **dans
+  sa racine** (`maestro.sandbox.en_place`), qui est donc l'espace monté —
+  avec ses masques, ce qui fait du conteneur l'endroit où ses exclusions
+  deviennent une clôture dure ;
 - les **exclusions du périmètre** (`.env`, `**/secrets/**`…) valent jusque dans
   le conteneur : ce qui est exclu n'y est **pas monté**, chaque chemin exclu
   étant recouvert d'un montage vide en lecture seule (`_masques`). Le cas n'est
-  pas théorique — la copie d'un projet non versionné écarte ces chemins d'office,
-  mais le **worktree** d'un projet versionné est une copie conforme de la
-  branche : un `.env` ou un `secrets/` **versionnés** y sont bel et bien.
+  pas théorique — le **worktree** d'un projet versionné est une copie conforme
+  de la branche, un `.env` ou un `secrets/` **versionnés** y sont bel et bien,
+  et la racine d'un projet non versionné porte tout ce que l'utilisateur y a mis.
 
 La rédaction des secrets du projet, elle, ne dépend pas du mode isolé (une tâche
 sur l'hôte fuit tout autant) : elle vit dans `maestro.projets.secrets` et est
@@ -193,17 +197,25 @@ class IsolationConfig:
         seul chemin de l'hôte que le shim montera dans le conteneur.
 
         `projet` (#226) est le projet dans lequel la tâche travaille — auquel cas
-        `workspace` est l'espace **dérivé** de ce projet (#224), worktree ou copie.
-        Deux choses s'y ajoutent alors, et rien d'autre du contrat ne bouge :
-        la racine (`ENV_PROJET`), transmise pour que le shim la refuse, et la
-        liste des chemins exclus par le périmètre (`ENV_MASQUES`), que le shim
+        `workspace` est l'espace **dérivé** de ce projet (#224). S'y ajoute alors
+        la liste des chemins exclus par le périmètre (`ENV_MASQUES`), que le shim
         recouvrira de montages vides. None — une tâche sans `projet_id` — rend
         exactement les trois variables d'avant.
 
-        Lève `ConfigError` si l'espace de travail est la racine du projet ou
-        vit dedans (EF-36 : les agents ne travaillent **jamais** dans la racine),
-        et si le périmètre exclut plus de chemins que `_MASQUES_MAX` — deux refus
-        francs plutôt qu'un montage approximatif.
+        Le sort de la **racine** dépend du régime, et c'est le seul point que
+        #839 a déplacé. Projet **versionné** : l'espace est un worktree hors de
+        la racine, celle-ci est transmise (`ENV_PROJET`) **pour être refusée** au
+        dernier mètre, et un espace qui serait la racine ou vivrait dedans est
+        refusé ici même (EF-36). Projet **non versionné** : l'espace **est** la
+        racine — le régime en place (`maestro.sandbox.en_place`) —, elle est donc
+        montée telle quelle, **avec ses masques** : c'est ici que les exclusions
+        deviennent une clôture dure, là où sur l'hôte la frontière d'écriture ne
+        confronte que les outils de fichiers. `ENV_PROJET` n'est pas transmise :
+        il n'y a rien à refuser, et la transmettre ferait refuser le montage
+        même qu'on vient de décider.
+
+        Lève `ConfigError` si le périmètre exclut plus de chemins que
+        `_MASQUES_MAX` — un refus franc plutôt qu'un montage approximatif.
         """
         protocole = {
             ENV_IMAGE: self.image,
@@ -213,7 +225,9 @@ class IsolationConfig:
         if projet is None:
             return protocole
         racine = canonique(projet.racine_chemin)
-        _refuse_la_racine(workspace, racine)
+        if projet.versionne:
+            _refuse_la_racine(workspace, racine)
+            protocole[ENV_PROJET] = str(racine)
         masques = exclusions(workspace, projet.perimetre)
         if len(masques) > _MASQUES_MAX:
             raise ConfigError(
@@ -224,7 +238,6 @@ class IsolationConfig:
                 "une partie de ce qui est exclu."
             )
         return protocole | {
-            ENV_PROJET: str(racine),
             ENV_MASQUES: _SEPARATEUR_MASQUES.join(_encode(masque) for masque in masques),
         }
 
@@ -241,8 +254,10 @@ def commande_docker(environ: Mapping[str, str], arguments: Sequence[str]) -> lis
       et deux tmpfs jetables (`/tmp`, home de l'utilisateur `agent` — l'état du
       CLI ne survit pas au conteneur) sont inscriptibles. Quand la tâche
       travaille dans un projet (#226), ce workspace est l'espace **dérivé** de
-      ce projet, **jamais sa racine** (refus explicite), et les chemins que son
-      périmètre exclut sont recouverts d'un montage vide en lecture seule ;
+      ce projet — **jamais la racine d'un projet versionné** (refus explicite),
+      la racine elle-même pour un projet non versionné (#839) —, et les chemins
+      que son périmètre exclut sont recouverts d'un montage vide en lecture
+      seule ;
     - **réseau restreint** : `bridge` (sortant seul, aucun port publié) ou `none` ;
     - **privilèges retirés** : utilisateur non-root (image), `--cap-drop ALL`,
       `--security-opt no-new-privileges`, plafonds pids/mémoire/CPU ;
@@ -304,11 +319,13 @@ def commande_docker(environ: Mapping[str, str], arguments: Sequence[str]) -> lis
 def _refuse_la_racine(workspace: Path, racine: Path) -> None:
     """Refuse de monter un espace de travail qui **est** la racine ou vit dedans.
 
-    EF-36 dans sa forme la plus courte : les agents travaillent hors de la racine
-    déclarée. Le lot 4 (#224) le vérifie déjà côté hôte au montage du worktree ou
-    de la copie ; on le revérifie ici parce que le chemin traverse entre-temps un
-    protocole d'environnement, qu'un tiers peut poser, et parce que la même règle
-    vérifiée deux fois coûte deux comparaisons de chemins.
+    EF-36 dans sa forme la plus courte : sur un projet **versionné**, les agents
+    travaillent hors de la racine déclarée. Le lot 4 (#224) le vérifie déjà côté
+    hôte au montage du worktree ; on le revérifie ici parce que le chemin
+    traverse entre-temps un protocole d'environnement, qu'un tiers peut poser, et
+    parce que la même règle vérifiée deux fois coûte deux comparaisons de
+    chemins. Un projet non versionné ne passe pas par ici (#839) : sa racine
+    **est** l'espace, et `env_sandbox` ne transmet alors pas `ENV_PROJET`.
 
     La comparaison se fait sur des chemins **résolus** : `racine/../racine`, un
     lien symbolique vers la racine et une casse différente sous Windows désignent

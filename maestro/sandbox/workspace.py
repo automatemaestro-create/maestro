@@ -21,9 +21,9 @@ import shutil
 import tempfile
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 #: Taille max d'un fichier dont on capture le contenu (octets). Au-delà, on garde le
 #: chemin mais pas le contenu : un livrable exploitable n'a pas à charger en mémoire
@@ -60,21 +60,44 @@ class Workspace:
     `empreintes` recense ce qui s'y trouvait **avant** que l'agent ne travaille —
     vide (None) pour l'espace jetable historique, créé vide, où tout fichier
     présent est par construction un livrable. Depuis #224 l'espace peut être
-    **dérivé d'un projet** (worktree Git ou copie du périmètre) : il est alors
-    peuplé de centaines de fichiers que l'agent n'a pas écrits, et les recenser
-    comme livrables gonflerait le rapport du run de tout le dépôt de
-    l'utilisateur. L'empreinte (taille + date de modification à la nanoseconde)
-    est le moyen le moins cher de faire la différence, et le seul qui vaille
-    aussi bien pour un worktree que pour une copie.
+    **dérivé d'un projet** (worktree Git, ou — depuis #839 — la racine même d'un
+    projet non versionné) : il est alors peuplé de centaines de fichiers que
+    l'agent n'a pas écrits, et les recenser comme livrables gonflerait le rapport
+    du run de tout le dépôt de l'utilisateur. L'empreinte (taille + date de
+    modification à la nanoseconde) est le moyen le moins cher de faire la
+    différence, et le seul qui vaille quel que soit l'espace.
+
+    Le **recensement** — ce que `derive` relève, ce que `produced_files` rend —
+    passe par `fichiers`, la seule énumération de l'espace, que la racine d'un
+    projet redéfinit (`maestro.sandbox.en_place.EspaceEnPlace`) pour parcourir
+    l'arbre **par le périmètre** : sans ce point de passage unique, empreintes et
+    livrables seraient relevés sur deux énumérations, et un fichier vu par l'une
+    et pas par l'autre ressortirait en livrable sans que l'agent l'ait écrit.
     """
 
     path: Path
     empreintes: Mapping[str, tuple[int, int]] | None = None
 
     @classmethod
-    def derive(cls, path: Path) -> Workspace:
-        """Un espace **déjà peuplé** : ce qui s'y trouve à cet instant n'est pas un livrable."""
-        return cls(path=path, empreintes=_empreintes(path))
+    def derive(cls, path: Path, **champs: Any) -> Self:
+        """Un espace **déjà peuplé** : ce qui s'y trouve à cet instant n'est pas un livrable.
+
+        `champs` sont les champs propres à une sous-classe (le périmètre d'un
+        `EspaceEnPlace`) : ils sont posés **avant** le relevé, parce que c'est
+        d'eux que dépend ce que `fichiers` énumère.
+        """
+        vide = cls(path=path, **champs)
+        return replace(vide, empreintes=vide._releve())
+
+    def fichiers(self) -> Iterator[Path]:
+        """Les fichiers de l'espace, triés par chemin — **tout** ce qui vit sous `path`.
+
+        C'est l'énumération de l'espace jetable et du worktree : rien n'y est
+        exclu, l'un est créé vide et l'autre est une copie conforme de la branche.
+        """
+        for f in sorted(self.path.rglob("*")):
+            if f.is_file():
+                yield f
 
     def produced_files(self) -> tuple[ProducedFile, ...]:
         """Recense les fichiers **produits**, triés par chemin relatif (déterministe).
@@ -86,8 +109,8 @@ class Workspace:
         travail de l'agent.
         """
         fichiers: list[ProducedFile] = []
-        for f in sorted(self.path.rglob("*")):
-            if not f.is_file() or self._inchange(f):
+        for f in self.fichiers():
+            if self._inchange(f):
                 continue
             rel = f.relative_to(self.path).as_posix()
             fichiers.append(ProducedFile(chemin=rel, contenu=_lire_texte(f)))
@@ -101,14 +124,9 @@ class Workspace:
         depart = self.empreintes.get(rel)
         return depart is not None and depart == _empreinte(fichier)
 
-
-def _empreintes(path: Path) -> dict[str, tuple[int, int]]:
-    """L'empreinte de chaque fichier présent sous `path`, par chemin relatif POSIX."""
-    releve: dict[str, tuple[int, int]] = {}
-    for f in path.rglob("*"):
-        if f.is_file():
-            releve[f.relative_to(path).as_posix()] = _empreinte(f)
-    return releve
+    def _releve(self) -> dict[str, tuple[int, int]]:
+        """L'empreinte de chaque fichier de l'espace, par chemin relatif POSIX."""
+        return {f.relative_to(self.path).as_posix(): _empreinte(f) for f in self.fichiers()}
 
 
 def _empreinte(fichier: Path) -> tuple[int, int]:
