@@ -373,12 +373,15 @@ export function BoutonLien({
  * **identifie un contrôle**, soumis à WCAG 1.4.11, là où le premier est
  * décoratif), et le contour d'accent double le tout pour qui navigue au clavier.
  *
- * **Exporté** depuis #697 pour la zone de saisie du fil, qui ne peut pas être un
- * `ChampTexte` — elle porte son propre `onKeyDown` (Entrée envoie, Maj+Entrée
- * saute une ligne), son `onPaste` (une capture collée devient une source) et pas
- * d'étiquette visible. Elle recopiait donc ces classes à la main, en couleurs
- * brutes : deux définitions du même contrôle, dont une seule suivait le socle.
- * L'apparence se prend ici ; le comportement reste à l'appelant.
+ * **Exporté** depuis #697, d'abord pour la zone de saisie du fil, qui ne pouvait
+ * pas être un `ChampTexte` faute de libellé masquable — depuis #832 elle en est
+ * un (`libelleMasque`), et ce qui reste à l'export sont les contrôles qui ne
+ * passent pas par `CadreChamp` : `ChampJetons`, qui porte un avertissement en
+ * plus de l'aide et vit dans son propre fichier parce qu'il appelle des hooks,
+ * et la consigne de l'assistant de rédaction d'`EditeurPlaybook`. L'apparence
+ * se prend ici ; le comportement reste à l'appelant. Ce n'est pas une troisième
+ * voie : `tests/a11y.test.tsx` refuse depuis #832 tout contrôle de saisie écrit
+ * hors des tokens, et un `<input>` nu qui les porte reste un `Champ` en attente.
  */
 export const CLASSE_CONTROLE =
   "w-full rounded-md border border-bord bg-surface px-3 py-1.5 text-corps " +
@@ -398,7 +401,22 @@ type ApparenceChamp = {
    * tourner.
    */
   id: string;
+  /**
+   * Le nom du champ — **obligatoire**, parce que c'est son nom accessible. Il
+   * est visible par défaut ; `libelleMasque` le retire de l'écran sans le
+   * retirer au lecteur d'écran. Il n'existe pas de champ sans libellé.
+   */
   libelle: ReactNode;
+  /**
+   * Le libellé n'est **lu** qu'au lecteur d'écran (#832) : à l'écran, la
+   * question est portée par le `placeholder` — le cas d'un composeur, où
+   * « Message à dev » écrit au-dessus de « Écrire à dev… » dirait deux fois la
+   * même chose. C'est un choix nommé, comme `monospace`, et non un `sr-only`
+   * recollé au `className` : avant ce ticket, les trois composeurs du produit
+   * contournaient la primitive entière pour obtenir ce seul effet, et
+   * perdaient au passage le bord de focus et le contour clavier du socle.
+   */
+  libelleMasque?: boolean;
   /** Ce qu'il faut savoir avant de saisir — annoncé avec le champ. */
   aide?: ReactNode;
   /** Ce qui ne va pas — annoncé avec le champ, et pose `aria-invalid`. */
@@ -439,6 +457,7 @@ function liaisonsChamp({ id, aide, erreur }: ApparenceChamp) {
 function CadreChamp({
   id,
   libelle,
+  libelleMasque = false,
   aide,
   erreur,
   className = "",
@@ -447,7 +466,13 @@ function CadreChamp({
   return (
     <div className={["flex flex-col gap-1", className].filter(Boolean).join(" ")}>
       <label className="flex flex-col gap-1">
-        <span className="text-annexe font-medium text-texte-secondaire">
+        {/* `sr-only` sort le libellé du flux (position absolue), donc le `gap`
+            de la colonne ne laisse aucun vide au-dessus du contrôle. */}
+        <span
+          className={
+            libelleMasque ? "sr-only" : "text-annexe font-medium text-texte-secondaire"
+          }
+        >
           {libelle}
         </span>
         {children}
@@ -473,6 +498,7 @@ function CadreChamp({
 export function Champ({
   id,
   libelle,
+  libelleMasque,
   aide,
   erreur,
   monospace,
@@ -480,7 +506,7 @@ export function Champ({
   ...reste
 }: ApparenceChamp &
   Omit<InputHTMLAttributes<HTMLInputElement>, "id" | "className">) {
-  const cadre = { id, libelle, aide, erreur, monospace, className };
+  const cadre = { id, libelle, libelleMasque, aide, erreur, monospace, className };
   return (
     <CadreChamp {...cadre}>
       <input
@@ -497,6 +523,7 @@ export function Champ({
 export function ChampListe({
   id,
   libelle,
+  libelleMasque,
   aide,
   erreur,
   monospace,
@@ -505,7 +532,7 @@ export function ChampListe({
   ...reste
 }: ApparenceChamp &
   Omit<SelectHTMLAttributes<HTMLSelectElement>, "id" | "className">) {
-  const cadre = { id, libelle, aide, erreur, monospace, className };
+  const cadre = { id, libelle, libelleMasque, aide, erreur, monospace, className };
   return (
     <CadreChamp {...cadre}>
       <select
@@ -577,6 +604,7 @@ export function ListeFiltre({
 export function ChampTexte({
   id,
   libelle,
+  libelleMasque,
   aide,
   erreur,
   monospace,
@@ -584,7 +612,7 @@ export function ChampTexte({
   ...reste
 }: ApparenceChamp &
   Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "id" | "className">) {
-  const cadre = { id, libelle, aide, erreur, monospace, className };
+  const cadre = { id, libelle, libelleMasque, aide, erreur, monospace, className };
   return (
     <CadreChamp {...cadre}>
       <textarea

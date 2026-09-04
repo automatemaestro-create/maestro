@@ -37,6 +37,7 @@ import {
   Carte,
   Champ,
   ChampListe,
+  ChampTexte,
   EnTeteSection,
   EtatVide,
   TuileChiffre,
@@ -290,6 +291,42 @@ describe("le champ (Champ)", () => {
       </ChampListe>,
     );
     expect(screen.getByRole("combobox", { name: "Agent" })).toBeInTheDocument();
+  });
+
+  it("sait masquer son libellé à l'écran sans le retirer au lecteur d'écran (#832)", () => {
+    // Le cas d'un composeur : la question est portée par le `placeholder`, et
+    // « Message à dev » écrit au-dessus de « Écrire à dev… » dirait deux fois
+    // la même chose. Le nom accessible, lui, ne bouge pas — c'est ce que les
+    // trois recopies obtenaient par `aria-label` en contournant la primitive.
+    render(
+      <>
+        <Champ id="adresse" libelle="Adresse à lire" libelleMasque placeholder="https://…" />
+        <ChampListe id="agent" libelle="Agent" libelleMasque>
+          <option value="dev">dev</option>
+        </ChampListe>
+        <ChampTexte id="message" libelle="Message à dev" libelleMasque placeholder="Écrire à dev…" />
+      </>,
+    );
+    const adresse = screen.getByRole("textbox", { name: "Adresse à lire" });
+    const agent = screen.getByRole("combobox", { name: "Agent" });
+    const message = screen.getByRole("textbox", { name: "Message à dev" });
+    for (const controle of [adresse, agent, message]) {
+      // Le libellé est bien là — dans le `<label>` qui entoure le contrôle —,
+      // seulement sorti de l'écran par `sr-only`.
+      const libelle = controle.closest("label")?.querySelector("span");
+      expect(libelle).toHaveClass("sr-only");
+      expect(libelle).not.toHaveClass("text-annexe");
+    }
+    // Et le contrôle reste celui du socle : bord de focus, contour clavier.
+    expect(message.className).toContain("focus:border-bord-fort");
+    expect(message.className).toContain("focus-visible:outline-accent");
+  });
+
+  it("affiche le libellé par défaut : masquer est un choix, jamais l'état de repos", () => {
+    render(<Champ id="nom" libelle="Nom du projet" />);
+    const libelle = screen.getByText("Nom du projet");
+    expect(libelle).not.toHaveClass("sr-only");
+    expect(libelle).toHaveClass("text-annexe");
   });
 });
 

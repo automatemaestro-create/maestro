@@ -688,6 +688,30 @@ L'`id` reste obligatoire : c'est lui qui rattache l'aide et l'erreur. Il n'est
 pas dérivé d'un `useId` parce que `Primitives.tsx` est partagé avec des
 composants serveur, où aucun hook ne peut tourner.
 
+**Le libellé aussi reste obligatoire, mais il peut être accessible-seulement**
+(`libelleMasque`, #832). Un composeur ne veut pas de libellé visible : sa
+question est portée par le `placeholder`, et « Message à dev » écrit au-dessus
+de « Écrire à dev… » dirait deux fois la même chose. Tant que `CadreChamp` rendait
+*toujours* le libellé, les **trois** composeurs du produit contournaient la
+primitive entière pour obtenir ce seul effet — un `aria-label` sur un `<textarea>`
+nu, et une `CLASSE_CHAMP` recopiée hors palette (`focus:border-emerald-500`,
+`border-neutral-200`), identique au mot près dans `SourcesDuMessage` et
+`ComposerObjectif` — et perdaient au passage le `focus:border-bord-fort` qui
+**identifie un contrôle** (WCAG 1.4.11) et le contour clavier. C'est la mécanique
+que docs/30 §2.2 a mesurée sur les cartes et les boutons, prise ici à sa source :
+la primitive ne couvre pas un cas, donc on la contourne, donc la palette cesse de
+tenir. `libelleMasque` est un choix nommé, comme `monospace`, et non un `sr-only`
+recollé au `className` ; le nom accessible ne bouge pas (le `<label>` entoure
+toujours le contrôle), seul le rendu à l'écran est retiré. Il n'existe **pas**
+de champ sans libellé : l'option masque, elle ne retire rien.
+
+`CLASSE_CONTROLE` reste exporté, mais il n'est plus la voie d'un composeur : ce
+qui en a encore l'usage sont les contrôles qui ne passent **pas** par
+`CadreChamp` — `ChampJetons`, et la consigne de l'assistant d'`EditeurPlaybook`.
+Un `<input>` nu qui les porte est un `Champ` en attente, et
+`tests/a11y.test.tsx` refuse depuis #832 tout contrôle de saisie écrit hors des
+tokens (voir « Le filet d'accessibilité »).
+
 #### Ce qui ne peut pas être une `<Carte>`
 
 `classesCarte()` rend les classes de la surface **sans** la balise qui les porte.
@@ -1210,7 +1234,7 @@ fois**. Les deux paquets sont désormais des dépendances **déclarées** : une
 dépendance transitive n'est pas un contrat, et un `npm dedupe` chez quelqu'un
 d'autre suffisait à faire disparaître le filet.
 
-Quatre mécanismes, et chacun garde ce que les autres ne voient pas :
+Cinq mécanismes, et chacun garde ce que les autres ne voient pas :
 
 | Mécanisme | Où | Ce qu'il refuse |
 | --- | --- | --- |
@@ -1218,8 +1242,21 @@ Quatre mécanismes, et chacun garde ce que les autres ne voient pas :
 | `axe-core` sur les **écrans du menu** | `tests/a11y.test.tsx` | toute violation `serious`/`critical` sur un écran monté dans son shell réel |
 | `motion-reduce:` | balayage des sources, même fichier | une utilité `transition`/`animate-` écrite **sans sa garde** dans la même chaîne de classes |
 | `CIBLE_MINIMALE` | rendu des écrans du menu, même fichier | un lien ou bouton **en petit corps** sans plancher de 24 px |
+| le contrôle de saisie **hors des tokens** (#832) | balayage des sources, même fichier | un `<input>`, `<textarea>` ou `<select>` dont la feuille de classes porte une couleur brute (`border-neutral-200`, `focus:border-emerald-500`) — donc écrit **sans** le `focus:border-bord-fort` qui identifie un contrôle (WCAG 1.4.11) ni le contour clavier du socle |
 
-Trois règles à connaître avant de toucher à un écran :
+Le cinquième lit **les contrôles** et non des chaînes au hasard : il résout
+`className={CLASSE_CHAMP}` par la constante du fichier — la forme sous laquelle
+toutes les recopies existent —, et une constante qu'il ne trouve ni dans le
+fichier ni dans `Primitives.tsx` est **refusée**, pas sautée (règle de #534).
+Le résidu antérieur au ticket est **nommé** fichier par fichier, avec son
+**compte exact** et sa raison (`RESIDU`) : un contrôle de plus rougit, un de
+moins rougit aussi tant que la ligne n'est pas mise à jour — c'est ainsi qu'il
+ne peut que décroître, et que chaque décroissance est un geste écrit. Il en
+restait **19 dans 8 fichiers** à #832, `EditeurAgent` pour huit ; et deux d'entre
+eux — le libellé `sr-only` posé à la main d'`ExplorateurDossiers`, la liste de
+`SelecteurReassignation` — sont exactement ce que `libelleMasque` rend désormais.
+
+Quatre règles à connaître avant de toucher à un écran :
 
 1. **Toute utilité de mouvement s'écrit avec sa garde**, sur la même chaîne :
    `transition-colors motion-reduce:transition-none`,
@@ -1232,6 +1269,11 @@ Trois règles à connaître avant de toucher à un écran :
    suivre l'ancre déplace le point d'insertion du document mais **pas le focus**,
    et la tabulation suivante repart du menu — c'est-à-dire de ce que le lien
    devait faire sauter.
+4. **Un contrôle de saisie est un `Champ`, `ChampListe` ou `ChampTexte` du
+   socle** — `libelleMasque` quand son libellé n'a pas à s'afficher (#832). Ni
+   `<input>` nu avec ses classes, ni `aria-label` en guise de libellé : le nom
+   accessible vient du `<label>` de la primitive, le bord de focus et le contour
+   clavier avec.
 
 ⚠ **Quatre règles axe sont écartées, et aucune ne l'est par confort** —
 `color-contrast`, parce que jsdom ne calcule aucune couleur et que le contraste
