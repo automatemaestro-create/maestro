@@ -1121,6 +1121,85 @@ page, il se montre simplement quand on regarde le contenu plutôt qu'en
 permanence. Ce que jsdom ne voit pas — aucun `overflow` calculé (#308) — se
 vérifie au navigateur avec `/banc-mise-en-page`.
 
+Ce que la feuille promet est **gardé sur ses octets** par `tests/composeur.test.tsx`
+(#728, technique de `contraste.test.ts`) : `thin` et jamais `none`, transparente au
+repos, éveillée sur les trois états à la fois, le pouce sur un token **déclaré dans
+les deux thèmes**, le fondu sous `no-preference` seulement, un seul moteur à la
+fois, le tout sous `@layer base` — et l'attribut que le CSS lit est celui que
+`lib/ascenseur` pose, la seule frontière du dispositif (renommer d'un seul côté ne
+casse rien à la compilation, et la barre ne se montrerait plus jamais au
+défilement). Chaque sonde est prouvée sur une feuille fautive avant de lire la
+vraie. Mesuré au navigateur le 2026-09-04 sur la colonne de propriétés de `/chat`
+et de `/couts` : `transparent transparent` au repos, `#888888` (`--bord-fort`)
+pendant le défilement, effacée après le repos de 700 ms — et plus aucune barre
+système, ni sur la colonne ni sur la page.
+
+### Le composeur de conversation — `components/Conversation.tsx` (#722)
+
+Le composeur est monté par **deux** surfaces — le chat global (`/chat`) et
+l'onglet Chat d'une fiche agent (`components/FilChat`) — et n'a qu'une mise en
+page, la leur. Jusqu'à la revue du 2026-08-28 il tenait en **trois rectangles
+voisins** : le champ (`rows={2}`, `resize-y`, bordé lui-même), « Envoyer » posé à
+côté, « Joindre des sources… » en troisième bloc sous le formulaire ; le raccourci
+clavier vivait dans le placeholder, donc s'effaçait au premier caractère ; et
+`pe-14` réservait 56 px de vide à droite de l'envoi pour le bouton flottant de
+l'assistant (#123).
+
+La veille de conception (#724, docs/30 §5.3 — décision complète en commentaire
+de #722) a tranché **quatre partis pris**, mesurés sur ChatGPT, Perplexity et
+Zulip, et les lots 3 et 4 (#726, #727) les ont posés :
+
+1. **Un cadre à deux étages** (d'après Perplexity) — le texte pleine largeur en
+   haut, un rail de contrôles en bas. Le cadre **est** le contrôle : il porte
+   `CLASSE_CONTROLE`, le bord de focus (`focus-within:border-bord-fort`) et
+   l'anneau (`has-[textarea:focus-visible]`) ; le `<textarea>` n'a plus de bord
+   propre. Ce n'est pas un `ChampTexte`, et ce n'est pas un retour en arrière :
+   la primitive dessine le contrôle **sur le champ**, or un champ bordé dans un
+   cadre bordé ferait deux contours — un cadre composite est un manque du socle,
+   à traiter par un ticket à lui et pas au passage.
+2. **Joindre part du rail** (d'après le `+` de ChatGPT et de Perplexity) —
+   `BoutonJoindre` en tête du rail est le seul point d'entrée des trois gestes de
+   #482 (fichiers, dossier, adresse), qui ne se déplient que derrière lui ; ce
+   qui est joint se lit **sous le cadre**, attaché au message en préparation —
+   des objets, pas des contrôles. Le glisser-déposer sur la conversation et le
+   collage d'une image aboutissent au même endroit.
+3. **Le champ grandit avec le message jusqu'à un plafond, puis défile en
+   interne** (d'après ChatGPT : 52 px → 256 px à vingt lignes, `max-height:
+   192px`) — `ajusterLaHauteur` pose la hauteur du contenu dès qu'il déborde
+   des deux lignes de départ, `max-h-48` (192 px) l'emporte, `overflow-y-auto`
+   prend le relais avec l'ascenseur discret du socle, et la poignée `resize-y`
+   disparaît. Mesuré au navigateur le 2026-09-04 : 43 px au repos, 86 px à
+   quatre lignes, 192 px à vingt (432 px de contenu, défilement interne), retour
+   à 43 px une fois vidé.
+4. **Le raccourci quitte le placeholder pour le rail** (d'après Zulip) —
+   « Entrée envoie · Maj+Entrée saute une ligne » reste lisible pendant la saisie
+   et **décrit** le champ (`aria-describedby`) ; sous `sm` il se retire du rail
+   mais reste dans la description.
+
+**Refusés, avec leur raison** : le rayon en gélule (une identité — docs/30 §6.1
+est « le même produit, avec du relief »), les chips de mode et le sélecteur de
+modèle (le corps est plafonné, et « Parler à » fait déjà ce travail dans la
+colonne), le composeur replié de Zulip (un seul fil à l'écran), la dictée (aucune
+brique dans le socle).
+
+**La réserve du bouton flottant a changé de côté.** `pe-14` est parti : à quai,
+le formulaire se tient **au-dessus** de la bande du flottant (`sticky
+bottom-16`) et un élément collant `h-16` couvre la bande sous lui, sans coût pour
+le flux (`-mt-19`). Ça vaut pour les deux surfaces sans rien conditionner à leur
+largeur — le flottant est calé sur la fenêtre, pas sur la colonne.
+
+**Ce qui le garde** (#728) : `tests/composeur.test.tsx` — la hauteur posée quand
+le contenu déborde et rendue quand il rentre (les mesures sont **simulées**,
+jsdom rendant zéro), le plafond et la poignée au CSS, le cadre qui contient
+l'envoi, l'absence de `pe-*`, la réserve verticale, l'envoi et le joindre
+atteints au clavier depuis le champ, le raccourci dans la description et hors du
+placeholder, et les gestes de #482 rejoués sur les **deux** surfaces — chaque
+sonde prouvée sur le composeur d'avant #726 avant de conclure. La géométrie,
+elle, est au banc : `/banc-mise-en-page` passé le 2026-09-04 sur `/chat` et
+`/couts` aux six fenêtres — rien d'inatteignable, aucun débordement horizontal,
+colonne de propriétés collante et bornée, et au repos plus aucune barre système
+ni sur la colonne ni sur la page.
+
 ### Le rendu des montants — `lib/format.ts`
 
 Même principe, pour ce qui se lit plutôt que pour ce qui s'habille : les
@@ -1380,6 +1459,7 @@ le pixel — le bout en bout dans un vrai navigateur reste le rôle du skill
 | `tests/chat-direct.test.tsx` | La **couture flux → fil** (#695) — le seul fichier à jouer le **vrai** `useChat`, `tests/setup.ts` le remplaçant partout ailleurs par un fil immobile (`vi.unmock`) : un double est exactement ce qu'il faut pour juger un écran, et exactement ce qui empêche de juger le hook. Trois invariants, tous silencieux quand ils cassent — la réponse s'écrit **et ne se dédouble pas** (la même paire arrive par le flux puis par le fil que le `chat.message` du WebSocket fait recharger, et la fusion écarte le doublon) ; un flux **cassé** ne perd ni le message utilisateur ni la portion reçue, et le lève en `ErreurReponse`, ce qui dit à l'écran de **ne pas** remettre le brouillon dans la saisie ; la réponse **figée** s'efface dès qu'une vraie réponse au même message rejoint le fil — sans quoi la garantie précédente tomberait précisément dans le cas où le backend achève sa production malgré la coupure (#268). Le reste de la couverture du chat global pleine page a été soldé au lot 8, ci-dessous |
 | `tests/fil-lisible.test.tsx` | **Le fil se lit** (#697) — la seule exception que la règle des lots prévoit pour la logique critique : un analyseur Markdown écrit à la main qui traite du texte produit par un **modèle**. Deux propriétés qui ne se rattrapent pas après coup : rien de ce qu'un modèle écrit ne devient du **balisage** (`lib/markdown` rend un arbre de données, jamais une chaîne de HTML — il n'y a donc rien à assainir et aucun `dangerouslySetInnerHTML` à écrire ; un lien `javascript:` est refusé et laissé lisible ; un titre de message ne rejoint jamais le plan du document), et les **écarts à CommonMark sont des décisions** et non des trous — `_` n'emphase pas (`run_id` traverse chaque réponse), une emphase ne franchit pas la fin de ligne, les listes sont plates. Plus `lib/journees` : deux instants du même jour local sous la même journée, un horodatage illisible qui n'en ouvre aucune, « Aujourd'hui »/« Hier » seulement quand l'horloge a démarré |
 | `tests/chat-pleine-page.test.tsx` | **Ce que le chantier a retiré** (#690, lot 8 #698) — la moitié navigateur, et la plus difficile à garder : rien à l'écran ne nomme une absence, si bien que le test ne peut qu'affirmer qu'elle est là. Quatre sujets : le fil **sans ascenseur à lui** (aucun `overflow-y`/`max-h` ni sur le `<ol>` ni au-dessus, `flex-1` présent, composeur `sticky`) ; l'**état nominal qui ne se dit plus**, « ni une fois ni deux » — seule la coupure reste dite ; les **conversations à l'écran** (#696 : l'ordre servi jamais retrié ici, `aria-current` sur celle qu'on lit et elle seule, le nom d'un fil vierge, les deux gestes) ; et le **fil qui n'exécute rien** (#697 vu du fil et non du module — que la bulle d'agent, la réponse **en cours** et le message de l'utilisateur passent tous par le bon rendu ; un `dangerouslySetInnerHTML` réintroduit dans une bulle ne ferait rougir aucun test du module). ⚠ Chaque sonde **prouve son motif sur un échantillon fautif** avant de conclure (méthode de #534/#537/#539) : la boîte de `60vh` d'avant #691 y est reconnue, le badge y est vu quand il est affiché, un fragment actif y est repéré. ⚠ **Aucune géométrie** (#308) : ce qui s'observe est le contrat de mise en page *tel qu'il est écrit*, jamais son effet — l'effet est le rôle de `/banc-mise-en-page` |
+| `tests/composeur.test.tsx` | **Le composeur et le pourtour du fil** (#722, lot 5 #728 — les tests différés des lots 2 à 4), joué sur les **deux** surfaces qui montent le composeur : le champ qui **grandit puis plafonne** (la hauteur posée quand le contenu déborde, rendue quand il rentre — mesures simulées, jsdom rendant zéro — et le plafond, le défilement interne et la poignée disparue lus au CSS) ; **un seul bloc** (le cadre est le contrôle et contient l'envoi, plus de `pe-*`, la réserve du flottant devenue verticale) ; l'envoi et le joindre **atteints au clavier** depuis le champ ; le **raccourci** dans la description du champ et plus dans le placeholder ; et **rien de #482 perdu** — dépôt, collage d'une image, panneau des trois gestes, envoi par identifiant. Puis **l'ascenseur discret sur les octets de `globals.css`** (technique de `contraste.test.ts`) : `thin` jamais `none`, transparente au repos, éveillée sur `:hover`/`:focus-within`/`[data-defilement]`, pouce sur un token des deux thèmes, fondu sous `no-preference`, un moteur à la fois, `@layer base` — l'attribut lu étant celui que `lib/ascenseur` pose ; la moitié JS (`ecouterDefilement` : marque, repos, fenêtre, démontage) et son câblage sous le vrai `Shell` ; et la colonne de `/chat` collante **et** bornée, comme `sobriete` le garde pour `/couts`. ⚠ Chaque sonde **prouve son motif sur un échantillon fautif** — le composeur d'avant #726, une feuille fautive par promesse — avant de conclure. ⚠ **Aucune géométrie** (#308) : le pixel est au banc, dont le verdict du 2026-09-04 est dans « Le composeur de conversation » ci-dessus |
 | `tests/validations.test.tsx` | L'écran qui **se décide vite** (#272, testé en #273) : l'ordre de la file (la plus ancienne d'abord, une demande sans horodatage en queue — elle n'a pas d'âge à faire valoir), `formatAttente` et ses paliers (« depuis » et non « il y a »), ce qu'on lit avant de trancher (l'**acte** en tête quand il y en a un, #581), et les gestes — approuver, refuser sec, refuser motivé. Deux garanties qui ne se voient pas à la relecture du composant : le motif **refermé est effacé** (« sans motif » doit vouloir dire sans motif, sinon un texte que plus personne n'a sous les yeux part au journal du run), et la **clé par `tache_id`**, prouvée en retirant la tête de file pendant qu'un motif est en cours de frappe — sans elle il s'attacherait à la demande suivante |
 | `tests/brief.test.tsx` | Valider le brief, **logique critique du lot seule** (#322, le reste différé à #323) : approuvé **corrigé** vs approuvé **tel quel** (`brief: null`, qui fait retenir au moteur sa propre proposition), refus qui n'emporte jamais de brief, réponses appariées **par position** aux questions (chaînes vides comprises), et le coût engagé rendu face à la décision |
 | `tests/fil-cadrage.test.tsx` | Le cadrage décidé **dans le fil** (#483 ; ce que #485 y ajoute est **côté moteur**, `tests/test_brief.py` ⑦ — D5 mesurée pendant l'attente et le bus refermé qui fait échouer le run, deux garanties qu'aucun écran ne montre) : le **canal reste le canal** — le fil rappelle `trancherBrief`/`repondreAuBrief`, donc les deux routes de #320/#321, avec le contrat entier (`brief: null` tel quel, brief corrigé sinon, jamais de brief sur un refus, une réponse par question) ; le **rang du tour et son plafond** restent en clair ; les tours joués se **déroulent** au lieu de se replier, le sans-réponse nommé ; et surtout le critère 3, seul dont l'échec est **invisible depuis l'écran qu'on regarde** — les trois surfaces qui montrent un run suspendu résolvent leur destination par le menu, donc un renvoi resté sur « Valider le brief » s'éteindrait sans un mot le jour où #484 retire l'entrée |

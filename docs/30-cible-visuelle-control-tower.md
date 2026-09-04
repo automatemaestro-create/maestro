@@ -820,6 +820,32 @@ son rendu visuel se retire), les trois composeurs repliés dessus, et un balayag
 **19 contrôles dans 8 fichiers**, qui ne peut que décroître
 ([`apps/web/README.md`](../apps/web/README.md#le-champ--champ-champliste-champtexte)).
 
+**Livré, puis gardé — 2026-09-04 (lot 5, #728).** Le pourtour d'abord : #725 a mis
+l'**ascenseur discret** dans le socle (`globals.css` + `lib/ascenseur`, README « L'ascenseur
+discret ») — au repos la barre ne se voit pas, elle se montre au survol, au focus et pendant le
+défilement, `thin` et jamais `none`, le pouce sur `--bord-fort` — si bien que la colonne de propriétés
+de `/chat` et de `/couts` ne double plus visuellement celle de la page : mesuré au navigateur,
+`transparent transparent` au repos sur la colonne comme sur la page, `#888888` pendant le défilement,
+effacée après. Puis les quatre partis pris, posés par #726 et #727 (README « Le composeur de
+conversation ») ; les mesures d'arrivée, prises au navigateur : **43 px au repos, plafond à 192 px
+puis défilement interne**, un seul cadre à deux étages, joindre en tête du rail, le raccourci qui
+décrit le champ. **Gardé** par `tests/composeur.test.tsx` — chaque sonde prouvée sur le composeur
+d'*avant* #726, et l'ascenseur vérifié sur les octets de la feuille comme `contraste.test.ts` le fait
+de la palette — et par le banc (`/banc-mise-en-page`), passé sur `/chat` et `/couts` aux six
+fenêtres : rien d'inatteignable, aucun débordement horizontal.
+
+Ce que le banc a vu **hors périmètre**, à ne pas perdre : sur `/couts` avec des données, le viewport
+garde un débordement **programmatique** (le `overflow-hidden` du `body` se propage au viewport, donc
+la molette ne le fait pas défiler, mais un `scrollTo` ou une prise de focus le pourrait) — 102 px à
+1280×500, 119 px à 375×667, 28 px à 1024×700, 0 aux trois fenêtres de 800 px et plus —, absent sur
+`/chat` et sur `/couts` vide ; et à 375 px, un nom de projet long chevauche le titre de la barre
+supérieure. Ni l'un ni l'autre ne vient de ce chantier ; les deux sont à traiter à part.
+
+Ce que la veille n'avait **pas regardé** reste ouvert : le **mobile** et les points de rupture — le
+banc n'y a rien trouvé d'inatteignable, mais aucune référence mobile n'a été vérifiée, et sous `sm`
+le raccourci se retire du rail sans qu'une messagerie de référence l'ait tranché. La question est
+**différée** (§5.3 ci-dessus, `veille-differe` → ticket de veille **#873**) plutôt que fermée.
+
 ---
 
 ## 6. Recommandation
