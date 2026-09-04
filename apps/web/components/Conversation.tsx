@@ -94,8 +94,16 @@
  * l'envoi se tient —, un champ qui **grandit avec ce qu'on y écrit** jusqu'à un
  * plafond puis défile en interne (la poignée `resize-y` disparaît, voir
  * `ajusterLaHauteur`), et le raccourci **sur le rail**, lisible pendant la
- * saisie. La place des pièces jointes est le lot suivant (#727) : le rail leur
- * garde sa tête.
+ * saisie. Depuis #727 (parti pris 2), **joindre part du composeur** : la tête du
+ * rail porte le seul point d'entrée des gestes de dépôt (`chat/SourcesDuMessage`,
+ * `BoutonJoindre`), le panneau des trois gestes ne se déplie que derrière lui,
+ * et ce qui est joint se lit **attaché au message en préparation**, juste sous
+ * le cadre — des objets, pas des contrôles, donc pas sur le rail. Le
+ * glisser-déposer et le collage d'une image aboutissent au même endroit qu'avant
+ * (la composition), et la liste se montre d'elle-même dès qu'elle a quelque
+ * chose à montrer : plus de volet à ouvrir pour voir ce qui part. Les
+ * **amorces** d'un fil vide, enfin, vivent **dans** le bloc de saisie au lieu de
+ * s'empiler au-dessus — il ne reste à l'écran qu'un seul composeur.
  *
  * Et la réserve du bouton flottant (#123) **change de côté**. `pe-14`
  * réservait 56 px de vide à droite de l'envoi, sur les deux surfaces, pour que
@@ -129,7 +137,10 @@ import {
 import { BulleFil } from "@/components/chat/BulleFil";
 import { SeparateurDeJour } from "@/components/chat/SeparateurDeJour";
 import { SourcesDuFil } from "@/components/chat/SourcesDuFil";
-import { SourcesDuMessage } from "@/components/chat/SourcesDuMessage";
+import {
+  BoutonJoindre,
+  SourcesDuMessage,
+} from "@/components/chat/SourcesDuMessage";
 import { TexteMarkdown } from "@/components/chat/TexteMarkdown";
 import { RefusSource } from "@/components/composer/RefusSource";
 import {
@@ -255,7 +266,10 @@ export function Conversation({
     acquis: boolean;
   } | null>(null);
   const [refusSource, setRefusSource] = useState<ErreurSource | null>(null);
-  const [sourcesOuvertes, setSourcesOuvertes] = useState(false);
+  // Le panneau des gestes de dépôt (#727) : déplié depuis la tête du rail, et
+  // seulement de là — ce qui est joint se voit sans lui (voir `onDrop`).
+  const [gestesOuverts, setGestesOuverts] = useState(false);
+  const idGestes = useId();
   const [survol, setSurvol] = useState(false);
   // L'horloge partagée (#250) : elle ne sert qu'aux séparateurs de journée, qui
   // disent « Aujourd'hui » et « Hier » — donc `null` tant qu'elle n'a pas
@@ -333,9 +347,10 @@ export function Conversation({
       const sources = await composition.declarer();
       await envoyer(contenu, sources);
       // Le succès seul efface la composition : le message est parti, ce qui l'a
-      // produit n'a plus de sens dans la zone de saisie.
+      // produit n'a plus de sens dans la zone de saisie — le panneau des gestes
+      // se replie avec elle.
       composition.vider();
-      setSourcesOuvertes(false);
+      setGestesOuverts(false);
     } catch (e) {
       // Trois régimes, et le troisième est venu avec le direct (#695) — ce qui
       // les sépare n'est pas la gravité mais **ce qu'il reste à faire** :
@@ -365,11 +380,13 @@ export function Conversation({
         // seconde fois des sources que le fil porte déjà — la même faute que
         // rendre le brouillon, sur l'autre moitié du geste.
         composition.vider();
-        setSourcesOuvertes(false);
+        setGestesOuverts(false);
         return;
       }
+      // Les sources, elles, n'ont pas bougé et restent visibles sous le cadre
+      // (#727) : le refus qui vise l'une d'elles se pose sur sa ligne, il n'y a
+      // aucun volet à rouvrir pour le lire.
       setBrouillon((courant) => (courant === "" ? contenu : courant));
-      if (composition.sources.length > 0) setSourcesOuvertes(true);
     }
   };
 
@@ -429,10 +446,11 @@ export function Conversation({
         if (!porteDesFichiers(e.dataTransfer)) return;
         e.preventDefault();
         setSurvol(false);
+        // Rien à ouvrir (#727) : ce qui est déposé se montre de lui-même sous
+        // le cadre de saisie, attaché au message — aucune pièce jointe ne
+        // reste invisible sous un volet fermé, et le panneau des gestes n'a
+        // pas à se déplier pour un geste qui vient d'aboutir sans lui.
         composition.deposer(e.dataTransfer.files);
-        // Le panneau s'ouvre sur un dépôt : des fichiers ajoutés sous un volet
-        // fermé seraient invisibles jusqu'à l'envoi.
-        setSourcesOuvertes(true);
       }}
     >
       <EnTeteSection
@@ -577,20 +595,6 @@ export function Conversation({
           `<ol>` à dessein — un `<li>` vide y serait annoncé comme un message de
           plus par les lecteurs d'écran. */}
       <div ref={pied} aria-hidden="true" />
-      {filVide && amorces.length > 0 && (
-        <div className="flex flex-wrap gap-2">
-          {amorces.map((amorce) => (
-            <Bouton
-              key={amorce}
-              variante="contour"
-              ton="neutre"
-              onClick={() => void soumettre(amorce)}
-            >
-              {amorce}
-            </Bouton>
-          ))}
-        </div>
-      )}
       {/* Le composeur reste **à quai** (#691) : le fil défilant désormais avec la
           page, le laisser en fin de flux obligerait à redescendre tout
           l'historique avant de pouvoir écrire. `sticky bottom-0` le colle au bas
@@ -674,12 +678,12 @@ export function Conversation({
               // Coller une image (capture d'écran) est le geste jumeau du
               // glisser-déposer, et le seul par lequel une capture arrive sans
               // passer par un fichier du disque. Le collage de **texte** n'est
-              // pas touché : `files` est alors vide.
+              // pas touché : `files` est alors vide. Comme le dépôt, il aboutit
+              // dans la composition et s'y voit aussitôt (#727).
               const colles = Array.from(e.clipboardData?.files ?? []);
               if (colles.length === 0) return;
               e.preventDefault();
               composition.deposer(colles);
-              setSourcesOuvertes(true);
             }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
@@ -701,62 +705,79 @@ export function Conversation({
             aria-describedby={idRaccourci}
             className="max-h-48 w-full resize-none overflow-y-auto placeholder:text-texte-secondaire outline-none"
           />
-          {/* Le rail (parti pris 1) : sa **tête** est libre — c'est là que
-              #727 pose le bouton des sources —, son **bout** porte le
-              raccourci puis l'envoi, d'où `justify-end`. Le raccourci a quitté
-              le placeholder (parti pris 4, d'après Zulip) : là, il s'effaçait
-              au premier caractère ; ici il reste lisible pendant la saisie sans
-              occuper une ligne à lui, et il **décrit** le champ
-              (`aria-describedby`) pour qu'un lecteur d'écran l'entende là où
-              l'œil le voit. Sous `sm` il se retire du rail — la place manque,
-              et un clavier virtuel n'a ni Maj ni raccourci à montrer — mais
-              reste dans la description du champ : un nœud caché que
-              `aria-describedby` désigne directement compte toujours. */}
-          <div className="flex items-center justify-end gap-2">
-            <span
-              id={idRaccourci}
-              className="hidden text-micro text-texte-secondaire sm:inline"
-            >
-              Entrée envoie · Maj+Entrée saute une ligne
-            </span>
-            {/* Pendant qu'une réponse s'écrit, le bouton d'envoi **cède la
-                place** à l'arrêt plutôt que de s'y ajouter : l'envoi est de
-                toute façon refusé tant qu'un échange est en vol (`soumettre`),
-                donc un bouton inerte à côté d'une action possible ne ferait
-                qu'occuper la seule place que la main vise. Et l'arrêt arrête
-                pour de bon — il annule la génération côté canal (#695) et ce
-                qui a été reçu rejoint le fil ; ce n'est pas un simple « je
-                cesse de regarder ». En taille `petite` comme le reste du rail,
-                le plancher de 24 px restant celui du socle (`BOUTON_SOCLE`). */}
-            {envoi ? (
-              <Bouton
-                variante="contour"
-                ton="neutre"
-                taille="petite"
-                icone={IconeFermer}
-                onClick={interrompre}
+          {/* Le rail (parti pris 1) : sa **tête** porte le seul point d'entrée
+              des pièces jointes (#727 — parti pris 2, d'après le `+` de ChatGPT
+              et de Perplexity), son **bout** le raccourci puis l'envoi. Le
+              raccourci a quitté le placeholder (parti pris 4, d'après Zulip) :
+              là, il s'effaçait au premier caractère ; ici il reste lisible
+              pendant la saisie sans occuper une ligne à lui, et il **décrit** le
+              champ (`aria-describedby`) pour qu'un lecteur d'écran l'entende là
+              où l'œil le voit. Sous `sm` il se retire du rail — la place
+              manque, et un clavier virtuel n'a ni Maj ni raccourci à montrer —
+              mais reste dans la description du champ : un nœud caché que
+              `aria-describedby` désigne directement compte toujours. Le bout
+              est un groupe à part (`ms-auto`) pour que l'envoi reste à droite
+              quand le raccourci s'est retiré : un `ms-auto` sur le raccourci
+              seul ne pousserait plus rien une fois celui-ci en `hidden`. */}
+          <div className="flex items-center gap-2">
+            <BoutonJoindre
+              ouvert={gestesOuverts}
+              occupe={envoi}
+              idPanneau={idGestes}
+              onBasculer={() => setGestesOuverts(!gestesOuverts)}
+            />
+            <div className="ms-auto flex items-center gap-2">
+              <span
+                id={idRaccourci}
+                className="hidden text-micro text-texte-secondaire sm:inline"
               >
-                Interrompre
-              </Bouton>
-            ) : (
-              <Bouton
-                type="submit"
-                taille="petite"
-                disabled={
-                  brouillon.trim() === "" && composition.sources.length === 0
-                }
-              >
-                Envoyer
-              </Bouton>
-            )}
+                Entrée envoie · Maj+Entrée saute une ligne
+              </span>
+              {/* Pendant qu'une réponse s'écrit, le bouton d'envoi **cède la
+                  place** à l'arrêt plutôt que de s'y ajouter : l'envoi est de
+                  toute façon refusé tant qu'un échange est en vol
+                  (`soumettre`), donc un bouton inerte à côté d'une action
+                  possible ne ferait qu'occuper la seule place que la main
+                  vise. Et l'arrêt arrête pour de bon — il annule la génération
+                  côté canal (#695) et ce qui a été reçu rejoint le fil ; ce
+                  n'est pas un simple « je cesse de regarder ». En taille
+                  `petite` comme le reste du rail, le plancher de 24 px restant
+                  celui du socle (`BOUTON_SOCLE`). */}
+              {envoi ? (
+                <Bouton
+                  variante="contour"
+                  ton="neutre"
+                  taille="petite"
+                  icone={IconeFermer}
+                  onClick={interrompre}
+                >
+                  Interrompre
+                </Bouton>
+              ) : (
+                <Bouton
+                  type="submit"
+                  taille="petite"
+                  disabled={
+                    brouillon.trim() === "" && composition.sources.length === 0
+                  }
+                >
+                  Envoyer
+                </Bouton>
+              )}
+            </div>
           </div>
         </div>
+        {/* Sous le cadre, et **dans** le bloc de saisie (#727) : le panneau des
+            gestes quand la tête du rail l'a déplié, puis ce qui est joint au
+            message en préparation — des objets, pas des contrôles, donc pas sur
+            le rail (parti pris 2). Rend `null` au repos : il ne reste alors que
+            le cadre. */}
         <SourcesDuMessage
           composition={composition}
           refus={refusSource}
           occupe={envoi}
-          ouvert={sourcesOuvertes}
-          onBasculer={() => setSourcesOuvertes(!sourcesOuvertes)}
+          ouvert={gestesOuverts}
+          idPanneau={idGestes}
         />
         {/* Le refus qui ne vise **aucune** source en particulier (trop de
             sources, backend injoignable) reste au geste qui l'a produit ; celui
@@ -767,6 +788,32 @@ export function Conversation({
             qui suit. */}
         {refusSource !== null && refusSource.index === null && (
           <RefusSource refus={refusSource} titre="Sources refusées" />
+        )}
+        {/* Les amorces d'un fil vide, **dans** le bloc de saisie (#727) : elles
+            s'empilaient au-dessus du formulaire, troisième rectangle entre le
+            fil et le cadre. Sous le cadre, en petit corps, elles se lisent
+            comme ce qu'elles sont — des propositions de message, à la place
+            où le message s'écrit (Perplexity pose les siennes au même
+            endroit). Ce qu'elles font n'a pas changé : un clic envoie l'amorce
+            telle quelle, et aucune n'ouvre un run à elle seule (#685). */}
+        {filVide && amorces.length > 0 && (
+          <div
+            role="group"
+            aria-label="Suggestions pour commencer"
+            className="flex flex-wrap gap-1.5"
+          >
+            {amorces.map((amorce) => (
+              <Bouton
+                key={amorce}
+                variante="contour"
+                ton="neutre"
+                taille="petite"
+                onClick={() => void soumettre(amorce)}
+              >
+                {amorce}
+              </Bouton>
+            ))}
+          </div>
         )}
       </form>
       {/* La **bande du bouton flottant**, couverte (#726). Le formulaire
