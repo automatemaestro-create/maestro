@@ -57,6 +57,14 @@ Thumbs.db
 
 # --- Claude Code (surcharges personnelles ; .claude/settings.json et .mcp.json restent versionnés) ---
 .claude/settings.local.json
+# Les worktrees des tickets, montés par `scripts/git/worktree.sh` SOUS le clone principal (#847) :
+# c'est le seul emplacement que le CLI Claude Code tient pour « géré », donc le seul où
+# `EnterWorktree` entre sans demander de validation (CLI ≥ 2.1.206 — une règle `allow` ne suffit
+# plus). Le CLI pose lui-même `**/.claude/worktrees/` dans `.git/info/exclude` au démarrage ; ici,
+# versionné, l'invariant « un montage laisse le clone principal propre » ne dépend plus de qui a
+# lancé quoi. AVEC barre finale, à l'inverse de `.venv` ci-dessus : un worktree est toujours un
+# répertoire, jamais un lien.
+.claude/worktrees/
 # Tout ce qu'un script du dépôt écrit pour être relu SUR PLACE, sous la racine du worktree
 # (docs/10 §8.5) : journaux du filet CI (`ci-local/`) et de `setup.sh`, journal d'orchestration
 # (`orchestrate/`), atelier de session (`session/`, #307), et le profil du navigateur piloté par

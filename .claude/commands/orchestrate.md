@@ -343,7 +343,8 @@ Ensuite seulement, apporte ce que la sortie ne dit pas :
    ce qui a été sauté (lot dépendant d'un échec, ou ticket pris entre-temps). Une raison en
    **« session terminée sans clôture, N fichier(s) non commité(s) »** (#178) est un échec
    **rattrapable** : la session a produit puis rendu la main sans clore, le travail est intact dans
-   le worktree du ticket (`../maestro-worktrees/<iid>-<slug>`, que la console du run a imprimé) et
+   le worktree du ticket (`.claude/worktrees/<iid>-<slug>` du clone principal — #847 —, que la
+   console du run a imprimé) et
    se termine par une session ouverte là, jusqu'à `/ticket-ship` — surtout pas en repartant de
    zéro. Une raison en **« sans rien produire (worktree propre) »** est l'inverse : il n'y a rien à
    récupérer, le ticket se relance tel quel.

@@ -1920,10 +1920,17 @@ def test_la_pose_vit_dans_le_verbe_partage_et_dans_aucun_prompt() -> None:
     corps_begin = lib.split("\ngl_begin() {", 1)[1].split("\n}\n", 1)[0]
     assert "gl_demarre_parent" in corps_begin, "la greffe est dans la mutation groupée"
 
+    # `.claude/worktrees/` est écarté AVANT de descendre, pas filtré après : depuis #847 les
+    # worktrees des tickets y sont montés, chacun avec ses docs et son `node_modules` — un `rglob`
+    # qui les traverse balaie des milliers de `.md` étrangers au dépôt, lentement, et jugerait les
+    # prompts d'une AUTRE branche à l'aune de celle-ci.
     fautifs = [
         chemin.relative_to(RACINE).as_posix()
-        for chemin in (RACINE / ".claude").rglob("*.md")
-        if _APPEL_DEMARRE_PARENT.search(chemin.read_text(encoding="utf-8", errors="replace"))
+        for sous in (RACINE / ".claude").iterdir()
+        if sous.name != "worktrees"
+        for chemin in (sous.rglob("*.md") if sous.is_dir() else [sous])
+        if chemin.suffix == ".md"
+        and _APPEL_DEMARRE_PARENT.search(chemin.read_text(encoding="utf-8", errors="replace"))
     ]
     assert not fautifs, f"aucun prompt ne repose l'état du parent lui-même : {fautifs}"
 

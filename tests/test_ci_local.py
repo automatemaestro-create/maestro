@@ -2361,7 +2361,17 @@ def prescriptions_des_prompts() -> list[tuple[str, int, str]]:
     la table qu'on suit.
     """
     prescriptions: list[tuple[str, int, str]] = []
-    for prompt in sorted((RACINE / ".claude").rglob("*.md")):
+    # `.claude/worktrees/` est écarté AVANT de descendre (#847) : les worktrees des tickets y sont
+    # montés, chacun avec ses docs et son `node_modules` — les traverser balaierait des milliers de
+    # `.md` étrangers au dépôt, et jugerait les prompts d'une AUTRE branche à l'aune de celle-ci.
+    prompts = sorted(
+        chemin
+        for sous in (RACINE / ".claude").iterdir()
+        if sous.name != "worktrees"
+        for chemin in (sous.rglob("*.md") if sous.is_dir() else [sous])
+        if chemin.suffix == ".md"
+    )
+    for prompt in prompts:
         dans_bloc = False
         for numero, ligne in enumerate(prompt.read_text(encoding="utf-8").splitlines(), 1):
             nue = ligne.strip()

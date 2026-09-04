@@ -3224,7 +3224,9 @@ s'écrivent **sans barre oblique finale**, et
 
 **La création native d'un worktree, écartée** (#520). Claude Code sait en monter un lui-même :
 `EnterWorktree` accepte un `name` au lieu d'un `path`, crée le répertoire sous
-`.claude/worktrees/<nom>` — exclu par `.git/info/exclude`, donc le clone principal reste propre —
+`.claude/worktrees/<nom>` — exclu par `.git/info/exclude`, donc le clone principal reste propre ;
+c'est le dossier où `worktree.sh` monte aussi les nôtres depuis #847 (§9.1), et pour la même
+raison : le CLI n'y demande rien —
 sur une branche `worktree-<nom>` partie d'`origin/<défaut>`. Mesuré le 2026-08-25 (CLI 2.1.215) :
 **ça fonctionne**, et ça ne remplace pas `worktree.sh create`. Trois raisons, dans l'ordre où elles
 coûtent cher :
@@ -3284,6 +3286,62 @@ l'appelant n'ait pas à interpréter le rapport humain qui la précède :
 > `ruleContentField`, donc une règle paramétrée ne matcherait jamais rien. `worktree.sh remove`
 > reste **hors** de l'`allow` : son `--force` passe outre les changements non commités, c'est
 > exactement le genre de geste qui mérite une confirmation.
+
+> ⚠ **Et depuis le CLI 2.1.206, cette règle ne suffit plus — c'est l'EMPLACEMENT du worktree qui
+> décide** (#847). `EnterWorktree path=<chemin>` vers un worktree situé **hors de
+> `<dépôt>/.claude/worktrees/`** déclenche une demande de validation (« Enter the worktree at … ?
+> This moves the session's working directory and write access there… ») qui n'est **pas** une
+> permission : c'est un **contrôle de sûreté** du CLI (`decisionReason: safetyCheck`,
+> « permission-root relocation … a model-supplied worktree outside .claude/worktrees/ »,
+> `classifierApprovable: false`), et sa documentation le dit en toutes lettres — « An
+> `EnterWorktree` permission rule or choosing "don't ask again" doesn't suppress this prompt; only
+> `bypassPermissions` mode skips it ». Or `worktree.sh` montait les worktrees dans un **dossier
+> frère** du dépôt (`<parent>/maestro-worktrees/`), si bien que **chaque `/ticket-start` interactif
+> s'arrêtait sur cette question** — l'inverse exact de ce que #199 avait obtenu ; mesuré sur les
+> transcripts du 2026-08-30 : **2 min** puis **1 h 02** d'attente d'une réponse humaine. Les runs
+> autonomes n'en souffraient pas (`run.sh` lance sa session **dans** le worktree, sans
+> `EnterWorktree`), ce qui a laissé la régression hors des journaux de run.
+>
+> Deux issues, une seule tenable. `bypassPermissions` est **écarté** par #791 — le prix n'est pas
+> d'ouvrir un worktree, c'est que l'`allow` cesse de contraindre quoi que ce soit. Reste à monter les
+> worktrees **là où le CLI les tient pour « gérés »** : le critère, lu dans son binaire, est
+> `<racine du dépôt>/.claude/worktrees/` en chemin **réel** (un lien symbolique posé là est refusé —
+> pas de raccourci vers l'ancien dossier). **Mesuré** avant d'être décidé, sur un dépôt jetable et
+> trois sessions `claude -p` (CLI 2.1.215, 2026-09-04, 0,10 $ —
+> [`scripts/claude/essai-worktree-gere.py`](../scripts/claude/essai-worktree-gere.py), à rejouer
+> le jour où le CLI changerait de critère) : **A** entrée sous `.claude/worktrees/` → entré, aucun
+> refus ; **B** entrée dans un dossier frère → refusée (en `-p`, l'« ask » n'a personne pour
+> répondre) ; **C** session dont le cwd est un tel worktree → `Write`, `Write` imbriqué et `Edit`
+> aboutissent, chemins absolus contenant `.claude/worktrees/` compris, pendant qu'un `Write` sous
+> le `.claude/` **du worktree** reste refusé — le garde-fou #229/#238 est intact et **ne déborde
+> pas** sur le worktree (ce que #520 avait déjà observé pour les worktrees natifs, ci-dessous).
+> `base_worktrees` monte donc sous `<clone principal>/.claude/worktrees/<iid>-<slug>`, et
+> **rien ne bouge côté permissions**. Ce que ça coûte, nommé plutôt que découvert :
+>
+> - **Un dossier de plus dans l'arbre du clone principal**, gitignoré (`.claude/worktrees/`,
+>   versionné — le CLI pose le même motif dans `.git/info/exclude` à son démarrage, mais un clone
+>   où il n'a jamais démarré n'en a pas, et c'est `git status --porcelain` qui décide « arbre
+>   propre » pour `start-brief`, `sync-main` et la purge). Le motif porte sa **barre finale**, à
+>   l'inverse de `.venv` (#333) : un worktree est toujours un répertoire. VS Code le montre en
+>   grisé dans l'explorateur, et sa recherche l'ignore (`search.useIgnoreFiles`).
+> - **Les balayages du dépôt** ne doivent pas y descendre : les deux tests qui parcourent
+>   `.claude/**/*.md` (`test_cycle_de_vie`, `test_ci_local`) écartent `worktrees/` **avant** de
+>   descendre — chaque worktree porte les docs et le `node_modules` d'une autre branche —, `ruff`
+>   respecte le `.gitignore`, `mypy` et `pytest` ne visent que `maestro/` et `tests/`, et le
+>   `docker build` de l'image pytest, dont le contexte est la racine, a gagné un `.dockerignore`
+>   qui n'y laisse que `pyproject.toml`.
+> - **Un worktree encore monté à l'ancien emplacement** demande la validation une dernière fois,
+>   jusqu'à son ramassage : `ensure` retrouve un worktree par sa **branche** (`git worktree list`),
+>   pas par son dossier. Rien à migrer — `gc` les retire à mesure que leurs PR se mergent, et le
+>   dossier `maestro-worktrees/` vide se supprime à la main. `MAESTRO_WORKTREE_DIR` reste la
+>   surcharge : posée **ailleurs**, elle ramène la question à chaque `/ticket-start`, et le
+>   `--help` du script le dit.
+> - **`git clean` depuis le clone principal** ne les emporte pas par défaut (un dossier portant un
+>   `.git` est un dépôt imbriqué pour lui, il faut `-ff`), mais c'est un geste sous `ask` de toute
+>   façon. Et **éditer un fichier d'un worktree depuis une session du clone principal** tombe sous
+>   le garde-fou `.claude/` de cette session — sans objet en pratique, une session travaille
+>   depuis son worktree, mais un `Edit` visant `…/Maestro/.claude/worktrees/…` depuis le clone
+>   principal demanderait confirmation.
 
 Le cas `ICI` n'est pas un détail de confort : c'est lui qui garde
 [`scripts/orchestrate/run.sh`](../scripts/orchestrate/run.sh) intact (§11). La boucle autonome monte
@@ -4190,7 +4248,9 @@ répertoires de projet**, pour **13 worktrees** encore sur le disque. Autrement 
 travail de ticket était devenu inatteignable — sans que rien, nulle part, ne le signale.
 
 **Rien n'est perdu : c'est l'adressage qui manquait, et il se dérive.** L'encodage de Claude Code
-remplace `:`, `\`, `/` et l'espace par `-`, sans rien tronquer ; le répertoire de projet d'un
+remplace **tout caractère hors `a-zA-Z0-9`** par `-` (`replace(/[^a-zA-Z0-9]/g, "-")`, lu dans le
+binaire du CLI — le `.` de `.claude` y devient un tiret, `…-Maestro--claude-worktrees-<iid>-…`,
+ce que la liste de quatre caractères de #385 ne couvrait pas, #847) ; le répertoire de projet d'un
 ticket est donc `<base des worktrees encodée>-<iid>-<slug>`, qu'un motif sur le seul **iid**
 retrouve — le slug n'est jamais nécessaire.
 
@@ -4215,10 +4275,12 @@ Trois choix à ne pas défaire :
   le mauvais : il n'aurait couvert que les ramassages postérieurs à sa mise en place, laissant
   dehors les **121 worktrees déjà partis** — et il aurait ajouté un état de plus à tenir d'accord
   avec la réalité.
-- **La base des worktrees vient de `create`**, jamais d'un `maestro-worktrees` figé dans le verbe :
+- **La base des worktrees vient de `create`**, jamais d'une base figée dans le verbe :
   `MAESTRO_WORKTREE_DIR` déplace les worktrees, donc l'encodage, donc ce qu'il faut chercher. Une
   formule recopiée répondrait juste sur une machine et **vide** sur les autres, silence
-  indiscernable de « ce ticket n'a pas de session ».
+  indiscernable de « ce ticket n'a pas de session ». Depuis #847 `sessions_base` **appelle**
+  `base_worktrees` au lieu d'en porter la copie — et c'est le déplacement de la base qui a montré
+  que la copie était là.
 - **Le motif ignore la casse.** Claude Code encode le chemin **tel qu'il lui a été donné**, sans le
   normaliser : sur la machine de référence le clone principal est rangé sous `e--` et ses worktrees
   sous `E--`. Un motif sensible à la casse en manquerait la moitié, sans un mot.

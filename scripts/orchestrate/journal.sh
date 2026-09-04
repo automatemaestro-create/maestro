@@ -1132,18 +1132,29 @@ function _duree(s,   h, m) {
   return sprintf("%dh%02d", h, m)
 }
 
-# _sans_worktree : le chemin, privé de son préfixe `…/maestro-worktrees/<nom-du-worktree>/`. Il est
-# le MÊME sur toutes les lignes d'un ticket et fait à lui seul la moitié de la largeur — même raison
-# que le `cd` retiré par `_forme`, et que le `${cible#"$RACINE/"}` de la vue.
+# _sans_worktree : le chemin, privé de son préfixe `…/<base>/<nom-du-worktree>/`. Il est le MÊME
+# sur toutes les lignes d'un ticket et fait à lui seul la moitié de la largeur — même raison que le
+# `cd` retiré par `_forme`, et que le `${cible#"$RACINE/"}` de la vue.
+#
+# La base est celle de `worktree.sh` par défaut — `.claude/worktrees` depuis #847, sous ses deux
+# séparateurs (la session reçoit des chemins « E:/… » comme « E:\… »), et `maestro-worktrees` avant,
+# gardée pour que les journaux d'avant restent lisibles : un audit qui ne saurait plus lire un run
+# de la veille ne vaut rien. Un `MAESTRO_WORKTREE_DIR` déplacé ne fait que laisser la ligne plus
+# longue, jamais fausse.
+function _sans_worktree(s,   r) {
+  r = _sans_base(s, ".claude/worktrees");  if (r != s) return r
+  r = _sans_base(s, ".claude\\worktrees"); if (r != s) return r
+  return _sans_base(s, "maestro-worktrees")
+}
+
+# _sans_base <chemin> <base> : le chemin privé de `…/<base>/<premier segment>/`, ou tel quel.
 #
 # Découpé à la main plutôt que par une expression régulière, et ce n'est pas un excès de prudence :
 # un `[\/\\]` dans un LITTÉRAL regex awk n'est pas portable — gawk consomme le `\\` à la lecture du
 # littéral, la classe devient `[\/\]`, le `\]` échappe le crochet et le motif ne se termine plus
 # (« unterminated regexp », mesuré). Dans une chaîne, `"\\"` vaut un antislash partout, sans
-# ambiguïté. La base est celle de `worktree.sh` par défaut : un `MAESTRO_WORKTREE_DIR` déplacé ne
-# fait que laisser la ligne plus longue, jamais fausse.
-function _sans_worktree(s,   p, q, c, base) {
-  base = "maestro-worktrees"
+# ambiguïté.
+function _sans_base(s, base,   p, q, c) {
   p = index(s, base)
   if (p == 0) return s
   q = p + length(base)

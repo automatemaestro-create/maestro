@@ -5359,6 +5359,38 @@ def test_audit_ecarte_le_cd_de_prefixe_en_regroupant_les_commandes(depot: Depot)
         f"le `cd` de préfixe rangerait tout le run sous une seule forme : {formes}"
 
 
+def test_audit_retire_le_prefixe_du_worktree_d_aujourd_hui_et_d_hier(depot: Depot) -> None:
+    """Une cible se rend sans son préfixe `…/<base>/<worktree>/` — base d'aujourd'hui ET d'hier.
+
+    Depuis #847 les worktrees se montent sous `<clone>/.claude/worktrees/` ; les journaux d'avant
+    portent `maestro-worktrees`. Un audit qui ne lirait plus l'une des deux rendrait des lignes
+    dont la moitié de la largeur est le même chemin, et un audit qui ne saurait plus lire un run
+    de la veille ne vaut rien. Les deux séparateurs voyagent aussi : une session reçoit ses
+    chemins en « E:/… » comme en « E:\\… », et le second arrive ÉCHAPPÉ dans le flux.
+    """
+    nouveau = "E:/Projets/Maestro/.claude/worktrees/498-la-commande"
+    antislash = "E:\\Projets\\Maestro\\.claude\\worktrees\\498-la-commande"
+    ancien = "E:/Projets/maestro-worktrees/498-la-commande"
+    flux = (
+        _appel(0, ("toolu_a", "Read", f"{nouveau}/maestro/nouveau.py"))
+        + _retour(30, "toolu_a")
+        + _appel(31, ("toolu_b", "Read", f"{antislash}\\maestro\\antislash.py"))
+        + _retour(60, "toolu_b")
+        + _appel(61, ("toolu_c", "Read", f"{ancien}/maestro/ancien.py"))
+        + _retour(90, "toolu_c")
+    )
+    _journal_audit(depot, "prefixe", {498: flux})
+    r = depot.lance("journal.sh", "audit", "prefixe")
+
+    assert r.returncode == 0, r.stderr
+    assert "── Les appels les plus longs" in r.stdout, r.stdout
+    longs = r.stdout.split("── Les appels les plus longs", 1)[1].split("\n──", 1)[0]
+    for attendu in ("maestro/nouveau.py", "maestro\\antislash.py", "maestro/ancien.py"):
+        assert attendu in longs, f"cible attendue sans son préfixe : {attendu}\n{r.stdout}"
+    assert "worktrees" not in longs and "Projets" not in longs, \
+        f"un préfixe de worktree a survécu :\n{longs}"
+
+
 # Les rejeux se comptent DANS UN TICKET, jamais sur le run (#578)
 # -------------------------------------------------------------------------------------
 # Le journal de ces deux tests est un ÉCHANTILLON FAUTIF : il porte, côte à côte, les deux appels
