@@ -343,6 +343,71 @@ est le seul invariant **observable** de tout le dispositif — un verdict consig
 convocation — et qui **prouve d'abord que le jalon était convoqué**, sans quoi « plus convoqué »
 serait vrai d'un jalon qui ne l'a jamais été.
 
+#### Avant d'empaqueter : le retour d'expérience utilisateur (#853)
+
+Le bouclage exerce des **critères de sortie** ; il ne dit pas ce qu'une personne qui **découvre**
+le produit voit en s'en servant. Ce regard-là, le dépôt l'a eu deux fois — la revue d'usage du
+2026-08-05, qui a fait naître la vague front, et celle du 2026-08-24, « Le run, objet de premier
+plan » ([docs/29](./29-decision-run-objet-de-premier-plan.md)) — et les deux fois **à la main, par
+l'humain, sans que rien ne soit rejouable**. Or c'est **avant** d'empaqueter (Phase 9) qu'il faut
+avoir vécu le produit comme un utilisateur, et personne ne l'avait refait depuis.
+
+**`/retex-utilisateur [objectif]`** rend ce geste rejouable. La session joue le rôle d'un
+utilisateur qui ne connaît rien de Maestro, sur la Control Tower **réelle** (jamais `--demo`) et par
+son seul navigateur (`mcp__chrome-maestro` — c'est **son** navigateur, à la différence de
+`/milestone-bilan` elle n'a aucun exécutant à qui déléguer le regard) : prérequis, parcours des
+écrans de `PAGES` (`apps/web/lib/navigation.ts`) un par un, puis un **run** composé dans le chat —
+seule porte d'entrée depuis #470 — sur un projet léger avec une interface, jusqu'à **ouvrir et
+exécuter le livrable**, le seul critère qui dise si l'objectif de [docs/00 §1.2](./00-cahier-des-charges.md)
+est tenu. Elle écrit `docs/retex/<date>-<slug>.md` ([docs/retex/README.md](./retex/README.md) dit ce
+qu'un rapport contient) : constats classés **bloquant / gênant / cosmétique**, chacun **confronté au
+backlog** par la méthode de docs/29 §2 (déjà couvert par #n, trou, ou renverse une décision écrite),
+puis une **proposition** de milestone et de tickets — **proposée, jamais créée**, le partage de
+`/run-audit` et du bouclage ci-dessus. Pendant le parcours, la session **n'est plus une session de
+développement** : aucune commande du dépôt, aucun appel direct à l'API, aucune lecture du code pour
+comprendre un écran — ce que l'interface n'explique pas est un constat.
+
+**Le prérequis est un poste vide, et aucun geste ne le vidait.** `start.sh --stop` solde les runs
+en vol sans rien effacer, et aucune route ne supprime une exécution : chaque essai partait donc d'un
+historique, la première chose qu'un nouvel utilisateur ne voit pas. D'où le verbe :
+
+```
+.venv/Scripts/python.exe -m maestro.controltower.purge --check       # ce qui partirait — rien n'est écrit
+.venv/Scripts/python.exe -m maestro.controltower.purge [--projets]   # le réel, mêmes comptes
+```
+
+Il vide l'**état d'exécution** — le journal durable (`persistence.py`, d'où tout est rejoué au
+démarrage), les battements, la file de tâches, les boîtes et la diffusion, les conversations
+(`MAESTRO_CHAT_DIR`) et les téléversements (`MAESTRO_INGESTION_DIR`) ; `--projets` retire en plus
+les **déclarations** de projets (`MAESTRO_PROJETS_DIR`, un `<id>.json` par projet) et **jamais** un
+dossier de projet sur le disque. Il ne touche **jamais** à la configuration : agents, playbooks,
+surcharges, capacités, permissions, secrets, MCP. Quatre choses à ne pas défaire :
+
+- **Les clés et les dossiers viennent des constantes Python**, importées, jamais recopiées dans un
+  shell ni dans le module : une constante recopiée des deux côtés d'une frontière est ce que #830 a
+  vu casser (un mois de captures muettes sur un texte que l'UI ne rendait plus). Le test l'interdit
+  par l'AST — aucun littéral `maestro.` hors docstring dans `purge.py`.
+- **Il refuse tant que l'API répond ou qu'un hôte détaché bat** (code `3`), et le refus **nomme**
+  `start.sh --stop`. Leçon de #699 : l'événement est consigné là où il naît, par le producteur, donc
+  un run en vol republierait dans le journal qu'on vient de vider, et une API vivante servirait
+  encore le sien. La vitalité d'un hôte se lit au registre des battements (`vitalite`, #348) : ce
+  qui bat bloque, ce qui ne bat plus depuis le seuil est un orphelin et **ne bloque pas** — c'est
+  exactement ce que la purge est là pour ramasser.
+- **`--check` ne fait pas que compter, il rend le même verdict** : on sait avant de confirmer si le
+  geste passerait, et le réel rend les mêmes comptes une fois fait.
+- **Dans la commande, la purge est confirmée** par un « oui » explicite après le `--check`, comme
+  le feu vert de `/orchestrate` — elle est destructive, elle n'est jamais jouée d'office.
+
+Ce que la commande **n'est pas**, et le rapport le dit : ni `/milestone-bilan` (critères, verdict),
+ni `/verify` (câblage), ni `/banc-mise-en-page` (géométrie). Ces trois-là savent ce qu'ils
+cherchent ; celle-ci regarde avec les yeux de quelqu'un qui **ne sait pas**. Rangée parmi les
+commandes de supervision de `CLAUDE.md` parce qu'elle n'écrit rien côté forge, elle en est la seule
+qui écrive l'état de la Control Tower, et ça se dit. Ni `WebSearch` ni `WebFetch` (#792 — un retex
+n'est pas une veille), aucun run relancé, aucun merge, aucun ticket créé ; le premier rapport est le
+ticket #854. Gardée par [`tests/test_retex_utilisateur.py`](../tests/test_retex_utilisateur.py) : la
+frontière écrans ↔ `navigation.ts` dans les deux sens, motif prouvé sur un échantillon fautif ; la
+purge sans Redis réel ; l'absence d'écriture forge.
+
 #### Soldé et vide : deux abstentions, jamais une seule (#619)
 
 Un milestone est écarté pour **l'une ou l'autre** de deux raisons, que `current-milestone` **nomme
