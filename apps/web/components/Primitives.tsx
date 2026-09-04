@@ -374,14 +374,20 @@ export function BoutonLien({
  * décoratif), et le contour d'accent double le tout pour qui navigue au clavier.
  *
  * **Exporté** depuis #697, d'abord pour la zone de saisie du fil, qui ne pouvait
- * pas être un `ChampTexte` faute de libellé masquable — depuis #832 elle en est
- * un (`libelleMasque`), et ce qui reste à l'export sont les contrôles qui ne
- * passent pas par `CadreChamp` : `ChampJetons`, qui porte un avertissement en
+ * pas être un `ChampTexte` faute de libellé masquable — #832 l'en a fait un
+ * (`libelleMasque`), puis #726 l'en a ressorti pour une autre raison : son
+ * composeur est un **cadre à deux étages** (le texte, puis un rail de contrôles),
+ * et c'est le cadre, un `<div>`, qui porte cette classe — le `<textarea>` qu'il
+ * enveloppe n'a pas de bord à lui, un contrôle bordé dans un cadre bordé ferait
+ * deux contours. Ce qui reste à l'export sont donc ce cadre et les contrôles qui
+ * ne passent pas par `CadreChamp` : `ChampJetons`, qui porte un avertissement en
  * plus de l'aide et vit dans son propre fichier parce qu'il appelle des hooks,
  * et la consigne de l'assistant de rédaction d'`EditeurPlaybook`. L'apparence
  * se prend ici ; le comportement reste à l'appelant. Ce n'est pas une troisième
  * voie : `tests/a11y.test.tsx` refuse depuis #832 tout contrôle de saisie écrit
- * hors des tokens, et un `<input>` nu qui les porte reste un `Champ` en attente.
+ * hors des tokens, et un `<input>` nu qui les porte reste un `Champ` en attente
+ * — un `ChampTexte` qui accepterait un rail est le manque du socle que le
+ * composeur nomme (`components/Conversation`).
  */
 export const CLASSE_CONTROLE =
   "w-full rounded-md border border-bord bg-surface px-3 py-1.5 text-corps " +
