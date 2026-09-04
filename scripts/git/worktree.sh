@@ -126,8 +126,10 @@ Options de création :
                     autonome, à équiper avec `bash scripts/setup.sh`.
   -h, --help        Cette aide.
 
-Emplacement : <parent-du-dépôt>/maestro-worktrees/<iid>-<slug>, surchargeable par
-MAESTRO_WORKTREE_DIR (le dossier qui accueille les worktrees).
+Emplacement : <clone-principal>/.claude/worktrees/<iid>-<slug> — le seul endroit que le CLI
+Claude Code tient pour « géré », donc le seul où EnterWorktree entre sans demander de
+validation (#847). Surchargeable par MAESTRO_WORKTREE_DIR (le dossier qui accueille les
+worktrees) — ailleurs, la question revient à chaque /ticket-start.
 USAGE
 }
 
@@ -146,10 +148,23 @@ depot_principal() {
 }
 
 # base_worktrees <clone principal> : le dossier qui accueille les worktrees. Écrit UNE fois — la
-# création, l'inventaire et le ramassage des coquilles (#422) désignent forcément le même endroit,
-# et deux formules à tenir d'accord finiraient par ramasser ailleurs que là où l'on monte.
+# création, l'inventaire, le ramassage des coquilles (#422) et l'adressage des sessions (#385)
+# désignent forcément le même endroit, et deux formules à tenir d'accord finiraient par ramasser
+# ailleurs que là où l'on monte.
+#
+# SOUS le clone principal, dans `.claude/worktrees/`, et ce n'est pas un choix de rangement (#847) :
+# depuis le CLI 2.1.206, `EnterWorktree path=…` vers un worktree situé AILLEURS déclenche une
+# demande de validation qu'aucune règle `allow` ne lève — un contrôle de sûreté du CLI
+# (« permission-root relocation … outside .claude/worktrees/ »), pas une permission —, si bien
+# que chaque /ticket-start interactif s'arrêtait dessus, jusqu'à une heure mesurée. Le critère du
+# CLI est `<racine du dépôt>/.claude/worktrees/` en chemin RÉEL (un lien symbolique est refusé), et
+# c'est le seul geste qui reste : `bypassPermissions` le saute aussi, au prix de tout le `allow`
+# (#791). Mesuré sur un dépôt jetable — `scripts/claude/essai-worktree-gere.py` : entrée sans
+# question ici, refusée dans un dossier frère, et le garde-fou d'écriture `.claude/` (#229/#238) ne
+# déborde PAS sur un tel worktree. Le dossier est gitignoré (le CLI le pose aussi dans
+# `.git/info/exclude`) : le clone principal reste propre.
 base_worktrees() {
-  printf '%s' "${MAESTRO_WORKTREE_DIR:-$(dirname "$1")/maestro-worktrees}"
+  printf '%s' "${MAESTRO_WORKTREE_DIR:-$1/.claude/worktrees}"
 }
 
 # worktree_de_branche <branche> : chemin du worktree qui a CETTE branche empruntée, s'il existe.
@@ -490,7 +505,8 @@ commande_create() {
       return 1 ;;
   esac
 
-  # 2) Emplacement : un dossier frère du dépôt, qui regroupe tous les worktrees.
+  # 2) Emplacement : `.claude/worktrees/` du clone principal, qui regroupe tous les worktrees — le
+  #    seul emplacement où le CLI entre sans demander de validation (#847, voir `base_worktrees`).
   local base dest nom
   base="$(base_worktrees "$principal")"
   nom="${branche#*/}"                      # « chore/152-slug » -> « 152-slug »
@@ -999,19 +1015,26 @@ sessions_racine() {
   printf '%s/projects' "$(sessions_config)"
 }
 
-# La base des worktrees — la même que celle de `create`, jamais une seconde formule à tenir d'accord.
+# La base des worktrees — CELLE de `create` (`base_worktrees`), et non une seconde formule à tenir
+# d'accord : jusqu'à #847 la même expression vivait ici en copie, et déplacer la base aurait fait
+# chercher les transcripts là où plus rien n'est monté.
 sessions_base() {
   local principal
   principal="$(depot_principal)" || return 1
-  printf '%s' "${MAESTRO_WORKTREE_DIR:-$(dirname "$principal")/maestro-worktrees}"
+  base_worktrees "$principal"
 }
 
-# L'encodage d'un chemin par Claude Code : « : », « \ », « / » et l'espace deviennent « - », sans
-# rien tronquer. Le chemin doit être NATIF (« E:\… ») : c'est sous cette forme que la session le
-# reçoit, donc sous cette forme qu'il a été encodé — l'encoder depuis le « /e/… » de Git Bash
-# donnerait un nom qui ne matche rien.
+# L'encodage d'un chemin par Claude Code : TOUT caractère hors `a-zA-Z0-9` devient « - » — le CLI
+# fait `replace(/[^a-zA-Z0-9]/g, "-")`, lu dans son binaire et vérifié sur ce poste
+# (`…-Maestro--claude-worktrees-<iid>-…` : le « . » de `.claude` y devient un tiret, comme « : »,
+# « \ », « / » et l'espace — ce que l'ancienne liste de quatre caractères ne couvrait pas, #847).
+# Le chemin doit être NATIF (« E:\… ») : c'est sous cette forme que la session le reçoit, donc sous
+# cette forme qu'il a été encodé — l'encoder depuis le « /e/… » de Git Bash donnerait un nom qui ne
+# matche rien. `LC_ALL=C` fait porter le complément sur des OCTETS : un caractère accentué (deux
+# octets en UTF-8) rendrait deux tirets là où le CLI n'en met qu'un — sans objet pour les chemins
+# de worktrees du dépôt, dont le slug est ASCII, et nommé plutôt que découvert.
 sessions_encode() {
-  printf '%s' "$(chemin_natif "$1")" | tr ':\\/ ' '----'
+  printf '%s' "$(chemin_natif "$1")" | LC_ALL=C tr -c 'a-zA-Z0-9' '-'
 }
 
 # La base des worktrees ainsi encodée : le préfixe commun aux répertoires de projet des tickets.

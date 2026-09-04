@@ -465,8 +465,11 @@ def depot(tmp_path: Path) -> Depot:
     # et `.tools` (#333) : ils sont partagés par un LIEN, que git ne voit comme un répertoire que
     # sous Windows. Un `/` ici les rendrait à nouveau non ignorés sous Linux, et le worktree
     # fraîchement monté repasserait pour « porteur de travail non sauvegardé ».
+    # `.claude/worktrees/` AVEC sa barre finale, comme dans le dépôt (#847) : c'est là que `create`
+    # monte les worktrees par défaut, et c'est ce motif — pas le `.git/info/exclude` que le CLI
+    # pose à son démarrage, absent d'ici — qui garde le clone principal propre.
     (racine / ".gitignore").write_text(
-        ".env\n.venv\n.tools\nnode_modules/\n.claude/settings.local.json\n",
+        ".env\n.venv\n.tools\nnode_modules/\n.claude/settings.local.json\n.claude/worktrees/\n",
         encoding="utf-8",
         newline="\n",
     )
@@ -533,6 +536,99 @@ def test_un_worktree_fraichement_monte_est_propre(depot: Depot) -> None:
         "un worktree fraîchement monté doit être propre — sinon le garde-fou « travail non "
         f"sauvegardé » refuse à jamais de le retirer. Laissé derrière :\n{salissures}"
     )
+
+
+# =================================================================================================
+# L'emplacement par défaut : SOUS le clone principal, dans `.claude/worktrees/` (#847)
+# =================================================================================================
+# La fixture redirige les worktrees sous `tmp_path` par `MAESTRO_WORKTREE_DIR`, ce qui masque
+# l'emplacement PAR DÉFAUT partout ailleurs. Une valeur vide vaut « non posée » pour le
+# `${MAESTRO_WORKTREE_DIR:-…}` du script — c'est ainsi que ces tests-ci le rallument.
+SANS_DOSSIER_IMPOSE = {"MAESTRO_WORKTREE_DIR": ""}
+
+
+def test_le_worktree_se_monte_sous_claude_worktrees_par_defaut(depot: Depot) -> None:
+    """Sans `MAESTRO_WORKTREE_DIR`, le worktree va sous `<clone principal>/.claude/worktrees/`.
+
+    Ce n'est pas un rangement (#847) : depuis le CLI 2.1.206, `EnterWorktree path=…` vers un
+    worktree situé AILLEURS déclenche une demande de validation qu'aucune règle `allow` ne lève —
+    un contrôle de sûreté du CLI, pas une permission —, si bien que le dossier frère d'avant
+    (`<parent>/maestro-worktrees/`) arrêtait chaque `/ticket-start` interactif sur une question,
+    jusqu'à une heure d'attente mesurée. `.claude/worktrees/` du dépôt est le seul emplacement que
+    le CLI tient pour « géré », donc le seul où il entre sans rien demander (mesuré :
+    `scripts/claude/essai-worktree-gere.py`).
+    """
+    acheve = depot.lance("create", "152", "--branche", BRANCHE, environnement=SANS_DOSSIER_IMPOSE)
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+
+    attendu = depot.racine / ".claude" / "worktrees" / "152-essai"
+    assert (attendu / ".git").is_file(), (
+        f"le worktree doit être monté sous .claude/worktrees/ du clone principal : {attendu}"
+    )
+    assert not depot.worktree().exists(), (
+        "le dossier que la fixture impose ailleurs ne doit pas avoir servi : la variable était vide"
+    )
+    liste = depot.git("worktree", "list", cwd=depot.racine).replace("\\", "/")
+    assert "/.claude/worktrees/152-essai" in liste, liste
+
+
+def test_le_montage_sous_claude_worktrees_laisse_le_clone_principal_propre(depot: Depot) -> None:
+    """Le pendant de « un worktree fraîchement monté est propre », vu du CLONE PRINCIPAL (#847).
+
+    Un worktree monté SOUS le dépôt est un dossier de plus dans son arbre. Sans le motif
+    `.claude/worktrees/` du `.gitignore`, `git status` du clone principal le verrait en `??`, et
+    tout ce qui juge l'arbre propre — `start-brief`, `sync-main`, la purge des branches — se
+    mettrait à signaler ou à s'abstenir pour toujours. Le CLI pose bien `**/.claude/worktrees/`
+    dans `.git/info/exclude` à son démarrage, mais un clone où il n'a jamais démarré (la CI, un
+    pilote) n'en a pas : c'est le `.gitignore` VERSIONNÉ qui porte l'invariant, et c'est lui qu'on
+    mesure — la fixture en porte une copie conforme et n'écrit aucun `exclude`.
+    """
+    # Le motif prouvé avant la mesure, des deux côtés : dans le dépôt, et dans sa copie conforme.
+    motifs = (RACINE / ".gitignore").read_text(encoding="utf-8").splitlines()
+    assert ".claude/worktrees/" in motifs, (
+        "le .gitignore du dépôt doit ignorer `.claude/worktrees/` — AVEC la barre finale, un "
+        "worktree étant toujours un répertoire"
+    )
+    copie = (depot.racine / ".gitignore").read_text(encoding="utf-8").splitlines()
+    assert ".claude/worktrees/" in copie, "la fixture doit porter le motif du dépôt"
+    exclude = depot.racine / ".git" / "info" / "exclude"
+    assert not exclude.exists() or ".claude/worktrees" not in exclude.read_text(encoding="utf-8"), (
+        "la mesure porterait sur .git/info/exclude et non sur le .gitignore"
+    )
+
+    acheve = depot.lance("create", "152", "--branche", BRANCHE, environnement=SANS_DOSSIER_IMPOSE)
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert (depot.racine / ".claude" / "worktrees" / "152-essai" / ".git").is_file()
+
+    salissures = depot.git("status", "--porcelain", cwd=depot.racine)
+    assert salissures == "", (
+        "le clone principal doit rester propre après un montage sous .claude/worktrees/ — sinon "
+        f"tout ce qui juge l'arbre propre se met à signaler pour toujours. Vu :\n{salissures}"
+    )
+    # Et c'est bien le motif versionné qui répond, pas un `exclude` que le CLI aurait posé.
+    source = depot.git("check-ignore", "-v", ".claude/worktrees/152-essai", cwd=depot.racine)
+    assert ".gitignore:" in source, source
+
+
+def test_la_base_des_sessions_est_celle_de_create() -> None:
+    """La base s'écrit UNE fois, dans `base_worktrees` ; `sessions_base` l'appelle (#847).
+
+    Jusqu'à #847, `sessions_base` portait la formule en copie — « la même que celle de `create`,
+    jamais une seconde formule à tenir d'accord », disait son commentaire, et c'était une seconde
+    formule. Déplacer la base a rendu la copie visible : le verbe `sessions` aurait cherché les
+    transcripts là où plus rien n'est monté, et répondu « aucune session » à des tickets qui en
+    ont. Une seule occurrence de la formule, et plus aucune trace du dossier frère d'avant.
+    """
+    script = (RACINE / "scripts" / "git" / "worktree.sh").read_text(encoding="utf-8")
+    assert script.count("/.claude/worktrees}") == 1, (
+        "la formule de la base doit vivre une fois, dans `base_worktrees`"
+    )
+    assert "maestro-worktrees" not in script, (
+        "l'ancien dossier frère ne doit survivre nulle part dans le script — une seconde base "
+        "recopiée est exactement ce que #847 a trouvé"
+    )
+    corps = script.split("\nsessions_base() {", 1)[1].split("\n}\n", 1)[0]
+    assert 'base_worktrees "$principal"' in corps, "sessions_base doit APPELER base_worktrees"
 
 
 def test_creation_monte_l_atelier_de_session(depot: Depot) -> None:
@@ -2345,15 +2441,15 @@ def test_les_trois_points_de_passage_passent_bien_par_le_ramassage(depot: Depot)
 
 
 def _encode_chemin(chemin: Path) -> str:
-    """Le chemin, encodé comme Claude Code encode un répertoire courant : `:`, `\\`, `/`, ` ` → `-`.
+    """Le chemin, encodé comme Claude Code encode un répertoire courant : tout caractère hors
+    `a-zA-Z0-9` devient `-` — `replace(/[^a-zA-Z0-9]/g, "-")`, lu dans le binaire du CLI (#847).
 
     Écrit ici en clair plutôt que demandé au script : un test qui interroge l'implémentation pour
-    savoir ce qu'il doit attendre ne prouve que la cohérence de celle-ci avec elle-même.
+    savoir ce qu'il doit attendre ne prouve que la cohérence de celle-ci avec elle-même. La liste
+    de quatre caractères de #385 (`:`, `\\`, `/`, espace) rendait le même nom sur les chemins
+    d'alors, sans point ; `.claude/worktrees/` en porte un, et c'est le test dédié qui l'éprouve.
     """
-    texte = str(chemin)
-    for caractere in (":", "\\", "/", " "):
-        texte = texte.replace(caractere, "-")
-    return texte
+    return "".join(c if c.isascii() and c.isalnum() else "-" for c in str(chemin))
 
 
 def _bucket(depot: Depot, iid: str, slug: str = "essai") -> Path:
@@ -2503,6 +2599,39 @@ def test_sessions_rend_le_plus_recent_d_abord(depot: Depot) -> None:
 
     acheve = depot.lance("sessions", "152")
     assert acheve.stdout.index("Récente") < acheve.stdout.index("Ancienne")
+
+
+def test_sessions_encode_le_point_de_claude_comme_le_cli(depot: Depot) -> None:
+    """Sous `.claude/worktrees/`, le chemin porte un « . » — que Claude Code encode en `-` (#847).
+
+    Le CLI fait `replace(/[^a-zA-Z0-9]/g, "-")` (lu dans son binaire, vu sur le poste de
+    référence : `…-Maestro--claude-worktrees-<iid>-…`). L'encodage du verbe ne couvrait que
+    quatre caractères, sans le point : il aurait cherché `….claude-worktrees-152-*`, trouvé RIEN,
+    et répondu « aucune session » — un silence indiscernable de « ce ticket n'a pas de session »,
+    précisément ce que #385 voulait éviter, et sur le seul emplacement que #847 rend courant.
+    """
+    nom = _encode_chemin(depot.racine / ".claude" / "worktrees" / "152-essai")
+    assert "--claude-worktrees-152-" in nom, (
+        "le motif doit porter un point encodé avant qu'on conclue quoi que ce soit"
+    )
+    _pose_transcript(
+        depot.home / ".claude" / "projects" / nom,
+        "abcd1111-2222-3333-4444-5555",
+        "Sous .claude/worktrees",
+    )
+    _pose_transcript(
+        _bucket(depot, "152"), "abcd2222-2222-3333-4444-5555", "Dans le dossier imposé"
+    )
+
+    acheve = depot.lance("sessions", "152", environnement=SANS_DOSSIER_IMPOSE)
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "Sous .claude/worktrees" in acheve.stdout, (
+        f"le verbe n'a pas retrouvé le transcript d'un worktree sous .claude/worktrees/ :\n"
+        f"{acheve.stdout}"
+    )
+    assert "Dans le dossier imposé" not in acheve.stdout, (
+        "sans MAESTRO_WORKTREE_DIR, la base est celle de `create`, pas celle de la fixture"
+    )
 
 
 def test_sessions_suit_le_dossier_de_worktrees_impose(depot: Depot) -> None:

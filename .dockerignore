@@ -1,0 +1,8 @@
+# Contexte des `docker build` lancés depuis la racine du dépôt — aujourd'hui le seul : l'image du
+# job pytest du filet CI local (`scripts/ci/pytest-regime.sh`), dont le Dockerfile ne copie que
+# `pyproject.toml`. Sans ce fichier, docker enverrait tout le dépôt au démon à chaque construction :
+# `.venv`, `.tools`, `apps/web/node_modules` — et depuis #847 les worktrees des tickets, montés
+# SOUS le clone principal (`.claude/worktrees/`), chacun avec son propre `node_modules`. Tout est
+# exclu, sauf ce que l'image lit. Un Dockerfile qui copierait autre chose ajoute sa ligne `!…` ici.
+*
+!pyproject.toml
