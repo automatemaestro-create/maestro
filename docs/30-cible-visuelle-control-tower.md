@@ -493,6 +493,68 @@ constat. La mesure courante vit dans `apps/web/tests/sobriete.test.tsx`, qui com
 chaque exécution — c'est justement ce qui distingue une règle opposable d'un tableau : personne ne
 recompte une doc.
 
+### 4.5 Le signe de vie d'une tâche qui travaille — une ligne dans la place existante (#834, 2026-09-04)
+
+Le troisième cas que la règle a tranché, et le premier où la question n'était pas « ce corps
+déborde » ni « ce corps donne la première place à autre chose », mais **« ce corps ne bouge pas »**.
+Pendant un run réel (mesuré le 2026-08-30 : deux tâches, trente minutes), les trois vues d'un run —
+Pipeline, Kanban, frise — sont restées **immobiles pendant les douze minutes d'une tâche en cours**,
+et la tuile de dépense affichait 5,26 $ figés depuis la fin de la tâche précédente, pendant qu'un
+agent écrivait des fichiers toutes les 5 à 15 secondes. La chaîne temps réel n'y était pour rien
+(< 1 s de bout en bout, ~1 s jusqu'au rechargement) : les vues rechargeaient bien, elles n'avaient
+**rien de nouveau à peindre**. Un run en cours ne se voyait pas vivre, et c'est la panne que la
+frise (#355) avait voulu fermer — « une attente humaine indiscernable d'un travail en cours » —
+déplacée d'un cran : ce n'était plus la validation qu'on ne voyait pas, c'était le **travail**.
+
+**Ce que les vues montrent pendant une tâche, depuis #834.** Le backend sert, sur ce qui travaille,
+un **signe de vie** — le dernier geste de l'agent et son horodatage (#836, docs/05 §6.13bis) — et
+un **coût partiel** qui progresse (#835). Côté surface (#837), une seule ligne, `LigneSigneDeVie`,
+rend le **libellé** du geste tronqué et son **ancienneté** (« à l'instant », « il y a 12 s », puis
+les paliers habituels), montée aux **trois** endroits où le backend sert la même valeur — le nœud
+`en_cours` du Pipeline, la carte du Kanban, l'en-tête du couloir de la frise —, parce qu'un signe
+rendu de trois façons ferait chercher trois faits là où il n'y en a qu'un. L'ancienneté compte à la
+**seconde**, sur cette feuille seulement (`useHorlogeFine`, un timer partagé qui ne tourne que tant
+qu'un signe est monté) : à trente secondes de pas, « il y a 12 s » resterait affiché pendant qu'il y
+en a quarante, et un signe de vie qui ment sur son âge ne vaut pas mieux qu'un écran immobile.
+
+**Ce que la règle a répondu à « quelle place ? » : aucune nouvelle.** Ni bloc de plein format, ni
+chiffre de bandeau — une ligne de plus dans une carte qui en avait déjà quatre. Rien ne pulse en
+plus : le badge « En cours » bat déjà, et un compteur qui avance est le seul mouvement ajouté ; un
+second ferait du bruit là où l'on cherche un pouls. Une tâche qui ne travaille pas rend la carte
+d'avant, **au pixel près**, et un run soldé rend la vue d'avant : le signe n'existe que là où il
+dit quelque chose. C'est la formulation du §4.3 appliquée à un mouvement plutôt qu'à un panneau —
+« est-ce utile ? » l'était évidemment, « quelle place ? » a tranché **dans** l'existant.
+`sobriete.test.tsx` et `a11y.test.tsx` n'ont rien eu à apprendre : le compte des places n'a pas
+bougé.
+
+**Pourquoi la frise garde son tri — la place qui avait une mauvaise réponse évidente.** La frise
+est la vue où « quelle place ? » se posait le plus mal : la réponse qui vient d'abord est **une
+entrée par geste**, et elle est fausse. Le run mesuré a produit ~220 lignes de journal pour **3**
+entrées de frise ; les verser noierait précisément les trois états que sa légende (docs/05 §2.4.6)
+existe pour distinguer — en cours, bloquée, en attente d'un humain. Le signe de vie est donc un
+**attribut de l'en-tête du couloir**, sous le nom et le rôle, borné en largeur pour qu'une cellule
+ne s'élargisse pas jusqu'au libellé entier — et **jamais une ligne** : `entrees` ne change pas, le
+tri non plus, un couloir arrêté est l'en-tête d'avant. Le renvoi du §4.1 fait le reste : ce qui ne
+tient dans aucune place est une ligne avec un renvoi, et ici le renvoi est le **Journal**, qui garde
+tout. Le Pipeline ajoute sa propre réserve, la même que pour l'état : l'attente humaine l'emporte
+sur le signe, une tâche arrêtée sur quelqu'un ne « bougeant » pas quel qu'ait été son dernier geste.
+
+**Veille différée → #868.** Le lot d'interface a été livré par une session autonome, qui ne joue pas
+de veille (§5.2) et n'arbitre rien à la place de personne (§5.3) : la forme du signe — libellé +
+ancienneté plutôt que pastille, compteur d'étapes ou horodatage absolu ; l'ancienneté à la seconde ;
+la ligne sous le nom du couloir ; l'absence de toute pulsation supplémentaire — a été tranchée **à
+l'écran, faute de référence**, et ces décisions sont consignées dans le ticket de veille avec la
+surface touchée. La veille se jouera **sur pièces**, et c'est son verdict qui dira si ces partis
+pris tiennent au banc du §1 ; jusque-là ils valent comme décision, pas comme référence.
+
+**Ce qui le garde.** Côté contrat, `tests/test_run_qui_travaille.py` (#838) compte la présence des
+champs et le contenu des payloads — jamais une durée —, et chaque contrôle y rougit d'abord sur la
+forme d'**avant** (un couloir en cours sans signe, une carte en vol restée `null`, `TYPES_FRISE`
+ouvert en bloc) avant d'être cru sur la forme livrée. Côté écran, la ligne a été vérifiée sur des
+vues factices à la livraison de #837 ; sa suite Vitest est le reliquat du lot final, consigné dans
+**#871** — le composant n'existant pas encore sur la branche qui posait les tests, un test qui
+l'importerait aurait rougi la CI de la PR pour une raison étrangère à ce qu'elle livrait.
+
 ---
 
 ## 5. Inventaire de l'outillage — éprouvé

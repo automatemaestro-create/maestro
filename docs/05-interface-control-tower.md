@@ -941,8 +941,11 @@ grille indicative, à dessein hors du code). Ce qui bouge pendant la tâche est 
 d'abord les **tokens** ; le montant suit dès qu'un fournisseur tarife par appel, sans
 qu'une ligne ne change. Une conséquence assumée : le plafond **en tokens** (#113) a
 désormais prise **pendant** une tâche, au tour où il est franchi, et non plus après
-qu'elle a tout dépensé. Couverture (critique seulement, le reste → #838) :
-`tests/test_usage_en_vol.py`.
+qu'elle a tout dépensé. Couverture : `tests/test_usage_en_vol.py` (le critique — total
+soldé identique au token près, relevé jamais compté deux fois) et, depuis #838,
+[`tests/test_run_qui_travaille.py`](../tests/test_run_qui_travaille.py) — la carte d'une
+tâche en vol restée `null` comme **échantillon fautif**, les trois lectures prouvées
+distinctes deux à deux, le cumul du run qui bouge entre deux lectures (§6.13bis).
 
 **Pourquoi il s'est arrêté.** Un run soldé en échec porte désormais sa **cause
 nommée**, lue à l'identique dans la liste (§2.4.1) et dans la vue (`LigneCause`,
@@ -4202,7 +4205,12 @@ et qu'un rejeu ne dérive pas), la route et ses trois vides. Le dernier volet é
 branches simultanées sur le vrai moteur**, et la simultanéité s'y prouve par une **barrière** et
 jamais par un `sleep` (règle du dépôt, #292) : les deux tâches doivent s'y rejoindre pour avancer,
 si bien qu'un moteur qui les sérialiserait ne finirait pas son run — le motif a d'ailleurs été
-prouvé sur un moteur fautif (`max_parallele=1`) avant d'être posé.
+prouvé sur un moteur fautif (`max_parallele=1`) avant d'être posé. Le **signe de vie du nœud**
+(#836) est gardé par [`tests/test_run_qui_travaille.py`](../tests/test_run_qui_travaille.py)
+(#838, §6.13bis) : le nœud en cours **sans** geste y est d'abord montré immobile entre deux
+lectures — l'échantillon fautif, la forme d'avant —, puis deux lectures espacées d'un geste
+rendent deux nœuds dont le signe est **la** différence, et `null` sur tout nœud qui ne travaille
+pas, quel qu'ait été son dernier geste.
 
 L'écran qui consomme ce contrat est la **vue pipeline** (§2.4.4, #491) : un niveau, une
 colonne ; un nœud, une boîte ; une arête, une courbe orientée. C'est aussi elle qui
@@ -4427,12 +4435,90 @@ Vérification : [`tests/test_frise_run.py`](../tests/test_frise_run.py) — la r
 (dont le tiret qui n'ouvre aucun couloir), le tri **prouvé par deux présentations inverses de la même
 matière**, les couloirs et l'invariant « aucune entrée perdue » vérifié par un **ensemble** et jamais
 par un décompte, les trois états côte à côte sur un même run, le plafond qui mord par la tête, et la
-route recoupée avec `GET /api/journal?run_id=…` entrée par entrée. Côté écran :
+route recoupée avec `GET /api/journal?run_id=…` entrée par entrée. Le **signe de vie du couloir**
+(#836) et la garde de `TYPES_FRISE` sont dans
+[`tests/test_run_qui_travaille.py`](../tests/test_run_qui_travaille.py) (#838, §6.13bis) : la frise
+composée **sans** `activites` — la forme d'avant — y rend un couloir en cours sans signe (l'échantillon
+fautif), la frise avec est identique à celle-là au JSON près une fois l'attribut retiré, et
+l'ouverture d'`agent.activite` en bloc est **montrée** verser les gestes dans `entrees` avant que la
+liste vraie ne soit vérifiée — dans le comportement et dans la source. Côté écran :
 [`apps/web/tests/frise.test.tsx`](../apps/web/tests/frise.test.tsx).
 
 L'écran qui consomme ce contrat est la **vue frise** (§2.4.4) : un tableau dont les lignes sont le
 temps et les colonnes les agents — un `<table>` et non une grille de `<div>`, pour que l'association
 `<th scope="col">` fasse porter à **chaque entrée son agent** sans le réécrire sur chaque carte.
+
+### 6.13bis Ce que les vues d'un run portent pendant une tâche — et pourquoi la frise garde son tri (#834) — **livré**
+
+Le chantier #834 en une mesure (2026-08-30, run `cc2d8e447f83`, deux tâches, ~30 min) : la chaîne
+temps réel tenait — Redis → API → WebSocket **< 1 s**, WebSocket → rechargement de la page **~1 s**,
+cycle de rechargement backend ~25 ms — et pourtant, pendant les douze minutes d'une tâche en cours,
+**rien ne bougeait** : quatre nœuds strictement inchangés sur 60 s, une frise de **3** entrées pour
+~220 lignes de journal (1158 octets identiques à 90 s d'intervalle), un Kanban qui bouge deux fois
+en trente minutes, et **5,26 $ figés** depuis la fin de la tâche précédente. Le défaut n'était pas
+la **synchronisation** mais la **matière** : toutes les vues étaient construites sur des données qui
+ne changent qu'aux **frontières de tâche**, quand l'agent, lui, agit en continu.
+
+Cette distinction est ce qui fixe la forme de ce que les tests gardent. Une suite qui vérifierait
+« la page se recharge à l'événement » aurait été **verte pendant toute la durée du défaut** ; ce qui
+se compte est la **présence des champs** et le **contenu** des payloads — jamais une durée (un
+chronomètre en CI mesure la charge de la machine, règle de #577).
+
+**Ce que chaque lecture porte pendant qu'une tâche est `en_cours`**, depuis #835 et #836 :
+
+| lecture | ce qui bouge pendant la tâche | ce qui n'y entre pas |
+| --- | --- | --- |
+| la carte de tâche (`GET /api/taches`, le Kanban §2.2) | `activite` — le dernier geste de l'agent, horodatage et libellé court (§6.11) ; `cout_usd` avec `cout_partiel: true` et `usage` — ce qu'elle a consommé jusqu'ici (§2.4.3) | ni statut ni colonne : une tâche qui travaille ou dépense **ne bouge pas** au Kanban |
+| le nœud du graphe (§6.11) | les mêmes `activite`, `cout_usd`/`cout_partiel`, plus les `etapes` que l'agent coche (#489) | rien d'autre : le signe est **la** différence entre deux lectures d'une boîte en cours |
+| le couloir de la frise (§6.13) | `activite` sur l'**en-tête** du couloir | **aucune entrée** : `entrees`, `total` et le tri sont ceux d'avant, au JSON près |
+| le résumé du run (`GET /api/executions`, §6.1) | `cout_usd` — le soldé **plus** le dernier relevé de chaque tâche en cours — et `cout_partiel` | le grand livre (`/cout`) et la vue analytique restent **soldé seulement**, chaque ligne comptée une fois |
+
+Trois règles, et où elles vivent :
+
+- **Une règle, trois lecteurs.** « Seule une tâche `en_cours` porte un signe de vie » est écrit
+  **une fois**, sur la carte (`EtatTache.signe_de_vie`) ; le nœud et le couloir lisent cette
+  décision et ne la refont pas, si bien que la carte, le nœud et le couloir servent **la même
+  valeur** par construction — jamais par trois calculs à tenir d'accord. `en_cours` **au sens
+  strict** : le compartiment de la progression y range aussi `en_attente_validation`, mais une
+  tâche arrêtée sur un humain ne travaille pas, et un signe dessus redirait « ça bouge » là où la
+  vérité est « ça attend » — la distinction que #355 a fait exister. Une tâche arrêtée garde son
+  dernier geste en mémoire et n'en montre rien.
+- **La frise garde son tri, et le signe est ce qui le permet.** `TYPES_FRISE` n'a pas bougé :
+  `agent.activite` est le bruit de fond d'un run, et l'y verser aurait noyé les trois signaux que
+  #355 demande de distinguer (~220 lignes pour 3). Le signe de vie est un **attribut de l'en-tête
+  du couloir**, jamais une ligne — la frise avec son signe et la frise sans sont identiques, une
+  fois l'attribut retiré. C'est l'écart le plus plausible à la relecture (« une entrée par geste,
+  ce serait plus vivant »), et il est refusé par un test, dans le comportement et dans la source.
+- **Rien sur le canal.** Les trois lectures se recomposent **à la lecture** ; le `agent.activite`
+  et le `tache.usage` qui les rafraîchissent circulent déjà, et le pouls `revision` du client
+  suffit — la mesure du 2026-08-30 le disait avant le chantier, et le chantier ne l'a pas démentie.
+
+**Ce que les vues ne portent pas**, et qu'il faut savoir avant de les lire : le coût en vol reste
+`null` **partiel** tant que le fournisseur n'a pas tarifé (le SDK Claude tarife au résultat, docs/09
+§4.2 en donne une grille indicative hors du code) — ce qui bouge d'abord pendant une tâche, ce sont
+les **tokens** de `usage` ; une tâche en cours **avant son premier relevé** a exactement la carte
+d'avant #835 (`null`, non partiel), et seul le relevé distingue les deux ; un signe de vie n'ouvre
+**jamais** une carte ni un couloir — le moteur consigne `:debut` avant le premier geste — et le
+repli de la frise n'en porte pas.
+
+Vérification : [`tests/test_run_qui_travaille.py`](../tests/test_run_qui_travaille.py) (#838). Sa
+méthode est celle du critère : chaque contrôle est d'abord joué sur un **échantillon fautif** — la
+forme d'**avant** le chantier — et doit y rougir avant qu'on le croie sur la forme livrée. Les
+échantillons sont ceux de la mesure : une carte `en_cours` sans geste (`activite: null`), un nœud
+en cours immobile entre deux lectures, une frise composée sans `activites` dont le couloir en cours
+n'a pas de signe, une carte en vol restée `null` non partiel, et `TYPES_FRISE` ouvert en bloc —
+montré verser trois gestes dans `entrees` (six entrées pour trois) avant que la liste vraie ne soit
+vérifiée. Puis la forme livrée : le libellé court et sa troncature dite, la règle stricte sur la
+carte (attente de validation comprise, dont le compartiment dit pourtant « en cours »), le rejeu du
+journal durable qui rend le même signe, le plus récent des gestes en multi-instances, deux lectures
+espacées d'un geste qui rendent deux nœuds dont le signe est **la** différence, la frise identique
+au JSON près une fois l'attribut retiré, les trois lectures de la carte de coût distinctes deux à
+deux, le cumul du run qui bouge, et la route — carte, nœud et couloir servant le **même** signe, un
+geste appliqué entre deux lectures qui change les trois sans toucher aux entrées, un run soldé qui
+rend exactement la vue d'avant. `tests/test_usage_en_vol.py` garde le critique de #835 (total
+soldé identique, relevé jamais compté deux fois). Côté écran, la ligne de #837 (§2.4.4) est un
+lot d'interface dont la suite Vitest reste à poser — **#871** : ce lot ne pouvait pas la viser
+depuis une branche où le composant n'existe pas encore, et la reprise a son propre ticket.
 
 ### 6.14 Un fil est une suite de conversations (#694) — **livré**
 

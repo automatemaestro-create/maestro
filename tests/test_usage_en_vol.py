@@ -15,7 +15,11 @@ ferait un run **plus cher** sans qu'aucun écran ne rougisse.
 
 Le reste — la carte qui distingue « rien consommé encore » de « coût inconnu »,
 le run dont le montant bouge entre deux lectures, le graphe qui porte la même
-réserve que la carte — est gardé au passage, sur le même flux.
+réserve que la carte — est gardé au passage, sur le même flux. Le lot 4 (#838,
+`tests/test_run_qui_travaille.py`) reprend la question par l'autre bout : la
+carte d'une tâche en vol restée `null` y est l'**échantillon fautif** sur lequel
+le contrôle rougit d'abord, et les trois lectures de la carte y sont prouvées
+distinctes deux à deux.
 
 **Ni réseau, ni SDK, ni Redis** : le flux du SDK est joué par des doubles, comme
 dans `test_providers.py`, et le journal émet sur un logger de test.
