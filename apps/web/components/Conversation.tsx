@@ -94,6 +94,7 @@ import {
   Fragment,
   useCallback,
   useEffect,
+  useId,
   useRef,
   useState,
   type ReactNode,
@@ -114,7 +115,7 @@ import {
 import {
   BadgeEtat,
   Bouton,
-  CLASSE_CONTROLE,
+  ChampTexte,
   EnTeteSection,
   LienRenvoi,
   type Icone,
@@ -192,6 +193,7 @@ export function Conversation({
     interrompre,
   } = fil;
   const composition = useSourcesComposees();
+  const idSaisie = useId();
   const [brouillon, setBrouillon] = useState("");
   /**
    * Ce qui a manqué au dernier envoi, et si le message a **quand même** rejoint
@@ -561,7 +563,19 @@ export function Conversation({
             commence à 1376). Deux surfaces, un seul composant : la règle qui vaut
             pour les deux est celle qui ne dépend pas de la mise en page. */}
         <div className="flex items-end gap-2 pe-14">
-          <textarea
+          {/* Un `ChampTexte` du socle, au libellé **masqué** (#832) : le nom
+              accessible reste « Message à … », la question est portée par le
+              `placeholder`. C'est le même contrôle que les champs du produit —
+              bord de focus `bord-fort`, contour d'accent au clavier — et non plus
+              une recopie de ses classes ; le comportement (Entrée envoie,
+              une capture collée devient une source) reste ici. La poignée de
+              redimensionnement n'est pas déclarée : le preflight de Tailwind
+              rend déjà tout `<textarea>` en `resize: vertical`. */}
+          <ChampTexte
+            id={idSaisie}
+            libelle={`Message à ${interlocuteur}`}
+            libelleMasque
+            className="min-w-0 flex-1"
             value={brouillon}
             onChange={(e) =>
               setBrouillon(
@@ -587,12 +601,6 @@ export function Conversation({
             }}
             rows={2}
             placeholder={`Écrire à ${interlocuteur}… (Entrée envoie, Maj+Entrée saute une ligne)`}
-            aria-label={`Message à ${interlocuteur}`}
-            // L'apparence vient du socle (#697) : c'est le **même** contrôle que
-            // les champs du produit, et il n'en portait qu'une copie en couleurs
-            // brutes — dont un `focus:outline-none` qui retirait au clavier le
-            // seul repère que `CLASSE_CONTROLE` promet à chaque contrôle.
-            className={`${CLASSE_CONTROLE} resize-y`}
           />
           {/* Pendant qu'une réponse s'écrit, le bouton d'envoi **cède la
               place** à l'arrêt plutôt que de s'y ajouter : l'envoi est de toute

@@ -72,6 +72,18 @@ const CONSEILS: Record<string, string> = {
     "Ce projet n'est plus déclaré — recharger la liste pour repartir de l'état réel.",
   "projet-illisible":
     "Le fichier de ce projet ne se relit pas : il est ignoré par la liste tant qu'il n'est pas réparé ou supprimé.",
+  // Les refus de la mise sous Git (#855, verbe #704) — la racine est restée
+  // dans l'état d'avant, le conseil dit ce qu'il reste à faire.
+  "depot-englobant":
+    "Ce dossier est déjà dans un dépôt Git : déclarer le projet sur la racine de ce dépôt, ou sortir le dossier de son arborescence.",
+  "init-refuse":
+    "Git n'a pas pu initialiser le dépôt : vérifier les droits sur le dossier, puis réessayer.",
+  "commit-refuse":
+    "Le premier commit a été refusé — souvent un hook Git du poste (pre-commit) : le corriger ou le lever, puis réessayer. Rien n'a été modifié dans le dossier.",
+  "vcs-introuvable":
+    "Git a répondu sans poser de dépôt lisible : lancer git status dans le dossier pour voir ce qu'il en dit.",
+  "git-indisponible":
+    "Git est absent ou muet sur le poste du backend : l'installer (ou le remettre dans le PATH), relancer le backend, puis réessayer.",
 };
 
 /** Le conseil d'un motif, ou `null` s'il n'y en a pas pour celui-ci. */

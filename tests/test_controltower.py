@@ -196,6 +196,10 @@ def test_liste_des_taches_statut_agent_cout(client, state):
         "etapes": [],
         "liens": [],
         "horodatage": t2["horodatage"],
+        # Le signe de vie (#836) : `null` sur une tâche qui ne travaille pas —
+        # terminée ici —, et servi sur la carte parce que le graphe en tire
+        # l'état de son nœud.
+        "activite": None,
     }
 
 

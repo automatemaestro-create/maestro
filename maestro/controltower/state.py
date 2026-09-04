@@ -55,13 +55,19 @@ from maestro.controltower.events import (
 from maestro.controltower.graphe import EtatNoeud, GrapheRun, graphe_du_run
 from maestro.controltower.portee import PorteeProjet, PorteeRun
 from maestro.controltower.progression import Progression, progression_des_statuts
+from maestro.controltower.signe_de_vie import SigneDeVie
 from maestro.detail_tache import (
     EtapeTache,
     LienUtile,
     etapes_en_liste,
     liens_en_liste,
 )
-from maestro.engine.executor import STATUT_BLOQUEE, STATUT_ECHEC, STATUT_TERMINEE
+from maestro.engine.executor import (
+    STATUT_BLOQUEE,
+    STATUT_ECHEC,
+    STATUT_EN_COURS,
+    STATUT_TERMINEE,
+)
 from maestro.plan_run import NoeudPlan
 from maestro.projets.application import DiffProjet
 from maestro.references import ticket_en_dict
@@ -231,6 +237,12 @@ class EtatTache:
     pour la traiter. Vides tant qu'aucun événement n'en a transporté (inconnu ≠
     absent), et le panneau de détail (#251) ne s'ouvre alors pas : une tâche sans
     détail rend exactement la carte d'avant ce lot.
+    `activite` (#836) est le **dernier geste** de l'agent sur la tâche — instant
+    et libellé court du dernier `agent.activite` (ou message, ou blocage
+    déclaré : tout ce que la projection tient déjà pour « l'agent vient de
+    parler ») —, None tant qu'aucun n'a été vu. Il n'est **servi** que comme
+    `signe_de_vie`, c'est-à-dire pour une tâche `en_cours` : ce que le graphe et
+    la frise en montrent est décidé ici, une fois, et pas dans chaque vue.
     """
 
     id: str
@@ -248,9 +260,24 @@ class EtatTache:
     etapes: list[EtapeTache] = field(default_factory=list)
     liens: list[LienUtile] = field(default_factory=list)
     horodatage: str = ""
+    activite: SigneDeVie | None = None
+
+    @property
+    def signe_de_vie(self) -> SigneDeVie | None:
+        """Le dernier geste de l'agent, **si la tâche travaille** — None sinon (#836).
+
+        `en_cours` au sens strict, et non le compartiment de `progression.py`,
+        qui y range aussi l'attente de validation : une tâche arrêtée sur un
+        humain ne travaille pas, et c'est la distinction même que #355 a fait
+        exister. Une tâche terminée, échouée, bloquée ou réassignée garde son
+        dernier geste en mémoire (`activite`) mais n'en montre rien : « ça
+        bouge » ne se dit pas d'une chose qui ne bouge plus.
+        """
+        return self.activite if self.statut == STATUT_EN_COURS else None
 
     def to_dict(self) -> dict[str, Any]:
         """Réémet la tâche en dict JSON-sérialisable (la forme du REST)."""
+        signe = self.signe_de_vie
         return {
             "id": self.id,
             "titre": self.titre,
@@ -270,6 +297,10 @@ class EtatTache:
             "etapes": etapes_en_liste(self.etapes),
             "liens": liens_en_liste(self.liens),
             "horodatage": self.horodatage,
+            # Le signe de vie (#836) : `null` dès que la tâche ne travaille pas.
+            # Servi sur la carte parce que c'est d'elle que le graphe tire
+            # l'état de son nœud, et que le Kanban lit la même carte.
+            "activite": signe.to_dict() if signe is not None else None,
         }
 
 
@@ -864,6 +895,32 @@ class ControlTowerState:
                 couloirs[tache.agent] = tache.role
         return couloirs
 
+    def signes_de_vie_du_run(self, run_id: str) -> dict[str, SigneDeVie]:
+        """Le signe de vie de chaque agent du run `run_id` (agent → signe) — #836.
+
+        Le pendant d'`agents_du_run` pour ce qui **bouge** : un agent y figure
+        s'il porte au moins une tâche du run qui travaille (`signe_de_vie`),
+        et le signe retenu est le **plus récent** de ses tâches en cours — en
+        multi-instances (#100), un agent en porte plusieurs à la fois, et le
+        couloir de la frise n'a qu'un en-tête. Un agent dont aucune tâche ne
+        travaille n'y est pas : la frise le lit comme « aucun signe de vie »,
+        ce qui est la vérité d'un couloir arrêté.
+
+        Même clé brute qu'`agents_du_run`, et pour la même raison : c'est la
+        frise qui tranche ce qui fait un couloir (`frise._couloir_de`), pas la
+        projection. Le tiret d'une tâche jamais routée ne porte de toute façon
+        aucun geste.
+        """
+        vues = self.taches_du_run(run_id)
+        signes: dict[str, SigneDeVie] = {}
+        for tache in self._taches.values():
+            if tache.id not in vues or not tache.agent:
+                continue
+            signe = tache.signe_de_vie
+            if signe is not None and signe.plus_recent_que(signes.get(tache.agent)):
+                signes[tache.agent] = signe
+        return signes
+
     def progression(self, run_id: str) -> Progression:
         """Où en est le run `run_id` : ses tâches réparties par compartiment (#473).
 
@@ -953,6 +1010,9 @@ class ControlTowerState:
         `usage`, où le moteur pose la durée horloge de la tâche (relances
         comprises) ; `None` tant que rien n'a été mesuré — inconnu n'est pas
         zéro, et une boîte annoncée à « 0 ms » se lirait comme instantanée.
+        Le **signe de vie** (#836) est celui que la carte sert déjà
+        (`signe_de_vie`) : la règle « seule une tâche en cours en porte un »
+        vit sur la carte, et le nœud ne la rejoue pas.
         """
         tache = self._taches[tache_id]
         return EtatNoeud(
@@ -963,6 +1023,7 @@ class ControlTowerState:
             cout_partiel=tache.cout_partiel,
             duree_ms=tache.usage.duree_ms if tache.usage is not None else None,
             etapes=tuple(tache.etapes),
+            activite=tache.signe_de_vie,
         )
 
     def tache(self, tache_id: str) -> EtatTache | None:
@@ -1271,7 +1332,21 @@ class ControlTowerState:
             tache.liens = list(event.liens)
 
     def _applique_activite(self, event: Event) -> None:
-        """Trace l'activité d'un acteur (planification, validation, message A2A)."""
+        """Trace l'activité d'un acteur (planification, validation, message A2A).
+
+        Depuis #836, la **tâche** en garde aussi la trace : son dernier geste
+        (`EtatTache.activite`), d'où le graphe et la frise tirent leur signe
+        de vie. Même règle que pour l'agent — tout ce qui arrive ici dit « il
+        vient de parler » —, restreinte à la tâche que l'événement nomme. Une
+        activité sans tâche (planification, reprise) ne rafraîchit que l'agent,
+        et une tâche que la projection ne connaît pas n'est pas créée : un
+        signe de vie n'ouvre pas de carte, il ne fait qu'animer celle qui
+        existe — le moteur consigne toujours `:debut` avant le premier geste.
+        """
+        if event.tache_id:
+            tache = self._taches.get(event.tache_id)
+            if tache is not None:
+                tache.activite = SigneDeVie.depuis(event)
         if event.agent in _AGENTS_NON_EXECUTANTS:
             return
         agent = self._agents.setdefault(

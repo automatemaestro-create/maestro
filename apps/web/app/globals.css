@@ -337,3 +337,99 @@ body {
     Arial,
     sans-serif;
 }
+
+/* =====================================================================
+   L'ascenseur discret (#725, lot 2 de #722)
+   =====================================================================
+
+   « Les cartes scrollables à droite, il faudrait ne pas afficher la scroll
+   bar » (revue du 2026-08-28). Sur `/chat` comme sur `/couts`, la colonne de
+   propriétés est collante et bornée — le bon choix, classe de bug de #306 —,
+   donc elle porte son propre ascenseur **à côté** de celui du `Shell` : deux
+   barres du système, voisines. Ce n'était pas un défaut de ces deux écrans :
+   le socle ne disait rien des ascenseurs, et les seize surfaces défilantes du
+   produit rendaient celui du système. La règle vit donc ici, une fois, et
+   chaque écran en hérite sans une ligne à lui.
+
+   Ce qu'elle fait, et ce qu'elle ne fait pas :
+
+   - **Au repos la barre ne se voit pas** ; elle **se montre** dès qu'elle peut
+     servir — sous le pointeur (`:hover`), quand le focus est dedans
+     (`:focus-within`, le pendant clavier du survol : ce qu'un survol révèle
+     doit se révéler au clavier) et **pendant le défilement**
+     (`[data-defilement]`, posé par `lib/ascenseur` sur l'élément qui vient
+     de défiler — CSS n'a aucun état pour « défile en ce moment », et c'est le
+     seul moment où le tactile voit la barre).
+   - **Discrète, jamais absente.** La barre garde sa place (`thin`, jamais
+     `none`) : rien ne bouge quand elle apparaît, le défilement à la molette,
+     au clavier et au tactile reste entier, et elle reste une **cible
+     pointable** — un pouce transparent se saisit aussi bien qu'un pouce
+     peint, et il est peint dès qu'on le vise. Un `display: none` retirerait
+     l'information qu'une surface bornée continue sous le pli (#306, et
+     docs/30 §4 n'admet jamais un retrait d'information) : ce n'est pas le
+     compromis choisi ici.
+   - **Aucune couleur nouvelle.** Le pouce emprunte `--bord-fort`, le token
+     qui *identifie un contrôle* — c'est ce qu'il est —, déjà mesuré ≥ 3:1 sur
+     les deux surfaces dans les deux thèmes (`tests/contraste.test.ts`, WCAG
+     2.2 §1.4.11). Une teinte à lui aurait dû entrer dans la palette et y
+     déclarer sa paire ; emprunter garde le filet sans rien y ajouter.
+   - **Deux moteurs, un seul actif.** Les propriétés standard
+     (`scrollbar-width` / `scrollbar-color` : Firefox, Chromium ≥ 121) quand le
+     navigateur les connaît ; `::-webkit-scrollbar` **seulement** sinon
+     (Safari, anciens Chromium). Les deux ne se cumulent pas : dès que
+     `scrollbar-color` est posé, Chromium ignore les pseudo-éléments — d'où le
+     `@supports`, qui choisit au lieu de superposer. Le pouce WebKit ne
+     s'anime pas (ses pseudo-éléments ignorent `transition`) : il n'y a donc
+     pas de fondu à lui déclarer.
+   - **Le fondu respecte `prefers-reduced-motion`** (#537) : il n'est posé que
+     sous `no-preference`, jamais annulé après coup — et il ne joue que là où
+     le moteur sait animer `scrollbar-color`, ailleurs la barre paraît d'un
+     coup, ce qui est le rendu sans mouvement.
+
+   ⚠ `@layer base`, et ce n'est pas un rangement : une règle **hors couche**
+   sur `*` l'emporterait sur tout utilitaire Tailwind, et le `transition`
+   ci-dessous aurait éteint le `transition-[width]` de la barre latérale et
+   tous ses semblables. Dans `base`, les utilitaires gardent le dernier mot.
+
+   ⚠ Le `Shell` n'est pas exempté : son ascenseur est celui de la page et
+   reste le repère de défilement — il se montre quand on regarde le contenu
+   (le pointeur y est) plutôt qu'en permanence. C'est le voisinage des deux
+   barres qui gênait, pas l'existence de la seconde. */
+@layer base {
+  @supports (scrollbar-color: auto) {
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: transparent transparent;
+    }
+    *:hover,
+    *:focus-within,
+    [data-defilement] {
+      scrollbar-color: var(--bord-fort) transparent;
+    }
+    @media (prefers-reduced-motion: no-preference) {
+      * {
+        transition: scrollbar-color 150ms ease-out;
+      }
+    }
+  }
+
+  @supports not (scrollbar-color: auto) {
+    ::-webkit-scrollbar {
+      width: 0.5rem;
+      height: 0.5rem;
+    }
+    ::-webkit-scrollbar-track,
+    ::-webkit-scrollbar-corner {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      border-radius: 9999px;
+      background-color: transparent;
+    }
+    *:hover::-webkit-scrollbar-thumb,
+    *:focus-within::-webkit-scrollbar-thumb,
+    [data-defilement]::-webkit-scrollbar-thumb {
+      background-color: var(--bord-fort);
+    }
+  }
+}

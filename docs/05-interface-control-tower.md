@@ -1541,9 +1541,10 @@ porte d'entrée et la sortie de « Projets » du menu sont au §2.0.1 (#279, #28
 Le premier des quatre écrans ci-dessus est **spécifié et implémenté** ; l'application des livrables
 l'est aussi, par l'écran de validation du §2.6, composer un objectif depuis #319 (§2.7.3) et valider
 le brief depuis #322 (§2.7.4). Les quatre y sont donc, et la réserve de l'encadré est levée.
-Implémentation : `apps/web/app/projets/page.tsx` et `apps/web/components/projets/`, contre les six
-routes du §6.7 ; couverture `apps/web/tests/projets.test.tsx` côté UI,
-[`tests/test_projets_api.py`](../tests/test_projets_api.py) côté API.
+Implémentation : `apps/web/app/projets/page.tsx` et `apps/web/components/projets/`, contre les
+routes du §6.7 (six à l'origine, la mise sous Git de #855 en plus) ; couverture
+`apps/web/tests/projets.test.tsx` côté UI, [`tests/test_projets_api.py`](../tests/test_projets_api.py)
+côté API.
 
 **Place dans la navigation** — l'écran a d'abord eu une entrée **« Projets »** juste après le
 tableau de bord ; elle a été **retirée** par #280 (§2.0.1), le projet étant le cadre des écrans et
@@ -1571,6 +1572,21 @@ visé n'existe pas encore — origine « nouveau » — se résout **sans except
 **parent** vient de l'explorateur et l'utilisateur ne saisit qu'un **nom de dossier**, refusé s'il
 contient un séparateur. Le §2.7.2 ajoute deux raccourcis vers un dossier lointain, sans changer
 qui valide quoi.
+
+**Mettre sous Git** (#855) — sur une carte « Non versionné », et sur elle seule, un bouton
+**« Mettre sous Git »** qui s'arme **en deux temps**, comme la suppression : le premier clic ouvre
+une confirmation qui **dit ce qui va être fait** — `git init` dans la racine affichée, puis un
+premier commit « Maestro : état initial du projet » de **toute la racine**, le `.gitignore` du
+projet respecté, et ce que ça change ensuite (les agents travailleront dans un espace dérivé du
+dépôt, la fusion de leur travail demandera un accord — [docs/24 §2.4](./24-projets-locaux-et-poste-de-travail.md)) —,
+le second appelle `POST /api/projets/{id}/versionner` (§6.7). C'est le **seul geste de l'écran qui
+écrive dans le dossier de l'utilisateur**, d'où une confirmation là où déclarer ou modifier n'en
+demandent pas. Rien n'est envoyé — le `vcs` se **constate**, il ne se déclare pas (EF-38) — et la
+liste se **relit** après, comme après toute écriture : c'est elle qui montre `git · <branche>`. Un
+refus s'affiche **sur la carte**, avec sa phrase, son motif (`depot-englobant`, `commit-refuse`,
+`git-indisponible`…) et le conseil qui va avec ; le projet reste non versionné et le geste se
+repropose. Un seul geste s'arme à la fois : armer la suppression range la mise sous Git, et
+inversement.
 
 **Un refus est une réponse** (EF-38), et il en porte trois choses : la **phrase** du backend, le
 **geste** qui en sort quand l'écran le connaît (élargir `MAESTRO_EXPLORATEUR_RACINES`, descendre
@@ -3657,6 +3673,20 @@ comportement réel.
 - `DELETE /api/projets/{id}` → `{ "id": …, "supprime": true }` — oublie la déclaration et **ne
   touche jamais au dossier sur le disque** : oublier un projet n'est pas supprimer le travail de
   l'utilisateur.
+- `POST /api/projets/{id}/versionner` → `Projet` (#855) — met un projet **non versionné** sous Git
+  par le verbe de #704 (`ProjetStore.versionner`, [docs/24 §2.4](./24-projets-locaux-et-poste-de-travail.md)) :
+  `git init` puis un **premier commit** « Maestro : état initial du projet » de toute la racine,
+  `git add -A` donc le `.gitignore` du projet **respecté**, pour que la branche de base résolve.
+  Rend la fiche **relue**, `vcs` constaté. **Sans corps** : le `vcs` ne se déclare pas (EF-38), il
+  se déclenche — c'est ce qui distingue ce geste d'un `PUT` élargi, et un `vcs` envoyé n'est ni lu
+  ni stocké. Un projet **déjà versionné** rend sa fiche telle quelle (aucune commande, `modifie_le`
+  intact) ; un refus porte son **motif**, jamais un 500 : `404` `projet-inconnu`, `409`
+  `depot-englobant` (la racine est dans un autre dépôt — l'**état du disque** s'oppose au geste),
+  `422` `commit-refuse` (un `pre-commit` de l'utilisateur a refusé : la racine est dans l'état
+  d'avant, le `.git` né compris), `init-refuse`, `vcs-introuvable` ou une racine devenue inadmissible
+  (`dossier-absent`…), `503` `git-indisponible` (le **poste** n'a pas Git). Le seul geste de la
+  famille qui **écrive dans le dossier de l'utilisateur** — sur demande explicite, et nulle part
+  ailleurs (déclaration, lecture et exécution ne posent aucun `.git`).
 - `GET /api/projets/explorateur?chemin=…` → `PageExplorateur` — énumère les **dossiers** de
   `chemin` ; **sans `chemin`**, les **points d'entrée** (#278, voir ci-dessous).
 - `GET /api/projets/selecteur` → `DisponibiliteSelecteur` (#278) — le dialogue de dossier **natif
@@ -4058,7 +4088,11 @@ bascule, et se lit avec n'importe laquelle des quatre. Le décompte de cette sec
       "cout_usd": 0.02, "duree_ms": 1234,      // null : inconnu (≠ zéro)
       // La checklist de la tâche (#489) : celle que l'agent tient, ou —
       // tant qu'elle n'a pas démarré — l'ossature déclarée au plan.
-      "etapes": [ { "libelle": "Lister les entités", "etat": "faite" } ] }
+      "etapes": [ { "libelle": "Lister les entités", "etat": "faite" } ],
+      // Le signe de vie (#836) : null sur tout nœud qui ne travaille pas —
+      // celui-ci est terminé. Sur le nœud `en_cours`, l'instant et un libellé
+      // court du dernier geste de son agent : { "horodatage": "…", "libelle": "…" }.
+      "activite": null }
   ],
   // `de` l'amont, `vers` l'aval : le sens du FLUX, jamais celui de la
   // déclaration (`Task.dependances` se lit « j'attends ceux-ci »).
@@ -4120,9 +4154,26 @@ un dessin qui pousse au lieu d'un plan.
 **Le direct passe par le canal existant, et le graphe n'a pas d'événement à lui** (troisième
 critère). Il se recompose **à la lecture**, en joignant le plan à l'état que la projection tient de
 chaque tâche : ce sont donc les événements déjà diffusés qui le font bouger — `tache.statut` (un
-nœud démarre, une arête s'allume), `tache.detail` (une étape se coche, #489), et le nouveau
-`run.plan`. Ce dernier est publié **une fois**, quand la décomposition rend son plan ; il porte les
-nœuds et leurs dépendances, jamais d'état.
+nœud démarre, une arête s'allume), `tache.detail` (une étape se coche, #489), `agent.activite` (le
+nœud en cours **vit**, #836 — ci-dessous), et le nouveau `run.plan`. Ce dernier est publié **une
+fois**, quand la décomposition rend son plan ; il porte les nœuds et leurs dépendances, jamais d'état.
+
+**Le nœud en cours porte un signe de vie, et c'est la seule chose qui bouge sur une boîte** (#836,
+lot 2 de #834). Mesuré sur un run réel (2026-08-30) : sur une fenêtre de 60 s, les quatre nœuds
+étaient **strictement inchangés** pendant que l'agent consignait un `agent.activite` toutes les 5 à
+15 secondes — la donnée existait, persistée, et n'atteignait aucune vue. Le nœud `en_cours` porte
+donc `activite` : l'**horodatage et un libellé court** (première ligne, bornée à 80 caractères,
+troncature dite par `…`) du **dernier geste** de son agent sur sa tâche, si bien que deux lectures
+espacées d'un geste rendent deux valeurs. `null` sur tout nœud qui ne travaille pas : une tâche
+terminée, échouée, bloquée ou réassignée garde son dernier geste en mémoire mais n'en montre rien —
+« ça bouge » ne se dit pas d'une chose qui ne bouge plus. La règle est **`en_cours` au sens
+strict**, et non le compartiment de la progression, qui y range aussi l'attente de validation :
+une tâche arrêtée sur un humain ne travaille pas, et c'est la distinction que #355 a fait exister.
+Elle vit **une fois**, sur la carte de tâche (`EtatTache.signe_de_vie`, servie aussi par
+`GET /api/taches` sous la même clé), d'où le nœud la lit sans la rejouer — et d'où la frise (§6.13)
+lit **le même** signe pour son couloir. Rien n'a été ajouté au canal ni à la pompe : le
+`agent.activite` qui le rafraîchit circule déjà, et c'est lui qui fait battre le pouls du client.
+Forme et règle : [`maestro/controltower/signe_de_vie.py`](../maestro/controltower/signe_de_vie.py).
 
 ⚠ **Il double la ligne de journal de la planification, il ne la remplace pas** : la même étape
 produit toujours son `agent.activite` — c'est par lui que l'usage du cadrage entre au grand livre
@@ -4282,11 +4333,16 @@ dise.
   // Un couloir par agent du run, MUET COMPRIS ; `entrees` ne porte que des ids.
   "couloirs": [
     { "agent": "developpeur", "role": "Développeur", "repli": false,
-      "entrees": ["j-0007", "j-0008"] },
-    { "agent": "devops", "role": "DevOps", "repli": false, "entrees": ["j-0009"] },
-    { "agent": "qa", "role": "Testeur", "repli": false, "entrees": [] },
+      "entrees": ["j-0007", "j-0008"],
+      // Le signe de vie du couloir (#836) : le dernier geste de l'agent sur une
+      // tâche qui travaille — un attribut de l'en-tête, JAMAIS une entrée.
+      "activite": { "horodatage": "2026-08-28T10:00:42+00:00",
+                    "libelle": "Écrit api/contacts.py, puis relit le résultat" } },
+    { "agent": "devops", "role": "DevOps", "repli": false, "entrees": ["j-0009"],
+      "activite": null },   // sa tâche attend un humain : elle ne travaille pas
+    { "agent": "qa", "role": "Testeur", "repli": false, "entrees": [], "activite": null },
     // Le repli ferme la liste, et n'existe que s'il a recueilli quelque chose.
-    { "agent": "", "role": "", "repli": true, "entrees": ["j-0011"] }
+    { "agent": "", "role": "", "repli": true, "entrees": ["j-0011"], "activite": null }
   ],
   "total": 4,        // AVANT le plafond
   "plafond": 500,
@@ -4338,9 +4394,24 @@ en cours a consommé) reste dehors pour la même raison : c'est une jauge qui bo
 arrive — elle se lit sur la carte et sur le résumé du run. Le journal requêtable reste là pour qui
 veut tout.
 
+**Mais le couloir porte un signe de vie, et ce n'est pas une entrée** (#836, lot 2 de #834). Le choix
+ci-dessus a un coût, mesuré sur un run réel (2026-08-30) : ~220 entrées de journal, **3** sur la
+frise, et **1158 octets identiques à 90 s d'intervalle** pendant les douze minutes d'une tâche en
+cours. Le remède n'est pas d'ouvrir `agent.activite` — la raison de l'écarter tient —, c'est de
+donner au couloir un **attribut** : `activite`, le dernier geste de son agent sur une tâche qui
+travaille, daté et abrégé — **le même** signe que celui du nœud `en_cours` du graphe (§6.11), tranché
+une fois par la projection et lu ici par agent (`ControlTowerState.signes_de_vie_du_run` ; en
+multi-instances, le plus récent de ses tâches en cours). Trois choses à ne pas défaire : `entrees` ne
+reçoit **aucune** entrée d'activité et `TYPES_FRISE` ne bouge pas — le tri est intact, et c'est tout
+l'intérêt d'un attribut de l'en-tête ; un couloir dont aucune tâche ne travaille rend `null`, ce qui
+distingue à l'œil un agent qui avance d'un agent arrêté sans lire une ligne ; et un signe **n'ouvre
+jamais** de couloir à lui seul — un agent qui travaille a un `:debut` consigné, donc son couloir, et
+le repli n'en porte pas.
+
 **Le direct passe par le canal existant, et la frise n'a pas d'événement à elle** — même doctrine que
-le graphe : elle se recompose à la lecture, donc `tache.statut`, `message.inter_agents` et
-`validation.demande` la font bouger sans second canal.
+le graphe : elle se recompose à la lecture, donc `tache.statut`, `message.inter_agents`,
+`validation.demande` — et, pour le seul signe de vie, `agent.activite` — la font bouger sans second
+canal.
 
 **La borne se dit toujours.** `plafond` (500) retient les entrées les plus **récentes** — « pendant
 qu'ils le font » se lit par la fin —, `total` compte avant, `tronquee` dit si la borne a mordu. Une

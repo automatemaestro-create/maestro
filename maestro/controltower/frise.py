@@ -71,6 +71,26 @@ Il ne dit rien du **statut** de la tâche, qui ne bouge pas : un agent qui bute
 n'est pas une tâche `bloquee` au sens de la cascade de #43 — celle-là n'a jamais
 été exécutée, celui-ci travaille encore et parle.
 
+Le signe de vie du couloir, et pourquoi ce n'est pas une entrée (#836)
+----------------------------------------------------------------------
+
+La règle ci-dessus a un coût, mesuré sur un run réel : ~220 entrées de journal,
+**3** sur la frise, et pas un pixel qui bouge pendant les douze minutes d'une
+tâche en cours. Le remède n'est pas d'ouvrir `agent.activite` — la raison de
+l'écarter tient —, c'est de donner au **couloir** un attribut : `activite`, le
+dernier geste de l'agent sur une tâche qui travaille, daté et abrégé
+(`maestro.controltower.signe_de_vie`). Un attribut de l'en-tête, jamais une
+ligne de plus : `entrees` ne reçoit **aucune** entrée d'activité, `TYPES_FRISE`
+ne bouge pas, et le tri reste ce qu'il est. Un couloir dont aucune tâche ne
+travaille n'en porte pas (`null`) — c'est ce qui distingue à l'œil un agent qui
+avance d'un agent arrêté, sans lire une seule ligne.
+
+La règle qui décide s'il y a un signe (« seule une tâche `en_cours` en porte
+un ») vit chez la projection, avec le graphe qui la lit aussi : ce module ne
+fait que ranger le signe dans le couloir qui lui revient, par la même
+normalisation de nom que les entrées — deux façons de nommer un agent ne
+feraient pas deux couloirs ici plus qu'ailleurs.
+
 Le couloir de repli, et pourquoi il n'est pas une commodité
 -----------------------------------------------------------
 
@@ -124,6 +144,7 @@ from maestro.controltower.events import (
 )
 from maestro.controltower.journal import EntreeJournal
 from maestro.controltower.progression import STATUT_EN_ATTENTE_VALIDATION
+from maestro.controltower.signe_de_vie import SigneDeVie
 from maestro.controltower.state import VALIDATION_APPROUVEE
 from maestro.engine.executor import (
     STATUT_VALIDATION_APPROUVE,
@@ -298,11 +319,17 @@ class CouloirFrise:
     Un couloir **vide** est un couloir légitime : un agent du run qui n'a encore
     rien dit se lit comme tel, là où l'omettre le ferait apparaître en cours de
     route sans qu'on sache s'il était prévu.
+
+    `activite` (#836) est le **signe de vie** du couloir : le dernier geste de
+    son agent sur une tâche qui travaille, daté et abrégé — None quand aucune
+    ne travaille. C'est un attribut de l'en-tête et non une entrée : rien de ce
+    qu'il porte ne figure dans `entrees`, ni dans la frise à plat.
     """
 
     agent: str
     role: str = ""
     entrees: tuple[str, ...] = ()
+    activite: SigneDeVie | None = None
 
     @property
     def repli(self) -> bool:
@@ -316,6 +343,9 @@ class CouloirFrise:
             "role": self.role,
             "repli": self.repli,
             "entrees": list(self.entrees),
+            # `null` sur un couloir dont aucune tâche ne travaille (#836) : un
+            # client qui ignore la clé lit exactement la forme d'avant.
+            "activite": self.activite.to_dict() if self.activite is not None else None,
         }
 
 
@@ -359,6 +389,7 @@ class _Couloir:
     agent: str
     role: str = ""
     entrees: list[str] = field(default_factory=list)
+    activite: SigneDeVie | None = None
 
 
 def frise_du_run(
@@ -366,6 +397,7 @@ def frise_du_run(
     entrees: Iterable[EntreeJournal],
     *,
     agents: Mapping[str, str] | None = None,
+    activites: Mapping[str, SigneDeVie] | None = None,
     plafond: int = PLAFOND_FRISE,
 ) -> FriseRun:
     """Assemble la frise du run `run_id` depuis des entrées de journal.
@@ -380,6 +412,15 @@ def frise_du_run(
     dans les entrées et absent de cette table ouvre le sien à la suite — la
     déclaration ordonne, elle ne filtre pas : un couloir manquant ferait perdre
     des entrées, ce que le critère interdit.
+
+    `activites` (#836) porte le **signe de vie** de chaque agent qui travaille
+    (agent → signe), tel que la projection l'a déjà tranché
+    (`ControlTowerState.signes_de_vie_du_run`). Il se pose sur le couloir de
+    l'agent — déclaré ou découvert — et **n'ouvre jamais** de couloir à lui
+    seul : un agent qui travaille a une tâche `en_cours`, donc un `:debut`
+    consigné, donc son couloir ; un signe sans couloir dirait « ça bouge » de
+    quelqu'un qui n'est pas dans le run. Le repli n'en porte pas : il n'a pas
+    d'agent, donc pas de tâche qui travaille.
 
     L'ordre des couloirs est donc : les agents déclarés, puis les agents
     découverts dans l'ordre chronologique, puis le **repli** en dernier s'il a
@@ -402,14 +443,16 @@ def frise_du_run(
     return FriseRun(
         run_id=run_id,
         entrees=tuple(retenues),
-        couloirs=_couloirs(retenues, agents or {}),
+        couloirs=_couloirs(retenues, agents or {}, activites or {}),
         total=total,
         plafond=plafond,
     )
 
 
 def _couloirs(
-    entrees: Sequence[EntreeFrise], agents: Mapping[str, str]
+    entrees: Sequence[EntreeFrise],
+    agents: Mapping[str, str],
+    activites: Mapping[str, SigneDeVie],
 ) -> tuple[CouloirFrise, ...]:
     """Range `entrees` (déjà triées) en couloirs — déclarés d'abord, repli en dernier."""
     couloirs: dict[str, _Couloir] = {}
@@ -434,8 +477,17 @@ def _couloirs(
         if not couloir.role and entree.role:
             couloir.role = entree.role
         couloir.entrees.append(entree.id)
+    for nom, signe in activites.items():
+        # Même normalisation que les entrées et les déclarations ; un signe qui
+        # ne trouve pas son couloir est écarté plutôt que d'en ouvrir un (cf.
+        # `frise_du_run`), et le repli n'en reçoit jamais.
+        couloir = couloirs.get(_couloir_de(nom))
+        if couloir is not None and signe.plus_recent_que(couloir.activite):
+            couloir.activite = signe
     rangs = [
-        CouloirFrise(agent=c.agent, role=c.role, entrees=tuple(c.entrees))
+        CouloirFrise(
+            agent=c.agent, role=c.role, entrees=tuple(c.entrees), activite=c.activite
+        )
         for c in couloirs.values()
     ]
     if repli.entrees:

@@ -813,7 +813,12 @@ pour rien.
 `Primitives.tsx` ne connaît pas `sr-only` : les **trois** composeurs du produit contournent donc la
 primitive avec la même classe recopiée hors palette (`focus:border-emerald-500`), dont deux
 identiques au mot près (`SourcesDuMessage.tsx:44`, `ComposerObjectif.tsx:62`). Le même refus sur
-trois surfaces n'est plus un refus — c'est la mécanique du §2.2, prise à sa source.
+trois surfaces n'est plus un refus — c'est la mécanique du §2.2, prise à sa source. **Livré par
+#832** : `libelleMasque` sur `Champ`/`ChampListe`/`ChampTexte` (le libellé reste obligatoire, seul
+son rendu visuel se retire), les trois composeurs repliés dessus, et un balayage de
+`tests/a11y.test.tsx` qui refuse tout contrôle de saisie écrit hors des tokens — résidu nommé,
+**19 contrôles dans 8 fichiers**, qui ne peut que décroître
+([`apps/web/README.md`](../apps/web/README.md#le-champ--champ-champliste-champtexte)).
 
 ---
 

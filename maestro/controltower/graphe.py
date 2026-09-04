@@ -70,6 +70,20 @@ seules tâches vues, sans aucune arête — c'est-à-dire un graphe plat lui aus
 mais pour une raison qui n'est pas la même. Les confondre ferait lire « ces
 tâches sont indépendantes » là où il faut lire « on ne sait pas ».
 
+Le signe de vie du nœud en cours (#836)
+---------------------------------------
+
+Entre `en_cours` et son issue, un nœud ne changeait pas d'un octet pendant
+toute la durée de sa tâche — douze minutes mesurées sur un run réel —, alors
+que son agent consignait un `agent.activite` toutes les quelques secondes. Le
+nœud porte donc désormais `activite` : l'horodatage et un libellé court du
+**dernier geste** de l'agent sur sa tâche (`maestro.controltower.signe_de_vie`),
+et `null` sur tout nœud qui ne travaille pas. Il ne change rien à la doctrine
+ci-dessus : c'est un attribut de plus lu dans l'état de la tâche, la règle qui
+décide s'il y en a un vit chez la projection (`EtatTache.signe_de_vie`), et le
+graphe se recompose toujours à la lecture — le `agent.activite` qui le
+rafraîchit circule déjà.
+
 Ce module est une **feuille**, comme `progression.py` : il ne connaît ni FastAPI,
 ni HTTP, ni la projection. Il ne sait que composer un graphe à partir de nœuds de
 plan et d'états de tâche — d'où `EtatNoeud`, qui est exactement ce que
@@ -90,6 +104,7 @@ from maestro.controltower.progression import (
     TERMINEES,
     compartiment,
 )
+from maestro.controltower.signe_de_vie import SigneDeVie
 from maestro.detail_tache import EtapeTache, etapes_en_liste
 from maestro.plan_run import NoeudPlan, dependants_directs
 
@@ -139,6 +154,11 @@ class EtatNoeud:
     alors que rien n'est inconnu. C'est l'usage même pour lequel
     `progression.py` déclare ce statut sans que le moteur l'émette : que la table
     couvre la machine à états entière, et pas seulement ce qui circule.
+
+    `activite` (#836) est le signe de vie **déjà tranché** par la projection :
+    None dès que la tâche ne travaille pas. Un septième champ, et il passe
+    parce qu'il est dessiné — c'est la seule chose qui bouge sur une boîte en
+    cours.
     """
 
     statut: str = STATUT_BACKLOG
@@ -151,6 +171,7 @@ class EtatNoeud:
     cout_partiel: bool = False
     duree_ms: int | None = None
     etapes: tuple[EtapeTache, ...] = ()
+    activite: SigneDeVie | None = None
 
 
 @dataclass(frozen=True)
@@ -162,6 +183,8 @@ class NoeudGraphe:
     inverse est déjà construite ici (`dependants_directs`). `niveau` est le rang
     topologique (le plus long chemin qui mène au nœud) et `rang` sa position dans
     ce niveau, dans l'ordre du plan : de quoi poser la boîte sans rien recalculer.
+    `activite` (#836) est le signe de vie de la tâche — son dernier geste,
+    daté et abrégé — et vaut None sur tout nœud qui ne travaille pas.
     """
 
     id: str
@@ -178,6 +201,7 @@ class NoeudGraphe:
     cout_partiel: bool = False
     duree_ms: int | None = None
     etapes: tuple[EtapeTache, ...] = ()
+    activite: SigneDeVie | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Réémet le nœud en dict JSON-sérialisable (la forme du REST)."""
@@ -199,6 +223,9 @@ class NoeudGraphe:
             "cout_partiel": self.cout_partiel,
             "duree_ms": self.duree_ms,
             "etapes": etapes_en_liste(self.etapes),
+            # `null` sur un nœud qui ne travaille pas (#836) : un client qui
+            # ignore la clé lit exactement la forme d'avant.
+            "activite": self.activite.to_dict() if self.activite is not None else None,
         }
 
 
@@ -433,6 +460,7 @@ def graphe_du_run(
                 cout_partiel=etat.cout_partiel,
                 duree_ms=etat.duree_ms,
                 etapes=_etapes_du_noeud(noeud, etat),
+                activite=etat.activite,
             )
         )
     connus = {noeud.id for noeud in noeuds}

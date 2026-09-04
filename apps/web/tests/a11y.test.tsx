@@ -61,6 +61,19 @@ const lireSource = (relatif: string) =>
   readFileSync(path.join(racine, relatif), "utf8");
 
 /**
+ * Une source sans ses commentaires. Les deux balayages de ce fichier lisent
+ * des **chaînes**, pas des lignes, et la prose du dépôt ferait le gros du
+ * résultat sans ce filtre : ce fichier-ci, comme `GuidePriseEnMain`, parle de
+ * « transition » en français, et #832 cite `focus:border-emerald-500` en toutes
+ * lettres dans le commentaire qui explique pourquoi il n'y est plus.
+ */
+function sansCommentaires(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+}
+
+/**
  * Tout ce que le produit rend : les écrans (`app/`) et les composants. La liste
  * est **parcourue** et non écrite — un fichier neuf entre dans le périmètre du
  * jour où il est créé, ce qui est la seule façon qu'un balayage reste vrai.
@@ -217,16 +230,11 @@ describe("la garde de mouvement (WCAG 2.2 §2.3.3)", () => {
    * le fait de savoir si elle est gardée.
    *
    * Le balayage se fait **sur les chaînes littérales, commentaires retirés** —
-   * pas sur les lignes brutes. Sans les deux filtres, la prose du dépôt ferait
-   * le gros du résultat : ce fichier-ci, comme `GuidePriseEnMain`, parle de
-   * « transition » en français et cite `transition-none` entre accents graves.
+   * pas sur les lignes brutes (voir `sansCommentaires`).
    */
   function chainesDeClasses(source: string): string[][] {
-    const sansCommentaires = source
-      .replace(/\/\*[\s\S]*?\*\//g, " ")
-      .replace(/(^|[^:])\/\/[^\n]*/g, "$1");
     return [
-      ...sansCommentaires.matchAll(/"([^"\n]*)"|'([^'\n]*)'|`([^`]*)`/g),
+      ...sansCommentaires(source).matchAll(/"([^"\n]*)"|'([^'\n]*)'|`([^`]*)`/g),
     ].map(([, guillemets, apostrophes, gabarit]) =>
       (guillemets ?? apostrophes ?? gabarit ?? "")
         .split(/[\s${}]+/)
@@ -294,6 +302,393 @@ describe("la garde de mouvement (WCAG 2.2 §2.3.3)", () => {
     // avant que les écrans de #472 ne bougent. Un lot qui en retire
     // légitimement une baisse ce chiffre — comme #534 fait de ses 36 paires.
     expect(mouvements).toBeGreaterThanOrEqual(19);
+  });
+});
+
+describe("le contrôle de saisie écrit hors des tokens (WCAG 2.2 §1.4.11)", () => {
+  /**
+   * Ce que #832 a relevé, au titre du §5 de `/design-veille` (« si le même
+   * refus revient sur plusieurs surfaces, ce n'est plus un refus mais un manque
+   * du socle ») : `CadreChamp` rendait **toujours** un libellé visible, donc les
+   * trois composeurs du produit contournaient la primitive entière et
+   * réécrivaient leur champ à la main — en couleurs brutes, avec un
+   * `focus:border-emerald-500` qui n'existe nulle part dans le socle, et sans
+   * le `focus:border-bord-fort` qui **identifie un contrôle** (§1.4.11) ni le
+   * contour clavier. C'est la mécanique de docs/30 §2.2 : la primitive ne
+   * couvre pas un cas, donc on la contourne, donc la palette cesse de tenir.
+   *
+   * Ce balayage-ci ne lit pas des chaînes au hasard mais **les contrôles de
+   * saisie** — `<input>`, `<textarea>`, `<select>` — et la feuille de classes
+   * que chacun porte, en résolvant `className={CLASSE_CHAMP}` par la constante
+   * du fichier : c'est la forme sous laquelle **toutes** les recopies existent,
+   * et un balayage des seules chaînes littérales n'en aurait vu aucune. Ce qu'il
+   * ne sait pas lire — une constante définie ailleurs —, il le **refuse** au
+   * lieu de le sauter (règle de #534) : une feuille illisible n'est pas une
+   * feuille saine.
+   */
+
+  /** Une couleur brute de Tailwind, là où le socle met un token. */
+  const COULEUR_BRUTE =
+    /^(?:border|bg|text|placeholder|ring|outline|caret|accent|divide|from|via|to)-(?:white|black|neutral|gray|zinc|slate|stone|emerald|green|teal|cyan|sky|blue|indigo|violet|rose|red|orange|amber|yellow)(?:-\d{2,3})?(?:\/\d+)?$/;
+
+  /** `dark:focus:border-x` → `border-x` : les variantes tombent, c'est l'utilité qui est jugée. */
+  const utilite = (jeton: string) => jeton.slice(jeton.lastIndexOf(":") + 1);
+
+  const litteraux = (expression: string): string[] =>
+    [...expression.matchAll(/"([^"\n]*)"|'([^'\n]*)'|`([^`]*)`/g)].map(
+      ([, a, b, c]) => a ?? b ?? c ?? "",
+    );
+
+  /**
+   * Les constantes de chaîne d'un fichier, par leur nom — `const CLASSE_CHAMP =
+   * "…" + "…";`, sur autant de lignes qu'il faut. La valeur est gardée telle
+   * qu'écrite : un gabarit peut nommer une autre constante.
+   */
+  function constantesDe(source: string): Map<string, string> {
+    const table = new Map<string, string>();
+    for (const [, nom, valeur] of source.matchAll(
+      /\bconst\s+([A-Za-z_$][\w$]*)\s*=\s*((?:(?:"[^"\n]*"|'[^'\n]*'|`[^`]*`)\s*\+?\s*)+);/g,
+    )) {
+      table.set(nom, valeur);
+    }
+    return table;
+  }
+
+  /** Ce qu'un fichier importe du socle — les seuls noms résolus hors de lui. */
+  function importsDuSocle(source: string): Set<string> {
+    const bloc = /import\s*\{([^}]*)\}\s*from\s*"@\/components\/Primitives"/.exec(source);
+    return new Set(
+      (bloc?.[1] ?? "")
+        .split(",")
+        .map((nom) => nom.replace(/^\s*type\s+/, "").trim())
+        .filter(Boolean),
+    );
+  }
+
+  type Tables = {
+    locales: Map<string, string>;
+    importees: Set<string>;
+    socle: Map<string, string>;
+  };
+
+  /**
+   * Les jetons de classe d'une expression `className`, constantes résolues —
+   * et les noms qu'on n'a **pas** su résoudre. Une constante en MAJUSCULES qui
+   * ne vient ni du fichier ni du socle est illisible ; un identifiant en
+   * minuscules (`occupe ? … : …`) est une condition, pas une feuille.
+   */
+  function resoudre(
+    expression: string,
+    tables: Tables,
+    vus = new Set<string>(),
+  ): { jetons: string[]; illisibles: string[] } {
+    const jetons: string[] = [];
+    const illisibles: string[] = [];
+    const noms = new Set<string>();
+    for (const [, nom] of expression.matchAll(/\$\{\s*([A-Za-z_$][\w$]*)\s*\}/g)) {
+      noms.add(nom);
+    }
+    const horsChaines = expression.replace(/"[^"\n]*"|'[^'\n]*'|`[^`]*`/g, " ");
+    for (const [nom] of horsChaines.matchAll(/\b[A-Z][A-Z0-9_]{2,}\b/g)) noms.add(nom);
+    for (const nom of noms) {
+      if (vus.has(nom)) continue;
+      vus.add(nom);
+      const locale = tables.locales.get(nom);
+      const definition =
+        locale ?? (tables.importees.has(nom) ? tables.socle.get(nom) : undefined);
+      if (definition === undefined) {
+        illisibles.push(nom);
+        continue;
+      }
+      const suite = resoudre(
+        definition,
+        locale === undefined ? { ...tables, locales: tables.socle } : tables,
+        vus,
+      );
+      jetons.push(...suite.jetons);
+      illisibles.push(...suite.illisibles);
+    }
+    for (const litteral of litteraux(expression)) {
+      // Un gabarit avale les chaînes qu'il interpole : `${a ? "x" : "y"}` rend
+      // ses deux branches, `${NOM}` a été résolu plus haut.
+      const aplati = litteral.replace(/\$\{([^}]*)\}/g, (_, dedans: string) =>
+        litteraux(dedans).join(" "),
+      );
+      jetons.push(...aplati.split(/\s+/).filter(Boolean));
+    }
+    return { jetons, illisibles };
+  }
+
+  /** L'indice du `>` qui ferme une balise ouvrante — hors accolades, et pas celui d'une flèche. */
+  function finDeBalise(texte: string, depuis: number): number {
+    let profondeur = 0;
+    for (let i = depuis; i < texte.length; i++) {
+      const c = texte[i];
+      if (c === "{") profondeur += 1;
+      else if (c === "}") profondeur -= 1;
+      else if (c === ">" && profondeur === 0 && texte[i - 1] !== "=") return i;
+    }
+    return texte.length;
+  }
+
+  /** L'expression d'un `className={…}` — accolades appariées — ou d'un `className="…"`. */
+  function expressionClassName(attributs: string): string | null {
+    const debut = /\bclassName=/.exec(attributs);
+    if (!debut) return null;
+    const apres = debut.index + debut[0].length;
+    if (attributs[apres] === '"') {
+      return `"${attributs.slice(apres + 1, attributs.indexOf('"', apres + 1))}"`;
+    }
+    let profondeur = 0;
+    for (let i = apres; i < attributs.length; i++) {
+      if (attributs[i] === "{") profondeur += 1;
+      else if (attributs[i] === "}") {
+        profondeur -= 1;
+        if (profondeur === 0) return attributs.slice(apres + 1, i);
+      }
+    }
+    return attributs.slice(apres);
+  }
+
+  type Champ = { balise: string; brutes: string[]; illisibles: string[] };
+
+  /** Chaque contrôle de saisie d'une source, avec ce que sa feuille de classes a de brut ou d'illisible. */
+  function champsDe(source: string, socle: Map<string, string>): Champ[] {
+    const propre = sansCommentaires(source);
+    const tables: Tables = {
+      locales: constantesDe(propre),
+      importees: importsDuSocle(propre),
+      socle,
+    };
+    const champs: Champ[] = [];
+    for (const ouverture of propre.matchAll(/<(input|textarea|select)\b/g)) {
+      const debut = (ouverture.index ?? 0) + ouverture[0].length;
+      const attributs = propre.slice(debut, finDeBalise(propre, debut));
+      const expression = expressionClassName(attributs);
+      if (expression === null) {
+        champs.push({ balise: ouverture[1], brutes: [], illisibles: [] });
+        continue;
+      }
+      const { jetons, illisibles } = resoudre(expression, tables);
+      if (jetons.length === 0 && illisibles.length === 0) {
+        illisibles.push("(aucune chaîne de classes lisible)");
+      }
+      champs.push({
+        balise: ouverture[1],
+        brutes: jetons.filter((j) => COULEUR_BRUTE.test(utilite(j))),
+        illisibles,
+      });
+    }
+    return champs;
+  }
+
+  /** Le socle, lu une fois : c'est lui que `className={CLASSE_CONTROLE}` désigne. */
+  const SOCLE = constantesDe(sansCommentaires(lireSource("components/Primitives.tsx")));
+
+  it("reconnaît un contrôle en couleurs brutes, et sait lire la constante qui les porte", () => {
+    // La sonde avant ce qu'elle mesure : un balayage dont le motif ne matcherait
+    // plus rien, ou qui ne résoudrait plus les constantes, rendrait « aucun
+    // contrôle hors des tokens » avec les mots de « tout est dans le socle ».
+    const lire = (source: string) => champsDe(source, new Map());
+
+    // La recopie telle qu'elle vivait dans les trois composeurs avant #832.
+    expect(
+      lire(
+        'const CLASSE_CHAMP =\n  "w-full border border-neutral-200 focus:border-emerald-500 dark:bg-neutral-900";\n' +
+          "<input id={idUrl} className={CLASSE_CHAMP} />",
+      ),
+    ).toEqual([
+      {
+        balise: "input",
+        brutes: ["border-neutral-200", "focus:border-emerald-500", "dark:bg-neutral-900"],
+        illisibles: [],
+      },
+    ]);
+    // …concaténée à un `font-mono` — la forme d'`EditeurAgent`.
+    expect(
+      lire('const CLASSE_CHAMP = "border-neutral-200";\n<textarea className={CLASSE_CHAMP + " font-mono"} />')[0]
+        .brutes,
+    ).toEqual(["border-neutral-200"]);
+    // …ou nommée dans un gabarit, avec une constante qui en nomme une autre.
+    expect(
+      lire(
+        'const BASE = "bg-white";\nconst CHAMP = `${BASE} px-3`;\n<select className={`${CHAMP} w-full`} />',
+      )[0].brutes,
+    ).toEqual(["bg-white"]);
+    // Une balise sur plusieurs lignes, une flèche dans un attribut : ce `>`-là
+    // ne ferme pas la balise, et le `className` qui suit est bien lu.
+    expect(
+      lire('<input\n  onChange={(e) => setUrl(e.target.value)}\n  className="bg-white"\n/>')[0]
+        .brutes,
+    ).toEqual(["bg-white"]);
+
+    // Ce qui est sain : les tokens du socle, un `sr-only`, un contrôle sans classe.
+    expect(
+      lire('<textarea className="w-full border border-bord bg-surface focus:border-bord-fort" />')[0],
+    ).toEqual({ balise: "textarea", brutes: [], illisibles: [] });
+    expect(lire('<input type="file" className="sr-only" />')[0].brutes).toEqual([]);
+    expect(lire('<input type="checkbox" checked />')[0]).toEqual({
+      balise: "input",
+      brutes: [],
+      illisibles: [],
+    });
+
+    // Ce qu'elle refuse de juger : une constante qu'elle ne trouve nulle part —
+    // et, à l'inverse, celle du socle, lue dans `Primitives.tsx`.
+    expect(lire("<input className={CLASSE_AILLEURS} />")[0].illisibles).toEqual([
+      "CLASSE_AILLEURS",
+    ]);
+    const socle = new Map([["CLASSE_CONTROLE", '"border-bord bg-surface"']]);
+    const importee =
+      'import { Bouton, CLASSE_CONTROLE } from "@/components/Primitives";\n<input className={CLASSE_CONTROLE} />';
+    expect(champsDe(importee, socle)[0]).toEqual({ balise: "input", brutes: [], illisibles: [] });
+    expect(
+      champsDe(importee, new Map([["CLASSE_CONTROLE", '"border-neutral-200"']]))[0].brutes,
+    ).toEqual(["border-neutral-200"]);
+
+    // Et la prose ne compte pas.
+    expect(lire('// un <input className="bg-white"> dans un commentaire')).toEqual([]);
+  });
+
+  it("lit le socle lui-même dans les tokens", () => {
+    // `CLASSE_CONTROLE` est ce que `Champ`, `ChampListe` et `ChampTexte`
+    // composent, et ce que `ChampJetons` importe : une couleur brute qui s'y
+    // glisserait passerait sur tous les écrans à la fois. Le balayage écarte
+    // `Primitives.tsx` (ses contrôles portent `classesControle(monospace)`, un
+    // appel qu'aucune constante ne résout) ; c'est ici qu'il est jugé.
+    const { jetons, illisibles } = resoudre("CLASSE_CONTROLE", {
+      locales: SOCLE,
+      importees: new Set(),
+      socle: SOCLE,
+    });
+    expect(illisibles).toEqual([]);
+    expect(jetons).toContain("focus:border-bord-fort");
+    expect(jetons).toContain("focus-visible:outline-accent");
+    expect(jetons.filter((j) => COULEUR_BRUTE.test(utilite(j)))).toEqual([]);
+  });
+
+  /**
+   * Ce qui reste hors des tokens, **nommé** fichier par fichier avec son compte
+   * exact et sa raison — jamais une liste où ranger ce qui échoue (règle de
+   * `HORS_PAIRES`, #534). Le compte est exact et non un plafond : un contrôle
+   * de plus rougit, un contrôle de moins rougit aussi, jusqu'à ce que la ligne
+   * soit mise à jour ou retirée — c'est ainsi qu'un résidu ne peut que
+   * décroître, et que chaque décroissance est un geste écrit.
+   */
+  const RECOPIE =
+    "recopie antérieure à #832, hors du périmètre du ticket (les trois composeurs) — " +
+    "à replier sur `Champ`/`ChampListe`/`ChampTexte`, ce qui retire la ligne";
+  const RESIDU = new Map<string, { controles: number; raison: string }>([
+    [
+      "app/journal/page.tsx",
+      {
+        controles: 1,
+        raison:
+          "une case à cocher, que le socle ne couvre pas : un `Champ type=\"checkbox\"` " +
+          "rendrait une case pleine largeur, ce n'est pas le même contrôle",
+      },
+    ],
+    [
+      "components/AssistantFlottant.tsx",
+      {
+        controles: 1,
+        raison:
+          "le quatrième composeur, hors du ticket : sa `ref` de mise au point n'a pas " +
+          "de passage dans `ChampTexte`, qui ne relaie pas de `ref`",
+      },
+    ],
+    ["components/EditeurAgent.tsx", { controles: 8, raison: RECOPIE }],
+    [
+      "components/SelecteurReassignation.tsx",
+      {
+        controles: 1,
+        raison:
+          "une liste posée dans une carte du Kanban, en fond transparent et corps " +
+          "réduit — un `ChampListe libelleMasque` en est le remplaçant naturel (#832)",
+      },
+    ],
+    ["components/brief/QuestionsBrief.tsx", { controles: 1, raison: RECOPIE }],
+    ["components/brief/SectionsBrief.tsx", { controles: 2, raison: RECOPIE }],
+    ["components/integrations/BibliothequeMcp.tsx", { controles: 3, raison: RECOPIE }],
+    [
+      "components/projets/ExplorateurDossiers.tsx",
+      {
+        controles: 1,
+        raison:
+          "un libellé `sr-only` posé à la main avec `htmlFor` — exactement ce que " +
+          "`Champ libelleMasque` rend depuis #832, à replier",
+      },
+    ],
+  ]);
+
+  /** Les fichiers que le balayage ne juge pas, et pourquoi. */
+  const HORS_BALAYAGE = new Map<string, string>([
+    [
+      "components/Primitives.tsx",
+      "le socle : ses contrôles portent `classesControle(monospace)`, jugé ci-dessus par `CLASSE_CONTROLE`",
+    ],
+  ]);
+
+  function residuMesure(): Map<string, string[]> {
+    const parFichier = new Map<string, string[]>();
+    for (const fichier of sourcesDuProduit()) {
+      if (HORS_BALAYAGE.has(fichier)) continue;
+      for (const { balise, brutes, illisibles } of champsDe(lireSource(fichier), SOCLE)) {
+        if (brutes.length === 0 && illisibles.length === 0) continue;
+        const detail = [
+          brutes.length > 0 ? `hors des tokens : ${brutes.join(", ")}` : "",
+          illisibles.length > 0 ? `illisible : ${illisibles.join(", ")}` : "",
+        ]
+          .filter(Boolean)
+          .join(" ; ");
+        parFichier.set(fichier, [...(parFichier.get(fichier) ?? []), `<${balise}> — ${detail}`]);
+      }
+    }
+    return parFichier;
+  }
+
+  it("ne laisse aucun contrôle de saisie hors des tokens, hors du résidu nommé", () => {
+    const mesure = residuMesure();
+    const nouveaux = [...mesure]
+      .filter(([fichier, controles]) => (RESIDU.get(fichier)?.controles ?? 0) < controles.length)
+      .map(([fichier, controles]) => `  ${fichier}\n${controles.map((c) => `    ${c}`).join("\n")}`);
+    expect(
+      nouveaux,
+      `\n${nouveaux.join("\n")}\n\nUn contrôle de saisie est un Champ, ChampListe ou ChampTexte du socle — ` +
+        "libelleMasque quand son libellé n'a pas à s'afficher (#832).\n",
+    ).toHaveLength(0);
+  });
+
+  it("examine bien les contrôles du produit, et pas un balayage devenu muet", () => {
+    // Le plancher rend le ✓ opposable : un motif de balise qui ne matcherait
+    // plus rien rendrait « aucun contrôle hors des tokens » avec les mots de
+    // « tout est dans le socle ». 26 est le compte **mesuré** à #832 hors
+    // `Primitives.tsx` — 19 dans le résidu, le reste dans les tokens ou en
+    // `sr-only` (les entrées de fichiers). Un lot qui replie une recopie sur
+    // le socle fait baisser ce chiffre (un `<Champ>` n'est plus un `<input>`),
+    // et le réécrit — comme #534 fait de ses paires.
+    let examines = 0;
+    for (const fichier of sourcesDuProduit()) {
+      if (HORS_BALAYAGE.has(fichier)) continue;
+      examines += champsDe(lireSource(fichier), SOCLE).length;
+    }
+    expect(examines).toBeGreaterThanOrEqual(26);
+  });
+
+  it("ne garde aucune exemption périmée", () => {
+    // Une ligne du résidu qui compte plus que ce qu'on mesure est une recopie
+    // repliée sans que la ligne l'ait dit — et une ligne qu'on relira comme si
+    // elle valait encore. Même contrôle sur les fichiers écartés du balayage.
+    const mesure = residuMesure();
+    for (const [fichier, { controles }] of RESIDU) {
+      expect(
+        mesure.get(fichier)?.length ?? 0,
+        `${fichier} : le résidu annonce ${controles} contrôle(s) hors des tokens`,
+      ).toBe(controles);
+    }
+    for (const fichier of HORS_BALAYAGE.keys()) {
+      expect(sourcesDuProduit(), `${fichier} est écarté mais n'existe plus`).toContain(fichier);
+    }
   });
 });
 
