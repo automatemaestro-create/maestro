@@ -159,12 +159,15 @@ describe("le fil n'a plus d'ascenseur à lui (#691)", () => {
     // Corollaire du retrait de la boîte, et pas un détail : en fin de flux, le
     // composeur obligerait à redescendre tout l'historique avant de pouvoir
     // écrire. C'est la seule pièce de l'écran qui **doit** rester collée.
+    // `bottom-16` et non `bottom-0` depuis #726 : à quai, il se tient au-dessus
+    // de la bande du bouton flottant (#123) au lieu de lui réserver du vide à
+    // droite — collé, donc, mais 64 px au-dessus du bord.
     const composeur = screen
       .getByLabelText(`Message à ${INTERLOCUTEUR_ORCHESTRATION}`)
       .closest("form");
     expect(composeur).not.toBeNull();
     expect(Array.from(composeur!.classList)).toEqual(
-      expect.arrayContaining(["sticky", "bottom-0"]),
+      expect.arrayContaining(["sticky", "bottom-16"]),
     );
   });
 });

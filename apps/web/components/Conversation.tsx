@@ -83,6 +83,31 @@
  *   est déjà lu ne bouge. Aucun de ces états n'est annoncé deux fois — la région
  *   live compte les messages (#538), les `role="alert"` disent les fautes.
  *
+ * ## Le composeur est un bloc (#726)
+ *
+ * Le `<form>` à quai portait trois rectangles voisins — le champ, « Envoyer »
+ * posé à côté, les sources dessous — et le raccourci clavier vivait dans le
+ * placeholder, donc s'effaçait au premier caractère, à l'instant où il
+ * servait. Depuis #726 il applique les partis pris de la veille de #724
+ * (docs/30 §5.3, décision complète en commentaire de #722) : **un cadre à deux
+ * étages** — le texte pleine largeur en haut, un rail de contrôles en bas, où
+ * l'envoi se tient —, un champ qui **grandit avec ce qu'on y écrit** jusqu'à un
+ * plafond puis défile en interne (la poignée `resize-y` disparaît, voir
+ * `ajusterLaHauteur`), et le raccourci **sur le rail**, lisible pendant la
+ * saisie. La place des pièces jointes est le lot suivant (#727) : le rail leur
+ * garde sa tête.
+ *
+ * Et la réserve du bouton flottant (#123) **change de côté**. `pe-14`
+ * réservait 56 px de vide à droite de l'envoi, sur les deux surfaces, pour que
+ * le bouton ne passe pas sous le flottant quand le composeur est à quai — un
+ * cadre pleine largeur aurait rendu ce vide plus visible encore. Elle est
+ * devenue **verticale** : à quai, le composeur se tient au-dessus de la bande
+ * que le flottant occupe en bas de la fenêtre, comme le `pb-24` du `Shell` la
+ * réserve déjà en fin de page, et un second élément collant couvre la bande
+ * sous lui. Ça vaut pour les deux surfaces sans rien conditionner à leur
+ * largeur (la règle de #691 : le flottant est calé sur la fenêtre, pas sur la
+ * colonne) — voir les commentaires du `<form>` et de l'élément qui le suit.
+ *
  * ## Ce qu'il ne fait pas
  *
  * Il ne charge rien : le fil lui est **passé** (`useChat`, historique REST +
@@ -94,6 +119,8 @@ import {
   Fragment,
   useCallback,
   useEffect,
+  useId,
+  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
@@ -135,6 +162,30 @@ import {
 } from "@/lib/types";
 import type { Chat, ReponseEnCours } from "@/lib/useChat";
 import { useSourcesComposees } from "@/lib/useSourcesComposees";
+
+/**
+ * Fait grandir la zone de saisie avec ce qu'on y écrit (#726 — parti pris 3 de
+ * la veille #724, mesuré chez ChatGPT : 52 px au repos, 256 px à vingt lignes,
+ * un plafond puis un défilement interne).
+ *
+ * Le champ repart de sa **hauteur de départ** (`rows`) et ne prend la hauteur
+ * de son contenu que s'il en déborde : c'est ce qui laisse le plancher au
+ * navigateur — deux lignes de la police réelle, sans pixel à recopier — et le
+ * **plafond au CSS** (`max-h-*`), qui l'emporte sur la hauteur posée ici et
+ * laisse alors `overflow-y-auto` défiler. Sous jsdom rien n'est mesuré (#308) :
+ * `scrollHeight` y vaut zéro, donc rien n'y est posé.
+ *
+ * Joué dans un `useLayoutEffect`, avant la peinture : après coup, chaque frappe
+ * au-delà du plancher montrerait une image du champ trop court, au contenu
+ * déjà défilé, avant qu'il ne grandisse.
+ */
+function ajusterLaHauteur(champ: HTMLTextAreaElement | null) {
+  if (champ === null) return;
+  champ.style.height = "";
+  if (champ.scrollHeight > champ.clientHeight) {
+    champ.style.height = `${champ.scrollHeight}px`;
+  }
+}
 
 export function Conversation({
   fil,
@@ -215,6 +266,10 @@ export function Conversation({
   // conteneur défilant à lui, donc plus rien à tenir par une `ref`.
   const pied = useRef<HTMLDivElement | null>(null);
   const ascenseur = useRef<HTMLElement | null>(null);
+  // La zone de saisie, tenue par une `ref` pour la faire grandir (#726) ; et
+  // l'identifiant du raccourci clavier, qui la **décrit** (`aria-describedby`).
+  const zone = useRef<HTMLTextAreaElement | null>(null);
+  const idRaccourci = useId();
   // Le lecteur suit-il encore la conversation ? Une `ref` et non un état : sa
   // valeur ne change rien à ce qui est rendu, et la relire à chaque événement de
   // défilement ferait un rendu par cran de molette.
@@ -252,6 +307,11 @@ export function Conversation({
   useEffect(() => {
     if (suit.current) collerEnBas();
   }, [messages, envoi, reponseEnCours?.texte, collerEnBas]);
+
+  // La zone de saisie grandit avec le brouillon (#726) — y compris quand il
+  // revient d'un échec d'envoi, ou qu'une mention en est détachée
+  // (`surSaisie`) : deux changements qui ne passent pas par une frappe.
+  useLayoutEffect(() => ajusterLaHauteur(zone.current), [brouillon]);
 
   const soumettre = async (texte: string) => {
     const contenu = texte.trim();
@@ -538,30 +598,61 @@ export function Conversation({
           place naturelle une fois le bas atteint — donc rien ne recouvre jamais
           le dernier message.
           Le fond opaque n'est pas décoratif : sans lui, les bulles défileraient
-          **sous** la zone de saisie, lisibles au travers. */}
+          **sous** la zone de saisie, lisibles au travers.
+          `bottom-16` et non `bottom-0` (#726) : à quai, le composeur se tient
+          **au-dessus de la bande du bouton flottant** de l'assistant (#123),
+          les 64 derniers pixels de la fenêtre (`bottom-4` + `size-12`) — le
+          `pb-2` fait les 8 px d'air. Tant que le composeur était en fin de
+          flux, le `pb-24` du `Shell` l'en tenait à distance ; à quai (#691),
+          c'est à cette hauteur-là qu'il vivait, et le bouton « Envoyer »
+          passait **sous** le flottant — mesuré à 375 px : 33 px de
+          recouvrement, moitié droite du bouton inerte (le flottant est en
+          `z-30`, le composeur en `z-10`). D'où, jusqu'ici, un `pe-14` qui
+          réservait 56 px de vide à droite du bouton, **inconditionnel** parce
+          que le flottant est calé sur la fenêtre et non sur la colonne : un
+          point de rupture aurait eu raison sur `/chat` — où la colonne de
+          propriétés éloigne le composeur — et tort sur l'onglet Chat d'une
+          fiche agent, où il court jusqu'au bord (mesuré : bord droit à 1416 px
+          pour un flottant qui commence à 1376). Un cadre pleine largeur
+          aurait rendu ce vide plus visible encore.
+          La réserve est donc devenue **verticale** : le cadre s'arrête
+          au-dessus de la bande et le flottant n'y rencontre que du fond (voir
+          l'élément qui suit le formulaire). Elle vaut pour les deux surfaces
+          sans rien conditionner à leur largeur — la règle qui vaut pour les
+          deux est toujours celle qui ne dépend pas de la mise en page —, et
+          c'est la même bande que le `pb-24` du `Shell` réserve en fin de
+          page : à quai comme au repos, rien ne se termine sous le flottant.
+          Au repos rien ne change : le décalage d'un élément collant ne joue
+          que contre le bord de l'ascenseur, jamais dans le flux. */}
       <form
         onSubmit={(e) => {
           e.preventDefault();
           void soumettre(brouillon);
         }}
-        className="sticky bottom-0 z-10 flex flex-col gap-2 border-t border-bord bg-background pt-3 pb-2"
+        className="sticky bottom-16 z-10 flex flex-col gap-2 border-t border-bord bg-background pt-3 pb-2"
       >
-        {/* `pe-14` : la réserve du bouton flottant de l'assistant (#123), qui
-            occupe les 64 derniers pixels de la fenêtre en bas à droite. Tant que
-            le composeur était en fin de flux, le `pb-24` du `Shell` l'en tenait
-            à distance ; à quai (#691), c'est à cette hauteur-là qu'il vit, et le
-            bouton « Envoyer » passait **sous** le flottant — mesuré à 375 px :
-            33 px de recouvrement, moitié droite du bouton inerte (le flottant est
-            en `z-30`, le composeur en `z-10`).
-            La réserve est **inconditionnelle** à dessein : le flottant est calé
-            sur la fenêtre, pas sur la colonne, si bien qu'un point de rupture
-            aurait raison sur `/chat` — où la colonne de propriétés éloigne le
-            composeur — et tort sur l'onglet Chat d'une fiche agent, où il court
-            jusqu'au bord (mesuré : bord droit à 1416 px pour un flottant qui
-            commence à 1376). Deux surfaces, un seul composant : la règle qui vaut
-            pour les deux est celle qui ne dépend pas de la mise en page. */}
-        <div className="flex items-end gap-2 pe-14">
+        {/* **Un cadre à deux étages** (#726 — parti pris 1 de la veille #724,
+            d'après Perplexity : le texte pleine largeur en haut, tous les
+            contrôles sur un rail en bas). Le cadre **est** le contrôle : c'est
+            lui qui porte `CLASSE_CONTROLE`, l'apparence que le socle promet à
+            chaque champ (#697), et le focus du champ se lit sur lui
+            (`focus-within` pour le bord, `has-[textarea:focus-visible]` pour
+            l'anneau — et pas `focus-within` pour l'anneau, qui doublerait
+            celui du bouton d'envoi quand c'est lui qu'on tient) plutôt que sur
+            le seul étage du texte, où un anneau ne cernerait que la moitié du
+            bloc. Sur un `<div>`, les variantes `focus:`/`placeholder:`/
+            `disabled:` de la classe sont sans effet ; on ne recopie pas le
+            reste pour autant — deux définitions du même contrôle, c'est ce que
+            #697 a retiré. */}
+        <div
+          className={
+            `${CLASSE_CONTROLE} flex flex-col gap-1 focus-within:border-bord-fort ` +
+            "has-[textarea:focus-visible]:outline-2 has-[textarea:focus-visible]:outline-offset-1 " +
+            "has-[textarea:focus-visible]:outline-accent"
+          }
+        >
           <textarea
+            ref={zone}
             value={brouillon}
             onChange={(e) =>
               setBrouillon(
@@ -585,41 +676,69 @@ export function Conversation({
                 void soumettre(brouillon);
               }
             }}
+            // `rows` est la **hauteur de départ** — deux lignes, comme avant
+            // ce lot — et non la hauteur : `ajusterLaHauteur` part de là, et
+            // le plafond est au CSS. `max-h-48`, c'est la mesure de ChatGPT
+            // (192 px) ; au-delà, le champ défile en interne, et l'ascenseur
+            // qu'il rend est le discret du socle (#725) sans une ligne à lui.
+            // `resize-none` : la poignée n'a plus d'objet. `outline-none` : le
+            // focus se lit sur le cadre, qui cerne le bloc entier (voir
+            // là-haut) — un anneau ici n'en cernerait que l'étage du texte.
             rows={2}
-            placeholder={`Écrire à ${interlocuteur}… (Entrée envoie, Maj+Entrée saute une ligne)`}
+            placeholder={`Écrire à ${interlocuteur}…`}
             aria-label={`Message à ${interlocuteur}`}
-            // L'apparence vient du socle (#697) : c'est le **même** contrôle que
-            // les champs du produit, et il n'en portait qu'une copie en couleurs
-            // brutes — dont un `focus:outline-none` qui retirait au clavier le
-            // seul repère que `CLASSE_CONTROLE` promet à chaque contrôle.
-            className={`${CLASSE_CONTROLE} resize-y`}
+            aria-describedby={idRaccourci}
+            className="max-h-48 w-full resize-none overflow-y-auto placeholder:text-texte-secondaire outline-none"
           />
-          {/* Pendant qu'une réponse s'écrit, le bouton d'envoi **cède la
-              place** à l'arrêt plutôt que de s'y ajouter : l'envoi est de toute
-              façon refusé tant qu'un échange est en vol (`soumettre`), donc un
-              bouton inerte à côté d'une action possible ne ferait qu'occuper la
-              seule place que la main vise. Et l'arrêt arrête pour de bon — il
-              annule la génération côté canal (#695) et ce qui a été reçu
-              rejoint le fil ; ce n'est pas un simple « je cesse de regarder ». */}
-          {envoi ? (
-            <Bouton
-              variante="contour"
-              ton="neutre"
-              icone={IconeFermer}
-              onClick={interrompre}
+          {/* Le rail (parti pris 1) : sa **tête** est libre — c'est là que
+              #727 pose le bouton des sources —, son **bout** porte le
+              raccourci puis l'envoi, d'où `justify-end`. Le raccourci a quitté
+              le placeholder (parti pris 4, d'après Zulip) : là, il s'effaçait
+              au premier caractère ; ici il reste lisible pendant la saisie sans
+              occuper une ligne à lui, et il **décrit** le champ
+              (`aria-describedby`) pour qu'un lecteur d'écran l'entende là où
+              l'œil le voit. Sous `sm` il se retire du rail — la place manque,
+              et un clavier virtuel n'a ni Maj ni raccourci à montrer — mais
+              reste dans la description du champ : un nœud caché que
+              `aria-describedby` désigne directement compte toujours. */}
+          <div className="flex items-center justify-end gap-2">
+            <span
+              id={idRaccourci}
+              className="hidden text-micro text-texte-secondaire sm:inline"
             >
-              Interrompre
-            </Bouton>
-          ) : (
-            <Bouton
-              type="submit"
-              disabled={
-                brouillon.trim() === "" && composition.sources.length === 0
-              }
-            >
-              Envoyer
-            </Bouton>
-          )}
+              Entrée envoie · Maj+Entrée saute une ligne
+            </span>
+            {/* Pendant qu'une réponse s'écrit, le bouton d'envoi **cède la
+                place** à l'arrêt plutôt que de s'y ajouter : l'envoi est de
+                toute façon refusé tant qu'un échange est en vol (`soumettre`),
+                donc un bouton inerte à côté d'une action possible ne ferait
+                qu'occuper la seule place que la main vise. Et l'arrêt arrête
+                pour de bon — il annule la génération côté canal (#695) et ce
+                qui a été reçu rejoint le fil ; ce n'est pas un simple « je
+                cesse de regarder ». En taille `petite` comme le reste du rail,
+                le plancher de 24 px restant celui du socle (`BOUTON_SOCLE`). */}
+            {envoi ? (
+              <Bouton
+                variante="contour"
+                ton="neutre"
+                taille="petite"
+                icone={IconeFermer}
+                onClick={interrompre}
+              >
+                Interrompre
+              </Bouton>
+            ) : (
+              <Bouton
+                type="submit"
+                taille="petite"
+                disabled={
+                  brouillon.trim() === "" && composition.sources.length === 0
+                }
+              >
+                Envoyer
+              </Bouton>
+            )}
+          </div>
         </div>
         <SourcesDuMessage
           composition={composition}
@@ -628,13 +747,39 @@ export function Conversation({
           ouvert={sourcesOuvertes}
           onBasculer={() => setSourcesOuvertes(!sourcesOuvertes)}
         />
+        {/* Le refus qui ne vise **aucune** source en particulier (trop de
+            sources, backend injoignable) reste au geste qui l'a produit ; celui
+            qui en vise une est rendu sur sa ligne par `SourcesDuMessage`.
+            **Dans** le formulaire depuis #726 : dessous, sous un composeur à
+            quai, il était hors de l'écran — le constat que #697 a fait sur
+            l'échec d'envoi —, et il aurait pris place sous la bande couverte
+            qui suit. */}
+        {refusSource !== null && refusSource.index === null && (
+          <RefusSource refus={refusSource} titre="Sources refusées" />
+        )}
       </form>
-      {/* Le refus qui ne vise **aucune** source en particulier (trop de sources,
-          backend injoignable) reste au geste qui l'a produit ; celui qui en vise
-          une est rendu sur sa ligne par `SourcesDuMessage`. */}
-      {refusSource !== null && refusSource.index === null && (
-        <RefusSource refus={refusSource} titre="Sources refusées" />
-      )}
+      {/* La **bande du bouton flottant**, couverte (#726). Le formulaire
+          s'arrête 64 px au-dessus du bas de l'ascenseur (`bottom-16`) ; sans
+          cet élément, les bulles défileraient dans la bande, lisibles entre le
+          cadre et le bord — le défaut même que le fond opaque du formulaire
+          évite sous le cadre. Il est **sans coût pour le flux** : sa hauteur
+          (`h-16`, la bande) est reprise par `-mt-19` — la bande plus le `gap-3`
+          de la section —, si bien qu'au repos il vit **sous** le formulaire, où
+          le `z-10` de celui-ci le recouvre, et que rien ne déborde de la
+          section : ni sur l'`aside` qui la suit sur un écran étroit, ni dans
+          le bas de page du `Shell` (mesuré : une marge négative sur la section
+          faisait défiler `/chat` de 56 px au repos, la colonne de propriétés
+          étirant déjà la rangée jusque dans le `pb-24`), et le contour de dépôt
+          reste entier. À quai il se cale au bas de l'ascenseur (`bottom-0`), là
+          où le formulaire s'arrête 64 px plus haut. ⚠ Il vit dans la même
+          section que le formulaire, à dessein : un élément collant ne bouge que
+          dans les bornes de son bloc parent, et les deux décrochent au bon
+          moment — entre les deux instants, la bande ne contient que la place
+          vide que le formulaire a quittée, jamais une bulle. */}
+      <div
+        aria-hidden="true"
+        className="sticky bottom-0 -mt-19 h-16 bg-background"
+      />
     </section>
   );
 }
