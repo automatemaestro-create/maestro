@@ -58,6 +58,26 @@ export type Tache = {
   description?: string | null;
   etapes?: EtapeTache[] | null;
   liens?: LienUtile[] | null;
+  /** Le signe de vie (#836) : `null` dès que la tâche ne travaille pas. */
+  activite?: SigneDeVie | null;
+};
+
+/**
+ * Le **signe de vie** d'une tâche qui travaille (#836) : l'horodatage et un
+ * libellé court du dernier geste de son agent (`agent.activite`). Servi sur la
+ * carte de tâche, sur le nœud `en_cours` du graphe et sur le couloir de la
+ * frise dont une tâche est en cours — la **même** valeur aux trois endroits,
+ * tranchée une fois par le backend (`maestro/controltower/signe_de_vie.py`) —,
+ * et `null` sur tout ce qui ne travaille pas : une tâche arrêtée ne « bouge »
+ * pas. Entre deux gestes d'agent, deux lectures rendent deux valeurs : c'est ce
+ * qui manquait à des vues immobiles pendant toute la durée d'une tâche.
+ *
+ * Déclaré **optionnel** sur les trois formes, pour la raison qui vaut déjà des
+ * `etapes` d'une `Tache` : un lot additif, que l'écran lit quand il est prêt.
+ */
+export type SigneDeVie = {
+  horodatage: string;
+  libelle: string;
 };
 
 /**
@@ -1734,6 +1754,8 @@ export type NoeudGraphe = {
   cout_usd: number | null;
   duree_ms: number | null;
   etapes: EtapeTache[];
+  /** Le signe de vie du nœud en cours (#836) : `null` sur tout autre nœud. */
+  activite?: SigneDeVie | null;
 };
 
 /** Une arête du graphe (#490) : `de` l'amont, `vers` l'aval — le sens du flux. */
@@ -1840,12 +1862,18 @@ export type EntreeFrise = {
  * comme tel, là où l'omettre le ferait apparaître en cours de route sans qu'on
  * sache s'il était prévu. `repli` marque le couloir de ce qui n'a pas d'agent —
  * il ferme toujours la liste, et n'existe que s'il a recueilli quelque chose.
+ *
+ * `activite` (#836) est le **signe de vie** du couloir : le dernier geste de son
+ * agent sur une tâche qui travaille, `null` quand aucune ne travaille. C'est un
+ * attribut de l'en-tête et jamais une entrée — rien de ce qu'il porte n'est
+ * dans `entrees`, et le tri de la frise n'en est pas touché.
  */
 export type CouloirFrise = {
   agent: string;
   role: string;
   repli: boolean;
   entrees: string[];
+  activite?: SigneDeVie | null;
 };
 
 /**

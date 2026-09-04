@@ -2033,8 +2033,14 @@ def create_app(
         La mise à jour **en direct** passe par le flux existant, sans second
         canal : le graphe se recompose à chaque lecture depuis la projection, et
         ce sont donc `run.plan` (le plan est connu), `tache.statut` (un nœud
-        démarre, une arête s'allume) et `tache.detail` (une étape se coche, #489)
-        qui le font bouger. 404 si aucune trace reçue pour ce `run_id`.
+        démarre, une arête s'allume), `tache.detail` (une étape se coche, #489)
+        et `agent.activite` (le nœud en cours **vit**, #836) qui le font bouger.
+
+        Le nœud `en_cours` porte un **signe de vie** (`activite` : horodatage et
+        libellé court du dernier geste de son agent), `null` sur tout nœud qui
+        ne travaille pas : entre deux gestes d'agent, deux lectures rendent
+        deux valeurs — c'est ce qui manquait à un graphe immobile pendant toute
+        la durée d'une tâche. 404 si aucune trace reçue pour ce `run_id`.
         """
         if state.execution(run_id) is None:
             raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
@@ -2071,6 +2077,12 @@ def create_app(
         elle se recompose à la lecture, donc la mise à jour en direct passe par
         le flux existant, sans second canal.
 
+        Chaque couloir dont une tâche **travaille** porte un **signe de vie**
+        (#836) — `activite` : horodatage et libellé court du dernier geste de
+        son agent, le même que celui du nœud en cours du graphe —, `null` sur
+        un couloir arrêté. C'est un attribut de l'en-tête et jamais une entrée :
+        `agent.activite` reste hors de `entrees`, le tri de la frise est intact.
+
         Bornée à `PLAFOND_FRISE` entrées, les plus **récentes** : `total` et
         `tronquee` disent ce qui a été laissé de côté — une borne muette ferait
         passer un run d'une heure pour un run de cinq cents lignes. 404 si aucune
@@ -2082,6 +2094,7 @@ def create_app(
             run_id,
             journal.entrees_du_run(run_id),
             agents=state.agents_du_run(run_id),
+            activites=state.signes_de_vie_du_run(run_id),
         ).to_dict()
 
     @app.post("/api/sources/apercu")
