@@ -798,7 +798,8 @@ Posées par #538 (lot 6 de #532), en réponse au **trou principal** de la recher
 contenait pourtant un — `AssistantFlottant` —, mais son fil n'est dans le DOM que
 panneau ouvert : présent dans le code, absent de l'écran. Pendant ce temps
 l'interface se met à jour sans action de l'utilisateur (jusqu'à **3 WebSockets**,
-rechargements coalescés à **150 ms**, horloge à **30 s**). Un écran qui bouge tout
+rechargements coalescés à **150 ms**, horloge à **30 s** — et à la **seconde** sur le
+seul signe de vie d'une tâche en cours, #837). Un écran qui bouge tout
 seul et ne le dit pas est muet pour qui ne le regarde pas.
 
 | Brique | Ce qu'elle tient |

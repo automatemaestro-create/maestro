@@ -465,7 +465,11 @@ replient en lignes en dessous, au lieu d'être toutes tassées de front.
   Un statut que le front ne connaît pas tombe dans une colonne **Autres** plutôt
   que de disparaître de l'écran.
 - Chaque carte : titre, ticket externe s'il y en a un (#192), agent assigné,
-  statut, coût, tokens et durée.
+  statut, coût, tokens et durée — et, sur une tâche **qui travaille**, son **signe
+  de vie** (#837) : le dernier geste de l'agent et son ancienneté, qui compte à la
+  seconde. La carte ne décide pas si elle en a un — la projection ne sert
+  `activite` que sur une tâche `en_cours` (#836, §6.11) —, et une tâche arrêtée
+  rend la carte d'avant, au pixel près.
 - **Réassignation manuelle** d'un agent à une tâche (EF-11/EF-20), depuis la
   carte comme depuis le panneau de détail.
 - **Le détail s'ouvre sur place** (#251) : un clic sur la carte ouvre un panneau
@@ -1058,6 +1062,32 @@ d'événement à lui (§6.11), il se recompose à la lecture, donc `lib/useGraph
 s'abonne au **pouls** (`revision`) et relit à chaque battement — un nœud qui démarre,
 une étape qui se coche, un plan qui arrive.
 
+**Et le nœud en cours vit** (#837, lot 3 de #834). Entre `en_cours` et son issue, une
+boîte ne changeait pas d'un pixel pendant toute la durée de sa tâche — mesuré le
+2026-08-30 sur un run réel : sur 88 s, page ouverte sur le Pipeline, 4 rafales de
+lectures pour **2** mutations du DOM ; la page rechargeait bien, elle n'avait rien de
+nouveau à peindre. #836 a posé la donnée (§6.11 : `activite`, le dernier geste de
+l'agent et son horodatage, servi sur le nœud `en_cours` et `null` ailleurs) ; ce lot la
+rend, **aux trois endroits par le même composant** (`components/SigneDeVie`) — le nœud
+du pipeline, la carte du Kanban (§2.2) et l'en-tête du couloir de la frise (§2.4.6) —,
+parce que le backend y sert la même valeur et qu'un signe rendu de trois façons ferait
+chercher trois faits. La ligne montre le **libellé** du geste, tronqué, et son
+**ancienneté** — « il y a 12 s », qui compte tout seul au pas de la **seconde**
+(`lib/horloge.useHorlogeFine`, une seconde horloge partagée à côté de celle de 30 s :
+le pas se déduit de la plus petite unité affichée, et à trente secondes de pas un signe
+de vie mentirait sur son âge la moitié du temps). C'est l'âge qui fait le signe :
+« il y a 12 s » dit *ça bouge*, « il y a 4 min » dit *ça s'est peut-être arrêté*, et
+cette différence se lit sans ouvrir le Journal. Rien ne pulse de plus — le badge
+« En cours » bat déjà, un compteur qui avance suffit —, et la ligne tient dans la
+**place existante** (docs/30 §4) : ni bloc, ni chiffre de bandeau. Sur le pipeline la
+vue ajoute **sa** réserve à celle du serveur : le signe n'apparaît que sur une boîte
+dessinée « En cours », donc jamais sur une attente humaine, qui l'emporte sur le signe
+comme elle l'emporte sur l'état (`lib/graphe.etatDuNoeud`) — une tâche arrêtée sur
+quelqu'un ne « bouge » pas, quel qu'ait été son dernier geste. Un run soldé rend le
+dessin d'avant ce lot. La démo publie deux gestes pendant la pulsation QA, seul moment
+où une de ses tâches travaille assez longtemps pour qu'on voie le signe compter.
+Tests différés au lot 4 de #834.
+
 Deux notes de lecture, jamais confondues : `plan_connu: false` dit que le run n'a pas
 publié son plan (nœuds reconstruits, aucune arête connue) ; `plat: true` qu'il n'a
 déclaré aucune dépendance — un graphe normal, et le cas le plus courant. La première
@@ -1206,6 +1236,16 @@ lirait comme un défaut d'affichage, alors qu'il est le couloir des tâches bloq
 d'entrées sur combien et renvoie à l'onglet Journal, qui porte l'historique complet —
 « ce qui ne tient dans aucune des trois places est une ligne avec un renvoi »
 (docs/30 §4).
+
+**Le couloir qui travaille le dit dans son en-tête** (#837). Le tri ci-dessus a un
+coût, mesuré par #836 : ~220 lignes de journal, **3** sur la frise, et pas un pixel qui
+bouge pendant les douze minutes d'une tâche. Le remède n'est pas d'ouvrir
+`agent.activite` — la raison de l'écarter tient — mais l'**attribut** que §6.13 a donné
+au couloir : `activite`, le dernier geste de l'agent sur une tâche qui travaille, `null`
+sinon. L'en-tête le rend sous le nom et le rôle, par le même composant que le nœud du
+pipeline et la carte du Kanban (§2.4.4), borné en largeur pour qu'une cellule ne
+s'élargisse pas jusqu'au libellé entier. Jamais une entrée : `entrees` ne change pas,
+le tri non plus, et un couloir arrêté est l'en-tête d'avant.
 
 Couverture : [`apps/web/tests/frise.test.tsx`](../apps/web/tests/frise.test.tsx) — les
 deux flux en lignes successives, l'objet qui ne se répète pas quand il redit le titre, le
