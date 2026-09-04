@@ -1,9 +1,11 @@
 # Projets, ressources locales et poste de travail — cadrage (ticket #215)
 
-**Version :** 1.1
-**Date :** 4 août 2026 *(dette du §2.3 soldée le 10 août 2026, #282)*
+**Version :** 1.2
+**Date :** 4 août 2026 *(dette du §2.3 soldée le 10 août 2026, #282 ; **D2 révisée le 4 septembre
+2026**, chantier #703, lot #707)*
 **Statut :** cadrage **tranché** — les sept décisions D1 à D7 ont été rendues le 2026-08-04 (§8),
-conformes aux recommandations ci-dessous ; les **milestones des Phases 7 à 9 sont créés** (#218).
+conformes aux recommandations ci-dessous, et **D2 a été révisée** le 2026-09-04 sur mesure (§2.4) ;
+les **milestones des Phases 7 à 9 sont créés** (#218).
 La **dette du §2.3** (« les coûts, le Kanban et le journal se filtrent par projet — ce qu'ils ne
 savent pas faire ») est **soldée** par le chantier #276, et une ligne du §4.4 — le **sélecteur de
 dossier natif** — a été prise en avance sur la Phase 9 (#278).
@@ -124,9 +126,16 @@ Conséquences en chaîne, toutes petites prises une à une — **les trois sont 
 > d'option de rattachement) n'apparaît sur l'écran d'aucun projet — seule la vue transverse le
 > montre. Le rattacher à la déclaration d'un objectif viendra avec la **Phase 8** (§3.2).
 
-### 2.4 Le patron d'écriture : jamais dans le répertoire de l'utilisateur en direct
+### 2.4 Le patron d'écriture (D2) — rendu le 2026-08-04, révisé le 2026-09-04
 
-C'est **la** décision structurante de ce chantier. Trois options :
+*Titre d'origine : « jamais dans le répertoire de l'utilisateur en direct ».* C'est **la** décision
+structurante de ce chantier, et elle a été rendue **deux fois** : telle quelle le 2026-08-04 (§8,
+D2), puis **révisée** par le chantier #703 quand la mesure a montré qu'une de ses deux moitiés ne
+livrait rien. La forme d'origine est conservée ci-dessous — c'est elle qu'on lit pour comprendre
+*ce qui était craint* —, puis la révision dit ce qui est retenu à la place, et pourquoi chaque
+crainte est **satisfaite** plutôt qu'écartée.
+
+**Ce qui a été décidé le 2026-08-04.** Trois options :
 
 | Option | Principe | Verdict |
 |---|---|---|
@@ -140,47 +149,104 @@ C'est **la** décision structurante de ce chantier. Trois options :
 > l'est. Le chantier n'invente donc pas de mécanisme de sûreté : il **branche un nouveau type
 > d'action sur celui qui existe**, avec le diff en pièce jointe de la demande.
 
-> ⚠ **L'option C est renversée pour le projet non versionné (#839, décision du 2026-08-30) — la
-> révision complète de D2 est le lot #707.** Mesurée sur le run réel `cc2d8e447f83`, la copie +
-> diff **ne livrait rien, et ne l'a jamais fait** : la copie était refermée par le `finally` du
-> runtime avant qu'un diff puisse être approuvé — 46 min, 8,80 $, zéro fichier dans la racine, et
-> pas une ligne au journal. Son filet (annuler) n'a pas d'objet sur un projet neuf, le cas nominal.
-> Un projet **non versionné** se remplit donc **dans sa racine, en place**
-> (`maestro/sandbox/en_place.py`), et l'objection de l'option A est **traitée** plutôt qu'ignorée :
-> les tâches d'un même projet sont **sérialisées** (une seule à la fois dans l'arbre, verrou par
-> projet du moteur), ce que la copie garantissait par absence — racine, liens symboliques,
-> exclusions du périmètre — est garanti par **refus** sur les outils de fichiers de l'agent
-> (`FrontiereEcriture`, hook `PreToolUse`), le mode isolé monte la racine **avec ses masques**, et
-> le journal dit ce qui est arrivé au projet **dans tous les cas**, l'abstention comprise. Le projet
-> **versionné** ne change pas : option B, worktree + branche + fusion (#705). Ce renversement
-> **change la portée de #706** : un projet non versionné n'a plus de diff à faire approuver,
-> l'écriture étant continue.
+#### D2 révisée (2026-09-04, chantier #703) : le projet se remplit pendant le run
 
-> **Le régime d'accord humain de l'écriture continue est tranché (#706, 2026-09-04).** Pour un
-> projet **versionné**, la fusion de chaque tâche soldée (#705) ne demande pas un accord par tâche
-> mais **un accord par run et par projet**, demandé à la **première fusion** — diff sous les yeux,
-> par le validateur de toujours (EF-08), avec `run_id` et `projet_id` (#570) pour qu'il atteigne
-> l'écran — et valant pour toutes les fusions suivantes du run dans ce projet, **refus compris**.
-> Trois formes écartées, avec leur raison : l'accord **par tâche** ferait d'un run de cinq tâches
-> cinq attentes humaines, chacune retenant les tâches d'aval (leur worktree part de la base, qui
-> n'a pas avancé) — c'est le prix que #568 a mesuré, 31 % du temps de mur ; l'accord porté par une
-> **propriété du projet** serait donné hors de tout run, sur rien de vu, sur un `vcs` qui est
-> détecté et jamais déclaré, et vaudrait « ne rien demander » dès la seconde fois ; **ne rien
-> demander** ferait écrire chez l'utilisateur sans qu'il l'ait accordé une seule fois. Le brief
-> (#320) est l'évolution naturelle si l'attente au milieu du run gêne, pas le point de départ :
-> tous les runs n'en ont pas, et il n'y a pas encore de diff. Un accord **non rendu** ne perd
-> rien : la branche `maestro/<tâche>` n'est jamais supprimée, l'étape `:fusion`
-> (`fusion_non_accordee`) la nomme avec le geste de rattrapage (`git merge` depuis la branche de
-> base), le run se lit « en attente d'arbitrage » (#571) tant que la question est ouverte, et un
-> run interrompu pendant l'attente laisse la même ligne sans rien retenir — le suivant repose la
-> question. Un projet **non versionné** n'a pas d'accord, et c'est la décision de #839 : l'écriture
-> y est continue et en place, il n'y a pas de moment de fusion où l'accrocher, et ce qui le garde
-> est la frontière d'écriture et la sérialisation. Le régime vit dans
-> `LocalExecutor._accord_de_fusion` (`maestro/engine/executor.py`) ; la révision complète de D2
-> reste le lot #707.
+**La seconde décision n'annule pas la première : elle la prend au mot.** Le chantier #703 (lots
+#704, #705, #839, #706, #707) est parti d'une mesure et non d'un principe — la revue #568 du
+2026-08-26, puis le run réel `cc2d8e447f83` du 2026-08-30 sur le projet `p1` : après cinq
+exécutions, puis après 46 min et 8,80 $, la racine du projet est **vide**. Trois causes, toutes en
+aval de D2 telle qu'elle avait été écrite : le dernier mètre (`appliquer_sous_validation`, #227)
+n'avait **aucun appelant en production** (B1) ; chaque tâche repartait d'un espace neuf, sans
+jamais voir le travail de la précédente (B2) ; et sur un projet **non versionné** la fin de tâche
+n'omettait pas de livrer, elle **effaçait** — le livrable de `squelette-p1` est parti avec le
+`rmtree` du `finally`, il n'en restait qu'une coquille `.git`. Autrement dit : l'option B n'avait
+pas de **moment**, l'option C n'avait pas de **lecteur**.
 
-⚠ **Un garde-fou qu'on ne voit pas ne garde rien, et celui-ci a été invisible.** La phrase
-ci-dessus est juste et le mécanisme a toujours fonctionné : la tâche s'arrêtait bien, personne n'a
+**Ce qui est retenu à la place** — le projet **avance pendant le run**, à la granularité de la
+tâche, sous trois propriétés tenues ensemble : temps réel, annulable, sans collision.
+
+| Projet | Espace de travail de la tâche | Ce qui atteint la racine, et quand | Accord humain | Retour arrière |
+|---|---|---|---|---|
+| **Versionné** | Option **B**, inchangée : un worktree Git **hors** de la racine, sur `maestro/<tâche>` (`maestro.sandbox.projet`) | La branche est **fusionnée dans la branche de base dès que la tâche est soldée en succès** (#705, `--no-ff`) ; une tâche en échec ne fusionne rien, et sa branche conserve le travail commité au démontage | **Un par run et par projet**, demandé à la **première** fusion, diff sous les yeux, par le validateur de toujours (EF-08) ; vaut pour les fusions suivantes du run, refus compris (#706) | Natif : un commit de fusion se défait par `git revert`, et la branche `maestro/<tâche>` n'est **jamais** supprimée |
+| **Non versionné** | **La racine elle-même**, en place (#839, `maestro.sandbox.en_place`) — rien n'est copié, rien n'est retiré | Ce que l'agent écrit, **pendant qu'il l'écrit** ; les tâches d'un même projet sont **sérialisées** (une seule à la fois dans l'arbre) | **Aucun** : il n'y a pas de moment de fusion où l'accrocher — ce qui garde est la frontière d'écriture, la sérialisation et le journal | Aucun historique : c'est le régime d'un projet **neuf**. Un projet qui a de la valeur se met sous Git (`versionner`, #704) et passe dans la ligne du dessus |
+| **Sans projet** | Le `mkdtemp()` jetable d'avant | Rien — il n'y a pas de racine | — | — |
+
+**Pourquoi l'objection de l'option A est satisfaite, et non écartée.** D2 écartait l'écriture
+directe pour trois raisons, et l'option C reposait sur un filet ; chacun reçoit une réponse qui le
+prend au sérieux plutôt qu'une dérogation :
+
+| Ce que D2 craignait | Ce qui y répond |
+|---|---|
+| « Cinq agents en parallèle dans un même arbre » — les collisions que le workspace jetable évitait | Projet versionné : les arbres restent **séparés** — un worktree par tâche, hors de la racine, vérifié et non supposé (`_verifie_hors_racine`) —, et seul le **geste de fusion** est sérialisé, par un verrou par projet. Projet non versionné : les tâches sont **sérialisées** (`LocalExecutor._atelier_projet`, sur le même verrou) — l'objection est prise au mot : une seule tâche à la fois dans l'arbre, donc aucune collision à éviter |
+| « Aucune annulation possible » | Projet versionné : le support **est** Git — fusion `--no-ff`, `git revert` la défait, et une fusion refusée ou non accordée nomme au journal le `git merge` de rattrapage. Projet non versionné : l'objection **n'a pas d'objet** sur un projet neuf et vide, qui est le cas nominal (p1 l'était) ; dès qu'il y a quelque chose à protéger, on le versionne (#704) et il change de ligne |
+| « Un `rm -rf` malheureux touche le vrai projet » | Projet versionné : il touche le worktree, jamais la racine. Projet non versionné : les outils de fichiers de l'agent sont confrontés à une **frontière d'écriture** avant chaque appel (`FrontiereEcriture`, hook `PreToolUse`) — hors de la racine, à travers un lien symbolique ou sur un chemin exclu du périmètre, l'écriture est **refusée avec son motif** ; `Bash` reste la limite **nommée** (elle l'était déjà de la copie et du worktree, §2.5), et le **mode isolé** la ferme en montant la racine **avec ses masques** ([docs/17 §3](./17-isolation-execution.md)) |
+| « Le diff montré à l'humain fait office de filet » (option C) | Ce filet **n'a jamais servi** : il vivait après un `finally` qui avait déjà détruit la copie. Le filet d'un projet non versionné est désormais le **journal**, qui dit ce qui est arrivé au projet **dans tous les cas** (`ecriture_en_place`, `ecriture_sans_objet`, `projet_introuvable`) — plus aucun run ne se solde vert sur une racine vide sans qu'une ligne le dise |
+
+**Ce que « action sensible » (EF-37) veut dire depuis #706.** Pour un projet **versionné**, la
+fusion de chaque tâche soldée (#705) ne demande pas un accord par tâche mais **un accord par run et
+par projet**, demandé à la **première fusion** — diff sous les yeux, par le validateur de toujours
+(EF-08), avec `run_id` et `projet_id` (#570) pour qu'il atteigne l'écran — et valant pour toutes
+les fusions suivantes du run dans ce projet, **refus compris**. Trois formes écartées, avec leur
+raison : l'accord **par tâche** ferait d'un run de cinq tâches cinq attentes humaines, chacune
+retenant les tâches d'aval (leur worktree part de la base, qui n'a pas avancé) — c'est le prix que
+#568 a mesuré, 31 % du temps de mur ; l'accord porté par une **propriété du projet** serait donné
+hors de tout run, sur rien de vu, sur un `vcs` qui est détecté et jamais déclaré, et vaudrait « ne
+rien demander » dès la seconde fois ; **ne rien demander** ferait écrire chez l'utilisateur sans
+qu'il l'ait accordé une seule fois. Le brief (#320) est l'évolution naturelle si l'attente au
+milieu du run gêne, pas le point de départ : tous les runs n'en ont pas, et il n'y a pas encore de
+diff. Un accord **non rendu** ne perd rien : la branche `maestro/<tâche>` n'est jamais supprimée,
+l'étape `:fusion` (`fusion_non_accordee`) la nomme avec le geste de rattrapage (`git merge` depuis
+la branche de base), le run se lit « en attente d'arbitrage » (#571) tant que la question est
+ouverte, et un run interrompu pendant l'attente laisse la même ligne sans rien retenir — le
+suivant repose la question. Un projet **non versionné** n'a pas d'accord, et c'est la décision de
+#839 : l'écriture y est continue et en place, il n'y a pas de moment de fusion où l'accrocher, et
+ce qui le garde est la frontière d'écriture et la sérialisation. Le régime vit dans
+`LocalExecutor._accord_de_fusion` (`maestro/engine/executor.py`).
+
+#### Le projet non versionné, noir sur blanc
+
+Un projet est non versionné quand sa racine n'a pas de `.git` (`Projet.vcs is None`, **constaté**
+par `detecter_vcs` et jamais imposé — EF-38). C'est le cas d'un projet **neuf** créé depuis la
+Control Tower (`origine: nouveau`), donc le cas le plus courant du premier run.
+
+- **Ce qu'il advenait de son travail jusqu'au 2026-08-30** (#224 → #839, option C) : chaque tâche
+  travaillait dans une **copie jetable** de son périmètre, sous un répertoire temporaire ; en fin
+  de tâche, `runtime.executer` refermait la copie dans son `finally`, et l'application du diff
+  (`appliquer_sous_validation`, #227) — écrite, testée, exportée — **n'avait aucun appelant**. Le
+  travail n'était donc pas « plus lent à livrer », il était **jeté**, sans une ligne au journal
+  pour le dire : `squelette-p1` effacé le 2026-08-28, puis `cc2d8e447f83` — 46 min, deux tâches
+  soldées, 8,80 $, zéro fichier dans la racine, cinq fichiers Python restés dans un
+  `C:\tmp\maestro-dev-…`.
+- **Ce qu'il en advient aujourd'hui** (#839) : l'espace de travail de la tâche **est** la racine.
+  Rien n'est copié, rien n'est retiré à la fermeture, ce que l'agent écrit est dans le projet
+  pendant qu'il l'écrit — et une tâche en échec y laisse ce qu'elle avait écrit avant de tomber.
+  Les tâches d'un même projet sont **sérialisées** ; les outils de fichiers de l'agent sont bornés
+  par la **frontière d'écriture** (racine, liens, exclusions) ; le recensement du livrable passe
+  par le périmètre (un `npm install` ne fait pas entrer 40 000 fichiers au rapport de run) ; en
+  mode isolé la racine est montée **avec ses masques** ; et le journal porte une étape `:fusion`
+  dans tous les cas — `ecriture_en_place` avec les fichiers écrits, `ecriture_sans_objet` si la
+  tâche a réussi sans rien déposer. Il n'y a **pas d'accord humain** (ci-dessus) et **pas de retour
+  arrière** : c'est le régime d'un projet neuf.
+- **Ce que le lot 1 (#704) lui offre** : **changer de régime**. `ProjetStore.versionner` /
+  `initialiser_depot` fait de la racine un dépôt Git **sur demande** — `git init`, puis un
+  **premier commit** « Maestro : état initial du projet » qui enregistre la racine telle qu'elle
+  est (`git add -A`, le `.gitignore` du projet respecté, `--allow-empty` sur un projet vide) pour
+  que la branche de base **résolve** : sans lui, un `HEAD` non né ferait partir le worktree de la
+  tâche suivante d'un espace **vide**. Dès la tâche suivante, le projet prend la ligne du dessus —
+  worktree, fusion, accord, retour arrière. Le verbe **ne fait jamais rien d'implicite**
+  (déclaration, lecture et exécution ne posent aucun `.git`), rend un projet déjà versionné tel
+  quel, rattrape sans rien créer une déclaration en retard sur un `git init` fait à la main, refuse
+  une racine contenue dans un autre dépôt (`depot-englobant`), et un échec laisse la racine dans
+  l'état d'avant, avec son motif — le `.git` qu'il venait de créer compris, objets en lecture
+  seule inclus (défaut propre à Windows, trouvé et corrigé par les tests de #707).
+  ⚠ **Il n'a pas encore d'appelant côté produit** : aucune route ni geste d'UI ne l'expose
+  (constat du 2026-08-30 sur #703 — `PUT /api/projets/{id}` ne prend pas le `vcs`), donc un projet
+  créé non versionné depuis la Control Tower ne peut le devenir que par un `git init` à la main,
+  que `versionner` rattrape ensuite. Le geste qui le rend joignable — route + geste d'UI — est
+  **#855**, hors du chantier #703.
+
+⚠ **Un garde-fou qu'on ne voit pas ne garde rien, et celui-ci a été invisible.** La règle d'EF-37
+est juste et le mécanisme a toujours fonctionné : la tâche s'arrêtait bien, personne n'a
 jamais écrit dans un projet sans accord. Ce qui manquait est l'autre moitié — **la demande
 n'atteignait aucun écran**. Mesuré le 2026-08-26 (revue **#568**, chantier #569) : trois tâches
 sensibles sur trois ont demandé un arbitrage, aucune n'a été affichée, le run est resté figé 31 %
@@ -188,8 +254,8 @@ de son temps de mur et n'a repris que par un `POST` à la main, pendant que l'é
 affirmait « aucune validation en attente ». Un garde-fou dont le blocage est indiscernable d'un
 plantage se contourne par le seul geste qui reste : le désarmer.
 
-Deux règles en sortent, et elles valent pour **toute** demande de validation — celle du déploiement
-comme celle de l'application des livrables :
+Deux règles en sortent, et elles valent pour **toute** demande de validation — celle du déploiement,
+celle de l'application des livrables, et l'accord d'écriture continue d'un run (#706) :
 
 - **une demande porte son run et son projet** (#570). `run_id` et `projet_id` ne sont pas du
   contexte d'agrément : ce sont les deux **critères de filtre** de la Control Tower, et ce qui ne
@@ -208,6 +274,16 @@ Le dispositif est gardé par [`tests/test_arbitrage_visible.py`](../tests/test_a
 et `apps/web/tests/arbitrage.test.tsx` (#572), et le contrat d'API est au
 [docs/05 §2.6 et §6.1](./05-interface-control-tower.md).
 
+> **Couverture de D2 révisée** (#707). Les lots de #703 sont gardés par
+> [`tests/test_ecriture_temps_reel.py`](../tests/test_ecriture_temps_reel.py) — mise sous Git sur
+> demande et refus de l'implicite, fusion sur succès et abstention sur échec, la tâche suivante qui
+> **voit** la précédente (le défaut B2 rejoué **sans** puis **avec** fusion, par l'exécuteur puis
+> par la vraie boucle), et trois refus qui laissent le projet intact sans faire échouer la tâche
+> (conflit, racine occupée, chemin hors périmètre) — sur de vrais dépôts, de vrais worktrees et de
+> vrais conflits. La frontière d'écriture et la sérialisation d'un projet non versionné sont dans
+> [`tests/test_espace_projet.py`](../tests/test_espace_projet.py) (#839), l'accord par run dans
+> [`tests/test_accord_ecriture_continue.py`](../tests/test_accord_ecriture_continue.py) (#706).
+
 Un corollaire est à assumer : **le premier lot ne rend pas les agents capables de lire tout un
 gros dépôt**. Charger un projet entier en contexte n'est ni possible ni souhaitable (coût). La
 lecture doit rester **outillée** (l'agent explore avec ses outils, comme le fait Claude Code)
@@ -222,7 +298,7 @@ un projet local **déplace la frontière** ; il faut le consigner plutôt que le
 
 | Nouvelle menace | Vecteur | Contre-mesure proposée |
 |---|---|---|
-| Destruction du travail de l'utilisateur | agent défaillant, `Bash` mal formé, code produit | Travail hors de la racine (§2.4 B/C) ; application sous validation ; projet versionné = retour arrière natif |
+| Destruction du travail de l'utilisateur | agent défaillant, `Bash` mal formé, code produit | Projet versionné : arbres séparés et fusion par tâche sous l'accord du run (§2.4, D2 révisée), retour arrière natif ; projet non versionné : tâches sérialisées et frontière d'écriture, journal dans tous les cas |
 | **Évasion par la racine déclarée** | `../..`, lien symbolique, chemin absolu | Racine **canonicalisée**, refus des chemins hors périmètre ; **liste de racines interdites** (racine du disque, dossier utilisateur nu, `.ssh`, `AppData`, le dépôt Maestro lui-même) |
 | Exfiltration du code de l'utilisateur | `git push` vers un distant tiers, appel réseau depuis un `Bash` | Politique d'outils par agent (#110) ; l'égress non filtré reste la limite connue ([docs/19 §5](./19-securite-modele-de-menace.md)) — un filtrage par domaine devient plus urgent qu'avant |
 | **Prompt injection par le contenu du projet** | un `README`, un commentaire ou une dépendance qui contient des instructions | Le contenu lu est **une donnée, pas une consigne** : à porter dans les prompts systèmes ; les actions sensibles restent derrière la validation, ce qui borne les dégâts |
@@ -600,7 +676,7 @@ cadrage (#218). Chacune est désormais un acquis, pas une option ouverte :
 | # | Décision | Verdict | Ce qu'elle engage |
 |---|---|---|---|
 | **D1** | Maestro travaille-t-il sur les projets locaux de l'utilisateur ? | **Oui** — c'est la brique manquante n° 1 (§2.2) | Ouvre la Phase 7 ; élargit le modèle de menace (§2.5) |
-| **D2** | Patron d'écriture : direct, worktree, ou copie + diff ? | **Worktree/branche par tâche** si versionné, **copie + diff** sinon ; application = **action sensible** (§2.4) | Réutilise la validation humaine existante ; interdit l'écriture directe |
+| **D2** | Patron d'écriture : direct, worktree, ou copie + diff ? | **Worktree/branche par tâche** si versionné, **copie + diff** sinon ; application = **action sensible** (§2.4). → **Révisée le 2026-09-04** (#703, §2.4) : worktree + **fusion continue** dès qu'une tâche est soldée, sous **un accord par run** si versionné ; **écriture en place**, sérialisée et bornée par la frontière d'écriture, sinon — `versionner` (#704) fait changer de régime | Réutilise la validation humaine existante ; l'écriture directe reste interdite sur un projet versionné, et se tient par refus et sérialisation sur un projet neuf |
 | **D3** | Le bureau est-il la finalité ? | **Non — c'est une enveloppe, pas une variante** (§4.7). Le mode web/serveur reste de premier ordre | Un seul front, deux modes de distribution ; SQLite/Postgres, jeton local/comptes comme **réglages** |
 | **D4** | Quel empaquetage ? | **Lanceur/installeur d'abord**, **Tauri ensuite** ; Electron écarté (§4.5) | Le mode isolé Docker devient **optionnel** en distribution bureau (§4.6) |
 | **D5** | L'ingestion de documents passe-t-elle par un **brief validé** ? | **Oui** — c'est le point de contrôle le plus rentable (§3.3) | Ajoute une étape avant décomposition et le droit, pour l'orchestrateur, de poser des questions |

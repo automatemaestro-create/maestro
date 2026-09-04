@@ -4,10 +4,12 @@ Le prérequis du parent #703, et lui seul. Toute la mécanique visée par ce
 chantier — fusionner la branche d'une tâche dans la branche de base dès que la
 tâche est soldée — suppose un projet **versionné** : c'est la branche qui retient
 le travail entre l'atelier et la racine. Un projet déclaré non versionné
-(`Projet.vcs is None`) ne prend pas cette voie mais la **copie jetable** du
-périmètre (`maestro.sandbox.projet`, D2), sans rien pour retenir le travail — le
-livrable de `squelette-p1` a ainsi été emporté par le `rmtree` de fin de tâche le
-2026-08-28 (#568).
+(`Projet.vcs is None`) ne prend pas cette voie : depuis #839 il se remplit **en
+place**, dans sa racine (`maestro.sandbox.en_place`) — et avant #839 il prenait la
+**copie jetable** du périmètre, sans rien pour retenir le travail, ce qui a emporté
+le livrable de `squelette-p1` dans le `rmtree` de fin de tâche le 2026-08-28
+(#568). Ce module est ce qui permet à un tel projet de **changer de régime** : une
+fois versionné, ses tâches suivantes prennent la branche, la fusion et l'accord.
 
 Ce module donne à un tel projet le moyen de **le devenir**. Il ne change pas la
 règle, il ouvre une porte à côté d'elle :
@@ -66,7 +68,9 @@ de passer en force.
 
 from __future__ import annotations
 
+import os
 import shutil
+import stat
 import subprocess
 from pathlib import Path
 
@@ -152,8 +156,30 @@ def initialiser_depot(racine: Path | str, *, branche: str = "") -> Vcs:
         return vcs
     except VersionnementRefuse:
         if git_absent_avant:
-            shutil.rmtree(chemin / ".git", ignore_errors=True)
+            _retirer_depot_ne(chemin / ".git")
         raise
+
+
+def _retirer_depot_ne(dossier_git: Path) -> None:
+    """Retire le `.git` que cet appel vient de créer — objets en **lecture seule** compris.
+
+    `shutil.rmtree(ignore_errors=True)` ne suffisait pas, et le défaut ne se voyait
+    que sous Windows (#707, sur le test du `pre-commit` qui refuse) : Git écrit ses
+    objets en lecture seule, et `os.remove` y refuse un fichier sans droit
+    d'écriture là où POSIX ne regarde que le dossier. Le `.git` survivait donc
+    **amputé** — `objects/` seul, sans `HEAD` —, c'est-à-dire exactement le
+    « résidu trouvé sur place » que l'appel suivant s'interdit de retirer : un
+    échec en laissait un second, définitif. Le droit d'écriture est donc rendu à
+    chaque fichier avant la suppression ; ce qui résiste encore est laissé —
+    best-effort, comme avant, le refus motivé restant ce qui remonte.
+    """
+    for dossier, _sous_dossiers, fichiers in os.walk(dossier_git):
+        for nom in fichiers:
+            try:
+                os.chmod(Path(dossier) / nom, stat.S_IWRITE)
+            except OSError:
+                continue
+    shutil.rmtree(dossier_git, ignore_errors=True)
 
 
 def _exige_hors_depot(chemin: Path) -> None:

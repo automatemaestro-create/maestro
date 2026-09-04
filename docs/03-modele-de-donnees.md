@@ -144,10 +144,12 @@ Un projet de travail (souvent rattaché à un dépôt de code). Regroupe des tâ
 > Le reste de la Phase 7 s'appuie dessus et est livré : le **`projet_id` porté par `TASK` et
 > `RUN`** (#222, voir ces deux entités), l'**API** `/api/projets` et son explorateur de dossiers
 > (#223, [docs/05 §2.7](./05-interface-control-tower.md)), l'**espace de travail dérivé** — worktree
-> Git par tâche si le projet est versionné, copie du périmètre sinon (#224, EF-36), l'**écran
+> Git par tâche si le projet est versionné, la racine elle-même sinon (#224 puis #839, EF-36), l'**écran
 > Projets** (#225), le **second montage** en mode isolé (#226,
 > [docs/17 §3](./17-isolation-execution.md)) et l'**application des livrables sous validation
-> humaine** (#227, EF-37). Les agents ne travaillent **jamais** directement dans la racine.
+> humaine** (#227, EF-37). Un projet versionné n'est jamais écrit en direct — sa racine avance par
+> fusion, tâche par tâche (#705) ; un projet non versionné se remplit en place *(D2 révisée le
+> 2026-09-04 par #703, [docs/24 §2.4](./24-projets-locaux-et-poste-de-travail.md))*.
 > *(Retenu — décisions D1/D2 de
 > [docs/24 §8](./24-projets-locaux-et-poste-de-travail.md), rendues le 2026-08-04 ; **Phase 7**.)*
 

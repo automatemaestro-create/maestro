@@ -71,13 +71,21 @@ La décision **D1** de [docs/24 §8](./24-projets-locaux-et-poste-de-travail.md)
 vigueur**, et non plus ce qui l'attend. Où chaque contre-mesure vit dans le code :
 
 - **travail hors de la racine** — `maestro.sandbox.projet` (#224) dérive l'espace de travail :
-  worktree Git sur la branche `maestro/<tâche>` si le projet est versionné, copie de son
-  périmètre sinon. La racine elle-même n'est jamais le répertoire de travail d'un agent (EF-36),
-  ni un montage du conteneur en mode isolé (#226, [docs/17 §3](./17-isolation-execution.md)) ;
-- **application sous validation humaine** — `maestro.controltower.validation.appliquer_sous_validation`
+  worktree Git sur la branche `maestro/<tâche>` si le projet est versionné, **fusionnée dans la
+  base dès que la tâche est soldée** (#705). La racine d'un projet **versionné** n'est jamais le
+  répertoire de travail d'un agent (EF-36), ni un montage du conteneur en mode isolé (#226,
+  [docs/17 §3](./17-isolation-execution.md)). Un projet **non versionné** se remplit **en place**
+  (#839, D2 révisée — [docs/24 §2.4](./24-projets-locaux-et-poste-de-travail.md)) : une tâche à
+  la fois, derrière la frontière d'écriture de `maestro.sandbox.en_place` (hors racine, lien
+  symbolique, exclusion du périmètre — refusés avec leur motif), et en mode isolé sa racine est
+  montée **avec ses masques** ;
+- **application sous accord humain** — `maestro.controltower.validation.appliquer_sous_validation`
   (#227, EF-37) soumet « appliquer ce travail ? » au **même** validateur que les autres actions
-  sensibles (EF-08), diff en pièce jointe. Sur refus, rien n'est écrit et le travail reste
-  consultable ; sans validateur, l'application est refusée (fail-safe des garde-fous, #9) ;
+  sensibles (EF-08), diff en pièce jointe ; depuis #706 la fusion continue d'un run passe par ce
+  validateur **une fois par run et par projet**, à la première fusion
+  (`LocalExecutor._accord_de_fusion`). Sur refus, rien n'est écrit et le travail reste
+  consultable sur sa branche ; sans validateur, l'application est refusée (fail-safe des
+  garde-fous, #9) ;
 - **racine canonicalisée et racines interdites** — `maestro.projets.racine` (#221) : `..` écrasés
   et liens résolus **avant** toute comparaison, refus **motivé** (jamais un `False` muet), et
   `chemin_dans_racine` par où passe toute écriture. La même frontière borne l'explorateur de
