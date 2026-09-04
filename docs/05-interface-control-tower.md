@@ -4020,7 +4020,11 @@ bascule, et se lit avec n'importe laquelle des quatre. Le décompte de cette sec
       "cout_usd": 0.02, "duree_ms": 1234,      // null : inconnu (≠ zéro)
       // La checklist de la tâche (#489) : celle que l'agent tient, ou —
       // tant qu'elle n'a pas démarré — l'ossature déclarée au plan.
-      "etapes": [ { "libelle": "Lister les entités", "etat": "faite" } ] }
+      "etapes": [ { "libelle": "Lister les entités", "etat": "faite" } ],
+      // Le signe de vie (#836) : null sur tout nœud qui ne travaille pas —
+      // celui-ci est terminé. Sur le nœud `en_cours`, l'instant et un libellé
+      // court du dernier geste de son agent : { "horodatage": "…", "libelle": "…" }.
+      "activite": null }
   ],
   // `de` l'amont, `vers` l'aval : le sens du FLUX, jamais celui de la
   // déclaration (`Task.dependances` se lit « j'attends ceux-ci »).
@@ -4082,9 +4086,26 @@ un dessin qui pousse au lieu d'un plan.
 **Le direct passe par le canal existant, et le graphe n'a pas d'événement à lui** (troisième
 critère). Il se recompose **à la lecture**, en joignant le plan à l'état que la projection tient de
 chaque tâche : ce sont donc les événements déjà diffusés qui le font bouger — `tache.statut` (un
-nœud démarre, une arête s'allume), `tache.detail` (une étape se coche, #489), et le nouveau
-`run.plan`. Ce dernier est publié **une fois**, quand la décomposition rend son plan ; il porte les
-nœuds et leurs dépendances, jamais d'état.
+nœud démarre, une arête s'allume), `tache.detail` (une étape se coche, #489), `agent.activite` (le
+nœud en cours **vit**, #836 — ci-dessous), et le nouveau `run.plan`. Ce dernier est publié **une
+fois**, quand la décomposition rend son plan ; il porte les nœuds et leurs dépendances, jamais d'état.
+
+**Le nœud en cours porte un signe de vie, et c'est la seule chose qui bouge sur une boîte** (#836,
+lot 2 de #834). Mesuré sur un run réel (2026-08-30) : sur une fenêtre de 60 s, les quatre nœuds
+étaient **strictement inchangés** pendant que l'agent consignait un `agent.activite` toutes les 5 à
+15 secondes — la donnée existait, persistée, et n'atteignait aucune vue. Le nœud `en_cours` porte
+donc `activite` : l'**horodatage et un libellé court** (première ligne, bornée à 80 caractères,
+troncature dite par `…`) du **dernier geste** de son agent sur sa tâche, si bien que deux lectures
+espacées d'un geste rendent deux valeurs. `null` sur tout nœud qui ne travaille pas : une tâche
+terminée, échouée, bloquée ou réassignée garde son dernier geste en mémoire mais n'en montre rien —
+« ça bouge » ne se dit pas d'une chose qui ne bouge plus. La règle est **`en_cours` au sens
+strict**, et non le compartiment de la progression, qui y range aussi l'attente de validation :
+une tâche arrêtée sur un humain ne travaille pas, et c'est la distinction que #355 a fait exister.
+Elle vit **une fois**, sur la carte de tâche (`EtatTache.signe_de_vie`, servie aussi par
+`GET /api/taches` sous la même clé), d'où le nœud la lit sans la rejouer — et d'où la frise (§6.13)
+lit **le même** signe pour son couloir. Rien n'a été ajouté au canal ni à la pompe : le
+`agent.activite` qui le rafraîchit circule déjà, et c'est lui qui fait battre le pouls du client.
+Forme et règle : [`maestro/controltower/signe_de_vie.py`](../maestro/controltower/signe_de_vie.py).
 
 ⚠ **Il double la ligne de journal de la planification, il ne la remplace pas** : la même étape
 produit toujours son `agent.activite` — c'est par lui que l'usage du cadrage entre au grand livre
@@ -4244,11 +4265,16 @@ dise.
   // Un couloir par agent du run, MUET COMPRIS ; `entrees` ne porte que des ids.
   "couloirs": [
     { "agent": "developpeur", "role": "Développeur", "repli": false,
-      "entrees": ["j-0007", "j-0008"] },
-    { "agent": "devops", "role": "DevOps", "repli": false, "entrees": ["j-0009"] },
-    { "agent": "qa", "role": "Testeur", "repli": false, "entrees": [] },
+      "entrees": ["j-0007", "j-0008"],
+      // Le signe de vie du couloir (#836) : le dernier geste de l'agent sur une
+      // tâche qui travaille — un attribut de l'en-tête, JAMAIS une entrée.
+      "activite": { "horodatage": "2026-08-28T10:00:42+00:00",
+                    "libelle": "Écrit api/contacts.py, puis relit le résultat" } },
+    { "agent": "devops", "role": "DevOps", "repli": false, "entrees": ["j-0009"],
+      "activite": null },   // sa tâche attend un humain : elle ne travaille pas
+    { "agent": "qa", "role": "Testeur", "repli": false, "entrees": [], "activite": null },
     // Le repli ferme la liste, et n'existe que s'il a recueilli quelque chose.
-    { "agent": "", "role": "", "repli": true, "entrees": ["j-0011"] }
+    { "agent": "", "role": "", "repli": true, "entrees": ["j-0011"], "activite": null }
   ],
   "total": 4,        // AVANT le plafond
   "plafond": 500,
@@ -4297,9 +4323,24 @@ statuts (`approuve`, `refuse`) que le moteur écrit lui-même sur l'étape `<tâ
 de tâche) est le bruit de fond d'un run, ni changement d'état ni échange — l'y verser noierait les
 trois signaux que le ticket demande de distinguer. Le journal requêtable reste là pour qui veut tout.
 
+**Mais le couloir porte un signe de vie, et ce n'est pas une entrée** (#836, lot 2 de #834). Le choix
+ci-dessus a un coût, mesuré sur un run réel (2026-08-30) : ~220 entrées de journal, **3** sur la
+frise, et **1158 octets identiques à 90 s d'intervalle** pendant les douze minutes d'une tâche en
+cours. Le remède n'est pas d'ouvrir `agent.activite` — la raison de l'écarter tient —, c'est de
+donner au couloir un **attribut** : `activite`, le dernier geste de son agent sur une tâche qui
+travaille, daté et abrégé — **le même** signe que celui du nœud `en_cours` du graphe (§6.11), tranché
+une fois par la projection et lu ici par agent (`ControlTowerState.signes_de_vie_du_run` ; en
+multi-instances, le plus récent de ses tâches en cours). Trois choses à ne pas défaire : `entrees` ne
+reçoit **aucune** entrée d'activité et `TYPES_FRISE` ne bouge pas — le tri est intact, et c'est tout
+l'intérêt d'un attribut de l'en-tête ; un couloir dont aucune tâche ne travaille rend `null`, ce qui
+distingue à l'œil un agent qui avance d'un agent arrêté sans lire une ligne ; et un signe **n'ouvre
+jamais** de couloir à lui seul — un agent qui travaille a un `:debut` consigné, donc son couloir, et
+le repli n'en porte pas.
+
 **Le direct passe par le canal existant, et la frise n'a pas d'événement à elle** — même doctrine que
-le graphe : elle se recompose à la lecture, donc `tache.statut`, `message.inter_agents` et
-`validation.demande` la font bouger sans second canal.
+le graphe : elle se recompose à la lecture, donc `tache.statut`, `message.inter_agents`,
+`validation.demande` — et, pour le seul signe de vie, `agent.activite` — la font bouger sans second
+canal.
 
 **La borne se dit toujours.** `plafond` (500) retient les entrées les plus **récentes** — « pendant
 qu'ils le font » se lit par la fin —, `total` compte avant, `tronquee` dit si la borne a mordu. Une
