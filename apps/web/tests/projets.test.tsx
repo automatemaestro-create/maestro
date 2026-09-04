@@ -24,6 +24,15 @@
  * l'écrivant qu'est apparu le défaut corrigé au passage dans
  * `ExplorateurDossiers.ouvrir` : le motif d'un dossier non déclarable était
  * posé, puis **effacé par le succès de l'ouverture** qui suivait.
+ *
+ * Le `describe` « mise sous Git » est #855 : le seul geste de l'écran qui
+ * écrive dans le dossier de l'utilisateur. Ce qui s'y garde : il n'est proposé
+ * que sur un projet **non versionné**, il s'arme en deux temps derrière une
+ * confirmation qui **dit ce qui va être fait** (`git init`, premier commit de
+ * toute la racine, `.gitignore` respecté) sans qu'aucun appel parte avant le
+ * second clic, la liste se **relit** après (le `vcs` est constaté, jamais
+ * recopié de la réponse), et un refus s'affiche **sur la carte** avec son motif
+ * et le conseil qui va avec.
  */
 
 import { render, screen, waitFor, within } from "@testing-library/react";
@@ -47,6 +56,7 @@ const chargerExplorateur = vi.fn();
 const creerProjet = vi.fn();
 const modifierProjet = vi.fn();
 const supprimerProjet = vi.fn();
+const versionnerProjet = vi.fn();
 const chargerDisponibiliteSelecteur = vi.fn();
 const ouvrirSelecteurNatif = vi.fn();
 
@@ -64,6 +74,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     modifierProjet: (id: string, declaration: unknown) =>
       modifierProjet(id, declaration),
     supprimerProjet: (id: string) => supprimerProjet(id),
+    versionnerProjet: (id: string) => versionnerProjet(id),
     chargerDisponibiliteSelecteur: () => chargerDisponibiliteSelecteur(),
     ouvrirSelecteurNatif: (depart: string | null) => ouvrirSelecteurNatif(depart),
   };
@@ -103,6 +114,7 @@ beforeEach(() => {
   creerProjet.mockResolvedValue(projetFactice());
   modifierProjet.mockResolvedValue(projetFactice());
   supprimerProjet.mockResolvedValue(undefined);
+  versionnerProjet.mockResolvedValue(projetFactice());
   chargerDisponibiliteSelecteur.mockResolvedValue(selecteurIndisponible());
   ouvrirSelecteurNatif.mockResolvedValue({
     annule: true,
@@ -735,6 +747,119 @@ describe("la modification et la suppression", () => {
     expect(await within(carte).findByRole("alert")).toHaveTextContent(
       "projet-inconnu",
     );
+  });
+});
+
+describe("la mise sous Git d'un projet non versionné (#855)", () => {
+  const bouton = () => screen.queryByRole("button", { name: "Mettre sous Git" });
+
+  /** La page avec un projet **non versionné**, sa carte rendue. */
+  async function carteNonVersionnee() {
+    chargerProjets.mockResolvedValue([projetFactice({ vcs: null })]);
+    await page();
+    return await screen.findByRole("listitem", { name: "Projet Dépensio" });
+  }
+
+  it("ne propose le geste que sur un projet non versionné", async () => {
+    // Sur un projet déjà sous Git, la route rendrait la fiche telle quelle :
+    // un bouton qui ne change rien apprendrait à ne plus lire les boutons.
+    chargerProjets.mockResolvedValue([projetFactice()]);
+    await page();
+    await screen.findByRole("listitem", { name: "Projet Dépensio" });
+
+    expect(bouton()).toBeNull();
+  });
+
+  it("s'arme en deux temps derrière une confirmation qui dit ce qui va être fait", async () => {
+    const utilisateur = userEvent.setup();
+    const carte = await carteNonVersionnee();
+
+    await utilisateur.click(await within(carte).findByRole("button", { name: "Mettre sous Git" }));
+
+    // Rien ne part avant le second clic : c'est le seul geste de l'écran qui
+    // écrive dans le dossier de l'utilisateur.
+    expect(versionnerProjet).not.toHaveBeenCalled();
+    const confirmation = within(carte).getByRole("group", {
+      name: "Confirmer la mise sous Git",
+    });
+    // Les trois choses que la confirmation doit dire (critère #855).
+    expect(confirmation).toHaveTextContent("git init");
+    expect(confirmation).toHaveTextContent(/premier commit/);
+    expect(confirmation).toHaveTextContent(/toute la racine/);
+    expect(confirmation).toHaveTextContent(".gitignore");
+    // Et où : la racine du projet, pas un dossier deviné.
+    expect(confirmation).toHaveTextContent("D:/projets/depensio");
+  });
+
+  it("appelle la route sans rien envoyer, puis relit la liste", async () => {
+    const utilisateur = userEvent.setup();
+    const carte = await carteNonVersionnee();
+    await utilisateur.click(await within(carte).findByRole("button", { name: "Mettre sous Git" }));
+
+    await utilisateur.click(
+      within(carte).getByRole("button", { name: "Confirmer la mise sous Git" }),
+    );
+
+    // L'identifiant seul : le `vcs` n'est pas un champ de requête (EF-38).
+    expect(versionnerProjet).toHaveBeenCalledWith("prj-7f3a1c2b");
+    // Le `vcs` rendu n'est pas recopié : la liste se relit, comme après toute
+    // écriture — c'est elle qui montrera « git · main ».
+    await waitFor(() => expect(chargerProjets).toHaveBeenCalledTimes(2));
+  });
+
+  it("laisse reculer avant de confirmer", async () => {
+    const utilisateur = userEvent.setup();
+    const carte = await carteNonVersionnee();
+    await utilisateur.click(await within(carte).findByRole("button", { name: "Mettre sous Git" }));
+
+    await utilisateur.click(
+      within(carte).getByRole("button", { name: "Garder non versionné" }),
+    );
+
+    expect(versionnerProjet).not.toHaveBeenCalled();
+    expect(within(carte).queryByRole("group", { name: "Confirmer la mise sous Git" })).toBeNull();
+    expect(bouton()).toBeInTheDocument();
+  });
+
+  it("n'arme qu'un geste à la fois : la suppression désarme la mise sous Git", async () => {
+    // Deux confirmations sur une même carte ne parleraient pas de la même
+    // chose ; armer l'une range l'autre.
+    const utilisateur = userEvent.setup();
+    const carte = await carteNonVersionnee();
+    await utilisateur.click(await within(carte).findByRole("button", { name: "Supprimer" }));
+
+    expect(bouton()).toBeNull();
+    expect(within(carte).queryByRole("group", { name: "Confirmer la mise sous Git" })).toBeNull();
+
+    await utilisateur.click(within(carte).getByRole("button", { name: "Garder le projet" }));
+    expect(bouton()).toBeInTheDocument();
+  });
+
+  it("montre le motif d'un refus sur la carte, avec le conseil qui va avec", async () => {
+    versionnerProjet.mockRejectedValue(
+      new ErreurProjet(
+        "depot-englobant",
+        "D:/projets/depensio est déjà dans le dépôt Git D:/projets — un dépôt imbriqué modifierait celui-ci.",
+      ),
+    );
+    const utilisateur = userEvent.setup();
+    const carte = await carteNonVersionnee();
+    await utilisateur.click(await within(carte).findByRole("button", { name: "Mettre sous Git" }));
+
+    await utilisateur.click(
+      within(carte).getByRole("button", { name: "Confirmer la mise sous Git" }),
+    );
+
+    const refus = await within(carte).findByRole("alert");
+    expect(refus).toHaveTextContent("Mise sous Git refusée");
+    expect(refus).toHaveTextContent("dépôt imbriqué");
+    expect(refus).toHaveTextContent("depot-englobant");
+    // Le conseil prolonge le message du backend, il ne le remplace pas.
+    expect(refus).toHaveTextContent(/racine de ce dépôt/);
+    // La carte reste utilisable : le projet est toujours non versionné, le
+    // geste se repropose, et rien n'a été relu (rien n'a été écrit).
+    expect(bouton()).toBeInTheDocument();
+    expect(chargerProjets).toHaveBeenCalledTimes(1);
   });
 });
 

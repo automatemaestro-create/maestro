@@ -19,11 +19,20 @@ déjà comptabilisé (le coût reste visible), mais la suite de l'étape est sto
 Un fournisseur qui ne rapporte pas de coût échappe au plafond *en USD* (coût
 « inconnu ») mais reste plafonnable **en tokens** (#113) : le même contrôle
 (`PlafondDepense`) accepte un plafond en tokens, toujours opérant.
+
+Depuis #835, ce canal se lit aussi **pendant** le travail : un collecteur ouvert
+avec `on_mesure=` rappelle son appelant à chaque mesure signalée, avec le cumul
+de l'étape — c'est ainsi que le moteur relève la dépense d'une tâche en cours au
+lieu d'attendre son issue —, et `usage_en_cours()` rend ce cumul à qui veut le
+lire sans attendre la mesure suivante (l'ouverture d'une tentative, par
+exemple). Ni l'un ni l'autre ne comptent quoi que ce soit : le cumul reste celui
+que `report_usage` a construit, et la comptabilité du run ne le lit toujours
+qu'à la consignation de l'étape.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
@@ -200,11 +209,25 @@ class UsageCollector:
     d'abord comptabilisée (le coût reste visible), puis le contrôle est consulté
     avec le cumul de l'étape. C'est lui qui confronte la dépense de l'exécution
     à son plafond (#56) — le collecteur ne tient aucun compte parallèle.
+
+    Avec `on_mesure` (#835), il **rappelle** son appelant à chaque mesure, avec
+    le cumul de l'étape — **avant** le contrôle de dépense, et c'est l'ordre qui
+    compte : une mesure qui fait crever le plafond est encore une dépense, et le
+    relevé qui la montre doit partir même si le contrôle stoppe l'étape juste
+    après. L'observateur ne casse jamais l'observé (règle du régulateur
+    d'activité, `maestro.providers.activite`) : un rappel qui lève est avalé, la
+    mesure reste comptée et le contrôle reste consulté.
     """
 
-    def __init__(self, *, plafond: ControleDepense | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        plafond: ControleDepense | None = None,
+        on_mesure: Callable[[StepUsage], None] | None = None,
+    ) -> None:
         self._total = StepUsage()
         self._plafond = plafond
+        self._on_mesure = on_mesure
 
     @property
     def total(self) -> StepUsage:
@@ -212,8 +235,13 @@ class UsageCollector:
         return self._total
 
     def add(self, usage: StepUsage) -> None:
-        """Ajoute une mesure à l'agrégat, puis soumet le cumul au contrôle de dépense."""
+        """Ajoute une mesure à l'agrégat, rappelle l'observateur, puis consulte le contrôle."""
         self._total = self._total.fusion(usage)
+        if self._on_mesure is not None:
+            try:
+                self._on_mesure(self._total)
+            except Exception:  # noqa: BLE001 — observer ne casse jamais l'observé
+                pass
         if self._plafond is not None:
             self._plafond.verifie(self._total)
 
@@ -225,21 +253,40 @@ _COLLECTEUR: ContextVar[UsageCollector | None] = ContextVar(
 
 
 @contextmanager
-def collect_usage(*, plafond: ControleDepense | None = None) -> Iterator[UsageCollector]:
+def collect_usage(
+    *,
+    plafond: ControleDepense | None = None,
+    on_mesure: Callable[[StepUsage], None] | None = None,
+) -> Iterator[UsageCollector]:
     """Ouvre un collecteur : les `report_usage` du bloc s'y accumulent.
 
     Un bloc imbriqué masque le collecteur englobant (pas de double comptage) ;
     à la sortie, le collecteur précédent est restauré. `plafond` arme le garde-fou
     de dépense (#9) sur ce bloc : à chaque mesure, le contrôle confronte la dépense
     de l'exécution à son plafond et le `report_usage` fautif lève
-    `PlafondDepenseDepasse` chez l'appelant du fournisseur.
+    `PlafondDepenseDepasse` chez l'appelant du fournisseur. `on_mesure` (#835)
+    reçoit le cumul du bloc à chaque mesure signalée — c'est le relevé en cours
+    d'une tâche, celui qui se voit pendant qu'il se dépense.
     """
-    collector = UsageCollector(plafond=plafond)
+    collector = UsageCollector(plafond=plafond, on_mesure=on_mesure)
     token = _COLLECTEUR.set(collector)
     try:
         yield collector
     finally:
         _COLLECTEUR.reset(token)
+
+
+def usage_en_cours() -> StepUsage:
+    """Le cumul du collecteur actif — une mesure vide hors de tout `collect_usage()` (#835).
+
+    Lecture seule : c'est ce qu'un appelant lit à un instant où aucune mesure
+    n'arrive (l'ouverture d'une tentative, par exemple) pour dire ce que l'étape
+    a déjà consommé. Hors collecteur, une mesure vide plutôt qu'une erreur — la
+    question « qu'a-t-on dépensé jusqu'ici ? » a alors pour réponse « rien de
+    mesuré », ce que `StepUsage()` dit exactement (coût inconnu, zéro appel).
+    """
+    collector = _COLLECTEUR.get()
+    return collector.total if collector is not None else StepUsage()
 
 
 def report_usage(usage: StepUsage) -> None:

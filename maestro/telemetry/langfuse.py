@@ -49,7 +49,7 @@ from typing import Any
 
 from maestro.config import Settings, load_settings
 from maestro.telemetry.costs import ETAPE_PLANIFICATION, RunCost
-from maestro.telemetry.journal import LOGGER_NAME, RunJournal
+from maestro.telemetry.journal import LOGGER_NAME, RunJournal, est_releve_usage
 
 #: Délai maximal d'une publication (connexion + réponse) : l'export est synchrone
 #: (handler logging), un Langfuse injoignable ralentit l'étape mais ne suspend
@@ -83,10 +83,19 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[dict[str, Any], .
     modèle (tokens et coût au format natif, #55), span sinon. Une ligne
     illisible (pas une étape de journal) ne produit **aucun** événement plutôt
     qu'un événement faux — l'export est un miroir, pas une source de vérité.
+
+    Un **relevé d'usage** (#835, `<tache>:usage`) n'en produit aucun non plus,
+    et pour une raison de comptabilité : il porte le **cumul** de la tâche en
+    cours, que son étape finale exportera en entier. En faire une génération
+    compterait chaque tour autant de fois qu'il a été relevé — sur une trace
+    Langfuse, un coût triplé ne ressemble pas à une erreur, il ressemble à un
+    run trois fois plus cher.
     """
     etape = record.get("etape")
     run_id = record.get("run_id")
     if not isinstance(etape, str) or not etape or not isinstance(run_id, str) or not run_id:
+        return ()
+    if est_releve_usage(etape):
         return ()
     brut = record.get("usage")
     usage: dict[str, Any] = dict(brut) if isinstance(brut, Mapping) else {}

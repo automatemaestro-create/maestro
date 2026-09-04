@@ -38,7 +38,14 @@
 import { useId, useMemo, useRef, useState } from "react";
 
 import { ExplorateurDossiers } from "@/components/projets/ExplorateurDossiers";
-import { BadgeEtat, Bouton, Carte, EtatVide } from "@/components/Primitives";
+import {
+  BadgeEtat,
+  Bouton,
+  Carte,
+  Champ,
+  ChampTexte,
+  EtatVide,
+} from "@/components/Primitives";
 import { IconeDossier, IconeFermer, IconeLienExterne } from "@/components/Icones";
 import { RapportExtraction } from "@/components/composer/RapportExtraction";
 import { RefusSource } from "@/components/composer/RefusSource";
@@ -58,12 +65,6 @@ import {
   type RapportLecture,
   type ResumeExecution,
 } from "@/lib/types";
-
-const CLASSE_CHAMP =
-  "w-full rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-corps text-neutral-900 placeholder:text-neutral-400 focus:border-emerald-500 focus:outline-none disabled:opacity-50 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100 dark:placeholder:text-neutral-600";
-
-const CLASSE_LIBELLE =
-  "flex flex-col gap-1 text-annexe font-medium text-neutral-600 dark:text-neutral-400";
 
 /** Le refus d'une exception quelconque — une panne réseau en est un aussi. */
 function refusDepuis(erreur: unknown): ErreurSource {
@@ -232,18 +233,18 @@ export function ComposerObjectif() {
 
       <Carte balise="section" densite="aeree" className="space-y-4">
         <div>
-          <label className={CLASSE_LIBELLE} htmlFor={idObjectif}>
-            Objectif
-            <textarea
-              id={idObjectif}
-              rows={5}
-              value={objectif}
-              onChange={(evenement) => setObjectif(evenement.target.value)}
-              disabled={occupe}
-              placeholder="Ce que Maestro doit obtenir, en langage naturel. Le Chef de projet le décomposera en tâches."
-              className={CLASSE_CHAMP}
-            />
-          </label>
+          {/* Les deux champs de l'écran sont ceux du socle (#832) : ils en
+              tiennent le bord de focus et le contour clavier, au lieu d'en
+              recopier les classes hors palette. */}
+          <ChampTexte
+            id={idObjectif}
+            libelle="Objectif"
+            rows={5}
+            value={objectif}
+            onChange={(evenement) => setObjectif(evenement.target.value)}
+            disabled={occupe}
+            placeholder="Ce que Maestro doit obtenir, en langage naturel. Le Chef de projet le décomposera en tâches."
+          />
           <p className="mt-1 text-annexe text-neutral-500 dark:text-neutral-400">
             Le run sera rattaché au projet{" "}
             <strong className="font-medium">{projet.nom}</strong> — le projet
@@ -303,24 +304,22 @@ export function ComposerObjectif() {
           )}
 
           <div className="flex flex-wrap items-end gap-2">
-            <label className={`${CLASSE_LIBELLE} min-w-64 flex-1`} htmlFor={idUrl}>
-              Adresse à lire
-              <input
-                id={idUrl}
-                type="url"
-                value={url}
-                onChange={(evenement) => setUrl(evenement.target.value)}
-                onKeyDown={(evenement) => {
-                  if (evenement.key === "Enter") {
-                    evenement.preventDefault();
-                    ajouterUrl();
-                  }
-                }}
-                disabled={occupe}
-                placeholder="https://…"
-                className={CLASSE_CHAMP}
-              />
-            </label>
+            <Champ
+              id={idUrl}
+              libelle="Adresse à lire"
+              className="min-w-64 flex-1"
+              type="url"
+              value={url}
+              onChange={(evenement) => setUrl(evenement.target.value)}
+              onKeyDown={(evenement) => {
+                if (evenement.key === "Enter") {
+                  evenement.preventDefault();
+                  ajouterUrl();
+                }
+              }}
+              disabled={occupe}
+              placeholder="https://…"
+            />
             <Bouton
               variante="contour"
               ton="neutre"

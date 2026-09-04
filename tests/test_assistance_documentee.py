@@ -695,11 +695,12 @@ def test_la_carte_du_corpus_reel_tient_dans_le_premier_prompt(
 #: résolvent `provider_from_settings()` au premier message, donc sur une machine
 #: configurée — celle d'un développeur, où l'accès modèle passe par l'abonnement — un
 #: test d'endpoint **appelle réellement le modèle**. Il devient alors lent, payant, et
-#: son verdict dépend de ce que le modèle a répondu ce jour-là. Le conftest neutralise
-#: déjà trois fuites du poste pour cette raison exacte (Langfuse, couleur, forge) ;
-#: celle-ci n'y est pas, et c'est un constat plus large que ce lot — voir le résumé du
-#: ticket. Ici, elle se neutralise explicitement, ce qui est de toute façon la bonne
-#: forme : le fournisseur *est* le sujet de ces deux tests.
+#: son verdict dépend de ce que le modèle a répondu ce jour-là. C'est ce test-ci qui l'a
+#: mesuré (43 s contre 1,4 s), et depuis #782 `tests/conftest.py` tient la règle pour
+#: toute la suite : une résolution du poste lève `FournisseurDuPosteRefuse` et rougit
+#: le test à sa sortie. Ici, elle se neutralise quand même explicitement, ce qui est de
+#: toute façon la bonne forme : le fournisseur *est* le sujet de ces deux tests, et
+#: c'est le **repli** qu'ils exercent — la garde, elle, refuserait ce chemin.
 def _refuse_tout_fournisseur() -> ModelProvider:
     raise KeyError("aucun fournisseur configuré sur ce poste")
 

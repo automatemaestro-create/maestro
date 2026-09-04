@@ -1240,6 +1240,23 @@ export function supprimerProjet(id: string): Promise<void> {
   ).then(() => undefined);
 }
 
+/**
+ * Met un projet non versionné sous Git (`POST /api/projets/{id}/versionner`,
+ * #855) : `git init` puis un premier commit de toute la racine, `.gitignore`
+ * du projet respecté — et rend la fiche **relue**, `vcs` constaté. **Sans
+ * corps** : le `vcs` ne se déclare pas (EF-38), il se déclenche. Un projet
+ * déjà versionné revient tel quel ; un refus lève avec son motif
+ * (`depot-englobant`, `commit-refuse`, `git-indisponible`…).
+ */
+export function versionnerProjet(id: string): Promise<Projet> {
+  return ecrireProjet<Projet>(
+    `/api/projets/${encodeURIComponent(id)}/versionner`,
+    undefined,
+    "mise sous Git refusée",
+    "POST",
+  );
+}
+
 // --- Composer un objectif (#319, API #315/#316/#317) -----------------------
 //
 // Trois routes, un même régime de refus : leur `detail` est l'objet

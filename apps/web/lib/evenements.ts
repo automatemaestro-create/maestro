@@ -32,6 +32,7 @@ import {
   EVENEMENT_TACHE_REASSIGNATION,
   EVENEMENT_TACHE_REFERENCE,
   EVENEMENT_TACHE_STATUT,
+  EVENEMENT_TACHE_USAGE,
   EVENEMENT_VALIDATION_DECISION,
   EVENEMENT_VALIDATION_DEMANDE,
   EXECUTION_ANNULEE,
@@ -54,6 +55,7 @@ const ICONES: Record<string, Icone> = {
   [EVENEMENT_TACHE_STATUT]: IconeTache,
   [EVENEMENT_TACHE_REASSIGNATION]: IconeReassignation,
   [EVENEMENT_TACHE_REFERENCE]: IconeTicket,
+  [EVENEMENT_TACHE_USAGE]: IconeTache,
   [EVENEMENT_AGENT_ACTIVITE]: IconeAgent,
   [EVENEMENT_AGENT_CAPACITE]: IconeCapacite,
   [EVENEMENT_MESSAGE_INTER_AGENTS]: IconeMessage,
@@ -253,6 +255,17 @@ export function resumeEvenement(evenement: Evenement): string {
       return evenement.ticket?.id
         ? `${quoi} est rattachée au ticket ${evenement.ticket.id}`
         : `${quoi} est rattachée à un ticket externe`;
+    }
+    case EVENEMENT_TACHE_USAGE: {
+      // #835 : le relevé de ce que la tâche a consommé jusqu'ici. La phrase
+      // est lue dans `detail`, où le moteur l'a composée (« 12 480 tokens ·
+      // 3 tour(s) · coût pas encore tarifé »), et non recomptée sur `usage` :
+      // le journal requêtable (#478) ne garde pas les charges lourdes, et un
+      // fil relu après rechargement dirait sinon « rien » là où il y a eu.
+      const quoi = cite(sujet) || "une tâche";
+      return evenement.detail
+        ? `${quoi} a consommé jusqu'ici : ${evenement.detail}`
+        : `${quoi} consomme`;
     }
     case EVENEMENT_AGENT_ACTIVITE:
       return phraseEtapeAgent(evenement);

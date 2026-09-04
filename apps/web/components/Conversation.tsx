@@ -643,7 +643,18 @@ export function Conversation({
             bloc. Sur un `<div>`, les variantes `focus:`/`placeholder:`/
             `disabled:` de la classe sont sans effet ; on ne recopie pas le
             reste pour autant — deux définitions du même contrôle, c'est ce que
-            #697 a retiré. */}
+            #697 a retiré.
+            ⚠ Ce n'est pas le `ChampTexte libelleMasque` que #832 venait de
+            poser ici, et ce n'est pas un retour en arrière : la primitive
+            dessine le contrôle **sur le `<textarea>`** — bord, fond, anneau —,
+            or dans un cadre à deux étages le contrôle est le **cadre**, et un
+            champ bordé dans un cadre bordé ferait deux contours. Le
+            `<textarea>` nu ci-dessous est écrit sur les seuls tokens et garde
+            son nom accessible (`aria-label`) : c'est exactement ce que le
+            balayage de `tests/a11y.test.tsx` (#832) exige d'un contrôle. Ce
+            qui manque au socle est un **cadre composite** — un `ChampTexte`
+            qui accepte un rail —, et ce manque se traite par un ticket à lui,
+            pas au passage (règle de #724). */}
         <div
           className={
             `${CLASSE_CONTROLE} flex flex-col gap-1 focus-within:border-bord-fort ` +

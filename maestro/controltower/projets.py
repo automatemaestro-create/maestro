@@ -13,7 +13,11 @@ Deux responsabilités :
   couche mince au-dessus de `ProjetStore`, qui reste le seul écrivain. La forme
   servie est celle de `Projet.to_dict` (docs/24 §2.3) : aucune seconde
   définition du contrat, donc aucune dérive possible entre le fichier stocké et
-  la réponse HTTP ;
+  la réponse HTTP — et, depuis #855, le **geste** `versionner`, qui n'est pas
+  un champ de plus du CRUD mais l'appel d'un verbe (`ProjetStore.versionner`,
+  #704) : le `vcs` reste **constaté et jamais déclaré** (EF-38), la route ne
+  prend aucun `vcs` en entrée, elle déclenche la mise sous Git et rend la
+  fiche relue ;
 - **l'explorateur de dossiers** (`explorer`) — la brique sans laquelle l'écran
   Projets ne peut pas exister : un navigateur ne livre jamais de chemin absolu,
   c'est donc le backend, qui tourne déjà sur le poste, qui énumère
@@ -78,6 +82,16 @@ LIMITE_RECENTS = 5
 #: en cause) ; **403** dit « je refuse de regarder là » (frontière franchie, pas
 #: saisie fautive) et **404** « ce chemin n'existe pas ». Un motif absent de la
 #: table retombe sur 422 — ajouter un motif ne peut donc pas rendre un 500.
+#:
+#: Les refus de la **mise sous Git** (#855, motifs de `VersionnementRefuse`,
+#: #704) passent par la même table : **409** pour `depot-englobant` — ce n'est
+#: ni la saisie ni une frontière, c'est l'**état du disque** qui s'oppose au
+#: geste (la racine est déjà dans un autre dépôt, comme un run déjà terminé
+#: refuse un second arrêt) —, **503** pour `git-indisponible` — le **poste** ne
+#: peut pas (binaire absent, délai dépassé), ce que ni un autre corps ni un
+#: autre chemin ne changeraient. `init-refuse`, `commit-refuse` (un `pre-commit`
+#: de l'utilisateur qui refuse) et `vcs-introuvable` restent sur le défaut : la
+#: racine, telle qu'elle est, est en cause.
 STATUT_HTTP_PAR_MOTIF: dict[str, int] = {
     "hors-racines-explorables": 403,
     "aucune-racine-explorable": 403,
@@ -87,6 +101,8 @@ STATUT_HTTP_PAR_MOTIF: dict[str, int] = {
     "acces-refuse": 403,
     "projet-inconnu": 404,
     "run-inconnu": 404,
+    "depot-englobant": 409,
+    "git-indisponible": 503,
 }
 
 #: Les refus de **portée projet** (#277) passent par la même table : ils sont de
@@ -281,6 +297,31 @@ class ServiceProjets:
         self._lire(id_)
         self._store.supprimer(id_)
         return {"id": id_, "supprime": True}
+
+    def versionner(self, id_: str) -> dict[str, Any]:
+        """Met le projet `id_` sous Git s'il ne l'est pas, et rend sa fiche relue (#855).
+
+        Le **seul** geste du service qui écrive dans le dossier de l'utilisateur,
+        et il ne fait qu'appeler le verbe de #704 (`ProjetStore.versionner` →
+        `initialiser_depot`) : `git init` puis un premier commit qui enregistre
+        la racine telle qu'elle est — `git add -A`, donc le `.gitignore` du
+        projet respecté —, pour que la branche de base résolve. Rien n'est
+        réimplémenté ici, et rien n'est demandé à l'appelant : pas de `vcs` en
+        entrée (EF-38 — il est constaté, jamais déclaré), pas de nom de branche
+        (Git répond selon la configuration de l'utilisateur).
+
+        Un projet **déjà versionné** rend sa fiche telle quelle — aucune
+        commande, aucune écriture, `modifie_le` intact : le verbe est
+        idempotent, et l'écran peut le proposer sans craindre un second clic.
+
+        Lève `ProjetInconnu`/`ProjetIllisible` (404/422 — avant toute commande
+        Git), `RacineRefusee` si la racine n'est plus admissible (EF-38, motif à
+        l'appui) et `VersionnementRefuse` motivée si l'initialisation échoue, la
+        racine restant alors dans l'état d'avant. Les trois portent un `motif` :
+        c'est ce que `statut_http`/`detail_refus` traduisent, jamais un 500.
+        """
+        self._lire(id_)  # 404/422 d'abord — et avant qu'une commande Git ne parte.
+        return self._fiche(self._store.versionner(id_))
 
     # --- Explorateur de dossiers -----------------------------------------
 

@@ -51,6 +51,18 @@ export type Tache = {
   role: string;
   run_id: string;
   cout_usd: number | null;
+  /**
+   * Le coût ci-dessus est-il **partiel** (#835) ? `true` tant que la tâche
+   * tourne et que `cout_usd`/`usage` sont un relevé en cours — ce qu'elle a
+   * consommé jusqu'ici —, `false` dès que son issue les a soldés. Trois
+   * lectures à ne pas confondre : `cout_usd: 0` avec `cout_partiel: true` est
+   * une tâche en cours qui n'a **encore rien consommé** (mesuré), `null` avec
+   * `cout_partiel: true` une tâche en cours dont le fournisseur n'a **pas
+   * encore tarifé** la dépense (les tokens sont dans `usage`), `null` avec
+   * `cout_partiel: false` un coût **inconnu** — aucune télémétrie, jamais.
+   * Optionnel parce qu'une carte servie avant ce lot n'en porte pas.
+   */
+  cout_partiel?: boolean;
   usage: Usage | null;
   ticket: ReferenceTicket | null;
   projet_id: string | null;
@@ -58,6 +70,26 @@ export type Tache = {
   description?: string | null;
   etapes?: EtapeTache[] | null;
   liens?: LienUtile[] | null;
+  /** Le signe de vie (#836) : `null` dès que la tâche ne travaille pas. */
+  activite?: SigneDeVie | null;
+};
+
+/**
+ * Le **signe de vie** d'une tâche qui travaille (#836) : l'horodatage et un
+ * libellé court du dernier geste de son agent (`agent.activite`). Servi sur la
+ * carte de tâche, sur le nœud `en_cours` du graphe et sur le couloir de la
+ * frise dont une tâche est en cours — la **même** valeur aux trois endroits,
+ * tranchée une fois par le backend (`maestro/controltower/signe_de_vie.py`) —,
+ * et `null` sur tout ce qui ne travaille pas : une tâche arrêtée ne « bouge »
+ * pas. Entre deux gestes d'agent, deux lectures rendent deux valeurs : c'est ce
+ * qui manquait à des vues immobiles pendant toute la durée d'une tâche.
+ *
+ * Déclaré **optionnel** sur les trois formes, pour la raison qui vaut déjà des
+ * `etapes` d'une `Tache` : un lot additif, que l'écran lit quand il est prêt.
+ */
+export type SigneDeVie = {
+  horodatage: string;
+  libelle: string;
 };
 
 /**
@@ -1147,6 +1179,14 @@ export const EVENEMENT_TACHE_STATUT = "tache.statut";
 export const EVENEMENT_TACHE_REASSIGNATION = "tache.reassignation";
 /** #187 : rattache une tâche à son ticket externe — ne porte que `ticket`. */
 export const EVENEMENT_TACHE_REFERENCE = "tache.reference";
+/**
+ * #835 : ce qu'une tâche **en cours** a consommé jusqu'ici — `usage` en est le
+ * cumul, `cout_usd` le raccourci, `detail` la phrase (« 12 480 tokens · 3
+ * tour(s) · coût pas encore tarifé »). Ni statut ni agent ne changent : une
+ * tâche qui dépense ne change pas de colonne. Un type à lui parce que son usage
+ * est un **cumul** que l'`agent.activite` n'aurait pas su distinguer d'une part.
+ */
+export const EVENEMENT_TACHE_USAGE = "tache.usage";
 export const EVENEMENT_AGENT_ACTIVITE = "agent.activite";
 export const EVENEMENT_AGENT_CAPACITE = "agent.capacite";
 export const EVENEMENT_MESSAGE_INTER_AGENTS = "message.inter_agents";
@@ -1565,6 +1605,14 @@ export type ResumeExecution = {
    */
   progression?: Progression;
   cout_usd: number | null;
+  /**
+   * Le cumul ci-dessus comprend-il un **relevé en cours** (#835) ? `true` tant
+   * qu'une tâche du run tourne avec un coût partiel — le montant bouge alors
+   * pendant qu'il se dépense, et il est un plancher, pas un solde. `false` quand
+   * tout ce qui a été dépensé est soldé. Optionnel : un résumé servi avant ce
+   * lot n'en porte pas.
+   */
+  cout_partiel?: boolean;
   ticket: ReferenceTicket | null;
   /** Le projet dans lequel le run travaille (#222), `null` hors de tout projet. */
   projet_id: string | null;
@@ -1732,8 +1780,12 @@ export type NoeudGraphe = {
   agent: string;
   role: string;
   cout_usd: number | null;
+  /** Le même coût que la carte de la tâche, avec la même réserve (#835, `Tache.cout_partiel`). */
+  cout_partiel?: boolean;
   duree_ms: number | null;
   etapes: EtapeTache[];
+  /** Le signe de vie du nœud en cours (#836) : `null` sur tout autre nœud. */
+  activite?: SigneDeVie | null;
 };
 
 /** Une arête du graphe (#490) : `de` l'amont, `vers` l'aval — le sens du flux. */
@@ -1840,12 +1892,18 @@ export type EntreeFrise = {
  * comme tel, là où l'omettre le ferait apparaître en cours de route sans qu'on
  * sache s'il était prévu. `repli` marque le couloir de ce qui n'a pas d'agent —
  * il ferme toujours la liste, et n'existe que s'il a recueilli quelque chose.
+ *
+ * `activite` (#836) est le **signe de vie** du couloir : le dernier geste de son
+ * agent sur une tâche qui travaille, `null` quand aucune ne travaille. C'est un
+ * attribut de l'en-tête et jamais une entrée — rien de ce qu'il porte n'est
+ * dans `entrees`, et le tri de la frise n'en est pas touché.
  */
 export type CouloirFrise = {
   agent: string;
   role: string;
   repli: boolean;
   entrees: string[];
+  activite?: SigneDeVie | null;
 };
 
 /**

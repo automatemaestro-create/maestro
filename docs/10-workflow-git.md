@@ -2068,6 +2068,36 @@ couleur ne sont que deux cas : **le verdict de la suite ne dépend pas du poste 
 qu'un `.env` ou un `settings.local.json` pose dans l'environnement se neutralise dans le conftest,
 pas dans le fichier du poste (non versionné, le prochain clone le reposerait).
 
+**Le fournisseur de modèle du poste, enfin, ne peut pas entrer dans le verdict** (#782) — la fuite
+la plus chère de toutes, et la seule qui parte sur le réseau. Les trois répondeurs de chat que
+`create_app()` construit sans fournisseur (`RepondeurModele`, `RepondeurOrchestration` et, depuis
+#764, `RepondeurAssistanceDocumentee`) résolvent `provider_from_settings()` **au premier message** —
+c'est voulu : l'app se construit sans configuration. Mais un test d'endpoint qui poste dans un fil
+**sans injecter de répondeur** appelle alors le vrai modèle sur toute machine où l'accès est
+configuré, c'est-à-dire sur un poste de développement, par l'abonnement. Mesuré sur le premier test
+de câblage de #764 : **43 s** et une vraie réponse documentée, contre **1,4 s** une fois le
+fournisseur neutralisé — l'écart *est* l'appel réseau. En CI le défaut est invisible (sans clés, la
+résolution échoue et le canal replie) : il ne se voit que là où il coûte, jamais là où l'on regarde.
+Le conftest remplace donc, pour chaque test, la lecture des réglages du poste **par la fabrique**
+(`maestro.providers.factory.load_settings`) : `provider_from_settings()` **nu** lève
+`FournisseurDuPosteRefuse`, dont le texte nomme la cause — « ce test allait appeler un vrai modèle,
+injecte un répondeur ou un fournisseur factice » — et jamais l'erreur d'authentification que le
+fournisseur aurait fini par lever. Et parce que les trois répondeurs **avalent** un échec de
+résolution en réponse de repli (201, « réglage absent »), lever ne suffit pas sur le chemin même
+qu'on protège : la garde retient la tentative et **échoue le test à sa sortie**, comme la garde
+Langfuse — sauf si le test a déjà échoué de cette exception-là, la cause étant alors sous les yeux.
+Trois choses à ne pas défaire : la garde ne vise que la résolution **sans `Settings` explicites**
+— des réglages construits par le test passent, et `provider_from_settings(load_settings())`, la
+fabrique par défaut des workers (`maestro.durable.activities`, `maestro.queue.worker`), lit le
+poste par un geste explicite du code appelant, où aucun test ne passe (tous injectent leur
+fabrique) ; un test qui veut **vraiment** lire le poste le dit par `@pytest.mark.fournisseur_du_poste`,
+à réserver à un test qui n'appelle aucun modèle réel — lire le poste n'est pas l'appeler ; et elle
+est **éprouvée sur un cas fautif avant de balayer** :
+[`tests/test_garde_fournisseur.py`](../tests/test_garde_fournisseur.py) rejoue le conftest lui-même,
+copié tel quel dans un sous-processus, sur un test qui poste sans injecter — il **passe** sa phase
+d'appel, et c'est la garde qui le rougit, faute de quoi elle rendrait un ✓ sur une question jamais
+posée.
+
 **Quand un pipeline se déclenche ?** **Uniquement sur les Pull Requests** (#165, puis #338). Le
 bloc `on:` du workflow ne porte que `pull_request` — l'**ouverture** d'une PR, puis chaque **push
 sur sa branche source** tant qu'elle est ouverte — et `workflow_dispatch`, le déclenchement

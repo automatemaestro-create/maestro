@@ -78,13 +78,52 @@ Windows. Un runner Linux muni de git en a trouvé 16 rouges du premier coup
 (#332). Le contrôle ne remet rien au vert : il fait qu'un futur retrait de git
 du job — un `container:` posé dans `.github/workflows/ci.yml`, par exemple — se
 voie tout de suite.
+
+Septième garde-fou (#782), et la fuite la plus chère de toutes : **le
+fournisseur de modèle du poste ne peut pas être résolu par un test**. Les trois
+répondeurs de chat que `create_app()` construit sans fournisseur —
+`RepondeurModele`, `RepondeurOrchestration`, `RepondeurAssistanceDocumentee` —
+résolvent `provider_from_settings()` **au premier message**, ce qui est voulu
+(l'app se construit sans configuration) ; mais un test d'endpoint qui poste dans
+un fil **sans injecter de répondeur** appelle alors le vrai modèle sur toute
+machine où l'accès est configuré — un poste de développement, par l'abonnement.
+Mesuré sur le premier test de câblage de #764 : **43 s** et une vraie réponse
+documentée, contre **1,4 s** une fois le fournisseur neutralisé — l'écart *est*
+l'appel réseau. En CI le défaut est invisible (sans clés, la résolution échoue et
+le canal replie) : il ne se voit que là où il coûte. Les trois neutralisations
+précédentes faussent un verdict ; celle-ci part sur le réseau et consomme du
+quota. La garde vit dans une fixture `autouse` et fait deux choses, parce que les
+répondeurs **avalent** un échec de résolution en réponse de repli (201, « réglage
+absent ») — une exception seule serait donc muette sur le chemin même qu'on
+protège : elle **lève** `FournisseurDuPosteRefuse` à la place de la lecture des
+réglages du poste par la fabrique, en nommant sa cause plutôt que l'erreur
+d'authentification que le fournisseur aurait fini par lever ; et elle **échoue le
+test à sa sortie** dès qu'une résolution a été tentée, comme la garde Langfuse —
+sauf si le test a déjà échoué de cette exception-là, la cause étant alors déjà
+nommée. Ce qui distingue « le poste » d'un fournisseur voulu : la garde ne vise
+que la résolution **sans `Settings` explicites** — `provider_from_settings()`
+nu, c'est-à-dire ce que le poste a configuré ; un test qui construit ses propres
+`Settings` et les passe n'est pas concerné, et un test qui veut **vraiment** lire
+le poste le dit avec `@pytest.mark.fournisseur_du_poste`. Limite nommée :
+`provider_from_settings(load_settings())`, la fabrique par défaut des workers
+(`maestro.durable.activities`, `maestro.queue.worker`), lit le poste par un geste
+explicite du code appelant — aucun test n'y passe, tous injectent leur fabrique.
+La garde est éprouvée sur un cas fautif avant de balayer
+(`tests/test_garde_fournisseur.py`) : un test qui poste sans injecter y **passe**
+sa phase d'appel, et c'est la garde qui le fait rougir.
 """
+
+from __future__ import annotations
 
 import logging
 import os
 import shutil
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from maestro.config import Settings
 
 #: Les deux clés dont la présence suffit à poser l'exporteur (`activer_export_langfuse`).
 _CLES_LANGFUSE = ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY")
@@ -108,6 +147,37 @@ CLES_FORGE = ("MAESTRO_FORGE", "MAESTRO_GITHUB_REPO")
 #: Leur présence distingue « personne n'est là pour lire un `s` dans le compte rendu » d'un
 #: lancement sur un poste, où un saut reste une réponse acceptable.
 _CLES_CI = ("CI", "GITLAB_CI", "GITHUB_ACTIONS")
+
+#: Le marqueur par lequel un test dit qu'il veut VRAIMENT résoudre le fournisseur configuré sur
+#: le poste (#782) — la garde s'efface alors. À réserver à un test qui n'appelle aucun modèle
+#: réel : lire le poste n'est pas l'appeler, et c'est l'appel qui coûte.
+MARQUEUR_FOURNISSEUR_DU_POSTE = "fournisseur_du_poste"
+
+#: La cause que la garde nomme — à la place de l'erreur d'authentification que le fournisseur
+#: aurait levée bien plus tard, ou de la vraie réponse qu'il aurait rendue sur un poste configuré.
+CAUSE_FOURNISSEUR_DU_POSTE = (
+    "ce test allait appeler un vrai modèle : `provider_from_settings()` a résolu le fournisseur "
+    "configuré sur CE POSTE (sans `Settings` explicites), ce qui appelle le modèle par "
+    "l'abonnement sur la machine d'un développeur (#782, tests/conftest.py). Injecte un "
+    "répondeur (`RepondeurScripte`, `JugeScripte`, un point d'injection de `create_app`) ou un "
+    "fournisseur factice (`provider=…`), ou remplace "
+    "`maestro.providers.factory.provider_from_settings` par un double — et si ce test doit "
+    "vraiment lire le poste, marque-le `@pytest.mark.fournisseur_du_poste`."
+)
+
+
+class FournisseurDuPosteRefuse(RuntimeError):
+    """Levée par la garde à la place de la lecture des réglages du poste par la fabrique (#782).
+
+    Son texte est `CAUSE_FOURNISSEUR_DU_POSTE` : ce que le test allait faire et comment y
+    remédier — jamais une panne de fournisseur, que ce test n'a pas atteint.
+    """
+
+
+#: Ce dont le test a échoué en phase d'appel (le type de l'exception), ou `None` s'il a passé —
+#: posé par `pytest_runtest_makereport`, lu par la garde à la sortie du test pour ne pas nommer
+#: deux fois la même cause.
+_ECHEC_APPEL: pytest.StashKey[type[BaseException] | None] = pytest.StashKey()
 
 
 def git_manquant_en_ci(environnement: dict[str, str], git: str | None) -> bool:
@@ -138,6 +208,14 @@ def pytest_configure(config: pytest.Config) -> None:
     levé à la configuration, avant la collecte : il nomme la cause plutôt que de laisser lire un
     compte rendu criblé de `s`.
     """
+    # Le marqueur d'exemption de la garde du fournisseur (#782), déclaré pour que
+    # `--strict-markers` n'y voie jamais une faute de frappe.
+    config.addinivalue_line(
+        "markers",
+        f"{MARQUEUR_FOURNISSEUR_DU_POSTE}: ce test résout VOLONTAIREMENT le fournisseur de "
+        "modèle configuré sur le poste (#782) — la garde de tests/conftest.py s'efface ; à "
+        "réserver à un test qui n'appelle aucun modèle réel.",
+    )
     # Poste sans git : le `skipif` de chaque module reste la bonne réponse.
     if not git_manquant_en_ci(dict(os.environ), shutil.which("git")):
         return
@@ -231,4 +309,72 @@ def _pas_de_fuite_d_export_langfuse():
         f"{len(fuites)} LangfuseExportHandler laissé(s) sur le logger « {LOGGER_NAME} » : "
         "le journal de tous les tests suivants partirait vers Langfuse (#195). "
         "Retirer le handler posé (`logger.removeHandler`) en fin de test."
+    )
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]):
+    """Retient de quoi la phase d'appel a échoué — pour la garde du fournisseur (#782).
+
+    La garde échoue un test à sa sortie quand une résolution a été tentée ; si le test a
+    déjà échoué **de l'exception même qu'elle a levée**, la cause est nommée et la redire
+    en ferait un second échec pour le même fait. Elle a donc besoin de savoir de quoi la
+    phase d'appel s'est soldée, ce qu'une fixture ne voit pas : c'est ce que ce hook lui
+    dépose, et rien d'autre.
+    """
+    rapport = yield
+    if call.when == "call":
+        item.stash[_ECHEC_APPEL] = call.excinfo.type if call.excinfo is not None else None
+    return rapport
+
+
+@pytest.fixture(autouse=True)
+def _pas_de_fournisseur_du_poste(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch):
+    """Refuse au test la résolution du fournisseur configuré sur le poste, et le dit (#782).
+
+    Ce qui est remplacé est la lecture des réglages du poste **par la fabrique**
+    (`maestro.providers.factory.load_settings`), c'est-à-dire exactement ce que
+    `provider_from_settings()` fait quand on ne lui passe rien — et rien d'autre :
+    `provider_from_settings(settings)` avec des réglages construits par le test passe, un
+    `provider_from_settings` remplacé par un double n'arrive jamais ici, et le marqueur
+    `fournisseur_du_poste` efface la garde pour le test qui veut vraiment lire le poste.
+
+    Deux gestes, parce que les trois répondeurs de `create_app` **avalent** un échec de
+    résolution en réponse de repli (201, « réglage absent ») : lever ne suffit pas sur le
+    chemin même qu'on protège. La résolution tentée est donc **retenue**, et le test qui
+    l'a faite est échoué à sa sortie — même forme que la garde Langfuse — sauf s'il a déjà
+    échoué de `FournisseurDuPosteRefuse` elle-même, la cause étant alors sous les yeux.
+
+    Le `monkeypatch` du test est celui utilisé ici, à dessein : un test qui remplace lui
+    aussi la fabrique empile sa substitution sur celle-ci dans **une seule** pile de
+    restauration, donc dans le bon ordre quel que soit celui des fixtures — deux piles
+    laisseraient la garde en place après le test, liée à un test fini. Portée nommée :
+    celle d'un test — ce qu'une fixture de module ou de session fait à son **montage**
+    précède la garde ; y résoudre un fournisseur serait y appeler un modèle, ce qui ne se
+    fait pas, et rien ici ne le refuserait.
+    """
+    if request.node.get_closest_marker(MARQUEUR_FOURNISSEUR_DU_POSTE) is not None:
+        yield
+        return
+
+    tentatives: list[str] = []
+
+    def refuse_le_poste() -> Settings:
+        tentatives.append(request.node.nodeid)
+        raise FournisseurDuPosteRefuse(CAUSE_FOURNISSEUR_DU_POSTE)
+
+    # Import différé par le chemin en chaîne : la fabrique tire le SDK, payé une fois par
+    # processus — et jamais avant la neutralisation de l'environnement (en tête de module).
+    monkeypatch.setattr("maestro.providers.factory.load_settings", refuse_le_poste)
+
+    yield
+
+    if not tentatives:
+        return
+    if request.node.stash.get(_ECHEC_APPEL, None) is FournisseurDuPosteRefuse:
+        return
+    pytest.fail(
+        f"{len(tentatives)} résolution(s) du fournisseur du poste pendant ce test — "
+        f"{CAUSE_FOURNISSEUR_DU_POSTE}",
+        pytrace=False,
     )

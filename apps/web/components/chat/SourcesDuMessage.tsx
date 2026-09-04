@@ -33,16 +33,13 @@
 import { useId, useRef, useState } from "react";
 
 import { ExplorateurDossiers } from "@/components/projets/ExplorateurDossiers";
-import { BadgeEtat, Bouton, EtatVide } from "@/components/Primitives";
+import { BadgeEtat, Bouton, Champ, EtatVide } from "@/components/Primitives";
 import { IconeDossier, IconeFermer, IconeLienExterne } from "@/components/Icones";
 import { RefusSource } from "@/components/composer/RefusSource";
 import type { ErreurSource } from "@/lib/api";
 import { formaterOctets, libelleType, type SourceComposee } from "@/lib/sources";
 import { SOURCE_DOSSIER, SOURCE_URL } from "@/lib/types";
 import type { SourcesComposees } from "@/lib/useSourcesComposees";
-
-const CLASSE_CHAMP =
-  "w-full rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-annexe text-neutral-900 placeholder:text-neutral-400 focus:border-emerald-500 focus:outline-none disabled:opacity-50 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100 dark:placeholder:text-neutral-600";
 
 /**
  * Les gestes de dépôt : fichiers, dossier, adresse. Rendus **sous** la saisie,
@@ -148,29 +145,26 @@ export function SourcesDuMessage({
           )}
 
           <div className="flex flex-wrap items-end gap-2">
-            <label
-              className="flex min-w-56 flex-1 flex-col gap-1 text-annexe font-medium text-neutral-600 dark:text-neutral-400"
-              htmlFor={idUrl}
-            >
-              Adresse à lire
-              <input
-                id={idUrl}
-                type="url"
-                value={url}
-                onChange={(evenement) => setUrl(evenement.target.value)}
-                onKeyDown={(evenement) => {
-                  if (evenement.key === "Enter") {
-                    // Sans quoi Entrée soumettrait le formulaire du fil et
-                    // enverrait le message au lieu d'ajouter l'adresse.
-                    evenement.preventDefault();
-                    soumettreUrl();
-                  }
-                }}
-                disabled={occupe}
-                placeholder="https://…"
-                className={CLASSE_CHAMP}
-              />
-            </label>
+            {/* Un `Champ` du socle (#832) et non une recopie de ses classes :
+                c'est de là que viennent le bord de focus et le contour clavier. */}
+            <Champ
+              id={idUrl}
+              libelle="Adresse à lire"
+              className="min-w-56 flex-1"
+              type="url"
+              value={url}
+              onChange={(evenement) => setUrl(evenement.target.value)}
+              onKeyDown={(evenement) => {
+                if (evenement.key === "Enter") {
+                  // Sans quoi Entrée soumettrait le formulaire du fil et
+                  // enverrait le message au lieu d'ajouter l'adresse.
+                  evenement.preventDefault();
+                  soumettreUrl();
+                }
+              }}
+              disabled={occupe}
+              placeholder="https://…"
+            />
             <Bouton
               variante="contour"
               ton="neutre"

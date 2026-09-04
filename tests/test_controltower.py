@@ -184,6 +184,7 @@ def test_liste_des_taches_statut_agent_cout(client, state):
     assert t2 == {
         "id": "t2", "titre": "Relire", "statut": "terminee", "agent": "qa",
         "role": "QA / Testeur", "run_id": "run-1", "cout_usd": 0.25,
+        "cout_partiel": False,  # soldé par l'issue de la tâche, pas un relevé en cours (#835)
         "usage": None,  # aucune mesure détaillée rapportée (#57)
         "ticket": None,  # aucune référence de ticket externe transportée (#183)
         "projet_id": None,  # la tâche ne relève d'aucun projet (#222)
@@ -195,6 +196,10 @@ def test_liste_des_taches_statut_agent_cout(client, state):
         "etapes": [],
         "liens": [],
         "horodatage": t2["horodatage"],
+        # Le signe de vie (#836) : `null` sur une tâche qui ne travaille pas —
+        # terminée ici —, et servi sur la carte parce que le graphe en tire
+        # l'état de son nœud.
+        "activite": None,
     }
 
 

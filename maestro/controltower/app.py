@@ -134,6 +134,12 @@ Endpoints :
 - `PUT  /api/projets/{id}` — remplace la déclaration (l'intégrale, pas un diff) ;
 - `DELETE /api/projets/{id}` — oublie un projet, sans jamais toucher au dossier
   sur le disque ;
+- `POST /api/projets/{id}/versionner` — met un projet **non versionné** sous
+  Git (#855, verbe de #704) : `git init` puis un premier commit de toute la
+  racine, `.gitignore` respecté, et rend la fiche relue — `vcs` constaté. Sans
+  corps : le `vcs` ne se déclare pas (EF-38), il se déclenche. Un projet déjà
+  versionné rend sa fiche telle quelle ; un refus (`depot-englobant` 409,
+  `commit-refuse` 422, `git-indisponible` 503…) porte son motif, jamais un 500 ;
 - `GET  /api/fournisseurs` — ce qui existe côté modèles (#253) **et ce qui est
   déjà là** (#487) : les fournisseurs du **registre**, leurs modèles annoncés et,
   pour chacun, les niveaux d'effort admis (liste vide quand le fournisseur
@@ -413,7 +419,7 @@ from maestro.messaging import InMemoryMailbox, Mailbox, RedisMailbox
 from maestro.orchestrator.errors import BriefValidationError
 from maestro.orchestrator.schema import validate_brief
 from maestro.poste import SondePoste
-from maestro.projets import RacineRefusee, canonique, valider_racine
+from maestro.projets import RacineRefusee, VersionnementRefuse, canonique, valider_racine
 from maestro.providers.arbitrage import OUTIL_ARBITRAGE
 from maestro.providers.blocage import OUTIL_BLOCAGE
 from maestro.providers.courrier import OUTIL_COURRIER
@@ -2033,8 +2039,14 @@ def create_app(
         La mise à jour **en direct** passe par le flux existant, sans second
         canal : le graphe se recompose à chaque lecture depuis la projection, et
         ce sont donc `run.plan` (le plan est connu), `tache.statut` (un nœud
-        démarre, une arête s'allume) et `tache.detail` (une étape se coche, #489)
-        qui le font bouger. 404 si aucune trace reçue pour ce `run_id`.
+        démarre, une arête s'allume), `tache.detail` (une étape se coche, #489)
+        et `agent.activite` (le nœud en cours **vit**, #836) qui le font bouger.
+
+        Le nœud `en_cours` porte un **signe de vie** (`activite` : horodatage et
+        libellé court du dernier geste de son agent), `null` sur tout nœud qui
+        ne travaille pas : entre deux gestes d'agent, deux lectures rendent
+        deux valeurs — c'est ce qui manquait à un graphe immobile pendant toute
+        la durée d'une tâche. 404 si aucune trace reçue pour ce `run_id`.
         """
         if state.execution(run_id) is None:
             raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
@@ -2071,6 +2083,12 @@ def create_app(
         elle se recompose à la lecture, donc la mise à jour en direct passe par
         le flux existant, sans second canal.
 
+        Chaque couloir dont une tâche **travaille** porte un **signe de vie**
+        (#836) — `activite` : horodatage et libellé court du dernier geste de
+        son agent, le même que celui du nœud en cours du graphe —, `null` sur
+        un couloir arrêté. C'est un attribut de l'en-tête et jamais une entrée :
+        `agent.activite` reste hors de `entrees`, le tri de la frise est intact.
+
         Bornée à `PLAFOND_FRISE` entrées, les plus **récentes** : `total` et
         `tronquee` disent ce qui a été laissé de côté — une borne muette ferait
         passer un run d'une heure pour un run de cinq cents lignes. 404 si aucune
@@ -2082,6 +2100,7 @@ def create_app(
             run_id,
             journal.entrees_du_run(run_id),
             agents=state.agents_du_run(run_id),
+            activites=state.signes_de_vie_du_run(run_id),
         ).to_dict()
 
     @app.post("/api/sources/apercu")
@@ -3768,6 +3787,36 @@ def create_app(
         try:
             return projets.supprimer(id_projet)
         except (ValueError, ProjetInconnu) as exc:
+            raise _refus_projet(exc) from exc
+
+    @app.post("/api/projets/{id_projet}/versionner")
+    async def versionner_projet(id_projet: str) -> dict[str, Any]:
+        """Met un projet non versionné sous Git et rend sa fiche relue (#855).
+
+        Le geste qui fait passer un projet du régime « écriture en place » (#839)
+        au régime « worktree + fusion sous accord » (#705/#706, docs/24 §2.4) :
+        `git init` puis un premier commit de toute la racine — `git add -A`, donc
+        le `.gitignore` du projet respecté — pour que la branche de base résolve.
+        Rien n'est réimplémenté ici : la route appelle le verbe de #704
+        (`ProjetStore.versionner`) et traduit ses refus.
+
+        **Sans corps**, à dessein : le `vcs` n'est jamais un champ de requête
+        (EF-38 — constaté sur le disque, jamais déclaré), et c'est ce qui
+        distingue ce geste d'un `PUT` élargi. Un projet **déjà versionné** rend
+        sa fiche telle quelle (aucune commande, `modifie_le` intact). 404 si le
+        projet est inconnu ; un refus porte son **motif** — `depot-englobant`
+        (409, la racine est dans un autre dépôt), `commit-refuse` (422, un
+        `pre-commit` de l'utilisateur a dit non — la racine est dans l'état
+        d'avant), `git-indisponible` (503, le poste n'a pas Git), ou une racine
+        devenue inadmissible (`dossier-absent`…) — jamais un 500.
+
+        Joué **hors de la boucle d'événements** : le premier commit indexe tout ce
+        que la racine porte, jusqu'à cinq minutes sur un projet lourd, et une
+        route qui bloquerait la boucle figerait les flux SSE des autres écrans.
+        """
+        try:
+            return await asyncio.to_thread(projets.versionner, id_projet)
+        except (ValueError, ProjetInconnu, VersionnementRefuse) as exc:
             raise _refus_projet(exc) from exc
 
     @app.get("/api/fournisseurs")
