@@ -960,6 +960,64 @@ renvoi y défile la page, à mesurer au banc, aucune référence mobile vérifi�
 `tests/chat-pleine-page.test.tsx` (⑤) — la sonde de forme **prouvée sur la ligne d'avant**, qui ne
 portait qu'un fond.
 
+#### Le chat global pleine page — 2026-09-05 (#820, différée de #698)
+
+Surface : le corps de `/chat` — `components/Conversation.tsx` (fil + composeur, monté aussi par
+l'onglet Chat d'une fiche agent), `components/chat/BulleFil.tsx`, la mise en page de
+`app/chat/page.tsx`. **Première veille différée jouée** (§5.3 ci-dessus, `veille-differe` → #820) :
+la surface était livrée depuis #690/#698, la veille s'est donc jouée **sur pièces**. Décision
+complète en commentaire de **#820**, captures dans l'atelier de la session. La question : « qu'est-ce
+qu'on s'est dit, dans quel ordre, et où en est la réponse ? »
+
+**Mesuré avant** (démo, 1920×872) : le fil occupe **1144 px** quand les bulles sont bornées à
+543 (`min(70 %, 72ch)`, #697) — la bulle de la personne (x 931 → 1474) et celle de l'agent
+(x 331 → 874) **ne se recouvrent pas**, 57 px de vide entre les deux colonnes, ~600 px pour l'œil
+d'un tour au suivant (à 1440×900 : recouvrement de 290 px, le zigzag reste) ; le composeur fait la
+largeur de la section, **deux fois** celle de ce qu'on lit ; chaque message, des deux côtés, est
+**en boîte** avec sa ligne « auteur · heure » ; le fil suit la réponse sauf si l'on est remonté
+(#695), et **rien ne dit qu'on a décroché**.
+
+**Vérifié en direct** (captures) : **ChatGPT** — colonne de lecture **640 px** centrée dans un
+volet de 1660 ; la personne en bulle grise à droite (max 70 %, sans accent), la réponse en **texte
+de page** sans bulle, 16/26 ; 36 px entre tours, 12 à l'intérieur ; composeur de 768 px à quai ;
+« Aller en bas » (44×44) **seulement une fois remonté**. **Perplexity** — colonne **720 px**,
+composeur **exactement** de la largeur de la colonne, question en carte grise, pas de retour en bas.
+**Zulip** (vue publique, `#general`) — colonne 911 px, tout part du bord gauche, **aucune bulle**,
+ligne d'auteur **au premier message d'une suite** seulement, destination nommée dans la barre de
+composition, retour en bas ancré à la colonne. **GitHub Discussions** (au banc du §1) — colonne
+928 px, titre collant, réponse en fin de flux.
+
+**Non vérifié, donc non cité** : Microsoft Copilot (mur de connexion dès l'ouverture), Claude.ai,
+Slack, Teams, Gemini.
+
+**Quatre partis pris** : le fil et le composeur partagent **une colonne de lecture bornée et
+centrée** — `max-w-3xl`, 48 rem *(ChatGPT, Perplexity)* · **seule la personne a une bulle**,
+l'agent parle dans le texte de la page, `pleineLargeur` (le brief, un formulaire) garde son cadre
+*(ChatGPT, Zulip, GitHub)* · **un tour = un auteur, nommé une fois** — pied visible sur le dernier
+message d'une suite, `sr-only` sur les autres, `gap-3` dedans, `gap-6` entre *(Zulip, ChatGPT)* ·
+**revenir en bas est un geste, visible seulement quand on a décroché** — un `Bouton` contour à quai
+au-dessus du formulaire, posé sur le changement de suivi et jamais par cran de molette *(ChatGPT,
+Zulip)*.
+
+**Refusés sur place, avec leur raison** : le fil en 16 px — l'échelle n'a pas de pas de texte
+courant à 16 px et le fil est l'un des dix écrans qui partagent `corps` ; les avatars — aucune
+primitive, un pictogramme par auteur est de l'identité ; la question rendue en titre (Perplexity) —
+un fil n'est pas une page de réponse ; la barre de sujet collante (Zulip) — deux collants suffisent,
+et l'en-tête nomme déjà la conversation (#831) ; le dégradé sous le composeur — fond opaque (#691).
+
+**Vu au passage, hors périmètre** : le bandeau d'aparté de `app/chat/page.tsx` est encore en
+`sky-*` brut — ce que #831 a retiré de la ligne de conversation → **#878**.
+
+**Ce que la veille n'a pas regardé** : le mobile (même trou que #724 → #873) ; l'onglet Chat d'une
+fiche agent en propre ; le Markdown et les blocs de code dans une colonne de 768 px ; le brief
+`pleineLargeur` à cette largeur.
+
+**Rien de #698 n'est défait** : `chat-pleine-page.test.tsx` ①–④ et `composeur.test.tsx` gardent une
+géométrie à laquelle ces partis pris **s'ajoutent** ; seules les sondes de la bulle côté agent
+bougent. Partis pris 1 à 3 → **#876**, parti pris 4 → **#877**. Le ticket source #698 porte
+`veille::arbitree` depuis cette veille — c'est l'enregistrement qui empêche la question de revenir,
+et le premier de ce genre posé **après** la fermeture du ticket qu'il arbitre.
+
 ---
 
 ## 6. Recommandation
