@@ -30,7 +30,11 @@
  *    les précédentes, et savoir laquelle on lit ;
  * ④ **le fil n'exécute rien** (#697, vu du fil et non du module) — ce qu'un
  *    modèle écrit reste du texte, dans la bulle comme dans la réponse qui
- *    s'écrit, et ce que l'utilisateur a tapé se relit tel qu'il l'a tapé.
+ *    s'écrit, et ce que l'utilisateur a tapé se relit tel qu'il l'a tapé ;
+ * ⑤ **le chemin vers les conversations** (#831) — la carte en tête de la
+ *    colonne, l'en-tête du fil qui nomme l'ouverte et y mène, la forme de
+ *    l'ouverte prouvée contre la ligne d'avant, la bascule qui ne cache jamais
+ *    l'ouverte.
  *
  * ⚠ **Aucune géométrie ici** (#308) : jsdom ne calcule ni hauteur, ni
  * `overflow`, ni défilement, et un test qui prétendrait mesurer l'un des trois
@@ -345,6 +349,222 @@ describe("les conversations, à l'écran (#696)", () => {
     await utilisateur.click(lignesDeLHistorique()[1]);
 
     expect(ouvrirConversation).toHaveBeenCalledWith(AVANT.id);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑤ Le chemin vers les conversations (#831)
+// ---------------------------------------------------------------------------
+
+/**
+ * La ligne ouverte telle que #696 la rendait : un fond et `aria-current`, rien
+ * d'autre — l'état porté par la **couleur seule**, en `sky-*` brut, que le banc
+ * de docs/30 §1.6 refuse. C'est l'échantillon fautif des deux sondes ci-dessous :
+ * sans lui, « porte une forme » serait vrai d'une sonde qui ne regarde rien.
+ */
+const LIGNE_OUVERTE_AVANT_831 =
+  "flex w-full cursor-pointer flex-col items-start gap-0.5 rounded-md px-2 py-1.5 text-left " +
+  "bg-sky-50 text-sky-900 dark:bg-sky-950 dark:text-sky-100";
+
+/** Une barre de bord visible sur un côté — une forme, pas une couleur. */
+function porteUneBarre(classes: string): boolean {
+  const utilitaires = classes.split(/\s+/);
+  return (
+    utilitaires.some((u) => /^border-[lrtb]-\d+$/.test(u)) &&
+    !utilitaires.includes("border-transparent")
+  );
+}
+
+/** Une couleur `sky-*` écrite en dur, hors de la palette sémantique. */
+function porteDuSkyBrut(classes: string): boolean {
+  return /(?:^|[\s:])(?:bg|text|border)-sky-\d+/.test(classes);
+}
+
+/** La colonne de propriétés — celle que la règle des trois places compte. */
+function colonneDeProprietes(): HTMLElement {
+  return screen.getByRole("complementary", { name: "Propriétés du fil" });
+}
+
+/** Les lignes rendues — la bascule « Voir les N autres » n'en est pas une. */
+function lignesRendues(): HTMLElement[] {
+  return lignesDeLHistorique().filter(
+    (bouton) => !bouton.hasAttribute("aria-expanded"),
+  );
+}
+
+/** La bascule de la liste bornée, ou `null` quand tout tient. */
+function basculeDeLaListe(): HTMLElement | null {
+  return (
+    within(carteDesConversations())
+      .queryAllByRole("button")
+      .find((bouton) => bouton.hasAttribute("aria-expanded")) ?? null
+  );
+}
+
+/** La bascule quand le test l'attend — une absence y est une faute nommée. */
+function basculeAttendue(): HTMLElement {
+  const bascule = basculeDeLaListe();
+  if (bascule === null) throw new Error("bascule de la liste absente");
+  return bascule;
+}
+
+describe("le chemin vers les conversations (#831)", () => {
+  const RECENTE = conversationFactice({
+    id: "20260827t090000-aaaaaa",
+    titre: "Ajoute la pagination",
+    messages: 4,
+  });
+  const ANCIENNE = conversationFactice({
+    id: "origine",
+    titre: "Le fil d'avant",
+    messages: 26,
+  });
+
+  /** N conversations dans l'ordre servi — de quoi dépasser la borne. */
+  function beaucoup(n: number) {
+    return Array.from({ length: n }, (_, rang) =>
+      conversationFactice({
+        id: `c${rang + 1}`,
+        titre: `Conversation ${rang + 1}`,
+        derniere: "",
+      }),
+    );
+  }
+
+  it("met la carte en tête de la colonne de propriétés", () => {
+    poserFilAssistance({
+      conversation: RECENTE.id,
+      conversations: [RECENTE, ANCIENNE],
+    });
+    monterLeChat();
+
+    const premiere = within(colonneDeProprietes()).getAllByRole("article")[0];
+    expect(
+      within(premiere).queryByRole("heading", { name: "Conversations" }),
+    ).not.toBeNull();
+  });
+
+  it("nomme le fil dont c'est l'historique, sous le titre", () => {
+    // Le lien causal de #696 — la liste est celle du destinataire — n'est plus
+    // dit par l'ordre des cartes : il est écrit.
+    poserFilAssistance({ conversation: RECENTE.id, conversations: [RECENTE] });
+    monterLeChat();
+
+    expect(carteDesConversations().textContent).toContain(
+      "avec l'orchestration",
+    );
+  });
+
+  it("nomme la conversation ouverte dans l'en-tête du fil, et le nom y mène", async () => {
+    const utilisateur = userEvent.setup();
+    poserFilAssistance({
+      conversation: ANCIENNE.id,
+      conversations: [RECENTE, ANCIENNE],
+    });
+    monterLeChat();
+
+    const renvoi = screen.getByRole("button", {
+      name: /^Le fil d'avant — conversation ouverte/,
+    });
+    // Dans le corps, pas dans la carte : c'est là qu'on lit, et c'est de là
+    // qu'on part.
+    expect(carteDesConversations().contains(renvoi)).toBe(false);
+
+    await utilisateur.click(renvoi);
+
+    const ouverte = lignesRendues().find(
+      (ligne) => ligne.getAttribute("aria-current") === "true",
+    );
+    expect(ouverte).toBeDefined();
+    expect(document.activeElement).toBe(ouverte);
+  });
+
+  it("ne nomme rien tant que la liste n'est pas arrivée", () => {
+    poserFilAssistance({ conversation: "", conversations: [] });
+    monterLeChat();
+
+    expect(
+      screen.queryByRole("button", { name: /conversation ouverte/ }),
+    ).toBeNull();
+  });
+
+  it("distingue l'ouverte par la forme, sans couleur brute — sonde prouvée sur la ligne d'avant", () => {
+    // La moitié qui prouve : la ligne de #696 n'a pas de forme et porte du sky.
+    expect(porteUneBarre(LIGNE_OUVERTE_AVANT_831)).toBe(false);
+    expect(porteDuSkyBrut(LIGNE_OUVERTE_AVANT_831)).toBe(true);
+
+    poserFilAssistance({
+      conversation: ANCIENNE.id,
+      conversations: [RECENTE, ANCIENNE],
+    });
+    monterLeChat();
+
+    const [premiere, seconde] = lignesRendues();
+    expect(seconde.getAttribute("aria-current")).toBe("true");
+    expect(porteUneBarre(seconde.className)).toBe(true);
+    expect(porteUneBarre(premiere.className)).toBe(false);
+    for (const ligne of [premiere, seconde]) {
+      expect(porteDuSkyBrut(ligne.className)).toBe(false);
+    }
+    // La graisse aussi : une forme de plus que la couleur.
+    expect(within(seconde).getByText("Le fil d'avant").className).toContain(
+      "font-semibold",
+    );
+    expect(
+      within(premiere).getByText("Ajoute la pagination").className,
+    ).not.toContain("font-semibold");
+  });
+
+  it("garde « Nouvelle conversation » dans l'en-tête de la carte, sous son nom entier", () => {
+    poserFilAssistance({ conversation: RECENTE.id, conversations: [RECENTE] });
+    monterLeChat();
+
+    const bouton = boutonNouvelleConversation();
+    const titre = within(carteDesConversations()).getByRole("heading", {
+      name: "Conversations",
+    });
+    expect(titre.parentElement?.contains(bouton)).toBe(true);
+  });
+
+  it("borne la liste et dit ce qu'elle garde en réserve", async () => {
+    const utilisateur = userEvent.setup();
+    const toutes = beaucoup(11);
+    poserFilAssistance({ conversation: toutes[0].id, conversations: toutes });
+    monterLeChat();
+
+    expect(lignesRendues()).toHaveLength(8);
+    expect(basculeAttendue().textContent).toContain("Voir les 3 autres");
+    expect(basculeAttendue().getAttribute("aria-expanded")).toBe("false");
+
+    await utilisateur.click(basculeAttendue());
+    expect(lignesRendues()).toHaveLength(11);
+    expect(basculeAttendue().textContent).toContain("Réduire");
+    expect(basculeAttendue().getAttribute("aria-expanded")).toBe("true");
+
+    await utilisateur.click(basculeAttendue());
+    expect(lignesRendues()).toHaveLength(8);
+  });
+
+  it("ne cache jamais la conversation ouverte, même au-delà de la borne", () => {
+    const toutes = beaucoup(11);
+    poserFilAssistance({ conversation: "c11", conversations: toutes });
+    monterLeChat();
+
+    const lignes = lignesRendues();
+    expect(lignes).toHaveLength(9);
+    expect(lignes[8].getAttribute("aria-current")).toBe("true");
+    expect(lignes[8].textContent).toContain("Conversation 11");
+    expect(basculeAttendue().textContent).toContain("Voir les 2 autres");
+  });
+
+  it("ne montre pas de bascule quand tout tient", () => {
+    poserFilAssistance({
+      conversation: RECENTE.id,
+      conversations: [RECENTE, ANCIENNE],
+    });
+    monterLeChat();
+
+    expect(basculeDeLaListe()).toBeNull();
   });
 });
 

@@ -484,7 +484,9 @@ Ce que le cas apprend à la règle, en trois points :
 
 La troisième place a fait tout le travail : la colonne porte « Parler à », « Conversations » (#696),
 « Ouvert depuis ce fil » et le cadrage à file vide — quatre cartes, aucun plafond, et le corps rendu
-à la conversation.
+à la conversation. Depuis #831, « Conversations » **ouvre** la colonne et l'en-tête du fil la nomme —
+c'est la veille du §5.3 (2026-09-05) qui l'a tranché : la place était la bonne, l'**ordre** et le
+**renvoi** manquaient.
 
 ⚠ **Le tableau du §4.2 n'a pas été complété d'une ligne `/chat`**, et c'est délibéré : il est
 l'**état de départ** daté du 2026-08-25, compté à la main. Y ajouter une mesure d'aujourd'hui en
@@ -910,6 +912,53 @@ Ce que la veille n'avait **pas regardé** reste ouvert : le **mobile** et les po
 banc n'y a rien trouvé d'inatteignable, mais aucune référence mobile n'a été vérifiée, et sous `sm`
 le raccourci se retire du rail sans qu'une messagerie de référence l'ait tranché. La question est
 **différée** (§5.3 ci-dessus, `veille-differe` → ticket de veille **#873**) plutôt que fermée.
+
+#### Le chemin vers les conversations du chat global — 2026-09-05 (#831)
+
+Surface : `ConversationsDuFil` / `LigneConversation` dans `app/chat/page.tsx`, troisième carte de la
+colonne de propriétés de `/chat`, et l'en-tête du fil qui ne la nommait pas. Décision complète en
+commentaire de **#831**, captures dans l'atelier de la session. La question : « dans quelle
+conversation suis-je, et comment j'en rouvre une autre ? »
+
+**Mesuré avant** (démo, 1920×872) : titre CONVERSATIONS à y = 592, première conversation à 726,
+« Ouvert depuis ce fil » coupé à 836 ; la colonne a son propre ascenseur, donc la suite est hors vue
+sans indice ; l'en-tête du fil dit « CHAT GLOBAL », le composeur « Écrire à l'orchestration… » —
+rien ne nomme la conversation ouverte ; l'état « ouverte » est porté par la couleur seule
+(`bg-sky-50`, hors palette).
+
+**Vérifié en direct** (captures) : **Zulip** — « Recent conversations » est une *vue*, première
+entrée de la barre latérale, table sujet · participants · récence triée par activité, et la barre de
+composition **nomme sa destination** avec « Start new conversation » à côté ; **GitHub Discussions**
+— une ligne = titre au corps, métadonnées annexes dessous, compte de réponses en **place fixe à
+droite**, tri annoncé « Latest activity ». **Lu (doc officielle)** : **Slack** — « Threads with unread
+replies will appear at the top of the list », l'en-tête de la conversation ouverte porte son nom et
+« click the channel name to see details » ; **Teams** — « Chats: your recent chats, sorted by most
+recent activity ».
+
+**Non vérifié, donc non cité** : HuggingChat et ChatGPT (historique derrière la connexion, help
+center en 403) — le regroupement « Today / Yesterday » n'a pas été vu et n'est pas proposé.
+
+**Cinq partis pris** : la conversation ouverte **se nomme là où on lit** et son nom **mène à la
+liste** *(Slack, Zulip)* · la carte passe **en tête** de la colonne, le fil nommé sous son titre
+*(Zulip, Teams)* · une ligne = **sujet · récence · volume**, l'ouverte à sa **forme** — barre et
+graisse sur `info-creux`/`info-texte`, plus de `sky-*` *(GitHub, §1.6)* · « Nouvelle conversation »
+**geste de tête**, dans l'en-tête de la carte *(Zulip)* · liste **bornée à huit**, le reste derrière
+une bascule qui dit son compte, l'ouverte toujours rendue *(Zulip, GitHub)*.
+
+**Refusés sur place, avec leur raison** : une barre latérale de conversations à gauche du fil — la
+Control Tower a déjà son menu, et un second rail serait un bloc de corps de plus (§4) ; un filtre ou
+une recherche — faute de volume, à rouvrir sur un fait ; participants, votes, non-lus, favoris — sans
+objet dans `ConversationChat`.
+
+**Ce que la veille n'a pas regardé** : la colonne passée sous le fil (`@4xl`) et le mobile — le
+renvoi y défile la page, à mesurer au banc, aucune référence mobile vérifiée (même trou que #724 →
+#873) ; l'onglet Chat d'une fiche agent, qui n'a pas de liste ; le nom d'une conversation au-delà de
+« Conversation vierge ».
+
+**Livré par #831**, dans le même lot : `app/chat/page.tsx` (l'ancre, `allerAuxConversations`,
+`ConversationOuverte`, la borne `CONVERSATIONS_VISIBLES`), gardé par
+`tests/chat-pleine-page.test.tsx` (⑤) — la sonde de forme **prouvée sur la ligne d'avant**, qui ne
+portait qu'un fond.
 
 ---
 

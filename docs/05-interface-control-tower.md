@@ -2325,13 +2325,30 @@ laissait l'écran inchangé ; il s'en sert ici. Avant ce lot, `/chat` n'offrait 
 repartir de zéro, et un fil de cinquante messages ne se relisait pas pour retrouver la demande
 d'avant-hier — le seul rattrapage était « Ouvert depuis ce fil », qui ne liste que les **runs**.
 
-**Une carte, dans la colonne de propriétés.** « Conversations » se pose entre « Parler à » et
-« Ouvert depuis ce fil » : un bouton **Nouvelle conversation**, puis la liste, la plus récente
-d'abord. L'emplacement est tranché par la règle des trois places ([docs/30 §4](./30-cible-visuelle-control-tower.md)) — une
+**Une carte, dans la colonne de propriétés — en tête depuis #831.** « Conversations » était posée
+entre « Parler à » et « Ouvert depuis ce fil » ; elle **ouvre** la colonne depuis le 2026-09-05 (voir
+ci-dessous). L'emplacement est tranché par la règle des trois places ([docs/30 §4](./30-cible-visuelle-control-tower.md)) — une
 conversation ouverte est une **propriété du fil**, et la colonne est la seule des trois sans
 plafond. En faire un quatrième bloc de corps ferait rougir `apps/web/tests/sobriete.test.tsx`, et ce
-serait le bon signal. L'ordre dans la colonne est causal : on choisit d'abord *à qui* l'on parle, la
-liste étant celle de **son** fil.
+serait le bon signal. Le lien causal — on choisit *à qui* l'on parle, la liste étant celle de **son**
+fil — n'est plus dit par l'ordre des cartes : il est **nommé** sous le titre de la carte (« celles du
+fil avec l'orchestration », « avec @dev »).
+
+**Le chemin qui y mène a été refait par #831** (revue du 2026-08-30 : « consulter la liste des
+conversations n'est pas intuitif »). Mesuré à 1920×872, la carte était la troisième de la colonne,
+son titre à y = 592 et la première conversation à 726, derrière l'ascenseur propre de la colonne et
+sans un indice qu'il y avait une suite ; et rien dans le corps ne nommait la conversation ouverte. La
+veille (`/design-veille`, consignée sur le ticket et dans
+[docs/30 §5.3](./30-cible-visuelle-control-tower.md)) a tranché cinq partis pris, tous dans le socle :
+**l'en-tête du fil nomme la conversation ouverte**, et ce nom est un bouton qui **mène à la liste**
+(la carte défile en vue, la ligne ouverte prend le focus) ; la carte passe **en tête** de la
+colonne ; une ligne dit **sujet · récence · volume** et l'ouverte se reconnaît à sa **forme** (barre
+`accent`, graisse) sur `info-creux`/`info-texte`, plus de `sky-*` brut ; **Nouvelle conversation**
+est un geste de tête, dans l'en-tête de la carte ; et la liste est **bornée à huit**, le reste
+derrière une bascule qui dit son compte — l'ouverte est toujours rendue. Refusé avec sa raison : une
+barre latérale de conversations à gauche du fil, le patron des messageries — la Control Tower a déjà
+son menu, et un second rail serait un bloc de corps de plus. Gardé par
+`apps/web/tests/chat-pleine-page.test.tsx` (⑤), la sonde de forme prouvée sur la ligne d'avant.
 
 **Un fil vierge s'appelle « Conversation vierge », et c'est l'écran qui le nomme.** L'API laisse le
 titre vide tant que rien n'a été dit (§6.14) — elle ne peut pas inventer une phrase qui n'a pas été
