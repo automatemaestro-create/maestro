@@ -108,6 +108,44 @@
  * - **la liste ne se recopie pas.** Titre, date et nombre de messages viennent de
  *   la carte servie par l'API (`ConversationChat`, §6.14), jamais d'un décompte
  *   refait ici sur les messages chargés — on n'en a qu'un fil sur N.
+ *
+ * ## Le chemin vers les conversations (#831)
+ *
+ * La fonctionnalité de #696 marchait ; c'est le chemin qui y menait qui ne
+ * l'était pas (revue du 2026-08-30 : « consulter la liste des conversations
+ * n'est pas intuitif »). Mesuré à 1920×872, la carte était la **troisième** de
+ * la colonne, son titre à y = 592 et la première conversation à 726, derrière
+ * l'ascenseur propre de la colonne — sans un indice qu'il y avait une suite —,
+ * et **rien dans le corps ne nommait la conversation ouverte**. Ce que la veille
+ * (commentaire du ticket, docs/30 §5.3) a tranché, en cinq partis pris :
+ *
+ * - **la conversation ouverte se nomme là où on lit** — d'après Slack, dont
+ *   l'en-tête porte le nom de ce qu'on lit et en fait un geste : l'`entete` du
+ *   fil porte son titre (`ConversationOuverte`), et le cliquer **mène à la
+ *   liste** (`allerAuxConversations` — la carte défile en vue, la ligne ouverte
+ *   prend le focus) ;
+ * - **la liste vient en tête de la colonne** — d'après Zulip (« Recent
+ *   conversations », première entrée) et Teams (« Chats, sorted by most recent
+ *   activity »). Le lien causal de #696 (« la liste est celle du destinataire »)
+ *   ne se perd pas : il est **nommé** sous le titre (« avec l'orchestration »)
+ *   au lieu d'être dit par un ordre que personne ne lisait ;
+ * - **une ligne = sujet · récence · volume, et l'ouverte a une forme** — d'après
+ *   GitHub Discussions (titre au corps, métadonnées annexes, compte en place fixe
+ *   à droite) : barre `border-accent` et graisse, sur `info-creux`/`info-texte`,
+ *   plus de `sky-*` brut — l'état n'est plus porté par la couleur seule ;
+ * - **« Nouvelle conversation » est un geste de tête** — d'après Zulip, qui
+ *   pose « Start new conversation » à côté de la destination courante : dans
+ *   l'`aside` de l'en-tête, en petite taille, et le paragraphe d'explication
+ *   tient en une ligne — la première conversation remonte d'environ 80 px ;
+ * - **la liste est bornée** (`CONVERSATIONS_VISIBLES`), le reste derrière une
+ *   bascule qui dit son compte — sans quoi une liste sans borne renverrait
+ *   « Parler à » sous le pli, le défaut qu'on corrige déplacé d'une carte. La
+ *   conversation ouverte est **toujours rendue**, même au-delà de la borne.
+ *
+ * Refusé, avec sa raison : une barre latérale de conversations à gauche du fil
+ * (le patron ChatGPT / Teams) — la Control Tower a déjà son menu, et un second
+ * rail serait un bloc de corps de plus, que `sobriete.test.tsx` refuserait à
+ * raison. Ce qui manquait était l'**ordre** et le **renvoi**, pas une place.
  */
 
 import { useMemo, useState } from "react";
@@ -239,11 +277,14 @@ export default function PageChat() {
           amorces={global ? AMORCES_ORCHESTRATION : []}
           surSaisie={detacherLaMention}
           entete={
-            !global && (
-              <BadgeEtat ton="info" contour>
-                @{destinataire}
-              </BadgeEtat>
-            )
+            <>
+              {!global && (
+                <BadgeEtat ton="info" contour>
+                  @{destinataire}
+                </BadgeEtat>
+              )}
+              <ConversationOuverte fil={fil} />
+            </>
           }
           bandeau={
             !global && (
@@ -292,17 +333,18 @@ export default function PageChat() {
           "@4xl:sticky @4xl:top-20 @4xl:max-h-[calc(100dvh-6rem)] @4xl:self-start @4xl:overflow-y-auto"
         }
       >
-        {/* Le cadrage à file vide (#691) : il ne disparaît pas, il change de
-            place — voir le corps ci-dessus. Ce qu'il dit ici est ce qu'il disait
-            là-bas : pourquoi la file est vide, et par où on y met quelque chose. */}
-        {!cadrageEnAttente && (
-          <Carte densite="aeree">
-            <EnTeteSection titre="Cadrage en attente" icone={IconeObjectif} />
-            <div className="mt-3">
-              <FilDeCadrage />
-            </div>
-          </Carte>
-        )}
+        {/* La liste des conversations vient EN TÊTE (#831) — voir l'en-tête de
+            la page : c'est ce qu'on vient chercher le plus souvent dans cette
+            colonne, et la troisième carte commençait sous le pli. Le lien causal
+            de #696 (« la liste est celle du destinataire ») est nommé sous son
+            titre plutôt que dit par l'ordre. L'ancre est la cible du renvoi de
+            l'en-tête du fil (`allerAuxConversations`). */}
+        <Carte densite="aeree" id={ID_CARTE_CONVERSATIONS}>
+          <ConversationsDuFil
+            fil={fil}
+            nomDuFil={global ? "l'orchestration" : `@${destinataire}`}
+          />
+        </Carte>
         <Carte densite="aeree">
           <EnTeteSection titre="Parler à" icone={IconeAgent} />
           <p className="mt-2 text-annexe text-neutral-500 dark:text-neutral-400">
@@ -324,12 +366,19 @@ export default function PageChat() {
             ))}
           </ul>
         </Carte>
-        {/* Après « Parler à », et l'ordre est causal : on choisit d'abord à qui
-            l'on parle, la liste ci-dessous étant celle de *son* fil (#696). */}
-        <Carte densite="aeree">
-          <EnTeteSection titre="Conversations" icone={IconeHistorique} />
-          <ConversationsDuFil fil={fil} />
-        </Carte>
+        {/* Le cadrage à file vide (#691) : il ne disparaît pas, il change de
+            place — voir le corps ci-dessus. Ce qu'il dit ici est ce qu'il disait
+            là-bas : pourquoi la file est vide, et par où on y met quelque chose.
+            Après les deux cartes de navigation (#831) : ce qu'il dit est une
+            explication, pas un geste. */}
+        {!cadrageEnAttente && (
+          <Carte densite="aeree">
+            <EnTeteSection titre="Cadrage en attente" icone={IconeObjectif} />
+            <div className="mt-3">
+              <FilDeCadrage />
+            </div>
+          </Carte>
+        )}
         <Carte densite="aeree">
           <EnTeteSection titre="Ouvert depuis ce fil" icone={IconeRuns} />
           <SuitesDuFil messages={fil.messages} taches={taches} />
@@ -353,19 +402,106 @@ export default function PageChat() {
  */
 const CONVERSATION_VIERGE = "Conversation vierge";
 
+/** L'ancre de la carte « Conversations » — la cible du renvoi de l'en-tête (#831). */
+const ID_CARTE_CONVERSATIONS = "conversations-du-fil";
+
+/**
+ * Le nombre de conversations rendues avant la bascule (#831). Huit lignes de
+ * deux pas font ~420 px : la carte reste en vue entière sur la fenêtre de
+ * référence (872 px), et « Parler à » avec elle.
+ */
+const CONVERSATIONS_VISIBLES = 8;
+
+/**
+ * Le renvoi de l'en-tête (#831) : la carte défile en vue, puis la ligne ouverte
+ * prend le focus — c'est elle qu'un lecteur d'écran annonce (« courant »), et
+ * c'est là qu'un clic de plus rouvre une autre conversation. Sous `@4xl`, où la
+ * colonne passe sous le fil, c'est la page qui défile : le geste est le même.
+ *
+ * Le mouvement respecte `prefers-reduced-motion`, comme toute transition du
+ * produit (docs/30 §3) ; les deux API sont testées avant d'être appelées parce
+ * que jsdom n'implémente ni l'une ni l'autre.
+ */
+function allerAuxConversations(): void {
+  const carte = document.getElementById(ID_CARTE_CONVERSATIONS);
+  if (carte === null) return;
+  const reduit =
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (typeof carte.scrollIntoView === "function") {
+    carte.scrollIntoView({
+      block: "nearest",
+      behavior: reduit ? "auto" : "smooth",
+    });
+  }
+  const ligne =
+    carte.querySelector<HTMLElement>('[aria-current="true"]') ??
+    carte.querySelector<HTMLElement>("button");
+  ligne?.focus();
+}
+
+/**
+ * La conversation ouverte, nommée dans l'en-tête du fil (#831) — le premier
+ * parti pris de la veille : ce qu'on lit dit ce que c'est, et le nom est le
+ * geste qui mène à la liste.
+ *
+ * Rien tant que la liste n'est pas chargée : afficher « Conversation vierge »
+ * le temps qu'elle arrive nommerait une conversation qui n'est pas celle-là.
+ * Le nom accessible dit plus que le libellé visible — le libellé y est en tête
+ * (WCAG 2.5.3) — pour que ce bouton ne porte pas le même nom que la ligne de la
+ * liste : deux commandes homonymes ne se distinguent plus à l'oreille (#696).
+ */
+function ConversationOuverte({ fil }: { fil: Chat }) {
+  const carte = fil.conversations.find((c) => c.id === fil.conversation);
+  if (carte === undefined) return null;
+  const titre = carte.titre === "" ? CONVERSATION_VIERGE : carte.titre;
+  return (
+    <Bouton
+      variante="discret"
+      ton="neutre"
+      taille="petite"
+      icone={IconeHistorique}
+      aria-label={`${titre} — conversation ouverte, aller à la liste`}
+      onClick={allerAuxConversations}
+      className="max-w-64"
+    >
+      <span className="min-w-0 truncate">{titre}</span>
+    </Bouton>
+  );
+}
+
 /**
  * L'historique du fil et le geste qui en ouvre un neuf (#696) — les deux moitiés
- * de « démarrer un nouveau chat et voir l'historique », dans la colonne de
- * propriétés (voir l'en-tête de la page).
+ * de « démarrer un nouveau chat et voir l'historique », en tête de la colonne
+ * de propriétés depuis #831 (voir l'en-tête de la page).
  *
  * Le composant ne **décide** de rien : `useChat` tient la conversation ouverte,
  * la liste et les deux verbes ; l'API tient l'ordre (la plus récente d'abord) et
  * l'idempotence de l'ouverture. Ce qui reste ici est ce qui se voit — comment on
- * appelle un fil vierge, et lequel porte la marque du fil ouvert.
+ * appelle un fil vierge, lequel porte la marque du fil ouvert, et **combien** de
+ * lignes tiennent avant la bascule. Celle-ci ne cache jamais la conversation
+ * ouverte : une liste où « celle que je lis » serait derrière « Voir les N
+ * autres » contredirait le renvoi de l'en-tête, qui promet de la montrer.
+ *
+ * Le fil dont c'est l'historique est **nommé** sous le titre (`nomDuFil`) :
+ * c'est le lien causal de #696 — la liste est celle du destinataire choisi dans
+ * « Parler à » —, dit en toutes lettres maintenant que la carte passe avant le
+ * choix du destinataire. Le bouton de l'en-tête garde son nom accessible
+ * entier, « Nouvelle conversation », sous un libellé visible plus court qui en
+ * est le début (WCAG 2.5.3) : à 320 px de colonne, le libellé entier repoussait
+ * le bouton sous le titre.
  */
-function ConversationsDuFil({ fil }: { fil: Chat }) {
+function ConversationsDuFil({
+  fil,
+  nomDuFil,
+}: {
+  fil: Chat;
+  /** « l'orchestration », « @dev » — le destinataire dont c'est l'historique. */
+  nomDuFil: string;
+}) {
   const maintenant = useHorloge();
   const [ouverture, setOuverture] = useState(false);
+  const [deployee, setDeployee] = useState(false);
 
   const ouvrirNeuve = async () => {
     setOuverture(true);
@@ -376,28 +512,43 @@ function ConversationsDuFil({ fil }: { fil: Chat }) {
     }
   };
 
+  // Les N premières, plus l'ouverte si elle est au-delà : filtrer plutôt que
+  // découper garde l'ordre servi, sans rien retrier ici.
+  const bornees = fil.conversations.filter(
+    (carte, rang) =>
+      rang < CONVERSATIONS_VISIBLES || carte.id === fil.conversation,
+  );
+  const enReserve = fil.conversations.length - bornees.length;
+  const visibles = deployee ? fil.conversations : bornees;
+
   return (
     <>
-      <p className="mt-2 text-annexe text-neutral-500 dark:text-neutral-400">
-        Chaque conversation garde son fil. En ouvrir une neuve ne touche pas à la
-        précédente, qui reste listée ici et se rouvre d&apos;un clic.
+      <EnTeteSection
+        titre="Conversations"
+        icone={IconeHistorique}
+        aside={
+          <Bouton
+            variante="contour"
+            ton="accent"
+            taille="petite"
+            icone={IconePlus}
+            occupe={ouverture}
+            aria-label="Nouvelle conversation"
+            onClick={() => void ouvrirNeuve()}
+          >
+            Nouvelle
+          </Bouton>
+        }
+      />
+      <p className="mt-1 text-annexe text-neutral-500 dark:text-neutral-400">
+        Celles du fil avec {nomDuFil}, la plus récente d&apos;abord.
       </p>
-      <Bouton
-        variante="contour"
-        ton="accent"
-        icone={IconePlus}
-        occupe={ouverture}
-        onClick={() => void ouvrirNeuve()}
-        className="mt-3 w-full"
-      >
-        Nouvelle conversation
-      </Bouton>
       {/* Liste vide = pas encore chargée : l'API n'en rend jamais aucune, un
           agent ayant toujours au moins sa conversation `origine` (§6.14). On ne
           rend donc rien plutôt qu'un « aucune conversation » qui serait faux. */}
-      {fil.conversations.length > 0 && (
+      {visibles.length > 0 && (
         <ul className="mt-3 flex flex-col gap-1">
-          {fil.conversations.map((carte) => (
+          {visibles.map((carte) => (
             <li key={carte.id}>
               <LigneConversation
                 carte={carte}
@@ -409,17 +560,40 @@ function ConversationsDuFil({ fil }: { fil: Chat }) {
           ))}
         </ul>
       )}
+      {enReserve > 0 && (
+        <Bouton
+          variante="discret"
+          ton="neutre"
+          taille="petite"
+          aria-expanded={deployee}
+          className="mt-2"
+          onClick={() => setDeployee((valeur) => !valeur)}
+        >
+          {deployee
+            ? "Réduire"
+            : enReserve === 1
+              ? "Voir l'autre"
+              : `Voir les ${enReserve} autres`}
+        </Bouton>
+      )}
     </>
   );
 }
 
 /**
  * Une conversation dans l'historique : son sujet, quand elle a bougé pour la
- * dernière fois, et combien elle porte de messages.
+ * dernière fois, et combien elle porte de messages — le compte **à droite**, en
+ * place fixe, comme le compte de réponses d'une discussion GitHub (#831).
  *
  * `aria-current` et non un simple fond coloré : « celle que je lis » doit
  * s'entendre autant qu'elle se voit, et c'est l'attribut que les lecteurs
- * d'écran annoncent pour l'élément courant d'une liste.
+ * d'écran annoncent pour l'élément courant d'une liste. Et depuis #831 elle se
+ * **voit** par sa forme — une barre `accent` sur le bord et la graisse du
+ * titre —, pas seulement par son fond : l'état porté par la couleur seule est
+ * ce que le banc de docs/30 §1.6 refuse, et le fond est passé aux tokens
+ * (`info-creux`/`info-texte`) là où il était écrit en `sky-*` brut. La barre
+ * transparente des autres lignes tient la mise en page : sans elle, ouvrir une
+ * conversation décalerait toutes les autres d'un pixel.
  */
 function LigneConversation({
   carte,
@@ -440,22 +614,38 @@ function LigneConversation({
       : carte.messages === 1
         ? "1 message"
         : `${carte.messages} messages`;
+  const teinteSecondaire = ouverte
+    ? ""
+    : "text-neutral-500 dark:text-neutral-400";
   return (
     <button
       type="button"
       onClick={onClick}
       aria-current={ouverte ? "true" : undefined}
       className={
-        "flex w-full cursor-pointer flex-col items-start gap-0.5 rounded-md px-2 py-1.5 text-left " +
+        "flex w-full cursor-pointer items-start gap-3 rounded-md border-l-2 px-2 py-1.5 text-left " +
         "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent " +
         (ouverte
-          ? "bg-sky-50 text-sky-900 dark:bg-sky-950 dark:text-sky-100"
-          : "hover:bg-survol")
+          ? "border-accent bg-info-creux text-info-texte"
+          : "border-transparent hover:bg-survol")
       }
     >
-      <span className="w-full truncate text-corps font-medium">{titre}</span>
-      <span className="text-annexe text-neutral-500 dark:text-neutral-400">
-        {quand === "" ? combien : `${quand} · ${combien}`}
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span
+          className={
+            "truncate text-corps " + (ouverte ? "font-semibold" : "font-medium")
+          }
+        >
+          {titre}
+        </span>
+        {quand !== "" && (
+          <span className={"text-annexe " + teinteSecondaire}>{quand}</span>
+        )}
+      </span>
+      <span
+        className={"shrink-0 pt-0.5 text-annexe tabular-nums " + teinteSecondaire}
+      >
+        {combien}
       </span>
     </button>
   );
