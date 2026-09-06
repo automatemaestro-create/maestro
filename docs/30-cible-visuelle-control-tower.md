@@ -1072,6 +1072,68 @@ tactile, les barres horizontales, le thème sombre de notre surface (mesuré par
 et le parti pris 3 change une constante déjà lue. Partis pris 1 et 3 → **#882** ; 2 et 4
 n'appellent aucun code. Le ticket source #725 porte `veille::arbitree` depuis cette veille.
 
+#### Le composeur — les trois points tranchés sans elle — 2026-09-06 (#866, différée de #726)
+
+Surface : le `<form>` à quai de `components/Conversation.tsx`, monté par `/chat` et l'onglet Chat
+d'une fiche agent. Veille **différée** jouée sur pièces ; celle de #724 tient et n'est pas rejouée —
+celle-ci ne juge que ce que #726 a tranché **à l'écran, sans référence** : la bande sous le composeur
+à quai, la hauteur de départ, la forme de l'envoi. Le raccourci retiré sous `sm` est laissé à
+**#873** (mobile). Décision complète en commentaire de **#866**, captures dans l'atelier de la
+session. La question : « où j'écris, comment j'envoie, et qu'est-ce qui a le droit d'occuper le bas
+de l'écran avec le composeur ? »
+
+**Mesuré avant** (démo, 1440×900) : cadre **86 px** au repos (43 px de texte à `rows={2}`, rail de
+25 px) ; « Envoyer » **63×25 en texte** au bout d'un rail dont la tête est une icône seule
+(`BoutonJoindre`, 36×24) ; « Interrompre » (~106 px, `contour` + icône) le remplace à chaque envoi et
+**le bout du rail saute de ~43 px** ; **64 px** de bande sous le formulaire, le flottant (48×48)
+dedans ; sur l'onglet Chat, le bord droit de l'envoi **chevauche le flottant de 27 px** — sans la
+bande, l'envoi passe dessous, c'est le constat de #726 rejoué.
+
+**Vérifié en direct** : **ChatGPT** — `rows="1"`, 24 px de ligne, plafond 192, cadre 52 px, envoi
+en icône seule 44×44 ; à quai **16 px** sous le cadre, l'avertissement (12 px) **au-dessus**, rien
+dessous. **Perplexity** — cadre à deux étages de 94 px, éditeur **28 px** au repos (plafond 360),
+envoi en icône seule 32×32, **16 px** dessous. **VS Code** (sources `main` lues :
+`chatInputPart.ts`, `chat.css`, `chatExecuteActions.ts`) — une ligne = **44 px** (20 + 12 + 12),
+plafond 250, plancher de lignes **en option** ; envoi `Codicon.arrowUpCompact` titré « Send », et
+**`CancelAction` (`stopCircle`) prend exactement sa place** — même groupe, même rang — pendant une
+requête. **Zulip** (sources lues : `compose.hbs`, `compose.css`, `zulip.css`) — envoi en icône
+seule (`aria-label="Send"`, 74 px, **30 sous `sm`**), `height: 1.5em`, `max-height: 22em`,
+compose `fixed; bottom: 0` : **0 px dessous** ; le bouton « aller en bas » en `absolute; bottom:
+41px; right: 0`, **au-dessus du composeur**, dans le fil. **Lu (doc officielle)** : **Slack**
+(« Press Enter to send your message… the paper plane icon ») et **Mattermost** (« select Send
+[icône] ») — icône, Enter envoie.
+
+**Non vérifié, donc non cité** : Linear, Cursor, Claude.ai, Gemini, Copilot, Discord, Teams ; l'état
+« envoi en cours » de ChatGPT et Perplexity en direct — la bascule envoi/arrêt n'a été lue que dans
+les sources de VS Code.
+
+**Trois partis pris** : **l'envoi devient une icône seule nommée « Envoyer », de la taille du `+`,
+et l'arrêt prend sa place à la même taille** — `IconeEnvoyer` sur le gabarit `Trait`, `Bouton
+petite icone` + libellé `sr-only`, la construction de `BoutonJoindre` en tête du même rail ;
+`Interrompre` en `contour` + `IconeArret` *(ChatGPT, Perplexity, VS Code, Zulip, Slack,
+Mattermost)* · **le champ part d'une ligne, c'est le rail qui donne sa hauteur au cadre** —
+`rows={1}`, 86 → ~64 px, plafond inchangé *(les quatre)* · **la bande sous le composeur est le prix
+du flottant en coin : sa hauteur est celle du flottant, et rien d'autre n'y vit** — rien à changer,
+ni remplie (§4 n'a pas de place, et les références mettent ce qu'elles ont à dire *au-dessus*) ni
+conditionnée à la largeur (#691) *(ChatGPT, Perplexity, Zulip)*.
+
+**Refusés sur place, avec leur raison** : les cibles de 44 px et le rail à 32 px — `petite` tient le
+plancher de 24 px, et grossir le rail ferait le cadre plus haut ; l'avertissement sous ou sur le
+composeur — pas de place, rien à dire ; le dérouleur d'options d'envoi et la planification — aucune
+fonction derrière ; un plancher de deux lignes en option — on choisit ; rouvrir le plafond (22em,
+250, 360) — 192 est posé sur ChatGPT (#724) ; la réserve horizontale calculée en JS — écartée par
+#691, et aucune référence ne le fait.
+
+**Ce que la veille n'a pas regardé** : le mobile et `sm` (→ #873) ; le composeur à quai sur un fil
+long (mesuré par #726 au banc, non rejoué — la démo n'a qu'un message) ; le thème sombre ; le
+troisième composeur du produit, `PanneauAssistance` (« Envoyer » en texte lui aussi).
+
+**Rien de #728 n'est défait** : une sonde change de valeur (`rows`, 2 → 1), les autres tiennent — le
+nom accessible « Envoyer » ne bouge pas avec un libellé `sr-only`. Partis pris 1 et 2 → **#884** ;
+le parti pris 3 n'appelle aucun code, et ce qu'il dit du **flottant** — les références le posent
+au-dessus du composeur, dans le fil — est une proposition à part → **#885**. Les tickets #726 et
+#866 portent `veille::arbitree` depuis cette veille.
+
 ---
 
 ## 6. Recommandation
