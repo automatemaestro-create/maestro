@@ -225,6 +225,38 @@ function reserveLaterale(form: HTMLElement): string[] {
 }
 
 /**
+ * Ce que le fil porte de l'assistant flottant (#123) : son bouton, reconnu à
+ * l'ancre `data-guide="assistant"` qu'il porte pour la visite guidée — le seul
+ * repère qui ne dépende ni d'un libellé ni d'une classe. Depuis #885 la réponse
+ * attendue est « rien » : la veille #866 proposait de le poser au-dessus du
+ * composeur, dans le fil, et c'est refusé sur mesure — le flottant vit dans le
+ * shell, en coin, sur les dix écrans, et la bande sous le composeur en est le
+ * prix.
+ */
+function assistantDans(fil: HTMLElement): HTMLElement[] {
+  return Array.from(
+    fil.querySelectorAll<HTMLElement>('[data-guide="assistant"]'),
+  );
+}
+
+/**
+ * Un fil qui **porterait** l'assistant : le bouton du flottant posé au-dessus
+ * du composeur, dans la section du fil — la place que la veille #866 proposait
+ * (celle du « aller en bas » de ChatGPT et de Zulip) et que #885 a refusée.
+ * Personne ne l'a jamais écrit ; c'est l'échantillon fautif qui prouve la sonde.
+ */
+function filAvecAssistant(): { fil: HTMLElement } {
+  const fil = document.createElement("section");
+  fixtures.push(fil);
+  fil.innerHTML =
+    '<ol aria-label="Fil"></ol>' +
+    '<button type="button" data-guide="assistant" aria-expanded="false" aria-label="Ouvrir l\'assistant"></button>' +
+    '<form class="sticky bottom-16"><textarea aria-label="Message à dev"></textarea></form>';
+  document.body.appendChild(fil);
+  return { fil };
+}
+
+/**
  * Où vit le raccourci clavier (#726, parti pris 4) : dans le **placeholder**,
  * qui s'efface au premier caractère, ou dans la **description** du champ
  * (`aria-describedby`), qui reste. Les deux sont rendus pour qu'un test dise
@@ -359,6 +391,13 @@ describe("les sondes du composeur, prouvées sur le composeur d'avant (#726, pui
     expect(reserveLaterale(form)).toEqual(["pe-14"]);
   });
 
+  it("reconnaissent un assistant posé dans le fil, au-dessus du composeur", () => {
+    const { fil } = filAvecAssistant();
+    const [bouton] = assistantDans(fil);
+    expect(bouton).toBeDefined();
+    expect(bouton.getAttribute("aria-label")).toBe("Ouvrir l'assistant");
+  });
+
   it("trouvent le raccourci dans le placeholder, et nulle part ailleurs", () => {
     const { champ } = composeurDAvant();
     expect(ouVitLeRaccourci(champ)).toEqual({
@@ -477,6 +516,20 @@ describe.each(SURFACES)("le composeur sur $nom", ({ monter, interlocuteur, secti
       expect(Array.from(bande!.classList)).toEqual(
         expect.arrayContaining(["sticky", "bottom-0", "h-16"]),
       );
+    });
+
+    it("ne porte pas l'assistant : le flottant reste en coin, hors du fil (#885)", () => {
+      monter();
+      // La veille #866 proposait le bouton de l'assistant au-dessus du
+      // composeur, dans le fil — la place du « aller en bas » de ChatGPT et de
+      // Zulip. Refusé sur mesure (#885) : ces références y posent un flottant
+      // de fil, transitoire ; le nôtre est un flottant d'outil, permanent, et
+      // il y couvrirait le dernier message aux six fenêtres du banc. Le fil ne
+      // le porte donc pas — il vit dans le shell, et la bande ci-dessus en est
+      // le prix.
+      const fil = composeurDe(zoneDeSaisie(interlocuteur)).closest("section");
+      expect(fil).not.toBeNull();
+      expect(assistantDans(fil!)).toEqual([]);
     });
   });
 

@@ -1134,6 +1134,16 @@ le parti pris 3 n'appelle aucun code, et ce qu'il dit du **flottant** — les r�
 au-dessus du composeur, dans le fil — est une proposition à part → **#885**. Les tickets #726 et
 #866 portent `veille::arbitree` depuis cette veille.
 
+**#885 a tranché le 2026-09-06 : refusé, sur mesure.** ChatGPT et Zulip posent là un flottant *de
+fil*, transitoire (masqué au repos) ; le nôtre est un flottant *d'outil*, permanent, sur dix écrans.
+Un disque de 48 px au-dessus du composeur couvre le fil et le dernier message dans les **12 cas** du
+banc (6 fenêtres × 2 surfaces), ou la colonne de propriétés de `/chat` à `@4xl` si on ne fait que le
+remonter dans son coin ; la place revient au « Dernier message » de #877, l'objet même des
+références. Le flottant reste en coin, la bande reste. Le banc a trouvé à la place un défaut du
+**shell** : la réserve `pb-24` ne tient pas au bas d'une page qui déborde (`main` à hauteur fixée
+depuis #248), et `bottom-16` remonte alors le composeur de 52 px sur le dernier message → **#888**.
+Arbitrage complet en commentaire de #885.
+
 ---
 
 ## 6. Recommandation
