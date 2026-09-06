@@ -38,7 +38,12 @@
  *    `globals.css` (technique de `contraste.test.ts`), et la moitié JS de la
  *    frontière (`lib/ascenseur`, câblé dans le `Shell`) ;
  * ⑦ **la colonne de propriétés** de `/chat` est collante **et** bornée, comme
- *    celle de `/couts` que `sobriete.test.tsx` garde déjà.
+ *    celle de `/couts` que `sobriete.test.tsx` garde déjà ;
+ * ⑧ **l'envoi et l'arrêt sont deux icônes nommées, de même taille** (#884,
+ *    partis pris 1 et 2 de la veille #866) — la construction de
+ *    `BoutonJoindre` en tête du rail, l'arrêt à la place de l'envoi, et le
+ *    champ qui part d'**une** ligne. La sonde est prouvée sur le rail d'avant
+ *    #884, où l'envoi était un texte et l'arrêt ~43 px plus large que lui.
  */
 
 import { readFileSync } from "node:fs";
@@ -242,6 +247,60 @@ function ouVitLeRaccourci(champ: HTMLElement): {
 }
 
 /**
+ * Le bout du rail d'**avant** #884, tel que #726 l'avait écrit et que la veille
+ * #866 l'a mesuré : « Envoyer » en **texte** (`plein petite`, 63×25) et,
+ * pendant une réponse, « Interrompre » en `contour` avec une icône **et** son
+ * texte (~106 px) — deux boîtes que leur libellé dimensionne, d'où un bout de
+ * rail qui sautait de ~43 px à chaque envoi. Les deux sont posés ensemble ici ;
+ * à l'écran ils alternaient.
+ */
+function railDAvant884(): {
+  envoyer: HTMLButtonElement;
+  interrompre: HTMLButtonElement;
+} {
+  const rail = document.createElement("div");
+  fixtures.push(rail);
+  rail.innerHTML =
+    '<button type="submit" class="inline-flex min-h-6 gap-1 rounded-md bg-accent px-2.5 py-1 text-annexe text-sur-ton">Envoyer</button>' +
+    '<button type="button" class="inline-flex min-h-6 gap-1 rounded-md border border-bord-fort px-2.5 py-1 text-annexe text-texte-secondaire">' +
+    '<svg aria-hidden="true" class="size-3.5"></svg>Interrompre</button>';
+  document.body.appendChild(rail);
+  const [envoyer, interrompre] = Array.from(rail.querySelectorAll("button"));
+  return { envoyer, interrompre };
+}
+
+/**
+ * La **forme** d'un contrôle du rail (#884, parti pris 1 de la veille #866) :
+ * porte-t-il une icône du jeu, son libellé est-il visible ou réservé aux
+ * lecteurs d'écran (`sr-only`), et quelle boîte s'est-il donnée — le pas de sa
+ * taille (`px-*`/`py-*`), son plancher (`min-h-*`) et sa largeur (`w-*`), si
+ * une est posée. Deux contrôles « de même taille » au sens du parti pris sont
+ * deux icônes nommées dont la boîte ne dépend d'aucun texte : même pas, même
+ * largeur posée, rien de visible qui puisse l'élargir. Le pixel, lui, est au
+ * banc (#308).
+ */
+function formeDuControle(bouton: HTMLElement): {
+  icone: boolean;
+  libelle: "visible" | "sr-only" | "aucun";
+  boite: string[];
+} {
+  const icone = bouton.querySelector('svg[aria-hidden="true"]') !== null;
+  const copie = bouton.cloneNode(true) as HTMLElement;
+  for (const masque of copie.querySelectorAll(".sr-only")) masque.remove();
+  const visible = (copie.textContent ?? "").trim() !== "";
+  const masque = Array.from(bouton.querySelectorAll(".sr-only")).some(
+    (n) => (n.textContent ?? "").trim() !== "",
+  );
+  return {
+    icone,
+    libelle: visible ? "visible" : masque ? "sr-only" : "aucun",
+    boite: Array.from(bouton.classList)
+      .filter((c) => /^(px|py|w|min-h|size)-/.test(c))
+      .sort(),
+  };
+}
+
+/**
  * Fait dire au champ ce que le navigateur mesurerait : `scrollHeight` (la
  * hauteur du contenu) et `clientHeight` (la boîte). jsdom rend zéro aux deux
  * (#308), et c'est précisément pourquoi `ajusterLaHauteur` n'y pose rien —
@@ -273,7 +332,7 @@ function glisserSur(cible: HTMLElement, fichiers: File[]): void {
   fireEvent.drop(cible, { dataTransfer: transfert });
 }
 
-describe("les sondes du composeur, prouvées sur le composeur d'avant #726", () => {
+describe("les sondes du composeur, prouvées sur le composeur d'avant (#726, puis #884)", () => {
   afterEach(() => {
     for (const fixture of fixtures.splice(0)) fixture.remove();
   });
@@ -307,6 +366,23 @@ describe("les sondes du composeur, prouvées sur le composeur d'avant #726", () 
       description: null,
     });
   });
+
+  it("voient, sur le rail d'avant #884, un envoi en texte et un arrêt dont la boîte suit le texte", () => {
+    const { envoyer, interrompre } = railDAvant884();
+    // « Envoyer » n'est qu'un texte ; « Interrompre » a bien une icône, mais
+    // son libellé reste visible, et ni l'un ni l'autre ne pose de largeur :
+    // leurs boîtes sont celles de leurs mots — 63 et ~106 px, mesurés.
+    expect(formeDuControle(envoyer)).toEqual({
+      icone: false,
+      libelle: "visible",
+      boite: ["min-h-6", "px-2.5", "py-1"],
+    });
+    expect(formeDuControle(interrompre)).toEqual({
+      icone: true,
+      libelle: "visible",
+      boite: ["min-h-6", "px-2.5", "py-1"],
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -324,12 +400,14 @@ beforeEach(() => {
 describe.each(SURFACES)("le composeur sur $nom", ({ monter, interlocuteur, section }) => {
   // ── ① le champ grandit puis plafonne ────────────────────────────────────
   describe("① le champ grandit puis plafonne (#726)", () => {
-    it("part de deux lignes, sans hauteur posée", () => {
+    it("part d'une ligne, sans hauteur posée", () => {
       monter();
       const champ = zoneDeSaisie(interlocuteur);
-      // `rows` est la hauteur de départ — le plancher est laissé au navigateur,
-      // sans pixel recopié — et rien n'est posé tant que rien ne déborde.
-      expect(champ.rows).toBe(2);
+      // `rows` est la hauteur de départ — une ligne depuis #884 (parti pris 2
+      // de la veille #866 : aucune référence ne part de deux), le plancher
+      // laissé au navigateur sans pixel recopié — et rien n'est posé tant que
+      // rien ne déborde.
+      expect(champ.rows).toBe(1);
       expect(champ.style.height).toBe("");
     });
 
@@ -522,6 +600,65 @@ describe.each(SURFACES)("le composeur sur $nom", ({ monter, interlocuteur, secti
       expect(
         screen.getByRole("button", { name: "Ajouter l'adresse" }),
       ).toBeInTheDocument();
+    });
+  });
+
+  // ── ⑧ l'envoi et l'arrêt sont deux icônes nommées, de même taille ──────
+  describe("⑧ l'envoi et l'arrêt sont deux icônes nommées, de même taille (#884)", () => {
+    const BOITE_DU_RAIL = ["min-h-6", "px-2.5", "py-1", "w-9"];
+
+    it("envoie par une icône nommée « Envoyer », de la construction du joindre", () => {
+      monter();
+      const cadre = cadreDe(zoneDeSaisie(interlocuteur));
+      const envoyer = within(cadre).getByRole("button", { name: "Envoyer" });
+      const joindre = within(cadre).getByRole("button", {
+        name: "Joindre des sources…",
+      });
+      // Une icône du jeu, un libellé que seuls les lecteurs d'écran lisent, et
+      // aucun `title=` (#536) : le nom accessible vient du libellé, jamais
+      // d'une infobulle.
+      expect(formeDuControle(envoyer)).toEqual({
+        icone: true,
+        libelle: "sr-only",
+        boite: BOITE_DU_RAIL,
+      });
+      expect(envoyer.getAttribute("title")).toBeNull();
+      // Le pas de la tête du rail, `w-9` en plus : `plein` n'a pas le filet
+      // de `contour`, et 36 px est la largeur du `+`. Le pixel est au banc.
+      expect(formeDuControle(joindre)).toMatchObject({
+        icone: true,
+        libelle: "sr-only",
+      });
+      expect(BOITE_DU_RAIL).toEqual(
+        expect.arrayContaining(formeDuControle(joindre).boite),
+      );
+      // Au bout du rail, et dernier de son groupe : c'est cette place que
+      // l'arrêt reprendra.
+      expect(envoyer.parentElement?.classList.contains("ms-auto")).toBe(true);
+      expect(envoyer.nextElementSibling).toBeNull();
+    });
+
+    it("cède sa place, à sa taille, à un arrêt nommé « Interrompre » pendant une réponse", () => {
+      const interrompre = vi.fn();
+      poserFilAssistance({ envoi: true, interrompre });
+      monter();
+      const cadre = cadreDe(zoneDeSaisie(interlocuteur));
+      // L'envoi a cédé la place : un seul bouton au bout du rail, de la même
+      // forme et de la même boîte — rien ne bouge d'un état à l'autre.
+      expect(within(cadre).queryByRole("button", { name: "Envoyer" })).toBeNull();
+      const arret = within(cadre).getByRole("button", { name: "Interrompre" });
+      expect(formeDuControle(arret)).toEqual({
+        icone: true,
+        libelle: "sr-only",
+        boite: BOITE_DU_RAIL,
+      });
+      expect(arret.getAttribute("title")).toBeNull();
+      expect(arret.parentElement?.classList.contains("ms-auto")).toBe(true);
+      expect(arret.nextElementSibling).toBeNull();
+      // Et l'arrêt arrête pour de bon (#695) : c'est `interrompre` du fil
+      // qu'il joue, pas un simple « je cesse de regarder ».
+      fireEvent.click(arret);
+      expect(interrompre).toHaveBeenCalledTimes(1);
     });
   });
 });

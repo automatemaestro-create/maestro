@@ -116,6 +116,15 @@
  * largeur (la règle de #691 : le flottant est calé sur la fenêtre, pas sur la
  * colonne) — voir les commentaires du `<form>` et de l'élément qui le suit.
  *
+ * Depuis #884 (veille #866, différée de #726 — docs/30 §5.3), le rail **parle
+ * une seule langue** : l'envoi est une icône nommée (`IconeEnvoyer`, libellé
+ * `sr-only`), de la taille du `+` qui ouvre le rail, et l'arrêt d'une réponse
+ * en vol prend **sa place, à sa taille** (`IconeArret`, `contour`) — d'après
+ * ChatGPT, Perplexity, VS Code (`arrowUpCompact` remplacé par `stopCircle` au
+ * même rang), Zulip, Slack et Mattermost. Et le champ part d'**une** ligne
+ * (`rows={1}`) : c'est le rail qui donne sa hauteur au cadre — les deux lignes
+ * d'avant étaient un héritage, aucune référence ne part de deux.
+ *
  * ## Ce qu'il ne fait pas
  *
  * Il ne charge rien : le fil lui est **passé** (`useChat`, historique REST +
@@ -144,7 +153,8 @@ import {
 import { TexteMarkdown } from "@/components/chat/TexteMarkdown";
 import { RefusSource } from "@/components/composer/RefusSource";
 import {
-  IconeFermer,
+  IconeArret,
+  IconeEnvoyer,
   IconeRuns,
   IconeTache,
   IconeValidations,
@@ -691,15 +701,18 @@ export function Conversation({
                 void soumettre(brouillon);
               }
             }}
-            // `rows` est la **hauteur de départ** — deux lignes, comme avant
-            // ce lot — et non la hauteur : `ajusterLaHauteur` part de là, et
-            // le plafond est au CSS. `max-h-48`, c'est la mesure de ChatGPT
-            // (192 px) ; au-delà, le champ défile en interne, et l'ascenseur
-            // qu'il rend est le discret du socle (#725) sans une ligne à lui.
-            // `resize-none` : la poignée n'a plus d'objet. `outline-none` : le
-            // focus se lit sur le cadre, qui cerne le bloc entier (voir
-            // là-haut) — un anneau ici n'en cernerait que l'étage du texte.
-            rows={2}
+            // `rows` est la **hauteur de départ** — **une** ligne depuis #884
+            // (parti pris 2 de la veille #866 : ChatGPT `rows="1"`, Perplexity,
+            // VS Code et Zulip partent tous d'une ; les deux lignes d'avant
+            // étaient un héritage de #726, pas une mesure) — et non la
+            // hauteur : `ajusterLaHauteur` part de là, et le plafond est au
+            // CSS. `max-h-48`, c'est la mesure de ChatGPT (192 px) ; au-delà,
+            // le champ défile en interne, et l'ascenseur qu'il rend est le
+            // discret du socle (#725) sans une ligne à lui. `resize-none` : la
+            // poignée n'a plus d'objet. `outline-none` : le focus se lit sur
+            // le cadre, qui cerne le bloc entier (voir là-haut) — un anneau
+            // ici n'en cernerait que l'étage du texte.
+            rows={1}
             placeholder={`Écrire à ${interlocuteur}…`}
             aria-label={`Message à ${interlocuteur}`}
             aria-describedby={idRaccourci}
@@ -740,28 +753,43 @@ export function Conversation({
                   possible ne ferait qu'occuper la seule place que la main
                   vise. Et l'arrêt arrête pour de bon — il annule la génération
                   côté canal (#695) et ce qui a été reçu rejoint le fil ; ce
-                  n'est pas un simple « je cesse de regarder ». En taille
-                  `petite` comme le reste du rail, le plancher de 24 px restant
-                  celui du socle (`BOUTON_SOCLE`). */}
+                  n'est pas un simple « je cesse de regarder ».
+                  Les deux sont des **icônes nommées** (#884, parti pris 1 de
+                  la veille #866) : la construction exacte de `BoutonJoindre`
+                  en tête du rail — `petite`, l'icône du jeu, le libellé en
+                  `sr-only` qui garde au bouton son nom accessible (« Envoyer »,
+                  « Interrompre ») sans `title=` (#536). Le rail parle ainsi
+                  une seule langue, et son bout **ne bouge pas** quand l'un
+                  remplace l'autre : avant, « Envoyer » en texte faisait 63 px
+                  et « Interrompre » ~106, soit un saut de ~43 px à chaque
+                  envoi. `w-9` sur les deux parce que `plein` n'a pas le filet
+                  de `contour` (34 contre 36 px à contenu égal — 2 px de saut
+                  résiduel) : 36 px, c'est la largeur du `+` en tête, et une
+                  largeur est ce que le `className` d'un `Bouton` est fait pour
+                  porter. Le plancher de 24 px reste celui du socle
+                  (`BOUTON_SOCLE`). */}
               {envoi ? (
                 <Bouton
                   variante="contour"
                   ton="neutre"
                   taille="petite"
-                  icone={IconeFermer}
+                  icone={IconeArret}
+                  className="w-9"
                   onClick={interrompre}
                 >
-                  Interrompre
+                  <span className="sr-only">Interrompre</span>
                 </Bouton>
               ) : (
                 <Bouton
                   type="submit"
                   taille="petite"
+                  icone={IconeEnvoyer}
+                  className="w-9"
                   disabled={
                     brouillon.trim() === "" && composition.sources.length === 0
                   }
                 >
-                  Envoyer
+                  <span className="sr-only">Envoyer</span>
                 </Bouton>
               )}
             </div>

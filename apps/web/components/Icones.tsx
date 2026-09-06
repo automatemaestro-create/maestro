@@ -738,6 +738,19 @@ export function IconeFlecheHaut(props: Props) {
 }
 
 /**
+ * Envoyer un message (#884, parti pris 1 de la veille #866) — la flèche vers le
+ * haut que ChatGPT, Perplexity et VS Code (`Codicon.arrowUpCompact`) posent au
+ * bout de leur composeur. Le **nom** porte le sens ; le dessin est celui de
+ * `IconeFlecheHaut`, et c'est voulu : une seule flèche vers le haut dans le jeu,
+ * plutôt que deux tracés presque pareils qu'on prendrait pour une erreur. Si
+ * l'envoi change un jour de glyphe (l'avion de papier de Slack), c'est ici que
+ * ça se joue, sans que l'explorateur qui remonte d'un cran en soit touché.
+ */
+export function IconeEnvoyer(props: Props) {
+  return <IconeFlecheHaut {...props} />;
+}
+
+/**
  * Chevron d'ouverture d'un menu déroulant — pointe vers le bas (#280).
  *
  * Ce qui distingue le sélecteur de projet d'un simple libellé : sans cette
