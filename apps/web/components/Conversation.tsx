@@ -115,6 +115,19 @@
  * sous lui. Ça vaut pour les deux surfaces sans rien conditionner à leur
  * largeur (la règle de #691 : le flottant est calé sur la fenêtre, pas sur la
  * colonne) — voir les commentaires du `<form>` et de l'élément qui le suit.
+ * Et c'est **arbitré** (#885, 2026-09-06) : la veille #866 proposait l'inverse
+ * — le flottant au-dessus du composeur, dans le fil, comme le « aller en bas »
+ * de ChatGPT et de Zulip —, refusé sur mesure, aux six fenêtres du banc et sur
+ * les deux surfaces. Ces références y posent un flottant **de fil**,
+ * transitoire ; le nôtre est un flottant **d'outil**, permanent, et un disque
+ * de 48 px au-dessus du composeur couvre le fil et le dernier message dans les
+ * 12 cas (6 fenêtres × 2 surfaces) — ou la colonne de propriétés de `/chat` à
+ * `@4xl` si on ne fait que le remonter dans son coin. La place au-dessus du
+ * composeur revient au flottant de fil de #877 (« Dernier message », veille
+ * #820). Le flottant reste donc en coin, la bande reste, et le fil ne porte pas
+ * l'assistant (`composeur.test.tsx` ②). Le prix est ailleurs : la réserve que
+ * cette bande prolonge ne tient pas au bas d'une page qui déborde (#888, voir
+ * l'élément qui suit le formulaire).
  *
  * Depuis #884 (veille #866, différée de #726 — docs/30 §5.3), le rail **parle
  * une seule langue** : l'envoi est une icône nommée (`IconeEnvoyer`, libellé
@@ -861,7 +874,19 @@ export function Conversation({
           section que le formulaire, à dessein : un élément collant ne bouge que
           dans les bornes de son bloc parent, et les deux décrochent au bon
           moment — entre les deux instants, la bande ne contient que la place
-          vide que le formulaire a quittée, jamais une bulle. */}
+          vide que le formulaire a quittée, jamais une bulle.
+          ⚠ **Mesuré en défaut au bas d'une page qui déborde** (banc de #885,
+          2026-09-06 → #888) : la réserve `pb-24` du `Shell` vit dans un `main`
+          à hauteur fixée (#248) que le contenu dépasse dès que la page est plus
+          haute que la fenêtre ; au bas du défilement le formulaire arrive à
+          12 px du bord de l'ascenseur, et `bottom-16` le **remonte de 52 px
+          sur le fil** — 36 px du dernier message perdus (sa dernière ligne et
+          son pied), et plus rien à défiler. Sur `/chat` à `@4xl`, la colonne de
+          propriétés étire déjà la rangée dans la réserve : 20 px perdus au
+          repos. Le remède est celui de la réserve, pas du composeur — tenue au
+          bas du défilement, elle rend à `bottom-16` exactement le rôle décrit
+          ci-dessus. Ne pas « corriger » en déplaçant le flottant : c'est la
+          proposition que #885 a refusée. */}
       <div
         aria-hidden="true"
         className="sticky bottom-0 -mt-19 h-16 bg-background"

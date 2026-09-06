@@ -18,6 +18,19 @@
  * ouvert est une carte bornée (jamais plein écran sur grand écran) qui se ferme
  * par Échap. Les surfaces de la visite guidée (#122, `z-40`/`z-50`) passent
  * au-dessus : pendant la visite, l'assistant est couvert comme le reste.
+ *
+ * **Le coin est arbitré, composeur compris** (#885, 2026-09-06). Sur `/chat` et
+ * sur l'onglet Chat d'un agent, le composeur à quai s'arrête au-dessus de la
+ * bande que ce bouton occupe (`sticky bottom-16`, #726) plutôt que de lui céder
+ * 56 px à droite. La veille #866 proposait l'inverse — le bouton au-dessus du
+ * composeur, dans le fil, comme le « aller en bas » de ChatGPT et de Zulip — et
+ * c'est refusé sur mesure : ces références y posent un flottant **de fil**,
+ * transitoire, quand celui-ci est un flottant **d'outil**, permanent, qui y
+ * couvrirait le dernier message aux six fenêtres du banc sur les deux surfaces.
+ * La seule porte qui supprimerait la bande et le `pb-24` d'un coup est une
+ * décision à dix écrans — le point d'entrée dans la barre supérieure, où
+ * `MenuAide` ouvre déjà le panneau —, hors de ce ticket. ⚠ La réserve `pb-24`,
+ * elle, ne tient pas au bas d'une page qui déborde : #888.
  */
 
 import { useEffect, useRef, useState } from "react";
