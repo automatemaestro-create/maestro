@@ -1234,8 +1234,18 @@ son coin. La place au-dessus du composeur revient au « Dernier message » de #8
 Le flottant reste en coin sur les dix écrans, la bande reste, et le fil ne porte
 pas l'assistant (sonde ② de `composeur.test.tsx`, prouvée sur un fil qui le
 porterait). Ce que ce banc a trouvé à la place : la réserve `pb-24` du shell ne
-tient pas au bas d'une page qui déborde, et `bottom-16` remonte alors le
-composeur de 52 px sur le dernier message — #888.
+tenait pas au bas d'une page qui déborde, et `bottom-16` remontait alors le
+composeur de 52 px sur le dernier message — #888, qui en a fait le **dernier
+élément du flux** de `main` (`after:h-24`) : un padding de `main`, boîte à
+hauteur fixée depuis #248, restait enfermé dans une boîte que toute page plus
+haute que la fenêtre dépasse, et le porter sur l'ascenseur a été **mesuré
+faux** — Chrome n'ajoute le padding de fin d'un conteneur défilant qu'à ses
+boîtes en flux directes, jamais au débordement de leurs descendants, et y
+calcule le `sticky` contre sa boîte de contenu. Un élément du flux suit le
+contenu où qu'il aille. Le plafond des colonnes de propriétés collantes
+(`/chat`, `/couts`) retranche cette réserve depuis (`calc(100dvh-11rem)` =
+`top-20` + la réserve, lue dans `Shell.tsx` par les tests), sans quoi la
+rangée étirait le fil dedans.
 
 **Refusés, avec leur raison** : le rayon en gélule (une identité — docs/30 §6.1
 est « le même produit, avec du relief »), les chips de mode et le sélecteur de

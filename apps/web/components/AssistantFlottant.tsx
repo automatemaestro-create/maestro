@@ -13,8 +13,9 @@
  * son interlocuteur : il répond sur **l'outil**, pas sur le projet.
  *
  * Ne pas masquer les actions de la page est une contrainte de fond ici : le
- * bouton fermé reste petit, le shell réserve la bande qu'il occupe (`pb-24` sur
- * la zone de contenu) pour qu'aucun contenu ne se termine dessous, et le panneau
+ * bouton fermé reste petit, le shell réserve la bande qu'il occupe (`after:h-24`
+ * sur `main` — un élément du flux, pas un padding, #888) pour qu'aucun contenu
+ * ne se termine dessous, et le panneau
  * ouvert est une carte bornée (jamais plein écran sur grand écran) qui se ferme
  * par Échap. Les surfaces de la visite guidée (#122, `z-40`/`z-50`) passent
  * au-dessus : pendant la visite, l'assistant est couvert comme le reste.
@@ -29,8 +30,10 @@
  * couvrirait le dernier message aux six fenêtres du banc sur les deux surfaces.
  * La seule porte qui supprimerait la bande et le `pb-24` d'un coup est une
  * décision à dix écrans — le point d'entrée dans la barre supérieure, où
- * `MenuAide` ouvre déjà le panneau —, hors de ce ticket. ⚠ La réserve `pb-24`,
- * elle, ne tient pas au bas d'une page qui déborde : #888.
+ * `MenuAide` ouvre déjà le panneau —, hors de ce ticket. La réserve, elle, est
+ * le **dernier élément du flux** de `main` depuis #888 (`after:h-24`) : en
+ * padding d'une boîte à hauteur fixée (#248), elle ne tenait pas au bas d'une
+ * page qui déborde.
  */
 
 import { useEffect, useRef, useState } from "react";

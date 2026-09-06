@@ -325,12 +325,19 @@ export default function PageChat() {
           une surface collante plus haute que la fenêtre voit son bas rester
           définitivement sous le pli, aucun défilement ne le ramenant puisque
           c'est le défilement qui la fige (classe de bug de #306). Les deux
-          utilitaires vont donc ensemble, et jamais l'un sans l'autre. */}
+          utilitaires vont donc ensemble, et jamais l'un sans l'autre.
+          **Le plafond retranche `top-20` (5 rem) et la réserve du bouton
+          flottant** (6 rem — le `after:h-24` de `main` dans le `Shell`, #888) :
+          la colonne va du haut de la zone de contenu au haut de la bande,
+          jamais au-delà. À 6 rem elle descendait de 80 px dans la réserve, et comme
+          c'est elle qui donne sa hauteur à la rangée, le fil s'y étirait avec
+          elle — le composeur à quai remontait de 36 px sur le dernier message
+          **au repos** (mesuré à 1280×800 et 1536×900). */}
       <aside
         aria-label="Propriétés du fil"
         className={
           "flex min-w-0 flex-col gap-6 @4xl:w-80 @4xl:shrink-0 " +
-          "@4xl:sticky @4xl:top-20 @4xl:max-h-[calc(100dvh-6rem)] @4xl:self-start @4xl:overflow-y-auto"
+          "@4xl:sticky @4xl:top-20 @4xl:max-h-[calc(100dvh-11rem)] @4xl:self-start @4xl:overflow-y-auto"
         }
       >
         {/* La liste des conversations vient EN TÊTE (#831) — voir l'en-tête de

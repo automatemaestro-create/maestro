@@ -69,6 +69,7 @@ import {
   poserFilAssistance,
   poserProjetActif,
   rendreAvecEtat,
+  reserveDuFlottantRem,
 } from "./aides";
 import { ECRANS, monterEcran, peuplerEtat } from "./ecrans";
 
@@ -1122,11 +1123,23 @@ describe("⑦ la colonne de propriétés de /chat", () => {
    * discrète : elle reste collante et bornée (le bon choix, classe de bug de
    * #306 — une surface collante sans plafond voit son bas rester sous le pli),
    * et son ascenseur est désormais celui du socle.
+   *
+   * Et le plafond **retranche la réserve du bouton flottant** (#888) : à
+   * `calc(100dvh-6rem)` la colonne descendait de 80 px dans la bande que le
+   * shell réserve en fin de page, et comme c'est elle qui donne sa
+   * hauteur à la rangée, le fil s'y étirait avec elle — composeur à quai
+   * remonté de 36 px sur le dernier message **au repos**, à 1280×800 comme à
+   * 1536×900. Le bon plafond est `top-20` (5 rem) plus la réserve, lue dans
+   * `Shell.tsx` et non recopiée : le jour où la réserve change, ce test dit
+   * que le plafond doit suivre.
    */
-  it("borne sa hauteur partout où elle est collante", () => {
+  it("borne sa hauteur partout où elle est collante, au-dessus de la réserve du flottant", () => {
     const source = lireSource("app/chat/page.tsx");
     expect(source).toContain("@4xl:sticky");
-    expect(source).toContain("@4xl:max-h-[calc(100dvh-6rem)]");
+    expect(source).toContain("@4xl:top-20");
+    expect(source).toContain(
+      `@4xl:max-h-[calc(100dvh-${5 + reserveDuFlottantRem()}rem)]`,
+    );
     expect(source).toContain("@4xl:overflow-y-auto");
   });
 });
