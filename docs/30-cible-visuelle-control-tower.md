@@ -1018,6 +1018,60 @@ bougent. Partis pris 1 à 3 → **#876**, parti pris 4 → **#877**. Le ticket s
 `veille::arbitree` depuis cette veille — c'est l'enregistrement qui empêche la question de revenir,
 et le premier de ce genre posé **après** la fermeture du ticket qu'il arbitre.
 
+#### L'ascenseur discret — 2026-09-06 (#859, différée de #725)
+
+Surface : la règle du socle pour les **seize surfaces défilantes** — `globals.css` `@layer base` et
+`lib/ascenseur.ts` (#725), gardés par `composeur.test.tsx` (#728) : le conteneur défilant du `Shell`,
+les colonnes de propriétés collantes de `/chat` et `/couts`, les listes bornées, les blocs de code,
+les `textarea`. Veille **différée** jouée sur pièces ; décision complète en commentaire de **#859**,
+captures dans l'atelier de la session. Les quatre questions que le constat laissait ouvertes : barre
+de page effacée ou permanente, teinte du pouce, ombre de continuation, délai d'effacement.
+
+**Mesuré avant** (démo, 1440×900, Chrome) : `thin` et transparent au repos partout ; sur la colonne,
+`data-defilement` posé à ~120 ms, pouce plein `#888` à 310 ms, retiré à ~870 ms (700 ms de repos),
+effacé à 1 300 ms. **La barre de page dépend du pointeur** : `*:hover` s'applique à tout ancêtre du
+pointeur, donc le conteneur du `Shell` montre sa barre dès que le pointeur est sur le contenu et la
+**perd** dès qu'il passe sur la navigation ou quitte la fenêtre — et elle n'existe pas au clavier
+sans focus dans le contenu. Sous Chromium/Windows la barre révélée porte deux **flèches** et un pouce
+rectangulaire (rendu classique de `scrollbar-color`), pas une surimpression arrondie.
+
+**Vérifié en direct** : **VS Code web** (mesure + sources `main` lues) — surimpression DOM
+invisible au repos, révélée au survol **et** au défilement, effacée **500 ms** après
+(`HIDE_TIMEOUT = 500`) par un fondu de 800 ms, pouce translucide `rgba(121,121,121,.4)`, une ombre
+**en haut** une fois qu'on a défilé, et pas de page. **Grafana** (clair et sombre) — une règle
+globale `body * { scrollbar-width: thin; scrollbar-color: rgba(…,.3) transparent }` : fine,
+translucide à 30 %, **toujours visible**, page comprise. **Zulip** (vue publique) — listes en
+SimpleBar (native cachée, pouce noir à 50 % + halo d'1 px, `transition: opacity .2s linear .5s`),
+mais la **page** garde la barre du **système**. **ChatGPT** — trois régimes : `html` en `none`,
+le **fil** en `auto` (système, toujours visible), les listes en `thin`, les bandeaux en `none`.
+
+**Non vérifié, donc non cité** : Linear, Notion, Vercel, Slack ; les surimpressions des systèmes.
+
+**Quatre partis pris** : **la barre de page est un repère permanent, seules les surfaces imbriquées
+sont discrètes** — `data-ascenseur="page"` sur le conteneur du `Shell`, `scrollbar-color:
+var(--bord-fort) transparent` sans condition *(Zulip, ChatGPT)* · **le pouce reste plein sur
+`bord-fort`, jamais translucide** — un `rgba` est hors de portée de `contraste.test.ts` et sous 3:1
+sur `surface` ; ce que les références obtiennent par la translucidité, le socle l'obtient par
+l'absence au repos *(contre VS Code, Grafana, Zulip — et pour ne pas rouvrir la question à chaque
+capture)* · **le repos avant effacement passe de 700 à 500 ms** — deux références mesurées au même
+chiffre, là où 700 était un ordre de grandeur *(VS Code, Zulip)* · **aucune ombre de continuation,
+la coupure est le signal** — aucune des quatre n'en dessine au bas d'une surface bornée, deux ne
+posent qu'un masque en haut *(les quatre)*.
+
+**Refusés sur place, avec leur raison** : les barres en DOM (SimpleBar, monaco) — une dépendance et
+une piste qui masque la native, pour un rendu arrondi que `scrollbar-color` ne sait pas faire ; les
+flèches de Chromium/Windows sont le prix accepté d'une règle CSS sans JavaScript ; le halo d'1 px —
+`bord-fort` tient déjà 3:1 sur nos deux surfaces ; `scrollbar-gutter: stable both-edges` — `thin`
+garde sa place ; l'ombre en haut — une 7ᵉ ombre ; effacer aussi la page — la lecture « reste le
+repère de défilement » de #725 est confirmée par Zulip et ChatGPT, pas infirmée.
+
+**Ce que la veille n'a pas regardé** : Firefox et Safari (la branche `::-webkit-scrollbar`), le
+tactile, les barres horizontales, le thème sombre de notre surface (mesuré par #725, non recapturé).
+
+**Rien de #728 n'est défait** : toutes ses sondes tiennent ; le parti pris 1 **ajoute** une règle
+et le parti pris 3 change une constante déjà lue. Partis pris 1 et 3 → **#882** ; 2 et 4
+n'appellent aucun code. Le ticket source #725 porte `veille::arbitree` depuis cette veille.
+
 ---
 
 ## 6. Recommandation
