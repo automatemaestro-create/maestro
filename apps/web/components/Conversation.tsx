@@ -110,8 +110,8 @@
  * le bouton ne passe pas sous le flottant quand le composeur est à quai — un
  * cadre pleine largeur aurait rendu ce vide plus visible encore. Elle est
  * devenue **verticale** : à quai, le composeur se tient au-dessus de la bande
- * que le flottant occupe en bas de la fenêtre, comme le `pb-24` du `Shell` la
- * réserve déjà en fin de page, et un second élément collant couvre la bande
+ * que le flottant occupe en bas de la fenêtre, comme le `Shell` la réserve
+ * déjà en fin de page (`after:h-24` sur `main`), et un second élément collant couvre la bande
  * sous lui. Ça vaut pour les deux surfaces sans rien conditionner à leur
  * largeur (la règle de #691 : le flottant est calé sur la fenêtre, pas sur la
  * colonne) — voir les commentaires du `<form>` et de l'élément qui le suit.
@@ -125,9 +125,10 @@
  * `@4xl` si on ne fait que le remonter dans son coin. La place au-dessus du
  * composeur revient au flottant de fil de #877 (« Dernier message », veille
  * #820). Le flottant reste donc en coin, la bande reste, et le fil ne porte pas
- * l'assistant (`composeur.test.tsx` ②). Le prix est ailleurs : la réserve que
- * cette bande prolonge ne tient pas au bas d'une page qui déborde (#888, voir
- * l'élément qui suit le formulaire).
+ * l'assistant (`composeur.test.tsx` ②). Le prix s'est payé ailleurs : la
+ * réserve que cette bande prolonge ne tenait pas au bas d'une page qui déborde
+ * tant qu'elle était un padding de `main`, et #888 en a fait le dernier
+ * élément du flux (voir l'élément qui suit le formulaire).
  *
  * Depuis #884 (veille #866, différée de #726 — docs/30 §5.3), le rail **parle
  * une seule langue** : l'envoi est une icône nommée (`IconeEnvoyer`, libellé
@@ -647,10 +648,16 @@ export function Conversation({
           l'élément qui suit le formulaire). Elle vaut pour les deux surfaces
           sans rien conditionner à leur largeur — la règle qui vaut pour les
           deux est toujours celle qui ne dépend pas de la mise en page —, et
-          c'est la même bande que le `pb-24` du `Shell` réserve en fin de
-          page : à quai comme au repos, rien ne se termine sous le flottant.
-          Au repos rien ne change : le décalage d'un élément collant ne joue
-          que contre le bord de l'ascenseur, jamais dans le flux. */}
+          c'est la même bande que le `Shell` réserve en fin de page
+          (`after:h-24` sur `main`) : à quai comme au repos, rien ne se termine
+          sous le flottant. Au repos rien ne change : le décalage d'un élément
+          collant ne joue que contre le bord de l'ascenseur, jamais dans le
+          flux — à condition que ce bord soit à plus de 64 px du formulaire au
+          bas du défilement, ce que les 96 px de la réserve garantissent
+          **depuis qu'elle est un élément du flux** (#888 ; en padding de
+          `main`, elle ne tenait pas dès que la page débordait, et `bottom-16`
+          remontait alors le formulaire sur le fil — voir l'élément qui
+          suit). */}
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -875,18 +882,23 @@ export function Conversation({
           dans les bornes de son bloc parent, et les deux décrochent au bon
           moment — entre les deux instants, la bande ne contient que la place
           vide que le formulaire a quittée, jamais une bulle.
-          ⚠ **Mesuré en défaut au bas d'une page qui déborde** (banc de #885,
-          2026-09-06 → #888) : la réserve `pb-24` du `Shell` vit dans un `main`
-          à hauteur fixée (#248) que le contenu dépasse dès que la page est plus
-          haute que la fenêtre ; au bas du défilement le formulaire arrive à
-          12 px du bord de l'ascenseur, et `bottom-16` le **remonte de 52 px
-          sur le fil** — 36 px du dernier message perdus (sa dernière ligne et
-          son pied), et plus rien à défiler. Sur `/chat` à `@4xl`, la colonne de
-          propriétés étire déjà la rangée dans la réserve : 20 px perdus au
-          repos. Le remède est celui de la réserve, pas du composeur — tenue au
-          bas du défilement, elle rend à `bottom-16` exactement le rôle décrit
-          ci-dessus. Ne pas « corriger » en déplaçant le flottant : c'est la
-          proposition que #885 a refusée. */}
+          ⚠ Les deux **comptent sur la réserve du `Shell`** (`after:h-24` sur
+          `main`, #888). Tant qu'elle était un padding de `main` — une boîte à
+          hauteur fixée (#248) que le contenu dépasse dès que la page est plus
+          haute que la fenêtre —, elle ne tenait pas au bas du défilement : le
+          formulaire y arrivait à 12 px du bord de l'ascenseur, et `bottom-16`
+          le **remontait de 52 px sur le fil** (banc de #885, 2026-09-06 :
+          36 px du dernier message perdus, sa dernière ligne et son pied, et
+          plus rien à défiler). Dernier élément du flux, la réserve suit le
+          contenu quand il déborde : au bas du défilement le formulaire est
+          96 px au-dessus du bord, donc jamais décalé, et `bottom-16` retrouve
+          exactement le rôle décrit ci-dessus (la piste « padding sur
+          l'ascenseur » a été mesurée fausse — voir `Shell.tsx`). Sur `/chat` à
+          `@4xl`, la colonne de propriétés retranche autant de son plafond,
+          sans quoi la rangée étirait le fil dans la réserve (20 px perdus au
+          repos). Le remède est celui de la réserve, pas du composeur — ne pas
+          « corriger » en déplaçant le flottant : c'est la proposition que
+          #885 a refusée. */}
       <div
         aria-hidden="true"
         className="sticky bottom-0 -mt-19 h-16 bg-background"

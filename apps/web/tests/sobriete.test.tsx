@@ -55,7 +55,7 @@ import { ID_CONTENU_PRINCIPAL } from "@/components/Shell";
 import { marquerGuideVu } from "@/lib/guide";
 import { MENU } from "@/lib/navigation";
 
-import { poserProjetActif } from "./aides";
+import { poserProjetActif, reserveDuFlottantRem } from "./aides";
 import {
   ECRANS,
   monterEcran,
@@ -374,8 +374,14 @@ describe("la colonne de propriétés de /couts", () => {
    * le pli : aucun défilement ne le ramène, puisque c'est le défilement qui la
    * fige. C'est la classe de bug de #306, et la règle des trois places
    * l'invite par construction. Les deux utilitaires vont donc ensemble.
+   *
+   * Le plafond retranche `top-20` (5 rem) **et la réserve du bouton flottant**
+   * (#888), lue dans `Shell.tsx` — même calcul que la colonne de `/chat`,
+   * gardé par `composeur.test.tsx` ⑦ : à 6 rem la colonne s'arrêtait 16 px
+   * au-dessus du bord de la fenêtre, c'est-à-dire **dans** la bande que le
+   * shell réserve à l'assistant.
    */
-  it("borne sa hauteur partout où elle est collante", () => {
+  it("borne sa hauteur partout où elle est collante, au-dessus de la réserve du flottant", () => {
     const source = readFileSync(
       path.join(
         path.dirname(fileURLToPath(import.meta.url)),
@@ -384,7 +390,10 @@ describe("la colonne de propriétés de /couts", () => {
       "utf8",
     );
     expect(source).toContain("@4xl:sticky");
-    expect(source).toContain("@4xl:max-h-[calc(100dvh-6rem)]");
+    expect(source).toContain("@4xl:top-20");
+    expect(source).toContain(
+      `@4xl:max-h-[calc(100dvh-${5 + reserveDuFlottantRem()}rem)]`,
+    );
     expect(source).toContain("@4xl:overflow-y-auto");
   });
 });

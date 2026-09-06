@@ -1140,8 +1140,12 @@ Un disque de 48 px au-dessus du composeur couvre le fil et le dernier message da
 banc (6 fenêtres × 2 surfaces), ou la colonne de propriétés de `/chat` à `@4xl` si on ne fait que le
 remonter dans son coin ; la place revient au « Dernier message » de #877, l'objet même des
 références. Le flottant reste en coin, la bande reste. Le banc a trouvé à la place un défaut du
-**shell** : la réserve `pb-24` ne tient pas au bas d'une page qui déborde (`main` à hauteur fixée
-depuis #248), et `bottom-16` remonte alors le composeur de 52 px sur le dernier message → **#888**.
+**shell** : la réserve `pb-24` ne tenait pas au bas d'une page qui déborde (`main` à hauteur fixée
+depuis #248), et `bottom-16` remontait alors le composeur de 52 px sur le dernier message → **#888**,
+qui fait de la réserve le **dernier élément du flux** de `main` (`after:h-24`, qui suit le contenu
+quand il déborde — la piste « padding sur l'ascenseur » a été mesurée fausse : Chrome n'ajoute le
+padding de fin qu'aux boîtes en flux directes, jamais au débordement de leurs descendants) et fait
+retrancher cette réserve au plafond des colonnes de propriétés collantes (`6rem` → `11rem`).
 Arbitrage complet en commentaire de #885.
 
 ---

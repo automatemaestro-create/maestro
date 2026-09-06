@@ -170,10 +170,40 @@ function CadreControlTower({
               zone (`@md:`, `@3xl:`…) et non sur celle de la fenêtre.
               `data-guide` : ancre de repli de la visite guidée (#122) quand la
               page ne rend pas encore le panneau qu'une étape vise.
-              `pb-24` : la bande que le bouton de l'assistant (#123) occupe en bas
-              à droite est réservée — aucun contenu ne se termine sous lui, donc
+              `after:h-24` — la **réserve du bouton flottant** (#888) : la bande
+              que le bouton de l'assistant (#123) occupe en bas à droite est
+              réservée par un pseudo-élément de 96 px, **dernier élément du
+              flux** de `main` — aucun contenu ne se termine sous lui, donc
               aucune action de la page (décider une validation…) ne finit
-              masquée.
+              masquée. Ce fut un `pb-24` sur `main` de #123 à #888, juste tant
+              que la page tenait dans la fenêtre : depuis #248 `main` est une
+              boîte à hauteur fixée (`min-h-0 flex-1`) que le contenu dépasse
+              dès qu'une page est plus haute qu'elle, et un padding enfermé
+              dans une boîte déjà dépassée n'est plus nulle part — au bas du
+              défilement la fin de page affleurait le bord (mesuré au banc :
+              36 px du dernier message sous le composeur à quai, les dernières
+              lignes du journal sous le flottant). ⚠ Le porter sur
+              l'**ascenseur** (`pb-24` sur le `div … overflow-y-auto` ci-dessus,
+              la piste du ticket) a été **mesuré faux** : Chrome n'ajoute le
+              padding de fin d'un conteneur défilant qu'à ses boîtes en flux
+              **directes** (`main`, fixée), jamais au débordement de leurs
+              descendants — marge sous le contenu toujours 0 au bas du
+              défilement —, et il y calcule le `sticky` contre la boîte de
+              **contenu** de l'ascenseur, ce qui remontait le composeur à quai
+              de 96 px de plus (bas du formulaire à 640 pour 800 de haut, quand
+              `bottom-16` en promet 736). Un élément du flux, lui, suit le
+              contenu où qu'il aille : quand la page déborde, il est après elle
+              dans le débordement défilable, et au bas du défilement les 96
+              derniers pixels ne portent que du fond (mesuré : le formulaire du
+              fil finit à 704 pour 800 de haut, le dernier message 28 px
+              au-dessus de lui). `after:-mt-6` reprend le `gap-6` pour que la
+              réserve fasse 96 px et non 120, et `main` n'a **aucun padding
+              bas** : la géométrie d'une page qui tient ne bouge pas — le
+              Kanban (#248) finit exactement où il finissait. Deux choses en
+              dépendent : le composeur à quai (`sticky bottom-16`,
+              `Conversation.tsx`) compte sur ces 96 px pour retrouver sa place
+              naturelle au bas du fil, et les colonnes de propriétés collantes
+              (`/chat`, `/couts`) les retranchent de leur plafond.
               `min-h-0 flex-1` : la zone occupe la hauteur du cadre, ce qui
               donne enfin une hauteur à prendre à une page qui le demande (le
               Kanban, #248). Ce qui déborde fait défiler la colonne parente —
@@ -195,7 +225,7 @@ function CadreControlTower({
             id={ID_CONTENU_PRINCIPAL}
             tabIndex={-1}
             data-guide="contenu"
-            className="@container mx-auto flex min-h-0 w-full max-w-screen-2xl flex-1 flex-col gap-6 p-4 pb-24 outline-none focus-visible:outline-2 focus-visible:outline-sky-600 sm:p-6 sm:pb-24"
+            className="@container mx-auto flex min-h-0 w-full max-w-screen-2xl flex-1 flex-col gap-6 px-4 pt-4 outline-none after:-mt-6 after:block after:h-24 after:shrink-0 focus-visible:outline-2 focus-visible:outline-sky-600 sm:px-6 sm:pt-6"
           >
             {children}
           </main>

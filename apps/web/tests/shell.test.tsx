@@ -165,11 +165,32 @@ describe("le shell applicatif (Shell)", () => {
     expect(navigation.querySelectorAll("a")).toHaveLength(MENU.length);
   });
 
-  it("réserve la bande du bouton flottant sous le contenu", async () => {
-    // Sans cette réserve (`pb-24`), une action de la page — décider une
-    // validation — pourrait finir masquée par l'assistant (#123).
+  it("réserve la bande du bouton flottant en fin de flux, après le contenu", async () => {
+    // Sans cette réserve, une action de la page — décider une validation —
+    // pourrait finir masquée par l'assistant (#123). Elle est le **dernier
+    // élément du flux** de `main` (#888, `after:h-24`) et non un padding :
+    // `main` est une boîte à hauteur fixée (#248) que le contenu dépasse dès
+    // qu'une page est plus haute que la fenêtre, et un `pb-24` enfermé dedans
+    // n'était plus nulle part au bas du défilement — la fin de page affleurait
+    // le bord. Le porter sur l'ascenseur (la piste du ticket) a été mesuré
+    // faux aussi : Chrome n'ajoute le padding de fin d'un conteneur défilant
+    // qu'à ses boîtes en flux directes, jamais au débordement de leurs
+    // descendants. Un élément du flux, lui, suit le contenu où qu'il aille.
+    // jsdom ne mesure rien (#308) et le pixel appartient au banc ; ce qui est
+    // gardé ici est la **forme** de la réserve — un item de flux de 96 px qui
+    // ne rétrécit pas — et l'absence de tout padding bas, sur `main` comme
+    // sur l'ascenseur, qui ferait croire à une réserve là où il n'y en a pas.
     const { container } = await monterShell();
-    expect(container.querySelector("main")).toHaveClass("pb-24");
+    const main = container.querySelector("main")!;
+    expect(Array.from(main.classList)).toEqual(
+      expect.arrayContaining(["after:block", "after:h-24", "after:shrink-0"]),
+    );
+    const ascenseur = main.closest(".overflow-y-auto");
+    expect(ascenseur, "main n'a aucun ascenseur au-dessus de lui").not.toBeNull();
+    const paddingsBas = (element: Element) =>
+      Array.from(element.classList).filter((c) => /^(sm:)?pb-/.test(c));
+    expect(paddingsBas(main)).toEqual([]);
+    expect(paddingsBas(ascenseur!)).toEqual([]);
   });
 
   it("pose les ancres que la visite guidée éclaire", async () => {

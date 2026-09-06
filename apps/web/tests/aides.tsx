@@ -9,6 +9,10 @@
  * côté backend ne casse pas trente tests, seulement la fabrique.
  */
 
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { render, type RenderResult } from "@testing-library/react";
 import type { ReactNode } from "react";
 
@@ -948,4 +952,30 @@ export function pageExplorateurFactice(
     tronque: false,
     ...partiel,
   };
+}
+
+/**
+ * La réserve du bouton flottant (#123), **lue dans `Shell.tsx`** et rendue en
+ * rem : le `after:h-*` de `main`, dernier élément du flux depuis #888. Les
+ * colonnes de propriétés collantes (`/chat`, `/couts`) doivent la retrancher de
+ * leur plafond — c'est elle qui bornait mal la rangée de `/chat`, qui s'étirait
+ * de 80 px dans la bande et y emportait le composeur —, et un plafond recopié
+ * en dur cesserait de la suivre le jour où elle change : d'où une lecture
+ * plutôt qu'un chiffre. Le pas de Tailwind est 0,25 rem (`h-24` = 6 rem).
+ */
+export function reserveDuFlottantRem(): number {
+  const source = readFileSync(
+    path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../components/Shell.tsx",
+    ),
+    "utf8",
+  );
+  const reserve = source.match(/(?:^|[\s"])after:h-(\d+)(?=[\s"])/);
+  if (reserve === null) {
+    throw new Error(
+      "Shell.tsx : aucun `after:h-*` sur `main` — la réserve du flottant (#888) a bougé",
+    );
+  }
+  return Number(reserve[1]) / 4;
 }

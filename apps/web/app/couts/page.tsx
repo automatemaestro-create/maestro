@@ -227,12 +227,17 @@ export default function PageCouts() {
                 compte assez d'agents. Le plafond lui rend son propre
                 ascenseur ; il ne s'applique qu'au-delà de `@4xl`, où la colonne
                 existe — en dessous elle repasse sous le corps et défile avec la
-                page, où la borner découperait une liste sans raison. */}
+                page, où la borner découperait une liste sans raison.
+                Le plafond retranche `top-20` (5 rem) **et la réserve du bouton
+                flottant** (6 rem, le `after:h-24` de `main` dans le `Shell` —
+                #888, même calcul que la colonne de `/chat`) : la colonne
+                s'arrête au haut de la bande de l'assistant au lieu de
+                descendre dessous. */}
             <aside
               aria-label="Propriétés de la période"
               className={
                 "flex min-w-0 flex-col gap-6 @4xl:sticky @4xl:top-20 " +
-                "@4xl:max-h-[calc(100dvh-6rem)] @4xl:overflow-y-auto " +
+                "@4xl:max-h-[calc(100dvh-11rem)] @4xl:overflow-y-auto " +
                 estompe
               }
             >
