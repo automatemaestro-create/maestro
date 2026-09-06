@@ -238,6 +238,18 @@ function PanneauAssistance({ fermer }: { fermer: () => void }) {
             "dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100 dark:focus:border-neutral-500"
           }
         />
+        {/* Le troisième composeur du produit, et le seul qui envoie encore en
+            texte : le parti pris 1 de la veille #866 (l'envoi en icône nommée,
+            posé sur `Conversation` par #884) ne lui est **pas** appliqué, et
+            c'est tranché plutôt qu'oublié. Il vaut pour un **rail** — deux
+            icônes de même taille à ses deux bouts, l'arrêt à la place de
+            l'envoi —, or ce panneau n'en a pas : un champ et un bouton côte à
+            côte, la forme d'avant #726, sur des classes que le socle n'a pas
+            encore reprises, et sans arrêt (le bouton s'éteint pendant l'envoi).
+            Une icône seule ici n'aurait rien à quoi répondre ; ce sera le
+            geste du ticket qui portera ce panneau sur le socle, avec sa propre
+            veille — celle de #866 ne l'a pas regardé, et ce qui n'est pas
+            vérifié n'est pas cité. */}
         <button
           type="submit"
           disabled={envoi || brouillon.trim() === ""}
