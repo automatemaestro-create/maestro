@@ -1148,9 +1148,12 @@ class LocalExecutor(TaskExecutor):
         # La validation d'une tâche sensible (#9) est du temps d'arbitrage comme
         # un autre — le journal doit le dire (#584) —, mais elle précède
         # l'armement : le délai ne courait pas encore, il n'y a rien à lui rendre.
-        # D'où la mesure ici et la remise à zéro du compteur au moment d'armer.
-        with credit.attente():
-            refus = await self._valide_si_sensible(agent, task, score, journal)
+        # D'où la mesure là-bas et la remise à zéro du compteur au moment d'armer.
+        # La fenêtre est ouverte **dans** `_valide_si_sensible` et non ici (#880) :
+        # l'immense majorité des tâches sont anodines, et l'envelopper de dehors
+        # mesurait alors le temps de *décider qu'il n'y a personne à consulter* —
+        # une durée sans objet, tronquée à `1` ms dès que la machine est chargée.
+        refus = await self._valide_si_sensible(agent, task, score, journal, credit)
         if refus is not None:
             return refus
         timeout_s = self._guardrails.timeout_s
@@ -1226,7 +1229,12 @@ class LocalExecutor(TaskExecutor):
         return realisation in fini
 
     async def _valide_si_sensible(
-        self, agent: Agent, task: Task, score: int, journal: RunJournal
+        self,
+        agent: Agent,
+        task: Task,
+        score: int,
+        journal: RunJournal,
+        credit: CreditArbitrage,
     ) -> TaskResult | None:
         """Déclenche la validation humaine si la tâche est sensible (#9).
 
@@ -1234,6 +1242,14 @@ class LocalExecutor(TaskExecutor):
         `TaskResult` d'échec de la tâche stoppée. La demande et la décision sont
         consignées au journal (étape dédiée `<task.id>:validation`, statuts alignés
         sur l'entité APPROVAL de docs/03), que la décision soit oui ou non.
+
+        `credit` (#584, replacé par #880) mesure l'attente, et la fenêtre s'ouvre
+        **ici** plutôt que chez l'appelant : une tâche anodine ressort sur le
+        `return None` ci-dessous sans que personne n'ait été consulté, et une
+        fenêtre ouverte de dehors lui aurait quand même compté le temps de cette
+        décision-là. Le crédit ne mesure que ce qui a réellement suspendu la
+        tâche — la borne inférieure de sa fenêtre est un `await` sur un humain,
+        jamais un chemin qui pourrait ne pas y arriver.
         """
         raison = self._guardrails.raison_sensible(task)
         if raison is None:
@@ -1257,7 +1273,8 @@ class LocalExecutor(TaskExecutor):
             # ce chemin-ci *est* celui qui donne son sens à `ORIGINE_POLITIQUE`.
             origine=ORIGINE_POLITIQUE,
         )
-        approuve, detail = await self._guardrails.demande_validation(demande)
+        with credit.attente():
+            approuve, detail = await self._guardrails.demande_validation(demande)
         self._consigne_validation(
             task,
             agent=agent.nom,
