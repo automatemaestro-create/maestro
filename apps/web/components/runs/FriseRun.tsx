@@ -122,7 +122,9 @@ const APPARENCE: Record<string, ApparenceEntree> = {
     icone: IconeArbitrage,
     teintee: true,
   },
-  bloquee: { ton: "accent", icone: IconeStatutBloquee },
+  // Le violet d'avant #912, conservé au pixel : un état qui emprunte le ton de
+  // la provenance, comme dans `Kanban` et `VuePipeline`.
+  bloquee: { ton: "provenance", icone: IconeStatutBloquee },
   terminee: { ton: "positif", icone: IconeStatutTerminee },
   echec: { ton: "alerte", icone: IconeStatutEchec },
   approuve: { ton: "positif", icone: IconeArbitrage },

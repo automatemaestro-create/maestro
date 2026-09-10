@@ -1530,7 +1530,13 @@ littérale du code repeindrait en vert toutes les pastilles de proposition *(Atl
 `Beta`), état chez GitHub (`Done`, l'affiliation passant au rose) : il n'a **aucun sens universel**,
 et c'est précisément pourquoi le ton doit être nommé par son **rôle** chez nous. Ce qui leur est
 commun, et qui porte le parti pris : les deux gardent un ton « origine / affiliation » **hors** de
-leurs cinq valences.
+leurs cinq valences. **Livré par #912** : `--provenance` / `-texte` / `-creux` dans `globals.css`,
+`TonBadge` renommé, six appelants suivis, rendu inchangé — avec deux paires refusées à dessein par
+`tests/contraste.test.ts` (pas de `sur-ton` sur cet aplat, où rien ne s'écrit, et pas d'`-appui`) et
+le contour du badge laissé à la main comme celui des quatre tons d'état, ses pas -300/-700 n'étant
+portés par aucun token (seul `neutre` a un contour sur tokens, depuis #910). Mesuré par
+`couleurs.test.ts` : 2 paires de moins dans `Primitives`, 680 → 678 (après les quatre que #911 a
+retirées de `BarreLaterale` en posant `--selectionne`).
 
 ⚠ **Un piège trouvé en chemin, mesuré, pour le lot qui appliquera le parti pris 3** : en sombre,
 `--survol` vaut `#262626`, qui est **exactement** le `dark:bg-neutral-800` dont `BarreLaterale` se

@@ -494,7 +494,7 @@ export function EditeurPlaybook({
                     : ""}
               </span>
               {propositionsRecentes.length > 0 && (
-                <BadgeEtat ton="accent" className="chiffre">
+                <BadgeEtat ton="provenance" className="chiffre">
                   {propositionsRecentes.length} en attente
                 </BadgeEtat>
               )}
@@ -780,7 +780,7 @@ function ApercuHistorique({
         <span className="chiffre font-mono text-annexe font-medium text-texte">
           {reference}
         </span>
-        {provenance && <BadgeEtat ton="accent">{provenance}</BadgeEtat>}
+        {provenance && <BadgeEtat ton="provenance">{provenance}</BadgeEtat>}
         {creeLe && (
           <span className="text-annexe text-texte-secondaire">
             {formatDateHeure(creeLe)}

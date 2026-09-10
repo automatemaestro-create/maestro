@@ -256,16 +256,10 @@ const MANQUES_DU_SOCLE: readonly Manque[] = [
   //   manquantes mais des **opacités de tokens existants** (`bg-texte/10`,
   //   `border-sur-ton/25`) — comblés sans qu'un token soit ajouté, donc sans que
   //   le contrôle « la palette couvre déjà ce manque » ait pu les voir partir.
-  {
-    token: "provenance",
-    temoin: "components/Primitives.tsx",
-    classe: "dark:bg-violet-900",
-    raison:
-      "le badge `accent` du socle est **violet** quand le token `--accent` est " +
-      "vert : ce sont deux rôles (la provenance d'un élément, l'action à " +
-      "faire), et les confondre repeindrait en vert toutes les pastilles de " +
-      "proposition — un changement de rendu, pas une migration",
-  },
+  // `provenance` (Primitives) est le troisième parti, par l'autre chemin : #912
+  //   a ajouté `--provenance`, `-texte`, `-creux` sur les valeurs violettes que
+  //   le badge rendait déjà, et sa ligne est partie parce que le contrôle
+  //   ci-dessous l'exigeait — c'est exactement ce pour quoi il existe.
   {
     token: "code",
     temoin: "components/PosteVide.tsx",
@@ -416,14 +410,17 @@ const RESIDU = new Map<string, number>([
   ["components/PanneauRunsImmobiles.tsx", 4],
   ["components/PanneauValidations.tsx", 5],
   ["components/PosteVide.tsx", 13], // manque : `code`
-  // Le socle lui-même : la carte, cinq des six tons du badge, l'en-tête de
-  // section. C'est la ligne qui compte double — une paire retirée ici retire
-  // des recopies partout, et une paire ajoutée s'imprime sur tous les écrans à
-  // la fois. Elle est dans le tableau comme les autres : l'écarter aurait
-  // exempté le fichier le plus visible du produit. 43 au lot ; le ton `neutre`
-  // est parti avec #910 (`bg-texte/10`, `border-bord` — une opacité et un token,
-  // pas une couleur de plus).
-  ["components/Primitives.tsx", 39], // manque : `provenance`
+  // Le socle lui-même : la carte, les quatre tons d'état du badge (plein et
+  // contour) et le contour de `provenance`, l'en-tête de section. C'est la
+  // ligne qui compte double — une paire retirée ici retire des recopies
+  // partout, et une paire ajoutée s'imprime sur tous les écrans à la fois. Elle
+  // est dans le tableau comme les autres : l'écarter aurait exempté le fichier
+  // le plus visible du produit. 43 au lot ; le ton `neutre` est parti avec #910
+  // (`bg-texte/10`, `border-bord` — une opacité et un token, pas une couleur de
+  // plus), et #912 en a retiré deux en écrivant le ton `provenance` du badge
+  // plein sur ses tokens (son contour reste à la main, comme celui des quatre
+  // tons d'état).
+  ["components/Primitives.tsx", 37],
   ["components/RepartitionAgents.tsx", 7], // manque : `serie`
   ["components/SelecteurReassignation.tsx", 4],
   ["components/SigneDeVie.tsx", 3],
@@ -461,7 +458,7 @@ const RESIDU = new Map<string, number>([
 ]);
 
 /** Le compte du README — épinglé ici pour qu'il ne puisse pas dériver en silence. */
-const TOTAL_ANNONCE = 680;
+const TOTAL_ANNONCE = 678;
 
 /** Ce que le produit porte aujourd'hui, fichier par fichier. */
 function residuMesure(): Map<string, string[]> {
