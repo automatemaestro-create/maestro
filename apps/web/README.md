@@ -1098,7 +1098,7 @@ sous les yeux** (un compteur temps réel) porte la classe `chiffre`
 elle, le passage de « 1 » à « 8 » élargit la valeur et fait sauter la ligne
 autour d'elle.
 
-### L'ascenseur discret — `app/globals.css` et `lib/ascenseur.ts` (#725)
+### L'ascenseur discret — `app/globals.css` et `lib/ascenseur.ts` (#725, #882)
 
 Le socle ne disait rien des ascenseurs, si bien que les **seize surfaces
 défilantes** du produit rendaient celui du système — et qu'une colonne de
@@ -1109,9 +1109,20 @@ celui de la page. Depuis #725 la règle vit dans `globals.css`, une fois, et tou
 - **au repos la barre ne se voit pas ; elle se montre** sous le pointeur
   (`:hover`), quand le focus est dedans (`:focus-within`, le pendant clavier du
   survol) et **pendant le défilement** — `data-defilement`, posé par
-  `lib/ascenseur` sur l'élément qui vient de défiler et retiré après un court
-  repos, parce que CSS n'a aucun état pour « défile en ce moment » et que c'est
-  le seul moment où le tactile la voit ;
+  `lib/ascenseur` sur l'élément qui vient de défiler et retiré après
+  `REPOS_DEFILEMENT_MS`, parce que CSS n'a aucun état pour « défile en ce
+  moment » et que c'est le seul moment où le tactile la voit. Ce repos vaut
+  **500 ms** depuis #882 : c'est le chiffre des deux références que la veille
+  #859 a mesurées (VS Code web, `HIDE_TIMEOUT = 500` ; Zulip, `.5s`), là où les
+  700 ms de #725 étaient « un ordre de grandeur, pas une mesure » ;
+- **sauf la page, qui est un repère permanent** (#882) : le conteneur défilant
+  du `Shell` porte `data-ascenseur="page"` et sa barre est peinte **sans
+  condition**, dans les deux moteurs ; seules les surfaces **imbriquées**
+  (colonnes bornées, listes, blocs de code, `textarea`) s'effacent au repos.
+  L'exception a besoin d'un marqueur faute d'un sélecteur qui distingue la page
+  d'une colonne bornée — et c'est un **attribut de données**, pas une classe
+  utilitaire : le CSS lit un contrat, que nul refactor de Tailwind ne retire
+  (même raison que `data-defilement`) ;
 - **discrète, jamais absente** : elle garde sa place (`thin`, jamais `none`),
   reste une cible pointable et n'empêche aucun défilement — un retrait pur
   effacerait l'information qu'une surface bornée continue sous le pli, la classe
@@ -1125,23 +1136,67 @@ celui de la page. Depuis #725 la règle vit dans `globals.css`, une fois, et tou
   ignore les pseudo-éléments dès que `scrollbar-color` est posé, d'où un
   `@supports` qui choisit au lieu de superposer.
 
-Le `Shell` n'est pas exempté : son ascenseur reste le repère de défilement de la
-page, il se montre simplement quand on regarde le contenu plutôt qu'en
-permanence. Ce que jsdom ne voit pas — aucun `overflow` calculé (#308) — se
-vérifie au navigateur avec `/banc-mise-en-page`.
+**Pourquoi la page fait exception**, et pourquoi il a fallu un marqueur : de
+#725 à #882 le `Shell` suivait la règle commune, ce qui revenait à laisser
+`*:hover` décider. Or `:hover` s'applique à **tout ancêtre du pointeur** : la
+barre de page apparaissait dès que le pointeur était sur le contenu, se perdait
+dès qu'il passait sur la navigation latérale ou quittait la fenêtre, et
+n'existait pas au clavier tant qu'aucun focus n'était dans le contenu. Un repère
+qui clignote au gré du pointeur n'est pas un repère — et les deux références de
+la veille #859 qui ont une page (Zulip, ChatGPT) la laissent toujours visible en
+n'effaçant que les surfaces imbriquées. Ce qui gênait à la revue du 2026-08-28
+était le **voisinage** de deux barres, jamais l'existence de celle de la page :
+c'est bien la seconde qu'on efface. Ce que jsdom ne voit pas — aucun `overflow`
+calculé (#308) — se vérifie au navigateur avec `/banc-mise-en-page`.
+
+⚠ Deux partis pris de la veille #859 **n'appellent aucun code** et se perdraient
+sans être écrits quelque part : le pouce reste **plein** sur `bord-fort`, jamais
+translucide (un `rgba` est hors de portée de `contraste.test.ts` et tombe sous
+3:1 sur `surface` — ce que les références obtiennent par la translucidité, le
+socle l'obtient par l'absence au repos), et il n'y a **aucune ombre de
+continuation** au bas d'une surface bornée, la coupure étant le signal (aucune
+des quatre références n'en dessine ; ce serait une 7ᵉ ombre). Refusés avec eux :
+les barres en DOM (SimpleBar, monaco), le halo d'1 px, `scrollbar-gutter`.
 
 Ce que la feuille promet est **gardé sur ses octets** par `tests/composeur.test.tsx`
 (#728, technique de `contraste.test.ts`) : `thin` et jamais `none`, transparente au
 repos, éveillée sur les trois états à la fois, le pouce sur un token **déclaré dans
 les deux thèmes**, le fondu sous `no-preference` seulement, un seul moteur à la
-fois, le tout sous `@layer base` — et l'attribut que le CSS lit est celui que
-`lib/ascenseur` pose, la seule frontière du dispositif (renommer d'un seul côté ne
-casse rien à la compilation, et la barre ne se montrerait plus jamais au
-défilement). Chaque sonde est prouvée sur une feuille fautive avant de lire la
-vraie. Mesuré au navigateur le 2026-09-04 sur la colonne de propriétés de `/chat`
-et de `/couts` : `transparent transparent` au repos, `#888888` (`--bord-fort`)
-pendant le défilement, effacée après le repos de 700 ms — et plus aucune barre
-système, ni sur la colonne ni sur la page.
+fois, le tout sous `@layer base`, et depuis #882 **la page peinte sans condition
+dans les deux moteurs** — et les attributs que le CSS lit sont ceux que le code
+pose, les deux frontières du dispositif : `data-defilement` par `lib/ascenseur`,
+`data-ascenseur="page"` par le `Shell` (renommer d'un seul côté ne casse rien à
+la compilation, et la barre ne se montrerait plus jamais — au défilement pour
+l'un, jamais du tout pour l'autre). Chaque sonde est prouvée sur une feuille
+fautive avant de lire la vraie, celle du repère permanent sur la feuille
+d'**avant** #882, où la page dépendait du pointeur comme tout le reste ; et le
+marqueur est cherché dans le DOM sous le `Shell` réel, une règle sans porteur ne
+peignant rien.
+
+Mesuré au navigateur le 2026-09-04 sur la colonne de propriétés de `/chat` et de
+`/couts` : `transparent transparent` au repos, `#888888` (`--bord-fort`) pendant
+le défilement, effacée après le repos — et plus aucune barre système.
+
+Remesuré le 2026-09-10 après #882, sur la démo en 1280×800, **chaque cas contre
+son contrefactuel** — le marqueur retiré par le DOM, ce qui rend le comportement
+d'avant : la page rend `rgb(136, 136, 136) rgba(0, 0, 0, 0)` **pointeur sur la
+navigation latérale** (`/chat`) comme **pointeur hors de la fenêtre** (`/couts`,
+`body:hover` faux), là où sans le marqueur elle retombe à
+`rgba(0, 0, 0, 0) rgba(0, 0, 0, 0)` dans les deux cas ; les colonnes de
+propriétés, elles, restent effacées au repos sur les deux écrans. ⚠ Un
+contrefactuel se lit **après** le fondu de 150 ms : lu dans la foulée du retrait,
+`getComputedStyle` rend la valeur en cours d'animation, c'est-à-dire l'ancienne —
+de quoi conclure « rien n'a changé » d'une règle qui marche.
+
+Deux choses que cette mesure a apprises sur la **compilation**, et qu'aucune
+lecture de la source ne donnait : Lightning CSS **fusionne** la règle de la page
+avec celle de l'éveil (`:hover, :focus-within, [data-defilement],
+[data-ascenseur="page"]`) et laisse tomber le `*` de `*:hover` — le sélecteur nu
+survit, donc le contrat tient, et c'est pourquoi la sonde cherche le marqueur
+**dans** un groupe plutôt qu'une règle à lui ; et `scrollbar-color` n'apparaît
+pas dans le `cssText` du CSSOM sous Chrome, si bien qu'une vérification par
+`document.styleSheets` rend un faux négatif — la mesure passe par
+`getComputedStyle`, ou par les octets servis.
 
 ### Le composeur de conversation — `components/Conversation.tsx` (#722)
 

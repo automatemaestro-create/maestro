@@ -30,7 +30,7 @@ import { MenuAide } from "@/components/MenuAide";
 import { RegionArbitrage } from "@/components/RegionLive";
 import { ChoixProjet, EcranOuverture } from "@/components/projets/ChoixProjet";
 import { SelecteurProjet } from "@/components/projets/SelecteurProjet";
-import { ecouterDefilement } from "@/lib/ascenseur";
+import { ASCENSEUR_PAGE, ecouterDefilement } from "@/lib/ascenseur";
 import { FournisseurEtatGlobal } from "@/lib/etatGlobal";
 import { FournisseurProjetActif, useProjetActif } from "@/lib/etatProjetActif";
 import {
@@ -156,7 +156,21 @@ function CadreControlTower({
           la chaîne indéfinie. */}
       <div className="flex min-h-0 flex-1">
         <BarreLaterale repliee={repliee} />
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
+        {/* `data-ascenseur="page"` (#882, parti pris 1 de la veille #859) : cet
+            ascenseur-ci est celui de la **page**, et le socle le peint sans
+            condition là où toutes les autres surfaces s'effacent au repos
+            (`app/globals.css`, « L'ascenseur discret »). Un marqueur est
+            nécessaire faute d'un sélecteur qui distingue la page d'une colonne
+            bornée — et c'est un **attribut de données**, pas une classe
+            utilitaire : le CSS lit un contrat, que nul refactor de Tailwind ne
+            retire (même raison que `data-defilement`). La valeur vient de
+            `lib/ascenseur`, qui la nomme pour le JSX comme pour la sonde qui
+            lit les octets de la feuille : renommée d'un seul côté, la barre de
+            page redeviendrait tributaire du pointeur sans que rien ne casse. */}
+        <div
+          data-ascenseur={ASCENSEUR_PAGE}
+          className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto"
+        >
           <BarreSuperieure
             repliee={repliee}
             basculerRepli={basculerRepli}

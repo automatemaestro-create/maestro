@@ -359,7 +359,22 @@ body {
      doit se révéler au clavier) et **pendant le défilement**
      (`[data-defilement]`, posé par `lib/ascenseur` sur l'élément qui vient
      de défiler — CSS n'a aucun état pour « défile en ce moment », et c'est le
-     seul moment où le tactile voit la barre).
+     seul moment où le tactile voit la barre). Le repos avant effacement vaut
+     **500 ms** (`REPOS_DEFILEMENT_MS`) depuis #882 : c'est le chiffre des deux
+     références que la veille #859 a mesurées, là où 700 était un ordre de
+     grandeur.
+   - **Sauf la page, qui est un repère permanent** (#882, parti pris 1 de la
+     veille #859) : le conteneur défilant du `Shell` porte
+     `data-ascenseur="page"` et sa barre est peinte **sans condition**, dans
+     les deux moteurs. C'est une exception, et elle a besoin d'un marqueur :
+     `*:hover` s'applique à **tout ancêtre du pointeur**, si bien que la barre
+     de page apparaissait dès que le pointeur était sur le contenu et
+     disparaissait dès qu'il passait sur la navigation ou quittait la fenêtre —
+     et n'existait pas au clavier hors focus dans le contenu. Un repère qui
+     clignote au gré du pointeur n'est pas un repère ; les deux références qui
+     ont une page (Zulip, ChatGPT) la laissent toujours visible et n'effacent
+     que les surfaces imbriquées. Ce qui reste discret est donc tout le reste :
+     colonnes bornées, listes, blocs de code, `textarea`.
    - **Discrète, jamais absente.** La barre garde sa place (`thin`, jamais
      `none`) : rien ne bouge quand elle apparaît, le défilement à la molette,
      au clavier et au tactile reste entier, et elle reste une **cible
@@ -391,10 +406,11 @@ body {
    ci-dessous aurait éteint le `transition-[width]` de la barre latérale et
    tous ses semblables. Dans `base`, les utilitaires gardent le dernier mot.
 
-   ⚠ Le `Shell` n'est pas exempté : son ascenseur est celui de la page et
-   reste le repère de défilement — il se montre quand on regarde le contenu
-   (le pointeur y est) plutôt qu'en permanence. C'est le voisinage des deux
-   barres qui gênait, pas l'existence de la seconde. */
+   ⚠ Ce qui gênait était le **voisinage** de deux barres, jamais l'existence
+   de celle de la page : c'est bien la seconde — la colonne bornée — qu'on
+   efface, et #882 rend à la première la permanence que #725 lui avait retirée
+   sans référence. La règle `*` d'effacement au repos reste pour tout le
+   reste : une seule exception, nommée. */
 @layer base {
   @supports (scrollbar-color: auto) {
     * {
@@ -404,6 +420,12 @@ body {
     *:hover,
     *:focus-within,
     [data-defilement] {
+      scrollbar-color: var(--bord-fort) transparent;
+    }
+    /* L'exception : la page, sans condition de pointeur ni de focus. Sa
+       spécificité (0,1,0) passe devant la règle `*` du repos ; le fondu
+       ci-dessous n'a rien à animer sur elle, sa couleur ne changeant jamais. */
+    [data-ascenseur="page"] {
       scrollbar-color: var(--bord-fort) transparent;
     }
     @media (prefers-reduced-motion: no-preference) {
@@ -429,6 +451,10 @@ body {
     *:hover::-webkit-scrollbar-thumb,
     *:focus-within::-webkit-scrollbar-thumb,
     [data-defilement]::-webkit-scrollbar-thumb {
+      background-color: var(--bord-fort);
+    }
+    /* La même exception, dans l'autre moteur : la page ne dépend de rien. */
+    [data-ascenseur="page"]::-webkit-scrollbar-thumb {
       background-color: var(--bord-fort);
     }
   }

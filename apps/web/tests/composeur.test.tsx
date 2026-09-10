@@ -34,9 +34,13 @@
  *    champ au lieu de vivre dans un placeholder qui s'efface ;
  * ⑤ **aucune fonctionnalité de #482 n'est perdue** — dépôt, collage d'une
  *    image, panneau des gestes, envoi par identifiant, sur les deux surfaces ;
- * ⑥ **l'ascenseur discret** (#725) — vérifié sur les **octets** de
+ * ⑥ **l'ascenseur discret** (#725, puis #882) — vérifié sur les **octets** de
  *    `globals.css` (technique de `contraste.test.ts`), et la moitié JS de la
- *    frontière (`lib/ascenseur`, câblé dans le `Shell`) ;
+ *    frontière (`lib/ascenseur`, câblé dans le `Shell`). Depuis #882 la page
+ *    en est l'**exception** : sa barre est peinte sans condition, dans les
+ *    deux moteurs, et le `Shell` la désigne par `data-ascenseur="page"` — une
+ *    sonde prouvée sur la feuille d'**avant**, où la page dépendait du
+ *    pointeur comme tout le reste ;
  * ⑦ **la colonne de propriétés** de `/chat` est collante **et** bornée, comme
  *    celle de `/couts` que `sobriete.test.tsx` garde déjà ;
  * ⑧ **l'envoi et l'arrêt sont deux icônes nommées, de même taille** (#884,
@@ -67,7 +71,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import PageChat from "@/app/chat/page";
 import { ContenuOngletAgent } from "@/components/ContenuOngletAgent";
 import { AMORCE_HORS_SM, AMORCES_SOUS_SM } from "@/components/Conversation";
-import { ATTRIBUT_DEFILEMENT, ecouterDefilement } from "@/lib/ascenseur";
+import { ID_CONTENU_PRINCIPAL } from "@/components/Shell";
+import {
+  ASCENSEUR_PAGE,
+  ATTRIBUT_ASCENSEUR,
+  ATTRIBUT_DEFILEMENT,
+  REPOS_DEFILEMENT_MS,
+  ecouterDefilement,
+} from "@/lib/ascenseur";
 import { marquerGuideVu } from "@/lib/guide";
 import {
   AGENT_ORCHESTRATION,
@@ -1181,20 +1192,46 @@ function declareDansLesDeuxThemes(feuille: string, token: string): boolean {
   return motif.test(clair) && motif.test(sombre);
 }
 
+/** Le marqueur que le `Shell` porte et que la feuille lit (#882). */
+const MARQUE_PAGE = `[${ATTRIBUT_ASCENSEUR}="${ASCENSEUR_PAGE}"]`;
+
 /**
  * Le verdict rendu sur une feuille : la liste de ce qui manque à l'ascenseur
- * discret pour tenir ses promesses (`globals.css`, #725). Vide, la feuille les
- * tient toutes. C'est **lui** que la feuille réelle subit, et lui qu'on prouve
- * d'abord sur des échantillons fautifs.
+ * discret pour tenir ses promesses (`globals.css`, #725, puis #882). Vide, la
+ * feuille les tient toutes. C'est **lui** que la feuille réelle subit, et lui
+ * qu'on prouve d'abord sur des échantillons fautifs.
  *
- * `attribut` est celui que `lib/ascenseur` pose : la règle vit des deux côtés
- * d'une frontière — le JS qui marque, le CSS qui lit —, et rien d'autre ne les
- * tient d'accord (même leçon que #830 pour le signal « page prête »).
+ * `attribut` est celui que `lib/ascenseur` pose, `marquePage` celui que le
+ * `Shell` porte : la règle vit des deux côtés d'une frontière — le JS qui
+ * marque, le JSX qui désigne, le CSS qui lit —, et rien d'autre ne les tient
+ * d'accord (même leçon que #830 pour le signal « page prête »).
  */
-function verdictAscenseur(source: string, attribut: string): string[] {
+function verdictAscenseur(
+  source: string,
+  attribut: string,
+  marquePage: string,
+): string[] {
   const feuille = source.replace(/\/\*[\s\S]*?\*\//g, "");
   const fautes: string[] = [];
   const marque = `[${attribut}]`;
+
+  /**
+   * Un pouce emprunte-t-il un token de la palette, déclaré dans les deux
+   * thèmes ? Rend la faute, ou `null`. Une teinte à lui aurait dû entrer dans
+   * la palette et y déclarer sa paire (`contraste.test.ts`) ; un `var()` vers
+   * un token absent est la même faute, en plus discret — le navigateur rend
+   * alors la valeur initiale, sans un mot.
+   */
+  const fauteDuPouce = (couleur: string, quoi: string): string | null => {
+    const token = /^var\(--([\w-]+)\)\s+transparent$/.exec(couleur)?.[1];
+    if (token === undefined) {
+      return `${quoi} n'emprunte pas un token de la palette (scrollbar-color: ${couleur || "absent"})`;
+    }
+    if (!declareDansLesDeuxThemes(feuille, token)) {
+      return `--${token} n'est pas déclaré dans les deux thèmes de la palette`;
+    }
+    return null;
+  };
 
   // Discrète, jamais absente : `none` retirerait l'information qu'une surface
   // bornée continue sous le pli (#306).
@@ -1237,13 +1274,39 @@ function verdictAscenseur(source: string, attribut: string): string[] {
   if (eveil === undefined) {
     fautes.push(`aucune règle n'éveille la barre sur *:hover, *:focus-within et ${marque} à la fois`);
   } else {
-    const couleur = declarationsDe(eveil.corps).get("scrollbar-color") ?? "";
-    const token = /^var\(--([\w-]+)\)\s+transparent$/.exec(couleur)?.[1];
-    if (token === undefined) {
-      fautes.push(`le pouce éveillé n'emprunte pas un token de la palette (scrollbar-color: ${couleur || "absent"})`);
-    } else if (!declareDansLesDeuxThemes(feuille, token)) {
-      fautes.push(`--${token} n'est pas déclaré dans les deux thèmes de la palette`);
-    }
+    const faute = fauteDuPouce(
+      declarationsDe(eveil.corps).get("scrollbar-color") ?? "",
+      "le pouce éveillé",
+    );
+    if (faute !== null) fautes.push(faute);
+  }
+
+  // L'ascenseur de PAGE est un repère permanent (#882, parti pris 1 de la
+  // veille #859) : le sélecteur cherché est le marqueur **nu**, sans pseudo-
+  // classe — c'est là tout le contrat. Une règle qui ne le peindrait que sous
+  // `:hover` ou `:focus-within` laisserait la page où #725 l'avait laissée :
+  // `*:hover` s'applique à tout ancêtre du pointeur, donc la barre de page
+  // apparaissait sur le contenu et disparaissait sur la navigation, et
+  // n'existait pas au clavier. Un sélecteur nu, lui, s'applique toujours — le
+  // trouver dans un groupe (`*:hover, [data-ascenseur="page"]`) suffit donc,
+  // chaque sélecteur d'un groupe valant pour lui-même.
+  const permanente = regles.find(
+    (r) =>
+      selecteursDe(r.prelude).includes(marquePage) &&
+      declarationsDe(r.corps).has("scrollbar-color"),
+  );
+  if (permanente === undefined) {
+    fautes.push(
+      `aucune règle ne peint ${marquePage} sans condition — la barre de page dépend du pointeur`,
+    );
+  } else {
+    // Même contrôle de token que l'éveil, par la même fonction : c'est le pouce
+    // de la page, il n'a pas droit à une teinte que l'autre n'aurait pas.
+    const faute = fauteDuPouce(
+      declarationsDe(permanente.corps).get("scrollbar-color") ?? "",
+      "le pouce de la page",
+    );
+    if (faute !== null) fautes.push(faute);
   }
 
   // Le fondu respecte `prefers-reduced-motion` : posé sous `no-preference`
@@ -1286,6 +1349,23 @@ function verdictAscenseur(source: string, attribut: string): string[] {
   ) {
     fautes.push("WebKit : le pouce éveillé n'emprunte pas un token de la palette");
   }
+
+  // La même exception dans l'autre moteur : « les deux moteurs, `@supports`
+  // compris ». Un `@supports` qui n'aurait la permanence que d'un côté rendrait
+  // la page tributaire du pointeur sur Safari et les anciens Chromium, sans que
+  // rien ne le montre depuis un poste sous Chrome.
+  const poucePage = reglesWebkit.find((r) =>
+    selecteursDe(r.prelude).includes(`${marquePage}::-webkit-scrollbar-thumb`),
+  );
+  if (poucePage === undefined) {
+    fautes.push(
+      `WebKit : aucune règle ne peint ${marquePage} sans condition — la barre de page dépend du pointeur`,
+    );
+  } else if (
+    !/^var\(--[\w-]+\)$/.test(declarationsDe(poucePage.corps).get("background-color") ?? "")
+  ) {
+    fautes.push("WebKit : le pouce de la page n'emprunte pas un token de la palette");
+  }
   return fautes;
 }
 
@@ -1301,6 +1381,7 @@ function feuille({
   fondu = "@media (prefers-reduced-motion: no-preference) { * { transition: scrollbar-color 150ms ease-out; } }",
   enPlus = "",
   couche = true,
+  page = MARQUE_PAGE,
 }: {
   largeur?: string;
   attribut?: string;
@@ -1308,14 +1389,33 @@ function feuille({
   fondu?: string;
   enPlus?: string;
   couche?: boolean;
+  /**
+   * Le **sélecteur** de la règle permanente de l'ascenseur de page (#882).
+   * `null` retire la règle des deux moteurs : c'est la feuille d'**avant**
+   * #882, où la page dépendait du pointeur comme tout le reste.
+   */
+  page?: string | null;
 } = {}): string {
   const palette =
     ':root, [data-theme="clair"] { --bord-fort: #888888; }\n' +
     '[data-theme="sombre"] { --bord-fort: #737373; }\n';
+  const reglePage =
+    page === null ? "" : `  ${page} { scrollbar-color: var(--bord-fort) transparent; }\n`;
+  // Le pseudo-élément se suffixe à **chaque** sélecteur du groupe, sinon un
+  // échantillon groupé serait fautif d'un côté pour une raison qui n'est pas
+  // celle qu'il illustre.
+  const poucePage =
+    page === null
+      ? ""
+      : `  ${page
+          .split(",")
+          .map((s) => `${s.trim()}::-webkit-scrollbar-thumb`)
+          .join(", ")} { background-color: var(--bord-fort); }\n`;
   const standard =
     "@supports (scrollbar-color: auto) {\n" +
     `  * { scrollbar-width: ${largeur}; scrollbar-color: transparent transparent; }\n` +
     `  *:hover, *:focus-within, [${attribut}] { scrollbar-color: ${couleur} transparent; }\n` +
+    reglePage +
     `  ${fondu}\n  ${enPlus}\n}\n`;
   const webkit =
     "@supports not (scrollbar-color: auto) {\n" +
@@ -1323,6 +1423,7 @@ function feuille({
     "  ::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }\n" +
     "  ::-webkit-scrollbar-thumb { border-radius: 9999px; background-color: transparent; }\n" +
     `  *:hover::-webkit-scrollbar-thumb, *:focus-within::-webkit-scrollbar-thumb, [${attribut}]::-webkit-scrollbar-thumb { background-color: var(--bord-fort); }\n` +
+    poucePage +
     "}\n";
   const bloc = standard + webkit;
   return palette + (couche ? `@layer base {\n${bloc}}\n` : bloc);
@@ -1332,25 +1433,25 @@ describe("⑥ la sonde de l'ascenseur discret, prouvée avant de servir", () => 
   it("rend une feuille saine sans faute", () => {
     // Le témoin doit être sain AVANT d'être sali, sans quoi les fautes
     // ci-dessous pourraient venir d'un défaut de la sonde et non de la retouche.
-    expect(verdictAscenseur(feuille(), ATTRIBUT_DEFILEMENT)).toEqual([]);
+    expect(verdictAscenseur(feuille(), ATTRIBUT_DEFILEMENT, MARQUE_PAGE)).toEqual([]);
   });
 
   it("refuse une barre absente (scrollbar-width: none)", () => {
-    expect(verdictAscenseur(feuille({ largeur: "none" }), ATTRIBUT_DEFILEMENT)).toContainEqual(
+    expect(verdictAscenseur(feuille({ largeur: "none" }), ATTRIBUT_DEFILEMENT, MARQUE_PAGE)).toContainEqual(
       expect.stringContaining("absente"),
     );
   });
 
   it("refuse un fondu posé hors de prefers-reduced-motion", () => {
     const sansGarde = feuille({ fondu: "* { transition: scrollbar-color 150ms ease-out; }" });
-    expect(verdictAscenseur(sansGarde, ATTRIBUT_DEFILEMENT)).toContainEqual(
+    expect(verdictAscenseur(sansGarde, ATTRIBUT_DEFILEMENT, MARQUE_PAGE)).toContainEqual(
       expect.stringContaining("hors de prefers-reduced-motion"),
     );
   });
 
   it("refuse les deux moteurs superposés", () => {
     const cumul = feuille({ enPlus: "::-webkit-scrollbar { width: 0.5rem; }" });
-    expect(verdictAscenseur(cumul, ATTRIBUT_DEFILEMENT)).toContainEqual(
+    expect(verdictAscenseur(cumul, ATTRIBUT_DEFILEMENT, MARQUE_PAGE)).toContainEqual(
       expect.stringContaining("se cumulent"),
     );
   });
@@ -1360,15 +1461,53 @@ describe("⑥ la sonde de l'ascenseur discret, prouvée avant de servir", () => 
     // Renommer d'un seul côté ne casse rien à la compilation, et la barre ne
     // se montrerait plus jamais au défilement.
     const desaccord = feuille({ attribut: "data-scroll" });
-    expect(verdictAscenseur(desaccord, ATTRIBUT_DEFILEMENT)).toContainEqual(
+    expect(verdictAscenseur(desaccord, ATTRIBUT_DEFILEMENT, MARQUE_PAGE)).toContainEqual(
       expect.stringContaining(`[${ATTRIBUT_DEFILEMENT}]`),
     );
   });
 
   it("refuse une règle hors de @layer base", () => {
-    expect(verdictAscenseur(feuille({ couche: false }), ATTRIBUT_DEFILEMENT)).toContainEqual(
+    expect(verdictAscenseur(feuille({ couche: false }), ATTRIBUT_DEFILEMENT, MARQUE_PAGE)).toContainEqual(
       expect.stringContaining("@layer base"),
     );
+  });
+
+  it("refuse la feuille d'AVANT #882, où la barre de page dépend du pointeur", () => {
+    // L'échantillon fautif est la feuille telle que #725 l'a laissée : aucune
+    // règle pour la page, donc `*:hover` seul décide — la barre apparaît quand
+    // le pointeur est sur le contenu, disparaît sur la navigation ou hors de la
+    // fenêtre, et n'existe pas au clavier. Sans cette moitié, le ✓ sur la
+    // feuille réelle serait vrai pour deux raisons : la bonne, et une sonde qui
+    // regarde ailleurs.
+    const avant = verdictAscenseur(feuille({ page: null }), ATTRIBUT_DEFILEMENT, MARQUE_PAGE);
+    expect(avant).toContainEqual(expect.stringContaining("dépend du pointeur"));
+    // Les deux moteurs, `@supports` compris : la page n'est pas permanente que
+    // sous Chrome. Une seule des deux fautes laisserait Safari en arrière.
+    expect(avant.filter((f) => f.includes("dépend du pointeur"))).toHaveLength(2);
+  });
+
+  it("refuse une règle de page conditionnée au pointeur", () => {
+    // Le piège d'à côté : le marqueur est là, mais sous `:hover` — la page
+    // dépend du pointeur exactement comme avant, et le marqueur donne à croire
+    // le contraire. Le contrat est le sélecteur **nu**.
+    const conditionnee = feuille({ page: `${MARQUE_PAGE}:hover` });
+    expect(verdictAscenseur(conditionnee, ATTRIBUT_DEFILEMENT, MARQUE_PAGE)).toContainEqual(
+      expect.stringContaining("dépend du pointeur"),
+    );
+  });
+
+  it("accepte le marqueur groupé avec l'éveil : un sélecteur d'un groupe vaut pour lui-même", () => {
+    // Le pendant du test précédent, sans quoi la sonde exigerait une **forme**
+    // (une règle à elle) là où le contrat porte sur l'**effet**. Groupé ou non,
+    // `[data-ascenseur="page"]` nu s'applique toujours.
+    // ⚠ Ce n'est pas une tolérance de principe : c'est ce que la compilation
+    // **fait**. Mesuré le 2026-09-10 sur le CSS servi par Next — Lightning CSS
+    // réunit les deux règles, qui portent les mêmes déclarations, et rend
+    // `:hover, :focus-within, [data-defilement], [data-ascenseur="page"]`. Une
+    // sonde qui exigerait une règle séparée rougirait sur la feuille **source**
+    // du jour où quelqu'un lirait le CSS compilé.
+    const groupee = feuille({ page: `*:focus-within, ${MARQUE_PAGE}` });
+    expect(verdictAscenseur(groupee, ATTRIBUT_DEFILEMENT, MARQUE_PAGE)).toEqual([]);
   });
 
   it("refuse une teinte nouvelle, ou un token que la palette ne porte pas", () => {
@@ -1376,10 +1515,10 @@ describe("⑥ la sonde de l'ascenseur discret, prouvée avant de servir", () => 
     // (`contraste.test.ts`) ; emprunter `--bord-fort` garde le filet sans rien
     // y ajouter. Un `var()` vers un token absent est la même faute, plus
     // discrète : le navigateur rend alors la valeur initiale, sans un mot.
-    expect(verdictAscenseur(feuille({ couleur: "#888888" }), ATTRIBUT_DEFILEMENT)).toContainEqual(
+    expect(verdictAscenseur(feuille({ couleur: "#888888" }), ATTRIBUT_DEFILEMENT, MARQUE_PAGE)).toContainEqual(
       expect.stringContaining("n'emprunte pas un token"),
     );
-    expect(verdictAscenseur(feuille({ couleur: "var(--pouce)" }), ATTRIBUT_DEFILEMENT)).toContainEqual(
+    expect(verdictAscenseur(feuille({ couleur: "var(--pouce)" }), ATTRIBUT_DEFILEMENT, MARQUE_PAGE)).toContainEqual(
       expect.stringContaining("--pouce n'est pas déclaré"),
     );
   });
@@ -1392,7 +1531,7 @@ describe("⑥ l'ascenseur discret de app/globals.css (#725)", () => {
     // `none` ; le pouce sur `--bord-fort`, déclaré dans les deux thèmes ; le
     // fondu sous `no-preference` ; un seul moteur à la fois ; le tout sous
     // `@layer base`. Une faute est rendue avec son motif.
-    const fautes = verdictAscenseur(lireSource("app/globals.css"), ATTRIBUT_DEFILEMENT);
+    const fautes = verdictAscenseur(lireSource("app/globals.css"), ATTRIBUT_DEFILEMENT, MARQUE_PAGE);
     expect(fautes, `\n${fautes.join("\n")}\n`).toEqual([]);
   });
 
@@ -1456,6 +1595,26 @@ describe("⑥ lib/ascenseur marque l'élément qui défile", () => {
     detacher();
   });
 
+  it("s'efface au bout de REPOS_DEFILEMENT_MS quand on ne lui dit rien", () => {
+    // Les autres sondes passent un repos court pour ne pas attendre — c'est le
+    // **défaut** qui vaut ici, et lui seul est en usage dans le `Shell`. Sans
+    // cette sonde, la constante pourrait valoir n'importe quoi sans que rien ne
+    // change : c'est le câblage qu'on garde, pas le chiffre. Il vaut 500 ms
+    // depuis #882, mesuré sur les deux références de la veille #859.
+    const detacher = ecouterDefilement(document);
+    const surface = document.createElement("div");
+    document.body.appendChild(surface);
+
+    surface.dispatchEvent(new Event("scroll"));
+    vi.advanceTimersByTime(REPOS_DEFILEMENT_MS - 1);
+    expect(surface).toHaveAttribute(ATTRIBUT_DEFILEMENT);
+    vi.advanceTimersByTime(1);
+    expect(surface).not.toHaveAttribute(ATTRIBUT_DEFILEMENT);
+
+    detacher();
+    surface.remove();
+  });
+
   it("ne laisse aucune marque derrière lui au démontage", () => {
     const detacher = ecouterDefilement(document, 50);
     const surface = document.createElement("div");
@@ -1473,11 +1632,32 @@ describe("⑥ lib/ascenseur marque l'élément qui défile", () => {
   });
 });
 
-describe("⑥ le Shell installe l'écoute — la colonne de /chat se marque quand elle défile", () => {
+describe("⑥ le Shell installe l'écoute, et désigne l'ascenseur de la page", () => {
   beforeEach(() => {
     marquerGuideVu();
     poserProjetActif();
     peuplerEtat();
+  });
+
+  it("marque son conteneur défilant comme l'ascenseur de la page (#882)", async () => {
+    // L'autre moitié de la frontière du parti pris 1 : la feuille peint
+    // `[data-ascenseur="page"]` sans condition (sonde ci-dessus, sur les
+    // octets), encore faut-il que quelque chose le porte. Poser la règle sans
+    // le marqueur ne casse rien à la compilation et ne peint rien du tout.
+    await monterEcran(ECRANS.find((ecran) => ecran.href === "/chat")!);
+    const marques = document.querySelectorAll(
+      `[${ATTRIBUT_ASCENSEUR}="${ASCENSEUR_PAGE}"]`,
+    );
+
+    // Un seul, et c'est le sens du mot « page » : deux marqueurs rendraient
+    // permanentes des barres imbriquées que la règle discrète doit effacer.
+    expect(marques).toHaveLength(1);
+    const page = marques[0];
+    // C'est bien le conteneur **défilant**, celui qui porte le contenu — pas
+    // un cadre voisin : un marqueur sur une boîte qui ne défile pas ne peint
+    // aucune barre, et le ✓ ci-dessus resterait vert.
+    expect(page.className).toContain("overflow-y-auto");
+    expect(page.contains(document.getElementById(ID_CONTENU_PRINCIPAL))).toBe(true);
   });
 
   it("marque la colonne de propriétés au défilement, sous le vrai Shell", async () => {
