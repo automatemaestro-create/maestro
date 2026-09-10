@@ -220,12 +220,25 @@
  *   le bureau en aligne plusieurs, Perplexity aucune ; les quatre du fil
  *   d'orchestration s'empilaient sur quatre lignes à 375 × 667.
  *
- * ⚠ Le repli est la seule chose de ce composeur qui **dépend d'une mesure
- * prise à l'écran**, et c'est ce qui le rend délicat : la rangée unique laisse
- * au texte ~88 px de moins que les deux étages, donc décider du repli sur une
- * mesure prise à deux étages le ferait osciller à chaque frappe. D'où
- * l'invariant : seule une mesure prise **en rangée unique** pose ou lève le
- * débordement (voir `debordement` et le `useLayoutEffect` qui le tient).
+ * **Et depuis #907 le repli se décide par le WRAP du navigateur, plus par une
+ * hauteur mesurée** (parti pris 1 de la veille #899, différée de #891 —
+ * docs/30 §5.3). #891 l'obtenait par un état (`debordement`) et un
+ * `useLayoutEffect` de mesure, tenus par un invariant délicat — seule une
+ * mesure prise en rangée unique pouvait poser ou lever le débordement, la
+ * rangée unique laissant au texte ~88 px de moins que les deux étages, faute de
+ * quoi le cadre oscillait à chaque frappe. ChatGPT, mesuré à 390 px, obtient
+ * le même comportement **sans état, sans mesure, sans `useLayoutEffect`** :
+ * le champ refuse de se comprimer sous la largeur de son texte (`min-w-fit`)
+ * et passe à la ligne tout seul quand il ne tient plus, et `wrap-reverse` le
+ * fait remonter **au-dessus** du rail au lieu de descendre. La bascule est
+ * **monotone** — plus de texte ne peut que replier moins —, donc
+ * l'oscillation est impossible **par construction** et non évitée par un
+ * invariant à tenir. Deux choses que la traduction a dû ajouter, et qui ne se
+ * devinent pas (voir les commentaires du cadre) : un `<textarea>` n'a pas de
+ * largeur intrinsèque qui suive son texte — c'est `field-sizing: content`
+ * qui la lui donne, sans quoi `min-w-fit` est inerte —, et l'envoi vit à un
+ * **autre niveau de wrap** que le couple `+`/champ, sans quoi il partirait sur
+ * une troisième ligne dès que le champ se déplie.
  *
  * Ce que ce lot ne touche **pas**, et la veille le dit : ni le `sticky
  * bottom-16`, ni la bande couverte, ni la réserve `after:h-24` de #888 —
@@ -317,34 +330,33 @@ export const AMORCE_HORS_SM = "max-sm:hidden";
 /**
  * Fait grandir la zone de saisie avec ce qu'on y écrit (#726 — parti pris 3 de
  * la veille #724, mesuré chez ChatGPT : 52 px au repos, 256 px à vingt lignes,
- * un plafond puis un défilement interne), et **rend si le brouillon tient sur
- * la hauteur de départ du champ** — à `rows={1}` (#884), sur une seule ligne.
+ * un plafond puis un défilement interne).
  *
  * Le champ repart de sa **hauteur de départ** (`rows`) et ne prend la hauteur
  * de son contenu que s'il en déborde : c'est ce qui laisse le plancher au
- * navigateur — deux lignes de la police réelle, sans pixel à recopier — et le
+ * navigateur — une ligne de la police réelle, sans pixel à recopier — et le
  * **plafond au CSS** (`max-h-*`), qui l'emporte sur la hauteur posée ici et
  * laisse alors `overflow-y-auto` défiler. Sous jsdom rien n'est mesuré (#308) :
- * `scrollHeight` y vaut zéro, donc rien n'y est posé — et le verdict rendu est
- * « tient sur une ligne », qui est bien l'état d'un brouillon vide.
+ * `scrollHeight` y vaut zéro, donc rien n'y est posé.
  *
- * Le verdict est **rendu ici** et jamais recalculé ailleurs (#891) : c'est la
- * même mesure qui décide de la hauteur du champ et du repli du cadre sous `sm`,
- * et une seconde source de vérité sur la hauteur divergerait de celle-ci au
- * premier changement de police.
+ * Elle ne décide **que de la hauteur** (#907). De #891 à #907 elle rendait
+ * aussi un verdict — « le brouillon tient-il sur une ligne ? » — dont dépendait
+ * le repli du cadre sous `sm` ; le repli se décide depuis par le wrap du
+ * navigateur sur la largeur du champ, et cette mesure n'a plus rien à dire.
+ * Là où `field-sizing: content` est compris (voir le `className` du champ), le
+ * navigateur fait déjà grandir le champ de lui-même et cette fonction ne pose
+ * rien qu'il n'ait posé ; ailleurs, elle reste ce qui le fait grandir.
  *
- * Joué dans un `useLayoutEffect`, avant la peinture : après coup, chaque frappe
- * au-delà du plancher montrerait une image du champ trop court, au contenu
- * déjà défilé, avant qu'il ne grandisse.
+ * Jouée dans un `useLayoutEffect`, avant la peinture : après coup, chaque
+ * frappe au-delà du plancher montrerait une image du champ trop court, au
+ * contenu déjà défilé, avant qu'il ne grandisse.
  */
-function ajusterLaHauteur(champ: HTMLTextAreaElement | null): boolean {
-  if (champ === null) return true;
+function ajusterLaHauteur(champ: HTMLTextAreaElement | null): void {
+  if (champ === null) return;
   champ.style.height = "";
   if (champ.scrollHeight > champ.clientHeight) {
     champ.style.height = `${champ.scrollHeight}px`;
-    return false;
   }
-  return true;
 }
 
 export function Conversation({
@@ -404,22 +416,6 @@ export function Conversation({
   } = fil;
   const composition = useSourcesComposees();
   const [brouillon, setBrouillon] = useState("");
-  /**
-   * Le brouillon qui a fait **déborder la rangée unique** du cadre replié
-   * (#891) — `null` tant que rien n'a débordé.
-   *
-   * Un brouillon et non un booléen, et c'est la moitié qui ne se devine pas :
-   * repliée, la rangée laisse au texte la largeur du cadre **moins le rail**
-   * (le `+`, l'envoi et leurs deux écarts, ~88 px), si bien qu'une mesure prise
-   * à deux étages ne dit rien de ce que la rangée unique ferait du même texte.
-   * Rendre la main au repli sur cette mesure-là ferait **osciller le cadre à
-   * chaque frappe** — replié le texte déborde donc on déplie, déplié il rentre
-   * donc on replie, et le champ passe la moitié du temps trop court pour ce
-   * qu'il montre. On ne retente donc le repli que lorsque le brouillon n'est
-   * **plus** celui qui a débordé (une frappe effacée, un texte remplacé),
-   * c'est-à-dire quand la mesure de la rangée unique redevient à faire.
-   */
-  const [debordement, setDebordement] = useState<string | null>(null);
   /**
    * Ce qui a manqué au dernier envoi, et si le message a **quand même** rejoint
    * le fil. Les deux ensemble parce qu'ils ne se déduisent pas l'un de l'autre
@@ -524,33 +520,16 @@ export function Conversation({
     if (suit.current) collerEnBas();
   }, [messages, envoi, reponseEnCours?.texte, collerEnBas]);
 
-  /**
-   * Le brouillon tient-il sur **une** ligne ? C'est ce qui décide du repli du
-   * cadre sous `sm` (#891, parti pris 2 de la veille #873) : tant que oui,
-   * `+` · champ · envoi partagent une rangée ; dès la deuxième ligne, le rail
-   * reprend la sienne. Au-dessus de `sm`, le cadre à deux étages de #726 ne
-   * bouge pas — là, c'est le CSS qui tient la mise en page et cette valeur
-   * n'a plus prise (voir le `className` du champ).
-   */
-  const surUneLigne = debordement === null || !brouillon.startsWith(debordement);
-
   // La zone de saisie grandit avec le brouillon (#726) — y compris quand il
   // revient d'un échec d'envoi, ou qu'une mention en est détachée
-  // (`surSaisie`) : deux changements qui ne passent pas par une frappe. Et
-  // **aussi quand le cadre se replie ou se déplie** (#891) : le champ change
-  // alors de largeur, donc la hauteur mesurée à l'autre largeur ne vaut plus —
-  // sans cette dépendance, le cadre qui vient de se déplier garderait la
-  // hauteur de deux lignes pour un texte qui, plus large, n'en occupe qu'une.
+  // (`surSaisie`) : deux changements qui ne passent pas par une frappe. Le
+  // repli du cadre sous `sm`, lui, n'est plus décidé ici (#907) : il tombe du
+  // wrap du navigateur, et le champ qui se replie ou se déplie change de
+  // largeur **sans passer par React** — c'est la même frappe qui fait les
+  // deux, donc la mesure prise ici l'est toujours dans la mise en page finale.
   useLayoutEffect(() => {
-    const tient = ajusterLaHauteur(zone.current);
-    // ⚠ Une mesure ne vaut que pour la mise en page où elle a été prise, et
-    // c'est tout l'invariant de #891 : seule celle prise **en rangée unique**
-    // peut poser ou lever le débordement, la rangée unique laissant ~88 px de
-    // moins au texte. Prise à deux étages, elle ne fait que redonner au champ
-    // la hauteur de sa nouvelle largeur.
-    if (!surUneLigne) return;
-    setDebordement(tient ? null : brouillon);
-  }, [brouillon, surUneLigne]);
+    ajusterLaHauteur(zone.current);
+  }, [brouillon]);
 
   const soumettre = async (texte: string) => {
     const contenu = texte.trim();
@@ -1009,13 +988,45 @@ export function Conversation({
             **ligne de flux**, ce qui est la seule façon de le faire partager
             sa rangée avec le champ sans écrire deux fois la même mise en
             page. */}
+        {/* **Et le repli se décide par le wrap, à DEUX niveaux** (#907 — parti
+            pris 1 de la veille #899, d'après ChatGPT). Sous `sm`, le cadre
+            n'est plus la rangée qui passe à la ligne : c'est la **rangée**
+            juste dessous — le couple `+`/champ — qui l'est, en `wrap-reverse`,
+            et le cadre n'aligne que deux choses sans jamais envelopper : cette
+            rangée, qui grandit, et le bout du rail, calé **en bas**
+            (`items-end`), donc sur la ligne du `+` quel que soit le nombre de
+            lignes que la rangée a prises. C'est la traduction de ce que la
+            veille a relevé chez ChatGPT — le rail de droite est un bloc
+            séparé, à un **autre niveau de wrap** que le couple `+`/champ — et
+            elle n'est pas un choix de forme : à un seul niveau, le `+` et
+            l'envoi faisant la même largeur (36 px, `w-9`), le champ qui ne
+            tient plus à côté du `+` ne tient jamais non plus à côté de
+            l'envoi, et l'envoi part **toujours** sur une troisième ligne, en
+            haut — mesuré au banc avant d'être écrit. Au-dessus de `sm`, la
+            rangée s'efface (`sm:contents`) : ses deux enfants redeviennent
+            ceux du cadre, qui reprend `flex-wrap` et `items-center` — la
+            structure de #891, à l'octet près, et l'ordre d'émission de
+            Tailwind fait passer chaque `sm:` après l'utilitaire nu
+            (`composeur.test.tsx` ⑨). Le prix, mesuré à 375 px : déplié sous
+            `sm`, le champ s'arrête à la colonne de l'envoi — 199 px au lieu
+            de 243, les 44 px de sa largeur et de l'écart — au lieu de courir
+            jusqu'au bord ; le rail ne bouge pas. Et la rangée cale elle aussi
+            ses pièces **en bas** : un brouillon qui grandit sans cesser de
+            tenir en largeur (un saut de ligne dans un texte court) reste
+            replié, le champ prend deux lignes entre le `+` et l'envoi, et
+            centré, le `+` flotterait 10 px au-dessus de l'envoi. ⚠ En bas,
+            c'est `items-start` et non `items-end` : `wrap-reverse` retourne
+            l'axe transversal, son **début** est en bas — `items-end` y a
+            été mesuré posant le `+` en haut du champ, 19 px au-dessus de
+            l'envoi. Sans effet au-dessus de `sm`, où la rangée s'efface. */}
         <div
           className={
-            `${CLASSE_CONTROLE} flex flex-wrap items-center gap-x-2 gap-y-1 focus-within:border-bord-fort ` +
+            `${CLASSE_CONTROLE} flex items-end gap-x-2 gap-y-1 sm:flex-wrap sm:items-center focus-within:border-bord-fort ` +
             "has-[textarea:focus-visible]:outline-2 has-[textarea:focus-visible]:outline-offset-1 " +
             "has-[textarea:focus-visible]:outline-accent"
           }
         >
+          <div className="flex min-w-0 flex-1 flex-wrap-reverse items-start gap-x-2 gap-y-1 sm:contents">
           <textarea
             ref={zone}
             value={brouillon}
@@ -1056,51 +1067,71 @@ export function Conversation({
             placeholder={`Écrire à ${interlocuteur}…`}
             aria-label={`Message à ${interlocuteur}`}
             aria-describedby={idRaccourci}
-            // La seconde moitié du repli (#891) — deux états, et c'est le
-            // `className` du champ qui les porte :
+            // La seconde moitié du repli (#891, puis #907) — **un seul** état
+            // de classes, et c'est le CSS qui rend les deux formes :
             //
-            // - `w-full` — le champ prend la ligne entière, donc pousse le
-            //   rail sur la suivante : c'est le cadre à deux étages de #726, à
-            //   l'octet près. C'est l'état de **toutes** les largeurs dès la
-            //   deuxième ligne, et de toute largeur ≥ `sm` quoi qu'il arrive ;
-            // - `flex-1 min-w-0` — le champ partage la rangée avec les deux
-            //   bouts du rail et absorbe ce qui en reste. Le `min-w-0` est ce
-            //   qui l'autorise à être plus étroit que son contenu (un
-            //   `<textarea>` tire sa largeur intrinsèque de `cols`, pas de son
-            //   texte).
+            // - `flex-1 min-w-fit` — dans la rangée, le champ partage la ligne
+            //   avec le `+` et absorbe ce qui en reste, mais **refuse de se
+            //   comprimer sous la largeur de son texte** : dès que le texte ne
+            //   tient plus à côté du `+`, c'est le champ entier qui passe à la
+            //   ligne, et le `wrap-reverse` de la rangée met cette ligne-là
+            //   **au-dessus**. C'est le cadre à deux étages de #726, obtenu
+            //   par le navigateur — et il ne revient jamais en arrière sur la
+            //   même frappe, puisqu'un texte plus long ne tient pas mieux ;
+            // - `sm:w-full sm:flex-none` — au-dessus du point de rupture, la
+            //   ligne entière quoi qu'il arrive, avec ses deux moitiés :
+            //   `sm:flex-none` défait le `flex-1` (sans quoi sa base `0%`
+            //   l'emporterait sur la largeur) et `sm:w-full` rend la ligne.
+            //   L'ordre d'émission de Tailwind fait le reste — une variante
+            //   passe après l'utilitaire nu (vérifié sur le CSS compilé, cf.
+            //   `composeur.test.tsx` ⑨).
             //
-            // Le `sm:` remet la première forme au-dessus du point de rupture,
-            // et il faut ses deux moitiés : `sm:flex-none` défait le `flex-1`
-            // (sans quoi sa base `0%` l'emporterait sur la largeur) et
-            // `sm:w-full` rend la ligne entière. L'ordre d'émission de
-            // Tailwind fait le reste — une variante passe après l'utilitaire
-            // nu (vérifié sur le CSS compilé, cf. `composeur.test.tsx` ⑨).
+            // ⚠ `min-w-fit` seul serait **inerte** sur un `<textarea>`, et
+            // c'est la moitié qui ne se devine pas : sa largeur intrinsèque
+            // vient de `cols` (vingt colonnes, quel que soit le texte), pas de
+            // ce qu'on y écrit — ChatGPT n'a pas ce problème, son champ est un
+            // `contenteditable`. `field-sizing-content` (`field-sizing:
+            // content`) est ce qui donne au champ la largeur **et** la hauteur
+            // de son contenu, placeholder compris quand il est vide : sans lui
+            // le champ ne se replierait jamais, à aucune longueur, sans un
+            // mot. Et `wrap-anywhere` (`overflow-wrap: anywhere`) borne sa
+            // largeur **minimale** à un caractère : `break-word`, le défaut
+            // d'un `<textarea>`, coupe bien un mot trop long à l'écran mais ne
+            // le compte pas dans `min-content`, si bien qu'une URL collée
+            // ferait déborder le cadre sur le côté au lieu de se couper. Là où
+            // `field-sizing` n'est pas compris, le cadre reste une rangée et
+            // le champ y grandit en hauteur par `ajusterLaHauteur` — dégradé,
+            // jamais cassé.
             className={
               "max-h-48 resize-none overflow-y-auto placeholder:text-texte-secondaire outline-none " +
-              (surUneLigne ? "min-w-0 flex-1 sm:w-full sm:flex-none" : "w-full")
+              "field-sizing-content wrap-anywhere min-w-fit flex-1 sm:w-full sm:flex-none"
             }
           />
           {/* La **tête du rail** (#727 — parti pris 2, d'après le `+` de
               ChatGPT et de Perplexity) : le seul point d'entrée des gestes de
               dépôt, et le panneau des trois gestes ne se déplie que derrière
               lui. Elle reste **après le champ dans le flux** et ne se déplace
-              qu'à l'affichage (`order-first`), quand le cadre est replié : la
-              rangée se lit alors `+` · champ · envoi. C'est ce qui garde
-              **intacte** la tabulation de #726 — depuis le champ, Tab mène au
-              `+` puis à l'envoi sans quitter le composeur
+              qu'à l'affichage (`order-first`), sous `sm` : la rangée se lit
+              alors `+` · champ · envoi, et dépliée, le `+` reste seul sur la
+              ligne du bas — celle que `wrap-reverse` pose en premier. C'est
+              ce qui garde **intacte** la tabulation de #726 — depuis le champ,
+              Tab mène au `+` puis à l'envoi sans quitter le composeur
               (`composeur.test.tsx` ③) — et, au-dessus de `sm`, l'ordre de
               lecture des deux étages, où le champ vient bien avant le rail.
               Un `order` qui déplacerait le **champ** aurait été plus court d'une
               classe et aurait fait sortir le `+` de la tabulation avant, ce que
               le déplacer à l'affichage seul évite : un seul écart entre l'ordre
-              vu et l'ordre parcouru, et il tombe du côté du repli. */}
+              vu et l'ordre parcouru, et il tombe du côté du repli — le bon
+              côté, la veille #899 l'a confirmé par une règle (le DOM suit
+              l'ordre de l'état **dominant**, qui est ici les deux étages). */}
           <BoutonJoindre
             ouvert={gestesOuverts}
             occupe={envoi}
             idPanneau={idGestes}
             onBasculer={() => setGestesOuverts(!gestesOuverts)}
-            className={surUneLigne ? "order-first sm:order-none" : undefined}
+            className="order-first sm:order-none"
           />
+          </div>
           {/* Le **bout du rail** (parti pris 1 de #726) : le raccourci, puis
               l'envoi. Le raccourci a quitté le placeholder (parti pris 4,
               d'après Zulip) : là, il s'effaçait au premier caractère ; ici il

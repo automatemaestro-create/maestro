@@ -48,11 +48,14 @@
  *    `BoutonJoindre` en tête du rail, l'arrêt à la place de l'envoi, et le
  *    champ qui part d'**une** ligne. La sonde est prouvée sur le rail d'avant
  *    #884, où l'envoi était un texte et l'arrêt ~43 px plus large que lui ;
- * ⑨ **le cadre se replie sous `sm`** (#891, parti pris 2 de la veille #873) —
- *    une rangée qui passe à la ligne, le champ qui prend la ligne entière dès
- *    la deuxième ligne de brouillon, et l'invariant qui empêche le cadre
- *    d'osciller : seule une mesure prise **en rangée unique** pose ou lève le
- *    débordement. Plus l'**ordre d'émission de Tailwind**, sur le CSS
+ * ⑨ **le cadre se replie sous `sm`** (#891, parti pris 2 de la veille #873 ;
+ *    puis #907, parti pris 1 de la veille #899) — une rangée qui passe à la
+ *    ligne, l'ordre du **flux** que le repli ne déplace pas, et depuis #907 le
+ *    repli **décidé par le wrap** : un seul état de classes quel que soit le
+ *    brouillon, le champ qui refuse de se comprimer sous son texte et dont la
+ *    largeur intrinsèque suit ce texte, et **deux niveaux** de wrap — le couple
+ *    `+`/champ dans une rangée, l'envoi hors d'elle, sans quoi il partirait sur
+ *    une troisième ligne. Plus l'**ordre d'émission de Tailwind**, sur le CSS
  *    compilé — la moitié de la frontière qu'aucun test de rendu ne voit ;
  * ⑩ **les amorces se bornent à deux sous `sm`** (#891, parti pris 3) — un
  *    marqueur de mise en page, aucune amorce retirée du DOM.
@@ -357,31 +360,46 @@ function formeDuControle(bouton: HTMLElement): {
 }
 
 /**
- * La **mise en page du cadre** (#891) : une rangée qui passe à la ligne, avec
- * ses deux écarts. Les deux étages de #726 n'en sont pas une autre boîte —
- * c'est le même cadre, dans l'état où le champ prend la ligne entière (voir
- * `dispositionDuChamp`) et pousse le rail sur la suivante. Avant #891, le
+ * La **mise en page d'une boîte du cadre** (#891, puis #907) : ce qu'elle
+ * porte de flux, d'alignement et d'écarts — les utilitaires **nus**, qui
+ * valent à toute largeur, et ceux que le `sm:` remet au-dessus du point de
+ * rupture, préfixe retiré. Les deux étages de #726 ne sont pas une autre
+ * boîte — c'est le même cadre, dans l'état où le champ prend la ligne entière
+ * (voir `dispositionDe`) et pousse le rail sur la suivante. Avant #891, le
  * cadre était une **colonne** : le repli y était impossible, la tête du rail
- * n'étant pas même une sœur du champ.
+ * n'étant pas même une sœur du champ. Depuis #907 le cadre a **deux** boîtes
+ * (voir `niveauxDuCadre`), et la sonde sert aux deux.
  */
-function dispositionDuCadre(cadre: HTMLElement): string[] {
-  return Array.from(cadre.classList)
-    .filter((c) => /^(flex|flex-wrap|flex-col|items-|gap-)/.test(c))
-    .sort();
+function dispositionDuCadre(boite: HTMLElement): {
+  rangee: string[];
+  auDela: string[];
+} {
+  const FLUX = /^(flex|contents$|items-|gap-)/;
+  const classes = Array.from(boite.classList);
+  return {
+    rangee: classes.filter((c) => FLUX.test(c)).sort(),
+    auDela: classes
+      .filter((c) => c.startsWith("sm:"))
+      .map((c) => c.slice("sm:".length))
+      .filter((c) => FLUX.test(c))
+      .sort(),
+  };
 }
 
 /**
  * Ce que le `className` d'une pièce du cadre dit de la rangée où elle vit
- * (#891) : les utilitaires de mise en page **nus** — ceux qui valent à toute
- * largeur — et ceux que le `sm:` remet au-dessus du point de rupture, préfixe
- * retiré.
+ * (#891, puis #907) : les utilitaires de mise en page **nus** — ceux qui
+ * valent à toute largeur — et ceux que le `sm:` remet au-dessus du point de
+ * rupture, préfixe retiré.
  *
- * - rangée unique : le champ en `flex-1 min-w-0` entre les deux bouts du rail,
- *   la tête du rail passée devant lui à l'affichage (`order-first`), et le
- *   `sm:` qui restitue les deux étages à l'un comme à l'autre ;
- * - deux étages : le champ en `w-full`, qui pousse le rail sur la ligne
- *   suivante, et une tête sans classe de place — rien à restituer, c'est déjà
- *   l'état de #726.
+ * - dans la rangée : le champ en `flex-1 min-w-fit`, qui absorbe ce qui reste
+ *   de la ligne mais **refuse de se comprimer sous son texte** — c'est cette
+ *   seconde moitié qui le fait passer à la ligne tout seul (#907, là où #891
+ *   le laissait se comprimer en `min-w-0` et décidait en JS) —, la tête du
+ *   rail passée devant lui à l'affichage (`order-first`), et le `sm:` qui
+ *   restitue les deux étages à l'un comme à l'autre ;
+ * - à deux étages (≥ `sm`) : le champ en `w-full`, qui pousse le rail sur la
+ *   ligne suivante, et une tête sans classe de place — c'est l'état de #726.
  *
  * C'est le contrat, pas la géométrie : le pixel est au banc (#308).
  */
@@ -389,7 +407,8 @@ function dispositionDe(piece: HTMLElement): {
   rangee: string[];
   auDela: string[];
 } {
-  const MISE_EN_PAGE = /^(order-|w-full$|flex-1$|flex-none$|min-w-0$|basis-)/;
+  const MISE_EN_PAGE =
+    /^(order-|w-full$|flex-1$|flex-none$|min-w-0$|min-w-fit$|basis-)/;
   const classes = Array.from(piece.classList);
   return {
     rangee: classes.filter((c) => MISE_EN_PAGE.test(c)).sort(),
@@ -401,17 +420,80 @@ function dispositionDe(piece: HTMLElement): {
 }
 
 /**
+ * Ce que le champ dit de sa **largeur intrinsèque** (#907) — la moitié du
+ * mécanisme qui ne se devine pas : un `<textarea>` tire sa largeur de `cols`
+ * et non de son texte, donc `min-w-fit` y est inerte tant que
+ * `field-sizing: content` (`suitLeTexte`) ne lui fait pas suivre son contenu ;
+ * et sans `overflow-wrap: anywhere` (`coupure`), un mot trop long compte
+ * entier dans ce plancher et fait déborder le cadre sur le côté.
+ */
+function largeurIntrinseque(champ: HTMLElement): {
+  suitLeTexte: boolean;
+  plancher: string | null;
+  coupure: string | null;
+} {
+  const classes = Array.from(champ.classList);
+  return {
+    suitLeTexte: classes.includes("field-sizing-content"),
+    plancher: classes.find((c) => /^min-w-/.test(c)) ?? null,
+    coupure: classes.find((c) => /^(wrap-|break-)/.test(c)) ?? null,
+  };
+}
+
+/**
  * Les **pièces du cadre**, dans l'ordre du **flux** (#891) — celui que la
  * tabulation suit, et qui ne bouge pas : le champ, puis la tête du rail, puis
  * son bout. Le repli ne déplace la tête qu'à l'**affichage**, ce qui garde
  * intacte la tabulation de #726 (③) et l'ordre de lecture des deux étages.
+ * Une boîte qui porte le champ est un **niveau** (la rangée de #907), pas une
+ * pièce : elle est traversée, dans l'ordre du flux.
  */
 function piecesDuCadre(cadre: HTMLElement): string[] {
-  return Array.from(cadre.children).map((enfant) => {
-    if (enfant.tagName === "TEXTAREA") return "champ";
-    if (enfant.tagName === "BUTTON") return nomDe(enfant);
-    return "bout-du-rail";
+  return Array.from(cadre.children).flatMap((enfant) => {
+    if (enfant.tagName === "TEXTAREA") return ["champ"];
+    if (enfant.tagName === "BUTTON") return [nomDe(enfant)];
+    if (enfant.querySelector("textarea") !== null) {
+      return piecesDuCadre(enfant as HTMLElement);
+    }
+    return ["bout-du-rail"];
   });
+}
+
+/**
+ * Les **niveaux de wrap** du cadre (#907) : pour chacune des trois pièces, la
+ * boîte flex qui la porte — le cadre lui-même, ou la **rangée** `+`/champ posée
+ * entre les deux —, et ce que cette rangée porte de mise en page. C'est la
+ * traduction de ce que la veille #899 a relevé chez ChatGPT (le rail de droite
+ * à un **autre** niveau de wrap que le couple `+`/champ), et ce qui garde
+ * l'envoi sur la ligne du `+` : à un seul niveau, le `+` et l'envoi faisant la
+ * même largeur, le champ qui ne tient plus à côté de l'un ne tient jamais à
+ * côté de l'autre, et l'envoi part sur une troisième ligne. Une boîte est un
+ * niveau si elle porte le champ ; le `<div>` du bout du rail n'en est pas un.
+ */
+function niveauxDuCadre(cadre: HTMLElement): {
+  champ: string;
+  tete: string;
+  envoi: string;
+  rangee: { rangee: string[]; auDela: string[] } | null;
+} {
+  const niveauDe = (piece: Element): string => {
+    let courant = piece.parentElement;
+    while (courant !== null && courant !== cadre) {
+      if (courant.querySelector("textarea") !== null) return "rangée";
+      courant = courant.parentElement;
+    }
+    return "cadre";
+  };
+  const champ = cadre.querySelector("textarea")!;
+  const tete = within(cadre).getByRole("button", { name: "Joindre des sources…" });
+  const envoi = within(cadre).getByRole("button", { name: "Envoyer" });
+  const boite = champ.parentElement!;
+  return {
+    champ: niveauDe(champ),
+    tete: niveauDe(tete),
+    envoi: niveauDe(envoi.parentElement!),
+    rangee: boite === cadre ? null : dispositionDuCadre(boite),
+  };
 }
 
 /**
@@ -446,6 +528,33 @@ function cadreDAvant891(): { cadre: HTMLElement; champ: HTMLTextAreaElement } {
     '<div class="ms-auto flex items-center gap-2">' +
     '<button type="submit"><span class="sr-only">Envoyer</span></button>' +
     "</div></div>";
+  document.body.appendChild(cadre);
+  return { cadre, champ: cadre.querySelector("textarea")! };
+}
+
+/**
+ * Le cadre de #891, **avant** #907 : une seule rangée qui passe à la ligne,
+ * dont les trois pièces sont sœurs — un seul niveau de wrap —, et un champ en
+ * `min-w-0` qui se **comprime** sous son texte (un `<textarea>` n'a pas de
+ * largeur intrinsèque qui le suive), si bien que rien dans le CSS ne peut
+ * décider du repli : c'était un état React et un `useLayoutEffect` de mesure.
+ * L'échantillon fautif de `niveauxDuCadre` et de `largeurIntrinseque` — sans
+ * lui, « deux niveaux » et « le champ suit son texte » seraient vrais d'une
+ * sonde qui regarde ailleurs.
+ */
+function cadreDe891(): { cadre: HTMLElement; champ: HTMLTextAreaElement } {
+  const cadre = document.createElement("div");
+  fixtures.push(cadre);
+  cadre.className =
+    "flex flex-wrap items-center gap-x-2 gap-y-1 w-full rounded-md border border-bord bg-surface px-3 py-1.5";
+  cadre.innerHTML =
+    '<textarea rows="1" aria-label="Message à dev" ' +
+    'class="max-h-48 resize-none overflow-y-auto outline-none min-w-0 flex-1 sm:w-full sm:flex-none"></textarea>' +
+    '<button type="button" class="order-first sm:order-none">' +
+    '<span class="sr-only">Joindre des sources…</span></button>' +
+    '<div class="ms-auto flex items-center gap-2">' +
+    '<button type="submit"><span class="sr-only">Envoyer</span></button>' +
+    "</div>";
   document.body.appendChild(cadre);
   return { cadre, champ: cadre.querySelector("textarea")! };
 }
@@ -593,7 +702,10 @@ describe("les sondes du composeur, prouvées sur le composeur d'avant (#726, pui
   it("voient, sur le cadre d'avant #891, une colonne dont le champ ne se replie pas", () => {
     const { cadre, champ } = cadreDAvant891();
     // Une colonne, jamais une rangée qui passe à la ligne : rien à replier.
-    expect(dispositionDuCadre(cadre)).toEqual(["flex", "flex-col", "gap-1"]);
+    expect(dispositionDuCadre(cadre)).toEqual({
+      rangee: ["flex", "flex-col", "gap-1"],
+      auDela: [],
+    });
     // Et la tête du rail n'est même pas une sœur du champ : elle vit dans le
     // `<div>` du rail, donc `+` · champ · envoi est hors d'atteinte à toute
     // largeur.
@@ -604,6 +716,46 @@ describe("les sondes du composeur, prouvées sur le composeur d'avant (#726, pui
     // `dispositionDe` distingue les deux formes du champ, mais qu'aucun autre
     // état n'existait — ce que les deux sondes ci-dessus établissent.
     expect(dispositionDe(champ)).toEqual({ rangee: ["w-full"], auDela: [] });
+    // Le `<div>` du rail n'est pas un niveau de wrap : il ne porte pas le
+    // champ. Un seul niveau, le cadre — pour les trois pièces.
+    expect(niveauxDuCadre(cadre)).toEqual({
+      champ: "cadre",
+      tete: "cadre",
+      envoi: "cadre",
+      rangee: null,
+    });
+  });
+
+  it("voient, sur le cadre de #891, un seul niveau de wrap et un champ qui se comprime sous son texte", () => {
+    const { cadre, champ } = cadreDe891();
+    // L'ordre du flux est déjà celui de #726 — c'est ce que #891 avait établi,
+    // et ce que #907 garde : les trois pièces se lisent pareil.
+    expect(piecesDuCadre(cadre)).toEqual([
+      "champ",
+      "Joindre des sources…",
+      "bout-du-rail",
+    ]);
+    // Mais les trois vivent au même niveau — le cadre est **la** rangée —,
+    // donc l'envoi ne peut pas rester sur la ligne du `+` quand le champ
+    // passe à la ligne : à un seul niveau, il en prend une troisième.
+    expect(niveauxDuCadre(cadre)).toEqual({
+      champ: "cadre",
+      tete: "cadre",
+      envoi: "cadre",
+      rangee: null,
+    });
+    // Et le champ se comprime sous son texte (`min-w-0`) sans que sa largeur
+    // suive ce texte : le CSS n'a aucune prise sur le repli, qui était décidé
+    // en JS sur une hauteur mesurée.
+    expect(largeurIntrinseque(champ)).toEqual({
+      suitLeTexte: false,
+      plancher: "min-w-0",
+      coupure: null,
+    });
+    expect(dispositionDe(champ)).toEqual({
+      rangee: ["flex-1", "min-w-0"],
+      auDela: ["flex-none", "w-full"],
+    });
   });
 
   it("ne trouvent aucune amorce bornée dans les quatre d'avant #891", () => {
@@ -922,16 +1074,19 @@ describe.each(SURFACES)("le composeur sur $nom", ({ monter, interlocuteur, secti
   });
 
   // ── ⑨ le cadre se replie sous sm ────────────────────────────────────────
-  describe("⑨ le cadre se replie sous `sm` (#891)", () => {
-    /** La rangée unique : `+` · champ · envoi, et le `sm:` qui la défait. */
-    const RANGEE_UNIQUE = {
-      champ: { rangee: ["flex-1", "min-w-0"], auDela: ["flex-none", "w-full"] },
+  describe("⑨ le cadre se replie sous `sm` (#891, puis #907)", () => {
+    /**
+     * La rangée : `+` · champ · envoi tant que le champ tient, le champ seul
+     * sur sa ligne dès qu'il ne tient plus — **un seul** état de classes pour
+     * les deux, c'est le wrap qui tranche (#907) —, et le `sm:` qui rend les
+     * deux étages de #726 à toute largeur au-dessus du point de rupture.
+     */
+    const RANGEE = {
+      champ: {
+        rangee: ["flex-1", "min-w-fit"],
+        auDela: ["flex-none", "w-full"],
+      },
       tete: { rangee: ["order-first"], auDela: ["order-none"] },
-    };
-    /** Les deux étages de #726 : le champ pleine largeur, le rail dessous. */
-    const DEUX_ETAGES = {
-      champ: { rangee: ["w-full"], auDela: [] },
-      tete: { rangee: [], auDela: [] },
     };
 
     /** Ce que le cadre monté rend des deux pièces que le repli déplace. */
@@ -943,79 +1098,88 @@ describe.each(SURFACES)("le composeur sur $nom", ({ monter, interlocuteur, secti
       return { champ: dispositionDe(champ), tete: dispositionDe(tete) };
     }
 
-    it("est une rangée qui passe à la ligne, et non deux boîtes", () => {
+    it("est une rangée qui passe à la ligne, à deux niveaux, et non deux boîtes", () => {
       monter();
       const cadre = cadreDe(zoneDeSaisie(interlocuteur));
-      // Les deux étages de #726 ne sont plus une colonne mais l'état de cette
-      // rangée où le champ prend la ligne entière : mêmes écarts qu'avant
-      // (`gap-x-2` entre les bouts du rail, `gap-y-1` entre les deux étages).
-      expect(dispositionDuCadre(cadre)).toEqual([
-        "flex",
-        "flex-wrap",
-        "gap-x-2",
-        "gap-y-1",
-        "items-center",
-      ]);
-      // Et le rail n'a plus de `<div>` à lui : ses deux bouts sont des sœurs
-      // du champ, ce qui est la seule façon de lui faire partager sa rangée.
-      // L'ordre du **flux**, lui, est celui de #726 — c'est ce qui garde la
+      // Sous `sm`, le cadre n'enveloppe pas : il aligne **en bas** deux
+      // choses, la rangée `+`/champ et le bout du rail — donc l'envoi reste
+      // sur la ligne du `+` quel que soit le nombre de lignes que la rangée a
+      // prises. Au-dessus, il redevient la rangée qui passe à la ligne de
+      // #891 (`flex-wrap`, `items-center`), avec les mêmes écarts.
+      expect(dispositionDuCadre(cadre)).toEqual({
+        rangee: ["flex", "gap-x-2", "gap-y-1", "items-end"],
+        auDela: ["flex-wrap", "items-center"],
+      });
+      // L'ordre du **flux** est celui de #726 — c'est ce qui garde la
       // tabulation de ③ intacte, le repli ne jouant qu'à l'affichage.
       expect(piecesDuCadre(cadre)).toEqual([
         "champ",
         "Joindre des sources…",
         "bout-du-rail",
       ]);
+      // Et les niveaux (#907, d'après ChatGPT) : le couple `+`/champ dans une
+      // rangée en `wrap-reverse` — c'est elle qui passe à la ligne, et qui
+      // pose la ligne du champ **au-dessus** de celle du `+` —, l'envoi hors
+      // d'elle. Elle cale ses pièces en bas comme le cadre : un brouillon qui
+      // grandit sans cesser de tenir en largeur reste replié, et un `+`
+      // centré flotterait alors au-dessus de l'envoi (mesuré : 10 px). ⚠ En
+      // bas se dit `items-start` ici : `wrap-reverse` retourne l'axe
+      // transversal, et `items-end` — mesuré — pose le `+` en **haut** du
+      // champ. Au-dessus de `sm` la rangée s'efface (`contents`) : ses deux
+      // enfants redeviennent ceux du cadre, et c'est la structure de #891.
+      expect(niveauxDuCadre(cadre)).toEqual({
+        champ: "rangée",
+        tete: "rangée",
+        envoi: "cadre",
+        rangee: {
+          rangee: [
+            "flex",
+            "flex-1",
+            "flex-wrap-reverse",
+            "gap-x-2",
+            "gap-y-1",
+            "items-start",
+          ],
+          auDela: ["contents"],
+        },
+      });
     });
 
-    it("partage la rangée au repos, et la rend au rail dès la deuxième ligne", () => {
+    it("ne change pas de classes quand le brouillon déborde : le repli n'est plus décidé ici", () => {
       monter();
       const champ = zoneDeSaisie(interlocuteur);
-      // Au repos, le brouillon est vide : il tient sur une ligne, donc `+` ·
-      // champ · envoi partagent la rangée sous `sm`, et le `sm:` restitue les
-      // deux étages au-dessus.
-      expect(etatDuCadre(champ)).toEqual(RANGEE_UNIQUE);
+      // Au repos comme à deux lignes, les mêmes classes : c'est le navigateur
+      // qui replie ou déplie, sur la largeur du champ. De #891 à #907, le
+      // champ passait en `w-full` et la tête perdait son `order-first` sur
+      // une mesure prise ici — et il fallait un invariant pour que la mesure
+      // prise à deux étages ne le fasse pas osciller. Plus rien à tenir.
+      expect(etatDuCadre(champ)).toEqual(RANGEE);
 
-      // Le champ déborde de sa hauteur de départ : c'est la « deuxième ligne »,
-      // et le rail reprend la sienne — à toute largeur, donc plus rien à
-      // restituer au-dessus du point de rupture.
       const mesure = { contenu: 120, boite: 52 };
       simulerLaMesure(champ, mesure);
       fireEvent.change(champ, { target: { value: "deux\nlignes" } });
-      expect(etatDuCadre(champ)).toEqual(DEUX_ETAGES);
+      expect(etatDuCadre(champ)).toEqual(RANGEE);
+      // Ce que la mesure décide encore, c'est la hauteur (①) — et elle seule.
       expect(champ.style.height).toBe("120px");
 
-      // Le brouillon repasse sous le point de débordement : le cadre se
-      // replie, et le champ rend sa hauteur.
       mesure.contenu = 40;
       fireEvent.change(champ, { target: { value: "deux" } });
-      expect(etatDuCadre(champ)).toEqual(RANGEE_UNIQUE);
+      expect(etatDuCadre(champ)).toEqual(RANGEE);
       expect(champ.style.height).toBe("");
     });
 
-    it("ne se replie pas sur une mesure prise à deux étages — il oscillerait", () => {
+    it("donne au champ la largeur de son texte, et un plancher d'un caractère", () => {
       monter();
-      const champ = zoneDeSaisie(interlocuteur);
-      const mesure = { contenu: 120, boite: 52 };
-      simulerLaMesure(champ, mesure);
-
-      // Le cadre se déplie sur une mesure prise en rangée unique.
-      fireEvent.change(champ, { target: { value: "deux lignes" } });
-      expect(etatDuCadre(champ)).toEqual(DEUX_ETAGES);
-
-      // Déplié, le champ est plus large de ~88 px (le `+`, l'envoi et leurs
-      // deux écarts) : le même texte y rentre sur une ligne. Se replier
-      // là-dessus le ferait aussitôt déborder à nouveau — replié il déborde,
-      // déplié il rentre, et le cadre changerait de forme à chaque frappe, le
-      // champ passant la moitié du temps trop court pour ce qu'il montre. La
-      // mesure ne vaut que pour la mise en page où elle a été prise : celle-ci
-      // ne lève pas le débordement.
-      mesure.contenu = 40;
-      fireEvent.change(champ, { target: { value: "deux lignes et plus" } });
-      expect(etatDuCadre(champ)).toEqual(DEUX_ETAGES);
-      // Ce qu'elle fait, en revanche, c'est rendre au champ la hauteur de sa
-      // nouvelle largeur : sans elle, le cadre déplié garderait la hauteur de
-      // deux lignes pour un texte qui n'en occupe qu'une.
-      expect(champ.style.height).toBe("");
+      // `min-w-fit` seul serait inerte sur un `<textarea>`, dont la largeur
+      // vient de `cols` : c'est `field-sizing: content` qui lui fait suivre
+      // son texte — et sans lui le cadre ne se replierait jamais, sans un
+      // mot. `overflow-wrap: anywhere` borne le plancher à un caractère, sans
+      // quoi une URL collée compterait entière et ferait déborder le cadre.
+      expect(largeurIntrinseque(zoneDeSaisie(interlocuteur))).toEqual({
+        suitLeTexte: true,
+        plancher: "min-w-fit",
+        coupure: "wrap-anywhere",
+      });
     });
   });
 });
@@ -1070,6 +1234,39 @@ describe("⑨ l'ordre d'émission de Tailwind (#891)", () => {
     expect(rangDeLaRegle(css, ".sm\\:order-none")).toBeGreaterThan(
       rangDeLaRegle(css, ".order-first"),
     );
+  });
+
+  it("laisse le `sm:` effacer la rangée et rendre au cadre la structure de #891 (#907)", async () => {
+    const css = await cssCompile([
+      "flex",
+      "items-end",
+      "flex-wrap-reverse",
+      "min-w-fit",
+      "field-sizing-content",
+      "wrap-anywhere",
+      "sm:contents",
+      "sm:flex-wrap",
+      "sm:items-center",
+    ]);
+    // Au-dessus de `sm`, `sm:contents` doit l'emporter sur le `flex` nu de la
+    // rangée — c'est ce qui rend ses deux enfants au cadre — et
+    // `sm:items-center` sur l'`items-end` du cadre, sans quoi le rail
+    // resterait calé en bas d'un cadre qui, à deux étages, n'a plus rien à y
+    // caler.
+    expect(rangDeLaRegle(css, ".sm\\:contents")).toBeGreaterThan(
+      rangDeLaRegle(css, ".flex"),
+    );
+    expect(rangDeLaRegle(css, ".sm\\:items-center")).toBeGreaterThan(
+      rangDeLaRegle(css, ".items-end"),
+    );
+    // Et les quatre utilitaires du mécanisme émettent la déclaration qu'on
+    // leur prête — `min-w-fit` et `field-sizing-content` n'existaient dans
+    // aucun écran du dépôt avant #907, une chaîne de classes ne dit pas
+    // qu'elle compile.
+    expect(css).toContain("flex-wrap: wrap-reverse");
+    expect(css).toContain("min-width: fit-content");
+    expect(css).toContain("field-sizing: content");
+    expect(css).toContain("overflow-wrap: anywhere");
   });
 });
 

@@ -1424,24 +1424,53 @@ tabulation**. Deux points, un seul fichier :
    étages de #726 **sont** cette rangée avec un champ pleine largeur, qui pousse
    le rail sur la suivante. Le rail perd donc son `<div>` propre — c'est une
    ligne de flux, seule façon de lui faire partager sa rangée avec le champ sans
-   écrire deux fois la même mise en page —, et « le brouillon tient sur une
-   ligne » se lit sur ce que `ajusterLaHauteur` mesurait déjà, qui **rend
-   désormais son verdict** au lieu de le garder.
+   écrire deux fois la même mise en page.
 
-   ⚠ **Le piège est un asservissement, et il n'a pas de référence.** Repliée, la
-   rangée laisse au texte la largeur du cadre **moins le rail** (~88 px : le
-   `+`, l'envoi, leurs deux écarts — mesuré à 375 px, **156 px** contre 243).
-   Il existe donc une plage de brouillons — ~35 caractères à cette largeur — qui
-   **déborde replié et rentre déplié** : décider du repli sur la mesure courante
-   y fait changer le cadre de forme **à chaque frappe**, le champ passant la
-   moitié du temps trop court pour ce qu'il montre. D'où l'invariant, qui est
-   tout ce qu'il faut retenir avant d'y toucher : **seule une mesure prise en
-   rangée unique pose ou lève le débordement** (`debordement` retient le
-   brouillon fautif ; on ne retente le repli que lorsque le brouillon n'est plus
-   celui-là). Conséquence assumée, et vérifiée au banc : dans cette plage, le
-   cadre reste **à deux étages avec un champ d'une seule ligne**. Aucune des
-   trois références n'a été observée dans cet état — c'est le point que la veille
-   n'a pas pu trancher, et il est consigné dans le ticket de veille **#899**.
+   **Et depuis #907, le repli se décide par le wrap du navigateur, plus par une
+   hauteur mesurée** (parti pris 1 de la veille **#899**, différée de #891 —
+   docs/30 §5.3). #891 lisait « le brouillon tient sur une ligne » sur ce que
+   `ajusterLaHauteur` mesurait, et le tenait par un invariant délicat : repliée,
+   la rangée laisse au texte ~88 px de moins que les deux étages (mesuré à
+   375 px, **156 px** contre 243), donc une plage de brouillons **débordait
+   replié et rentrait déplié**, et seule une mesure prise en rangée unique
+   pouvait poser ou lever le débordement, faute de quoi le cadre oscillait à
+   chaque frappe. La veille a mesuré ChatGPT dans le même état sur toute la
+   plage 35–50 caractères, obtenu **sans état, sans mesure, sans
+   `useLayoutEffect`** : `flex-wrap: wrap-reverse` sur la rangée, et un champ
+   qui **refuse de se comprimer sous la largeur de son texte** (`min-w-fit`) —
+   il passe à la ligne tout seul, `wrap-reverse` le remonte au-dessus du rail,
+   et la bascule est **monotone** (plus de texte ne peut que replier moins),
+   donc l'oscillation est impossible par construction. `debordement`,
+   `surUneLigne` et l'invariant sont partis ; `ajusterLaHauteur` ne décide plus
+   que de la hauteur.
+
+   ⚠ **La traduction a coûté deux choses que la veille ne pouvait pas voir**, et
+   c'est tout ce qu'il faut retenir avant d'y toucher. D'abord, `min-w-fit` est
+   **inerte sur un `<textarea>`** : sa largeur intrinsèque vient de `cols`, pas
+   de son texte (le champ de ChatGPT est un `contenteditable`) — c'est
+   `field-sizing-content` (`field-sizing: content`) qui lui fait suivre son
+   contenu, placeholder compris, et sans lui le cadre ne se replierait jamais,
+   sans un mot ; `wrap-anywhere` borne le plancher à un caractère, sans quoi
+   une URL collée compterait entière et ferait déborder le cadre sur le côté.
+   Ensuite, l'envoi vit à un **autre niveau de wrap** que le couple `+`/champ
+   (la structure que la veille a relevée chez ChatGPT, `wm-composer-trailing`
+   hors de `wm-composer-wrapInner`), et ce n'est pas un choix de forme : le `+`
+   et l'envoi faisant la même largeur (`w-9`), un champ qui ne tient plus à
+   côté de l'un ne tient jamais à côté de l'autre, et à un seul niveau l'envoi
+   part **toujours** sur une troisième ligne, en haut. D'où une **rangée**
+   `+`/champ (`flex-wrap-reverse items-start` — en bas se dit `items-start`,
+   `wrap-reverse` retournant l'axe transversal, mesuré) sous un cadre qui
+   n'enveloppe plus (`items-end`, l'envoi calé sur la ligne du `+`), et qui
+   s'**efface** au-dessus de `sm` (`sm:contents`) pour rendre au cadre la
+   structure de #891 à l'octet près. Le DOM reste champ · `+` · envoi — la
+   tabulation de ③ est intacte, et #899 a confirmé par une règle que
+   l'`order-first` du repli est le bon côté. Le prix, mesuré à 375 px : déplié,
+   le champ s'arrête à la colonne de l'envoi — **199 px au lieu de 243** —, si
+   bien que l'état « deux étages, une ligne » s'étend de ~28 à ~34 caractères
+   au lieu de ~28 à ~43 ; au-delà, deux lignes. Et un brouillon qui grandit
+   sans cesser de tenir en largeur (un saut de ligne dans un texte court) reste
+   **replié**, le champ prenant ses lignes entre le `+` et l'envoi : le repli
+   ne voit que la largeur, c'est le mécanisme de la référence.
 8. **Les amorces se bornent à deux** (ChatGPT en montre **une** à 390 px là où
    le bureau en aligne plusieurs ; Perplexity **aucune**) — les quatre du fil
    d'orchestration s'empilaient sur **quatre lignes** à 375×667 sous un composeur
@@ -1479,21 +1508,35 @@ le cadre passerait sous le flottant de 30 à 40 px partout où le fil court
 jusqu'au bord ; mais au bas du défilement, le dernier message perd 36 px sous le
 composeur, et c'est le shell qui est en cause (#888). Depuis #891 s'y ajoutent le
 cadre replié (⑨ — la rangée qui passe à la ligne, l'ordre du **flux** que le
-repli ne déplace pas, le passage aux deux étages dès que le champ déborde, et
-l'invariant qui l'empêche d'osciller : une mesure prise à deux étages ne replie
-rien) et les amorces bornées (⑩), plus l'**ordre d'émission de Tailwind** sur le
-CSS compilé — la seule moitié de ces deux règles que jsdom ne peut pas juger.
-Côté banc, le 2026-09-10 sur `/chat` **et** l'onglet Chat aux six fenêtres, plus
-639 et 640 px pour la bascule : cadre au repos à 375 px **63 → 38 px**, amorces
+repli ne déplace pas, et depuis #907 : **un seul état de classes** quel que soit
+le brouillon, la mesure ne décidant plus que de la hauteur ; le champ qui
+**suit son texte** et refuse de se comprimer dessous, `largeurIntrinseque` ;
+et les **deux niveaux** de wrap, `niveauxDuCadre` — sondes prouvées sur le cadre
+de #891, à un seul niveau et au champ en `min-w-0`) et les amorces bornées
+(⑩), plus l'**ordre d'émission de Tailwind** sur le CSS compilé — la seule
+moitié de ces deux règles que jsdom ne peut pas juger — et, depuis #907, la
+**déclaration** que chacun des quatre utilitaires du mécanisme émet. Côté banc,
+le 2026-09-10 sur `/chat` **et** l'onglet Chat aux six fenêtres, plus 639 et
+640 px pour la bascule : cadre au repos à 375 px **63 → 38 px**, amorces
 **124 px sur 4 lignes → 59 px sur 2**, formulaire entier **216 → 125 px**
 (l'« avant » mesuré dans la **même** page, en rendant au champ et à la tête du
 rail leurs classes d'avant #891 : seule la variable sous test change) ; bascule
 au pixel près à 640 px ; 63 px inchangés partout au-dessus ; RAS aux six
-fenêtres, barre latérale dépliée et repliée, lever de doute joué. Ce qui reste
-sans référence et **n'a pas été touché** : les deux amorces qui survivent tiennent
+fenêtres, barre latérale dépliée et repliée, lever de doute joué. Puis le même
+jour pour #907, `/chat` **et** l'onglet Chat, balayage de longueurs à 375 × 667
+et 390 × 700 (la fenêtre de la veille), 639, 640 et 1280 px : **0 → 28 car.**
+replié (cadre 38 px, champ 156 px) · **30 → 34** déplié, champ d'une ligne
+(63 px, champ 199 px) · **35 → 60** deux lignes (85 px) · **80** trois (106) ·
+**100** quatre (128) — l'envoi **sur la ligne du `+`** dans les 16 cas, jamais
+une troisième ligne, aucune hauteur posée par JS avant le plafond ; bascule
+monotone ; à 639 px replié jusqu'à 70 car. ; à 640 et 1280 px cadre à **63 px**
+au repos, champ pleine largeur, rangée en `display: contents`, raccourci
+visible — rien ne bouge au-dessus de `sm` ; RAS à 375 et 1280 dans les trois
+états (repos, déplié, URL sans espace), lever de doute joué. Ce qui reste sans
+référence et **n'a pas été touché** : les deux amorces qui survivent tiennent
 encore **une ligne chacune**, les libellés du fil d'orchestration étant des
 phrases entières — la veille a compté les amorces, pas leur longueur, et
-raccourcir un libellé change ce qu'il propose (#899).
+raccourcir un libellé change ce qu'il propose (#899 → #908).
 
 ### Le fil en colonne — `components/Conversation.tsx`, `chat/BulleFil.tsx` (#876)
 
