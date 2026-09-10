@@ -1227,6 +1227,26 @@ parti pris 4 → **#892**, à part parce qu'il touche `app/layout.tsx`, donc tou
 seule surface de conversation. Le parti pris 1 n'appelle aucun code. Les tickets #728 et #873
 portent `veille::arbitree` depuis cette veille.
 
+⚠ **Deux choses que #891 a trouvées en les posant, et que cette veille ne pouvait pas voir** —
+consignées ici parce qu'elles corrigent ce qui précède (`apps/web/README.md`, partis pris 7 et 8) :
+
+- la forme du parti pris 3, « un `hidden sm:inline-flex` au-delà de la deuxième », est **inerte** :
+  la classe de socle d'un `Bouton` porte déjà `inline-flex`, et dans le CSS que Tailwind émet
+  `.hidden` passe **avant** `.inline-flex`, donc `hidden` perd à toute largeur — sans un mot. Le
+  marqueur posé est `max-sm:hidden`, une **variante**, émise après les utilitaires nus. Une veille
+  juge ce qu'on **vise** ; la cascade qui le rend n'est visible qu'au moment d'écrire, et jsdom ne
+  la voit pas non plus (`composeur.test.tsx` ⑨ la garde sur le CSS compilé) ;
+- le parti pris 2 cache un **asservissement** que la lecture seule de trois produits ne pouvait pas
+  faire apparaître : repliée, la rangée laisse au texte ~88 px de moins (mesuré à 375 px, 156 px
+  contre 243), donc il existe une plage de brouillons qui **déborde replié et rentre déplié**.
+  Décider du repli sur la mesure courante y ferait changer le cadre de forme à chaque frappe. #891 a
+  tranché **à l'écran, faute de référence** — seule une mesure prise en rangée unique pose ou lève le
+  débordement, si bien que dans cette plage le cadre reste à deux étages avec un champ d'une seule
+  ligne. Aucune des trois références n'a été observée dans cet état ; la question est **différée**
+  (§5.3 ci-dessus, `veille-differe` → ticket de veille **#899**), avec le second point que #891 n'a
+  pas touché : les deux amorces qui survivent tiennent encore une ligne chacune, la veille ayant
+  compté les amorces et non leur longueur.
+
 #### Le signe de vie d'une tâche qui travaille — 2026-09-10 (#868, différée de #837)
 
 Surface : `components/SigneDeVie.tsx` (`LigneSigneDeVie`), rendue à l'identique par **trois**
