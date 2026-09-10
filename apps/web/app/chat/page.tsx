@@ -258,7 +258,7 @@ export default function PageChat() {
             className="flex min-w-0 flex-col gap-3"
           >
             <EnTeteSection titre="Cadrage en attente" icone={IconeObjectif} />
-            <p className="text-corps text-neutral-600 dark:text-neutral-400">
+            <p className="text-corps text-texte-secondaire">
               Avant de parler du travail, on le cadre : le brief se relit et se
               corrige ici même, les questions du Chef de projet s&apos;y
               répondent, et l&apos;accord — ou le refus — s&apos;y donne. Rien
@@ -287,8 +287,19 @@ export default function PageChat() {
             </>
           }
           bandeau={
+            /* Un fait neutre mis en avant, donc le ton `info` — pas `attention`,
+               qui ferait lire « quelque chose attend un geste » là où le bandeau
+               ne fait que dire où part le message. Sur les **jetons** et non sur
+               `sky-*` brut (#878) : c'est le même geste que #831 sur la ligne de
+               conversation ouverte, et ce que docs/30 §1.6/§2 demandent — la
+               palette de base ne dit pas le sens, et une teinte écrite en dur
+               échappe au banc de contraste, qui ne juge que les tokens. `border`
+               plein plutôt que `-creux` : le bandeau n'est pas une carte, son
+               contour le détache du fil qu'il surplombe. Empreinte visuelle
+               inchangée — `--text-sm` vaut `--text-corps`, `info-creux` est
+               `sky-100`/`sky-950`. */
             !global && (
-              <div className="flex flex-wrap items-center gap-3 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-200">
+              <div className="flex flex-wrap items-center gap-3 rounded-md border border-info bg-info-creux px-3 py-2 text-corps text-info-texte">
                 <span className="min-w-0">
                   Ce message part dans le fil de <strong>{destinataire}</strong>{" "}
                   — le même que sert sa fiche. Rien n&apos;est recopié ici.
@@ -354,7 +365,7 @@ export default function PageChat() {
         </Carte>
         <Carte densite="aeree">
           <EnTeteSection titre="Parler à" icone={IconeAgent} />
-          <p className="mt-2 text-annexe text-neutral-500 dark:text-neutral-400">
+          <p className="mt-2 text-annexe text-texte-secondaire">
             Au clavier, sans quitter l&apos;écran : commencez le message par
             <span className="font-mono"> @nom </span> suivi d&apos;une espace.
           </p>
@@ -547,7 +558,7 @@ function ConversationsDuFil({
           </Bouton>
         }
       />
-      <p className="mt-1 text-annexe text-neutral-500 dark:text-neutral-400">
+      <p className="mt-1 text-annexe text-texte-secondaire">
         Celles du fil avec {nomDuFil}, la plus récente d&apos;abord.
       </p>
       {/* Liste vide = pas encore chargée : l'API n'en rend jamais aucune, un
@@ -623,7 +634,7 @@ function LigneConversation({
         : `${carte.messages} messages`;
   const teinteSecondaire = ouverte
     ? ""
-    : "text-neutral-500 dark:text-neutral-400";
+    : "text-texte-secondaire";
   return (
     <button
       type="button"
@@ -710,7 +721,7 @@ function SuitesDuFil({
           >
             <span className="min-w-0">
               <span className="font-mono text-annexe">{run}</span>
-              <span className="ml-2 text-annexe text-neutral-500 dark:text-neutral-400">
+              <span className="ml-2 text-annexe text-texte-secondaire">
                 {nombre === 0
                   ? "décomposition en cours"
                   : nombre === 1

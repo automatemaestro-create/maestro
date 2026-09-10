@@ -34,7 +34,9 @@
  * ⑤ **le chemin vers les conversations** (#831) — la carte en tête de la
  *    colonne, l'en-tête du fil qui nomme l'ouverte et y mène, la forme de
  *    l'ouverte prouvée contre la ligne d'avant, la bascule qui ne cache jamais
- *    l'ouverte.
+ *    l'ouverte ;
+ * ⑥ **le bandeau d'aparté sur les jetons du socle** (#878) — ni palette de
+ *    base, ni pas typographique de Tailwind, prouvé contre le bandeau d'avant.
  *
  * ⚠ **Aucune géométrie ici** (#308) : jsdom ne calcule ni hauteur, ni
  * `overflow`, ni défilement, et un test qui prétendrait mesurer l'un des trois
@@ -683,5 +685,110 @@ describe("le fil n'exécute rien (#697)", () => {
     expect(elementsExecutables(fil)).toEqual([]);
     expect(fil.textContent).toContain("**ici**");
     expect(fil.textContent).toContain("<b>là</b>");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑥ Le bandeau d'aparté, sur les jetons du socle (#878)
+// ---------------------------------------------------------------------------
+
+/**
+ * Le bandeau tel que #269 l'écrivait, et tel qu'il est resté jusqu'à #878 : la
+ * palette de base en dur, et le pas typographique de Tailwind plutôt que celui
+ * du socle. C'est l'échantillon fautif des deux sondes ci-dessous — sans lui,
+ * « ne porte rien de brut » serait vrai d'une sonde qui ne regarde nulle part,
+ * et c'est précisément la panne qu'aucun ✓ ne signale (méthode de #534/#537/
+ * #539, déjà appliquée en ⑤ à la ligne de conversation d'avant #831).
+ */
+const BANDEAU_APARTE_AVANT_878 =
+  "flex flex-wrap items-center gap-3 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 " +
+  "text-sm text-sky-900 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-200";
+
+/**
+ * Les familles de la palette de base de Tailwind. La sonde vise **la palette**
+ * et non le bleu ciel : n'interdire que `sky-*` laisserait le même défaut
+ * revenir en `slate-*` au premier ajustement, alors que ce que docs/30 §1.6/§2
+ * refuse est toute couleur hors `surface` / `bord` / `texte` / `accent` /
+ * `info` / `positif` / `attention` / `alerte`.
+ */
+const FAMILLES_BRUTES = [
+  "slate", "gray", "zinc", "neutral", "stone", "red", "orange", "amber",
+  "yellow", "lime", "green", "emerald", "teal", "cyan", "sky", "blue",
+  "indigo", "violet", "purple", "fuchsia", "pink", "rose",
+].join("|");
+
+/** Une couleur de la palette de base écrite en dur, variantes (`dark:`) comprises. */
+const COULEUR_BRUTE = new RegExp(
+  `(?:^|[\\s:])(?:bg|text|border|ring|outline|divide|from|via|to)-(?:${FAMILLES_BRUTES})-\\d+`,
+);
+
+/**
+ * Un pas typographique de Tailwind — `text-sm`, `text-lg`… — là où le socle n'a
+ * que `micro` / `annexe` / `corps` / `titre` / `page`. `--text-sm` **vaut**
+ * `--text-corps` (globals.css), donc ce défaut-là ne se voit pas à l'écran : il
+ * ne se voit qu'ici, et c'est toute la raison d'être de cette seconde sonde.
+ */
+const PAS_BRUT = /(?:^|[\s:])text-(?:xs|sm|base|lg|[2-9]?xl)(?=\s|$)/;
+
+/** Le bandeau d'aparté — la boîte, pas la phrase qu'elle porte. */
+function bandeauDAparte(): HTMLElement {
+  const boite = screen.getByText(/Rien n'est recopié ici/).closest("div");
+  if (boite === null) throw new Error("bandeau d'aparté sans conteneur");
+  return boite;
+}
+
+/** Passe le fil en aparté : le bandeau n'existe qu'hors de l'orchestration. */
+async function parlerAuDev(): Promise<void> {
+  const utilisateur = userEvent.setup();
+  const parlerA = within(colonneDeProprietes())
+    .getAllByRole("article")
+    .find(
+      (candidate) =>
+        within(candidate).queryByRole("heading", { name: "Parler à" }) !== null,
+    );
+  if (parlerA === undefined) throw new Error("carte « Parler à » absente");
+  await utilisateur.click(within(parlerA).getByRole("button", { name: "@dev" }));
+}
+
+describe("le bandeau d'aparté, sur les jetons du socle (#878)", () => {
+  it("reconnaît le bandeau d'avant — les sondes voient ce qu'elles cherchent", () => {
+    // La moitié qui prouve. Elle porte les deux défauts à la fois, et chacun
+    // est nommé à part : une sonde muette sur l'un passerait pour verte grâce
+    // à l'autre.
+    expect(COULEUR_BRUTE.test(BANDEAU_APARTE_AVANT_878)).toBe(true);
+    expect(PAS_BRUT.test(BANDEAU_APARTE_AVANT_878)).toBe(true);
+  });
+
+  it("écrit le bandeau sur les jetons du socle, sans palette ni pas brut", async () => {
+    monterLeChat();
+    await parlerAuDev();
+
+    const classes = bandeauDAparte().className;
+    expect(COULEUR_BRUTE.test(classes)).toBe(false);
+    expect(PAS_BRUT.test(classes)).toBe(false);
+    // Le ton reste `info` — un fait mis en avant, pas un geste attendu. Nommer
+    // les jetons attendus, et pas seulement l'absence des bruts : sans cela,
+    // un bandeau devenu incolore passerait pour corrigé.
+    expect(classes).toContain("bg-info-creux");
+    expect(classes).toContain("text-info-texte");
+    expect(classes).toContain("text-corps");
+  });
+
+  it("garde la boîte du bandeau, ses gestes et sa phrase", async () => {
+    // Le lot n'est qu'un changement d'écriture : ce que le bandeau dit et ce
+    // qu'il permet ne bouge pas d'un mot. Sans cette assertion, retirer le
+    // bandeau rendrait les deux sondes ci-dessus vertes… par l'échec du
+    // `getByText`, donc rouges — mais son *contenu* pourrait fondre sans bruit.
+    monterLeChat();
+    await parlerAuDev();
+
+    const bandeau = bandeauDAparte();
+    expect(bandeau.textContent).toContain("Rien n'est recopié ici");
+    expect(
+      within(bandeau).getByRole("link", { name: /Vue détaillée/ }),
+    ).toHaveAttribute("href", "/agents/dev/chat");
+    expect(
+      within(bandeau).getByRole("button", { name: "Revenir à l'orchestration" }),
+    ).toBeInTheDocument();
   });
 });
