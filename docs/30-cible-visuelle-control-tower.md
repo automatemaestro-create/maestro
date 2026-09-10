@@ -1289,6 +1289,10 @@ consignées ici parce qu'elles corrigent ce qui précède (`apps/web/README.md`,
   pas touché : les deux amorces qui survivent tiennent encore une ligne chacune, la veille ayant
   compté les amorces et non leur longueur.
 
+  ➜ **Les deux ont été tranchés depuis** par la veille **#899** (entrée suivante) : ChatGPT *vit*
+  dans cet état, sur toute la plage 35–50 caractères, et l'obtient **sans état ni mesure** ; et le
+  bornage à deux garde en fait les deux amorces **les plus longues**.
+
 #### Le signe de vie d'une tâche qui travaille — 2026-09-10 (#868, différée de #837)
 
 Surface : `components/SigneDeVie.tsx` (`LigneSigneDeVie`), rendue à l'identique par **trois**
@@ -1362,6 +1366,80 @@ met —, la veille jugeant la *forme* du signe et non la qualité de la phrase q
 Partis pris 3 et 4 → **#894** (même ligne, même composant : un seul ticket). Les partis pris 1 et 2
 n'appellent aucun code — ils confirment. Constat hors partis pris → **#895**. Les tickets #837 et
 #868 portent `veille::arbitree` depuis cette veille.
+
+#### Le composeur sous `sm`, ce que #891 a tranché sans elle — 2026-09-10 (#899, différée de #891)
+
+Surface : le composeur de `components/Conversation.tsx`, monté par `/chat` et l'onglet Chat d'une
+fiche agent. Veille **différée** jouée sur pièces — la surface est **livrée** —, et elle ne rejoue
+pas #873 : elle répond aux **trois** questions que l'entrée précédente lui a laissées en propre.
+Décision complète en commentaire de **#899**, captures dans l'atelier de la session. Les questions,
+telles que #891 les a écrites : *comment un composeur qui se replie décide-t-il de se replier ?* ·
+*lequel des deux états paie l'écart entre l'ordre vu et l'ordre parcouru ?* · *les amorces, une fois
+comptées, sont-elles assez courtes ?*
+
+**Vérifié en direct** (390 × 700, sans compte, DOM et styles calculés instrumentés) : **ChatGPT** —
+composeur mobile dédié (`#mobile-composer-prompt`), et surtout **aucun état, aucune mesure, aucun
+`useLayoutEffect`** : le conteneur est `flex-wrap: wrap-reverse`, le champ `flex: 10 1 auto` +
+`min-width: fit-content`. Balayage de longueurs, la seule variable étant le brouillon : **0 → 30
+car.** une rangée (cadre 36 px, champ 121 → 201 px) · **35 → 45 car.** deux étages, **champ d'une
+seule ligne** (cadre 76 px, champ 241 → 299 × 24) · **60 car. et au-delà** deux étages, deux lignes
+(cadre 88 px). La bascule est **monotone** — aucun retour en arrière. **Perplexity** — deux étages
+permanents, DOM **champ d'abord**, aucun écart d'ordre. **Duck.ai** — deux étages permanents, DOM
+champ d'abord, et **quatre amorces** en `white-space: nowrap` (10 à 28 car., 2 à 5 mots) dans un
+conteneur `flex-wrap: wrap` centré : elles tiennent en **trois** rangées, dont une en porte deux.
+**Zulip** (vue publique) — barre repliée à une rangée, un contrôle, libellé **tronqué** sur sa ligne.
+
+**Non vérifié, donc non cité** : **HuggingChat** (connexion exigée — constat de #831 reconduit) ; et
+**Zulip en écriture**, dont la vue publique ne laisse pas taper — sa barre repliée est capturée, son
+comportement de repli **dynamique** ne l'est pas.
+
+**Cinq partis pris** : **le repli se décide par le WRAP du navigateur, jamais par une hauteur
+mesurée** — `flex-wrap-reverse` sur la rangée et `min-w-fit` sur le champ, qui refuse alors de se
+comprimer sous la largeur de son texte et passe à la ligne tout seul ; `wrap-reverse` le fait
+remonter **au-dessus** du rail au lieu de descendre, et l'oscillation devient impossible **par
+construction** plutôt que par un invariant à tenir *(ChatGPT)* · **l'état « deux étages avec un
+champ d'une seule ligne » est le régime NORMAL** — il occupe chez ChatGPT toute la plage 35–50 car.,
+donc #891 a visé juste : il obtient en JavaScript ce que la référence obtient en CSS, **rien à
+reprendre** *(ChatGPT)* · **le DOM suit l'ordre de l'état DOMINANT, l'écart tombe sur l'autre** —
+ChatGPT, dominant replié, met le `+` **avant** le champ et paie l'écart déplié ; Perplexity et
+Duck.ai, en deux étages permanents, mettent le champ d'abord et ne paient **rien** ; notre état
+dominant étant les deux étages, l'`order-first` de #891 est **le bon côté** *(les trois)* · **une
+amorce ne s'enveloppe JAMAIS, c'est le groupe qui enveloppe** — `whitespace-nowrap` sur les `Bouton`
+d'amorce, le conteneur étant **déjà** `flex flex-wrap gap-1.5` *(Duck.ai, Zulip)* · **le bornage à
+deux garde aujourd'hui les deux amorces les plus LONGUES** — 43 et 35 car. conservées, « Où en sont
+les runs ? » (21 car., seule au calibre des références) retirée : #873 a borné le **nombre**, il
+reste à borner la **longueur** *(Duck.ai)*.
+
+**Refusé sur place, avec sa raison** : le **composeur mobile dédié** de ChatGPT (`wm-composer-*`,
+distinct de sa version bureau). `Conversation.tsx` existe précisément pour qu'il n'y ait **qu'une**
+mise en page pour les deux surfaces de fil (#269, reconduit par #620) ; deux composeurs seraient
+deux mises en page à tenir d'accord. Également laissés : les six contrôles au rail de Perplexity
+(le §4 plafonne les places, et #891 a réduit le rail à ses deux bouts), et la **troncature** de
+Zulip — elle vaut pour un rappel de destinataire, jamais pour une amorce, qui tronquée ne dit plus
+ce qu'elle enverrait.
+
+⚠ **Le parti pris 1 a un prix, et il est réel** : `wrap-reverse` demande de remonter le `+` **avant**
+le champ dans le DOM, ce que ChatGPT fait — or `composeur.test.tsx` ③ (#726) exige d'atteindre
+« Joindre des sources… » **en tabulant depuis le champ**, donc un `+` placé avant deviendrait
+inatteignable par Tab avant. Une **traduction** garde le contrat — DOM inchangé, `order-first` sur
+le `+` sous `sm`, `wrap-reverse` pour que sa ligne s'affiche sous celle du champ — mais elle demande
+d'établir **au banc** que l'envoi reste sur la rangée du `+` plutôt que de partir sur une troisième
+ligne : chez ChatGPT le rail de droite est un bloc séparé, à un **autre** niveau de wrap. Une veille
+dit ce qu'on vise ; ce n'est pas ici que la géométrie se tranche.
+
+**Ce que la veille n'a pas regardé** : le **clavier virtuel** — tout est mesuré à 390 px sur poste,
+jamais sur un mobile réel où son ouverture rétrécit le viewport *pendant* que le composeur décide de
+se replier (même angle mort que #873, et le parti pris 4 de #873 → #892 en dépend) ; **où le focus
+est annoncé** en état replié — seul l'ordre du **DOM** a été relevé, aucune capture ne dit ce qu'un
+lecteur d'écran restitue, or c'est dans ces termes que #891 posait la question ; et le plafond
+`max-h-48` avec le `sticky bottom-16`, hors périmètre depuis #891.
+
+Parti pris 1 → **#907** (le mécanisme, et lui seul : il retire un état et un `useLayoutEffect`, et
+sa traduction se mesure au banc). Partis pris 4 et 5 → **#908** (les amorces : `nowrap` et la
+longueur des libellés vont ensemble, un libellé raccourci sans `nowrap` ferait déborder). Les partis
+pris 2 et 3 **n'appellent aucun code** — ils confirment #891, et c'est le résultat le plus utile de
+cette veille : ce qui avait été tranché à l'aveugle est ce que fait la référence. Les tickets #891
+et #899 portent `veille::arbitree` depuis cette veille.
 
 ---
 
