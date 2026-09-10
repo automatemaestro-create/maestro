@@ -1457,6 +1457,44 @@ tabulation**. Deux points, un seul fichier :
    #830) : `composeur.test.tsx` ⑨ la garde sur le **CSS compilé**, en vérifiant
    d'abord que la forme d'instinct y perd.
 
+**Et aucune amorce ne s'enveloppe sur elle-même** (#908, partis pris 4 et 5 de la
+veille **#899**, différée de #891 — docs/30 §5.3). #873 avait **compté** les
+amorces, pas leur longueur : les deux que #891 gardait sous `sm` étaient les deux
+plus **longues** (43 et 35 caractères, des phrases entières), une ligne chacune à
+375 px, et la seule au calibre des références — « Où en sont les runs ? »,
+21 caractères — était précisément celle qu'il retirait. Deux règles, **qui ne se
+livrent pas séparément** :
+
+9. **Une amorce ne s'enveloppe jamais ; c'est le groupe qui enveloppe** (d'après
+   Duck.ai — quatre amorces en `white-space: nowrap` dans un conteneur
+   `flex-wrap: wrap`, trois rangées dont une en porte deux — et Zulip, qui tronque
+   plutôt que d'envelopper). `AMORCE_NOWRAP` (`whitespace-nowrap`) sur chaque
+   `Bouton` d'amorce, bornées comprises ; le groupe reste `flex flex-wrap
+   gap-1.5`. Les amorces du panneau d'assistance (`AssistantFlottant`) suivent la
+   même règle, avec le même marqueur.
+10. **Les libellés tiennent au calibre mesuré** — `CALIBRE_AMORCE`, 28 caractères,
+    la borne haute de Duck.ai (10 à 28, 2 à 5 mots) — **sans changer ce que
+    chacune propose** : « Pagine les projets » demande ce que demandait « Ajoute
+    la pagination à la liste des projets », « Corrige le tri Kanban » ce que
+    demandait « Corrige le tri des tâches du Kanban », « Que dois-je arbitrer ? »
+    ce que demandait « Qu'est-ce qui attend mon arbitrage ? ». C'est une décision
+    de **rédaction**, et l'ordre n'a pas bougé : il est éditorial (les deux
+    premières mènent à une proposition de run, les deux dernières à une réponse),
+    et garder « les deux plus courtes » sous `sm` — l'alternative écartée — le
+    rendrait imprévisible tout en laissant les libellés longs au-dessus de `sm`.
+    Les deux premières portent en plus une borne **à elles deux**
+    (`CALIBRE_PAIRE_SOUS_SM`, 40 caractères) : à 375 px le composeur ne fait que
+    **268,8 px** (rail de 64 px, marges de 16 px), soit 262,8 px pour deux
+    boutons — 39 caractères tiennent, 42 (« Corrige le tri **du** Kanban »)
+    dépassaient de 7 px. Les quatre amorces de l'assistant sont au même calibre,
+    et `tests/test_assistance.py` tient l'autre bout : chacune trouve encore son
+    sujet dans le repli.
+
+   ⚠ `nowrap` **sans** le calibre ferait **déborder** à droite une amorce de
+   43 caractères à 375 px — pire que l'enveloppement qu'il corrige ; le calibre
+   sans `nowrap` ne prouve rien, le prochain libellé un peu long enveloppant à
+   nouveau. C'est pourquoi les deux vivent dans le même ticket.
+
 **Ce qui le garde** (#728) : `tests/composeur.test.tsx` — la hauteur posée quand
 le contenu déborde et rendue quand il rentre (les mesures sont **simulées**,
 jsdom rendant zéro), le plafond et la poignée au CSS, le cadre qui contient

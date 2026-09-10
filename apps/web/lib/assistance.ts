@@ -33,12 +33,21 @@ export const ACCUEIL_ASSISTANCE =
  * Des questions d'amorce, proposées tant que la conversation n'a pas commencé :
  * elles montrent le périmètre de l'assistant mieux qu'une phrase d'explication,
  * et évitent la page blanche du premier usage.
+ *
+ * ⚠ **Chaque libellé tient en `CALIBRE_AMORCE` caractères au plus** (#908 —
+ * même règle que `AMORCES_ORCHESTRATION`, même raison : une amorce ne
+ * s'enveloppe jamais sur elle-même, `whitespace-nowrap`, donc sa longueur est
+ * toute sa largeur). Raccourcir n'a rien changé à ce que chacune demande, et
+ * `tests/test_assistance.py` le tient d'un autre côté : chacune doit encore
+ * trouver son sujet dans le repli (`sujet_assistance`), en démo comme sans
+ * fournisseur — le mot qui porte le sujet (« tableau de bord », « validation »,
+ * « coûts », « playbook ») est resté dans chaque libellé.
  */
 export const AMORCES_ASSISTANCE: string[] = [
-  "À quoi sert le tableau de bord ?",
-  "Comment approuver une validation ?",
+  "Que dit le tableau de bord ?",
+  "Approuver une validation ?",
   "Où voir les coûts ?",
-  "Comment modifier le playbook d'un agent ?",
+  "Modifier un playbook ?",
 ];
 
 /** Ouvre le panneau d'assistance, d'où qu'on le demande. */

@@ -18,6 +18,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { AssistantFlottant } from "@/components/AssistantFlottant";
+import { AMORCE_NOWRAP } from "@/components/Conversation";
 import { MenuAide } from "@/components/MenuAide";
 import {
   ACCUEIL_ASSISTANCE,
@@ -169,6 +170,23 @@ describe("le panneau d'assistance", () => {
     expect(within(panneau).getByText(ACCUEIL_ASSISTANCE)).toBeInTheDocument();
     for (const amorce of AMORCES_ASSISTANCE) {
       expect(within(panneau).getByRole("button", { name: amorce })).toBeInTheDocument();
+    }
+  });
+
+  it("interdit à chaque amorce de s'envelopper sur elle-même (#908)", async () => {
+    // Même règle que le composeur (`composeur.test.tsx` ⑪) : le marqueur est
+    // sur chaque bouton, et c'est le groupe qui enveloppe. Le panneau fait
+    // 343 px à 375 px, ce qui tient avec des libellés au calibre — la sonde
+    // lit le contrat écrit, jsdom n'enveloppant rien (#308).
+    const utilisateur = userEvent.setup();
+    render(<AssistantFlottant />);
+    const panneau = await ouvrirPanneau(utilisateur);
+    for (const amorce of AMORCES_ASSISTANCE) {
+      const bouton = within(panneau).getByRole("button", { name: amorce });
+      expect(bouton.classList.contains(AMORCE_NOWRAP)).toBe(true);
+      expect(bouton.parentElement?.className.split(/\s+/)).toEqual(
+        expect.arrayContaining(["flex", "flex-wrap"]),
+      );
     }
   });
 

@@ -315,6 +315,45 @@ export const AMORCES_SOUS_SM = 2;
 export const AMORCE_HORS_SM = "max-sm:hidden";
 
 /**
+ * Le marqueur qui interdit à une amorce de s'envelopper **sur elle-même**
+ * (#908 — parti pris 4 de la veille #899, d'après Duck.ai : quatre amorces en
+ * `white-space: nowrap` dans un conteneur `flex-wrap: wrap`, trois rangées dont
+ * une en porte deux ; Zulip fait le même choix, en tronquant). C'est le
+ * **groupe** qui enveloppe (`flex flex-wrap gap-1.5`, inchangé) : une amorce
+ * qui passe à la ligne au milieu de sa phrase ne se lit plus comme une
+ * proposition de message, et occupe deux lignes du seul écran qu'on ait.
+ *
+ * ⚠ Il ne tient qu'avec des libellés au calibre (`CALIBRE_AMORCE`) : sur une
+ * amorce de 43 caractères à 375 px, `nowrap` ferait **déborder** à droite ce
+ * qu'il empêche d'envelopper — pire que le défaut corrigé. Les deux règles
+ * vont ensemble et se sont livrées ensemble.
+ */
+export const AMORCE_NOWRAP = "whitespace-nowrap";
+
+/**
+ * Combien de caractères un libellé d'amorce peut compter (#908, parti pris 5
+ * de la veille #899) — le **calibre mesuré** chez Duck.ai à 390 px, 10 à 28
+ * caractères. Avec `AMORCE_NOWRAP`, la longueur d'une amorce est toute sa
+ * largeur, et sous `sm` les deux premières doivent partager une rangée à
+ * 375 px : c'est le banc qui tranche le pixel, ce plafond garde la rédaction.
+ * Il vaut pour les deux listes (`lib/orchestration`, `lib/assistance`).
+ */
+export const CALIBRE_AMORCE = 28;
+
+/**
+ * Combien de caractères les **deux amorces visibles sous `sm`** peuvent compter
+ * **à elles deux** (#908) — pour partager une rangée à 375 px, où le composeur
+ * ne fait que 268,8 px (rail de 64 px, marges de 16 px du `main`) : 262,8 px
+ * pour deux boutons de `petite` taille, moins 44 px de marges intérieures et de
+ * filets, à ~5,2 px le caractère en `text-annexe`. Mesuré au banc du
+ * 2026-09-10 : 39 caractères tiennent (252,2 px), 42 ne tiennent plus
+ * (269,7 px, 7 px de trop). C'est une **borne de rédaction**, un compte de
+ * caractères n'étant qu'une approximation d'une largeur ; le pixel reste au
+ * banc.
+ */
+export const CALIBRE_PAIRE_SOUS_SM = 40;
+
+/**
  * Fait grandir la zone de saisie avec ce qu'on y écrit (#726 — parti pris 3 de
  * la veille #724, mesuré chez ChatGPT : 52 px au repos, 256 px à vingt lignes,
  * un plafond puis un défilement interne), et **rend si le brouillon tient sur
@@ -1219,7 +1258,15 @@ export function Conversation({
             après les utilitaires nus, donc elle gagne. Mesuré sur le CSS
             compilé, et gardé par `composeur.test.tsx` ⑨ : c'est une frontière
             entre une chaîne de classes et une cascade, exactement ce qu'aucun
-            test de rendu ne voit (leçon de #830). */}
+            test de rendu ne voit (leçon de #830).
+            **Et aucune ne s'enveloppe sur elle-même** (#908 — parti pris 4 de
+            la veille #899, d'après Duck.ai et Zulip) : `AMORCE_NOWRAP` sur
+            chaque bouton, le groupe restant seul à envelopper. Ça ne tient
+            qu'avec des libellés au calibre (`CALIBRE_AMORCE`, parti pris 5) —
+            les deux amorces que #891 gardait sous `sm` étaient les deux plus
+            **longues** (43 et 35 caractères), une ligne chacune ; au calibre,
+            et sous `CALIBRE_PAIRE_SOUS_SM` à elles deux, les deux partagent
+            une rangée à 375 px (banc du 2026-09-10). */}
         {filVide && amorces.length > 0 && (
           <div
             role="group"
@@ -1232,7 +1279,11 @@ export function Conversation({
                 variante="contour"
                 ton="neutre"
                 taille="petite"
-                className={index >= AMORCES_SOUS_SM ? AMORCE_HORS_SM : ""}
+                className={
+                  index >= AMORCES_SOUS_SM
+                    ? `${AMORCE_NOWRAP} ${AMORCE_HORS_SM}`
+                    : AMORCE_NOWRAP
+                }
                 onClick={() => void soumettre(amorce)}
               >
                 {amorce}
