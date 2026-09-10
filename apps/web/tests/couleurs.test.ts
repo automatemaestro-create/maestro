@@ -411,7 +411,12 @@ const RESIDU = new Map<string, number>([
   ["components/GuidePriseEnMain.tsx", 11],
   ["components/IndicateursTableauDeBord.tsx", 1],
   ["components/Infobulle.tsx", 3],
-  ["components/Kanban.tsx", 7],
+  // La dernière ligne arrivée : #894 a ajouté une **cinquième** occurrence de
+  //   `text-neutral-500 dark:text-neutral-400` dans ce fichier pendant que ce
+  //   lot attendait son merge. La migrer seule aurait laissé ses quatre
+  //   voisines identiques écrites à la main — une équivalence posée pour faire
+  //   taire un test, ce que le message d'échec écarte précisément.
+  ["components/Kanban.tsx", 8],
   ["components/LienTicketExterne.tsx", 3],
   ["components/LigneActivite.tsx", 11],
   ["components/ListeAgents.tsx", 5],
@@ -466,7 +471,7 @@ const RESIDU = new Map<string, number>([
 ]);
 
 /** Le compte du README — épinglé ici pour qu'il ne puisse pas dériver en silence. */
-const TOTAL_ANNONCE = 688;
+const TOTAL_ANNONCE = 689;
 
 /** Ce que le produit porte aujourd'hui, fichier par fichier. */
 function residuMesure(): Map<string, string[]> {
