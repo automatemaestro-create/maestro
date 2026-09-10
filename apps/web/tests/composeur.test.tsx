@@ -58,7 +58,14 @@
  *    une troisième ligne. Plus l'**ordre d'émission de Tailwind**, sur le CSS
  *    compilé — la moitié de la frontière qu'aucun test de rendu ne voit ;
  * ⑩ **les amorces se bornent à deux sous `sm`** (#891, parti pris 3) — un
- *    marqueur de mise en page, aucune amorce retirée du DOM.
+ *    marqueur de mise en page, aucune amorce retirée du DOM ;
+ * ⑪ **les amorces ne s'enveloppent plus** (#908, partis pris 4 et 5 de la
+ *    veille #899) — `whitespace-nowrap` sur chaque bouton, le groupe seul à
+ *    envelopper, et des libellés au **calibre mesuré** (≤ 28 caractères) sur
+ *    les deux listes. Les deux règles vont ensemble : `nowrap` sur un libellé
+ *    de 43 caractères ferait déborder à 375 px. La sonde est prouvée sur les
+ *    quatre libellés d'avant #908 et sur les boutons d'avant #891, sans
+ *    marqueur ; le pixel — deux amorces sur une rangée à 375 px — est au banc.
  */
 
 import { readFileSync } from "node:fs";
@@ -73,8 +80,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import PageChat from "@/app/chat/page";
 import { ContenuOngletAgent } from "@/components/ContenuOngletAgent";
-import { AMORCE_HORS_SM, AMORCES_SOUS_SM } from "@/components/Conversation";
+import {
+  AMORCE_HORS_SM,
+  AMORCE_NOWRAP,
+  AMORCES_SOUS_SM,
+  CALIBRE_AMORCE,
+  CALIBRE_PAIRE_SOUS_SM,
+} from "@/components/Conversation";
 import { ID_CONTENU_PRINCIPAL } from "@/components/Shell";
+import { AMORCES_ASSISTANCE } from "@/lib/assistance";
 import {
   ASCENSEUR_PAGE,
   ATTRIBUT_ASCENSEUR,
@@ -508,6 +522,41 @@ function amorcesHorsSm(groupe: HTMLElement): string[] {
 }
 
 /**
+ * Les amorces qui **peuvent encore s'envelopper** sur elles-mêmes (#908, parti
+ * pris 4) — celles qui ne portent pas `AMORCE_NOWRAP`. Comme `amorcesHorsSm`,
+ * la sonde lit le marqueur et rien d'autre : jsdom n'enveloppe rien (#308), donc
+ * seul le contrat écrit se juge ici, l'effet est au banc.
+ */
+function amorcesQuiSEnveloppent(groupe: HTMLElement): string[] {
+  return Array.from(groupe.querySelectorAll<HTMLElement>("button"))
+    .filter((bouton) => !bouton.classList.contains(AMORCE_NOWRAP))
+    .map((bouton) => (bouton.textContent ?? "").trim());
+}
+
+/**
+ * Les libellés **au-delà du calibre** (#908, parti pris 5) — plus de
+ * `CALIBRE_AMORCE` caractères. Compté en points de code et non en octets : un
+ * « É » ou un « ’ » vaut un caractère à l'écran, pas deux.
+ */
+function auDelaDuCalibre(amorces: readonly string[]): string[] {
+  return amorces.filter((amorce) => Array.from(amorce).length > CALIBRE_AMORCE);
+}
+
+/**
+ * Les quatre amorces d'orchestration d'**avant** #908 — 43, 35, 21 et 36
+ * caractères, des phrases entières. L'échantillon fautif d'`auDelaDuCalibre` :
+ * le bornage à deux de #891 y gardait les deux plus **longues**, une ligne
+ * chacune à 375 px (banc du 2026-09-10), et la seule au calibre des références
+ * (21 caractères) était précisément celle qu'il retirait.
+ */
+const AMORCES_DAVANT_908 = [
+  "Ajoute la pagination à la liste des projets",
+  "Corrige le tri des tâches du Kanban",
+  "Où en sont les runs ?",
+  "Qu'est-ce qui attend mon arbitrage ?",
+] as const;
+
+/**
  * Le cadre d'**avant** #891 : une **colonne** (`flex flex-col gap-1`), le
  * champ toujours pleine largeur, et un rail dans son propre `<div>` — donc la
  * tête du rail n'est pas une sœur du champ et aucune rangée `+` · champ ·
@@ -762,6 +811,20 @@ describe("les sondes du composeur, prouvées sur le composeur d'avant (#726, pui
     const { groupe } = amorcesDAvant891();
     expect(within(groupe).getAllByRole("button")).toHaveLength(4);
     expect(amorcesHorsSm(groupe)).toEqual([]);
+  });
+
+  it("voient les quatre d'avant #891 libres de s'envelopper, et trois libellés d'avant #908 hors calibre", () => {
+    // Sans `AMORCE_NOWRAP`, chaque amorce passe à la ligne au milieu de sa
+    // phrase dès que la rangée manque : les quatre sont fautives.
+    const { groupe } = amorcesDAvant891();
+    expect(amorcesQuiSEnveloppent(groupe)).toEqual(["une", "deux", "trois", "quatre"]);
+    // Et les libellés d'avant #908 : trois phrases entières au-delà du calibre,
+    // la quatrième — 21 caractères — étant celle que le bornage retirait.
+    expect(auDelaDuCalibre(AMORCES_DAVANT_908)).toEqual([
+      "Ajoute la pagination à la liste des projets",
+      "Corrige le tri des tâches du Kanban",
+      "Qu'est-ce qui attend mon arbitrage ?",
+    ]);
   });
 
   it("voient, sur le rail d'avant #884, un envoi en texte et un arrêt dont la boîte suit le texte", () => {
@@ -1309,6 +1372,85 @@ describe("⑩ les amorces se bornent à deux sous `sm` (#891)", () => {
     expect(
       screen.queryByRole("group", { name: "Suggestions pour commencer" }),
     ).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑪ Les amorces ne s'enveloppent plus (#908)
+// ---------------------------------------------------------------------------
+
+describe("⑪ les amorces ne s'enveloppent plus (#908)", () => {
+  /**
+   * Même périmètre que ⑩ : `/chat` est la seule surface qui passe des amorces
+   * au composeur. Le panneau d'assistance a les siennes, sur un autre rendu,
+   * et `assistant.test.tsx` y rejoue la même règle.
+   */
+  it("interdit à chaque amorce de s'envelopper, bornées comprises", () => {
+    rendreAvecEtat(<PageChat />, {
+      agents: [
+        agentFactice({ nom: "dev" }),
+        agentFactice({ nom: AGENT_ORCHESTRATION, role: ROLE_ORCHESTRATION }),
+      ],
+    });
+    const groupe = screen.getByRole("group", {
+      name: "Suggestions pour commencer",
+    });
+    expect(within(groupe).getAllByRole("button")).toHaveLength(
+      AMORCES_ORCHESTRATION.length,
+    );
+    // Aucune ne peut passer à la ligne sur elle-même — pas même celles que le
+    // marqueur de #891 retire sous `sm`, qui reprennent leur place au-dessus.
+    expect(amorcesQuiSEnveloppent(groupe)).toEqual([]);
+    // Et le groupe reste seul à envelopper : c'est lui qui passe à la ligne
+    // quand la rangée manque, jamais une amorce.
+    expect(groupe.className.split(/\s+/)).toEqual(
+      expect.arrayContaining(["flex", "flex-wrap"]),
+    );
+    // Le bornage de ⑩ n'a pas bougé : les deux premières restent sous `sm`.
+    expect(amorcesHorsSm(groupe)).toEqual(
+      AMORCES_ORCHESTRATION.slice(AMORCES_SOUS_SM),
+    );
+  });
+
+  it("tient les deux listes au calibre mesuré, sans changer ce que chacune propose", () => {
+    // Le calibre de Duck.ai (10 à 28 caractères) — `nowrap` sans lui ferait
+    // déborder une amorce à 375 px, ce qui serait pire que l'enveloppement.
+    expect(CALIBRE_AMORCE).toBe(28);
+    expect(auDelaDuCalibre(AMORCES_ORCHESTRATION)).toEqual([]);
+    expect(auDelaDuCalibre(AMORCES_ASSISTANCE)).toEqual([]);
+    // Ce que chacune propose n'a pas bougé, et l'ordre non plus — il est
+    // éditorial (les deux premières mènent à une proposition de run, les deux
+    // dernières à une réponse), et « garder les deux plus courtes » sous `sm`
+    // le rendrait imprévisible : ce sont bien les deux **premières** que ⑩
+    // garde, et elles doivent donc tenir la rangée à elles deux.
+    expect(AMORCES_ORCHESTRATION).toEqual([
+      "Pagine les projets",
+      "Corrige le tri Kanban",
+      "Où en sont les runs ?",
+      "Que dois-je arbitrer ?",
+    ]);
+    // La rangée à 375 px : 262,8 px pour les deux boutons, soit ~40 caractères
+    // à elles deux (banc du 2026-09-10 — 39 tiennent, 42 dépassent de 7 px).
+    // Une borne de rédaction : le pixel est au banc, ce compte l'approche.
+    const paire = AMORCES_ORCHESTRATION.slice(0, AMORCES_SOUS_SM);
+    expect(paire).toHaveLength(AMORCES_SOUS_SM);
+    expect(
+      paire.reduce((total, amorce) => total + Array.from(amorce).length, 0),
+    ).toBeLessThanOrEqual(CALIBRE_PAIRE_SOUS_SM);
+    // Et l'échantillon fautif de cette borne-là : les deux que #891 gardait
+    // (43 + 35 caractères) la dépassent de loin — une ligne chacune, mesuré.
+    expect(
+      AMORCES_DAVANT_908.slice(0, AMORCES_SOUS_SM).reduce(
+        (total, amorce) => total + Array.from(amorce).length,
+        0,
+      ),
+    ).toBeGreaterThan(CALIBRE_PAIRE_SOUS_SM);
+    expect(AMORCES_ASSISTANCE).toEqual([
+      "Que dit le tableau de bord ?",
+      "Approuver une validation ?",
+      "Où voir les coûts ?",
+      "Modifier un playbook ?",
+    ]);
   });
 });
 

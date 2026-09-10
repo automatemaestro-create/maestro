@@ -1558,7 +1558,9 @@ graisse, casse), où aucun problème n'était posé et où §6.1 interdit d'alle
 et le **contraste des tokens proposés** au sens du filet, dont `tests/contraste.test.ts` est le juge.
 
 Partis pris 1 et 2 → **#910** (les deux qui n'ajoutent **aucun token** : `BadgeEtat` et
-`SourcesDuFil`, 4 paires retirées dont 2 dans `Primitives`). Parti pris 3 → **#911** (poser
+`SourcesDuFil` — la veille annonçait 4 paires retirées dont 2 dans `Primitives`, le compte que
+`couleurs.test.ts` a mesuré au lot est **5 dont 4** : les deux tons `neutre`, plein et contour,
+portaient chacun deux jetons `dark:`, 689 → 684). Parti pris 3 → **#911** (poser
 `--selectionne`, puis migrer `BarreLaterale` — dans cet ordre, voir le piège ; 4 paires). Parti pris
 4 → **#912** (renommer et mettre en tokens sans changer un pixel ; 2 paires, et il débloque le
 repeint des 43 que `Primitives` porte). **#910 et #912 ne sont pas parallélisables** — les deux

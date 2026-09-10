@@ -76,12 +76,30 @@ export const ACCUEIL_ORCHESTRATION =
  * gênante et assumée — `AMORCES_ASSISTANCE` porte le même nom pour la même
  * chose —, et c'est pour elle que la garde de `tests/test_chat_global.py` lit des
  * identifiants Python plutôt que de chercher du texte.
+ *
+ * ⚠ **Chaque libellé tient en `CALIBRE_AMORCE` caractères au plus** (#908,
+ * parti pris 5 de la veille #899, d'après Duck.ai : 10 à 28 caractères, 2 à 5
+ * mots). Une amorce ne s'enveloppe jamais sur elle-même (`whitespace-nowrap`,
+ * `components/Conversation`), donc sa longueur est **toute** sa largeur — et
+ * sous `sm` les deux premières doivent partager une rangée à 375 px, où le
+ * composeur ne fait que **268,8 px** (rail de 64 px, marges de 16 px) : les
+ * deux boutons disposent de 262,8 px à eux deux, soit ~40 caractères en tout
+ * (`CALIBRE_PAIRE_SOUS_SM`) — « Corrige le tri du Kanban » à côté de « Pagine
+ * les projets » dépassait encore de 7 px, mesuré au banc du 2026-09-10. Les
+ * quatre d'avant #908 (43, 35, 21 et 36 caractères) étaient des phrases
+ * entières, et le bornage à deux de #891 gardait précisément les deux plus
+ * longues. Raccourcir est une décision de **rédaction** : chacune propose
+ * exactement ce qu'elle proposait — paginer la liste des projets, corriger le
+ * tri des tâches du Kanban, l'état des runs, ce qui attend un arbitrage —, et
+ * l'**ordre** ne bouge pas (il est éditorial : l'orchestration propose d'abord
+ * ce qu'elle fait le mieux, et garder « les deux plus courtes » sous `sm` le
+ * rendrait imprévisible).
  */
 export const AMORCES_ORCHESTRATION: string[] = [
-  "Ajoute la pagination à la liste des projets",
-  "Corrige le tri des tâches du Kanban",
+  "Pagine les projets",
+  "Corrige le tri Kanban",
   "Où en sont les runs ?",
-  "Qu'est-ce qui attend mon arbitrage ?",
+  "Que dois-je arbitrer ?",
 ];
 
 /**

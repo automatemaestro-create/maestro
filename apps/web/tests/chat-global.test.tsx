@@ -208,8 +208,10 @@ describe("le chat global (#269)", () => {
     // Deux mènent à une proposition de run, deux à une simple réponse : c'est la
     // frontière que le canal distingue. Aucune n'ouvre de run à elle seule depuis
     // #685 — c'est l'accord qui suit qui ouvre, jamais le texte de l'amorce.
+    // Les libellés sont au calibre depuis #908 (« Pagine les projets » demande
+    // ce que demandait « Ajoute la pagination à la liste des projets »).
     expect(
-      screen.getByRole("button", { name: "Ajoute la pagination à la liste des projets" }),
+      screen.getByRole("button", { name: "Pagine les projets" }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Où en sont les runs ?" }),

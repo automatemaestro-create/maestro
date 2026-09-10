@@ -48,7 +48,13 @@ export function SourcesDuFil({ message }: { message: MessageChat }) {
   if (sources.length === 0) return null;
 
   return (
-    <div className="mt-1.5 space-y-1 border-t border-white/25 pt-1.5 dark:border-white/15">
+    // Le filet est posé sur l'aplat de ton de la bulle, où `bord` (calculé sur
+    // `surface`) disparaît : c'est `sur-ton` à 25 % (#910, veille #905), sans
+    // variante `dark:`. En clair c'est un non-changement au bit près — `sur-ton`
+    // *est* le blanc — ; en sombre l'aplat est un vert **clair** et le blanc n'y
+    // avait plus rien à éclaircir (1,13:1, invisible) : `sur-ton/25` va dans le
+    // bon sens, vers le sombre, et rend 1,64:1 — la séparation du thème clair.
+    <div className="mt-1.5 space-y-1 border-t border-sur-ton/25 pt-1.5">
       <ul
         aria-label={`Sources jointes (${sources.length})`}
         className="space-y-0.5"
