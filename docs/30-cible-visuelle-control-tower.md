@@ -1441,6 +1441,122 @@ pris 2 et 3 **n'appellent aucun code** — ils confirment #891, et c'est le rés
 cette veille : ce qui avait été tranché à l'aveugle est ce que fait la référence. Les tickets #891
 et #899 portent `veille::arbitree` depuis cette veille.
 
+#### Les tons du socle — 2026-09-10 (#905, différée de #895)
+
+Surface : les **quatre manques du socle** que #895 a relevés et qui posent tous la même question —
+*comment dire un état qui n'a pas de valence ?* — `selectionne` (`BarreLaterale`), `neutre` et
+`provenance` (`Primitives`, `BadgeEtat`), `sur-ton-bord` (`chat/SourcesDuFil`). Veille **différée**
+jouée sur pièces. Les deux autres manques, `code` et `serie`, sont **hors périmètre** et le restent.
+Décision complète en commentaire de **#895**, captures et scripts de mesure dans l'atelier de la
+session.
+
+**Vérifié en direct** (styles calculés relevés dans la page) : **Zulip** (vue publique) — l'entrée
+**sélectionnée** de la barre latérale porte **trois** signaux à la fois, fond `rgb(255,255,255)` sur
+un rail transparent (elle *se soulève* au lieu de s'assombrir), `font-weight: 600` contre `400`, et
+un libellé qui fonce de `rgb(51,51,51)` à `rgb(38,38,38)` ; **aucun** marqueur latéral
+(`border-left-width: 0px`, `::before`/`::after` à `none`). — **GitHub Actions** (`vercel/next.js`,
+dépôt public), le §1.1 creusé sur son **rail** : l'entrée active (`ActionListItem--navActive`) porte
+`rgba(129,139,152,0.15)` — un gris **translucide**, pas un gris opaque — et **rien d'autre**, poids
+et libellé identiques à ses voisines ; séparateur de section translucide lui aussi
+(`rgba(209,217,224,0.7)`) ; à noter, l'**onglet** de dépôt sélectionné n'a aucun fond (poids 600 +
+soulignement) — le même produit emploie deux mécanismes selon que la sélection est un *lieu* ou un
+*mode*. — **Atlassian** (Lozenge) : le ton par défaut (`Draft`, `Inactive`) est
+`rgba(5,21,36,0.06)` avec le libellé `rgb(41,42,46)`, soit **la couleur du texte ordinaire, en aplat
+à 6 % et en libellé à 100 %** ; et un violet `rgb(238,215,252)` porte `New` / `Beta` / `Premium`,
+distinct de son vert et de son bleu. — **Primer** (Label, GitHub) : tout en contour ; `Default` =
+filet neutre + **texte ordinaire** ; `Secondary` = texte secondaire + filet à **70 %** ; `Accent` est
+**bleu** (la couleur d'action) ; `Done` est **violet** mais désigne un **état**, l'affiliation étant
+portée par un rose (`Sponsors`).
+
+**Non vérifié, donc non cité** : **Material 3** (`m3.material.io`, rendu en JavaScript — ni l'active
+indicator, ni `secondary-container`, ni les opacités de state layer ; c'est la référence qui aurait
+le mieux couvert `selectionne`, **aucun parti pris ne s'y appuie**) ; **Carbon** (page tronquée à la
+lecture) ; **Grafana**, au banc du §1.3, dont le méga-menu est **replié** par défaut et n'a pas été
+ouvert ; **Linear** et **Cursor**, derrière authentification (exclusion de #471 reconduite).
+
+**Ce que le banc dit, en une ligne** : les quatre obtiennent leurs couleurs **sans valence** par
+**transparence sur ce qui est déjà là**, jamais en ajoutant une teinte à leur palette. La nôtre est
+**entièrement opaque** — 43 hexadécimaux pleins — et c'est **la** raison pour laquelle ces manques
+n'ont pas de place où se ranger : ce ne sont pas quatre couleurs qui manquent, c'est **un
+mécanisme**, déjà disponible et déjà employé **quatre** fois dans le produit — `bg-accent/10`
+(`EditeurPlaybook`), `bg-info/45`, `bg-attention/45`, `bg-texte-secondaire/40` (`runs/EtatRun`).
+
+⚠ **Deux relevés internes valent mieux qu'une référence de plus.** Les quatre usages sont **tous**
+des `bg-*` et **aucun** n'est un `text-*` : la seule mention d'un `text-sur-ton/70` du dépôt est
+dans un **commentaire** de `chat/BulleFil.tsx`, et c'est un **refus** écrit — « aurait l'air plus
+sobre et sortirait du barème sans que rien ne le dise ». Le socle avait donc déjà tranché, sur un
+autre token, ce que le parti pris 1 remesure ici : l'opacité va sur le **fond**, jamais sur le
+**texte**. Et `EditeurPlaybook.tsx` porte déjà un état sélectionné —
+`i === choisie ? "bg-accent/10 text-texte" : "text-texte-secondaire"` —, à un écran de distance de
+`BarreLaterale`, qui l'écrit à la main.
+
+⚠ Mais ce précédent interne **ne dit pas ce qu'il a l'air de dire**, et c'est la mesure qui l'a
+renversé. Il ressemble à une **troisième voie** pour `selectionne` — séparer par la **teinte**
+plutôt que par la luminance, ce qui contournerait la collision avec `survol` en sombre. Il ne tient
+pas : `accent/10` ne rend que **1,148:1** (clair) et **1,121:1** (sombre) d'écart au fond, c'est-à-
+dire **sous** le pas de survol en sombre (1,308:1) — à 10 %, il n'y a pas assez de teinte pour
+séparer quoi que ce soit. Ce qui porte réellement l'état choisi dans cet écran est le **libellé** :
+`texte` sur l'aplat teinté (15,62:1 / 13,21:1) contre `texte-secondaire` ailleurs (5,33:1 / 6,37:1),
+soit **2,9× et 2,1×** d'écart. L'aplat y est décoratif. **Refusé ici, avec sa raison** — et ce refus
+*confirme* le parti pris 3 au lieu de l'affaiblir : dans le seul endroit du produit qui avait déjà
+résolu la question, le signal dominant n'est pas le fond. S'y ajoute une raison qui n'est pas de
+mesure : teinter la sélection en `accent` ferait partager à « où je suis » la couleur de « l'action
+à faire » — exactement la confusion que le parti pris 4 défait sur le badge.
+
+**Quatre partis pris** : **`neutre` n'est pas une couleur, c'est la teinte du texte** —
+`bg-texte/10 text-texte`, aucun token ajouté, les deux thèmes venant avec ; ⚠ le libellé reste
+`texte` et **jamais** `texte-secondaire`, mesuré à **4,35:1** sur `surface` et **4,15:1** sur
+`surface-creuse` en clair, sous les 4,5:1 de WCAG 1.4.3 — la variante `Secondary` de Primer est le
+seul point qui ne se transpose pas *(Atlassian, Primer a contrario)* · **`sur-ton-bord` n'est pas
+une couleur non plus, c'est `sur-ton` à 25 %** — `border-sur-ton/25`, une classe sans variante
+`dark:`, **non-changement au bit près en clair** (`--sur-ton` *est* le blanc) et correction d'un
+filet **invisible** en sombre, où l'aplat de la bulle est un vert *clair* : **1,13:1 → 1,64:1**, le
+blanc n'y allant dans le mauvais sens qu'au prix d'une bande pâle (`white/60` pour 1,69:1)
+*(Primer, Atlassian)* · **`selectionne` est le frère de `survol` : un token par thème, pas une
+opacité** — et c'est la mesure qui l'a tranché contre le réflexe inverse, la barre étant posée sur
+`surface-creuse` où le pas de survol vaut déjà 1,308:1 en sombre : `texte/10` rend **1,230** (*sous*
+le survol) et `texte/15` **1,418** (8 % au-dessus, indiscernable), seul `texte/20` s'en détache et
+donnerait en clair un `#cdcdcd` deux fois plus marqué que l'actuel `#e5e5e5` — **aucune opacité
+unique ne sert les deux thèmes**, exactement le cas que le socle a déjà tranché pour `--survol` ; et
+**deux signaux plutôt qu'un**, la graisse étant déjà là et ne devant pas être retirée en migrant le
+fond *(Zulip ; GitHub ne s'en sort avec un seul que parce que son rail est blanc)* ·
+**`provenance` est le seul vrai ton manquant — et c'est d'abord un problème de NOM** : le sixième
+ton s'appelle `provenance` et non `accent`, sur les valeurs violettes qu'il rend **déjà**, un
+renommage plus une mise en tokens et **jamais un changement de rendu** — le défaut est l'homonymie,
+notre badge violet s'appelant `accent` quand `--accent` est **vert**, si bien que la lecture
+littérale du code repeindrait en vert toutes les pastilles de proposition *(Atlassian, Primer)*.
+
+⚠ **Les deux références ne s'accordent pas sur le violet** — origine chez Atlassian (`New`,
+`Beta`), état chez GitHub (`Done`, l'affiliation passant au rose) : il n'a **aucun sens universel**,
+et c'est précisément pourquoi le ton doit être nommé par son **rôle** chez nous. Ce qui leur est
+commun, et qui porte le parti pris : les deux gardent un ton « origine / affiliation » **hors** de
+leurs cinq valences.
+
+⚠ **Un piège trouvé en chemin, mesuré, pour le lot qui appliquera le parti pris 3** : en sombre,
+`--survol` vaut `#262626`, qui est **exactement** le `dark:bg-neutral-800` dont `BarreLaterale` se
+sert aujourd'hui pour l'entrée **active**. Une migration qui remplacerait le survol écrit à la main
+par `hover:bg-survol` en laissant l'actif tel quel rendrait **survol et sélection identiques en
+sombre** — la distinction que le manque nommait, effacée par le geste censé le combler. C'est
+l'ordre qui protège : poser `--selectionne` **avant** de toucher au survol. (En clair il n'y a pas
+de collision, `#f5f5f5` contre `#e5e5e5` : le défaut n'apparaîtrait que dans le thème qu'aucune
+capture des quatre références ne montre.)
+
+**Ce que la veille n'a pas regardé** : `code` et `serie`, hors périmètre — `serie` restant le plus
+mûr des deux et gardant sa raison d'être un ticket à lui ; le **thème sombre des références**, les
+quatre étant relevées en clair alors que c'est en sombre que nos trois mesures se jouent — la
+conclusion y repose sur nos propres valeurs, pas sur les leurs ; la **forme** du badge (rayon,
+graisse, casse), où aucun problème n'était posé et où §6.1 interdit d'aller chercher une identité ;
+et le **contraste des tokens proposés** au sens du filet, dont `tests/contraste.test.ts` est le juge.
+
+Partis pris 1 et 2 → **#910** (les deux qui n'ajoutent **aucun token** : `BadgeEtat` et
+`SourcesDuFil`, 4 paires retirées dont 2 dans `Primitives`). Parti pris 3 → **#911** (poser
+`--selectionne`, puis migrer `BarreLaterale` — dans cet ordre, voir le piège ; 4 paires). Parti pris
+4 → **#912** (renommer et mettre en tokens sans changer un pixel ; 2 paires, et il débloque le
+repeint des 43 que `Primitives` porte). **#910 et #912 ne sont pas parallélisables** — les deux
+touchent les tables de `BadgeEtat` ; #911 est indépendant des deux. Chacun met à jour le compte de
+`RESIDU` et retire sa ligne de `MANQUES_DU_SOCLE` (#895). Les tickets #895 et #905 portent
+`veille::arbitree` depuis cette veille.
+
 ---
 
 ## 6. Recommandation
