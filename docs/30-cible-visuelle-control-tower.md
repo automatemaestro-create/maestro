@@ -1032,6 +1032,19 @@ cette largeur, d'où 307 et non les ~318 annoncés ici), **24 px entre deux tour
 Un pied masqué ne passe **pas** par `Infobulle` — son wrapper est focusable (#536), ce serait un
 arrêt de tabulation invisible par message groupé — et l'horodatage y reste un `<time>` nu.
 
+**Parti pris 4 livré par #877** : `components/Conversation.tsx` (l'état `decroche`, `reglerLeSuivi`,
+`retourAuDernierMessage`) et `components/Icones.tsx` (`IconeFlecheBas`, que le jeu n'avait pas),
+gardés par `tests/dernier-message.test.tsx` — la sonde de forme prouvée sur un geste écrit **sans le
+socle**, et le compteur de rendus sur un fil qui rendrait à **chaque** `scroll`. Deux choses que la
+veille n'avait pas tranchées et que le lot a dû décider à l'écran : le geste est **enfant du
+formulaire** (un `sticky` frère se pinnerait sur la même ligne que lui, faute de connaître une
+hauteur de composeur qui grandit avec le brouillon), et il **porte son fond** — un `contour` n'a
+qu'un filet, et il flotte au-dessus du fil. Il occupe exactement la bande que #885 lui avait
+réservée en refusant d'y remonter le flottant de l'assistant. ⚠ Le lot a **corrigé au passage** une
+note fausse de `lib/defilement.ts` : jsdom n'implémente pas `document.scrollingElement`, donc le fil
+ne s'abonnait à **rien** en test — un `scroll` dispatché sur l'élément racine n'exerçait rien en
+rendant un vert.
+
 #### L'ascenseur discret — 2026-09-06 (#859, différée de #725)
 
 Surface : la règle du socle pour les **seize surfaces défilantes** — `globals.css` `@layer base` et

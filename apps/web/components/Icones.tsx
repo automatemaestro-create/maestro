@@ -738,6 +738,22 @@ export function IconeFlecheHaut(props: Props) {
 }
 
 /**
+ * Redescendre — le pendant exact de `IconeFlecheHaut`, retourné (#877).
+ *
+ * Le jeu portait les trois autres directions et pas celle-là, faute d'emploi ;
+ * le geste « Dernier message » du fil (`components/Conversation`, veille #820)
+ * en est le premier. `IconeChevronBas` n'aurait pas fait l'affaire : elle dit
+ * « ce contrôle s'ouvre » (#280), pas « la lecture redescend ».
+ */
+export function IconeFlecheBas(props: Props) {
+  return (
+    <Trait {...props}>
+      <path d="M12 4.5v15M6 13.5l6 6 6-6" />
+    </Trait>
+  );
+}
+
+/**
  * Envoyer un message (#884, parti pris 1 de la veille #866) — la flèche vers le
  * haut que ChatGPT, Perplexity et VS Code (`Codicon.arrowUpCompact`) posent au
  * bout de leur composeur. Le **nom** porte le sens ; le dessin est celui de
