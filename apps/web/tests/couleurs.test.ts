@@ -251,15 +251,11 @@ const MANQUES_DU_SOCLE: readonly Manque[] = [
   // `selectionne` en est sorti par #911 : le token existe, `BarreLaterale`
   // l'écrit — c'est le contrôle « ne nomme aucun manque que la palette couvre
   // déjà » ci-dessous qui a fait retirer la ligne, comme prévu.
-  {
-    token: "neutre",
-    temoin: "components/Primitives.tsx",
-    classe: "dark:bg-neutral-800",
-    raison:
-      "le ton `neutre` d'un `BadgeEtat` — un compte, un statut sans valence. " +
-      "Les cinq tons ont leur `-creux`/`-texte`, le neutre n'en a pas : c'est " +
-      "le seul badge du socle qui doive s'écrire à la main",
-  },
+  // `neutre` (Primitives) et `sur-ton-bord` (chat/SourcesDuFil) ont figuré ici
+  //   jusqu'à #910 : la veille #905 a établi qu'ils n'étaient pas des couleurs
+  //   manquantes mais des **opacités de tokens existants** (`bg-texte/10`,
+  //   `border-sur-ton/25`) — comblés sans qu'un token soit ajouté, donc sans que
+  //   le contrôle « la palette couvre déjà ce manque » ait pu les voir partir.
   {
     token: "provenance",
     temoin: "components/Primitives.tsx",
@@ -269,14 +265,6 @@ const MANQUES_DU_SOCLE: readonly Manque[] = [
       "vert : ce sont deux rôles (la provenance d'un élément, l'action à " +
       "faire), et les confondre repeindrait en vert toutes les pastilles de " +
       "proposition — un changement de rendu, pas une migration",
-  },
-  {
-    token: "sur-ton-bord",
-    temoin: "components/chat/SourcesDuFil.tsx",
-    classe: "dark:border-white/15",
-    raison:
-      "le filet posé **sur un aplat de ton**, dont `sur-ton` est le pendant " +
-      "écrit. `bord` est calculé sur `surface` et disparaît sur un fond teinté",
   },
   {
     token: "code",
@@ -371,9 +359,11 @@ describe("ce que le socle ne sait pas rendre", () => {
  * La raison est la même pour toutes les lignes et n'est donc pas répétée
  * soixante-cinq fois : ces écrans sont **antérieurs à la palette** de #533, qui
  * n'a migré aucun appelant. Ce ticket ne les migre pas non plus — il pose le
- * compte et refuse le suivant. Les six lignes qui portent en plus un manque du
+ * compte et refuse le suivant. Les lignes qui portent en plus un manque du
  * socle sont annotées ci-dessous : celles-là ne descendront pas à zéro tant que
- * la palette n'aura pas bougé.
+ * la palette n'aura pas bougé. (Six au lot ; #910 en a comblé deux sans toucher
+ * à la palette — `neutre` et `sur-ton-bord` étaient des opacités, pas des
+ * couleurs.)
  *
  * Le compte est **exact et non un plafond** : une paire de plus rougit, une
  * paire de **moins** rougit aussi tant que la ligne n'est pas mise à jour.
@@ -426,12 +416,14 @@ const RESIDU = new Map<string, number>([
   ["components/PanneauRunsImmobiles.tsx", 4],
   ["components/PanneauValidations.tsx", 5],
   ["components/PosteVide.tsx", 13], // manque : `code`
-  // Le socle lui-même : la carte, les six tons du badge, l'en-tête de section.
-  // C'est la ligne qui compte double — une paire retirée ici retire des
-  // recopies partout, et une paire ajoutée s'imprime sur tous les écrans à la
-  // fois. Elle est dans le tableau comme les autres : l'écarter aurait exempté
-  // le fichier le plus visible du produit.
-  ["components/Primitives.tsx", 43], // manques : `neutre`, `provenance`
+  // Le socle lui-même : la carte, cinq des six tons du badge, l'en-tête de
+  // section. C'est la ligne qui compte double — une paire retirée ici retire
+  // des recopies partout, et une paire ajoutée s'imprime sur tous les écrans à
+  // la fois. Elle est dans le tableau comme les autres : l'écarter aurait
+  // exempté le fichier le plus visible du produit. 43 au lot ; le ton `neutre`
+  // est parti avec #910 (`bg-texte/10`, `border-bord` — une opacité et un token,
+  // pas une couleur de plus).
+  ["components/Primitives.tsx", 39], // manque : `provenance`
   ["components/RepartitionAgents.tsx", 7], // manque : `serie`
   ["components/SelecteurReassignation.tsx", 4],
   ["components/SigneDeVie.tsx", 3],
@@ -442,7 +434,9 @@ const RESIDU = new Map<string, number>([
   ["components/brief/ValidationBriefs.tsx", 6],
   ["components/chat/CadrageDansLeFil.tsx", 8],
   ["components/chat/FilDeCadrage.tsx", 6],
-  ["components/chat/SourcesDuFil.tsx", 2], // manque : `sur-ton-bord`
+  // 2 au lot ; le filet du haut est passé sur `sur-ton/25` avec #910. Ce qui
+  //   reste est le fond du rapport déplié, qui reprend celui de l'écran.
+  ["components/chat/SourcesDuFil.tsx", 1],
   ["components/composer/ComposerObjectif.tsx", 14],
   ["components/composer/RapportExtraction.tsx", 14],
   ["components/composer/RefusSource.tsx", 4],
@@ -467,7 +461,7 @@ const RESIDU = new Map<string, number>([
 ]);
 
 /** Le compte du README — épinglé ici pour qu'il ne puisse pas dériver en silence. */
-const TOTAL_ANNONCE = 685;
+const TOTAL_ANNONCE = 680;
 
 /** Ce que le produit porte aujourd'hui, fichier par fichier. */
 function residuMesure(): Map<string, string[]> {

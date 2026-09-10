@@ -1073,14 +1073,16 @@ palette et non son emploi. Une couleur choisie hors d'elle passait donc les deux
 filets — jusqu'à ce que la veille #868 en relève trois sur `SigneDeVie`, et que
 le compte déplace le sujet : ce n'était pas une exception, c'était **la norme**.
 
-Ce qui reste, mesuré le **2026-09-10** : **685 paires écrites à la main dans
-65 fichiers** (689 au lot, avant que #911 n'en retire quatre de
-`BarreLaterale`). Ce ticket ne les migre pas — il pose le compte et **refuse la
-suivante** (`tests/couleurs.test.ts`), comme #832 l'a fait pour les contrôles de
-saisie et #534 pour le contraste. La 689ᵉ est arrivée pendant l'attente de merge
-de ce lot (#894, une cinquième recopie de la même paire dans `Kanban.tsx`) : la
-sonde l'a **vue**, ce qui est son travail, et le tableau a suivi — elle refuse la
-prochaine, elle ne réécrit pas ce qui est entré avant qu'elle existe. Ce chiffre ne se compare pas aux « 542 lignes
+Ce qui reste, mesuré le **2026-09-10** au lot : **689 paires écrites à la main
+dans 65 fichiers** — **684** depuis #910, qui en a retiré cinq sans ajouter un
+token (voir les manques du socle, ci-dessous), **680** depuis #911, qui en a
+retiré quatre de `BarreLaterale` en ajoutant `selectionne`. Ce ticket ne les
+migre pas — il pose le compte et **refuse la suivante** (`tests/couleurs.test.ts`),
+comme #832 l'a fait pour les contrôles de saisie et #534 pour le contraste. La
+689ᵉ est arrivée pendant l'attente de merge de ce lot (#894, une cinquième
+recopie de la même paire dans `Kanban.tsx`) : la sonde l'a **vue**, ce qui est
+son travail, et le tableau a suivi — elle refuse la prochaine, elle ne réécrit
+pas ce qui est entré avant qu'elle existe. Ce chiffre ne se compare pas aux « 542 lignes
 sur 59 fichiers » de #533 : celui-là comptait des **lignes** avant la palette,
 celui-ci compte des **jetons** `dark:` après elle.
 
@@ -1100,25 +1102,25 @@ pas mise à jour — c'est ce qui fait qu'un résidu ne peut que décroître, et
 chaque décroissance est un geste **écrit**. Le message d'échec rend la ligne à
 recopier : la contrainte doit coûter une seconde, pas une enquête. Les cinq plus
 gros porteurs disent où le gain est : `integrations/BibliothequeMcp` (49),
-**`Primitives`** (43), `EditeurAgent` (38), `OngletMcpAgent` (36),
+**`Primitives`** (39, 43 au lot), `EditeurAgent` (38), `OngletMcpAgent` (36),
 `AssistantFlottant` (30).
 
 ⚠ **Le socle est dans le tableau comme les autres, et il compte double.**
-`Primitives.tsx` porte 43 paires — les quatre surfaces de `Carte`, les six tons
-de `BadgeEtat` en plein et en contour. Une paire retirée là retire des recopies
-partout ; une paire ajoutée s'imprime sur tous les écrans à la fois. L'écarter du
-balayage aurait exempté le fichier le plus visible du produit.
+`Primitives.tsx` porte 39 paires — les quatre surfaces de `Carte`, cinq des six
+tons de `BadgeEtat` en plein et en contour (le sixième, `neutre`, est sur les
+tokens depuis #910). Une paire retirée là retire des recopies partout ; une paire
+ajoutée s'imprime sur tous les écrans à la fois. L'écarter du balayage aurait
+exempté le fichier le plus visible du produit.
 
-**Cinq manques du socle** (six au lot — `selectionne` a été comblé par #911),
-nommés avec leur raison dans `MANQUES_DU_SOCLE` — une couleur brute **sans token
-correspondant** n'est pas une faute, c'est un manque à signaler, et forcer une
-équivalence approximative changerait le rendu :
+**Trois manques du socle** (six au lot — #910 en a comblé deux sans ajouter un
+token, #911 a comblé `selectionne` par un token), nommés avec leur raison dans
+`MANQUES_DU_SOCLE` — une couleur brute **sans token correspondant** n'est pas une
+faute, c'est un manque à signaler, et forcer une équivalence approximative
+changerait le rendu :
 
 | Token qui manque | Où ça se voit | Pourquoi aucun token ne convient |
 | --- | --- | --- |
-| `neutre` | `Primitives` | le ton neutre d'un `BadgeEtat` — les cinq tons ont leur `-creux`/`-texte`, le neutre n'en a pas |
 | `provenance` | `Primitives` | le badge `accent` du socle est **violet** quand `--accent` est vert : deux rôles, et les confondre repeindrait toutes les pastilles de proposition |
-| `sur-ton-bord` | `chat/SourcesDuFil` | le filet posé **sur un aplat de ton**, dont `sur-ton` est le pendant écrit ; `bord` est calculé sur `surface` et y disparaît |
 | `code` | `PosteVide` | le fond d'un bloc de commande, sombre dans les **deux** thèmes — aucune des deux surfaces n'est faite pour être invariante |
 | `serie` | `GraphiqueEvolutionCout`, `RepartitionAgents` | la couleur d'une **série de données** : les cinq tons portent un sens qu'une courbe de dépense n'a pas |
 
@@ -1129,6 +1131,22 @@ peut descendre sans que la palette bouge d'abord, et chacun est un ticket à
 ouvrir. Un test le garde : le jour où le `--color-<token>` est déclaré, la ligne
 rougit et son témoin se replie — c'est ce qui est arrivé à `selectionne` (#911),
 et la ligne est partie avec le manque.
+
+⚠ **Deux des six n'étaient pas des couleurs, et c'est la veille #905 qui l'a
+vu** (docs/30 §5.3, « Les tons du socle ») : les références vérifiées rendent
+leurs tons **sans valence** par **transparence sur ce qui est déjà là**, jamais
+par une teinte de plus — et notre palette est entièrement opaque, ce qui est la
+raison même pour laquelle ces deux-là n'avaient pas de place où se ranger. #910
+les a donc comblés **sans ajouter un token** : le ton `neutre` de `BadgeEtat` est
+la teinte du texte, `bg-texte/10 text-texte` en plein et `border-bord text-texte`
+en contour (le libellé reste `texte` et jamais `texte-secondaire`, qui rend
+4,35:1 sur `bg-texte/10` en clair, sous les 4,5:1 de WCAG 1.4.3) ; le filet de
+`chat/SourcesDuFil`, posé sur l'aplat de la bulle, est `border-sur-ton/25` — en
+clair un non-changement au bit près, en sombre la correction d'un filet blanc
+devenu invisible sur un aplat clair (1,13:1 → 1,64:1). L'opacité va sur le
+**fond**, jamais sur le texte. Ces deux manques sont sortis de
+`MANQUES_DU_SOCLE` par le geste et non par le contrôle « la palette couvre déjà
+ce manque », qui ne tient que sur un nom de token — un token n'a pas été ajouté.
 
 ⚠ **Le cas que le ticket donnait pour un manque n'en était pas un**, et c'est la
 mesure qui l'a tranché : le fond et le bord de `BarreLaterale`
@@ -1858,7 +1876,7 @@ le pixel — le bout en bout dans un vrai navigateur reste le rôle du skill
 | `tests/regions-live.test.tsx` | Les régions live des écrans temps réel (#538) : le **vocabulaire sans DOM** (seules les hausses parlent, un franchissement dit le total, les deux attentes humaines **absentes** du relevé des runs) ; la **présence** écran par écran, comptée sur l'attribut `aria-live` comme la sonde du ticket — une polie, zéro assertive ; le **contenu** après un événement simulé ; le **débit**, où une rafale de trois tâches ne coûte que deux phrases et douze événements du journal une seule ; et l'**assertive** avec sa réserve — unique dans le shell, muette sur une tâche terminée, et jamais redite par la région polie de l'écran qui montre l'arbitrage |
 | `tests/sobriete.test.tsx` | La **règle des trois places** (#539, voir « Le langage visuel » ci-dessus) rendue opposable : les écrans du menu recensés, bandeau de tête ≤ 4 chiffres, corps ≤ 3 blocs, une seule colonne de propriétés, aucun bloc anonyme. Rien n'y est **déclaré** — le bandeau se reconnaît à ses `TuileChiffre`, la colonne à sa balise `<aside>`, et l'**arbitrage se prouve** en montant chaque écran une seconde fois files vides : un bloc qui prétendrait arbitrer sans disparaître compterait comme les autres. Sonde prouvée sur un échantillon fautif avant de balayer, comme `contraste.test.ts` |
 | `tests/contraste.test.ts` | Le contraste de la palette sémantique (#534) : les **36 paires légitimes par thème** de #533 mesurées en octets dans `globals.css`, au seuil 4,5:1 (texte) ou 3:1 (contour, aplat d'état) — **et la sonde prouvée avant de servir**, sur les ratios que #471 avait mesurés au navigateur puis sur une faute glissée exprès. Le contrôle qui en fait un filet plutôt qu'un instantané est le dernier : un token ajouté sans paire **rougit** au lieu d'être vert par construction |
-| `tests/couleurs.test.ts` | La **couleur écrite à la main** dans les écrans (#895, voir « La palette sémantique » ci-dessus) — l'**usage** de la palette, là où `contraste.test.ts` juge la palette et `a11y.test.tsx` les seuls contrôles de saisie : aucune paire `dark:` + couleur brute hors du résidu **nommé fichier par fichier avec son compte exact** (689 dans 65 fichiers au lot), le compte étant exact et non un plafond — une paire de moins rougit aussi, si bien que le résidu ne peut que décroître et que chaque décroissance est un geste écrit. Cinq **manques du socle** y sont nommés avec leur raison (six au lot), et un test rougit le jour où la palette les comble — c'est ce qui a fait sortir `selectionne` de la liste (#911). **Prouvée avant de servir en deux étages** : le motif d'abord (les trois paires que la veille #868 a relevées, les variantes dans les deux ordres, le contournement par valeur arbitraire, et ce sur quoi il ne doit pas crier — les tokens, la prose), puis le **verdict** lui-même sur une mesure fabriquée — sans quoi une comparaison qui cesserait de comparer rendrait « rien à signaler » |
+| `tests/couleurs.test.ts` | La **couleur écrite à la main** dans les écrans (#895, voir « La palette sémantique » ci-dessus) — l'**usage** de la palette, là où `contraste.test.ts` juge la palette et `a11y.test.tsx` les seuls contrôles de saisie : aucune paire `dark:` + couleur brute hors du résidu **nommé fichier par fichier avec son compte exact** (689 dans 65 fichiers au lot, 684 depuis #910, 680 depuis #911), le compte étant exact et non un plafond — une paire de moins rougit aussi, si bien que le résidu ne peut que décroître et que chaque décroissance est un geste écrit. Trois **manques du socle** y sont nommés avec leur raison (six au lot — #910 en a comblé deux par une opacité de token existant, #911 a comblé `selectionne` par un token), et un test rougit le jour où la palette les comble — c'est ce qui a fait sortir `selectionne` de la liste (#911). **Prouvée avant de servir en deux étages** : le motif d'abord (les trois paires que la veille #868 a relevées, les variantes dans les deux ordres, le contournement par valeur arbitraire, et ce sur quoi il ne doit pas crier — les tokens, la prose), puis le **verdict** lui-même sur une mesure fabriquée — sans quoi une comparaison qui cesserait de comparer rendrait « rien à signaler » |
 | `tests/hydratation.test.ts` | Ce que le layout racine **tolère du dehors** (#730) : les deux `suppressHydrationWarning`, celui de `<html>` (le `data-theme` que `SCRIPT_INIT_THEME` corrige, #118) et celui de `<body>` (les attributs qu'une extension y pose avant l'hydratation — Grammarly, LastPass…). Ils ont l'air d'un doublon et n'en sont pas : déplacer l'un sur l'autre, le geste qu'on fait en croyant simplifier, ramène l'un des deux écarts. La sonde lit les **octets du layout**, et ce n'est pas ici un pis-aller mais le seul filet possible — le symptôme exige un navigateur, un rendu serveur à hydrater et une extension installée, donc ni jsdom ni la CI ne le verront jamais revenir. Comme `contraste.test.ts`, elle est **prouvée avant de servir**, sur un échantillon fautif qui porte le piège : la prose du layout nomme `<body>` *avant* la balise, si bien qu'une recherche naïve rougirait un fichier correct |
 
 Cinq fichiers portent l'outillage plutôt que des tests :
