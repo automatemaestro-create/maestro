@@ -1435,7 +1435,16 @@ lecteur d'écran restitue, or c'est dans ces termes que #891 posait la question 
 `max-h-48` avec le `sticky bottom-16`, hors périmètre depuis #891.
 
 Parti pris 1 → **#907** (le mécanisme, et lui seul : il retire un état et un `useLayoutEffect`, et
-sa traduction se mesure au banc). Partis pris 4 et 5 → **#908** (les amorces : `nowrap` et la
+sa traduction se mesure au banc). ➜ **Livré par #907, et la traduction a coûté deux choses que la
+veille ne pouvait pas voir** (`apps/web/README.md`, « Sous `sm`, le cadre se replie ») : `min-w-fit`
+est **inerte sur un `<textarea>`**, dont la largeur intrinsèque vient de `cols` et non du texte —
+le champ de ChatGPT est un `contenteditable` —, et c'est `field-sizing: content` qui la lui donne ;
+et l'envoi vit à un **autre niveau de wrap** que le couple `+`/champ, comme chez ChatGPT, parce
+qu'à un seul niveau, le `+` et l'envoi faisant la même largeur, l'envoi partait **toujours** sur
+une troisième ligne — mesuré avant d'être écrit. Le DOM reste champ · `+` · envoi (③ intact), et
+le prix mesuré à 375 px est un champ déplié qui s'arrête à la colonne de l'envoi (199 px au lieu
+de 243) : l'état « deux étages, une ligne » va de ~28 à ~34 caractères au lieu de ~28 à ~43.
+Partis pris 4 et 5 → **#908** (les amorces : `nowrap` et la
 longueur des libellés vont ensemble, un libellé raccourci sans `nowrap` ferait déborder). Les partis
 pris 2 et 3 **n'appellent aucun code** — ils confirment #891, et c'est le résultat le plus utile de
 cette veille : ce qui avait été tranché à l'aveugle est ce que fait la référence. Les tickets #891
