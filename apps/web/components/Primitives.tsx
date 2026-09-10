@@ -796,6 +796,16 @@ export function EnTeteSection({
  * échoué, `info` pour un fait neutre mis en avant, `provenance` pour l'origine
  * d'un élément (proposition, personnalisation, découverte).
  *
+ * `neutre` n'est pas une couleur, c'est la **teinte du texte** (#910, veille
+ * #905 — Atlassian et Primer rendent leur ton sans valence par transparence
+ * sur ce qui est déjà là, jamais par une teinte de plus) : `texte` en aplat à
+ * 10 % et en libellé à 100 %, les deux thèmes venant avec le token, donc sans
+ * `dark:` à écrire. ⚠ Le libellé reste `texte` et jamais `texte-secondaire`,
+ * mesuré : sur `bg-texte/10`, `texte-secondaire` rend 4,35:1 sur `surface` et
+ * 4,15:1 sur `surface-creuse` en clair — sous les 4,5:1 de WCAG 1.4.3 —, là où
+ * `texte` tient de 11,93:1 à 14,63:1 sur les quatre combinaisons. Et l'opacité
+ * va sur le **fond**, jamais sur le texte (le refus écrit de `chat/BulleFil`).
+ *
  * Le sixième s'est appelé `accent` jusqu'à #912, tout en rendant du **violet**
  * quand le token `--accent` du socle est **vert** : ce sont deux rôles — la
  * provenance d'un élément, l'action à faire —, et l'homonymie aurait fait
@@ -806,7 +816,7 @@ export function EnTeteSection({
  * qui est le bon nom d'une action.
  */
 const TON_PLEIN = {
-  neutre: "bg-neutral-200 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300",
+  neutre: "bg-texte/10 text-texte",
   info: "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300",
   positif:
     "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
@@ -816,14 +826,15 @@ const TON_PLEIN = {
 } as const;
 
 /**
- * Le contour reste écrit à la main pour les six tons, `provenance` compris :
- * son filet et son libellé sont les pas -300/-700 (clair) et -800/-300 (sombre)
- * qu'aucun token du socle ne porte — `-texte` est le pas -900/-200, `-creux` un
- * fond. L'y replier changerait le rendu ; ces paires restent donc comptées dans
- * le résidu de `tests/couleurs.test.ts`.
+ * En contour, le neutre est le filet du socle et le texte ordinaire (`Default`
+ * de Primer). Les cinq autres tons, `provenance` compris, restent écrits à la
+ * main : leur filet et leur libellé sont les pas -300/-700 (clair) et -800/-300
+ * (sombre) qu'aucun token du socle ne porte — `-texte` est le pas -900/-200,
+ * `-creux` un fond. Les y replier changerait le rendu ; ces paires restent donc
+ * comptées dans le résidu de `tests/couleurs.test.ts`.
  */
 const TON_CONTOUR = {
-  neutre: "border border-neutral-300 text-neutral-600 dark:border-neutral-700 dark:text-neutral-400",
+  neutre: "border border-bord text-texte",
   info: "border border-sky-300 text-sky-700 dark:border-sky-800 dark:text-sky-400",
   positif:
     "border border-emerald-300 text-emerald-700 dark:border-emerald-800 dark:text-emerald-400",

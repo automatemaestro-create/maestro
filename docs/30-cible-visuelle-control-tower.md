@@ -1533,7 +1533,9 @@ commun, et qui porte le parti pris : les deux gardent un ton « origine / affili
 leurs cinq valences. **Livré par #912** : `--provenance` / `-texte` / `-creux` dans `globals.css`,
 `TonBadge` renommé, six appelants suivis, rendu inchangé — avec deux paires refusées à dessein par
 `tests/contraste.test.ts` (pas de `sur-ton` sur cet aplat, où rien ne s'écrit, et pas d'`-appui`) et
-le contour du badge laissé à la main, faute de token de contour pour quelque ton que ce soit.
+le contour du badge laissé à la main comme celui des quatre tons d'état, ses pas -300/-700 n'étant
+portés par aucun token (seul `neutre` a un contour sur tokens, depuis #910). Mesuré par
+`couleurs.test.ts` : 2 paires de moins dans `Primitives`, 684 → 682.
 
 ⚠ **Un piège trouvé en chemin, mesuré, pour le lot qui appliquera le parti pris 3** : en sombre,
 `--survol` vaut `#262626`, qui est **exactement** le `dark:bg-neutral-800` dont `BarreLaterale` se
@@ -1552,7 +1554,9 @@ graisse, casse), où aucun problème n'était posé et où §6.1 interdit d'alle
 et le **contraste des tokens proposés** au sens du filet, dont `tests/contraste.test.ts` est le juge.
 
 Partis pris 1 et 2 → **#910** (les deux qui n'ajoutent **aucun token** : `BadgeEtat` et
-`SourcesDuFil`, 4 paires retirées dont 2 dans `Primitives`). Parti pris 3 → **#911** (poser
+`SourcesDuFil` — la veille annonçait 4 paires retirées dont 2 dans `Primitives`, le compte que
+`couleurs.test.ts` a mesuré au lot est **5 dont 4** : les deux tons `neutre`, plein et contour,
+portaient chacun deux jetons `dark:`, 689 → 684). Parti pris 3 → **#911** (poser
 `--selectionne`, puis migrer `BarreLaterale` — dans cet ordre, voir le piège ; 4 paires). Parti pris
 4 → **#912** (renommer et mettre en tokens sans changer un pixel ; 2 paires, et il débloque le
 repeint des 43 que `Primitives` porte). **#910 et #912 ne sont pas parallélisables** — les deux
