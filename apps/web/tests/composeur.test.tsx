@@ -43,23 +43,35 @@
  *    partis pris 1 et 2 de la veille #866) — la construction de
  *    `BoutonJoindre` en tête du rail, l'arrêt à la place de l'envoi, et le
  *    champ qui part d'**une** ligne. La sonde est prouvée sur le rail d'avant
- *    #884, où l'envoi était un texte et l'arrêt ~43 px plus large que lui.
+ *    #884, où l'envoi était un texte et l'arrêt ~43 px plus large que lui ;
+ * ⑨ **le cadre se replie sous `sm`** (#891, parti pris 2 de la veille #873) —
+ *    une rangée qui passe à la ligne, le champ qui prend la ligne entière dès
+ *    la deuxième ligne de brouillon, et l'invariant qui empêche le cadre
+ *    d'osciller : seule une mesure prise **en rangée unique** pose ou lève le
+ *    débordement. Plus l'**ordre d'émission de Tailwind**, sur le CSS
+ *    compilé — la moitié de la frontière qu'aucun test de rendu ne voit ;
+ * ⑩ **les amorces se bornent à deux sous `sm`** (#891, parti pris 3) — un
+ *    marqueur de mise en page, aucune amorce retirée du DOM.
  */
 
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { compile } from "tailwindcss";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import PageChat from "@/app/chat/page";
 import { ContenuOngletAgent } from "@/components/ContenuOngletAgent";
+import { AMORCE_HORS_SM, AMORCES_SOUS_SM } from "@/components/Conversation";
 import { ATTRIBUT_DEFILEMENT, ecouterDefilement } from "@/lib/ascenseur";
 import { marquerGuideVu } from "@/lib/guide";
 import {
   AGENT_ORCHESTRATION,
+  AMORCES_ORCHESTRATION,
   INTERLOCUTEUR_ORCHESTRATION,
   ROLE_ORCHESTRATION,
 } from "@/lib/orchestration";
@@ -334,6 +346,166 @@ function formeDuControle(bouton: HTMLElement): {
 }
 
 /**
+ * La **mise en page du cadre** (#891) : une rangée qui passe à la ligne, avec
+ * ses deux écarts. Les deux étages de #726 n'en sont pas une autre boîte —
+ * c'est le même cadre, dans l'état où le champ prend la ligne entière (voir
+ * `dispositionDuChamp`) et pousse le rail sur la suivante. Avant #891, le
+ * cadre était une **colonne** : le repli y était impossible, la tête du rail
+ * n'étant pas même une sœur du champ.
+ */
+function dispositionDuCadre(cadre: HTMLElement): string[] {
+  return Array.from(cadre.classList)
+    .filter((c) => /^(flex|flex-wrap|flex-col|items-|gap-)/.test(c))
+    .sort();
+}
+
+/**
+ * Ce que le `className` d'une pièce du cadre dit de la rangée où elle vit
+ * (#891) : les utilitaires de mise en page **nus** — ceux qui valent à toute
+ * largeur — et ceux que le `sm:` remet au-dessus du point de rupture, préfixe
+ * retiré.
+ *
+ * - rangée unique : le champ en `flex-1 min-w-0` entre les deux bouts du rail,
+ *   la tête du rail passée devant lui à l'affichage (`order-first`), et le
+ *   `sm:` qui restitue les deux étages à l'un comme à l'autre ;
+ * - deux étages : le champ en `w-full`, qui pousse le rail sur la ligne
+ *   suivante, et une tête sans classe de place — rien à restituer, c'est déjà
+ *   l'état de #726.
+ *
+ * C'est le contrat, pas la géométrie : le pixel est au banc (#308).
+ */
+function dispositionDe(piece: HTMLElement): {
+  rangee: string[];
+  auDela: string[];
+} {
+  const MISE_EN_PAGE = /^(order-|w-full$|flex-1$|flex-none$|min-w-0$|basis-)/;
+  const classes = Array.from(piece.classList);
+  return {
+    rangee: classes.filter((c) => MISE_EN_PAGE.test(c)).sort(),
+    auDela: classes
+      .filter((c) => c.startsWith("sm:"))
+      .map((c) => c.slice("sm:".length))
+      .sort(),
+  };
+}
+
+/**
+ * Les **pièces du cadre**, dans l'ordre du **flux** (#891) — celui que la
+ * tabulation suit, et qui ne bouge pas : le champ, puis la tête du rail, puis
+ * son bout. Le repli ne déplace la tête qu'à l'**affichage**, ce qui garde
+ * intacte la tabulation de #726 (③) et l'ordre de lecture des deux étages.
+ */
+function piecesDuCadre(cadre: HTMLElement): string[] {
+  return Array.from(cadre.children).map((enfant) => {
+    if (enfant.tagName === "TEXTAREA") return "champ";
+    if (enfant.tagName === "BUTTON") return nomDe(enfant);
+    return "bout-du-rail";
+  });
+}
+
+/**
+ * Les amorces **retirées sous `sm`** (#891, parti pris 3), telles que leur
+ * marqueur les désigne — et lui seul : rien n'est retiré du DOM, donc compter
+ * les boutons ne dirait rien.
+ */
+function amorcesHorsSm(groupe: HTMLElement): string[] {
+  return Array.from(groupe.querySelectorAll<HTMLElement>("button"))
+    .filter((bouton) => bouton.classList.contains(AMORCE_HORS_SM))
+    .map((bouton) => (bouton.textContent ?? "").trim());
+}
+
+/**
+ * Le cadre d'**avant** #891 : une **colonne** (`flex flex-col gap-1`), le
+ * champ toujours pleine largeur, et un rail dans son propre `<div>` — donc la
+ * tête du rail n'est pas une sœur du champ et aucune rangée `+` · champ ·
+ * envoi n'est possible, à aucune largeur. C'est l'échantillon fautif des trois
+ * sondes ci-dessus.
+ */
+function cadreDAvant891(): { cadre: HTMLElement; champ: HTMLTextAreaElement } {
+  const cadre = document.createElement("div");
+  fixtures.push(cadre);
+  cadre.className =
+    "flex flex-col gap-1 w-full rounded-md border border-bord bg-surface px-3 py-1.5";
+  cadre.innerHTML =
+    '<textarea rows="1" aria-label="Message à dev" ' +
+    'class="max-h-48 w-full resize-none overflow-y-auto outline-none"></textarea>' +
+    '<div class="flex items-center gap-2">' +
+    '<button type="button" title="Joindre des sources…">' +
+    '<span class="sr-only">Joindre des sources…</span></button>' +
+    '<div class="ms-auto flex items-center gap-2">' +
+    '<button type="submit"><span class="sr-only">Envoyer</span></button>' +
+    "</div></div>";
+  document.body.appendChild(cadre);
+  return { cadre, champ: cadre.querySelector("textarea")! };
+}
+
+/**
+ * Les amorces d'**avant** #891 : les quatre rendues sans marqueur, qui
+ * s'empilaient sur quatre lignes à 375 × 667 sous un composeur à quai (banc du
+ * 2026-09-04, capture `.maestro/banc/chat-375x667.png`). L'échantillon fautif
+ * de `amorcesHorsSm` — sans lui, « deux amorces bornées » serait vrai d'une
+ * sonde qui regarde ailleurs.
+ */
+function amorcesDAvant891(): { groupe: HTMLElement } {
+  const groupe = document.createElement("div");
+  fixtures.push(groupe);
+  groupe.setAttribute("role", "group");
+  groupe.setAttribute("aria-label", "Suggestions pour commencer");
+  groupe.className = "flex flex-wrap gap-1.5";
+  groupe.innerHTML = ["une", "deux", "trois", "quatre"]
+    .map(
+      (amorce) =>
+        '<button type="button" class="inline-flex min-h-6 border border-bord-fort ' +
+        `px-2.5 py-1">${amorce}</button>`,
+    )
+    .join("");
+  document.body.appendChild(groupe);
+  return { groupe };
+}
+
+/**
+ * Le CSS que Tailwind émet **réellement** pour une liste de classes.
+ *
+ * C'est l'autre moitié de la frontière de #891 : une chaîne de classes d'un
+ * côté, une cascade de l'autre, et rien entre les deux qu'un test de rendu
+ * puisse voir — jsdom n'applique aucune feuille (#308), donc un marqueur
+ * inerte y serait indiscernable d'un marqueur qui agit (leçon de #830, où le
+ * signal « page prête » vivait des deux côtés d'une frontière que rien ne
+ * gardait). Le paquet est résolu par son export `tailwindcss/index.css` plutôt
+ * qu'en chemin recopié : un `node_modules` remonté d'un cran ne casse rien.
+ */
+const INDEX_TAILWIND = createRequire(import.meta.url).resolve(
+  "tailwindcss/index.css",
+);
+
+async function cssCompile(classes: string[]): Promise<string> {
+  const compilateur = await compile('@import "tailwindcss";', {
+    base: path.dirname(INDEX_TAILWIND),
+    loadStylesheet: async (id, base) => {
+      const fichier =
+        id === "tailwindcss" ? INDEX_TAILWIND : path.resolve(base, id);
+      return {
+        path: fichier,
+        base: path.dirname(fichier),
+        content: readFileSync(fichier, "utf8"),
+      };
+    },
+  });
+  return compilateur.build(classes);
+}
+
+/**
+ * Où la règle d'un utilitaire est émise. Le sélecteur est cherché **avec son
+ * point et son accolade** : sans eux, `.hidden` matcherait d'abord
+ * `.max-sm\:hidden`, et la comparaison dirait l'inverse de la vérité.
+ */
+function rangDeLaRegle(css: string, selecteur: string): number {
+  const rang = css.indexOf(`${selecteur} {`);
+  expect(rang, `règle absente du CSS compilé : ${selecteur}`).toBeGreaterThan(-1);
+  return rang;
+}
+
+/**
  * Fait dire au champ ce que le navigateur mesurerait : `scrollHeight` (la
  * hauteur du contenu) et `clientHeight` (la boîte). jsdom rend zéro aux deux
  * (#308), et c'est précisément pourquoi `ajusterLaHauteur` n'y pose rien —
@@ -405,6 +577,28 @@ describe("les sondes du composeur, prouvées sur le composeur d'avant (#726, pui
       placeholder: true,
       description: null,
     });
+  });
+
+  it("voient, sur le cadre d'avant #891, une colonne dont le champ ne se replie pas", () => {
+    const { cadre, champ } = cadreDAvant891();
+    // Une colonne, jamais une rangée qui passe à la ligne : rien à replier.
+    expect(dispositionDuCadre(cadre)).toEqual(["flex", "flex-col", "gap-1"]);
+    // Et la tête du rail n'est même pas une sœur du champ : elle vit dans le
+    // `<div>` du rail, donc `+` · champ · envoi est hors d'atteinte à toute
+    // largeur.
+    expect(piecesDuCadre(cadre)).toEqual(["champ", "bout-du-rail"]);
+    // ⚠ Le champ, lui, porte **exactement** ce qu'il porte à deux étages
+    // aujourd'hui (`w-full`, rien à restituer) — et c'est normal : ce composeur
+    // n'a que cet état-là. Ce que l'échantillon prouve n'est donc pas que
+    // `dispositionDe` distingue les deux formes du champ, mais qu'aucun autre
+    // état n'existait — ce que les deux sondes ci-dessus établissent.
+    expect(dispositionDe(champ)).toEqual({ rangee: ["w-full"], auDela: [] });
+  });
+
+  it("ne trouvent aucune amorce bornée dans les quatre d'avant #891", () => {
+    const { groupe } = amorcesDAvant891();
+    expect(within(groupe).getAllByRole("button")).toHaveLength(4);
+    expect(amorcesHorsSm(groupe)).toEqual([]);
   });
 
   it("voient, sur le rail d'avant #884, un envoi en texte et un arrêt dont la boîte suit le texte", () => {
@@ -714,6 +908,199 @@ describe.each(SURFACES)("le composeur sur $nom", ({ monter, interlocuteur, secti
       fireEvent.click(arret);
       expect(interrompre).toHaveBeenCalledTimes(1);
     });
+  });
+
+  // ── ⑨ le cadre se replie sous sm ────────────────────────────────────────
+  describe("⑨ le cadre se replie sous `sm` (#891)", () => {
+    /** La rangée unique : `+` · champ · envoi, et le `sm:` qui la défait. */
+    const RANGEE_UNIQUE = {
+      champ: { rangee: ["flex-1", "min-w-0"], auDela: ["flex-none", "w-full"] },
+      tete: { rangee: ["order-first"], auDela: ["order-none"] },
+    };
+    /** Les deux étages de #726 : le champ pleine largeur, le rail dessous. */
+    const DEUX_ETAGES = {
+      champ: { rangee: ["w-full"], auDela: [] },
+      tete: { rangee: [], auDela: [] },
+    };
+
+    /** Ce que le cadre monté rend des deux pièces que le repli déplace. */
+    function etatDuCadre(champ: HTMLElement) {
+      const cadre = cadreDe(champ);
+      const tete = within(cadre).getByRole("button", {
+        name: "Joindre des sources…",
+      });
+      return { champ: dispositionDe(champ), tete: dispositionDe(tete) };
+    }
+
+    it("est une rangée qui passe à la ligne, et non deux boîtes", () => {
+      monter();
+      const cadre = cadreDe(zoneDeSaisie(interlocuteur));
+      // Les deux étages de #726 ne sont plus une colonne mais l'état de cette
+      // rangée où le champ prend la ligne entière : mêmes écarts qu'avant
+      // (`gap-x-2` entre les bouts du rail, `gap-y-1` entre les deux étages).
+      expect(dispositionDuCadre(cadre)).toEqual([
+        "flex",
+        "flex-wrap",
+        "gap-x-2",
+        "gap-y-1",
+        "items-center",
+      ]);
+      // Et le rail n'a plus de `<div>` à lui : ses deux bouts sont des sœurs
+      // du champ, ce qui est la seule façon de lui faire partager sa rangée.
+      // L'ordre du **flux**, lui, est celui de #726 — c'est ce qui garde la
+      // tabulation de ③ intacte, le repli ne jouant qu'à l'affichage.
+      expect(piecesDuCadre(cadre)).toEqual([
+        "champ",
+        "Joindre des sources…",
+        "bout-du-rail",
+      ]);
+    });
+
+    it("partage la rangée au repos, et la rend au rail dès la deuxième ligne", () => {
+      monter();
+      const champ = zoneDeSaisie(interlocuteur);
+      // Au repos, le brouillon est vide : il tient sur une ligne, donc `+` ·
+      // champ · envoi partagent la rangée sous `sm`, et le `sm:` restitue les
+      // deux étages au-dessus.
+      expect(etatDuCadre(champ)).toEqual(RANGEE_UNIQUE);
+
+      // Le champ déborde de sa hauteur de départ : c'est la « deuxième ligne »,
+      // et le rail reprend la sienne — à toute largeur, donc plus rien à
+      // restituer au-dessus du point de rupture.
+      const mesure = { contenu: 120, boite: 52 };
+      simulerLaMesure(champ, mesure);
+      fireEvent.change(champ, { target: { value: "deux\nlignes" } });
+      expect(etatDuCadre(champ)).toEqual(DEUX_ETAGES);
+      expect(champ.style.height).toBe("120px");
+
+      // Le brouillon repasse sous le point de débordement : le cadre se
+      // replie, et le champ rend sa hauteur.
+      mesure.contenu = 40;
+      fireEvent.change(champ, { target: { value: "deux" } });
+      expect(etatDuCadre(champ)).toEqual(RANGEE_UNIQUE);
+      expect(champ.style.height).toBe("");
+    });
+
+    it("ne se replie pas sur une mesure prise à deux étages — il oscillerait", () => {
+      monter();
+      const champ = zoneDeSaisie(interlocuteur);
+      const mesure = { contenu: 120, boite: 52 };
+      simulerLaMesure(champ, mesure);
+
+      // Le cadre se déplie sur une mesure prise en rangée unique.
+      fireEvent.change(champ, { target: { value: "deux lignes" } });
+      expect(etatDuCadre(champ)).toEqual(DEUX_ETAGES);
+
+      // Déplié, le champ est plus large de ~88 px (le `+`, l'envoi et leurs
+      // deux écarts) : le même texte y rentre sur une ligne. Se replier
+      // là-dessus le ferait aussitôt déborder à nouveau — replié il déborde,
+      // déplié il rentre, et le cadre changerait de forme à chaque frappe, le
+      // champ passant la moitié du temps trop court pour ce qu'il montre. La
+      // mesure ne vaut que pour la mise en page où elle a été prise : celle-ci
+      // ne lève pas le débordement.
+      mesure.contenu = 40;
+      fireEvent.change(champ, { target: { value: "deux lignes et plus" } });
+      expect(etatDuCadre(champ)).toEqual(DEUX_ETAGES);
+      // Ce qu'elle fait, en revanche, c'est rendre au champ la hauteur de sa
+      // nouvelle largeur : sans elle, le cadre déplié garderait la hauteur de
+      // deux lignes pour un texte qui n'en occupe qu'une.
+      expect(champ.style.height).toBe("");
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑨ bis — l'ordre d'émission de Tailwind, sur le CSS compilé (#891)
+// ---------------------------------------------------------------------------
+
+describe("⑨ l'ordre d'émission de Tailwind (#891)", () => {
+  it("écarte le `hidden sm:inline-flex` d'instinct, et retient `max-sm:hidden`", async () => {
+    const css = await cssCompile([
+      "hidden",
+      "inline-flex",
+      "sm:inline-flex",
+      AMORCE_HORS_SM,
+    ]);
+    // L'échantillon fautif est ici la **règle** : `.hidden` est émis AVANT
+    // `.inline-flex`, donc sur un `Bouton` — dont la classe de socle porte
+    // `inline-flex` (`BOUTON_SOCLE`) — un `hidden` nu ne cacherait rien, à
+    // aucune largeur, et sans un mot. C'est la forme que la note technique du
+    // ticket proposait ; elle ne tient que sur un élément sans display à lui.
+    expect(rangDeLaRegle(css, ".hidden")).toBeLessThan(
+      rangDeLaRegle(css, ".inline-flex"),
+    );
+    // Le marqueur retenu est une **variante** : émise après les utilitaires
+    // nus, elle l'emporte — et seulement sous le point de rupture.
+    expect(rangDeLaRegle(css, `.${AMORCE_HORS_SM.replace(":", "\\:")}`)).toBeGreaterThan(
+      rangDeLaRegle(css, ".inline-flex"),
+    );
+    expect(css).toContain("width < 40rem");
+  });
+
+  it("laisse le `sm:` défaire la rangée unique, sur ses deux pièces", async () => {
+    // L'autre moitié du repli : au-dessus de `sm`, `sm:flex-none` doit
+    // l'emporter sur le `flex-1` nu du champ — sans quoi sa base `0%`
+    // gagnerait contre `sm:w-full` et le champ ne reprendrait jamais la ligne
+    // entière — et `sm:order-none` sur l'`order-first` de la tête du rail,
+    // sans quoi elle resterait devant le champ à deux étages.
+    const css = await cssCompile([
+      "flex-1",
+      "order-first",
+      "sm:flex-none",
+      "sm:w-full",
+      "sm:order-none",
+    ]);
+    expect(rangDeLaRegle(css, ".sm\\:flex-none")).toBeGreaterThan(
+      rangDeLaRegle(css, ".flex-1"),
+    );
+    expect(rangDeLaRegle(css, ".sm\\:w-full")).toBeGreaterThan(
+      rangDeLaRegle(css, ".flex-1"),
+    );
+    expect(rangDeLaRegle(css, ".sm\\:order-none")).toBeGreaterThan(
+      rangDeLaRegle(css, ".order-first"),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑩ Les amorces se bornent à deux sous sm (#891)
+// ---------------------------------------------------------------------------
+
+describe("⑩ les amorces se bornent à deux sous `sm` (#891)", () => {
+  /**
+   * ⚠ Joué sur `/chat` **seulement**, et ce n'est pas la moitié d'un test :
+   * `app/chat/page.tsx` est le seul appelant qui passe des amorces, l'onglet
+   * Chat d'une fiche agent n'en ayant aucune à borner. Le second cas est
+   * vérifié pour ce qu'il est — une absence — plutôt que supposé.
+   */
+  it("borne à deux, sans retirer une seule amorce du DOM", () => {
+    rendreAvecEtat(<PageChat />, {
+      agents: [
+        agentFactice({ nom: "dev" }),
+        agentFactice({ nom: AGENT_ORCHESTRATION, role: ROLE_ORCHESTRATION }),
+      ],
+    });
+    const groupe = screen.getByRole("group", {
+      name: "Suggestions pour commencer",
+    });
+    // Les quatre sont là, à toute largeur : le bornage est un marqueur de mise
+    // en page, jamais un `slice` — rien n'est perdu au-dessus du point de
+    // rupture, et c'est ce que la note technique du ticket exige.
+    expect(within(groupe).getAllByRole("button")).toHaveLength(
+      AMORCES_ORCHESTRATION.length,
+    );
+    // Et ce sont bien les deux **premières** qui restent : les suivantes
+    // portent le marqueur, dans l'ordre où elles sont proposées.
+    expect(amorcesHorsSm(groupe)).toEqual(
+      AMORCES_ORCHESTRATION.slice(AMORCES_SOUS_SM),
+    );
+  });
+
+  it("n'a rien à borner sur l'onglet Chat d'une fiche agent", () => {
+    rendreAvecEtat(<ContenuOngletAgent nom="dev" onglet="chat" />);
+    expect(
+      screen.queryByRole("group", { name: "Suggestions pour commencer" }),
+    ).toBeNull();
   });
 });
 

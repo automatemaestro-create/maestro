@@ -139,6 +139,41 @@
  * (`rows={1}`) : c'est le rail qui donne sa hauteur au cadre — les deux lignes
  * d'avant étaient un héritage, aucune référence ne part de deux.
  *
+ * ## Sous `sm`, le cadre se replie (#891)
+ *
+ * La veille #873 a rejoué #724 sur le seul point qu'elle avait écrit ne pas
+ * avoir regardé — le **mobile et les points de rupture** —, à 390 × 700 sur
+ * trois produits capturés en direct (décision complète en commentaire de
+ * #728). Deux de ses partis pris vivent ici, et **rien ne change au-dessus de
+ * `sm`** :
+ *
+ * - **le cadre se replie sur une rangée tant que le brouillon tient sur une
+ *   ligne** — d'après ChatGPT, et c'est une mesure : trois états du même
+ *   composant à la même largeur, la seule variable étant le brouillon (vide →
+ *   une rangée, une ligne dans un vrai fil → une rangée, deux lignes → deux
+ *   étages). Le rail se paie à la rangée, et sous `sm` il ne porte que ses
+ *   deux bouts, le raccourci s'étant retiré (parti pris 1, que Zulip
+ *   confirme en tombant elle-même de trois contrôles à un entre 1280 et
+ *   390 px). Perplexity garde ses deux étages à cette largeur — avec **six**
+ *   contrôles au rail, ce qui justifie sa rangée et confirme la règle ;
+ * - **les amorces se bornent à deux** — ChatGPT en montre une à 390 px là où
+ *   le bureau en aligne plusieurs, Perplexity aucune ; les quatre du fil
+ *   d'orchestration s'empilaient sur quatre lignes à 375 × 667.
+ *
+ * ⚠ Le repli est la seule chose de ce composeur qui **dépend d'une mesure
+ * prise à l'écran**, et c'est ce qui le rend délicat : la rangée unique laisse
+ * au texte ~88 px de moins que les deux étages, donc décider du repli sur une
+ * mesure prise à deux étages le ferait osciller à chaque frappe. D'où
+ * l'invariant : seule une mesure prise **en rangée unique** pose ou lève le
+ * débordement (voir `debordement` et le `useLayoutEffect` qui le tient).
+ *
+ * Ce que ce lot ne touche **pas**, et la veille le dit : ni le `sticky
+ * bottom-16`, ni la bande couverte, ni la réserve `after:h-24` de #888 —
+ * aucune des trois références ne fait cohabiter un composeur à quai et un
+ * bouton flottant, #885 a déjà refusé de déplacer le second, et le plafond de
+ * croissance `max-h-48` reste une mesure de bureau (#884) qu'aucune référence
+ * mobile n'a confrontée.
+ *
  * ## Ce qu'il ne fait pas
  *
  * Il ne charge rien : le fil lui est **passé** (`useChat`, historique REST +
@@ -199,27 +234,56 @@ import type { Chat, ReponseEnCours } from "@/lib/useChat";
 import { useSourcesComposees } from "@/lib/useSourcesComposees";
 
 /**
+ * Combien d'**amorces** un fil vide propose sous `sm` (#891 — parti pris 3 de
+ * la veille #873). Au-dessus, toutes : le bornage est un marqueur de mise en
+ * page, pas un `slice`.
+ */
+export const AMORCES_SOUS_SM = 2;
+
+/**
+ * Le marqueur qui retire une amorce **sous** `sm` (#891).
+ *
+ * ⚠ `max-sm:hidden`, et non le `hidden sm:inline-flex` qu'on écrirait
+ * d'instinct : la classe de socle d'un `Bouton` porte déjà `inline-flex`, et
+ * dans le CSS que Tailwind émet `.hidden` passe **avant** `.inline-flex` —
+ * `hidden` perdrait donc à toute largeur, en silence. Une variante est émise
+ * après les utilitaires nus, donc elle gagne. C'est une frontière entre une
+ * chaîne de classes et une cascade : `composeur.test.tsx` ⑨ la garde sur le
+ * CSS compilé, aucun test de rendu ne pouvant la voir.
+ */
+export const AMORCE_HORS_SM = "max-sm:hidden";
+
+/**
  * Fait grandir la zone de saisie avec ce qu'on y écrit (#726 — parti pris 3 de
  * la veille #724, mesuré chez ChatGPT : 52 px au repos, 256 px à vingt lignes,
- * un plafond puis un défilement interne).
+ * un plafond puis un défilement interne), et **rend si le brouillon tient sur
+ * la hauteur de départ du champ** — à `rows={1}` (#884), sur une seule ligne.
  *
  * Le champ repart de sa **hauteur de départ** (`rows`) et ne prend la hauteur
  * de son contenu que s'il en déborde : c'est ce qui laisse le plancher au
  * navigateur — deux lignes de la police réelle, sans pixel à recopier — et le
  * **plafond au CSS** (`max-h-*`), qui l'emporte sur la hauteur posée ici et
  * laisse alors `overflow-y-auto` défiler. Sous jsdom rien n'est mesuré (#308) :
- * `scrollHeight` y vaut zéro, donc rien n'y est posé.
+ * `scrollHeight` y vaut zéro, donc rien n'y est posé — et le verdict rendu est
+ * « tient sur une ligne », qui est bien l'état d'un brouillon vide.
+ *
+ * Le verdict est **rendu ici** et jamais recalculé ailleurs (#891) : c'est la
+ * même mesure qui décide de la hauteur du champ et du repli du cadre sous `sm`,
+ * et une seconde source de vérité sur la hauteur divergerait de celle-ci au
+ * premier changement de police.
  *
  * Joué dans un `useLayoutEffect`, avant la peinture : après coup, chaque frappe
  * au-delà du plancher montrerait une image du champ trop court, au contenu
  * déjà défilé, avant qu'il ne grandisse.
  */
-function ajusterLaHauteur(champ: HTMLTextAreaElement | null) {
-  if (champ === null) return;
+function ajusterLaHauteur(champ: HTMLTextAreaElement | null): boolean {
+  if (champ === null) return true;
   champ.style.height = "";
   if (champ.scrollHeight > champ.clientHeight) {
     champ.style.height = `${champ.scrollHeight}px`;
+    return false;
   }
+  return true;
 }
 
 export function Conversation({
@@ -279,6 +343,22 @@ export function Conversation({
   } = fil;
   const composition = useSourcesComposees();
   const [brouillon, setBrouillon] = useState("");
+  /**
+   * Le brouillon qui a fait **déborder la rangée unique** du cadre replié
+   * (#891) — `null` tant que rien n'a débordé.
+   *
+   * Un brouillon et non un booléen, et c'est la moitié qui ne se devine pas :
+   * repliée, la rangée laisse au texte la largeur du cadre **moins le rail**
+   * (le `+`, l'envoi et leurs deux écarts, ~88 px), si bien qu'une mesure prise
+   * à deux étages ne dit rien de ce que la rangée unique ferait du même texte.
+   * Rendre la main au repli sur cette mesure-là ferait **osciller le cadre à
+   * chaque frappe** — replié le texte déborde donc on déplie, déplié il rentre
+   * donc on replie, et le champ passe la moitié du temps trop court pour ce
+   * qu'il montre. On ne retente donc le repli que lorsque le brouillon n'est
+   * **plus** celui qui a débordé (une frappe effacée, un texte remplacé),
+   * c'est-à-dire quand la mesure de la rangée unique redevient à faire.
+   */
+  const [debordement, setDebordement] = useState<string | null>(null);
   /**
    * Ce qui a manqué au dernier envoi, et si le message a **quand même** rejoint
    * le fil. Les deux ensemble parce qu'ils ne se déduisent pas l'un de l'autre
@@ -346,10 +426,33 @@ export function Conversation({
     if (suit.current) collerEnBas();
   }, [messages, envoi, reponseEnCours?.texte, collerEnBas]);
 
+  /**
+   * Le brouillon tient-il sur **une** ligne ? C'est ce qui décide du repli du
+   * cadre sous `sm` (#891, parti pris 2 de la veille #873) : tant que oui,
+   * `+` · champ · envoi partagent une rangée ; dès la deuxième ligne, le rail
+   * reprend la sienne. Au-dessus de `sm`, le cadre à deux étages de #726 ne
+   * bouge pas — là, c'est le CSS qui tient la mise en page et cette valeur
+   * n'a plus prise (voir le `className` du champ).
+   */
+  const surUneLigne = debordement === null || !brouillon.startsWith(debordement);
+
   // La zone de saisie grandit avec le brouillon (#726) — y compris quand il
   // revient d'un échec d'envoi, ou qu'une mention en est détachée
-  // (`surSaisie`) : deux changements qui ne passent pas par une frappe.
-  useLayoutEffect(() => ajusterLaHauteur(zone.current), [brouillon]);
+  // (`surSaisie`) : deux changements qui ne passent pas par une frappe. Et
+  // **aussi quand le cadre se replie ou se déplie** (#891) : le champ change
+  // alors de largeur, donc la hauteur mesurée à l'autre largeur ne vaut plus —
+  // sans cette dépendance, le cadre qui vient de se déplier garderait la
+  // hauteur de deux lignes pour un texte qui, plus large, n'en occupe qu'une.
+  useLayoutEffect(() => {
+    const tient = ajusterLaHauteur(zone.current);
+    // ⚠ Une mesure ne vaut que pour la mise en page où elle a été prise, et
+    // c'est tout l'invariant de #891 : seule celle prise **en rangée unique**
+    // peut poser ou lever le débordement, la rangée unique laissant ~88 px de
+    // moins au texte. Prise à deux étages, elle ne fait que redonner au champ
+    // la hauteur de sa nouvelle largeur.
+    if (!surUneLigne) return;
+    setDebordement(tient ? null : brouillon);
+  }, [brouillon, surUneLigne]);
 
   const soumettre = async (texte: string) => {
     const contenu = texte.trim();
@@ -689,9 +792,24 @@ export function Conversation({
             qui manque au socle est un **cadre composite** — un `ChampTexte`
             qui accepte un rail —, et ce manque se traite par un ticket à lui,
             pas au passage (règle de #724). */}
+        {/* **Une seule rangée qui se replie** (#891 — parti pris 2 de la veille
+            #873, d'après ChatGPT : trois états du même composant à 390 px, la
+            seule variable étant le brouillon — vide → une rangée, une ligne
+            → une rangée, deux lignes → deux étages ; Perplexity garde ses deux
+            étages à cette largeur, mais avec **six** contrôles au rail, ce qui
+            justifie sa rangée et confirme la règle). Le cadre est donc une
+            rangée **qui passe à la ligne** plutôt qu'une colonne : les deux
+            étages de #726 sont la même mise en page avec un champ pleine
+            largeur, qui pousse le rail sur la ligne suivante. Rien ne change
+            au-dessus de `sm` — mêmes écarts (`gap-x-2` entre les bouts du
+            rail, `gap-y-1` entre les deux étages), même géométrie, même ordre
+            de tabulation —, et le rail n'a plus de `<div>` à lui : c'est une
+            **ligne de flux**, ce qui est la seule façon de le faire partager
+            sa rangée avec le champ sans écrire deux fois la même mise en
+            page. */}
         <div
           className={
-            `${CLASSE_CONTROLE} flex flex-col gap-1 focus-within:border-bord-fort ` +
+            `${CLASSE_CONTROLE} flex flex-wrap items-center gap-x-2 gap-y-1 focus-within:border-bord-fort ` +
             "has-[textarea:focus-visible]:outline-2 has-[textarea:focus-visible]:outline-offset-1 " +
             "has-[textarea:focus-visible]:outline-accent"
           }
@@ -736,83 +854,122 @@ export function Conversation({
             placeholder={`Écrire à ${interlocuteur}…`}
             aria-label={`Message à ${interlocuteur}`}
             aria-describedby={idRaccourci}
-            className="max-h-48 w-full resize-none overflow-y-auto placeholder:text-texte-secondaire outline-none"
+            // La seconde moitié du repli (#891) — deux états, et c'est le
+            // `className` du champ qui les porte :
+            //
+            // - `w-full` — le champ prend la ligne entière, donc pousse le
+            //   rail sur la suivante : c'est le cadre à deux étages de #726, à
+            //   l'octet près. C'est l'état de **toutes** les largeurs dès la
+            //   deuxième ligne, et de toute largeur ≥ `sm` quoi qu'il arrive ;
+            // - `flex-1 min-w-0` — le champ partage la rangée avec les deux
+            //   bouts du rail et absorbe ce qui en reste. Le `min-w-0` est ce
+            //   qui l'autorise à être plus étroit que son contenu (un
+            //   `<textarea>` tire sa largeur intrinsèque de `cols`, pas de son
+            //   texte).
+            //
+            // Le `sm:` remet la première forme au-dessus du point de rupture,
+            // et il faut ses deux moitiés : `sm:flex-none` défait le `flex-1`
+            // (sans quoi sa base `0%` l'emporterait sur la largeur) et
+            // `sm:w-full` rend la ligne entière. L'ordre d'émission de
+            // Tailwind fait le reste — une variante passe après l'utilitaire
+            // nu (vérifié sur le CSS compilé, cf. `composeur.test.tsx` ⑨).
+            className={
+              "max-h-48 resize-none overflow-y-auto placeholder:text-texte-secondaire outline-none " +
+              (surUneLigne ? "min-w-0 flex-1 sm:w-full sm:flex-none" : "w-full")
+            }
           />
-          {/* Le rail (parti pris 1) : sa **tête** porte le seul point d'entrée
-              des pièces jointes (#727 — parti pris 2, d'après le `+` de ChatGPT
-              et de Perplexity), son **bout** le raccourci puis l'envoi. Le
-              raccourci a quitté le placeholder (parti pris 4, d'après Zulip) :
-              là, il s'effaçait au premier caractère ; ici il reste lisible
-              pendant la saisie sans occuper une ligne à lui, et il **décrit** le
-              champ (`aria-describedby`) pour qu'un lecteur d'écran l'entende là
-              où l'œil le voit. Sous `sm` il se retire du rail — la place
-              manque, et un clavier virtuel n'a ni Maj ni raccourci à montrer —
-              mais reste dans la description du champ : un nœud caché que
+          {/* La **tête du rail** (#727 — parti pris 2, d'après le `+` de
+              ChatGPT et de Perplexity) : le seul point d'entrée des gestes de
+              dépôt, et le panneau des trois gestes ne se déplie que derrière
+              lui. Elle reste **après le champ dans le flux** et ne se déplace
+              qu'à l'affichage (`order-first`), quand le cadre est replié : la
+              rangée se lit alors `+` · champ · envoi. C'est ce qui garde
+              **intacte** la tabulation de #726 — depuis le champ, Tab mène au
+              `+` puis à l'envoi sans quitter le composeur
+              (`composeur.test.tsx` ③) — et, au-dessus de `sm`, l'ordre de
+              lecture des deux étages, où le champ vient bien avant le rail.
+              Un `order` qui déplacerait le **champ** aurait été plus court d'une
+              classe et aurait fait sortir le `+` de la tabulation avant, ce que
+              le déplacer à l'affichage seul évite : un seul écart entre l'ordre
+              vu et l'ordre parcouru, et il tombe du côté du repli. */}
+          <BoutonJoindre
+            ouvert={gestesOuverts}
+            occupe={envoi}
+            idPanneau={idGestes}
+            onBasculer={() => setGestesOuverts(!gestesOuverts)}
+            className={surUneLigne ? "order-first sm:order-none" : undefined}
+          />
+          {/* Le **bout du rail** (parti pris 1 de #726) : le raccourci, puis
+              l'envoi. Le raccourci a quitté le placeholder (parti pris 4,
+              d'après Zulip) : là, il s'effaçait au premier caractère ; ici il
+              reste lisible pendant la saisie sans occuper une ligne à lui, et
+              il **décrit** le champ (`aria-describedby`) pour qu'un lecteur
+              d'écran l'entende là où l'œil le voit. Sous `sm` il se retire du
+              rail — la place manque, et un clavier virtuel n'a ni Maj ni
+              raccourci à montrer —, ce que le repli de #891 rend d'autant plus
+              nécessaire (le raccourci occuperait la rangée du champ), mais il
+              reste dans la description du champ : un nœud caché que
               `aria-describedby` désigne directement compte toujours. Le bout
               est un groupe à part (`ms-auto`) pour que l'envoi reste à droite
               quand le raccourci s'est retiré : un `ms-auto` sur le raccourci
-              seul ne pousserait plus rien une fois celui-ci en `hidden`. */}
-          <div className="flex items-center gap-2">
-            <BoutonJoindre
-              ouvert={gestesOuverts}
-              occupe={envoi}
-              idPanneau={idGestes}
-              onBasculer={() => setGestesOuverts(!gestesOuverts)}
-            />
-            <div className="ms-auto flex items-center gap-2">
-              <span
-                id={idRaccourci}
-                className="hidden text-micro text-texte-secondaire sm:inline"
+              seul ne pousserait plus rien une fois celui-ci en `hidden`. À deux
+              étages, le `ms-auto` pousse le groupe au bout du second ; en
+              rangée unique il ne pousse rien, le champ ayant déjà absorbé la
+              place libre (`flex-1`) — un `ms-auto` ne prend que ce qu'il reste
+              après la croissance. */}
+          <div className="ms-auto flex items-center gap-2">
+            <span
+              id={idRaccourci}
+              className="hidden text-micro text-texte-secondaire sm:inline"
+            >
+              Entrée envoie · Maj+Entrée saute une ligne
+            </span>
+            {/* Pendant qu'une réponse s'écrit, le bouton d'envoi **cède la
+                place** à l'arrêt plutôt que de s'y ajouter : l'envoi est de
+                toute façon refusé tant qu'un échange est en vol
+                (`soumettre`), donc un bouton inerte à côté d'une action
+                possible ne ferait qu'occuper la seule place que la main
+                vise. Et l'arrêt arrête pour de bon — il annule la génération
+                côté canal (#695) et ce qui a été reçu rejoint le fil ; ce
+                n'est pas un simple « je cesse de regarder ».
+                Les deux sont des **icônes nommées** (#884, parti pris 1 de
+                la veille #866) : la construction exacte de `BoutonJoindre`
+                en tête du rail — `petite`, l'icône du jeu, le libellé en
+                `sr-only` qui garde au bouton son nom accessible (« Envoyer »,
+                « Interrompre ») sans `title=` (#536). Le rail parle ainsi
+                une seule langue, et son bout **ne bouge pas** quand l'un
+                remplace l'autre : avant, « Envoyer » en texte faisait 63 px
+                et « Interrompre » ~106, soit un saut de ~43 px à chaque
+                envoi. `w-9` sur les deux parce que `plein` n'a pas le filet
+                de `contour` (34 contre 36 px à contenu égal — 2 px de saut
+                résiduel) : 36 px, c'est la largeur du `+` en tête, et une
+                largeur est ce que le `className` d'un `Bouton` est fait pour
+                porter. Le plancher de 24 px reste celui du socle
+                (`BOUTON_SOCLE`). */}
+            {envoi ? (
+              <Bouton
+                variante="contour"
+                ton="neutre"
+                taille="petite"
+                icone={IconeArret}
+                className="w-9"
+                onClick={interrompre}
               >
-                Entrée envoie · Maj+Entrée saute une ligne
-              </span>
-              {/* Pendant qu'une réponse s'écrit, le bouton d'envoi **cède la
-                  place** à l'arrêt plutôt que de s'y ajouter : l'envoi est de
-                  toute façon refusé tant qu'un échange est en vol
-                  (`soumettre`), donc un bouton inerte à côté d'une action
-                  possible ne ferait qu'occuper la seule place que la main
-                  vise. Et l'arrêt arrête pour de bon — il annule la génération
-                  côté canal (#695) et ce qui a été reçu rejoint le fil ; ce
-                  n'est pas un simple « je cesse de regarder ».
-                  Les deux sont des **icônes nommées** (#884, parti pris 1 de
-                  la veille #866) : la construction exacte de `BoutonJoindre`
-                  en tête du rail — `petite`, l'icône du jeu, le libellé en
-                  `sr-only` qui garde au bouton son nom accessible (« Envoyer »,
-                  « Interrompre ») sans `title=` (#536). Le rail parle ainsi
-                  une seule langue, et son bout **ne bouge pas** quand l'un
-                  remplace l'autre : avant, « Envoyer » en texte faisait 63 px
-                  et « Interrompre » ~106, soit un saut de ~43 px à chaque
-                  envoi. `w-9` sur les deux parce que `plein` n'a pas le filet
-                  de `contour` (34 contre 36 px à contenu égal — 2 px de saut
-                  résiduel) : 36 px, c'est la largeur du `+` en tête, et une
-                  largeur est ce que le `className` d'un `Bouton` est fait pour
-                  porter. Le plancher de 24 px reste celui du socle
-                  (`BOUTON_SOCLE`). */}
-              {envoi ? (
-                <Bouton
-                  variante="contour"
-                  ton="neutre"
-                  taille="petite"
-                  icone={IconeArret}
-                  className="w-9"
-                  onClick={interrompre}
-                >
-                  <span className="sr-only">Interrompre</span>
-                </Bouton>
-              ) : (
-                <Bouton
-                  type="submit"
-                  taille="petite"
-                  icone={IconeEnvoyer}
-                  className="w-9"
-                  disabled={
-                    brouillon.trim() === "" && composition.sources.length === 0
-                  }
-                >
-                  <span className="sr-only">Envoyer</span>
-                </Bouton>
-              )}
-            </div>
+                <span className="sr-only">Interrompre</span>
+              </Bouton>
+            ) : (
+              <Bouton
+                type="submit"
+                taille="petite"
+                icone={IconeEnvoyer}
+                className="w-9"
+                disabled={
+                  brouillon.trim() === "" && composition.sources.length === 0
+                }
+              >
+                <span className="sr-only">Envoyer</span>
+              </Bouton>
+            )}
           </div>
         </div>
         {/* Sous le cadre, et **dans** le bloc de saisie (#727) : le panneau des
@@ -843,19 +1000,37 @@ export function Conversation({
             comme ce qu'elles sont — des propositions de message, à la place
             où le message s'écrit (Perplexity pose les siennes au même
             endroit). Ce qu'elles font n'a pas changé : un clic envoie l'amorce
-            telle quelle, et aucune n'ouvre un run à elle seule (#685). */}
+            telle quelle, et aucune n'ouvre un run à elle seule (#685).
+            **Sous `sm`, elles se bornent à DEUX** (#891 — parti pris 3 de la
+            veille #873 : ChatGPT en montre **une** à 390 px là où le bureau en
+            aligne plusieurs, Perplexity **aucune**). Les quatre s'empilaient
+            sur quatre lignes à 375 × 667 sous un composeur à quai (banc du
+            2026-09-04) et poussaient le cadre vers le haut du seul écran qu'on
+            ait. Aucune n'est **retirée du DOM** : c'est un marqueur de mise en
+            page, donc rien à conditionner en JS et rien de perdu au-dessus du
+            point de rupture.
+            ⚠ Le marqueur est `max-sm:hidden` et **non** un `hidden
+            sm:inline-flex`, qui ne cacherait rien : la classe de socle d'un
+            `Bouton` porte déjà `inline-flex`, et dans le CSS que Tailwind émet
+            `.hidden` passe **avant** `.inline-flex` — c'est donc `inline-flex`
+            qui l'emporterait à toute largeur. Une variante, elle, est émise
+            après les utilitaires nus, donc elle gagne. Mesuré sur le CSS
+            compilé, et gardé par `composeur.test.tsx` ⑨ : c'est une frontière
+            entre une chaîne de classes et une cascade, exactement ce qu'aucun
+            test de rendu ne voit (leçon de #830). */}
         {filVide && amorces.length > 0 && (
           <div
             role="group"
             aria-label="Suggestions pour commencer"
             className="flex flex-wrap gap-1.5"
           >
-            {amorces.map((amorce) => (
+            {amorces.map((amorce, index) => (
               <Bouton
                 key={amorce}
                 variante="contour"
                 ton="neutre"
                 taille="petite"
+                className={index >= AMORCES_SOUS_SM ? AMORCE_HORS_SM : ""}
                 onClick={() => void soumettre(amorce)}
               >
                 {amorce}

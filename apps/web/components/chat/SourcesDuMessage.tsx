@@ -97,12 +97,22 @@ export function BoutonJoindre({
   occupe,
   idPanneau,
   onBasculer,
+  className,
 }: {
   ouvert: boolean;
   occupe: boolean;
   /** L'identifiant du panneau que le bouton déplie (`SourcesDuMessage`). */
   idPanneau: string;
   onBasculer: () => void;
+  /**
+   * Sa **place dans la rangée** du cadre, et rien d'autre (#891) : sous `sm`,
+   * la tête du rail passe devant le champ (`order-first`) quand le brouillon
+   * tient sur une ligne. L'ordre du **flux** ne bouge pas pour autant — le
+   * champ reste avant elle dans le DOM, donc la tabulation le mène à elle puis
+   * à l'envoi sans quitter le composeur, comme #726 le garantit
+   * (`composeur.test.tsx` ③).
+   */
+  className?: string;
 }) {
   return (
     <Bouton
@@ -110,6 +120,7 @@ export function BoutonJoindre({
       ton="neutre"
       taille="petite"
       icone={IconePlus}
+      className={className}
       disabled={occupe}
       aria-expanded={ouvert}
       aria-controls={ouvert ? idPanneau : undefined}
