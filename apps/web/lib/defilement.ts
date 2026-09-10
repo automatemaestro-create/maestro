@@ -25,10 +25,19 @@
  *
  * ⚠ **Aucune des deux ne mesure quoi que ce soit sous jsdom**, et c'est voulu :
  * jsdom ne calcule ni hauteur ni défilement (#308, frontière du skill
- * `/banc-mise-en-page`). `ascenseurDe` y rend l'élément racine — aucun ancêtre
- * n'ayant d'`overflow` calculé — et lui écrire un `scrollTop` ne fait rien. Le
- * fil se rend donc normalement en test, sans qu'un faux verdict de géométrie
- * puisse s'y glisser.
+ * `/banc-mise-en-page`). Écrire un `scrollTop` n'y fait rien, et `estEnBas` y
+ * lit trois zéros. Le fil se rend donc normalement en test, sans qu'un faux
+ * verdict de géométrie puisse s'y glisser.
+ *
+ * ⚠ Mais `ascenseurDe` n'y rend **pas** l'élément racine, contrairement à ce que
+ * cette note a dit de #691 à #877 : jsdom **n'implémente pas**
+ * `document.scrollingElement` (mesuré : `undefined`, donc `null` rendu), et
+ * aucun ancêtre n'y a d'`overflow` calculé tant qu'on n'en pose pas un. Le fil
+ * ne s'abonne donc à **rien** sous jsdom, et un test qui dispatcherait un
+ * `scroll` sur `document.documentElement` n'exercerait rien en rendant un vert.
+ * Ce qui remet les choses dans l'ordre du produit — où l'ascenseur est le
+ * conteneur du `Shell`, jamais la fenêtre — est un `overflowY` posé sur un
+ * ancêtre **avant** le montage : voir `tests/dernier-message.test.tsx`.
  */
 
 /**

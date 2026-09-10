@@ -61,6 +61,36 @@
  *   le remettre dans la zone de saisie inviterait à l'envoyer deux fois. C'est
  *   `ErreurReponse` qui sépare ce cas d'un refus, où rien n'est parti.
  *
+ * ## Le fil montre qu'on a décroché (#877)
+ *
+ * La règle ci-dessus était la bonne, et **rien ne la montrait** : remonté lire,
+ * on ne voyait pas qu'une réponse continuait en bas, et aucun geste ne ramenait
+ * au dernier message autrement qu'en défilant. C'est le parti pris 4 de la
+ * veille #820 (docs/30 §5.3) — ChatGPT rend un « Aller en bas » qui n'apparaît
+ * **qu'une fois remonté**, Zulip ancre le sien au coin de la colonne. La règle
+ * de #695 ne change donc pas d'un caractère : elle devient visible.
+ *
+ * Trois choses la tiennent, et la troisième est celle qui se défait sans qu'on
+ * le voie :
+ *
+ * - **le bouton n'existe que décroché.** Il est monté sur `decroche` et
+ *   disparaît dès que la vue est revenue en bas ; le cliquer redescend
+ *   (`collerEnBas`) **et** réarme le suivi, sans quoi la réponse en cours
+ *   reprendrait à s'écrire hors de l'écran (`retourAuDernierMessage`) ;
+ * - **il est enfant du formulaire**, qui est à quai : c'est ce qui le rend
+ *   collant sans avoir à connaître la hauteur du composeur, laquelle grandit
+ *   avec le brouillon (#726). Voir le commentaire du bloc pour ce qu'un
+ *   `sticky` frère aurait donné — et pour la bande que #885 lui a réservée en
+ *   refusant d'y remonter le flottant de l'assistant ;
+ * - **`suit` reste une `ref`, `decroche` est posé sur son CHANGEMENT.** Les
+ *   deux disent le même fait, l'un pour le recollement et l'autre pour le
+ *   rendu, et c'est `reglerLeSuivi` qui les pose ensemble — deux écritures
+ *   séparées finiraient par afficher le geste sur un fil qui suit déjà. Le
+ *   garde-fou est dans `surDefilement` : un cran de molette qui ne fait pas
+ *   changer d'avis ne pose rien, donc ne rend rien. Un état relu à chaque
+ *   `scroll` aurait rendu le fil entier par cran, c'est-à-dire pendant qu'une
+ *   réponse s'écrit — exactement ce que la `ref` de #695 avait évité.
+ *
  * ## Le fil se lit (#697)
  *
  * Trois choses, et la troisième est celle qu'on ne voit pas :
@@ -124,7 +154,9 @@
  * 12 cas (6 fenêtres × 2 surfaces) — ou la colonne de propriétés de `/chat` à
  * `@4xl` si on ne fait que le remonter dans son coin. La place au-dessus du
  * composeur revient au flottant de fil de #877 (« Dernier message », veille
- * #820). Le flottant reste donc en coin, la bande reste, et le fil ne porte pas
+ * #820), qui l'occupe **depuis** — transitoire, donc il ne couvre le dernier
+ * message que le temps où l'on n'y est plus (voir la section plus haut). Le
+ * flottant reste donc en coin, la bande reste, et le fil ne porte pas
  * l'assistant (`composeur.test.tsx` ②). Le prix s'est payé ailleurs : la
  * réserve que cette bande prolonge ne tenait pas au bas d'une page qui déborde
  * tant qu'elle était un padding de `main`, et #888 en a fait le dernier
@@ -169,6 +201,7 @@ import { RefusSource } from "@/components/composer/RefusSource";
 import {
   IconeArret,
   IconeEnvoyer,
+  IconeFlecheBas,
   IconeRuns,
   IconeTache,
   IconeValidations,
@@ -312,6 +345,25 @@ export function Conversation({
   // valeur ne change rien à ce qui est rendu, et la relire à chaque événement de
   // défilement ferait un rendu par cran de molette.
   const suit = useRef(true);
+  // Ce que l'écran en montre (#877) : le geste « Dernier message », rendu
+  // seulement quand la lecture a quitté le bas. Un état, donc — il décide d'un
+  // rendu — mais posé sur le **changement** de `suit` et jamais sur le geste de
+  // défilement lui-même (voir `surDefilement`).
+  const [decroche, setDecroche] = useState(false);
+
+  /**
+   * Pose le suivi **et** ce que l'écran en montre, d'un seul geste.
+   *
+   * Les deux disent le même fait sous deux formes — une `ref` pour le
+   * recollement, un état pour le rendu — et les laisser diverger afficherait
+   * « Dernier message » sur un fil qui suit déjà, ou le tairait sur un fil
+   * décroché. Trois appelants : le défilement, l'envoi d'un message et le
+   * bouton lui-même.
+   */
+  const reglerLeSuivi = useCallback((enBas: boolean) => {
+    suit.current = enBas;
+    setDecroche(!enBas);
+  }, []);
 
   /** Ramène la vue au bas du fil — sans condition, l'appelant ayant tranché. */
   const collerEnBas = useCallback(() => {
@@ -319,6 +371,18 @@ export function Conversation({
     if (cadre === null) return;
     cadre.scrollTop = cadre.scrollHeight;
   }, []);
+
+  /**
+   * Le geste de retour (#877) : redescendre **et** réarmer le suivi, pour que
+   * la réponse en cours reprenne son recollement au lieu de s'écrire à nouveau
+   * hors de l'écran. Le réarmement est explicite plutôt que laissé au `scroll`
+   * que le recollement provoque : celui-là est asynchrone, et un défilement
+   * doux le rendrait à contretemps.
+   */
+  const retourAuDernierMessage = useCallback(() => {
+    reglerLeSuivi(true);
+    collerEnBas();
+  }, [collerEnBas, reglerLeSuivi]);
 
   // Qui défile, et le lecteur suit-il ? Résolu une fois au montage : l'ascenseur
   // est celui du cadre (`Shell`), il ne change pas sous les pieds du fil.
@@ -330,11 +394,17 @@ export function Conversation({
     // lecteur : mesurer après coup dirait toujours « trop loin du bas », le
     // nouveau contenu venant précisément d'allonger la page.
     const surDefilement = () => {
-      suit.current = estEnBas(cadre);
+      const enBas = estEnBas(cadre);
+      // Le garde-fou de #877, et c'est **lui** le critère : un cran de molette
+      // qui ne fait pas changer d'avis ne pose rien, donc ne rend rien. Sans
+      // lui, un état posé à chaque `scroll` ferait un rendu du fil entier par
+      // cran — pendant qu'une réponse s'écrit, c'est-à-dire au pire moment.
+      if (enBas === suit.current) return;
+      reglerLeSuivi(enBas);
     };
     cadre.addEventListener("scroll", surDefilement, { passive: true });
     return () => cadre.removeEventListener("scroll", surDefilement);
-  }, []);
+  }, [reglerLeSuivi]);
 
   // Le fil suit la conversation : chaque nouveau message, l'indicateur d'attente
   // et **chaque incrément de la réponse en cours** (#695) ramènent la vue en
@@ -360,9 +430,9 @@ export function Conversation({
     setRefusSource(null);
     setBrouillon("");
     // Écrire, c'est reprendre le fil : quel que soit l'endroit où on lisait, on
-    // veut voir partir son propre message. Le suivi reprend donc ici, et c'est
-    // le seul endroit où il se rétablit sans geste de défilement.
-    suit.current = true;
+    // veut voir partir son propre message. Le suivi reprend donc ici — et le
+    // geste de retour disparaît avec lui (#877), le fil suivant à nouveau.
+    reglerLeSuivi(true);
     try {
       // Le téléversement **avant** l'envoi : le message ne porte que des
       // identifiants, ce qui garantit qu'un fichier n'atterrit jamais ailleurs
@@ -665,6 +735,50 @@ export function Conversation({
         }}
         className="sticky bottom-16 z-10 flex flex-col gap-2 border-t border-bord bg-background pt-3 pb-2"
       >
+        {/* **Le fil montre qu'on a décroché** (#877 — parti pris 4 de la veille
+            #820, d'après ChatGPT, dont le « Aller en bas » n'apparaît qu'une
+            fois remonté, et Zulip, qui ancre le sien au coin de la colonne).
+            La règle de suivi de #695 ne change pas : elle devient **visible**.
+            Jusqu'ici, remonté lire, rien ne disait qu'une réponse continuait en
+            bas et aucun geste n'y ramenait autrement qu'en défilant.
+
+            **Enfant du formulaire, et c'est ce qui le rend collant** : le
+            formulaire est à quai (`sticky bottom-16`), donc il est le bloc
+            conteneur d'un absolu — un `sticky` à lui, posé entre le fil et le
+            formulaire, se pinnerait sur la **même** ligne que celui-ci (64 px
+            du bas) et le recouvrirait, faute de pouvoir connaître sa hauteur,
+            qui grandit avec le brouillon (#726). Ici, `bottom-full` l'accroche
+            au bord haut du formulaire quelle que soit cette hauteur, `mb-2`
+            donne l'air, et `end-0` l'aligne à droite de la colonne — logique
+            et non `right-0`, comme le `ms-auto` du rail.
+
+            Il occupe la place que #885 lui a **réservée** en refusant d'y
+            remonter le flottant de l'assistant : celui-là est un flottant
+            d'outil, permanent ; celui-ci un flottant de fil, transitoire — et
+            c'est cette différence-là qui décide de qui a droit à cette bande.
+            Le fond opaque n'est pas décoratif, pour la même raison que celui
+            du formulaire : sans lui les bulles se liraient au travers d'un
+            bouton qui n'a qu'un filet (`contour`). Il est porté par
+            l'enveloppe et non par le `className` du `Bouton`, dont le contrat
+            dit « mise en page seulement, jamais une couleur ».
+
+            L'apparition est une transition d'état de départ
+            (`starting:`/`@starting-style`) : le bouton est **monté** quand il
+            paraît, donc il n'a pas d'avant à animer sans elle. `motion-reduce:`
+            la neutralise — le mouvement se garde (docs/30 §3.4). */}
+        {decroche && (
+          <div className="absolute end-0 bottom-full mb-2 rounded-md bg-background shadow-sm">
+            <Bouton
+              variante="contour"
+              ton="neutre"
+              icone={IconeFlecheBas}
+              className="transition duration-150 motion-reduce:transition-none starting:translate-y-1 starting:opacity-0"
+              onClick={retourAuDernierMessage}
+            >
+              Dernier message
+            </Bouton>
+          </div>
+        )}
         {/* **Un cadre à deux étages** (#726 — parti pris 1 de la veille #724,
             d'après Perplexity : le texte pleine largeur en haut, tous les
             contrôles sur un rail en bas). Le cadre **est** le contrôle : c'est
