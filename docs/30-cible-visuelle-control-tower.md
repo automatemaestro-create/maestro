@@ -1214,6 +1214,80 @@ parti pris 4 → **#892**, à part parce qu'il touche `app/layout.tsx`, donc tou
 seule surface de conversation. Le parti pris 1 n'appelle aucun code. Les tickets #728 et #873
 portent `veille::arbitree` depuis cette veille.
 
+#### Le signe de vie d'une tâche qui travaille — 2026-09-10 (#868, différée de #837)
+
+Surface : `components/SigneDeVie.tsx` (`LigneSigneDeVie`), rendue à l'identique par **trois**
+lectures de la vue d'un run — le nœud `en_cours` du Pipeline, la carte du Kanban, l'en-tête de
+couloir de la frise. Veille **différée** jouée sur pièces. Décision complète en commentaire de
+**#837**, captures dans l'atelier de la session. La question, que #837 avait nommée lui-même : « la
+forme du signe de vie (horodatage relatif ? libellé de l'outil ? pastille ? compteur d'étapes ?)
+n'est pas tranchée » — autrement dit, *cette tâche est-elle encore vivante, ou plantée ?*
+
+**Vérifié en direct** : **GitHub Actions**, sur un run **réellement en cours** (`home-assistant/core`),
+trois vues. *Liste* : anneau ambre, date de départ relative et grossière (« 1 minute ago »), et le
+**mot** « In progress » **à la place** de la durée qu'un run fini affiche (« 4m 41s »). *Run
+(graphe)* : en-tête « Status: In progress », **« Total duration — »** (un tiret) ; sur un nœud en
+cours `Check pylint 3m 31s`, **compté en direct** (relevé à `3m 15s` puis `3m 31s` sur la même
+page), l'horodatage absolu en `title` (`Sep 10, 2026, 15:42 GMT+3`) ; sur un nœud matriciel
+`0/6 jobs completed`. *Job* : « **Started 3m 47s ago** » en tête, puis la liste des étapes
+**déclarées**, celle en cours portant un **anneau ambre fixe** à son rang — aucune durée par étape,
+aucune ligne de résumé. — **Perplexity**, en plein travail, sans compte : à la place où la réponse
+va s'écrire, **une seule ligne** — une icône et « Ouverture des documents d'architecture », le geste
+**nommé en langue naturelle**. Aucune ancienneté, aucune durée, ligne **statique** ; le seul autre
+indice est le bouton d'arrêt du composeur. — **ChatGPT**, en plein travail, sans compte : **rien
+qu'un flux**, et le même bouton d'arrêt.
+
+**Non vérifié, donc non cité** — et ce sont les trois que le ticket nommait : **Langfuse**, dont le
+« projet de démo public » de `langfuse.com/docs/demo` **redirige vers une page de connexion**
+(l'exclusion de #471 tient, re-vérifiée) ; **Temporal**, UI derrière un compte, dont la doc
+`docs.temporal.io/web-ui` nomme des « Pending Activities » et des champs « Start Time, Close Time
+and Duration » mais **ne décrit ni** l'indicateur d'état d'une exécution en cours, **ni** si une
+durée y compte, **ni** une animation ; **n8n**, sans instance publique joignable, dont la doc décrit
+les **filtres** de la liste d'exécutions (« Failed, Running, Success, Waiting ») et non le rendu
+d'une ligne.
+
+**Quatre partis pris**, dont **deux confirment** ce que #837 avait décidé sans référence : **le
+libellé du geste en cours est le bon support** — Perplexity le nomme en langue naturelle, et le
+contre-exemple le confirme au lieu de le contredire, GitHub Actions ne nommant pas le geste parce
+que ses étapes sont **déclarées d'avance** et se désignent par leur **rang** ; les gestes d'un agent
+ne sont pas énumérables, donc la liste n'existe pas *(Perplexity, GHA a contrario)* · **rien ne
+pulse en plus** — ligne statique chez Perplexity, anneau ambre **fixe** chez GitHub, aucune des
+trois références ne fait battre son signe *(Perplexity, GHA)* · **montrer aussi depuis combien de
+temps la tâche travaille**, à côté de l'âge du geste — les deux mesures ne disent pas la même chose
+et `lib/format.ts` porte déjà les deux mots avec leur raison, « il y a 12 s » (`formatAnciennete`)
+dit *ça bouge*, « depuis 6 min » (`formatDepuis`) dit *ça dure*, et seule la seconde distingue une
+tâche vivante d'une tâche vivante mais **partie trop loin** ; la place existe (la ligne chrono du
+nœud et de la carte) et reste vide tant que la tâche n'est pas soldée *(GHA)* · **dater le geste au
+survol**, l'horodatage absolu en `title` derrière la durée relative — « il y a 4 min » ne dit pas
+*de quand* *(GHA)*.
+
+**Refusés sur place, avec leur raison** : le compteur `N/M` de GitHub — pas de sous-unités à cet
+endroit, la checklist de #489 occupe déjà ce rôle, et ce serait un troisième chiffre dans une boîte
+de 16 rem (§4) ; l'étape désignée par son **rang dans une liste** — impossible par construction ; le
+**tiret** de GitHub à la place d'une durée de run en cours — c'est l'inverse du troisième parti pris,
+et la plainte d'origine de #834.
+
+**Un constat hors partis pris, dont la mesure a déplacé la portée.** `LigneSigneDeVie` écrit ses
+trois couleurs **hors palette** (`text-neutral-600 dark:text-neutral-300`, `text-neutral-500
+dark:text-neutral-400`, `text-sky-600 dark:text-sky-400`) — ce que le §6.1 dit que la palette a
+supprimé. Mais le compte a changé le sujet : **468 occurrences de `dark:*-neutral-*` dans 62
+fichiers** de `apps/web` (mesuré le 2026-09-10). `SigneDeVie` n'est pas une exception, c'est la
+norme, et repeindre ce seul fichier serait arbitraire tout en laissant le compte monter au prochain
+écran — les 542 du §6.1 étaient un objectif, il en reste 468 et rien ne mesure l'écart. Ni
+`a11y.test.tsx` (qui ne balaie que les contrôles de **saisie**, #832) ni `contraste.test.ts` (qui lit
+les **octets de la feuille**, #534) ne l'attrape : les deux jugent la palette, jamais son usage dans
+les écrans. → **#895**, sur le modèle de #832 : une sonde qui refuse le **prochain**, et le résidu
+**nommé avec son compte**, si bien qu'il ne peut que décroître — jamais une migration des 468.
+
+**Ce que la veille n'a pas regardé** : le thème **sombre** (les trois captures sont en clair) ; le
+cas **plusieurs tâches en vol**, qu'aucune référence ne montrait alors que c'est le régime normal
+d'un run à concurrence 3 ; et le **libellé lui-même** — sa longueur, sa troncature, ce que l'agent y
+met —, la veille jugeant la *forme* du signe et non la qualité de la phrase que le backend sert.
+
+Partis pris 3 et 4 → **#894** (même ligne, même composant : un seul ticket). Les partis pris 1 et 2
+n'appellent aucun code — ils confirment. Constat hors partis pris → **#895**. Les tickets #837 et
+#868 portent `veille::arbitree` depuis cette veille.
+
 ---
 
 ## 6. Recommandation
