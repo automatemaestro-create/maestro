@@ -189,6 +189,19 @@ const SURFACES = ["surface", "surface-creuse"];
  */
 const TONS_ACTION = ["accent", "info", "attention", "alerte"];
 
+/**
+ * Le sixième ton, `provenance` (#912) — l'origine d'un élément, ni valence ni
+ * action. Il n'entre **pas** dans `TONS`, et les deux paires qui lui manquent
+ * sont des décisions et non des trous : pas de `sur-ton` dessus, parce que rien
+ * ne s'y écrit (son aplat est la pastille du badge, son libellé se pose sur le
+ * `-creux`, et `TonBouton` ne le connaît pas — violet-500 ne rendrait d'ailleurs
+ * que 4,40:1 sous le blanc, ce que ce test doit continuer de refuser le jour où
+ * quelqu'un l'écrira) ; pas de `-appui`, parce qu'un badge n'est jamais survolé,
+ * comme `positif`. Ce qui reste — le ton écrit sur les deux surfaces et sur son
+ * creux, l'aplat comme indicateur — est exactement ce que le produit rend.
+ */
+const TON_PROVENANCE = "provenance";
+
 const PAIRES: readonly Paire[] = [
   // Le texte courant, sur les deux surfaces.
   ...SURFACES.flatMap((fond): Paire[] => [
@@ -238,6 +251,33 @@ const PAIRES: readonly Paire[] = [
       }),
     ),
   ]),
+
+  // ── La provenance (#912) ─────────────────────────────────────────────────
+  // Le ton écrit, sur les deux surfaces puis sur son creux — la même promesse
+  // que les cinq autres —, et l'aplat comme indicateur (la pastille, 1.4.11).
+  // Ni `sur-ton` ni `-appui` : voir `TON_PROVENANCE`.
+  ...SURFACES.map(
+    (fond): Paire => ({
+      avant: `${TON_PROVENANCE}-texte`,
+      arriere: fond,
+      seuil: SEUIL_TEXTE,
+      motif: `le ton « ${TON_PROVENANCE} » écrit`,
+    }),
+  ),
+  {
+    avant: `${TON_PROVENANCE}-texte`,
+    arriere: `${TON_PROVENANCE}-creux`,
+    seuil: SEUIL_TEXTE,
+    motif: `la pastille « ${TON_PROVENANCE} »`,
+  },
+  ...SURFACES.map(
+    (fond): Paire => ({
+      avant: TON_PROVENANCE,
+      arriere: fond,
+      seuil: SEUIL_NON_TEXTE,
+      motif: `l'aplat « ${TON_PROVENANCE} » comme indicateur`,
+    }),
+  ),
 
   // Ce qui borne un contrôle — champ, case, contour de bouton.
   ...SURFACES.map(
@@ -467,13 +507,14 @@ describe("la couverture du filet", () => {
     }
   });
 
-  it("mesure les 43 paires par thème qu'annoncent #533 et #535", () => {
-    // Le chiffre est celui du README et de `globals.css` (« 86 paires mesurées,
-    // 43 par thème » : les 36 de #533, plus les 7 dont #535 a besoin pour son
-    // état survolé). Il garde le CONSTRUCTEUR de la table : une boucle qui
-    // n'itère plus rendrait une table courte, donc un vert plus rapide et faux.
-    // S'il bouge un jour, il bouge aux trois endroits ensemble.
-    expect(PAIRES).toHaveLength(43);
+  it("mesure les 48 paires par thème qu'annoncent #533, #535 et #912", () => {
+    // Le chiffre est celui du README et de `globals.css` (« 96 paires mesurées,
+    // 48 par thème » : les 36 de #533, plus les 7 dont #535 a besoin pour son
+    // état survolé, plus les 5 du ton `provenance` de #912). Il garde le
+    // CONSTRUCTEUR de la table : une boucle qui n'itère plus rendrait une table
+    // courte, donc un vert plus rapide et faux. S'il bouge un jour, il bouge aux
+    // trois endroits ensemble.
+    expect(PAIRES).toHaveLength(48);
   });
 
   it("couvre chaque token de la palette, ou nomme pourquoi il en est exempt", () => {

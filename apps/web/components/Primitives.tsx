@@ -793,8 +793,17 @@ export function EnTeteSection({
 /**
  * Les tons d'un badge — un sens, pas une couleur : `positif` pour ce qui va
  * bien, `attention` pour ce qui attend un geste, `alerte` pour ce qui a
- * échoué, `info` pour un fait neutre mis en avant, `accent` pour une
- * provenance (proposition, personnalisation).
+ * échoué, `info` pour un fait neutre mis en avant, `provenance` pour l'origine
+ * d'un élément (proposition, personnalisation, découverte).
+ *
+ * Le sixième s'est appelé `accent` jusqu'à #912, tout en rendant du **violet**
+ * quand le token `--accent` du socle est **vert** : ce sont deux rôles — la
+ * provenance d'un élément, l'action à faire —, et l'homonymie aurait fait
+ * repeindre en vert toutes les pastilles de proposition au premier « repli sur
+ * le token ». Le nom suit désormais le rôle que ce commentaire disait déjà, et
+ * le ton est écrit sur ses tokens (`--provenance`, `-texte`, `-creux`, posés
+ * sur les valeurs violettes qu'il rendait) ; `TonBouton` garde son `accent`,
+ * qui est le bon nom d'une action.
  */
 const TON_PLEIN = {
   neutre: "bg-neutral-200 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300",
@@ -803,9 +812,16 @@ const TON_PLEIN = {
     "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
   attention: "bg-amber-100 text-amber-900 dark:bg-amber-900 dark:text-amber-200",
   alerte: "bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300",
-  accent: "bg-violet-200 text-violet-900 dark:bg-violet-900 dark:text-violet-200",
+  provenance: "bg-provenance-creux text-provenance-texte",
 } as const;
 
+/**
+ * Le contour reste écrit à la main pour les six tons, `provenance` compris :
+ * son filet et son libellé sont les pas -300/-700 (clair) et -800/-300 (sombre)
+ * qu'aucun token du socle ne porte — `-texte` est le pas -900/-200, `-creux` un
+ * fond. L'y replier changerait le rendu ; ces paires restent donc comptées dans
+ * le résidu de `tests/couleurs.test.ts`.
+ */
 const TON_CONTOUR = {
   neutre: "border border-neutral-300 text-neutral-600 dark:border-neutral-700 dark:text-neutral-400",
   info: "border border-sky-300 text-sky-700 dark:border-sky-800 dark:text-sky-400",
@@ -814,7 +830,7 @@ const TON_CONTOUR = {
   attention:
     "border border-amber-300 text-amber-700 dark:border-amber-800 dark:text-amber-300",
   alerte: "border border-rose-300 text-rose-700 dark:border-rose-800 dark:text-rose-400",
-  accent:
+  provenance:
     "border border-violet-300 text-violet-700 dark:border-violet-800 dark:text-violet-300",
 } as const;
 
@@ -825,7 +841,7 @@ const TON_PASTILLE = {
   positif: "bg-emerald-500",
   attention: "bg-amber-500",
   alerte: "bg-rose-500",
-  accent: "bg-violet-500",
+  provenance: "bg-provenance",
 } as const;
 
 export type TonBadge = keyof typeof TON_PLEIN;

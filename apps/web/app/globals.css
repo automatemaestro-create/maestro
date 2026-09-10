@@ -34,9 +34,9 @@
       un vert « presque emerald » se verrait côte à côte avec `bg-emerald-700`.
       Les swatches empruntées sont nommées en regard de chaque valeur.
 
-   3. **Chaque paire tient AA, et le chiffre est connu** — 86 paires mesurées
-      (43 par thème), 0 faute : les 72 de ce lot, plus les 14 qu'ajoute l'état
-      survolé de #535. Seuils : ≥ 4,5:1 pour tout ce qui est du texte, ≥ 3:1 pour ce qui borne
+   3. **Chaque paire tient AA, et le chiffre est connu** — 96 paires mesurées
+      (48 par thème), 0 faute : les 72 de ce lot, plus les 14 qu'ajoute l'état
+      survolé de #535, plus les 10 du ton `provenance` (#912). Seuils : ≥ 4,5:1 pour tout ce qui est du texte, ≥ 3:1 pour ce qui borne
       un contrôle ou porte un état (WCAG 2.2, 1.4.3 et 1.4.11). Les marges les
       plus courtes sont `bord-fort` sur `surface-creuse` (3,40) et
       `alerte-texte` sur `alerte-creux` (5,02). Depuis le lot #534 c'est un test
@@ -114,7 +114,9 @@
      c'est une propriété de la palette, choisie et vérifiée — chaque ton plein
      ci-dessous passe 4,5:1 avec cette valeur-là. Un ton futur qui ne la
      tiendrait pas prend son propre `--sur-<ton>` ; il n'y en a aucun besoin
-     aujourd'hui, et cinq tokens identiques cacheraient l'invariant. */
+     aujourd'hui, et cinq tokens identiques cacheraient l'invariant.
+     (`provenance`, le sixième, n'est pas un ton plein : rien ne s'écrit sur
+     son aplat — voir sa déclaration plus bas.) */
   --sur-ton: #ffffff;
 
   /* L'accent — la couleur d'action. Le produit est vert depuis #245 et le reste
@@ -146,6 +148,33 @@
   --alerte-texte: #c70036; /* rose-700 */
   --alerte-creux: #ffe4e6; /* rose-100 */
   --alerte-appui: #a50036; /* rose-800 — 7,92:1 avec sur-ton */
+
+  /* Le sixième ton du badge : la **provenance** d'un élément (proposition,
+     personnalisation, découverte) — pas une valence, pas une action (#912,
+     docs/30 §5.3). Il s'appelait `accent` dans `BadgeEtat` tout en rendant du
+     violet, quand `--accent` est vert : l'homonymie aurait fait repeindre en
+     vert toutes les pastilles de proposition au premier « repli sur le token ».
+     Le violet n'a aucun sens universel (origine chez Atlassian, état chez
+     Primer), d'où un nom par le **rôle**.
+
+     Ce sont les valeurs que le badge rendait **déjà** — un renommage et une
+     mise en tokens, jamais un changement de rendu —, et trois choses en
+     découlent, qui ne sont pas des oublis :
+     - `-texte` et `-creux` **s'échangent** entre les thèmes (violet-900 sur
+       violet-200 en clair, violet-200 sur violet-900 en sombre : 7,95:1 les
+       deux fois) ;
+     - l'aplat vaut **violet-500 dans les deux thèmes** — c'est la pastille du
+       badge, et en sombre les cinq autres tons éclaircissent leur aplat parce
+       qu'un libellé s'y pose ; ici rien ne s'y écrit, donc rien à éclaircir,
+       et le pas -500 tient 4,07:1 au pire comme indicateur (seuil 3:1) ;
+     - pas de `-appui` (jamais une action, comme `positif`), et **pas de
+       `sur-ton` dessus** : 4,40:1 en clair — le seul ton plein qui ne le
+       tiendrait pas, et il n'a pas à le tenir, `TonBouton` ne le connaît pas.
+       Le jour où un bouton `provenance` naît, il lui faut sa propre valeur ou
+       son `--sur-provenance`, pas une exception dans le test. */
+  --provenance: #8e51ff; /* violet-500 — 4,40:1 sur surface, 4,22:1 sur surface-creuse */
+  --provenance-texte: #4d179a; /* violet-900 — 11,03:1 sur surface */
+  --provenance-creux: #ddd6ff; /* violet-200 — porte son texte à 7,95:1 */
 }
 
 [data-theme="sombre"] {
@@ -198,6 +227,13 @@
   --alerte-texte: #ff637e; /* rose-400 */
   --alerte-creux: #4d0218; /* rose-950 */
   --alerte-appui: #ffa1ad; /* rose-300 — 10,33:1 avec sur-ton */
+
+  /* `provenance` : les mêmes trois valeurs qu'en clair, texte et creux
+     échangés — c'est ce que `dark:bg-violet-900 dark:text-violet-200`
+     rendait. L'aplat ne bouge pas (voir le bloc clair). */
+  --provenance: #8e51ff; /* violet-500 — 4,07:1 sur surface, 4,50:1 sur surface-creuse */
+  --provenance-texte: #ddd6ff; /* violet-200 — 12,92:1 sur surface */
+  --provenance-creux: #4d179a; /* violet-900 — porte son texte à 7,95:1 */
 }
 
 /* Le mappage vers les utilitaires (`bg-surface`, `text-texte-secondaire`,
@@ -247,6 +283,10 @@
   --color-alerte-texte: var(--alerte-texte);
   --color-alerte-creux: var(--alerte-creux);
   --color-alerte-appui: var(--alerte-appui);
+
+  --color-provenance: var(--provenance);
+  --color-provenance-texte: var(--provenance-texte);
+  --color-provenance-creux: var(--provenance-creux);
 }
 
 /* =====================================================================

@@ -179,7 +179,9 @@ const APPARENCE: Record<EtatNoeud, ApparenceNoeud> = {
   },
   [NOEUD_BLOQUE]: {
     libelle: "Bloquée",
-    ton: "accent",
+    // Le violet d'avant #912, conservé au pixel : un état qui emprunte le ton
+    // de la provenance, comme dans `Kanban` et `FriseRun`.
+    ton: "provenance",
     surface: "pleine",
     icone: IconeStatutBloquee,
     pulse: false,

@@ -518,7 +518,7 @@ function EntreeBibliotheque({
           distinguerait plus rien.
         */}
         {!montable && (
-          <BadgeEtat ton="accent" contour>
+          <BadgeEtat ton="provenance" contour>
             Découverte
           </BadgeEtat>
         )}

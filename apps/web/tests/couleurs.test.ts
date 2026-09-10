@@ -267,16 +267,10 @@ const MANQUES_DU_SOCLE: readonly Manque[] = [
       "Les cinq tons ont leur `-creux`/`-texte`, le neutre n'en a pas : c'est " +
       "le seul badge du socle qui doive s'écrire à la main",
   },
-  {
-    token: "provenance",
-    temoin: "components/Primitives.tsx",
-    classe: "dark:bg-violet-900",
-    raison:
-      "le badge `accent` du socle est **violet** quand le token `--accent` est " +
-      "vert : ce sont deux rôles (la provenance d'un élément, l'action à " +
-      "faire), et les confondre repeindrait en vert toutes les pastilles de " +
-      "proposition — un changement de rendu, pas une migration",
-  },
+  // `provenance` était le sixième manque : comblé par #912 (`--provenance`,
+  // `-texte`, `-creux`, sur les valeurs violettes que le badge rendait déjà).
+  // Sa ligne est partie parce que le contrôle ci-dessous l'exigeait — c'est
+  // exactement ce pour quoi il existe.
   {
     token: "sur-ton-bord",
     temoin: "components/chat/SourcesDuFil.tsx",
@@ -430,12 +424,14 @@ const RESIDU = new Map<string, number>([
   ["components/PanneauRunsImmobiles.tsx", 4],
   ["components/PanneauValidations.tsx", 5],
   ["components/PosteVide.tsx", 13], // manque : `code`
-  // Le socle lui-même : la carte, les six tons du badge, l'en-tête de section.
+  // Le socle lui-même : la carte, les tons du badge, l'en-tête de section.
   // C'est la ligne qui compte double — une paire retirée ici retire des
   // recopies partout, et une paire ajoutée s'imprime sur tous les écrans à la
   // fois. Elle est dans le tableau comme les autres : l'écarter aurait exempté
-  // le fichier le plus visible du produit.
-  ["components/Primitives.tsx", 43], // manques : `neutre`, `provenance`
+  // le fichier le plus visible du produit. 43 au lot ; #912 en a retiré deux en
+  // écrivant le ton `provenance` du badge plein sur ses tokens (son contour
+  // reste à la main, comme celui des cinq autres tons).
+  ["components/Primitives.tsx", 41], // manque : `neutre`
   ["components/RepartitionAgents.tsx", 7], // manque : `serie`
   ["components/SelecteurReassignation.tsx", 4],
   ["components/SigneDeVie.tsx", 3],
@@ -471,7 +467,7 @@ const RESIDU = new Map<string, number>([
 ]);
 
 /** Le compte du README — épinglé ici pour qu'il ne puisse pas dériver en silence. */
-const TOTAL_ANNONCE = 689;
+const TOTAL_ANNONCE = 687;
 
 /** Ce que le produit porte aujourd'hui, fichier par fichier. */
 function residuMesure(): Map<string, string[]> {

@@ -117,7 +117,10 @@ const COLONNES: {
   {
     statut: "bloquee",
     titre: "Bloquées",
-    ton: "accent",
+    // Le violet du badge, tel qu'il était rendu avant #912 — un **état** qui
+    // emprunte le ton de la provenance. Le renommage n'a pas le droit de
+    // changer le rendu ; lui donner un ton d'état est un autre ticket.
+    ton: "provenance",
     icone: IconeStatutBloquee,
   },
   {
