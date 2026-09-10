@@ -90,7 +90,7 @@ import {
 } from "@/components/Primitives";
 import { ATTENTES } from "@/components/runs/EtatRun";
 import type { Reassigner } from "@/components/SelecteurReassignation";
-import { LigneSigneDeVie } from "@/components/SigneDeVie";
+import { ChronoEnVol, LigneSigneDeVie } from "@/components/SigneDeVie";
 import { detailDe, normaliserEtapes } from "@/lib/detailTache";
 import { ATTENTE_VALIDATION } from "@/lib/execution";
 import { formatCout, formatDuree } from "@/lib/format";
@@ -740,6 +740,15 @@ function NoeudCarte({
   // lien, reste strictement inerte — rien n'annonce un panneau qui serait vide.
   const ouvrable = tache !== undefined && !detailDe(tache).vide;
 
+  // Depuis combien de temps cette tâche travaille (#894) — sous **la même**
+  // réserve que le signe de vie juste en dessous, et pas une réserve à elle :
+  // les deux temps disent « ça travaille », donc ils se taisent ensemble dès
+  // que la boîte est dessinée autrement qu'« En cours » (l'attente humaine
+  // l'emporte, cf. `lib/graphe.etatDuNoeud`). Le second temps voyage dans la
+  // valeur du premier, si bien qu'il n'y a rien de plus à aller chercher.
+  const travailleDepuis =
+    (etat === NOEUD_EN_COURS && noeud.activite?.travaille_depuis) || null;
+
   const surClic = (evenement: MouseEvent<HTMLElement>) => {
     if (!ouvrable || tache === undefined) return;
     if ((evenement.target as HTMLElement).closest("a, select, option, button")) {
@@ -846,14 +855,26 @@ function NoeudCarte({
         </div>
       )}
 
-      {(noeud.cout_usd !== null || noeud.duree_ms !== null) && (
+      {/* La ligne chrono, et les **deux** durées qu'elle peut porter (#894) :
+          celle d'une tâche soldée (`duree_ms`, un fait figé) et, tant qu'elle
+          travaille, le temps qu'elle y passe — compté en direct dans la place
+          existante, jamais dans une ligne de plus. Les deux ne coexistent pas :
+          `duree_ms` n'arrive qu'à l'issue, quand plus rien ne travaille. */}
+      {(noeud.cout_usd !== null || noeud.duree_ms !== null || travailleDepuis !== null) && (
         <p className="chiffre mt-1 flex justify-between gap-2 text-annexe text-neutral-500 dark:text-neutral-400">
           <span>{noeud.cout_usd === null ? "" : formatCout(noeud.cout_usd)}</span>
-          {noeud.duree_ms !== null && (
+          {travailleDepuis !== null ? (
             <span className="inline-flex items-center gap-1">
               <IconeChrono className="size-3.5 shrink-0" />
-              {formatDuree(noeud.duree_ms)}
+              <ChronoEnVol depuis={travailleDepuis} />
             </span>
+          ) : (
+            noeud.duree_ms !== null && (
+              <span className="inline-flex items-center gap-1">
+                <IconeChrono className="size-3.5 shrink-0" />
+                {formatDuree(noeud.duree_ms)}
+              </span>
+            )
           )}
         </p>
       )}

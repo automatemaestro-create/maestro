@@ -549,6 +549,36 @@ l'écran, faute de référence**, et ces décisions sont consignées dans le tic
 surface touchée. La veille se jouera **sur pièces**, et c'est son verdict qui dira si ces partis
 pris tiennent au banc du §1 ; jusque-là ils valent comme décision, pas comme référence.
 
+**Ce que la veille a rendu, et ce que #894 en a fait (2026-09-10).** Elle a **confirmé** deux des
+trois décisions prises sans référence — le geste nommé en langue naturelle, et le fait que rien ne
+pulse en plus — et fait bouger la troisième : **il manquait un second temps**. GitHub Actions, sur
+un run réellement en cours, en montre deux — la durée d'un job **comptée en direct** sur son nœud,
+et « Started 3m 47s ago » sur son en-tête —, quand nous n'avions que l'âge du dernier geste. Les
+deux ne disent pas la même chose, et `lib/format.ts` portait déjà les deux mots avec leur raison :
+`formatAnciennete` **situe un fait passé** (« il y a 12 s » : *ça bouge*), `formatAttente` **mesure
+une attente qui dure** (« depuis 6 min » : *ça dure*). Seule la seconde distingue une tâche vivante
+d'une tâche **vivante mais partie trop loin** — celle qui enchaîne des gestes depuis vingt minutes
+sur un sujet qui en demandait deux. Deux choses ont suivi, sur la même ligne du même composant :
+
+- **La valeur n'existait pas, et le ticket a tranché sur pièces.** La ligne chrono est alimentée par
+  `usage.duree_ms`, que le moteur ne pose qu'à l'**issue** de la tâche (`StepUsage.avec_duree`) : un
+  relevé en cours (#835) porte des tokens et un coût, jamais une durée, si bien que la place
+  affichait « — » ou rien pendant tout le travail. Elle est donc **dérivée du début de la tâche
+  côté projection** (`EtatTache.debut`, l'horodatage du passage `en_cours`) et **jointe au signe de
+  vie** plutôt que transportée à part : un agent multi-instances (#100) porte plusieurs tâches et le
+  couloir n'a qu'un en-tête, si bien que deux champs séparés y montreraient le geste d'une tâche
+  avec l'ancienneté d'une autre. Une valeur, une tâche — et la règle « seule une tâche `en_cours` en
+  porte un » décide des **deux** temps d'un coup, sans qu'aucune vue la rejoue.
+- **La place, encore une fois, était déjà là.** Sur le nœud et la carte, c'est la **ligne chrono** —
+  celle qui montre `formatDuree(duree_ms)` une fois la tâche soldée, et qui ne disait rien en vol ;
+  les deux durées ne coexistent jamais. L'en-tête de couloir de la frise n'a pas de ligne chrono :
+  son unique place est la ligne du signe, d'où le seul `avecChrono` du dépôt. Une information, deux
+  places existantes, **un** composant — et `sobriete.test.tsx` compte le même nombre de places
+  qu'avant. Le geste porte en outre son **horodatage absolu en `title`** (quatrième parti pris) :
+  « il y a 4 min » ne dit pas *de quand*, et c'est la première question devant un run qui traîne —
+  un complément, jamais l'information seule, ce qui est la raison pour laquelle `title` y suffit là
+  où #536 exige `Infobulle`.
+
 **Ce qui le garde.** Côté contrat, `tests/test_run_qui_travaille.py` (#838) compte la présence des
 champs et le contenu des payloads — jamais une durée —, et chaque contrôle y rougit d'abord sur la
 forme d'**avant** (un couloir en cours sans signe, une carte en vol restée `null`, `TYPES_FRISE`

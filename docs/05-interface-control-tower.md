@@ -469,7 +469,10 @@ replient en lignes en dessous, au lieu d'être toutes tassées de front.
   de vie** (#837) : le dernier geste de l'agent et son ancienneté, qui compte à la
   seconde. La carte ne décide pas si elle en a un — la projection ne sert
   `activite` que sur une tâche `en_cours` (#836, §6.11) —, et une tâche arrêtée
-  rend la carte d'avant, au pixel près.
+  rend la carte d'avant, au pixel près. Sa **durée**, elle, dit deux choses selon
+  le moment (#894) : le temps passé depuis que la tâche travaille tant qu'elle
+  tourne (« depuis 6 min », compté en direct), le temps qu'elle a pris une fois
+  soldée — la même place, jamais les deux à la fois.
 - **Réassignation manuelle** d'un agent à une tâche (EF-11/EF-20), depuis la
   carte comme depuis le panneau de détail.
 - **Le détail s'ouvre sur place** (#251) : un clic sur la carte ouvre un panneau
@@ -1129,6 +1132,24 @@ dessin d'avant ce lot. La démo publie deux gestes pendant la pulsation QA, seul
 où une de ses tâches travaille assez longtemps pour qu'on voie le signe compter.
 Couverture (#838) : [`apps/web/tests/signe-de-vie.test.tsx`](../apps/web/tests/signe-de-vie.test.tsx)
 côté écran — détail en §6.13bis —, `tests/test_run_qui_travaille.py` côté contrat.
+
+**Deux temps, depuis #894** (veille #868, docs/30 §4.5). Le signe disait « ça bouge »,
+jamais **depuis combien de temps la tâche travaille** — la mesure qui distingue une
+tâche vivante d'une tâche vivante mais **partie trop loin**. Il porte donc un second
+champ, `travaille_depuis`, l'instant du passage `en_cours` (`EtatTache.debut`), joint
+au geste par la propriété qui tranche déjà s'il y a un signe : les deux temps arrivent
+ensemble ou pas du tout, et un couloir multi-instances (§6.11) ne peut pas montrer le
+geste d'une tâche avec l'ancienneté d'une autre. Il ne pouvait pas se lire ailleurs —
+`horodatage` est le **dernier** changement d'état (une relance le repousse) et
+`usage.duree_ms` n'existe qu'à l'issue, un relevé en cours (#835) portant tokens et
+coût mais aucune durée. Côté écran, la valeur se pose dans la **place existante** :
+la ligne chrono du nœud et de la carte, celle qui montre `formatDuree(duree_ms)` une
+fois la tâche soldée — les deux durées ne coexistent jamais —, et, faute d'une telle
+ligne dans un en-tête de couloir, sur la ligne du signe elle-même. Elle se lit
+« depuis 6 min » (`formatAttente`) et non « il y a 6 min » : *situer un fait passé* et
+*mesurer une attente qui dure* sont deux questions, et les fondre reperdrait la
+distinction que le ticket a posée. Le geste porte en outre son **horodatage absolu en
+`title`** — « il y a 4 min » ne dit pas *de quand*.
 
 Deux notes de lecture, jamais confondues : `plan_connu: false` dit que le run n'a pas
 publié son plan (nœuds reconstruits, aucune arête connue) ; `plat: true` qu'il n'a
@@ -4152,7 +4173,11 @@ bascule, et se lit avec n'importe laquelle des quatre. Le décompte de cette sec
       "etapes": [ { "libelle": "Lister les entités", "etat": "faite" } ],
       // Le signe de vie (#836) : null sur tout nœud qui ne travaille pas —
       // celui-ci est terminé. Sur le nœud `en_cours`, l'instant et un libellé
-      // court du dernier geste de son agent : { "horodatage": "…", "libelle": "…" }.
+      // court du dernier geste de son agent, plus l'instant où la TÂCHE s'est
+      // mise au travail (#894) — deux temps, une seule valeur :
+      // { "horodatage": "…", "libelle": "…", "travaille_depuis": "…" }.
+      // `travaille_depuis` est null quand le passage `en_cours` n'était pas
+      // horodaté : la vue n'affiche alors que le premier temps.
       "activite": null }
   ],
   // `de` l'amont, `vers` l'aval : le sens du FLUX, jamais celui de la
@@ -4401,9 +4426,12 @@ dise.
     { "agent": "developpeur", "role": "Développeur", "repli": false,
       "entrees": ["j-0007", "j-0008"],
       // Le signe de vie du couloir (#836) : le dernier geste de l'agent sur une
-      // tâche qui travaille — un attribut de l'en-tête, JAMAIS une entrée.
+      // tâche qui travaille — un attribut de l'en-tête, JAMAIS une entrée. Et
+      // depuis quand CETTE tâche-là travaille (#894) : en multi-instances,
+      // les deux temps viennent de la même tâche, celle du geste retenu.
       "activite": { "horodatage": "2026-08-28T10:00:42+00:00",
-                    "libelle": "Écrit api/contacts.py, puis relit le résultat" } },
+                    "libelle": "Écrit api/contacts.py, puis relit le résultat",
+                    "travaille_depuis": "2026-08-28T09:54:30+00:00" } },
     { "agent": "devops", "role": "DevOps", "repli": false, "entrees": ["j-0009"],
       "activite": null },   // sa tâche attend un humain : elle ne travaille pas
     { "agent": "qa", "role": "Testeur", "repli": false, "entrees": [], "activite": null },
@@ -4526,7 +4554,7 @@ chronomètre en CI mesure la charge de la machine, règle de #577).
 
 | lecture | ce qui bouge pendant la tâche | ce qui n'y entre pas |
 | --- | --- | --- |
-| la carte de tâche (`GET /api/taches`, le Kanban §2.2) | `activite` — le dernier geste de l'agent, horodatage et libellé court (§6.11) ; `cout_usd` avec `cout_partiel: true` et `usage` — ce qu'elle a consommé jusqu'ici (§2.4.3) | ni statut ni colonne : une tâche qui travaille ou dépense **ne bouge pas** au Kanban |
+| la carte de tâche (`GET /api/taches`, le Kanban §2.2) | `activite` — le dernier geste de l'agent, horodatage et libellé court, plus `travaille_depuis`, l'instant où la tâche s'est mise au travail (§6.11, #894) ; `cout_usd` avec `cout_partiel: true` et `usage` — ce qu'elle a consommé jusqu'ici (§2.4.3) | ni statut ni colonne : une tâche qui travaille ou dépense **ne bouge pas** au Kanban ; et **aucune durée** — `usage.duree_ms` n'arrive qu'à l'issue, c'est pour cela que le second temps se dérive du départ |
 | le nœud du graphe (§6.11) | les mêmes `activite`, `cout_usd`/`cout_partiel`, plus les `etapes` que l'agent coche (#489) | rien d'autre : le signe est **la** différence entre deux lectures d'une boîte en cours |
 | le couloir de la frise (§6.13) | `activite` sur l'**en-tête** du couloir | **aucune entrée** : `entrees`, `total` et le tri sont ceux d'avant, au JSON près |
 | le résumé du run (`GET /api/executions`, §6.1) | `cout_usd` — le soldé **plus** le dernier relevé de chaque tâche en cours — et `cout_partiel` | le grand livre (`/cout`) et la vue analytique restent **soldé seulement**, chaque ligne comptée une fois |

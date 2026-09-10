@@ -50,7 +50,7 @@ import {
   SelecteurReassignation,
   type Reassigner,
 } from "@/components/SelecteurReassignation";
-import { LigneSigneDeVie } from "@/components/SigneDeVie";
+import { ChronoEnVol, LigneSigneDeVie } from "@/components/SigneDeVie";
 import { detailDe } from "@/lib/detailTache";
 import {
   BadgeEtat,
@@ -309,6 +309,28 @@ function CarteTache({
   const ouvrable = !detailDe(tache).vide;
   const nom = tache.titre || tache.id;
 
+  // Depuis combien de temps cette tâche travaille (#894). Le second temps
+  // voyage dans le signe de vie, qui n'est servi que pour une tâche en cours :
+  // la carte n'a donc aucune règle à rejouer — elle le montre quand elle l'a,
+  // exactement comme la ligne du signe juste au-dessus.
+  const travailleDepuis = tache.activite?.travaille_depuis || null;
+
+  // La ligne chrono porte **deux** durées selon le moment : celle d'une tâche
+  // soldée (`duree_ms`, un fait figé) et, tant qu'elle travaille, le temps
+  // qu'elle y passe — dans la place existante, qui affichait « — » en vol faute
+  // d'une durée que le relevé en cours (#835) ne mesure pas. Les deux ne
+  // coexistent jamais : `duree_ms` n'arrive qu'à l'issue.
+  const chrono = (
+    <span className="inline-flex items-center gap-1">
+      <IconeChrono className="size-3.5 shrink-0" />
+      {travailleDepuis !== null ? (
+        <ChronoEnVol depuis={travailleDepuis} />
+      ) : (
+        formatDuree(tache.usage?.duree_ms ?? null)
+      )}
+    </span>
+  );
+
   // Le sélecteur de réassignation et le lien du ticket externe gardent leur
   // geste : un clic dessus ne doit pas ouvrir le panneau par-dessus l'action
   // qu'on vient de lancer. Le titre, lui, est un vrai bouton — c'est par lui que
@@ -378,7 +400,7 @@ function CarteTache({
           {tache.horodatage ? ` · ${formatHeure(tache.horodatage)}` : ""}
         </span>
       </p>
-      {tache.usage && (
+      {tache.usage ? (
         // La ventilation entrée/sortie ne se lit nulle part ailleurs : elle
         // passe donc du `title` à l'infobulle (#536).
         <Infobulle
@@ -389,11 +411,21 @@ function CarteTache({
             <IconeJetons className="size-3.5 shrink-0" />
             {formatTokens(tache.usage.tokens_total)} tokens
           </span>
-          <span className="inline-flex items-center gap-1">
-            <IconeChrono className="size-3.5 shrink-0" />
-            {formatDuree(tache.usage.duree_ms)}
-          </span>
+          {chrono}
         </Infobulle>
+      ) : (
+        // Une tâche qui travaille **sans mesure d'usage** : le second temps a
+        // quand même sa place. Le cas ne se produit pas côté serveur (le
+        // `:debut` d'une tâche pose un usage vide), mais le contrat client
+        // autorise `usage: null` — et faire dépendre « depuis combien de temps
+        // elle travaille » de la présence d'un champ voisin serait un couplage
+        // sans raison. Pas d'infobulle ici : il n'y a pas de ventilation à
+        // décrire.
+        travailleDepuis !== null && (
+          <p className="chiffre mt-0.5 flex justify-end text-annexe text-neutral-500 dark:text-neutral-400">
+            {chrono}
+          </p>
+        )
       )}
       <SelecteurReassignation
         tache={tache}
