@@ -324,6 +324,12 @@ class CouloirFrise:
     son agent sur une tâche qui travaille, daté et abrégé — None quand aucune
     ne travaille. C'est un attribut de l'en-tête et non une entrée : rien de ce
     qu'il porte ne figure dans `entrees`, ni dans la frise à plat.
+
+    Depuis #894 il porte aussi le **départ** de cette tâche-là, et c'est ici que
+    ça compte le plus : un agent multi-instances (#100) en porte plusieurs, le
+    couloir n'a qu'un en-tête, et le signe retenu est celui de la plus récente.
+    Les deux temps voyageant dans la même valeur, l'en-tête ne peut pas montrer
+    le geste d'une tâche et l'ancienneté d'une autre.
     """
 
     agent: str

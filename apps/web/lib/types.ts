@@ -84,12 +84,23 @@ export type Tache = {
  * pas. Entre deux gestes d'agent, deux lectures rendent deux valeurs : c'est ce
  * qui manquait à des vues immobiles pendant toute la durée d'une tâche.
  *
+ * `travaille_depuis` (#894) est le **second temps** : l'instant où la tâche a
+ * commencé à travailler, `null` tant qu'on ne le sait pas. Les deux ne disent
+ * pas la même chose, et le module de formats porte déjà les deux mots avec leur
+ * raison — `formatAnciennete` situe un fait passé (« il y a 12 s » : *ça
+ * bouge*), `formatAttente` mesure une attente qui dure (« depuis 6 min » : *ça
+ * dure*). Seul le second distingue une tâche vivante d'une tâche vivante mais
+ * **partie trop loin**. Il voyage dans la même valeur que le geste, jamais à
+ * côté : sur le couloir d'un agent multi-instances, deux champs séparés
+ * montreraient le geste d'une tâche et l'ancienneté d'une autre.
+ *
  * Déclaré **optionnel** sur les trois formes, pour la raison qui vaut déjà des
  * `etapes` d'une `Tache` : un lot additif, que l'écran lit quand il est prêt.
  */
 export type SigneDeVie = {
   horodatage: string;
   libelle: string;
+  travaille_depuis?: string | null;
 };
 
 /**

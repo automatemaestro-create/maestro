@@ -28,14 +28,44 @@
 export const ATTRIBUT_DEFILEMENT = "data-defilement";
 
 /**
+ * Le second contrat de la frontière : l'attribut qui **désigne** un ascenseur.
+ *
+ * Un attribut de données et non une classe utilitaire (même raison que
+ * `data-defilement`) : le CSS lit un contrat, que nul refactor de Tailwind ne
+ * retire. Ce module ne le pose jamais — c'est le `Shell` qui le porte sur son
+ * conteneur défilant —, il le **nomme**, pour que le JSX qui l'écrit et la
+ * sonde qui lit les octets de la feuille tiennent la même valeur.
+ */
+export const ATTRIBUT_ASCENSEUR = "data-ascenseur";
+
+/**
+ * La valeur qui désigne **l'ascenseur de la page** — celui du `Shell`.
+ *
+ * C'est la seule exception à la règle discrète (#882, parti pris 1 de la veille
+ * #859) : la barre de page est un **repère permanent**, peinte sans condition,
+ * et seules les surfaces imbriquées s'effacent au repos. Une exception qui a
+ * besoin d'un marqueur, faute d'un sélecteur qui distingue « la page » d'une
+ * colonne bornée : `*:hover` s'applique à **tout ancêtre du pointeur**, donc le
+ * conteneur du `Shell` montrait sa barre dès que le pointeur était sur le
+ * contenu et la perdait dès qu'il passait sur la navigation ou quittait la
+ * fenêtre — et elle n'existait pas au clavier tant qu'aucun focus n'était dans
+ * le contenu. Le repère de page clignotait au gré du pointeur.
+ */
+export const ASCENSEUR_PAGE = "page";
+
+/**
  * Le repos (ms) après le dernier `scroll` avant que la barre ne s'efface.
  *
  * Assez long pour qu'un défilement par à-coups (molette, touches) reste **une**
  * apparition et non un clignotement ; assez court pour que la barre parte avec
- * le geste, et pas une seconde après. C'est l'ordre de grandeur des ascenseurs
- * en surimpression du système, qui s'effacent de la même façon.
+ * le geste, et pas une seconde après.
+ *
+ * 700 ms de #725 à #882 était « un ordre de grandeur, pas une mesure ». La
+ * veille #859 a vérifié les deux références qui effacent : VS Code web
+ * (`HIDE_TIMEOUT = 500` dans `scrollableElement.ts`, lu sur les sources) et
+ * Zulip (`transition: opacity .2s linear .5s`) — **500 ms** l'une et l'autre.
  */
-export const REPOS_DEFILEMENT_MS = 700;
+export const REPOS_DEFILEMENT_MS = 500;
 
 /**
  * Marque de `data-defilement` tout élément de `document` pendant qu'il défile.

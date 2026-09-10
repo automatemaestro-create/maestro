@@ -1170,7 +1170,7 @@ sous les yeux** (un compteur temps réel) porte la classe `chiffre`
 elle, le passage de « 1 » à « 8 » élargit la valeur et fait sauter la ligne
 autour d'elle.
 
-### L'ascenseur discret — `app/globals.css` et `lib/ascenseur.ts` (#725)
+### L'ascenseur discret — `app/globals.css` et `lib/ascenseur.ts` (#725, #882)
 
 Le socle ne disait rien des ascenseurs, si bien que les **seize surfaces
 défilantes** du produit rendaient celui du système — et qu'une colonne de
@@ -1181,9 +1181,20 @@ celui de la page. Depuis #725 la règle vit dans `globals.css`, une fois, et tou
 - **au repos la barre ne se voit pas ; elle se montre** sous le pointeur
   (`:hover`), quand le focus est dedans (`:focus-within`, le pendant clavier du
   survol) et **pendant le défilement** — `data-defilement`, posé par
-  `lib/ascenseur` sur l'élément qui vient de défiler et retiré après un court
-  repos, parce que CSS n'a aucun état pour « défile en ce moment » et que c'est
-  le seul moment où le tactile la voit ;
+  `lib/ascenseur` sur l'élément qui vient de défiler et retiré après
+  `REPOS_DEFILEMENT_MS`, parce que CSS n'a aucun état pour « défile en ce
+  moment » et que c'est le seul moment où le tactile la voit. Ce repos vaut
+  **500 ms** depuis #882 : c'est le chiffre des deux références que la veille
+  #859 a mesurées (VS Code web, `HIDE_TIMEOUT = 500` ; Zulip, `.5s`), là où les
+  700 ms de #725 étaient « un ordre de grandeur, pas une mesure » ;
+- **sauf la page, qui est un repère permanent** (#882) : le conteneur défilant
+  du `Shell` porte `data-ascenseur="page"` et sa barre est peinte **sans
+  condition**, dans les deux moteurs ; seules les surfaces **imbriquées**
+  (colonnes bornées, listes, blocs de code, `textarea`) s'effacent au repos.
+  L'exception a besoin d'un marqueur faute d'un sélecteur qui distingue la page
+  d'une colonne bornée — et c'est un **attribut de données**, pas une classe
+  utilitaire : le CSS lit un contrat, que nul refactor de Tailwind ne retire
+  (même raison que `data-defilement`) ;
 - **discrète, jamais absente** : elle garde sa place (`thin`, jamais `none`),
   reste une cible pointable et n'empêche aucun défilement — un retrait pur
   effacerait l'information qu'une surface bornée continue sous le pli, la classe
@@ -1197,23 +1208,67 @@ celui de la page. Depuis #725 la règle vit dans `globals.css`, une fois, et tou
   ignore les pseudo-éléments dès que `scrollbar-color` est posé, d'où un
   `@supports` qui choisit au lieu de superposer.
 
-Le `Shell` n'est pas exempté : son ascenseur reste le repère de défilement de la
-page, il se montre simplement quand on regarde le contenu plutôt qu'en
-permanence. Ce que jsdom ne voit pas — aucun `overflow` calculé (#308) — se
-vérifie au navigateur avec `/banc-mise-en-page`.
+**Pourquoi la page fait exception**, et pourquoi il a fallu un marqueur : de
+#725 à #882 le `Shell` suivait la règle commune, ce qui revenait à laisser
+`*:hover` décider. Or `:hover` s'applique à **tout ancêtre du pointeur** : la
+barre de page apparaissait dès que le pointeur était sur le contenu, se perdait
+dès qu'il passait sur la navigation latérale ou quittait la fenêtre, et
+n'existait pas au clavier tant qu'aucun focus n'était dans le contenu. Un repère
+qui clignote au gré du pointeur n'est pas un repère — et les deux références de
+la veille #859 qui ont une page (Zulip, ChatGPT) la laissent toujours visible en
+n'effaçant que les surfaces imbriquées. Ce qui gênait à la revue du 2026-08-28
+était le **voisinage** de deux barres, jamais l'existence de celle de la page :
+c'est bien la seconde qu'on efface. Ce que jsdom ne voit pas — aucun `overflow`
+calculé (#308) — se vérifie au navigateur avec `/banc-mise-en-page`.
+
+⚠ Deux partis pris de la veille #859 **n'appellent aucun code** et se perdraient
+sans être écrits quelque part : le pouce reste **plein** sur `bord-fort`, jamais
+translucide (un `rgba` est hors de portée de `contraste.test.ts` et tombe sous
+3:1 sur `surface` — ce que les références obtiennent par la translucidité, le
+socle l'obtient par l'absence au repos), et il n'y a **aucune ombre de
+continuation** au bas d'une surface bornée, la coupure étant le signal (aucune
+des quatre références n'en dessine ; ce serait une 7ᵉ ombre). Refusés avec eux :
+les barres en DOM (SimpleBar, monaco), le halo d'1 px, `scrollbar-gutter`.
 
 Ce que la feuille promet est **gardé sur ses octets** par `tests/composeur.test.tsx`
 (#728, technique de `contraste.test.ts`) : `thin` et jamais `none`, transparente au
 repos, éveillée sur les trois états à la fois, le pouce sur un token **déclaré dans
 les deux thèmes**, le fondu sous `no-preference` seulement, un seul moteur à la
-fois, le tout sous `@layer base` — et l'attribut que le CSS lit est celui que
-`lib/ascenseur` pose, la seule frontière du dispositif (renommer d'un seul côté ne
-casse rien à la compilation, et la barre ne se montrerait plus jamais au
-défilement). Chaque sonde est prouvée sur une feuille fautive avant de lire la
-vraie. Mesuré au navigateur le 2026-09-04 sur la colonne de propriétés de `/chat`
-et de `/couts` : `transparent transparent` au repos, `#888888` (`--bord-fort`)
-pendant le défilement, effacée après le repos de 700 ms — et plus aucune barre
-système, ni sur la colonne ni sur la page.
+fois, le tout sous `@layer base`, et depuis #882 **la page peinte sans condition
+dans les deux moteurs** — et les attributs que le CSS lit sont ceux que le code
+pose, les deux frontières du dispositif : `data-defilement` par `lib/ascenseur`,
+`data-ascenseur="page"` par le `Shell` (renommer d'un seul côté ne casse rien à
+la compilation, et la barre ne se montrerait plus jamais — au défilement pour
+l'un, jamais du tout pour l'autre). Chaque sonde est prouvée sur une feuille
+fautive avant de lire la vraie, celle du repère permanent sur la feuille
+d'**avant** #882, où la page dépendait du pointeur comme tout le reste ; et le
+marqueur est cherché dans le DOM sous le `Shell` réel, une règle sans porteur ne
+peignant rien.
+
+Mesuré au navigateur le 2026-09-04 sur la colonne de propriétés de `/chat` et de
+`/couts` : `transparent transparent` au repos, `#888888` (`--bord-fort`) pendant
+le défilement, effacée après le repos — et plus aucune barre système.
+
+Remesuré le 2026-09-10 après #882, sur la démo en 1280×800, **chaque cas contre
+son contrefactuel** — le marqueur retiré par le DOM, ce qui rend le comportement
+d'avant : la page rend `rgb(136, 136, 136) rgba(0, 0, 0, 0)` **pointeur sur la
+navigation latérale** (`/chat`) comme **pointeur hors de la fenêtre** (`/couts`,
+`body:hover` faux), là où sans le marqueur elle retombe à
+`rgba(0, 0, 0, 0) rgba(0, 0, 0, 0)` dans les deux cas ; les colonnes de
+propriétés, elles, restent effacées au repos sur les deux écrans. ⚠ Un
+contrefactuel se lit **après** le fondu de 150 ms : lu dans la foulée du retrait,
+`getComputedStyle` rend la valeur en cours d'animation, c'est-à-dire l'ancienne —
+de quoi conclure « rien n'a changé » d'une règle qui marche.
+
+Deux choses que cette mesure a apprises sur la **compilation**, et qu'aucune
+lecture de la source ne donnait : Lightning CSS **fusionne** la règle de la page
+avec celle de l'éveil (`:hover, :focus-within, [data-defilement],
+[data-ascenseur="page"]`) et laisse tomber le `*` de `*:hover` — le sélecteur nu
+survit, donc le contrat tient, et c'est pourquoi la sonde cherche le marqueur
+**dans** un groupe plutôt qu'une règle à lui ; et `scrollbar-color` n'apparaît
+pas dans le `cssText` du CSSOM sous Chrome, si bien qu'une vérification par
+`document.styleSheets` rend un faux négatif — la mesure passe par
+`getComputedStyle`, ou par les octets servis.
 
 ### Le composeur de conversation — `components/Conversation.tsx` (#722)
 
@@ -1771,7 +1826,7 @@ le pixel — le bout en bout dans un vrai navigateur reste le rôle du skill
 | `tests/runs-vue.test.tsx` | La vue d'un run (#475/#478, testée en #480) : les tâches lues **avec `?run=`** et non filtrées sur `Tache.run_id` — le champ porte le *dernier* run qui les a touchées, une relance volerait celles du run repris —, la relecture au **pouls** du shell sans seconde WebSocket, les trois vides (autre projet, arrêt sur brief, API muette) et le journal persisté fusionné au direct sans doublon — atteint **par son onglet** depuis #516, avec le contrôle qu'il ne s'affiche ni sous le pipeline ni sous le Kanban |
 | `tests/pipeline.test.tsx` | La vue pipeline d'un run (#491, testée en #492) en **trois étages**, parce qu'ils ne se gardent pas de la même façon : les règles hors JSX (`lib/graphe` — le backend sert tout ce qui se dessine, ce module ne porte que les trois questions qu'il ne pose pas, et l'**ordre** dans lequel elles sont posées *est* la décision ; `lib/vuesRun` — le pipeline ouvre) ; la checklist rendue (`components/EtapesTache` — **une case par étape**, le contrôle qui compte étant le dénominateur qui grandit sans que le numérateur bouge) ; puis la vue montée : le nœud en cours, l'étape qui se coche au battement suivant, l'arête qui s'allume, et l'attente humaine qui ne se lit plus « en cours » |
 | `tests/frise.test.tsx` | La **frise d'activité** d'un run (#355) : les deux flux — statuts de tâche et messages inter-agents — sur une même chronologie, et les trois états que le ticket demande de distinguer **à l'œil** (en cours, attente humaine, bloquée), nommés côte à côte par une légende parce que « bloquée » et « en attente d'un humain » se ressemblent en ceci qu'aucune des deux n'avance. Deux contrôles y portent tout le poids et ne se voient pas à la relecture du composant : le rangement est prouvé par l'**indice de cellule** et non par la présence du texte — un `getByText` dirait seulement que l'entrée est quelque part, pas qu'elle est dans la colonne de son agent —, et le front **n'invente aucun ordre**, éprouvé en lui servant une frise à l'envers, qu'il rend telle quelle : le tri appartient à l'agrégat (§6.13), et une seconde règle de tri finirait par contredire la première. S'y ajoutent le couloir de **repli** avec son explication (« Sans agent » se lirait comme un défaut d'affichage, alors que c'est le couloir des tâches jamais routées), l'invariant « **aucune entrée perdue** » vérifié ligne par ligne, et la borne annoncée au lieu d'être subie. Un dernier contrôle est une **déclaration** et non une mesure, sur le patron de la colonne collante de `/couts` : le tableau garde son débordement **chez lui** (`overflow-x-auto` + `min-w-max`, deux utilitaires qui n'ont de sens qu'ensemble), faute de quoi un run à six agents pousserait le corps de la page — jsdom ne mesure aucune largeur, et le pixel appartient à `/banc-mise-en-page` |
-| `tests/signe-de-vie.test.tsx` | Le **signe de vie** d'une tâche qui travaille, à l'écran (#837, testé en #838) — la moitié visible de #836, dont le contrat est gardé côté Python par `tests/test_run_qui_travaille.py`. Trois étages : le **format** sous la minute (`formatAnciennete`, prouvé sur le format d'avant, `formatHeureRelative`, qui taisait l'âge sous la minute), la **feuille et son horloge** (`LigneSigneDeVie` + `useHorlogeFine`, à l'**horloge factice** — l'ancienneté avance sans rechargement, « il y a 12 s » → « il y a 14 s » deux secondes plus tard, un seul `setInterval` pour tous les signes montés et rendu au dernier, et l'horloge à 30 s qui n'en suit pas le pas), puis les **trois surfaces** dans `VueRun` — le signe sur la seule boîte qui travaille, prouvé par le **rangement** (le plus petit ancêtre qui le porte) et non par la présence du texte ; effacé dès que la tâche attend un humain ; la carte du Kanban ; l'en-tête du couloir **sans une ligne de plus** dans la frise ; un run soldé sans aucun `[data-signe-de-vie]`. L'échantillon fautif est un nœud **arrêté** que le payload doterait d'un signe : le serveur ne le sert jamais (#836), et la vue refuse quand même de le montrer — sa réserve à elle, celle de `etatDuNoeud` |
+| `tests/signe-de-vie.test.tsx` | Le **signe de vie** d'une tâche qui travaille, à l'écran (#837, testé en #838) — la moitié visible de #836, dont le contrat est gardé côté Python par `tests/test_run_qui_travaille.py`. Trois étages : le **format** sous la minute (`formatAnciennete`, prouvé sur le format d'avant, `formatHeureRelative`, qui taisait l'âge sous la minute), la **feuille et son horloge** (`LigneSigneDeVie` + `useHorlogeFine`, à l'**horloge factice** — l'ancienneté avance sans rechargement, « il y a 12 s » → « il y a 14 s » deux secondes plus tard, un seul `setInterval` pour tous les signes montés et rendu au dernier, et l'horloge à 30 s qui n'en suit pas le pas), puis les **trois surfaces** dans `VueRun` — le signe sur la seule boîte qui travaille, prouvé par le **rangement** (le plus petit ancêtre qui le porte) et non par la présence du texte ; effacé dès que la tâche attend un humain ; la carte du Kanban ; l'en-tête du couloir **sans une ligne de plus** dans la frise ; un run soldé sans aucun `[data-signe-de-vie]`. L'échantillon fautif est un nœud **arrêté** que le payload doterait d'un signe : le serveur ne le sert jamais (#836), et la vue refuse quand même de le montrer — sa réserve à elle, celle de `etatDuNoeud`. Depuis #894 la suite garde aussi le **second temps** — « depuis 6 min », l'ancienneté de la tâche à côté de « il y a 12 s », l'âge de son geste : la **distinction des deux formats** d'abord (`formatAnciennete` situe un fait passé, `formatAttente` mesure une attente qui dure — deux phrases du même instant, et le contrôle existe pour qu'un refactor ne les fonde pas), puis la **place** de la valeur sur les trois surfaces, comptée et non décrite — la boîte du Pipeline a le **même nombre de blocs** avec et sans le champ (la seule mesure qui distingue « posé dans la place existante » de « posé quelque part »), la carte du Kanban rend son chrono dans la ligne des tokens à la place du « — » de `formatDuree(null)`, et l'en-tête de couloir — seule surface sans ligne chrono — le porte sur la ligne du signe, deux `<time>` et pas un `<p>` de plus. Deux motifs prouvés à côté : la boîte **soldée**, dont la même ligne dit un fait figé (« 1 min 32 s »), et le nœud arrêté doté d'un signe, qui ne compte pas son temps non plus — les deux temps se taisent ensemble. Le `title` absolu du geste est vérifié comme un **complément** : il diffère du texte visible, qui ne bouge pas |
 | `tests/etat-des-runs.test.tsx` | L'état des runs au tableau de bord (#476, testé en #480) : **l'exhaustivité de la table des groupes**, balayée sur `regimeDuRun` plutôt qu'énumérée — un régime sans groupe fait disparaître ces runs-là de l'écran, ce qui est arrivé à « en pause » entre #476 et #477 — puis le plafond des soldés et ce qu'il annonce, `soldeAujourdHui` sur ses trois entrées, et l'écran qui ne porte **aucun** geste |
 | `tests/a11y.test.tsx` | Le **filet d'accessibilité** (#537) en trois étages : `axe-core` joué sur les **écrans du menu** montés dans leur shell réel, verdict **0 violation `serious`/`critical`** — table d'écrans **dérivée de `MENU`**, donc une page ajoutée au menu sans cas d'audit rougit ; puis ce qu'axe ne sait pas voir — le **lien d'évitement** (premier dans l'ordre du DOM, visant un `<main>` que le focus peut atteindre), la **garde de mouvement** sur chaque utilité `transition`/`animate-` du produit, et le **plancher de 24 px** des cibles en petit corps. Comme `contraste.test.ts`, **la sonde est prouvée avant de servir** : sur un fragment fautif (image sans alternative, bouton sans nom, champ sans étiquette), puis sur un fragment sain |
 | `tests/regions-live.test.tsx` | Les régions live des écrans temps réel (#538) : le **vocabulaire sans DOM** (seules les hausses parlent, un franchissement dit le total, les deux attentes humaines **absentes** du relevé des runs) ; la **présence** écran par écran, comptée sur l'attribut `aria-live` comme la sonde du ticket — une polie, zéro assertive ; le **contenu** après un événement simulé ; le **débit**, où une rafale de trois tâches ne coûte que deux phrases et douze événements du journal une seule ; et l'**assertive** avec sa réserve — unique dans le shell, muette sur une tâche terminée, et jamais redite par la région polie de l'écran qui montre l'arbitrage |

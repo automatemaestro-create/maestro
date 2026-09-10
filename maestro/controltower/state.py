@@ -208,6 +208,33 @@ def _solde_le_cout(event: Event) -> bool:
     )
 
 
+def _pose_debut(tache: EtatTache, statut: str, horodatage: str) -> None:
+    """Pose le départ d'une tâche qui **se met** à travailler (#894).
+
+    À appeler **avant** d'écrire le nouveau statut, la règle portant sur le
+    passage et non sur l'état : on ne pose que si la tâche entre en `en_cours`
+    depuis autre chose. Deux conséquences, et ce sont les deux qu'on veut :
+
+    - une tâche déjà `en_cours` dont le moteur ré-émet le statut (relance, #91)
+      **ne rajeunit pas** — une tâche partie depuis vingt minutes est ce que le
+      second temps existe pour montrer, et la repousser à chaque redémarrage
+      effacerait exactement ce signal (même raison que l'ancienneté d'attente
+      d'un run, `_suspend_sur_arbitrage`) ;
+    - une tâche qui repart après un arrêt (réassignée puis reprise) part d'un
+      **départ neuf** : le temps où elle ne travaillait pas ne compte pas.
+
+    Un passage sans horodatage lisible **efface** le départ au lieu de laisser
+    courir celui du cycle précédent : `signe_de_vie` le rendra `null`, et ne rien
+    dire vaut mieux que dire faux.
+
+    Écrit une fois pour les deux chemins qui font bouger un statut de tâche
+    (`tache.statut`, `tache.reassignation`) : deux copies de la règle finiraient
+    par diverger sur le cas de la reprise, qui passe par le second.
+    """
+    if statut == STATUT_EN_COURS and tache.statut != STATUT_EN_COURS:
+        tache.debut = horodatage
+
+
 @dataclass
 class EtatTache:
     """La ligne « tâche » de la projection : de quoi peupler une carte Kanban.
@@ -243,6 +270,14 @@ class EtatTache:
     parler ») —, None tant qu'aucun n'a été vu. Il n'est **servi** que comme
     `signe_de_vie`, c'est-à-dire pour une tâche `en_cours` : ce que le graphe et
     la frise en montrent est décidé ici, une fois, et pas dans chaque vue.
+    `debut` (#894) est l'instant où la tâche a **commencé à travailler** —
+    l'horodatage de son passage `en_cours`, reposé à chaque nouveau passage et
+    jamais rafraîchi tant qu'elle y reste (une relance qui ré-émet `en_cours`
+    ne rajeunit pas une tâche partie depuis vingt minutes). Il ne pouvait pas se
+    lire ailleurs : `horodatage` est celui du **dernier** changement d'état, et
+    `usage.duree_ms` n'existe qu'à l'issue — un relevé en cours (#835) porte des
+    tokens et un coût, jamais une durée. Servi, lui aussi, par le seul
+    `signe_de_vie`.
     """
 
     id: str
@@ -261,6 +296,7 @@ class EtatTache:
     liens: list[LienUtile] = field(default_factory=list)
     horodatage: str = ""
     activite: SigneDeVie | None = None
+    debut: str = ""
 
     @property
     def signe_de_vie(self) -> SigneDeVie | None:
@@ -272,8 +308,16 @@ class EtatTache:
         exister. Une tâche terminée, échouée, bloquée ou réassignée garde son
         dernier geste en mémoire (`activite`) mais n'en montre rien : « ça
         bouge » ne se dit pas d'une chose qui ne bouge plus.
+
+        C'est ici, et **une seule fois**, que le second temps se joint au premier
+        (#894) : la même condition décide des deux, puisque « depuis quand
+        travaille-t-elle ? » n'a pas de sens d'une tâche qui ne travaille pas.
+        Le graphe, la frise et le Kanban reçoivent donc les deux temps ou aucun,
+        sans avoir à rejouer quoi que ce soit.
         """
-        return self.activite if self.statut == STATUT_EN_COURS else None
+        if self.statut != STATUT_EN_COURS or self.activite is None:
+            return None
+        return self.activite.avec_debut(self.debut)
 
     def to_dict(self) -> dict[str, Any]:
         """Réémet la tâche en dict JSON-sérialisable (la forme du REST)."""
@@ -1156,6 +1200,7 @@ class ControlTowerState:
     def _applique_statut_tache(self, event: Event) -> None:
         """Met à jour la tâche visée et la fiche de l'agent qui l'a portée."""
         tache = self._taches.setdefault(event.tache_id, EtatTache(id=event.tache_id))
+        _pose_debut(tache, event.statut, event.horodatage)
         tache.statut = event.statut or tache.statut
         tache.titre = event.titre or tache.titre
         tache.agent = event.agent or tache.agent
@@ -1215,6 +1260,7 @@ class ControlTowerState:
         origine = tache.agent
         tache.agent = event.agent
         tache.role = event.role or tache.role
+        _pose_debut(tache, event.statut or "assignee", event.horodatage)
         tache.statut = event.statut or "assignee"
         tache.horodatage = event.horodatage or tache.horodatage
 

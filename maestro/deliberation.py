@@ -43,6 +43,18 @@ intercepté (#583), l'outil `demander_arbitrage` pour l'agent qui lève la main
 C'est la seule position d'où « combien de temps la tâche est-elle restée
 bloquée ? » a une réponse exacte.
 
+⚠ **Suspendu, et pas seulement « susceptible de l'être »** (#880). Une fenêtre
+ouverte autour d'un chemin qui peut ne consulter personne mesure alors une durée
+que rien ne justifie : quelques centaines de microsecondes sur un exécutant
+chargé, que `ecoule_ms()` tronque à `1`. Le journal ne dit plus « aucun
+arbitrage » mais « une milliseconde d'arbitrage », et la sonde qui garde cette
+distinction (`duree_arbitrage_ms == 0`) rougit un jour sur N — ce qui est arrivé
+sur un diff qui ne touchait que de la documentation. Le remède est de position et
+non de tolérance : `_valide_si_sensible` n'ouvre sa fenêtre qu'**après** avoir
+établi que la tâche est sensible, donc qu'une personne va être consultée. Ce que
+le crédit n'a jamais été sollicité de compter (`sollicite`), il le rend `0` sans
+lire aucune horloge — un fait, jamais une mesure.
+
 ## L'union, jamais la somme
 
 Deux arbitrages simultanés dans une même tâche ne coûtent pas deux fois leur
@@ -93,6 +105,11 @@ class CreditArbitrage:
     def __init__(self) -> None:
         # Cumul des fenêtres déjà refermées, en secondes.
         self._acquis: float = 0.0
+        # Nombre de fenêtres ouvertes depuis la naissance du crédit (#880). Il ne
+        # sert à aucun calcul : il répond à « a-t-on jamais attendu quelqu'un ? »,
+        # que le cumul seul ne sait pas distinguer d'« on a attendu, très peu ».
+        # C'est ce qui fait de `0` un fait vérifiable sans horloge.
+        self._sollicitations: int = 0
         # Profondeur d'imbrication des fenêtres ouvertes. C'est ce compteur qui
         # rend l'**union** plutôt que la somme : deux attentes qui se recouvrent
         # n'ouvrent qu'un seul intervalle, du premier `attente()` au dernier
@@ -124,6 +141,7 @@ class CreditArbitrage:
             self._ferme()
 
     def _ouvre(self) -> None:
+        self._sollicitations += 1
         if self._profondeur == 0:
             self._ouverture = perf_counter()
             self._repos.clear()
@@ -139,6 +157,19 @@ class CreditArbitrage:
         """Une délibération est-elle en cours à cet instant ?"""
         return self._profondeur > 0
 
+    @property
+    def sollicite(self) -> bool:
+        """Ce crédit a-t-il **jamais** eu à attendre quelqu'un ? (#880)
+
+        À distinguer de `en_attente()`, qui répond de l'instant. Ici la question
+        porte sur toute la vie du crédit, et elle n'a qu'un usage : établir que
+        `ecoule_ms()` vaut `0` parce que **rien n'a eu lieu**, et non parce
+        qu'une horloge a rendu une durée assez petite pour être tronquée. Les
+        deux se lisent pareil dans le journal ; seul ce drapeau les sépare, et
+        c'est lui que les tests interrogent plutôt qu'un seuil de tolérance.
+        """
+        return self._sollicitations > 0
+
     def ecoule(self) -> float:
         """Le temps d'arbitrage cumulé, en secondes — attente en cours comprise."""
         if self._profondeur == 0:
@@ -146,7 +177,13 @@ class CreditArbitrage:
         return self._acquis + (perf_counter() - self._ouverture)
 
     def ecoule_ms(self) -> int:
-        """Le même cumul, en millisecondes — l'unité du journal (`StepUsage`)."""
+        """Le même cumul, en millisecondes — l'unité du journal (`StepUsage`).
+
+        Vaut **exactement** `0` tant que le crédit n'a pas été sollicité : aucune
+        horloge n'a été lue, il n'y a donc rien que la troncature puisse arrondir
+        vers le haut (#880). C'est ce que le journal doit pouvoir dire — « mesuré
+        et nul », et non « inconnu ».
+        """
         return int(self.ecoule() * 1000)
 
     async def repos(self) -> None:

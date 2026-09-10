@@ -346,11 +346,18 @@ function EnTeteCouloir({ couloir }: { couloir: CouloirFrise }) {
       {/* Le signe de vie du couloir (#837) : un attribut de l'en-tête, servi
           seulement quand une tâche de l'agent travaille. Borné en largeur —
           une cellule de tableau s'élargit sinon jusqu'au libellé entier, et
-          c'est la colonne qui se déformerait, pas la ligne qui se tronquerait. */}
+          c'est la colonne qui se déformerait, pas la ligne qui se tronquerait.
+
+          `avecChrono` (#894) : c'est la **seule** des trois surfaces où le
+          second temps se pose sur cette ligne-ci, faute d'une ligne chrono où
+          le mettre — le nœud et la carte en ont une, l'en-tête d'un couloir
+          n'en a pas, et lui en ajouter une serait la quatrième ligne que la
+          règle des trois places (docs/30 §4) refuse. */}
       {couloir.activite && (
         <LigneSigneDeVie
           signe={couloir.activite}
           taille="micro"
+          avecChrono
           className="mt-0.5 max-w-48 font-normal"
         />
       )}

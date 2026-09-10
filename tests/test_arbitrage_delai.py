@@ -19,8 +19,12 @@ dans l'**appel d'outil**, donc au cœur de la réalisation, donc dans l'échéan
    *différents* n'héritent pas l'un de l'autre, et une panne n'est pas retenue
    comme une décision ;
 ③ **le journal distingue les deux temps** — `duree_arbitrage_ms` est une part de
-   `duree_ms` et jamais un temps de plus, et l'aller-retour JSON la garde ;
-④ **le crédit mesure l'union**, jamais la somme, et compte l'attente en cours ;
+   `duree_ms` et jamais un temps de plus, et l'aller-retour JSON la garde ; et
+   « aucun arbitrage » y est un **fait** et non une durée trop petite pour être
+   vue (#880 — la fenêtre ne s'ouvre que là où quelqu'un est réellement
+   consulté, sonde prouvée sur un fournisseur qui l'ouvre pour rien) ;
+④ **le crédit mesure l'union**, jamais la somme, compte l'attente en cours, et
+   sait dire s'il a jamais été sollicité ;
 ⑤ **la fenêtre se referme là où l'appel cesse d'être bloqué** — c'est-à-dire à la
    borne du hook et non à l'arrivée de la décision. C'est le seul endroit où une
    erreur ne se verrait pas : elle rendrait à la tâche du délai qu'elle a passé à
@@ -93,6 +97,10 @@ class ProviderQuiArbitre(ModelProvider):
         self.travail_s = travail_s
         self.arbitrages = arbitrages
         self.demandes: list[tuple[str, dict[str, str]]] = []
+        # Le crédit de la tâche, tel que le moteur le tend au fournisseur (#584).
+        # Le retenir est ce qui permet d'interroger la **mécanique** — « a-t-on
+        # jamais attendu quelqu'un ? » — plutôt que la seule durée qu'elle rend.
+        self.credit: CreditArbitrage | None = None
 
     def supports(self, model: str) -> bool:
         return True
@@ -108,6 +116,7 @@ class ProviderQuiArbitre(ModelProvider):
         on_courrier=None,
         plafond_tours=None, projet=None,
     ):
+        self.credit = credit_arbitrage
         for _ in range(self.arbitrages):
             if on_arbitrage_acte is None:
                 break
@@ -127,6 +136,34 @@ class ProviderLent(ProviderQuiArbitre):
 
     def __init__(self, *, travail_s: float) -> None:
         super().__init__(travail_s=travail_s, arbitrages=0)
+
+
+class ProviderQuiOuvreLaFenetrePourRien(ProviderQuiArbitre):
+    """L'**échantillon fautif** de #880 : la fenêtre s'ouvre, personne n'est consulté.
+
+    C'est la forme exacte du défaut réparé — `_realise_gardee` enveloppait ainsi
+    la validation d'une tâche anodine —, reproduite ici pour prouver que la sonde
+    de `test_sans_arbitrage_la_part_est_nulle…` la **verrait**. Sans cette moitié,
+    un `duree_arbitrage_ms == 0` vert ne dirait pas si le crédit s'abstient de
+    compter ce qui n'a pas eu lieu ou s'il ne compte simplement rien du tout.
+
+    La fenêtre dure `fenetre_s`, mesurable et non microscopique : ce test ne peut
+    donc pas dépendre de la charge de la machine, dans un sens comme dans l'autre.
+    """
+
+    name = "fenetre-pour-rien"
+
+    def __init__(self, *, fenetre_s: float) -> None:
+        super().__init__(arbitrages=0)
+        self.fenetre_s = fenetre_s
+
+    async def run_agent(self, prompt, **kwargs):
+        credit = kwargs["credit_arbitrage"]
+        self.credit = credit
+        with credit.attente():  # aucune demande d'arbitrage : rien n'est soumis
+            await asyncio.sleep(self.fenetre_s)
+        (Path(kwargs["workspace"]) / "livrable.txt").write_text("contenu", encoding="utf-8")
+        return "OUTILLE"
 
 
 class ValidateurLent:
@@ -479,13 +516,40 @@ def test_le_journal_distingue_le_temps_d_execution_du_temps_d_arbitrage(store):
     assert finale.usage.duree_arbitrage_ms == usage.duree_arbitrage_ms
 
 
+def test_une_fenetre_ouverte_sans_arbitrage_serait_bien_comptee():
+    # L'échantillon fautif de #880, joué **avant** la sonde qu'il garde : un
+    # fournisseur ouvre la fenêtre du crédit sans soumettre quoi que ce soit à
+    # personne, et le journal en rend le temps. C'est ce que faisait le moteur
+    # autour de la validation d'une tâche anodine, à ceci près que la fenêtre y
+    # durait quelques centaines de microsecondes — assez pour être tronquée à
+    # `1` sur un exécutant chargé, jamais assez pour être vue.
+    #
+    # Ce test ne demande donc pas qu'on tolère le bruit : il établit que la sonde
+    # d'à côté n'est pas aveugle. Sans lui, `duree_arbitrage_ms == 0` serait un ✓
+    # sur une question jamais posée.
+    provider = ProviderQuiOuvreLaFenetrePourRien(fenetre_s=0.1)
+
+    resultat, _ = _joue(_moteur(provider))
+
+    assert resultat.ok, resultat.erreur
+    assert provider.credit.sollicite  # une fenêtre a bien été ouverte…
+    assert resultat.usage.duree_arbitrage_ms >= 50  # …et son temps est compté
+
+
 def test_sans_arbitrage_la_part_est_nulle_et_la_duree_reste_celle_du_travail():
     # Mesuré et nul (`0`), pas inconnu (`None`) : le moteur a regardé, il n'y a
     # rien eu. C'est la distinction de `cout_usd`, et elle vaut ici pareil.
-    resultat, _ = _joue(_moteur(ProviderLent(travail_s=0.0)))
+    provider = ProviderLent(travail_s=0.0)
+
+    resultat, _ = _joue(_moteur(provider))
 
     assert resultat.usage.duree_arbitrage_ms == 0
     assert resultat.usage.duree_execution_ms == resultat.usage.duree_ms
+    # Et le `0` ci-dessus est un **fait**, pas une mesure assez petite pour être
+    # tronquée (#880) : le crédit n'a jamais été sollicité, donc aucune horloge
+    # n'a été lue. C'est cette moitié-là qui rend la sonde insensible à la charge
+    # de la machine — le test rougissait un jour sur N sans elle.
+    assert not provider.credit.sollicite
 
 
 def test_la_part_d_arbitrage_survit_a_l_aller_retour_json():
@@ -619,6 +683,34 @@ def test_sans_attente_le_repos_est_immediat():
         return credit.ecoule()
 
     assert asyncio.run(scenario()) == 0.0
+
+
+def test_un_credit_jamais_sollicite_rend_zero_sans_lire_d_horloge():
+    # La mécanique sur laquelle repose la sonde de ③ (#880). Un crédit neuf ne
+    # rend pas « une durée très petite » : il rend `0.0`, parce qu'aucune borne
+    # d'intervalle n'a jamais été posée. C'est vrai à toute charge de machine,
+    # et c'est la seule forme sous laquelle `duree_arbitrage_ms == 0` est un
+    # fait plutôt qu'un pari sur l'ordonnanceur.
+    credit = CreditArbitrage()
+
+    assert not credit.sollicite
+    assert credit.ecoule() == 0.0
+    assert credit.ecoule_ms() == 0
+
+
+def test_une_fenetre_meme_vide_sollicite_le_credit():
+    # L'autre moitié : le drapeau dit « on a ouvert une fenêtre », jamais « on a
+    # attendu longtemps ». Une fenêtre qui se referme aussitôt compte donc comme
+    # une sollicitation — sans quoi il suffirait qu'une délibération soit rapide
+    # pour qu'elle disparaisse du journal, ce qui est le défaut symétrique de
+    # celui qu'on répare.
+    credit = CreditArbitrage()
+
+    with credit.attente():
+        pass
+
+    assert credit.sollicite
+    assert not credit.en_attente()  # …et la fenêtre est bien refermée
 
 
 # --- ⑤ La fenêtre se referme là où l'appel cesse d'être bloqué --------------------------
