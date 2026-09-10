@@ -912,6 +912,8 @@ Ce que la veille n'avait **pas regardé** reste ouvert : le **mobile** et les po
 banc n'y a rien trouvé d'inatteignable, mais aucune référence mobile n'a été vérifiée, et sous `sm`
 le raccourci se retire du rail sans qu'une messagerie de référence l'ait tranché. La question est
 **différée** (§5.3 ci-dessus, `veille-differe` → ticket de veille **#873**) plutôt que fermée.
+**Jouée le 2026-09-10** — voir « Le composeur en mobile » en fin de section : le retrait du
+raccourci est **confirmé** par Zulip, et trois autres partis pris en sont sortis.
 
 #### Le chemin vers les conversations du chat global — 2026-09-05 (#831)
 
@@ -1147,6 +1149,70 @@ quand il déborde — la piste « padding sur l'ascenseur » a été mesurée fa
 padding de fin qu'aux boîtes en flux directes, jamais au débordement de leurs descendants) et fait
 retrancher cette réserve au plafond des colonnes de propriétés collantes (`6rem` → `11rem`).
 Arbitrage complet en commentaire de #885.
+
+#### Le composeur en mobile — 2026-09-10 (#873, différée de #728)
+
+Surface : le `<form>` à quai de `components/Conversation.tsx`, monté par `/chat` et l'onglet Chat
+d'une fiche agent, jugé **sous `sm`** — la seule question que #724 avait explicitement laissée
+ouverte (« ce que cette veille n'a pas regardé : le mobile et les points de rupture »), et que #866
+lui a renvoyée. Veille **différée** jouée sur pièces ; ni #724 ni #866 n'est rejouée. Décision
+complète en commentaire de **#728**, captures dans l'atelier de la session. La question : « où
+j'écris, et qu'est-ce que je peux joindre — sans que la réponse coûte la moitié d'un écran de
+667 px ? »
+
+**Mesuré avant** (banc du 2026-09-04, 375×667) : composeur **269 px** de large à côté de la barre
+latérale repliée, cadre **86 px** au repos, rail réduit à ses **deux bouts** (le raccourci s'étant
+retiré sous `sm`), amorces d'un fil vide empilées sur **quatre lignes** sous le cadre.
+
+**Vérifié en direct** (390×700) : **ChatGPT** — trois états du **même composant à la même largeur**,
+la seule variable étant la longueur du brouillon : vide → **une rangée** (`+` · champ · envoi) ;
+brouillon d'**une** ligne, dans un vrai fil → **une rangée** ; brouillon de **deux** lignes →
+**deux étages**. Le repli est donc commandé par le **contenu**, pas par la largeur — c'est le
+troisième état qui l'établit, les deux premiers ne l'auraient pas prouvé. Et **une seule** amorce
+sur l'accueil, là où le bureau en aligne plusieurs. **Perplexity** — **ne se replie pas** : deux
+étages à 390 px, rail conservé à **six** contrôles, 16 px d'air sous le cadre, **aucune** amorce.
+**Zulip**, mesuré aux **deux** largeurs sur la même vue publique : **trois** contrôles de composeur
+à 1280 px (champ + « Start new conversation » + « New direct message »), **un seul `+`** à 390.
+
+**Lu (documentation officielle)** : **MDN**, clé `interactive-widget` du `<meta name="viewport">` —
+trois valeurs, dont `resizes-visual` **par défaut**, où le viewport de *mise en page* ne bouge pas
+sous le clavier ; **MDN**, unités `vh`/`svh`/`lvh`/`dvh` — `dvh` est la seule à suivre les
+interfaces dynamiques du navigateur, et fait « redimensionner le contenu pendant le défilement ».
+
+**Non vérifié, donc non cité** : Slack, Teams, Discord, Element (comptes) ; **GitHub**, pourtant au
+banc du §1.1 — déconnecté, il ne rend aucune zone de commentaire, comme en 2026-08-30 ; et le
+**clavier virtuel lui-même**, qu'aucun navigateur piloté sans appareil n'ouvre.
+
+**Quatre partis pris** : **le retrait du raccourci sous `sm` est confirmé, rien à changer** — Zulip,
+la référence même d'où vient le raccourci sur le rail (#724, parti pris 4), tombe elle-même de trois
+contrôles à un entre 1280 et 390 px, et le maintien dans `aria-describedby` reste le bon écart
+*(Zulip)* · **sous `sm`, le cadre se replie sur une rangée tant que le brouillon tient sur une
+ligne** — le rail se paie **à la rangée** et n'y porte plus que ses deux bouts ; Perplexity garde la
+sienne, mais avec six contrôles dedans, ce qui justifie sa rangée et confirme la règle plutôt que de
+la contredire *(ChatGPT)* · **sous `sm`, les amorces se bornent à deux** — un `hidden
+sm:inline-flex` au-delà de la deuxième *(ChatGPT, Perplexity)* · **le viewport déclare
+`interactive-widget=resizes-content`** — `app/layout.tsx` n'exporte aujourd'hui **aucun** `viewport`,
+donc le défaut s'applique, donc `bottom-16`, la bande couverte et la réserve `after:h-24` de #888
+visent toutes une bande que le clavier recouvre *(MDN)*.
+
+**Refusés sur place, avec leur raison** : la pilule pleinement arrondie de ChatGPT — déjà refusée
+par #724, c'est une identité et le rayon d'un contrôle vient de `CLASSE_CONTROLE` ; le micro de
+ChatGPT et de Perplexity — aucune dictée dans le produit, et un troisième bouton au rail est
+exactement ce que #727 en a retiré.
+
+**Ce que la veille n'a pas regardé** : le **plafond de croissance** en mobile — `max-h-48` (192 px)
+est une mesure de ChatGPT **au bureau** (#724, redite par #884), et la confronter en mobile
+demanderait de saisir un texte long chez eux, hors de la lecture seule ; le **comportement réel d'un
+clavier virtuel**, d'où un parti pris 4 adossé à la spécification et **à vérifier sur un téléphone**,
+jamais soldé par un test unitaire seul ; et la **cohabitation d'un composeur à quai et d'un bouton
+flottant**, qu'**aucune** des trois références ne pratique — le sujet reste donc **sans référence**,
+et ce n'est pas ici qu'on le rouvre : #885 a refusé de déplacer le flottant, #888 a mis le remède du
+côté de la réserve.
+
+Partis pris 2 et 3 → **#891** (même fichier, même point de rupture, même banc : un seul ticket) ;
+parti pris 4 → **#892**, à part parce qu'il touche `app/layout.tsx`, donc tout le produit et non la
+seule surface de conversation. Le parti pris 1 n'appelle aucun code. Les tickets #728 et #873
+portent `veille::arbitree` depuis cette veille.
 
 ---
 
