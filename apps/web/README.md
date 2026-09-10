@@ -1279,6 +1279,54 @@ relu par cran de molette rendrait le fil entier pendant qu'une réponse s'écrit
 c'est-à-dire au pire moment, et c'est précisément ce que la `ref` de #695 avait
 évité.
 
+**Sous `sm`, le cadre se replie et les amorces se bornent à deux** (#891, partis
+pris 2 et 3 de la veille **#873**, différée de #728 — docs/30 §5.3). Rien ne
+change au-dessus de `sm` : mêmes écarts, même géométrie, **même ordre de
+tabulation**. Deux points, un seul fichier :
+
+7. **Le cadre se replie sur une rangée tant que le brouillon tient sur une
+   ligne** (d'après ChatGPT : trois états du même composant à la même largeur,
+   la seule variable étant le brouillon — vide → une rangée, une ligne dans un
+   vrai fil → une rangée, deux lignes → deux étages ; Perplexity garde ses deux
+   étages à 390 px, mais avec **six** contrôles au rail, ce qui justifie sa
+   rangée et confirme la règle). Le cadre devient une **rangée qui passe à la
+   ligne** (`flex-wrap`, `gap-x-2`/`gap-y-1`) plutôt qu'une colonne : les deux
+   étages de #726 **sont** cette rangée avec un champ pleine largeur, qui pousse
+   le rail sur la suivante. Le rail perd donc son `<div>` propre — c'est une
+   ligne de flux, seule façon de lui faire partager sa rangée avec le champ sans
+   écrire deux fois la même mise en page —, et « le brouillon tient sur une
+   ligne » se lit sur ce que `ajusterLaHauteur` mesurait déjà, qui **rend
+   désormais son verdict** au lieu de le garder.
+
+   ⚠ **Le piège est un asservissement, et il n'a pas de référence.** Repliée, la
+   rangée laisse au texte la largeur du cadre **moins le rail** (~88 px : le
+   `+`, l'envoi, leurs deux écarts — mesuré à 375 px, **156 px** contre 243).
+   Il existe donc une plage de brouillons — ~35 caractères à cette largeur — qui
+   **déborde replié et rentre déplié** : décider du repli sur la mesure courante
+   y fait changer le cadre de forme **à chaque frappe**, le champ passant la
+   moitié du temps trop court pour ce qu'il montre. D'où l'invariant, qui est
+   tout ce qu'il faut retenir avant d'y toucher : **seule une mesure prise en
+   rangée unique pose ou lève le débordement** (`debordement` retient le
+   brouillon fautif ; on ne retente le repli que lorsque le brouillon n'est plus
+   celui-là). Conséquence assumée, et vérifiée au banc : dans cette plage, le
+   cadre reste **à deux étages avec un champ d'une seule ligne**. Aucune des
+   trois références n'a été observée dans cet état — c'est le point que la veille
+   n'a pas pu trancher, et il est consigné dans le ticket de veille **#899**.
+8. **Les amorces se bornent à deux** (ChatGPT en montre **une** à 390 px là où
+   le bureau en aligne plusieurs ; Perplexity **aucune**) — les quatre du fil
+   d'orchestration s'empilaient sur **quatre lignes** à 375×667 sous un composeur
+   à quai. Un marqueur de mise en page au-delà de la deuxième, donc **aucune
+   amorce retirée du DOM** et rien à conditionner en JS.
+
+   ⚠ **Le marqueur est `max-sm:hidden`, et non le `hidden sm:inline-flex` que la
+   veille proposait** : la classe de socle d'un `Bouton` porte déjà
+   `inline-flex`, et dans le CSS que Tailwind émet `.hidden` passe **avant**
+   `.inline-flex` — `hidden` perdrait donc à toute largeur, **en silence**. Une
+   variante, elle, est émise après les utilitaires nus. C'est une frontière entre
+   une chaîne de classes et une **cascade**, que jsdom ne peut pas voir (leçon de
+   #830) : `composeur.test.tsx` ⑨ la garde sur le **CSS compilé**, en vérifiant
+   d'abord que la forme d'instinct y perd.
+
 **Ce qui le garde** (#728) : `tests/composeur.test.tsx` — la hauteur posée quand
 le contenu déborde et rendue quand il rentre (les mesures sont **simulées**,
 jsdom rendant zéro), le plafond et la poignée au CSS, le cadre qui contient
@@ -1299,7 +1347,23 @@ messages : aucun chevauchement entre le cadre, l'envoi et le flottant dans les
 12 cas (le cadre s'arrête 8 px au-dessus de la bande partout), et sans la bande
 le cadre passerait sous le flottant de 30 à 40 px partout où le fil court
 jusqu'au bord ; mais au bas du défilement, le dernier message perd 36 px sous le
-composeur, et c'est le shell qui est en cause (#888).
+composeur, et c'est le shell qui est en cause (#888). Depuis #891 s'y ajoutent le
+cadre replié (⑨ — la rangée qui passe à la ligne, l'ordre du **flux** que le
+repli ne déplace pas, le passage aux deux étages dès que le champ déborde, et
+l'invariant qui l'empêche d'osciller : une mesure prise à deux étages ne replie
+rien) et les amorces bornées (⑩), plus l'**ordre d'émission de Tailwind** sur le
+CSS compilé — la seule moitié de ces deux règles que jsdom ne peut pas juger.
+Côté banc, le 2026-09-10 sur `/chat` **et** l'onglet Chat aux six fenêtres, plus
+639 et 640 px pour la bascule : cadre au repos à 375 px **63 → 38 px**, amorces
+**124 px sur 4 lignes → 59 px sur 2**, formulaire entier **216 → 125 px**
+(l'« avant » mesuré dans la **même** page, en rendant au champ et à la tête du
+rail leurs classes d'avant #891 : seule la variable sous test change) ; bascule
+au pixel près à 640 px ; 63 px inchangés partout au-dessus ; RAS aux six
+fenêtres, barre latérale dépliée et repliée, lever de doute joué. Ce qui reste
+sans référence et **n'a pas été touché** : les deux amorces qui survivent tiennent
+encore **une ligne chacune**, les libellés du fil d'orchestration étant des
+phrases entières — la veille a compté les amorces, pas leur longueur, et
+raccourcir un libellé change ce qu'il propose (#899).
 
 ### Le fil en colonne — `components/Conversation.tsx`, `chat/BulleFil.tsx` (#876)
 
