@@ -284,6 +284,21 @@ const PAIRES: readonly Paire[] = [
     seuil: SEUIL_NON_TEXTE,
     motif: "le contour d'un bouton de contour survolé",
   },
+
+  // ── L'état sélectionné (#911) ────────────────────────────────────────────
+  // Le frère de `survol` : le fond d'un contrôle sans aplat quand il dit « où
+  // je suis » (l'entrée de menu active). UNE paire et non les trois du survol,
+  // et c'est mesuré, pas économisé : `texte-secondaire` n'y tient dans aucun
+  // thème (4,23:1 en clair, 3,68:1 en sombre) et `bord-fort` pas davantage —
+  // donc une entrée sélectionnée écrit **toujours** `texte`, et c'est ce que
+  // le produit fait. Les déclarer « pour la symétrie » rougirait sur des paires
+  // que rien ne rend, et la faute serait dans la table, pas dans la palette.
+  {
+    avant: "texte",
+    arriere: "selectionne",
+    seuil: SEUIL_TEXTE,
+    motif: "le libellé d'une entrée sélectionnée",
+  },
 ];
 
 /**
@@ -467,13 +482,14 @@ describe("la couverture du filet", () => {
     }
   });
 
-  it("mesure les 43 paires par thème qu'annoncent #533 et #535", () => {
-    // Le chiffre est celui du README et de `globals.css` (« 86 paires mesurées,
-    // 43 par thème » : les 36 de #533, plus les 7 dont #535 a besoin pour son
-    // état survolé). Il garde le CONSTRUCTEUR de la table : une boucle qui
-    // n'itère plus rendrait une table courte, donc un vert plus rapide et faux.
-    // S'il bouge un jour, il bouge aux trois endroits ensemble.
-    expect(PAIRES).toHaveLength(43);
+  it("mesure les 44 paires par thème qu'annoncent #533, #535 et #911", () => {
+    // Le chiffre est celui du README et de `globals.css` (« 88 paires mesurées,
+    // 44 par thème » : les 36 de #533, plus les 7 dont #535 a besoin pour son
+    // état survolé, plus la 1 de l'état sélectionné de #911). Il garde le
+    // CONSTRUCTEUR de la table : une boucle qui n'itère plus rendrait une table
+    // courte, donc un vert plus rapide et faux. S'il bouge un jour, il bouge
+    // aux trois endroits ensemble.
+    expect(PAIRES).toHaveLength(44);
   });
 
   it("couvre chaque token de la palette, ou nomme pourquoi il en est exempt", () => {
