@@ -1281,6 +1281,70 @@ le cadre passerait sous le flottant de 30 à 40 px partout où le fil court
 jusqu'au bord ; mais au bas du défilement, le dernier message perd 36 px sous le
 composeur, et c'est le shell qui est en cause (#888).
 
+### Le fil en colonne — `components/Conversation.tsx`, `chat/BulleFil.tsx` (#876)
+
+La veille du chat global pleine page (#820, différée de #698 — docs/30 §5.3,
+décision complète en commentaire de #820) a mesuré ce que #690/#698 avaient figé
+**sans référence**, à 1920×872 : le fil occupait **1144 px** pour des bulles
+bornées à 543 (`min(70 %, 72ch)`, #697), si bien que les deux côtés **ne se
+recouvraient pas** — 57 px de vide entre eux, ~600 px pour l'œil d'un tour au
+suivant —, le composeur faisait **deux fois** la largeur de ce qu'on lit, et
+chaque message des deux côtés était une boîte portant sa propre ligne
+« auteur · heure ». Trois de ses quatre partis pris sont posés ici (le quatrième,
+le retour en bas, a son ticket : #877) :
+
+1. **Une colonne de lecture bornée et centrée** (d'après ChatGPT — 640 px dans un
+   volet de 1660 — et Perplexity, dont le composeur fait *exactement* la largeur
+   de la colonne) : `mx-auto w-full max-w-3xl` sur la **section**, donc sur
+   l'en-tête, le fil et le formulaire d'un coup. Rien n'est conditionné à un
+   point de rupture — sous `@4xl` la colonne de propriétés passe déjà sous le
+   fil, donc la borne ne mord pas —, et l'onglet Chat d'une fiche agent en hérite
+   sans une ligne.
+2. **Seule la personne a une bulle** (ChatGPT, Zulip, GitHub Discussions) :
+   `BulleFil` hors `utilisateur` et hors `pleineLargeur` perd `border border-bord
+   bg-surface shadow-sm` et parle en `text-texte` sur le fond de la page. Deux
+   exceptions qui ne sont pas des tolérances — la bulle `bg-accent` de la
+   personne ne bouge pas (redevenue rare, c'est elle qui désigne **qui** parle),
+   et `pleineLargeur` **garde son cadre** parce que ce contenu-là est un
+   formulaire (le brief de #483), pas de la prose. Ce qui ne part pas avec le
+   cadre : `px-3 py-2` et la borne `min(70 %, 72ch)` — c'est la **colonne** qui
+   se resserre, pas la bulle.
+3. **Un tour = un auteur, nommé une fois** (Zulip, dont la ligne d'auteur n'est
+   rendue qu'au premier message d'une suite ; ChatGPT, 36 px entre tours contre
+   12 dedans) : les messages consécutifs du même auteur sont groupés, le pied
+   n'est visible que sur le **dernier** de la suite et reste `sr-only` sur les
+   autres — un lecteur d'écran garde donc le nom à chaque message (#483, une
+   bulle relue n'a ni gauche ni droite). Le fil porte `gap-3`, l'ouverture d'un
+   tour y ajoute `mt-3` (donc 24 px), et `first:mt-0` l'annule sur le premier
+   message, qui n'ouvre rien. Le regroupement se juge sur l'auteur **et** le
+   côté, un séparateur de journée **coupe** un tour, et il se calcule dans
+   `Conversation` — c'est une propriété de la *suite* des messages, pas de l'un
+   d'eux. ⚠ Un pied masqué ne passe **pas** par `Infobulle` : son wrapper est
+   focusable (#536), et ce serait un arrêt de tabulation invisible par message
+   groupé.
+
+**Refusés par la veille, avec leur raison** : le fil en 16 px (l'échelle n'a pas
+de pas de texte courant à 16 px, et le fil partage `corps` avec neuf autres
+écrans) ; les avatars (aucune primitive, un pictogramme par auteur est de
+l'identité) ; l'absence de bulle **des deux côtés** (le côté dit qui parle,
+#483) ; la question rendue en titre (un fil n'est pas une page de réponse) ; la
+barre de sujet collante (deux collants suffisent, et l'en-tête nomme déjà la
+conversation depuis #831).
+
+**Ce qui le garde** (#876) : `tests/fil-en-colonne.test.tsx`, joué sur les
+**deux** surfaces qui montent le fil — chaque sonde prouvée sur le fil d'avant
+#876 (la section qui ne borne rien, la bulle d'agent bordée et ombrée, deux
+messages consécutifs du même agent portant chacun son pied visible). La
+géométrie, elle, est au banc : `/banc-mise-en-page` passé le 2026-09-10 sur
+`/chat` aux six fenêtres plus 1920×872, et sur l'onglet Chat — **RAS partout**
+(rien d'inatteignable, aucun débordement, aucun rogneur). Colonne à 768 px de
+375 à 1920 dès que la place le permet (269 px à 375, 646 à 768, 558 à 1024), le
+composeur **exactement** de sa largeur aux sept fenêtres, et le recouvrement des
+deux côtés passé de **−57 px à +293** (307 pour deux messages assez longs pour
+occuper la borne ; la veille annonçait ~318 en prenant `72ch`, c'est `70 %` qui
+mord à 768 px). Écarts mesurés : **24 px entre deux tours, 12 dedans**, et un
+pied masqué occupe 1 px de haut au lieu de 16 en gardant son texte.
+
 ### Le rendu des montants — `lib/format.ts`
 
 Même principe, pour ce qui se lit plutôt que pour ce qui s'habille : les
@@ -1541,6 +1605,7 @@ le pixel — le bout en bout dans un vrai navigateur reste le rôle du skill
 | `tests/fil-lisible.test.tsx` | **Le fil se lit** (#697) — la seule exception que la règle des lots prévoit pour la logique critique : un analyseur Markdown écrit à la main qui traite du texte produit par un **modèle**. Deux propriétés qui ne se rattrapent pas après coup : rien de ce qu'un modèle écrit ne devient du **balisage** (`lib/markdown` rend un arbre de données, jamais une chaîne de HTML — il n'y a donc rien à assainir et aucun `dangerouslySetInnerHTML` à écrire ; un lien `javascript:` est refusé et laissé lisible ; un titre de message ne rejoint jamais le plan du document), et les **écarts à CommonMark sont des décisions** et non des trous — `_` n'emphase pas (`run_id` traverse chaque réponse), une emphase ne franchit pas la fin de ligne, les listes sont plates. Plus `lib/journees` : deux instants du même jour local sous la même journée, un horodatage illisible qui n'en ouvre aucune, « Aujourd'hui »/« Hier » seulement quand l'horloge a démarré |
 | `tests/chat-pleine-page.test.tsx` | **Ce que le chantier a retiré** (#690, lot 8 #698) — la moitié navigateur, et la plus difficile à garder : rien à l'écran ne nomme une absence, si bien que le test ne peut qu'affirmer qu'elle est là. Quatre sujets : le fil **sans ascenseur à lui** (aucun `overflow-y`/`max-h` ni sur le `<ol>` ni au-dessus, `flex-1` présent, composeur `sticky`) ; l'**état nominal qui ne se dit plus**, « ni une fois ni deux » — seule la coupure reste dite ; les **conversations à l'écran** (#696 : l'ordre servi jamais retrié ici, `aria-current` sur celle qu'on lit et elle seule, le nom d'un fil vierge, les deux gestes) ; et le **fil qui n'exécute rien** (#697 vu du fil et non du module — que la bulle d'agent, la réponse **en cours** et le message de l'utilisateur passent tous par le bon rendu ; un `dangerouslySetInnerHTML` réintroduit dans une bulle ne ferait rougir aucun test du module) ; et le **chemin vers les conversations** (#831 : la carte en tête de la colonne, l'en-tête du fil qui nomme l'ouverte et y mène, la forme de l'ouverte — sonde prouvée sur la ligne de #696, qui ne portait qu'un fond `sky-*` —, la bascule à huit qui ne cache jamais l'ouverte). ⚠ Chaque sonde **prouve son motif sur un échantillon fautif** avant de conclure (méthode de #534/#537/#539) : la boîte de `60vh` d'avant #691 y est reconnue, le badge y est vu quand il est affiché, un fragment actif y est repéré. ⚠ **Aucune géométrie** (#308) : ce qui s'observe est le contrat de mise en page *tel qu'il est écrit*, jamais son effet — l'effet est le rôle de `/banc-mise-en-page` |
 | `tests/composeur.test.tsx` | **Le composeur et le pourtour du fil** (#722, lot 5 #728 — les tests différés des lots 2 à 4), joué sur les **deux** surfaces qui montent le composeur : le champ qui **grandit puis plafonne** (la hauteur posée quand le contenu déborde, rendue quand il rentre — mesures simulées, jsdom rendant zéro — et le plafond, le défilement interne et la poignée disparue lus au CSS) ; **un seul bloc** (le cadre est le contrôle et contient l'envoi, plus de `pe-*`, la réserve du flottant devenue verticale, et depuis #885 le fil qui **ne porte pas** l'assistant — prouvé sur un fil qui le porterait) ; l'envoi et le joindre **atteints au clavier** depuis le champ ; le **raccourci** dans la description du champ et plus dans le placeholder ; et **rien de #482 perdu** — dépôt, collage d'une image, panneau des trois gestes, envoi par identifiant. Puis **l'ascenseur discret sur les octets de `globals.css`** (technique de `contraste.test.ts`) : `thin` jamais `none`, transparente au repos, éveillée sur `:hover`/`:focus-within`/`[data-defilement]`, pouce sur un token des deux thèmes, fondu sous `no-preference`, un moteur à la fois, `@layer base` — l'attribut lu étant celui que `lib/ascenseur` pose ; la moitié JS (`ecouterDefilement` : marque, repos, fenêtre, démontage) et son câblage sous le vrai `Shell` ; et la colonne de `/chat` collante **et** bornée, comme `sobriete` le garde pour `/couts`. ⚠ Chaque sonde **prouve son motif sur un échantillon fautif** — le composeur d'avant #726, une feuille fautive par promesse, le rail d'avant #884 — avant de conclure. Depuis #884, **l'envoi et l'arrêt sont deux icônes nommées de même taille** (`formeDuControle` : une icône du jeu, un libellé `sr-only`, la même boîte — `w-9` compris —, aucun `title=`, la même place au bout du rail), l'arrêt joue bien `interrompre` du fil, et le champ part d'**une** ligne (`rows`, 2 → 1). ⚠ **Aucune géométrie** (#308) : le pixel est au banc, dont les verdicts du 2026-09-04 et du 2026-09-06 sont dans « Le composeur de conversation » ci-dessus |
+| `tests/fil-en-colonne.test.tsx` | **Le fil se lit comme une colonne** (#876 — partis pris 1 à 3 de la veille #820), joué sur les **deux** surfaces qui montent le fil : la **colonne** (`mx-auto w-full max-w-3xl` sur la section, donc l'en-tête, le fil et le composeur ensemble — et aucune seconde borne à l'intérieur, qui ferait deux largeurs de lecture sur un écran) ; la **bulle réservée à la personne** (l'agent sans bord ni fond ni ombre, la bulle `bg-accent` intacte, et le `pleineLargeur` du brief qui garde son cadre — monté sur la primitive, c'est une propriété de la bulle) ; les **tours** (`mt-3` à l'ouverture et rien dedans, pied visible sur le dernier de la suite et `sr-only` sur les autres, un séparateur de journée qui coupe, deux côtés jamais groupés sous un même nom d'auteur) ; et le pied masqué **hors de l'ordre de tabulation**, l'`Infobulle` y étant un arrêt de clavier invisible. ⚠ Chaque sonde **prouve son motif sur le fil d'avant #876** — section qui ne borne rien, bulle d'agent bordée et ombrée, deux messages du même agent à deux pieds visibles — avant de conclure : deux des trois propriétés s'observent en **négatif**. ⚠ **Aucune géométrie** (#308) : le pixel est au banc, dont le verdict du 2026-09-10 est dans « Le fil en colonne » ci-dessus |
 | `tests/validations.test.tsx` | L'écran qui **se décide vite** (#272, testé en #273) : l'ordre de la file (la plus ancienne d'abord, une demande sans horodatage en queue — elle n'a pas d'âge à faire valoir), `formatAttente` et ses paliers (« depuis » et non « il y a »), ce qu'on lit avant de trancher (l'**acte** en tête quand il y en a un, #581), et les gestes — approuver, refuser sec, refuser motivé. Deux garanties qui ne se voient pas à la relecture du composant : le motif **refermé est effacé** (« sans motif » doit vouloir dire sans motif, sinon un texte que plus personne n'a sous les yeux part au journal du run), et la **clé par `tache_id`**, prouvée en retirant la tête de file pendant qu'un motif est en cours de frappe — sans elle il s'attacherait à la demande suivante |
 | `tests/brief.test.tsx` | Valider le brief, **logique critique du lot seule** (#322, le reste différé à #323) : approuvé **corrigé** vs approuvé **tel quel** (`brief: null`, qui fait retenir au moteur sa propre proposition), refus qui n'emporte jamais de brief, réponses appariées **par position** aux questions (chaînes vides comprises), et le coût engagé rendu face à la décision |
 | `tests/fil-cadrage.test.tsx` | Le cadrage décidé **dans le fil** (#483 ; ce que #485 y ajoute est **côté moteur**, `tests/test_brief.py` ⑦ — D5 mesurée pendant l'attente et le bus refermé qui fait échouer le run, deux garanties qu'aucun écran ne montre) : le **canal reste le canal** — le fil rappelle `trancherBrief`/`repondreAuBrief`, donc les deux routes de #320/#321, avec le contrat entier (`brief: null` tel quel, brief corrigé sinon, jamais de brief sur un refus, une réponse par question) ; le **rang du tour et son plafond** restent en clair ; les tours joués se **déroulent** au lieu de se replier, le sans-réponse nommé ; et surtout le critère 3, seul dont l'échec est **invisible depuis l'écran qu'on regarde** — les trois surfaces qui montrent un run suspendu résolvent leur destination par le menu, donc un renvoi resté sur « Valider le brief » s'éteindrait sans un mot le jour où #484 retire l'entrée |
