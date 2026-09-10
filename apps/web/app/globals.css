@@ -34,9 +34,9 @@
       un vert « presque emerald » se verrait côte à côte avec `bg-emerald-700`.
       Les swatches empruntées sont nommées en regard de chaque valeur.
 
-   3. **Chaque paire tient AA, et le chiffre est connu** — 86 paires mesurées
-      (43 par thème), 0 faute : les 72 de ce lot, plus les 14 qu'ajoute l'état
-      survolé de #535. Seuils : ≥ 4,5:1 pour tout ce qui est du texte, ≥ 3:1 pour ce qui borne
+   3. **Chaque paire tient AA, et le chiffre est connu** — 88 paires mesurées
+      (44 par thème), 0 faute : les 72 de ce lot, plus les 14 qu'ajoute l'état
+      survolé de #535, plus les 2 de l'état sélectionné de #911. Seuils : ≥ 4,5:1 pour tout ce qui est du texte, ≥ 3:1 pour ce qui borne
       un contrôle ou porte un état (WCAG 2.2, 1.4.3 et 1.4.11). Les marges les
       plus courtes sont `bord-fort` sur `surface-creuse` (3,40) et
       `alerte-texte` sur `alerte-creux` (5,02). Depuis le lot #534 c'est un test
@@ -73,7 +73,19 @@
 
    `positif` n'a **pas** de `-appui`, et c'est une décision : un aplat `positif`
    est un **état**, jamais une action, donc il n'est jamais survolé. Le trou dit
-   quelque chose ; le combler par symétrie dirait le contraire. */
+   quelque chose ; le combler par symétrie dirait le contraire.
+
+   ---
+
+   **Ce que #911 y ajoute : l'état sélectionné.** `--selectionne` est le frère
+   de `--survol` — le fond d'un contrôle sans aplat quand il dit « où je suis »
+   et non « ce que je vise » (l'entrée de menu active de `BarreLaterale`). Un
+   cran au-delà du survol dans les deux thèmes, et un token par thème plutôt
+   qu'une opacité de `texte`, pour la raison mesurée en regard de sa valeur
+   sombre : aucune opacité unique ne sert les deux thèmes. Le fond n'est que
+   le **second** signal — la graisse (`font-medium`) et `aria-current="page"`
+   restent, et migrer le fond ne les retire pas (veille #905, d'après Zulip,
+   dont l'entrée sélectionnée porte trois signaux à la fois). */
 
 :root,
 [data-theme="clair"] {
@@ -109,6 +121,18 @@
      s'éclairer. Ce qui s'écrit dessus tient AA — `texte` 16,44:1,
      `texte-secondaire` 4,89:1, `bord-fort` 3,25:1. */
   --survol: #f5f5f5; /* neutral-100 */
+
+  /* Le fond d'un contrôle **sélectionné** quand il n'a pas d'aplat : l'entrée
+     de menu active (#911). Le frère de `survol`, et un token par thème pour la
+     même raison qu'à lui — aucune opacité unique ne sert les deux thèmes (voir
+     le bloc sombre). Un cran au-delà du survol, jamais égal : « où je suis »
+     et « ce que je vise » sont deux états, et le second ne doit pas effacer le
+     premier. Une seule chose s'y pose, le libellé en `texte` (14,23:1) — le
+     second plan n'y tient pas (`texte-secondaire` 4,23:1, sous les 4,5:1 de
+     1.4.3), donc une entrée sélectionnée écrit **toujours** `texte`. C'est le
+     rendu d'aujourd'hui, au bit près : 1,21:1 sur `surface-creuse`, 1,16:1 sur
+     `survol`. */
+  --selectionne: #e5e5e5; /* neutral-200 */
 
   /* Ce qui s'écrit **sur** un ton plein. Un seul token pour les cinq tons :
      c'est une propriété de la palette, choisie et vérifiée — chaque ton plein
@@ -171,6 +195,20 @@
      `bord-fort` 3,19:1. */
   --survol: #262626; /* neutral-800 */
 
+  /* Un pas au-delà du survol (le pas -700), et c'est ici que la mesure a
+     tranché contre l'opacité : la barre est posée sur `surface-creuse`, où le
+     survol vaut déjà 1,308:1 — `texte/10` rend 1,230 (*sous* le survol :
+     la sélection paraîtrait moins marquée qu'un simple survol), `texte/15`
+     1,418 (8 % au-dessus, indiscernable), et le seul `texte/20` qui s'en
+     détache donnerait en clair un `#cdcdcd` deux fois plus marqué que
+     `#e5e5e5`. Même cause que `--survol`, même réponse : une valeur par thème.
+     Celle-ci rend 1,91:1 sur la creuse et 1,46:1 sur le survol ; `texte` y
+     tient 8,86:1, `texte-secondaire` n'y tient pas (3,68:1). ⚠ Le piège que
+     ce token ferme : `#262626` était *à la fois* le survol de la palette et le
+     `dark:bg-neutral-800` de l'entrée active — replier l'actif sur `survol`
+     aurait rendu survol et sélection identiques dans ce thème. */
+  --selectionne: #404040; /* neutral-700 */
+
   /* En sombre, les tons pleins sont **clairs** : ce qui s'écrit dessus est donc
      sombre. C'est tout l'intérêt d'un token plutôt que d'un `text-white` figé. */
   --sur-ton: #0a0a0a;
@@ -223,6 +261,7 @@
   --color-texte-secondaire: var(--texte-secondaire);
   --color-sur-ton: var(--sur-ton);
   --color-survol: var(--survol);
+  --color-selectionne: var(--selectionne);
 
   --color-accent: var(--accent);
   --color-accent-texte: var(--accent-texte);
