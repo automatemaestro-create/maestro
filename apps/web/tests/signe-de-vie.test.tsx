@@ -42,7 +42,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LigneSigneDeVie } from "@/components/SigneDeVie";
 import { VueRun } from "@/components/runs/VueRun";
-import { formatAnciennete, formatHeure, formatHeureRelative } from "@/lib/format";
+import {
+  formatAnciennete,
+  formatAttente,
+  formatDateHeure,
+  formatHeure,
+  formatHeureRelative,
+} from "@/lib/format";
 import { useHorloge } from "@/lib/horloge";
 import {
   ARETE_FRANCHIE,
@@ -63,16 +69,25 @@ import {
   rendreAvecEtat,
   runFactice,
   tacheFactice,
+  usageFactice,
   validationFactice,
 } from "./aides";
 
 const RUN = "3ff0bcb065f9";
 
-/** L'instant « maintenant » des tests à horloge factice, et un geste 12 s avant. */
+/**
+ * L'instant « maintenant » des tests à horloge factice, un geste 12 s avant, et
+ * une tâche au travail depuis 6 min — les deux temps de #894, choisis pour
+ * tomber dans deux paliers différents : « il y a 12 s » compte les secondes,
+ * « depuis 6 min » les minutes. Deux valeurs identiques ne prouveraient pas
+ * qu'on lit bien deux mesures.
+ */
 const MAINTENANT = new Date("2026-08-30T07:41:12+00:00").getTime();
+const DEBUT = "2026-08-30T07:35:00+00:00";
 const GESTE: SigneDeVie = {
   horodatage: "2026-08-30T07:41:00+00:00",
   libelle: "Écrit api/contacts.py, puis relit le résultat",
+  travaille_depuis: DEBUT,
 };
 
 /** Ce que les fausses lectures rendront — même dispositif que `pipeline.test`. */
@@ -103,6 +118,10 @@ beforeEach(() => {
 /** Les lignes de signe de vie montées, où qu'elles soient. */
 const signes = (racine: ParentNode = document) =>
   racine.querySelectorAll("[data-signe-de-vie]");
+
+/** Les chronos en vol montés (#894) — « depuis 6 min », où qu'ils soient. */
+const chronos = (racine: ParentNode = document) =>
+  racine.querySelectorAll("[data-chrono-en-vol]");
 
 /* ==================================================================== *
  * ① Le format : sous la minute, et pas ailleurs
@@ -155,6 +174,32 @@ describe("l'ancienneté d'un signe de vie (formatAnciennete)", () => {
   });
 });
 
+describe("« il y a » et « depuis » ne mesurent pas la même chose (#894)", () => {
+  it("rendent deux phrases différentes du même instant, et chacune son mot", () => {
+    // La distinction que #894 pose à l'écran, et que ce contrôle existe pour
+    // empêcher un refactor de fondre : « il y a 6 min » **situe un fait passé**
+    // (le dernier geste : *ça bouge*), « depuis 6 min » **mesure une attente qui
+    // dure** (la tâche elle-même : *ça dure*). Seule la seconde distingue une
+    // tâche vivante d'une tâche vivante mais partie trop loin.
+    expect(formatAnciennete(DEBUT, MAINTENANT)).toBe("il y a 6 min");
+    expect(formatAttente(DEBUT, MAINTENANT)).toBe("depuis 6 min");
+    expect(formatAnciennete(DEBUT, MAINTENANT)).not.toBe(
+      formatAttente(DEBUT, MAINTENANT),
+    );
+  });
+
+  it("divergent aussi sous la minute, où l'une compte et l'autre renonce", () => {
+    // Le palier le plus fin, celui du signe de vie : l'âge d'un geste se compte
+    // à la seconde (des gestes tombent toutes les 5 à 15 s), l'ancienneté d'une
+    // tâche s'arrondit — « depuis 12 s » n'apprendrait rien sur une tâche qui
+    // vient de partir, et une durée qui saute de seconde en seconde ferait le
+    // bruit que la veille écarte (parti pris 2 : rien ne pulse en plus).
+    const recent = new Date(MAINTENANT - 12_000).toISOString();
+    expect(formatAnciennete(recent, MAINTENANT)).toBe("il y a 12 s");
+    expect(formatAttente(recent, MAINTENANT)).toBe("depuis moins d'une minute");
+  });
+});
+
 /* ==================================================================== *
  * ② La feuille et son horloge : l'âge avance sans rechargement
  * ==================================================================== */
@@ -177,6 +222,45 @@ describe("la ligne de signe de vie (LigneSigneDeVie)", () => {
     expect(ligne.querySelector("time")).toHaveAttribute("dateTime", GESTE.horodatage);
     // Le texte porte tout : un lecteur d'écran sait ce que la ligne est.
     expect(ligne).toHaveTextContent("Dernier geste de l'agent");
+  });
+
+  it("date le geste au survol, sans toucher au texte visible (#894)", () => {
+    // « il y a 4 min » ne dit pas **de quand**, et c'est la première question
+    // devant un run qui traîne. La date se prend en plus, pas à la place : le
+    // texte reste celui du contrôle précédent.
+    render(<LigneSigneDeVie signe={GESTE} />);
+
+    const instant = signes()[0].querySelector("time");
+    expect(instant).toHaveAttribute("title", formatDateHeure(GESTE.horodatage));
+    expect(instant).toHaveTextContent("il y a 12 s");
+    // Le motif est prouvé sur un `title` qui dirait la même chose que le texte :
+    // c'est l'**absolu** qu'on veut, pas une répétition du relatif.
+    expect(instant?.getAttribute("title")).not.toBe(instant?.textContent);
+  });
+
+  it("ne porte le second temps que là où on le lui demande", () => {
+    // Le nœud et la carte ont une ligne chrono où le mettre ; l'en-tête de
+    // couloir de la frise n'en a pas, et c'est la seule à passer `avecChrono`.
+    // L'y ajouter partout dirait deux fois la même chose sur la même boîte.
+    const { unmount } = render(<LigneSigneDeVie signe={GESTE} />);
+    expect(chronos()).toHaveLength(0);
+    unmount();
+
+    render(<LigneSigneDeVie signe={GESTE} avecChrono />);
+    expect(chronos()).toHaveLength(1);
+    expect(signes()[0]).toHaveTextContent("depuis 6 min");
+  });
+
+  it("se tait sur le second temps quand le serveur ne le sert pas", () => {
+    // `travaille_depuis: null` — un producteur qui n'horodate pas son passage
+    // `en_cours`, ou une carte servie avant #894. Ne rien dire vaut mieux que
+    // dire faux, et la ligne redevient exactement celle d'avant.
+    const sansDepart: SigneDeVie = { ...GESTE, travaille_depuis: null };
+    render(<LigneSigneDeVie signe={sansDepart} avecChrono />);
+
+    expect(chronos()).toHaveLength(0);
+    expect(signes()[0]).toHaveTextContent("il y a 12 s");
+    expect(signes()[0]).not.toHaveTextContent("depuis");
   });
 
   it("fait avancer l'ancienneté chaque seconde, sans rechargement", () => {
@@ -234,6 +318,32 @@ describe("la ligne de signe de vie (LigneSigneDeVie)", () => {
     rendus.mockRestore();
   });
 
+  it("fait avancer le second temps aussi, sur la même horloge", () => {
+    // Une durée qui avance est le mouvement qu'on a déjà (parti pris 2 de la
+    // veille : rien ne pulse en plus) — encore faut-il qu'elle avance. Et sans
+    // second timer : les deux temps de la même ligne partagent le battement.
+    const poses = vi.spyOn(globalThis, "setInterval");
+    render(<LigneSigneDeVie signe={GESTE} avecChrono />);
+    expect(signes()[0]).toHaveTextContent("depuis 6 min");
+
+    act(() => {
+      vi.advanceTimersByTime(60_000);
+    });
+
+    expect(signes()[0]).toHaveTextContent("depuis 7 min");
+    expect(signes()[0]).toHaveTextContent("il y a 1 min");
+    expect(poses.mock.calls.filter(([, pas]) => pas === 1_000)).toHaveLength(1);
+    poses.mockRestore();
+  });
+
+  it("date aussi le départ au survol, pour la même raison que le geste", () => {
+    render(<LigneSigneDeVie signe={GESTE} avecChrono />);
+
+    const depart = chronos()[0];
+    expect(depart).toHaveAttribute("dateTime", DEBUT);
+    expect(depart).toHaveAttribute("title", formatDateHeure(DEBUT));
+  });
+
   it("n'entraîne pas l'horloge à 30 s dans son pas", () => {
     // Passer tout le fil d'activité à la seconde ferait re-rendre des dizaines
     // de lignes chaque seconde pour des étiquettes à la minute : la seconde
@@ -283,6 +393,10 @@ function matiere(): { graphe: GrapheRun; taches: Tache[]; frise: FriseRun } {
         compartiment: "terminees",
         agent: "bdd",
         role: "Base de données",
+        // Une tâche soldée : sa ligne chrono porte un fait **figé** (#894), et
+        // c'est la seconde moitié de la règle — les deux durées ne coexistent
+        // jamais sur la même boîte.
+        duree_ms: 92_000,
         activite: null,
       }),
       noeudGrapheFactice({
@@ -293,6 +407,13 @@ function matiere(): { graphe: GrapheRun; taches: Tache[]; frise: FriseRun } {
         statut: "en_cours",
         compartiment: "en_cours",
         agent: "developpeur",
+        // En vol, le serveur n'a **aucune** durée à servir : `avec_duree` n'est
+        // posée qu'à l'issue, un relevé en cours (#835) porte tokens et coût.
+        // C'est exactement le trou que le second temps vient combler — et le
+        // coût partiel, lui, est là : c'est bien la **même** ligne.
+        duree_ms: null,
+        cout_usd: 0.3,
+        cout_partiel: true,
         activite: GESTE,
       }),
       noeudGrapheFactice({ id: "ui", titre: "UI liste", niveau: 1, rang: 1 }),
@@ -305,6 +426,7 @@ function matiere(): { graphe: GrapheRun; taches: Tache[]; frise: FriseRun } {
       titre: "Schéma SQL",
       statut: "terminee",
       agent: "bdd",
+      usage: usageFactice({ tokens_total: 4200, duree_ms: 92_000 }),
       activite: null,
     }),
     tacheFactice({
@@ -312,6 +434,8 @@ function matiere(): { graphe: GrapheRun; taches: Tache[]; frise: FriseRun } {
       titre: "API CRUD",
       statut: "en_cours",
       agent: "developpeur",
+      // Le relevé en cours d'une tâche qui travaille : des tokens, pas de durée.
+      usage: usageFactice({ tokens_total: 5000, duree_ms: null }),
       activite: GESTE,
     }),
   ];
@@ -458,6 +582,92 @@ describe("le nœud en cours du Pipeline", () => {
     expect(autre === null || autre.textContent?.includes("API CRUD")).toBe(true);
   });
 
+  it("dit dans sa ligne chrono depuis combien de temps la tâche travaille (#894)", async () => {
+    runQuiTravaille();
+    monter();
+    const vue = await pipeline();
+
+    // Un seul chrono en vol sur tout le graphe : celui du nœud qui travaille.
+    // Ce volet dit **où** la valeur se pose et de quel instant elle part ; ce
+    // qu'elle affiche (« depuis 6 min », qui avance) est éprouvé au volet ②,
+    // sous horloge factice — ici l'horloge est réelle, et une assertion sur le
+    // texte relatif mesurerait la date du jour.
+    expect(chronos(vue)).toHaveLength(1);
+    expect(chronos(vue)[0]).toHaveAttribute("dateTime", DEBUT);
+    const boite = within(vue).getByText("API CRUD").closest("article");
+    expect(boite?.querySelectorAll("[data-chrono-en-vol]")).toHaveLength(1);
+    // Dans la **place existante** : la ligne où le coût se lit déjà, et où une
+    // tâche soldée montre sa durée. Pas dans une ligne à elle.
+    expect(chronos(vue)[0].closest("p")).toHaveTextContent("0,30 $US");
+  });
+
+  it("ne fait pas grandir la boîte d'une ligne, quoi que le serveur serve", async () => {
+    // Le second critère du ticket, compté : la règle des trois places
+    // (docs/30 §4) plafonne ces boîtes, et le second temps devait tenir dans ce
+    // qui existe. On compte donc les blocs de la boîte **avec** puis **sans**
+    // le champ, sur le même run — la seule mesure qui distingue « posé dans la
+    // place existante » de « posé quelque part ».
+    const lignes = async () => {
+      const rendu = monter();
+      const vue = await pipeline();
+      const boite = within(vue).getByText("API CRUD").closest("article");
+      const compte = boite!.children.length;
+      rendu.unmount();
+      return compte;
+    };
+
+    runQuiTravaille();
+    const avecSecondTemps = await lignes();
+
+    const { graphe } = matiere();
+    runQuiTravaille();
+    lecture.graphe = grapheFactice({
+      ...graphe,
+      noeuds: graphe.noeuds.map((noeud) =>
+        noeud.id === "api"
+          ? { ...noeud, activite: { ...GESTE, travaille_depuis: null } }
+          : noeud,
+      ),
+    });
+    const sansSecondTemps = await lignes();
+
+    expect(avecSecondTemps).toBe(sansSecondTemps);
+  });
+
+  it("prouve son motif sur la boîte soldée : là, la ligne chrono dit un fait figé", async () => {
+    // Le contrôle précédent ne vaut que si les deux durées ne se confondent
+    // pas. Sur « Schéma SQL », terminée, la même ligne rend `formatDuree` —
+    // « 1 min 32 s », un intervalle clos —, et aucun chrono en vol.
+    runQuiTravaille();
+    monter();
+    const vue = await pipeline();
+
+    const boite = within(vue).getByText("Schéma SQL").closest("article");
+    expect(boite).toHaveTextContent("1 min 32 s");
+    expect(boite?.querySelectorAll("[data-chrono-en-vol]")).toHaveLength(0);
+  });
+
+  it("échantillon fautif : un nœud arrêté doté d'un signe ne compte pas non plus son temps", async () => {
+    // La réserve de la vue vaut pour les **deux** temps : ils disent tous les
+    // deux « ça travaille », donc ils se taisent ensemble. Sans cette moitié,
+    // le contrôle ci-dessus vaudrait pour un payload sain et rien d'autre.
+    const { graphe } = matiere();
+    runQuiTravaille();
+    lecture.graphe = grapheFactice({
+      ...graphe,
+      noeuds: graphe.noeuds.map((noeud) =>
+        noeud.id === "schema" ? { ...noeud, activite: GESTE } : noeud,
+      ),
+    });
+    monter();
+    const vue = await pipeline();
+
+    expect(chronos(vue)).toHaveLength(1);
+    expect(within(vue).getByText("Schéma SQL").closest("article")).not.toHaveTextContent(
+      "depuis 6 min",
+    );
+  });
+
   it("efface le signe dès que la tâche attend un humain", async () => {
     // L'attente humaine l'emporte sur le signe comme elle l'emporte sur l'état
     // (`lib/graphe.etatDuNoeud`) : une tâche arrêtée sur quelqu'un ne « bouge »
@@ -484,6 +694,38 @@ describe("la carte du Kanban", () => {
     const autre = porteurDuSigne(vue, "Schéma SQL");
     expect(autre === null || autre.textContent?.includes("API CRUD")).toBe(true);
   });
+
+  it("remplace le « — » de sa ligne chrono par le temps passé (#894)", async () => {
+    // La place existait et ne disait rien : `formatDuree(null)` rend « — » sur
+    // une tâche en vol, faute d'une durée que le relevé en cours ne mesure pas.
+    // Le motif est prouvé juste après, sur la carte soldée.
+    runQuiTravaille();
+    monter();
+    const vue = await kanban();
+
+    expect(chronos(vue)).toHaveLength(1);
+    expect(chronos(vue)[0]).toHaveAttribute("dateTime", DEBUT);
+    const carte = within(vue).getByText("API CRUD").closest("article");
+    expect(carte?.querySelectorAll("[data-chrono-en-vol]")).toHaveLength(1);
+    // Toujours la ligne des mesures : celle qui porte déjà les tokens — et le
+    // « — » de `formatDuree(null)` en a disparu, qui était tout ce que cette
+    // place savait dire d'une tâche en vol. (Le « — » du **coût** inconnu, lui,
+    // reste sur sa ligne à lui : c'est la troisième lecture de #835, pas la
+    // nôtre.)
+    const ligneChrono = chronos(vue)[0].closest("span")?.parentElement;
+    expect(ligneChrono).toHaveTextContent("tokens");
+    expect(ligneChrono).not.toHaveTextContent("—");
+  });
+
+  it("prouve son motif sur la carte soldée : la même ligne y dit un fait figé", async () => {
+    runQuiTravaille();
+    monter();
+    const vue = await kanban();
+
+    const carte = within(vue).getByText("Schéma SQL").closest("article");
+    expect(carte).toHaveTextContent("1 min 32 s");
+    expect(carte?.querySelectorAll("[data-chrono-en-vol]")).toHaveLength(0);
+  });
 });
 
 describe("le couloir de la frise", () => {
@@ -499,6 +741,26 @@ describe("le couloir de la frise", () => {
     // Jamais une entrée : autant de lignes que d'entrées servies, pas une de plus.
     expect(within(vue).getAllByRole("row").slice(1)).toHaveLength(2);
     expect(signes(vue)).toHaveLength(1);
+  });
+
+  it("porte le second temps sur cette ligne-là, faute de ligne chrono (#894)", async () => {
+    // La seule des trois surfaces où le chrono se pose sur la ligne du signe :
+    // un en-tête de couloir n'a ni coût ni durée où le glisser, et lui ajouter
+    // une ligne serait la quatrième que la règle des trois places refuse.
+    runQuiTravaille();
+    monter();
+    const vue = await frise();
+
+    expect(chronos(vue)).toHaveLength(1);
+    // Sur la **même** ligne que le geste, pas en dessous : deux `<time>` dans
+    // une seule ligne de signe, l'un daté du geste et l'autre du départ.
+    expect(chronos(vue)[0].closest("[data-signe-de-vie]")).toBe(signes(vue)[0]);
+    const instants = [...signes(vue)[0].querySelectorAll("time")].map((t) =>
+      t.getAttribute("dateTime"),
+    );
+    expect(instants).toEqual([GESTE.horodatage, DEBUT]);
+    // Et l'en-tête n'a pas gagné de ligne : le couloir garde ses trois places.
+    expect(within(vue).getAllByRole("columnheader")[2].querySelectorAll("p")).toHaveLength(1);
   });
 
   it("borne la largeur de la ligne pour que la colonne ne se déforme pas", async () => {
@@ -525,5 +787,8 @@ describe("un run soldé", () => {
     const couloirs = await frise();
     expect(signes(couloirs)).toHaveLength(0);
     expect(signes()).toHaveLength(0);
+    // Le second temps part avec le premier (#894) : plus rien ne travaille,
+    // donc plus rien ne compte — les deux se taisent ensemble.
+    expect(chronos()).toHaveLength(0);
   });
 });

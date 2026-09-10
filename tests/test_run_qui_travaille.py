@@ -79,6 +79,7 @@ from maestro.controltower.events import (
     EVENEMENT_AGENT_ACTIVITE,
     EVENEMENT_MESSAGE_INTER_AGENTS,
     EVENEMENT_TACHE_BLOCAGE,
+    EVENEMENT_TACHE_REASSIGNATION,
     EVENEMENT_TACHE_STATUT,
     EVENEMENT_TACHE_USAGE,
     EVENEMENT_VALIDATION_DECISION,
@@ -238,8 +239,21 @@ def client_sur(*evenements: Event, state: ControlTowerState | None = None) -> Te
     )
 
 
-def signe(horodatage: str = T1, libelle: str = "Écrit api/contacts.py") -> dict[str, str]:
-    return {"horodatage": horodatage, "libelle": libelle}
+def signe(
+    horodatage: str = T1,
+    libelle: str = "Écrit api/contacts.py",
+    *,
+    depuis: str | None = T0,
+) -> dict[str, str | None]:
+    """La forme JSON d'un signe de vie servi par la projection.
+
+    `depuis` vaut T0 par défaut — l'instant où le harnais fait démarrer ses
+    tâches (`tache(...)`), donc le second temps (#894) que la projection joint
+    au geste. `None` est la forme d'un signe **brut**, tiré d'un événement : un
+    événement dit ce que l'agent vient de faire, jamais depuis quand sa tâche
+    travaille.
+    """
+    return {"horodatage": horodatage, "libelle": libelle, "travaille_depuis": depuis}
 
 
 # ------------------------------------------ ① La forme du signe : un instant, un libellé court
@@ -270,7 +284,10 @@ def test_le_signe_reprend_l_instant_de_l_evenement_tel_quel():
     vie = SigneDeVie.depuis(geste("t1", "Écrit api/contacts.py\npuis relit", horodatage=T1))
 
     assert vie == SigneDeVie(horodatage=T1, libelle="Écrit api/contacts.py")
-    assert vie.to_dict() == signe()
+    # Un signe **brut** ne porte que le geste : un événement ne sait pas depuis
+    # quand la tâche travaille (#894), et la projection le joint plus tard.
+    assert vie.travaille_depuis == ""
+    assert vie.to_dict() == signe(depuis=None)
 
 
 def test_a_instant_egal_le_premier_reste():
@@ -323,7 +340,9 @@ def test_le_dernier_geste_devient_le_signe_de_la_tache_en_cours():
     t1 = state.tache("t1")
 
     assert t1 is not None
-    assert t1.signe_de_vie == SigneDeVie(horodatage=T2, libelle="Écrit api/contacts.py")
+    assert t1.signe_de_vie == SigneDeVie(
+        horodatage=T2, libelle="Écrit api/contacts.py", travaille_depuis=T0
+    )
     assert t1.to_dict()["activite"] == signe(T2)
 
 
@@ -369,7 +388,12 @@ def test_l_attente_de_validation_ne_travaille_pas_meme_si_son_compartiment_dit_e
 
 
 def test_le_signe_reprend_des_que_la_tache_retravaille():
-    """Le geste d'avant l'arrêt reste en mémoire ; c'est le statut qui décide."""
+    """Le geste d'avant l'arrêt reste en mémoire ; c'est le statut qui décide.
+
+    Et le second temps, lui, **repart de zéro** (#894) : une tâche arrêtée puis
+    reprise ne travaille pas depuis son premier départ — le temps où elle ne
+    travaillait pas ne compte pas.
+    """
     state = projection(
         lancement(),
         tache("t1", STATUT_EN_COURS),
@@ -380,7 +404,9 @@ def test_le_signe_reprend_des_que_la_tache_retravaille():
     t1 = state.tache("t1")
 
     assert t1 is not None
-    assert t1.signe_de_vie == SigneDeVie(horodatage=T1, libelle="Premier jet")
+    assert t1.signe_de_vie == SigneDeVie(
+        horodatage=T1, libelle="Premier jet", travaille_depuis=T3
+    )
 
 
 @pytest.mark.parametrize(
@@ -413,7 +439,9 @@ def test_un_message_ou_un_blocage_declare_rafraichit_aussi_le_signe(type, statut
 
     assert t1 is not None and t1.statut == STATUT_EN_COURS
     assert t1.signe_de_vie == SigneDeVie(
-        horodatage=T2, libelle="le dépôt de recette refuse mes identifiants"
+        horodatage=T2,
+        libelle="le dépôt de recette refuse mes identifiants",
+        travaille_depuis=T0,
     )
 
 
@@ -441,7 +469,9 @@ def test_rejouer_le_meme_geste_rend_le_meme_signe():
     t1 = state.tache("t1")
 
     assert t1 is not None
-    assert t1.signe_de_vie == SigneDeVie(horodatage=T1, libelle="Écrit api/contacts.py")
+    assert t1.signe_de_vie == SigneDeVie(
+        horodatage=T1, libelle="Écrit api/contacts.py", travaille_depuis=T0
+    )
 
 
 def test_les_signes_du_run_sont_ceux_de_ses_agents_qui_travaillent():
@@ -461,26 +491,41 @@ def test_les_signes_du_run_sont_ceux_de_ses_agents_qui_travaillent():
 
     signes = state.signes_de_vie_du_run(RUN)
 
-    assert signes == {"developpeur": SigneDeVie(horodatage=T1, libelle="Écrit api/contacts.py")}
+    assert signes == {
+        "developpeur": SigneDeVie(
+            horodatage=T1, libelle="Écrit api/contacts.py", travaille_depuis=T0
+        )
+    }
     assert state.signes_de_vie_du_run("run-jamais-vu") == {}
 
 
 def test_en_multi_instances_le_couloir_retient_le_plus_recent_de_ses_taches():
     """Un agent porte plusieurs tâches à la fois (#100) et le couloir n'a qu'un
     en-tête : c'est le plus récent des gestes qui le représente, et à instant
-    égal le premier reste."""
+    égal le premier reste.
+
+    Les **deux** temps du signe (#894) suivent la même tâche, et c'est ici que
+    ça se prouve : les trois tâches ont démarré à trois instants distincts, si
+    bien qu'un second champ transporté à part montrerait le geste de `t2` avec
+    l'ancienneté de `t1`. Une valeur, une tâche.
+    """
+    debut_t1 = "2026-08-30T07:20:00+00:00"
+    debut_t2 = "2026-08-30T07:30:00+00:00"
+    debut_t3 = "2026-08-30T07:35:00+00:00"
     state = projection(
         lancement(),
-        tache("t1", STATUT_EN_COURS),
-        tache("t2", STATUT_EN_COURS),
-        tache("t3", STATUT_EN_COURS),
+        tache("t1", STATUT_EN_COURS, horodatage=debut_t1),
+        tache("t2", STATUT_EN_COURS, horodatage=debut_t2),
+        tache("t3", STATUT_EN_COURS, horodatage=debut_t3),
         geste("t1", "Ancien", horodatage=T1),
         geste("t2", "Récent", horodatage=T2),
         geste("t3", "Même seconde que t2", horodatage=T2),
     )
 
     assert state.signes_de_vie_du_run(RUN) == {
-        "developpeur": SigneDeVie(horodatage=T2, libelle="Récent")
+        "developpeur": SigneDeVie(
+            horodatage=T2, libelle="Récent", travaille_depuis=debut_t2
+        )
     }
 
 
@@ -551,7 +596,7 @@ def test_le_graphe_transporte_le_signe_tel_que_la_projection_l_a_tranche():
     """`graphe_du_run` est une feuille : il ne rejoue pas la règle, il rend ce
     qu'on lui passe — y compris, si on le lui passait, un signe sur un nœud
     arrêté. C'est la projection qui ne le lui passe jamais."""
-    vie = SigneDeVie(horodatage=T1, libelle="Écrit api/contacts.py")
+    vie = SigneDeVie(horodatage=T1, libelle="Écrit api/contacts.py", travaille_depuis=T0)
     graphe = graphe_du_run(
         RUN,
         [NoeudPlan(id="t1"), NoeudPlan(id="t2")],
@@ -610,7 +655,7 @@ def test_le_couloir_dont_la_tache_travaille_porte_le_signe_et_l_autre_non():
 
     par_agent = {couloir.agent: couloir for couloir in frise.couloirs}
     assert par_agent["developpeur"].activite == SigneDeVie(
-        horodatage=T2, libelle="Écrit api/contacts.py"
+        horodatage=T2, libelle="Écrit api/contacts.py", travaille_depuis=T0
     )
     assert par_agent["qa"].activite is None
     assert par_agent["developpeur"].to_dict()["activite"] == signe(T2)
@@ -819,6 +864,128 @@ def test_le_cumul_du_run_bouge_entre_deux_lectures_pendant_qu_une_tache_travaill
     assert (seconde["cout_usd"], seconde["cout_partiel"]) == (pytest.approx(0.5), True)
     # Le nœud du graphe porte la même réserve que la carte.
     assert state.graphe(RUN).to_dict()["noeuds"][1]["cout_partiel"] is True
+
+
+# ------------------------------------------ ⑦ Le second temps : depuis quand la tâche travaille
+
+
+def test_echantillon_fautif_une_tache_en_vol_n_a_aucune_duree_a_montrer():
+    """La forme d'**avant** #894, et le motif de tout le volet : la ligne chrono
+    d'une boîte en cours n'a **rien** à dire.
+
+    Elle est alimentée par `usage.duree_ms`, que le moteur ne pose qu'à l'issue
+    (`StepUsage.avec_duree`) — un relevé en cours (#835) porte des tokens et un
+    coût, jamais une durée. Le contrôle suivant rougit donc ici, et c'est ce qui
+    a tranché la question ouverte du ticket : la valeur n'était pas déjà servie,
+    il fallait la dériver du **début** de la tâche côté projection.
+    """
+    state = projection(lancement(), tache("t1", STATUT_EN_COURS))
+    state.appliquer(releve("t1", StepUsage(tokens_entree=5000, tours=2, cout_usd=0.3)))
+    t1 = state.tache("t1")
+
+    assert t1 is not None and t1.statut == STATUT_EN_COURS
+    assert t1.usage is not None and t1.usage.duree_ms is None
+    assert t1.to_dict()["usage"]["duree_ms"] is None
+    # Le nœud du graphe lit la même durée, et n'a donc rien de plus à montrer.
+    assert state.graphe(RUN).to_dict()["noeuds"][0]["duree_ms"] is None
+
+
+def test_le_depart_est_le_passage_en_cours_et_non_le_dernier_changement_d_etat():
+    """`horodatage` porte le **dernier** changement d'état de la tâche, et c'est
+    pour cela qu'il ne pouvait pas servir : sur une relance (#91), le moteur
+    ré-émet `en_cours`, l'horodatage suit — et une tâche partie depuis vingt
+    minutes se remettrait à zéro sous les yeux, c'est-à-dire exactement le signal
+    que le second temps existe pour montrer."""
+    state = projection(
+        lancement(),
+        tache("t1", STATUT_EN_COURS, horodatage=T0),
+        geste("t1", "Écrit api/contacts.py", horodatage=T1),
+        tache("t1", STATUT_EN_COURS, horodatage=T3),
+    )
+    t1 = state.tache("t1")
+
+    assert t1 is not None
+    assert t1.horodatage == T3
+    assert t1.debut == T0
+    assert t1.to_dict()["activite"] == signe(T1, depuis=T0)
+
+
+def _reassignation(statut: str, horodatage: str, agent: str = "qa") -> Event:
+    """L'acte manuel du Kanban (EF-11/EF-20) — le second chemin qui fait bouger
+    un statut de tâche, et donc le second appelant de `_pose_debut`."""
+    return Event(
+        type=EVENEMENT_TACHE_REASSIGNATION,
+        run_id=RUN,
+        tache_id="t1",
+        agent=agent,
+        role="Testeur",
+        statut=statut,
+        projet_id=PROJET,
+        horodatage=horodatage,
+    )
+
+
+def test_une_reprise_apres_arret_repart_d_un_depart_neuf_meme_par_reassignation():
+    """Le pendant du cas précédent : le temps où la tâche **ne travaillait pas**
+    ne compte pas. La règle vit une fois (`_pose_debut`) pour les deux chemins
+    qui font bouger un statut de tâche, et c'est le second — la réassignation —
+    qui porte la reprise depuis le Kanban.
+
+    Les deux moitiés sont éprouvées ici, parce que ce sont deux passages
+    différents : une réassignation **sur une tâche qui travaille** ne rajeunit
+    rien (le travail continue, il change juste de mains), une réassignation qui
+    la **remet** au travail arme un départ neuf.
+    """
+    state = projection(
+        lancement(),
+        tache("t1", STATUT_EN_COURS, horodatage=T0),
+        # Elle travaille toujours : le porteur change, pas le départ.
+        _reassignation(STATUT_EN_COURS, T1, agent="devops"),
+    )
+    assert state.tache("t1").debut == T0  # type: ignore[union-attr]
+
+    # Elle s'arrête (une réassignation nue rend la tâche « assignee »)…
+    state.appliquer(_reassignation("", T2))
+    assert state.tache("t1").statut == "assignee"  # type: ignore[union-attr]
+
+    # … puis elle repart : départ neuf.
+    state.appliquer(_reassignation(STATUT_EN_COURS, T3))
+    t1 = state.tache("t1")
+
+    assert t1 is not None and t1.agent == "qa"
+    assert t1.debut == T3
+
+
+def test_un_passage_sans_horodatage_n_invente_pas_un_depart():
+    """Ne rien dire vaut mieux que dire faux : un producteur minimaliste qui
+    n'horodate pas son `en_cours` laisse le second temps à `null`, plutôt que de
+    laisser courir le départ d'un cycle précédent. Le premier temps, lui, reste
+    servi — le signe ne disparaît pas pour autant."""
+    state = projection(
+        lancement(),
+        tache("t1", STATUT_EN_COURS, horodatage=T0),
+        tache("t1", STATUT_TERMINEE, horodatage=T1),
+        tache("t1", STATUT_EN_COURS, horodatage=""),
+        geste("t1", "Écrit api/contacts.py", horodatage=T2),
+    )
+    t1 = state.tache("t1")
+
+    assert t1 is not None and t1.debut == ""
+    assert t1.to_dict()["activite"] == signe(T2, depuis=None)
+
+
+def test_le_second_temps_survit_au_rejeu_du_journal_durable():
+    """Rejouer la même séquence rend le même état (#97) — départ compris."""
+    evenements = [
+        lancement(),
+        tache("t1", STATUT_EN_COURS, horodatage=T0),
+        geste("t1", "Écrit api/contacts.py", horodatage=T1),
+    ]
+    une = projection(*evenements)
+    deux = projection(*evenements, *evenements)
+
+    assert une.tache("t1").debut == T0  # type: ignore[union-attr]
+    assert deux.tache("t1").debut == T0  # type: ignore[union-attr]
 
 
 # ------------------------------------------ La route : le même signe aux trois endroits

@@ -158,7 +158,10 @@ class EtatNoeud:
     `activite` (#836) est le signe de vie **déjà tranché** par la projection :
     None dès que la tâche ne travaille pas. Un septième champ, et il passe
     parce qu'il est dessiné — c'est la seule chose qui bouge sur une boîte en
-    cours.
+    cours. Depuis #894 il porte **deux** temps et pas un — l'âge du dernier
+    geste et le départ de la tâche —, ce qui reste **un** champ à transporter :
+    c'est la ligne chrono de la boîte qui rend le second, dans la place où elle
+    montre déjà `duree_ms` une fois la tâche soldée.
     """
 
     statut: str = STATUT_BACKLOG

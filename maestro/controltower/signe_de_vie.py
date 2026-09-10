@@ -55,7 +55,7 @@ Module **feuille** : il ne connaît ni la projection, ni FastAPI. Il emprunte à
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from maestro.controltower.events import Event
@@ -94,22 +94,60 @@ def libelle_court(texte: str, largeur: int = LARGEUR_LIBELLE) -> str:
 
 @dataclass(frozen=True)
 class SigneDeVie:
-    """Le dernier geste d'un agent sur une tâche : quand, et quoi en bref.
+    """Ce qu'une vue montre d'une tâche qui travaille : son dernier geste, et son âge.
 
-    `horodatage` est celui de l'événement qui l'a produit, tel quel — c'est
-    lui qu'une vue rend en « il y a 12 s », et lui qui prouve que deux lectures
-    espacées d'un geste ne rendent pas la même chose. `libelle` est le geste,
-    abrégé par `libelle_court` ; vide si l'événement n'en disait rien, et
+    `horodatage` est celui de l'événement qui a produit le geste, tel quel —
+    c'est lui qu'une vue rend en « il y a 12 s », et lui qui prouve que deux
+    lectures espacées d'un geste ne rendent pas la même chose. `libelle` est le
+    geste, abrégé par `libelle_court` ; vide si l'événement n'en disait rien, et
     l'horodatage suffit alors à dire « vivant ».
+
+    Deux temps, et pas un (#894)
+    ----------------------------
+
+    `travaille_depuis` est l'instant où la **tâche** a commencé à travailler —
+    vide tant qu'on ne le sait pas. Les deux ne disent pas la même chose, et le
+    front porte déjà les deux mots avec leur raison (`lib/format.ts`) :
+    l'horodatage du geste **situe un fait passé** (« il y a 12 s » — *ça
+    bouge*), l'instant de départ **mesure une attente qui dure** (« depuis
+    6 min » — *ça dure*). Seul le second distingue une tâche vivante d'une tâche
+    vivante mais **partie trop loin** : celle qui enchaîne des gestes depuis
+    vingt minutes sur un sujet qui en demandait deux.
+
+    Ils voyagent **ensemble** plutôt que côte à côte, et c'est le point : le
+    couloir d'un agent multi-instances (#100) retient le signe de la plus
+    récente de ses tâches en cours (`plus_recent_que`), si bien qu'un second
+    champ transporté à part montrerait le geste d'une tâche et l'ancienneté
+    d'une autre. Une valeur, une tâche.
+
+    La comparaison, elle, ne porte **que** sur l'horodatage du geste : c'est lui
+    qui dit lequel de deux signes est le plus frais. Le départ d'une tâche ne
+    bouge pas.
     """
 
     horodatage: str
     libelle: str = ""
+    travaille_depuis: str = ""
 
     @classmethod
     def depuis(cls, event: Event) -> SigneDeVie:
-        """Le signe de vie que porte `event` — son instant et son détail abrégé."""
+        """Le signe de vie que porte `event` — son instant et son détail abrégé.
+
+        Sans `travaille_depuis` : un événement dit ce que l'agent vient de
+        faire, jamais depuis quand sa tâche travaille. Ce second temps est posé
+        par la projection, qui seule tient le départ de la tâche
+        (`EtatTache.debut`), au moment où elle tranche qu'il y a un signe.
+        """
         return cls(horodatage=event.horodatage, libelle=libelle_court(event.detail))
+
+    def avec_debut(self, debut: str) -> SigneDeVie:
+        """Copie du signe, augmentée de l'instant où la tâche a commencé à travailler.
+
+        Le geste reste ce qu'il était : ce verbe **compose**, il ne recalcule
+        rien. Un `debut` vide laisse le champ vide, ce que `to_dict` rend `null`
+        — inconnu n'est pas « depuis toujours ».
+        """
+        return replace(self, travaille_depuis=debut)
 
     def plus_recent_que(self, autre: SigneDeVie | None) -> bool:
         """Ce signe est-il postérieur à `autre` (ou `autre` absent) ?
@@ -124,5 +162,14 @@ class SigneDeVie:
         return autre is None or self.horodatage > autre.horodatage
 
     def to_dict(self) -> dict[str, Any]:
-        """La forme JSON d'un signe de vie (`SigneDeVie`, apps/web/lib/types.ts)."""
-        return {"horodatage": self.horodatage, "libelle": self.libelle}
+        """La forme JSON d'un signe de vie (`SigneDeVie`, apps/web/lib/types.ts).
+
+        `travaille_depuis` sort à `null` quand il est vide — le client distingue
+        ainsi « on ne sait pas depuis quand » d'un départ connu, et n'affiche
+        alors que le premier temps, comme avant #894.
+        """
+        return {
+            "horodatage": self.horodatage,
+            "libelle": self.libelle,
+            "travaille_depuis": self.travaille_depuis or None,
+        }
