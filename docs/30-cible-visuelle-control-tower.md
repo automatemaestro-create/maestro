@@ -1020,6 +1020,18 @@ bougent. Partis pris 1 à 3 → **#876**, parti pris 4 → **#877**. Le ticket s
 `veille::arbitree` depuis cette veille — c'est l'enregistrement qui empêche la question de revenir,
 et le premier de ce genre posé **après** la fermeture du ticket qu'il arbitre.
 
+**Partis pris 1 à 3 livrés par #876** : `components/Conversation.tsx` (la colonne sur la section,
+donc l'en-tête, le fil et le composeur d'un coup ; le calcul des tours, propriété de la *suite* des
+messages) et `components/chat/BulleFil.tsx` (l'habillage réservé à la personne et à `pleineLargeur`,
+les deux drapeaux `ouvreUnTour`/`piedVisible`), gardés par `tests/fil-en-colonne.test.tsx` sur les
+**deux** surfaces — sondes prouvées sur le fil d'avant, deux des trois propriétés s'observant en
+négatif. Banc du 2026-09-10 sur `/chat` aux six fenêtres plus 1920×872 et sur l'onglet Chat : **RAS
+partout**, colonne et composeur à **768 px** exactement de la même largeur, recouvrement des deux
+côtés **−57 px → +293** (307 sur deux messages qui occupent la borne : `70 %` mord avant `72ch` à
+cette largeur, d'où 307 et non les ~318 annoncés ici), **24 px entre deux tours contre 12 dedans**.
+Un pied masqué ne passe **pas** par `Infobulle` — son wrapper est focusable (#536), ce serait un
+arrêt de tabulation invisible par message groupé — et l'horodatage y reste un `<time>` nu.
+
 **Parti pris 4 livré par #877** : `components/Conversation.tsx` (l'état `decroche`, `reglerLeSuivi`,
 `retourAuDernierMessage`) et `components/Icones.tsx` (`IconeFlecheBas`, que le jeu n'avait pas),
 gardés par `tests/dernier-message.test.tsx` — la sonde de forme prouvée sur un geste écrit **sans le

@@ -113,6 +113,34 @@
  *   est déjà lu ne bouge. Aucun de ces états n'est annoncé deux fois — la région
  *   live compte les messages (#538), les `role="alert"` disent les fautes.
  *
+ * ## Le fil est une colonne (#876)
+ *
+ * Les partis pris **1 à 3** de la veille #820 (docs/30 §5.3, décision complète
+ * en commentaire de #820, différée de #698) — la première veille jouée **sur
+ * pièces**, c'est-à-dire sur une surface que #690/#698 avaient figée sans
+ * référence. Ce qu'elle a mesuré à 1920×872 : le fil occupait **1144 px** pour
+ * des bulles bornées à 543 (`min(70 %, 72ch)`, #697), si bien que les deux côtés
+ * **ne se recouvraient pas** — 57 px de vide entre eux, l'œil traversant ~600 px
+ * d'un tour au suivant —, le composeur faisait **deux fois** la largeur de ce
+ * qu'on lit, et chaque message des deux côtés était une boîte portant sa propre
+ * ligne « auteur · heure ».
+ *
+ * - **une colonne de lecture bornée et centrée** — `mx-auto w-full max-w-3xl`
+ *   sur la section, donc sur l'en-tête, le fil *et* le formulaire à la fois :
+ *   c'est ce qui fait que ce qu'on lit et ce qu'on écrit ont la même largeur
+ *   *(ChatGPT 640 px, Perplexity 720 px dont le composeur fait exactement la
+ *   largeur)*. Le recouvrement des deux côtés passe de −57 px à ~318 ;
+ * - **seule la personne a une bulle** — voir `chat/BulleFil`, qui porte les
+ *   deux exceptions (la bulle de la personne, le `pleineLargeur` du brief) ;
+ * - **un tour = un auteur, nommé une fois** — voir `continuations`/`ferme`
+ *   ci-dessous : le regroupement est une propriété de la **suite** des messages,
+ *   donc il se calcule ici et la bulle ne fait que l'appliquer.
+ *
+ * Le parti pris 4 de la même veille — revenir en bas est un geste, visible
+ * seulement quand on a décroché — est **hors de ce lot** (#877) : le `suit` de
+ * `lib/defilement` tient déjà la moitié invisible du sujet, c'est la moitié
+ * visible qui manque.
+ *
  * ## Le composeur est un bloc (#726)
  *
  * Le `<form>` à quai portait trois rectangles voisins — le champ, « Envoyer »
@@ -513,11 +541,62 @@ export function Conversation({
     return jour === jourDe(messages[index - 1].horodatage) ? null : jour;
   });
 
+  /**
+   * Les **tours** : quels messages continuent celui qui les précède, et lesquels
+   * ferment leur suite (#876 — parti pris 3 de la veille #820, d'après Zulip,
+   * dont la ligne d'auteur n'est rendue qu'au premier message d'une suite, et
+   * ChatGPT, 36 px entre tours contre 12 dedans).
+   *
+   * Calculé ici, comme `ouvertures` et pour la même raison : c'est une propriété
+   * de la **suite** des messages, et une bulle ne peut pas répondre seule à
+   * « suis-je encore dans le tour d'avant ? ». Trois règles y sont lisibles d'un
+   * coup — le premier message n'ouvre rien, un séparateur de journée **coupe**
+   * un tour (deux répliques à trois jours d'écart ne sont pas un tour), et la
+   * suite se juge sur l'auteur **et** le côté, pas sur le seul nom : deux
+   * auteurs homonymes de part et d'autre du fil resteraient deux tours.
+   */
+  const tourDe = (auteur: string) =>
+    `${auteur} ${auteur === CHAT_AUTEUR_UTILISATEUR ? "vous" : "autre"}`;
+  const continuations = messages.map((message, index) => {
+    if (index === 0 || ouvertures[index] !== null) return false;
+    return tourDe(messages[index - 1].auteur) === tourDe(message.auteur);
+  });
+  /** Le dernier message de sa suite : celui qui porte le pied à l'œil. */
+  const ferme = messages.map(
+    (_, index) =>
+      index === messages.length - 1 || !continuations[index + 1],
+  );
+  // La réponse qui s'écrit ouvre un tour, sauf à prolonger celui du dernier
+  // message — ce qui arrive quand l'agent enchaîne deux fois. Elle ne change
+  // jamais le pied d'un message **persisté** : elle est transitoire, et le
+  // message qui la remplacera refera le calcul ci-dessus.
+  const reponseOuvreUnTour =
+    enTrainDEcrire !== null &&
+    (messages.length === 0 ||
+      tourDe(messages[messages.length - 1].auteur) !==
+        tourDe(enTrainDEcrire.auteur));
+
   return (
     <section
       aria-label={libelle}
       className={
-        "flex min-w-0 flex-1 flex-col gap-3 rounded-md " +
+        // **Une colonne de lecture**, bornée et centrée (#876 — parti pris 1 de
+        // la veille #820, d'après ChatGPT : 640 px dans un volet de 1660, et
+        // Perplexity : 720 px, composeur exactement de la largeur de la
+        // colonne). Mesuré avant : à 1920×872 le fil occupait 1144 px pour des
+        // bulles bornées à 543, si bien que les deux côtés **ne se recouvraient
+        // pas** — 57 px de vide entre les deux colonnes, ~600 px pour l'œil d'un
+        // tour au suivant — et que le composeur faisait deux fois la largeur de
+        // ce qu'on lit. `max-w-3xl` (48 rem) ramène le recouvrement à ~318 px :
+        // ce qu'on lit et ce qu'on écrit ont enfin la même largeur, la borne de
+        // la bulle elle-même ne bougeant pas (`chat/BulleFil`).
+        //
+        // Rien n'est conditionné à un point de rupture : sous `@4xl` la colonne
+        // de propriétés passe déjà sous le fil, donc la borne ne mord pas, et
+        // une règle qui vaut pour les deux surfaces est toujours celle qui ne
+        // dépend pas de la mise en page (règle de #691). L'onglet Chat d'une
+        // fiche agent en hérite ainsi sans une ligne.
+        "mx-auto flex w-full max-w-3xl min-w-0 flex-1 flex-col gap-3 rounded-md " +
         (survol
           ? "outline-dashed outline-2 outline-offset-4 outline-accent "
           : "") +
@@ -629,7 +708,11 @@ export function Conversation({
                   libelle={libelleDuJour(ouverture, maintenant)}
                 />
               )}
-              <Bulle message={message} />
+              <Bulle
+                message={message}
+                ouvreUnTour={!continuations[index]}
+                piedVisible={ferme[index]}
+              />
             </Fragment>
           );
         })}
@@ -638,7 +721,12 @@ export function Conversation({
             s'écrire » veut dire. Elle disparaît sur la trame de clôture, où le
             message persisté prend le relais sans clignotement (`useChat` : la
             fusion écarte le doublon). */}
-        {enTrainDEcrire !== null && <BulleEnCours reponse={enTrainDEcrire} />}
+        {enTrainDEcrire !== null && (
+          <BulleEnCours
+            reponse={enTrainDEcrire}
+            ouvreUnTour={reponseOuvreUnTour}
+          />
+        )}
         {/* « … répond… » ne couvre plus que l'attente **avant le premier
             mot** : dès qu'un incrément arrive, c'est le texte lui-même qui dit
             que ça travaille. C'était le défaut de départ — un indicateur
@@ -1046,9 +1134,16 @@ export function Conversation({
  * curseur est donc **passé** au rendu, qui le fond dans le dernier bloc plutôt
  * que de l'ajouter dessous.
  */
-function BulleEnCours({ reponse }: { reponse: ReponseEnCours }) {
+function BulleEnCours({
+  reponse,
+  ouvreUnTour,
+}: {
+  reponse: ReponseEnCours;
+  /** Elle ouvre un tour, sauf à prolonger celui du dernier message (#876). */
+  ouvreUnTour: boolean;
+}) {
   return (
-    <BulleFil auteur={reponse.auteur}>
+    <BulleFil auteur={reponse.auteur} ouvreUnTour={ouvreUnTour}>
       <TexteMarkdown
         texte={reponse.texte}
         curseur={
@@ -1082,13 +1177,25 @@ function BulleEnCours({ reponse }: { reponse: ReponseEnCours }) {
  * *message* porte, et lui seul — c'est la même raison qui a fait sortir la mise
  * en page de `FilChat` vers ce fichier, appliquée d'un cran plus bas.
  */
-function Bulle({ message }: { message: MessageChat }) {
+function Bulle({
+  message,
+  ouvreUnTour,
+  piedVisible,
+}: {
+  message: MessageChat;
+  /** Le message d'avant est d'un autre auteur, ou une journée les sépare (#876). */
+  ouvreUnTour: boolean;
+  /** Ce message ferme sa suite : c'est lui qui nomme l'auteur à l'œil (#876). */
+  piedVisible: boolean;
+}) {
   const utilisateur = message.auteur === CHAT_AUTEUR_UTILISATEUR;
   return (
     <BulleFil
       auteur={message.auteur}
       utilisateur={utilisateur}
       horodatage={message.horodatage}
+      ouvreUnTour={ouvreUnTour}
+      piedVisible={piedVisible}
     >
       {/* Le Markdown du **seul** côté de l'agent (#697) : c'est lui qui produit
           des titres, des listes et du code, et c'est ce que le critère nomme.
