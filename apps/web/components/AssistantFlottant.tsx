@@ -38,6 +38,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { AMORCE_NOWRAP } from "@/components/Conversation";
 import { IconeAssistant, IconeFermer } from "@/components/Icones";
 import { Infobulle } from "@/components/Infobulle";
 import {
@@ -209,6 +210,11 @@ function PanneauAssistance({ fermer }: { fermer: () => void }) {
         )}
       </ol>
 
+      {/* Les amorces suivent la règle du composeur (#908) : aucune ne
+          s'enveloppe sur elle-même (`AMORCE_NOWRAP`), c'est le groupe qui
+          enveloppe — et ça ne tient qu'avec des libellés au calibre
+          (`CALIBRE_AMORCE`, `lib/assistance`) : le panneau fait au plus
+          `min(24rem, 100vw − 2rem)`, soit 343 px à 375 px. */}
       {filVide && (
         <div className="flex flex-wrap gap-1.5 px-3 pb-2">
           {AMORCES_ASSISTANCE.map((amorce) => (
@@ -217,7 +223,7 @@ function PanneauAssistance({ fermer }: { fermer: () => void }) {
               type="button"
               onClick={() => void soumettre(amorce)}
               className={
-                "rounded-full border border-neutral-200 px-2.5 py-1 text-xs text-neutral-600 " +
+                `${AMORCE_NOWRAP} rounded-full border border-neutral-200 px-2.5 py-1 text-xs text-neutral-600 ` +
                 "hover:border-neutral-400 hover:text-neutral-900 " +
                 "dark:border-neutral-700 dark:text-neutral-300 dark:hover:border-neutral-500 dark:hover:text-neutral-100"
               }
