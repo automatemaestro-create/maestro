@@ -248,16 +248,9 @@ type Manque = {
 };
 
 const MANQUES_DU_SOCLE: readonly Manque[] = [
-  {
-    token: "selectionne",
-    temoin: "components/BarreLaterale.tsx",
-    classe: "dark:bg-neutral-800",
-    raison:
-      "l'entrée de menu **active** est un cran plus marquée que la survolée " +
-      "(`bg-neutral-200` contre le `#f5f5f5` de `survol` en clair) ; la palette " +
-      "n'a qu'un fond de survol, et replier l'actif dessus effacerait la " +
-      "distinction entre « où je suis » et « ce que je vise »",
-  },
+  // `selectionne` en est sorti par #911 : le token existe, `BarreLaterale`
+  // l'écrit — c'est le contrôle « ne nomme aucun manque que la palette couvre
+  // déjà » ci-dessous qui a fait retirer la ligne, comme prévu.
   // `neutre` (Primitives) et `sur-ton-bord` (chat/SourcesDuFil) ont figuré ici
   //   jusqu'à #910 : la veille #905 a établi qu'ils n'étaient pas des couleurs
   //   manquantes mais des **opacités de tokens existants** (`bg-texte/10`,
@@ -320,9 +313,10 @@ describe("ce que le socle ne sait pas rendre", () => {
 
   it("ne nomme aucun manque que la palette couvre déjà", () => {
     // LE contrôle qui empêche cette liste de devenir l'endroit où l'on range ce
-    // qui échoue : le jour où `--color-selectionne` est déclaré, la ligne rougit
-    // et son témoin se replie. ⚠ Il ne tient que sur le **nom** — un token
-    // ajouté sous un autre nom (`--color-selection`) ne le déclencherait pas.
+    // qui échoue : le jour où le `--color-<token>` est déclaré, la ligne rougit
+    // et son témoin se replie — c'est ainsi que `selectionne` en est sorti
+    // (#911). ⚠ Il ne tient que sur le **nom** — un token ajouté sous un autre
+    // nom (`--color-selection`) ne le déclencherait pas.
     const tokens = tokensDeLaPalette();
     for (const { token, temoin } of MANQUES_DU_SOCLE) {
       expect(
@@ -377,11 +371,13 @@ const RESIDU = new Map<string, number>([
   ["app/journal/page.tsx", 9],
   ["components/AssistantFlottant.tsx", 30],
   ["components/BanniereErreurApi.tsx", 3],
-  // + le fond de la barre latérale et son bord : `surface-creuse` et `bord` les
-  //   rendent **au pixel près** dans les deux thèmes (mesuré). Le ticket les
-  //   donnait pour un manque plausible du socle ; ils n'en sont pas un, et
-  //   c'est la ligne la plus facile de ce tableau à faire baisser.
-  ["components/BarreLaterale.tsx", 8], // manque : `selectionne`
+  // 8 → 4 par #911 : les deux fonds d'entrée (`selectionne`, `survol`) et le
+  //   fond et le bord de la barre, que `surface-creuse` et `bord` rendent **au
+  //   pixel près** dans les deux thèmes (mesuré — le ticket les donnait pour
+  //   un manque plausible du socle, ils n'en étaient pas un). Ce qui reste :
+  //   le lien de marque et les trois tons de libellé des entrées, dont le
+  //   repli sur `texte`/`texte-secondaire` changerait le rendu.
+  ["components/BarreLaterale.tsx", 4],
   ["components/BarreSuperieure.tsx", 10],
   ["components/BasculeDeVues.tsx", 6],
   ["components/BasculeTheme.tsx", 8],
@@ -462,7 +458,7 @@ const RESIDU = new Map<string, number>([
 ]);
 
 /** Le compte du README — épinglé ici pour qu'il ne puisse pas dériver en silence. */
-const TOTAL_ANNONCE = 682;
+const TOTAL_ANNONCE = 678;
 
 /** Ce que le produit porte aujourd'hui, fichier par fichier. */
 function residuMesure(): Map<string, string[]> {

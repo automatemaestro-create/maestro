@@ -259,6 +259,27 @@ describe("la sidebar (BarreLaterale)", () => {
     ).not.toHaveAttribute("aria-current");
   });
 
+  it("porte la sélection par deux signaux, sur les tokens du socle (#911)", () => {
+    // Le fond dit « où je suis », la graisse le redit : migrer le fond sur
+    // `bg-selectionne` ne retire pas `font-medium` (veille #905, d'après Zulip,
+    // dont l'entrée sélectionnée porte trois signaux). Et le survol est un
+    // AUTRE état — `hover:bg-survol`, jamais le même fond que la sélection :
+    // en sombre, `survol` vaut l'ancien `dark:bg-neutral-800` de l'actif, donc
+    // c'est bien deux tokens qu'il faut, sans variante `dark:` écrite à la main.
+    poserChemin("/couts");
+    render(<BarreLaterale repliee={false} />);
+    const active = screen.getByRole("link", { name: /Coûts & analytics/ });
+    expect(active).toHaveClass("bg-selectionne");
+    expect(active).toHaveClass("font-medium");
+    expect(active).not.toHaveClass("bg-survol");
+    expect(active.className).not.toMatch(/dark:bg-/);
+    const autre = screen.getByRole("link", { name: /Tableau de bord/ });
+    expect(autre).toHaveClass("hover:bg-survol");
+    expect(autre).not.toHaveClass("bg-selectionne");
+    expect(autre).not.toHaveClass("font-medium");
+    expect(autre.className).not.toMatch(/dark:(?:hover:)?bg-/);
+  });
+
   it("garde chaque section atteignable une fois repliée", () => {
     // Repliée, la sidebar masque les libellés : c'est l'`aria-label` (et
     // l'icône) qui portent alors le nom de la section — les liens doivent

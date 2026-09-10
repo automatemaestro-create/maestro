@@ -25,7 +25,10 @@ export function BarreLaterale({ repliee }: { repliee: boolean }) {
   return (
     <aside
       className={
-        "sticky top-0 flex h-dvh shrink-0 flex-col border-r border-neutral-200 bg-neutral-50 transition-[width] duration-200 motion-reduce:transition-none dark:border-neutral-800 dark:bg-neutral-950 " +
+        // `surface-creuse` et `bord` rendent l'ancien `bg-neutral-50` /
+        // `border-neutral-200` et leurs `dark:` au pixel près (#895, mesuré) —
+        // et c'est sur cette creuse que `selectionne` a été mesuré (#911).
+        "sticky top-0 flex h-dvh shrink-0 flex-col border-r border-bord bg-surface-creuse transition-[width] duration-200 motion-reduce:transition-none " +
         largeur
       }
     >
@@ -69,11 +72,20 @@ export function BarreLaterale({ repliee }: { repliee: boolean }) {
               // sidebar n'affiche plus que l'icône, et le nom du lien ne tenait
               // qu'au `title`.
               aria-label={libelle}
+              // Deux fonds, deux états, deux tokens (#911) : `selectionne` dit
+              // « où je suis », `survol` « ce que je vise », et ils ne se
+              // replient pas l'un sur l'autre — en sombre, `survol` vaut
+              // exactement l'ancien `dark:bg-neutral-800` de l'entrée active,
+              // donc migrer le survol seul aurait rendu les deux identiques.
+              // Le fond n'est que le second signal : la graisse reste, et
+              // `aria-current` ci-dessus porte l'état sans couleur. Les tons
+              // du libellé sont encore écrits à la main — les replier sur
+              // `texte`/`texte-secondaire` changerait le rendu, hors de ce lot.
               className={
                 "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors motion-reduce:transition-none " +
                 (actif
-                  ? "bg-neutral-200 font-medium text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100"
-                  : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-900 dark:hover:text-neutral-100")
+                  ? "bg-selectionne font-medium text-neutral-900 dark:text-neutral-100"
+                  : "text-neutral-600 hover:bg-survol hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100")
               }
             >
               <Icone className="size-5 shrink-0" />

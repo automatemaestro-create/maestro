@@ -324,6 +324,21 @@ const PAIRES: readonly Paire[] = [
     seuil: SEUIL_NON_TEXTE,
     motif: "le contour d'un bouton de contour survolé",
   },
+
+  // ── L'état sélectionné (#911) ────────────────────────────────────────────
+  // Le frère de `survol` : le fond d'un contrôle sans aplat quand il dit « où
+  // je suis » (l'entrée de menu active). UNE paire et non les trois du survol,
+  // et c'est mesuré, pas économisé : `texte-secondaire` n'y tient dans aucun
+  // thème (4,23:1 en clair, 3,68:1 en sombre) et `bord-fort` pas davantage —
+  // donc une entrée sélectionnée écrit **toujours** `texte`, et c'est ce que
+  // le produit fait. Les déclarer « pour la symétrie » rougirait sur des paires
+  // que rien ne rend, et la faute serait dans la table, pas dans la palette.
+  {
+    avant: "texte",
+    arriere: "selectionne",
+    seuil: SEUIL_TEXTE,
+    motif: "le libellé d'une entrée sélectionnée",
+  },
 ];
 
 /**
@@ -507,14 +522,14 @@ describe("la couverture du filet", () => {
     }
   });
 
-  it("mesure les 48 paires par thème qu'annoncent #533, #535 et #912", () => {
-    // Le chiffre est celui du README et de `globals.css` (« 96 paires mesurées,
-    // 48 par thème » : les 36 de #533, plus les 7 dont #535 a besoin pour son
-    // état survolé, plus les 5 du ton `provenance` de #912). Il garde le
-    // CONSTRUCTEUR de la table : une boucle qui n'itère plus rendrait une table
-    // courte, donc un vert plus rapide et faux. S'il bouge un jour, il bouge aux
-    // trois endroits ensemble.
-    expect(PAIRES).toHaveLength(48);
+  it("mesure les 49 paires par thème qu'annoncent #533, #535, #911 et #912", () => {
+    // Le chiffre est celui du README et de `globals.css` (« 98 paires mesurées,
+    // 49 par thème » : les 36 de #533, plus les 7 dont #535 a besoin pour son
+    // état survolé, plus la 1 de l'état sélectionné de #911, plus les 5 du ton
+    // `provenance` de #912). Il garde le CONSTRUCTEUR de la table : une boucle
+    // qui n'itère plus rendrait une table courte, donc un vert plus rapide et
+    // faux. S'il bouge un jour, il bouge aux trois endroits ensemble.
+    expect(PAIRES).toHaveLength(49);
   });
 
   it("couvre chaque token de la palette, ou nomme pourquoi il en est exempt", () => {
