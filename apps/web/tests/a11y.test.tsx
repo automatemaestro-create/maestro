@@ -37,12 +37,11 @@
  * Le harnais — les dix écrans, leur état, leur montage — vit dans `./ecrans`
  * depuis #539 : `sobriete.test.tsx` monte exactement les mêmes pages dans le
  * même état, et deux tables recopiées seraient le premier moyen qu'une suite
- * audite un produit que l'autre ne monte plus.
+ * audite un produit que l'autre ne monte plus. Pour la même raison, le
+ * **périmètre des sources** qu'on balaie vit dans `./sources` depuis #895 :
+ * `couleurs.test.ts` y cherche les couleurs écrites à la main, et un dossier
+ * ajouté au produit doit entrer dans les deux filets à la fois.
  */
-
-import { readFileSync, readdirSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -54,38 +53,7 @@ import { MENU } from "@/lib/navigation";
 import { auditerLaPage, bloquantes, raconter } from "./axe";
 import { ECRANS, monterEcran, peuplerEtat } from "./ecrans";
 import { poserProjetActif } from "./aides";
-
-const racine = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
-
-const lireSource = (relatif: string) =>
-  readFileSync(path.join(racine, relatif), "utf8");
-
-/**
- * Une source sans ses commentaires. Les deux balayages de ce fichier lisent
- * des **chaînes**, pas des lignes, et la prose du dépôt ferait le gros du
- * résultat sans ce filtre : ce fichier-ci, comme `GuidePriseEnMain`, parle de
- * « transition » en français, et #832 cite `focus:border-emerald-500` en toutes
- * lettres dans le commentaire qui explique pourquoi il n'y est plus.
- */
-function sansCommentaires(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
-    .replace(/(^|[^:])\/\/[^\n]*/g, "$1");
-}
-
-/**
- * Tout ce que le produit rend : les écrans (`app/`) et les composants. La liste
- * est **parcourue** et non écrite — un fichier neuf entre dans le périmètre du
- * jour où il est créé, ce qui est la seule façon qu'un balayage reste vrai.
- */
-function sourcesDuProduit(): string[] {
-  return ["app", "components"].flatMap((dossier) =>
-    readdirSync(path.join(racine, dossier), { recursive: true })
-      .map(String)
-      .filter((f) => f.endsWith(".tsx"))
-      .map((f) => path.posix.join(dossier, f.split(path.sep).join("/"))),
-  );
-}
+import { lireSource, sansCommentaires, sourcesDuProduit } from "./sources";
 
 // --- Le réseau, pour de bon ------------------------------------------------
 
