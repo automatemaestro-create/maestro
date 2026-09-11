@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 
 import { Shell } from "@/components/Shell";
 import { SCRIPT_INIT_THEME } from "@/lib/theme";
@@ -9,6 +9,40 @@ export const metadata: Metadata = {
   title: "Maestro — Control Tower",
   description:
     "Poste de pilotage de l'orchestration : agents, tâches et coûts en temps réel.",
+};
+
+/**
+ * Le clavier virtuel réduit le viewport de **mise en page**, pas seulement le
+ * visuel (#892, parti pris 4 de la veille #873).
+ *
+ * Sans cette clé, c'est le défaut de la spécification qui s'applique —
+ * `resizes-visual` : le viewport visuel rétrécit, celui de mise en page garde
+ * sa hauteur pleine. Tout ce qui se cale « en bas de l'écran » vise alors un
+ * bord que le clavier couvre — le `sticky bottom-16` du composeur (#726), la
+ * bande `sticky bottom-0 h-16` qui le suit, la réserve `after:h-24` du `Shell`
+ * (#888) —, un décalage `sticky` se mesurant contre le scrollport, que le
+ * défaut laisse intact.
+ *
+ * **Mesuré** sur Chrome Android le 2026-09-11, clavier ouvert, hauteur
+ * initiale 779 px : sans la clé, `clientHeight` reste à **779** pendant que
+ * `visualViewport.height` tombe à **461** — 318 px ignorés ; avec elle,
+ * `clientHeight` suit à **460**. Deux choses à en retenir. `innerHeight` suit
+ * le viewport de **mise en page** des deux côtés (779 puis 460) : il ne sert
+ * donc pas à détecter le clavier. Et le défaut ne se voit **pas** sur le geste
+ * le plus simple — le navigateur fait glisser la page pour ramener l'élément
+ * focalisé dans la vue, si bien que le composeur paraît bien posé dans les
+ * deux cas ; il se voit en **défilant** clavier ouvert, et sur ce qui est
+ * dimensionné en `dvh`.
+ *
+ * C'est d'ailleurs là que le gain est net : `100dvh` valait 779 clavier
+ * ouvert, donc les `calc(100dvh - …)` des colonnes collantes de `/chat` et
+ * `/couts` se dimensionnaient contre une hauteur dont 318 px étaient couverts.
+ * MDN met en garde sur l'autre versant — le contenu se redimensionne quand le
+ * clavier monte —, et c'est le prix assumé : la valeur devient juste, au prix
+ * d'un remous.
+ */
+export const viewport: Viewport = {
+  interactiveWidget: "resizes-content",
 };
 
 export default function RootLayout({
