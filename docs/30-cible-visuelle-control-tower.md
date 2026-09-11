@@ -1293,6 +1293,47 @@ consignées ici parce qu'elles corrigent ce qui précède (`apps/web/README.md`,
   dans cet état, sur toute la plage 35–50 caractères, et l'obtient **sans état ni mesure** ; et le
   bornage à deux garde en fait les deux amorces **les plus longues**.
 
+⚠ **Le parti pris 4 est vérifié depuis, sur un vrai téléphone** (#892, 2026-09-11) — c'est la seule
+des quatre décisions qui reposait sur la **spécification** et non sur une capture, et la veille
+nommait elle-même ce trou (« le comportement réel d'un clavier virtuel », ci-dessus). Chrome
+Android, clavier ouvert, hauteur initiale 779 px, deux pages de mesure ne différant que par la clé :
+**sans elle, `clientHeight` reste à 779 pendant que `visualViewport.height` tombe à 461** — 318 px
+que le viewport de mise en page ignore —, **avec elle, `clientHeight` suit à 460**. Le défaut de la
+spécification est donc bien celui que Chrome applique, ce que MDN ne disait pas : sa page ne porte
+**aucune** table de compatibilité pour cette clé.
+
+Trois choses que la mesure a apprises, et qu'on ne pouvait pas déduire du texte de la spec :
+
+- **l'avertissement `dvh` de la veille se retourne à moitié.** `100dvh` valait **779** clavier
+  ouvert, donc les `calc(100dvh - …)` des colonnes collantes de `/chat` et `/couts` se
+  dimensionnaient déjà contre une hauteur dont 318 px étaient couverts. `resizes-content` rend la
+  valeur **juste** ; ce qu'on achète en échange est le remous que MDN décrit, et il n'a d'occasion
+  de jouer que là où le clavier monte. Le banc aux six fenêtres le confirme par l'autre bout : sans
+  clavier la clé est **inerte**, `100dvh` égale la fenêtre aux douze relevés, zéro inatteignable,
+  zéro débordement ;
+- **le symptôme applicatif est discret, et il fallait le mesurer pour le savoir.** Le navigateur
+  fait glisser la page pour ramener l'élément **focalisé** dans le viewport visuel, si bien que le
+  composeur à quai paraît bien posé **des deux côtés** : à l'écran, les deux variantes se
+  ressemblent. Le défaut se voit là où ce rattrapage ne joue plus — en **défilant** clavier ouvert,
+  et sur ce qui est dimensionné en `dvh`. C'est une **géométrie** qu'on corrige, pas une gêne
+  spectaculaire, et l'annoncer autrement ferait juger le correctif inutile ;
+- **`innerHeight` suit le viewport de mise en page** (779 puis 460) : il ne sert donc pas à détecter
+  un clavier, dans un sens comme dans l'autre.
+
+Un risque a été écarté avant tout le reste : déclarer un `export const viewport` pouvait
+**remplacer** les défauts de Next au lieu de les compléter, donc faire perdre `width=device-width`
+et casser tout le mobile pour réparer une bande de 318 px. La balise réellement émise est
+`width=device-width, initial-scale=1, interactive-widget=resizes-content` — Next complète —, d'où un
+export qui ne pose **que** cette clé.
+
+Ce qui **n'a pas été fait**, et se dit plutôt que de se masquer : la vérification de `/chat`
+lui-même sur le téléphone. Les deux transports ont échoué pour des raisons distinctes — le renvoi de
+ports de `chrome://inspect` est resté `Offline — Pending authentication`, et servir la stack en
+Wi-Fi butait sur un pare-feu classant le réseau en **Public**, où une règle **Block** vise le
+`node.exe` qui sert l'UI (le `python.exe` des pages de mesure, lui, passait). La levée demandait de
+reclasser le réseau et d'ouvrir trois ports : **arbitrage humain, rendu négativement**. Ce qui
+manque est donc le confort de voir la vraie interface, pas la preuve.
+
 #### Le signe de vie d'une tâche qui travaille — 2026-09-10 (#868, différée de #837)
 
 Surface : `components/SigneDeVie.tsx` (`LigneSigneDeVie`), rendue à l'identique par **trois**
