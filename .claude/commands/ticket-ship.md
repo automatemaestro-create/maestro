@@ -116,6 +116,12 @@ doute). Les **garde-fous** priment sur l'automatisation : suis les étapes dans 
    dit, à l'étape 8, si le lot que tu viens de shipper est mergé ou seulement « En revue ». Un
    ticket mergé **au terme d'un déblocage** est mergé sans réserve : c'est le même `merge-mr` qui a
    tranché, avec les mêmes quatre prérequis.
+   ⚠ **Elle regarde aussi l'écran avant de pousser** (#935) : si le diff a touché une **surface
+   visible**, `/ticket-finish` joue la relecture visuelle (#932) et **consigne sur le ticket** ce qui
+   a été vu — ou la raison de ne pas l'avoir regardé. `/ticket-ship` en hérite **sans une ligne à
+   elle**, exactement comme du ramassage du worktree ci-dessous ; ne la rejoue pas ici. Le prix est
+   d'environ une minute sur un ticket d'interface, et de **rien du tout** sur les autres : la
+   question ne se pose pas quand le diff ne touche aucun écran.
    ⚠ **Sur un merge réussi, elle te ramène dans le clone principal** (#519) : son dernier geste est
    de sortir du worktree du ticket pour le retirer, lui et sa branche locale. Ne t'en étonne pas et
    ne le rejoue pas — les étapes 8 et 9 se jouent très bien de là, les helpers `lib.sh` visant le

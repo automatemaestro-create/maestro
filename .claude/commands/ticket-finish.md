@@ -1,7 +1,7 @@
 ---
 description: Termine le travail sur le ticket courant (push + PR prête + état « En revue » + merge)
 argument-hint: "[issue-iid] (optionnel si le nom de la branche courante le contient déjà)"
-allowed-tools: Bash(git:*), Bash(gh:*), Bash(bash:*), ExitWorktree
+allowed-tools: Bash(git:*), Bash(gh:*), Bash(bash:*), ExitWorktree, Skill, Read, Write, mcp__chrome-maestro
 ---
 
 Tu vas clôturer le cycle de développement de la branche courante selon les règles de Maestro
@@ -28,6 +28,12 @@ humain. L'attente s'allonge d'autant, et se dit plutôt que de se masquer (étap
 (`ExitWorktree`) puis retire worktree et branche locale, comme le pilote d'un run le fait depuis
 #438 — le ménage n'attend plus le prochain `/ticket-start` (étape 14). Conséquence à connaître : la
 session **finit dans le clone principal**, pas là où elle a travaillé. C'est le but.
+
+⚠ **Et depuis #935, un ticket d'interface ne se clôt plus sans que son rendu ait été regardé** : si
+le diff a touché une **surface visible**, la commande joue la relecture visuelle (#932) **avant** le
+filet CI, et consigne **sur le ticket** ce qui a été vu — ou la raison de ne pas l'avoir regardé
+(étape 4bis, `docs/30 §5.5`). Elle est **muette** quand il n'y a aucun écran, et elle ne demande
+rien : regarder n'est pas un verdict, c'est ce qui permet d'en rendre un.
 
 1. Détermine l'IID du ticket : utilise `$ARGUMENTS` s'il est fourni, sinon extrais-le du nom
    de la branche courante (`git branch --show-current`, motif `<type>/<iid>-<slug>`). Si
@@ -70,6 +76,64 @@ session **finit dans le clone principal**, pas là où elle a travaillé. C'est 
    puis `git commit -F <fichier>` — jamais `-m` sur plusieurs lignes ni `-m "$(…)"` : même refus
    que pour la description de PR (#233).
    Ne commite jamais silencieusement sans montrer ce qui va être committé.
+
+4bis. **Le rendu a-t-il été regardé ?** (#935, chantier #930, `docs/30 §5.5`). Un ticket qui a
+   touché une **surface visible** ne se clôt plus sans que son écran ait été ouvert — ou sans que la
+   raison de ne pas l'avoir ouvert soit **enregistrée sur le ticket**. C'est le pendant, à la
+   clôture, de ce que #714 pose au démarrage : là-bas on demande *ce qu'on vise*, quand rien n'est
+   écrit ; ici l'écran existe, et personne ne demandait plus s'il avait été regardé.
+
+   Commence par la question, qui ne coûte rien et ne démarre rien (~2 s) :
+   ```
+   bash scripts/design/relecture-visuelle.sh --plan <iid>
+   ```
+   Elle dérive les écrans **des fichiers que ce ticket a touchés** — commits de la branche *et*
+   travail non commité (#544 via #932). C'est un **constat**, pas la prédiction textuelle de
+   `touche-surface` (#714), qui rate 12 tickets sur 33 (`docs/30 §5.2`) : à la clôture on a le
+   diff, donc mieux — et rien ici n'**exige** que le motif textuel ait parlé.
+
+   - **code `3` — aucune surface visible.** Il n'y a rien à regarder et rien à dire : **ne le
+     mentionne pas**, n'appelle aucun verbe, passe à l'étape 5. L'abstention nominale est muette
+     (règle de `gc --auto`).
+   - **code `0` — il y a des écrans.** **Joue le skill `relecture-visuelle`** (outil `Skill`), qui
+     porte la séquence entière : stack sur les ports du worktree, `localStorage`, chaque écran dans
+     les **deux thèmes**, captures **relues**, puis `--fin`. Ne la recopie jamais ici — une recette
+     recopiée dans un prompt fige l'outil au jour où elle a été écrite (#310), et le skill en est la
+     source unique.
+
+   ⚠ **On ne demande pas, on joue** — et c'est la différence avec la veille de l'étape 5 de
+   `/ticket-start`, qui elle **propose**. Une veille est un **jugement** sur l'opportunité de
+   chercher des références, et elle coûte des recherches web ; regarder l'écran qu'on vient d'écrire
+   est un **constat**, il coûte ~50 s pour trois écrans, et le verdict — *est-ce que ça a l'air
+   juste ?* — reste entier, il est seulement rendu après avoir regardé plutôt qu'avant. Le
+   mécanisme vaut donc **à l'identique en run et en interactif** : il n'y a personne à qui demander
+   dans un run, et il n'y avait rien à demander.
+
+   **Puis consigne — c'est le geste qui manquait, et celui qu'il ne faut pas sauter.** Le jugement
+   d'une session meurt avec sa console (#608, #795) : ce qui survit est ce qui est écrit sur le
+   ticket.
+   ```
+   bash scripts/gitlab/lib.sh relecture-note <iid> .maestro/relecture/<iid>/jugement.md
+   ```
+   Et si la relecture **n'a pas eu lieu** — stack qui ne démarre pas, écran qu'on n'a pas su
+   atteindre, geste abandonné pour une raison quelconque —, alors écris cette raison (outil `Write`)
+   et enregistre-la, plutôt que de la taire :
+   ```
+   bash scripts/gitlab/lib.sh relecture-note --raison <iid> <fichier-de-la-raison>
+   ```
+   Le verbe est **idempotent** (empreinte `cksum` : un rejeu à l'identique est muet, un jugement
+   enrichi s'ajoute), donc une clôture rejouée après un pipeline rouge n'empile rien. Ses refus
+   tombent **avant toute écriture** : `4` fichier absent ou vide, `3` iid inconnu. Un `1` (forge
+   muette) **ne bloque pas la clôture** — signale-le dans le résumé final.
+
+   Deux conduites à ne pas confondre selon ce que tu as vu :
+   - **un constat corrigeable ici** (un contraste qui saute en thème sombre, un bloc qui déborde) :
+     corrige, puis **reprends à l'étape 4** — c'est précisément pourquoi cette étape passe **avant**
+     le filet CI : ce qui change le diff passe avant le verdict qui le juge (même ordre que
+     `/mr-fix`, qui résout le conflit avant de diagnostiquer le pipeline).
+   - **un constat qui appelle son propre ticket** : nomme-le dans le jugement avec ce que tu en
+     fais. Un constat sans suite est un constat perdu ; ouvrir le ticket reste une décision, pas un
+     effet de bord de la clôture.
 
 5. **Filet CI local** — avant de pousser, rejoue en local ce que le pipeline de la PR jouera. Ne
    cherche pas toi-même quel outil s'applique : `scripts/ci/local.sh` est la **source unique** des

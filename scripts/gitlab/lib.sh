@@ -2112,6 +2112,190 @@ dans son **ticket de veille #$1**, qui survit à la fermeture de celui-ci (#795)
 ANCRE
 }
 
+# --- La relecture visuelle laisse une TRACE sur le ticket (#935, chantier #930) ------------------
+#
+# #714 pose la question du design AU DÉMARRAGE — « qu'est-ce qu'on vise ? » —, quand rien n'est
+# encore écrit. À la CLÔTURE l'écran existe, et plus rien ne demandait s'il avait été regardé. Le
+# lot 2 (#932) a rendu le geste jouable (`scripts/design/relecture-visuelle.sh` + skill
+# `relecture-visuelle`) ; ce verbe est ce qui le rend RETROUVABLE.
+#
+# POURQUOI UN VERBE, ET PAS `issue-note` — le contenant serait pourtant le même : un commentaire sur
+# le ticket, qui lui survit là où un résumé de session meurt avec sa console (#608, #795). Ce que
+# `issue-note` ne porte pas, et qui EST le mécanisme :
+#
+#   1. UNE ANCRE. Sans en-tête reconnaissable, la trace est un commentaire parmi d'autres et « ce
+#      ticket a-t-il été relu ? » n'a pas de réponse — or c'est la question du critère.
+#   2. L'IDEMPOTENCE. `/ticket-finish` se rejoue (pipeline rouge, deux passes `/mr-fix`, reprise d'un
+#      run), et rejouer ne doit pas empiler N fois le même jugement. Même empreinte `cksum` que
+#      `gl_reste_claude` et `gl_veille_differe` : rejeu à l'identique MUET, jugement enrichi ADDITIF.
+#   3. LA DISTINCTION JOUÉE / NON JOUÉE, portée par le verbe et jamais par la prose du fichier. C'est
+#      le défaut même qu'on corrige : « regardé, rien à signaler » et « pas regardé » ne doivent pas
+#      se ressembler. `--raison` dit le second, et il le dit dans le TITRE de la section — là où on
+#      le lit sans dérouler.
+#
+# CE QU'IL N'EST PAS : un verdict. Le lot rend automatique le fait de REGARDER et d'ENREGISTRER ; il
+# ne fait juger à aucune machine qu'un écran est beau, et « marquer d'office » reste ce que #562 a
+# écarté. Le partage de #562, #612 et #714 tient donc — ce qui est automatique est la détection du
+# manque — avec un déplacement qu'il faut nommer : à la clôture, « le manque » n'est plus une
+# PRÉDICTION sur le texte du ticket mais un CONSTAT sur les fichiers touchés, que
+# `relecture-visuelle.sh --plan` rend déjà (#544 via #932). AUCUN SECOND MOTIF N'EST ÉCRIT ICI :
+# `gl_touche_surface` garde le sien, là où il sert — au démarrage, quand il n'y a pas de diff à lire
+# —, et c'est justement parce qu'il en rate 12 sur 33 (docs/30 §5.2) que la clôture ne le consulte
+# pas : elle a mieux sous la main, et rien ici n'EXIGE que le motif ait parlé.
+#
+# PAS DE PENDANT EN LECTURE, et c'est délibéré : un verbe de lecture sans appelant est du code mort
+# — la raison exacte pour laquelle le filet de #611 n'a jamais eu d'équivalent côté veille. La
+# relecture n'en a pas besoin : elle est POSÉE SUR LE SEUL CHEMIN QUI CRÉE L'ÉVÉNEMENT (la clôture),
+# comme le « En cours » d'un parent l'est sur `begin` (#517) — un balayage de rattrapage n'aurait
+# rien à rattraper. `gh_relecture_empreintes` lit, mais pour l'idempotence, et pour elle seule.
+GL_RELECTURE_ANCRE="${GL_RELECTURE_ANCRE:-Relecture visuelle}"
+
+# gh_relecture_empreintes <iid> -> les empreintes des relectures DÉJÀ consignées, une par ligne (rien
+# s'il n'y en a pas). Codes : 0 lu · 2 usage · 3 ticket inconnu · 1 forge muette ou ticket illisible.
+#
+# UN SEUL ALLER, et la même forme de requête que `gh_reste_source` : le titre voyage avec les
+# commentaires, ce qui permet de séparer « ticket inconnu » de « aucune trace » sans rien demander de
+# plus (#602 — ce qui se garde est le NOMBRE d'allers, jamais une durée).
+#
+# L'EMPREINTE SE CHERCHE APRÈS LA CLÉ « comments », comme dans `gh_reste_source` : un titre de ticket
+# qui parlerait d'empreintes ne doit pas passer pour une trace. Et elle se cherche SEULE — « empreinte
+# <n>-<n> », sans l'ancre qui la précède —, exactement comme `gl_veille_complete` la relit dans une
+# description : l'ancre est écrite pour l'œil, l'empreinte pour le rejeu, et faire dépendre le second
+# d'un tiret cadratin qui peut voyager échappé dans du JSON serait s'ajouter un mode de panne.
+gh_relecture_empreintes() {
+  local iid="$1" raw
+  if [ -z "$iid" ]; then echo "usage: gh_relecture_empreintes <iid>" >&2; return 2; fi
+  raw="$(gh_graphql_read '{ '"$(gh_depot_gql)"' { issue(number:'"$iid"') { title comments(first: 100) { nodes { body } } } } }')" || return 1
+  case "$raw" in
+    *'"issue":null'*) return 3 ;;
+  esac
+  if [ -z "$(printf '%s' "$raw" | gl_json_string_field title)" ]; then return 1; fi
+  printf '%s' "$raw" | sed 's/.*"comments"//' \
+    | grep -o 'empreinte [0-9][0-9]*-[0-9][0-9]*' | sed 's/^empreinte //' || true
+}
+
+# gl_relecture_section <empreinte> [raison] — l'en-tête du commentaire. Sa forme est un CONTRAT :
+# c'est « empreinte <n>-<n> » que relit `gh_relecture_empreintes` au tour suivant, sur UNE ligne et
+# en clair, comme dans `gl_reste_section`.
+#
+# Il dit POURQUOI il est là, et pas seulement ce qu'il porte. Un commentaire qui commence par un
+# jugement sans dire d'où il vient se lit, six mois plus tard, comme un avis de passage ; ce qu'on
+# veut qu'il dise est « la question a été posée à la clôture, et voici la réponse ».
+gl_relecture_section() {
+  local empreinte="$1" raison="${2:-0}"
+  if [ "$raison" = 1 ]; then
+    printf '## %s — NON JOUÉE — empreinte %s\n\n' "$GL_RELECTURE_ANCRE" "$empreinte"
+    cat <<'ENTETE'
+Ce ticket a touché une **surface visible**, et son rendu n'a **pas** été regardé avant la clôture.
+La raison est consignée ici — sur le ticket, qui survit au merge — plutôt que dans un résumé de
+session, qui ne survit à rien (#608, #795). Ce n'est pas un échec : c'est ce qui empêche « personne
+n'y a pensé » de ressembler à « regardé, rien à signaler ».
+
+ENTETE
+    return 0
+  fi
+  printf '## %s — empreinte %s\n\n' "$GL_RELECTURE_ANCRE" "$empreinte"
+  cat <<'ENTETE'
+Le rendu des écrans touchés a été regardé avant la clôture, dans les **deux thèmes** (skill
+`relecture-visuelle`, #932). Ce qui suit est le jugement rendu — y compris ce qui n'a **pas** pu
+être vu, qui compte autant : *ne pas avoir regardé n'est pas avoir trouvé que tout va bien.*
+
+ENTETE
+}
+
+# gl_relecture_note [--raison] <iid> <fichier> -> CONSIGNE la relecture visuelle sur le ticket <iid>,
+# en commentaire ancré. Sans `--raison` le fichier porte le JUGEMENT rendu ; avec, il porte la RAISON
+# de n'avoir pas regardé.
+#
+# Codes : 0 consigné (ou déjà consigné à l'identique) · 2 usage · 3 iid inconnu · 4 fichier absent ou
+# vide · 1 échec côté forge. Les deux REFUS gratuits (4 puis 3) tombent AVANT toute écriture, règle
+# de `gl_reste_claude` : un refus ne laisse rien derrière lui.
+#
+# LE FICHIER EST OBLIGATOIRE DANS LES DEUX SENS, et c'est la moitié la plus facile à défaire. Côté
+# jugement, la raison est celle de `gl_veille_differe` : ce que la session a d'irremplaçable est ce
+# qu'elle a VU. Côté `--raison` elle est plus forte encore — une absence sans motif est exactement ce
+# qu'on ne veut plus pouvoir écrire, le critère du ticket disant « son absence porte une raison
+# ENREGISTRÉE ». Un `--raison` sans fichier rendrait le mécanisme contournable en un mot.
+gl_relecture_note() {
+  local raison=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --raison) raison=1; shift ;;
+      --) shift; break ;;
+      *) break ;;
+    esac
+  done
+  local iid="$1" fichier="$2"
+  if [ -z "$iid" ] || [ -z "$fichier" ]; then
+    echo "usage: gl_relecture_note [--raison] <iid> <fichier>" >&2; return 2
+  fi
+  # Le contrôle GRATUIT d'abord (règle de `gl_reste_claude`) : refuser sans avoir rien demandé à la
+  # forge est ce qui garantit qu'un refus ne laisse rien derrière lui.
+  if [ ! -f "$fichier" ]; then
+    echo "gl_relecture_note : fichier introuvable : $fichier" >&2
+    if [ "$raison" = 1 ]; then
+      echo "  La RAISON de n'avoir pas regardé EST le corps du commentaire : l'écrire d'abord (outil" >&2
+      echo "  Write), puis passer son CHEMIN. Une absence sans motif est ce que ce verbe existe pour" >&2
+      echo "  rendre impossible." >&2
+    else
+      echo "  Le JUGEMENT EST le corps du commentaire : l'écrire d'abord (outil Write — le skill" >&2
+      echo "  « relecture-visuelle » en donne les trois sections), puis passer son CHEMIN." >&2
+    fi
+    return 4
+  fi
+  if [ ! -s "$fichier" ]; then
+    echo "gl_relecture_note : $fichier est vide — un commentaire vide ne dit pas si l'écran a été" >&2
+    echo "  regardé, ce qui est précisément la question posée." >&2
+    return 4
+  fi
+  case "$iid" in
+    ''|*[!0-9]*)
+      echo "gl_relecture_note : « $iid » n'est pas un iid de ticket — rien n'a été écrit." >&2
+      return 3 ;;
+  esac
+
+  local empreinte
+  empreinte="$(cksum < "$fichier" | awk '{ printf "%s-%s", $1, $2 }')"
+  if [ -z "$empreinte" ]; then
+    echo "gl_relecture_note : empreinte de « $fichier » illisible (cksum absent ?)" >&2; return 1
+  fi
+
+  local deja rc
+  deja="$(gh_relecture_empreintes "$iid")"; rc=$?
+  case "$rc" in
+    0) ;;
+    3) echo "gl_relecture_note : ticket #$iid introuvable dans $GL_GH_REPO — rien n'a été écrit." >&2
+       return 3 ;;
+    *) echo "gl_relecture_note : commentaires de #$iid illisibles — rien n'a été écrit." >&2
+       return 1 ;;
+  esac
+  if printf '%s\n' "$deja" | grep -qx "$empreinte"; then
+    printf '#%s : cette relecture y est déjà (empreinte %s) — rien à écrire.\n' "$iid" "$empreinte"
+    gl_issue_url "$iid"
+    return 0
+  fi
+
+  # Brouillon relu par personne — il repart tel quel vers la forge : temporaire du système, pas
+  # `.maestro/` (règle #234, docs/10 §8.5).
+  local corps
+  corps="$(mktemp "${TMPDIR:-/tmp}/maestro-relecture.XXXXXX")" || return 1
+  gl_relecture_section "$empreinte" "$raison" > "$corps"
+  cat "$fichier" >> "$corps"
+  printf '\n' >> "$corps"
+  if ! gl_issue_note "$iid" "$corps" >/dev/null; then
+    rm -f "$corps"
+    echo "gl_relecture_note : échec de la publication sur #$iid — la relecture n'y est PAS." >&2
+    return 1
+  fi
+  rm -f "$corps"
+  if [ "$raison" = 1 ]; then
+    printf '#%s : relecture visuelle NON JOUÉE — raison consignée (empreinte %s).\n' "$iid" "$empreinte"
+  else
+    printf '#%s : relecture visuelle consignée (empreinte %s).\n' "$iid" "$empreinte"
+  fi
+  gl_issue_url "$iid"
+}
+
 # --- Fermeture du parent (#515, docs/10 §5.1) ---------------------------------------------------
 # Un parent de suivi ne porte ni branche ni code : aucune PR ne le ferme par un `Closes #`, et sa
 # fermeture était le SEUL geste du cycle d'un chantier resté manuel — §5.1 la décrivait comme « une
@@ -8248,6 +8432,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     touche-surface) gl_touche_surface "$@" ;;
     veille-arbitre) gl_veille_arbitre "$@" ;;
     veille-differe) gl_veille_differe "$@" ;;
+    relecture-note) gl_relecture_note "$@" ;;
     ferme-parent)   gl_ferme_parent "$@" ;;
     garde-fermeture) gl_garde_fermeture "$@" ;;
     demarre-parent) gl_demarre_parent "$@" ;;
@@ -8345,6 +8530,9 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "  veille-differe <iid> <fichier>     (DIFFÈRE la veille faute de répondant — crée le ticket de veille portant" >&2
       echo "                                      le constat du fichier, assigné donc hors des plans d'un run. N'arbitre" >&2
       echo "                                      RIEN : « veille::arbitree » n'est pas posé — docs/30 §5.3)" >&2
+      echo "  relecture-note [--raison] <iid> <fichier>  (CONSIGNE la relecture visuelle du rendu sur le ticket, en" >&2
+      echo "                                      commentaire ancré et idempotent. Sans --raison le fichier porte le" >&2
+      echo "                                      JUGEMENT ; avec, la RAISON de n'avoir pas regardé — docs/30 §5.5)" >&2
       echo "  current-milestone [produit|outillage] (titre du milestone courant du rail — le plus ancien actif portant" >&2
       echo "                                      encore un ticket ouvert ; soldé et vide sont sautés, chacun nommé sur stderr. Défaut produit)" >&2
       echo "  milestones                         (tous les milestones : titre/état/dates/avancement, TSV)" >&2

@@ -33,6 +33,13 @@ est le travail d'un autre outil, souvent d'un autre ticket.
 Le déclencheur : **avant de clore un ticket qui a touché une surface visible.**
 Le geste dit lui-même s'il y en a une — inutile de le deviner.
 
+⚠ **Et depuis #935 il n'est plus une règle lue** : `/ticket-finish` pose la
+question à son étape 4bis, juste après le commit et **avant** le filet CI, puis
+ouvre ce skill quand `--plan` rend des écrans (`docs/30 §5.5`). On ne demande
+rien et on ne l'appelle pas de soi-même : *regarder* n'est pas un verdict, c'est
+ce qui permet d'en rendre un — d'où un mécanisme identique en run et en
+interactif, là où la veille de `/ticket-start`, elle, **propose**.
+
 ## La séquence
 
 ### 1. Demander le plan (et souvent s'arrêter là)
@@ -153,9 +160,30 @@ Trois sections, et les trois sont obligatoires :
   d'erreur). C'est la section qui distingue un jugement d'un ✓ : *ne pas avoir
   regardé n'est pas avoir trouvé que tout va bien.*
 
-Quand il y a un constat, le consigner sur le ticket
-(`bash scripts/gitlab/lib.sh issue-note <iid> <fichier>`) — c'est ce qui lui
-survit. Quand tout va, rester bref : l'abstention nominale est muette.
+**Puis le consigner sur le ticket** — toujours, et pas seulement quand il y a un
+constat (#935) :
+
+```bash
+bash scripts/gitlab/lib.sh relecture-note <iid> .maestro/relecture/<iid>/jugement.md
+```
+
+C'est le geste qui fait survivre le jugement : le fichier vit dans un worktree
+que le merge fera ramasser, et un résumé de session meurt avec sa console
+(#608, #795). **Toujours**, parce que c'est ce qui sépare « regardé, rien à
+signaler » de « personne n'y a pensé » — les deux se ressemblent partout
+ailleurs, et c'est exactement le défaut que #935 corrige. Quand tout va, rester
+bref : la brièveté est dans le contenu, jamais dans l'absence de trace.
+
+Et si la relecture **n'a pas eu lieu** — stack qui ne démarre pas, écran qu'on
+n'a pas su atteindre, geste abandonné —, écrire la raison et l'enregistrer
+plutôt que de la taire :
+
+```bash
+bash scripts/gitlab/lib.sh relecture-note --raison <iid> <fichier-de-la-raison>
+```
+
+Le verbe est **idempotent** (empreinte `cksum`) : une clôture rejouée après un
+pipeline rouge n'empile rien, et un jugement enrichi s'ajoute au lieu d'écraser.
 
 ## Le prix, annoncé plutôt que masqué (règle de #418)
 
@@ -175,12 +203,13 @@ des ports distincts, ce que `worktree.sh` garantit depuis #152.
 
 ## En session de run
 
-Tout ce qui précède est jouable : `mcp__chrome-maestro` passe déjà l'union des
-deux allowlists, et `bash scripts/controltower/start.sh` comme
+**Rien ne change**, et c'est le propre de ce geste. Tout ce qui précède est
+jouable : `mcp__chrome-maestro` passe déjà l'union des deux allowlists, et
+`bash scripts/controltower/start.sh` comme
 `bash scripts/design/relecture-visuelle.sh` sont dans celle du run (#932). Rien
 ici ne demande le web : la relecture regarde **ce qu'on a écrit**, là où
-`/design-veille` cherche ce que d'autres ont fait — et c'est cette seconde-là
-qui reste interdite en run (#792).
+`/design-veille` cherche ce que d'autres ont fait — un accès que #933 a depuis
+ouvert aux deux régimes, et dont celui-ci n'a de toute façon pas besoin.
 
 Le jugement, lui, n'a personne pour le lire à l'écran : le consigner sur le
 ticket est donc la seule façon qu'il survive.
