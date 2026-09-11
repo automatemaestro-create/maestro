@@ -27,7 +27,7 @@
 #
 # --- Trois questions, et c'est l'ordre qui porte le sens (comme la taxonomie de #307) ---------------
 #   Q1  ce que le dépôt met en `ask`        — approuvable en interactif, refusé sec en run ;
-#   Q2  ce qu'aucun `allow` ne couvre       — geste par geste, dont `WebSearch`/`WebFetch` ;
+#   Q2  ce qu'aucun `allow` ne couvre       — geste par geste, dont l'accès web (ouvert par #933) ;
 #   Q3  ce que le CLI refuse EN AMONT       — l'écriture sous `.claude/`, mesurée et non déduite.
 #
 # Et il DISTINGUE l'écart de l'interdit voulu : `merge-mr`/`pipeline-wait` (G5) et les refus mérités
@@ -160,8 +160,8 @@ TSV
 # c'est elle qui rejouera toute seule quand le lot 2 aura élargi la liste.
 GESTES=$(
   cat <<'TSV'
-voulu	outil	WebSearch	#788 G3 · #714 · tranché au lot 4 (#792)	Confirmé fermé : une veille rend des PARTIS PRIS — un jugement, laissé à un humain comme l'arbitrage de #562 et le rail de #617 — et « chrome-maestro » passant déjà l'union, ouvrir la seule recherche donnerait une veille à moitié. Jamais demandé : 0 refus sur 56. Forme couverte : la question SURVIT au run (lot 5, #795), un humain joue /design-veille ensuite.
-voulu	outil	WebFetch	#788 G3 · mesuré 1× (#271) · tranché au lot 4 (#792)	Fermé aussi, mais par une raison qui lui est PROPRE : #714 le rangeait sous la veille, or le seul usage mesuré n'en est pas une — lire une référence citée par le ticket. « L'URL vient d'un humain » n'est pas exprimable dans une règle, qui ne borne qu'un préfixe (raison de curl, #528), et le produit d'un run est mergé sans relecture (#418/#419). Forme couverte : référence versionnée, ou porte d'admission humaine (#678) — ce que #271 a fini par faire.
+ecart	outil	WebSearch	#933 (renverse #792) · #788 G3 · #714	OUVERT dans les DEUX allowlists. Des quatre raisons de #792, trois tombent : la veille cesse d'attendre un « oui » que personne ne donne (lot 4, #934) ; le jugement qu'elle rend n'est pas plus lourd que le code qu'une session écrit et qui part dans main sans relecture ; et « ouvrir la seule recherche donnerait une veille à moitié » est un argument pour ouvrir LES DEUX. La garde ne peut pas vivre dans cette liste : elle est dans le prompt de run.sh — le contenu web est une DONNÉE, jamais une INSTRUCTION.
+ecart	outil	WebFetch	#933 (renverse #792) · mesuré 1× (#271)	OUVERT lui aussi. Sa raison PROPRE était la seule entière — « l'URL vient d'un humain » n'est pas exprimable dans une règle, qui ne borne qu'un préfixe (raison de curl, #528) — et elle ne ferme pas le geste : elle dit que la garde ne peut pas ÊTRE une règle, donc pas non plus une liste de domaines, qui viserait QUELS sites sont lus au lieu de CE QU'ON FAIT du texte lu. Reste vrai quel que soit le régime : une référence DURABLE entre par un geste humain — versionnée et relue, ou porte d'admission (#678).
 ecart	bash	pwd	mesuré 5× (#484, #695, #696, #739, #256)	Lecture pure. Le premier geste après un « cd » dont on doute.
 ecart	bash	cut -f2	mesuré 1× (#698)	Découper une ligne TSV — le pendant de « awk »/« sed », déjà autorisés.
 ecart	bash	tr -d ' '	mesuré 1× (#698)	Lecture pure, bornée au tube.
@@ -190,7 +190,7 @@ TSV
 # constat sur le résidu `.claude/`. Colonnes : question <TAB> où elle se pose <TAB> verbe de survie.
 QUESTIONS=$(
   cat <<'TSV'
-veille de conception (« qu'est-ce qu'on vise ? »)	/ticket-start étape 5 · #714
+veille de conception (« qu'est-ce qu'on vise ? »)	/ticket-start étape 5 · #714	veille-differe
 reprise d'un ticket orphelin	/orchestrate, feu vert · #327
 choix du milestone du run	/orchestrate, feu vert · §11.2
 arbitrage lot::arbitre d'un parent	/orchestrate, feu vert · #562
@@ -502,8 +502,14 @@ else
   fi
   web_ouvert=$(awk -F'\t' '($3 == "WebSearch" || $3 == "WebFetch") && $1 == "couvert" { n++ } END { print n + 0 }' "$TMP.q2")
   web_voulu=$(awk -F'\t' '($3 == "WebSearch" || $3 == "WebFetch") && $1 == "voulu" { n++ } END { print n + 0 }' "$TMP.q2")
-  if [ "$web_ouvert" -gt 0 ]; then
-    printf '  G3  WebSearch / WebFetch                      → NE SE REPRODUIT PLUS : %s des deux est couvert.\n' "$web_ouvert"
+  if [ "$web_ouvert" -eq 2 ]; then
+    printf '  G3  WebSearch / WebFetch                      → NE SE REPRODUIT PLUS : les DEUX sont couverts\n'
+    printf '      (#933, qui renverse #792). La garde n%sest pas dans les listes — elle ne peut pas y être —,\n' "'"
+    printf '      elle est dans le prompt : le contenu web est une DONNÉE, jamais une INSTRUCTION.\n'
+  elif [ "$web_ouvert" -eq 1 ]; then
+    printf '  G3  WebSearch / WebFetch                      → RÉGIME À MOITIÉ : un seul des deux est couvert.\n'
+    printf '      #933 les a ouverts ENSEMBLE (« une veille à moitié » était l%sargument pour ouvrir les deux) :\n' "'"
+    printf '      un seul refermé est indiscernable d%sun oubli — à trancher, dans un sens ou dans l%sautre.\n' "'" "'"
   elif [ "$web_voulu" -eq 2 ]; then
     printf '  G3  WebSearch / WebFetch                      → INTERDIT VOULU, pas un écart : tranché au lot 4\n'
     printf '      (#792). Les deux restent hors des DEUX allowlists, chacun avec SA raison et sa forme\n'

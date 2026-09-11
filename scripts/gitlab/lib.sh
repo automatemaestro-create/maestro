@@ -2060,9 +2060,9 @@ Veille de conception à jouer, différée de #$source — $titre_source
 Ce ticket porte une **question qu'une session autonome n'a pas pu faire trancher**. \`/ticket-start\`
 a signalé une **surface visible** sur #$source et proposé \`/design-veille\` : une proposition qui
 attend un « oui » que personne ne donne dans un run. La session a fait ce qu'il fallait — elle n'a
-ni joué la veille (\`WebSearch\`/\`WebFetch\` sont hors des deux allowlists d'un run, et une veille à
-moitié est pire qu'aucune), ni enregistré d'arbitrage, ce qui aurait fermé la question sans que
-personne l'ait jugée.
+ni joué la veille (l'accès web lui est ouvert depuis #933, mais \`/design-veille\` n'est pas encore
+jouable en régime autonome : #934), ni enregistré d'arbitrage, ce qui aurait fermé la question sans
+que personne l'ait jugée.
 
 Il existe parce qu'un **résumé de fin de session ne survit à rien** (#608, transposé par #795) : un
 run \`--detach\` se termine dans une console que personne ne regarde, \`journal.sh gc\` ne garde que

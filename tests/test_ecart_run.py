@@ -20,10 +20,11 @@ lequel garde :
   trous mesurés sont couverts, et **aucune des règles ajoutées n'élargit au-delà de sa raison
   écrite** : les refus mérités de #307/#528 restent refusés, et les cinq `ask` restent des `ask` ;
 * **les lots 3 et 4 — deux verdicts, gardés comme verdicts** (#791, #792). Le régime des sessions
-  de run n'ouvre pas `.claude/` (pas de `bypassPermissions`), le banc qui rouvrirait le dossier est
-  dans le dépôt, et l'accès web reste hors des **deux** allowlists — ce dernier point vit dans
-  [`test_design_veille.py`](test_design_veille.py), qui visait déjà les deux fichiers et qui dit
-  désormais **les deux raisons**, celle de `WebFetch` n'étant pas celle de la veille ;
+  de run n'ouvre pas `.claude/` (pas de `bypassPermissions`), et le banc qui rouvrirait le dossier
+  est dans le dépôt. ⚠ Le second, l'accès web, a été **renversé par #933** : `WebSearch` et
+  `WebFetch` sont désormais dans les **deux** allowlists, et ce qui est gardé est l'ouverture — avec
+  la **garde qu'aucune liste ne peut porter**, dans le prompt de `run.sh`. Ce point vit dans
+  [`test_design_veille.py`](test_design_veille.py), qui visait déjà les deux fichiers ;
 * **le lot 5 — la survie d'une question** (#795). Une veille rencontrée par un run **se consigne**
   dans un ticket qui survit à la fermeture du sien, et un run **sans** question n'écrit rien ;
 * **G5 — l'interdit voulu** (#788). `merge-mr` et `pipeline-wait` refusés en run ne sont pas un
