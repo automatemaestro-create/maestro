@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <title>Maestro</title>
+    <!--
+      Ce que la fenêtre montre AVANT que la stack locale ne réponde (#923).
+
+      Elle existe pour une raison de cycle de vie, pas de décoration : démarrer l'API puis compiler
+      l'UI prend des dizaines de secondes, et une fenêtre qui n'apparaîtrait qu'après ne pourrait
+      pas être fermée pendant ce temps — or c'est sa fermeture qui arrête la stack (premier critère
+      d'acceptation). La fenêtre s'ouvre donc d'abord, et cette page tient la place.
+
+      ⚠ CE N'EST PAS UN ÉCRAN DU PRODUIT (docs/35 §4 : « aucun écran nouveau »). Elle n'ajoute
+      aucune identité visuelle : ses deux couleurs sont `--background` / `--foreground` de
+      `apps/web/app/globals.css`, et elle disparaît dès que l'UI répond. Rien ici ne doit grandir —
+      ce qu'on serait tenté d'y mettre a sa place dans la Control Tower, qui arrive juste après.
+    -->
+    <style>
+      :root {
+        color-scheme: light dark;
+        --fond: #ffffff;
+        --texte: #171717;
+        --discret: #737373;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --fond: #0a0a0a;
+          --texte: #ededed;
+          --discret: #a3a3a3;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 0.75rem;
+        padding: 2rem;
+        background: var(--fond);
+        color: var(--texte);
+        font: 400 0.9375rem/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      h1 {
+        margin: 0;
+        font-size: 1.25rem;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
+      p {
+        margin: 0;
+        color: var(--discret);
+        text-align: center;
+        max-width: 44rem;
+      }
+      /* Le seul mouvement de la page : il dit que quelque chose se passe, et il se tait pour qui
+         a demandé moins d'animations (même règle que le filet `motion-reduce` du produit). */
+      .pouls {
+        width: 2rem;
+        height: 2px;
+        border-radius: 2px;
+        background: currentColor;
+        opacity: 0.25;
+        animation: pouls 1.6s ease-in-out infinite;
+      }
+      @keyframes pouls {
+        50% {
+          opacity: 0.65;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .pouls {
+          animation: none;
+        }
+      }
+      /* Le détail d'un échec : la sortie de `start.sh`, telle quelle. C'est une coque de
+         développement — la cause exacte vaut mieux qu'une paraphrase. */
+      pre {
+        margin: 0;
+        max-width: 60rem;
+        max-height: 18rem;
+        overflow: auto;
+        padding: 0.75rem 1rem;
+        border-radius: 0.5rem;
+        background: color-mix(in srgb, var(--texte) 6%, transparent);
+        color: var(--discret);
+        font: 400 0.8125rem/1.6 ui-monospace, "Cascadia Code", Consolas, monospace;
+        white-space: pre-wrap;
+        text-align: left;
+        -webkit-user-select: text;
+        user-select: text;
+      }
+      [hidden] {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="pouls" id="pouls"></div>
+    <h1>Maestro</h1>
+    <p id="message">Démarrage de la stack locale…</p>
+    <pre id="detail" hidden></pre>
+
+    <script>
+      // Appelée par le processus principal (`annoncer`), jamais par la page elle-même.
+      // Aucun pont n'est exposé dans l'autre sens : la coque ne donne AUCUNE capacité à ce qu'elle
+      // affiche — ni ici, ni a fortiori au front du mode web qui prendra sa place (ENF-12).
+      window.maestroAttente = function (charge) {
+        var messages = {
+          demarrage: 'Démarrage de la stack locale…',
+          chargement: 'Ouverture de la Control Tower…',
+          echec: "La stack locale n'a pas démarré.",
+        };
+        var pouls = document.getElementById('pouls');
+        var message = document.getElementById('message');
+        var detail = document.getElementById('detail');
+        var etat = (charge && charge.etat) || 'demarrage';
+
+        message.textContent = messages[etat] || messages.demarrage;
+        pouls.hidden = etat === 'echec';
+
+        if (etat === 'echec') {
+          detail.textContent = (charge && charge.message) || '';
+          detail.hidden = !detail.textContent;
+        } else if (charge && charge.message) {
+          detail.textContent = charge.message;
+          detail.hidden = false;
+        }
+      };
+    </script>
+  </body>
+</html>

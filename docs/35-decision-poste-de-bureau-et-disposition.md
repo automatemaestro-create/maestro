@@ -97,14 +97,41 @@ faible une fois le backend embarqué.
 
 | | Electron | Tauri |
 |---|---|---|
-| Poids de la coque | ~150 Mo | ~10 Mo |
+| Poids de la coque | **158 Mo téléchargés, 368 Mo sur le disque** *(mesuré, voir ci-dessous)* | ~10 Mo *(jamais mesuré ici)* |
 | Moteur de rendu | Chromium embarqué, **identique partout** | WebView du système, **trois moteurs** |
 | Chaîne de construction | Node — **déjà** un prérequis (`.node-version`, `.tools/node/`) | Rust — **à ajouter** |
-| Empreinte mémoire | plus élevée | plus faible |
+| Empreinte mémoire | **351 Mo, 4 processus** *(mesuré)* | plus faible *(jamais mesurée ici)* |
 
-⚠ **Les deux chiffres de poids sont repris de docs/24 et n'ont pas été re-mesurés** (§6). Le lot 2
-les mesurera sur la coque réelle ; s'ils s'écartent, c'est l'arbitrage qu'il faudra relire, pas le
-chiffre qu'il faudra corriger en silence.
+#### La mesure, faite par le lot 2 (#923) — et ce qu'elle déplace
+
+Relevé le **2026-09-11** sur le poste de référence (Windows 11, `win32-x64`), Electron **44.3.0**
+installé par `apps/desktop/package.json` :
+
+| | Mesure |
+|---|---|
+| Archive amont (`electron-v44.3.0-win32-x64.zip`) | **158,1 Mo** |
+| Runtime décompressé (`node_modules/electron/dist/`) | **368 Mo** |
+| `apps/desktop/node_modules/` entier | **382 Mo** |
+| `electron.exe` seul | **246 Mo** |
+| Empreinte mémoire, fenêtre ouverte sur la Control Tower | **351 Mo cumulés sur 4 processus** |
+
+⚠ **Les ~150 Mo de docs/24 ne désignaient pas la même chose que ce qu'on paie ici**, et c'est la
+seule lecture que la mesure autorise : ils correspondent à l'**archive** (158 Mo — l'estimation
+était juste au chiffre près), tandis que ce qu'un poste de développement pose sur son disque est
+**2,3× plus lourd** (368 Mo). Les deux chiffres sont vrais ; ils ne répondent pas à la même
+question.
+
+**L'arbitrage n'est pas relu pour autant, et voici pourquoi** — la décision de §2.2 ne s'appuie pas
+sur le poids, elle l'assume : ce qui la porte est *le moteur vérifié est le moteur livré*. Un écart
+de 210 Mo sur un poste de développement ne déplace pas cet argument. Ce qu'il déplace est le
+**mode d'installation** : la coque n'est **pas** installée par `setup.sh`, mais **à la demande** au
+premier lancement de `desktop.sh`, qui annonce la taille avant de télécharger — un clone qui
+n'ouvrira jamais la fenêtre ne paie rien.
+
+⚠ **Ce n'est toujours PAS la taille d'un installeur** (#641, Phase 9). Un paquet livré ne contient
+ni les en-têtes, ni les fichiers de debug, ni les locales inutiles de `dist/`, et il est compressé.
+La mesure ci-dessus borne le coût **en développement** ; celui de la distribution reste à faire,
+et le sidecar Python de §2.2 n'y est pas non plus.
 
 Ce qu'on accepte : **un installeur plus lourd et une empreinte mémoire plus élevée**, contre un
 moteur unique, une chaîne de construction déjà présente, et un filet visuel qui regarde ce qui est
@@ -137,6 +164,26 @@ de `if (electron)` dans `apps/web/**`.
 **L'ordre de D4 tient** : lanceur (#640), installeur (#641), *puis* enveloppe. Ce chantier livre une
 coque **de développement** — elle sert la stack locale. L'empaquetage sans Python ni Node reste en
 Phase 9. On n'empaquette pas une cible mouvante, et la disposition bouge ici.
+
+### 2.6 Deux pièges de poste, trouvés en écrivant le lot 2
+
+Écrits ici parce qu'ils ne se devinent pas et que leurs symptômes ne nomment pas leur cause. Les
+deux sont traités dans `scripts/controltower/desktop.sh`, qui en porte le détail.
+
+- **`ELECTRON_RUN_AS_NODE` — le terminal de VS Code.** Posée, cette variable fait démarrer Electron
+  en **Node pur** : aucune fenêtre ne s'ouvre, `require('electron')` rend le chemin du binaire au
+  lieu du module, et la coque meurt sur un `Cannot read properties of undefined (reading
+  'requestSingleInstanceLock')` qui ne parle de rien. Or **VS Code est lui-même une application
+  Electron** et pose cette variable pour les processus qu'il lance : tout terminal intégré en
+  hérite (mesuré le 2026-09-11). Autrement dit, *le lancement le plus probable était précisément
+  celui qui échouait*. Le lanceur la retire — elle seule, les `VSCODE_*` n'étant lues que par
+  VS Code.
+- **Le paquet `electron` peut être inerte.** Il ne contient que quelques fichiers JS ; c'est son
+  script de post-installation qui télécharge le runtime sous `dist/`. Ce post-install **n'a pas
+  tourné** lors du premier `npm install` du lot 2 — « added 13 packages », et pas de `dist/`. Le
+  lanceur vérifie donc **le binaire**, jamais le dossier qui devrait le contenir, et rejoue
+  `install.js` seul plutôt que de réinstaller l'arbre. C'est la même règle que partout ailleurs
+  ici : *on vérifie ce qu'on va exécuter, pas ce qu'on suppose installé*.
 
 ---
 
@@ -259,10 +306,13 @@ ENF-12 fait de la coque un objet extérieur au front.
 
 Par honnêteté de méthode, comme docs/30 §7 :
 
-- **Les deux chiffres de poids** (~150 Mo / ~10 Mo) sont **repris de docs/24 §4.5** et n'ont été
-  re-mesurés ni sur une coque réelle, ni sur ce front. Le lot 2 les mesure.
-- **L'empreinte mémoire** d'Electron sur ce produit : non mesurée. Estimée d'après la nature du
-  moteur, pas d'après un relevé.
+- ~~**Les deux chiffres de poids**~~ — **mesuré le 2026-09-11 par le lot 2** (§2.3) : 158 Mo
+  téléchargés, **368 Mo sur le disque**. Le chiffre de docs/24 visait l'archive, pas le décompressé ;
+  l'arbitrage tient, parce qu'il ne reposait pas sur le poids. Le chiffre **Tauri (~10 Mo)** reste,
+  lui, **non mesuré** — et il ne le sera pas : on ne construira pas la coque qu'on a écartée.
+- ~~**L'empreinte mémoire**~~ — **mesurée le 2026-09-11** : **351 Mo sur 4 processus**, fenêtre
+  ouverte sur la Control Tower en mode démo. Un seul relevé, sur un seul poste, à l'ouverture : ce
+  n'est pas une courbe d'usage, et un run qui tourne n'a pas été observé.
 - **Le coût d'un sidecar Python empaqueté** : jamais mesuré dans ce dépôt. L'argument de §2.2
   s'appuie sur l'affirmation de docs/24 §4.6, non sur un chiffre.
 - **Le comportement de `sobriete.test.tsx` face à une troisième zone** : la lecture du fichier montre
