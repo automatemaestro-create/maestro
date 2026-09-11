@@ -7,8 +7,10 @@ allowed-tools: Bash(bash:*), Bash(.venv/Scripts/python.exe:*), Bash(.venv/bin/py
 <!-- `mcp__chrome-maestro` est déclaré, et c'est voulu : c'est SON navigateur. À la différence de
      `/milestone-bilan`, cette commande n'a aucun exécutant à qui déléguer le regard — ce qu'elle
      produit est précisément ce qu'un script ne sait pas faire : regarder sans savoir ce qu'on
-     cherche. `WebSearch` / `WebFetch` n'y ont rien à faire (règle de #792) : un retour
-     d'expérience n'est pas une veille. -->
+     cherche. `WebSearch` / `WebFetch` n'y ont rien à faire, et cette raison lui est PROPRE : un
+     retour d'expérience n'est pas une veille. Elle ne tient donc pas à ce que #792 refusait aux
+     sessions de run — renversé depuis (#933, les deux gestes sont ouverts) —, et l'ouverture ne
+     les fait pas entrer ici : ce qu'on regarde est le produit, pas l'état de l'art. -->
 
 Tu vas **te servir de Maestro comme un utilisateur qui le découvre** — par sa seule interface, la
 Control Tower **réelle** (jamais `--demo`), pilotée au navigateur — du poste vide jusqu'au

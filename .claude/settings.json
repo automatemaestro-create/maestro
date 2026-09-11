@@ -48,6 +48,8 @@
       "Bash(bash scripts/ci/pytest.sh:*)",
       "EnterWorktree",
       "ExitWorktree",
+      "WebSearch",
+      "WebFetch",
       "mcp__chrome-maestro",
       "mcp__figma-officiel"
     ],

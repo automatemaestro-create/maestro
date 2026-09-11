@@ -105,9 +105,12 @@ n'a pas revue.
     `.claude/` sur les 78 sessions du journal, TOUTES dans les 3 premiers runs du
     2026-08-27 et ZÉRO sur les 63 sessions suivantes, contre 86 règles `allow` ramenées à 0
     et 3 des 5 `ask` du dépôt devenus des oui silencieux (`git clean`, `gh issue close`,
-    `browser_run_code_unsafe` — `guard.sh` ne juge que les appels Bash). Et l'ouverture
-    trancherait par effet de bord l'accès web d'un run, que #792 arbitre séparément : le
-    journal porte un refus `WebFetch` qui aurait abouti. Analyse complète en docs/10 §11.7.
+    `browser_run_code_unsafe` — `guard.sh` ne juge que les appels Bash). ⚠ Un quatrième
+    argument comptait alors et EST TOMBÉ DEPUIS : l'ouverture aurait tranché par effet de
+    bord l'accès web d'un run, que #792 arbitrait séparément — #933 l'a ouvert
+    EXPRESSÉMENT. Le verdict ne dépendait pas de lui et ne bouge pas ; c'est la
+    vérification à faire avant de croire qu'un argument tombé rouvre un dossier. Analyse
+    complète en docs/10 §11.7.
 
     Ce script garde tout son sens : c'est lui qui rouvrirait le dossier si le CLI changeait
     de comportement. Un verdict différent de « code 0 » est un fait nouveau, à instruire.

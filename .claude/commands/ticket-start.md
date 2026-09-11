@@ -137,9 +137,10 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
      est indiscernable de « personne n'y a pensé » et la question reviendra à chaque démarrage,
      jusqu'à ce qu'on cesse de la lire. N'enregistre **rien** tant que personne n'a répondu : un
      arbitrage posé d'office ferme la question sans que personne l'ait jugée.
-   - **En session autonome** (run `/orchestrate`), personne ne lira la question : la veille est un
-     **geste interactif** — `WebSearch`/`WebFetch` ne sont dans aucune des deux allowlists d'un
-     run, donc elle ne peut pas être jouée. Ne la tente pas, **n'enregistre aucun arbitrage** — et
+   - **En session autonome** (run `/orchestrate`), personne ne lira la question, et la veille n'y
+     est **pas encore jouable** : l'accès web y est ouvert depuis #933, mais `/design-veille` n'a
+     pas été adaptée au régime autonome — c'est #934 qui s'en charge, et qui tranchera ce qui s'y
+     enregistre ou non comme arbitrage. Ne la tente pas, **n'enregistre aucun arbitrage** — et
      **diffère-la au lieu de la perdre** (#795, docs/30 §5.3) : une fois le ticket implémenté,
      écris avec l'outil `Write` un constat qui nomme la **surface** touchée et ce que tu as décidé
      à l'écran faute de référence, puis `bash scripts/gitlab/lib.sh veille-differe <iid>

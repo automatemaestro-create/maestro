@@ -402,8 +402,10 @@ Ce que la commande **n'est pas**, et le rapport le dit : ni `/milestone-bilan` (
 ni `/verify` (câblage), ni `/banc-mise-en-page` (géométrie). Ces trois-là savent ce qu'ils
 cherchent ; celle-ci regarde avec les yeux de quelqu'un qui **ne sait pas**. Rangée parmi les
 commandes de supervision de `CLAUDE.md` parce qu'elle n'écrit rien côté forge, elle en est la seule
-qui écrive l'état de la Control Tower, et ça se dit. Ni `WebSearch` ni `WebFetch` (#792 — un retex
-n'est pas une veille), aucun run relancé, aucun merge, aucun ticket créé ; le premier rapport est le
+qui écrive l'état de la Control Tower, et ça se dit. Ni `WebSearch` ni `WebFetch` — un retex n'est
+pas une veille, et cette raison-là lui est **propre** : elle ne tient pas à ce que #792 refusait aux
+runs (renversé depuis, #933), mais à ce qu'un retex regarde, qui est le produit et non l'état de
+l'art. Aucun run relancé, aucun merge, aucun ticket créé ; le premier rapport est le
 ticket #854. Gardée par [`tests/test_retex_utilisateur.py`](../tests/test_retex_utilisateur.py) : la
 frontière écrans ↔ `navigation.ts` dans les deux sens, motif prouvé sur un échantillon fautif ; la
 purge sans Redis réel ; l'absence d'écriture forge.
@@ -1127,10 +1129,11 @@ n'est donc plus une salle d'attente mais un **état de passage**, où le ticket 
      ça, « inutile ici » serait indiscernable de « personne n'y a pensé » et la question
      reviendrait à chaque démarrage. Muet dans les deux autres cas, pour deux raisons distinctes —
      « aucune surface visible » est l'abstention nominale, « déjà arbitré » est la promesse du
-     dispositif. **Rien de tout cela ne se joue en session de run** : la veille est un geste
-     **interactif**, `WebSearch`/`WebFetch` restant hors des deux allowlists (§11.7) ; le prompt de
-     session demande de ne pas la tenter, de **n'enregistrer aucun arbitrage**, et de nommer le
-     ticket dans le résumé final. `MAESTRO_VEILLE_SIGNAL=0` éteint le signalement.
+     dispositif. **Rien de tout cela ne se joue encore en session de run** — non plus faute d'accès web,
+     ouvert dans les deux allowlists depuis #933 (§11.7), mais parce que `/design-veille` n'a pas
+     été adaptée au régime autonome (#934) ; le prompt de session demande donc de ne pas la jouer,
+     de **n'enregistrer aucun arbitrage**, et de **différer** la question dans un ticket de veille
+     (#795). `MAESTRO_VEILLE_SIGNAL=0` éteint le signalement.
    Une fois le cadrage résumé, l'agent **enchaîne directement sur l'implémentation** — le résumé
    n'est pas une pause d'autorisation, aucun « go » n'est attendu.
 3. Développement sur la branche (commits `Refs #<iid>`).
@@ -5540,7 +5543,7 @@ Quatre conséquences, et ce sont les cinq écarts de #788 :
 | --- | --- | --- |
 | **G1** les `ask` sans répondant + les trous mesurés | une **règle** | plus bas (#790) |
 | **G2** l'écriture sous `.claude/` | un **arbitrage** — rendu, et négatif | plus bas (#791) |
-| **G3** `WebSearch` / `WebFetch` | un **arbitrage** — rendu, et négatif pour les deux | plus bas (#792) |
+| **G3** `WebSearch` / `WebFetch` | un **arbitrage** — rendu négatif pour les deux (#792), puis **renversé** : les deux sont ouverts | plus bas (#792, #933) |
 | **G4** les questions qu'un run rencontre sans pouvoir y répondre | **différer** la question au lieu de la perdre | #795, [docs/30 §5.2](./30-cible-visuelle-control-tower.md) |
 | **G5** `merge-mr` / `pipeline-wait` | **rien — et c'est voulu** | fin de section |
 
@@ -6034,12 +6037,17 @@ jamais atteint). La mesure tenait ; ce qui manquait n'était pas une mesure de p
   outil non-`Bash` — `Write`, `Edit`, les serveurs MCP — passe **sans examen**. C'est ce qui fait des
   trois `ask` ci-dessus des oui silencieux, et `git clean` efface précisément ce que le dispositif de
   #327 existe pour sauver : du travail non commité.
-- **Elle trancherait par effet de bord une question qu'un autre lot arbitre.** `WebSearch` et
-  `WebFetch` ne sont barrés que par l'`allow` (#714, plus bas) — donc sous `bypassPermissions` **le
-  web s'ouvre aux runs**. Ce n'est pas une hypothèse : le journal porte **un refus `WebFetch`**
-  (#271, vers `raw.githubusercontent.com`) qui aurait abouti. Ouvrir `.claude/` reviendrait à
-  répondre « oui » à #792 sans l'avoir instruit, et un régime qui tranche par effet de bord ce qu'un
-  ticket arbitre est une régression de méthode avant d'être une régression de sécurité.
+- ~~**Elle trancherait par effet de bord une question qu'un autre lot arbitre.**~~ `WebSearch` et
+  `WebFetch` n'étaient barrés que par l'`allow` (#714, plus bas) — donc sous `bypassPermissions` **le
+  web se serait ouvert aux runs** sans que personne l'ait décidé, et le journal portait **un refus
+  `WebFetch`** (#271, vers `raw.githubusercontent.com`) qui aurait abouti. ⚠ **Cet argument est
+  tombé le 2026-09-11** : #933 a ouvert le web **expressément**, avec sa garde écrite dans le
+  prompt, donc il n'y a plus d'effet de bord à redouter de ce côté. Il est barré plutôt que retiré
+  parce que ce qu'il portait vaut toujours **en méthode** — un régime qui tranche par effet de bord
+  ce qu'un ticket arbitre est une régression de méthode avant d'en être une de sécurité — et parce
+  que le verdict de ce lot **ne dépendait pas de lui** : les trois arguments ci-dessus le portent
+  entiers, et c'est la vérification qu'il faut faire avant de croire qu'un argument tombé rouvre un
+  dossier.
 
 **La piste médiane a été examinée, pas écartée d'un mot.** Réserver `bypassPermissions` aux tickets
 que #612 signale est la seule des trois qui bornait le renversement — et elle ne tient pas : son
@@ -6054,15 +6062,19 @@ apprenne à juger autre chose que `Bash`. Les deux se mesurent ; en attendant, l
 de #608 — **on rend le correctif dans la PR et on ouvre le ticket de reprise, on ne contourne
 jamais**.
 
-**Un accès qui n'a pas été ouvert, et c'est une décision : le web** (#714, réexaminé et
-**confirmé** par #792, [docs/30 §5.2](./30-cible-visuelle-control-tower.md)). `WebSearch` et
-`WebFetch` ne sont dans **aucune** des deux allowlists — ni `settings.run.json`, ni
-`.claude/settings.json`, dont l'`allow` d'un run est l'**union**. Ce n'est pas un trou à instruire au
-sens de cette section, c'est le régime voulu. ⚠ Mais **les deux ne sont pas le même geste**, et #714
-les avait tranchés d'un bloc, sous la veille de conception : #792 les a repris séparément, et c'est
-la seule chose qui a bougé — les deux restent fermés, l'un des deux pour une autre raison.
+**Un accès qui n'avait pas été ouvert, et qui l'est depuis #933 : le web** (#714, réexaminé et
+confirmé par #792, **renversé par #933** — lot 3 de #930, 2026-09-11 ;
+[docs/30 §5.2](./30-cible-visuelle-control-tower.md)). `WebSearch` et `WebFetch` sont désormais dans
+les **deux** allowlists — `settings.run.json` et `.claude/settings.json`, dont l'`allow` d'un run est
+l'**union** —, donc joignables en run, et sans confirmation en interactif. Le verdict d'origine est
+gardé ci-dessous : un renversement se lit contre ce qu'il défait, et c'est **raison par raison** que
+celui-ci se juge. ⚠ **Les deux n'étaient pas le même geste**, et #714 les avait tranchés d'un bloc,
+sous la veille de conception : #792 les a repris **séparément** — c'est ce découpage qui a rendu la
+reprise lisible, puisque leurs raisons ne tombent pas ensemble.
 
-**`WebSearch` — fermé, et les raisons de #714 tiennent.** Une veille rend des **partis pris**,
+**`WebSearch` — l'état d'avant : fermé, et les raisons de #714 passaient pour tenir.** *(Les deux
+paragraphes qui suivent sont le verdict de #792, conservé pour que le renversement se lise contre
+ce qu'il défait.)* Une veille rend des **partis pris**,
 c'est-à-dire un jugement, du même bois que l'arbitrage de #562 et le rail de #617 ; une session de
 run n'a **personne** pour répondre au « oui » que `/ticket-start` propose (§5), donc l'ouvrir
 reviendrait à lancer la veille d'office ; et `mcp__chrome-maestro` passant déjà cette union, ouvrir
@@ -6074,46 +6086,88 @@ affaiblit pas, et c'est pour le savoir que ce lot vient après lui : faire **sur
 n'est pas y répondre. La veille reste jouée par un humain, plus tard ; ce que #795 change est
 qu'elle ne se perd plus en route.
 
-**Ce que ce refus coûte, car il coûte quelque chose** : tout ticket à surface visible traité
-par un run est implémenté **sans référence vérifiée**, en s'en tenant au socle (docs/30 §6.1,
-tokens et primitives du dépôt). C'est réel et assumé — mais l'ouverture ne le rembourserait pas,
-puisqu'elle achèterait des partis pris que personne n'aurait arbitrés. Ce qui le rembourse est
-que la question **survive** au run (#795), pour être tranchée par quelqu'un.
+**Ce que ce refus coûtait, car il coûtait quelque chose** : tout ticket à surface visible traité
+par un run était implémenté **sans référence vérifiée**, en s'en tenant au socle (docs/30 §6.1,
+tokens et primitives du dépôt). C'était réel et assumé — l'ouverture, disait-on, ne le
+rembourserait pas, puisqu'elle achèterait des partis pris que personne n'aurait arbitrés, et ce qui
+le remboursait était que la question **survive** au run (#795). ⚠ **C'est ce coût-là que #933 cesse
+de payer** : le ticket de veille reste le filet, il n'est plus le seul recours.
 
-**`WebFetch` — fermé aussi, mais sa raison n'est pas celle-là.** #714 le rangeait sous la veille ;
+**`WebFetch` — fermé aussi, mais sa raison n'était pas celle-là**, et c'est la seule qui ait
+survécu au renversement. #714 le rangeait sous la veille ;
 or le seul usage jamais mesuré n'en est pas une. Un run l'a demandé **une fois** — #271
 « Bibliothèque MCP élargie », pour lire `raw.githubusercontent.com/modelcontextprotocol/…` —,
 c'est-à-dire une **référence citée par le ticket qu'il implémentait** : déterministe et vérifiable,
 tout le contraire d'un jugement. La raison écrite ne couvrait donc pas le seul cas observé, et #714
-se trompait en avançant que « personne ne le demandera ». Ce qui le ferme est autre chose, et vaut
-mieux : la propriété qui rendrait le geste sûr — *l'URL vient du ticket, donc d'un humain* — **n'est
-pas exprimable dans une règle**, qui ne borne qu'un préfixe (`WebFetch(domain:…)` borne le domaine,
-jamais la provenance). C'est mot pour mot la raison de `curl` en #528 — *le pouvoir est dans
-l'argument* — et celle de la tête de boucle : la règle bénirait la forme sans rien juger de ce
+se trompait en avançant que « personne ne le demandera ». Ce qui le fermait était autre chose, et
+valait mieux : la propriété qui rendrait le geste sûr — *l'URL vient du ticket, donc d'un humain* —
+**n'est pas exprimable dans une règle**, qui ne borne qu'un préfixe (`WebFetch(domain:…)` borne le
+domaine, jamais la provenance). C'est mot pour mot la raison de `curl` en #528 — *le pouvoir est
+dans l'argument* — et celle de la tête de boucle : la règle bénirait la forme sans rien juger de ce
 qu'elle rapporte. S'y ajoute ce que #714 n'invoque pas : depuis #418/#419 le produit d'un run est
 **mergé sans relecture humaine**, si bien qu'une page distante influencerait du code qui part dans
-`main` sans que personne ne l'ait lue.
+`main` sans que personne ne l'ait lue. ⚠ **Cette raison-là n'est pas tombée avec les autres — elle a
+changé de rôle.** Elle ne dit pas que le geste doit être fermé : elle dit que **sa garde ne peut pas
+vivre dans une allowlist**, ce qui vaut aussi bien contre une liste de domaines. #933 en tire la
+conséquence en posant la garde ailleurs, plus bas.
 
 **La forme couverte existe, et le dépôt l'avait déjà choisie.** #271 a livré sans : le registre MCP
 est fait d'entrées **curées, écrites à la main et relues en revue** (`SEED`), et les entrées
 **découvertes** passent par un miroir versionné puis par une **porte d'admission** — un geste humain
-tracé (#677, #678). C'est la règle générale dont ce refus est un cas : du contenu venu d'internet
-peut être *visible*, jamais *actionnable* sans qu'un humain l'ait admis. Ce que l'interdit coûte est
-donc borné et connu — une session qui veut lire une URL citée par son ticket perd un tour à
-découvrir la règle. C'est un défaut de **prompt**, pas de liste, et le prompt de session le dit
-désormais (§11.3) au lieu de le laisser découvrir.
+tracé (#677, #678). C'est la règle générale dont ce refus était un cas, **et elle ne bouge pas avec
+le régime** : du contenu venu d'internet peut être *visible*, jamais *actionnable* sans qu'un humain
+l'ait admis. Ce qui a changé est la frontière entre les deux — une session **lit** désormais une
+page et s'en sert comme **source** de son jugement ; la faire entrer comme **matière** du produit
+(une entrée de registre, une URL qu'un script ira lire) reste un geste humain. Ce que l'interdit
+coûtait était borné et connu — une session qui voulait lire une URL citée par son ticket perdait un
+tour à découvrir la règle —, et c'était un défaut de **prompt**, pas de liste : le prompt de session
+(§11.3) dit désormais le régime ouvert et sa garde, au lieu du refus.
 
-**Aucun des deux fichiers n'est touché, et c'est le verdict.** La question « lequel ? » se pose quand
-même, parce qu'elle se reposera : ouvrir pour le seul run passerait par `settings.run.json`, que
-l'interactif ne lit pas ; ouvrir dans `.claude/settings.json` ouvre **les deux** par l'union, et
-c'est le geste piégeux que `tests/test_design_veille.py` garde — « ouvrir `WebSearch` dans
-`.claude/settings.json` pour éviter une confirmation à chaque `/design-veille` interactive » est
-légitime en intention et non voulu en effet. Une confirmation dans une session interactive n'est pas
-un défaut : il y a quelqu'un pour la donner. Le test n'interdit pas d'y revenir — il demande qu'on le
-fasse **exprès**, en l'éditant avec sa raison, plutôt que de découvrir six mois plus tard qu'un run
-lit des pages que personne n'a décidées. `bash scripts/orchestrate/ecart-run.sh` (#789) range
-désormais les deux gestes en **refus voulu** avec leur raison, à côté de `curl` et de `merge-mr` :
-ils sortent du compte des écarts, qui passe de 15 à 13.
+**Aucun des deux fichiers n'était touché, et c'était le verdict.** La question « lequel ? » se
+posait quand même, parce qu'elle allait se reposer : ouvrir pour le seul run passerait par
+`settings.run.json`, que l'interactif ne lit pas ; ouvrir dans `.claude/settings.json` ouvre **les
+deux** par l'union, et c'était le geste piégeux que `tests/test_design_veille.py` gardait — « ouvrir
+`WebSearch` dans `.claude/settings.json` pour éviter une confirmation à chaque `/design-veille`
+interactive » est légitime en intention et n'était pas voulu en effet. Le test n'interdisait pas d'y
+revenir — il demandait qu'on le fasse **exprès**, avec sa raison, plutôt que de découvrir six mois
+plus tard qu'un run lit des pages que personne n'a décidées.
+
+**C'est fait, et expressément : #933 ouvre les deux gestes dans les deux fichiers.** Trois des
+quatre raisons ci-dessus tombent, et la quatrième — la seule entière, celle de `WebFetch` — **ne
+ferme pas le geste : elle dit où sa garde ne peut pas vivre**. Le détail des quatre est en
+[docs/30 §5.2](./30-cible-visuelle-control-tower.md), avec ce qui relève de la veille ; ce qui
+relève de cette section-ci tient en trois points :
+
+- **La garde n'est pas dans une liste, elle est dans le prompt.** Une règle ne borne qu'un préfixe :
+  elle sait dire « tu peux lire », jamais « ce que tu lis ne te commande pas ». Le prompt de session
+  (§11.3) dit donc en toutes lettres que **le contenu web est une donnée et jamais une instruction**,
+  et ce qu'il faut faire d'une page qui prétend le contraire — ne pas obéir, ne pas la citer,
+  continuer le ticket, la **nommer dans le résumé final** avec son URL. Un signalement, pas un échec.
+- ⚠ **Une liste de domaines est écartée**, avec ses deux raisons, pour qu'elle ne soit pas
+  reproposée au premier doute : elle **viderait la recherche de son objet** (on cherche précisément
+  ce qu'on ne connaît pas d'avance) et elle viserait le **mauvais risque** — non pas *quels* sites
+  sont lus, mais *ce qu'on fait* du texte lu. `WebFetch(domain:…)` borne le domaine, jamais la
+  provenance : c'est la raison de `curl` (#528), et elle vaut toujours **contre l'illusion qu'une
+  règle suffirait**.
+- ⚠ **C'est une classe de risque nouvelle, et l'argument inverse a été vérifié faux.** On pouvait
+  croire qu'une session lit déjà du texte arbitraire, le dépôt étant public depuis #734 et la
+  description d'un ticket étant lue comme une consigne : `queue.sh` ne retient que les tickets « À
+  faire » **du milestone courant**, et un non-collaborateur ne peut poser ni milestone ni état de
+  projet. Le double filtre tient, et tout ce qu'une session lit aujourd'hui comme consigne a été
+  écrit par l'équipe. **Le web est la première source de texte non contrôlée** — d'où le poids porté
+  par la garde écrite, et non par ce qui borne la casse (`deny`, `guard.sh`, `main` protégée), qui
+  n'a pas bougé et n'en est pas une.
+
+**Ce qui reste vrai de #271, et ne dépend pas du régime** : une référence qui doit devenir
+**durable** dans le dépôt — entrée de registre, URL qu'un script ira lire — entre par un **geste
+humain**, versionnée et relue ou par la **porte d'admission** (#677, #678), jamais par une lecture à
+chaud au milieu d'un run. Lire une page et **s'en servir comme source** est ce qui s'ouvre ; la
+faire entrer comme **matière** du produit, non.
+
+`bash scripts/orchestrate/ecart-run.sh` (#789) rangeait les deux gestes en **refus voulu** avec leur
+raison, à côté de `curl` et de `merge-mr` ; ils sortent désormais **couverts**, et son bilan G3 le
+dit sans qu'on ait eu à le lui apprendre — il confronte les gestes aux règles là où elles vivent,
+la classe déclarée n'étant qu'un repli.
 
 **Un `ask` du dépôt est un `deny` en run, et les cinq sont tranchés** (#790, lot 2 de #788).
 `.claude/settings.json` met cinq gestes en `ask` — `gh issue close`, `git commit --no-verify`,
