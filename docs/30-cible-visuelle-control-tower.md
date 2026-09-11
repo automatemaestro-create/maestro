@@ -1021,6 +1021,124 @@ forme que #519, et pour la même raison : la pièce manquante était une conduit
 
 ---
 
+### 5.5 La relecture devient une condition de clôture — 2026-09-11 (#935)
+
+> ⚠ **Numérotation.** Comme au §5.4, la section « Veilles jouées » qui suit porte `5.3` par un
+> doublon antérieur au chantier. Elle n'est pas renumérotée ici : le lot 6 (#936) le traite.
+
+Le lot 2 (#932) a rendu le geste **jouable** ; il restait **appelé par rien**. C'est le défaut de
+#714 à l'identique, un cran plus loin dans le cycle — et sa correction se transpose mot pour mot.
+
+#### La question était posée au mauvais moment
+
+`/ticket-start` demande « qu'est-ce qu'on vise ? » **au démarrage**, quand rien n'est encore écrit.
+C'est le bon moment pour une veille : elle sert à décider avant de coder. Mais à la **clôture**,
+quand l'écran existe et qu'on s'apprête à le merger, plus rien ne demandait **s'il avait été
+regardé** — alors que c'est le seul instant où la question a une réponse.
+
+La mesure du §5.3 dit pourquoi une règle écrite ne suffisait pas : sur les **76 tickets livrés par
+un run**, **13 touchaient une surface visible** et **aucun** n'a été arbitré, alors que la règle
+existait et que les sessions la relayaient dans leur résumé. *Une checklist qu'aucune machine ne
+vérifie ne tient pas* (§3.6).
+
+#### Le déclencheur est un CONSTAT, plus une prédiction
+
+À la clôture, le dispositif ne consulte **pas** `touche-surface` (#714), et c'est le seul endroit du
+chantier où le motif mesuré n'est pas réutilisé. La raison n'est pas qu'il soit mauvais, c'est que
+la question a changé :
+
+| | au démarrage | à la clôture |
+|---|---|---|
+| ce qu'on demande | ce ticket *va-t-il* toucher un écran ? | ce ticket *a-t-il* touché un écran ? |
+| ce qu'on a sous la main | le **texte** du ticket | le **diff** |
+| ce qui répond | `touche-surface` — label `agent::design` ou route citée | `relecture-visuelle.sh --plan` — fichiers des commits **et** de l'arbre (#544 via #932) |
+| ce que ça rate | **12 tickets sur 33** : ceux décrits par leur comportement (§5.2) | rien de ce que le diff montre |
+
+**Aucun second motif n'est écrit**, et c'est la note technique du ticket : le plan du lot 2 n'en est
+pas un — il appelle `ecrans-touches.sh`, dont la règle vit depuis #544 à un seul endroit. Le
+dispositif n'**exige** pas non plus que le motif textuel ait parlé : l'exiger rendrait le trou des
+12/33 invisible au lieu de le réduire.
+
+#### On ne demande pas, on joue — et c'est ce qui le rend identique en run
+
+Le partage de #562, #612 et #714 est repris tel quel : **ce qui est automatique est la détection du
+manque, jamais le verdict**. Mais le verdict n'est pas au même endroit que pour la veille, et les
+confondre ferait reproduire une question que personne, en run, n'est là pour entendre :
+
+- une **veille** est un jugement *sur l'opportunité de chercher* — elle coûte des recherches web et
+  du quota, la jouer sur un correctif sans enjeu visuel serait du gaspillage, d'où une
+  **proposition** en interactif et, depuis #934, un **critère écrit** que la commande applique en
+  run ;
+- une **relecture** est un *constat* : ouvrir l'écran qu'on vient d'écrire coûte ~50 s pour trois
+  écrans, et le verdict — *est-ce que ça a l'air juste ?* — reste entier. Il est seulement rendu
+  **après** avoir regardé, au lieu de l'être sans avoir regardé.
+
+Le mécanisme est donc **le même des deux côtés** : `/ticket-finish` joue, sans rien demander. Il n'y
+a personne à qui demander dans un run, et il n'y avait rien à demander.
+
+#### Où il s'accroche, et pourquoi là
+
+**Étape 4bis de `/ticket-finish`** — après le commit, **avant** le filet CI. L'ordre est le contenu
+de la décision, et c'est celui de `/mr-fix` (résoudre le conflit avant de diagnostiquer le
+pipeline) : ce qui peut **changer le diff** passe avant le verdict qui le juge. Un contraste qui
+saute en thème sombre se corrige, et le filet CI joue ensuite une fois — pas deux.
+
+`/ticket-ship` en hérite **sans une ligne à elle**, comme du ramassage de worktree de #519 : elle
+délègue tout à `/ticket-finish` depuis toujours.
+
+#### Le contenant : un commentaire sur le ticket, jamais un résumé
+
+C'est la leçon de #608 et #795, et elle vaut ici sans changer un mot : un run `--detach` finit dans
+une console que personne ne regarde, `journal.sh gc` ne garde que dix runs, et le ticket se ferme au
+merge dans l'heure. `bash scripts/gitlab/lib.sh relecture-note [--raison] <iid> <fichier>` écrit
+donc sur **le ticket**, qui lui survit.
+
+Un verbe, et pas un `issue-note` — le contenant serait pourtant le même. Trois choses qu'`issue-note`
+ne porte pas, et qui **sont** le mécanisme :
+
+1. **une ancre** — sans en-tête reconnaissable, « ce ticket a-t-il été relu ? » n'a pas de réponse ;
+2. **l'idempotence** — `/ticket-finish` se rejoue (pipeline rouge, deux passes `/mr-fix`, reprise
+   d'un run) ; empreinte `cksum` comme `reste-claude` et `veille-differe` : rejeu à l'identique
+   **muet**, jugement enrichi **additif** ;
+3. **la distinction jouée / non jouée**, portée par le verbe et jamais par la prose du fichier —
+   c'est le défaut même qu'on corrige, « regardé, rien à signaler » et « pas regardé » ne devant pas
+   se ressembler. `--raison` le dit dans le **titre** de la section, là où on le lit sans dérouler.
+
+**Le fichier est obligatoire dans les deux sens**, et c'est la moitié la plus facile à défaire. Côté
+jugement, la raison est celle de `veille-differe` : ce que la session a d'irremplaçable est ce
+qu'elle a **vu**. Côté `--raison`, elle est plus forte — le critère du ticket dit « son absence porte
+une raison **enregistrée** », et un `--raison` sans fichier rendrait le mécanisme contournable en un
+mot.
+
+#### Ce qui a été écarté, avec sa raison
+
+- **Un label** (`relecture::vue`, sur le modèle de `veille::arbitree`). Écarté : un label sert quand
+  la question **se repose** — `veille::arbitree` existe parce que `start-brief` repasserait sinon à
+  chaque démarrage. Ici la question se pose **une fois**, à la clôture, et le ticket se ferme
+  ensuite : le label n'aurait personne pour le relire, et ce serait un second support pour un seul
+  fait (la panne que #365 a supprimée).
+- **Un verbe de lecture** (`relecture-de`, pendant de `reste-claude-de`). Écarté pour la raison
+  écrite au §5.3 : *un verbe de lecture sans appelant est du code mort*. L'idempotence lit les
+  commentaires, mais pour elle-même.
+- **Un filet de fin de run** (le pendant de #611). Sans objet : la pose est **sur le seul chemin qui
+  crée l'événement**, comme le « En cours » d'un parent l'est sur `begin` (#517) — un balayage de
+  rattrapage n'aurait rien à rattraper.
+- **Bloquer la clôture**. Écarté pour la raison qui a écarté le blocage du merge sur un résidu
+  `.claude/` (#608) : une forge muette ou une stack qui ne démarre pas ne dit rien sur ce que la PR
+  livre. Un `1` du verbe se **signale** dans le résumé ; c'est l'absence de **trace** que le
+  dispositif rend difficile, jamais le merge.
+
+#### Aucune règle ajoutée
+
+Comme #934, et c'est le signe que les lots 2 et 3 avaient fait leur travail : l'union des deux
+allowlists couvrait déjà tout ce que l'étape appelle — `bash scripts/design/relecture-visuelle.sh`
+et `bash scripts/controltower/start.sh` (#932), `mcp__chrome-maestro`,
+`Bash(bash scripts/gitlab/lib.sh:*)` pour le verbe. Le `allowed-tools:` du frontmatter **ne vaut pas
+permission** (#179) : celui de `/ticket-finish` a seulement été complété de `Skill`, `Read`, `Write`
+et `mcp__chrome-maestro`, que l'étape 4bis emploie.
+
+---
+
 ### 5.3 Veilles jouées
 
 Le banc du §1 a été dressé **une fois**, en prose, et n'était rejouable par personne — c'est le

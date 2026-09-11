@@ -1671,6 +1671,23 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
   commun, `4` en retard **avec** conflit probable, `2` usage, `1` état illisible. L'heuristique est
   volontairement grossière (git seul tranche vraiment) : elle vise les **fichiers aimants**
   touchés par presque tous les tickets — `CLAUDE.md`, ce document, `scripts/gitlab/lib.sh`.
+- **Aucune clôture d'un ticket d'interface sans que son rendu ait été regardé** (#935, chantier
+  #930, [docs/30 §5.5](./30-cible-visuelle-control-tower.md)). À l'étape **4bis** de
+  `/ticket-finish` — après le commit, **avant** le filet CI —, `bash
+  scripts/design/relecture-visuelle.sh --plan <iid>` dit si le diff a touché un écran. Sur `3`
+  (aucune surface visible) la commande est **muette** et passe ; sur `0` elle joue le skill
+  `relecture-visuelle` (#932), puis **consigne sur le ticket** : `bash scripts/gitlab/lib.sh
+  relecture-note <iid> <fichier>` pour le jugement, `… --raison <iid> <fichier>` quand la relecture
+  n'a **pas** eu lieu. `/ticket-ship` en hérite sans une ligne à elle. Trois choses à ne pas
+  défaire : le déclencheur est le **diff** et non le texte du ticket — à la clôture on a mieux que
+  la prédiction de `touche-surface`, qui rate 12 tickets sur 33 (docs/30 §5.2), et rien n'**exige**
+  que ce motif-là ait parlé ; **on ne demande pas, on joue**, à l'identique en run et en interactif,
+  parce que *regarder* est un constat et non un jugement sur l'opportunité de regarder — c'est ce
+  qui le sépare de la veille de `/ticket-start`, qui, elle, propose ; et l'étape passe **avant** le
+  filet CI parce que ce qui peut changer le diff passe avant le verdict qui le juge (même ordre que
+  `/mr-fix`). Le verbe est **idempotent** (empreinte `cksum`), ses refus tombent avant toute
+  écriture (`4` fichier absent ou vide, `3` iid inconnu), et un `1` (forge muette) **ne bloque pas
+  la clôture** — ce que le dispositif rend difficile est l'absence de **trace**, jamais le merge.
 - **Aucune clôture d'un ticket que la session ne traite pas.** `/ticket-finish` et `/ticket-ship`
   vérifient, **avant toute écriture** (commit, push, PR, statut, temps), que le ticket
   visé est bien celui de la session : `bash scripts/gitlab/lib.sh close-guard <iid> [branche]`.
