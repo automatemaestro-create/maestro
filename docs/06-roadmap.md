@@ -134,7 +134,7 @@ d'exécution ; l'utilisateur reçoit une copie de fichiers à recopier lui-même
 |---|---|---|---|---|
 | **7 — Projets & espace de travail réel** | Un projet a une **racine sur le disque** ; les agents y travaillent par branche/worktree ou copie, et l'application des modifications passe par la validation humaine. Le contrat d'isolation et le modèle de menace s'étendent au projet de l'utilisateur | Phase 5 (lancement de run par l'API — livré) | 2027-03-18 → 2027-04-28 | **livrée** (#219, 8 lots) |
 | **8 — De l'intention au brief** | Un objectif se **compose** (prompt + documents téléversés + dossier de références), se **discute** (questions de clarification) et se **valide** (brief structuré) avant toute décomposition payante | Phase 7 | 2027-04-29 → 2027-06-09 | **livrée** (#314, 9 lots) |
-| **9 — Poste de travail : distribution** | Le produit s'**installe** : mode local durci (jeton, SQLite), lanceur/installeur et parcours de premier lancement, puis **enveloppe de bureau** embarquant la Control Tower existante | Phases 7 et 8 — ne pas empaqueter une cible mouvante | 2027-06-10 → 2027-07-21 | à venir |
+| **9 — Poste de travail : distribution** | Le produit s'**installe** : mode local durci (jeton, SQLite), lanceur/installeur et parcours de premier lancement. L'**enveloppe de bureau** en est **sortie** le 2026-09-11 (#643 abandonné) : elle est livrée par « L'atelier » et devient **Electron** ([docs/35](./35-decision-poste-de-bureau-et-disposition.md)) | Phases 7 et 8 — ne pas empaqueter une cible mouvante | 2027-06-10 → 2027-07-21 | découpée (#637, 8 lots) |
 
 Les fenêtres reprennent la cadence des phases précédentes (~6 semaines) et s'enchaînent après
 l'échéance de la Phase 6. Ce sont des repères de planification : une échéance de milestone se
@@ -166,11 +166,18 @@ réservé.
 > (questions de clarification), #322 (valider le brief dans la Control Tower) et #323 (tests + doc).
 > Le pari du découpage différé a tenu : la Phase 8 a été découpée **une fois la Phase 7 livrée**,
 > et le brief a pu viser un projet qui existait.
-> La **Phase 9 reste un contenant vide à dessein** : on n'empaquette pas une cible mouvante.
-> **Vide ne veut pas dire seule à venir** : le découpage différé porte sur *cette phase-là*,
-> pas sur le backlog. Trois autres milestones, décrits juste en dessous, sont ouverts **et
-> découpés** — la **vague front « Control Tower v3 »**, qui se mène en parallèle des Phases 8
-> et 9 sans rien changer à leur cadrage.
+> La **Phase 9 est restée un contenant vide à dessein** — on n'empaquette pas une cible mouvante —
+> jusqu'à son découpage : parent **#637** et huit lots (#638–#645). **Vide ne voulait pas dire
+> seule à venir** : le découpage différé portait sur *cette phase-là*, pas sur le backlog. Les
+> autres milestones, décrits juste en dessous, étaient ouverts **et découpés** — la **vague front
+> « Control Tower v3 »**, menée en parallèle des Phases 8 et 9 sans rien changer à leur cadrage.
+>
+> ⚠ **Un de ses lots a changé de main le 2026-09-11** : **#643 « Enveloppe Tauri » est abandonné**
+> au profit du lot 2 de **#921** — la coque devient **Electron**, et elle est livrée dans
+> « L'atelier » parce qu'elle n'a rien à attendre (elle affiche ce que la stack locale sert,
+> **ENF-12**). Ce que la Phase 9 garde est l'**empaquetage** : #640, #641, #642, #644. Le
+> renversement porte sur *quelle* coque, jamais sur *quand* — voir
+> [docs/35 §2](./35-decision-poste-de-bureau-et-disposition.md).
 
 ---
 
@@ -247,9 +254,9 @@ Deux points d'articulation avec le reste de la roadmap :
 
 ---
 
-## Chantiers hors phases — ce que l'usage a ouvert (2026-08)
+## Chantiers hors phases — ce que l'usage a ouvert (2026-08 → 2026-09)
 
-Quatre milestones sont nés **après** la vague front, d'un usage réel plutôt que d'un cadrage : on
+Cinq milestones sont nés **après** la vague front, d'un usage réel plutôt que d'un cadrage : on
 s'est servi du produit et de son outillage, et ce qui manquait s'est vu. Ils ne prennent **pas de
 numéro de phase**, pour la raison déjà écrite pour la vague front — un chantier né de l'usage
 **recouvre** les phases qu'il accompagne au lieu de s'y insérer, et le numéro 10 reste réservé à
@@ -261,6 +268,7 @@ numéro de phase**, pour la raison déjà écrite pour la vague front — un cha
 | **Résilience des runs** | Un run ne se perd plus : il survit à l'arrêt de son API (**hôte détaché**, livré), se voit quand il meurt, se rattrape sur son brief — et, depuis la revue du 2026-08-24, **se solde quand on éteint Maestro exprès** | 2027-06-30 | **#441** — 6 lots (#442–#447), **#347** et #486 |
 | **Collaboration inter-agents** | Ce que les agents se disent pendant un run, et une surface qu'ils écrivent ensemble | 2027-09-01 | #354, #355, #356 |
 | **Outillage de la forge** | Le workflow lui-même : merge automatique en fin de ticket, découpage porté par les sub-issues natives | 2027-09-15 | **#413** et **#389** |
+| **L'atelier — le travail au centre, la conversation à portée** | La Control Tower devient un **poste de travail de bureau** : une fenêtre **Electron**, un shell à **trois zones** (navigation à gauche, travail au centre, conversation à droite), le **pipeline du run** comme vue de travail — et les quatre constats du retex qui vivent dans ces surfaces | 2027-11-09 | **#921** — 8 lots (#922–#929) |
 
 **Le chantier « Le run, objet de premier plan » est le seul des quatre à être né d'une décision
 écrite** : la revue d'usage du **2026-08-24** portait seize demandes, dont **trois renversaient une
@@ -293,7 +301,23 @@ Deux articulations avec le reste de la roadmap :
   dit ce que la **sonde** a vu sur ce poste, jamais ce que Maestro supporte, et les deux colonnes ne
   se confondent nulle part.
 
-> **Tickets : les quatre milestones sont découpés**, comme la vague front et pour la même raison —
+⚠ **« L'atelier » passe DEVANT la Phase 9, et c'est une décision** (2026-09-11,
+[docs/35](./35-decision-poste-de-bureau-et-disposition.md), #921). Son échéance — 2027-11-09, la
+veille de celle de la Phase 9 — n'est pas un repère de plus : `lib.sh current-milestone` retient
+**le jalon actif le plus ancien du rail qui porte encore un ticket ouvert**, si bien que la date
+*est* l'ordre de traitement. Trois choses la justifient, et la troisième est la moins évidente :
+
+- **D6 n'est pas violée.** L'ordre 7 → 8 → 9 porte sur les **phases** ; l'atelier n'en est pas une,
+  il **recouvre** comme la vague front. Le numéro 10 reste réservé.
+- **L'argument de la Phase 9 joue en sa faveur**, pas contre lui : « on n'empaquette pas une cible
+  mouvante » (§4.8 de docs/24). La disposition bouge — donc elle bouge **avant** l'empaquetage, pas
+  pendant. Ordonner l'inverse ferait empaqueter deux fois.
+- **La coque, elle, est livrée dès le lot 2** — sans attendre le reste. Ce n'est pas une entorse à
+  l'ordre de **D4** : c'est une coque **de développement**, qui sert la stack locale. Le lanceur
+  (#640), l'installeur (#641), le premier lancement (#642) et les mises à jour (#644) restent en
+  Phase 9, dans leur ordre.
+
+> **Tickets : les cinq milestones sont découpés**, comme la vague front et pour la même raison —
 > ils portent sur un produit et un outillage qui **existent**, il n'y a rien à attendre pour les
 > découper. Même patron : un **parent de suivi** par chantier, qui porte la checklist ordonnée et
 > ne se ferme que toutes cases cochées, et des lots mergeables un à un sur `main`, les lots marqués
