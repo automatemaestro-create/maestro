@@ -754,10 +754,20 @@ def test_le_prompt_de_run_prescrit_de_differer_en_plus_du_resume(depot: Depot) -
     # Les deux verbes se ressemblent et ne font pas la même chose : le prompt doit prescrire l'un
     # ET interdire l'autre dans la même phrase, faute de quoi une session « ferait propre » en
     # enregistrant un arbitrage que personne n'a rendu.
-    assert "N'enregistre AUCUN arbitrage" in prompt
-    assert "veille-arbitre" in prompt and "fermerait la" in prompt, (
-        "l'interdit doit NOMMER le verbe qu'il vise — « n'arbitre pas » sans son nom se relit mal "
-        "à côté d'un « veille-differe » prescrit deux lignes plus bas"
+    #
+    # ⚠ #934 a rendu cet interdit CONDITIONNEL sans le lever, et c'est la nuance que ce test garde
+    # désormais : la veille se joue en run, donc un arbitrage s'y enregistre — mais seulement
+    # quand elle a été JOUÉE, auquel cas un jugement a été rendu ET écrit (les partis pris, en
+    # commentaire du ticket). Sur l'ABSTENTION, le « marquer d'office » de #562 reste écarté, et
+    # c'est ce cas-là — le seul où `veille-differe` s'applique — que la phrase doit couvrir.
+    assert "N'APPELLE JAMAIS « lib.sh veille-arbitre » DANS CE CAS" in prompt, (
+        "l'interdit doit NOMMER le verbe qu'il vise ET son cas — « n'arbitre pas » sans son nom se "
+        "relit mal à côté d'un « veille-differe » prescrit deux lignes plus haut, et un interdit "
+        "GLOBAL serait faux depuis #934"
+    )
+    assert "ABSTENTION" in prompt, (
+        "le mot qui sépare les deux cas : un « non » rendu par une personne est un jugement et "
+        "s'enregistre, un « non » qui ne vient de personne ne ferme rien"
     )
     assert "Tu traites intégralement le ticket" in prompt, "ce n'est pas le prompt qui a été lu"
 
