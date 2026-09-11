@@ -542,6 +542,24 @@ démarre le backend en arrière-plan : la même interface, dans une fenêtre au 
 | **3 — Enveloppe Electron** | Idem, moteur Chromium embarqué | moyen-élevé | **Écarté sauf besoin précis** : ~150 Mo contre ~10, sans avantage ici — l'UI n'a besoin d'aucune API exotique |
 | **4 — Réécriture native** | Refonte de l'UI hors web | élevé | **Écarté.** Jetterait la Phase 4 et la Phase 6 |
 
+> ⚠ **Renversé le 2026-09-11 : c'est l'option 3 (Electron) qui est retenue**, et l'option 2 (Tauri)
+> qui est écartée — voir [docs/35](./35-decision-poste-de-bureau-et-disposition.md) §2, chantier
+> #921. Le verdict ci-dessus reste écrit tel quel : il dit **sur quoi** la décision d'origine
+> reposait, et c'est ce qui permet de juger le renversement.
+>
+> Ce qui a changé tient en deux points. Le verdict de 2026-08-04 ne portait que sur le **poids**, sa
+> seconde moitié — « sans avantage ici » — étant une constatation d'époque : **le besoin précis est
+> arrivé** (une session doit regarder le rendu qu'elle vient d'écrire, chantier #930), et
+> `chrome-maestro`, Playwright et le job `web-build` ciblent tous **Chromium** — avec Electron, le
+> moteur vérifié **est** le moteur livré ; avec une WebView système, ce sont trois moteurs
+> différents, dont aucun n'est celui que le filet regarde. Et **§4.6 ci-dessous affaiblit l'argument
+> du poids** : le coût caché étant le backend Python, l'écart de 140 Mo est absolu mais bien plus
+> faible en relatif une fois le sidecar embarqué.
+>
+> Ce qui **ne** change **pas** : l'**ordre** de D4 (lanceur, installeur, *puis* enveloppe), **D3**
+> (le bureau est une enveloppe, pas la finalité) et **ENF-12** (aucun embranchement de code
+> applicatif). Le renversement porte sur *quelle* coque, jamais sur *quand* ni sur *pourquoi*.
+
 ### 4.6 Le coût caché : ce n'est pas l'UI, c'est le backend Python
 
 Empaqueter Next.js est un problème résolu. Empaqueter **Python + le Claude Agent SDK + le CLI
@@ -684,7 +702,7 @@ cadrage (#218). Chacune est désormais un acquis, pas une option ouverte :
 | **D1** | Maestro travaille-t-il sur les projets locaux de l'utilisateur ? | **Oui** — c'est la brique manquante n° 1 (§2.2) | Ouvre la Phase 7 ; élargit le modèle de menace (§2.5) |
 | **D2** | Patron d'écriture : direct, worktree, ou copie + diff ? | **Worktree/branche par tâche** si versionné, **copie + diff** sinon ; application = **action sensible** (§2.4). → **Révisée le 2026-09-04** (#703, §2.4) : worktree + **fusion continue** dès qu'une tâche est soldée, sous **un accord par run** si versionné ; **écriture en place**, sérialisée et bornée par la frontière d'écriture, sinon — `versionner` (#704) fait changer de régime | Réutilise la validation humaine existante ; l'écriture directe reste interdite sur un projet versionné, et se tient par refus et sérialisation sur un projet neuf |
 | **D3** | Le bureau est-il la finalité ? | **Non — c'est une enveloppe, pas une variante** (§4.7). Le mode web/serveur reste de premier ordre | Un seul front, deux modes de distribution ; SQLite/Postgres, jeton local/comptes comme **réglages** |
-| **D4** | Quel empaquetage ? | **Lanceur/installeur d'abord**, **Tauri ensuite** ; Electron écarté (§4.5) | Le mode isolé Docker devient **optionnel** en distribution bureau (§4.6) |
+| **D4** | Quel empaquetage ? | **Lanceur/installeur d'abord**, **Tauri ensuite** ; Electron écarté (§4.5). → **Renversée le 2026-09-11** (#921, [docs/35 §2](./35-decision-poste-de-bureau-et-disposition.md)) : c'est **Electron** qui est retenu et **Tauri** qui est écarté — le verdict d'origine ne portait que sur le poids, et le « besoin précis » qu'il réservait est arrivé (le moteur vérifié par le filet visuel doit être le moteur livré). L'**ordre** ne bouge pas : lanceur, installeur, *puis* enveloppe | Le mode isolé Docker devient **optionnel** en distribution bureau (§4.6) ; l'enveloppe embarque Chromium, la chaîne reste Node (pas de Rust à ajouter) |
 | **D5** | L'ingestion de documents passe-t-elle par un **brief validé** ? | **Oui** — c'est le point de contrôle le plus rentable (§3.3) | Ajoute une étape avant décomposition et le droit, pour l'orchestrateur, de poser des questions |
 | **D6** | Ordre des phases | **7 → 8 → 9** ; la **10 reste à confirmer** et n'a pas de milestone (§7) | Évite d'empaqueter une cible mouvante (§4.8) |
 | **D7** | Les Phases 5 et 6 changent-elles de périmètre ? | **Non** — elles vont au bout telles quelles | Ce cadrage ne perturbe pas le travail en cours ; leurs milestones sont inchangés |
