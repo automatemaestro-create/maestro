@@ -4,6 +4,14 @@
 #   bash scripts/presentation/ecrans-touches.sh <iid…>
 #   bash scripts/presentation/ecrans-touches.sh --check 474 528     # + le diagnostic sur stderr
 #   bash scripts/presentation/ecrans-touches.sh --ref main 474
+#   bash scripts/presentation/ecrans-touches.sh --ref HEAD --travail-en-cours 932   # le travail EN COURS
+#
+# Les commits sont la source par défaut parce que la question d'origine est posée APRÈS COUP, sur un
+# milestone livré. La relecture visuelle (#932) la pose AVANT — pendant que la session écrit —, quand
+# le ticket n'a souvent aucun commit et jamais de merge : `--travail-en-cours` ajoute alors ce que
+# l'arbre a de plus que HEAD. Rien d'autre ne change, et surtout pas le classement d'un chemin en
+# route : c'est la même règle qui répond aux deux, sans quoi les deux appelants finiraient par ne plus
+# nommer le même écran pour le même fichier.
 #
 # `/milestone-presentation` (#142) photographie TOUTES les pages du menu, dans leur état du jour,
 # et c'est l'agent qui devine au moment de rédiger quelle capture illustre quel ticket — l'étape 5
@@ -86,6 +94,8 @@ RACINE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 CHECK=0
 REF=""
+TRAVAIL=0
+CHEMINS=0
 IIDS=()
 
 usage() {
@@ -98,6 +108,15 @@ Options :
   --ref <ref>   Branche ou révision à lire. Par défaut, la première qui existe parmi
                 `origin/main`, `main`, `HEAD` — `origin/main` d'abord parce qu'un `main` local
                 peut être en retard, et que c'est une ref LOCALE : aucun appel réseau.
+  --travail-en-cours
+                Ajoute au ticket ce que l'ARBRE a de plus que HEAD — fichiers modifiés et
+                fichiers non suivis. Pour une session qui vient d'écrire son ticket et n'a
+                encore rien commité ni poussé (#932). Un seul iid attendu : le travail en
+                cours n'est attribuable qu'au ticket de la branche courante.
+  --chemins     Ne lit NI les commits NI l'arbre : classe les chemins reçus sur stdin, un par
+                ligne. Pour qui a déjà sa liste de fichiers et ne veut que la règle « ce chemin,
+                quel écran ? » — la remonte d'un composant partagé vers les écrans qui
+                l'affichent (#932). Un seul iid attendu, stdin n'étant lisible qu'une fois.
   --check       Affiche aussi, sur stderr, le diagnostic : ref retenue, et les tickets dont
                 aucun commit ne porte `Refs #<iid>` / `Closes #<iid>` sur cette ref (pas
                 encore mergés, ou d'un autre dépôt) — à distinguer d'un ticket sans écran.
@@ -111,6 +130,8 @@ USAGE
 while [ $# -gt 0 ]; do
   case "$1" in
     --ref) REF="${2:-}"; shift ;;
+    --travail-en-cours) TRAVAIL=1 ;;
+    --chemins) CHEMINS=1 ;;
     --check) CHECK=1 ;;
     -h | --help) usage; exit 0 ;;
     -*) printf 'Option inconnue : %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
@@ -137,6 +158,14 @@ diag() { [ "$CHECK" = 1 ] && printf 'ecrans-touches.sh : %s\n' "$*" >&2; return 
 if [ "${#IIDS[@]}" -eq 0 ]; then
   printf 'ecrans-touches.sh : au moins un iid de ticket est attendu.\n\n' >&2
   usage >&2
+  exit 2
+fi
+
+# Le travail en cours appartient à la BRANCHE, pas à l'historique : il n'y a donc qu'un ticket à qui
+# l'attribuer. L'étaler sur N tickets prêterait à chacun les fichiers des autres — un résultat faux,
+# et silencieusement (les lignes se ressembleraient).
+if [ "$TRAVAIL" = 1 ] && [ "${#IIDS[@]}" -ne 1 ]; then
+  printf 'ecrans-touches.sh : --travail-en-cours attend un seul iid (%d donnés).\n' "${#IIDS[@]}" >&2
   exit 2
 fi
 
@@ -209,25 +238,55 @@ END {
 }
 '
 
+# Ce que l'arbre a de plus que HEAD : les fichiers SUIVIS modifiés (indexés ou non — `diff HEAD`
+# couvre les deux) et les NON SUIVIS que le `.gitignore` ne masque pas. Deux lectures, aucun parsing
+# de `--porcelain` : ses renommages (`R old -> new`) et ses guillemets seraient une seconde grammaire
+# à tenir, quand la question tient en deux commandes qui rendent déjà des chemins nus.
+travail_en_cours() {
+  git -C "$RACINE" -c core.quotepath=false diff --name-only --no-renames HEAD
+  git -C "$RACINE" -c core.quotepath=false ls-files --others --exclude-standard
+}
+
 printf '# iid\troute\tcle\tfichiers\n'
+
+# Mode --chemins : la source est stdin, point. Ni `git log`, ni l'arbre — la seule chose qu'on
+# demande ici au script est SA RÈGLE de classement, sur une liste que l'appelant tient déjà.
+if [ "$CHEMINS" = 1 ]; then
+  diag "#${IIDS[0]} — chemins lus sur stdin"
+  LC_ALL=C sort -u \
+    | awk -v IID="${IIDS[0]}" "$AWK_ROUTES" \
+    | LC_ALL=C sort -t"$(printf '\t')" -k1,1 -k3,3 \
+    | cut -f2-
+  exit 0
+fi
 
 for iid in "${IIDS[@]}"; do
   # Le mot-clé fait partie du motif (voir l en-tête) ; la borne « non-chiffre ou fin » distingue
   # #5 de #54.
   motif='(Refs|Closes) #'"$iid"'([^0-9]|$)'
   shas="$(git -C "$RACINE" log "$REF" --extended-regexp --grep="$motif" --format=%H)"
+  commits=()
   if [ -z "$shas" ]; then
     diag "#$iid — aucun commit sur $REF"
-    continue
+    # Sans commit ET sans travail en cours à lire, il n'y a rien à classer : on passe. Avec
+    # `--travail-en-cours`, au contraire, c'est le cas NOMINAL — une session qui n'a pas encore
+    # commité son ticket.
+    [ "$TRAVAIL" = 0 ] && continue
+  else
+    mapfile -t commits <<<"$shas"
+    diag "#$iid — ${#commits[@]} commit(s)"
   fi
-  mapfile -t commits <<<"$shas"
-  diag "#$iid — ${#commits[@]} commit(s)"
 
   # `--no-renames` pour qu'un écran DÉPLACÉ compte pour ses deux routes (la détection de renommage
   # ne rendrait que la nouvelle). `core.quotepath=false` pour qu'un chemin accentué sorte en UTF-8
   # plutôt qu'en octets échappés — un -c ne touche à aucune configuration du dépôt.
-  git -C "$RACINE" -c core.quotepath=false show \
-      --format= --name-only --no-renames -m --first-parent "${commits[@]}" \
+  {
+    if [ "${#commits[@]}" -gt 0 ]; then
+      git -C "$RACINE" -c core.quotepath=false show \
+        --format= --name-only --no-renames -m --first-parent "${commits[@]}"
+    fi
+    if [ "$TRAVAIL" = 1 ]; then travail_en_cours; fi
+  } \
     | LC_ALL=C sort -u \
     | awk -v IID="$iid" "$AWK_ROUTES" \
     | LC_ALL=C sort -t"$(printf '\t')" -k1,1 -k3,3 \
