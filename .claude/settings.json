@@ -46,6 +46,7 @@
       "Bash(bash scripts/orchestrate/journal.sh refus:*)",
       "Bash(bash scripts/ci/local.sh:*)",
       "Bash(bash scripts/ci/pytest.sh:*)",
+      "Bash(bash scripts/design/relecture-visuelle.sh:*)",
       "EnterWorktree",
       "ExitWorktree",
       "WebSearch",

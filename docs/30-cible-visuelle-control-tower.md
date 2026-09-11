@@ -1686,6 +1686,11 @@ pour un gain nul sur le problème mesuré. La direction est de **donner du relie
 
 ### 6.2 Outillage retenu
 
+> **L'inventaire à jour vit désormais dans [docs/36](./36-outillage-du-design.md)** (#931, lot 1 de
+> #930) : chaque outil y porte un verdict **et sa preuve**, `dataviz` y est adopté, `mcp__chrome`
+> arbitré, et le verdict Figma ci-dessous y est **re-vérifié** au 2026-09-11. Ce qui suit reste le
+> verdict du chantier #532, tel qu'il a été rendu.
+
 - **Retenu** : les tests comme garde-fou (contraste, `vitest-axe`, lint `jsx-a11y` en `error`),
   `banc-mise-en-page`, `chrome-maestro`, `@radix-ui` pour les 3 motifs qui échouent.
 - **Écarté** : le design system Figma comme source — **Code Connect refusé, aucune bibliothèque
@@ -1739,7 +1744,12 @@ Par honnêteté de méthode :
   reproduit** — le script n'a pas été rejoué (il rebuild l'UI en production, plusieurs minutes).
 - **Le contraste sur écrans peuplés** : le scénario de démo n'étant pas rattaché à un projet, les
   écrans mesurés étaient partiellement vides. Les chiffres de §3.2 sont un plancher.
-- **Le skill `dataviz`** : non lisible depuis cette session.
+- ~~**Le skill `dataviz`** : non lisible depuis cette session.~~ **Lu et éprouvé** (2026-09-11,
+  #931 — [docs/36 §3.1](./36-outillage-du-design.md)) : il est lisible, son validateur de palette
+  s'exécute, et il est **adopté** comme référence et comme filet. Ce qu'il a mesuré au passage
+  n'était pas la question posée ici — les tons d'état du produit **échouent** comme palette de
+  séries dans les deux thèmes, et la couleur des données de `/couts` n'est **aucun token**
+  ([docs/36 §1](./36-outillage-du-design.md)).
 - **Le coût de `@radix-ui`** en poids de bundle : estimé d'après la documentation des paquets, non
   mesuré par un build.
 - **Un dossier a été créé hors du dépôt** pour la mesure — `E:/Projects Solutions/maestro-demo-471`,
