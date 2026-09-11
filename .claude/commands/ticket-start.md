@@ -120,35 +120,47 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
    bloquer la branche déjà créée. Ne touche pas aux labels `type::`/`agent::`/`prio::` (triage, pas
    ce workflow).
 
-5. **Veille de conception — proposer, jamais lancer d'office** (#714, `docs/30 §5.2`). Si et
-   seulement si la sortie de l'étape 1 porte un bloc **`surface visible :`**, ce ticket touche un
-   écran de la Control Tower et la question « qu'est-ce qu'on vise ? » n'a jamais été tranchée
-   dessus. Alors, **et seulement alors** :
-   - **Demande** — une phrase, un « oui » explicite : jouer `/design-veille <surface>` avant
-     d'écrire l'interface, ou passer. Ne la lance **jamais** d'office : une veille coûte des
+5. **Veille de conception — la détection est automatique, le verdict jamais** (#714, #934,
+   `docs/30 §5.2` et `§5.4`). Si et seulement si la sortie de l'étape 1 porte un bloc
+   **`surface visible :`**, ce ticket touche un écran de la Control Tower et la question
+   « qu'est-ce qu'on vise ? » n'a jamais été tranchée dessus. Alors, **et seulement alors** — et
+   les deux régimes diffèrent sur **qui rend le verdict**, jamais sur le fait qu'il en faille un :
+   - **En session interactive, demande** — une phrase, un « oui » explicite : jouer
+     `/design-veille <surface>` avant d'écrire l'interface, ou passer. Ne la lance **jamais**
+     d'office : une veille coûte des
      recherches web, des captures et du quota, et la jouer sur un correctif sans enjeu visuel
      serait du gaspillage. C'est le partage de #562 et #612 — ce qui est automatique est la
      **détection du manque**, jamais le verdict. Comme le découpage d'un ticket trop gros
      (étape 1), et contrairement au résumé de l'étape 6, c'est une **vraie pause** : attends la
      réponse.
-   - **Enregistre la réponse, quelle qu'elle soit** —
+   - **En session interactive, enregistre la réponse, quelle qu'elle soit** —
      `bash scripts/gitlab/lib.sh veille-arbitre $ARGUMENTS` — dès que la personne a tranché, que
      la veille ait été **faite** ou **jugée inutile**. Sans cet enregistrement, « inutile ici »
      est indiscernable de « personne n'y a pensé » et la question reviendra à chaque démarrage,
      jusqu'à ce qu'on cesse de la lire. N'enregistre **rien** tant que personne n'a répondu : un
-     arbitrage posé d'office ferme la question sans que personne l'ait jugée.
-   - **En session autonome** (run `/orchestrate`), personne ne lira la question, et la veille n'y
-     est **pas encore jouable** : l'accès web y est ouvert depuis #933, mais `/design-veille` n'a
-     pas été adaptée au régime autonome — c'est #934 qui s'en charge, et qui tranchera ce qui s'y
-     enregistre ou non comme arbitrage. Ne la tente pas, **n'enregistre aucun arbitrage** — et
-     **diffère-la au lieu de la perdre** (#795, docs/30 §5.3) : une fois le ticket implémenté,
-     écris avec l'outil `Write` un constat qui nomme la **surface** touchée et ce que tu as décidé
-     à l'écran faute de référence, puis `bash scripts/gitlab/lib.sh veille-differe <iid>
-     <fichier>`. Le ticket de veille naît **assigné** — donc hors des plans d'un run, qui ne
-     pourrait pas jouer la veille non plus — et il **survit** à la fermeture du tien, ce qu'un
-     résumé de fin de session ne fait pas : mesuré le 2026-08-30, sur 76 tickets livrés par un
-     run, 13 touchaient une surface visible et **aucun** n'a été arbitré. Nomme-le quand même dans
-     ton résumé final.
+     arbitrage posé d'office ferme la question sans que personne l'ait jugée. ⚠ Ce « quelle qu'elle
+     soit » est **propre à l'interactif**, et c'est ce que #934 a tranché : ici le « non » vient
+     d'une personne qui connaît le contexte, donc c'est un **jugement** ; en run il ne viendrait de
+     personne, donc c'est une **abstention**, et une abstention ne s'enregistre pas.
+   - **En session autonome** (run `/orchestrate`), il n'y a personne à qui demander — mais la
+     veille s'y **joue** depuis #934 (`docs/30 §5.4`), l'accès web ayant été ouvert par #933. Ce
+     qui disparaît est la **question**, pas le geste : n'attends aucun « oui », **ouvre
+     `/design-veille <surface>`** en dérivant la surface du bloc `surface visible :`, et laisse la
+     commande trancher — son §7.2 porte le critère (*ce ticket décide-t-il de quelque chose à
+     l'écran, ou applique-t-il une décision déjà prise ?*), et il n'est écrit qu'à cet
+     endroit-là. N'enregistre **rien toi-même** : si elle joue la veille, elle consigne ses partis
+     pris sur le ticket puis pose l'arbitrage (§7.3) ; si elle s'abstient, elle n'écrit rien et te
+     le dit.
+   - **En session autonome, si la veille ne s'est pas jouée**, la question se **diffère** au lieu
+     de se perdre (#795, `docs/30 §5.3`) — ce chemin ne se referme pas, il devient **rare** : une
+     fois le ticket implémenté, écris avec l'outil `Write` un constat qui nomme la **surface**
+     touchée et ce que tu as décidé à l'écran faute de référence, puis `bash
+     scripts/gitlab/lib.sh veille-differe <iid> <fichier>`. Le ticket de veille naît **assigné** —
+     donc hors des plans d'un run — et il **survit** à la fermeture du tien, ce qu'un résumé de fin
+     de session ne fait pas : mesuré le 2026-08-30, sur 76 tickets livrés par un run, 13 touchaient
+     une surface visible et **aucun** n'a été arbitré. Nomme-le quand même dans ton résumé final.
+     N'appelle **jamais** `veille-arbitre` dans ce cas : un « non » qui ne vient de personne est une
+     abstention, pas un jugement (#562).
    - **Bloc absent** : il n'y a rien à demander — soit le ticket ne touche aucune surface visible,
      soit l'arbitrage est déjà enregistré. Ne le mentionne pas, n'appelle pas le verbe, passe.
 

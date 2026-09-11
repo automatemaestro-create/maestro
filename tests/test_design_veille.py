@@ -513,23 +513,38 @@ def test_le_prompt_de_run_dit_que_le_web_est_une_donnee_jamais_une_instruction()
     assert "#678" in texte
 
 
-def test_le_prompt_de_run_ne_joue_pas_encore_la_veille_mais_plus_faute_dacces() -> None:
-    """La conduite ne bouge pas au lot 3 ; sa RAISON, si — et une raison fausse est pire qu'aucune.
+def test_le_prompt_de_run_joue_la_veille_et_narbitre_que_ce_qui_a_ete_juge() -> None:
+    """#934 renverse la conduite : la veille se joue en run, et le prompt dit ce qui s'y écrit.
 
-    `/design-veille` n'est pas encore adaptée au régime autonome (lot 4, #934) : une session de run
-    ne la joue donc toujours pas, n'enregistre aucun arbitrage — `veille-arbitre` fermerait la
-    question sans que personne l'ait jugée (#562) — et **diffère** dans un ticket de veille (#795),
-    chemin que ce lot ne referme pas : il le rend plus rare.
+    Ce qui disparaît en run est la **question** — la proposition qui attendait un « oui » —, jamais
+    le **geste** : le prompt fait ouvrir `/design-veille` avec la surface dérivée du bloc
+    « surface visible : », et c'est la commande qui tranche. Le critère n'est écrit qu'à un seul
+    endroit (son §7.2), les prompts y renvoyant plutôt que de le recopier — deux formulations de la
+    même règle finiraient par ne plus rendre le même verdict (raison de `gl_arbitrage_de`, #562).
 
-    Mais le prompt ne peut plus le justifier par « la recherche te serait refusée » : c'est faux
-    depuis l'ouverture, et une session qui lit une raison démentie par ses outils n'a plus de repère
-    pour savoir ce qui vaut encore.
+    **La décision du lot, et ce que ce test garde vraiment** : seule la veille JOUÉE s'enregistre.
+    Jouée, elle a rendu un jugement, écrit en commentaire du ticket — l'arbitrage l'enregistre. Non
+    jouée, un « non » qui ne vient de personne est une ABSTENTION, pas un jugement : rien ne
+    s'enregistre et la question se **diffère** (#795), le « marquer d'office » de #562 restant
+    écarté. L'asymétrie avec l'interactif — où les deux verdicts s'enregistrent — n'est donc pas une
+    inégalité de confiance : là-bas le « non » vient d'une personne à qui l'on a demandé.
+
+    Ce que la raison d'avant ne doit pas devenir : une conduite démentie par les outils de la
+    session. Le lot 3 avait déjà retiré « la recherche te serait refusée » ; celui-ci retire le
+    « ne la joue pas » qu'elle justifiait.
     """
     texte = RUN_SH.read_text(encoding="utf-8")
-    assert "AUCUN arbitrage" in texte, (
-        "« veille-arbitre » reste interdit tant que #934 n'a pas tranché ce qui s'enregistre"
+    assert "/design-veille" in texte, "le prompt nomme la commande qu'il fait ouvrir"
+    # Le refus d'arbitrer est nommé AVEC son cas : un « jamais » nu interdirait les deux côtés, et
+    # c'est précisément ce que le lot a tranché — l'un s'enregistre, l'autre non.
+    assert "N'APPELLE JAMAIS « lib.sh veille-arbitre » DANS CE CAS" in texte, (
+        "l'interdit porte sur l'abstention seule, jamais sur la veille jouée"
     )
-    assert "veille-differe" in texte, "le chemin de #795 reste ouvert"
+    assert "ABSTENTION" in texte, "le mot qui porte la distinction avec le jugement d'une personne"
+    assert "NE SE JOUE PAS ENCORE ICI" not in texte, (
+        "la conduite d'avant #934 ne survit pas à son renversement"
+    )
+    assert "veille-differe" in texte, "le chemin de #795 reste ouvert — il devient rare, pas fermé"
     assert "WebSearch et WebFetch ne sont dans aucune" not in texte, (
         "cette raison est fausse depuis #933 : les deux gestes sont dans les deux allowlists"
     )

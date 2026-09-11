@@ -790,7 +790,9 @@ Le prompt de session de `run.sh` le disait donc en toutes lettres : ne pas tente
 pas enregistrer d'arbitrage** (ce serait fermer la question sans que personne l'ait jugée — le
 « marquer d'office » de #562), et **différer la question dans un ticket de veille** (§5.3). La
 troisième moitié était, jusqu'à #795, « nommer le ticket dans le résumé final » : les sessions l'ont
-fait, et personne ne l'a lu.
+fait, et personne ne l'a lu. *(Conduite renversée depuis par #934, §5.4 : la veille se joue, et
+l'arbitrage s'enregistre — mais seulement quand elle a été **jouée**, le « marquer d'office » de
+#562 restant écarté pour l'abstention.)*
 ⚠ Le changement plausible n'était pas « ouvrir le web aux runs » mais « ouvrir `WebSearch` dans
 `.claude/settings.json` pour éviter une confirmation à chaque `/design-veille` interactive » : geste
 légitime, effet non voulu — il ouvre le run du même coup. `tests/test_design_veille.py` gardait les
@@ -834,13 +836,13 @@ texte non contrôlée**. Ce qui ne condamne pas l'ouverture, mais fait porter to
 garde ci-dessus : elle est **écrite**, pas sous-entendue.
 
 **Ce qui ne change pas.** La confirmation d'une session **interactive** disparaît aussi (c'est
-l'autre moitié du même geste : l'`allow` d'un run est l'union des deux fichiers). `/design-veille`
-n'est pas pour autant jouable en run — c'est le **lot 4** —, donc jusque-là une session autonome ne
-la joue pas, n'enregistre **aucun** arbitrage, et **diffère** la question dans un ticket de veille
-(#795, §5.3) : ce chemin reste ouvert, il devient plus **rare**. Le raisonnement **geste par geste**
-de #792 est ce qui a rendu ce renversement lisible ; `tests/test_design_veille.py` garde désormais
-l'ouverture, avec la même portée sur les deux fichiers — un seul refermé laisserait un régime à
-moitié, indiscernable d'un oubli.
+l'autre moitié du même geste : l'`allow` d'un run est l'union des deux fichiers). Ce lot **ouvre
+l'accès sans rendre la veille jouable** — c'est le **lot 4** (#934, §5.4), livré depuis : jusque-là
+une session autonome ne la jouait pas, n'enregistrait **aucun** arbitrage, et **différait** la
+question dans un ticket de veille (#795, §5.3). Ce chemin-là ne s'est pas refermé, il est devenu
+plus **rare**. Le raisonnement **geste par geste** de #792 est ce qui a rendu ce renversement
+lisible ; `tests/test_design_veille.py` garde désormais l'ouverture, avec la même portée sur les
+deux fichiers — un seul refermé laisserait un régime à moitié, indiscernable d'un oubli.
 
 ### 5.3 La question différée, faute de répondant — 2026-08-30 (#795)
 
@@ -919,6 +921,103 @@ fin de run les tickets ayant buté, et dire si chacun a bien son ticket) n'a pas
 serait jouable : `lib.sh touche-surface <iid>` répond depuis le pilote, qui pourrait donc constater.
 Ce qui manque est son **appelant** — il n'y a pas de verbe de lecture `veille-differee-de`, et en
 écrire un sans appelant serait du code mort. C'est un ticket à part entière, pas une omission.
+
+### 5.4 La veille se joue en run — 2026-09-11 (#934)
+
+> ⚠ **Numérotation.** La section « Veilles jouées » qui suit porte elle aussi `5.3`, par un doublon
+> antérieur à ce lot. Elle n'est **pas** renumérotée ici : une douzaine de renvois la visent depuis
+> `apps/web/README.md`, `docs/05` et ce fichier même, et les requalifier un par un — en les
+> distinguant de ceux qui visent l'autre `5.3` — est un travail de doc, pas un effet de bord. Le
+> lot 6 (#936) le traite.
+
+#714 a donné à la veille un **déclencheur**, #795 un **contenant**, #933 l'**accès**. Il lui manquait
+d'être **jouable** du côté où elle ne l'était pas.
+
+#### Ce qui disparaît en run est la question, jamais le geste
+
+Le prompt de session disait « ne tente pas la veille ». La raison avait déjà changé une fois — le
+lot 3 lui avait retiré l'accès web comme motif —, et ce qui restait était le **répondant** : la
+veille était une *proposition*, et une proposition sans personne pour répondre n'est pas jouable.
+
+Le renversement tient dans le déplacement de cette phrase : **ce qui manque à un run n'est pas un
+juge, c'est un interlocuteur.** `/ticket-start` cesse donc de *proposer* et **ouvre**
+`/design-veille` avec la surface dérivée du bloc `surface visible :`. Le partage de #562, #612 et
+#714 ne bouge pas d'un mot — ce qui est automatique reste la **détection du manque** — ; seul le
+**juge** change, une personne en interactif, la session en run, à qui ce même prompt confie déjà des
+jugements plus lourds (le découpage d'un correctif, le choix d'une implémentation, le code qui part
+dans `main` sans relecture).
+
+#### La décision du lot : seule la veille **jouée** s'enregistre
+
+C'était la question ouverte du cadrage, et elle n'a qu'une réponse cohérente avec #562 :
+
+| en run, la veille est… | ce qui s'écrit | pourquoi |
+| --- | --- | --- |
+| **jouée** | les partis pris en commentaire du ticket (`issue-note`), **puis** `veille-arbitre` | un jugement a été **rendu**, et il est **écrit** : le label enregistre une question réellement tranchée, et sa trace est relisible |
+| **non jouée** | **rien** — et la question se **diffère** (`veille-differe`, #795) | un « non » qui ne vient de personne est une **abstention**, pas un jugement : poser le label serait le « marquer d'office » que #562 a écarté nommément |
+
+⚠ **L'asymétrie avec l'interactif n'est pas une inégalité de confiance.** Là-bas, `veille-arbitre`
+est posé *quel que soit le verdict*, veille faite **ou** jugée inutile — parce que le « non » vient
+d'une personne à qui l'on a **demandé**, et qui connaît le contexte : sa réponse est un jugement. En
+run, il ne viendrait de personne. **Ce qui autorise l'enregistrement n'est donc pas *qui* a joué la
+veille, c'est qu'un jugement ait été rendu *et écrit*.**
+
+D'où une propriété qui se vérifie, et c'est elle qui rend la règle opposable : **en run, tout
+`veille::arbitree` est adossé à un commentaire de partis pris sur son ticket.** L'**ordre** des deux
+gestes la porte — consigner *puis* arbitrer : l'inverse laisserait, si la consignation échoue, un
+label qui ferme la question **sans sa trace**, et `veille::arbitree` ne dit pas ce qui a été décidé,
+seulement que la question a été posée.
+
+Les deux gestes se font **dès la décision rendue, avant d'implémenter** : si la session s'arrête
+ensuite — limite d'usage, échec —, la veille est déjà sauvée. C'est la leçon de #608 appliquée à
+l'objet que #795 protège.
+
+#### Jouer ou non : le critère, et où il vit
+
+> **Ce ticket décide-t-il de quelque chose à l'écran, ou applique-t-il une décision déjà prise ?**
+
+**Il décide** — un écran ou un composant neuf, un motif d'affichage à inventer, des critères qui
+disent l'intention (« rendre lisible d'un coup d'œil ») sans dire la forme — la veille se joue. **Il
+applique** — un token à substituer, un débordement à corriger, un renommage, un test à réparer, un
+parti pris qu'une veille antérieure a déjà rendu — elle ne se joue pas : le ticket dit déjà quoi
+faire, il n'y a rien à chercher dehors.
+
+Ce critère **n'est écrit qu'à un seul endroit**, le §7.2 de la commande, et les prompts y
+**renvoient** au lieu de le recopier — même raison que `gl_arbitrage_de` pour #562 : deux
+formulations de la même règle finissent par ne plus rendre le même verdict, et c'est le prompt que
+la session lit en dernier qui l'emporterait.
+
+⚠ **L'asymétrie des deux erreurs est écrite, et elle penche.** Jouer pour rien coûte du quota et un
+commentaire de trop — borné, et visible. Ne pas jouer quand il fallait laisse **un écran de plus
+écrit sans référence**, c'est-à-dire le défaut que tout ce chantier corrige (13 surfaces visibles
+sur 76 tickets livrés par un run, **zéro** arbitrée — §5.3). Le ticket de veille borne cette seconde
+erreur sans l'annuler : la question survit, mais l'écran est déjà écrit. **Dans le doute, on joue**
+— et le doute est rare, un ticket qui dit quoi faire le disant en toutes lettres.
+
+#### Ce qui ne change pas
+
+- **Le chemin de #795 ne se referme pas**, il devient **rare** : c'est le troisième critère du
+  ticket, et c'est aussi ce qui rend l'erreur de jugement supportable. Une session qui s'abstient
+  diffère, exactement comme avant.
+- **Les règles de la commande** : ce qui n'est pas vérifié n'est pas cité (#471), le socle se relève
+  **avant** la recherche, aucune identité nouvelle n'est cherchée (§6.1). Le régime autonome ne les
+  assouplit pas — il n'y a personne pour rattraper une référence citée de mémoire.
+- **La commande n'ouvre aucun ticket** et ne pose aucun autre label. Ce qui dépasse le lot en cours
+  se **nomme** dans le commentaire ; l'ouvrir d'office remplirait le backlog de tickets que personne
+  ne fermera — et en run, personne n'arbitre cette ouverture.
+
+#### Aucune règle n'a été ajoutée, et c'est le signe que le lot 3 avait fait son travail
+
+L'union des deux allowlists (docs/10 §11.7) couvre déjà tout ce que la commande appelle :
+`WebSearch`/`WebFetch` (#933, les deux fichiers), `mcp__chrome-maestro`,
+`Bash(bash scripts/gitlab/lib.sh:*)` pour `issue-note` et `veille-arbitre`, et
+`Bash(bash scripts/controltower/start.sh:*)` pour regarder la surface en local (#932). Le
+`allowed-tools:` du frontmatter **ne vaut pas permission** (#179) : c'est l'union qui tranche, et
+c'est elle qui a été vérifiée — le frontmatter a seulement été complété de `Write`, que le §7.3
+emploie.
+
+Ce lot est donc un changement de **prompts, de doc et de tests**, sans une ligne de règle — la même
+forme que #519, et pour la même raison : la pièce manquante était une conduite, pas un droit.
 
 ---
 

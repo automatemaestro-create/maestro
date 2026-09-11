@@ -1129,11 +1129,15 @@ n'est donc plus une salle d'attente mais un **état de passage**, où le ticket 
      ça, « inutile ici » serait indiscernable de « personne n'y a pensé » et la question
      reviendrait à chaque démarrage. Muet dans les deux autres cas, pour deux raisons distinctes —
      « aucune surface visible » est l'abstention nominale, « déjà arbitré » est la promesse du
-     dispositif. **Rien de tout cela ne se joue encore en session de run** — non plus faute d'accès web,
-     ouvert dans les deux allowlists depuis #933 (§11.7), mais parce que `/design-veille` n'a pas
-     été adaptée au régime autonome (#934) ; le prompt de session demande donc de ne pas la jouer,
-     de **n'enregistrer aucun arbitrage**, et de **différer** la question dans un ticket de veille
-     (#795). `MAESTRO_VEILLE_SIGNAL=0` éteint le signalement.
+     dispositif. **En session de run, la veille se joue aussi** (#934, docs/30 §5.4) — l'accès web
+     est ouvert dans les deux allowlists depuis #933 (§11.7) : ce qui disparaît en run est la
+     **question**, pas le geste. Le prompt fait **ouvrir** `/design-veille` avec la surface dérivée
+     du bloc, et c'est la commande qui tranche (son §7.2, seul endroit où le critère est écrit).
+     **Seule la veille jouée s'arbitre** : elle consigne ses partis pris sur le ticket puis pose
+     `veille-arbitre`, dans cet ordre. Non jouée, **rien** ne s'enregistre — un « non » qui ne vient
+     de personne est une abstention et non un jugement (#562) — et la question se **diffère** dans
+     un ticket de veille (#795) : ce chemin ne se referme pas, il devient **rare**.
+     `MAESTRO_VEILLE_SIGNAL=0` éteint le signalement.
    Une fois le cadrage résumé, l'agent **enchaîne directement sur l'implémentation** — le résumé
    n'est pas une pause d'autorisation, aucun « go » n'est attendu.
 3. Développement sur la branche (commits `Refs #<iid>`).

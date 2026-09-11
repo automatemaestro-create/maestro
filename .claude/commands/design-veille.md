@@ -1,17 +1,23 @@
 ---
 description: Cherche comment les produits comparables rendent une surface donnée, puis en tire des partis pris tenables dans le socle — avant d'écrire une ligne d'interface
 argument-hint: "<surface>  (un écran, un composant ou un motif : « la carte d'un run », « /couts », « la barre d'avancement »)"
-allowed-tools: WebSearch, WebFetch, Read, Grep, Glob, Bash(bash:*), Bash(git:*), mcp__chrome-maestro
+allowed-tools: WebSearch, WebFetch, Read, Grep, Glob, Write, Bash(bash:*), Bash(git:*), mcp__chrome-maestro
 ---
 
-Commande **de recherche, en lecture seule** : pour la surface `$ARGUMENTS`, tu vas chercher dehors
-comment les produits comparables la rendent aujourd'hui, puis tu en tires **3 à 5 partis pris
-applicables**, chacun rattaché à sa référence et **tenable dans le socle du dépôt**. Tu n'écris ni
-code, ni ticket, ni commentaire de forge : tu rends une décision, et tu proposes la suite.
+Commande **de recherche** : pour la surface `$ARGUMENTS`, tu vas chercher dehors comment les
+produits comparables la rendent aujourd'hui, puis tu en tires **3 à 5 partis pris applicables**,
+chacun rattaché à sa référence et **tenable dans le socle du dépôt**. Tu n'écris ni code, ni
+ticket : tu rends une décision, et tu proposes la suite.
 
-Si `$ARGUMENTS` est vide, demande la surface. « Le design de la Control Tower » n'en est pas une :
-il faut un écran (`/couts`), un composant (`CarteRun`) ou un motif (« la barre d'avancement d'un
-run »). Une veille sans objet rend une galerie ; une veille sur une surface rend une décision.
+Elle se joue **des deux côtés** — session interactive, et depuis #934 **session de run**. Le régime
+n'y change que sur deux points, et le §7 les porte tous les deux : **qui choisit la surface**, et
+**ce qu'on fait de la décision** une fois rendue. La méthode des §1 à §6, elle, est la même : ce qui
+n'est pas vérifié n'est pas cité, le socle se relève avant la recherche, aucune identité nouvelle.
+
+Si `$ARGUMENTS` est vide, demande la surface — **en session de run, personne ne répondra : dérive-la
+(§7)**. « Le design de la Control Tower » n'en est pas une : il faut un écran (`/couts`), un
+composant (`CarteRun`) ou un motif (« la barre d'avancement d'un run »). Une veille sans objet rend
+une galerie ; une veille sur une surface rend une décision.
 
 ## Ce que cette commande est, et ce qu'elle n'est pas
 
@@ -123,7 +129,8 @@ n'en appliquera douze. Chacun tient en une ligne et porte trois choses :
 > **&lt;le parti pris&gt;** — d'après *&lt;référence&gt;*. Concrètement : `<le geste dans le code>`.
 
 Termine par ce que la veille **n'a pas** regardé — par honnêteté de méthode, comme docs/30 §7 — puis
-par la suite, que tu **proposes sans la faire** :
+par la suite, que tu **proposes sans la faire**. ⚠ **En session de run, le premier point ci-dessous
+n'est pas une proposition : tu le fais** (§7.3), parce que personne ne lira une proposition.
 
 - consigner la décision sur le ticket en cours :
   `bash scripts/gitlab/lib.sh issue-note <iid> <fichier>` — le texte voyage par un **fichier**,
@@ -134,9 +141,85 @@ par la suite, que tu **proposes sans la faire** :
 - et, une fois le code écrit, ce qui **garde** : `npm test` dans `apps/web`, puis le skill
   `banc-mise-en-page` dès que la retouche porte sur des hauteurs, du défilement ou du responsive.
 
+## 7. En session de run — qui choisit la surface, et ce qu'on fait de la décision
+
+Une session de run n'a **personne** pour répondre. Deux points changent, et rien d'autre : la
+méthode des §1 à §6 tient telle quelle.
+
+### 7.1 La surface, tu la dérives
+
+`/ticket-start` a imprimé un bloc `surface visible :` — c'est le signal (`lib.sh touche-surface`,
+#714), et il nomme le **motif qui a parlé** (`agent::design`, ou une route de `apps/web/app/`) avec
+le nombre de lignes du ticket qui l'ont déclenché. Prends de là **la surface que le ticket
+retouche**, jamais le champ du motif : un ticket qui porte `agent::design` et parle de la carte d'un
+run a pour surface « la carte d'un run », pas « la Control Tower ». S'il en touche plusieurs et
+qu'elles posent la même question, elles font **une** veille ; sinon, prends celle que le ticket
+décide vraiment et **nomme l'autre** au §6, parmi ce que la veille n'a pas regardé.
+
+### 7.2 Jouer ou ne pas jouer — c'est toi qui juges, et le critère tient en une question
+
+Le bloc `surface visible :` est une **détection**, jamais un verdict : c'est le partage de #562,
+#612 et #714, et il ne bouge pas ici. Ce qui change est **qui rend le verdict** — en interactif une
+personne, en run toi. La question :
+
+> **Ce ticket décide-t-il de quelque chose à l'écran, ou applique-t-il une décision déjà prise ?**
+
+- **Il décide** → joue la veille. Un écran ou un composant neuf, un motif d'affichage à inventer, un
+  changement dans *la façon* dont une information est rendue, un ticket dont les critères disent
+  l'intention (« rendre lisible d'un coup d'œil ») sans dire la forme.
+- **Il applique** → ne la joue pas (§7.4). Remplacer une couleur brute par son token, corriger un
+  débordement à 400 px, renommer, réparer un test, déplacer du code, appliquer un parti pris qu'une
+  veille antérieure a déjà rendu : le ticket dit déjà quoi faire, il n'y a rien à chercher dehors.
+
+⚠ **L'asymétrie des deux erreurs est écrite, et elle penche.** Jouer pour rien coûte du quota et un
+commentaire de trop — borné, et visible. Ne pas jouer quand il fallait laisse un écran de plus écrit
+sans référence, et c'est le défaut que ce chantier corrige (mesure du 2026-08-30 : **13 surfaces
+visibles sur 76 tickets livrés par un run, zéro arbitrée**). Le ticket de veille (#795) borne cette
+seconde erreur sans l'annuler — la question survit, mais l'écran est déjà écrit. **Dans le doute,
+joue** ; et le doute est rare, un ticket qui dit quoi faire le disant en toutes lettres.
+
+### 7.3 Si tu l'as jouée : consigne d'abord, arbitre ensuite
+
+C'est ici, et seulement ici, que la commande cesse d'être en lecture seule — c'est la décision de
+#934 :
+
+1. **Consigne les partis pris sur le ticket** — écris-les avec l'outil `Write` dans
+   `.maestro/session/`, puis `bash scripts/gitlab/lib.sh issue-note <iid> <fichier>` (le texte voyage
+   par un **fichier**, jamais sur la ligne de commande). En interactif le §6 *propose* ce geste ; ici
+   tu le **fais**, parce que personne ne lira une proposition et que le ticket se ferme au merge dans
+   l'heure — la leçon de #608 et de #795, appliquée à l'objet qu'elles protègent.
+2. **Puis enregistre l'arbitrage** — `bash scripts/gitlab/lib.sh veille-arbitre <iid>`.
+
+**L'ordre n'est pas cosmétique** : l'inverse laisserait, si la consignation échoue, un label qui
+ferme la question **sans sa trace** — `veille::arbitree` ne dit pas ce qui a été décidé, seulement
+que la question a été posée. Fais les deux **dès que la décision est rendue, avant d'implémenter** :
+si la session s'arrête ensuite (limite d'usage, échec), la veille est déjà sauvée, et c'est
+exactement ce qu'on lui demande.
+
+Puis implémente en appliquant tes propres partis pris, et nomme-les dans ton résumé final.
+
+### 7.4 Si tu ne l'as pas jouée : n'écris rien ici, et dis-le
+
+**N'appelle ni `veille-arbitre`, ni `veille-differe`, ni `issue-note`.** Sors en disant que la veille
+n'avait pas d'objet sur ce ticket, et **pourquoi** en une ligne : c'est la session qui reprendra la
+main, et le régime de #795 est le sien — son constat s'écrit **après** l'implémentation, puisqu'il
+nomme ce qu'elle a décidé à l'écran faute de référence. Ici, ce constat n'existe pas encore.
+
+⚠ **Pourquoi `veille-arbitre` est refusé dans ce cas-là, alors qu'il est posé dans l'autre.** En
+interactif, le « non » d'une personne *est* un jugement — elle connaît le contexte, on lui a demandé,
+elle a répondu ; le label enregistre sa réponse. En run, un « non » qui ne vient de personne est une
+**abstention**, et une abstention ne ferme pas une question : la poser d'office serait le « marquer
+d'office » que #562 a écarté nommément. Ce qui autorise l'enregistrement n'est donc pas *qui* a joué,
+c'est **qu'un jugement ait été rendu et écrit** — d'où une propriété qui se vérifie : *en run, tout
+`veille::arbitree` est adossé à un commentaire de partis pris sur son ticket.*
+
 ## Ce que tu ne fais jamais ici
 
-- **Écrire du code**, ouvrir une PR, poser un label, changer l'état d'un ticket.
+- **Écrire du code**, ouvrir une PR, changer l'état d'un ticket, créer un ticket. Poser un label non
+  plus — à **une** exception, `veille::arbitree` en session de run, et seulement après avoir consigné
+  les partis pris (§7.3). Ce qui dépasse le lot en cours se **nomme** au §6 ; en run, cela vaut aussi
+  pour les tickets qu'on aurait ouverts — les nommer laisse la décision à quelqu'un, les ouvrir
+  d'office remplit le backlog de tickets que personne ne fermera.
 - **Citer une référence de mémoire.** Non vérifiée, elle est nommée comme telle ou elle n'y est pas.
 - **Proposer une identité nouvelle** — palette, police, arrondis de marque (docs/30 §6.1).
 - **Rejouer les mesures des autres outils** : le contraste est un test (`contraste.test.ts`), la

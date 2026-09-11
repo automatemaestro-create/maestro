@@ -2049,20 +2049,30 @@ gl_veille_cree() {
 # gl_veille_entete <source> <titre-source> — l'en-tête du corps, écrit UNE FOIS à la création.
 #
 # Il dit le GESTE et son RÉGIME. Sans le second, ce ticket est repris par le prochain run, qui
-# échouera exactement là où la session d'origine s'est abstenue — ce n'est pas une crainte, c'est
-# la mesure de #724 : un lot qui EST une veille a fait sauter tous les lots suivants de son parent
-# (run `20260828-215853`), et resté « À faire » il rééchouait à chaque run.
+# échouera — ce n'est pas une crainte, c'est la mesure de #724 : un lot qui EST une veille a fait
+# sauter tous les lots suivants de son parent (run `20260828-215853`), et resté « À faire » il
+# rééchouait à chaque run.
+#
+# ⚠ #934 A CHANGÉ LA CAUSE DE CET ÉCHEC, PAS L'ÉCHEC. Un run sait désormais jouer une veille, donc
+# ce n'est plus « il ne pourrait pas la jouer » ; mais un ticket dont c'est le SEUL contenu ne
+# produit aucun commit, et `/ticket-ship` refuse un arbre vide. Le mode de panne est le même à la
+# clôture près, et la parade aussi : la naissance ASSIGNÉE. Ne pas la retirer en croyant que #934
+# l'a rendue inutile — c'est l'erreur que ce commentaire existe pour empêcher.
 gl_veille_entete() {
   local source="$1" titre_source="$2"
   cat <<ENTETE
 Veille de conception à jouer, différée de #$source — $titre_source
 
-Ce ticket porte une **question qu'une session autonome n'a pas pu faire trancher**. \`/ticket-start\`
-a signalé une **surface visible** sur #$source et proposé \`/design-veille\` : une proposition qui
-attend un « oui » que personne ne donne dans un run. La session a fait ce qu'il fallait — elle n'a
-ni joué la veille (l'accès web lui est ouvert depuis #933, mais \`/design-veille\` n'est pas encore
-jouable en régime autonome : #934), ni enregistré d'arbitrage, ce qui aurait fermé la question sans
-que personne l'ait jugée.
+Ce ticket porte une **question qu'une session autonome n'a pas tranchée**. \`/ticket-start\` a
+signalé une **surface visible** sur #$source ; la veille ne s'est pas jouée, et la session n'a
+**rien arbitré** — c'est la règle, pas un oubli : un « non » qui ne vient de personne est une
+**abstention**, jamais un jugement, et une abstention ne ferme pas une question (le « marquer
+d'office » de #562).
+
+⚠ Depuis #934, une session de run **joue** la veille quand le ticket décide de quelque chose à
+l'écran ; ce ticket-ci existe parce qu'elle a jugé que ce n'était pas le cas, ou n'a pas su le
+trancher. Ce chemin ne s'est donc pas refermé — il est devenu **rare**, et c'est ce qui en fait un
+signal plutôt qu'un passage obligé.
 
 Il existe parce qu'un **résumé de fin de session ne survit à rien** (#608, transposé par #795) : un
 run \`--detach\` se termine dans une console que personne ne regarde, \`journal.sh gc\` ne garde que
@@ -2082,9 +2092,11 @@ ses partis pris ouvrent leurs propres tickets s'ils appellent une reprise.
    et cet enregistrement est ce qui empêche la question de revenir à chaque démarrage.
 
 ⚠ Il naît **assigné**, et ce n'est pas un détail de forme : c'est ce qui le tient hors des plans de
-\`queue.sh\`, qui filtre sur « À faire **et** libre ». Un run qui le prendrait ne pourrait pas jouer
-la veille — il échouerait, et ferait sauter les lots suivants de son parent (mesuré, #724). Le
-libérer sans l'avoir jouée le rendrait prenable.
+\`queue.sh\`, qui filtre sur « À faire **et** libre ». **La raison a changé avec #934, l'assignation
+non** : un run sait désormais jouer une veille, mais un ticket **dont c'est le seul contenu** ne
+produit aucun commit — et \`/ticket-ship\` refuse un arbre vide. Il échouerait donc à la clôture,
+et ferait sauter les lots suivants de son parent, exactement comme en #724, pour une cause qui a
+seulement changé de nom. Le libérer sans l'avoir jouée le rendrait prenable.
 
 ENTETE
 }

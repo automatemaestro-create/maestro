@@ -318,8 +318,9 @@
     "conception, #792 les a repris geste par geste et confirmés fermés. Des quatre raisons écrites",
     "alors, trois ne tiennent plus et la quatrième se retourne :",
     "  - « une session de run n'a PERSONNE pour répondre au oui » — la veille cessait d'être jouable",
-    "    faute de répondant. Elle devient un geste du ticket lui-même (lot 4, #934), donc plus une",
-    "    proposition qui attend une réponse ;",
+    "    faute de répondant. Elle est devenue un geste du ticket lui-même (lot 4, #934) : ce qui a",
+    "    disparu est la QUESTION, pas le geste, et le verdict a changé de juge sans cesser d'en avoir",
+    "    un ;",
     "  - « une veille rend des PARTIS PRIS, donc un jugement » — ne tient pas seule : ce fichier",
     "    confie déjà à une session des jugements plus lourds (le découpage d'un correctif, le choix",
     "    d'une implémentation, le message d'un commit, qui part dans `main` sans relecture) ;",
@@ -365,9 +366,13 @@
     "    déclare le projet de la démo, appelle `start.sh` et range tout à `--fin`. Ses écritures sont",
     "    bornées à `.maestro/relecture/` et à `core/projets/<PROJET_DEMO>.json`, tous deux gitignorés.",
     "⚠ CE QU'ILS N'OUVRENT PAS : le web. La relecture regarde CE QU'ON VIENT D'ÉCRIRE ; chercher comment",
-    "d'autres l'ont résolu est `/design-veille`, et `WebSearch`/`WebFetch` restent hors des deux listes",
-    "(#792, réexaminé et confirmé par #792 lot 3). Les deux gestes se ressemblent et ne posent pas la même",
-    "question — celui-ci n'a besoin de personne au dehors."
+    "d'autres l'ont résolu est `/design-veille`. Les deux gestes se ressemblent et ne posent pas la même",
+    "question — celui-ci n'a besoin de personne au dehors, et c'est toujours vrai.",
+    "⚠ CE QUI A CHANGÉ SOUS CETTE PHRASE, et il faut le dire ici parce qu'elle affirmait l'inverse : ce",
+    "lot-ci l'avait écrite « et `WebSearch`/`WebFetch` restent hors des deux listes », ce qui était vrai à",
+    "l'heure où il a été écrit et FAUX huit jours plus tard — #933 (lot 3 du même chantier) les a ouverts",
+    "dans les deux fichiers, #934 (lot 4) rend la veille jouable en run. La DISTINCTION ci-dessus ne bouge",
+    "pas d'un mot ; seul l'INTERDIT est tombé, et il n'était pas le sien."
   ],
   "permissions": {
     "allow": [
