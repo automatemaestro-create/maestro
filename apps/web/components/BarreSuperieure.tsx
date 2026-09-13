@@ -10,6 +10,16 @@
  * thème (#118) et l'aide (#122) sont livrés, les notifications sont encore
  * tenues par un bouton inerte quand la barre est rendue sans elles, pour que sa
  * géométrie ne bouge pas.
+ *
+ * Depuis #925 elle porte **les deux** bascules de zone du shell, une à chaque
+ * extrémité : la navigation à gauche (#117) et la conversation à droite. Le
+ * second bouton est le jumeau du premier — même patron ARIA, mêmes chevrons au
+ * miroir —, et c'est délibéré : deux zones qui se replient de la même façon
+ * s'apprennent une fois. Ce qu'on n'a **pas** repris des produits regardés à la
+ * veille de #925, c'est le raccourci clavier global (`[` chez Linear, `⌘B` chez
+ * shadcn/ui) : le produit n'en a aucun aujourd'hui, celui-ci serait le premier
+ * d'une famille que personne ne tient, et il entrerait en collision avec la
+ * saisie du composeur qui rejoint la colonne au lot #926.
  */
 
 import { usePathname } from "next/navigation";
@@ -20,6 +30,7 @@ import {
   IconeNotifications,
   IconeReplier,
 } from "@/components/Icones";
+import { ID_COLONNE_CONVERSATION } from "@/components/ColonneConversation";
 import { Infobulle } from "@/components/Infobulle";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import { formatCout } from "@/lib/format";
@@ -46,6 +57,16 @@ type Props = {
   theme: ReactNode;
   /** Menu d'aide — visite guidée (#122), assistant à venir (#123). */
   aide: ReactNode;
+  /**
+   * Colonne de droite ouverte (#925) — état tenu par le shell, comme `repliee`.
+   *
+   * Optionnels tous les deux : la barre se rend sans eux (elle n'affiche alors
+   * aucune bascule de conversation), ce qui garde montable hors du shell une
+   * barre dont ce n'est pas le sujet. Contrairement à la cloche de #119, aucune
+   * place n'est réservée — il n'y a rien à attendre, la zone existe déjà.
+   */
+  conversationOuverte?: boolean;
+  basculerConversation?: () => void;
 };
 
 export function BarreSuperieure({
@@ -55,6 +76,8 @@ export function BarreSuperieure({
   notifications,
   theme,
   aide,
+  conversationOuverte = false,
+  basculerConversation,
 }: Props) {
   const chemin = usePathname();
   const { connecte, coutTotal, projet } = useEtatGlobal();
@@ -141,6 +164,39 @@ export function BarreSuperieure({
           )}
           {theme}
           {aide}
+          {/* La bascule de la troisième zone (#925), à l'extrémité droite de la
+              barre : le miroir exact du bouton de navigation, à l'autre bout.
+              ⚠ Les deux chevrons sont **croisés** par rapport à leur nom, qui
+              date de la sidebar de gauche : pour une colonne de *droite*,
+              l'ouvrir la tire vers l'intérieur (chevron vers la gauche,
+              `IconeReplier`) et la fermer la renvoie au bord (chevron vers la
+              droite, `IconeDeplier`). Les noms disent le geste à gauche, les
+              dessins disent la direction — ce sont ces derniers qui comptent
+              ici, et c'est ce qui évite une paire d'icônes de plus.
+              Pas de `lg:block` comme à gauche : sous ce seuil le rail est imposé
+              et le bouton de navigation n'aurait rien à basculer, alors que la
+              conversation, elle, s'ouvre à toutes les largeurs — en recouvrement
+              quand la fenêtre est étroite. */}
+          {basculerConversation !== undefined && (
+            <button
+              type="button"
+              onClick={basculerConversation}
+              aria-expanded={conversationOuverte}
+              aria-controls={ID_COLONNE_CONVERSATION}
+              aria-label={
+                conversationOuverte
+                  ? "Replier la conversation"
+                  : "Déplier la conversation"
+              }
+              className="rounded-md p-2 text-texte-secondaire hover:bg-survol hover:text-texte"
+            >
+              {conversationOuverte ? (
+                <IconeDeplier className="size-5" />
+              ) : (
+                <IconeReplier className="size-5" />
+              )}
+            </button>
+          )}
         </div>
       </div>
     </header>

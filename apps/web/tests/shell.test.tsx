@@ -25,7 +25,12 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { Shell } from "@/components/Shell";
 import { marquerGuideVu } from "@/lib/guide";
 import { MENU } from "@/lib/navigation";
-import { ecrireRepliSidebar, lireRepliSidebar } from "@/lib/preferences";
+import {
+  ecrireConversationOuverte,
+  ecrireRepliSidebar,
+  lireConversationOuverte,
+  lireRepliSidebar,
+} from "@/lib/preferences";
 
 import {
   coutExecutionFactice,
@@ -201,5 +206,108 @@ describe("le shell applicatif (Shell)", () => {
         `ancre « ${ancre} » absente du shell`,
       ).not.toBeNull();
     }
+  });
+
+  // --- La troisième zone (#925, lot 4 de #921) ------------------------------
+  //
+  // Ce qui se vérifie ici est ce que jsdom peut voir : la **présence**, l'état
+  // par défaut, le chemin de la bascule et la place de la zone dans l'arbre. Ce
+  // qu'il ne peut pas — la colonne qui recouvre au lieu de pousser sous `lg`,
+  // les 420 px sans débordement — n'est pas oublié : il ne se mesure pas ici
+  // (#308), c'est le banc de mise en page qui le tranche.
+
+  it("garde la colonne de droite fermée tant que personne ne l'a ouverte", async () => {
+    // Le défaut du chantier, et ce qui rend ce lot mergeable seul : une colonne
+    // repliée ne change aucun écran (docs/35 §5).
+    await monterShell();
+    const bascule = screen.getByRole("button", {
+      name: "Déplier la conversation",
+    });
+    expect(bascule).toHaveAttribute("aria-expanded", "false");
+    expect(
+      screen.queryByRole("complementary", { name: "Conversation" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("fait passer l'ouverture de la conversation par le stockage", async () => {
+    // Même contrat que le repli de la sidebar : le stockage tranche, l'abonnement
+    // met l'état à jour. C'est ce qui permettra à un autre contrôle — un onglet
+    // voisin, une préférence — de commander la même colonne sans connaître le
+    // shell.
+    const utilisateur = userEvent.setup();
+    await monterShell();
+
+    await utilisateur.click(
+      screen.getByRole("button", { name: "Déplier la conversation" }),
+    );
+    expect(lireConversationOuverte()).toBe(true);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("complementary", { name: "Conversation" }),
+      ).toBeInTheDocument(),
+    );
+    expect(
+      screen.getByRole("button", { name: "Replier la conversation" }),
+    ).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("restitue la colonne ouverte d'une session à l'autre", async () => {
+    ecrireConversationOuverte(true);
+    await monterShell();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("complementary", { name: "Conversation" }),
+      ).toBeInTheDocument(),
+    );
+  });
+
+  it("referme la colonne depuis la colonne elle-même", async () => {
+    // La croix n'est pas un doublon du bouton de la barre : sous `lg` la colonne
+    // recouvre la droite de l'écran, donc le bouton qui l'a ouverte. Sans elle,
+    // une fenêtre étroite ouvrirait une colonne qu'on ne pourrait plus refermer.
+    const utilisateur = userEvent.setup();
+    ecrireConversationOuverte(true);
+    await monterShell();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("complementary", { name: "Conversation" }),
+      ).toBeInTheDocument(),
+    );
+
+    await utilisateur.click(
+      screen.getByRole("button", { name: "Fermer la conversation" }),
+    );
+    expect(lireConversationOuverte()).toBe(false);
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("complementary", { name: "Conversation" }),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  it("tient la colonne hors du contenu de l'écran, et la désigne sans se tromper", async () => {
+    // Le point de vigilance du chantier (docs/35 §3.4) : une zone du **shell**
+    // n'est pas un bloc de plus dans l'**écran**. Rendue dans `<main>`, elle
+    // deviendrait la « sortie de secours » de la règle des trois places — la
+    // seule place sans plafond, où un écran plein rangerait son quatrième bloc.
+    // La frontière portée par le code reste le lot 8 (#929) ; ce qui est gardé
+    // ici est qu'on ne l'a pas déjà franchie.
+    // Second contrôle : le bouton dit commander la colonne (`aria-controls`), et
+    // l'identifiant doit désigner un élément **qui existe** — la colonne reste
+    // donc dans le DOM une fois fermée, simplement masquée.
+    ecrireConversationOuverte(true);
+    const { container } = await monterShell();
+    const colonne = await screen.findByRole("complementary", {
+      name: "Conversation",
+    });
+    const main = container.querySelector("main")!;
+    expect(main.contains(colonne)).toBe(false);
+
+    const bascule = screen.getByRole("button", {
+      name: "Replier la conversation",
+    });
+    const cible = bascule.getAttribute("aria-controls");
+    expect(cible).not.toBeNull();
+    expect(document.getElementById(cible!)).toBe(colonne);
   });
 });
