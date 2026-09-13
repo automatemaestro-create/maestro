@@ -2743,6 +2743,16 @@ Quatre choses à ne pas défaire :
 - **L'écran Coûts lit ce compte et n'en tient plus un à lui** (`CoutExecutionResume.nb_taches`).
   Son tableau **par tâche** garde en revanche sa propre population — une tâche n'y figure que si
   elle a dépensé —, et l'écart entre les deux est légitime : ce ne sont pas les mêmes questions.
+  C'est ce que dit le bandeau en nommant ses « N tâche(s) **comptabilisée(s)** ».
+- **Le graphe complète le plan des tâches que le run a portées sans qu'il les annonce**, en nœuds
+  isolés. La réciproque du point précédent, et elle a été trouvée **en regardant l'écran** (#935) :
+  la démo publie un plan de quatre nœuds puis exécute une cinquième tâche — une vérification de
+  santé rejouée en boucle —, si bien que le pipeline annonçait « 4 tâches » quand les trois autres
+  surfaces en disaient cinq. Faire entrer le plan dans les tâches ne suffisait pas ; il fallait
+  aussi faire entrer les tâches dans le graphe. Écrit en **un seul geste** pour les deux régimes :
+  sur un run sans plan publié, le complément rend exactement le repli d'avant, nœud pour nœud —
+  une règle plutôt qu'une règle et son exception. `plan_connu` continue de répondre à sa seule
+  question (le plan a-t-il été publié ?) et non à « d'où vient chaque nœud ».
 
 ⚠ **Ce que le renversement a déplacé, et qui n'est pas réparé pour autant** : la perte d'événements
 que #699 corrige ne se lit plus dans le compte d'un run (il vient du plan, donc il est juste des deux

@@ -1037,10 +1037,15 @@ class ControlTowerState:
 
         Un run **sans plan publié** ne rend pas un graphe vide : ses nœuds sont
         reconstruits de ses tâches vues, dans leur ordre d'apparition, sans
-        aucune arête — et le graphe le **dit** (`plan_connu: false`). C'est le
-        seul cas où les nœuds ne viennent pas du plan, et il fallait qu'il se
-        distingue d'un plan réellement sans dépendance : les deux se dessinent
-        pareil, on n'a pas le droit d'en conclure la même chose.
+        aucune arête — et le graphe le **dit** (`plan_connu: false`). Il fallait
+        que ce cas se distingue d'un plan réellement sans dépendance : les deux
+        se dessinent pareil, on n'a pas le droit d'en conclure la même chose.
+
+        Et **une tâche que le run a portée sans être au plan est dessinée aussi**
+        (#924), en nœud isolé : le graphe rend donc toujours autant de nœuds que
+        le run compte de tâches, quel que soit le régime. `plan_connu` continue
+        de répondre à sa seule question — le plan a-t-il été publié ? — et non à
+        « d'où vient chaque nœud ».
 
         Un run inconnu rend un graphe **vide** plutôt qu'une erreur, comme
         `progression` : la projection répond à ce qu'elle sait, le refus motivé
@@ -1049,17 +1054,30 @@ class ControlTowerState:
         execution = self._executions.get(run_id)
         plan = list(execution.plan) if execution is not None else []
         plan_connu = bool(plan)
-        if not plan_connu:
-            # Repli : les tâches que le run a portées, dans leur ordre de
-            # première apparition — celui de `taches()`, et non celui de
-            # `taches_vues`, qui est un `frozenset` et rendrait un graphe dont
-            # l'ordre changerait d'un appel à l'autre.
-            vues = self.taches_du_run(run_id)
-            plan = [
-                NoeudPlan(id=tache.id, titre=tache.titre)
-                for tache in self._taches.values()
-                if tache.id in vues
-            ]
+        # Puis **les tâches que le run a portées sans que le plan les annonce**
+        # (#924) : elles existent, elles ont coûté, le Kanban les montre et la
+        # barre les compte — les taire ici ferait mentir le pipeline sur le
+        # volume du run, qui est le défaut que ce lot corrige, pris par l'autre
+        # bout. Le cas est réel et non théorique : la démo porte une tâche de
+        # santé qui se rejoue en boucle, publiée après la décomposition
+        # (`demo-qa`), et le moteur peut de même consigner une tâche qu'aucun
+        # plan n'annonçait. Elles arrivent **après** les nœuds du plan, dans
+        # leur ordre de première apparition — celui de `taches()`, et non celui
+        # de `taches_vues`, qui est un `frozenset` et rendrait un graphe dont
+        # l'ordre changerait d'un appel à l'autre —, et sans aucune arête :
+        # personne n'a déclaré ce qu'elles attendent.
+        #
+        # Écrit en **un seul geste** pour les deux régimes : sur un run sans plan
+        # publié, `declares` est vide et ce complément rend exactement le repli
+        # d'avant, nœud pour nœud. Une seule règle plutôt qu'une règle et son
+        # exception.
+        declares = {noeud.id for noeud in plan}
+        vues = self.taches_du_run(run_id)
+        plan += [
+            NoeudPlan(id=tache.id, titre=tache.titre)
+            for tache in self._taches.values()
+            if tache.id in vues and tache.id not in declares
+        ]
         return graphe_du_run(
             run_id,
             plan,
