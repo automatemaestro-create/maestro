@@ -62,6 +62,7 @@ from maestro.controltower.events import (
     Event,
 )
 from maestro.controltower.portee import PorteeProjet
+from maestro.controltower.progression import STATUT_BACKLOG
 from maestro.controltower.state import (
     EXECUTION_ANNULEE,
     EXECUTION_EN_ATTENTE_ARBITRAGE,
@@ -276,8 +277,15 @@ def test_projetee_dans_cet_ordre_la_demande_reste_dans_la_vue_du_projet():
     """
     etat = _projette(_joue_une_tache_sensible().evenements, jusqu_a_la_demande=True)
 
-    # La tâche n'existe pour personne : c'est bien l'ordre nominal qui est projeté.
-    assert etat.taches(PorteeProjet.tous()) == []
+    # La tâche n'a **porté aucun statut** : c'est bien l'ordre nominal qui est
+    # projeté, et c'est ce qui interdit de recoller le projet depuis elle.
+    # ⚠ Sa carte, elle, existe depuis #924 — déclarée par le plan, sur `backlog`
+    # et sans agent. Le test affirmait ici qu'elle n'existait « pour personne » ;
+    # ce qui compte n'a jamais été son absence mais le fait que rien en aval ne
+    # peut suppléer ce que la demande ne porte pas : une carte déclarée d'avance
+    # ne dit toujours pas quel projet **le run** attend.
+    (declaree,) = etat.taches(PorteeProjet.tous())
+    assert (declaree.id, declaree.statut, declaree.agent) == (TACHE, STATUT_BACKLOG, "")
 
     (validation,) = etat.validations(PorteeProjet.projet(PROJET))
     assert validation.tache_id == TACHE and validation.en_attente

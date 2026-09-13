@@ -2671,7 +2671,9 @@ donc **partagé** dès que deux runs décomposent le même objectif. C'est le ca
 **relance** (§6.1, #349), qui rejoue le brief approuvé : filtrer sur ce champ ferait disparaître de
 la vue d'un run les tâches que son propre successeur a reprises. La portée se juge donc sur
 `EtatExecution.taches_vues`, qui ne change jamais rétroactivement — d'où l'égalité
-`progression.total == nb_taches`, vraie par construction.
+`progression.total == nb_taches`, vraie par construction. Depuis #924 cet ensemble comprend aussi les
+tâches que le **plan** du run déclare, et pas seulement celles que ses événements ont portées : c'est
+là que naît le compte unique des quatre surfaces (§6.0ter).
 
 Implémentation : `PorteeRun` et son unique prédicat `retient`, dans le même
 [`maestro/controltower/portee.py`](../maestro/controltower/portee.py) que la portée projet — deux
@@ -2681,6 +2683,87 @@ Couverture (#480) : `tests/test_run_portee.py` — la table des compartiments et
 la portée et son refus, la composition avec `?projet=`, l'invariant `progression.total ==
 nb_taches` et le cas qui a motivé le choix du champ lu — **une relance ne vole pas les tâches du run
 qu'elle reprend**.
+
+#### 6.0ter Le compte des tâches d'un run naît **une fois** (#924) — **livré**
+
+Quatre surfaces comptent les tâches d'un run — le **pipeline** (§2.4.4), le **Kanban** (§2.4.2),
+l'**en-tête** de la vue du run et l'écran **Coûts** (§2.6) —, et elles le dérivaient chacune de leur
+côté. Le retex du 2026-09-11 (G3, C8) a mesuré le résultat sur un seul run :
+
+| Surface | Ce qu'elle annonçait | Ce qu'elle lisait |
+| --- | --- | --- |
+| Pipeline | « 4 tâches » | `graphe.nb_noeuds` — le **plan** |
+| Kanban | **1 carte** | `GET /api/taches?run=` — les tâches qui ont **démarré** |
+| En-tête | « 0/1 soldée », puis « 1/2 », « 2/3 », « 3/4 » | `progression.total` — les mêmes, donc un **dénominateur qui grandit** |
+| Coûts | **8 tâches** | les `tache_id` des événements, **quatre lignes de fusion comprises** |
+
+Deux causes, pas une, et il fallait les séparer pour les traiter.
+
+**① Le suffixe `:fusion` n'était pas retiré de l'identifiant de tâche.** `bridge.py` reconnaissait
+l'étape `<tache>:fusion` (#705) comme une activité d'agent mais ne la dépouillait pas de son
+suffixe : l'événement sortait avec `coquille-ui:fusion` pour `tache_id`, c'est-à-dire un
+identifiant qui n'est la tâche de personne — compté comme une tâche de plus partout où le flux en
+compte, et rendu au grand livre comme une ligne sans agent, sans coût et sans durée. La liste des
+suffixes d'activité **vit désormais une fois** (`_SUFFIXES_ACTIVITE`), lue par la reconnaissance
+comme par le retrait : c'est le fait de la tenir à deux endroits qui avait échoué, `:fusion` ayant
+rejoint le premier et pas le second.
+
+**② Une tâche n'existait qu'en démarrant.** C'est la cause de fond, et son remède **renverse #490** :
+`run.plan` posait le graphe « et rien d'autre », en refusant explicitement de créer des cartes pour
+que `progression.total` ne diverge pas de `nb_taches`. L'intention était juste, la conséquence
+inverse de ce qu'elle visait — les deux restaient bien égaux, mais à un nombre qui **grandissait au
+fil de la décomposition**, une tâche n'émettant son premier événement qu'en démarrant. Le plan
+**déclare** donc ses tâches, au statut `backlog`, sans agent ni coût ni durée.
+
+Ce qui a tranché : **le graphe disait déjà ce que la projection ignorait.** `EtatNoeud` donne
+`backlog` par défaut à un nœud du plan que la projection ne connaît pas encore — « la machine à
+états a un mot pour *déclarée, pas encore prise* » (docs/03 §3). La tâche existait donc pour qui
+regardait le pipeline, pas pour qui comptait. Poser la carte ne change aucun dessin ; cela rend la
+même vérité lisible aux trois autres surfaces.
+
+Le dénominateur est **stable** parce que le plan l'est : `topological_order` est appelé **une fois**,
+avant la première exécution (`maestro/plan_run.py`). C'est ce qui a permis d'écarter l'autre réponse
+que le ticket envisageait — annoncer la progression autrement tant que la décomposition dure — :
+elle répond à un plan qui s'enrichirait en cours de run, ce que celui-ci ne fait pas.
+
+Quatre choses à ne pas défaire :
+
+- **`taches_vues` est l'union du plan et des événements**, jamais le plan seul : les deux moitiés
+  apprennent chacune ce que l'autre ignore, et un run **sans plan publié** (journal antérieur à
+  #490, producteur minimaliste, run arrêté sur son brief) n'a que ses événements pour se compter.
+- **Une carte déjà là n'est jamais touchée.** Le plan précède l'exécution, donc une carte présente
+  vient d'ailleurs : d'un rejeu du journal durable, ou du run que celui-ci **relance** (#349), dont
+  les tâches portent les mêmes identifiants. La remettre à `backlog` effacerait un état acquis, et
+  le Kanban d'un run repris afficherait « à faire » sur du travail fini.
+- **Le Kanban gagne une colonne « À faire »** (`backlog` + `prete`), sans quoi les tâches déclarées
+  n'auraient aucune place : c'est le premier critère du ticket — *une tâche sans agent assigné a sa
+  place dans le Kanban*. Les deux statuts y sont réunis parce que ce qui les distingue (les
+  dépendances sont-elles levées ?) n'est pas une question de tableau, et que `progression.py` les
+  range déjà ensemble dans `a_faire`.
+- **L'écran Coûts lit ce compte et n'en tient plus un à lui** (`CoutExecutionResume.nb_taches`).
+  Son tableau **par tâche** garde en revanche sa propre population — une tâche n'y figure que si
+  elle a dépensé —, et l'écart entre les deux est légitime : ce ne sont pas les mêmes questions.
+
+⚠ **Ce que le renversement a déplacé, et qui n'est pas réparé pour autant** : la perte d'événements
+que #699 corrige ne se lit plus dans le compte d'un run (il vient du plan, donc il est juste des deux
+côtés) mais dans ses **statuts** — une tâche dont l'issue s'est perdue reste sur `backlog`, pour
+toujours, et le run fini s'arrête à 3/5. `tests/test_publication_durable.py` a été repris en
+conséquence : son échantillon fautif reste fautif, et le dit avec le symptôme d'aujourd'hui.
+
+Un effet visible que le ticket ne demandait pas, et qu'on assume plutôt que de le contourner : le
+Kanban **du projet** (§2.1) montre lui aussi ces cartes, puisqu'elles sont des tâches du projet comme
+les autres. C'est le backlog qu'il a toujours prétendu montrer ; ce qui change est qu'il ne commence
+plus à la première tâche démarrée.
+
+⚠ **Sur une relance (#349), l'avancement peut reculer** — mesuré : un run B qui reprend un A soldé
+affiche `2/2` dès son plan publié, puis `1/2` quand sa première tâche repart. Ce n'est pas le défaut
+que le critère interdit (« une tâche *découverte* ne fait pas reculer l'avancement ») : le
+dénominateur ne bouge pas, et ce qui recule est le numérateur, parce qu'une tâche **est réellement
+rejouée**. C'est le régime que la conception a choisi et que §6.0bis décrit — les cartes sont
+partagées entre un run et sa relance (l'identifiant est un slug du contenu) et portent le **dernier**
+passage, si bien que la barre et le Kanban d'un même écran comptent toujours la même chose. Le rendre
+monotone demanderait un statut **par run**, c'est-à-dire une copie figée par exécution : un autre
+chantier, et l'inverse de ce que §6.0bis a tranché.
 
 ### 6.1 Exécutions — lancement, suivi, pause, annulation, relance (#185) — **livré**
 
@@ -4154,7 +4237,7 @@ bascule, et se lit avec n'importe laquelle des quatre. Le décompte de cette sec
   // ses seules tâches vues et il n'y a AUCUNE arête, faute de les connaître.
   "plan_connu": true,
   "plat": false,           // aucune arête — un cas normal, pas un graphe vide
-  "nb_noeuds": 4,          // les nœuds du PLAN (≠ nb_taches, voir plus bas)
+  "nb_noeuds": 4,          // les nœuds du PLAN — et le compte du run (§6.0ter)
   "nb_aretes": 4,
   "profondeur": 3,         // le plus long enchaînement, en niveaux
   "largeur": 2,            // le niveau le plus peuplé : la parallélisation autorisée
@@ -4230,12 +4313,15 @@ seule entrée — la lecture juste, puisque tout peut effectivement partir en m�
 (moteur antérieur au lot, journal durable rejoué d'avant, planification en échec). Les deux se
 dessinent pareil ; ce qu'on a le droit d'en conclure ne l'est pas, d'où deux booléens et non un.
 
-⚠ **`nb_noeuds` ne vaut pas `nb_taches`**, donc pas `progression.total`, et l'écart n'est pas un
-défaut : le plan annonce ce qui **sera** fait, `nb_taches` compte ce que le run a **réellement
-porté** (§6.1 — les tâches qui ont démarré). Les deux se rejoignent à la fin d'un run qui va au
-bout, et divergent tout du long — ce qu'un graphe est précisément là pour montrer. Les faire
-coïncider aurait demandé de retirer du graphe les nœuds pas encore démarrés, c'est-à-dire de rendre
-un dessin qui pousse au lieu d'un plan.
+**`nb_noeuds` vaut `nb_taches`**, donc `progression.total` : c'est **le** compte des tâches du run,
+dérivé une fois (§6.0ter) et lu par les quatre surfaces qui le rendent.
+
+⚠ **Cette ligne disait l'inverse jusqu'à #924**, et le renversement est délibéré : « l'écart n'est
+pas un défaut — le plan annonce ce qui *sera* fait, `nb_taches` compte ce que le run a *réellement
+porté* ; les faire coïncider aurait demandé de rendre un dessin qui pousse au lieu d'un plan ». La
+première moitié était juste, la conclusion fausse : il ne fallait pas que le dessin rétrécisse, mais
+que le **compte** vienne du plan. Le graphe n'a pas perdu un nœud ; les trois autres surfaces l'ont
+rejoint.
 
 **Le direct passe par le canal existant, et le graphe n'a pas d'événement à lui** (troisième
 critère). Il se recompose **à la lecture**, en joignant le plan à l'état que la projection tient de

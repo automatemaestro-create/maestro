@@ -309,6 +309,13 @@ export function formatDureeRun(
  * « Bloquée » et « En cours ».
  */
 const LIBELLES_STATUT: Record<string, string> = {
+  // Les deux statuts d'une tâche que le plan a déclarée et que personne ne porte
+  // encore (#924). Ils manquaient à cette table alors que la machine à états les
+  // nomme depuis toujours (docs/03 §3) : sans eux la carte d'une tâche non
+  // démarrée affichait « backlog » en toutes lettres, c'est-à-dire le repli qui
+  // existe pour un flux enrichi, sur un statut parfaitement connu.
+  backlog: "À faire",
+  prete: "Prête",
   assignee: "Assignée",
   en_cours: "En cours",
   en_attente_validation: "Attente humaine",

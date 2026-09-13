@@ -495,17 +495,52 @@ def test_une_ligne_ordinaire_ne_porte_aucun_plan():
     assert event.plan is None
 
 
-def test_le_plan_se_pose_sur_l_execution_sans_toucher_a_ses_taches():
-    """Le plan annonce ce qui *sera* fait ; les tâches d'un run restent celles que
-    ses événements ont réellement portées. Les confondre ferait diverger
-    `progression.total` de `nb_taches` pendant tout le run."""
+def test_le_plan_se_pose_sur_l_execution_et_declare_ses_taches():
+    """Le plan pose le graphe **et** déclare les tâches du run (#924).
+
+    ⚠ Ce test disait l'inverse jusqu'à #924 — « sans toucher à ses tâches » —, et
+    le renversement est délibéré : quatre surfaces comptaient les tâches d'un run
+    chacune de leur côté, si bien que le pipeline en annonçait quatre là où le
+    Kanban montrait une carte et où la barre de progression voyait son
+    dénominateur grandir (retex du 2026-09-11, G3). Le compte naît désormais une
+    fois, dans `taches_vues`.
+
+    Les cartes déclarées portent `backlog` — le statut que le graphe leur donnait
+    **déjà** (`EtatNoeud`) : ce lot n'a pas inventé un état, il a rendu visible à
+    qui compte celui que le dessin montrait.
+    """
     state = projection(lancement(), plan_publie(_noeud("schema"), _noeud("api", "schema")))
 
     execution = state.execution(RUN)
     assert execution is not None
     assert [noeud.id for noeud in execution.plan] == ["schema", "api"]
-    assert execution.nb_taches == 0
-    assert state.taches_du_run(RUN) == frozenset()
+    assert execution.nb_taches == 2
+    assert state.taches_du_run(RUN) == frozenset({"schema", "api"})
+    assert [(t.id, t.statut, t.agent) for t in state.taches()] == [
+        ("schema", STATUT_BACKLOG, ""),
+        ("api", STATUT_BACKLOG, ""),
+    ]
+
+
+def test_le_plan_ne_touche_pas_une_carte_deja_la():
+    """Une carte présente vient d'ailleurs, et le plan ne l'écrase jamais (#924).
+
+    L'ordre est la raison : le plan précède l'exécution, donc une carte déjà là
+    est celle d'un rejeu du journal durable, ou celle du run que celui-ci
+    **relance** (#349) — les identifiants sont les mêmes, un slug étant engendré
+    depuis le contenu. La remettre à `backlog` effacerait un état acquis, et le
+    Kanban d'un run repris afficherait « à faire » sur du travail fini.
+    """
+    state = projection(
+        lancement(),
+        tache("schema", "terminee"),
+        plan_publie(_noeud("schema"), _noeud("api", "schema")),
+    )
+
+    assert {t.id: t.statut for t in state.taches()} == {
+        "schema": "terminee",
+        "api": STATUT_BACKLOG,
+    }
 
 
 def test_poser_deux_fois_le_meme_plan_est_sans_effet():
@@ -622,10 +657,20 @@ def test_un_plan_plat_publie_se_distingue_d_un_plan_inconnu():
     assert graphe["niveaux"] == [["a", "b"]]
 
 
-def test_le_nombre_de_noeuds_ne_vaut_pas_le_nombre_de_taches_portees():
-    """L'écart n'est pas un défaut : le plan annonce ce qui **sera** fait,
-    `nb_taches` compte ce que le run a **réellement porté**. Les faire coïncider
-    aurait demandé de rendre un dessin qui pousse au lieu d'un plan."""
+def test_le_nombre_de_noeuds_vaut_le_nombre_de_taches_du_run():
+    """Les deux comptes **coïncident**, et c'est le premier critère de #924.
+
+    ⚠ Ce test affirmait l'écart jusque-là (« l'écart n'est pas un défaut »), au
+    motif qu'y remédier aurait demandé « de rendre un dessin qui pousse au lieu
+    d'un plan ». L'inverse s'est révélé vrai : ce n'était pas au dessin de
+    rétrécir, c'était au compte de venir du plan. Le graphe n'a pas bougé d'un
+    nœud ; ce sont les trois autres surfaces qui le rejoignent.
+
+    Ce que l'écart coûtait, mesuré à l'écran : un même run annoncé « 4 tâches »
+    par son pipeline, « 1 carte » par son Kanban et « 0/1 soldée » par sa barre,
+    laquelle passait ensuite à « 1/2 », « 2/3 », « 3/4 » — presque pleine à
+    mi-parcours.
+    """
     with client_sur(
         lancement(),
         plan_publie(_noeud("schema"), _noeud("api", "schema"), _noeud("ui", "schema")),
@@ -635,7 +680,10 @@ def test_le_nombre_de_noeuds_ne_vaut_pas_le_nombre_de_taches_portees():
         execution = client.get(f"/api/executions/{RUN}").json()
 
     assert graphe["nb_noeuds"] == 3
-    assert execution["nb_taches"] == 1
+    assert execution["nb_taches"] == 3
+    # Le dénominateur est celui du plan dès la décomposition, le numérateur seul
+    # bouge : c'est le second critère du ticket.
+    assert (execution["progression"]["soldees"], execution["progression"]["total"]) == (1, 3)
 
 
 def test_le_graphe_se_recompose_a_la_lecture_sans_evenement_a_lui():

@@ -90,6 +90,31 @@ describe("les colonnes du Kanban", () => {
     }
   });
 
+  it("donne une colonne aux tâches que personne ne porte encore", () => {
+    // #924 — `backlog` et `prete` n'avaient aucune colonne, donc une tâche que le
+    // plan déclare et qu'aucun agent n'a prise n'apparaissait nulle part : un run
+    // de quatre tâches montrait **une** carte ici pendant que son pipeline en
+    // annonçait quatre. Les deux statuts partagent la colonne parce que ce qui
+    // les distingue — les dépendances sont-elles levées ? — n'est pas une
+    // question de tableau, et que le serveur les range déjà ensemble
+    // (`progression.py`, compartiment `a_faire`).
+    rendreKanban([
+      tacheFactice({ id: "T-0", titre: "Déclarée par le plan", statut: "backlog" }),
+      tacheFactice({ id: "T-6", titre: "Dépendances levées", statut: "prete" }),
+      tacheFactice({ id: "T-2", statut: "en_cours" }),
+    ]);
+
+    expect(within(colonne("À faire")).getByRole("heading")).toHaveTextContent("2");
+    expect(
+      within(colonne("À faire")).getByText("Déclarée par le plan"),
+    ).toBeInTheDocument();
+    // Et non dans « Autres », où elles tombaient faute de colonne à elles : un
+    // statut que la machine à états nomme n'est pas un statut inconnu.
+    expect(
+      screen.queryByRole("heading", { name: /^Autres/ }),
+    ).not.toBeInTheDocument();
+  });
+
   it("range un statut inconnu du front dans « Autres » au lieu de le perdre", () => {
     // Même garde que `libelleStatut` : le moteur peut enrichir sa machine à
     // états sans qu'une tâche disparaisse de l'écran de pilotage.

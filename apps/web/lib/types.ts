@@ -1585,6 +1585,11 @@ export type Brief = {
  * `total` vaut le `nb_taches` du run et `soldees` compte ce qui ne bougera plus
  * (terminées + échecs + bloquées) : une barre se dessine par `soldees / total`,
  * sans avoir à savoir lesquels des compartiments sont terminaux.
+ *
+ * `total` est **stable** dès que le run a publié son plan (#924) : il compte les
+ * tâches que celui-ci déclare, non celles qui ont démarré. Seul le numérateur
+ * bouge, et une barre ne peut donc plus paraître presque pleine à mi-parcours
+ * parce que son dénominateur grandissait sous les yeux.
  */
 export type Progression = {
   a_faire: number;
@@ -1824,9 +1829,18 @@ export type AreteGraphe = {
  * de les connaître ; le dessin est le même, ce qu'on a le droit d'en conclure ne
  * l'est pas.
  *
- * ⚠ `nb_noeuds` ne vaut pas `nb_taches` (donc pas `progression.total`) : le plan
- * annonce ce qui **sera** fait, le run compte ce qu'il a **porté**. Les deux se
- * rejoignent à la fin d'un run qui va au bout.
+ * `nb_noeuds` vaut `nb_taches`, donc `progression.total` : c'est **le** compte
+ * des tâches du run, et les quatre surfaces qui le rendent (ce graphe, le
+ * Kanban, la barre de progression, l'écran Coûts) en héritent d'une seule
+ * dérivation, côté serveur (#924).
+ *
+ * ⚠ Ce commentaire affirmait l'inverse jusque-là — « le plan annonce ce qui
+ * **sera** fait, le run compte ce qu'il a **porté** », les deux ne se
+ * rejoignant qu'à la fin. L'écart était réel et il coûtait cher à l'écran : un
+ * même run annoncé « 4 tâches » ici, « 1 carte » au Kanban et « 0/1 soldée »
+ * par sa barre, laquelle passait ensuite à « 1/2 », « 2/3 », « 3/4 » — presque
+ * pleine à mi-parcours (retex du 2026-09-11, G3). Ce n'est pas le graphe qui a
+ * cédé : les autres l'ont rejoint.
  */
 export type GrapheRun = {
   run_id: string;

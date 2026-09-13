@@ -36,6 +36,7 @@ import {
   IconeChrono,
   IconeJetons,
   IconePuce,
+  IconeStatutAFaire,
   IconeStatutAssignee,
   IconeStatutBloquee,
   IconeStatutEchec,
@@ -97,25 +98,46 @@ type Props = {
  * rouge, et disparaissait à l'impression.
  */
 const COLONNES: {
-  statut: string;
+  /**
+   * Les statuts que la colonne rassemble. Une **liste** et non un statut depuis
+   * #924 : « À faire » en réunit deux (`backlog` et `prete`), que la machine à
+   * états distingue par une question — les dépendances sont-elles levées ? — à
+   * laquelle un tableau n'a pas à répondre. C'est déjà le rangement de
+   * `progression.py` côté serveur, où les deux tombent dans `a_faire` ; les
+   * séparer ici donnerait deux colonnes dont l'une serait toujours vide, le
+   * moteur n'émettant ni l'un ni l'autre pour l'instant.
+   */
+  statuts: string[];
   titre: string;
   ton: TonBadge;
   icone: Icone;
 }[] = [
   {
-    statut: "assignee",
+    // Les tâches que le **plan** a déclarées et que personne ne porte encore
+    // (#924). Elles n'avaient aucune colonne, donc aucune place sur ce tableau :
+    // un run de quatre tâches y montrait **une** carte pendant que son pipeline
+    // en annonçait quatre (retex du 2026-09-11, G3). Elles arrivent en tête
+    // parce que c'est le début du flux, et la colonne n'existe pas quand le
+    // moteur n'a rien déclaré — comme les autres, elle se rend vide.
+    statuts: ["backlog", "prete"],
+    titre: "À faire",
+    ton: "neutre",
+    icone: IconeStatutAFaire,
+  },
+  {
+    statuts: ["assignee"],
     titre: "Assignées",
     ton: "info",
     icone: IconeStatutAssignee,
   },
   {
-    statut: "en_cours",
+    statuts: ["en_cours"],
     titre: "En cours",
     ton: "attention",
     icone: IconeStatutEnCours,
   },
   {
-    statut: "bloquee",
+    statuts: ["bloquee"],
     titre: "Bloquées",
     // Le violet du badge, tel qu'il était rendu avant #912 — un **état** qui
     // emprunte le ton de la provenance. Le renommage n'a pas le droit de
@@ -124,12 +146,12 @@ const COLONNES: {
     icone: IconeStatutBloquee,
   },
   {
-    statut: "terminee",
+    statuts: ["terminee"],
     titre: "Terminées",
     ton: "positif",
     icone: IconeStatutTerminee,
   },
-  { statut: "echec", titre: "Échecs", ton: "alerte", icone: IconeStatutEchec },
+  { statuts: ["echec"], titre: "Échecs", ton: "alerte", icone: IconeStatutEchec },
 ];
 
 /** Ouvre le panneau de détail sur une tâche, en retenant d'où on est parti. */
@@ -165,17 +187,17 @@ export function Kanban({
   const affichee =
     ouverte === null ? null : (taches.find((t) => t.id === ouverte.id) ?? ouverte);
 
-  const connus = new Set(COLONNES.map((c) => c.statut));
+  const connus = new Set(COLONNES.flatMap((c) => c.statuts));
   const autres = taches.filter((t) => !connus.has(t.statut));
   const colonnes = [
     ...COLONNES.map((colonne) => ({
       ...colonne,
-      taches: taches.filter((t) => t.statut === colonne.statut),
+      taches: taches.filter((t) => colonne.statuts.includes(t.statut)),
     })),
     ...(autres.length > 0
       ? [
           {
-            statut: "",
+            statuts: [],
             titre: "Autres",
             ton: "neutre" as TonBadge,
             icone: IconePuce,

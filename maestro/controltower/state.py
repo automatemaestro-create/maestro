@@ -54,7 +54,11 @@ from maestro.controltower.events import (
 )
 from maestro.controltower.graphe import EtatNoeud, GrapheRun, graphe_du_run
 from maestro.controltower.portee import PorteeProjet, PorteeRun
-from maestro.controltower.progression import Progression, progression_des_statuts
+from maestro.controltower.progression import (
+    STATUT_BACKLOG,
+    Progression,
+    progression_des_statuts,
+)
 from maestro.controltower.signe_de_vie import SigneDeVie
 from maestro.detail_tache import (
     EtapeTache,
@@ -620,7 +624,7 @@ class EtatExecution:
 
     @property
     def taches_vues(self) -> frozenset[str]:
-        """Les tâches que **ce run** a portées — son identité, lue dans ses événements.
+        """Les tâches de **ce run** : celles que son plan annonce, et celles qu'il a portées.
 
         C'est la réponse à « quelles sont les tâches de ce run ? » (#473), et
         elle se lit ici plutôt que sur le `run_id` des tâches de la projection,
@@ -630,16 +634,38 @@ class EtatExecution:
         (#349), qui rejoue le brief approuvé. Lu là-bas, un run se ferait voler
         ses tâches par son propre successeur ; lu ici, son histoire ne change
         jamais rétroactivement.
+
+        ⚠ **Le plan en fait partie depuis #924**, et c'est le compte unique dont
+        les quatre surfaces héritent (pipeline, Kanban, en-tête, écran Coûts).
+        Les seuls événements donnaient une population qui **grandissait** au fil
+        de la décomposition — une tâche n'émet son premier événement qu'en
+        démarrant —, donc un dénominateur de barre de progression qui bougeait
+        sous les yeux : « 0/1 soldée », puis « 1/2 », « 2/3 », « 3/4 » pour un run
+        de quatre tâches (retex du 2026-09-11, G3).
+
+        L'union, et non le plan seul : les deux moitiés apprennent chacune
+        quelque chose que l'autre ignore. Le plan est **figé au départ**
+        (`plan_run` — `topological_order`, appelé une fois avant la première
+        exécution), ce qui donne le total stable ; les événements restent la
+        seule source pour un run **sans plan publié** — journal antérieur à #490,
+        producteur minimaliste, ou run arrêté avant sa décomposition. Rien n'est
+        donc perdu, et le total ne peut plus que **rester égal** à lui-même sur
+        un run qui décompose : les tâches qui démarrent sont celles que le plan
+        annonçait.
         """
         return frozenset(
             e.tache_id
             for e in self.evenements
             if e.type == EVENEMENT_TACHE_STATUT and e.tache_id
-        )
+        ) | frozenset(noeud.id for noeud in self.plan if not noeud.vide)
 
     @property
     def nb_taches(self) -> int:
-        """Le nombre de tâches distinctes vues dans le run (0 avant planification)."""
+        """Le nombre de tâches du run — celles de son plan, plus celles qu'il a portées.
+
+        Stable dès la décomposition sur un run qui en publie un (#924) ; 0 avant
+        elle, ce qui est l'état normal d'un run arrêté sur son brief.
+        """
         return len(self.taches_vues)
 
     def resume(self) -> dict[str, Any]:
@@ -1421,25 +1447,67 @@ class ControlTowerState:
             agent.instances = event.instances
 
     def _applique_run_plan(self, event: Event) -> None:
-        """Pose le **graphe du plan** d'un run (#490) — et **rien d'autre**.
+        """Pose le **graphe du plan** d'un run (#490) et **déclare ses tâches** (#924).
 
-        Le pendant, pour le run, de ce que `_applique_reference` et
-        `_applique_detail` font pour une tâche : l'événement n'apprend qu'une
-        chose, il ne touche donc qu'à elle. Il ne crée aucune tâche, ne fait
-        bouger aucune colonne du Kanban et ne change pas `nb_taches` — le plan
-        annonce ce qui *sera* fait, les tâches d'un run restent celles que ses
-        événements ont réellement portées (`taches_vues`), et confondre les deux
-        ferait diverger `progression.total` de `nb_taches` pendant tout le run.
+        ⚠ La seconde moitié **renverse** la décision de #490, qui ne posait que
+        le plan : « il ne crée aucune tâche, ne fait bouger aucune colonne du
+        Kanban et ne change pas `nb_taches` ». C'était juste du graphe et faux de
+        tout le reste, et le retex du 2026-09-11 (G3) a mesuré le prix : sur un
+        même run, le pipeline annonçait « 4 tâches » là où le Kanban montrait
+        **une** carte et où l'en-tête comptait « 0/1 soldée », puis « 1/2 »,
+        « 2/3 », « 3/4 » — un **dénominateur qui grandit**, donc une barre de
+        progression presque pleine à mi-parcours. Quatre surfaces dérivaient le
+        compte chacune de son côté ; il naît désormais **une fois**, ici.
+
+        Ce qui a tranché : le graphe **disait déjà** ce que la projection
+        ignorait. `EtatNoeud` donne `backlog` par défaut à un nœud du plan que
+        la projection ne connaît pas encore — « la machine à états a un mot pour
+        *déclarée, pas encore prise* ». La tâche existe donc déjà pour qui
+        regarde le pipeline ; elle n'existait pas pour qui compte. Poser la
+        carte ne change aucun dessin (le statut est celui que le graphe rendait),
+        il rend seulement la même vérité lisible au Kanban, à la barre et au
+        compte du run.
+
+        **Ce que la carte porte, et rien de plus** : le titre que le plan
+        transporte, le projet du run, et `backlog`. **Ni agent, ni coût, ni
+        durée** : rien de tout cela n'existe quand le plan est écrit — l'agent
+        est routé au démarrage (#42) —, et c'est exactement ce que `plan_run`
+        refuse de transporter. **Ni l'ossature de checklist** du nœud (#489),
+        bien qu'elle voyage : c'est `graphe._etapes_du_noeud` qui la lit,
+        déjà, et qui ne retombe sur le plan que si la carte n'en porte pas. La
+        recopier ici mettrait la conversion « libellés → `EtapeTache` » à deux
+        endroits pour un dessin inchangé — donc deux règles à tenir d'accord
+        contre zéro gain.
+
+        **Une carte déjà là n'est jamais touchée.** L'ordre est la raison : le
+        plan précède l'exécution, donc une carte présente vient d'ailleurs — de
+        ce run, qui l'a déjà démarrée (rejeu du journal durable), ou du run que
+        celui-ci **relance** (#349), dont les tâches portent les mêmes
+        identifiants, un slug étant engendré depuis le contenu. La remettre à
+        `backlog` effacerait dans les deux cas un état acquis.
 
         Un plan **vide** ne remplace rien : le pont ne publie l'événement que sur
         un plan non vide, et si un producteur minimaliste en envoyait un, il
-        n'apprendrait rien. Idempotent, donc rejouable : le journal durable (#97)
-        reconstruit le graphe à l'identique au redémarrage de l'API.
+        n'apprendrait rien. Un nœud **sans identifiant** ne déclare aucune tâche
+        — il n'y a rien à quoi la rattacher (`NoeudPlan.vide`), et le graphe
+        l'écarte déjà du dessin. Idempotent, donc rejouable : le journal durable
+        (#97) reconstruit le graphe **et** les cartes à l'identique au
+        redémarrage de l'API.
         """
         execution = self._executions.get(event.run_id)
         if execution is None or not event.plan:
             return
         execution.plan = list(event.plan)
+        for noeud in event.plan:
+            if noeud.vide or noeud.id in self._taches:
+                continue
+            self._taches[noeud.id] = EtatTache(
+                id=noeud.id,
+                titre=noeud.titre,
+                statut=STATUT_BACKLOG,
+                run_id=event.run_id,
+                projet_id=event.projet_id,
+            )
 
     def _applique_execution_statut(self, event: Event) -> None:
         """Pose le cycle de vie d'un run (#185) : objectif, statut, heure de fin.

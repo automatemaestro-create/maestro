@@ -123,8 +123,13 @@ class CoutExecutionResume:
     """La ligne « par exécution » : le run résumé — bornes, tâches, usage cumulé.
 
     `debut`/`fin` sont les horodatages extrêmes des événements retenus (vides
-    si aucun n'est daté) ; `nb_taches` compte les tâches distinctes du run.
-    Le détail par tâche du run reste du côté du grand livre (#57).
+    si aucun n'est daté) ; `nb_taches` est **le** compte des tâches du run
+    (`EtatExecution.taches_vues`, #924), le même que celui du pipeline, du
+    Kanban et de la barre de progression — et non un compte propre à la fenêtre
+    de cet écran, qui faisait dire à `/couts` un nombre que nulle autre surface
+    ne confirmait. Le détail par tâche du run reste du côté du grand livre
+    (#57), où une tâche ne figure que si elle a dépensé : les deux comptes
+    diffèrent donc légitimement, et c'est la question qui n'est pas la même.
     """
 
     run_id: str
@@ -249,6 +254,12 @@ class _Accumulateur:
     statut: str = ""
     taches: set[str] = field(default_factory=set)
     executions: set[str] = field(default_factory=set)
+    #: Le nombre de tâches du run, **lu sur le run** et non compté ici (#924) —
+    #: sert la seule ligne « par exécution ». `taches` ci-dessus reste ce que la
+    #: fenêtre a vu passer, et c'est ce qu'il faut pour un agent : « combien de
+    #: tâches cet agent a-t-il portées dans la période » n'est pas « combien de
+    #: tâches ce run compte ».
+    nb_taches_du_run: int = 0
     debut: datetime | None = None
     fin: datetime | None = None
     debut_brut: str = ""
@@ -359,6 +370,22 @@ def agrege_couts(
                     tache.role = event.role or tache.role
                     tache.statut = event.statut or tache.statut
 
+        # Le compte des tâches du run est **celui du run** et non celui des
+        # événements retenus ci-dessus (#924) : il naît une fois, dans
+        # `EtatExecution.taches_vues`, et les quatre surfaces qui comptent les
+        # tâches d'un run en héritent. Lu sur la fenêtre, cet écran annonçait un
+        # nombre à lui — 8 tâches pour un run qui en avait 4, les quatre lignes
+        # de fusion en trop (C8, corrigé chez `bridge`) — et, cette cause
+        # réglée, il en aurait annoncé *moins* que le pipeline tant qu'une tâche
+        # du plan n'avait pas démarré.
+        #
+        # Posé **après** la boucle et non dedans : `taches_vues` parcourt tous
+        # les événements du run, donc le relire à chacun d'eux rendrait cet écran
+        # quadratique en nombre d'événements.
+        retenu = par_execution.get(execution.run_id)
+        if retenu is not None:
+            retenu.nb_taches_du_run = len(execution.taches_vues)
+
     return AnalyticsCouts(
         depuis=depuis.isoformat() if depuis is not None else None,
         pas=pas,
@@ -368,7 +395,7 @@ def agrege_couts(
         executions=tuple(
             CoutExecutionResume(
                 run_id=run_id,
-                nb_taches=len(acc.taches),
+                nb_taches=acc.nb_taches_du_run,
                 debut=acc.debut_brut,
                 fin=acc.fin_brut,
                 usage=acc.usage,

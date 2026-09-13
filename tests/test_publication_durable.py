@@ -6,6 +6,14 @@ tableau mentait sur trois points — une tâche finie affichée « En cours », 
 tâche démarrée sans aucun statut (donc lue comme une exécution parallèle qu'aucun
 plan ne déclare), et un run annonçant une tâche là où son plan en portait cinq.
 
+⚠ **Le troisième mensonge ne se lit plus au même endroit depuis #924** : le
+compte des tâches d'un run vient de son plan, donc il est juste des deux côtés et
+n'oppose plus rien. Ce que la perte laisse voir, et que cette suite éprouve
+désormais, c'est le **statut** — une tâche qui a vécu dans la coupure reste sur le
+`backlog` que le plan lui a donné, pour toujours, et le run s'arrête à 4/5. Le
+symptôme a bougé, le défaut non : c'est bien la même perte d'événements, et ces
+tests la voient toujours.
+
 La cause n'est pas dans l'affichage. Le bus est du **pub/sub, éphémère**, et le
 journal durable (#97) n'avait qu'un écrivain : la **pompe** de l'API, c'est-à-dire
 un *consommateur*. L'hôte détaché (#441/#446) continue de publier pendant la
@@ -69,6 +77,7 @@ from maestro.controltower import (
 from maestro.controltower.bridge import publieur_redis
 from maestro.controltower.events import CANAL_EVENEMENTS, EVENEMENT_TACHE_DETAIL
 from maestro.controltower.persistence import CLE_JOURNAL_EVENEMENTS, bus_durable
+from maestro.controltower.progression import STATUT_BACKLOG
 from maestro.controltower.state import EVENEMENT_EXECUTION_STATUT, EXECUTION_EN_COURS
 from maestro.engine.executor import STATUT_EN_COURS, STATUT_TERMINEE
 from maestro.plan_run import NoeudPlan
@@ -342,33 +351,53 @@ def test_le_tableau_d_avant_mentait_sur_les_trois_points_du_rapport():
     """L'échantillon fautif : le même run, le dispositif d'avant, les trois mensonges.
 
     Sans cette moitié, les assertions ci-dessus vaudraient un ✓ sur une question
-    jamais posée. Ce sont les trois chiffres du rapport, au mot près : une tâche
-    finie encore « en cours », une tâche démarrée sans aucun statut, et une
-    progression qui annonce **une** tâche là où le plan en porte cinq — ce
-    dernier point parce qu'un `tache.detail` fait bouger une carte sans jamais la
-    faire entrer au compte du run (`taches_vues`).
+    jamais posée. Ce sont les trois chiffres du rapport : une tâche finie encore
+    « en cours », une tâche démarrée dont le statut manque, et un run qui ne
+    compte pas toutes ses tâches.
+
+    ⚠ **Le troisième mensonge a changé de forme depuis #924**, et c'est à lire
+    avec soin : le compte total ne le porte plus, puisqu'il vient désormais du
+    **plan** — il vaut cinq des deux côtés, et une assertion dessus ne
+    distinguerait plus rien. Ce qui reste, et qui est la perte elle-même, c'est
+    le **statut** : `modele-persistance` a démarré, son événement s'est perdu
+    dans la coupure, donc sa carte reste sur le `backlog` que le plan lui a
+    donné. Le tableau la lit « à faire » alors qu'elle travaille. La perte est
+    intacte ; seul son symptôme s'est déplacé du dénominateur vers la colonne.
     """
     with redemarrage(incident_sans_le_dispositif()) as client:
         execution = resume(client)
         graphe = client.get(f"/api/executions/{RUN}/graphe").json()
 
         assert carte(client, "squelette-p1")["statut"] == STATUT_EN_COURS
-        assert carte(client, "modele-persistance")["statut"] == ""
+        assert carte(client, "modele-persistance")["statut"] == STATUT_BACKLOG
 
-    assert execution["progression"]["total"] == 1
+    # Rien de soldé : la tâche finie est lue « en cours », celle qui travaille est
+    # lue « à faire ». Le run annonce cinq tâches et n'en a résolu aucune.
+    assert (execution["progression"]["soldees"], execution["progression"]["total"]) == (
+        0,
+        len(PLAN),
+    )
     assert graphe["nb_noeuds"] == len(PLAN)
 
 
-def test_le_dispositif_rend_au_run_les_taches_qu_il_a_vraiment_portees():
-    """Le pendant du test ci-dessus : deux tâches vues, parce que rien n'a été perdu.
+def test_le_dispositif_rend_au_run_les_statuts_qu_il_a_vraiment_portes():
+    """Le pendant du test ci-dessus : les deux tâches sont à leur place.
 
-    Le compte reste celui des tâches que le run a **réellement portées** — un
-    plan annonce ce qui *sera* fait et ne crée aucune carte (#490) —, et c'est
-    précisément ce qui rend le « 1 » d'avant faux : il n'y avait pas une tâche,
-    il y en avait deux, dont une dont le statut s'était perdu.
+    C'est ce qui rend le tableau d'avant faux — non pas qu'il comptât une tâche
+    de moins (le plan les compte toutes depuis #924), mais qu'il en montrât deux
+    au mauvais endroit : `squelette-p1` **terminée** et rangée « en cours »,
+    `modele-persistance` **en cours** et rangée « à faire ».
     """
     with redemarrage(incident_avec_le_dispositif()) as client:
-        assert resume(client)["progression"]["total"] == 2
+        execution = resume(client)
+
+        assert carte(client, "squelette-p1")["statut"] == STATUT_TERMINEE
+        assert carte(client, "modele-persistance")["statut"] == STATUT_EN_COURS
+
+    assert (execution["progression"]["soldees"], execution["progression"]["total"]) == (
+        1,
+        len(PLAN),
+    )
 
 
 # --------------------------- ③ le compte de tâches est celui du plan
@@ -426,15 +455,30 @@ def test_le_compte_de_taches_du_run_est_celui_de_son_plan():
 
     assert execution["nb_taches"] == len(PLAN)
     assert execution["progression"]["total"] == graphe["nb_noeuds"] == len(PLAN)
+    # Le pendant exact de l'échantillon fautif : rien n'a été perdu, donc le run
+    # fini est **entièrement** soldé. C'est cette moitié que le compte total ne
+    # sait plus porter depuis #924 (il vaut cinq des deux côtés) et qui distingue
+    # seule les deux mondes.
+    assert execution["progression"]["soldees"] == len(PLAN)
 
 
-def test_sans_le_dispositif_une_tache_entiere_manque_au_compte_pour_toujours():
-    """L'échantillon fautif : le run est fini, et il lui manque une tâche.
+def test_sans_le_dispositif_une_tache_entiere_reste_a_faire_pour_toujours():
+    """L'échantillon fautif : le run est fini, et une de ses tâches n'a jamais bougé.
 
-    Pas « pas encore » : `modele-persistance` a été faite, et aucun écran ne la
-    montrera jamais — ni le Kanban, ni la barre, ni le journal. Le graphe, lui,
-    la dessine, puisque le plan avait été publié avant la coupure : c'est
-    exactement la contradiction qu'on lisait à l'écran.
+    Pas « pas encore » : `modele-persistance` a vécu et fini dans le quart
+    d'heure de coupure, et rien après elle n'en reparlera — ce que le journal n'a
+    pas gardé, le run ne le redira jamais. Le run est **terminé** et sa barre
+    s'arrête à **3/5**, la coupure ayant emporté deux issues : celle de
+    `modele-persistance`, qui reste « à faire », et celle de `squelette-p1`, dont
+    seul le départ a été consigné et qui reste donc « en cours ».
+
+    ⚠ **La forme du défaut a changé avec #924**, pas sa gravité. La carte de
+    `modele-persistance` manquait autrefois tout entière et le compte tombait à
+    quatre ; le plan la déclare désormais, donc elle est là — mais sur `backlog`,
+    pour toujours, parce que les deux seuls événements qui l'auraient fait
+    avancer sont ceux qu'on a perdus. C'est même la lecture la plus trompeuse des
+    deux : une tâche absente se remarque, une tâche « à faire » sur un run fini
+    se lit comme un travail qu'on aurait renoncé à faire.
     """
     log = InMemoryEventLog()
     run_entier(bus_d_avant(), log)
@@ -442,10 +486,11 @@ def test_sans_le_dispositif_une_tache_entiere_manque_au_compte_pour_toujours():
     with redemarrage(log) as client:
         execution = resume(client)
         graphe = client.get(f"/api/executions/{RUN}/graphe").json()
-        assert carte(client, "modele-persistance") is None
+        assert carte(client, "modele-persistance")["statut"] == STATUT_BACKLOG
+        assert carte(client, "squelette-p1")["statut"] == STATUT_EN_COURS
 
-    assert execution["progression"]["total"] == len(PLAN) - 1
-    assert graphe["nb_noeuds"] == len(PLAN)
+    assert execution["progression"]["soldees"] == len(PLAN) - 2
+    assert execution["progression"]["total"] == graphe["nb_noeuds"] == len(PLAN)
 
 
 # ------------------ ④ publié une fois, consigné une fois (API en marche)

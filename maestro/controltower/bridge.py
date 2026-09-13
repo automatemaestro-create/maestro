@@ -138,6 +138,38 @@ _SUFFIXE_BLOCAGE = ":blocage"
 #: grand livre.
 _SUFFIXE_USAGE = SUFFIXE_ETAPE_USAGE
 
+#: Les suffixes d'étape qui font une **activité d'agent** rattachée à sa tâche :
+#: un fait consigné sur elle, qui ne la fait pas changer de colonne. Déclarés
+#: **une fois** et non deux (#924) : ils servent à la fois à reconnaître l'étape
+#: et à retirer le suffixe de son `tache_id`, et tenir deux listes d'accord est
+#: précisément ce qui a échoué — `:fusion` (#705) avait rejoint la première et
+#: pas la seconde, si bien qu'une étape `<tache>:fusion` rendait
+#: `coquille-ui:fusion` pour identifiant de tâche. Un identifiant qui n'est la
+#: tâche de personne se compte comme une tâche de plus partout où le flux en
+#: compte, et l'écran Coûts annonçait 8 tâches pour un run qui en avait 4 (retex
+#: du 2026-09-11, C8).
+_SUFFIXES_ACTIVITE = (
+    _SUFFIXE_VALIDATION,
+    _SUFFIXE_RELANCE,
+    _SUFFIXE_REFUS,
+    _SUFFIXE_ACTIVITE,
+    _SUFFIXE_FUSION,
+)
+
+
+def _sans_suffixe_dactivite(etape: str) -> str:
+    """L'identifiant de tâche d'une étape d'activité — son suffixe retiré.
+
+    Un seul suffixe est retiré, celui qui termine l'étape : les enchaîner
+    (`removesuffix(...).removesuffix(...)`) n'apportait rien et laissait croire
+    qu'une étape pouvait en porter deux. Une étape qui n'en porte aucun revient
+    telle quelle — c'est le cas des étapes du run, que l'appelant écarte avant.
+    """
+    for suffixe in _SUFFIXES_ACTIVITE:
+        if etape.endswith(suffixe):
+            return etape.removesuffix(suffixe)
+    return etape
+
 
 def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
     """Convertit une ligne de journal (`StepRecord.to_dict`) en événements du bus.
@@ -210,15 +242,7 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
     est_detail = etape.endswith(_SUFFIXE_DETAIL)
     est_blocage = etape.endswith(_SUFFIXE_BLOCAGE)
     est_usage = etape.endswith(_SUFFIXE_USAGE)
-    est_activite = etape in _ETAPES_RUN or etape.endswith(
-        (
-            _SUFFIXE_VALIDATION,
-            _SUFFIXE_RELANCE,
-            _SUFFIXE_REFUS,
-            _SUFFIXE_ACTIVITE,
-            _SUFFIXE_FUSION,
-        )
-    )
+    est_activite = etape in _ETAPES_RUN or etape.endswith(_SUFFIXES_ACTIVITE)
     if est_reference:
         type_evenement = EVENEMENT_TACHE_REFERENCE
         tache_id = etape.removesuffix(_SUFFIXE_REFERENCE)
@@ -264,14 +288,10 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
         cout_brut = None
     elif est_activite:
         type_evenement = EVENEMENT_AGENT_ACTIVITE
-        tache_id = (
-            ""
-            if etape in _ETAPES_RUN
-            else etape.removesuffix(_SUFFIXE_VALIDATION)
-            .removesuffix(_SUFFIXE_RELANCE)
-            .removesuffix(_SUFFIXE_REFUS)
-            .removesuffix(_SUFFIXE_ACTIVITE)
-        )
+        # Le suffixe se retire pour **chacun** de ceux qui ouvrent cette branche,
+        # par la liste qui l'a ouverte — recopier ici les quatre premiers est ce
+        # qui a laissé `:fusion` derrière (#924, `_SUFFIXES_ACTIVITE`).
+        tache_id = "" if etape in _ETAPES_RUN else _sans_suffixe_dactivite(etape)
         detail = str(record.get("sortie") or record.get("erreur") or "")
     else:
         type_evenement = EVENEMENT_TACHE_STATUT
