@@ -478,8 +478,12 @@ else
     printf '  ⚠ « lib.sh reste-claude » est introuvable : un correctif refusé sous « .claude/ » ne\n'
     printf '    survivrait plus au merge de sa PR (la panne de #608).\n'
   fi
-  printf '  → régime de permission à arbitrer au lot 3 (#791). Mesure fraîche des refus de cette\n'
-  printf '    famille : bash scripts/orchestrate/journal.sh refus --tous --claude\n'
+  printf '  → ARBITRÉ par #791, et le verdict est NÉGATIF : on n'\''ouvre pas. Les deux coûts ont été\n'
+  printf '    chiffrés côte à côte — 5 butées sur les 78 sessions du journal, toutes dans les 3\n'
+  printf '    premiers runs du 2026-08-27, contre 86 règles « allow » ramenées à 0 et 3 des 5 « ask »\n'
+  printf '    devenus des oui silencieux. Ça se rouvre sur un FAIT — des butées qui reprennent, que le\n'
+  printf '    filet de #611 nomme —, jamais sur une intuition. Mesure fraîche de cette famille :\n'
+  printf '    bash scripts/orchestrate/journal.sh refus --tous --claude\n'
 
   printf '\n── Les cinq écarts de #788, sur l'\''état actuel du dépôt\n'
   if [ "$nb_ask" -eq 0 ] && [ "$nb_ecart_g1" -eq 0 ] && [ "$nb_arbitrer" -eq 0 ]; then
@@ -528,8 +532,10 @@ else
   done <<EOF
 $QUESTIONS
 EOF
-  printf '      → un support qui survit est le travail du lot 5 (#795) ; le précédent qui marche est\n'
-  printf '        « reste-claude », né du même constat sur le résidu « .claude/ » (#608 → #610).\n'
+  printf '      → le lot 5 (#795) a tranché LESQUELLES se consignent, et le critère n'\''est pas leur\n'
+  printf '        importance : « se repose-t-elle d'\''elle-même au passage suivant ? ». Les trois « ✗ »\n'
+  printf '        se reposent à chaque run (feu vert de /orchestrate) — elles sont EN ATTENTE, pas\n'
+  printf '        perdues, et leur ouvrir un ticket ferait le doublon d'\''un signalement déjà vivant.\n'
   g5=$(awk -F'\t' '$3 ~ /(merge-mr|pipeline-wait)/ && $1 == "voulu" { n++ } END { print n + 0 }' "$TMP.q2")
   if [ "$g5" -eq 2 ]; then
     printf '  G5  merge-mr / pipeline-wait                  → INTERDIT VOULU, pas un écart : les deux sont\n'
@@ -544,8 +550,9 @@ EOF
   printf '  Q3 n'\''y entre pas : aucune règle ne comble ce que le CLI refuse en amont (voir l'\''en-tête).\n'
 
   printf '\n  Ce que ce rapport ne dit pas : ce qui a été RÉELLEMENT refusé à des sessions —\n'
-  printf '  « bash scripts/orchestrate/journal.sh refus --tous ». Il ne tranche rien non plus : les\n'
-  printf '  arbitrages appartiennent aux lots 2 à 5 de #788.\n'
+  printf '  « bash scripts/orchestrate/journal.sh refus --tous ». Il ne tranche rien non plus — les\n'
+  printf '  cinq arbitrages de #788 sont rendus (#790, #791, #792 puis #933, #795) ; ce qu'\''il fait est\n'
+  printf '  de REJOUER leur verdict sur les règles d'\''aujourd'\''hui, là où elles vivent.\n'
 fi
 
 [ $((nb_ecart + nb_arbitrer + nb_ask)) -eq 0 ] || exit 3

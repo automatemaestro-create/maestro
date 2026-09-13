@@ -5,7 +5,8 @@
 #   bash scripts/design/relecture-visuelle.sh <iid>          # le plan, + la stack montée, prête à regarder
 #   bash scripts/design/relecture-visuelle.sh --fin          # arrête la stack et retire ce qu'elle a posé
 #
-# Le maillon qui manquait à la chaîne de docs/30 §5.1 : PERSONNE NE REGARDE LE RENDU. `verify` répond
+# Le maillon qui manquait à la chaîne de docs/30 §5.1 : PERSONNE NE REGARDE LE RENDU. La décision et
+# ses raisons sont en docs/30 §5.6 ; ce qui l'APPELLE — l'étape 4bis de `/ticket-finish` — en §5.5. `verify` répond
 # du câblage, `banc-mise-en-page` de la géométrie, `contraste.test.ts` / `a11y.test.tsx` /
 # `sobriete.test.tsx` des règles — aucun ne dit « à quoi ça ressemble ». Une session peut écrire une
 # interface, voir tous ses tests verts, et n'avoir jamais ouvert l'écran qu'elle vient de changer.

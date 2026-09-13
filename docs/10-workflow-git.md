@@ -6083,6 +6083,22 @@ apprenne à juger autre chose que `Bash`. Les deux se mesurent ; en attendant, l
 de #608 — **on rend le correctif dans la PR et on ouvre le ticket de reprise, on ne contourne
 jamais**.
 
+**Un premier accès ouvert par le même chantier, et qui n'a demandé aucune garde : la stack
+locale** (#932, lot 2 de #930, 2026-09-11 ; [docs/30 §5.6](./30-cible-visuelle-control-tower.md)).
+`settings.run.json` autorise désormais `bash scripts/controltower/start.sh` et
+`bash scripts/design/relecture-visuelle.sh`. C'était le **blocage réel** que le parent avait mesuré,
+et il n'était pas là où on le cherchait : `mcp__chrome-maestro` passait déjà l'union des deux listes,
+donc **le navigateur était disponible en run depuis toujours** — ce qui manquait à une session était
+une **stack à regarder**. Rien ici n'appelle la discussion du paragraphe suivant, et la différence
+est le fond du sujet : ces deux règles ouvrent **deux processus locaux** sur les ports du worktree
+(distincts par session depuis #152, donc N sessions n'en montent pas une pour toutes) et un verbe
+qui ne parle à **aucune forge**, n'écrit que sous `.maestro/relecture/` et `core/projets/`, tous deux
+gitignorés. Rien ne sort de la machine, rien n'entre — c'est exactement ce que le web, lui, fait.
+⚠ **`start.sh` n'est pas dans `.claude/settings.json`**, et ce n'est pas un oubli : en interactif une
+personne approuve, et c'est l'asymétrie écrite plus haut — à liste identique un run est plus
+contraint, parce qu'une règle y **définit la frontière** là où elle ne retire ailleurs que de la
+friction.
+
 **Un accès qui n'avait pas été ouvert, et qui l'est depuis #933 : le web** (#714, réexaminé et
 confirmé par #792, **renversé par #933** — lot 3 de #930, 2026-09-11 ;
 [docs/30 §5.2](./30-cible-visuelle-control-tower.md)). `WebSearch` et `WebFetch` sont désormais dans
