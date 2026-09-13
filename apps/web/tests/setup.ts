@@ -37,6 +37,8 @@ import { configure } from "@testing-library/dom";
 import { cleanup } from "@testing-library/react";
 import { afterEach, beforeEach, vi } from "vitest";
 
+import { oublierLesBrouillons } from "@/lib/brouillons";
+
 import {
   CATALOGUE_POSTE_NU,
   canauxDemandes,
@@ -180,6 +182,10 @@ beforeEach(() => {
   canauxDemandes.length = 0;
   projetsDuFil.length = 0;
   window.localStorage.clear();
+  // Le brouillon du composeur vit dans la mémoire du module depuis #926
+  // (`lib/brouillons`) — donc il survit à un démontage, ce qu'on lui demande,
+  // et survivrait au test suivant, ce qu'on ne veut pas.
+  oublierLesBrouillons();
   document.documentElement.removeAttribute("data-theme");
   window.ResizeObserver = ResizeObserverFactice as unknown as typeof ResizeObserver;
   Element.prototype.scrollIntoView = () => {};

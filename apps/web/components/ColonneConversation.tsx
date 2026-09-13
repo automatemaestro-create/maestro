@@ -1,9 +1,8 @@
 "use client";
 
 /**
- * La troisième zone du shell (#925, lot 4 de #921) : la colonne de droite,
- * **posée vide**. Le fil s'y installe au lot suivant (#926) ; ce lot-ci ne
- * livre que la zone, son ouverture et son comportement à l'étroit.
+ * La troisième zone du shell (#925, lot 4 de #921) et **le fil qui l'occupe**
+ * (#926, lot 5) : la colonne de droite, disponible depuis n'importe quel écran.
  *
  * ── Pourquoi elle n'est PAS modale ──────────────────────────────────────────
  *
@@ -35,9 +34,43 @@
  * est **`lg`**, celui que `BarreLaterale` emploie déjà : un troisième point de
  * rupture dans le même shell serait une règle de plus à tenir pour rien.
  *
+ * ⚠ La veille de **#926** a re-mesuré VS Code, qui tranche l'inverse — à 640 px
+ * il **comprime ses trois zones** (170 / 216 / 194) au lieu de recouvrir. C'est
+ * écarté, et la raison tient en une phrase : VS Code est une fenêtre de bureau
+ * qui n'est jamais vraiment étroite, la Control Tower est servie dans un
+ * navigateur et doit tenir à 420 px. Le régime de #925 ne bouge pas.
+ *
  * Les deux régimes s'écrivent en `max-lg:` / `lg:` et **ne s'annulent pas l'un
  * l'autre** : chacun pose ses propres propriétés, si bien qu'aucune ne dépend
  * de l'ordre dans lequel Tailwind les émet.
+ *
+ * ── Ce que #926 y installe, et les trois choses à ne pas défaire ────────────
+ *
+ * 1. **Le fil est monté TEL QUEL** (parti pris 1 de la veille). `Conversation`
+ *    borne sa colonne de lecture à `max-w-3xl` (48 rem) depuis #876, et cette
+ *    borne est **inerte** ici : `w-full max-w-3xl` dans 320 px rend 320. Il n'y
+ *    a donc ni mode « étroit », ni prop de largeur, ni seconde mise en page —
+ *    ce que le fichier de `Conversation` refuse nommément (« deux mises en page
+ *    dans un fichier qui existe pour n'en porter qu'une »). Vérifié dehors :
+ *    chez VS Code le composeur prend **90 % de la colonne** à 260 px (233 px) et
+ *    se **borne à 926** quand la zone passe à 1384 — la borne est une contrainte
+ *    de large, jamais une propriété du fil.
+ *
+ * 2. **Le fil n'est monté que si la colonne est ouverte.** `useChat` ouvre une
+ *    **WebSocket par instance** : le laisser dans le DOM sous `hidden` ferait
+ *    tourner un second socket sur tous les écrans, et deux sur `/chat`. C'est
+ *    aussi ce qui rend le repli sur `/chat` (`Shell`) réel et pas cosmétique.
+ *    ⚠ Ce qu'on écrit **survit quand même** à ces démontages : le brouillon vit
+ *    dans `lib/brouillons`, hors du composant, précisément pour ça.
+ *
+ * 3. **L'ascenseur est ICI, pas dans le fil.** Depuis #691 le fil n'a plus
+ *    d'ascenseur à lui — « il s'étend, et c'est la page qui le parcourt » —, ce
+ *    qui est juste sur `/chat`, où la page défile. Dans une colonne à hauteur
+ *    fixée (`h-dvh`), personne ne le parcourrait : c'est donc le conteneur
+ *    ci-dessous qui défile, et `Conversation` reste inchangée. La chaîne
+ *    `min-h-0` est ce qui donne sa hauteur à cet ascenseur (même règle que le
+ *    `Shell`, #248) — un seul maillon manquant et la colonne s'étire sous son
+ *    contenu au lieu de le faire défiler.
  *
  * ⚠ Fermée, la colonne reste **dans le DOM** — c'est ce qui permet à
  * l'`aria-controls` du bouton de la barre supérieure de désigner un élément qui
@@ -50,7 +83,20 @@
  * feuille de style du navigateur.
  */
 
-import { IconeFermer } from "@/components/Icones";
+import Link from "next/link";
+
+import { Conversation } from "@/components/Conversation";
+import { IconeAgrandir, IconeFermer } from "@/components/Icones";
+import { Infobulle } from "@/components/Infobulle";
+import { useEtatGlobal } from "@/lib/etatGlobal";
+import { entreeParLibelle } from "@/lib/navigation";
+import {
+  ACCUEIL_ORCHESTRATION,
+  AGENT_ORCHESTRATION,
+  AMORCES_ORCHESTRATION,
+  INTERLOCUTEUR_ORCHESTRATION,
+} from "@/lib/orchestration";
+import { useChat } from "@/lib/useChat";
 
 /**
  * L'ancre de la colonne, visée par l'`aria-controls` de son bouton.
@@ -65,6 +111,16 @@ export const ID_COLONNE_CONVERSATION = "colonne-conversation";
 
 /** Le titre visible de la zone, qui lui sert aussi de nom accessible. */
 const ID_TITRE = "colonne-conversation-titre";
+
+/**
+ * Le grand format du même fil — `/chat`, jamais une seconde conversation.
+ *
+ * Dérivé de `lib/navigation` comme partout ailleurs plutôt qu'écrit en dur, ce
+ * qui donne les deux propriétés du helper : le renvoi suit si « Chat » déménage,
+ * et il **ne s'allume pas** si l'entrée disparaît du menu (`undefined` plutôt
+ * qu'un lien mort) — voir `hrefRun`, même contrat.
+ */
+const HREF_CHAT = entreeParLibelle("Chat")?.href;
 
 export function ColonneConversation({
   ouverte,
@@ -114,37 +170,113 @@ export function ColonneConversation({
         >
           Conversation
         </h2>
-        {/* La fermeture est offerte **ici aussi**, et ce n'est pas un doublon du
-            bouton de la barre supérieure : sous `lg`, la colonne recouvre la
-            droite de l'écran, donc elle recouvre le bouton qui l'a ouverte. Sans
-            cette croix, une fenêtre étroite ouvrirait une colonne qu'on ne peut
-            plus refermer. Les deux libellés sont **distincts** à dessein
-            (« Fermer » ici, « Replier » là-haut) : deux boutons de même nom sur
-            le même écran ne se désignent plus. */}
-        <button
-          type="button"
-          onClick={fermer}
-          aria-label="Fermer la conversation"
-          className="-mr-1 rounded-md p-1.5 text-texte-secondaire hover:bg-survol hover:text-texte"
-        >
-          <IconeFermer className="size-5" />
-        </button>
+        {/* L'en-tête reste **au calibre de la colonne** (parti pris 4 de la
+            veille) : un titre et deux gestes, rien de plus. Mesuré chez VS Code,
+            dont l'en-tête de barre secondaire fait 32 px de haut et ne porte que
+            quatre boutons de 22 px — ce qui ne tient pas ici descend dans le fil
+            ou n'y est pas. La colonne n'est pas un écran. */}
+        <div className="flex shrink-0 items-center gap-1">
+          {/* Le pont vers le grand format (parti pris 2), d'après le couple
+              « Agrandir » / « Restaurer » de VS Code — mesuré : la même
+              conversation passe de 260 px à 1384, nav et centre à zéro. C'est un
+              **lien** et non un bouton parce que `/chat` est une route : le
+              milieu du clic, le clic droit et l'ouverture dans un onglet doivent
+              marcher comme partout ailleurs. Le repli de la colonne à l'arrivée
+              est tenu par le `Shell`, pas ici — il vaut aussi quand on atteint
+              `/chat` par le menu. */}
+          {HREF_CHAT !== undefined && (
+            <Infobulle texte="Ouvrir en grand">
+              <Link
+                href={HREF_CHAT}
+                aria-label="Ouvrir la conversation en grand"
+                className="flex rounded-md p-1.5 text-texte-secondaire hover:bg-survol hover:text-texte"
+              >
+                <IconeAgrandir className="size-5" />
+              </Link>
+            </Infobulle>
+          )}
+          {/* La fermeture est offerte **ici aussi**, et ce n'est pas un doublon du
+              bouton de la barre supérieure : sous `lg`, la colonne recouvre la
+              droite de l'écran, donc elle recouvre le bouton qui l'a ouverte. Sans
+              cette croix, une fenêtre étroite ouvrirait une colonne qu'on ne peut
+              plus refermer. Les deux libellés sont **distincts** à dessein
+              (« Fermer » ici, « Replier » là-haut) : deux boutons de même nom sur
+              le même écran ne se désignent plus. */}
+          <button
+            type="button"
+            onClick={fermer}
+            aria-label="Fermer la conversation"
+            className="-mr-1 rounded-md p-1.5 text-texte-secondaire hover:bg-survol hover:text-texte"
+          >
+            <IconeFermer className="size-5" />
+          </button>
+        </div>
       </div>
 
-      {/* La place tenue, patron repris d'`EmplacementReserve` (barre supérieure,
-          #119) : une zone qui s'ouvre sur rien apprend à ne plus l'ouvrir.
-          Mesuré à la veille sur Zulip, dont la colonne de droite en vue publique
-          n'affiche qu'une action orpheline — 50 px de contenu pour 285 de large.
-          Ce bloc disparaît au lot #926, quand le fil prend la place. */}
-      <div className="flex flex-1 flex-col items-center justify-center gap-1 px-6 text-center">
-        <p className="text-corps font-medium text-texte">
-          La conversation s&apos;installera ici
-        </p>
-        <p className="text-annexe text-texte-secondaire">
-          La zone est posée d&apos;abord, vide : le fil la rejoint au ticket
-          #926.
-        </p>
-      </div>
+      {/* ⚠ Monté **seulement quand la colonne est ouverte** : voir le point 2 de
+          l'en-tête — une WebSocket par instance de `useChat`. Ce qui est en
+          cours de saisie ne s'y perd pas (`lib/brouillons`). */}
+      {ouverte && <FilDeLaColonne />}
     </aside>
+  );
+}
+
+/**
+ * Le fil de l'orchestration, dans la colonne.
+ *
+ * Composant séparé pour que `useChat` **et son socket** naissent et meurent avec
+ * l'ouverture de la colonne : monté dans le parent, le hook tournerait même
+ * fermée, un `if` dans le JSX ne changeant rien à l'ordre des hooks.
+ */
+function FilDeLaColonne() {
+  const { projet } = useEtatGlobal();
+  // Le même appel que `/chat` (`app/chat/page.tsx`) — donc **la même**
+  // conversation, servie par la même API et la même mémoire de conversation
+  // ouverte (`lib/useChat` lit `useConversationOuverte`, jamais un état d'ici).
+  // C'est ce qui tient le critère « `/chat` reste servi et reste la même
+  // conversation » sans rien synchroniser : il n'y a rien à synchroniser.
+  const fil = useChat(AGENT_ORCHESTRATION, projet.id);
+
+  return (
+    // L'ascenseur de la colonne (point 3 de l'en-tête). `min-h-0` est ce qui lui
+    // donne sa hauteur : sans lui, `min-height:auto` laisserait la boîte grandir
+    // sous le fil et plus rien ne défilerait.
+    //
+    // ⚠ `after:h-24` — **la réserve du bouton flottant**, et elle est
+    // obligatoire ici pour la raison exacte de #888. Le composeur est à quai en
+    // `sticky bottom-16` (#726) : il se tient 64 px au-dessus du bord de **son**
+    // ascenseur, lequel est désormais cette boîte-ci et non plus la page. Or le
+    // bouton de l'assistant (#123) est calé sur la **fenêtre**
+    // (`fixed right-4 bottom-4 z-30`), donc il flotte par-dessus le bas de cette
+    // colonne — elle occupe les 320 px de droite, c'est-à-dire son coin. Sans
+    // cette réserve, au bas du défilement le formulaire remonterait de 64 px
+    // **sur le fil** (le défaut que #888 décrit mot pour mot) ; avec elle, les
+    // 96 derniers pixels ne portent que du fond et le flottant n'y rencontre
+    // rien. Pas de `-mt-*` en regard du `after:-mt-6` de `main` : cette boîte
+    // n'a pas de `gap` à reprendre.
+    <div
+      data-defilement
+      className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pt-4 after:block after:h-24 after:shrink-0"
+    >
+      <Conversation
+        fil={fil}
+        interlocuteur={INTERLOCUTEUR_ORCHESTRATION}
+        libelle="Conversation"
+        // Le titre reste au document — donc aux lecteurs d'écran et à la
+        // hiérarchie des titres — mais quitte l'**écran** : l'en-tête de la
+        // colonne dit déjà « Conversation » deux lignes plus haut, et deux
+        // titres empilés dans 320 px sont une ligne payée deux fois (vu au banc
+        // du 2026-09-13 : « Conversation » puis « CHAT GLOBAL »). C'est le
+        // patron `libelleMasque` de `CadreChamp` (#832), et VS Code ne titre pas
+        // deux fois sa barre secondaire non plus. Le badge « Reconnexion… »,
+        // lui, reste visible : c'est la seule chose de cet en-tête qui apprenne
+        // quelque chose (#691).
+        titre="Chat global"
+        niveauTitre={3}
+        titreMasque
+        accueil={ACCUEIL_ORCHESTRATION}
+        amorces={AMORCES_ORCHESTRATION}
+      />
+    </div>
   );
 }
