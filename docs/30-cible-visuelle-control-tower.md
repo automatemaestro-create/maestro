@@ -485,7 +485,7 @@ Ce que le cas apprend à la règle, en trois points :
 La troisième place a fait tout le travail : la colonne porte « Parler à », « Conversations » (#696),
 « Ouvert depuis ce fil » et le cadrage à file vide — quatre cartes, aucun plafond, et le corps rendu
 à la conversation. Depuis #831, « Conversations » **ouvre** la colonne et l'en-tête du fil la nomme —
-c'est la veille du §5.3 (2026-09-05) qui l'a tranché : la place était la bonne, l'**ordre** et le
+c'est la veille du §5.7 (2026-09-05) qui l'a tranché : la place était la bonne, l'**ordre** et le
 **renvoi** manquaient.
 
 ⚠ **Le tableau du §4.2 n'a pas été complété d'une ligne `/chat`**, et c'est délibéré : il est
@@ -660,6 +660,16 @@ Trois choses qu'il reprend de cette note et qu'il ne faut pas défaire :
 
 Il ne rejoue aucun des cinq : ni contraste, ni géométrie, ni accessibilité. Il n'écrit ni code ni
 forge — il rend une décision et propose de la consigner sur le ticket.
+
+#### Le maillon qui manquait encore, ajouté le 2026-09-11 (#932) — **regarder**
+
+Le maillon 0 dit ce qu'on **vise**, les cinq suivants ce qui **tient**. Il restait un trou qu'aucun
+des six ne voyait, et qui n'était pas une affaire de règle : **personne ne regarde le rendu**. Ni le
+contraste, ni la hauteur, ni la WebSocket ne disent *à quoi ça ressemble* — une session pouvait
+écrire une interface, voir tous ses tests verts, et n'avoir jamais ouvert l'écran qu'elle venait de
+changer. Le geste est `scripts/design/relecture-visuelle.sh` + le skill `relecture-visuelle`
+(**§5.6**), et il est devenu une **condition de clôture** le même jour (**§5.5**) : livré sans
+appelant, il aurait été une règle lue de plus.
 
 ---
 
@@ -924,12 +934,6 @@ Ce qui manque est son **appelant** — il n'y a pas de verbe de lecture `veille-
 
 ### 5.4 La veille se joue en run — 2026-09-11 (#934)
 
-> ⚠ **Numérotation.** La section « Veilles jouées » qui suit porte elle aussi `5.3`, par un doublon
-> antérieur à ce lot. Elle n'est **pas** renumérotée ici : une douzaine de renvois la visent depuis
-> `apps/web/README.md`, `docs/05` et ce fichier même, et les requalifier un par un — en les
-> distinguant de ceux qui visent l'autre `5.3` — est un travail de doc, pas un effet de bord. Le
-> lot 6 (#936) le traite.
-
 #714 a donné à la veille un **déclencheur**, #795 un **contenant**, #933 l'**accès**. Il lui manquait
 d'être **jouable** du côté où elle ne l'était pas.
 
@@ -1022,9 +1026,6 @@ forme que #519, et pour la même raison : la pièce manquante était une conduit
 ---
 
 ### 5.5 La relecture devient une condition de clôture — 2026-09-11 (#935)
-
-> ⚠ **Numérotation.** Comme au §5.4, la section « Veilles jouées » qui suit porte `5.3` par un
-> doublon antérieur au chantier. Elle n'est pas renumérotée ici : le lot 6 (#936) le traite.
 
 Le lot 2 (#932) a rendu le geste **jouable** ; il restait **appelé par rien**. C'est le défaut de
 #714 à l'identique, un cran plus loin dans le cycle — et sa correction se transpose mot pour mot.
@@ -1139,7 +1140,100 @@ et `mcp__chrome-maestro`, que l'étape 4bis emploie.
 
 ---
 
-### 5.3 Veilles jouées
+### 5.6 Le geste lui-même : ce qu'il regarde, et ce qu'il ne sait pas voir — 2026-09-11 (#932)
+
+> **Pourquoi ici, après son déclencheur.** Le lot 2 est **antérieur** au §5.5 : il a livré le geste,
+> que le §5.5 a ensuite rendu obligatoire. L'ordre de lecture est pourtant le bon — le §5.5 dit
+> *quand* on regarde et *ce qu'on en garde*, celui-ci *ce qu'on regarde et avec quoi*. Le numéro
+> suit la lecture, pas la chronologie.
+
+Le trou est nommé au §5.1 et il tient en une phrase : **personne ne regarde**. Les cinq maillons
+répondent à « est-ce que ça tient ? » — ratios, hauteurs, rôles, câblage, nombre de blocs —, aucun à
+*« à quoi ça ressemble, et est-ce que ça a l'air juste ? »*. Une session écrit une interface, voit
+tous ses tests verts, et n'a jamais ouvert son écran.
+
+⚠ **Le script ne regarde pas.** `scripts/design/relecture-visuelle.sh` prépare ce qui est mécanique
+— quels écrans, sur quels ports, où déposer les captures — et s'arrête là ; le jugement demande des
+yeux, et c'est la session qui les a (skill `relecture-visuelle`). C'est le partage de #562, #612 et
+#714, une fois de plus : ce qui est automatique est la **désignation** de ce qu'il y a à regarder,
+jamais le verdict.
+
+#### Quels écrans : trois questions, et une seule règle de classement
+
+`scripts/presentation/ecrans-touches.sh` (#544) sait déjà dire à quel écran appartient un fichier.
+C'est **sa** règle qui répond ici — recopiée, elle finirait par ne plus nommer le même écran pour le
+même fichier, et les deux appelants diraient des choses différentes du même diff. Le geste lui pose
+donc trois questions, dans l'ordre :
+
+| question | comment | pourquoi elle ne se déduit pas de la précédente |
+|---|---|---|
+| ce que le ticket a **touché** | `--ref HEAD --travail-en-cours` | la relecture a lieu **avant** la clôture : le ticket n'a souvent aucun commit, jamais de merge, et `origin/main` ne sait rien de lui |
+| les écrans qui **affichent** un composant partagé | remonte par les imports | #544 range `apps/web/components/**` sous « indéterminée », et il a raison : un composant n'**est** aucune route. Mais on peut remonter à celles qui le **montrent** — question différente, et sans elle le geste serait muet sur une bonne part des tickets d'interface, `components/` étant l'endroit le plus édité de `apps/web` |
+| ce qui reste **indéterminé** | nommé, jamais deviné | la coquille de tous les écrans (`app/layout.tsx`, `globals.css`) n'appartient à aucun, et un composant que personne n'importe encore ne s'affiche nulle part. La session le relaie dans « ce que je n'ai pas pu voir » — c'est une **réponse**, pas un trou |
+
+Les deux premières ont demandé deux sources nouvelles à `ecrans-touches.sh` (`--travail-en-cours`,
+`--chemins`) et **aucune règle nouvelle** : le classement d'un chemin en route n'a pas bougé d'une
+ligne. Chacune refuse plus d'un iid, pour deux raisons différentes qui mènent au même endroit —
+l'arbre appartient à la **branche**, stdin n'est lisible qu'**une fois** — et les refuse plutôt que
+d'en ignorer un en silence.
+
+⚠ **La remonte par les imports est une approximation, et il faut que ça se voie.** Elle apparie sur
+le **nom de module** (`from "…/Composeur"`), donc deux composants homonymes dans deux dossiers se
+confondent, et un import construit à l'exécution lui échappe. Les deux erreurs ne coûtent pas la
+même chose — *un écran de trop se regarde en vingt secondes, un écran manquant ne se regarde
+jamais* —, d'où le choix de **ratisser large**, et le plan dit toujours **par quel fichier** un
+écran est arrivé : un « ← Conversation.tsx » dit quoi regarder, là où nommer l'importateur rendrait
+la réponse au lieu de la cause.
+
+#### Sur quels ports : le fichier du worktree, jamais l'environnement
+
+C'est le piège que ce geste rencontrait par construction. Une session relocalisée par
+`/ticket-start` garde les ports du **clone principal** dans son bloc `env` ([docs/10
+§9.1](./10-workflow-git.md) — `EnterWorktree` ne réévalue que les caches liés au CWD).
+**L'environnement ment donc précisément là où ce script sert**, et le suivre reviendrait à arrêter
+la stack d'une session voisine ; viser 8000/3000 en dur est la même faute en pire. La source de
+vérité est le `.claude/settings.local.json` **du dépôt courant**, que `worktree.sh` écrit au
+montage ; l'environnement n'est qu'un repli, et 8000/3000 le repli du repli (clone principal, poste
+sans worktree).
+
+#### Ce qu'il écrit, et ce qu'il retire
+
+- `.maestro/relecture/<iid>/` — les captures et le jugement, sous la racine du dépôt et en chemin
+  **relatif** : un chemin absolu hors du répertoire de travail demande une approbation qu'une
+  session autonome n'a personne pour donner (#234, [docs/10 §11.7](./10-workflow-git.md)). Le
+  `filename` du MCP se donne relatif lui aussi, et c'est **mesuré** — sa racine autorisée *est* le
+  worktree de la session, mais son contrôle compare les chemins littéralement, si bien qu'un `e:/…`
+  est refusé « outside allowed roots » face à un `E:/…` pourtant identique. Le relatif rend la
+  question **sans objet** plutôt que de la traiter une fois de plus.
+- `core/projets/<PROJET_DEMO>.json` — sans projet actif, le shell ne rend que sa porte d'entrée
+  (#279) et il n'y a rien à regarder. Le fichier est gitignoré, son identifiant est **lu** dans
+  `maestro/controltower/demo.py` plutôt que recopié (une constante recopiée des deux côtés d'une
+  frontière est ce que #830 a vu casser), et il n'est retiré que **si c'est nous qui l'avons
+  posé** : un projet déclaré avant nous ne nous appartient pas.
+
+`--fin` arrête la stack **puis** retire le projet, dans cet ordre — un projet retiré sous une API
+vivante la laisserait servir un fantôme. Et le chemin d'échec range de lui-même : une stack qui ne
+démarre pas est arrêtée et son projet repris, faute de quoi un `--demo` raté laisserait derrière lui
+un projet déclaré que personne ne verrait passer, `core/projets/` étant gitignoré.
+
+#### Le prix est du temps de mur, et il s'annonce
+
+Monter la stack coûte — 18 s de montage, ~4 s par écran et par thème, 6 s d'arrêt sur le poste de
+référence —, et un run à concurrence 3 en monterait trois, sur des ports distincts que `worktree.sh`
+garantit depuis #152. C'est pourquoi **`--plan` existe séparément et ne démarre rien** : un ticket
+sans surface visible rend `3` en deux secondes, et personne ne paie la stack pour apprendre qu'il
+n'y avait rien à regarder. Ce `3` est ce qui rend l'étape 4bis du §5.5 acceptable sur **tout** le
+backlog, et non seulement sur les tickets d'interface — la règle de #418 tient ici comme ailleurs :
+ce que ça coûte se dit plutôt que de se masquer.
+
+Le dispositif est gardé par [`tests/test_relecture_visuelle.py`](../tests/test_relecture_visuelle.py)
+(#936) ; les deux sources de `ecrans-touches.sh` le sont dans
+[`tests/test_presentation.py`](../tests/test_presentation.py), là où vit la règle de #544 qu'elles
+étendent.
+
+---
+
+### 5.7 Veilles jouées
 
 Le banc du §1 a été dressé **une fois**, en prose, et n'était rejouable par personne — c'est le
 défaut que `/design-veille` corrige. Il serait absurde de le reproduire à l'échelle des surfaces :

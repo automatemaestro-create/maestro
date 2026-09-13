@@ -1048,7 +1048,7 @@ Cinq choses à savoir avant d'y toucher :
   qu'un écran tokenisé ne jure pas à côté d'un écran encore brut pendant la
   migration.
 - **Le sixième ton du badge s'appelle `provenance`, pas `accent`** (#912,
-  docs/30 §5.3). `BadgeEtat` rendait du **violet** sous le nom `accent` quand
+  docs/30 §5.7). `BadgeEtat` rendait du **violet** sous le nom `accent` quand
   `--accent` est vert : ce sont deux rôles — la provenance d'un élément,
   l'action à faire —, et l'homonymie aurait fait repeindre en vert toutes les
   pastilles de proposition au premier repli sur le token. Le ton porte
@@ -1157,7 +1157,7 @@ rougit et son témoin se replie — c'est ce qui est arrivé à `selectionne` (#
 et la ligne est partie avec le manque.
 
 ⚠ **Deux des six n'étaient pas des couleurs, et c'est la veille #905 qui l'a
-vu** (docs/30 §5.3, « Les tons du socle ») : les références vérifiées rendent
+vu** (docs/30 §5.7, « Les tons du socle ») : les références vérifiées rendent
 leurs tons **sans valence** par **transparence sur ce qui est déjà là**, jamais
 par une teinte de plus — et notre palette est entièrement opaque, ce qui est la
 raison même pour laquelle ces deux-là n'avaient pas de place où se ranger. #910
@@ -1349,7 +1349,7 @@ clavier vivait dans le placeholder, donc s'effaçait au premier caractère ; et
 `pe-14` réservait 56 px de vide à droite de l'envoi pour le bouton flottant de
 l'assistant (#123).
 
-La veille de conception (#724, docs/30 §5.3 — décision complète en commentaire
+La veille de conception (#724, docs/30 §5.7 — décision complète en commentaire
 de #722) a tranché **quatre partis pris**, mesurés sur ChatGPT, Perplexity et
 Zulip, et les lots 3 et 4 (#726, #727) les ont posés :
 
@@ -1382,7 +1382,7 @@ Zulip, et les lots 3 et 4 (#726, #727) les ont posés :
    mais reste dans la description.
 
 Puis la veille **différée** de #726 (#866, jouée sur pièces le 2026-09-06 —
-décision complète en commentaire de #866, entrée datée en docs/30 §5.3) a jugé
+décision complète en commentaire de #866, entrée datée en docs/30 §5.7) a jugé
 les trois points que #726 avait tranchés à l'écran sans référence, et #884 a
 posé les deux qui appelaient du code — mesurés sur ChatGPT, Perplexity, VS Code
 (sources lues), Zulip (sources lues), Slack et Mattermost (doc officielle) :
@@ -1475,7 +1475,7 @@ c'est-à-dire au pire moment, et c'est précisément ce que la `ref` de #695 ava
 évité.
 
 **Sous `sm`, le cadre se replie et les amorces se bornent à deux** (#891, partis
-pris 2 et 3 de la veille **#873**, différée de #728 — docs/30 §5.3). Rien ne
+pris 2 et 3 de la veille **#873**, différée de #728 — docs/30 §5.7). Rien ne
 change au-dessus de `sm` : mêmes écarts, même géométrie, **même ordre de
 tabulation**. Deux points, un seul fichier :
 
@@ -1493,7 +1493,7 @@ tabulation**. Deux points, un seul fichier :
 
    **Et depuis #907, le repli se décide par le wrap du navigateur, plus par une
    hauteur mesurée** (parti pris 1 de la veille **#899**, différée de #891 —
-   docs/30 §5.3). #891 lisait « le brouillon tient sur une ligne » sur ce que
+   docs/30 §5.7). #891 lisait « le brouillon tient sur une ligne » sur ce que
    `ajusterLaHauteur` mesurait, et le tenait par un invariant délicat : repliée,
    la rangée laisse au texte ~88 px de moins que les deux étages (mesuré à
    375 px, **156 px** contre 243), donc une plage de brouillons **débordait
@@ -1552,7 +1552,7 @@ tabulation**. Deux points, un seul fichier :
    d'abord que la forme d'instinct y perd.
 
 **Et aucune amorce ne s'enveloppe sur elle-même** (#908, partis pris 4 et 5 de la
-veille **#899**, différée de #891 — docs/30 §5.3). #873 avait **compté** les
+veille **#899**, différée de #891 — docs/30 §5.7). #873 avait **compté** les
 amorces, pas leur longueur : les deux que #891 gardait sous `sm` étaient les deux
 plus **longues** (43 et 35 caractères, des phrases entières), une ligne chacune à
 375 px, et la seule au calibre des références — « Où en sont les runs ? »,
@@ -1643,7 +1643,7 @@ raccourcir un libellé change ce qu'il propose (#899 → #908).
 
 ### Le fil en colonne — `components/Conversation.tsx`, `chat/BulleFil.tsx` (#876)
 
-La veille du chat global pleine page (#820, différée de #698 — docs/30 §5.3,
+La veille du chat global pleine page (#820, différée de #698 — docs/30 §5.7,
 décision complète en commentaire de #820) a mesuré ce que #690/#698 avaient figé
 **sans référence**, à 1920×872 : le fil occupait **1144 px** pour des bulles
 bornées à 543 (`min(70 %, 72ch)`, #697), si bien que les deux côtés **ne se

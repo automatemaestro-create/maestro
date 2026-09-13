@@ -48,7 +48,7 @@
  * ## Ce que #876 y change : la bulle est réservée à la personne, et un tour se
  * nomme une fois
  *
- * Partis pris **2 et 3** de la veille #820 (docs/30 §5.3, décision complète en
+ * Partis pris **2 et 3** de la veille #820 (docs/30 §5.7, décision complète en
  * commentaire de #820), mesurés sur ChatGPT, Zulip et GitHub Discussions.
  *
  * **Seule la personne a une bulle.** Hors `utilisateur` et hors `pleineLargeur`,

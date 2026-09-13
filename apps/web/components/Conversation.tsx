@@ -66,7 +66,7 @@
  * La règle ci-dessus était la bonne, et **rien ne la montrait** : remonté lire,
  * on ne voyait pas qu'une réponse continuait en bas, et aucun geste ne ramenait
  * au dernier message autrement qu'en défilant. C'est le parti pris 4 de la
- * veille #820 (docs/30 §5.3) — ChatGPT rend un « Aller en bas » qui n'apparaît
+ * veille #820 (docs/30 §5.7) — ChatGPT rend un « Aller en bas » qui n'apparaît
  * **qu'une fois remonté**, Zulip ancre le sien au coin de la colonne. La règle
  * de #695 ne change donc pas d'un caractère : elle devient visible.
  *
@@ -115,7 +115,7 @@
  *
  * ## Le fil est une colonne (#876)
  *
- * Les partis pris **1 à 3** de la veille #820 (docs/30 §5.3, décision complète
+ * Les partis pris **1 à 3** de la veille #820 (docs/30 §5.7, décision complète
  * en commentaire de #820, différée de #698) — la première veille jouée **sur
  * pièces**, c'est-à-dire sur une surface que #690/#698 avaient figée sans
  * référence. Ce qu'elle a mesuré à 1920×872 : le fil occupait **1144 px** pour
@@ -147,7 +147,7 @@
  * posé à côté, les sources dessous — et le raccourci clavier vivait dans le
  * placeholder, donc s'effaçait au premier caractère, à l'instant où il
  * servait. Depuis #726 il applique les partis pris de la veille de #724
- * (docs/30 §5.3, décision complète en commentaire de #722) : **un cadre à deux
+ * (docs/30 §5.7, décision complète en commentaire de #722) : **un cadre à deux
  * étages** — le texte pleine largeur en haut, un rail de contrôles en bas, où
  * l'envoi se tient —, un champ qui **grandit avec ce qu'on y écrit** jusqu'à un
  * plafond puis défile en interne (la poignée `resize-y` disparaît, voir
@@ -190,7 +190,7 @@
  * tant qu'elle était un padding de `main`, et #888 en a fait le dernier
  * élément du flux (voir l'élément qui suit le formulaire).
  *
- * Depuis #884 (veille #866, différée de #726 — docs/30 §5.3), le rail **parle
+ * Depuis #884 (veille #866, différée de #726 — docs/30 §5.7), le rail **parle
  * une seule langue** : l'envoi est une icône nommée (`IconeEnvoyer`, libellé
  * `sr-only`), de la taille du `+` qui ouvre le rail, et l'arrêt d'une réponse
  * en vol prend **sa place, à sa taille** (`IconeArret`, `contour`) — d'après
@@ -222,7 +222,7 @@
  *
  * **Et depuis #907 le repli se décide par le WRAP du navigateur, plus par une
  * hauteur mesurée** (parti pris 1 de la veille #899, différée de #891 —
- * docs/30 §5.3). #891 l'obtenait par un état (`debordement`) et un
+ * docs/30 §5.7). #891 l'obtenait par un état (`debordement`) et un
  * `useLayoutEffect` de mesure, tenus par un invariant délicat — seule une
  * mesure prise en rangée unique pouvait poser ou lever le débordement, la
  * rangée unique laissant au texte ~88 px de moins que les deux étages, faute de

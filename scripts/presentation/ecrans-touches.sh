@@ -116,7 +116,8 @@ Options :
   --chemins     Ne lit NI les commits NI l'arbre : classe les chemins reçus sur stdin, un par
                 ligne. Pour qui a déjà sa liste de fichiers et ne veut que la règle « ce chemin,
                 quel écran ? » — la remonte d'un composant partagé vers les écrans qui
-                l'affichent (#932). Un seul iid attendu, stdin n'étant lisible qu'une fois.
+                l'affichent (#932). Un seul iid attendu — stdin n'étant lisible qu'une fois, deux
+                sont REFUSÉS plutôt qu'un ignoré en silence.
   --check       Affiche aussi, sur stderr, le diagnostic : ref retenue, et les tickets dont
                 aucun commit ne porte `Refs #<iid>` / `Closes #<iid>` sur cette ref (pas
                 encore mergés, ou d'un autre dépôt) — à distinguer d'un ticket sans écran.
@@ -164,8 +165,13 @@ fi
 # Le travail en cours appartient à la BRANCHE, pas à l'historique : il n'y a donc qu'un ticket à qui
 # l'attribuer. L'étaler sur N tickets prêterait à chacun les fichiers des autres — un résultat faux,
 # et silencieusement (les lignes se ressembleraient).
-if [ "$TRAVAIL" = 1 ] && [ "${#IIDS[@]}" -ne 1 ]; then
-  printf 'ecrans-touches.sh : --travail-en-cours attend un seul iid (%d donnés).\n' "${#IIDS[@]}" >&2
+# `--chemins` tombe sous la même garde pour une raison qui lui est propre et qui mène au même
+# endroit : stdin n'est lisible qu'une fois, donc le second iid ne recevrait rien — en ignorer un en
+# silence serait le défaut symétrique de celui que la garde ci-dessus empêche.
+if [ "${#IIDS[@]}" -ne 1 ] && { [ "$TRAVAIL" = 1 ] || [ "$CHEMINS" = 1 ]; }; then
+  printf 'ecrans-touches.sh : %s attend un seul iid (%d donnés).\n' \
+    "$([ "$TRAVAIL" = 1 ] && printf -- '--travail-en-cours' || printf -- '--chemins')" \
+    "${#IIDS[@]}" >&2
   exit 2
 fi
 

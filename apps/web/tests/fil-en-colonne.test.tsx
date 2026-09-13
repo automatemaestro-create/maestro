@@ -1,6 +1,6 @@
 /**
  * **Le fil se lit comme une colonne** (#876) — les partis pris 1 à 3 de la
- * veille #820 (docs/30 §5.3, décision complète en commentaire de #820).
+ * veille #820 (docs/30 §5.7, décision complète en commentaire de #820).
  *
  * Ce fichier ne recouvre pas ce qui est déjà gardé : la géométrie que #691/#698
  * ont posée vit dans `chat-pleine-page.test.tsx` (①–④) et le composeur dans

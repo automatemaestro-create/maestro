@@ -34,7 +34,7 @@
  *   savoir quoi retirer.
  *
  * Et deux de plus depuis #727, venus de la veille #724 (parti pris 2, docs/30
- * §5.3, décision complète en commentaire de #722) :
+ * §5.7, décision complète en commentaire de #722) :
  *
  * - **un seul point d'entrée, qui ouvre les gestes** — d'après ChatGPT (un `+`
  *   en tête du champ, qui ouvre un menu) et Perplexity (un `+` en tête du

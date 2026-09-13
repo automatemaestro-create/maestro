@@ -117,7 +117,7 @@
  * la colonne, son titre à y = 592 et la première conversation à 726, derrière
  * l'ascenseur propre de la colonne — sans un indice qu'il y avait une suite —,
  * et **rien dans le corps ne nommait la conversation ouverte**. Ce que la veille
- * (commentaire du ticket, docs/30 §5.3) a tranché, en cinq partis pris :
+ * (commentaire du ticket, docs/30 §5.7) a tranché, en cinq partis pris :
  *
  * - **la conversation ouverte se nomme là où on lit** — d'après Slack, dont
  *   l'en-tête porte le nom de ce qu'on lit et en fait un geste : l'`entete` du

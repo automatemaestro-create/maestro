@@ -142,10 +142,37 @@ class DepotEcrans:
             self._git("add", "--", chemin)
         self._git("commit", "-m", message)
 
-    def ecrans(self, *iids: object, check: bool = False) -> subprocess.CompletedProcess[str]:
+    def ecrit(self, chemin: str, *, suivi: bool = False) -> None:
+        """Pose un fichier SANS le commiter — le régime d'une session qui vient d'écrire.
+
+        `suivi=True` le commite d'abord puis le modifie : c'est l'autre moitié de ce que
+        `--travail-en-cours` doit voir (un fichier suivi modifié, et non seulement non suivi).
+        """
+        fichier = self.racine / chemin
+        fichier.parent.mkdir(parents=True, exist_ok=True)
+        if suivi:
+            fichier.write_text(f"// {chemin}\n", encoding="utf-8")
+            self._git("add", "--", chemin)
+            self._git("commit", "-m", "chore: base\n\nRefs #1")
+        fichier.write_text(f"// {chemin} (en cours)\n", encoding="utf-8")
+
+    def ecrans(
+        self,
+        *iids: object,
+        check: bool = False,
+        ref: str | None = None,
+        travail: bool = False,
+        chemins: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
         args = ["scripts/presentation/ecrans-touches.sh"]
         if check:
             args.append("--check")
+        if ref is not None:
+            args += ["--ref", ref]
+        if travail:
+            args.append("--travail-en-cours")
+        if chemins is not None:
+            args.append("--chemins")
         args += [str(i) for i in iids]
         return subprocess.run(
             [BASH, *args],
@@ -153,6 +180,7 @@ class DepotEcrans:
             capture_output=True,
             text=True,
             encoding="utf-8",
+            input=chemins,
         )
 
 
@@ -359,6 +387,123 @@ def test_le_script_n_ecrit_rien_dans_le_depot(depot: DepotEcrans) -> None:
         [GIT, "status", "--porcelain"], cwd=depot.racine, capture_output=True, text=True
     ).stdout
     assert avant == apres == ""
+
+
+# --------------------------------------------------------------------------------------------------
+# Les deux sources ajoutées par #932 — même règle de classement, d'autres fichiers à classer
+# --------------------------------------------------------------------------------------------------
+#
+# `ecrans-touches.sh` répondait à une question posée APRÈS COUP, sur un milestone livré : les
+# commits suffisaient. La relecture visuelle (#932) la pose AVANT la clôture, quand le ticket
+# n'a souvent aucun commit. Ce qui se garde ici n'est donc pas une règle de plus — c'est que la
+# règle reste **la même** quand la source change, et que chaque source refuse ce qu'elle ne sait
+# pas attribuer.
+
+
+@besoin_de_git
+def test_le_travail_en_cours_ne_compte_que_si_on_le_demande(depot: DepotEcrans) -> None:
+    """Le contre-exemple d'abord : sans l'option, un écran non commité n'existe pas.
+
+    Sans cette moitié, « --travail-en-cours rend une ligne » ne prouverait rien — la ligne pourrait
+    venir d'ailleurs.
+    """
+    depot.ecrit("apps/web/app/couts/page.tsx")
+    assert routes(depot.ecrans(30).stdout) == []
+    assert routes(depot.ecrans(30, travail=True).stdout) == [("30", "/couts", "couts")]
+
+
+@besoin_de_git
+def test_le_travail_en_cours_voit_le_suivi_modifie_autant_que_le_non_suivi(
+    depot: DepotEcrans,
+) -> None:
+    """Deux lectures, pas une : `diff HEAD` (suivis modifiés) et `ls-files --others` (non suivis).
+
+    Un écran retouché est le cas le plus courant d'un ticket d'interface — n'en lire qu'une des deux
+    laisserait la moitié des relectures muettes.
+    """
+    depot.ecrit("apps/web/app/runs/page.tsx", suivi=True)
+    depot.ecrit("apps/web/app/couts/page.tsx")
+    assert routes(depot.ecrans(31, travail=True).stdout) == [
+        ("31", "/couts", "couts"),
+        ("31", "/runs", "runs"),
+    ]
+
+
+@besoin_de_git
+def test_les_commits_et_l_arbre_se_reunissent_sous_une_seule_route(depot: DepotEcrans) -> None:
+    """Un ticket qui a commité un écran puis en retouche un fichier : une route, ses deux fichiers.
+
+    C'est l'agrégation de #544 qui répond — la source n'y change rien, et c'était l'enjeu de ne pas
+    recopier la règle dans `relecture-visuelle.sh`.
+    """
+    depot.commit("feat: runs\n\nRefs #32", ["apps/web/app/runs/page.tsx"])
+    depot.ecrit("apps/web/app/runs/Filtres.tsx")
+    vues = lignes(depot.ecrans(32, ref="HEAD", travail=True).stdout)
+    assert [(ligne[0], ligne[1]) for ligne in vues] == [("32", "/runs")]
+    assert vues[0][3] == "apps/web/app/runs/Filtres.tsx,apps/web/app/runs/page.tsx"
+
+
+@besoin_de_git
+def test_un_fichier_ignore_n_est_pas_du_travail_en_cours(depot: DepotEcrans) -> None:
+    """`--exclude-standard` : ce que le `.gitignore` masque n'entre jamais dans un commit, donc
+    n'est pas du travail à relire. Le dépôt en pose sous `apps/web/` (build, captures)."""
+    (depot.racine / ".gitignore").write_text("apps/web/app/brouillon/\n", encoding="utf-8")
+    depot._git("add", "--", ".gitignore")
+    depot._git("commit", "-m", "chore: motif\n\nRefs #1")
+    depot.ecrit("apps/web/app/brouillon/page.tsx")
+    depot.ecrit("apps/web/app/couts/page.tsx")
+    assert routes(depot.ecrans(33, travail=True).stdout) == [("33", "/couts", "couts")]
+
+
+@besoin_de_git
+def test_le_travail_en_cours_refuse_deux_tickets(depot: DepotEcrans) -> None:
+    """L'arbre appartient à la BRANCHE : l'étaler sur N tickets prêterait à chacun les fichiers des
+    autres, et silencieusement — les lignes se ressembleraient."""
+    resultat = depot.ecrans(34, 35, travail=True)
+    assert resultat.returncode == 2
+    assert "--travail-en-cours attend un seul iid" in resultat.stderr
+
+
+@besoin_de_git
+def test_chemins_ne_lit_ni_les_commits_ni_l_arbre(depot: DepotEcrans) -> None:
+    """Le contre-exemple est dans le décor : le ticket a un écran commité ET un écran non commité,
+    et aucun des deux ne sort. `--chemins` ne rend QUE la règle, sur la liste qu'on lui donne."""
+    depot.commit("feat: coûts\n\nCloses #36", ["apps/web/app/couts/page.tsx"])
+    depot.ecrit("apps/web/app/runs/page.tsx")
+    sortie = depot.ecrans(36, chemins="apps/web/app/agents/page.tsx\n").stdout
+    assert routes(sortie) == [("36", "/agents", "agents")]
+
+
+@besoin_de_git
+def test_chemins_classe_avec_la_meme_regle_que_les_commits(depot: DepotEcrans) -> None:
+    """Un composant partagé rend « - » ici comme ailleurs : c'est ce qui permet à
+    `relecture-visuelle.sh` de remonter vers les écrans qui l'affichent sans jamais redéfinir
+    « indéterminé »."""
+    sortie = depot.ecrans(
+        37,
+        chemins="apps/web/components/Conversation.tsx\napps/web/app/chat/page.tsx\n",
+    ).stdout
+    assert routes(sortie) == [("37", "/chat", "chat"), ("37", "-", "-")]
+
+
+@besoin_de_git
+def test_chemins_dedoublonne_ce_qu_on_lui_donne(depot: DepotEcrans) -> None:
+    """`sort -u` en entrée, comme pour les commits : deux importateurs d'un même composant mènent au
+    même écran, et le plan ne doit pas le nommer deux fois."""
+    sortie = depot.ecrans(
+        38, chemins="apps/web/app/runs/page.tsx\napps/web/app/runs/page.tsx\n"
+    ).stdout
+    assert routes(sortie) == [("38", "/runs", "runs")]
+
+
+@besoin_de_git
+def test_chemins_refuse_deux_tickets(depot: DepotEcrans) -> None:
+    """Même garde que `--travail-en-cours`, pour une raison qui lui est propre et que l'aide
+    annonçait déjà : stdin n'est lisible qu'une fois, donc le second iid ne recevrait rien. En
+    ignorer un en silence était le défaut symétrique de celui que l'autre garde empêche."""
+    resultat = depot.ecrans(39, 40, chemins="apps/web/app/runs/page.tsx\n")
+    assert resultat.returncode == 2
+    assert "--chemins attend un seul iid" in resultat.stderr
 
 
 # ==================================================================================================

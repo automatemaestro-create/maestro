@@ -2360,7 +2360,7 @@ conversations n'est pas intuitif »). Mesuré à 1920×872, la carte était la t
 son titre à y = 592 et la première conversation à 726, derrière l'ascenseur propre de la colonne et
 sans un indice qu'il y avait une suite ; et rien dans le corps ne nommait la conversation ouverte. La
 veille (`/design-veille`, consignée sur le ticket et dans
-[docs/30 §5.3](./30-cible-visuelle-control-tower.md)) a tranché cinq partis pris, tous dans le socle :
+[docs/30 §5.7](./30-cible-visuelle-control-tower.md)) a tranché cinq partis pris, tous dans le socle :
 **l'en-tête du fil nomme la conversation ouverte**, et ce nom est un bouton qui **mène à la liste**
 (la carte défile en vue, la ligne ouverte prend le focus) ; la carte passe **en tête** de la
 colonne ; une ligne dit **sujet · récence · volume** et l'ouverte se reconnaît à sa **forme** (barre
