@@ -25,6 +25,7 @@ import { BarreLaterale } from "@/components/BarreLaterale";
 import { BarreSuperieure } from "@/components/BarreSuperieure";
 import { BasculeTheme } from "@/components/BasculeTheme";
 import { CentreNotifications } from "@/components/CentreNotifications";
+import { ColonneConversation } from "@/components/ColonneConversation";
 import { GuidePriseEnMain } from "@/components/GuidePriseEnMain";
 import { MenuAide } from "@/components/MenuAide";
 import { RegionArbitrage } from "@/components/RegionLive";
@@ -34,8 +35,11 @@ import { ASCENSEUR_PAGE, ecouterDefilement } from "@/lib/ascenseur";
 import { FournisseurEtatGlobal } from "@/lib/etatGlobal";
 import { FournisseurProjetActif, useProjetActif } from "@/lib/etatProjetActif";
 import {
+  ecouterConversationOuverte,
   ecouterRepliSidebar,
+  ecrireConversationOuverte,
   ecrireRepliSidebar,
+  lireConversationOuverte,
   lireRepliSidebar,
 } from "@/lib/preferences";
 import type { Projet } from "@/lib/types";
@@ -90,6 +94,10 @@ function CadreControlTower({
   children: React.ReactNode;
 }) {
   const [repliee, setRepliee] = useState(false);
+  // La troisième zone (#925) : fermée au premier rendu, puis restituée comme le
+  // repli ci-dessous. Fermée est aussi le défaut du chantier — c'est ce qui rend
+  // ce lot mergeable seul, une colonne repliée ne changeant aucun écran.
+  const [conversationOuverte, setConversationOuverte] = useState(false);
 
   // Lu après l'hydratation : le rendu serveur ne connaît pas le localStorage,
   // le lire pendant le rendu ferait diverger les deux arbres. Restitution
@@ -106,9 +114,26 @@ function CadreControlTower({
     };
   }, []);
 
+  // Même mécanique, même raison (#925) : un second effet plutôt qu'un ajout au
+  // premier, pour que chaque zone garde son abonnement et son nettoyage — deux
+  // préférences indépendantes, dont l'une peut changer sans l'autre.
+  useEffect(() => {
+    const tick = setTimeout(
+      () => setConversationOuverte(lireConversationOuverte()),
+      0,
+    );
+    const detacher = ecouterConversationOuverte(setConversationOuverte);
+    return () => {
+      clearTimeout(tick);
+      detacher();
+    };
+  }, []);
+
   // Le stockage tranche : on écrit, l'abonnement ci-dessus met l'état à jour —
   // ici comme depuis les Paramètres, un seul chemin de bascule.
   const basculerRepli = () => ecrireRepliSidebar(!repliee);
+  const basculerConversation = () =>
+    ecrireConversationOuverte(!conversationOuverte);
 
   return (
     // `key` : changer de projet **remonte** tout ce qui est dessous (#281).
@@ -178,6 +203,8 @@ function CadreControlTower({
             notifications={<CentreNotifications />}
             theme={<BasculeTheme />}
             aide={<MenuAide />}
+            conversationOuverte={conversationOuverte}
+            basculerConversation={basculerConversation}
           />
           {/* `@container` : la sidebar prend de la largeur au contenu, donc les
               grilles des pages se calent sur la largeur **réelle** de cette
@@ -244,6 +271,22 @@ function CadreControlTower({
             {children}
           </main>
         </div>
+        {/* La troisième zone (#925, docs/35 §3) : sœur de la colonne centrale,
+            donc **hors** de `<main>` — c'est ce qui la tient hors du comptage de
+            `sobriete.test.tsx`, qui ne recense que les blocs de
+            `#contenu-principal`. Une zone du shell n'est pas un bloc de plus
+            dans l'écran, et une `<aside>` posée *dedans* aurait été la « sortie
+            de secours » que docs/35 §3.4 nomme : la seule place sans plafond, où
+            un écran plein rangerait son quatrième bloc. La frontière portée par
+            le code, elle, reste le livrable du lot 8 (#929) — et ce lot-ci ne
+            relève pas `BLOCS_MAX`.
+            Après la colonne centrale dans le DOM, donc dernier dans l'ordre de
+            tabulation : la conversation se consulte en marge du travail, elle ne
+            se met pas devant. */}
+        <ColonneConversation
+          ouverte={conversationOuverte}
+          fermer={() => ecrireConversationOuverte(false)}
+        />
       </div>
       {/* Hors flux (position fixe) : la visite se superpose au shell entier, et
           l'assistant (#123) flotte sur toutes les pages — la visite passant
