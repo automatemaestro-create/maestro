@@ -281,16 +281,19 @@ class GrapheRun:
 
     @property
     def nb_noeuds(self) -> int:
-        """Le nombre de nœuds du graphe — celui du **plan**, pas des tâches vues.
+        """Le nombre de nœuds du graphe — celui du **plan**, et le compte du run.
 
-        ⚠ Il ne vaut donc pas `nb_taches`, et l'écart n'est pas un défaut : le
-        plan annonce ce qui **sera** fait, `nb_taches` (donc `progression.total`,
-        #473) compte ce que le run a **réellement porté**, c'est-à-dire les
-        tâches qui ont démarré. Les deux se rejoignent à la fin d'un run qui va
-        au bout, et divergent tout du long — c'est exactement ce qu'un graphe est
-        là pour montrer. Les faire coïncider aurait demandé de retirer du graphe
-        les nœuds pas encore démarrés, c'est-à-dire de rendre un dessin qui
-        pousse au lieu d'un plan.
+        Il vaut `nb_taches`, donc `progression.total` (#473) : le plan **déclare**
+        les tâches du run depuis #924, si bien que les quatre surfaces qui les
+        comptent héritent d'une seule dérivation.
+
+        ⚠ Cette docstring affirmait l'écart jusque-là, au motif que « les faire
+        coïncider aurait demandé de retirer du graphe les nœuds pas encore
+        démarrés, c'est-à-dire de rendre un dessin qui pousse au lieu d'un plan ».
+        C'était juste, et c'est resté vrai : **rien n'a été retiré du graphe**. Ce
+        qui a changé est l'autre bout — le compte vient du plan au lieu des seules
+        tâches démarrées, et le dénominateur d'une barre de progression ne
+        grandit plus sous les yeux (retex du 2026-09-11, G3).
         """
         return len(self.noeuds)
 

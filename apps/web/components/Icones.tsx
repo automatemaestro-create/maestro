@@ -577,6 +577,23 @@ export function IconePuce(props: Props) {
   );
 }
 
+/**
+ * Statut « à faire » : la tâche est déclarée, personne ne la porte encore (#924).
+ *
+ * Le cercle de la famille, **vide** : les quatre autres statuts y posent un
+ * signe (lecture, barres, coche, croix), celui-ci n'en a aucun à poser — rien
+ * n'a commencé. Le tiret est ce qui la distingue d'`IconePuce`, qui remplit le
+ * même cercle et dit « type inconnu » là où ici tout est connu.
+ */
+export function IconeStatutAFaire(props: Props) {
+  return (
+    <Trait {...props}>
+      <circle cx="12" cy="12" r="9.5" />
+      <path d="M8.5 12h7" />
+    </Trait>
+  );
+}
+
 /** Statut « assignée » : la tâche est confiée, pas encore ouverte. */
 export function IconeStatutAssignee(props: Props) {
   return (
