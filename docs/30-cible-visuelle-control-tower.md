@@ -1977,6 +1977,76 @@ touchent les tables de `BadgeEtat` ; #911 est indépendant des deux. Chacun met 
 `RESIDU` et retire sa ligne de `MANQUES_DU_SOCLE` (#895). Les tickets #895 et #905 portent
 `veille::arbitree` depuis cette veille.
 
+#### Le fil dans la colonne de droite — 2026-09-13 (#926, lot 5 de #921)
+
+Surface : `components/ColonneConversation.tsx` (la zone posée **vide** par #925) et le fil qu'elle
+accueille — `components/Conversation.tsx`, déjà monté par `/chat` et par l'onglet Chat d'une fiche.
+La question : *de quoi parle-t-on avec l'orchestration, et puis-je répondre sans quitter ce que je
+regarde ?* Première veille du dépôt sur un fil **à l'étroit et permanent** : #820 avait tranché le
+fil **pleine page** et laissé les largeurs contraintes hors de son champ.
+
+**Vérifié en direct** (mesuré au navigateur) : **VS Code** (`vscode.dev`) — sa barre secondaire est
+la même zone que la nôtre, et son contenu **par défaut est la Conversation** : **260 px** (nav 268,
+centre 852), en-tête **32 px** et **4 actions de 22 px**, composeur à **233 px sur 260** (90 % de la
+colonne, deux étages, à quai) ; elle **prend sa place** au large ; à 640 px elle **comprime les trois
+zones** (170 / 216 / 194) au lieu de recouvrir ; « **Agrandir** » porte la conversation à **1384 px**
+— nav et centre à **zéro** — et son composeur s'y **borne à 926**. **Zulip**
+(`chat.zulip.org`, viewport **420 px**, 250 messages) — **aucune bulle**, tout part du bord, en-têtes
+de sujet collants, composeur nommant sa destination ; et surtout : message 391 px mais **contenu
+203 px**, l'avatar et sa gouttière coûtant **75 px, soit 19 % de la largeur**.
+
+**Vérifié sur documentation** : les deux modes de la vue de chat — « The Chat view operates in two
+modes: compact and side-by-side », compact = « the sessions list and conversation share the same
+panel » ; trois emplacements (barre latérale, onglet d'éditeur, fenêtre séparée) ; et
+`chat.notifyWindowOnResponseReceived` (défaut `windowNotFocused`), qui notifie **avec un aperçu de la
+réponse** et dont la sélection **ramène le focus à la session**.
+
+**Non vérifié, donc non cité** : Cursor (disposition à trois panneaux attestée par son changelog et
+son forum, **aucune UI publique capturable**) ; Slack, Teams, Linear, Claude.ai, ChatGPT (fil réel
+derrière authentification).
+
+**Quatre partis pris** : la **borne de lecture ne se retire pas, elle se tait** — `max-w-3xl` est
+*inerte* dans 320 px, donc le fil est monté **tel quel**, sans mode « étroit » ni prop de largeur
+*(VS Code : 90 % de la colonne à 260 px, borné à 926 en grand)* · le **pont vers le grand format est
+un geste dans l'en-tête**, pas une navigation — `IconeAgrandir` vers `/chat` *(VS Code :
+« Agrandir » / « Restaurer »)* · **une seule conversation à l'écran** : sur `/chat` la colonne se
+replie et son bouton quitte la barre supérieure *(VS Code met nav et centre à zéro ; et `useChat`
+ouvre une **WebSocket par instance**)* · l'**en-tête reste au calibre de la colonne** — un titre,
+deux gestes *(VS Code : 32 px, 4 boutons de 22)*.
+
+**Refusés sur place, avec leur raison** : la **compression des trois zones** de VS Code à 640 px —
+le régime de #925 (recouvrement sous `lg`, d'après Zulip) est arrêté et vérifié au banc, et VS Code
+est une fenêtre de bureau qui n'est jamais vraiment étroite ; les **avatars** — déjà refusés par #820,
+et la mesure Zulip le confirme par un autre angle (19 % de la largeur) ; la **liste des conversations
+dans la colonne** (le mode *side-by-side*) — 320 px n'en portent pas deux, et le chemin vers les
+conversations est tranché par #831 ; l'**onglet d'éditeur** et la **fenêtre séparée** — le produit
+n'a ni l'un ni l'autre, `/chat` **est** son grand format.
+
+**Ce que le lot a dû décider à l'écran, et que la veille n'avait pas vu** : le fil n'ayant plus
+d'ascenseur à lui depuis #691 (« c'est la page qui le parcourt »), la colonne **porte le sien** — et
+avec lui la **réserve `after:h-24`** de #888, sans quoi le composeur à quai (`sticky bottom-16`)
+remonterait de 64 px sur le fil au bas du défilement, le bouton flottant de l'assistant étant calé
+sur la **fenêtre** donc par-dessus le coin de la colonne (mesuré après coup : formulaire à 704, bas du
+flottant à 736 — **32 px d'air**). Et le banc a montré **deux titres empilés** — « Conversation »
+puis « CHAT GLOBAL » — d'où `titreMasque` sur `EnTeteSection`, décalque du `libelleMasque` de #832 :
+le titre reste au document, seul son rendu se retire.
+
+**Ce que la veille n'a pas regardé** : le **Markdown et les blocs de code à 320 px**
+(`chat/TexteMarkdown`, `chat/BlocDeCode` — même trou que #820, qui l'avait laissé à 768) ; les
+**amorces** et leur calibre (#916) dans la colonne ; le **glisser-déposer de sources** (#482) vers une
+cible de 320 px.
+
+**Ce qui dépasse le lot, et n'est donc pas fait ici** : **fermée, la colonne ne dit pas qu'une
+réponse est arrivée.** Le critère du ticket porte sur le fil *ouvert* ; le signalement quand il est
+replié est une question à lui seul. La référence est vérifiée (`chat.notifyWindowOnResponseReceived`)
+et le socle a déjà le patron — la cloche de #119/#322 compte « combien de choses m'attendent », une
+seule pastille pour plusieurs familles. **→ ticket à ouvrir.**
+
+Banc du 2026-09-13 (`/` et `/chat`, 1280×800 · 1024×700 · **1280×500** · 375×667) : **aucun
+débordement horizontal**, rien d'inatteignable — le seul signalement est un **1 px** sous-pixel sur
+une tuile de chiffre, présent avant ce lot. Le ticket #926 porte `veille::arbitree` depuis cette
+veille.
+
 ---
 
 ## 6. Recommandation

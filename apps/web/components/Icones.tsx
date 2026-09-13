@@ -288,6 +288,24 @@ export function IconeDeplier(props: Props) {
   );
 }
 
+/**
+ * Reprendre la conversation en grand (#926, parti pris 2 de sa veille) — les
+ * deux flèches diagonales du geste « agrandir ».
+ *
+ * Le jeu n'avait rien pour ça : `IconeEcran` dessine un moniteur (l'appareil,
+ * pas le geste) et `IconeLienExterne` promet une **sortie** du produit, ce que
+ * `/chat` n'est pas — c'est le même fil, à une autre taille. C'est la même
+ * raison qui a fait naître `IconeFlecheBas` (#877) : un geste neuf, aucune
+ * icône qui le dise déjà.
+ */
+export function IconeAgrandir(props: Props) {
+  return (
+    <Trait {...props}>
+      <path d="M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7" />
+    </Trait>
+  );
+}
+
 /* ------------------------------------------------------------------ *
  * Entités — ce dont l'interface parle (#245)
  * ------------------------------------------------------------------ */

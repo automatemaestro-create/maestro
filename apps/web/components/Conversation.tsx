@@ -294,6 +294,7 @@ import {
 import { RegionLive } from "@/components/RegionLive";
 import { mesureDesMessages } from "@/lib/annonces";
 import { ErreurReponse, ErreurSource } from "@/lib/api";
+import { useBrouillon } from "@/lib/brouillons";
 import { ascenseurDe, estEnBas } from "@/lib/defilement";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import { useHorloge } from "@/lib/horloge";
@@ -405,6 +406,7 @@ export function Conversation({
   titre,
   icone,
   niveauTitre = 2,
+  titreMasque = false,
   accueil,
   amorces = [],
   entete,
@@ -427,6 +429,14 @@ export function Conversation({
   icone?: Icone;
   /** `2` pour un écran, `3` pour un fil posé dans une fiche à onglets. */
   niveauTitre?: 2 | 3;
+  /**
+   * Retire le titre de l'écran sans le retirer du document (#926) — pour la
+   * colonne de droite, dont l'en-tête de zone dit déjà « Conversation » : deux
+   * titres empilés dans 320 px, c'est une ligne payée deux fois. Le badge de
+   * coupure (`aside`) reste visible, lui : c'est la seule chose de cet en-tête
+   * qui apprend quelque chose (#691).
+   */
+  titreMasque?: boolean;
   /** Le mot d'accueil d'un fil vide — jamais persisté (voir `lib/orchestration`). */
   accueil?: string;
   /** Des amorces proposées tant que la conversation n'a pas commencé. */
@@ -454,7 +464,19 @@ export function Conversation({
     interrompre,
   } = fil;
   const composition = useSourcesComposees();
-  const [brouillon, setBrouillon] = useState("");
+  /**
+   * ⚠ Le brouillon vit **hors du composant** depuis #926 (`lib/brouillons`), et
+   * l'API est celle d'un `useState` — forme fonctionnelle comprise — pour que
+   * les trois sites d'écriture ci-dessous n'aient pas bougé.
+   *
+   * Pourquoi : la colonne de droite (#926) se démonte quand on va sur `/chat`
+   * (une seule conversation à l'écran) et quand on la replie, sans qu'aucun de
+   * ces deux gestes soit un abandon de ce qu'on était en train d'écrire. La clé
+   * est l'**interlocuteur**, donc le brouillon suit le fil d'une surface à
+   * l'autre — ce que le bandeau d'aparté promet déjà en toutes lettres
+   * (« le même que sert sa fiche. Rien n'est recopié ici. »).
+   */
+  const [brouillon, setBrouillon] = useBrouillon(interlocuteur);
   /**
    * Ce qui a manqué au dernier envoi, et si le message a **quand même** rejoint
    * le fil. Les deux ensemble parce qu'ils ne se déduisent pas l'un de l'autre
@@ -751,6 +773,7 @@ export function Conversation({
         niveau={niveauTitre}
         icone={icone}
         titre={titre}
+        titreMasque={titreMasque}
         aside={
           /* Ce qui va **bien** ne s'affiche plus (#691). Le badge disait
              « Temps réel connecté » en permanence, dans l'en-tête du bloc

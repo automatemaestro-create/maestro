@@ -18,6 +18,7 @@
  * qui remplace l'entrée « Projets » de la barre latérale.
  */
 
+import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { AssistantFlottant } from "@/components/AssistantFlottant";
@@ -33,6 +34,7 @@ import { ChoixProjet, EcranOuverture } from "@/components/projets/ChoixProjet";
 import { SelecteurProjet } from "@/components/projets/SelecteurProjet";
 import { ASCENSEUR_PAGE, ecouterDefilement } from "@/lib/ascenseur";
 import { FournisseurEtatGlobal } from "@/lib/etatGlobal";
+import { entreeParLibelle } from "@/lib/navigation";
 import { FournisseurProjetActif, useProjetActif } from "@/lib/etatProjetActif";
 import {
   ecouterConversationOuverte,
@@ -52,6 +54,14 @@ import type { Projet } from "@/lib/types";
  * build, ni dans un rendu — le lien mènerait simplement nulle part.
  */
 export const ID_CONTENU_PRINCIPAL = "contenu-principal";
+
+/**
+ * Le grand format de la conversation (#926) — résolu par le menu, jamais écrit
+ * en dur, et `undefined` si « Chat » quittait le menu (contrat de `hrefRun`).
+ * La colonne y renvoie, le shell s'y replie : la même route, lue au même
+ * endroit.
+ */
+const HREF_CHAT = entreeParLibelle("Chat")?.href;
 
 export function Shell({ children }: { children: React.ReactNode }) {
   // L'ascenseur discret du socle (#725) se montre pendant le défilement, et CSS
@@ -93,6 +103,7 @@ function CadreControlTower({
   projet: Projet;
   children: React.ReactNode;
 }) {
+  const pathname = usePathname();
   const [repliee, setRepliee] = useState(false);
   // La troisième zone (#925) : fermée au premier rendu, puis restituée comme le
   // repli ci-dessous. Fermée est aussi le défaut du chantier — c'est ce qui rend
@@ -134,6 +145,27 @@ function CadreControlTower({
   const basculerRepli = () => ecrireRepliSidebar(!repliee);
   const basculerConversation = () =>
     ecrireConversationOuverte(!conversationOuverte);
+
+  /**
+   * **Une seule conversation à l'écran** (#926, parti pris 3 de sa veille) : sur
+   * `/chat`, le fil occupe déjà le centre, donc la colonne se replie et son
+   * bouton de bascule quitte la barre supérieure — il n'y a rien à déplier
+   * quand on y est.
+   *
+   * Mesuré dehors : VS Code, en agrandissant sa conversation, met la navigation
+   * et le centre à **zéro** — jamais la même conversation deux fois. Et ici ce
+   * n'est pas qu'une affaire de doublon visuel : `useChat` ouvre une **WebSocket
+   * par instance**, donc deux fils montés sur `orchestrateur` en ouvriraient
+   * deux.
+   *
+   * ⚠ La **préférence n'est pas écrite** au passage, et c'est le point : on
+   * masque, on ne ferme pas. L'écrire à `false` ferait qu'en quittant `/chat` la
+   * colonne resterait repliée — la page aurait éteint un réglage qui ne lui
+   * appartient pas. En sortant, elle revient exactement comme on l'avait
+   * laissée. Ce que l'on écrivait, lui, survit dans `lib/brouillons`.
+   */
+  const surLeChat = HREF_CHAT !== undefined && pathname === HREF_CHAT;
+  const colonneOuverte = conversationOuverte && !surLeChat;
 
   return (
     // `key` : changer de projet **remonte** tout ce qui est dessous (#281).
@@ -203,8 +235,13 @@ function CadreControlTower({
             notifications={<CentreNotifications />}
             theme={<BasculeTheme />}
             aide={<MenuAide />}
-            conversationOuverte={conversationOuverte}
-            basculerConversation={basculerConversation}
+            conversationOuverte={colonneOuverte}
+            // Sur `/chat` le bouton **disparaît** — `BarreSuperieure` ne le rend
+            // que si la bascule lui est donnée. C'est plus juste que de le
+            // laisser inerte : on est déjà dans la conversation, il n'y a rien à
+            // déplier, et un bouton qui ne fait rien s'apprend comme un bouton
+            // cassé.
+            basculerConversation={surLeChat ? undefined : basculerConversation}
           />
           {/* `@container` : la sidebar prend de la largeur au contenu, donc les
               grilles des pages se calent sur la largeur **réelle** de cette
@@ -284,7 +321,7 @@ function CadreControlTower({
             tabulation : la conversation se consulte en marge du travail, elle ne
             se met pas devant. */}
         <ColonneConversation
-          ouverte={conversationOuverte}
+          ouverte={colonneOuverte}
           fermer={() => ecrireConversationOuverte(false)}
         />
       </div>

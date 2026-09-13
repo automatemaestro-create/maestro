@@ -751,6 +751,7 @@ export function EnTeteSection({
   id,
   ton = "neutre",
   aside,
+  titreMasque = false,
   className = "",
 }: {
   titre: ReactNode;
@@ -761,6 +762,20 @@ export function EnTeteSection({
   ton?: "neutre" | "attention";
   /** Ce qui se pose à droite : compte, renvoi, bouton. */
   aside?: ReactNode;
+  /**
+   * Retire le titre de l'**écran**, jamais du document (#926).
+   *
+   * Repris mot pour mot du `libelleMasque` de `CadreChamp` (#832) : le titre
+   * reste obligatoire et reste lu, seul son rendu visuel se retire. Pour une
+   * section dont la **zone qui la porte** est déjà nommée à l'écran, et où le
+   * redire ferait deux titres empilés — le cas de la colonne de conversation,
+   * où l'en-tête de zone dit déjà « Conversation » dans 320 px de large
+   * (mesuré : VS Code ne titre pas deux fois sa barre secondaire).
+   *
+   * ⚠ Ce n'est **pas** un moyen de se passer de titre : la hiérarchie des
+   * titres reste celle du document, et un balayage d'accessibilité la lit.
+   */
+  titreMasque?: boolean;
   className?: string;
 }) {
   const Titre = niveau === 2 ? "h2" : "h3";
@@ -776,9 +791,15 @@ export function EnTeteSection({
     >
       <Titre
         id={id}
-        className={`flex items-center gap-2 text-corps font-semibold tracking-wide uppercase ${couleur}`}
+        className={
+          titreMasque
+            ? "sr-only"
+            : `flex items-center gap-2 text-corps font-semibold tracking-wide uppercase ${couleur}`
+        }
       >
-        {Icone && <Icone className="size-4 shrink-0" />}
+        {/* L'icône part avec le titre : elle le décore, elle ne le remplace pas
+            — la laisser seule poserait un pictogramme sans nom. */}
+        {Icone && !titreMasque && <Icone className="size-4 shrink-0" />}
         {titre}
       </Titre>
       {aside}
