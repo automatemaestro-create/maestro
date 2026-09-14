@@ -347,7 +347,21 @@ if [ "${#REGLAGE[@]}" = 0 ]; then
   warn "réglages du dépôt illisibles (API muette) — contrôle ignoré"
 else
   case "${REGLAGE[pipeline_requis]:--}" in
-    true)  ok "protection de branche sur main : les checks CI sont requis — aucun merge au rouge" ;;
+    true)  ok "protection de branche sur main : les checks CI sont requis — aucun merge au rouge"
+           # « Des checks sont requis » ne dit pas LESQUELS, et c'est la moitié qui manquait
+           # (#948) : un job ajouté au pipeline et à `CHECKS` ne devient requis qu'au prochain
+           # `protect-main.sh` sans --check. Entre les deux, il tourne, il peut rougir, et il
+           # n'empêche aucun merge — exactement le garde-fou qui saute (#333).
+           #
+           # La question est POSÉE AU SCRIPT qui porte la liste, jamais à une copie de celle-ci :
+           # `protect-main.sh --check` est en lecture seule et rend 3 quand un nom manque.
+           manquants="$(bash "$here/../github/protect-main.sh" --check 2>/dev/null |
+             sed -n 's/^  ⚠ check requis manquant : //p')" || true
+           if [ -n "$manquants" ]; then
+             warn "des jobs du pipeline ne sont pas des checks requis : $(printf '%s' "$manquants" | paste -sd, - | sed 's/,/, /g')"
+             printf '    → ils tournent et peuvent rougir, mais n'"'"'empêchent aucun merge\n'
+             printf '    → réparer : bash scripts/github/protect-main.sh\n'
+           fi ;;
     false) warn "aucune protection de branche sur main : un merge au rouge redevient possible hors de nos chemins"
            printf '    → posée le 2026-08-28 (#734, docs/10 §8.8) — son absence est une dérive, plus une décision\n'
            printf '    → « lib.sh merge-mr » tient toujours la règle POUR LES SESSIONS ; ce qui manque est\n'

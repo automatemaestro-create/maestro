@@ -47,9 +47,11 @@ pytestmark = pytest.mark.skipif(BASH is None, reason="bash introuvable")
 besoin_git = pytest.mark.skipif(GIT is None, reason="git introuvable")
 
 # Ordre de ETAPES_CONNUES dans scripts/setup.sh — le rapport final le suit.
-ETAPES = ("node", "prerequis", "venv", "env", "hooks", "web", "mcp", "infra", "verif")
+ETAPES = ("node", "prerequis", "venv", "env", "hooks", "web", "desktop", "mcp", "infra", "verif")
 
-# Étapes à neutraliser pour rester hors ligne (voir le docstring du module).
+# Étapes à neutraliser pour rester hors ligne (voir le docstring du module). `desktop` (#948) n'y
+# est pas, et ce n'est pas un oubli : sans coque installée ni `--only`, elle s'abstient et ne
+# lance aucun npm — c'est précisément le comportement qu'on veut voir tenir dans un setup complet.
 HORS_LIGNE = ("--skip", "venv,web,infra,verif")
 
 GABARIT_ENV = """\
@@ -711,6 +713,47 @@ def test_derive_signale_le_lockfile_npm(depot: Depot) -> None:
 
     assert resultat.returncode == DERIVE_DETECTEE
     assert "package-lock.json" in lignes_derive(resultat)["web"]
+
+
+# La coque de bureau est le SECOND paquet npm du dépôt (#923), et la dérive ne s'y pose pas dans
+# les mêmes termes (#948) : Electron pèse ≈ 370 Mo sur le disque, donc `desktop.sh` l'installe à la
+# demande au premier lancement de la fenêtre. Les deux tests ci-dessous tiennent les deux moitiés,
+# et c'est leur PAIRE qui garde la règle — l'un sans l'autre laisse passer l'un des deux travers.
+
+
+def test_derive_ignore_une_coque_jamais_installee(depot: Depot) -> None:
+    """Ne pas avoir la coque n'est pas une dérive : c'est le cas nominal.
+
+    Sans cette moitié, `--derive` rendrait 3 sur tous les postes, à chaque `/ticket-start` et avant
+    chaque filet, pour proposer une réparation que personne n'a demandée — et 370 Mo à un clone qui
+    n'ouvrira jamais la fenêtre.
+    """
+    prepare_venv(depot)
+    depot.ecrire("apps/desktop/package.json", '{"name": "desktop"}\n')
+    depot.ecrire("apps/desktop/package-lock.json", '{"lockfileVersion": 3}\n')
+
+    resultat = depot.lance("--derive")
+
+    assert resultat.returncode == DERIVE_A_JOUR, resultat.stdout + resultat.stderr
+    assert resultat.stdout == ""
+
+
+def test_derive_signale_le_lockfile_de_la_coque_deja_installee(depot: Depot) -> None:
+    """L'autre moitié : une coque installée dont le lockfile a bougé ouvrirait la fenêtre sur une
+    version périmée, et rien ne le dirait."""
+    prepare_venv(depot)
+    depot.ecrire("apps/desktop/package.json", '{"name": "desktop"}\n')
+    node_modules = depot.racine / "apps" / "desktop" / "node_modules"
+    node_modules.mkdir(parents=True)
+    lock = depot.ecrire("apps/desktop/package-lock.json", '{"lockfileVersion": 3}\n')
+    date_fichier(lock, os.stat(node_modules).st_mtime + 60)
+
+    resultat = depot.lance("--derive")
+
+    assert resultat.returncode == DERIVE_DETECTEE
+    # Le prédicat est PARTAGÉ avec `apps/web` (`npm_perime`), donc la raison nomme son paquet :
+    # deux formules à tenir d'accord seraient ce qui fait qu'un clone cesse d'être réparé.
+    assert "apps/desktop/package-lock.json" in lignes_derive(resultat)["desktop"]
 
 
 def test_derive_signale_la_version_de_node_epinglee(depot: Depot) -> None:

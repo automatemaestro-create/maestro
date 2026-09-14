@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Protège `main` sur le dépôt GitHub du projet : les six jobs de `.github/workflows/ci.yml`
+# Protège `main` sur le dépôt GitHub du projet : les jobs de `.github/workflows/ci.yml`
 # deviennent des checks REQUIS, donc aucun merge sans verdict vert (ticket #338, chantier #335).
 #
 # C'est le pendant GitHub de ce que `scripts/gitlab/bootstrap.sh` pose côté GitLab avec
@@ -35,11 +35,20 @@ set -euo pipefail
 DEPOT="${MAESTRO_GITHUB_REPO:-automatemaestro-create/maestro}"
 BRANCHE="${MAESTRO_GITHUB_BRANCHE:-main}"
 
-# Les six jobs de `.github/workflows/ci.yml`, par leur NOM DE JOB — c'est sous ce nom que GitHub
+# Les jobs de `.github/workflows/ci.yml`, par leur NOM DE JOB — c'est sous ce nom que GitHub
 # rapporte un check, et c'est ce nom qui est requis ici. Renommer un job dans le workflow sans le
 # renommer ici rendrait toute PR non mergeable : le check requis ne serait plus jamais rapporté,
 # et une PR qui attend un verdict qui n'arrivera pas ne se débloque par aucun clic.
-CHECKS=(perimetre shellcheck python-lint pytest mypy web-build)
+#
+# ⚠ AJOUTER UN NOM ICI NE LE REND PAS REQUIS. Cette liste est ce que le script POSE ; ce que la
+# forge EXIGE ne change qu'au prochain lancement sans `--check`. Les deux gestes vont donc
+# ensemble, et dans cet ordre : le job entre dans le workflow ET dans cette liste au même commit
+# (sans quoi personne ne s'en souviendra), puis le script est rejoué UNE FOIS LE COMMIT SUR
+# `main`. Le rejouer avant mergerait mal : une PR ouverte sur un `main` qui n'a pas encore le job
+# attendrait un check que son pipeline ne rapportera jamais — le piège que `ci.yml` décrit.
+# L'écart entre les deux moments est une dérive, et `doctor.sh` la signale (#948) plutôt que de
+# la laisser découvrir : un check listé mais non posé ne bloque aucun merge.
+CHECKS=(perimetre shellcheck python-lint pytest mypy web-build desktop)
 
 check_only=0
 case "${1:-}" in

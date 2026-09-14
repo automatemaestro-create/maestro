@@ -179,6 +179,14 @@ ARBORESCENCE = {
     # sont dans ce cas, et c'est ce qui a rendu le défaut visible (#375).
     "scripts/migration/inventaire.sh": "#!/usr/bin/env bash\necho inventaire\n",
     "scripts/orphelin.sh": "#!/usr/bin/env bash\necho orphelin\n",
+    # LA COQUE DE BUREAU (#923), et l'état dans lequel #948 l'a trouvée : un second paquet npm que
+    # RIEN ne nomme — ni `apps/desktop/`, ni `main.js` n'apparaissent dans une seule suite.
+    # C'est l'état exact du vrai dépôt au 2026-09-14, et c'est ce qui rendait la coque « chemin
+    # non classé », donc synonyme de suite entière. Les tests de classification s'appuient
+    # dessus ET le vérifient avant de conclure (`aucune_suite_ne_nomme_la_coque`) : une suite
+    # jetable qui viendrait à la citer désamorcerait le test en silence.
+    "apps/desktop/package.json": '{"name": "desktop", "main": "main.js", "private": true}\n',
+    "apps/desktop/main.js": "'use strict';\n// coque\n",
     # Une suite qui relit tout un répertoire le désigne par son CHEMIN, jamais par le nom de ses
     # fichiers — comme test_collaboration avec `.claude/commands/*.md` (#196).
     "tests/test_prompts.py": '"""Relit les prompts de .claude/commands/."""\n',
@@ -919,6 +927,78 @@ def test_un_fichier_que_personne_ne_nomme_elargit_au_lieu_de_sauter(clone: Clone
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
     assert suites_jouees(clone.appels()) == []
     assert "aucune suite ne nomme .mcp.json" in ligne_du_job(acheve.stdout, "pytest")
+
+
+# --- La coque de bureau : ni « non classée », ni sautée en silence (#948) -------------------------
+# `apps/desktop/` est arrivé dans le dépôt avec #923 et n'était nommé par aucun des quatre
+# mécanismes qui décident « qu'est-ce qui est vérifié, et par qui ». Côté périmètre, la
+# conséquence est un DOUBLE écueil, et les deux tests ci-dessous en épinglent un chacun :
+#
+#   · le laisser au cas général en fait un « chemin non classé », donc la SUITE ENTIÈRE à chaque
+#     diff de la coque — le filet a raison, mais pour une raison qui n'est pas la sienne ;
+#   · le ranger avec `apps/web/` le rendrait SILENCIEUSEMENT SAUTÉ le jour où des suites la
+#     lisent (sûreté, cycle de vie des processus — #929), ce qui est pire.
+#
+# La réponse est la règle du nom, privée de son élargissement final : les suites qui la nomment
+# s'il y en a, une abstention MOTIVÉE sinon (le job `desktop` couvre ce qu'aucune suite ne
+# regarde). Les deux moitiés se tiennent ; n'en garder qu'une rouvre l'autre écueil.
+
+
+def aucune_suite_ne_nomme_la_coque(clone: Clone) -> None:
+    """Le piège, vérifié avant de conclure : sans lui, « aucune suite jouée » ne prouverait rien.
+
+    Le dépôt jetable reproduit l'état du vrai au 2026-09-14 — la coque n'est citée nulle part.
+    Le jour où une suite jetable viendrait à la nommer, le repli par dossier la trouverait, le
+    verdict changerait de cause, et le test passerait encore en ayant cessé de garder quoi que ce
+    soit.
+    """
+    for suite in sorted((clone.racine / "tests").glob("test_*.py")):
+        texte = suite.read_text(encoding="utf-8")
+        assert "apps/desktop/" not in texte and "main.js" not in texte, (
+            f"{suite.name} nomme la coque : le test de classification est désamorcé"
+        )
+
+
+def test_la_coque_ne_ramene_pas_la_suite_entiere(clone: Clone) -> None:
+    """Le défaut de départ : un diff qui ne touche que la coque rejouait TOUTE la suite.
+
+    1 min 51 dans le conteneur, et quinze minutes en natif, pour deux fichiers qu'aucun test ne
+    lit — à chaque `/ticket-finish` d'un ticket de la coque.
+    """
+    clone.equipe_tout()
+    aucune_suite_ne_nomme_la_coque(clone)
+
+    clone.modifie("apps/desktop/main.js", "// une ligne de plus\n")
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert lancements_pytest(clone.appels()) == []
+    ligne = ligne_du_job(acheve.stdout, "pytest")
+    assert "toute la suite" not in ligne, ligne
+    # L'abstention est MOTIVÉE, et le motif nomme qui couvre : c'est ce qui la distingue d'un
+    # saut silencieux, seule différence entre un filet honnête et un filet qui ment (#333).
+    assert "apps/desktop/" in ligne and "job desktop" in ligne, ligne
+
+
+def test_une_suite_qui_nomme_la_coque_est_bien_jouee(clone: Clone) -> None:
+    """L'autre moitié, et la seule qui puisse rendre un faux vert.
+
+    S'abstenir est juste tant que personne ne lit la coque. #929 va écrire les tests qui gardent
+    sa configuration de sûreté et le cycle de vie de ses processus : ce jour-là, un diff de la
+    coque doit les jouer. La règle du nom y répond d'elle-même — encore faut-il qu'elle passe
+    AVANT l'abstention, ce que ce test épingle.
+    """
+    clone.equipe_tout()
+    # La suite est COMMITÉE et poussée : sans ça elle serait elle-même dans le diff, donc dans le
+    # périmètre par un autre chemin, et l'assertion ne dirait plus rien de la règle du nom.
+    clone.modifie("tests/test_coque.py", '"""Relit apps/desktop/main.js sans lancer Electron."""\n')
+    clone.git("add", "-A")
+    clone.git("commit", "--quiet", "-m", "test: une suite qui lit la coque")
+    clone.git("push", "--quiet", "origin", "main")
+
+    clone.modifie("apps/desktop/main.js", "// une ligne de plus\n")
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert suites_jouees(clone.appels()) == ["tests/test_coque.py"]
 
 
 def test_la_prose_ne_declenche_aucune_suite(clone: Clone) -> None:
@@ -1912,6 +1992,81 @@ def test_web_build_ignore_quand_le_node_du_depot_manque(clone: Clone) -> None:
     assert "scripts/setup.sh --only node" in ligne
 
 
+# --- Périmètre du job desktop (#948) --------------------------------------------------------------
+# Le pendant local du job `desktop` du pipeline. Il joue `node --check` sur les sources de la
+# coque, et PAS le `npm ci` de la CI : celui-ci retéléchargerait ≈ 158 Mo de runtime Electron pour
+# vérifier un lockfile. Ce partage est dit dans le détail du job plutôt que découvert au premier
+# rouge de pipeline.
+
+
+def checks_node(appels: list[str]) -> list[str]:
+    return [appel for appel in appels if appel.startswith("node --check")]
+
+
+def test_desktop_hors_perimetre_quand_la_coque_n_a_pas_bouge(clone: Clone) -> None:
+    """Même règle que le pipeline : un diff qui ne touche pas la coque ne la vérifie pas."""
+    clone.equipe_tout()
+    acheve = clone.lance("--skip", "shellcheck,python-lint,pytest,mypy,web-build")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    ligne = ligne_du_job(acheve.stdout, "desktop")
+    assert "HORS PÉRIM." in ligne
+    assert "le pipeline ne le joue pas non plus" in ligne
+    assert checks_node(clone.appels()) == []
+
+
+def test_desktop_joue_sur_une_modification_de_la_coque(clone: Clone) -> None:
+    clone.equipe_tout()
+    clone.modifie("apps/desktop/main.js", "// une ligne de plus\n")
+    acheve = clone.lance("--skip", "shellcheck,python-lint,pytest,mypy,web-build")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "OK" in ligne_du_job(acheve.stdout, "desktop")
+    lances = checks_node(clone.appels())
+    assert any(appel.endswith("main.js") for appel in lances), lances
+    # Le `npm ci` du pipeline n'est PAS rejoué ici, et le détail du job le dit.
+    assert not any(appel.startswith("npm ") for appel in clone.appels())
+    assert "npm ci non rejoué" in ligne_du_job(acheve.stdout, "desktop")
+
+
+def test_desktop_ne_verifie_jamais_node_modules(clone: Clone) -> None:
+    """Les sources versionnées, et elles seules : `node_modules` pèse des milliers de fichiers et
+    ne nous appartient pas — l'y inclure ferait durer des minutes un job qui prend une seconde."""
+    clone.equipe_tout()
+    intrus = clone.racine / "apps" / "desktop" / "node_modules" / "electron" / "index.js"
+    intrus.parent.mkdir(parents=True, exist_ok=True)
+    intrus.write_text("module.exports = {}\n", encoding="utf-8", newline="\n")
+    clone.modifie("apps/desktop/main.js", "// une ligne de plus\n")
+    acheve = clone.lance("--skip", "shellcheck,python-lint,pytest,mypy,web-build")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert not any("node_modules" in appel for appel in checks_node(clone.appels()))
+
+
+def test_une_source_de_coque_illisible_rend_le_job_rouge(clone: Clone) -> None:
+    """Sans ce job, une faute de frappe dans `main.js` voyage jusqu'au premier `desktop.sh` d'un
+    poste : rien d'autre en CI ne charge ce fichier."""
+    clone.equipe_tout()
+    # Un node qui REFUSE, comme le vrai devant une erreur de syntaxe. Les deux dispositions,
+    # sinon la plateforme qui n'est pas celle du poste garderait le shim vert (#333).
+    refus = "#!/usr/bin/env bash\nexit 1\n"
+    base = clone.racine / ".tools" / "node" / f"v{NODE_PIN}"
+    clone.pose_shim("node.exe", base, refus)
+    clone.pose_shim("node", base / "bin", refus)
+
+    clone.modifie("apps/desktop/main.js", "// une ligne de plus\n")
+    acheve = clone.lance("--skip", "shellcheck,python-lint,pytest,mypy,web-build")
+    assert acheve.returncode != 0, acheve.stdout + acheve.stderr
+    ligne = ligne_du_job(acheve.stdout, "desktop")
+    assert "ÉCHEC" in ligne
+    # Le détail NOMME le fichier fautif : un « node --check a échoué » n'aiderait personne.
+    assert "main.js" in ligne
+
+
+def test_only_desktop_force_le_job_hors_perimetre(clone: Clone) -> None:
+    clone.equipe_tout()
+    acheve = clone.lance("--only", "desktop")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "OK" in ligne_du_job(acheve.stdout, "desktop")
+
+
 # --- Le miroir en LF de shellcheck ----------------------------------------------------------------
 
 
@@ -2884,3 +3039,104 @@ def test_le_verrou_est_rendu_meme_quand_un_job_rouge(clone: Clone) -> None:
     assert resultat.returncode != 0
     assert not (file_dattente(clone) / "verrou").exists(), "verrou gardé après un job rouge"
     assert not any((file_dattente(clone) / "file").glob("*")), "entrée de file laissée derrière"
+
+
+# --- La frontière pipeline ↔ checks requis (#948) -------------------------------------------------
+# Ces deux tests ne portent pas sur le filet local mais sur les DEUX AUTRES mécanismes que la coque
+# de bureau a trouvés fermés : le portier de périmètre du pipeline, et la liste des checks requis
+# sur `main`. Ils vivent ici parce que c'est la suite qui lit déjà `.github/workflows/ci.yml`.
+#
+# Le commentaire du workflow prévient depuis #338 qu'un job ajouté ou renommé sans l'être dans
+# `CHECKS` rend « une PR indéfiniment non mergeable » dans un sens, et un merge non gardé dans
+# l'autre — mais aucune machine ne le vérifiait : c'était une règle LUE, ce que docs/30 §3.6 tient
+# pour ne pas tenir. Ce qui manquait est une garde SUR LA FRONTIÈRE, pas d'un côté (leçon de #830).
+
+
+def jobs_du_pipeline() -> list[str]:
+    """Les noms de jobs de `.github/workflows/ci.yml` — ceux sous lesquels GitHub rapporte."""
+    texte = (RACINE / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    corps = texte.split("\njobs:\n", 1)[1]
+    return re.findall(r"^  ([a-z][a-z0-9-]*):$", corps, flags=re.MULTILINE)
+
+
+def checks_requis() -> list[str]:
+    """La liste `CHECKS` de `scripts/github/protect-main.sh`, là où elle vit."""
+    texte = (RACINE / "scripts" / "github" / "protect-main.sh").read_text(encoding="utf-8")
+    trouve = re.search(r"^CHECKS=\(([^)]*)\)$", texte, flags=re.MULTILINE)
+    assert trouve, "CHECKS introuvable dans protect-main.sh : le motif a cessé de matcher"
+    return trouve.group(1).split()
+
+
+def test_tout_job_du_pipeline_est_un_check_requis() -> None:
+    """Un job qui n'est pas dans `CHECKS` tourne, peut rougir, et n'empêche aucun merge.
+
+    C'est le trou dans lequel la coque de bureau serait née si #948 avait ajouté son job sans
+    ajouter son nom : rien ne rougit, rien ne manque à l'écran, et le garde-fou a sauté (#333).
+    """
+    jobs = jobs_du_pipeline()
+    # Le motif d'abord : sans lui, deux listes vides se ressembleraient beaucoup.
+    assert "pytest" in jobs and "desktop" in jobs, jobs
+    manquants = [job for job in jobs if job not in checks_requis()]
+    assert manquants == [], (
+        f"jobs du pipeline absents de CHECKS (scripts/github/protect-main.sh) : {manquants}"
+    )
+
+
+def test_tout_check_requis_est_un_job_du_pipeline() -> None:
+    """La réciproque, et c'est elle qui immobilise une PR : un check requis que plus aucun job ne
+    rapporte laisse la PR attendre un verdict qui n'arrivera jamais, sans rien à cliquer."""
+    jobs = jobs_du_pipeline()
+    fantomes = [check for check in checks_requis() if check not in jobs]
+    assert fantomes == [], (
+        f"checks requis sans job correspondant dans .github/workflows/ci.yml : {fantomes}"
+    )
+
+
+def test_le_portier_ouvre_une_sortie_par_job_a_perimetre() -> None:
+    """Un job conditionné par le portier doit avoir SA sortie : sans elle son `if:` lit une chaîne
+    vide, le job ne tourne jamais, et il est rapporté « skipped » — donc vert, toujours."""
+    texte = (RACINE / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    sorties = set(re.findall(r"^      ([a-z][a-z0-9-]*): \$\{\{ steps\.filtre\.outputs\.",
+                             texte, flags=re.MULTILINE))
+    lues = set(re.findall(r"needs\.perimetre\.outputs\.([a-z][a-z0-9-]*)", texte))
+    assert "desktop" in lues, "le job desktop doit être conditionné par le portier"
+    assert lues <= sorties, f"sorties lues mais jamais déclarées : {sorted(lues - sorties)}"
+    # Et chaque sortie est bien POSÉE par le script du portier, dans ses trois chemins (les deux
+    # replis « tout ouvrir » et la décision sur le diff) : une sortie déclarée mais jamais écrite
+    # vaut la chaîne vide, c'est-à-dire un job qui ne tourne plus.
+    for sortie in sorties:
+        assert f'echo "{sortie}=true"' in texte or f"decide {sortie} " in texte, sortie
+
+
+def motifs_du_portier() -> dict[str, str]:
+    """Les motifs passés à `decide` dans le script du job-portier de `ci.yml`."""
+    texte = (RACINE / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    return dict(re.findall(r"^          decide ([a-z-]+) '([^']+)'$", texte, flags=re.MULTILINE))
+
+
+@pytest.mark.parametrize(
+    ("chemin", "web", "desktop"),
+    [
+        # Le cas du ticket : un diff qui ne touche QUE la coque doit déclencher le job qui la
+        # vérifie — et lui seul. C'est ce qui n'arrivait pas avant #948 : `web=false`, donc rien.
+        ("apps/desktop/main.js", False, True),
+        ("apps/desktop/package-lock.json", False, True),
+        # Réciproquement : la coque ne fait pas payer `npm ci && next build` au front, ni l'inverse.
+        ("apps/web/app/page.tsx", True, False),
+        # Le fichier CI ouvre les deux : il peut changer n'importe lequel des jobs.
+        (".github/workflows/ci.yml", True, True),
+        # Un diff purement Python n'ouvre aucun des deux — c'est ce qui garde le pipeline court.
+        ("maestro/engine.py", False, False),
+        # Le motif est ancré à gauche : un chemin qui CONTIENT le dossier n'est pas ce dossier.
+        ("docs/apps/desktop/note.md", False, False),
+    ],
+)
+def test_le_portier_ouvre_le_job_qui_verifie_le_chemin(
+    chemin: str, web: bool, desktop: bool
+) -> None:
+    """Le portier décide QUELS jobs voient un diff. Un chemin qu'il ne nomme pas ne tombe pas dans
+    un défaut neutre : le job qui le vérifie est sauté, et rien ne rougit (#948)."""
+    motifs = motifs_du_portier()
+    assert set(motifs) == {"web", "desktop"}, motifs
+    assert bool(re.search(motifs["web"], chemin)) is web, chemin
+    assert bool(re.search(motifs["desktop"], chemin)) is desktop, chemin

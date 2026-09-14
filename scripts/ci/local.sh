@@ -125,7 +125,7 @@ COUVERTURE_MIN="${COUVERTURE_MIN##*=}"
 
 # --- Jobs, par étage (mêmes noms que .github/workflows/ci.yml) ----------------------------------------------
 ETAGE_LINT="shellcheck python-lint"
-ETAGE_TEST="pytest mypy web-build"
+ETAGE_TEST="pytest mypy web-build desktop"
 JOBS_CONNUS="$ETAGE_LINT $ETAGE_TEST"
 
 JOBS_ONLY=""
@@ -167,9 +167,11 @@ travail non commité compris :
   tests/test_*.py     elles-mêmes
   conftest.py, pyproject.toml, ou tout chemin non classé   la suite entière
   apps/web/**, docs/**, *.md   aucune suite pytest (web-build couvre le front)
+  apps/desktop/**     les suites qui la NOMMENT, et aucune s'il n'y en a pas — jamais la suite
+                      entière : le job desktop couvre ce qu'aucune suite ne regarde (#948)
 
-web-build ne tourne que si apps/web (ou .github/workflows/ci.yml) change par rapport à origin/main —
-même règle que le pipeline. « --only web-build » le force.
+web-build ne tourne que si apps/web (ou .github/workflows/ci.yml) change par rapport à origin/main,
+et desktop que si apps/desktop change — même règle que le pipeline. « --only <job> » les force.
 
 OÙ pytest joue (#372) : dans un conteneur Linux construit depuis $PYTEST_DOCKERFILE_REL,
 parce que les suites d'outillage sont faites de sous-processus shell et qu'un fork y coûte < 1 ms
@@ -232,6 +234,7 @@ liste_jobs() {
   fi
   printf '  %-12s %-6s %s\n' mypy         test "mypy maestro"
   printf '  %-12s %-6s %s\n' web-build    test "npm run lint && npm run typecheck && npm test && npm run build (dans apps/web)"
+  printf '  %-12s %-6s %s\n' desktop      test "node --check sur les sources de apps/desktop (npm ci : pipeline seul)"
 }
 
 while [ $# -gt 0 ]; do
@@ -569,7 +572,10 @@ rend_raisons() { printf '%s' "${1#|}" | tr '|' '
 
 # La règle du NOM, appliquée à un fichier : les suites qui le citent, ou la suite entière si
 # personne ne le cite. Pose ses résultats dans CHOISIES / PERIMETRE_TOUT (variables de l'appelant).
-classe_par_nom() { # <chemin>
+#
+# Le second argument, optionnel, remplace l'ÉLARGISSEMENT final par une abstention motivée : voir
+# le commentaire à l'endroit où il agit, plus bas.
+classe_par_nom() { # <chemin> [raison de ne pas élargir]
   local base dossier nommant
   base="$(basename "$1")"
   nommant="$(suites_nommant "$base" ancre)"
@@ -601,14 +607,22 @@ classe_par_nom() { # <chemin>
   case "$dossier" in
     */*) nommant="$(suites_nommant "$dossier/")" ;;
   esac
-  if [ -z "$nommant" ]; then
-    PERIMETRE_TOUT=1
-    ajoute_raison RAISONS_TOUT "aucune suite ne nomme $base"
-  else
+  if [ -n "$nommant" ]; then
     CHOISIES="$CHOISIES$nommant"$'
 '
     ajoute_raison RAISONS_CHOIX "$dossier/"
+    return 0
   fi
+  # Personne ne nomme ce fichier. Par défaut on ÉLARGIT : c'est la règle d'or, et le sens de
+  # dérive du filet. Le second argument est la seule dérogation, réservée aux chemins dont un
+  # AUTRE job répond — `apps/desktop/**` a le sien depuis #948. Elle ne rétrécit donc pas sur une
+  # supposition mais sur une couverture nommée, et elle se dit dans le motif du verdict.
+  if [ -n "${2:-}" ]; then
+    ajoute_raison RAISONS_SANS "$2"
+    return 0
+  fi
+  PERIMETRE_TOUT=1
+  ajoute_raison RAISONS_TOUT "aucune suite ne nomme $base"
 }
 
 calcule_perimetre() {
@@ -660,6 +674,24 @@ calcule_perimetre() {
       # Prose et front : aucune suite pytest ne les lit (web-build couvre apps/web).
       docs/* | apps/web/*)
         ajoute_raison RAISONS_SANS "${fichier%%/*}/ (sans effet sur pytest)"
+        ;;
+      # La COQUE DE BUREAU (#948). Ni l'un ni l'autre des deux voisins ci-dessus, et c'est tout
+      # l'objet de ce cas : elle a un job CI à elle (`desktop`, qui vérifie son paquet et la
+      # syntaxe de ses sources) ET des suites pytest qui la lisent (sûreté, cycle de vie des
+      # processus — #929). Il faut donc les DEUX moitiés :
+      #
+      #   · la ranger avec `apps/web/` la rendrait silencieusement sautée le jour où ces suites
+      #     existent — un filet vert qui n'a pas joué ce qui garde la coque ;
+      #   · la laisser au cas général `*/*` la fait tomber dans « chemin non classé », donc dans
+      #     la SUITE ENTIÈRE à chaque diff (constat du 2026-09-14 : aucune suite ne nommait
+      #     `apps/desktop/` ni `main.js`) — le filet a raison, pour la mauvaise raison, et il
+      #     coûte 1 min 51 au lieu de quelques secondes.
+      #
+      # La règle du nom répond juste aux deux : elle joue les suites qui la nomment quand il y en
+      # a, et s'abstient sinon — sans élargir, parce que le job `desktop` couvre ce qu'aucune
+      # suite ne regarde.
+      apps/desktop/*)
+        classe_par_nom "$fichier" "apps/desktop/ (couverte par le job desktop)"
         ;;
       # Les chemins IMBRIQUÉS passent par la règle du nom, y compris les .md :
       # `.claude/commands/*.md` est lu par test_collaboration (#196). Seule la prose de la RACINE
@@ -898,6 +930,52 @@ job_web() {
   return 0
 }
 
+# --- La coque de bureau (#948) ------------------------------------------------------------------
+# Miroir local du job `desktop` du pipeline, et même règle de périmètre que lui.
+desktop_concerne() {
+  case " $JOBS_ONLY " in *" desktop "*) return 0 ;; esac
+  fichiers_modifies | grep -qE '^(apps/desktop/|\.github/workflows/)'
+}
+
+# Les sources versionnées de la coque — jamais `node_modules`, qui ne nous appartient pas et pèse
+# des milliers de fichiers. `-print0`/`read -d ''` : un chemin peut porter un espace.
+sources_coque() {
+  find "$RACINE/apps/desktop" -name node_modules -prune -o -type f -name '*.js' -print0
+}
+
+job_desktop() {
+  local bindir fichier nb=0
+  if ! desktop_concerne; then
+    DETAIL="apps/desktop inchangé par rapport à origin/main — le pipeline ne le joue pas non plus"
+    return 3
+  fi
+  [ -d "$RACINE/apps/desktop" ] || {
+    DETAIL="apps/desktop absent du dépôt"
+    return 2
+  }
+  bindir="$(node_bindir)" || {
+    DETAIL="Node du dépôt absent (.tools/node, cf. .node-version) — bash scripts/setup.sh --only node"
+    return 2
+  }
+  # Le `npm ci` du pipeline n'est PAS rejoué ici — même raison que pour `apps/web` : il
+  # retélécharge le monde, et ici c'est en plus ≈ 158 Mo de runtime Electron. Ce qu'il vérifie (le
+  # lockfile en accord avec le package.json) reste donc au pipeline seul, et se dit plutôt que de
+  # se découvrir : un lockfile désynchronisé passe ce filet et rougit en CI.
+  while IFS= read -r -d '' fichier; do
+    nb=$((nb + 1))
+    PATH="$bindir:$PATH" execute node --check "$fichier" || {
+      DETAIL="node --check : erreur de syntaxe dans ${fichier#"$RACINE/"}"
+      return 1
+    }
+  done < <(sources_coque)
+  if [ "$nb" = 0 ]; then
+    DETAIL="aucune source .js dans apps/desktop"
+    return 2
+  fi
+  DETAIL="node --check vert sur $nb fichier(s) — npm ci non rejoué (pipeline seul)"
+  return 0
+}
+
 lance_job() {
   case "$1" in
     shellcheck) job_shellcheck ;;
@@ -905,6 +983,7 @@ lance_job() {
     pytest) job_pytest ;;
     mypy) job_mypy ;;
     web-build) job_web ;;
+    desktop) job_desktop ;;
     *) DETAIL="job inconnu"; return 2 ;;
   esac
 }

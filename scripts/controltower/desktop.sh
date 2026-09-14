@@ -25,8 +25,12 @@ RACINE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 COQUE="$RACINE/apps/desktop"
 
 # Electron pèse lourd (voir docs/35 §2.3 pour la mesure) et n'est requis que par ce script : il est
-# donc installé À LA DEMANDE, au premier lancement, et pas par `setup.sh`. Un clone qui n'ouvrira
-# jamais la fenêtre ne paie rien ; celui qui la veut paie une fois, en le sachant.
+# donc installé À LA DEMANDE, au premier lancement, et jamais par un `setup.sh` complet. Un clone qui
+# n'ouvrira jamais la fenêtre ne paie rien ; celui qui la veut paie une fois, en le sachant.
+#
+# `setup.sh` a bien une étape `desktop` depuis #948, mais elle ne change pas ce partage : elle
+# s'abstient quand la coque n'est pas là (en renvoyant ici), RÉPARE une coque déjà installée dont le
+# lockfile a bougé, et n'installe que sur `--only desktop`. Ce script reste le chemin normal.
 TAILLE_ANNONCEE="≈ 158 Mo à télécharger, ≈ 370 Mo sur le disque"
 
 usage() {
