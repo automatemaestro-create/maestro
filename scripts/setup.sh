@@ -61,7 +61,7 @@ OUTILS_DIR="$RACINE/.tools"
 # d'un clone à l'autre, et c'est du code exécuté à chaque démarrage de Claude Code.
 PLAYWRIGHT_MCP_VERSION="${MAESTRO_PLAYWRIGHT_MCP_VERSION:-0.0.78}"
 
-ETAPES_CONNUES="node prerequis venv env hooks web mcp infra verif"
+ETAPES_CONNUES="node prerequis venv env hooks web desktop mcp infra verif"
 
 # --- Drapeaux -----------------------------------------------------------------------------------
 MODE_CHECK=0                                     # --check : diagnostic seul, aucune écriture
@@ -99,6 +99,9 @@ Options :
              vides sont signalées, avec le script qui les récupère (scripts/env-pull.sh)
   hooks      hook git commit-msg (scripts/git/install-hooks.sh)
   web        dépendances npm de apps/web
+  desktop    dépendances npm de la coque de bureau (apps/desktop) — RÉPARE une coque déjà
+             installée dont le lockfile a bougé ; ne l'installe que si l'étape est demandée
+             (--only desktop), Electron pesant ≈ 370 Mo sur le disque
   mcp        .claude/settings.local.json (profil navigateur + serveurs MCP du dépôt) —
              clés machine attendues : .claude/settings.local.example.json
   infra      bases locales PostgreSQL/Redis/Temporal — uniquement avec --with-infra
@@ -599,20 +602,46 @@ venv_perime() {
   return 1
 }
 
-# web_perime <racine> : 0 si `npm ci` est à rejouer. Évalué sur la racine COURANTE, elle : chaque
-# worktree a son propre apps/web/node_modules (Turbopack refuse un lien), donc ses propres dates.
-web_perime() {
-  local web="$1/apps/web" lock="$1/apps/web/package-lock.json"
-  [ -f "$web/package.json" ] || return 1
-  if [ ! -d "$web/node_modules" ]; then
-    printf 'dépendances npm jamais installées (apps/web/node_modules absent)\n'
+# npm_perime <répertoire du paquet> : 0 si `npm ci` est à rejouer, avec la raison sur stdout.
+#
+# PRÉDICAT UNIQUE de « ces dépendances npm ont dérivé » (#216, généralisé par #948 quand la coque
+# de bureau est devenue le second paquet npm du dépôt). `etape_web`, `etape_desktop` et `--derive`
+# le partagent tous les trois : deux formules à tenir d'accord sont exactement ce qui fait qu'un
+# clone cesse d'être réparé sans que personne ne le voie.
+#
+# Évalué sur la racine COURANTE, elle : chaque worktree a son propre `node_modules` (Turbopack
+# refuse un lien), donc ses propres dates.
+npm_perime() {
+  local paquet="$1" lock="$1/package-lock.json" court="${1#"$RACINE/"}"
+  [ -f "$paquet/package.json" ] || return 1
+  if [ ! -d "$paquet/node_modules" ]; then
+    printf 'dépendances npm jamais installées (%s/node_modules absent)\n' "$court"
     return 0
   fi
-  if [ -f "$lock" ] && [ "$lock" -nt "$web/node_modules" ]; then
-    printf 'apps/web/package-lock.json modifié depuis l'\''installation de apps/web/node_modules\n'
+  if [ -f "$lock" ] && [ "$lock" -nt "$paquet/node_modules" ]; then
+    printf '%s/package-lock.json modifié depuis l'\''installation de %s/node_modules\n' \
+      "$court" "$court"
     return 0
   fi
   return 1
+}
+
+# web_perime <racine> : la question ci-dessus, posée sur `apps/web`.
+web_perime() { npm_perime "$1/apps/web"; }
+
+# desktop_perime <racine> : la même question sur la coque de bureau — À UNE DIFFÉRENCE PRÈS, et
+# c'est tout le sujet (#923, #948).
+#
+# La coque s'installe À LA DEMANDE, au premier `desktop.sh`, parce qu'Electron pèse ≈ 370 Mo sur
+# le disque : un clone qui n'ouvrira jamais la fenêtre ne doit rien payer. NE PAS l'avoir n'est
+# donc pas une dérive, c'est le cas nominal — sans quoi `--derive` rendrait 3 sur tous les postes,
+# à chaque `/ticket-start`, pour une réparation que personne n'a demandée.
+#
+# Ce qui EST une dérive : l'avoir installée et voir le lockfile bouger sous ses pieds. Ce clone-là
+# ouvrira la fenêtre sur une version qu'il croit à jour, et rien ne le lui dirait.
+desktop_perime() {
+  [ -d "$1/apps/desktop/node_modules" ] || return 1
+  npm_perime "$1/apps/desktop"
 }
 
 # node_perime : 0 si le Node vendoré n'est pas à la version épinglée. Comparaison de CONTENU
@@ -639,9 +668,10 @@ rapport_derive() {
     # Sur stderr : stdout ne porte que du TSV, pour que l'appelant le lise sans filtrer.
     printf 'venv partagé — dérive évaluée dans le clone principal %s\n' "$porteuse" >&2
   fi
-  if raison="$(venv_perime "$porteuse")"; then printf 'venv\t%s\n' "$raison"; nb=$((nb + 1)); fi
-  if raison="$(web_perime "$RACINE")";   then printf 'web\t%s\n'  "$raison"; nb=$((nb + 1)); fi
-  if raison="$(node_perime)";            then printf 'node\t%s\n' "$raison"; nb=$((nb + 1)); fi
+  if raison="$(venv_perime "$porteuse")";    then printf 'venv\t%s\n'    "$raison"; nb=$((nb + 1)); fi
+  if raison="$(web_perime "$RACINE")";       then printf 'web\t%s\n'     "$raison"; nb=$((nb + 1)); fi
+  if raison="$(desktop_perime "$RACINE")";   then printf 'desktop\t%s\n' "$raison"; nb=$((nb + 1)); fi
+  if raison="$(node_perime)";                then printf 'node\t%s\n'    "$raison"; nb=$((nb + 1)); fi
   [ "$nb" -eq 0 ] || return 3
   return 0
 }
@@ -1059,6 +1089,81 @@ etape_web() {
     fi
   fi
   rapport OK web "apps/web : dépendances npm installées"
+}
+
+# --- 6bis. apps/desktop : dépendances npm de la coque de bureau (#948) ---------------------------
+# Le second paquet npm du dépôt, et il ne se provisionne PAS comme le premier.
+#
+# `desktop.sh` installe Electron au premier lancement de la fenêtre, en annonçant son prix
+# (≈ 158 Mo à télécharger, ≈ 370 Mo sur le disque) — décision de #923 : un clone qui n'ouvrira
+# jamais la fenêtre ne paie rien. Cette étape ne la défait pas, elle la COMPLÈTE aux deux endroits
+# où elle laissait un trou :
+#
+#   · elle RÉPARE ce qui est déjà là. Une coque installée dont le lockfile a bougé tournerait sur
+#     une version périmée sans que rien ne le dise — c'est la dérive que `--derive` signale
+#     désormais, et c'est ici qu'elle se corrige ;
+#   · elle INSTALLE sur demande explicite (`--only desktop`), pour que la coque soit joignable
+#     depuis le provisionnement du dépôt et pas seulement depuis son lanceur.
+#
+# Dans un `setup.sh` complet, une coque absente est donc une ABSTENTION annoncée, jamais une
+# installation surprise de 370 Mo.
+etape_desktop() {
+  local coque="$RACINE/apps/desktop" lock motif ok=1
+
+  if [ ! -f "$coque/package.json" ]; then
+    rapport IGNORE desktop "apps/desktop : pas de package.json, étape sautée"
+    return 0
+  fi
+  if [ "$NODE_PRESENT" = 0 ]; then
+    rapport IGNORE desktop "apps/desktop : node/npm absent, étape sautée"
+    return 0
+  fi
+
+  # Jamais installée, et personne ne l'a demandée : on s'abstient en disant par où elle vient.
+  # `ETAPES_ONLY` non vide veut dire que l'appelant a nommé des étapes — dont celle-ci, sinon on
+  # ne serait pas là (`etape_demandee` a déjà tranché).
+  if [ ! -d "$coque/node_modules" ] && [ -z "$ETAPES_ONLY" ]; then
+    rapport IGNORE desktop \
+      "apps/desktop : coque non installée — à la demande par scripts/controltower/desktop.sh (#923)"
+    return 0
+  fi
+
+  lock="$coque/package-lock.json"
+  # Même prédicat que `--derive`, via `npm_perime` : une seule définition de « ces dépendances ont
+  # dérivé ». `desktop_perime` ne s'applique qu'à une coque déjà installée ; ici node_modules est
+  # présent, ou l'étape a été demandée explicitement — les deux cas veulent la question complète.
+  if ! motif="$(npm_perime "$coque")"; then
+    rapport DEJA desktop "apps/desktop : dépendances npm à jour"
+    return 0
+  fi
+  if [ "$MODE_CHECK" = 1 ]; then
+    rapport IGNORE desktop \
+      "apps/desktop : dépendances npm à installer — $motif (--check : rien écrit)"
+    return 0
+  fi
+
+  printf '  … installation des dépendances npm de apps/desktop — Electron pèse ≈ 158 Mo\n'
+  if [ -f "$lock" ]; then
+    ( cd "$coque" && execute_journalise desktop-npm-ci npm ci ) || ok=0
+  else
+    ok=0
+  fi
+  if [ "$ok" = 0 ]; then
+    # Repli : pas de lockfile, ou `npm ci` refusé (lockfile désynchronisé du package.json).
+    if ! ( cd "$coque" && execute_journalise desktop-npm-install npm install ); then
+      echec_dur desktop "apps/desktop : installation npm impossible"
+      return 0
+    fi
+  fi
+  # Le paquet npm ne prouve RIEN sur le runtime : c'est un post-install qui le télécharge, et il ne
+  # tourne pas toujours (mesuré le 2026-09-11, #923). `desktop.sh` sait le réparer pour lui seul ;
+  # le dire ici évite de laisser croire que la fenêtre est prête.
+  if [ ! -d "$coque/node_modules/electron/dist" ]; then
+    rapport OK desktop \
+      "apps/desktop : paquets installés — runtime Electron récupéré au 1er desktop.sh"
+    return 0
+  fi
+  rapport OK desktop "apps/desktop : dépendances npm installées"
 }
 
 # --- 7. Claude Code : .claude/settings.local.json (profil navigateur + serveurs MCP) -------------

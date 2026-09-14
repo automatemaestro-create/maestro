@@ -10,8 +10,10 @@
 # commentaires sont de l'HISTOIRE : elles disent pourquoi un choix a été fait, jamais qu'il existe
 # un second pipeline à tenir d'accord.
 #
-# Les six jobs : shellcheck, python-lint, pytest, mypy, web-build — plus `perimetre`, le
-# job-portier qui n'avait pas d'équivalent GitLab (voir plus bas).
+# Les jobs : shellcheck, python-lint, pytest, mypy, web-build, desktop — plus `perimetre`, le
+# job-portier qui n'avait pas d'équivalent GitLab (voir plus bas). Chacun d'eux est un CHECK REQUIS
+# sur `main` : en ajouter un, c'est ajouter son nom à `CHECKS` (scripts/github/protect-main.sh) dans
+# le même commit, puis rejouer ce script une fois le commit sur `main` (#948).
 
 name: CI
 
@@ -81,7 +83,7 @@ permissions:
 #     explicitement ci-dessous (`cache: npm`) ; v6 restreint ce cache automatique à npm ;
 #   · setup-python v7 retire l'entrée `pip-install`, que ce workflow n'utilise pas.
 #
-# Ces majeures exigent un runner ≥ v2.327.1 : sans objet tant que les six jobs tournent sur
+# Ces majeures exigent un runner ≥ v2.327.1 : sans objet tant que les jobs tournent sur
 # `ubuntu-latest` (runner hébergé, tenu à jour par GitHub). Un runner auto-hébergé — la piste
 # qu'a écartée #331 — remettrait cette contrainte sur la table.
 
@@ -99,7 +101,7 @@ jobs:
   # requis dont le WORKFLOW ne se déclenche pas n'est jamais rapporté du tout, et la PR reste
   # bloquée pour toujours, sans rien à cliquer pour la débloquer.
   #
-  # ⚠ La branch protection est POSÉE depuis le 2026-08-28 (#734, docs/10 §8.8) : les six jobs de ce
+  # ⚠ La branch protection est POSÉE depuis le 2026-08-28 (#734, docs/10 §8.8) : les jobs de ce
   # fichier sont des CHECKS REQUIS sur `main`. Elle a été écartée de #338 au 2026-08-27, faute
   # d'exister sur un dépôt privé d'un compte Free — la structure était écrite pour elle avant de
   # l'être, et c'est ce qui a permis de la poser en une commande sans rien casser. Le piège
@@ -110,10 +112,20 @@ jobs:
   #
   # Le calcul se fait en git nu, sans action tierce : une dépendance de plus dans la chaîne
   # d'approvisionnement se justifie mal pour trois lignes de `git diff`.
+  #
+  # ⚠ DEUX SORTIES depuis #948, une par paquet npm du dépôt — et non une sortie « front » commune.
+  # `apps/web` et `apps/desktop` ont chacun leur lockfile, leur job et leur coût : les fondre ferait
+  # payer plusieurs minutes de `npm ci && next build` à un diff qui ne touche que la coque, et
+  # inversement ferait sauter la coque sur un diff du front. Surtout, un chemin que ce portier ne
+  # nomme pas ne tombe PAS dans un défaut neutre : il fait sauter le job qui le vérifie, sans que
+  # rien ne rougisse — c'est le trou dans lequel `apps/desktop/` est né (#923) et que #948 ferme.
+  # Ajouter une surface npm ici, c'est donc AUSSI ajouter son job ci-dessous et son nom dans
+  # `CHECKS` (scripts/github/protect-main.sh), les trois dans le même commit.
   perimetre:
     runs-on: ubuntu-latest
     outputs:
       web: ${{ steps.filtre.outputs.web }}
+      desktop: ${{ steps.filtre.outputs.desktop }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -129,17 +141,21 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
-          if [ -z "$BASE_SHA" ]; then
-            # Hors PR (workflow_dispatch) : aucune base de comparaison n'a de sens. On ne saute
-            # rien — le coût d'un web-build de trop est négligeable devant celui d'un verdict
-            # manquant sur un déclenchement manuel, qui sert précisément à vérifier quelque chose.
+          # Tout ouvrir : la seule réponse sûre quand il n'y a rien à comparer. Le coût d'un job
+          # de trop est négligeable devant celui d'un verdict manquant.
+          tout() {
             echo "web=true" >> "$GITHUB_OUTPUT"
-            echo "hors pull request → web-build joué systématiquement."
+            echo "desktop=true" >> "$GITHUB_OUTPUT"
+            echo "$1"
+          }
+          if [ -z "$BASE_SHA" ]; then
+            # Hors PR (workflow_dispatch) : aucune base de comparaison n'a de sens, et un
+            # déclenchement manuel sert précisément à vérifier quelque chose.
+            tout "hors pull request → web-build et desktop joués systématiquement."
             exit 0
           fi
           if ! git rev-parse --verify --quiet "${BASE_SHA}^{commit}" >/dev/null; then
-            echo "web=true" >> "$GITHUB_OUTPUT"
-            echo "base $BASE_SHA introuvable → web-build joué par précaution."
+            tout "base $BASE_SHA introuvable → web-build et desktop joués par précaution."
             exit 0
           fi
           # Deux points et non trois : HEAD est déjà le merge de la PR dans $BASE_SHA, donc
@@ -148,11 +164,18 @@ jobs:
           fichiers="$(git diff --name-only "$BASE_SHA" HEAD)"
           echo "Fichiers modifiés depuis $BASE_SHA :"
           printf '  %s\n' $fichiers
-          if printf '%s\n' "$fichiers" | grep -qE '^(apps/web/|\.github/workflows/)'; then
-            echo "web=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "web=false" >> "$GITHUB_OUTPUT"
-          fi
+          # Une sortie par paquet npm. Ce fichier-ci ouvre les DEUX : une modification du workflow
+          # peut changer n'importe lequel des jobs, et c'est le seul chemin dont on ne sait rien
+          # dire de plus précis.
+          decide() { # <nom de la sortie> <motif ERE sur les chemins>
+            if printf '%s\n' "$fichiers" | grep -qE "$2"; then
+              echo "$1=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "$1=false" >> "$GITHUB_OUTPUT"
+            fi
+          }
+          decide web '^(apps/web/|\.github/workflows/)'
+          decide desktop '^(apps/desktop/|\.github/workflows/)'
 
   # ───────────────────────────────────────────────────────────────────────────
   # UN APPEL PAR FICHIER, comme le filet local (#285) : shellcheck est superlinéaire en taille
@@ -289,3 +312,64 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # LA COQUE DE BUREAU (#948, chantier #921) — et d'abord CE QU'ELLE NE JOUE PAS, parce que c'est
+  # la moitié qui se découvre autrement.
+  #
+  # Ce job joue les deux seules choses qu'on puisse vérifier sur `apps/desktop` sans exécuter
+  # quoi que ce soit :
+  #
+  #   1. LE PAQUET TIENT — `npm ci` échoue si `package-lock.json` a cessé d'être en accord avec
+  #      `package.json`. C'est le contrôle qui rattrape une dépendance ajoutée sans relock, et le
+  #      seul que `node --check` ne rattrape jamais.
+  #   2. LE PROCESSUS PRINCIPAL SE PARSE — `node --check` sur les sources de la coque. Elles ne
+  #      sont chargées par rien d'autre en CI : sans ce job, une faute de frappe dans `main.js`
+  #      voyage jusqu'au premier `desktop.sh` d'un poste.
+  #
+  # CE QU'IL NE JOUE PAS, et qui est vérifié AILLEURS :
+  #
+  #   · la CONFIGURATION DE SÛRETÉ (`nodeIntegration`, `contextIsolation`, `sandbox`, l'origine
+  #     autorisée) et le CYCLE DE VIE DES PROCESSUS (démarrage de la stack, arrêt à la fermeture,
+  #     instance unique) — ce sont des tests pytest qui LISENT `main.js`, à écrire par #929. Ils
+  #     tournent dans le job `pytest`, qui n'a aucun filtre de périmètre : ils sont donc joués sur
+  #     toute PR, celle-ci comprise. Rien à câbler ici pour eux.
+  #   · le RUNTIME Electron n'est même pas téléchargé (`ELECTRON_SKIP_BINARY_DOWNLOAD`) : ~158 Mo
+  #     pour ouvrir une fenêtre qu'aucun runner ne regarderait. Tester une coque Electron ne
+  #     demande pas de lancer Electron (#929) — ce qui se garde ici est sa configuration.
+  #
+  # CE QUI RESTE HORS PIPELINE, et le restera : le RENDU de la fenêtre (thème, taille, écran
+  # d'attente) et le comportement d'un vrai lancement. Cela demande un poste, un serveur X et la
+  # stack locale ; c'est le ressort du filet visuel (`relecture-visuelle`, #932) et de `desktop.sh`,
+  # jamais d'un runner. Un job qui prétendrait le couvrir serait le garde-fou qui saute (#333).
+  #
+  # Pas de lint JS : `apps/desktop` n'a pas de configuration eslint, et celle de `apps/web` vise du
+  # Next/React là où la coque est du CommonJS Node. En ajouter une est un ticket, pas un effet de
+  # bord de celui-ci — et son absence est dite ici plutôt que découverte.
+  desktop:
+    needs: perimetre
+    if: needs.perimetre.outputs.desktop == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          # Résolu depuis la racine du dépôt, pas depuis `working-directory` — même usage que
+          # `web-build` ci-dessus.
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - name: Dépendances de la coque, sans le runtime Electron
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: npm ci
+      - name: Syntaxe des sources de la coque
+        run: |
+          set -euo pipefail
+          # Les sources versionnées, et elles seules : `node_modules` vient d'être installé et ne
+          # nous appartient pas. `-print0`/`-0` parce qu'un chemin peut porter un espace.
+          find . -name node_modules -prune -o -type f -name '*.js' -print0 |
+            xargs -0 -r -n1 node --check

@@ -2035,14 +2035,14 @@ documenter la clé n'écrit rien nulle part.
 
 ## 8. Intégration continue (CI)
 
-Le pipeline [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) porte six jobs :
+Le pipeline [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) porte sept jobs :
 `shellcheck` (sévérité `warning`, scripts `scripts/**/*.sh`, **un appel par fichier** — §8.4),
 `python-lint` (ruff), `pytest` (suite du dépôt **en parallèle**, `-n auto`, #214 — 1 min 53 s au
 lieu de ~10, §8.4, avec **couverture** pytest-cov : taux remonté dans le résumé du run, échec sous
-`--cov-fail-under=90`), `mypy` (typage strict de `maestro/`), `web-build` (l'UI Control Tower) et
-`perimetre`, un job-portier sans équivalent GitLab (§8.8). Les jobs Python partagent le **cache
-pip** natif de `setup-python` (clé sur `pyproject.toml`). Un **pipeline vert est la condition de
-passage `En revue` → merge**.
+`--cov-fail-under=90`), `mypy` (typage strict de `maestro/`), `web-build` (l'UI Control Tower),
+`desktop` (la coque de bureau, #948 — voir plus bas) et `perimetre`, un job-portier sans équivalent
+GitLab (§8.8). Les jobs Python partagent le **cache pip** natif de `setup-python` (clé sur
+`pyproject.toml`). Un **pipeline vert est la condition de passage `En revue` → merge**.
 
 Le **front** (`apps/web`) a son propre job, `web-build`, qui enchaîne `npm run lint` (ESLint),
 `npm run typecheck` (`tsc --noEmit`, #236), `npm test` (la suite **Vitest** de l'interface, #124)
@@ -2056,6 +2056,46 @@ trois fois de plus n'apprendrait rien et se facturerait d'autant (§8.1) ; l'ord
 rapide au plus lent, pour que le verdict tombe tôt quand il est rouge. Le job ne se déclenche que
 si `apps/web/**` (ou `.github/workflows/**`) change — un pipeline purement Python reste rapide — et
 son cache npm porte sur le lockfile versionné.
+
+### 8.0 La coque de bureau dans les filets (#948)
+
+`apps/desktop` (#923, [docs/35](./35-decision-poste-de-bureau-et-disposition.md)) est le **second
+paquet npm** du dépôt, et il est né **hors de portée des quatre mécanismes** qui décident « qu'est-ce
+qui est vérifié, et par qui » — tous câblés sur `apps/web` en dur. Un chemin qu'ils ne nomment pas ne
+tombe pas dans un défaut neutre : il tombe dans deux défauts **opposés**, dont aucun ne rougit.
+
+| Mécanisme | Ce qu'il faisait d'un chemin inconnu | Ce qu'il en fait depuis |
+|---|---|---|
+| Portier de périmètre (`ci.yml`) | `web=false` → aucun job ne regarde la coque | une **sortie `desktop`** distincte, et le job qui va avec |
+| Checks requis (`protect-main.sh`) | le job ajouté n'empêche aucun merge | `desktop` dans `CHECKS` — voir §8.8 pour le geste qui le pose |
+| Périmètre du filet local | « chemin non classé » → **toute** la suite pytest, à chaque diff | les suites qui **nomment** la coque, et aucune sinon (§8.4) |
+| Provisionnement (`setup.sh`) | ni installation ni dérive : `--derive` ne voyait jamais rien bouger | une étape `desktop` et une ligne de dérive (§9.4) |
+
+Les deux premiers et le troisième se **contredisaient**, et c'est ce qui rendait la situation
+difficile à voir : *en CI rien ne la vérifiait, en local tout se rejouait*.
+
+**Ce que le job `desktop` joue** : `npm ci` — donc le lockfile en accord avec le `package.json`,
+avec `ELECTRON_SKIP_BINARY_DOWNLOAD` pour ne pas tirer ≈ 158 Mo de runtime — puis `node --check` sur
+les sources versionnées de la coque, que rien d'autre ne charge en CI.
+
+**Ce qu'il ne joue pas, et où ça se joue** : la **configuration de sûreté**
+(`nodeIntegration`, `contextIsolation`, `sandbox`, l'origine autorisée) et le **cycle de vie des
+processus** sont gardés par des tests **pytest qui lisent `main.js`** (#929) — donc par le job
+`pytest`, qui n'a aucun filtre de périmètre et tourne sur toute PR. *Tester une coque Electron ne
+demande pas de lancer Electron.*
+
+**Ce qui reste hors pipeline**, et le restera : le **rendu** de la fenêtre et le comportement d'un
+vrai lancement — cela demande un poste, un serveur X et la stack locale, c'est le ressort du filet
+visuel (`relecture-visuelle`, #932) et de `desktop.sh`. De même, `apps/desktop` n'a **pas de lint
+JS** : il n'a pas de configuration eslint, et celle de `apps/web` vise du Next/React. Ces absences
+sont **dites** plutôt que découvertes — un job qui prétendrait les couvrir serait le garde-fou qui
+saute (§8.7).
+
+La **frontière est gardée** par [`tests/test_ci_local.py`](../tests/test_ci_local.py) : tout job du
+pipeline est dans `CHECKS` **et réciproquement** (un check requis sans job laisse une PR attendre un
+verdict qui n'arrivera jamais), et tout job conditionné par le portier a **sa** sortie, posée sur les
+trois chemins du script. Le commentaire de `ci.yml` prévenait depuis #338 ; c'était une règle **lue**,
+elle est maintenant vérifiée.
 
 Les **scripts shell** ne sont pas seulement lintés : le parcours de mise en route
 ([`scripts/setup.sh`](../scripts/setup.sh), §7) a sa propre suite pytest
@@ -2146,8 +2186,8 @@ verdict réellement lu, celui qui conditionne le merge. Trois conséquences prat
 - **La case « Pipeline CI verte » de la PR est vide au premier passage**, et c'est normal :
   `/ticket-finish` pousse **puis** ouvre la PR, donc le pipeline naît *après* le constat (§6).
 
-Le garde-fou de merge **de la forge** est, lui, **posé depuis le 2026-08-28** (#734) : les six jobs
-sont des **checks requis** sur `main`, `enforce_admins` compris. Il ne remplace pas le nôtre — la
+Le garde-fou de merge **de la forge** est, lui, **posé depuis le 2026-08-28** (#734) : les jobs de
+`ci.yml` sont des **checks requis** sur `main`, `enforce_admins` compris. Il ne remplace pas le nôtre — la
 règle « pas de merge au rouge » reste tenue dans `lib.sh merge-mr`, quatrième prérequis (§6), seul à
 exiger que le vert soit porté par la **tête de la PR** — il le double là où nos chemins ne passent
 pas. Avant cette date, la protection n'existait pas sur un dépôt privé d'un compte Free (§8.8) et le
@@ -2328,9 +2368,23 @@ partira au push), fichier par fichier :
 | `tests/test_*.py` | elles-mêmes |
 | `tests/conftest.py`, `pyproject.toml`, `.node-version` | la suite entière |
 | `docs/**`, `apps/web/**`, prose de la racine | aucune suite pytest (`web-build` couvre le front) |
+| `apps/desktop/**` | les suites qui la **nomment**, et **aucune** s'il n'y en a pas (#948, ci-dessous) |
 | **tout le reste** | la suite entière |
 
 Ces points de conception valent d'être compris avant d'y toucher.
+
+**La coque de bureau est le seul chemin qui échappe aux deux voisins, et il le faut (#948).** La
+ranger avec `apps/web/**` la rendrait **silencieusement sautée** le jour où des suites la lisent
+(sûreté, cycle de vie des processus — #929) ; la laisser dans « tout le reste » en fait un **chemin
+non classé**, donc la suite entière à chaque diff — mesuré le 2026-09-14 : aucune suite ne nommait
+`apps/desktop/` ni `main.js`, donc **1 min 51 dans le conteneur** (quinze minutes en natif) pour deux
+fichiers que rien ne lit. La règle du nom répond juste aux deux, à condition de lui retirer son
+**élargissement final** : elle joue les suites qui nomment la coque quand il y en a, et s'abstient
+sinon — non par supposition, mais parce que le job `desktop` couvre ce qu'aucune suite ne regarde
+(§8.0). L'abstention est **motivée à l'écran** (« apps/desktop/ (couverte par le job desktop) »),
+seule chose qui la distingue d'un saut silencieux. Les deux moitiés se tiennent, et
+`tests/test_ci_local.py` en garde une chacune — la seconde échoue si l'on range la coque avec le
+front, la première si on l'abandonne au cas général.
 
 **Le repli par le dossier cherche un chemin, jamais un nom nu (#375).** La règle du nom a un repli :
 un fichier que personne ne cite hérite des suites qui nomment son **dossier** — une suite qui relit
@@ -3116,8 +3170,26 @@ manque).
 
 ```bash
 bash scripts/github/protect-main.sh --check    # ce qui est requis aujourd'hui — répond 0, « Conforme »
-bash scripts/github/protect-main.sh            # repose les six checks (idempotent)
+bash scripts/github/protect-main.sh            # repose les checks de CHECKS (idempotent)
 ```
+
+**Ajouter un job au pipeline est donc un geste en trois temps (#948).** La liste `CHECKS` du script
+est ce qu'il **pose** ; ce que la forge **exige** ne change qu'au prochain lancement sans `--check`.
+L'ordre compte, et il n'est pas celui qu'on croit :
+
+1. le job entre dans `ci.yml` **et** son nom dans `CHECKS`, au **même commit** — séparés, le second
+   ne sera jamais fait ;
+2. le script est rejoué **une fois le commit sur `main`**, et pas avant : le rejouer sur une PR
+   ouverte ferait attendre à toutes les autres PR — bâties sur un `main` qui n'a pas encore le job —
+   un check que leur pipeline ne rapportera jamais, et c'est le piège décrit en tête de `ci.yml` :
+   *une PR indéfiniment non mergeable, découverte sous la pression* ;
+3. entre les deux moments, l'écart est une **dérive**, et elle est **signalée** — `doctor.sh` §6
+   nomme les jobs qui ne sont pas requis (« ils tournent et peuvent rougir, mais n'empêchent aucun
+   merge »). Il la demande à `protect-main.sh --check`, jamais à une copie de la liste.
+
+La correspondance elle-même — tout job dans `CHECKS`, et réciproquement — est gardée par
+[`tests/test_ci_local.py`](../tests/test_ci_local.py) : la règle était écrite depuis #338 et
+n'était **lue** par personne.
 
 Trois valeurs du corps `PUT`, et chacune est une décision :
 
@@ -4110,7 +4182,21 @@ depuis toujours — c'est ainsi que ses étapes décident si elles ont quelque c
 |---|---|---|
 | `venv` | `pyproject.toml` contre le témoin `.venv/.maestro-setup-stamp` | `pip install -e ".[dev]"` |
 | `web`  | `apps/web/package-lock.json` contre `apps/web/node_modules` | `npm ci` |
+| `desktop` | idem sur `apps/desktop`, **si la coque est installée** (#948) | `npm ci` |
 | `node` | `.node-version` contre `node -v` du Node vendoré | provisionnement de `.tools/node/` |
+
+**La coque de bureau dérive autrement, et c'est délibéré (#948).** Le prédicat est le même —
+`npm_perime`, **généralisé** plutôt que recopié, parce que deux formules à tenir d'accord sont
+exactement ce qui fait qu'un clone cesse d'être réparé sans que personne ne le voie — mais la
+question ne se pose qu'à un clone qui a **déjà** la coque. Electron pèse ≈ 370 Mo sur le disque, et
+#923 a décidé de l'installer **à la demande**, au premier `desktop.sh` : ne pas l'avoir n'est donc
+pas une dérive, c'est le cas nominal. Sans cette réserve, `--derive` rendrait `3` sur tous les
+postes, à chaque `/ticket-start` et avant chaque filet, pour proposer une réparation que personne
+n'a demandée. Ce qui **est** une dérive : l'avoir installée et voir son lockfile bouger — cette
+fenêtre-là s'ouvrirait sur une version périmée sans que rien ne le dise. Symétriquement, l'étape
+`desktop` de `setup.sh` **répare** ce qui est là et **n'installe** que sur demande explicite
+(`--only desktop`) ; dans un `setup.sh` complet, une coque absente est une **abstention annoncée**,
+jamais une installation surprise.
 
 Ce qui manquait, c'était de l'**exposer** — d'où un mode dédié, lisible par un script, sans réseau
 ni écriture :

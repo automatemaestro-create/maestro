@@ -124,9 +124,18 @@ question.
 **L'arbitrage n'est pas relu pour autant, et voici pourquoi** — la décision de §2.2 ne s'appuie pas
 sur le poids, elle l'assume : ce qui la porte est *le moteur vérifié est le moteur livré*. Un écart
 de 210 Mo sur un poste de développement ne déplace pas cet argument. Ce qu'il déplace est le
-**mode d'installation** : la coque n'est **pas** installée par `setup.sh`, mais **à la demande** au
-premier lancement de `desktop.sh`, qui annonce la taille avant de télécharger — un clone qui
-n'ouvrira jamais la fenêtre ne paie rien.
+**mode d'installation** : la coque n'est **pas** installée par un `setup.sh` complet, mais **à la
+demande** au premier lancement de `desktop.sh`, qui annonce la taille avant de télécharger — un clone
+qui n'ouvrira jamais la fenêtre ne paie rien.
+
+⚠ **Ce que #948 y a ajouté ne défait pas ce choix, il le complète aux deux endroits où il laissait un
+trou** ([docs/10 §9.4](./10-workflow-git.md)). `setup.sh` a désormais une étape `desktop`, mais elle
+**n'installe rien d'office** : dans un parcours complet, une coque absente est une **abstention
+annoncée** qui renvoie vers `desktop.sh`. Elle **répare** ce qui est déjà là — une coque installée
+dont le lockfile a bougé ouvrirait sa fenêtre sur une version périmée sans que rien ne le dise —, et
+elle **installe sur demande explicite** (`--only desktop`), pour que la coque soit joignable depuis le
+provisionnement du dépôt et pas seulement depuis son lanceur. Symétriquement, `setup.sh --derive` ne
+signale la coque que si elle est **installée** : ne pas l'avoir reste le cas nominal, pas une dérive.
 
 ⚠ **Ce n'est toujours PAS la taille d'un installeur** (#641, Phase 9). Un paquet livré ne contient
 ni les en-têtes, ni les fichiers de debug, ni les locales inutiles de `dist/`, et il est compressé.

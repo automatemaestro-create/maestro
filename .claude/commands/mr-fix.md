@@ -154,7 +154,7 @@ cas de doute). Les **garde-fous** priment sur l'automatisation : suis les étape
      bash scripts/ci/local.sh --only <job>
      ```
      `<job>` est le nom rendu par l'étape 6 (`shellcheck`, `python-lint`, `pytest`, `mypy`,
-     `web-build` ; `lint` et `test` désignent l'étage entier). **Ne rejoue pas la suite entière**
+     `web-build`, `desktop` ; `lint` et `test` désignent l'étage entier). **Ne rejoue pas la suite entière**
      — ni `--complet`, ni un `pytest -n auto` à la main : le filet cadre `pytest` sur le périmètre
      du diff (~40 s au lieu de ~10 min), et c'est ici, en plein diagnostic d'un pipeline rouge, que
      la différence se paye. Pour reboucler sur le seul test rouge de la trace, vise-le directement —
