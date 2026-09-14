@@ -115,7 +115,7 @@ renseigner) sort dans la section « Reste à faire » de son rapport final.
 |---|---|
 | `bash scripts/setup.sh --check` | Diagnostic seul : dit ce qui manque, **n'écrit rien** |
 | `bash scripts/setup.sh --no-install` | N'installe aucun outil, se contente de le signaler |
-| `bash scripts/setup.sh --only <étapes>` · `--skip <étapes>` | Rejoue / saute des étapes : `node`, `prerequis`, `venv`, `env`, `hooks`, `web`, `desktop`, `mcp`, `infra`, `verif` |
+| `bash scripts/setup.sh --only <étapes>` · `--skip <étapes>` | Rejoue / saute des étapes : `node`, `prerequis`, `venv`, `env`, `hooks`, `shell`, `web`, `desktop`, `mcp`, `infra`, `verif` |
 | `bash scripts/setup.sh --with-infra` | Démarre en plus les bases locales PostgreSQL / Redis / Temporal (`infra/`) |
 
 Dans une session Claude Code, la commande [`/setup`](./.claude/commands/setup.md) lance ce même

@@ -1858,6 +1858,74 @@ barre le geste **nu**, que plus personne n'a de raison de lancer.
   d'identifiants, forcer `gh` comme credential helper le temps de la commande —
   `git -c credential.helper='!gh auth git-credential' push -u origin <branche>`.
 
+### 7.0 Windows : dans PowerShell, `bash` désigne le lanceur WSL (#970)
+
+Tout ce que ce dépôt prescrit commence par `bash scripts/…` — les prompts de `.claude/commands/`,
+`CONTRIBUTING.md`, ce document, et chaque bloc de commande qu'une session propose. Sous Windows,
+**aucune de ces commandes ne fonctionne dans PowerShell**, qui est pourtant le shell du terminal par
+défaut :
+
+```
+PS E:\Projects Solutions\Maestro> bash scripts/github/protect-main.sh
+<3>WSL (10 - Relay) ERROR: CreateProcessCommon:800: execvpe(/bin/bash) failed: No such file or directory
+```
+
+Le script n'a jamais démarré, et le message ne nomme ni sa cause ni son remède.
+
+**Pourquoi le PATH ne peut pas y répondre**, mesuré le 2026-09-14 sur le poste de référence
+(Windows 11, PowerShell 5.1) : le seul `bash.exe` que le PATH **persistant** atteint est
+`C:\Windows\System32\bash.exe`, le lanceur WSL — **aucun dossier de Git n'est dans le PATH**. Et
+Windows construit le PATH d'un processus en concaténant le PATH **machine** *puis* le PATH
+**utilisateur** : ce qu'on ajoute à ce dernier arrive donc toujours **après** `System32`. Masquer ce
+`bash.exe` exigerait d'éditer le PATH machine, donc des droits admin.
+
+Une **fonction** PowerShell, elle, prime sur le PATH. C'est ce que pose l'étape `shell` de
+`scripts/setup.sh`, dans le profil de l'utilisateur :
+
+```powershell
+function bash { & 'C:\Program Files\Git\bin\bash.exe' @args }
+```
+
+Ce qu'il faut savoir avant d'y toucher :
+
+- **C'est la seule étape du script qui écrive hors du dépôt.** Elle s'en tient donc strictement à
+  ses quatre promesses : bloc **délimité et ajouté** (jamais un profil réécrit — ce qui l'entoure
+  survit), **rejouable** sans doublon, `--check` sans écriture, et un **opt-out**
+  (`MAESTRO_PROFIL_POWERSHELL=0`).
+- **Le profil est demandé à PowerShell** (`$PROFILE.CurrentUserAllHosts`), jamais reconstruit à
+  partir de `…\Documents\` : « Documents » est redirigé dès qu'OneDrive est actif, et le profil
+  qu'on écrirait ne serait pas celui que PowerShell charge.
+- **Le chemin de Git Bash est dérivé** de celui qui exécute `setup.sh`. Git for Windows en livre
+  deux et le choix compte : `…\Git\bin\bash.exe` (46 Ko) est le **lanceur** destiné aux appels venus
+  de Windows, `…\Git\usr\bin\bash.exe` (4 Mo) le binaire nu. ⚠ La dérivation reste en chemin
+  **natif** de bout en bout, parce que les deux conversions sont perdantes ici : `/bin` est un
+  **lien** vers `/usr/bin` sous Git Bash, et la racine POSIX de ce shell **est** le dossier
+  d'installation de Git — si bien que `cygpath` traduit `…\Git\bin\bash.exe` en `/bin/bash.exe` puis
+  le retraduit en `…\Git\usr\bin\bash.exe`. L'aller-retour ne sait pas distinguer les deux.
+- **Le bloc posé est en ASCII pur**, et ce n'est pas une préférence : Windows PowerShell 5.1 lit un
+  `.ps1` **sans BOM** avec l'encodage ANSI du poste, pas en UTF-8 — un commentaire accentué s'y
+  afficherait en mojibake. On ne peut pas répondre par un BOM, puisqu'on **ajoute** à un fichier
+  qu'on n'a pas écrit ; l'ASCII est juste dans les deux cas.
+- **La politique d'exécution n'est jamais changée.** Sur un poste en `Restricted` ou `AllSigned`,
+  PowerShell ne charge aucun profil : l'étape **le dit** et nomme le remède
+  (`Set-ExecutionPolicy RemoteSigned -Scope CurrentUser`) sans le jouer — modifier une politique de
+  sécurité Windows n'est pas un geste de mise en route.
+- **L'effet n'est pas rétroactif** : un terminal déjà ouvert garde l'ancienne résolution. Il faut un
+  **nouveau** PowerShell.
+- **Pour retirer** : supprimer le bloc du profil, que ses deux marqueurs délimitent. Pour appeler
+  quand même le bash de WSL : `wsl bash`.
+
+⚠ **Ce mécanisme réduit la fréquence du piège, il ne le supprime pas** — poste neuf pas encore
+passé par `setup.sh`, terminal ouvert avant l'étape, profil désactivé par une politique. La règle
+de conduite reste donc **derrière** lui : quand on fait jouer une commande à la main à quelqu'un
+sous Windows, on précise « dans Git Bash » ou l'on donne la forme sûre —
+`& "C:\Program Files\Git\bin\bash.exe" scripts/…`.
+
+Gardé par [`tests/test_setup.py`](../tests/test_setup.py) : l'abstention sans PowerShell (le motif,
+prouvé avant tout le reste), le bloc et sa fonction, l'ASCII pur, l'idempotence, le **remplacement**
+d'un bloc périmé sans toucher au reste du profil, `--check`, l'opt-out et la politique restrictive
+dite mais jamais changée.
+
 ### 7.1 Permissions Claude Code (allowlist)
 
 Pour que les commandes du workflow — en particulier [`/ticket-ship`](../.claude/commands/ticket-ship.md) —
