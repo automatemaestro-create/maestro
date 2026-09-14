@@ -100,6 +100,12 @@ temps. Un lot non marqué attend tout ce qui le précède — c'est ce qui garde
   `commit-msg` refuse tout message hors convention — c'est voulu.
 - **Python** : toujours via le venv du dépôt (`.venv/Scripts/python.exe` sous Windows,
   `.venv/bin/python` sous Unix). Le `python` système n'a pas les dépendances.
+- **Windows — les commandes `bash …` se tapent dans Git Bash.** Dans PowerShell, `bash` désigne le
+  **lanceur WSL** et non Git Bash, et la commande échoue sur un message qui ne nomme pas sa cause
+  (`execvpe(/bin/bash) failed`). L'étape `shell` de `setup.sh` corrige ça une fois pour toutes en
+  posant une fonction dans votre profil PowerShell — **effective dans un nouveau terminal**
+  ([docs/10 §7.0](./docs/10-workflow-git.md)). Si vous ne l'avez pas encore passée, la forme sûre
+  est `& "C:\Program Files\Git\bin\bash.exe" scripts/…`.
 - **La CI distante ne tourne que sur les Pull Requests** : un push sur votre branche ne déclenche
   rien tant que la PR n'est pas ouverte, et `main` n'est plus rejoué après le merge
   ([docs/10 §8](./docs/10-workflow-git.md)). Le filet, c'est donc le local :

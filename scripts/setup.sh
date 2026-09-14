@@ -61,7 +61,7 @@ OUTILS_DIR="$RACINE/.tools"
 # d'un clone à l'autre, et c'est du code exécuté à chaque démarrage de Claude Code.
 PLAYWRIGHT_MCP_VERSION="${MAESTRO_PLAYWRIGHT_MCP_VERSION:-0.0.78}"
 
-ETAPES_CONNUES="node prerequis venv env hooks web desktop mcp infra verif"
+ETAPES_CONNUES="node prerequis venv env hooks shell web desktop mcp infra verif"
 
 # --- Drapeaux -----------------------------------------------------------------------------------
 MODE_CHECK=0                                     # --check : diagnostic seul, aucune écriture
@@ -98,6 +98,9 @@ Options :
   env        .env créé depuis .env.example (jamais écrasé) ; les clés partagées encore
              vides sont signalées, avec le script qui les récupère (scripts/env-pull.sh)
   hooks      hook git commit-msg (scripts/git/install-hooks.sh)
+  shell      Windows : « bash » désigne Git Bash et non le lanceur WSL, dans le profil
+             PowerShell de l'utilisateur — sans quoi aucune commande « bash scripts/… » ne
+             marche depuis un terminal PowerShell (MAESTRO_PROFIL_POWERSHELL=0 l'éteint)
   web        dépendances npm de apps/web
   desktop    dépendances npm de la coque de bureau (apps/desktop) — RÉPARE une coque déjà
              installée dont le lockfile a bougé ; ne l'installe que si l'étape est demandée
@@ -1048,6 +1051,220 @@ etape_hooks() {
   else
     echec_dur hooks "hooks git : install-hooks.sh a échoué"
   fi
+}
+
+# --- 5bis. PowerShell : que `bash` désigne Git Bash et non WSL (#970) ----------------------------
+#
+# Tout ce que ce dépôt prescrit commence par `bash scripts/…` — les prompts de `.claude/commands/`,
+# CONTRIBUTING.md, docs/10, et chaque bloc de commande qu'une session propose. Sous Windows, aucune
+# de ces commandes ne fonctionne dans PowerShell, qui est le shell du terminal par défaut :
+#
+#   PS> bash scripts/github/protect-main.sh
+#   <3>WSL (10 - Relay) ERROR: CreateProcessCommon:800: execvpe(/bin/bash) failed: No such file…
+#
+# `bash` s'y résout vers `C:\Windows\System32\bash.exe`, le LANCEUR WSL, et le script ne démarre
+# jamais. Mesuré le 2026-09-14 sur le poste de référence : aucun dossier de Git n'est dans le PATH
+# persistant, et le PATH machine précède TOUJOURS le PATH utilisateur — donc aucun ajout de PATH
+# sans droits admin ne peut masquer `System32`. Une FONCTION, si : elle prime sur le PATH.
+#
+# ⚠ C'est la seule étape qui écrive HORS DU DÉPÔT, et elle s'en tient donc strictement aux quatre
+# promesses du script : bloc délimité AJOUTÉ (jamais un profil réécrit), rejouable sans doublon,
+# `--check` sans écriture, et un opt-out — `MAESTRO_PROFIL_POWERSHELL=0`.
+#
+# Ce qu'elle ne fait pas, et pourquoi : elle ne touche PAS à `Set-ExecutionPolicy`. Si la politique
+# du poste interdit les profils, elle le DIT — changer une politique de sécurité Windows n'est pas
+# un geste de mise en route.
+
+#: Le marqueur du bloc. Il sert à trois choses — reconnaître notre bloc pour ne pas le dupliquer,
+#: le remplacer quand le chemin de Git Bash a changé, et permettre à un humain de le retirer à la
+#: main. Ne jamais le modifier : un marqueur qui change laisse l'ancien bloc en place pour toujours.
+PS_MARQUE_DEBUT='# >>> Maestro (scripts/setup.sh) >>>'
+PS_MARQUE_FIN='# <<< Maestro (scripts/setup.sh) <<<'
+
+# chemin_posix : le pendant de `chemin_natif`, et le même repli — sans `cygpath`, le chemin est
+# déjà dans la forme qu'attend le système.
+chemin_posix() {
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -u "$1" 2>/dev/null
+  else
+    printf '%s\n' "$1"
+  fi
+}
+
+# lisible_natif : « C:\x\y » -> « /c/x/y », pour le seul besoin de TESTER l'existence d'un chemin
+# natif depuis ce shell.
+#
+# ⚠ La conversion est faite ici à la main, et surtout PAS par `cygpath -u`, qui rend la forme la
+# plus COURTE : sous Git Bash, « C:\Program Files\Git\bin\bash.exe » devient « /bin/bash.exe »,
+# parce que la racine POSIX de ce shell est justement le dossier d'installation de Git. Comme
+# `/bin` y est un lien vers `/usr/bin`, l'aller-retour natif→POSIX→natif ramène systématiquement
+# « …\usr\bin\bash.exe » : il ne sait pas distinguer les deux bash que Git for Windows livre.
+# Un chemin déjà POSIX (aucune lettre de lecteur) traverse inchangé.
+lisible_natif() {
+  local p="${1//\\//}" lettre
+  case "$p" in
+    [A-Za-z]:/*)
+      lettre="$(printf '%s' "${p%%:*}" | tr '[:upper:]' '[:lower:]')"
+      printf '/%s%s\n' "$lettre" "${p#*:}"
+      ;;
+    *) printf '%s\n' "$p" ;;
+  esac
+}
+
+# git_bash_natif : le bash.exe à poser dans le profil, en chemin natif.
+#
+# DÉRIVÉ de celui qui nous exécute, jamais écrit en dur : un chemin figé serait faux sur le premier
+# poste qui installe Git ailleurs.
+#
+# Git for Windows livre DEUX bash, et le choix n'est pas indifférent : « <racine>\bin\bash.exe »
+# (46 Ko) est le LANCEUR que Git destine aux appels venus de Windows — il met en place
+# l'environnement MSYS —, quand « <racine>\usr\bin\bash.exe » (4 Mo) est le binaire nu. On préfère
+# donc le premier, avec repli sur celui qui nous exécute s'il manque.
+#
+# ⚠ Tout se passe en chemin NATIF, du début à la fin, et c'est un piège mesuré le 2026-09-14 : le
+# candidat n'est jamais reconverti par `cygpath` avant d'être posé. Les deux conversions sont
+# perdantes ici — voir `lisible_natif` —, et un aller-retour ramenait « …\usr\bin\bash.exe » en
+# faisant croire que la préférence n'avait pas trouvé son fichier. Seul le TEST d'existence passe
+# par une lecture POSIX, littérale. `dirname` ne connaissant pas « \ », les séparateurs sont
+# normalisés le temps de la remontée puis rétablis — ce qui laisse la fonction opérante là où
+# `cygpath` n'existe pas, c'est-à-dire partout où ce script est testé (#372).
+git_bash_natif() {
+  local moi racine candidat
+  moi="$(chemin_natif "${BASH:-$(command -v bash)}")"
+  [ -n "$moi" ] || return 1
+  racine="$(dirname "$(dirname "$(dirname "${moi//\\//}")")")"
+  racine="${racine%/}"
+  # Le candidat prend le séparateur de la forme d'entrée : ce qui est écrit dans le profil doit se
+  # lire comme un chemin Windows là où c'en est un.
+  case "$moi" in
+    *\\*) candidat="${racine//\//\\}\\bin\\bash.exe" ;;
+    *)    candidat="$racine/bin/bash.exe" ;;
+  esac
+  if [ -x "$(lisible_natif "$candidat")" ]; then
+    printf '%s\n' "$candidat"
+  else
+    printf '%s\n' "$moi"
+  fi
+}
+
+# profil_powershell : le chemin du profil, DEMANDÉ à PowerShell lui-même.
+#
+# Jamais reconstruit à partir de `$USERPROFILE\Documents\…` : « Documents » est redirigé sur tout
+# poste où OneDrive est actif, et le profil que PowerShell charge n'est alors pas celui qu'on
+# aurait écrit. `CurrentUserAllHosts` vise le profil valable pour tous les hôtes (console, ISE,
+# terminal intégré), c'est-à-dire le seul qui couvre tous les endroits d'où l'on tape une commande.
+profil_powershell() {
+  powershell.exe -NoProfile -NonInteractive -Command '$PROFILE.CurrentUserAllHosts' 2>/dev/null |
+    tr -d '\r'
+}
+
+# bloc_powershell <chemin natif de bash.exe> : le texte à poser.
+#
+# ⚠ EN ASCII PUR, et ce n'est pas une préférence : Windows PowerShell 5.1 lit un `.ps1` SANS BOM
+# avec l'encodage ANSI du poste, pas en UTF-8. Un commentaire accentué s'y afficherait en mojibake,
+# et l'on ne peut pas répondre par un BOM — on AJOUTE à un fichier qu'on n'a pas écrit, dont
+# l'encodage ne nous appartient pas. L'ASCII est juste dans les deux cas ; c'est ce qui le choisit.
+bloc_powershell() {
+  cat <<EOF
+$PS_MARQUE_DEBUT
+# Dans PowerShell, "bash" designe le lanceur WSL (C:\\Windows\\System32\\bash.exe) et non Git Bash :
+# aucun dossier de Git n'est dans le PATH, et le PATH machine precede toujours le PATH utilisateur,
+# donc aucun ajout de PATH ne peut le masquer sans droits admin. Une fonction, si.
+# Sans cette ligne, toutes les commandes du depot ("bash scripts/...") echouent ici (ticket #970).
+# Pour retirer : supprimer ce bloc.  Pour le bash de WSL malgre tout : "wsl bash".
+function bash { & '$1' @args }
+$PS_MARQUE_FIN
+EOF
+}
+
+etape_shell() {
+  local profil bash_exe attendu actuel politique profil_lisible
+
+  if [ "${MAESTRO_PROFIL_POWERSHELL:-1}" = 0 ]; then
+    rapport IGNORE shell "PowerShell : désactivé (MAESTRO_PROFIL_POWERSHELL=0)"
+    return 0
+  fi
+  # Le critère est la présence de `powershell.exe`, et NON `os_kind` : c'est le critère
+  # FONCTIONNEL — la question ne se pose que là où un PowerShell lit un profil —, il est plus
+  # précis (un Windows sans PowerShell dans le PATH saute pour la bonne raison), et c'est le seul
+  # que la suite de tests puisse exercer, elle qui tourne dans un conteneur Linux (#372).
+  if ! command -v powershell.exe >/dev/null 2>&1; then
+    rapport IGNORE shell "PowerShell : powershell.exe introuvable (hors Windows, ou hors PATH) — étape sautée"
+    return 0
+  fi
+
+  bash_exe="$(git_bash_natif)" || {
+    rapport IGNORE shell "PowerShell : Git Bash introuvable (\$BASH illisible), étape sautée"
+    return 0
+  }
+  profil="$(profil_powershell)"
+  if [ -z "$profil" ]; then
+    rapport IGNORE shell "PowerShell : profil illisible (PowerShell muet), étape sautée"
+    return 0
+  fi
+  profil_lisible="$(chemin_posix "$profil")"
+  if [ -z "$profil_lisible" ]; then
+    rapport IGNORE shell "PowerShell : chemin de profil non convertible ($profil), étape sautée"
+    return 0
+  fi
+
+  attendu="$(bloc_powershell "$bash_exe")"
+  if [ -f "$profil_lisible" ]; then
+    # Comparaison sur le bloc ENTIER, et pas sur la seule présence du marqueur : c'est ce qui fait
+    # qu'un poste dont Git a déménagé est réparé au lieu de garder un chemin mort en le déclarant
+    # « déjà fait ».
+    actuel="$(awk -v d="$PS_MARQUE_DEBUT" -v f="$PS_MARQUE_FIN" \
+      'index($0,d)==1{dedans=1} dedans{print} index($0,f)==1{dedans=0}' \
+      "$profil_lisible" 2>/dev/null | tr -d '\r')"
+    if [ "$actuel" = "$attendu" ]; then
+      rapport DEJA shell "PowerShell : « bash » pointe déjà sur $bash_exe"
+      return 0
+    fi
+  fi
+
+  if [ "$MODE_CHECK" = 1 ]; then
+    if [ -n "${actuel:-}" ]; then
+      rapport IGNORE shell "PowerShell : bloc à mettre à jour dans $profil (--check : rien écrit)"
+    else
+      rapport IGNORE shell "PowerShell : « bash » à faire pointer sur Git Bash dans $profil (--check : rien écrit)"
+    fi
+    return 0
+  fi
+
+  mkdir -p "$(dirname "$profil_lisible")" 2>/dev/null || true
+  # Un bloc déjà là mais périmé est RETIRÉ avant d'être réécrit — sans quoi deux définitions de
+  # `bash` cohabiteraient, et c'est la dernière lue qui gagnerait, donc l'ordre du fichier qui
+  # déciderait du comportement.
+  if [ -n "${actuel:-}" ]; then
+    awk -v d="$PS_MARQUE_DEBUT" -v f="$PS_MARQUE_FIN" \
+      'index($0,d)==1{dedans=1} !dedans{print} index($0,f)==1{dedans=0}' \
+      "$profil_lisible" > "$profil_lisible.maestro-tmp" 2>/dev/null &&
+      mv "$profil_lisible.maestro-tmp" "$profil_lisible" || {
+        rm -f "$profil_lisible.maestro-tmp"
+        echec_dur shell "PowerShell : impossible de réécrire $profil"
+        return 0
+      }
+  fi
+  { [ -s "$profil_lisible" ] && printf '\n'; printf '%s\n' "$attendu"; } >> "$profil_lisible" || {
+    echec_dur shell "PowerShell : écriture impossible dans $profil"
+    return 0
+  }
+
+  # La politique d'exécution est lue APRÈS l'écriture, et seulement pour le dire : un profil posé
+  # sur un poste en « Restricted » est un profil que PowerShell ne chargera pas, et le taire
+  # laisserait croire le contraire.
+  politique="$(powershell.exe -NoProfile -NonInteractive -Command 'Get-ExecutionPolicy' 2>/dev/null |
+    tr -d '\r')"
+  case "$politique" in
+    Restricted | AllSigned)
+      rapport OK shell "PowerShell : « bash » → $bash_exe dans $profil, mais la politique « $politique » empêche le chargement du profil — la lever est une décision humaine (Set-ExecutionPolicy RemoteSigned -Scope CurrentUser)"
+      ;;
+    *)
+      # Le chemin du profil est NOMMÉ, et pas seulement en --check : c'est la seule écriture du
+      # script hors du dépôt, et personne ne doit avoir à deviner où elle a eu lieu.
+      rapport OK shell "PowerShell : « bash » → Git Bash dans $profil (effectif dans un NOUVEAU terminal)"
+      ;;
+  esac
 }
 
 # --- 6. apps/web : dépendances npm de la Control Tower -------------------------------------------

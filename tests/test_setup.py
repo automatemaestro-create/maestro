@@ -46,8 +46,37 @@ pytestmark = pytest.mark.skipif(BASH is None, reason="bash introuvable")
 # L'étape `hooks` délègue à `git config core.hooksPath` : sans git, rien à vérifier.
 besoin_git = pytest.mark.skipif(GIT is None, reason="git introuvable")
 
+#: `powershell.exe` factice — il ne répond qu'aux deux questions que l'étape `shell` lui pose
+#: (#970). Posé d'office par la fixture `depot` : voir le commentaire qui l'y installe.
+FAUX_POWERSHELL = """\
+#!/usr/bin/env bash
+for arg in "$@"; do
+  case "$arg" in
+    '$PROFILE.CurrentUserAllHosts') printf '%s\\n' "$MAESTRO_FAUX_PROFIL"; exit 0 ;;
+    'Get-ExecutionPolicy') printf '%s\\n' "${MAESTRO_FAUX_POLITIQUE:-RemoteSigned}"; exit 0 ;;
+  esac
+done
+exit 0
+"""
+
+#: Les marqueurs du bloc posé dans le profil PowerShell — ils doivent rester ceux du script.
+MARQUE_DEBUT = "# >>> Maestro (scripts/setup.sh) >>>"
+MARQUE_FIN = "# <<< Maestro (scripts/setup.sh) <<<"
+
 # Ordre de ETAPES_CONNUES dans scripts/setup.sh — le rapport final le suit.
-ETAPES = ("node", "prerequis", "venv", "env", "hooks", "web", "desktop", "mcp", "infra", "verif")
+ETAPES = (
+    "node",
+    "prerequis",
+    "venv",
+    "env",
+    "hooks",
+    "shell",
+    "web",
+    "desktop",
+    "mcp",
+    "infra",
+    "verif",
+)
 
 # Étapes à neutraliser pour rester hors ligne (voir le docstring du module). `desktop` (#948) n'y
 # est pas, et ce n'est pas un oubli : sans coque installée ni `--only`, elle s'abstient et ne
@@ -156,6 +185,8 @@ class Depot:
     home: Path
     tmp: Path
     fauxbin: Path
+    #: Où le `powershell.exe` factice dit que vit le profil de l'utilisateur (étape `shell`, #970).
+    profil_ps: Path
 
     # --- fichiers du dépôt ---
     @property
@@ -203,6 +234,11 @@ class Depot:
         environnement["HOME"] = str(self.home)
         environnement["TMPDIR"] = str(self.tmp)
         environnement["MAESTRO_AUTO_INSTALL"] = "0"
+        # Ce que le `powershell.exe` factice répondra : un profil dans le `tmp_path` du test, et une
+        # politique d'exécution permissive. Posés ici et non dans chaque test, parce que la
+        # protection doit valoir pour TOUS — y compris ceux qui ne parlent pas de l'étape `shell`.
+        environnement["MAESTRO_FAUX_PROFIL"] = self.profil_ps.as_posix()
+        environnement["MAESTRO_FAUX_POLITIQUE"] = "RemoteSigned"
         environnement["PATH"] = os.pathsep.join(
             [str(self.fauxbin), environnement.get("PATH", "")]
         )
@@ -269,12 +305,30 @@ def depot(tmp_path: Path) -> Depot:
     )
     shim.chmod(0o755)
 
+    # `powershell.exe` est systématiquement NEUTRALISÉ — même rôle que le `docker` factice de
+    # tests/test_ci_local.py, et pour la même raison : aucun test ne doit toucher au poste.
+    #
+    # L'étape `shell` (#970) est la seule du script à écrire HORS du dépôt, dans le profil
+    # PowerShell de l'utilisateur. Or ce profil n'est PAS redirigé par le `HOME` du harnais :
+    # PowerShell le résout depuis son propre `$PROFILE`, qui pointe le vrai dossier Documents.
+    # Sans ce shim, tout test lançant `setup.sh` sur un poste Windows écrirait donc dans le profil
+    # réel de la personne qui lance la suite — mesuré le 2026-09-14, sur le premier passage.
+    faux_ps = fauxbin / "powershell.exe"
+    faux_ps.write_text(FAUX_POWERSHELL, encoding="utf-8", newline="\n")
+    faux_ps.chmod(0o755)
+
     if GIT is not None:
         subprocess.run(  # noqa: S603
             [GIT, "init", "--quiet"], cwd=racine, check=True, capture_output=True
         )
 
-    return Depot(racine=racine, home=home, tmp=tmp, fauxbin=fauxbin)
+    return Depot(
+        racine=racine,
+        home=home,
+        tmp=tmp,
+        fauxbin=fauxbin,
+        profil_ps=tmp_path / "profil" / "profile.ps1",
+    )
 
 
 @pytest.fixture(scope="session")
@@ -813,3 +867,179 @@ def test_derive_ignore_ce_que_le_depot_ne_porte_pas(depot: Depot) -> None:
     assert resultat.returncode == DERIVE_A_JOUR
     assert "web" not in resultat.stdout
     assert "node" not in resultat.stdout
+
+
+# --- Étape `shell` : « bash » désigne Git Bash et non WSL (#970) ----------------------------------
+# Sous Windows, PowerShell résout `bash` vers le lanceur WSL — mesuré le 2026-09-14 : aucun dossier
+# de Git n'est dans le PATH persistant, et le PATH machine précède toujours le PATH utilisateur,
+# donc rien ne peut masquer `System32\bash.exe` sans droits admin. Toutes les commandes que le dépôt
+# prescrit (`bash scripts/…`) échouent alors depuis un terminal PowerShell.
+#
+# L'étape pose une FONCTION dans le profil de l'utilisateur — la seule chose qui prime sur le PATH.
+# C'est aussi la seule étape du script qui écrive HORS du dépôt : ces tests portent donc autant sur
+# ce qu'elle écrit que sur ce qu'elle s'interdit d'écrire.
+#
+# Le critère de déclenchement est la présence de `powershell.exe`, jamais `uname` : c'est ce qui
+# rend l'étape exerçable ici, la suite tournant dans un conteneur Linux (#372).
+
+def bloc_pose(profil: Path) -> str:
+    """Le bloc Maestro du profil, marqueurs exclus — vide s'il n'y en a pas."""
+    if not profil.exists():
+        return ""
+    texte = profil.read_text(encoding="utf-8")
+    if MARQUE_DEBUT not in texte:
+        return ""
+    return texte.split(MARQUE_DEBUT, 1)[1].split(MARQUE_FIN, 1)[0]
+
+
+def test_aucun_test_ne_peut_atteindre_le_profil_du_poste(depot: Depot) -> None:
+    """Le garde-fou du harnais lui-même, et le seul test d'ici qui protège la MACHINE.
+
+    Le `HOME` redirigé ne suffit pas : PowerShell résout `$PROFILE` depuis son propre dossier
+    Documents, que rien dans l'environnement du test ne déplace. Sur le premier passage de cette
+    suite (2026-09-14, poste Windows), l'étape a donc lu le vrai profil de l'utilisateur — et
+    l'aurait ÉCRIT s'il n'avait pas déjà porté le bloc à jour.
+
+    Ce qui protège est le `powershell.exe` factice posé d'office par la fixture. Ce test vérifie
+    qu'il est bien celui qui répond, et que le profil écrit est bien celui du `tmp_path`.
+    """
+    resultat = depot.lance("--only", "shell", "--no-install")
+
+    assert statut(resultat.stdout, "shell") == "OK", resultat.stdout
+    assert depot.profil_ps.exists(), "le profil du test n'a pas été écrit : qui a répondu ?"
+    # Et le chemin annoncé par le script est bien celui du bac à sable, jamais un dossier du poste.
+    assert depot.profil_ps.as_posix() in resultat.stdout.replace("\\", "/")
+
+
+def test_sans_powershell_l_etape_s_abstient(depot: Depot, path_sans_python: str) -> None:
+    """Le motif, prouvé d'abord : sans `powershell.exe`, il n'y a pas de profil à écrire.
+
+    C'est le cas de tous les postes Unix — et de la CI. Une étape qui écrirait quand même poserait
+    un fichier que rien ne lira jamais, dans le HOME de quelqu'un.
+
+    Le PATH minimal est ce qui rend la question posable **sous Windows** : là, `powershell.exe` vit
+    dans `System32` et reste joignable même sans le shim du harnais. Sans ce PATH, ce test
+    passerait sur Linux et mesurerait autre chose sous Windows.
+    """
+    resultat = depot.lance("--only", "shell", "--no-install", path=path_sans_python)
+
+    assert statut(resultat.stdout, "shell") == "IGNORÉ", resultat.stdout
+    assert "powershell.exe introuvable" in detail(resultat.stdout, "shell")
+    assert not depot.profil_ps.exists()
+
+
+def test_le_profil_recoit_une_fonction_bash_vers_un_bash_reel(depot: Depot) -> None:
+    """Le cœur du ticket : après l'étape, `bash` est une fonction et non plus le lanceur WSL."""
+    profil = depot.profil_ps
+    assert not profil.exists()
+
+    resultat = depot.lance("--only", "shell", "--no-install")
+
+    assert statut(resultat.stdout, "shell") == "OK", resultat.stdout
+    bloc = bloc_pose(profil)
+    assert "function bash" in bloc, bloc
+    # Le chemin posé est DÉRIVÉ de celui qui exécute le script : il désigne donc un bash qui existe
+    # vraiment ici. Un chemin écrit en dur passerait sur le poste qui l'a écrit, et lui seul.
+    trouve = re.search(r"function bash \{ & '([^']+)' @args \}", bloc)
+    assert trouve, bloc
+    pose = trouve.group(1)
+    assert Path(pose.replace("\\", "/")).name.startswith("bash"), pose
+
+
+def test_le_bloc_pose_est_en_ascii_pur(depot: Depot) -> None:
+    """Windows PowerShell 5.1 lit un `.ps1` SANS BOM avec l'encodage ANSI du poste, pas en UTF-8.
+
+    Un commentaire accentué s'y afficherait en mojibake, et l'on ne peut pas répondre par un BOM :
+    on AJOUTE à un fichier qu'on n'a pas écrit, dont l'encodage ne nous appartient pas. L'ASCII est
+    juste dans les deux cas — c'est ce qui le choisit, et ce test est ce qui l'empêche de dériver
+    au premier commentaire réécrit en français soigné.
+    """
+    depot.lance("--only", "shell", "--no-install")
+
+    octets = depot.profil_ps.read_bytes()
+    assert octets, "aucun profil écrit"
+    non_ascii = [octet for octet in octets if octet > 0x7F]
+    assert non_ascii == [], f"{len(non_ascii)} octet(s) non-ASCII dans le profil"
+
+
+def test_rejouer_l_etape_ne_duplique_pas_le_bloc(depot: Depot) -> None:
+    """Deux définitions de `bash` cohabiteraient, et c'est l'ordre du fichier qui trancherait."""
+    profil = depot.profil_ps
+
+    premier = depot.lance("--only", "shell", "--no-install")
+    assert statut(premier.stdout, "shell") == "OK"
+    apres_un = profil.read_text(encoding="utf-8")
+
+    second = depot.lance("--only", "shell", "--no-install")
+
+    assert statut(second.stdout, "shell") == "DÉJÀ FAIT", second.stdout
+    assert profil.read_text(encoding="utf-8") == apres_un, "le profil a changé au second passage"
+    assert apres_un.count(MARQUE_DEBUT) == 1
+
+
+def test_un_bloc_perime_est_remplace_et_le_reste_du_profil_survit(depot: Depot) -> None:
+    """Un poste dont Git a déménagé doit être RÉPARÉ, pas déclaré « déjà fait ».
+
+    C'est la moitié qui distingue une comparaison du bloc ENTIER d'une simple recherche de
+    marqueur — et le cas s'est produit pendant l'écriture du ticket, le chemin dérivé ayant changé
+    en cours de route.
+    """
+    profil = depot.profil_ps
+    profil.parent.mkdir(parents=True, exist_ok=True)
+    profil.write_text(
+        "# ce que l'utilisateur avait deja\n"
+        "Set-Alias ll Get-ChildItem\n"
+        f"{MARQUE_DEBUT}\n"
+        "function bash { & 'D:\\ailleurs\\bash.exe' @args }\n"
+        f"{MARQUE_FIN}\n"
+        "# et ce qu'il avait apres\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    resultat = depot.lance("--only", "shell", "--no-install")
+
+    assert statut(resultat.stdout, "shell") == "OK", resultat.stdout
+    texte = profil.read_text(encoding="utf-8")
+    assert texte.count(MARQUE_DEBUT) == 1, texte
+    assert "D:\\ailleurs\\bash.exe" not in texte, "l'ancien chemin survit au remplacement"
+    # Ce qui n'est pas à nous n'est pas touché — ni avant le bloc, ni après.
+    assert "Set-Alias ll Get-ChildItem" in texte
+    assert "# et ce qu'il avait apres" in texte
+
+
+def test_check_n_ecrit_aucun_profil(depot: Depot) -> None:
+    """`--check` est un diagnostic : il le reste jusque dans le HOME de l'utilisateur."""
+    resultat = depot.lance("--only", "shell", "--no-install", "--check")
+
+    assert statut(resultat.stdout, "shell") == "IGNORÉ"
+    assert "rien écrit" in detail(resultat.stdout, "shell")
+    assert not depot.profil_ps.exists(), "--check a écrit le profil"
+
+
+def test_l_opt_out_empeche_toute_ecriture(depot: Depot) -> None:
+    """La seule étape qui écrit hors du dépôt doit pouvoir être refusée sans discuter."""
+    resultat = depot.lance(
+        "--only", "shell", "--no-install", env={"MAESTRO_PROFIL_POWERSHELL": "0"}
+    )
+
+    assert statut(resultat.stdout, "shell") == "IGNORÉ"
+    assert "MAESTRO_PROFIL_POWERSHELL=0" in detail(resultat.stdout, "shell")
+    assert not depot.profil_ps.exists()
+
+
+def test_une_politique_restrictive_est_dite_et_jamais_changee(depot: Depot) -> None:
+    """Un profil posé sur un poste en « Restricted » ne sera pas chargé : le taire laisserait
+    croire l'inverse. Le lever reste une décision humaine — changer une politique de sécurité
+    Windows n'est pas un geste de mise en route."""
+    resultat = depot.lance(
+        "--only", "shell", "--no-install", env={"MAESTRO_FAUX_POLITIQUE": "Restricted"}
+    )
+
+    assert statut(resultat.stdout, "shell") == "OK"
+    ligne = detail(resultat.stdout, "shell")
+    assert "Restricted" in ligne
+    assert "Set-ExecutionPolicy" in ligne, "le remède doit être nommé"
+    assert depot.profil_ps.exists(), (
+        "le bloc est posé quand même : la politique peut être levée après"
+    )

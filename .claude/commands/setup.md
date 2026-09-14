@@ -82,6 +82,15 @@ Le script est **idempotent** et **non destructif** (il n'écrase ni le `.env` ni
      Code alourdirait la mise en route (ce token s'obtient via un client OAuth approuvé par Figma)
      et casserait le serveur pour qui n'en a pas. Rien à committer.
 
+   - **PowerShell, sous Windows** — l'étape `shell` (#970) pose dans le profil de l'utilisateur une
+     fonction faisant pointer `bash` sur Git Bash : sans elle, `bash` y désigne le **lanceur WSL**
+     et aucune commande du dépôt ne démarre. Deux choses à relayer telles quelles, jamais à
+     escamoter : l'effet n'est **pas rétroactif** (il faut un **nouveau** terminal), et si le
+     rapport nomme une politique d'exécution `Restricted`/`AllSigned`, le profil ne sera pas chargé
+     du tout — donne la commande (`Set-ExecutionPolicy RemoteSigned -Scope CurrentUser`) et
+     **laisse la décision à l'utilisateur** : changer une politique de sécurité Windows n'est pas
+     un geste de mise en route. Qui n'en veut pas pose `MAESTRO_PROFIL_POWERSHELL=0`.
+
    - **Docker** — plus rien à monter pour la CI depuis #344 : elle tourne sur les exécutants
      hébergés de GitHub, et l'étape `runner` a disparu avec l'outillage GitLab. Si quelqu'un
      cherche encore « le runner à rallumer », la réponse est qu'il n'y en a plus. Docker ne sert
@@ -103,5 +112,7 @@ qu'aux exécutions durables. Le rapport le rappelle ; ne les démarre que si l'u
 
 **Garde-fous.** Cette commande ne touche ni à Git (pas de commit, pas de branche, pas de push) ni à
 la forge (ni cycle de vie, ni PR) : elle prépare une machine, rien d'autre. Elle n'écrit aucun secret dans
-un fichier versionné. Elle **installe en revanche des logiciels** sur la machine (c'est son objet) :
+un fichier versionné. ⚠ Une seule de ses étapes écrit **hors du dépôt** — `shell`, dans le profil
+PowerShell de l'utilisateur (#970) : dis-le dans ton résumé, avec le chemin exact que le rapport a
+nommé, plutôt que de le laisser découvrir. Elle **installe en revanche des logiciels** sur la machine (c'est son objet) :
 si l'utilisateur veut s'en tenir au diagnostic, c'est `bash scripts/setup.sh --no-install`.
