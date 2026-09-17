@@ -2249,10 +2249,10 @@ Règles de ce run autonome :
   dérivée de ce bloc — « la carte d'un run », « /couts », « la barre d'avancement d'un run » —, et
   jamais « la Control Tower », qui rendrait une galerie au lieu d'une décision.
   C'EST LA COMMANDE QUI TRANCHE, et son critère n'est écrit que là (son §7.2) : ce ticket
-  DÉCIDE-t-il de quelque chose à l'écran, ou APPLIQUE-t-il une décision déjà prise ? Un écran ou un
-  composant neuf, un motif d'affichage à inventer, un ticket qui dit l'intention sans dire la
-  forme : elle joue. Un token à substituer, un débordement à corriger, un renommage, un test à
-  réparer : elle s'abstient et te le dit.
+  DÉCIDE-t-il de quelque chose à l'écran, ou APPLIQUE-t-il une décision déjà prise ? S'il décide,
+  elle joue ; s'il applique, elle s'abstient et te le dit. Ses exemples sont dans son §7.2 et
+  nulle part ailleurs : deux formulations du même critère finiraient par ne plus rendre le même
+  verdict (#979).
   N'ENREGISTRE RIEN TOI-MÊME, dans les deux cas. Si elle a joué, elle a déjà consigné ses partis
   pris sur le ticket puis posé l'arbitrage — « lib.sh issue-note » puis « lib.sh veille-arbitre »,
   dans cet ordre, parce qu'un label qui ferme la question sans sa trace ne dit rien de ce qui a été

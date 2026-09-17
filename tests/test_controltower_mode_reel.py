@@ -27,6 +27,12 @@ par le levier qui l'expose sans rien lancer :
    —, donc il se saute là où il n'existe pas (l'image CI installe le paquet sans
    passer par `.venv/`) ; ② couvre le même diagnostic partout.
 
+④ **Les états limites de la démo** (#978, lot 3 de #972) — `--demo --scenario <nom>`, par le
+   même diagnostic que ① : un scénario se **demande** avec la démo et jamais sans elle, et ses
+   noms sont **lus** dans `maestro/controltower/demo.py` (#830). Le test les compare aux
+   constantes Python elles-mêmes : deux listes qui dériveraient se verraient ici. Ce que la démo
+   **sert** dans chaque état est gardé avec le module, dans `test_cli_smoke.py`.
+
 Ce qui n'est **pas** testé ici, faute de pouvoir l'être sans démarrer la stack :
 que le mode démo saute effectivement le préflight Redis. Le lancer pour
 l'observer contredirait la contrainte du ticket ; ① établit que `--demo`
@@ -45,6 +51,7 @@ from pathlib import Path
 import pytest
 
 from maestro.controltower.cli import COMMANDE_REDIS, endpoint_lisible, verifier_redis
+from maestro.controltower.demo import SCENARIO_NOMINAL, SCENARIOS
 
 RACINE = Path(__file__).resolve().parent.parent
 SCRIPT = RACINE / "scripts" / "controltower" / "start.sh"
@@ -124,9 +131,20 @@ def test_le_mode_ne_change_rien_au_reste_du_lanceur() -> None:
 
 def test_une_option_inconnue_est_refusee() -> None:
     """Un drapeau mal orthographié ne doit pas démarrer silencieusement le mode réel."""
+    acheve = lanceur("--demoo")
+
+    assert acheve.returncode == 2
+    assert "--demoo" in acheve.stderr
+    # Rien n'a été touché : ni nettoyage d'une session en place, ni démarrage.
+    assert "[nettoyage]" not in acheve.stdout
+    assert "[api]" not in acheve.stdout
+
+
+def lanceur(*options: str) -> subprocess.CompletedProcess[str]:
+    """`start.sh` joué tel quel — pour les refus, qui tombent avant tout démarrage."""
     assert BASH is not None
-    acheve = subprocess.run(  # noqa: S603
-        [BASH, str(SCRIPT), "--demoo"],
+    return subprocess.run(  # noqa: S603
+        [BASH, str(SCRIPT), *options],
         cwd=str(RACINE),
         capture_output=True,
         text=True,
@@ -135,10 +153,39 @@ def test_une_option_inconnue_est_refusee() -> None:
         timeout=60,
     )
 
-    assert acheve.returncode == 2
-    assert "--demoo" in acheve.stderr
-    # Rien n'a été touché : ni nettoyage d'une session en place, ni démarrage.
-    assert "[nettoyage]" not in acheve.stdout
+
+# ------------------------------------------- ④ Les états limites de la démo (#978)
+
+
+@pytest.mark.parametrize("scenario", SCENARIOS)
+def test_chaque_scenario_de_la_demo_se_demande_au_lanceur(scenario: str) -> None:
+    """Chaque nom que la démo déclare est un nom que le lanceur accepte — lu, jamais recopié."""
+    champs = diagnostic("--demo", "--scenario", scenario)
+    assert champs["stack"] == "demo"
+    assert champs["scenario"] == scenario
+
+
+def test_sans_scenario_le_lancement_est_celui_d_avant() -> None:
+    """Le nominal est servi SANS option, et le diagnostic d'un lancement ordinaire n'a pas bougé :
+    `captures.sh`, `/milestone-presentation` et les parcours filmés en dépendent (#978)."""
+    assert "scenario" not in diagnostic("--demo")
+    assert SCENARIO_NOMINAL == SCENARIOS[0], "le nominal ouvre la liste : c'est le défaut annoncé"
+
+
+def test_un_scenario_sans_la_demo_est_refuse() -> None:
+    """Demander un scénario factice ne suffit pas à remplacer la vraie orchestration (#186)."""
+    acheve = lanceur("--scenario", "vide", "--diagnostic-navigateur")
+    assert acheve.returncode == 2, acheve.stdout + acheve.stderr
+    assert "--scenario ne vaut qu'avec --demo" in acheve.stderr
+    assert "stack:" not in acheve.stdout, "refusé avant le diagnostic, donc avant tout le reste"
+
+
+def test_un_scenario_inconnu_est_refuse_avec_la_liste_lue_dans_la_demo() -> None:
+    """Refusé ICI : la démo le refuserait aussi, mais en arrière-plan, dans `api.log`, et le lanceur
+    n'en dirait que « l'API ne répond pas ». La liste citée est celle des constantes Python."""
+    acheve = lanceur("--demo", "--scenario", "plein", "--diagnostic-navigateur")
+    assert acheve.returncode == 2, acheve.stdout + acheve.stderr
+    assert f"Scénario inconnu : plein (connus : {' '.join(SCENARIOS)})" in acheve.stderr
     assert "[api]" not in acheve.stdout
 
 

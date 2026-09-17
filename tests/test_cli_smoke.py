@@ -9,17 +9,30 @@ grossière (module qui ne s'importe plus, option renommée, câblage cassé) soi
 détectée même hors métrique. Aucun appel réseau, aucun serveur réellement lancé.
 """
 
+import asyncio
+import re
 import sys
 import types
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from maestro import check_env, temporal_demo
 from maestro.agents import runtime_cli
 from maestro.config import Settings
 from maestro.controltower import cli as controltower_cli
 from maestro.controltower import demo as controltower_demo
+from maestro.controltower.app import create_app
+from maestro.controltower.chat import ChatStore
+from maestro.controltower.events import (
+    EVENEMENT_RUN_PLAN,
+    EVENEMENT_TACHE_STATUT,
+    EVENEMENT_VALIDATION_DEMANDE,
+)
+from maestro.controltower.orchestration import NOM_ORCHESTRATION
 from maestro.engine import (
     MODE_BRIEF_SANS,
     STATUT_TERMINEE,
@@ -265,6 +278,171 @@ def test_demo_controltower_nominal_sert_sur_l_ecoute_demandee(monkeypatch):
         "port": 9100,
         "scenario": controltower_demo.SCENARIO_NOMINAL,
     }
+
+
+# Les états limites de la démo (#978, lot 3 de #972) : la relecture visuelle reconnaissait ne pas
+# savoir atteindre une file vide ou une API en panne — c'est là que le rendu casse. Ce qui se garde
+# ici est qu'ils sont ATTEIGNABLES et qu'ils servent ce qu'ils annoncent ; leur montage par le
+# lanceur est gardé dans test_controltower_mode_reel.py, par la relecture dans
+# test_relecture_visuelle.py.
+
+
+@pytest.mark.parametrize("scenario", controltower_demo.SCENARIOS)
+def test_demo_controltower_sert_le_scenario_demande(monkeypatch, scenario):
+    recus = {}
+
+    async def _servir_factice(hote, port, scenario):
+        recus["scenario"] = scenario
+        return 0
+
+    monkeypatch.setattr(controltower_demo, "_servir", _servir_factice)
+    assert controltower_demo.main(["--scenario", scenario]) == 0
+    assert recus == {"scenario": scenario}
+
+
+def test_demo_controltower_refuse_un_scenario_inconnu():
+    with pytest.raises(SystemExit) as excinfo:
+        controltower_demo.main(["--scenario", "plein"])
+    assert excinfo.value.code == 2
+
+
+def test_demo_controltower_declare_ses_scenarios_sous_la_forme_que_les_scripts_lisent():
+    """`start.sh` et `relecture-visuelle.sh` LISENT les noms dans le source (#830), par une ligne
+    `SCENARIO_<NOM> = "<nom>"` en début de ligne. Une constante annotée ou calculée serait un état
+    que la démo sert et qu'aucun script ne sait demander."""
+    motif = re.compile(r'^SCENARIO_[A-Z_]* *= *"([^"]*)"', re.M)
+    fautif = 'SCENARIO_PLEIN: str = "plein"\n'
+    assert not motif.findall(fautif), "motif trop large : l'écart ci-dessous ne se verrait pas"
+    source = Path(controltower_demo.__file__).read_text(encoding="utf-8")
+    assert tuple(motif.findall(source)) == controltower_demo.SCENARIOS
+
+
+class _ServeurFactice:
+    """`uvicorn.Server` réduit à ce que `_servir` attend : démarré d'emblée, rendu aussitôt."""
+
+    def __init__(self, config):
+        self.started = True
+
+    async def serve(self):
+        return None
+
+
+@pytest.mark.parametrize(
+    ("scenario", "publie", "en_panne"),
+    [
+        ("nominal", "nominal", False),
+        ("vide", None, False),
+        ("erreur", None, True),
+        ("charge", "charge", False),
+    ],
+)
+def test_demo_controltower_chaque_scenario_sert_ce_qu_il_annonce(
+    monkeypatch, tmp_path, scenario, publie, en_panne
+):
+    """« vide » et « erreur » ne publient RIEN — un état vide est l'absence d'événement, une API en
+    panne n'a rien à montrer derrière sa panne ; seule « erreur » branche la panne ; le nominal
+    reste celui d'avant #978, dont `captures.sh` et les parcours filmés dépendent."""
+    publies = []
+    apps = []
+
+    def _publication(nom):
+        def publier(bus):
+            publies.append(nom)
+            return asyncio.sleep(0)
+
+        return publier
+
+    vrai_create_app = controltower_demo.create_app
+
+    def _create_app(**kwargs):
+        apps.append(vrai_create_app(**kwargs))
+        return apps[-1]
+
+    rangs = iter(range(100))
+
+    def _mkdtemp(prefix):
+        # Les dépôts éphémères de la démo sous tmp_path : rien ne reste dans le /tmp du poste.
+        dossier = tmp_path / f"{prefix}{next(rangs)}"
+        dossier.mkdir()
+        return str(dossier)
+
+    monkeypatch.setattr(controltower_demo.tempfile, "mkdtemp", _mkdtemp)
+    factice = types.ModuleType("uvicorn")
+    factice.Config = lambda app, **kwargs: types.SimpleNamespace(app=app)
+    factice.Server = _ServeurFactice
+    monkeypatch.setitem(sys.modules, "uvicorn", factice)
+    monkeypatch.setattr(controltower_demo, "create_app", _create_app)
+    monkeypatch.setattr(controltower_demo, "_scenario", _publication("nominal"))
+    monkeypatch.setattr(controltower_demo, "_scenario_charge", _publication("charge"))
+
+    assert asyncio.run(controltower_demo._servir("127.0.0.1", 0, scenario)) == 0
+    assert publies == ([publie] if publie else [])
+    branche = [m for m in apps[0].user_middleware if m.cls is controltower_demo._ApiEnErreur]
+    assert bool(branche) is en_panne
+
+
+def test_demo_controltower_erreur_repond_en_panne_sous_le_cors():
+    """La panne passe SOUS le CORS : sans ses en-têtes, le navigateur cacherait la réponse au code,
+    qui ne verrait qu'un « Failed to fetch » — une API coupée, pas une API en erreur. Et deux routes
+    répondent, sans quoi le shell resterait à sa porte : on ne verrait qu'une erreur, la sienne."""
+    origine = {"Origin": "http://localhost:3000"}
+    with TestClient(create_app()) as client:
+        assert client.get("/api/taches?projet=tous", headers=origine).status_code == 200, (
+            "témoin : sans le scénario, la même route répond"
+        )
+
+    app = create_app()
+    controltower_demo._brancher_erreur(app)
+    with TestClient(app) as client:
+        panne = client.get("/api/taches?projet=tous", headers=origine)
+        assert panne.status_code == controltower_demo.STATUT_ERREUR_SIMULEE
+        assert panne.json()["detail"] == controltower_demo.MESSAGE_ERREUR_SIMULEE
+        assert panne.headers.get("access-control-allow-origin") == "*"
+        for route in controltower_demo.ROUTES_EPARGNEES_PAR_L_ERREUR:
+            assert client.get(route, headers=origine).status_code != (
+                controltower_demo.STATUT_ERREUR_SIMULEE
+            ), f"{route} doit rester épargnée par la panne"
+        with pytest.raises(WebSocketDisconnect):
+            with client.websocket_connect("/ws/evenements") as socket:
+                socket.receive_text()
+
+
+class _BusQuiRetient:
+    """Le bus réduit à ce que la charge emploie : elle publie, et c'est tout ce qu'on compte."""
+
+    def __init__(self):
+        self.evenements = []
+
+    async def publish(self, event):
+        self.evenements.append(event)
+
+
+def test_demo_controltower_charge_depasse_ce_qu_un_ecran_affiche(tmp_path):
+    """Les volumes annoncés sont ceux publiés, et les TROIS formes de texte long sont là — un nom,
+    une phrase, un jeton sans espace : elles ne cassent pas le rendu de la même façon."""
+    d = controltower_demo
+    bus = _BusQuiRetient()
+    asyncio.run(d._scenario_charge(bus))
+    par_type = {}
+    for event in bus.evenements:
+        par_type.setdefault(event.type, []).append(event)
+
+    taches = [e for e in par_type[EVENEMENT_TACHE_STATUT] if e.run_id == d.RUN_CHARGE]
+    assert len(taches) == d.CHARGE_TACHES
+    assert len({e.run_id for e in bus.evenements}) == d.CHARGE_RUNS
+    assert len(par_type[EVENEMENT_VALIDATION_DEMANDE]) == d.CHARGE_VALIDATIONS
+    assert len(par_type[EVENEMENT_RUN_PLAN][0].plan) == d.CHARGE_TACHES
+    assert len(d.AGENT_LONG) >= 80 and d.AGENT_LONG in {e.agent for e in taches}
+    assert " " not in d.JETON_LONG and any(d.JETON_LONG in e.titre for e in taches)
+    assert any(e.description == d.TEXTE_LONG for e in taches)
+
+    store = ChatStore(tmp_path)
+    d._peupler_chat_charge(store)
+    conversations = store.conversations(NOM_ORCHESTRATION)
+    assert len([c for c in conversations if c.messages]) == d.CHARGE_CONVERSATIONS
+    assert conversations[0].messages == d.CHARGE_MESSAGES_CHAT, (
+        "la plus récente porte le fil long : c'est celle que l'écran ouvre d'office"
+    )
 
 
 # --- maestro-temporal-demo (maestro/temporal_demo.py) -------------------------------------

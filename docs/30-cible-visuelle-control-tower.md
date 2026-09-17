@@ -671,6 +671,10 @@ changer. Le geste est `scripts/design/relecture-visuelle.sh` + le skill `relectu
 (**§5.6**), et il est devenu une **condition de clôture** le même jour (**§5.5**) : livré sans
 appelant, il aurait été une règle lue de plus.
 
+Regarder ne disait pas encore **par rapport à quoi**. Depuis le chantier #972 (**§5.8**), l'attente
+s'écrit dans le ticket, un ticket qui décide de l'écran montre ses variantes avant le code, et le
+rendu est jugé par un regard neuf, contre l'avant et sur une grille fixe.
+
 ---
 
 ### 5.2 Le maillon 0 se déclenche, le 2026-08-28 (#714)
@@ -1292,9 +1296,10 @@ démarrées à quarante secondes d'écart — on compare la mise en page et le r
 rester disponible — c'est la raison d'être des worktrees.
 
 Le dispositif est gardé par [`tests/test_relecture_visuelle.py`](../tests/test_relecture_visuelle.py)
-(#936) ; les deux sources de `ecrans-touches.sh` le sont dans
+(#936, l'avant par #974) ; les deux sources de `ecrans-touches.sh` le sont dans
 [`tests/test_presentation.py`](../tests/test_presentation.py), là où vit la règle de #544 qu'elles
-étendent.
+étendent. Ce que le chantier #972 a ajouté au geste — états limites, regard neuf, grille, planche —
+est au **§5.8**.
 
 ---
 
@@ -2111,6 +2116,199 @@ Banc du 2026-09-13 (`/` et `/chat`, 1280×800 · 1024×700 · **1280×500** · 3
 débordement horizontal**, rien d'inatteignable — le seul signalement est un **1 px** sous-pixel sur
 une tuile de chiffre, présent avant ce lot. Le ticket #926 porte `veille::arbitree` depuis cette
 veille.
+
+---
+
+### 5.8 Un écran se juge contre l'attente — 2026-09-17 (chantier #972)
+
+> **Pourquoi après le journal des veilles.** Le §5.7 est un journal qui s'allonge ; ce paragraphe
+> est un régime. Il vient à la suite parce qu'il a été écrit après, et renvoie au §5.6 pour ce qu'il
+> ne fait que prolonger.
+
+La chaîne des §5.1 à §5.6 sait **viser** (`/design-veille`), **tenir** (tokens, primitives),
+**garder** (contraste, a11y, sobriété) et **regarder** (`relecture-visuelle`). Elle vérifie qu'une
+interface est **conforme**. Elle ne vérifiait pas qu'elle est **voulue** — celle que la personne qui
+a demandé le ticket attendait —, et jugeait mal si elle était réussie. Quatre trous, relevés le
+2026-09-17 au cadrage de #972 :
+
+| trou | ce qui se passait |
+|---|---|
+| l'attente n'entrait jamais sous forme visuelle | les gabarits ne portaient que du texte : contexte, objectif, critères |
+| personne ne voyait l'écran avant `main` | depuis #418/#419 une PR verte est mergée d'office : un ticket qui **décide** de quelque chose à l'écran partait dans `main` sans qu'un humain ait vu la direction prise |
+| le juge du rendu était son auteur, sans référence | « est-ce que ça a l'air juste ? » ne disait pas **par rapport à quoi** : ni l'attente, ni l'état d'avant, ni les partis pris de la veille |
+| les états limites ne se regardaient pas | la démo peuplait l'état nominal, et le skill reconnaissait ne pas atteindre une file vide ou une erreur — là où le rendu casse |
+
+**Pourquoi l'écran et pas le code.** Le dépouillement de #969 a écarté, sur mesure, la relecture
+humaine du **code** ; la même mesure montre que, sur les 42 bugs postérieurs à #418, la famille
+« trouvée en se servant du produit » (#878, #888, #892, #939 → #946) vient de **quelqu'un qui
+regardait un écran**. Et le moment
+le moins cher pour changer d'avis est **avant** le code, pas après le merge.
+
+Le partage de #562, #612 et #714 tient sur tout le chantier, et c'est lui qui a décidé de chaque
+voie : **ce qui est automatique est la détection du manque, jamais le verdict**.
+
+#### L'attente s'écrit dans le ticket (#976)
+
+Les gabarits `feature` et `bug` portent une section **« Rendu attendu »** en quatre rubriques — la
+**question** à laquelle un coup d'œil doit répondre, une **référence**, **ce qui ne bouge pas**, les
+**états à couvrir** —, décrites dans un commentaire HTML. C'est la seule information qu'une session ne
+peut pas inventer, et c'est contre elle que l'écran est jugé. `/ticket-create` la **remplit** avec les
+mots de la personne, la **demande** quand elle n'en a rien dit, et la **retire** sur un ticket sans
+surface visible ; `/ticket-start` la relaie au cadrage.
+
+Un seul parseur la lit, `gl_issue_brief_render` : pour le brief de `/ticket-start` et pour le regard
+neuf (`lib.sh relecture-attente`). Une section restée telle que le gabarit la pose est **vide** et
+ne s'imprime pas ; un « non renseigné » écrit n'est **pas** vide, et s'imprime.
+
+**Écarté, avec sa raison :**
+
+- **Juger la surface visible par `touche-surface`** à la création. Le ticket n'existe pas encore :
+  le verbe n'est pas jouable. C'est un **jugement** de `/ticket-create`, comme le choix d'`agent::`,
+  éclairé par le motif de #714.
+- **Un lexique** (« écran », « interface » dans la demande). Il ne prouve rien — un ticket décrit
+  par son comportement change souvent un écran (§5.2 : 12 tickets sur 33) —, et #746 l'interdit.
+- **Bloquer la création** tant que la section est vide. Sans répondant — une commande amont, une
+  boucle d'orchestration — la question n'a personne à qui se poser : **demander, jamais bloquer**. La
+  section « reste vide et le dit », parce qu'un commentaire de gabarit laissé en place ne se voit
+  nulle part, alors qu'un « non renseigné » se relaie au démarrage.
+- **La section dans les gabarits `doc` et `infra`**. Ils n'ont pas d'écran.
+
+#### La direction se valide avant le code (#979)
+
+Un ticket qui **décide** de quelque chose à l'écran montre **2 ou 3 variantes rendues** et attend le
+choix d'une personne avant d'implémenter ; un ticket qui **applique** une décision prise reste
+automatique. Le critère est celui du §7.2 de `/design-veille` (§5.4 ici) : il a désormais **deux
+appelants**, la veille et l'étape 7 de `/ticket-start`, et n'est toujours écrit **qu'une fois**.
+
+En session interactive, les variantes sont des **brouillons sur la vraie stack** (montée par
+`relecture-visuelle.sh`, l'avant sur `origin/main` servant de référence à « ce qui ne bouge pas »),
+sauvés en patch sous `.maestro/variantes/<iid>/` puis défaits par `git restore`. Quand la question se
+pose, **l'arbre est vide et la stack arrêtée** : la réponse peut venir le lendemain, et aucune variante
+non choisie ne doit pouvoir finir dans un commit. Le choix se consigne sur le ticket, dans un
+commentaire qui commence par `## Variante retenue`, **avant** la première ligne d'implémentation —
+c'est aussi ce titre qui fait du ticket un ticket qui **applique** au démarrage suivant.
+
+**Le régime de run était l'arbitrage du lot**, consigné sur #979 et en tête du prompt de `run.sh` :
+
+| voie | verdict | raison |
+|---|---|---|
+| (c) implémenter la variante la plus proche des partis pris, question ouverte après coup | **écartée** | elle fabrique un choix que personne n'a fait, et le merge d'office le met dans `main` avant qu'on le lise |
+| (b) différer la question dans un ticket à part, comme `veille-differe` (#795) | **écartée** | par le critère de #795 lui-même : *la question se repose-t-elle d'elle-même ?* La veille a besoin d'un ticket à part parce que son ticket source se ferme au merge ; ici rien n'est implémenté, donc rien ne se ferme, et l'étape 7 repose la question au démarrage suivant. Et (b) avec implémentation, c'est (c) |
+| (a) écarter le ticket des runs en l'assignant (#621) | **retenue** | avec un déplacement : « décide » est un jugement de modèle, que `queue.sh` ne sait pas rendre sans lexique (#746). L'écart se fait donc **dans la session**, au moment où elle juge : trace sur le ticket, **puis** « À faire » en gardant l'assignation, **puis** `ORCHESTRATE: ECHEC choix de variante attendu` |
+
+Le prix est connu : une session par ticket de ce genre (sa veille reste acquise et nourrira les
+variantes), et les lots suivants du parent sautés par la cascade — ce qui est juste, ils bâtiraient
+sur un écran que personne n'a choisi. Conséquence sur #934 : une veille jouée en run **ne se conclut
+plus par une implémentation**, puisqu'elle dit que le ticket décide.
+
+**Écarté aussi :** une **maquette** plutôt que des brouillons — Figma sert à explorer, jamais de
+source de vérité, Code Connect étant refusé sur ce plan (§5.1, [docs/36](./36-outillage-du-design.md)) ;
+une **galerie** — deux ou trois variantes, et une variante **unique** se présente comme une
+validation, pas comme un choix ; des variantes **produites en run** — personne ne les regarderait,
+`gh` ne joint pas d'image à un ticket, et la démo aura avancé quand quelqu'un l'ouvrira ; des captures
+de variantes sous `.maestro/relecture/`, que `--couverture` compterait à la clôture comme un regard
+porté sur l'écran livré.
+
+⚠ **Trouvé en écrivant les tests (#974)** : le prompt de run, écrit par #934, paraphrasait les
+exemples du §7.2 juste après avoir dit que le critère « n'est écrit que là ». Deux formulations du
+même critère finissent par ne plus rendre le même verdict — celle que la session lit en dernier
+l'emporte. Le prompt y renvoie désormais, et un test le garde.
+
+#### La relecture est comparative (#977)
+
+Chaque écran se regarde **deux fois**, sur la branche et sur `origin/main`, dans le même thème et le
+même état. La voie — un second worktree détaché, servi à côté —, ses mesures et les deux voies
+écartées sont au §5.6 (*L'avant*). Ce qui s'y ajoute ici est ce qu'on en **fait** : l'avant est la
+référence de la rubrique « ce qui ne bouge pas », et c'est la **paire** que le regard neuf juge.
+
+#### Les états limites s'ouvrent dans la démo (#978)
+
+La démo sert des **scénarios nommés** : `nominal` (celui d'avant, inchangé, toujours le défaut),
+`vide`, `erreur` et `charge`. Ils se **demandent** — `start.sh --demo --scenario <nom>`,
+`relecture-visuelle.sh <iid> --scenario <nom>` —, et `--couverture` dit, écran par écran, lesquels
+ont été capturés. Quels états ouvrir : ceux que la rubrique « États à couvrir » du ticket nomme, et
+les trois quand elle ne dit rien.
+
+Ce qui tient, et à ne pas défaire :
+
+- **Les noms sont lus** dans `maestro/controltower/demo.py` par le lanceur et par la relecture,
+  jamais recopiés (#830). Un nom inconnu est refusé **avant** la stack : la démo le refuserait aussi,
+  mais en arrière-plan, et l'on ne lirait qu'« API injoignable ».
+- **« erreur » est une API en panne, pas une API coupée.** Le middleware se branche **sous** le
+  CORS : par-dessus, le navigateur cacherait la réponse au code, qui ne verrait qu'un « Failed to
+  fetch ». La santé et la liste des projets sont **épargnées** — sinon le lanceur échouerait, ou le
+  shell resterait sur sa porte et l'on ne verrait qu'une erreur, la sienne. Le prix est nommé :
+  l'écran « Projets » ne montre rien dans cet état.
+- **« charge » est publiée d'un coup, sans pulsation** : une capture prise à la minute 1 et une autre
+  à la minute 3 doivent montrer le même écran. Ses textes longs ont trois formes — un nom, une phrase,
+  un jeton sans espace —, parce qu'elles ne cassent pas le rendu de la même façon.
+- **Ce qui a été vu se compte sur le disque**, jamais dans une déclaration ; et la couverture
+  **constate** : décider quels états il fallait couvrir reste le jugement de la session (#746).
+
+**Écarté :** changer le **nominal** (`captures.sh`, `/milestone-presentation` et les parcours filmés
+de #545 en dépendent) ; changer d'état **à chaud** (le scénario est celui de l'API — chaque état
+redémarre la stack, ~18 s, et c'est annoncé) ; un état « **largeur téléphone** » (ce n'est pas un état
+de l'API : il va à « ce que je n'ai pas pu voir »).
+
+#### Le jugement est rendu par un regard neuf, sur une grille fixe (#980)
+
+**L'auteur voit ce qu'il a voulu faire ; il faut quelqu'un qui voie ce qu'il a produit.** Le jugement
+est rendu par le sous-agent `regard-neuf` (`.claude/agents/regard-neuf.md`), dont **le seul outil est
+`Read`** et dont le prompt n'est que le chemin d'une **saisine** : les paires capturées, le rendu
+attendu, les décisions déjà prises à l'écran (commentaires qui **commencent** par
+`## Veille de conception` ou `## Variante retenue`), la grille et le gabarit à rendre. Ni le code, ni
+le diff, ni le raisonnement de la session : c'est l'outil, pas la consigne, qui l'empêche de les lire.
+
+La **grille** vit dans `scripts/design/grille-relecture.tsv`, et nulle part ailleurs : la saisine la
+pose, le skill la nomme, et `lib.sh relecture-note` la **garde** — un jugement dont une ligne manque,
+ou dont la réponse ne commence pas par ✓, ✗ ou « non vu », est refusé (`5`) avant toute lecture de
+la forge. Ce qui se vérifie est une **forme**, jamais un sens. Un ✗ se corrige, s'ouvre en ticket ou
+se **conteste sur pièces**, jamais ne se retire : l'essai de #980 a relevé un faux positif (un chiffre
+« teinté de rouge » en sombre, blanc sur la capture et sans couleur dans le code), et l'auteur qui
+répond « ce n'est pas ce que je voulais faire » n'apporte pas une pièce.
+
+La **planche** (`relecture-visuelle.sh --planche`) rend l'avant et l'après côte à côte, le jugement en
+tête, en un fichier HTML autonome (mécanique de `scripts/presentation/build.py`, reprise par import).
+Elle est recopiée dans le **clone principal** : `/ticket-finish` ramasse le worktree juste après le
+merge, avant son résumé, et une planche laissée là serait un lien mort. Mesuré sous le régime de run,
+sur un écran, ses deux thèmes et leur avant (4 captures) : **105 s et 1,29 $** pour le regard neuf,
+session appelante comprise ; `--saisine` 6,6 s ; `--planche` 3,3 s pour 329 Ko.
+
+**Écarté, avec sa raison :**
+
+- **Tous les commentaires du ticket dans la saisine.** Un ticket porte aussi les notes de la session
+  qui l'a écrit — c'est-à-dire son raisonnement, précisément ce que le regard neuf ne doit pas
+  recevoir. D'où les ancres, **en tête** de commentaire : une ancre citée au milieu d'une note n'est
+  pas une décision.
+- **Une grille qui mesure.** Le contraste, la géométrie et les règles ont leurs outils
+  (`contraste.test.ts`, `/banc-mise-en-page`, `a11y.test.tsx`, `sobriete.test.tsx`) ; la grille
+  **nomme** ce qu'un regard voit.
+- **Juger le ✓ par une machine.** Qu'un ✓ soit mérité est le travail du regard neuf ; un contrôle du
+  sens serait un lexique (#746).
+- **Joindre les captures à la forge.** `gh` ne sait pas joindre une image à un commentaire : le
+  jugement consigné reste du texte, et la planche n'est envoyée à aucune forge.
+- **Instruire une règle `Agent` pour le run.** Essayé sous `settings.run.json` : **zéro refus**, il
+  n'y avait rien à instruire (docs/10 §11.7).
+- **Un regard par écran.** Le sous-agent coûte au nombre de captures qu'il ouvre ; un seul regard par
+  relecture.
+
+#### Ce qui est gardé, et où
+
+| lot | ce qui est gardé | suite |
+|---|---|---|
+| #976 | la section dans les gabarits (et pas ailleurs), ses rubriques tenues avec la saisine, les trois sorts de `/ticket-create`, le rendu du brief (vide muet, « non renseigné » imprimé, fermeture au titre suivant) | [`test_relecture_visuelle.py`](../tests/test_relecture_visuelle.py) |
+| #977 | l'avant sur les ports + 200, l'écran nouveau jamais capturé, le best-effort, l'état suivi ou rien, `--fin` qui arrête et retire | `test_relecture_visuelle.py` |
+| #978 | les scénarios servis (panne sous le CORS, charge), demandés au lanceur, montés et comptés par la relecture | [`test_cli_smoke.py`](../tests/test_cli_smoke.py), [`test_controltower_mode_reel.py`](../tests/test_controltower_mode_reel.py), `test_relecture_visuelle.py` |
+| #979 | le critère écrit une fois, l'arbre vide avant la question, le choix consigné avant le code, la voie (a) en run et ses voies écartées | [`test_design_veille.py`](../tests/test_design_veille.py) |
+| #980 | la grille (refus, fichier unique), `relecture-attente` (ancres, un aller), la saisine (pièces et rien d'autre), la planche (autonome, survit au worktree), `regard-neuf` réduit à `Read` | `test_relecture_visuelle.py` |
+
+Chaque contrôle qui conclut d'une **absence** — une recopie, une section manquante — éprouve d'abord
+son motif sur un **échantillon fautif**, et un prompt se lit **normalisé** : replié à 100 colonnes, il
+couperait une phrase recopiée n'importe où.
+
+**Hors périmètre du chantier**, et suivi ailleurs : le **socle** lui-même (typographie, rayons,
+ombres — #973), la **régression au pixel** (#985), la confrontation **générale** des critères
+d'acceptation à la clôture (#968, dont ce chantier ne traite que la part visuelle).
 
 ---
 
