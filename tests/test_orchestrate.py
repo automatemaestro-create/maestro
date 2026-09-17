@@ -697,6 +697,16 @@ def depot(tmp_path: Path) -> Depot:
     return Depot(racine=racine, fixtures=fixtures, env=env)
 
 
+#: Ce qu'un bouchon lit pour savoir QUEL ticket on lui confie : l'iid du prompt, dans « le ticket
+#: GitHub #N » au premier tour comme dans « le ticket #N » à la reprise. Le mot de la forge n'y
+#: entre pas, et le motif ne s'écrit qu'ici : #961 a changé ce mot dans le prompt de `run.sh`, et
+#: les huit bouchons qui le recopiaient ont rougi ensemble (29 tests).
+_IID_DU_PROMPT = (
+    "$(printf '%s\\n' \"$@\" | grep -oE 'ticket ([A-Za-z]+ )?#[0-9]+' | head -1"
+    " | grep -oE '[0-9]+$')"
+)
+
+
 def _claude_stub(depot: Depot, corps: str) -> str:
     """Écrit un bouchon de `claude` et renvoie son chemin."""
     chemin = depot.racine.parent / "bin" / "claude-stub"
@@ -2226,7 +2236,7 @@ def _stub_livre(depot: Depot) -> str:
     """
     gabarit = _statut_json("%s", "En revue")
     return _claude_stub(depot, f"""
-        iid=$(printf '%s\\n' "$@" | grep -o 'GitHub #[0-9]*' | head -1 | tr -dc '0-9')
+        iid="{_IID_DU_PROMPT}"
         printf '{gabarit}' "$iid" > "$MAESTRO_FIXTURES/owner-$iid.json"
         printf '{{"type":"assistant","message":{{"content":[{{"type":"tool_use",'
         printf '"name":"Read","input":{{"file_path":"docs/21-configuration-mcp.md"}}}}]}}}}\\n'
@@ -2350,7 +2360,7 @@ def test_l_attente_et_la_reprise_sont_des_etats_de_la_vue(depot: Depot) -> None:
     gabarit = _statut_json("%s", "En revue")
     claude = _claude_stub(depot, f"""
         if printf '%s\\n' "$@" | grep -q -- '--resume'; then
-          iid=$(printf '%s\\n' "$@" | grep -o 'GitHub #[0-9]*' | head -1 | tr -dc '0-9')
+          iid="{_IID_DU_PROMPT}"
           printf '{gabarit}' "${{iid:-130}}" > "$MAESTRO_FIXTURES/owner-130.json"
           printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":6}}\\n'
           exit 0
@@ -4190,8 +4200,7 @@ def test_une_limite_d_usage_ne_declenche_qu_une_attente_pour_les_n_sessions(
     # le test insensible à la charge : laquelle des deux ouvre le rendez-vous est une course, mais
     # qu'il n'y en ait qu'UN ne l'est pas — et c'est cela, le critère.
     claude = _claude_stub(depot, f"""
-        iid="$(printf '%s\\n' "$@" | grep -oE 'ticket (GitHub )?#[0-9]+' | head -1 |
-               grep -oE '[0-9]+$')"
+        iid="{_IID_DU_PROMPT}"
         printf '%s\\n' "$@" >> "$MAESTRO_FIXTURES/args-$iid.txt"
         n=$(( $(cat "$MAESTRO_FIXTURES/n-$iid" 2>/dev/null || echo 0) + 1 ))
         printf '%s' "$n" > "$MAESTRO_FIXTURES/n-$iid"
@@ -5886,12 +5895,11 @@ def _stub_barriere(depot: Depot, iids: tuple[int, ...], *, apres: str = "") -> s
     """
     attente = " ".join(f'[ -e "$MAESTRO_FIXTURES/arrivee-{i}" ] &&' for i in iids)
     gabarit = _statut_json("$iid", "En revue")
-    # « ticket GitHub #N » au premier tour, « le ticket #N » à la reprise : les deux formes
-    # comptent, sans quoi une session rouverte n'écrirait son verdict sous aucun nom (et le test
-    # dirait, à tort, que la reprise n'a rien livré).
+    # `_IID_DU_PROMPT` lit les deux formes, premier tour et reprise : sans la seconde, une session
+    # rouverte n'écrirait son verdict sous aucun nom (et le test dirait, à tort, que la reprise n'a
+    # rien livré).
     return _claude_stub(depot, f"""
-        iid="$(printf '%s\\n' "$@" | grep -oE 'ticket (GitHub )?#[0-9]+' | head -1 |
-               grep -oE '[0-9]+$')"
+        iid="{_IID_DU_PROMPT}"
         printf '%s\\n' "$iid" >> "$MAESTRO_FIXTURES/vus.txt"
         # Le pic de simultanéité, mesuré par les sessions elles-mêmes — c'est la seule façon de
         # constater qu'on N'A JAMAIS eu deux tickets liés en vol : une lecture d'après coup ne
@@ -7775,7 +7783,7 @@ def test_une_session_de_deblocage_en_echec_laisse_la_pr_ouverte_et_intacte(depot
           printf '{{"type":"result","subtype":"error","is_error":true,"total_cost_usd":0.5}}\\n'
           exit 1
         fi
-        iid=$(printf '%s\\n' "$@" | grep -o 'GitHub #[0-9]*' | head -1 | tr -dc '0-9')
+        iid="{_IID_DU_PROMPT}"
         printf '{gabarit}' "$iid" > "$MAESTRO_FIXTURES/owner-$iid.json"
         printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":1}}\\n'
         exit 0
@@ -7851,7 +7859,7 @@ def _stub_residu(depot: Depot, cible: str = ".claude/commands/ticket-finish.md")
     """
     gabarit = _statut_json("%s", "En revue")
     return _claude_stub(depot, f"""
-        iid=$(printf '%s\\n' "$@" | grep -o 'GitHub #[0-9]*' | head -1 | tr -dc '0-9')
+        iid="{_IID_DU_PROMPT}"
         printf '{gabarit}' "$iid" > "$MAESTRO_FIXTURES/owner-$iid.json"
         printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":2,'
         printf '"permission_denials":[{{"tool_name":"Edit","tool_use_id":"t0",'
@@ -7924,7 +7932,7 @@ def test_un_refus_qui_nest_pas_une_ecriture_sous_claude_ne_declenche_rien(depot:
     depot.mr("feat/130-ticket-130", "opened")
     gabarit = _statut_json("%s", "En revue")
     claude = _claude_stub(depot, f"""
-        iid=$(printf '%s\\n' "$@" | grep -o 'GitHub #[0-9]*' | head -1 | tr -dc '0-9')
+        iid="{_IID_DU_PROMPT}"
         printf '{gabarit}' "$iid" > "$MAESTRO_FIXTURES/owner-$iid.json"
         printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":2,'
         printf '"permission_denials":[{{"tool_name":"Bash","tool_use_id":"t0",'

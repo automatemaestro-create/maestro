@@ -2207,7 +2207,11 @@ personnelles vont dans `.claude/settings.local.json`, non versionné).
   n'accorde jamais rien, ce que #179 n'a mesuré que pour `EnterWorktree` — alors qu'une déclaration
   juste ne peut, au pire, accorder que ce que la commande fait déjà. Un écart se corrige donc **dans
   l'en-tête** : jamais en allongeant une allowlist pour le faire tenir, ni l'inverse. La garde
-  contre la rechute est le lot final du chantier #960.
+  contre la rechute est `TestChainagesDesDeclarations`
+  ([`tests/test_audit_commandes.py`](../tests/test_audit_commandes.py), #966). Elle lit les
+  chaînages **dans la puce ci-dessus**, qui en est la source : un chaînage ajouté ici est vérifié
+  sans toucher au test. Pour chacun, elle exige que la déclaration de la commande jouée soit
+  incluse dans celle de l'appelante, et que l'appelante la cite ([docs/25 §9.4](./25-audit-commandes-claude.md)).
 - **Réglages machine (`.claude/settings.local.json`, non versionné)** : rien ne les annonçait, d'où
   le gabarit versionné [`.claude/settings.local.example.json`](../.claude/settings.local.example.json)
   — les clés attendues avec des **valeurs neutres**, et **aucun secret** (un jeton n'a pas sa place
@@ -6127,6 +6131,16 @@ travail vaut d'être relue au tour suivant, et le worktree part en entier quand 
 (§9.2). Même raison pour `journal.sh` lui-même, qui résout désormais le journal vers le **clone
 principal** d'où qu'on le lise : sans ça, lire ses propres refus depuis un worktree demandait un
 chemin absolu, et l'outil de mesure produisait le refus qu'il mesure.
+
+Désigner l'atelier dans le prompt ne suffit pas si la commande que la session lit **en dernier**
+dit l'inverse. Jusqu'à #962, `/ticket-finish`, `/ticket-ship` et `/mr-fix` envoyaient le message
+de commit et la description de PR dans le scratchpad de session, un chemin absolu. Au 2026-09-14,
+l'échappée de chemin était la première famille de refus (19 sur 55), et cette contradiction
+portait sur le geste terminal de chaque ticket. `TestAtelierDeSession`
+([`tests/test_audit_commandes.py`](../tests/test_audit_commandes.py), #966) refuse désormais
+« scratchpad » dans toute commande que les prompts de `run.sh` font jouer, chaînages compris.
+Seules y échappent les mentions inscrites qui ne le nomment que pour l'écarter
+([docs/25 §9.4](./25-audit-commandes-claude.md)).
 
 Un refus **ne bloque pas le run** : sans humain pour approuver, l'appel est simplement refusé et la
 session se débrouille. C'est précisément le problème — **il se paie deux fois** : en tours et en

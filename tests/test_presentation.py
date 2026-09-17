@@ -293,11 +293,11 @@ def test_un_composant_partage_rend_une_ligne_indeterminee(depot: DepotEcrans) ->
 
 @besoin_de_git
 def test_la_plomberie_de_l_ui_est_hors_perimetre(depot: DepotEcrans) -> None:
-    """`lib/` et `hooks/` sont exclus À DESSEIN : presque tous les tickets de la Control Tower y
-    touchent, et les compter ferait rendre une ligne indéterminée à presque tous."""
+    """`lib/` est exclu À DESSEIN, hooks compris (ils y vivent) : presque tous les tickets de la
+    Control Tower y touchent, et les compter ferait rendre une ligne indéterminée à presque tous."""
     depot.commit(
         "feat: plomberie\n\nCloses #17",
-        ["apps/web/lib/navigation.ts", "apps/web/hooks/useControlTower.ts"],
+        ["apps/web/lib/navigation.ts", "apps/web/lib/useControlTower.ts"],
     )
     assert lignes(depot.ecrans(17).stdout) == []
 
