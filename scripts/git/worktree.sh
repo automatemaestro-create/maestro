@@ -69,6 +69,13 @@ Un worktree git par ticket — deux tickets, deux sessions, un seul dépôt.
   bash scripts/git/worktree.sh remove <iid|chemin> [--force]
   bash scripts/git/worktree.sh gc [--check] [--auto] [--sauf <iid>] [--iid <iid>]
   bash scripts/git/worktree.sh sessions [<iid>|--tous]
+  bash scripts/git/worktree.sh avant [--retirer|--ramasser] [--sans-fetch] <iid>
+
+`avant` monte l'AVANT d'une relecture visuelle (#977) : un worktree DÉTACHÉ sur origin/main,
+nommé `<iid>.avant`, équipé pour servir sa Control Tower (dernière ligne « AVANT <chemin> »).
+C'est `scripts/design/relecture-visuelle.sh` qui l'appelle et le range. `--retirer` le retire
+(délier puis retirer) ; les avants dont le ticket n'a plus de worktree sur ce poste sont
+ramassés au montage suivant, ou par `--ramasser`.
 
 `ensure` est l'aiguillage de /ticket-start : il dit où la session doit travailler, en rendant
 en dernière ligne « ICI <chemin> » (le répertoire courant convient déjà — cas d'orchestrate,
@@ -884,7 +891,12 @@ commande_list() {
               printf '  %-50s %s\n' "$chemin" "[$branche] — ports $((8000 + decalage))/$((3000 + decalage))" ;;
           esac
         fi ;;
-      detached) printf '  %-50s %s\n' "$chemin" "(HEAD détaché)" ;;
+      detached)
+        nom="$(basename "$chemin")"
+        case "$nom" in
+          [0-9]*.avant) printf '  %-50s %s\n' "$chemin" "(avant de la relecture visuelle de #${nom%.avant} — origin/main, détaché)" ;;
+          *) printf '  %-50s %s\n' "$chemin" "(HEAD détaché)" ;;
+        esac ;;
     esac
   done < <(git -C "$principal" worktree list --porcelain 2>/dev/null)
 
@@ -978,6 +990,227 @@ commande_remove() {
     printf '  dossier doit être supprimé à la main.\n' >&2
     return 1
   fi
+}
+
+# --- avant : l'état d'origin/main, servi à côté du ticket (#977) ------------------------------------
+# La relecture visuelle (#932) regarde l'APRÈS — les écrans de la branche. Il lui manquait l'AVANT, le
+# même écran dans le même thème sur `origin/main` : une capture seule ne dit ni ce qui a changé, ni si
+# le changement a abîmé ce qui allait. Ce verbe monte ce qu'il faut pour le servir, et rien d'autre ;
+# c'est `scripts/design/relecture-visuelle.sh` qui l'appelle, démarre la stack et la range.
+#
+# UN SECOND WORKTREE, DÉTACHÉ, et c'est une décision prise SUR MESURE entre trois voies (docs/30
+# §5.6, #977) :
+#   - remettre les fichiers d'`origin/main` dans le worktree du ticket puis restaurer HEAD coûtait le
+#     moins, mais c'est la seule voie qui touche au travail, et sa fenêtre de risque couvre PLUSIEURS
+#     appels d'outil de la session (captures au navigateur) : une session coupée entre les deux laisse
+#     un arbre qui annule le ticket, que `/ticket-ship` commiterait d'office au passage suivant ;
+#   - capturer l'avant au `/ticket-start` était gratuit mais aveugle là où ça compte — la prédiction
+#     `touche-surface` rate 12 tickets sur 33, précisément ceux dont le diff révèle la surface ;
+#   - le second worktree ne touche à RIEN du ticket. Son prix, mesuré le 2026-09-17 sur le poste de
+#     référence : ~2 s de `git worktree add`, ~33 s de `npm ci` (498 Mo — Turbopack refuse un
+#     `node_modules` lié, voir l'étape 5 de `create`), ~9 s de stack, ~5 s d'arrêt, ~4 s de retrait.
+#
+# Trois choses à ne pas défaire :
+#   - le NOM `<iid>.avant` ne peut pas être celui d'un worktree de ticket (`<iid>-<slug>`, jamais de
+#     point dans un slug) : `remove`, `gc` et `ensure` cherchent par BRANCHE, et un worktree détaché
+#     n'en porte aucune, donc ils ne le voient pas — le nom est ce qui le désigne, il doit être sûr ;
+#   - on ne touche QU'À UN WORKTREE DÉTACHÉ à cet emplacement : un dossier qui porte une branche n'est
+#     pas un avant, et il est refusé avant la moindre écriture ;
+#   - le retrait passe par `retire_worktree` (délier PUIS retirer, #152) après avoir vidé
+#     `apps/web/node_modules`, installé sur place : c'est lui qui dépasse MAX_PATH, et
+#     `git worktree remove` échoue alors sur « Filename too long » (mesuré au cadrage de #977).
+#
+# Un avant n'est pas ramassé par `gc`, qui juge par la forge et par la branche : il se ramasse au
+# montage suivant, sur une règle sans forge — un avant dont le ticket n'a plus aucun worktree sur ce
+# poste (clone principal compris) n'est plus regardé par personne.
+nom_avant() { printf '%s.avant' "$1"; }
+
+# avants_en_place <clone principal> : « chemin<TAB>iid » de chaque avant enregistré, détaché, sous la
+# base des worktrees. Un dossier du bon nom qui porte une branche n'en fait pas partie.
+avants_en_place() {
+  local principal="$1" base ligne chemin="" detache=0 nom
+  base="$(base_worktrees "$principal")"
+  while IFS= read -r ligne; do
+    case "$ligne" in
+      worktree\ *) chemin="${ligne#worktree }"; detache=0 ;;
+      detached) detache=1 ;;
+      '')
+        if [ "$detache" = 1 ] && [ -n "$chemin" ]; then
+          nom="$(basename "$chemin")"
+          # `[ -ef ]` et non une comparaison de chaînes : git répond « E:/… », le shell « /e/… ».
+          case "${nom%.avant}" in
+            ''|*[!0-9]*) ;;
+            *)
+              [ "$nom" != "${nom%.avant}" ] && [ "$base/$nom" -ef "$chemin" ] &&
+                printf '%s\t%s\n' "$chemin" "${nom%.avant}" ;;
+          esac
+        fi
+        chemin=""; detache=0 ;;
+    esac
+  done < <(git -C "$principal" worktree list --porcelain 2>/dev/null; printf '\n')
+}
+
+# ticket_a_un_worktree <clone principal> <iid> : 0 si un worktree de ce poste — clone principal compris
+# — porte une branche de ce ticket. C'est ce qui garde l'avant d'une relecture EN COURS, y compris
+# quand le ticket se traite dans le clone principal (verdict `ICI` d'`ensure`).
+ticket_a_un_worktree() {
+  local principal="$1" iid="$2" ligne nom
+  while IFS= read -r ligne; do
+    case "$ligne" in
+      branch\ refs/heads/*)
+        nom="${ligne#branch refs/heads/}"
+        nom="${nom#*/}"
+        case "$nom" in "$iid"|"$iid"-*) return 0 ;; esac ;;
+    esac
+  done < <(git -C "$principal" worktree list --porcelain 2>/dev/null)
+  return 1
+}
+
+# retire_avant <chemin> : vider node_modules (jamais une jonction ici), puis la séquence commune.
+retire_avant() {
+  local chemin="$1"
+  if [ -d "$chemin/apps/web/node_modules" ] && [ ! -L "$chemin/apps/web/node_modules" ]; then
+    rm -rf "$chemin/apps/web/node_modules" 2>/dev/null
+  fi
+  retire_worktree "$chemin" 1 0
+}
+
+# ramasse_avants <clone principal> <iid à garder> : retire les avants que plus aucun ticket ne regarde.
+ramasse_avants() {
+  local principal="$1" garder="$2" chemin iid
+  while IFS=$'\t' read -r chemin iid; do
+    [ -n "$chemin" ] || continue
+    [ "$iid" = "$garder" ] && continue
+    ticket_a_un_worktree "$principal" "$iid" && continue
+    if retire_avant "$chemin"; then
+      ok "avant de #$iid retiré — son ticket n'a plus de worktree sur ce poste"
+    else
+      alerte "avant de #$iid non retiré : $(printf '%s' "$RETRAIT_ERREUR" | head -1)"
+    fi
+  done <<< "$(avants_en_place "$principal")"
+}
+
+commande_avant() {
+  local mode="monter" iid="" fetch=1
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --retirer)   mode="retirer" ;;
+      --ramasser)  mode="ramasser" ;;
+      --sans-fetch) fetch=0 ;;
+      -h|--help)   usage; return 0 ;;
+      -*) printf 'Option inconnue : %s\n\n' "$1" >&2; usage >&2; return 2 ;;
+      *)  iid="${1#\#}" ;;
+    esac
+    shift
+  done
+
+  local principal
+  principal="$(depot_principal)" || { erreur "hors d'un dépôt git"; return 1; }
+
+  if [ "$mode" = "ramasser" ]; then
+    ramasse_avants "$principal" ""
+    return 0
+  fi
+
+  case "$iid" in
+    '') echo "usage: bash scripts/git/worktree.sh avant [--retirer] <iid>" >&2; return 2 ;;
+    *[!0-9]*) echo "IID de ticket attendu (nombre) : « $iid »" >&2; return 2 ;;
+  esac
+
+  local base dest
+  base="$(base_worktrees "$principal")"
+  dest="$base/$(nom_avant "$iid")"
+
+  # Refus AVANT toute écriture, et dans les deux modes : un dossier de ce nom qui porte une branche
+  # n'est pas un avant, quoi qu'en dise son nom.
+  if [ -e "$dest/.git" ] && git -C "$dest" symbolic-ref -q HEAD >/dev/null 2>&1; then
+    erreur "$(chemin_natif "$dest") porte une branche : ce n'est pas un avant, rien n'est touché"
+    return 1
+  fi
+
+  if [ "$mode" = "retirer" ]; then
+    if [ ! -e "$dest/.git" ]; then
+      deja "aucun avant en place pour #$iid"
+      return 0
+    fi
+    if retire_avant "$dest"; then
+      ok "avant de #$iid retiré"
+      return 0
+    fi
+    if [ "$RETRAIT_DESENREGISTRE" = 1 ]; then
+      alerte "avant de #$iid désenregistré, son dossier résiste : $(chemin_natif "$dest")"
+    else
+      erreur "avant de #$iid non retiré : $(printf '%s' "$RETRAIT_ERREUR" | head -1)"
+    fi
+    return 1
+  fi
+
+  # Les avants que plus personne ne regarde partent d'abord : c'est leur seul ramassage (voir l'en-tête).
+  ramasse_avants "$principal" "$iid"
+
+  if [ "$fetch" = 1 ]; then
+    GIT_TERMINAL_PROMPT=0 git -C "$principal" fetch origin main >/dev/null 2>&1
+  fi
+  local sha
+  sha="$(git -C "$principal" rev-parse --verify --quiet 'origin/main^{commit}')" || {
+    erreur "origin/main introuvable — pas d'avant à monter"
+    return 1
+  }
+
+  printf '\nAvant de la relecture visuelle #%s — origin/main (%s)\n\n' "$iid" "${sha:0:7}"
+
+  local sortie
+  if [ -e "$dest/.git" ]; then
+    # Déjà là : une relecture rejouée (pipeline rouge, reprise) ou coupée avant `--fin`. Ramené sur
+    # origin/main sans rien réinstaller — `setup.sh` ne rejoue `npm ci` que si le lockfile a bougé.
+    # `--force` ne met rien en jeu : cet arbre n'est à personne, c'est une copie d'origin/main.
+    if ! sortie="$(git -C "$dest" checkout --quiet --force --detach "$sha" 2>&1)"; then
+      erreur "avant en place mais impossible à ramener sur origin/main :"
+      printf '%s\n' "$sortie" >&2
+      return 1
+    fi
+    deja "worktree d'avant déjà en place — ramené sur origin/main"
+  else
+    if [ -d "$dest" ] && [ -z "$(ls -A "$dest" 2>/dev/null)" ]; then
+      rmdir "$dest" 2>/dev/null && ignore "coquille vide d'un retrait précédent écartée"
+    fi
+    if [ -e "$dest" ]; then
+      erreur "$(chemin_natif "$dest") existe déjà sans être un worktree — rien n'est touché"
+      return 1
+    fi
+    mkdir -p "$base" 2>/dev/null
+    if ! sortie="$(git -C "$principal" worktree add --detach "$dest" "$sha" 2>&1)"; then
+      erreur "git worktree add a échoué :"
+      printf '%s\n' "$sortie" >&2
+      return 1
+    fi
+    ok "worktree détaché créé sur origin/main"
+  fi
+
+  # Le même équipement qu'un worktree de ticket, moins ce qui ne sert qu'à une SESSION (réglages Claude
+  # Code, atelier) : personne n'entre dans un avant, on n'y fait que servir une stack.
+  if [ ! -f "$dest/.env" ] && [ -f "$principal/.env" ]; then
+    cp "$principal/.env" "$dest/.env" && ok ".env recopié depuis le clone principal"
+  fi
+  local cible code
+  for cible in .venv .tools; do
+    lier "$principal/$cible" "$dest/$cible"; code=$?
+    case "$code" in
+      0) ok "$cible partagé avec le clone principal" ;;
+      2|3) ;;
+      *) ignore "$cible : lien impossible" ;;
+    esac
+  done
+  # Annoncé AVANT de lancer, comme dans `ensure` : un `npm ci` laisse la console muette une demi-minute.
+  printf '  … dépendances de apps/web d'\''origin/main (~35 s à la première installation, rien si à jour)\n'
+  if ( cd "$dest" && bash "$dest/scripts/setup.sh" --only web >/dev/null 2>&1 ); then
+    ok "apps/web : dépendances prêtes"
+  else
+    erreur "apps/web : installation en échec dans l'avant"
+    return 1
+  fi
+
+  printf 'AVANT %s\n' "$(chemin_natif "$dest")"
 }
 
 # --- sessions : retrouver les transcripts d'un ticket (#385) ----------------------------------------
@@ -1984,6 +2217,7 @@ case "$cmd" in
   ensure)      commande_ensure "$@" ;;
   list)        commande_list "$@" ;;
   remove)      commande_remove "$@" ;;
+  avant)       commande_avant "$@" ;;
   gc)          commande_gc "$@" ;;
   sessions)    commande_sessions "$@" ;;
   -h|--help|'') usage ;;

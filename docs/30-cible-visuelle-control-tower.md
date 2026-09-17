@@ -1226,6 +1226,67 @@ n'y avait rien à regarder. Ce `3` est ce qui rend l'étape 4bis du §5.5 accept
 backlog, et non seulement sur les tickets d'interface — la règle de #418 tient ici comme ailleurs :
 ce que ça coûte se dit plutôt que de se masquer.
 
+#### L'avant : un second worktree, détaché sur `origin/main` — 2026-09-17 (#977)
+
+Une capture seule ne dit ni ce qui a changé, ni si le changement a abîmé ce qui allait — et sans
+l'état d'avant, le jugement ne peut répondre ni à « ce qui ne doit pas bouger » du rendu attendu
+(#976), ni voir la régression d'un écran qui affiche un composant partagé. Chaque écran du plan se
+regarde donc **deux fois**, dans le même thème : sur la branche et sur `origin/main`, capturés
+`<ecran>-<theme>-apres.png` et `<ecran>-<theme>-avant.png` côte à côte.
+
+Le ticket posait **trois voies à trancher sur mesure**, et c'est la mesure qui a tranché :
+
+| voie | ce qu'elle coûte | ce qui l'arrête |
+|---|---|---|
+| remettre les fichiers d'`origin/main` dans le worktree du ticket, puis restaurer `HEAD` | le moins : une restauration et un rechargement à chaud | c'est la seule qui **touche au travail**, et sa fenêtre de risque n'est pas celle d'un script — elle couvre **plusieurs appels d'outil** de la session (chaque capture passe par le navigateur). Une session coupée entre les deux (limite d'usage, échec) laisse un arbre qui **annule le ticket**, et `/ticket-ship` le commite d'office au passage suivant. Aucun `trap` ne couvre ce qui se passe hors du script. Elle servait en plus l'UI d'`origin/main` contre l'API de la branche : un avant qui n'en est pas un dès qu'un ticket touche les deux |
+| capturer l'avant au `/ticket-start`, tant que le worktree vaut `origin/main` | rien au démarrage, une stack de plus sur tout ticket prédit visuel | la prédiction `touche-surface` **rate 12 tickets sur 33** (§5.2) — l'avant manquerait précisément là où le diff révèle la surface, c'est-à-dire là où la clôture (§5.5) a cessé de prédire |
+| **un second worktree détaché sur `origin/main`, avec sa propre stack** — retenue | mesuré sur le poste de référence : `git worktree add` **~2 s**, `npm ci` **~33 s** (498 Mo — Turbopack refuse un `node_modules` lié), stack **~9 s** jusqu'à la première page, arrêt **~5 s**, retrait **~4 s** | rien du ticket n'est touché : dans son arbre, rien n'est écrit hors de `.maestro/` |
+
+Bout en bout, sur un écran existant et un écran nouveau : `--plan` **2 s → 3,2 s**, préparation
+**~18 s → 57 s** au premier montage (l'avant seul **38 à 48 s**) et **40 s** rejouée (l'avant
+**22 s**, sans réinstaller), `--fin` **6 s → 17,6 s**. Soit **~50 s de plus par relecture**, plus
+~4 s par écran et par thème, et ~500 Mo de disque le temps qu'elle dure. Le chiffre est **annoncé
+avant** le montage et **mesuré après** (« avant prêt en N s »), règle de #418.
+
+**Ce qui est tenu, et à ne pas défaire :**
+
+- **L'avant est best-effort, jamais bloquant.** `origin/main` introuvable, montage ou stack en échec :
+  l'après reste prêt, le script dit la cause, et la session la reporte à « ce que je n'ai pas pu
+  voir ». Un avant manquant ne vaut jamais une relecture manquante. `MAESTRO_RELECTURE_AVANT=0`
+  l'éteint, et le plan le dit.
+- **Un écran nouveau est nommé, jamais capturé sur une 404.** « Cet écran existe-t-il sur
+  `origin/main` ? » se pose à **la règle de #544** — les pages d'`origin/main` classées par
+  `ecrans-touches.sh --chemins` —, et non à un `curl` qui demanderait une stack pour répondre : le
+  plan reste gratuit. Seules comptent les pages **sans segment dynamique**, `/runs/[runId]/page.tsx`
+  se rangeant sous `/runs` sans que `/runs` réponde pour autant. Le TSV porte la réponse en
+  **dernière** colonne (URL · `nouveau` · `-`), les quatre premières étant lues par leur rang.
+- **Les ports sont ceux de l'après, décalés de 200.** Les worktrees de ticket occupent 8001-8100 et
+  3001-3100, le clone principal 8000/3000 : 8200-8300 et 3200-3300 ne croisent personne. Dérivés
+  **de l'après** et non de l'iid, pour qu'un `--ports` imposé au montage emporte l'avant avec lui.
+- **Le nom `<iid>.avant` est sûr par construction.** `remove`, `gc` et `ensure` retrouvent un
+  worktree par sa **branche** ; un worktree détaché n'en porte aucune, donc c'est son nom qui le
+  désigne — et un slug de ticket ne contient jamais de point. Un dossier de ce nom qui porte une
+  branche est refusé avant toute écriture.
+- **Le retrait vide `node_modules` d'abord, puis délie, puis retire** (#152). Mesuré au cadrage :
+  `git worktree remove` échoue sur « Filename too long » dès que `node_modules` dépasse MAX_PATH.
+  Les jonctions `.venv`/`.tools` du clone principal sont sorties intactes de trois retraits.
+- **Un avant oublié se ramasse au montage suivant, pas par `gc`.** `gc` juge par la forge et par la
+  branche ; l'avant se juge **sans elle** : dès que son ticket n'a plus de worktree sur ce poste
+  (clone principal compris), plus personne ne le regarde. La règle ne peut pas retirer l'avant d'une
+  relecture en cours, qui a toujours le worktree de son ticket.
+
+**Trois pièges trouvés en le jouant**, écrits dans le skill parce que c'est la session qui les
+rencontre : l'après et l'avant sont **deux origines**, donc deux `localStorage` à préparer ; une
+paire dont un côté est encore sur « Chargement… » montre une différence qui n'en est pas une — la
+capture attend le signal « page prête » de `captures.mjs` (#830) **des deux côtés** ; et les
+**chiffres de la démo ne se comparent pas**, le scénario avançant avec le temps entre deux stacks
+démarrées à quarante secondes d'écart — on compare la mise en page et le rendu, jamais les valeurs.
+
+**Écarté aussi :** servir l'avant depuis le **clone principal**, qui a déjà ses dépendances. Son
+`main` n'est avancé qu'à certains passages (§9.3 de docs/10) et peut porter du travail, son
+`apps/web/.next` serait partagé par N relectures d'un run concurrent, et le clone principal doit
+rester disponible — c'est la raison d'être des worktrees.
+
 Le dispositif est gardé par [`tests/test_relecture_visuelle.py`](../tests/test_relecture_visuelle.py)
 (#936) ; les deux sources de `ecrans-touches.sh` le sont dans
 [`tests/test_presentation.py`](../tests/test_presentation.py), là où vit la règle de #544 qu'elles

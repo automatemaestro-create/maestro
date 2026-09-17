@@ -2,8 +2,8 @@
 # LA RELECTURE VISUELLE — ce qu'il faut regarder, et de quoi le regarder (#932, lot 2 de #930).
 #
 #   bash scripts/design/relecture-visuelle.sh --plan <iid>   # ce qu'il y a à regarder. Ne démarre rien.
-#   bash scripts/design/relecture-visuelle.sh <iid>          # le plan, + la stack montée, prête à regarder
-#   bash scripts/design/relecture-visuelle.sh --fin          # arrête la stack et retire ce qu'elle a posé
+#   bash scripts/design/relecture-visuelle.sh <iid>          # le plan, + les stacks montées : après et avant
+#   bash scripts/design/relecture-visuelle.sh --fin          # arrête les stacks et retire ce qu'elles ont posé
 #
 # Le maillon qui manquait à la chaîne de docs/30 §5.1 : PERSONNE NE REGARDE LE RENDU. La décision et
 # ses raisons sont en docs/30 §5.6 ; ce qui l'APPELLE — l'étape 4bis de `/ticket-finish` — en §5.5. `verify` répond
@@ -62,8 +62,10 @@
 #     (#279) et il n'y a rien à regarder. Le fichier est gitignoré (`core/projets/.gitignore`), son
 #     identifiant est LU dans `maestro/controltower/demo.py` plutôt que recopié, et il n'est retiré que
 #     si c'est nous qui l'avons posé — un projet déclaré avant nous ne nous appartient pas.
+#   - `.maestro/relecture/.avant` — le témoin de l'avant (section 5) : où il est monté et sur quels
+#     ports, pour que `--fin`, qui ne prend pas d'iid, sache quoi arrêter et quoi retirer.
 #
-# Il ne parle à aucune forge, ne commite rien, ne merge rien : il monte deux processus locaux sur les
+# Il ne parle à aucune forge, ne commite rien, ne merge rien : il monte des processus locaux sur les
 # ports d'un worktree, et les arrête.
 #
 # --- 4. LE PRIX EST DU TEMPS DE MUR, ET IL S'ANNONCE (règle de #418) -------------------------------
@@ -71,7 +73,32 @@
 # Monter la stack coûte, et un run à concurrence 3 en monterait trois — sur des ports distincts, ce que
 # `worktree.sh` garantit depuis #152. C'est pourquoi `--plan` existe SÉPARÉMENT et ne démarre rien : un
 # ticket sans surface visible rend `3` en une seconde, et personne ne paie la stack pour apprendre qu'il
-# n'y avait rien à regarder.
+# n'y avait rien à regarder. L'avant ajoute sa part — ~50 s de plus la première fois, mesurés au
+# cadrage de #977 —, et la préparation dit ce qu'elle a réellement coûté, chronomètre en main.
+#
+# --- 5. L'AVANT : `origin/main`, servi à côté et jamais à la place (#977) --------------------------
+#
+# Une capture seule ne dit ni ce qui a changé, ni si le changement a abîmé ce qui allait. Chaque écran
+# du plan se regarde donc DEUX fois : sur la branche (l'après) et sur `origin/main` (l'avant), dans le
+# même thème. L'avant est servi par une SECONDE stack, montée depuis un SECOND worktree, détaché
+# (`worktree.sh avant`, dont l'en-tête dit pourquoi cette voie et pas les deux autres) — le travail
+# de la session n'est donc jamais mis en jeu pour l'obtenir : dans l'arbre du ticket, rien n'est écrit
+# hors de `.maestro/`, et aucun fichier suivi n'est touché — pas même le temps d'une capture.
+#
+#   - SES PORTS sont ceux de l'après, décalés de 200. Les worktrees de ticket occupent 8001-8100 et
+#     3001-3100 (`worktree.sh`, #152), le clone principal 8000/3000 : 8200-8300 et 3200-3300 ne
+#     croisent personne. Dérivés de l'après et non de l'iid, pour qu'un `--ports` imposé au montage
+#     du worktree emporte l'avant avec lui.
+#   - UN ÉCRAN NOUVEAU n'a pas d'avant, et il est NOMMÉ comme tel — jamais capturé sur une 404. La
+#     question « cet écran existe-t-il sur origin/main ? » se pose à la règle de #544 : les pages
+#     d'origin/main, classées par `ecrans-touches.sh --chemins`. Seules comptent les pages SANS
+#     segment dynamique, parce que `/runs/[runId]/page.tsx` se range sous `/runs` sans que `/runs`
+#     réponde pour autant.
+#   - L'AVANT EST BEST-EFFORT : `origin/main` introuvable, montage ou stack en échec — l'après reste
+#     prêt, l'avant est dit indisponible avec sa cause, et c'est la session qui le reporte à « ce que je
+#     n'ai pas pu voir ». Un avant manquant ne vaut jamais une relecture manquante.
+#   - `MAESTRO_RELECTURE_AVANT=0` l'éteint, et le plan le dit : ne pas payer l'avant est un choix, pas
+#     un oubli.
 #
 # Codes de retour : 0 = il y a à regarder · 3 = aucune surface visible (abstention nominale, pas une
 # panne) · 1 = échec · 2 = usage.
@@ -90,13 +117,17 @@ usage() {
 La relecture visuelle : ce qu'il faut regarder, et de quoi le regarder.
 
   bash scripts/design/relecture-visuelle.sh --plan <iid>   Ce qu'il y a à regarder. Ne démarre rien.
-  bash scripts/design/relecture-visuelle.sh <iid>          Le plan, puis la stack montée et prête.
-  bash scripts/design/relecture-visuelle.sh --fin          Arrête la stack et retire ce qu'elle a posé.
+  bash scripts/design/relecture-visuelle.sh <iid>          Le plan, puis les stacks montées : après et avant.
+  bash scripts/design/relecture-visuelle.sh --fin          Arrête les stacks et retire ce qu'elles ont posé.
 
 Options :
   --plan        N'écrit rien, ne démarre rien : dit seulement s'il y a matière, et laquelle.
-  --tsv         Le plan en TSV (route, url, origine, fichiers), pour un appelant machine.
+  --tsv         Le plan en TSV (route, url, origine, fichiers, avant), pour un appelant machine.
+                `avant` vaut l'URL sur origin/main, `nouveau` pour un écran absent d'origin/main,
+                ou `-` quand l'avant n'est pas évalué.
   -h, --help    Cette aide.
+
+L'avant (origin/main) se sert sur les ports de l'après + 200. MAESTRO_RELECTURE_AVANT=0 l'éteint.
 
 Codes de retour : 0 = il y a à regarder · 3 = aucune surface visible · 1 = échec · 2 = usage.
 USAGE
@@ -144,6 +175,18 @@ port_de() {
 PORT_API="$(port_de MAESTRO_PORT_API 8000)"
 PORT_UI="$(port_de MAESTRO_PORT_UI 3000)"
 
+# --- L'avant (section 5 de l'en-tête) -----------------------------------------------------------------
+DECALAGE_AVANT=200
+REF_AVANT="origin/main"
+WORKTREE_SH="$RACINE/scripts/git/worktree.sh"
+TEMOIN_AVANT="$RACINE/$SOUS_DOSSIER/.avant"
+PORT_API_AVANT=""
+PORT_UI_AVANT=""
+case "$PORT_API$PORT_UI" in
+  '' | *[!0-9]*) ;;   # un port venu de l'environnement qui n'est pas un nombre : pas d'avant à dériver
+  *) PORT_API_AVANT=$((PORT_API + DECALAGE_AVANT)); PORT_UI_AVANT=$((PORT_UI + DECALAGE_AVANT)) ;;
+esac
+
 # --- Le projet de la démo -----------------------------------------------------------------------------
 # L'identifiant est LU dans le scénario : le jour où la démo change de projet, le script suit.
 PROJET_DEMO="$(sed -n 's/^PROJET_ID *= *"\([^"]*\)".*/\1/p' "$RACINE/maestro/controltower/demo.py" | head -n 1)"
@@ -160,17 +203,22 @@ base_temporaire() {
   printf '%s' "${base//\\//}"
 }
 
+# ecris_projet <fichier> <id> : la déclaration du projet de démo, écrite UNE fois pour les deux stacks.
+ecris_projet() {
+  local fichier="$1" id="$2" racine_fictive
+  racine_fictive="$(base_temporaire)/maestro-relecture/mini-crm"
+  mkdir -p "$racine_fictive" 2>/dev/null
+  mkdir -p "$(dirname "$fichier")" 2>/dev/null
+  printf '{"id":"%s","nom":"mini-CRM (démo)","racine":"%s","origine":"existant","vcs":null}\n' \
+    "$id" "$racine_fictive" >"$fichier"
+}
+
 pose_projet() {
   if [ -f "$PROJET_FICHIER" ]; then
     dire "  projet     : « $PROJET_DEMO » déjà déclaré — laissé en place"
     return 0
   fi
-  local racine_fictive
-  racine_fictive="$(base_temporaire)/maestro-relecture/mini-crm"
-  mkdir -p "$racine_fictive" 2>/dev/null
-  mkdir -p "$(dirname "$PROJET_FICHIER")" 2>/dev/null
-  if ! printf '{"id":"%s","nom":"mini-CRM (démo)","racine":"%s","origine":"existant","vcs":null}\n' \
-    "$PROJET_DEMO" "$racine_fictive" >"$PROJET_FICHIER"; then
+  if ! ecris_projet "$PROJET_FICHIER" "$PROJET_DEMO"; then
     dire "  ⚠ projet    : déclaration impossible — les écrans rendront la porte d'entrée"
     return 1
   fi
@@ -303,13 +351,146 @@ plan_de() {
   }
 }
 
+# --- L'avant : ce qu'origin/main sait servir --------------------------------------------------------
+AVANT_ETAT=""      # actif · eteint · indisponible
+AVANT_SHA=""
+AVANT_RAISON=""
+ROUTES_AVANT=""
+
+evalue_avant() {
+  if [ "${MAESTRO_RELECTURE_AVANT:-1}" = 0 ]; then
+    AVANT_ETAT="eteint"; AVANT_RAISON="MAESTRO_RELECTURE_AVANT=0"
+    return 0
+  fi
+  if [ -z "$PORT_UI_AVANT" ]; then
+    AVANT_ETAT="indisponible"; AVANT_RAISON="ports de l'après illisibles (UI « $PORT_UI »)"
+    return 0
+  fi
+  AVANT_SHA="$(git -C "$RACINE" rev-parse --verify --quiet "$REF_AVANT^{commit}" 2>/dev/null)"
+  if [ -z "$AVANT_SHA" ]; then
+    AVANT_ETAT="indisponible"; AVANT_RAISON="$REF_AVANT introuvable dans ce dépôt"
+    return 0
+  fi
+  AVANT_ETAT="actif"
+  # Les écrans qu'origin/main SERT, à la règle de #544 : ses pages, classées comme celles du ticket.
+  # Une page sous un segment dynamique est écartée — elle se range sous la route de sa liste sans que
+  # cette route réponde, et l'avant serait alors capturé sur une 404.
+  ROUTES_AVANT="$(git -C "$RACINE" ls-tree -r --name-only "$AVANT_SHA" -- apps/web/app 2>/dev/null \
+    | grep -E '/page\.(tsx|ts|jsx|js|mdx)$' | grep -v '\[' \
+    | bash "$ECRANS_TOUCHES" --chemins "$IID" 2>/dev/null \
+    | directs_de | cut -f1 | LC_ALL=C sort -u)"
+}
+
+# avant_de <route> : ce que l'avant rend pour cet écran — son URL, `nouveau`, ou `-` (non évalué).
+avant_de() {
+  local route="$1"
+  if [ "$AVANT_ETAT" != "actif" ] || [ "$route" = "-" ]; then
+    printf -- '-'
+  elif printf '%s\n' "$ROUTES_AVANT" | grep -qxF -- "$route"; then
+    printf 'http://localhost:%s%s' "$PORT_UI_AVANT" "$route"
+  else
+    printf 'nouveau'
+  fi
+}
+
+# arrete_stack_avant : arrête la stack de l'avant nommée par le témoin. Par le `start.sh` de CE dépôt :
+# l'arrêt se fait par les ports, et il doit rester possible quand l'arbre de l'avant a déjà disparu.
+arrete_stack_avant() {
+  [ -f "$TEMOIN_AVANT" ] || return 0
+  local _iid _chemin api ui
+  IFS=$'\t' read -r _iid _chemin api ui <"$TEMOIN_AVANT"
+  [ -n "$api" ] && [ -n "$ui" ] || return 0
+  MAESTRO_PORT_API="$api" MAESTRO_PORT_UI="$ui" \
+    bash "$RACINE/scripts/controltower/start.sh" --stop 2>&1 | sed 's/^/  [avant] /'
+}
+
+# retire_avant : retire le worktree de l'avant nommé par le témoin, et le témoin avec — seulement si le
+# retrait a abouti, pour qu'un `--fin` rejoué retrouve ce qui reste à retirer.
+retire_avant() {
+  [ -f "$TEMOIN_AVANT" ] || return 0
+  local iid _chemin _api _ui
+  IFS=$'\t' read -r iid _chemin _api _ui <"$TEMOIN_AVANT"
+  if [ -z "$iid" ] || [ ! -f "$WORKTREE_SH" ]; then
+    rm -f "$TEMOIN_AVANT"
+    return 0
+  fi
+  if bash "$WORKTREE_SH" avant --retirer "$iid" 2>&1; then
+    rm -f "$TEMOIN_AVANT"
+  fi
+}
+
+# prepare_avant : monte l'avant et sa stack, APRÈS l'après — l'après est ce qui compte, et un avant ne
+# se paie pas pour une relecture qui ne pourra pas avoir lieu. Best-effort de bout en bout : il ne
+# change jamais le code de retour.
+prepare_avant() {
+  local debut sortie code chemin id journal ligne
+  case "$AVANT_ETAT" in
+    eteint) dire "  avant      : éteint ($AVANT_RAISON) — l'après seul"; return 0 ;;
+    actif) ;;
+    *) dire "  avant      : indisponible — $AVANT_RAISON ; l'après seul"; return 0 ;;
+  esac
+  if [ "$NB_AVANT" -eq 0 ]; then
+    dire "  avant      : rien à monter — tous les écrans du plan sont nouveaux"
+    return 0
+  fi
+  if [ ! -f "$WORKTREE_SH" ]; then
+    dire "  avant      : indisponible — scripts/git/worktree.sh introuvable ; l'après seul"
+    return 0
+  fi
+
+  dire "  avant      : montage d'$REF_AVANT — worktree détaché et seconde stack (~50 s la première fois)"
+  debut=$SECONDS
+  sortie="$(bash "$WORKTREE_SH" avant --sans-fetch "$IID" 2>&1)"; code=$?
+  chemin="$(printf '%s\n' "$sortie" | sed -n 's/^AVANT //p' | tail -n 1)"
+  if [ "$code" -ne 0 ] || [ -z "$chemin" ]; then
+    dire "  ⚠ avant indisponible — montage en échec : $(printf '%s\n' "$sortie" \
+      | grep -v '^AVANT ' | sed '/^[[:space:]]*$/d' | tail -n 1 | sed 's/^[[:space:]]*//')"
+    dire "    l'après reste prêt ; l'avant va à « ce que je n'ai pas pu voir »."
+    return 0
+  fi
+  chemin="${chemin//\\//}"
+  mkdir -p "$(dirname "$TEMOIN_AVANT")" 2>/dev/null
+  printf '%s\t%s\t%s\t%s\n' "$IID" "$chemin" "$PORT_API_AVANT" "$PORT_UI_AVANT" >"$TEMOIN_AVANT"
+
+  # Le projet de démo de l'AVANT : son identifiant est lu dans SON scénario, qui peut différer de celui
+  # de la branche. Aucun témoin : l'arbre entier part avec `--fin`.
+  id="$(sed -n 's/^PROJET_ID *= *"\([^"]*\)".*/\1/p' "$chemin/maestro/controltower/demo.py" 2>/dev/null | head -n 1)"
+  id="${id:-$PROJET_DEMO}"
+  [ -f "$chemin/core/projets/$id.json" ] || ecris_projet "$chemin/core/projets/$id.json" "$id"
+
+  # Le `start.sh` de l'AVANT, et non celui de la branche : l'avant est origin/main tel qu'il se lance.
+  if MAESTRO_PORT_API="$PORT_API_AVANT" MAESTRO_PORT_UI="$PORT_UI_AVANT" \
+    bash "$chemin/scripts/controltower/start.sh" --demo --no-browser >/dev/null 2>&1; then
+    dire "  ✓ avant prêt en $((SECONDS - debut)) s : http://localhost:$PORT_UI_AVANT ($REF_AVANT ${AVANT_SHA:0:7})"
+    return 0
+  fi
+  dire "  ⚠ avant indisponible — la stack d'$REF_AVANT n'a pas démarré. Fin de ses journaux :"
+  for journal in api ui; do
+    while IFS= read -r ligne; do
+      dire "      [$journal] $ligne"
+    done < <(tail -n 5 "$chemin/.maestro/controltower/$PORT_API_AVANT-$PORT_UI_AVANT/$journal.log" 2>/dev/null)
+  done
+  arrete_stack_avant >/dev/null
+  retire_avant >/dev/null
+  dire "    l'après reste prêt ; l'avant va à « ce que je n'ai pas pu voir »."
+}
+
 # --- Les modes ------------------------------------------------------------------------------------
 affiche_plan() {
-  local iid="$1" lignes="$2" nb="$3" indet="$4" route _cle origine fichiers suffixe f
+  local iid="$1" lignes="$2" nb="$3" indet="$4" route _cle origine fichiers suffixe f avant
   dire "Relecture visuelle du ticket #$iid"
   dire ""
   dire "  ports      : UI $PORT_UI · API $PORT_API"
-  dire "  captures   : $SOUS_DOSSIER/$iid/<ecran>-<theme>.png — chemin RELATIF, jamais absolu"
+  case "$AVANT_ETAT" in
+    actif)  dire "  avant      : $REF_AVANT (${AVANT_SHA:0:7}) — UI $PORT_UI_AVANT · API $PORT_API_AVANT" ;;
+    eteint) dire "  avant      : éteint ($AVANT_RAISON) — l'après seul" ;;
+    *)      dire "  avant      : indisponible — $AVANT_RAISON ; l'après seul" ;;
+  esac
+  if [ "$AVANT_ETAT" = "actif" ]; then
+    dire "  captures   : $SOUS_DOSSIER/$iid/<ecran>-<theme>-apres.png, et -avant.png à côté — chemin RELATIF"
+  else
+    dire "  captures   : $SOUS_DOSSIER/$iid/<ecran>-<theme>-apres.png — chemin RELATIF, jamais absolu"
+  fi
   dire "  thèmes     : clair, sombre — les deux, toujours (le socle en porte deux, on en garde deux)"
   dire ""
   if [ "$nb" -eq 0 ]; then
@@ -322,6 +503,12 @@ affiche_plan() {
       [ "$origine" = "via" ] && suffixe="  (composant affiché ici)"
       dire "$(printf '    %-12s http://localhost:%s%-12s ← %s%s' \
         "$route" "$PORT_UI" "$route" "$fichiers" "$suffixe")"
+      avant="$(avant_de "$route")"
+      case "$avant" in
+        -) ;;
+        nouveau) dire "$(printf '    %-12s avant : aucun — écran NOUVEAU, absent d'\''%s' "" "$REF_AVANT")" ;;
+        *) dire "$(printf '    %-12s avant : %s' "" "$avant")" ;;
+      esac
     done <<<"$lignes"
   fi
   if [ -n "$indet" ]; then
@@ -341,9 +528,14 @@ case "$MODE" in
     fi
     printf 'Fin de la relecture visuelle — ports UI %s · API %s\n' "$PORT_UI" "$PORT_API"
     # L'arrêt d'abord : un projet retiré sous une API vivante la laisserait servir un projet fantôme.
+    # Les DEUX stacks avant tout retrait — et l'avant d'abord, ce qui laisse à ses processus le temps
+    # de lâcher leurs fichiers pendant que l'après s'arrête : un dossier encore tenu résisterait au
+    # retrait de son worktree (#422).
+    arrete_stack_avant
     MAESTRO_PORT_API="$PORT_API" MAESTRO_PORT_UI="$PORT_UI" \
       bash "$RACINE/scripts/controltower/start.sh" --stop
     retire_projet
+    retire_avant
     exit 0
     ;;
   plan | preparer)
@@ -363,14 +555,29 @@ LIGNES="$(printf '%s\n' "$BRUT" | grep -v $'^-\t' | sed '/^$/d' || true)"
 INDET="$(printf '%s\n' "$BRUT" | grep $'^-\t' || true)"
 NB="$(printf '%s\n' "$LIGNES" | sed '/^$/d' | wc -l | tr -d ' ')"
 
+# L'avant se juge sur l'origin/main LOCAL en `--plan` — gratuit, hors réseau, comme le reste du plan.
+# La préparation, elle, va chercher le plus frais d'abord : c'est lui qu'on va servir, et un écran
+# mergé entre-temps ne doit pas y être annoncé nouveau. Best-effort : hors ligne, on sert ce qu'on a.
+if [ "$MODE" = "preparer" ] && [ "$NB" -gt 0 ] && [ "${MAESTRO_RELECTURE_AVANT:-1}" != 0 ]; then
+  GIT_TERMINAL_PROMPT=0 git -C "$RACINE" fetch origin main >/dev/null 2>&1
+fi
+evalue_avant
+NB_AVANT=0
+while IFS=$'\t' read -r route _cle _origine _fichiers; do
+  [ -z "$route" ] && continue
+  case "$(avant_de "$route")" in http*) NB_AVANT=$((NB_AVANT + 1)) ;; esac
+done <<<"$LIGNES"
+
 if [ "$TSV" = 1 ]; then
-  printf '# route\turl\torigine\tfichiers\n'
+  # `avant` en DERNIÈRE colonne : les quatre premières sont un contrat qu'un appelant lit par leur rang.
+  printf '# route\turl\torigine\tfichiers\tavant\n'
   while IFS=$'\t' read -r route _cle origine fichiers; do
     [ -z "$route" ] && continue
     if [ "$route" = "-" ]; then
-      printf -- '-\t-\t%s\t%s\n' "$origine" "$fichiers"
+      printf -- '-\t-\t%s\t%s\t-\n' "$origine" "$fichiers"
     else
-      printf '%s\thttp://localhost:%s%s\t%s\t%s\n' "$route" "$PORT_UI" "$route" "$origine" "$fichiers"
+      printf '%s\thttp://localhost:%s%s\t%s\t%s\t%s\n' \
+        "$route" "$PORT_UI" "$route" "$origine" "$fichiers" "$(avant_de "$route")"
     fi
   done <<<"$BRUT"
 else
@@ -401,8 +608,11 @@ if MAESTRO_PORT_API="$PORT_API" MAESTRO_PORT_UI="$PORT_UI" \
   bash "$RACINE/scripts/controltower/start.sh" --demo --no-browser; then
   dire ""
   dire "  ✓ prête : http://localhost:$PORT_UI"
-  dire "    à faire ensuite — poser le localStorage (guide vu, thème, projet actif), ouvrir chaque écran"
-  dire "    dans les deux thèmes, capturer sous $SOUS_DOSSIER/$IID/, puis :"
+  prepare_avant
+  dire ""
+  dire "    à faire ensuite — poser le localStorage (guide vu, thème, projet actif) SUR CHAQUE ORIGINE"
+  dire "    servie, ouvrir chaque écran dans les deux thèmes, capturer l'après et l'avant côte à côte"
+  dire "    sous $SOUS_DOSSIER/$IID/, puis :"
   dire "        bash scripts/design/relecture-visuelle.sh --fin"
   exit 0
 fi

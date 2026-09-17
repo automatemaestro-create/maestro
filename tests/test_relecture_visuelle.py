@@ -249,8 +249,9 @@ def test_un_composant_partage_remonte_vers_les_ecrans_qui_laffichent(
 
     resultat = depot.joue("--plan", "--tsv", "43")
     assert resultat.returncode == 0, resultat.stdout + resultat.stderr
+    # La cinquième colonne est l'avant (#977) : `-` ici, le dépôt d'essai n'ayant pas d'origin/main.
     assert tsv(resultat.stdout) == [
-        ("/chat", "http://localhost:3000/chat", "via", "apps/web/components/Conversation.tsx")
+        ("/chat", "http://localhost:3000/chat", "via", "apps/web/components/Conversation.tsx", "-")
     ], "l'écran qui AFFICHE le composant, et le composant nommé comme origine"
 
 
@@ -264,7 +265,9 @@ def test_un_composant_que_personne_naffiche_est_nomme_jamais_devine(
     """
     depot.ecris("apps/web/components/Orpheline.tsx", "// personne ne m'importe\n")
     resultat = depot.joue("--plan", "--tsv", "44")
-    assert tsv(resultat.stdout) == [("-", "-", "indetermine", "apps/web/components/Orpheline.tsx")]
+    assert tsv(resultat.stdout) == [
+        ("-", "-", "indetermine", "apps/web/components/Orpheline.tsx", "-")
+    ]
     assert resultat.returncode == 3, "aucune route : rien à ouvrir dans un navigateur"
     assert depot.appels_start() == []
 
@@ -302,7 +305,7 @@ def test_direct_lemporte_sur_via(depot: DepotRelecture) -> None:
 
     lignes = tsv(depot.joue("--plan", "--tsv", "46").stdout)
     assert len(lignes) == 1, lignes
-    route, _url, origine, fichiers = lignes[0]
+    route, _url, origine, fichiers, _avant = lignes[0]
     assert (route, origine) == ("/chat", "direct")
     assert "apps/web/app/chat/page.tsx" in fichiers
     assert "apps/web/components/Conversation.tsx" in fichiers
