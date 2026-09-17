@@ -3740,7 +3740,14 @@ bash scripts/git/worktree.sh list         # les worktrees en place, avec leurs p
 bash scripts/git/worktree.sh remove 152   # retire le worktree — jamais la branche
 bash scripts/git/worktree.sh gc           # ramasse ceux dont le travail est soldé (§9.2)
 bash scripts/git/worktree.sh sessions 152 # retrouve les sessions Claude Code du ticket (§9.7)
+bash scripts/git/worktree.sh avant 152    # l'avant de la relecture visuelle : origin/main, détaché (#977)
 ```
+
+`avant` n'est pas un geste à faire à la main : c'est `scripts/design/relecture-visuelle.sh` qui
+l'appelle pour servir l'état d'`origin/main` à côté de la branche, puis le retire à `--fin`
+([docs/30 §5.6](./30-cible-visuelle-control-tower.md)). Le worktree `<iid>.avant` est **détaché**,
+donc invisible de `remove`, `gc` et `ensure`, qui cherchent par branche ; `list` le nomme, et un
+avant oublié se ramasse au montage suivant dès que son ticket n'a plus de worktree sur ce poste.
 
 Le script fait plus qu'un `git worktree add` : il résout la branche comme
 [`/ticket-start`](../.claude/commands/ticket-start.md) (`lib.sh branch-for`) et la crée depuis

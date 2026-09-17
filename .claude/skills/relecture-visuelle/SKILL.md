@@ -59,7 +59,10 @@ Trois réponses, et deux d'entre elles terminent le geste :
 - **code `3` — aucune surface visible.** C'est une réponse, pas une panne : un
   ticket de moteur, de CI ou de doc n'a pas d'écran. On ne monte rien, on ne
   paie rien, on passe.
-- **code `0` avec des écrans.** On continue.
+- **code `0` avec des écrans.** On continue. Chaque écran porte sa ligne
+  **`avant :`** (#977) — l'URL où `origin/main` le sert, ou **`écran NOUVEAU`**
+  quand il n'existe pas encore sur `origin/main`. Un écran nouveau n'a pas
+  d'avant, et on ne va pas le chercher : il serait capturé sur une 404.
 - **une section `indéterminé`.** Des fichiers dont aucune route ne se dérive :
   la coquille de tous les écrans (`app/layout.tsx`, `globals.css`) ou un
   composant que personne n'importe encore. **Ils ne disparaissent pas du
@@ -84,6 +87,15 @@ ne montre pas le rendu qu'on vient d'écrire. C'est l'inverse du choix de
 Sans option, la démo sert l'état **nominal**. Les états limites se montent par
 le même geste, un état à la fois — voir l'étape 4bis.
 
+**Puis l'avant** (#977) : une **seconde stack**, servie depuis un worktree
+**détaché sur `origin/main`** (`<iid>.avant`, monté par `worktree.sh avant`),
+sur les ports de l'après **+ 200**, et dans **le même état** — un état
+qu'`origin/main` ne déclare pas n'a pas d'avant. Le worktree du ticket n'est
+jamais touché pour l'obtenir — c'est la raison de cette voie, écrite en
+`docs/30 §5.6`. L'avant est **best-effort** : `origin/main` introuvable, montage
+ou stack en échec, et le script le dit — l'après reste prêt, et l'avant manquant
+va à « ce que je n'ai pas pu voir ». `MAESTRO_RELECTURE_AVANT=0` l'éteint.
+
 > ⚠ `--no-browser` est dans le script et doit y rester : sans lui `start.sh`
 > ouvre sa propre fenêtre et **arrête la stack quand elle se ferme** (#149) —
 > l'API disparaîtrait sous le navigateur qu'on pilote.
@@ -106,6 +118,11 @@ browser_evaluate  () => {
                   }
 ```
 
+> ⚠ **Une fois PAR ORIGINE.** L'après (`localhost:<PORT_UI>`) et l'avant
+> (`localhost:<PORT_UI + 200>`) sont deux origines, donc deux `localStorage` :
+> des clés posées sur l'une n'existent pas sur l'autre, et l'avant s'ouvrirait
+> sur la visite guidée, dans le mauvais thème, sans projet.
+
 ### 4. Regarder — chaque écran, dans les deux thèmes
 
 **Un thème à la fois, tous les écrans, puis l'autre** : le thème se pose une
@@ -116,7 +133,28 @@ sans recharger ne change rien.
 ```
 browser_navigate         http://localhost:<PORT_UI>/<route>
 browser_take_screenshot  filename: .maestro/relecture/<iid>/<ecran>-<theme>.png
+browser_navigate         <URL de la ligne « avant : » du plan>
+browser_take_screenshot  filename: .maestro/relecture/<iid>/<ecran>-<theme>-avant.png
 ```
+
+**L'après et l'avant côte à côte**, même écran, même thème — c'est la paire qui
+se juge, pas chaque image seule : ce qui a changé, et si le changement a abîmé
+ce qui allait. Un écran **nouveau** n'a que son après ; le dire dans le jugement.
+
+> ⚠ **Attendre que CHAQUE page soit prête avant de la capturer.** Les deux
+> stacks ne compilent pas au même moment, et une paire dont un côté est encore
+> sur « Chargement… » montre une différence qui n'en est pas une (mesuré au
+> cadrage de #977 : un avant chargé contre un après vide, sur le même écran).
+> Le signal est celui de `scripts/presentation/captures.mjs` (#830) : le `<main
+> id="contenu-principal">` du shell présent, ni « Reconnexion… » ni
+> « Chargement » à l'écran — à attendre par un `browser_evaluate` qui interroge
+> la page jusqu'à ce qu'il tienne.
+
+> ⚠ **Les chiffres de la démo ne se comparent pas.** Le scénario factice
+> avance avec le temps, et les deux stacks n'ont pas démarré ensemble : coût,
+> tokens ou nombre d'appels diffèrent entre l'avant et l'après sans que le
+> ticket y soit pour rien. On compare la **mise en page et le rendu**, jamais
+> les valeurs.
 
 Puis **relire chaque capture** (outil `Read`) : c'est là que le geste a lieu.
 Une capture qu'on prend sans la regarder est une galerie, pas une relecture.
@@ -173,7 +211,11 @@ captures d'un état vont **dans son sous-dossier** :
 
 ```
 browser_take_screenshot  filename: .maestro/relecture/<iid>/<etat>/<ecran>-<theme>.png
+browser_take_screenshot  filename: .maestro/relecture/<iid>/<etat>/<ecran>-<theme>-avant.png
 ```
+
+L'avant suit l'état : la préparation le redémarre dans le même scénario, ou
+dit qu'`origin/main` ne sert pas cet état — il n'y a alors que l'après.
 
 Les deux thèmes valent ici comme ailleurs, et on relit chaque capture avec
 `Read`, comme à l'étape 4. En `erreur`, la pastille « Reconnexion… » est
@@ -210,9 +252,11 @@ pas relue ne compte pas, et c'est à toi de le tenir.
 bash scripts/design/relecture-visuelle.sh --fin
 ```
 
-Arrête la stack et retire le projet qu'elle avait déclaré — **y compris quand
-la relecture s'est mal passée** : une stack laissée derrière tient un port pour
-le ticket suivant.
+Arrête **les deux** stacks, retire le projet déclaré et le worktree de l'avant —
+**y compris quand la relecture s'est mal passée** : une stack laissée derrière
+tient un port pour le ticket suivant, et un avant oublié pèse ~500 Mo. S'il en
+reste un malgré tout (session coupée avant `--fin`), le montage d'avant suivant
+sur ce poste le ramasse dès que son ticket n'a plus de worktree.
 
 ## Le livrable : un jugement, pas une galerie
 
@@ -227,7 +271,8 @@ Trois sections, et les trois sont obligatoires :
   constat perdu.
 - **ce que je n'ai pas pu voir** — les `indéterminé` du plan, un écran qui n'a
   pas chargé, un état que la démo ne sert pas (une largeur téléphone) ou qu'on
-  n'a pas ouvert, **nommé avec son écran**. C'est la section qui distingue un
+  n'a pas ouvert, **nommé avec son écran**, un **avant indisponible** avec la
+  cause que le script a donnée. C'est la section qui distingue un
   jugement d'un ✓ : *ne pas avoir regardé n'est pas avoir trouvé que tout va
   bien.*
 
@@ -281,6 +326,21 @@ mesures : aucune relecture complète n'a encore été chronométrée. C'est pour
 `--plan` existe séparément : un ticket sans surface visible coûte deux
 secondes pour l'apprendre. Un run à concurrence 3 monterait trois stacks — sur
 des ports distincts, ce que `worktree.sh` garantit depuis #152.
+
+**Ce que l'avant ajoute** (#977), mesuré le 2026-09-17 sur le même poste, avec
+un écran existant et un écran nouveau :
+
+| Étape | Avant #977 | Avec l'avant |
+| --- | --- | --- |
+| `--plan` | ~2 s | **3,2 s** (lecture des pages d'`origin/main`) |
+| préparation, premier montage | ~18 s | **57 s** — dont 38 à 48 s pour l'avant (worktree ~2 s, `npm ci` ~33 s, stack ~9 s) |
+| préparation rejouée, avant déjà là | ~18 s | **40 s** — l'avant en 22 s, sans réinstaller |
+| par écran existant et par thème | ~4 s | ~8 s (la paire) |
+| `--fin` | 6 s | **17,6 s** (deux stacks, puis le retrait de l'avant) |
+
+Soit **~50 s de plus** par relecture, plus ~4 s par écran et par thème, et
+~500 Mo de disque le temps de la relecture. `MAESTRO_RELECTURE_AVANT=0` les
+économise, au prix de juger l'après sans référence.
 
 ## En session de run
 
