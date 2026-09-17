@@ -229,8 +229,8 @@ Deux règles gouvernent tout le reste, et rien de ce qui suit ne les défait :
   phase. Un défaut qu'on y voit est un défaut **maintenant** — c'est bien ce qu'un bouclage
   cherche —, mais quelque chose de corrigé depuis n'est pas un défaut de la phase.
 - **Un composant partagé ne se rattache à aucune route.** `apps/web/components/**` rend une ligne
-  « indéterminée » (`-`) plutôt qu'un écran tiré au hasard ; `apps/web/lib/**` et
-  `apps/web/hooks/**` ne sont pas comptés du tout.
+  « indéterminée » (`-`) plutôt qu'un écran tiré au hasard ; `apps/web/lib/**` — hooks
+  compris, ils y vivent — n'est pas compté du tout.
 - **Un ticket non mergé n'a aucun commit sur `origin/main`** : il ne rend aucun écran, comme un
   ticket sans surface visible. C'est `--check` qui les distingue, sur stderr.
 - **Un jalon d'outillage n'a rien à photographier.** Son livrable s'exerce en **jouant** ses

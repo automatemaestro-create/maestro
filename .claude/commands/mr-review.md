@@ -69,10 +69,12 @@ cette commande est autosuffisante, n'ouvre le doc qu'en cas de doute).
    Compte les `isResolved: false` et signale-les — sans jamais y répondre ni les résoudre. Un échec
    de cette lecture ne fait pas échouer la synthèse : dis simplement que le décompte n'a pas pu
    être obtenu.
-   Le dépôt est écrit **en toutes lettres** parce qu'il ne peut pas encore être déduit : `gh` le
-   lirait normalement du remote, or `origin` pointe sur GitLab jusqu'à la bascule (#343). C'est la
-   valeur par défaut de `MAESTRO_GITHUB_REPO` — si cette variable est posée à autre chose, prends
-   la sienne (`owner` avant le `/`, `name` après) plutôt que celle-ci.
+   Le dépôt est écrit **en toutes lettres** : c'est la valeur par défaut de `MAESTRO_GITHUB_REPO`,
+   la variable dont `lib.sh` tire le dépôt de chacun de ses verbes (`GL_GH_REPO`) plutôt que de le
+   déduire du remote — la synthèse vise ainsi le même dépôt que le reste de l'outillage. Si cette
+   variable est posée à autre chose, prends la sienne (`owner` avant le `/`, `name` après) plutôt
+   que celle-ci. (Pendant la migration, `origin` pointait encore sur GitLab et `gh` ne pouvait pas
+   le déduire du remote, #343 ; la bascule est faite, `origin` est le dépôt GitHub.)
 
 7. Rends un **compte rendu Markdown** :
    - en-tête : `#<numéro> — <titre>` · état (Draft/Ready, open/merged) · `<source> → <cible>` · auteur ;

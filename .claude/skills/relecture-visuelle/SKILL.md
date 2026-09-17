@@ -81,6 +81,9 @@ shell ne rend que sa porte d'entrée, #279) et `start.sh --demo --no-browser`.
 ne montre pas le rendu qu'on vient d'écrire. C'est l'inverse du choix de
 `/retex-utilisateur`, qui veut précisément le poste vide d'un nouvel arrivant.
 
+Sans option, la démo sert l'état **nominal**. Les états limites se montent par
+le même geste, un état à la fois — voir l'étape 4bis.
+
 > ⚠ `--no-browser` est dans le script et doit y rester : sans lui `start.sh`
 > ouvre sa propre fenêtre et **arrête la stack quand elle se ferme** (#149) —
 > l'API disparaîtrait sous le navigateur qu'on pilote.
@@ -130,6 +133,73 @@ les garde tous les deux, et un écran juste en clair peut être illisible en
 sombre — c'est même l'erreur la plus probable, le développement se faisant le
 plus souvent dans un seul des deux.
 
+`<ecran>` est la **clé** de l'écran (`/` → `accueil`, `/couts` → `couts`) :
+`--couverture` (étape 4bis) nomme les fichiers qu'il attend.
+
+### 4bis. Les états limites — là où le rendu casse (#978)
+
+L'état nominal est rarement celui qui casse. C'est **une file vide** sans
+explication, **une erreur** qui déborde, **un nom de 80 caractères**, **une
+liste de 200 lignes**. La démo sert ces états sous un nom, et le script les
+monte :
+
+```bash
+bash scripts/design/relecture-visuelle.sh <iid> --scenario <nom>
+```
+
+| État | Ce que la démo sert | Ce qu'on y cherche |
+| --- | --- | --- |
+| `vide` | aucun run, aucune tâche, aucune validation, aucun fil | un état vide qui **explique** et propose la suite, pas un cadre blanc |
+| `erreur` | toutes les routes en 500, WebSocket refusée — sauf `/api/sante` et `/api/projets` | l'erreur **nommée**, lisible dans les deux thèmes, sans casser la mise en page |
+| `charge` | 200 tâches sur 20 niveaux, 24 runs, 30 validations, 641 lignes de journal, 31 conversations dont une de 80 messages, un nom d'agent de 80 caractères, un jeton sans espace | ce qui **déborde** : colonne élargie, texte coupé sans ellipse, défilement horizontal |
+
+Les noms sont **lus** dans `maestro/controltower/demo.py` (le plan les
+annonce) : un nom que la démo ne sert pas est refusé avant la stack. Écran
+« Projets » en `erreur` : rien à voir, sa seule route est épargnée pour que le
+shell laisse entrer dans les autres écrans.
+
+**Quels états ouvrir.** Ceux que la rubrique **« États à couvrir »** du ticket
+nomme (section `## Rendu attendu`, #976), rapprochés des noms ci-dessus par
+jugement (« contenu long » est `charge`). Quand le ticket ne les nomme pas
+(section absente ou « non renseigné »), on ouvre **les trois** : un état jamais
+ouvert est un état que personne ne regarde, et ce qu'on paie en échange, c'est
+~18 s de redémarrage par état. Un état que la démo ne sait pas servir, par
+exemple une largeur téléphone, va à « ce que je n'ai pas pu voir ».
+
+**Comment.** Chaque état **redémarre** la stack : le scénario est celui de
+l'API, qu'on ne change pas à chaud. Le `localStorage` posé à l'étape 3
+survit au redémarrage (même origine), donc il n'y a qu'à renaviguer. Les
+captures d'un état vont **dans son sous-dossier** :
+
+```
+browser_take_screenshot  filename: .maestro/relecture/<iid>/<etat>/<ecran>-<theme>.png
+```
+
+Les deux thèmes valent ici comme ailleurs, et on relit chaque capture avec
+`Read`, comme à l'étape 4. En `erreur`, la pastille « Reconnexion… » est
+**attendue** : c'est la WebSocket refusée, pas un défaut de l'écran. Et la
+bannière d'erreur n'arrive qu'**après** le premier chargement, environ 2 s
+mesurées sur `/runs` : capturée trop tôt, la page montre « Chargement… ». On
+attend donc qu'elle soit là (`browser_wait_for` sur « a répondu ») avant de
+capturer. En `charge`, tout est publié avant que l'UI ne démarre, mais **le
+rendu, lui, prend du temps** : sur `/chat`, une capture à 3 s montrait un bloc
+« Conversations » vide et un composeur sur la barre du haut, alors qu'à 8 s
+l'écran était juste. On attend donc un **contenu** (`browser_wait_for` sur un
+texte que l'écran doit afficher, par exemple « Voir les ») et jamais un délai
+fixe. Un écran qui paraît cassé à la première capture se recapture avant de
+devenir un constat.
+
+**Puis compter ce qui a été vu, écran par écran** :
+
+```bash
+bash scripts/design/relecture-visuelle.sh --couverture <iid>
+```
+
+Le script croise les écrans du plan, les états et les deux thèmes avec les
+captures présentes sur le disque. Il ne démarre rien et ne rend aucun verdict.
+Il ne sait voir qu'une **capture**, jamais un regard : une capture qu'on n'a
+pas relue ne compte pas, et c'est à toi de le tenir.
+
 ### 5. Fermer, puis rendre
 
 > ⚠ `browser_close` **à la fin de chaque séquence**, pas seulement en fin de
@@ -156,9 +226,16 @@ Trois sections, et les trois sont obligatoires :
   fait : corrigé ici, ou à ouvrir en ticket. Un constat sans suite est un
   constat perdu.
 - **ce que je n'ai pas pu voir** — les `indéterminé` du plan, un écran qui n'a
-  pas chargé, un état qu'on n'a pas su atteindre (une file vide, un cas
-  d'erreur). C'est la section qui distingue un jugement d'un ✓ : *ne pas avoir
-  regardé n'est pas avoir trouvé que tout va bien.*
+  pas chargé, un état que la démo ne sert pas (une largeur téléphone) ou qu'on
+  n'a pas ouvert, **nommé avec son écran**. C'est la section qui distingue un
+  jugement d'un ✓ : *ne pas avoir regardé n'est pas avoir trouvé que tout va
+  bien.*
+
+Et sous les trois, **la couverture des états** : le tableau de
+`--couverture <iid>` recopié tel quel, écran par écran. C'est ce qui dit
+lesquels ont été vus sans qu'on ait à le reconstituer de la prose. Une
+case « — » sur un état que le ticket demandait doit se retrouver, nommée, dans
+« ce que je n'ai pas pu voir ».
 
 **Puis le consigner sur le ticket** — toujours, et pas seulement quand il y a un
 constat (#935) :
@@ -194,9 +271,13 @@ Mesuré le 2026-09-11, worktree déjà installé, poste de référence :
 | `--plan` | ~2 s (lecture git seule, aucune stack) |
 | montage de la stack | **18 s** |
 | par écran et par thème | ~4 s (une navigation, une capture) |
+| par état limite (`--scenario`, #978) | ~18 s de redémarrage, puis ~4 s par écran et par thème |
+| `--couverture` | ~2 s (lecture git et disque, aucune stack) |
 | `--fin` | **6 s** |
 
-Soit ~50 s pour trois écrans, hors le temps de regarder. C'est pourquoi
+Soit ~50 s pour trois écrans dans l'état nominal, hors le temps de regarder,
+et ~2 min 30 avec les trois états limites. Ce sont des estimations, pas des
+mesures : aucune relecture complète n'a encore été chronométrée. C'est pourquoi
 `--plan` existe séparément : un ticket sans surface visible coûte deux
 secondes pour l'apprendre. Un run à concurrence 3 monterait trois stacks — sur
 des ports distincts, ce que `worktree.sh` garantit depuis #152.

@@ -200,8 +200,8 @@ chose qui te reste à juger est la **prose**.
 - **Un composant partagé ne se rattache à aucune route.** `apps/web/components/**` touche
   potentiellement plusieurs écrans sans qu'aucun ne le dise : la dérivation rend une ligne
   « indéterminée » (`-`) au lieu d'attribuer l'écran au hasard. Elle ne **compte pas**
-  `apps/web/lib/**` ni `apps/web/hooks/**`, qui sont de la plomberie — presque tous les tickets de
-  la Control Tower y touchent, et les compter n'apprendrait plus rien.
+  `apps/web/lib/**` (hooks compris, ils y vivent), qui est de la plomberie — presque tous les
+  tickets de la Control Tower y touchent, et le compter n'apprendrait plus rien.
 - **Le MCP `chrome-maestro` ne filme pas.** Il n'expose que `browser_take_screenshot`, aucun verbe
   d'enregistrement : les clips passent par le `recordVideo` de Playwright dans `captures.mjs`. Ce
   n'est pas un renoncement au MCP — c'est le même moteur, appelé là où le contexte du navigateur

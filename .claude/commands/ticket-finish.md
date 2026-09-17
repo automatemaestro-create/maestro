@@ -72,9 +72,12 @@ rien : regarder n'est pas un verdict, c'est ce qui permet d'en rendre un.
      et pied `Refs #<iid>` (le hook `commit-msg` refuse tout message hors convention ; détail
      `docs/10-workflow-git.md` §2),
    - demande confirmation à l'utilisateur avant de committer.
-   Le message passe par un **fichier** (écrit avec l'outil `Write`, dans ton scratchpad de session)
-   puis `git commit -F <fichier>` — jamais `-m` sur plusieurs lignes ni `-m "$(…)"` : même refus
-   que pour la description de PR (#233).
+   Le message passe par un **fichier**, écrit avec l'outil `Write` dans **`.maestro/session/`**
+   (l'atelier de session, gitignoré, monté par `worktree.sh` ; ailleurs, `mkdir -p .maestro/session`)
+   puis `git commit -F .maestro/session/<fichier>` en chemin **relatif** — ni le scratchpad de
+   session ni `/tmp` : ce sont des chemins absolus, première cause de refus d'une session de run
+   (#962). Jamais `-m` sur plusieurs lignes ni `-m "$(…)"` : même refus que pour la description de
+   PR (#233).
    Ne commite jamais silencieusement sans montrer ce qui va être committé.
 
 4bis. **Le rendu a-t-il été regardé ?** (#935, chantier #930, `docs/30 §5.5`). Un ticket qui a
@@ -137,8 +140,8 @@ rien : regarder n'est pas un verdict, c'est ce qui permet d'en rendre un.
 
 5. **Filet CI local** — avant de pousser, rejoue en local ce que le pipeline de la PR jouera. Ne
    cherche pas toi-même quel outil s'applique : `scripts/ci/local.sh` est la **source unique** des
-   contrôles locaux (#214, `docs/10-workflow-git.md` §8.4), il lit les jobs dans `.gitlab-ci.yml`
-   et déduit du diff ce qui les concerne.
+   contrôles locaux (#214, `docs/10-workflow-git.md` §8.4), il lit les jobs dans
+   `.github/workflows/ci.yml` et déduit du diff ce qui les concerne.
    ```
    bash scripts/ci/local.sh
    ```
@@ -223,8 +226,10 @@ rien : regarder n'est pas un verdict, c'est ce qui permet d'en rendre un.
       son nom `mr-iid` des deux côtés — c'est le **contrat de `lib.sh`**, normalisé vers le
       vocabulaire GitLab pour que ses appelants ne bougent pas (cf. son en-tête) : seul le mot
       change dans les prompts, jamais le nom d'un verbe.
-   2. **Prépare le fichier de description**, dans ton répertoire de scratchpad de session (ce n'est
-      pas un livrable, il n'a rien à faire dans le worktree). **Écris-le avec l'outil `Write`** —
+   2. **Prépare le fichier de description** dans **`.maestro/session/`** (l'atelier de session :
+      gitignoré, ce n'est pas un livrable ; `mkdir -p .maestro/session` s'il manque), et passe-le au
+      point 3 en chemin **relatif** — ni le scratchpad de session ni `/tmp`, chemins absolus qu'une
+      session de run se voit refuser (#962). **Écris-le avec l'outil `Write`** —
       pas avec `cat`/`echo`/un heredoc, qui rejoueraient exactement le problème que cette étape
       évite.
       - **Aucune PR** : contenu neuf — `Closes #<iid>`, une ligne vide, puis la section

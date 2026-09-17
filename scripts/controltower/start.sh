@@ -24,6 +24,7 @@
 #
 #   bash scripts/controltower/start.sh                     # (re)démarre tout + navigateur (réel)
 #   bash scripts/controltower/start.sh --demo              # scénario factice, sans Redis
+#   bash scripts/controltower/start.sh --demo --scenario vide   # un état limite (#978) : vide, erreur, charge
 #   bash scripts/controltower/start.sh --no-browser        # sans navigateur ni arrêt auto
 #   bash scripts/controltower/start.sh --stop              # arrête seulement (et SOLDE les runs en vol)
 #   bash scripts/controltower/start.sh --diagnostic-navigateur  # dit quel navigateur serait ouvert
@@ -576,10 +577,21 @@ NAVIGATEUR_AUTO=1
 # Ce qui alimente l'API : « reel » (maestro-api sur Redis) par défaut depuis
 # #186, « demo » sur demande explicite (bus mémoire + scénario factice).
 STACK="reel"
+# Le scénario de la démo (#978) : vide tant qu'aucun n'est demandé, et c'est alors
+# le nominal que la démo sert — le lancement d'avant, au bit près.
+SCENARIO=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --stop) MODE="arreter" ;;
     --demo | --demonstration) STACK="demo" ;;
+    --scenario)
+      if [ $# -lt 2 ]; then
+        echo "--scenario attend un nom de scénario" >&2
+        exit 2
+      fi
+      SCENARIO="$2"
+      shift
+      ;;
     --no-browser | --sans-navigateur) NAVIGATEUR_AUTO=0 ;;
     # Dit quel navigateur serait ouvert, et comment, sans rien démarrer ni ouvrir.
     --diagnostic-navigateur) MODE="diagnostic" ;;
@@ -597,6 +609,28 @@ while [ $# -gt 0 ]; do
   shift
 done
 
+# Le scénario est une propriété de la DÉMO, et il se vérifie avant de toucher à quoi que ce soit.
+# Les noms sont LUS dans `maestro/controltower/demo.py` (une constante `SCENARIO_* = "…"` par ligne),
+# jamais recopiés ici (#830) : le module refuserait de toute façon un nom inconnu, mais il le ferait
+# en arrière-plan, dans `api.log`, et ce script n'en dirait que « l'API ne répond pas ».
+# Sans `--demo`, on refuse au lieu de basculer : demander un scénario factice ne doit pas suffire à
+# remplacer la vraie orchestration en silence (#186).
+if [ -n "$SCENARIO" ] && [ "$MODE" != "arreter" ]; then
+  if [ "$STACK" != "demo" ]; then
+    echo "--scenario ne vaut qu'avec --demo : bash scripts/controltower/start.sh --demo --scenario $SCENARIO" >&2
+    exit 2
+  fi
+  SCENARIOS_CONNUS="$(sed -n 's/^SCENARIO_[A-Z_]* *= *"\([^"]*\)".*/\1/p' \
+    "$RACINE/maestro/controltower/demo.py" | tr '\n' ' ')"
+  case " $SCENARIOS_CONNUS " in
+    *" $SCENARIO "*) ;;
+    *)
+      echo "Scénario inconnu : $SCENARIO (connus : ${SCENARIOS_CONNUS% })" >&2
+      exit 2
+      ;;
+  esac
+fi
+
 # Stratégie navigateur résolue UNE FOIS, à chaud (association système + MAESTRO_BROWSER[_DEFAUT]).
 # Le chien de garde, relancé via ce même script, la recalcule à l'identique (env et poste inchangés).
 resoudre_strategie
@@ -605,6 +639,8 @@ resoudre_strategie
 # sessions parallèles, #200/#152) sans démarrer la stack ni ouvrir de fenêtre.
 if [ "$MODE" = "diagnostic" ]; then
   printf 'stack: %s\n' "$STACK"
+  # Seulement quand il est demandé : la sortie d'un diagnostic sans scénario reste celle d'avant.
+  if [ -n "$SCENARIO" ]; then printf 'scenario: %s\n' "$SCENARIO"; fi
   printf 'famille: %s\n' "$STRAT_FAMILLE"
   printf 'mode: %s\n' "$STRAT_MODE"
   printf 'source: %s\n' "$STRAT_SOURCE"
@@ -741,9 +777,15 @@ mkdir -p "$LOG_DIR" "$ETAT_DIR"
 cd "$RACINE" || exit 1
 
 if [ "$STACK" = "demo" ]; then
-  echo "[api] démarrage sur :${PORT_API} — mode démo, scénario factice (log : $LOG_DIR_REL/api.log)"
-  nohup "$PYTHON" -m maestro.controltower.demo --port "$PORT_API" \
-    >"$LOG_DIR/api.log" 2>&1 &
+  if [ -n "$SCENARIO" ]; then
+    echo "[api] démarrage sur :${PORT_API} — mode démo, scénario « $SCENARIO » (log : $LOG_DIR_REL/api.log)"
+    nohup "$PYTHON" -m maestro.controltower.demo --port "$PORT_API" --scenario "$SCENARIO" \
+      >"$LOG_DIR/api.log" 2>&1 &
+  else
+    echo "[api] démarrage sur :${PORT_API} — mode démo, scénario factice (log : $LOG_DIR_REL/api.log)"
+    nohup "$PYTHON" -m maestro.controltower.demo --port "$PORT_API" \
+      >"$LOG_DIR/api.log" 2>&1 &
+  fi
 else
   echo "[api] démarrage sur :${PORT_API} — mode réel sur Redis (log : $LOG_DIR_REL/api.log)"
   nohup "$PYTHON" -m maestro.controltower.cli --port "$PORT_API" \
@@ -796,7 +838,7 @@ fi
 
 echo
 if [ "$STACK" = "demo" ]; then
-  echo "Control Tower prête (mode démo — scénario FACTICE) : $URL_UI"
+  echo "Control Tower prête (mode démo — scénario FACTICE${SCENARIO:+ « $SCENARIO »}) : $URL_UI"
 else
   echo "Control Tower prête (mode réel) : $URL_UI"
   # Sans run, le poste de pilotage est vide — l'UI l'explique elle-même (#186),

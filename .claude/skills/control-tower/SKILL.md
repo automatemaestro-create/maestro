@@ -59,6 +59,14 @@ rattrapage silencieux. Le préflight seul, sans rien démarrer :
 `--demo` reste le bon choix pour le **développement front**, le skill `verify`
 et les captures de `/milestone-presentation`.
 
+`--demo --scenario <nom>` sert un **état limite** au lieu du scénario nominal
+(#978) : `vide` (aucun run), `erreur` (API en 500, WebSocket refusée — sauf
+`/api/sante` et `/api/projets`), `charge` (listes et textes longs). Les noms
+viennent de `maestro/controltower/demo.py`. Sans `--demo`, l'option est
+refusée : demander un scénario ne remplace pas le mode réel en silence. C'est
+le geste de la relecture visuelle, et il n'y en a pas d'autre pour regarder
+une file vide ou une panne.
+
 ## Remplir le poste : lancer un run
 
 En mode réel, un premier démarrage n'affiche **rien** — c'est normal, l'UI

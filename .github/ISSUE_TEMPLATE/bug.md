@@ -17,7 +17,8 @@ labels: "type::bug,prio::moyenne"
      - **Question** : la question à laquelle un coup d'œil sur l'écran doit répondre, en une phrase.
      - **Référence** : une capture, un lien, un croquis, ou « comme X, sans Y ».
      - **Ce qui ne bouge pas** : ce que la correction laisse tel quel à l'écran.
-     - **États à couvrir** : vide, erreur, contenu long, largeur téléphone — lesquels, et ce qu'on y voit. -->
+     - **États à couvrir** : vide, erreur, charge (contenu long), largeur téléphone — lesquels, et ce qu'on y voit.
+       Les trois premiers s'ouvrent dans la démo (`start.sh --demo --scenario <nom>`, #978). -->
 
 ## Étapes de reproduction
 1.
