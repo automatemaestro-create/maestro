@@ -7309,7 +7309,7 @@ n'existe jamais), et ceux qui restent deviennent résolubles pendant le run plut
 | | Pendant le run | En fin de run |
 |---|---|---|
 | Déclenchement | dans la boucle d'attente, une passe toutes les `MAESTRO_ORCHESTRATE_MERGE_INTERVALLE` s (60) | le plan épuisé, plus aucun ticket en vol |
-| Attente de pipeline | **non** — le pilote doit continuer à moissonner et à tenir l'écran | **oui** (`pipeline-wait`), sauf si l'arrêt a été demandé. C'est le **seul** endroit où le run patiente pour une naissance, une passe ne repassant pas sur une PR qui n'a rien donné : l'appel peut donc tenir une demi-heure, et s'annonce PR par PR avant de commencer (§8.9) |
+| Attente de pipeline | **non** — le pilote doit continuer à moissonner et à tenir l'écran | **oui** (`pipeline-wait`), sauf si le run a été **arrêté** (STOP, limite hebdomadaire) — un run borné par `--max` attend (#987). C'est le **seul** endroit où le run patiente pour une naissance, une passe ne repassant pas sur une PR qui n'a rien donné : l'appel peut donc tenir une demi-heure, et s'annonce PR par PR avant de commencer (§8.9) |
 | Ordre | celui d'entrée | `lib.sh merge-order` (voir plus bas), **recalculé après chaque merge** |
 | Bornes | — | plafond global `MAESTRO_ORCHESTRATE_MERGE_PLAFOND` (3600 s), relu entre deux passes **et avant chaque PR** (#595 : une attente de naissance pouvant tenir une demi-heure, une passe de cinq PR sous une panne de déclencheur vaudrait deux heures et demie sans ce second contrôle) |
 
@@ -7376,7 +7376,8 @@ tourner une session la ferait diverger de la première au premier réglage ajout
   Une session qui a échoué coûte donc un appel de plus ; le plafond borne ce que cette générosité
   peut coûter ;
 - **elle prend un créneau**, comme un ticket : mêmes refus au lancement (arrêt demandé, attente
-  d'une limite d'usage en cours, concurrence pleine) ;
+  d'une limite d'usage en cours, concurrence pleine). Le plafond `--max` n'en est pas un : il compte
+  les tickets tentés, et une session de déblocage n'en est pas un (#987) ;
 - **au drain final elle est le dernier recours** : on ne l'ouvre que si *aucune* PR n'a bougé — une
   PR qui se merge telle quelle ne vaut pas une session.
 
@@ -7408,6 +7409,17 @@ qui est déjà vert part quand même, le reste est nommé au bilan. Même règle
 relu **entre** deux passes : il n'interrompt ni un merge ni une session de déblocage en cours —
 couper une résolution de conflit au milieu n'économiserait que du temps de mur.
 
+⚠ **`--max` borne ce que le run lance, il ne demande pas d'arrêt** (#987). Les quatre motifs qui
+cessent de lancer des tickets vivent dans une seule variable du pilote (`ARRET_LANCEMENT`), et le
+drain final les a longtemps lus d'un bloc : le 2026-09-17, le run `20260917-081314` (`--max 1`) a
+annoncé un drain « sans attendre de pipeline (arrêt demandé) » que personne n'avait demandé, et
+laissé ouverte une PR passée au vert quelques minutes plus tard. Le partage vit désormais dans
+`arret_du_run` : **seuls STOP et la limite hebdomadaire** retirent l'attente du drain final et les
+sessions de déblocage ; un run borné les garde toutes deux, et la ligne du drain nomme le vrai motif
+quand elle n'attend pas. Le partage se fait **par exclusion du plafond** : un motif ajouté plus tard
+sans y penser retire l'attente, ce qui coûte au pire une PR nommée au bilan, plutôt que de faire
+patienter une heure un run qu'on a voulu arrêter.
+
 > **Tests.** [`tests/test_merge_automatique.py`](../tests/test_merge_automatique.py) garde les
 > verbes (les quatre prérequis un par un, les codes de `pipeline-wait` — **naissance comprise**,
 > avec l'A/B qui prouve qu'un vieux vert n'est plus pris pour le run attendu (§8.9), et une
@@ -7425,7 +7437,10 @@ couper une résolution de conflit au milieu n'économiserait que du temps de mur
 > merge qui aboutit, la **sérialisation** (mesurée par une barrière et des relevés par écrivain,
 > jamais par un `sleep` ni un compteur partagé — #292, puis #313), la seconde PR rejugée après le
 > premier merge, le plafond de deux déblocages, la reprise qui ne rejoue pas un merge fait, et
-> l'attente de naissance **nommée une fois** sur la console avec son contre-échantillon (§8.9).
+> l'attente de naissance **nommée une fois** sur la console avec son contre-échantillon (§8.9), et
+> le run borné par `--max` qui attend son pipeline puis merge (#987) — pipeline « en cours » aux
+> deux premières lectures, **au rang de l'appel**, et contre-échantillon STOP sur le même décor, qui
+> prouve que le chemin sans attente échoue bel et bien à merger.
 
 ### 11.12 Après un run : où est passé son temps — `journal.sh audit` et `/run-audit` (chantier #495)
 

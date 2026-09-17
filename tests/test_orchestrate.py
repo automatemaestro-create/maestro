@@ -239,6 +239,19 @@ if [ "$1" = "api" ]; then
       exit 0 ;;
     *"actions/runs?branch="*)
       branche="${requete#*actions/runs?branch=}"; branche="${branche%%&*}"
+      # Un pipeline qui TOURNE encore, puis rend son vert (#987) : `run-<branche>.en-cours` porte le
+      # nombre de lectures qui le voient « in_progress », les suivantes lisent la fixture telle
+      # quelle. Le rang vient de `gh.log`, qui a déjà journalisé CET appel — une transition par le
+      # rang de l'appel, jamais par un minuteur (#648, la règle `apres` de tests/harnais_forge.py).
+      # Le pilote sérialise ses lectures, si bien qu'aucun rang n'est disputé.
+      run="$FIX/run-${branche//\//__}"
+      if [ -f "$run.en-cours" ] &&
+        [ "$(grep -cF "actions/runs?branch=$branche&" "$FIX/gh.log")" -le "$(cat "$run.en-cours")" ]
+      then
+        sed -e 's/"status":"[a-z_]*"/"status":"in_progress"/' \
+          -e 's/"conclusion":"[a-z_]*"/"conclusion":null/' "$run.json"
+        exit 0
+      fi
       if [ -f "$FIX/run-${branche//\//__}.json" ]; then
         cat "$FIX/run-${branche//\//__}.json"
       else
@@ -7815,6 +7828,110 @@ def test_une_session_de_deblocage_en_echec_laisse_la_pr_ouverte_et_intacte(depot
     assert "merge-mr" in resultat, (
         "le résultat de la session renvoie au verbe qui tranche, au lieu de rendre un verdict"
     )
+
+
+# --- Un run borné par `--max` n'est pas un run arrêté (#987) --------------------------------------
+# Le 2026-09-17, le run `20260917-081314` (`--max 1`) a laissé sa PR ouverte et son worktree
+# monté : le drain final avait pris le plafond pour un « arrêt demandé », donc renoncé à attendre
+# un pipeline qui a rendu son vert quelques minutes plus tard. `--max` borne ce que le run LANCE ;
+# seuls STOP et la limite hebdomadaire retirent l'attente.
+#
+# Le pipeline « tourne » aux DEUX premières lectures de son run, et c'est le compte qui fait le
+# test : une au drain du fil de l'eau, une au drain final. Sans attente, le drain final lit donc
+# encore « running » et la PR reste en file ; avec, `pipeline-wait` sonde jusqu'au vert. Le
+# contre-échantillon STOP, sur le même décor, prouve ce compte : c'est le chemin sans attente, et
+# il doit échouer à merger.
+_PIPELINE_EN_COURS = {
+    "MAESTRO_ORCHESTRATE_MERGE": "1",
+    "MAESTRO_PIPELINE_NAISSANCE": "1",
+    "MAESTRO_PIPELINE_NAISSANCE_PR": "1",
+    "MAESTRO_PIPELINE_SONDAGE": "1",
+}
+
+
+def _pr_dont_le_pipeline_tourne(depot: Depot, iid: int, lectures: int = 2) -> None:
+    _pr_mergeables(depot, (iid,))
+    (depot.fixtures / f"run-feat__{iid}-ticket-{iid}.en-cours").write_text(
+        f"{lectures}\n", encoding="utf-8")
+
+
+@besoin_git
+def test_un_run_borne_par_max_attend_le_pipeline_et_merge(depot: Depot) -> None:
+    """Le cas du 2026-09-17 : `--max 1`, pipeline encore « running » au drain final.
+
+    Trois choses, une par critère de #987 : la PR est mergée une fois le vert rendu, le drain l'a
+    ATTENDUE (sans quoi le merge viendrait d'ailleurs), et rien ne parle d'un arrêt que personne n'a
+    demandé.
+    """
+    _pr_dont_le_pipeline_tourne(depot, 130)
+    plan = _plan(depot, [(1, 130, "-", "haute"), (2, 131, "-", "haute")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "borne-merge", "--max", "1",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_livre(depot), **_PIPELINE_EN_COURS})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "Plafond --max 1 atteint" in r.stdout, "le décor est bien celui d'un run borné"
+
+    ligne = _merge_tsv(depot.racine / ".maestro/orchestrate/borne-merge")[0]
+    assert ligne[3] == "mergee", (
+        "un run borné se solde tout mergé, comme un run qui ne l'est pas (#419) : "
+        f"{ligne}\n{r.stdout}"
+    )
+    assert len(_pr_du_journal(depot, "pulls/930/merge")) == 1, "un merge, et un seul"
+    assert "pipeline attendu" in r.stdout, "le drain final annonce qu'il attend"
+    assert "attente du pipeline" in r.stdout, "et il a réellement attendu, PR par PR"
+    assert "arrêt demandé" not in r.stdout.lower(), (
+        "le plafond --max n'est pas un arrêt demandé : la console ne doit pas le dire"
+    )
+
+
+@besoin_git
+def test_stop_retire_l_attente_du_drain_meme_sur_un_run_borne(depot: Depot) -> None:
+    """Le contre-échantillon : même décor, STOP posé par la session. Le drain ne patiente pas.
+
+    Il garde la moitié de #987 qui ne bouge pas — qui demande l'arrêt n'attend pas un quart d'heure
+    par PR — et il prouve le décor du test précédent : sans attente, le drain final lit encore
+    « running », donc un merge obtenu là-bas vient bien de l'attente.
+    """
+    _pr_dont_le_pipeline_tourne(depot, 130)
+    stop = depot.racine / ".maestro/orchestrate/STOP"
+    gabarit = _statut_json("%s", "En revue")
+    claude = _claude_stub(depot, f"""
+        iid="{_IID_DU_PROMPT}"
+        printf '{gabarit}' "$iid" > "$MAESTRO_FIXTURES/owner-$iid.json"
+        touch "{stop}"
+        printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":1}}\\n'
+        exit 0
+    """)
+    plan = _plan(depot, [(1, 130, "-", "haute"), (2, 131, "-", "haute")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "borne-stop", "--max", "1",
+                    env={"MAESTRO_CLAUDE_BIN": claude, **_PIPELINE_EN_COURS})
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    ligne = _merge_tsv(depot.racine / ".maestro/orchestrate/borne-stop")[0]
+    assert ligne[3] == "attente", f"STOP retire l'attente : la PR reste en file, nommée : {ligne}"
+    assert not _pr_du_journal(depot, "pulls/930/merge"), "rien n'a été mergé sans le vert"
+    assert "attente du pipeline" not in r.stdout, "aucune attente n'a été tentée"
+    assert "sans attendre de pipeline" in r.stdout, "le drain dit qu'il n'attend pas"
+
+
+@besoin_git
+def test_un_run_borne_par_max_debloque_encore_ses_pr(depot: Depot) -> None:
+    """Le plafond `--max` compte les tickets tentés ; une session de déblocage n'en est pas un.
+
+    La refuser — ce que faisait la même confusion que #987 — laissait un run borné sur une PR
+    réparable, c'est-à-dire exactement le geste manuel que le run existe pour supprimer (#420).
+    """
+    _pr_mergeables(depot, (130,))
+    depot.run_actions("feat/130-ticket-130", conclusion="failure")
+    plan = _plan(depot, [(1, 130, "-", "haute"), (2, 131, "-", "haute")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "borne-fix", "--max", "1",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_livre(depot),
+                         "MAESTRO_ORCHESTRATE_MERGE": "1"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    dossier = depot.racine / ".maestro/orchestrate/borne-fix"
+    ligne = _merge_tsv(dossier)[0]
+    assert ligne[7] == "2", f"les deux sessions de déblocage ont été ouvertes : {ligne}"
+    assert (dossier / "130-mrfix.resultat.txt").exists()
+    assert not (dossier / "131.session").exists(), "et le plafond tient : aucun ticket de plus"
 
 
 @besoin_git

@@ -3086,7 +3086,21 @@ WORKTREES=""
 # demandé pendant l'attente) qui faisaient un `break 2`. Un `break` ne suffit plus : les tickets encore
 # en vol tiennent un worktree et une session, il faut les laisser finir — on cesse de lancer, on vide,
 # puis on rend le résumé.
+#
+# ⚠ Le plafond `--max` n'est pas un ARRÊT, et il ne se lit donc pas comme les trois autres (#987). Il
+# borne ce que le run LANCE : une fois atteint, plus aucun ticket ne part — mais ce qui est livré se
+# merge comme dans un run non borné, pipeline attendu et déblocage compris (#419, #420). Seuls STOP et
+# la limite hebdomadaire retirent l'attente du drain final et les sessions de déblocage, et c'est
+# `arret_du_run` qui fait le partage — jamais un `[ -n "$ARRET_LANCEMENT" ]`, qui les confondait.
 ARRET_LANCEMENT=""
+ARRET_PLAFOND="plafond --max"
+# arret_du_run : 0 si le run a été ARRÊTÉ (STOP, limite hebdomadaire), et non simplement borné. Le
+# partage se fait par exclusion du plafond, et le sens est voulu : un motif ajouté plus tard sans y
+# penser retire l'attente — ce qui coûte au pire une PR laissée en file, nommée au bilan — plutôt que
+# de faire patienter une heure un run dont on a demandé l'arrêt.
+arret_du_run() {
+  [ -n "$ARRET_LANCEMENT" ] && [ "$ARRET_LANCEMENT" != "$ARRET_PLAFOND" ]
+}
 # L'origine du chrono du run, lue par le pied de la vue vivante (#240). `SECONDS` plutôt que `date` :
 # la frame se redessine plusieurs fois par seconde, et sous MSYS un fork y coûterait plus cher que
 # tout le reste du dessin.
@@ -3594,10 +3608,14 @@ mrfix_moissonne() {
 # l'arrêt demandé (STOP arrête de LANCER), l'attente d'une limite d'usage en cours (ouvrir une
 # session dans cette fenêtre, c'est brûler une reprise pour rien) et le créneau libre. Rend 0 si une
 # session est partie.
+#
+# Le plafond `--max` n'en est pas (#987) : il compte les tickets tentés, et une session de déblocage
+# n'en est pas un — elle ne sert qu'une PR que le run a déjà livrée, et son propre plafond
+# (`MRFIX_MAX`) borne ce qu'elle coûte. La refuser laisserait un run borné sur une PR réparable.
 mrfix_relance() {
   [ "$MRFIX" = 1 ] || return 1
   [ "$MERGE" = 1 ] || return 1
-  [ -n "$ARRET_LANCEMENT" ] && return 1
+  arret_du_run && return 1
   arret_demande >/dev/null 2>&1 && return 1
   limite_en_cours && return 1
   compte_creneaux
@@ -3623,8 +3641,9 @@ mrfix_attend() {
 
 # merge_draine_final : ce qui reste, une fois le plan épuisé. Deux différences avec la passe
 # ordinaire, et une seule raison pour les deux — plus aucun ticket ne tourne :
-#   · `pipeline-wait` est autorisé (l'attente ne coûte que du temps de mur), sauf si l'arrêt a été
-#     demandé : qui demande STOP n'attend pas un quart d'heure par PR ;
+#   · `pipeline-wait` est autorisé (l'attente ne coûte que du temps de mur), sauf si le run a été
+#     ARRÊTÉ — STOP ou limite hebdomadaire : qui demande l'arrêt n'attend pas un quart d'heure par
+#     PR. Un run borné par `--max` n'a rien demandé de tel, et il attend (#987) ;
 #   · l'ordre est celui de `merge-order` (#416), recalculé après chaque merge parce que le merge
 #     qu'on vient de faire a changé le graphe.
 # Borné par un plafond global : une PR dont le pipeline ne rendra jamais rien ne doit pas retenir un
@@ -3635,7 +3654,7 @@ merge_draine_final() {
   [ "$MERGE" = 1 ] || return 0
   [ "${#Q_IID[@]}" -gt 0 ] || return 0
   local i restants reparables attendre=1 debut=$SECONDS progres
-  [ -n "$ARRET_LANCEMENT" ] && attendre=0
+  arret_du_run && attendre=0
 
   restants=""
   for ((i = 0; i < ${#Q_IID[@]}; i++)); do
@@ -3646,7 +3665,8 @@ merge_draine_final() {
 
   printf '\n%sDrain de la file de merge%s — %s PR en attente%s.\n' \
     "$C_B" "$C_0" "$(printf '%s' "$restants" | wc -w | tr -d ' ')" \
-    "$([ "$attendre" = 1 ] && printf ', pipeline attendu' || printf ', sans attendre de pipeline (arrêt demandé)')"
+    "$([ "$attendre" = 1 ] && printf ', pipeline attendu' ||
+      printf ', sans attendre de pipeline (%s)' "$ARRET_LANCEMENT")"
 
   while :; do
     restants=""
@@ -4317,7 +4337,7 @@ remplit_les_creneaux() {
     if [ "$MAX" -gt 0 ] && [ "$TRAITES" -ge "$MAX" ]; then
       dit '%sPlafond --max %s atteint%s — le reste du plan est laissé pour un prochain run.\n' \
         "$C_Y" "$MAX" "$C_0"
-      ARRET_LANCEMENT="plafond --max"
+      ARRET_LANCEMENT="$ARRET_PLAFOND"
       return 0
     fi
 
