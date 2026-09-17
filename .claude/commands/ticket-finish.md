@@ -1,7 +1,7 @@
 ---
 description: Termine le travail sur le ticket courant (push + PR prête + état « En revue » + merge)
 argument-hint: "[issue-iid] (optionnel si le nom de la branche courante le contient déjà)"
-allowed-tools: Bash(bash:*), Bash(git:*), Bash(gh:*), Bash(.venv/Scripts/python.exe:*), Bash(.venv/bin/python:*), ExitWorktree, Skill, AskUserQuestion, Read, Edit, Write
+allowed-tools: Bash(bash:*), Bash(git:*), Bash(gh:*), Bash(mkdir:*), Bash(.venv/Scripts/python.exe:*), Bash(.venv/bin/python:*), ExitWorktree, Skill, AskUserQuestion, Read, Edit, Write
 ---
 
 Tu vas clôturer le cycle de développement de la branche courante selon les règles de Maestro
