@@ -1,0 +1,24 @@
+# LA GRILLE DE LA RELECTURE VISUELLE (#980, chantier #972) — une ligne par question, et c'est le seul
+# endroit où elles s'écrivent.
+#
+# Trois lecteurs, aucun ne la recopie :
+#   - `scripts/design/relecture-visuelle.sh --saisine` la pose, à remplir, devant le regard neuf
+#     (sous-agent `regard-neuf`, `.claude/agents/regard-neuf.md`) ;
+#   - `scripts/gitlab/lib.sh relecture-note` refuse un jugement où une ligne manque ou reste sans
+#     réponse : c'est ce qui fait arriver la grille sur le ticket, et pas seulement dans un fichier ;
+#   - le skill `relecture-visuelle` la nomme, sans en citer une ligne.
+#
+# Format : `libellé <TAB> question <TAB> source`. Le LIBELLÉ est un contrat — il ouvre la ligne du
+# tableau rendu (`| <libellé> | ✓ | … |`), et c'est lui que `relecture-note` cherche. Le changer ici le
+# change partout ; le changer ailleurs ne change rien.
+#
+# Ce qu'elle N'EST PAS : une mesure. Elle NOMME ce qu'un regard voit ; le contraste se prouve dans
+# `contraste.test.ts`, la géométrie par `/banc-mise-en-page`, les règles par `a11y.test.tsx` et
+# `sobriete.test.tsx` (tableau du skill). Une ligne qui demanderait un chiffre n'a rien à faire ici.
+Hiérarchie typographique	Un titre se distingue-t-il du corps, et ce qui compte le plus se lit-il en premier ?	docs/30 §6.1 (1)
+Alignements et espacement	Les bords s'alignent-ils d'un bloc à l'autre, et l'espacement suit-il un rythme régulier ?	docs/30 §1.1, §6.1
+Densité	L'écran tient-il les trois places — un bandeau d'au plus 4 chiffres, un corps d'au plus 3 blocs, une seule colonne de propriétés ?	docs/30 §4.1
+État par la forme	Chaque état (réussi, en échec, en cours, en attente) se lit-il par une forme ou un libellé, et pas seulement par sa couleur ?	docs/30 §1.1, §6.1 (3)
+Cohérence avec les voisins	L'écran parle-t-il la même langue que son avant et que les autres écrans de la saisine — mêmes composants, mêmes tailles, mêmes filets ?	docs/30 §6.1
+Deux thèmes	Ce qui se lit en clair se lit-il aussi bien en sombre, sans élément qui disparaît ni qui crie ?	docs/30 §6.1 (2)
+États vus	Les états vide, erreur et charge s'affichent-ils sans casser la mise en page, et l'état vide dit-il quoi faire ensuite ?	skill relecture-visuelle, étape 4bis (#978)

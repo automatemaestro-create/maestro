@@ -2250,10 +2250,61 @@ ENTETE
   printf '## %s — empreinte %s\n\n' "$GL_RELECTURE_ANCRE" "$empreinte"
   cat <<'ENTETE'
 Le rendu des écrans touchés a été regardé avant la clôture, dans les **deux thèmes** (skill
-`relecture-visuelle`, #932). Ce qui suit est le jugement rendu — y compris ce qui n'a **pas** pu
-être vu, qui compte autant : *ne pas avoir regardé n'est pas avoir trouvé que tout va bien.*
+`relecture-visuelle`, #932), puis jugé par un **regard neuf** sur la **grille fixe** de la relecture
+(#980) : un sous-agent qui n'a reçu que les captures avant/après, le rendu attendu et les décisions
+déjà prises à l'écran — ni le code, ni le raisonnement de la session qui l'a écrit. Ce qui suit est
+le jugement rendu — y compris ce qui n'a **pas** pu être vu, qui compte autant : *ne pas avoir
+regardé n'est pas avoir trouvé que tout va bien.*
 
 ENTETE
+}
+
+# --- La grille du jugement (#980) ----------------------------------------------------------------
+#
+# La grille vit dans UN fichier, `scripts/design/grille-relecture.tsv`, que trois lecteurs partagent
+# sans la recopier (son en-tête les nomme). Ce verbe en est le troisième, et le seul qui GARDE : un
+# jugement dont une ligne manque, ou reste sans réponse, n'est pas consigné. Sans ce refus, « la
+# grille arrive sur le ticket » serait une règle lue — celle du skill —, et c'est exactement ce que
+# le §3.6 de docs/30 dit ne pas tenir.
+#
+# CE QUI SE VÉRIFIE EST UNE FORME, JAMAIS UN SENS (#746) : pour chaque libellé de la grille, une
+# ligne de tableau `| <libellé> | <réponse> | … |` dont la réponse COMMENCE par l'un des trois mots
+# permis — ✓, ✗, « non vu ». Qu'un ✓ soit mérité, aucune machine n'en décide ici : c'est le travail
+# du regard neuf, et le verbe ne fait que refuser qu'une question soit tue.
+#
+# Une grille INTROUVABLE est une panne (`1`), jamais un jugement accepté faute de pouvoir le vérifier :
+# un garde-fou qui saute est pire qu'un garde-fou absent.
+GL_RELECTURE_GRILLE="${GL_RELECTURE_GRILLE:-$GL_ICI/../design/grille-relecture.tsv}"
+
+# gl_relecture_grille_manquante <fichier> -> les libellés de la grille SANS RÉPONSE dans <fichier>,
+# un par ligne ; rien quand la grille est complète. Codes : 0 lu · 1 grille introuvable.
+# Lecture en LC_ALL=C : les libellés et les trois réponses se comparent octet à octet, ce qui est sûr
+# en UTF-8 (aucun octet d'un caractère multi-octets ne vaut `|` ni une espace).
+gl_relecture_grille_manquante() {
+  local fichier="$1"
+  if [ ! -f "$GL_RELECTURE_GRILLE" ]; then
+    echo "gl_relecture_grille_manquante : grille introuvable : $GL_RELECTURE_GRILLE" >&2
+    return 1
+  fi
+  LC_ALL=C awk -F'\t' '
+    function nu(s) { sub(/^[ \t]+/, "", s); sub(/[ \t\r]+$/, "", s); return s }
+    NR == FNR {
+      sub(/\r$/, "")
+      if ($0 !~ /^#/ && $1 != "") libelles[++n] = $1
+      next
+    }
+    {
+      ligne = $0
+      sub(/^[ \t]+/, "", ligne)
+      if (substr(ligne, 1, 1) != "|") next
+      c = split(ligne, cellules, "|")
+      if (c < 4) next
+      reponse = nu(cellules[3])
+      if (index(reponse, "✓") == 1 || index(reponse, "✗") == 1 || index(reponse, "non vu") == 1)
+        repondu[nu(cellules[2])] = 1
+    }
+    END { for (i = 1; i <= n; i++) if (!(libelles[i] in repondu)) print libelles[i] }
+  ' "$GL_RELECTURE_GRILLE" "$fichier"
 }
 
 # gl_relecture_note [--raison] <iid> <fichier> -> CONSIGNE la relecture visuelle sur le ticket <iid>,
@@ -2261,8 +2312,9 @@ ENTETE
 # de n'avoir pas regardé.
 #
 # Codes : 0 consigné (ou déjà consigné à l'identique) · 2 usage · 3 iid inconnu · 4 fichier absent ou
-# vide · 1 échec côté forge. Les deux REFUS gratuits (4 puis 3) tombent AVANT toute écriture, règle
-# de `gl_reste_claude` : un refus ne laisse rien derrière lui.
+# vide · 5 jugement sans sa grille entière (#980, jamais pour `--raison`) · 1 échec côté forge, ou
+# grille introuvable. Les REFUS gratuits (4, 3, 5) tombent AVANT toute lecture de forge, règle de
+# `gl_reste_claude` : un refus ne laisse rien derrière lui.
 #
 # LE FICHIER EST OBLIGATOIRE DANS LES DEUX SENS, et c'est la moitié la plus facile à défaire. Côté
 # jugement, la raison est celle de `gl_veille_differe` : ce que la session a d'irremplaçable est ce
@@ -2306,6 +2358,24 @@ gl_relecture_note() {
       echo "gl_relecture_note : « $iid » n'est pas un iid de ticket — rien n'a été écrit." >&2
       return 3 ;;
   esac
+  # La grille (#980), gratuite elle aussi : jugée sur le disque, avant le premier aller. Une RAISON
+  # n'en porte pas — rien n'a été regardé, il n'y a rien à y répondre —, et l'exiger ferait écrire
+  # une grille de « non vu » pour pouvoir dire qu'on n'a pas regardé.
+  if [ "$raison" = 0 ]; then
+    local manquantes
+    manquantes="$(gl_relecture_grille_manquante "$fichier")" || {
+      echo "gl_relecture_note : la grille ne peut pas être vérifiée — rien n'a été écrit." >&2
+      return 1
+    }
+    if [ -n "$manquantes" ]; then
+      echo "gl_relecture_note : le jugement de $fichier ne porte pas sa grille entière — rien n'a été écrit." >&2
+      echo "  Lignes sans réponse (✓, ✗ ou « non vu », dans un tableau « | <libellé> | <réponse> | … |) :" >&2
+      printf '%s\n' "$manquantes" | sed 's/^/    - /' >&2
+      echo "  La grille est celle du regard neuf (skill « relecture-visuelle ») : la recopier telle" >&2
+      echo "  qu'il l'a rendue, jamais la compléter à sa place." >&2
+      return 5
+    fi
+  fi
 
   local empreinte
   empreinte="$(cksum < "$fichier" | awk '{ printf "%s-%s", $1, $2 }')"
@@ -2347,6 +2417,72 @@ gl_relecture_note() {
     printf '#%s : relecture visuelle consignée (empreinte %s).\n' "$iid" "$empreinte"
   fi
   gl_issue_url "$iid"
+}
+
+# --- Ce contre quoi le regard neuf juge l'écran (#980) --------------------------------------------
+#
+# Le regard neuf (sous-agent `regard-neuf`) ne reçoit que trois choses : les captures, le rendu
+# attendu, et les décisions déjà prises à l'écran. Les deux dernières vivent sur le TICKET, et ce verbe
+# les en tire — lecture seule, pour `scripts/design/relecture-visuelle.sh --saisine`.
+#
+# CE QUI EST TIRÉ L'EST PAR UNE ANCRE, JAMAIS PAR UN JUGEMENT SUR LE TEXTE (#746). Trois ancres, chacune
+# écrite par la commande qui produit la pièce, et c'est ce qui les rend sûres :
+#   - la section « Rendu attendu » de la description (#976) — rendue par `gl_issue_brief_render`, la
+#     projection de `/ticket-start`, commentaires de gabarit retirés et « non renseigné » compris.
+#     AUCUN SECOND PARSEUR : la même section, lue ici et au cadrage, ne peut pas dire deux choses ;
+#   - les commentaires qui COMMENCENT par « ## Veille de conception » — les partis pris consignés par
+#     `/design-veille` (§6, §7.3) ;
+#   - ceux qui COMMENCENT par « ## Variante retenue » — le choix consigné par `/ticket-start` (#979).
+# Un commentaire qui cite l'ancre au milieu n'est pas une décision : seul le début compte, comme pour
+# « ## Variante retenue » à l'étape 7 de `/ticket-start`.
+#
+# POURQUOI PAS TOUS LES COMMENTAIRES : un ticket porte aussi les notes de la session qui l'a écrit —
+# c'est-à-dire son raisonnement, précisément ce que le regard neuf ne doit pas recevoir.
+#
+# UN SEUL ALLER (#602) : la description et les commentaires voyagent dans la même requête.
+GL_RELECTURE_DECISIONS="${GL_RELECTURE_DECISIONS:-## Veille de conception|## Variante retenue}"
+
+# gl_relecture_attente <iid> -> deux blocs séparés par la ligne `@@decisions@@` : la section « Rendu
+# attendu » (titre compris ; rien si le ticket n'en porte pas ou la laisse vide), puis le corps de
+# chaque commentaire ancré, séparés par la ligne `@@decision@@`. Codes : 0 lu · 2 usage · 3 ticket
+# inconnu · 1 forge muette.
+gl_relecture_attente() {
+  local iid="$1" raw titre corps noeud premier=1
+  if [ -z "$iid" ]; then echo "usage: gl_relecture_attente <iid>" >&2; return 2; fi
+  case "$iid" in
+    *[!0-9]*) echo "gl_relecture_attente : « $iid » n'est pas un iid de ticket." >&2; return 2 ;;
+  esac
+  raw="$(gh_graphql_read '{ '"$(gh_depot_gql)"' { issue(number:'"$iid"') { title body comments(first: 100) { nodes { body } } } } }')" || return 1
+  case "$raw" in
+    *'"issue":null'*) echo "gl_relecture_attente : ticket #$iid introuvable dans $GL_GH_REPO." >&2; return 3 ;;
+  esac
+  titre="$(printf '%s' "$raw" | gl_json_string_field title)"
+  if [ -z "$titre" ]; then
+    echo "gl_relecture_attente : ticket #$iid illisible." >&2; return 1
+  fi
+  # La description AVANT la clé « comments » : un commentaire porte lui aussi un champ `body`.
+  corps="$(printf '%s' "$raw" | sed 's/"comments".*//' | gl_json_string_field body)"
+  printf 'title:\t%s\n--\n%s\n' "$titre" "$corps" | gl_issue_brief_render "$iid" \
+    | awk '/^#+[ \t]+[Rr]endu attendu([ \t\r(:].*)?$/ { p = 1 } p'
+  printf '@@decisions@@\n'
+  # Un nœud par ligne : le JSON de `gh` est compact et échappe ses sauts de ligne, et un `{"body":"`
+  # écrit DANS un commentaire y voyage échappé — le découpage ne peut pas tomber au milieu d'un corps.
+  # Les ancres passent par ENVIRON, jamais par `-v`, qui interpréterait leurs échappements.
+  while IFS= read -r noeud; do
+    [ -z "$noeud" ] && continue
+    [ "$premier" = 1 ] || printf '@@decision@@\n'
+    premier=0
+    printf '%s' "$noeud" | gl_json_string_field body
+    printf '\n'
+  done < <(printf '%s' "$raw" | sed 's/.*"comments"//' \
+    | ANCRES="$GL_RELECTURE_DECISIONS" LC_ALL=C awk '
+      BEGIN { na = split(ENVIRON["ANCRES"], ancres, "|") }
+      {
+        n = split($0, parts, /\{"body":"/)
+        for (i = 2; i <= n; i++)
+          for (k = 1; k <= na; k++)
+            if (index(parts[i], ancres[k]) == 1) { print "{\"body\":\"" parts[i]; break }
+      }')
 }
 
 # --- Fermeture du parent (#515, docs/10 §5.1) ---------------------------------------------------
@@ -8486,6 +8622,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     veille-arbitre) gl_veille_arbitre "$@" ;;
     veille-differe) gl_veille_differe "$@" ;;
     relecture-note) gl_relecture_note "$@" ;;
+    relecture-attente) gl_relecture_attente "$@" ;;
     ferme-parent)   gl_ferme_parent "$@" ;;
     garde-fermeture) gl_garde_fermeture "$@" ;;
     demarre-parent) gl_demarre_parent "$@" ;;
@@ -8585,7 +8722,11 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "                                      RIEN : « veille::arbitree » n'est pas posé — docs/30 §5.3)" >&2
       echo "  relecture-note [--raison] <iid> <fichier>  (CONSIGNE la relecture visuelle du rendu sur le ticket, en" >&2
       echo "                                      commentaire ancré et idempotent. Sans --raison le fichier porte le" >&2
-      echo "                                      JUGEMENT ; avec, la RAISON de n'avoir pas regardé — docs/30 §5.5)" >&2
+      echo "                                      JUGEMENT, grille comprise (5 = une ligne sans réponse) ; avec, la RAISON de" >&2
+      echo "                                      n'avoir pas regardé — docs/30 §5.5, #980)" >&2
+      echo "  relecture-attente <iid>            (lecture seule : le rendu attendu et les décisions déjà prises à l'écran —" >&2
+      echo "                                      commentaires « ## Veille de conception » / « ## Variante retenue » —, ce" >&2
+      echo "                                      contre quoi le regard neuf juge, #980)" >&2
       echo "  current-milestone [produit|outillage] (titre du milestone courant du rail — le plus ancien actif portant" >&2
       echo "                                      encore un ticket ouvert ; soldé et vide sont sautés, chacun nommé sur stderr. Défaut produit)" >&2
       echo "  milestones                         (tous les milestones : titre/état/dates/avancement, TSV)" >&2

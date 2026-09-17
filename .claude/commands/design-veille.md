@@ -134,7 +134,9 @@ n'est pas une proposition : tu le fais** (§7.3), parce que personne ne lira une
 
 - consigner la décision sur le ticket en cours :
   `bash scripts/gitlab/lib.sh issue-note <iid> <fichier>` — le texte voyage par un **fichier**,
-  jamais sur la ligne de commande (la couche permissions découpe sur les sauts de ligne) ;
+  jamais sur la ligne de commande (la couche permissions découpe sur les sauts de ligne), et ce
+  fichier **commence par `## Veille de conception`** : c'est l'ancre par laquelle la relecture
+  visuelle retrouve ces partis pris pour les confronter à l'écran livré (#980) ;
 - ou, si la surface n'a pas de ticket, `/ticket-create` ;
 - si des partis pris dépassent le lot en cours, **un ticket par ligne** plutôt qu'un élargissement
   du périmètre courant ;
@@ -189,8 +191,9 @@ C'est ici, et seulement ici, que la commande cesse d'être en lecture seule — 
 #934 :
 
 1. **Consigne les partis pris sur le ticket** — écris-les avec l'outil `Write` dans
-   `.maestro/session/`, puis `bash scripts/gitlab/lib.sh issue-note <iid> <fichier>` (le texte voyage
-   par un **fichier**, jamais sur la ligne de commande). En interactif le §6 *propose* ce geste ; ici
+   `.maestro/session/`, dans un fichier qui **commence par `## Veille de conception`** (l'ancre du
+   §6), puis `bash scripts/gitlab/lib.sh issue-note <iid> <fichier>` (le texte voyage par un
+   **fichier**, jamais sur la ligne de commande). En interactif le §6 *propose* ce geste ; ici
    tu le **fais**, parce que personne ne lira une proposition et que le ticket se ferme au merge dans
    l'heure — la leçon de #608 et de #795, appliquée à l'objet qu'elles protègent.
 2. **Puis enregistre l'arbitrage** — `bash scripts/gitlab/lib.sh veille-arbitre <iid>`.

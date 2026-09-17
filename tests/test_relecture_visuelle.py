@@ -485,6 +485,22 @@ def forge(tmp_path: Path) -> Depot:
     return monte_depot(tmp_path)
 
 
+def grille_remplie() -> str:
+    """La grille du regard neuf (#980), chaque ligne répondue — lue dans LE fichier qui la porte.
+
+    Depuis #980, `relecture-note` refuse (`5`) un jugement dont une ligne de la grille manque : un
+    jugement de test qui veut atteindre la forge la porte donc, et la porte telle que le dépôt
+    l'écrit — la recopier ici la ferait diverger de ce que le verbe vérifie. Les refus de la grille
+    eux-mêmes sont éprouvés par le lot final du chantier (#974).
+    """
+    lignes = ["### Regard neuf — grille", "", "| Ligne | Réponse | Où |", "|---|---|---|"]
+    grille = RACINE / "scripts" / "design" / "grille-relecture.tsv"
+    for ligne in grille.read_text(encoding="utf-8").splitlines():
+        if ligne and not ligne.startswith("#"):
+            lignes.append(f"| {ligne.split(chr(9))[0]} | ✓ | vu |")
+    return "\n".join(lignes) + "\n"
+
+
 def jugement(forge: Depot, nom: str, texte: str) -> str:
     """Écrit un jugement dans l'atelier de session et rend son chemin RELATIF.
 
@@ -515,7 +531,7 @@ def test_le_jugement_est_consigne_sous_une_ancre_reconnaissable(forge: Depot) ->
     """Sans en-tête reconnaissable, « ce ticket a-t-il été relu ? » n'a pas de réponse — or c'est
     la question du critère. L'empreinte y est en clair : c'est elle que le tour suivant relira."""
     forge.pose_etat(graphql=[regle_relecture("60")])
-    fichier = jugement(forge, "vu.md", "Les deux thèmes vus, rien à signaler.\n")
+    fichier = jugement(forge, "vu.md", grille_remplie() + "Les deux thèmes vus, rien à signaler.\n")
     acheve = forge.lib("relecture-note", "60", fichier)
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
     corps = corps_poste(forge, "60")
@@ -530,7 +546,7 @@ def test_rejoue_a_lidentique_il_necrit_rien(forge: Depot) -> None:
     même : rejeu à l'identique MUET. Sans lui, une clôture qui repasse trois fois empilerait trois
     fois le même jugement sur le ticket.
     """
-    fichier = jugement(forge, "vu.md", "Rien à signaler.\n")
+    fichier = jugement(forge, "vu.md", grille_remplie() + "Rien à signaler.\n")
     forge.pose_etat(graphql=[regle_relecture("61")])
     forge.lib("relecture-note", "61", fichier)
     empreinte = corps_poste(forge, "61").split("empreinte ")[1].split("\n")[0].strip()
@@ -549,7 +565,9 @@ def test_un_jugement_enrichi_sajoute_au_lieu_decraser(forge: Depot) -> None:
     forge.pose_etat(
         graphql=[regle_relecture("62", notes=("## Relecture visuelle — empreinte 111-22",))]
     )
-    fichier = jugement(forge, "vu.md", "Deuxième passage : le contraste est corrigé.\n")
+    fichier = jugement(
+        forge, "vu.md", grille_remplie() + "Deuxième passage : le contraste est corrigé.\n"
+    )
     acheve = forge.lib("relecture-note", "62", fichier)
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
     assert len(notes_postees(forge, "62")) == 1
@@ -607,14 +625,15 @@ def test_le_refus_gratuit_tombe_avant_toute_lecture_de_forge(forge: Depot) -> No
 
 def test_un_ticket_inconnu_est_refuse_sans_rien_ecrire(forge: Depot) -> None:
     forge.pose_etat(graphql=[regle_relecture("67", existe=False)])
-    acheve = forge.lib("relecture-note", "67", jugement(forge, "vu.md", "Vu.\n"))
+    acheve = forge.lib("relecture-note", "67", jugement(forge, "vu.md", grille_remplie() + "Vu.\n"))
     assert acheve.returncode == 3, acheve.stdout + acheve.stderr
     assert "introuvable" in acheve.stderr
     assert ecritures(forge) == []
 
 
 def test_un_iid_qui_nen_est_pas_un_est_refuse_sans_rien_ecrire(forge: Depot) -> None:
-    acheve = forge.lib("relecture-note", "chat", jugement(forge, "vu.md", "Vu.\n"))
+    fichier = jugement(forge, "vu.md", grille_remplie() + "Vu.\n")
+    acheve = forge.lib("relecture-note", "chat", fichier)
     assert acheve.returncode == 3
     assert forge.appels() == []
 
@@ -623,7 +642,7 @@ def test_une_forge_muette_ne_fait_pas_semblant_davoir_consigne(forge: Depot) -> 
     """Un `1` **ne bloque pas la clôture** (le prompt le dit), mais il ne doit pas se faire passer
     pour un succès : ce que le dispositif rend difficile est l'absence de TRACE, jamais le merge."""
     forge.pose_etat(graphql=[{"contient": ["issue(number:68)"], "reponse": {"data": None}}])
-    acheve = forge.lib("relecture-note", "68", jugement(forge, "vu.md", "Vu.\n"))
+    acheve = forge.lib("relecture-note", "68", jugement(forge, "vu.md", grille_remplie() + "Vu.\n"))
     assert acheve.returncode == 1
     assert ecritures(forge) == []
 
@@ -636,7 +655,7 @@ def test_la_consignation_ne_coute_quun_aller_de_lecture(forge: Depot) -> None:
     pas un second appel.
     """
     forge.pose_etat(graphql=[regle_relecture("69")])
-    forge.lib("relecture-note", "69", jugement(forge, "vu.md", "Vu.\n"))
+    forge.lib("relecture-note", "69", jugement(forge, "vu.md", grille_remplie() + "Vu.\n"))
     lectures = [ligne for ligne in forge.appels() if ligne.startswith("api\tgraphql")]
     assert len(lectures) == 1, lectures
 

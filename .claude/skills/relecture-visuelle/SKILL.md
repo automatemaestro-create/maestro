@@ -22,7 +22,7 @@ visuelle sait **viser** (`/design-veille`), **tenir** (tokens, primitives) et
 | `contraste.test.ts` · `a11y.test.tsx` · `sobriete.test.tsx` | les **règles** — ratios, rôles, nombre de blocs | si le résultat est **beau, lisible, cohérent** |
 | `/banc-mise-en-page` | la **géométrie** — hauteurs, défilement, points de rupture | à quoi ressemble ce qui tient |
 | `/verify` | le **câblage** — WebSocket, reprise, absence de rechargement | tout le reste |
-| **ce geste** | le **rendu**, les deux thèmes, avec des yeux | la logique, la géométrie mesurée, les règles |
+| **ce geste** | le **rendu**, les deux thèmes, avant et après, jugé par un **regard neuf** sur une **grille fixe** | la logique, la géométrie mesurée, les règles |
 
 **Ne pas redoubler les quatre autres.** Une hauteur suspecte appelle
 `/banc-mise-en-page`, un contraste douteux se prouve dans `contraste.test.ts`
@@ -156,8 +156,11 @@ ce qui allait. Un écran **nouveau** n'a que son après ; le dire dans le jugeme
 > ticket y soit pour rien. On compare la **mise en page et le rendu**, jamais
 > les valeurs.
 
-Puis **relire chaque capture** (outil `Read`) : c'est là que le geste a lieu.
-Une capture qu'on prend sans la regarder est une galerie, pas une relecture.
+Puis **relire chaque capture** (outil `Read`) — pour vérifier qu'elle **montre
+l'écran** : prête, pas sur « Chargement… », pas sur la visite guidée, le bon
+thème. Une capture ratée se reprend ici, avant de devenir un « non vu » plus
+loin. Le **jugement**, lui, n'est plus le tien : il est rendu à l'étape 5 par un
+regard qui n'a pas écrit l'écran.
 
 > ⚠ **Le `filename` se donne en chemin RELATIF.** La racine autorisée du MCP est
 > le worktree de la session, mais son contrôle compare les chemins
@@ -242,7 +245,63 @@ captures présentes sur le disque. Il ne démarre rien et ne rend aucun verdict.
 Il ne sait voir qu'une **capture**, jamais un regard : une capture qu'on n'a
 pas relue ne compte pas, et c'est à toi de le tenir.
 
-### 5. Fermer, puis rendre
+### 5. Le regard neuf — c'est lui qui juge (#980)
+
+**L'auteur voit ce qu'il a voulu faire ; il faut quelqu'un qui voie ce qu'il a
+produit.** Le jugement est rendu par le sous-agent `regard-neuf`
+(`.claude/agents/regard-neuf.md`, outil `Read` seul), qui ne reçoit que trois
+choses : les **captures** avant/après, le **rendu attendu** du ticket (#976) et
+les **décisions déjà prises** à l'écran — partis pris d'une veille, variante
+retenue (#979). **Ni le code, ni le diff, ni ton raisonnement.**
+
+D'abord la saisine, qui les réunit — les stacks peuvent rester montées, elle ne
+lit que le disque et le ticket :
+
+```bash
+bash scripts/design/relecture-visuelle.sh --saisine <iid>
+```
+
+Elle écrit `.maestro/relecture/<iid>/saisine.md` : les paires capturées en
+chemins absolus, la section « Rendu attendu » du ticket, les commentaires qui
+**commencent** par `## Veille de conception` ou `## Variante retenue`, la
+**grille** (`scripts/design/grille-relecture.tsv`, seul endroit où elle
+s'écrit) et le gabarit à remplir. Sa dernière ligne est `SAISINE <chemin>`.
+Une veille consignée **avant** l'ancre — un commentaire de partis pris qui ne
+commence pas par elle — s'ajoute par `--partis-pris <fichier>`, où tu la
+recopies **telle quelle**, sans un mot de plus. Un ticket illisible ne bloque
+pas : la saisine le dit, et les rubriques iront à « non vu ».
+
+Puis le sous-agent, et **son prompt est cette phrase, au mot près** — un mot de
+contexte en plus serait ce que ce geste retire :
+
+```
+Agent  subagent_type: "regard-neuf"
+       description:   "Regard neuf sur #<iid>"
+       prompt:        "Ta saisine : <chemin de la ligne SAISINE> — lis-la, puis rends-la remplie."
+```
+
+Sa réponse va **telle quelle** dans `.maestro/relecture/<iid>/regard.md` (outil
+`Write`) : les trois sections `### Regard neuf — …`, que tu ne retouches pas.
+
+> ⚠ **Un agent de projet se charge au démarrage de la session.** Une session
+> ouverte avant que `.claude/agents/regard-neuf.md` existe répond « Agent type
+> 'regard-neuf' not found » — c'est arrivé à la session qui l'a écrit. Dans ce
+> cas seulement, `subagent_type: "general-purpose"` et pour prompt
+> « Suis la consigne de `<racine>/.claude/agents/regard-neuf.md` (ignore son
+> en-tête), puis : ta saisine : <chemin> — lis-la, puis rends-la remplie. » —
+> et **nomme ce repli** dans le jugement : le sous-agent avait alors d'autres
+> outils que `Read`.
+
+**Ce que tu fais des ✗.** Chacun va dans « ce qui cloche », avec sa suite :
+**corrigé ici** (puis nouvelles captures, nouvelle saisine, nouveau regard —
+le précédent ne jugeait pas cet écran-là), **ticket à ouvrir**, ou **contesté
+sur pièces**. Un regard neuf peut voir ce qui n'y est pas — mesuré à l'essai de
+#980 : un chiffre « teinté de rouge » en sombre, blanc sur la capture et sans
+couleur dans le code. Le contester est permis ; le **retirer de la grille**
+ne l'est pas, et la pièce se nomme (la capture relue, la ligne de code) — *tu
+es l'auteur, et « ce n'est pas ce que je voulais faire » n'est pas une pièce.*
+
+### 6. Fermer, puis rendre
 
 > ⚠ `browser_close` **à la fin de chaque séquence**, pas seulement en fin de
 > session : Chrome n'accepte qu'un consommateur par `--user-data-dir`, et une
@@ -262,25 +321,51 @@ sur ce poste le ramasse dès que son ticket n'a plus de worktree.
 
 Écrire `.maestro/relecture/<iid>/jugement.md`, **et le reprendre dans le résumé
 de la session** — le fichier vit dans un worktree que le merge fera ramasser.
-Trois sections, et les trois sont obligatoires :
+Il **commence par le regard neuf**, recopié de `regard.md` au caractère près —
+la grille, puis la confrontation au rendu attendu et aux décisions prises —, et
+c'est la grille qui fait foi : `relecture-note` refuse (`5`) un jugement dont
+une ligne manque ou reste sans réponse ✓, ✗ ou « non vu ».
+
+Suivent tes trois sections, et les trois sont obligatoires :
 
 - **ce qui va** — en une ligne ou deux. Pas un compte rendu des captures : ce
-  qu'on a vérifié et qui tient.
-- **ce qui cloche** — chaque constat avec son écran, son thème, et ce qu'on en
-  fait : corrigé ici, ou à ouvrir en ticket. Un constat sans suite est un
-  constat perdu.
-- **ce que je n'ai pas pu voir** — les `indéterminé` du plan, un écran qui n'a
-  pas chargé, un état que la démo ne sert pas (une largeur téléphone) ou qu'on
-  n'a pas ouvert, **nommé avec son écran**, un **avant indisponible** avec la
-  cause que le script a donnée. C'est la section qui distingue un
-  jugement d'un ✓ : *ne pas avoir regardé n'est pas avoir trouvé que tout va
-  bien.*
+  que la grille a vu et qui tient.
+- **ce qui cloche** — **chaque ✗ de la grille**, avec son écran, son thème, et ce
+  qu'on en fait : corrigé ici, à ouvrir en ticket, ou contesté sur pièces
+  (étape 5). Un constat sans suite est un constat perdu, et un ✗ passé sous
+  silence est un jugement réécrit.
+- **ce que je n'ai pas pu voir** — les « non vu » de la grille, les
+  `indéterminé` du plan, un écran qui n'a pas chargé, un état que la démo ne
+  sert pas (une largeur téléphone) ou qu'on n'a pas ouvert, **nommé avec son
+  écran**, un **avant indisponible** avec la cause que le script a donnée.
+  C'est la section qui distingue un jugement d'un ✓ : *ne pas avoir regardé
+  n'est pas avoir trouvé que tout va bien.*
 
 Et sous les trois, **la couverture des états** : le tableau de
 `--couverture <iid>` recopié tel quel, écran par écran. C'est ce qui dit
 lesquels ont été vus sans qu'on ait à le reconstituer de la prose. Une
 case « — » sur un état que le ticket demandait doit se retrouver, nommée, dans
 « ce que je n'ai pas pu voir ».
+
+**Puis la planche**, pour qu'une personne **voie** ce que le texte juge — `gh` ne
+sait pas joindre une image à un commentaire, et le jugement consigné reste du
+texte :
+
+```bash
+bash scripts/design/relecture-visuelle.sh --planche <iid>
+```
+
+Elle écrit `.maestro/relecture/<iid>/planche.html` : un fichier **autonome**
+(captures en `data:`, deux thèmes, visionneuse — la mécanique de
+`scripts/presentation/build.py`, reprise par import), le jugement en tête, puis
+chaque état et chaque écran avec l'avant et l'après côte à côte. Rien n'est
+envoyé à la forge. Elle est **recopiée dans le clone principal**, au même
+chemin : `/ticket-finish` ramasse le worktree juste après le merge, avant son
+résumé, et une planche laissée là serait un lien mort. **Nomme dans le résumé**
+de la session le chemin de la dernière ligne, `PLANCHE <chemin>` — c'est cette
+copie-là. Elle se rejoue après une correction comme la saisine, et un plafond de
+taille la borne (`MAESTRO_RELECTURE_PLANCHE_MAX`, 25 Mio) — une capture écartée
+y est nommée.
 
 **Puis le consigner sur le ticket** — toujours, et pas seulement quand il y a un
 constat (#935) :
@@ -306,6 +391,10 @@ bash scripts/gitlab/lib.sh relecture-note --raison <iid> <fichier-de-la-raison>
 
 Le verbe est **idempotent** (empreinte `cksum`) : une clôture rejouée après un
 pipeline rouge n'empile rien, et un jugement enrichi s'ajoute au lieu d'écraser.
+Il **garde la grille** : un jugement sans elle est refusé (`5`) avant toute
+lecture de la forge, et la liste des lignes manquantes est imprimée. La réponse
+n'est jamais de les remplir toi-même — c'est rejouer le regard neuf. Une
+`--raison` n'en porte pas : rien n'a été regardé.
 
 ## Le prix, annoncé plutôt que masqué (règle de #418)
 
@@ -342,6 +431,20 @@ Soit **~50 s de plus** par relecture, plus ~4 s par écran et par thème, et
 ~500 Mo de disque le temps de la relecture. `MAESTRO_RELECTURE_AVANT=0` les
 économise, au prix de juger l'après sans référence.
 
+**Ce que le regard neuf ajoute** (#980), mesuré le 2026-09-17 sur un écran,
+nominal, les deux thèmes avec leur avant (4 captures), en session `claude -p`
+sous le régime de run :
+
+| Étape | Coût |
+| --- | --- |
+| `--saisine` | **6,6 s** (le plan, plus un aller vers la forge) |
+| sous-agent `regard-neuf` | **105 s et 1,29 $** (Opus, session appelante comprise) — il lit la saisine puis chaque capture |
+| `--planche` | **3,3 s**, **329 Ko** pour 4 captures (~80 Kio chacune en `data:`) |
+
+Le sous-agent coûte au nombre de captures qu'il ouvre : c'est le poste qui
+grandit avec les états limites, et c'est pourquoi il n'y a **qu'un** regard par
+relecture, pas un par écran.
+
 ## En session de run
 
 **Rien ne change**, et c'est le propre de ce geste. Tout ce qui précède est
@@ -352,5 +455,12 @@ ici ne demande le web : la relecture regarde **ce qu'on a écrit**, là où
 `/design-veille` cherche ce que d'autres ont fait — un accès que #933 a depuis
 ouvert aux deux régimes, et dont celui-ci n'a de toute façon pas besoin.
 
+**L'outil `Agent` non plus n'est soumis à aucune règle** : essayé le
+2026-09-17 sous `settings.run.json` et `--permission-mode acceptEdits`, une
+session a appelé le sous-agent `regard-neuf`, qui a lu la saisine et ses quatre
+captures — **zéro refus**. Il n'y avait donc rien à instruire (docs/10 §11.7).
+Une session de run démarre sur le worktree : l'agent de projet y est chargé.
+
 Le jugement, lui, n'a personne pour le lire à l'écran : le consigner sur le
-ticket est donc la seule façon qu'il survive.
+ticket est donc la seule façon qu'il survive — et la planche, que personne
+n'ouvrira pendant le run, reste nommée dans le résumé pour qui reprendra.
