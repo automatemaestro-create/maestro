@@ -690,8 +690,8 @@ mécanisme est donc en trois pièces :
 
 | pièce | rôle |
 |---|---|
-| `lib.sh touche-surface <iid>` | **lit** — `0` touche (à proposer) · `4` touche mais déjà arbitré · `3` aucune surface |
-| `start-brief` (donc `/ticket-start`) | **propose**, sur la vue du ticket qu'il vient de lire — zéro aller de forge en plus |
+| `lib.sh touche-surface <iid>` | **lit** — rend `<verdict>⇥<lignes>⇥<source>` ; `0` touche (à proposer) · `4` touche mais déjà arbitré · `3` aucune surface |
+| `start-brief` (donc `/ticket-start`) | **propose**, sur la vue du ticket qu'il vient de lire — zéro aller de forge en plus : #602 venait de faire descendre le pré-vol de 30 allers à 5, on ne les rend pas un par un |
 | `lib.sh veille-arbitre <iid>` | **enregistre** la réponse — veille faite **ou** jugée inutile |
 
 L'enregistrement est repris mot pour mot de `lot::arbitre` (#562), sa raison comprise : le label

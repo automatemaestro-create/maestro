@@ -287,6 +287,22 @@ la facture ; il ne tranche pas. La seule chose qu'il recommande sans réserve, c
 répartir cette facture sur les sessions qui n'en tirent rien** : une session qui corrige un
 composant React n'a aucun usage des 4 930 tokens de la boucle d'orchestration.
 
+> **H1 et H2 sont tranchés par #965** (arbitrage du 2026-09-17, chantier #960), après que la question
+> a été laissée ouverte pendant que CLAUDE.md passait de **22 261 à 84 079 tokens** (même compteur,
+> `estimer_tokens`). Le tri se fait **par nature de contenu**, et non par section : CLAUDE.md garde,
+> pour chaque mécanisme, **la règle et ce qu'il ne faut pas défaire**, en une phrase, avec son
+> pointeur `docs/<n> §x` ; les **mesures**, les **pistes écartées**, l'**historique des renversements**
+> et les **récits d'incidents** vivent dans `docs/` seulement — aucune commande ne grossit, puisque
+> `/ticket-start`, `/ticket-finish` et `/ticket-ship` sont chargées par chaque session de run. La
+> contrepartie écrite ci-dessus tombe ainsi : l'**interdit** reste chargé à chaque session, seule la
+> **démonstration** sort, et elle vivait déjà presque toute dans `docs/`. Le retrait s'est fait sous
+> une **garde de non-perte** — chaque fait chiffré et chaque décision retrouvés dans `docs/`, et ceux
+> qui n'y étaient pas (entre autres toute la mécanique de `scripts/presentation/`, docs/10 §3.4) portés
+> **avant** d'être retirés. **Budget : 25 000 tokens**, soit l'ordre de grandeur du jour de cet audit
+> plus une marge — 16 000 aurait coupé des interdits utiles, 40 000 ne rendait que la moitié du gain.
+> Le test qui lève à un token près, sur le modèle de `BUDGET_CARTE_TOKENS`, est #966. Après le tri,
+> CLAUDE.md pèse **~15 800 tokens**.
+
 ## 8. Rejouer les mesures
 
 Les trois scripts d'analyse (tailles/tokens, redites, densité) ont été écrits dans le scratchpad de

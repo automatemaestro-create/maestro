@@ -510,6 +510,17 @@ pour avoir écrit ces tests après coup plutôt que de les avoir sautés — l'i
 mais les scripts, eux, restent dans le dépôt pour être rejoués, et un script conservé pour être
 rejouable doit être correct.
 
+Ce que la suite garde, ce sont donc les **invariants non rejouables** : l'**ordre** (l'objet créé
+pour l'iid N porte le numéro N, sans quoi les 270 `Refs #<n>` de l'historique deviennent *faux* et
+non morts), les **trous** comblés par un bouche-trou fermé, les **octets** (aucune étape ne décode
+puis ré-encode — l'aller-retour du mojibake de #141, vérifié sur les octets et jamais à
+l'affichage), l'**idempotence** du ré-assemblage et la **reprise** sur journal, commentaire par
+commentaire. Son harnais est un **dépôt GitHub simulé** — un `gh` factice qui *tient une séquence* —
+et non celui de [`tests/harnais_forge.py`](../tests/harnais_forge.py), sans mémoire par
+construction : une séquence ne s'observe que sur un dépôt qui en tient une. Le remède au deuxième
+défaut vaut au-delà de l'import, à connaître avant d'écrire une boucle `while IFS=$'\t' read` : le
+champ optionnel voyage avec un **marqueur**, comme dans le journal d'import.
+
 ### 12.6 Ce qui reste
 
 - **Le vocabulaire.** `docs/10` dit encore « MR », « GitLab » et « pipeline » à beaucoup
