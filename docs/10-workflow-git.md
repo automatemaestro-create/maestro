@@ -2110,7 +2110,7 @@ personnelles vont dans `.claude/settings.local.json`, non versionné).
 
 | Catégorie | Effet | Contenu (préfixes de commande) |
 |---|---|---|
-| **`allow`** | exécuté sans prompt | Lectures/écritures **non destructrices** du workflow : `git status`/`diff`/`log`/`show`/`branch`/`checkout`/`fetch`/`pull`/`add`/`commit`/`push`/`rev-parse`/`ls-files` ; `gh` `auth status`, `api user`/`graphql`, `issue` view/list/create/edit/comment, `pr` view/list/create/edit/diff/ready, `run` list/view/rerun, `workflow` list/view/run ; `bash scripts/gitlab/lib.sh`, `… doctor.sh`, `… git/install-hooks.sh` ; les outils des serveurs MCP du dépôt (`mcp__chrome-maestro`, `mcp__figma-officiel`). |
+| **`allow`** | exécuté sans prompt | Lectures/écritures **non destructrices** du workflow : `git status`/`diff`/`log`/`show`/`branch`/`checkout`/`fetch`/`pull`/`add`/`commit`/`push`/`rev-parse`/`ls-files` ; `gh` `auth status`, `api user`/`graphql`, `issue` view/list/create/edit/comment, `pr` view/list/create/edit/diff/ready, `run` list/view/rerun, `workflow` list/view/run ; `bash scripts/gitlab/lib.sh`, `… doctor.sh`, `… git/install-hooks.sh` ; les **lectures de supervision** (#963, puce ci-dessous) : `… orchestrate/status.sh`, `… orchestrate/queue.sh`, `… orchestrate/guard.sh --check`, `… presentation/ecrans-touches.sh --check`, `… git/worktree.sh sessions` ; les outils des serveurs MCP du dépôt (`mcp__chrome-maestro`, `mcp__figma-officiel`). |
 | **`ask`** | confirmation explicite (jamais silencieux) | `git commit --no-verify` (le bypass du hook reste possible mais **volontaire**), `git reset --hard`, `git clean`, `gh issue close`, `mcp__chrome-maestro__browser_run_code_unsafe` (exécution de JS arbitraire dans la page). |
 | **`deny`** | bloqué | Ce que les garde-fous (§6) interdisent : `git push --force` / `-f` / `--force-with-lease`, `gh pr merge`, `gh pr close`, `gh run delete`. |
 
@@ -2121,6 +2121,35 @@ personnelles vont dans `.claude/settings.local.json`, non versionné).
   canoniques, mais une variante à l'ordre de drapeaux inhabituel peut y échapper — d'où le rappel du §6
   que la **consigne** (jamais de force-push/merge/close auto) reste la garantie première, l'allowlist
   n'étant qu'un filet.
+- **Lectures de supervision, et ce qui reste dehors** (#963, lot 3 de #960) — la raison vit **ici**,
+  parce que `.claude/settings.json` ne peut pas la porter : l'outil d'édition de Claude Code y refuse
+  un `$comment` (« Unrecognized field », constaté le 2026-09-17), alors que `settings.run.json`, qui
+  vit hors de `.claude/`, en porte un. Les commandes du dépôt prescrivent ces appels à **chaque usage**, et le
+  `allowed-tools:` de leur en-tête ne vaut pas permission (#179) : sans règle, chacun demandait une
+  approbation, sur des commandes de supervision dont c'est l'unique travail. Même raison que
+  `worktree.sh ensure` (#199) : lire n'écrit rien côté forge, ne supprime aucune branche et ne
+  force-pushe rien.
+  - `orchestrate/status.sh` — c'est **tout** `/orchestrate --status` ; « il n'écrit RIEN » (son
+    en-tête). `orchestrate/queue.sh` — « ce script est en LECTURE SEULE » (son en-tête), déjà
+    ouvert en run. `orchestrate/guard.sh --check` — compare les `deny` des deux fichiers (le mode nu
+    est le hook du run). `presentation/ecrans-touches.sh --check` — lit l'historique git
+    (`/milestone-bilan`, `/milestone-presentation`). `git/worktree.sh sessions` — retrouver la
+    conversation d'un ticket (#385, #397).
+  - **La granularité suit la nature déclarée, jamais un répertoire.** Un script qui se déclare en
+    lecture seule **tout entier** est son propre verbe (`status.sh`, `queue.sh` : leurs options ne
+    font que choisir quoi lire, et une règle par option laisserait dehors `--no-forge`, l'ordre
+    `--milestone X --check` ou un double espace). Un script qui mêle lecture et écriture, ou dont
+    une seule forme est prescrite, s'ouvre **verbe par verbe** (`worktree.sh`, dont `remove` reste
+    dehors ; `guard.sh` ; `ecrans-touches.sh`). Une règle `bash scripts/…` en gros bénirait tout
+    script à venir sans rien juger de lui.
+  - **Restent dehors, volontairement** — ici la confirmation est le geste, pas une friction :
+    `orchestrate/run.sh` (`--detach` compris) ouvre N Pull Requests, son feu vert **est** la
+    question ; `setup.sh` **écrit** (venv, `.env`, hooks git, `node_modules`, et le profil
+    PowerShell hors du dépôt, §7.0) ; `orchestrate/journal.sh gc` écrit (rétention et compression
+    du journal) — seuls `audit` et `refus`, qui lisent, sont ouverts.
+  - L'`allow` d'un run étant l'**union** des deux fichiers (§11.7), toute règle ajoutée ici s'ouvre
+    aussi en run : `bash scripts/orchestrate/ecart-run.sh` doit continuer de rendre 0. Ouvrir une
+    lecture ne peut que retirer un écart, jamais en creuser un.
 - **Régénérer / auditer** : le fichier est du JSON simple ; toute évolution de l'allowlist est une
   **décision humaine** (un agent ne s'auto-accorde pas de permissions — l'écriture de ce fichier par
   Claude Code est d'ailleurs interceptée et demande validation).
