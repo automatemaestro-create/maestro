@@ -189,6 +189,8 @@ args+=("$@")
 # donc qui voit « NATIF » sait tout de suite qu'il a le temps d'aller chercher un café — et pourquoi.
 if [ "$PYTEST_REGIME" = conteneur ]; then
   printf '%spytest — conteneur Linux (%s)%s\n' "$C_D" "$PYTEST_IMAGE" "$C_0"
+  # L'issue d'un démarrage se dit ici comme dans le filet (#988) : même plomberie, même phrase.
+  [ -z "$DOCKER_DEMARRAGE_ISSUE" ] || printf '%s  %s%s\n' "$C_D" "$DOCKER_DEMARRAGE_ISSUE" "$C_0"
   pytest_conteneur "$PYTEST_IMAGE" "${args[@]}"
 else
   # Le natif SUBI et le natif VOULU ne se disent pas de la même façon. Le premier est un repli qu'il

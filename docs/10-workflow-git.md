@@ -2946,6 +2946,57 @@ Les points de conception, à comprendre avant d'y toucher :
     (§8.4bis) — deux implémentations à tenir d'accord seraient le premier moyen pour qu'un lanceur
     cesse d'exécuter ce que le filet prédit.
 
+  **Quatre corrections de #988**, nées du run `20260917-081314` : pour un diff `apps/` + `docs/`,
+  le filet avait démarré Docker Desktop avant de conclure « aucune suite concernée », sans rien
+  dire de l'issue du démarrage.
+  - **Le périmètre passe avant le régime.** `job_pytest` calcule le périmètre d'abord. Un diff
+    sans suite concernée sort hors périmètre sans rien sonder ni démarrer, et `--list` le signale :
+    « après démarrage de Docker Desktop, si une suite est concernée ».
+  - **L'issue du démarrage figure dans le verdict**, qu'il réussisse ou non. Réussi : « Docker
+    Desktop démarré par le filet en N s ». Raté : le code de `docker desktop start`. Ce qui a fait
+    tomber le démarrage du 2026-09-17, le code de retour ne le montrait pas : **Docker Desktop a
+    planté** sept secondes après son lancement, sur `initializing Inference manager: listening on
+    unix://…/Docker/run/dockerInference: remove …: The file cannot be accessed by the system`. Il
+    a ensuite affiché une boîte d'erreur (Quit / Reset to factory defaults), et le moteur n'a
+    répondu qu'après une relance à la main. Seul le journal du backend
+    (`%LOCALAPPDATA%\Docker\log\host\com.docker.backend.exe.log`) nomme ce plantage. Le filet
+    lit donc sa fin, en best-effort (absent : silence), et ne retient qu'un plantage postérieur au
+    lancement (`MAESTRO_DOCKER_JOURNAL_BACKEND` le déplace).
+  - **Sous Windows, le filet lance l'application, plus le plugin.** Il confie
+    `Docker Desktop.exe` à `explorer.exe`, comme un lancement depuis le menu Démarrer, au lieu
+    d'appeler `docker desktop start`. C'est le geste qui a rendu le moteur chaque fois que le
+    démarrage du filet avait planté, et il ne part pas de l'arbre de processus du filet. Le
+    plugin, lui, exécute l'application depuis cet arbre, et trois de ses quatre démarrages du
+    2026-09-17 ont planté. L'exécutable se **déduit du CLI** : `docker` est rangé sous
+    `<installation>/resources/bin/`, l'application deux niveaux plus haut. Ailleurs, et sans
+    exécutable, le plugin reste. `MAESTRO_DOCKER_LANCEUR=application|plugin` force l'un ou
+    l'autre, `MAESTRO_DOCKER_DESKTOP_EXE` désigne l'exécutable. Arbitré par l'utilisateur.
+  - **L'attente s'écourte sur un plantage.** Le filet interroge le moteur, puis le journal, et
+    avec le plugin `start` tourne en tâche de fond pendant ce temps. Un plantage met fin à
+    l'attente au lieu de la laisser courir jusqu'à 180 s, et le repli natif nomme la cause avec le
+    seul remède qui ait marché : « Quit » dans la boîte d'erreur, puis rouvrir Docker Desktop.
+    **Rien n'est retenté après un plantage.** Tant que la boîte d'erreur est ouverte, relancer
+    l'application ne fait rien : 400 s sans réponse, vérifié le 2026-09-17.
+  - **La sonde du moteur est bornée** (`MAESTRO_DOCKER_SONDE_DELAI`, 10 s, par `timeout`). Quand
+    la boîte d'erreur reste ouverte, `docker version` ne rend jamais la main : plus de 400 s
+    mesurées le 2026-09-17. `docker desktop stop` échoue lui aussi dans cet état. Sans borne, le
+    filet se figeait avant même de conclure.
+
+  Les mesures du 2026-09-17, moteur éteint :
+
+  | Lanceur | Contexte | Arrêt préalable | Issue |
+  |---|---|---|---|
+  | plugin | session de run (#927) | brutal, la veille | **plantage** à +7 s |
+  | plugin | console détachée, comme `run.sh --detach` | `docker desktop stop` | `start` à 9 s, moteur à 13 s |
+  | plugin | session Claude, `pytest.sh` | `docker desktop stop` | **plantage** à +7 s |
+  | plugin | même session, cinquante secondes plus tard | — | **plantage** à +6 s |
+  | application | session Claude, `pytest.sh` | processus tués de force | moteur à 13 s |
+  | application | idem | `docker desktop stop` | moteur à 9 s |
+  | application | idem | `docker desktop stop` | moteur à 10 s |
+
+  Le socket périmé ne vient donc pas seulement d'un arrêt brutal : trois démarrages sur quatre par
+  le plugin ont planté, aucun sur trois par l'application, dont un juste après un arrêt forcé.
+
   `MAESTRO_DOCKER_DEMARRAGE=0` éteint la tentative, `MAESTRO_DOCKER_DEMARRAGE_DELAI` déplace le
   plafond.
 - **L'étiquette de l'image porte l'empreinte de `pyproject.toml` et de
@@ -3006,7 +3057,8 @@ Les points de conception, à comprendre avant d'y toucher :
 
 Réglages : `MAESTRO_PYTEST_REGIME=auto|conteneur|natif`, `MAESTRO_PYTEST_IMAGE` pour le nom de
 l'image, `MAESTRO_DOCKER_DEMARRAGE=0` et `MAESTRO_DOCKER_DEMARRAGE_DELAI` pour le démarrage
-automatique du démon (#425, ci-dessus). Garde-fous dans
+automatique du démon (#425, ci-dessus), `MAESTRO_DOCKER_SONDE_DELAI` et
+`MAESTRO_DOCKER_JOURNAL_BACKEND` pour sa sonde et son témoin de plantage (#988). Garde-fous dans
 [`tests/test_ci_local.py`](../tests/test_ci_local.py), qui n'ouvre **aucun** conteneur : c'est un
 shim `docker` qui répond, et ce sont les *décisions* du script qu'on lit dans son journal. Depuis
 #425 ce shim **tient une séquence** (un témoin fait répondre `version` une fois `desktop start`
