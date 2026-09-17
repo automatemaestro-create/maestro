@@ -103,6 +103,39 @@ lieu d'inventer.
    d'acceptation). Ne fabrique pas de critères d'acceptation : si l'utilisateur ne les a pas
    fournis, laisse les cases `- [ ]` vides ou demande-les.
 
+   **La section « Rendu attendu »** (gabarits `feature` et `bug` seulement, #976) porte l'attente
+   visuelle du ticket, en quatre rubriques décrites dans son commentaire : la **question** à
+   laquelle un coup d'œil sur l'écran doit répondre, une **référence**, **ce qui ne bouge pas**, les
+   **états à couvrir**. C'est la seule information qu'une session ne peut pas inventer, et c'est
+   contre elle que l'écran sera jugé. Son sort dépend d'un **jugement** : ce ticket touche-t-il une
+   **surface visible** de la Control Tower ?
+   - **Comment trancher** : à la création le ticket n'existe pas encore, donc
+     `lib.sh touche-surface` n'est pas jouable. C'est un jugement, au même titre que le choix
+     d'`agent::` à l'étape 6, éclairé par le motif que #714 a mesuré : un ticket `agent::design`, ou
+     qui change ce qu'affiche une route de `apps/web/app/`. **Pas de lexique** pour le trancher
+     (#746) — « écran » ou « interface » dans la demande ne prouvent rien, un ticket qui décrit une
+     fonctionnalité par son comportement peut très bien changer un écran. Pour un **découpage**, la
+     question se pose **lot par lot** — la surface visible est une propriété du lot, pas du
+     chantier (#714 : l'héritage du parent dégrade la détection) —, et jamais sur le parent, qui ne
+     porte que l'objectif.
+   - **Aucune surface visible** : **retire la section entière**, titre et commentaire. Ne l'ajoute
+     pas non plus aux gabarits `doc` et `infra`, qui ne la portent pas.
+   - **Surface visible, et la personne en a dit quelque chose** (capture, lien, « comme X », état à
+     ne pas casser…) : remplis les rubriques avec **ses mots**, en liste
+     (`- **Question** : …`, `- **Référence** : …`, `- **Ce qui ne bouge pas** : …`,
+     `- **États à couvrir** : …`), et retire le commentaire. Ne fabrique pas une référence qu'elle
+     n'a pas donnée : une rubrique manquante se **demande** (point suivant).
+   - **Surface visible, et la personne n'en a rien dit** (ou pas tout) : **demande-le**, en une
+     seule question qui nomme les rubriques manquantes. Une réponse qui ne concerne qu'une rubrique
+     suffit : la question n'est pas un formulaire.
+   - **Demander, jamais bloquer** : si la personne passe, ou si la création est **enchaînée sans
+     répondant** (boucle d'orchestration, commande amont qui n'ouvre pas de dialogue) — donc sans
+     personne à qui poser la question —, garde la section et écris-y ce qui manque, en une ligne, à
+     la place du commentaire :
+     `_Non renseigné à la création — à préciser avant d'implémenter l'écran._` (suivi des rubriques
+     déjà connues s'il y en a). La section **reste vide et le dit** : un « non renseigné » écrit se
+     relaie au démarrage du ticket, un commentaire de gabarit laissé en place ne se voit nulle part.
+
 6. Détermine les labels de catégorisation (voir `docs/10-workflow-git.md` §3.2) :
    - `type::<type>` — **obligatoire**, déduit de l'étape 2.
    - `agent::<rôle>` — quel agent Maestro traitera le ticket
@@ -185,7 +218,10 @@ lieu d'inventer.
 
 10. Termine par un résumé court : l'IID et l'URL du ticket créé, ses labels et son milestone —
    pour un découpage : le parent et chaque sous-ticket avec son rang dans le découpage, et le
-   marqueur `lot::parallele` là où il a été posé. Mentionne
+   marqueur `lot::parallele` là où il a été posé. Dis en une ligne ce que tu as jugé à propos du
+   **rendu attendu** (étape 5) quand la question se posait : section remplie, laissée « non
+   renseigné », ou retirée faute de surface visible sur un ticket où l'on aurait pu la croire utile
+   — c'est un jugement, il doit pouvoir être contredit, comme le rail. Mentionne
    `project-add` **seulement s'il a échoué** : c'est le cas nominal qui n'a pas à occuper le
    résumé, et l'anomalie qui doit s'y voir — un ticket sans état est à traiter, pas à consigner.
    Puis la suite :

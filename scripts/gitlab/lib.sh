@@ -613,10 +613,11 @@ gl_issue_raw() {
   gh_issue_raw "$iid"
 }
 
-# gl_issue_brief <iid> -> projection compacte de la vue ticket : uniquement le titre, les labels et
-# la section « Critères d'acceptation ». Le reste du corps (Description, « Pourquoi maintenant ? »…)
-# est écarté. Utilisé par /ticket-start à la place de la vue intégrale pour réinjecter moins de
-# contexte (celle-ci reste disponible en direct si besoin). Parsing en awk pur (pas de jq requis).
+# gl_issue_brief <iid> -> projection compacte de la vue ticket : uniquement le titre, les labels, la
+# section « Critères d'acceptation » et, quand elle est écrite, la section « Rendu attendu » (#976).
+# Le reste du corps (Description, « Pourquoi maintenant ? »…) est écarté. Utilisé par /ticket-start
+# à la place de la vue intégrale pour réinjecter moins de contexte (celle-ci reste disponible en
+# direct si besoin). Parsing en awk pur (pas de jq requis).
 gl_issue_brief() {
   local iid="$1"
   if [ -z "$iid" ]; then echo "usage: gl_issue_brief <iid>" >&2; return 2; fi
@@ -634,9 +635,53 @@ gl_issue_brief() {
 # … »). Le mot « acceptation » n'a pas d'accent → on l'utilise comme ancre robuste aux deux formes
 # (avec ou sans accent sur « Critères »). En forme titre on capture les lignes suivantes jusqu'au
 # prochain titre ; en forme inline on n'imprime que la ligne elle-même.
+#
+# La section « Rendu attendu » (#976) — l'attente visuelle que les gabarits feature/bug portent et
+# que /ticket-create remplit ou demande sur une surface visible — est rendue APRÈS les critères,
+# quelle que soit sa place dans le corps : c'est ce que /ticket-start relaie au cadrage, sans relire
+# le ticket (#602 : le pré-vol ne rend pas ses allers un par un). Trois choses à ne pas défaire :
+#   · ses COMMENTAIRES HTML sont retirés, y compris sur plusieurs lignes — le gabarit y décrit les
+#     quatre rubriques, et une section restée telle qu'il la pose est VIDE : elle ne s'imprime pas,
+#     sans quoi un ticket ouvert depuis l'interface web sans y toucher « porterait » une attente ;
+#   · un « non renseigné » écrit par /ticket-create n'est PAS vide et s'imprime — la section « reste
+#     vide et le dit », et c'est précisément ce que le cadrage doit relayer ;
+#   · elle se ferme au premier titre de niveau égal ou supérieur, jamais à un sous-titre, et ses
+#     lignes ne passent pas par l'ancre « acceptation » des critères : une rubrique qui citerait le
+#     mot ne doit pas se faire passer pour un critère.
 gl_issue_brief_render() {
   local iid="$1"
   awk -v iid="$iid" '
+    function blanc(s) { return s ~ /^[ \t\r]*$/ }
+    ph == 1 && /^#+[ \t]/ {
+      match($0, /^#+/)
+      if (!(rendu && RLENGTH > rniv)) {
+        rendu = 0
+        if ($0 ~ /^#+[ \t]+[Rr]endu attendu([ \t\r(:].*)?$/) {
+          rendu = 1; rniv = RLENGTH; rtitre = $0; sub(/\r$/, "", rtitre)
+          crit = 0; comm = 0; nr = 0
+          next
+        }
+      }
+    }
+    ph == 1 && rendu {
+      # Retrait des commentaires HTML, ouverts ou fermés sur la ligne ou sur une précédente.
+      ligne = $0; garde = ""; porte = 0
+      while (ligne != "") {
+        if (comm) {
+          p = index(ligne, "-->"); porte = 1
+          if (p == 0) ligne = ""; else { ligne = substr(ligne, p + 3); comm = 0 }
+        } else {
+          p = index(ligne, "<!--")
+          if (p == 0) { garde = garde ligne; ligne = "" }
+          else { garde = garde substr(ligne, 1, p - 1); ligne = substr(ligne, p + 4); comm = 1; porte = 1 }
+        }
+      }
+      # Une ligne qui n était qu un commentaire disparaît ; une ligne vide reste (paragraphes).
+      sub(/\r$/, "", garde)
+      if (porte) sub(/[ \t]+$/, "", garde)
+      if (!(porte && blanc(garde))) rl[++nr] = garde
+      next
+    }
     ph == 1 {
       if (crit == 0 && $0 ~ /[Aa]cceptation/) {
         print ""; print $0
@@ -654,6 +699,14 @@ gl_issue_brief_render() {
     }
     /^title:/  { t = $0; sub(/^title:[ \t]*/,  "", t); title  = t; next }
     /^labels:/ { l = $0; sub(/^labels:[ \t]*/, "", l); labels = l; next }
+    END {
+      d = 1; while (d <= nr && blanc(rl[d])) d++
+      f = nr; while (f >= d && blanc(rl[f])) f--
+      if (d <= f) {
+        print ""; print rtitre
+        for (i = d; i <= f; i++) print rl[i]
+      }
+    }
   '
 }
 
@@ -2700,7 +2753,7 @@ gl_demarre_parent() {
 # ticket (un unique gl_issue_raw, rejoué pour toutes les projections ; autres lectures : le
 # statut/assigné du ticket, et les lots du parent si <iid> est un sous-ticket). Vérifie les
 # pré-requis (gl_require), signale un arbre sale, puis imprime un bloc compact : titre/labels/
-# critères (gl_issue_brief_render), la ligne « statut : … — libre / pris par … » (gl_issue_owner,
+# critères et rendu attendu s'il est écrit (gl_issue_brief_render), la ligne « statut : … — libre / pris par … » (gl_issue_owner,
 # avec ⚠ si le ticket est « En cours » chez quelqu'un d'autre), selon le cas le rattachement
 # sous-ticket (parent, rang « lot n/total », tests différés, contrôle du statut des lots précédents)
 # ou la table des lots (parent de suivi — qui ne porte ni branche ni code : pas de branche proposée
@@ -8514,7 +8567,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "  status-derives                     (tickets ouverts hors projet ou sans Status — iid/cause," >&2
       echo "                                      précédés de « #examines <examinés> <ouverts> »)" >&2
       echo "  issues-sans-milestone              (iid des tickets ouverts sans jalon)" >&2
-      echo "  issue-brief <iid>                  (titre + labels + critères d'acceptation)" >&2
+      echo "  issue-brief <iid>                  (titre + labels + critères d'acceptation + rendu attendu s'il est écrit)" >&2
       echo "  issue-owner <iid>                  (cycle de vie + assignés du ticket, TSV — vide = libre)" >&2
       echo "  statuts <iid…>                     (cycle de vie de N tickets NOMMÉS en UNE lecture, TSV iid/libellé ;" >&2
       echo "                                      « - » = hors projet ou Status vide, aucune ligne = ticket inexistant." >&2
