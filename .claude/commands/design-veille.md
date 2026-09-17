@@ -178,6 +178,11 @@ visibles sur 76 tickets livrés par un run, zéro arbitrée**). Le ticket de vei
 seconde erreur sans l'annuler — la question survit, mais l'écran est déjà écrit. **Dans le doute,
 joue** ; et le doute est rare, un ticket qui dit quoi faire le disant en toutes lettres.
 
+⚠ **Ce critère a deux appelants**, et c'est pourquoi il ne vit qu'ici : il décide aussi de l'étape 7
+de `/ticket-start` (#979) — un ticket qui **décide** montre 2 ou 3 variantes rendues et attend le
+choix d'une personne avant d'implémenter ; en run, il n'est pas implémenté. Le reformuler ici change
+les deux verdicts à la fois. L'asymétrie ci-dessus, elle, ne vaut que pour la veille.
+
 ### 7.3 Si tu l'as jouée : consigne d'abord, arbitre ensuite
 
 C'est ici, et seulement ici, que la commande cesse d'être en lecture seule — c'est la décision de
@@ -196,7 +201,9 @@ que la question a été posée. Fais les deux **dès que la décision est rendue
 si la session s'arrête ensuite (limite d'usage, échec), la veille est déjà sauvée, et c'est
 exactement ce qu'on lui demande.
 
-Puis implémente en appliquant tes propres partis pris, et nomme-les dans ton résumé final.
+Puis rends la main à `/ticket-start`, et nomme tes partis pris dans ton résumé final. Une veille
+jouée dit que le ticket **décide** : son étape 7 ne l'implémente pas en run (#979) — elle le laisse
+attendre le choix d'une personne, à qui tes partis pris serviront à juger les variantes.
 
 ### 7.4 Si tu ne l'as pas jouée : n'écris rien ici, et dis-le
 
