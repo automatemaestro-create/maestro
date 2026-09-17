@@ -1103,6 +1103,10 @@ def monte_depot(tmp_path: Path) -> Depot:
         # `lib.sh reconcile-workflow`, donc les deux fichiers doivent être là ENSEMBLE — c'est le
         # chaînage des deux filtres (raison de fermeture, puis état courant) qui se teste.
         "scripts/github/ticket-ferme.sh",
+        # La grille de la relecture visuelle (#980) : `relecture-note` la lit pour refuser un
+        # jugement incomplet, et une grille introuvable est une panne — sans elle, chaque
+        # consignation de test échouerait en `1` au lieu d'éprouver ce qu'elle vise.
+        "scripts/design/grille-relecture.tsv",
     ):
         cible = racine / relatif
         cible.parent.mkdir(parents=True, exist_ok=True)

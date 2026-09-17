@@ -5,6 +5,8 @@
 #   bash scripts/design/relecture-visuelle.sh <iid>          # le plan, + les stacks montées : après et avant
 #   bash scripts/design/relecture-visuelle.sh <iid> --scenario vide   # les mêmes, sur un état limite (#978)
 #   bash scripts/design/relecture-visuelle.sh --couverture <iid>      # écran par écran, les états capturés
+#   bash scripts/design/relecture-visuelle.sh --saisine <iid>         # ce que le regard neuf reçoit (#980)
+#   bash scripts/design/relecture-visuelle.sh --planche <iid>         # la planche HTML avant/après (#980)
 #   bash scripts/design/relecture-visuelle.sh --fin          # arrête les stacks et retire ce qu'elles ont posé
 #
 # Le maillon qui manquait à la chaîne de docs/30 §5.1 : PERSONNE NE REGARDE LE RENDU. La décision et
@@ -66,9 +68,13 @@
 #     si c'est nous qui l'avons posé — un projet déclaré avant nous ne nous appartient pas.
 #   - `.maestro/relecture/.avant` — le témoin de l'avant (section 6) : où il est monté et sur quels
 #     ports, pour que `--fin`, qui ne prend pas d'iid, sache quoi arrêter et quoi retirer.
+#   - `.maestro/relecture/<iid>/saisine.md`, `paires.tsv` et `planche.html` — le regard neuf et sa
+#     planche (section 7) ; la planche est recopiée au même chemin dans le CLONE PRINCIPAL, seule
+#     écriture de ce script hors du dépôt courant.
 #
-# Il ne parle à aucune forge, ne commite rien, ne merge rien : il monte des processus locaux sur les
-# ports d'un worktree, et les arrête.
+# Il ne commite rien, ne merge rien, et n'ÉCRIT dans aucune forge : il monte des processus locaux sur
+# les ports d'un worktree, et les arrête. Sa seule lecture de forge est celle de `--saisine` (section
+# 7), et elle passe par `lib.sh relecture-attente` — jamais par un `gh` écrit ici.
 #
 # --- 4. LE PRIX EST DU TEMPS DE MUR, ET IL S'ANNONCE (règle de #418) -------------------------------
 #
@@ -129,8 +135,34 @@
 #   - `MAESTRO_RELECTURE_AVANT=0` l'éteint, et le plan le dit : ne pas payer l'avant est un choix, pas
 #     un oubli.
 #
+# --- 7. LE REGARD NEUF ET SA PLANCHE (#980) ---------------------------------------------------------
+#
+# « Est-ce que ça a l'air juste ? » n'a pas de réponse sans référence, et son juge était celui qui avait
+# écrit l'écran : l'auteur voit ce qu'il a VOULU faire. Le jugement est donc rendu par un sous-agent
+# (`.claude/agents/regard-neuf.md`, outil `Read` seul), et ce script prépare ce qu'il reçoit :
+#
+#   - `--saisine <iid>` écrit `saisine.md` : les PAIRES capturées (chemins absolus — l'outil `Read`
+#     n'en prend pas d'autres), le RENDU ATTENDU et les DÉCISIONS déjà prises à l'écran (lus par
+#     `lib.sh relecture-attente`, par ancre), la GRILLE et le gabarit à rendre. Rien d'autre : ni le
+#     code, ni le diff, ni un mot de la session. C'est ce qui rend « ne reçoit que » VÉRIFIABLE — le
+#     prompt du sous-agent n'est que le chemin de ce fichier, et le fichier reste sur le disque.
+#     La forge muette ne bloque pas : la saisine le dit, et les rubriques deviennent « non vu ».
+#     `--partis-pris <fichier>` y ajoute une veille antérieure à l'ancre, que la session recopie.
+#   - LA GRILLE N'EST PAS ÉCRITE ICI : elle est lue dans `scripts/design/grille-relecture.tsv`, que
+#     `lib.sh relecture-note` lit aussi pour refuser un jugement incomplet.
+#   - `--planche <iid>` écrit `planche.html` : autonome, avant et après côte à côte, le jugement en
+#     tête. Recopiée dans le `.maestro/relecture/<iid>/` du CLONE PRINCIPAL, qui survit au ramassage
+#     du worktree après le merge ; sa dernière ligne, `PLANCHE <chemin absolu>`, est cette copie. Le gabarit est `scripts/design/planche.py`, qui reprend la mécanique de
+#     `scripts/presentation/build.py` (images en `data:`, plafond de taille, bascule de thème,
+#     visionneuse) au lieu d'en écrire une seconde. Rien n'est envoyé à la forge : `gh` ne sait pas
+#     joindre une image à un commentaire, et le jugement consigné reste du texte.
+#
+# LES DEUX LISENT LES MÊMES PAIRES, et un seul endroit les dresse (`paires_de`) : le nom d'une capture
+# se construit ici et nulle part ailleurs (`nom_capture`), faute de quoi la planche et la saisine
+# finiraient par ne plus montrer les mêmes fichiers.
+#
 # Codes de retour : 0 = il y a à regarder · 3 = aucune surface visible (abstention nominale, pas une
-# panne) · 1 = échec · 2 = usage.
+# panne) · 4 = `--saisine`/`--planche` sans aucune capture sur le disque · 1 = échec · 2 = usage.
 
 set -uo pipefail
 
@@ -141,6 +173,7 @@ MODE="preparer"
 TSV=0
 IID=""
 SCENARIO=""
+PARTIS_PRIS=""
 
 usage() {
   cat <<'USAGE'
@@ -150,12 +183,20 @@ La relecture visuelle : ce qu'il faut regarder, et de quoi le regarder.
   bash scripts/design/relecture-visuelle.sh <iid>                 Le plan, puis les stacks montées : après et avant.
   bash scripts/design/relecture-visuelle.sh <iid> --scenario <nom>  Les mêmes, sur un état de la démo.
   bash scripts/design/relecture-visuelle.sh --couverture <iid>    Écran par écran, les états capturés.
+  bash scripts/design/relecture-visuelle.sh --saisine <iid>       Ce que le regard neuf reçoit : paires, attente, grille.
+  bash scripts/design/relecture-visuelle.sh --planche <iid>       La planche HTML autonome, avant et après côte à côte.
   bash scripts/design/relecture-visuelle.sh --fin                 Arrête les stacks et retire ce qu'elles ont posé.
 
 Options :
   --plan            N'écrit rien, ne démarre rien : dit seulement s'il y a matière, et laquelle.
   --scenario <nom>  L'état que sert la démo (noms lus dans maestro/controltower/demo.py).
   --couverture      N'écrit rien, ne démarre rien : croise écrans, états et thèmes avec les captures.
+  --saisine         Écrit .maestro/relecture/<iid>/saisine.md (lecture seule de la forge) ; sa
+                    dernière ligne est « SAISINE <chemin absolu> », à donner au sous-agent regard-neuf.
+  --partis-pris <fichier>  Avec --saisine : une veille consignée sans l'ancre « ## Veille de
+                    conception », recopiée telle quelle du ticket.
+  --planche         Écrit .maestro/relecture/<iid>/planche.html (images en data:, jugement en tête).
+                    MAESTRO_RELECTURE_PLANCHE_MAX (Mio, 0 = aucun) plafonne sa taille.
   --tsv             Le plan (ou la couverture) en TSV, pour un appelant machine. La dernière colonne
                     du plan, `avant`, vaut l'URL sur origin/main, `nouveau` pour un écran absent
                     d'origin/main, ou `-` quand l'avant n'est pas évalué.
@@ -163,7 +204,8 @@ Options :
 
 L'avant (origin/main) se sert sur les ports de l'après + 200. MAESTRO_RELECTURE_AVANT=0 l'éteint.
 
-Codes de retour : 0 = il y a à regarder · 3 = aucune surface visible · 1 = échec · 2 = usage.
+Codes de retour : 0 = il y a à regarder · 3 = aucune surface visible · 4 = aucune capture (saisine,
+planche) · 1 = échec · 2 = usage.
 USAGE
 }
 
@@ -172,6 +214,14 @@ while [ $# -gt 0 ]; do
     --plan) MODE="plan" ;;
     --fin) MODE="fin" ;;
     --couverture) MODE="couverture" ;;
+    --saisine) MODE="saisine" ;;
+    --planche) MODE="planche" ;;
+    --partis-pris)
+      if [ $# -lt 2 ] || [ -z "$2" ]; then
+        printf 'relecture-visuelle.sh : --partis-pris attend un fichier.\n\n' >&2
+        usage >&2; exit 2
+      fi
+      PARTIS_PRIS="$2"; shift ;;
     --tsv) TSV=1 ;;
     --scenario)
       if [ $# -lt 2 ] || [ -z "$2" ]; then
@@ -261,6 +311,8 @@ dossier_captures() {
 # Le nom d'une capture : la clé d'écran de #544 (celle de `captures.mjs`) et le thème. Un seul endroit
 # le construit, pour que le skill, le plan et la couverture parlent du même fichier.
 nom_capture() { printf '%s-%s.png' "$1" "$2"; }
+# Son avant (#977), à côté : même clé, même thème, suffixe `-avant`.
+nom_capture_avant() { printf '%s-%s-avant.png' "$1" "$2"; }
 
 # Le dossier que l'écran « Projets » affichera. Il ne sert qu'à ça : rien n'y est écrit, et la validation
 # des racines (`maestro/projets/racine.py`) n'est pas rejouée à la LECTURE du dépôt de projets — c'est
@@ -562,6 +614,194 @@ prepare_avant() {
   dire "    l'après reste prêt ; l'avant va à « ce que je n'ai pas pu voir »."
 }
 
+# --- Le regard neuf et sa planche (section 7 de l'en-tête) ------------------------------------------
+GRILLE="$RACINE/scripts/design/grille-relecture.tsv"
+LIB_SH="$RACINE/scripts/gitlab/lib.sh"
+
+# paires_de <iid> <lignes du plan> : une ligne par écran, état et thème —
+# `etat <TAB> route <TAB> cle <TAB> theme <TAB> apres <TAB> avant`, où `apres` et `avant` sont le chemin
+# RELATIF de la capture quand elle est sur le disque, `-` sinon, et `avant` vaut `nouveau` pour un écran
+# absent d'origin/main. Toutes les combinaisons y sont, capturées ou non : ce qui manque se nomme.
+paires_de() {
+  local iid="$1" lignes="$2" etats scenario dossier route cle _origine _fichiers av theme apres avant
+  etats="$SCENARIO_NOMINAL"
+  [ -n "$SCENARIOS_DEMO" ] && etats="$SCENARIOS_DEMO"
+  for scenario in $etats; do
+    dossier="$(dossier_captures "$iid" "$scenario")"
+    while IFS=$'\t' read -r route cle _origine _fichiers; do
+      [ -z "$route" ] && continue
+      av="$(avant_de "$route")"
+      for theme in clair sombre; do
+        apres="$dossier/$(nom_capture "$cle" "$theme")"
+        avant="$dossier/$(nom_capture_avant "$cle" "$theme")"
+        [ -s "$RACINE/$apres" ] || apres="-"
+        if [ ! -s "$RACINE/$avant" ]; then
+          avant="-"
+          [ "$av" = "nouveau" ] && avant="nouveau"
+        fi
+        printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$scenario" "$route" "$cle" "$theme" "$apres" "$avant"
+      done
+    done <<<"$lignes"
+  done
+}
+
+# Le nombre de captures RÉELLEMENT sur le disque dans une liste de paires.
+compte_captures() {
+  awk -F'\t' '$5 != "-" { n++ } $6 != "-" && $6 != "nouveau" { n++ } END { print n + 0 }'
+}
+
+# La racine sous la forme que l'outil `Read` du sous-agent accepte : `E:/…` sous Windows — la forme MSYS
+# `/e/…` n'y désigne rien —, le chemin tel quel ailleurs.
+racine_native() {
+  if command -v cygpath >/dev/null 2>&1; then cygpath -m "$RACINE"; else printf '%s' "$RACINE"; fi
+}
+
+# cellule_capture <chemin|-|nouveau> <racine> : ce qu'une case du tableau de la saisine dit d'un côté.
+cellule_capture() {
+  case "$1" in
+    -) printf 'non capturé' ;;
+    nouveau) printf 'écran nouveau — aucun avant' ;;
+    *) printf '`%s/%s`' "$2" "$1" ;;
+  esac
+}
+
+# en_citation : recopie stdin tel quel, en citation Markdown. Une décision recopiée garde ses propres
+# titres (`## Veille de conception…`) : citée, elle ne se confond pas avec les sections de la saisine.
+en_citation() { awk '{ print ($0 == "" ? ">" : "> " $0) }'; }
+
+# ecris_saisine <iid> <paires> <fichier> : la saisine du regard neuf. Rend 1 si la grille est
+# introuvable — une saisine sans grille ferait rendre un texte libre, c'est-à-dire ce que #980 retire.
+ecris_saisine() {
+  local iid="$1" paires="$2" sortie="$3" racine attente code_attente=0 rendu="" decisions="" etats
+  local scenario du_etat nb route _cle theme apres avant libelle question source n
+  if [ ! -f "$GRILLE" ]; then
+    printf 'relecture-visuelle.sh : grille introuvable (%s) — pas de saisine.\n' "$GRILLE" >&2
+    return 1
+  fi
+  racine="$(racine_native)"
+  attente="$(bash "$LIB_SH" relecture-attente "$iid" 2>/dev/null)" || code_attente=$?
+  if [ "$code_attente" -eq 0 ]; then
+    rendu="$(printf '%s\n' "$attente" | awk '/^@@decisions@@$/ { exit } { print }')"
+    decisions="$(printf '%s\n' "$attente" | awk 'p { print } /^@@decisions@@$/ { p = 1 }')"
+  fi
+  etats="$(printf '%s\n' "$paires" | cut -f1 | awk 'NF && !vu[$0]++')"
+
+  {
+    printf '# Saisine du regard neuf — ticket #%s\n\n' "$iid"
+    cat <<'TETE'
+Préparée par `scripts/design/relecture-visuelle.sh --saisine`. Tout ce que tu as à juger est ici, et
+rien d'autre n'est à lire : ouvre chaque capture nommée avec `Read` (les chemins sont absolus), puis
+rends le gabarit de la section 5, rempli.
+
+## 1. Les captures
+
+Une ligne = une paire : même écran, même thème, même état. « écran nouveau » : il n'existe pas avant
+ce ticket et n'a que son après. « non capturé » : personne ne l'a pris — ce qui en dépend est « non vu ».
+TETE
+    while IFS= read -r scenario; do
+      [ -z "$scenario" ] && continue
+      du_etat="$(printf '%s\n' "$paires" | ETAT="$scenario" awk -F'\t' '$1 == ENVIRON["ETAT"]')"
+      nb="$(printf '%s\n' "$du_etat" | compte_captures)"
+      if [ "$nb" -eq 0 ]; then
+        printf '\n### État « %s » — aucune capture\n\nRien de cet état n'\''a été capturé : tout ce qui le concerne est « non vu ».\n' "$scenario"
+        continue
+      fi
+      printf '\n### État « %s »\n\n| Écran | Thème | Après | Avant |\n|---|---|---|---|\n' "$scenario"
+      while IFS=$'\t' read -r _e route _cle theme apres avant; do
+        [ -z "$route" ] && continue
+        printf '| `%s` | %s | %s | %s |\n' "$route" "$theme" \
+          "$(cellule_capture "$apres" "$racine")" "$(cellule_capture "$avant" "$racine")"
+      done <<<"$du_etat"
+    done <<<"$etats"
+
+    printf '\n## 2. Le rendu attendu\n\n'
+    if [ "$code_attente" -ne 0 ]; then
+      printf "Le ticket n'a pas pu être lu (lib.sh relecture-attente : code %s) : le rendu attendu est inconnu.\n" "$code_attente"
+    elif [ -z "$(printf '%s' "$rendu" | tr -d '[:space:]')" ]; then
+      printf 'Le ticket ne porte pas de rendu attendu.\n'
+    else
+      printf 'La section du ticket, telle qu'\''elle est écrite :\n\n'
+      printf '%s\n' "$rendu" | sed '1d' | en_citation
+    fi
+
+    printf '\n## 3. Les décisions déjà prises à l'\''écran\n\n'
+    if [ "$code_attente" -ne 0 ]; then
+      printf "Le ticket n'a pas pu être lu : les décisions consignées sont inconnues.\n"
+    elif [ -z "$(printf '%s' "$decisions" | tr -d '[:space:]')" ] && [ -z "$PARTIS_PRIS" ]; then
+      printf 'Aucune décision consignée sur le ticket.\n'
+    fi
+    if [ "$code_attente" -eq 0 ] && [ -n "$(printf '%s' "$decisions" | tr -d '[:space:]')" ]; then
+      printf 'Les commentaires du ticket qui les portent, tels qu'\''ils sont écrits — une citation par\n'
+      printf 'commentaire :\n\n'
+      # Le séparateur de `relecture-attente` devient une ligne HORS citation : deux commentaires font
+      # deux citations, et aucun ne se lit comme la suite de l'autre.
+      printf '%s\n' "$decisions" | awk '
+        /^@@decision@@$/ { print ""; next }
+        { print ($0 == "" ? ">" : "> " $0) }'
+    fi
+    if [ -n "$PARTIS_PRIS" ]; then
+      if [ "$code_attente" -ne 0 ] || [ -n "$(printf '%s' "$decisions" | tr -d '[:space:]')" ]; then
+        printf '\n'
+      fi
+      printf 'Une veille consignée sans ancre, recopiée du ticket par la session :\n\n'
+      en_citation <"$PARTIS_PRIS"
+    fi
+
+    printf '\n## 4. La grille\n\n'
+    printf 'Elle nomme ce qui se voit ; elle ne mesure ni contraste ni géométrie (d'\''autres outils le font).\n\n'
+    n=0
+    while IFS=$'\t' read -r libelle question source; do
+      case "$libelle" in '' | '#'*) continue ;; esac
+      n=$((n + 1))
+      printf '%s. **%s** — %s *Source : %s.*\n' "$n" "$libelle" "$question" "$source"
+    done <"$GRILLE"
+
+    printf '\n## 5. Le gabarit à rendre — rempli, et rien d'\''autre\n\n'
+    printf 'Réponses permises : ✓, ✗ (avec écran · thème · état), ou « non vu » (avec ce qui manque).\n'
+    printf 'Recopie les titres `### Regard neuf — …` tels quels.\n\n'
+    printf '### Regard neuf — grille\n\n| Ligne | Réponse | Où, et ce qui se voit |\n|---|---|---|\n'
+    while IFS=$'\t' read -r libelle _question _source; do
+      case "$libelle" in '' | '#'*) continue ;; esac
+      printf '| %s |  |  |\n' "$libelle"
+    done <"$GRILLE"
+
+    printf '\n### Regard neuf — contre le rendu attendu\n\n'
+    if [ "$code_attente" -ne 0 ]; then
+      printf "Rendu attendu illisible sur le ticket : non confronté.\n"
+    elif [ -z "$(printf '%s' "$rendu" | tr -d '[:space:]')" ]; then
+      printf 'Le ticket ne porte pas de rendu attendu : rien à confronter.\n'
+    else
+      printf "Une rubrique que le ticket ne remplit pas se répond « non renseignée ».\n\n"
+      printf '| Rubrique | Réponse | Ce qui se voit |\n|---|---|---|\n'
+      printf '| Question |  |  |\n| Référence |  |  |\n| Ce qui ne bouge pas |  |  |\n| États à couvrir |  |  |\n'
+    fi
+
+    printf '\n### Regard neuf — contre les décisions déjà prises\n\n'
+    if [ "$code_attente" -ne 0 ] && [ -z "$PARTIS_PRIS" ]; then
+      printf 'Décisions illisibles sur le ticket : non confrontées.\n'
+    elif [ -z "$(printf '%s' "$decisions" | tr -d '[:space:]')" ] && [ -z "$PARTIS_PRIS" ]; then
+      printf 'Aucune décision consignée : rien à confronter.\n'
+    else
+      printf -- '- <chaque parti pris ou choix, en une ligne> — tenu · plié · non vu : <ce qui se voit>\n'
+    fi
+  } >"$sortie"
+  return 0
+}
+
+# python_du_depot : l'interpréteur du venv du dépôt, sinon celui du poste. La planche n'importe que la
+# bibliothèque standard (et `build.py`, qui n'en importe pas plus) : un poste sans venv la produit quand
+# même, là où tout le reste du dépôt exigerait le venv.
+python_du_depot() {
+  local candidat
+  for candidat in "$RACINE/.venv/Scripts/python.exe" "$RACINE/.venv/bin/python"; do
+    if [ -x "$candidat" ]; then printf '%s' "$candidat"; return 0; fi
+  done
+  for candidat in python3 python; do
+    if command -v "$candidat" >/dev/null 2>&1; then printf '%s' "$candidat"; return 0; fi
+  done
+  return 1
+}
+
 # --- Les modes ------------------------------------------------------------------------------------
 affiche_plan() {
   local iid="$1" lignes="$2" nb="$3" indet="$4" route _cle origine fichiers suffixe f avant
@@ -614,6 +854,17 @@ affiche_plan() {
   fi
 }
 
+if [ -n "$PARTIS_PRIS" ]; then
+  if [ "$MODE" != "saisine" ]; then
+    printf 'relecture-visuelle.sh : --partis-pris ne vaut qu'\''avec --saisine (c'\''est ce que le regard neuf reçoit).\n' >&2
+    exit 2
+  fi
+  if [ ! -s "$PARTIS_PRIS" ]; then
+    printf 'relecture-visuelle.sh : --partis-pris : fichier introuvable ou vide : %s\n' "$PARTIS_PRIS" >&2
+    exit 2
+  fi
+fi
+
 case "$MODE" in
   fin)
     if [ -n "$IID" ]; then
@@ -636,7 +887,7 @@ case "$MODE" in
     retire_avant
     exit 0
     ;;
-  plan | preparer | couverture)
+  plan | preparer | couverture | saisine | planche)
     if [ -z "$IID" ]; then
       printf 'relecture-visuelle.sh : un iid de ticket est attendu.\n\n' >&2
       usage >&2
@@ -741,6 +992,81 @@ while IFS=$'\t' read -r route _cle _origine _fichiers; do
   [ -z "$route" ] && continue
   case "$(avant_de "$route")" in http*) NB_AVANT=$((NB_AVANT + 1)) ;; esac
 done <<<"$LIGNES"
+
+# --- Le regard neuf et sa planche (section 7) : lecture du disque, rien ne démarre ---------------------
+if [ "$MODE" = "saisine" ] || [ "$MODE" = "planche" ]; then
+  if [ "$NB" -eq 0 ]; then
+    printf 'Relecture visuelle du ticket #%s — aucun écran : rien à juger.\n' "$IID"
+    exit 3
+  fi
+  PAIRES="$(paires_de "$IID" "$LIGNES")"
+  NB_CAPTURES="$(printf '%s\n' "$PAIRES" | compte_captures)"
+  NB_PAIRES="$(printf '%s\n' "$PAIRES" | sed '/^$/d' | wc -l | tr -d ' ')"
+  NB_PAIRES_VUES="$(printf '%s\n' "$PAIRES" \
+    | awk -F'\t' 'NF && ($5 != "-" || ($6 != "-" && $6 != "nouveau")) { n++ } END { print n + 0 }')"
+  DOSSIER="$SOUS_DOSSIER/$IID"
+  if [ "$NB_CAPTURES" -eq 0 ]; then
+    printf 'Relecture visuelle du ticket #%s — aucune capture sous %s/ : rien à juger.\n' "$IID" "$DOSSIER" >&2
+    printf '  La relecture n'\''a pas eu lieu : sa raison se consigne (lib.sh relecture-note --raison).\n' >&2
+    exit 4
+  fi
+  mkdir -p "$RACINE/$DOSSIER" 2>/dev/null
+
+  if [ "$MODE" = "saisine" ]; then
+    SAISINE="$DOSSIER/saisine.md"
+    ecris_saisine "$IID" "$PAIRES" "$RACINE/$SAISINE" || exit 1
+    printf 'Saisine du regard neuf — ticket #%s\n\n' "$IID"
+    printf '  captures   : %s — %s paire(s) sur %s en portent au moins une (écran × état × thème)\n' \
+      "$NB_CAPTURES" "$NB_PAIRES_VUES" "$NB_PAIRES"
+    if grep -q "^Le ticket n'a pas pu être lu" "$RACINE/$SAISINE"; then
+      printf '  ⚠ attente  : ticket illisible — rendu attendu et décisions iront à « non vu »\n'
+    else
+      printf '  attente    : rendu attendu et décisions lus sur le ticket (lib.sh relecture-attente)\n'
+    fi
+    [ -n "$PARTIS_PRIS" ] && printf '  partis pris: %s, recopié tel quel\n' "$PARTIS_PRIS"
+    printf '  grille     : scripts/design/grille-relecture.tsv\n'
+    printf '  ensuite    : sous-agent « regard-neuf », dont le prompt est ce seul chemin :\n'
+    printf 'SAISINE %s/%s\n' "$(racine_native)" "$SAISINE"
+    exit 0
+  fi
+
+  # La planche : les paires sur le disque, puis `planche.py` depuis la racine — les chemins restent
+  # RELATIFS de bout en bout, ce qui évite de traduire `/e/…` pour un Python Windows.
+  printf '%s\n' "$PAIRES" >"$RACINE/$DOSSIER/paires.tsv"
+  if ! PYTHON="$(python_du_depot)"; then
+    printf 'relecture-visuelle.sh : aucun interpréteur Python — pas de planche.\n' >&2
+    exit 1
+  fi
+  # PYTHONIOENCODING sur l'interpréteur lui-même : sous Windows sa sortie serait en cp1252, et ses
+  # « ⚠ » arriveraient en mojibake (même piège que #141, dans l'autre sens).
+  if ! (cd "$RACINE" && PYTHONIOENCODING=utf-8 "$PYTHON" scripts/design/planche.py --iid "$IID" \
+    --paires "$DOSSIER/paires.tsv" --dossier "$DOSSIER" --sortie "$DOSSIER/planche.html"); then
+    printf 'relecture-visuelle.sh : la planche n'\''a pas pu être écrite.\n' >&2
+    exit 1
+  fi
+  # ELLE SURVIT AU WORKTREE. `/ticket-finish` ramasse le worktree juste après le merge, avant son
+  # résumé : une planche nommée là, mais laissée ici, serait un lien mort au moment où on le lit. Elle
+  # est donc recopiée sous le `.maestro/relecture/` du CLONE PRINCIPAL — le parent du répertoire git
+  # commun, comme `worktree.sh` le trouve —, et c'est ce chemin-là que la dernière ligne rend. Un
+  # seul fichier suffit : les captures y sont en `data:`. Best-effort : une copie ratée laisse la
+  # planche du worktree, et le dit.
+  PLANCHE="$DOSSIER/planche.html"
+  COMMUN="$(git -C "$RACINE" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+  PRINCIPAL=""
+  [ -n "$COMMUN" ] && PRINCIPAL="$(cd "$(dirname "$COMMUN")" 2>/dev/null && pwd)"
+  if [ -n "$PRINCIPAL" ] && [ "$PRINCIPAL" != "$(cd "$RACINE" && pwd)" ]; then
+    if mkdir -p "$PRINCIPAL/$DOSSIER" 2>/dev/null \
+      && cp "$RACINE/$PLANCHE" "$PRINCIPAL/$PLANCHE" 2>/dev/null; then
+      printf '  copie de travail : %s (ramassée avec le worktree)\n' "$PLANCHE"
+      if command -v cygpath >/dev/null 2>&1; then PRINCIPAL="$(cygpath -m "$PRINCIPAL")"; fi
+      printf 'PLANCHE %s/%s\n' "$PRINCIPAL" "$PLANCHE"
+      exit 0
+    fi
+    printf '  ⚠ copie vers le clone principal impossible : la planche partira avec le worktree.\n' >&2
+  fi
+  printf 'PLANCHE %s/%s\n' "$(racine_native)" "$PLANCHE"
+  exit 0
+fi
 
 if [ "$TSV" = 1 ]; then
   # `avant` en DERNIÈRE colonne : les quatre premières sont un contrat qu'un appelant lit par leur rang.

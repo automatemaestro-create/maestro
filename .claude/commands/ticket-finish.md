@@ -126,8 +126,13 @@ rien : regarder n'est pas un verdict, c'est ce qui permet d'en rendre un.
    ```
    Le verbe est **idempotent** (empreinte `cksum` : un rejeu à l'identique est muet, un jugement
    enrichi s'ajoute), donc une clôture rejouée après un pipeline rouge n'empile rien. Ses refus
-   tombent **avant toute écriture** : `4` fichier absent ou vide, `3` iid inconnu. Un `1` (forge
-   muette) **ne bloque pas la clôture** — signale-le dans le résumé final.
+   tombent **avant toute écriture** : `4` fichier absent ou vide, `3` iid inconnu, `5` jugement
+   sans sa **grille** entière (#980) — qui se répare en rejouant le regard neuf du skill, jamais en
+   la remplissant toi-même. Un `1` (forge muette) **ne bloque pas la clôture** — signale-le dans le
+   résumé final. Et **nomme dans ce résumé la planche** que le skill a écrite (la ligne
+   `PLANCHE <chemin>` de `relecture-visuelle.sh --planche`) : c'est sa copie dans le clone
+   principal, la seule qui survit au ramassage de l'étape 14, et la seule façon pour une personne
+   de **voir** ce que le texte consigné juge.
 
    Deux conduites à ne pas confondre selon ce que tu as vu :
    - **un constat corrigeable ici** (un contraste qui saute en thème sombre, un bloc qui déborde) :
