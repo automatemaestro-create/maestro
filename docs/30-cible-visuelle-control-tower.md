@@ -1136,7 +1136,8 @@ allowlists couvrait déjà tout ce que l'étape appelle — `bash scripts/design
 et `bash scripts/controltower/start.sh` (#932), `mcp__chrome-maestro`,
 `Bash(bash scripts/gitlab/lib.sh:*)` pour le verbe. Le `allowed-tools:` du frontmatter **ne vaut pas
 permission** (#179) : celui de `/ticket-finish` a seulement été complété de `Skill`, `Read`, `Write`
-et `mcp__chrome-maestro`, que l'étape 4bis emploie.
+et `mcp__chrome-maestro`, que l'étape 4bis emploie. (#964 en a depuis retiré `mcp__chrome-maestro` :
+le navigateur est celui du skill `relecture-visuelle`, et un skill garde ses outils — docs/10 §7.1.)
 
 ---
 

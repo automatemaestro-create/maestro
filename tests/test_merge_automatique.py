@@ -1522,8 +1522,15 @@ def test_ticket_ship_herite_du_ramassage_sans_le_reimplementer() -> None:
     Il n'a rien à rejouer — mais son résumé, lui, est le sien : une commande « zéro friction » qui
     finit dans un autre répertoire que celui où elle a commencé doit le dire, sans quoi la
     surprise se découvre au premier chemin relatif qui ne résout plus.
+
+    Le motif porte sur le CORPS du prompt, jamais sur son en-tête : depuis #964, l'`allowed-tools:`
+    de `/ticket-ship` déclare ce qu'il hérite de `/ticket-finish`, `ExitWorktree` compris (docs/10
+    §7.1). Une déclaration n'est pas une réimplémentation — et l'en-tête qui la porte est
+    l'échantillon qui prouve que le motif ci-dessous n'est pas creux.
     """
-    ship = _prompt("ticket-ship.md")
+    _, entete, corps = _prompt("ticket-ship.md").split("---", 2)
+    assert "ExitWorktree" in entete, "l'héritage de `/ticket-finish` est déclaré dans l'en-tête"
+    ship = corps
     assert "#519" in ship
     aplati = _aplati(ship)
     assert "clone principal" in aplati, (

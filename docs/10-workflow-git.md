@@ -2172,6 +2172,42 @@ personnelles vont dans `.claude/settings.local.json`, non versionné).
 - **Régénérer / auditer** : le fichier est du JSON simple ; toute évolution de l'allowlist est une
   **décision humaine** (un agent ne s'auto-accorde pas de permissions — l'écriture de ce fichier par
   Claude Code est d'ailleurs interceptée et demande validation).
+- **Le `allowed-tools:` d'une commande décrit, il n'autorise pas** (#964, M5 de #304). Il **ne vaut
+  pas permission** — `/ticket-start` déclarait `EnterWorktree` et la question restait posée (#179) —
+  et ne restreint rien — `Write` fonctionnait sans être déclaré ([docs/25 §5.5](./25-audit-commandes-claude.md)) :
+  c'est l'`allow` du dépôt (et, en run, son union avec `settings.run.json`, §11.7) qui tranche. Il
+  reste pourtant la **seule description** de ce qu'une commande touche, donc il se tient **juste**,
+  à la même règle pour toutes les commandes de [`.claude/commands/`](../.claude/commands/) :
+  - **ce que son texte prescrit** : `Bash(<exécutable>:*)` pour chaque commande shell qu'il écrit
+    (`bash`, `git`, `gh`, `.venv/Scripts/python.exe`…) ; `Read`, `Grep`, `Glob`, `Edit`, `Write`
+    pour lire, chercher, modifier ou écrire un fichier ; `EnterWorktree`/`ExitWorktree` ;
+    `WebSearch`/`WebFetch` ; `mcp__<serveur>` pour un navigateur qu'elle pilote **elle-même** ;
+    `Skill` dès qu'elle invoque une commande ou un skill ; `AskUserQuestion` dès qu'une étape **pose
+    une question et attend la réponse pour continuer** (choisir, confirmer, arbitrer) — un
+    garde-fou qui s'arrête faute d'argument ou sur une anomalie n'en est pas une ;
+  - **chaînages compris** : une commande qu'elle **joue comme une de ses étapes** lui transmet toute
+    sa déclaration — `/ticket-ship` ⊇ `/ticket-finish` ⊇ `/mr-fix`, `/ticket-start` ⊇
+    `/design-veille` et `/ticket-create` (découpage), `/milestone-verdict` ⊇ `/ticket-create`. Celle à
+    qui elle **passe la main** en fin de parcours (`/ticket-create` → `/ticket-start`) ne lui
+    transmet rien : c'est une autre commande, qui porte sa propre déclaration ;
+  - **un skill garde ses outils** : le jouer se déclare `Skill`, jamais ce qu'il appelle — les
+    déclarer inviterait la commande à refaire elle-même ce que l'exécutant fait déjà (commentaire
+    d'en-tête de `/milestone-bilan`, et `test_la_cloture_delegue_la_sequence_au_skill_au_lieu_de_la_recopier`
+    pour la relecture visuelle). D'où `mcp__chrome-maestro` **absent** de `/ticket-finish` et de
+    `/milestone-bilan`, **présent** dans `/design-veille`, `/retex-utilisateur` et
+    `/milestone-presentation`, qui pilotent le leur ;
+  - ce qui n'est que **cité** — une commande interdite, une suite proposée à quelqu'un d'autre — ne
+    se déclare pas.
+
+  **Pourquoi corriger plutôt que retirer.** #304 laissait les deux ouverts. Le champ porte déjà des
+  décisions que des tests gardent — `/retex-utilisateur` a son navigateur et jamais le web,
+  `/milestone-bilan` n'en a aucun ([`tests/test_retex_utilisateur.py`](../tests/test_retex_utilisateur.py),
+  [`tests/test_milestone_bilan.py`](../tests/test_milestone_bilan.py)) : le retirer les aurait
+  renvoyées dans la prose sans supprimer la dérive. Et retirer n'est neutre que si le champ
+  n'accorde jamais rien, ce que #179 n'a mesuré que pour `EnterWorktree` — alors qu'une déclaration
+  juste ne peut, au pire, accorder que ce que la commande fait déjà. Un écart se corrige donc **dans
+  l'en-tête** : jamais en allongeant une allowlist pour le faire tenir, ni l'inverse. La garde
+  contre la rechute est le lot final du chantier #960.
 - **Réglages machine (`.claude/settings.local.json`, non versionné)** : rien ne les annonçait, d'où
   le gabarit versionné [`.claude/settings.local.example.json`](../.claude/settings.local.example.json)
   — les clés attendues avec des **valeurs neutres**, et **aucun secret** (un jeton n'a pas sa place

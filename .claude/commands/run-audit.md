@@ -1,7 +1,7 @@
 ---
 description: Où est passé le temps d'un run — rapport délégué à journal.sh, jugement sur les coûts attendus, tickets de correction proposés
 argument-hint: "[<run-id> | --tous]  (défaut : le dernier run)"
-allowed-tools: Bash(bash:*), Bash(gh:*)
+allowed-tools: Bash(bash:*), Skill
 ---
 
 Commande **de supervision, en lecture seule** : tu rends le rapport de temps d'un run

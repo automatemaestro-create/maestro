@@ -1,7 +1,7 @@
 ---
 description: Exerce le livrable d'un milestone sur pièces et propose un verdict de bouclage — GO, GO avec réserves, NO-GO — critère par critère
 argument-hint: "[milestone]  (titre ou fragment, ex. « Phase 3 » — sans argument, les jalons actifs soldés te sont proposés)"
-allowed-tools: Bash(git:*), Bash(gh:*), Bash(bash:*), Bash(node:*), Bash(npm:*), Bash(.venv/Scripts/python.exe:*), Bash(.venv/bin/python:*), Read, Write, Skill
+allowed-tools: Bash(bash:*), Skill, AskUserQuestion, Read, Write
 ---
 
 <!-- `mcp__chrome-maestro` est ABSENT de cette liste, et c'est voulu : cette commande n'a aucun

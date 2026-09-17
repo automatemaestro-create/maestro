@@ -1,7 +1,7 @@
 ---
 description: Enregistre le verdict de bouclage arbitré d'un milestone et ouvre ses réserves en tickets — ne ferme jamais le milestone
 argument-hint: "[milestone]  (titre ou fragment, ex. « Phase 3 » — sans argument, les rapports de bouclage en attente d'arbitrage te sont proposés)"
-allowed-tools: Bash(git:*), Bash(gh:*), Bash(bash:*), Read, Write, Skill
+allowed-tools: Bash(bash:*), Bash(gh:*), Skill, AskUserQuestion, Read, Write
 ---
 
 <!-- Cette commande n'a ni navigateur, ni stack, ni suite de tests, et c'est voulu : elle ne rejoue

@@ -1,7 +1,7 @@
 ---
 description: Génère une présentation HTML autonome des travaux d'un milestone (fonctionnalités, corrections, écrans touchés, démonstrations filmées)
 argument-hint: "[milestone]  (titre ou fragment, ex. « Phase 3 » — défaut : la phase courante)"
-allowed-tools: Bash(git:*), Bash(gh:*), Bash(bash:*), Bash(node:*), Bash(npm:*), Bash(.venv/Scripts/python.exe:*), Bash(.venv/bin/python:*)
+allowed-tools: Bash(bash:*), Bash(python:*), Bash(.venv/Scripts/python.exe:*), Bash(.venv/bin/python:*), Read, Write, mcp__chrome-maestro
 ---
 
 Tu vas produire une **présentation HTML** de ce qui a été construit pendant un milestone :
