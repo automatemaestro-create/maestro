@@ -89,7 +89,7 @@ doute). Les **garde-fous** priment sur l'automatisation : suis les étapes dans 
        optionnel (module/dossier concerné) ;
      - corps optionnel (le *pourquoi*, pas le *quoi*) ;
      - pied **`Closes #<iid>`** — `/ticket-ship` est l'action terminale du cycle de dev, donc le
-       commit porte `Closes` (et non `Refs`) : GitLab fermera le ticket au merge.
+       commit porte `Closes` (et non `Refs`) : GitHub fermera le ticket au merge.
    - Committe directement, **hook `commit-msg` respecté** (il valide en-tête + `Closes #<iid>`).
      Le message passe par un **fichier** : écris-le avec l'outil `Write` dans ton scratchpad de
      session — jamais un heredoc, jamais `-m "$(…)"`, la couche permissions découpant une commande

@@ -30,7 +30,7 @@ n'ouvrir qu'en cas de doute.
    (quelqu'un se l'est attribué sans l'avoir démarré), et un « En cours » assigné est en travail —
    `/ticket-start` refuse de le démarrer.
 
-3. Récupère la **file de revue** — les PR ouvertes en attente de relecture :
+3. Récupère la **file de revue** — les PR ouvertes, donc non mergées (le verbe a gardé son nom) :
    `bash scripts/gitlab/lib.sh review-queue`. Sortie **TSV**, une ligne d'en-tête préfixée `#` (à
    ignorer) puis une ligne par PR, **la plus ancienne d'abord** : `mr` (le numéro — le verbe et ses
    colonnes gardent le vocabulaire GitLab, c'est le contrat de `lib.sh`), `age_j` (jours écoulés
@@ -47,24 +47,25 @@ n'ouvrir qu'en cas de doute.
    quand il n'y a rien (code 3, aucune sortie, pas même l'en-tête) : dans ce cas **ne le mentionne
    pas du tout**, ni en bloc, ni dans la synthèse.
 
-4. Rends un **compte rendu Markdown** clair. Commence par le bloc **⏳ PR en attente de revue**,
-   **en tête de sortie** : c'est lui qui déclenche la relecture. Une ligne par PR de la file, dans
-   l'ordre rendu (la plus ancienne d'abord) : `PR #<numéro>` — titre, ticket `#<iid>`, **ancienneté**
-   (`ouverte depuis <age_j> j`), état `draft`/`ready`, pipeline, et le relecteur s'il en a été posé
-   un (`à relire par @<relecteur>`, sinon **« aucun relecteur »** — ce n'est **pas** une anomalie :
-   depuis #196 aucune commande n'en pose, c'est donc le cas normal, et la PR n'en attend pas moins
-   une relecture). Écris toujours **`PR #<numéro>`** en toutes lettres : sur GitHub, issues et PR
+4. Rends un **compte rendu Markdown** clair. Commence par le bloc **⏳ PR non mergées**, **en tête
+   de sortie** : c'est ce qui bloque, depuis #418, ce que `merge-mr` a refusé (voir le ⚠ de
+   l'étape 5). Une ligne par PR de la file, dans l'ordre rendu (la plus ancienne d'abord) :
+   `PR #<numéro>` — titre, ticket `#<iid>`, **ancienneté** (`ouverte depuis <age_j> j`), état
+   `draft`/`ready`, pipeline, et le relecteur s'il en a été posé un (`à relire par @<relecteur>`,
+   sinon **« aucun relecteur »** — ce n'est **pas** une anomalie : depuis #196 aucune commande n'en
+   pose, c'est donc le cas normal). Écris toujours **`PR #<numéro>`** en toutes lettres : sur GitHub, issues et PR
    partagent la notation `#<n>` (là où GitLab distinguait `#` et `!`), donc seul le préfixe évite de
    confondre un ticket et une PR. Mets en évidence les PR les plus **anciennes** (celles qui
-   traînent) et celles au **pipeline rouge** (non mergeables en l'état). La revue est
-   **best-effort** : c'est cette file qui appelle un relecteur, aucune approbation n'est obligatoire
-   et ce que le merge exige n'est pas un avis mais les prérequis de `merge-mr` — **aucun merge non
+   traînent) et celles au **pipeline rouge** (non mergeables en l'état). La revue n'a
+   **aucun déclencheur** : cette file n'appelle pas de relecteur, la relecture (`/mr-review`) est un
+   geste humain à la demande (docs/10 §6), aucune approbation n'est obligatoire et ce que le merge
+   exige n'est pas un avis mais les prérequis de `merge-mr` — **aucun merge non
    vérifié** (#417, chantier #413).
    Enchaîne ensuite sur le backlog groupé par **état**, dans cet ordre (le plus
    actionnable d'abord) :
-   1. **🔍 En revue** — action humaine attendue (merge). Pour chaque ticket, affiche
-      `#<iid> — <titre>` puis, si une PR est rattachée : son état (Draft/Ready) et un lien
-      `PR #<numéro>`. C'est la section « prêt à merger / attend une revue » — vue côté **tickets**,
+   1. **🔍 En revue** — PR ouverte et pas encore mergée : depuis #418, un merge en cours ou refusé
+      par `merge-mr`. Pour chaque ticket, affiche `#<iid> — <titre>` puis, si une PR est
+      rattachée : son état (Draft/Ready) et un lien `PR #<numéro>`. C'est la vue côté **tickets**,
       là où le bloc ⏳ de tête est la vue côté **PR** ; ne répète pas ici l'ancienneté ni le
       relecteur. Signale un ticket « En revue » **sans PR** (dérive — cf. `doctor.sh`).
    2. **🛠 En cours** — c'est ici que se lit qui travaille sur quoi : mets l'assigné en évidence

@@ -64,7 +64,7 @@ Règles :
 <type>/<iid>-<slug>
 ```
 
-- `iid` : l'ID du ticket GitLab (le numéro affiché dans l'issue, ex. `#12` → `12`).
+- `iid` : le numéro du ticket GitHub (le numéro affiché dans l'issue, ex. `#12` → `12`).
 - `slug` : le titre du ticket en minuscules, sans accents, mots séparés par `-`, tronqué à ~40 caractères.
 - `type` : dérivé du label `type::*` du ticket (voir §3).
 
@@ -1657,10 +1657,12 @@ peut être clos sans être réalisé avec **`/ticket-abandon <iid> [doublon]`** 
 la Control Tower (Phase 1) :
 
 - [`/backlog`](../.claude/commands/backlog.md) `[opened|all]` — vue d'ensemble du backlog groupée
-  par **cycle de vie** (§3.1), avec `agent::`/`prio::` et la mise en avant de ce qui **attend une
-  revue / est prêt à merger**. S'appuie sur `lib.sh backlog` (requête canonique du backlog).
+  par **cycle de vie** (§3.1), avec `agent::`/`prio::` et, en tête, les **PR non mergées** — depuis
+  #418, celles que `merge-mr` a refusées (§6). S'appuie sur `lib.sh backlog` (requête canonique du
+  backlog).
 - [`/mr-review`](../.claude/commands/mr-review.md) `<mr|branche>` — synthèse d'une PR (aptitude au
-  merge, pipeline, threads bloquants, résumé du diff) pour **éclairer un relecteur humain**. Depuis
+  merge, pipeline, threads bloquants, résumé du diff) pour **éclairer un relecteur humain**. **Aucune
+  commande ni aucun run ne la déclenche** : c'est un geste humain, à la demande (§6). Depuis
   #418 la revue est un geste d'**après-merge** (§6), donc la commande éclaire le plus souvent une PR
   **déjà dans `main`** ; elle reste utile avant merge sur une PR qu'on reprend à la main. Conforme au
   garde-fou §6 : elle **ne merge, ne ferme, ni n'approuve jamais** — le chemin de merge est
@@ -1747,8 +1749,10 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
     plus ouvertes en Draft jusqu'à ce que quelqu'un les relise : elles entrent dans `main` dès
     qu'elles sont vertes. Ce qui disparaît est l'attente d'un humain pour **vérifier**, pas la
     vérification — qui vit tout entière dans le tableau ci-dessus. La file de revue de `/backlog` et
-    `/mr-review` gardent leur usage et perdent leur place dans le cycle : on relit ce qui est déjà
-    dans `main`, et un problème trouvé se corrige par un ticket, plus par un blocage de PR.
+    `/mr-review` perdent leur place dans le cycle : on relit ce qui est déjà dans `main`, et un
+    problème trouvé se corrige par un ticket, plus par un blocage de PR. Ni l'une ni l'autre n'a
+    gardé de déclencheur de revue — la file ne montre plus que des PR refusées, et la relecture est
+    un geste humain à la demande (la revue, plus bas dans cette section).
   - **La PR passe en prête sans rien demander.** `/ticket-finish` joue `gh pr ready` d'office : la
     question « le travail est-il prêt pour la revue ? » disparaît, une PR qu'on s'apprête à merger
     n'étant pas un brouillon.
@@ -1894,19 +1898,31 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
   pas « d'où vient la branche » mais « aucune ne part sans que la forge la confirme **ou** qu'un tag
   la garde joignable ». Reste une dérive qui n'est pas d'hygiène de branches, laissée hors
   périmètre : l'issue **#353 est encore ouverte** alors que son livrable est sur `main`.
-- **La revue est *best-effort*, pas bloquante — et depuis #413 elle est d'APRÈS-MERGE.** À
-  plusieurs, personne ne sait spontanément ce qui attend qui : le projet garde donc
-  `approvals_before_merge=0` et joue sur la **visibilité** — arbitrage du chantier #155. L'argument
-  d'origine (« une approbation obligatoire recréerait une dépendance entre personnes ») tient
-  toujours ; celui qui l'accompagnait — « et le merge resterait de toute façon humain » — est
+- **La revue n'est pas une étape du cycle : rien ne la déclenche, et depuis #413 elle est
+  d'APRÈS-MERGE.** À plusieurs, personne ne sait spontanément ce qui attend qui : le projet a donc
+  gardé `approvals_before_merge=0` et misé sur la **visibilité** — arbitrage du chantier #155.
+  L'argument d'origine (« une approbation obligatoire recréerait une dépendance entre personnes »)
+  tient toujours ; celui qui l'accompagnait — « et le merge resterait de toute façon humain » — est
   **faux depuis #418** : une approbation obligatoire ne ralentirait plus un humain, elle
   **bloquerait le merge automatique**, ce qui en fait un choix plus lourd qu'avant et non plus
   léger. Ce qu'exige le merge vit dans `merge-mr` (premier point de cette section), pas dans une
   approbation.
+  - ⚠ **`/mr-review` n'a qu'un déclencheur : un humain, à la demande** (#961). Ni `/ticket-finish`,
+    ni `/ticket-ship`, ni le pilote d'un run, ni un hook ne l'appelle ; `/backlog` se borne à la
+    **proposer** en pied de rapport. Cette section a longtemps dit que « la visibilité » déclenchait
+    la revue — or une visibilité n'appelle rien, et depuis #418 la file qu'elle désignait ne montre
+    plus de PR à relire (dernier point ci-dessous) : c'était une **règle lue**, jamais un mécanisme,
+    le défaut de `/design-veille` avant #714. La commande garde son usage — éclairer une PR, le plus
+    souvent déjà dans `main` —, et ce qu'on y trouve se corrige par un ticket.
+  - **Ce qui tient lieu de revue avant merge** : les quatre prérequis de `merge-mr` (premier point
+    de cette section), le filet CI (§8) et, quand le diff touche un écran, la **relecture visuelle**
+    que joue `/ticket-finish` (#935, docs/30 §5.5). **Ajouter une relecture de code a été écarté sur
+    mesure** (#969, abandonné) : sur 42 bugs postérieurs à #418, dépouillés par ce qui les a
+    trouvés, **5 seulement (12 %)** étaient plausiblement rattrapables par une relecture de diff —
+    le reste est venu de la mesure, de l'usage du produit ou de renversements de conception.
   - **Aucun relecteur n'est posé automatiquement** (#196). `/ticket-finish` l'a fait un temps
     (#161) ; ce n'est plus le cas : désigner un relecteur attribue une PR à quelqu'un qui ne l'a
-    pas demandé, alors que la file de revue donne déjà le signal « cette PR attend quelqu'un ». La
-    **visibilité** suffit donc, et la désignation redevient un **geste humain explicite**.
+    pas demandé. La désignation est un **geste humain explicite**.
   - Le helper reste **outillé pour cette pose manuelle** :
     `bash scripts/gitlab/lib.sh set-reviewer [mr|branche] [username]` choisit, à défaut d'un nom
     donné, un **membre humain du projet distinct de l'auteur**, résolu via l'API des membres —
@@ -1918,10 +1934,13 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
     une seule personne, il n'y a pas de candidat et le helper échoue proprement (code `1`). Aucune
     commande du workflow ne l'appelle — c'est un outil, plus une étape.
   - `/backlog` affiche la **file de revue** en tête (`bash scripts/gitlab/lib.sh review-queue`) :
-    PR ouvertes **la plus ancienne d'abord**, avec `age_j` (l'ancienneté, c'est elle qui déclenche
-    la relecture), l'état `draft`/`ready`, le statut du pipeline, l'auteur et le relecteur s'il en
-    a été posé un à la main (colonne à « - » sinon, cas désormais normal). C'est **elle seule** qui
-    porte le signal de revue.
+    PR ouvertes **la plus ancienne d'abord**, avec `age_j`, l'état `draft`/`ready`, le statut du
+    pipeline, l'auteur et le relecteur s'il en a été posé un à la main (colonne à « - » sinon, cas
+    normal). Le verbe a gardé son nom, **la file a changé de contenu** : depuis #418 une PR verte et
+    sans conflit est mergée à sa clôture (ou au drain du run, §11.11), si bien que ce qui s'attarde
+    ici est ce que `merge-mr` a **refusé** — une PR bloquée, à débloquer par `/mr-fix` (§8.3), pas
+    une PR à relire —, et l'ancienneté y dit depuis quand un blocage attend. La file ne porte donc
+    **plus aucun signal de revue** : une PR saine ne passe devant personne, et c'est le cas nominal.
 - **Une PR au pipeline rouge n'est pas mergeable — et depuis #734 DEUX gardiens le tiennent.** Du
   temps de GitLab, le réglage projet `only_allow_merge_if_pipeline_succeeds=true` (complété par
   `allow_merge_on_skipped_pipeline=false`) faisait appliquer la règle par **GitLab lui-même** : le
@@ -5038,16 +5057,16 @@ est traité et pourquoi il existe.
 | Une session clôture un ticket **qui n'est pas le sien** (PR et temps posés à la place d'un autre) | **garde-fou de clôture** : `close-guard` compare l'iid visé à la branche courante *et* aux assignés | §6 |
 | Les lots d'un parent s'attendent en file alors qu'ils sont indépendants | label **`lot::parallele`** sur le lot ; `startables` liste **tous** les lots prenables | §5.1 |
 | Une branche vieillit pendant qu'`origin/main` avance ; le conflit se découvre au merge | **alerte de retard** avant le push : `behind-main` (commits de retard + fichiers modifiés des deux côtés) | §6 |
-| Une PR ouverte n'est relue par personne, faute de savoir qu'elle attend | **revue best-effort outillée** : **file de revue** en tête de `/backlog`, la plus ancienne d'abord (aucun relecteur posé d'office, #196 ; `set-reviewer` reste là pour une pose manuelle) | §6 |
+| Une PR reste bloquée sans que personne sache qu'elle attend | **file de revue** en tête de `/backlog`, la plus ancienne d'abord : depuis #418 elle ne montre que ce que `merge-mr` a refusé, à débloquer par `/mr-fix`. La **relecture** n'a aucun déclencheur — geste humain à la demande (`/mr-review`) ; aucun relecteur posé d'office, #196 ; `set-reviewer` reste là pour une pose manuelle | §6 |
 | Une session meurt sur un ticket : il reste « En cours » et assigné, donc **invisible de tous** — travail compris | **détection + reprise** : `reconcile-en-cours` signale d'office, `reprendre-en-cours` le rend prenable sans toucher au worktree | §9.6 |
-| La CI dépend du poste d'**une** personne : elle éteint sa machine, l'équipe ne merge plus | **runner partagé permanent** (`--partage`, machine toujours allumée), les runners locaux en secours | §8.1 |
-| Un échec de lint occupe le runner de quelqu'un d'autre pour une faute de frappe | **filet CI local** : `bash scripts/ci/local.sh` rejoue les jobs du pipeline avant le push | §8 |
+| La CI dépend du poste d'**une** personne : elle éteint sa machine, l'équipe ne merge plus | **exécutants hébergés** de GitHub (#344) : aucun runner à tenir allumé — du temps de GitLab, un runner partagé permanent (`--partage`) | §8.1 |
+| Un échec de lint coûte un pipeline entier pour une faute de frappe | **filet CI local** : `bash scripts/ci/local.sh` rejoue les jobs du pipeline avant le push | §8 |
 | La moitié du `.env` circule à la main, de canal en canal | marqueurs **`[perso]` / `[partagé]`** + `env-pull.sh`, qui complète sans jamais écraser | §7.3 |
 
 **Rien n'est bloquant.** Aucun de ces mécanismes n'interdit quoi que ce soit : ils *disent*, et la
 décision reste humaine. `behind-main` et `close-guard` rendent un **code de retour lu, jamais
-fatal** (`… || verdict=$?`) ; la revue n'exige **aucune approbation** — c'est la visibilité qui la
-déclenche ; et **aucun relecteur n'est désigné d'office** (#196), la pose restant un geste humain
+fatal** (`… || verdict=$?`) ; la revue n'exige **aucune approbation** et **rien ne la déclenche** —
+c'est un geste humain, à la demande (§6) ; et **aucun relecteur n'est désigné d'office** (#196), la pose restant un geste humain
 outillé par `set-reviewer`. Les seuls refus durs restent ceux des garde-fous de
 §6 : **aucun merge non vérifié**, pas de force-push, pas de suppression de branche non mergée. ⚠ Ce
 premier refus disait « pas de merge automatique » jusqu'au chantier #413 : le merge **est** devenu
@@ -5063,7 +5082,7 @@ bloquants au sens plein, seuls de tout ce tableau.
 3. `/ticket-start <iid>` — s'arrête si le ticket est déjà pris ; sinon branche, statut, dates.
 4. `bash scripts/ci/local.sh` avant de pousser (§8).
 5. `/ticket-ship` — retard sur `origin/main` signalé, garde-fou de clôture, PR (sans relecteur
-   désigné : c'est la file de revue qui appelle un relecteur, §6), **puis attente du pipeline et
+   désigné, la relecture étant un geste humain à la demande, §6), **puis attente du pipeline et
    merge** par `lib.sh merge-mr` (§6). Compter quelques minutes : la commande ne rend plus la main
    dans la seconde.
 6. Le plus souvent il n'y a **rien à faire ensuite** — la PR est mergée, le ticket fermé par son

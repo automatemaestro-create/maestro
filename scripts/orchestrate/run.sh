@@ -18,7 +18,7 @@
 # (La reprise après limite d'usage elle-même est le lot suivant, #171 ; ici la boucle s'arrête sur
 # l'échec d'un ticket et le consigne.)
 #
-# --- Le verdict d'un ticket vient de GitLab, pas du texte de la session ---------------------------
+# --- Le verdict d'un ticket vient de GitHub, pas du texte de la session ---------------------------
 # Une session peut conclure « c'est fait » en s'étant trompée, ou échouer après avoir tout livré.
 # On ne lit donc pas sa prose : un ticket est réussi si, et seulement si, sa branche porte une PR
 # OUVERTE et son cycle de vie est « En revue » — exactement ce que `/ticket-ship` laisse derrière
@@ -43,7 +43,7 @@
 #
 # Le découpage suit la seule ligne qui compte, celle entre ce qui est ÉTAT DU RUN et ce qui est LONG :
 #   · le PILOTE (ce processus) garde tout l'état — plan, éligibilité, sauts, compteurs, `--max`,
-#     cascade d'échec, montage des worktrees, verdicts GitLab, `resume.tsv`. Il est SEUL À ÉCRIRE le
+#     cascade d'échec, montage des worktrees, verdicts GitHub, `resume.tsv`. Il est SEUL À ÉCRIRE le
 #     bilan, ce qui règle par construction la question « une ligne de resume.tsv reste-t-elle
 #     entière ? » : il n'y a jamais deux écrivains ;
 #   · le SOUS-SHELL d'un ticket ne porte que la session Claude et ses reprises — la seule partie qui
@@ -2148,7 +2148,7 @@ lance_session() {
 # protégée par six checks requis (#734).
 prompt_ticket() {
   cat <<PROMPT
-Tu traites intégralement le ticket GitLab #$1 de ce dépôt, seul et sans supervision humaine.
+Tu traites intégralement le ticket GitHub #$1 de ce dépôt, seul et sans supervision humaine.
 
 1. Lance la commande /ticket-start $1.
 2. Implémente tous les critères d'acceptation du ticket.
@@ -3828,7 +3828,7 @@ eligible() { # <index>
 # touche à l'état du run (compteurs, cascade, bilan) reste au pilote, qui n'a donc rien à recoller au
 # retour : un code suffit.
 #
-#   0  la session a rendu la main — le verdict est à lire dans GitLab
+#   0  la session a rendu la main — le verdict est à lire dans GitHub
 #   1  idem, mais interrompue par le timeout — le pilote le dira dans la raison
 #   2  arrêt demandé (fichier STOP) pendant l'attente d'une limite d'usage
 #   3  plafond d'attente dépassé : c'est la limite hebdomadaire, le run s'arrête
@@ -3858,7 +3858,7 @@ joue_session() { # <clé> <dest> <uuid> <mode> [<tâche>] [<cible>]
     fi
 
     # Une session sortie en 0 est allée au bout de son tour : rien ne l'a coupée, et il n'y a rien à
-    # reprendre. On passe droit au verdict GitLab. Sans ce garde-fou, tout faux positif de la
+    # reprendre. On passe droit au verdict GitHub. Sans ce garde-fou, tout faux positif de la
     # détection renvoyait en attente un ticket DÉJÀ LIVRÉ, sans jamais lire ce verdict (#203).
     if [ "$code" -eq 0 ]; then
       bilan_des_reprises "$reprises" "$attente_cumulee"
@@ -4102,7 +4102,7 @@ juge_ticket() { # <index> <code rendu par le sous-shell>
   cout="$(champ_json "$RUN_DIR/$iid.json" total_cost_usd)"
 
   # Les deux sorties d'urgence d'une session arrêtent le RUN et pas seulement ce ticket : elles ne
-  # passent donc pas par le verdict GitLab, qu'aucune session n'a eu le loisir de poser.
+  # passent donc pas par le verdict GitHub, qu'aucune session n'a eu le loisir de poser.
   if [ "$code" -eq 3 ]; then
     raison="limite hebdomadaire (attente > $(duree_lisible "$PLAFOND_ATTENTE_S"))"
     solde_ticket "$i" ECHEC - "$duree" "${cout:-0}" "$raison"
@@ -4257,7 +4257,7 @@ remplit_les_creneaux() {
     # Une limite d'usage est en cours et des sessions l'attendent (#291) : jeter un ticket neuf dans
     # cette fenêtre, c'est ouvrir une session qui échouera à sa première requête, brûlera une reprise
     # et rejoindra la même attente — après avoir consommé un montage de worktree et une lecture
-    # GitLab pour rien. On attend, comme les autres.
+    # GitHub pour rien. On attend, comme les autres.
     #
     # Seulement si quelque chose est EN VOL, et la condition n'est pas décorative : sans elle, un
     # rendez-vous encore ouvert alors que plus personne ne l'attend ferait sortir le pilote de sa
@@ -4322,7 +4322,7 @@ remplit_les_creneaux() {
       TRAITES=$((TRAITES + 1))
       lance_ticket "$i"
       # Une frame TOUT DE SUITE (#290) : remplir N créneaux prend le temps de N montages de worktree
-      # et de N lectures GitLab, pendant lesquelles l'écran resterait sur l'image d'avant — celle où
+      # et de N lectures GitHub, pendant lesquelles l'écran resterait sur l'image d'avant — celle où
       # ce ticket n'était pas encore parti. C'est aussi le seul endroit qui redessine quand les
       # sessions se soldent aussi vite qu'on les lance : la boucle d'attente, elle, ne tourne pas.
       vue_tick

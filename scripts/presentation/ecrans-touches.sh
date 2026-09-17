@@ -61,9 +61,9 @@
 #    est faux. C'est l'arbitrage entre les deux moitiés du critère : l'absence est muette, l'inconnu
 #    est nommé.
 #
-# 5. HORS PÉRIMÈTRE, à dessein : `apps/web/lib/**` et `apps/web/hooks/**` ne sont pas comptés. Ce
-#    sont de la plomberie, pas une surface — et les compter ferait rendre une ligne `-` à presque
-#    tous les tickets de la Control Tower, ce qui n'apprendrait plus rien.
+# 5. HORS PÉRIMÈTRE, à dessein : `apps/web/lib/**` n'est pas compté (les hooks y vivent aussi). C'est
+#    de la plomberie, pas une surface — et le compter ferait rendre une ligne `-` à presque tous les
+#    tickets de la Control Tower, ce qui n'apprendrait plus rien.
 #
 # --- Comment les commits sont trouvés --------------------------------------------------------------
 #
