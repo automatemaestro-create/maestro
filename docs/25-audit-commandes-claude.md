@@ -3,6 +3,10 @@
 > Ticket #304. Audit daté du **2026-08-07**, sur `origin/main` à `7a64a21`.
 > **Ce document ne modifie aucune commande** : il mesure, localise et propose. Les corrections
 > sont listées en §7 sous forme de tickets à créer.
+>
+> **Rejoué le 2026-09-14** (chantier #960, lots #961 à #966) : §9 porte les chiffres, le sort de
+> chaque constat et de chaque recommandation, les gardes posées et ce qui reste ouvert. Les §2 à §7
+> restent la photo du 2026-08-07.
 
 ## 1. Périmètre et méthode
 
@@ -300,7 +304,8 @@ composant React n'a aucun usage des 4 930 tokens de la boucle d'orchestration.
 > qui n'y étaient pas (entre autres toute la mécanique de `scripts/presentation/`, docs/10 §3.4) portés
 > **avant** d'être retirés. **Budget : 25 000 tokens**, soit l'ordre de grandeur du jour de cet audit
 > plus une marge — 16 000 aurait coupé des interdits utiles, 40 000 ne rendait que la moitié du gain.
-> Le test qui lève à un token près, sur le modèle de `BUDGET_CARTE_TOKENS`, est #966. Après le tri,
+> Le test qui lève à un token près, sur le modèle de `BUDGET_CARTE_TOKENS`, est `TestBudgetClaudeMd`
+> ([`tests/test_audit_commandes.py`](../tests/test_audit_commandes.py), #966). Après le tri,
 > CLAUDE.md pèse **~15 800 tokens**.
 
 ## 8. Rejouer les mesures
@@ -313,6 +318,169 @@ Les commandes de vérification directe, elles, sont reproductibles telles quelle
 wc -c .claude/commands/*.md .claude/skills/*/SKILL.md CLAUDE.md   # tailles
 grep -rn "@docs\|@CLAUDE" .claude/                                 # non-régression #28
 git branch --format='%(refname:short)' | wc -l                     # ampleur du constat 4.1
-glab mr view <iid> --output json | wc -c                           # charge utile d'une MR
+glab mr view <iid> --output json | wc -c                           # charge utile d'une MR (du temps de GitLab)
 bash scripts/gitlab/lib.sh issue-brief <iid> | wc -c               # projection équivalente
 ```
+
+Le rejeu du §9 se refait avec les instruments du dépôt, sans script jetable pour les trois
+premiers. Le compteur est `estimer_tokens` (`maestro/sources/extraction.py`), le même que celui
+de la carte de documentation. Il donne des chiffres qu'on ne peut **pas** comparer à ceux du §2,
+estimés par deux autres heuristiques :
+
+```bash
+bash scripts/gitlab/doctor.sh                       # la forge : 0 erreur, 0 avertissement
+bash scripts/orchestrate/ecart-run.sh               # les listes : code 0 = aucun écart imputable
+bash scripts/orchestrate/journal.sh refus --tous    # ce qui a réellement été refusé, par famille
+.venv/Scripts/python.exe -m pytest tests/test_audit_commandes.py   # les quatre gardes du §9.4
+git show <rev>:CLAUDE.md > .maestro/session/claude.md              # un fichier à une révision…
+env PYTHONPATH=. .venv/Scripts/python.exe -c "import sys; from maestro.sources.extraction import estimer_tokens; print(estimer_tokens(open(sys.argv[1], encoding='utf-8').read()))" .maestro/session/claude.md
+```
+
+## 9. Rejeu du 2026-09-14 (chantier #960)
+
+L'audit a été rejoué le **2026-09-14** sur `main` à `1d2426a`. Il a donné six constats, un par
+lot (#961 à #965), et un lot final pour les gardes et ce document (#966). Les chiffres
+« aujourd'hui » sont pris le **2026-09-17** à `dd5855d`, une fois les lots 1 à 5 mergés.
+
+**Ce qui délimitait le chantier.** Le dépôt était sain sur tout ce que ses outils regardent :
+`doctor.sh` rendait 0 erreur et 0 avertissement, `ecart-run.sh` aucun écart imputable aux listes.
+C'est encore vrai le 2026-09-17. Les six constats portent sur la seule chose qu'aucun outil ne
+jugeait : **ce qu'un prompt affirme est-il vrai ?**
+
+### 9.1 Les chiffres, au même compteur
+
+Tout est compté par `estimer_tokens`, aux trois révisions, commandes et skills compris (§8).
+
+| | 2026-08-07 (`7a64a21`) | 2026-09-14 (`1d2426a`) | 2026-09-17 (`dd5855d`) |
+|---|---:|---:|---:|
+| `CLAUDE.md` | 20 578 | **82 062** | **15 886** |
+| références `#NNN` dans `CLAUDE.md` | 81 | 502 | 147 |
+| commandes (nombre · tokens) | 12 · 35 831 | 17 · 86 603 | 17 · 88 791 |
+| skills (nombre · tokens) | 2 · 3 904 | 4 · 11 452 | 4 · 14 558 |
+| `/ticket-start` + `/ticket-ship` + `/ticket-finish` | 11 789 | 23 923 | 24 466 |
+| **entrée d'une session de ticket** (`CLAUDE.md` + ces trois) | 32 367 | **105 985** | **40 352** |
+| `/ticket-finish` seul | 5 237 | 14 233 | 14 412 |
+
+Les 22 261 tokens que #960 cite pour « le jour de l'audit » sont ceux du dernier `CLAUDE.md` de
+cette journée (`5b8f166`). Le pic est de **84 079** (`546e371`), juste avant le tri de #965. Les
+16 910 tokens du §2 viennent d'un autre compteur : ils ne se comparent à aucune colonne.
+
+**Ce que disent les chiffres.** Le coût d'entrée d'une session a été ramené près de son niveau
+d'août : 40 352 tokens contre 32 367. Mais sa **composition s'est inversée**. En août, `CLAUDE.md`
+en faisait 64 %. Aujourd'hui, ce sont les trois commandes du cycle qui en font 61 %, et
+`/ticket-finish` à lui seul pèse presque autant que `CLAUDE.md`. `CLAUDE.md` a désormais une borne,
+les commandes n'en ont aucune (§9.5).
+
+| Refus de permission (`journal.sh refus --tous`) | 2026-09-14 | 2026-09-17 |
+|---|---:|---:|
+| sessions · refus | 32 · 55 | 32 · 55 |
+| échappées de chemin | 19 (35 %) | 19 (35 %) |
+| règles `allow` lues (union du run) | 98 | 102 |
+
+Aucun run n'a tourné entre les deux mesures : le journal ne compte que des sessions passées. L'effet
+de #962 sur les échappées ne se mesurera qu'au prochain run. Les quatre règles de plus sont celles
+de #963.
+
+### 9.2 Les six constats, et ce qu'ils sont devenus
+
+| Constat du 2026-09-14 | Lot · PR | Ce qui a changé | Garde contre la rechute |
+|---|---|---|---|
+| Le préambule de `CLAUDE.md` annonçait « Phase 0 — POC … pas encore de code applicatif », face à 142 modules | #965 · #994 | Réécrit **sans état daté** : il dit où lire la phase (`lib.sh current-milestone`) au lieu de la nommer. Le hook `SessionStart` proposé est écarté, car il coûterait un aller vers la forge par session, runs compris (#602). | Aucun test : un texte qui n'affirme aucun état n'a rien qui puisse périmer. C'est sa nature qui tient lieu de garde. |
+| Quatre passages de `/ticket-finish`, `/ticket-ship` et `/mr-fix` envoyaient le message de commit et la description de PR dans le scratchpad, un chemin absolu que le prompt de run refuse | #962 · #995 | `.maestro/session/` en chemin relatif, et le scratchpad nommé pour être écarté | `TestAtelierDeSession` |
+| Des faits au présent désignaient GitLab, dont `.gitlab-ci.yml` à l'étape du filet CI | #961 · #999 | GitHub et `.github/workflows/ci.yml`, dans les commandes, dans le prompt et les commentaires de `run.sh`, et dans docs/10 §6 | `TestForgeAuPresent` |
+| L'`allow` interactif ne couvrait pas cinq lectures de supervision que les commandes prescrivent | #963 · #997 | Cinq règles, avec leur granularité et ce qui reste dehors (docs/10 §7.1) | `ecart-run.sh` rejoue l'union run ↔ interactif. Aucun test ne vérifie la couverture des formes prescrites (§9.5). |
+| Les `allowed-tools:` ne décrivaient pas ce que font les commandes (M5) | #964 · #1000 | Corrigés plutôt que retirés, sous une règle unique qui inclut les chaînages (docs/10 §7.1) | `TestChainagesDesDeclarations` |
+| `CLAUDE.md` sans borne : 82 062 tokens, ×3,7 depuis #304 | #965 · #994 | 84 079 → 15 830, par tri de contenu (la règle et l'interdit restent, la démonstration va dans `docs/`), sous une garde de non-perte | `TestBudgetClaudeMd` (25 000) |
+
+### 9.3 Les recommandations du 2026-08-07, cinq semaines plus tard
+
+| # | Sort | Par |
+|---|---|---|
+| M1 | **Fait** — `/branch-cleanup` délègue sa boucle à `lib.sh cleanup-merged` | #309 |
+| M2 | **Fait** — `/ticket-abandon` lit `issue-brief` ; `/ticket-start` juge la taille sur `issue-raw` après `start-brief` | la bascule `glab` → `gh` des prompts (`5f81ca9`, 2026-08-17) |
+| M3 | **Fait** — `/mr-fix` et `/ticket-finish` renvoient à `scripts/ci/local.sh` | #310 (`d04dd11`, 2026-08-10) |
+| M4 | **Fait en deux temps.** La phrase « squelette sans code » de `/ticket-finish` est partie avec M3, le 2026-08-10. La même faute, un état du dépôt affirmé au présent, vivait aussi dans le préambule de `CLAUDE.md` ; c'est celle que #960 a trouvée | M3, puis #965 |
+| M5 | **Fait** — corrigé, pas retiré | #964 |
+| H1 · H2 | **Tranchés** — tri par nature de contenu, budget de 25 000 tokens | #965 |
+| H3 | **Non traité.** Les passages littéraux (préambule, prélude, verdicts `close-guard`) n'ont pas été re-mesurés : le script de *shingles* n'a jamais été versionné (§8) | — |
+| H4 | **Non traité.** La convention de découpage vit toujours dans `/ticket-create` §4 et `/ticket-start` §1. Seule la copie de `CLAUDE.md` a maigri, avec #965 | — |
+| H5 | **Cas cité, disparu.** La question « la PR est en Draft, est-ce fini ? » de `/ticket-finish` a disparu quand le merge est devenu automatique : la PR passe « prête » sans demander. La question générale, une branche « personne n'est là » dans les commandes, reste compensée par le prompt de `run.sh` | #430 (`8474817`, 2026-08-23) |
+
+M4 et M5 sont le motif de ce chantier. Recommandés sans réserve le 2026-08-07, ils ont attendu cinq
+semaines : la même dérive était revenue, et rien ne pouvait la voir revenir.
+
+### 9.4 Les gardes, et comment elles jugent
+
+[`tests/test_audit_commandes.py`](../tests/test_audit_commandes.py) porte une garde par constat
+qui peut revenir :
+
+- **`TestBudgetClaudeMd`** — `estimer_tokens(CLAUDE.md) ≤ BUDGET_CLAUDE_MD_TOKENS` (25 000). La garde
+  **lève**, en disant de combien et où la décision a été prise (#965). Elle est prouvée **à un token
+  près sur le fichier réel** : au coût exact elle passe, un token en dessous elle lève. Le budget
+  annoncé par `CLAUDE.md` et par ce document est lu et comparé à la constante : la relever en
+  silence fait rougir la suite.
+- **`TestForgeAuPresent`** — toute mention de GitLab dans `.claude/**` versionné et dans
+  `scripts/orchestrate/run.sh`. Le chemin `scripts/gitlab/`, où le helper vit toujours, n'est pas
+  une mention. `.gitlab-ci.yml` n'est admis nulle part.
+- **`TestAtelierDeSession`** — « scratchpad » dans les commandes qu'une session de run joue. Le
+  périmètre est **dérivé** : les commandes que nomment les quatre prompts de session de `run.sh`,
+  plus celles qu'elles jouent selon les chaînages de docs/10 §7.1. `/ticket-finish` y entre par
+  `/ticket-ship`. Les usages légitimes (`/milestone-*`, skill `verify`) restent dehors par le
+  périmètre, pas par un motif aveugle : la suite vérifie que le motif les voit.
+- **`TestChainagesDesDeclarations`** — pour chaque chaînage écrit dans docs/10 §7.1, la
+  déclaration de la commande jouée est **incluse** dans celle de son appelante. La commande jouée
+  doit aussi être citée par l'appelante : un chaînage écrit sans appel réel décrit un autre dépôt.
+
+**Le temps d'une phrase ne se juge pas par des mots.** « Au passé » n'a pas de forme lexicale
+fiable, et juger un texte par un lexique est proscrit dans ce dépôt. Les deux gardes de mentions
+tiennent donc un **inventaire** : `FORGE_ADMISES` et `SCRATCHPAD_ADMISES` recopient chaque mention
+admise, avec **sa raison** (au passé, vraie au présent, nommée pour être écartée). La machine ne
+détecte que ce que personne n'a jugé, suivant le partage de #562 : la détection du manque est
+automatique, le verdict ne l'est jamais. Un extrait se lit sur le texte aplati (citations `>` et
+commentaires `#` retirés en tête de ligne) : rewrapper un paragraphe ne le casse pas. Un extrait
+inscrit qui a disparu du fichier fait rougir la suite, pour que l'inventaire ne couvre jamais
+qu'une phrase qui existe.
+
+**Quand une garde rougit.** Une mention de GitLab au présent se corrige : la forge est GitHub
+(#335). Une mention au passé, ou vraie au présent, s'inscrit avec sa raison. Une commande jouée en
+run qui prescrit le scratchpad se corrige vers `.maestro/session/`. Un chaînage qui ne transmet
+pas sa déclaration se corrige **dans l'en-tête** de l'appelante (docs/10 §7.1), jamais dans une
+allowlist. Et un `CLAUDE.md` qui dépasse est une décision : on relève le budget en connaissant le
+coût, ou on sort la démonstration vers `docs/`.
+
+**L'échantillon fautif est le vrai.** Chaque motif est éprouvé, avant le balayage, sur les phrases
+**exactes** que #961 et #962 ont retirées (`d742670^`, `85f42e5^`). Pour les chaînages,
+l'échantillon est celui de #964 : `/mr-review` ne contient pas `/ticket-finish`. Un échantillon
+inventé prouverait qu'on sait reconnaître la faute qu'on imagine. Celui-ci prouve que la garde
+aurait arrêté celle qui a eu lieu.
+
+Au passage, deux résidus que #961 avait laissés pour ce lot sont soldés. Les bouchons de
+`tests/test_orchestrate.py` lisent l'iid du prompt par un seul motif, `_IID_DU_PROMPT`, qui ne
+contient plus le nom de la forge ; #961 avait fait rougir 29 tests en changeant ce mot. Et
+l'échantillon de `tests/test_presentation.py` ne vise plus `apps/web/hooks/`, un dossier qui
+n'existe pas.
+
+### 9.5 Ce qui reste ouvert
+
+- **Les commandes n'ont pas de budget.** De 12 commandes et 35 831 tokens le 2026-08-07, on est
+  passé à 17 commandes et 88 791 tokens. `/ticket-finish` est passé de 5 237 à 14 412 tokens (×2,75),
+  et chaque session de run le paie à travers `/ticket-ship`. #965 a refusé de déplacer la prose de
+  `CLAUDE.md` vers les commandes, précisément parce qu'elles sont chargées à chaque session de run,
+  mais rien ne borne leur propre croissance. C'est le poste qui pèse le plus lourd dans l'entrée
+  d'une session (§9.1). La question est celle de H1/H2 transposée aux commandes, et elle appelle le
+  même arbitrage : un budget par commande du cycle, ou un tri par nature de contenu.
+- **Le texte d'une commande et son `allowed-tools:`** ne se vérifient que le long des chaînages.
+  Rien ne vérifie qu'un exécutable prescrit dans le corps (`gh`, `git`, `.venv/…`) est bien déclaré,
+  ni qu'un exécutable déclaré est encore utilisé.
+- **La couverture de l'`allow` interactif** sur les lectures que les commandes prescrivent (#963) a
+  été vérifiée une fois, à la main (26 formes sur 26), avec le filtre partagé `permissions.awk`.
+  Aucun test ne la rejoue. `ecart-run.sh` ne juge que l'écart entre les deux listes.
+- **Les skills joués par `Skill`** (`relecture-visuelle`) sont hors du périmètre de
+  `TestAtelierDeSession`, qui se dérive des commandes. Aucun ne nomme le scratchpad aujourd'hui.
+- **`scripts/gitlab/lib.sh` est hors du périmètre de `TestForgeAuPresent`.** #961 y a relevé des
+  commentaires qui décrivent encore l'ancienne file de revue (« PR ouvertes en attente de revue »),
+  et le défaut `GL_BOT_USERS=MaestroAgents` date de GitLab. Les y inclure élargirait le filet
+  local à presque toutes les suites d'outillage, pour des commentaires.
+- **H3, H4, et H5 dans sa forme générale** (§9.3).
+- **Les refus** : 16 « inclassés » et 15 « trous d'allowlist » attendent toujours au journal.
+  Ils ne viennent pas de cet audit, mais c'est le même instrument qui les montre.

@@ -4,6 +4,8 @@ Maestro est un orchestrateur d'agents : moteur et API en Python (`maestro/`, l'A
 
 **Ce fichier est chargé par chaque session : il ne garde que la règle et ce qu'il ne faut pas défaire** (#965, budget 25 000 tokens). La démonstration — mesures, pistes écartées, historique des renversements, incidents — vit dans la section pointée : **la lire avant de toucher à un mécanisme**. Abréviations : docs/10 = [docs/10-workflow-git.md](./docs/10-workflow-git.md), docs/30 = [docs/30-cible-visuelle-control-tower.md](./docs/30-cible-visuelle-control-tower.md), docs/35 = [docs/35-decision-poste-de-bureau-et-disposition.md](./docs/35-decision-poste-de-bureau-et-disposition.md). Ajouter ici une règle, jamais sa démonstration.
 
+**Ce qu'un prompt affirme est gardé** par [`tests/test_audit_commandes.py`](./tests/test_audit_commandes.py) (#966, docs/25 §9.4) : le budget de ce fichier (levé, jamais tronqué), GitLab au présent dans `.claude/**` et `run.sh`, le scratchpad dans une commande jouée en run, l'`allowed-tools:` le long des chaînages. Une mention admise **s'inscrit avec sa raison** dans l'inventaire du test — jamais un lexique du passé pour la reconnaître.
+
 La CI ([`.github/workflows/ci.yml`](./.github/workflows/ci.yml), exécutants hébergés) **ne se déclenche que sur les Pull Requests** et un pipeline vert est requis avant merge. Avant la PR, on se vérifie avec `bash scripts/ci/local.sh`, qui ne joue par défaut que les tests concernés par le diff (docs/10 §8, §8.4).
 
 ## Règles Git obligatoires
