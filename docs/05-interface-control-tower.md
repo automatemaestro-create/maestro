@@ -282,12 +282,17 @@ reste que ce qui se lit d'un coup d'œil, dans cet ordre :
    ligne de détail (#247). Depuis #281 « combien travaillent » veut dire
    **ici** — le parc étant celui du poste (§2.0), seul un décompte dérivé des
    tâches du projet a sa place en tête, les « occupés ailleurs » passant au
-   détail.
-5. **État des runs** (#476, §2.1.2) — ce qui tourne, ce qui attend quelqu'un, ce
-   qui est tombé et ce qui s'est soldé aujourd'hui, chacun avec sa progression et
-   un renvoi vers sa vue. Le **Kanban** occupait cette place jusqu'au 2026-08-24
-   (#248) ; voir l'encadré ci-dessous.
-6. **Aperçu de l'activité** en direct (quelques lignes, pas le fil entier).
+   détail. ⚠ La tuile **Run en cours** ne se dérive plus des tâches depuis #927 :
+   elle reçoit les runs que l'écran a rangés — voir §2.1.3.
+5. **Run en cours** (#927, §2.1.3, [docs/35 §3.2](./35-decision-poste-de-bureau-et-disposition.md))
+   — la carte du run qui tourne **puis son pipeline**, sans geste de navigation.
+   Rien quand aucun run ne travaille : « aucun run en cours » reste un état normal.
+6. **État des runs** (#476, §2.1.2) — ce qui attend quelqu'un, ce qui est tombé et
+   ce qui s'est soldé aujourd'hui, chacun avec sa progression et un renvoi vers sa
+   vue. Le **Kanban** occupait cette place jusqu'au 2026-08-24 (#248) ; voir
+   l'encadré ci-dessous. ⚠ Depuis #927 les runs **promus au centre** n'y reparaissent
+   pas, et le bloc s'efface entièrement quand il ne lui reste rien d'autre à dire.
+7. **Aperçu de l'activité** en direct (quelques lignes, pas le fil entier).
 
 Le reste n'a pas été supprimé, il est **rangé**, et **chaque tuile renvoie vers
 la page où le détail vit désormais** : les fiches d'agent vers **Agents**, la
@@ -304,15 +309,16 @@ Le **coût cumulé** — celui du projet actif depuis #281 (§2.0) — et le sta
 temps réel vivent en permanence dans la barre supérieure, sur toutes les pages. Tout
 se met à jour par WebSocket.
 
-> ⚠ **L'item 5 a été renversé le 2026-08-24** (revue #470,
+> ⚠ **L'item « état des runs » a été renversé le 2026-08-24** (revue #470,
 > [docs/29 §3](./29-decision-run-objet-de-premier-plan.md)) et **livré par #476** : le
 > **Kanban a quitté le tableau de bord**, qui montre à la place **l'état des runs**.
 > Le motif est une question de portée, pas de place : le Kanban rend les tâches du
 > **projet** (#277/#281) — ce qui court avec ce qui est fini depuis trois jours —,
 > alors que la question « où en est-on ? » porte sur ce qui tourne, c'est-à-dire un
-> **run**. Il reparaît entier dans la vue d'un run (#475, §2.4.2). Les items 1 à 4 et
-> 6 n'ont pas bougé, et la portée **projet** n'est pas défaite : le run s'y
-> **ajoute**.
+> **run**. Il reparaît entier dans la vue d'un run (#475, §2.4.2). Les autres items
+> n'ont pas bougé, et la portée **projet** n'est pas défaite : le run s'y
+> **ajoute**. (La liste comptait alors six items ; le run au centre — #927, §2.1.3 —
+> en a fait le cinquième le 2026-09-17.)
 >
 > **#248 n'est pas effacé pour autant**, il est **daté** : « le Kanban prend toute la
 > hauteur restante » a décrit cet écran jusqu'au 2026-08-24, et c'est cet encadré qui
@@ -361,12 +367,12 @@ redémarrage de l'API (journal durable, #97).
 
 #### 2.1.2 L'état des runs — ce qui a pris la place du Kanban (#476) — **livré**
 
-L'item 5 du tableau de bord : les runs du projet actif **groupés par régime**, chacun
+L'item 6 du tableau de bord : les runs du projet actif **groupés par régime**, chacun
 avec sa progression et le renvoi vers sa vue (§2.4.2).
 
 | Groupe | Ce qu'il porte |
 | --- | --- |
-| **En cours** | les runs qui **avancent** — badge bleu à pastille battante |
+| **En cours** | les runs qui **avancent** — badge bleu à pastille battante. ⚠ Sur le tableau de bord ils sont **au centre** depuis #927 (§2.1.3) et ce groupe ne les répète pas ; il reste entier partout ailleurs |
 | **Suspendus** | ceux qui attendent quelqu'un : brief à valider, questions de clarification, arbitrage sur une tâche — avec **depuis quand** |
 | **En pause** | ceux qu'on a mis de côté (#477) — ils ne lancent plus rien, ils n'ont rien perdu |
 | **Interrompus** | ceux dont l'hôte ne bat plus (#348) |
@@ -428,6 +434,83 @@ groupes, le plafond des soldés et ce qu'il annonce, `soldeAujourdHui` (fin, rep
 sur le début, horodatage illisible), le vide nommé et l'absence de tout geste ;
 `tests/tableau-de-bord.test.tsx` garde depuis #476 que le Kanban a quitté l'écran et
 que le renvoi vers la liste y est.
+
+#### 2.1.3 Le run qui tourne, au centre (#927) — **livré**
+
+L'item 5 du tableau de bord depuis le 2026-09-17 (lot 6 de #921,
+[docs/35 §3.2](./35-decision-poste-de-bureau-et-disposition.md)) : quand un run
+travaille, **sa carte puis son pipeline** occupent le centre de l'écran d'accueil,
+sans geste de navigation. C'est le verdict du [retex du
+2026-09-11](./retex/2026-09-11-premiere-session-utilisateur.md) appliqué — *« le
+pipeline du run […] la meilleure vue du produit »* — alors que cette vue était à deux
+clics, derrière une liste, sur un écran qu'on ne visite pas spontanément.
+
+**Rien n'est réécrit, tout est remonté.** `CarteRun` est la ligne qu'on lit déjà dans
+la liste des runs et dans l'état des runs (§2.1.2) ; `VuePipeline` est la vue par
+défaut d'un run depuis #491, et les **quatre lectures** d'un run gardent leur
+arbitrage (§2.4.2) — le centre n'en monte qu'une, la bascule restant dans la vue du
+run, où mène le titre de la carte.
+
+Quatre décisions le tiennent, les deux premières venant de la **veille de conception**
+du ticket (consignée sur #927, références vérifiées le 2026-09-17) :
+
+- **le résumé avant le dessin** — d'après la page d'un run GitHub Actions : une ligne
+  de faits en tête, **puis** le graphe, dans un cadre qui lui appartient. C'est aussi
+  le reproche que [docs/30 §1.2](./30-cible-visuelle-control-tower.md) fait à notre
+  onglet Pipeline, qui ouvre d'emblée sur le graphe ;
+- **le run promu quitte la liste** — d'après la page d'aperçu d'un projet Vercel, qui
+  **sort** le déploiement courant de la liste au lieu de l'y répéter. Le groupe *En
+  cours* de §2.1.2 ne rend donc plus ces runs-là, et le bloc entier s'efface quand il
+  ne lui reste rien d'autre à dire. C'est ce qui tient la promesse de
+  [docs/35 §4](./35-decision-poste-de-bureau-et-disposition.md) — *ce qui est mis au
+  centre remplace, il ne s'ajoute pas* — et ce qui garde le corps de l'écran sous les
+  **trois blocs** de la règle des trois places ([docs/30 §4](./30-cible-visuelle-control-tower.md))
+  : deux au calme, comme avant, trois au plus quand d'autres runs attendent, dorment
+  ou se sont soldés aujourd'hui ;
+- **un seul pipeline déployé, jamais N** — deux graphes empilés ne répondent pas à
+  « où ça en est », ils demandent au lecteur de choisir, et le cadre du pipeline fait
+  à lui seul 34 rem. Le run de **tête** est celui du backend, qui rend ses résumés
+  récents d'abord ; les autres gardent leur carte, dans le même bloc, avec le renvoi
+  vers leur vue ;
+- **« aucun run en cours » reste un état normal** — sans run qui travaille, le bloc ne
+  rend rien et l'écran est celui d'avant, `PosteVide` (§2.1.1) compris.
+
+**Une source, trois lecteurs.** La tuile de tête, ce bloc et l'état des runs sortent
+tous de `runsParRegime` (`lib/execution.ts`). C'est le remède au constat **G2** du
+retex — *la tuile « Run en cours » affiche **Aucun** pendant que la section juste
+dessous affiche « EN COURS 1 »* : la tuile dérivait ses runs des **tâches** du projet,
+la section lisait les **exécutions**, et pendant la décomposition les deux disaient le
+contraire l'une de l'autre sur le même écran. Le remède est une source, pas une
+synchronisation — la leçon que #365 a tirée du cycle de vie d'un ticket, appliquée à
+un écran.
+
+**Et la décomposition se voit pendant qu'elle dure** (constat **G11** : quatre minutes
+de « Aucune tâche » pendant que le coût monte à 2,68 $). `estEnDecomposition`
+(`lib/execution.ts`) est une conjonction — le run **travaille** (le régime, jamais le
+statut brut : un run arrêté sur son brief a lui aussi zéro tâche, et ce cas est déjà
+nommé) **et** `nb_taches` vaut 0, c'est-à-dire le compte unique de #924, stable dès la
+décomposition. Le vide du pipeline, du Kanban et de la frise le dit alors en toutes
+lettres, et la tuile de tête porte « décomposition en cours » à la place du compte de
+tâches ouvertes. Le parti pris vient de deux références : GitHub Actions, où un job
+qui n'a pas démarré **garde sa place** et **nomme** son attente (« *Waiting for a
+runner to pick up this job…* »), et Buildkite, où l'étape qui **fabrique** le plan est
+une étape du build et non son absence. Ce qui en a été **laissé** : compter ces tâches
+qui n'existent pas encore (« 0/N ») — annoncer « 0 tâche » serait le « Aucune tâche »
+qu'on retire —, et fabriquer un nœud « planification » dans le graphe, qui ferait
+re-grandir le dénominateur que #924 vient de figer.
+
+⚠ Le verdict reste vrai d'un run qui ne publiera **jamais** de plan (producteur
+minimaliste, planification en échec), et c'est assumé : de l'extérieur les deux
+situations sont la même — le run travaille, rien n'est encore arrivé —, et la phrase
+ne promet donc pas de plan pour bientôt, elle dit ce qu'on sait.
+
+Composants : `apps/web/components/runs/RunAuCentre.tsx` (le bloc),
+`apps/web/lib/execution.ts` (`runsParRegime`, `estEnDecomposition`,
+`messageVideDuRun` — cette dernière a quitté `VueRun` pour que les deux écrans qui
+montent le même pipeline ne disent pas deux phrases différentes du même run). Tests
+du lot différés au lot final du chantier (#929) ; les suites existantes qui figeaient
+le comportement renversé ont été reprises (`tableau-de-bord`, `pipeline`, `frise`,
+`runs-vue`), l'échantillon fautif de G2 étant rejoué tel quel.
 
 ### 2.2 📋 Tâches — tableau Kanban
 
@@ -2519,9 +2602,10 @@ idempotence) est gardé côté canal par `tests/test_chat_pleine_page.py` (④).
 
 ## 5. Maquette textuelle du tableau de bord
 
-Tel qu'épuré par #191, rééquilibré par la vague v3, puis **renversé par #476** :
-l'arbitrage d'abord, quatre tuiles de tête **resserrées**, **l'état des runs**
-groupé par régime (§2.1.2), puis un aperçu de l'activité qui renvoie au Journal.
+Tel qu'épuré par #191, rééquilibré par la vague v3, **renversé par #476**, puis
+**recentré par #927** : l'arbitrage d'abord, quatre tuiles de tête **resserrées**, le
+**run qui tourne avec son pipeline** (§2.1.3), **l'état des runs** groupé par régime
+pour tout le reste (§2.1.2), puis un aperçu de l'activité qui renvoie au Journal.
 Chaque tuile qui résume un panneau rangé porte le renvoi (`→`) vers la page où il vit.
 Les pictogrammes ci-dessous sont ceux de cette maquette, pas ceux de l'écran :
 l'interface, elle, n'a plus d'émoji (#245, §4).
@@ -2544,11 +2628,19 @@ l'interface, elle, n'a plus d'émoji (#245, §4).
 │   Chat       │ 5 ouvertes   │ 4 en cours…  │ 4 au total…  │ 3 exécution(s)  │
 │   Coûts…     │              │              │ Voir les →   │ Détail par →    │
 │   Validations├──────────────┴──────────────┴──────────────┴─────────────────┤
-│   Journal    │  ÉTAT DES RUNS                            tous les runs →    │
-│   Paramètres │  En cours 1                                                  │
-│              │   Migrer la facturation                    ● En cours        │
-│              │   run-2f9c · il y a 12 min · 4,95 $US                        │
+│   Journal    │  RUN EN COURS                             tous les runs →    │
+│   Paramètres │   Migrer la facturation                    ● En cours        │
+│              │   run-2f9c · ⏱ 12 min · 4,95 $US                             │
 │              │   ▓▓▓▓▓▓▓▓▓░░░░░░  12 terminées · 4 en cours — 12/20 soldées │
+│              │   Pipeline                      [Tout le graphe][Branche…]   │
+│              │   20 tâches · 24 enchaînements · 5 niveaux · jusqu'à 4 …     │
+│              │  ┌────────────────────────────────────────────────────────┐  │
+│              │  │ [✓ Schéma SQL]──┬─[● API REST     ]──┬─[· Recette   ]  │  │
+│              │  │                 │  ⏱ 3 min · 0,84 $ │                  │  │
+│              │  │                 └─[· Maquette UI  ]──┘                 │  │
+│              │  └────────────────────────────────────────────────────────┘  │
+│              ├──────────────────────────────────────────────────────────────┤
+│              │  ÉTAT DES RUNS                            tous les runs →    │
 │              │  Suspendus 1                                                 │
 │              │   Refondre l'onboarding              ● Brief à valider       │
 │              │   run-8b1e · il y a 3 h · 0,42 $US                           │
@@ -2561,11 +2653,20 @@ l'interface, elle, n'a plus d'émoji (#245, §4).
 └──────────────┴──────────────────────────────────────────────────────────────┘
 ```
 
-Deux détails de la maquette qui **sont** des décisions : le groupe *Interrompus*
-n'apparaît pas parce qu'il n'y a rien dedans — un groupe vide ne s'affiche pas —, et
-« + 1 autre soldé » est la borne des soldés du jour, seul groupe plafonné (§2.1.2).
-La barre de progression, elle, est celle de la liste des runs et de la vue d'un run,
-comptée par le backend (#473) : trois écrans, une seule mesure.
+Quatre détails de la maquette qui **sont** des décisions : le run qui tourne n'est
+**pas** répété dans l'état des runs ci-dessous, dont le groupe *En cours* a disparu
+avec lui (#927, §2.1.3) ; le groupe *Interrompus* n'apparaît pas parce qu'il n'y a
+rien dedans — un groupe vide ne s'affiche pas — ; « + 1 autre soldé » est la borne des
+soldés du jour, seul groupe plafonné (§2.1.2) ; et le dessin du pipeline défile **chez
+lui**, dans son cadre, jamais la page. La barre de progression, elle, est celle de la
+liste des runs et de la vue d'un run, comptée par le backend (#473) : trois écrans, une
+seule mesure.
+
+⚠ Pendant les premières minutes d'un run, le cadre du pipeline ne porte **aucune**
+boîte et le dit — « Décomposition en cours : l'orchestrateur écrit le plan de ce
+run. » —, la tuile de tête disant « décomposition en cours » à la place du compte de
+tâches ouvertes (§2.1.3). C'est le seul moment où le centre de l'écran n'a pas de
+graphe à montrer, et c'est justement celui qu'il ne faut pas taire.
 
 ---
 

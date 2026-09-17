@@ -376,6 +376,116 @@ export function regimeDuRun(
 }
 
 /**
+ * Ce run **décompose-t-il son objectif**, à cet instant (#927, docs/35 §3.2) ?
+ *
+ * La phase que le retex du 2026-09-11 mesure comme un trou (**G11**) : pendant
+ * les **quatre premières minutes** d'un run, l'orchestrateur écrit le plan et
+ * aucune tâche n'existe encore — l'écran affichait « Aucune tâche » pendant que
+ * le coût montait à 2,68 $. Ce n'est pas un vide, c'est un **état**, et c'est le
+ * parti pris qu'on prend à Buildkite : chez lui, l'étape qui *fabrique* le plan
+ * est une étape du build, pas son absence.
+ *
+ * Une conjonction, et les deux moitiés comptent :
+ *
+ * - **il travaille** — le régime, jamais le statut brut : un run arrêté sur son
+ *   brief a lui aussi zéro tâche, et c'est un cas **déjà nommé** (« ce run attend
+ *   une décision sur son brief, la décomposition n'a pas encore eu lieu »). Les
+ *   confondre dirait « ça décompose » d'un run qui attend quelqu'un — c'est-à-dire
+ *   exactement l'erreur de #355, à l'envers ;
+ * - **il n'a aucune tâche** — `nb_taches`, c'est-à-dire le compte unique de #924
+ *   (`EtatExecution.taches_vues` : le plan **plus** les tâches vues). Avant #924 ce
+ *   nombre grandissait au fil de la décomposition ; il vaut désormais 0 tant que
+ *   rien n'est publié, puis le total du plan d'un coup. C'est ce qui rend ce
+ *   verdict franc : il bascule une fois, quand le plan arrive.
+ *
+ * `attendUneValidation` n'est pas demandé, et ce n'est pas un oubli : une demande
+ * de validation porte une **tâche**, or ce run n'en a aucune — et le cas où elle
+ * est publiée avant sa tâche (#568) se lit sur le `statut`
+ * (`en_attente_arbitrage`), donc `causeDAttente` répond déjà sans l'appariement.
+ * Même raison qu'à `runsEnSouffrance` ci-dessous.
+ *
+ * ⚠ Le verdict reste vrai d'un run qui ne publiera **jamais** de plan (producteur
+ * minimaliste, planification en échec), et c'est assumé : de l'extérieur les deux
+ * situations sont la même — le run travaille, rien n'est encore arrivé —, et la
+ * phrase qui en découle ne promet donc pas de plan pour bientôt, elle dit ce
+ * qu'on sait.
+ */
+export function estEnDecomposition(execution: ResumeExecution): boolean {
+  return regimeDuRun(execution) === REGIME_TRAVAILLE && execution.nb_taches === 0;
+}
+
+/**
+ * Les runs **rangés par régime**, en une passe et dans l'ordre du backend (#927).
+ *
+ * Extrait d'`EtatDesRuns`, où cette boucle vivait depuis #476, parce que le
+ * tableau de bord a désormais **trois** lecteurs de la même question — la tuile
+ * de tête, le run mis au centre, et l'état des runs — et que c'est précisément
+ * leur divergence que le retex rapporte (**G2** : la tuile disait « Aucun »
+ * pendant que la section juste dessous disait « EN COURS 1 »). La tuile dérivait
+ * des `taches`, la section des `executions` ; le remède est **une source**, pas
+ * une synchronisation.
+ *
+ * Aucun tri : `GET /api/executions` rend ses résumés récents d'abord, et chaque
+ * groupe conserve cet ordre de lui-même — même parti pris que `ListeRuns` et que
+ * `runsRelancables`, qui ne retrient pas non plus.
+ *
+ * Les régimes **absents** n'ont pas d'entrée : un appelant lit
+ * `parRegime.get(REGIME_…) ?? []`, ce qui distingue mal « aucun » de « pas
+ * demandé » — mais il n'y a rien à distinguer, la carte étant toujours complète
+ * pour les runs qu'on lui a donnés.
+ */
+export function runsParRegime(
+  executions: ResumeExecution[],
+  enValidation: ReadonlySet<string>,
+): Map<RegimeRun, ResumeExecution[]> {
+  const parRegime = new Map<RegimeRun, ResumeExecution[]>();
+  for (const run of executions) {
+    const regime = regimeDuRun(run, enValidation.has(run.run_id));
+    const deja = parRegime.get(regime);
+    if (deja) deja.push(run);
+    else parRegime.set(regime, [run]);
+  }
+  return parRegime;
+}
+
+/**
+ * Ce que dit une lecture **vide** de ce run — et il y a désormais **trois** vides,
+ * qui ne s'expliquent pas de la même façon (#491, #927).
+ *
+ * Écrit ici et non dans la vue d'un run, où il vivait jusqu'à #927 : le tableau
+ * de bord monte le même pipeline (docs/35 §3.2), et deux formulations du même
+ * vide finiraient par ne plus dire la même chose du même run selon l'écran d'où
+ * on le regarde.
+ *
+ * **L'ordre des trois questions est la décision** :
+ *
+ * 1. **le brief** d'abord — un run arrêté dessus n'a créé aucune tâche parce que
+ *    la décomposition **n'a pas eu lieu** ; c'est son état normal, et il attend
+ *    quelqu'un ;
+ * 2. **la décomposition** ensuite — elle a lieu, maintenant, et c'est ce que
+ *    l'écran taisait (**G11**). Elle ne peut pas précéder le brief : un run arrêté
+ *    sur son brief n'est pas du régime `travaille`, donc `estEnDecomposition` rend
+ *    déjà `false` — l'ordre est une redondance voulue, pas une condition ;
+ * 3. **le reste** — rien à expliquer, seulement à dire que ça viendra.
+ *
+ * La phrase ne nomme aucune des quatre lectures depuis #491 : elles la partagent,
+ * et un pipeline vide qui promettrait de remplir un tableau désignerait l'écran
+ * d'à côté.
+ */
+export function messageVideDuRun(
+  execution: ResumeExecution,
+  attente: CauseAttente | null,
+): string {
+  if (attente === ATTENTE_BRIEF || attente === ATTENTE_REPONSES) {
+    return "Aucune tâche : ce run attend une décision sur son brief, la décomposition n'a pas encore eu lieu.";
+  }
+  if (estEnDecomposition(execution)) {
+    return "Décomposition en cours : l'orchestrateur écrit le plan de ce run. Ses tâches paraîtront ici toutes ensemble, dès qu'il l'aura publié.";
+  }
+  return "Aucune tâche pour ce run — cette vue se remplira dès qu'il publiera ses événements.";
+}
+
+/**
  * Les runs **qu'on a laissés attendre**, dans l'ordre du backend (#738).
  *
  * Le pendant de `runsRelancables` sur l'autre verdict, et sa seconde moitié est

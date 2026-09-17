@@ -17,6 +17,15 @@
  * « Tâches » et « Dépense » sont cadrées par construction. La tuile « Agents »,
  * elle, l'est par ce composant, parce que le **parc est celui du poste** et non
  * du projet (docs/05 §2.3) : voir sa construction plus bas.
+ *
+ * ⚠ **La tuile « Run en cours » ne se dérive plus des tâches** (#927, lot 6 de
+ * #921) : elle reçoit les runs que l'écran a rangés (`quiTournent`), c'est-à-dire
+ * la même carte que le bloc du run au centre et que l'état des runs. Elle les
+ * dérivait des `taches` du projet, et c'est le constat **G2** du retex du
+ * 2026-09-11 : « Aucun » affiché juste au-dessus d'une section qui disait
+ * « EN COURS 1 ». Deux sources pour un fait ne se synchronisent pas, elles se
+ * remplacent par une — c'est la leçon que #365 a tirée du cycle de vie d'un
+ * ticket, appliquée ici à un écran.
  */
 
 import type { ReactNode } from "react";
@@ -29,9 +38,16 @@ import {
 } from "@/components/Icones";
 import { type Icone, type Renvoi, TuileChiffre } from "@/components/Primitives";
 import { coutCumule } from "@/lib/etatGlobal";
+import { estEnDecomposition } from "@/lib/execution";
 import { formatCout } from "@/lib/format";
 import { entreeParLibelle } from "@/lib/navigation";
-import { AGENT_OCCUPE, type CoutExecution, type EtatAgent, type Tache } from "@/lib/types";
+import {
+  AGENT_OCCUPE,
+  type CoutExecution,
+  type EtatAgent,
+  type ResumeExecution,
+  type Tache,
+} from "@/lib/types";
 
 /**
  * Les statuts de tâche dont on a besoin ici (machine à états docs/03 §3, mêmes
@@ -40,11 +56,7 @@ import { AGENT_OCCUPE, type CoutExecution, type EtatAgent, type Tache } from "@/
  */
 const STATUT_EN_COURS = "en_cours";
 const STATUT_BLOQUEE = "bloquee";
-const STATUT_TERMINEE = "terminee";
 const STATUT_ECHEC = "echec";
-
-/** Une tâche soldée ne compte plus dans ce qui est « en vol ». */
-const STATUTS_SOLDES = new Set([STATUT_TERMINEE, STATUT_ECHEC]);
 
 type Indicateur = {
   libelle: string;
@@ -70,17 +82,53 @@ export function IndicateursTableauDeBord({
   taches,
   agents,
   couts,
+  quiTournent = [],
 }: {
   taches: Tache[];
   agents: EtatAgent[];
   couts: CoutExecution[];
+  /**
+   * Les runs **qui travaillent**, tels que l'écran les a rangés (#927) —
+   * `runsParRegime(…).get(REGIME_TRAVAILLE)`, la carte dont `EtatDesRuns` et le
+   * run mis au centre sortent eux aussi.
+   *
+   * C'est **le** remède à G2 (retex du 2026-09-11) : la tuile dérivait ses runs
+   * des `taches` du projet, pendant que la section juste dessous lisait les
+   * `executions`. Les deux lectures ne pouvaient qu'être d'accord par accident,
+   * et pendant la décomposition elles ne l'étaient pas du tout — zéro tâche
+   * contre un run en vol, donc « Aucun » au-dessus de « EN COURS 1 ». Le remède
+   * est **une source**, pas une synchronisation : la liste arrive déjà rangée,
+   * cette tuile ne la redéduit pas.
+   *
+   * Défaut vide plutôt qu'obligatoire : un appelant qui ne connaît pas les runs
+   * — un banc de primitives, un test de tuile — rend alors « Aucun », ce qui est
+   * vrai de ce qu'on lui a donné.
+   */
+  quiTournent?: ResumeExecution[];
 }) {
-  const enVol = taches.filter((t) => !STATUTS_SOLDES.has(t.statut));
-  const runsActifs = [
-    ...new Set(enVol.map((t) => t.run_id).filter(Boolean)),
-  ];
   const compte = (statut: string) =>
     taches.filter((t) => t.statut === statut).length;
+
+  // Ce que la tuile dit **sous** le chiffre. Les tâches encore ouvertes viennent
+  // de la progression des runs eux-mêmes (#473, comptée par le backend sur la
+  // machine à états) et non des `taches` chargées : c'est la même source que la
+  // valeur au-dessus, et c'est tout l'objet du lot. `nb_taches` en repli pour un
+  // résumé servi sans progression.
+  const ouvertes = quiTournent.reduce(
+    (total, run) =>
+      total +
+      (run.progression
+        ? run.progression.total - run.progression.soldees
+        : run.nb_taches),
+    0,
+  );
+  // La décomposition **dite** en tête d'écran (#927, G11) : pendant les premières
+  // minutes d'un run il n'y a aucune tâche à compter, et « 0 tâche(s) encore
+  // ouverte(s) » se lirait « il ne se passe rien » à l'instant précis où tout se
+  // passe. La condition porte sur **tous** les runs en vol : dès que l'un d'eux a
+  // un plan, il y a bien quelque chose à compter.
+  const decomposent =
+    quiTournent.length > 0 && quiTournent.every(estEnDecomposition);
 
   // Ce qu'on vient chercher sur cette tuile, c'est « combien travaillent,
   // combien sont disponibles » (#247) — pas un ratio d'agents allumés. Le
@@ -130,19 +178,19 @@ export function IndicateursTableauDeBord({
       libelle: "Run en cours",
       icone: IconeStatutEnCours,
       valeur:
-        runsActifs.length === 0
+        quiTournent.length === 0
           ? "Aucun"
-          : runsActifs.length === 1
-            ? runsActifs[0]
-            : `${runsActifs.length} runs`,
-      monospace: runsActifs.length === 1,
-      titre: runsActifs.length === 1 ? runsActifs[0] : undefined,
+          : quiTournent.length === 1
+            ? quiTournent[0].run_id
+            : `${quiTournent.length} runs`,
+      monospace: quiTournent.length === 1,
+      titre: quiTournent.length === 1 ? quiTournent[0].run_id : undefined,
       detail:
-        enVol.length === 0
-          ? taches.length === 0
-            ? "aucune tâche connue"
-            : "toutes les tâches sont soldées"
-          : `${enVol.length} tâche(s) encore ouverte(s)`,
+        quiTournent.length === 0
+          ? "aucun run ne travaille en ce moment"
+          : decomposent
+            ? "décomposition en cours"
+            : `${ouvertes} tâche(s) encore ouverte(s)`,
     },
     {
       libelle: "Tâches",

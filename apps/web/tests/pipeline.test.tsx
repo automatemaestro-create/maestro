@@ -854,9 +854,20 @@ describe("les deux notes de lecture, jamais confondues", () => {
 });
 
 describe("quand le graphe n'a rien à montrer", () => {
+  /**
+   * ⚠ Le run de ces trois contrôles porte `nb_taches: 4` depuis #927, et ce n'est
+   * pas un détail de fixture : un run en vol **sans aucune tâche** est désormais
+   * un run qui **décompose** (G11), et il a sa phrase à lui — celle-là même que
+   * le dernier contrôle vérifie. Sans ce compte, les deux premiers mesureraient
+   * l'état d'à côté, et le troisième ne prouverait rien qui lui soit propre.
+   */
+  const runAvecPlan = () => ({
+    executions: [runFactice({ run_id: RUN, nb_taches: 4 })],
+  });
+
   it("nomme le vide sans désigner l'écran d'à côté", async () => {
     lecture.graphe = grapheFactice({ run_id: RUN });
-    monter();
+    monter(runAvecPlan());
 
     expect(
       await screen.findByText(/cette vue se remplira dès qu'il publiera/),
@@ -867,10 +878,26 @@ describe("quand le graphe n'a rien à montrer", () => {
     // La phrase est partagée avec le Kanban (#491) : un pipeline vide qui
     // promettrait de remplir « le tableau » désignerait l'écran d'à côté.
     lecture.graphe = null;
-    monter();
+    monter(runAvecPlan());
 
     expect(
       await screen.findByText(/cette vue se remplira dès qu'il publiera/),
     ).toBeInTheDocument();
+  });
+
+  it("dit la décomposition en cours plutôt que « Aucune tâche » (#927)", async () => {
+    // Le trou que le retex du 2026-09-11 mesure (G11) : pendant les quatre
+    // premières minutes d'un run, l'orchestrateur écrit le plan et rien n'existe
+    // — l'écran disait « Aucune tâche » pendant que le coût montait à 2,68 $.
+    // `runFactice` rend exactement cet état : `en_cours`, `nb_taches: 0`.
+    lecture.graphe = grapheFactice({ run_id: RUN });
+    monter();
+
+    expect(
+      await screen.findByText(/Décomposition en cours/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/cette vue se remplira dès qu'il publiera/),
+    ).not.toBeInTheDocument();
   });
 });

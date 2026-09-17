@@ -13,9 +13,9 @@
  *    champ porte le *dernier* run qui a touché la tâche, or un identifiant de
  *    tâche est un slug engendré depuis son contenu, donc partagé entre un run et
  *    sa **relance** (#349). On vérifie donc que la lecture part avec `?run=`.
- * ② **Trois vides qui ne se confondent pas** — run d'un autre projet, run arrêté
- *    sur son brief, API injoignable. Un Kanban vide non expliqué se lirait « ce
- *    run n'a rien fait ».
+ * ② **Quatre vides qui ne se confondent pas** — run d'un autre projet, run arrêté
+ *    sur son brief, run en **décomposition** (#927), API injoignable. Un Kanban
+ *    vide non expliqué se lirait « ce run n'a rien fait ».
  * ③ **Le journal persisté** (#478) — il vient de l'API et non du fil du shell,
  *    qui ne contient que ce qui est passé par le WebSocket depuis l'ouverture de
  *    la page : un run terminé la veille n'y aurait rien.
@@ -164,9 +164,9 @@ describe("les tâches d'un run", () => {
   });
 });
 
-// -------------------------------- ② Trois vides qui ne se confondent pas
+// -------------------------------- ② Quatre vides qui ne se confondent pas
 
-describe("les trois cas qui ne se confondent pas", () => {
+describe("les quatre cas qui ne se confondent pas", () => {
   it("dit qu'un run est hors de portée, et renvoie à la liste", async () => {
     monter({ executions: [] });
 
@@ -197,8 +197,29 @@ describe("les trois cas qui ne se confondent pas", () => {
     ).toBeInTheDocument();
   });
 
-  it("dit qu'un run sans tâche attend ses événements, sans accuser personne", async () => {
+  it("dit qu'un run en vol sans aucune tâche est en train de décomposer", async () => {
+    // Le troisième vide, ajouté par #927 : un run qui **travaille** et n'a
+    // encore aucune tâche est en train d'écrire son plan (G11, retex du
+    // 2026-09-11 — quatre minutes de « Aucune tâche » pendant que le coût monte
+    // à 2,68 $). `runFactice` rend exactement cet état : `en_cours`,
+    // `nb_taches: 0`.
     monter();
+
+    expect(
+      await screen.findByText(/Décomposition en cours/),
+    ).toBeInTheDocument();
+    await versLeKanban();
+    expect(
+      await screen.findByText(/Décomposition en cours/),
+    ).toBeInTheDocument();
+  });
+
+  it("dit qu'un run sans tâche attend ses événements, sans accuser personne", async () => {
+    // Le vide générique, et il faut désormais un run **qui a un plan** pour
+    // l'atteindre : sinon c'est la décomposition ci-dessus. Le cas reste réel —
+    // un run dont le compte est connu mais dont le graphe n'a rien rendu
+    // (journal rejoué d'un backend antérieur à #490).
+    monter({ executions: [runFactice({ run_id: RUN, nb_taches: 4 })] });
 
     // La phrase ne nomme aucune des deux vues (#491) : elles la partagent, et un
     // pipeline vide qui promettrait de remplir « le tableau » désignerait

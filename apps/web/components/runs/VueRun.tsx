@@ -70,9 +70,8 @@ import { RegionLive } from "@/components/RegionLive";
 import { mesuresDesRuns, mesuresDesTaches } from "@/lib/annonces";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import {
-  ATTENTE_BRIEF,
-  ATTENTE_REPONSES,
   causeDAttente,
+  messageVideDuRun,
   regimeDuRun,
   runsEnAttenteDeValidation,
   tachesEnAttenteDeValidation,
@@ -207,7 +206,7 @@ export function VueRun({ runId }: { runId: string }) {
               // défaut d'origine du chantier.
               enAttenteHumaine={tachesEnAttenteDeValidation(validations)}
               revision={revision}
-              messageVide={messageVideDuRun(attente)}
+              messageVide={messageVideDuRun(run, attente)}
             />
           )}
 
@@ -220,7 +219,7 @@ export function VueRun({ runId }: { runId: string }) {
               messageVide={
                 chargementTaches
                   ? "Chargement des tâches de ce run…"
-                  : messageVideDuRun(attente)
+                  : messageVideDuRun(run, attente)
               }
             />
           )}
@@ -240,7 +239,7 @@ export function VueRun({ runId }: { runId: string }) {
               messageVide={
                 chargementTaches
                   ? "Chargement de l'activité de ce run…"
-                  : messageVideDuRun(attente)
+                  : messageVideDuRun(run, attente)
               }
             />
           )}
@@ -377,20 +376,10 @@ function EnTeteRun({
   );
 }
 
-/**
- * Ce que dit la vue **vide** de ce run — et il y a deux vides, qui ne
- * s'expliquent pas de la même façon.
- *
- * Un run arrêté sur son brief n'a créé **aucune** tâche : la décomposition n'a pas
- * eu lieu, c'est son état normal et non le symptôme d'une lecture ratée. Les
- * autres cas n'ont rien à expliquer, seulement à dire que ça viendra.
- *
- * La phrase ne nomme plus « le tableau » depuis #491 : les deux lectures la
- * partagent, et un pipeline vide qui promettrait de remplir un tableau désignerait
- * l'écran d'à côté.
+/*
+ * ⚠ `messageVideDuRun` **a quitté ce fichier** (#927) : il vit dans
+ * `lib/execution`, avec les trois vides qu'il distingue désormais — le brief,
+ * la **décomposition** (G11), et le reste. Le tableau de bord monte le même
+ * pipeline (docs/35 §3.2), et deux formulations du même vide finiraient par ne
+ * plus dire la même chose du même run selon l'écran d'où on le regarde.
  */
-function messageVideDuRun(attente: CauseAttente | null): string {
-  return attente === ATTENTE_BRIEF || attente === ATTENTE_REPONSES
-    ? "Aucune tâche : ce run attend une décision sur son brief, la décomposition n'a pas encore eu lieu."
-    : "Aucune tâche pour ce run — cette vue se remplira dès qu'il publiera ses événements.";
-}
