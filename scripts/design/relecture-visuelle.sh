@@ -3,6 +3,8 @@
 #
 #   bash scripts/design/relecture-visuelle.sh --plan <iid>   # ce qu'il y a à regarder. Ne démarre rien.
 #   bash scripts/design/relecture-visuelle.sh <iid>          # le plan, + les stacks montées : après et avant
+#   bash scripts/design/relecture-visuelle.sh <iid> --scenario vide   # les mêmes, sur un état limite (#978)
+#   bash scripts/design/relecture-visuelle.sh --couverture <iid>      # écran par écran, les états capturés
 #   bash scripts/design/relecture-visuelle.sh --fin          # arrête les stacks et retire ce qu'elles ont posé
 #
 # Le maillon qui manquait à la chaîne de docs/30 §5.1 : PERSONNE NE REGARDE LE RENDU. La décision et
@@ -62,7 +64,7 @@
 #     (#279) et il n'y a rien à regarder. Le fichier est gitignoré (`core/projets/.gitignore`), son
 #     identifiant est LU dans `maestro/controltower/demo.py` plutôt que recopié, et il n'est retiré que
 #     si c'est nous qui l'avons posé — un projet déclaré avant nous ne nous appartient pas.
-#   - `.maestro/relecture/.avant` — le témoin de l'avant (section 5) : où il est monté et sur quels
+#   - `.maestro/relecture/.avant` — le témoin de l'avant (section 6) : où il est monté et sur quels
 #     ports, pour que `--fin`, qui ne prend pas d'iid, sache quoi arrêter et quoi retirer.
 #
 # Il ne parle à aucune forge, ne commite rien, ne merge rien : il monte des processus locaux sur les
@@ -76,24 +78,51 @@
 # n'y avait rien à regarder. L'avant ajoute sa part — ~50 s de plus la première fois, mesurés au
 # cadrage de #977 —, et la préparation dit ce qu'elle a réellement coûté, chronomètre en main.
 #
-# --- 5. L'AVANT : `origin/main`, servi à côté et jamais à la place (#977) --------------------------
+# --- 5. LES ÉTATS LIMITES : ouverts par la démo, comptés par écran (#978) ---------------------------
+#
+# La démo peuple l'état NOMINAL, et c'est rarement là que le rendu casse : c'est dans une file vide,
+# une API en panne, un nom de 80 caractères ou une liste de 200 lignes. `maestro/controltower/demo.py`
+# sert donc des SCÉNARIOS nommés, et ce script sait les monter (`--scenario <nom>`, relayé à `start.sh`).
+# Deux choses à ne pas défaire :
+#
+#   - LES NOMS SONT LUS dans `demo.py` (`SCENARIO_* = "…"`), jamais recopiés — même règle que le projet
+#     de démo, même raison (#830). Un nom que la démo ne sert pas est refusé ICI, avant la stack : le
+#     module le refuserait aussi, mais en arrière-plan, et l'on ne lirait qu'« API injoignable ».
+#   - CE QUI A ÉTÉ VU SE COMPTE SUR LE DISQUE, pas dans une déclaration. `--couverture` croise les écrans
+#     du plan, les scénarios et les deux thèmes avec les captures déposées — celles du nominal à la
+#     racine du dossier du ticket (le chemin d'avant #978, inchangé), celles d'un autre état dans un
+#     sous-dossier à son nom. Le script ne sait voir qu'une CAPTURE, jamais un regard : une capture
+#     qu'on n'a pas relue ne vaut rien, et c'est au skill de le tenir. Il ne décide pas non plus quels
+#     états il FALLAIT couvrir — c'est la rubrique « États à couvrir » du ticket (#976), un texte, que
+#     seule la session sait juger (#746) : ce mode constate, il ne rend aucun verdict.
+#
+# Chaque état se monte par un redémarrage de la stack (le scénario est celui de l'API, qu'on ne change
+# pas à chaud) : ~18 s par état, qui s'annoncent au même titre que le reste.
+#
+# --- 6. L'AVANT : `origin/main`, servi à côté et jamais à la place (#977) --------------------------
 #
 # Une capture seule ne dit ni ce qui a changé, ni si le changement a abîmé ce qui allait. Chaque écran
 # du plan se regarde donc DEUX fois : sur la branche (l'après) et sur `origin/main` (l'avant), dans le
-# même thème. L'avant est servi par une SECONDE stack, montée depuis un SECOND worktree, détaché
-# (`worktree.sh avant`, dont l'en-tête dit pourquoi cette voie et pas les deux autres) — le travail
-# de la session n'est donc jamais mis en jeu pour l'obtenir : dans l'arbre du ticket, rien n'est écrit
-# hors de `.maestro/`, et aucun fichier suivi n'est touché — pas même le temps d'une capture.
+# même thème et le même état. L'avant est servi par une SECONDE stack, montée depuis un SECOND
+# worktree, détaché (`worktree.sh avant`, dont l'en-tête dit pourquoi cette voie et pas les deux
+# autres) — le travail de la session n'est donc jamais mis en jeu pour l'obtenir : dans l'arbre du
+# ticket, rien n'est écrit hors de `.maestro/`, et aucun fichier suivi n'est touché — pas même le temps
+# d'une capture.
 #
 #   - SES PORTS sont ceux de l'après, décalés de 200. Les worktrees de ticket occupent 8001-8100 et
 #     3001-3100 (`worktree.sh`, #152), le clone principal 8000/3000 : 8200-8300 et 3200-3300 ne
 #     croisent personne. Dérivés de l'après et non de l'iid, pour qu'un `--ports` imposé au montage
 #     du worktree emporte l'avant avec lui.
+#   - SA CAPTURE EST À CÔTÉ DE L'APRÈS : même dossier d'état (§5), même clé, suffixe `-avant`. Le nom de
+#     l'après ne bouge pas — `--couverture` le compte, et il ne compte que les regards sur la branche.
 #   - UN ÉCRAN NOUVEAU n'a pas d'avant, et il est NOMMÉ comme tel — jamais capturé sur une 404. La
 #     question « cet écran existe-t-il sur origin/main ? » se pose à la règle de #544 : les pages
 #     d'origin/main, classées par `ecrans-touches.sh --chemins`. Seules comptent les pages SANS
 #     segment dynamique, parce que `/runs/[runId]/page.tsx` se range sous `/runs` sans que `/runs`
 #     réponde pour autant.
+#   - UN ÉTAT (§5) que la démo d'origin/main ne déclare pas n'a pas d'avant non plus : l'avant sert le
+#     même scénario que l'après ou ne sert rien — comparer un état limite au nominal ferait voir une
+#     différence que le ticket n'a pas faite.
 #   - L'AVANT EST BEST-EFFORT : `origin/main` introuvable, montage ou stack en échec — l'après reste
 #     prêt, l'avant est dit indisponible avec sa cause, et c'est la session qui le reporte à « ce que je
 #     n'ai pas pu voir ». Un avant manquant ne vaut jamais une relecture manquante.
@@ -111,21 +140,26 @@ SOUS_DOSSIER=".maestro/relecture"
 MODE="preparer"
 TSV=0
 IID=""
+SCENARIO=""
 
 usage() {
   cat <<'USAGE'
 La relecture visuelle : ce qu'il faut regarder, et de quoi le regarder.
 
-  bash scripts/design/relecture-visuelle.sh --plan <iid>   Ce qu'il y a à regarder. Ne démarre rien.
-  bash scripts/design/relecture-visuelle.sh <iid>          Le plan, puis les stacks montées : après et avant.
-  bash scripts/design/relecture-visuelle.sh --fin          Arrête les stacks et retire ce qu'elles ont posé.
+  bash scripts/design/relecture-visuelle.sh --plan <iid>          Ce qu'il y a à regarder. Ne démarre rien.
+  bash scripts/design/relecture-visuelle.sh <iid>                 Le plan, puis les stacks montées : après et avant.
+  bash scripts/design/relecture-visuelle.sh <iid> --scenario <nom>  Les mêmes, sur un état de la démo.
+  bash scripts/design/relecture-visuelle.sh --couverture <iid>    Écran par écran, les états capturés.
+  bash scripts/design/relecture-visuelle.sh --fin                 Arrête les stacks et retire ce qu'elles ont posé.
 
 Options :
-  --plan        N'écrit rien, ne démarre rien : dit seulement s'il y a matière, et laquelle.
-  --tsv         Le plan en TSV (route, url, origine, fichiers, avant), pour un appelant machine.
-                `avant` vaut l'URL sur origin/main, `nouveau` pour un écran absent d'origin/main,
-                ou `-` quand l'avant n'est pas évalué.
-  -h, --help    Cette aide.
+  --plan            N'écrit rien, ne démarre rien : dit seulement s'il y a matière, et laquelle.
+  --scenario <nom>  L'état que sert la démo (noms lus dans maestro/controltower/demo.py).
+  --couverture      N'écrit rien, ne démarre rien : croise écrans, états et thèmes avec les captures.
+  --tsv             Le plan (ou la couverture) en TSV, pour un appelant machine. La dernière colonne
+                    du plan, `avant`, vaut l'URL sur origin/main, `nouveau` pour un écran absent
+                    d'origin/main, ou `-` quand l'avant n'est pas évalué.
+  -h, --help        Cette aide.
 
 L'avant (origin/main) se sert sur les ports de l'après + 200. MAESTRO_RELECTURE_AVANT=0 l'éteint.
 
@@ -137,7 +171,14 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --plan) MODE="plan" ;;
     --fin) MODE="fin" ;;
+    --couverture) MODE="couverture" ;;
     --tsv) TSV=1 ;;
+    --scenario)
+      if [ $# -lt 2 ] || [ -z "$2" ]; then
+        printf 'relecture-visuelle.sh : --scenario attend un nom de scénario.\n\n' >&2
+        usage >&2; exit 2
+      fi
+      SCENARIO="$2"; shift ;;
     -h | --help) usage; exit 0 ;;
     -*) printf 'Option inconnue : %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
     *)
@@ -175,7 +216,7 @@ port_de() {
 PORT_API="$(port_de MAESTRO_PORT_API 8000)"
 PORT_UI="$(port_de MAESTRO_PORT_UI 3000)"
 
-# --- L'avant (section 5 de l'en-tête) -----------------------------------------------------------------
+# --- L'avant (section 6 de l'en-tête) -----------------------------------------------------------------
 DECALAGE_AVANT=200
 REF_AVANT="origin/main"
 WORKTREE_SH="$RACINE/scripts/git/worktree.sh"
@@ -193,6 +234,33 @@ PROJET_DEMO="$(sed -n 's/^PROJET_ID *= *"\([^"]*\)".*/\1/p' "$RACINE/maestro/con
 PROJET_DEMO="${PROJET_DEMO:-prj-demo}"
 PROJET_FICHIER="$RACINE/core/projets/$PROJET_DEMO.json"
 TEMOIN_PROJET="$RACINE/$SOUS_DOSSIER/.projet-pose"
+
+# --- Les scénarios de la démo (#978) ------------------------------------------------------------------
+# LUS dans le même fichier, dans l'ordre où la démo les déclare (voir l'en-tête, §5). Une démo qui n'en
+# déclare aucun — antérieure à #978 — rend une liste vide : le plan le dit, `--scenario` est refusé, et
+# la couverture ne compte que le nominal, qui existe toujours.
+SCENARIOS_DEMO="$(sed -n 's/^SCENARIO_[A-Z_]* *= *"\([^"]*\)".*/\1/p' \
+  "$RACINE/maestro/controltower/demo.py" 2>/dev/null | tr '\n' ' ')"
+SCENARIOS_DEMO="${SCENARIOS_DEMO% }"
+SCENARIO_NOMINAL="$(sed -n 's/^SCENARIO_NOMINAL *= *"\([^"]*\)".*/\1/p' \
+  "$RACINE/maestro/controltower/demo.py" 2>/dev/null | head -n 1)"
+SCENARIO_NOMINAL="${SCENARIO_NOMINAL:-nominal}"
+
+# Le dossier des captures d'un état, RELATIF à la racine. Le nominal garde le chemin d'avant #978 — le
+# dossier du ticket lui-même —, un autre état a le sien dessous : deux états d'un même écran ne
+# s'écrasent pas, et une relecture qui n'ouvre que le nominal n'a rien à apprendre de neuf.
+dossier_captures() {
+  local iid="$1" scenario="${2:-}"
+  if [ -z "$scenario" ] || [ "$scenario" = "$SCENARIO_NOMINAL" ]; then
+    printf '%s/%s' "$SOUS_DOSSIER" "$iid"
+  else
+    printf '%s/%s/%s' "$SOUS_DOSSIER" "$iid" "$scenario"
+  fi
+}
+
+# Le nom d'une capture : la clé d'écran de #544 (celle de `captures.mjs`) et le thème. Un seul endroit
+# le construit, pour que le skill, le plan et la couverture parlent du même fichier.
+nom_capture() { printf '%s-%s.png' "$1" "$2"; }
 
 # Le dossier que l'écran « Projets » affichera. Il ne sert qu'à ça : rien n'y est écrit, et la validation
 # des racines (`maestro/projets/racine.py`) n'est pas rejouée à la LECTURE du dépôt de projets — c'est
@@ -215,7 +283,13 @@ ecris_projet() {
 
 pose_projet() {
   if [ -f "$PROJET_FICHIER" ]; then
-    dire "  projet     : « $PROJET_DEMO » déjà déclaré — laissé en place"
+    # Posé par une relecture précédente de ce dépôt (un autre état monté, #978) : il est à nous, et
+    # `--fin` le retirera. Le dire autrement laisserait croire qu'il appartient à quelqu'un d'autre.
+    if [ -f "$TEMOIN_PROJET" ]; then
+      dire "  projet     : « $PROJET_DEMO » déjà posé par cette relecture (retiré par --fin)"
+    else
+      dire "  projet     : « $PROJET_DEMO » déjà déclaré — laissé en place"
+    fi
     return 0
   fi
   if ! ecris_projet "$PROJET_FICHIER" "$PROJET_DEMO"; then
@@ -437,6 +511,19 @@ prepare_avant() {
     dire "  avant      : indisponible — scripts/git/worktree.sh introuvable ; l'après seul"
     return 0
   fi
+  # Le même état que l'après, ou rien (en-tête, §6). Lu dans le `demo.py` d'origin/main AVANT de monter
+  # quoi que ce soit : ne rien servir coûte moins cher qu'un worktree monté pour rien. Une stack d'avant
+  # restée d'un état précédent est arrêtée — elle servirait un autre état sous la même URL.
+  local args_avant=(--demo --no-browser)
+  if [ -n "$SCENARIO" ] && [ "$SCENARIO" != "$SCENARIO_NOMINAL" ]; then
+    if ! git -C "$RACINE" show "$AVANT_SHA:maestro/controltower/demo.py" 2>/dev/null \
+      | grep -q "^SCENARIO_[A-Z_]* *= *\"$SCENARIO\""; then
+      arrete_stack_avant >/dev/null
+      dire "  avant      : $REF_AVANT ne sert pas l'état « $SCENARIO » — l'après seul pour cet état"
+      return 0
+    fi
+    args_avant+=(--scenario "$SCENARIO")
+  fi
 
   dire "  avant      : montage d'$REF_AVANT — worktree détaché et seconde stack (~50 s la première fois)"
   debut=$SECONDS
@@ -460,8 +547,8 @@ prepare_avant() {
 
   # Le `start.sh` de l'AVANT, et non celui de la branche : l'avant est origin/main tel qu'il se lance.
   if MAESTRO_PORT_API="$PORT_API_AVANT" MAESTRO_PORT_UI="$PORT_UI_AVANT" \
-    bash "$chemin/scripts/controltower/start.sh" --demo --no-browser >/dev/null 2>&1; then
-    dire "  ✓ avant prêt en $((SECONDS - debut)) s : http://localhost:$PORT_UI_AVANT ($REF_AVANT ${AVANT_SHA:0:7})"
+    bash "$chemin/scripts/controltower/start.sh" "${args_avant[@]}" >/dev/null 2>&1; then
+    dire "  ✓ avant prêt en $((SECONDS - debut)) s : http://localhost:$PORT_UI_AVANT ($REF_AVANT ${AVANT_SHA:0:7}, état « $ETAT_ANNONCE »)"
     return 0
   fi
   dire "  ⚠ avant indisponible — la stack d'$REF_AVANT n'a pas démarré. Fin de ses journaux :"
@@ -487,11 +574,18 @@ affiche_plan() {
     *)      dire "  avant      : indisponible — $AVANT_RAISON ; l'après seul" ;;
   esac
   if [ "$AVANT_ETAT" = "actif" ]; then
-    dire "  captures   : $SOUS_DOSSIER/$iid/<ecran>-<theme>-apres.png, et -avant.png à côté — chemin RELATIF"
+    dire "  captures   : $SOUS_DOSSIER/$iid/<ecran>-<theme>.png, et <ecran>-<theme>-avant.png à côté — chemin RELATIF"
   else
-    dire "  captures   : $SOUS_DOSSIER/$iid/<ecran>-<theme>-apres.png — chemin RELATIF, jamais absolu"
+    dire "  captures   : $SOUS_DOSSIER/$iid/<ecran>-<theme>.png — chemin RELATIF, jamais absolu"
   fi
   dire "  thèmes     : clair, sombre — les deux, toujours (le socle en porte deux, on en garde deux)"
+  if [ -n "$SCENARIOS_DEMO" ]; then
+    dire "  états      : ${SCENARIOS_DEMO// / · } — lus dans maestro/controltower/demo.py"
+    dire "               un état autre que « $SCENARIO_NOMINAL » se monte par --scenario <nom>, ses captures"
+    dire "               sous $SOUS_DOSSIER/$iid/<nom>/ ; --couverture dit, écran par écran, lesquels sont vus"
+  else
+    dire "  états      : « $SCENARIO_NOMINAL » seul — cette démo ne déclare aucun autre scénario"
+  fi
   dire ""
   if [ "$nb" -eq 0 ]; then
     dire "  aucun écran : ce ticket n'a touché aucune surface visible."
@@ -526,6 +620,10 @@ case "$MODE" in
       printf 'relecture-visuelle.sh : --fin ne prend pas d'\''iid (la stack est celle du dépôt courant).\n' >&2
       exit 2
     fi
+    if [ -n "$SCENARIO" ]; then
+      printf 'relecture-visuelle.sh : --fin ne prend pas de scénario (il arrête la stack, quel que soit son état).\n' >&2
+      exit 2
+    fi
     printf 'Fin de la relecture visuelle — ports UI %s · API %s\n' "$PORT_UI" "$PORT_API"
     # L'arrêt d'abord : un projet retiré sous une API vivante la laisserait servir un projet fantôme.
     # Les DEUX stacks avant tout retrait — et l'avant d'abord, ce qui laisse à ses processus le temps
@@ -538,14 +636,81 @@ case "$MODE" in
     retire_avant
     exit 0
     ;;
-  plan | preparer)
+  plan | preparer | couverture)
     if [ -z "$IID" ]; then
       printf 'relecture-visuelle.sh : un iid de ticket est attendu.\n\n' >&2
       usage >&2
       exit 2
     fi
+    if [ -n "$SCENARIO" ] && [ "$MODE" != "preparer" ]; then
+      printf 'relecture-visuelle.sh : --scenario ne vaut que pour monter la stack (le plan et la couverture valent pour tous les états).\n' >&2
+      exit 2
+    fi
+    # Refusé ICI, avant la stack : `demo.py` le refuserait aussi, mais en arrière-plan (voir §5).
+    if [ -n "$SCENARIO" ]; then
+      case " $SCENARIOS_DEMO " in
+        *" $SCENARIO "*) ;;
+        *)
+          printf 'relecture-visuelle.sh : scénario inconnu « %s » (la démo sert : %s).\n' \
+            "$SCENARIO" "${SCENARIOS_DEMO:-aucun}" >&2
+          exit 2
+          ;;
+      esac
+    fi
     ;;
 esac
+
+# La couverture : pour chaque écran du plan, chaque état et chaque thème, la capture est-elle là ?
+# Lecture du disque seule — ni stack, ni navigateur, ni forge. Voir l'en-tête, §5 : elle CONSTATE.
+# Une cellule de 10 colonnes. La largeur VISIBLE est passée à la main : `printf '%-10s'` compte des
+# octets sous une locale C, et `✓`, `—` en pèsent trois chacun — le tableau se décalait d'une ligne à
+# l'autre selon ce qu'elle contenait (même piège que la vue de `run.sh`, #325).
+cellule() { printf '%s%*s' "$1" "$((10 - $2))" ''; }
+
+affiche_couverture() {
+  local iid="$1" lignes="$2" route cle scenario theme fichier etats marque clair sombre
+  etats="$SCENARIO_NOMINAL"
+  [ -n "$SCENARIOS_DEMO" ] && etats="$SCENARIOS_DEMO"
+  if [ "$TSV" = 1 ]; then
+    printf '# route\tcle\tscenario\tclair\tsombre\n'
+  else
+    dire "Couverture de la relecture du ticket #$iid — captures sous $SOUS_DOSSIER/$iid/"
+    dire ""
+    dire "  écran         $(for scenario in $etats; do printf '%-10s' "$scenario"; done)"
+  fi
+  while IFS=$'\t' read -r route cle _origine _fichiers; do
+    [ -z "$route" ] && continue
+    marque=""
+    for scenario in $etats; do
+      clair=0; sombre=0
+      for theme in clair sombre; do
+        fichier="$(dossier_captures "$iid" "$scenario")/$(nom_capture "$cle" "$theme")"
+        if [ -s "$RACINE/$fichier" ]; then
+          [ "$theme" = clair ] && clair=1
+          [ "$theme" = sombre ] && sombre=1
+        fi
+      done
+      if [ "$TSV" = 1 ]; then
+        printf '%s\t%s\t%s\t%s\t%s\n' "$route" "$cle" "$scenario" "$clair" "$sombre"
+      else
+        case "$clair$sombre" in
+          11) marque="${marque}$(cellule '✓' 1)" ;;
+          10) marque="${marque}$(cellule 'clair' 5)" ;;
+          01) marque="${marque}$(cellule 'sombre' 6)" ;;
+          *) marque="${marque}$(cellule '—' 1)" ;;
+        esac
+      fi
+    done
+    [ "$TSV" = 1 ] || dire "$(printf '  %-14s' "$route")$marque"
+  done <<<"$lignes"
+  if [ "$TSV" != 1 ]; then
+    dire ""
+    dire "  ✓ les deux thèmes · clair / sombre : un seul · — rien de capturé"
+    dire "  une capture n'est pas un regard : ne compte comme vue que celle qu'on a relue."
+    dire "  fichiers attendus : $SOUS_DOSSIER/$iid/[<état>/]<clé>-<thème>.png — clés : $(
+      printf '%s\n' "$lignes" | cut -f2 | sed '/^$/d' | tr '\n' ' ')"
+  fi
+}
 
 BRUT="$(plan_de "$IID")"
 # Deux natures dans un seul flux (le contrat de #544) : les ÉCRANS, qui portent une route, et les
@@ -554,6 +719,15 @@ BRUT="$(plan_de "$IID")"
 LIGNES="$(printf '%s\n' "$BRUT" | grep -v $'^-\t' | sed '/^$/d' || true)"
 INDET="$(printf '%s\n' "$BRUT" | grep $'^-\t' || true)"
 NB="$(printf '%s\n' "$LIGNES" | sed '/^$/d' | wc -l | tr -d ' ')"
+
+if [ "$MODE" = "couverture" ]; then
+  if [ "$NB" -eq 0 ]; then
+    dire "Couverture de la relecture du ticket #$IID — aucun écran : rien à couvrir."
+    exit 3
+  fi
+  affiche_couverture "$IID" "$LIGNES"
+  exit 0
+fi
 
 # L'avant se juge sur l'origin/main LOCAL en `--plan` — gratuit, hors réseau, comme le reste du plan.
 # La préparation, elle, va chercher le plus frais d'abord : c'est lui qu'on va servir, et un écran
@@ -571,6 +745,9 @@ done <<<"$LIGNES"
 if [ "$TSV" = 1 ]; then
   # `avant` en DERNIÈRE colonne : les quatre premières sont un contrat qu'un appelant lit par leur rang.
   printf '# route\turl\torigine\tfichiers\tavant\n'
+  # Les états que la démo sait servir, en commentaire : un appelant machine les lit sans rejouer le
+  # `sed` sur `demo.py`, et un lecteur de TSV qui ignore les `#` n'y voit rien de changé.
+  printf '# scenarios\t%s\n' "${SCENARIOS_DEMO:-$SCENARIO_NOMINAL}"
   while IFS=$'\t' read -r route _cle origine fichiers; do
     [ -z "$route" ] && continue
     if [ "$route" = "-" ]; then
@@ -596,23 +773,32 @@ fi
 
 # --- Préparation ------------------------------------------------------------------------------------
 dire ""
-mkdir -p "$RACINE/$SOUS_DOSSIER/$IID" 2>/dev/null
+CAPTURES="$(dossier_captures "$IID" "$SCENARIO")"
+mkdir -p "$RACINE/$CAPTURES" 2>/dev/null
 pose_projet
 
-dire "  stack      : démarrage (mode démo, sans navigateur) — le premier passage construit l'UI"
 # `--demo` : bus mémoire, aucun Redis requis, et surtout des écrans PEUPLÉS — un poste vide ne montre
 # pas le rendu qu'on vient d'écrire. `--no-browser` est obligatoire : sans lui le script ouvre sa propre
 # fenêtre et arrête la stack dès qu'elle se ferme (#149), ce qui couperait l'API sous le navigateur
-# qu'on pilote.
+# qu'on pilote. Un état limite (#978) n'est passé que s'il est DEMANDÉ : sans `--scenario`, l'appel est
+# celui d'avant, au caractère près.
+ARGS_START=(--demo --no-browser)
+ETAT_ANNONCE="$SCENARIO_NOMINAL"
+if [ -n "$SCENARIO" ]; then
+  ARGS_START+=(--scenario "$SCENARIO")
+  ETAT_ANNONCE="$SCENARIO"
+fi
+dire "  stack      : démarrage (mode démo, état « $ETAT_ANNONCE », sans navigateur) — le premier passage construit l'UI"
 if MAESTRO_PORT_API="$PORT_API" MAESTRO_PORT_UI="$PORT_UI" \
-  bash "$RACINE/scripts/controltower/start.sh" --demo --no-browser; then
+  bash "$RACINE/scripts/controltower/start.sh" "${ARGS_START[@]}"; then
   dire ""
-  dire "  ✓ prête : http://localhost:$PORT_UI"
+  dire "  ✓ prête : http://localhost:$PORT_UI — état « $ETAT_ANNONCE »"
   prepare_avant
   dire ""
   dire "    à faire ensuite — poser le localStorage (guide vu, thème, projet actif) SUR CHAQUE ORIGINE"
   dire "    servie, ouvrir chaque écran dans les deux thèmes, capturer l'après et l'avant côte à côte"
-  dire "    sous $SOUS_DOSSIER/$IID/, puis :"
+  dire "    sous $CAPTURES/, puis l'état suivant (--scenario <nom>), et pour finir :"
+  dire "        bash scripts/design/relecture-visuelle.sh --couverture $IID"
   dire "        bash scripts/design/relecture-visuelle.sh --fin"
   exit 0
 fi

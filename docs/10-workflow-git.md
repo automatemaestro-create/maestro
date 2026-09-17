@@ -64,7 +64,7 @@ Règles :
 <type>/<iid>-<slug>
 ```
 
-- `iid` : l'ID du ticket GitLab (le numéro affiché dans l'issue, ex. `#12` → `12`).
+- `iid` : le numéro du ticket GitHub (le numéro affiché dans l'issue, ex. `#12` → `12`).
 - `slug` : le titre du ticket en minuscules, sans accents, mots séparés par `-`, tronqué à ~40 caractères.
 - `type` : dérivé du label `type::*` du ticket (voir §3).
 
@@ -194,6 +194,10 @@ Ces labels sont créés (idempotent) via [`scripts/gitlab/bootstrap.sh`](../scri
 ([`bootstrap-project.sh`](../scripts/github/bootstrap-project.sh), §3.5) — et **ne sont pas touchés**
 par les commandes `/ticket-*` : ils relèvent du triage (à la création), pas du cycle Git.
 
+Les trois familles sont **toutes en français**. Ne pas recréer d'équivalents anglais —
+`status::*`, `priority::*`, `type::docs`, `type::chore` — ni de famille d'état : l'état est le champ
+Status (§3.1), et une seconde famille serait un second support.
+
 ### 3.3 Dates & time tracking — renseignés automatiquement
 
 Les champs natifs **Dates** (widget *Start and due date*) et **Time tracking** du ticket sont
@@ -277,6 +281,21 @@ Ce que l'absence a laissé passer, sur pièces : les contrats d'API de [docs/05 
 | **exercer** | `/milestone-bilan "<titre>"` (#759) | monte la stack, prend les captures, joue les verbes et les suites, rattache chaque critère à sa pièce, **propose** un verdict, écrit `docs/bilans/<slug>.md` | rien côté forge : rien n'y est encore arbitré |
 | **enregistrer** | `/milestone-verdict "<titre>"` (#760) | prend la réponse d'une personne, la consigne dans la section `## Verdict` du jalon, **propose** chaque réserve en ticket | ne ferme aucun jalon, ne rejoue aucune pièce |
 
+`/milestone-bilan` **n'a aucun navigateur en propre** : les exécutants existent, elle les
+**appelle** — `ecrans-touches.sh` pour les surfaces livrées (dérivées des commits, jamais
+devinées), `captures.sh` pour les captures et les clips, le skill `verify` pour le câblage,
+`banc-mise-en-page` pour la géométrie, et pour un jalon d'**outillage** les verbes joués et les
+suites qui les gardent.
+
+`/milestone-verdict`, de son côté, **n'enregistre rien sans un « oui » explicite** — ni le verdict,
+ni un seul ticket de réserve : une réserve **acceptée telle quelle** est une décision, et un ticket
+ouvert d'office sur une réserve assumée est un ticket que personne ne fermera. Elle ne **fabrique
+aucun verdict** sans rapport de bouclage, symétrie exacte du refus de `/milestone-bilan` d'écrire
+les critères qui lui manquent. Et elle **constate en finissant** que la convocation a cessé pour ce
+jalon — la seule moitié observable du dispositif. Ce que chaque verdict dit de la fermeture : `GO`
+et `GO avec réserves` laissent le jalon **fermable**, `NO-GO` dit qu'il ne doit **pas encore**
+l'être ; la fermeture reste un geste humain.
+
 Elles sont **deux et non deux étapes de la même** : un bilan est long, l'arbitrage n'arrive pas
 toujours dans la foulée, et enchaîner l'enregistrement à la fin du bilan perdrait tout verdict que
 personne n'a arbitré dans la même session — la panne de #608 recréée sur l'objet qu'on protège. Le
@@ -306,7 +325,8 @@ l'autre branche serait rouge sur la moitié des machines — et garde ce qui vau
 forme documentée passe partout ; le remède, si on le veut un jour, est un ticket à lui seul.
 
 **La convocation** est `lib.sh milestones-a-boucler` (#758) : les jalons **actifs, entièrement
-soldés, et sans verdict consigné**, relayés par `doctor.sh` (§7) et `/backlog`. Elle disait jusque-là
+soldés, et sans verdict consigné**, relayés par `doctor.sh` (§7) et `/backlog` — en **pied** de sa
+sortie, sous le bloc « 🏁 Jalon à boucler », et **seulement s'il y en a**. Elle disait jusque-là
 « à fermer » — la décision finale, proposée en sautant le geste qui doit la précéder —, et c'est
 pourquoi personne n'a jamais été *convoqué*. Un jalon déjà bouclé **sort du signalement** alors même
 qu'il reste ouvert : le verdict est le geste qu'on pouvait oublier, la fermeture est celui qu'on
@@ -327,6 +347,10 @@ Quatre choses à ne pas défaire :
 - **Un critère qu'aucune pièce ne couvre est nommé comme tel, jamais coché**, et il vaut réserve à
   lui seul. C'est ce ✓-là qui a laissé quatorze jalons se fermer sur « ça a été écrit » — *lire le
   code n'est pas l'exercer*.
+
+Et une cinquième, qui tient à `/milestone-bilan` seule : **l'abstention n'est pas un `NO-GO`**. Un
+jalon dont aucun critère n'est exerçable rend une abstention, parce qu'un livrable qu'on n'a pas su
+éprouver n'est pas un livrable jugé mauvais.
 
 Deux limites assumées plutôt que masquées. Le **rapport n'est pas commité** (décision alignée sur
 `/milestone-presentation`), donc son chemin dans la section consignée est un renvoi **local** que
@@ -356,7 +380,8 @@ avoir vécu le produit comme un utilisateur, et personne ne l'avait refait depui
 utilisateur qui ne connaît rien de Maestro, sur la Control Tower **réelle** (jamais `--demo`) et par
 son seul navigateur (`mcp__chrome-maestro` — c'est **son** navigateur, à la différence de
 `/milestone-bilan` elle n'a aucun exécutant à qui déléguer le regard) : prérequis, parcours des
-écrans de `PAGES` (`apps/web/lib/navigation.ts`) un par un, puis un **run** composé dans le chat —
+écrans de `PAGES` (`apps/web/lib/navigation.ts`) un par un — **le menu d'abord, puis les pages hors
+menu**, les deux confrontés par le test —, puis un **run** composé dans le chat —
 seule porte d'entrée depuis #470 — sur un projet léger avec une interface, jusqu'à **ouvrir et
 exécuter le livrable**, le seul critère qui dise si l'objectif de [docs/00 §1.2](./00-cahier-des-charges.md)
 est tenu. Elle écrit `docs/retex/<date>-<slug>.md` ([docs/retex/README.md](./retex/README.md) dit ce
@@ -365,7 +390,11 @@ backlog** par la méthode de docs/29 §2 (déjà couvert par #n, trou, ou renver
 puis une **proposition** de milestone et de tickets — **proposée, jamais créée**, le partage de
 `/run-audit` et du bouclage ci-dessus. Pendant le parcours, la session **n'est plus une session de
 développement** : aucune commande du dépôt, aucun appel direct à l'API, aucune lecture du code pour
-comprendre un écran — ce que l'interface n'explique pas est un constat.
+comprendre un écran — ce que l'interface n'explique pas est un constat. La séquence se termine par
+**`browser_close`**, comme toute séquence du navigateur partagé.
+
+**Jamais `--demo`**, et c'est une chose à ne pas défaire : ne pas retomber en douce sur la démo est
+la règle du skill `control-tower`, et un retex sur des données factices serait un retex faux.
 
 **Le prérequis est un poste vide, et aucun geste ne le vidait.** `start.sh --stop` solde les runs
 en vol sans rien effacer, et aucune route ne supprime une exécution : chaque essai partait donc d'un
@@ -383,12 +412,16 @@ les **déclarations** de projets (`MAESTRO_PROJETS_DIR`, un `<id>.json` par proj
 dossier de projet sur le disque. Il ne touche **jamais** à la configuration : agents, playbooks,
 surcharges, capacités, permissions, secrets, MCP. Quatre choses à ne pas défaire :
 
-- **Les clés et les dossiers viennent des constantes Python**, importées, jamais recopiées dans un
+- **Les clés et les dossiers viennent des constantes Python** — `CLE_JOURNAL_EVENEMENTS`,
+  `CLE_BATTEMENTS`, `FILE_TACHES`, `CANAL_BOITE_PREFIXE`/`CANAL_DIFFUSION`, `ChatStore.default`,
+  `racine_ingestion`, `ProjetStore.default` —, importées, jamais recopiées dans un
   shell ni dans le module : une constante recopiée des deux côtés d'une frontière est ce que #830 a
   vu casser (un mois de captures muettes sur un texte que l'UI ne rendait plus). Le test l'interdit
   par l'AST — aucun littéral `maestro.` hors docstring dans `purge.py`.
 - **Il refuse tant que l'API répond ou qu'un hôte détaché bat** (code `3`), et le refus **nomme**
-  `start.sh --stop`. Leçon de #699 : l'événement est consigné là où il naît, par le producteur, donc
+  `start.sh --stop`. « L'API répond » se juge sur `/api/sante` au port `MAESTRO_PORT_API` — le
+  contrat de `start.sh`, que `worktree.sh ensure` surcharge par worktree. Leçon de #699 :
+  l'événement est consigné là où il naît, par le producteur, donc
   un run en vol republierait dans le journal qu'on vient de vider, et une API vivante servirait
   encore le sien. La vitalité d'un hôte se lit au registre des battements (`vitalite`, #348) : ce
   qui bat bloque, ce qui ne bat plus depuis le seuil est un orphelin et **ne bloque pas** — c'est
@@ -408,7 +441,88 @@ runs (renversé depuis, #933), mais à ce qu'un retex regarde, qui est le produi
 l'art. Aucun run relancé, aucun merge, aucun ticket créé ; le premier rapport est le
 ticket #854. Gardée par [`tests/test_retex_utilisateur.py`](../tests/test_retex_utilisateur.py) : la
 frontière écrans ↔ `navigation.ts` dans les deux sens, motif prouvé sur un échantillon fautif ; la
-purge sans Redis réel ; l'absence d'écriture forge.
+purge sans Redis réel (un client factice, comme le `docker` neutralisé du filet) ; la configuration
+et les dossiers de projet **intacts** sur un poste jetable ; l'absence d'écriture forge.
+
+#### Montrer une phase : `/milestone-presentation` et `scripts/presentation/` (#142, #543, #545, #830)
+
+**`/milestone-presentation [milestone]`** produit une présentation HTML des travaux d'un milestone —
+sans argument la phase courante, un fragment de titre suffisant (`Phase 3`). Elle regroupe les
+tickets par **état** (Livré / En revue / En cours / À venir) puis par `type::`, et y joint des
+**captures de la Control Tower prises en direct**, les **écrans que la phase a touchés** (dérivés
+des commits, jamais devinés — #544) et des **démonstrations filmées** sur la stack de démo (#545),
+jouables dans le fichier. Le livrable est un fichier **autonome** `docs/presentations/<slug>.html`
+(CSS en ligne, images et clips en base64, sous plafond de taille), **non commité** — c'est une
+décision humaine — et la commande **n'écrit rien côté forge**. Elle **montre** ; elle n'exerce rien
+et ne rend aucun verdict (ci-dessus, le glissement de 2026-07).
+
+`scripts/presentation/` porte **quatre étapes**, gardées par
+[`tests/test_presentation.py`](../tests/test_presentation.py) (#547) :
+
+| étape | rôle |
+|---|---|
+| `ecrans-touches.sh` | **quels écrans la phase a touchés**, dérivés des commits (#544) |
+| `captures.sh` | monte une stack **de production** sur ses propres ports (8010/3010) ; `playwright-core` + Edge installés dans un dossier temporaire, jamais dans le dépôt |
+| `captures.mjs` | pilote le navigateur et, depuis #545, **tourne** les parcours déclarés dans `parcours.mjs` |
+| `build.py` | JSON → HTML autonome, gabarit et CSS inclus, clips en base64 sous deux plafonds |
+
+Ce que le chantier #543 a changé tient en une phrase : **le rattachement écran ↔ ticket se lit au
+lieu de se deviner** — tout commit porte `Refs #<iid>`/`Closes #<iid>` (hook `commit-msg`) et les
+routes vivent sous `apps/web/app/<route>/`, donc l'agent ne pose plus de clé de capture au jugé.
+Quatre choses à ne pas défaire :
+
+- **L'absence est muette, l'inconnu est nommé.** Un ticket sans surface visible (moteur, CI, doc)
+  rend **zéro ligne** et n'aura ni vignette ni écran ; un ticket qui n'a touché que
+  `apps/web/components/**` rend **une** ligne « indéterminée » — la taire reviendrait à dire qu'il
+  n'a rien changé à l'écran.
+- **Le motif borne l'iid sur une non-chiffre** (sans quoi `#5` hériterait des écrans de `#54`) **et
+  exige le mot-clé** : GitHub suffixe le sujet d'un squash du numéro de la **PR**, qui n'est pas
+  l'iid.
+- **Un parcours en échec laisse sa ligne** au manifeste avec son erreur (« jamais tenté » et
+  « tenté, échoué » restent distincts) ; le code de retour ne dépend **que** des captures.
+- **Le fichier reste autonome** — aucune ressource externe, tout en `data:` —, ce qui n'est tenable
+  qu'avec un plafond **par clip** (`MAESTRO_PRESENTATION_VIDEO_MAX`, 6 Mio) et un plafond **de
+  fichier** (`MAESTRO_PRESENTATION_MAX`, 25 Mio), le second mesuré sur la page **sans clips** et non
+  estimé ; un clip écarté garde sa place sous son affiche de repli, avec **son motif**.
+
+Deux limites assumées plutôt que masquées : un **composant partagé ne se rattache à aucune route**
+(`apps/web/lib/**` est même hors périmètre — presque tout ticket de la Control Tower y touche, le
+compter n'apprendrait plus rien), et le **MCP `chrome-maestro` ne sait pas filmer** (il n'expose que
+`browser_take_screenshot`) : les clips passent par le `recordVideo` de Playwright dans
+`captures.mjs`, même moteur, appelé là où le contexte du navigateur est déjà construit. Les
+captures **ne passent pas par le serveur de dev** : en mode dev, la WebSocket de rechargement à chaud
+de Next échoue dans le navigateur headless et bloque l'hydratation — toutes les pages sortiraient en
+« Reconnexion… / Chargement de l'état… ».
+
+⚠ **Le signal « page prête » vit des deux côtés d'une frontière, et rien ne le gardait (#830).**
+`captures.mjs` a attendu de #142 à #829 le texte « Temps réel connecté » de la barre supérieure, que
+**#691 a retiré** (« ce qui va bien ne s'affiche plus ») — après quoi le signal n'est plus **jamais**
+arrivé, et les deux appelants ont dégradé différemment, ce qui a caché la panne un mois. Côté
+**captures**, l'attente lève, on photographie quand même et les images sont **bonnes** : invisible.
+Côté **parcours**, le plafond d'attente était borné par ce qu'il restait du clip, donc le
+`waitForFunction` **consommait tout le budget avant le premier geste** — clip enregistré,
+`complet: false`, **conservé**, et immobile. Mesure du 2026-08-30 : **10/10** pages en « données
+incomplètes », **5/5** parcours à zéro geste, code de retour **0**, deux jalons présentés sans une
+démonstration. Trois choses à ne pas défaire :
+
+- Le signal se lit sur ce que l'UI **rend aujourd'hui** — une ancre **positive** (le `<main id>` du
+  shell, `ID_CONTENU_PRINCIPAL`) plus deux **absences** (la pastille « Reconnexion… » de #691, un
+  placeholder « Chargement »). L'ancre positive n'est pas décorative : sans elle, un document
+  **vide** satisfait les deux absences et se fait passer pour une page prête.
+- La page prête **n'est plus une condition d'entrée des gestes** (attente courte, échec réduit à un
+  avertissement, gestes joués quand même — chacun a sa propre patience, et un `attendre` ancré sur
+  un texte de l'écran sait bien mieux dire si la page est là). C'est le **compte de gestes joués**
+  qui tranche : un clip **écourté** en cours de route a montré quelque chose et se garde, un clip
+  qui n'a joué **aucun** geste est **écarté** (`fichier: null`, ligne et cause conservées).
+- La garde est **sur la frontière** et non d'un côté : `tests/test_presentation.py` confronte les
+  constantes du script aux fichiers qui les rendent, avec un motif **serré** — un nœud de texte
+  JSX, `>…<` — dont l'échantillon fautif est réel, `BarreSuperieure.tsx` portant encore « Temps réel
+  connecté » **en commentaire** : un motif lâche aurait répondu « tout va bien » après #691.
+
+⚠ Les tests du **tournage** exigent `node`, présent sur les postes et sur le runner `ubuntu-latest`
+du job `pytest` mais **absent de l'image `python:3.11`** du filet CI local : ils y sont sautés, et
+`test_node_ne_manque_pas_en_ci` en fait une **erreur franche** si le job venait à le perdre (même
+leçon que #333, §8.7).
 
 #### Soldé et vide : deux abstentions, jamais une seule (#619)
 
@@ -550,7 +664,16 @@ Idempotent, aucune écriture en `--check`, codes de retour alignés sur `protect
 ou posé, 3 non conforme, 1 pré-requis manquant). Le titre du projet (`Maestro`) est une **clé** : le
 script s'en sert pour se rejouer sans rien créer en double, et `lib.sh` s'en servira pour résoudre
 le projet — **aucun ID de projet, de champ ni d'option n'est figé dans le dépôt**, exactement comme
-aucun GID de label ne l'est aujourd'hui.
+aucun GID de label ne l'est aujourd'hui. Le titre cherché est lu dans **`MAESTRO_PROJECT_TITRE`**
+(défaut « Maestro ») : c'est le seul réglage du dispositif, et il nomme un titre, jamais un identifiant.
+
+**Provisionner un dépôt neuf demande deux scripts, et l'ordre compte** : `bootstrap.sh` (labels de
+catégorisation, §3.2) puis `bootstrap-project.sh` — sans le second, aucun ticket ne peut porter
+d'état et `/ticket-start` ne démarre rien. Ce qu'ils ne font pas (protection de branche,
+`delete_branch_on_merge`, §6 et §8.8) est **nommé dans leur sortie** plutôt qu'appliqué à moitié.
+Trois scripts sont partis avec l'outillage GitLab : `bootstrap-board.sh` (colonnes du Kanban),
+`migrate-workflow-labels.sh` (rattrapage ponctuel de #207) et `bootstrap-lifecycle.sh` (champ
+Status natif de GitLab).
 
 **Ce que `doctor.sh` en contrôle (#363).** Le changement d'autorité ne supprime pas la panne, il la
 **déplace**, et le bilan de santé change donc de questions en même temps que de support. Deux
@@ -732,7 +855,13 @@ pièce : à eux seuls, les deux tiers du poste.
 
 D'où **`st_statuts <iid…>`**, le pendant unitaire de la carte : le Status de N tickets nommés en
 **un** aller, par alias GraphQL — exactement l'idiome de `gh_issues_state`, et pour la même raison.
-**1,6 s pour huit lots**, contre 20 à 32 s.
+**1,6 s pour huit lots**, contre 20 à 32 s. Il est exposé en verbe public, **`lib.sh statuts
+<iid…>`**, ce qui fixe la règle de lecture en trois cas, **selon la question posée** : **un** ticket →
+`issue-owner` ; **N tickets qu'on nomme** → `lib.sh statuts <iid…>` (un aller quel que soit N) ;
+**tout le monde** → `backlog-table`, qui pagine les items du projet. `st_statuts` rend la sortie de
+la table colonne pour colonne (« - » hors projet ou Status vide, **aucune ligne** pour un ticket
+inexistant — contrat de `gh_issues_state`), ce qui a permis de rebrancher l'enrichissement sans
+toucher à la règle de blocage des lots.
 
 ⚠ **Et il corrige un faux silence, ce qui ne se voit pas au chronomètre — c'est même la moitié la
 plus grave.** L'enrichissement lisait la carte *à travers* `gl_backlog_table`, bornée à `first: 100`
@@ -1247,7 +1376,14 @@ refusé en nommant celui-là — `addSubIssue` porte un `replaceParent` dont on 
 un lot en silence étant l'inverse de ce qu'on veut) ; `subticket-order <parent> <iid>…` **ordonne**
 en un seul aller, les lots nommés se retrouvant contigus et dans l'ordre donné, **rien n'étant écrit**
 si la liste est fautive ; `parent-of`, `subtickets`, `startables`, `lots-ouverts`, `arbitrage`
-**lisent**. Couverts par [`tests/test_decoupage_natif.py`](../tests/test_decoupage_natif.py).
+**lisent**. Couverts par [`tests/test_decoupage_natif.py`](../tests/test_decoupage_natif.py) (#396),
+qui garde les invariants **qui ne se rejouent pas** : l'ordre posé en **une** mutation et rien
+d'écrit sur une liste fautive ; l'**idempotence** du rattachement — ce qui rendait relançable le
+backfill des 41 parents (#392), dont le script « one-shot » est parti avec le support qu'il
+migrait ; le **double rattachement refusé** en nommant le parent en place ; et le **verdict de
+`startables` figé**, avec son contre-exemple (le même parent sans ses labels ne le rend plus). C'est
+le verdict lui-même qui est gardé parce que la comparaison des deux régimes (checklist et natif)
+n'est plus jouable depuis que `checklist` a disparu (#395).
 
 Ce que chacun porte :
 
@@ -1521,10 +1657,12 @@ peut être clos sans être réalisé avec **`/ticket-abandon <iid> [doublon]`** 
 la Control Tower (Phase 1) :
 
 - [`/backlog`](../.claude/commands/backlog.md) `[opened|all]` — vue d'ensemble du backlog groupée
-  par **cycle de vie** (§3.1), avec `agent::`/`prio::` et la mise en avant de ce qui **attend une
-  revue / est prêt à merger**. S'appuie sur `lib.sh backlog` (requête canonique du backlog).
+  par **cycle de vie** (§3.1), avec `agent::`/`prio::` et, en tête, les **PR non mergées** — depuis
+  #418, celles que `merge-mr` a refusées (§6). S'appuie sur `lib.sh backlog` (requête canonique du
+  backlog).
 - [`/mr-review`](../.claude/commands/mr-review.md) `<mr|branche>` — synthèse d'une PR (aptitude au
-  merge, pipeline, threads bloquants, résumé du diff) pour **éclairer un relecteur humain**. Depuis
+  merge, pipeline, threads bloquants, résumé du diff) pour **éclairer un relecteur humain**. **Aucune
+  commande ni aucun run ne la déclenche** : c'est un geste humain, à la demande (§6). Depuis
   #418 la revue est un geste d'**après-merge** (§6), donc la commande éclaire le plus souvent une PR
   **déjà dans `main`** ; elle reste utile avant merge sur une PR qu'on reprend à la main. Conforme au
   garde-fou §6 : elle **ne merge, ne ferme, ni n'approuve jamais** — le chemin de merge est
@@ -1611,8 +1749,13 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
     plus ouvertes en Draft jusqu'à ce que quelqu'un les relise : elles entrent dans `main` dès
     qu'elles sont vertes. Ce qui disparaît est l'attente d'un humain pour **vérifier**, pas la
     vérification — qui vit tout entière dans le tableau ci-dessus. La file de revue de `/backlog` et
-    `/mr-review` gardent leur usage et perdent leur place dans le cycle : on relit ce qui est déjà
-    dans `main`, et un problème trouvé se corrige par un ticket, plus par un blocage de PR.
+    `/mr-review` perdent leur place dans le cycle : on relit ce qui est déjà dans `main`, et un
+    problème trouvé se corrige par un ticket, plus par un blocage de PR. Ni l'une ni l'autre n'a
+    gardé de déclencheur de revue — la file ne montre plus que des PR refusées, et la relecture est
+    un geste humain à la demande (la revue, plus bas dans cette section).
+  - **La PR passe en prête sans rien demander.** `/ticket-finish` joue `gh pr ready` d'office : la
+    question « le travail est-il prêt pour la revue ? » disparaît, une PR qu'on s'apprête à merger
+    n'étant pas un brouillon.
   - ⚠ **Ceci renverse « pas d'attente pipeline à la clôture ».** `/ticket-finish` attend désormais le
     verdict (~2-4 min, borné par `pipeline-wait` — 15 min pour un run qui tourne, jusqu'à 30 min
     quand le run n'est **pas encore né**, §8.9) **avant** de merger, et `/ticket-ship`
@@ -1755,19 +1898,31 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
   pas « d'où vient la branche » mais « aucune ne part sans que la forge la confirme **ou** qu'un tag
   la garde joignable ». Reste une dérive qui n'est pas d'hygiène de branches, laissée hors
   périmètre : l'issue **#353 est encore ouverte** alors que son livrable est sur `main`.
-- **La revue est *best-effort*, pas bloquante — et depuis #413 elle est d'APRÈS-MERGE.** À
-  plusieurs, personne ne sait spontanément ce qui attend qui : le projet garde donc
-  `approvals_before_merge=0` et joue sur la **visibilité** — arbitrage du chantier #155. L'argument
-  d'origine (« une approbation obligatoire recréerait une dépendance entre personnes ») tient
-  toujours ; celui qui l'accompagnait — « et le merge resterait de toute façon humain » — est
+- **La revue n'est pas une étape du cycle : rien ne la déclenche, et depuis #413 elle est
+  d'APRÈS-MERGE.** À plusieurs, personne ne sait spontanément ce qui attend qui : le projet a donc
+  gardé `approvals_before_merge=0` et misé sur la **visibilité** — arbitrage du chantier #155.
+  L'argument d'origine (« une approbation obligatoire recréerait une dépendance entre personnes »)
+  tient toujours ; celui qui l'accompagnait — « et le merge resterait de toute façon humain » — est
   **faux depuis #418** : une approbation obligatoire ne ralentirait plus un humain, elle
   **bloquerait le merge automatique**, ce qui en fait un choix plus lourd qu'avant et non plus
   léger. Ce qu'exige le merge vit dans `merge-mr` (premier point de cette section), pas dans une
   approbation.
+  - ⚠ **`/mr-review` n'a qu'un déclencheur : un humain, à la demande** (#961). Ni `/ticket-finish`,
+    ni `/ticket-ship`, ni le pilote d'un run, ni un hook ne l'appelle ; `/backlog` se borne à la
+    **proposer** en pied de rapport. Cette section a longtemps dit que « la visibilité » déclenchait
+    la revue — or une visibilité n'appelle rien, et depuis #418 la file qu'elle désignait ne montre
+    plus de PR à relire (dernier point ci-dessous) : c'était une **règle lue**, jamais un mécanisme,
+    le défaut de `/design-veille` avant #714. La commande garde son usage — éclairer une PR, le plus
+    souvent déjà dans `main` —, et ce qu'on y trouve se corrige par un ticket.
+  - **Ce qui tient lieu de revue avant merge** : les quatre prérequis de `merge-mr` (premier point
+    de cette section), le filet CI (§8) et, quand le diff touche un écran, la **relecture visuelle**
+    que joue `/ticket-finish` (#935, docs/30 §5.5). **Ajouter une relecture de code a été écarté sur
+    mesure** (#969, abandonné) : sur 42 bugs postérieurs à #418, dépouillés par ce qui les a
+    trouvés, **5 seulement (12 %)** étaient plausiblement rattrapables par une relecture de diff —
+    le reste est venu de la mesure, de l'usage du produit ou de renversements de conception.
   - **Aucun relecteur n'est posé automatiquement** (#196). `/ticket-finish` l'a fait un temps
     (#161) ; ce n'est plus le cas : désigner un relecteur attribue une PR à quelqu'un qui ne l'a
-    pas demandé, alors que la file de revue donne déjà le signal « cette PR attend quelqu'un ». La
-    **visibilité** suffit donc, et la désignation redevient un **geste humain explicite**.
+    pas demandé. La désignation est un **geste humain explicite**.
   - Le helper reste **outillé pour cette pose manuelle** :
     `bash scripts/gitlab/lib.sh set-reviewer [mr|branche] [username]` choisit, à défaut d'un nom
     donné, un **membre humain du projet distinct de l'auteur**, résolu via l'API des membres —
@@ -1779,10 +1934,13 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
     une seule personne, il n'y a pas de candidat et le helper échoue proprement (code `1`). Aucune
     commande du workflow ne l'appelle — c'est un outil, plus une étape.
   - `/backlog` affiche la **file de revue** en tête (`bash scripts/gitlab/lib.sh review-queue`) :
-    PR ouvertes **la plus ancienne d'abord**, avec `age_j` (l'ancienneté, c'est elle qui déclenche
-    la relecture), l'état `draft`/`ready`, le statut du pipeline, l'auteur et le relecteur s'il en
-    a été posé un à la main (colonne à « - » sinon, cas désormais normal). C'est **elle seule** qui
-    porte le signal de revue.
+    PR ouvertes **la plus ancienne d'abord**, avec `age_j`, l'état `draft`/`ready`, le statut du
+    pipeline, l'auteur et le relecteur s'il en a été posé un à la main (colonne à « - » sinon, cas
+    normal). Le verbe a gardé son nom, **la file a changé de contenu** : depuis #418 une PR verte et
+    sans conflit est mergée à sa clôture (ou au drain du run, §11.11), si bien que ce qui s'attarde
+    ici est ce que `merge-mr` a **refusé** — une PR bloquée, à débloquer par `/mr-fix` (§8.3), pas
+    une PR à relire —, et l'ancienneté y dit depuis quand un blocage attend. La file ne porte donc
+    **plus aucun signal de revue** : une PR saine ne passe devant personne, et c'est le cas nominal.
 - **Une PR au pipeline rouge n'est pas mergeable — et depuis #734 DEUX gardiens le tiennent.** Du
   temps de GitLab, le réglage projet `only_allow_merge_if_pipeline_succeeds=true` (complété par
   `allow_merge_on_skipped_pipeline=false`) faisait appliquer la règle par **GitLab lui-même** : le
@@ -1817,7 +1975,9 @@ barre le geste **nu**, que plus personne n'a de raison de lancer.
 > session Claude Code. Il installe `gh`, active le hook `commit-msg`, crée le `.venv` et le `.env`
 > et pose les réglages Claude Code. Il ne monte **plus de runner CI** : la CI tourne sur les
 > exécutants hébergés de GitHub (§8.1, #344). Ce qui est détaillé ici est le **quoi et le
-> pourquoi**, plus une check-list à dérouler à la main.
+> pourquoi**, plus une check-list à dérouler à la main. `/setup` prend en charge ce que le script
+> ne peut pas faire seul — authentifications interactives, diagnostic d'une étape en échec,
+> accompagnement du remplissage du `.env` — et ne réimplémente jamais ses étapes.
 
 > **Un humain qui arrive lit [`CONTRIBUTING.md`](../CONTRIBUTING.md)**, pas ce document. Ce
 > fichier-ci est exhaustif (et `CLAUDE.md` est écrit pour l'agent) : `CONTRIBUTING.md` tient en une
@@ -1829,7 +1989,38 @@ barre le geste **nu**, que plus personne n'a de raison de lancer.
 - [`gh`](https://cli.github.com/) installé et authentifié : `gh auth login` (proposé par
   `scripts/setup.sh`, qui n'automatise pas l'authentification — elle est interactive et son jeton
   ne transite jamais par une ligne de commande ; §7.4 pour l'isolement par projet).
-- Vérifier l'accès : `gh issue list` doit lister les tickets du dépôt.
+- Vérifier l'accès : `gh issue list` doit lister les tickets du dépôt. **Si `gh auth status` échoue,
+  une session s'arrête** et demande qu'on s'authentifie, au lieu de continuer sans.
+- **Python : toujours le venv du dépôt** (`.venv/Scripts/python.exe` sous Windows,
+  `.venv/bin/python` sous Unix). Les dépendances (`claude-agent-sdk`, `pytest`…) n'existent que là :
+  avec le `python` système, la collecte des tests échoue dès l'import
+  (`ModuleNotFoundError: No module named 'claude_agent_sdk'`).
+- **Node : la version est épinglée par le dépôt** ([`.node-version`](../.node-version)), pas par le
+  gestionnaire du poste. `setup.sh` la provisionne sous `.tools/node/` (gitignoré, téléchargement
+  **vérifié par SHA-256**, aucun droit admin) et la place en tête du `PATH` pour ses étapes suivantes
+  — un `nvm use 18` sur la machine ne casse donc plus rien. Reprovisionner :
+  `bash scripts/setup.sh --only node`. Le serveur MCP `chrome-maestro` passe par
+  [`scripts/mcp/playwright-mcp.mjs`](../scripts/mcp/playwright-mcp.mjs), qui relance
+  `@playwright/mcp` avec ce Node-là : Claude Code démarre ses serveurs avec le `PATH` de **son**
+  processus, qu'aucun hook de shell (`.nvmrc`, fnm) n'atteint. Symptôme si ce maillon saute : le
+  serveur ressort « not connected » **sans message**, `@playwright/mcp` exigeant Node ≥ 20.
+- **Texte long vers la forge : par un FICHIER et par les helpers.** Tout aller-retour
+  lecture → réécriture d'une description passe par `get-description`/`set-description` (ticket) et
+  `get-mr-description`/`set-mr-description` (PR) — mettre à jour la checklist d'une PR, réécrire le
+  corps d'un ticket —, et la création par leurs pendants (#233) : `create-mr <iid> <fichier>` ouvre
+  la PR **en Draft vers `main`** (titre lu dans le ticket via `issue-title`, description lue dans le
+  fichier, idempotent — une PR ouverte est mise à jour au lieu d'échouer) et `issue-note <iid>
+  <fichier>` poste un commentaire. On écrit le fichier avec l'outil `Write`, puis on passe son
+  **chemin** : la couche permissions découpe un appel sur ses sauts de ligne et ne matche aucune
+  substitution `$(…)`, si bien qu'un `gh pr create --body` multi-ligne — et son repli
+  `--body "$(cat …)"` — sont refusés alors même que `gh pr create` est autorisé (**10 refus, 8
+  sessions sur 16**, sur la dernière action du ticket — #232, §11.7). ⚠ **Jamais
+  `gh issue view --json body | python`** : sous Windows, `sys.stdin` décode en cp1252 et repousse du
+  mojibake (« Ã© » pour « é ») dans la description — c'est arrivé sur un parent (#141). Le piège
+  classique est `PYTHONIOENCODING=utf-8 gh … | python`, où la variable s'applique à `gh` et **n'est
+  pas propagée** au python du pipeline ; les helpers restent en shell pur, transparents aux octets.
+  Une correction d'encodage se vérifie **par octets**, jamais à l'affichage — un terminal cp1252
+  réaffiche le mojibake de façon plausible.
 - Les commandes `/ticket-*` et `/backlog` s'appuient sur le helper
   [`scripts/gitlab/lib.sh`](../scripts/gitlab/lib.sh) (bash), qui factorise les appels `gh`
   (résolution work-item, **cycle de vie** par nom — `set-workflow`, §3.1 —, **listing du backlog**, slug, préfixe de
@@ -1924,7 +2115,10 @@ sous Windows, on précise « dans Git Bash » ou l'on donne la forme sûre —
 Gardé par [`tests/test_setup.py`](../tests/test_setup.py) : l'abstention sans PowerShell (le motif,
 prouvé avant tout le reste), le bloc et sa fonction, l'ASCII pur, l'idempotence, le **remplacement**
 d'un bloc périmé sans toucher au reste du profil, `--check`, l'opt-out et la politique restrictive
-dite mais jamais changée.
+dite mais jamais changée. ⚠ Son harnais **neutralise `powershell.exe` d'office**, comme
+`tests/test_ci_local.py` neutralise `docker` : le `HOME` redirigé ne protège rien ici, PowerShell
+résolvant `$PROFILE` depuis son propre dossier Documents — sans ce shim, lancer la suite sur un
+poste Windows écrit dans le **vrai** profil de la personne (mesuré au premier passage).
 
 ### 7.1 Permissions Claude Code (allowlist)
 
@@ -1935,8 +2129,8 @@ personnelles vont dans `.claude/settings.local.json`, non versionné).
 
 | Catégorie | Effet | Contenu (préfixes de commande) |
 |---|---|---|
-| **`allow`** | exécuté sans prompt | Lectures/écritures **non destructrices** du workflow : `git status`/`diff`/`log`/`show`/`branch`/`checkout`/`fetch`/`pull`/`add`/`commit`/`push`/`rev-parse`/`ls-files` ; `gh` `auth status`, `api user`/`graphql`, `issue` view/list/create/edit/comment, `pr` view/list/create/edit/diff/ready, `run` list/view/rerun, `workflow` list/view/run ; `bash scripts/gitlab/lib.sh`, `… doctor.sh`, `… git/install-hooks.sh`. |
-| **`ask`** | confirmation explicite (jamais silencieux) | `git commit --no-verify` (le bypass du hook reste possible mais **volontaire**), `git reset --hard`, `git clean`, `gh issue close`. |
+| **`allow`** | exécuté sans prompt | Lectures/écritures **non destructrices** du workflow : `git status`/`diff`/`log`/`show`/`branch`/`checkout`/`fetch`/`pull`/`add`/`commit`/`push`/`rev-parse`/`ls-files` ; `gh` `auth status`, `api user`/`graphql`, `issue` view/list/create/edit/comment, `pr` view/list/create/edit/diff/ready, `run` list/view/rerun, `workflow` list/view/run ; `bash scripts/gitlab/lib.sh`, `… doctor.sh`, `… git/install-hooks.sh` ; les **lectures de supervision** (#963, puce ci-dessous) : `… orchestrate/status.sh`, `… orchestrate/queue.sh`, `… orchestrate/guard.sh --check`, `… presentation/ecrans-touches.sh --check`, `… git/worktree.sh sessions` ; les outils des serveurs MCP du dépôt (`mcp__chrome-maestro`, `mcp__figma-officiel`). |
+| **`ask`** | confirmation explicite (jamais silencieux) | `git commit --no-verify` (le bypass du hook reste possible mais **volontaire**), `git reset --hard`, `git clean`, `gh issue close`, `mcp__chrome-maestro__browser_run_code_unsafe` (exécution de JS arbitraire dans la page). |
 | **`deny`** | bloqué | Ce que les garde-fous (§6) interdisent : `git push --force` / `-f` / `--force-with-lease`, `gh pr merge`, `gh pr close`, `gh run delete`. |
 
 - **`git commit`/`push` en `allow`** couvrent le chemin nominal de `/ticket-ship` et `/ticket-finish` ;
@@ -1946,6 +2140,35 @@ personnelles vont dans `.claude/settings.local.json`, non versionné).
   canoniques, mais une variante à l'ordre de drapeaux inhabituel peut y échapper — d'où le rappel du §6
   que la **consigne** (jamais de force-push/merge/close auto) reste la garantie première, l'allowlist
   n'étant qu'un filet.
+- **Lectures de supervision, et ce qui reste dehors** (#963, lot 3 de #960) — la raison vit **ici**,
+  parce que `.claude/settings.json` ne peut pas la porter : l'outil d'édition de Claude Code y refuse
+  un `$comment` (« Unrecognized field », constaté le 2026-09-17), alors que `settings.run.json`, qui
+  vit hors de `.claude/`, en porte un. Les commandes du dépôt prescrivent ces appels à **chaque usage**, et le
+  `allowed-tools:` de leur en-tête ne vaut pas permission (#179) : sans règle, chacun demandait une
+  approbation, sur des commandes de supervision dont c'est l'unique travail. Même raison que
+  `worktree.sh ensure` (#199) : lire n'écrit rien côté forge, ne supprime aucune branche et ne
+  force-pushe rien.
+  - `orchestrate/status.sh` — c'est **tout** `/orchestrate --status` ; « il n'écrit RIEN » (son
+    en-tête). `orchestrate/queue.sh` — « ce script est en LECTURE SEULE » (son en-tête), déjà
+    ouvert en run. `orchestrate/guard.sh --check` — compare les `deny` des deux fichiers (le mode nu
+    est le hook du run). `presentation/ecrans-touches.sh --check` — lit l'historique git
+    (`/milestone-bilan`, `/milestone-presentation`). `git/worktree.sh sessions` — retrouver la
+    conversation d'un ticket (#385, #397).
+  - **La granularité suit la nature déclarée, jamais un répertoire.** Un script qui se déclare en
+    lecture seule **tout entier** est son propre verbe (`status.sh`, `queue.sh` : leurs options ne
+    font que choisir quoi lire, et une règle par option laisserait dehors `--no-forge`, l'ordre
+    `--milestone X --check` ou un double espace). Un script qui mêle lecture et écriture, ou dont
+    une seule forme est prescrite, s'ouvre **verbe par verbe** (`worktree.sh`, dont `remove` reste
+    dehors ; `guard.sh` ; `ecrans-touches.sh`). Une règle `bash scripts/…` en gros bénirait tout
+    script à venir sans rien juger de lui.
+  - **Restent dehors, volontairement** — ici la confirmation est le geste, pas une friction :
+    `orchestrate/run.sh` (`--detach` compris) ouvre N Pull Requests, son feu vert **est** la
+    question ; `setup.sh` **écrit** (venv, `.env`, hooks git, `node_modules`, et le profil
+    PowerShell hors du dépôt, §7.0) ; `orchestrate/journal.sh gc` écrit (rétention et compression
+    du journal) — seuls `audit` et `refus`, qui lisent, sont ouverts.
+  - L'`allow` d'un run étant l'**union** des deux fichiers (§11.7), toute règle ajoutée ici s'ouvre
+    aussi en run : `bash scripts/orchestrate/ecart-run.sh` doit continuer de rendre 0. Ouvrir une
+    lecture ne peut que retirer un écart, jamais en creuser un.
 - **Régénérer / auditer** : le fichier est du JSON simple ; toute évolution de l'allowlist est une
   **décision humaine** (un agent ne s'auto-accorde pas de permissions — l'écriture de ce fichier par
   Claude Code est d'ailleurs interceptée et demande validation).
@@ -1961,6 +2184,18 @@ personnelles vont dans `.claude/settings.local.json`, non versionné).
   `settings.local.json` est écrit et fusionné clé par clé par l'étape `mcp` de `setup.sh`, qui
   renvoie vers le gabarit en `--check`. Les worktrees y ajoutent `MAESTRO_PORT_API`/
   `MAESTRO_PORT_UI`, posés par `worktree.sh` (§9) — pas à la main.
+- **Serveurs MCP de Claude Code ([`.mcp.json`](../.mcp.json), versionné)** : `chrome-maestro`
+  (pilotage du navigateur via `@playwright/mcp`) et `figma-officiel` — un clone les reprend sans
+  réinstallation. On n'y fige **jamais de chemin machine ni de secret** : le profil du navigateur
+  passe par `${MAESTRO_CHROME_PROFILE}` (défaut `.maestro/chrome-profile`, gitignoré), posé par
+  chacun dans le bloc `env` ci-dessus ; Figma s'authentifie en OAuth par utilisateur. **Fermer la
+  fenêtre (`browser_close`) à la fin de chaque séquence**, pas seulement en fin de session : Chrome
+  n'accepte qu'**un seul consommateur à la fois** sur un `--user-data-dir` (verrou
+  ProcessSingleton), donc une fenêtre laissée ouverte bloque tout autre outil sur le même profil — si
+  une étape suivante en a besoin, elle rouvrira. Le skill `verify` et
+  `scripts/presentation/captures.sh` ne sont pas concernés : ils lancent Edge **sans profil
+  persistant**. À ne pas confondre avec `core/mcp/<agent>.json`, qui équipe les agents du produit
+  ([docs/21](./21-configuration-mcp.md)).
 
 ### 7.2 Traçabilité des demandes — hook `UserPromptSubmit`
 
@@ -2134,7 +2369,7 @@ tombe pas dans un défaut neutre : il tombe dans deux défauts **opposés**, don
 
 | Mécanisme | Ce qu'il faisait d'un chemin inconnu | Ce qu'il en fait depuis |
 |---|---|---|
-| Portier de périmètre (`ci.yml`) | `web=false` → aucun job ne regarde la coque | une **sortie `desktop`** distincte, et le job qui va avec |
+| Portier de périmètre (`ci.yml`) | `web=false` → aucun job ne regarde la coque | une **sortie `desktop`** distincte, et le job qui va avec — **une sortie par paquet npm**, jamais une sortie « front » commune, qui ferait payer `next build` à un diff de la seule coque |
 | Checks requis (`protect-main.sh`) | le job ajouté n'empêche aucun merge | `desktop` dans `CHECKS` — voir §8.8 pour le geste qui le pose |
 | Périmètre du filet local | « chemin non classé » → **toute** la suite pytest, à chaque diff | les suites qui **nomment** la coque, et aucune sinon (§8.4) |
 | Provisionnement (`setup.sh`) | ni installation ni dérive : `--derive` ne voyait jamais rien bouger | une étape `desktop` et une ligne de dérive (§9.4) |
@@ -2185,7 +2420,11 @@ verdict en **17 min 51 s au lieu de 7 min 08 s** (`activer_export_langfuse()` es
 chaque point d'entrée, le handler survit au test qui l'a déclenché, et chaque ligne journalisée
 ensuite part en POST **synchrone** de 10 s de plafond — vers le vrai projet Langfuse, qu'elle
 pollue au passage) ; sans la seconde, la prochaine fuite du même genre repasserait inaperçue,
-puisqu'elle ne se manifeste que par de la lenteur. C'est aussi ce qui rend le filet CI local
+puisqu'elle ne se manifeste que par de la lenteur. Motif à connaître avant d'ajouter un handler à
+un logger de `maestro.` : `activer_export_langfuse()` est appelée par **chaque** point d'entrée
+(`engine_cli.main`, `maestro.demo.main`) et rien ne la retire, donc elle est **idempotente** — sans
+quoi N invocations dans un même processus accrochaient N handlers, et chaque ligne journalisée
+partait N fois : traces et coûts **dupliqués en production**, pas seulement en test. C'est aussi ce qui rend le filet CI local
 ([`scripts/ci/local.sh`](../scripts/ci/local.sh), ci-dessous) comparable au job qu'il prédit : le
 runner, lui, n'a jamais eu de clés Langfuse dans son environnement.
 
@@ -2432,7 +2671,7 @@ partira au push), fichier par fichier :
 | Ce qui change | Ce qui se joue |
 |---|---|
 | `maestro/**` | toutes les suites **applicatives** |
-| `scripts/**`, `.claude/**`, `.gitlab*`, `.env.example`… | les suites qui **nomment** le fichier — à défaut, celles qui nomment le **chemin de son dossier** (ci-dessous) |
+| `scripts/**`, `.claude/**`, `.github/**`, `.env.example`… | les suites qui **nomment** le fichier — à défaut, celles qui nomment le **chemin de son dossier** (ci-dessous) |
 | `tests/test_*.py` | elles-mêmes |
 | `tests/conftest.py`, `pyproject.toml`, `.node-version` | la suite entière |
 | `docs/**`, `apps/web/**`, prose de la racine | aucune suite pytest (`web-build` couvre le front) |
@@ -2645,7 +2884,8 @@ Les points de conception, à comprendre avant d'y toucher :
 - **Mais un démon éteint n'est pas un poste sans Docker (#425).** Le repli ci-dessus a été écrit
   pour le *poste sans Docker* ; celui qu'on rencontre tous les jours est le *démon éteint* — Docker
   Desktop installé, simplement pas démarré, typiquement après un redémarrage. Il empruntait le même
-  chemin et payait le même prix, alors qu'il se répare en une commande : le filet **démarre donc
+  chemin et payait le même prix (×15 à ×30, et un verdict aveugle aux écarts Windows/Linux), alors
+  qu'il se répare en une commande : le filet **démarre donc
   Docker Desktop lui-même** avant de conclure au repli. Ce qui sépare les deux cas est la présence
   du plugin CLI **`docker desktop`**, livré *avec* Docker Desktop — un critère qui ne devine aucun
   chemin d'installation et ne distingue aucune plateforme. Quatre points de conception :
@@ -2765,7 +3005,8 @@ shellcheck manque (« `winget install koalaman.shellcheck` (ou `docker pull …`
 
 **Deux `local.sh` ne tournent jamais ensemble sur une machine.** Le second annonce qu'il attend,
 puis joue seul dès que le premier a rendu son verdict. Il ne refuse jamais, et on ne le saute
-jamais : **sérialiser, pas refuser**.
+jamais : **sérialiser, pas refuser**. Un filet qui répondrait « reviens plus tard » déplacerait le
+problème sur son appelant, qui est `/ticket-finish` juste avant un push.
 
 Ce n'est pas un cas de bord, c'est le régime **nominal** depuis #455/#626 — un run tourne à
 concurrence 3, chaque session passe le filet avant de pousser (§6), et une session interactive peut
@@ -2950,8 +3191,10 @@ Les points de conception, à comprendre avant d'y toucher :
   natifs par ticket). Les prompts de session (`prompt_ticket`, `prompt_mrfix`) le nomment **avec sa
   règle de choix**, les deux branches ensemble : autoriser une commande que personne ne nomme ne la
   fait pas exister, et n'en dire que la moitié enverrait les suites applicatives dans un conteneur
-  qui les ralentit. C'est la leçon de #310 prise dans l'autre sens — là-bas un prompt prescrivait
-  une recette que le filet portait déjà, ici il taisait un outil que rien d'autre n'annonce.
+  qui les ralentit **de six fois**. C'est la leçon de #310 prise dans l'autre sens — là-bas un prompt
+  prescrivait une recette que le filet portait déjà, ici il taisait un outil que rien d'autre
+  n'annonce. `tests/test_ci_local.py` garde les deux versants : la règle d'allowlist présente des
+  **deux** côtés, et les deux prompts qui la nomment.
 - **La plomberie est PARTAGÉE, pas recopiée**
   ([`scripts/ci/pytest-regime.sh`](../scripts/ci/pytest-regime.sh), sourcé par les deux). Régime,
   empreinte de l'image, point de montage, identité git, workers, garde-fous du venv (#194) : une
@@ -3138,6 +3381,9 @@ Deux moitiés, et il faut les deux :
   sur les machines sans `~/.gitconfig`, c'est-à-dire nulle part où quelqu'un regardait.
 - **son absence en CI est une erreur**, pas un saut : `tests/conftest.py` refuse de jouer la suite
   quand git manque **et** qu'une variable de CI est posée (`CI`, `GITLAB_CI`, `GITHUB_ACTIONS`).
+  Des quatre garde-fous du conftest, c'est **le seul qui refuse de jouer au lieu de neutraliser** :
+  les trois autres (Langfuse, couleur, fournisseur du poste, §8) protègent le verdict de ce que le
+  poste apporte **en trop**, celui-ci de ce que l'image du job **n'apporte pas**.
   Sur un poste sans git, le `skipif` de chaque module reste la bonne réponse — il dit « cette
   machine ne peut pas répondre » ; en CI le même saut dit « rien n'a été vérifié » avec les mots de
   « tout va bien ». Ce contrôle ne remet rien au vert : il fait qu'un futur retrait de git se voie
@@ -4530,7 +4776,8 @@ travail de ticket était devenu inatteignable — sans que rien, nulle part, ne 
 **Rien n'est perdu : c'est l'adressage qui manquait, et il se dérive.** L'encodage de Claude Code
 remplace **tout caractère hors `a-zA-Z0-9`** par `-` (`replace(/[^a-zA-Z0-9]/g, "-")`, lu dans le
 binaire du CLI — le `.` de `.claude` y devient un tiret, `…-Maestro--claude-worktrees-<iid>-…`,
-ce que la liste de quatre caractères de #385 ne couvrait pas, #847) ; le répertoire de projet d'un
+ce que la liste de quatre caractères de #385 ne couvrait pas : c'est `sessions_encode` qui l'applique
+dans `worktree.sh`, `.` compris, sans quoi `sessions` ne retrouverait plus rien depuis #847) ; le répertoire de projet d'un
 ticket est donc `<base des worktrees encodée>-<iid>-<slug>`, qu'un motif sur le seul **iid**
 retrouve — le slug n'est jamais nécessaire.
 
@@ -4846,16 +5093,16 @@ est traité et pourquoi il existe.
 | Une session clôture un ticket **qui n'est pas le sien** (PR et temps posés à la place d'un autre) | **garde-fou de clôture** : `close-guard` compare l'iid visé à la branche courante *et* aux assignés | §6 |
 | Les lots d'un parent s'attendent en file alors qu'ils sont indépendants | label **`lot::parallele`** sur le lot ; `startables` liste **tous** les lots prenables | §5.1 |
 | Une branche vieillit pendant qu'`origin/main` avance ; le conflit se découvre au merge | **alerte de retard** avant le push : `behind-main` (commits de retard + fichiers modifiés des deux côtés) | §6 |
-| Une PR ouverte n'est relue par personne, faute de savoir qu'elle attend | **revue best-effort outillée** : **file de revue** en tête de `/backlog`, la plus ancienne d'abord (aucun relecteur posé d'office, #196 ; `set-reviewer` reste là pour une pose manuelle) | §6 |
+| Une PR reste bloquée sans que personne sache qu'elle attend | **file de revue** en tête de `/backlog`, la plus ancienne d'abord : depuis #418 elle ne montre que ce que `merge-mr` a refusé, à débloquer par `/mr-fix`. La **relecture** n'a aucun déclencheur — geste humain à la demande (`/mr-review`) ; aucun relecteur posé d'office, #196 ; `set-reviewer` reste là pour une pose manuelle | §6 |
 | Une session meurt sur un ticket : il reste « En cours » et assigné, donc **invisible de tous** — travail compris | **détection + reprise** : `reconcile-en-cours` signale d'office, `reprendre-en-cours` le rend prenable sans toucher au worktree | §9.6 |
-| La CI dépend du poste d'**une** personne : elle éteint sa machine, l'équipe ne merge plus | **runner partagé permanent** (`--partage`, machine toujours allumée), les runners locaux en secours | §8.1 |
-| Un échec de lint occupe le runner de quelqu'un d'autre pour une faute de frappe | **filet CI local** : `bash scripts/ci/local.sh` rejoue les jobs du pipeline avant le push | §8 |
+| La CI dépend du poste d'**une** personne : elle éteint sa machine, l'équipe ne merge plus | **exécutants hébergés** de GitHub (#344) : aucun runner à tenir allumé — du temps de GitLab, un runner partagé permanent (`--partage`) | §8.1 |
+| Un échec de lint coûte un pipeline entier pour une faute de frappe | **filet CI local** : `bash scripts/ci/local.sh` rejoue les jobs du pipeline avant le push | §8 |
 | La moitié du `.env` circule à la main, de canal en canal | marqueurs **`[perso]` / `[partagé]`** + `env-pull.sh`, qui complète sans jamais écraser | §7.3 |
 
 **Rien n'est bloquant.** Aucun de ces mécanismes n'interdit quoi que ce soit : ils *disent*, et la
 décision reste humaine. `behind-main` et `close-guard` rendent un **code de retour lu, jamais
-fatal** (`… || verdict=$?`) ; la revue n'exige **aucune approbation** — c'est la visibilité qui la
-déclenche ; et **aucun relecteur n'est désigné d'office** (#196), la pose restant un geste humain
+fatal** (`… || verdict=$?`) ; la revue n'exige **aucune approbation** et **rien ne la déclenche** —
+c'est un geste humain, à la demande (§6) ; et **aucun relecteur n'est désigné d'office** (#196), la pose restant un geste humain
 outillé par `set-reviewer`. Les seuls refus durs restent ceux des garde-fous de
 §6 : **aucun merge non vérifié**, pas de force-push, pas de suppression de branche non mergée. ⚠ Ce
 premier refus disait « pas de merge automatique » jusqu'au chantier #413 : le merge **est** devenu
@@ -4871,7 +5118,7 @@ bloquants au sens plein, seuls de tout ce tableau.
 3. `/ticket-start <iid>` — s'arrête si le ticket est déjà pris ; sinon branche, statut, dates.
 4. `bash scripts/ci/local.sh` avant de pousser (§8).
 5. `/ticket-ship` — retard sur `origin/main` signalé, garde-fou de clôture, PR (sans relecteur
-   désigné : c'est la file de revue qui appelle un relecteur, §6), **puis attente du pipeline et
+   désigné, la relecture étant un geste humain à la demande, §6), **puis attente du pipeline et
    merge** par `lib.sh merge-mr` (§6). Compter quelques minutes : la commande ne rend plus la main
    dans la seconde.
 6. Le plus souvent il n'y a **rien à faire ensuite** — la PR est mergée, le ticket fermé par son
@@ -4932,7 +5179,8 @@ ouvert (il survit à la fermeture de Claude Code, pas à celle du terminal).
 le pilote *est*, pas sur qui appuie sur le bouton : `--detach` relance le script dans une **console
 indépendante**, puis rend la main tout de suite. Le pilote y est bien un shell dans son propre
 processus — ni une session Claude Code, ni un travail d'arrière-plan suspendu à une session, qui
-mourrait avec elle. Ce qui l'en distingue en pratique :
+mourrait avec elle. Depuis une session, `/orchestrate` ne le lance **qu'après confirmation** : un
+run ouvre N PR, et depuis #419 il les merge. Ce qui l'en distingue en pratique :
 
 | | Pilote |
 |---|---|
@@ -5029,7 +5277,8 @@ que personne ne l'ouvre : le résidu ne disparaît pas, il devient **invisible**
 conclusion depuis #238 (« Mieux vaut ne pas l'y envoyer […] **`queue.sh` ne le détecte pas** —
 c'est au rédacteur du ticket de le dire ») sans l'avoir jamais outillée. Mêmes trois surfaces, même
 règle unique — celle de `lib.sh touche-claude`, rejouée par `gl_touche_claude_de` sur la vue que
-`queue.sh` a **déjà** en cache, donc sans une lecture de forge de plus :
+`queue.sh` a **déjà** en cache, donc sans une lecture de forge de plus. Le verbe **lit** : il rend
+`<verdict>⇥<lignes>`, code `0` si le ticket touche `.claude/`, `3` sinon.
 
 | Surface | Ce qu'elle rend |
 |---|---|
@@ -5322,12 +5571,13 @@ n'est pas de partager l'écran entre N écrivains mais de **le retirer à tous s
 | ce que fait une session | dessine, efface, réimprime | **publie** son action dans `<iid>.vue` |
 | la hauteur du bloc | un fichier partagé (`.vue-hauteur`) | une **variable** — un seul processus la lit et l'écrit |
 | une ligne permanente d'un ticket | stdout → `tee` → écran, en course avec la frame suivante | une **file** que le pilote vide entre deux frames |
+| le paramètre `frais` du dessin | nécessaire | **disparu** |
 
 Trois points à connaître avant d'y toucher :
 
-- **le chrono n'est pas publié par la session, il est calculé par le pilote.** Il vaut pour le
-  **ticket**, donc à travers ses reprises (§11.4) : une valeur publiée par une session repartie de
-  zéro le ferait reculer à chaque limite d'usage ;
+- **le chrono n'est pas publié par la session, il est calculé par le pilote** (`P_DEBUT`). Il vaut
+  pour le **ticket**, donc à travers ses reprises (§11.4) : une valeur publiée par une session
+  repartie de zéro le ferait reculer à chaque limite d'usage ;
 - **la hauteur du bloc varie** maintenant d'une frame à l'autre — un ticket qui se solde rend sa
   ligne d'action. Le bloc se termine donc par `ESC[J`, qui efface ce qu'une frame plus haute avait
   laissé sous lui, et il **se borne à la fenêtre** : plutôt que de déborder (donc de faire défiler,
@@ -5337,6 +5587,9 @@ Trois points à connaître avant d'y toucher :
   boucle d'attente **ne tourne pas** quand les sessions se soldent aussi vite qu'on les lance : le
   bloc restait alors vide tout le run — c'est le défaut qu'a révélé le premier essai à trois
   tickets, invisible à `--concurrence 1`.
+
+Et une règle qui en découle : **la file est vidée à la sortie**, comme dans le trap — une ligne
+restée dans la file n'existe nulle part ailleurs, ni à l'écran ni dans `run.log`.
 
 **Le compteur du pied dit ce qu'il reste, pas où on en est.** `reste` valait `nb_plan - POSITION`,
 c'est-à-dire la position du dernier ticket lancé : à N en vol les tickets ne se prennent plus dans
@@ -5353,7 +5606,7 @@ invisibles à la relecture de `run.log` — ce qui explique qu'ils aient tenu :
 | --- | --- | --- |
 | l'historique se remplit de copies du bloc | la frame se terminait par un **saut de ligne**, et un `\n` écrit sur la rangée du bas fait **défiler le tampon** — cinq fois par seconde | la dernière ligne du bloc n'a plus de `\n` : le curseur y reste, et le repositionnement vaut `hauteur - 1` |
 | le curseur saute sans arrêt | il est déplacé d'un bout à l'autre du bloc à chaque frame | il est **caché** tant que la vue tient l'écran, rendu par `vue_ferme` (sortie normale, erreur ou Ctrl-C) |
-| une ligne `… 12min00 · Bash …` s'accumule sous le bloc | le **battement** partait sur stdout, donc par `tee`, donc à l'écran — et forçait un redessin « à neuf » qui laissait le bloc précédent derrière lui | il part vers le **journal seul** ; l'écran a déjà l'information dans le bloc, en plus frais |
+| une ligne `… 12min00 · Bash …` s'accumule sous le bloc | le **battement** (une ligne par minute) partait sur stdout, donc par `tee`, donc à l'écran — et forçait un redessin « à neuf » qui laissait le bloc précédent derrière lui | il part vers le **journal seul** ; l'écran a déjà l'information dans le bloc, en plus frais |
 
 Le redessin ne se fait plus qu'**une fois par seconde** (rien de ce que la frame montre ne bouge plus
 vite : le chrono compte les secondes), et chaque frame coûte une poignée de forks — à cinq images par
@@ -5496,7 +5749,8 @@ bash scripts/orchestrate/run.sh --resultat .maestro/orchestrate/<run-id>/<iid>.j
 
 Le **coût** y est arrondi à deux décimales, comme dans `resume.tsv` et dans la console :
 `total_cost_usd` sort du CLI en flottant brut (`10.686978499999995`), qui n'apprend rien de plus que
-`10.69` et déborde de toutes les colonnes.
+`10.69` et déborde de toutes les colonnes. L'arrondi se calcule sous `LC_ALL=C`, la colonne de
+`resume.tsv` étant relue en awk (une virgule décimale la casserait).
 
 **Ce journal ne s'accumule plus sans fin** (#198). Rien ne le nettoyait : `run.sh` crée un
 répertoire **par lancement** et ses deux `rm -rf` sont des renoncements (lancement détaché en
@@ -5872,6 +6126,10 @@ Deux pièges de lecture, découverts à ce prix, sans lesquels on instruit à c�
   pour autant les verbes git/`gh` du dépôt — une copie de l'`allow` dériverait en silence, là où
   `guard.sh --check` veille sur celle du `deny`.
 
+La conduite qu'on en tire : une session appelle ses commandes **depuis son worktree, en chemins
+relatifs, une par une** — sans les enchaîner, un `cd` ou un `echo` de confort suffisant à faire
+tomber une chaîne par ailleurs autorisée.
+
 Une règle ne prend pas non plus toujours de spécificateur : **`Skill` s'autorise nu**, le tool ne
 déclarant pas de `ruleContentField` (`Skill(ticket-start)` ne matcherait rien), là où `Bash` expose
 `command` et `Write` `file_path`.
@@ -5993,7 +6251,8 @@ ses propres permissions : on ne cherche pas à le contourner.
 **nus**. La déduction laissait un trou, et #238 est allé le boucher : une règle à **chemin
 explicite** (`Edit(.claude/skills/**)`) n'avait jamais été essayée, alors que la lecture du binaire
 du CLI suggérait qu'une telle règle est consultée **avant** le garde-fou. Le banc d'essai est dans
-le dépôt et se rejoue — quelques minutes, ~0,15 $ :
+le dépôt et se rejoue — quelques minutes, ~0,15 $ — et il a ses propres tests,
+[`tests/test_essai_ecriture_claude.py`](../tests/test_essai_ecriture_claude.py) :
 
 ```bash
 .venv/Scripts/python.exe scripts/claude/essai-ecriture-claude.py
@@ -6562,8 +6821,10 @@ Trois choses à savoir sur ce que la reprise fait du plan :
   `--plan` réduit à un sous-ensemble le donnerait décalé de son propre total (`[4/3]`), `N` étant
   compté sur ce fichier-là.
 
-> **Tests.** [`tests/test_orchestrate.py`](../tests/test_orchestrate.py) — même parti pris que le
-> reste : dépôt jetable, **ni réseau, ni quota, ni écriture côté forge**. Un `gh` factice répond
+> **Tests.** [`tests/test_orchestrate.py`](../tests/test_orchestrate.py) — garde les invariants de
+> la boucle depuis son origine (#172, puis #175, #178, #179, #180, #203, #204, #213, #217, #230,
+> #235, #240, #284, #286, #325, #326 et le chantier concurrent #288-#291, couvert par #292). Même
+> parti pris que le reste : dépôt jetable, **ni réseau, ni quota, ni écriture côté forge**. Un `gh` factice répond
 > depuis des fixtures (et **journalise ses appels**, ce qui rend vérifiable une promesse comme
 > `--no-forge`, dont l'alias historique `--no-gitlab` est joué lui aussi),
 > `MAESTRO_CLAUDE_BIN` remplace le CLI, `MAESTRO_ORCHESTRATE_WORKTREE` le montage
@@ -6586,7 +6847,9 @@ Trois choses à savoir sur ce que la reprise fait du plan :
 **Démarrer ou reprendre un run commence par tuer ceux qui tournent encore.** Deux pilotes vivants,
 c'est le même quota brûlé en double, un unique fichier `STOP` pour les deux, et une reprise qui
 rejoue le plan d'un run toujours en train de le jouer. Le cas n'avait rien d'exceptionnel : on
-relance parce que le précédent « a l'air fini », et il ne l'était pas.
+relance parce que le précédent « a l'air fini », et il ne l'était pas. `/orchestrate` l'**annonce
+avec le feu vert**, au démarrage comme à la reprise, plutôt que de le laisser découvrir dans la
+console.
 
 ```bash
 bash scripts/orchestrate/run.sh --tuer-les-runs   # ne fait QUE ça : arrête, dit lesquels, sort
@@ -6828,7 +7091,8 @@ Trois conséquences, toutes voulues :
 
 * **`resume.tsv` n'a qu'un seul écrivain.** La question « une ligne reste-t-elle entière quand N
   processus écrivent en `>>` ? » ne se pose pas : aucun sous-shell n'écrit le bilan. Le pilote le
-  fait, à l'unique endroit qui incrémente aussi les compteurs et nourrit la cascade.
+  fait, à l'unique endroit qui incrémente aussi les compteurs et nourrit la cascade. Confier cette
+  atomicité à un `>>` partagé l'aurait fait dépendre **de la plateforme**.
 * **Le montage des worktrees est sérialisé.** `git worktree add` écrit dans le dépôt partagé et prend
   ses verrous sur les refs ; N montages simultanés sur le même clone, c'est un « cannot lock ref » au
   hasard. Le coût est réel — mesuré ~1 s de pré-vol par ticket sous MSYS, quelques minutes avec
@@ -7098,7 +7362,15 @@ couper une résolution de conflit au milieu n'économiserait que du temps de mur
 > verbes (les quatre prérequis un par un, les codes de `pipeline-wait` — **naissance comprise**,
 > avec l'A/B qui prouve qu'un vieux vert n'est plus pris pour le run attendu (§8.9), et une
 > naissance tardive observée **au rang du sondage** et jamais à l'horloge, #648 §8.4 —, l'ordre de
-> `merge-order` sur le graphe de #299, le `deny` et son message) ;
+> `merge-order` sur le graphe de #299, le `deny` et son message). Les quatre prérequis sont éprouvés
+> **un par un** — un test qui les vérifierait ensemble ne dirait pas lequel garde —, dont le
+> pipeline rouge et le **vert porté par un sha antérieur** ; le plafond de `pipeline-wait` n'est
+> **pas** un rouge ; `merge-order` est jugé par son **coût** (2 résolutions contre 4) et non par une
+> permutation apprise par cœur ; le message du `deny` doit **nommer le chemin vérifié**, un « ne
+> merge jamais » resté en place enverrait une session chercher un contournement. Les conflits n'y
+> sont **pas simulés** (vrais commits, vrai `merge-tree`), et un `grep` prouve qu'aucun prompt ne
+> **prescrit** `gh pr merge` — motif prouvé sur un échantillon fautif avant de balayer, et borné aux
+> prescriptions, le dépôt **mentionnant** la commande une dizaine de fois pour l'interdire ;
 > [`tests/test_orchestrate.py`](../tests/test_orchestrate.py) garde le pilote — l'entrée en file, le
 > merge qui aboutit, la **sérialisation** (mesurée par une barrière et des relevés par écrivain,
 > jamais par un `sleep` ni un compteur partagé — #292, puis #313), la seconde PR rejugée après le
@@ -7119,7 +7391,8 @@ bash scripts/orchestrate/journal.sh audit <run-id>   # un run précis
 bash scripts/orchestrate/journal.sh audit --tous     # tout le journal, pour la tendance
 ```
 
-Depuis Claude Code, **`/run-audit [<run-id>]`** est le geste : elle appelle ce verbe **et** `refus`,
+Le verbe vient de #497, la commande de #498. Depuis Claude Code, **`/run-audit [<run-id>|--tous]`**
+est le geste : elle appelle ce verbe **et** `refus`,
 et n'ajoute au-dessus d'eux que ce qu'un script ne sait pas faire — le **jugement**, puis les
 **tickets de correction** qu'il appelle. Elle est en **lecture seule**, comme `/backlog` et
 `/mr-review` : ni cycle de vie, ni PR, ni merge, et aucun ticket ouvert sans un « go » explicite.
@@ -7155,7 +7428,10 @@ aurait retiré l'invitation sans la remplacer. Enfin **rien n'a bougé dans `jou
 
 **Ce que l'audit répond, et que rien d'autre ne répondait.** Sans argument il porte sur le dernier
 run qui porte un flux — un run **en cours** se lit comme un autre, et c'est même la question la plus
-fréquente. Huit sections, toutes tirées des mêmes faits extraits une seule fois :
+fréquente. La durée d'un appel ne se lit sur **aucune** ligne du flux : l'audit apparie chaque
+`tool_use` à son `tool_result` **par identifiant**. Huit sections, toutes tirées des mêmes faits
+extraits une seule fois — le tableau ci-dessous, plus le **poids par outil** et le **palmarès des
+appels les plus longs** :
 
 | Ce qu'on veut savoir | Ce que la section montre |
 | --- | --- |
@@ -7201,6 +7477,12 @@ compterait aussi le structurel annoncerait un gisement d'économie que rien de c
 montrerait (4,2 min avant, **5,4 s** après, sur le même run). Le coût d'un appel une-fois-par-ticket
 n'est pas perdu pour autant : il se lit « par forme de commande », et pour le pré-vol dans sa propre
 section. La mécanique était déjà là — le regroupement par forme sépare les tickets depuis #496/#497.
+
+Deux choses de plus à ne pas défaire dans la mesure. L'occupation sous outil est l'**union** des
+intervalles, **jamais leur somme** : des appels parallèles se recouvrent, et les additionner rendrait
+une part de 110 %. Et le `cd "<worktree>" &&` de préfixe est **écarté** du regroupement par forme,
+faute de quoi tout le run se rangerait sous « cd » — même raison que le maillon d'une chaîne compté
+pour lui-même dans `refus` (§11.7), et même désescapage qu'à #496.
 
 ⚠ **Le temps mort se mesure, il ne se départage pas.** Un trou de plusieurs heures est une limite
 d'usage ; quelques minutes, de la réflexion. L'audit nomme les trous au-delà de

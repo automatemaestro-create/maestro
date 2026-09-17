@@ -690,8 +690,8 @@ mécanisme est donc en trois pièces :
 
 | pièce | rôle |
 |---|---|
-| `lib.sh touche-surface <iid>` | **lit** — `0` touche (à proposer) · `4` touche mais déjà arbitré · `3` aucune surface |
-| `start-brief` (donc `/ticket-start`) | **propose**, sur la vue du ticket qu'il vient de lire — zéro aller de forge en plus |
+| `lib.sh touche-surface <iid>` | **lit** — rend `<verdict>⇥<lignes>⇥<source>` ; `0` touche (à proposer) · `4` touche mais déjà arbitré · `3` aucune surface |
+| `start-brief` (donc `/ticket-start`) | **propose**, sur la vue du ticket qu'il vient de lire — zéro aller de forge en plus : #602 venait de faire descendre le pré-vol de 30 allers à 5, on ne les rend pas un par un |
 | `lib.sh veille-arbitre <iid>` | **enregistre** la réponse — veille faite **ou** jugée inutile |
 
 L'enregistrement est repris mot pour mot de `lot::arbitre` (#562), sa raison comprise : le label
@@ -1231,8 +1231,11 @@ ce que ça coûte se dit plutôt que de se masquer.
 Une capture seule ne dit ni ce qui a changé, ni si le changement a abîmé ce qui allait — et sans
 l'état d'avant, le jugement ne peut répondre ni à « ce qui ne doit pas bouger » du rendu attendu
 (#976), ni voir la régression d'un écran qui affiche un composant partagé. Chaque écran du plan se
-regarde donc **deux fois**, dans le même thème : sur la branche et sur `origin/main`, capturés
-`<ecran>-<theme>-apres.png` et `<ecran>-<theme>-avant.png` côte à côte.
+regarde donc **deux fois**, dans le même thème et le même état : sur la branche et sur
+`origin/main`, capturés `<ecran>-<theme>.png` et `<ecran>-<theme>-avant.png` côte à côte, dans le
+dossier de l'état (#978). Le nom de l'après ne bouge pas : `--couverture` le compte, et il ne compte
+que les regards portés sur la branche. Un état que la démo d'`origin/main` ne déclare pas n'a pas
+d'avant — comparer un état limite au nominal ferait voir une différence que le ticket n'a pas faite.
 
 Le ticket posait **trois voies à trancher sur mesure**, et c'est la mesure qui a tranché :
 
