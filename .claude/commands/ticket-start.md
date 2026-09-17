@@ -1,7 +1,7 @@
 ---
 description: Démarre le travail sur un ticket (branche + assignation + état « En cours »)
 argument-hint: <issue-iid>
-allowed-tools: Bash(bash:*), Bash(gh:*), EnterWorktree, Skill, AskUserQuestion, Read, Grep, Glob, Write, WebSearch, WebFetch, mcp__chrome-maestro
+allowed-tools: Bash(bash:*), Bash(gh:*), Bash(git:*), EnterWorktree, Skill, AskUserQuestion, Read, Grep, Glob, Write, WebSearch, WebFetch, mcp__chrome-maestro
 ---
 
 Tu vas démarrer le travail sur le ticket d'IID `$ARGUMENTS` selon les règles de Maestro
@@ -165,7 +165,7 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
    - **Bloc absent** : il n'y a rien à demander — soit le ticket ne touche aucune surface visible,
      soit l'arbitrage est déjà enregistré. Ne le mentionne pas, n'appelle pas le verbe, passe.
 
-6. **Résumé court, puis enchaîne immédiatement sur l'implémentation** : nom de la branche, titre
+6. **Résumé court, puis enchaîne immédiatement** — sur l'étape 7, puis l'implémentation : nom de la branche, titre
    du ticket, dates posées, critères d'acceptation ; si le brief porte une section **`## Rendu
    attendu`**, relaie-la — ses rubriques telles qu'écrites (question, référence, ce qui ne bouge
    pas, états à couvrir), ou le fait qu'elle est « non renseigné » (#976). C'est l'attente contre
@@ -177,7 +177,83 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
    scripts/gitlab/lib.sh startables <iid-parent>`) — de quoi permettre à quelqu'un d'autre d'en
    prendre un tout de suite. Le résumé cadre le travail, ce n'est **pas une demande de validation** : n'attends
    aucun « go » et commence tout de suite (les critères d'acceptation font foi). Ne t'arrête pour
-   demander que si le ticket est réellement ambigu au point de ne pas pouvoir commencer.
+   demander que si le ticket est réellement ambigu au point de ne pas pouvoir commencer — ou que
+   l'étape 7 te l'impose.
+
+7. **Variantes — un ticket qui DÉCIDE de l'écran montre ses variantes, puis attend le choix** (#979,
+   chantier #972). La question est celle du §7.2 de `/design-veille` — *ce ticket décide-t-il de
+   quelque chose à l'écran, ou applique-t-il une décision déjà prise ?* —, et son critère n'est écrit
+   **que là** : juges-en par lui, sans le recopier. Elle se pose sur tout ticket qui touche un écran —
+   bloc `surface visible :` de l'étape 1, section `## Rendu attendu` écrite, ou ce que tu t'apprêtes à
+   modifier sous `apps/web/` —, que la veille ait été jouée, jugée inutile ou arbitrée avant toi : la
+   veille dit *ce qu'on vise*, les variantes *laquelle de ces formes*. Ce qui est automatique est la
+   **détection**, jamais le choix (#562, #714). Aucun écran touché : passe sans rien dire.
+   - **Un choix est déjà consigné** — un commentaire du ticket qui **commence** par
+     `## Variante retenue` (`gh issue view <iid> --comments`, lu seulement quand le ticket décide) :
+     le ticket **applique** désormais
+     une décision prise. Implémente-la, sans reposer la question.
+   - **Il applique** : pas de variantes, et enchaîne. En session interactive, dis-le **en une
+     ligne**, avec ta raison — c'est ton jugement, et la personne le renverse en demandant les
+     variantes.
+   - **Il décide, en session interactive** : montre **2 ou 3 variantes rendues**, puis attends. Comme
+     le découpage (étape 1) et la veille (étape 5), c'est une **vraie pause**.
+     1. **Des brouillons sur la vraie stack, pas une maquette.** Une variante est le minimum de code
+        qui rend sa direction visible — tokens et primitives du socle, aucune identité nouvelle
+        (docs/30 §6.1), ni tests ni finitions. Les variantes divergent sur **ce que le ticket
+        décide**, jamais sur un détail. Deux ou trois, pas une galerie ; une variante **unique** n'est
+        pas un choix mais une **validation**, et se présente comme telle. Figma sert à explorer avant
+        de brouillonner, jamais de capture (docs/30 §5.1).
+     2. **Rien ne reste dans l'arbre.** Un brouillon ne crée **aucun fichier** (un composant neuf se
+        brouillonne dans un fichier existant), pour que `git diff` le contienne tout entier et que
+        `git restore` le défasse tout entier. Écris le premier, puis monte la stack par
+        `bash scripts/design/relecture-visuelle.sh <iid>` — son plan se dérive du diff, donc d'un
+        brouillon présent : ports du worktree, projet de démo, et l'**avant** servi depuis
+        `origin/main`, qui est la référence de « ce qui ne bouge pas » ; prépare le navigateur et
+        attends qu'une page soit prête comme le disent les étapes 3 et 4 du skill
+        `relecture-visuelle`. L'UI tourne en `next dev` : les brouillons suivants s'échangent à chaud.
+        Pour chaque lettre : écris-le, capture en chemin **relatif** vers
+        `.maestro/variantes/<iid>/<lettre>/<ecran>-<theme>.png` — **jamais sous `.maestro/relecture/`**,
+        que `--couverture` compterait à la clôture comme un regard porté sur l'écran livré —, relis
+        chaque capture (`Read`), sauve le brouillon par
+        `git diff > .maestro/variantes/<iid>/<lettre>.patch`, puis `git restore` ses fichiers. Un
+        thème suffit à choisir une direction ; les deux sont l'affaire de la relecture.
+     3. **Avant de poser la question** : `bash scripts/design/relecture-visuelle.sh --fin`,
+        `browser_close`, et `git status --porcelain` **vide**. La réponse peut venir le lendemain, et
+        la session être coupée d'ici là : aucune variante non choisie ne doit pouvoir finir dans un
+        commit, et aucune stack ne doit tenir un port.
+     4. **Présente**, variante par variante : ses captures (en liens), ce qu'elle décide en une
+        ligne, sa confrontation au **rendu attendu** rubrique par rubrique — la question a-t-elle sa
+        réponse d'un coup d'œil, la référence est-elle tenue, ce qui ne bouge pas a-t-il bougé (contre
+        l'avant) — puis aux **partis pris de la veille** quand un commentaire du ticket en porte :
+        lesquels elle tient, lesquels elle plie. Section « non renseigné » ou absente : dis-le, et
+        confronte aux critères. Recommande-en une en le disant — une recommandation n'est pas un
+        choix —, puis demande (`AskUserQuestion`, une option par variante).
+     5. **Consigne le choix avant la première ligne d'implémentation** : écris avec `Write`
+        `.maestro/session/variante-<iid>.md`, qui commence par `## Variante retenue` et dit laquelle
+        (ou la direction que la personne a décrite à la place : c'est un choix aussi), celles écartées
+        et pourquoi — dans ses mots quand elle en a donné —, puis
+        `bash scripts/gitlab/lib.sh issue-note <iid> <fichier>`. Consignation en échec :
+        n'implémente pas, dis-le et réessaie. Ensuite seulement, repars du brouillon retenu
+        (`git apply .maestro/variantes/<iid>/<lettre>.patch`) et implémente pour de bon.
+   - **Il décide, en session autonome** (run `/orchestrate`) : personne ne choisira, et **tu ne
+     choisis pas à sa place**. Implémenter la variante la plus proche des partis pris et ouvrir la
+     question après coup fabriquerait un choix que personne n'a fait, déjà parti dans `main` quand
+     quelqu'un le lirait. Ne produis **aucune variante** — personne ne les regardera, et `gh` ne joint
+     pas d'image à un ticket —, n'écris **aucune ligne** d'implémentation, et écarte le ticket du run :
+     1. écris avec `Write`, dans `.maestro/session/`, ce que le ticket décide à l'écran, les partis
+        pris de la veille à confronter s'il y en a, et qu'il **attend un choix** ; puis
+        `bash scripts/gitlab/lib.sh issue-note <iid> <fichier>` ;
+     2. **puis** `bash scripts/gitlab/lib.sh set-workflow <iid> "À faire"`, en **gardant
+        l'assignation** posée à l'étape 4 : « À faire » **et** assigné est la protection qui tient un
+        ticket hors des plans de run (#621), et c'est une personne qui le reprendra par
+        `/ticket-start` — cette étape lui montrera les variantes ;
+     3. termine sur `ORCHESTRATE: ECHEC choix de variante attendu`. Les lots suivants du parent seront
+        sautés, et c'est juste : ils bâtiraient sur un écran que personne n'a choisi.
+
+     L'ordre est celui de #934 : la trace, **puis** la protection — un ticket écarté sans trace ne
+     dirait pas pourquoi. Aucun ticket à part : `veille-differe` en ouvre un parce que le ticket
+     source se ferme au merge, or celui-ci ne se ferme pas, et la question se repose d'elle-même au
+     prochain `/ticket-start` (le critère de #795 : *se repose-t-elle d'elle-même ?*).
 
 Pas de Pull Request à ce stade (aucun commit à proposer). La clôture passe par les commandes
 dédiées — `/ticket-ship` (commit auto + push + PR + état) ou `/ticket-finish` (commit déjà
