@@ -170,9 +170,11 @@ cas de doute). Les **garde-fous** priment sur l'automatisation : suis les étape
      PR.
    - committe en **commit intermédiaire** — pied **`Refs #<iid>`**, pas `Closes` (la PR porte déjà
      le `Closes`), hook `commit-msg` respecté, **jamais `--no-verify`**. Le message passe par un
-     **fichier** : écris-le avec l'outil `Write` dans ton scratchpad de session — jamais un
-     heredoc, jamais `-m "$(…)"`, la couche permissions découpant une commande sur ses sauts de
-     ligne et ne matchant aucune substitution (#233). Puis :
+     **fichier** : écris-le avec l'outil `Write` dans **`.maestro/session/`** (l'atelier de
+     session, gitignoré ; `mkdir -p .maestro/session` s'il manque) et passe-le en chemin
+     **relatif** — ni le scratchpad de session ni `/tmp`, chemins absolus qu'une session de run se
+     voit refuser (#962) ; jamais un heredoc, jamais `-m "$(…)"`, la couche permissions découpant
+     une commande sur ses sauts de ligne et ne matchant aucune substitution (#233). Puis :
      ```
      git commit -F <fichier>
      ```
