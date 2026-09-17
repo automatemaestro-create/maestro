@@ -417,10 +417,15 @@ describe("la lecture de la frise", () => {
   });
 
   it("explique un run sans activité au lieu d'afficher un tableau vide", async () => {
+    // ⚠ Depuis #927 la phrase dépend de **l'état du run** et non seulement du
+    // vide de la frise : le run de ce fichier est `en_cours` avec `nb_taches: 0`,
+    // c'est-à-dire un run qui **décompose** (G11, retex du 2026-09-11). Ce que
+    // ce contrôle garde est inchangé — la vue explique au lieu de rendre un
+    // tableau vide —, et elle explique désormais mieux.
     lecture.frise = friseFactice({ run_id: RUN, entrees: [] });
     const vue = await frise();
 
-    expect(vue.getByText(/Aucune tâche pour ce run/)).toBeInTheDocument();
+    expect(vue.getByText(/Décomposition en cours/)).toBeInTheDocument();
     expect(vue.queryByRole("table")).not.toBeInTheDocument();
   });
 

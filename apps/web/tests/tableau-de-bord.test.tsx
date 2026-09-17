@@ -35,6 +35,7 @@ import {
   coutTacheFactice,
   evenementFactice,
   rendreAvecEtat,
+  runFactice,
   tacheFactice,
   usageFactice,
   validationFactice,
@@ -85,43 +86,83 @@ describe("les indicateurs de tête (IndicateursTableauDeBord)", () => {
     }
   });
 
+  /**
+   * ⚠ **La tuile « Run en cours » ne se dérive plus des tâches** (#927) : elle
+   * reçoit les runs que l'écran a rangés (`quiTournent`), c'est-à-dire la carte
+   * dont sortent aussi le run mis au centre et l'état des runs. Les quatre
+   * contrôles ci-dessous figeaient la dérivation d'avant ; ils sont repris sur la
+   * nouvelle source, et le cinquième — celui qui rejoue l'échantillon fautif —
+   * est ce que l'ancienne ne pouvait pas garder.
+   */
   it("nomme le run quand il n'y en a qu'un", () => {
-    monter({ taches: [tacheFactice({ run_id: "run-7", statut: "en_cours" })] });
+    monter({
+      quiTournent: [runFactice({ run_id: "run-7", nb_taches: 3 })],
+    });
     expect(tuile("Run en cours")).toHaveTextContent("run-7");
     expect(tuile("Run en cours")).toHaveTextContent(
-      "1 tâche(s) encore ouverte(s)",
+      "3 tâche(s) encore ouverte(s)",
     );
   });
 
   it("les compte au-delà d'un seul, sans en privilégier un", () => {
     monter({
-      taches: [
-        tacheFactice({ id: "T-1", run_id: "run-7", statut: "en_cours" }),
-        tacheFactice({ id: "T-2", run_id: "run-8", statut: "assignee" }),
+      quiTournent: [
+        runFactice({ run_id: "run-7", nb_taches: 1 }),
+        runFactice({ run_id: "run-8", nb_taches: 1 }),
       ],
     });
     expect(tuile("Run en cours")).toHaveTextContent("2 runs");
     expect(tuile("Run en cours")).not.toHaveTextContent("run-7");
   });
 
-  it("ne compte comme « en vol » que les tâches non soldées", () => {
-    // Une tâche terminée ou en échec garde son `run_id` : sans ce filtre, un
-    // run clos resterait affiché « en cours » indéfiniment.
+  it("compte les tâches encore ouvertes sur la progression du run", () => {
+    // Et non sur les tâches chargées : c'est le backend qui compte, sur la
+    // machine à états du moteur (#473), donc la tuile ne mesure jamais la
+    // pagination de l'écran.
     monter({
-      taches: [
-        tacheFactice({ id: "T-1", run_id: "run-7", statut: "terminee" }),
-        tacheFactice({ id: "T-2", run_id: "run-7", statut: "echec" }),
+      quiTournent: [
+        runFactice({
+          run_id: "run-7",
+          nb_taches: 4,
+          progression: {
+            a_faire: 1,
+            en_cours: 1,
+            bloquees: 0,
+            terminees: 2,
+            echecs: 0,
+            autres: 0,
+            soldees: 2,
+            total: 4,
+          },
+        }),
       ],
     });
-    expect(tuile("Run en cours")).toHaveTextContent("Aucun");
     expect(tuile("Run en cours")).toHaveTextContent(
-      "toutes les tâches sont soldées",
+      "2 tâche(s) encore ouverte(s)",
     );
   });
 
-  it("distingue « aucune tâche connue » de « toutes soldées »", () => {
+  it("dit qu'aucun run ne travaille plutôt que de parler des tâches", () => {
     monter();
-    expect(tuile("Run en cours")).toHaveTextContent("aucune tâche connue");
+    expect(tuile("Run en cours")).toHaveTextContent("Aucun");
+    expect(tuile("Run en cours")).toHaveTextContent(
+      "aucun run ne travaille en ce moment",
+    );
+  });
+
+  it("nomme le run qui décompose, là où elle disait « Aucun » (G2 + G11)", () => {
+    // L'échantillon fautif du retex du 2026-09-11, rejoué : pendant les quatre
+    // premières minutes d'un run, aucune tâche n'existe encore. La tuile, qui
+    // dérivait des `taches`, affichait « Aucun / aucune tâche connue » — au-dessus
+    // d'une section qui disait « EN COURS 1 ». Les deux mêmes entrées, servies aux
+    // deux lectures : celle d'hier se contredisait, celle-ci ne le peut plus.
+    monter({
+      taches: [],
+      quiTournent: [runFactice({ run_id: "run-7", nb_taches: 0 })],
+    });
+    expect(tuile("Run en cours")).toHaveTextContent("run-7");
+    expect(tuile("Run en cours")).not.toHaveTextContent("Aucun");
+    expect(tuile("Run en cours")).toHaveTextContent("décomposition en cours");
   });
 
   it("détaille les tâches par statut", () => {
@@ -297,6 +338,27 @@ describe("le tableau de bord épuré (app/page)", () => {
     ]) {
       expect(screen.getByRole("region", { name: zone })).toBeInTheDocument();
     }
+  });
+
+  it("met le run qui tourne au centre, et ne le répète pas dessous (#927)", () => {
+    // Les deux critères d'un coup, sur les **mêmes** entrées : un run en vol,
+    // aucune tâche (c'est l'état de ses premières minutes). Avant #927 la tuile
+    // disait « Aucun » pendant que l'état des runs disait « EN COURS 1 » — G2 du
+    // retex du 2026-09-11. Désormais le run occupe le centre, la tuile le nomme,
+    // et il ne paraît pas deux fois : ce qui est mis au centre **remplace**
+    // (docs/35 §4).
+    monter({ taches: [], executions: [runFactice({ run_id: "run-9" })] });
+
+    const centre = screen.getByRole("region", { name: "Run en cours" });
+    expect(within(centre).getByText("run-9")).toBeInTheDocument();
+    // Et la tuile de tête dit la même chose, parce qu'elle lit la même liste.
+    const tete = screen.getByRole("region", { name: "Indicateurs de tête" });
+    expect(
+      within(tete).getByText("Run en cours").closest("article"),
+    ).toHaveTextContent("run-9");
+    // Rien d'autre à dire : l'état des runs s'efface au lieu d'annoncer
+    // « aucun run en cours » juste sous le run en cours.
+    expect(screen.queryByRole("region", { name: "État des runs" })).toBeNull();
   });
 
   it("a rendu le Kanban à la vue d'un run (#476, renverse #248)", () => {

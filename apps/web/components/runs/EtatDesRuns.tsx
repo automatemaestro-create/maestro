@@ -38,6 +38,14 @@
  * liste et que le groupe « Suspendus » ci-dessous continue de montrer parmi les
  * autres : le premier dit qu'on l'a oublié, le second où il en est.
  *
+ * ⚠ **Depuis #927 il ne rend pas ce que l'écran a déjà promu** (`exclure`, docs/35
+ * §3.2) : au tableau de bord, le run qui **travaille** occupe le centre avec son
+ * pipeline, donc le groupe *En cours* n'a plus rien à répéter trois blocs plus bas —
+ * et quand il ne reste aucun autre groupe, ce bloc s'efface entièrement plutôt que
+ * d'annoncer « aucun run en cours » juste sous le run en cours. Ce n'est pas une
+ * exception à la règle de la table ci-dessous : elle reste exhaustive, `exclure` vide,
+ * et l'exclusion est le geste de **l'écran**, jamais de la liste.
+ *
  * ⚠ « En propre » compte depuis #477, puis #467 : `CarteRun` porte les **ordres du
  * run** (le mettre en pause, l'interrompre), et cet écran en hérite en la rendant. Ce
  * n'est pas une entorse mais la conséquence de la deuxième décision ci-dessus — une
@@ -56,8 +64,8 @@ import {
 } from "@/components/Primitives";
 import { CarteRun } from "@/components/runs/EtatRun";
 import {
-  regimeDuRun,
   runsEnAttenteDeValidation,
+  runsParRegime,
   REGIME_EN_PAUSE,
   REGIME_INTERROMPU,
   REGIME_SOLDE,
@@ -124,12 +132,30 @@ export function EtatDesRuns({
   validations,
   taches,
   projet,
+  exclure,
 }: {
   executions: ResumeExecution[];
   validations: Validation[];
   /** Les tâches du projet — l'appariement validation → run passe par elles. */
   taches: Tache[];
   projet: Projet;
+  /**
+   * Les runs **déjà montrés ailleurs sur le même écran** (#927) — au tableau de
+   * bord, ceux que le centre a promus avec leur pipeline (docs/35 §3.2).
+   *
+   * Ce n'est pas un filtre d'affichage mais l'application de « ce qui est mis au
+   * centre **remplace**, il ne s'ajoute pas » (docs/35 §4) : un run qui occupe le
+   * haut de l'écran n'a pas à repasser en ligne trois blocs plus bas. Un objet,
+   * une place — le parti pris pris à Vercel, dont la page d'aperçu d'un projet
+   * **sort** le déploiement courant de la liste au lieu de l'y répéter.
+   *
+   * ⚠ Ce composant reste **exhaustif par défaut**, `exclure` vide : la table
+   * `GROUPES` doit couvrir tous les régimes, et c'est l'invariant que garde
+   * `tests/etat-des-runs.test.tsx` — un régime sans groupe ne dégrade pas
+   * l'affichage, il fait disparaître ces runs-là. L'exclusion est le geste de
+   * **l'écran**, jamais de la liste.
+   */
+  exclure?: ReadonlySet<string>;
 }) {
   const maintenant = useHorloge();
 
@@ -139,22 +165,28 @@ export function EtatDesRuns({
   const enValidation = runsEnAttenteDeValidation(validations, taches);
   const liste = entreeParLibelle("Runs");
 
-  // Une seule passe : le régime est demandé une fois par run, et l'ordre du
-  // backend (récents d'abord) se conserve de lui-même dans chaque groupe — le
-  // même parti pris que `ListeRuns`, qui ne retrie pas non plus.
-  const parRegime = new Map<RegimeRun, ResumeExecution[]>();
-  for (const run of executions) {
-    const regime = regimeDuRun(run, enValidation.has(run.run_id));
-    if (regime === REGIME_SOLDE && !soldeAujourdHui(run, maintenant)) continue;
-    const deja = parRegime.get(regime);
-    if (deja) deja.push(run);
-    else parRegime.set(regime, [run]);
-  }
+  // Une seule passe, et la règle vit dans `lib/execution` depuis #927 : le
+  // tableau de bord pose la même question à trois endroits (la tuile de tête, le
+  // run au centre, ce bloc), et c'est leur divergence que le retex rapporte (G2).
+  const promus = exclure ?? new Set<string>();
+  const parRegime = runsParRegime(
+    executions.filter((run) => !promus.has(run.run_id)),
+    enValidation,
+  );
 
   const groupes = GROUPES.map((groupe) => ({
     ...groupe,
-    runs: parRegime.get(groupe.regime) ?? [],
+    runs: (parRegime.get(groupe.regime) ?? []).filter(
+      // Le seul groupe borné dans le temps — voir sa ligne dans `GROUPES`.
+      (run) => groupe.regime !== REGIME_SOLDE || soldeAujourdHui(run, maintenant),
+    ),
   })).filter((groupe) => groupe.runs.length > 0);
+
+  // Tout est en tête d'écran : il n'y a rien à ajouter, et le dire quand même
+  // (« aucun run en cours… ») contredirait le bloc juste au-dessus. C'est le
+  // seul cas où ce bloc s'efface — sans promu, un écran sans run **est** une
+  // information, et l'état vide ci-dessous la porte.
+  if (groupes.length === 0 && promus.size > 0) return null;
 
   return (
     // `data-guide` : la visite guidée (#122) éclairait ici le Kanban, qui était

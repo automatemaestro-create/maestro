@@ -5,8 +5,26 @@
  *
  * Il répond à « où en est-on, et qu'est-ce qui m'attend ? » en un écran, dans
  * cet ordre : **ce qui attend un arbitrage humain** (#48), les **indicateurs de
- * tête** (run en cours, tâches par statut, agents, dépense), **l'état des runs**
- * (#476) et un **aperçu** de l'activité en direct.
+ * tête** (run en cours, tâches par statut, agents, dépense), **le run qui
+ * tourne** (#927), **l'état des runs** (#476) et un **aperçu** de l'activité en
+ * direct.
+ *
+ * **Le centre montre le run qui tourne** (#927, lot 6 de #921, docs/35 §3.2) —
+ * sa carte puis son **pipeline**, sans geste de navigation, là où cette vue était
+ * à deux clics derrière une liste alors que le retex du 2026-09-11 la désigne
+ * comme « la meilleure vue du produit ». Deux propriétés portent tout le lot :
+ *
+ * - **une source, trois lecteurs.** La tuile de tête, le run au centre et l'état
+ *   des runs sortent tous de `runsParRegime` (`lib/execution`). C'est le constat
+ *   **G2** du retex — la tuile disait « Aucun » pendant que la section juste
+ *   dessous disait « EN COURS 1 », parce que l'une dérivait des `taches` et
+ *   l'autre des `executions`. Le remède est une source, pas une synchronisation ;
+ * - **ce qui est mis au centre remplace** (docs/35 §4). Les runs promus sortent
+ *   d'`EtatDesRuns` (`exclure`), qui s'efface entièrement quand il ne lui reste
+ *   rien d'autre à dire. Le corps de l'écran tient donc les trois blocs de la
+ *   règle des trois places (docs/30 §4) : au calme il en compte **deux** comme
+ *   avant — le run au centre prenant la place de l'état des runs —, et **trois**
+ *   au plus, quand d'autres runs attendent, dorment ou se sont soldés aujourd'hui.
  *
  * Ce qui en est parti n'a pas disparu, il est rangé — et chaque tuile renvoie
  * vers sa page : les fiches d'agent (statut, capacité, coût par agent) vers
@@ -52,12 +70,18 @@ import { PanneauValidations } from "@/components/PanneauValidations";
 import { PosteVide } from "@/components/PosteVide";
 import { RegionLive } from "@/components/RegionLive";
 import { EtatDesRuns } from "@/components/runs/EtatDesRuns";
+import { RunAuCentre } from "@/components/runs/RunAuCentre";
 import {
   mesureDeLaDepense,
   mesuresDesRuns,
   mesuresDesTaches,
 } from "@/lib/annonces";
 import { useEtatGlobal } from "@/lib/etatGlobal";
+import {
+  runsEnAttenteDeValidation,
+  runsParRegime,
+  REGIME_TRAVAILLE,
+} from "@/lib/execution";
 import { entreeParLibelle } from "@/lib/navigation";
 
 /**
@@ -74,6 +98,7 @@ const APERCU_ACTIVITE = 6;
 export default function TableauDeBord() {
   const {
     projet,
+    portee,
     taches,
     agents,
     evenements,
@@ -85,10 +110,23 @@ export default function TableauDeBord() {
     chargement,
     erreur,
     decider,
+    reassigner,
     relancerRun,
+    revision,
   } = useEtatGlobal();
 
   const journal = entreeParLibelle("Journal");
+
+  // **Une source, et trois lecteurs** (#927, lot 6 de #921) : la tuile de tête,
+  // le run mis au centre et l'état des runs sortent tous de cette carte-ci. C'est
+  // le remède au constat G2 du retex du 2026-09-11 — la tuile dérivait ses runs
+  // des `taches`, la section lisait les `executions`, et pendant la décomposition
+  // les deux disaient le contraire l'une de l'autre sur le même écran.
+  const enValidation = runsEnAttenteDeValidation(validations, taches);
+  const quiTournent =
+    runsParRegime(executions, enValidation).get(REGIME_TRAVAILLE) ?? [];
+  // Ce que le centre a promu : `EtatDesRuns` ne le rendra plus une seconde fois.
+  const promus = new Set(quiTournent.map((run) => run.run_id));
 
   // Rien reçu **sur ce projet**, et l'API répond : le poste n'est pas en panne,
   // il n'a pas encore de run à montrer ici (#186 — le mode réel est désormais le
@@ -151,6 +189,22 @@ export default function TableauDeBord() {
             taches={taches}
             agents={agents}
             couts={couts}
+            quiTournent={quiTournent}
+          />
+          {/* Le run qui tourne, **pipeline compris**, sans geste de navigation
+              (#927, docs/35 §3.2) — juste sous la tuile qui l'annonce, dont il
+              est le détail et avec laquelle il ne peut plus se contredire.
+              Il ne s'**ajoute** pas : les runs qu'il promeut sortent de l'état
+              des runs ci-dessous (`promus`), et sans run qui travaille il ne rend
+              rien — « aucun run en cours » reste un état normal. */}
+          <RunAuCentre
+            runs={quiTournent}
+            validations={validations}
+            enValidation={enValidation}
+            portee={portee}
+            agents={agents}
+            reassigner={reassigner}
+            revision={revision}
           />
           {/* Là où le Kanban prenait toute la hauteur (#248) : l'état des runs
               (#476). Il ne décide de rien — les trois panneaux au-dessus portent
@@ -161,6 +215,7 @@ export default function TableauDeBord() {
             validations={validations}
             taches={taches}
             projet={projet}
+            exclure={promus}
           />
           <FilActivite
             evenements={evenements}
