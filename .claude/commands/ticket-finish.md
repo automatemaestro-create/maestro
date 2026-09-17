@@ -140,8 +140,8 @@ rien : regarder n'est pas un verdict, c'est ce qui permet d'en rendre un.
 
 5. **Filet CI local** — avant de pousser, rejoue en local ce que le pipeline de la PR jouera. Ne
    cherche pas toi-même quel outil s'applique : `scripts/ci/local.sh` est la **source unique** des
-   contrôles locaux (#214, `docs/10-workflow-git.md` §8.4), il lit les jobs dans `.gitlab-ci.yml`
-   et déduit du diff ce qui les concerne.
+   contrôles locaux (#214, `docs/10-workflow-git.md` §8.4), il lit les jobs dans
+   `.github/workflows/ci.yml` et déduit du diff ce qui les concerne.
    ```
    bash scripts/ci/local.sh
    ```
