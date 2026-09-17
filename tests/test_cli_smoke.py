@@ -253,14 +253,18 @@ def test_demo_controltower_nominal_sert_sur_l_ecoute_demandee(monkeypatch):
     # On coupe au niveau de `_servir` : le scénario et uvicorn sont bloquants.
     appels = {}
 
-    async def _servir_factice(hote, port):
-        appels.update(hote=hote, port=port)
+    async def _servir_factice(hote, port, scenario):
+        appels.update(hote=hote, port=port, scenario=scenario)
         return 0
 
     monkeypatch.setattr(controltower_demo, "_servir", _servir_factice)
 
     assert controltower_demo.main(["--port", "9100"]) == 0
-    assert appels == {"hote": controltower_demo.HOTE_DEFAUT, "port": 9100}
+    assert appels == {
+        "hote": controltower_demo.HOTE_DEFAUT,
+        "port": 9100,
+        "scenario": controltower_demo.SCENARIO_NOMINAL,
+    }
 
 
 # --- maestro-temporal-demo (maestro/temporal_demo.py) -------------------------------------
