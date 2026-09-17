@@ -1,7 +1,7 @@
 ---
 description: Traite le backlog en autonomie — un ticket, un worktree, une session Claude Code, de /ticket-start à /ticket-ship
 argument-hint: "[--dry-run | --status | --resume [<run-id>] | --milestone <titre> | --max <n>] (aucun argument = lance un run)"
-allowed-tools: Bash(bash:*), Bash(git:*), Bash(gh:*), Bash(cat:*), Bash(ls:*), AskUserQuestion
+allowed-tools: Bash(bash:*), Bash(git:*), Skill, AskUserQuestion, Read
 ---
 
 Tu vas piloter la **boucle d'orchestration autonome** (`docs/10-workflow-git.md` §10) : elle traite

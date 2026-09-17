@@ -1,7 +1,7 @@
 ---
 description: Crée un ticket bien formé (labels type::/agent::/prio:: + corps de template, état « À faire », item du projet)
 argument-hint: "<type: feature|bug|doc|infra> <titre>  (le reste peut être précisé en dialogue)"
-allowed-tools: Bash(git:*), Bash(gh:*), Bash(bash:*), Read
+allowed-tools: Bash(bash:*), Bash(gh:*), Skill, AskUserQuestion, Read, Write
 ---
 
 Tu vas créer un **nouveau ticket** bien formé selon les règles de Maestro (résumées

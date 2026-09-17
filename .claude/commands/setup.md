@@ -1,6 +1,6 @@
 ---
 description: Met en route un clone du dépôt — venv, .env, hooks git, dépendances web, serveurs MCP — et prend en charge les authentifications interactives
-allowed-tools: Bash(bash:*), Bash(git:*), Bash(gh:*), Bash(npm:*), Bash(node:*), Bash(python:*), Bash(claude:*), Read, Edit
+allowed-tools: Bash(bash:*), Bash(gh:*), Bash(claude:*), Bash(.venv/Scripts/python.exe:*), Bash(.venv/bin/python:*), AskUserQuestion, Read, Edit
 ---
 
 Amène ce clone à l'état « il ne reste qu'à renseigner le `.env` et lancer ». Le travail est fait

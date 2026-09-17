@@ -1,7 +1,7 @@
 ---
 description: Démarre le travail sur un ticket (branche + assignation + état « En cours »)
 argument-hint: <issue-iid>
-allowed-tools: Bash(git:*), Bash(gh:*), Bash(bash:*), EnterWorktree
+allowed-tools: Bash(bash:*), Bash(gh:*), EnterWorktree, Skill, AskUserQuestion, Read, Grep, Glob, Write, WebSearch, WebFetch, mcp__chrome-maestro
 ---
 
 Tu vas démarrer le travail sur le ticket d'IID `$ARGUMENTS` selon les règles de Maestro

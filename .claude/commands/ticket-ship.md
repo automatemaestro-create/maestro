@@ -1,7 +1,7 @@
 ---
 description: Commit automatique + /ticket-finish enchaînés — clôture le ticket courant sans blocage manuel
 argument-hint: "[issue-iid] (optionnel si le nom de la branche courante le contient déjà)"
-allowed-tools: Bash(git:*), Bash(gh:*), Bash(bash:*)
+allowed-tools: Bash(bash:*), Bash(git:*), Bash(gh:*), Bash(.venv/Scripts/python.exe:*), Bash(.venv/bin/python:*), ExitWorktree, Skill, AskUserQuestion, Read, Edit, Write
 ---
 
 Tu vas clôturer le ticket courant **en une seule action** : committer les changements en attente

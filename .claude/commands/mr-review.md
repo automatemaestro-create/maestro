@@ -1,7 +1,7 @@
 ---
 description: Synthétise une Pull Request (état, pipeline, threads, diff) pour éclairer un relecteur humain — ne merge jamais
 argument-hint: "<pr-numéro | branche>  (défaut : la PR de la branche courante)"
-allowed-tools: Bash(git:*), Bash(gh:*), Bash(bash:*)
+allowed-tools: Bash(bash:*), Bash(git:*), Bash(gh:*)
 ---
 
 Commande **de supervision, en lecture seule** : tu synthétises **une** Pull Request pour aider

@@ -1,7 +1,7 @@
 ---
 description: Se servir de la Control Tower réelle comme un utilisateur qui découvre Maestro — du poste vide au livrable exécuté — et en rendre un retour d'expérience exploitable en tickets
 argument-hint: "[objectif]  (l'objectif du run à composer dans le chat — sans argument, la session choisit un projet léger avec une interface, et dit pourquoi)"
-allowed-tools: Bash(bash:*), Bash(.venv/Scripts/python.exe:*), Bash(.venv/bin/python:*), Bash(git:*), Read, Write, mcp__chrome-maestro
+allowed-tools: Bash(bash:*), Bash(git:*), Bash(.venv/Scripts/python.exe:*), Bash(.venv/bin/python:*), AskUserQuestion, Read, Write, mcp__chrome-maestro
 ---
 
 <!-- `mcp__chrome-maestro` est déclaré, et c'est voulu : c'est SON navigateur. À la différence de

@@ -1,6 +1,6 @@
 ---
 description: Nettoie les branches de tickets déjà mergées et revient sur main à jour
-allowed-tools: Bash(git:*), Bash(gh:*), Bash(bash:*)
+allowed-tools: Bash(bash:*), Bash(git:*)
 ---
 
 Nettoie les branches **locales** de tickets déjà mergés, **ramasse les worktrees devenus inutiles**

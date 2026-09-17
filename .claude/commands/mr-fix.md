@@ -1,7 +1,7 @@
 ---
 description: Rend une PR mergeable puis la merge — conflit avec origin/main, puis pipeline rouge ; aucun merge non vérifié
 argument-hint: "[pr-numéro | branche]  (défaut : la branche courante)"
-allowed-tools: Bash(git:*), Bash(gh:*), Bash(bash:*)
+allowed-tools: Bash(bash:*), Bash(git:*), Bash(gh:*), Bash(.venv/Scripts/python.exe:*), Bash(.venv/bin/python:*), Read, Edit, Write
 ---
 
 Tu vas **rendre une PR mergeable, puis la merger** — une PR à la fois. Deux choses l'en empêchent,

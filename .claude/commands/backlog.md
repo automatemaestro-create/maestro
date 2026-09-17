@@ -1,7 +1,7 @@
 ---
 description: Vue d'ensemble du backlog groupée par état du cycle de vie (+ ce qui attend une revue / est prêt à merger)
 argument-hint: "[opened|all]  (défaut : opened — les tickets ouverts)"
-allowed-tools: Bash(git:*), Bash(gh:*), Bash(bash:*)
+allowed-tools: Bash(bash:*)
 ---
 
 Commande **de supervision, en lecture seule** : tu produis un tableau de bord du backlog pour aider

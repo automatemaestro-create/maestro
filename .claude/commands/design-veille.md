@@ -1,7 +1,7 @@
 ---
 description: Cherche comment les produits comparables rendent une surface donnée, puis en tire des partis pris tenables dans le socle — avant d'écrire une ligne d'interface
 argument-hint: "<surface>  (un écran, un composant ou un motif : « la carte d'un run », « /couts », « la barre d'avancement »)"
-allowed-tools: WebSearch, WebFetch, Read, Grep, Glob, Write, Bash(bash:*), Bash(git:*), mcp__chrome-maestro
+allowed-tools: Bash(bash:*), Skill, Read, Grep, Glob, Write, WebSearch, WebFetch, mcp__chrome-maestro
 ---
 
 Commande **de recherche** : pour la surface `$ARGUMENTS`, tu vas chercher dehors comment les

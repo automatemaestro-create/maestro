@@ -1,7 +1,7 @@
 ---
 description: Clôt un ticket sans le réaliser — pose l'état « Abandonné » (won't-do) ou « Doublon » et ferme le ticket
 argument-hint: "<iid> [doublon [<iid-original>]]  — sans « doublon », c'est un abandon (won't-do)"
-allowed-tools: Bash(git:*), Bash(gh:*), Bash(bash:*)
+allowed-tools: Bash(bash:*), Bash(git:*), Bash(gh:*), AskUserQuestion, Write
 ---
 
 Tu vas **clôturer un ticket sans qu'il soit réalisé** (cette commande est autosuffisante ; réf.
