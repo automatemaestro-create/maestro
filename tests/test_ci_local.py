@@ -272,12 +272,28 @@ case "$1" in
     if [ -n "${MAESTRO_FAUX_DOCKER_TEMOIN:-}" ] && [ -f "${MAESTRO_FAUX_DOCKER_TEMOIN}" ]; then
       exit 0
     fi
+    # Un moteur SUSPENDU (#988) : Docker Desktop resté sur sa boîte d'erreur ne répond jamais. La
+    # marque n'est posée que si personne n'a interrompu la sonde avant.
+    if [ -n "${MAESTRO_FAUX_DOCKER_VERSION_ATTENTE:-}" ]; then
+      sleep "$MAESTRO_FAUX_DOCKER_VERSION_ATTENTE"
+      : > "$MAESTRO_FAUX_DOCKER_VERSION_ATTENTE_FINIE"
+    fi
     exit "${MAESTRO_FAUX_DOCKER_VERSION_CODE:-0}" ;;
   desktop)
     if [ "${2:-}" = start ]; then
       code="${MAESTRO_FAUX_DOCKER_DESKTOP_START_CODE:-${MAESTRO_FAUX_DOCKER_DESKTOP_CODE:-1}}"
       if [ "$code" = 0 ] && [ -n "${MAESTRO_FAUX_DOCKER_TEMOIN:-}" ]; then
         : > "$MAESTRO_FAUX_DOCKER_TEMOIN"
+      fi
+      # Le plantage de Docker Desktop (#988) s'écrit APRÈS le témoin, jamais avant : c'est ce qui
+      # rend « planté mais rattrapé » observable sans course — le moteur répond avant que le
+      # journal ne parle. Puis une attente, pour un `start` qui ne rend pas la main de lui-même.
+      if [ -n "${MAESTRO_FAUX_DOCKER_PLANTAGE:-}" ]; then
+        printf '%s\\n' "$MAESTRO_FAUX_DOCKER_PLANTAGE" >> "$MAESTRO_DOCKER_JOURNAL_BACKEND"
+      fi
+      if [ -n "${MAESTRO_FAUX_DOCKER_START_ATTENTE:-}" ]; then
+        sleep "$MAESTRO_FAUX_DOCKER_START_ATTENTE"
+        : > "$MAESTRO_FAUX_DOCKER_START_ATTENTE_FINIE"
       fi
       exit "$code"
     fi
@@ -373,6 +389,10 @@ class Clone:
                 "MAESTRO_FAUX_JOURNAL": str(self.journal),
                 # L'image de repli n'est plus lue dans la CI (#344) : on la pose ici.
                 "MAESTRO_SHELLCHECK_IMAGE": IMAGE,
+                # Jamais le journal du Docker Desktop DU POSTE (#988) : un plantage réel y ferait
+                # dire au filet d'un test ce qu'aucun décor n'a posé. Un test qui en veut un le
+                # pose.
+                "MAESTRO_DOCKER_JOURNAL_BACKEND": str(self.tmp / "aucun-journal-docker.log"),
             }
         )
         environnement.update(reglages)
@@ -704,6 +724,9 @@ def test_pytest_ignore_quand_maestro_se_resout_ailleurs(clone: Clone) -> None:
     dirait pourquoi il ne vaut rien, au lieu de rendre un rouge faux (ou un vert faux).
     """
     clone.equipe_tout()
+    # Un diff qui CONCERNE une suite : depuis #988 le périmètre passe avant le régime, et un diff
+    # vide sort hors périmètre sans jamais atteindre le garde-fou qu'on éprouve ici.
+    clone.modifie("maestro/moteur.py")
     acheve = clone.lance(
         "--only", "pytest",
         MAESTRO_FAUX_SONDE_SORTIE="AILLEURS /ailleurs/Maestro/maestro\\n",
@@ -723,6 +746,7 @@ def test_pytest_ignore_quand_maestro_se_resout_ailleurs(clone: Clone) -> None:
 def test_pytest_ignore_quand_la_sonde_est_muette(clone: Clone) -> None:
     """Sonde sans réponse : on ignore quel code serait testé, donc le verdict serait sans valeur."""
     clone.equipe_tout()
+    clone.modifie("maestro/moteur.py")  # un diff qui concerne une suite (#988, voir plus haut)
     acheve = clone.lance(
         "--only", "pytest",
         MAESTRO_FAUX_SONDE_SORTIE="\\n",
@@ -743,6 +767,7 @@ def test_pytest_absent_du_venv_reste_ignore_et_non_rouge(clone: Clone) -> None:
     clone.equipe_tout()
     for chemin in ("Scripts/pytest.exe", "bin/pytest"):
         (clone.racine / ".venv" / chemin).unlink()
+    clone.modifie("maestro/moteur.py")  # un diff qui concerne une suite (#988, voir plus haut)
     acheve = clone.lance("--only", "pytest")
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
     ligne = ligne_du_job(acheve.stdout, "pytest")
@@ -1683,6 +1708,262 @@ def test_le_lanceur_demarre_docker_comme_le_filet(clone: Clone) -> None:
     assert lancements_conteneur(clone.appels()), "…et jouer dans le conteneur qui en résulte"
 
 
+# --- Le réveil suit le périmètre, et son issue se dit (#988) --------------------------------------
+# Le run `20260917-081314` a démarré Docker Desktop pour un diff `apps/` + `docs/`, puis conclu
+# « aucune suite concernée » : le régime était choisi AVANT le périmètre. Et le verdict taisait
+# l'issue du démarrage — or ce jour-là Docker Desktop avait PLANTÉ au lancement (socket AF_UNIX
+# périmé, lu dans son journal) et n'avait répondu qu'après une relance à la main. Les tests d'ici
+# gardent l'ordre, puis les trois issues : réussi, raté, et rattrapé après un plantage.
+
+#: Le démon dort, Docker Desktop est installé, et son démarrage aboutit — le décor de #425.
+DEMON_ENDORMI = {
+    "MAESTRO_FAUX_DOCKER_VERSION_CODE": "1",
+    "MAESTRO_FAUX_DOCKER_DESKTOP_CODE": "0",
+}
+
+
+def test_un_diff_sans_suite_concernee_ne_demarre_pas_docker(clone: Clone) -> None:
+    """L'ordre périmètre → réveil : sur de la prose, Docker Desktop n'est même pas sondé.
+
+    Le contre-échantillon est dans le même test : le même décor sur un diff d'outillage démarre
+    bien Docker — sans lui, « aucun démarrage » pourrait venir d'un décor qui n'en déclenche aucun.
+    """
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    clone.modifie("docs/10-workflow-git.md", "une phrase de plus\n")
+    temoin = str(clone.tmp / "docker-demarre")
+    acheve = clone.lance("--only", "pytest", MAESTRO_FAUX_DOCKER_TEMOIN=temoin, **DEMON_ENDORMI)
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "HORS PÉRIM." in ligne_du_job(acheve.stdout, "pytest")
+    assert not demarrages_desktop(clone.appels()), (
+        "un diff sans suite concernée ne doit pas démarrer Docker Desktop — jusqu'à 180 s pour rien"
+    )
+    assert "démarrage de Docker Desktop" not in acheve.stdout, "ni l'annoncer"
+
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+    acheve = clone.lance("--only", "pytest", MAESTRO_FAUX_DOCKER_TEMOIN=temoin, **DEMON_ENDORMI)
+    assert demarrages_desktop(clone.appels()), "le même décor, avec une suite concernée, démarre"
+
+
+def test_un_demarrage_reussi_se_dit_dans_le_verdict(clone: Clone) -> None:
+    """« Le filet l'a démarré » ne se confond plus avec « il répondait déjà »."""
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+    acheve = clone.lance(
+        "--only", "pytest",
+        MAESTRO_FAUX_DOCKER_TEMOIN=str(clone.tmp / "docker-demarre"),
+        MAESTRO_DOCKER_JOURNAL_BACKEND=str(clone.tmp / "absent.log"),
+        **DEMON_ENDORMI,
+    )
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    ligne = ligne_du_job(acheve.stdout, "pytest")
+    assert "conteneur Linux" in ligne and "démarré par le filet (plugin) en" in ligne, ligne
+    assert "planté" not in ligne, "un journal absent ne fabrique aucun plantage"
+
+
+def test_un_demarrage_rate_nomme_le_code_du_plugin(clone: Clone) -> None:
+    """La cause d'un échec est ce que le plugin a rendu, pas un « en échec » sans suite."""
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+    acheve = clone.lance(
+        "--only", "pytest",
+        MAESTRO_FAUX_DOCKER_DESKTOP_START_CODE="7",
+        MAESTRO_DOCKER_JOURNAL_BACKEND=str(clone.tmp / "absent.log"),
+        **DEMON_ENDORMI,
+    )
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    ligne = ligne_du_job(acheve.stdout, "pytest")
+    assert "NATIF" in ligne, ligne
+    assert "« docker desktop start » a rendu 7" in ligne, ligne
+
+
+def _plantage(horodatage: str) -> str:
+    """Une ligne de plantage du backend de Docker Desktop, à la forme exacte du 2026-09-17."""
+    return (
+        f"[{horodatage}][com.docker.backend.exe] backend crashed, dumping error to file and "
+        "reporting to user: starting services: initializing Inference manager: listening on "
+        "unix://C:/Users/x/AppData/Local/Docker/run/dockerInference: remove "
+        "C:/Users/x/AppData/Local/Docker/run/dockerInference: The file cannot be accessed by the "
+        "system."
+    )
+
+
+#: Un plantage daté de l'avenir : postérieur à tout lancement, donc toujours celui de CE démarrage.
+PLANTAGE_A_VENIR = _plantage("2999-01-01T00:00:00.000000000Z")
+
+
+def test_un_plantage_au_lancement_ecourte_l_attente_et_retombe_en_natif(clone: Clone) -> None:
+    """Le remède arbitré sur #988 : ne plus attendre 180 s un démarrage qui a planté.
+
+    Le `start` factice ne rend pas la main de lui-même (il attend vingt secondes, puis pose une
+    marque). Que la marque manque prouve que le filet l'a INTERROMPU — un compte, jamais une durée.
+    """
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+    finie = clone.tmp / "start-alle-au-bout"
+    acheve = clone.lance(
+        "--only", "pytest",
+        MAESTRO_DOCKER_JOURNAL_BACKEND=str(clone.tmp / "com.docker.backend.exe.log"),
+        MAESTRO_FAUX_DOCKER_PLANTAGE=PLANTAGE_A_VENIR,
+        MAESTRO_FAUX_DOCKER_START_ATTENTE="20",
+        MAESTRO_FAUX_DOCKER_START_ATTENTE_FINIE=str(finie),
+        **DEMON_ENDORMI,
+    )
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert not finie.exists(), "le filet a attendu la fin du démarrage au lieu de l'écourter"
+    assert not lancements_conteneur(clone.appels()), "un démarrage planté ne donne pas de conteneur"
+    ligne = ligne_du_job(acheve.stdout, "pytest")
+    assert "NATIF" in ligne, ligne
+    assert "Docker Desktop a planté au lancement, attente écourtée" in acheve.stdout, acheve.stdout
+    assert "dockerInference" in acheve.stdout, "la cause vient du journal, telle quelle"
+    assert "le relancer à la main" in acheve.stdout, "et le seul remède qui ait marché est nommé"
+
+
+#: L'explorateur factice (#988) : il journalise ce qu'on lui confie, puis joue ce que le décor
+#: demande — le moteur qui répond (témoin) et/ou le plantage écrit dans le journal du backend, dans
+#: cet ordre, comme `start` plus haut. Il rend 1, ce que fait le vrai quand tout va bien.
+SHIM_EXPLORER = """\
+#!/usr/bin/env bash
+printf 'explorer.exe %s\\n' "$*" >> "$MAESTRO_FAUX_JOURNAL"
+if [ "${MAESTRO_FAUX_EXPLORER_DEMARRE:-1}" = 1 ] && [ -n "${MAESTRO_FAUX_DOCKER_TEMOIN:-}" ]; then
+  : > "$MAESTRO_FAUX_DOCKER_TEMOIN"
+fi
+if [ -n "${MAESTRO_FAUX_DOCKER_PLANTAGE:-}" ]; then
+  printf '%s\\n' "$MAESTRO_FAUX_DOCKER_PLANTAGE" >> "$MAESTRO_DOCKER_JOURNAL_BACKEND"
+fi
+exit 1
+"""
+
+
+def _lanceur_application(clone: Clone) -> dict[str, str]:
+    """Le décor du lanceur « application » : l'exécutable, l'explorateur, et le lanceur forcé.
+
+    Forcé, parce que le conteneur Linux du verdict n'est pas Windows : c'est la décision qu'on
+    éprouve ici, pas la détection de la plateforme — qui, elle, ne lit qu'un test de fichier.
+    """
+    exe = clone.tmp / "Docker" / "Docker Desktop.exe"
+    exe.parent.mkdir(parents=True, exist_ok=True)
+    exe.write_text("", encoding="utf-8")
+    clone.pose_shim("explorer.exe", corps=SHIM_EXPLORER)
+    return {"MAESTRO_DOCKER_LANCEUR": "application", "MAESTRO_DOCKER_DESKTOP_EXE": str(exe)}
+
+
+def test_le_lanceur_application_ouvre_docker_desktop_par_l_explorateur(clone: Clone) -> None:
+    """Le remède arbitré sur #988 : rouvrir l'APPLICATION, le geste qui a rendu le moteur.
+
+    Le plugin n'est pas appelé du tout — ni `start`, ni même sa sonde `--help` —, sans quoi
+    l'application ne serait qu'un détour vers le chemin qui plantait.
+    """
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+    acheve = clone.lance(
+        "--only", "pytest",
+        MAESTRO_FAUX_DOCKER_TEMOIN=str(clone.tmp / "docker-demarre"),
+        **DEMON_ENDORMI,
+        **_lanceur_application(clone),
+    )
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    appels = clone.appels()
+    ouvertures = [appel for appel in appels if appel.startswith("explorer.exe ")]
+    assert len(ouvertures) == 1 and "Docker Desktop.exe" in ouvertures[0], appels
+    assert not [appel for appel in appels if appel.startswith("docker desktop")], (
+        f"le lanceur « application » ne passe pas par le plugin : {appels}"
+    )
+    assert lancements_conteneur(appels), "le moteur ayant répondu, la suite joue dans le conteneur"
+    ligne = ligne_du_job(acheve.stdout, "pytest")
+    assert "démarré par le filet (application)" in ligne, ligne
+
+
+def test_le_lanceur_application_ecourte_aussi_l_attente_sur_un_plantage(clone: Clone) -> None:
+    """Le remède garde le filet : un plantage de l'application au lancement se nomme aussi."""
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+    acheve = clone.lance(
+        "--only", "pytest",
+        MAESTRO_DOCKER_JOURNAL_BACKEND=str(clone.tmp / "com.docker.backend.exe.log"),
+        MAESTRO_FAUX_DOCKER_PLANTAGE=PLANTAGE_A_VENIR,
+        MAESTRO_FAUX_EXPLORER_DEMARRE="0",
+        **DEMON_ENDORMI,
+        **_lanceur_application(clone),
+    )
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "NATIF" in ligne_du_job(acheve.stdout, "pytest")
+    assert "Docker Desktop a planté au lancement, attente écourtée" in acheve.stdout, acheve.stdout
+
+
+def test_un_moteur_suspendu_ne_fige_pas_le_filet(clone: Clone) -> None:
+    """Reproduit le 2026-09-17 : boîte d'erreur ouverte, `docker version` sans réponse, filet figé.
+
+    La sonde est bornée ; qu'elle ait été INTERROMPUE se lit à la marque absente du `version`
+    factice — un compte, pas un chronomètre. Sans plugin, le repli natif suit et le dit.
+    """
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+    finie = clone.tmp / "version-allee-au-bout"
+    acheve = clone.lance(
+        "--only", "pytest",
+        MAESTRO_FAUX_DOCKER_VERSION_CODE="1",
+        MAESTRO_FAUX_DOCKER_VERSION_ATTENTE="30",
+        MAESTRO_FAUX_DOCKER_VERSION_ATTENTE_FINIE=str(finie),
+        MAESTRO_DOCKER_SONDE_DELAI="1",
+    )
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert not finie.exists(), "la sonde du moteur a attendu sa réponse au lieu d'être bornée"
+    assert lancements_pytest(clone.appels()), "le filet a conclu, en natif"
+    assert "NATIF" in ligne_du_job(acheve.stdout, "pytest")
+
+
+def test_un_plantage_rattrape_par_une_relance_est_nomme_quand_le_moteur_repond(
+    clone: Clone,
+) -> None:
+    """Le cas du 2026-09-17 : le moteur répond, mais après un plantage — pas grâce au filet.
+
+    Le contre-échantillon — un plantage ANTÉRIEUR au lancement, déjà dans le journal — prouve que
+    seul un plantage de CE démarrage est retenu.
+    """
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+    journal = clone.tmp / "com.docker.backend.exe.log"
+    acheve = clone.lance(
+        "--only", "pytest",
+        MAESTRO_FAUX_DOCKER_TEMOIN=str(clone.tmp / "docker-demarre"),
+        MAESTRO_DOCKER_JOURNAL_BACKEND=str(journal),
+        MAESTRO_FAUX_DOCKER_PLANTAGE=PLANTAGE_A_VENIR,
+        **DEMON_ENDORMI,
+    )
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    ligne = ligne_du_job(acheve.stdout, "pytest")
+    assert "conteneur Linux" in ligne, ligne
+    assert "planté au lancement" in ligne and "après une relance" in ligne, ligne
+
+    (clone.tmp / "docker-demarre").unlink()
+    journal.write_text(_plantage("2000-01-01T00:00:00.000000000Z") + "\n", encoding="utf-8")
+    acheve = clone.lance(
+        "--only", "pytest",
+        MAESTRO_FAUX_DOCKER_TEMOIN=str(clone.tmp / "docker-demarre"),
+        MAESTRO_DOCKER_JOURNAL_BACKEND=str(journal),
+        **DEMON_ENDORMI,
+    )
+    ligne = ligne_du_job(acheve.stdout, "pytest")
+    assert "démarré par le filet (plugin) en" in ligne and "planté" not in ligne, (
+        f"un plantage d'avant le lancement n'appartient pas à ce démarrage : {ligne}"
+    )
+
+
 # --- Le lanceur d'itération serrée (#405) ---------------------------------------------------------
 # `local.sh` rend un VERDICT sur le périmètre du diff ; `pytest.sh` fait ITÉRER sur une cible. Deux
 # questions différentes, mais la même réponse sur le régime — et c'est tout l'enjeu de ce bloc.
@@ -1711,6 +1992,11 @@ PLOMBERIE_PARTAGEE = (
     "venv_bin",
     "chemin_natif",
     "image_docker_disponible",
+    # Le lanceur de Docker Desktop et son attente (#988).
+    "docker_lanceur",
+    "docker_desktop_exe",
+    "docker_attend_moteur",
+    "docker_plantage_depuis",
 )
 
 

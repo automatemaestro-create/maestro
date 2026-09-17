@@ -89,7 +89,23 @@ esac
 # `liste_jobs`, et bash ne connaît une fonction qu'une fois la ligne qui la définit LUE. Définies
 # plus bas, elles rendaient « regime_pytest_pressenti: command not found » sur `--list` — attrapé
 # par les tests, pas à la relecture.
-docker_repond() { docker version --format '{{.Server.Version}}' >/dev/null 2>&1; }
+#
+# La sonde est BORNÉE (#988) : un Docker Desktop resté sur sa boîte d'erreur après un plantage au
+# lancement laisse `docker version` suspendu sans fin — reproduit le 2026-09-17, plus de 400 s sans
+# réponse —, et le filet se figeait alors avant même de conclure au repli. `timeout` rend 124, qui
+# vaut « ne répond pas », ce qui est exactement vrai. Sans `timeout` (macOS nu), la sonde reste
+# celle d'avant.
+DOCKER_SONDE_DELAI="${MAESTRO_DOCKER_SONDE_DELAI:-10}"
+case "$DOCKER_SONDE_DELAI" in
+  '' | 0 | *[!0-9]*) DOCKER_SONDE_DELAI=10 ;;
+esac
+docker_repond() {
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$DOCKER_SONDE_DELAI" docker version --format '{{.Server.Version}}' >/dev/null 2>&1
+  else
+    docker version --format '{{.Server.Version}}' >/dev/null 2>&1
+  fi
+}
 
 # --- Un démon éteint n'est pas un poste sans Docker (#425) ----------------------------------------
 # Le repli natif plus bas a été écrit pour les postes SANS Docker. Un autre cas lui empruntait le
@@ -113,42 +129,219 @@ esac
 
 #: Pourquoi le démon n'a pas pu être joint — posée par `docker_reveille`, lue par son appelant.
 DOCKER_RAISON=""
+#: Ce qu'a donné le démarrage QUAND IL A ÉTÉ TENTÉ (#988) — vide si le filet n'a rien démarré. Lue
+#: par les appelants, qui la portent dans leur verdict : un démarrage réussi se dit aussi, sans quoi
+#: « le filet a démarré Docker » et « quelqu'un l'avait ouvert entre-temps » sont indiscernables.
+# shellcheck disable=SC2034  # lue par `local.sh` et `pytest.sh` (lint fichier par fichier, #285)
+DOCKER_DEMARRAGE_ISSUE=""
+#: Le code rendu par `docker desktop start` à la dernière tentative.
+DOCKER_START_CODE=0
 
-# Le plugin est-il là, et a-t-on le droit de s'en servir ? Sonde PURE : elle ne démarre rien, ce qui
-# la rend jouable depuis `regime_pytest_pressenti`, dont tout le contrat est d'être gratuit.
+# --- Le seul témoin d'un PLANTAGE au lancement (#988) ---------------------------------------------
+# Mesuré sur le run `20260917-081314` : le plugin a bien lancé Docker Desktop depuis la session de
+# run, mais le backend a PLANTÉ sept secondes plus tard — « initializing Inference manager: listening
+# on unix://…/Docker/run/dockerInference: remove …: The file cannot be accessed by the system » —, un
+# socket AF_UNIX que Docker Desktop 4.84 ne sait pas retirer. Il ouvre alors une boîte d'erreur (Quit
+# / Reset) et attend qu'on clique ; le moteur n'a répondu qu'après une relance À LA MAIN. Le contexte
+# de la session n'y était pour rien : le 2026-09-14, trois lancements manuels ont planté sur la même
+# cause, et le plantage a été reproduit le 2026-09-17 après un `docker desktop stop` tout à fait
+# propre — un démarrage sur deux, depuis la même console détachée (docs/10 §8.4).
+#
+# Rien dans le code de retour ne le dit — `start` a rendu 0 dès que la relance manuelle a répondu —,
+# et c'est pourquoi le journal du backend est lu : il est le seul à nommer la cause. Lecture
+# BEST-EFFORT et bornée à une ligne : un journal absent ou d'un autre format rend le silence, jamais
+# une erreur, et seul un plantage postérieur au lancement est retenu.
+DOCKER_JOURNAL_BACKEND="${MAESTRO_DOCKER_JOURNAL_BACKEND:-${LOCALAPPDATA:+$LOCALAPPDATA/Docker/log/host/com.docker.backend.exe.log}}"
+
+docker_plantage_depuis() { # <AAAA-MM-JJTHH:MM:SS UTC> → la cause du plantage, ou 1
+  local depuis="$1" ligne horodatage
+  [ -n "$DOCKER_JOURNAL_BACKEND" ] && [ -r "$DOCKER_JOURNAL_BACKEND" ] || return 1
+  # La FIN du journal seulement : il pèse ~500 Ko, il est relu à chaque tour d'attente, et un
+  # plantage de ce démarrage-ci ne peut être que dans ses dernières lignes.
+  ligne="$(tail -n 400 "$DOCKER_JOURNAL_BACKEND" 2>/dev/null | grep -a 'backend crashed' | tail -1)"
+  [ -n "$ligne" ] || return 1
+  horodatage="${ligne#\[}"
+  horodatage="${horodatage%%\]*}"
+  # Des horodatages ISO de même forme se comparent comme des chaînes.
+  [[ "$horodatage" < "$depuis" ]] && return 1
+  ligne="${ligne#*reporting to user: }"
+  printf '%s\n' "${ligne:0:200}"
+}
+
+# --- COMMENT on lance Docker Desktop (#988) --------------------------------------------------------
+# Deux lanceurs, un par plateforme :
+#
+#   application   Windows : `Docker Desktop.exe`, confié à l'EXPLORATEUR, comme un lancement depuis
+#                 le menu Démarrer. C'est le geste qui a rendu le moteur chaque fois que le
+#                 démarrage du filet avait planté — rouvrir l'application —, et il ne part pas de
+#                 l'arbre de processus du filet ni de la session Claude qui l'a lancé. Le plugin, lui,
+#                 exécute `Docker Desktop.exe` depuis cet arbre-là, et trois de ses quatre démarrages
+#                 du 2026-09-17 ont planté. Arbitré par l'utilisateur sur #988.
+#   plugin        ailleurs : `docker desktop start`, le lanceur de #425.
+#
+# `MAESTRO_DOCKER_LANCEUR=application|plugin` force l'un ou l'autre ; `MAESTRO_DOCKER_DESKTOP_EXE`
+# désigne l'exécutable quand il n'est pas à côté du CLI `docker` qu'on appelle.
+DOCKER_LANCEUR_DEMANDE="${MAESTRO_DOCKER_LANCEUR:-}"
+case "$DOCKER_LANCEUR_DEMANDE" in
+  application | plugin) ;;
+  *) DOCKER_LANCEUR_DEMANDE="" ;;
+esac
+
+# L'exécutable de l'application, déduit du CLI : Docker Desktop range `docker` sous
+# `<installation>/resources/bin/`, et l'application deux niveaux plus haut. Aucun chemin deviné.
+docker_desktop_exe() {
+  local cli
+  if [ -n "${MAESTRO_DOCKER_DESKTOP_EXE:-}" ]; then
+    [ -f "$MAESTRO_DOCKER_DESKTOP_EXE" ] || return 1
+    printf '%s\n' "$MAESTRO_DOCKER_DESKTOP_EXE"
+    return 0
+  fi
+  cli="$(command -v docker 2>/dev/null)" || return 1
+  cli="$(dirname "$(dirname "$(dirname "$cli")")")/Docker Desktop.exe"
+  [ -f "$cli" ] || return 1
+  printf '%s\n' "$cli"
+}
+
+# Quel lanceur servirait ? Rien d'autre qu'un test de fichier : la sonde reste gratuite.
+docker_lanceur() {
+  if [ -n "$DOCKER_LANCEUR_DEMANDE" ]; then
+    printf '%s\n' "$DOCKER_LANCEUR_DEMANDE"
+  elif [ "$WINDOWS" = 1 ] && docker_desktop_exe >/dev/null; then
+    printf 'application\n'
+  else
+    printf 'plugin\n'
+  fi
+}
+
+# Docker Desktop est-il là, et a-t-on le droit de le lancer ? Sonde PURE : elle ne démarre rien, ce
+# qui la rend jouable depuis `regime_pytest_pressenti`, dont tout le contrat est d'être gratuit.
 docker_reveillable() {
   [ "$DOCKER_DEMARRAGE" != 0 ] || return 1
-  docker desktop --help >/dev/null 2>&1
+  if [ "$(docker_lanceur)" = application ]; then
+    docker_desktop_exe >/dev/null
+  else
+    docker desktop --help >/dev/null 2>&1
+  fi
+}
+
+#: La cause d'un plantage constaté pendant le démarrage — posée par `docker_demarre`, vide sinon.
+DOCKER_PLANTAGE=""
+
+# Attend le MOTEUR jusqu'à <fin> (en SECONDS). → 0 il répond · 1 plafond ou plantage (DOCKER_PLANTAGE).
+# Le moteur est interrogé AVANT le journal, et une dernière fois avant de renoncer sur un plantage :
+# il a pu répondre entre les deux lectures, et un moteur qui répond l'emporte sur un plantage.
+docker_attend_moteur() { # <depuis UTC> <fin>
+  local depuis="$1" fin="$2"
+  DOCKER_PLANTAGE=""
+  while :; do
+    docker_repond && return 0
+    if DOCKER_PLANTAGE="$(docker_plantage_depuis "$depuis")"; then
+      docker_repond && return 0
+      return 1
+    fi
+    DOCKER_PLANTAGE=""
+    [ "$SECONDS" -lt "$fin" ] || return 1
+    sleep 2
+  done
 }
 
 # Démarre Docker Desktop, puis attend que le MOTEUR réponde. → 0 il répond · 1 non.
-docker_demarre() {
-  local essais=15
-  docker desktop start --timeout "$DOCKER_DEMARRAGE_DELAI" >/dev/null 2>&1 || return 1
+#
+# L'ATTENTE S'ÉCOURTE SUR UN PLANTAGE (#988). Le filet regarde le journal du backend pendant qu'il
+# attend : un plantage au lancement ne se répare pas en attendant — Docker Desktop reste sur sa boîte
+# d'erreur jusqu'à ce qu'on clique —, donc le constater tôt épargne jusqu'à 180 s d'une attente qui
+# ne pouvait rien rendre. S'il répond quand même, c'est `docker_reveille` qui dira le plantage.
+#
+# Rien n'est tenté sur Docker lui-même après un plantage — ni relance, ni nettoyage de son socket :
+# la boîte d'erreur ouverte, une relance ne fait rien (vérifié le 2026-09-17, 400 s sans réponse).
+docker_demarre() { # <AAAA-MM-JJTHH:MM:SS UTC, le début du démarrage>
+  local depuis="$1" pid essais=15 exe
+  DOCKER_START_CODE=0
+  DOCKER_PLANTAGE=""
+  if [ "$(docker_lanceur)" = application ]; then
+    exe="$(docker_desktop_exe)" || return 1
+    # L'explorateur rend la main aussitôt, et son code ne dit rien (il vaut 1 quand tout va bien) :
+    # seule la réponse du moteur tranche, dans le plafond du démarrage.
+    explorer.exe "$(chemin_natif "$exe")" >/dev/null 2>&1
+    docker_attend_moteur "$depuis" $((SECONDS + DOCKER_DEMARRAGE_DELAI))
+    return
+  fi
+  docker desktop start --timeout "$DOCKER_DEMARRAGE_DELAI" >/dev/null 2>&1 &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    # Le moteur d'abord, à chaque tour : `start` peut tarder à rendre la main alors qu'il répond déjà.
+    if docker_repond; then
+      wait "$pid" 2>/dev/null
+      return 0
+    fi
+    if DOCKER_PLANTAGE="$(docker_plantage_depuis "$depuis")"; then
+      # Une dernière question au moteur avant de renoncer : il a pu répondre entre la question du
+      # début de tour et la lecture du journal, et un moteur qui répond l'emporte sur un plantage.
+      if docker_repond; then
+        wait "$pid" 2>/dev/null
+        return 0
+      fi
+      kill "$pid" 2>/dev/null
+      wait "$pid" 2>/dev/null
+      return 1
+    fi
+    DOCKER_PLANTAGE=""
+    sleep 1
+  done
+  wait "$pid" || DOCKER_START_CODE=$?
+  if [ "$DOCKER_START_CODE" -ne 0 ]; then
+    # Relu ici aussi : un `start` qui échoue vite peut sortir avant le premier tour de la boucle, et
+    # la cause ne doit pas dépendre de cette course.
+    DOCKER_PLANTAGE="$(docker_plantage_depuis "$depuis")" || DOCKER_PLANTAGE=""
+    return 1
+  fi
   # `start` rend la main quand Docker Desktop est LANCÉ, ce qui ne dit pas encore que le MOTEUR
   # répond — et c'est la seule question qui nous intéresse. On la repose donc, mais l'attente
   # longue reste dans `--timeout` : ce sursis-ci ne couvre que l'écart entre les deux événements
-  # (nul sur le poste de référence, où `docker version` répond dès le retour de `start`). Il ne se
-  # paie que sur un poste plus lent, et la boucle sort au premier `oui` — jamais après 30 s.
-  while ! docker_repond; do
-    essais=$((essais - 1))
-    [ "$essais" -gt 0 ] || return 1
-    sleep 2
-  done
-  return 0
+  # (4 s mesurées le 2026-09-17 depuis une console détachée : `start` rendu en 9 s, moteur à 13 s).
+  # La boucle sort au premier `oui` — jamais après 30 s —, ou dès qu'un plantage est constaté.
+  docker_attend_moteur "$depuis" $((SECONDS + 2 * essais))
 }
 
 # Le démon ne répond pas : sait-on le réveiller ? → 0 il répond maintenant · 1 non (DOCKER_RAISON).
 #
 # Le démarrage est ANNONCÉ avant d'être tenté, au même titre que la construction de l'image : une
 # attente muette d'une demi-minute au milieu d'un lancement passerait pour un blocage.
+#
+# L'ISSUE se dit dans les deux sens (#988) : réussi, avec sa durée ; raté, avec ce qui l'a fait
+# rater — le code du plugin, et le plantage de Docker Desktop quand son journal le nomme.
+# shellcheck disable=SC2034  # DOCKER_DEMARRAGE_ISSUE est lue par les APPELANTS (lint par fichier, #285).
 docker_reveille() {
+  local depuis debut duree cause lanceur
   DOCKER_RAISON="démon Docker injoignable"
+  DOCKER_DEMARRAGE_ISSUE=""
   docker_reveillable || return 1
-  printf '    ─── démon Docker éteint : démarrage de Docker Desktop (jusqu'\''à %s s) …\n' \
-    "$DOCKER_DEMARRAGE_DELAI"
-  docker_demarre && return 0
-  DOCKER_RAISON="démarrage de Docker Desktop en échec (plafond ${DOCKER_DEMARRAGE_DELAI} s)"
+  lanceur="$(docker_lanceur)"
+  printf '    ─── démon Docker éteint : démarrage de Docker Desktop (%s, jusqu'\''à %s s) …\n' \
+    "$lanceur" "$DOCKER_DEMARRAGE_DELAI"
+  depuis="$(date -u +%Y-%m-%dT%H:%M:%S 2>/dev/null)"
+  debut=$SECONDS
+  if docker_demarre "$depuis"; then
+    duree=$((SECONDS - debut))
+    DOCKER_DEMARRAGE_ISSUE="Docker Desktop démarré par le filet ($lanceur) en ${duree} s"
+    # Un plantage suivi d'une réponse veut dire qu'une AUTRE relance a eu lieu : c'est elle qui a
+    # rendu le moteur, pas le filet, et le verdict ne doit pas s'attribuer ce qu'il n'a pas fait.
+    if cause="$(docker_plantage_depuis "$depuis")"; then
+      DOCKER_DEMARRAGE_ISSUE="Docker Desktop a planté au lancement ($cause) ; le moteur n'a répondu qu'après une relance, en ${duree} s"
+    fi
+    return 0
+  fi
+  duree=$((SECONDS - debut))
+  if [ -n "$DOCKER_PLANTAGE" ]; then
+    # Le remède est humain, et c'est le seul qui ait marché dans les journaux : la boîte d'erreur de
+    # Docker Desktop attend « Quit », puis une relance. Le dire ici évite de le chercher le lendemain.
+    DOCKER_RAISON="Docker Desktop a planté au lancement, attente écourtée après ${duree} s : $DOCKER_PLANTAGE — le relancer à la main (« Quit » dans sa boîte d'erreur, puis le rouvrir)"
+  elif [ "$DOCKER_START_CODE" -ne 0 ]; then
+    DOCKER_RAISON="démarrage de Docker Desktop en échec après ${duree} s (« docker desktop start » a rendu ${DOCKER_START_CODE}, plafond ${DOCKER_DEMARRAGE_DELAI} s)"
+  else
+    DOCKER_RAISON="démarrage de Docker Desktop en échec après ${duree} s (lancé par $lanceur, mais le moteur ne répond pas, plafond ${DOCKER_DEMARRAGE_DELAI} s)"
+  fi
+  DOCKER_DEMARRAGE_ISSUE="$DOCKER_RAISON"
   return 1
 }
 
