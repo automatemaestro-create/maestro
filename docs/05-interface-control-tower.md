@@ -150,6 +150,12 @@ notifications, et le **flux temps réel** qui les alimente tous.
 
 **Ce qui reste global, et pourquoi** :
 
+> ⚠ **Les deux premières lignes de ce tableau sont renversées** (2026-09-19, [docs/37 §2.1](./37-decision-equipe-sur-mesure.md)).
+> Le parc d'agents, le catalogue et les playbooks cessent d'être une ressource du poste. Chaque
+> projet reçoit son équipe, dérivée de son analyse et validée par l'utilisateur (#1021). Le
+> catalogue devient des gabarits de rôle. Le tableau décrit l'état présent : les lots #1038 et
+> #1043 le réécriront.
+
 | ce qui reste global | pourquoi | ce qui est cadré malgré tout |
 | --- | --- | --- |
 | `GET /api/agents` — état du parc | un agent est une ressource du **poste** : son playbook, sa capacité et ses instances (#86) valent pour toute la Control Tower. Il n'appartient à aucun projet, et #277 ne lui a pas donné de portée | la tuile « Agents » compte les agents **au travail sur ce projet** (dérivé de ses tâches) et renvoie au détail le parc et les « occupés ailleurs » |

@@ -50,6 +50,7 @@ La documentation complète se trouve dans le dossier [`docs/`](./docs). Ordre de
 | 32 | [Le cran « orchestrateur » de l'arbitrage : note de décision](./docs/32-decision-cran-orchestrateur.md) | **Trois arbitrages**, rendus sur trois mesures : le cran `orchestrateur` est **retiré** et non branché (il recouvre deux choses dont l'une *est* `auto` et l'autre un LLM qui garde un LLM), **pas d'escalade** vers l'humain — et pas pour raison de sûreté, l'escalade allait dans le sens sûr —, et le **canal « question »** renvoyé à #354 avec sa frontière écrite. La population du cran mesurée à **zéro** (aucune entrée `ask` dans le dépôt), et le trou de trace que le retrait **referme** |
 | 33 | [L'orchestrateur surveille son run : note de décision](./docs/33-decision-surveillance-run.md) | **Quatre arbitrages** : « blocage » nomme deux situations **opposées** (une tâche bloquée avance, un run suspendu non) et une seule est un cas de surveillance ; des trois niveaux **seul *alerter* est ouvert** — *voir* est #355, *décider* est **vide après soustraction** ; la boucle est une **règle sur un réveil qui existe déjà**, jamais chez l'orchestrateur (un veilleur qui meurt avec ce qu'il veille n'en est pas un) ; et l'alerte **ne passe pas par la file de validations**, qui porte des actes. Un seul seuil temporel rend un verdict dans tout `maestro/`, et il répond à l'autre question |
 | 34 | [Brancher un agent CLI tiers comme exécuteur de tâche (ACP) : note de décision](./docs/34-decision-agent-cli-tiers-acp.md) | **Brancher sous condition — aucune condition remplie, donc aucun code.** Le cas réel n'est pas à imaginer : `scripts/orchestrate/` branche déjà Claude Code *sans protocole*, pour **8 292 lignes** de pilote, **14 161** de tests et **29,09 $ par ticket** livré. La ligne de fracture est nette — ce qui s'observe **sur le disque** survit (livrable, espace de travail, durée), ce qui s'observe **dans le flux du SDK** non (coût, refus au vol, arbitrage) —, avec deux surprises : **aucun plafond de tours à perdre** (`None` partout) et un **bac à sable portable en principe** (le shim est déjà à la frontière d'ACP, mais le binaire y est en dur). Ni `ModelProvider` (l'interface mentirait) ni `TaskExecutor` (il abstrait le **lieu**, jamais l'**autorité**) |
+| 37 | [L'équipe sur mesure : chaque projet s'outille et recrute ses agents](./docs/37-decision-equipe-sur-mesure.md) | **Deux renversements, demandés explicitement.** D'abord, les agents cessent d'être une ressource du poste : un projet naît **sans agent**, et son équipe est proposée par l'analyse du projet puis validée par l'utilisateur ; le catalogue figé devient des gabarits de rôle. Ensuite, « personne ne répond en cours de tâche » tombe : un agent **demande** quand la décision requiert un humain, et **tranche seul** le reste en le consignant. Le premier pas de tout projet devient son **outillage universel** (AGENTS.md, Agent Skills, scripts). Ne bougent pas : docs/32, EF-08 et la configuration ambiante fermée |
 
 Les versions **Word (.docx)** prêtes à partager sont dans `deliverables/` — ce dossier est **hors dépôt** (versionné sur le Drive de l'équipe), pas dans Git.
 
@@ -67,6 +68,11 @@ Les versions **Word (.docx)** prêtes à partager sont dans `deliverables/` — 
 | 🧪 **QA / Testeur** | Tests, validation, revue | « Écrire les tests e2e du parcours d'inscription » |
 
 > Ces agents sont **entièrement configurables** depuis l'interface, et vous pouvez en **créer de nouveaux**.
+
+> ⚠ **Ce catalogue ne sera bientôt plus instancié d'office** ([docs/37](./docs/37-decision-equipe-sur-mesure.md), jalon *L'équipe sur mesure*).
+> Un projet naîtra sans agent, et son équipe (rôles, nombre, instances, playbooks, skills et
+> autorisations) sera proposée par l'analyse du projet, puis validée par l'utilisateur. Les agents
+> ci-dessus deviendront des gabarits de rôle.
 
 ---
 
