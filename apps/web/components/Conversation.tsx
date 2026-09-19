@@ -411,6 +411,7 @@ export function Conversation({
   amorces = [],
   entete,
   bandeau,
+  pied,
   surSaisie,
   className = "",
 }: {
@@ -445,6 +446,17 @@ export function Conversation({
   entete?: ReactNode;
   /** Ce qui se pose entre l'en-tête et le fil (la barre de destinataire de `/chat`). */
   bandeau?: ReactNode;
+  /**
+   * Ce qui se pose **au pied du fil**, entre le dernier message et le composeur
+   * (#943) : ce à quoi on répond par un geste plutôt que par une phrase — la
+   * demande de cadrage de `/chat` aujourd'hui.
+   *
+   * Là et pas ailleurs, pour la raison que `chat/CadrageDansLeFil` avait déjà
+   * énoncée : ce qu'on **écrit** est en bas, à la place de la zone de saisie.
+   * Un geste qui répond au dernier message se pose où l'œil vient de finir de
+   * lire, et où la main allait taper.
+   */
+  pied?: ReactNode;
   /**
    * Filtre appliqué à chaque frappe : rend le texte à **garder** dans la zone de
    * saisie. `/chat` s'en sert pour détacher une mention `@agent` du brouillon —
@@ -500,7 +512,7 @@ export function Conversation({
   // La sentinelle de fin de fil : elle ne sert qu'à désigner l'ascenseur qui
   // porte la conversation (`lib/defilement`). Depuis #691 le fil n'a plus de
   // conteneur défilant à lui, donc plus rien à tenir par une `ref`.
-  const pied = useRef<HTMLDivElement | null>(null);
+  const sentinelle = useRef<HTMLDivElement | null>(null);
   const ascenseur = useRef<HTMLElement | null>(null);
   // La zone de saisie, tenue par une `ref` pour la faire grandir (#726) ; et
   // l'identifiant du raccourci clavier, qui la **décrit** (`aria-describedby`).
@@ -552,7 +564,7 @@ export function Conversation({
   // Qui défile, et le lecteur suit-il ? Résolu une fois au montage : l'ascenseur
   // est celui du cadre (`Shell`), il ne change pas sous les pieds du fil.
   useEffect(() => {
-    const cadre = ascenseurDe(pied.current);
+    const cadre = ascenseurDe(sentinelle.current);
     ascenseur.current = cadre;
     if (cadre === null) return;
     // Le suivi se décide **avant** l'arrivée du message, sur le geste du
@@ -916,11 +928,17 @@ export function Conversation({
           </li>
         )}
       </ol>
+      {/* Ce à quoi on répond d'un geste (#943) : hors du `<ol>`, parce que ce
+          n'est pas un message du fil mais ce qu'on s'apprête à y dire — la
+          place que `chat/CadrageDansLeFil` donne déjà à sa carte « Décision ».
+          Avant la sentinelle : « aller en bas » doit amener jusqu'au geste, pas
+          jusqu'au message qui le précède. */}
+      {pied !== undefined && <div className="mt-3">{pied}</div>}
       {/* La sentinelle de fin de fil : elle ne rend rien, elle **désigne**
           l'ascenseur qui porte la conversation (`lib/defilement`). Hors du
           `<ol>` à dessein — un `<li>` vide y serait annoncé comme un message de
           plus par les lecteurs d'écran. */}
-      <div ref={pied} aria-hidden="true" />
+      <div ref={sentinelle} aria-hidden="true" />
       {/* Le composeur reste **à quai** (#691) : le fil défilant désormais avec la
           page, le laisser en fin de flux obligerait à redescendre tout
           l'historique avant de pouvoir écrire. `sticky bottom-0` le colle au bas

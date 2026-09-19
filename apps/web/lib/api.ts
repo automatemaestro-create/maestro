@@ -31,6 +31,7 @@ import type {
   JournalAdmissionsMcp,
   LancementExecution,
   LexiquePlaybook,
+  MessageChat,
   MigrationMcp,
   PageExplorateur,
   PageJournal,
@@ -645,6 +646,51 @@ export async function ouvrirConversationChat(
   }
   const carte = (await reponse.json()) as { conversation: ConversationChat };
   return carte.conversation;
+}
+
+/**
+ * Tranche la demande de cadrage que le fil porte (`POST /api/chat/{agent}/cadrage`,
+ * #943) et rend la paire (geste, réponse) — les deux messages à poser au fil.
+ *
+ * `objectif` est la version **amendée** ; `null` dit « la proposition tient » et
+ * ne recopie rien — le `brief: null` de `POST …/brief/decision` (§6.10), un cran
+ * plus tôt. Il est ignoré sur un refus.
+ *
+ * Un `409` n'est pas une panne : la demande a été tranchée entre-temps, ou la
+ * conversation a repris. L'appelant recharge plutôt qu'il ne réessaie — d'où la
+ * cause portée telle quelle dans le message d'erreur.
+ */
+export async function trancherCadrageChat(
+  agent: string,
+  decision: {
+    approuve: boolean;
+    objectif?: string | null;
+    projetId?: string | null;
+    conversation?: string;
+  },
+): Promise<MessageChat[]> {
+  const reponse = await fetch(
+    `${API_URL}/api/chat/${encodeURIComponent(agent)}/cadrage`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        approuve: decision.approuve,
+        objectif: decision.objectif ?? null,
+        projet_id: decision.projetId ?? null,
+        conversation: decision.conversation,
+      }),
+    },
+  );
+  if (!reponse.ok) {
+    throw new Error(
+      reponse.status === 409
+        ? "cette demande de cadrage n'attend plus — la conversation a repris."
+        : `décision refusée (${reponse.status})`,
+    );
+  }
+  const paire = (await reponse.json()) as { messages: MessageChat[] };
+  return paire.messages;
 }
 
 /**
