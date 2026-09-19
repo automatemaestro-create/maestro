@@ -287,10 +287,13 @@ from maestro.controltower.chat import (
 from maestro.controltower.events import ACTEUR_RUN, ROLE_RUN
 from maestro.controltower.portee import PorteeProjet
 from maestro.controltower.state import (
+    EXECUTION_ANNULEE,
+    EXECUTION_ECHEC,
     EXECUTION_EN_ATTENTE_ARBITRAGE,
     EXECUTION_EN_ATTENTE_BRIEF,
     EXECUTION_EN_ATTENTE_REPONSES,
     EXECUTION_EN_COURS,
+    EXECUTION_TERMINEE,
     ControlTowerState,
 )
 from maestro.providers.base import ModelProvider
@@ -412,6 +415,30 @@ _STATUTS_ACTIFS = frozenset(
         EXECUTION_EN_ATTENTE_ARBITRAGE,
     }
 )
+
+#: Ce que le fil dit d'un statut d'exécution (#946, C7 du retex du 2026-09-11) :
+#: l'ouverture d'un run annonçait « statut « en_cours » », c'est-à-dire
+#: l'identifiant de la machine à états rendu tel quel dans une conversation.
+#:
+#: Les libellés sont ceux de `libelleStatutExecution` (`apps/web/lib/format.ts`)
+#: **au mot près** — c'est la règle de #571, et le même run lu dans le fil puis
+#: sur son écran ne doit pas paraître dans deux états. Un statut absent de la
+#: table se dit brut plutôt que traduit à l'aveugle.
+_LIBELLES_STATUT_EXECUTION = {
+    EXECUTION_EN_COURS: "En cours",
+    EXECUTION_TERMINEE: "Terminée",
+    EXECUTION_ANNULEE: "Annulée",
+    EXECUTION_ECHEC: "Échec",
+    EXECUTION_EN_ATTENTE_BRIEF: "Brief à valider",
+    EXECUTION_EN_ATTENTE_REPONSES: "Questions en attente",
+    EXECUTION_EN_ATTENTE_ARBITRAGE: "Validation en attente",
+}
+
+
+def libelle_statut_execution(statut: str) -> str:
+    """Le statut d'un run en mots d'interface, ou brut si le flux s'est enrichi."""
+    return _LIBELLES_STATUT_EXECUTION.get(statut, statut)
+
 
 #: Un bloc de code Markdown, que les modèles posent volontiers autour d'un JSON
 #: qu'on leur a demandé nu.
@@ -833,7 +860,7 @@ class RepondeurOrchestration(RepondeurChat):
         statut = str(resume.get("statut", ""))
         await redaction.ecrire(f" Run {run_id} ouvert" if run_id else " Run ouvert")
         if statut:
-            await redaction.ecrire(f", statut « {statut} »")
+            await redaction.ecrire(f", statut « {libelle_statut_execution(statut)} »")
         await redaction.ecrire(
             ". Les tâches apparaîtront au tableau de bord à mesure que la "
             "décomposition les produit."

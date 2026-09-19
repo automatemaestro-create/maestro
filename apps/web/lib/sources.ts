@@ -9,7 +9,7 @@
  * demander de monter un DOM.
  */
 
-import { conseilMotif } from "./projets";
+import { conseilMotif, libelleMotif } from "./projets";
 import {
   LECTURE_IGNOREE,
   LECTURE_LUE,
@@ -69,6 +69,38 @@ const CONSEILS: Record<string, string> = {
  */
 export function conseilSource(motif: string): string | null {
   return CONSEILS[motif] ?? conseilMotif(motif);
+}
+
+/**
+ * Ce que dit un motif de refus de source **en mots d'interface** (#946, C7).
+ *
+ * Même délégation que `conseilSource` juste au-dessus, et pour la même raison :
+ * les motifs de racine que les deux écrans partagent ont déjà leur libellé.
+ * Le bandeau de composition est le **pendant exact** de celui des projets
+ * (`RefusMotive`) — les laisser diverger ferait lire un code d'un côté et une
+ * phrase de l'autre pour le même fait.
+ */
+const LIBELLES: Record<string, string> = {
+  "type-inconnu": "Type de source inconnu",
+  "url-non-suivable": "Adresse non suivable",
+  "url-absente": "Adresse absente",
+  "url-trop-longue": "Adresse trop longue",
+  "source-trop-volumineuse": "Source trop volumineuse",
+  "ingestion-trop-volumineuse": "Sources trop volumineuses au total",
+  "trop-de-sources": "Trop de sources",
+  "televersement-inconnu": "Dépôt de fichier inconnu",
+  "nom-invalide": "Nom de fichier invalide",
+  "nom-absent": "Nom de fichier absent",
+  "nom-trop-long": "Nom de fichier trop long",
+  "taille-absente": "Taille de fichier non mesurée",
+  "taille-invalide": "Taille de fichier inexploitable",
+  "apercu-sans-octets": "Aperçu désynchronisé des fichiers déposés",
+  "sources-illisibles": "Liste des sources illisible",
+};
+
+/** Le libellé d'un motif de refus de source, ou le motif brut s'il est neuf. */
+export function libelleSource(motif: string): string {
+  return LIBELLES[motif] ?? libelleMotif(motif);
 }
 
 /**

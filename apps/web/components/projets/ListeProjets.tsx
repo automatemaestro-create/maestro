@@ -301,10 +301,23 @@ export function ListeProjets({ apresEcriture }: Props = {}) {
 
       <section aria-label="Projets déclarés" className="flex flex-col gap-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
+          {/* L'espace qui suit le gras est **explicite** (#946, C1 du retex du
+              2026-09-11) : écrit comme une espace de texte, il se perdait au
+              rendu et la phrase donnait « racine sur le disqueet ce qu'elle
+              expose ». Un jsdom ne le reproduit pas — d'où l'espace porté par
+              une expression, qui ne dépend d'aucun nettoyage de JSX.
+
+              Et la phrase ne dit plus « jamais en tapant un chemin » (C2) :
+              l'explorateur offre justement d'y sauter par un chemin absolu, et
+              elle contredisait l'écran qu'elle décrit. Ce qui reste vrai — et
+              qui était ce qu'elle voulait dire — c'est qu'on n'a jamais **à**
+              en taper un : la racine retenue vient toujours d'un dossier
+              énuméré par l'API. */}
           <p className="max-w-2xl text-sm text-neutral-500 dark:text-neutral-400">
-            Un projet, c&apos;est une <strong>racine sur le disque</strong> et ce
-            qu&apos;elle expose aux agents. Le dossier se choisit dans
-            l&apos;explorateur servi par le backend — jamais en tapant un chemin.
+            Un projet, c&apos;est une <strong>racine sur le disque</strong>{" "}
+            et ce qu&apos;elle expose aux agents. Le dossier se choisit dans
+            l&apos;explorateur servi par le backend — sans jamais avoir à taper
+            un chemin.
           </p>
           {!creationOuverte && (
             <Bouton

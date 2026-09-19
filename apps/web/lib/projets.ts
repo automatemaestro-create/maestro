@@ -92,6 +92,58 @@ export function conseilMotif(motif: string): string | null {
 }
 
 /**
+ * Ce que dit un motif de refus **en mots d'interface** (#946, C7 du retex du
+ * 2026-09-11) — le bandeau affichait `projet-inconnu` tel quel, c'est-à-dire
+ * l'identifiant de l'API rendu à quelqu'un qui ne l'a jamais lu.
+ *
+ * Même règle que `libelleOrigine` et `libelleStatut` : un motif absent de la
+ * table se rend **brut** plutôt que traduit à l'aveugle. L'API en gagnera, et
+ * un code affiché sans fard reste préférable à une phrase inventée — c'est déjà
+ * l'arbitrage de `CONSEILS` juste au-dessus.
+ */
+const LIBELLES_MOTIF: Record<string, string> = {
+  // Les racines qu'un projet ne peut pas être (EF-38).
+  "racine-de-disque": "Racine de disque",
+  "dossier-utilisateur-nu": "Dossier utilisateur au complet",
+  "au-dessus-du-dossier-utilisateur": "Au-dessus du dossier utilisateur",
+  "chemin-sensible": "Zone protégée",
+  "chemin-systeme": "Dossier système",
+  "depot-maestro": "Dépôt de Maestro",
+  "au-dessus-du-depot-maestro": "Au-dessus du dépôt de Maestro",
+  "hors-racines-explorables": "Hors des dossiers explorables",
+  "aucune-racine-explorable": "Aucun dossier explorable",
+  // Ce que l'exploration a rencontré.
+  "acces-refuse": "Accès refusé",
+  "dossier-absent": "Dossier absent",
+  "pas-un-dossier": "Ce chemin n'est pas un dossier",
+  "chemin-relatif": "Chemin relatif",
+  // Le sélecteur natif, et les cinq façons dont il peut ne pas s'ouvrir (#278).
+  "selecteur-hors-poste": "Sélecteur indisponible — backend distant",
+  "selecteur-desactive": "Sélecteur désactivé sur ce backend",
+  "selecteur-sans-outil": "Aucun sélecteur sur ce poste",
+  "selecteur-en-cours": "Une fenêtre de choix est déjà ouverte",
+  "selecteur-expire": "Fenêtre de choix abandonnée",
+  // Le projet lui-même.
+  "projet-inconnu": "Projet inconnu",
+  "projet-illisible": "Projet illisible",
+  "run-inconnu": "Run inconnu",
+  "requete-invalide": "Demande invalide",
+  // La mise sous Git (#855).
+  "depot-englobant": "Dépôt Git englobant",
+  "init-refuse": "Initialisation Git refusée",
+  "commit-refuse": "Premier commit refusé",
+  "vcs-introuvable": "Dépôt Git introuvable",
+  "git-indisponible": "Git indisponible",
+  // Celui que l'écran fabrique lui-même quand l'appel n'aboutit pas.
+  "api-injoignable": "API injoignable",
+};
+
+/** Le libellé d'un motif, ou le motif brut si l'API s'est enrichie. */
+export function libelleMotif(motif: string): string {
+  return LIBELLES_MOTIF[motif] ?? motif;
+}
+
+/**
  * Les motifs saisis sur une ligne, en liste d'API. Une saisie vide rend `null`,
  * qui vaut « laisse les défauts du modèle » côté backend — à distinguer d'une
  * liste vide, qui voudrait dire « n'inclus rien ».
