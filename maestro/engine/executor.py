@@ -577,6 +577,13 @@ class LocalExecutor(TaskExecutor):
         debut = perf_counter()
         deliberation = Deliberation()
         entree = task.description
+        # La **checklist** (#489) naît ici depuis #944, et non dans `_realise` :
+        # elle doit survivre aux relances comme avant (une tâche relancée reprend
+        # sur l'avancement acquis), mais l'**écart** entre ce qu'elle porte et le
+        # verdict de la tâche ne se dit qu'à la clôture — et la clôture est ici.
+        # L'agent qui l'alimente, lui, n'existe pas encore : il sort du routage.
+        suivi = SuiviChecklist(task.etapes)
+        agent_execute: Agent | None = None
         # Un contrôle par exécution (#56) : il ne compte rien lui-même, il relit
         # le grand livre du `journal` à chaque mesure — planification et tâches
         # achevées comptent autant que la tâche courante.
@@ -613,6 +620,7 @@ class LocalExecutor(TaskExecutor):
                     )
                 else:
                     releve.agent = decision.agent
+                    agent_execute = decision.agent
                     entree = _build_task_description(task, dependances)
                     # Application à chaud (#78, #104, #110) : playbook courant,
                     # serveurs MCP déclarés et politique de permissions sont
@@ -656,6 +664,7 @@ class LocalExecutor(TaskExecutor):
                                 serveurs_mcp,
                                 politique,
                                 deliberation,
+                                suivi,
                             )
                         if playbook is not None:
                             result = replace(result, playbook_version=playbook.version)
@@ -669,6 +678,12 @@ class LocalExecutor(TaskExecutor):
                 _ecoule_ms(debut), arbitrage_ms=deliberation.credit.ecoule_ms()
             ),
         )
+        # L'écart entre le verdict et la checklist (#944) : dit **avant** l'étape
+        # terminale, pour qu'il soit déjà au journal quand la tâche s'y annonce
+        # terminée — une tâche ne peut pas s'afficher « Terminée » sur une
+        # checklist incomplète sans qu'on sache laquelle de ses étapes ne l'est
+        # pas. Muet dans tous les autres cas.
+        self._consigne_ecart_checklist(task, agent_execute, suivi, result, journal)
         # Le dernier mètre (#705) : la tâche est soldée, son worktree démonté et
         # sa branche écrite — c'est le seul instant où « dès qu'elle est soldée »
         # veut dire quelque chose. **Avant** l'étape terminale et non après : la
@@ -1107,8 +1122,15 @@ class LocalExecutor(TaskExecutor):
         serveurs_mcp: tuple[ServeurMcp, ...] = (),
         politique: PolitiqueOutils | None = None,
         deliberation: Deliberation | None = None,
+        suivi: SuiviChecklist | None = None,
     ) -> TaskResult:
         """Réalise la tâche sous garde-fous (#9) : validation humaine, puis time-out.
+
+        `suivi` (#489, remonté à `execute` par #944) traverse sans appartenir à
+        cette fonction, comme `deliberation` : la checklist doit survivre aux
+        relances *et* être lisible après la clôture. `None` — un appel direct,
+        hors de `execute` — en monte un sur l'ossature du plan, ce qui rend le
+        comportement d'avant : personne ne lira alors l'écart.
 
         Une tâche sensible non approuvée est stoppée **avant** toute exécution.
         Le plafond de dépense, lui, est armé plus haut (sur le collecteur d'usage
@@ -1156,16 +1178,17 @@ class LocalExecutor(TaskExecutor):
         refus = await self._valide_si_sensible(agent, task, score, journal, credit)
         if refus is not None:
             return refus
+        suivi = suivi if suivi is not None else SuiviChecklist(task.etapes)
         timeout_s = self._guardrails.timeout_s
         if timeout_s is None:
             return await self._realise(
                 agent, task, description, score, playbook, serveurs_mcp, politique,
-                journal, deliberation,
+                journal, deliberation, suivi,
             )
         realisation = asyncio.create_task(
             self._realise(
                 agent, task, description, score, playbook, serveurs_mcp, politique,
-                journal, deliberation,
+                journal, deliberation, suivi,
             ),
             name=f"maestro-realisation:{task.id}",
         )
@@ -1480,6 +1503,7 @@ class LocalExecutor(TaskExecutor):
         politique: PolitiqueOutils | None,
         journal: RunJournal,
         deliberation: Deliberation,
+        suivi: SuiviChecklist,
     ) -> TaskResult:
         """Produit le livrable de `task` et le mue en `TaskResult` (échec consigné, jamais levé).
 
@@ -1507,12 +1531,15 @@ class LocalExecutor(TaskExecutor):
         soldait sans qu'on sache s'il s'agissait d'une limite d'usage, d'un
         dépassement de contexte ou d'un plantage.
 
-        La **checklist** de la tâche (#489) est tenue ici, et non dans la boucle
-        de tentative : un `SuiviChecklist` par exécution, monté sur l'ossature que
-        le plan déclare (`task.etapes`), posé une fois avant la première tentative
-        et complété par les relevés de l'agent. Le placer plus bas le remettrait à
-        neuf à chaque relance, c'est-à-dire ferait reculer l'avancement au moment
-        précis où l'on a le plus besoin de savoir ce qui était déjà acquis.
+        La **checklist** de la tâche (#489) traverse cette boucle sans lui
+        appartenir : un `SuiviChecklist` par exécution, monté sur l'ossature que
+        le plan déclare (`task.etapes`), posé ici une fois avant la première
+        tentative et complété par les relevés de l'agent. La placer **dans** la
+        boucle la remettrait à neuf à chaque relance, c'est-à-dire ferait reculer
+        l'avancement au moment précis où l'on a le plus besoin de savoir ce qui
+        était déjà acquis ; elle est **née dans `execute`** depuis #944, d'un cran
+        au-dessus, parce que l'écart entre ce qu'elle porte et le verdict de la
+        tâche ne se lit qu'une fois la tâche soldée — donc hors d'ici.
 
         La **délibération** (#584) traverse cette boucle sans lui appartenir : elle
         vient de `execute`, pour la raison exacte qui fait tenir le `SuiviChecklist`
@@ -1524,7 +1551,6 @@ class LocalExecutor(TaskExecutor):
         relance = self._relance
         max_tentatives = relance.max_tentatives if relance is not None else 1
         tentative = 1
-        suivi = SuiviChecklist(task.etapes)
         # L'ossature part avant la première tentative : c'est ce qui donne à lire
         # la tâche pendant qu'elle démarre, là où l'agent n'a encore rien dit.
         # Muet quand le plan n'en déclare aucune (règle de #246).
@@ -1990,6 +2016,62 @@ class LocalExecutor(TaskExecutor):
             etapes=[etape.to_dict() for etape in etapes],
             agent=agent.nom,
             role=agent.role,
+        )
+
+    def _consigne_ecart_checklist(
+        self,
+        task: Task,
+        agent: Agent | None,
+        suivi: SuiviChecklist,
+        result: TaskResult,
+        journal: RunJournal,
+    ) -> None:
+        """Dit l'écart entre le verdict d'une tâche et sa checklist (#944).
+
+        Le défaut, mesuré par le retex du 2026-09-11 (constat **G12**) : la
+        tâche 4 du run s'affichait **Terminée** sur une checklist à **14/15**, et
+        rien nulle part ne disait laquelle des quinze étapes ne l'était pas —
+        l'utilisateur lit alors soit un compteur faux, soit un verdict faux, sans
+        pouvoir trancher.
+
+        Les deux remèdes évidents sont écartés, et pour la même raison : ils
+        **effacent** la question au lieu d'y répondre. Cocher d'office les étapes
+        restantes ferait dire à l'agent ce qu'il n'a pas dit ; refuser le verdict
+        « Terminée » ferait échouer une tâche qui a livré, sur une liste de
+        travail que le contrat lui-même donne pour faillible (#489 : « un agent
+        qui ne tient pas de liste ne produit simplement aucune étape »). Reste
+        celui que le critère du ticket nomme : le **dire**. 14/15 sur une tâche
+        terminée est une information, pas une contradiction — dès lors qu'on sait
+        ce qui manque.
+
+        Trois conditions, et c'est tout : la tâche est soldée en **succès** (sur
+        un échec, une checklist inachevée n'apprend rien — c'est ce qu'un échec
+        veut dire), elle **porte** une checklist, et cette checklist a des étapes
+        non cochées. Muet autrement, jusqu'au silence complet d'un run où tout
+        est coché : ce lot n'ajoute aucune ligne à une tâche sans écart.
+
+        La ligne passe par l'étape `:activite` (#479) — le canal existant, que le
+        pont range déjà parmi les faits rattachés à une tâche sans la faire
+        changer de colonne. **Aucun suffixe neuf** : le pont traite toute étape
+        qu'il ne reconnaît pas comme l'issue d'une tâche, si bien qu'un
+        `<tache>:ecart` deviendrait une tâche fantôme de plus dans les comptes —
+        le défaut C8 du même retex, corrigé par #924, qu'on ne va pas rouvrir
+        pour une ligne de texte.
+        """
+        if agent is None or result.statut != STATUT_TERMINEE:
+            return
+        restantes = suivi.inachevees()
+        if not restantes:
+            return
+        total = len(suivi.etapes())
+        libelles = " · ".join(etape.libelle for etape in restantes)
+        self._consigne_activite(
+            task,
+            agent,
+            f"Checklist incomplète à la clôture : {len(restantes)} étape(s) sur "
+            f"{total} non cochée(s) par l'agent — {libelles}. La tâche est "
+            "terminée ; ces étapes ne sont pas rapportées comme faites.",
+            journal,
         )
 
     def _on_etapes(

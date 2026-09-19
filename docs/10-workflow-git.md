@@ -1831,6 +1831,32 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
   `/mr-fix`). Le verbe est **idempotent** (empreinte `cksum`), ses refus tombent avant toute
   écriture (`4` fichier absent ou vide, `3` iid inconnu), et un `1` (forge muette) **ne bloque pas
   la clôture** — ce que le dispositif rend difficile est l'absence de **trace**, jamais le merge.
+- **Aucune clôture sans que les critères d'acceptation aient été confrontés au diff livré** (#968).
+  Les critères étaient écrits par `/ticket-create`, lus au cadrage — puis plus jamais regardés : la
+  checklist de PR juge le procédé, `merge-mr` la mergeabilité, et le merge fermait le ticket sans
+  que personne ait demandé « fait-il ce qu'il disait ? ». C'est le défaut que `/milestone-bilan`
+  corrige au jalon (#759), ici à l'échelle du ticket, où l'occasion se détruit au merge (branche
+  supprimée, worktree ramassé). À l'étape **4ter** de `/ticket-finish` — après la relecture
+  visuelle, **avant** le filet CI —, `bash scripts/gitlab/lib.sh criteres <iid>` rend les critères
+  numérotés `C1…Cn` : les cases garnies de « Critères d'acceptation » (les 612 sections du backlog
+  ont toutes cette forme, mesuré le 2026-09-19) ou, **repli bug**, la section « Comportement
+  attendu », comptée comme critère unique — le gabarit `bug.md` n'en a pas d'autre. La session
+  confronte chacun au diff et consigne un tableau `| Cn | ✓ / ✗ / hors diff | pièce |` par `bash
+  scripts/gitlab/lib.sh criteres-note <iid> <fichier>`. Sur `3` (aucun critère), elle le
+  **signale** par `criteres-note --aucun <iid>`, qui relit le ticket avant d'écrire — on ne se
+  déclare pas sans critère — et n'écrit jamais de critères à sa place. Les deux arbitrages sont
+  consignés sur #968 : **signaler plutôt que taire** — contrairement à « aucun écran », l'absence
+  de critère *est* le manque, et elle est assez rare (76 tickets fermés sur 667) pour ne pas devenir
+  du bruit ; **avant le filet CI** — un manque corrigeable change le diff, même ordre que la
+  relecture et `/mr-fix`. Ce qui se vérifie est une **forme**, jamais un sens (#746) : chaque `Cn` a
+  une réponse, la pièce n'est jamais vide, et un **✓ nomme un fichier du diff** — la règle « un
+  critère tenu sans pièce nommée n'est pas tenu » de `/milestone-bilan`, rendue vérifiable. Un
+  constat qui ne tient pas est refusé (`5`) avant toute écriture, et se répare en disant ✗ ou « hors
+  diff », jamais en cochant. Le verbe est **idempotent** (empreinte `cksum`), un `1` ne bloque pas
+  la clôture, et **un ✗ ne bloque pas le merge**. Ce constat dit ce qui a été **écrit**, pas ce qui
+  a été exercé : l'exercice reste celui du pipeline et, au jalon, de `/milestone-bilan`.
+  `/ticket-ship` en hérite sans une ligne à elle. Gardé par
+  [`tests/test_criteres_cloture.py`](../tests/test_criteres_cloture.py).
 - **Aucune clôture d'un ticket que la session ne traite pas.** `/ticket-finish` et `/ticket-ship`
   vérifient, **avant toute écriture** (commit, push, PR, statut, temps), que le ticket
   visé est bien celui de la session : `bash scripts/gitlab/lib.sh close-guard <iid> [branche]`.
