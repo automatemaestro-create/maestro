@@ -204,7 +204,10 @@ def test_les_cases_garnies_lemportent_sur_le_comportement_attendu(forge: Depot) 
     forge.pose_etat(graphql=[regle_criteres("63", corps)])
     acheve = forge.lib("criteres", "63")
     assert acheve.returncode == 0
-    assert acheve.stdout.splitlines() == ["# source\tCritères d'acceptation", "C1\tLe verbe rend 0."]
+    assert acheve.stdout.splitlines() == [
+        "# source\tCritères d'acceptation",
+        "C1\tLe verbe rend 0.",
+    ]
 
 
 def test_sans_rien_la_reponse_est_aucun_critere(forge: Depot) -> None:
@@ -279,9 +282,7 @@ def test_rejoue_a_lidentique_il_necrit_rien(forge: Depot) -> None:
 def test_un_constat_enrichi_sajoute_au_lieu_decraser(forge: Depot) -> None:
     """Contre-exemple du précédent : un second constat — après correction d'un ✗ — est un second
     fait, pas la correction du premier."""
-    forge.pose_etat(
-        graphql=[regle_criteres("72", CORPS_TROIS, notes=("## X — empreinte 111-22",))]
-    )
+    forge.pose_etat(graphql=[regle_criteres("72", CORPS_TROIS, notes=("## X — empreinte 111-22",))])
     acheve = forge.lib("criteres-note", "72", constat(forge, CONSTAT_COMPLET))
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
     assert len(notes_postees(forge, "72")) == 1
@@ -346,7 +347,9 @@ def test_le_chemin_entier_compte_autant_que_le_nom(forge: Depot) -> None:
     forge.commit("outils/verbe.sh", "echo verbe\n", "feat: verbe\n\nRefs #60")
     forge.pose_etat(graphql=[regle_criteres("77", CORPS_TROIS)])
     texte = tableau(
-        ("C1", "✓", "`outils/verbe.sh`"), ("C2", "✓", "`./outils/verbe.sh`"), ("C3", "✓", "verbe.sh")
+        ("C1", "✓", "`outils/verbe.sh`"),
+        ("C2", "✓", "`./outils/verbe.sh`"),
+        ("C3", "✓", "verbe.sh"),
     )
     acheve = forge.lib("criteres-note", "77", constat(forge, texte))
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
@@ -542,13 +545,14 @@ def etape_4ter() -> str:
 def test_la_cloture_nomme_la_question_la_trace_et_le_signalement() -> None:
     etape = etape_4ter()
     assert "bash scripts/gitlab/lib.sh criteres <iid>" in etape
-    assert "bash scripts/gitlab/lib.sh criteres-note <iid> .maestro/session/criteres-<iid>.md" in etape
+    trace = "bash scripts/gitlab/lib.sh criteres-note <iid> .maestro/session/criteres-<iid>.md"
+    assert trace in etape
     assert "bash scripts/gitlab/lib.sh criteres-note --aucun <iid>" in etape
 
 
 def test_la_confrontation_passe_apres_la_relecture_et_avant_le_filet_ci() -> None:
-    """L'ordre EST la décision arbitrée sur #968 : ce qui peut changer le diff passe avant le verdict
-    qui le juge, et après la relecture visuelle, dont le correctif change aussi le diff."""
+    """L'ordre EST la décision arbitrée sur #968 : ce qui peut changer le diff passe avant le
+    verdict qui le juge, et après la relecture visuelle, dont le correctif change aussi le diff."""
     texte = PROMPT_FINISH.read_text(encoding="utf-8")
     relecture = texte.index("4bis. **Le rendu a-t-il été regardé ?**")
     criteres = texte.index("4ter. **Le ticket fait-il ce qu'il disait ?**")
@@ -565,8 +569,8 @@ def test_un_non_couvert_est_nomme_et_ne_bloque_pas_le_merge() -> None:
 
 
 def test_sans_critere_on_signale_sans_en_ecrire() -> None:
-    """Les deux moitiés de l'arbitrage : le signalement (pas l'abstention muette de la relecture sans
-    écran), et l'interdit d'écrire des critères à la clôture."""
+    """Les deux moitiés de l'arbitrage : le signalement (pas l'abstention muette de la relecture
+    sans écran), et l'interdit d'écrire des critères à la clôture."""
     etape = etape_4ter()
     assert "code `3` — aucun critère écrit" in etape
     assert "Signale-le" in etape

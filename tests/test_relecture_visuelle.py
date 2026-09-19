@@ -760,9 +760,11 @@ def etape_4bis() -> str:
     """
     texte = PROMPT_FINISH.read_text(encoding="utf-8")
     debut = texte.index("4bis. **Le rendu a-t-il été regardé ?**")
-    # L'étape 4ter (#968) la suit et parle comme elle — « on ne demande pas, on joue », « code `3` » :
-    # la borne s'arrête donc à elle, sans quoi sa phrase garderait verte une 4bis qui l'aurait perdue.
-    return " ".join(texte[debut : texte.index("4ter. **Le ticket fait-il ce qu'il disait ?**")].split())
+    # L'étape 4ter (#968) la suit et parle comme elle — « on ne demande pas, on joue », « code
+    # `3` » : la borne s'arrête donc à elle, sans quoi sa phrase garderait verte une 4bis qui
+    # l'aurait perdue.
+    fin = texte.index("4ter. **Le ticket fait-il ce qu'il disait ?**")
+    return " ".join(texte[debut:fin].split())
 
 
 def test_la_cloture_est_muette_quand_il_ny_a_rien_a_regarder() -> None:
