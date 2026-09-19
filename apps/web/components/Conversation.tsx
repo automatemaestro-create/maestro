@@ -433,6 +433,7 @@ export function Conversation({
   amorces = [],
   entete,
   bandeau,
+  pied,
   surSaisie,
   className = "",
 }: {
@@ -467,6 +468,17 @@ export function Conversation({
   entete?: ReactNode;
   /** Ce qui se pose entre l'en-tête et le fil (la barre de destinataire de `/chat`). */
   bandeau?: ReactNode;
+  /**
+   * Ce qui se pose **au pied du fil**, entre le dernier message et le composeur
+   * (#943) : ce à quoi on répond par un geste plutôt que par une phrase — la
+   * demande de cadrage de `/chat` aujourd'hui.
+   *
+   * Là et pas ailleurs, pour la raison que `chat/CadrageDansLeFil` avait déjà
+   * énoncée : ce qu'on **écrit** est en bas, à la place de la zone de saisie.
+   * Un geste qui répond au dernier message se pose où l'œil vient de finir de
+   * lire, et où la main allait taper.
+   */
+  pied?: ReactNode;
   /**
    * Filtre appliqué à chaque frappe : rend le texte à **garder** dans la zone de
    * saisie. `/chat` s'en sert pour détacher une mention `@agent` du brouillon —
@@ -523,8 +535,8 @@ export function Conversation({
   // porte la conversation, et elle dit où le fil finit (`lib/defilement`).
   // Depuis #691 le fil n'a plus de conteneur défilant à lui ; depuis #941 c'est
   // sa dernière ligne, et non la dernière de la page, qui fait le « bas » —
-  // d'où la `ref` sur la section plutôt que sur une sentinelle de fin, qui ne
-  // savait que remonter les ancêtres.
+  // d'où la `ref` sur la section plutôt que sur la sentinelle de fin, qui ne
+  // savait que remonter les ancêtres et s'en est allée avec ce lot.
   const bloc = useRef<HTMLElement | null>(null);
   // Le composeur, pour la seule chose que le défilement lui demande : la bande
   // qu'il se réserve à quai (`bottom-16`), que `lib/defilement` **lit** sur lui
@@ -954,6 +966,14 @@ export function Conversation({
           </li>
         )}
       </ol>
+      {/* Ce à quoi on répond d'un geste (#943) : hors du `<ol>`, parce que ce
+          n'est pas un message du fil mais ce qu'on s'apprête à y dire — la
+          place que `chat/CadrageDansLeFil` donne déjà à sa carte « Décision ».
+          Il était « avant la sentinelle » pour que « aller en bas » amène
+          jusqu'au geste et non jusqu'au message qui le précède ; la promesse
+          est **plus forte** depuis #941, qui vise le bas de la section entière
+          (composeur compris) : ce geste-ci est dedans par construction. */}
+      {pied !== undefined && <div className="mt-3">{pied}</div>}
       {/* La sentinelle de fin de fil a disparu avec #941 : elle ne rendait rien
           et ne servait qu'à **désigner** l'ascenseur en remontant ses ancêtres,
           ce que la `ref` de la section fait aussi bien — et elle, en plus, sait

@@ -13,9 +13,13 @@ Deux fragments sont **partagés par tous les rôles**, pour n'exister qu'une foi
 - `_socle.md` — le **régime sénior** (#293) : ce que l'agent décide seul, ce qu'il remonte au
   lieu de le décider, et ce qu'il rend (décisions & arbitrages, recommandations). Il vaut pour
   les **deux** chemins d'exécution — runtime outillé et exécution texte du catalogue.
-- `_cadre_outille.md` — le cadre propre à l'exécution **outillée** : répertoire de travail
-  isolé, livrable matérialisé en fichiers, rien qui survive à la tâche. L'exécution texte du
-  catalogue n'a pas d'outils : elle ne le charge pas.
+- `_cadre_outille.md` — le cadre propre à l'exécution **outillée** : répertoire de travail,
+  livrable matérialisé en fichiers, ce qui a servi à le produire rangé à part (#944), rien qui
+  survive à la tâche. L'exécution texte du catalogue n'a pas d'outils : elle ne le charge pas.
+  ⚠ Il ne promet **pas** un répertoire « isolé » : depuis #839 ce répertoire peut être la racine
+  du projet de quelqu'un, et c'est cette fausse prémisse qui faisait laisser les dossiers de
+  travail des agents à côté du livrable. *Où* ranger le reste est dit par l'espace lui-même, dans
+  le message de la tâche (`maestro.sandbox.en_place.EspaceEnPlace.consigne_espace`).
 
 Les documents de rôle les appellent par les marqueurs `{{socle}}` et `{{cadre}}`, substitués à
 la lecture. Un marqueur inconnu (ou une accolade double laissée dans le texte) est une erreur
@@ -44,7 +48,7 @@ RACINE = Path(__file__).resolve().parent / "playbooks_defaut"
 #: Le tronc commun du régime sénior, partagé par les deux chemins d'exécution.
 FRAGMENT_SOCLE = "_socle"
 
-#: Le cadre d'exécution outillée (espace de travail isolé), réservé aux runtimes.
+#: Le cadre d'exécution outillée (espace de travail, livrable, atelier), réservé aux runtimes.
 FRAGMENT_CADRE = "_cadre_outille"
 
 #: Les marqueurs de substitution admis dans un document de rôle, et le fragment qu'ils

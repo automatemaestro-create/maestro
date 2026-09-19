@@ -74,8 +74,11 @@ from maestro.controltower.chat import (
     FRAGMENT_CHAT_DEBUT,
     FRAGMENT_CHAT_DELTA,
     FRAGMENT_CHAT_FIN,
+    CadrageIntrouvable,
     ChatStore,
     MessageChat,
+    RepondeurScripte,
+    proposition_en_attente,
 )
 from maestro.controltower.events import (
     EVENEMENT_CHAT_MESSAGE,
@@ -1632,3 +1635,296 @@ def test_le_module_n_expose_aucun_juge_lexical() -> None:
 
     assert surface & set(LEXIQUE_RETIRE_LOCAL) == set()
     assert {"VERDICT_PROPOSITION", "VERDICT_ACCORD", "VERDICT_ECHANGE"} <= surface
+
+
+# ── ⑨ la demande de cadrage sort de la phrase, et se répond d'un geste (#943) ─
+#
+# Constat **G10** du retex du 2026-09-11 : l'orchestration écrit « Je lance ? »
+# sans bouton, et le panneau « Cadrage en attente » dit « aucun » au même
+# instant. Le défaut n'était pas l'absence d'un bouton : la demande n'existait
+# **que** dans le texte de la réponse, donc aucune surface ne pouvait la voir.
+
+
+def _repondeur_qui_propose(
+    lanceur: LanceurEspion | None = None,
+) -> RepondeurOrchestration:
+    """Un répondeur dont le juge propose — l'état de départ de tous ces tests."""
+    return RepondeurOrchestration(
+        lanceur=lanceur,
+        provider=JugeScripte(_verdict(VERDICT_PROPOSITION, _propose(), OBJECTIF)),
+    )
+
+
+def test_une_proposition_porte_l_objectif_jusqu_au_message(lanceur) -> None:
+    """La demande quitte la phrase : elle est sur le message, donc lisible par un écran."""
+    reponse = asyncio.run(
+        _repondeur_qui_propose(lanceur).produire(
+            AGENT_ORCHESTRATION, _fil("Génère une application d'agenda")
+        )
+    )
+
+    assert reponse.proposition == OBJECTIF
+    # Et rien n'est ouvert pour autant : proposer n'est pas lancer (#685).
+    assert reponse.run_id == "" and lanceur.objectifs == []
+
+
+def test_un_echange_ne_porte_aucune_demande() -> None:
+    """Pas de geste sur une réponse qui ne demande rien — sinon le bouton serait partout."""
+    repondeur, _ = _repondeur(_verdict(VERDICT_ECHANGE, "Trois runs tournent."))
+
+    reponse = asyncio.run(
+        repondeur.produire(AGENT_ORCHESTRATION, _fil("où en sont les runs ?"))
+    )
+
+    assert reponse.proposition == ""
+
+
+def test_sans_lanceur_une_proposition_n_offre_aucun_geste() -> None:
+    """Le message vient de dire que le run n'ouvrirait pas : offrir le bouton le contredirait.
+
+    C'est la seule raison pour laquelle une proposition peut ne pas porter sa
+    demande — et elle est mécanique, pas cosmétique : le geste mènerait à un
+    lancement que le canal annonce impossible une ligne plus haut.
+    """
+    repondeur = RepondeurOrchestration(
+        lanceur=None,
+        provider=JugeScripte(_verdict(VERDICT_PROPOSITION, _propose(), OBJECTIF)),
+    )
+
+    reponse = asyncio.run(
+        repondeur.produire(AGENT_ORCHESTRATION, _fil("Génère une application d'agenda"))
+    )
+
+    assert "pas encore l'ouvrir" in reponse.contenu
+    assert reponse.proposition == ""
+
+
+def test_une_demande_attend_tant_que_rien_n_a_suivi() -> None:
+    """Le dernier message, et lui seul : ce n'est pas le temps qui périme une demande.
+
+    Les deux moitiés comptent. Sans la première, aucune surface ne verrait la
+    demande ; sans la seconde, le geste resterait offert après qu'on a répondu
+    — et un second clic ouvrirait un run de plus.
+    """
+    demande = MessageChat(
+        agent=NOM_ORCHESTRATION,
+        auteur=NOM_ORCHESTRATION,
+        contenu=_propose(),
+        proposition=OBJECTIF,
+    )
+    suite = MessageChat(
+        agent=NOM_ORCHESTRATION, auteur=UTILISATEUR, contenu="plutôt pas"
+    )
+
+    assert proposition_en_attente([]) is None
+    assert proposition_en_attente(_fil("bonjour")) is None
+    assert proposition_en_attente([demande]) is demande
+    assert proposition_en_attente([demande, suite]) is None
+
+
+def test_un_repondeur_qui_ne_propose_rien_n_a_rien_a_trancher() -> None:
+    """Le défaut de la classe de base : il le dit au lieu de le laisser deviner."""
+    with pytest.raises(CadrageIntrouvable):
+        asyncio.run(
+            RepondeurScripte().trancher_cadrage(
+                AGENT_ORCHESTRATION, [], approuve=True, objectif=OBJECTIF
+            )
+        )
+
+
+@pytest.fixture()
+def client_proposition(bus, depot_chat, lanceur):
+    """L'app dont le juge **propose** : l'écran a donc une demande à trancher.
+
+    Le juge est laissé sur `proposition` pour toute la durée du test, y compris
+    après le geste : c'est ce qui rend visible qu'un accord au bouton ne repasse
+    pas devant lui — s'il y repassait, il rendrait une proposition de plus et
+    aucun run ne partirait.
+    """
+    with TestClient(
+        create_app(
+            bus=bus,
+            chat_store=depot_chat,
+            orchestration_repondeur=_repondeur_qui_propose(lanceur),
+        )
+    ) as client:
+        client.post(
+            f"/api/chat/{NOM_ORCHESTRATION}/messages",
+            json={"contenu": "Génère une application d'agenda"},
+        )
+        yield client
+
+
+def test_la_demande_est_servie_au_fil_donc_visible_par_les_deux_surfaces(
+    client_proposition,
+) -> None:
+    """Critère 2, côté contrat : l'écran n'a plus à deviner qu'une question est posée."""
+    fil = client_proposition.get(f"/api/chat/{NOM_ORCHESTRATION}").json()["messages"]
+
+    assert [message["proposition"] for message in fil] == ["", OBJECTIF]
+
+
+def test_le_geste_d_accord_ouvre_le_run_sans_repasser_par_le_juge(
+    client_proposition, lanceur
+) -> None:
+    """Critère 1 : on répond d'un geste, et l'accord n'est pas un texte à rejuger."""
+    reponse = client_proposition.post(
+        f"/api/chat/{NOM_ORCHESTRATION}/cadrage", json={"approuve": True}
+    )
+
+    assert reponse.status_code == 201
+    geste, repondu = reponse.json()["messages"]
+    assert geste["auteur"] == UTILISATEUR and geste["contenu"] == "Oui, lance."
+    assert repondu["run_id"] == "run-42"
+    assert lanceur.objectifs == [OBJECTIF]
+    # La demande est soldée : le fil a repris, plus rien n'attend.
+    assert repondu["proposition"] == ""
+
+
+def test_un_objectif_amende_est_celui_qui_part(client_proposition, lanceur) -> None:
+    """Le troisième geste — amender —, et la raison pour laquelle il exige cette route.
+
+    Le contrat du juge lui demande, sur un accord, de recopier **mot pour mot**
+    sa propre proposition : une correction qui repasserait par lui serait
+    silencieusement remplacée par l'original. Elle ne peut donc pas emprunter la
+    zone de saisie, et le fil doit garder ce qui est réellement parti.
+    """
+    amende = "Développer une application Windows d'agenda, sans notifications"
+
+    reponse = client_proposition.post(
+        f"/api/chat/{NOM_ORCHESTRATION}/cadrage",
+        json={"approuve": True, "objectif": amende},
+    )
+
+    geste, _ = reponse.json()["messages"]
+    assert lanceur.objectifs == [amende]
+    assert amende in geste["contenu"]
+
+
+def test_un_objectif_intact_ne_se_recopie_pas(client_proposition, lanceur) -> None:
+    """`objectif: null` n'est pas une omission, c'est « la proposition tient » (§6.10).
+
+    Renvoyer le même texte serait indiscernable d'une correction, et le fil
+    porterait « avec cet objectif : … » sur un objectif que personne n'a touché.
+    """
+    reponse = client_proposition.post(
+        f"/api/chat/{NOM_ORCHESTRATION}/cadrage",
+        json={"approuve": True, "objectif": None},
+    )
+
+    geste, _ = reponse.json()["messages"]
+    assert geste["contenu"] == "Oui, lance."
+    assert lanceur.objectifs == [OBJECTIF]
+
+
+def test_un_refus_au_geste_n_ouvre_rien_et_laisse_parler(
+    client_proposition, lanceur
+) -> None:
+    """Refuser n'annule aucun run — il n'y en a pas encore — et ne clôt pas le fil."""
+    reponse = client_proposition.post(
+        f"/api/chat/{NOM_ORCHESTRATION}/cadrage", json={"approuve": False}
+    )
+
+    assert reponse.status_code == 201
+    geste, repondu = reponse.json()["messages"]
+    assert geste["contenu"] == "Non, ne lance pas."
+    assert lanceur.objectifs == []
+    assert "je n'ouvre rien" in repondu["contenu"]
+
+
+def test_le_geste_est_ecrit_au_fil_car_le_fil_est_la_seule_memoire(
+    client_proposition, depot_chat
+) -> None:
+    """Un accord au bouton sans trace ferait reproposer le tour suivant.
+
+    Le canal n'a pas d'autre mémoire que sa conversation (`orchestration`) : ce
+    qui n'y est pas écrit n'a pas eu lieu pour le juge du message suivant.
+    """
+    client_proposition.post(
+        f"/api/chat/{NOM_ORCHESTRATION}/cadrage", json={"approuve": True}
+    )
+
+    fil = depot_chat.fil(NOM_ORCHESTRATION)
+    assert [message.auteur for message in fil] == [
+        UTILISATEUR,
+        NOM_ORCHESTRATION,
+        UTILISATEUR,
+        NOM_ORCHESTRATION,
+    ]
+    assert fil[2].contenu == "Oui, lance."
+
+
+def test_le_geste_part_aussi_sur_le_websocket(client_proposition) -> None:
+    """Deux fenêtres ouvertes : celle qui n'a pas cliqué apprend que la demande est soldée."""
+    with client_proposition.websocket_connect("/ws/evenements?projet=tous") as ws:
+        client_proposition.post(
+            f"/api/chat/{NOM_ORCHESTRATION}/cadrage", json={"approuve": True}
+        )
+        aller = ws.receive_json()
+        retour = ws.receive_json()
+
+    assert aller["type"] == EVENEMENT_CHAT_MESSAGE and aller["run_id"] == ""
+    assert retour["type"] == EVENEMENT_CHAT_MESSAGE and retour["run_id"] == "run-42"
+
+
+def test_le_projet_de_la_fenetre_voyage_aussi_par_le_geste(
+    client_proposition, lanceur
+) -> None:
+    """Un run ouvert au bouton appartient au projet actif, comme un run ouvert au clavier."""
+    client_proposition.post(
+        f"/api/chat/{NOM_ORCHESTRATION}/cadrage",
+        json={"approuve": True, "projet_id": "prj-depensio"},
+    )
+
+    assert lanceur.projets == ["prj-depensio"]
+
+
+def test_un_geste_sans_demande_est_un_409(client_global, lanceur) -> None:
+    """Rien n'attend : le fil de `client_global` n'a jamais rien proposé."""
+    reponse = client_global.post(
+        f"/api/chat/{NOM_ORCHESTRATION}/cadrage", json={"approuve": True}
+    )
+
+    assert reponse.status_code == 409
+    assert lanceur.objectifs == []
+
+
+def test_un_second_geste_est_un_409_et_n_ouvre_pas_un_run_de_plus(
+    client_proposition, lanceur
+) -> None:
+    """Le double geste — deux fenêtres, ou un clic répété — ne coûte pas deux runs.
+
+    C'est le `409` de §6.10 un cran plus tôt, et il se tient **sans verrou** :
+    le premier geste a écrit dans le fil, donc la demande n'est plus la dernière
+    chose dite.
+    """
+    client_proposition.post(
+        f"/api/chat/{NOM_ORCHESTRATION}/cadrage", json={"approuve": True}
+    )
+
+    second = client_proposition.post(
+        f"/api/chat/{NOM_ORCHESTRATION}/cadrage", json={"approuve": True}
+    )
+
+    assert second.status_code == 409
+    assert lanceur.objectifs == [OBJECTIF]
+
+
+def test_un_geste_sur_un_fil_inconnu_reste_un_404(client_proposition) -> None:
+    reponse = client_proposition.post(
+        "/api/chat/pas-un-agent/cadrage", json={"approuve": True}
+    )
+
+    assert reponse.status_code == 404
+
+
+def test_une_ligne_ecrite_avant_ce_lot_se_relit_sans_demande() -> None:
+    """Un fil persisté ne se réécrit pas : la clé absente retombe sur le défaut."""
+    ancienne = {
+        "agent": NOM_ORCHESTRATION,
+        "auteur": NOM_ORCHESTRATION,
+        "contenu": _propose(),
+        "horodatage": "2026-09-11T12:38:00+00:00",
+    }
+
+    assert MessageChat.from_dict(ancienne).proposition == ""

@@ -2188,7 +2188,9 @@ non choisie ne doit pouvoir finir dans un commit. Le choix se consigne sur le ti
 commentaire qui commence par `## Variante retenue`, **avant** la première ligne d'implémentation —
 c'est aussi ce titre qui fait du ticket un ticket qui **applique** au démarrage suivant.
 
-**Le régime de run était l'arbitrage du lot**, consigné sur #979 et en tête du prompt de `run.sh` :
+**Le régime de run était l'arbitrage du lot**, consigné sur #979 et en tête du prompt de `run.sh` —
+⚠ **renversé par #1009** (« Le run tranche la forme lui-même », plus bas), qui retient une quatrième
+voie ; le tableau reste ici comme la trace de ce qui a été pesé :
 
 | voie | verdict | raison |
 |---|---|---|
@@ -2199,13 +2201,15 @@ c'est aussi ce titre qui fait du ticket un ticket qui **applique** au démarrage
 Le prix est connu : une session par ticket de ce genre (sa veille reste acquise et nourrira les
 variantes), et les lots suivants du parent sautés par la cascade — ce qui est juste, ils bâtiraient
 sur un écran que personne n'a choisi. Conséquence sur #934 : une veille jouée en run **ne se conclut
-plus par une implémentation**, puisqu'elle dit que le ticket décide.
+plus par une implémentation**, puisqu'elle dit que le ticket décide. *(Payé dès le premier run, puis
+renversé par #1009 : la cascade a sauté des lots qui ne bâtissaient sur aucun écran.)*
 
 **Écarté aussi :** une **maquette** plutôt que des brouillons — Figma sert à explorer, jamais de
 source de vérité, Code Connect étant refusé sur ce plan (§5.1, [docs/36](./36-outillage-du-design.md)) ;
 une **galerie** — deux ou trois variantes, et une variante **unique** se présente comme une
 validation, pas comme un choix ; des variantes **produites en run** — personne ne les regarderait,
-`gh` ne joint pas d'image à un ticket, et la démo aura avancé quand quelqu'un l'ouvrira ; des captures
+`gh` ne joint pas d'image à un ticket, et la démo aura avancé quand quelqu'un l'ouvrira (renversé par
+#1009 : le regard neuf les regarde, dans la session qui les a rendues) ; des captures
 de variantes sous `.maestro/relecture/`, que `--couverture` compterait à la clôture comme un regard
 porté sur l'écran livré.
 
@@ -2292,6 +2296,61 @@ session appelante comprise ; `--saisine` 6,6 s ; `--planche` 3,3 s pour 329 Ko.
 - **Un regard par écran.** Le sous-agent coûte au nombre de captures qu'il ouvre ; un seul regard par
   relecture.
 
+#### Le run tranche la forme lui-même, sur pièces (#1009) — 2026-09-19
+
+> **Renverse la voie (a) de #979** (« La direction se valide avant le code », plus haut), et avec
+> elle la pause interactive : un ticket qui décide de l'écran n'attend plus personne, dans aucun
+> régime.
+
+**Le fait.** Premier run sous la voie (a), `20260919-205116` : #928 (« un run qui se termine
+l'annonce ») a été jugé *décide* — trois formes possibles pour l'annonce dans le fil, aucun
+précédent — et arrêté comme prévu, pour 4,06 $ et zéro ligne. La cascade a sauté les quatre lots
+suivants de #921 : #938 et #929, qui en dépendaient, mais aussi #947 (Tauri dans la doc) et #949
+(modèle de menace), qui ne touchaient aucun écran (constat dans #1008). **La décision** de
+l'utilisateur, le même jour : *un run doit pouvoir traiter tous les types de tickets et savoir
+trancher* — la forme d'un écran comprise, sur une comparaison avec des produits professionnels
+similaires à ce qui est attendu.
+
+**Le régime** (étape 7 de `/ticket-start`, et la règle du prompt de `run.sh` qui y renvoie) :
+
+1. **les références d'abord** — sans commentaire `## Veille de conception` sur le ticket, la veille
+   se joue, que `touche-surface` ait détecté le ticket ou non (#928 n'était détectable par aucun des
+   deux motifs) ; elle cherche des **produits professionnels comparables** et en rapporte au moins
+   deux **captures**, qui seront la base de comparaison ;
+2. **2 ou 3 variantes rendues**, comme sous #979 — brouillons sur la vraie stack, patchs sous
+   `.maestro/variantes/<iid>/`, arbre vide entre deux et avant le choix ;
+3. **le choix rendu par le regard neuf** (#980) sur une saisine qui confronte chaque variante aux
+   références, au rendu attendu, aux critères et aux partis pris ; il en retient **toujours une**,
+   et seul un « non vu » faute de pièces le dispense de trancher (une seconde saisine, puis la
+   session tranche elle-même en le disant) ;
+4. **le choix consigné avant le code** (`## Variante retenue` : la retenue, qui l'a retenue, les
+   écartées et pourquoi, les références qui ont tranché), puis la variante implémentée et le ticket
+   clos comme les autres.
+
+**Pourquoi ce n'est pas la voie (c).** Elle reste écartée, et pour la raison que #979 lui donnait :
+« la variante la plus proche des partis pris », c'est un choix **fabriqué** — rien ne l'a comparé à
+rien. Ce qui sépare (d) de (c) est exactement ce qui manquait à (c) : des références vérifiées en
+direct, des variantes rendues, un juge qui n'en est pas l'auteur, une trace écrite **avant** le
+code. Le partage de #562 tient : aucun script ne rend ce verdict ; il change de juge, comme la veille
+l'avait fait en run avec #934 — un modèle qui juge sur pièces, jamais un lexique (#746).
+
+**Le prix**, connu : une veille et un regard neuf de plus par ticket qui décide (le regard neuf d'une
+relecture coûte **105 s et 1,29 $**, mesuré par #980). En échange, le ticket est livré et aucun lot
+de son parent n'est sauté. Qui veut une autre forme consigne une nouvelle `## Variante retenue` —
+elle fait du ticket suivant un ticket qui **applique** — et la relecture de `/ticket-finish` juge
+l'écran livré contre le choix consigné.
+
+**Écarté, avec sa raison :**
+
+- **Garder la pause en interactif.** La personne présente peut toujours renverser le choix après
+  coup ; l'attendre ferait d'elle le goulot que la décision de #1009 retire (« sans moi »).
+- **Laisser la session choisir entre ses propres brouillons.** C'est le juge que #980 a retiré de la
+  relecture : l'auteur voit ce qu'il a voulu faire.
+- **Une saisine écrite par un script.** Celle de la relecture l'est (`--saisine`) parce qu'elle
+  apparie des captures avant/après par écran et par thème ; celle du choix est un tableau de 2 ou 3
+  variantes que la session remplit en une fois. À scripter si l'écart entre deux saisines devient
+  un constat.
+
 #### Ce qui est gardé, et où
 
 | lot | ce qui est gardé | suite |
@@ -2299,7 +2358,8 @@ session appelante comprise ; `--saisine` 6,6 s ; `--planche` 3,3 s pour 329 Ko.
 | #976 | la section dans les gabarits (et pas ailleurs), ses rubriques tenues avec la saisine, les trois sorts de `/ticket-create`, le rendu du brief (vide muet, « non renseigné » imprimé, fermeture au titre suivant) | [`test_relecture_visuelle.py`](../tests/test_relecture_visuelle.py) |
 | #977 | l'avant sur les ports + 200, l'écran nouveau jamais capturé, le best-effort, l'état suivi ou rien, `--fin` qui arrête et retire | `test_relecture_visuelle.py` |
 | #978 | les scénarios servis (panne sous le CORS, charge), demandés au lanceur, montés et comptés par la relecture | [`test_cli_smoke.py`](../tests/test_cli_smoke.py), [`test_controltower_mode_reel.py`](../tests/test_controltower_mode_reel.py), `test_relecture_visuelle.py` |
-| #979 | le critère écrit une fois, l'arbre vide avant la question, le choix consigné avant le code, la voie (a) en run et ses voies écartées | [`test_design_veille.py`](../tests/test_design_veille.py) |
+| #979 | le critère écrit une fois, l'arbre vide avant le choix, le choix consigné avant le code, les voies écartées | [`test_design_veille.py`](../tests/test_design_veille.py) |
+| #1009 | aucun arrêt ni pause sur un ticket qui décide, la veille avant les variantes, le choix rendu par le regard neuf sur références, la voie (a) renversée et (c) toujours écartée | `test_design_veille.py` |
 | #980 | la grille (refus, fichier unique), `relecture-attente` (ancres, un aller), la saisine (pièces et rien d'autre), la planche (autonome, survit au worktree), `regard-neuf` réduit à `Read` | `test_relecture_visuelle.py` |
 
 Chaque contrôle qui conclut d'une **absence** — une recopie, une section manquante — éprouve d'abord

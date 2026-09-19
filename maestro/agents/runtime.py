@@ -315,7 +315,9 @@ class AgentRuntime:
         racine elle-même** sinon (#839, `maestro.sandbox.en_place` : l'agent y
         écrit en place, et rien n'est retiré à la fermeture). None (une tâche
         sans `projet_id`) : le répertoire temporaire vide d'avant. `tache_id` ne
-        sert qu'à nommer cette branche et ce répertoire.
+        sert qu'à nommer cette branche, ce répertoire et l'**atelier** de la
+        tâche (#944) — le sous-dossier de la racine où l'agent range ce qui n'est
+        pas le livrable, et que le message de la tâche lui nomme.
 
         Deux autres choses en dépendent (#226), inertes elles aussi sans lui :
         les **secrets du projet** sont enregistrés auprès de la rédaction (#109)
@@ -343,7 +345,6 @@ class AgentRuntime:
                 f"La description de la tâche confiée au rôle {self._profile.role} est vide."
             )
 
-        prompt = _build_prompt(self._profile, description, format_sortie)
         outils = self._tools if politique is None else politique.filtre_outils(self._tools)
         if politique is not None:
             mcp_serveurs = [s for s in mcp_serveurs if politique.serveur_autorise(s.nom)]
@@ -367,6 +368,13 @@ class AgentRuntime:
             prefix=self._profile.workspace_prefix,
             keep=keep_workspace,
         ) as ws:
+            # Le message est composé **une fois l'espace ouvert** (#944) : ce que
+            # l'agent doit savoir de son espace dépend du régime (la racine d'un
+            # projet nomme son atelier, un répertoire jetable n'ajoute rien), et
+            # c'est l'espace, seul, qui sait lequel il est.
+            prompt = _build_prompt(
+                self._profile, description, format_sortie, ws.consigne_espace()
+            )
             resume = await self._provider.run_agent(
                 prompt,
                 model=self._model,
@@ -397,9 +405,24 @@ class AgentRuntime:
             )
 
 
-def _build_prompt(profile: RoleProfile, description: str, format_sortie: str | None) -> str:
-    """Compose le message confié à l'agent : la tâche encadrée par les consignes du rôle."""
+def _build_prompt(
+    profile: RoleProfile,
+    description: str,
+    format_sortie: str | None,
+    espace: str = "",
+) -> str:
+    """Compose le message confié à l'agent : la tâche encadrée par les consignes du rôle.
+
+    `espace` (#944) est ce que l'espace de travail a à dire de lui-même
+    (`Workspace.consigne_espace`) — la racine d'un projet nomme son atelier, les
+    deux autres régimes n'ont rien à ajouter et rendent une chaîne vide, auquel
+    cas le message est celui d'avant, à la ligne près. Posé après les consignes
+    du rôle et avant le format de sortie : les consignes disent *comment*
+    travailler, celle-ci dit *où* déposer quoi.
+    """
     lignes = [profile.intro_tache, "", description, "", profile.consignes]
+    if espace:
+        lignes += ["", espace]
     if format_sortie:
         lignes += ["", f"Format de sortie attendu : {format_sortie}"]
     lignes += ["", profile.consigne_finale]
