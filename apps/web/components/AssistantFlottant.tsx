@@ -12,6 +12,28 @@
  * retrouve la conversation. Ce qui distingue l'assistant du chat des agents est
  * son interlocuteur : il répond sur **l'outil**, pas sur le projet.
  *
+ * ## Le fil est celui du produit (#945)
+ *
+ * Ce panneau montait jusqu'ici **sa propre** conversation : ses bulles, ses
+ * amorces, son composeur, son bouton « Envoyer » — en `bg-sky-600`, quand la
+ * couleur d'action du produit est `--accent` (emerald-700). C'était le constat
+ * C6 du retex du 2026-09-11, et la cause en était que l'assistant avait été
+ * écrit **à côté** du produit plutôt que dedans : 30 paires de couleurs brutes
+ * dans ce seul fichier (`couleurs.test.ts`), et un composeur de plus à tenir.
+ *
+ * Il monte désormais `components/Conversation`, le composant de fil du produit —
+ * celui de `/chat`, de l'onglet Chat d'un agent et de la colonne de droite. Ce
+ * n'est pas un alignement de classes mais un **retrait de recopie** : le
+ * composeur, ses bulles, ses amorces, sa région live et son « Dernier message »
+ * arrivent avec les décisions qui les ont formés (#726, #727, #877, #891, #908,
+ * #918, #926, veilles #820/#866/#873/#899) et ne peuvent plus en diverger. Ce
+ * fichier n'est plus que **le branchement d'un fil sur le canal d'aide**, comme
+ * `FilChat` l'est sur un agent.
+ *
+ * Ce qui lui reste en propre est ce qui est propre à un panneau flottant : la
+ * carte bornée, son en-tête à bouton de fermeture, Échap, et le fait que le
+ * composeur n'y réserve **pas** la bande du bouton flottant (voir plus bas).
+ *
  * Ne pas masquer les actions de la page est une contrainte de fond ici : le
  * bouton fermé reste petit, le shell réserve la bande qu'il occupe (`after:h-24`
  * sur `main` — un élément du flux, pas un padding, #888) pour qu'aucun contenu
@@ -34,23 +56,37 @@
  * le **dernier élément du flux** de `main` depuis #888 (`after:h-24`) : en
  * padding d'une boîte à hauteur fixée (#248), elle ne tenait pas au bas d'une
  * page qui déborde.
+ *
+ * ⚠ **Et cette bande-là n'existe pas ICI** (`bandeDuFlottant={false}`, #945).
+ * Elle vaut partout où ce bouton, calé sur la fenêtre, recouvre le bas de
+ * l'ascenseur d'un fil ; or ce panneau est la carte que ce bouton **ouvre**, et
+ * il se tient au-dessus de lui dans la même colonne flottante. Rien ne le
+ * recouvre, donc il n'y a rien à réserver — la garder coûterait 96 px sur une
+ * carte qui en fait 544 au plus, et poserait le composeur 64 px au-dessus du
+ * bord de sa propre carte. C'est la même règle que #885 a tranchée, lue dans
+ * l'autre sens.
  */
 
 import { useEffect, useRef, useState } from "react";
 
-import { AMORCE_NOWRAP } from "@/components/Conversation";
+import { Conversation } from "@/components/Conversation";
 import { IconeAssistant, IconeFermer } from "@/components/Icones";
-import { Infobulle } from "@/components/Infobulle";
+import { Bouton } from "@/components/Primitives";
 import {
   ACCUEIL_ASSISTANCE,
   AGENT_ASSISTANCE,
   AMORCES_ASSISTANCE,
   ecouterOuvertureAssistant,
 } from "@/lib/assistance";
-import { ErreurReponse } from "@/lib/api";
-import { formatDateHeure, formatHeure } from "@/lib/format";
-import { CHAT_AUTEUR_UTILISATEUR, type MessageChat } from "@/lib/types";
 import { useChat } from "@/lib/useChat";
+
+/**
+ * L'interlocuteur, tel qu'il se nomme à l'écran : tous les libellés du fil en
+ * dérivent (région live, liste des messages, indicateur d'attente), pour qu'un
+ * lecteur d'écran entende le même nom partout. « l'assistant » et non
+ * « assistance » — le nom du canal côté API n'est pas un nom de personne.
+ */
+const INTERLOCUTEUR_ASSISTANCE = "l'assistant";
 
 export function AssistantFlottant() {
   const [ouvert, setOuvert] = useState(false);
@@ -78,6 +114,13 @@ export function AssistantFlottant() {
   return (
     <div className="fixed right-4 bottom-4 z-30 flex flex-col items-end gap-3 print:hidden">
       {ouvert && <PanneauAssistance fermer={() => setOuvert(false)} />}
+      {/* Écrit à la main, et c'est le seul bouton du fichier qui le reste :
+          `Bouton` porte la forme d'une action de formulaire (`rounded-md`, deux
+          tailles), pas une pastille de 48 px calée sur la fenêtre. Ce qu'il lui
+          prend en revanche, ce sont les **jetons** — plus un `bg-white` ni un
+          `ring-sky-500` ici (#945) : le filet de focus est celui du socle
+          (`outline-accent`), et la pastille suit le thème sans une variante
+          `dark:` à tenir. */}
       <button
         ref={declencheur}
         type="button"
@@ -86,10 +129,10 @@ export function AssistantFlottant() {
         aria-expanded={ouvert}
         aria-label={ouvert ? "Fermer l'assistant" : "Ouvrir l'assistant"}
         className={
-          "flex size-12 items-center justify-center rounded-full border border-neutral-200 " +
-          "bg-white text-neutral-600 shadow-lg transition motion-reduce:transition-none hover:text-neutral-900 " +
-          "focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 " +
-          "dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100"
+          "flex size-12 cursor-pointer items-center justify-center rounded-full border border-bord " +
+          "bg-surface text-texte-secondaire shadow-lg transition motion-reduce:transition-none " +
+          "hover:text-texte focus-visible:outline-2 focus-visible:outline-offset-2 " +
+          "focus-visible:outline-accent"
         }
       >
         {ouvert ? (
@@ -102,226 +145,59 @@ export function AssistantFlottant() {
   );
 }
 
-/** Le panneau : en-tête, fil des échanges, amorces sur fil vide, saisie. */
+/** Le panneau : la carte, son en-tête, et le fil du produit dedans. */
 function PanneauAssistance({ fermer }: { fermer: () => void }) {
-  const { messages, connecte, chargement, erreur, envoi, envoyer } =
-    useChat(AGENT_ASSISTANCE);
-  const [brouillon, setBrouillon] = useState("");
-  const [erreurEnvoi, setErreurEnvoi] = useState<string | null>(null);
-  const fil = useRef<HTMLOListElement | null>(null);
-  const saisie = useRef<HTMLTextAreaElement | null>(null);
-
-  // Le panneau s'ouvre prêt à recevoir la question : ouvrir puis devoir cliquer
-  // dans le champ serait un geste de trop pour une aide qu'on veut immédiate.
-  useEffect(() => saisie.current?.focus(), []);
-
-  // Le fil suit la conversation, comme celui de la page Chat.
-  useEffect(() => {
-    const conteneur = fil.current;
-    if (conteneur !== null) conteneur.scrollTop = conteneur.scrollHeight;
-  }, [messages, envoi]);
-
-  const soumettre = async (texte: string) => {
-    const contenu = texte.trim();
-    if (contenu === "" || envoi) return;
-    setErreurEnvoi(null);
-    setBrouillon("");
-    try {
-      await envoyer(contenu);
-    } catch (e) {
-      setErreurEnvoi(e instanceof Error ? e.message : String(e));
-      // Le texte revient dans la zone de saisie (sauf si l'utilisateur a déjà
-      // repris la main) : relancer reste un simple Entrée. **Sauf** si la
-      // question est déjà partie (#695) : l'envoi passe par le flux, dont
-      // l'échec peut survenir après que le message a rejoint le fil — le rendre
-      // à la saisie inviterait alors à poser deux fois la même question.
-      if (e instanceof ErreurReponse) return;
-      setBrouillon((courant) => (courant === "" ? contenu : courant));
-    }
-  };
-
-  const filVide = !chargement && messages.length === 0;
+  const fil = useChat(AGENT_ASSISTANCE);
 
   return (
     <section
       aria-label="Assistant de la Control Tower"
       className={
         "flex max-h-[min(70vh,34rem)] w-[min(24rem,calc(100vw-2rem))] flex-col overflow-hidden " +
-        "rounded-xl border border-neutral-200 bg-white shadow-2xl " +
-        "dark:border-neutral-700 dark:bg-neutral-900"
+        "rounded-xl border border-bord bg-surface shadow-2xl"
       }
     >
-      <header className="flex items-start gap-2 border-b border-neutral-200 px-4 py-3 dark:border-neutral-800">
-        <div className="min-w-0 flex-1">
-          <h2 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
-            Assistant
-          </h2>
-          <p className="mt-0.5 flex items-center gap-1.5 text-xs text-neutral-500 dark:text-neutral-400">
-            <span
-              aria-hidden="true"
-              className={
-                "size-1.5 shrink-0 rounded-full " +
-                (connecte
-                  ? "bg-emerald-500"
-                  : "animate-pulse motion-reduce:animate-none bg-amber-500")
-              }
-            />
-            {connecte ? "Vos questions sur la Control Tower" : "Reconnexion…"}
-          </p>
-        </div>
-        <button
-          type="button"
+      {/* L'en-tête de la **carte**, pas du fil : il porte le nom du panneau et
+          le geste qui le ferme. Le titre du fil, lui, reste au document mais
+          quitte l'écran (`titreMasque`) — deux titres empilés dans 384 px sont
+          une ligne payée deux fois, exactement le patron de la colonne de
+          droite (#926). Le badge de coupure, lui, reste visible : c'est la
+          seule chose de cet en-tête-là qui apprenne quelque chose (#691). */}
+      <header className="flex items-center gap-2 border-b border-bord px-4 py-3">
+        <h2 className="min-w-0 flex-1 text-corps font-semibold text-texte">
+          Assistant
+        </h2>
+        <Bouton
+          variante="discret"
+          ton="neutre"
+          taille="petite"
+          icone={IconeFermer}
           onClick={fermer}
-          aria-label="Fermer l'assistant"
-          className="-mr-1 rounded-md p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-900 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
+          className="-me-1.5"
         >
-          <IconeFermer className="size-4" />
-        </button>
+          <span className="sr-only">Fermer l&apos;assistant</span>
+        </Bouton>
       </header>
 
-      {erreur && (
-        <p
-          role="alert"
-          className="border-b border-rose-200 bg-rose-50 px-4 py-2 text-xs text-rose-800 dark:border-rose-900 dark:bg-rose-950 dark:text-rose-300"
-        >
-          Fil illisible : {erreur}
-        </p>
-      )}
-
-      <ol
-        ref={fil}
-        aria-label="Échanges avec l'assistant"
-        aria-live="polite"
-        className="flex flex-1 flex-col gap-2 overflow-y-auto p-3"
-      >
-        {chargement && (
-          <li className="text-xs text-neutral-500">Chargement…</li>
-        )}
-        {filVide && (
-          <li className="rounded-lg bg-neutral-100 px-3 py-2 text-sm text-neutral-700 dark:bg-neutral-800 dark:text-neutral-200">
-            {ACCUEIL_ASSISTANCE}
-          </li>
-        )}
-        {messages.map((message, index) => (
-          <Bulle key={`${message.horodatage}-${index}`} message={message} />
-        ))}
-        {envoi && (
-          <li className="text-xs italic text-neutral-500">L&apos;assistant répond…</li>
-        )}
-      </ol>
-
-      {/* Les amorces suivent la règle du composeur (#908) : aucune ne
-          s'enveloppe sur elle-même (`AMORCE_NOWRAP`), c'est le groupe qui
-          enveloppe — et ça ne tient qu'avec des libellés au calibre
-          (`CALIBRE_AMORCE`, `lib/assistance`) : le panneau fait au plus
-          `min(24rem, 100vw − 2rem)`, soit 343 px à 375 px. */}
-      {filVide && (
-        <div className="flex flex-wrap gap-1.5 px-3 pb-2">
-          {AMORCES_ASSISTANCE.map((amorce) => (
-            <button
-              key={amorce}
-              type="button"
-              onClick={() => void soumettre(amorce)}
-              className={
-                `${AMORCE_NOWRAP} rounded-full border border-neutral-200 px-2.5 py-1 text-xs text-neutral-600 ` +
-                "hover:border-neutral-400 hover:text-neutral-900 " +
-                "dark:border-neutral-700 dark:text-neutral-300 dark:hover:border-neutral-500 dark:hover:text-neutral-100"
-              }
-            >
-              {amorce}
-            </button>
-          ))}
-        </div>
-      )}
-
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          void soumettre(brouillon);
-        }}
-        className="flex items-end gap-2 border-t border-neutral-200 p-3 dark:border-neutral-800"
-      >
-        <textarea
-          ref={saisie}
-          value={brouillon}
-          onChange={(e) => setBrouillon(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              void soumettre(brouillon);
-            }
-          }}
-          rows={1}
-          placeholder="Poser une question…"
-          aria-label="Question à l'assistant"
-          className={
-            "min-h-9 w-full resize-y rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-sm " +
-            "text-neutral-900 shadow-sm focus:border-neutral-400 focus:outline-none " +
-            "dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100 dark:focus:border-neutral-500"
-          }
+      {/* L'ascenseur de la carte. `min-h-0` est ce qui lui donne sa hauteur :
+          sans lui, `min-height:auto` laisserait la boîte grandir sous le fil et
+          plus rien ne défilerait. Pas d'`after:h-24` en regard de la colonne de
+          droite (#888) : la réserve couvre la bande du bouton flottant, et
+          celui-ci ne passe pas sur cette carte — voir l'en-tête du fichier. */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 pt-3">
+        <Conversation
+          fil={fil}
+          interlocuteur={INTERLOCUTEUR_ASSISTANCE}
+          libelle="Échanges avec l'assistant"
+          titre="Assistant"
+          niveauTitre={3}
+          titreMasque
+          accueil={ACCUEIL_ASSISTANCE}
+          amorces={AMORCES_ASSISTANCE}
+          bandeDuFlottant={false}
+          focusAuMontage
         />
-        {/* Le troisième composeur du produit, et le seul qui envoie encore en
-            texte : le parti pris 1 de la veille #866 (l'envoi en icône nommée,
-            posé sur `Conversation` par #884) ne lui est **pas** appliqué, et
-            c'est tranché plutôt qu'oublié. Il vaut pour un **rail** — deux
-            icônes de même taille à ses deux bouts, l'arrêt à la place de
-            l'envoi —, or ce panneau n'en a pas : un champ et un bouton côte à
-            côte, la forme d'avant #726, sur des classes que le socle n'a pas
-            encore reprises, et sans arrêt (le bouton s'éteint pendant l'envoi).
-            Une icône seule ici n'aurait rien à quoi répondre ; ce sera le
-            geste du ticket qui portera ce panneau sur le socle, avec sa propre
-            veille — celle de #866 ne l'a pas regardé, et ce qui n'est pas
-            vérifié n'est pas cité. */}
-        <button
-          type="submit"
-          disabled={envoi || brouillon.trim() === ""}
-          className="shrink-0 rounded-md bg-sky-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-sky-700 disabled:opacity-50"
-        >
-          {envoi ? "…" : "Envoyer"}
-        </button>
-      </form>
-
-      {erreurEnvoi && (
-        <p
-          role="alert"
-          className="px-3 pb-3 text-xs text-rose-600 dark:text-rose-400"
-        >
-          {erreurEnvoi}
-        </p>
-      )}
-    </section>
-  );
-}
-
-/** Une bulle du fil : l'utilisateur à droite, l'assistant à gauche. */
-function Bulle({ message }: { message: MessageChat }) {
-  const utilisateur = message.auteur === CHAT_AUTEUR_UTILISATEUR;
-  return (
-    <li className={"flex " + (utilisateur ? "justify-end" : "justify-start")}>
-      <div
-        className={
-          "max-w-[85%] rounded-lg px-3 py-2 text-sm shadow-sm " +
-          (utilisateur
-            ? "bg-sky-600 text-white dark:bg-sky-700"
-            : "bg-neutral-100 text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100")
-        }
-      >
-        <p className="whitespace-pre-wrap break-words">{message.contenu}</p>
-        <p
-          className={
-            "mt-1 text-right text-[10px] " +
-            (utilisateur
-              ? "text-sky-100"
-              : "text-neutral-400 dark:text-neutral-500")
-          }
-        >
-          <Infobulle texte={formatDateHeure(message.horodatage)}>
-            <time dateTime={message.horodatage}>
-              {formatHeure(message.horodatage)}
-            </time>
-          </Infobulle>
-        </p>
       </div>
-    </li>
+    </section>
   );
 }
