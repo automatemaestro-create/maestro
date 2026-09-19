@@ -35,6 +35,11 @@ filet CI, et consigne **sur le ticket** ce qui a été vu — ou la raison de ne
 (étape 4bis, `docs/30 §5.5`). Elle est **muette** quand il n'y a aucun écran, et elle ne demande
 rien : regarder n'est pas un verdict, c'est ce qui permet d'en rendre un.
 
+⚠ **Et depuis #968, un ticket ne se clôt plus sans que ses critères d'acceptation aient été
+confrontés au diff livré** : la commande les lit, les confronte, et consigne **sur le ticket** ce
+qui est couvert, ce qui ne l'est pas — nommé, jamais coché — ou que le ticket n'en portait aucun
+(étape 4ter, avant le filet CI). Un critère non couvert **ne bloque pas le merge**.
+
 1. Détermine l'IID du ticket : utilise `$ARGUMENTS` s'il est fourni, sinon extrais-le du nom
    de la branche courante (`git branch --show-current`, motif `<type>/<iid>-<slug>`). Si
    aucun IID ne peut être déterminé, demande-le à l'utilisateur.
@@ -142,6 +147,69 @@ rien : regarder n'est pas un verdict, c'est ce qui permet d'en rendre un.
    - **un constat qui appelle son propre ticket** : nomme-le dans le jugement avec ce que tu en
      fais. Un constat sans suite est un constat perdu ; ouvrir le ticket reste une décision, pas un
      effet de bord de la clôture.
+
+4ter. **Le ticket fait-il ce qu'il disait ?** (#968). Les critères d'acceptation sont écrits par
+   `/ticket-create`, lus au cadrage par `/ticket-start` — et plus personne ne les regardait : la
+   checklist de l'étape 8 juge le **procédé**, `merge-mr` juge la **mergeabilité**, jamais le
+   **contrat** du ticket. C'est le défaut que `/milestone-bilan` corrige au jalon (#759), ici à
+   l'échelle du ticket, et sans rattrapage possible : après le merge, la branche est supprimée et le
+   worktree ramassé. Commence par la question, qui ne coûte qu'une lecture :
+   ```
+   bash scripts/gitlab/lib.sh criteres <iid>
+   ```
+   - **code `0` — il y a des critères.** Ils sortent numérotés (`C1`, `C2`, …), mot pour mot : c'est
+     le texte du ticket qui fait foi, jamais ta reformulation. Une ligne d'en-tête dit leur source :
+     les cases garnies de « Critères d'acceptation » ou, pour un bug qui n'en a pas, sa section
+     « Comportement attendu », comptée comme critère unique `C1` (arbitré sur #968).
+     **Confronte chacun au diff** que tu t'apprêtes à pousser (`git diff origin/main...HEAD`), puis
+     écris le constat avec l'outil `Write` dans `.maestro/session/criteres-<iid>.md`, une ligne de
+     tableau par critère :
+     ```
+     | Critère | Réponse | Pièce |
+     |---|---|---|
+     | C1 | ✓ couvert | `scripts/gitlab/lib.sh` — le verbe qui … |
+     | C2 | ✗ non couvert | aucun fichier du diff ne s'y rapporte : … |
+     | C3 | hors diff | commentaire de décision posé sur le ticket |
+     ```
+     **✓** : un fichier du diff le porte, et la pièce le **nomme** (chemin ou nom de fichier).
+     **✗** : aucune pièce du diff ne le couvre — dis pourquoi. **hors diff** : le critère se tient
+     ailleurs que dans un fichier (un geste de forge, une mesure) — dis ce qui le montre. Puis :
+     ```
+     bash scripts/gitlab/lib.sh criteres-note <iid> .maestro/session/criteres-<iid>.md
+     ```
+   - **code `3` — aucun critère écrit** (ni case garnie, ni « Comportement attendu »). Ce n'est pas
+     l'abstention muette de la relecture sans écran : un ticket sans écran n'avait rien à faire
+     regarder, un ticket sans critère avait quelque chose à tenir et ne l'a pas écrit — c'est le
+     manque lui-même (arbitré sur #968). **Signale-le** sur le ticket, puis dans le résumé final :
+     ```
+     bash scripts/gitlab/lib.sh criteres-note --aucun <iid>
+     ```
+     ⚠ **N'écris pas les critères toi-même pour pouvoir confronter**, et ne le propose pas : rédigés
+     à la clôture, ils seraient taillés sur ce qui a été livré (règle de `/milestone-bilan`).
+   - **code `1`** (ticket introuvable, forge muette) : signale-le dans le résumé final et poursuis.
+
+   **Un critère non couvert est nommé, jamais coché.** Un ✓ sur une question jamais posée est pire
+   qu'une case vide : c'est lui qui a laissé quatorze jalons se fermer sur « ça a été écrit ». Le
+   verbe **garde la forme** du constat — son refus `5` tombe **avant toute écriture** : un `Cn` sans
+   réponse recevable, un ✓ dont la pièce ne nomme **aucun fichier du diff**, un constat sur un
+   ticket sans critère ou un `--aucun` sur un ticket qui en a. Il se répare en disant **✗** ou
+   **hors diff**, jamais en cochant pour passer. Ses autres refus : `4` fichier absent ou vide, `3`
+   iid inconnu ; un `1` (forge muette, base du diff introuvable) **ne bloque pas la clôture** —
+   signale-le. Le verbe est **idempotent** (empreinte `cksum`) : une clôture rejouée après un
+   pipeline rouge n'empile rien, un constat enrichi s'ajoute.
+
+   **Un ✗ n'empêche pas le merge** : ce que le dispositif rend difficile est l'absence de **trace**,
+   jamais la livraison (règle de #935). Deux conduites, comme à l'étape 4bis :
+   - **un manque corrigeable ici** (la doc que le critère demandait, le test qu'il nommait) :
+     corrige, puis **reprends à l'étape 4** — c'est pourquoi cette étape passe **avant** le filet CI :
+     ce qui peut changer le diff passe avant le verdict qui le juge (arbitré sur #968) ;
+   - **un manque qui dépasse ce ticket** : consigne-le ✗ avec ce que tu en fais, et **nomme-le
+     dans le résumé final**. Ouvrir un ticket de suite reste une décision, pas un effet de bord.
+
+   **On ne demande pas, on joue** — à l'identique en run et en interactif : confronter est un
+   **constat**, pas un jugement sur l'opportunité de confronter. Et ce constat dit ce qui a été
+   **écrit**, pas ce qui a été **exercé** : un ✓ affirme qu'un fichier du diff porte le critère,
+   jamais qu'il fonctionne — l'exercice reste celui du pipeline et, au jalon, de `/milestone-bilan`.
 
 5. **Filet CI local** — avant de pousser, rejoue en local ce que le pipeline de la PR jouera. Ne
    cherche pas toi-même quel outil s'applique : `scripts/ci/local.sh` est la **source unique** des
@@ -515,7 +583,9 @@ rien : regarder n'est pas un verdict, c'est ce qui permet d'en rendre un.
    échéant. Si un refus du garde-fou de l'étape 3 a été **franchi sur demande explicite**,
    dis-le en tête du résumé (quel motif, et qui l'a demandé). Et si l'étape 9.5 a joué, **nomme le
    ticket de reprise** (#608) — la PR qui portait le correctif vient d'être mergée, ce ticket est
-   le seul endroit où il vit encore.
+   le seul endroit où il vit encore. Rends enfin la **confrontation des critères** de l'étape 4ter
+   sur sa propre ligne : le compte (`n ✓ · n ✗ · n hors diff`), **chaque critère ✗ nommé**, ou
+   « aucun critère — signalé sur le ticket ».
 
    **Jamais de ✅ global.** Une clôture dont la PR est restée ouverte sur un pipeline rouge n'est
    pas « terminée avec une réserve » : elle est **inachevée**, et le dire avec ce mot-là est tout ce

@@ -124,6 +124,10 @@ doute). Les **garde-fous** priment sur l'automatisation : suis les étapes dans 
    elle**, exactement comme du ramassage du worktree ci-dessous ; ne la rejoue pas ici. Le prix est
    d'environ une minute sur un ticket d'interface, et de **rien du tout** sur les autres : la
    question ne se pose pas quand le diff ne touche aucun écran.
+   ⚠ **Elle confronte aussi les critères d'acceptation au diff** (#968) : avant de pousser,
+   `/ticket-finish` consigne **sur le ticket** chaque critère couvert, non couvert — nommé, jamais
+   coché —, ou l'absence de tout critère. `/ticket-ship` en hérite **sans une ligne à elle** ; ne la
+   rejoue pas ici. Un critère non couvert ne bloque pas le merge.
    ⚠ **Sur un merge réussi, elle te ramène dans le clone principal** (#519) : son dernier geste est
    de sortir du worktree du ticket pour le retirer, lui et sa branche locale. Ne t'en étonne pas et
    ne le rejoue pas — les étapes 8 et 9 se jouent très bien de là, les helpers `lib.sh` visant le
