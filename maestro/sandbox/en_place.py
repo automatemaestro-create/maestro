@@ -58,6 +58,43 @@ sont pas confrontés non plus : ils ne modifient rien, et la rédaction (#109,
 à l'agent, or l'agent est dans la racine. Seules les exclusions tiennent — et
 elles tiennent à l'écriture. Le worktree ne l'appliquait pas davantage (une copie
 conforme de la branche) : depuis ce lot, `inclus` ne restreint aucun espace dérivé.
+
+L'atelier — ce que l'agent laisse **à côté** du livrable (#944)
+----------------------------------------------------------------
+
+La racine étant l'espace de travail, tout ce qu'un agent écrit pour travailler
+atterrit dans le projet de l'utilisateur, au même rang que ce qu'il livre.
+Mesuré sur le run du
+[retex du 2026-09-11](../../docs/retex/2026-09-11-premiere-session-utilisateur.md)
+(constat **G12**) : à côté des quatre fichiers du livrable, la racine portait
+`_verif/`, `_verif_timer/` et `qa/` — les répertoires de travail des agents,
+laissés là parce que rien ne leur disait où les mettre.
+
+Le remède **n'est pas un ménage de fin de run** : effacer après coup, c'est
+parier sur le fait qu'aucun de ces fichiers n'était voulu, et le harnais de
+vérification de la QA — que le retex a rejoué lui-même — prouve que le pari
+serait perdu. La question est *où* un agent écrit ce qui n'est pas le livrable,
+et le dépôt l'a déjà tranchée pour lui-même (docs/10 §11.7) : **ce qu'on invite
+à relire va sous `.maestro/`, ce que personne ne lit va dans le temporaire**.
+Transposée au projet d'un utilisateur, elle donne un **atelier** —
+`.maestro/<tâche>/` dans la racine —, et deux propriétés qui vont ensemble :
+
+- l'agent le **connaît** : `consigne_espace` le nomme dans le message de sa
+  tâche (`maestro.agents.runtime`), et le cadre d'exécution de son playbook
+  (`playbooks_defaut/_cadre_outille.md`) dit la règle. Ce n'est pas un pari sur
+  sa docilité mais le retrait d'une **fausse prémisse** : le cadre lui promettait
+  un « répertoire de travail isolé » là où son répertoire courant est le projet
+  de quelqu'un ;
+- le recensement l'**ignore** : `fichiers` ne descend jamais dans `.maestro/`,
+  donc un brouillon n'entre ni à l'empreinte de départ ni aux fichiers produits.
+  Un atelier qui ressortirait en livrable ne ferait que déplacer le défaut du
+  disque vers le rapport de run.
+
+La frontière, elle, ne bouge pas : l'atelier est **dans** la racine et hors des
+exclusions, donc il s'écrit sans rien lever. Refuser d'écrire ailleurs qu'en
+atelier serait impossible — aucune règle de chemin ne distingue un livrable d'un
+brouillon — et c'est bien pourquoi la réponse est une **adresse donnée**, pas un
+refus de plus.
 """
 
 from __future__ import annotations
@@ -90,27 +127,99 @@ OUTILS_A_CHEMIN: Mapping[str, str] = {
 #: (racine, liens, exclusions) ; pour les autres seules les exclusions valent.
 OUTILS_ECRITURE: frozenset[str] = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit"})
 
+#: Le dossier qui porte les **ateliers** des tâches dans la racine d'un projet
+#: (#944) — un sous-dossier par tâche. Le nom est celui que le dépôt s'est donné
+#: pour la même question (docs/10 §11.7) : un point de tête, un seul dossier, et
+#: on sait d'un coup d'œil que ce n'est pas le livrable. Jamais recensé.
+DOSSIER_ATELIER = ".maestro"
+
+
+def chemin_atelier(tache: str) -> str:
+    """L'atelier de la tâche `tache`, relatif à la racine — `.maestro/<tâche>`.
+
+    `tache` est déjà assaini par l'appelant (`maestro.sandbox.projet._slug`, le
+    même fragment que la branche et le répertoire d'un projet versionné) : un
+    identifiant vide n'arrive pas jusqu'ici. Une fonction plutôt qu'un f-string
+    recopié, pour que « où est l'atelier » n'ait qu'une seule orthographe — c'est
+    elle que le message de la tâche nomme et que le recensement saute.
+    """
+    return f"{DOSSIER_ATELIER}/{tache}"
+
+
+def ouvre_atelier(racine: Path, atelier: str) -> None:
+    """Crée l'atelier `atelier` sous `racine` — **best-effort**, jamais fatal.
+
+    Créé plutôt que seulement nommé : un agent qui lance `node .maestro/t4/x.mjs`
+    ou qui y `cd` a besoin du dossier, là où l'outil `Write` l'aurait créé au
+    passage. Et s'il échoue (droits, disque), rien n'est perdu — l'écriture le
+    créera, ou l'agent se rabattra sur le temporaire : ouvrir un atelier n'est
+    pas une condition pour travailler.
+    """
+    try:
+        (racine / atelier).mkdir(parents=True, exist_ok=True)
+    except OSError:  # racine en lecture seule, disque plein : l'agent s'en passe
+        pass
+
 
 @dataclass(frozen=True)
 class EspaceEnPlace(Workspace):
     """L'espace de travail qui **est** la racine d'un projet non versionné (#839).
 
-    `perimetre` est celui du projet : c'est par lui que l'espace s'énumère. Le
-    reste du contrat de `Workspace` tient tel quel — `derive` relève l'empreinte
-    de départ, `produced_files` rend ce qui a changé depuis.
+    `perimetre` est celui du projet : c'est par lui que l'espace s'énumère.
+    `atelier` est le dossier de travail de la tâche (#944), relatif à la racine :
+    l'agent y range ce qui n'est pas le livrable, et le recensement ne le voit
+    pas. Le reste du contrat de `Workspace` tient tel quel — `derive` relève
+    l'empreinte de départ, `produced_files` rend ce qui a changé depuis.
     """
 
     perimetre: Perimetre = field(default_factory=Perimetre)
+    atelier: str = ""
 
     def fichiers(self) -> Iterator[Path]:
-        """Les fichiers de la racine **par le périmètre** : exclusions sautées, liens ignorés."""
+        """Les fichiers de la racine **par le périmètre** : exclusions sautées, liens ignorés.
+
+        L'**atelier** est sauté avec elles (#944), et le dossier entier plutôt
+        que le seul de cette tâche : celui d'une tâche voisine n'est pas
+        davantage le livrable de celle-ci, et les tâches d'un projet non
+        versionné se succèdent dans la même racine.
+        """
         exclus = motifs_compiles(self.perimetre.exclus)
-        for relatif in fichiers_du_perimetre(self.path, exclus):
+        for relatif in fichiers_du_perimetre(self.path, exclus, hors=(DOSSIER_ATELIER,)):
             yield self.path / relatif
 
+    def consigne_espace(self) -> str:
+        """Ce que l'agent doit savoir de cet espace — la racine, et son atelier (#944).
 
-def fichiers_du_perimetre(racine: Path, exclus: tuple[re.Pattern[str], ...]) -> Iterator[str]:
+        Dit dans le message de la **tâche** et non dans le playbook du rôle : le
+        régime dépend du projet, pas de l'agent, et un prompt système qui
+        promettrait un atelier là où il n'y en a pas serait le défaut d'avant,
+        retourné. Vide tant qu'aucun atelier n'est ouvert — l'appelant n'ajoute
+        alors rien au message.
+        """
+        if not self.atelier:
+            return ""
+        return (
+            "Ton répertoire courant est la **racine du projet de l'utilisateur** : "
+            "ce que tu y laisses est le livrable qu'il recevra. Range ce qui n'est "
+            f"pas le livrable — brouillons, essais, harnais de vérification, notes — "
+            f"dans `{self.atelier}/`, ton atelier ; ce que personne n'aura à relire "
+            "va dans le répertoire temporaire du système. Rien ne sera déplacé ni "
+            "effacé après toi."
+        )
+
+
+def fichiers_du_perimetre(
+    racine: Path,
+    exclus: tuple[re.Pattern[str], ...],
+    *,
+    hors: tuple[str, ...] = (),
+) -> Iterator[str]:
     """Les chemins relatifs (POSIX) des fichiers de `racine` que `exclus` ne retire pas.
+
+    `hors` nomme des chemins relatifs que le parcours ne descend pas, quels que
+    soient les motifs — l'atelier des tâches (#944). Distinct des exclusions à
+    dessein : une exclusion du périmètre vaut aussi **à l'écriture**
+    (`FrontiereEcriture`), et l'atelier est justement là pour être écrit.
 
     Parcours itératif (pas récursif) : un projet réel a des arborescences
     profondes et la pile de Python n'est pas le bon endroit pour en dépendre. Un
@@ -135,7 +244,7 @@ def fichiers_du_perimetre(racine: Path, exclus: tuple[re.Pattern[str], ...]) -> 
             continue
         for entree in triees:
             relatif = f"{relatif_dossier}/{entree.name}" if relatif_dossier else entree.name
-            if entree.is_symlink() or _correspond(relatif, exclus):
+            if entree.is_symlink() or relatif in hors or _correspond(relatif, exclus):
                 continue
             if entree.is_dir():
                 pile.append(relatif)

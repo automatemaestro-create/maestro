@@ -18,7 +18,8 @@ premier, et le second est un régime à lui (`maestro.sandbox.en_place`) :
   du retrait l'emporterait et la branche survivrait vide ;
 - **projet non versionné** → **la racine elle-même**, en place (#839) : rien
   n'est copié, rien n'est retiré, ce que l'agent écrit est dans le projet
-  pendant qu'il l'écrit. La copie du périmètre que D2 prescrivait (option C)
+  pendant qu'il l'écrit — avec, depuis #944, un **atelier** `.maestro/<tâche>/`
+  où ranger ce qui n'est pas le livrable. La copie du périmètre que D2 prescrivait (option C)
   ne livrait rien — refermée avant qu'un diff puisse être approuvé, 8,80 $ pour
   zéro fichier sur le run `cc2d8e447f83` — et son filet (annuler) n'a pas
   d'objet sur un projet neuf. Ce que la copie garantissait par absence, la
@@ -59,7 +60,7 @@ from pathlib import Path
 from maestro.projets.application import ApplicationRefusee, commiter_en_attente
 from maestro.projets.modele import Projet
 from maestro.projets.racine import valider_racine
-from maestro.sandbox.en_place import EspaceEnPlace
+from maestro.sandbox.en_place import EspaceEnPlace, chemin_atelier, ouvre_atelier
 from maestro.sandbox.workspace import Workspace, isolated_workspace
 
 #: Préfixe des branches de tâche (docs/24 §2.4) : une branche `maestro/<tâche>`
@@ -137,10 +138,14 @@ def espace_de_travail(
 
     racine = valider_racine(projet.racine)
     if not projet.versionne:
+        # L'atelier de la tâche (#944) est ouvert **avant** la dérivation : c'est
+        # de lui que dépend ce que `fichiers` énumère, donc l'empreinte de départ.
+        atelier = chemin_atelier(_slug(tache_id))
+        ouvre_atelier(racine, atelier)
         # `derive` et non `EspaceEnPlace(path=…)` : la racine n'est pas vide, et
         # sans cette empreinte de départ tout le projet de l'utilisateur
         # ressortirait en « fichiers produits » du rapport de run.
-        yield EspaceEnPlace.derive(racine, perimetre=projet.perimetre)
+        yield EspaceEnPlace.derive(racine, perimetre=projet.perimetre, atelier=atelier)
         return
 
     parent = Path(tempfile.mkdtemp(prefix=prefix))
