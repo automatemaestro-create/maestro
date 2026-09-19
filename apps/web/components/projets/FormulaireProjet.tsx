@@ -118,15 +118,14 @@ export function FormulaireProjet({
       }}
       className="flex flex-col gap-4"
     >
-      <h3 className="text-sm font-semibold tracking-wide text-neutral-500 uppercase dark:text-neutral-400">
-        {creation ? (
-          <span className="inline-flex items-center gap-1.5">
-            <IconePlus className="size-4 shrink-0" />
-            Nouveau projet
-          </span>
-        ) : (
-          `Modifier « ${projet.nom} »`
-        )}
+      {/* Le titre porte son texte **en enfant direct** (#946, C12) : enveloppé
+          dans un `<span>` aux côtés de l'icône, il ressortait sans nom dans
+          l'arbre d'accessibilité — la carte n'avait alors de nom que par le
+          `aria-label` du `<form>`, et son titre, lui, n'annonçait rien. La
+          disposition ne bouge pas : le `flex` passe du span au titre. */}
+      <h3 className="flex items-center gap-1.5 text-sm font-semibold tracking-wide text-neutral-500 uppercase dark:text-neutral-400">
+        {creation && <IconePlus className="size-4 shrink-0" />}
+        {creation ? "Nouveau projet" : `Modifier « ${projet.nom} »`}
       </h3>
 
       <Champ

@@ -275,7 +275,8 @@ describe("les refus (#319, critère 3)", () => {
 
     const refus = await screen.findByRole("alert");
     expect(refus).toHaveTextContent("trop volumineuse");
-    expect(refus).toHaveTextContent("source-trop-volumineuse");
+    expect(refus).toHaveTextContent("motif : Source trop volumineuse");
+    expect(refus).not.toHaveTextContent("source-trop-volumineuse");
     // Le refus est **dans la ligne** de la source fautive, pas en tête d'écran.
     const ligne = screen.getByText("enorme.pdf").closest("li");
     expect(ligne).not.toBeNull();
@@ -297,7 +298,8 @@ describe("les refus (#319, critère 3)", () => {
 
     const refus = await screen.findByRole("alert");
     expect(refus).toHaveTextContent("Lancement refusé");
-    expect(refus).toHaveTextContent("requete-invalide");
+    // Le motif en mots depuis #946 (C7), plus son identifiant d'API.
+    expect(refus).toHaveTextContent("motif : Demande invalide");
     expect(screen.getByLabelText("Objectif")).toHaveValue("   .");
   });
 
@@ -310,7 +312,7 @@ describe("les refus (#319, critère 3)", () => {
     await utilisateur.click(screen.getByRole("button", { name: "Voir ce qui sera lu" }));
 
     const refus = await screen.findByRole("alert");
-    expect(refus).toHaveTextContent("api-injoignable");
+    expect(refus).toHaveTextContent("motif : API injoignable");
   });
 });
 

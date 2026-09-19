@@ -279,8 +279,10 @@ export default function PageJournal() {
         // qui évite de chercher une panne (le bandeau ci-dessus dit si le flux
         // est coupé) ou de croire que rien ne tourne nulle part (#281).
         <p className="text-sm text-neutral-500 dark:text-neutral-400">
-          Rien encore sur {projet.nom} : aucun événement de ce projet n&apos;a
-          été consigné.
+          {/* Espace insécable avant le deux-points, comme sur les Coûts
+              (#946, C3) : la même phrase y perdait la sienne au rendu. */}
+          Rien encore sur {projet.nom}&nbsp;: aucun événement de ce projet
+          n&apos;a été consigné.
         </p>
       ) : filtres.length === 0 ? (
         <p className="text-sm text-neutral-500 dark:text-neutral-400">

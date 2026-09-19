@@ -186,7 +186,12 @@ export default function PageCouts() {
             // zéro — et sans les tables, qui s'effacent quand elles sont vides,
             // l'écran se lirait comme une page à moitié chargée (#281).
             <p className="text-sm text-neutral-500 dark:text-neutral-400">
-              Rien encore sur {projet.nom} : aucune exécution de ce projet
+              {/* Espace **insécable** avant le deux-points (#946, C3) : écrite
+                  comme une espace ordinaire, elle se perdait au rendu et la
+                  phrase donnait « Rien encore sur Minuteur Pomodoro: aucune ».
+                  C'est aussi la typographie française de la ponctuation double,
+                  et elle interdit au deux-points de passer seul à la ligne. */}
+              Rien encore sur {projet.nom}&nbsp;: aucune exécution de ce projet
               n&apos;a de dépense à comptabiliser sur cette période.
             </p>
           )}

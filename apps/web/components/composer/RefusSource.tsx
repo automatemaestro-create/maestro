@@ -6,8 +6,14 @@
  *
  * Trois choses, comme sur l'écran Projets, et pour la même raison : la **phrase**
  * du backend (ce qui s'est passé), le **conseil** quand l'écran en connaît un
- * (ce qu'on peut faire) et le **motif brut** affiché tel quel — un code stable
- * vaut mieux qu'une traduction approximative quand il faut chercher de l'aide.
+ * (ce qu'on peut faire) et le **motif**, désormais rendu en mots (#946, C7).
+ *
+ * Ce troisième point renverse le parti pris d'origine — « un code stable vaut
+ * mieux qu'une traduction approximative » — sur le constat du retex du
+ * 2026-09-11 : `motif : projet-inconnu` a été lu à l'écran par quelqu'un qui
+ * découvrait le produit, et un identifiant d'API n'y apprend rien. Ce qui
+ * tenait dans l'argument tient toujours pour les motifs que l'écran ne connaît
+ * pas : ceux-là se rendent encore bruts, plutôt qu'inventés.
  *
  * Un composant à part plutôt qu'un import de `RefusMotive` : le vocabulaire n'est
  * pas le même (`conseilSource` connaît les motifs d'ingestion, et délègue à celui
@@ -16,7 +22,7 @@
  * l'endroit où il s'affiche et non seulement son texte.
  */
 
-import { conseilSource } from "@/lib/sources";
+import { conseilSource, libelleSource } from "@/lib/sources";
 
 export function RefusSource({
   refus,
@@ -36,7 +42,7 @@ export function RefusSource({
       </p>
       {conseil && <p className="mt-1">{conseil}</p>}
       <p className="mt-1 text-amber-700 dark:text-amber-400">
-        motif : <code className="font-mono">{refus.motif}</code>
+        motif : {libelleSource(refus.motif)}
       </p>
     </div>
   );

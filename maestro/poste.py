@@ -92,16 +92,21 @@ _INCERTITUDE_DISTANT = (
 )
 
 #: L'incertitude qui pèse sur les **absences**, donc sur le rapport entier.
+#:
+#: Ponctuée : les incertitudes se lisent **à la suite** sur la fiche d'un agent,
+#: et sans point final celle-ci se recollait à la suivante — « …peut être
+#: installé sur la machine seuls la boucle locale… » (#946, C4 du retex du
+#: 2026-09-11). Deux phrases qui se touchent ne se lisent qu'une fois relues.
 INCERTITUDE_PATH = (
     "les CLI sont résolus sur le `PATH` du process qui sert l'API, qui n'est pas "
     "toujours celui de votre terminal : un outil absent d'ici peut être installé "
-    "sur la machine"
+    "sur la machine."
 )
 
 #: Idem pour les serveurs : seule la boucle locale est regardée.
 INCERTITUDE_PORTEE = (
     "seuls la boucle locale et l'environnement de ce process sont regardés — "
-    "rien n'est démarré, rien n'est installé, rien n'est écrit"
+    "rien n'est démarré, rien n'est installé, rien n'est écrit."
 )
 
 #: Hôtes tenus pour « cette machine ».

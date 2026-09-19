@@ -34,7 +34,7 @@ import {
   ErreurProjet,
   ouvrirSelecteurNatif,
 } from "@/lib/api";
-import { conseilMotif } from "@/lib/projets";
+import { conseilMotif, libelleMotif } from "@/lib/projets";
 import type {
   DisponibiliteSelecteur,
   OrigineDossier,
@@ -86,8 +86,14 @@ export function RefusMotive({
         {titre} — {refus.message}
       </p>
       {conseil && <p className="mt-1">{conseil}</p>}
+      {/* Le motif **en mots**, pas son identifiant (#946, C7) : la ligne
+          affichait « motif : projet-inconnu », soit le code de l'API rendu tel
+          quel à quelqu'un qui ne l'a jamais lu. Un motif que la table ne connaît
+          pas se rend encore brut — un code affiché sans fard vaut mieux qu'une
+          phrase inventée —, et le `font-mono` part avec la traduction : il
+          annonçait justement du code. */}
       <p className="mt-1 text-amber-700 dark:text-amber-400">
-        motif : <code className="font-mono">{refus.motif}</code>
+        motif : {libelleMotif(refus.motif)}
       </p>
     </div>
   );

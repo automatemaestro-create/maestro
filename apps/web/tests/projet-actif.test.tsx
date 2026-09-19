@@ -173,7 +173,10 @@ describe("la mémoire du projet actif", () => {
 
     const motif = await screen.findByRole("alert");
     expect(motif).toHaveTextContent("prj-disparu");
-    expect(motif).toHaveTextContent("projet-inconnu");
+    // En mots, pas sous l'identifiant de l'API (#946, C7) : c'est cette
+    // ligne-là que le retex du 2026-09-11 a lue sur la porte d'entrée.
+    expect(motif).toHaveTextContent("motif : Projet inconnu");
+    expect(motif).not.toHaveTextContent("projet-inconnu");
     // Le conseil du motif prolonge le message du backend (EF-38).
     expect(motif).toHaveTextContent(/recharger la liste/);
 
