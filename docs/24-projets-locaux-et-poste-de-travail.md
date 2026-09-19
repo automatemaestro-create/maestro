@@ -117,6 +117,9 @@ Conséquences en chaîne, toutes petites prises une à une — **les trois sont 
   montre que le projet actif (#281). Ce qui reste **global** est nommé et justifié dans
   [docs/05 §2.0](./05-interface-control-tower.md) : le parc d'agents, le catalogue, les playbooks,
   le chat et les paramètres du poste.
+  ⚠ **Les agents cessent d'être globaux** (2026-09-19, [docs/37 §2.1](./37-decision-equipe-sur-mesure.md)) :
+  un projet naît sans agent et reçoit une équipe dérivée de son analyse (#1021). Cette ligne décrit
+  l'état présent, et les lots de #1021 la réécriront.
 
 > **La dette de cette section est donc soldée.** Ce qu'elle annonçait sans le livrer — « la
 > Control Tower devient multi-projets », « les coûts, le Kanban et le journal se filtrent par
@@ -665,6 +668,11 @@ Recensé en analysant le code, à arbitrer avec le reste :
 6. **Modèles de projet.** « Initier un projet » suppose des points de départ (application web,
    API, script) : c'est du **playbook**, mécanisme qui existe déjà ([docs/22](./22-auto-amelioration-playbooks.md)),
    à ne surtout pas réimplémenter en dur.
+   ⚠ **Le point de départ d'un projet devient son outillage** (2026-09-19,
+   [docs/37](./37-decision-equipe-sur-mesure.md)). Un projet existant est analysé, un projet neuf
+   s'outille sur les choix de l'utilisateur, et l'outillage est généré dans son dossier dans des
+   formats ouverts, AGENTS.md et Agent Skills (#1020). Ce ne sont pas des modèles figés en dur :
+   la règle ci-dessus tient.
 
 ---
 

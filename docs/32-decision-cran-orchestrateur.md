@@ -248,6 +248,14 @@ sûrement que brancher le cran du milieu.
 > **Verdict : la question est écartée de l'arbitrage et renvoyée à #354**, avec la frontière écrite.
 > Elle n'est pas refusée : elle change de cadrage.
 
+> ⚠ **Le canal s'est perdu entre deux cadrages, puis a été repris** (2026-09-19,
+> [docs/37 §2.2](./37-decision-equipe-sur-mesure.md)). [docs/31 §3.1](./31-decision-surface-ecriture-agents.md)
+> le renvoyait à #647, ce paragraphe à #354. Les deux tickets se sont fermés sans le construire. Il
+> est désormais le lot #1023 (question libre et suspension, sur les trois pièces nommées au §5.3)
+> et le lot #1025 (la question dans le fil). La frontière écrite ici tient : poser une question
+> attend une réponse, déclarer un blocage n'attend rien, et une question ne contourne jamais une
+> validation.
+
 ### 5.1 Quatre canaux, trois axes, aucun recouvrement
 
 | | qui demande | ce que la réponse porte | ce qui est suspendu |

@@ -1,0 +1,149 @@
+# 37 — L'équipe sur mesure : chaque projet s'outille et recrute ses agents
+
+**Date :** 2026-09-19. **Instruite par :** `/idee` (#1013). **Consignée par :** #1044.
+**Jalon :** *L'équipe sur mesure — chaque projet s'outille et recrute ses agents* (échéance 2028-01-05).
+**Chantiers :** #1022 (répertoire des projets), #1019 (question et arbitrage autonome), #1020 (outillage universel), #1021 (équipe sur mesure).
+
+---
+
+## 0. Ce que ce document décide
+
+Quatre évolutions, demandées ensemble le 2026-09-19 :
+
+1. **Un répertoire commun des projets.** Un projet neuf y naît. Le réglage est rempli par défaut et modifiable. Un projet existant se choisit toujours en parcourant soi-même (§4.7).
+2. **L'outillage d'abord.** La première étape de tout projet est la génération de son outillage : commandes, skills et scripts, dans des **formats ouverts** qu'un autre agent que Claude sait exécuter. Sur un projet existant, l'outillage est recommandé par une analyse ; sur un projet neuf, il découle des choix de l'utilisateur.
+3. **Aucun agent figé.** Un projet naît **sans agent**. L'analyse du projet propose son équipe (rôles, nombre, instances, playbooks, skills et autorisations), l'utilisateur la valide, et elle est créée **dans le projet**.
+4. **Autonomie sous arbitrage.** Tout agent peut **demander** à l'utilisateur à tout moment, et **tranche seul** ce qui ne requiert pas d'humain, **en le consignant**.
+
+Deux de ces points **renversent** une décision écrite (§2). La personne a demandé explicitement les deux renversements : aucun n'a été tranché à sa place.
+
+## 1. D'où vient la demande
+
+Voici la demande, dans ses mots :
+- « à la création ou import d'un projet, aucun agent défini encore, c'est-à-dire supprimer les agents qu'on a figés avant. Je veux que les agents soient créés directement selon le projet / besoin » ;
+- « tu pourras à tout moment demander l'arbitrage de l'utilisateur, les validations pour une action / recommandation / etc. Tu n'es pas silencieux mais tu n'es pas non plus dépendant de l'humain […] chaque agent devrait pouvoir agir ainsi ».
+
+L'analyse complète, avec ce qui existait, les standards vérifiés et chaque arbitrage, est le corps de #1044.
+
+## 2. Ce qui est renversé
+
+### 2.1 Les agents cessent d'être une ressource du poste
+
+**Avant.** [docs/05 §2.0](./05-interface-control-tower.md) rangeait le parc d'agents, le catalogue et les playbooks parmi ce qui **reste global**, avec cette raison : « les partager entre projets est l'intérêt d'en avoir ». La Phase 2 de [docs/06](./06-roadmap.md) livrait « **les 6 agents** par défaut », et [docs/04 §2](./04-specifications-agents.md) en tenait le catalogue.
+
+**Après.** Un agent **appartient à un projet** : sa définition, son playbook, ses autorisations, ses serveurs MCP et sa capacité y sont rangés (#1038). Le catalogue figé devient un catalogue de **gabarits de rôle** que l'analyse d'équipe consulte (#1039) et qu'aucun projet n'instancie d'office (#1042).
+
+**Pourquoi.** La raison de 2.0 supposait qu'un bon agent vaut pour tous les projets. La demande pose le contraire : l'équipe se **dérive** du projet, jusqu'au nombre d'instances. Un agent partagé entre un projet Python et un projet mobile porterait les skills et les autorisations de l'un chez l'autre.
+
+**Ce qui est gardé.** Les playbooks « senior » des agents figés ne sont pas jetés : ils deviennent la matière des gabarits. C'est un arbitrage (§4.1), et il se défait en un lot si l'on n'en veut pas.
+
+### 2.2 « Personne ne répond en cours de tâche » tombe
+
+**Avant.** Le socle des playbooks (`maestro/agents/playbooks_defaut/_socle.md`, [docs/04 §1.2](./04-specifications-agents.md)) portait trois volets, et deux d'entre eux **restent** :
+- ce que l'agent décide seul (le réversible) ;
+- ce qu'il remonte (l'irréversible, le hors-périmètre).
+
+Sa règle centrale, elle, disparaît : *une hypothèse énoncée vaut mieux qu'une question posée — personne ne répond en cours de tâche*.
+
+**Après.** Un agent **pose une question** quand la décision requiert un humain : un acte irréversible, un coût ou une portée qui dépasse le brief, un choix produit à deux issues défendables. Sa tâche est suspendue jusqu'à la réponse ou jusqu'à une borne (#1023). La question arrive dans le fil (#1025). Tout le reste se **tranche seul, et se consigne** (#1024), puis se lit dans la vue du run (#1026).
+
+**Pourquoi.** La règle était juste tant qu'aucun canal n'existait. Or ce canal a été **perdu entre deux cadrages** : [docs/31 §3.1](./31-decision-surface-ecriture-agents.md) le renvoyait à #647, [docs/32 §5](./32-decision-cran-orchestrateur.md) à #354. Les deux tickets se sont fermés, et il n'a jamais été construit. Les pièces de suspension existent déjà (`BornesArbitrage`, `CreditArbitrage` de #584, `MemoireArbitrage`) : docs/32 §5.3 les avait nommées pour ce cas.
+
+## 3. Ce qui ne bouge pas
+
+- **[docs/32](./32-decision-cran-orchestrateur.md) : aucune IA ne juge l'appel d'outil d'une autre IA.** L'autonomie demandée porte sur les **décisions de travail**, jamais sur la couche de permissions, qui reste déclarée par une personne, outil par outil (#716).
+- **EF-08 / ENF-04 : sans réponse, un acte soumis à validation est refusé.** Une question sans réponse fait continuer l'agent sur une hypothèse écrite. Un acte, lui, ne passe jamais faute de réponse. La question ne contourne pas la validation : ce sont deux canaux (docs/32 §5.3).
+- **[docs/34 §4.6](./34-decision-agent-cli-tiers-acp.md) : la configuration ambiante reste fermée.** L'outillage généré dans le projet est **transmis explicitement** à nos agents (#1032), dans la limite de ce que le manifeste déclare. Aucun fichier du projet ne s'impose au runtime.
+- **[docs/24 §2.4](./24-projets-locaux-et-poste-de-travail.md) : le régime d'écriture dans le projet.** La génération de l'outillage suit ce régime comme toute écriture : fusion sous accord si le projet est versionné, écriture en place sinon (#1033).
+- **[docs/31 §3.5](./31-decision-surface-ecriture-agents.md) : un agent ne recrute pas pendant un run.** Une tâche qu'aucun rôle ne sait prendre est **signalée** (#1041). Recruter reste un geste validé hors du run.
+- **D5 : le brief est validé avant la décomposition.** L'équipe ne se forme pas dans un run, elle se forme à la création du projet.
+
+## 4. Les arbitrages rendus par `/idee`, à contredire au besoin
+
+1. **Les agents figés deviennent des gabarits de rôle**, pas des agents (§2.1). La demande est tenue à la lettre, puisque aucun projet ne naît avec un agent, et la matière n'est pas perdue.
+2. **L'orchestrateur n'est pas un membre de l'équipe.** Il est Maestro, présent dans tout projet, et c'est lui qui recrute.
+3. **Les autorisations sont proposées par l'analyse, puis validées par l'utilisateur** (#1039, #1040). Chaque permission `auto` est nommée avec sa raison. Une permission `auto` reste donc une décision humaine prise à l'avance ; seule sa **rédaction** devient automatique.
+4. **Une question échue n'arrête pas l'agent.** Il continue sur l'hypothèse qu'il avait annoncée en posant la question, et l'hypothèse est écrite. « Pas dépendant de l'humain » vaut pour les choix, jamais pour les actes (§3).
+5. **Le format de l'outillage : `AGENTS.md` et Agent Skills.** Vérifiés le 2026-09-19 :
+   - [AGENTS.md](https://agents.md/) est porté par l'Agentic AI Foundation (Linux Foundation) et lu par plus de 20 agents ;
+   - [Agent Skills](https://agentskills.io/specification) (`SKILL.md`, `scripts/`, `references/`, `assets/`) est pris en charge par Claude Code, Codex, Gemini CLI, Copilot, Cursor, Mistral Vibe, OpenHands, Goose, etc.
+
+   **L'emplacement des skills n'est fixé par aucune spécification.** Il se tranche dans #1029, une fois vérifié où chaque client cherche les siens, et `AGENTS.md` le désigne.
+6. **L'étape d'outillage est première et proposée d'office, mais reportable** (#1034). Importer un projet pour le regarder ne doit pas imposer une génération. Un projet non outillé le **dit**.
+7. **Le répertoire proposé par défaut** est un dossier `Maestro` sous le dossier personnel, créé à la première utilisation (#1022). La racine nue du dossier personnel reste refusée par `valider_racine`, alors qu'un sous-dossier est admis.
+
+## 5. Le découpage
+
+Le jalon compte un ticket isolé et trois chantiers. Ils sont dans l'ordre de leurs dépendances : la question vient d'abord, parce que l'outillage d'un projet neuf et l'équipe proposée **se demandent** ; l'outillage vient avant l'équipe, parce que l'équipe **branche** ses skills.
+
+Les lots marqués ∥ portent `lot::parallele`.
+
+**#1022 — Répertoire des projets.** Ticket isolé.
+
+**#1019 — Question et arbitrage autonome** (5 lots) :
+
+| Lot | Ticket | Contenu |
+| --- | --- | --- |
+| 1 ∥ | #1023 | Question libre et suspension |
+| 2 ∥ | #1024 | Socle et décisions consignées |
+| 3 | #1025 | La question dans le fil |
+| 4 ∥ | #1026 | Les décisions dans la vue du run |
+| 5 | #1027 | Tests + doc |
+
+**#1020 — Outillage universel** (7 lots) :
+
+| Lot | Ticket | Contenu |
+| --- | --- | --- |
+| 1 | #1029 | Format |
+| 2 ∥ | #1030 | Analyse d'un projet existant |
+| 3 ∥ | #1031 | Choix d'un projet neuf |
+| 4 ∥ | #1032 | Les agents lisent l'outillage |
+| 5 | #1033 | Génération |
+| 6 | #1034 | Parcours de création |
+| 7 | #1035 | Tests + doc |
+
+**#1021 — Équipe sur mesure** (7 lots) :
+
+| Lot | Ticket | Contenu |
+| --- | --- | --- |
+| 1 ∥ | #1037 | Runtime outillé depuis la fiche |
+| 2 ∥ | #1038 | Agents par projet |
+| 3 | #1039 | Proposition d'équipe |
+| 4 | #1040 | Validation et création |
+| 5 ∥ | #1041 | Routage sur l'équipe |
+| 6 | #1042 | Un projet naît sans agent |
+| 7 | #1043 | Tests + doc |
+
+**Différé, et pourquoi.** L'**exécution outillée par un fournisseur non-Anthropic dans Maestro** reste hors du jalon. Le format de l'outillage est universel, et un autre agent le lit sur le poste de l'utilisateur. Mais dans Maestro, seuls les modèles Claude ont des outils : `openai_compat.py` ne fait que du texte. C'est l'objectif O7 ([docs/00](./00-cahier-des-charges.md)), un chantier à lui seul, noté dans [docs/06](./06-roadmap.md) « Au-delà ».
+
+## 6. La place dans la file
+
+Sur le rail produit, l'échéance d'un jalon **est** son rang (`current-milestone` trie par `DUE_DATE`) :
+
+| Jalon | Échéance |
+| --- | --- |
+| L'atelier | 2027-11-09 |
+| **L'équipe sur mesure** | **2028-01-05** |
+| Phase 9 | **2028-02-16** (était 2027-11-10) |
+
+- **Après « L'atelier »**, qui est en cours (#921) et qu'on ne double pas.
+- **Devant la Phase 9**, pour l'argument de la Phase 9 elle-même : on n'empaquette pas une cible mouvante ([docs/24 §4.8](./24-projets-locaux-et-poste-de-travail.md)). La création d'un projet et le modèle d'agents changent ici : ils doivent changer **avant** l'installeur, pas pendant. Le même argument avait fait passer « L'atelier » devant la Phase 9 ([docs/35 §2](./35-decision-poste-de-bureau-et-disposition.md)).
+
+## 7. Ce qui rouvrirait la décision
+
+- **Un agent partagé entre projets** redevient défendable si plusieurs projets réels demandent la **même** équipe au mot près. On outillerait alors le **partage d'un gabarit**, pas le retour d'un agent global.
+- **Le canal de question** se rouvre s'il noie la personne. La mesure est le nombre de questions par run et la part de questions échues. Le remède serait une borne par agent, pas le retour à « personne ne répond ».
+- **Les gabarits** se retirent si l'analyse d'équipe s'en passe mieux, ce qui se mesure sur les équipes proposées.
+
+## 8. Où cette décision est écrite ailleurs
+
+Un renvoi ⚠ vers cette note est posé à l'endroit de chaque décision renversée ou rendue fausse :
+- [docs/04 §1.2 et §2](./04-specifications-agents.md) ;
+- [docs/05 §2.0](./05-interface-control-tower.md) ;
+- [docs/06, Phase 2](./06-roadmap.md) ;
+- [docs/00 EF-03 et EF-21](./00-cahier-des-charges.md) ;
+- [docs/24 §2.3 et §6](./24-projets-locaux-et-poste-de-travail.md) ;
+- [docs/32 §5](./32-decision-cran-orchestrateur.md) ;
+- la section « Les agents (par défaut) » du [README](../README.md).
+
+Ces documents décrivent l'état **présent** : les lots qui changent le code les réécriront. Ce renvoi dit seulement que l'état change.

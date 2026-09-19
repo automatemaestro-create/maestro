@@ -87,6 +87,7 @@ L'utilisateur passe ainsi du rôle d'« opérateur » (qui exécute) à celui de
 - **EF-01 (DOIT)** — Le système fournit des agents préconfigurés : Chef de projet, Développeur, Base de données, DevOps, Designer, QA.
 - **EF-02 (DOIT)** — Chaque agent possède un rôle, un jeu d'outils et un *playbook* (workflow d'instructions).
 - **EF-03 (DEVRAIT)** — L'utilisateur peut créer un nouvel agent et le configurer entièrement.
+  ⚠ *2026-09-19, [docs/37](./37-decision-equipe-sur-mesure.md) : les agents d'un projet sont proposés par l'analyse du projet puis validés par l'utilisateur, et ils appartiennent au projet (#1021).*
 - **EF-04 (DOIT)** — Chaque agent déclare ses **capacités** (tags/compétences) servant au routage.
 
 ### 4.2 Autonomie
@@ -124,6 +125,7 @@ L'utilisateur passe ainsi du rôle d'« opérateur » (qui exécute) à celui de
 - **EF-19 (DOIT)** — **Interagir** : ouvrir une conversation avec un agent.
 - **EF-20 (DOIT)** — **Assigner / réassigner** une tâche à un agent.
 - **EF-21 (DEVRAIT)** — **Contrôler la capacité** : activer/désactiver un agent, ajuster le nombre d'instances.
+  ⚠ *2026-09-19, [docs/37](./37-decision-equipe-sur-mesure.md) : le nombre d'instances est d'abord proposé par l'analyse du projet, puis ajusté par l'utilisateur, et la capacité se range par projet (#1038, #1039).*
 - **EF-22 (DEVRAIT)** — Visualiser pour chaque exécution la **trace** détaillée (étapes, outils, coût, durée).
 - **EF-23 (POURRAIT)** — Tableau de bord analytique (coûts, débit, taux de réussite).
 

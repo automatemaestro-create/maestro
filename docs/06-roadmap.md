@@ -32,7 +32,8 @@ gantt
 > initial** (Phases 0 à 3, toutes soldées) ; le projet a continué au-delà — Phases 4 à 6 plus
 > bas, puis les **Phases 7 à 9** issues du cadrage #215 et planifiées par #218, et la **vague
 > front « Control Tower v3 »** ouverte par la revue d'usage du 2026-08-05, menée **en parallèle**
-> des Phases 8 et 9.
+> des Phases 8 et 9. Les chantiers nés de l'usage viennent ensuite, puis le jalon **« L'équipe sur
+> mesure »**, né d'une idée le 2026-09-19 et placé devant la Phase 9.
 
 ---
 
@@ -70,6 +71,8 @@ gantt
 **But :** équipe d'agents complète, personnalisation, observabilité.
 
 - **Les 6 agents** par défaut opérationnels (+ création d'agents personnalisés).
+  ⚠ *Renversé le 2026-09-19* ([docs/37](./37-decision-equipe-sur-mesure.md)) : un projet naîtra
+  **sans agent**, et son équipe sera dérivée de son analyse. Voir « L'équipe sur mesure » plus bas.
 - **Premier fournisseur non-Anthropic branché** via la couche d'abstraction (valide l'agnosticisme de bout en bout — O7 : ≥ 1 fournisseur non-Anthropic en V1).
 - **Éditeur de playbooks versionnés** dans l'UI, application à chaud.
 - **Observabilité Langfuse** intégrée (traces, coûts, évaluation).
@@ -317,6 +320,11 @@ veille de celle de la Phase 9 — n'est pas un repère de plus : `lib.sh current
   (#640), l'installeur (#641), le premier lancement (#642) et les mises à jour (#644) restent en
   Phase 9, dans leur ordre.
 
+> ⚠ **« La veille de celle de la Phase 9 » n'est plus vrai depuis le 2026-09-19.** La Phase 9 a
+> reculé au **2028-02-16**, pour laisser passer devant elle « L'équipe sur mesure » (section
+> suivante). L'argument qui a fait passer l'atelier devant la Phase 9 est le même, et
+> l'ordre entre l'atelier et la Phase 9 ne change pas.
+
 > **Tickets : les cinq milestones sont découpés**, comme la vague front et pour la même raison —
 > ils portent sur un produit et un outillage qui **existent**, il n'y a rien à attendre pour les
 > découper. Même patron : un **parent de suivi** par chantier, qui porte la checklist ordonnée et
@@ -326,8 +334,57 @@ veille de celle de la Phase 9 — n'est pas un repère de plus : `lib.sh current
 
 ---
 
+## « L'équipe sur mesure » — un jalon né d'une idée (2026-09-19)
+
+Ce jalon n'est né ni d'un cadrage de phase ni d'une revue d'usage : il vient d'une **idée exposée
+en conversation**, instruite par [`/idee`](../.claude/commands/idee.md) (#1013) et consignée par
+#1044. Comme les chantiers nés de l'usage, il ne prend **pas de numéro de phase**. Le numéro 10
+reste réservé.
+
+| Milestone | Contenu | Échéance | Suivi |
+|---|---|---|---|
+| **L'équipe sur mesure — chaque projet s'outille et recrute ses agents** | Voir le détail ci-dessous | 2028-01-05 | **#1022** ; **#1019** — 5 lots (#1023–#1027) ; **#1020** — 7 lots (#1029–#1035) ; **#1021** — 7 lots (#1037–#1043) |
+
+Le contenu du jalon, en quatre points :
+- **Un répertoire commun des projets**, rempli par défaut et modifiable, où naît un projet neuf. Un projet existant se choisit en parcourant soi-même.
+- **L'outillage d'abord.** La première étape de tout projet est son **outillage universel** (AGENTS.md, Agent Skills, scripts) : recommandé par l'analyse d'un projet existant, choisi par l'utilisateur pour un projet neuf, généré dans son dossier et lu par nos agents.
+- **Aucun agent figé.** L'équipe de chaque projet est **dérivée de son analyse** (rôles, instances, playbooks, skills, autorisations), puis validée par l'utilisateur.
+- **Autonomie sous arbitrage.** Tout agent **demande** quand il le faut et **tranche seul** le reste, en le consignant.
+
+**Deux décisions tombent, à la demande explicite de la personne**, et une note les écrit :
+[docs/37](./37-decision-equipe-sur-mesure.md).
+- Les agents cessent d'être une ressource du poste. Cela renverse [docs/05 §2.0](./05-interface-control-tower.md) et le « 6 agents par défaut » de la Phase 2.
+- « Personne ne répond en cours de tâche » tombe : le socle des playbooks, [docs/04 §1.2](./04-specifications-agents.md).
+
+Trois choses **ne bougent pas** :
+- [docs/32](./32-decision-cran-orchestrateur.md) : aucune IA ne juge l'appel d'outil d'une autre ;
+- EF-08 : sans réponse, un acte sensible est refusé ;
+- [docs/34 §4.6](./34-decision-agent-cli-tiers-acp.md) : la configuration ambiante reste fermée.
+
+**Ordre des chantiers.** Le répertoire des projets est indépendant. La **question** vient d'abord, parce que l'outillage d'un projet neuf et l'équipe proposée **se demandent** à l'utilisateur. L'**outillage** vient ensuite, puis l'**équipe**, qui branche les skills que l'outillage a générés. Les trois parents sont en `prio::haute`, créés dans cet ordre, et `queue.sh` les tient donc dans cet ordre.
+
+**Place dans la file**, sur le rail produit, où l'échéance *est* le rang :
+
+| Jalon | Échéance |
+| --- | --- |
+| « L'atelier » | 2027-11-09 |
+| **« L'équipe sur mesure »** | **2028-01-05** |
+| Phase 9 | 2028-02-16 (était 2027-11-10) |
+
+- Le jalon vient **après « L'atelier »**, qui est en cours et qu'on ne double pas.
+- Il passe **devant la Phase 9**, pour l'argument de la Phase 9 elle-même : on n'empaquette pas une cible mouvante (§4.8 de docs/24). La création d'un projet et le modèle d'agents changent ici : ils changent **avant** l'installeur, pas pendant.
+- #938, le sélecteur natif et le glisser-déposer d'un dossier, passe en `prio::haute` : il rend direct le parcours d'un projet existant.
+- #642, le premier lancement, est l'endroit où proposer le répertoire des projets.
+
+> ⚠ **Les critères de sortie du jalon sont dans sa description**, section `## Critères de sortie`
+> (C1 à C5, dans les mots de la demande). C'est elle qui fait foi au bouclage (docs/10 §3.4), pas ce
+> résumé.
+
+---
+
 ## Au-delà (idées V3+)
 
+- **Des outils pour un fournisseur non-Anthropic, dans Maestro** (objectif O7). Aujourd'hui, seuls les modèles Claude exécutent avec outils : `openai_compat.py` ne fait que du texte. L'outillage généré par « L'équipe sur mesure » est universel par son **format** et se lit par tout agent sur le poste de l'utilisateur. L'exécuter avec outils **dans** Maestro par un autre fournisseur est un chantier à lui seul. Il a été **différé** par l'instruction de #1044 et n'a pas encore de ticket.
 - Marketplace d'agents et de playbooks partageables.
 - **Catalogue étendu de fournisseurs** et **sélection automatique du modèle** par coût/latence/souveraineté (la couche d'abstraction, elle, existe dès la Phase 0 ; ici on enrichit le catalogue et l'auto-sélection).
 - Apprentissage des préférences de l'équipe (mémoire long terme enrichie).
