@@ -1191,6 +1191,180 @@ EOF
   printf '%s' "$sortie"
 }
 
+# --- Planification : l'ordre des jalons et des tickets (#1013) ------------------------------------
+# Deux ordres décident de ce qui se traite en premier, et aucun n'est une liste tenue à part :
+#   * ENTRE JALONS, L'ÉCHÉANCE. `gh_current_milestone` trie par `DUE_DATE` et retient le premier du
+#     rail qui porte encore un ticket ouvert : la date EST l'ordre de traitement (docs/06, « L'atelier
+#     passe DEVANT la Phase 9 »). Déplacer un jalon dans la file, c'est déplacer son échéance.
+#   * DANS UN JALON, `prio::`. `queue.sh` trie par priorité puis par iid, un parent prenant la
+#     meilleure de ses lots.
+# `/idee` les ajuste quand une idée arrive. Ce sont des VERBES et non un `gh api` dans le prompt, pour
+# la raison de `milestone-rail` (#617) : les écritures de forge sont interdites sous
+# `.claude/commands/**`, et `--add-label` y est refusé nommément par `tests/test_cycle_de_vie.py`.
+#
+# LES REFUS GRATUITS TOMBENT AVANT LA FORGE (règle de `gl_milestone_section`) : une date mal formée ou
+# un niveau inconnu se voient sans rien demander à personne, et un refus ne laisse rien derrière lui.
+#
+# AUCUN DE CES VERBES NE FERME NI NE RENOMME UN JALON : la fermeture reste une décision humaine
+# (docs/10 §3.4), et un titre est la clé de tout ce qui se résout par son nom (#358).
+
+# La fiche d'un jalon — « <numéro> TAB <échéance AAAA-MM-JJ, ou « - » sans échéance> TAB
+# <open|closed> » —, fermés compris, sélectionnée PAR TITRE côté API. ⚠ Le « - » n'est pas décoratif :
+# `IFS=$'\t' read` FUSIONNE deux tabulations consécutives (la tabulation est un blanc pour IFS), si
+# bien qu'une échéance vide ferait glisser l'état dans sa colonne — un champ optionnel voyage avec un
+# marqueur (piège déjà payé par `scripts/migration/`). Le programme vit dans une variable parce que le double de
+# `tests/harnais_forge.py` le rejoue en Python (il n'exécute pas jq) et que `tests/test_idee.py`
+# garde qu'il n'a pas bougé sans lui : une sélection modifiée ici laisserait le double rendre
+# l'ancienne, et la suite verte.
+GL_MS_FICHE_JQ='map(select(.title == env.GL_MS_TITRE)) | if length == 0 then empty else "\(.[0].number)\t\((.[0].due_on // "-")[0:10])\t\(.[0].state)" end'
+
+# gl_milestone_fiche <titre-exact> -> la fiche sur stdout ; 1 = aucun jalon de ce titre.
+gl_milestone_fiche() {
+  local brut
+  brut="$(GL_MS_TITRE="$1" gh api "repos/$GL_GH_REPO/milestones?state=all&per_page=100" \
+    --jq "$GL_MS_FICHE_JQ" 2>/dev/null)"
+  [ -n "$brut" ] || return 1
+  printf '%s\n' "$brut"
+}
+
+# gl_date_valide <AAAA-MM-JJ> -> 0 si c'est une date du calendrier ÉCRITE dans cette forme. La forme
+# d'abord (un « 2027-9-1 » que `date -d` accepterait ne se relirait pas à l'identique), puis
+# l'aller-retour par `date -d`, qui écarte un 31 juin.
+gl_date_valide() {
+  case "$1" in
+    [0-9][0-9][0-9][0-9]-[01][0-9]-[0-3][0-9]) ;;
+    *) return 1 ;;
+  esac
+  [ "$(date -d "$1" +%F 2>/dev/null)" = "$1" ]
+}
+
+# gl_milestone_echeance <titre-exact> [<AAAA-MM-JJ>] -> LIT l'échéance du jalon, ou la POSE.
+# Codes : 0 = lue (date sur stdout) / posée / déjà à jour · 3 = aucune échéance, rien sur stdout ·
+# 2 = usage ou date invalide · 1 = jalon inconnu ou échec côté forge.
+#
+# Un jalon SANS échéance se trie en DERNIER chez GitHub (`DUE_DATE ASC`) : c'est une place dans la
+# file, pas une absence — d'où le 3 muet, qui n'est pas une panne.
+gl_milestone_echeance() {
+  local titre="$1" date="${2:-}" fiche numero courant
+  if [ -z "$titre" ]; then
+    echo "usage: gl_milestone_echeance <titre-exact-du-jalon> [<AAAA-MM-JJ>]" >&2; return 2
+  fi
+  if [ -n "$date" ] && ! gl_date_valide "$date"; then
+    echo "gl_milestone_echeance : « $date » n'est pas une date AAAA-MM-JJ — rien n'a été demandé à la forge." >&2
+    return 2
+  fi
+  gh_require || return 1
+
+  fiche="$(gl_milestone_fiche "$titre")" || {
+    echo "gl_milestone_echeance : aucun jalon intitulé « $titre »" >&2; return 1; }
+  IFS=$'\t' read -r numero courant _ <<<"$fiche"
+  [ "$courant" = - ] && courant=""
+
+  if [ -z "$date" ]; then
+    [ -n "$courant" ] || return 3
+    printf '%s\n' "$courant"
+    return 0
+  fi
+  if [ "$courant" = "$date" ]; then
+    printf 'jalon « %s » : échéance déjà au %s — rien à écrire.\n' "$titre" "$date"
+    return 0
+  fi
+  # Minuit UTC, comme les échéances déjà posées sur le dépôt : c'est la date qu'on relit, et la
+  # comparer à des jalons posés autrement la décalerait d'un jour selon le fuseau.
+  gh api --method PATCH "repos/$GL_GH_REPO/milestones/$numero" \
+    --raw-field due_on="${date}T00:00:00Z" >/dev/null || {
+      echo "gl_milestone_echeance : échec de l'écriture sur « $titre » — l'échéance reste « ${courant:-aucune} »." >&2
+      return 1; }
+  printf 'jalon « %s » : échéance %s → %s.\n' "$titre" "${courant:-aucune}" "$date"
+}
+
+# gl_milestone_cree <titre> <AAAA-MM-JJ> [produit|outillage] -> CRÉE un jalon, échéance et rail
+# posés d'un coup. Codes : 0 = créé · 4 = un jalon porte déjà ce titre (fermé compris), rien créé ·
+# 2 = usage, date ou rail invalide · 1 = échec côté forge.
+#
+# L'ÉCHÉANCE EST OBLIGATOIRE, et c'est la raison d'être du verbe plutôt qu'un détail : un jalon sans
+# date se range DERNIER de son rail, donc personne ne le choisit en le créant — il y tombe. Créer un
+# jalon, c'est décider de sa place dans la file ; le verbe demande la décision.
+#
+# UN TITRE DÉJÀ PRIS EST UN REFUS ET NON UN SUCCÈS IDEMPOTENT : le jalon qui le porte peut être un
+# autre (fermé, d'une phase passée), et « déjà là » y poserait des tickets sans que personne l'ait
+# vu. Le geste d'après est nommé : régler l'existant par `milestone-echeance` / `milestone-rail`.
+gl_milestone_cree() {
+  local titre="$1" date="${2:-}" rail="${3:-produit}" fiche
+  if [ -z "$titre" ] || [ -z "$date" ]; then
+    echo "usage: gl_milestone_cree <titre> <AAAA-MM-JJ> [produit|outillage]" >&2; return 2
+  fi
+  if ! gl_date_valide "$date"; then
+    echo "gl_milestone_cree : « $date » n'est pas une date AAAA-MM-JJ — rien n'a été demandé à la forge." >&2
+    return 2
+  fi
+  if ! gl_rail_valide "$rail"; then
+    echo "gl_milestone_cree : rail inconnu « $rail » (attendu : produit | outillage)" >&2; return 2
+  fi
+  gh_require || return 1
+
+  if fiche="$(gl_milestone_fiche "$titre")"; then
+    echo "gl_milestone_cree : un jalon s'intitule déjà « $titre » (n° ${fiche%%$'\t'*}) — rien n'a été créé." >&2
+    echo "  Son échéance se règle par « milestone-echeance », son rail par « milestone-rail »." >&2
+    return 4
+  fi
+
+  # Le marqueur de rail est la description entière d'un jalon d'outillage neuf, EN TÊTE comme le
+  # pose `gl_milestone_rail` ; un jalon produit naît sans description (« produit » est l'absence du
+  # marqueur). Les sections de cadrage s'ajoutent ensuite en queue, par `milestone-criteres`.
+  if [ "$rail" = outillage ]; then
+    gh api --method POST "repos/$GL_GH_REPO/milestones" --raw-field title="$titre" \
+      --raw-field due_on="${date}T00:00:00Z" --raw-field description="rail: outillage" >/dev/null
+  else
+    gh api --method POST "repos/$GL_GH_REPO/milestones" --raw-field title="$titre" \
+      --raw-field due_on="${date}T00:00:00Z" >/dev/null
+  fi || { echo "gl_milestone_cree : échec de la création de « $titre »" >&2; return 1; }
+  printf 'jalon « %s » créé — échéance %s, rail %s.\n' "$titre" "$date" "$rail"
+}
+
+# gl_prio_pose <iid> <haute|moyenne|basse> -> REMPLACE la priorité d'un ticket. Codes : 0 = posée /
+# déjà à jour · 2 = usage ou niveau inconnu · 1 = ticket illisible ou échec côté forge.
+#
+# L'AJOUT PRÉCÈDE LE RETRAIT : une panne entre les deux laisse un ticket à DEUX priorités — visible,
+# nommée, et que `queue.sh` range encore quelque part —, jamais un ticket SANS priorité, que rien ne
+# signalerait. Tous les `prio::` autres que la cible partent, pas seulement le premier : un ticket
+# qui en porte deux est justement celui qu'il faut réparer.
+gl_prio_pose() {
+  local iid="$1" niveau="${2:-}" brut labels cible ancien anciens="" present=0
+  if [ -z "$iid" ] || [ -z "$niveau" ]; then
+    echo "usage: gl_prio_pose <iid> <haute|moyenne|basse>" >&2; return 2
+  fi
+  case "$niveau" in
+    haute|moyenne|basse) ;;
+    *) echo "gl_prio_pose : niveau inconnu « $niveau » (attendu : haute | moyenne | basse)" >&2; return 2 ;;
+  esac
+  gh_require || return 1
+  cible="prio::$niveau"
+
+  # Une lecture, celle de la vue canonique : ses labels sont joints par « , ».
+  brut="$(gl_issue_raw "$iid")" || {
+    echo "gl_prio_pose : ticket #$iid illisible — rien n'a été écrit." >&2; return 1; }
+  labels="$(printf '%s\n' "$brut" | awk -F'\t' '$1 == "labels:" { print $2; exit }')"
+  for ancien in $(printf '%s\n' "$labels" | grep -o 'prio::[a-z]*'); do
+    if [ "$ancien" = "$cible" ]; then present=1; else anciens="$anciens $ancien"; fi
+  done
+  anciens="${anciens# }"
+
+  if [ "$present" = 1 ] && [ -z "$anciens" ]; then
+    printf '#%s : déjà %s — rien à écrire.\n' "$iid" "$cible"
+    return 0
+  fi
+  if [ "$present" = 0 ]; then
+    gh_add_label "$iid" "$cible" || return 1
+  fi
+  for ancien in $anciens; do
+    gh_remove_label "$iid" "$ancien" || {
+      echo "gl_prio_pose : #$iid porte encore « $ancien » à côté de « $cible » — à retirer." >&2
+      return 1; }
+  done
+  printf '#%s : %s → %s.\n' "$iid" "${anciens:-aucune priorité}" "$cible"
+}
+
 # --- Sous-tickets (découpage parent / lots) -------------------------------------------------------
 # Convention (docs/10-workflow-git.md §5.1) : un besoin qui dépasse ~1 session de travail est porté
 # par un ticket PARENT de suivi auquel ses lots sont rattachés en SUB-ISSUES natives — `Issue.parent`
@@ -7401,6 +7575,17 @@ gh_add_label() {
   fi
 }
 
+# gh_remove_label <iid> <label> -> retire UN label sans toucher aux autres — le pendant exact de
+# gh_add_label, et pour la même raison : `DELETE /issues/<n>/labels/<nom>` n'ôte que celui-là. Le
+# nom voyage dans le CHEMIN : ses deux-points s'encodent (`prio::haute` → `prio%3A%3Ahaute`).
+gh_remove_label() {
+  local iid="$1" label="$2"
+  if [ -z "$iid" ] || [ -z "$label" ]; then echo "usage: gh_remove_label <iid> <label>" >&2; return 2; fi
+  if ! gh api -X DELETE "repos/$GL_GH_REPO/issues/$iid/labels/${label//:/%3A}" >/dev/null 2>&1; then
+    echo "Échec du retrait du label « $label » de #$iid" >&2; return 1
+  fi
+}
+
 gh_get_mr_description() {
   local mr="$1"
   if [ -z "$mr" ]; then echo "usage: gh_get_mr_description <mr>" >&2; return 2; fi
@@ -8961,6 +9146,9 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     milestone-criteres) gl_milestone_criteres "$@" ;;
     milestone-verdict)  gl_milestone_verdict "$@" ;;
     milestones-a-boucler) gl_milestones_a_boucler ;;
+    milestone-echeance) gl_milestone_echeance "$@" ;;
+    milestone-cree)     gl_milestone_cree "$@" ;;
+    prio-pose)          gl_prio_pose "$@" ;;
     issue-link)     gl_issue_link "$@" ;;
     subticket-add)   gl_subticket_add "$@" ;;
     subticket-order) gl_subticket_order "$@" ;;
@@ -9098,6 +9286,11 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "                                      fichier — idempotent. 0=lu/écrit, 3=aucun, muet — #757)" >&2
       echo "  milestones-a-boucler               (jalons actifs entièrement soldés SANS verdict consigné : titre/rail/" >&2
       echo "                                      critères/fermés/total, TSV. 0=il y en a, 3=aucun et muet — #758)" >&2
+      echo "  milestone-echeance <titre> [<AAAA-MM-JJ>]  (lit l'échéance du jalon, ou la pose — la date EST l'ordre" >&2
+      echo "                                      des jalons d'un rail. 0=lue/posée, 3=aucune et muet — #1013)" >&2
+      echo "  milestone-cree <titre> <AAAA-MM-JJ> [produit|outillage]  (crée un jalon, échéance et rail posés ;" >&2
+      echo "                                      4 = titre déjà pris, rien créé — #1013)" >&2
+      echo "  prio-pose <iid> <haute|moyenne|basse>  (remplace le prio:: d'un ticket — idempotent, #1013)" >&2
       echo "  slug <titre> | branch-prefix <type> | host   (hôte de la forge, déduit du remote)" >&2
       echo "  Sous-tickets (découpage parent/lots, docs/10 §5.1) :" >&2
       echo "    issue-link <iid-parent> <iid-lot> [--parallele]  (rattache un lot à son parent — alias de" >&2

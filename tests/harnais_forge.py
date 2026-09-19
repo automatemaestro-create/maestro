@@ -382,21 +382,52 @@ def jalons_rest(chemin, meth, args):
     jalons = etat.get("jalons")
     if jalons is None or "/milestones" not in chemin:
         return
+
+    def persiste():
+        with open(os.environ["MAESTRO_FAUX_GH"], "w", encoding="utf-8") as f:
+            json.dump(etat, f, ensure_ascii=False, indent=2)
+
     if meth == "PATCH":
         numero = chemin.rsplit("/", 1)[-1]
         for jalon in jalons:
             if str(jalon.get("number")) == numero:
-                description = valeur_champ(args, "description")
-                if description is not None:
-                    jalon["description"] = description
-                with open(os.environ["MAESTRO_FAUX_GH"], "w", encoding="utf-8") as f:
-                    json.dump(etat, f, ensure_ascii=False, indent=2)
+                # Les deux champs qu'un verbe écrit : la description (#617, #757) et l'échéance
+                # (#1013). Chacun n'est touché que s'il voyage — un PATCH REST ne remplace que ce
+                # qu'on lui envoie.
+                for champ in ("description", "due_on"):
+                    valeur = valeur_champ(args, champ)
+                    if valeur is not None:
+                        jalon[champ] = valeur
+                persiste()
                 sortie(compact({"number": jalon["number"], "title": jalon["title"]}))
         sortie(compact({"message": "Not Found"}), code=1)
+    if meth == "POST" and chemin.endswith("/milestones"):
+        # La création (#1013) : GitHub refuse un titre déjà pris par un « Validation Failed » ;
+        # le verbe s'arrête avant, mais le double ne l'invente pas pour autant.
+        titre = valeur_champ(args, "title") or ""
+        if any(jalon["title"] == titre for jalon in jalons):
+            sortie(compact({"message": "Validation Failed"}), code=1)
+        numero = max((int(jalon.get("number", 0)) for jalon in jalons), default=0) + 1
+        jalons.append({
+            "number": numero, "title": titre, "state": "open",
+            "description": valeur_champ(args, "description") or "",
+            "due_on": valeur_champ(args, "due_on"),
+            "open_issues": 0, "closed_issues": 0,
+        })
+        persiste()
+        sortie(compact({"number": numero, "title": titre}))
     if "state=all" in chemin:
         vise = os.environ.get("GL_MS_TITRE", "")
+        # Deux programmes jq lisent cette liste, et le double rejoue celui qu'on lui passe : la
+        # FICHE d'un jalon (`GL_MS_FICHE_JQ`, #1013) se reconnaît à son `due_on`, la lecture de sa
+        # description (`gl_milestone_numero_desc`, #757) est l'autre. `tests/test_idee.py` garde
+        # que le programme de la fiche n'a pas bougé sans ce double.
+        programme = args[args.index("--jq") + 1] if "--jq" in args else ""
         for jalon in jalons:
             if jalon["title"] == vise:
+                if "due_on" in programme:
+                    echeance = (jalon.get("due_on") or "-")[:10]
+                    sortie(f'{jalon["number"]}\t{echeance}\t{jalon.get("state", "open")}\n')
                 sortie(str(jalon["number"]) + "\n" + jalon.get("description", "") + "\n")
         sortie()                       # `empty` en jq : sortie vide, code 0
     if re.fullmatch(r".*/milestones/\d+", chemin):
@@ -816,6 +847,7 @@ def jalon(
     fermes: int = 0,
     numero: int = 17,
     etat: str = "open",
+    echeance: str | None = None,
 ) -> dict:
     """Un jalon du dépôt jetable, dans la forme que sert `jalons_rest`.
 
@@ -823,6 +855,9 @@ def jalon(
     se fabrique en donnant `fermes` seul. Un jalon **vide** (`0/0`) et un jalon **en cours**
     (`ouverts > 0`) sont les deux abstentions à côté, et ils se décrivent aussi bien — c'est ce qui
     permet de vérifier que la convocation ne les prend pas.
+
+    `echeance` (« AAAA-MM-JJ ») est rendue sous la forme REST de GitHub, minuit UTC — c'est elle
+    qui ordonne les jalons d'un rail (#1013). Absente, le jalon n'a pas d'échéance.
     """
     return {
         "number": numero,
@@ -831,6 +866,7 @@ def jalon(
         "state": etat,
         "open_issues": ouverts,
         "closed_issues": fermes,
+        "due_on": f"{echeance}T00:00:00Z" if echeance else None,
     }
 
 

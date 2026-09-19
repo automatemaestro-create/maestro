@@ -113,6 +113,28 @@
  *   est déjà lu ne bouge. Aucun de ces états n'est annoncé deux fois — la région
  *   live compte les messages (#538), les `role="alert"` disent les fautes.
  *
+ * ## « En bas » est le bas du FIL (#941)
+ *
+ * Le recollement ci-dessus visait le bas de l'**ascenseur** — juste tant que le
+ * fil finissait la page. Sous `@4xl`, la colonne de propriétés de `/chat` passe
+ * **sous** la conversation : s'y coller emportait le composeur 93 px au-dessus
+ * du bord supérieur de l'écran, et `/chat` s'ouvrait donc au format téléphone
+ * sur le bas de la pile de panneaux (retex du 2026-09-11, constat G8 ; mesuré
+ * au banc à 420 × 860 le 2026-09-19). À 420 × 1400, où la page ne déborde pas,
+ * rien ne défilait et l'ordre paraissait juste : ce n'était pas l'empilement,
+ * c'était ce que « en bas » désignait.
+ *
+ * La règle vit dans `lib/defilement` (`positionEnBas`), avec la borne qui garde
+ * le repos de #888 quand le fil finit bien la page. Ici, trois choses à ne pas
+ * défaire : le recollement **et** le verdict de décrochage l'appellent, sans
+ * quoi le geste « Dernier message » paraîtrait sur un fil qu'on vient de coller
+ * en bas ; c'est la `ref` de la **section** qui la porte — la sentinelle de fin
+ * de fil, qui ne savait que remonter les ancêtres, s'en est allée avec ce
+ * lot ; et le **formulaire** lui est passé, pour que la bande qu'il se réserve
+ * à quai (`bottom-16`) soit *lue* et non recopiée. Sans elle, la cible posait
+ * le composeur 64 px plus haut, c'est-à-dire sur le dernier message — 48 px
+ * amputés, mesurés au banc à 420 × 860, le défaut même que #888 nomme.
+ *
  * ## Le fil est une colonne (#876)
  *
  * Les partis pris **1 à 3** de la veille #820 (docs/30 §5.7, décision complète
@@ -295,7 +317,7 @@ import { RegionLive } from "@/components/RegionLive";
 import { mesureDesMessages } from "@/lib/annonces";
 import { ErreurReponse, ErreurSource } from "@/lib/api";
 import { useBrouillon } from "@/lib/brouillons";
-import { ascenseurDe, estEnBas } from "@/lib/defilement";
+import { ascenseurDe, estEnBas, positionEnBas } from "@/lib/defilement";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import { useHorloge } from "@/lib/horloge";
 import { jourDe, libelleDuJour } from "@/lib/journees";
@@ -411,6 +433,7 @@ export function Conversation({
   amorces = [],
   entete,
   bandeau,
+  pied,
   surSaisie,
   bandeDuFlottant = true,
   focusAuMontage = false,
@@ -447,6 +470,17 @@ export function Conversation({
   entete?: ReactNode;
   /** Ce qui se pose entre l'en-tête et le fil (la barre de destinataire de `/chat`). */
   bandeau?: ReactNode;
+  /**
+   * Ce qui se pose **au pied du fil**, entre le dernier message et le composeur
+   * (#943) : ce à quoi on répond par un geste plutôt que par une phrase — la
+   * demande de cadrage de `/chat` aujourd'hui.
+   *
+   * Là et pas ailleurs, pour la raison que `chat/CadrageDansLeFil` avait déjà
+   * énoncée : ce qu'on **écrit** est en bas, à la place de la zone de saisie.
+   * Un geste qui répond au dernier message se pose où l'œil vient de finir de
+   * lire, et où la main allait taper.
+   */
+  pied?: ReactNode;
   /**
    * Filtre appliqué à chaque frappe : rend le texte à **garder** dans la zone de
    * saisie. `/chat` s'en sert pour détacher une mention `@agent` du brouillon —
@@ -532,10 +566,18 @@ export function Conversation({
   // disent « Aujourd'hui » et « Hier » — donc `null` tant qu'elle n'a pas
   // démarré, et une date absolue en attendant (`lib/journees`).
   const maintenant = useHorloge();
-  // La sentinelle de fin de fil : elle ne sert qu'à désigner l'ascenseur qui
-  // porte la conversation (`lib/defilement`). Depuis #691 le fil n'a plus de
-  // conteneur défilant à lui, donc plus rien à tenir par une `ref`.
-  const pied = useRef<HTMLDivElement | null>(null);
+  // La section entière, tenue par une `ref` : elle **désigne** l'ascenseur qui
+  // porte la conversation, et elle dit où le fil finit (`lib/defilement`).
+  // Depuis #691 le fil n'a plus de conteneur défilant à lui ; depuis #941 c'est
+  // sa dernière ligne, et non la dernière de la page, qui fait le « bas » —
+  // d'où la `ref` sur la section plutôt que sur la sentinelle de fin, qui ne
+  // savait que remonter les ancêtres et s'en est allée avec ce lot.
+  const bloc = useRef<HTMLElement | null>(null);
+  // Le composeur, pour la seule chose que le défilement lui demande : la bande
+  // qu'il se réserve à quai (`bottom-16`), que `lib/defilement` **lit** sur lui
+  // au lieu de la recopier — sans quoi la cible du recollement le poserait
+  // 64 px plus haut, sur le dernier message (#941).
+  const quai = useRef<HTMLFormElement | null>(null);
   const ascenseur = useRef<HTMLElement | null>(null);
   // La zone de saisie, tenue par une `ref` pour la faire grandir (#726) ; et
   // l'identifiant du raccourci clavier, qui la **décrit** (`aria-describedby`).
@@ -565,11 +607,18 @@ export function Conversation({
     setDecroche(!enBas);
   }, []);
 
-  /** Ramène la vue au bas du fil — sans condition, l'appelant ayant tranché. */
+  /**
+   * Ramène la vue au bas du fil — sans condition, l'appelant ayant tranché.
+   *
+   * Au bas **du fil**, et non de la page (#941) : sous `@4xl`, la colonne de
+   * propriétés de `/chat` passe sous la conversation, si bien que le bas de la
+   * page est le bas de cette colonne et que s'y coller emportait le composeur
+   * hors champ par le haut. `positionEnBas` porte la règle et sa borne.
+   */
   const collerEnBas = useCallback(() => {
     const cadre = ascenseur.current;
     if (cadre === null) return;
-    cadre.scrollTop = cadre.scrollHeight;
+    cadre.scrollTop = positionEnBas(cadre, bloc.current, quai.current);
   }, []);
 
   /**
@@ -587,14 +636,14 @@ export function Conversation({
   // Qui défile, et le lecteur suit-il ? Résolu une fois au montage : l'ascenseur
   // est celui du cadre (`Shell`), il ne change pas sous les pieds du fil.
   useEffect(() => {
-    const cadre = ascenseurDe(pied.current);
+    const cadre = ascenseurDe(bloc.current);
     ascenseur.current = cadre;
     if (cadre === null) return;
     // Le suivi se décide **avant** l'arrivée du message, sur le geste du
     // lecteur : mesurer après coup dirait toujours « trop loin du bas », le
     // nouveau contenu venant précisément d'allonger la page.
     const surDefilement = () => {
-      const enBas = estEnBas(cadre);
+      const enBas = estEnBas(cadre, bloc.current, quai.current);
       // Le garde-fou de #877, et c'est **lui** le critère : un cran de molette
       // qui ne fait pas changer d'avis ne pose rien, donc ne rend rien. Sans
       // lui, un état posé à chaque `scroll` ferait un rendu du fil entier par
@@ -766,6 +815,7 @@ export function Conversation({
 
   return (
     <section
+      ref={bloc}
       aria-label={libelle}
       className={
         // **Une colonne de lecture**, bornée et centrée (#876 — parti pris 1 de
@@ -961,11 +1011,19 @@ export function Conversation({
           </li>
         )}
       </ol>
-      {/* La sentinelle de fin de fil : elle ne rend rien, elle **désigne**
-          l'ascenseur qui porte la conversation (`lib/defilement`). Hors du
-          `<ol>` à dessein — un `<li>` vide y serait annoncé comme un message de
-          plus par les lecteurs d'écran. */}
-      <div ref={pied} aria-hidden="true" />
+      {/* Ce à quoi on répond d'un geste (#943) : hors du `<ol>`, parce que ce
+          n'est pas un message du fil mais ce qu'on s'apprête à y dire — la
+          place que `chat/CadrageDansLeFil` donne déjà à sa carte « Décision ».
+          Il était « avant la sentinelle » pour que « aller en bas » amène
+          jusqu'au geste et non jusqu'au message qui le précède ; la promesse
+          est **plus forte** depuis #941, qui vise le bas de la section entière
+          (composeur compris) : ce geste-ci est dedans par construction. */}
+      {pied !== undefined && <div className="mt-3">{pied}</div>}
+      {/* La sentinelle de fin de fil a disparu avec #941 : elle ne rendait rien
+          et ne servait qu'à **désigner** l'ascenseur en remontant ses ancêtres,
+          ce que la `ref` de la section fait aussi bien — et elle, en plus, sait
+          dire où le fil finit, qui est la question de ce lot. Un nœud de moins
+          dans le fil, et un seul endroit où l'on demande « où est le bas ? ». */}
       {/* Le composeur reste **à quai** (#691) : le fil défilant désormais avec la
           page, le laisser en fin de flux obligerait à redescendre tout
           l'historique avant de pouvoir écrire. `sticky bottom-0` le colle au bas
@@ -1006,6 +1064,7 @@ export function Conversation({
           remontait alors le formulaire sur le fil — voir l'élément qui
           suit). */}
       <form
+        ref={quai}
         onSubmit={(e) => {
           e.preventDefault();
           void soumettre(brouillon);

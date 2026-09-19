@@ -99,6 +99,18 @@ class Workspace:
             if f.is_file():
                 yield f
 
+    def consigne_espace(self) -> str:
+        """Ce que l'agent doit savoir de cet espace, ajouté au message de sa tâche.
+
+        **Vide** ici, et c'est la règle : un répertoire jetable et un worktree
+        n'ont rien de particulier à dire — le premier disparaît avec la tâche, le
+        second est une copie conforme d'une branche —, donc le message qu'ils
+        composent est au caractère près celui d'avant #944. Seule la racine d'un
+        projet a quelque chose à ajouter : elle n'est pas isolée, et elle porte un
+        atelier (`maestro.sandbox.en_place.EspaceEnPlace.consigne_espace`).
+        """
+        return ""
+
     def produced_files(self) -> tuple[ProducedFile, ...]:
         """Recense les fichiers **produits**, triés par chemin relatif (déterministe).
 
