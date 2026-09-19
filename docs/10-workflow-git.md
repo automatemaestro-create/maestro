@@ -1721,6 +1721,11 @@ Trois décisions à ne pas défaire :
 - **L'échéance est obligatoire à la création.** Un jalon sans date se range **dernier** de son rail
   (`DUE_DATE ASC`) : personne ne le choisit en le créant, il y tombe. Créer un jalon, c'est décider de
   sa place ; le verbe demande la décision.
+- **L'échéance d'un jalon neuf ne voyage pas dans sa création** (#1018) : GitHub enregistre la
+  **veille** d'un `due_on` envoyé dans le `POST` (`2028-01-05` → `2028-01-04`, mesuré le 2026-09-19),
+  alors qu'un `PATCH` la garde. `milestone-cree` crée donc le jalon sans date, la pose par le chemin
+  de `milestone-echeance`, puis la **relit** : il annonce ce que la forge rend, ou il échoue en le
+  disant. Le double de `tests/harnais_forge.py` reproduit le décalage.
 - **Un titre déjà pris est un refus (`4`), pas un succès idempotent** : le jalon qui le porte peut être
   un autre, fermé, d'une phase passée — « déjà là » y rangerait des tickets sans que personne l'ait vu.
 - **Dans `prio-pose`, l'ajout précède le retrait** : une panne entre les deux laisse un ticket à deux

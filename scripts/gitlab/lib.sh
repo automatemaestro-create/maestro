@@ -1289,8 +1289,16 @@ gl_milestone_echeance() {
 # UN TITRE DÉJÀ PRIS EST UN REFUS ET NON UN SUCCÈS IDEMPOTENT : le jalon qui le porte peut être un
 # autre (fermé, d'une phase passée), et « déjà là » y poserait des tickets sans que personne l'ait
 # vu. Le geste d'après est nommé : régler l'existant par `milestone-echeance` / `milestone-rail`.
+#
+# ⚠ L'ÉCHÉANCE NE VOYAGE PAS DANS LE POST, ET C'EST UNE CORRECTION (#1018). GitHub enregistre la
+# VEILLE quand `due_on` accompagne la création (`2028-01-05T00:00:00Z` → `2028-01-04`, mesuré le
+# 2026-09-19 sur le jalon n° 21), alors qu'un PATCH de la même valeur la garde. La version de #1013
+# l'envoyait dans le POST : elle annonçait une date qu'elle n'avait pas posée, et un jour d'écart
+# suffit à inverser deux jalons voisins. Le jalon naît donc SANS échéance, `gl_milestone_echeance`
+# la pose par PATCH — un seul chemin d'écriture de la date —, puis la fiche est RELUE : l'échéance
+# annoncée est celle que la forge rend, ou le verbe échoue en le disant.
 gl_milestone_cree() {
-  local titre="$1" date="${2:-}" rail="${3:-produit}" fiche
+  local titre="$1" date="${2:-}" rail="${3:-produit}" fiche relue
   if [ -z "$titre" ] || [ -z "$date" ]; then
     echo "usage: gl_milestone_cree <titre> <AAAA-MM-JJ> [produit|outillage]" >&2; return 2
   fi
@@ -1314,12 +1322,21 @@ gl_milestone_cree() {
   # marqueur). Les sections de cadrage s'ajoutent ensuite en queue, par `milestone-criteres`.
   if [ "$rail" = outillage ]; then
     gh api --method POST "repos/$GL_GH_REPO/milestones" --raw-field title="$titre" \
-      --raw-field due_on="${date}T00:00:00Z" --raw-field description="rail: outillage" >/dev/null
+      --raw-field description="rail: outillage" >/dev/null
   else
-    gh api --method POST "repos/$GL_GH_REPO/milestones" --raw-field title="$titre" \
-      --raw-field due_on="${date}T00:00:00Z" >/dev/null
+    gh api --method POST "repos/$GL_GH_REPO/milestones" --raw-field title="$titre" >/dev/null
   fi || { echo "gl_milestone_cree : échec de la création de « $titre »" >&2; return 1; }
-  printf 'jalon « %s » créé — échéance %s, rail %s.\n' "$titre" "$date" "$rail"
+
+  gl_milestone_echeance "$titre" "$date" >/dev/null || {
+    echo "gl_milestone_cree : « $titre » est créé SANS échéance — il se range dernier de son rail." >&2
+    echo "  À reposer : milestone-echeance \"$titre\" $date" >&2
+    return 1; }
+  relue="$(gl_milestone_echeance "$titre")" || relue=""
+  if [ "$relue" != "$date" ]; then
+    echo "gl_milestone_cree : « $titre » est créé, mais la forge rend l'échéance « ${relue:-aucune} » au lieu de $date." >&2
+    return 1
+  fi
+  printf 'jalon « %s » créé — échéance %s (relue), rail %s.\n' "$titre" "$date" "$rail"
 }
 
 # gl_prio_pose <iid> <haute|moyenne|basse> -> REMPLACE la priorité d'un ticket. Codes : 0 = posée /
