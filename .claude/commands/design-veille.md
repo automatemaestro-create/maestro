@@ -70,8 +70,9 @@ niveau AAA) — elles ne sont ni des oublis à corriger, ni un blanc-seing sur l
 
 ## 3. Aller chercher — et **prouver** ce qu'on rapporte
 
-Cherche **3 à 5 produits comparables** qui résolvent la même question. Deux garde-fous, dans cet
-ordre :
+Cherche **3 à 5 produits professionnels comparables** qui résolvent la même question — des produits
+en service, dont des équipes se servent pour un travail voisin de celui que la surface sert, jamais
+une maquette de vitrine (Dribbble, Behance) ni un concept. Deux garde-fous, dans cet ordre :
 
 1. **Commence par ce qui est déjà au banc.** docs/30 §1 en tient quatre — GitHub Actions (liste de
    runs, détail d'un run), Grafana, Linear, Cursor. S'ils répondent à la surface, reprends-les : le
@@ -88,6 +89,11 @@ Range les captures dans l'atelier de session, en chemin relatif :
 `.maestro/session/design-veille/<surface>-<reference>.png`. C'est la règle de docs/10 §11.7 — ce
 qu'on invite à regarder va sous `.maestro/` (gitignoré), jamais dans `/tmp`, qu'une session ne peut
 pas relire sans un chemin absolu.
+
+⚠ **Ouverte par l'étape 7 de `/ticket-start`** (un ticket qui décide de l'écran, #1009), tes captures
+deviennent la **base de comparaison** des variantes que cette étape rendra, et que le regard neuf
+jugera contre elles : les deux références vérifiées sont alors **deux captures**, pas des pages lues —
+une page lue ne se compare pas à un écran.
 
 **Ferme la fenêtre du navigateur (`browser_close`) dès la séquence terminée**, et pas seulement en
 fin de session : Chrome n'accepte qu'un seul consommateur à la fois sur un profil, et une fenêtre
@@ -129,8 +135,9 @@ n'en appliquera douze. Chacun tient en une ligne et porte trois choses :
 > **&lt;le parti pris&gt;** — d'après *&lt;référence&gt;*. Concrètement : `<le geste dans le code>`.
 
 Termine par ce que la veille **n'a pas** regardé — par honnêteté de méthode, comme docs/30 §7 — puis
-par la suite, que tu **proposes sans la faire**. ⚠ **En session de run, le premier point ci-dessous
-n'est pas une proposition : tu le fais** (§7.3), parce que personne ne lira une proposition.
+par la suite, que tu **proposes sans la faire**. ⚠ **En session de run, ou ouverte par l'étape 7 de
+`/ticket-start`, le premier point ci-dessous n'est pas une proposition : tu le fais** (§7.3), parce
+que personne ne lira une proposition.
 
 - consigner la décision sur le ticket en cours :
   `bash scripts/gitlab/lib.sh issue-note <iid> <fichier>` — le texte voyage par un **fichier**,
@@ -146,7 +153,9 @@ n'est pas une proposition : tu le fais** (§7.3), parce que personne ne lira une
 ## 7. En session de run — qui choisit la surface, et ce qu'on fait de la décision
 
 Une session de run n'a **personne** pour répondre. Deux points changent, et rien d'autre : la
-méthode des §1 à §6 tient telle quelle.
+méthode des §1 à §6 tient telle quelle. Ce § vaut aussi, **en session interactive**, quand l'étape 7
+de `/ticket-start` t'ouvre sur un ticket qui décide de l'écran : là non plus personne n'est attendu
+(#1009), et la surface t'est passée en argument au lieu de se dériver (§7.1).
 
 ### 7.1 La surface, tu la dérives
 
@@ -181,9 +190,10 @@ seconde erreur sans l'annuler — la question survit, mais l'écran est déjà �
 joue** ; et le doute est rare, un ticket qui dit quoi faire le disant en toutes lettres.
 
 ⚠ **Ce critère a deux appelants**, et c'est pourquoi il ne vit qu'ici : il décide aussi de l'étape 7
-de `/ticket-start` (#979) — un ticket qui **décide** montre 2 ou 3 variantes rendues et attend le
-choix d'une personne avant d'implémenter ; en run, il n'est pas implémenté. Le reformuler ici change
-les deux verdicts à la fois. L'asymétrie ci-dessus, elle, ne vaut que pour la veille.
+de `/ticket-start` (#979, #1009) — un ticket qui **décide** rend 2 ou 3 variantes, en fait choisir une
+sur pièces par le regard neuf, consigne ce choix puis l'implémente, en run comme en interactif. Le
+reformuler ici change les deux verdicts à la fois. L'asymétrie ci-dessus, elle, ne vaut que pour la
+veille.
 
 ### 7.3 Si tu l'as jouée : consigne d'abord, arbitre ensuite
 
@@ -205,8 +215,8 @@ si la session s'arrête ensuite (limite d'usage, échec), la veille est déjà s
 exactement ce qu'on lui demande.
 
 Puis rends la main à `/ticket-start`, et nomme tes partis pris dans ton résumé final. Une veille
-jouée dit que le ticket **décide** : son étape 7 ne l'implémente pas en run (#979) — elle le laisse
-attendre le choix d'une personne, à qui tes partis pris serviront à juger les variantes.
+jouée dit que le ticket **décide** : son étape 7 en rend les variantes, et le regard neuf les juge
+contre tes partis pris et tes captures avant qu'une seule soit implémentée (#1009).
 
 ### 7.4 Si tu ne l'as pas jouée : n'écris rien ici, et dis-le
 
@@ -226,8 +236,8 @@ c'est **qu'un jugement ait été rendu et écrit** — d'où une propriété qui
 ## Ce que tu ne fais jamais ici
 
 - **Écrire du code**, ouvrir une PR, changer l'état d'un ticket, créer un ticket. Poser un label non
-  plus — à **une** exception, `veille::arbitree` en session de run, et seulement après avoir consigné
-  les partis pris (§7.3). Ce qui dépasse le lot en cours se **nomme** au §6 ; en run, cela vaut aussi
+  plus — à **une** exception, `veille::arbitree` en session de run ou ouverte par l'étape 7 de
+  `/ticket-start`, et seulement après avoir consigné les partis pris (§7.3). Ce qui dépasse le lot en cours se **nomme** au §6 ; en run, cela vaut aussi
   pour les tickets qu'on aurait ouverts — les nommer laisse la décision à quelqu'un, les ouvrir
   d'office remplit le backlog de tickets que personne ne fermera.
 - **Citer une référence de mémoire.** Non vérifiée, elle est nommée comme telle ou elle n'y est pas.
