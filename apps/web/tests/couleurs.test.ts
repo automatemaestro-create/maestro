@@ -369,7 +369,11 @@ describe("ce que le socle ne sait pas rendre", () => {
 const RESIDU = new Map<string, number>([
   ["app/couts/page.tsx", 19],
   ["app/journal/page.tsx", 9],
-  ["components/AssistantFlottant.tsx", 30],
+  // `components/AssistantFlottant.tsx` est **sorti** du tableau par #945 (30 → 0) :
+  //   le panneau montait sa propre conversation — bulles `bg-sky-600`, composeur et
+  //   bouton « Envoyer » recopiés —, il monte désormais `Conversation`, le fil du
+  //   produit. La ligne la plus haute qu'on ait retirée d'un coup, et elle ne s'est
+  //   pas retirée classe par classe : c'est la **recopie** qui est partie.
   ["components/BanniereErreurApi.tsx", 3],
   // 8 → 4 par #911 : les deux fonds d'entrée (`selectionne`, `survol`) et le
   //   fond et le bord de la barre, que `surface-creuse` et `bord` rendent **au
@@ -458,7 +462,7 @@ const RESIDU = new Map<string, number>([
 ]);
 
 /** Le compte du README — épinglé ici pour qu'il ne puisse pas dériver en silence. */
-const TOTAL_ANNONCE = 678;
+const TOTAL_ANNONCE = 648;
 
 /** Ce que le produit porte aujourd'hui, fichier par fichier. */
 function residuMesure(): Map<string, string[]> {

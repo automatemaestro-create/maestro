@@ -163,6 +163,7 @@ from pathlib import Path
 from typing import Any
 
 from maestro.agents.catalog import Agent
+from maestro.agents.playbook_du_code import registre
 from maestro.agents.playbooks import PlaybookStore
 from maestro.config import Settings, load_settings
 from maestro.controltower.events import EVENEMENT_CHAT_MESSAGE, Event, EventBus
@@ -265,12 +266,21 @@ _LONGUEUR_OBJET = 80
 #: Cadre de conversation ajouté au playbook de l'agent : le chat n'est pas une
 #: tâche à livrer (le playbook exige « strictement le livrable ») mais un
 #: échange direct avec un humain — on le dit explicitement au modèle.
-_CADRE_CONVERSATION = """\
+#:
+#: ⚠ Il **redit le registre** (#945), alors que le playbook de l'agent le porte déjà
+#: par son socle. Ce n'est pas une recopie : un agent **personnalisé** (#72) a le
+#: playbook que son auteur lui a écrit, lequel ne passe par aucun socle — et c'est
+#: précisément en conversation directe, ici, qu'un registre à lui se verrait. La
+#: source reste unique (`playbook_du_code.registre()`), seul le nombre de fois où on
+#: la sert change.
+_CADRE_CONVERSATION = f"""\
 Contexte particulier : tu es en CONVERSATION DIRECTE avec un utilisateur humain
 depuis la Control Tower de Maestro — ce n'est pas une tâche à livrer. Réponds au
 dernier message de l'utilisateur, en français, de façon concise et utile, dans
 les limites de ton rôle et de tes garde-fous. Si la demande sort de ton domaine,
-dis-le et oriente vers l'agent compétent."""
+dis-le et oriente vers l'agent compétent.
+
+{registre()}"""
 
 
 def _horodatage() -> str:

@@ -412,6 +412,8 @@ export function Conversation({
   entete,
   bandeau,
   surSaisie,
+  bandeDuFlottant = true,
+  focusAuMontage = false,
   className = "",
 }: {
   /** Le fil, tel que `useChat` le rend. */
@@ -451,6 +453,39 @@ export function Conversation({
    * un effet de bord assumé, la mention changeant le destinataire au passage.
    */
   surSaisie?: (texte: string) => string;
+  /**
+   * La bande du bouton flottant de l'assistant est-elle à réserver sous le composeur
+   * (#726, #888) ? Vraie partout où ce bouton, calé sur la **fenêtre**, recouvre le bas
+   * de l'ascenseur qui porte ce fil : `/chat`, l'onglet Chat d'un agent, la colonne de
+   * droite — c'est-à-dire tous les appelants sauf un.
+   *
+   * Fausse dans le **panneau de l'assistant lui-même** (#945) : ce panneau est la carte
+   * que ce bouton ouvre, et il se tient **au-dessus** de lui dans la même colonne
+   * flottante — rien ne le recouvre, donc il n'y a rien à réserver. Y laisser la bande
+   * mangerait 96 px sur une carte qui n'en fait que 544 au plus, et le composeur
+   * flotterait 64 px au-dessus du bord de sa propre carte.
+   *
+   * ⚠ Le nom dit la **raison**, pas le pixel : ce qui décide n'est pas une largeur ni un
+   * point de rupture (règle de #691), c'est qu'un bouton fixé à la fenêtre passe ou non
+   * par-dessus cette surface. L'appelant est le seul à le savoir.
+   */
+  bandeDuFlottant?: boolean;
+  /**
+   * La zone de saisie prend-elle le focus au montage ? Faux partout où le fil est
+   * **l'écran** : voler le focus à l'arrivée sur une page ferait sauter la lecture au
+   * composeur et perdrait la navigation au clavier sur tout ce qui le précède.
+   *
+   * Vrai dans le panneau de l'assistant (#945), parce qu'il est **ouvert par un geste**
+   * : il s'ouvre pour qu'on y pose une question, et devoir cliquer dans le champ après
+   * l'avoir ouvert serait un geste de trop pour une aide qu'on veut immédiate (#123, qui
+   * le faisait déjà avant que ce panneau monte ce composant).
+   *
+   * ⚠ C'est un **effet**, pas l'attribut `autoFocus` — que `jsx-a11y/no-autofocus`
+   * refuse, et à juste titre : l'attribut ne sait pas distinguer une page qui s'ouvre
+   * d'un panneau qu'on vient de demander. Ce booléen porte exactement cette distinction,
+   * et c'est pourquoi il est faux par défaut.
+   */
+  focusAuMontage?: boolean;
   className?: string;
 }) {
   const {
@@ -580,6 +615,16 @@ export function Conversation({
   useEffect(() => {
     if (suit.current) collerEnBas();
   }, [messages, envoi, reponseEnCours?.texte, collerEnBas]);
+
+  // La mise au point à l'ouverture, quand l'appelant la demande (#945, voir
+  // `focusAuMontage`). Par un effet et **non** par `autoFocus` : la règle
+  // `jsx-a11y/no-autofocus` refuse l'attribut, et elle a raison de le refuser —
+  // il s'applique au **montage du document**, sans que rien distingue une page
+  // qui s'ouvre d'un panneau qu'on vient de demander. Ici c'est l'appelant qui
+  // tranche, et il ne le demande que sur une surface ouverte par un geste.
+  useEffect(() => {
+    if (focusAuMontage) zone.current?.focus();
+  }, [focusAuMontage]);
 
   // La zone de saisie grandit avec le brouillon (#726) — y compris quand il
   // revient d'un échec d'envoi, ou qu'une mention en est détachée
@@ -965,7 +1010,13 @@ export function Conversation({
           e.preventDefault();
           void soumettre(brouillon);
         }}
-        className="sticky bottom-16 z-10 flex flex-col gap-2 border-t border-bord bg-background pt-3 pb-2"
+        className={
+          // `bottom-16` réserve la bande du flottant, `bottom-0` colle le composeur au
+          // bas de l'ascenseur là où aucun flottant ne passe (#945, `bandeDuFlottant`).
+          // Le reste — fond opaque, filet, `z-10` — ne dépend pas de ce choix.
+          (bandeDuFlottant ? "bottom-16" : "bottom-0") +
+          " sticky z-10 flex flex-col gap-2 border-t border-bord bg-background pt-3 pb-2"
+        }
       >
         {/* **Le fil montre qu'on a décroché** (#877 — parti pris 4 de la veille
             #820, d'après ChatGPT, dont le « Aller en bas » n'apparaît qu'une
@@ -1380,11 +1431,16 @@ export function Conversation({
           sans quoi la rangée étirait le fil dans la réserve (20 px perdus au
           repos). Le remède est celui de la réserve, pas du composeur — ne pas
           « corriger » en déplaçant le flottant : c'est la proposition que
-          #885 a refusée. */}
-      <div
-        aria-hidden="true"
-        className="sticky bottom-0 -mt-19 h-16 bg-background"
-      />
+          #885 a refusée.
+          Absente quand il n'y a pas de bande à couvrir (#945) : sans flottant au-dessus
+          de cette surface, ce cache ne masquerait rien et le `-mt-19` remonterait le
+          composeur de 76 px sur le fil pour rien. */}
+      {bandeDuFlottant && (
+        <div
+          aria-hidden="true"
+          className="sticky bottom-0 -mt-19 h-16 bg-background"
+        />
+      )}
     </section>
   );
 }

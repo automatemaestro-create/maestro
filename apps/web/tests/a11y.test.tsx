@@ -556,15 +556,10 @@ describe("le contrôle de saisie écrit hors des tokens (WCAG 2.2 §1.4.11)", ()
           "rendrait une case pleine largeur, ce n'est pas le même contrôle",
       },
     ],
-    [
-      "components/AssistantFlottant.tsx",
-      {
-        controles: 1,
-        raison:
-          "le quatrième composeur, hors du ticket : sa `ref` de mise au point n'a pas " +
-          "de passage dans `ChampTexte`, qui ne relaie pas de `ref`",
-      },
-    ],
+    // `components/AssistantFlottant.tsx` **n'est plus une exemption** (#945) : sa ligne
+    //   disait « le quatrième composeur », et c'est le composeur qui a disparu — le
+    //   panneau monte `Conversation`. Une exemption dont la raison nomme la chose à
+    //   retirer s'éteint avec elle ; c'est le cas nominal, pas une dérogation levée.
     ["components/EditeurAgent.tsx", { controles: 8, raison: RECOPIE }],
     [
       "components/SelecteurReassignation.tsx",

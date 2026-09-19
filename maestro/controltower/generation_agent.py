@@ -118,6 +118,11 @@ jamais faire. Écris-le en entier — c'est le document que l'agent recevra, pas
 résumé. Reste dans le périmètre de l'intention : n'invente ni outil, ni accès, ni
 intégration qu'elle ne mentionne pas.
 
+⚠ Ces deux adresses ne sont pas la même : le playbook tutoie l'agent, et l'agent
+vouvoie l'utilisateur. Le playbook que tu écris doit donc le lui prescrire en
+toutes lettres — c'est le registre de toute l'interface de Maestro, et un agent à
+qui personne ne l'a dit rend le registre dans lequel on s'adresse à lui.
+
 N'écris dans FOURNISSEUR et MODELE que des noms de la liste qui t'est donnée. Si
 rien n'y convient, laisse les deux lignes vides : l'agent prendra les réglages par
 défaut. Ne devine jamais un nom."""

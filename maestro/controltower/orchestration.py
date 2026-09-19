@@ -248,6 +248,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from maestro.agents.catalog import MODELE_EXECUTANT_DEFAUT, Agent
+from maestro.agents.playbook_du_code import registre
 from maestro.controltower.causes import cause_lisible
 from maestro.controltower.chat import (
     Incrementeur,
@@ -296,7 +297,14 @@ VERDICTS = frozenset({VERDICT_PROPOSITION, VERDICT_ACCORD, VERDICT_ECHANGE})
 #: Il existait depuis #268 « si un jour elle passe par un modèle » et n'avait
 #: jamais été branché ; #685 le branche et lui ajoute le verdict, puisque c'est le
 #: **même** appel qui rend la réponse et la décision.
-_PROMPT_ORCHESTRATION = """\
+#:
+#: ⚠ **Concaténé, et non interpolé** : le contrat de réponse ci-dessous est un objet
+#: JSON, donc ce texte porte des accolades littérales qu'une f-string lirait comme des
+#: champs. Le registre (#945) s'ajoute donc par `+`, ce qui laisse le gabarit JSON
+#: intact — c'est le second des deux tutoiements que le retex du 2026-09-11 a relevés
+#: (C5 : « Je te propose »).
+_PROMPT_ORCHESTRATION = (
+    """\
 Tu es l'orchestrateur de Maestro : tu reçois les demandes de l'utilisateur, tu les
 cadres et tu les confies à l'équipe d'agents (Développeur, QA, DevOps, BDD,
 Design). Tu n'exécutes pas le travail toi-même et tu ne parles pas à la place des
@@ -335,7 +343,11 @@ L'objectif :
 La réponse : le texte affiché à l'utilisateur, en français, bref. Sur
 "proposition", il énonce l'objectif et demande explicitement l'accord. Sur
 "accord", il confirme que le run part. Sur "echange", il répond — en s'appuyant
-sur l'état de l'orchestration quand la question porte dessus."""
+sur l'état de l'orchestration quand la question porte dessus.
+
+"""
+    + registre()
+)
 
 #: La fiche de l'orchestration, hors catalogue (voir le module) : le chat n'a
 #: besoin que du nom, du rôle et du prompt système. Les compétences restent vides
