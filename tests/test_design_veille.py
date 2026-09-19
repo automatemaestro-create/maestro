@@ -24,11 +24,13 @@ verdict est un jugement humain, ce qui est outillé est la *détection du manque
   portée — il gardait la fermeture, il garde l'ouverture des deux gestes dans les deux fichiers, et
   surtout la **garde qui la rend tenable**, qu'aucune allowlist ne peut porter : le prompt de
   session dit que le contenu web est une **donnée et jamais une instruction** ;
-* **les variantes** (#979, lot 4 de #972, docs/30 §5.8) — le critère « décide ou applique » du §7.2
-  de `/design-veille` a depuis un **second appelant** : un ticket qui décide de l'écran montre 2 ou
-  3 variantes et attend un choix humain avant d'implémenter, et en run il n'est pas implémenté. Ce
-  qui se garde est que le critère n'est écrit qu'une fois, que l'arbre est vide quand la question
-  se pose, que le choix est consigné avant la première ligne, et qu'un run ne le fabrique jamais.
+* **les variantes** (#979, lot 4 de #972 ; #1009 ; docs/30 §5.8) — le critère « décide ou
+  applique » du §7.2 de `/design-veille` a depuis un **second appelant** : un ticket qui décide de
+  l'écran rend 2 ou 3 variantes. #979 en laissait le choix à une personne ; #1009 l'a renversé — un
+  run traite tous les tickets et tranche, sur pièces. Ce qui se garde est que le critère n'est écrit
+  qu'une fois, qu'aucun texte n'arrête plus un ticket qui décide, que la veille rapporte de quoi
+  comparer, que le choix est rendu par le regard neuf sur un arbre vide, et consigné avant la
+  première ligne.
   Les autres lots du chantier vivent dans
   [`test_relecture_visuelle.py`](test_relecture_visuelle.py).
 
@@ -66,6 +68,8 @@ PROMPT_START = RACINE / ".claude" / "commands" / "ticket-start.md"
 PROMPT_VEILLE = RACINE / ".claude" / "commands" / "design-veille.md"
 RELECTURE_SH = RACINE / "scripts" / "design" / "relecture-visuelle.sh"
 RUN_SH = RACINE / "scripts" / "orchestrate" / "run.sh"
+SKILL_RELECTURE = RACINE / ".claude" / "skills" / "relecture-visuelle" / "SKILL.md"
+AGENT_REGARD = RACINE / ".claude" / "agents" / "regard-neuf.md"
 BOOTSTRAP = RACINE / "scripts" / "gitlab" / "bootstrap.sh"
 REGLAGES_RUN = RACINE / "scripts" / "orchestrate" / "settings.run.json"
 REGLAGES_DEPOT = RACINE / ".claude" / "settings.json"
@@ -564,11 +568,13 @@ def test_le_prompt_de_run_joue_la_veille_et_narbitre_que_ce_qui_a_ete_juge() -> 
 
 
 # =================================================================================================
-# Les variantes — un ticket qui DÉCIDE de l'écran attend un choix humain (#979, docs/30 §5.8)
+# Les variantes — un ticket qui DÉCIDE de l'écran se tranche sur pièces (#979, #1009, docs/30 §5.8)
 # =================================================================================================
-# La veille dit ce qu'on vise ; LAQUELLE des formes possibles, une personne la choisit, sur
-# des variantes rendues — et depuis #418/#419 elle ne voit l'écran qu'après le merge, au moment le
-# plus cher pour changer d'avis. Les prompts sont repliés à 100 colonnes : ils se lisent NORMALISÉS.
+# La veille dit ce qu'on vise ; LAQUELLE des formes possibles se choisit sur des variantes rendues.
+# #979 laissait ce choix à une personne — une pause en interactif, un ECHEC en run. #1009 l'a
+# renversé : un run traite tous les tickets et tranche, sur des références vérifiées, par un juge
+# qui n'est pas l'auteur des brouillons, et le choix se consigne avant le code. Les prompts sont
+# repliés à 100 colonnes : ils se lisent NORMALISÉS.
 
 
 def normalise(texte: str) -> str:
@@ -581,10 +587,16 @@ def etape_7() -> str:
     return texte[texte.index("7. **Variantes") : texte.index("Pas de Pull Request à ce stade")]
 
 
+def conduite_qui_decide() -> str:
+    """La branche « Il décide » de l'étape 7, sans le paragraphe qui raconte le renversement."""
+    etape = etape_7()
+    return etape[etape.index("**Il décide** —") : etape.index("**Ce que #1009 a renversé**")]
+
+
 def regle_de_run() -> str:
     """La règle du prompt de run qui porte les variantes, bornée à elle-même."""
     texte = normalise(RUN_SH.read_text(encoding="utf-8"))
-    debut = texte.index("- UN TICKET QUI DÉCIDE DE L'ÉCRAN NE S'IMPLÉMENTE PAS DANS UN RUN")
+    debut = texte.index("- UN TICKET QUI DÉCIDE DE L'ÉCRAN SE TRANCHE ICI, SUR PIÈCES")
     return texte[debut : texte.index("- TU AS ACCÈS AU WEB", debut)]
 
 
@@ -595,6 +607,16 @@ EXEMPLES_DU_CRITERE = (
     "un motif d'affichage à inventer",
     "Remplacer une couleur brute par son token",
     "corriger un débordement à 400 px",
+)
+
+#: Ce que la voie (a) de #979 faisait dire aux deux textes qu'une session de run lit. Aucun ne doit
+#: survivre au renversement : une session qui lirait l'ancien ordre à côté du nouveau suivrait celui
+#: qu'elle lit en dernier.
+CONDUITES_RENVERSEES = (
+    "ORCHESTRATE: ECHEC choix de variante attendu",
+    "ne s'implémente pas dans un run",
+    "tu ne choisis pas à sa place",
+    "puis attends",
 )
 
 
@@ -610,7 +632,7 @@ def test_le_critere_decide_ou_applique_n_est_ecrit_qu_une_fois() -> None:
             f"le critère a changé (« {exemple} ») : ce test ne garde plus rien"
         )
     assert "**Ce critère a deux appelants**" in source
-    assert "l'étape 7 de `/ticket-start` (#979)" in source
+    assert "l'étape 7 de `/ticket-start` (#979, #1009)" in source
 
     replie = "\n".join(textwrap.wrap(EXEMPLES_DU_CRITERE[0], 20))
     fautif = PROMPT_START.read_text(encoding="utf-8") + "\n" + replie + "\n"
@@ -629,28 +651,85 @@ def test_le_critere_decide_ou_applique_n_est_ecrit_qu_une_fois() -> None:
             )
 
 
-def test_en_interactif_les_variantes_se_montrent_puis_le_choix_attend() -> None:
-    """Deux ou trois, pas une galerie ; et une variante unique se présente comme une VALIDATION."""
+def test_un_ticket_qui_decide_n_attend_personne() -> None:
+    """#1009 : ni pause en interactif, ni arrêt en run — la personne renverse après coup, sur la
+    trace, au lieu d'être le goulot. Deux ou trois variantes, pas une galerie ; et une variante
+    unique se consigne comme une VALIDATION."""
     etape = etape_7()
-    assert "montre **2 ou 3 variantes rendues**, puis attends" in etape
-    assert "c'est une **vraie pause**" in etape
+    assert "**Personne n'est attendu, dans aucun régime** (#1009)" in etape
+    assert "**Il décide** — en session interactive **comme en run**, et sans rien demander" in etape
     assert "une variante **unique** n'est pas un choix mais une **validation**" in etape
-    assert "`AskUserQuestion`, une option par variante" in etape
-    assert "une recommandation n'est pas un choix" in etape
-    # Un ticket qui APPLIQUE passe sans variantes — et l'interactif dit pourquoi, en une ligne.
     assert "**Il applique** : pas de variantes, et enchaîne" in etape
+    assert "Ce n'est **pas une question**" in etape
+
+    # L'échantillon fautif : l'ancienne question, repliée comme un prompt la replierait.
+    ancienne = "puis demande (`AskUserQuestion`, une option par variante)"
+    fautif = etape + "\n".join(textwrap.wrap(ancienne, 30))
+    assert "AskUserQuestion" in normalise(fautif), "motif creux : l'absence ne prouverait rien"
+    assert "AskUserQuestion" not in etape, "l'étape 7 repose une question que #1009 a retirée"
+    assert "vraie pause" not in etape
+
+
+def test_l_etape_5_ne_demande_pas_la_veille_d_un_ticket_qui_decide() -> None:
+    """Le choix de l'étape 7 se rend contre les références de la veille : la demander en interactif
+    ferait revenir, par l'étape d'avant, la pause que #1009 retire."""
+    texte = normalise(PROMPT_START.read_text(encoding="utf-8"))
+    etape_5 = texte[texte.index("5. **Veille de conception") : texte.index("6. **Résumé court")]
+    decide = etape_5.index(
+        "**Un ticket qui DÉCIDE de l'écran** (critère du §7.2 de `/design-veille`)"
+    )
+    demande = etape_5.index("**En session interactive, demande**")
+    assert decide < demande, "l'exception se lit avant la question qu'elle écarte"
+    assert "ne demande rien, en aucun régime" in etape_5
+
+
+@pytest.mark.parametrize("source", ["ticket-start", "run.sh"])
+def test_aucun_texte_de_run_n_arrete_un_ticket_qui_decide(source: str) -> None:
+    """La voie (a) de #979 — trace, « À faire » en gardant l'assignation, ECHEC — ne survit dans
+    aucun des deux textes qu'une session de run lit (#1009)."""
+    if source == "ticket-start":
+        texte = etape_7()
+        assert 'set-workflow <iid> "À faire"' not in texte, "l'écart du plan de la voie (a)"
+    else:
+        texte = normalise(RUN_SH.read_text(encoding="utf-8"))
+        texte = texte[texte.index("prompt_ticket() {") : texte.index("prompt_reprise() {")]
+    fautif = texte + "\n".join(textwrap.wrap(CONDUITES_RENVERSEES[0], 25))
+    assert CONDUITES_RENVERSEES[0] in normalise(fautif), "motif creux"
+    for conduite in CONDUITES_RENVERSEES:
+        assert conduite not in texte, (
+            f"{source} garde la conduite renversée par #1009 : « {conduite} »"
+        )
+
+
+def test_la_veille_passe_avant_les_variantes_et_rapporte_de_quoi_comparer() -> None:
+    """Sans références capturées, il n'y a rien contre quoi juger une variante : la veille se joue
+    d'abord, que `touche-surface` ait vu le ticket ou non (#928 n'était vu par aucun motif), et elle
+    cherche des produits PROFESSIONNELS comparables — jamais une vitrine."""
+    conduite = conduite_qui_decide()
+    sans_veille = "Si aucun commentaire du ticket ne **commence** par `## Veille de conception`"
+    assert sans_veille in conduite
+    assert "que l'étape 5 l'ait détectée ou non" in conduite
+    ouverture = conduite.index("/design-veille <surface>")
+    brouillons = conduite.index("git diff > .maestro/variantes")
+    assert ouverture < brouillons, "la veille, puis les brouillons"
+
+    veille = normalise(PROMPT_VEILLE.read_text(encoding="utf-8"))
+    assert "**3 à 5 produits professionnels comparables**" in veille
+    assert "jamais une maquette de vitrine" in veille
+    assert "deviennent la **base de comparaison** des variantes" in veille
+    assert "les deux références vérifiées sont alors **deux captures**" in veille
 
 
 def test_rien_de_non_choisi_ne_peut_finir_dans_un_commit() -> None:
-    """La réponse peut venir le lendemain, et la session être coupée d'ici là : quand la question se
-    pose, l'arbre est vide et la stack arrêtée — sinon `/ticket-ship` committerait une variante que
-    personne n'a choisie."""
-    etape = etape_7()
-    assert "**Rien ne reste dans l'arbre.**" in etape
-    assert "Un brouillon ne crée **aucun fichier**" in etape
-    assert "`git status --porcelain` **vide**" in etape
-    arret = etape.index("relecture-visuelle.sh --fin")
-    assert arret < etape.index("`AskUserQuestion`"), "l'arbre se vide AVANT la question, pas après"
+    """La session peut être coupée entre le dernier brouillon et le choix : l'arbre est vide et la
+    stack arrêtée AVANT le choix — sinon `/ticket-ship` committerait une variante non retenue."""
+    conduite = conduite_qui_decide()
+    assert "**Rien ne reste dans l'arbre.**" in conduite
+    assert "Un brouillon ne crée **aucun fichier**" in conduite
+    assert "`git status --porcelain` **vide**" in conduite
+    arret = conduite.index("relecture-visuelle.sh --fin")
+    choix = conduite.index('`subagent_type: "regard-neuf"`')
+    assert arret < choix, "l'arbre se vide AVANT le choix"
 
 
 def test_les_captures_de_variantes_ne_comptent_pas_comme_une_relecture() -> None:
@@ -666,21 +745,40 @@ def test_les_captures_de_variantes_ne_comptent_pas_comme_une_relecture() -> None
     assert f"**jamais sous `{sous_dossier.group(1)}/`**" in etape
 
 
+def test_le_choix_est_rendu_par_le_regard_neuf_sur_pieces() -> None:
+    """#980 : l'auteur voit ce qu'il a voulu faire. Le regard neuf reçoit les pièces et rien
+    d'autre, par la même phrase que la relecture, et il en retient toujours une — personne d'autre
+    ne choisira."""
+    conduite = conduite_qui_decide()
+    assert "**Le choix est rendu par le regard neuf**, pas par toi" in conduite
+    assert "`.maestro/session/design-veille/`" in conduite, "les références font partie des pièces"
+    assert "**ni le code, ni le diff, ni ton raisonnement**" in conduite
+    assert "Il en **retient toujours une**" in conduite
+    assert "saisis-le **une** fois de plus" in conduite, "une reprise, pas une boucle"
+
+    phrase = "— lis-la, puis rends-la remplie."
+    assert phrase in conduite
+    assert phrase in normalise(SKILL_RELECTURE.read_text(encoding="utf-8")), (
+        "la phrase de la relecture a changé : l'étape 7 n'en est plus la copie au mot près"
+    )
+
+    agent = AGENT_REGARD.read_text(encoding="utf-8")
+    assert "## Quand la saisine demande un choix entre variantes" in agent
+    assert "**Tu en retiens toujours une.**" in agent
+    assert re.search(r"^tools: Read$", agent, re.M), "le choix ne rouvre pas les outils du regard"
+
+
 def test_le_choix_se_consigne_avant_la_premiere_ligne_d_implementation() -> None:
     """La trace, puis le code : un choix qui ne vivrait que dans la conversation mourrait avec elle,
     et le ticket reposerait la question au démarrage suivant."""
-    etape = etape_7()
-    interactif = etape[
-        etape.index("**Il décide, en session interactive**") : etape.index(
-            "**Il décide, en session autonome**"
-        )
-    ]
-    assert "**Consigne le choix avant la première ligne d'implémentation**" in interactif
-    ancre = interactif.index("qui commence par `## Variante retenue`")
-    note = interactif.index("lib.sh issue-note <iid> <fichier>")
-    reprise = interactif.index("git apply .maestro/variantes/<iid>/<lettre>.patch")
-    assert ancre < note < reprise
-    assert "Consignation en échec : n'implémente pas" in interactif
+    conduite = conduite_qui_decide()
+    assert "**Consigne le choix avant la première ligne d'implémentation**" in conduite
+    regard = conduite.index('`subagent_type: "regard-neuf"`')
+    ancre = conduite.index("qui commence par `## Variante retenue`")
+    note = conduite.index("lib.sh issue-note <iid> <fichier>")
+    reprise = conduite.index("git apply .maestro/variantes/<iid>/<lettre>.patch")
+    assert regard < ancre < note < reprise
+    assert "Consignation en échec : n'implémente pas" in conduite
 
 
 def test_un_choix_consigne_fait_du_ticket_un_ticket_qui_applique() -> None:
@@ -691,56 +789,46 @@ def test_un_choix_consigne_fait_du_ticket_un_ticket_qui_applique() -> None:
     assert "dont le choix est consigné — s'implémente, lui, comme d'habitude" in regle_de_run()
 
 
-@pytest.mark.parametrize("source", ["ticket-start", "run.sh"])
-def test_en_run_le_choix_n_est_jamais_fabrique(source: str) -> None:
-    """La voie (a) de #979, dans les DEUX textes qu'une session de run lit : la trace, PUIS la
-    protection (« À faire » en gardant l'assignation, #621), PUIS l'échec. Ni variante, ni ligne de
-    code — implémenter « la plus proche des partis pris » serait un choix que personne n'a fait,
-    déjà dans `main` quand quelqu'un le lirait."""
-    if source == "ticket-start":
-        etape = etape_7()
-        texte = etape[etape.index("**Il décide, en session autonome**") :]
-        assert "**tu ne choisis pas à sa place**" in texte
-        assert "Ne produis **aucune variante**" in texte
-        assert "n'écris **aucune ligne** d'implémentation" in texte
-        assert "en **gardant l'assignation**" in texte
-        trace = texte.index("lib.sh issue-note <iid> <fichier>")
-        protection = texte.index('lib.sh set-workflow <iid> "À faire"')
-    else:
-        texte = regle_de_run()
-        assert "ne produis aucune variante et n'écris aucune ligne d'implémentation" in texte
-        assert "EN GARDANT son assignation" in texte
-        assert "N'implémente JAMAIS « la variante la plus proche des partis pris »" in texte
-        trace = texte.index("« lib.sh issue-note »")
-        protection = texte.index('« lib.sh set-workflow <iid> "À faire" »')
-    echec = texte.index("ORCHESTRATE: ECHEC choix de variante attendu")
-    assert trace < protection < echec, "l'ordre de #934 : la trace avant ce qu'elle explique"
+def test_la_regle_de_run_tranche_dans_l_ordre_et_ne_s_arrete_jamais() -> None:
+    """La règle du prompt de run dit le même ordre que l'étape 7 à laquelle elle renvoie : la
+    veille, les variantes, le regard neuf, la trace, PUIS le code."""
+    regle = regle_de_run()
+    assert "tu ne t'arrêtes JAMAIS pour attendre un choix" in regle
+    assert "L'étape 7 de /ticket-start porte la conduite" in regle
+    veille = regle.index("« ## Veille de conception »")
+    regard = regle.index("« regard-neuf »")
+    trace = regle.index("« lib.sh issue-note »")
+    code = regle.index("AVANT la première ligne d'implémentation")
+    assert veille < regard < trace < code
+    assert "un choix sans pièces est un choix fabriqué" in regle
 
 
-def test_la_regle_generale_du_run_nomme_son_exception() -> None:
-    """« Si un choix se présente, tranche » est la règle d'un run — et elle contredirait la voie (a)
-    si elle ne nommait pas l'exception là où elle est écrite."""
+def test_la_regle_generale_du_run_n_a_plus_d_exception() -> None:
+    """« Si un choix se présente, tranche » est la règle d'un run, et #1009 lui a rendu la forme
+    d'un écran : l'exception que #979 y avait écrite contredirait la règle qui la suit."""
     texte = normalise(RUN_SH.read_text(encoding="utf-8"))
-    assert "À UNE EXCEPTION PRÈS, la forme d'un écran qu'un ticket DÉCIDE" in texte
+    assert "À UNE EXCEPTION PRÈS" not in texte
+    assert "Y COMPRIS la forme d'un écran qu'un ticket DÉCIDE" in texte
 
 
 def test_le_regime_de_run_est_arbitre_par_ecrit_avec_ses_voies_ecartees() -> None:
-    """Un verdict réduit à sa conduite se rouvre au premier doute : les deux voies écartées sont
-    écrites avec leur raison, à côté du prompt qui applique la troisième."""
+    """Un verdict réduit à sa conduite se rouvre au premier doute : les quatre voies sont écrites
+    avec leur sort — (a) retenue puis renversée, (d) retenue, (b) et (c) écartées."""
     texte = normalise(RUN_SH.read_text(encoding="utf-8"))
     assert re.search(r"\(c\) implémenter la variante la plus proche .{0,120}ÉCARTÉE", texte)
     assert re.search(r"\(b\) DIFFÉRER la question .{0,120}ÉCARTÉE", texte)
-    assert re.search(r"\(a\) ÉCARTER le ticket des runs .{0,80}RETENUE", texte)
+    assert re.search(r"\(a\) ÉCARTER le ticket des runs .{0,80}RETENUE par #979", texte)
+    assert re.search(r"RETENUE par #979 .{0,120}RENVERSÉE par #1009", texte)
+    assert re.search(r"\(d\) TRANCHER SUR PIÈCES, dans la session — RETENUE par #1009", texte)
     assert "la question se repose-t-elle d'elle-même ?" in texte, "la raison qui écarte (b) (#795)"
 
 
-def test_une_veille_jouee_en_run_ne_se_conclut_plus_par_une_implementation() -> None:
-    """Conséquence de #979 sur #934 : une veille jouée dit que le ticket DÉCIDE, et un tel ticket ne
-    s'implémente pas en run. Les deux conduites d'avant ne doivent pas survivre à côté de la
-    nouvelle — une session lirait deux ordres contraires."""
+def test_une_veille_jouee_nourrit_le_choix_des_variantes() -> None:
+    """Conséquence de #1009 sur #934 : une veille jouée dit que le ticket DÉCIDE, et ses captures
+    sont ce contre quoi les variantes se jugent — la veille elle-même n'implémente toujours rien."""
     veille = normalise(PROMPT_VEILLE.read_text(encoding="utf-8"))
     run = normalise(RUN_SH.read_text(encoding="utf-8"))
     assert "Puis implémente en appliquant tes propres partis pris" not in veille
-    assert "Implémente alors en appliquant CES partis pris" not in run
     assert "Puis rends la main à `/ticket-start`" in veille
-    assert "un tel ticket ne s'implémente pas dans un run" in run
+    assert "le regard neuf les juge contre tes partis pris et tes captures" in veille
+    assert "ses captures de référence sont ce contre quoi tes variantes seront jugées" in run
