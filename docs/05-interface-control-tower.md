@@ -607,6 +607,26 @@ replient en lignes en dessous, au lieu d'être toutes tassées de front.
 > la rangée de cases — dont le contrôle qui compte : le dénominateur grandit sans
 > que le numérateur bouge.
 
+> **Ce qui reste non coché à la clôture se dit (#944).** Un agent conclut souvent
+> sans cocher sa dernière ligne : la tâche 4 du run du
+> [retex du 2026-09-11](./retex/2026-09-11-premiere-session-utilisateur.md)
+> s'affichait **Terminée** sur une checklist à **14/15**, et rien nulle part ne
+> disait laquelle des quinze manquait — on lisait donc soit un compteur faux, soit
+> un verdict faux, sans pouvoir trancher (constat **G12**). Les deux remèdes
+> évidents effacent la question au lieu d'y répondre : cocher d'office ferait dire
+> à l'agent ce qu'il n'a pas dit, refuser le verdict ferait échouer une tâche qui a
+> livré — sur une liste de travail que le contrat donne lui-même pour faillible.
+> Reste le troisième, et c'est le critère du ticket : **le dire**. À la clôture
+> d'une tâche soldée en **succès** dont la checklist porte des étapes non cochées,
+> le moteur consigne une ligne qui les **nomme**
+> (`LocalExecutor._consigne_ecart_checklist`), par le canal d'activité existant
+> (`<tache>:activite`) et **avant** l'étape terminale, pour qu'on ne lise jamais
+> « Terminée » sans elle. Aucun suffixe neuf : le pont traite ce qu'il ne reconnaît
+> pas comme l'issue d'une tâche, et un `<tache>:ecart` ferait une tâche fantôme de
+> plus dans les comptes — le défaut **C8** du même retex, corrigé par #924. Muet
+> partout ailleurs : sur un échec (une checklist inachevée n'y apprend rien), sans
+> checklist, et sur un run où tout est coché.
+
 Le **glisser-déposer** entre colonnes reste une **cible non livrée** : le statut
 d'une tâche est aujourd'hui posé par la machine à états du moteur, et seule la
 réassignation d'agent s'obtient depuis l'écran.
