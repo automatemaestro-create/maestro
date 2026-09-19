@@ -150,6 +150,7 @@
 
 import { useMemo, useState } from "react";
 
+import { DemandeDeCadrage } from "@/components/chat/DemandeDeCadrage";
 import { FilDeCadrage } from "@/components/chat/FilDeCadrage";
 import { Conversation } from "@/components/Conversation";
 import {
@@ -170,7 +171,7 @@ import {
   LienRenvoi,
 } from "@/components/Primitives";
 import { cheminOnglet } from "@/lib/agents";
-import { runsEnAttente } from "@/lib/brief";
+import { propositionEnAttente, runsEnAttente } from "@/lib/brief";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import { formatHeureRelative } from "@/lib/format";
 import { useHorloge } from "@/lib/horloge";
@@ -211,6 +212,26 @@ export default function PageChat() {
   // deux formulations de « ce qui attend » finiraient par ne plus désigner la
   // même file, et l'écran montrerait le cadrage au moment où il n'y en a pas.
   const cadrageEnAttente = runsEnAttente(executions).length > 0;
+
+  // L'autre moitié de « ce qui attend un geste de cadrage » (#943) : la
+  // proposition que l'orchestration vient de faire — « Je lance ? » —, qui n'a
+  // pas encore de run et que `runsEnAttente` ne peut donc pas voir. Même
+  // module, même raison : la page appelle la règle, elle ne la recopie pas.
+  //
+  // Elle ne déplace **pas** le bloc de cadrage dans le corps, et c'est
+  // délibéré : cette demande-là est déjà sous les yeux, dans le fil qui occupe
+  // l'écran. L'y recopier en tête pousserait la conversation vers le bas pour
+  // redire ce qu'elle dit — exactement ce que #691 a corrigé. Le geste va au
+  // pied du fil, où la main allait taper ; le panneau, lui, cesse de dire
+  // « aucun » pendant que la question est posée.
+  //
+  // Lue sur le fil **affiché**, et seulement quand c'est celui de
+  // l'orchestration : elle est la seule à proposer des runs, donc un aparté
+  // avec un agent n'en porte jamais. Rien ne se perd à basculer — la demande
+  // est persistée sur son message et revient avec le fil ; et au moment où la
+  // question est posée, c'est nécessairement ce fil-là qu'on a sous les yeux,
+  // puisqu'elle répond à ce qu'on vient d'y écrire.
+  const proposition = global ? propositionEnAttente(fil.messages) : null;
 
   /**
    * Chaque frappe passe ici : une mention close par une espace change le
@@ -264,7 +285,7 @@ export default function PageChat() {
               répondent, et l&apos;accord — ou le refus — s&apos;y donne. Rien
               n&apos;est décomposé avant.
             </p>
-            <FilDeCadrage />
+            <FilDeCadrage proposition={proposition} />
           </section>
         )}
         <Conversation
@@ -285,6 +306,17 @@ export default function PageChat() {
               )}
               <ConversationOuverte fil={fil} />
             </>
+          }
+          /* Le geste au pied du fil (#943) — là où l'œil vient de lire la
+             question, et où la main allait taper la réponse. */
+          pied={
+            proposition !== null ? (
+              <DemandeDeCadrage
+                demande={proposition}
+                trancher={fil.trancherCadrage}
+                enCours={fil.envoi}
+              />
+            ) : undefined
           }
           bandeau={
             /* Un fait neutre mis en avant, donc le ton `info` — pas `attention`,
@@ -393,7 +425,7 @@ export default function PageChat() {
           <Carte densite="aeree">
             <EnTeteSection titre="Cadrage en attente" icone={IconeObjectif} />
             <div className="mt-3">
-              <FilDeCadrage />
+              <FilDeCadrage proposition={proposition} />
             </div>
           </Carte>
         )}

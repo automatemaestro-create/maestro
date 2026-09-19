@@ -171,6 +171,8 @@ export type FilFactice = {
   envoyer: (contenu: string, sources?: SourceDeclaree[]) => Promise<void>;
   /** L'arrêt d'une génération en vol (#695) — noté, jamais joué. */
   interrompre: () => void;
+  /** Le geste qui tranche une demande de cadrage (#943) — accord, refus, amendement. */
+  trancherCadrage: (approuve: boolean, objectif?: string | null) => Promise<void>;
   /** La conversation ouverte du fil (#696) — `""` tant que rien n'a été servi. */
   conversation: string;
   /** Les conversations du fil, la plus récente d'abord (#696). */
@@ -196,6 +198,7 @@ function filParDefaut(): FilFactice {
     reponseEnCours: null,
     envoyer: async () => {},
     interrompre: () => {},
+    trancherCadrage: async () => {},
     conversation: CHAT_CONVERSATION_ORIGINE,
     conversations: [conversationFactice()],
     nouvelleConversation: async () => {},

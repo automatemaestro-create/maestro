@@ -1091,6 +1091,13 @@ export type Fournisseur = {
  * comme `agent` l'est à l'intérieur du dépôt. L'API le sert toujours ; il est
  * facultatif ici parce que les fils simulés des tests n'ont pas à le porter pour
  * que le composant les rende.
+ *
+ * `proposition` (#943) est la troisième question que le même objet porte : ce
+ * que le message **demande**. C'est l'objectif qu'une réponse de
+ * l'orchestration soumet à l'accord — la reformulation qu'elle enverrait au
+ * run —, et c'est ce qui fait exister une demande de cadrage ailleurs que dans
+ * une phrase. Vide partout ailleurs ; ce n'est **pas** lui qui dit si la
+ * demande tient encore (`propositionEnAttente`, `lib/brief`).
  */
 export type MessageChat = {
   agent: string;
@@ -1099,6 +1106,8 @@ export type MessageChat = {
   horodatage: string;
   run_id: string;
   tache_id: string;
+  /** L'objectif soumis à l'accord par ce message (#943) — vide : aucune demande. */
+  proposition?: string;
   /** La conversation d'appartenance (#694) — `origine` pour celle d'un agent par défaut. */
   conversation?: string;
   /** La matière résolue que le message embarque (#482) — absente ou vide : aucune. */

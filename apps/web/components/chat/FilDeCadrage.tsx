@@ -21,6 +21,22 @@
  * suspendus depuis #538 et coupe la parole exprès ; une seconde annonce polie sur
  * le même événement le dirait deux fois. Ce que `/brief` annonce, lui, est ce qui
  * **sort** de la file — c'est son écran, pas celui-ci.
+ *
+ * ## La file avait une seconde entrée, qu'elle ne voyait pas (#943)
+ *
+ * Une proposition de l'orchestration — « Je lance ? » — est un cadrage en
+ * attente **sans run** : `runsEnAttente` ne pouvait pas la voir, et ce composant
+ * affirmait « Aucun cadrage en attente » au moment même où la question était
+ * posée (retex du 2026-09-11, constat G10). Il la reçoit désormais de la page,
+ * qui la lit par `propositionEnAttente` — la règle vit dans `lib/brief` avec
+ * l'autre, précisément pour que les deux ne puissent plus désigner des files
+ * différentes.
+ *
+ * Il la **signale**, il ne la tranche pas — le partage que `PanneauBriefs` tient
+ * déjà : la carte dit qu'une décision attend et où elle se prend, le geste vit
+ * là où on lit la demande (`chat/DemandeDeCadrage`, au pied du fil). Deux
+ * endroits pour un même bouton, ce serait la même question posée deux fois sur
+ * le même écran.
  */
 
 import { useState } from "react";
@@ -34,9 +50,21 @@ import { useEtatGlobal } from "@/lib/etatGlobal";
 import { formatHeureRelative } from "@/lib/format";
 import { useHorloge } from "@/lib/horloge";
 import { entreeParLibelle } from "@/lib/navigation";
-import { EXECUTION_EN_ATTENTE_REPONSES } from "@/lib/types";
+import {
+  EXECUTION_EN_ATTENTE_REPONSES,
+  type MessageChat,
+} from "@/lib/types";
 
-export function FilDeCadrage() {
+export function FilDeCadrage({
+  proposition = null,
+}: {
+  /**
+   * La demande de cadrage que le fil porte encore (#943) — celle que la page a
+   * lue par `propositionEnAttente`. `null` : aucune, et c'est la seule façon de
+   * dire « aucun » sans se tromper.
+   */
+  proposition?: MessageChat | null;
+}) {
   const { projet, executions, chargement, erreur } = useEtatGlobal();
   const maintenant = useHorloge();
   const [choisi, setChoisi] = useState<string | null>(null);
@@ -52,12 +80,19 @@ export function FilDeCadrage() {
   return (
     <>
       <BanniereErreurApi erreur={erreur} />
+      {/* La demande **sans run**, en tête : c'est la plus récente des deux
+          sortes, et la seule à laquelle on répond sans quitter l'écran. */}
+      {proposition !== null && (
+        <PropositionEnAttente demande={proposition} maintenant={maintenant} />
+      )}
       {courant === undefined ? (
-        <EtatVide
-          message={`Aucun cadrage en attente sur ${projet.nom}. Un run lancé depuis la Control Tower s'arrête ici avant de décomposer : c'est le moment où corriger coûte un message.`}
-          icone={IconeObjectif}
-          lien={composer && { href: composer.href, libelle: "Composer un objectif" }}
-        />
+        proposition === null && (
+          <EtatVide
+            message={`Aucun cadrage en attente sur ${projet.nom}. Un run lancé depuis la Control Tower s'arrête ici avant de décomposer : c'est le moment où corriger coûte un message.`}
+            icone={IconeObjectif}
+            lien={composer && { href: composer.href, libelle: "Composer un objectif" }}
+          />
+        )
       ) : (
         <>
           {runs.length > 1 && (
@@ -111,5 +146,45 @@ export function FilDeCadrage() {
         </>
       )}
     </>
+  );
+}
+
+/**
+ * La proposition que l'orchestration attend de voir tranchée, **signalée**
+ * (#943) : ce qu'elle lancerait, et depuis quand elle le demande.
+ *
+ * Elle ne porte pas de bouton, et c'est le partage de `PanneauBriefs` — « il
+ * signale et il achemine, il ne décide pas ». Ici le geste est à quelques
+ * lignes de là, au pied du fil ; le redonner en tête poserait deux fois la même
+ * question sur le même écran. Ce que cette carte apporte est ce qui manquait :
+ * que la surface faite pour montrer les cadrages en attente en montre un quand
+ * il y en a un.
+ */
+function PropositionEnAttente({
+  demande,
+  maintenant,
+}: {
+  demande: MessageChat;
+  maintenant: number | null;
+}) {
+  const quand = demande.horodatage
+    ? formatHeureRelative(demande.horodatage, maintenant)
+    : "";
+  return (
+    <div className="flex min-w-0 flex-col gap-1.5 rounded-md border border-attention bg-attention-creux px-3 py-2">
+      <span className="flex flex-wrap items-center gap-2">
+        <BadgeEtat ton="attention">décision</BadgeEtat>
+        <span className="text-annexe text-attention-texte">
+          L&apos;orchestration attend votre accord{quand && ` — ${quand}`}
+        </span>
+      </span>
+      <p className="min-w-0 break-words text-corps text-texte">
+        {demande.proposition}
+      </p>
+      <p className="text-annexe text-texte-secondaire">
+        Répondez sur la demande, au bas du fil : lancer, corriger l&apos;objectif
+        ou refuser.
+      </p>
+    </div>
   );
 }

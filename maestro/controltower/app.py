@@ -195,6 +195,10 @@ Endpoints :
   un run** quand c'en est une (`maestro.controltower.orchestration`). Le corps
   porte le `projet_id` de la fenêtre (#683) : le run ouvert **appartient** au
   projet actif, donc il figure dans sa liste de runs et s'ouvre en détail ;
+- `POST /api/chat/{agent}/cadrage` — **tranche** la demande de cadrage que le
+  fil porte (#943) : accepter, refuser, ou accepter un objectif **amendé**, sans
+  repasser par la zone de saisie ni par le juge. Même paire rendue qu'un envoi ;
+  `409` quand rien n'attend ;
 - `GET  /api/chat/{agent}/flux` — la même réponse rendue **au fur et à mesure**
   (SSE, trames `debut`/`fragment`/`fin`/`interrompu`/`erreur`, #268) : un canal,
   valable pour les trois fils ; `?projet_id=` y porte le même rattachement que le
@@ -327,6 +331,7 @@ from maestro.controltower.battement import (
 )
 from maestro.controltower.brief import ACTEUR_BRIEF, ROLE_BRIEF
 from maestro.controltower.chat import (
+    CadrageIntrouvable,
     ChatStore,
     RepondeurChat,
     RepondeurModele,
@@ -764,6 +769,25 @@ class ChatEnvoiRequete(BaseModel):
 
     contenu: str
     sources: list[dict[str, Any]] | None = None
+    projet_id: str | None = None
+    conversation: str | None = None
+
+
+class CadrageDecisionRequete(BaseModel):
+    """Corps du geste qui tranche une demande de cadrage du fil (#943).
+
+    La **même forme** que `DecisionBrief` (§6.10), parce que c'est la même
+    décision un cran plus tôt : `approuve` dit oui ou non, et le second champ
+    porte la version **corrigée** ou `null` pour « la proposition tient ». Le
+    corps ne recopie jamais un objectif non touché — et `null` n'est pas une
+    omission, c'est une affirmation.
+
+    `objectif` est ignoré sur un refus : il n'y a rien à lancer. `projet_id` et
+    `conversation` ont exactement le sens qu'ils ont sur un envoi.
+    """
+
+    approuve: bool
+    objectif: str | None = None
     projet_id: str | None = None
     conversation: str | None = None
 
@@ -4199,6 +4223,51 @@ def create_app(
             "role": fiche.role,
             "conversation": fil,
             "messages": [message.to_dict(), reponse.to_dict()],
+        }
+
+    @app.post("/api/chat/{agent}/cadrage", status_code=201)
+    async def trancher_cadrage_chat(
+        agent: str, requete: CadrageDecisionRequete
+    ) -> dict[str, Any]:
+        """Tranche la demande de cadrage que le fil porte, et rend la paire (#943).
+
+        Le **geste** qui répond à une proposition de l'orchestration — « Je
+        lance ? » — sans repasser par la zone de saisie : `approuve` dit oui ou
+        non, `objectif` porte la version corrigée ou `null` pour « la
+        proposition tient ». Même forme et même réponse que
+        `POST …/messages` — l'acte est écrit au fil, la réponse suit —, parce
+        que c'est bien un tour de conversation : ce qui change est que la
+        décision vient d'un clic.
+
+        `409` quand rien n'attend : aucune proposition, une déjà tranchée, ou un
+        fil dont le répondeur n'en fait pas — c'est le `409` de §6.10 un cran
+        plus tôt, et il couvre le double geste comme le geste tardif. `404` hors
+        catalogue, `422` sur une conversation mal formée, `502` si la décision
+        n'a pas pu être exécutée (le geste, lui, reste acquis au fil).
+        """
+        fiche, service = _canal_chat(agent)
+        fil = _conversation_demandee(service, fiche, requete.conversation)
+        try:
+            geste, reponse = await service.trancher_cadrage(
+                fiche,
+                approuve=requete.approuve,
+                objectif=requete.objectif,
+                # Normalisé **ici**, à la frontière, comme sur un envoi : c'est
+                # le projet de la fenêtre, et c'est lui qui rattachera le run.
+                projet_id=projet_id_valide(requete.projet_id),
+                conversation=fil,
+            )
+        except CadrageIntrouvable as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except ReponseIndisponible as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {
+            "agent": fiche.nom,
+            "role": fiche.role,
+            "conversation": fil,
+            "messages": [geste.to_dict(), reponse.to_dict()],
         }
 
     async def _flux_reponse(

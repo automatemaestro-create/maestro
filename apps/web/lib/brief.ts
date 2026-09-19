@@ -15,6 +15,14 @@
  * se vérifie — le déménagement n'a rien eu à réécrire de ce qui est ici, et les
  * deux surfaces ne peuvent pas diverger sur ce qu'est un brief corrigé, un run en
  * attente ou un tour de clarification.
+ *
+ * ⚠ **« Ce qui attend un geste de cadrage » a deux sources depuis #943**, et
+ * n'en avait qu'une : un run arrêté sur son brief (`runsEnAttente`) **et** une
+ * proposition de l'orchestration qui n'a pas encore de run
+ * (`propositionEnAttente`). La seconde est ce que le retex du 2026-09-11 a
+ * trouvé manquant — le panneau disait « aucun » pendant que la question était
+ * posée, parce qu'il ne regardait que la première. Les deux se lisent ici, et
+ * pas dans les composants, pour la raison qui a fait ce module.
  */
 
 import {
@@ -24,6 +32,7 @@ import {
   EXECUTION_EN_ATTENTE_REPONSES,
   type Brief,
   type Evenement,
+  type MessageChat,
   type ResumeExecution,
 } from "./types";
 
@@ -85,6 +94,37 @@ export function runsEnAttente(executions: ResumeExecution[]): ResumeExecution[] 
  */
 export function attenteDepuis(execution: ResumeExecution): string {
   return execution.attente_depuis || execution.debut || "9999";
+}
+
+/**
+ * La **demande de cadrage** que ce fil porte encore — `null` s'il n'y en a pas
+ * (#943).
+ *
+ * L'autre moitié de « ce qui attend un geste de cadrage », et la moitié qui
+ * manquait : `runsEnAttente` ne voit que les runs **arrêtés sur leur brief**, or
+ * une proposition de l'orchestration (« Je lance ? ») n'a pas encore de run.
+ * D'où le constat du retex du 2026-09-11 (G10) — le panneau affirmait « aucun
+ * cadrage en attente » au moment même où la question était posée : il disait
+ * vrai sur ce qu'il regardait, et la demande vivait ailleurs.
+ *
+ * La règle est **le dernier message, et lui seul**, quand il porte une
+ * `proposition` : une demande attend tant que rien n'a suivi. C'est la lecture
+ * littérale de ce que le canal tient côté API (`maestro/controltower/chat.py`,
+ * `proposition_en_attente`) — le fil est sa seule mémoire, et ce qui rend une
+ * proposition caduque n'est pas le temps mais qu'on y ait répondu, quoi qu'on
+ * ait répondu.
+ *
+ * Elle vit ici, avec `runsEnAttente`, pour la raison d'être du module : les
+ * surfaces qui montrent le cadrage et celle qui le tranche ne peuvent pas
+ * diverger sur ce qui attend. Deux formulations finiraient par ne plus désigner
+ * la même file — c'est exactement le défaut qu'on corrige.
+ */
+export function propositionEnAttente(
+  messages: MessageChat[],
+): MessageChat | null {
+  const dernier = messages[messages.length - 1];
+  if (dernier === undefined) return null;
+  return (dernier.proposition ?? "") === "" ? null : dernier;
 }
 
 /**
