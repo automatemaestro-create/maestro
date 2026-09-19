@@ -84,6 +84,7 @@ ECRITURES = (
 # apparaissent dans la requête — les règles les plus spécifiques se placent donc en tête.
 FAUX_GH = r'''
 import base64
+import datetime
 import json
 import os
 import re
@@ -408,10 +409,18 @@ def jalons_rest(chemin, meth, args):
         if any(jalon["title"] == titre for jalon in jalons):
             sortie(compact({"message": "Validation Failed"}), code=1)
         numero = max((int(jalon.get("number", 0)) for jalon in jalons), default=0) + 1
+        # ⚠ GitHub enregistre la VEILLE d'une échéance envoyée à la CRÉATION (#1018, mesuré le
+        # 2026-09-19 : `2028-01-05T00:00:00Z` → `2028-01-04T00:00:00Z`), alors que le PATCH la
+        # garde. Le double le reproduit : c'est ce qui rend visible un verbe qui ferait voyager
+        # l'échéance dans le POST, là où un double fidèle à ce qu'on lui envoie le laissait vert.
+        echeance = valeur_champ(args, "due_on")
+        if echeance:
+            veille = datetime.date.fromisoformat(echeance[:10]) - datetime.timedelta(days=1)
+            echeance = veille.isoformat() + echeance[10:]
         jalons.append({
             "number": numero, "title": titre, "state": "open",
             "description": valeur_champ(args, "description") or "",
-            "due_on": valeur_champ(args, "due_on"),
+            "due_on": echeance,
             "open_issues": 0, "closed_issues": 0,
         })
         persiste()

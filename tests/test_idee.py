@@ -139,7 +139,7 @@ def test_une_date_invalide_est_refusee_avant_la_forge(depot: Depot, date: str) -
 def test_un_jalon_produit_nait_avec_son_echeance_et_sans_marqueur(file: Depot) -> None:
     cree = file.lib("milestone-cree", "Projet d'abord", "2027-10-15")
     assert cree.returncode == 0, cree.stderr
-    assert "échéance 2027-10-15, rail produit" in cree.stdout
+    assert "échéance 2027-10-15 (relue), rail produit" in cree.stdout
     neuf = jalon_du_double(file, "Projet d'abord")
     assert neuf["due_on"] == "2027-10-15T00:00:00Z"
     assert neuf["description"] == "", "« produit » est l'absence du marqueur"
@@ -150,6 +150,37 @@ def test_un_jalon_d_outillage_porte_son_marqueur_en_tete(file: Depot) -> None:
     cree = file.lib("milestone-cree", "Forge v2", "2027-12-01", "outillage")
     assert cree.returncode == 0, cree.stderr
     assert jalon_du_double(file, "Forge v2")["description"] == "rail: outillage"
+
+
+# ─── #1018 : GitHub enregistre la veille d'une échéance envoyée à la création ────────────────────
+
+
+def test_le_double_enregistre_la_veille_d_une_echeance_postee(file: Depot) -> None:
+    """L'échantillon fautif : la forme de #1013 — l'échéance DANS le POST — rend la veille.
+
+    Sans cette moitié, le double serait fidèle à ce qu'on lui envoie, et la suite resterait verte
+    sur le verbe qui a rangé le jalon n° 21 un jour trop tôt (2026-09-19).
+    """
+    (file.racine / "essai-post.sh").write_text(
+        'gh api --method POST "repos/equipe-test/maestro/milestones" --raw-field title="Neuf" '
+        '--raw-field due_on="2028-01-05T00:00:00Z" >/dev/null\n',
+        encoding="utf-8",
+        newline="\n",
+    )
+    assert file._bash("essai-post.sh", cwd=None).returncode == 0
+    assert jalon_du_double(file, "Neuf")["due_on"] == "2028-01-04T00:00:00Z"
+
+
+def test_l_echeance_ne_voyage_pas_dans_le_post_et_se_pose_par_patch(file: Depot) -> None:
+    """La correction : le jalon naît sans échéance, le PATCH la pose, puis la fiche est relue."""
+    cree = file.lib("milestone-cree", "L'équipe sur mesure", "2028-01-05")
+    assert cree.returncode == 0, cree.stderr
+
+    ecrites = [ligne for ligne in ecritures(file) if "/milestones" in ligne]
+    creation, pose = ecrites
+    assert "--method\tPOST" in creation and "due_on" not in creation
+    assert "--method\tPATCH" in pose and "due_on=2028-01-05T00:00:00Z" in pose
+    assert jalon_du_double(file, "L'équipe sur mesure")["due_on"] == "2028-01-05T00:00:00Z"
 
 
 def test_un_titre_deja_pris_est_un_refus_et_rien_n_est_cree(file: Depot) -> None:
