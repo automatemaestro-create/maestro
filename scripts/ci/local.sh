@@ -217,6 +217,8 @@ liste_jobs() {
     # une demi-minute ; annoncer « natif » annoncerait un régime qui ne jouera pas.
     if [ "$PYTEST_REGIME_REVEIL" = 1 ]; then
       ou="$ou — après démarrage de Docker Desktop"
+      # Depuis #988 le réveil suit le périmètre : un diff sans suite concernée ne démarre rien.
+      [ "$MODE_PYTEST" = complet ] || ou="$ou, si une suite est concernée"
     fi
     lanceur="pytest"
   else
@@ -773,6 +775,22 @@ xdist_utilisable() { # <python|"">
 job_pytest() {
   local exe="" couverture tests args=() suite nb=0 workers code
 
+  # Le PÉRIMÈTRE d'abord, le régime ensuite (#988). Choisir le régime peut démarrer Docker Desktop —
+  # jusqu'à 180 s —, et le faire avant de savoir si une suite est concernée payait ce démarrage sur
+  # un diff de prose ou de front, pour conclure aussitôt « aucune suite concernée ». Le périmètre ne
+  # lit que le diff : il ne dépend d'aucun régime, et c'est ce qui permet de le calculer avant.
+  if [ "$MODE_PYTEST" != complet ]; then
+    calcule_perimetre
+    if [ "$PERIMETRE_TOUT" != 1 ] && [ -z "$PERIMETRE_SUITES" ]; then
+      # Rien de testable n'a bougé (prose, front). Ni vert ni rouge : hors périmètre, comme
+      # web-build quand apps/web n'a pas changé.
+      DETAIL="aucune suite concernée — $PERIMETRE_MOTIF"
+      PERIMETRE_REDUIT=1
+      PYTEST_JOUE=1
+      return 3
+    fi
+  fi
+
   choisit_regime_pytest || return 2
 
   # Les contrôles du venv (pytest installé, `import maestro` résolu ICI) vivent dans
@@ -791,17 +809,10 @@ job_pytest() {
     xdist_utilisable "$exe" && args=(-n "$workers" "${args[@]}")
     PERIMETRE_MOTIF="--complet"
   else
-    calcule_perimetre
+    # Le périmètre est déjà calculé, et un périmètre vide est déjà sorti — voir plus haut.
     if [ "$PERIMETRE_TOUT" = 1 ]; then
       # Le périmètre couvre tout : autant le dire ainsi et laisser pytest collecter lui-même.
       xdist_utilisable "$exe" && args=(-n "$workers")
-    elif [ -z "$PERIMETRE_SUITES" ]; then
-      # Rien de testable n'a bougé (prose, front). Ni vert ni rouge : hors périmètre, comme
-      # web-build quand apps/web n'a pas changé.
-      DETAIL="aucune suite concernée — $PERIMETRE_MOTIF"
-      PERIMETRE_REDUIT=1
-      PYTEST_JOUE=1
-      return 3
     else
       if [ "$PERIMETRE_OUTILLAGE" = 1 ] && xdist_utilisable "$exe"; then args=(-n "$workers"); fi
       while IFS= read -r suite; do
@@ -844,7 +855,9 @@ EOF
   # page : c'est celui qui ne voit pas ce que la CI verra (docs/10 §8.7), et il est dix à trente
   # fois plus lent. Le taire ferait passer un vert partiel pour le vert complet.
   if [ "$PYTEST_REGIME" = conteneur ]; then
-    DETAIL="$DETAIL — conteneur Linux"
+    # Un démarrage de Docker Desktop se dit aussi quand il a réussi (#988) : c'est ce qui sépare
+    # « le filet l'a démarré » de « il a fallu le relancer », que le seul régime ne distingue pas.
+    DETAIL="$DETAIL — conteneur Linux${DOCKER_DEMARRAGE_ISSUE:+ (${DOCKER_DEMARRAGE_ISSUE})}"
   else
     DETAIL="$DETAIL — NATIF (${PYTEST_REGIME_MOTIF:-régime demandé})"
   fi
