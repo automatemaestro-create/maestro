@@ -1682,6 +1682,54 @@ ni commit sur `main` (voir §8).
 
 Détail des commandes : [`.claude/commands/`](../.claude/commands/).
 
+### 5.2 D'une idée au backlog ordonné — `/idee` (#1013)
+
+`/ticket-create` crée **un** ticket bien formé ; rien ne disait comment **instruire** une idée
+exposée en conversation — ce qu'elle prolonge, ce qu'elle renverse, comment la découper —, ni ce
+qu'elle change à l'**ordre** du reste, ni comment la **roadmap** la reçoit. #274 et #228 ont été
+ouverts après coup pour rattraper dans [docs/06](./06-roadmap.md) des chantiers qu'elle ne décrivait
+pas. [`/idee`](../.claude/commands/idee.md) joue le cycle entier, en session interactive seulement
+(un run n'a personne pour exposer une idée) :
+
+1. **instruire** — backlog ouvert et fermé, branches, jalons, décisions écrites, code, et l'état de
+   l'art quand l'idée s'appuie sur un standard extérieur (ce qui n'est pas vérifié n'est pas cité) ;
+2. **recommander** — une analyse écrite : l'idée reformulée, ce qui existe, ce qu'elle renverse, les
+   chantiers et leurs lots, leur place dans la file, les arbitrages rendus ;
+3. **arbitrer seul ce qui ne demande pas d'humain, et le dire** ; **demander** (une seule salve de
+   questions, recommandation en premier) une décision documentée que l'idée renverse sans que la
+   personne l'ait voulu, un abandon, un choix produit à deux issues défendables ;
+4. **créer** par `/ticket-create`, et mettre à jour plutôt que doubler un ticket que l'idée prolonge ;
+5. **reclasser** — les jalons et les tickets (ci-dessous) ;
+6. **consigner** — un ticket `type::doc` porte l'analyse, et `/idee` passe la main à `/ticket-start`
+   dessus : section de [docs/06](./06-roadmap.md), et note de décision quand une décision tombe.
+
+**Les deux ordres qu'elle tient, et aucun n'est une liste à part.** Entre jalons, **l'échéance est
+l'ordre** : `current-milestone` retient le jalon actif le plus tôt échu du rail qui porte encore un
+ticket ouvert (§3.4), et `/orchestrate` le propose — déplacer un jalon dans la file, c'est déplacer son
+échéance. Dans un jalon, **`prio::`** : `queue.sh` trie par priorité puis par iid (§11.2). Trois verbes
+les écrivent, parce que les écritures de forge sont interdites sous `.claude/commands/**` et que
+`--add-label` y est refusé par [`tests/test_cycle_de_vie.py`](../tests/test_cycle_de_vie.py) :
+
+| verbe | ce qu'il fait | codes |
+|---|---|---|
+| `lib.sh milestone-echeance "<titre>" [<AAAA-MM-JJ>]` | lit l'échéance d'un jalon, ou la pose (minuit UTC, comme les échéances déjà posées) | `0` lue/posée/déjà à jour · `3` aucune, muet · `2` date invalide · `1` jalon inconnu |
+| `lib.sh milestone-cree "<titre>" <AAAA-MM-JJ> [produit\|outillage]` | crée un jalon, **échéance obligatoire** et rail posés | `0` créé · `4` titre déjà pris, rien créé · `2` usage · `1` forge |
+| `lib.sh prio-pose <iid> <haute\|moyenne\|basse>` | remplace le `prio::` d'un ticket — **l'ajout précède le retrait** | `0` posée/déjà à jour · `2` niveau inconnu · `1` forge |
+
+Trois décisions à ne pas défaire :
+
+- **L'échéance est obligatoire à la création.** Un jalon sans date se range **dernier** de son rail
+  (`DUE_DATE ASC`) : personne ne le choisit en le créant, il y tombe. Créer un jalon, c'est décider de
+  sa place ; le verbe demande la décision.
+- **Un titre déjà pris est un refus (`4`), pas un succès idempotent** : le jalon qui le porte peut être
+  un autre, fermé, d'une phase passée — « déjà là » y rangerait des tickets sans que personne l'ait vu.
+- **Dans `prio-pose`, l'ajout précède le retrait** : une panne entre les deux laisse un ticket à deux
+  priorités, visible et nommé — jamais un ticket sans priorité, que rien ne signalerait.
+
+Aucun de ces verbes ne **ferme** ni ne **renomme** un jalon, et `/idee` n'**abandonne** aucun ticket :
+un ticket que l'idée rend caduc est demandé ou proposé, jamais soldé d'office. Gardé par
+[`tests/test_idee.py`](../tests/test_idee.py).
+
 ---
 
 ## 6. Garde-fous
@@ -2213,7 +2261,8 @@ personnelles vont dans `.claude/settings.local.json`, non versionné).
     garde-fou qui s'arrête faute d'argument ou sur une anomalie n'en est pas une ;
   - **chaînages compris** : une commande qu'elle **joue comme une de ses étapes** lui transmet toute
     sa déclaration — `/ticket-ship` ⊇ `/ticket-finish` ⊇ `/mr-fix`, `/ticket-start` ⊇
-    `/design-veille` et `/ticket-create` (découpage), `/milestone-verdict` ⊇ `/ticket-create`. Celle à
+    `/design-veille` et `/ticket-create` (découpage), `/milestone-verdict` ⊇ `/ticket-create`,
+    `/idee` ⊇ `/ticket-create`. Celle à
     qui elle **passe la main** en fin de parcours (`/ticket-create` → `/ticket-start`) ne lui
     transmet rien : c'est une autre commande, qui porte sa propre déclaration ;
   - **un skill garde ses outils** : le jouer se déclare `Skill`, jamais ce qu'il appelle — les
