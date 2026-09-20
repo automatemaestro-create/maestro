@@ -1735,6 +1735,55 @@ Aucun de ces verbes ne **ferme** ni ne **renomme** un jalon, et `/idee` n'**aban
 un ticket que l'idée rend caduc est demandé ou proposé, jamais soldé d'office. Gardé par
 [`tests/test_idee.py`](../tests/test_idee.py).
 
+### 5.3 Où en est le projet, et quoi faire ensuite — `/etat-des-lieux` (#1049)
+
+Chaque commande de supervision répond à une question étroite, et bien : `/backlog` rend le backlog
+par état, `/run-audit` le temps d'un run, `/milestone-bilan` le verdict d'un jalon **sur pièces**,
+`/mr-review` la synthèse d'une PR, `/idee` instruit une idée qu'une personne vient d'exposer.
+Aucune ne répondait à celle qu'on pose en rouvrant le dépôt après quelques jours : **où en est
+Maestro, et que faut-il faire ensuite ?** On la refaisait à la main — six ou sept verbes joués dans
+un ordre qu'il fallait retrouver, puis un tri de tête dont rien ne restait.
+[`/etat-des-lieux`](../.claude/commands/etat-des-lieux.md) la tient, en session interactive
+seulement (elle se termine par une recommandation ; un run n'a personne à qui la faire).
+
+**Elle lit par délégation**, jamais par une analyse recopiée (§8.3, #310) :
+
+| lecture | verbe | ce qu'elle apporte au plan |
+|---|---|---|
+| backlog ouvert | `lib.sh backlog-table` | qui est **libre** (colonne `assigne`), qui est sans état |
+| PR en souffrance | `lib.sh review-queue` | depuis #418, ce que `merge-mr` a **refusé de merger** |
+| jalons | `lib.sh milestones`, `current-milestone <rail>` | l'avancement, et le jalon courant de chaque rail |
+| bouclages dus | `lib.sh milestones-a-boucler` | un rail qu'un jalon soldé retient (muet s'il n'y a rien) |
+| « En cours » | `lib.sh reconcile-en-cours` | vivant · **orphelin** · hors de portée |
+| santé de la forge | `scripts/gitlab/doctor.sh` | les dérives dures, sans recopier ses sept sections |
+| runs | `status.sh --list`, `journal.sh refus --claude` | un run en vol, et les **butées `.claude/`** (§11.7) |
+
+Puis elle confronte [docs/06](./06-roadmap.md) au réel — un chantier annoncé que porte aucun ticket,
+un jalon actif que la roadmap ne décrit pas, une décision qu'un travail en cours renverse sans note
+—, et termine par un **plan en trois temps** : **maintenant** (ce qui débloque le reste), **ensuite**
+(ce qui se prend, jalon courant et `prio::`), **à décider** (ce qui ne se fait pas sans la personne).
+
+Quatre décisions à ne pas défaire :
+
+- **Elle n'écrit rien, et ne crée aucun ticket — même sur un « go ».** Le plan **nomme** la commande
+  qui l'exécute (`/idee`, `/ticket-create`, `/mr-fix`, `/milestone-bilan`) ; il ne la joue pas.
+  C'est le partage de #562 : ce qui est automatique est la **détection du manque**, jamais le
+  verdict. C'est aussi ce qui la tient hors des chaînages de `allowed-tools:` (§7.1) — elle passe la
+  main, elle ne joue aucune étape.
+- **Elle ne rend aucun verdict de bouclage.** Un jalon soldé apparaît dans « à décider » avec
+  `/milestone-bilan` en face, jamais avec un GO. *Lire le code n'est pas l'exercer* (§3.4, #759) —
+  dupliquer le verdict ici l'aurait rendu sur des chiffres au lieu de pièces.
+- **Le rail pondère le plan, il ne filtre pas la lecture.** Les deux rails se tiennent l'un l'autre :
+  un outillage cassé arrête le produit. `$ARGUMENTS` descend l'autre rail d'un cran, il ne l'efface
+  pas.
+- **Chaque ligne du plan porte son chiffre et sa commande.** Une ligne sans chiffre est une
+  impression, une ligne sans commande est une intention ; et le plan est **fini** — cinq lignes par
+  temps au plus, sans quoi il redevient le backlog une seconde fois.
+
+⚠ Elle se joue **depuis le clone principal** : `status.sh` lit le `.maestro/orchestrate` du
+répertoire d'où on l'appelle (là où `journal.sh` remonte au dépôt commun), si bien que depuis un
+worktree il annonce « aucun run » — ce qui n'est pas « aucun run n'a tourné ».
+
 ---
 
 ## 6. Garde-fous
