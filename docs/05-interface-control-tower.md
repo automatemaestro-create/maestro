@@ -5689,3 +5689,193 @@ familles jamais mêlées, la question **répondue** qui n'y entre pas, le sens d
 qui se dit, et le 404 de la route — et par `apps/web/tests/decisions-run.test.tsx` pour l'écran :
 une ligne par décision dans l'ordre servi, l'hypothèse marquée par **une forme et un mot**, et les
 trois états d'une liste vide (chargement, échec de lecture, run qui n'a rien tranché seul).
+
+### 6.19 L'outillage d'un projet — l'analyser, le choisir, l'écrire (#1020) — **livré**
+
+Le chantier #1020 : **créer ou importer un projet commence par son outillage**. Le format est arrêté
+par [docs/38](./38-decision-outillage-universel-du-projet.md) — `AGENTS.md`, deux ponts d'une ligne,
+des skills au format Agent Skills dans `.agents/skills/`, et un **manifeste**
+`.maestro/outillage/manifeste.json` — et ce que ça change au chantier des projets locaux est à
+[docs/24 §2.6](./24-projets-locaux-et-poste-de-travail.md). Ici : les routes, et les trois règles
+qu'elles portent.
+
+**Six routes, deux voies, une seule recommandation.** Un projet **existant** est analysé, un projet
+**neuf** est questionné — et les deux aboutissent à la *même* forme `recommandation`, produite par
+la même fonction. Il n'y a pas deux idées de « ce qu'il faut à ce projet » à tenir d'accord.
+
+| Route | Ce qu'elle fait | Écrit ? |
+| --- | --- | --- |
+| `GET  /api/projets/{id}/outillage/analyse` | Analyse la racine et rend l'outillage recommandé (#1030) | non |
+| `POST /api/projets/{id}/outillage/questionnaire` | La prochaine question d'un projet neuf, vu les réponses acquises (#1031) | non |
+| `POST /api/projets/{id}/outillage/recommandation` | Ce que ces réponses recommandent — **la forme de l'analyse** (#1031) | non |
+| `POST /api/chat/{agent}/outillage/questionnaire` | Pose (ou reprend) le questionnaire **dans le fil** (#1031) | le fil |
+| `POST /api/chat/{agent}/outillage` | Répond d'un **geste** à la question que le fil porte (#1031) | le fil |
+| `POST /api/projets/{id}/outillage/generation` | Écrit l'outillage dans le projet, au régime de docs/24 §2.4 (#1033) | **oui** |
+| `POST /api/projets/{id}/outillage/report` | Enregistre le « plus tard » de l'étape d'outillage (#1034) | la fiche |
+
+Les cinq premières **ne touchent à rien** : l'analyse est en lecture seule et le questionnaire ne
+regarde aucun fichier. Seule `…/generation` écrit dans le dossier de quelqu'un.
+
+#### L'analyse — `GET /api/projets/{id}/outillage/analyse`
+
+```jsonc
+// Analyse — la forme servie, `analyse` en portant la version
+{
+  "analyse": 1,
+  "id": "ana-3c9f0011",            // la RÉFÉRENCE que le manifeste gardera
+  "projet_id": "prj-7f3a", "racine": "D:/projets/depensio",
+  "faite_le": "2026-09-20T09:12:00+00:00",
+  "resume": "Python, TypeScript ; uv, npm ; tests : pytest ; GitHub Actions",
+  // LES BORNES VOYAGENT DANS LA RÉPONSE. Une analyse arrêtée à 20 000 fichiers
+  // et une analyse complète ne disent pas la même chose du projet, et rien ne
+  // permettrait de les distinguer si le plafond restait dans le code. Les deux
+  // derniers champs ne sont pas des réglages : ce sont les promesses, lisibles.
+  "bornes": { "fichiers_max": 20000, "profondeur_max": 8,
+              "octets_par_fichier_max": 262144, "ignores": [".git", "node_modules", "…"],
+              "lecture_seule": true, "execution": "aucune" },
+  "parcours": { "fichiers_vus": 431, "dossiers_vus": 58, "profondeur_atteinte": 6,
+                "tronque": false, "troncatures": [], "ignores_rencontres": ["node_modules"] },
+  // CE QUI A ÉTÉ LU, chaque constat avec le chemin qui le prouve.
+  "constats": {
+    "langages": [{ "nom": "Python", "fichiers": 210, "part": 0.61, "exemple": "src/api.py" }],
+    "gestionnaires": [{ "nom": "uv", "chemin": "pyproject.toml",
+                        "verrou": "uv.lock", "installer": "uv sync" }],
+    // `origine` : `declaree` (le projet l'écrit) ou `convention` (celle de l'outil).
+    // La distinction est la seule honnête — une convention peut être fausse sur
+    // un projet qui fait autrement, et la recopier sans le dire ferait passer
+    // une supposition pour une lecture.
+    "commandes": [{ "usage": "tester", "commande": "pytest", "chemin": "pyproject.toml",
+                    "extrait": "[tool.pytest]", "origine": "declaree" }],
+    "ci": [{ "nom": "GitHub Actions", "chemin": ".github/workflows", "role": "intégration continue" }],
+    "forge": { "nom": "GitHub", "distant": "git@github.com:…", "chemin": ".git/config" },
+    "vcs": { "type": "git", "branche_base": "main", "distant": "git@github.com:…" },
+    "conventions": [{ "nom": "README.md", "chemin": "README.md", "role": "…" }],
+    // CONSTATÉ, jamais imposé (docs/38 §3.4) : `bin/` ou `tools/` gagnent s'ils
+    // existent, et `constate: false` dit que `scripts` n'est qu'un défaut annoncé.
+    "dossier_scripts": { "chemin": "scripts", "constate": true,
+                         "scripts": [{ "nom": "test.sh", "chemin": "scripts/test.sh",
+                                       "role": "tester" }] },
+    "outillage_present": [{ "nom": "AGENTS.md", "chemin": "AGENTS.md", "role": "instructions" }]
+  },
+  "recommandation": {
+    // `etat` : `a-generer` | `a-completer` (un bloc délimité dans un fichier que
+    // le projet possède déjà) | `deja-present` — qui GARDE l'entrée dans la
+    // réponse : « déjà là » est une information, et une entrée qui s'efface se
+    // lirait comme un oubli.
+    "entrees": [{ "type": "skill", "nom": "lancer-les-tests",
+                  "chemin": ".agents/skills/lancer-les-tests/SKILL.md",
+                  "etat": "a-generer", "raison": "c'est la vérification que tout agent joue…",
+                  "justification": { "nom": "scripts/test.sh", "chemin": "scripts/test.sh",
+                                     "role": "dossier de scripts constaté" },
+                  "commandes": ["bash scripts/test.sh"] }],
+    // CE QUI N'EST PAS RECOMMANDÉ, avec sa raison. Sans cette liste, « pas de
+    // skill de tests » se lirait comme une défaillance de Maestro plutôt que
+    // comme un fait du projet. Les commandes y sont par DÉCISION (docs/38 §3.5).
+    "ecartes": [{ "type": "commande", "nom": "toutes", "raison": "aucun format de commande…" }]
+  },
+  "source_manifeste": { "type": "analyse", "projet_id": "prj-7f3a",
+                        "reference": "ana-3c9f0011", "resume": "Python, TypeScript ; …" }
+}
+```
+
+**Lecture seule, bornée, et sans jamais exécuter le projet.** Les trois promesses sont dans la
+réponse plutôt que dans une docstring, et elles sont mesurées **sur les appels** par
+[`tests/test_outillage_analyse.py`](../tests/test_outillage_analyse.py) — un module qui écrirait
+puis effacerait passerait une comparaison avant/après. Le VCS lui-même est lu dans `.git/config`
+(#221) plutôt qu'obtenu d'un `git remote`. Le **périmètre déclaré** du projet s'applique en plus des
+dossiers ignorés : ni `.env` ni `**/secrets/**` ne sont ouverts (docs/24 §2.5).
+
+**Jouée hors de la boucle d'événements** : parcourir un projet réel prend des secondes, et une route
+qui bloquerait la boucle figerait les flux SSE des autres écrans. `404` projet inconnu, `422` motivé
+si la fiche est illisible ou si la racine n'est plus un dossier lisible — jamais un `500`.
+
+#### Le questionnaire d'un projet neuf — deux voies, sans état
+
+`POST …/projets/{id}/outillage/questionnaire` prend `{"choix": [{"cle": "nature", "valeur":
+"service-api"}]}` et rend `{"question": …, "deductions": […], "terminee": false}`. La voie est
+**sans état** : le client dit ce qu'il a, l'API dit ce qui en découle — c'est ce qui permet au fil
+(qui tient ses réponses dans ses messages) et au parcours de création (qui les tient à l'écran) de
+servir du même questionnaire sans partager de session.
+
+**Une question dont la réponse se déduit d'une autre ne se pose pas** — mais elle ne se cache pas
+non plus : `deductions` rend chaque réponse entraînée **avec sa cause**, et elle compte comme une
+réponse à part entière. `POST …/outillage/recommandation` rend, à tout moment,
+`{"projet_id", "source", "choix", "recommandation"}` — la recommandation ayant **exactement** la
+forme de celle de l'analyse ci-dessus.
+
+Dans le fil : `POST /api/chat/{agent}/outillage/questionnaire` pose la première question (ou
+**reprend** là où l'on en est — idempotente, le fil étant la seule mémoire du canal), et
+`POST /api/chat/{agent}/outillage` répond d'un geste. La question visée n'est pas dans le corps —
+c'est celle qui attend —, si bien qu'un geste tardif ou un double clic tombe sur `409` au lieu de
+répondre à une question déjà tranchée. `422` sur une valeur hors des options posées.
+
+#### La génération — `POST /api/projets/{id}/outillage/generation`
+
+Corps **facultatif**, et il ne porte qu'une chose : `{"retenus": ["AGENTS.md", "…"]}`, les chemins
+que l'étape d'outillage a gardés cochés (#1034). Absent — un appel qui ne vient pas d'un écran —,
+tout ce qui est recommandé est écrit.
+
+```jsonc
+{
+  "projet_id": "prj-7f3a", "analyse": "ana-3c9f0011",
+  // LE RÉGIME D'ÉCRITURE EST CELUI DU PROJET (docs/24 §2.4) : `en-place` sur un
+  // projet non versionné — c'est fait à la réponse —, `branche` sinon, et la
+  // requête ATTEND alors l'accord humain, sans time-out (contrat du validateur).
+  "regime": "en-place", "branche": "", "tache_id": "outillage-7c1e",
+  "rapport": {
+    "cible": "D:/projets/depensio", "manifeste": ".maestro/outillage/manifeste.json",
+    "genere_par": "maestro 0.0.0", "genere_le": "2026-09-20T09:12:00+00:00", "refus": "",
+    "ecritures": [{ "chemin": "AGENTS.md", "role": "instructions", "portee": "fichier",
+                    "etat": "ecrit", "refuse_vers": "" }],
+    "ecrits": ["AGENTS.md", "CLAUDE.md", ".agents/skills/lancer-les-tests/SKILL.md"],
+    // CE QUI N'A PAS ÉTÉ ÉCRASÉ, et où la version neuve attend.
+    "refuses": [], "ignores": [], "retires": []
+  },
+  "application": null      // le verdict de la validation humaine, sur un projet versionné
+}
+```
+
+**Rien n'est jamais écrasé en silence**, et les quatre cas de docs/38 §4.2 sont le contrat de cette
+route : un fichier que le projet portait et que Maestro n'a pas écrit n'est **pas touché**
+(`ignores`) ; un fichier qu'il avait écrit et que quelqu'un a modifié depuis n'est **pas réécrit** —
+la version neuve va dans `.maestro/outillage/refuses/` et le rapport la nomme (`refuses`) ; ce qui
+n'est plus recommandé **quitte le manifeste sans quitter le disque** (`retires`). Régénérer ne
+duplique rien : ce que le manifeste déclare déjà à jour n'est pas réécrit.
+
+Un refus d'écriture est **une ligne du rapport, jamais une exception** : il ne doit pas exister
+d'état où une partie de l'outillage est posée et où personne ne sait laquelle. `404`/`422` comme
+l'analyse, plus le worktree qui ne se monte pas et la fusion refusée (racine occupée, conflit).
+
+#### Le report — `POST /api/projets/{id}/outillage/report`
+
+**Sans corps**, comme `versionner`, et pour la même raison : il n'y a rien à déclarer, seulement un
+verbe à appeler. Idempotente — la première date gagne. La fiche rendue porte
+`outillage: {"reporte_le": "…", "genere": false, "a_faire": true}`.
+
+⚠ **`genere` se lit sur le disque, jamais dans la fiche** : le manifeste peut naître sans passer par
+l'écran (une génération relancée), être retiré à la main, ou venir d'un clone. Un booléen « outillé »
+stocké divergerait du dossier au premier de ces trois cas, et c'est le dossier qui a raison. `a_faire`
+est le croisement des deux — *reporté **et** pas encore généré* —, ce qui fait que générer suffit à
+faire taire le rappel sans qu'aucun code de génération connaisse ce champ.
+
+#### La frontière, qui n'est pas une route
+
+Ce que les agents reçoivent de cet outillage leur est **transmis explicitement** (#1032) : dérivé du
+manifeste, borné à ce qu'il déclare, posé dans le message de la tâche. Rien du projet n'entre de
+lui-même dans le runtime — `setting_sources=[]` et `skills=[]` en plus du `strict_mcp_config` qui
+fermait déjà les serveurs MCP —, et un `allowed-tools:` écrit dans un `SKILL.md` du projet est
+**inerte**, signalé comme ignoré plutôt que silencieusement sauté. C'est docs/38 §5, et c'est ce qui
+sépare « Maestro injecte » de « le projet s'impose » : sans cette règle, les deux donneraient le même
+contexte au même agent.
+
+Implémentation : [`maestro/outillage/`](../maestro/outillage/) (le domaine),
+[`maestro/controltower/outillage.py`](../maestro/controltower/outillage.py) (le service et le
+conducteur du fil), [`maestro/controltower/app.py`](../maestro/controltower/app.py) (les routes),
+`apps/web/components/projets/EtapeOutillage.tsx` et `apps/web/components/chat/QuestionDOutillage.tsx`
+(les écrans). Gardé par [`tests/test_outillage_analyse.py`](../tests/test_outillage_analyse.py),
+[`test_outillage_questionnaire.py`](../tests/test_outillage_questionnaire.py),
+[`test_outillage_generation.py`](../tests/test_outillage_generation.py),
+[`test_outillage_contexte.py`](../tests/test_outillage_contexte.py) et
+[`test_outillage_skills_ref.py`](../tests/test_outillage_skills_ref.py) — cette dernière validant
+les skills **écrits sur le disque** contre la spécification Agent Skills, par un validateur
+indépendant du code qui les rédige.
