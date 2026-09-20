@@ -146,6 +146,40 @@ describe("la bannière nomme la panne", () => {
     expect(texte).not.toContain("voir le journal");
   });
 
+  it("garde le geste sur la ligne de la panne, et l'annexe au diagnostic", () => {
+    // Le constat du regard neuf à la relecture de #996 : descendu dans la ligne
+    // technique, derrière la route et le code, le geste se lit comme un jeton de
+    // log. Les deux questions du bandeau — *quelle panne ?* et *que faire ?* —
+    // se répondent sur la **première** ligne ; l'annexe ne porte que ce qui sert
+    // à diagnostiquer.
+    render(
+      <BanniereErreurApi erreur={new ErreurApi(ROUTE, 500, "projet inconnu")} />,
+    );
+
+    const lignes = screen
+      .getByRole("alert")
+      .querySelectorAll("p");
+    expect(lignes).toHaveLength(2);
+    expect(lignes[0].textContent).toContain("voir le journal");
+    expect(lignes[1].textContent).toBe(`GET ${ROUTE} → 500`);
+  });
+
+  it("ne colle pas un point médian derrière la ponctuation du serveur", () => {
+    // Le motif vient du serveur, ponctué ou non : « … (#978). · voir le journal »
+    // était la scorie relevée à la relecture. Le séparateur s'efface devant une
+    // ponctuation finale, et reste là quand il n'y en a pas.
+    const { unmount } = render(
+      <BanniereErreurApi erreur={new ErreurApi(ROUTE, 500, "projet inconnu.")} />,
+    );
+    expect(texteDeLaBanniere()).toContain("projet inconnu. voir le journal");
+    unmount();
+
+    render(
+      <BanniereErreurApi erreur={new ErreurApi(ROUTE, 500, "projet inconnu")} />,
+    );
+    expect(texteDeLaBanniere()).toContain("projet inconnu · voir le journal");
+  });
+
   it("porte son état autrement que par la couleur", () => {
     // Le filet a11y du socle : un état qui ne tient qu'à une teinte ne se lit
     // pas en niveaux de gris. Ici l'icône et le libellé en tête le portent.
