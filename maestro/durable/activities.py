@@ -52,7 +52,6 @@ from typing import Any, TypeVar
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
-from maestro.agents import default_runtimes
 from maestro.agents.capacity import CapacityStore
 from maestro.agents.mcp import McpStore
 from maestro.agents.permissions import PermissionStore
@@ -146,11 +145,16 @@ def _executeur() -> LocalExecutor:
     """L'exécuteur du process worker, construit paresseusement au premier message.
 
     Câblé comme celui de la boucle locale et des workers de file (#41) : catalogue
-    effectif (#72), runtimes outillés, playbooks (#78), capacité (#86), MCP (#104),
+    effectif (#72), playbooks (#78), capacité (#86), MCP (#104),
     secrets (#109), permissions (#110) et projets (#224) relus **à chaud** dans les dépôts de la
     config à chaque tâche — une édition publiée depuis la Control Tower vaut pour
     le message suivant, sans redémarrer le worker. Les garde-fous (#9) et la
     relance (#91) sont ceux posés par `configurer_worker`.
+
+    Le **runtime outillé** n'est pas câblé ici (#1037) : l'exécuteur le dérive de la
+    fiche de l'agent routé, à chaque tâche — un agent personnalisé travaille donc
+    outillé dans une activité durable comme ailleurs. Lui passer `default_runtimes(...)`
+    le restreindrait aux cinq rôles du code.
     """
     global _executor
     if _executor is None:
@@ -161,7 +165,6 @@ def _executeur() -> LocalExecutor:
         _executor = LocalExecutor(
             provider,
             agents=catalogue(agents_store, settings.model, surcharges=surcharges),
-            runtimes=default_runtimes(provider, model=settings.model),
             guardrails=_guardrails,
             playbooks=PlaybookStore.default(settings),
             capacites=CapacityStore.default(settings),

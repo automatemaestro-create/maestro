@@ -70,6 +70,7 @@ import {
 } from "@/lib/types";
 import {
   VUES_RUN,
+  VUE_DECISIONS,
   VUE_FRISE,
   VUE_JOURNAL,
   VUE_KANBAN,
@@ -433,31 +434,37 @@ describe("l'arbitrage entre les lectures d'un run", () => {
     expect(VUE_RUN_DEFAUT).toBe(VUE_PIPELINE);
   });
 
-  it("propose les quatre : le flux, l'inventaire, l'activité, puis le récit", () => {
+  it("propose les cinq : le flux, l'inventaire, l'activité, l'autonomie, puis le récit", () => {
     // L'ordre *est* la décision. Le journal ferme la rangée (#516) : c'est ce que
     // #478 défendait en le posant sous les tâches — on le consulte après avoir vu
     // où en est le run —, reporté sur la bascule au lieu d'un empilement. La
     // frise (#355) s'insère donc **avant** lui : elle répond encore à « où en
     // est-on ? », dans le sens du temps, là où le journal est ce qu'on ouvre
-    // quand la vue d'ensemble ne suffit plus.
+    // quand la vue d'ensemble ne suffit plus. Les décisions (#1026) s'insèrent à
+    // leur tour juste avant le journal, et pour la même raison dans l'autre
+    // sens : elles sont la dernière vue d'ensemble, le journal le recours.
     expect(VUES_RUN.map((onglet) => onglet.cle)).toEqual([
       VUE_PIPELINE,
       VUE_KANBAN,
       VUE_FRISE,
+      VUE_DECISIONS,
       VUE_JOURNAL,
     ]);
   });
 
   it("donne à chaque onglet la question à laquelle il répond", () => {
-    // « Pipeline », « Kanban », « Frise » et « Journal » ne disent pas
-    // d'eux-mêmes lequel montre quoi, et c'est précisément la confusion que
+    // « Pipeline », « Kanban », « Frise », « Décisions » et « Journal » ne disent
+    // pas d'eux-mêmes lequel montre quoi, et c'est précisément la confusion que
     // l'arbitrage devait lever. La paire frise/journal est la plus fine des
-    // quatre — les deux sont chronologiques —, d'où deux questions qui ne se
-    // recouvrent pas : *qui, quand, et à qui* contre *qu'a-t-il fait*.
-    const [pipeline, kanban, frise, journal] = VUES_RUN;
+    // cinq — les deux sont chronologiques —, d'où deux questions qui ne se
+    // recouvrent pas : *qui, quand, et à qui* contre *qu'a-t-il fait*. Les
+    // décisions en sont une troisième, chronologique elle aussi : ce qui la
+    // sépare n'est pas l'ordre mais ce qu'elle retient (#1026).
+    const [pipeline, kanban, frise, decisions, journal] = VUES_RUN;
     expect(pipeline.question).toMatch(/Quoi après quoi/);
     expect(kanban.question).toMatch(/Combien dans quel état/);
     expect(frise.question).toMatch(/Qui, quand, et à qui/);
+    expect(decisions.question).toMatch(/décidé sans moi/);
     expect(journal.question).toMatch(/Qu'a-t-il fait/);
   });
 });

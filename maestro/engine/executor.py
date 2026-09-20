@@ -46,9 +46,9 @@ from dataclasses import dataclass, replace
 from time import monotonic, perf_counter
 from typing import Any
 
-from maestro.agents import default_runtimes
 from maestro.agents.capacity import CapacityStore, JaugeInstances
 from maestro.agents.catalog import DEFAULT_AGENTS, Agent
+from maestro.agents.fiche_outillee import runtime_outille
 from maestro.agents.mcp import McpStore, ServeurMcp
 from maestro.agents.permissions import (
     DecisionOutil,
@@ -643,10 +643,18 @@ class LocalExecutor(TaskExecutor):
         # validation par tâche. Le défaut laisse plafond et time-out inactifs
         # mais garde la détection d'actions sensibles (refusées sans validateur).
         self._guardrails = guardrails if guardrails is not None else Guardrails()
-        # Runtimes outillés, indexés par nom d'agent du catalogue. Par défaut, ceux
-        # du POC (`developpeur`, `bdd`) adossés au même fournisseur que le moteur.
-        self._runtimes = (
-            dict(runtimes) if runtimes is not None else default_runtimes(provider)
+        # Runtimes outillés (#1037) : **None** — le cas nominal — veut dire « résolus
+        # depuis la fiche de l'agent routé », à chaque tâche, comme le playbook, les
+        # serveurs MCP et la politique de permissions. Tout agent du catalogue a donc un
+        # runtime, agents définis hors du code compris : il n'y a plus une table de cinq
+        # noms et un chemin texte pour les autres.
+        #
+        # Une table **injectée** reste autoritaire et complète : c'est ainsi qu'on fige
+        # un régime (tests, câblage qui veut exactement ces rôles). Un nom absent de la
+        # table n'a alors pas de runtime — et `runtimes={}` éteint l'outillage pour tout
+        # le monde, ce qu'aucune autre écriture ne sait dire.
+        self._runtimes: dict[str, AgentRuntime] | None = (
+            dict(runtimes) if runtimes is not None else None
         )
 
     async def execute(
@@ -986,6 +994,29 @@ class LocalExecutor(TaskExecutor):
         if self._permissions is None:
             return None
         return self._permissions.pour_projet(projet_id).lire(agent)
+
+    def _runtime_de(self, agent: Agent) -> AgentRuntime | None:
+        """Le runtime outillé de `agent`, **dérivé de sa fiche** à chaque tâche (#1037).
+
+        Même relecture à chaud que les playbooks, les serveurs MCP et les politiques, et
+        pour la même raison : la fiche est ce qui bouge (un modèle surchargé depuis la
+        Control Tower, un playbook réécrit, un agent créé après la construction du
+        moteur), le runtime n'est qu'un objet dérivé — trois champs et un fournisseur,
+        rien à conserver entre deux tâches.
+
+        Le verrou que #1037 lève tenait ici : l'outillage se cherchait dans une table de
+        cinq noms, donc un agent défini par sa fiche n'en trouvait aucun et retombait sur
+        le chemin texte — sans fichiers, sans écriture dans le projet, sans commandes.
+        Désormais tout agent du catalogue a le sien, et les cinq rôles du code passent par
+        ce même chemin.
+
+        Une table **injectée** (`runtimes=…`) l'emporte et fait foi telle quelle : un nom
+        qui n'y est pas n'a pas de runtime. C'est le seul moyen d'éteindre l'outillage —
+        `runtimes={}` — ou de le restreindre, et ce qu'en font les tests.
+        """
+        if self._runtimes is not None:
+            return self._runtimes.get(agent.nom)
+        return runtime_outille(self._provider, agent)
 
     def _playbook_courant(
         self, agent: str, projet_id: str | None = None
@@ -1759,8 +1790,19 @@ class LocalExecutor(TaskExecutor):
         une réponse humaine est un renseignement reçu, une reprise sur hypothèse
         est une décision prise par l'agent, et les deux doivent se lire.
 
-        La **borne** est nommée dans la seconde : c'est ici qu'elle est réglée,
-        donc ici qu'on la dit. L'agent, lui, ne la lit pas (cf.
+        **Deux champs, jamais une phrase** (#1026) : `sortie` porte l'issue **nue**
+        — la réponse reçue, ou l'hypothèse reprise —, `description` porte son
+        motif. C'est la forme que `_consigne_decision_autonome` a posée pour la
+        décision tranchée seul (#1024), et l'étendre ici est ce qui permet à la
+        liste des décisions d'un run (`maestro.controltower.decisions`) de rendre
+        une hypothèse dans les mêmes colonnes qu'une décision **sans rien
+        redécouper** : deviner par la forme ce que le journal savait à l'écriture
+        est précisément ce que ce partage évite. C'est aussi ce que le contrat
+        écrit disait déjà des deux côtés — `STATUT_QUESTION_SANS_REPONSE`
+        ci-dessus et docs/05 §6.17 : « sortie = l'hypothèse ».
+
+        La **borne** est nommée dans le motif de la seconde : c'est ici qu'elle est
+        réglée, donc ici qu'on la dit. L'agent, lui, ne la lit pas (cf.
         `maestro.providers.question.SANS_REPONSE`) — la redire des deux côtés
         ferait deux supports pour un même chiffre.
 
@@ -1777,12 +1819,13 @@ class LocalExecutor(TaskExecutor):
                 STATUT_QUESTION_REPONDUE if repondue else STATUT_QUESTION_SANS_REPONSE
             ),
             entree=demande.resume(),
-            sortie=(
-                f"réponse : {reponse}"
+            sortie=(reponse if reponse is not None else demande.hypothese),
+            description=(
+                f"réponse reçue à : {demande.question}"
                 if repondue
                 else (
-                    f"aucune réponse après {demande.attente_s:g} s — l'agent reprend "
-                    f"sur son hypothèse : {demande.hypothese}"
+                    f"aucune réponse après {demande.attente_s:g} s à : "
+                    f"{demande.question}"
                 )
             ),
             usage=StepUsage(),
@@ -2514,22 +2557,26 @@ class LocalExecutor(TaskExecutor):
         suivi: SuiviChecklist | None = None,
         deliberation: Deliberation | None = None,
     ) -> tuple[str, tuple[ProducedFile, ...]]:
-        """Produit le livrable de `task` : runtime outillé si le rôle en a un, sinon texte.
+        """Produit le livrable de `task` : le runtime outillé de l'agent, sinon texte.
 
         `description` est la tâche déjà enrichie du tableau noir (résultats des
-        dépendances). Un rôle outillé (#35) l'exécute dans un espace isolé et renvoie
-        aussi ses fichiers. Si le fournisseur ne sait pas exécuter d'agent outillé
-        (`UnsupportedCapability`), le rôle retombe sur son livrable texte via
-        `generate()` — même chemin que les rôles sans runtime.
+        dépendances). Le runtime (#35) l'exécute dans son espace de travail et renvoie
+        aussi ses fichiers ; depuis #1037 il est **dérivé de la fiche** de l'agent
+        (`_runtime_de`), donc tout agent du catalogue en a un — un agent défini hors du
+        code n'est plus cantonné au texte. Si le fournisseur ne sait pas exécuter d'agent
+        outillé (`UnsupportedCapability`), le rôle retombe sur son livrable texte via
+        `generate()` — le seul repli qui reste, avec une table de runtimes injectée où
+        l'agent ne figure pas.
 
         `playbook` est la version courante du playbook stocké (#78) : son contenu
         remplace le prompt système sur les **deux** chemins — surcharge ponctuelle
         du runtime outillé, prompt de l'appel texte. None : prompts du code.
 
         `serveurs_mcp` (#104) n'équipe que le chemin **outillé** : le chemin
-        texte n'expose aucun outil (c'est son contrat), MCP compris — un agent
-        sans runtime outillé, ou un repli texte-seul, exécute sans ses serveurs
-        (comportement documenté, docs/04 §6). Leurs références `${VAR}` se
+        texte n'expose aucun outil (c'est son contrat), MCP compris — un repli
+        texte-seul exécute donc sans ses serveurs (comportement documenté,
+        docs/04 §6). Depuis #1037 ce repli est le seul cas : tout agent du
+        catalogue a un runtime, et ses serveurs le suivent. Leurs références `${VAR}` se
         résolvent dans l'environnement scopé de l'agent (#109) : son coffre
         seul quand un `SecretStore` provisionné est câblé — relu ici, à chaque
         tâche, comme le reste ; un coffre invalide est un échec propre.
@@ -2600,7 +2647,7 @@ class LocalExecutor(TaskExecutor):
         (`ModelProvider.effort_admis`) : ni ici, ni dans le runtime.
         """
         deliberation = deliberation if deliberation is not None else Deliberation()
-        runtime = self._runtimes.get(agent.nom)
+        runtime = self._runtime_de(agent)
         if runtime is not None:
             try:
                 outcome = await runtime.execute(

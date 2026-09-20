@@ -541,7 +541,7 @@ clics, derrière une liste, sur un écran qu'on ne visite pas spontanément.
 
 **Rien n'est réécrit, tout est remonté.** `CarteRun` est la ligne qu'on lit déjà dans
 la liste des runs et dans l'état des runs (§2.1.2) ; `VuePipeline` est la vue par
-défaut d'un run depuis #491, et les **quatre lectures** d'un run gardent leur
+défaut d'un run depuis #491, et les **cinq lectures** d'un run gardent leur
 arbitrage (§2.4.2) — le centre n'en monte qu'une, la bascule restant dans la vue du
 run, où mène le titre de la carte.
 
@@ -1002,13 +1002,13 @@ dessous. Ouvrir un run donne enfin son backlog — jusqu'ici le Kanban était ce
 **projet** (#248) et un run n'avait pas de vue à lui, si bien que dans un projet où
 plusieurs runs se succèdent, *ce que ce run avait fait* n'était visible nulle part.
 
-> ⚠ **Cette lecture est quadruple** : le **pipeline** (§2.4.4), le **Kanban**, la
-> **frise** (§2.4.6) et le **journal** coexistent sous une bascule, et c'est le
-> pipeline qui ouvre. #491 l'a rendue double, #516 y a ajouté la troisième position,
-> #355 la quatrième. Tout ce que dit cette section vaut inchangé — la tête, le
-> contenu du journal, l'appartenance par l'API, le pouls du shell —, seul le corps
-> de l'écran a désormais quatre formes, dont on ne voit **qu'une** à la fois.
-> L'arbitrage est rendu en §2.4.4.
+> ⚠ **Cette lecture est quintuple** : le **pipeline** (§2.4.4), le **Kanban**, la
+> **frise** (§2.4.6), les **décisions** (§6.18) et le **journal** coexistent sous une
+> bascule, et c'est le pipeline qui ouvre. #491 l'a rendue double, #516 y a ajouté la
+> troisième position, #355 la quatrième, #1026 la cinquième. Tout ce que dit cette
+> section vaut inchangé — la tête, le contenu du journal, l'appartenance par l'API, le
+> pouls du shell —, seul le corps de l'écran a désormais cinq formes, dont on ne voit
+> **qu'une** à la fois. L'arbitrage est rendu en §2.4.4.
 
 **Le Kanban est réutilisé, pas réimplémenté.** C'est le composant de §2.2 :
 mêmes colonnes, mêmes cartes, même **détail sur place** (#251), même réassignation.
@@ -1236,6 +1236,17 @@ la frise ne retient que deux flux et les range **par agent**, dans le sens du te
 C'est dans cet écart que se lit le défaut qui a motivé le ticket : sur un fil, une
 attente de décision humaine est une ligne parmi cent ; sur une frise, c'est un couloir
 qui ne bouge plus.
+
+**Et cinq depuis #1026**, les **décisions** (§6.18) s'insérant entre la frise et le
+journal. Cinquième question : « ce qui a été décidé sans moi, et pourquoi ». Elle obéit
+à la même règle de position, appliquée dans l'autre sens : les décisions sont la
+**dernière vue d'ensemble**, le journal reste le recours. Et comme la frise, elles
+lisent la même source persistée sans en être un filtre — elles retiennent deux familles
+(ce qu'un agent a jugé sien, et l'hypothèse qu'il a prise faute de réponse) et les
+rendent en colonnes fixes, là où le journal rend une phrase par événement. Le défaut
+qu'elles corrigent est du même ordre : une décision tranchée seule était **consignée
+puis invisible**, une ligne parmi cent, alors que l'autonomie du chantier #1019 n'est
+acceptable que si elle se vérifie après coup.
 
 Trois options **écartées**, et pourquoi. **Une route par lecture**
 (`/runs/<id>/pipeline`, `…/kanban`, `…/journal`), sur le modèle des onglets d'une fiche
@@ -2353,8 +2364,10 @@ Les deux décisions sont consignées sur #1025, sous « ## Veille de conception 
 retenue ». Implémentation :
 [`apps/web/components/chat/QuestionDansLeFil.tsx`](../apps/web/components/chat/QuestionDansLeFil.tsx),
 [`apps/web/lib/questions.ts`](../apps/web/lib/questions.ts), `app/chat/page.tsx`,
-`components/FilChat.tsx`, `components/CentreNotifications.tsx`. Tests différés au lot final de #1019
-(**#1027**).
+`components/FilChat.tsx`, `components/CentreNotifications.tsx`. Gardé par
+`apps/web/tests/question-agent.test.tsx` (#1027) : les gestes sont ceux que l'agent a déclarés, la
+phrase d'attente vient de l'API, la carte dit que l'agent est reparti **et reste répondable**, et le
+fil de l'orchestration porte toutes les questions là où un aparté ne porte que les siennes.
 
 ### 2.8 🗒️ Journal — l'activité, en plein format et **persistée** *(#249, #250, #478 — **livré**)*
 
@@ -5533,9 +5546,11 @@ n'est pas un oubli de fermeture : à la borne, l'agent reprend sur **l'hypothès
 annoncée** (troisième critère), et la question continue de valoir — une réponse tardive est retenue
 (`MemoireArbitrage`, #584) et le même appel rejoué la retrouve sans nouvelle attente. Ce que l'agent
 a fait entre-temps se lit **au journal du run**, étape `<tache>:question`, statut
-`question_sans_reponse`, sortie = l'hypothèse. C'est la raison pour laquelle il n'existe pas de
-statut « sans réponse » côté file : fermer la question dirait à l'écran qu'il n'y a plus rien à
-écrire, ce qui serait faux.
+`question_sans_reponse`, sortie = l'hypothèse, **description = le motif** (« aucune réponse après
+*n* s à : … ») — deux champs et jamais une phrase, comme la décision tranchée seul de #1024, pour
+que la liste des décisions d'un run (§6.18) n'ait rien à redécouper. C'est la raison pour laquelle
+il n'existe pas de statut « sans réponse » côté file : fermer la question dirait à l'écran qu'il n'y
+a plus rien à écrire, ce qui serait faux.
 
 ⚠ **D'où `echeance`, ajoutée par le lot de l'écran (#1025)** : la borne, en **date**, posée à la
 publication. Le statut ne bougeant pas à la borne — et il a raison de ne pas bouger —, l'écran
@@ -5575,4 +5590,102 @@ du verbe `mcp__maestro__poser_une_question` et ses deux frontières),
 `_consigne_question` — c'est là que vit la **borne**, avec le journal),
 [`maestro/controltower/question.py`](../maestro/controltower/question.py)
 (`ArbitreQuestionControlTower`) et [`maestro/controltower/app.py`](../maestro/controltower/app.py)
-pour les deux routes. Tests différés au lot final de #1019 (**#1027**).
+pour les deux routes. Gardé par
+[`tests/test_questions_agents.py`](../tests/test_questions_agents.py) (#1027) — la suspension et sa
+borne, l'hypothèse écrite à l'échéance dans ses deux champs, la réponse tardive retrouvée **sans
+nouvelle demande**, le refus d'un acte malgré une réponse (EF-08), et les trois refus de la route
+(`404`/`409`/`422`) — et, pour le cadrage projet, par
+[`tests/test_appartenance_projet.py`](../tests/test_appartenance_projet.py).
+
+---
+
+### 6.18 Les décisions qu'un agent a tranchées seul, dans la vue d'un run (#1026) — **livré**
+
+La **cinquième lecture** d'un run. Le Kanban dit « combien dans quel état » (§6.1), le graphe
+« quoi après quoi » (§6.11), la frise « qui, quand, et à qui » (§6.13), le journal « qu'a-t-il
+fait » (§6.2) ; aucune ne dit **ce qui a été décidé sans moi, et pourquoi**. C'est la condition que
+#1019 pose à l'autonomie : *elle n'est acceptable que si elle se vérifie après coup*. Le lot 2
+(#1024) a fait consigner ces décisions ; sans cette lecture elles étaient **écrites puis
+invisibles** — noyées dans le journal, et rendues par la branche `default` du front, qui affichait
+le statut brut du bus.
+
+- `GET /api/executions/{run_id}/decisions` → `DecisionsRun`. `404` si aucune trace reçue pour ce
+  `run_id`, par la même porte que `/cout`, `/graphe` et `/frise`. **Pas de `?projet=`** : le run
+  seul suffit à désigner ce qu'on lit.
+
+```jsonc
+// DecisionsRun
+{
+  "run_id": "demo-live",
+  // DU PLUS RÉCENT AU PLUS ANCIEN — comme le journal du run (§6.2) et non comme
+  // la frise : les deux lectures chronologiques de la bascule vont dans le même
+  // sens, sinon passer de l'une à l'autre demande de relire le sens de lecture.
+  "entrees": [
+    { "id": "j-0031",                    // l'id du journal requêtable (§6.2)
+      // La famille, et il en faut deux. `tranchee` : l'agent a jugé que la
+      // question ne demandait personne (#1024). `hypothese` : il a demandé,
+      // personne n'a répondu avant la borne, il est reparti sur ce qu'il avait
+      // annoncé (#1023, §6.17). `hypothese` (le booléen) est le raccourci de
+      // `origine === "hypothese"` — servi plutôt que recalculé, pour que la
+      // marque ne dépende pas d'une comparaison de chaîne côté client.
+      "origine": "hypothese", "hypothese": true,
+      "tache_id": "api-crud",
+      // Le TITRE de la tâche, résolu depuis la projection — pas le `nom` de
+      // l'étape de journal, qui le porte préfixé (« Décision de l'agent — … »).
+      // Vide quand la tâche n'est pas connue : la vue rend alors l'identifiant.
+      "tache": "API CRUD",
+      "agent": "developpeur", "role": "Développeur",
+      // Les deux champs que le moteur sépare à L'ÉCRITURE (#1024) : cette route
+      // ne redécoupe rien, et la vue non plus.
+      "decision": "Pagination en curseur plutôt qu'en offset",
+      "raison": "aucune réponse après 900 s à : offset ou curseur pour la liste ?",
+      "horodatage": "2026-09-20T17:04:11Z" }
+  ],
+  "total": 7,        // AVANT le plafond
+  "hypotheses": 2,   // AVANT le plafond, lui aussi : une liste tronquée le
+                     // recompterait sur ce qu'elle a reçu, donc faux
+  "plafond": 200,
+  "tronquee": false
+}
+```
+
+**Rien n'est créé.** Les deux flux sont déjà persistés et déjà servis par
+`GET /api/journal?run_id=…`, dont chaque entrée garde ici son identifiant. Comme le graphe et la
+frise, cette liste **n'a pas d'événement à elle** : elle se recompose à la lecture, donc la mise à
+jour en direct passe par le flux existant, sans second canal.
+
+**Deux familles, jamais mêlées.** « Je n'avais pas à demander » et « j'ai demandé et personne n'a
+répondu » ne sont pas le même fait : les ranger sous un même mot reviendrait à ne plus pouvoir dire
+lequel des deux on lit — c'est le partage que `EVENEMENT_TACHE_DECISION` fait déjà entre la décision
+d'un **agent** et celle d'une **personne** (`validation.decision`). Une étape de question soldée par
+une **réponse** n'entre pas dans la liste : quelqu'un a répondu, c'est le contraire de l'autonomie,
+et elle reste au journal.
+
+**Cette route ne juge rien.** Une décision autonome n'y est ni approuvée ni refusée, et répondre
+après coup à une question reste l'affaire de `POST /api/questions/{question_id}/reponse` (§6.17).
+Elle ne résume rien non plus : décision et motif sortent tels que l'agent les a écrits, expurgés des
+secrets en amont sur le bus.
+
+**À l'écran** (`/runs/[runId]`) : une **cinquième entrée de la bascule de vues**, et non un bloc de
+plus. C'est ce que la règle des trois places impose ici (docs/30 §4.1, §4.2 — la vue d'un run tient
+en 2 blocs + onglets) : une `<nav>` n'occupe aucune des trois places, un bloc empilé sous le résumé
+en occuperait une. L'onglet **reste là quand le run n'a rien décidé seul**, comme les quatre autres,
+et l'écran dit alors *pourquoi* c'est vide (aucun agent n'a eu à trancher hors de son brief, aucune
+question n'est restée sans réponse) : un onglet qui apparaîtrait en cours de run déplacerait les
+autres sous le pointeur, et « rien n'a été décidé seul » est une réponse, pas une absence de vue.
+
+**La forme de la liste a été tranchée sur pièces** (#1009) : trois variantes rendues sur la stack
+— la ligne dense, la table à six colonnes, le groupement par tâche — et jugées par le sous-agent
+`regard-neuf` contre les références capturées par la veille. La **ligne dense** l'emporte : la
+décision en premier plan, son motif en second juste dessous, l'heure et l'icône de famille en
+gouttière, l'agent et le renvoi vers la tâche en colonne à droite. Le choix, les écartées et leurs
+raisons sont consignés sur le ticket (commentaire `## Variante retenue`).
+
+Implémentation : [`maestro/controltower/decisions.py`](../maestro/controltower/decisions.py)
+(la composition), [`maestro/controltower/app.py`](../maestro/controltower/app.py) (la route),
+`apps/web/components/runs/DecisionsRun.tsx` et `apps/web/lib/vuesRun.ts` (l'écran). Gardé par
+[`tests/test_decisions_autonomes.py`](../tests/test_decisions_autonomes.py) (#1027) — les deux
+familles jamais mêlées, la question **répondue** qui n'y entre pas, le sens de lecture, le plafond
+qui se dit, et le 404 de la route — et par `apps/web/tests/decisions-run.test.tsx` pour l'écran :
+une ligne par décision dans l'ordre servi, l'hypothèse marquée par **une forme et un mot**, et les
+trois états d'une liste vide (chargement, échec de lecture, run qui n'a rien tranché seul).

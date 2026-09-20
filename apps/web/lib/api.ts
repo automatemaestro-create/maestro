@@ -19,6 +19,7 @@ import type {
   ConversationsChat,
   DecisionBrief,
   DeclarationProjet,
+  DecisionsRun,
   DefinitionAgent,
   DefinitionAgentProposee,
   DetailExecution,
@@ -343,6 +344,27 @@ export function chargerGrapheExecution(runId: string): Promise<GrapheRun> {
 export function chargerFriseExecution(runId: string): Promise<FriseRun> {
   return chargerJson<FriseRun>(
     `/api/executions/${encodeURIComponent(runId)}/frise`,
+  );
+}
+
+/**
+ * Les décisions qu'un agent a tranchées **seul** pendant une exécution
+ * (`GET /api/executions/{run_id}/decisions`, #1026) : ce qu'il a décidé sans
+ * demander, et pourquoi — plus les hypothèses qu'il a prises faute de réponse,
+ * marquées comme telles.
+ *
+ * Tout ce qui sert à rendre une ligne est **servi** : le tri (du plus récent au
+ * plus ancien), la famille (`origine`), la décision et son motif dans deux
+ * champs distincts, et le titre de la tâche vers laquelle la ligne renvoie. Rien
+ * à redécouper ni à retrier ici.
+ *
+ * Pas de `?projet=`, par la même porte que `/frise`, `/graphe` et `/cout` : le
+ * run seul suffit à désigner ce qu'on lit. Se recharge sur le pouls du shell,
+ * cette lecture n'ayant pas de canal à elle.
+ */
+export function chargerDecisionsExecution(runId: string): Promise<DecisionsRun> {
+  return chargerJson<DecisionsRun>(
+    `/api/executions/${encodeURIComponent(runId)}/decisions`,
   );
 }
 
@@ -857,6 +879,78 @@ export async function trancherCadrageChat(
   const paire = (await reponse.json()) as { messages: MessageChat[] };
   return paire.messages;
 }
+
+/**
+ * Répond d'un geste à la question d'outillage que le fil porte
+ * (`POST /api/chat/{agent}/outillage`, #1031) et rend la paire (geste, réponse).
+ *
+ * La question visée **n'est pas** dans le corps : c'est celle qui attend. La laisser
+ * désigner par l'écran ouvrirait la porte à une réponse qui vise une question déjà
+ * tranchée — le geste tardif et le double clic, que le `409` attrape.
+ *
+ * Un `409` n'est pas une panne, comme sur le cadrage : la question a reçu sa réponse
+ * entre-temps, ou la conversation a repris. L'appelant recharge plutôt qu'il ne
+ * réessaie.
+ */
+export async function repondreQuestionOutillage(
+  agent: string,
+  reponseChoisie: { valeur: string; conversation?: string },
+): Promise<MessageChat[]> {
+  const reponse = await fetch(
+    `${API_URL}/api/chat/${encodeURIComponent(agent)}/outillage`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        valeur: reponseChoisie.valeur,
+        conversation: reponseChoisie.conversation,
+      }),
+    },
+  );
+  if (!reponse.ok) {
+    throw new Error(
+      reponse.status === 409
+        ? "cette question n'attend plus — la conversation a repris."
+        : `réponse refusée (${reponse.status})`,
+    );
+  }
+  const paire = (await reponse.json()) as { messages: MessageChat[] };
+  return paire.messages;
+}
+
+/**
+ * Ouvre — ou reprend — le questionnaire d'outillage sur le fil
+ * (`POST /api/chat/{agent}/outillage/questionnaire`, #1031).
+ *
+ * N'écrit **aucun message d'utilisateur** : personne n'a rien demandé, seulement la
+ * question est posée. Idempotente — rappelée sur un questionnaire en cours, elle
+ * repose la question là où il en est.
+ */
+export async function ouvrirQuestionnaireOutillage(
+  agent: string,
+  conversation?: string,
+): Promise<MessageChat[]> {
+  const requete = new URLSearchParams();
+  if (conversation) requete.set("conversation", conversation);
+  const suffixe = requete.toString() ? `?${requete}` : "";
+  const reponse = await fetch(
+    `${API_URL}/api/chat/${encodeURIComponent(agent)}/outillage/questionnaire${suffixe}`,
+    { method: "POST", headers: { "Content-Type": "application/json" } },
+  );
+  if (!reponse.ok) {
+    throw new Error(`ouverture du questionnaire refusée (${reponse.status})`);
+  }
+  const paire = (await reponse.json()) as { messages: MessageChat[] };
+  return paire.messages;
+}
+
+/* ⚠ Pas de client pour `POST …/outillage/recommandation` ici, et c'est délibéré
+   (#1031). La route existe et rend la `Recommandation` du lot 2 ; **aucun écran ne
+   la consomme encore** — c'est #1034 qui l'affichera, avec l'analyse d'un projet
+   existant, dont le front n'a pas non plus de type (`GET …/outillage/analyse`, #1030,
+   n'en a reçu aucun). Écrire ici la moitié cliente d'un contrat que personne ne lit
+   la ferait vieillir sans que rien ne le signale : le modèle a déjà changé une fois
+   entre l'écriture de ce lot et le merge du précédent. */
 
 /**
  * Un échec survenu **après** que le message utilisateur a été acquis (#695) :

@@ -12,14 +12,17 @@ Control Tower `/api/catalogue`) et `catalogue()` assemble le catalogue effectif 
 les agents par défaut, puis les personnalisés. En V1 ce dépôt passera en base
 (table AGENT) sans changer ce contrat.
 
-Au-delà de l'identité (`Agent`), certains rôles disposent d'un **runtime outillé** —
-un sous-agent du SDK qui exécute une tâche de bout en bout dans un espace isolé et
-renvoie un livrable exploitable (`AgentOutcome`). Le runtime est **générique**
-(`AgentRuntime`, ticket #35) et paramétré par un profil de rôle (`RoleProfile`) :
-le Développeur (`DEVELOPER_PROFILE`, ticket #4), la Base de données
-(`DATABASE_PROFILE`, ticket #5), le QA / Testeur (`QA_PROFILE`, ticket #45), le
-DevOps (`DEVOPS_PROFILE`, ticket #67) et le Designer (`DESIGNER_PROFILE`, ticket #68).
-Ajouter un rôle outillé = déclarer un profil et l'inscrire dans `TOOLED_PROFILES`.
+Au-delà de l'identité (`Agent`), **tout** agent du catalogue dispose d'un **runtime
+outillé** — un sous-agent du SDK qui exécute une tâche de bout en bout dans un
+espace de travail et renvoie un livrable exploitable (`AgentOutcome`). Le runtime
+est **générique** (`AgentRuntime`, ticket #35) et paramétré par un profil de rôle
+(`RoleProfile`) que #1037 **dérive de la fiche de l'agent**
+(`maestro.agents.fiche_outillee.runtime_outille`) : il n'y a plus deux runtimes, et un
+agent défini hors du code lit, écrit et exécute comme les rôles du code. Ces cinq-là
+déclarent en plus un **cadre** propre — le Développeur (`DEVELOPER_PROFILE`, #4), la
+Base de données (`DATABASE_PROFILE`, #5), le QA / Testeur (`QA_PROFILE`, #45), le
+DevOps (`DEVOPS_PROFILE`, #67) et le Designer (`DESIGNER_PROFILE`, #68), inscrits dans
+`TOOLED_PROFILES` : des consignes de métier, pas un privilège d'outillage.
 
 Les **playbooks** (instructions d'un rôle) sont éditables hors du code via un
 stockage versionné (`maestro.agents.playbooks`, ticket #76) et appliqués **à
@@ -70,6 +73,15 @@ from maestro.agents.database import DATABASE_PROFILE
 from maestro.agents.designer import DESIGNER_PROFILE
 from maestro.agents.developer import DEVELOPER_PROFILE
 from maestro.agents.devops import DEVOPS_PROFILE
+from maestro.agents.fiche_outillee import (
+    CADRE_GENERIQUE,
+    CADRES_DU_CODE,
+    TOOLED_PROFILES,
+    default_runtimes,
+    playbook_outille,
+    profil_outille,
+    runtime_outille,
+)
 from maestro.agents.mcp import TYPES_SERVEUR, IntegrationMcp, McpStore, ServeurMcp
 from maestro.agents.permissions import (
     DecisionOutil,
@@ -99,52 +111,11 @@ from maestro.agents.store import (
     AgentStore,
     catalogue,
 )
-from maestro.providers.base import PLAFOND_TOURS_DEFAUT, ModelProvider
-
-#: Les profils outillés du POC, dans l'ordre du catalogue. La boucle d'orchestration
-#: (`maestro.engine`) route les tâches assignées à ces rôles vers leur runtime.
-TOOLED_PROFILES: tuple[RoleProfile, ...] = (
-    DEVELOPER_PROFILE,
-    DATABASE_PROFILE,
-    DEVOPS_PROFILE,
-    DESIGNER_PROFILE,
-    QA_PROFILE,
-)
-
-
-def default_runtimes(
-    provider: ModelProvider,
-    *,
-    model: str | None = None,
-    playbooks: PlaybookStore | None = None,
-) -> dict[str, AgentRuntime]:
-    """Construit les runtimes outillés par défaut, indexés par nom d'agent du catalogue.
-
-    C'est le câblage que consomme la boucle d'orchestration : une tâche routée vers
-    l'un de ces noms (`developpeur`, `bdd`, `devops`, `designer`, `qa`) s'exécute via
-    son runtime outillé plutôt que par un appel texte. `model` (optionnel, #69)
-    impose un modèle unique à tous les rôles — sinon chacun garde celui de son profil.
-    `playbooks` (optionnel, #76) **fige** le prompt système de chaque rôle sur son
-    playbook versionné du moment — un instantané au câblage ; l'application à
-    chaud (#78) passe, elle, par `LocalExecutor(playbooks=...)`, qui relit le
-    dépôt à chaque tâche et surcharge ces runtimes ponctuellement.
-    """
-    return {
-        profile.nom: AgentRuntime(
-            provider,
-            profile,
-            model=model,
-            system_prompt=(
-                playbooks.prompt_systeme(profile.nom, profile.prompt_systeme)
-                if playbooks is not None
-                else None
-            ),
-        )
-        for profile in TOOLED_PROFILES
-    }
-
+from maestro.providers.base import PLAFOND_TOURS_DEFAUT
 
 __all__ = [
+    "CADRES_DU_CODE",
+    "CADRE_GENERIQUE",
     "DATABASE_PROFILE",
     "DEFAULT_AGENTS",
     "DEFAULT_TOOLS",
@@ -184,4 +155,7 @@ __all__ = [
     "avec_playbooks",
     "catalogue",
     "default_runtimes",
+    "playbook_outille",
+    "profil_outille",
+    "runtime_outille",
 ]

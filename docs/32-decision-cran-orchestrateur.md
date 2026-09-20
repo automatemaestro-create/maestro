@@ -248,13 +248,18 @@ sûrement que brancher le cran du milieu.
 > **Verdict : la question est écartée de l'arbitrage et renvoyée à #354**, avec la frontière écrite.
 > Elle n'est pas refusée : elle change de cadrage.
 
-> ⚠ **Le canal s'est perdu entre deux cadrages, puis a été repris** (2026-09-19,
+> ⚠ **Le canal s'est perdu entre deux cadrages, puis a été construit** (2026-09-20,
 > [docs/37 §2.2](./37-decision-equipe-sur-mesure.md)). [docs/31 §3.1](./31-decision-surface-ecriture-agents.md)
 > le renvoyait à #647, ce paragraphe à #354. Les deux tickets se sont fermés sans le construire. Il
-> est désormais le lot #1023 (question libre et suspension, sur les trois pièces nommées au §5.3)
-> et le lot #1025 (la question dans le fil). La frontière écrite ici tient : poser une question
-> attend une réponse, déclarer un blocage n'attend rien, et une question ne contourne jamais une
-> validation.
+> est **livré** par #1023 (question libre et suspension, sur les trois pièces nommées au §5.3) et
+> #1025 (la question dans le fil) : `mcp__maestro__poser_une_question`
+> ([`maestro/providers/question.py`](../maestro/providers/question.py)), deux routes figées en
+> [docs/05 §6.17](./05-interface-control-tower.md), une carte au pied du fil (§2.7.6). La frontière
+> écrite ici tient, mot pour mot : poser une question attend une réponse, déclarer un blocage
+> n'attend rien, et une question ne contourne jamais une validation — c'est ce que garde
+> [`tests/test_questions_agents.py`](../tests/test_questions_agents.py) (#1027), qui joue les deux
+> canaux dans un même run et vérifie qu'un acte classé `ask` reste refusé alors même qu'une
+> personne a répondu « oui, vas-y » à la question de l'agent.
 
 ### 5.1 Quatre canaux, trois axes, aucun recouvrement
 
@@ -263,7 +268,7 @@ sûrement que brancher le cran du milieu.
 | **arbitrage sur l'acte** (#573) | nous (la politique) — ou l'agent (#582) | un **booléen** | l'**appel d'outil** |
 | **clarifications du brief** (#321) | l'**orchestrateur** | du **texte** (un brief corrigé) | le **run**, avant décomposition |
 | **« déclarer un blocage »** (#354) | l'**agent** | **rien** — c'est une émission | rien |
-| **canal « question »** (candidat) | l'**agent** | du **texte** | l'**appel**, pendant la tâche |
+| **canal « question »** (candidat à l'époque, **livré** par #1023) | l'**agent** | du **texte** | l'**appel**, pendant la tâche |
 
 La règle d'appartenance tient en une ligne : **l'arbitrage tranche des ACTES — un oui/non sur ce que
 l'agent va faire ; #321 est la question posée AVANT la décomposition, par l'orchestrateur ; tout ce
@@ -307,6 +312,14 @@ file porte des **actes à décider**, et sa carte est une carte oui/non (`Pannea
 `CarteValidation` l. 249-400, avec `ArgumentsActe` et le refus motivé). Une question ouverte n'y a
 pas de geste. Le **chat** est le candidat — #483 a déjà posé que « brief, clarifications et
 validation se décident dans le fil » —, mais c'est une décision de #354 et elle n'est pas prise ici.
+
+> ⚠ **Les trois pièces ont bien été héritées, et le chat était le bon endroit** (#1023, #1025). Le
+> canal réemploie `BornesArbitrage`, `CreditArbitrage` et `MemoireArbitrage` sans en écrire une
+> seule de plus — ce sont des pièces de **suspension**, pas d'arbitrage, exactement comme ce
+> paragraphe l'annonçait —, et la question arrive au **pied du fil**, à la place que la demande de
+> cadrage occupe déjà (#943). Les deux files restent séparées : elles ne se rejoignent que dans le
+> **compte** de la cloche, qui répond à « combien de choses m'attendent » et non à « combien de
+> validations ».
 
 ## 6. Ce que la trace porte — et le trou que le retrait **referme**
 
