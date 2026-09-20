@@ -74,6 +74,24 @@ class StepUsage:
     d'une tâche, la seule qui porte sa durée horloge ; le poser aussi sur les
     étapes annexes (`:validation`, `:refus-outil`, à usage nul) le ferait compter
     deux fois dans `usage_totale`.
+
+    `duree_attente_creneau_ms` et `duree_attente_atelier_ms` (#989) sont les deux
+    autres parts de `duree_ms` qui ne sont pas du travail : le temps passé à
+    attendre un **créneau d'instance** de son agent (#86), puis l'**atelier** de
+    son projet (#839, une tâche à la fois dans la racine d'un projet non
+    versionné). Elles vivent ici pour la raison exacte de `duree_arbitrage_ms` —
+    ce sont des parts d'une durée déjà mesurée, jamais un temps de plus — et le
+    moteur le disait déjà sans le compter : « attendre son tour n'est pas
+    travailler » (`maestro/engine/executor.py`). Sans elles, une tâche restée
+    dix-huit minutes en file se lit exactement comme une tâche lente, mesuré deux
+    fois : 21 min 17 s annoncées pour 8 min 05 s de travail (revue du 2026-08-26),
+    24 min 17 s pour ~11 min (retex du 2026-09-11).
+
+    **Deux champs et non un**, parce que les deux attentes n'appellent pas le même
+    geste : un créneau qui manque se corrige en ajoutant des instances à l'agent,
+    un atelier qui bloque est le régime de sérialisation d'un projet non versionné,
+    qu'on ne change pas à la légère (#839). Les fondre dans un « temps d'attente »
+    unique rendrait le chiffre inactionnable.
     """
 
     appels: int = 0
@@ -83,6 +101,8 @@ class StepUsage:
     duree_ms: int | None = None
     duree_api_ms: int | None = None
     duree_arbitrage_ms: int | None = None
+    duree_attente_creneau_ms: int | None = None
+    duree_attente_atelier_ms: int | None = None
     tours: int = 0
     outils: tuple[str, ...] = ()
 
@@ -92,19 +112,46 @@ class StepUsage:
         return self.tokens_entree + self.tokens_sortie
 
     @property
+    def duree_attente_ms(self) -> int | None:
+        """Ce que la tâche a passé à **attendre** : arbitrage, créneau et atelier (#989).
+
+        `None` — inconnu — tant qu'aucune des trois n'a été mesurée ; sinon la
+        somme de celles qui l'ont été. Ces trois attentes-là **ne se recouvrent
+        pas** : elles sont prises l'une après l'autre (créneau, puis atelier, puis
+        le travail dans lequel un arbitrage peut suspendre), donc les additionner
+        est ici légitime — ce qui ne s'additionne pas est l'occupation de deux
+        tâches menées de front, et cela se règle un cran plus haut
+        (`maestro.telemetry.costs.RunCost`).
+        """
+        parts = (
+            self.duree_arbitrage_ms,
+            self.duree_attente_creneau_ms,
+            self.duree_attente_atelier_ms,
+        )
+        mesurees = [part for part in parts if part is not None]
+        return sum(mesurees) if mesurees else None
+
+    @property
     def duree_execution_ms(self) -> int | None:
-        """La durée horloge **moins** l'arbitrage : le temps réellement passé à travailler (#584).
+        """La durée horloge **moins ses attentes** : le temps de travail (#584, #989).
 
         `None` quand la durée horloge l'est — il n'y a alors rien à décomposer.
-        Sans arbitrage mesuré, c'est la durée horloge elle-même : une tâche qui
-        n'a rien fait arbitrer a passé tout son temps à travailler. Bornée à zéro,
-        les deux mesures venant d'horloges qui ne partent pas au même instant.
+        Sans attente mesurée, c'est la durée horloge elle-même : une tâche dont
+        personne n'a mesuré les files a passé, pour ce qu'on en sait, tout son
+        temps à travailler. Bornée à zéro, les mesures venant d'horloges qui ne
+        partent pas au même instant.
+
+        #584 avait nommé ce temps et n'en retirait que l'**arbitrage** ; #989 lui
+        retire les deux attentes que le moteur rangeait déjà hors du travail sans
+        les compter. Le nom ne change pas, parce que le concept ne change pas :
+        c'est son contenu qui était incomplet.
         """
         if self.duree_ms is None:
             return None
-        if self.duree_arbitrage_ms is None:
+        attente = self.duree_attente_ms
+        if attente is None:
             return self.duree_ms
-        return max(0, self.duree_ms - self.duree_arbitrage_ms)
+        return max(0, self.duree_ms - attente)
 
     def fusion(self, autre: StepUsage) -> StepUsage:
         """Agrège deux mesures : somme des compteurs, union ordonnée des outils."""
@@ -118,30 +165,61 @@ class StepUsage:
             duree_arbitrage_ms=_somme_optionnelle(
                 self.duree_arbitrage_ms, autre.duree_arbitrage_ms
             ),
+            duree_attente_creneau_ms=_somme_optionnelle(
+                self.duree_attente_creneau_ms, autre.duree_attente_creneau_ms
+            ),
+            duree_attente_atelier_ms=_somme_optionnelle(
+                self.duree_attente_atelier_ms, autre.duree_attente_atelier_ms
+            ),
             tours=self.tours + autre.tours,
             outils=self.outils + tuple(o for o in autre.outils if o not in self.outils),
         )
 
-    def avec_duree(self, duree_ms: int, *, arbitrage_ms: int | None = None) -> StepUsage:
+    def avec_duree(
+        self,
+        duree_ms: int,
+        *,
+        arbitrage_ms: int | None = None,
+        attente_creneau_ms: int | None = None,
+        attente_atelier_ms: int | None = None,
+    ) -> StepUsage:
         """Copie de la mesure avec la durée horloge posée par l'appelant.
 
         `arbitrage_ms` (#584) pose du même geste la part de cette durée passée
-        suspendue à une décision humaine. Absent, le champ reste `None` : un
-        appelant qui ne mesure pas l'arbitrage ne déclare pas qu'il n'y en a pas
-        eu — la plupart des appelants de ce verbe (files, activités durables,
-        boucle de planification) n'ont aucun arbitrage à mesurer.
+        suspendue à une décision humaine ; `attente_creneau_ms` et
+        `attente_atelier_ms` (#989) les deux parts passées à attendre son tour.
+        Absents, les champs restent `None` : un appelant qui ne mesure pas une
+        attente ne déclare pas qu'il n'y en a pas eu — la plupart des appelants de
+        ce verbe (files, activités durables, boucle de planification) n'ont aucune
+        attente à mesurer.
         """
-        return replace(self, duree_ms=duree_ms, duree_arbitrage_ms=arbitrage_ms)
+        return replace(
+            self,
+            duree_ms=duree_ms,
+            duree_arbitrage_ms=arbitrage_ms,
+            duree_attente_creneau_ms=attente_creneau_ms,
+            duree_attente_atelier_ms=attente_atelier_ms,
+        )
 
     def resume_court(self) -> str:
         """Rend la mesure en une ligne lisible (pour les synthèses Markdown)."""
         duree = "n/d" if self.duree_ms is None else f"{self.duree_ms / 1000:.1f} s"
-        if self.duree_arbitrage_ms:
-            # Nommé **seulement** quand il y en a eu : annoncer « dont 0,0 s
-            # d'arbitrage » sur chacune des tâches d'un run apprendrait à ne plus
-            # lire la mention, et c'est elle qui doit sauter aux yeux le jour où
-            # une tâche a passé quatre minutes à attendre quelqu'un.
-            duree += f" (dont {self.duree_arbitrage_ms / 1000:.1f} s d'arbitrage)"
+        # Nommées **seulement** quand il y en a eu : annoncer « dont 0,0 s
+        # d'arbitrage » sur chacune des tâches d'un run apprendrait à ne plus
+        # lire la mention, et c'est elle qui doit sauter aux yeux le jour où
+        # une tâche a passé quatre minutes à attendre quelqu'un — ou dix-huit à
+        # attendre son tour (#989).
+        attentes = [
+            f"{part / 1000:.1f} s {mot}"
+            for part, mot in (
+                (self.duree_arbitrage_ms, "d'arbitrage"),
+                (self.duree_attente_creneau_ms, "de file d'agent"),
+                (self.duree_attente_atelier_ms, "d'atelier de projet"),
+            )
+            if part
+        ]
+        if attentes:
+            duree += " (dont " + ", ".join(attentes) + ")"
         if not self.appels:
             return f"aucun usage fournisseur rapporté · durée {duree}"
         cout = "n/d" if self.cout_usd is None else f"{self.cout_usd:.4f} $"
@@ -162,6 +240,14 @@ class StepUsage:
             "duree_ms": self.duree_ms,
             "duree_api_ms": self.duree_api_ms,
             "duree_arbitrage_ms": self.duree_arbitrage_ms,
+            "duree_attente_creneau_ms": self.duree_attente_creneau_ms,
+            "duree_attente_atelier_ms": self.duree_attente_atelier_ms,
+            # Les deux **dérivées** (#989) voyagent comme `tokens_total` : calculées
+            # ici et ignorées au retour. La règle « ce qui est du travail, ce qui
+            # est de l'attente » ne doit exister qu'à un endroit — la réécrire en
+            # TypeScript pour l'écran, c'est se donner deux règles qui divergeront.
+            "duree_attente_ms": self.duree_attente_ms,
+            "duree_execution_ms": self.duree_execution_ms,
             "tours": self.tours,
             "outils": list(self.outils),
         }
@@ -170,8 +256,10 @@ class StepUsage:
     def from_dict(cls, data: Mapping[str, Any]) -> StepUsage:
         """Reconstruit une mesure depuis sa forme `to_dict` (aller-retour JSON, #41).
 
-        `tokens_total` (dérivé) est ignoré ; les clés absentes retombent sur les
-        défauts — la mesure d'un worker qui ne rapporte rien reste valide.
+        `tokens_total`, `duree_attente_ms` et `duree_execution_ms` (dérivés) sont
+        ignorés ; les clés absentes retombent sur les défauts — la mesure d'un
+        worker qui ne rapporte rien reste valide, et une ligne de journal écrite
+        avant #989 se relit sans attentes mesurées (inconnu, pas zéro).
         """
         return cls(
             appels=data.get("appels", 0),
@@ -181,6 +269,8 @@ class StepUsage:
             duree_ms=data.get("duree_ms"),
             duree_api_ms=data.get("duree_api_ms"),
             duree_arbitrage_ms=data.get("duree_arbitrage_ms"),
+            duree_attente_creneau_ms=data.get("duree_attente_creneau_ms"),
+            duree_attente_atelier_ms=data.get("duree_attente_atelier_ms"),
             tours=data.get("tours", 0),
             outils=tuple(data.get("outils", ())),
         )

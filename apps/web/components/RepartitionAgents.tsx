@@ -46,7 +46,10 @@ export function RepartitionAgents({ agents }: { agents: CoutAgentAgrege[] }) {
                     ligne entière (#536) : le wrapper focusable est un `<span>`,
                     qui ne peut pas contenir les `<div>` de la barre. */}
                 <Infobulle
-                  texte={`${formatTokens(agent.usage.tokens_total)} tokens · ${agent.usage.appels} appel(s) · ${formatDuree(agent.usage.duree_ms)}`}
+                  /* La durée est celle du **travail** de l'agent (#989) : son
+                     horloge contenait le temps passé à attendre un créneau
+                     d'instance, qui n'est pas du travail et se lit à part. */
+                  texte={`${formatTokens(agent.usage.tokens_total)} tokens · ${agent.usage.appels} appel(s) · ${formatDuree(agent.usage.duree_execution_ms ?? agent.usage.duree_ms)}`}
                 >
                   <span className="font-medium">{agent.agent}</span>
                 </Infobulle>

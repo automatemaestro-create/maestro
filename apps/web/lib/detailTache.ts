@@ -51,6 +51,12 @@ export type LienAffiche = {
   url: string | null;
 };
 
+/** Une attente mesurée de la tâche, prête à rendre : son nom, sa durée. */
+export type AttenteAffichee = {
+  libelle: string;
+  dureeMs: number;
+};
+
 /** Le détail complet d'une tâche, normalisé. `vide` : il n'y a rien à ouvrir. */
 export type DetailTache = {
   description: string;
@@ -58,8 +64,39 @@ export type DetailTache = {
   liens: LienAffiche[];
   /** Nombre d'étapes terminées — le numérateur de l'avancement affiché. */
   faites: number;
+  /**
+   * Les attentes **non nulles** de la tâche (#989), dans l'ordre où elles
+   * arrivent. Vide quand la tâche n'a rien attendu — ou quand personne ne l'a
+   * mesuré : c'est cette liste, et elle seule, qui décide s'il y a un bloc de
+   * temps à rendre.
+   */
+  attentes: AttenteAffichee[];
+  /**
+   * Le **travail** de la tâche, en regard duquel ses attentes se lisent (#989).
+   *
+   * Il n'ouvre jamais le bloc à lui seul : sans attente, il n'y a rien à mettre
+   * en regard, et le panneau n'a pas à répéter un chiffre que la carte porte
+   * déjà. C'est la réserve n°2 du regard neuf — « les 12 min 38 s sont seules,
+   * sans rien à quoi les comparer » — et c'est ce que fait la référence
+   * (GitLab CI met « Durée » et « En file d'attente » dans le même bloc).
+   */
+  travailMs: number | null;
   vide: boolean;
 };
+
+/**
+ * Les trois attentes d'une tâche, dans l'ordre où le moteur les rencontre : le
+ * créneau d'instance de l'agent (#86), l'atelier du projet (#839), puis
+ * l'arbitrage humain qui peut suspendre le travail (#584).
+ *
+ * L'ordre est celui du moteur et non celui des durées : trié par valeur, un
+ * lecteur ne saurait plus dire à quel moment la tâche a attendu.
+ */
+const ATTENTES: readonly [keyof NonNullable<Tache["usage"]>, string][] = [
+  ["duree_attente_creneau_ms", "File d'attente de l'agent"],
+  ["duree_attente_atelier_ms", "Atelier du projet occupé"],
+  ["duree_arbitrage_ms", "Décision humaine attendue"],
+];
 
 /** Le libellé de repli d'un lien qui n'en porte pas, par nature. */
 const LIBELLE_PAR_NATURE: Record<NatureAffichee, string> = {
@@ -152,11 +189,33 @@ export function detailDe(tache: Tache): DetailTache {
   const description = texte(tache.description);
   const etapes = etapesDe(tache);
   const liens = liensDe(tache);
+  const attentes = attentesDe(tache);
   return {
     description,
     etapes,
     liens,
     faites: etapes.filter((etape) => etape.etat === ETAPE_FAITE).length,
-    vide: description === "" && etapes.length === 0 && liens.length === 0,
+    attentes,
+    travailMs: tache.usage?.duree_execution_ms ?? tache.usage?.duree_ms ?? null,
+    vide:
+      description === "" &&
+      etapes.length === 0 &&
+      liens.length === 0 &&
+      attentes.length === 0,
   };
+}
+
+/**
+ * Les attentes **non nulles** de la tâche (#989) — la même règle que partout
+ * ici : rien à montrer ⇒ rien à rendre. Une attente mesurée à zéro n'est pas
+ * une information, et l'annoncer sur chacune des tâches d'un run apprendrait à
+ * ne plus lire la ligne (la règle est déjà écrite pour l'arbitrage, #584).
+ */
+export function attentesDe(tache: Tache): AttenteAffichee[] {
+  const usage = tache.usage;
+  if (!usage) return [];
+  return ATTENTES.map(([champ, libelle]) => ({
+    libelle,
+    dureeMs: typeof usage[champ] === "number" ? (usage[champ] as number) : 0,
+  })).filter((attente) => attente.dureeMs > 0);
 }

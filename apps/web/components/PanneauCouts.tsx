@@ -58,7 +58,12 @@ function GrandLivre({ cout }: { cout: CoutExecution }) {
           {" · "}
           {formatTokens(cout.total.tokens_total)} tokens
           {" · "}
-          {formatDuree(cout.total.duree_ms)}
+          {/* La durée du run est l'**union** des intervalles de ses étapes
+              (#989), posée par le backend : deux tâches menées de front ne
+              l'occupent qu'une fois. C'est le « Total duration » d'un run de
+              GitHub Actions, et non la somme des durées de ses jobs — que la
+              même page range ailleurs, sous un autre nom. */}
+          {formatDuree(dureeTravail(cout.total))}
         </p>
       </div>
       <div className="mt-2 overflow-x-auto">
@@ -132,7 +137,22 @@ function CellulesUsage({ usage }: { usage: Usage }) {
         </Infobulle>
       </td>
       <td className="chiffre py-1 pr-3 text-right">{formatCout(usage.cout_usd)}</td>
-      <td className="chiffre py-1 text-right">{formatDuree(usage.duree_ms)}</td>
+      <td className="chiffre py-1 text-right">{formatDuree(dureeTravail(usage))}</td>
     </>
   );
+}
+
+/**
+ * La durée qu'une ligne du grand livre affiche (#989) : le **travail**, jamais
+ * l'horloge.
+ *
+ * Une seule fonction pour les trois familles de lignes, et c'est le point : sur
+ * une tâche, elle retire les attentes que le moteur range déjà hors du travail ;
+ * sur la planification et le brief, qui n'attendent rien, elle rend la durée
+ * inchangée ; sur la ligne de **total**, le backend a déjà posé l'union des
+ * intervalles du run et n'y déclare aucune attente — la même expression rend
+ * donc cette union telle quelle. Le repli couvre un backend d'avant ce ticket.
+ */
+function dureeTravail(usage: Usage): number | null {
+  return usage.duree_execution_ms ?? usage.duree_ms;
 }

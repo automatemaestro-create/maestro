@@ -36,11 +36,82 @@ deux tient réellement (au lieu d'un plafond silencieusement sans prise).
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from datetime import datetime, timedelta
 from typing import Any
 
 from maestro.references import ReferenceTicket, ticket_en_dict
-from maestro.telemetry.journal import RunJournal
+from maestro.telemetry.journal import RunJournal, StepRecord
 from maestro.telemetry.usage import StepUsage
+
+
+def intervalle_depuis(
+    horodatage: str, duree_ms: int | None
+) -> tuple[datetime, datetime] | None:
+    """L'intervalle `[début, fin]` qu'une étape a **occupé**, ou None (#989).
+
+    Le journal ne porte qu'un horodatage, celui de la **consignation** — donc la
+    fin —, et la durée horloge de l'étape : le début s'en déduit. C'est déjà ce
+    que fait l'export Langfuse (`maestro.telemetry.langfuse._debut_depuis`), et
+    le refaire autrement donnerait deux débuts pour la même étape.
+
+    None quand il n'y a pas d'intervalle à lire : aucune durée mesurée, une durée
+    nulle ou négative, un horodatage vide ou illisible. Une étape sans intervalle
+    ne compte pas dans l'union — elle ne la fausse pas non plus.
+
+    Publique parce que le grand livre se construit par **deux** chemins, et
+    qu'ils doivent lire le temps pareil : depuis le journal du moteur
+    (`RunCost.depuis_journal`) et depuis le flux d'événements de la Control Tower
+    (`EtatExecution.cout`). Une règle de temps recopiée des deux côtés d'une
+    frontière est ce que #830 a vu casser.
+
+    ⚠ L'horodatage est écrit à la **seconde** (`isoformat(timespec="seconds")`) :
+    les bornes de l'union sont donc quantifiées à la seconde. C'est sans effet
+    sur ce que l'union sert à corriger — un recouvrement de plusieurs minutes
+    entre deux tâches menées de front — et rendre le journal plus fin pour cela
+    seul coûterait à toutes ses lignes.
+    """
+    if duree_ms is None or duree_ms <= 0 or not horodatage:
+        return None
+    try:
+        fin = datetime.fromisoformat(horodatage)
+    except ValueError:
+        return None
+    return (fin - timedelta(milliseconds=duree_ms), fin)
+
+
+def _intervalle(record: StepRecord) -> tuple[datetime, datetime] | None:
+    """L'intervalle occupé par une ligne de journal — cf. `intervalle_depuis`."""
+    return intervalle_depuis(record.horodatage, record.usage.duree_ms)
+
+
+def union_ms(intervalles: list[tuple[datetime, datetime]]) -> int | None:
+    """La durée couverte par l'**union** des intervalles, jamais leur somme (#989).
+
+    Deux tâches menées de front occupent le run une seule fois sur la part qu'elles
+    partagent. C'est la correction que l'outillage a faite sur les runs de
+    `/orchestrate` (#497 — « l'occupation est l'union des intervalles et jamais
+    leur somme ») et que le produit répétait à l'envers : 47 min annoncées pour
+    43,5 min de mur (revue du 2026-08-26).
+
+    None sur une liste vide — rien de mesuré n'est pas une durée nulle.
+    """
+    if not intervalles:
+        return None
+    # Triés par début, les intervalles se fondent en blocs contigus : on tient
+    # le bloc courant et on ne compte que lorsqu'un trou le clôt.
+    ordonnes = sorted(intervalles)
+    debut_courant, fin_courante = ordonnes[0]
+    couvert = timedelta()
+    for debut, fin in ordonnes[1:]:
+        if debut > fin_courante:
+            # Un trou : le bloc précédent est clos, on le compte et on repart.
+            couvert += fin_courante - debut_courant
+            debut_courant, fin_courante = debut, fin
+        elif fin > fin_courante:
+            fin_courante = fin
+    couvert += fin_courante - debut_courant
+    return int(round(couvert.total_seconds() * 1000))
+
 
 #: Étape du journal qui n'appartient à aucune tâche : la planification (#8).
 ETAPE_PLANIFICATION = "planification"
@@ -123,14 +194,40 @@ class RunCost:
     planification: StepUsage = StepUsage()
     brief: StepUsage = StepUsage()
     taches: tuple[TaskCost, ...] = ()
+    #: Ce que le run a **occupé** : l'union des intervalles de ses étapes (#989),
+    #: `None` quand aucune n'a de durée lisible. C'est cette valeur que `total`
+    #: porte comme durée, à la place d'une somme qui comptait deux fois les
+    #: tâches menées de front.
+    duree_mur_ms: int | None = None
 
     @property
     def total(self) -> StepUsage:
-        """Usage agrégé de l'exécution — retombe sur `RunJournal.usage_totale`."""
+        """Usage agrégé de l'exécution — compteurs sommés, durée **unie** (#989).
+
+        Tokens, appels, tours et coût se somment : deux tâches de front coûtent
+        bien deux fois. La **durée**, non : c'est du temps de mur, et le run n'en
+        a vécu qu'un — d'où `duree_mur_ms`, l'union des intervalles, à la place
+        de la somme que `fusion` produirait.
+
+        Ses **attentes** retombent à `None`, et c'est voulu : une somme d'attentes
+        de tâches parallèles n'est pas une attente du run, et la retrancher d'une
+        union donnerait un « travail du run » qui ne veut rien dire. Au niveau du
+        run, la durée est une seule mesure — celle que GitHub Actions appelle
+        « Total duration » ; la décomposition travail/attente se lit par tâche,
+        là où elle a un sens.
+
+        Les compteurs, eux, retombent bien sur `RunJournal.usage_totale`.
+        """
         total = self.planification.fusion(self.brief)
         for tache in self.taches:
             total = total.fusion(tache.usage)
-        return total
+        return replace(
+            total,
+            duree_ms=self.duree_mur_ms,
+            duree_arbitrage_ms=None,
+            duree_attente_creneau_ms=None,
+            duree_attente_atelier_ms=None,
+        )
 
     @classmethod
     def depuis_journal(cls, journal: RunJournal) -> RunCost:
@@ -144,7 +241,15 @@ class RunCost:
         planification = StepUsage()
         brief = StepUsage()
         entrees: dict[str, TaskCost] = {}
+        # Les intervalles de toutes les étapes comptées — planification et brief
+        # compris : ils occupent le run comme le reste, et c'est le temps de mur
+        # du run entier qu'on mesure, pas celui de ses seules tâches.
+        intervalles: list[tuple[datetime, datetime]] = []
         for record in journal.records:
+            if record.etape != ETAPE_REPRISE:
+                intervalle = _intervalle(record)
+                if intervalle is not None:
+                    intervalles.append(intervalle)
             if record.etape == ETAPE_PLANIFICATION:
                 planification = planification.fusion(record.usage)
                 continue
@@ -189,6 +294,7 @@ class RunCost:
             planification=planification,
             brief=brief,
             taches=tuple(entrees.values()),
+            duree_mur_ms=union_ms(intervalles),
         )
 
     def to_dict(self) -> dict[str, Any]:

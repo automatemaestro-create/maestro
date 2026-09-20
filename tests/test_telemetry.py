@@ -14,10 +14,19 @@ Couvre aussi le suivi de coût par tâche (#49, tests différés → #59) :
   vérification (aucun compteur parallèle) et lève `PlafondDepenseDepasse` au
   dépassement — relayé par `report_usage` chez l'appelant du fournisseur, la
   mesure fautive restant comptée (le coût reste visible).
+
+Et, depuis #989, **le temps** que ces deux objets rapportent :
+
+- la durée d'une tâche est son **temps de travail** — l'horloge moins ses
+  attentes (arbitrage #584, créneau d'agent #86, atelier de projet #839), qui se
+  lisent à part et gardent chacune son nom ;
+- la durée d'un **run** est l'**union** des intervalles de ses étapes, jamais
+  leur somme : deux tâches menées de front ne l'occupent qu'une fois.
 """
 
 import json
 import logging
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -31,9 +40,11 @@ from maestro.telemetry import (
     RunJournal,
     StepUsage,
     collect_usage,
+    intervalle_depuis,
     redact_secrets,
     report_usage,
     resume_controle_depense,
+    union_ms,
 )
 
 # --- StepUsage : agrégation ------------------------------------------------------------
@@ -396,3 +407,179 @@ def test_report_usage_leve_chez_l_appelant_quand_le_plafond_creve():
 
     assert recolte.total.appels == 2
     assert recolte.total.cout_usd == pytest.approx(0.016)
+
+
+# --- #989 : la durée d'une tâche est son temps de travail ------------------------------
+
+
+def test_la_duree_de_travail_retire_les_trois_attentes():
+    # Le cas du retex du 2026-09-11 (G4), chiffres compris : 24 min 17 s
+    # annoncées, dont 13 min à attendre son tour — il reste ~11 min de travail.
+    usage = StepUsage().avec_duree(
+        1_457_000,
+        arbitrage_ms=12_000,
+        attente_creneau_ms=48_000,
+        attente_atelier_ms=780_000,
+    )
+
+    assert usage.duree_attente_ms == 840_000
+    assert usage.duree_execution_ms == 617_000
+
+
+def test_une_attente_non_mesuree_ne_vaut_pas_zero():
+    # La distinction de `cout_usd`, et elle vaut pour la même raison : une
+    # mesure absente n'est pas une mesure nulle. Un appelant qui ne mesure
+    # aucune attente (files, boucle de planification) ne déclare pas qu'il n'y
+    # en a pas eu, et sa durée de travail reste son horloge.
+    sans_mesure = StepUsage().avec_duree(5_000)
+    assert sans_mesure.duree_attente_ms is None
+    assert sans_mesure.duree_execution_ms == 5_000
+
+    # Mesurée à zéro, en revanche, l'attente est un fait : on l'a regardée.
+    mesuree = StepUsage().avec_duree(5_000, attente_creneau_ms=0, attente_atelier_ms=0)
+    assert mesuree.duree_attente_ms == 0
+    assert mesuree.duree_execution_ms == 5_000
+
+
+def test_la_duree_de_travail_ne_devient_jamais_negative():
+    # Les mesures viennent d'horloges qui ne partent pas au même instant :
+    # bornée à zéro plutôt que de rendre une durée négative.
+    usage = StepUsage().avec_duree(1_000, attente_atelier_ms=4_000)
+    assert usage.duree_execution_ms == 0
+
+
+def test_les_attentes_voyagent_en_json_avec_leurs_derivees():
+    usage = StepUsage().avec_duree(
+        10_000, arbitrage_ms=1_000, attente_creneau_ms=2_000, attente_atelier_ms=3_000
+    )
+    forme = usage.to_dict()
+
+    assert forme["duree_attente_creneau_ms"] == 2_000
+    assert forme["duree_attente_atelier_ms"] == 3_000
+    # Les dérivées voyagent calculées, comme `tokens_total` : l'écran ne
+    # réécrit pas la règle « ce qui est du travail, ce qui est de l'attente ».
+    assert forme["duree_attente_ms"] == 6_000
+    assert forme["duree_execution_ms"] == 4_000
+    # …et sont ignorées au retour : l'aller-retour reste fidèle.
+    assert StepUsage.from_dict(forme) == usage
+
+
+def test_une_ligne_de_journal_d_avant_989_se_relit_sans_attente_mesuree():
+    # Inconnu, pas zéro : rien ne permet après coup de dire ce qu'une tâche a
+    # attendu, et sa durée de travail reste donc son horloge.
+    relu = StepUsage.from_dict({"duree_ms": 4_000})
+    assert relu.duree_attente_creneau_ms is None
+    assert relu.duree_attente_ms is None
+    assert relu.duree_execution_ms == 4_000
+
+
+def test_le_resume_court_nomme_chaque_attente_et_tait_les_nulles():
+    resume = StepUsage(appels=1).avec_duree(
+        20_000, arbitrage_ms=0, attente_creneau_ms=0, attente_atelier_ms=8_000
+    ).resume_court()
+
+    assert "d'atelier de projet" in resume
+    # Les deux attentes nulles ne sont pas annoncées : « dont 0,0 s » sur
+    # chacune des tâches d'un run apprendrait à ne plus lire la mention (#584).
+    assert "d'arbitrage" not in resume
+    assert "de file d'agent" not in resume
+
+
+# --- #989 : la durée d'un run est l'union de ses intervalles ---------------------------
+
+
+def _intervalle(debut_s: float, fin_s: float) -> tuple[datetime, datetime]:
+    """Un intervalle en secondes depuis une origine fixe — de quoi lire le test."""
+    origine = datetime(2026, 9, 20, 10, 0, tzinfo=UTC)
+    return (origine + timedelta(seconds=debut_s), origine + timedelta(seconds=fin_s))
+
+
+def test_l_union_ne_compte_pas_deux_fois_un_recouvrement():
+    # L'erreur que le produit répétait et que l'outillage avait corrigée (#497) :
+    # 47 min annoncées pour 43,5 min de mur. Deux tâches de 60 s qui se
+    # recouvrent de 30 s occupent 90 s, pas 120.
+    assert union_ms([_intervalle(0, 60), _intervalle(30, 90)]) == 90_000
+
+
+def test_l_union_additionne_les_intervalles_disjoints():
+    # L'autre moitié : sans recouvrement, l'union **est** la somme — le trou
+    # entre les deux n'est pas du temps occupé.
+    assert union_ms([_intervalle(0, 10), _intervalle(40, 50)]) == 20_000
+
+
+def test_l_union_absorbe_un_intervalle_entierement_contenu():
+    # Une tâche courte pendant une longue n'ajoute rien, et ne raccourcit rien.
+    assert union_ms([_intervalle(0, 100), _intervalle(20, 30)]) == 100_000
+
+
+def test_l_union_ignore_l_ordre_dans_lequel_les_etapes_sont_consignees():
+    # `RunJournal.records` suit l'ordre d'**achèvement** : des tâches menées de
+    # front y arrivent dans le désordre de leurs débuts.
+    desordre = [_intervalle(30, 90), _intervalle(0, 60)]
+    assert union_ms(desordre) == 90_000
+
+
+def test_l_union_sans_intervalle_est_inconnue_et_non_nulle():
+    assert union_ms([]) is None
+
+
+def test_un_intervalle_se_deduit_de_l_horodatage_et_de_la_duree():
+    debut, fin = intervalle_depuis("2026-09-20T10:00:40+00:00", 40_000)
+    assert fin - debut == timedelta(seconds=40)
+    assert debut == datetime(2026, 9, 20, 10, 0, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    "horodatage, duree_ms",
+    [
+        ("2026-09-20T10:00:40+00:00", None),  # rien de mesuré
+        ("2026-09-20T10:00:40+00:00", 0),  # durée nulle : aucun temps occupé
+        ("2026-09-20T10:00:40+00:00", -5),  # horloges désaccordées
+        ("pas une date", 40_000),  # horodatage illisible
+        ("", 40_000),  # horodatage absent
+    ],
+)
+def test_une_etape_sans_intervalle_lisible_ne_fausse_pas_l_union(horodatage, duree_ms):
+    assert intervalle_depuis(horodatage, duree_ms) is None
+
+
+def test_le_grand_livre_rend_l_union_et_non_la_somme_des_durees():
+    # De bout en bout, sur un vrai journal : deux tâches d'une minute
+    # consignées coup sur coup se recouvrent presque entièrement. La somme
+    # annoncerait deux minutes ; l'occupation du run en vaut une.
+    journal = RunJournal()
+    _consigne(journal, etape="t1", usage=StepUsage(appels=1).avec_duree(60_000))
+    _consigne(journal, etape="t2", usage=StepUsage(appels=1).avec_duree(60_000))
+    cout = RunCost.depuis_journal(journal)
+
+    # Les compteurs, eux, se somment bien : deux tâches de front coûtent deux fois.
+    assert cout.total.appels == 2
+    # La durée, non. Une seconde de marge : les deux consignations peuvent
+    # tomber de part et d'autre d'un tic d'horloge (horodatage à la seconde).
+    assert cout.duree_mur_ms is not None
+    assert 60_000 <= cout.duree_mur_ms <= 61_000
+    assert cout.total.duree_ms == cout.duree_mur_ms
+
+
+def test_le_total_du_run_ne_porte_aucune_attente():
+    # Une somme d'attentes de tâches parallèles n'est pas une attente du run,
+    # et la retrancher d'une union donnerait un « travail du run » qui ne veut
+    # rien dire. Au niveau du run, la durée est une seule mesure.
+    journal = RunJournal()
+    _consigne(
+        journal,
+        etape="t1",
+        usage=StepUsage(appels=1).avec_duree(60_000, attente_atelier_ms=30_000),
+    )
+    total = RunCost.depuis_journal(journal).total
+
+    assert total.duree_attente_ms is None
+    assert total.duree_execution_ms == total.duree_ms
+
+
+def test_une_etape_de_reprise_n_occupe_pas_le_run():
+    # Marqueur de run (#96), rattaché à aucune tâche : il ne compte pas au grand
+    # livre, il n'occupe donc rien non plus.
+    journal = RunJournal()
+    _consigne(journal, etape="reprise", usage=StepUsage().avec_duree(90_000))
+    assert RunCost.depuis_journal(journal).duree_mur_ms is None

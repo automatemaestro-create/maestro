@@ -40,6 +40,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from maestro.controltower.app import create_app
+from maestro.controltower.bridge import evenements_depuis_step
 from maestro.controltower.brief import (
     ACTEUR_BRIEF,
     ROLE_BRIEF,
@@ -49,6 +50,7 @@ from maestro.controltower.brief import (
     evenement_demande_brief,
 )
 from maestro.controltower.events import (
+    EVENEMENT_AGENT_ACTIVITE,
     EVENEMENT_BRIEF_DECISION,
     EVENEMENT_BRIEF_DEMANDE,
     EVENEMENT_EXECUTION_STATUT,
@@ -87,8 +89,8 @@ from maestro.orchestrator import (
     validate_brief,
 )
 from maestro.providers.base import ModelProvider
-from maestro.telemetry import RunJournal
-from maestro.telemetry.costs import ETAPE_BRIEF
+from maestro.telemetry import RunJournal, StepUsage
+from maestro.telemetry.costs import ETAPE_BRIEF, ETAPE_PLANIFICATION, ETAPE_REPRISE
 
 RUN = "b1e5f0000001"
 
@@ -1018,3 +1020,104 @@ def test_un_bus_referme_sans_reponse_aux_questions_echoue_de_meme():
     assert "sans réponse" in str(capture.value)
     assert cadrage.prompts_plan == []
     assert execution.appels == 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 7. Le cadrage a son seau au grand livre — bout en bout (#989, défaut S9)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _ligne_de_run(etape: str, nom: str, cout_usd: float | None = None) -> dict[str, Any]:
+    """Une ligne de journal pour une étape **du run** — sans tâche, donc."""
+    return {
+        "run_id": "run-brief",
+        "etape": etape,
+        "nom": nom,
+        "agent": "orchestrateur",
+        "role": "Orchestrateur",
+        "statut": "terminee",
+        "usage": StepUsage(appels=1, cout_usd=cout_usd).to_dict(),
+        "horodatage": "2026-09-20T10:00:00+00:00",
+    }
+
+
+def test_le_pont_nomme_l_etape_de_cadrage_sur_l_evenement():
+    """La ligne `brief` du journal arrive à la projection **en se nommant**.
+
+    C'est la moitié manquante du défaut S9 (revue #568) : le moteur consignait
+    bien l'étape (`ETAPE_BRIEF`, #318), mais le pont la traduisait en activité
+    d'agent sans `tache_id` — indiscernable de la planification pour le grand
+    livre que la Control Tower sert, d'où un seau `brief` vide quel que soit
+    l'écran qui avait lancé le run. Le nom de l'étape voyage donc avec
+    l'événement, plutôt que de se deviner d'un titre : le dépôt ne juge pas un
+    texte par son libellé (#746).
+    """
+    (event,) = evenements_depuis_step(
+        _ligne_de_run(ETAPE_BRIEF, "Brief de l'objectif", 0.02)
+    )
+
+    assert event.type == EVENEMENT_AGENT_ACTIVITE
+    assert event.tache_id == ""
+    assert event.etape_run == ETAPE_BRIEF
+
+
+def test_une_etape_de_tache_ne_porte_aucune_etape_de_run():
+    """Le champ ne dit quelque chose que là où il en a un à dire.
+
+    Sans cette moitié-là, « cet événement ne nomme pas d'étape de run » se
+    confondrait avec « le champ n'a jamais été posé », et la prochaine lecture
+    aurait un indice de plus à interpréter.
+    """
+    (event,) = evenements_depuis_step(
+        {
+            "run_id": "run-brief",
+            "etape": "t1",
+            "nom": "Implémenter",
+            "agent": "developpeur",
+            "role": "Développeur",
+            "statut": "terminee",
+            "usage": StepUsage(appels=1, cout_usd=0.4).to_dict(),
+            "horodatage": "2026-09-20T10:00:00+00:00",
+        }
+    )
+
+    assert event.tache_id == "t1"
+    assert event.etape_run == ""
+
+
+def test_le_grand_livre_separe_le_cadrage_de_la_planification():
+    """Bout en bout : trois lignes de journal, deux seaux distincts.
+
+    Les confondre masquait ce que coûte la mise au point de l'intention — ce que
+    le seau existe pour montrer —, et d'autant plus qu'un brief se **régénère**
+    à chaque aller-retour de clarification (#321).
+    """
+    state = ControlTowerState()
+    lignes = (
+        _ligne_de_run(ETAPE_BRIEF, "Brief de l'objectif", 0.02),
+        _ligne_de_run(ETAPE_BRIEF, "Brief de l'objectif (clarification 1)", 0.01),
+        _ligne_de_run(ETAPE_PLANIFICATION, "Planification", 0.05),
+    )
+    for ligne in lignes:
+        for event in evenements_depuis_step(ligne):
+            state.appliquer(event)
+
+    cout = state.execution("run-brief").cout
+
+    # Les deux tours de cadrage se cumulent dans **un** poste, comme le grand
+    # livre du moteur les cumule déjà (#318).
+    assert cout.brief.cout_usd == pytest.approx(0.03)
+    assert cout.brief.appels == 2
+    assert cout.planification.cout_usd == pytest.approx(0.05)
+    assert cout.total.cout_usd == pytest.approx(0.08)
+
+
+def test_une_reprise_n_est_ni_un_cadrage_ni_une_planification():
+    """La troisième étape de run (#96) porte son nom comme les deux autres.
+
+    Elle n'a aucun usage par construction, mais la nommer est ce qui empêche la
+    prochaine lecture de la ranger quelque part par défaut.
+    """
+    (event,) = evenements_depuis_step(_ligne_de_run(ETAPE_REPRISE, "Reprise"))
+
+    assert event.etape_run == ETAPE_REPRISE

@@ -381,6 +381,20 @@ class Event:
     # pas dans le transport, où il ferait annoncer une attente humaine à chaque
     # statut de tâche.
     decideur: str = ""
+    # **Quelle étape du run** cette activité d'agent est (#989, défaut S9) :
+    # `planification`, `brief` ou `reprise` — les valeurs de
+    # `maestro.telemetry.costs.ETAPE_*` —, et vide partout ailleurs, y compris
+    # sur toute activité rattachée à une tâche.
+    #
+    # Il existe parce que le grand livre de la Control Tower se reconstruit des
+    # **événements** et non du journal (`EtatExecution.cout`) : les trois étapes
+    # de run y arrivaient comme la même chose — une activité d'agent sans
+    # `tache_id` —, si bien que le coût du cadrage était compté en planification
+    # et que le seau `brief` du grand livre (#318) restait vide quel que soit
+    # l'écran qui avait lancé le run. Un fait porté par le transport, jamais
+    # deviné du titre : juger « c'est un brief » sur le libellé serait un lexique,
+    # et le dépôt n'en pose pas (#746).
+    etape_run: str = ""
     horodatage: str = field(default_factory=_horodatage)
 
     def to_dict(self) -> dict[str, Any]:
@@ -423,6 +437,7 @@ class Event:
             "outil": self.outil,
             "arguments": dict(self.arguments) if self.arguments is not None else None,
             "decideur": self.decideur,
+            "etape_run": self.etape_run,
             "horodatage": self.horodatage,
         }
 
@@ -517,6 +532,11 @@ class Event:
             # connaît pas ; le repli sûr (`decideur_depuis`) est appliqué là où
             # une **décision** se prend, jamais sur un transport.
             decideur=str(data.get("decideur") or ""),
+            # Même régime que `decideur` et `cause` : la valeur brute passe telle
+            # quelle. Un événement émis avant #989 n'en porte pas — son cadrage
+            # restera compté en planification, et c'est juste : rien ne permet
+            # après coup de dire ce qu'il était.
+            etape_run=str(data.get("etape_run") or ""),
             horodatage=data.get("horodatage", ""),
         )
 

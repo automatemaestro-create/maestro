@@ -2240,6 +2240,71 @@ débordement horizontal**, rien d'inatteignable — le seul signalement est un *
 une tuile de chiffre, présent avant ce lot. Le ticket #926 porte `veille::arbitree` depuis cette
 veille.
 
+#### La durée d'une tâche et ses attentes — 2026-09-20 (#989, jouée en run)
+
+Surface : la **ligne chrono** d'une carte de Kanban (`components/Kanban.tsx`) et celle d'un nœud de
+pipeline (`components/runs/VuePipeline.tsx`), le panneau de détail d'une tâche, et les deux tables du
+grand livre (`app/couts/page.tsx`, `components/PanneauCouts.tsx`). La question : *combien de temps
+cette tâche a-t-elle réellement travaillé — et, si le chiffre surprend, où est passé le reste ?*
+Première veille **jouée par une session de run** puis suivie, sur le même ticket, du choix de
+variantes de #1009. Décision complète en commentaire de **#989**.
+
+**Vérifié en direct** (trois captures, `.maestro/session/design-veille/`) : **GitHub Actions**, run
+public terminé — l'en-tête porte quatre faits alignés en colonnes (`Triggered via… · Status ·
+Total duration 3m 47s · Artifacts`), et « Total duration » est un **lien** vers une page `Usage` dont
+la table « Run time » rend une durée par job pour un total de **9 m 38 s**. Le même run vaut donc
+3 m 47 s (mur) et 9 m 38 s (somme) : **deux nombres, deux noms, deux places**, le premier menant au
+second. — **GitLab CI**, job public terminé : le bloc de faits empile des lignes **étiquetées en
+gras**, même taille — `Durée : 1 minute 15 secondes` · `Terminé` · `En file d'attente : 28 secondes`
+· `Délai d'attente` —, quand la **liste** des jobs du pipeline n'en porte qu'une seule. —
+**Buildkite**, build public : `Passed in 43m 44s` en tête, **une** durée par job (40m 6s, 36m 44s,
+24m 8s…) dont la somme dépasse largement le build.
+
+**Non vérifié, donc non cité** : la page « timeline » d'un job Buildkite (le « waited » par job,
+derrière un compte) ; **Temporal** et **Langfuse** (exclusion de #471, re-confirmée par #868) ;
+**Airflow**, dont la doc nomme un `queued_duration` distinct du `duration` mais qui n'a pas
+d'instance publique joignable.
+
+**Cinq partis pris** : la **place compacte porte UN chiffre, et c'est le travail** *(GHA, Buildkite)*
+· l'**attente est un fait NOMMÉ, sur sa propre ligne, dans le détail** — jamais fondue dans la durée,
+jamais reléguée à une infobulle *(GitLab CI)* · une **attente nulle ne s'affiche pas**, la règle étant
+déjà écrite pour l'arbitrage (#584 : « annoncer “dont 0,0 s” sur chacune des tâches apprendrait à ne
+plus lire la mention ») *(GitLab CI a contrario)* · un **run ne s'annonce jamais par la somme de ses
+tâches** : le chiffre de tête est le mur, la somme est une autre lecture sous un autre nom *(GHA,
+Buildkite)* · le **chiffre porte son mot**, pas seulement son glyphe — depuis #894 cette place rend
+déjà deux mesures de sens différent *(GitLab CI, GHA)*.
+
+**Refusés sur place, avec leur raison** : la **barre segmentée** travail / attente sur la carte et le
+nœud — `AvancementEtapes` (#489) occupe déjà ce rôle visuel dans ces deux boîtes, deux barres dans une
+carte de 16 rem se liraient l'une pour l'autre, et aucune des trois références n'en montre ; une
+**page dédiée** à la décomposition (le modèle `Usage` de GitHub) — une route de plus pour trois
+chiffres, quand les deux places existent ; le **tiret ou le mot à la place d'une durée** (« In
+progress »), déjà refusé par #868 ; un **quatrième chiffre de bandeau** sur `/couts`, la règle des
+trois places en plafonnant quatre et les quatre étant pris.
+
+**Puis les variantes** (#1009), rendues sur la vraie stack avec une donnée qui a réellement attendu —
+13 min 39 s d'horloge, 1 min 01 s de travail, 12 min 38 s d'atelier : **A** l'attente dans le détail
+seul · **B** un second temps sur la ligne chrono · **C** une ligne dédiée sous la ligne chrono,
+nommant l'attente. **Retenue : A**, par le regard neuf, contre les captures de référence. Ce que le
+rendu a tranché et qu'aucun raisonnement n'aurait donné : dans **B**, le « 1 min 01 s » qui tenait sur
+deux lignes **éclate en quatre** (« 1 » / « min » / « 01 » / « s ») et le second chiffre en trois — la
+ligne chrono double de hauteur et les deux durées, de même graisse et de même format, se lisent l'une
+pour l'autre. **C** ne casse rien et répond mieux d'un coup d'œil, mais plie le parti pris 1 et charge
+l'élément de liste comme aucune référence ne le fait ; elle est **repêchable** si l'absence d'amorce
+d'A se révèle coûteuse à l'usage.
+
+**Une réserve du regard neuf a changé le code** avant d'être écrite ailleurs : dans A, l'attente
+était **seule** dans le panneau, sans la durée de travail en regard — or la référence met les deux
+côte à côte, et sans ce vis-à-vis « 12 min 38 s » ne se rapporte à rien. Le bloc porte donc le travail
+en première ligne. Les deux autres réserves sont assumées et consignées : **aucune amorce** sur la
+carte (le prix de la place compacte, et ce qui rend C repêchable), et **non vus** — le thème sombre,
+le rendu d'une attente **en cours**, la frise.
+
+**Ce que la veille n'a pas regardé** : le thème sombre (les trois captures sont en clair) ; le rendu
+d'une attente **en cours** — une tâche qui attend son atelier *maintenant* —, qu'aucune référence ne
+montrait ; et la **frise**, qui n'affiche aucune durée soldée. Le ticket #989 porte `veille::arbitree`
+depuis cette veille.
+
 ---
 
 ### 5.8 Un écran se juge contre l'attente — 2026-09-17 (chantier #972)

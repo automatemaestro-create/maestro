@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from typing import Any
 
 from maestro.agents.capacity import INSTANCES_DEFAUT, CapaciteAgent
@@ -76,7 +77,13 @@ from maestro.plan_run import NoeudPlan
 from maestro.projets.application import DiffProjet
 from maestro.references import ticket_en_dict
 from maestro.sources.modele import Source, sources_en_liste
-from maestro.telemetry.costs import RunCost, TaskCost
+from maestro.telemetry.costs import (
+    ETAPE_BRIEF,
+    RunCost,
+    TaskCost,
+    intervalle_depuis,
+    union_ms,
+)
 from maestro.telemetry.usage import StepUsage
 
 #: Statuts d'agent exposés par l'API (docs/05 §2.1 : libre / occupé / désactivé…).
@@ -102,6 +109,15 @@ EXECUTION_EN_COURS = "en_cours"
 EXECUTION_TERMINEE = "terminee"
 EXECUTION_ANNULEE = "annulee"
 EXECUTION_ECHEC = "echec"
+
+#: Types d'événements que le grand livre d'un run compte (`EtatExecution.cout`).
+#: La même liste que la vue analytique (`analytics._TYPES_COMPTABLES`) — y
+#: compter un type de plus creuserait un écart entre les deux vues. Déclarée ici
+#: depuis #989, où l'**occupation** du run se lit sur les mêmes lignes que son
+#: coût : ce qui ne compte pas au grand livre n'occupe pas le run non plus.
+_TYPES_COMPTABLES = frozenset(
+    {EVENEMENT_TACHE_STATUT, EVENEMENT_AGENT_ACTIVITE, EVENEMENT_MESSAGE_INTER_AGENTS}
+)
 
 #: Le run **s'est arrêté sur son brief** et attend une décision humaine (#320,
 #: décision D5) : aucune tâche n'est créée tant que rien n'est tranché. État
@@ -790,14 +806,33 @@ class EtatExecution:
 
         Même convention d'attribution que `RunCost.depuis_journal` (#55),
         transposée au flux d'événements — le bus ne transporte pas le journal :
-        l'activité sans tâche est la planification (l'orchestrateur), un
-        `tache.statut` fait foi pour l'identité de sa tâche, activités et
-        messages rattachés à une tâche (validation #48, message #44) fusionnent
-        leur usage dans la sienne. Un événement qui ne rapporte qu'un
-        `cout_usd` (producteur minimaliste) est compté pour ce seul coût.
+        l'activité sans tâche est une étape du run, un `tache.statut` fait foi
+        pour l'identité de sa tâche, activités et messages rattachés à une tâche
+        (validation #48, message #44) fusionnent leur usage dans la sienne. Un
+        événement qui ne rapporte qu'un `cout_usd` (producteur minimaliste) est
+        compté pour ce seul coût.
+
+        Deux corrections de #989 vivent ici, et c'est parce que ce chemin-ci est
+        celui que la Control Tower sert :
+
+        - le **cadrage** (`brief`, #318) est compté à part de la planification.
+          Jusque-là les trois étapes de run arrivaient ici comme la même chose —
+          une activité d'agent sans `tache_id` —, si bien que le seau `brief`
+          restait vide quel que soit l'écran qui avait lancé le run (défaut S9 de
+          la revue #568). L'étape voyage désormais sur l'événement (`etape_run`) ;
+          un événement d'avant ce ticket n'en porte pas et retombe, lui, en
+          planification.
+        - la **durée** du run est l'union des intervalles de ses étapes, jamais
+          leur somme : deux tâches menées de front ne l'occupent qu'une fois.
         """
         planification = StepUsage()
+        brief = StepUsage()
         entrees: dict[str, TaskCost] = {}
+        # Ce que le run a **occupé** (#989) : l'union des intervalles de ses
+        # étapes, jamais leur somme. Les bornes se lisent par le même verbe que
+        # côté journal (`intervalle_depuis`) — deux chemins construisent ce grand
+        # livre, ils ne doivent pas lire le temps de deux façons.
+        intervalles: list[tuple[datetime, datetime]] = []
         for event in self.evenements:
             if event.tache_id and (event.ticket is not None or event.projet_id is not None):
                 # Ni le ticket externe (#187) ni le projet (#222) n'ont de coût :
@@ -817,6 +852,14 @@ class EtatExecution:
                 usage = StepUsage(cout_usd=event.cout_usd)
             if usage is None:
                 continue
+            # Un relevé en cours (#835) n'entre pas au grand livre et n'occupe
+            # donc rien : son type est hors des lecteurs comptables, et la
+            # branche qui l'écarterait ici est celle du `elif` plus bas — on
+            # relève l'intervalle **avec** l'usage qu'on va compter.
+            if event.type in _TYPES_COMPTABLES:
+                intervalle = intervalle_depuis(event.horodatage, usage.duree_ms)
+                if intervalle is not None:
+                    intervalles.append(intervalle)
             if event.type == EVENEMENT_TACHE_STATUT and event.tache_id:
                 entree = entrees.get(event.tache_id) or TaskCost(tache_id=event.tache_id)
                 entrees[event.tache_id] = replace(
@@ -828,7 +871,18 @@ class EtatExecution:
                     usage=entree.usage.fusion(usage),
                 )
             elif event.type == EVENEMENT_AGENT_ACTIVITE and not event.tache_id:
-                planification = planification.fusion(usage)
+                # Le **cadrage** à part de la planification (#989, défaut S9) :
+                # ce sont deux appels modèle distincts, et le brief peut être
+                # régénéré par les allers-retours de clarification (#321) — les
+                # confondre masque ce que coûte la mise au point de l'intention,
+                # qui est justement ce que le seau `brief` (#318) sert à montrer.
+                # L'étape est **portée par l'événement** (`etape_run`), jamais
+                # devinée de son titre ; un événement d'avant ce ticket n'en
+                # porte pas, et son cadrage reste donc compté en planification.
+                if event.etape_run == ETAPE_BRIEF:
+                    brief = brief.fusion(usage)
+                else:
+                    planification = planification.fusion(usage)
             elif (
                 event.type in {EVENEMENT_AGENT_ACTIVITE, EVENEMENT_MESSAGE_INTER_AGENTS}
                 and event.tache_id
@@ -840,7 +894,9 @@ class EtatExecution:
         return RunCost(
             run_id=self.run_id,
             planification=planification,
+            brief=brief,
             taches=tuple(entrees.values()),
+            duree_mur_ms=union_ms(intervalles),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -1110,6 +1166,14 @@ class ControlTowerState:
             cout_usd=tache.cout_usd,
             cout_partiel=tache.cout_partiel,
             duree_ms=tache.usage.duree_ms if tache.usage is not None else None,
+            # Le travail de la tâche (#989), à côté de son horloge : c'est lui
+            # que la boîte affiche, l'horloge contenant les attentes que le
+            # moteur range déjà hors du travail (créneau #86, atelier #839,
+            # arbitrage #584). La décomposition vit dans `StepUsage`, jamais
+            # ici : la projection transporte, elle ne recalcule pas.
+            duree_execution_ms=(
+                tache.usage.duree_execution_ms if tache.usage is not None else None
+            ),
             etapes=tuple(tache.etapes),
             activite=tache.signe_de_vie,
         )

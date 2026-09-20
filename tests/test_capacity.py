@@ -19,6 +19,11 @@ Couvre les trois critères d'acceptation, couche par couche :
    visibles dès le démarrage ; refus : agent inconnu (404), requête vide ou
    plafond invalide (422), réassignation manuelle vers un agent désactivé
    (422) ; la suppression d'un agent personnalisé purge son réglage.
+
+Depuis #989, ② couvre aussi ce que cette attente **coûte à la lecture** : le
+temps passé à attendre un créneau n'est pas du travail, le moteur le disait
+déjà sans le compter, et c'est maintenant une part mesurée de la durée de la
+tâche (`StepUsage.duree_attente_creneau_ms`).
 """
 
 import asyncio
@@ -289,6 +294,46 @@ def test_sans_depot_cable_la_capacite_reste_illimitee(tmp_path):
     resultats = asyncio.run(_deux_taches_bdd(executor))
     assert all(r.ok for r in resultats)
     assert provider.pic >= 2
+
+
+# --- ②bis L'attente d'un créneau est mesurée, et n'est pas du travail (#989) --------------
+
+
+def test_la_tache_qui_attend_son_creneau_ne_compte_pas_cette_attente_en_travail(tmp_path):
+    # Une seule instance : des deux tâches lancées de front, l'une prend le
+    # créneau et l'autre l'attend. Le moteur rangeait déjà cette attente hors de
+    # l'échéance de la tâche (« attendre son tour n'est pas travailler ») sans la
+    # compter — elle gonflait donc la durée affichée (retex du 2026-09-11, G4).
+    executor = LocalExecutor(PicProvider(), runtimes={}, capacites=CapacityStore(tmp_path))
+
+    resultats = asyncio.run(_deux_taches_bdd(executor))
+    assert all(r.ok for r in resultats)
+
+    attentes = [r.usage.duree_attente_creneau_ms for r in resultats]
+    # Mesurées des deux côtés : ici on a regardé, et mesurer qu'on n'a pas
+    # attendu n'est pas ne pas savoir (la distinction de `cout_usd`).
+    assert all(attente is not None for attente in attentes)
+    # L'une des deux a réellement attendu que l'autre libère le créneau.
+    qui_a_attendu = max(resultats, key=lambda r: r.usage.duree_attente_creneau_ms or 0)
+    assert (qui_a_attendu.usage.duree_attente_creneau_ms or 0) > 0
+    # Et cette attente sort de son temps de travail, qui est ce que l'écran rend.
+    assert qui_a_attendu.usage.duree_execution_ms < qui_a_attendu.usage.duree_ms
+
+
+def test_une_tache_qui_n_attend_rien_le_dit_par_des_attentes_nulles(tmp_path):
+    # L'autre moitié, et ce qui rend le chiffre lisible : sans dépôt de capacité
+    # ni projet, la tâche traverse les deux files sans s'y arrêter. Les attentes
+    # valent zéro — **mesurées**, pas inconnues — et sa durée de travail est son
+    # horloge, donc l'écran affiche exactement ce qu'il affichait avant #989.
+    executor = LocalExecutor(PicProvider(), runtimes={})
+
+    resultat = asyncio.run(executor.execute(_task(id="t1"), [], RunJournal()))
+
+    assert resultat.ok
+    assert resultat.usage.duree_attente_creneau_ms == 0
+    assert resultat.usage.duree_attente_atelier_ms == 0
+    assert resultat.usage.duree_attente_ms == 0
+    assert resultat.usage.duree_execution_ms == resultat.usage.duree_ms
 
 
 # --- L'événement `agent.capacite` voyage en JSON ------------------------------------------

@@ -1252,8 +1252,9 @@ geste d'une tâche avec l'ancienneté d'une autre. Il ne pouvait pas se lire ail
 `horodatage` est le **dernier** changement d'état (une relance le repousse) et
 `usage.duree_ms` n'existe qu'à l'issue, un relevé en cours (#835) portant tokens et
 coût mais aucune durée. Côté écran, la valeur se pose dans la **place existante** :
-la ligne chrono du nœud et de la carte, celle qui montre `formatDuree(duree_ms)` une
-fois la tâche soldée — les deux durées ne coexistent jamais —, et, faute d'une telle
+la ligne chrono du nœud et de la carte, celle qui montre la durée de la tâche une
+fois soldée (`duree_execution_ms` depuis #989, §2.4.4) — les deux durées ne
+coexistent jamais —, et, faute d'une telle
 ligne dans un en-tête de couloir, sur la ligne du signe elle-même. Elle se lit
 « depuis 6 min » (`formatAttente`) et non « il y a 6 min » : *situer un fait passé* et
 *mesurer une attente qui dure* sont deux questions, et les fondre reperdrait la
@@ -1464,6 +1465,67 @@ plafond de trois :
 
 Le filtre de période, lui, n'occupe aucune des trois places : c'est le réglage de tout l'écran, il
 reste en tête de page au-dessus de ce qu'il borne.
+
+#### 2.5.1 Une durée de tâche est son temps de travail (#989) — **livré**
+
+Le défaut, mesuré deux fois : **21 min 17 s** annoncées pour **8 min 05 s** de travail (revue du
+2026-08-26, défaut S1) et **24 min 17 s** pour **~11 min** (retex du 2026-09-11, G4). Entre les
+deux, la même cause : le chronomètre d'une tâche démarrait **avant** deux attentes que le moteur
+range lui-même hors du travail — le **créneau d'instance** de son agent (#86) puis l'**atelier** de
+son projet (#839, une tâche à la fois dans la racine d'un projet non versionné). Son propre
+commentaire le disait déjà : *« attendre son tour n'est pas travailler »*. #584 avait retiré
+l'**arbitrage** de cette durée ; ces deux-là y restaient, et l'écran affichait de toute façon
+l'horloge brute.
+
+**Ce qui est mesuré.** `StepUsage` porte désormais `duree_attente_creneau_ms` et
+`duree_attente_atelier_ms` à côté de `duree_arbitrage_ms` — des **parts** de `duree_ms`, jamais un
+temps de plus. `duree_attente_ms` en porte le cumul et `duree_execution_ms` ce qui reste : le
+travail. Deux champs d'attente et non un, parce que les deux n'appellent pas le même geste — un
+créneau qui manque se corrige en ajoutant des instances à l'agent, un atelier qui bloque est le
+régime de sérialisation d'un projet non versionné, qu'on ne change pas à la légère. Les fondre
+rendrait le chiffre inactionnable. Chacune vaut `None` là où personne n'a mesuré et `0` là où l'on
+a mesuré qu'il n'y a pas eu d'attente : la distinction de `cout_usd`, pour la même raison.
+
+**Ce qui est affiché**, et c'est la forme retenue sur pièces (trois variantes rendues, choix du
+regard neuf, docs/30 §5.8) : la **place compacte** — carte du Kanban, nœud du pipeline, ligne de
+grand livre — porte **un** chiffre, le travail ; l'attente est un fait **nommé** dans le panneau de
+détail d'une tâche, sous un bloc « Temps » où le **travail vient en tête**, en regard duquel elle se
+lit. Une attente mesurée à zéro ne s'affiche pas, et une tâche qui n'a rien attendu rend donc la
+carte d'avant, au pixel près — répéter dans un panneau la durée que la carte porte déjà l'ouvrirait
+sur chaque tâche mesurée, pour rien.
+
+Les trois références capturées en direct convergent, et c'est ce qui a tranché : **GitHub Actions**
+et **Buildkite** ne mettent qu'une durée dans la place compacte (« Total duration » en tête d'un
+run, une durée par ligne de job) ; **GitLab CI** range l'attente dans le **bloc de faits** d'un job
+— « Durée » puis « En file d'attente », étiquetées, empilées, à la même taille — et jamais dans la
+liste.
+
+**La durée d'un run, elle, est l'union des intervalles de ses étapes**, jamais leur somme : deux
+tâches menées de front ne l'occupent qu'une fois. La revue mesurait 47 min annoncées pour 43,5 min
+de mur — exactement l'erreur que l'outillage avait corrigée sur ses propres runs (#497, *« l'occupation
+est l'union des intervalles et jamais leur somme »*) et que le produit répétait. L'intervalle d'une
+étape se déduit de son horodatage de consignation et de sa durée horloge (`intervalle_depuis`), et
+le calcul vit **en un seul endroit** (`union_ms`), les deux chemins du grand livre — le journal du
+moteur et le flux d'événements de la Control Tower — devant lire le temps pareil. Le total d'un run
+ne porte **aucune** attente : une somme d'attentes de tâches parallèles n'est pas une attente du
+run, et la retrancher d'une union donnerait un « travail du run » qui ne veut rien dire. C'est le
+partage de GitHub Actions, dont l'en-tête d'un run porte « Total duration » (3 m 47 s sur le run
+capturé) quand la somme de ses jobs vit ailleurs, sous un autre nom (« Run time », 9 m 38 s).
+
+**Le seau `brief` du grand livre**, resté vide dans la revue (défaut S9), avait une cause distincte
+de l'ancien écran de brief, et structurelle : le grand livre que la Control Tower sert se
+reconstruit du **flux d'événements** et non du journal, et les trois étapes de run y arrivaient
+comme la même chose — une activité d'agent sans `tache_id`. Le cadrage était donc compté en
+planification, quel que soit l'écran qui avait lancé le run. L'événement porte désormais le **nom de
+l'étape** (`etape_run`) ; il ne se devine pas d'un titre, le dépôt ne jugeant pas un texte par son
+libellé (#746). Un événement émis avant ce ticket n'en porte pas et reste compté en planification —
+rien ne permet après coup de dire ce qu'il était.
+
+Couverture : [`tests/test_telemetry.py`](../tests/test_telemetry.py) (la mesure et l'union),
+[`tests/test_capacity.py`](../tests/test_capacity.py) (l'attente d'un créneau, mesurée de bout en
+bout sur deux tâches lancées de front), [`tests/test_brief.py`](../tests/test_brief.py) et
+[`tests/test_controltower.py`](../tests/test_controltower.py) (le seau `brief`, le grand livre),
+[`apps/web/tests/duree-de-travail.test.tsx`](../apps/web/tests/duree-de-travail.test.tsx) (l'écran).
 
 ### 2.6 ✅ Validation humaine (human-in-the-loop)
 
@@ -4418,7 +4480,12 @@ bascule, et se lit avec n'importe laquelle des quatre. Le décompte de cette sec
       // réinventée par écran. `backlog` : le nœud n'a pas démarré.
       "statut": "terminee", "compartiment": "terminees",
       "agent": "Développeur backend", "role": "Backend",
-      "cout_usd": 0.02, "duree_ms": 1234,      // null : inconnu (≠ zéro)
+      // `duree_ms` est l'HORLOGE du nœud ; `duree_execution_ms` (#989) son
+      // TRAVAIL — l'horloge moins ses attentes (créneau d'agent #86, atelier de
+      // projet #839, arbitrage #584). C'est le second que la boîte affiche ; les
+      // attentes se lisent à part, dans le panneau de détail de la tâche.
+      // null : inconnu (≠ zéro), pour les deux.
+      "cout_usd": 0.02, "duree_ms": 1234, "duree_execution_ms": 1234,
       // La checklist de la tâche (#489) : celle que l'agent tient, ou —
       // tant qu'elle n'a pas démarré — l'ossature déclarée au plan.
       "etapes": [ { "libelle": "Lister les entités", "etat": "faite" } ],

@@ -414,7 +414,12 @@ function TableTaches({ taches }: { taches: CoutTacheAgregee[] }) {
                 {formatCout(tache.usage.cout_usd)}
               </td>
               <td className="py-1 text-right tabular-nums">
-                {formatDuree(tache.usage.duree_ms)}
+                {/* Le **travail** de la tâche, jamais son horloge (#989) : les
+                    attentes (créneau d'agent, atelier de projet, arbitrage) se
+                    lisent à part, dans le détail de la tâche. */}
+                {formatDuree(
+                  tache.usage.duree_execution_ms ?? tache.usage.duree_ms,
+                )}
               </td>
             </tr>
           ))}

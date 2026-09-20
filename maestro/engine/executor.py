@@ -576,6 +576,13 @@ class LocalExecutor(TaskExecutor):
         """
         debut = perf_counter()
         deliberation = Deliberation()
+        # Les deux attentes (#989), **inconnues** tant que la tâche n'est pas
+        # arrivée jusqu'aux files : un plafond crevé, un routage sans agent ou une
+        # déclaration MCP invalide sortent avant, et une tâche qui n'a jamais pris
+        # la file n'a pas attendu zéro, on n'en sait rien — la distinction est
+        # celle de `cout_usd`, et elle vaut ici pour la même raison.
+        attente_creneau_ms: int | None = None
+        attente_atelier_ms: int | None = None
         entree = task.description
         # La **checklist** (#489) naît ici depuis #944, et non dans `_realise` :
         # elle doit survivre aux relances comme avant (une tâche relancée reprend
@@ -650,32 +657,46 @@ class LocalExecutor(TaskExecutor):
                         # attendant un créneau qu'une autre tient en attendant
                         # l'atelier). Hors de l'échéance de `_realise_gardee` :
                         # attendre son tour n'est pas travailler.
-                        async with (
-                            self._creneau_capacite(decision.agent.nom),
-                            self._atelier_projet(task),
-                        ):
-                            result = await self._realise_gardee(
-                                decision.agent,
-                                task,
-                                entree,
-                                decision.score,
-                                journal,
-                                playbook,
-                                serveurs_mcp,
-                                politique,
-                                deliberation,
-                                suivi,
-                            )
+                        #
+                        # Et maintenant **compté** (#989) : les deux prises sont
+                        # imbriquées au lieu d'être groupées, parce qu'un `async
+                        # with (A, B)` ne dit pas quand A a été obtenu — or c'est
+                        # exactement la frontière entre les deux attentes. L'ordre
+                        # est le même, chronométré ; chaque mesure part à zéro,
+                        # jamais à `None` : ici on a mesuré, et mesurer qu'on n'a
+                        # pas attendu n'est pas ne pas savoir.
+                        debut_creneau = perf_counter()
+                        async with self._creneau_capacite(decision.agent.nom):
+                            attente_creneau_ms = _ecoule_ms(debut_creneau)
+                            debut_atelier = perf_counter()
+                            async with self._atelier_projet(task):
+                                attente_atelier_ms = _ecoule_ms(debut_atelier)
+                                result = await self._realise_gardee(
+                                    decision.agent,
+                                    task,
+                                    entree,
+                                    decision.score,
+                                    journal,
+                                    playbook,
+                                    serveurs_mcp,
+                                    politique,
+                                    deliberation,
+                                    suivi,
+                                )
                         if playbook is not None:
                             result = replace(result, playbook_version=playbook.version)
-        # La part d'arbitrage voyage avec la durée horloge (#584) : c'est la même
-        # mesure, décomposée. Elle est posée sur **cette** étape et sur aucune
-        # autre — l'étape finale de la tâche est la seule qui porte sa durée, donc
-        # la seule où « dont tant d'arbitrage » veuille dire quelque chose.
+        # Les parts d'attente voyagent avec la durée horloge (#584, #989) : c'est
+        # la même mesure, décomposée. Elles sont posées sur **cette** étape et sur
+        # aucune autre — l'étape finale de la tâche est la seule qui porte sa
+        # durée, donc la seule où « dont tant d'attente » veuille dire quelque
+        # chose.
         result = replace(
             result,
             usage=recolte.total.avec_duree(
-                _ecoule_ms(debut), arbitrage_ms=deliberation.credit.ecoule_ms()
+                _ecoule_ms(debut),
+                arbitrage_ms=deliberation.credit.ecoule_ms(),
+                attente_creneau_ms=attente_creneau_ms,
+                attente_atelier_ms=attente_atelier_ms,
             ),
         )
         # L'écart entre le verdict et la checklist (#944) : dit **avant** l'étape
