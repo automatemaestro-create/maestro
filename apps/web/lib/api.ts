@@ -51,6 +51,7 @@ import type {
   RedactionPlaybook,
   RefusProjet,
   ReglagesModele,
+  RepertoireProjets,
   ReponsesBrief,
   ResumeExecution,
   RevocationAdmissionMcp,
@@ -1444,6 +1445,36 @@ export function chargerExplorateur(
   return lireProjets<PageExplorateur>(
     `/api/projets/explorateur${requete}`,
     "dossier illisible",
+  );
+}
+
+/**
+ * Le **répertoire des projets** (`GET /api/projets/repertoire`, #1022) : où naît
+ * un projet neuf. Toujours 200 — un répertoire devenu indéclarable revient avec
+ * son `refus`, et l'écran le montre au lieu de tomber en panne. ⚠ Cette lecture
+ * **crée** le dossier s'il manque (« créé à la première utilisation ») et le dit
+ * (`cree`).
+ */
+export function chargerRepertoireProjets(): Promise<RepertoireProjets> {
+  return lireProjets<RepertoireProjets>(
+    "/api/projets/repertoire",
+    "répertoire des projets illisible",
+  );
+}
+
+/**
+ * Pose le répertoire des projets (`PUT /api/projets/repertoire`, #1022).
+ * `null` revient au défaut. Le chemin **ne se tape pas** : il vient de
+ * l'explorateur ou du dialogue du poste, comme toute racine (#225).
+ */
+export function reglerRepertoireProjets(
+  chemin: string | null,
+): Promise<RepertoireProjets> {
+  return ecrireProjet<RepertoireProjets>(
+    "/api/projets/repertoire",
+    { chemin },
+    "répertoire refusé",
+    "PUT",
   );
 }
 

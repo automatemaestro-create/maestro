@@ -65,6 +65,7 @@ from maestro.projets import (
     valider_racine,
     verifier_zone_interdite,
 )
+from maestro.projets.reglages import ReglagesProjetsStore
 
 #: Nombre maximum de sous-dossiers rendus par un appel à l'explorateur. Un
 #: dossier de dépôts à 50 000 entrées existe (un `node_modules`, un cache) et
@@ -185,26 +186,90 @@ class ServiceProjets:
         store: ProjetStore,
         *,
         racines_exploration: tuple[Path | str, ...] | None = None,
+        reglages: ReglagesProjetsStore | None = None,
     ) -> None:
         self._store = store
         self._racines = (
             None if racines_exploration is None else tuple(Path(r) for r in racines_exploration)
         )
+        self._reglages = reglages if reglages is not None else ReglagesProjetsStore.default()
 
     @classmethod
     def default(cls, settings: Settings | None = None) -> ServiceProjets:
         """Le service configuré : dépôt `MAESTRO_PROJETS_DIR`, racines
-        explorables `MAESTRO_EXPLORATEUR_RACINES`."""
+        explorables `MAESTRO_EXPLORATEUR_RACINES`, réglages `MAESTRO_REGLAGES_DIR`."""
         settings = settings or load_settings()
         return cls(
             ProjetStore.default(settings),
             racines_exploration=_racines_configurees(settings),
+            reglages=ReglagesProjetsStore.default(settings),
         )
 
     @property
     def store(self) -> ProjetStore:
         """Le dépôt sous-jacent — le seul écrivain des projets (#221)."""
         return self._store
+
+    @property
+    def reglages(self) -> ReglagesProjetsStore:
+        """Le dépôt des réglages du poste — où naît un projet neuf (#1022)."""
+        return self._reglages
+
+    # --- Répertoire des projets (#1022) ----------------------------------
+
+    def repertoire(self, *, creer: bool = False) -> dict[str, Any]:
+        """Le répertoire où naît un projet neuf, tel que l'écran le lit (#1022).
+
+        Rend `{chemin, par_defaut, existe, cree, refus}`. Un refus **ne lève
+        pas** ici : le répertoire réglé peut être devenu indéclarable (disque
+        débranché, dossier devenu fichier) sans que cela doive empêcher de
+        déclarer un projet ailleurs — l'écran affiche le motif et laisse
+        parcourir. Le seul cas qui lève est l'écriture (`regler`), parce qu'un
+        réglage refusé ne doit pas être stocké.
+        """
+        try:
+            chemin, par_defaut, cree = self._reglages.resoudre(creer=creer)
+        except RacineRefusee as refus:
+            reglages = self._reglages.lire()
+            brut = reglages.repertoire
+            return {
+                "chemin": brut if brut is not None else str(refus.chemin or ""),
+                "par_defaut": brut is None,
+                "existe": False,
+                "cree": False,
+                "refus": detail_refus(refus),
+            }
+        return {
+            "chemin": str(chemin),
+            "par_defaut": par_defaut,
+            "existe": True,
+            "cree": cree,
+            "refus": None,
+        }
+
+    def regler_repertoire(self, chemin: str | None) -> dict[str, Any]:
+        """Pose le répertoire des projets (`None` = retour au défaut) et le relit.
+
+        Le dossier est validé **et créé** par le dépôt avant d'être stocké : le
+        réglage posé est toujours un dossier déclarable, jamais une intention à
+        vérifier plus tard. Lève `RacineRefusee` motivée, que l'API traduit.
+        """
+        self._reglages.ecrire(chemin)
+        return self.repertoire(creer=True)
+
+    def _repertoire_explorable(self) -> Path | None:
+        """Le répertoire des projets s'il est un dossier — sinon rien.
+
+        Sert la **frontière** et les points d'entrée : un parent prérempli que
+        l'explorateur refuserait d'ouvrir serait un cul-de-sac, et c'est le
+        premier geste qu'un utilisateur fait après l'avoir lu (« Changer de
+        dossier… » s'ouvre dessus).
+        """
+        try:
+            chemin, _, _ = self._reglages.resoudre()
+        except RacineRefusee:
+            return None
+        return chemin
 
     # --- CRUD ------------------------------------------------------------
 
@@ -338,6 +403,14 @@ class ServiceProjets:
         """
         base = self._racines if self._racines is not None else _racines_defaut()
         candidates = list(base) + [p.racine_chemin for p in self._projets_lisibles()]
+        # Le répertoire des projets entre dans la frontière comme une racine de
+        # projet déclaré (#1022) : c'est un dossier que l'écran **propose**, et
+        # proposer un parent que l'explorateur refuserait d'ouvrir serait un
+        # cul-de-sac. Sans restriction configurée il y est déjà (il est sous le
+        # dossier utilisateur) ; avec une restriction, c'est ici qu'il entre.
+        repertoire = self._repertoire_explorable()
+        if repertoire is not None:
+            candidates.append(repertoire)
         retenues: dict[str, Path] = {}
         for candidate in candidates:
             try:
@@ -362,8 +435,12 @@ class ServiceProjets:
         bien qu'elle se réduirait à `C:/` (ou `/`) — un point d'entrée unique
         d'où il faudrait redescendre tout l'arbre à chaque fois.
 
-        Quatre origines, dans cet ordre :
+        Cinq origines, dans cet ordre :
 
+        - `repertoire` — le **répertoire des projets** (#1022), celui que le
+          formulaire propose d'office à un projet neuf : c'est le premier
+          endroit à regarder, puisque c'est celui d'où l'on vient. Absent tant
+          qu'il n'existe pas sur le disque ;
         - `utilisateur` — le dossier utilisateur, là où sont la plupart des
           projets ;
         - `recent` — les **parents** des projets déclarés, du plus récemment
@@ -400,6 +477,10 @@ class ServiceProjets:
             if _sous_une_racine(resolu, racines) is None:
                 return
             vus[cle] = (resolu, origine)
+
+        repertoire = self._repertoire_explorable()
+        if repertoire is not None:
+            retenir(repertoire, "repertoire")
 
         if self._racines is not None:
             for configuree in self._racines:
@@ -597,8 +678,8 @@ def _fiche_dossier(
     de disque (`D:/`), qui n'a pas de nom mais doit rester cliquable.
 
     `origine` n'est renseignée que sur la **page d'entrée** (#278) : elle dit
-    *pourquoi* ce dossier est proposé (`utilisateur`, `recent`, `projet`,
-    `volume`, `configuree`), ce que l'écran affiche en pastille. Ailleurs elle
+    *pourquoi* ce dossier est proposé (`repertoire`, `utilisateur`, `recent`,
+    `projet`, `volume`, `configuree`), ce que l'écran affiche en pastille. Ailleurs elle
     est `null` — un sous-dossier énuméré n'a pas d'autre raison d'être là que
     d'être dans le dossier ouvert.
     """

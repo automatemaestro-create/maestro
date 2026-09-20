@@ -43,13 +43,40 @@
  *   · lisible mais non déclarable (on **ouvre l'explorateur dessus**, avec le
  *   motif). C'est ce qui évite le cul-de-sac, et un dépôt n'a pas de raison d'en
  *   rendre d'autres.
+ *
+ * ## Le quatrième, ajouté par #1022 : **un projet neuf naît quelque part**
+ *
+ * Le dossier parent d'un projet neuf n'était **rien** tant qu'on ne l'avait pas
+ * choisi (« aucun dossier choisi », bouton désactivé). Il porte désormais
+ * d'office le **répertoire des projets**, un réglage du poste
+ * (`GET /api/projets/repertoire`, `maestro.projets.reglages`).
+ *
+ * Trois choses le tiennent, et la première n'est pas le préremplissage :
+ *
+ * - **prérempli ne veut pas dire saisissable.** La règle 1 ne bouge pas : le
+ *   parent reste du texte et un bouton, jamais un champ. C'est le parti pris que
+ *   la veille a pris à *Unity Hub*, dont le champ `Location` s'ouvre sur un
+ *   dialogue ;
+ * - **l'écran dit d'où vient la valeur**, en une ligne de second plan sous le
+ *   choix — et, dès qu'on a choisi ailleurs, comment y revenir. C'est la variante
+ *   retenue sur pièces par le regard neuf, contre une variante muette et une
+ *   variante à deux boutons radio ; c'est aussi le manque commun aux trois
+ *   références de la veille (IntelliJ, GitHub Desktop, Unity Hub), dont aucune ne
+ *   dit *pourquoi ce chemin-là* ;
+ * - **l'import d'un projet existant ne reçoit rien.** Le réglage dit où un projet
+ *   **naît** ; un projet déjà là se parcourt, comme *Add Local Repository* chez
+ *   GitHub Desktop, qui ne préremplit rien. D'où la forme de l'état :
+ *   `dossierChoisi` ne porte **que** ce que l'utilisateur a choisi lui-même, et
+ *   le parent s'en **dérive** — ce qui vient du réglage n'est donc jamais
+ *   stocké, et se retire de lui-même au retour sur « dossier existant ».
  */
 
-import { useState, type DragEvent } from "react";
+import Link from "next/link";
+import { useEffect, useState, type DragEvent } from "react";
 
 import { IconeDossier, IconePlus } from "@/components/Icones";
 import { Bouton, Carte, Champ } from "@/components/Primitives";
-import { verdictRacine } from "@/lib/api";
+import { chargerRepertoireProjets, verdictRacine } from "@/lib/api";
 import { cheminDuDossierDepose, peutLireCheminDepose } from "@/lib/poste";
 import {
   cheminEnfant,
@@ -60,9 +87,30 @@ import {
   texteDepuisMotifs,
   libelleOrigine,
 } from "@/lib/projets";
-import type { DeclarationProjet, Projet, RefusProjet } from "@/lib/types";
+import type {
+  DeclarationProjet,
+  Projet,
+  RefusProjet,
+  RepertoireProjets,
+} from "@/lib/types";
 
 import { ExplorateurDossiers, refusDepuis, RefusMotive } from "./ExplorateurDossiers";
+
+/**
+ * Le renvoi vers le réglage, **dans la phrase** qui le nomme (#1022). Le regard
+ * neuf l'a relevé sur la variante retenue : nommer « les Paramètres » en toutes
+ * lettres ne dit pas qu'on peut y aller. L'ancre vise la section, pas la page.
+ */
+function LienParametres() {
+  return (
+    <Link
+      href="/parametres#projets"
+      className="underline underline-offset-2 hover:text-texte"
+    >
+      Paramètres
+    </Link>
+  );
+}
 
 export function FormulaireProjet({
   projet,
@@ -80,7 +128,16 @@ export function FormulaireProjet({
   const [origine, setOrigine] = useState(projet?.origine ?? "existant");
   // En création avec « nouveau dossier », c'est le **parent** ; partout
   // ailleurs, la racine elle-même.
-  const [dossier, setDossier] = useState<string | null>(projet?.racine ?? null);
+  // Le dossier que l'utilisateur a **choisi lui-même** — et lui seul (#1022).
+  // Ce qui vient du répertoire des projets n'est pas stocké ici mais dérivé
+  // plus bas : c'est ce qui fait que le réglage se remplace sans rien régler,
+  // et qu'il se retire de lui-même au retour sur « dossier existant », que le
+  // réglage n'a pas à imposer. Un état de plus, synchronisé par un effet,
+  // aurait donné deux sources pour un seul chemin.
+  const [dossierChoisi, setDossierChoisi] = useState<string | null>(
+    projet?.racine ?? null,
+  );
+  const [repertoire, setRepertoire] = useState<RepertoireProjets | null>(null);
   const [nomDossier, setNomDossier] = useState("");
   const [inclusTexte, setInclusTexte] = useState(
     projet ? texteDepuisMotifs(projet.perimetre.inclus) : "",
@@ -103,6 +160,19 @@ export function FormulaireProjet({
   const posteDepose = peutLireCheminDepose();
 
   const nouveauDossier = creation && origine === "nouveau";
+
+  /** Le répertoire des projets, s'il est utilisable comme parent (#1022). */
+  const repertoireUtilisable =
+    repertoire !== null && repertoire.refus === null ? repertoire.chemin : null;
+
+  // Le parent, **dérivé** et non stocké : ce que l'utilisateur a choisi
+  // l'emporte toujours ; sinon, et seulement pour un dossier neuf, le
+  // répertoire des projets. D'où les trois critères de #1022 sans une ligne de
+  // synchronisation : le préremplissage, son remplacement, et son retrait
+  // quand on repasse à « dossier existant ».
+  const dossier =
+    dossierChoisi ?? (nouveauDossier ? repertoireUtilisable : null);
+
   const racine = nouveauDossier
     ? dossier === null
       ? null
@@ -113,8 +183,30 @@ export function FormulaireProjet({
     racine !== null &&
     (!nouveauDossier || nomDossierValide(nomDossier));
 
+  // Le **répertoire des projets** n'est lu qu'en création (#1022) : modifier un
+  // projet ne déplace rien. Un échec de lecture n'est pas une panne du
+  // formulaire — sans réponse, l'écran est celui d'avant et le dossier se
+  // choisit comme toujours.
+  useEffect(() => {
+    if (!creation) return;
+    let vivant = true;
+    void chargerRepertoireProjets()
+      .then((lu) => {
+        if (vivant) setRepertoire(lu);
+      })
+      .catch(() => undefined);
+    return () => {
+      vivant = false;
+    };
+  }, [creation]);
+
+  const changerOrigine = (valeur: "existant" | "nouveau") => {
+    setOrigine(valeur);
+    setRefus(null);
+  };
+
   const choisir = (chemin: string) => {
-    setDossier(chemin);
+    setDossierChoisi(chemin);
     setExplorateurOuvert(false);
     setExplorateurDepart(null);
     setRefus(null);
@@ -245,7 +337,7 @@ export function FormulaireProjet({
                   name="origine"
                   value={valeur}
                   checked={origine === valeur}
-                  onChange={() => setOrigine(valeur)}
+                  onChange={() => changerOrigine(valeur)}
                 />
                 {libelleOrigine(valeur)}
               </label>
@@ -287,6 +379,42 @@ export function FormulaireProjet({
             {dossier === null ? "Choisir un dossier…" : "Changer de dossier…"}
           </Bouton>
         </div>
+        {/* D'où vient cette valeur, et comment y revenir — la variante retenue
+            de #1022, jugée sur pièces par le regard neuf. Une **ligne de second
+            plan**, jamais un bloc : le corps d'un écran est plafonné à trois
+            (docs/30 §4), et c'est le manque commun aux trois références de la
+            veille — aucune ne dit *pourquoi ce chemin-là*. */}
+        {nouveauDossier && repertoire !== null && (
+          <p className="text-annexe text-texte-secondaire">
+            {repertoire.refus !== null ? (
+              <>
+                Votre répertoire des projets est indisponible :{" "}
+                {repertoire.refus.message} Choisissez un dossier parent pour ce
+                projet, ou corrigez le réglage dans les{" "}
+                <LienParametres />.
+              </>
+            ) : dossierChoisi !== null ? (
+              <>
+                Hors de votre répertoire des projets.{" "}
+                <button
+                  type="button"
+                  className="underline underline-offset-2 hover:text-texte"
+                  onClick={() => setDossierChoisi(null)}
+                  disabled={enCours}
+                >
+                  Revenir au répertoire des projets
+                </button>
+              </>
+            ) : (
+              <>
+                Votre{" "}
+                <strong className="font-medium">répertoire des projets</strong>,
+                réglé dans les <LienParametres />. En choisir un autre ici ne vaut
+                que pour ce projet.
+              </>
+            )}
+          </p>
+        )}
         {/* La zone de dépôt (#938, variante C retenue par le regard neuf).
             Dessinée **seulement** là où le poste sait rendre un chemin réel :
             dans un onglet, rien n'apparaît et l'écran est celui d'avant, au

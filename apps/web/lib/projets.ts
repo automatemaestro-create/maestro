@@ -184,11 +184,19 @@ export function nomDepuisChemin(chemin: string): string {
  * Un nom vide rend le parent inchangé, et un nom qui contient un séparateur est
  * refusé par l'appelant : le seul chemin absolu du formulaire reste celui que
  * l'API a énuméré.
+ *
+ * **Le séparateur est celui du parent** (#1022) : un parent Windows rendu par le
+ * dialogue du poste (`C:\Users\…\Maestro`) donnait jusqu'ici
+ * `C:\Users\…\Maestro/depensio`, deux séparateurs dans un même chemin — l'API
+ * l'accepte, mais la ligne « Racine déclarée » le montre, et ce qu'on montre à
+ * quelqu'un qui vérifie où son projet va naître doit ressembler à un chemin de
+ * son poste. Relevé par le regard neuf sur les variantes de #1022.
  */
 export function cheminEnfant(parent: string, nom: string): string {
   const propre = nom.trim();
   if (propre === "") return parent;
-  return `${parent.replace(/\/+$/, "")}/${propre}`;
+  const separateur = parent.includes("\\") && !parent.includes("/") ? "\\" : "/";
+  return `${parent.replace(/[/\\]+$/, "")}${separateur}${propre}`;
 }
 
 /** Vrai si ce nom de dossier est saisissable tel quel (pas un bout de chemin). */

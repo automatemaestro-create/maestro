@@ -140,6 +140,12 @@ Endpoints :
   **dossier déposé** sur l'écran de déclaration. Même corps que la route
   ci-dessus, `annule` en moins. C'est la **porte unique** : aucun chemin réel
   n'entre sans passer par elle ;
+- `GET  /api/projets/repertoire` — le **répertoire des projets** (#1022) : où
+  naît un projet neuf. `par_defaut` dit qu'aucun réglage n'a été posé (c'est
+  alors `~/Maestro`) ; la lecture **crée** le dossier s'il manque et le dit
+  (`cree`) — « créé à la première utilisation » ;
+- `PUT  /api/projets/repertoire` — pose ce répertoire ; `chemin: null` revient au
+  défaut. Validé et créé avant d'être stocké, sinon rien n'est écrit ;
 - `GET  /api/projets/{id}` — un projet déclaré ;
 - `POST /api/projets` — déclare un projet : racine **validée** (EF-38, refus
   motivé en 422) et VCS **constaté** sur le disque ;
@@ -812,6 +818,18 @@ class RacineRequete(BaseModel):
     """
 
     chemin: str
+
+
+class RepertoireRequete(BaseModel):
+    """Corps d'un réglage du répertoire des projets (#1022).
+
+    `chemin` à `null` **revient au défaut** (`~/Maestro`) — ce n'est pas « pas
+    de répertoire », c'est « celui que Maestro propose ». Non canonicalisé, pour
+    la même raison que `RacineRequete` : la canonicalisation appartient à
+    `valider_racine`.
+    """
+
+    chemin: str | None = None
 
 
 class ChatEnvoiRequete(BaseModel):
@@ -4050,6 +4068,49 @@ def create_app(
                 "refus": {"motif": exc.motif, "message": str(exc)},
             }
         return {"chemin": resolu.as_posix(), "racine_valide": True, "refus": None}
+
+    @app.get("/api/projets/repertoire")
+    async def repertoire_des_projets() -> dict[str, Any]:
+        """Le **répertoire des projets** : où naît un projet neuf (#1022).
+
+        Ce que le formulaire lit pour **remplir d'office** le dossier parent
+        d'un projet neuf, et ce que les Paramètres affichent. Rend `chemin`,
+        `par_defaut` (aucun réglage posé — c'est `~/Maestro`), `existe`, `cree`
+        et `refus`.
+
+        ⚠ **Cette lecture crée le dossier s'il manque**, et le dit (`cree`).
+        C'est la décision de #1022 : « créé à la première utilisation », la
+        première utilisation étant la première fois qu'on demande *où naît un
+        projet neuf*. Rendre un chemin qui n'existe pas serait pire — le bouton
+        « Changer de dossier… » s'ouvre dessus, et l'explorateur le refuserait
+        (`dossier-absent`). La création est idempotente et porte sur un dossier
+        que Maestro propose ; elle n'est jamais silencieuse.
+
+        Toujours **200** : un répertoire devenu indéclarable (disque débranché,
+        dossier devenu fichier) revient avec son `refus` motivé plutôt qu'en
+        4xx — l'écran doit le **montrer** et laisser parcourir ailleurs, pas
+        traiter la page en panne.
+        """
+        return projets.repertoire(creer=True)
+
+    @app.put("/api/projets/repertoire")
+    async def regler_repertoire_des_projets(corps: RepertoireRequete) -> dict[str, Any]:
+        """Pose le répertoire des projets — `chemin: null` revient au défaut (#1022).
+
+        Le dossier est **validé et créé** avant d'être stocké : un réglage posé
+        est toujours un dossier déclarable, jamais une intention qui échouerait
+        plus tard et ailleurs. Comme partout, le chemin **ne se tape pas** côté
+        écran (#225) — il vient de l'explorateur ou du dialogue du poste ; la
+        route, elle, valide ce qu'on lui donne.
+
+        422/403/404 motivés quand la racine est refusée (`valider_racine`,
+        EF-38) — et dans ce cas **rien n'est écrit** : le réglage précédent
+        reste en place.
+        """
+        try:
+            return projets.regler_repertoire(corps.chemin)
+        except ValueError as exc:
+            raise _refus_projet(exc) from exc
 
     @app.get("/api/projets/explorateur")
     async def explorer_dossiers(chemin: str | None = None) -> dict[str, Any]:

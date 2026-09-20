@@ -50,8 +50,14 @@ describe("le sommaire des Paramètres (lib/parametres)", () => {
     // dont ce poste-ci est réglé. C'est le seul départ du sommaire à ce jour, et
     // il n'a rien retiré au produit — l'ancre `#mcp` est rattrapée par
     // `RedirectionAncreMcp`.
+    //
+    // « Projets » est entrée en #1022 : le **répertoire où naît un projet
+    // neuf**, un réglage de cette installation-ci — d'où sa place sous « Le
+    // poste », et d'où le fait que ce soit une **section** et non une famille
+    // (le plafond de docs/30 §4 porte sur les blocs, c'est-à-dire les familles).
     expect(SECTIONS_PARAMETRES.map((section) => section.id)).toEqual([
       "general",
+      "projets",
       "apparence",
       "notifications",
       "agents",

@@ -100,6 +100,12 @@ from maestro.projets.racine import (
     valider_racine,
     verifier_zone_interdite,
 )
+from maestro.projets.reglages import (
+    NOM_DEFAUT,
+    ReglagesProjets,
+    ReglagesProjetsStore,
+    repertoire_par_defaut,
+)
 from maestro.projets.secrets import enregistre_secrets_du_projet
 from maestro.projets.store import ProjetStore
 from maestro.projets.versionnement import (
@@ -121,6 +127,7 @@ __all__ = [
     "NATURE_AJOUT",
     "NATURE_MODIFICATION",
     "NATURE_SUPPRESSION",
+    "NOM_DEFAUT",
     "ORIGINES",
     "PREFIXE_ID",
     "ApplicationRefusee",
@@ -131,6 +138,8 @@ __all__ = [
     "Projet",
     "ProjetStore",
     "RacineRefusee",
+    "ReglagesProjets",
+    "ReglagesProjetsStore",
     "ResultatApplication",
     "Vcs",
     "VersionnementRefuse",
@@ -145,6 +154,7 @@ __all__ = [
     "fichiers_exclus",
     "initialiser_depot",
     "nouvel_id",
+    "repertoire_par_defaut",
     "valider_racine",
     "verifier_perimetre",
     "verifier_zone_interdite",

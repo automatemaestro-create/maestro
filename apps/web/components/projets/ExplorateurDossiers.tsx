@@ -88,6 +88,7 @@ async function choisirDepuisLaFenetre(
  * lecture de la page d'entrée.
  */
 const LIBELLE_ORIGINE: Record<OrigineDossier, string> = {
+  repertoire: "répertoire des projets",
   utilisateur: "dossier utilisateur",
   recent: "récent",
   projet: "projet déclaré",

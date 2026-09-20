@@ -1,0 +1,4 @@
+# Les réglages du poste écrits à chaud (API #1022 — le répertoire des projets)
+# sont des données d'exécution, pas du code : on ne les commite pas.
+*.json
+*.tmp
