@@ -61,3 +61,28 @@ hors `NOMS_DU_CODE`), le **catalogue effectif** (le seul chemin par lequel elle
 atteint l'exécution : `MAESTRO_MODEL` prime sur le modèle et pas sur l'effort, le
 fournisseur reste déclaratif), et les **deux routes** (les trois états de
 `source`, `herite`/`reglages_du_code`, et surtout *annuler n'est pas supprimer*).
+
+## Rangement par projet (#1038)
+
+Depuis [docs/37 §2.1](../../docs/37-decision-equipe-sur-mesure.md), **un agent
+appartient à un projet**. Ce dossier porte donc deux niveaux :
+
+- **la racine** — les **gabarits de rôle**, ce qui vaut hors de tout projet et ce
+  que l'analyse d'équipe consultera (#1039) ;
+- **`_projets/<projet_id>/`** — la même arborescence, pour un projet. Le tiret bas
+  le met hors d'atteinte d'un nom d'agent, qui commence par `[a-z0-9]`.
+
+L'API sert ces deux niveaux par `?projet=<id>` (omis : les gabarits), et
+l'exécution lit ceux du projet de la tâche. Code :
+`maestro/agents/rangement.py` (la règle), `maestro/agents/configuration.py`
+(les six dépôts d'un bloc).
+
+**Ce que le projet ne règle pas, il l'hérite du gabarit.** Une surcharge que le projet n'a pas
+posée est celle du gabarit. Annuler une surcharge dans un projet le ramène donc au
+gabarit — c'est-à-dire à l'agent du code tant que rien n'y est surchargé, l'invariant
+du #259 dans le nouveau rangement.
+
+**Reprise.** Ce qu'un poste portait ici avant #1038 est rattaché au projet qui
+l'utilise au démarrage de l'API — idempotente, sans rien supprimer, et elle dit
+ce qu'elle a fait. À la main : `python -m maestro.agents.reprise [--check]
+[--projet <id>]` (`MAESTRO_REPRISE_AGENTS=0` pour s'en passer).

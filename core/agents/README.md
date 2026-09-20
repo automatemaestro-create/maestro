@@ -31,3 +31,28 @@ contrat.
 
 Tests (#71) : `tests/test_agent_store.py` (dépôt, catalogue effectif, routage,
 exécution) et `tests/test_controltower.py` §⑦ (API `/api/catalogue`).
+
+## Rangement par projet (#1038)
+
+Depuis [docs/37 §2.1](../../docs/37-decision-equipe-sur-mesure.md), **un agent
+appartient à un projet**. Ce dossier porte donc deux niveaux :
+
+- **la racine** — les **gabarits de rôle**, ce qui vaut hors de tout projet et ce
+  que l'analyse d'équipe consultera (#1039) ;
+- **`_projets/<projet_id>/`** — la même arborescence, pour un projet. Le tiret bas
+  le met hors d'atteinte d'un nom d'agent, qui commence par `[a-z0-9]`.
+
+L'API sert ces deux niveaux par `?projet=<id>` (omis : les gabarits), et
+l'exécution lit ceux du projet de la tâche. Code :
+`maestro/agents/rangement.py` (la règle), `maestro/agents/configuration.py`
+(les six dépôts d'un bloc).
+
+**⚠ Seul dépôt à n'hériter de rien** : ce qu'il stocke décide de l'**existence**
+d'un agent, et l'appartenance n'a pas de défaut sensé là où un réglage en a un.
+Une définition rangée à la racine est un *gabarit*, pas un membre de l'équipe d'un
+projet — un agent d'un projet n'apparaît donc dans aucun autre.
+
+**Reprise.** Ce qu'un poste portait ici avant #1038 est rattaché au projet qui
+l'utilise au démarrage de l'API — idempotente, sans rien supprimer, et elle dit
+ce qu'elle a fait. À la main : `python -m maestro.agents.reprise [--check]
+[--projet <id>]` (`MAESTRO_REPRISE_AGENTS=0` pour s'en passer).

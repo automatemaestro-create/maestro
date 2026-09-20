@@ -37,3 +37,29 @@ La version utilisée est **tracée** sur chaque exécution : `playbook_version` 
 résultat de tâche, au journal (#8) et dans les métadonnées Langfuse ; None si
 l'agent a exécuté avec son prompt du code. En V1, ce stockage passera en base
 (entité `PLAYBOOK_VERSION`, docs/03) sans changer le contrat.
+
+## Rangement par projet (#1038)
+
+Depuis [docs/37 §2.1](../../docs/37-decision-equipe-sur-mesure.md), **un agent
+appartient à un projet**. Ce dossier porte donc deux niveaux :
+
+- **la racine** — les **gabarits de rôle**, ce qui vaut hors de tout projet et ce
+  que l'analyse d'équipe consultera (#1039) ;
+- **`_projets/<projet_id>/`** — la même arborescence, pour un projet. Le tiret bas
+  le met hors d'atteinte d'un nom d'agent, qui commence par `[a-z0-9]`.
+
+L'API sert ces deux niveaux par `?projet=<id>` (omis : les gabarits), et
+l'exécution lit ceux du projet de la tâche. Code :
+`maestro/agents/rangement.py` (la règle), `maestro/agents/configuration.py`
+(les six dépôts d'un bloc).
+
+**Ce que le projet ne règle pas, il l'hérite du gabarit.** Tant que le projet n'a publié aucune
+version pour un agent, tout se lit au gabarit — playbook courant et historique.
+Sa première publication **poursuit la numérotation** du gabarit, si bien que la frise
+ne recule jamais ; ensuite le projet a son histoire. Les **propositions**, elles, ne
+s'héritent pas : un brouillon s'applique là où il a été déposé.
+
+**Reprise.** Ce qu'un poste portait ici avant #1038 est rattaché au projet qui
+l'utilise au démarrage de l'API — idempotente, sans rien supprimer, et elle dit
+ce qu'elle a fait. À la main : `python -m maestro.agents.reprise [--check]
+[--projet <id>]` (`MAESTRO_REPRISE_AGENTS=0` pour s'en passer).
