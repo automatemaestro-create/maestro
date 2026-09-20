@@ -27,7 +27,7 @@ import {
   useState,
 } from "react";
 
-import { chargerProjets } from "@/lib/api";
+import { chargerProjets, panneDe, type PanneApi } from "@/lib/api";
 import {
   ecouterProjetActif,
   ecrireProjetActifId,
@@ -48,8 +48,8 @@ export type ProjetActif = {
   pret: boolean;
   /** Vrai tant qu'une lecture de la liste est en vol (première ou non). */
   chargement: boolean;
-  /** L'API n'a pas répondu — ce qui n'est pas la même chose qu'« aucun projet ». */
-  erreur: string | null;
+  /** La panne de la dernière lecture (#996) — ce qui n'est pas « aucun projet ». */
+  erreur: PanneApi | null;
   /** Le motif du retour au choix : le projet retenu n'est plus déclaré. */
   perdu: RefusProjet | null;
   /** Entre dans un projet — celui d'une liste, ou celui qu'on vient de créer. */
@@ -71,7 +71,7 @@ export function FournisseurProjetActif({
   const [idActif, setIdActif] = useState<string | null>(null);
   const [pret, setPret] = useState(false);
   const [chargement, setChargement] = useState(true);
-  const [erreur, setErreur] = useState<string | null>(null);
+  const [erreur, setErreur] = useState<PanneApi | null>(null);
   const [perdu, setPerdu] = useState<RefusProjet | null>(null);
 
   const recharger = useCallback(async () => {
@@ -97,7 +97,7 @@ export function FournisseurProjetActif({
       // de #225) : le choix retenu est **conservé** — il redeviendra valide dès
       // que le backend répondra — mais il ne fait pas entrer, faute de pouvoir
       // nommer le projet sur lequel on entrerait.
-      setErreur(e instanceof Error ? e.message : String(e));
+      setErreur(panneDe(e));
     } finally {
       setChargement(false);
       setPret(true);

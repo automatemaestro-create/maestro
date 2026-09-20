@@ -45,6 +45,8 @@ import {
   reprendreExecution,
   suspendreExecution,
   urlEvenements,
+  panneDe,
+  type PanneApi,
   type PorteeProjet,
 } from "./api";
 import type {
@@ -112,8 +114,8 @@ export type ControlTower = {
   revision: number;
   /** Premier chargement REST encore en cours. */
   chargement: boolean;
-  /** API injoignable au dernier chargement (null si tout va bien). */
-  erreur: string | null;
+  /** La panne du dernier chargement (null si tout va bien), **typée** (#996). */
+  erreur: PanneApi | null;
   reassigner: (tacheId: string, agent: string) => Promise<void>;
   /**
    * Tranche une demande de validation : le moteur reprend ou annule la tâche.
@@ -178,7 +180,7 @@ export function useControlTower(portee: PorteeProjet): ControlTower {
   const [connecte, setConnecte] = useState(false);
   const [revision, setRevision] = useState(0);
   const [chargement, setChargement] = useState(true);
-  const [erreur, setErreur] = useState<string | null>(null);
+  const [erreur, setErreur] = useState<PanneApi | null>(null);
 
   const rechargementPrevu = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -219,7 +221,7 @@ export function useControlTower(portee: PorteeProjet): ControlTower {
       setCouts(nouveauxCouts);
       setErreur(null);
     } catch (e) {
-      setErreur(e instanceof Error ? e.message : String(e));
+      setErreur(panneDe(e));
     } finally {
       setChargement(false);
       // Le pouls bat ici et nulle part ailleurs : une lecture vient de se

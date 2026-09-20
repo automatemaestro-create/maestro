@@ -985,6 +985,14 @@ comme les autres. Comme `contraste.test.ts` et `a11y.test.tsx`, la sonde est
 **prouvée sur un échantillon fautif avant de balayer** — sans quoi un comptage
 mal branché rendrait « 0 dépassement » sur une question jamais posée.
 
+⚠ **Et ce qui est hors de l'écran n'est pas hors de la règle** (#929, docs/30
+§4.6). Ce comptage-ci ne recense que `#contenu-principal` — juste, puisqu'une
+zone du **shell** n'est pas un bloc d'écran, et c'est précisément ce qui en
+ferait une sortie de secours. L'autre moitié vit dans
+`tests/frontiere-shell-ecran.test.tsx`, et les deux partagent **une seule** sonde
+(`tests/places.ts`), plafonds compris : une recopie qui dériverait d'un caractère
+rendrait « conforme » un bloc rangé dans le shell et compté nulle part.
+
 **L'ordre dans la colonne n'est pas neutre, et un renvoi depuis le corps ne
 coûte aucune place** (#831). La règle dit *où* un bloc a le droit d'être, pas
 dans quel ordre la colonne les empile — or la colonne défile, et sa troisième
@@ -1136,7 +1144,10 @@ qui a écrit le ton `provenance` du badge plein sur ses tokens, **648** depuis
 #945, qui a fait **sortir un fichier entier du tableau** — l'assistant flottant
 montait sa propre conversation (30 paires, dont un « Envoyer » en `bg-sky-600`),
 il monte désormais `Conversation` : la plus grosse décroissance à ce jour, et
-elle vient d'une recopie retirée, pas de trente classes migrées une à une. Ce ticket ne les
+elle vient d'une recopie retirée, pas de trente classes migrées une à une —, et
+**645** depuis #996, qui a sorti la bannière d'erreur (3 paires `rose-*`) en la
+réécrivant pour qu'elle nomme la panne : la teinte est partie avec le texte,
+dans un fichier qu'on rouvrait de toute façon. Ce ticket ne les
 migre pas — il pose le compte et **refuse la suivante** (`tests/couleurs.test.ts`),
 comme #832 l'a fait pour les contrôles de saisie et #534 pour le contraste. La
 689ᵉ est arrivée pendant l'attente de merge de ce lot (#894, une cinquième
@@ -1363,7 +1374,9 @@ lui pose les cinq autres familles avant qu'elle ne balaie.
 
 Ce qui reste, mesuré le **2026-09-20** : **165 tailles hors de l'échelle dans
 37 fichiers** — 150 jumelles (`text-xs` 85, `text-sm` 65), 6 pas que l'échelle
-n'a pas (`text-lg`, `text-base`, `text-xl`) et 9 valeurs arbitraires. Le compte
+n'a pas (`text-lg`, `text-base`, `text-xl`) et 9 valeurs arbitraires ; **164**
+depuis #996, qui a sorti la bannière d'erreur du tableau (son `text-sm` unique)
+en la réécrivant sur `text-corps` et `text-annexe`. Le compte
 est **exact et non un plafond** : une taille de plus rougit, une taille de
 **moins** rougit aussi tant que la ligne n'est pas mise à jour — si bien que le
 résidu ne peut que décroître, et que chaque décroissance est un geste **écrit**.
@@ -1930,6 +1943,45 @@ série de quelques millièmes, elles tomberaient toutes sur « 0,00 » et l'axe 
 dirait plus rien ; l'exception est déclarée dans ce même module, pas dans le
 composant qui dessine.
 
+### La bannière d'erreur — `components/BanniereErreurApi.tsx`, `lib/api.ts` (#996)
+
+Treize écrans montent la même bannière, et elle nomme **la panne qui a eu lieu**
+— il y en a deux, qui n'appellent pas le même geste :
+
+| Panne | Ce que la lecture voit | Ce que la bannière dit |
+| --- | --- | --- |
+| **API injoignable** | le `fetch` rejette : rien n'a répondu (backend éteint, mauvaise URL, CORS) | « API injoignable — rien n'a répondu, vérifier que le backend tourne (`maestro-api`) » |
+| **API en erreur** | le serveur répond 4xx/5xx | « L'API a répondu en erreur — *le motif rendu par le serveur* », le code et la route en annexe |
+
+Avant #996, les deux se lisaient « API injoignable … a répondu 500 — vérifier
+que le backend tourne » : un diagnostic faux, un geste inutile (le backend
+venait de répondre), et le `detail` de l'API jeté par `chargerJson` alors que
+`envoyerJson` le relayait déjà pour les écritures.
+
+Trois décisions portent le mécanisme, et aucune ne se défait seule :
+
+- **La classe vient de la lecture, pas de l'écran.** `chargerJson` lève une
+  `ErreurApi` qui porte `chemin`, `statut` (`null` = aucune réponse) et `motif`.
+  Chaque `catch` d'écran passe par `panneDe(e)` — la panne typée si c'en est
+  une, son texte sinon —, si bien qu'aucun écran ne réécrit ce choix. Le type
+  `PanneApi` (`ErreurApi | string`) est ce que les hooks exposent et ce que la
+  bannière accepte : une faute qui n'est pas une lecture d'API (un envoi refusé)
+  s'y montre telle quelle, sans code ni geste inventés.
+- **La bannière lit le type, jamais le texte.** Chercher « a répondu » dans un
+  message rendrait le bon verdict aujourd'hui et le mauvais à la première
+  reformulation — c'est le refus général de juger un texte par son vocabulaire,
+  et `tests/banniere-erreur.test.tsx` le garde en passant une chaîne qui *dit*
+  « a répondu 500 » sans en être une.
+- **Le motif porte la ligne principale, le code descend en annexe** (veille de
+  conception du ticket, d'après Primer, Carbon, Stripe et NN/g). L'annexe
+  s'écrit en `alerte-texte`, jamais en `texte-secondaire`, qui ne tient pas
+  4,5:1 sur un fond creux (`contraste.test.ts`) : son retrait vient de la taille
+  et de la police.
+
+L'état limite se regarde sans le provoquer : `bash
+scripts/controltower/start.sh --demo --scenario erreur` fait répondre l'API en
+500 sur toutes les routes sauf la santé et les projets (#978).
+
 ## Lancer en local
 
 1. **Backend** (API REST + WebSocket, ticket #46) — Redis du docker-compose requis
@@ -2130,7 +2182,10 @@ le pixel — le bout en bout dans un vrai navigateur reste le rôle du skill
 | `tests/parametres.test.tsx` | Sommaire, ancres, préférences du poste (#121) |
 | `tests/guide.test.tsx` | Déclenchement unique, étapes, sortie clavier, ancres et pages réelles (#122, #193) |
 | `tests/assistant.test.tsx` | Ouverture, envoi, échec d'envoi, non-fermeture au clic extérieur (#123) |
-| `tests/shell.test.tsx` | La composition : les sept lots effectivement branchés dans le cadre |
+| `tests/shell.test.tsx` | La composition : les sept lots effectivement branchés dans le cadre, puis la **troisième zone** (#925) — fermée par défaut, sa bascule qui passe par le stockage, sa croix, et le fait de base dont la frontière dépend : la colonne est hors de `<main>` |
+| `tests/frontiere-shell-ecran.test.tsx` | **La frontière shell / écran** (#929, docs/30 §4.6, docs/35 §3.4) : une zone du shell ne peut pas servir de sortie de secours à la règle des trois places. Trois temps — les plafonds confrontés au **texte** de docs/30 §4.1 (donc `BLOCS_MAX` ne se relève pas dans un fichier de test) ; écran par écran, ce qui est rendu **hors** de `#contenu-principal` comparé à ce que le shell rend **seul**, colonne ouverte comme fermée ; et l'écran qui ne gagne aucune place quand la conversation s'ouvre. La sonde est prouvée sur un échantillon fautif — un écran qui range un bloc par un portail est vu, `<section>` comme `<aside>` — et l'inventaire des zones du shell est **épinglé**, faute de quoi une quatrième zone s'ajouterait sans que rien ne rougisse |
+| `tests/fil-continu.test.tsx` | **La continuité du fil** (#926, docs/35 §3.3) : une seule conversation à l'écran (le fil n'est monté que colonne ouverte — `useChat` ouvre une WebSocket par instance —, et la colonne se replie sur `/chat` **sans éteindre la préférence**), le même canal et la même portée que `/chat`, et le brouillon qui **suit** d'une surface à l'autre (`lib/brouillons` : hissé hors du composant, par interlocuteur, jamais persisté) |
+| `tests/issue-de-run.test.tsx` | **L'annonce de fin d'un run** (#928, docs/05 §2.9) : `lib/issueRun` (une fin par run et non par message, « fini » ≠ « abouti », les deux raisons de n'avoir pas de livrable, le repère de lecture de la cloche), l'annonce rendue (l'heure de la **fin**, le chemin qui n'est pas un lien, « aucun livrable » écrit à sa place, les deux gestes dont « Copier le chemin » **toujours**), et les deux surfaces — le fil qui la retrouve **sans aucun temps réel**, la cloche qui marque d'un point et l'acquitte à l'ouverture |
 | `tests/agents.test.tsx` | La fiche agent à onglets, la liste, et la survie des chemins v1 par redirection (#190, testé en #193) ; puis le **cadre** de l'écran de création (#254) — sa route, la porte en tête de liste, la sortie par Échap, la garde du brouillon, le nom que la route occupe |
 | `tests/agent-onglets.test.tsx` | L'**aiguillage** des cinq facettes (`ContenuOngletAgent`, #190 relu par #267) : chaque onglet ouvre *le bon* composant, une seule facette à la fois, et la table des repères se compare à `ONGLETS_AGENT` — un onglet déclaré sans être branché rougit. Le typage n'y suffit pas : le `switch` est exhaustif par construction, mais il accepterait sans un mot qu'un cas monte le composant du voisin — deux lignes de copier-coller, invisibles au lint comme au build |
 | `tests/agent-creation.test.tsx` | La création **jusqu'au bout** (#254, #257, testés en #267), là où `agents.test.tsx` n'en garde que le cadre : la définition composée puis envoyée, la fiche née ouverte sur son profil, « rien de choisi » rendu en `null` (le défaut légitime, pas un trou), la saisie gardée sur un refus ; puis l'assistant — il remplit **à partir de l'intention**, ce qu'il pose reste modifiable mot à mot, l'abandon rend l'état d'**avant** (pas celui d'un essai précédent), et un échec **ne touche à rien** |
@@ -2156,6 +2211,7 @@ le pixel — le bout en bout dans un vrai navigateur reste le rôle du skill
 | `tests/journal.test.tsx` | La page Journal : fil sans limite, filtres par type/agent/tâche, recherche jusque dans le détail, « notable seulement » aligné sur la cloche (#249) |
 | `tests/activite.test.tsx` | Les lignes d'activité : repli des rafales, horodatage relatif, détail brut à un clic, garde des types inconnus (#250) |
 | `tests/socle-visuel.test.tsx` | Le langage visuel (#245) : le jeu d'icônes (SVG à `currentColor`, toutes décoratives), les primitives et leurs deux thèmes, et **aucun émoji rendu** sur les écrans de la vague |
+| `tests/banniere-erreur.test.tsx` | La bannière que montent treize écrans **nomme la panne qui a eu lieu** (#996, voir « La bannière d'erreur » ci-dessus) : la lecture porte la classe (`chargerJson` distingue « rien n'a répondu » de « le serveur a répondu 4xx/5xx », garde le statut même sans corps exploitable, et relaie le `detail` que la lecture jetait), et l'écran ne fait que la lire — une API qui répond 500 ne dit plus « injoignable » ni « vérifier que le backend tourne ». Le contrôle qui porte le plus : une **chaîne** qui dit « a répondu 500 » n'est pas traitée comme une réponse du serveur, sans quoi la distinction reposerait sur un vocabulaire et se perdrait à la première reformulation. Plus le filet du socle : l'état porte une icône et un libellé, pas seulement une teinte |
 | `tests/kanban.test.tsx` | La section Tâches qui prend la place (#248) : colonnes de la machine à états, colonne « Autres », **chaîne d'étirement entière** et défilement rendu à chaque colonne |
 | `tests/format.test.ts` | Les montants à deux décimales et leurs trois verdicts — « — », « 0,00 $US », « < 0,01 $US » —, l'exception des graduations d'axe, durées et tokens (#247) |
 | `tests/projet-actif.test.tsx` | La porte d'entrée : aucun écran n'est atteint sans projet actif, le choix retenu est confronté à l'état réel, et la page demandée revient sans redirection (#279) |
@@ -2184,9 +2240,9 @@ le pixel — le bout en bout dans un vrai navigateur reste le rôle du skill
 | `tests/regions-live.test.tsx` | Les régions live des écrans temps réel (#538) : le **vocabulaire sans DOM** (seules les hausses parlent, un franchissement dit le total, les deux attentes humaines **absentes** du relevé des runs) ; la **présence** écran par écran, comptée sur l'attribut `aria-live` comme la sonde du ticket — une polie, zéro assertive ; le **contenu** après un événement simulé ; le **débit**, où une rafale de trois tâches ne coûte que deux phrases et douze événements du journal une seule ; et l'**assertive** avec sa réserve — unique dans le shell, muette sur une tâche terminée, et jamais redite par la région polie de l'écran qui montre l'arbitrage |
 | `tests/sobriete.test.tsx` | La **règle des trois places** (#539, voir « Le langage visuel » ci-dessus) rendue opposable : les écrans du menu recensés, bandeau de tête ≤ 4 chiffres, corps ≤ 3 blocs, une seule colonne de propriétés, aucun bloc anonyme. Rien n'y est **déclaré** — le bandeau se reconnaît à ses `TuileChiffre`, la colonne à sa balise `<aside>`, et l'**arbitrage se prouve** en montant chaque écran une seconde fois files vides : un bloc qui prétendrait arbitrer sans disparaître compterait comme les autres. Sonde prouvée sur un échantillon fautif avant de balayer, comme `contraste.test.ts` |
 | `tests/contraste.test.ts` | Le contraste de la palette sémantique (#534) : les **36 paires légitimes par thème** de #533 mesurées en octets dans `globals.css`, au seuil 4,5:1 (texte) ou 3:1 (contour, aplat d'état) — **et la sonde prouvée avant de servir**, sur les ratios que #471 avait mesurés au navigateur puis sur une faute glissée exprès. Le contrôle qui en fait un filet plutôt qu'un instantané est le dernier : un token ajouté sans paire **rougit** au lieu d'être vert par construction |
-| `tests/couleurs.test.ts` | La **couleur écrite à la main** dans les écrans (#895, voir « La palette sémantique » ci-dessus) — l'**usage** de la palette, là où `contraste.test.ts` juge la palette et `a11y.test.tsx` les seuls contrôles de saisie : aucune paire `dark:` + couleur brute hors du résidu **nommé fichier par fichier avec son compte exact** (689 dans 65 fichiers au lot, 684 depuis #910, 680 depuis #911, 678 depuis #912, 648 dans 64 fichiers depuis #945), le compte étant exact et non un plafond — une paire de moins rougit aussi, si bien que le résidu ne peut que décroître et que chaque décroissance est un geste écrit. Deux **manques du socle** y sont nommés avec leur raison (six au lot — #910 en a comblé deux par une opacité de token existant, #911 a comblé `selectionne` par un token, #912 `provenance` par trois tokens ajoutés), et un test rougit le jour où la palette les comble — c'est ce qui a fait sortir `selectionne` (#911) puis `provenance` (#912) de la liste. **Prouvée avant de servir en deux étages** : le motif d'abord (les trois paires que la veille #868 a relevées, les variantes dans les deux ordres, le contournement par valeur arbitraire, et ce sur quoi il ne doit pas crier — les tokens, la prose), puis le **verdict** lui-même sur une mesure fabriquée — sans quoi une comparaison qui cesserait de comparer rendrait « rien à signaler » |
+| `tests/couleurs.test.ts` | La **couleur écrite à la main** dans les écrans (#895, voir « La palette sémantique » ci-dessus) — l'**usage** de la palette, là où `contraste.test.ts` juge la palette et `a11y.test.tsx` les seuls contrôles de saisie : aucune paire `dark:` + couleur brute hors du résidu **nommé fichier par fichier avec son compte exact** (689 dans 65 fichiers au lot, 684 depuis #910, 680 depuis #911, 678 depuis #912, 648 dans 64 fichiers depuis #945, 645 dans 63 depuis #996), le compte étant exact et non un plafond — une paire de moins rougit aussi, si bien que le résidu ne peut que décroître et que chaque décroissance est un geste écrit. Deux **manques du socle** y sont nommés avec leur raison (six au lot — #910 en a comblé deux par une opacité de token existant, #911 a comblé `selectionne` par un token, #912 `provenance` par trois tokens ajoutés), et un test rougit le jour où la palette les comble — c'est ce qui a fait sortir `selectionne` (#911) puis `provenance` (#912) de la liste. **Prouvée avant de servir en deux étages** : le motif d'abord (les trois paires que la veille #868 a relevées, les variantes dans les deux ordres, le contournement par valeur arbitraire, et ce sur quoi il ne doit pas crier — les tokens, la prose), puis le **verdict** lui-même sur une mesure fabriquée — sans quoi une comparaison qui cesserait de comparer rendrait « rien à signaler » |
 | `tests/espacements.test.ts` | Le **padding des conteneurs et des contrôles** (#983, voir « Le barème de padding » ci-dessus) — le rythme intérieur, là où `couleurs.test.ts` juge la couleur : aucun padding hors des **six pas du socle** en dehors du résidu **nommé fichier par fichier avec son compte exact** (70 dans 39 fichiers au lot), le compte étant exact et non un plafond — un padding de moins rougit aussi, si bien que le résidu ne peut que décroître. Le barème est **lu dans `Primitives.tsx`**, jamais recopié, et **épinglé** : une primitive qui ajoute un septième pas rougit, au lieu d'élargir le barème en silence. La **portée est étroite à dessein** — les `p-<n>` partout (un écart égal des quatre côtés est le rythme d'une boîte, et c'est ce qui fait voir `<Carte densite="aucune" className="p-5">`), la paire `px`/`py` seulement quand sa feuille habille quelque chose (rayon ou interaction), parce que `px-3 py-2` rend aussi bien un onglet qu'une bannière et que `px-4 py-3` ne rend que les bandes d'un panneau : réclamer `Bouton` à qui pose le padding d'un `<main>` discréditerait le résidu entier. **Prouvée avant de servir en deux étages**, comme `couleurs.test.ts` : le motif d'abord (les cinq pas hors barème de docs/30 §2.3, la surcharge de densité de `PosteVide`, le contournement par valeur arbitraire, et ce sur quoi il ne doit pas crier — la mise en page, les `gap`, la prose), puis le **verdict** sur une mesure fabriquée |
-| `tests/typographie.test.ts` | La **taille de texte écrite hors de l'échelle** (#981, voir « L'échelle typographique » ci-dessus) — l'**usage** de l'échelle, ce que `couleurs.test.ts` est à la palette : aucun pas de Tailwind (`text-xs`, `text-sm`, `text-base`, `text-lg`…) ni valeur arbitraire (`text-[13px]`, `text-[length:var(--x)]`, `text-(length:--x)`) hors du résidu **nommé fichier par fichier avec son compte exact** (165 dans 37 fichiers au lot), le compte étant exact et non un plafond — une taille de moins rougit aussi, si bien que le résidu ne peut que décroître et que chaque décroissance est un geste écrit. Les deux ensembles sont **lus** et non recopiés : les noms de pas dans le `theme.css` de Tailwind, les pas nommés et leurs alias dans le bloc `@theme` de `globals.css` — d'où un contrôle qui rougit si un alias de #533 reprenait une valeur propre, et un autre si un pas de l'échelle portait un nom de Tailwind (la sonde refuserait le socle qu'elle recommande). Un **manque de l'échelle** y est nommé avec sa raison (`graduation`, l'étiquette d'axe d'un graphique à 10 px quand le plus petit pas est à 11), et un test rougit le jour où l'échelle le comble. **Prouvée avant de servir en deux étages** : le motif d'abord — les jumelles du ticket, les variantes, les contournements arbitraires, et surtout ce sur quoi il ne doit **pas** crier, `text-` étant surchargé par cinq autres familles (couleur, alignement, retour à la ligne, débordement, ombre de texte) —, puis le **verdict** lui-même sur une mesure fabriquée |
+| `tests/typographie.test.ts` | La **taille de texte écrite hors de l'échelle** (#981, voir « L'échelle typographique » ci-dessus) — l'**usage** de l'échelle, ce que `couleurs.test.ts` est à la palette : aucun pas de Tailwind (`text-xs`, `text-sm`, `text-base`, `text-lg`…) ni valeur arbitraire (`text-[13px]`, `text-[length:var(--x)]`, `text-(length:--x)`) hors du résidu **nommé fichier par fichier avec son compte exact** (165 dans 37 fichiers au lot, 164 dans 36 depuis #996), le compte étant exact et non un plafond — une taille de moins rougit aussi, si bien que le résidu ne peut que décroître et que chaque décroissance est un geste écrit. Les deux ensembles sont **lus** et non recopiés : les noms de pas dans le `theme.css` de Tailwind, les pas nommés et leurs alias dans le bloc `@theme` de `globals.css` — d'où un contrôle qui rougit si un alias de #533 reprenait une valeur propre, et un autre si un pas de l'échelle portait un nom de Tailwind (la sonde refuserait le socle qu'elle recommande). Un **manque de l'échelle** y est nommé avec sa raison (`graduation`, l'étiquette d'axe d'un graphique à 10 px quand le plus petit pas est à 11), et un test rougit le jour où l'échelle le comble. **Prouvée avant de servir en deux étages** : le motif d'abord — les jumelles du ticket, les variantes, les contournements arbitraires, et surtout ce sur quoi il ne doit **pas** crier, `text-` étant surchargé par cinq autres familles (couleur, alignement, retour à la ligne, débordement, ombre de texte) —, puis le **verdict** lui-même sur une mesure fabriquée |
 | `tests/rayons-ombres.test.ts` | Le **rayon et l'ombre écrits hors barème** (#982, voir « Le barème des rayons et des ombres » ci-dessus) — le pendant de `couleurs.test.ts` pour les deux propriétés qui disent la **profondeur**. Elle juge le **nom**, pas la valeur : `rounded-lg` et `rounded-carte` rendent le même pixel, et pourtant l'un ne dit pas si l'auteur visait un contrôle ou s'il a recopié la ligne d'à côté. Le barème est **lu dans `globals.css`, jamais recopié**, et un **pas** (valeur littérale) s'y distingue d'une **jumelle** (`var(…)`) — on ne peut donc pas ajouter un pas en le faisant passer pour un alias, et deux contrôles tiennent le « peu de pas » : **exactement 4 rayons et 1 ombre**, un de plus rougit. Résidu **nommé fichier par fichier avec son compte exact** (165 dans 59 fichiers au lot), exact et non plafonné. **Prouvée avant de servir en deux étages** comme `couleurs.test.ts` : le motif d'abord — les cinq rayons et cinq ombres relevés le 2026-09-20, les variantes dans les deux ordres, le rayon et l'ombre **nus** (les deux pas dépréciés de Tailwind v4), les coins dirigés, la valeur arbitraire, l'écriture **en ligne** (`style={{ boxShadow }}`), et ce sur quoi elle ne doit pas crier (le barème lui-même, `ring-*`, `inset-shadow-*`, `drop-shadow-*`, la prose) —, puis le **verdict** sur une mesure fabriquée. Un plancher de plus qu'elle seule a besoin de poser : **le barème doit être employé et pas seulement déclaré**, sans quoi un barème que personne n'écrit rendrait « zéro écart de moins » avec les mots de « tout est au barème » |
 | `tests/hydratation.test.ts` | Ce que le layout racine **tolère du dehors** (#730) : les deux `suppressHydrationWarning`, celui de `<html>` (le `data-theme` que `SCRIPT_INIT_THEME` corrige, #118) et celui de `<body>` (les attributs qu'une extension y pose avant l'hydratation — Grammarly, LastPass…). Ils ont l'air d'un doublon et n'en sont pas : déplacer l'un sur l'autre, le geste qu'on fait en croyant simplifier, ramène l'un des deux écarts. La sonde lit les **octets du layout**, et ce n'est pas ici un pis-aller mais le seul filet possible — le symptôme exige un navigateur, un rendu serveur à hydrater et une extension installée, donc ni jsdom ni la CI ne le verront jamais revenir. Comme `contraste.test.ts`, elle est **prouvée avant de servir**, sur un échantillon fautif qui porte le piège : la prose du layout nomme `<body>` *avant* la balise, si bien qu'une recherche naïve rougirait un fichier correct |
 

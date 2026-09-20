@@ -100,10 +100,81 @@ export function urlEvenements(portee: PorteeProjet): string {
   );
 }
 
+/**
+ * Une lecture qui n'a pas abouti, et **laquelle des deux pannes** (#996).
+ *
+ * `statut === null` : le `fetch` a échoué avant toute réponse — backend éteint,
+ * mauvaise URL, CORS. L'API est **injoignable**, et « vérifier que
+ * `maestro-api` tourne » est le bon geste.
+ *
+ * `statut` renseigné : le serveur a **répondu**, en 4xx ou 5xx. Il tourne, donc
+ * l'envoyer démarrer est un contresens ; ce qu'il faut montrer est son code et,
+ * quand il en rend un, son `motif` (le `detail` du corps — celui que
+ * `envoyerJson` relaie déjà pour les écritures, et que `chargerJson` jetait).
+ *
+ * La classe est portée **à la source**, jamais relue dans le message : un texte
+ * qu'on analyse pour deviner la panne cesse de dire vrai à la première
+ * reformulation.
+ */
+export class ErreurApi extends Error {
+  readonly chemin: string;
+  readonly statut: number | null;
+  readonly motif: string;
+
+  constructor(chemin: string, statut: number | null, motif = "") {
+    super(
+      statut === null
+        ? `${chemin} n'a pas répondu`
+        : `${chemin} a répondu ${statut}${motif === "" ? "" : ` : ${motif}`}`,
+    );
+    this.name = "ErreurApi";
+    this.chemin = chemin;
+    this.statut = statut;
+    this.motif = motif;
+  }
+
+  /** L'API n'a pas répondu du tout : le `fetch` a rejeté. */
+  static injoignable(chemin: string): ErreurApi {
+    return new ErreurApi(chemin, null);
+  }
+}
+
+/**
+ * Ce qu'une bannière d'erreur reçoit : une panne **typée**, ou un message déjà
+ * écrit quand la faute ne vient pas d'une lecture de l'API.
+ */
+export type PanneApi = ErreurApi | string;
+
+/**
+ * Ce qu'un `catch` rend à l'écran : la panne typée si c'en est une, sinon le
+ * texte. Un seul endroit pour ce choix — chaque hook l'écrivait à la main, et
+ * c'est là que le type se perdait.
+ */
+export function panneDe(e: unknown): PanneApi {
+  if (e instanceof ErreurApi) return e;
+  return e instanceof Error ? e.message : String(e);
+}
+
+/** Le `detail` d'une réponse en échec, quand elle en porte un de lisible. */
+async function motifDe(reponse: Response): Promise<string> {
+  try {
+    const contenu = (await reponse.json()) as { detail?: unknown };
+    return typeof contenu.detail === "string" ? contenu.detail : "";
+  } catch {
+    // corps non JSON (une page d'erreur d'un proxy, un corps vide) : pas de motif
+    return "";
+  }
+}
+
 async function chargerJson<T>(chemin: string): Promise<T> {
-  const reponse = await fetch(`${API_URL}${chemin}`, { cache: "no-store" });
+  let reponse: Response;
+  try {
+    reponse = await fetch(`${API_URL}${chemin}`, { cache: "no-store" });
+  } catch {
+    throw ErreurApi.injoignable(chemin);
+  }
   if (!reponse.ok) {
-    throw new Error(`${chemin} a répondu ${reponse.status}`);
+    throw new ErreurApi(chemin, reponse.status, await motifDe(reponse));
   }
   return (await reponse.json()) as T;
 }
@@ -1179,12 +1250,25 @@ async function refusProjet(
   return new ErreurProjet(motif, message);
 }
 
-/** Lecture d'une route projets, dont l'échec porte son motif. */
+/**
+ * Lecture d'une route projets, dont l'échec porte son motif.
+ *
+ * ⚠ Une API **injoignable** n'est pas un refus motivé (#996) : rien n'a
+ * répondu, donc il n'y a ni `motif` ni statut à porter. Elle emprunte le même
+ * chemin que les autres lectures — `ErreurApi` —, sans quoi la porte d'entrée
+ * des projets afficherait « Failed to fetch » là où les douze autres écrans
+ * disent « API injoignable ».
+ */
 async function lireProjets<T>(
   chemin: string,
   refusParDefaut: string,
 ): Promise<T> {
-  const reponse = await fetch(`${API_URL}${chemin}`, { cache: "no-store" });
+  let reponse: Response;
+  try {
+    reponse = await fetch(`${API_URL}${chemin}`, { cache: "no-store" });
+  } catch {
+    throw ErreurApi.injoignable(chemin);
+  }
   if (!reponse.ok) throw await refusProjet(reponse, refusParDefaut);
   return (await reponse.json()) as T;
 }
