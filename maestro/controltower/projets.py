@@ -222,6 +222,21 @@ class ServiceProjets:
         """Le projet `id_`. `ProjetInconnu` s'il n'existe pas, `ProjetIllisible` s'il est cassé."""
         return self._fiche(self._lire(id_))
 
+    def entite(self, id_: str) -> Projet:
+        """Le projet `id_` en **entité** — sa racine en `Path`, son périmètre.
+
+        `detail` rend la fiche JSON de l'API ; les services qui vont *regarder le
+        disque du projet* (`ServiceOutillage`, `maestro.controltower.equipe`) ont
+        besoin de l'objet. Ils passent ici plutôt que de relire le dépôt à côté,
+        pour qu'il n'y ait qu'un seul lecteur de projets dans la Control Tower :
+        deux relectures de la même fiche finiraient par ne plus se refuser les
+        mêmes fichiers.
+
+        Mêmes refus que `detail`, et aux mêmes conditions — `ProjetInconnu`,
+        `ProjetIllisible` —, donc la même traduction HTTP.
+        """
+        return self._lire(id_)
+
     def existe(self, id_: str) -> bool:
         """Le projet `id_` est-il déclaré ? La question que pose la **portée** d'une lecture (#277).
 
