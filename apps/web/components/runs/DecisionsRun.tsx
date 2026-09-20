@@ -205,7 +205,7 @@ function LigneDecision({
   const maintenant = useHorloge();
   const Glyphe = prise.hypothese ? IconeHypothese : IconeDecision;
   return (
-    <li className="flex items-start gap-3 px-3 py-2.5">
+    <li className="flex items-start gap-x-3 px-3 py-2.5">
       {/* `chiffre` : l'âge se réévalue sous les yeux, et la classe empêche le
           changement de largeur de faire sauter la ligne autour de lui (#245). */}
       <time
@@ -239,8 +239,23 @@ function LigneDecision({
         <p className="mt-0.5 text-annexe text-texte-secondaire">{prise.raison}</p>
       </div>
 
-      <p className="w-48 shrink-0 text-right text-annexe text-texte-secondaire">
-        <span className="block truncate font-medium text-texte">{prise.agent}</span>
+      {/* La colonne de droite est séparée du texte par une gouttière franche
+          (`pl-6`) et non par le seul `gap` de la ligne : à 12 px, une raison qui
+          remplit toute sa largeur venait buter contre le renvoi vers la tâche, et
+          les deux se lisaient d'un trait alors qu'ils sont deux colonnes (relevé
+          par le regard neuf, #980). */}
+      <p className="w-52 shrink-0 pl-6 text-right text-annexe text-texte-secondaire">
+        {/* `agent · Rôle`, comme le nœud du pipeline et la carte du Kanban : le
+            même agent doit se lire pareil d'une vue à l'autre, et l'identifiant
+            seul (« developpeur ») est le nom technique, pas le nom lisible
+            (relevé par le regard neuf, #980). Le rôle tombe quand le flux n'en
+            porte pas — rien n'invente « · ». */}
+        <span className="block truncate font-medium text-texte">
+          {prise.agent}
+          {prise.role && (
+            <span className="font-normal text-texte-secondaire"> · {prise.role}</span>
+          )}
+        </span>
         <button
           type="button"
           title={prise.tache || prise.tache_id}
