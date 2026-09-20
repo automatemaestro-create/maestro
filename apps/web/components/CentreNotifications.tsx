@@ -31,6 +31,14 @@
  * l'écran, là où une validation se décide sur place — sept sections, des
  * questions et un coût ne tiennent pas dans un panneau de 20 rem, et approuver
  * sans lire est exactement ce que le point de contrôle empêche.
+ *
+ * **Trois familles depuis #1025** : les **questions libres** d'un agent (#1023)
+ * rejoignent le même compte, pour la raison qui y avait fait entrer les briefs —
+ * c'est « combien de choses m'attendent » que la pastille répond. Et elles sont
+ * **acheminées, pas tranchées**, comme eux : la veille du ticket l'a refusé en
+ * toutes lettres, une question se répond **dans le fil**, là où on a la
+ * conversation qui l'a produite. Un second champ de réponse ici en ferait deux,
+ * et celui de la cloche répondrait sans le contexte.
  */
 
 import Link from "next/link";
@@ -57,10 +65,12 @@ import {
   lireIssuesVues,
 } from "@/lib/issueRun";
 import { entreeParLibelle } from "@/lib/navigation";
+import { PAGE_DES_QUESTIONS, questionsEnAttente } from "@/lib/questions";
 import { useSurfaceDeroulee } from "@/lib/useSurfaceDeroulee";
 import {
   EXECUTION_EN_ATTENTE_REPONSES,
   VALIDATION_EN_ATTENTE,
+  type Question,
   type ResumeExecution,
   type Validation,
 } from "@/lib/types";
@@ -95,9 +105,10 @@ const MAX_ISSUES_RAPPELEES = 5;
 function etiquetteCloche(
   validations: number,
   briefs: number,
+  questions: number,
   issuesNeuves: boolean,
 ): string {
-  const resume = resumeArbitrages(validations, briefs);
+  const resume = resumeArbitrages(validations, briefs, questions);
   // Les fins de run viennent **après** la file d'arbitrage et ne s'y ajoutent
   // pas : « 2 à valider, et du travail terminé » se lit dans l'ordre où l'on
   // agit. Sans arbitrage en attente, la phrase tient seule.
@@ -110,7 +121,7 @@ function etiquetteCloche(
 }
 
 export function CentreNotifications() {
-  const { validations, executions, evenements, projet, decider } =
+  const { validations, executions, evenements, projet, questions, decider } =
     useEtatGlobal();
   const [ouvert, setOuvert] = useState(false);
   // Le repère de lecture des fins de run (#928), lu **une fois par ouverture**
@@ -126,7 +137,11 @@ export function CentreNotifications() {
     (v) => v.statut === VALIDATION_EN_ATTENTE,
   );
   const briefs = runsEnAttente(executions);
-  const nb = enAttente.length + briefs.length;
+  // Les questions d'agents (#1025), **appelées** et jamais recomptées ici : la
+  // règle « qu'est-ce qui attend une réponse ? » vit dans `lib/questions`, comme
+  // celle des briefs vit dans `lib/brief`.
+  const demandes = questionsEnAttente(questions);
+  const nb = enAttente.length + briefs.length + demandes.length;
   const notables = grouperEvenements(
     evenements.filter(estNotableNotification),
   ).slice(0, MAX_EVENEMENTS_NOTABLES);
@@ -147,6 +162,7 @@ export function CentreNotifications() {
   const etiquette = etiquetteCloche(
     enAttente.length,
     briefs.length,
+    demandes.length,
     issuesNeuves,
   );
 
@@ -253,6 +269,40 @@ export function CentreNotifications() {
                     <li key={run.run_id}>
                       <CarteBriefCompacte
                         run={run}
+                        surOuverture={() => setOuvert(false)}
+                      />
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            {/* Les questions d'agents (#1025), **entre** les briefs et les
+                validations. L'ordre du panneau suivait jusqu'ici ce que chaque
+                attente bloque ; celle-ci s'y range sur une autre propriété, et
+                c'est elle qui la fait passer devant les validations : c'est la
+                seule des trois qui **périme**. Un brief et une validation
+                attendent indéfiniment, une question a une borne — passée elle,
+                l'agent est reparti sur son hypothèse, et la répondre ne le
+                rattrapera qu'au prochain appel identique. */}
+            {demandes.length > 0 && (
+              // Sur les **jetons du socle** et au **barème**, et non sur les
+              // `neutral-*`/`text-xs`/`p-2` que ses sections voisines portent
+              // encore : une couleur se choisit une fois (docs/30 §2,
+              // `couleurs.test.ts`), un pas typographique aussi (#981), une
+              // densité aussi (#983). Le rendu est le même au pixel près —
+              // `--text-xs` **est** `--text-annexe` — et les trois résidus, qui
+              // ne peuvent que décroître, ne grandissent pas d'une ligne.
+              // Replier les sections voisines est une migration, pas ce ticket.
+              <section aria-label="Questions d'agents" className="p-2.5">
+                <h3 className="px-1 pb-1 text-annexe font-semibold tracking-wide text-texte-secondaire uppercase">
+                  Questions d&apos;agents
+                </h3>
+                <ul className="space-y-2">
+                  {demandes.map((question) => (
+                    <li key={question.question_id}>
+                      <CarteQuestionCompacte
+                        question={question}
                         surOuverture={() => setOuvert(false)}
                       />
                     </li>
@@ -406,6 +456,63 @@ function CarteBriefCompacte({
         className={`mt-2 inline-flex items-center gap-1 ${CIBLE_MINIMALE} text-micro font-medium text-amber-800 hover:underline dark:text-amber-300`}
       >
         {reponses ? "Répondre" : "Relire le brief"}
+        <IconeFlecheDroite className="size-3 shrink-0" />
+      </Link>
+    </Carte>
+  );
+}
+
+/**
+ * Une question d'agent en version compacte : qui demande, ce qu'il demande, et
+ * le chemin vers le fil où l'on y répond.
+ *
+ * **Aucun champ de réponse ici**, et c'est la décision de la veille du ticket :
+ * une question se répond **dans le fil**, là où on a la conversation qui l'a
+ * produite (#483, docs/29). Un second endroit où écrire en ferait deux, dont un
+ * sans le contexte — et le canal n'a pas d'autre mémoire que son fil. Même
+ * partage que `CarteBriefCompacte`, pour une raison voisine.
+ *
+ * Le chemin est un **libellé de menu** (`PAGE_DES_QUESTIONS`) et non une URL :
+ * un renvoi codé en dur s'éteint le jour où la page déménage, et une cloche
+ * muette sur un agent suspendu est exactement ce que le critère 2 interdit.
+ */
+function CarteQuestionCompacte({
+  question,
+  surOuverture,
+}: {
+  question: Question;
+  surOuverture: () => void;
+}) {
+  const page = entreeParLibelle(PAGE_DES_QUESTIONS);
+  if (page === undefined) return null;
+
+  return (
+    <Carte densite="compacte" ton="attention">
+      {/* La question d'abord — c'est elle qu'on vient lire. L'infobulle porte le
+          texte entier quand il est écrêté : ici le `title` apprend quelque
+          chose, comme sur la carte de brief. */}
+      <p className="line-clamp-2 text-annexe font-medium" title={question.question}>
+        {question.question}
+      </p>
+      {/* Jetons du socle, pas de `neutral-*`/`amber-*` bruts — voir la section
+          qui monte cette carte : les deux thèmes viennent avec le token, et le
+          banc de contraste ne juge que les tokens (docs/30 §1.6, §2). */}
+      <p className="mt-0.5 flex items-center gap-1 text-micro text-texte-secondaire">
+        <IconeAgent className="size-3 shrink-0" />
+        Agent {question.agent}
+        {question.role ? ` · ${question.role}` : ""}
+      </p>
+      {question.hypothese && (
+        <p className="mt-1 line-clamp-2 text-micro text-attention-texte italic">
+          Sans réponse : {question.hypothese}
+        </p>
+      )}
+      <Link
+        href={page.href}
+        onClick={surOuverture}
+        className={`mt-2 inline-flex items-center gap-1 ${CIBLE_MINIMALE} text-micro font-medium text-attention-texte hover:underline`}
+      >
+        Répondre dans le fil
         <IconeFlecheDroite className="size-3 shrink-0" />
       </Link>
     </Carte>

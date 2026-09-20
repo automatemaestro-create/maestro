@@ -45,6 +45,7 @@ import type {
   PropositionPlaybook,
   PropositionPlaybookDetail,
   ProvenanceRegistreMcp,
+  Question,
   RapportLecture,
   RedactionPlaybook,
   RefusProjet,
@@ -228,6 +229,45 @@ export function chargerValidations(
 ): Promise<Validation[]> {
   return chargerJson<Validation[]>(
     `/api/validations?projet=${encodeURIComponent(portee)}`,
+  );
+}
+
+/**
+ * Les **questions libres** posées par les agents (#1023, docs/05 §6.17) : en
+ * attente d'abord, puis celles qui ont reçu leur réponse.
+ *
+ * `projet` est obligatoire, au contrat commun : une question appartient au
+ * projet de la tâche qui la pose, et une Control Tower cadrée sur un projet n'a
+ * pas à faire répondre pour un travail qui se déroule ailleurs.
+ */
+export function chargerQuestions(portee: PorteeProjet): Promise<Question[]> {
+  return chargerJson<Question[]>(
+    `/api/questions?projet=${encodeURIComponent(portee)}`,
+  );
+}
+
+/**
+ * Répond à la question d'un agent (#1023) — du **texte**, rien d'autre : ni
+ * `approuve`, ni `motif`. Une question ne soumet aucun acte, il n'y a donc rien
+ * à approuver ni à refuser, et répondre n'autorise aucun appel d'outil (EF-08).
+ *
+ * Un choix retenu se répond **en le recopiant** : c'est le contrat de la route,
+ * et c'est pourquoi le bouton d'un choix envoie son libellé plutôt qu'un index —
+ * un numéro ferait voyager une signification qui vivrait dans un autre
+ * événement.
+ *
+ * La réponse est rognée ici comme elle l'est côté backend : une réponse vide est
+ * refusée en 422 (elle n'apprendrait rien à l'agent, qui reprendrait sur son
+ * hypothèse en croyant qu'on lui a répondu).
+ */
+export function repondreQuestion(
+  questionId: string,
+  reponse: string,
+): Promise<void> {
+  return envoyerJson(
+    `/api/questions/${encodeURIComponent(questionId)}/reponse`,
+    { reponse: reponse.trim() },
+    "réponse refusée",
   );
 }
 

@@ -152,6 +152,7 @@ import { useMemo, useState } from "react";
 
 import { DemandeDeCadrage } from "@/components/chat/DemandeDeCadrage";
 import { FilDeCadrage } from "@/components/chat/FilDeCadrage";
+import { QuestionsDuFil } from "@/components/chat/QuestionDansLeFil";
 import { Conversation } from "@/components/Conversation";
 import {
   IconeAgent,
@@ -172,6 +173,7 @@ import {
 } from "@/components/Primitives";
 import { cheminOnglet } from "@/lib/agents";
 import { propositionEnAttente, runsEnAttente } from "@/lib/brief";
+import { questionsDuFil } from "@/lib/questions";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import { formatHeureRelative } from "@/lib/format";
 import { useHorloge } from "@/lib/horloge";
@@ -188,7 +190,14 @@ import type { ConversationChat, MessageChat } from "@/lib/types";
 import { useChat, type Chat } from "@/lib/useChat";
 
 export default function PageChat() {
-  const { agents, taches, projet, executions } = useEtatGlobal();
+  const {
+    agents,
+    taches,
+    projet,
+    executions,
+    questions: toutesLesQuestions,
+    repondreAUneQuestion,
+  } = useEtatGlobal();
   const [destinataire, setDestinataire] = useState(AGENT_ORCHESTRATION);
   // Le projet **de cette fenêtre** part avec chaque message (#683) : c'est ce
   // qui rattache au projet actif le run que l'orchestration ouvre, et donc ce
@@ -232,6 +241,17 @@ export default function PageChat() {
   // question est posée, c'est nécessairement ce fil-là qu'on a sous les yeux,
   // puisqu'elle répond à ce qu'on vient d'y écrire.
   const proposition = global ? propositionEnAttente(fil.messages) : null;
+
+  // Les questions d'agents que **ce fil** concerne (#1025). La règle est
+  // appelée, jamais recopiée (`lib/questions`, même raison que `lib/brief`) :
+  // le fil de l'orchestration les porte toutes — il est la porte d'entrée
+  // (docs/29) et c'est là que la cloche achemine —, un aparté `@agent` ne porte
+  // que les siennes, pour qu'on ne réponde pas à côté.
+  const questions = useMemo(
+    () =>
+      questionsDuFil(toutesLesQuestions, destinataire, AGENT_ORCHESTRATION),
+    [toutesLesQuestions, destinataire],
+  );
 
   /**
    * Chaque frappe passe ici : une mention close par une espace change le
@@ -307,15 +327,28 @@ export default function PageChat() {
               <ConversationOuverte fil={fil} />
             </>
           }
-          /* Le geste au pied du fil (#943) — là où l'œil vient de lire la
-             question, et où la main allait taper la réponse. */
+          /* Les gestes au pied du fil (#943, #1025) — là où l'œil vient de lire
+             la question, et où la main allait taper la réponse.
+             Les **questions d'agents au-dessus** de la demande de cadrage quand
+             les deux attendent : une question porte sur un travail déjà en vol,
+             une proposition sur un travail qui n'a pas commencé, et c'est la
+             seconde qui remplace vraiment la zone de saisie — son objectif est
+             éditable, donc il se tient là où la main allait écrire. */
           pied={
-            proposition !== null ? (
-              <DemandeDeCadrage
-                demande={proposition}
-                trancher={fil.trancherCadrage}
-                enCours={fil.envoi}
-              />
+            questions.length > 0 || proposition !== null ? (
+              <div className="flex flex-col gap-3">
+                <QuestionsDuFil
+                  questions={questions}
+                  repondre={repondreAUneQuestion}
+                />
+                {proposition !== null && (
+                  <DemandeDeCadrage
+                    demande={proposition}
+                    trancher={fil.trancherCadrage}
+                    enCours={fil.envoi}
+                  />
+                )}
+              </div>
             ) : undefined
           }
           bandeau={

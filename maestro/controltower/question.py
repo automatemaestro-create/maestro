@@ -56,6 +56,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import suppress
+from datetime import UTC, datetime, timedelta
 
 from maestro.controltower.events import (
     EVENEMENT_QUESTION_DEMANDE,
@@ -81,6 +82,13 @@ def evenement_question(demande: DemandeQuestion) -> Event:
     `detail` est la phrase qu'un fil affiche sans rien composer. C'est le partage
     que `validation.demande` fait déjà entre `raison` et `description`.
 
+    **La borne voyage deux fois pour la même raison** (#1025) : en toutes lettres
+    dans `detail`, et en **date** dans `echeance` — le fait avec lequel l'écran
+    compare son horloge pour dire si l'agent a déjà repris. Sans elle, il lui
+    faudrait lire le chiffre dans la phrase (juger du texte par un motif, ce que
+    le dépôt refuse) ou recopier `BornesArbitrage.attente_s` côté navigateur (deux
+    supports pour un même réglage).
+
     Tout ce qui vient de l'agent est **expurgé des secrets** avant de partir —
     question, choix, hypothèse : c'est du texte qu'un modèle a composé, au même
     titre que la `raison` d'un arbitrage, et une question peut très bien citer une
@@ -88,6 +96,7 @@ def evenement_question(demande: DemandeQuestion) -> Event:
     sont des identifiants que **nous** produisons.
     """
     hypothese = redact_secrets(demande.hypothese)
+    naissance = datetime.now(UTC)
     return Event(
         type=EVENEMENT_QUESTION_DEMANDE,
         run_id=demande.run_id,
@@ -105,6 +114,17 @@ def evenement_question(demande: DemandeQuestion) -> Event:
         question_id=demande.question_id,
         hypothese=hypothese,
         choix=[redact_secrets(choix) for choix in demande.choix],
+        # La borne, en **date** (#1025) — le même chiffre que `detail` dit en
+        # toutes lettres, sous la forme avec laquelle un écran compare son
+        # horloge. Elle est posée ici, à la publication, et non côté écran : la
+        # borne est un réglage du moteur (`BornesArbitrage.attente_s`), et la
+        # recopier dans le navigateur ferait deux supports pour un même réglage.
+        # `horodatage` reste l'instant de la demande : les deux ne se déduisent
+        # pas l'un de l'autre sans connaître ce réglage.
+        echeance=(naissance + timedelta(seconds=demande.attente_s)).isoformat(
+            timespec="seconds"
+        ),
+        horodatage=naissance.isoformat(timespec="seconds"),
     )
 
 

@@ -85,9 +85,9 @@ export function RegionLive({
  * props n'apprendrait rien à personne.
  */
 export function RegionArbitrage() {
-  const { validations, executions } = useEtatGlobal();
+  const { validations, executions, questions } = useEtatGlobal();
   const annonce = useAnnonce(
-    mesuresDesArbitrages(validations, executions),
+    mesuresDesArbitrages(validations, executions, questions),
     DELAI_ARBITRAGE_MS,
   );
   return (
