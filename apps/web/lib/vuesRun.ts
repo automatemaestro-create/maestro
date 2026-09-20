@@ -1,18 +1,29 @@
 /**
- * Les quatre **lectures** d'un run et la bascule entre elles (#491, lot 3 de
- * #488 ; troisième position ajoutée par #516, quatrième par #355) —
- * l'arbitrage que ces tickets demandaient de rendre, écrit ici et une seule
- * fois.
+ * Les cinq **lectures** d'un run et la bascule entre elles (#491, lot 3 de
+ * #488 ; troisième position ajoutée par #516, quatrième par #355, cinquième par
+ * #1026) — l'arbitrage que ces tickets demandaient de rendre, écrit ici et une
+ * seule fois.
  *
  * ## Ce qui est tranché
  *
- * **Les quatre vues coexistent, sous une bascule, et le pipeline est le défaut.**
+ * **Les cinq vues coexistent, sous une bascule, et le pipeline est le défaut.**
  * Elles ne se remplacent pas, parce qu'elles ne répondent pas à la même question
  * (docs/05 §2.4.2) : le pipeline dit **« quoi après quoi »**, le Kanban
- * **« combien dans quel état »**, la frise **« qui, quand, et à qui »**, le
- * journal **« qu'a-t-il fait »**. Aucune ne se déduit d'une autre — on ne lit pas
- * un enchaînement dans cinq colonnes, on ne compte pas un état dans un graphe,
- * et ni l'un ni l'autre ne rend ce qu'un run a *dit*.
+ * **« combien dans quel état »**, la frise **« qui, quand, et à qui »**, les
+ * décisions **« ce qui a été décidé sans moi, et pourquoi »**, le journal
+ * **« qu'a-t-il fait »**. Aucune ne se déduit d'une autre — on ne lit pas un
+ * enchaînement dans cinq colonnes, on ne compte pas un état dans un graphe, et
+ * ni l'un ni l'autre ne rend ce qu'un run a *dit*.
+ *
+ * **Les décisions sont une lecture, pas un filtre du journal** (#1026). Tout ce
+ * qu'elle montre est déjà dans le journal — et c'est justement le défaut qu'elle
+ * corrige : une décision qu'un agent a prise seule y est une ligne parmi cent,
+ * consignée puis invisible, alors que l'autonomie du chantier #1019 n'est
+ * acceptable **que si elle se vérifie après coup**. Elle retient deux familles
+ * (ce qu'un agent a jugé sien, et l'hypothèse qu'il a prise faute de réponse) et
+ * les rend en colonnes fixes — décision, motif, agent, tâche —, là où le journal
+ * rend une phrase par événement. Le même écart qu'entre la frise et le journal,
+ * et la même réponse.
  *
  * **La frise n'est pas le journal, et c'est la distinction la plus fine des
  * quatre** (#355). Les deux sont chronologiques et lisent la même source
@@ -80,6 +91,7 @@
 
 import {
   IconeActivite,
+  IconeDecision,
   IconeGraphe,
   IconeJournal,
   IconeTache,
@@ -92,6 +104,8 @@ export const VUE_PIPELINE = "pipeline";
 export const VUE_KANBAN = "kanban";
 /** Ce que ses agents ont fait et se sont dit, en couloirs et dans le temps (#355). */
 export const VUE_FRISE = "frise";
+/** Ce que ses agents ont tranché **seuls**, et pourquoi (#1026). */
+export const VUE_DECISIONS = "decisions";
 /** Ce qu'il a dit, dans l'ordre où il l'a dit — son journal persisté (#478). */
 export const VUE_JOURNAL = "journal";
 
@@ -99,6 +113,7 @@ export type VueRunCle =
   | typeof VUE_PIPELINE
   | typeof VUE_KANBAN
   | typeof VUE_FRISE
+  | typeof VUE_DECISIONS
   | typeof VUE_JOURNAL;
 
 export type VueRunOnglet = {
@@ -119,8 +134,12 @@ export type VueRunOnglet = {
  *
  * La **frise** s'insère en avant-dernier et non en dernier (#355) : elle répond
  * encore à « où en est-on ? », dans le sens du temps, là où le journal est ce
- * qu'on ouvre quand la vue d'ensemble ne suffit plus. Le journal ferme donc
- * toujours la rangée, et la règle de #516 tient sans exception.
+ * qu'on ouvre quand la vue d'ensemble ne suffit plus. Les **décisions** (#1026)
+ * s'insèrent à leur tour juste avant le journal, et pour la même raison, dans
+ * l'autre sens : on ne les ouvre pas pour savoir où en est le run, mais avant
+ * d'aller chercher la ligne exacte dans la trace — elles sont la dernière vue
+ * d'ensemble, le journal le recours. Le journal ferme donc toujours la rangée,
+ * et la règle de #516 tient sans exception.
  */
 export const VUES_RUN: VueRunOnglet[] = [
   {
@@ -141,6 +160,13 @@ export const VUES_RUN: VueRunOnglet[] = [
     question:
       "Qui, quand, et à qui : statuts et messages en couloirs, dans l'ordre du temps",
     icone: IconeActivite,
+  },
+  {
+    cle: VUE_DECISIONS,
+    libelle: "Décisions",
+    question:
+      "Ce qui a été décidé sans moi : ce que les agents ont tranché seuls, et pourquoi",
+    icone: IconeDecision,
   },
   {
     cle: VUE_JOURNAL,

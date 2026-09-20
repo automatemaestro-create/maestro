@@ -18,6 +18,7 @@ import type {
   ConversationsChat,
   DecisionBrief,
   DeclarationProjet,
+  DecisionsRun,
   DefinitionAgent,
   DefinitionAgentProposee,
   DetailExecution,
@@ -273,6 +274,27 @@ export function chargerGrapheExecution(runId: string): Promise<GrapheRun> {
 export function chargerFriseExecution(runId: string): Promise<FriseRun> {
   return chargerJson<FriseRun>(
     `/api/executions/${encodeURIComponent(runId)}/frise`,
+  );
+}
+
+/**
+ * Les décisions qu'un agent a tranchées **seul** pendant une exécution
+ * (`GET /api/executions/{run_id}/decisions`, #1026) : ce qu'il a décidé sans
+ * demander, et pourquoi — plus les hypothèses qu'il a prises faute de réponse,
+ * marquées comme telles.
+ *
+ * Tout ce qui sert à rendre une ligne est **servi** : le tri (du plus récent au
+ * plus ancien), la famille (`origine`), la décision et son motif dans deux
+ * champs distincts, et le titre de la tâche vers laquelle la ligne renvoie. Rien
+ * à redécouper ni à retrier ici.
+ *
+ * Pas de `?projet=`, par la même porte que `/frise`, `/graphe` et `/cout` : le
+ * run seul suffit à désigner ce qu'on lit. Se recharge sur le pouls du shell,
+ * cette lecture n'ayant pas de canal à elle.
+ */
+export function chargerDecisionsExecution(runId: string): Promise<DecisionsRun> {
+  return chargerJson<DecisionsRun>(
+    `/api/executions/${encodeURIComponent(runId)}/decisions`,
   );
 }
 

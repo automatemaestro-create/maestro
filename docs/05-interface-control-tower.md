@@ -525,7 +525,7 @@ clics, derrière une liste, sur un écran qu'on ne visite pas spontanément.
 
 **Rien n'est réécrit, tout est remonté.** `CarteRun` est la ligne qu'on lit déjà dans
 la liste des runs et dans l'état des runs (§2.1.2) ; `VuePipeline` est la vue par
-défaut d'un run depuis #491, et les **quatre lectures** d'un run gardent leur
+défaut d'un run depuis #491, et les **cinq lectures** d'un run gardent leur
 arbitrage (§2.4.2) — le centre n'en monte qu'une, la bascule restant dans la vue du
 run, où mène le titre de la carte.
 
@@ -979,13 +979,13 @@ dessous. Ouvrir un run donne enfin son backlog — jusqu'ici le Kanban était ce
 **projet** (#248) et un run n'avait pas de vue à lui, si bien que dans un projet où
 plusieurs runs se succèdent, *ce que ce run avait fait* n'était visible nulle part.
 
-> ⚠ **Cette lecture est quadruple** : le **pipeline** (§2.4.4), le **Kanban**, la
-> **frise** (§2.4.6) et le **journal** coexistent sous une bascule, et c'est le
-> pipeline qui ouvre. #491 l'a rendue double, #516 y a ajouté la troisième position,
-> #355 la quatrième. Tout ce que dit cette section vaut inchangé — la tête, le
-> contenu du journal, l'appartenance par l'API, le pouls du shell —, seul le corps
-> de l'écran a désormais quatre formes, dont on ne voit **qu'une** à la fois.
-> L'arbitrage est rendu en §2.4.4.
+> ⚠ **Cette lecture est quintuple** : le **pipeline** (§2.4.4), le **Kanban**, la
+> **frise** (§2.4.6), les **décisions** (§6.18) et le **journal** coexistent sous une
+> bascule, et c'est le pipeline qui ouvre. #491 l'a rendue double, #516 y a ajouté la
+> troisième position, #355 la quatrième, #1026 la cinquième. Tout ce que dit cette
+> section vaut inchangé — la tête, le contenu du journal, l'appartenance par l'API, le
+> pouls du shell —, seul le corps de l'écran a désormais cinq formes, dont on ne voit
+> **qu'une** à la fois. L'arbitrage est rendu en §2.4.4.
 
 **Le Kanban est réutilisé, pas réimplémenté.** C'est le composant de §2.2 :
 mêmes colonnes, mêmes cartes, même **détail sur place** (#251), même réassignation.
@@ -1213,6 +1213,17 @@ la frise ne retient que deux flux et les range **par agent**, dans le sens du te
 C'est dans cet écart que se lit le défaut qui a motivé le ticket : sur un fil, une
 attente de décision humaine est une ligne parmi cent ; sur une frise, c'est un couloir
 qui ne bouge plus.
+
+**Et cinq depuis #1026**, les **décisions** (§6.18) s'insérant entre la frise et le
+journal. Cinquième question : « ce qui a été décidé sans moi, et pourquoi ». Elle obéit
+à la même règle de position, appliquée dans l'autre sens : les décisions sont la
+**dernière vue d'ensemble**, le journal reste le recours. Et comme la frise, elles
+lisent la même source persistée sans en être un filtre — elles retiennent deux familles
+(ce qu'un agent a jugé sien, et l'hypothèse qu'il a prise faute de réponse) et les
+rendent en colonnes fixes, là où le journal rend une phrase par événement. Le défaut
+qu'elles corrigent est du même ordre : une décision tranchée seule était **consignée
+puis invisible**, une ligne parmi cent, alors que l'autonomie du chantier #1019 n'est
+acceptable que si elle se vérifie après coup.
 
 Trois options **écartées**, et pourquoi. **Une route par lecture**
 (`/runs/<id>/pipeline`, `…/kanban`, `…/journal`), sur le modèle des onglets d'une fiche
@@ -5517,8 +5528,17 @@ secrets en amont sur le bus.
 **À l'écran** (`/runs/[runId]`) : une **cinquième entrée de la bascule de vues**, et non un bloc de
 plus. C'est ce que la règle des trois places impose ici (docs/30 §4.1, §4.2 — la vue d'un run tient
 en 2 blocs + onglets) : une `<nav>` n'occupe aucune des trois places, un bloc empilé sous le résumé
-en occuperait une. L'onglet **n'apparaît pas** quand le run n'a rien décidé seul, et c'est le même
-raisonnement que pour un bloc d'arbitrage à file vide : une lecture vide n'est pas une lecture.
+en occuperait une. L'onglet **reste là quand le run n'a rien décidé seul**, comme les quatre autres,
+et l'écran dit alors *pourquoi* c'est vide (aucun agent n'a eu à trancher hors de son brief, aucune
+question n'est restée sans réponse) : un onglet qui apparaîtrait en cours de run déplacerait les
+autres sous le pointeur, et « rien n'a été décidé seul » est une réponse, pas une absence de vue.
+
+**La forme de la liste a été tranchée sur pièces** (#1009) : trois variantes rendues sur la stack
+— la ligne dense, la table à six colonnes, le groupement par tâche — et jugées par le sous-agent
+`regard-neuf` contre les références capturées par la veille. La **ligne dense** l'emporte : la
+décision en premier plan, son motif en second juste dessous, l'heure et l'icône de famille en
+gouttière, l'agent et le renvoi vers la tâche en colonne à droite. Le choix, les écartées et leurs
+raisons sont consignés sur le ticket (commentaire `## Variante retenue`).
 
 Implémentation : [`maestro/controltower/decisions.py`](../maestro/controltower/decisions.py)
 (la composition), [`maestro/controltower/app.py`](../maestro/controltower/app.py) (la route),
