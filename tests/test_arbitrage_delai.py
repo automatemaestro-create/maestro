@@ -111,7 +111,7 @@ class ProviderQuiArbitre(ModelProvider):
     async def run_agent(
         self, prompt, *, model, system_prompt=None, workspace, tools,
         mcp_serveurs=(), politique=None, on_refus=None, on_arbitrage_acte=None,
-        on_activite=None, on_etapes=None, on_arbitrage=None, on_blocage=None,
+        on_activite=None, on_etapes=None, on_arbitrage=None, on_blocage=None, on_decision=None,
         credit_arbitrage=None,
         on_courrier=None, on_question=None,
         plafond_tours=None, projet=None,

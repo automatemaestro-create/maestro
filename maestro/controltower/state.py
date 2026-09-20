@@ -45,6 +45,7 @@ from maestro.controltower.events import (
     EVENEMENT_QUESTION_REPONSE,
     EVENEMENT_RUN_PLAN,
     EVENEMENT_TACHE_BLOCAGE,
+    EVENEMENT_TACHE_DECISION,
     EVENEMENT_TACHE_DETAIL,
     EVENEMENT_TACHE_REASSIGNATION,
     EVENEMENT_TACHE_REFERENCE,
@@ -1439,6 +1440,12 @@ class ControlTowerState:
             # — et sa tâche ne bouge pas d'une colonne, ce qui est tout l'objet
             # de son type distinct (docs/31 §3.4).
             EVENEMENT_TACHE_BLOCAGE,
+            # Une décision tranchée seul (#1024) : même traitement, et pour la
+            # même raison — l'agent vient de parler, donc il est vivant, et sa
+            # tâche ne bouge pas d'une colonne. Elle est **gardée** dans
+            # `EtatExecution.evenements` comme tout ce qui porte un `run_id`,
+            # ce qui est le chemin par lequel la vue du run (#1026) la lira.
+            EVENEMENT_TACHE_DECISION,
         }:
             self._applique_activite(event)
         elif event.type == EVENEMENT_AGENT_CAPACITE:

@@ -58,7 +58,7 @@ from maestro.config import ConfigError, Settings
 from maestro.decideur import Decideur
 from maestro.deliberation import CreditArbitrage
 from maestro.detail_tache import EtapeTache
-from maestro.providers import blocage, courrier, question
+from maestro.providers import blocage, courrier, decision, question
 from maestro.providers.activite import Geste, RegulateurActivite
 from maestro.providers.arbitrage import (
     CANAL_EN_ERREUR,
@@ -363,6 +363,7 @@ class ClaudeProvider(ModelProvider):
         on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,
         on_arbitrage: Arbitre | None = None,
         on_blocage: blocage.Signaleur | None = None,
+        on_decision: decision.Consigneur | None = None,
         credit_arbitrage: CreditArbitrage | None = None,
         on_courrier: courrier.Courrier | None = None,
         on_question: question.Questionneur | None = None,
@@ -489,6 +490,18 @@ class ClaudeProvider(ModelProvider):
         plus au statut de la tâche (docs/31 §3.4 : ce serait fausser la cascade
         de #43) ; il consigne, et l'agent poursuit.
 
+        `on_decision` (#1024) fait porter au même serveur l'outil
+        `consigner_decision(decision, raison)`
+        (`maestro.providers.decision`) : l'agent qui a **tranché seul** écrit ce
+        qu'il a décidé et pourquoi, au moment où il le décide. Jumeau de
+        `on_blocage` sur tout ce qui compte — rien n'est soumis à personne, rien
+        n'est attendu, l'agent n'est jamais suspendu, et rien n'entre au grand
+        livre —, et son contraire sur ce qu'il transporte : l'un dit ce que
+        l'agent **subit**, l'autre ce qu'il **fait**. C'est la seconde moitié du
+        régime de docs/37 §2.2 : ce qui demande un humain se demande (les deux
+        canaux d'arbitrage ci-dessus), tout le reste se tranche seul **et se
+        consigne**.
+
         Ce serveur porte **N outils** depuis #718, et non plus un seul : ce qui
         décide de son contenu est `_outils_maestro`, ce qui décide de son montage
         est `_serveurs_mcp`. Le partage n'est pas cosmétique — c'est lui qui rend
@@ -577,6 +590,7 @@ class ClaudeProvider(ModelProvider):
             _outils_maestro(
                 on_arbitrage=on_arbitrage,
                 on_blocage=on_blocage,
+                on_decision=on_decision,
                 credit=credit_arbitrage,
                 on_courrier=on_courrier,
                 on_question=on_question,
@@ -889,6 +903,58 @@ def _outil_blocage(on_blocage: blocage.Signaleur) -> SdkMcpTool[Any]:
     return signaler_blocage
 
 
+def _outil_decision(on_decision: decision.Consigneur) -> SdkMcpTool[Any]:
+    """L'outil `consigner_decision(decision, raison)` servi à l'agent (#1024).
+
+    Le jumeau de `_outil_blocage` — **aucun `await`** : l'appel écrit et rend la
+    main dans le même tour, l'agent n'est jamais suspendu, personne n'est
+    sollicité, rien ne lui répondra. Le vocabulaire est importé **qualifié**
+    (`decision.NOM_OUTIL`…) parce que les verbes d'écriture nomment leurs
+    constantes pareil — deux `CANAL_EN_ERREUR` dans le même fichier finiraient
+    par se servir l'un pour l'autre, et l'agent lirait le message d'un autre
+    canal.
+
+    Trois issues, et aucune n'est rendue en **erreur d'outil** — même raison
+    qu'en #582 et #719 : une erreur invite à réessayer *le même appel*, or ici il
+    faut le rappeler **autrement**, ou pas du tout.
+
+    - **décision vide** : rien n'est écrit. Consigner « j'ai décidé » sans dire
+      quoi remplirait le journal du seul fait qu'on savait déjà — qu'un agent
+      travaille ;
+    - **raison vide** : rien n'est écrit non plus, et c'est ce qui distingue ce
+      verbe de ses voisins. Une décision sans motif ne se conteste pas, donc ne
+      se vérifie pas après coup — et « vérifiable après coup » est la condition
+      même à laquelle le parent #1019 ouvre l'autonomie ;
+    - **canal en erreur** : le callback a levé. On le lui dit, et surtout on ne
+      laisse pas l'exception remonter — elle tuerait la tâche à l'instant précis
+      où l'agent rend compte de lui-même, ce qui est la pire des façons de lui
+      apprendre à le faire.
+
+    Rendu **séparément de son serveur** comme ses trois voisins : ce qui décide
+    tient en quelques lignes, et les éprouver ne doit coûter ni CLI, ni
+    sous-processus, ni quota (tests → #1027).
+    """
+
+    @tool(decision.NOM_OUTIL, decision.DESCRIPTION_OUTIL, decision.SCHEMA_ENTREE)
+    async def consigner_decision(args: dict[str, Any]) -> dict[str, Any]:
+        quoi = str(args.get("decision") or "").strip()
+        raison = str(args.get("raison") or "").strip()
+        if not quoi:
+            texte = decision.DECISION_MANQUANTE
+        elif not raison:
+            texte = decision.RAISON_MANQUANTE
+        else:
+            try:
+                on_decision(quoi, raison)
+            except Exception as exc:  # noqa: BLE001 — dit à l'agent, jamais une tâche tuée
+                texte = decision.CANAL_EN_ERREUR.format(cause=exc)
+            else:
+                texte = decision.DECISION_CONSIGNEE
+        return {"content": [{"type": "text", "text": texte}]}
+
+    return consigner_decision
+
+
 @contextmanager
 def _fenetre_arbitrage(credit: CreditArbitrage | None) -> Iterator[None]:
     """Ouvre la fenêtre d'attente du crédit quand il y en a un (#584), sinon ne fait rien.
@@ -909,15 +975,16 @@ def _outils_maestro(
     *,
     on_arbitrage: Arbitre | None = None,
     on_blocage: blocage.Signaleur | None = None,
+    on_decision: decision.Consigneur | None = None,
     credit: CreditArbitrage | None = None,
     on_courrier: courrier.Courrier | None = None,
     on_question: question.Questionneur | None = None,
 ) -> list[SdkMcpTool[Any]]:
     """Les outils que le serveur `maestro` a **effectivement** à porter (#718).
 
-    Le point d'extension du serveur, et le seul : un verbe nouveau (#719, #720)
-    s'y ajoute en un `if` et une ligne, sans toucher ni à `run_agent`, ni au
-    porte-outils, ni au montage. C'est tout l'objet de ce lot — deux verbes
+    Le point d'extension du serveur, et le seul : un verbe nouveau (#719, #720,
+    #1024) s'y ajoute en un `if` et une ligne, sans toucher ni à `run_agent`, ni
+    au porte-outils, ni au montage. C'est tout l'objet de ce lot — deux verbes
     écrits en parallèle se croiseraient ici, sur deux lignes voisines, plutôt
     qu'au milieu du corps de `run_agent`.
 
@@ -930,7 +997,7 @@ def _outils_maestro(
     courrier, l'inverse, tous ou aucun. Rien ici ne les ordonne, et l'ordre de la
     liste n'a pas de sens pour le SDK — c'est celui de la lecture.
 
-    `on_question` (#1023) est le quatrième, et il prend le `credit` comme le
+    `on_question` (#1023) est le cinquième, et il prend le `credit` comme le
     premier : ce sont les deux seuls verbes qui **suspendent** l'agent, donc les
     deux seuls dont l'attente ne doit pas être facturée au délai de la tâche.
     """
@@ -939,6 +1006,8 @@ def _outils_maestro(
         outils.append(_outil_arbitrage(on_arbitrage, credit))
     if on_blocage is not None:
         outils.append(_outil_blocage(on_blocage))
+    if on_decision is not None:
+        outils.append(_outil_decision(on_decision))
     if on_courrier is not None:
         outils.append(_outil_courrier(on_courrier))
     if on_question is not None:

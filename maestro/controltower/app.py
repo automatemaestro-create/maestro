@@ -447,6 +447,7 @@ from maestro.projets import RacineRefusee, VersionnementRefuse, canonique, valid
 from maestro.providers.arbitrage import OUTIL_ARBITRAGE
 from maestro.providers.blocage import OUTIL_BLOCAGE
 from maestro.providers.courrier import OUTIL_COURRIER
+from maestro.providers.decision import OUTIL_DECISION
 from maestro.providers.question import OUTIL_QUESTION
 from maestro.references import ReferenceTicket
 from maestro.sources import DepotTeleversements, SourceRefusee, apercu_sources
@@ -3053,9 +3054,9 @@ def create_app(
         Trois origines, et aucune n'est écrite en dur ici : les outils
         **intégrés** de son profil de rôle (`RoleProfile.outils`, `DEFAULT_TOOLS`
         pour un agent hors des profils outillés), les verbes du serveur
-        in-process **maestro** (arbitrage, blocage, courrier, question — leurs
-        constantes existent précisément pour qu'une politique les désigne, #805,
-        #1023) et les
+        in-process **maestro** (arbitrage, blocage, courrier, décision
+        consignée, question — leurs constantes existent précisément pour qu'une
+        politique les désigne, #805, #1023) et les
         **serveurs MCP** effectivement montés pour lui, cités en entier
         (`mcp__<serveur>`, qui couvre tous leurs outils).
 
@@ -3078,6 +3079,11 @@ def create_app(
             {"nom": OUTIL_ARBITRAGE, "origine": "maestro", "libelle": "demander un arbitrage"},
             {"nom": OUTIL_BLOCAGE, "origine": "maestro", "libelle": "signaler un blocage"},
             {"nom": OUTIL_COURRIER, "origine": "maestro", "libelle": "écrire à un pair"},
+            {
+                "nom": OUTIL_DECISION,
+                "origine": "maestro",
+                "libelle": "consigner une décision tranchée seul",
+            },
             {"nom": OUTIL_QUESTION, "origine": "maestro", "libelle": "poser une question"},
         ]
         try:

@@ -284,6 +284,37 @@ SUFFIXE_ETAPE_QUESTION = ":question"
 STATUT_QUESTION_REPONDUE = "question_repondue"
 STATUT_QUESTION_SANS_REPONSE = "question_sans_reponse"
 
+#: Suffixe des étapes de **décision tranchée seul** (#1024) : `<task.id>:decision`,
+#: une par appel de `consigner_decision` (`maestro.providers.decision`) — le pont
+#: Control Tower les mue en événements `tache.decision`.
+#:
+#: C'est la seconde moitié du régime de docs/37 §2.2 : ce qui demande un humain
+#: se demande (les deux canaux d'arbitrage), **tout le reste se tranche seul et
+#: se consigne**. Le régime sénior de #293 donnait déjà le droit de trancher ;
+#: ce que l'agent tranchait ne se lisait nulle part avant son compte-rendu
+#: final, c'est-à-dire après — et un run en échec l'emportait avec lui.
+#:
+#: ⚠ À ne pas confondre avec `:validation` (#9, #582), qui porte une décision
+#: **humaine** sur un acte soumis. Les deux mots se ressemblent et disent le
+#: contraire l'un de l'autre : là-bas une personne a tranché pour l'agent, ici
+#: l'agent a tranché **sans personne**, ce qui est précisément ce qu'on veut
+#: pouvoir relire.
+SUFFIXE_ETAPE_DECISION = ":decision"
+
+#: Statut des étapes de décision tranchée seul (#1024) — un mot à lui, comme
+#: `STATUT_BLOCAGE_SIGNALE` et pour la même raison.
+#:
+#: `approuve`/`refuse` (les statuts d'une `:validation`) diraient qu'une décision
+#: a été **rendue sur** l'agent ; `en_cours` ferait redire au fil ce que le
+#: Kanban montre déjà. La seule information de la ligne est **ce que l'agent a
+#: décidé et pourquoi**, et elle mérite un mot qui ne la range dans aucune des
+#: deux familles existantes.
+#:
+#: Il ne déplace aucune carte : le pont range ces étapes sous `tache.decision`,
+#: que la projection n'utilise que pour rafraîchir la dernière activité de
+#: l'agent — jamais le statut d'une tâche (docs/31 §3.4).
+STATUT_DECISION_AUTONOME = "decision_autonome"
+
 #: Suffixe des étapes de fusion dans le projet (#705) : `<task.id>:fusion`, une
 #: par tâche soldée en succès sur un projet **versionné** — le pont Control Tower
 #: les mue en activités d'agent, comme `:relance` et `:refus-outil`.
@@ -2221,6 +2252,62 @@ class LocalExecutor(TaskExecutor):
             projet_id=task.projet_id,
         )
 
+    def _consigne_decision_autonome(
+        self,
+        task: Task,
+        agent: Agent,
+        decision: str,
+        raison: str,
+        journal: RunJournal,
+    ) -> None:
+        """Écrit au journal du run ce que l'agent a **tranché seul** (#1024).
+
+        Étape dédiée `<task.id>:decision` (même modèle que `:blocage`), que le
+        pont (`maestro.controltower.bridge`) mue en événement `tache.decision`.
+        Les quatre champs que le ticket demande y sont, et chacun vient de qui en
+        répond : l'**agent** et la **tâche** sont fermés ici — comme dans
+        `_courrier` et `_arbitre`, un agent qui les fournirait pourrait signer
+        d'un autre nom —, la **décision** et sa **raison** viennent de lui.
+
+        Elles voyagent dans **deux champs distincts**, et c'est le point à ne pas
+        défaire : `sortie` porte la décision, `description` porte le motif. Les
+        fondre en un seul texte obligerait la vue du run (#1026) à les
+        redécouper, c'est-à-dire à deviner par la forme ce que le journal savait
+        à l'écriture. `description` est le champ du **texte long** d'une ligne de
+        journal — celui de la tâche sur un `tache.statut` (#246), l'action
+        décrite sur une `validation.demande` (#48) —, et le motif d'une décision
+        en est un de plus ; il traverse déjà le pont, le journal durable et le
+        journal requêtable (#478) sans qu'aucun champ nouveau soit à ajouter.
+
+        Usage nul, comme le blocage (#719) et pour la même raison : rendre compte
+        de soi ne doit rien coûter, faute de quoi se taire serait la stratégie
+        payante. Le pont écarte de lui-même la mesure de ces étapes.
+
+        La tâche ne **change pas de colonne** au passage : l'agent a tranché dans
+        sa tâche, il ne s'est pas prononcé sur son sort (docs/31 §3.4).
+
+        Décision ou raison vide n'est **pas** consignée — mais on ne devrait pas
+        les y voir : le fournisseur les a déjà écartées et l'a dit à l'agent
+        (`maestro.providers.decision`). Le contrôle est ici quand même parce que
+        ce chemin a **deux entrées** — l'outil MCP, et un appelant direct — et
+        qu'une ligne sans décision ou sans motif se lirait comme une panne
+        d'affichage (règle de `_consigne_activite`).
+        """
+        if not decision.strip() or not raison.strip():
+            return
+        journal.consigne(
+            etape=f"{task.id}{SUFFIXE_ETAPE_DECISION}",
+            nom=f"Décision de l'agent — {task.titre}",
+            agent=agent.nom,
+            role=agent.role,
+            statut=STATUT_DECISION_AUTONOME,
+            entree="",
+            sortie=decision,
+            description=raison,
+            usage=StepUsage(),
+            projet_id=task.projet_id,
+        )
+
     def _consigne_etapes(
         self,
         task: Task,
@@ -2485,6 +2572,18 @@ class LocalExecutor(TaskExecutor):
                         if journal is None
                         else lambda raison: self._consigne_blocage_signale(
                             task, agent, raison, journal
+                        )
+                    ),
+                    # Même règle que le blocage (#1024) : ce verbe ne fait
+                    # **que** consigner, donc sans journal il n'aboutirait
+                    # nulle part. Le servir quand même ferait promettre à
+                    # l'agent une trace qui n'existe pas — or c'est la seule
+                    # chose que ce verbe promet.
+                    on_decision=(
+                        None
+                        if journal is None
+                        else lambda decision, raison: self._consigne_decision_autonome(
+                            task, agent, decision, raison, journal
                         )
                     ),
                     # Le crédit descend, la mémoire non (#584) : le fournisseur

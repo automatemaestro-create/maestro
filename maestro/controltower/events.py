@@ -111,6 +111,25 @@ EVENEMENT_TACHE_DETAIL = "tache.detail"
 #: distinguer. Un type distinct est la seule voie qui montre le blocage **sans**
 #: défaire ce tri.
 EVENEMENT_TACHE_BLOCAGE = "tache.blocage"
+#: `tache.decision` (#1024) porte ce qu'un agent a **tranché seul** en cours de
+#: tâche : `detail` la décision, `description` son motif, tels qu'il les a
+#: écrits. Même forme que `tache.blocage` et pour la même raison — ni statut, ni
+#: agent, ni coût ne changent : un agent qui décide dans sa tâche ne décide pas
+#: du sort de sa tâche (docs/31 §3.4).
+#:
+#: ⚠ À ne pas confondre avec `validation.decision`, et le préfixe est ce qui les
+#: sépare : celui-là porte la décision **d'une personne** sur un acte soumis
+#: (#48), celui-ci la décision **d'un agent** que personne n'a arbitrée. C'est
+#: tout le partage de docs/37 §2.2 — ce qui demande un humain se demande, tout
+#: le reste se tranche seul et se consigne —, et les ranger sous un même type
+#: reviendrait à ne plus pouvoir dire lequel des deux on lit.
+#:
+#: ⚠ Il lui fallait un type à lui plutôt que de rejoindre `agent.activite`, pour
+#: la raison qui valait déjà pour `tache.blocage` : la frise (#355) écarte le
+#: bruit de fond d'un run, si bien qu'une décision rangée là serait consignée
+#: puis invisible — exactement l'inverse de ce que le parent #1019 demande, dont
+#: la condition est que l'autonomie **se vérifie après coup**.
+EVENEMENT_TACHE_DECISION = "tache.decision"
 #: `tache.usage` (#835) porte ce qu'une tâche **en cours** a consommé jusqu'ici :
 #: `usage` en est le cumul (tokens, tours, et le coût si le fournisseur l'a déjà
 #: tarifé), `cout_usd` le raccourci scalaire. Même forme que `tache.reference`,
