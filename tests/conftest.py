@@ -148,6 +148,9 @@ CLES_FORGE = ("MAESTRO_FORGE", "MAESTRO_GITHUB_REPO")
 #: dépend pas du poste (docs/10 §8.7).
 CLE_REGLAGES_DIR = "MAESTRO_REGLAGES_DIR"
 
+#: La reprise des agents dans leur projet, jouée au démarrage de l'API (#1038).
+CLE_REPRISE_AGENTS = "MAESTRO_REPRISE_AGENTS"
+
 #: Variables posées d'office par les intégrations continues. `GITLAB_CI` reste de la liste bien
 #: après le retrait de la CI GitLab (#344) : ce qui est testé est « quelqu'un lira-t-il ce compte
 #: rendu ? », et un jeton de reconnaissance de plus ne coûte rien là où en manquer un coûte 285
@@ -285,12 +288,36 @@ def _neutralise_forge() -> None:
         os.environ[cle] = ""
 
 
+def _neutralise_reprise_agents() -> None:
+    """Coupe la reprise des agents dans leur projet pendant la suite (#1038).
+
+    Au démarrage, l'API rattache au projet qui les utilise les agents et réglages
+    globaux qu'un poste porte encore — best-effort, idempotente, et elle n'écrit
+    que si **un seul** projet est déclaré. Or beaucoup de tests construisent
+    `create_app()` en n'injectant qu'une partie des dépôts : les autres
+    retombent alors sur ceux de la config, c'est-à-dire `core/` du dépôt, et le
+    service des projets sur `core/projets/`. Sur un poste qui y a déclaré un
+    projet — et un seul —, ouvrir un `TestClient` **écrirait** dans
+    `core/*/_projets/<id>/`.
+
+    C'est la fuite du poste dans le verdict que docs/10 §8 interdit : ce que la
+    suite mesure ne doit pas dépendre des projets déclarés sur la machine qui la
+    joue. Le mécanisme lui-même s'éprouvera en l'appelant, jamais en démarrant
+    une app (lot #1043).
+
+    Mise à `0` plutôt que vidée : `0` est ce que la variable *signifie*, et le
+    code lit une valeur, pas une absence.
+    """
+    os.environ[CLE_REPRISE_AGENTS] = "0"
+
+
 # Posés à l'import du conftest, donc avant l'import du premier module de test :
 # un test qui appelle `load_settings()` dès son import voit déjà l'environnement
 # neutralisé (la config relit `os.environ` à chaque appel, rien n'est mis en cache).
 _neutralise_langfuse()
 _neutralise_couleur_orchestrate()
 _neutralise_forge()
+_neutralise_reprise_agents()
 
 
 @pytest.fixture(autouse=True)

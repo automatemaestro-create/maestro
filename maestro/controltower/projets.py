@@ -53,6 +53,7 @@ from pathlib import Path
 from typing import Any
 
 from maestro.config import Settings, load_settings
+from maestro.outillage import CHEMIN_MANIFESTE
 from maestro.projets import (
     ORIGINES,
     Perimetre,
@@ -291,6 +292,21 @@ class ServiceProjets:
         """Le projet `id_`. `ProjetInconnu` s'il n'existe pas, `ProjetIllisible` s'il est cassé."""
         return self._fiche(self._lire(id_))
 
+    def entite(self, id_: str) -> Projet:
+        """Le projet `id_` en **entité** — sa racine en `Path`, son périmètre.
+
+        `detail` rend la fiche JSON de l'API ; les services qui vont *regarder le
+        disque du projet* (`ServiceOutillage`, `maestro.controltower.equipe`) ont
+        besoin de l'objet. Ils passent ici plutôt que de relire le dépôt à côté,
+        pour qu'il n'y ait qu'un seul lecteur de projets dans la Control Tower :
+        deux relectures de la même fiche finiraient par ne plus se refuser les
+        mêmes fichiers.
+
+        Mêmes refus que `detail`, et aux mêmes conditions — `ProjetInconnu`,
+        `ProjetIllisible` —, donc la même traduction HTTP.
+        """
+        return self._lire(id_)
+
     def existe(self, id_: str) -> bool:
         """Le projet `id_` est-il déclaré ? La question que pose la **portée** d'une lecture (#277).
 
@@ -342,8 +358,14 @@ class ServiceProjets:
         retombe sur son défaut, il n'est pas « conservé ». Le `vcs` est
         **re-détecté** sur la racine servie (elle a pu changer, ou le dossier
         être passé sous Git depuis) et `cree_le` est préservé par le dépôt.
+
+        ⚠ Une exception, et elle est de même nature que `cree_le` : le fragment
+        `outillage` (#1034) est **reporté tel quel**. Ce n'est pas un champ de la
+        déclaration — la route n'en prend aucun en entrée —, c'est une décision
+        déjà prise ; la remise à zéro par un renommage de projet reposerait une
+        question à laquelle quelqu'un a répondu.
         """
-        self._lire(id_)  # 404 avant toute écriture — et avant de créer un dossier.
+        ancien = self._lire(id_)  # 404 avant toute écriture — et avant de créer un dossier.
         if origine not in ORIGINES:
             raise ValueError(
                 f"origine invalide : {origine!r} ({' ou '.join(sorted(ORIGINES))} attendu)."
@@ -359,6 +381,7 @@ class ServiceProjets:
                 inclus=inclus if inclus is not None else Perimetre().inclus,
                 exclus=exclus if exclus is not None else Perimetre().exclus,
             ),
+            outillage=ancien.outillage,
         )
         return self._fiche(self._store.ecrire(projet))
 
@@ -392,6 +415,25 @@ class ServiceProjets:
         """
         self._lire(id_)  # 404/422 d'abord — et avant qu'une commande Git ne parte.
         return self._fiche(self._store.versionner(id_))
+
+    def reporter_outillage(self, id_: str) -> dict[str, Any]:
+        """Enregistre le « plus tard » de l'étape d'outillage, et rend la fiche relue (#1034).
+
+        Le pendant de `versionner` pour l'autre décision que l'écran de
+        déclaration fait prendre — à ceci près qu'elle n'écrit **rien** dans le
+        dossier de l'utilisateur : reporter, c'est précisément ne pas y écrire.
+        Elle ne prend donc aucun corps, et ne peut rien refuser du dehors.
+
+        Idempotente (`ProjetStore.reporter_outillage` garde la première date) :
+        l'écran peut la rappeler sans craindre un double clic. La fiche rendue
+        porte déjà `outillage.a_faire`, donc l'écran n'a rien à recalculer.
+
+        Lève `ProjetInconnu`/`ProjetIllisible` (404/422). Un projet **déjà
+        outillé** est accepté sans distinction : le report y est sans effet
+        visible, `a_faire` restant faux parce que le manifeste est là.
+        """
+        self._lire(id_)  # 404/422 avant toute écriture.
+        return self._fiche(self._store.reporter_outillage(id_))
 
     # --- Explorateur de dossiers -----------------------------------------
 
@@ -649,8 +691,48 @@ class ServiceProjets:
         return par_racine
 
     def _fiche(self, projet: Projet) -> dict[str, Any]:
-        """La forme JSON d'un projet — celle du fichier stocké (docs/24 §2.3)."""
-        return projet.to_dict()
+        """La forme JSON d'un projet — le fichier stocké, **plus l'outillage constaté** (#1034).
+
+        Le fragment `outillage` du fichier ne porte qu'une décision
+        (`reporte_le`, docs/37 §4.6) ; la fiche servie y ajoute deux champs que
+        seul le disque sait rendre :
+
+        - `genere` — `.maestro/outillage/manifeste.json` est-il là (docs/38 §4.1) ?
+          **Constaté, jamais stocké**, pour la raison exacte qui fait constater le
+          VCS (EF-38) : le manifeste peut naître d'une génération relancée, être
+          retiré à la main, ou venir d'un clone. Un booléen persisté divergerait
+          du dossier, et c'est le dossier qui a raison ;
+        - `a_faire` — reporté **et** pas encore généré. C'est le critère du ticket
+          rendu par le serveur plutôt que redéduit par chaque écran : *un projet
+          qu'on a choisi d'outiller plus tard le dit, **tant qu'il ne l'est pas***.
+          Générer suffit donc à faire taire le rappel, sans qu'aucun code de
+          génération (#1033) ait à connaître ce champ.
+
+        Le coût est un `is_file()` par projet listé — du même ordre que la
+        relecture de sa fiche —, et une racine illisible (disque démonté, droits)
+        vaut « pas de manifeste » plutôt qu'une liste de projets en panne.
+        """
+        fiche = projet.to_dict()
+        genere = self._outillage_genere(projet)
+        fiche["outillage"] = {
+            **projet.outillage.to_dict(),
+            "genere": genere,
+            "a_faire": projet.outillage.reporte and not genere,
+        }
+        return fiche
+
+    @staticmethod
+    def _outillage_genere(projet: Projet) -> bool:
+        """Le manifeste d'outillage est-il présent dans la racine du projet ?
+
+        Le chemin vient de `maestro.outillage` (`CHEMIN_MANIFESTE`) et n'est
+        **jamais recopié** : deux orthographes du même chemin finiraient par
+        répondre différemment à la même question (#830).
+        """
+        try:
+            return (projet.racine_chemin / CHEMIN_MANIFESTE).is_file()
+        except OSError:  # pragma: no cover - racine illisible pour l'OS
+            return False
 
 
 def _vue(

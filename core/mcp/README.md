@@ -253,3 +253,32 @@ Guide : [docs/07 §6.7](../../docs/07-guide-de-demarrage.md).
 Classification des **modes d'authentification** de ces serveurs (token statique
 / appairage sans token / OAuth verrouillé) et pré-requis pour leur
 configuration depuis la Control Tower : [docs/21](../../docs/21-configuration-mcp.md) (#126).
+
+## Rangement par projet (#1038)
+
+Depuis [docs/37 §2.1](../../docs/37-decision-equipe-sur-mesure.md), **un agent
+appartient à un projet**. Ce dossier porte donc deux niveaux :
+
+- **la racine** — les **gabarits de rôle**, ce qui vaut hors de tout projet et ce
+  que l'analyse d'équipe consultera (#1039) ;
+- **`_projets/<projet_id>/`** — la même arborescence, pour un projet. Le tiret bas
+  le met hors d'atteinte d'un nom d'agent, qui commence par `[a-z0-9]`.
+
+L'API sert ces deux niveaux par `?projet=<id>` (omis : les gabarits), et
+l'exécution lit ceux du projet de la tâche. Code :
+`maestro/agents/rangement.py` (la règle), `maestro/agents/configuration.py`
+(les six dépôts d'un bloc).
+
+**Ce que le projet ne règle pas, il l'hérite du gabarit.** Le pool du projet s'il en a un, sinon
+celui du gabarit ; les activations d'un agent que le projet ne mentionne pas, celles
+du gabarit ; de même pour sa déclaration héritée. Le mot « pool **projet** » (#130)
+devient ainsi exact — il désignait jusqu'ici un stockage unique au poste.
+
+⚠ La **migration** (`migrer_agent`, `POST /api/mcp/migration/{agent}`) ne migre que les
+fichiers de son propre niveau : migrer un fichier qu'on hérite le laisserait en place,
+donc autoritaire à la lecture — une migration invisible.
+
+**Reprise.** Ce qu'un poste portait ici avant #1038 est rattaché au projet qui
+l'utilise au démarrage de l'API — idempotente, sans rien supprimer, et elle dit
+ce qu'elle a fait. À la main : `python -m maestro.agents.reprise [--check]
+[--projet <id>]` (`MAESTRO_REPRISE_AGENTS=0` pour s'en passer).

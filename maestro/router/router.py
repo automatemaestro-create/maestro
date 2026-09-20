@@ -101,7 +101,11 @@ class Router:
         self._seuil = seuil_confiance
 
     async def route(
-        self, task: Task, *, exclus: Collection[str] = frozenset()
+        self,
+        task: Task,
+        *,
+        exclus: Collection[str] = frozenset(),
+        agents: Sequence[Agent] | None = None,
     ) -> RoutingDecision:
         """Route `task` : agent assigné, ou décision « à assigner » — sans jamais lever.
 
@@ -109,8 +113,19 @@ class Router:
         capacité, #86/EF-21) : un agent désactivé ne reçoit plus de tâches — la
         tâche va au meilleur agent restant, ou part en repli « à assigner » si
         plus personne n'est disponible (jamais routée vers un exclu).
+
+        `agents` (#1038) remplace, **pour cet appel seulement**, le catalogue du
+        routeur : c'est ainsi qu'une tâche rattachée à un projet est routée sur
+        les agents **de ce projet**, un catalogue figé au câblage ne pouvant pas
+        les connaître (ils naissent après lui, et pas dans le même dossier).
+        L'ordre reste celui du catalogue reçu — c'est lui qui départage les ex
+        æquo, et il ne doit donc pas être trié ici. Une séquence **vide** vaut
+        omission : un projet sans agent propre se route sur le catalogue du
+        câblage plutôt que de partir en repli, la réponse à « un projet naît sans
+        agent » étant le lot #1042, pas une tâche qui ne part nulle part.
         """
-        candidats_actifs = tuple(a for a in self._agents if a.nom not in exclus)
+        catalogue = tuple(agents) if agents else self._agents
+        candidats_actifs = tuple(a for a in catalogue if a.nom not in exclus)
         if not candidats_actifs:
             return self._repli(
                 task, raison="tous les agents du catalogue sont désactivés"

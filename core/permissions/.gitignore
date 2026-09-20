@@ -1,0 +1,5 @@
+# Les politiques de ce niveau sont les **gabarits** : de la configuration
+# VERSIONNÉE, qui se commite (<agent>.json). Le rangement par projet (#1038),
+# lui, est de la configuration d'installation — il reste sur le poste.
+_projets/
+*.tmp

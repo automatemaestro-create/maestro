@@ -48,6 +48,12 @@ import {
 const chargerProjets = vi.fn();
 const chargerExplorateur = vi.fn();
 const creerProjet = vi.fn();
+// L'étape d'outillage s'intercale entre la déclaration et l'entrée (#1034) : la
+// porte en dépend désormais, donc ses deux appels sont ici. `analyserOutillage`
+// est ce qu'elle lit, `reporterOutillage` l'issue qui ouvre le projet sans rien
+// écrire dans le dossier.
+const analyserOutillage = vi.fn();
+const reporterOutillage = vi.fn();
 
 // `importOriginal`, et non un objet nu : `ErreurProjet` doit rester **la**
 // classe du module (voir `projets.test.tsx`). Cette déclaration prend le pas sur
@@ -59,6 +65,8 @@ vi.mock("@/lib/api", async (importOriginal) => {
     chargerProjets: () => chargerProjets(),
     chargerExplorateur: (chemin: string | null) => chargerExplorateur(chemin),
     creerProjet: (declaration: unknown) => creerProjet(declaration),
+    analyserOutillage: (id: string) => analyserOutillage(id),
+    reporterOutillage: (id: string) => reporterOutillage(id),
   };
 });
 
@@ -93,6 +101,43 @@ beforeEach(() => {
     }),
   );
   creerProjet.mockResolvedValue(projetFactice());
+  analyserOutillage.mockResolvedValue({
+    analyse: 1,
+    id: "ana-1",
+    projet_id: "prj-neuf",
+    racine: "D:/projets/depensio",
+    faite_le: "2026-09-20T10:00:00+00:00",
+    resume: "TypeScript ; npm ; tests : npm run test",
+    parcours: {
+      fichiers_vus: 12,
+      dossiers_vus: 3,
+      profondeur_atteinte: 2,
+      tronque: false,
+      troncatures: [],
+      ignores_rencontres: [],
+    },
+    recommandation: {
+      entrees: [
+        {
+          type: "instructions",
+          nom: "AGENTS.md",
+          chemin: "AGENTS.md",
+          etat: "a-generer",
+          raison: "le fichier d'instructions que tous les clients lisent",
+          justification: {
+            nom: "README.md",
+            chemin: "README.md",
+            role: "présentation",
+          },
+          commandes: [],
+        },
+      ],
+      ecartes: [],
+    },
+  });
+  reporterOutillage.mockImplementation((id: string) =>
+    Promise.resolve(projetFactice({ id })),
+  );
 });
 
 describe("l'écran de choix du projet", () => {
@@ -125,7 +170,7 @@ describe("l'écran de choix du projet", () => {
     expect(ecran).toHaveTextContent(/Aucun projet déclaré/);
   });
 
-  it("entre dans le projet déclaré sur place", async () => {
+  it("entre dans le projet déclaré sur place, une fois son outillage tranché", async () => {
     const utilisateur = userEvent.setup();
     creerProjet.mockResolvedValue(projetFactice({ id: "prj-neuf", nom: "Neuf" }));
     monter();
@@ -146,10 +191,26 @@ describe("l'écran de choix du projet", () => {
       screen.getByRole("button", { name: "Déclarer le projet" }),
     );
 
+    // Déclarer ne fait plus entrer (#1034) : l'outillage est l'étape suivante,
+    // proposée d'office, et c'est elle qui ouvre le projet. On reste donc devant
+    // la porte, et la page demandée n'est toujours pas là.
+    const etape = await screen.findByRole("region", {
+      name: "Outillage de Neuf",
+    });
+    expect(analyserOutillage).toHaveBeenCalledWith("prj-neuf");
+    expect(screen.queryByText(CONTENU)).toBeNull();
+
+    // « Plus tard » est une issue à part entière : on entre sans avoir rien
+    // écrit dans le dossier.
+    await utilisateur.click(
+      within(etape).getByRole("button", { name: "Outiller plus tard" }),
+    );
+
     // Le projet **relu** par le backend devient l'actif sans relecture de la
     // liste, dont l'échec laisserait devant la porte qu'on vient d'ouvrir.
     expect(await screen.findByText(CONTENU)).toBeInTheDocument();
     expect(lireProjetActifId()).toBe("prj-neuf");
+    expect(reporterOutillage).toHaveBeenCalledWith("prj-neuf");
     expect(chargerProjets).toHaveBeenCalledTimes(1);
   });
 });

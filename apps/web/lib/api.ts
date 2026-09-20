@@ -7,11 +7,14 @@
  */
 
 import { AUCUNE_BORNE, type BornesRun } from "./bornes";
+import { lireProjetActifId } from "./projetActif";
 import type {
   AgentCatalogue,
   AgentCatalogueDetail,
+  AnalyseOutillage,
   AnalyticsCouts,
   CatalogueFournisseurs,
+  ChoixOutillage,
   CoutExecution,
   ChoixSelecteur,
   ConversationChat,
@@ -24,6 +27,7 @@ import type {
   DetailExecution,
   DisponibiliteSelecteur,
   EntreeRegistreMcp,
+  EtapeQuestionnaireOutillage,
   EtatAgent,
   FilChat,
   FragmentChat,
@@ -47,8 +51,10 @@ import type {
   PropositionPlaybookDetail,
   ProvenanceRegistreMcp,
   Question,
+  RapportGenerationOutillage,
   RapportLecture,
   RedactionPlaybook,
+  ReponseRecommandationOutillage,
   RefusProjet,
   ReglagesModele,
   RepertoireProjets,
@@ -94,6 +100,31 @@ export function urlApi(): string {
 export type PorteeProjet = string;
 export const PORTEE_TOUS = "tous";
 export const PORTEE_AUCUN = "aucun";
+
+/**
+ * Le cadre d'une route de **configuration d'agent** (#1038) : `?projet=<actif>`.
+ *
+ * Depuis [docs/37 §2.1], un agent appartient à un projet — sa définition, son
+ * playbook, ses autorisations, ses serveurs MCP et sa capacité y sont rangés —,
+ * et l'API sert ces routes cadrées par le projet demandé.
+ *
+ * Il se lit **ici** et non en paramètre de chaque appel, contrairement à la
+ * portée de #281 juste au-dessus, et la différence n'est pas une commodité :
+ * une lecture qui agrège a **trois** issues (un projet, `tous`, `aucun`), donc
+ * un défaut y serait une fuite silencieuse vers la vue transverse — c'est ce
+ * que #277 a fermé. Une route de configuration n'en a que deux, et aucune n'est
+ * transverse : le projet actif, ou les **gabarits** (la configuration rangée
+ * hors de tout projet) quand la Control Tower est ouverte sans projet. Passer
+ * l'identifiant de main en main sur une vingtaine d'appels n'achèterait donc
+ * aucune garantie que `lireProjetActifId` ne donne déjà — elle *est* la source
+ * du projet actif, celle que le shell écrit.
+ */
+function cadreProjet(chemin: string): string {
+  const projet = lireProjetActifId();
+  if (projet === null) return chemin;
+  const separateur = chemin.includes("?") ? "&" : "?";
+  return `${chemin}${separateur}projet=${encodeURIComponent(projet)}`;
+}
 
 /** L'URL du flux d'événements temps réel (`WS /ws/evenements`), à la portée demandée. */
 export function urlEvenements(portee: PorteeProjet): string {
@@ -213,16 +244,20 @@ export function chargerTaches(
 /**
  * L'état des agents (libre/occupé, tâche courante, compteurs, coût cumulé).
  *
- * **Sans portée projet, et c'est une décision** (#281, docs/05 §2.3) : un agent
- * est une ressource du **poste** — son playbook, sa capacité et ses instances
- * (#86) valent pour toute la Control Tower —, il n'appartient à aucun projet et
- * le backend ne le filtre pas (#277 ne porte pas `?projet=` sur cette route).
- * Ce qui doit être cadré, c'est ce qu'un écran en **dit** : voir
- * `IndicateursTableauDeBord`, dont la tuile compte les agents au travail **sur
- * le projet actif** et nomme le parc comme partagé.
+ * ⚠ **Le parc est celui du projet actif depuis #1038** (docs/37 §2.1), ce qui
+ * renverse la décision #281 écrite ici : un agent n'est plus une ressource du
+ * poste, il **appartient** à un projet — définition, playbook, autorisations,
+ * serveurs MCP et capacité y sont rangés. La route est donc cadrée comme les
+ * autres routes de configuration (`cadreProjet`), et la vue rend les agents de
+ * l'équipe de ce projet.
+ *
+ * Ce qui est cadré est l'**appartenance**, pas les compteurs : ceux-ci restent
+ * ceux que la projection a vus. La question « qu'a fait cet agent **ici** ? » se
+ * pose aux tâches (`chargerTaches`), et la tuile d'`IndicateursTableauDeBord`
+ * continue de la poser là.
  */
 export function chargerAgents(): Promise<EtatAgent[]> {
-  return chargerJson<EtatAgent[]>("/api/agents");
+  return chargerJson<EtatAgent[]>(cadreProjet("/api/agents"));
 }
 
 /** Les demandes de validation humaine (#48) : contexte, statut, décision. */
@@ -432,13 +467,13 @@ async function envoyerJson(
 
 /** Les playbooks des agents (#76) : version courante et provenance de chacun. */
 export function chargerPlaybooks(): Promise<PlaybookFiche[]> {
-  return chargerJson<PlaybookFiche[]>("/api/playbooks");
+  return chargerJson<PlaybookFiche[]>(cadreProjet("/api/playbooks"));
 }
 
 /** Le playbook courant d'un agent, contenu compris (celui chargé par le moteur). */
 export function chargerPlaybook(agent: string): Promise<PlaybookDetail> {
   return chargerJson<PlaybookDetail>(
-    `/api/playbooks/${encodeURIComponent(agent)}`,
+    cadreProjet(`/api/playbooks/${encodeURIComponent(agent)}`),
   );
 }
 
@@ -447,7 +482,7 @@ export function chargerVersionsPlaybook(
   agent: string,
 ): Promise<VersionPlaybook[]> {
   return chargerJson<VersionPlaybook[]>(
-    `/api/playbooks/${encodeURIComponent(agent)}/versions`,
+    cadreProjet(`/api/playbooks/${encodeURIComponent(agent)}/versions`),
   );
 }
 
@@ -457,7 +492,9 @@ export function chargerVersionPlaybook(
   version: number,
 ): Promise<VersionPlaybookDetail> {
   return chargerJson<VersionPlaybookDetail>(
-    `/api/playbooks/${encodeURIComponent(agent)}/versions/${version}`,
+    cadreProjet(
+      `/api/playbooks/${encodeURIComponent(agent)}/versions/${version}`,
+    ),
   );
 }
 
@@ -468,7 +505,7 @@ export function chargerVersionPlaybook(
  */
 export function ecrirePlaybook(agent: string, contenu: string): Promise<void> {
   return envoyerJson(
-    `/api/playbooks/${encodeURIComponent(agent)}`,
+    cadreProjet(`/api/playbooks/${encodeURIComponent(agent)}`),
     { contenu },
     "publication refusée",
     "PUT",
@@ -484,7 +521,7 @@ export function restaurerPlaybook(
   version: number,
 ): Promise<void> {
   return envoyerJson(
-    `/api/playbooks/${encodeURIComponent(agent)}/restaurer`,
+    cadreProjet(`/api/playbooks/${encodeURIComponent(agent)}/restaurer`),
     { version },
     "restauration refusée",
   );
@@ -499,7 +536,7 @@ export function chargerPropositionsPlaybook(
   agent: string,
 ): Promise<PropositionPlaybook[]> {
   return chargerJson<PropositionPlaybook[]>(
-    `/api/playbooks/${encodeURIComponent(agent)}/propositions`,
+    cadreProjet(`/api/playbooks/${encodeURIComponent(agent)}/propositions`),
   );
 }
 
@@ -509,7 +546,9 @@ export function chargerPropositionPlaybook(
   numero: number,
 ): Promise<PropositionPlaybookDetail> {
   return chargerJson<PropositionPlaybookDetail>(
-    `/api/playbooks/${encodeURIComponent(agent)}/propositions/${numero}`,
+    cadreProjet(
+      `/api/playbooks/${encodeURIComponent(agent)}/propositions/${numero}`,
+    ),
   );
 }
 
@@ -523,7 +562,9 @@ export function appliquerPropositionPlaybook(
   numero: number,
 ): Promise<void> {
   return envoyerJson(
-    `/api/playbooks/${encodeURIComponent(agent)}/propositions/${numero}/appliquer`,
+    cadreProjet(
+      `/api/playbooks/${encodeURIComponent(agent)}/propositions/${numero}/appliquer`,
+    ),
     undefined,
     "application refusée",
   );
@@ -535,7 +576,9 @@ export function rejeterPropositionPlaybook(
   numero: number,
 ): Promise<void> {
   return envoyerJson(
-    `/api/playbooks/${encodeURIComponent(agent)}/propositions/${numero}/rejeter`,
+    cadreProjet(
+      `/api/playbooks/${encodeURIComponent(agent)}/propositions/${numero}/rejeter`,
+    ),
     undefined,
     "rejet refusé",
   );
@@ -567,7 +610,7 @@ export function redigerPlaybook(
   consigne?: string,
 ): Promise<RedactionPlaybook> {
   return envoyerJsonEtLire<RedactionPlaybook>(
-    `/api/playbooks/${encodeURIComponent(agent)}/redaction`,
+    cadreProjet(`/api/playbooks/${encodeURIComponent(agent)}/redaction`),
     { contenu, ...(consigne !== undefined && consigne !== "" && { consigne }) },
     "rédaction refusée",
   );
@@ -594,7 +637,7 @@ export function chargerFournisseurs(): Promise<CatalogueFournisseurs> {
 
 /** Le catalogue d'agents (#72) : les agents par défaut du code puis les personnalisés. */
 export function chargerCatalogue(): Promise<AgentCatalogue[]> {
-  return chargerJson<AgentCatalogue[]>("/api/catalogue");
+  return chargerJson<AgentCatalogue[]>(cadreProjet("/api/catalogue"));
 }
 
 /** La définition complète d'un agent du catalogue, playbook compris. */
@@ -602,7 +645,7 @@ export function chargerAgentCatalogue(
   nom: string,
 ): Promise<AgentCatalogueDetail> {
   return chargerJson<AgentCatalogueDetail>(
-    `/api/catalogue/${encodeURIComponent(nom)}`,
+    cadreProjet(`/api/catalogue/${encodeURIComponent(nom)}`),
   );
 }
 
@@ -614,7 +657,11 @@ export function creerAgent(
   nom: string,
   definition: DefinitionAgent,
 ): Promise<void> {
-  return envoyerJson("/api/catalogue", { nom, ...definition }, "création refusée");
+  return envoyerJson(
+    cadreProjet("/api/catalogue"),
+    { nom, ...definition },
+    "création refusée",
+  );
 }
 
 /**
@@ -631,7 +678,7 @@ export function genererDefinitionAgent(
   intention: string,
 ): Promise<DefinitionAgentProposee> {
   return envoyerJsonEtLire<DefinitionAgentProposee>(
-    "/api/catalogue/generation",
+    cadreProjet("/api/catalogue/generation"),
     { intention },
     "génération refusée",
   );
@@ -646,7 +693,7 @@ export function modifierAgent(
   definition: DefinitionAgent,
 ): Promise<void> {
   return envoyerJson(
-    `/api/catalogue/${encodeURIComponent(nom)}`,
+    cadreProjet(`/api/catalogue/${encodeURIComponent(nom)}`),
     definition,
     "modification refusée",
     "PUT",
@@ -656,7 +703,7 @@ export function modifierAgent(
 /** Supprime un agent personnalisé du catalogue (`DELETE /api/catalogue/{nom}`). */
 export function supprimerAgent(nom: string): Promise<void> {
   return envoyerJson(
-    `/api/catalogue/${encodeURIComponent(nom)}`,
+    cadreProjet(`/api/catalogue/${encodeURIComponent(nom)}`),
     undefined,
     "suppression refusée",
     "DELETE",
@@ -677,7 +724,7 @@ export function surchargerAgent(
   reglages: ReglagesModele,
 ): Promise<void> {
   return envoyerJson(
-    `/api/catalogue/${encodeURIComponent(nom)}/reglages`,
+    cadreProjet(`/api/catalogue/${encodeURIComponent(nom)}/reglages`),
     reglages,
     "surcharge refusée",
     "PUT",
@@ -694,7 +741,7 @@ export function surchargerAgent(
  */
 export function annulerSurchargeAgent(nom: string): Promise<void> {
   return envoyerJson(
-    `/api/catalogue/${encodeURIComponent(nom)}/reglages`,
+    cadreProjet(`/api/catalogue/${encodeURIComponent(nom)}/reglages`),
     undefined,
     "retour au défaut refusé",
     "DELETE",
@@ -721,7 +768,7 @@ export function reglerCapaciteAgent(
   reglage: { actif?: boolean; instances?: number },
 ): Promise<void> {
   return envoyerJson(
-    `/api/agents/${encodeURIComponent(nom)}/capacite`,
+    cadreProjet(`/api/agents/${encodeURIComponent(nom)}/capacite`),
     reglage,
     "réglage de capacité refusé",
   );
@@ -1242,7 +1289,7 @@ export function revoquerAdmissionMcp(
  * l'allowlist (révoquée : elle reste montée, et l'écran doit le dire).
  */
 export function chargerPoolMcp(): Promise<PoolMcp> {
-  return chargerJson<PoolMcp>("/api/mcp/pool");
+  return chargerJson<PoolMcp>(cadreProjet("/api/mcp/pool"));
 }
 
 /**
@@ -1260,7 +1307,7 @@ export function ajouterIntegrationPoolMcp(corps: {
   secrets: { cle: string; valeur: string; expire_le?: string | null }[];
 }): Promise<IntegrationPoolMcp> {
   return envoyerJsonEtLire<IntegrationPoolMcp>(
-    "/api/mcp/pool",
+    cadreProjet("/api/mcp/pool"),
     corps,
     "ajout au pool refusé",
   );
@@ -1273,7 +1320,7 @@ export function ajouterIntegrationPoolMcp(corps: {
  */
 export function supprimerIntegrationPoolMcp(id: string): Promise<void> {
   return envoyerJson(
-    `/api/mcp/pool/${encodeURIComponent(id)}`,
+    cadreProjet(`/api/mcp/pool/${encodeURIComponent(id)}`),
     undefined,
     "retrait du pool refusé",
     "DELETE",
@@ -1290,7 +1337,7 @@ export function definirActivationsMcp(
   integrations: string[],
 ): Promise<void> {
   return envoyerJson(
-    `/api/mcp/activations/${encodeURIComponent(agent)}`,
+    cadreProjet(`/api/mcp/activations/${encodeURIComponent(agent)}`),
     { integrations },
     "activation refusée",
     "PUT",
@@ -1309,7 +1356,7 @@ export function definirActivationsMcp(
  */
 export function migrerDeclarationsMcp(agent: string): Promise<MigrationMcp> {
   return envoyerJsonEtLire<MigrationMcp>(
-    `/api/mcp/migration/${encodeURIComponent(agent)}`,
+    cadreProjet(`/api/mcp/migration/${encodeURIComponent(agent)}`),
     {},
     "migration refusée",
   );
@@ -1329,7 +1376,7 @@ export function definirPermissions(
   politique: PolitiquePermissions,
 ): Promise<void> {
   return envoyerJson(
-    `/api/permissions/${encodeURIComponent(agent)}`,
+    cadreProjet(`/api/permissions/${encodeURIComponent(agent)}`),
     politique,
     "politique refusée",
     "PUT",
@@ -1577,6 +1624,120 @@ export function versionnerProjet(id: string): Promise<Projet> {
     `/api/projets/${encodeURIComponent(id)}/versionner`,
     undefined,
     "mise sous Git refusée",
+    "POST",
+  );
+}
+
+// --- L'outillage d'un projet (#1034, routes #1030/#1031/#1033) -------------
+//
+// Quatre clients pour une seule étape du parcours de création, et c'est leur
+// **origine** qui les sépare, jamais leur forme : un projet *existant* est
+// analysé (#1030), un projet *neuf* répond à des questions (#1031), et les deux
+// rendent la **même** `RecommandationOutillage` — c'est le second critère de
+// #1031, tenu côté moteur par une fonction unique. L'écran n'a donc qu'un rendu
+// à tenir, et les deux branches du parcours partagent leur étape.
+//
+// Ils passent par `lireProjets`/`ecrireProjet` comme le reste : leurs refus sont
+// ceux des routes projets (`{motif, message}`), donc affichables **à l'endroit du
+// geste** par le même `RefusMotive`.
+
+/**
+ * L'analyse d'un projet existant et l'outillage qu'elle recommande
+ * (`GET /api/projets/{id}/outillage/analyse`, #1030, docs/38).
+ *
+ * La racine est lue **en lecture seule** et le code du projet n'est jamais
+ * exécuté ; l'appel prend des secondes sur un projet réel, ce que l'écran
+ * annonce plutôt que de figer. Rien n'est écrit : la génération est un geste
+ * séparé (`genererOutillage`).
+ */
+export function analyserOutillage(id: string): Promise<AnalyseOutillage> {
+  return lireProjets<AnalyseOutillage>(
+    `/api/projets/${encodeURIComponent(id)}/outillage/analyse`,
+    "analyse impossible",
+  );
+}
+
+/**
+ * La prochaine question qui décide de l'outillage d'un projet neuf
+ * (`POST /api/projets/{id}/outillage/questionnaire`, #1031).
+ *
+ * **Sans état côté serveur** : l'écran dit ce qu'il a, l'API dit ce qui en
+ * découle. C'est ce qui lui permet de servir du même questionnaire que le fil de
+ * conversation sans partager de session — et c'est pourquoi il renvoie **toutes**
+ * les réponses acquises à chaque appel, plutôt qu'un identifiant de parcours.
+ *
+ * `deductions` porte les réponses que ces choix **entraînent**, chacune avec sa
+ * cause : une question qu'on ne pose pas n'est pas une question qu'on cache.
+ */
+export function questionOutillage(
+  id: string,
+  choix: ChoixOutillage[],
+): Promise<EtapeQuestionnaireOutillage> {
+  return ecrireProjet<EtapeQuestionnaireOutillage>(
+    `/api/projets/${encodeURIComponent(id)}/outillage/questionnaire`,
+    { choix },
+    "questionnaire indisponible",
+  );
+}
+
+/**
+ * L'outillage que ces réponses recommandent, dans la forme de l'analyse
+ * (`POST /api/projets/{id}/outillage/recommandation`, #1031).
+ *
+ * Rendue à **tout moment**, questionnaire fini ou non : ce qui n'a pas été
+ * répondu ne justifie simplement aucune entrée, et `ecartes` le dit avec sa
+ * raison. Rien n'est écrit — c'est une proposition.
+ */
+export function recommandationOutillage(
+  id: string,
+  choix: ChoixOutillage[],
+): Promise<ReponseRecommandationOutillage> {
+  return ecrireProjet<ReponseRecommandationOutillage>(
+    `/api/projets/${encodeURIComponent(id)}/outillage/recommandation`,
+    { choix },
+    "recommandation indisponible",
+  );
+}
+
+/**
+ * Écrit dans le projet l'outillage retenu
+ * (`POST /api/projets/{id}/outillage/generation`, #1033, docs/38 §4.2).
+ *
+ * `retenus` est la liste des **chemins** que l'écran a gardés cochés : rien de
+ * plus, parce que le reste — quoi écrire, où, avec quel contenu — se rederive de
+ * l'analyse côté serveur. L'omettre revient à tout générer.
+ *
+ * ⚠ **L'appel peut être long, et pour deux raisons différentes** : la racine est
+ * ré-analysée, et, sur un projet **versionné**, la requête **attend l'accord
+ * humain** sur la fusion de la branche `maestro/outillage-…`, sans time-out. Un
+ * refus laisse la branche intacte et lève avec son motif.
+ */
+export function genererOutillage(
+  id: string,
+  retenus?: string[],
+): Promise<RapportGenerationOutillage> {
+  return ecrireProjet<RapportGenerationOutillage>(
+    `/api/projets/${encodeURIComponent(id)}/outillage/generation`,
+    retenus === undefined ? {} : { retenus },
+    "génération refusée",
+    "POST",
+  );
+}
+
+/**
+ * Enregistre le « plus tard » de l'étape d'outillage
+ * (`POST /api/projets/{id}/outillage/report`, #1034, docs/37 §4.6).
+ *
+ * **Sans corps** et idempotent, comme `versionnerProjet` — et, contrairement à
+ * lui, il n'écrit **rien** dans le dossier de l'utilisateur : reporter, c'est
+ * justement ne pas y écrire. La fiche relue porte `outillage.a_faire`, que la
+ * carte du projet affiche tant que l'outillage n'est pas généré.
+ */
+export function reporterOutillage(id: string): Promise<Projet> {
+  return ecrireProjet<Projet>(
+    `/api/projets/${encodeURIComponent(id)}/outillage/report`,
+    undefined,
+    "report refusé",
     "POST",
   );
 }

@@ -222,19 +222,35 @@ notifications, et le **flux temps réel** qui les alimente tous.
 
 **Ce qui reste global, et pourquoi** :
 
-> ⚠ **Les deux premières lignes de ce tableau sont renversées** (2026-09-19, [docs/37 §2.1](./37-decision-equipe-sur-mesure.md)).
-> Le parc d'agents, le catalogue et les playbooks cessent d'être une ressource du poste. Chaque
-> projet reçoit son équipe, dérivée de son analyse et validée par l'utilisateur (#1021). Le
-> catalogue devient des gabarits de rôle. Le tableau décrit l'état présent : les lots #1038 et
-> #1043 le réécriront.
-
 | ce qui reste global | pourquoi | ce qui est cadré malgré tout |
 | --- | --- | --- |
-| `GET /api/agents` — état du parc | un agent est une ressource du **poste** : son playbook, sa capacité et ses instances (#86) valent pour toute la Control Tower. Il n'appartient à aucun projet, et #277 ne lui a pas donné de portée. ⚠ Il rend les **exécutants**, jamais l'orchestration (#1028, §2.5.0) : elle dépense et on lui parle, mais elle n'exécute rien | la tuile « Agents » compte les agents **au travail sur ce projet** (dérivé de ses tâches) et renvoie au détail le parc et les « occupés ailleurs » |
-| le **catalogue** d'agents et les **playbooks** | ce sont des définitions, pas du travail — les partager entre projets est l'intérêt d'en avoir | — |
 | le **chat** et l'assistant | ils parlent de l'**outil**, pas du projet ; et un `chat.message` ne porte pas de `projet_id`, donc une socket cadrée ne le recevrait **jamais** (§6.0) — le fil se figerait sans rien dire | — |
 | les **paramètres** du poste (apparence, notifications) | réglages de l'installation, pas d'un projet | la dépense cumulée qui y figure, elle, est celle du projet |
-| les **intégrations MCP** (pool projet et bibliothèque) | elles ont quitté les Paramètres en #270 (§2.10) précisément parce qu'elles n'en sont pas : elles décident de ce qu'un agent sait faire. Le **pool** porte pourtant « projet » dans son nom — c'est un stockage unique (`core/mcp/pool.json`), non cadré à ce jour | — |
+| la **bibliothèque** MCP (allowlist curée, entrées admises, miroir d'amont) | c'est un **catalogue de ce qui est admissible**, pas une configuration d'agent : une admission est un geste humain tracé qui vaut pour l'installation (#678) | le **pool** d'intégrations, lui, a quitté ce tableau — voir ci-dessous |
+
+**Le parc, le catalogue et les playbooks ont quitté ce tableau** (#1038, [docs/37 §2.1](./37-decision-equipe-sur-mesure.md)) — ils y figuraient
+avec cette raison : « les partager entre projets est l'intérêt d'en avoir ». La demande du
+2026-09-19 pose le contraire, et **un agent appartient désormais à un projet** : sa définition, son
+playbook, ses autorisations, ses serveurs MCP et sa capacité y sont rangés. Un agent partagé entre
+un projet Python et un projet mobile porterait les skills et les autorisations de l'un chez l'autre.
+
+| ce qui est désormais cadré | où c'est rangé | ce qui reste au niveau du poste |
+| --- | --- | --- |
+| `GET /api/agents` — le parc | la vue rend l'**équipe du projet actif** (`?projet=<id>`). ⚠ Elle rend les **exécutants**, jamais l'orchestration (#1028, §2.5.0) : elle dépense et on lui parle, mais elle n'exécute rien | les **compteurs** d'un agent (occupé, coût cumulé) restent ceux que la projection a vus : le cadre porte sur l'appartenance, pas sur l'activité — « qu'a-t-il fait **ici** ? » se lit sur les tâches |
+| le **catalogue** d'agents et les **playbooks** | `core/agents/_projets/<id>/`, `core/playbooks/_projets/<id>/` | la racine de chaque dépôt devient le niveau des **gabarits de rôle** : ce que l'analyse d'équipe consultera (#1039), jamais instancié d'office (#1042) |
+| les **autorisations** et la **capacité** (instances) | `core/permissions/_projets/<id>/`, `core/capacite/_projets/<id>/` | idem — et ce que le projet ne règle pas, il l'**hérite** du gabarit : sans ce repli, ranger les autorisations par projet ferait d'un projet neuf un projet « tout permis » |
+| le **pool** d'intégrations MCP et les **activations** par agent | `core/mcp/_projets/<id>/` | le mot « pool **projet** » (#130) devient exact : c'était jusqu'ici un stockage unique (`core/mcp/pool.json`) |
+
+**Ce que ce cadre ne décide pas encore** : *quel* agent de l'équipe prend *quelle* tâche. Le routage
+sur l'équipe d'un projet est le lot #1041 ; #1038 garantit seulement que les agents d'un projet sont
+**candidats** — un agent recruté pour un projet recevrait sinon des tâches de nulle part.
+
+**Reprise sans perte.** Un poste installé avant ce lot voit ses agents et réglages globaux rattachés
+au projet qui les utilise, au démarrage de l'API : idempotente, elle ne supprime jamais rien et dit
+ce qu'elle a fait. Avec **un seul** projet déclaré, c'est par construction celui qui les utilise ;
+sans projet ou avec plusieurs, elle ne devine pas et les laisse en gabarits, en nommant le geste qui
+tranche. À la main : `python -m maestro.agents.reprise [--check] [--projet <id>]`
+(`MAESTRO_REPRISE_AGENTS=0` pour s'en passer au démarrage).
 
 **Le coût cumulé change de source** avec ce lot. Il se lisait sur `agents[].cout_usd` — un total de
 **tous** les projets, puisque le parc est celui du poste. Il est désormais la somme des **grands
@@ -772,15 +788,22 @@ L'**activation/désactivation** et le **contrôle de capacité** (**+ / −**
 instances, EF-21) se règlent dans **Paramètres › Agents & capacité** ; le tableau
 de bord en donne le compte et y renvoie.
 
-**Ces écrans sont les seuls du produit à rester transverses** (#281, §2.0), et c'est une décision
-plutôt qu'un reste : un agent est une ressource du **poste**, pas un objet de projet. Sa définition,
-son playbook, sa capacité et son état libre/occupé valent pour toute la Control Tower — les
-partager entre projets est précisément l'intérêt d'avoir un catalogue —, et `GET /api/agents` ne
-porte donc pas de portée (§6.0). Ce qui est cadré, c'est ce que les **autres** écrans en disent :
-la tuile « Agents » du tableau de bord compte les agents au travail **sur le projet actif** et
-nomme le parc comme partagé. Le jour où un agent deviendrait propre à un projet — un catalogue par
-projet, une capacité par projet — c'est ici et au §6.0 qu'il faudrait revenir, pas dans un
-composant.
+**Ces écrans sont cadrés par le projet actif comme les autres** (#1038, §2.0) — et c'est le
+renversement de #281, qui en faisait les seuls écrans transverses du produit au motif qu'un agent
+était une ressource du **poste**. Un agent appartient à un projet : le catalogue listé, le playbook
+édité, la politique d'autorisations écrite, le pool MCP activé et la capacité réglée sont ceux du
+projet ouvert. Côté client, une seule ligne le tient : chaque route de configuration passe par
+`cadreProjet` (`apps/web/lib/api.ts`), qui y pose le projet actif.
+
+Le **cadre porte sur l'appartenance, pas sur l'activité**. Les compteurs d'une carte — occupé,
+tâches traitées, coût cumulé — restent ceux que la projection a vus : la question « qu'a fait cet
+agent **ici** ? » se pose aux tâches du projet, pas au parc. La tuile « Agents » du tableau de bord
+garde donc son décompte dérivé des tâches, et cesse simplement de nommer le parc comme partagé.
+
+⚠ **Ce que le cadre ne décide pas encore** : quel agent de l'équipe prend quelle tâche. Ce routage
+est le lot #1041 ; #1038 garantit que les agents d'un projet sont **candidats**, et que les cinq
+réglages que l'écran édite sont ceux que l'exécution lira. Et un projet **naît** encore avec les
+agents du code — les en retirer pour n'en faire que des gabarits de rôle est le lot #1042.
 
 #### 2.3.1 Fournisseur, modèle, effort — une chaîne, pas trois champs (#253, #255)
 
@@ -2371,8 +2394,10 @@ Les deux décisions sont consignées sur #1025, sous « ## Veille de conception 
 retenue ». Implémentation :
 [`apps/web/components/chat/QuestionDansLeFil.tsx`](../apps/web/components/chat/QuestionDansLeFil.tsx),
 [`apps/web/lib/questions.ts`](../apps/web/lib/questions.ts), `app/chat/page.tsx`,
-`components/FilChat.tsx`, `components/CentreNotifications.tsx`. Tests différés au lot final de #1019
-(**#1027**).
+`components/FilChat.tsx`, `components/CentreNotifications.tsx`. Gardé par
+`apps/web/tests/question-agent.test.tsx` (#1027) : les gestes sont ceux que l'agent a déclarés, la
+phrase d'attente vient de l'API, la carte dit que l'agent est reparti **et reste répondable**, et le
+fil de l'orchestration porte toutes les questions là où un aparté ne porte que les siennes.
 
 ### 2.8 🗒️ Journal — l'activité, en plein format et **persistée** *(#249, #250, #478 — **livré**)*
 
@@ -3116,6 +3141,34 @@ projet demandé ».
 actif, elle n'a **aucun défaut** dans [`apps/web/lib/api.ts`](../apps/web/lib/api.ts) — une lecture
 non cadrée ne compile pas —, et `tous` ne subsiste que là où il est justifié : le flux du **chat**,
 dont les événements ne portent pas de projet et qu'une socket cadrée ne recevrait jamais.
+
+#### 6.0quater Le projet d'une **configuration d'agent** — `?projet=` (#1038) — **livré**
+
+Depuis que les agents appartiennent à un projet (§2.0, [docs/37 §2.1](./37-decision-equipe-sur-mesure.md)),
+les routes qui servent ce qu'un agent **est** portent aussi `?projet=` : `/api/agents`,
+`/api/catalogue*`, `/api/playbooks*`, `/api/permissions/{agent}`, `/api/mcp/pool`,
+`/api/mcp/activations/{agent}`, `/api/mcp/migration/{agent}` et `/api/agents/{nom}/capacite`.
+
+Le paramètre porte le même nom et vit dans le même module, mais ce **n'est pas la portée du §6.0**,
+et les deux écarts sont des décisions :
+
+| | lecture qui agrège (§6.0) | configuration d'agent (ici) |
+| --- | --- | --- |
+| `<id>` | ce qui appartient à ce projet | la configuration de ce projet |
+| `tous` / `aucun` | vue transverse / travaux sans projet | **refus** `404` `{motif: "projet-inconnu"}` |
+| *omis* | **refus** `422` `{motif: "projet-requis"}` | les **gabarits** (la racine de chaque dépôt) |
+
+`tous` et `aucun` sont refusés parce qu'une configuration appartient à un projet réel : il n'y a ni
+union ni complément à servir, et les accepter rendrait un catalogue mélangé — ce que ce jalon
+supprime. Et l'omission n'est pas un refus parce qu'elle ne mène nulle part de transverse : les
+gabarits sont un **niveau nommé**, celui que l'analyse d'équipe consultera (#1039), et c'est
+exactement ce que ces routes servaient avant ce lot — un appel d'avant répond donc la même chose.
+
+La fiche d'un agent et celle d'un playbook portent la clé `projet` : l'identifiant du projet servi,
+ou `null` pour un gabarit. Implémentation :
+`resoudre_projet_configuration` dans [`maestro/controltower/portee.py`](../maestro/controltower/portee.py),
+et `ConfigurationAgents` ([`maestro/agents/configuration.py`](../maestro/agents/configuration.py)),
+qui cadre les six dépôts d'un bloc — une fois par requête, plutôt que six fois.
 
 #### 6.0bis Portée **run** d'une lecture — `?run=` (#473) — **livré**
 
@@ -5591,7 +5644,12 @@ du verbe `mcp__maestro__poser_une_question` et ses deux frontières),
 `_consigne_question` — c'est là que vit la **borne**, avec le journal),
 [`maestro/controltower/question.py`](../maestro/controltower/question.py)
 (`ArbitreQuestionControlTower`) et [`maestro/controltower/app.py`](../maestro/controltower/app.py)
-pour les deux routes. Tests différés au lot final de #1019 (**#1027**).
+pour les deux routes. Gardé par
+[`tests/test_questions_agents.py`](../tests/test_questions_agents.py) (#1027) — la suspension et sa
+borne, l'hypothèse écrite à l'échéance dans ses deux champs, la réponse tardive retrouvée **sans
+nouvelle demande**, le refus d'un acte malgré une réponse (EF-08), et les trois refus de la route
+(`404`/`409`/`422`) — et, pour le cadrage projet, par
+[`tests/test_appartenance_projet.py`](../tests/test_appartenance_projet.py).
 
 ---
 
@@ -5679,5 +5737,9 @@ raisons sont consignés sur le ticket (commentaire `## Variante retenue`).
 
 Implémentation : [`maestro/controltower/decisions.py`](../maestro/controltower/decisions.py)
 (la composition), [`maestro/controltower/app.py`](../maestro/controltower/app.py) (la route),
-`apps/web/components/runs/DecisionsRun.tsx` et `apps/web/lib/vuesRun.ts` (l'écran). Tests différés
-au lot final de #1019 (**#1027**).
+`apps/web/components/runs/DecisionsRun.tsx` et `apps/web/lib/vuesRun.ts` (l'écran). Gardé par
+[`tests/test_decisions_autonomes.py`](../tests/test_decisions_autonomes.py) (#1027) — les deux
+familles jamais mêlées, la question **répondue** qui n'y entre pas, le sens de lecture, le plafond
+qui se dit, et le 404 de la route — et par `apps/web/tests/decisions-run.test.tsx` pour l'écran :
+une ligne par décision dans l'ordre servi, l'hypothèse marquée par **une forme et un mot**, et les
+trois états d'une liste vide (chargement, échec de lecture, run qui n'a rien tranché seul).

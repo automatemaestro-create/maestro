@@ -125,7 +125,7 @@ L'utilisateur passe ainsi du rôle d'« opérateur » (qui exécute) à celui de
 - **EF-19 (DOIT)** — **Interagir** : ouvrir une conversation avec un agent.
 - **EF-20 (DOIT)** — **Assigner / réassigner** une tâche à un agent.
 - **EF-21 (DEVRAIT)** — **Contrôler la capacité** : activer/désactiver un agent, ajuster le nombre d'instances.
-  ⚠ *2026-09-19, [docs/37](./37-decision-equipe-sur-mesure.md) : le nombre d'instances est d'abord proposé par l'analyse du projet, puis ajusté par l'utilisateur, et la capacité se range par projet (#1038, #1039).*
+  ⚠ *2026-09-19, [docs/37](./37-decision-equipe-sur-mesure.md) : le nombre d'instances est d'abord proposé par l'analyse du projet, puis ajusté par l'utilisateur, et la capacité se range par projet. **Le rangement est livré** (#1038, `core/capacite/_projets/<id>/`, docs/05 §2.0) ; la proposition par l'analyse reste #1039. Le plafond appliqué à l'exécution, lui, demeure celui du poste : c'est ce que la machine fait tourner en même temps pour cet agent, pas un quota par projet.*
 - **EF-22 (DEVRAIT)** — Visualiser pour chaque exécution la **trace** détaillée (étapes, outils, coût, durée).
 - **EF-23 (POURRAIT)** — Tableau de bord analytique (coûts, débit, taux de réussite).
 
