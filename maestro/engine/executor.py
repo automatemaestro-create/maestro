@@ -59,7 +59,7 @@ from maestro.agents.permissions import (
 from maestro.agents.playbooks import PlaybookStore, PlaybookVersion
 from maestro.agents.runtime import AgentRuntime
 from maestro.agents.secrets import SecretStore
-from maestro.agents.store import AgentStore, SurchargeStore, catalogue
+from maestro.agents.store import AgentStore, SurchargeStore, catalogue_du_projet
 from maestro.decideur import DECIDEUR_DEFAUT
 from maestro.deliberation import (
     CreditArbitrage,
@@ -81,6 +81,7 @@ from maestro.engine.questions import (
     identifiant_question,
 )
 from maestro.engine.retry import PolitiqueRelance, est_transitoire
+from maestro.equipe.manque import RoleManquant, role_manquant
 from maestro.messaging.mailbox import (
     MESSAGE_NOTIFICATION,
     AgentMessage,
@@ -256,6 +257,44 @@ SUFFIXE_ETAPE_BLOCAGE = ":blocage"
 #: que la projection n'utilise que pour rafraîchir la dernière activité de
 #: l'agent — jamais le statut d'une tâche.
 STATUT_BLOCAGE_SIGNALE = "blocage_signale"
+
+#: L'acteur au nom duquel le moteur consigne ce qu'il fait **lui-même**, sans
+#: agent : la planification et le cadrage (`maestro.engine.loop`), et le rôle
+#: manquant (#1041). Les deux mots vivaient en littéraux à quatre endroits de la
+#: boucle ; ils sont ici pour que le rôle manquant n'en ajoute pas un cinquième.
+#:
+#: ⚠ Ce sont les mêmes que `ACTEUR_RUN`/`ROLE_RUN` de
+#: `maestro.controltower.events`, et ils le restent : la Control Tower les écrit
+#: de son côté (cycle de vie d'un run, hôte détaché) et le moteur du sien, sans
+#: que l'un importe l'autre — la couche basse de la Control Tower n'importe pas le
+#: moteur, et le moteur ne connaît pas la Control Tower. Deux mots à tenir
+#: d'accord entre deux couches qui ne se voient pas, plutôt qu'un import qui
+#: fermerait un cycle.
+ACTEUR_ORCHESTRATEUR = "orchestrateur"
+ROLE_ORCHESTRATEUR = "Orchestrateur"
+
+#: Suffixe des étapes de **rôle manquant** (#1041) : `<task.id>:manque`, écrite au
+#: routage quand aucun rôle de l'équipe du projet ne couvre les compétences de la
+#: tâche. Le pont (`maestro.controltower.bridge`) la range sous `tache.blocage`.
+#:
+#: ⚠ Elle emprunte ce type-là sans être un blocage déclaré : ce n'est pas un agent
+#: qui parle — il n'y en a aucun —, c'est le routage qui constate. Le type est
+#: partagé parce que le **fait** l'est : *ça ne peut pas avancer, et il faut
+#: quelqu'un*. Un type de plus n'aurait rien ajouté à ce que la frise (#355), la
+#: projection et le fil en font déjà, et aurait demandé à chacun de traiter à
+#: l'identique deux mots pour une seule chose. Le `statut` les distingue.
+#:
+#: Elle ne déplace aucune carte, et c'est ici sans ambiguïté : la tâche part de
+#: toute façon en échec « à assigner » juste après, par sa propre ligne. Celle-ci
+#: ne redit pas cet échec — elle nomme **le rôle qui manque**, que rien d'autre ne
+#: sait dire.
+SUFFIXE_ETAPE_MANQUE = ":manque"
+
+#: Statut des étapes de rôle manquant (#1041). Un mot à lui, et il ne pouvait être
+#: ni `bloquee` — la tâche n'est pas à l'aval d'un échec, c'est elle qu'on ne sait
+#: pas prendre — ni `blocage_signale`, qui dit « son agent bute en travaillant
+#: encore » alors qu'ici personne n'a commencé.
+STATUT_ROLE_MANQUANT = "role_manquant"
 
 #: Suffixe des étapes de **question posée par l'agent** (#1023) :
 #: `<task.id>:question`, une par appel de `poser_une_question`
@@ -736,9 +775,21 @@ class LocalExecutor(TaskExecutor):
                 if decision.agent is None:
                     # Repli explicite (#42) : tâche marquée « à assigner » plutôt que
                     # mal routée — l'assignation revient à un humain.
+                    #
+                    # Et, quand le repli vient d'un **manque de rôle** (#1041), le
+                    # manque est signalé au fil avant l'échec : « à assigner » dit
+                    # que personne n'a pris la tâche, il ne dit pas *qui* aurait pu
+                    # la prendre. Recruter reste hors du run (docs/37 §3.5).
+                    manque = role_manquant(decision.non_couvertes)
+                    if manque is not None:
+                        self._consigne_role_manquant(task, manque, journal)
                     result = _echec(
                         task, agent="—", role="à assigner", score=decision.score,
-                        erreur=decision.raison,
+                        erreur=(
+                            f"{decision.raison} {manque.phrase()}"
+                            if manque is not None
+                            else decision.raison
+                        ),
                     )
                 else:
                     releve.agent = decision.agent
@@ -866,25 +917,15 @@ class LocalExecutor(TaskExecutor):
         relecture, un agent recruté pour un projet ne recevrait jamais de tâche —
         une régression, pas un choix de routage.
 
-        None dans trois cas, tous ramenés au catalogue du câblage : tâche sans
-        projet, dépôts non câblés (tests et câblages sans Control Tower), et
-        dépôt illisible — un incident de stockage ne doit pas faire partir toutes
-        les tâches en repli « à assigner ». Les deux dépôts vont **ensemble** :
-        recomposer le catalogue sans les surcharges du projet le rendrait sur les
-        modèles du code, ce qui serait un réglage perdu en silence.
+        La règle elle-même vit dans `maestro.agents.store.catalogue_du_projet`
+        depuis #1041 : la boucle l'applique aussi, pour découper l'objectif sur
+        l'équipe qui l'exécutera. Deux exemplaires finiraient par ne plus rendre
+        le même catalogue, et le plan partirait tout entier en repli « à
+        assigner » sans que rien ne le dise.
         """
-        if projet_id is None or self._agents_store is None:
-            return None
-        if self._surcharges is None:
-            return None
-        try:
-            return catalogue(
-                self._agents_store.pour_projet(projet_id),
-                self._modele,
-                surcharges=self._surcharges.pour_projet(projet_id),
-            )
-        except (OSError, ValueError):  # dépôt illisible : on garde le catalogue câblé
-            return None
+        return catalogue_du_projet(
+            self._agents_store, self._surcharges, projet_id, self._modele
+        )
 
     def _desactives(self, projet_id: str | None = None) -> frozenset[str]:
         """Les agents désactivés (#86), relus dans le dépôt à chaque tâche.
@@ -2376,6 +2417,43 @@ class LocalExecutor(TaskExecutor):
             statut=STATUT_BLOCAGE_SIGNALE,
             entree="",
             sortie=raison,
+            usage=StepUsage(),
+            projet_id=task.projet_id,
+        )
+
+    def _consigne_role_manquant(
+        self, task: Task, manque: RoleManquant, journal: RunJournal
+    ) -> None:
+        """Signale au fil le rôle qui manque à l'équipe pour prendre `task` (#1041).
+
+        Étape dédiée `<task.id>:manque` (même modèle que `:blocage`), que le pont
+        (`maestro.controltower.bridge`) mue en événement `tache.blocage` — donc au
+        fil temps réel et à la frise, que `agent.activite` n'atteindrait pas
+        (#355). `sortie` porte la phrase entière : ce qui n'est couvert par
+        personne, le poste que cela désigne, et que le recrutement se fait hors du
+        run (docs/37 §3.5).
+
+        L'agent consigné est l'**orchestrateur**, comme sur la planification
+        (`maestro.engine.loop._plan`) : c'est lui qui répartit le travail et lui
+        qui recrute, et la tâche n'a par définition aucun agent à nommer. Le
+        `role` n'est pas celui qui manque — c'est celui de qui parle ; le rôle
+        manquant est dans la phrase, où on le lit.
+
+        Usage nul, comme le blocage (#719) et la décision (#1024) : constater un
+        manque ne dépense rien, le routage ayant échoué avant tout appel modèle.
+
+        La tâche ne change pas de colonne : c'est son propre échec « à assigner »,
+        consigné juste après, qui la déplace. Cette ligne-ci ne fait que nommer ce
+        que cet échec ne sait pas dire.
+        """
+        journal.consigne(
+            etape=f"{task.id}{SUFFIXE_ETAPE_MANQUE}",
+            nom=f"Rôle manquant — {task.titre}",
+            agent=ACTEUR_ORCHESTRATEUR,
+            role=ROLE_ORCHESTRATEUR,
+            statut=STATUT_ROLE_MANQUANT,
+            entree="",
+            sortie=manque.phrase(),
             usage=StepUsage(),
             projet_id=task.projet_id,
         )

@@ -25,7 +25,7 @@ seulement : une équipe *branche* les skills que l'outillage a recommandés
 ait à les distinguer — un projet analysé (#1030) et un projet neuf dont on a
 recueilli les choix (#1031) rendent la même paire `Constats` / `Recommandation`.
 
-Trois modules, et la frontière entre eux est celle de ce qui décide :
+Quatre modules, et la frontière entre eux est celle de ce qui décide :
 
 - `maestro.equipe.modele` — les formes, **inertes** : elles décrivent et
   sérialisent, elles ne touchent à rien ;
@@ -33,7 +33,12 @@ Trois modules, et la frontière entre eux est celle de ce qui décide :
   des agents figés devenus **gabarits** (docs/37 §2.1), et la règle qui dit si
   ce projet-là en appelle un ;
 - `maestro.equipe.proposition` — des constats et de l'outillage à l'équipe, avec
-  pour chaque rôle sa raison, son endroit, ses instances et ses autorisations.
+  pour chaque rôle sa raison, son endroit, ses instances et ses autorisations ;
+- `maestro.equipe.manque` — le rôle qui **manquerait** à une équipe déjà créée
+  pour prendre une tâche (#1041). Le seul des quatre qui regarde un run en cours
+  plutôt qu'un projet qui naît, et il n'en recrute pas davantage : il nomme, le
+  moteur signale, et le recrutement reste un geste validé hors du run
+  (docs/37 §3.5).
 
 ⚠ **La politique proposée laisse `allow` ouvert**, et c'est une décision. Une
 liste `allow` non vide est *fermée* (`maestro.agents.permissions`) : la remplir
@@ -70,6 +75,11 @@ from maestro.equipe.gabarits import (
     RAISON_UNE_INSTANCE,
     Gabarit,
     Justification,
+)
+from maestro.equipe.manque import (
+    RoleManquant,
+    competences_non_couvertes,
+    role_manquant,
 )
 from maestro.equipe.modele import (
     CRANS,
@@ -111,9 +121,12 @@ __all__ = [
     "Justification",
     "PropositionEquipe",
     "RoleEcarte",
+    "RoleManquant",
     "RolePropose",
     "SkillBranche",
     "avec_playbook",
+    "competences_non_couvertes",
     "nouvel_id",
     "proposer_equipe",
+    "role_manquant",
 ]

@@ -326,6 +326,12 @@ const LIBELLES_STATUT: Record<string, string> = {
   refuse: "Refusée",
   refus_outil: "Outil refusé",
   arbitrage_outil: "Outil arbitré",
+  // Ce qui bute sur une tâche sans la faire changer de colonne : l'agent déclare
+  // qu'il bute en travaillant encore (#719), ou aucun rôle de l'équipe du projet
+  // ne sait seulement la prendre (#1041). Deux mots parce que ce n'est pas la
+  // même personne qu'il faut — quelqu'un qui débloque, ou quelqu'un à recruter.
+  blocage_signale: "Blocage signalé",
+  role_manquant: "Rôle manquant",
   // Ce qui est arrivé au **projet** quand la tâche s'est soldée (#705). Trois
   // libellés parce qu'il y a trois issues, et « rien à fusionner » en est une :
   // la taire rendrait invisible un run vert sur un projet resté vide (#568).

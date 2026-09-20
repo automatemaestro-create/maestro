@@ -143,6 +143,20 @@ _SUFFIXE_DETAIL = SUFFIXE_ETAPE_DETAIL
 #: pont est la couche basse de la Control Tower et n'importe pas le moteur.
 _SUFFIXE_BLOCAGE = ":blocage"
 
+#: Suffixe des étapes de **rôle manquant** (#1041 — cf.
+#: `maestro.engine.executor`, `SUFFIXE_ETAPE_MANQUE`). Recopié comme les autres
+#: suffixes du moteur, pour la même raison.
+#:
+#: Il rejoint `tache.blocage` plutôt que d'ouvrir un type : le fait est le même —
+#: *ça ne peut pas avancer, et il faut quelqu'un* —, et les trois lecteurs de ce
+#: type en font déjà ce qu'il faut (la frise le montre, la projection rafraîchit
+#: la dernière activité sans déplacer de carte, le grand livre l'ignore). Ce qui
+#: les sépare est le `statut`, qui voyage tel quel : `blocage_signale` pour un
+#: agent qui bute en travaillant, `role_manquant` pour une tâche que personne ne
+#: sait prendre. Sans cette entrée, la règle par défaut en ferait l'issue d'une
+#: tâche nommée `<tache>:manque` — une carte fantôme au Kanban (#924).
+_SUFFIXE_MANQUE = ":manque"
+
 #: Suffixe des étapes de **décision tranchée seul** (#1024 — cf.
 #: `maestro.engine.executor`, `SUFFIXE_ETAPE_DECISION`). Recopié plutôt
 #: qu'importé, comme `:blocage`, `:activite`, `:relance`, `:debut` et
@@ -224,6 +238,12 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
       rien changer d'autre. Même forme que les deux précédentes et pour la même
       raison — un agent qui bute n'est pas une tâche bloquée (la cascade de #43
       appartient au moteur, docs/31 §3.4) ;
+    - les étapes `<tache>:manque` (#1041) deviennent elles aussi un
+      `tache.blocage` : elles ne portent que **le rôle qui manquerait à l'équipe
+      du projet** pour prendre la tâche. Même type, statut différent
+      (`role_manquant`) — le fait est le même (ça n'avance pas, il faut
+      quelqu'un), mais ici personne n'a commencé : c'est le routage qui constate,
+      et recruter se fait hors du run (docs/37 §3.5) ;
     - les étapes `<tache>:decision` (#1024) deviennent un `tache.decision` :
       elles portent **ce que l'agent a tranché seul** (`detail`) et **pourquoi**
       (`description`), sans rien changer d'autre. Même forme que la précédente,
@@ -270,6 +290,7 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
     est_reference = etape.endswith(_SUFFIXE_REFERENCE)
     est_detail = etape.endswith(_SUFFIXE_DETAIL)
     est_blocage = etape.endswith(_SUFFIXE_BLOCAGE)
+    est_manque = etape.endswith(_SUFFIXE_MANQUE)
     est_decision = etape.endswith(_SUFFIXE_DECISION)
     est_usage = etape.endswith(_SUFFIXE_USAGE)
     est_activite = etape in _ETAPES_RUN or etape.endswith(_SUFFIXES_ACTIVITE)
@@ -295,6 +316,14 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
         # de #719 — la déclaration est gratuite au grand livre, faute de quoi
         # dire qu'on est bloqué coûterait, et un agent aurait une raison de se
         # taire.
+        mesure = None
+        cout_brut = None
+    elif est_manque:
+        type_evenement = EVENEMENT_TACHE_BLOCAGE
+        tache_id = etape.removesuffix(_SUFFIXE_MANQUE)
+        detail = str(record.get("sortie") or "")
+        # Idem : constater qu'aucun rôle ne sait prendre la tâche ne dépense
+        # rien — le routage a échoué avant tout appel modèle (#1041).
         mesure = None
         cout_brut = None
     elif est_decision:

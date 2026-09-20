@@ -493,6 +493,40 @@ def catalogue(
     ) + tuple(definition.to_agent(modele) for definition in store.lister())
 
 
+def catalogue_du_projet(
+    store: AgentStore | None,
+    surcharges: SurchargeStore | None,
+    projet_id: str | None,
+    modele: str | None = None,
+) -> tuple[Agent, ...] | None:
+    """L'équipe d'un projet — `None` quand il faut s'en tenir au catalogue du câblage.
+
+    La **règle unique** de « quels agents pour ce travail-là », écrite ici parce
+    qu'elle a deux lecteurs depuis #1041 et qu'ils doivent lire la même chose :
+    l'exécuteur, qui route la tâche (`LocalExecutor._equipe`), et la boucle, qui
+    fait découper l'objectif (`OrchestrationEngine._plan`). Un plan proposé sur
+    une équipe et exécuté sur une autre enverrait toutes ses tâches en repli
+    « à assigner » sans que rien ne le dise.
+
+    `None` dans trois cas, tous à ramener au catalogue du câblage par l'appelant :
+    tâche (ou run) **sans projet**, dépôts **non câblés** — tests et câblages sans
+    Control Tower —, et dépôt **illisible** : un incident de stockage ne doit pas
+    faire partir toutes les tâches en repli. Les deux dépôts vont **ensemble** :
+    recomposer le catalogue sans les surcharges du projet le rendrait sur les
+    modèles du code, ce qui serait un réglage perdu en silence (#1038).
+    """
+    if projet_id is None or store is None or surcharges is None:
+        return None
+    try:
+        return catalogue(
+            store.pour_projet(projet_id),
+            modele,
+            surcharges=surcharges.pour_projet(projet_id),
+        )
+    except (OSError, ValueError):  # dépôt illisible : on garde le catalogue câblé
+        return None
+
+
 def _surcharge_appliquee(
     agent: Agent, surcharge: SurchargeAgent | None, modele_impose: str | None
 ) -> Agent:

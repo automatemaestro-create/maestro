@@ -30,13 +30,14 @@ import re
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
+from maestro.agents.catalog import Agent
 from maestro.config import Settings, load_settings
 from maestro.orchestrator.errors import BriefParsingError, PlanParsingError
 from maestro.orchestrator.prompt import (
     BRIEF_SYSTEM_PROMPT,
-    ORCHESTRATOR_SYSTEM_PROMPT,
     build_brief_user_prompt,
     build_user_prompt,
+    prompt_orchestrateur,
 )
 from maestro.orchestrator.schema import (
     Brief,
@@ -74,8 +75,18 @@ class Orchestrator:
         settings = settings or load_settings()
         return cls(provider_from_settings(settings), model=default_model(settings))
 
-    async def plan(self, objective: str) -> list[Task]:
+    async def plan(
+        self, objective: str, *, equipe: Sequence[Agent] | None = None
+    ) -> list[Task]:
         """Produit le plan de tâches pour `objective`.
+
+        `equipe` (#1041) est l'équipe **du projet** sur laquelle le travail sera
+        réparti : ses rôles et ses compétences entrent dans le prompt système à la
+        place de la liste que le playbook portait en dur
+        (`maestro.orchestrator.prompt.prompt_orchestrateur`). Omise — ou vide —,
+        le découpage retombe sur les gabarits du code, ce qui est le plan d'un
+        objectif sans projet : la CLI `maestro-plan` et les activités durables
+        gardent ainsi exactement le prompt d'avant.
 
         Lève `ValueError` si l'objectif est vide, `PlanParsingError` si la réponse
         du modèle n'est pas un tableau JSON exploitable, `TaskValidationError` si le
@@ -87,7 +98,7 @@ class Orchestrator:
         response = await self._provider.generate(
             build_user_prompt(objective),
             model=self._model,
-            system_prompt=ORCHESTRATOR_SYSTEM_PROMPT,
+            system_prompt=prompt_orchestrateur(equipe),
         )
         raw_tasks = _extract_task_array(response)
         return validate_plan(raw_tasks)

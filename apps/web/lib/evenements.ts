@@ -29,6 +29,7 @@ import {
   EVENEMENT_MESSAGE_INTER_AGENTS,
   EVENEMENT_PLAYBOOK_PROPOSITION,
   EVENEMENT_RUN_PLAN,
+  EVENEMENT_TACHE_BLOCAGE,
   EVENEMENT_TACHE_REASSIGNATION,
   EVENEMENT_TACHE_REFERENCE,
   EVENEMENT_TACHE_STATUT,
@@ -266,6 +267,17 @@ export function resumeEvenement(evenement: Evenement): string {
       return evenement.detail
         ? `${quoi} a consommé jusqu'ici : ${evenement.detail}`
         : `${quoi} consomme`;
+    }
+    case EVENEMENT_TACHE_BLOCAGE: {
+      // Ce qui bute sur une tâche (#719, #1041). La phrase **est** le `detail` —
+      // comme pour l'activité et l'arbitrage plus haut : le titre ne dirait que
+      // le nom de la tâche, que la carte du Kanban montre déjà, et tairait la
+      // seule chose que cette ligne apporte — la raison que l'agent a écrite, ou
+      // le rôle qui manque à l'équipe.
+      const quoi = cite(sujet) || "une tâche";
+      return evenement.detail
+        ? `${evenement.agent ? `${evenement.agent} · ` : ""}${evenement.detail}`
+        : `${quoi} bute : ${libelleStatut(evenement.statut)}`;
     }
     case EVENEMENT_AGENT_ACTIVITE:
       return phraseEtapeAgent(evenement);
@@ -527,6 +539,12 @@ const STATUTS_DECISION = new Set([
   "refuse",
   "arbitrage_outil",
   "blocage_signale",
+  // #1041 : aucun rôle de l'équipe ne sait prendre la tâche. Une **décision**
+  // et non une erreur, pour la raison qui vaut déjà juste au-dessus : la ligne
+  // appelle quelqu'un — ici pour recruter, hors du run (docs/37 §3.5) — et la
+  // ranger en erreur la noierait parmi les pannes, à côté de l'échec « à
+  // assigner » de la tâche elle-même, qui, lui, en est bien une.
+  "role_manquant",
 ]);
 
 /** Les deux canaux qui *sont* une décision humaine, quel que soit leur statut. */
