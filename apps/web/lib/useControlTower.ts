@@ -34,6 +34,7 @@ import {
   chargerAgents,
   chargerCoutExecution,
   chargerExecutions,
+  chargerQuestions,
   chargerTaches,
   chargerValidations,
   deciderBrief,
@@ -42,6 +43,7 @@ import {
   reglerCapaciteAgent,
   relancerExecution,
   repondreBrief,
+  repondreQuestion,
   reprendreExecution,
   suspendreExecution,
   urlEvenements,
@@ -54,6 +56,7 @@ import type {
   DecisionBrief,
   EtatAgent,
   Evenement,
+  Question,
   ResumeExecution,
   Tache,
   Validation,
@@ -78,6 +81,19 @@ export type ControlTower = {
   evenements: Evenement[];
   /** Demandes de validation humaine (#48), en attente comme tranchées. */
   validations: Validation[];
+  /**
+   * Les **questions libres** posées par les agents (#1023), en attente comme
+   * répondues. Chargées ici et non dans le fil, pour la raison qui a fait ce
+   * hook : trois surfaces les lisent — le pied de `/chat`, l'onglet Chat d'une
+   * fiche agent, le badge de la cloche — et trois chargements ouvriraient trois
+   * fois la même requête à chaque événement du flux.
+   *
+   * ⚠ Elles ne rejoignent **pas** `validations` : répondre n'approuve aucun acte
+   * (EF-08, docs/32 §5), et un outil classé `ask` reste refusé sans arbitrage.
+   * Les deux ne se confondent que dans le **compte** de la cloche, qui répond à
+   * « combien de choses m'attendent » (#322).
+   */
+  questions: Question[];
   /**
    * Les exécutions du projet actif (#185), résumé seul. Chargées ici depuis #322
    * pour une raison précise : un run **suspendu sur son brief** n'a créé aucune
@@ -139,6 +155,12 @@ export type ControlTower = {
    */
   repondreAuBrief: (runId: string, reponses: string[]) => Promise<void>;
   /**
+   * Répond à la question d'un agent (#1023) : l'agent, suspendu sur le bus, la
+   * reçoit et **reprend**. Du texte, jamais un booléen — et jamais une
+   * autorisation : un acte soumis à validation reste refusé sans arbitrage.
+   */
+  repondreAUneQuestion: (questionId: string, reponse: string) => Promise<void>;
+  /**
    * Rejoue un run interrompu sur son **brief approuvé** (#349) : le cadrage déjà
    * payé repart sans repasser par la clarification ni par la validation, et le run
    * repris est soldé. Rend le résumé du **nouveau** run — celui qui porte
@@ -175,6 +197,7 @@ export function useControlTower(portee: PorteeProjet): ControlTower {
   const [agents, setAgents] = useState<EtatAgent[]>([]);
   const [evenements, setEvenements] = useState<Evenement[]>([]);
   const [validations, setValidations] = useState<Validation[]>([]);
+  const [questions, setQuestions] = useState<Question[]>([]);
   const [executions, setExecutions] = useState<ResumeExecution[]>([]);
   const [couts, setCouts] = useState<CoutExecution[]>([]);
   const [connecte, setConnecte] = useState(false);
@@ -191,12 +214,14 @@ export function useControlTower(portee: PorteeProjet): ControlTower {
         nouveauxAgents,
         nouvellesValidations,
         nouvellesExecutions,
+        nouvellesQuestions,
       ] = await Promise.all([
         chargerTaches(portee),
         // Sans portée : le parc d'agents est du poste, pas du projet.
         chargerAgents(),
         chargerValidations(portee),
         chargerExecutions(portee),
+        chargerQuestions(portee),
       ]);
       // Les grands livres (#57) se chargent après : les run_id connus en sont
       // dérivés. Des **deux** listes depuis #322, et pas des seules tâches — un
@@ -218,6 +243,7 @@ export function useControlTower(portee: PorteeProjet): ControlTower {
       setAgents(nouveauxAgents);
       setValidations(nouvellesValidations);
       setExecutions(nouvellesExecutions);
+      setQuestions(nouvellesQuestions);
       setCouts(nouveauxCouts);
       setErreur(null);
     } catch (e) {
@@ -339,6 +365,18 @@ export function useControlTower(portee: PorteeProjet): ControlTower {
     [recharger],
   );
 
+  const repondreAUneQuestion = useCallback(
+    async (questionId: string, reponse: string) => {
+      await repondreQuestion(questionId, reponse);
+      // Même mécanique que les autres réponses : l'événement `question.reponse`
+      // arrivera par le WebSocket, le rechargement direct fait sortir la
+      // question de l'attente sans dépendre de la socket. Il compte ici : c'est
+      // lui qui retire la carte du pied du fil à l'instant où l'on répond.
+      await recharger();
+    },
+    [recharger],
+  );
+
   const relancerRun = useCallback(
     async (runId: string) => {
       const nouveau = await relancerExecution(runId);
@@ -405,6 +443,7 @@ export function useControlTower(portee: PorteeProjet): ControlTower {
     agents,
     evenements,
     validations,
+    questions,
     executions,
     couts,
     connecte,
@@ -415,6 +454,7 @@ export function useControlTower(portee: PorteeProjet): ControlTower {
     decider,
     trancherBrief,
     repondreAuBrief,
+    repondreAUneQuestion,
     relancerRun,
     suspendreRun,
     reprendreRun,

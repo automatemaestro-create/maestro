@@ -2262,6 +2262,77 @@ décomposition « optimiste » lancée en parallèle de l'attente rendrait pourt
 bout de la chaîne et non seulement dans l'arbitre. Le canal des questions (§6.10) suit la même règle :
 un tour silencieusement sauté ferait approuver un cadrage qu'on présenterait comme éclairci.
 
+#### 2.7.6 La question d'un agent arrive dans le fil, et s'y répond (#1025) — **livré**
+
+Le §6.17 a donné à tout agent outillé un verbe pour **demander** ce qu'il ne sait pas pendant sa
+tâche, et une borne au-delà de laquelle il reprend sur l'hypothèse qu'il a annoncée. Le canal
+existait des deux côtés ; il n'arrivait **nulle part**. Cette section est l'endroit où il arrive.
+
+**Au pied du fil, à la place de la saisie** — la place que la demande de cadrage occupe déjà
+(§2.7.5, #943), et c'est ce que le ticket demande en toutes lettres : « même mécanique que le
+cadrage ». Deux moments jumeaux — quelque chose attend un geste, et la conversation qui l'a produit
+est sous les yeux — ne devaient pas avoir deux grammaires : même carte `attention`, même en-tête
+capitalisé avec son icône et son heure à droite, même libellé au-dessus du champ, même bouton plein
+en bas à gauche. Quand les deux attendent ensemble, **les questions passent au-dessus** : une
+question porte sur un travail déjà en vol, une proposition sur un travail qui n'a pas commencé, et
+c'est la seconde qui remplace vraiment la zone de saisie, son objectif étant éditable.
+
+**Deux surfaces, la même carte** : `/chat` (le fil de l'orchestration, et un aparté `@agent`) et
+l'onglet Chat d'une fiche agent. La **colonne de conversation** du shell, elle, n'en porte pas —
+comme elle ne porte pas le geste de cadrage : hors de `#contenu-principal`, un écran n'ajoute rien à
+ce que le shell rend seul (#929, docs/30 §4.6).
+
+**Quel fil montre quelle question**, en une règle énoncée une fois (`apps/web/lib/questions.ts`) :
+le fil de l'**orchestration** les porte **toutes** — il est la porte d'entrée (docs/29) et c'est là
+que la cloche achemine ; un **aparté `@agent`** ne porte que les siennes, pour qu'on ne réponde pas
+à côté. Une question de `bdd` qui n'apparaîtrait que dans l'aparté avec `bdd` n'atteindrait
+personne : il faudrait savoir qu'elle existe pour aller la chercher, ce que le badge existe
+précisément pour éviter.
+
+**Les gestes sont dérivés de ce que l'agent a déclaré**, jamais posés par l'écran : `choix` vide → un
+champ de texte seul ; `choix` non vide → un bouton par choix, **et** le champ. Répondre d'un geste
+n'interdit jamais de répondre en une phrase — les choix d'abord, le champ ensuite, dans le **même**
+bloc. Un choix retenu se répond en **recopiant son libellé**, au contrat du §6.17.
+
+**Ce qui se passera sans réponse est écrit avec la question**, sur une ligne à elle : la phrase
+`attente` est rendue **telle quelle**, parce qu'elle porte déjà le délai et que la recomposer ferait
+deux rédactions du même fait. Passée la borne, la même carte dit ce qui s'est **passé** — l'agent est
+reparti sur son hypothèse — sans cesser d'accepter une réponse : la question reste posée, et une
+réponse tardive le rattrapera au prochain appel identique (`MemoireArbitrage`, #584).
+
+⚠ **Comment l'écran sait que la borne est passée**, et pourquoi le §6.17 porte un champ de plus. Le
+canal ne change pas de statut à la borne — et il a raison, la question sert encore. Restaient deux
+recours, tous deux mauvais : lire le chiffre dans la phrase `attente` (juger du texte par un motif,
+ce que le dépôt refuse, #746) ou recopier `BornesArbitrage.attente_s` côté navigateur (deux supports
+pour un réglage du moteur). D'où **`echeance`**, la borne en **date**, posée à la publication : un
+fait porté par le transport, que l'écran compare à son horloge. Vide sur une question d'avant ce
+lot, et l'écran dit alors « en attente » sans dire jusqu'à quand.
+
+**Hors du fil, un badge et rien de plus** (deuxième critère). Les questions en attente rejoignent le
+compte de la cloche — celui qui répond à *combien de choses m'attendent*, pas *combien de
+validations* (#322) — et la cloche les **achemine** vers le fil sans redonner le champ de réponse,
+exactement comme elle achemine un brief. Un second endroit où écrire en ferait deux, dont un sans le
+contexte, et le canal n'a pas d'autre mémoire que sa conversation. Une **file « Questions »** — carte
+de la colonne de propriétés ou écran à part — a été refusée à la veille : le corps de `/chat` porte
+déjà deux blocs plus l'`aside`, docs/30 §4 plafonne à trois, et le produit a tranché que ce qui
+attend se décide **dans le fil** (#483).
+
+**Répondre n'approuve rien.** Le texte écrit ici n'autorise aucun appel d'outil : un outil classé
+`ask` reste refusé sans canal d'arbitrage, qu'une question ait été posée ou non (EF-08, docs/32 §5).
+Les deux files ne se rejoignent que dans le **compte** de la cloche.
+
+La forme vient d'une **veille de conception** (LangChain Agent Inbox, GitHub Actions « Reviewing
+deployments », Zulip Polls, n8n « Send and Wait for Response ») et d'un **choix rendu sur pièces** par
+un regard qui n'en était pas l'auteur — trois variantes rendues sur la vraie stack, dont celle qui
+faisait de la question un **message du fil** (écartée : ce qui arrivait après elle la poussait hors
+de l'écran, or la seule chose qui attend un humain ne doit pas être la seule à pouvoir disparaître).
+Les deux décisions sont consignées sur #1025, sous « ## Veille de conception » et « ## Variante
+retenue ». Implémentation :
+[`apps/web/components/chat/QuestionDansLeFil.tsx`](../apps/web/components/chat/QuestionDansLeFil.tsx),
+[`apps/web/lib/questions.ts`](../apps/web/lib/questions.ts), `app/chat/page.tsx`,
+`components/FilChat.tsx`, `components/CentreNotifications.tsx`. Tests différés au lot final de #1019
+(**#1027**).
+
 ### 2.8 🗒️ Journal — l'activité, en plein format et **persistée** *(#249, #250, #478 — **livré**)*
 
 Le fil d'activité a **quitté le tableau de bord pour sa propre entrée de menu**.
@@ -5341,14 +5412,15 @@ Implémentation : [`maestro/controltower/bornes.py`](../maestro/controltower/bor
 [`tests/test_chat_global.py`](../tests/test_chat_global.py) section ⑦ et
 `apps/web/tests/demande-cadrage.test.tsx` section ⑤.
 
-### 6.17 La question libre d'un agent — la poser, y répondre (#1023) — **moteur et API livrés**
+### 6.17 La question libre d'un agent — la poser, y répondre (#1023) — **livré**, écran compris (#1025, §2.7.6)
 
 Un agent ne pouvait demander qu'un **oui/non sur un acte** (`demander_arbitrage`, §2.6). Le canal
 « question », dont la réponse serait du texte, a été renvoyé de #647 à #354 puis rendu à #647 — les
 deux tickets se sont fermés sans le construire, et le socle des playbooks disait l'inverse de ce
 qu'on veut : *personne ne répondra pendant la tâche, préfère une hypothèse à une question*. Ces deux
-routes-ci sont la moitié moteur + API du chantier #1019 ; **l'écran de réponse est le lot #1025**,
-et il empruntera ce contrat sans en ouvrir un second.
+routes-ci sont la moitié moteur + API du chantier #1019 ; **l'écran de réponse est le lot #1025**
+(§2.7.6), et il a emprunté ce contrat sans en ouvrir un second — il l'a seulement complété d'un
+champ, `echeance`, dont la raison est écrite plus bas.
 
 - `GET  /api/questions?projet=<id|tous|aucun>` → `200` + `EtatQuestion[]` — les questions posées par
   les agents, en attente d'abord, puis avec leur réponse. `projet` est **obligatoire**, au contrat
@@ -5368,6 +5440,7 @@ et il empruntera ce contrat sans en ouvrir un second.
   "agent": "bdd",
   "role": "Base de données",
   "attente": "sans réponse d'ici 240 s, l'agent reprendra sur son hypothèse : …",
+  "echeance": "2026-09-20T09:16:31+00:00", // la même borne, en date (#1025)
   "statut": "en_attente",                // puis "repondue"
   "reponse": "",                         // le texte humain, une fois écrit
   "projet_id": "prj-demo",
@@ -5412,6 +5485,16 @@ a fait entre-temps se lit **au journal du run**, étape `<tache>:question`, stat
 `question_sans_reponse`, sortie = l'hypothèse. C'est la raison pour laquelle il n'existe pas de
 statut « sans réponse » côté file : fermer la question dirait à l'écran qu'il n'y a plus rien à
 écrire, ce qui serait faux.
+
+⚠ **D'où `echeance`, ajoutée par le lot de l'écran (#1025)** : la borne, en **date**, posée à la
+publication. Le statut ne bougeant pas à la borne — et il a raison de ne pas bouger —, l'écran
+n'avait que deux recours pour dire que l'agent est déjà reparti, et les deux sont refusés par le
+dépôt : lire le chiffre dans la phrase `attente`, c'est-à-dire juger du texte par un motif (#746),
+ou recopier `BornesArbitrage.attente_s` côté navigateur, c'est-à-dire deux supports pour un même
+réglage. Elle voyage donc sur l'événement `question.demande` à côté de `detail`, exactement comme
+`hypothese` : `detail` est la **phrase** qu'un fil affiche sans rien composer, `echeance` le **fait**
+avec lequel on compare une horloge. Vide sur une question publiée avant ce lot, et l'écran dit alors
+« en attente » sans dire jusqu'à quand.
 
 **Le run n'est pas suspendu.** `_suspend_sur_arbitrage` (#571) existe parce qu'une tâche arrêtée sur
 un acte sensible l'est *indéfiniment* — sans décision, elle ne repart jamais. Une question a une

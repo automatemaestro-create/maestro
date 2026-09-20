@@ -604,7 +604,12 @@ class EtatQuestion:
     `attente` dit ce qui se passera sans réponse, en clair et borne comprise :
     c'est la phrase que l'événement de demande compose, et elle dit à qui lit
     **l'urgence** de la question — répondre dans la minute et répondre demain
-    n'ont pas le même effet.
+    n'ont pas le même effet. `echeance` (#1025) est la même borne en **date** :
+    la phrase se lit, la date se compare — c'est elle qui permet à un écran de
+    dire que l'agent est *déjà* reparti sur son hypothèse, sans lire un chiffre
+    dans une phrase ni recopier le réglage du moteur. Vide sur une question
+    publiée avant ce lot, et l'écran dit alors « en attente » sans dire
+    jusqu'à quand.
 
     `projet_id` (#277) est le projet de la tâche, hérité de l'événement : c'est ce
     qui rend la file filtrable comme le Kanban. `run_id` est le run dont l'agent
@@ -621,6 +626,7 @@ class EtatQuestion:
     agent: str = ""
     role: str = ""
     attente: str = ""
+    echeance: str = ""
     statut: str = QUESTION_EN_ATTENTE
     reponse: str = ""
     projet_id: str | None = None
@@ -644,6 +650,7 @@ class EtatQuestion:
             "agent": self.agent,
             "role": self.role,
             "attente": self.attente,
+            "echeance": self.echeance,
             "statut": self.statut,
             "reponse": self.reponse,
             "projet_id": self.projet_id,
@@ -2058,6 +2065,7 @@ class ControlTowerState:
             agent=event.agent,
             role=event.role,
             attente=event.detail,
+            echeance=event.echeance,
             projet_id=projet_id,
             run_id=event.run_id,
             horodatage=event.horodatage,

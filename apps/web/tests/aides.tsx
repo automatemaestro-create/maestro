@@ -294,6 +294,9 @@ function etatParDefaut(): ControlTower {
     agents: [],
     evenements: [],
     validations: [],
+    // Les questions d'agents (#1025) : aucune par défaut, comme les validations
+    // — un écran qui n'en exerce pas ne doit pas en voir arriver une.
+    questions: [],
     executions: [],
     couts: [],
     connecte: true,
@@ -308,6 +311,7 @@ function etatParDefaut(): ControlTower {
     decider: async () => {},
     trancherBrief: async () => {},
     repondreAuBrief: async () => {},
+    repondreAUneQuestion: async () => {},
     // Rend le **nouveau** run, comme la vraie : c'est lui qui porte `reprise_de`,
     // et un test qui n'en veut rien peut ignorer la valeur.
     relancerRun: async (runId: string) => ({
@@ -595,6 +599,16 @@ export function poserProjetActif(projet: Projet = projetFactice()): Projet {
  * Le **projet** lui est donné ici comme le shell le donne en vrai (#281) : sans
  * lui, aucun écran ne saurait nommer le vide qu'il affiche. Un test qui regarde
  * ce nom passe le sien en troisième argument ; les autres n'ont rien à changer.
+ *
+ * ⚠ Le `rerender` rendu est celui de Testing Library, **tel quel** : il remplace
+ * tout l'arbre par ce qu'on lui passe, fournisseur compris. Un test qui re-rend
+ * un composant lisant l'état global doit donc remonter le fournisseur lui-même
+ * (`regions-live.test.tsx` le fait depuis toujours ; `agent-chat.test.tsx` a dû
+ * s'y mettre quand `FilChat` a commencé à lire les questions d'agents, #1025).
+ * Le faire **ici** aurait paru plus commode et aurait doublé le fournisseur chez
+ * tous ceux qui l'enveloppent déjà — c'est-à-dire monté deux `useControlTower`
+ * sur le même projet, et fait taire les régions live qu'ils exercent (mesuré :
+ * 6 tests de `regions-live` muets).
  */
 export function rendreAvecEtat(
   ui: ReactNode,

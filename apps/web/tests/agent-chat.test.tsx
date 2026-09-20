@@ -32,12 +32,14 @@ import { describe, expect, it, vi } from "vitest";
 
 import { ContenuOngletAgent } from "@/components/ContenuOngletAgent";
 import { FilChat } from "@/components/FilChat";
+import { FournisseurEtatGlobal } from "@/lib/etatGlobal";
 
 import {
   canalCourant,
   canauxDemandes,
   messageFactice,
   poserFilAssistance,
+  projetFactice,
   rendreAvecEtat,
 } from "./aides";
 
@@ -66,11 +68,22 @@ describe("① l'onglet parle au fil de son agent", () => {
   });
 
   it("suit la fiche quand on passe à un autre agent", () => {
+    const projet = projetFactice();
     const { rerender } = rendreAvecEtat(
       <ContenuOngletAgent nom="dev" onglet="chat" />,
+      {},
+      projet,
     );
 
-    rerender(<ContenuOngletAgent nom="devops" onglet="chat" />);
+    // Le fournisseur est **remonté** : le `rerender` de Testing Library
+    // remplace tout l'arbre par ce qu'on lui passe, fournisseur compris, et
+    // l'onglet lit l'état global depuis qu'il porte les questions d'agents
+    // (#1025). Même geste que `regions-live.test.tsx`, pour la même raison.
+    rerender(
+      <FournisseurEtatGlobal projet={projet}>
+        <ContenuOngletAgent nom="devops" onglet="chat" />
+      </FournisseurEtatGlobal>,
+    );
 
     expect(canalCourant()).toBe("devops");
   });

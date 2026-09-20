@@ -494,6 +494,21 @@ class Event:
     # rien des choix » de « il n'y en a aucun », et une réponse ne doit pas
     # effacer ceux que la demande a posés.
     choix: list[str] | None = None
+    # L'instant où l'agent reprendra **sans** réponse (#1025) — la borne, en date
+    # plutôt qu'en durée. Chaîne vide ailleurs, et sur une question dont personne
+    # ne connaît la borne.
+    #
+    # Elle voyage alors que `detail` dit déjà la même chose en toutes lettres
+    # (« sans réponse d'ici 240 s… »), et ce n'est pas un doublon : `detail` est la
+    # **phrase** qu'un fil affiche sans rien composer, celle-ci est le **fait**
+    # avec lequel un écran compare son horloge. Sans elle, l'écran du lot #1025
+    # n'avait que deux recours pour savoir si la borne est passée — lire le
+    # chiffre dans la phrase, c'est-à-dire juger du texte par un motif (ce que le
+    # dépôt refuse, #746), ou recopier `BornesArbitrage.attente_s` côté
+    # navigateur, c'est-à-dire deux supports pour un même réglage. C'est le même
+    # partage que `hypothese` fait déjà avec `detail`, sur l'autre moitié de la
+    # phrase.
+    echeance: str = ""
     etape_run: str = ""
     horodatage: str = field(default_factory=_horodatage)
 
@@ -540,6 +555,7 @@ class Event:
             "question_id": self.question_id,
             "hypothese": self.hypothese,
             "choix": list(self.choix) if self.choix is not None else None,
+            "echeance": self.echeance,
             "etape_run": self.etape_run,
             "horodatage": self.horodatage,
         }
@@ -645,6 +661,10 @@ class Event:
             question_id=str(data.get("question_id") or ""),
             hypothese=str(data.get("hypothese") or ""),
             choix=(reponses_depuis(data["choix"]) if data.get("choix") is not None else None),
+            # Même régime (#1025) : la date passe telle quelle, sans être relue ni
+            # recalculée. Un événement émis avant ce lot n'en porte pas, et l'écran
+            # sait alors dire « en attente » sans savoir jusqu'à quand.
+            echeance=str(data.get("echeance") or ""),
             # Même régime que `decideur` et `cause` : la valeur brute passe telle
             # quelle. Un événement émis avant #989 n'en porte pas — son cadrage
             # restera compté en planification, et c'est juste : rien ne permet
