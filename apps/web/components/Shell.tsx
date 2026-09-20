@@ -314,9 +314,11 @@ function CadreControlTower({
             `#contenu-principal`. Une zone du shell n'est pas un bloc de plus
             dans l'écran, et une `<aside>` posée *dedans* aurait été la « sortie
             de secours » que docs/35 §3.4 nomme : la seule place sans plafond, où
-            un écran plein rangerait son quatrième bloc. La frontière portée par
-            le code, elle, reste le livrable du lot 8 (#929) — et ce lot-ci ne
-            relève pas `BLOCS_MAX`.
+            un écran plein rangerait son quatrième bloc. La frontière est portée
+            par le code depuis le lot 11 (#929, `frontiere-shell-ecran.test.tsx`)
+            et non par ce commentaire : ce qu'un écran rend hors de `<main>` est
+            comparé à ce que le shell rend seul. Et `BLOCS_MAX` ne se relève
+            jamais — il est confronté au texte de docs/30 §4.1.
             Après la colonne centrale dans le DOM, donc dernier dans l'ordre de
             tabulation : la conversation se consulte en marge du travail, elle ne
             se met pas devant. */}

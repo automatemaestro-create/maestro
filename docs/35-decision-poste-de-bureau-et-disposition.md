@@ -252,20 +252,29 @@ La **règle des trois places** ([docs/30 §4](./30-cible-visuelle-control-tower.
 colonne de propriétés sans plafond. Elle est comptée par `apps/web/tests/sobriete.test.tsx` sur les
 dix écrans du menu.
 
-Une zone du **shell** n'est pas un bloc de plus dans l'**écran**. Mais rien, aujourd'hui, ne porte
-cette distinction dans le code — et #539 a écrit pourquoi elle doit y être portée :
+Une zone du **shell** n'est pas un bloc de plus dans l'**écran**. Mais rien, au moment d'écrire ce
+cadrage, ne portait cette distinction dans le code — et #539 a écrit pourquoi elle doit y être
+portée :
 
 > il n'y a **qu'une** colonne de propriétés par écran, faute de quoi la seule place sans plafond
 > deviendrait la sortie de secours des deux autres.
 
 Une troisième zone du shell rendue comme une `<aside>` serait exactement cette sortie de secours : un
-écran plein pourrait y ranger son quatrième bloc. **Deux choses à ne pas défaire**, et le lot 8 en
+écran plein pourrait y ranger son quatrième bloc. **Deux choses à ne pas défaire**, et le lot 11 en
 fait son livrable :
 
 - la frontière est portée par le **code**, jamais par une convention — une règle qu'aucune machine ne
   vérifie ne tient pas (docs/30 §3.6) ;
 - on ne relève **jamais** `BLOCS_MAX` pour faire passer la refonte. Si le test rougit, c'est qu'il
   pose la bonne question.
+
+**Livré le 2026-09-20** (#929) : `apps/web/tests/frontiere-shell-ecran.test.tsx`. Ce qui est compté,
+et pourquoi c'est en trois temps, vit en un seul endroit —
+[docs/30 §4.6](./30-cible-visuelle-control-tower.md). En deux lignes : ce qu'un écran rend **hors**
+de `#contenu-principal` est comparé à ce que le shell rend **seul**, colonne ouverte comme fermée ;
+et les deux plafonds sont confrontés au texte de la règle, si bien que les relever demande de la
+réécrire. Le shell pose aujourd'hui deux `<aside>` — le rail de navigation et la conversation — et
+**aucune** `<section>` : il n'occupe ni le corps ni le bandeau de tête.
 
 ---
 
