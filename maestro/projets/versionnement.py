@@ -68,12 +68,10 @@ de passer en force.
 
 from __future__ import annotations
 
-import os
-import shutil
-import stat
 import subprocess
 from pathlib import Path
 
+from maestro.fichiers import retirer_arbre
 from maestro.projets.modele import AUTEUR_COURRIEL, AUTEUR_NOM, Vcs
 from maestro.projets.racine import canonique, detecter_vcs, valider_racine
 
@@ -169,17 +167,14 @@ def _retirer_depot_ne(dossier_git: Path) -> None:
     d'écriture là où POSIX ne regarde que le dossier. Le `.git` survivait donc
     **amputé** — `objects/` seul, sans `HEAD` —, c'est-à-dire exactement le
     « résidu trouvé sur place » que l'appel suivant s'interdit de retirer : un
-    échec en laissait un second, définitif. Le droit d'écriture est donc rendu à
-    chaque fichier avant la suppression ; ce qui résiste encore est laissé —
-    best-effort, comme avant, le refus motivé restant ce qui remonte.
+    échec en laissait un second, définitif.
+
+    Le geste lui-même n'est plus ici : #992 a rencontré la même coquille dans les
+    espaces de travail jetables, et deux orthographes d'un même remède finissent
+    par diverger (`maestro.fichiers.retirer_arbre`). Ce qui reste ici est ce qui
+    est propre à ce module — *quel* `.git` on retire, et pourquoi.
     """
-    for dossier, _sous_dossiers, fichiers in os.walk(dossier_git):
-        for nom in fichiers:
-            try:
-                os.chmod(Path(dossier) / nom, stat.S_IWRITE)
-            except OSError:
-                continue
-    shutil.rmtree(dossier_git, ignore_errors=True)
+    retirer_arbre(dossier_git)
 
 
 def _exige_hors_depot(chemin: Path) -> None:

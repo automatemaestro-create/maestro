@@ -2248,6 +2248,18 @@ dite mais jamais changée. ⚠ Son harnais **neutralise `powershell.exe` d'offic
 résolvant `$PROFILE` depuis son propre dossier Documents — sans ce shim, lancer la suite sur un
 poste Windows écrit dans le **vrai** profil de la personne (mesuré au premier passage).
 
+**Le même malentendu, en sens inverse : `/tmp` (#992).** Un Git Bash **de connexion** pose
+`TMPDIR=/tmp` *et* `TMP=/tmp`, et MSYS monte `/tmp` sur `%TEMP%`. Python sous Windows, lui, lit
+`/tmp` comme un chemin **enraciné sans lecteur** : il le résout donc sur le lecteur **courant** —
+`C:\tmp` quand le process travaille sur `C:`, rien du tout quand il travaille sur `E:`, auquel cas
+`tempfile` retombe silencieusement sur `%TEMP%`. Deux conséquences, mesurées le 2026-09-20 : un
+fichier écrit « dans `/tmp` » par un script bash est introuvable pour un script Python du même
+dépôt, et 76 espaces de travail d'agents dormaient sous `C:\tmp` sans que rien ne les y cherche.
+La règle de conduite : **ne jamais faire voyager un chemin temporaire entre bash et Python** — on
+passe un chemin natif, ou l'on reste d'un seul côté. Côté code, `maestro.sandbox.ramassage`
+(`racine_des_espaces`) écarte une valeur MSYS pour que les deux côtés retombent au même endroit ;
+son en-tête porte la mesure.
+
 ### 7.1 Permissions Claude Code (allowlist)
 
 Pour que les commandes du workflow — en particulier [`/ticket-ship`](../.claude/commands/ticket-ship.md) —

@@ -17,13 +17,15 @@ conteneur.
 
 from __future__ import annotations
 
-import shutil
 import tempfile
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Self
+
+from maestro.fichiers import retirer_arbre
+from maestro.sandbox.ramassage import marquer, racine_des_espaces
 
 #: Taille max d'un fichier dont on capture le contenu (octets). Au-delà, on garde le
 #: chemin mais pas le contenu : un livrable exploitable n'a pas à charger en mémoire
@@ -176,10 +178,21 @@ def isolated_workspace(
     `keep=True` conserve le répertoire (utile pour inspecter le livrable après coup),
     son chemin restant lisible via `Workspace.path`. Sinon il est supprimé **même en
     cas d'exception**, pour ne pas laisser de résidus sur le disque.
+
+    Trois précisions que #992 a ajoutées à cette phrase, parce qu'elle n'était pas
+    tenue (`maestro.sandbox.ramassage` les démontre) :
+
+    - **où** — `racine_des_espaces` plutôt que le défaut de `tempfile`, pour que
+      Python et le Bash de l'agent tombent au même endroit sous Windows (S13) ;
+    - **au nom de qui** — le pid de ce process est inscrit dans le nom
+      (`marquer`), seul moyen pour un ramassage ultérieur de distinguer l'espace
+      d'une tâche vivante de la dépouille d'un process tué (S6) ;
+    - **pour de bon** — `retirer_arbre` et non `shutil.rmtree(ignore_errors=True)`,
+      qui laissait une coquille `.git` dès qu'un agent avait fait un `git init`.
     """
-    path = Path(tempfile.mkdtemp(prefix=prefix))
+    path = Path(tempfile.mkdtemp(prefix=marquer(prefix), dir=racine_des_espaces()))
     try:
         yield Workspace(path=path)
     finally:
         if not keep:
-            shutil.rmtree(path, ignore_errors=True)
+            retirer_arbre(path)

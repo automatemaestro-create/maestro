@@ -26,6 +26,17 @@ si le projet est versionné, et depuis #839 **la racine elle-même** sinon
 
 `projet=None` retombe sur `isolated_workspace` : une tâche sans `projet_id` garde
 le répertoire jetable d'avant, au caractère près.
+
+Ce répertoire jetable **ne laisse plus rien derrière lui** depuis #992
+(`maestro.sandbox.ramassage`) : il naît sous une racine que Python et le Bash de
+l'agent résolvent au même endroit, il porte le pid de son process dans son nom,
+il est supprimé pour de bon (objets Git en lecture seule compris), et ce qu'un
+process tué a laissé est **ramassé** au démarrage de l'hôte suivant — jamais
+l'espace d'une tâche vivante, jamais un worktree porteur de travail non commité.
+
+    from maestro.sandbox import ramasser
+
+    ramasser()  # best-effort, muet quand il n'y a rien à retirer
 """
 
 from __future__ import annotations
@@ -44,6 +55,7 @@ from maestro.sandbox.projet import (
     branche_de_tache,
     espace_de_travail,
 )
+from maestro.sandbox.ramassage import Ramassage, racine_des_espaces, ramasser
 from maestro.sandbox.workspace import ProducedFile, Workspace, isolated_workspace
 
 __all__ = [
@@ -54,10 +66,13 @@ __all__ = [
     "FrontiereEcriture",
     "IsolationConfig",
     "ProducedFile",
+    "Ramassage",
     "Workspace",
     "branche_de_tache",
     "chemin_atelier",
     "espace_de_travail",
     "frontiere_de",
     "isolated_workspace",
+    "racine_des_espaces",
+    "ramasser",
 ]
