@@ -397,6 +397,38 @@ distinguent plus sur le disque — les deux donnent le même contexte au même a
 l'intention les sépare. Et la vérification se fait **sur un run réel** : la mesure ci-dessus dit ce
 que le contrat du SDK promet, pas ce qu'un CLI fait.
 
+### 5.4 Ce que #1032 a fermé, et ce qui a été mesuré
+
+Fait le 2026-09-20 (`claude_agent_sdk` 0.2.128, `claude-haiku-4-5`), sur des runs réels et sur un
+projet **outillé à la main** — le manifeste, `AGENTS.md`, un pont et un skill écrits pour la mesure.
+Chaque sonde donne à l'agent un contexte dont **un seul** fragment doit ressortir, et lui retire les
+outils qui lui permettraient d'aller lire ce qu'on ne lui a pas donné.
+
+| Ce qu'on mesure | Sans le lot | Avec `setting_sources=[]` et `skills=[]` |
+| --- | --- | --- |
+| Mot-témoin d'un `CLAUDE.md` posé dans le `cwd` | **ressort** dans la réponse | absent |
+| Mot-témoin d'un `AGENTS.md` **déclaré au manifeste** | — | **ressort** : il est transmis |
+| Mot-témoin du **corps** d'un `SKILL.md` déclaré | — | absent : seul l'index part |
+
+La porte était donc bien ouverte, et elle est fermée. Trois conséquences que la mesure fixe, et qui
+ne se supposent plus :
+
+- **`AGENTS.md` du projet n'entre pas par le CLI**, même sans `CLAUDE.md` à côté : ce qui entre,
+  c'est ce que Maestro transmet (`maestro.outillage.contexte`), dérivé du manifeste ;
+- **la portée déclarée est la portée transmise** — `"portee": "bloc"` transmet le bloc, pas le
+  fichier qui l'entoure. Même règle qu'à l'écriture (§4.2), appliquée dans l'autre sens : ce qui
+  entoure le bloc n'a été écrit ni déclaré par personne. Qui veut le fichier entier le déclare en
+  `"portee": "fichier"` ;
+- **`allowed-tools:` est inerte, et c'est mesuré aussi.** Sonde : un skill du projet déclare
+  `allowed-tools: Bash, Read, Write` et porte un script qui écrit un fichier-témoin ; l'agent, dont
+  la politique soumet `Bash` à un arbitrage sans canal, essaie deux fois, est refusé deux fois, et
+  le fichier-témoin n'existe pas à la sortie. Le champ est **signalé comme ignoré** plutôt que
+  silencieusement sauté : l'inertie se voit au lieu de se supposer.
+
+Reste vrai ce que §5.1 disait déjà, et que le lot n'a pas eu à changer : un `.mcp.json` du projet ne
+monte rien (`strict_mcp_config`). Les deux verrous ne se remplacent pas — l'un ferme les serveurs
+MCP, l'autre les réglages, les fichiers d'instructions et les skills.
+
 ## 6. Ce qui est écarté, et pourquoi
 
 | Écarté | Pourquoi |
@@ -423,9 +455,10 @@ se **revérifie**, jamais ne se suppose :
   le faisait, elle l'emporterait sur ce choix, qui n'existe que pour combler son silence.
 - **Un format de commande commun apparaît.** §3.5 redeviendrait un arbitrage plutôt qu'un constat.
 
-Et une qui tient au dépôt : **la frontière de §5.3 se mesure, elle ne se décrète pas**. Si une
-mesure sur un run réel montre qu'un `CLAUDE.md` de projet n'entre pas dans le contexte, c'est la
-mesure qui a raison et ce paragraphe qui se corrige.
+Et une qui tient au dépôt : **la frontière de §5.3 se mesure, elle ne se décrète pas**. La mesure a
+été faite (§5.4) et elle a confirmé §5.3 — un `CLAUDE.md` de projet entrait bien dans le contexte.
+Elle reste à **rejouer** quand le SDK ou le CLI bougent : c'est le contrat d'une version qu'elle
+constate, pas une propriété acquise.
 
 ## 8. Ce que les lots suivants en tiennent
 
@@ -433,7 +466,7 @@ mesure qui a raison et ce paragraphe qui se corrige.
 | --- | --- |
 | #1030 — analyse d'un projet existant | Le dossier de scripts se **constate** (§3.4) ; ce qu'elle recommande remplit `source` du manifeste (§4.1) |
 | #1031 — choix d'un projet neuf | Les choix remplissent `source` de la même façon ; l'arbre de §3.6 est la cible |
-| #1032 — les agents lisent l'outillage | §5 en entier, et `setting_sources=[]` comme condition (§5.3) |
+| #1032 — les agents lisent l'outillage | §5 en entier, et `setting_sources=[]` comme condition (§5.3). **Fait**, mesuré en §5.4 |
 | #1033 — génération | §3.6 pour l'arbre, §4.2 pour les quatre cas, et le nom d'atelier réservé (§4.3) |
 | #1034 — parcours de création | L'étape d'outillage écrit ce que §3.6 décrit, et reste reportable ([docs/37 §4.6](./37-decision-equipe-sur-mesure.md)) |
 | #1035 — tests + doc | Les faits de §2 se revérifient ; §7 dit lesquels |

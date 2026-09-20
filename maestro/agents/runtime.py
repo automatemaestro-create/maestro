@@ -28,6 +28,7 @@ from maestro.agents.permissions import PolitiqueOutils
 from maestro.config import Settings, load_settings
 from maestro.deliberation import CreditArbitrage
 from maestro.detail_tache import EtapeTache
+from maestro.outillage import outillage_du_projet
 from maestro.projets.modele import Projet
 from maestro.projets.secrets import enregistre_secrets_du_projet
 from maestro.providers.arbitrage import Arbitre, ArbitreActe
@@ -336,6 +337,16 @@ class AgentRuntime:
         `maestro.sandbox.container`) et pour armer, en place, la **frontière
         d'écriture** sur ses outils de fichiers.
 
+        Une troisième depuis #1032, et c'est celle qui referme la frontière de
+        docs/38 §5 : l'**outillage du projet** — `AGENTS.md` et l'index de ses
+        skills, dérivés du manifeste et bornés à ce qu'il déclare
+        (`maestro.outillage.contexte`) — est ajouté au **message de la tâche**.
+        Il est lu dans la racine du projet, pas dans l'espace dérivé : un
+        worktree n'en porte que ce qui est commité, et le manifeste, lui, vit
+        sous `.maestro/`. C'est la moitié « transmis explicitement » de la
+        règle ; l'autre moitié est le refus de le laisser entrer tout seul, qui
+        vit chez le fournisseur (`setting_sources=[]`, `skills=[]`).
+
         `effort` (#253) remplace, pour **cette exécution**, l'effort du runtime —
         même canal à chaud que `system_prompt` pour les playbooks, et pour la même
         raison : le réglage vit sur la définition de l'agent, que l'exécuteur
@@ -367,6 +378,12 @@ class AgentRuntime:
         # dans un résumé d'agent ou une trace.
         if projet is not None:
             enregistre_secrets_du_projet(projet)
+        # L'outillage du projet (#1032, docs/38 §5) : lu **avant** d'ouvrir
+        # l'espace, parce qu'il vit dans la racine du projet et pas dans l'espace
+        # dérivé — un worktree n'en porte que ce qui est commité. Vide sans
+        # projet, sans manifeste, ou quand le périmètre le retire : le message
+        # est alors celui d'avant ce lot, à la ligne près.
+        outillage = outillage_du_projet(projet)
         # Le mot-clé ne part que s'il a quelque chose à dire (#253) : hors réglage
         # admis, l'appel au fournisseur est au bit près celui d'avant ce lot.
         reglage = self._provider.effort_admis(self._model, effort or self._effort)
@@ -382,7 +399,11 @@ class AgentRuntime:
             # projet nomme son atelier, un répertoire jetable n'ajoute rien), et
             # c'est l'espace, seul, qui sait lequel il est.
             prompt = _build_prompt(
-                self._profile, description, format_sortie, ws.consigne_espace()
+                self._profile,
+                description,
+                format_sortie,
+                ws.consigne_espace(),
+                outillage.consigne(),
             )
             resume = await self._provider.run_agent(
                 prompt,
@@ -420,6 +441,7 @@ def _build_prompt(
     description: str,
     format_sortie: str | None,
     espace: str = "",
+    outillage: str = "",
 ) -> str:
     """Compose le message confié à l'agent : la tâche encadrée par les consignes du rôle.
 
@@ -429,10 +451,21 @@ def _build_prompt(
     cas le message est celui d'avant, à la ligne près. Posé après les consignes
     du rôle et avant le format de sortie : les consignes disent *comment*
     travailler, celle-ci dit *où* déposer quoi.
+
+    `outillage` (#1032) est l'outillage du projet — `AGENTS.md` et l'index de ses
+    skills —, que Maestro **transmet** au lieu de le laisser entrer tout seul
+    (`maestro.outillage.contexte`, docs/38 §5). Il vient **après** les consignes
+    du rôle et juste avant le format de sortie, et cet ordre est une décision :
+    les consignes d'un rôle viennent de Maestro, celles d'un projet du projet, et
+    c'est Maestro qui a le dernier mot sur ce que son agent est. Vide quand le
+    projet n'est pas outillé — le cas le plus courant —, auquel cas le message
+    est là encore celui d'avant.
     """
     lignes = [profile.intro_tache, "", description, "", profile.consignes]
     if espace:
         lignes += ["", espace]
+    if outillage:
+        lignes += ["", outillage]
     if format_sortie:
         lignes += ["", f"Format de sortie attendu : {format_sortie}"]
     lignes += ["", profile.consigne_finale]

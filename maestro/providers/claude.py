@@ -51,7 +51,7 @@ from claude_agent_sdk import (
     query,
     tool,
 )
-from claude_agent_sdk.types import HookInput
+from claude_agent_sdk.types import HookInput, SettingSource
 
 from maestro.acte import arguments_depuis
 from maestro.config import ConfigError, Settings
@@ -118,6 +118,60 @@ _MCP_CONNEXION_MAX_S: float = 60.0
 
 #: Période du sondage de statut pendant l'attente de connexion des serveurs MCP.
 _MCP_SONDAGE_S: float = 0.5
+
+def sans_reglages_du_poste() -> list[SettingSource]:
+    """**Aucune source de réglages de fichiers** (#1032, docs/38 §5.3).
+
+    Le SDK documente son défaut : « When `None`, all sources are loaded (matches
+    CLI defaults). Pass `[]` to disable filesystem settings (SDK isolation
+    mode). Must include `"project"` to load CLAUDE.md files. » Sans cette liste
+    vide, le `~/.claude/settings.json` du poste, le `.claude/settings.json` du
+    répertoire courant **et son `CLAUDE.md`** entrent dans la session — ce
+    dernier étant précisément le fichier que Maestro écrira lui-même dans le
+    projet à partir de #1033, si bien que son runtime se relirait sans le savoir
+    (docs/38 §5.2).
+
+    Mesuré sur un run réel le 2026-09-20 (`claude_agent_sdk` 0.2.128, agent sans
+    aucun outil, donc incapable de lire un fichier) : sans elle, le mot-témoin
+    d'un `CLAUDE.md` posé dans le `cwd` ressort dans la réponse de l'agent ;
+    avec elle, l'agent répond qu'il n'en voit aucun. C'est la vérification que
+    docs/38 §5.3 et §7 exigeaient — le contrat du SDK dit ce qu'il promet, pas
+    ce que le CLI fait.
+
+    ⚠ Elle **ne remplace pas** `strict_mcp_config`, et l'inverse non plus :
+    l'une ferme les serveurs MCP ambiants, l'autre les réglages et les fichiers
+    d'instructions. Retirer l'une parce que l'autre est là rouvrirait une moitié
+    de la porte.
+
+    Une **fonction** et non une constante partagée : le SDK garde la liste qu'on
+    lui donne, et une liste de module se ferait modifier une fois pour toutes
+    les sessions. Un tuple vide aurait la même sûreté mais pas le bon type — le
+    SDK attend une `list`.
+    """
+    return []
+
+
+def sans_skills_du_poste() -> list[str]:
+    """**Aucun skill découvert par le CLI** (#1032).
+
+    `None` n'est *pas* « skills off » — la docstring du SDK le dit en toutes
+    lettres —, c'est « les défauts du CLI » : les skills du `cwd`, ceux de ses
+    parents et ceux du poste. Or un skill de projet peut déclarer
+    `allowed-tools:`, que la spécification décrit comme des outils
+    « pré-approuvés » : chez nous une permission se déclare par une personne,
+    outil par outil (docs/32), et aucun fichier du projet ne peut en poser une —
+    fût-il écrit par Maestro (docs/38 §5.1).
+
+    Les skills du projet ne sont pas perdus pour autant : ils sont **transmis**,
+    par leur index, dans le message de la tâche (`maestro.outillage.contexte`),
+    et l'agent ouvre celui qu'il lui faut avec ses propres outils de lecture.
+    Ses scripts se lancent alors comme n'importe quelle commande — sous la
+    politique de l'agent, jamais au-delà.
+
+    Même forme que `sans_reglages_du_poste`, et pour la même raison.
+    """
+    return []
+
 
 _E = TypeVar("_E", bound=BaseException)
 
@@ -306,6 +360,8 @@ class ClaudeProvider(ModelProvider):
             tools=[],
             stderr=stderr,
             effort=self._effort_sdk(model, effort),
+            setting_sources=sans_reglages_du_poste(),
+            skills=sans_skills_du_poste(),
         )
         return await _collect_response(prompt, options, stderr=stderr)
 
@@ -343,6 +399,8 @@ class ClaudeProvider(ModelProvider):
             stderr=stderr,
             include_partial_messages=True,
             effort=self._effort_sdk(model, effort),
+            setting_sources=sans_reglages_du_poste(),
+            skills=sans_skills_du_poste(),
         )
         async for morceau in _stream_response(prompt, options, stderr=stderr):
             yield morceau
@@ -402,6 +460,23 @@ class ClaudeProvider(ModelProvider):
         concluant sans ses capacités. Un serveur en échec (démarrage, auth) ou
         jamais connecté à l'échéance lève `McpServerUnavailable` (serveur et
         cause nommés) **avant** tout appel modèle.
+
+        `setting_sources=[]` et `skills=[]` (#1032, docs/38 §5.3) ferment
+        l'**autre** moitié de la configuration ambiante : les réglages de
+        fichiers du poste et du répertoire courant, le `CLAUDE.md` qui s'y
+        trouve, et les skills que le CLI y découvrirait. La porte que
+        `strict_mcp_config` fermait sur les serveurs MCP était restée ouverte
+        là-dessus — mesuré sur un run réel, cf. `sans_reglages_du_poste` —, et
+        elle devient le cas nominal dès lors que Maestro écrit lui-même un
+        `CLAUDE.md` et des skills dans le projet où son propre runtime travaille
+        (docs/38 §5.2).
+
+        Ce qui remplace cette lecture n'est pas un silence mais une
+        **transmission** : l'outillage déclaré au manifeste du projet part dans
+        le *message de la tâche*, dérivé et borné par
+        `maestro.outillage.contexte`, posé par `maestro.agents.runtime`. Le
+        fournisseur n'a rien à en connaître — il ne fait que refuser tout autre
+        chemin d'entrée.
 
         Par défaut, l'isolation est *au niveau du système de fichiers* — un shell
         pourrait en principe adresser des chemins hors du `cwd`. Le renfort est le
@@ -594,6 +669,8 @@ class ClaudeProvider(ModelProvider):
             effort=self._effort_sdk(model, effort),
             mcp_servers=serveurs,
             strict_mcp_config=True,
+            setting_sources=sans_reglages_du_poste(),
+            skills=sans_skills_du_poste(),
             hooks=(
                 {
                     "PreToolUse": [
