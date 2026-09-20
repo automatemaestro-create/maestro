@@ -93,11 +93,21 @@ export function RepartitionAgents({
   orchestration?: CoutAgentAgrege | null;
 }) {
   if (agents.length === 0) {
+    /* Deux vides, et deux phrases : l'orchestration est désormais une
+       population à part, donc « aucun usage attribué **à un agent** » — le
+       libellé d'avant #1028 — taisait la seconde. Le premier vide ne restreint
+       donc plus à personne ; le second nomme ce qui manque, l'orchestration
+       étant déjà chiffrée juste au-dessus par `EtiquetteOrchestration`.
+       ⚠ **Les deux tiennent sur une ligne**, et c'est une contrainte de
+       disposition, pas une préférence : cette carte partage sa rangée avec
+       « Évolution du coût », et une phrase qui s'enveloppe la fait descendre
+       plus bas que sa voisine (relevé à la relecture visuelle de #1028, sur une
+       première rédaction à 71 caractères). */
     return (
       <p className="text-sm text-neutral-500 dark:text-neutral-400">
         {orchestration
           ? "Aucun agent n'a travaillé sur la période."
-          : "Aucun usage attribué sur la période."}
+          : "Aucun usage sur la période."}
       </p>
     );
   }

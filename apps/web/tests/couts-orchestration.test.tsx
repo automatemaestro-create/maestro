@@ -24,7 +24,13 @@
  * 3. les parts se comptent sur le **tout** — l'étiquette et la liste annoncent
  *    des pourcentages du même dénominateur, et ils font 100 % ensemble ;
  * 4. rien de mesuré ≠ zéro : sans poste d'orchestration, l'en-tête ne rend rien
- *    plutôt qu'un « 0,00 $US » qui affirmerait qu'elle n'a rien coûté.
+ *    plutôt qu'un « 0,00 $US » qui affirmerait qu'elle n'a rien coûté ;
+ * 5. les deux vides **distinguent** ce qui est vide — « aucun usage » quand
+ *    rien n'a dépensé, « aucun agent n'a travaillé » quand seule
+ *    l'orchestration a dépensé. Le libellé d'avant #1028 (« aucun usage
+ *    attribué **à un agent** ») ne parlait que d'une population : depuis qu'il
+ *    y en a deux, il taisait la seconde. Les deux tiennent sur **une ligne**,
+ *    la carte partageant sa rangée avec « Évolution du coût ».
  */
 
 import { render, screen, within } from "@testing-library/react";
@@ -103,6 +109,26 @@ describe("la répartition des coûts et l'orchestration", () => {
     );
 
     expect(container).toBeEmptyDOMElement();
+  });
+
+  it("distingue les deux vides, sans restreindre au parc", () => {
+    const sansRien = render(<RepartitionAgents agents={[]} />);
+    expect(sansRien.container).toHaveTextContent("Aucun usage sur la période.");
+    // Le libellé d'avant #1028 restreignait à une population sur deux : le
+    // remettre ferait taire l'orchestration dans l'état où l'on vérifie
+    // justement qu'elle n'a rien dépensé.
+    expect(sansRien.container).not.toHaveTextContent("à un agent");
+    sansRien.unmount();
+
+    // L'autre vide, que ce même libellé aurait décrit à l'envers : quelque
+    // chose a bien été dépensé, simplement pas par le parc — et l'en-tête le
+    // chiffre juste au-dessus.
+    const sansAgent = render(
+      <RepartitionAgents agents={[]} orchestration={ORCHESTRATION} />,
+    );
+    expect(sansAgent.container).toHaveTextContent(
+      "Aucun agent n'a travaillé sur la période.",
+    );
   });
 
   it("garde la liste intacte quand il n'y a pas d'orchestration", () => {

@@ -200,7 +200,7 @@ describe("les indicateurs de tête (IndicateursTableauDeBord)", () => {
     });
     expect(tuile("Agents")).toHaveTextContent("1 sur ce projet · 1 libre(s)");
     expect(tuile("Agents")).toHaveTextContent(
-      "3 agent(s) hors orchestration · 0 occupé(s) ailleurs · 1 désactivé(s)",
+      "3 agent(s), hors orchestration · 0 occupé(s) ailleurs · 1 désactivé(s)",
     );
   });
 

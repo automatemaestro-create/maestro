@@ -154,12 +154,20 @@ export function IndicateursTableauDeBord({
   // désormais la même population que celle de `/agents`.
   //
   // Le détail le **dit** plutôt que de laisser le compte passer de 6 à 5 sans
-  // explication — « hors orchestration ». Il a fallu, pour le loger, céder le
-  // « du poste » d'avant : le détail tient sur **deux lignes**, et une tuile plus
-  // haute que ses trois voisines se voit dans une rangée (mesuré sur les
-  // variantes de #1028, où la mention en plus faisait une troisième ligne). Le
-  // cadre du poste n'est pas perdu pour autant : « occupé(s) ailleurs » ne veut
-  // rien dire d'autre qu'un parc partagé entre projets.
+  // explication — « hors orchestration ». Deux points de rédaction, tous deux
+  // relevés à la relecture visuelle de #1028 et tous deux contraints :
+  //
+  // - **la virgule n'est pas un ornement.** Séparée par un « · » comme les
+  //   deux membres suivants, l'exclusion se lisait comme un troisième état
+  //   d'occupation (« occupés ailleurs », « désactivés », « hors
+  //   orchestration ») ; la virgule la rattache au **compte**, qui est ce
+  //   qu'elle qualifie ;
+  // - **le « du poste » d'avant a été cédé.** Le détail doit tenir sur **deux
+  //   lignes** — une tuile plus haute que ses trois voisines se voit dans une
+  //   rangée —, et la forme qui garde les deux mentions en fait trois. Le
+  //   cadre du poste n'est pas perdu pour autant : « occupé(s) ailleurs » ne
+  //   veut rien dire d'autre qu'un parc partagé entre projets, et la valeur de
+  //   tête dit déjà « sur ce projet ».
   //
   // Le croisement se fait sur les **identifiants** de `taches_en_cours` et non
   // sur le nom de l'agent : c'est la donnée dont le backend dérive lui-même
@@ -229,7 +237,7 @@ export function IndicateursTableauDeBord({
       detail:
         agents.length === 0
           ? "aucun agent connu"
-          : `${agents.length} agent(s) hors orchestration · ${ailleurs} occupé(s) ailleurs · ${desactives} désactivé(s)`,
+          : `${agents.length} agent(s), hors orchestration · ${ailleurs} occupé(s) ailleurs · ${desactives} désactivé(s)`,
       renvoi: pageAgents && {
         href: pageAgents.href,
         libelle: "Voir les agents",
