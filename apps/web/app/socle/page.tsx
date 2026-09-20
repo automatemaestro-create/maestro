@@ -160,11 +160,17 @@ function ListeFiltreVue({ cle }: { cle: string }) {
   );
 }
 
-/** Un aplat de couleur et le token qui le porte — la forme d'Atlassian. */
+/**
+ * Un aplat de couleur et le token qui le porte — la forme d'Atlassian.
+ *
+ * Son rayon et sa paire de padding viennent du **barème** (`rounded-controle`,
+ * `px-3 py-1.5` — #982, #983) : un catalogue du socle qui s'écrirait hors du
+ * barème pour se montrer lui-même mentirait sur ce qu'il montre.
+ */
 function Aplat({ classe, sur }: { classe: string; sur?: string }) {
   return (
     <span
-      className={`inline-flex ${CIBLE_MINIMALE} min-w-16 items-center justify-center rounded-md border border-bord px-2 py-2 text-annexe ${classe}`}
+      className={`inline-flex min-w-16 items-center justify-center rounded-controle border border-bord px-3 py-1.5 text-annexe ${classe}`}
     >
       {sur ?? " "}
     </span>
@@ -770,7 +776,7 @@ function Scene({
       data-theme={theme}
       role="group"
       aria-label={libelle}
-      className={`rounded-lg border border-bord bg-surface-creuse p-3 text-texte ${className}`}
+      className={`rounded-carte border border-bord bg-surface-creuse p-3 text-texte ${className}`}
     >
       {children}
     </div>
@@ -841,7 +847,9 @@ function BlocVu({ bloc }: { bloc: Bloc }) {
 
 export default function PageSocle() {
   return (
-    <div className="flex flex-col gap-6 p-4 sm:p-6">
+    // `p-4` et non un `sm:p-6` de plus : le padding d'un conteneur se prend
+    // dans le barème (#983), et `aeree` en est le pas le plus large.
+    <div className="flex flex-col gap-6 p-4">
       <header className="flex flex-col gap-2">
         <h2 className="text-page font-semibold tracking-tight">Catalogue du socle</h2>
         <p className="text-corps text-texte-secondaire">
