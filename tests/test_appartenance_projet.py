@@ -558,6 +558,51 @@ def test_les_validations_d_un_projet_ne_montrent_que_les_siennes(
     assert vues[0]["projet_id"] == projet
 
 
+def test_les_questions_d_un_projet_ne_montrent_que_les_siennes(
+    projets: ServiceProjets, ids: tuple[str, str]
+) -> None:
+    """La file des **questions d'agents** (#1023) se cadre comme sa voisine (#1027).
+
+    Elle est arrivée après la vague #277 et par une autre porte — un canal du
+    moteur, pas une vue —, si bien que son `?projet=` obligatoire n'avait aucun
+    lecteur ici. La raison est celle des validations, et elle est même plus
+    directe : répondre à une question fait **reprendre un agent**, et répondre
+    pour un travail qu'on ne pilote pas est la faute que cette vague existe pour
+    empêcher.
+
+    Le **repli sur la tâche** est éprouvé positivement au passage : la question
+    retenue ne porte **aucun** `projet_id` et hérite de celui de sa tâche, déjà
+    projetée — c'est le cas courant, puisqu'un `tache.statut` précède toujours la
+    question d'une tâche en vol.
+    """
+    projet, autre = ids
+    state = ControlTowerState()
+    state.appliquer(_evenement(tache_id="t1", run_id="run-1", projet_id=projet))
+    state.appliquer(_evenement(tache_id="t2", run_id="run-2", projet_id=autre))
+    # `t1` hérite (aucun projet sur l'événement), `t2` porte le sien.
+    for tache, porte in (("t1", None), ("t2", autre)):
+        state.appliquer(
+            Event(
+                type="question.demande",
+                tache_id=tache,
+                agent="bdd",
+                titre="Rédiger le schéma",
+                description="Postgres ou SQLite ?",
+                hypothese="je pars sur SQLite",
+                question_id=f"{tache}:9f1c",
+                projet_id=porte,
+            )
+        )
+
+    with TestClient(
+        create_app(bus=InMemoryEventBus(), state=state, projets=projets)
+    ) as client:
+        vues = client.get("/api/questions", params={"projet": projet}).json()
+
+    assert [q["question_id"] for q in vues] == ["t1:9f1c"]
+    assert vues[0]["projet_id"] == projet
+
+
 # --- ⑥ Le journal requêtable, cadré comme les autres vues (#277) --------------
 #
 # Le journal n'était servi que par les **fixtures** jusqu'à #478 — sans elles il

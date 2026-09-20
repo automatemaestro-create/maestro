@@ -32,6 +32,8 @@ import {
   EVENEMENT_TACHE_STATUT,
   EXECUTION_ANNULEE,
   EXECUTION_EN_COURS,
+  ORIGINE_TRANCHEE,
+  QUESTION_EN_ATTENTE,
   TAILLE_PAGE_JOURNAL_MAX,
 } from "@/lib/types";
 import type {
@@ -44,6 +46,8 @@ import type {
   CoutTacheAgregee,
   ConversationChat,
   CouloirFrise,
+  Decision,
+  DecisionsRun,
   DossierExplorateur,
   EntreeFrise,
   EntreeJournal,
@@ -56,6 +60,7 @@ import type {
   PageExplorateur,
   PageJournal,
   Projet,
+  Question,
   ResumeExecution,
   SourceDeclaree,
   Tache,
@@ -896,6 +901,82 @@ export function evenementFactice(partiel: Partial<Evenement> = {}): Evenement {
     ticket: null,
     projet_id: null,
     horodatage: "2026-07-28T10:00:00Z",
+    ...partiel,
+  };
+}
+
+/**
+ * Une **question libre** posée par un agent (#1023, §6.17), en attente.
+ *
+ * Les défauts décrivent le cas le plus courant du canal : une question à choix,
+ * avec son hypothèse et la phrase d'attente que l'API compose — c'est-à-dire
+ * tout ce que la carte du fil a besoin de rendre. `echeance` est **vide** par
+ * défaut, comme sur une question publiée avant #1025 : c'est ce que rend un
+ * backend antérieur au lot, donc le cas qu'un écran doit savoir traiter (il dit
+ * alors « en attente » sans dire jusqu'à quand). Un test qui joue la borne la
+ * pose.
+ */
+export function questionFactice(partiel: Partial<Question> = {}): Question {
+  return {
+    question_id: "t2:9f1c0a4bd3",
+    tache_id: "t2",
+    titre: "Rédiger le schéma de données",
+    question: "Postgres ou SQLite pour la démo ?",
+    hypothese: "je pars sur SQLite, plus simple à embarquer",
+    choix: ["Postgres", "SQLite"],
+    agent: "bdd",
+    role: "Base de données",
+    attente:
+      "sans réponse d'ici 240 s, l'agent reprendra sur son hypothèse : je pars sur SQLite, plus simple à embarquer",
+    echeance: "",
+    statut: QUESTION_EN_ATTENTE,
+    reponse: "",
+    projet_id: null,
+    run_id: "run-1",
+    horodatage: "2026-09-20T09:12:31+00:00",
+    ...partiel,
+  };
+}
+
+/** Une décision qu'un agent a tranchée **seul** (#1026) — famille `tranchee`. */
+export function decisionFactice(partiel: Partial<Decision> = {}): Decision {
+  return {
+    id: "j-0031",
+    origine: ORIGINE_TRANCHEE,
+    hypothese: false,
+    tache_id: "api-crud",
+    tache: "API CRUD",
+    agent: "developpeur",
+    role: "Développeur",
+    decision: "Pagination en curseur plutôt qu'en offset",
+    raison: "la liste est triée par date et l'offset dérive à chaque insertion",
+    horodatage: "2026-09-20T17:04:11+00:00",
+    ...partiel,
+  };
+}
+
+/**
+ * Les décisions d'un run (#1026), **dérivées de ses entrées** : `total` et
+ * `hypotheses` se comptent sur ce qu'on lui passe, `tronquee` s'en déduit.
+ *
+ * Rien n'y est retrié — le tri (du plus récent au plus ancien) appartient au
+ * backend, et une fabrique qui le rejouerait finirait par le contredire. C'est
+ * la règle de `friseFactice` et de `grapheFactice`, et elle a ici la même
+ * conséquence utile : un test qui veut vérifier que le front **n'invente pas
+ * d'ordre** pose ses entrées dans l'ordre qu'il veut lire.
+ */
+export function decisionsRunFactice(
+  partiel: Partial<DecisionsRun> = {},
+): DecisionsRun {
+  const entrees: Decision[] = partiel.entrees ?? [];
+  const total = partiel.total ?? entrees.length;
+  return {
+    run_id: "run-1",
+    entrees,
+    total,
+    hypotheses: entrees.filter((entree) => entree.hypothese).length,
+    plafond: 200,
+    tronquee: total > entrees.length,
     ...partiel,
   };
 }

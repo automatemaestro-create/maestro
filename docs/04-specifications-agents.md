@@ -24,8 +24,28 @@ Jusqu'à #295 le playbook « du code » était une **chaîne Python** de trois p
 
 Deux morceaux sont communs à tous les rôles et vivent à part, appelés par les marqueurs `{{socle}}` et `{{cadre}}` que la lecture substitue (un marqueur inconnu ou mal fermé lève : mieux vaut un import en échec qu'un prompt système servi avec un trou) :
 
-- **`_socle.md` — le régime sénior** (#293), le cœur du dispositif. Il porte les trois volets que tout rôle applique : **ce qu'il décide seul** (l'approche, les patrons, les bibliothèques, l'ordre de travail — tout ce qui est réversible, sans demander d'accord) ; **ce qu'il remonte au lieu de le décider** (l'irréversible et le destructif, le hors-périmètre, le risque non couvert) ; **ce qu'il rend** (deux sections obligatoires, « Décisions & arbitrages » et « Recommandations »). Sa règle centrale : *une hypothèse énoncée vaut mieux qu'une question posée* — personne ne répond en cours de tâche, donc on tranche, on le signale, et on avance.
-  ⚠ **Cette règle centrale tombe** (2026-09-19, [docs/37 §2.2](./37-decision-equipe-sur-mesure.md)). Un agent **demande** quand la décision requiert un humain, et sa tâche est suspendue jusqu'à la réponse ou une borne (#1023). Il tranche seul le reste **et le consigne** (#1024). Les deux autres volets du socle restent.
+- **`_socle.md` — le régime sénior** (#293), le cœur du dispositif. Il porte les trois volets que tout rôle applique : **ce qu'il décide seul** (l'approche, les patrons, les bibliothèques, l'ordre de travail — tout ce qui est réversible, sans demander d'accord) ; **ce qu'il remonte au lieu de le décider** (l'irréversible et le destructif, le hors-périmètre, le risque non couvert) ; **ce qu'il rend** (deux sections obligatoires, « Décisions & arbitrages » et « Recommandations »). Sa règle centrale disait : *une hypothèse énoncée vaut mieux qu'une question posée* — personne ne répond en cours de tâche, donc on tranche, on le signale, et on avance.
+  ⚠ **Cette règle centrale est tombée** (2026-09-19, [docs/37 §2.2](./37-decision-equipe-sur-mesure.md), chantier #1019) et le socle dit désormais l'inverse : voir le §1.2bis, qui porte le régime en deux moitiés. Les deux autres volets du socle restent.
+
+#### 1.2bis Ce qu'un agent demande, et ce qu'il tranche seul
+
+Le régime tient en une phrase, et elle est écrite telle quelle dans `_socle.md` : **ce qui demande un humain se demande ; tout le reste se tranche seul, et ce qui est tranché seul se consigne.** C'est ce que docs/37 §2.2 a décidé, et les deux moitiés sont indissociables — la première sans la seconde ferait de chaque tâche une file d'attente humaine, la seconde sans la première rendrait l'autonomie invérifiable.
+
+**Trois familles de décisions, et elles seules, demandent un humain** (le socle les nomme, aucune règle ne les détecte — c'est le jugement de l'agent qui tranche) :
+
+| Ce qui demande un humain | Pourquoi ce n'est pas à l'agent |
+| --- | --- |
+| un **acte irréversible ou destructif** engageant autre chose que son espace de travail | perte de données, publication, déploiement, dépense engagée : personne ne peut le défaire après coup |
+| un **coût ou une portée qui dépasse le brief** | ce qu'on n'avait prévu ni de payer ni de toucher — une dépendance lourde, un existant à refondre |
+| un **choix produit à deux issues défendables** | pas deux moyens techniques équivalents (ceux-là se tranchent), mais deux réponses qui donneraient deux produits différents : seul celui qui reçoit le livrable peut départager |
+
+**Demander n'est pas s'arrêter.** L'agent pose sa question (`poser_une_question`, §1.4ter), dit ce qu'il retiendra faute de réponse, et continue ce qui n'en dépend pas. Sans réponse — borne écoulée, ou aucun canal servi —, il tranche sur l'**hypothèse qu'il avait annoncée**, elle est consignée au journal, et il la nomme dans son compte-rendu.
+
+**Tout le reste se tranche seul** : l'approche et la conception, les patrons, les bibliothèques et conventions courantes, l'ordre de travail, ce qu'il traite et ce qu'il laisse de côté, les outils dont il se sert. Chaque rôle en précise la latitude dans sa section « Ce qu'il tranche seul » (§2).
+
+**Et ce qui est tranché seul se consigne au moment où il est pris** (`consigner_decision`, §1.4ter) : ce qui a été retenu, et **pourquoi**, avec ce qui a été écarté. Une décision sans son motif n'est pas consignée du tout, et le refus n'est pas formel — « j'ai retenu SQLite » ne se conteste pas, « j'ai retenu SQLite parce que la tâche ne nomme aucun serveur et que le livrable doit tourner sans service » se conteste. C'est la condition que #1019 pose à l'autonomie : *elle n'est acceptable que si elle se vérifie après coup*, et elle se relit dans la vue d'un run ([docs/05 §6.18](./05-interface-control-tower.md)) — décisions tranchées seules et hypothèses prises faute de réponse, les secondes marquées comme telles.
+
+Gardé par [`tests/test_questions_agents.py`](../tests/test_questions_agents.py) (ce qui se demande) et [`tests/test_decisions_autonomes.py`](../tests/test_decisions_autonomes.py) (ce qui se tranche seul).
 - **`_cadre_outille.md` — le cadre d'exécution outillée** : répertoire de travail isolé, livrable **matérialisé en fichiers**, rien de destructif au-dehors, aucun processus qui survive à la tâche. Réservé aux runtimes ; l'exécution texte du catalogue n'a pas d'outils et ne le charge pas.
 
 ### 1.3 Structure d'un document de rôle
@@ -86,7 +106,7 @@ Un **quatrième canal** repart vers l'agent : `demander_arbitrage(raison)` (#582
 
 #### 1.4ter Ce qu'un agent peut **écrire** pendant sa tâche
 
-Le canal ci-dessus **soumet un acte** ; trois autres ne soumettent rien — ils **consignent**. La règle qui les départage tient en une question, et elle rend le même verdict cinq fois ([docs/31 §2](./31-decision-surface-ecriture-agents.md)) : *le verbe écrit-il une **observation**, ou une **décision sur le plan** ?* Une observation dit ce qui est, s'ajoute, ne retire rien, et le moteur peut l'ignorer sans que le run change de sens — **ouverte**. Une décision sur le plan dit ce qui doit être, et change ce qu'un humain a approuvé — **fermée**, et elle ne se rouvre que par un point d'approbation (D5).
+Le canal ci-dessus **soumet un acte** ; cinq autres ne soumettent rien — ils **consignent** —, et un sixième **demande** (#1023). La règle qui les départage tient en une question, et elle rend le même verdict à chaque fois ([docs/31 §2](./31-decision-surface-ecriture-agents.md)) : *le verbe écrit-il une **observation**, ou une **décision sur le plan** ?* Une observation dit ce qui est, s'ajoute, ne retire rien, et le moteur peut l'ignorer sans que le run change de sens — **ouverte**. Une décision sur le plan dit ce qui doit être, et change ce qu'un humain a approuvé — **fermée**, et elle ne se rouvre que par un point d'approbation (D5).
 
 | L'agent écrit… | Verbe | Ce qu'il en obtient |
 | --- | --- | --- |
@@ -94,13 +114,16 @@ Le canal ci-dessus **soumet un acte** ; trois autres ne soumettent rien — ils 
 | ce qu'il **prévoit** | sa checklist (#489), via `TodoWrite` | une étape `<tache>:detail` |
 | ce qu'il **subit** | `mcp__maestro__signaler_blocage(raison)` (#719) | une étape `<tache>:blocage`, et **rien d'autre** |
 | ce qu'il veut **transmettre** | `mcp__maestro__ecrire_a_un_pair(destinataire, message)` (#720) | une étape `<tache>:message`, notifiée en best-effort |
+| ce qu'il a **tranché seul** | `mcp__maestro__consigner_decision(decision, raison)` (#1024) | une étape `<tache>:decision`, lue dans la vue du run (docs/05 §6.18) |
 | ce qu'il **ne sait pas** | `mcp__maestro__poser_une_question(question, hypothese, choix)` (#1023) | une **attente bornée**, puis une étape `<tache>:question` — la réponse, ou l'hypothèse qu'il avait annoncée |
 
-Les trois derniers sont servis par le **même serveur MCP in-process** que `demander_arbitrage` (nom réservé `maestro`), donc gouvernés par la **même** politique de permissions : une liste `allow` fermée qui ne les cite pas, ou un `deny` dessus, retire à l'agent la possibilité de les appeler, et le refus est tracé comme les autres. C'est la distinction à retenir face aux produits qui font tenir ce genre de garde-fou par le prompt : **chez nous la description règle l'usage normal, le droit est tenu ailleurs** — un modèle qui n'obéit pas à la description ne franchit rien.
+Les quatre derniers sont servis par le **même serveur MCP in-process** que `demander_arbitrage` (nom réservé `maestro`), donc gouvernés par la **même** politique de permissions : une liste `allow` fermée qui ne les cite pas, ou un `deny` dessus, retire à l'agent la possibilité de les appeler, et le refus est tracé comme les autres. C'est la distinction à retenir face aux produits qui font tenir ce genre de garde-fou par le prompt : **chez nous la description règle l'usage normal, le droit est tenu ailleurs** — un modèle qui n'obéit pas à la description ne franchit rien.
 
 ⚠ **Le dernier, lui, attend** (#1023, [docs/05 §6.17](./05-interface-control-tower.md)) : `poser_une_question` **suspend** l'agent jusqu'à la réponse, ou jusqu'à une **borne** — après quoi il reprend sur l'**hypothèse** qu'il avait écrite dans son appel, et cette hypothèse est consignée. C'est le canal que #647 puis #354 se sont renvoyé sans jamais le construire ; la frontière qu'ils avaient écrite tient au mot près (docs/32 §5.3) : *poser une question attend une réponse, déclarer un blocage n'attend rien*. Il réutilise les trois pièces de **suspension** de l'arbitrage — bornes, crédit de délai, mémoire d'une réponse tardive — et **aucune** de ses pièces de décision : une réponse n'approuve rien, et un acte classé `ask` reste refusé sans validateur (EF-08).
 
-Trois choses que les trois premiers verbes ne font **pas**, et qui sont le contenu de la décision :
+**`consigner_decision`, lui, est le jumeau de `signaler_blocage`** et son contraire sur ce qu'il porte (#1024) : rien n'est soumis à personne, rien n'est attendu, l'agent n'est jamais suspendu — l'un dit ce que l'agent **subit**, l'autre ce qu'il **fait**. C'est la seconde moitié du régime du §1.2bis, et c'est le seul verbe qui refuse une entrée incomplète pour une raison de fond : **une décision sans son motif n'est pas consignée**, parce qu'elle ne se relirait pas. Ses deux champs restent **séparés** de bout en bout — la décision d'un côté, sa raison de l'autre —, pour que la vue qui les rend n'ait rien à redécouper.
+
+Trois choses que les cinq verbes qui **consignent** ne font pas, et qui sont le contenu de la décision :
 
 - **ils n'attendent rien.** `signaler_blocage` est une *déclaration*, pas une *demande* : il consigne et rend la main, l'agent poursuit comme il peut. C'est ce qui le sépare de `demander_arbitrage`, qui suspend l'appel le temps qu'une personne tranche, et de `poser_une_question`, qui le suspend le temps qu'on le renseigne ;
 - **ils ne touchent pas au graphe du plan.** Créer une tâche, changer un statut ou un propriétaire, recruter : les trois sont **refusés**, avec leurs motifs et leurs conditions de réouverture en docs/31 §3.3-§3.5. Un agent qui découvre en travaillant qu'il faudrait une tâche de plus ne peut que… le dire — la demande ne disparaît pas, **elle change de destinataire** : elle va à l'humain qui lit la frise, au lieu de s'exécuter en silence ;
