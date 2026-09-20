@@ -571,6 +571,44 @@ export function IconeArbitrage(props: Props) {
 }
 
 /**
+ * Une décision qu'un **agent** a tranchée seul (#1026) : une bifurcation dont
+ * une branche est prise, l'autre laissée.
+ *
+ * Distincte d'`IconeArbitrage` (la balance), et il le faut : celle-là dit la
+ * décision d'une **personne** sur un acte qu'on lui a soumis, celle-ci la
+ * décision d'un agent que personne n'a arbitrée. Les confondre à l'écran ferait
+ * perdre exactement ce que leurs deux types d'événements séparent.
+ */
+export function IconeDecision(props: Props) {
+  return (
+    <Trait {...props}>
+      <path d="M12 21v-9" />
+      <path d="M12 12 6 6.5M12 12l6-5.5" />
+      <circle cx="18.5" cy="5.5" r="2.5" />
+    </Trait>
+  );
+}
+
+/**
+ * Une décision prise **faute de réponse** (#1026) : la question posée, restée
+ * sans réponse jusqu'à la borne, et l'agent reparti sur son hypothèse.
+ *
+ * Le point d'interrogation n'annonce pas une question **en vol** — celle-là vit
+ * dans le fil (#1025) : il rappelle qu'au départ de cette décision il y avait
+ * une question, ce qui est précisément ce que la ligne doit dire. Le mot
+ * « hypothèse » l'accompagne toujours ; l'icône ne porte jamais le sens seule.
+ */
+export function IconeHypothese(props: Props) {
+  return (
+    <Trait {...props}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M9.6 9.3a2.5 2.5 0 1 1 3.4 2.4c-.7.3-1 .9-1 1.6v.3" />
+      <path d="M12 17h.01" />
+    </Trait>
+  );
+}
+
+/**
  * Le **graphe** d'un run (#491) : deux nœuds amont qui convergent vers un aval —
  * la forme même de ce que la vue pipeline dessine, et ce qui la distingue de
  * l'icône des tâches, qui dit un inventaire.

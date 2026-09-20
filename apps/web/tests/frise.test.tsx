@@ -482,7 +482,15 @@ describe("l'onglet Frise", () => {
     const onglets = bascule
       .getAllByRole("button")
       .map((bouton) => bouton.textContent);
-    expect(onglets).toEqual(["Pipeline", "Kanban", "Frise", "Journal"]);
+    // Les décisions (#1026) se sont glissées entre la frise et le journal : le
+    // journal ferme toujours la rangée, et c'est ce que cette assertion garde.
+    expect(onglets).toEqual([
+      "Pipeline",
+      "Kanban",
+      "Frise",
+      "Décisions",
+      "Journal",
+    ]);
   });
 
   it("ne montre qu'une lecture à la fois", async () => {

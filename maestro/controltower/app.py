@@ -358,11 +358,13 @@ from maestro.controltower.brief import ACTEUR_BRIEF, ROLE_BRIEF
 from maestro.controltower.chat import (
     CadrageIntrouvable,
     ChatStore,
+    QuestionIntrouvable,
     RepondeurChat,
     RepondeurModele,
     ReponseIndisponible,
     ServiceChat,
 )
+from maestro.controltower.decisions import decisions_du_run
 from maestro.controltower.events import (
     EVENEMENT_AGENT_CAPACITE,
     EVENEMENT_BRIEF_DECISION,
@@ -453,6 +455,7 @@ from maestro.engine.brief import MODE_BRIEF_AUTO, MODE_BRIEF_HUMAIN
 from maestro.messaging import InMemoryMailbox, Mailbox, RedisMailbox
 from maestro.orchestrator.errors import BriefValidationError
 from maestro.orchestrator.schema import validate_brief
+from maestro.outillage.questionnaire import Choix
 from maestro.poste import SondePoste
 from maestro.projets import (
     ApplicationRefusee,
@@ -881,6 +884,54 @@ class CadrageDecisionRequete(BaseModel):
                 "parallelisme": self.parallelisme,
             }
         )
+
+
+class ReponseOutillageRequete(BaseModel):
+    """Corps du geste qui répond à une question d'outillage du fil (#1031).
+
+    Un seul champ de fond, `valeur` : la clé de la question **n'est pas** dans le
+    corps, et c'est une décision. La question à laquelle on répond est celle que le
+    fil porte encore (`chat.question_en_attente`) ; la laisser désigner par le client
+    ouvrirait la porte à une réponse qui vise une question déjà tranchée — le geste
+    tardif et le double clic, exactement ce que le `409` existe pour attraper.
+
+    `conversation` a le sens qu'il a partout ailleurs sur ce canal.
+    """
+
+    valeur: str
+    conversation: str | None = None
+
+
+class ChoixOutillageRequete(BaseModel):
+    """Une réponse déjà acquise, telle qu'elle voyage vers les routes sans état (#1031).
+
+    La forme de `maestro.outillage.questionnaire.Choix` : `cle` et `valeur` disent la
+    réponse, `deduit` et `parce_que` disent qu'elle a été conclue plutôt que donnée.
+    Les deux derniers sont **rendus** par l'API et **acceptés** en entrée sans être
+    crus : `deductions` les recalcule de toute façon, si bien qu'un client n'a jamais
+    à les tenir à jour.
+    """
+
+    cle: str
+    valeur: str
+    deduit: bool = False
+    parce_que: str = ""
+
+
+class QuestionnaireOutillageRequete(BaseModel):
+    """Les réponses acquises, dont on veut la suite ou la recommandation (#1031).
+
+    Sans état côté serveur, et c'est le contrat : le client dit ce qu'il a, l'API dit
+    ce qui en découle. C'est ce qui permet au fil (qui tient ses réponses dans ses
+    messages) et au parcours de création (#1034, qui les tiendra à l'écran) de servir
+    du **même** questionnaire sans partager de session.
+    """
+
+    choix: list[ChoixOutillageRequete] = []
+
+    def choix_acquis(self) -> list[Choix]:
+        """Les réponses en objets du domaine — `deduit`/`parce_que` recalculés."""
+        return [Choix(cle=c.cle, valeur=c.valeur) for c in self.choix]
 
 
 class SecretPoolRequete(BaseModel):
@@ -2246,6 +2297,44 @@ def create_app(
             journal.entrees_du_run(run_id),
             agents=state.agents_du_run(run_id),
             activites=state.signes_de_vie_du_run(run_id),
+        ).to_dict()
+
+    @app.get("/api/executions/{run_id}/decisions")
+    async def decisions_execution(run_id: str) -> dict[str, Any]:
+        """Ce que les agents de ce run ont tranché **seuls** (#1026, docs/05 §6.18).
+
+        La cinquième lecture d'un run, à côté du Kanban (« combien dans quel
+        état »), de la progression (« où en est-on »), du graphe (« quoi après
+        quoi ») et de la frise (« dans quel ordre ») : celle qui dit **ce qui a
+        été décidé sans moi, et pourquoi**. C'est la condition que le parent
+        #1019 pose à l'autonomie — elle n'est acceptable que si elle se vérifie
+        après coup.
+
+        Deux familles, séparées par `origine` et jamais mêlées : une décision que
+        l'agent a jugée sienne (`tranchee`, #1024 — il n'avait à demander à
+        personne) et une **hypothèse prise faute de réponse** (`hypothese`,
+        #1023 — il a demandé, personne n'a répondu avant la borne, il est reparti
+        sur ce qu'il avait annoncé). `decision` et `raison` sortent des deux
+        champs que le moteur sépare à l'écriture : cette route ne redécoupe rien.
+
+        Rien n'est créé : les deux flux sont déjà persistés et déjà servis par
+        `GET /api/journal?run_id=…`, dont chaque entrée garde ici son identifiant.
+        Comme le graphe et la frise, cette liste **n'a pas d'événement à elle** —
+        elle se recompose à la lecture, donc la mise à jour en direct passe par le
+        flux existant, sans second canal.
+
+        Rendue **du plus récent au plus ancien**, comme le journal du run et non
+        comme la frise : les deux lectures chronologiques de la bascule vont dans
+        le même sens. Bornée à `PLAFOND_DECISIONS` entrées, les plus récentes :
+        `total`, `hypotheses` et `tronquee` comptent **avant** la borne et disent
+        ce qui a été laissé de côté. 404 si aucune trace reçue pour ce `run_id`.
+        """
+        if state.execution(run_id) is None:
+            raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
+        return decisions_du_run(
+            run_id,
+            journal.entrees_du_run(run_id),
+            taches=state.titres_du_run(run_id),
         ).to_dict()
 
     @app.post("/api/sources/apercu")
@@ -4601,6 +4690,120 @@ def create_app(
             "conversation": fil,
             "messages": [geste.to_dict(), reponse.to_dict()],
         }
+
+    @app.post("/api/chat/{agent}/outillage/questionnaire", status_code=201)
+    async def ouvrir_questionnaire_chat(
+        agent: str, conversation: str | None = None
+    ) -> dict[str, Any]:
+        """Pose la première question d'outillage dans le fil — ou reprend (#1031).
+
+        L'entrée du questionnaire d'un projet neuf : c'est elle qu'appellera le
+        parcours de création (#1034) après le choix de la racine. Elle n'écrit
+        **aucun message d'utilisateur** — personne n'a rien demandé —, seulement la
+        question, par la même voie que n'importe quelle réponse d'agent.
+
+        **Idempotente** : rappelée sur un questionnaire en cours, elle repose la
+        question là où il en est plutôt que d'en recommencer un second. La propriété
+        vient de ce que le fil est la seule mémoire du canal, pas d'une garde.
+
+        `409` sur un fil dont le répondeur ne conduit pas de questionnaire — un
+        aparté avec un agent du catalogue, par exemple. `404` hors catalogue, `422`
+        sur une conversation mal formée.
+        """
+        fiche, service = _canal_chat(agent)
+        fil = _conversation_demandee(service, fiche, conversation)
+        try:
+            message = await service.poser_question(fiche, conversation=fil)
+        except QuestionIntrouvable as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except ReponseIndisponible as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {
+            "agent": fiche.nom,
+            "role": fiche.role,
+            "conversation": fil,
+            "messages": [message.to_dict()],
+        }
+
+    @app.post("/api/chat/{agent}/outillage", status_code=201)
+    async def repondre_question_chat(
+        agent: str, requete: ReponseOutillageRequete
+    ) -> dict[str, Any]:
+        """Répond d'un **geste** à la question d'outillage que le fil porte (#1031).
+
+        Le jumeau de `POST …/cadrage` sur l'autre demande du canal, et la même
+        réponse : l'acte est écrit au fil, la suite vient derrière. La question
+        visée n'est pas dans le corps — c'est celle qui attend —, si bien qu'un
+        geste tardif ou un double clic tombe sur le `409` au lieu de répondre à une
+        question déjà tranchée.
+
+        `422` si la valeur n'est pas une option de la question posée : le fil est la
+        seule mémoire du canal, une valeur fantaisiste y resterait. `409` quand rien
+        n'attend, `404` hors catalogue, `502` si la suite n'a pas pu être produite
+        (le geste, lui, reste acquis au fil).
+        """
+        fiche, service = _canal_chat(agent)
+        fil = _conversation_demandee(service, fiche, requete.conversation)
+        try:
+            geste, reponse = await service.repondre_question(
+                fiche, valeur=requete.valeur, conversation=fil
+            )
+        except QuestionIntrouvable as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except ReponseIndisponible as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {
+            "agent": fiche.nom,
+            "role": fiche.role,
+            "conversation": fil,
+            "messages": [geste.to_dict(), reponse.to_dict()],
+        }
+
+    @app.post("/api/projets/{id_projet}/outillage/questionnaire")
+    async def question_outillage(
+        id_projet: str, requete: QuestionnaireOutillageRequete
+    ) -> dict[str, Any]:
+        """La prochaine question qui décide de l'outillage d'un projet neuf (#1031).
+
+        La voie **sans état** du questionnaire, à côté de celle du fil : le client dit
+        ce qu'il a, l'API dit ce qui en découle. C'est ce qui permet au fil — qui
+        tient ses réponses dans ses messages — et au parcours de création (#1034) —
+        qui les tiendra à l'écran — de servir du même questionnaire sans partager de
+        session.
+
+        Rangée sous le projet, comme l'analyse : les deux décident du même outillage,
+        et un projet déclaré est la seule chose qu'elles prennent du dehors. `404` sur
+        un projet inconnu, `422` sur un identifiant mal formé — les mêmes refus que
+        `GET …/outillage/analyse`, traduits par la même fonction.
+        """
+        try:
+            return outillage.question(id_projet, requete.choix_acquis())
+        except (ValueError, ProjetInconnu) as exc:
+            raise _refus_projet(exc) from exc
+
+    @app.post("/api/projets/{id_projet}/outillage/recommandation")
+    async def recommandation_outillage(
+        id_projet: str, requete: QuestionnaireOutillageRequete
+    ) -> dict[str, Any]:
+        """L'outillage que ces réponses recommandent — **la forme de l'analyse** (#1031).
+
+        Le second critère du ticket : les réponses produisent la *même* recommandation
+        structurée que l'analyse d'un projet existant (#1030), servie par l'API. Elles
+        la produisent par la **même fonction** — les réponses deviennent des
+        `Constats`, et `recommander` fait le reste —, si bien qu'il n'y a pas deux
+        formes à tenir d'accord mais une seule et deux façons de la remplir.
+
+        Rendue à **tout moment**, questionnaire fini ou non. Rien n'est écrit : c'est
+        une proposition, et la génération est le lot 5 (#1033).
+        """
+        try:
+            return outillage.recommandation(id_projet, requete.choix_acquis())
+        except (ValueError, ProjetInconnu) as exc:
+            raise _refus_projet(exc) from exc
 
     async def _flux_reponse(
         agent: str,

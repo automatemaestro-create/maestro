@@ -5,10 +5,11 @@ créer ou importer un projet **commence par son outillage** — `AGENTS.md`, des
 Agent Skills dans `.agents/skills/`, et des scripts —, recommandé par l'analyse
 sur un projet existant, choisi par l'utilisateur sur un projet neuf.
 
-Il porte trois lots, qui prennent le même outillage à trois moments — le
-**lot 2** (#1030) l'analyse et le recommande, le **lot 5** (#1033) l'écrit dans
-le dossier du projet, le **lot 4** (#1032) le relit pour le transmettre aux
-agents qui y travaillent :
+Il porte quatre lots, qui prennent le même outillage à quatre moments — le
+**lot 2** (#1030) l'analyse sur un projet existant, le **lot 3** (#1031) le
+demande sur un projet neuf, le **lot 5** (#1033) l'écrit dans le dossier du
+projet, le **lot 4** (#1032) le relit pour le transmettre aux agents qui
+travaillent dans le projet :
 
     from maestro.outillage import analyser, generer_outillage, outillage_du_projet, rediger
 
@@ -18,20 +19,37 @@ agents qui y travaillent :
     analyse.recommandation.entrees     # AGENTS.md, les deux ponts, les skills justifiés
     analyse.source_manifeste()         # le fragment `source` du manifeste (docs/38 §4.1)
 
-    fichiers = rediger(analyse.constats, analyse.recommandation)
-    preparation = generer_outillage(projet, fichiers, source=analyse.source_manifeste())
+    preparation = generer_outillage(
+        projet, analyse.constats, analyse.recommandation, source=analyse.source_manifeste()
+    )
     preparation.regime                 # "en-place" (c'est fait) | "branche" (attend la fusion)
     preparation.rapport.refuses        # ce qui n'a **pas** été écrasé, et où la neuve attend
+
+    from maestro.outillage import Choix, question_suivante, recommandation_depuis_choix
+
+    question_suivante([])              # « Quelle sorte de projet est-ce ? », recommandée
+    reco = recommandation_depuis_choix([Choix("nature", "service-api"), …])
+    reco.entrees                       # la **même** forme que `analyse.recommandation`
 
     outillage = outillage_du_projet(projet)
     outillage.instructions             # le texte d'`AGENTS.md`, dans la portée déclarée
     outillage.skills                   # l'**index** : nom, description, chemin
     outillage.consigne()               # ce qui part dans le message de la tâche
 
-Sept modules, et la frontière entre eux est celle du disque :
+⚠ **Les deux premiers bouts se rejoignent sur `recommander`**, et c'est le
+critère de #1031 : les réponses de l'utilisateur deviennent des `Constats`
+(`constats_depuis_choix`), et la suite est celle d'un projet analysé. Il n'y a
+donc **pas deux chemins** de « ce qu'il faut à ce projet » à tenir d'accord — ce
+que #1033 génère vient de la même fonction, quelle que soit sa provenance.
+
+Neuf modules, et la frontière entre eux est celle du disque :
 
 - `maestro.outillage.modele` — les formes, **inertes** : elles décrivent et
   sérialisent, elles ne touchent à rien ;
+- `maestro.outillage.questionnaire` — le **lot 3** (#1031) : les questions qui
+  décident de l'outillage d'un projet **neuf**, et la mue de leurs réponses en
+  `Constats`. C'est le pendant d'`analyse` — là-bas on lit un projet existant,
+  ici on le demande —, et les deux aboutissent au même `recommander` ;
 - `maestro.outillage.detection` — les **tables** (extensions, gestionnaires, CI,
   forges, conventions) et les lecteurs de manifestes. Tout y est lu, **rien n'y
   est exécuté** ;
@@ -124,6 +142,23 @@ from maestro.outillage.modele import (
     Recommandation,
     nouvel_id,
 )
+from maestro.outillage.questionnaire import (
+    CATALOGUE,
+    QUESTIONS_MAX,
+    SOURCE_CHOIX,
+    Choix,
+    Option,
+    QuestionOutillage,
+    cles_connues,
+    constats_depuis_choix,
+    deductions,
+    options_admissibles,
+    question_suivante,
+    recommandation_depuis_choix,
+    resume_des_choix,
+    source_manifeste_des_choix,
+    valeur_admissible,
+)
 from maestro.outillage.recommandation import DOSSIER_SKILLS, SKILL_PAR_USAGE, recommander
 from maestro.outillage.redaction import (
     GENERE_PAR,
@@ -140,6 +175,7 @@ from maestro.outillage.redaction import (
 __all__ = [
     "BALISE_DEBUT",
     "BALISE_FIN",
+    "CATALOGUE",
     "CHAMP_OUTILS",
     "CHEMIN_MANIFESTE",
     "DOSSIER_REFUSES",
@@ -151,15 +187,18 @@ __all__ = [
     "PORTEE_BLOC",
     "PORTEE_FICHIER",
     "PREFIXE_ID",
+    "QUESTIONS_MAX",
     "REGIME_BRANCHE",
     "REGIME_EN_PLACE",
     "ROLES_TRANSMIS",
     "SKILL_PAR_USAGE",
+    "SOURCE_CHOIX",
     "USAGES",
     "VERSION_ANALYSE",
     "VERSION_MANIFESTE",
     "Analyse",
     "Bornes",
+    "Choix",
     "Commande",
     "Constats",
     "DossierScripts",
@@ -171,21 +210,32 @@ __all__ = [
     "Gestionnaire",
     "Langage",
     "NonTransmis",
+    "Option",
     "OutillageDuProjet",
     "Parcours",
     "Piece",
     "Preparation",
+    "QuestionOutillage",
     "Rapport",
     "Recommandation",
     "SkillDuProjet",
     "analyser",
+    "cles_connues",
+    "constats_depuis_choix",
+    "deductions",
     "generer",
     "generer_outillage",
     "nouvel_id",
     "nouvel_id_de_generation",
+    "options_admissibles",
     "outillage_du_projet",
     "portees_declarees",
+    "question_suivante",
+    "recommandation_depuis_choix",
     "recommander",
     "rediger",
     "resume",
+    "resume_des_choix",
+    "source_manifeste_des_choix",
+    "valeur_admissible",
 ]

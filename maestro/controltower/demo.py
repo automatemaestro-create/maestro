@@ -43,6 +43,7 @@ import itertools
 import sys
 import tempfile
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -61,6 +62,7 @@ from maestro.controltower.events import (
     EVENEMENT_MESSAGE_INTER_AGENTS,
     EVENEMENT_QUESTION_DEMANDE,
     EVENEMENT_RUN_PLAN,
+    EVENEMENT_TACHE_DECISION,
     EVENEMENT_TACHE_STATUT,
     EVENEMENT_VALIDATION_DEMANDE,
     ROLE_RUN,
@@ -82,7 +84,14 @@ from maestro.detail_tache import (
     EtapeTache,
     LienUtile,
 )
-from maestro.engine.executor import STATUT_BLOQUEE, STATUT_ECHEC, STATUT_EN_COURS, STATUT_TERMINEE
+from maestro.engine.executor import (
+    STATUT_BLOQUEE,
+    STATUT_DECISION_AUTONOME,
+    STATUT_ECHEC,
+    STATUT_EN_COURS,
+    STATUT_QUESTION_SANS_REPONSE,
+    STATUT_TERMINEE,
+)
 from maestro.plan_run import NoeudPlan
 from maestro.telemetry.usage import StepUsage
 
@@ -249,6 +258,64 @@ PLAN_DEMO: tuple[NoeudPlan, ...] = (
 )
 
 
+@dataclass(frozen=True)
+class DecisionDemo:
+    """Une décision que l'agent a tranchée seul, telle que la démo la publie (#1026).
+
+    Les deux familles de la lecture « Décisions » d'un run, sous une seule forme
+    parce qu'elles ne diffèrent que par leur **provenance** — et c'est exactement
+    ce que l'écran doit rendre visible :
+
+    - `hypothese=False` : l'agent a jugé que la question ne demandait personne, a
+      tranché et l'a consigné (`tache.decision`, #1024) ;
+    - `hypothese=True` : il a posé sa question, personne n'a répondu avant la
+      borne, et il est reparti sur ce qu'il avait annoncé — au journal, une étape
+      `<tache>:question` soldée `question_sans_reponse`, que le pont range en
+      `agent.activite` (#1023).
+
+    La démo publie donc **la forme d'arrivée** de chacune, et non un raccourci à
+    elle : ce que l'écran lit ici est bit pour bit ce qu'un vrai run lui envoie,
+    faute de quoi la démo validerait un rendu que la production ne produit pas.
+    """
+
+    decision: str
+    raison: str
+    hypothese: bool = False
+
+    def evenement(
+        self,
+        tache_id: str,
+        titre: str,
+        agent: str,
+        role: str,
+        projet_id: str | None,
+    ) -> Event:
+        """L'événement de bus que cette décision produit, dans sa famille."""
+        return Event(
+            type=(EVENEMENT_AGENT_ACTIVITE if self.hypothese else EVENEMENT_TACHE_DECISION),
+            run_id=RUN_ID,
+            tache_id=tache_id,
+            # Le `nom` de l'étape, préfixé comme le moteur le préfixe : c'est ce
+            # qui oblige la liste à prendre le titre de la tâche à la projection
+            # plutôt qu'à découper cette chaîne (`state.titres_du_run`).
+            titre=(
+                f"Question de l'agent — {titre}"
+                if self.hypothese
+                else f"Décision de l'agent — {titre}"
+            ),
+            agent=agent,
+            role=role,
+            statut=(
+                STATUT_QUESTION_SANS_REPONSE
+                if self.hypothese
+                else STATUT_DECISION_AUTONOME
+            ),
+            detail=self.decision,
+            description=self.raison,
+            projet_id=projet_id,
+        )
+
+
 async def _avancer_tache(
     bus: EventBus,
     *,
@@ -264,6 +331,7 @@ async def _avancer_tache(
     checklist: Sequence[EtapeTache] = (),
     liens: Sequence[LienUtile] = (),
     gestes: Sequence[str] = (),
+    decisions: Sequence[DecisionDemo] = (),
 ) -> None:
     """Fait avancer une tâche à travers `etapes` ; usage/coût posés sur la dernière.
 
@@ -288,6 +356,14 @@ async def _avancer_tache(
     seul moyen de voir les deux comportements côte à côte. `checklist` est
     nommée ainsi pour ne pas se confondre avec `etapes`, qui reste la suite des
     **statuts** traversés.
+
+    `decisions` (#1026) sont ce que l'agent a **tranché seul** pendant que la
+    tâche est `en_cours` — publiées au même endroit que les `gestes`, et pour la
+    même raison : sans elles, la lecture « Décisions » de la vue d'un run n'a
+    rien à montrer, et l'écran que ce lot livre ne se voit pas. Les deux familles
+    y sont, parce que les distinguer est tout l'objet de l'écran : une décision
+    que l'agent a jugée sienne (#1024) et une hypothèse reprise faute de réponse
+    (#1023). Vides par défaut : une tâche sans décision est la tâche d'avant.
     """
     # `None` (et non `[]`) quand la tâche n'a rien à détailler : le détail voyage
     # avec chaque statut comme le ticket, et une liste vide effacerait à chaque
@@ -330,6 +406,9 @@ async def _avancer_tache(
                     projet_id=projet_id,
                 )
             )
+            await asyncio.sleep(PAUSE_ENTRE_STATUTS_S)
+        for prise in decisions:
+            await bus.publish(prise.evenement(tache_id, titre, agent, role, projet_id))
             await asyncio.sleep(PAUSE_ENTRE_STATUTS_S)
 
 
@@ -446,6 +525,18 @@ async def _scenario(bus: EventBus) -> None:
             tours=3,
             outils=("Write", "Bash"),
         ),
+        # Une décision tranchée seul (#1024), de la famille « choix technique qui
+        # ne dépasse pas le brief » : rien à demander, donc rien de suspendu.
+        decisions=(
+            DecisionDemo(
+                decision="Clé primaire en UUID v7 plutôt qu'en entier auto-incrémenté",
+                raison=(
+                    "le brief prévoit une synchronisation entre deux bases ; un "
+                    "compteur local y produirait des collisions, et le choix "
+                    "n'engage que le schéma que cette tâche livre"
+                ),
+            ),
+        ),
     )
     await bus.publish(
         Event(
@@ -518,6 +609,28 @@ async def _scenario(bus: EventBus) -> None:
                 nature=LIEN_DEPOT,
             ),
         ),
+        # Les **deux** familles sur la même tâche, et c'est voulu : c'est le seul
+        # moyen de voir côte à côte ce que l'écran doit distinguer — une décision
+        # que l'agent a jugée sienne, et une hypothèse qu'il a prise faute de
+        # réponse à une question qu'il avait bel et bien posée (#1023).
+        decisions=(
+            DecisionDemo(
+                decision="Pagination en curseur plutôt qu'en offset",
+                raison=(
+                    "aucune réponse après 900 s à : la liste des contacts se "
+                    "pagine-t-elle en offset ou en curseur ?"
+                ),
+                hypothese=True,
+            ),
+            DecisionDemo(
+                decision="Erreurs rendues au format RFC 7807 (`application/problem+json`)",
+                raison=(
+                    "le brief demande « les erreurs au format du projet » et le "
+                    "projet n'en fixe aucun ; RFC 7807 est le seul format que le "
+                    "client web sait déjà lire"
+                ),
+            ),
+        ),
     )
 
     await _avancer_tache(
@@ -527,6 +640,18 @@ async def _scenario(bus: EventBus) -> None:
         agent="devops",
         role="DevOps",
         etapes=["assignee", "en_cours"],
+        # Une décision prise **pendant** que la tâche travaille encore, et dont
+        # la validation en attente juste en dessous est le contraire : ce que
+        # l'agent tranche seul ne passe par personne, l'acte sensible si (EF-08).
+        decisions=(
+            DecisionDemo(
+                decision="Cache des dépendances indexé sur le lock, pas sur la branche",
+                raison=(
+                    "une clé par branche ferait repartir de zéro à chaque ticket ; "
+                    "le réglage est interne au pipeline et se défait d'une ligne"
+                ),
+            ),
+        ),
     )
     await bus.publish(
         Event(
