@@ -33,6 +33,8 @@ import { describe, expect, it, vi } from "vitest";
 import PageChat from "@/app/chat/page";
 import { DemandeDeCadrage } from "@/components/chat/DemandeDeCadrage";
 import { FilDeCadrage } from "@/components/chat/FilDeCadrage";
+import { ParametresCouts } from "@/components/parametres/ParametresCouts";
+import { AUCUNE_BORNE, phraseDesBornes } from "@/lib/bornes";
 import { propositionEnAttente } from "@/lib/brief";
 import {
   AGENT_ORCHESTRATION,
@@ -115,8 +117,9 @@ describe("② le geste — accepter, refuser, amender", () => {
     await userEvent.click(screen.getByRole("button", { name: "Lancer" }));
 
     // `null` et non une copie : le corps ne recopie jamais un objectif qu'on
-    // n'a pas corrigé — même contrat que `brief: null` (§6.10).
-    expect(trancher).toHaveBeenCalledWith(true, null);
+    // n'a pas corrigé — même contrat que `brief: null` (§6.10). Le troisième
+    // argument est le régime des bornes (#990), ici « aucune ».
+    expect(trancher).toHaveBeenCalledWith(true, null, AUCUNE_BORNE);
   });
 
   it("lance la version **corrigée** dès que l'objectif change", async () => {
@@ -131,7 +134,11 @@ describe("② le geste — accepter, refuser, amender", () => {
     });
     await userEvent.click(bouton);
 
-    expect(trancher).toHaveBeenLastCalledWith(true, "Un minuteur, sans le son");
+    expect(trancher).toHaveBeenLastCalledWith(
+      true,
+      "Un minuteur, sans le son",
+      AUCUNE_BORNE,
+    );
   });
 
   it("refuse sans rien emporter", async () => {
@@ -139,7 +146,8 @@ describe("② le geste — accepter, refuser, amender", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Ne pas lancer" }));
 
-    expect(trancher).toHaveBeenCalledWith(false, null);
+    // Ni objectif corrigé, ni bornes : il n'y a pas de run à borner.
+    expect(trancher).toHaveBeenCalledWith(false, null, null);
   });
 
   it("ferme le lancement sur un objectif vidé, et le dit", async () => {
@@ -233,5 +241,123 @@ describe("④ l'écran — les deux critères, là où ils se rencontrent", () =
     expect(
       screen.queryByRole("region", { name: "Décision sur le cadrage" }),
     ).toBeNull();
+  });
+});
+
+/**
+ * ⑤ **borner le run, là où on le lance** (#990).
+ *
+ * Le moteur savait arrêter un run sur quatre garde-fous ; la conversation, seule
+ * porte de lancement depuis #666, ne les passait pas — un run mesuré à 12,51 $
+ * n'a pas pu l'être (retex du 2026-09-11, G5).
+ *
+ * La **forme** est un choix rendu sur pièces (commentaire « Variante retenue »
+ * de #990) : repliée, le repli portant le récapitulatif, le contrôle à gauche de
+ * la ligne. Ce qui se garde ici n'est pas cette apparence mais les trois
+ * propriétés dont elle découle, et qu'une refonte devra tenir :
+ *
+ * - le régime se lit **sans rien ouvrir**, y compris quand il n'y a aucune
+ *   borne (critère 3 — l'illimité est un choix affiché) ;
+ * - ce qui est saisi **part** avec l'accord (critère 1) ;
+ * - Paramètres **dit où** cela se règle (critère 2).
+ */
+describe("⑤ borner le run, là où on le lance", () => {
+  function monterLeGeste(trancher = vi.fn().mockResolvedValue(undefined)) {
+    rendreAvecEtat(
+      <DemandeDeCadrage demande={demandeFactice()} trancher={trancher} />,
+    );
+    return trancher;
+  }
+
+  async function ouvrirLesBornes() {
+    await userEvent.click(screen.getByRole("button", { name: /Bornes du run/ }));
+  }
+
+  it("dit le régime sans rien ouvrir, et l'absence de borne est un choix affiché", () => {
+    monterLeGeste();
+
+    // Critère 3 : le repli **fermé** porte déjà la réponse. C'est la lecture de
+    // Vercel Spend Management, dont la ligne fermée porte l'état.
+    expect(screen.getByText(/Aucune borne — le run ira jusqu'au bout/)).toBeTruthy();
+    expect(screen.queryByLabelText("Coût maximal")).toBeNull();
+  });
+
+  it("offre les quatre garde-fous du moteur, et eux seuls", async () => {
+    monterLeGeste();
+    await ouvrirLesBornes();
+
+    expect(screen.getByLabelText("Coût maximal")).toBeTruthy();
+    expect(screen.getByLabelText("Tokens maximum")).toBeTruthy();
+    expect(screen.getByLabelText("Délai par tâche")).toBeTruthy();
+    expect(screen.getByLabelText("Tâches en parallèle")).toBeTruthy();
+  });
+
+  it("récapitule ce qui part, en disant ce que chaque borne **fait**", async () => {
+    monterLeGeste();
+    await ouvrirLesBornes();
+
+    await userEvent.type(screen.getByLabelText("Coût maximal"), "5");
+    await userEvent.type(screen.getByLabelText("Tâches en parallèle"), "2");
+
+    // « s'interrompt à » et non « plafond » : le parti pris tiré des budgets
+    // GitHub, où la borne et son effet sont deux informations.
+    expect(await screen.findByText(/s'interrompt à/)).toBeTruthy();
+    expect(screen.getByText(/2 tâches à la fois/)).toBeTruthy();
+  });
+
+  it("transmet les bornes saisies avec l'accord", async () => {
+    const trancher = monterLeGeste();
+    await ouvrirLesBornes();
+
+    await userEvent.type(screen.getByLabelText("Coût maximal"), "5");
+    await userEvent.type(screen.getByLabelText("Tokens maximum"), "200000");
+    await userEvent.type(screen.getByLabelText("Délai par tâche"), "120");
+    await userEvent.type(screen.getByLabelText("Tâches en parallèle"), "2");
+    await userEvent.click(screen.getByRole("button", { name: "Lancer" }));
+
+    expect(trancher).toHaveBeenCalledWith(true, null, {
+      plafond_cout_usd: 5,
+      plafond_tokens: 200000,
+      timeout_tache_s: 120,
+      parallelisme: 2,
+    });
+  });
+
+  it("refuse de lancer sur une borne illisible, plutôt que de la perdre", async () => {
+    // L'échantillon fautif de ce ticket : une borne qu'on ne sait pas lire
+    // partirait en `null`, c'est-à-dire en run **sans limite** — exactement le
+    // défaut qu'on corrige. On le dit, et on désarme.
+    const trancher = monterLeGeste();
+    await ouvrirLesBornes();
+
+    await userEvent.type(screen.getByLabelText("Coût maximal"), "beaucoup");
+
+    expect(
+      (screen.getByRole("button", { name: "Lancer" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    expect(screen.getByText(/illisible/)).toBeTruthy();
+    expect(trancher).not.toHaveBeenCalled();
+  });
+
+  it("dit la même chose des deux côtés — une seule règle (`phraseDesBornes`)", () => {
+    // La page ne recopie pas la phrase : elle l'appelle. Deux formulations de
+    // « qu'est-ce qui borne ce run ? » finiraient par ne plus dire la même
+    // chose, et c'est la divergence que #943 a déjà corrigée sur « y a-t-il un
+    // cadrage en attente ? ».
+    monterLeGeste();
+
+    expect(screen.getByText(phraseDesBornes(AUCUNE_BORNE))).toBeTruthy();
+  });
+
+  it("Paramètres ne dit plus « pas encore réglable » : il dit où", async () => {
+    rendreAvecEtat(<ParametresCouts />);
+
+    expect(screen.queryByText(/pas encore réglable/)).toBeNull();
+    expect(screen.queryByText(/--plafond-cout/)).toBeNull();
+    expect(screen.getByText(/Bornes d'un run/)).toBeTruthy();
+    expect(
+      screen.getByRole("link", { name: /Aller à la conversation/ }),
+    ).toBeTruthy();
   });
 });

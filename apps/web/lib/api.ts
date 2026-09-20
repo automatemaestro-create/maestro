@@ -6,6 +6,7 @@
  * (`maestro-api`, 127.0.0.1:8000). Le WebSocket dérive de la même URL.
  */
 
+import { AUCUNE_BORNE, type BornesRun } from "./bornes";
 import type {
   AgentCatalogue,
   AgentCatalogueDetail,
@@ -656,6 +657,11 @@ export async function ouvrirConversationChat(
  * ne recopie rien — le `brief: null` de `POST …/brief/decision` (§6.10), un cran
  * plus tôt. Il est ignoré sur un refus.
  *
+ * `bornes` (#990) est jusqu'où le run pourra aller — les quatre garde-fous du
+ * moteur, aux mêmes noms que sur `POST /api/executions`. Elles partent avec
+ * l'accord parce que c'est le même geste qui dit « lance » et « jusque-là » ;
+ * absentes, le run part sans borne, comme avant ce ticket.
+ *
  * Un `409` n'est pas une panne : la demande a été tranchée entre-temps, ou la
  * conversation a repris. L'appelant recharge plutôt qu'il ne réessaie — d'où la
  * cause portée telle quelle dans le message d'erreur.
@@ -665,10 +671,12 @@ export async function trancherCadrageChat(
   decision: {
     approuve: boolean;
     objectif?: string | null;
+    bornes?: BornesRun | null;
     projetId?: string | null;
     conversation?: string;
   },
 ): Promise<MessageChat[]> {
+  const bornes = decision.bornes ?? AUCUNE_BORNE;
   const reponse = await fetch(
     `${API_URL}/api/chat/${encodeURIComponent(agent)}/cadrage`,
     {
@@ -677,6 +685,7 @@ export async function trancherCadrageChat(
       body: JSON.stringify({
         approuve: decision.approuve,
         objectif: decision.objectif ?? null,
+        ...bornes,
         projet_id: decision.projetId ?? null,
         conversation: decision.conversation,
       }),
