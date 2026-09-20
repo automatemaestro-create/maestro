@@ -538,8 +538,13 @@ le persona principal — le fondateur qui ne code pas ([docs/00 §3.1](./00-cahi
 | **Mises à jour** applicatives | `git pull` |
 | Notifications système, ouverture dans l'éditeur/l'explorateur | absent |
 
-Concrètement, une application Tauri est **une fenêtre native qui affiche le site web local** et
+Concrètement, une **enveloppe de bureau** est **une fenêtre native qui affiche le site web local** et
 démarre le backend en arrière-plan : la même interface, dans une fenêtre au lieu d'un onglet.
+
+> Ce paragraphe disait « une application **Tauri** » : c'était le verdict de D4 le 2026-08-04, et il
+> a été **renversé le 2026-09-11** — la coque est **Electron** (§4.5 ci-dessous,
+> [docs/35 §2](./35-decision-poste-de-bureau-et-disposition.md), livrée par #923). Ce que la phrase
+> décrit ne change pas d'un mot : c'est le moteur derrière la fenêtre qui a changé.
 
 > **Une ligne de ce tableau a été prise en avance** (#278, lot 2 de #276). Le sélecteur de dossier
 > natif y figurait comme un apport du bureau ; il n'avait en fait pas besoin de l'enveloppe, parce
@@ -554,10 +559,20 @@ démarre le backend en arrière-plan : la même interface, dans une fenêtre au 
 > où l'explorateur servi par l'API reste la seule voie. La leçon est à garder pour les autres
 > lignes : la question n'est pas « le bureau apporterait-il ceci ? » mais « qu'est-ce qui, ici,
 > dépend vraiment de la fenêtre ? ».
+>
+> ⚠ **Ce « reste » n'attend plus la Phase 9** : la fenêtre existe depuis **#923**, et le
+> glisser-déposer d'un dossier comme le sélecteur natif sans détour sont le lot **#938** du
+> chantier « L'atelier » (#921). La Phase 9 garde l'**empaquetage** — lanceur, installeur, mises à
+> jour —, pas l'enveloppe.
 
 ### 4.5 Les options
 
-| Option | Ce que c'est | Coût | Verdict |
+⚠ **La colonne « Verdict » ci-dessous est celle du 2026-08-04, et elle a été renversée** : c'est
+aujourd'hui l'**option 3 (Electron)** qui est retenue et l'**option 2 (Tauri)** qui est écartée —
+l'encart sous la table le détaille. Elle reste écrite telle quelle parce qu'elle dit **sur quoi** la
+décision d'origine reposait ; ne la lire que ligne à ligne donnerait la réponse d'avant.
+
+| Option | Ce que c'est | Coût | Verdict *(2026-08-04 — voir l'encart)* |
 |---|---|---|---|
 | **0 — Rester tel quel** | Web local lancé par script | nul | **Insuffisant** à terme : ferme le produit à son persona principal |
 | **1 — Lanceur + installeur** | Un exécutable qui installe les dépendances, démarre l'API et le front, ouvre le navigateur, s'arrête proprement | **faible** | **Recommandé en premier.** ~80 % du bénéfice ressenti pour ~10 % du coût |
@@ -632,7 +647,7 @@ après.
 |---|---|
 | [00 — Cahier des charges](./00-cahier-des-charges.md) | Cas d'usage 8/9 ; exigences **EF-35 à EF-42** (projet local, sources, brief, distribution) ; **ENF-12** (installation) ; risques |
 | [01 — Architecture](./01-architecture-technique.md) | L'espace de travail d'une tâche est dérivé d'un **projet**, pas d'un `mkdtemp()` |
-| [02 — Stack](./02-stack-technique.md) | Extraction de documents, empaquetage de bureau (Tauri/Electron/lanceur), SQLite *vs* PostgreSQL selon le mode |
+| [02 — Stack](./02-stack-technique.md) | Extraction de documents, empaquetage de bureau (lanceur/installeur, puis enveloppe — Tauri au cadrage, **Electron** depuis le renversement de §4.5), SQLite *vs* PostgreSQL selon le mode |
 | [03 — Modèle de données](./03-modele-de-donnees.md) | PROJECT enrichie (racine, périmètre, vcs), SOURCE ajoutée, `projet_id` sur TASK/RUN |
 | [05 — Control Tower](./05-interface-control-tower.md) | Écran **Projets**, composition d'un objectif avec sources, validation du **brief**, application d'un diff. *Depuis #276, le projet y est devenu le **cadre** de tous les écrans (§2.0, §2.0.1) et non un écran de plus, et le choix du dossier ne se limite plus au dossier utilisateur (§2.7.2)* |
 | [06 — Roadmap](./06-roadmap.md) | **Phases 7 à 9** planifiées avec leurs fenêtres (§7 ci-dessous), milestones créés par #218 ; Phase 10 à confirmer |
@@ -686,7 +701,7 @@ existent désormais comme **milestones GitLab** (#218), la quatrième reste à c
 |---|---|---|---|---|
 | **7 — Projets & espace de travail réel** | Maestro travaille dans un vrai dossier | Entité Projet (racine, périmètre, vcs) ; workspace dérivé du projet ; **branche/worktree par tâche** ; application des livrables **sous validation** ; explorateur de dossiers servi par l'API ; extension du contrat d'isolation et du modèle de menace | Phase 5 (lancement de run par l'API, livré #185) | 2027-03-18 → 2027-04-28 |
 | **8 — De l'intention au brief** | Un objectif se compose, se discute, se valide | Sources typées (fichier/dossier/URL) ; extraction docx/pdf → Markdown ; **brief structuré** + questions de clarification ; validation avant décomposition ; plafond d'ingestion | Phase 7 (un brief vise un projet) | 2027-04-29 → 2027-06-09 |
-| **9 — Poste de travail : distribution** | Le produit s'installe | Mode local durci (jeton d'API local, SQLite) ; **lanceur/installeur** ; parcours de premier lancement ; puis **enveloppe Tauri** + mises à jour | Phases 7 et 8 (§4.8) | 2027-06-10 → 2027-07-21 |
+| **9 — Poste de travail : distribution** | Le produit s'installe | Mode local durci (jeton d'API local, SQLite) ; **lanceur/installeur** ; parcours de premier lancement ; **mises à jour**. *Le cadrage écrivait ici « puis enveloppe Tauri + mises à jour » : l'**enveloppe** est sortie de la phase le 2026-09-11 (#643 abandonné) — elle est **Electron** et livrée par #923, [docs/35 §2](./35-decision-poste-de-bureau-et-disposition.md)* | Phases 7 et 8 (§4.8) | 2027-06-10 → 2027-07-21 |
 | **10 — Continuité & multi-projet** *(à confirmer — pas de milestone)* | Un projet vit dans la durée | Historique et coûts par projet ; mémoire long terme ; itération sur un livrable existant ; boucle de vérification (tests exécutés) ; multi-utilisateur en mode serveur | Phase 7 | — |
 
 Les fenêtres suivent la **cadence historique** du projet (~6 semaines par phase, comme les Phases

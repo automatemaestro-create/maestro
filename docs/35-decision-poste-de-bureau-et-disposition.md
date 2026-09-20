@@ -1,7 +1,7 @@
 # 35 — Le poste de travail de bureau : la coque, et la disposition à trois zones
 
-**Date :** 2026-09-11 · **Chantier :** #921 (8 lots) · **Jalon :** *L'atelier — le travail au centre,
-la conversation à portée*
+**Date :** 2026-09-11 · **Chantier :** #921 (11 lots — 8 au cadrage, §5) · **Jalon :** *L'atelier — le
+travail au centre, la conversation à portée*
 
 ---
 
@@ -300,7 +300,7 @@ fait son livrable :
 | 6 | Le centre montre le run qui tourne | #927 | |
 | 7 | Un run qui se termine l'annonce, et remet son livrable | #928 | |
 | 8 | Choisir une racine **depuis la fenêtre** — le dialogue sans détour, et le dépôt d'un dossier | #938 | |
-| 9 | Le renversement de D4 n'est pas fini : ce qui retient encore Tauri | #947 | |
+| 9 | Le renversement de D4 n'est pas fini : ce qui retient encore Tauri | #947 | ∥ |
 | 10 | Le modèle de menace ne connaît pas la fenêtre | #949 | |
 | 11 | Tests + doc — dont **la frontière shell / écran** | #929 | |
 
@@ -310,6 +310,10 @@ autre chose qu'elle-même (#938), le renversement de D4 resté à moitié écrit
 modèle de menace qui ne connaît pas encore la fenêtre (#949) —, et le lot « tests + doc » reste le
 **dernier**, jamais parallèle. Le corriger ici plutôt qu'au lot final est délibéré : un tableau faux
 se relit comme un découpage qu'on ne suit pas.
+
+Et il reste une **commodité de lecture** : depuis #389/#395 la relation parent/lot, son ordre et son
+état vivent dans la forge, où aucun outil ne vient lire ces lignes —
+`bash scripts/gitlab/lib.sh start-brief 921` rend le découpage qui fait foi.
 
 **L'ordre porte deux décisions**, et aucune n'est un séquencement de confort :
 
