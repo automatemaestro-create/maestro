@@ -1242,6 +1242,56 @@ sous les yeux** (un compteur temps réel) porte la classe `chiffre`
 elle, le passage de « 1 » à « 8 » élargit la valeur et fait sauter la ligne
 autour d'elle.
 
+#### Le barème de padding — le résidu compté (#983)
+
+Les densités ci-dessus étaient **nommées sans être tenues** : `Carte` en propose
+trois, rien n'obligeait à les prendre, et docs/30 §2.3 a mesuré le résultat —
+**8 paddings de conteneur distincts**, dont **5 hors barème**. C'est le rythme
+d'un écran, et c'est ce qui se voit en premier quand deux blocs voisins ne
+respirent pas pareil. `tests/espacements.test.ts` le garde comme
+`couleurs.test.ts` garde la palette : il pose le compte et **refuse le suivant**.
+
+**Six pas, et pas un de plus** — trois pour l'intérieur d'une boîte, trois pour un
+élément réglé sur une ligne de texte (barème complet et raisons : docs/30 §2.5) :
+
+| Rôle | Le pas | Ce qui le rend |
+| --- | --- | --- |
+| Conteneur | `p-2.5` · `p-3` · `p-4` · *(aucun)* | `<Carte densite="compacte\|normale\|aeree\|aucune">` |
+| Contrôle | `px-2 py-0.5` | `<Badge>` |
+| Contrôle | `px-2.5 py-1` | `<Bouton taille="petite">` |
+| Contrôle | `px-3 py-1.5` | `<Bouton>`, `CLASSE_CONTROLE` |
+
+⚠ **Le barème n'est pas cette table** : c'est ce que `components/Primitives.tsx`
+écrit, et la sonde le **lit** là — comme elle lit la palette dans `globals.css`
+plutôt que de la recopier. Un **septième pas** se décide donc dans le socle, où il
+se discute ; l'écrire dans un écran ne l'ajoute pas au barème, ça le contourne.
+Les six pas sont **épinglés** dans le test : une primitive qui en ajoute un
+rougit, au lieu d'élargir le barème en silence et de faire taire le résidu
+d'autant.
+
+**Ce que la sonde juge**, et c'est étroit à dessein — un résidu étalé sur tout le
+dépôt ne serait plus lu : les `p-<n>` **partout et sans condition** (un écart égal
+des quatre côtés est le rythme intérieur d'une boîte, et c'est ce qui fait voir
+`<Carte densite="aucune" className="p-5">`), et la paire `px-<a> py-<b>`
+**quand sa feuille habille quelque chose** — un rayon, ou une marque
+d'interaction. Cette condition n'est pas un confort : `px-3 py-2` rend **à la
+fois** l'onglet d'`OngletsAgent` et la bannière de `BanniereErreurApi`, tandis que
+`px-4 py-3` ne rend **que** les trois bandes de `PanneauDetailTache`. Sans elle,
+la sonde réclamerait `Bouton` à qui pose le padding d'un `<main>`, et quelques
+faux positifs suffisent à ce qu'on cesse de lire un résidu. Hors compte : les
+marges, les `gap`, les paddings dirigés (`pt-`, `pl-`…), un `px-`/`py-` seul — et
+`Primitives.tsx`, qui **porte** le barème au lieu d'être jugé par lui.
+
+Ce qui reste, mesuré le **2026-09-20** : **70 paddings hors barème dans 39
+fichiers**. Le tableau vit **dans le test** (`RESIDU`), fichier par fichier, le
+README ne le recopie pas. Le compte y est **exact et non un plafond** : un de plus
+rougit, un de **moins** rougit aussi tant que la ligne n'est pas mise à jour —
+c'est ce qui fait qu'un résidu ne peut que décroître, et que chaque décroissance
+est un geste **écrit**. Les cinq plus gros porteurs disent où le gain est :
+`OngletMcpAgent` (6), `integrations/BibliothequeMcp` (5), `BarreSuperieure` (4),
+`CentreNotifications` (4), `MenuAide` (3). Ce ticket ne migre aucun écran ; la
+migration se fait écran par écran, dans des tickets à part.
+
 #### La taille écrite hors de l'échelle — le résidu compté (#981)
 
 #533 a **posé** l'échelle ; il n'a migré aucun appelant, et rien ne refusait la
@@ -2042,6 +2092,7 @@ le pixel — le bout en bout dans un vrai navigateur reste le rôle du skill
 | `tests/sobriete.test.tsx` | La **règle des trois places** (#539, voir « Le langage visuel » ci-dessus) rendue opposable : les écrans du menu recensés, bandeau de tête ≤ 4 chiffres, corps ≤ 3 blocs, une seule colonne de propriétés, aucun bloc anonyme. Rien n'y est **déclaré** — le bandeau se reconnaît à ses `TuileChiffre`, la colonne à sa balise `<aside>`, et l'**arbitrage se prouve** en montant chaque écran une seconde fois files vides : un bloc qui prétendrait arbitrer sans disparaître compterait comme les autres. Sonde prouvée sur un échantillon fautif avant de balayer, comme `contraste.test.ts` |
 | `tests/contraste.test.ts` | Le contraste de la palette sémantique (#534) : les **36 paires légitimes par thème** de #533 mesurées en octets dans `globals.css`, au seuil 4,5:1 (texte) ou 3:1 (contour, aplat d'état) — **et la sonde prouvée avant de servir**, sur les ratios que #471 avait mesurés au navigateur puis sur une faute glissée exprès. Le contrôle qui en fait un filet plutôt qu'un instantané est le dernier : un token ajouté sans paire **rougit** au lieu d'être vert par construction |
 | `tests/couleurs.test.ts` | La **couleur écrite à la main** dans les écrans (#895, voir « La palette sémantique » ci-dessus) — l'**usage** de la palette, là où `contraste.test.ts` juge la palette et `a11y.test.tsx` les seuls contrôles de saisie : aucune paire `dark:` + couleur brute hors du résidu **nommé fichier par fichier avec son compte exact** (689 dans 65 fichiers au lot, 684 depuis #910, 680 depuis #911, 678 depuis #912, 648 dans 64 fichiers depuis #945), le compte étant exact et non un plafond — une paire de moins rougit aussi, si bien que le résidu ne peut que décroître et que chaque décroissance est un geste écrit. Deux **manques du socle** y sont nommés avec leur raison (six au lot — #910 en a comblé deux par une opacité de token existant, #911 a comblé `selectionne` par un token, #912 `provenance` par trois tokens ajoutés), et un test rougit le jour où la palette les comble — c'est ce qui a fait sortir `selectionne` (#911) puis `provenance` (#912) de la liste. **Prouvée avant de servir en deux étages** : le motif d'abord (les trois paires que la veille #868 a relevées, les variantes dans les deux ordres, le contournement par valeur arbitraire, et ce sur quoi il ne doit pas crier — les tokens, la prose), puis le **verdict** lui-même sur une mesure fabriquée — sans quoi une comparaison qui cesserait de comparer rendrait « rien à signaler » |
+| `tests/espacements.test.ts` | Le **padding des conteneurs et des contrôles** (#983, voir « Le barème de padding » ci-dessus) — le rythme intérieur, là où `couleurs.test.ts` juge la couleur : aucun padding hors des **six pas du socle** en dehors du résidu **nommé fichier par fichier avec son compte exact** (70 dans 39 fichiers au lot), le compte étant exact et non un plafond — un padding de moins rougit aussi, si bien que le résidu ne peut que décroître. Le barème est **lu dans `Primitives.tsx`**, jamais recopié, et **épinglé** : une primitive qui ajoute un septième pas rougit, au lieu d'élargir le barème en silence. La **portée est étroite à dessein** — les `p-<n>` partout (un écart égal des quatre côtés est le rythme d'une boîte, et c'est ce qui fait voir `<Carte densite="aucune" className="p-5">`), la paire `px`/`py` seulement quand sa feuille habille quelque chose (rayon ou interaction), parce que `px-3 py-2` rend aussi bien un onglet qu'une bannière et que `px-4 py-3` ne rend que les bandes d'un panneau : réclamer `Bouton` à qui pose le padding d'un `<main>` discréditerait le résidu entier. **Prouvée avant de servir en deux étages**, comme `couleurs.test.ts` : le motif d'abord (les cinq pas hors barème de docs/30 §2.3, la surcharge de densité de `PosteVide`, le contournement par valeur arbitraire, et ce sur quoi il ne doit pas crier — la mise en page, les `gap`, la prose), puis le **verdict** sur une mesure fabriquée |
 | `tests/typographie.test.ts` | La **taille de texte écrite hors de l'échelle** (#981, voir « L'échelle typographique » ci-dessus) — l'**usage** de l'échelle, ce que `couleurs.test.ts` est à la palette : aucun pas de Tailwind (`text-xs`, `text-sm`, `text-base`, `text-lg`…) ni valeur arbitraire (`text-[13px]`, `text-[length:var(--x)]`, `text-(length:--x)`) hors du résidu **nommé fichier par fichier avec son compte exact** (165 dans 37 fichiers au lot), le compte étant exact et non un plafond — une taille de moins rougit aussi, si bien que le résidu ne peut que décroître et que chaque décroissance est un geste écrit. Les deux ensembles sont **lus** et non recopiés : les noms de pas dans le `theme.css` de Tailwind, les pas nommés et leurs alias dans le bloc `@theme` de `globals.css` — d'où un contrôle qui rougit si un alias de #533 reprenait une valeur propre, et un autre si un pas de l'échelle portait un nom de Tailwind (la sonde refuserait le socle qu'elle recommande). Un **manque de l'échelle** y est nommé avec sa raison (`graduation`, l'étiquette d'axe d'un graphique à 10 px quand le plus petit pas est à 11), et un test rougit le jour où l'échelle le comble. **Prouvée avant de servir en deux étages** : le motif d'abord — les jumelles du ticket, les variantes, les contournements arbitraires, et surtout ce sur quoi il ne doit **pas** crier, `text-` étant surchargé par cinq autres familles (couleur, alignement, retour à la ligne, débordement, ombre de texte) —, puis le **verdict** lui-même sur une mesure fabriquée |
 | `tests/hydratation.test.ts` | Ce que le layout racine **tolère du dehors** (#730) : les deux `suppressHydrationWarning`, celui de `<html>` (le `data-theme` que `SCRIPT_INIT_THEME` corrige, #118) et celui de `<body>` (les attributs qu'une extension y pose avant l'hydratation — Grammarly, LastPass…). Ils ont l'air d'un doublon et n'en sont pas : déplacer l'un sur l'autre, le geste qu'on fait en croyant simplifier, ramène l'un des deux écarts. La sonde lit les **octets du layout**, et ce n'est pas ici un pis-aller mais le seul filet possible — le symptôme exige un navigateur, un rendu serveur à hydrater et une extension installée, donc ni jsdom ni la CI ne le verront jamais revenir. Comme `contraste.test.ts`, elle est **prouvée avant de servir**, sur un échantillon fautif qui porte le piège : la prose du layout nomme `<body>` *avant* la balise, si bien qu'une recherche naïve rougirait un fichier correct |
 
