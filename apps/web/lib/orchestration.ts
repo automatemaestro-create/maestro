@@ -107,19 +107,25 @@ export const AMORCES_ORCHESTRATION: string[] = [
  * C'est l'ordre du menu (`/chat` avant `/agents`) et celui de l'usage — on
  * s'adresse à l'orchestration par défaut, à un exécutant par exception.
  *
- * **Elle est retirée du parc plutôt qu'ajoutée à côté**, parce qu'elle y figure :
- * `GET /api/agents` rend les acteurs vus au journal, et l'orchestrateur en est un
- * (`events.ACTEUR_RUN`) — c'est ce que supposent déjà la répartition par agent et
- * le panneau des coûts, où sa planification est une dépense comme une autre. La
- * réserve de `maestro.agents.store.NOMS_RESERVES` interdit qu'un agent
- * *personnalisé* prenne ce nom ; elle ne promet pas que le parc n'en porte aucun.
- * Le prendre pour un exécutant donnait deux entrées pour un seul fil, et deux
- * enfants React sous la même clé (#671).
+ * **Elle est retirée du parc plutôt qu'ajoutée à côté** (#671), parce qu'elle y
+ * figurait : `GET /api/agents` rendait les acteurs vus au journal, et
+ * l'orchestrateur en est un (`events.ACTEUR_RUN`). Le prendre pour un exécutant
+ * donnait deux entrées pour un seul fil, et deux enfants React sous la même clé.
+ *
+ * ⚠ **Depuis #1028, le parc ne le porte plus** : la projection le laisse dehors
+ * (`state._hors_du_parc`), puisqu'il n'exécute aucune tâche et n'est pas un
+ * membre du parc (docs/37 §4.2). La déduplication **reste** pour autant, et ce
+ * n'est pas de la superstition : la réserve de `maestro.agents.store.NOMS_RESERVES`
+ * interdit qu'un agent *personnalisé* prenne ce nom, elle ne promet pas qu'aucune
+ * projection n'en fabriquera jamais un — une API d'une version antérieure, un flux
+ * rejoué. Elle ne coûte rien et elle empêche un écran de casser ; l'ôter
+ * échangerait une ligne contre une classe de panne déjà rencontrée.
  *
  * Le doublon ne se voyait ni en `--demo` ni en test, dont les parcs n'ont jamais
- * porté l'orchestrateur : seul le mode réel sert cette forme-là. C'est pourquoi la
- * règle vit ici, éprouvable sans monter d'écran, et pourquoi le parc des tests
- * d'écran porte désormais l'orchestrateur.
+ * porté l'orchestrateur : seul le mode réel servait cette forme-là. C'est pourquoi
+ * la règle vit ici, éprouvable sans monter d'écran, et pourquoi le parc des tests
+ * d'écran porte l'orchestrateur — c'est désormais le seul endroit où il en reste
+ * un, et c'est bien ce que ce test garde.
  *
  * Le reste du parc passe **tel quel** : un exécutant en double serait un défaut de
  * la projection, que l'écran masquerait au lieu de le montrer.

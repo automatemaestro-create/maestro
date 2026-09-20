@@ -58,7 +58,10 @@ import { LienTicketExterne } from "@/components/LienTicketExterne";
 import { PanneauCouts } from "@/components/PanneauCouts";
 import { Carte, EnTeteSection, TuileChiffre } from "@/components/Primitives";
 import { RegionLive } from "@/components/RegionLive";
-import { RepartitionAgents } from "@/components/RepartitionAgents";
+import {
+  EtiquetteOrchestration,
+  RepartitionAgents,
+} from "@/components/RepartitionAgents";
 import { mesureDeLaDepense } from "@/lib/annonces";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import {
@@ -251,9 +254,18 @@ export default function PageCouts() {
                   titre="Répartition par agent"
                   niveau={2}
                   icone={IconeAgents}
+                  aside={
+                    <EtiquetteOrchestration
+                      agents={vue.agents}
+                      orchestration={vue.orchestration}
+                    />
+                  }
                 />
                 <div className="mt-3">
-                  <RepartitionAgents agents={vue.agents} />
+                  <RepartitionAgents
+                    agents={vue.agents}
+                    orchestration={vue.orchestration}
+                  />
                 </div>
               </Carte>
             </aside>

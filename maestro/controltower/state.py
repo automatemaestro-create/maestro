@@ -32,6 +32,7 @@ from typing import Any
 from maestro.agents.capacity import INSTANCES_DEFAUT, CapaciteAgent
 from maestro.agents.catalog import DEFAULT_AGENTS, Agent
 from maestro.controltower.events import (
+    ACTEUR_RUN,
     EVENEMENT_AGENT_ACTIVITE,
     EVENEMENT_AGENT_CAPACITE,
     EVENEMENT_BRIEF_DECISION,
@@ -210,6 +211,38 @@ STATUTS_TACHE_TERMINAUX = frozenset({STATUT_TERMINEE, STATUT_ECHEC, STATUT_BLOQU
 #: Valeurs d'`Event.agent` qui ne désignent pas un exécutant réel (tâche bloquée
 #: jamais exécutée : « — », routage sans élu…) : rien à mettre à jour côté agents.
 _AGENTS_NON_EXECUTANTS = frozenset({"", "—"})
+
+
+def _hors_du_parc(agent: str) -> bool:
+    """Cet acteur doit-il rester **hors** du parc (`GET /api/agents`) ? (#1028)
+
+    Deux raisons de n'avoir aucune fiche, et elles ne se confondent pas :
+
+    - ce n'est **personne** — les sentinelles ci-dessus, qu'une tâche jamais
+      exécutée ou un routage sans élu laissent dans `Event.agent` ;
+    - c'est **Maestro lui-même** — `ACTEUR_RUN`, au nom de qui le cycle de vie
+      d'un run, le cadrage et la planification sont consignés. Lui existe, il
+      dépense, et on lui parle (`/chat`) ; il n'est simplement pas un **membre
+      du parc** : il n'exécute aucune tâche (`maestro/agents/catalog.py` l'exclut
+      des exécutants en toutes lettres), on ne lui en réassigne pas, et on ne lui
+      règle pas de capacité. C'est l'arbitrage de
+      [docs/37 §4.2](../../docs/37-decision-equipe-sur-mesure.md) — *« L'orchestrateur
+      n'est pas un membre de l'équipe. Il est Maestro, présent dans tout projet,
+      et c'est lui qui recrute. »*
+
+    Avant #1028, la projection lui ouvrait une fiche au premier `agent.activite`
+    de planification, si bien que le tableau de bord comptait **6** agents du
+    poste là où `/agents` — qui lit le catalogue des exécutants — en listait
+    **5** (constat C13 du retex du 2026-09-11). Le remède est **une** source pour
+    le parc, pas une soustraction chez chaque lecteur : c'est la leçon que #365 a
+    tirée du cycle de vie d'un ticket et #927 de la tuile « Run en cours ».
+
+    ⚠ Ce qu'il **ne** retire pas : sa dépense. Elle reste au grand livre et à la
+    vue analytique, sous un poste qui porte son nom
+    (`analytics.AnalyticsCouts.orchestration`) — hors du parc ne veut pas dire
+    hors du compte.
+    """
+    return agent in _AGENTS_NON_EXECUTANTS or agent == ACTEUR_RUN
 
 
 def _solde_le_cout(event: Event) -> bool:
@@ -1194,7 +1227,13 @@ class ControlTowerState:
         return self._taches.get(tache_id)
 
     def agents(self) -> list[EtatAgent]:
-        """Les agents connus : le catalogue, puis les acteurs apparus au fil des événements."""
+        """Le **parc** : le catalogue, puis les exécutants apparus au fil des événements.
+
+        ⚠ L'orchestration n'y figure pas (#1028, `_hors_du_parc`) : elle dépense
+        et on lui parle, mais elle n'exécute rien — c'est le même parc que
+        `/agents`, et c'est ce qui permet à la tuile *Agents* du tableau de bord
+        et à cette liste de rendre enfin le même compte.
+        """
         return list(self._agents.values())
 
     def agent(self, nom: str) -> EtatAgent | None:
@@ -1347,7 +1386,7 @@ class ControlTowerState:
             if demande is not None and demande.projet_id is None:
                 demande.projet_id = event.projet_id
 
-        if event.agent in _AGENTS_NON_EXECUTANTS:
+        if _hors_du_parc(event.agent):
             return
         agent = self._agents.setdefault(
             event.agent, EtatAgent(nom=event.agent, role=event.role)
@@ -1386,11 +1425,11 @@ class ControlTowerState:
         # Répercute la réassignation sur les fiches agents (#52) : l'agent
         # d'origine rend le créneau de cette tâche (ses autres instances restent
         # en vol, #100), le nouvel agent la porte tant qu'elle n'est pas terminale.
-        if origine != event.agent and origine not in _AGENTS_NON_EXECUTANTS:
+        if origine != event.agent and not _hors_du_parc(origine):
             ancien = self._agents.get(origine)
             if ancien is not None:
                 ancien.termine(event.tache_id)
-        if event.agent in _AGENTS_NON_EXECUTANTS:
+        if _hors_du_parc(event.agent):
             return
         agent = self._agents.setdefault(
             event.agent, EtatAgent(nom=event.agent, role=event.role)
@@ -1512,7 +1551,7 @@ class ControlTowerState:
             tache = self._taches.get(event.tache_id)
             if tache is not None:
                 tache.activite = SigneDeVie.depuis(event)
-        if event.agent in _AGENTS_NON_EXECUTANTS:
+        if _hors_du_parc(event.agent):
             return
         agent = self._agents.setdefault(
             event.agent, EtatAgent(nom=event.agent, role=event.role)
@@ -1527,7 +1566,7 @@ class ControlTowerState:
         rediffusion par la pompe) laisse l'état inchangé — idempotence, comme
         la réassignation. Un champ absent ne touche pas la valeur en place.
         """
-        if event.agent in _AGENTS_NON_EXECUTANTS:
+        if _hors_du_parc(event.agent):
             return
         agent = self._agents.setdefault(
             event.agent, EtatAgent(nom=event.agent, role=event.role)

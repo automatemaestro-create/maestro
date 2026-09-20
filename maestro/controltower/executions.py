@@ -1202,8 +1202,8 @@ class ServiceExecutions:
                     titre=tache.titre,
                     # L'agent **de la tâche**, sans quoi rien ne serait libéré : la
                     # projection ne rend son créneau qu'à l'agent que l'événement
-                    # nomme (`_applique_statut_tache`), et un événement sans
-                    # exécutant est écarté d'emblée (`_AGENTS_NON_EXECUTANTS`).
+                    # nomme (`_applique_statut_tache`), et ce qui n'est pas un
+                    # membre du parc est écarté d'emblée (`_hors_du_parc`).
                     agent=tache.agent,
                     role=tache.role,
                     statut=STATUT_ECHEC,

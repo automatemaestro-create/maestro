@@ -310,6 +310,16 @@ export type AnalyticsCouts = {
   total: Usage;
   executions: CoutExecutionResume[];
   agents: CoutAgentAgrege[];
+  /**
+   * Ce que **Maestro** a dépensé à cadrer, planifier et conduire les runs de la
+   * fenêtre (#1028) — `null` quand il n'a rien coûté de mesuré.
+   *
+   * Hors d'`agents`, et c'est tout le ticket : l'orchestration dépense, mais
+   * elle n'est pas un membre du parc (docs/37 §4.2). Rangée parmi les agents,
+   * elle y prenait 21 % d'un parc que `/agents` n'a jamais listé (constat C13 du
+   * retex du 2026-09-11). `agents` + `orchestration` font toujours `total`.
+   */
+  orchestration: CoutAgentAgrege | null;
   taches: CoutTacheAgregee[];
   serie: PointCout[];
 };

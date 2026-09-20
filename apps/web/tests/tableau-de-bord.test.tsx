@@ -200,8 +200,23 @@ describe("les indicateurs de tête (IndicateursTableauDeBord)", () => {
     });
     expect(tuile("Agents")).toHaveTextContent("1 sur ce projet · 1 libre(s)");
     expect(tuile("Agents")).toHaveTextContent(
-      "3 agent(s) du poste · 0 occupé(s) ailleurs · 1 désactivé(s)",
+      "3 agent(s), hors orchestration · 0 occupé(s) ailleurs · 1 désactivé(s)",
     );
+  });
+
+  it("dit que le compte est celui du parc, orchestration exclue", () => {
+    // #1028 : le détail annonçait « N agent(s) du poste » sur un parc qui
+    // portait l'orchestrateur — 6 ici, 5 sur `/agents` (constat C13 du retex du
+    // 2026-09-11). Le parc est corrigé à la source (`state._hors_du_parc`), et
+    // ce que ce test garde est l'autre moitié : que le compte **dise** de quelle
+    // population il parle, plutôt que de passer de 6 à 5 en silence.
+    monter({
+      agents: [agentFactice({ nom: "dev", actif: true, statut: "libre" })],
+      taches: [],
+    });
+    expect(tuile("Agents")).toHaveTextContent("hors orchestration");
+    // Et jamais l'ancien libellé, qui ne disait pas de quel parc il s'agissait.
+    expect(tuile("Agents")).not.toHaveTextContent("agent(s) du poste");
   });
 
   it("renvoie au détail l'agent occupé sur un autre projet", () => {
@@ -537,6 +552,15 @@ describe("le second niveau de la page Coûts (#539)", () => {
       agents: [
         { agent: "dev", role: "Développeur", taches: 1, usage: usageFactice() },
       ],
+      // Le poste de Maestro, hors du parc (#1028) : la période peuplée le porte
+      // parce que c'est ce que sert le mode réel, et que la colonne de
+      // propriétés doit se tenir **avec** lui.
+      orchestration: {
+        agent: "orchestrateur",
+        role: "Orchestrateur",
+        taches: 0,
+        usage: usageFactice({ cout_usd: 0.2 }),
+      },
       taches: [coutTacheAgregeeFactice()],
       serie: [],
     };
@@ -587,6 +611,10 @@ describe("le second niveau de la page Coûts (#539)", () => {
     expect(
       within(colonne).getByRole("heading", { name: "Répartition par agent" }),
     ).toBeInTheDocument();
+    // Et l'orchestration se lit **dans l'en-tête** de ce bloc, jamais dans sa
+    // liste (#1028) : « dont orchestration … », à côté du titre.
+    expect(within(colonne).getByText(/dont/)).toHaveTextContent("orchestration");
+    expect(within(colonne).queryByText("orchestrateur")).toBeNull();
   });
 
   it("efface le bloc quand la période n'a ni tâche ni exécution", () => {

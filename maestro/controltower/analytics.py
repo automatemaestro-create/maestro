@@ -5,8 +5,10 @@ d'un run (`RunCost`) et son endpoint (`GET /api/executions/{run_id}/cout`).
 Cette brique construit la vue **transverse** au-dessus des mêmes événements —
 la matière du tableau de bord coûts & analytics (`GET /api/analytics/couts`) :
 
-- le coût agrégé **par tâche** (toutes exécutions confondues), **par agent**
-  (planification de l'orchestrateur comprise) et **par exécution** ;
+- le coût agrégé **par tâche** (toutes exécutions confondues), **par agent**,
+  **par exécution**, et le poste de l'**orchestration** (#1028 : le cadrage et la
+  planification sont une dépense, mais Maestro n'est pas un membre du parc — il a
+  donc son propre champ plutôt qu'une ligne parmi les agents) ;
 - la **série temporelle** du coût (seaux par minute, heure ou jour) pour
   visualiser l'évolution de la dépense, sur une période sélectionnable
   (`depuis`).
@@ -29,6 +31,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from maestro.controltower.events import (
+    ACTEUR_RUN,
     EVENEMENT_AGENT_ACTIVITE,
     EVENEMENT_MESSAGE_INTER_AGENTS,
     EVENEMENT_TACHE_STATUT,
@@ -96,11 +99,19 @@ _AGENTS_NON_EXECUTANTS = frozenset({"", "—"})
 
 @dataclass(frozen=True)
 class CoutAgent:
-    """La ligne « par agent » : l'usage cumulé d'un acteur, toutes exécutions confondues.
+    """La ligne d'un acteur : son usage cumulé, toutes exécutions confondues.
 
-    L'orchestrateur y figure comme les exécutants (sa planification est une
-    dépense au même titre) ; `taches` compte les tâches distinctes auxquelles
-    son usage a été attribué — 0 pour un usage hors tâche (planification).
+    `taches` compte les tâches distinctes auxquelles son usage a été attribué —
+    0 pour un usage hors tâche (le cadrage et la planification).
+
+    ⚠ La même forme sert **deux** postes depuis #1028, et c'est leur *place* qui
+    les distingue : les lignes d'`AnalyticsCouts.agents` sont des exécutants du
+    parc, `AnalyticsCouts.orchestration` est Maestro. Une forme commune parce
+    qu'on lit d'eux exactement la même chose (un coût, des tokens, des appels,
+    une durée) ; deux champs parce que les additionner dans une seule liste
+    faisait passer l'orchestration pour un agent de plus — 21 % du camembert
+    d'un parc dont `/agents` ne l'a jamais listée (constat C13 du retex du
+    2026-09-11).
     """
 
     agent: str
@@ -221,6 +232,13 @@ class AnalyticsCouts:
     total: StepUsage = StepUsage()
     executions: tuple[CoutExecutionResume, ...] = ()
     agents: tuple[CoutAgent, ...] = ()
+    #: Ce que **Maestro** a dépensé pour cadrer, planifier et conduire les runs de
+    #: la fenêtre (#1028) — `None` quand il n'a rien coûté de mesuré. Un champ à
+    #: lui, hors d'`agents`, parce qu'il n'est pas un membre du parc
+    #: (docs/37 §4.2) : le confondre avec un exécutant donnait un parc de 6 au
+    #: tableau de bord contre 5 sur `/agents`. Il reste dans `total` — c'est bien
+    #: de l'argent dépensé —, et `agents` + `orchestration` en font la somme.
+    orchestration: CoutAgent | None = None
     taches: tuple[CoutTacheAgregee, ...] = ()
     serie: tuple[PointCout, ...] = ()
 
@@ -234,6 +252,9 @@ class AnalyticsCouts:
             "total": self.total.to_dict(),
             "executions": [e.to_dict() for e in self.executions],
             "agents": [a.to_dict() for a in self.agents],
+            "orchestration": (
+                None if self.orchestration is None else self.orchestration.to_dict()
+            ),
             "taches": [t.to_dict() for t in self.taches],
             "serie": [p.to_dict() for p in self.serie],
         }
@@ -364,6 +385,8 @@ def agrege_couts(
     total = StepUsage()
     par_execution: dict[str, _Accumulateur] = {}
     par_agent: dict[str, _Accumulateur] = {}
+    #: Le poste de l'orchestration (#1028), hors du parc et jamais mélangé à lui.
+    orchestration = _Accumulateur()
     par_tache: dict[str, _Accumulateur] = {}
     # Les usages datés, **avant** d'être mis en seaux (#991) : le pas peut n'être
     # connu qu'à la fin (`PAS_AUTO` le déduit de l'étendue), et la découpe ne peut
@@ -416,7 +439,23 @@ def agrege_couts(
             if date is not None:
                 usages_dates.append((date, usage))
 
-            if event.agent not in _AGENTS_NON_EXECUTANTS:
+            # L'orchestration a son propre seau (#1028) : elle dépense — le
+            # cadrage et la planification sont payés — mais elle n'est pas un
+            # membre du parc, et la ranger parmi les agents la faisait lire
+            # comme un exécutant de plus. Écartée de la boucle plutôt que
+            # soustraite à l'arrivée : c'est ici que la question se pose une
+            # fois, et `total` la garde de toute façon.
+            if event.agent == ACTEUR_RUN:
+                # `agent` posé ici est le témoin qu'on l'a **vu dépenser** : sans
+                # lui, un poste à zéro serait indiscernable d'un poste absent, et
+                # la fenêtre où Maestro n'a rien coûté rendrait « 0,00 $ » plutôt
+                # que rien (même convention que `cout_usd: None`).
+                orchestration.agent = ACTEUR_RUN
+                orchestration.usage = orchestration.usage.fusion(usage)
+                orchestration.role = event.role or orchestration.role
+                if event.tache_id:
+                    orchestration.taches.add(event.tache_id)
+            elif event.agent not in _AGENTS_NON_EXECUTANTS:
                 acteur = par_agent.setdefault(event.agent, _Accumulateur())
                 acteur.usage = acteur.usage.fusion(usage)
                 acteur.role = event.role or acteur.role
@@ -492,6 +531,16 @@ def agrege_couts(
             for nom, acc in sorted(
                 par_agent.items(), key=lambda item: _tri_par_cout(item[1].usage), reverse=True
             )
+        ),
+        orchestration=(
+            CoutAgent(
+                agent=orchestration.agent,
+                role=orchestration.role,
+                taches=len(orchestration.taches),
+                usage=orchestration.usage,
+            )
+            if orchestration.agent
+            else None
         ),
         taches=tuple(
             CoutTacheAgregee(
