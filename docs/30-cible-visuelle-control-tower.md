@@ -196,6 +196,85 @@ valent 0,875 rem. Et `text-titre` (1 rem), déclaré, n'est employé **nulle par
 plat du §1.3 : **408 des 439 usages typographiques (93 %) tiennent sur deux pas** — 0,75 rem et
 0,875 rem —, sans titre intermédiaire.
 
+### 2.3bis Le barème des rayons et des ombres — décidé le 2026-09-20 (#982)
+
+La ligne « Rayon » et la ligne « Ombre » du tableau ci-dessus sont un **constat**. Voici la
+**décision** qui y répond. Elle a été prise dans cet ordre, et l'ordre compte : un barème déduit de
+l'usage courant n'aurait fait que figer la dispersion qu'on vient de mesurer.
+
+1. une **veille** sur trois produits en service, dont les valeurs ont été relevées dans le
+   navigateur (§5.7) ;
+2. **trois variantes** rendues sur la vraie stack, et un choix rendu par un regard qui n'en était
+   pas l'auteur (§5.8) ;
+3. **puis** la sonde, qui garde ce qui a été décidé.
+
+> **Quatre rayons, un seul pas d'ombre, chacun nommé par son rôle.**
+>
+> | Token | Valeur | Ce qu'il dit |
+> |---|---|---|
+> | `--radius-controle` | 6 px | ce qu'on manipule : bouton, champ, sélecteur, entrée de navigation, onglet |
+> | `--radius-carte` | 8 px | une surface **posée** sur la page : carte, encart, conteneur en place |
+> | `--radius-flottant` | 12 px | une surface qui **survole** la page : panneau, menu déroulant, modale |
+> | `--radius-pastille` | pleine | ce qui est circulaire ou en pilule : badge d'état, avatar, point d'état |
+> | `--shadow-flottant` | l'ombre de `shadow-lg` | **le seul** pas d'ombre : « cette surface flotte » |
+>
+> **Une surface posée se sépare par son bord (`border-bord`), jamais par une ombre.**
+
+**Le pas d'ombre unique est la décision la moins évidente**, et c'est la mesure qui l'a tranchée.
+Relevé dans le navigateur le 2026-09-20 sur deux produits en service : **GitHub** (liste de runs
+d'Actions) porte **une** ombre d'élévation réelle sur toute la page — celle des menus déroulants ;
+ses 32 autres `box-shadow` sont des `inset`, donc des *filets*, pas de l'élévation. **Grafana**
+(liste de tableaux de bord) en porte **une** aussi. Un second pas d'ombre — « posé », qui aurait
+gardé l'ombre des cartes — a été rendu, comparé et écarté : il nomme une surface, pas un état.
+
+Le barème vit dans `apps/web/app/globals.css`, et **les jumelles Tailwind y sont aliasées sur leur
+pas** (`--radius-md: var(--radius-controle)`, `--radius-lg: var(--radius-carte)`,
+`--radius-xl: var(--radius-flottant)`, `--shadow-lg: var(--shadow-flottant)`) — la mécanique de
+`--text-xs: var(--text-annexe)`, et pour une raison qui vaut pendant toute la migration : sans
+l'alias, un pas retouché laisserait les classes pas encore renommées à l'ancienne valeur. D'où une
+propriété qu'on peut promettre : **renommer une de ces classes en son pas de rôle ne change aucun
+pixel.** Restent sans alias `shadow-sm`, `shadow-md`, `shadow-2xl` et le `shadow` nu — aucun n'a de
+pas : leur retrait change le rendu, donc c'est une **migration**, avec sa relecture visuelle et son
+thème sombre, jamais un renommage.
+
+**Ce qui garde le barème** : `apps/web/tests/rayons-ombres.test.ts`, sur le modèle de
+`couleurs.test.ts` (#895) — sonde prouvée sur un échantillon fautif, résidu **nommé et compté**
+fichier par fichier, exact et non plafonné, donc qui ne peut que décroître. Elle lit le barème dans
+`globals.css` plutôt que de le recopier, et distingue un **pas** (valeur littérale) d'une **jumelle**
+(un `var(…)`) : on ne peut donc pas ajouter un pas en le faisant passer pour un alias.
+
+**Le résidu au 2026-09-20**, compté par la sonde — c'est la ligne de départ, et elle est plus haute
+que ne le laissait croire le relevé à la main de §2.3 :
+
+| | Écritures | Détail |
+|---|---:|---|
+| Rayons | **136** | `rounded-md` 70 · `rounded-full` 31 · `rounded` **nu** 20 · `rounded-lg` 12 · `rounded-t-md` 2 · `rounded-xl` 1 |
+| Ombres | **28** | `shadow-sm` 14 · `shadow-lg` 7 · `shadow` **nu** 3 · `shadow-2xl` 3 · `shadow-md` 1 |
+| En ligne | **1** | un `boxShadow` dans un objet `style` (`GuidePriseEnMain`) |
+
+**165 écritures sur 59 fichiers**, une fois retirés les **8 rayons du socle**
+(`components/Primitives.tsx`), qui ont pris leur nom de rôle avec ce lot, à valeur constante.
+
+Deux choses que le relevé à la main de §2.3 avait manquées, et que la sonde voit — parce qu'elle
+lit les jetons d'une feuille de classes au lieu de chercher un préfixe :
+
+- le **`rounded` nu**, **20 emplois** et non deux ou trois : il rend le pas que Tailwind v4 donne
+  lui-même pour *déprécié* (0,25 rem, soit 4 px). C'est un **sixième rayon**, le troisième par
+  fréquence, et personne ne l'a choisi — on l'écrit en croyant écrire « arrondi » ;
+- le **`shadow` nu** (3 emplois) est lui aussi déprécié et rend **exactement `shadow-sm`** : 17 des
+  28 ombres du produit rendent le même pixel sous deux noms. C'est le défaut des « jumelles » que
+  l'échelle typographique avait déjà tranché pour `text-xs` / `text-annexe`.
+
+⚠ Le relevé à la main comptait aussi les classes citées **dans les commentaires** — d'où un
+`rounded-md` de plus que ce que le produit rend. C'est la raison pour laquelle le chiffre de
+référence est désormais celui de la sonde, pas celui d'un `grep`.
+
+**Un manque du barème est nommé, pas toléré** : le voile du guide de prise en main
+(`0 0 0 9999px`, qui assombrit la page *sauf* un rectangle) n'est pas une élévation et aucun pas ne
+peut l'exprimer. Il est inscrit dans `MANQUES_DU_BAREME` avec sa raison — il reste **dans** le
+compte du résidu, et il dit seulement jusqu'où ce compte peut descendre sans que le barème bouge
+d'abord.
+
 ### 2.4 Les couleurs ne sont pas tokenisées
 
 **1 750 occurrences** de classes Tailwind brutes ; **0 occurrence** de classe sémantique
