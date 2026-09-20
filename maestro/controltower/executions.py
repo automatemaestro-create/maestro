@@ -209,6 +209,7 @@ from maestro.controltower.events import (
 from maestro.controltower.hote import DemarrageHoteRate, HoteRun, OrdreRun
 from maestro.controltower.hote_en_process import HoteRunEnProcess
 from maestro.controltower.portee import PorteeProjet, PorteeRun
+from maestro.controltower.question import ArbitreQuestionControlTower
 from maestro.controltower.souffrance import SEUIL_SOUFFRANCE_S, en_souffrance
 from maestro.controltower.state import (
     EXECUTION_ANNULEE,
@@ -1521,6 +1522,11 @@ class ServiceExecutions:
         `projet_id` (#222) descend par le même chemin et pour la même raison :
         chaque tâche du plan en hérite, et l'appartenance remonte aux vues.
 
+        La **question libre** d'un agent (#1023) se câble au même endroit et pour
+        la même raison que les deux arbitres de brief : *où* la question est posée
+        est un choix de déploiement — ici le bus de cette app —, quand *combien de
+        temps on l'attend* est un réglage du moteur. Elle n'ajoute rien à l'ordre.
+
         `mode_brief` (#320) descend, lui, en deux morceaux, et la séparation est la
         même que celle des garde-fous : l'**arbitre** est un câblage de déploiement
         (*où* la question est posée — ici le bus de l'app), donc il part à la
@@ -1571,6 +1577,13 @@ class ServiceExecutions:
                 # pas passé ici — c'est un réglage du moteur, dont le défaut
                 # (`TOURS_CLARIFICATION_DEFAUT`) vaut pour tout run lancé par l'API.
                 arbitre_clarification=ArbitreClarificationControlTower(self._bus),
+                # La question libre d'un agent (#1023) se câble ici pour la
+                # troisième fois la même raison : *où* la question est posée est un
+                # choix de déploiement — ici le bus de cette app. La **borne** de
+                # l'attente, elle, ne passe pas par l'ordre : c'est un réglage du
+                # moteur (`MAESTRO_ARBITRAGE_ATTENTE`), au même titre que le
+                # plafond d'allers-retours de clarification juste au-dessus.
+                questionneur=ArbitreQuestionControlTower(self._bus),
             )
             rapport = await moteur.run(
                 ordre.objectif,

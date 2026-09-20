@@ -98,8 +98,8 @@ des motifs d'arrêt. **Tranche en énonçant l'hypothèse**, et continue :
 - **contenu manquant** — invente un contenu réaliste, jamais du faux-texte : c'est le contenu
   réel qui casse une mise en page, et c'est sur lui qu'on veut être surpris tôt.
 
-Ne rends jamais une maquette vide au motif qu'il manquait une entrée — personne ne te répondra
-en cours de tâche.
+Ne rends jamais une maquette vide au motif qu'il manquait une entrée : même une question posée se
+double de l'hypothèse sur laquelle tu continues, et c'est la maquette qui la rend discutable.
 
 ## Garde-fous
 

@@ -363,6 +363,43 @@ export type Validation = {
 };
 
 /**
+ * Une **question libre** posée par un agent pendant sa tâche, telle que servie
+ * par `GET /api/questions` (#1023, `EtatQuestion.to_dict` ; contrat docs/05
+ * §6.17).
+ *
+ * Ce n'est **pas** une `Validation`, et les deux ne se rejoignent nulle part :
+ * là-bas on approuve ou on refuse un **acte**, ici on répond du **texte** à une
+ * question. Répondre n'autorise aucun appel d'outil — un outil classé `ask`
+ * reste refusé sans arbitrage (EF-08, docs/32 §5).
+ *
+ * `question_id` est l'identité, **pas** `tache_id` : une tâche en pose
+ * plusieurs, et deux peuvent attendre ensemble. `choix` est vide quand l'agent
+ * n'en propose aucun — c'est **lui** qui décide des gestes offerts, l'écran n'en
+ * fabrique aucun. `hypothese` est ce qu'il fera sans réponse, `attente` la
+ * phrase qui le dit borne comprise, et `echeance` (#1025) la même borne en date
+ * — la seule chose qu'un écran puisse comparer à son horloge sans lire un
+ * chiffre dans une phrase. Vide sur une question d'avant ce lot.
+ */
+export type Question = {
+  question_id: string;
+  tache_id: string;
+  titre: string;
+  question: string;
+  hypothese: string;
+  choix: string[];
+  agent: string;
+  role: string;
+  attente: string;
+  /** L'instant où l'agent reprendra sans réponse (#1025) — vide : inconnu. */
+  echeance: string;
+  statut: string;
+  reponse: string;
+  projet_id: string | null;
+  run_id: string;
+  horodatage: string;
+};
+
+/**
  * Un fichier du diff d'application (#227, `Modification.to_dict`) : le chemin
  * **relatif à la racine du projet**, ce qui lui arrive, et de combien de lignes.
  * `ajouts`/`suppressions` valent 0 quand `binaire` est vrai — on sait alors que
@@ -1162,40 +1199,13 @@ export type ChoixOutillage = {
   parce_que: string;
 };
 
-/**
- * Un fichier de l'outillage recommandé (`Piece.to_dict`, #1031).
- *
- * Une pièce **par fichier**, jamais par skill (docs/38 §4.2) : « régénérer sans
- * écraser » se décide fichier par fichier. `justifie_par` nomme ce qui justifie
- * cette pièce-là — pour un projet neuf la **réponse** qui l'a décidée, pour un
- * projet existant l'endroit du projet qui la montre (#1030). Un lecteur n'a donc
- * jamais à savoir lequel des deux lots a produit la recommandation qu'il lit.
- */
-export type PieceOutillage = {
-  chemin: string;
-  role: string;
-  titre: string;
-  raison: string;
-  justifie_par: string;
-  deja_present: boolean;
-};
-
-/**
- * L'outillage recommandé pour un projet (`RecommandationOutillage.to_dict`, #1031).
- *
- * Le contrat **partagé** par l'analyse d'un projet existant (#1030) et les choix
- * d'un projet neuf (#1031) : deux formes auraient donné deux écrans de validation,
- * et deux générateurs. `source` dit laquelle des deux l'a produite.
- */
-export type RecommandationOutillage = {
-  projet_id: string;
-  source: string;
-  reference: string;
-  resume: string;
-  dossier_scripts: string;
-  pieces: PieceOutillage[];
-  choix: ChoixOutillage[];
-};
+/* ⚠ Aucun type pour la **recommandation** d'outillage ici (#1031). Elle est servie
+   par `POST /api/projets/{id}/outillage/recommandation` dans la forme du lot 2
+   (`maestro.outillage.modele.Recommandation`), la même que
+   `GET …/outillage/analyse` — à laquelle le front n'a pas non plus de type. C'est
+   #1034 qui affichera l'une et l'autre, et qui les déclarera alors **une fois**
+   pour les deux. En écrire ici la moitié qui sert un seul des deux appelants
+   donnerait deux déclarations d'un même contrat, dont une que rien n'exerce. */
 
 /**
  * Un message du fil de chat utilisateur ↔ agent (`MessageChat.to_dict`, #84) :
@@ -1333,6 +1343,18 @@ export const VALIDATION_EN_ATTENTE = "en_attente";
 export const VALIDATION_APPROUVEE = "approuvee";
 export const VALIDATION_REFUSEE = "refusee";
 
+/**
+ * Statuts d'une **question d'agent** (#1023, maestro/controltower/state.py).
+ *
+ * Deux, et non trois : il n'y a rien à refuser — une question ne soumet aucun
+ * acte. Et pas de « sans réponse » non plus, alors que l'agent, lui, reprend à
+ * la borne : la question **reste posée** tant que personne n'y a répondu, une
+ * réponse tardive servant encore. C'est `echeance` qui dit à l'écran que l'agent
+ * est reparti, jamais un changement de statut.
+ */
+export const QUESTION_EN_ATTENTE = "en_attente";
+export const QUESTION_REPONDUE = "repondue";
+
 /** Types d'événements diffusés (maestro/controltower/events.py). */
 export const EVENEMENT_TACHE_STATUT = "tache.statut";
 export const EVENEMENT_TACHE_REASSIGNATION = "tache.reassignation";
@@ -1351,6 +1373,13 @@ export const EVENEMENT_AGENT_CAPACITE = "agent.capacite";
 export const EVENEMENT_MESSAGE_INTER_AGENTS = "message.inter_agents";
 export const EVENEMENT_VALIDATION_DEMANDE = "validation.demande";
 export const EVENEMENT_VALIDATION_DECISION = "validation.decision";
+/**
+ * #1023 : la **question libre** d'un agent, et ce qui lui revient. Canal
+ * distinct de `validation.*` — celui-là transporte un booléen sur un acte,
+ * celui-ci du texte sur une question, pendant une tâche (docs/32 §5.2).
+ */
+export const EVENEMENT_QUESTION_DEMANDE = "question.demande";
+export const EVENEMENT_QUESTION_REPONSE = "question.reponse";
 export const EVENEMENT_CHAT_MESSAGE = "chat.message";
 /**
  * Le cycle de vie d'un run piloté par l'API (#185, `EVENEMENT_EXECUTION_STATUT`

@@ -45,7 +45,7 @@ import type {
   PropositionPlaybook,
   PropositionPlaybookDetail,
   ProvenanceRegistreMcp,
-  RecommandationOutillage,
+  Question,
   RapportLecture,
   RedactionPlaybook,
   RefusProjet,
@@ -229,6 +229,45 @@ export function chargerValidations(
 ): Promise<Validation[]> {
   return chargerJson<Validation[]>(
     `/api/validations?projet=${encodeURIComponent(portee)}`,
+  );
+}
+
+/**
+ * Les **questions libres** posées par les agents (#1023, docs/05 §6.17) : en
+ * attente d'abord, puis celles qui ont reçu leur réponse.
+ *
+ * `projet` est obligatoire, au contrat commun : une question appartient au
+ * projet de la tâche qui la pose, et une Control Tower cadrée sur un projet n'a
+ * pas à faire répondre pour un travail qui se déroule ailleurs.
+ */
+export function chargerQuestions(portee: PorteeProjet): Promise<Question[]> {
+  return chargerJson<Question[]>(
+    `/api/questions?projet=${encodeURIComponent(portee)}`,
+  );
+}
+
+/**
+ * Répond à la question d'un agent (#1023) — du **texte**, rien d'autre : ni
+ * `approuve`, ni `motif`. Une question ne soumet aucun acte, il n'y a donc rien
+ * à approuver ni à refuser, et répondre n'autorise aucun appel d'outil (EF-08).
+ *
+ * Un choix retenu se répond **en le recopiant** : c'est le contrat de la route,
+ * et c'est pourquoi le bouton d'un choix envoie son libellé plutôt qu'un index —
+ * un numéro ferait voyager une signification qui vivrait dans un autre
+ * événement.
+ *
+ * La réponse est rognée ici comme elle l'est côté backend : une réponse vide est
+ * refusée en 422 (elle n'apprendrait rien à l'agent, qui reprendrait sur son
+ * hypothèse en croyant qu'on lui a répondu).
+ */
+export function repondreQuestion(
+  questionId: string,
+  reponse: string,
+): Promise<void> {
+  return envoyerJson(
+    `/api/questions/${encodeURIComponent(questionId)}/reponse`,
+    { reponse: reponse.trim() },
+    "réponse refusée",
   );
 }
 
@@ -841,28 +880,13 @@ export async function ouvrirQuestionnaireOutillage(
   return paire.messages;
 }
 
-/**
- * L'outillage que ces réponses recommandent
- * (`POST /api/outillage/recommandation`, #1031) — **la forme de l'analyse** (#1030).
- *
- * Sans état : le client dit ce qu'il a, l'API dit ce qui en découle. Rendue à tout
- * moment, questionnaire fini ou non — ce qui n'a pas été répondu ne justifie
- * simplement aucune pièce.
- */
-export async function recommandationOutillage(
-  choix: { cle: string; valeur: string }[],
-  projetId?: string | null,
-): Promise<RecommandationOutillage> {
-  const reponse = await fetch(`${API_URL}/api/outillage/recommandation`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ choix, projet_id: projetId ?? null }),
-  });
-  if (!reponse.ok) {
-    throw new Error(`recommandation indisponible (${reponse.status})`);
-  }
-  return (await reponse.json()) as RecommandationOutillage;
-}
+/* ⚠ Pas de client pour `POST …/outillage/recommandation` ici, et c'est délibéré
+   (#1031). La route existe et rend la `Recommandation` du lot 2 ; **aucun écran ne
+   la consomme encore** — c'est #1034 qui l'affichera, avec l'analyse d'un projet
+   existant, dont le front n'a pas non plus de type (`GET …/outillage/analyse`, #1030,
+   n'en a reçu aucun). Écrire ici la moitié cliente d'un contrat que personne ne lit
+   la ferait vieillir sans que rien ne le signale : le modèle a déjà changé une fois
+   entre l'écriture de ce lot et le merge du précédent. */
 
 /**
  * Un échec survenu **après** que le message utilisateur a été acquis (#695) :

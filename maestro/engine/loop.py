@@ -74,7 +74,6 @@ from dataclasses import dataclass, replace
 from time import perf_counter
 from typing import Any
 
-from maestro.agents import default_runtimes
 from maestro.agents.capacity import CapacityStore
 from maestro.agents.catalog import DEFAULT_AGENTS, Agent
 from maestro.agents.mcp import McpStore
@@ -108,6 +107,7 @@ from maestro.engine.executor import (
 )
 from maestro.engine.guardrails import Guardrails
 from maestro.engine.pause import PorteExecution
+from maestro.engine.questions import ArbitreQuestion
 from maestro.engine.retry import RELANCE_DEFAUT, PolitiqueRelance
 from maestro.messaging.handoff import HandoffRelais
 from maestro.messaging.mailbox import Mailbox
@@ -115,6 +115,7 @@ from maestro.orchestrator.orchestrator import Orchestrator
 from maestro.orchestrator.schema import Brief, Clarification, Task, topological_order
 from maestro.plan_run import noeuds_du_plan
 from maestro.projets.store import ProjetStore
+from maestro.providers.arbitrage import BornesArbitrage
 from maestro.providers.base import ModelProvider
 from maestro.references import ReferenceTicket
 from maestro.sources.extraction import RapportLecture
@@ -392,6 +393,8 @@ class OrchestrationEngine:
         arbitre_brief: ArbitreBrief | None = None,
         arbitre_clarification: ArbitreClarification | None = None,
         tours_clarification: int | None = None,
+        questionneur: ArbitreQuestion | None = None,
+        bornes_question: BornesArbitrage | None = None,
     ) -> None:
         if max_parallele is not None and max_parallele < 1:
             raise ValueError(f"max_parallele doit être ≥ 1 (reçu : {max_parallele}).")
@@ -451,6 +454,14 @@ class OrchestrationEngine:
                 relance=relance,
                 projets=projets,
                 mailbox=mailbox,
+                # La question libre d'un agent (#1023) descend jusqu'à
+                # l'exécuteur, où elle est posée et consignée : c'est lui qui tient
+                # la tâche, le journal et la borne. Comme les deux arbitres de
+                # brief ci-dessus, l'arbitre est un **câblage de déploiement**
+                # (*où* la question est posée) et non un réglage du run ; ignoré
+                # si un exécuteur est injecté, qui câble le sien.
+                questionneur=questionneur,
+                bornes_question=bornes_question,
             )
         )
 
@@ -466,6 +477,7 @@ class OrchestrationEngine:
         arbitre_brief: ArbitreBrief | None = None,
         arbitre_clarification: ArbitreClarification | None = None,
         tours_clarification: int | None = None,
+        questionneur: ArbitreQuestion | None = None,
     ) -> OrchestrationEngine:
         """Moteur par défaut : fournisseur et modèle issus de la config (#69).
 
@@ -485,8 +497,11 @@ class OrchestrationEngine:
         agents par défaut plus les agents personnalisés persistés
         (`MAESTRO_AGENTS_DIR`, sinon `core/agents/`), chargés ici, à la
         construction du moteur — un agent créé ensuite vaut pour les moteurs
-        construits après lui. Sans runtime outillé, un agent personnalisé
-        produit son livrable par le chemin texte, cadré par son playbook.
+        construits après lui. **Aucune table de runtimes n'est passée** (#1037) :
+        l'exécuteur dérive celui de chaque tâche de la fiche de l'agent routé, si
+        bien qu'un agent personnalisé travaille outillé — fichiers, écriture dans
+        le projet, commandes — au lieu de produire son livrable en texte. Lui
+        passer `default_runtimes(...)` le restreindrait aux cinq rôles du code.
 
         Le **contrôle de capacité** (#86, EF-21) est branché sur le dépôt
         configuré (`MAESTRO_CAPACITE_DIR`, sinon `core/capacite/`), relu à
@@ -528,6 +543,16 @@ class OrchestrationEngine:
         `maestro.controltower.brief.ArbitreBriefControlTower`. None (défaut) :
         aucun régime humain n'est possible sur ce moteur, et le demander sera
         refusé plutôt qu'ignoré.
+
+        `questionneur` (#1023) est **à qui** un agent pose une question libre
+        pendant sa tâche — en pratique
+        `maestro.controltower.question.ArbitreQuestionControlTower`. None
+        (défaut) : le verbe n'est pas servi aux agents de ce moteur, plutôt que
+        servi sans aboutir. La **borne** de l'attente, elle, vient de la config
+        (`MAESTRO_ARBITRAGE_ATTENTE`) et non d'un paramètre : c'est le même temps
+        humain que celui d'un arbitrage, et lui donner un second réglage ferait
+        deux chiffres à tenir d'accord pour une seule question — *combien laisse-
+        t-on à qui répond ?*
         """
         from maestro.providers.factory import default_model, provider_from_settings
 
@@ -538,7 +563,6 @@ class OrchestrationEngine:
             provider,
             orchestrator,
             agents=catalogue(AgentStore.default(settings), settings.model),
-            runtimes=default_runtimes(provider, model=settings.model),
             guardrails=guardrails,
             mailbox=mailbox,
             playbooks=PlaybookStore.default(settings),
@@ -552,6 +576,8 @@ class OrchestrationEngine:
             arbitre_brief=arbitre_brief,
             arbitre_clarification=arbitre_clarification,
             tours_clarification=tours_clarification,
+            questionneur=questionneur,
+            bornes_question=BornesArbitrage.from_settings(settings),
         )
 
     async def run(

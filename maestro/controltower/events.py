@@ -111,6 +111,25 @@ EVENEMENT_TACHE_DETAIL = "tache.detail"
 #: distinguer. Un type distinct est la seule voie qui montre le blocage **sans**
 #: défaire ce tri.
 EVENEMENT_TACHE_BLOCAGE = "tache.blocage"
+#: `tache.decision` (#1024) porte ce qu'un agent a **tranché seul** en cours de
+#: tâche : `detail` la décision, `description` son motif, tels qu'il les a
+#: écrits. Même forme que `tache.blocage` et pour la même raison — ni statut, ni
+#: agent, ni coût ne changent : un agent qui décide dans sa tâche ne décide pas
+#: du sort de sa tâche (docs/31 §3.4).
+#:
+#: ⚠ À ne pas confondre avec `validation.decision`, et le préfixe est ce qui les
+#: sépare : celui-là porte la décision **d'une personne** sur un acte soumis
+#: (#48), celui-ci la décision **d'un agent** que personne n'a arbitrée. C'est
+#: tout le partage de docs/37 §2.2 — ce qui demande un humain se demande, tout
+#: le reste se tranche seul et se consigne —, et les ranger sous un même type
+#: reviendrait à ne plus pouvoir dire lequel des deux on lit.
+#:
+#: ⚠ Il lui fallait un type à lui plutôt que de rejoindre `agent.activite`, pour
+#: la raison qui valait déjà pour `tache.blocage` : la frise (#355) écarte le
+#: bruit de fond d'un run, si bien qu'une décision rangée là serait consignée
+#: puis invisible — exactement l'inverse de ce que le parent #1019 demande, dont
+#: la condition est que l'autonomie **se vérifie après coup**.
+EVENEMENT_TACHE_DECISION = "tache.decision"
 #: `tache.usage` (#835) porte ce qu'une tâche **en cours** a consommé jusqu'ici :
 #: `usage` en est le cumul (tokens, tours, et le coût si le fournisseur l'a déjà
 #: tarifé), `cout_usd` le raccourci scalaire. Même forme que `tache.reference`,
@@ -131,6 +150,28 @@ EVENEMENT_AGENT_CAPACITE = "agent.capacite"
 EVENEMENT_MESSAGE_INTER_AGENTS = "message.inter_agents"
 EVENEMENT_VALIDATION_DEMANDE = "validation.demande"
 EVENEMENT_VALIDATION_DECISION = "validation.decision"
+#: `question.demande` et `question.reponse` (#1023) portent la **question libre**
+#: qu'un agent pose pendant sa tâche, et ce qui lui revient. Cinquième couple
+#: `demande`/`réponse` du dépôt, et il lui fallait le sien pour la raison que #320
+#: a déjà écrite : `validation.*` transporte un **booléen** sur un acte — ses
+#: trois contrats sont typés pour ça —, `brief.*` un brief avant décomposition,
+#: celui-ci du **texte libre pendant une tâche**. Faire voyager une question dans
+#: le canal booléen aurait demandé d'élargir les trois autres.
+#:
+#: `question.demande` porte l'identifiant de la question (`question_id` — une
+#: tâche en pose plusieurs, et deux peuvent attendre en même temps), son texte
+#: (`description`), les `choix` facultatifs et l'`hypothese` que l'agent a
+#: annoncée ; `detail` dit en clair ce qui se passera sans réponse, borne
+#: comprise. `question.reponse` porte la réponse humaine dans `detail`, ou —
+#: quand personne n'a répondu avant la borne — l'hypothèse reprise, sous un
+#: statut qui les distingue (`maestro.controltower.state`, `QUESTION_*`).
+#:
+#: ⚠ Ni l'un ni l'autre ne **décide** de quoi que ce soit : une réponse n'est pas
+#: une approbation, et un acte classé `ask` reste refusé sans canal d'arbitrage
+#: (EF-08). Ils ne touchent pas non plus au statut de la tâche — un agent qui
+#: demande travaille encore, et il reprendra quoi qu'il arrive.
+EVENEMENT_QUESTION_DEMANDE = "question.demande"
+EVENEMENT_QUESTION_REPONSE = "question.reponse"
 EVENEMENT_CHAT_MESSAGE = "chat.message"
 EVENEMENT_PLAYBOOK_PROPOSITION = "playbook.proposition"
 EVENEMENT_EXECUTION_STATUT = "execution.statut"
@@ -434,6 +475,40 @@ class Event:
     # l'écran qui avait lancé le run. Un fait porté par le transport, jamais
     # deviné du titre : juger « c'est un brief » sur le libellé serait un lexique,
     # et le dépôt n'en pose pas (#746).
+    # La **question libre** d'un agent (#1023), portée par le seul couple
+    # `question.*`. `question_id` l'identifie : une tâche en pose plusieurs, et
+    # une question restée sans réponse reste en vol pendant que l'agent reprend —
+    # deux peuvent donc attendre en même temps, ce qu'un index par `tache_id`
+    # (celui des validations, #48) ne saurait pas distinguer. Chaîne vide
+    # ailleurs, pour la raison de `outil`/`cause` : un seul couple en parle, et
+    # « cet événement ne porte pas de question » est un fait.
+    question_id: str = ""
+    # Ce que l'agent fera **sans réponse**, tel qu'il l'a annoncé. Il voyage
+    # séparément de `detail` parce qu'il sert deux fois et dans deux sens : montré
+    # à qui répond (il change l'urgence de la question), puis servi à l'agent à la
+    # borne, mot pour mot. Le fondre dans une phrase le rendrait irrécupérable.
+    hypothese: str = ""
+    # Les options entre lesquelles l'agent hésite — None (et non `[]`) quand
+    # l'événement n'en apprend rien, pour la raison qui vaut déjà
+    # d'`etapes`/`liens`/`sources` : la projection distingue « cet événement ne dit
+    # rien des choix » de « il n'y en a aucun », et une réponse ne doit pas
+    # effacer ceux que la demande a posés.
+    choix: list[str] | None = None
+    # L'instant où l'agent reprendra **sans** réponse (#1025) — la borne, en date
+    # plutôt qu'en durée. Chaîne vide ailleurs, et sur une question dont personne
+    # ne connaît la borne.
+    #
+    # Elle voyage alors que `detail` dit déjà la même chose en toutes lettres
+    # (« sans réponse d'ici 240 s… »), et ce n'est pas un doublon : `detail` est la
+    # **phrase** qu'un fil affiche sans rien composer, celle-ci est le **fait**
+    # avec lequel un écran compare son horloge. Sans elle, l'écran du lot #1025
+    # n'avait que deux recours pour savoir si la borne est passée — lire le
+    # chiffre dans la phrase, c'est-à-dire juger du texte par un motif (ce que le
+    # dépôt refuse, #746), ou recopier `BornesArbitrage.attente_s` côté
+    # navigateur, c'est-à-dire deux supports pour un même réglage. C'est le même
+    # partage que `hypothese` fait déjà avec `detail`, sur l'autre moitié de la
+    # phrase.
+    echeance: str = ""
     etape_run: str = ""
     horodatage: str = field(default_factory=_horodatage)
 
@@ -477,6 +552,10 @@ class Event:
             "outil": self.outil,
             "arguments": dict(self.arguments) if self.arguments is not None else None,
             "decideur": self.decideur,
+            "question_id": self.question_id,
+            "hypothese": self.hypothese,
+            "choix": list(self.choix) if self.choix is not None else None,
+            "echeance": self.echeance,
             "etape_run": self.etape_run,
             "horodatage": self.horodatage,
         }
@@ -572,6 +651,20 @@ class Event:
             # connaît pas ; le repli sûr (`decideur_depuis`) est appliqué là où
             # une **décision** se prend, jamais sur un transport.
             decideur=str(data.get("decideur") or ""),
+            # La question libre (#1023) — même régime que tout ce qui précède :
+            # **relecture, jamais revalidation**. Les choix ont été nettoyés et
+            # bornés à la publication (`maestro.providers.question`), et les
+            # rejuger ici rendrait illisible la question d'un run passé le jour où
+            # un plafond bougerait. `reponses_depuis` est réemployé tel quel : ce
+            # qu'on relit est exactement la même chose — une liste de textes dont
+            # ce qui n'en est pas un est écarté.
+            question_id=str(data.get("question_id") or ""),
+            hypothese=str(data.get("hypothese") or ""),
+            choix=(reponses_depuis(data["choix"]) if data.get("choix") is not None else None),
+            # Même régime (#1025) : la date passe telle quelle, sans être relue ni
+            # recalculée. Un événement émis avant ce lot n'en porte pas, et l'écran
+            # sait alors dire « en attente » sans savoir jusqu'à quand.
+            echeance=str(data.get("echeance") or ""),
             # Même régime que `decideur` et `cause` : la valeur brute passe telle
             # quelle. Un événement émis avant #989 n'en porte pas — son cadrage
             # restera compté en planification, et c'est juste : rien ne permet

@@ -48,6 +48,14 @@ Le test est celui-ci : si les deux réponses possibles mènent au même plan, ce
 question — c'est une hypothèse, écris-la et avance. Si elles mènent à deux plans différents, pose
 la question.
 
+Trois familles le passent presque toujours, et ce sont celles qui **demandent un humain** partout
+ailleurs dans Maestro : un **acte irréversible** que l'objectif suppose (perte de données,
+modification d'un système existant, publication, déploiement, dépense engagée) ; un **coût ou une
+portée** que l'objectif laisse ouverts et qui feraient un travail sans commune mesure ; un **choix
+produit à deux issues défendables**, où les deux réponses se tiennent et donnent deux produits
+différents. Tout le reste est une hypothèse : tu la tranches, tu l'écris dans `hypotheses`, et tu
+avances.
+
 N'en pose **aucune** quand l'objectif se suffit : un brief limpide sort avec `questions` vide, et
 c'est le bon résultat. À l'inverse, n'enterre pas une ambiguïté coûteuse dans une hypothèse pour
 faire propre — c'est exactement l'erreur que ce brief existe pour éviter.

@@ -71,6 +71,22 @@ Il ne dit rien du **statut** de la tâche, qui ne bouge pas : un agent qui bute
 n'est pas une tâche `bloquee` au sens de la cascade de #43 — celle-là n'a jamais
 été exécutée, celui-ci travaille encore et parle.
 
+Pourquoi la question d'un agent y entre (#1023)
+------------------------------------------------
+
+`question.demande` / `question.reponse` sont le cinquième flux, et ils entrent
+par la porte de la validation plutôt que par celle du blocage : une question est
+la seconde où **un agent attend quelqu'un**, c'est-à-dire exactement le fait dont
+l'absence a coûté les 53 minutes du 14 août. La frise est le seul écran qui dise
+*l'instant* où cela arrive ; la file des questions, elle, dit l'état courant.
+
+Une différence avec la validation, et elle se lit dans le statut rendu : une
+tâche arrêtée sur un acte sensible l'est **indéfiniment**, une question a une
+**issue par défaut** — sans réponse à la borne, l'agent reprend sur l'hypothèse
+qu'il avait annoncée, et c'est l'étape `<tache>:question` du journal qui le dit.
+Une entrée de frise `en_attente` n'annonce donc pas une tâche à l'arrêt : elle
+annonce quelqu'un qui peut encore répondre utilement.
+
 Le signe de vie du couloir, et pourquoi ce n'est pas une entrée (#836)
 ----------------------------------------------------------------------
 
@@ -137,6 +153,8 @@ from typing import Any
 
 from maestro.controltower.events import (
     EVENEMENT_MESSAGE_INTER_AGENTS,
+    EVENEMENT_QUESTION_DEMANDE,
+    EVENEMENT_QUESTION_REPONSE,
     EVENEMENT_TACHE_BLOCAGE,
     EVENEMENT_TACHE_STATUT,
     EVENEMENT_VALIDATION_DECISION,
@@ -173,6 +191,8 @@ TYPES_FRISE = frozenset(
         EVENEMENT_VALIDATION_DEMANDE,
         EVENEMENT_VALIDATION_DECISION,
         EVENEMENT_TACHE_BLOCAGE,
+        EVENEMENT_QUESTION_DEMANDE,
+        EVENEMENT_QUESTION_REPONSE,
     }
 )
 
@@ -207,7 +227,19 @@ def _statut_de(entree: EntreeJournal) -> str:
     Un message n'a pas de statut de tâche : il rend la chaîne vide, et c'est
     ainsi qu'une vue distingue les deux flux sans interpréter le type.
     """
-    if entree.type in (EVENEMENT_TACHE_STATUT, EVENEMENT_TACHE_BLOCAGE):
+    if entree.type in (
+        EVENEMENT_TACHE_STATUT,
+        EVENEMENT_TACHE_BLOCAGE,
+        # Une question (#1023) porte le sien aussi et le porte **tel quel** :
+        # `en_attente` puis `repondue` (`maestro.controltower.state`,
+        # `QUESTION_*`). Pas de traduction vers le vocabulaire des validations,
+        # qui dirait « en attente de validation » pour une demande qui ne soumet
+        # aucun acte — et surtout qui laisserait croire que la tâche s'arrête là :
+        # une question a une issue par défaut, l'agent reprend à la borne sur
+        # l'hypothèse qu'il a annoncée.
+        EVENEMENT_QUESTION_DEMANDE,
+        EVENEMENT_QUESTION_REPONSE,
+    ):
         return entree.statut
     if entree.type == EVENEMENT_VALIDATION_DEMANDE:
         return STATUT_EN_ATTENTE_VALIDATION

@@ -24,8 +24,13 @@
  * répète pas le nom mais donne le rôle quand l'appelant le connaît.
  */
 
+import { useMemo } from "react";
+
+import { QuestionsDuFil } from "@/components/chat/QuestionDansLeFil";
 import { Conversation } from "@/components/Conversation";
 import { IconeChat } from "@/components/Icones";
+import { useEtatGlobal } from "@/lib/etatGlobal";
+import { questionsEnAttente } from "@/lib/questions";
 import { useChat } from "@/lib/useChat";
 
 export function FilChat({
@@ -41,6 +46,19 @@ export function FilChat({
   role?: string;
 }) {
   const fil = useChat(agent);
+  const { questions, repondreAUneQuestion } = useEtatGlobal();
+  // Les questions **de cet agent** (#1025) : c'est sa fiche, on lui parle, et
+  // lui montrer celle d'un autre ferait répondre à côté. Filtrées ici plutôt que
+  // par `questionsDuFil` : ce fil n'a pas de cas « tous » — la fiche est celle
+  // d'un agent, jamais de l'orchestration —, et lui passer la constante du fil
+  // global pour ne jamais s'en servir décrirait un choix qui n'existe pas.
+  const siennes = useMemo(
+    () =>
+      questionsEnAttente(questions).filter(
+        (question) => question.agent === agent,
+      ),
+    [questions, agent],
+  );
   return (
     <Conversation
       fil={fil}
@@ -49,6 +67,17 @@ export function FilChat({
       titre={`Conversation${role ? ` · ${role}` : ""}`}
       icone={IconeChat}
       niveauTitre={3}
+      /* Au pied du fil, comme sur `/chat` : la carte est la même, la place est
+         la même, et c'est ce qui fait qu'on répond de la même façon d'une
+         surface à l'autre (#620 — « les deux ne divergent pas »). */
+      pied={
+        siennes.length > 0 ? (
+          <QuestionsDuFil
+            questions={siennes}
+            repondre={repondreAUneQuestion}
+          />
+        ) : undefined
+      }
     />
   );
 }

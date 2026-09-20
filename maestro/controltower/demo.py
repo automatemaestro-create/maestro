@@ -59,6 +59,7 @@ from maestro.controltower.events import (
     EVENEMENT_AGENT_ACTIVITE,
     EVENEMENT_EXECUTION_STATUT,
     EVENEMENT_MESSAGE_INTER_AGENTS,
+    EVENEMENT_QUESTION_DEMANDE,
     EVENEMENT_RUN_PLAN,
     EVENEMENT_TACHE_STATUT,
     EVENEMENT_VALIDATION_DEMANDE,
@@ -70,7 +71,7 @@ from maestro.controltower.events import (
 )
 from maestro.controltower.fixtures import FixturesControlTower
 from maestro.controltower.orchestration import NOM_ORCHESTRATION
-from maestro.controltower.state import EXECUTION_TERMINEE
+from maestro.controltower.state import EXECUTION_TERMINEE, QUESTION_EN_ATTENTE
 from maestro.detail_tache import (
     ETAPE_A_FAIRE,
     ETAPE_EN_COURS,
@@ -540,6 +541,42 @@ async def _scenario(bus: EventBus) -> None:
                 "de démo (action sensible : écriture hors du bac à sable)."
             ),
             detail="validation requise avant déploiement",
+        )
+    )
+    # Une **question libre** du même agent (#1023, #1025), délibérément posée sur
+    # la tâche qui porte déjà une demande de validation : les deux canaux se
+    # voient alors côte à côte, et c'est la meilleure façon de montrer qu'ils ne
+    # sont pas le même — là on approuve un **acte** par oui/non, ici on répond du
+    # **texte** à une question, et y répondre n'autorise rien (EF-08).
+    #
+    # La borne est **large** (30 min) là où le défaut du moteur est de quelques
+    # minutes : la démo doit rendre l'état *en attente* de façon stable, y compris
+    # quand on la laisse tourner le temps d'une relecture visuelle ou d'une
+    # capture. L'état *échu* se voit en laissant passer l'échéance.
+    await bus.publish(
+        Event(
+            type=EVENEMENT_QUESTION_DEMANDE,
+            run_id=RUN_ID,
+            tache_id="demo-t3",
+            titre="Pipeline CI et déploiement de l'API",
+            agent="devops",
+            role="DevOps",
+            statut=QUESTION_EN_ATTENTE,
+            description=(
+                "Le déploiement de démo doit-il tourner sur le même compose que "
+                "la CI, ou sur une pile à lui ?"
+            ),
+            hypothese="je pars sur le même compose, plus simple à tenir à jour",
+            choix=["Le même compose", "Une pile dédiée"],
+            detail=(
+                "sans réponse d'ici 1800 s, l'agent reprendra sur son hypothèse : "
+                "je pars sur le même compose, plus simple à tenir à jour"
+            ),
+            echeance=(
+                datetime.now(UTC) + timedelta(seconds=1800)
+            ).isoformat(timespec="seconds"),
+            projet_id=PROJET_ID,
+            question_id="demo-t3:4f2a91c0de",
         )
     )
 

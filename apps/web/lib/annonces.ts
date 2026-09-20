@@ -37,12 +37,14 @@
 
 import { runsEnAttente } from "./brief";
 import { formatCout } from "./format";
+import { questionsEnAttente } from "./questions";
 import {
   EXECUTION_ANNULEE,
   EXECUTION_ECHEC,
   EXECUTION_EN_COURS,
   EXECUTION_TERMINEE,
   VALIDATION_EN_ATTENTE,
+  type Question,
   type ResumeExecution,
   type Tache,
   type Validation,
@@ -259,47 +261,75 @@ export function mesureDesMessages(nombre: number): Mesure {
 /**
  * « 1 validation et 2 briefs en attente » — `null` quand rien n'attend personne.
  *
- * Les deux familles sont dites séparément quand les deux sont là, et chacune
- * seule quand elle est seule : « 3 en attente » obligerait à ouvrir l'écran pour
+ * Les familles sont dites séparément quand plusieurs sont là, et chacune seule
+ * quand elle est seule : « 3 en attente » obligerait à ouvrir l'écran pour
  * savoir de quoi il retourne, alors que répondre à des questions et approuver une
  * action sensible ne demandent ni la même disponibilité ni la même personne.
  *
  * Partagé avec l'étiquette de la cloche (`components/CentreNotifications`) depuis
  * #538 : les deux disent la même file, et deux formulations auraient fini par
  * diverger — c'est déjà la raison d'être de `lib/brief` et `lib/execution`.
+ *
+ * **Trois familles depuis #1025**, et la troisième est de la même nature que les
+ * deux autres sans être du même canal : une **question d'agent** attend un texte,
+ * pas un oui/non, et y répondre n'autorise aucun acte (EF-08). Elle entre dans ce
+ * résumé pour la raison qui y avait fait entrer les briefs (#322) : ce compte-là
+ * répond à « combien de choses m'attendent ? », pas à « combien de validations » —
+ * deux compteurs côte à côte obligeraient à faire la somme soi-même, et un agent
+ * suspendu resterait invisible tant que la file de validations n'est pas vide.
  */
 export function resumeArbitrages(
   validations: number,
   briefs: number,
+  questions = 0,
 ): string | null {
   const morceaux: string[] = [];
   if (validations > 0) {
     morceaux.push(`${validations} validation${validations > 1 ? "s" : ""}`);
   }
   if (briefs > 0) morceaux.push(`${briefs} brief${briefs > 1 ? "s" : ""}`);
+  if (questions > 0) {
+    morceaux.push(`${questions} question${questions > 1 ? "s" : ""}`);
+  }
   if (morceaux.length === 0) return null;
-  return `${morceaux.join(" et ")} en attente`;
+  // Virgules puis « et » devant le dernier : « 2 validations, 1 brief et 1
+  // question en attente » se lit, « A et B et C » non. Avec deux morceaux la
+  // phrase est celle d'avant ce lot, à l'octet près.
+  const dernier = morceaux[morceaux.length - 1];
+  const avant = morceaux.slice(0, -1);
+  const liste = avant.length === 0 ? dernier : `${avant.join(", ")} et ${dernier}`;
+  return `${liste} en attente`;
 }
 
 /**
  * Le relevé des **demandes d'arbitrage humain** — les seuls événements qui
  * attendent une action, donc les seuls qui aient droit à `aria-live="assertive"`.
  *
- * Une **seule** mesure pour les deux familles, et non une par famille : ce qui
+ * Une **seule** mesure pour toutes les familles, et non une par famille : ce qui
  * doit interrompre quelqu'un est « on vous attend », pas la ventilation de la
  * file. Deux mesures auraient produit deux phrases coupant la parole à la
  * première, pour un état que la phrase unique dit déjà en entier.
+ *
+ * `questions` (#1025) est facultatif pour la même raison que le paramètre du
+ * résumé : un appelant qui ne les connaît pas encore rend la phrase d'avant ce
+ * lot, à l'octet près.
  */
 export function mesuresDesArbitrages(
   validations: Validation[],
   executions: ResumeExecution[],
+  questions: Question[] = [],
 ): Mesure[] {
   const enAttente = validations.filter(
     (validation) => validation.statut === VALIDATION_EN_ATTENTE,
   ).length;
   const briefs = runsEnAttente(executions).length;
-  const resume = resumeArbitrages(enAttente, briefs);
+  const demandes = questionsEnAttente(questions).length;
+  const resume = resumeArbitrages(enAttente, briefs, demandes);
   return [
-    jalon("arbitrage", enAttente + briefs, `Arbitrage requis : ${resume ?? ""}`),
+    jalon(
+      "arbitrage",
+      enAttente + briefs + demandes,
+      `Arbitrage requis : ${resume ?? ""}`,
+    ),
   ];
 }

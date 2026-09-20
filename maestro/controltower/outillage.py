@@ -1,12 +1,18 @@
-"""Le questionnaire d'outillage conduit dans le fil, et répondu d'un geste (#1031).
+"""L'outillage d'un projet, côté Control Tower : l'analyser (#1030), le demander (#1031).
 
-Lot 3/7 de #1020. Les questions, leurs recommandations et la recommandation
-structurée qu'elles produisent vivent dans `maestro.projets.outillage` — un module
-sans dépendance à la Control Tower, que l'analyse d'un projet existant (#1030) et la
-génération (#1033) partagent. **Ici** vit seulement ce qui les fait tenir dans une
-conversation.
+Les deux bouts du même outillage, et ils tiennent dans un module parce qu'ils servent
+la même chose à la même API : `ServiceOutillage` analyse un projet **existant**,
+`ConducteurOutillage` pose à l'utilisateur les questions qui décident de celui d'un
+projet **neuf**. Tout ce qu'ils décident — les questions, les constats, la
+recommandation — vit dans `maestro.outillage`, qui ne connaît ni HTTP ni projet
+déclaré ; ici vit seulement ce qui les fait tenir dans une Control Tower.
 
-## Pourquoi dans le fil, et pas dans un formulaire
+**Ils ne se croisent nulle part**, et c'est voulu : un projet qu'on analyse n'a pas de
+questionnaire, un projet neuf n'a rien à analyser. Ce qu'ils partagent est ce qu'ils
+rendent — la `Recommandation` du lot 2, que `recommandation_depuis_choix` produit en
+muant les réponses en `Constats` plutôt qu'en refaisant le chemin.
+
+## Le questionnaire : pourquoi dans le fil, et pas dans un formulaire
 
 « Chaque question propose une recommandation et se répond d'un geste, par la mécanique
 du cadrage (#1014), **sans formulaire à part** » — c'est le critère du ticket, et il
@@ -42,27 +48,56 @@ qu'aucune garde n'a à tenir :
 C'est la propriété que `orchestration` tient déjà pour le cadrage, appliquée à un objet
 qui a plus d'un tour.
 
-## Ce que ce module ne fait pas
+Enfin la question ne se pose **nulle part ailleurs** que dans le fil : l'étape
+d'outillage du parcours de création (#1034) montera cette même carte, elle n'en fera
+pas une seconde.
 
-Il **n'écrit rien dans le projet** : la génération est le lot 5 (#1033), et ce qui la
-précède est une recommandation, pas un fichier. Il ne décide pas non plus du **format**
-de l'outillage — docs/38 l'a arrêté, et `maestro.projets.outillage` en dérive. Enfin il
-ne pose la question **nulle part ailleurs** que dans le fil : l'étape d'outillage du
-parcours de création (#1034) montera cette même carte, elle n'en fera pas une seconde.
+## L'analyse : une couche mince sur `maestro.outillage`
+
+La pièce que la route `GET /api/projets/{id}/outillage/analyse` appelle, au
+patron de [`maestro.controltower.projets`](./projets.py) : le service tient la
+forme JSON et les refus, `app.py` ne fait que les traduire en codes HTTP.
+
+**Une couche mince, et c'est voulu.** Toute l'analyse vit dans
+`maestro.outillage` — qui ne connaît ni HTTP ni projet déclaré. Ce module n'en
+ajoute qu'une chose : il **résout le projet** avant de regarder le disque. C'est
+ce qui fait que la route n'analyse jamais un chemin qu'on lui apporte, mais
+seulement la racine d'un projet déjà déclaré, donc déjà passée par
+`valider_racine` (EF-38). Une route qui accepterait un chemin libre serait une
+seconde porte d'entrée sur le disque à côté de l'explorateur, avec ses propres
+frontières à tenir d'accord — exactement ce que `POST /api/projets/racine`
+(#938) a rassemblé en une porte unique.
+
+**Le périmètre du projet s'applique.** `Projet.perimetre` retire d'office
+`.env` et `**/secrets/**` (docs/24 §2.5) : l'analyse ne peut donc pas lire les
+deux gisements de secrets d'un dépôt d'utilisateur, et ce n'est pas une
+précaution prise ici mais une propriété de ce qui est déclaré.
+
+**Rien n'est écrit, ni sur le disque ni dans la forge.** L'analyse propose ; la
+génération est le lot 5 du chantier (#1033), et elle passera par le régime
+d'écriture de docs/24 §2.4. Deux appels sur un projet inchangé rendent le même
+contenu — seuls l'`id` et l'horodatage diffèrent, parce qu'ils datent la
+lecture et non le projet.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Any
 
 from maestro.controltower.chat import MessageChat, ReponseChat, choix_du_fil
-from maestro.projets.outillage import (
+from maestro.controltower.projets import ProjetInconnu, ServiceProjets
+from maestro.outillage import Bornes, analyser
+from maestro.outillage.questionnaire import (
     Choix,
     QuestionOutillage,
     deductions,
     question_suivante,
     recommandation_depuis_choix,
+    resume_des_choix,
+    source_manifeste_des_choix,
 )
+from maestro.projets import Projet
 
 
 def _phrase_des_deductions(deduits: Sequence[Choix]) -> str:
@@ -105,22 +140,22 @@ def _phrase_de_la_question(question: QuestionOutillage) -> str:
     )
 
 
-def _phrase_de_conclusion(projet_id: str, acquis: Sequence[Choix]) -> str:
+def _phrase_de_conclusion(acquis: Sequence[Choix]) -> str:
     """Ce que le fil dit quand il n'y a plus de question : l'outillage recommandé.
 
     Le questionnaire ne s'arrête pas sur un silence. Il rend **ce qu'il a produit** —
-    le résumé du manifeste à venir et le compte des fichiers —, parce que c'est la
+    le résumé du manifeste à venir et le compte des entrées —, parce que c'est la
     seule chose qui donne rétrospectivement un sens aux questions qu'on vient de
-    répondre. Le détail, lui, se sert par l'API (`POST /api/outillage/recommandation`)
+    répondre. Le détail, lui, se sert par l'API (`POST …/outillage/recommandation`)
     et s'affiche là où on le valide (#1034) : le redire ici en entier ferait du fil un
     second écran de recommandation.
     """
-    reco = recommandation_depuis_choix(projet_id, acquis)
-    skills = sum(1 for p in reco.pieces if p.role == "skill")
+    reco = recommandation_depuis_choix(acquis)
+    skills = sum(1 for e in reco.entrees if e.type == "skill")
     return (
-        f"C'est tout ce qu'il me fallait — {reco.resume}.\n"
-        f"L'outillage recommandé : {len(reco.pieces)} fichier(s), dont {skills} skill(s), "
-        "chacun avec la raison qui le justifie. Rien n'est écrit dans le projet tant "
+        f"C'est tout ce qu'il me fallait — {resume_des_choix(acquis)}.\n"
+        f"L'outillage recommandé : {len(reco.entrees)} entrée(s), dont {skills} skill(s), "
+        "chacune avec la raison qui la justifie. Rien n'est écrit dans le projet tant "
         "que vous ne l'avez pas validé."
     )
 
@@ -128,18 +163,19 @@ def _phrase_de_conclusion(projet_id: str, acquis: Sequence[Choix]) -> str:
 class ConducteurOutillage:
     """Conduit le questionnaire d'outillage d'un projet neuf dans un fil de chat.
 
-    Sans état : tout ce qu'il sait, il le relit du fil qu'on lui passe. Il est donc
-    sûr de le partager entre conversations, et la Control Tower n'en construit qu'un.
+    **Aucun attribut, et c'est la propriété qui compte** : tout ce qu'il sait, il le
+    relit du fil qu'on lui passe. Il est donc sûr de le partager entre conversations,
+    la Control Tower n'en construit qu'un, et il ne peut pas se désaccorder de ce qui
+    est persisté — c'est la même garantie que `RepondeurOrchestration` tient pour une
+    proposition de run (« aucun état de session », #685), à ceci près qu'ici l'objet a
+    plusieurs tours et que la tentation d'en garder un bout est réelle.
 
-    `projet_id` est **celui de la fenêtre**, passé au montage plutôt qu'à chaque
-    appel : le questionnaire porte sur le projet qu'on est en train d'outiller, et
-    changer de projet en cours de questionnaire n'a pas de sens — c'est un autre
-    questionnaire. La valeur ne sert qu'à remplir la recommandation, jamais à décider
-    d'une question.
+    Le **projet** n'y est pas non plus, et c'est le même raisonnement : la
+    recommandation ne dépend que des réponses (`recommandation_depuis_choix`), et le
+    projet ne sert qu'à dater la provenance dans le manifeste
+    (`source_manifeste_des_choix`, appelé par l'API qui, elle, sait de quel projet il
+    s'agit).
     """
-
-    def __init__(self, projet_id: str = "") -> None:
-        self._projet_id = projet_id
 
     def acquis(self, fil: Sequence[MessageChat]) -> tuple[Choix, ...]:
         """Les réponses que ce fil porte — celles données, **puis** celles qui en découlent.
@@ -164,7 +200,7 @@ class ConducteurOutillage:
         acquis = [*donnes, *deductions(donnes)]
         question = question_suivante(acquis)
         if question is None:
-            corps = _phrase_de_conclusion(self._projet_id, acquis)
+            corps = _phrase_de_conclusion(acquis)
             return ReponseChat(contenu=_joint(prelude, corps))
         return ReponseChat(
             contenu=_joint(prelude, _phrase_de_la_question(question)),
@@ -203,3 +239,113 @@ class ConducteurOutillage:
 def _joint(prelude: str, corps: str) -> str:
     """Colle le prélude au corps — sans ligne vide inutile quand il n'y en a pas."""
     return f"{prelude}\n\n{corps}" if prelude else corps
+
+
+class ServiceOutillage:
+    """L'outillage d'un projet déclaré, servi par l'API — analysé (#1030) ou choisi (#1031).
+
+    `bornes` permet de resserrer la lecture (les tests s'en servent pour
+    fabriquer une troncature sur un projet minuscule) ; `None` — le cas nominal
+    — laisse le défaut de `maestro.outillage`, dossiers ignorés compris. Elle ne
+    concerne que l'analyse : un questionnaire ne lit rien.
+
+    **Les deux voies exigent un projet déclaré**, et c'est la même raison des deux
+    côtés : une route qui accepterait un chemin libre serait une seconde porte
+    d'entrée sur le disque à côté de l'explorateur. Le questionnaire, lui, n'ouvre
+    aucun fichier — mais son résultat nomme un projet dans la provenance du
+    manifeste, et ce projet doit être celui qu'on a déclaré, pas une chaîne
+    apportée par l'appelant.
+    """
+
+    def __init__(self, projets: ServiceProjets, *, bornes: Bornes | None = None) -> None:
+        self._projets = projets
+        self._bornes = bornes
+
+    def analyser(self, id_projet: str) -> dict[str, Any]:
+        """Analyse le projet `id_projet` et rend l'outillage recommandé (docs/38).
+
+        Lève `ProjetInconnu`/`ProjetIllisible` **avant de toucher au disque** —
+        un projet qu'on ne sait pas lire n'a pas de racine à parcourir —, et
+        `RacineRefusee` motivée si la racine déclarée n'est plus un dossier
+        lisible (`dossier-absent`, `pas-un-dossier`). Les trois portent un
+        `motif` : c'est ce que `statut_http`/`detail_refus` traduisent, jamais
+        un 500.
+
+        Appelée **hors de la boucle d'événements** par la route : parcourir un
+        projet réel prend des secondes, et une route qui bloquerait la boucle
+        figerait les flux SSE des autres écrans.
+        """
+        projet = self._projet(id_projet)
+        analyse = analyser(
+            projet.racine_chemin,
+            projet_id=projet.id,
+            perimetre=projet.perimetre,
+            bornes=self._bornes,
+        )
+        return analyse.to_dict()
+
+    def question(self, id_projet: str, choix: Sequence[Choix]) -> dict[str, Any]:
+        """La prochaine question du questionnaire, vu les réponses déjà acquises (#1031).
+
+        **Sans état** : l'appelant dit ce qu'il a, le service dit ce qui en découle.
+        C'est ce qui permet au fil — qui tient ses réponses dans ses messages — et au
+        parcours de création (#1034) — qui les tiendra à l'écran — de servir du même
+        questionnaire sans partager de session.
+
+        `deductions` rend les réponses que les choix donnés **entraînent**, chacune
+        avec sa cause : une question qu'on ne pose pas n'est pas une question qu'on
+        cache. `question` vaut `None` quand il n'y en a plus, et c'est alors
+        `recommandation` qui a quelque chose à dire.
+
+        Le projet est résolu (404/422 motivés) sans que rien du disque soit lu : le
+        questionnaire ne regarde aucun fichier.
+        """
+        self._projet(id_projet)
+        deduits = deductions(choix)
+        suivante = question_suivante([*choix, *deduits])
+        return {
+            "question": suivante.to_dict() if suivante is not None else None,
+            "deductions": [c.to_dict() for c in deduits],
+            "terminee": suivante is None,
+        }
+
+    def recommandation(self, id_projet: str, choix: Sequence[Choix]) -> dict[str, Any]:
+        """L'outillage que ces réponses recommandent — **la forme de l'analyse** (#1031).
+
+        La même `Recommandation` que `analyser` rend, produite par la **même**
+        fonction (`maestro.outillage.recommandation.recommander`) : c'est le second
+        critère du ticket, et il se tient en n'ayant qu'un seul chemin plutôt qu'en
+        gardant deux chemins d'accord.
+
+        Rendue à **tout moment**, questionnaire fini ou non : un client qui veut
+        montrer ce qui se dessine au fil des réponses n'a pas à attendre la dernière.
+        Ce qui n'a pas été répondu ne justifie simplement aucune entrée — et
+        `recommander` le dit, en écartant le skill correspondant avec sa raison.
+
+        `source` est le fragment de provenance du manifeste (docs/38 §4.1), le jumeau
+        de celui qu'`Analyse.source_manifeste()` rend : c'est lui qui dira, six mois
+        plus tard, que cet outillage vient de réponses et lesquelles.
+        """
+        projet = self._projet(id_projet)
+        acquis = [*choix, *deductions(choix)]
+        return {
+            "projet_id": projet.id,
+            "source": source_manifeste_des_choix(projet.id, acquis),
+            "choix": [c.to_dict() for c in acquis],
+            "recommandation": recommandation_depuis_choix(acquis).to_dict(),
+        }
+
+    def _projet(self, id_projet: str) -> Projet:
+        """Le projet déclaré, relu par le service des projets — jamais un second lecteur.
+
+        `ServiceProjets.detail` rend un dict ; ici il faut l'entité (sa racine
+        en `Path`, son périmètre). On passe donc par le **dépôt** que le service
+        expose, ce qui garde un seul lecteur de projets dans la Control Tower :
+        deux relectures de la même fiche finiraient par ne plus se refuser les
+        mêmes fichiers.
+        """
+        self._projets.detail(id_projet)  # 404/422 motivés, avant toute lecture du disque
+        projet = self._projets.store.lire(id_projet)
+        if projet is None:  # pragma: no cover - `detail` a déjà levé dans ce cas
+            raise ProjetInconnu(id_projet)
+        return projet

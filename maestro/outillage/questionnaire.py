@@ -1,38 +1,30 @@
-"""L'outillage d'un projet : ce qu'on recommande, et les questions qui le décident (#1031).
+"""Les questions qui décident de l'outillage d'un projet neuf (#1031).
 
-Lot 3/7 de #1020. Le format est arrêté par
-[docs/38](../../docs/38-decision-outillage-universel-du-projet.md) — `AGENTS.md` à la
-racine, deux ponts d'une ligne, les skills sous `.agents/skills/<nom>/`, les scripts
-dans le skill ou dans le dossier de scripts du projet, aucune commande, et un
-manifeste. Ce module n'en **redécide rien** : il en dérive ce qu'un projet donné
-reçoit.
+Lot 3/7 de #1020, et le **pendant exact** de `maestro.outillage.analyse` : là-bas on
+lit un projet existant pour savoir ce qu'il lui faut, ici on le demande à qui va le
+créer. Les deux aboutissent au même endroit, et c'est le sujet du module.
 
-Il porte deux choses, et elles se lisent dans cet ordre.
+## Les réponses rendent la recommandation de l'analyse — parce que c'est la sienne
 
-## 1. La recommandation structurée — le contrat que deux lots partagent
+« Les réponses produisent la **même recommandation structurée** que l'analyse d'un
+projet existant (lot 2), servie par l'API » : le critère se tient de la seule façon qui
+ne puisse pas diverger — les réponses sont muées en `Constats`, et c'est
+`maestro.outillage.recommandation.recommander` — la fonction du lot 2, inchangée — qui
+en tire la `Recommandation`. Il n'y a donc **pas deux chemins** de « ce qu'il faut à ce
+projet » à tenir d'accord : il y en a un, et deux façons d'en remplir l'entrée.
 
-`RecommandationOutillage` est ce que rend **l'analyse d'un projet existant** (#1030)
-*et* ce que produisent **les choix d'un projet neuf** (ce lot). Une seule forme, parce
-que le lot 5 (#1033) génère depuis l'une ou l'autre sans savoir laquelle, et que le
-chantier « équipe » (#1021) dérive l'équipe de la même structure. Deux formes auraient
-donné deux générateurs.
+C'est ce qui rend `Entree.justification` lisible des deux côtés sans que personne ait à
+savoir d'où elle sort : pour une analyse, le **fichier lu** ; ici, le manifeste que le
+choix implique, dans le rôle de la **réponse** qui l'a décidé.
 
-Ce qui change entre les deux n'est pas la forme mais le **remplissage** de deux champs,
-et c'est voulu :
+⚠ **Sur un projet neuf, une commande est toujours de la `convention`, jamais
+`declaree`** — et la distinction est déjà celle d'`ORIGINES_COMMANDE` : le projet
+n'écrit rien nulle part puisqu'il n'existe pas encore. Son `chemin` est donc l'endroit
+où la commande **vivra** (`pyproject.toml`, `package.json`), pas un fichier qu'on a
+ouvert ; son `extrait` nomme la réponse. Confondre les deux ferait passer un choix pour
+une lecture, ce que le lot 2 s'interdit dans l'autre sens.
 
-- `source` dit d'où ça vient — `SOURCE_ANALYSE` ou `SOURCE_CHOIX` — et remplit le
-  `source` du manifeste (docs/38 §4.1), qui est la mémoire de « pourquoi » ;
-- `Piece.justifie_par` nomme **ce qui justifie cette pièce-là** : pour une analyse, un
-  endroit du projet (`pyproject.toml`, `.github/workflows/ci.yml`) ; pour un projet
-  neuf, la **réponse** qui l'a décidée. Le champ existe une fois, se lit une fois, et
-  un lecteur n'a jamais à savoir lequel des deux lots l'a rempli.
-
-⚠ **`Piece` est une pièce par fichier, jamais par skill** — c'est la première des trois
-propriétés que docs/38 §4.2 demande de ne pas défaire : « régénérer sans écraser » se
-décide fichier par fichier, quelqu'un corrigeant un `SKILL.md` en laissant ses scripts
-tranquilles, et l'inverse.
-
-## 2. Les questions — bornées, recommandées, et celles qu'on ne pose pas
+## Les questions — bornées, recommandées, et celles qu'on ne pose pas
 
 Six thèmes décident de l'outillage d'un projet neuf : sa nature, son langage, ses
 tests, sa forge, sa CI, ses conventions. Ils sont **bornés** (`QUESTIONS_MAX`), comme
@@ -64,29 +56,24 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
-#: D'où vient une recommandation — l'analyse d'un projet existant (#1030) ou les
-#: choix de l'utilisateur sur un projet neuf (#1031). C'est le `source.type` du
-#: manifeste (docs/38 §4.1), et les deux seules valeurs qu'il prenne.
-SOURCE_ANALYSE = "analyse"
+from maestro.outillage.modele import (
+    USAGES,
+    Commande,
+    Constats,
+    DossierScripts,
+    Forge,
+    Gestionnaire,
+    Langage,
+    Piece,
+    Recommandation,
+)
+from maestro.outillage.recommandation import recommander
+
+#: Le `source.type` du manifeste (docs/38 §4.1) quand l'outillage vient des **choix**
+#: de l'utilisateur. Son pendant, `"analyse"`, est écrit par `Analyse.source_manifeste`
+#: et pas ici : chacun des deux lots nomme sa propre provenance, et aucun ne décrit
+#: celle de l'autre.
 SOURCE_CHOIX = "choix"
-
-#: Le rôle d'un fichier généré, tel que le manifeste le nomme (docs/38 §4.1). Quatre
-#: rôles, pas cinq : il n'y a **aucune commande** générée (docs/38 §3.5), et le
-#: manifeste lui-même n'est pas une pièce de l'outillage mais sa comptabilité.
-ROLE_INSTRUCTIONS = "instructions"
-ROLE_PONT = "pont"
-ROLE_SKILL = "skill"
-ROLE_SCRIPT = "script"
-
-#: Le dossier des skills d'un projet — le seul chemin lu par plus d'un client, et le
-#: seul qui ne porte le nom d'aucun éditeur (docs/38 §2.1, §3.3). Écrit ici en une
-#: seule place : trois lots le composent, et trois recopies finiraient par diverger.
-DOSSIER_SKILLS = ".agents/skills"
-
-#: Le dossier de scripts d'un projet **neuf**. Sur un projet existant il se
-#: **constate** (`scripts/`, `bin/`, `tools/` — docs/38 §3.4) ; un projet neuf n'a rien
-#: à constater, et `scripts/` est ce que la note retient à défaut.
-DOSSIER_SCRIPTS_DEFAUT = "scripts"
 
 #: Le plafond de questions, comme les tours de clarification du brief ont le leur
 #: (#321). Ce n'est pas le nombre posé — les questions déduites ne le sont pas — mais
@@ -225,74 +212,6 @@ class Choix:
             deduit=bool(data.get("deduit")),
             parce_que=str(data.get("parce_que") or ""),
         )
-
-
-@dataclass(frozen=True)
-class Piece:
-    """Un fichier de l'outillage recommandé, avec sa raison et ce qui le justifie.
-
-    Une pièce **par fichier** (docs/38 §4.2), jamais par skill : c'est ce qui permet à
-    la génération de régénérer l'un sans toucher l'autre.
-
-    `deja_present` dit que le projet le porte **déjà** : reconnu plutôt que dupliqué,
-    ce qui est le second critère de l'analyse (#1030). Toujours faux sur un projet
-    neuf, où il n'y a rien à reconnaître — le champ existe pour que la forme soit la
-    même des deux côtés, pas pour que chacun s'en serve.
-    """
-
-    chemin: str
-    role: str
-    titre: str
-    raison: str
-    justifie_par: str
-    deja_present: bool = False
-
-    def to_dict(self) -> dict[str, Any]:
-        """La forme du REST."""
-        return {
-            "chemin": self.chemin,
-            "role": self.role,
-            "titre": self.titre,
-            "raison": self.raison,
-            "justifie_par": self.justifie_par,
-            "deja_present": self.deja_present,
-        }
-
-
-@dataclass(frozen=True)
-class RecommandationOutillage:
-    """L'outillage recommandé pour un projet — la forme que l'API sert.
-
-    Le contrat partagé par l'analyse d'un projet existant (#1030) et les choix d'un
-    projet neuf (#1031). `resume` est la phrase qui dit de quoi il s'agit, telle
-    qu'elle entrera dans `source.resume` du manifeste (docs/38 §4.1) ; `reference`
-    identifie *ce* qui a produit la recommandation — l'analyse, ou les réponses.
-
-    `dossier_scripts` est nommé ici et pas déduit à la génération : sur un projet
-    existant il se **constate**, sur un projet neuf il vaut `scripts/`, et les
-    `SKILL.md` l'écrivent en chemin depuis la racine (docs/38 §3.4). Le laisser
-    implicite obligerait chaque lecteur à refaire le constat.
-    """
-
-    projet_id: str
-    source: str
-    reference: str
-    resume: str
-    dossier_scripts: str
-    pieces: tuple[Piece, ...] = ()
-    choix: tuple[Choix, ...] = ()
-
-    def to_dict(self) -> dict[str, Any]:
-        """La forme du REST — `GET`/`POST …/outillage/recommandation`."""
-        return {
-            "projet_id": self.projet_id,
-            "source": self.source,
-            "reference": self.reference,
-            "resume": self.resume,
-            "dossier_scripts": self.dossier_scripts,
-            "pieces": [p.to_dict() for p in self.pieces],
-            "choix": [c.to_dict() for c in self.choix],
-        }
 
 
 # --------------------------------------------------------------------------- #
@@ -739,170 +658,231 @@ def cles_connues() -> tuple[str, ...]:
 
 
 # --------------------------------------------------------------------------- #
-# Des choix à la recommandation                                                 #
+# Des choix aux constats — puis à la recommandation du lot 2                    #
 # --------------------------------------------------------------------------- #
 
-def _skill(
-    nom: str, titre: str, raison: str, justifie_par: str, script: str | None = None
-) -> tuple[Piece, ...]:
-    """Un skill, et son script quand il en a un — **deux pièces**, jamais une.
+#: Ce qu'un langage implique, quand on le **choisit** plutôt que de le constater : le
+#: manifeste où ses commandes vivront, son gestionnaire, et les commandes elles-mêmes
+#: par usage (`USAGES` du modèle).
+#:
+#: ⚠ Ce tableau dit **ce que Maestro sait outiller**, pas l'état de l'art — la même
+#: retenue que `maestro.outillage.detection`, qui ne connaît que ce qu'il sait lire.
+#: Un langage absent (`autre`) n'a ni manifeste ni commande : l'outillage s'y réduit
+#: aux instructions et aux ponts, et le dire est plus utile que de deviner.
+_OUTILS_PAR_LANGAGE: dict[str, tuple[str, str, dict[str, str]]] = {
+    "python": (
+        "pyproject.toml",
+        "uv",
+        {"installer": "uv sync", "lint": "ruff check .", "formater": "ruff format ."},
+    ),
+    "typescript": (
+        "package.json",
+        "npm",
+        {"installer": "npm ci", "lint": "npm run lint", "types": "npx tsc --noEmit"},
+    ),
+    "go": ("go.mod", "go", {"installer": "go mod download", "lint": "go vet ./..."}),
+    "rust": ("Cargo.toml", "cargo", {"installer": "cargo fetch", "lint": "cargo clippy"}),
+}
 
-    docs/38 §4.2 : une entrée par fichier. Le script d'un skill qui n'en sert qu'un
-    vit **dans** le skill, en chemin relatif à sa racine (§3.4).
+#: La commande de test de chaque réponse possible à la question « tests ».
+_COMMANDE_DE_TEST: dict[str, str] = {
+    "pytest": "pytest",
+    "vitest": "npx vitest run",
+    "jest": "npx jest",
+    "go-test": "go test ./...",
+    "cargo-test": "cargo test",
+}
+
+#: La commande de démarrage, quand la **nature** du projet en justifie une. Seules
+#: l'application web et le service en ont une : une bibliothèque ne se lance pas, et un
+#: outil en ligne de commande se lance par la commande qu'on est en train d'écrire.
+_COMMANDE_DE_DEMARRAGE: dict[tuple[str, str], str] = {
+    ("application-web", "typescript"): "npm run dev",
+    ("service-api", "python"): "uv run python -m app",
+    ("service-api", "typescript"): "npm run start",
+    ("service-api", "go"): "go run ./...",
+    ("service-api", "rust"): "cargo run",
+}
+
+#: Le fichier de CI que chaque réponse implique — l'endroit où le workflow vivra.
+_FICHIER_DE_CI: dict[str, tuple[str, str]] = {
+    "github-actions": (".github/workflows/ci.yml", "workflow GitHub Actions"),
+    "gitlab-ci": (".gitlab-ci.yml", "pipeline GitLab CI"),
+}
+
+
+def _piece_du_choix(cle: str, valeur: str, chemin: str, role: str) -> Piece:
+    """La pièce qui justifie un constat **choisi** : où il vivra, et quelle réponse l'a dit.
+
+    `role` porte la réponse en toutes lettres — c'est lui que `recommander` recopie
+    dans la justification de l'entrée (`_justification`), donc c'est là qu'il faut
+    qu'elle se lise. Sur une analyse ce rôle dit ce qu'on a **vu** ; ici il dit ce qui
+    a été **répondu**, et les deux se distinguent à la lecture sans qu'aucun lecteur
+    n'ait à savoir quel lot a rempli la forme.
     """
-    pieces = [
-        Piece(
-            chemin=f"{DOSSIER_SKILLS}/{nom}/SKILL.md",
-            role=ROLE_SKILL,
-            titre=titre,
-            raison=raison,
-            justifie_par=justifie_par,
-        )
-    ]
-    if script is not None:
-        pieces.append(
-            Piece(
-                chemin=f"{DOSSIER_SKILLS}/{nom}/scripts/{script}",
-                role=ROLE_SCRIPT,
-                titre=f"Le script de « {titre} »",
-                raison=f"Ce que « {titre} » exécute, appelé en chemin relatif au skill.",
-                justifie_par=justifie_par,
+    return Piece(nom=chemin, chemin=chemin, role=f"{role} — réponse « {cle} » = {valeur}")
+
+
+def constats_depuis_choix(choix: Sequence[Choix]) -> Constats:
+    """Les réponses muées en `Constats` — la matière que `recommander` attend.
+
+    C'est **toute** la jonction entre ce lot et le lot 2, et elle tient dans une
+    fonction : ce qui suit (quels skills, quelles entrées, quels écartés, dans quel
+    ordre) est la recommandation du lot 2, appelée telle quelle. Rien de ce que docs/38
+    tranche n'est re-décidé ici — pas même l'emplacement des skills, que ce module ne
+    nomme nulle part.
+
+    Trois propriétés à ne pas défaire :
+
+    - **toutes les commandes sont de la `convention`.** Un projet qui n'existe pas
+      encore ne déclare rien ; les marquer `declaree` ferait passer une réponse pour
+      une lecture, l'exact travers qu'`ORIGINES_COMMANDE` existe pour empêcher.
+    - **rien n'est constaté sur une question sans réponse.** Une question qu'on n'a pas
+      encore posée ne justifie aucun fichier, et `recommander` écartera alors le skill
+      correspondant **avec sa raison** — ce qui est la bonne réponse, pas un trou.
+    - **`outillage_present` reste vide et `dossier_scripts.constate` faux.** Il n'y a
+      rien à reconnaître dans un projet neuf : c'est ce qui fait que toutes les entrées
+      sortent en `a-generer`, là où une analyse en rend `deja-present`.
+
+    ⚠ **Deux réponses ne produisent aucun skill, et ce n'est pas une perte** : la forge
+    et les conventions remplissent `Constats.forge` et `Constats.conventions`, que
+    `recommander` ne mue pas en entrée — parce qu'il n'y a pas de skill à en tirer.
+    Elles vont dans les sections `## Conventions` et `## Le projet` d'`AGENTS.md`
+    (docs/38 §3.1), que #1033 écrira depuis ces mêmes constats. Leur ajouter un usage
+    dans `SKILL_PAR_USAGE` reviendrait à re-trancher ici la table que le lot 2 tient,
+    et c'est exactement ce que la note de #1029 existe pour empêcher.
+    """
+    acquis = _repondues(choix)
+    nature = acquis.get("nature", "")
+    langage = acquis.get("langages", "")
+    manifeste, gestionnaire, commandes = _OUTILS_PAR_LANGAGE.get(langage, ("", "", {}))
+
+    langages: list[Langage] = []
+    gestionnaires: list[Gestionnaire] = []
+    lues: list[Commande] = []
+    if langage and manifeste:
+        libelle = _QUESTION_LANGAGES.libelle_de(langage)
+        langages.append(Langage(nom=libelle, fichiers=0, part=1.0, exemple=manifeste))
+        gestionnaires.append(
+            Gestionnaire(
+                nom=gestionnaire,
+                chemin=manifeste,
+                installer=commandes.get("installer"),
             )
         )
-    return tuple(pieces)
 
+    def _commande(usage: str, texte: str, cle: str) -> Commande:
+        return Commande(
+            usage=usage,
+            commande=texte,
+            chemin=manifeste,
+            extrait=f"réponse « {cle} » = {acquis.get(cle, '')}",
+            origine="convention",
+        )
 
-def _socle(justifie_par: str) -> tuple[Piece, ...]:
-    """Les trois fichiers que tout projet outillé reçoit (docs/38 §3.1, §3.2).
+    # L'ordre suit `USAGES` : c'est celui dans lequel on arrive sur un projet, et
+    # `recommander` ne trie pas — il lit la première commande de chaque usage.
+    for usage in USAGES:
+        if usage == "tester":
+            tests = acquis.get("tests", "")
+            if tests and tests != "aucun" and tests in _COMMANDE_DE_TEST:
+                lues.append(_commande(usage, _COMMANDE_DE_TEST[tests], "tests"))
+            continue
+        if usage == "demarrer":
+            demarrage = _COMMANDE_DE_DEMARRAGE.get((nature, langage))
+            if demarrage:
+                lues.append(_commande(usage, demarrage, "nature"))
+            continue
+        if usage in commandes:
+            lues.append(_commande(usage, commandes[usage], "langages"))
 
-    `AGENTS.md` est la source ; les deux ponts sont des fichiers d'**une ligne**, jamais
-    une copie — trois sources pour une instruction divergeraient à la première
-    correction.
-    """
-    return (
-        Piece(
-            chemin="AGENTS.md",
-            role=ROLE_INSTRUCTIONS,
-            titre="Les instructions du projet",
-            raison=(
-                "Le fichier d'instructions dont l'emplacement est écrit, lu nativement "
-                "par Codex et Copilot."
-            ),
-            justifie_par=justifie_par,
-        ),
-        Piece(
-            chemin="CLAUDE.md",
-            role=ROLE_PONT,
-            titre="Le pont vers Claude Code",
-            raison="Une ligne — `@AGENTS.md` : Claude Code ne lit `AGENTS.md` que sans lui.",
-            justifie_par=justifie_par,
-        ),
-        Piece(
-            chemin="GEMINI.md",
-            role=ROLE_PONT,
-            titre="Le pont vers Gemini CLI",
-            raison="Une ligne — `@AGENTS.md` : Gemini CLI lit `GEMINI.md` par défaut.",
-            justifie_par=justifie_par,
-        ),
+    ci: list[Piece] = []
+    reponse_ci = acquis.get("ci", "")
+    if reponse_ci in _FICHIER_DE_CI:
+        chemin, role = _FICHIER_DE_CI[reponse_ci]
+        ci.append(_piece_du_choix("ci", reponse_ci, chemin, role))
+
+    forge: Forge | None = None
+    reponse_forge = acquis.get("forge", "")
+    if reponse_forge and reponse_forge != "aucune":
+        forge = Forge(nom=reponse_forge, chemin="")
+
+    conventions: list[Piece] = []
+    if acquis.get("conventions") == "conventional-commits":
+        conventions.append(
+            _piece_du_choix(
+                "conventions",
+                "conventional-commits",
+                "CONTRIBUTING.md",
+                "convention de message de commit",
+            )
+        )
+
+    return Constats(
+        langages=tuple(langages),
+        gestionnaires=tuple(gestionnaires),
+        commandes=tuple(lues),
+        ci=tuple(ci),
+        forge=forge,
+        conventions=tuple(conventions),
+        # `constate=False` : un projet neuf n'a pas d'habitude à respecter, donc
+        # `scripts/` est le défaut de docs/38 §3.4 et il est dit comme tel.
+        dossier_scripts=DossierScripts(),
     )
 
 
-def _resume(acquis: Mapping[str, str]) -> str:
-    """La phrase qui dit de quoi cet outillage est fait — le `source.resume` du manifeste.
+def resume_des_choix(choix: Sequence[Choix]) -> str:
+    """La phrase que le manifeste garde (`source.resume`, docs/38 §4.1).
 
-    Écrite à partir des seules réponses acquises : ce qui n'a pas été répondu n'y
-    apparaît pas, plutôt que d'y figurer en « inconnu ». C'est ce que `resume` sert à
-    faire relire six mois plus tard.
+    Le pendant de `maestro.outillage.analyse.resume`, écrit sur les mêmes principes :
+    une ligne, et **seulement ce qui a été répondu** — ce qu'on n'a pas demandé n'y
+    figure pas en « inconnu ». C'est elle qu'on relira six mois plus tard, à côté d'un
+    outillage dont on se demande d'où il sort.
     """
+    acquis = _repondues(choix)
     morceaux: list[str] = []
     for cle, question in (("nature", _QUESTION_NATURE), ("langages", _QUESTION_LANGAGES)):
         if cle in acquis:
             morceaux.append(question.libelle_de(acquis[cle]))
     tests = acquis.get("tests", "")
     if tests and tests != "aucun":
-        morceaux.append(_QUESTION_TESTS.libelle_de(tests))
+        morceaux.append(f"tests : {_QUESTION_TESTS.libelle_de(tests)}")
     ci = acquis.get("ci", "")
-    morceaux.append(
-        _QUESTION_CI.libelle_de(ci) if ci and ci != "aucune" else "aucune CI"
-    )
-    return ", ".join(morceaux) if morceaux else "aucun choix encore donné"
+    if ci:
+        morceaux.append(
+            _QUESTION_CI.libelle_de(ci) if ci != "aucune" else "aucune CI"
+        )
+    return " ; ".join(morceaux) if morceaux else "aucun choix encore donné"
 
 
-def recommandation_depuis_choix(
-    projet_id: str, choix: Sequence[Choix], reference: str = ""
-) -> RecommandationOutillage:
-    """L'outillage que ces choix recommandent — la **même forme** que l'analyse (#1030).
+def source_manifeste_des_choix(projet_id: str, choix: Sequence[Choix]) -> dict[str, Any]:
+    """Le fragment `source` du manifeste quand l'outillage vient des choix (docs/38 §4.1).
 
-    Chaque pièce porte sa raison et **la réponse qui la justifie** : c'est le pendant,
-    pour un projet neuf, de « l'endroit du projet qui la justifie » que l'analyse
-    remplit. Un lecteur n'a donc jamais à savoir lequel des deux lots a produit la
-    recommandation qu'il lit.
+    Le jumeau d'`Analyse.source_manifeste()`, et il est écrit **ici** pour la raison qui
+    l'a fait écrire là-bas : c'est #1033 qui le posera dans le manifeste, et une
+    seconde formulation du même fragment finirait par diverger — on lirait alors un
+    outillage sans savoir d'où il sort.
 
-    Rien n'est recommandé sur une réponse absente : une question qu'on n'a pas encore
-    posée ne peut justifier aucun fichier, et en inventer un reviendrait à générer
-    l'outillage d'un projet qu'on n'a pas fini de décrire. Le socle (`AGENTS.md` et ses
-    deux ponts), lui, est là dès le premier appel — il ne dépend d'aucune réponse.
+    `reference` est la **suite des réponses**, dans l'ordre : c'est ce qui tient lieu
+    d'identifiant d'analyse, et c'est relisible sans rien ouvrir d'autre.
     """
-    acquis = _repondues(choix)
-    pieces: list[Piece] = list(_socle("les réponses données à Maestro"))
+    return {
+        "type": SOURCE_CHOIX,
+        "projet_id": projet_id,
+        "reference": " ; ".join(f"{c.cle}={c.valeur}" for c in choix),
+        "resume": resume_des_choix(choix),
+    }
 
-    tests = acquis.get("tests", "")
-    if tests and tests != "aucun":
-        libelle = _QUESTION_TESTS.libelle_de(tests)
-        pieces.extend(
-            _skill(
-                "lancer-les-tests",
-                "Lancer les tests",
-                f"Le projet joue ses tests avec {libelle} : un agent doit savoir les "
-                "lancer avant de proposer un changement.",
-                f"réponse « tests » = {tests}",
-                script="tests.sh",
-            )
-        )
 
-    nature = acquis.get("nature", "")
-    if nature:
-        pieces.extend(
-            _skill(
-                "monter-et-lancer",
-                "Monter et lancer le projet",
-                "Installer les dépendances et démarrer — ce qu'un agent qui arrive ne "
-                "sait pas.",
-                f"réponse « nature » = {nature}",
-                script="lancer.sh",
-            )
-        )
+def recommandation_depuis_choix(choix: Sequence[Choix]) -> Recommandation:
+    """L'outillage que ces réponses recommandent — **la recommandation du lot 2**.
 
-    ci = acquis.get("ci", "")
-    if ci and ci != "aucune":
-        pieces.extend(
-            _skill(
-                "verifier-avant-de-pousser",
-                "Vérifier avant de pousser",
-                f"Rejouer localement ce que {_QUESTION_CI.libelle_de(ci)} jouera : un "
-                "pipeline rouge se découvre avant la forge.",
-                f"réponse « ci » = {ci}",
-                script="verifier.sh",
-            )
-        )
+    Une ligne de corps, et c'est le critère du ticket : `recommander` est la fonction
+    de `maestro.outillage.recommandation`, appelée sans copie ni variante. Ce que cette
+    fonction ajoute est **uniquement** la mue des réponses en constats
+    (`constats_depuis_choix`) ; tout le reste — quelles entrées, dans quel ordre, avec
+    quelle raison et quels écartés — est celui d'un projet analysé.
+    """
+    return recommander(constats_depuis_choix(choix))
 
-    if acquis.get("conventions") == "conventional-commits":
-        pieces.extend(
-            _skill(
-                "ecrire-un-commit",
-                "Écrire un message de commit",
-                "Le projet suit Conventional Commits : la forme du message est une "
-                "règle, pas un goût.",
-                "réponse « conventions » = conventional-commits",
-            )
-        )
 
-    return RecommandationOutillage(
-        projet_id=projet_id,
-        source=SOURCE_CHOIX,
-        reference=reference or "les réponses données à Maestro",
-        resume=_resume(acquis),
-        dossier_scripts=DOSSIER_SCRIPTS_DEFAUT,
-        pieces=tuple(pieces),
-        choix=tuple(choix),
-    )

@@ -195,7 +195,7 @@ from maestro.messaging import (
     AgentMessage,
     Mailbox,
 )
-from maestro.projets.outillage import Choix, QuestionOutillage
+from maestro.outillage.questionnaire import Choix, QuestionOutillage
 from maestro.providers.base import ModelProvider
 from maestro.sources import (
     DepotTeleversements,
@@ -1374,7 +1374,7 @@ class RepondeurScripte(RepondeurChat):
 
         Le seul verbe de ce répondeur qui ne soit pas scripté, et c'est voulu : le
         questionnaire est une fonction pure de ce que le fil porte
-        (`maestro.projets.outillage`), donc la démo n'a rien à simuler — elle joue
+        (`maestro.outillage.questionnaire`), donc la démo n'a rien à simuler — elle joue
         le mécanisme réel, questions, recommandations et déductions comprises. Une
         version scriptée aurait montré un écran qui ressemble au produit sans se
         comporter comme lui, et c'est exactement ce que le dépôt refuse ailleurs

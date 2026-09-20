@@ -51,14 +51,14 @@ from claude_agent_sdk import (
     query,
     tool,
 )
-from claude_agent_sdk.types import HookInput
+from claude_agent_sdk.types import HookInput, SettingSource
 
 from maestro.acte import arguments_depuis
 from maestro.config import ConfigError, Settings
 from maestro.decideur import Decideur
 from maestro.deliberation import CreditArbitrage
 from maestro.detail_tache import EtapeTache
-from maestro.providers import blocage, courrier
+from maestro.providers import blocage, courrier, decision, question
 from maestro.providers.activite import Geste, RegulateurActivite
 from maestro.providers.arbitrage import (
     CANAL_EN_ERREUR,
@@ -118,6 +118,60 @@ _MCP_CONNEXION_MAX_S: float = 60.0
 
 #: Période du sondage de statut pendant l'attente de connexion des serveurs MCP.
 _MCP_SONDAGE_S: float = 0.5
+
+def sans_reglages_du_poste() -> list[SettingSource]:
+    """**Aucune source de réglages de fichiers** (#1032, docs/38 §5.3).
+
+    Le SDK documente son défaut : « When `None`, all sources are loaded (matches
+    CLI defaults). Pass `[]` to disable filesystem settings (SDK isolation
+    mode). Must include `"project"` to load CLAUDE.md files. » Sans cette liste
+    vide, le `~/.claude/settings.json` du poste, le `.claude/settings.json` du
+    répertoire courant **et son `CLAUDE.md`** entrent dans la session — ce
+    dernier étant précisément le fichier que Maestro écrira lui-même dans le
+    projet à partir de #1033, si bien que son runtime se relirait sans le savoir
+    (docs/38 §5.2).
+
+    Mesuré sur un run réel le 2026-09-20 (`claude_agent_sdk` 0.2.128, agent sans
+    aucun outil, donc incapable de lire un fichier) : sans elle, le mot-témoin
+    d'un `CLAUDE.md` posé dans le `cwd` ressort dans la réponse de l'agent ;
+    avec elle, l'agent répond qu'il n'en voit aucun. C'est la vérification que
+    docs/38 §5.3 et §7 exigeaient — le contrat du SDK dit ce qu'il promet, pas
+    ce que le CLI fait.
+
+    ⚠ Elle **ne remplace pas** `strict_mcp_config`, et l'inverse non plus :
+    l'une ferme les serveurs MCP ambiants, l'autre les réglages et les fichiers
+    d'instructions. Retirer l'une parce que l'autre est là rouvrirait une moitié
+    de la porte.
+
+    Une **fonction** et non une constante partagée : le SDK garde la liste qu'on
+    lui donne, et une liste de module se ferait modifier une fois pour toutes
+    les sessions. Un tuple vide aurait la même sûreté mais pas le bon type — le
+    SDK attend une `list`.
+    """
+    return []
+
+
+def sans_skills_du_poste() -> list[str]:
+    """**Aucun skill découvert par le CLI** (#1032).
+
+    `None` n'est *pas* « skills off » — la docstring du SDK le dit en toutes
+    lettres —, c'est « les défauts du CLI » : les skills du `cwd`, ceux de ses
+    parents et ceux du poste. Or un skill de projet peut déclarer
+    `allowed-tools:`, que la spécification décrit comme des outils
+    « pré-approuvés » : chez nous une permission se déclare par une personne,
+    outil par outil (docs/32), et aucun fichier du projet ne peut en poser une —
+    fût-il écrit par Maestro (docs/38 §5.1).
+
+    Les skills du projet ne sont pas perdus pour autant : ils sont **transmis**,
+    par leur index, dans le message de la tâche (`maestro.outillage.contexte`),
+    et l'agent ouvre celui qu'il lui faut avec ses propres outils de lecture.
+    Ses scripts se lancent alors comme n'importe quelle commande — sous la
+    politique de l'agent, jamais au-delà.
+
+    Même forme que `sans_reglages_du_poste`, et pour la même raison.
+    """
+    return []
+
 
 _E = TypeVar("_E", bound=BaseException)
 
@@ -306,6 +360,8 @@ class ClaudeProvider(ModelProvider):
             tools=[],
             stderr=stderr,
             effort=self._effort_sdk(model, effort),
+            setting_sources=sans_reglages_du_poste(),
+            skills=sans_skills_du_poste(),
         )
         return await _collect_response(prompt, options, stderr=stderr)
 
@@ -343,6 +399,8 @@ class ClaudeProvider(ModelProvider):
             stderr=stderr,
             include_partial_messages=True,
             effort=self._effort_sdk(model, effort),
+            setting_sources=sans_reglages_du_poste(),
+            skills=sans_skills_du_poste(),
         )
         async for morceau in _stream_response(prompt, options, stderr=stderr):
             yield morceau
@@ -363,8 +421,10 @@ class ClaudeProvider(ModelProvider):
         on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,
         on_arbitrage: Arbitre | None = None,
         on_blocage: blocage.Signaleur | None = None,
+        on_decision: decision.Consigneur | None = None,
         credit_arbitrage: CreditArbitrage | None = None,
         on_courrier: courrier.Courrier | None = None,
+        on_question: question.Questionneur | None = None,
         plafond_tours: int | None = PLAFOND_TOURS_DEFAUT,
         projet: Projet | None = None,
         effort: str | None = None,
@@ -401,6 +461,23 @@ class ClaudeProvider(ModelProvider):
         concluant sans ses capacités. Un serveur en échec (démarrage, auth) ou
         jamais connecté à l'échéance lève `McpServerUnavailable` (serveur et
         cause nommés) **avant** tout appel modèle.
+
+        `setting_sources=[]` et `skills=[]` (#1032, docs/38 §5.3) ferment
+        l'**autre** moitié de la configuration ambiante : les réglages de
+        fichiers du poste et du répertoire courant, le `CLAUDE.md` qui s'y
+        trouve, et les skills que le CLI y découvrirait. La porte que
+        `strict_mcp_config` fermait sur les serveurs MCP était restée ouverte
+        là-dessus — mesuré sur un run réel, cf. `sans_reglages_du_poste` —, et
+        elle devient le cas nominal dès lors que Maestro écrit lui-même un
+        `CLAUDE.md` et des skills dans le projet où son propre runtime travaille
+        (docs/38 §5.2).
+
+        Ce qui remplace cette lecture n'est pas un silence mais une
+        **transmission** : l'outillage déclaré au manifeste du projet part dans
+        le *message de la tâche*, dérivé et borné par
+        `maestro.outillage.contexte`, posé par `maestro.agents.runtime`. Le
+        fournisseur n'a rien à en connaître — il ne fait que refuser tout autre
+        chemin d'entrée.
 
         Par défaut, l'isolation est *au niveau du système de fichiers* — un shell
         pourrait en principe adresser des chemins hors du `cwd`. Le renfort est le
@@ -488,6 +565,18 @@ class ClaudeProvider(ModelProvider):
         plus au statut de la tâche (docs/31 §3.4 : ce serait fausser la cascade
         de #43) ; il consigne, et l'agent poursuit.
 
+        `on_decision` (#1024) fait porter au même serveur l'outil
+        `consigner_decision(decision, raison)`
+        (`maestro.providers.decision`) : l'agent qui a **tranché seul** écrit ce
+        qu'il a décidé et pourquoi, au moment où il le décide. Jumeau de
+        `on_blocage` sur tout ce qui compte — rien n'est soumis à personne, rien
+        n'est attendu, l'agent n'est jamais suspendu, et rien n'entre au grand
+        livre —, et son contraire sur ce qu'il transporte : l'un dit ce que
+        l'agent **subit**, l'autre ce qu'il **fait**. C'est la seconde moitié du
+        régime de docs/37 §2.2 : ce qui demande un humain se demande (les deux
+        canaux d'arbitrage ci-dessus), tout le reste se tranche seul **et se
+        consigne**.
+
         Ce serveur porte **N outils** depuis #718, et non plus un seul : ce qui
         décide de son contenu est `_outils_maestro`, ce qui décide de son montage
         est `_serveurs_mcp`. Le partage n'est pas cosmétique — c'est lui qui rend
@@ -538,6 +627,20 @@ class ClaudeProvider(ModelProvider):
         pendant sa tâche. C'est aussi pourquoi l'issue de la publication ne
         remonte pas jusqu'ici — elle ne prouverait rien de plus que son échec.
 
+        `on_question` (#1023, `maestro.providers.question`) fait porter au même
+        serveur l'outil `poser_une_question(question, hypothese, choix)` : l'agent
+        demande un **renseignement** à l'utilisateur et son appel est suspendu
+        jusqu'à la réponse. C'est le **second** canal qui attende quelque chose, et
+        il reçoit donc le même `credit_arbitrage` que le premier — mais ce qu'il
+        transporte est du **texte**, là où l'arbitrage transporte un booléen : les
+        deux ne se remplacent pas, et une réponse n'a jamais autorisé un acte
+        (EF-08, cf. le module).
+
+        Il ne **borne rien** ici : l'attente est réglée par l'appelant, seul à
+        pouvoir consigner les deux issues (réponse reçue, reprise sur hypothèse).
+        Ce que ce fournisseur fait de `None` est donc une réponse servie à l'agent
+        — « reprends sur ton hypothèse » — et jamais un refus.
+
         `effort` (#253) alimente l'option homonyme du SDK (`--effort` du CLI),
         après le même tamis que sur `generate` : c'est un **conseil de dépense**,
         au même titre que le modèle, et pas une borne — à la différence de
@@ -562,8 +665,10 @@ class ClaudeProvider(ModelProvider):
             _outils_maestro(
                 on_arbitrage=on_arbitrage,
                 on_blocage=on_blocage,
+                on_decision=on_decision,
                 credit=credit_arbitrage,
                 on_courrier=on_courrier,
+                on_question=on_question,
             ),
         )
         options = ClaudeAgentOptions(
@@ -580,6 +685,8 @@ class ClaudeProvider(ModelProvider):
             effort=self._effort_sdk(model, effort),
             mcp_servers=serveurs,
             strict_mcp_config=True,
+            setting_sources=sans_reglages_du_poste(),
+            skills=sans_skills_du_poste(),
             hooks=(
                 {
                     "PreToolUse": [
@@ -747,6 +854,88 @@ def _outil_courrier(on_courrier: courrier.Courrier) -> SdkMcpTool[Any]:
     return ecrire_a_un_pair
 
 
+def _outil_question(
+    on_question: question.Questionneur, credit: CreditArbitrage | None = None
+) -> SdkMcpTool[Any]:
+    """L'outil `poser_une_question(question, hypothese, choix)` servi à l'agent (#1023).
+
+    Le quatrième verbe du porte-outils (#718), et le **second** qui attende
+    quelque chose — mais pas la même chose que le premier : `demander_arbitrage`
+    soumet un acte et reçoit un oui/non, celui-ci pose une question et reçoit du
+    texte. Toute la forme de ce qu'il rend vit dans `maestro.providers.question`,
+    avec les deux frontières qui l'ont dessiné, pour rester lisible sans monter de
+    session SDK.
+
+    Quatre réponses se ressemblent et n'ont pas la même cause ; aucune n'est
+    rendue en **erreur d'outil** — même raison qu'en #582 et #720 : une erreur
+    invite à réessayer, or dans trois cas sur quatre il n'y a rien à réessayer
+    tout de suite.
+
+    - **question vide** : rien n'a été posé à personne, donc rien n'est refusé.
+      C'est un champ à remplir ;
+    - **hypothèse vide** : la question n'est **pas posée**, et ce n'est pas un
+      formalisme. L'attente est bornée : sans hypothèse, l'agent n'aurait rien à
+      reprendre à la borne et le journal rien à consigner — la question se
+      terminerait sur un silence, c'est-à-dire sur le défaut qu'on répare ;
+    - **réponse reçue** : servie telle qu'elle a été écrite, avec la suite à
+      donner ;
+    - **personne n'a répondu** (`None`) : ce n'est **pas** un refus et on ne le
+      dit pas comme tel. L'agent reprend sur son hypothèse, qu'on lui recopie, et
+      on lui dit que la question reste posée — c'est la nuance de
+      `arbitrage.motif_attente`, ici sur un canal où l'attente a une issue par
+      défaut au lieu d'un appel écarté.
+
+    Et un cinquième cas, le **canal en erreur** : le callback a levé. On le dit —
+    l'agent attendait quelque chose, donc son échec change quelque chose pour lui
+    — et on ne laisse surtout pas l'exception remonter : elle tuerait la tâche au
+    moment précis où l'agent cherchait à bien faire.
+
+    `credit` (#584) mesure l'attente, et la fenêtre couvre **le seul `await` qui
+    bloque** — pas la composition de la réponse. C'est le canal où un délai par
+    tâche ferait le plus de dégâts après celui de l'arbitrage : un `timeout_s` de
+    dix minutes tuerait une tâche dont l'agent a eu la prudence de demander plutôt
+    que de deviner, ce qui lui apprendrait exactement le contraire de ce qu'on
+    veut lui apprendre.
+
+    L'outil est rendu **séparément de son serveur**, comme ses trois voisins et
+    pour la même raison : ce qui décide ici tient en une poignée de lignes, et les
+    éprouver ne doit coûter ni CLI, ni sous-processus, ni quota (tests → #1027).
+    """
+
+    @tool(question.NOM_OUTIL, question.DESCRIPTION_OUTIL, question.SCHEMA_ENTREE)
+    async def poser_une_question(args: dict[str, Any]) -> dict[str, Any]:
+        texte = str(args.get("question") or "").strip()
+        hypothese = str(args.get("hypothese") or "").strip()
+        choix = question.choix_nettoyes(args.get("choix"))
+        if not texte:
+            reponse_servie = question.QUESTION_MANQUANTE
+        elif not hypothese:
+            reponse_servie = question.HYPOTHESE_MANQUANTE
+        else:
+            try:
+                with _fenetre_arbitrage(credit):
+                    recue = await on_question(texte, choix, hypothese)
+            except Exception as exc:  # noqa: BLE001 — servi à l'agent, jamais une tâche tuée
+                reponse_servie = question.CANAL_EN_ERREUR.format(
+                    cause=exc, hypothese=hypothese
+                )
+            else:
+                reponse_servie = (
+                    question.reponse_recue(recue)
+                    if recue is not None
+                    # `None` n'est pas un refus : personne n'a dit non, personne
+                    # n'a lu. La borne, elle, n'est **pas nommée à l'agent** —
+                    # elle vit chez l'appelant (cf. `Questionneur`), et la
+                    # recopier ici en ferait un second support à tenir d'accord
+                    # pour un chiffre qui n'apprend rien à qui doit reprendre son
+                    # travail. Le journal, lui, la porte : c'est là qu'on la lit.
+                    else question.sans_reponse(hypothese)
+                )
+        return {"content": [{"type": "text", "text": reponse_servie}]}
+
+    return poser_une_question
+
+
 def _outil_blocage(on_blocage: blocage.Signaleur) -> SdkMcpTool[Any]:
     """L'outil `signaler_blocage(raison)` servi à l'agent (#719).
 
@@ -791,6 +980,58 @@ def _outil_blocage(on_blocage: blocage.Signaleur) -> SdkMcpTool[Any]:
     return signaler_blocage
 
 
+def _outil_decision(on_decision: decision.Consigneur) -> SdkMcpTool[Any]:
+    """L'outil `consigner_decision(decision, raison)` servi à l'agent (#1024).
+
+    Le jumeau de `_outil_blocage` — **aucun `await`** : l'appel écrit et rend la
+    main dans le même tour, l'agent n'est jamais suspendu, personne n'est
+    sollicité, rien ne lui répondra. Le vocabulaire est importé **qualifié**
+    (`decision.NOM_OUTIL`…) parce que les verbes d'écriture nomment leurs
+    constantes pareil — deux `CANAL_EN_ERREUR` dans le même fichier finiraient
+    par se servir l'un pour l'autre, et l'agent lirait le message d'un autre
+    canal.
+
+    Trois issues, et aucune n'est rendue en **erreur d'outil** — même raison
+    qu'en #582 et #719 : une erreur invite à réessayer *le même appel*, or ici il
+    faut le rappeler **autrement**, ou pas du tout.
+
+    - **décision vide** : rien n'est écrit. Consigner « j'ai décidé » sans dire
+      quoi remplirait le journal du seul fait qu'on savait déjà — qu'un agent
+      travaille ;
+    - **raison vide** : rien n'est écrit non plus, et c'est ce qui distingue ce
+      verbe de ses voisins. Une décision sans motif ne se conteste pas, donc ne
+      se vérifie pas après coup — et « vérifiable après coup » est la condition
+      même à laquelle le parent #1019 ouvre l'autonomie ;
+    - **canal en erreur** : le callback a levé. On le lui dit, et surtout on ne
+      laisse pas l'exception remonter — elle tuerait la tâche à l'instant précis
+      où l'agent rend compte de lui-même, ce qui est la pire des façons de lui
+      apprendre à le faire.
+
+    Rendu **séparément de son serveur** comme ses trois voisins : ce qui décide
+    tient en quelques lignes, et les éprouver ne doit coûter ni CLI, ni
+    sous-processus, ni quota (tests → #1027).
+    """
+
+    @tool(decision.NOM_OUTIL, decision.DESCRIPTION_OUTIL, decision.SCHEMA_ENTREE)
+    async def consigner_decision(args: dict[str, Any]) -> dict[str, Any]:
+        quoi = str(args.get("decision") or "").strip()
+        raison = str(args.get("raison") or "").strip()
+        if not quoi:
+            texte = decision.DECISION_MANQUANTE
+        elif not raison:
+            texte = decision.RAISON_MANQUANTE
+        else:
+            try:
+                on_decision(quoi, raison)
+            except Exception as exc:  # noqa: BLE001 — dit à l'agent, jamais une tâche tuée
+                texte = decision.CANAL_EN_ERREUR.format(cause=exc)
+            else:
+                texte = decision.DECISION_CONSIGNEE
+        return {"content": [{"type": "text", "text": texte}]}
+
+    return consigner_decision
+
+
 @contextmanager
 def _fenetre_arbitrage(credit: CreditArbitrage | None) -> Iterator[None]:
     """Ouvre la fenêtre d'attente du crédit quand il y en a un (#584), sinon ne fait rien.
@@ -811,14 +1052,16 @@ def _outils_maestro(
     *,
     on_arbitrage: Arbitre | None = None,
     on_blocage: blocage.Signaleur | None = None,
+    on_decision: decision.Consigneur | None = None,
     credit: CreditArbitrage | None = None,
     on_courrier: courrier.Courrier | None = None,
+    on_question: question.Questionneur | None = None,
 ) -> list[SdkMcpTool[Any]]:
     """Les outils que le serveur `maestro` a **effectivement** à porter (#718).
 
-    Le point d'extension du serveur, et le seul : un verbe nouveau (#719, #720)
-    s'y ajoute en un `if` et une ligne, sans toucher ni à `run_agent`, ni au
-    porte-outils, ni au montage. C'est tout l'objet de ce lot — deux verbes
+    Le point d'extension du serveur, et le seul : un verbe nouveau (#719, #720,
+    #1024) s'y ajoute en un `if` et une ligne, sans toucher ni à `run_agent`, ni
+    au porte-outils, ni au montage. C'est tout l'objet de ce lot — deux verbes
     écrits en parallèle se croiseraient ici, sur deux lignes voisines, plutôt
     qu'au milieu du corps de `run_agent`.
 
@@ -827,17 +1070,25 @@ def _outils_maestro(
     pire que ne pas le lui servir. La liste rendue peut donc être vide — c'est
     un état normal, que `_serveurs_mcp` traite comme tel.
 
-    Les deux canaux sont **indépendants** : un run peut servir l'arbitrage sans
-    le courrier, l'inverse, les deux ou aucun. Rien ici ne les ordonne, et
-    l'ordre de la liste n'a pas de sens pour le SDK — c'est celui de la lecture.
+    Les canaux sont **indépendants** : un run peut servir l'arbitrage sans le
+    courrier, l'inverse, tous ou aucun. Rien ici ne les ordonne, et l'ordre de la
+    liste n'a pas de sens pour le SDK — c'est celui de la lecture.
+
+    `on_question` (#1023) est le cinquième, et il prend le `credit` comme le
+    premier : ce sont les deux seuls verbes qui **suspendent** l'agent, donc les
+    deux seuls dont l'attente ne doit pas être facturée au délai de la tâche.
     """
     outils: list[SdkMcpTool[Any]] = []
     if on_arbitrage is not None:
         outils.append(_outil_arbitrage(on_arbitrage, credit))
     if on_blocage is not None:
         outils.append(_outil_blocage(on_blocage))
+    if on_decision is not None:
+        outils.append(_outil_decision(on_decision))
     if on_courrier is not None:
         outils.append(_outil_courrier(on_courrier))
+    if on_question is not None:
+        outils.append(_outil_question(on_question, credit))
     return outils
 
 

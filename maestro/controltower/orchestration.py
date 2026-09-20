@@ -298,7 +298,7 @@ from maestro.controltower.state import (
     EXECUTION_TERMINEE,
     ControlTowerState,
 )
-from maestro.projets.outillage import QuestionOutillage
+from maestro.outillage.questionnaire import QuestionOutillage
 from maestro.providers.base import ModelProvider
 
 #: Le nom du fil global — la clé de stockage (`core/chat/orchestrateur.jsonl`), le
@@ -793,7 +793,7 @@ class RepondeurOrchestration(RepondeurChat):
 
         **Aucun appel modèle**, comme pour le geste de cadrage et pour une raison de
         plus : ici la suite du questionnaire est une fonction pure de ce que le fil
-        porte (`maestro.projets.outillage`). Le juge de ce module n'est consulté que
+        porte (`maestro.outillage.questionnaire`). Le juge de ce module n'est consulté que
         sur ce qu'il est seul à savoir faire — dire si un message est une demande de
         travail.
         """
