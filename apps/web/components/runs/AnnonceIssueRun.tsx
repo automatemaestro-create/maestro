@@ -111,30 +111,48 @@ export function AnnonceIssueRun({
           {" — "}
           {issue.execution.objectif || issue.execution.run_id}
         </p>
-        <p className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-micro text-texte-secondaire">
+        {/* Les faits, séparés par le **point médian** que le fil emploie partout
+            ailleurs (« vous · 07:49 », « Agent devops · DevOps ») : juxtaposés
+            par un simple blanc, ils se lisaient comme une suite de mots plutôt
+            que comme trois faits distincts (relevé de la relecture visuelle).
+            Les séparateurs sont `aria-hidden` — un lecteur d'écran marque déjà
+            la frontière entre deux éléments. */}
+        <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-micro text-texte-secondaire">
           {/* L'heure de la FIN, et c'est ce qui a écarté la variante B : rangée
               sous la bulle qui a lancé le run, l'annonce y portait l'heure du
               lancement. Un run de 53 minutes annonçait sa fin à l'heure où il
               avait commencé. */}
           {fin !== "" && (
-            <time dateTime={fin} title={formatDateHeure(fin)}>
-              {formatHeureCourte(fin)}
-            </time>
+            <>
+              <time dateTime={fin} title={formatDateHeure(fin)}>
+                {formatHeureCourte(fin)}
+              </time>
+              <Separateur />
+            </>
           )}
           <span>
             {issue.execution.nb_taches === 1
               ? "1 tâche"
               : `${issue.execution.nb_taches} tâches`}
           </span>
+          <Separateur />
           <span className="chiffre">{formatCout(issue.execution.cout_usd)}</span>
           {!compacte && run !== undefined && (
-            <LienRenvoi renvoi={{ href: run, libelle: "Voir le run" }} />
+            <>
+              <Separateur />
+              <LienRenvoi renvoi={{ href: run, libelle: "Voir le run" }} />
+            </>
           )}
         </p>
         <LivrableDuRun issue={issue} />
       </div>
     </div>
   );
+}
+
+/** Le point médian qui sépare deux faits — décoratif, jamais lu deux fois. */
+function Separateur() {
+  return <span aria-hidden="true">·</span>;
 }
 
 /**
@@ -145,6 +163,13 @@ export function AnnonceIssueRun({
  * à la ligne sous eux quand la largeur ne suffit pas : c'est `flex-wrap`, et
  * c'est ce qui tient dans la colonne de conversation (320 px) comme dans le
  * panneau de la cloche (20 rem) sans seconde mise en page.
+ *
+ * ⚠ Le `pe-2` du chemin n'est pas un réglage d'esthète : `break-all` remplit la
+ * ligne **exactement**, si bien que le `gap` du flex ne se voyait pas et que la
+ * fin du chemin venait buter contre la bordure du premier bouton (✗ relevé par
+ * la relecture visuelle, `/chat` dans les deux thèmes). On ne savait alors pas,
+ * d'un coup d'œil, si le chemin était complet ou coupé — ce qui est exactement
+ * ce qu'un chemin doit dire. Le retirer ramène le défaut.
  */
 function LivrableDuRun({ issue }: { issue: IssueRun }) {
   const raison = raisonSansLivrable(issue);
@@ -153,7 +178,7 @@ function LivrableDuRun({ issue }: { issue: IssueRun }) {
       <span className="shrink-0">Livrable :</span>
       {issue.racine !== null ? (
         <>
-          <span className="min-w-0 font-mono break-all text-texte">
+          <span className="min-w-0 pe-2 font-mono break-all text-texte">
             {issue.racine}
           </span>
           <GestesDuLivrable chemin={issue.racine} />
