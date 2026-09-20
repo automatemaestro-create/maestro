@@ -33,9 +33,12 @@ import {
   chargerExplorateur,
   ErreurProjet,
   ouvrirSelecteurNatif,
+  verdictRacine,
 } from "@/lib/api";
+import { choisirDossierDuPoste, peutChoisirDossier } from "@/lib/poste";
 import { conseilMotif, libelleMotif } from "@/lib/projets";
 import type {
+  ChoixSelecteur,
   DisponibiliteSelecteur,
   OrigineDossier,
   PageExplorateur,
@@ -53,6 +56,30 @@ export function refusDepuis(erreur: unknown): RefusProjet {
   };
 }
 
+
+/**
+ * Le dialogue de dossier **de la fenêtre**, rendu sous la forme exacte de la
+ * route qui l'ouvre depuis le backend (#938).
+ *
+ * C'est délibéré, et c'est ce qui fait tenir le reste : `parcourirNatif` traite
+ * les **trois mêmes issues** (annulé · déclarable · lisible mais non déclarable)
+ * sans savoir laquelle des deux voies a répondu. La ligne de partage est une
+ * **capacité**, pas une plateforme — ENF-12 (`lib/poste`).
+ *
+ * Et le verdict vient de `POST /api/projets/racine`, jamais d'ici : les
+ * frontières d'EF-38 vivent en un seul endroit, et la coque ne fait que lire un
+ * chemin (`apps/desktop/preload.js`).
+ */
+async function choisirDepuisLaFenetre(
+  depart: string | null,
+): Promise<ChoixSelecteur> {
+  const chemin = await choisirDossierDuPoste(depart);
+  // Annuler n'est pas une erreur : même contrat qu'`ouvrirSelecteurNatif`.
+  if (chemin === null) {
+    return { annule: true, chemin: null, racine_valide: false, refus: null };
+  }
+  return { annule: false, ...(await verdictRacine(chemin)) };
+}
 
 /**
  * Ce que dit la pastille d'un point d'entrée (#278). Le libellé répond à
@@ -116,6 +143,15 @@ export function ExplorateurDossiers({
   const [ouvertureNative, setOuvertureNative] = useState(false);
   const [saisie, setSaisie] = useState("");
 
+  // Lu au rendu et non dans un effet : la capacité est posée par la coque avant
+  // le premier script de la page et ne change jamais en cours de vie (même
+  // motif qu'`AnnonceIssueRun`, #928). Dans la fenêtre, le dialogue est
+  // **toujours** ouvrable — c'est le premier critère de #938 : `selecteur-hors-
+  // poste` (backend joint depuis le réseau) et `selecteur-sans-outil` (ni
+  // PowerShell, ni osascript, ni zenity/kdialog) n'ont plus d'objet quand ce
+  // n'est plus le backend qui ouvre la fenêtre.
+  const posteChoisit = peutChoisirDossier();
+
   /**
    * Ouvre `chemin`, et décide de ce qu'il advient du bandeau de refus.
    *
@@ -159,6 +195,10 @@ export function ExplorateurDossiers({
     // L'état du sélecteur natif est demandé une fois, à l'arrivée : il dépend
     // du poste et du backend, pas du dossier ouvert. Son échec n'est pas une
     // panne de l'explorateur — on retombe simplement sur « pas de bouton ».
+    //
+    // Sauf quand le poste ouvre le dialogue lui-même (#938) : la question ne se
+    // pose alors plus, et la poser rendrait un motif qu'on n'afficherait pas.
+    if (posteChoisit) return;
     let vivant = true;
     const tick = setTimeout(() => {
       void chargerDisponibiliteSelecteur()
@@ -169,7 +209,7 @@ export function ExplorateurDossiers({
       vivant = false;
       clearTimeout(tick);
     };
-  }, []);
+  }, [posteChoisit]);
 
   const courant = page?.chemin ?? null;
   const dossiers = page?.dossiers ?? [];
@@ -184,7 +224,9 @@ export function ExplorateurDossiers({
   const parcourirNatif = useCallback(async () => {
     setOuvertureNative(true);
     try {
-      const choix = await ouvrirSelecteurNatif(courant);
+      const choix = posteChoisit
+        ? await choisirDepuisLaFenetre(courant)
+        : await ouvrirSelecteurNatif(courant);
       if (choix.annule || choix.chemin === null) return;
       if (choix.racine_valide) {
         onChoisir(choix.chemin);
@@ -196,7 +238,7 @@ export function ExplorateurDossiers({
     } finally {
       setOuvertureNative(false);
     }
-  }, [courant, onChoisir, ouvrir]);
+  }, [courant, onChoisir, ouvrir, posteChoisit]);
 
   /** Le chemin saisi, ouvert — par le bouton « Aller » comme par `Entrée`. */
   const allerAuChemin = useCallback(() => {
@@ -257,9 +299,13 @@ export function ExplorateurDossiers({
       {/* Les deux raccourcis vers un dossier lointain (#278). Le dialogue natif
           est un confort — il n'apparaît que là où il peut s'ouvrir —, la saisie
           d'un chemin est le repli qui marche partout, y compris en mode
-          serveur : c'est l'API qui la vérifie, jamais le navigateur. */}
+          serveur : c'est l'API qui la vérifie, jamais le navigateur.
+
+          ⚠ « Là où il peut s'ouvrir » a deux réponses depuis #938, et une seule
+          d'entre elles demande l'avis du backend : dans la fenêtre, le dialogue
+          est celui du poste et il est **toujours** ouvrable. */}
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        {selecteur?.disponible && (
+        {(posteChoisit || selecteur?.disponible) && (
           <Bouton
             variante="contour"
             ton="neutre"
@@ -310,7 +356,9 @@ export function ExplorateurDossiers({
 
       {/* Le mode serveur (et tout autre empêchement) se **dit**, à la place du
           bouton : un bouton mort ferait croire à une panne, un silence ferait
-          croire que la fonction n'existe pas. */}
+          croire que la fonction n'existe pas. Dans la fenêtre il n'y a rien à
+          dire, et `selecteur` y reste `null` : la disponibilité n'est même pas
+          demandée (voir l'effet plus haut). */}
       {selecteur && !selecteur.disponible && (
         <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
           {selecteur.message}

@@ -19,12 +19,38 @@
  *    est né ; la réécrire ne changerait rien sur le disque et mentirait sur
  *    l'historique. En modification, elle s'affiche, elle ne s'édite pas — et
  *    c'est bien celle du projet qui repart dans le `PUT`.
+ *
+ * ## Le troisième, ajouté par #938 : **on peut aussi déposer un dossier**
+ *
+ * « La racine ne se tape pas » ne dit pas « la racine ne se dépose pas » — et
+ * jusqu'ici elle ne se déposait nulle part, parce qu'aucun navigateur ne donne
+ * le chemin de ce qu'on lui dépose (docs/24 §4.7). La **fenêtre**, elle, le
+ * donne : le dépôt est donc un troisième geste, à côté de l'explorateur de
+ * l'API et du dialogue du poste — jamais à leur place.
+ *
+ * Trois choses le tiennent, et la première est celle qu'on oublierait :
+ *
+ * - **la zone n'est dessinée que là où le geste est possible**
+ *   (`peutLireCheminDepose`). Une cible visible dans un onglet promettrait ce
+ *   qu'aucun navigateur ne peut tenir — c'est la réserve du regard neuf sur la
+ *   variante retenue, et le troisième critère du ticket : *hors fenêtre, rien
+ *   ne change* ;
+ * - **le chemin déposé passe par la même porte que les autres**
+ *   (`POST /api/projets/racine`, EF-38) : la coque lit un chemin, elle
+ *   n'autorise rien ;
+ * - **les trois issues du dialogue sont rendues à l'identique** — rien
+ *   d'exploitable (on ne touche à rien, on le dit) · déclarable (on le choisit)
+ *   · lisible mais non déclarable (on **ouvre l'explorateur dessus**, avec le
+ *   motif). C'est ce qui évite le cul-de-sac, et un dépôt n'a pas de raison d'en
+ *   rendre d'autres.
  */
 
-import { useState } from "react";
+import { useState, type DragEvent } from "react";
 
-import { IconePlus } from "@/components/Icones";
+import { IconeDossier, IconePlus } from "@/components/Icones";
 import { Bouton, Carte, Champ } from "@/components/Primitives";
+import { verdictRacine } from "@/lib/api";
+import { cheminDuDossierDepose, peutLireCheminDepose } from "@/lib/poste";
 import {
   cheminEnfant,
   motifsDepuisTexte,
@@ -63,8 +89,18 @@ export function FormulaireProjet({
     projet ? texteDepuisMotifs(projet.perimetre.exclus) : "",
   );
   const [explorateurOuvert, setExplorateurOuvert] = useState(false);
+  // Le dossier sur lequel l'explorateur s'ouvre quand ce n'est pas celui du
+  // formulaire : un dossier déposé mais non déclarable, qu'on montre pour en
+  // descendre d'un cran (#938). `null` le rend au dossier choisi.
+  const [explorateurDepart, setExplorateurDepart] = useState<string | null>(null);
   const [enCours, setEnCours] = useState(false);
   const [refus, setRefus] = useState<RefusProjet | null>(null);
+  const [survolDepot, setSurvolDepot] = useState(false);
+  const [depotEnCours, setDepotEnCours] = useState(false);
+
+  // Lu au rendu et non dans un effet : la capacité est posée par la coque avant
+  // le premier script de la page et ne change jamais en cours de vie (#928).
+  const posteDepose = peutLireCheminDepose();
 
   const nouveauDossier = creation && origine === "nouveau";
   const racine = nouveauDossier
@@ -80,9 +116,63 @@ export function FormulaireProjet({
   const choisir = (chemin: string) => {
     setDossier(chemin);
     setExplorateurOuvert(false);
+    setExplorateurDepart(null);
+    setRefus(null);
     // Le nom du dossier fait un premier jet de nom de projet — modifiable,
     // mais un champ pré-rempli vaut mieux qu'un champ à recopier.
     if (!nouveauDossier && nom.trim() === "") setNom(nomDepuisChemin(chemin));
+  };
+
+  /**
+   * Un dossier déposé sur la zone (#938) — et ses trois issues, les mêmes que
+   * celles du dialogue natif.
+   *
+   * Le chemin vient de la coque (`cheminDuDossierDepose`) et le **verdict** de
+   * l'API (`verdictRacine`, EF-38) : c'est la seule porte, la même que
+   * l'explorateur et que le dialogue. Rien n'est jugé ici.
+   */
+  const deposer = async (evenement: DragEvent<HTMLDivElement>) => {
+    evenement.preventDefault();
+    setSurvolDepot(false);
+    // Pendant l'enregistrement, tout le formulaire est `disabled` : la zone,
+    // elle, n'est pas un contrôle et ne l'est donc pas d'elle-même.
+    if (enCours || depotEnCours) return;
+    const fichier = evenement.dataTransfer.files[0];
+    const chemin = fichier === undefined ? null : cheminDuDossierDepose(fichier);
+    if (chemin === null) {
+      // Un objet qui ne vient pas du disque (glissé depuis une page, une
+      // sélection de texte) : on ne touche à rien, et on le **dit** — un dépôt
+      // sans effet ni message ne se distingue pas d'une page figée.
+      setRefus({
+        motif: "depot-sans-chemin",
+        message:
+          "Ce dépôt n'a pas de chemin sur le disque — déposez un dossier depuis l'explorateur de votre poste.",
+      });
+      return;
+    }
+    setDepotEnCours(true);
+    setRefus(null);
+    try {
+      const verdict = await verdictRacine(chemin);
+      if (verdict.racine_valide && verdict.chemin !== null) {
+        choisir(verdict.chemin);
+        return;
+      }
+      setRefus(verdict.refus);
+      // Lisible mais non déclarable (une racine de disque, le dossier
+      // utilisateur nu) : on ouvre l'explorateur **dessus**, de quoi descendre
+      // d'un cran plutôt que de recommencer. Une seule exception, et elle est
+      // propre au dépôt : ce qui n'est pas un dossier n'a rien à explorer, et
+      // le motif le dit déjà.
+      if (verdict.chemin !== null && verdict.refus?.motif !== "pas-un-dossier") {
+        setExplorateurDepart(verdict.chemin);
+        setExplorateurOuvert(true);
+      }
+    } catch (erreur) {
+      setRefus(refusDepuis(erreur));
+    } finally {
+      setDepotEnCours(false);
+    }
   };
 
   const soumettre = async () => {
@@ -185,18 +275,91 @@ export function FormulaireProjet({
           <Bouton
             variante="contour"
             ton="neutre"
-            onClick={() => setExplorateurOuvert(!explorateurOuvert)}
+            onClick={() => {
+              // Le bouton rouvre toujours sur le dossier du formulaire : le
+              // départ posé par un dépôt refusé ne vaut que pour ce dépôt-là.
+              setExplorateurDepart(null);
+              setExplorateurOuvert(!explorateurOuvert);
+            }}
             disabled={enCours}
             aria-expanded={explorateurOuvert}
           >
             {dossier === null ? "Choisir un dossier…" : "Changer de dossier…"}
           </Bouton>
         </div>
+        {/* La zone de dépôt (#938, variante C retenue par le regard neuf).
+            Dessinée **seulement** là où le poste sait rendre un chemin réel :
+            dans un onglet, rien n'apparaît et l'écran est celui d'avant, au
+            pixel près (troisième critère du ticket).
+
+            L'état « je peux lâcher » change la **forme** autant que la teinte —
+            tireté → plein, plus l'aplat et le libellé : le filet a11y refuse un
+            état porté par la seule couleur, et le banc de #471 en a fait un
+            parti pris (docs/30 §1). */}
+        {posteDepose && (
+          <div
+            onDragOver={(evenement) => {
+              // Sans ce `preventDefault`, `drop` ne part jamais : c'est le
+              // navigateur qui décide, et son défaut est de refuser.
+              evenement.preventDefault();
+              evenement.dataTransfer.dropEffect = "copy";
+              setSurvolDepot(true);
+            }}
+            onDragLeave={() => setSurvolDepot(false)}
+            onDrop={(evenement) => void deposer(evenement)}
+            className={[
+              "flex flex-col items-center gap-1 rounded-carte border border-dashed p-4 text-center transition-colors motion-reduce:transition-none",
+              // `accent-creux` va avec `accent-texte`, jamais avec `texte` : la
+              // palette ne promet AA que sur les paires qu'elle déclare, et
+              // c'est celle-là que le socle montre (`app/socle/page.tsx`).
+              survolDepot
+                ? "border-solid border-accent bg-accent-creux text-accent-texte"
+                : "border-bord-fort bg-surface-creuse",
+            ].join(" ")}
+          >
+            <p
+              className={[
+                "flex items-center gap-2 text-annexe font-medium",
+                survolDepot ? "" : "text-texte",
+              ].join(" ")}
+            >
+              <IconeDossier
+                className={[
+                  "size-5 shrink-0",
+                  survolDepot ? "" : "text-texte-secondaire",
+                ].join(" ")}
+                aria-hidden="true"
+              />
+              {depotEnCours
+                ? "Lecture du dossier déposé…"
+                : survolDepot
+                  ? "Lâchez pour désigner ce dossier"
+                  : "Déposer un dossier ici"}
+            </p>
+            {/* La contrainte se dit **dans** la zone, avant le refus — et sur
+                sa propre ligne : filée derrière le titre elle passait pour une
+                nuance de celui-ci (relevé par le regard neuf). Le survol la
+                laisse hériter d'`accent-texte`, la graisse du titre suffisant à
+                tenir la hiérarchie le temps d'un glisser. */}
+            <p
+              className={[
+                "text-micro",
+                survolDepot ? "" : "text-texte-secondaire",
+              ].join(" ")}
+            >
+              Depuis l&apos;explorateur de votre poste. Un dossier, pas un
+              fichier.
+            </p>
+          </div>
+        )}
         {explorateurOuvert && (
           <ExplorateurDossiers
-            cheminInitial={dossier}
+            cheminInitial={explorateurDepart ?? dossier}
             onChoisir={choisir}
-            onFermer={() => setExplorateurOuvert(false)}
+            onFermer={() => {
+              setExplorateurOuvert(false);
+              setExplorateurDepart(null);
+            }}
           />
         )}
         {nouveauDossier && (

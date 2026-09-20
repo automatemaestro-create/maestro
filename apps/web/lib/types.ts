@@ -2191,17 +2191,27 @@ export type DisponibiliteSelecteur = {
 };
 
 /**
- * Ce que rend `POST /api/projets/selecteur` (#278). `annule` distingue « la
- * fenêtre a été fermée » — un geste normal, pas une erreur — d'un chemin
- * choisi. `racine_valide` dit si ce chemin est **déclarable tel quel** ; sinon
- * `refus` porte le motif d'EF-38 (racine de disque, dossier utilisateur nu…),
- * que le formulaire affiche au lieu de le découvrir à la soumission.
+ * Ce qu'EF-38 dit d'un chemin proposé comme racine — le corps de
+ * `POST /api/projets/racine` (#938), et le cœur de celui du sélecteur.
+ *
+ * `chemin` est le dossier **canonicalisé** ; `racine_valide` dit s'il est
+ * déclarable tel quel ; sinon `refus` porte le motif (racine de disque, dossier
+ * utilisateur nu, chemin qui n'est pas un dossier…), que l'écran **montre** au
+ * lieu de le découvrir à la soumission.
  */
-export type ChoixSelecteur = {
-  annule: boolean;
+export type VerdictRacine = {
   chemin: string | null;
   racine_valide: boolean;
   refus: RefusProjet | null;
+};
+
+/**
+ * Ce que rend `POST /api/projets/selecteur` (#278) : le verdict ci-dessus, plus
+ * `annule`, qui distingue « la fenêtre a été fermée » — un geste normal, pas une
+ * erreur — d'un chemin choisi.
+ */
+export type ChoixSelecteur = VerdictRacine & {
+  annule: boolean;
 };
 
 /**

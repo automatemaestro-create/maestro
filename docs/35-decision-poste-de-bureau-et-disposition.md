@@ -155,9 +155,10 @@ n'est pas le poids qui décide.
   y ajoute **G6** : le produit « parle le dépôt » à son utilisateur,
   `bash scripts/controltower/start.sh` affiché sur la page d'accueil.
 - **PWA / raccourci de navigateur** — non traitée par docs/24, écartée ici : elle ne donne ni
-  l'ouverture de l'explorateur de fichiers (lot 7, **G1**), ni le glisser-déposer avec chemin réel,
-  ni le cycle de vie du backend. C'est-à-dire précisément les trois capacités qui justifient une
-  fenêtre.
+  l'ouverture de l'explorateur de fichiers (lot 7, **G1**), ni le glisser-déposer avec chemin réel
+  (lot 8, #938 — qui y ajoute le **dialogue de dossier sans détour par le backend**, donc sans les
+  motifs `selecteur-hors-poste` et `selecteur-sans-outil` de #278), ni le cycle de vie du backend.
+  C'est-à-dire précisément les trois capacités qui justifient une fenêtre.
 - **Réécriture native** — écartée par D4, et l'argument tient sans changement : elle jetterait les
   Phases 4 et 6.
 
@@ -298,18 +299,21 @@ fait son livrable :
 | 5 | La conversation occupe la colonne de droite | #926 | |
 | 6 | Le centre montre le run qui tourne | #927 | |
 | 7 | Un run qui se termine l'annonce, et remet son livrable | #928 | |
-| 8 | Choisir une racine depuis la fenêtre — sélecteur natif sans détour, glisser-déposer d'un dossier | #938 | |
-| 9 | Ce que le renversement de D4 laisse derrière lui dans la doc et les tickets | #947 | ∥ |
-| 10 | Le modèle de menace face à la fenêtre — ce que la coque expose, ce qui le borne | #949 | |
+| 8 | Choisir une racine **depuis la fenêtre** — le dialogue sans détour, et le dépôt d'un dossier | #938 | |
+| 9 | Le renversement de D4 n'est pas fini : ce qui retient encore Tauri | #947 | ∥ |
+| 10 | Le modèle de menace ne connaît pas la fenêtre | #949 | |
 | 11 | Tests + doc — dont **la frontière shell / écran** | #929 | |
 
-> **Trois lots ont été ajoutés après ce cadrage**, qui n'en annonçait que huit (#922–#929) : #938
-> (ce que la fenêtre apporte au choix d'une racine — §2.4 le nommait sans lui donner de lot), #947
-> (les documents et les tickets que le renversement de D4 laissait à contre-sens) et #949 (le modèle
-> de menace, que §4 déclarait hors périmètre avant que la coque n'existe). Ce tableau est une
-> **commodité de lecture** : depuis #389/#395 la relation parent/lot, son ordre et son état vivent
-> dans la forge, et aucun outil ne lit ces lignes — raison de plus pour qu'elles ne mentent pas.
-> `bash scripts/gitlab/lib.sh start-brief 921` rend le découpage qui fait foi.
+⚠ **Ce tableau annonçait 8 lots, et il a été écrit avant les trois derniers.** Les lots 8 à 10 sont
+nés de ce que les précédents ont fait apparaître — la première capacité qui rend la fenêtre utile à
+autre chose qu'elle-même (#938), le renversement de D4 resté à moitié écrit dans le dépôt (#947), un
+modèle de menace qui ne connaît pas encore la fenêtre (#949) —, et le lot « tests + doc » reste le
+**dernier**, jamais parallèle. Le corriger ici plutôt qu'au lot final est délibéré : un tableau faux
+se relit comme un découpage qu'on ne suit pas.
+
+Et il reste une **commodité de lecture** : depuis #389/#395 la relation parent/lot, son ordre et son
+état vivent dans la forge, où aucun outil ne vient lire ces lignes —
+`bash scripts/gitlab/lib.sh start-brief 921` rend le découpage qui fait foi.
 
 **L'ordre porte deux décisions**, et aucune n'est un séquencement de confort :
 

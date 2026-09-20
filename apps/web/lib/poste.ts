@@ -1,9 +1,36 @@
 "use client";
 
 /**
- * **Ce que la fenêtre sait faire et qu'un onglet ne sait pas** (#928, lot 7 de
- * #921) — aujourd'hui une seule chose : ouvrir un dossier dans l'explorateur du
- * système.
+ * **Ce que la fenêtre sait faire et qu'un onglet ne sait pas** (#928 lot 7,
+ * #938 lot 8, de #921) — trois choses, et les deux dernières répondent à la
+ * même question :
+ *
+ * 1. **ouvrir un dossier** dans l'explorateur du système (`ouvrirDossier`) ;
+ * 2. **ouvrir le dialogue de dossier de l'OS** sans détour par le backend
+ *    (`choisirDossierDuPoste`) ;
+ * 3. **lire le chemin réel d'un dossier déposé** (`cheminDuDossierDepose`).
+ *
+ * ## Pourquoi 2 et 3 ne doublent pas l'explorateur de l'API
+ *
+ * Un navigateur ne livre **jamais** de chemin absolu : c'est la contrainte qui a
+ * fait naître l'explorateur servi par l'API (#223) puis le dialogue ouvert par
+ * le backend (#278). Ce dernier porte ses limites en toutes lettres — il refuse
+ * quand la requête vient du réseau (`selecteur-hors-poste` : le dialogue
+ * s'ouvrirait sur le serveur, devant personne) et quand le poste n'a ni
+ * PowerShell, ni `osascript`, ni `zenity`/`kdialog` (`selecteur-sans-outil`).
+ * **Dans une fenêtre, ces deux empêchements n'existent pas** : le dialogue est
+ * celui d'Electron, il s'ouvre là où la personne regarde, et il ne dépend
+ * d'aucun outil installé.
+ *
+ * Et le **dépôt d'un dossier**, lui, n'existait nulle part : aucun navigateur ne
+ * donne le chemin de ce qu'on lui dépose, ce qu'annonçait déjà le cadrage de
+ * docs/24 §4.7.
+ *
+ * ⚠ **Aucune de ces trois fonctions n'autorise quoi que ce soit.** Le chemin
+ * rendu est celui de l'OS, brut : c'est `POST /api/projets/racine` qui le
+ * confronte aux frontières d'EF-38 (#221), au même endroit que toutes les autres
+ * voies. Une validation côté coque ferait deux formules à tenir d'accord, et
+ * c'est la garde qui perdrait.
  *
  * ## Pourquoi ce module existe, et pourquoi il n'est pas un `if (electron)`
  *
@@ -55,6 +82,8 @@ declare global {
   interface Window {
     maestro?: {
       ouvrirDossier?: (chemin: string) => Promise<boolean>;
+      choisirDossier?: (depart: string | null) => Promise<string | null>;
+      cheminDuFichier?: (fichier: File) => string | null;
     };
   }
 }
@@ -65,6 +94,73 @@ export function peutOuvrirDossier(): boolean {
     typeof window !== "undefined" &&
     typeof window.maestro?.ouvrirDossier === "function"
   );
+}
+
+/**
+ * Le poste peut-il ouvrir **lui-même** le dialogue de dossier de l'OS ? (#938)
+ *
+ * Vrai dans la fenêtre, faux dans un onglet — où l'écran retombe sur la
+ * disponibilité que l'API rend (`GET /api/projets/selecteur`) et ses trois
+ * motifs, inchangés. La question est bien « puis-je ? » et non « où suis-je ? ».
+ */
+export function peutChoisirDossier(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.maestro?.choisirDossier === "function"
+  );
+}
+
+/**
+ * Ouvre le dialogue de dossier du poste et rend le chemin choisi — `null` si la
+ * personne a **annulé**, ce qui est un geste normal et n'affiche rien.
+ *
+ * `depart` est le dossier d'ouverture : un confort, jamais une permission. Le
+ * chemin rendu est celui de l'OS, **non canonicalisé** — il reste à le faire
+ * juger par `verdictRacine`.
+ */
+export async function choisirDossierDuPoste(
+  depart: string | null = null,
+): Promise<string | null> {
+  const pont = window.maestro?.choisirDossier;
+  if (typeof pont !== "function") return null;
+  try {
+    return await pont(depart);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Le poste sait-il donner le **chemin réel** d'un dossier déposé ? (#938)
+ *
+ * C'est ce qui décide si l'écran de déclaration **dessine** sa zone de dépôt :
+ * une cible visible là où le geste est impossible promettrait ce qu'aucun
+ * navigateur ne peut tenir (réserve du regard neuf sur la variante retenue,
+ * et troisième critère d'acceptation du ticket — *hors fenêtre, rien ne
+ * change*).
+ */
+export function peutLireCheminDepose(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.maestro?.cheminDuFichier === "function"
+  );
+}
+
+/**
+ * Le chemin réel du `File` déposé, ou `null` si le poste ne sait pas le dire.
+ *
+ * `null` couvre les deux cas d'un seul tenant — pas de pont (onglet), et un
+ * objet qui ne vient pas du disque (glissé depuis une autre page) : l'appelant
+ * n'a qu'une chose à afficher, « ce dépôt n'a pas donné de chemin ».
+ */
+export function cheminDuDossierDepose(fichier: File): string | null {
+  const pont = window.maestro?.cheminDuFichier;
+  if (typeof pont !== "function") return null;
+  try {
+    return pont(fichier) || null;
+  } catch {
+    return null;
+  }
 }
 
 /**
