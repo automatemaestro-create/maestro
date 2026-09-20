@@ -173,12 +173,25 @@ export function QuestionDOutillage({
                   </span>
                   {recommandee && <BadgeEtat ton="info">Recommandé</BadgeEtat>}
                 </span>
-                {/* La raison de l'option — et, sur la recommandée, **ce qui l'a
-                    désignée** : c'est la seule chose que `raison` ne dit pas, et
-                    celle qu'on veut lire avant de garder le défaut. */}
+                {/* La raison de l'option, sur **toutes** les lignes — c'est elle
+                    qui dit ce que ce choix entraîne, et c'est par elle qu'on
+                    compare deux options.
+
+                    ⚠ La recommandée en porte une **seconde**, et non une autre :
+                    le premier jet y mettait `pourquoi` **à la place** de
+                    `raison`, si bien que la seule option qu'on ne pouvait pas
+                    lire par sa ligne était celle qu'on recommandait (constat du
+                    regard neuf, #980). Les deux phrases ne répondent pas à la
+                    même question — « qu'est-ce que ce choix ? » et « pourquoi
+                    celui-là ? » —, donc aucune ne remplace l'autre. */}
                 <span className="min-w-0 break-words text-annexe text-texte-secondaire">
-                  {recommandee ? question.pourquoi : option.raison}
+                  {option.raison}
                 </span>
+                {recommandee && (
+                  <span className="min-w-0 break-words text-annexe text-attention-texte">
+                    {question.pourquoi}
+                  </span>
+                )}
               </span>
             </button>
           );
