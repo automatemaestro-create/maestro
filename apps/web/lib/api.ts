@@ -36,7 +36,7 @@ import type {
   MigrationMcp,
   PageExplorateur,
   PageJournal,
-  PasSerie,
+  PasDemande,
   PlaybookDetail,
   PlaybookFiche,
   PolitiquePermissions,
@@ -209,11 +209,13 @@ export function chargerFriseExecution(runId: string): Promise<FriseRun> {
  * La vue coûts & analytics (`GET /api/analytics/couts`, #87) : agrégats par
  * tâche, par agent et par exécution, total et série temporelle du coût.
  * `depuis` (ISO) restreint la fenêtre — la période sélectionnable de l'UI ;
- * `pas` fixe la granularité des seaux de la série (minute/heure/jour).
+ * `pas` fixe la granularité des seaux de la série (minute/heure/jour), ou vaut
+ * `auto` : le backend la déduit alors de l'étendue couverte (#991). La réponse
+ * rend toujours le pas **retenu**.
  */
 export function chargerAnalyticsCouts(options: {
   depuis?: string;
-  pas?: PasSerie;
+  pas?: PasDemande;
   projet: PorteeProjet;
 }): Promise<AnalyticsCouts> {
   const params = new URLSearchParams();

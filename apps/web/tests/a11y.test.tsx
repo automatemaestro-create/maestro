@@ -154,6 +154,73 @@ describe("les dix écrans face à axe-core", () => {
   }
 });
 
+// --- 2bis. Le lien sans nom de /runs (#991, défaut S11) ---------------------
+
+/**
+ * La revue du 2026-08-26 (#568) relevait un **lien sans nom accessible** dans
+ * `/runs` « quand l'objectif est long », et personne n'avait su le reproduire.
+ * Ce bloc est la tentative, écrite plutôt que racontée — et son verdict est en
+ * deux temps, parce que la réponse n'est pas la même selon la bordure :
+ *
+ * - **un objectif long ne le reproduit pas.** `truncate` coupe le rendu, jamais
+ *   le texte : le lien garde son nom accessible en entier, et c'est d'ailleurs le
+ *   défaut que S12 corrige (un nom accessible de quinze pages). Les deux écrans
+ *   qui listent des runs sont audités avec un tel run dans `peuplerEtat`, et
+ *   restent verts ;
+ * - **un objectif fait de blancs le reproduit**, et c'est la cause plausible que
+ *   la revue avait sous les yeux : `" " || run.run_id` rend `" "` en JavaScript,
+ *   donc un titre invisible et un lien sans nom. Le premier test ci-dessous rend
+ *   cette forme-là **à la main** — la sonde prouvée sur son échantillon fautif,
+ *   comme au §1 — et le second vérifie que la carte réelle ne la produit plus.
+ */
+describe("le nom accessible d'un run (#991, défaut S11)", () => {
+  it("rend `link-name` sur un lien dont le texte n'est que des blancs", async () => {
+    // La forme exacte que produisait `run.objectif || run.run_id` avec un
+    // objectif fait d'espaces. Sans ce contrôle, le test d'à côté rendrait un
+    // vert sur une question qu'axe n'aurait jamais posée.
+    render(
+      <main>
+        <h1>Runs</h1>
+        {/* La route réelle, pour que l'échantillon soit celui du défaut et non
+            un lien de laboratoire — d'où l'exemption ci-dessous, à la ligne
+            près : le lint veut `<Link />`, et un composant de Next n'est pas ce
+            qu'on mesure ici. */}
+        {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+        <a href="/runs/run-blanc"> </a>
+      </main>,
+    );
+    const trouvees = bloquantes(await auditerLaPage());
+    expect(trouvees.map((v) => v.id)).toContain("link-name");
+  });
+
+  it("ne le rend pas sur la carte réelle, objectif blanc compris", async () => {
+    marquerGuideVu();
+    poserProjetActif();
+    peuplerEtat();
+    await monterEcran(ECRANS.find((e) => e.href === "/runs")!);
+
+    // Le repli a joué : le run sans objectif lisible est nommé par son
+    // identifiant, qui n'est jamais vide.
+    expect(
+      screen.getByRole("link", { name: "run-blanc" }),
+    ).toBeInTheDocument();
+    const violations = await auditerLaPage();
+    expect(bloquantes(violations), `\n${raconter(violations)}\n`).toHaveLength(0);
+  });
+
+  it("borne le nom accessible d'un objectif long", async () => {
+    // L'autre moitié de S11, et c'est S12 : le lien avait bien un nom, mais
+    // c'était le brief entier. Il porte désormais le titre court servi par l'API.
+    marquerGuideVu();
+    poserProjetActif();
+    peuplerEtat();
+    await monterEcran(ECRANS.find((e) => e.href === "/runs")!);
+
+    const lien = screen.getByRole("link", { name: /^Reprendre l'écran des coûts/ });
+    expect(lien.textContent ?? "").toHaveLength(80);
+  });
+});
+
 // --- 3. Ce qu'axe ne voit pas ----------------------------------------------
 
 describe("le lien d'évitement (WCAG 2.2 §2.4.1)", () => {

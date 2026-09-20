@@ -72,6 +72,7 @@ import { useEtatGlobal } from "@/lib/etatGlobal";
 import {
   causeDAttente,
   messageVideDuRun,
+  nomDuRun,
   regimeDuRun,
   runsEnAttenteDeValidation,
   tachesEnAttenteDeValidation,
@@ -325,17 +326,27 @@ function EnTeteRun({
   return (
     <Carte balise="div" ton={fondDe(regime)} densite="aeree">
       <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
-        {/* `line-clamp-3` et non `truncate` : un objectif tient rarement sur une
-            ligne, et sur un run **relancé** (#349) c'est le brief approuvé qui
-            en tient lieu — plusieurs paragraphes. Trois lignes suffisent à
-            reconnaître le run. Le `title` qui redoublait ce texte est parti
-            (#536) : il ne disait rien de plus que le titre lui-même, que le
-            lecteur d'écran lit en entier quoi qu'en montre le `line-clamp`. */}
+        {/* Le **titre** du run, court et borné (#991) — plus son objectif
+            entier. C'était l'objectif lui-même, ramené à trois lignes par un
+            `line-clamp` : sur un run **relancé** (#349), où le brief approuvé
+            tient lieu d'objectif, l'œil en voyait trois lignes et un lecteur
+            d'écran en lisait quinze pages. Le `line-clamp` reste — un titre
+            borné à 80 signes n'en prend jamais trois, il garde la tête à
+            l'abri d'un backend plus ancien qui n'en servirait pas. Le `title`
+            qui redoublait ce texte, lui, est parti avec #536. */}
         <h2 className="line-clamp-3 min-w-0 flex-1 text-corps font-semibold">
-          {run.objectif || run.run_id}
+          {nomDuRun(run)}
         </h2>
         <BadgeRun run={run} regime={regime} attente={attente} />
       </div>
+
+      {/* L'objectif entier **reste là où on le lit** : la vue d'un run est cet
+          endroit, et lui seul — la liste et le journal n'en montrent que le
+          titre. Replié, parce que c'est la réponse à une question qu'on ne se
+          pose pas à chaque ouverture ; déplié d'un geste, parce qu'elle se pose.
+          Rien ne s'affiche quand le titre *est* l'objectif : un dépliant qui
+          redirait la ligne du dessus serait un geste pour rien. */}
+      <ObjectifComplet run={run} />
 
       <p className="chiffre mt-1 truncate text-annexe text-neutral-500 dark:text-neutral-400">
         {run.run_id}
@@ -373,6 +384,35 @@ function EnTeteRun({
       <LignePause regime={regime} className="mt-3" />
       <GestesRun run={run} className="mt-3" />
     </Carte>
+  );
+}
+
+/**
+ * L'**objectif entier** d'un run, replié sous son titre (#991, défaut S12).
+ *
+ * Il existe parce que le titre est désormais borné : le montrer entier quelque
+ * part n'est pas un supplément, c'est la contrepartie de l'avoir raccourci
+ * ailleurs — « l'objectif entier reste disponible là où on le lit ». La vue d'un
+ * run est ce « là » : c'est l'écran qu'on ouvre pour savoir ce que ce run fait,
+ * et le seul où il n'y a qu'un run à lire.
+ *
+ * `<details>` natif, comme la table de la série du graphe des coûts : aucune
+ * primitive à inventer, un état plié/déplié que le navigateur porte, et un nom
+ * accessible sur le `<summary>`. Rien n'est rendu quand le titre n'a rien coupé.
+ */
+function ObjectifComplet({ run }: { run: ResumeExecution }) {
+  const objectif = run.objectif.trim();
+  if (objectif === "" || objectif === nomDuRun(run)) return null;
+  return (
+    <details className="mt-1 text-annexe text-texte-secondaire">
+      <summary className="cursor-pointer select-none rounded-controle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info">
+        Objectif complet
+      </summary>
+      {/* `whitespace-pre-wrap` : un objectif est du texte libre, souvent un
+          brief à paragraphes — l'aplatir en un seul bloc le rendrait illisible
+          là précisément où on vient le lire. */}
+      <p className="mt-1 whitespace-pre-wrap break-words">{objectif}</p>
+    </details>
   );
 }
 

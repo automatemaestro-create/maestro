@@ -86,6 +86,8 @@ Sept briques, assemblées par l'app FastAPI (`maestro.controltower.app`) :
 from __future__ import annotations
 
 from maestro.controltower.analytics import (
+    PAS_AUTO,
+    PAS_DEMANDABLES,
     PAS_HEURE,
     PAS_JOUR,
     PAS_MINUTE,
@@ -302,6 +304,8 @@ __all__ = [
     "HOTE_RUN_EN_PROCESS",
     "NOM_ASSISTANCE",
     "NOM_ORCHESTRATION",
+    "PAS_AUTO",
+    "PAS_DEMANDABLES",
     "PAS_HEURE",
     "PAS_JOUR",
     "PAS_MINUTE",

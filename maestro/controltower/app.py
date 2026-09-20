@@ -319,7 +319,7 @@ from maestro.agents.store import (
 from maestro.appartenance import projet_id_valide
 from maestro.config import ConfigError, Settings, load_settings
 from maestro.controltower import selecteur
-from maestro.controltower.analytics import PAS_HEURE, PAS_VALIDES, agrege_couts
+from maestro.controltower.analytics import PAS_DEMANDABLES, PAS_HEURE, agrege_couts
 from maestro.controltower.assistance import (
     AGENT_ASSISTANCE,
     NOM_ASSISTANCE,
@@ -359,6 +359,7 @@ from maestro.controltower.events import (
     InMemoryEventBus,
     RedisEventBus,
     brief_depuis,
+    titre_court,
 )
 from maestro.controltower.executions import (
     MOTIF_RELANCE_RUN_INCONNU,
@@ -1970,7 +1971,10 @@ def create_app(
         event = Event(
             type=EVENEMENT_BRIEF_DECISION,
             run_id=run_id,
-            titre=resume["objectif"],
+            # Le titre court à montrer, l'objectif entier à lire (#991) : la
+            # projection tient déjà celui-ci, l'événement ne fait que le porter.
+            titre=titre_court(resume["objectif"]),
+            description=resume["objectif"],
             agent=ACTEUR_BRIEF,
             role=ROLE_BRIEF,
             statut=BRIEF_APPROUVE if requete.approuve else BRIEF_REFUSE,
@@ -2042,7 +2046,9 @@ def create_app(
         event = Event(
             type=EVENEMENT_BRIEF_REPONSES,
             run_id=run_id,
-            titre=resume["objectif"],
+            # Même partage qu'à la décision ci-dessus (#991).
+            titre=titre_court(resume["objectif"]),
+            description=resume["objectif"],
             agent=ACTEUR_BRIEF,
             role=ROLE_BRIEF,
             detail=(
@@ -2244,7 +2250,10 @@ def create_app(
         Recalculée des exécutions projetées, avec la même convention
         d'attribution que le grand livre d'un run (#57) : coût agrégé par
         tâche, par agent (planification comprise) et par exécution, total, et
-        série temporelle du coût en seaux de `pas` (minute/heure/jour).
+        série temporelle du coût en seaux de `pas` (minute/heure/jour), ou
+        `auto` : le pas se **déduit alors de l'étendue** couverte (#991), ce que
+        l'appelant ne peut pas faire sur une fenêtre sans borne. La réponse rend
+        toujours le pas **retenu**, jamais `auto`.
         `depuis` (ISO-8601, réputé UTC sans fuseau) restreint la fenêtre — la
         période sélectionnable de l'UI. `projet` est **obligatoire** (#277) et
         restreint la dépense : seuls les événements que la portée retient
@@ -2254,10 +2263,10 @@ def create_app(
         `pas` ou un `depuis` invalide.
         """
         portee = _portee(projet)
-        if pas not in PAS_VALIDES:
+        if pas not in PAS_DEMANDABLES:
             raise HTTPException(
                 status_code=422,
-                detail=f"pas invalide : {pas} (attendus : {', '.join(PAS_VALIDES)})",
+                detail=f"pas invalide : {pas} (attendus : {', '.join(PAS_DEMANDABLES)})",
             )
         borne = None
         if depuis is not None:

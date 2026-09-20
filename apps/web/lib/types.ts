@@ -236,6 +236,21 @@ export type CoutExecution = {
 /** Granularité de la série temporelle analytics (maestro/controltower/analytics.py, #87). */
 export type PasSerie = "minute" | "heure" | "jour";
 
+/**
+ * Ce qu'on peut **demander** comme granularité (#991) : l'une des trois, ou
+ * `auto` — le backend la déduit alors de l'étendue réellement couverte.
+ *
+ * `auto` existe parce que la portée « Tout » n'a pas de fenêtre : l'écran
+ * demandait « heure » quoi qu'il arrive, et douze jours d'historique rendaient
+ * près de trois cents colonnes horaires presque toutes vides, chacune nommée
+ * pour les technologies d'assistance. Le client ne peut pas choisir un pas à
+ * partir d'une étendue qu'il ignore ; la projection, elle, la connaît.
+ *
+ * Il n'entre jamais dans une **réponse** : `AnalyticsCouts.pas` porte toujours
+ * le pas retenu, donc l'une des trois valeurs de `PasSerie`.
+ */
+export type PasDemande = PasSerie | "auto";
+
 /** La ligne « par agent » de la vue analytics (`CoutAgent.to_dict`, #87). */
 export type CoutAgentAgrege = {
   agent: string;
@@ -1638,6 +1653,19 @@ export type Progression = {
 export type ResumeExecution = {
   run_id: string;
   objectif: string;
+  /**
+   * Le **titre** du run (#991) : la forme courte et bornée de l'objectif —
+   * première ligne, coupée au dernier mot entier. C'est ce que la liste des runs
+   * et l'en-tête d'un run montrent, `objectif` restant ce qu'on **lit** dans la
+   * vue du run.
+   *
+   * Il existe parce que l'écran ne faisait que tronquer en CSS : un objectif de
+   * quinze pages — le cas d'un run relancé, dont le brief approuvé tient lieu
+   * d'objectif — était lu en entier par les lecteurs d'écran et pesait autant de
+   * fois qu'il y avait de lignes. Optionnel : un résumé servi avant ce lot n'en
+   * porte pas, et les appelants retombent alors sur `objectif`.
+   */
+  titre?: string;
   statut: string;
   nb_taches: number;
   /**

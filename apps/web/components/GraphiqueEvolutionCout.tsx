@@ -28,7 +28,16 @@ const PAS_MS: Record<PasSerie, number> = {
   jour: 86_400_000,
 };
 
-/** Au-delà, on renonce à combler : la série servie reste affichée telle quelle. */
+/**
+ * Au-delà, on renonce à combler : la série servie reste affichée telle quelle.
+ *
+ * Ce n'est plus qu'un **filet** depuis #991 : le pas suit désormais l'étendue de
+ * la période (`auto`, `maestro/controltower/analytics.py`), si bien qu'aucune
+ * période de l'écran ne peut plus produire plus d'une centaine de seaux. C'était
+ * le contraire avant lui — la portée « Tout » gardait le pas horaire quelle que
+ * soit l'étendue, et douze jours d'historique comblaient jusqu'ici, soit près de
+ * trois cents colonnes vides, chacune nommée pour les technologies d'assistance.
+ */
 const MAX_SEAUX_COMBLES = 400;
 
 const USAGE_VIDE: Usage = {

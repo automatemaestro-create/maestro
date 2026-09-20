@@ -3081,6 +3081,12 @@ repaie une planification, sous un **nouveau** `run_id`.
 {
   "run_id": "demo-live",
   "objectif": "Prototyper un mini-CRM",
+  // Le **titre** du run (#991) : l'objectif ramené à sa première ligne, coupé au
+  // dernier mot entier sous 80 signes. C'est ce que la liste des runs, le fil et
+  // l'en-tête d'un run montrent ; `objectif` reste servi entier à côté, et c'est
+  // la vue du run qui le donne à lire. Sur un run relancé (§6.11), où le brief
+  // approuvé tient lieu d'objectif, les deux n'ont pas le même ordre de grandeur.
+  "titre": "Prototyper un mini-CRM",
   // en_cours | terminee | annulee | echec
   // | en_attente_brief | en_attente_reponses  ← suspendu sur son brief (§6.10)
   // | en_attente_arbitrage                    ← suspendu sur un arbitrage (§2.6, #571)
