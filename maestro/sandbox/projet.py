@@ -50,17 +50,18 @@ réutilise pas.
 from __future__ import annotations
 
 import re
-import shutil
 import subprocess
 import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+from maestro.fichiers import retirer_arbre
 from maestro.projets.application import ApplicationRefusee, commiter_en_attente
 from maestro.projets.modele import Projet
 from maestro.projets.racine import valider_racine
 from maestro.sandbox.en_place import EspaceEnPlace, chemin_atelier, ouvre_atelier
+from maestro.sandbox.ramassage import racine_des_espaces
 from maestro.sandbox.workspace import Workspace, isolated_workspace
 
 #: Préfixe des branches de tâche (docs/24 §2.4) : une branche `maestro/<tâche>`
@@ -148,7 +149,12 @@ def espace_de_travail(
         yield EspaceEnPlace.derive(racine, perimetre=projet.perimetre, atelier=atelier)
         return
 
-    parent = Path(tempfile.mkdtemp(prefix=prefix))
+    # `racine_des_espaces` et non le défaut de `tempfile` (#992, S13) : la même
+    # racine que l'espace jetable, donc celle que le Bash de l'agent appelle
+    # `/tmp` sous Windows. Le parent n'est **pas** marqué d'un pid, et c'est
+    # voulu : le ramassage ne doit jamais emporter un worktree, dont le travail
+    # non commité ne vit nulle part ailleurs (`ramassage.porte_un_worktree`).
+    parent = Path(tempfile.mkdtemp(prefix=prefix, dir=racine_des_espaces()))
     chemin = parent / _slug(tache_id)
     monte = False
     try:
@@ -161,7 +167,7 @@ def espace_de_travail(
             if monte:
                 _solder_la_branche(chemin, _branche(tache_id))
                 _retirer_worktree(racine, chemin)
-            shutil.rmtree(parent, ignore_errors=True)
+            retirer_arbre(parent)
 
 
 def branche_de_tache(tache_id: str) -> str:
@@ -290,14 +296,16 @@ def _retirer_worktree(racine: Path, chemin: Path) -> None:
     Best-effort et silencieux à dessein : ce démontage vit dans un `finally`, et
     une erreur levée ici masquerait celle qui a réellement condamné la tâche. Si
     Git ne peut pas le retirer (dépôt déplacé, binaire absent), le répertoire est
-    supprimé à la main et l'enregistrement est purgé au prochain montage.
+    supprimé à la main — par `retirer_arbre` (#992), parce qu'un worktree est
+    plein d'objets Git en lecture seule et qu'un `rmtree` nu en laisserait la
+    coquille — et l'enregistrement est purgé au prochain montage.
     """
     try:
         resultat = _git(racine, "worktree", "remove", "--force", str(chemin))
     except EspaceProjetIndisponible:
         resultat = None
     if resultat is None or resultat.returncode != 0:
-        shutil.rmtree(chemin, ignore_errors=True)
+        retirer_arbre(chemin)
 
 
 def _ref_existe(racine: Path, branche: str) -> bool:

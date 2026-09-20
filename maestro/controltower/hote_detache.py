@@ -853,6 +853,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     mécanique : s'abonner est **asynchrone**, donc n'a de lieu qu'une fois la boucle
     ouverte. Ce qui reste dans cette fonction est ce qui ne l'est pas.
 
+    Un geste **précède** les six, et n'en est pas un : le **ramassage des espaces
+    de travail orphelins** (#992, `maestro.sandbox.ramassage`). Il est ici parce
+    que c'est ce process qui va en créer un par tâche, donc le seul qui sache
+    qu'aucun des siens n'existe encore ; il ne retire que ce qu'aucune tâche
+    vivante n'occupe, il est best-effort, et son échec n'empêche jamais le run de
+    partir.
+
     Les **imports du moteur sont locaux** aux deux fonctions, et ce n'est pas une
     économie de démarrage : `maestro.controltower` est importé par toute app, et y
     faire entrer `maestro.engine.loop` au niveau du module reviendrait à résoudre
@@ -881,6 +888,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     from maestro.engine.cli import activer_publication_evenements, console_tolerante
     from maestro.engine.runner import run_borne
     from maestro.orchestrator.errors import OrchestratorError
+    from maestro.sandbox.ramassage import ramasser
     from maestro.telemetry import activer_export_langfuse, redact_secrets
 
     console_tolerante()
@@ -897,6 +905,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (OSError, ValueError) as exc:
         print(f"Ordre de run illisible : {exc}", file=sys.stderr)
         return 2
+
+    # Le ménage d'avant le travail (#992) : ce process va créer un espace de
+    # travail par tâche, et c'est le seul moment où l'on sait qu'aucun des siens
+    # n'existe encore. Un process tué ne passe jamais par son `finally` — la
+    # revue #568 en comptait 76 dépouilles le 2026-09-20 —, et personne d'autre
+    # ne repasse derrière. Best-effort, muet quand il n'y a rien à retirer, et
+    # jamais un motif d'échec : le run part dans tous les cas.
+    if passage := ramasser():
+        print(passage.resume(), file=sys.stderr)
 
     # Export Langfuse (#81) : purement configuratif, no-op sans clés — même bascule
     # que pour un run CLI, pour qu'un run détaché ne perde pas sa trace.
