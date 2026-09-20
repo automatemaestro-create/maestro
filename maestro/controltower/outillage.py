@@ -114,6 +114,7 @@ from maestro.outillage import (
     analyser,
     generer_outillage,
 )
+from maestro.outillage.modele import Recommandation
 from maestro.outillage.questionnaire import (
     Choix,
     QuestionOutillage,
@@ -124,6 +125,37 @@ from maestro.outillage.questionnaire import (
     source_manifeste_des_choix,
 )
 from maestro.projets import Projet
+
+
+def _retenue(
+    recommandation: Recommandation, retenus: Sequence[str] | None
+) -> Recommandation:
+    """La recommandation réduite à ce que l'écran a **gardé** (#1034).
+
+    `None` rend la recommandation telle quelle — un appel qui ne vient pas d'un
+    écran écrit tout ce qui est recommandé, et c'est le comportement de #1033
+    inchangé.
+
+    Le filtre porte sur `entrees` et **pas** sur `ecartes` : les écartés ne sont
+    pas des entrées qu'on aurait décochées, ce sont des choses que le projet ne
+    justifie pas (docs/38 §3.5) — il n'y a rien à écrire pour elles, et les
+    « ajouter » n'aurait pas de sens. Ce que l'écran appelle *ajouter* est la
+    remise d'une entrée retirée, ou la reprise d'une entrée `deja-present` que
+    la liste ne gardait pas d'office : dans les deux cas son `chemin` revient
+    ici, et rien d'autre ne change.
+
+    Un chemin inconnu est **ignoré sans bruit** : la liste vient d'un écran qui
+    a lu la même analyse, et un chemin qui n'y correspond plus ne désigne rien
+    à écrire. Ce n'est pas une saisie à refuser, c'est une ligne qui a disparu
+    entre deux lectures du projet.
+    """
+    if retenus is None:
+        return recommandation
+    gardes = set(retenus)
+    return Recommandation(
+        entrees=tuple(e for e in recommandation.entrees if e.chemin in gardes),
+        ecartes=recommandation.ecartes,
+    )
 
 
 def _phrase_des_deductions(deduits: Sequence[Choix]) -> str:
@@ -316,7 +348,13 @@ class ServiceOutillage:
         """
         return self._analyse(self._projet(id_projet)).to_dict()
 
-    async def generer(self, id_projet: str, *, run_id: str = "") -> dict[str, Any]:
+    async def generer(
+        self,
+        id_projet: str,
+        *,
+        retenus: Sequence[str] | None = None,
+        run_id: str = "",
+    ) -> dict[str, Any]:
         """Écrit dans `id_projet` l'outillage que son analyse recommande (docs/38, #1033).
 
         Le déroulé, dans cet ordre — il compte :
@@ -332,6 +370,15 @@ class ServiceOutillage:
            ou un validateur absent, laisse la branche intacte : l'outillage
            proposé reste consultable et se récupère d'un `git merge`.
 
+        `retenus` (#1034) est ce que l'utilisateur a **gardé** à l'étape
+        d'outillage : la liste des `chemin` d'entrées. Seules ces entrées sont
+        rédigées ; le reste n'est pas écrit et **quitte le manifeste sans quitter
+        le disque**, ce qui est déjà la règle de docs/38 §4.2 pour « un fichier
+        que l'analyse ne recommande plus ». C'est le seul endroit où le choix de
+        l'écran entre dans la génération : filtrer la **recommandation** suffit,
+        parce que c'est elle, et elle seule, que la rédaction parcourt. `None` —
+        un appel sans écran — écrit tout ce qui est recommandé.
+
         Rend le rapport dans les deux régimes, `application` portant le verdict
         de la validation quand il y en a eu une. Lève les refus **motivés** de
         ses couches (`ProjetInconnu`, `RacineRefusee`, `EspaceProjetIndisponible`,
@@ -340,11 +387,12 @@ class ServiceOutillage:
         """
         projet = self._projet(id_projet)
         analyse = await asyncio.to_thread(self._analyse, projet)
+        recommandation = _retenue(analyse.recommandation, retenus)
         preparation = await asyncio.to_thread(
             generer_outillage,
             projet,
             analyse.constats,
-            analyse.recommandation,
+            recommandation,
             source=analyse.source_manifeste(),
         )
         reponse: dict[str, Any] = {

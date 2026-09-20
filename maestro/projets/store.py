@@ -35,6 +35,7 @@ from maestro.config import Settings, load_settings
 from maestro.projets.modele import (
     ID_PROJET,
     ORIGINES,
+    Outillage,
     Perimetre,
     Projet,
     nouvel_id,
@@ -217,6 +218,27 @@ class ProjetStore:
         if projet.versionne:
             return projet
         return self.ecrire(replace(projet, vcs=initialiser_depot(projet.racine, branche=branche)))
+
+    def reporter_outillage(self, id_: str) -> Projet:
+        """Enregistre le « plus tard » de l'étape d'outillage (#1034, docs/37 §4.6).
+
+        Le seul verbe qui touche à `Projet.outillage`, et il ne fait qu'y poser
+        une date. Il n'écrit **rien** dans le dossier de l'utilisateur : reporter,
+        c'est justement ne pas y écrire.
+
+        **Idempotent, et la première date gagne** : rappelé sur un projet déjà
+        reporté, il rend la fiche telle quelle — pas de seconde écriture, pas de
+        `modifie_le` rafraîchi. C'est ce qui permet à l'écran de le proposer sans
+        craindre un double clic, et c'est le même arbitrage que `versionner`.
+
+        Lève `ValueError` si le projet n'est pas dans le dépôt.
+        """
+        projet = self.lire(id_)
+        if projet is None:
+            raise ValueError(f"projet inconnu : {id_!r} — rien à reporter.")
+        if projet.outillage.reporte:
+            return projet
+        return self.ecrire(replace(projet, outillage=Outillage(reporte_le=_maintenant())))
 
     def supprimer(self, id_: str) -> bool:
         """Retire le projet `id_` du dépôt ; False s'il n'y était pas (rien à faire).

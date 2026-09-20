@@ -159,6 +159,42 @@ def _motifs(valeur: Any, defaut: tuple[str, ...]) -> tuple[str, ...]:
 
 
 @dataclass(frozen=True)
+class Outillage:
+    """Ce que l'utilisateur a **décidé** de l'outillage de son projet (#1034, docs/37 §4.6).
+
+    Un seul champ, et c'est voulu : `reporte_le`, l'horodatage du moment où
+    quelqu'un a répondu « plus tard » à l'étape d'outillage. Vide tant que la
+    question n'a pas été écartée.
+
+    ⚠ **Ce n'est pas l'état de l'outillage, c'est une décision.** Savoir si un
+    projet *est* outillé se lit sur le disque — `.maestro/outillage/manifeste.json`
+    (docs/38 §4.1) —, jamais ici : le manifeste peut naître sans passer par cet
+    écran (#1033, une génération relancée), être retiré à la main, ou venir d'un
+    clone. Un booléen « outillé » stocké là divergerait du dossier au premier de
+    ces trois cas, et c'est le dossier qui a raison. La fiche servie par l'API
+    **croise** les deux (`maestro.controltower.projets`), ce qui rend exactement
+    le critère du ticket : *un projet qu'on a choisi d'outiller plus tard le dit,
+    tant qu'il ne l'est pas*.
+    """
+
+    reporte_le: str = ""
+
+    @property
+    def reporte(self) -> bool:
+        """La question a-t-elle été écartée d'un « plus tard » ?"""
+        return self.reporte_le != ""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Réémet la décision en dict JSON-sérialisable (le fragment `outillage`)."""
+        return {"reporte_le": self.reporte_le}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Outillage:
+        """Reconstruit la décision depuis sa forme `to_dict`."""
+        return cls(reporte_le=data.get("reporte_le", "") or "")
+
+
+@dataclass(frozen=True)
 class Projet:
     """Un projet de l'utilisateur : une racine sur le disque et son périmètre (EF-35).
 
@@ -178,6 +214,7 @@ class Projet:
     origine: str = "existant"
     vcs: Vcs | None = None
     perimetre: Perimetre = field(default_factory=Perimetre)
+    outillage: Outillage = field(default_factory=Outillage)
     cree_le: str = ""
     modifie_le: str = ""
 
@@ -200,15 +237,22 @@ class Projet:
             "origine": self.origine,
             "vcs": self.vcs.to_dict() if self.vcs is not None else None,
             "perimetre": self.perimetre.to_dict(),
+            "outillage": self.outillage.to_dict(),
             "cree_le": self.cree_le,
             "modifie_le": self.modifie_le,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Projet:
-        """Reconstruit un projet depuis sa forme `to_dict` (le fichier stocké)."""
+        """Reconstruit un projet depuis sa forme `to_dict` (le fichier stocké).
+
+        Un fichier écrit **avant** #1034 n'a pas de fragment `outillage` : il
+        retombe sur le défaut (« jamais reporté »), ce qui est exactement ce
+        qu'il veut dire. Aucune migration à jouer.
+        """
         vcs = data.get("vcs")
         perimetre = data.get("perimetre")
+        outillage = data.get("outillage")
         return cls(
             id=data["id"],
             nom=data.get("nom", ""),
@@ -216,6 +260,7 @@ class Projet:
             origine=data.get("origine", "existant"),
             vcs=Vcs.from_dict(vcs) if vcs else None,
             perimetre=Perimetre.from_dict(perimetre) if perimetre else Perimetre(),
+            outillage=Outillage.from_dict(outillage) if outillage else Outillage(),
             cree_le=data.get("cree_le", ""),
             modifie_le=data.get("modifie_le", ""),
         )

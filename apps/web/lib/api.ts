@@ -11,8 +11,10 @@ import { lireProjetActifId } from "./projetActif";
 import type {
   AgentCatalogue,
   AgentCatalogueDetail,
+  AnalyseOutillage,
   AnalyticsCouts,
   CatalogueFournisseurs,
+  ChoixOutillage,
   CoutExecution,
   ChoixSelecteur,
   ConversationChat,
@@ -25,6 +27,7 @@ import type {
   DetailExecution,
   DisponibiliteSelecteur,
   EntreeRegistreMcp,
+  EtapeQuestionnaireOutillage,
   EtatAgent,
   FilChat,
   FragmentChat,
@@ -48,8 +51,10 @@ import type {
   PropositionPlaybookDetail,
   ProvenanceRegistreMcp,
   Question,
+  RapportGenerationOutillage,
   RapportLecture,
   RedactionPlaybook,
+  ReponseRecommandationOutillage,
   RefusProjet,
   ReglagesModele,
   ReponsesBrief,
@@ -1588,6 +1593,120 @@ export function versionnerProjet(id: string): Promise<Projet> {
     `/api/projets/${encodeURIComponent(id)}/versionner`,
     undefined,
     "mise sous Git refusée",
+    "POST",
+  );
+}
+
+// --- L'outillage d'un projet (#1034, routes #1030/#1031/#1033) -------------
+//
+// Quatre clients pour une seule étape du parcours de création, et c'est leur
+// **origine** qui les sépare, jamais leur forme : un projet *existant* est
+// analysé (#1030), un projet *neuf* répond à des questions (#1031), et les deux
+// rendent la **même** `RecommandationOutillage` — c'est le second critère de
+// #1031, tenu côté moteur par une fonction unique. L'écran n'a donc qu'un rendu
+// à tenir, et les deux branches du parcours partagent leur étape.
+//
+// Ils passent par `lireProjets`/`ecrireProjet` comme le reste : leurs refus sont
+// ceux des routes projets (`{motif, message}`), donc affichables **à l'endroit du
+// geste** par le même `RefusMotive`.
+
+/**
+ * L'analyse d'un projet existant et l'outillage qu'elle recommande
+ * (`GET /api/projets/{id}/outillage/analyse`, #1030, docs/38).
+ *
+ * La racine est lue **en lecture seule** et le code du projet n'est jamais
+ * exécuté ; l'appel prend des secondes sur un projet réel, ce que l'écran
+ * annonce plutôt que de figer. Rien n'est écrit : la génération est un geste
+ * séparé (`genererOutillage`).
+ */
+export function analyserOutillage(id: string): Promise<AnalyseOutillage> {
+  return lireProjets<AnalyseOutillage>(
+    `/api/projets/${encodeURIComponent(id)}/outillage/analyse`,
+    "analyse impossible",
+  );
+}
+
+/**
+ * La prochaine question qui décide de l'outillage d'un projet neuf
+ * (`POST /api/projets/{id}/outillage/questionnaire`, #1031).
+ *
+ * **Sans état côté serveur** : l'écran dit ce qu'il a, l'API dit ce qui en
+ * découle. C'est ce qui lui permet de servir du même questionnaire que le fil de
+ * conversation sans partager de session — et c'est pourquoi il renvoie **toutes**
+ * les réponses acquises à chaque appel, plutôt qu'un identifiant de parcours.
+ *
+ * `deductions` porte les réponses que ces choix **entraînent**, chacune avec sa
+ * cause : une question qu'on ne pose pas n'est pas une question qu'on cache.
+ */
+export function questionOutillage(
+  id: string,
+  choix: ChoixOutillage[],
+): Promise<EtapeQuestionnaireOutillage> {
+  return ecrireProjet<EtapeQuestionnaireOutillage>(
+    `/api/projets/${encodeURIComponent(id)}/outillage/questionnaire`,
+    { choix },
+    "questionnaire indisponible",
+  );
+}
+
+/**
+ * L'outillage que ces réponses recommandent, dans la forme de l'analyse
+ * (`POST /api/projets/{id}/outillage/recommandation`, #1031).
+ *
+ * Rendue à **tout moment**, questionnaire fini ou non : ce qui n'a pas été
+ * répondu ne justifie simplement aucune entrée, et `ecartes` le dit avec sa
+ * raison. Rien n'est écrit — c'est une proposition.
+ */
+export function recommandationOutillage(
+  id: string,
+  choix: ChoixOutillage[],
+): Promise<ReponseRecommandationOutillage> {
+  return ecrireProjet<ReponseRecommandationOutillage>(
+    `/api/projets/${encodeURIComponent(id)}/outillage/recommandation`,
+    { choix },
+    "recommandation indisponible",
+  );
+}
+
+/**
+ * Écrit dans le projet l'outillage retenu
+ * (`POST /api/projets/{id}/outillage/generation`, #1033, docs/38 §4.2).
+ *
+ * `retenus` est la liste des **chemins** que l'écran a gardés cochés : rien de
+ * plus, parce que le reste — quoi écrire, où, avec quel contenu — se rederive de
+ * l'analyse côté serveur. L'omettre revient à tout générer.
+ *
+ * ⚠ **L'appel peut être long, et pour deux raisons différentes** : la racine est
+ * ré-analysée, et, sur un projet **versionné**, la requête **attend l'accord
+ * humain** sur la fusion de la branche `maestro/outillage-…`, sans time-out. Un
+ * refus laisse la branche intacte et lève avec son motif.
+ */
+export function genererOutillage(
+  id: string,
+  retenus?: string[],
+): Promise<RapportGenerationOutillage> {
+  return ecrireProjet<RapportGenerationOutillage>(
+    `/api/projets/${encodeURIComponent(id)}/outillage/generation`,
+    retenus === undefined ? {} : { retenus },
+    "génération refusée",
+    "POST",
+  );
+}
+
+/**
+ * Enregistre le « plus tard » de l'étape d'outillage
+ * (`POST /api/projets/{id}/outillage/report`, #1034, docs/37 §4.6).
+ *
+ * **Sans corps** et idempotent, comme `versionnerProjet` — et, contrairement à
+ * lui, il n'écrit **rien** dans le dossier de l'utilisateur : reporter, c'est
+ * justement ne pas y écrire. La fiche relue porte `outillage.a_faire`, que la
+ * carte du projet affiche tant que l'outillage n'est pas généré.
+ */
+export function reporterOutillage(id: string): Promise<Projet> {
+  return ecrireProjet<Projet>(
+    `/api/projets/${encodeURIComponent(id)}/outillage/report`,
+    undefined,
+    "report refusé",
     "POST",
   );
 }

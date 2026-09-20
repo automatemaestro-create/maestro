@@ -161,6 +161,11 @@ Endpoints :
   sa **raison** et l'**endroit du projet** qui la justifie, ce que le projet
   porte déjà étant reconnu (`deja-present`) plutôt que dupliqué. N'écrit rien :
   la génération est #1033 ;
+- `POST /api/projets/{id}/outillage/report` — le « **plus tard** » de l'étape
+  d'outillage (#1034, docs/37 §4.6) : sans corps, idempotent, il n'écrit rien
+  dans le dossier de l'utilisateur et rend la fiche relue. Celle-ci porte
+  `outillage.a_faire` — reporté **et** manifeste absent —, ce qui fait qu'une
+  génération suffit à faire taire le rappel ;
 - `POST /api/projets/{id}/equipe/proposition` — l'**équipe** que ce projet
   appelle (#1039, docs/37) : chaque rôle avec sa **raison** et l'endroit du
   projet qui la prouve, son nombre d'**instances** et pourquoi ce nombre, son
@@ -947,6 +952,24 @@ class QuestionnaireOutillageRequete(BaseModel):
     def choix_acquis(self) -> list[Choix]:
         """Les réponses en objets du domaine — `deduit`/`parce_que` recalculés."""
         return [Choix(cle=c.cle, valeur=c.valeur) for c in self.choix]
+
+
+class GenerationOutillageRequete(BaseModel):
+    """Corps — facultatif — de la génération d'outillage (#1034).
+
+    Un seul champ, `retenus` : les **chemins** des entrées que l'étape
+    d'outillage a gardées cochées. Pas les entrées elles-mêmes — le quoi, le où
+    et le contenu se rederivent de l'analyse côté serveur, et les laisser voyager
+    depuis un écran ouvrirait une seconde façon de décider ce qu'on écrit dans le
+    dossier de quelqu'un.
+
+    `None` (le champ absent, ou pas de corps du tout) et une **liste vide** ne
+    disent pas la même chose : le premier veut dire « je n'ai rien à trier, écris
+    ce qui est recommandé », le second « je n'ai rien gardé ». Un défaut à `[]`
+    confondrait les deux, et un appel sans corps n'écrirait plus rien.
+    """
+
+    retenus: list[str] | None = None
 
 
 class SecretPoolRequete(BaseModel):
@@ -4453,8 +4476,36 @@ def create_app(
         except (ValueError, ProjetInconnu) as exc:
             raise _refus_projet(exc) from exc
 
+    @app.post("/api/projets/{id_projet}/outillage/report")
+    async def reporter_outillage_du_projet(id_projet: str) -> dict[str, Any]:
+        """Enregistre le « plus tard » de l'étape d'outillage (#1034, docs/37 §4.6).
+
+        L'étape d'outillage est **première et proposée d'office, mais
+        reportable** : importer un projet pour seulement le regarder ne doit pas
+        imposer une génération. Cette route est l'autre issue de l'étape, celle
+        qui ne produit rien — la seule chose qu'elle écrit est la date de la
+        décision, dans la fiche du projet.
+
+        **Sans corps**, comme `versionner`, et pour la même raison : il n'y a
+        rien à déclarer, seulement un verbe à appeler. Idempotente — la première
+        date gagne, un second appel rend la fiche telle quelle.
+
+        La fiche rendue porte `outillage.a_faire` : reporté **et** pas encore
+        généré. C'est ce que la carte du projet affiche, et c'est pourquoi
+        générer suffit à faire taire le rappel sans qu'aucun code de génération
+        (#1033) connaisse ce champ.
+
+        404 si le projet est inconnu, 422 motivé si sa fiche est illisible.
+        """
+        try:
+            return projets.reporter_outillage(id_projet)
+        except (ValueError, ProjetInconnu) as exc:
+            raise _refus_projet(exc) from exc
+
     @app.post("/api/projets/{id_projet}/outillage/generation")
-    async def generer_outillage_du_projet(id_projet: str) -> dict[str, Any]:
+    async def generer_outillage_du_projet(
+        id_projet: str, requete: GenerationOutillageRequete | None = None
+    ) -> dict[str, Any]:
         """Écrit dans le projet l'outillage que son analyse recommande (#1033, docs/38).
 
         Le second geste du chantier, et celui qui touche au dossier de
@@ -4481,12 +4532,21 @@ def create_app(
         refus laisse la branche intacte — le travail reste consultable et se
         récupère d'un `git merge`.
 
+        **Le corps est facultatif, et il ne porte qu'une chose** (#1034) :
+        `retenus`, les chemins que l'étape d'outillage a gardés cochés. Absent —
+        un appel qui ne vient pas d'un écran —, tout ce qui est recommandé est
+        écrit, ce qui est le comportement d'origine. Ce qui n'y est pas n'est pas
+        écrit, et **quitte le manifeste sans quitter le disque** : c'est déjà la
+        règle de docs/38 §4.2 pour un fichier que l'analyse ne recommande plus.
+
         404 si le projet est inconnu, 422 motivé si sa fiche est illisible, si sa
         racine n'est plus un dossier lisible, si le worktree ne se monte pas ou si
         la fusion est refusée (racine occupée, conflit) — jamais un 500.
         """
         try:
-            return await outillage.generer(id_projet)
+            return await outillage.generer(
+                id_projet, retenus=None if requete is None else requete.retenus
+            )
         except (
             ValueError,
             ProjetInconnu,

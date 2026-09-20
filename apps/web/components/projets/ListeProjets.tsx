@@ -24,7 +24,13 @@
  *   régime « écriture en place » au régime « worktree + fusion sous accord »
  *   (docs/24 §2.4) — d'où une confirmation, là où déclarer ou modifier n'en
  *   demandent pas. Le `vcs` n'est pas envoyé : il est **constaté** au retour
- *   (EF-38), et la liste se relit comme après toute écriture.
+ *   (EF-38), et la liste se relit comme après toute écriture ;
+ * - **déclarer un projet ne s'arrête plus à sa racine** (#1034, docs/37 §4.6) :
+ *   l'**étape d'outillage** (`EtapeOutillage`) prend la place du formulaire dès
+ *   qu'il a rendu un projet, et c'est elle qui se ferme — générée ou reportée.
+ *   Un projet reporté le **dit** sur sa carte (`outillage.a_faire`) et offre d'y
+ *   revenir, sauf pendant que l'étape est ouverte sur lui : le report se dit
+ *   après le choix, pas pendant.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -45,6 +51,7 @@ import { formatDateHeure } from "@/lib/format";
 import { libelleOrigine } from "@/lib/projets";
 import type { DeclarationProjet, Projet, RefusProjet } from "@/lib/types";
 
+import { EtapeOutillage } from "./EtapeOutillage";
 import { refusDepuis, RefusMotive } from "./ExplorateurDossiers";
 import { FormulaireProjet } from "./FormulaireProjet";
 
@@ -79,11 +86,25 @@ function CarteProjet({
   onModifier,
   onSupprime,
   onVersionne,
+  onOutiller,
+  outillageOuvert = false,
 }: {
   projet: Projet;
   onModifier: () => void;
   onSupprime: () => Promise<void>;
   onVersionne: () => Promise<void>;
+  /** Rouvre l'étape d'outillage sur ce projet — la sortie d'un « plus tard ». */
+  onOutiller: () => void;
+  /**
+   * L'étape d'outillage est ouverte **sur ce projet**, juste au-dessus.
+   *
+   * La carte se tait alors sur l'outillage — ni badge « reporté », ni bouton
+   * « Outiller maintenant ». Relevé par le regard neuf sur les trois variantes :
+   * l'étape proposait « Outiller plus tard » pendant que la carte, deux cents
+   * pixels plus bas, annonçait déjà le report et offrait de le défaire. Le report
+   * se dit **après** le choix, pas pendant.
+   */
+  outillageOuvert?: boolean;
 }) {
   const [geste, setGeste] = useState<GesteArme | null>(null);
   const [enCours, setEnCours] = useState(false);
@@ -132,6 +153,15 @@ function CarteProjet({
           <BadgeEtat ton="info" contour>
             {projet.vcs.type}
             {projet.vcs.branche_base !== "" && ` · ${projet.vcs.branche_base}`}
+          </BadgeEtat>
+        )}
+        {/* « Un projet non outillé le dit » (#1034, docs/37 §4.6) — et il le dit
+            **tant qu'il ne l'est pas** : `a_faire` croise la décision (reporté)
+            et le disque (manifeste absent), si bien que générer suffit à faire
+            taire le rappel. */}
+        {projet.outillage?.a_faire && !outillageOuvert && (
+          <BadgeEtat ton="attention" contour>
+            Outillage reporté
           </BadgeEtat>
         )}
       </div>
@@ -198,6 +228,18 @@ function CarteProjet({
               Mettre sous Git
             </Bouton>
           )}
+          {/* Un report n'est pas un cul-de-sac : la question revient d'un clic,
+              là où elle a été posée. */}
+          {projet.outillage?.a_faire && !outillageOuvert && geste === null && (
+            <Bouton
+              variante="contour"
+              ton="attention"
+              onClick={onOutiller}
+              disabled={enCours}
+            >
+              Outiller maintenant
+            </Bouton>
+          )}
           {geste === "supprimer" ? (
             <>
               <Bouton
@@ -257,6 +299,9 @@ export function ListeProjets({ apresEcriture }: Props = {}) {
   const [erreur, setErreur] = useState<PanneApi | null>(null);
   const [creationOuverte, setCreationOuverte] = useState(false);
   const [editionId, setEditionId] = useState<string | null>(null);
+  // Le projet qui vient d'être déclaré et dont l'outillage se décide : l'étape
+  // suivante du parcours, pas un écran à part (#1034).
+  const [aOutiller, setAOutiller] = useState<Projet | null>(null);
 
   const recharger = useCallback(async () => {
     try {
@@ -284,9 +329,17 @@ export function ListeProjets({ apresEcriture }: Props = {}) {
   }, [recharger, apresEcriture]);
 
   const declarer = async (declaration: DeclarationProjet) => {
-    await creerProjet(declaration);
+    const projet = await creerProjet(declaration);
     setCreationOuverte(false);
+    // Le choix de la racine n'est plus la fin du parcours : l'outillage est
+    // l'étape suivante, proposée d'office (#1034, docs/37 §4.6).
+    setAOutiller(projet);
     await rechargerApresEcriture();
+  };
+
+  const finirOutillage = () => {
+    setAOutiller(null);
+    void rechargerApresEcriture();
   };
 
   const modifier = async (id: string, declaration: DeclarationProjet) => {
@@ -334,6 +387,10 @@ export function ListeProjets({ apresEcriture }: Props = {}) {
           )}
         </div>
 
+        {aOutiller !== null && (
+          <EtapeOutillage projet={aOutiller} onTermine={finirOutillage} />
+        )}
+
         {creationOuverte && (
           <FormulaireProjet
             enregistrer={declarer}
@@ -378,6 +435,12 @@ export function ListeProjets({ apresEcriture }: Props = {}) {
                   }}
                   onSupprime={rechargerApresEcriture}
                   onVersionne={rechargerApresEcriture}
+                  onOutiller={() => {
+                    setAOutiller(projet);
+                    setCreationOuverte(false);
+                    setEditionId(null);
+                  }}
+                  outillageOuvert={aOutiller?.id === projet.id}
                 />
               ),
             )}

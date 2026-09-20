@@ -22,6 +22,13 @@
  * 4. **la page demandée est nommée, pas oubliée** : la garde ne redirige pas,
  *    donc l'URL ne bouge pas. Le dire à l'écran fait de cette propriété quelque
  *    chose qui se voit — on sait où l'on retombe avant de choisir.
+ *
+ * Un cinquième depuis #1034 : **déclarer ne fait plus entrer**. La porte enchaîne
+ * sur l'**étape d'outillage** (`EtapeOutillage`, docs/37 §4.6), qui occupe tout
+ * le cadre comme le formulaire avant elle, et c'est elle qui ouvre le projet —
+ * une fois l'outillage généré, ou la question reportée. La même étape, le même
+ * composant et le même verdict que sur l'écran Projets : deux parcours qui
+ * déclarent le même objet n'ont pas à en décider différemment.
  */
 
 import { usePathname } from "next/navigation";
@@ -30,13 +37,14 @@ import { useState } from "react";
 import { BanniereErreurApi } from "@/components/BanniereErreurApi";
 import { IconePlus } from "@/components/Icones";
 import { LogoMaestro } from "@/components/Logo";
-import { Bouton, classesCarte } from "@/components/Primitives";
+import { BadgeEtat, Bouton, classesCarte } from "@/components/Primitives";
 import { creerProjet } from "@/lib/api";
 import { useProjetActif } from "@/lib/etatProjetActif";
 import { entreeCourante } from "@/lib/navigation";
 import { libelleOrigine } from "@/lib/projets";
 import type { DeclarationProjet, Projet } from "@/lib/types";
 
+import { EtapeOutillage } from "./EtapeOutillage";
 import { RefusMotive } from "./ExplorateurDossiers";
 import { FormulaireProjet } from "./FormulaireProjet";
 
@@ -153,6 +161,16 @@ function CarteChoix({
               {projet.vcs.branche_base !== "" && ` · ${projet.vcs.branche_base}`}
             </span>
           )}
+          {/* « Un projet non outillé le dit » (#1034, docs/37 §4.6) — et il le
+              dit **là où on le choisit** autant que sur l'écran Projets : c'est
+              ici qu'on décide d'y entrer. Porté par `BadgeEtat` et non par une
+              troisième pastille écrite à la main : la primitive existe, et la
+              recopier est ce que docs/30 §2.2 a mesuré (18 cartes, 26 boutons). */}
+          {projet.outillage?.a_faire && (
+            <BadgeEtat ton="attention" contour>
+              Outillage reporté
+            </BadgeEtat>
+          )}
         </span>
         <code className="font-mono text-xs break-all text-neutral-500 dark:text-neutral-400">
           {projet.racine}
@@ -169,6 +187,11 @@ export function ChoixProjet() {
   // le formulaire ouvert ou refermé à la main, le choix de l'utilisateur tient —
   // sans quoi « Annuler » serait sans effet sur une liste vide.
   const [creationDemandee, setCreationDemandee] = useState<boolean | null>(null);
+  // Le projet déclaré dont l'outillage se décide avant d'entrer (#1034). Tant
+  // qu'il est là, la porte montre **cette** étape et rien d'autre : ouvrir la
+  // Control Tower derrière elle reviendrait à faire du choix d'outillage une
+  // option qu'on saute d'un clic ailleurs.
+  const [aOutiller, setAOutiller] = useState<Projet | null>(null);
   const chemin = usePathname();
 
   // Rien à lister et rien qui l'explique : le formulaire s'ouvre de lui-même.
@@ -179,13 +202,53 @@ export function ChoixProjet() {
     // `creerProjet` rend le projet **relu** par le backend (racine
     // canonicalisée, VCS constaté) : c'est celui-là qu'on ouvre, pas ce qui a
     // été envoyé. Un refus remonte au formulaire, qui l'affiche avec son motif.
-    choisir(await creerProjet(declaration));
+    //
+    // Depuis #1034 on n'entre pas tout de suite : l'outillage est l'étape
+    // suivante, ici comme sur l'écran Projets, et c'est elle qui ouvre le projet
+    // — générée ou reportée.
+    setAOutiller(await creerProjet(declaration));
   };
 
   // La garde ne redirige pas : la page demandée est toujours celle de l'URL, on
   // se contente de la nommer. `undefined` sur une page hors menu — on ne promet
   // alors rien qu'on ne sache dire.
   const destination = entreeCourante(chemin);
+
+  // Le projet vient d'être déclaré : la porte ne propose plus de choisir, elle
+  // finit ce qu'on a commencé. C'est l'« étape 2 sur 2 » du parcours, et elle
+  // remplace la liste comme le formulaire remplaçait déjà le reste.
+  if (aOutiller !== null) {
+    return (
+      <CadrePorte etiquette="Outillage du projet">
+        <EnTetePorte>
+          {/* `text-page` et non `text-xl` : même pas (1,25 rem), nommé par son
+              rôle — le titre d'un écran. Sa voisine reste `text-xl` parce que la
+              migrer n'est pas ce lot. */}
+          <h1 className="text-page font-semibold tracking-tight">
+            Outiller le projet
+          </h1>
+          {/* Les tokens, pas les couleurs brutes de ses voisines : ce qui
+              s'écrit aujourd'hui se choisit une fois (docs/30 §2.4), et le
+              résidu de cet écran ne peut que décroître. */}
+          <p className="text-corps text-texte-secondaire">
+            « {aOutiller.nom} » est déclaré. Dernière étape avant d&apos;entrer :
+            l&apos;outillage que ses agents liront — ou le report de cette
+            question.
+          </p>
+        </EnTetePorte>
+        <EtapeOutillage
+          projet={aOutiller}
+          onTermine={() => {
+            // On entre sur le projet **relu** : `choisir` prend la fiche telle
+            // que la déclaration l'a rendue, et rien de ce que l'étape a fait
+            // (manifeste écrit, report noté) ne change la racine ni le VCS.
+            choisir(aOutiller);
+            setAOutiller(null);
+          }}
+        />
+      </CadrePorte>
+    );
+  }
 
   return (
     <CadrePorte etiquette="Choix du projet">
