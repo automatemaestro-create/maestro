@@ -23,6 +23,7 @@ from maestro.deliberation import CreditArbitrage
 from maestro.providers.arbitrage import Arbitre, ArbitreActe
 from maestro.providers.blocage import Signaleur
 from maestro.providers.courrier import Courrier
+from maestro.providers.question import Questionneur
 
 if TYPE_CHECKING:  # imports de typage seuls — pas de dépendance d'exécution vers agents
     from maestro.agents.mcp import ServeurMcp
@@ -463,6 +464,7 @@ class ModelProvider(ABC):
         on_blocage: Signaleur | None = None,
         credit_arbitrage: CreditArbitrage | None = None,
         on_courrier: Courrier | None = None,
+        on_question: Questionneur | None = None,
         plafond_tours: int | None = PLAFOND_TOURS_DEFAUT,
         projet: Projet | None = None,
         effort: str | None = None,
@@ -654,6 +656,30 @@ class ModelProvider(ABC):
         Capacité optionnelle au second degré, comme `on_etapes` et
         `on_arbitrage` : un fournisseur sans outillage n'expose rien et le moteur
         ne s'en aperçoit pas.
+
+        `on_question` (#1023, `maestro.providers.question`) est le **second canal
+        qui suspend l'agent**, et le seul dont la réponse soit du **texte** : un
+        fournisseur qui l'honore expose `poser_une_question(question, hypothese,
+        choix)` et suspend l'appel jusqu'à ce que ce canal rende la réponse
+        humaine — ou `None`, quand personne n'a répondu.
+
+        Trois exigences, et la troisième est le contraire de celle de
+        l'arbitrage. Le fournisseur **ouvre la fenêtre de crédit** autour de
+        l'attente, comme pour `on_arbitrage` : c'est le même temps humain, il n'a
+        pas plus à être facturé à la tâche. Il **exige l'hypothèse** — ce que
+        l'agent fera sans réponse — avant de poser quoi que ce soit : une attente
+        bornée sans issue annoncée finirait sur un silence. Et il **ne borne
+        rien** : la borne vit chez l'appelant, seul à pouvoir consigner les deux
+        issues, si bien qu'un `None` ne s'invente pas ici — il se reçoit.
+
+        ⚠ Ce canal n'autorise **aucun acte**. Il ne traverse pas le point de
+        contrôle des appels d'outil, ne compose aucune demande de validation, et
+        ce qu'un humain y écrit n'est jamais lu comme une approbation : un outil
+        classé `ask` sans canal d'arbitrage reste refusé, qu'une question ait été
+        posée ou non (EF-08, ENF-04).
+
+        Capacité optionnelle comme les précédentes : sans ce canal, le verbe n'est
+        pas exposé du tout — plutôt qu'exposé sans aboutir.
 
         `plafond_tours` (#239) borne la boucle agentique — dépassé ⇒
         `TurnLimitReached`. Il est **fourni par l'appelant** (le profil de

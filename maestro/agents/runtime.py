@@ -34,6 +34,7 @@ from maestro.providers.arbitrage import Arbitre, ArbitreActe
 from maestro.providers.base import PLAFOND_TOURS_DEFAUT, ModelProvider
 from maestro.providers.blocage import Signaleur
 from maestro.providers.courrier import Courrier
+from maestro.providers.question import Questionneur
 from maestro.sandbox import ProducedFile, espace_de_travail
 
 #: Outils confiés par défaut à un rôle outillé : lire/écrire/éditer des fichiers,
@@ -216,6 +217,7 @@ class AgentRuntime:
         on_blocage: Signaleur | None = None,
         credit_arbitrage: CreditArbitrage | None = None,
         on_courrier: Courrier | None = None,
+        on_question: Questionneur | None = None,
         projet: Projet | None = None,
         tache_id: str = "",
         effort: str | None = None,
@@ -309,6 +311,14 @@ class AgentRuntime:
         l'agent. None : le verbe n'est pas servi du tout, plutôt que servi sans
         aboutir.
 
+        `on_question` (#1023) est le huitième, et il traverse dans le sens de
+        `on_arbitrage` — de l'agent vers l'appelant **et retour** : c'est l'agent
+        qui demande un renseignement, le fournisseur qui lui expose l'outil et
+        suspend son appel, et l'appelant qui porte la question à l'utilisateur,
+        borne l'attente et consigne les deux issues. Le runtime n'est aucun des
+        trois, et il n'a surtout rien à décider de la borne : elle vit avec le
+        journal. None : le verbe n'est pas servi du tout.
+
         `projet` (#224, EF-36) est le **projet dans lequel la tâche travaille** :
         l'espace de travail en est alors dérivé — worktree Git sur la branche
         `maestro/<tache_id>` hors de la racine si le projet est versionné, **la
@@ -391,6 +401,7 @@ class AgentRuntime:
                 on_blocage=on_blocage,
                 credit_arbitrage=credit_arbitrage,
                 on_courrier=on_courrier,
+                on_question=on_question,
                 plafond_tours=self._plafond_tours,
                 projet=projet,
                 **reglage_effort,

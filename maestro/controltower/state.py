@@ -41,6 +41,8 @@ from maestro.controltower.events import (
     EVENEMENT_BRIEF_REPONSES,
     EVENEMENT_EXECUTION_STATUT,
     EVENEMENT_MESSAGE_INTER_AGENTS,
+    EVENEMENT_QUESTION_DEMANDE,
+    EVENEMENT_QUESTION_REPONSE,
     EVENEMENT_RUN_PLAN,
     EVENEMENT_TACHE_BLOCAGE,
     EVENEMENT_TACHE_DETAIL,
@@ -102,6 +104,20 @@ CAPACITE_DESACTIVE = "desactive"
 VALIDATION_EN_ATTENTE = "en_attente"
 VALIDATION_APPROUVEE = "approuvee"
 VALIDATION_REFUSEE = "refusee"
+
+#: Statuts d'une **question posée par un agent** (#1023) : en attente d'une
+#: réponse, puis répondue. Deux statuts et non trois — il n'y a pas de « refusée »
+#: ici, parce qu'il n'y a rien à refuser : une question ne soumet aucun acte, et
+#: ne pas y répondre n'est pas une décision.
+#:
+#: ⚠ Et pas de « sans réponse » non plus, alors que l'agent, lui, **reprend** à la
+#: borne. C'est délibéré : ce que l'agent a fait entre-temps est dit au journal
+#: (étape `<tache>:question`), tandis que la question, elle, **reste posée** — une
+#: réponse tardive sert encore, le même appel rejoué la retrouve
+#: (`MemoireArbitrage`, #584). Fermer la question à la borne dirait à l'écran
+#: qu'il n'y a plus rien à écrire, ce qui serait faux.
+QUESTION_EN_ATTENTE = "en_attente"
+QUESTION_REPONDUE = "repondue"
 
 #: Statuts d'une **exécution** (#185, contrat #183) : en vol, menée à terme,
 #: interrompue par un humain, ou soldée en échec (au moins une tâche échouée, ou
@@ -568,6 +584,74 @@ class EtatValidation:
 
 
 @dataclass
+class EtatQuestion:
+    """Une question libre posée par un agent pendant sa tâche (#1023), et sa réponse.
+
+    Miroir de la `DemandeQuestion` du moteur : qui demande (l'agent, son rôle), à
+    propos de quoi (la tâche et son titre), la `question` elle-même, les `choix`
+    facultatifs et l'`hypothese` que l'agent a annoncée — ce qu'il fera sans
+    réponse. `statut` suit `QUESTION_*` ; `reponse` porte le texte humain une fois
+    écrit.
+
+    ⚠ **L'identité est la question, pas la tâche.** La file des validations
+    s'indexe par `tache_id` et l'assume (#48 : une nouvelle demande remplace la
+    précédente) ; ici ce serait faux — une tâche en pose plusieurs, et une question
+    restée sans réponse **reste en vol** pendant que son agent reprend sur son
+    hypothèse. Deux questions d'une même tâche peuvent donc attendre ensemble, et
+    la réponse écrite pour l'une ne doit pas être rendue à l'autre.
+
+    `attente` dit ce qui se passera sans réponse, en clair et borne comprise :
+    c'est la phrase que l'événement de demande compose, et elle dit à qui lit
+    **l'urgence** de la question — répondre dans la minute et répondre demain
+    n'ont pas le même effet.
+
+    `projet_id` (#277) est le projet de la tâche, hérité de l'événement : c'est ce
+    qui rend la file filtrable comme le Kanban. `run_id` est le run dont l'agent
+    demande — il ne le **suspend** pas (cf. `maestro.controltower.question`), il
+    l'identifie.
+    """
+
+    question_id: str
+    tache_id: str = ""
+    titre: str = ""
+    question: str = ""
+    hypothese: str = ""
+    choix: tuple[str, ...] = ()
+    agent: str = ""
+    role: str = ""
+    attente: str = ""
+    statut: str = QUESTION_EN_ATTENTE
+    reponse: str = ""
+    projet_id: str | None = None
+    run_id: str = ""
+    horodatage: str = ""
+
+    @property
+    def en_attente(self) -> bool:
+        """La question attend-elle encore une réponse ?"""
+        return self.statut == QUESTION_EN_ATTENTE
+
+    def to_dict(self) -> dict[str, Any]:
+        """Réémet la question en dict JSON-sérialisable (la forme du REST)."""
+        return {
+            "question_id": self.question_id,
+            "tache_id": self.tache_id,
+            "titre": self.titre,
+            "question": self.question,
+            "hypothese": self.hypothese,
+            "choix": list(self.choix),
+            "agent": self.agent,
+            "role": self.role,
+            "attente": self.attente,
+            "statut": self.statut,
+            "reponse": self.reponse,
+            "projet_id": self.projet_id,
+            "run_id": self.run_id,
+            "horodatage": self.horodatage,
+        }
+
+
+@dataclass
 class EtatExecution:
     """Le détail d'une exécution : les événements d'un `run_id`, dans l'ordre reçu.
 
@@ -990,6 +1074,10 @@ class ControlTowerState:
                 fiche.instances = capacite.instances
         self._executions: dict[str, EtatExecution] = {}
         self._validations: dict[str, EtatValidation] = {}
+        # Les questions d'agent (#1023), indexées par **question** et non par
+        # tâche : une tâche en pose plusieurs, et deux peuvent attendre en même
+        # temps (cf. `EtatQuestion`).
+        self._questions: dict[str, EtatQuestion] = {}
 
     # ------------------------------------------------------------------ lecture
 
@@ -1274,6 +1362,23 @@ class ControlTowerState:
         """La demande de validation de la tâche `tache_id`, ou None si aucune."""
         return self._validations.get(tache_id)
 
+    def questions(self, portee: PorteeProjet | None = None) -> list[EtatQuestion]:
+        """Les questions posées par les agents, dans l'ordre de première apparition.
+
+        Filtrables par projet (#277) comme les validations, et pour la même
+        raison : une question appartient au projet de la tâche qui la pose, et une
+        Control Tower cadrée sur un projet n'a pas à faire répondre pour un travail
+        qui se déroule ailleurs.
+        """
+        questions = list(self._questions.values())
+        if portee is None:
+            return questions
+        return [q for q in questions if portee.retient(q.projet_id)]
+
+    def question(self, question_id: str) -> EtatQuestion | None:
+        """La question `question_id`, ou None si aucune."""
+        return self._questions.get(question_id)
+
     # ----------------------------------------------------------------- écriture
 
     def ajouter_agent(self, nom: str, role: str) -> None:
@@ -1342,6 +1447,10 @@ class ControlTowerState:
             self._applique_validation_demande(event)
         elif event.type == EVENEMENT_VALIDATION_DECISION:
             self._applique_validation_decision(event)
+        elif event.type == EVENEMENT_QUESTION_DEMANDE:
+            self._applique_question_demande(event)
+        elif event.type == EVENEMENT_QUESTION_REPONSE:
+            self._applique_question_reponse(event)
         elif event.type == EVENEMENT_RUN_PLAN:
             self._applique_run_plan(event)
         elif event.type == EVENEMENT_EXECUTION_STATUT:
@@ -1900,6 +2009,73 @@ class ControlTowerState:
         demande.decision = event.detail or demande.decision
         demande.horodatage = event.horodatage or demande.horodatage
         self._libere_de_arbitrage(demande.run_id)
+
+    def _applique_question_demande(self, event: Event) -> None:
+        """Enregistre une question posée par un agent (#1023) — en attente de réponse.
+
+        Indexée par `question_id` et non par tâche : une tâche en pose plusieurs,
+        et deux peuvent attendre en même temps (cf. `EtatQuestion`). Une même
+        question republiée — rediffusion, journal durable rejoué — **ne réécrit pas
+        la réponse déjà reçue** : la demande arrive avant la réponse dans l'ordre
+        du flux, mais rien ne garantit cet ordre au rejeu, et une question
+        retombée « en attente » ferait attendre quelqu'un pour un agent qui a déjà
+        sa réponse. Même garde que `_applique_brief_decision` sur l'autre bout de
+        sa chaîne.
+
+        Le **projet** se lit sur l'événement, ou à défaut sur la tâche déjà
+        projetée — le même repli que `_applique_validation_demande`, et il est ici
+        un vrai filet : la question d'une tâche en vol arrive après son
+        `tache.statut`, donc la tâche est presque toujours connue.
+
+        Le run **n'est pas suspendu** : une question a une issue par défaut, et
+        l'agent reprend à la borne sur l'hypothèse qu'il a annoncée. Marquer le run
+        « en attente » le laisserait bloqué à l'écran quelques minutes après que
+        plus personne n'attend (cf. `maestro.controltower.question`).
+        """
+        existante = self._questions.get(event.question_id)
+        if existante is not None and not existante.en_attente:
+            return
+        connue = self._taches.get(event.tache_id)
+        projet_id = event.projet_id
+        if projet_id is None and connue is not None:
+            projet_id = connue.projet_id
+        self._questions[event.question_id] = EtatQuestion(
+            question_id=event.question_id,
+            tache_id=event.tache_id,
+            titre=event.titre,
+            question=event.description,
+            hypothese=event.hypothese,
+            # Les choix ont été nettoyés et bornés à la publication : la
+            # projection est un miroir, elle ne rejuge rien.
+            choix=tuple(event.choix or ()),
+            agent=event.agent,
+            role=event.role,
+            attente=event.detail,
+            projet_id=projet_id,
+            run_id=event.run_id,
+            horodatage=event.horodatage,
+        )
+
+    def _applique_question_reponse(self, event: Event) -> None:
+        """Pose la réponse humaine sur une question (#1023).
+
+        Idempotent : réappliquer la même réponse (application directe par
+        l'endpoint puis rediffusion par la pompe) laisse l'état inchangé. Une
+        réponse à une question inconnue est **ignorée** — la projection est un
+        miroir, pas une source de vérité.
+
+        Une réponse **tardive** est reçue comme les autres, et c'est voulu : une
+        question reste posée tant que personne n'y a répondu, même quand l'agent a
+        déjà repris sur son hypothèse (`MemoireArbitrage`, #584 — le même appel
+        rejoué retrouvera cette réponse). Ce que l'agent a fait entre-temps est dit
+        au journal, jamais ici.
+        """
+        question = self._questions.get(event.question_id)
+        if question is None:
+            return
+        question.statut = QUESTION_REPONDUE
+        question.reponse = event.detail or question.reponse
+        question.horodatage = event.horodatage or question.horodatage
 
     def _suspend_sur_arbitrage(self, run_id: str, horodatage: str) -> None:
         """Le run s'arrête sur un arbitrage de tâche (#571) : statut et ancienneté.
