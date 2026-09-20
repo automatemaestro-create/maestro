@@ -347,14 +347,14 @@ def routes_du_motif() -> set[str]:
 #:
 #: `socle` (#984, lot 4 de #973) est le **catalogue des primitives** : une page de développement qui
 #: rend `components/Primitives` dans ses variantes et dans les deux thèmes. Elle n'est pas servie en
-#: production (`REDIRECTION_SOCLE_HORS_DEVELOPPEMENT` dans `apps/web/next.config.ts`), elle n'est pas
-#: au menu, et **personne ne demandera une veille de conception dessus** : elle ne décide de rien
-#: qu'un écran du produit montrerait, elle montre ce que les écrans emploient. Un ticket qui nomme
+#: production (`REDIRECTION_SOCLE_HORS_DEVELOPPEMENT`, `apps/web/next.config.ts`), elle n'est pas au
+#: menu, et **personne ne demandera une veille de conception dessus** : elle ne décide de rien qu'un
+#: écran du produit montrerait, elle montre ce que les écrans emploient. Un ticket qui nomme
 #: `/socle` n'a donc pas de surface visible au sens de #714.
 #:
 #: ⚠ L'exclusion est NOMMÉE, jamais un motif qui l'ignorerait en silence : le test ci-dessous rougit
-#: toujours dans les deux sens sur tout le reste, et une entrée d'ici qui perdrait son dossier rougit
-#: aussi. C'est la même règle que le motif lui-même — ce qui est écarté l'est avec sa raison.
+#: toujours dans les deux sens sur tout le reste, et une entrée d'ici qui perdrait son dossier
+#: rougit aussi. C'est la même règle que le motif lui-même — ce qui est écarté l'est avec sa raison.
 HORS_PRODUIT = {"socle"}
 
 

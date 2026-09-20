@@ -125,8 +125,22 @@ type Specimen = { code: string; rendu: (cle: string) => ReactNode };
 /** Un axe de variation : **un seul** paramètre bouge d'un spécimen à l'autre. */
 type Axe = { nom: string; note?: string; specimens: Specimen[] };
 
-/** Une brique du socle : son nom, ce à quoi elle sert, ses axes. */
-type Bloc = { ancre: string; nom: string; role: string; axes: Axe[] };
+/**
+ * Une brique du socle : son nom, ce à quoi elle sert, ses axes.
+ *
+ * `fondation` distingue ce qui n'est **pas** une primitive — l'échelle
+ * typographique, la palette : des suites de valeurs qui se lisent comme une
+ * **progression**, donc en pleine largeur (voir `BlocVu`). C'est une propriété
+ * du bloc et non une liste d'ancres tenue ailleurs : une fondation de plus
+ * hérite du bon rendu du seul fait de se déclarer telle.
+ */
+type Bloc = {
+  ancre: string;
+  nom: string;
+  role: string;
+  fondation?: boolean;
+  axes: Axe[];
+};
 
 /** Une liste de filtre est contrôlée : elle porte son état, pas le catalogue. */
 function ListeFiltreVue({ cle }: { cle: string }) {
@@ -161,6 +175,7 @@ const CATALOGUE: Bloc[] = [
   {
     ancre: "echelle",
     nom: "Échelle typographique",
+    fondation: true,
     role:
       "Cinq pas de texte nommés par leur rôle, plus un pas d'affichage réservé à la valeur d'une tuile de tête.",
     axes: [
@@ -190,6 +205,7 @@ const CATALOGUE: Bloc[] = [
   {
     ancre: "palette",
     nom: "Palette sémantique",
+    fondation: true,
     role:
       "Un rôle, pas une couleur. Les deux thèmes viennent avec le token : rien ici ne porte de variante sombre écrite à la main.",
     axes: [
@@ -365,6 +381,24 @@ const CATALOGUE: Bloc[] = [
           { code: "icone", rendu: () => <Bouton icone={IconeRuns}>Avec icône</Bouton> },
           { code: "occupe", rendu: () => <Bouton occupe>En cours</Bouton> },
           { code: "disabled", rendu: () => <Bouton disabled>Indisponible</Bouton> },
+        ],
+      },
+      {
+        nom: "CIBLE_MINIMALE",
+        note:
+          "Le plancher de toute cible interactive — 24 px, WCAG 2.2 §2.5.8. `Bouton` le porte déjà ; ce qui n'en est pas un l'emprunte.",
+        specimens: [
+          {
+            code: "CIBLE_MINIMALE",
+            rendu: () => (
+              <a
+                href="#bouton"
+                className={`inline-flex ${CIBLE_MINIMALE} items-center text-annexe font-medium text-accent-texte hover:underline`}
+              >
+                Un lien en petit corps, au plancher
+              </a>
+            ),
+          },
         ],
       },
     ],
@@ -706,22 +740,36 @@ const CATALOGUE: Bloc[] = [
  * Le rendu
  * ------------------------------------------------------------------ */
 
+/** Les deux thèmes, dans l'ordre où la page les rend. */
+const THEMES = [
+  { cle: "clair", libelle: "Thème clair" },
+  { cle: "sombre", libelle: "Thème sombre" },
+] as const;
+
 /**
  * La scène : un panneau basculé dans un thème, qui peint son propre fond.
- * C'est le seul endroit de la page qui pose `data-theme`.
+ * C'est le **seul** endroit de la page qui pose `data-theme`.
+ *
+ * `role="group"` et son nom : à l'écran, le thème d'un panneau se voit ; au
+ * lecteur d'écran, deux rendus consécutifs du même axe seraient indiscernables.
+ * Le nom est donc annoncé, et rien n'est écrit en plus dans la page.
  */
 function Scene({
   theme,
+  libelle,
   className = "",
   children,
 }: {
   theme: string;
+  libelle: string;
   className?: string;
   children: ReactNode;
 }) {
   return (
     <div
       data-theme={theme}
+      role="group"
+      aria-label={libelle}
       className={`rounded-lg border border-bord bg-surface-creuse p-3 text-texte ${className}`}
     >
       {children}
@@ -750,7 +798,26 @@ function AxeVu({ axe, cle }: { axe: Axe; cle: string }) {
   );
 }
 
+/**
+ * Une brique du socle : son nom, ce à quoi elle sert, et **chaque axe rendu
+ * deux fois** — un thème par scène, les deux portant les mêmes libellés.
+ *
+ * C'est la variante A, choisie par le regard neuf sur pièces (commentaire
+ * « ## Variante retenue » de #984). Ce qu'elle tient et que les deux autres
+ * perdaient : le rendu sombre se **montre du doigt** autant que le clair, et
+ * chaque spécimen sombre reste à l'aplomb de son homologue clair — les deux
+ * scènes ont la même largeur, donc elles se replient au même endroit.
+ *
+ * ⚠ Les **fondations** (l'échelle, la palette) empilent leurs deux scènes sur
+ * la pleine largeur au lieu de les mettre côte à côte, et c'est la réserve que
+ * le regard neuf a nommée : à demi-largeur, l'échelle typographique casse après
+ * `text-titre` et cesse de se lire comme une progression. Ce n'est pas la
+ * variante C pour autant — les libellés restent des deux côtés, ce que C
+ * abandonnait. La bascule est une **propriété du bloc**, `fondation`, et non
+ * une liste d'ancres à tenir à jour.
+ */
 function BlocVu({ bloc }: { bloc: Bloc }) {
+  const paire = bloc.fondation ? "grid gap-2" : "grid gap-2 lg:grid-cols-2";
   return (
     <section id={bloc.ancre} className="flex flex-col gap-3">
       <EnTeteSection titre={bloc.nom} niveau={3} />
@@ -759,9 +826,13 @@ function BlocVu({ bloc }: { bloc: Bloc }) {
         <div key={axe.nom} className="flex flex-col gap-2">
           <p className="text-annexe font-medium text-texte">{axe.nom}</p>
           {axe.note && <p className="text-micro text-texte-secondaire">{axe.note}</p>}
-          <Scene theme="clair">
-            <AxeVu axe={axe} cle={`${bloc.ancre}-${axe.nom}`} />
-          </Scene>
+          <div className={paire}>
+            {THEMES.map((theme) => (
+              <Scene key={theme.cle} theme={theme.cle} libelle={theme.libelle}>
+                <AxeVu axe={axe} cle={`${bloc.ancre}-${axe.nom}-${theme.cle}`} />
+              </Scene>
+            ))}
+          </div>
         </div>
       ))}
     </section>
@@ -774,9 +845,13 @@ export default function PageSocle() {
       <header className="flex flex-col gap-2">
         <h2 className="text-page font-semibold tracking-tight">Catalogue du socle</h2>
         <p className="text-corps text-texte-secondaire">
-          Chaque primitive de <code className="text-annexe">components/Primitives</code> dans ses
-          variantes, avec l&apos;échelle typographique et la palette sémantique. Page de
-          développement : elle n&apos;est pas servie en production et n&apos;est pas au menu.
+          Chaque primitive de <code className="text-annexe">components/Primitives</code>{" "}
+          dans ses variantes, avec l&apos;échelle typographique et la palette sémantique.{" "}
+          <strong className="font-medium text-texte">
+            Chaque rangée est rendue deux fois : thème clair, puis thème sombre.
+          </strong>{" "}
+          Page de développement : elle n&apos;est pas servie en production et n&apos;est pas au
+          menu.
         </p>
         <nav aria-label="Les briques du socle" className="flex flex-wrap gap-x-3 gap-y-1">
           {CATALOGUE.map((bloc) => (
