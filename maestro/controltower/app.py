@@ -128,6 +128,11 @@ Endpoints :
 - `POST /api/projets/selecteur` — ouvre le dialogue de dossier de l'OS et rend
   le chemin choisi, confronté à EF-38 (`racine_valide`, `refus`). Annuler rend
   200 (`annule: true`) — fermer une fenêtre n'est pas une erreur ;
+- `POST /api/projets/racine` — ce qu'EF-38 dit d'un chemin **qu'on lui apporte**
+  (#938) : celui du dialogue ouvert par la **fenêtre** de bureau, celui d'un
+  **dossier déposé** sur l'écran de déclaration. Même corps que la route
+  ci-dessus, `annule` en moins. C'est la **porte unique** : aucun chemin réel
+  n'entre sans passer par elle ;
 - `GET  /api/projets/{id}` — un projet déclaré ;
 - `POST /api/projets` — déclare un projet : racine **validée** (EF-38, refus
   motivé en 422) et VCS **constaté** sur le disque ;
@@ -742,6 +747,16 @@ class SelecteurRequete(BaseModel):
     """
 
     depart: str | None = None
+
+
+class RacineRequete(BaseModel):
+    """Corps d'un verdict de racine (#938) : le chemin proposé, tel que l'OS l'a rendu.
+
+    Non canonicalisé, et c'est voulu : la canonicalisation fait partie de ce
+    qu'EF-38 vérifie (`valider_racine`), pas de ce que l'appelant prépare.
+    """
+
+    chemin: str
 
 
 class ChatEnvoiRequete(BaseModel):
@@ -3694,6 +3709,29 @@ def create_app(
         if chemin is None:
             return {"annule": True, "chemin": None, "racine_valide": False, "refus": None}
         return {"annule": False, **_verdict_racine(chemin)}
+
+    @app.post("/api/projets/racine")
+    async def verdict_racine(corps: RacineRequete) -> dict[str, Any]:
+        """Ce qu'EF-38 dit d'un chemin proposé comme racine (#938) — **la porte unique**.
+
+        Le pendant de `POST /api/projets/selecteur` pour les chemins que le
+        backend n'a pas ouverts lui-même : celui que le dialogue de la **fenêtre**
+        a rendu, celui d'un **dossier déposé** sur l'écran de déclaration. Les
+        deux arrivent avec un chemin réel que le navigateur, lui, ne sait pas
+        fabriquer — et ils doivent passer par la **même** porte que les autres
+        voies, faute de quoi il y aurait deux formules de validation à tenir
+        d'accord et c'est la garde qui perdrait.
+
+        Même corps que la route du sélecteur, `annule` en moins : `chemin` porte
+        le dossier canonicalisé, `racine_valide` dit s'il est déclarable tel
+        quel, et un dossier lisible mais non déclarable (une racine de disque, le
+        dossier utilisateur nu) revient avec son `refus` motivé plutôt qu'en 4xx
+        — l'écran a besoin de le **montrer**, pas de le traiter en panne.
+
+        Toujours **200** : c'est un verdict, pas une exécution. Rien n'est ouvert,
+        rien n'est écrit, et refuser fait partie des réponses.
+        """
+        return _verdict_racine(corps.chemin)
 
     def _verdict_racine(chemin: str) -> dict[str, Any]:
         """Le chemin choisi, canonicalisé, et ce qu'EF-38 en dit — sans jamais lever.

@@ -57,6 +57,7 @@ import type {
   Tache,
   TeleversementSources,
   Validation,
+  VerdictRacine,
   VersionPlaybook,
   VersionPlaybookDetail,
 } from "./types";
@@ -1245,6 +1246,23 @@ export function ouvrirSelecteurNatif(
     "/api/projets/selecteur",
     { depart },
     "sélecteur natif indisponible",
+  );
+}
+
+/**
+ * Ce qu'EF-38 dit d'un chemin qu'on apporte (`POST /api/projets/racine`, #938)
+ * — **la porte unique** des chemins que le backend n'a pas ouverts lui-même :
+ * celui du dialogue de la fenêtre de bureau, celui d'un dossier déposé.
+ *
+ * Toujours 200 : un refus est un **verdict**, pas une panne — l'écran le montre
+ * dans le formulaire au lieu de le découvrir à la soumission. Seuls une API
+ * injoignable ou un corps invalide lèvent.
+ */
+export function verdictRacine(chemin: string): Promise<VerdictRacine> {
+  return ecrireProjet<VerdictRacine>(
+    "/api/projets/racine",
+    { chemin },
+    "chemin refusé",
   );
 }
 

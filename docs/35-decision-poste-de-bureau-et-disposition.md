@@ -155,9 +155,10 @@ n'est pas le poids qui décide.
   y ajoute **G6** : le produit « parle le dépôt » à son utilisateur,
   `bash scripts/controltower/start.sh` affiché sur la page d'accueil.
 - **PWA / raccourci de navigateur** — non traitée par docs/24, écartée ici : elle ne donne ni
-  l'ouverture de l'explorateur de fichiers (lot 7, **G1**), ni le glisser-déposer avec chemin réel,
-  ni le cycle de vie du backend. C'est-à-dire précisément les trois capacités qui justifient une
-  fenêtre.
+  l'ouverture de l'explorateur de fichiers (lot 7, **G1**), ni le glisser-déposer avec chemin réel
+  (lot 8, #938 — qui y ajoute le **dialogue de dossier sans détour par le backend**, donc sans les
+  motifs `selecteur-hors-poste` et `selecteur-sans-outil` de #278), ni le cycle de vie du backend.
+  C'est-à-dire précisément les trois capacités qui justifient une fenêtre.
 - **Réécriture native** — écartée par D4, et l'argument tient sans changement : elle jetterait les
   Phases 4 et 6.
 
@@ -287,7 +288,7 @@ fait son livrable :
 
 ---
 
-## 5. Le découpage — 8 lots
+## 5. Le découpage — 11 lots
 
 | # | Lot | Ticket | ∥ |
 |---|---|---|---|
@@ -298,7 +299,17 @@ fait son livrable :
 | 5 | La conversation occupe la colonne de droite | #926 | |
 | 6 | Le centre montre le run qui tourne | #927 | |
 | 7 | Un run qui se termine l'annonce, et remet son livrable | #928 | |
-| 8 | Tests + doc — dont **la frontière shell / écran** | #929 | |
+| 8 | Choisir une racine **depuis la fenêtre** — le dialogue sans détour, et le dépôt d'un dossier | #938 | |
+| 9 | Le renversement de D4 n'est pas fini : ce qui retient encore Tauri | #947 | |
+| 10 | Le modèle de menace ne connaît pas la fenêtre | #949 | |
+| 11 | Tests + doc — dont **la frontière shell / écran** | #929 | |
+
+⚠ **Ce tableau annonçait 8 lots, et il a été écrit avant les trois derniers.** Les lots 8 à 10 sont
+nés de ce que les précédents ont fait apparaître — la première capacité qui rend la fenêtre utile à
+autre chose qu'elle-même (#938), le renversement de D4 resté à moitié écrit dans le dépôt (#947), un
+modèle de menace qui ne connaît pas encore la fenêtre (#949) —, et le lot « tests + doc » reste le
+**dernier**, jamais parallèle. Le corriger ici plutôt qu'au lot final est délibéré : un tableau faux
+se relit comme un découpage qu'on ne suit pas.
 
 **L'ordre porte deux décisions**, et aucune n'est un séquencement de confort :
 

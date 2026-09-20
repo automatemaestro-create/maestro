@@ -68,6 +68,10 @@ const CONSEILS: Record<string, string> = {
   "dossier-absent":
     "Le dossier n'est pas là — l'origine « Nouveau dossier » le crée à la déclaration.",
   "pas-un-dossier": "Ce chemin désigne un fichier : il faut un dossier.",
+  // Le motif que l'écran de déclaration fabrique lui-même quand un dépôt
+  // n'apporte aucun chemin (#938) : un objet qui ne vient pas du disque.
+  "depot-sans-chemin":
+    "Déposer un dossier depuis l'explorateur du poste — pas un élément glissé depuis une page, qui n'a pas de chemin sur le disque.",
   "projet-inconnu":
     "Ce projet n'est plus déclaré — recharger la liste pour repartir de l'état réel.",
   "projet-illisible":
@@ -134,8 +138,10 @@ const LIBELLES_MOTIF: Record<string, string> = {
   "commit-refuse": "Premier commit refusé",
   "vcs-introuvable": "Dépôt Git introuvable",
   "git-indisponible": "Git indisponible",
-  // Celui que l'écran fabrique lui-même quand l'appel n'aboutit pas.
+  // Ceux que l'écran fabrique lui-même : l'appel qui n'aboutit pas, et le dépôt
+  // d'un objet qui n'a pas de chemin sur le disque (#938).
   "api-injoignable": "API injoignable",
+  "depot-sans-chemin": "Dépôt sans chemin sur le disque",
 };
 
 /** Le libellé d'un motif, ou le motif brut si l'API s'est enrichie. */
