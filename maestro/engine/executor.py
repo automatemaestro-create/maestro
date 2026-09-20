@@ -1674,8 +1674,19 @@ class LocalExecutor(TaskExecutor):
         une réponse humaine est un renseignement reçu, une reprise sur hypothèse
         est une décision prise par l'agent, et les deux doivent se lire.
 
-        La **borne** est nommée dans la seconde : c'est ici qu'elle est réglée,
-        donc ici qu'on la dit. L'agent, lui, ne la lit pas (cf.
+        **Deux champs, jamais une phrase** (#1026) : `sortie` porte l'issue **nue**
+        — la réponse reçue, ou l'hypothèse reprise —, `description` porte son
+        motif. C'est la forme que `_consigne_decision_autonome` a posée pour la
+        décision tranchée seul (#1024), et l'étendre ici est ce qui permet à la
+        liste des décisions d'un run (`maestro.controltower.decisions`) de rendre
+        une hypothèse dans les mêmes colonnes qu'une décision **sans rien
+        redécouper** : deviner par la forme ce que le journal savait à l'écriture
+        est précisément ce que ce partage évite. C'est aussi ce que le contrat
+        écrit disait déjà des deux côtés — `STATUT_QUESTION_SANS_REPONSE`
+        ci-dessus et docs/05 §6.17 : « sortie = l'hypothèse ».
+
+        La **borne** est nommée dans le motif de la seconde : c'est ici qu'elle est
+        réglée, donc ici qu'on la dit. L'agent, lui, ne la lit pas (cf.
         `maestro.providers.question.SANS_REPONSE`) — la redire des deux côtés
         ferait deux supports pour un même chiffre.
 
@@ -1692,12 +1703,13 @@ class LocalExecutor(TaskExecutor):
                 STATUT_QUESTION_REPONDUE if repondue else STATUT_QUESTION_SANS_REPONSE
             ),
             entree=demande.resume(),
-            sortie=(
-                f"réponse : {reponse}"
+            sortie=(reponse if reponse is not None else demande.hypothese),
+            description=(
+                f"réponse reçue à : {demande.question}"
                 if repondue
                 else (
-                    f"aucune réponse après {demande.attente_s:g} s — l'agent reprend "
-                    f"sur son hypothèse : {demande.hypothese}"
+                    f"aucune réponse après {demande.attente_s:g} s à : "
+                    f"{demande.question}"
                 )
             ),
             usage=StepUsage(),

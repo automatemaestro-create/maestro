@@ -363,6 +363,7 @@ from maestro.controltower.chat import (
     ReponseIndisponible,
     ServiceChat,
 )
+from maestro.controltower.decisions import decisions_du_run
 from maestro.controltower.events import (
     EVENEMENT_AGENT_CAPACITE,
     EVENEMENT_BRIEF_DECISION,
@@ -2234,6 +2235,44 @@ def create_app(
             journal.entrees_du_run(run_id),
             agents=state.agents_du_run(run_id),
             activites=state.signes_de_vie_du_run(run_id),
+        ).to_dict()
+
+    @app.get("/api/executions/{run_id}/decisions")
+    async def decisions_execution(run_id: str) -> dict[str, Any]:
+        """Ce que les agents de ce run ont tranché **seuls** (#1026, docs/05 §6.18).
+
+        La cinquième lecture d'un run, à côté du Kanban (« combien dans quel
+        état »), de la progression (« où en est-on »), du graphe (« quoi après
+        quoi ») et de la frise (« dans quel ordre ») : celle qui dit **ce qui a
+        été décidé sans moi, et pourquoi**. C'est la condition que le parent
+        #1019 pose à l'autonomie — elle n'est acceptable que si elle se vérifie
+        après coup.
+
+        Deux familles, séparées par `origine` et jamais mêlées : une décision que
+        l'agent a jugée sienne (`tranchee`, #1024 — il n'avait à demander à
+        personne) et une **hypothèse prise faute de réponse** (`hypothese`,
+        #1023 — il a demandé, personne n'a répondu avant la borne, il est reparti
+        sur ce qu'il avait annoncé). `decision` et `raison` sortent des deux
+        champs que le moteur sépare à l'écriture : cette route ne redécoupe rien.
+
+        Rien n'est créé : les deux flux sont déjà persistés et déjà servis par
+        `GET /api/journal?run_id=…`, dont chaque entrée garde ici son identifiant.
+        Comme le graphe et la frise, cette liste **n'a pas d'événement à elle** —
+        elle se recompose à la lecture, donc la mise à jour en direct passe par le
+        flux existant, sans second canal.
+
+        Rendue **du plus récent au plus ancien**, comme le journal du run et non
+        comme la frise : les deux lectures chronologiques de la bascule vont dans
+        le même sens. Bornée à `PLAFOND_DECISIONS` entrées, les plus récentes :
+        `total`, `hypotheses` et `tronquee` comptent **avant** la borne et disent
+        ce qui a été laissé de côté. 404 si aucune trace reçue pour ce `run_id`.
+        """
+        if state.execution(run_id) is None:
+            raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
+        return decisions_du_run(
+            run_id,
+            journal.entrees_du_run(run_id),
+            taches=state.titres_du_run(run_id),
         ).to_dict()
 
     @app.post("/api/sources/apercu")
