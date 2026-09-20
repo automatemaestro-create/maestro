@@ -2241,6 +2241,29 @@ export type PerimetreProjet = {
 };
 
 /**
+ * Où en est l'outillage d'un projet (#1034, docs/37 §4.6, docs/38 §4.1).
+ *
+ * Trois champs, et ils ne viennent pas du même endroit — c'est la seule chose à
+ * retenir ici :
+ *
+ * - `reporte_le` est une **décision**, persistée dans la fiche : quelqu'un a
+ *   répondu « plus tard » à l'étape d'outillage. Vide sinon ;
+ * - `genere` est un **constat du disque** : `.maestro/outillage/manifeste.json`
+ *   est-il là ? Jamais stocké, pour la raison qui fait constater le `vcs` — un
+ *   manifeste peut naître d'une génération relancée, être retiré à la main, ou
+ *   venir d'un clone ;
+ * - `a_faire` est le croisement des deux, calculé par l'API : reporté **et** pas
+ *   encore généré. C'est exactement ce que la carte d'un projet affiche — *un
+ *   projet qu'on a choisi d'outiller plus tard le dit, tant qu'il ne l'est pas*
+ *   —, et c'est pourquoi l'écran ne le redéduit pas.
+ */
+export type OutillageProjet = {
+  reporte_le: string;
+  genere: boolean;
+  a_faire: boolean;
+};
+
+/**
  * Un projet de l'utilisateur (`GET /api/projets`, #223) : une racine sur le
  * disque et son périmètre. `racine` est **canonicalisée** et rendue en POSIX sur
  * les trois OS ; `vcs` est `null` quand le projet n'est pas versionné — ce qui
@@ -2253,8 +2276,121 @@ export type Projet = {
   origine: string;
   vcs: VcsProjet | null;
   perimetre: PerimetreProjet;
+  /** Où en est son outillage (#1034) — absent des fiches servies avant ce lot. */
+  outillage?: OutillageProjet;
   cree_le: string;
   modifie_le: string;
+};
+
+/**
+ * Un fichier du projet qui **prouve** un constat (`Piece.to_dict`, #1030).
+ *
+ * `chemin` est relatif à la racine, en POSIX. C'est lui que l'écran affiche sous
+ * une entrée recommandée : une raison sans le fichier qui la porte est une
+ * affirmation, et le ticket #1030 a fait de la preuve un champ plutôt qu'un
+ * usage.
+ */
+export type PieceOutillage = {
+  nom: string;
+  chemin: string;
+  role: string;
+};
+
+/**
+ * Une pièce d'outillage recommandée (`Entree.to_dict`, #1030, docs/38 §3).
+ *
+ * `type` suit docs/38 : `instructions` (`AGENTS.md`), `pont` (`CLAUDE.md`,
+ * `GEMINI.md`), `skill` (`.agents/skills/<nom>/`), `script`.
+ *
+ * `etat` dit ce qu'il reste à faire — `a-generer`, `a-completer`, ou
+ * `deja-present` quand le projet la porte **déjà**. Ce dernier garde l'entrée
+ * dans la réponse au lieu de la faire disparaître : sans lui, un `AGENTS.md`
+ * déjà écrit et un `AGENTS.md` jamais envisagé se ressembleraient.
+ *
+ * `justification` est l'endroit du projet d'où l'entrée sort — le fichier lu,
+ * pas une phrase —, `null` pour ce que docs/38 pose sans rien constater.
+ */
+export type EntreeOutillage = {
+  type: string;
+  nom: string;
+  chemin: string;
+  etat: string;
+  raison: string;
+  justification: PieceOutillage | null;
+  commandes: string[];
+};
+
+/**
+ * Ce que l'analyse a **choisi de ne pas** recommander, avec sa raison
+ * (`Ecarte.to_dict`, #1030).
+ *
+ * Deux familles : ce que docs/38 écarte par décision (les fichiers de commande,
+ * §3.5) et ce que le projet ne justifie pas (aucune commande de test
+ * constatée). Sans cette liste, « pas de skill de tests » se lirait comme un
+ * oubli de Maestro plutôt que comme un fait du projet.
+ */
+export type EcarteOutillage = {
+  type: string;
+  nom: string;
+  raison: string;
+};
+
+/**
+ * L'outillage recommandé : ce qui s'écrit, et ce qui a été écarté
+ * (`Recommandation.to_dict`, #1030).
+ *
+ * **Une seule forme pour les deux origines** — l'analyse d'un projet existant
+ * (`GET …/outillage/analyse`, #1030) et les réponses d'un projet neuf
+ * (`POST …/outillage/recommandation`, #1031) la produisent par la *même*
+ * fonction côté moteur. L'écran d'outillage (#1034) n'a donc qu'un rendu à
+ * tenir, et c'est ce qui permet aux deux branches du parcours de partager leur
+ * étape au lieu de la dédoubler.
+ */
+export type RecommandationOutillage = {
+  entrees: EntreeOutillage[];
+  ecartes: EcarteOutillage[];
+};
+
+/**
+ * Ce que le parcours de l'analyse a vu — et ce qu'il n'a **pas** vu
+ * (`Parcours.to_dict`, #1030).
+ *
+ * `troncatures` nomme les bornes atteintes (`fichiers-max`, `profondeur-max`,
+ * `fichier-trop-gros`). Une analyse tronquée qui ne le dirait pas se lirait
+ * comme un projet plus petit qu'il n'est, et c'est le genre d'erreur qu'on ne
+ * voit jamais : il manque des constats, pas des messages. L'écran le relaie.
+ */
+export type ParcoursOutillage = {
+  fichiers_vus: number;
+  dossiers_vus: number;
+  profondeur_atteinte: number;
+  tronque: boolean;
+  troncatures: string[];
+  ignores_rencontres: string[];
+};
+
+/**
+ * L'analyse d'un projet existant et l'outillage qu'elle recommande
+ * (`GET /api/projets/{id}/outillage/analyse`, #1030, docs/38 §4.1).
+ *
+ * `resume` est la phrase que le manifeste gardera (`source.resume`) : elle tient
+ * en une ligne parce qu'elle est destinée à être relue six mois plus tard, à
+ * côté d'un outillage dont on se demande d'où il sort. C'est elle que l'étape
+ * d'outillage met en tête.
+ *
+ * `analyse` est la **version de la forme** : un écran doit pouvoir dire « je ne
+ * sais pas lire cette forme-là » plutôt que de lire de travers une forme qui a
+ * changé.
+ */
+export type AnalyseOutillage = {
+  analyse: number;
+  id: string;
+  projet_id: string;
+  racine: string;
+  faite_le: string;
+  resume: string;
+  parcours: ParcoursOutillage;
+  recommandation: RecommandationOutillage;
 };
 
 /** Corps de `POST`/`PUT /api/projets` — le `vcs` n'y figure pas : il est constaté. */

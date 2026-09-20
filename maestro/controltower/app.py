@@ -161,6 +161,11 @@ Endpoints :
   sa **raison** et l'**endroit du projet** qui la justifie, ce que le projet
   porte déjà étant reconnu (`deja-present`) plutôt que dupliqué. N'écrit rien :
   la génération est #1033 ;
+- `POST /api/projets/{id}/outillage/report` — le « **plus tard** » de l'étape
+  d'outillage (#1034, docs/37 §4.6) : sans corps, idempotent, il n'écrit rien
+  dans le dossier de l'utilisateur et rend la fiche relue. Celle-ci porte
+  `outillage.a_faire` — reporté **et** manifeste absent —, ce qui fait qu'une
+  génération suffit à faire taire le rappel ;
 - `GET  /api/fournisseurs` — ce qui existe côté modèles (#253) **et ce qui est
   déjà là** (#487) : les fournisseurs du **registre**, leurs modèles annoncés et,
   pour chacun, les niveaux d'effort admis (liste vide quand le fournisseur
@@ -4111,6 +4116,32 @@ def create_app(
         """
         try:
             return await asyncio.to_thread(outillage.analyser, id_projet)
+        except (ValueError, ProjetInconnu) as exc:
+            raise _refus_projet(exc) from exc
+
+    @app.post("/api/projets/{id_projet}/outillage/report")
+    async def reporter_outillage_du_projet(id_projet: str) -> dict[str, Any]:
+        """Enregistre le « plus tard » de l'étape d'outillage (#1034, docs/37 §4.6).
+
+        L'étape d'outillage est **première et proposée d'office, mais
+        reportable** : importer un projet pour seulement le regarder ne doit pas
+        imposer une génération. Cette route est l'autre issue de l'étape, celle
+        qui ne produit rien — la seule chose qu'elle écrit est la date de la
+        décision, dans la fiche du projet.
+
+        **Sans corps**, comme `versionner`, et pour la même raison : il n'y a
+        rien à déclarer, seulement un verbe à appeler. Idempotente — la première
+        date gagne, un second appel rend la fiche telle quelle.
+
+        La fiche rendue porte `outillage.a_faire` : reporté **et** pas encore
+        généré. C'est ce que la carte du projet affiche, et c'est pourquoi
+        générer suffit à faire taire le rappel sans qu'aucun code de génération
+        (#1033) connaisse ce champ.
+
+        404 si le projet est inconnu, 422 motivé si sa fiche est illisible.
+        """
+        try:
+            return projets.reporter_outillage(id_projet)
         except (ValueError, ProjetInconnu) as exc:
             raise _refus_projet(exc) from exc
 
