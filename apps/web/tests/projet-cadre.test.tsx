@@ -272,7 +272,11 @@ describe("ce qui reste global, et le dit", () => {
     );
     const tuile = screen.getByText("Agents").closest("article") as HTMLElement;
     expect(tuile).toHaveTextContent("1 sur ce projet");
-    expect(tuile).toHaveTextContent("2 agent(s) du poste");
+    // « hors orchestration » depuis #1028 : le parc ne la porte plus, et le
+    // détail dit de quelle population il parle plutôt que de passer de 6 à 5
+    // sans explication. Le cadre du poste, lui, se lit toujours sur la ligne
+    // suivante — « occupé(s) ailleurs » n'a de sens que pour un parc partagé.
+    expect(tuile).toHaveTextContent("2 agent(s) hors orchestration");
     expect(tuile).toHaveTextContent("1 occupé(s) ailleurs");
   });
 });

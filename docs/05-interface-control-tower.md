@@ -158,7 +158,7 @@ notifications, et le **flux temps réel** qui les alimente tous.
 
 | ce qui reste global | pourquoi | ce qui est cadré malgré tout |
 | --- | --- | --- |
-| `GET /api/agents` — état du parc | un agent est une ressource du **poste** : son playbook, sa capacité et ses instances (#86) valent pour toute la Control Tower. Il n'appartient à aucun projet, et #277 ne lui a pas donné de portée | la tuile « Agents » compte les agents **au travail sur ce projet** (dérivé de ses tâches) et renvoie au détail le parc et les « occupés ailleurs » |
+| `GET /api/agents` — état du parc | un agent est une ressource du **poste** : son playbook, sa capacité et ses instances (#86) valent pour toute la Control Tower. Il n'appartient à aucun projet, et #277 ne lui a pas donné de portée. ⚠ Il rend les **exécutants**, jamais l'orchestration (#1028, §2.5.0) : elle dépense et on lui parle, mais elle n'exécute rien | la tuile « Agents » compte les agents **au travail sur ce projet** (dérivé de ses tâches) et renvoie au détail le parc et les « occupés ailleurs » |
 | le **catalogue** d'agents et les **playbooks** | ce sont des définitions, pas du travail — les partager entre projets est l'intérêt d'en avoir | — |
 | le **chat** et l'assistant | ils parlent de l'**outil**, pas du projet ; et un `chat.message` ne porte pas de `projet_id`, donc une socket cadrée ne le recevrait **jamais** (§6.0) — le fil se figerait sans rien dire | — |
 | les **paramètres** du poste (apparence, notifications) | réglages de l'installation, pas d'un projet | la dépense cumulée qui y figure, elle, est celle du projet |
@@ -1465,6 +1465,38 @@ plafond de trois :
 
 Le filtre de période, lui, n'occupe aucune des trois places : c'est le réglage de tout l'écran, il
 reste en tête de page au-dessus de ce qu'il borne.
+
+#### 2.5.0 L'orchestration n'est pas une part d'agent (#1028) — **livré**
+
+Trois écrans ne comptaient pas le même parc (constat **C13** du [retex du
+2026-09-11](./retex/2026-09-11-premiere-session-utilisateur.md)) : le tableau de bord annonçait
+« **6** agent(s) du poste », `/agents` en listait **5**, et cette page donnait **21 %** de la
+dépense à `orchestrateur` **comme à un agent**. Une seule cause : `GET /api/agents` ouvrait une
+fiche à tout acteur vu au journal, l'orchestrateur compris, là où `/agents` lit le **catalogue des
+exécutants** — qui l'exclut en toutes lettres.
+
+**La question de fond était déjà tranchée**, et ce ticket n'a fait que l'appliquer aux trois écrans
+à la fois : l'orchestrateur **n'est pas un agent** ([docs/37 §4.2](./37-decision-equipe-sur-mesure.md),
+2026-09-19) — « il est Maestro, présent dans tout projet, et c'est lui qui recrute ».
+
+- **Le parc ne le porte plus.** La correction est **à la source** (`state._hors_du_parc`) et non
+  chez chaque lecteur : la tuile *Agents*, `/agents` et la réassignation lisent désormais la même
+  population. Deux sources pour un fait ne se synchronisent pas, elles se remplacent par une — la
+  leçon de #365 sur le cycle de vie d'un ticket, et de #927 sur la tuile « Run en cours ».
+- **Sa dépense reste comptée, sous un poste qui porte son nom.** `GET /api/analytics/couts` rend un
+  champ **`orchestration`** à côté d'`agents` (`null` quand rien n'a été mesuré — pas un poste à
+  zéro) ; `agents` + `orchestration` refont `total`. Hors du parc ne veut pas dire hors du compte.
+- **À l'écran, ce qui la distingue est la place et le mot** : « dont orchestration … » en **en-tête**
+  du bloc « Répartition par agent », et une liste qui ne contient plus que des agents. C'est la
+  forme que GitHub Actions donne à « Total duration » — un résumé au-dessus de la liste, jamais une
+  ligne dedans. La tuile *Agents*, elle, **dit** son parc : « N agent(s) hors orchestration ».
+- **Écarté, et pourquoi.** Une teinte propre (la palette est sémantique, et un état porté par la
+  couleur seule tombe sous le filet a11y, §1.6) ; une barre absente ou creuse (le choix rendu sur
+  trois variantes : les deux se lisent comme un **défaut de rendu**) ; répartir sa part sur les
+  agents, à la manière du `shareIdle` de Kubecost (ce serait inventer une attribution que le grand
+  livre ne porte pas).
+
+La veille, les trois variantes et le choix rendu par le regard neuf sont consignés sur #1028.
 
 #### 2.5.1 Une durée de tâche est son temps de travail (#989) — **livré**
 

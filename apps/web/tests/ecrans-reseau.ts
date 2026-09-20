@@ -328,6 +328,24 @@ export function vueAnalytics(): AnalyticsCouts {
       },
     ],
     agents: [{ agent: "dev", role: "Développeur", taches: 2, usage }],
+    // Le poste de Maestro (#1028), servi **hors** des agents : la vue factice
+    // porte les deux, sans quoi l'écran des coûts serait testé sur un cas que
+    // le mode réel ne sert jamais — c'est exactement ce qui avait laissé passer
+    // le doublon d'orchestrateur de #671.
+    orchestration: {
+      agent: "orchestrateur",
+      role: "Orchestrateur",
+      taches: 0,
+      usage: usageFactice({
+        appels: 2,
+        tokens_entree: 2100,
+        tokens_sortie: 400,
+        tokens_total: 2500,
+        cout_usd: 0.36,
+        duree_ms: 5_000,
+        tours: 1,
+      }),
+    },
     taches: [coutTacheAgregeeFactice({ usage })],
     serie: [{ periode: "2026-07-28T10:00:00Z", usage }],
   };

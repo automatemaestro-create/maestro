@@ -598,16 +598,67 @@ def test_analytics_agrege_par_tache_agent_et_execution(client, state_analytics):
     assert r1["usage"]["cout_usd"] == pytest.approx(0.55)
     assert r2["run_id"] == "run-2" and r2["usage"]["cout_usd"] == pytest.approx(0.20)
 
-    # Par agent : tri par coût décroissant, planification comprise (orchestrateur).
-    assert [a["agent"] for a in vue["agents"]] == ["developpeur", "orchestrateur", "qa"]
+    # Par agent : tri par coût décroissant, et **sans l'orchestrateur** (#1028) —
+    # il dépense, mais il n'est pas un membre du parc (docs/37 §4.2).
+    assert [a["agent"] for a in vue["agents"]] == ["developpeur", "qa"]
     dev = vue["agents"][0]
     assert dev["usage"]["cout_usd"] == pytest.approx(0.60) and dev["taches"] == 1
-    assert vue["agents"][1]["taches"] == 0  # planification : hors tâche
+
+    # Sa dépense n'est pas perdue pour autant : elle a son propre poste, et
+    # `agents` + `orchestration` refont le total.
+    orchestration = vue["orchestration"]
+    assert orchestration["agent"] == "orchestrateur"
+    assert orchestration["usage"]["cout_usd"] == pytest.approx(0.10)
+    assert orchestration["taches"] == 0  # planification : hors tâche
+    somme = sum(a["usage"]["cout_usd"] for a in vue["agents"])
+    assert somme + orchestration["usage"]["cout_usd"] == pytest.approx(
+        vue["total"]["cout_usd"]
+    )
 
     # Par tâche : t1 cumule ses deux runs, l'identité suit le dernier statut vu.
     t1 = next(t for t in vue["taches"] if t["tache_id"] == "t1")
     assert t1["executions"] == 2 and t1["statut"] == "echec"
     assert t1["usage"]["cout_usd"] == pytest.approx(0.60)
+
+
+def test_le_parc_ne_porte_pas_lorchestrateur(client, state_analytics):
+    """`GET /api/agents` rend les **exécutants**, jamais Maestro (#1028).
+
+    C'est le constat C13 du retex du 2026-09-11 pris à la source : le tableau de
+    bord annonçait « 6 agent(s) du poste » parce que la planification ouvrait
+    une fiche d'agent à l'orchestrateur, quand `/agents` — qui lit le catalogue
+    des exécutants — en listait 5.
+
+    La fixture publie précisément l'événement fautif : une `agent.activite` de
+    planification au nom de l'orchestrateur. Sans elle, ce test passerait sur un
+    parc qui n'a jamais eu l'occasion de se tromper.
+    """
+    noms = [a["nom"] for a in client.get("/api/agents").json()]
+
+    assert "orchestrateur" not in noms
+    # Les exécutants de la fixture, eux, ont bien leur fiche : ce test dit
+    # « l'orchestrateur est écarté », pas « la projection est muette ».
+    assert {"developpeur", "qa"} <= set(noms)
+
+
+def test_lorchestration_absente_des_couts_na_pas_de_poste(client, state):
+    """Rien de mesuré ≠ zéro : sans dépense d'orchestration, pas de poste (#1028).
+
+    Même convention que `cout_usd: None` ailleurs dans la vue — un poste à
+    « 0,00 $US » dirait que Maestro n'a rien coûté, là où la fenêtre dit qu'il
+    n'y a rien à en dire.
+    """
+    state.appliquer(Event(
+        type=EVENEMENT_TACHE_STATUT, run_id="run-9", tache_id="t9",
+        titre="Implémenter", agent="developpeur", role="Développeur",
+        statut="terminee", usage=_usage(0.40),
+        horodatage="2026-07-14T10:20:00+00:00",
+    ))
+
+    vue = client.get("/api/analytics/couts?projet=tous").json()
+
+    assert vue["orchestration"] is None
+    assert [a["agent"] for a in vue["agents"]] == ["developpeur"]
 
 
 def test_analytics_serie_temporelle_selon_le_pas(client, state_analytics):

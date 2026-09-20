@@ -145,6 +145,22 @@ export function IndicateursTableauDeBord({
   // **libres** (l'être ne dépend d'aucun projet — un agent libre l'est aussi
   // pour celui-ci), et **occupés ailleurs**, renvoyés au détail avec le parc.
   //
+  // ⚠ **Ce parc ne porte plus l'orchestration** (#1028) : elle dépense et on lui
+  // parle, mais elle n'exécute aucune tâche, donc elle n'est pas un membre du
+  // parc (docs/37 §4.2). Jusque-là `GET /api/agents` la rendait — la tuile
+  // annonçait « 6 agent(s) du poste » quand `/agents` en listait 5 (constat C13
+  // du retex du 2026-09-11). Le remède est **à la source** et non ici : ce
+  // composant continue de compter ce qu'on lui donne, et ce qu'on lui donne est
+  // désormais la même population que celle de `/agents`.
+  //
+  // Le détail le **dit** plutôt que de laisser le compte passer de 6 à 5 sans
+  // explication — « hors orchestration ». Il a fallu, pour le loger, céder le
+  // « du poste » d'avant : le détail tient sur **deux lignes**, et une tuile plus
+  // haute que ses trois voisines se voit dans une rangée (mesuré sur les
+  // variantes de #1028, où la mention en plus faisait une troisième ligne). Le
+  // cadre du poste n'est pas perdu pour autant : « occupé(s) ailleurs » ne veut
+  // rien dire d'autre qu'un parc partagé entre projets.
+  //
   // Le croisement se fait sur les **identifiants** de `taches_en_cours` et non
   // sur le nom de l'agent : c'est la donnée dont le backend dérive lui-même
   // `occupe` (maestro/controltower/state.py), donc `ici` ne peut pas dépasser
@@ -213,7 +229,7 @@ export function IndicateursTableauDeBord({
       detail:
         agents.length === 0
           ? "aucun agent connu"
-          : `${agents.length} agent(s) du poste · ${ailleurs} occupé(s) ailleurs · ${desactives} désactivé(s)`,
+          : `${agents.length} agent(s) hors orchestration · ${ailleurs} occupé(s) ailleurs · ${desactives} désactivé(s)`,
       renvoi: pageAgents && {
         href: pageAgents.href,
         libelle: "Voir les agents",
