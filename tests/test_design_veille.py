@@ -343,6 +343,21 @@ def routes_du_motif() -> set[str]:
     return set(trouve.group(1).split("|"))
 
 
+#: Les routes de `apps/web/app/` qui ne sont PAS des écrans du produit, chacune avec sa raison.
+#:
+#: `socle` (#984, lot 4 de #973) est le **catalogue des primitives** : une page de développement qui
+#: rend `components/Primitives` dans ses variantes et dans les deux thèmes. Elle n'est pas servie en
+#: production (`REDIRECTION_SOCLE_HORS_DEVELOPPEMENT`, `apps/web/next.config.ts`), elle n'est pas au
+#: menu, et **personne ne demandera une veille de conception dessus** : elle ne décide de rien qu'un
+#: écran du produit montrerait, elle montre ce que les écrans emploient. Un ticket qui nomme
+#: `/socle` n'a donc pas de surface visible au sens de #714.
+#:
+#: ⚠ L'exclusion est NOMMÉE, jamais un motif qui l'ignorerait en silence : le test ci-dessous rougit
+#: toujours dans les deux sens sur tout le reste, et une entrée d'ici qui perdrait son dossier
+#: rougit aussi. C'est la même règle que le motif lui-même — ce qui est écarté l'est avec sa raison.
+HORS_PRODUIT = {"socle"}
+
+
 def test_la_liste_des_routes_suit_les_ecrans() -> None:
     """Une liste recopiée à la main dérive au premier écran ajouté — celle-ci est vérifiée.
 
@@ -353,8 +368,16 @@ def test_la_liste_des_routes_suit_les_ecrans() -> None:
     ⚠ Ce test rougit dans les DEUX sens, et le second compte autant : une route disparue laisserait
     dans le motif un nom qui ne désigne plus rien, donc un faux positif pour toujours.
     """
-    ecrans = {p.parent.name for p in (RACINE / "apps" / "web" / "app").glob("*/page.tsx")}
-    assert ecrans, "aucune route trouvée : le test ne garde plus rien"
+    dossiers = {p.parent.name for p in (RACINE / "apps" / "web" / "app").glob("*/page.tsx")}
+    assert dossiers, "aucune route trouvée : le test ne garde plus rien"
+    # Une exclusion qui ne désigne plus rien est aussi une dérive : elle ferait croire qu'une route
+    # est couverte par une raison écrite, alors qu'elle n'existe plus.
+    orphelines = HORS_PRODUIT - dossiers
+    assert not orphelines, (
+        f"routes écartées qui n'existent plus sous apps/web/app/ : {sorted(orphelines)} — "
+        "retirer leur entrée de HORS_PRODUIT avec sa raison"
+    )
+    ecrans = dossiers - HORS_PRODUIT
     manquantes = ecrans - routes_du_motif()
     disparues = routes_du_motif() - ecrans
     assert not manquantes, (

@@ -645,6 +645,42 @@ même attribut ne se départagent pas par l'ordre d'écriture mais par celui de 
 feuille générée — une surcharge au cas par cas est silencieusement instable. La
 même règle vaut pour le ton et la variante d'un `Bouton`.
 
+#### Les voir — le catalogue `/socle` (#984)
+
+Le tableau ci-dessus **dit** les briques ; la page `/socle` les **rend**. Chaque
+primitive exportée y est montrée dans ses variantes — une section par brique, une
+rangée par axe (`ton`, `variante`, `taille`, `densité`) —, avec l'échelle
+typographique et la palette sémantique, et **chaque rangée est rendue deux fois :
+thème clair, puis thème sombre**. Chaque spécimen porte son nom technique
+(`ton="attentionClaire"`) : le catalogue sert à montrer du doigt.
+
+Ce n'est pas un écran du produit, et rien ne l'y fait entrer :
+
+- **elle n'est pas servie en production** — `REDIRECTION_SOCLE_HORS_DEVELOPPEMENT`
+  (`next.config.ts`) renvoie `/socle` vers `/` dès que `NODE_ENV` vaut
+  `production`, et une redirection est évaluée *avant* le routage ;
+- **elle n'est pas au menu**, donc elle n'entre ni dans les dix écrans de
+  `tests/sobriete.test.tsx` et `tests/a11y.test.tsx` (leurs tables sont dérivées
+  de `MENU`), ni dans la frontière écrans ↔ `navigation.ts` de
+  `tests/test_retex_utilisateur.py`. La règle des trois places ne s'y applique
+  donc pas : un catalogue **est** une liste ;
+- **elle est écartée, nommément et avec sa raison**, des deux dérivations de
+  routes — `HORS_PRODUIT` dans `tests/test_design_veille.py` et
+  `scripts/presentation/ecrans-touches.sh`.
+
+Elle reste en revanche jugée par les balayages qui lisent tout `app/` +
+`components/` (`couleurs.test.ts`, `typographie.test.ts`, la garde de mouvement
+et les contrôles de saisie d'`a11y.test.tsx`), et c'est voulu : une page qui
+inventerait une couleur ou un pas pour se montrer elle-même mentirait sur ce
+qu'elle montre.
+
+Les deux thèmes ne coûtent **aucun CSS** : `globals.css` déclare ses tokens sur
+`[data-theme="clair"]` / `[data-theme="sombre"]` — des sélecteurs d'attribut — et
+le variant `dark:` matche `[data-theme="sombre"] *`. Poser `data-theme` sur un
+`<div>` bascule tout son sous-arbre. C'est le seul endroit de la page qui le
+fait (son composant `Scene`), et le panneau peint son fond lui-même
+(`bg-surface-creuse`), `--background` n'étant consommé que par la règle `body`.
+
 #### Le bouton — `Bouton`, `BoutonLien`
 
 Avant #535 le produit n'avait **aucune** primitive de bouton : 92 `<button>` dans

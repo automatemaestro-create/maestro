@@ -69,10 +69,39 @@ export const REDIRECTIONS_PORTE_UNIQUE = [
   { source: "/brief", destination: "/chat", permanent: false },
 ];
 
+/**
+ * Le catalogue du socle (#984, lot 4 de #973) n'est **pas servi en
+ * production** — et c'est ici qu'on l'en empêche, pas dans la page.
+ *
+ * `/socle` rend chaque primitive de `components/Primitives` dans ses variantes
+ * et dans les deux thèmes : une référence pour qui écrit un « rendu attendu »
+ * (#976), pour la session qui construit, pour la relecture qui juge (#980).
+ * C'est un **outil de développement**, pas un écran du produit — il ne dit rien
+ * d'un projet, d'un run ni d'un coût, et un utilisateur qui y arriverait par un
+ * lien n'y trouverait rien à faire.
+ *
+ * ⚠ **Une redirection, et non un `notFound()` dans la page** : elle est évaluée
+ * **avant le routage** (la raison déjà écrite au-dessus pour `/composer` et
+ * `/brief`), donc elle l'emporte sur tout ce que la page pourrait faire, et le
+ * gardien vit à **un** endroit — pas un dans `next.config` et un second dans le
+ * composant, qui divergeraient au premier refactor. Un `notFound()` aurait en
+ * plus rendu un 404 là où le produit sait déjà ramener quelqu'un à l'accueil.
+ *
+ * La frontière est `NODE_ENV` et rien d'autre : `next dev` la pose à
+ * `development`, `next build` / `next start` à `production` — donc la stack de
+ * production de `scripts/presentation/captures.sh`, celle du poste de démo et
+ * tout déploiement futur redirigent, sans réglage à tenir à jour.
+ */
+export const REDIRECTION_SOCLE_HORS_DEVELOPPEMENT =
+  process.env.NODE_ENV === "production"
+    ? [{ source: "/socle", destination: "/", permanent: false }]
+    : [];
+
 const nextConfig: NextConfig = {
   redirects: async () => [
     ...REDIRECTIONS_NAVIGATION_V1,
     ...REDIRECTIONS_PORTE_UNIQUE,
+    ...REDIRECTION_SOCLE_HORS_DEVELOPPEMENT,
   ],
 };
 

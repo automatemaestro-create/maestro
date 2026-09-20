@@ -52,6 +52,20 @@
 #    - les fichiers à la RACINE de `apps/web/app/` autres que `page.tsx` — `layout.tsx`,
 #      `globals.css`, les icônes : ce sont la coquille de TOUS les écrans, pas l'écran d'accueil.
 #      Un `layout.tsx` IMBRIQUÉ, lui, est bien celui de sa route et compte pour elle.
+#    - `apps/web/app/socle/**`, LE CATALOGUE DES PRIMITIVES (#984, lot 4 de #973). C'est une route
+#      réelle en développement, et c'est bien pour ça qu'elle est écartée ICI, avec sa raison,
+#      plutôt que par un motif qui la raterait : elle n'est PAS SERVIE EN PRODUCTION
+#      (`REDIRECTION_SOCLE_HORS_DEVELOPPEMENT`, `apps/web/next.config.ts`), donc la stack de
+#      `captures.sh` — qui est une stack de production — ne peut pas la photographier, et une
+#      présentation de jalon qui l'annoncerait comme « écran touché » promettrait une capture qui
+#      n'existera jamais. Ce n'est pas un écran du produit : il ne montre ni projet, ni run, ni
+#      coût, il montre ce avec quoi les écrans sont écrits.
+#      ⚠ CONSÉQUENCE ASSUMÉE, et elle vaut d'être dite : `scripts/design/relecture-visuelle.sh`
+#      pose ses trois questions à ce script (#932), donc un ticket qui ne touche que le catalogue
+#      rend une ligne `-` et son plan le NOMME en « indéterminé » au lieu d'ouvrir l'écran. C'est la
+#      règle de ce fichier appliquée jusqu'au bout — l'inconnu se nomme, il ne se devine pas — et
+#      c'est préférable à deux règles de classement, une par appelant, qui finiraient par ne plus
+#      nommer le même écran pour le même fichier.
 #    Les rattacher à une route serait les rattacher à une route au hasard.
 #
 # 4. UN TICKET SANS SURFACE VISIBLE REND ZÉRO LIGNE, et c'est un résultat : moteur, CI, doc,
@@ -211,11 +225,17 @@ function ajoute(route, chemin) {
   routes[++n] = route
   fichiers[route] = chemin
 }
-BEGIN { APP = "apps/web/app/"; PARTAGE = "apps/web/components/" }
+BEGIN {
+  APP = "apps/web/app/"; PARTAGE = "apps/web/components/"
+  # La route réelle qui n est pas un ecran du produit : le catalogue des primitives (#984). Ecartee
+  # nommement et non par un motif — voir le point 3 de l en-tete.
+  HORS_PRODUIT = "apps/web/app/socle/"
+}
 {
   chemin = $0
   if (chemin == "") next
   if (substr(chemin, 1, length(PARTAGE)) == PARTAGE) { ajoute("-", chemin); next }
+  if (substr(chemin, 1, length(HORS_PRODUIT)) == HORS_PRODUIT) { ajoute("-", chemin); next }
   if (substr(chemin, 1, length(APP)) != APP) next
 
   reste = substr(chemin, length(APP) + 1)
