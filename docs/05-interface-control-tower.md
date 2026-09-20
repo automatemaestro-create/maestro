@@ -5066,8 +5066,12 @@ que le même objet porte, après ce qu'il **embarque** (`sources`, §6.12) et ce
 // CadrageDecisionRequete (corps de …/cadrage)
 {
   "approuve": true,
-  "objectif": null,     // la version CORRIGÉE ; null : la proposition part telle quelle
-  "projet_id": "prj-…", // le projet de la fenêtre — il rattachera le run, comme à l'envoi
+  "objectif": null,        // la version CORRIGÉE ; null : la proposition part telle quelle
+  "plafond_cout_usd": 5,   // les quatre bornes du run (#990, §6.16) — null : aucune
+  "plafond_tokens": null,
+  "timeout_tache_s": null,
+  "parallelisme": 2,
+  "projet_id": "prj-…",    // le projet de la fenêtre — il rattachera le run, comme à l'envoi
   "conversation": null
 }
 ```
@@ -5119,3 +5123,75 @@ Implémentation : [`maestro/controltower/chat.py`](../maestro/controltower/chat.
 `apps/web/components/Conversation.tsx`. Couverture :
 [`tests/test_chat_global.py`](../tests/test_chat_global.py) section ⑨ et
 `apps/web/tests/demande-cadrage.test.tsx`.
+
+### 6.16 Borner un run depuis le chat (#990) — **livré**
+
+Le moteur sait arrêter un run sur quatre garde-fous depuis #9 — `plafond_cout_usd`,
+`plafond_tokens`, `timeout_tache_s`, `parallelisme` —, `POST /api/executions` les expose depuis #185
+et la ligne de commande aussi. Mais la **seule porte de lancement de l'interface** est la
+conversation depuis #666, et elle ne les passait pas : `ouvrir_un_run` appelait `lancer(objectif)`
+sans garde-fou, quoi qu'on ait pu vouloir. Un run lancé d'un écran était donc littéralement sans
+borne — mesuré à **12,51 $** par le [retex du 2026-09-11](retex/2026-09-11-premiere-session-utilisateur.md)
+(constat **G5**), pendant que l'écran Paramètres reconnaissait lui-même « Le plafond de dépense n'est
+pas encore réglable depuis l'interface » et renvoyait à une option de ligne de commande.
+
+**Le contrat.** Les quatre champs s'ajoutent au corps de `…/cadrage` (§6.15), **aux mêmes noms** que
+sur `POST /api/executions` : c'est le même moteur qui les reçoit, et un second vocabulaire pour la
+même chose se paierait au premier écran qui voudrait afficher les deux. Chacun est optionnel et
+`null` vaut « pas de borne », comme partout ailleurs dans ce contrat.
+
+**Ils voyagent avec l'accord**, et pas ailleurs, pour la raison exacte qui y fait passer l'objectif
+amendé : le juge rend un objectif, jamais un formulaire, donc un tour de jugement les perdrait. Un
+accord **tapé** dans la zone de saisie n'en porte donc aucun — les bornes ne peuvent venir que d'un
+**geste** d'écran, seul endroit où quelqu'un a pu les poser.
+
+**Ils ne sont pas jugés à la frontière.** La règle « un plafond est un maximum » vit dans
+`ServiceExecutions.lancer`, qui refuse **avant toute écriture**, et la redoubler dans le canal
+donnerait deux formulations qui finiraient par diverger. Un garde-fou hors bornes se raconte donc
+**dans le fil** (« Le lancement a échoué : … ») plutôt que de remonter en statut : le geste, lui, a
+bien eu lieu et reste acquis au fil — c'est l'invariant de #686 appliqué un cran plus loin.
+
+**Le régime s'annonce dans les deux sens**, et c'est le troisième critère du ticket : la réponse qui
+ouvre le run dit à quoi il s'arrêtera, ou qu'il ira jusqu'au bout. C'est la règle de la ligne
+`plan :` d'un run d'outillage (#286) — taire l'illimité en ferait un oubli plutôt qu'un choix, or
+c'est exactement le défaut qu'on corrige. Le **geste**, lui, ne recopie que ce qu'il a *ajouté*
+(« Oui, lance — bornes : s'interrompt à 5,00 $ ») : le fil est la seule mémoire du canal, et un run
+borné dont la trace ne dirait pas à quoi il s'est arrêté serait un run qu'on ne peut plus relire.
+
+**La phrase est écrite une fois de chaque côté** — `BornesRun.en_phrase()`
+([`maestro/controltower/bornes.py`](../maestro/controltower/bornes.py)) et `phraseDesBornes`
+(`apps/web/lib/bornes`) —, et dans le même vocabulaire : des **verbes d'effet** (« s'interrompt
+à ») plutôt que des étiquettes (« plafond de »). Relire dans le fil ce qu'on a vu sur l'écran ne
+doit pas donner l'impression d'avoir lancé autre chose.
+
+**Côté écran**, la forme est un choix rendu **sur pièces** (commentaires « Veille de conception » et
+« Variante retenue » de #990) : trois variantes rendues sur la vraie stack, jugées par un regard qui
+n'en était pas l'auteur, contre des références capturées en direct (Replicate, Vercel Spend
+Management, les budgets GitHub). Ce qu'elles ont tranché :
+
+- **au lancement, pas dans un écran de réglages** — d'après Replicate, où l'objectif et ses bornes
+  tiennent dans un seul formulaire et où « Run » est à son pied. La variante qui posait des
+  **défauts** dans Paramètres a été écartée : pour borner *ce* run-ci, il aurait fallu quitter une
+  proposition en attente, aller régler ailleurs, puis revenir. Un second endroit où poser la même
+  valeur serait aussi un second support de la même vérité ;
+- **repliées, le repli portant le récapitulatif** — d'après Vercel, dont la ligne fermée porte le
+  chiffre et l'état plutôt qu'un mot générique. La variante qui laissait les quatre champs ouverts
+  en permanence a été écartée : elle alourdit **chaque** proposition ;
+- **le contrôle à gauche de la ligne** — correction du regard neuf : au bord droit, il tombait sous
+  le bouton flottant « ↓ Dernier message » du fil, qui recouvrait l'affordance ;
+- **aucune invite grise** : « aucun » en `placeholder` se lit comme un champ vide, pas comme une
+  valeur. Ce que vaut l'absence est écrit dans l'aide du champ.
+
+**Paramètres cesse d'être un cul-de-sac** (critère 2) : la section « Coûts & plafonds » ne dit plus
+« pas encore réglable depuis l'interface » et ne renvoie plus à une option de ligne de commande —
+elle **dit où** (`/chat`), ce qui est le travail d'un écran de réglages dont la valeur vit ailleurs.
+
+Implémentation : [`maestro/controltower/bornes.py`](../maestro/controltower/bornes.py) (`BornesRun`),
+[`maestro/controltower/chat.py`](../maestro/controltower/chat.py) (`ServiceChat.trancher_cadrage`,
+`_geste_de_cadrage`), [`maestro/controltower/orchestration.py`](../maestro/controltower/orchestration.py)
+(`LanceurRun`, `_ouvrir_un_run`) et [`maestro/controltower/app.py`](../maestro/controltower/app.py)
+(`CadrageDecisionRequete`, `ouvrir_un_run`) ; côté UI `apps/web/lib/bornes.ts`,
+`apps/web/components/chat/DemandeDeCadrage.tsx` et
+`apps/web/components/parametres/ParametresCouts.tsx`. Couverture :
+[`tests/test_chat_global.py`](../tests/test_chat_global.py) section ⑦ et
+`apps/web/tests/demande-cadrage.test.tsx` section ⑤.

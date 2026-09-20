@@ -275,6 +275,7 @@ from typing import Any
 
 from maestro.agents.catalog import MODELE_EXECUTANT_DEFAUT, Agent
 from maestro.agents.playbook_du_code import registre
+from maestro.controltower.bornes import AUCUNE_BORNE, BornesRun
 from maestro.controltower.causes import cause_lisible
 from maestro.controltower.chat import (
     Incrementeur,
@@ -394,7 +395,13 @@ AGENT_ORCHESTRATION = Agent(
 #: le satisfait tel quel, une fois ses réglages liés par l'appelant. Le second
 #: argument est le **projet de la fenêtre** d'où part la demande (#683), `None`
 #: quand il n'y en a pas : le run part alors sans projet, comme avant ce lot.
-LanceurRun = Callable[[str, str | None], Awaitable[Mapping[str, Any]]]
+#:
+#: Le troisième porte les **bornes** que l'écran a posées au moment de lancer
+#: (#990) : coût, tokens, délai par tâche, parallélisme. Elles voyagent d'un bloc
+#: plutôt qu'en quatre paramètres — voir `controltower.bornes` —, et
+#: `AUCUNE_BORNE` est le régime de tous les runs ouverts depuis le fil avant ce
+#: ticket, donc ce que rend un appelant qui n'en pose pas.
+LanceurRun = Callable[[str, str | None, BornesRun], Awaitable[Mapping[str, Any]]]
 
 #: L'état de l'orchestration en une phrase, pour répondre « où en est-on ? » sans
 #: donner à ce module la connaissance de la projection. Il prend le projet de la
@@ -696,7 +703,12 @@ class RepondeurOrchestration(RepondeurChat):
             return ReponseChat(contenu=redaction.texte)
         await redaction.ecrire(verdict.reponse)
         if verdict.nom == VERDICT_ACCORD:
-            return await self._ouvrir_un_run(redaction, verdict.objectif, projet_id)
+            # Un accord **tapé** ne porte aucune borne : le juge rend un
+            # objectif, pas un formulaire. Les bornes viennent du geste
+            # (`trancher_cadrage`), seul chemin où un écran a pu les poser.
+            return await self._ouvrir_un_run(
+                redaction, verdict.objectif, projet_id, AUCUNE_BORNE
+            )
         if verdict.nom == VERDICT_PROPOSITION and self._lanceur is None:
             # Prévenir **avant** le « oui » : proposer un run qu'on ne pourra pas
             # ouvrir ferait attendre l'utilisateur pour un refus au tour suivant.
@@ -725,6 +737,7 @@ class RepondeurOrchestration(RepondeurChat):
         approuve: bool,
         objectif: str,
         projet_id: str | None = None,
+        bornes: BornesRun = AUCUNE_BORNE,
     ) -> ReponseChat:
         """Exécute la décision prise **au geste** sur une proposition (#943).
 
@@ -741,9 +754,16 @@ class RepondeurOrchestration(RepondeurChat):
         proposition —, donc la corriger exige ce chemin-ci ou ne serait pas
         possible du tout.
 
+        `bornes` (#990) est ce que l'écran a posé **au moment de lancer** : les
+        quatre garde-fous de `lancer`, et rien d'autre. Elles passent par ici
+        pour la raison exacte qui y fait passer l'objectif amendé — un tour de
+        jugement les perdrait, le juge ne rendant qu'un objectif. Non posées,
+        c'est `AUCUNE_BORNE`, donc le run d'avant ce ticket.
+
         Un refus n'ouvre rien et ne solde rien : le fil garde la proposition,
         l'utilisateur reformule. C'est la symétrie du brief refusé (§6.10) à
-        ceci près qu'il n'y a pas encore de run à annuler.
+        ceci près qu'il n'y a pas encore de run à annuler. Les bornes y sont
+        ignorées, comme l'objectif : il n'y a rien à borner.
         """
         redaction = Redaction(None)
         if not approuve:
@@ -753,7 +773,9 @@ class RepondeurOrchestration(RepondeurChat):
             )
             return ReponseChat(contenu=redaction.texte)
         await redaction.ecrire("C'est parti.")
-        return await self._ouvrir_un_run(redaction, objectif.strip(), projet_id)
+        return await self._ouvrir_un_run(
+            redaction, objectif.strip(), projet_id, bornes
+        )
 
     async def _juger(
         self, agent: Agent, fil: Sequence[MessageChat], projet_id: str | None
@@ -817,7 +839,11 @@ class RepondeurOrchestration(RepondeurChat):
         return _verdict_depuis(texte)
 
     async def _ouvrir_un_run(
-        self, redaction: Redaction, objectif: str, projet_id: str | None
+        self,
+        redaction: Redaction,
+        objectif: str,
+        projet_id: str | None,
+        bornes: BornesRun = AUCUNE_BORNE,
     ) -> ReponseChat:
         """Ouvre le run de `objectif`, dans son projet, et le rattache à la réponse.
 
@@ -833,6 +859,13 @@ class RepondeurOrchestration(RepondeurChat):
         nulle part, le chat étant depuis #666 la seule porte d'entrée. Rien n'est
         deviné : `projet_id` est ce que la fenêtre a envoyé, `None` quand elle n'a
         pas de projet, et le run part alors sans projet comme avant ce lot.
+
+        **Le régime des bornes s'annonce dans les deux sens** (#990, critère 3),
+        et c'est la règle de la ligne `plan :` d'un run d'outillage (#286) : un
+        run borné dit à quoi il s'arrêtera, un run sans borne dit qu'il ira
+        jusqu'au bout. Taire le second ferait de l'illimité un oubli plutôt
+        qu'un choix — or c'est le défaut que ce ticket corrige, et il s'est
+        mesuré à 12,51 $.
         """
         if not objectif:
             await redaction.ecrire(
@@ -848,7 +881,7 @@ class RepondeurOrchestration(RepondeurChat):
             return ReponseChat(contenu=redaction.texte)
 
         try:
-            resume = await self._lanceur(objectif, projet_id)
+            resume = await self._lanceur(objectif, projet_id, bornes)
         except Exception as echec:
             # Nommé dans le fil plutôt que levé : voir la classe. Un objectif
             # refusé (vide, plafond hors bornes) et un moteur qui ne démarre pas
@@ -861,6 +894,7 @@ class RepondeurOrchestration(RepondeurChat):
         await redaction.ecrire(f" Run {run_id} ouvert" if run_id else " Run ouvert")
         if statut:
             await redaction.ecrire(f", statut « {libelle_statut_execution(statut)} »")
+        await redaction.ecrire(f" — {bornes.en_phrase()}")
         await redaction.ecrire(
             ". Les tâches apparaîtront au tableau de bord à mesure que la "
             "décomposition les produit."

@@ -114,6 +114,15 @@ RUN_SOLDE = "demo-livre"
 #: reconnaît à son objectif, jamais à son identifiant.
 OBJECTIF_SOLDE = "Exporter les contacts du mini-CRM en CSV, avec un rapport de qualité"
 
+#: L'objectif qu'une **proposition en attente** soumet à l'accord (#943, #990) —
+#: le `proposition` du dernier message du fil nominal. C'est lui que la carte
+#: « Lancer ce run ? » affiche, éditable, et c'est lui qui partirait si l'on
+#: cliquait : sans cette valeur, la carte n'a rien à montrer et ne se rend pas.
+OBJECTIF_PROPOSE = (
+    "Dédoublonner les contacts du mini-CRM sur l'adresse e-mail, puis relancer "
+    "l'export CSV"
+)
+
 #: Les tâches de ce run, avec ce qu'elles ont coûté. Deux, et pas quatre : ce run
 #: n'est pas là pour peupler un Kanban — il est là pour qu'un run **fini** existe.
 _TACHES_SOLDEES: tuple[tuple[str, str, str, str, StepUsage], ...] = (
@@ -868,14 +877,20 @@ async def _scenario_charge(bus: EventBus) -> None:
 def _peupler_chat_nominal(store: ChatStore) -> None:
     """Met dans le fil global **la demande qui a ouvert le run soldé**, et sa réponse (#928).
 
-    Deux messages, pas un de plus. C'est la scène exacte du retex du 2026-09-11 :
-    on demande quelque chose, l'orchestration répond « c'est parti », et le
-    dernier message du fil reste le **lancement** — le run finit ailleurs, sans
-    que le fil en sache rien.
+    Les deux premiers messages sont la scène exacte du retex du 2026-09-11 : on
+    demande quelque chose, l'orchestration répond « c'est parti », et le run
+    finit ailleurs, sans que le fil en sache rien. La réponse porte `run_id`
+    (#268) : c'est le rattachement persisté par lequel le fil sait de quel run il
+    parle, et il existe depuis #269.
 
-    La réponse porte `run_id` (#268) : c'est le rattachement persisté par lequel
-    le fil sait de quel run il parle, et il existe depuis #269. Rien de neuf ici
-    — ce qui manquait est ce que l'écran en fait une fois le run soldé.
+    Les deux derniers sont la **demande de cadrage en attente** (#943), et ils
+    sont là pour une raison mécanique : la carte « Lancer ce run ? » n'existe à
+    l'écran que si le **dernier** message du fil porte une `proposition`
+    (`chat.proposition_en_attente`). Sans eux, la porte d'entrée du produit —
+    donc l'écran où se posent les bornes d'un run (#990) — ne se montre dans
+    aucune démo, et ni une capture ni une relecture visuelle ne peuvent
+    l'atteindre. L'état nominal montre donc les deux moments du fil : ce qui a
+    été lancé, et ce qui attend un accord.
     """
     ouverture = datetime.now(UTC) - timedelta(minutes=53)
     store.ajouter(
@@ -896,6 +911,28 @@ def _peupler_chat_nominal(store: ChatStore) -> None:
             ),
             horodatage=(ouverture + timedelta(seconds=12)).isoformat(timespec="seconds"),
             run_id=RUN_SOLDE,
+        )
+    )
+    store.ajouter(
+        MessageChat(
+            agent=NOM_ORCHESTRATION,
+            auteur=UTILISATEUR,
+            contenu="Il faudrait aussi dédoublonner les contacts avant l'export.",
+            horodatage=(ouverture + timedelta(minutes=51)).isoformat(timespec="seconds"),
+        )
+    )
+    store.ajouter(
+        MessageChat(
+            agent=NOM_ORCHESTRATION,
+            auteur=NOM_ORCHESTRATION,
+            contenu=(
+                "Je vous propose de dédoublonner les contacts du mini-CRM sur "
+                "l'adresse e-mail, puis de relancer l'export CSV. Je lance ?"
+            ),
+            horodatage=(ouverture + timedelta(minutes=51, seconds=9)).isoformat(
+                timespec="seconds"
+            ),
+            proposition=OBJECTIF_PROPOSE,
         )
     )
 
