@@ -206,6 +206,50 @@ Conséquence directe : **542 lignes portant un `dark:`** sur 59 fichiers — cha
 deux fois, à la main, partout où la primitive n'est pas utilisée. **C'est le multiplicateur de coût
 de toute la refonte** : changer une couleur, aujourd'hui, c'est éditer deux valeurs dans N fichiers.
 
+### 2.5 Le barème de padding — conteneurs et contrôles (#983)
+
+Le §2.3 mesure la dispersion ; celui-ci écrit le barème qui la tient. **Six pas, et pas un de
+plus** : trois pour l'intérieur d'une boîte, trois pour un élément réglé sur une ligne de texte.
+
+| Rôle | Le pas | Ce qui le rend | Quand |
+|---|---|---|---|
+| Conteneur | `p-2.5` | `<Carte densite="compacte">` | ce qui s'empile en nombre — cartes du Kanban, lignes de liste |
+| Conteneur | `p-3` | `<Carte>` (défaut) | le cas courant |
+| Conteneur | `p-4` | `<Carte densite="aeree">` | une section de plein format qu'on lit posément |
+| Conteneur | *(aucun)* | `<Carte densite="aucune">` | la carte encadre un contenu qui gère le sien (tableau…) |
+| Contrôle | `px-2 py-0.5` | `<Badge>` | ce qui qualifie sans agir |
+| Contrôle | `px-2.5 py-1` | `<Bouton taille="petite">` | une action posée dans une ligne |
+| Contrôle | `px-3 py-1.5` | `<Bouton>`, `CLASSE_CONTROLE` | la taille courante d'un formulaire |
+
+**Le barème n'est pas cette table : c'est ce que `components/Primitives.tsx` écrit.** La table le
+rend lisible, la sonde le **lit** — deux tables recopiées divergeraient au premier ticket, et c'est
+précisément ce que §2.3 mesure sur les couleurs. Un **septième pas** est donc une décision d'écran,
+qui se prend dans `Primitives.tsx` et se discute là : l'écrire dans un écran ne l'ajoute pas au
+barème, ça le contourne.
+
+**Ce que la sonde juge** (`apps/web/tests/espacements.test.ts`), et c'est **étroit à dessein** — un
+résidu étalé sur tout le dépôt ne serait plus lu :
+
+- **`p-<n>`, partout et sans condition.** Un écart égal des quatre côtés est le rythme intérieur
+  d'une boîte : rien d'autre ne s'écrit ainsi. C'est ce qui fait voir la surcharge la plus directe,
+  `<Carte densite="aucune" className="p-5">`.
+- **La paire `px-<a> py-<b>`, quand sa feuille habille quelque chose** — un rayon, ou une marque
+  d'interaction (`hover:`, `focus:`, `disabled:`, `cursor-pointer`…). La condition n'est pas un
+  confort : mesuré le 2026-09-20, `px-3 py-2` rend **à la fois** l'onglet d'`OngletsAgent` et la
+  bannière de `BanniereErreurApi`, tandis que `px-4 py-3` ne rend **que** les trois bandes de
+  `PanneauDetailTache` (en-tête, corps, pied). Sans elle, la sonde réclamerait `Bouton` à qui pose
+  le padding d'un `<main>` — et quelques faux positifs suffisent à ce qu'on cesse de lire un résidu.
+- **Hors compte** : les marges, les `gap`, les paddings dirigés (`pt-`, `pl-`…) et un `px-`/`py-`
+  seul. Ils règlent la mise en page, pas le rythme intérieur. Hors compte aussi,
+  `components/Primitives.tsx` — il **porte** le barème, il n'est pas jugé par lui ; son
+  élargissement rougit ailleurs, là où les six pas sont épinglés.
+
+**Le résidu au 2026-09-20 : 70 paddings hors barème dans 39 fichiers**, nommés fichier par fichier
+dans le test avec leur compte **exact** — un de plus rougit, un de **moins** rougit aussi tant que
+la ligne n'est pas mise à jour. C'est ce qui fait qu'un résidu ne peut que décroître, et que chaque
+décroissance est un geste écrit (mécanique de #895). Ce ticket ne migre aucun écran : il pose le
+compte et refuse le suivant.
+
 ---
 
 ## 3. Cible d'accessibilité
