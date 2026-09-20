@@ -179,6 +179,9 @@ contraste fautif de §3.2, dans 26 endroits à corriger un par un.
 
 ### 2.3 La dispersion visuelle, en nombres
 
+**Relevé au `ripgrep` du 2026-08-25** (#540). C'est le constat qui a lancé le chantier ; la
+**re-mesure** par les sondes est au §2.6, et c'est elle qui fait foi aujourd'hui.
+
 | Propriété | Variantes distinctes | Détail |
 |---|---|---|
 | Rayon | **5** | `rounded-md` 99 · `rounded-full` 38 · `rounded-lg` 27 · `rounded-t-md` 2 · `rounded-xl` 1 |
@@ -328,6 +331,79 @@ dans le test avec leur compte **exact** — un de plus rougit, un de **moins** r
 la ligne n'est pas mise à jour. C'est ce qui fait qu'un résidu ne peut que décroître, et que chaque
 décroissance est un geste écrit (mécanique de #895). Ce ticket ne migre aucun écran : il pose le
 compte et refuse le suivant.
+
+### 2.6 La re-mesure par les sondes — 2026-09-20 (#975, lot 5 de #973)
+
+Le tableau du §2.3 a été relevé **à la main**. Depuis, chaque ligne a sa **sonde** (#981, #982,
+#983, et #895 pour la couleur), et c'est elle qui compte désormais — pour la raison qui a fait
+écrire ce chantier : *un chiffre qu'aucun test ne tient est vrai le jour où on l'a mesuré et faux le
+lendemain*, ce que le §4.2 reproche déjà au comptage de sobriété fait au `grep`.
+
+**L'unité a changé, et c'est la moitié du renversement.** Le relevé de 2026-08-25 comptait des
+**variantes distinctes** — combien de rayons différents le produit écrit-il ? La sonde compte des
+**écarts au barème** — combien d'écritures ne prennent pas le pas qui existe pour elles ? Le premier
+comptage était le bon tant qu'il n'y avait **pas de barème** : cinq rayons, c'est cinq décisions
+prises une par une, et on ne pouvait rien dire de plus. Depuis que les pas sont nommés, « cinq
+variantes » ne distingue plus une valeur **choisie** d'une ligne **recopiée**, alors que c'est tout
+le sujet (§2.2). Les deux tableaux ne sont donc **pas comparables terme à terme**, et aucune des
+différences ci-dessous ne s'interprète comme une baisse.
+
+| Dimension | Ce que la sonde refuse | Résidu au 2026-09-20 | Où le détail vit |
+|---|---:|---|---|
+| Couleur | une paire `dark:` + couleur brute là où un token existe | **648** dans **64** fichiers | `apps/web/tests/couleurs.test.ts` (#895) |
+| Typographie | un pas de Tailwind ou une valeur arbitraire hors de l'échelle | **165** dans **37** fichiers | `apps/web/tests/typographie.test.ts` (#981) |
+| Rayons et ombres | un rayon ou une ombre hors des 4 + 1 pas nommés | **165** dans **59** fichiers | `apps/web/tests/rayons-ombres.test.ts` (#982), détail par classe au §2.3bis |
+| Padding | un `p-<n>`, ou une paire `px`/`py` qui habille, hors des 6 pas | **70** dans **39** fichiers | `apps/web/tests/espacements.test.ts` (#983), barème au §2.5 |
+
+Le détail des deux lignes que le tableau de 2026-08-25 chiffrait le plus finement :
+
+- **Typographie** — 150 **jumelles** (`text-xs` 85, `text-sm` 65 : le même corps qu'un pas nommé,
+  sous un autre nom), **6** pas que l'échelle n'a pas (`text-lg`, `text-base`, `text-xl`) et **9**
+  valeurs arbitraires. Le constat de §2.3 tient donc entièrement — *le pire est la typographie* —,
+  mais il se dit maintenant autrement : ce ne sont pas 13 tailles, ce sont **165 écritures** dont
+  **91 % ne changent rien à l'écran**. Un défaut qui ne se voit pas est un défaut qu'aucune
+  relecture visuelle n'attrapera jamais : il ne pouvait être gardé que là.
+- **Rayons et ombres** — 136 rayons, 28 ombres, 1 `boxShadow` en ligne ; le détail par classe est au
+  §2.3bis, avec les deux choses que le relevé à la main avait **manquées** (le `rounded` nu, 20
+  emplois, sixième rayon que personne n'a choisi ; le `shadow` nu, qui rend exactement `shadow-sm`).
+
+**Trois raisons font que les deux mesures ne se soustraient pas**, et elles valent pour les quatre
+lignes : la sonde **retire les commentaires** avant de lire (le relevé comptait les classes citées
+en prose — d'où un `rounded-md` de plus que ce que le produit rend) ; elle lit les **jetons d'une
+feuille de classes** au lieu d'un préfixe (d'où le `rounded` nu, invisible à un `grep` de
+`rounded-`) ; et elle ne compte que ce qui est **hors barème**, donc rien de ce que le socle écrit
+désormais sous son nom de rôle.
+
+**Ce qu'aucune sonde ne compte, et pourquoi** — le dire ici évite qu'on prenne le silence pour un
+zéro :
+
+- l'**emploi** des pas nommés (`text-titre` employé une seule fois, le constat le plus parlant de
+  §2.3) : il n'y a pas de faute à ne pas employer un pas, il y a une **décision d'écran** à prendre
+  — c'est le chantier #972, pas un compte à tenir ;
+- l'**interligne**, la graisse et la casse : l'interligne des jumelles n'est délibérément pas aliasé
+  (`text-xs` garde son `calc(1 / 0.75)`), donc le refuser réclamerait la migration que ces lots
+  s'interdisent ;
+- les **marges**, les `gap` et les paddings dirigés (`pt-`, `pl-`…) : ils règlent la mise en page, pas
+  le rythme intérieur d'une boîte — les compter étalerait le résidu sur tout le dépôt, et un résidu
+  qu'on ne lit plus ne garde rien (§2.5) ;
+- le **pixel** : ni jsdom ni un balayage de sources ne mesure une hauteur. C'est le skill
+  `/banc-mise-en-page` (#308), et le rendu est le skill `relecture-visuelle` (§5.6).
+
+**Ce que cette re-mesure ne couvre pas.** Les §2.1 (les acquis d'accessibilité) et §2.2 (le socle
+contourné) restent le relevé du 2026-08-25 : les sondes des lots 1 à 3 ne mesurent ni l'un ni
+l'autre, et ce lot ne les re-mesure pas. Ce qui les garde vit ailleurs — le **filet
+d'accessibilité** de #537 pour §2.1 (`a11y.test.tsx`, `contraste.test.ts`, `jsx-a11y` en `error`) ;
+pour §2.2, rien ne **compte** les recopies, mais les quatre sondes ci-dessus en refusent désormais
+l'**ingrédient** : la recopie littérale qu'y mesure le tableau —
+`rounded-lg border border-neutral-200 bg-white` — porte à la fois une paire de couleur brute et un
+rayon hors barème, donc deux écarts qui rougissent avant d'entrer.
+
+⚠ **Aucun de ces quatre chiffres n'a vocation à être recopié ailleurs.** Chacun est **épinglé dans
+sa sonde** (`TOTAL_ANNONCE`) et confronté au compte réel à chaque pipeline : un écart rougit **dans
+les deux sens**, y compris quand le résidu **baisse** sans que la ligne soit mise à jour. C'est ce
+qui fait qu'un résidu ne peut que décroître et que chaque décroissance est un geste **écrit** —
+mais c'est aussi ce qui rend les chiffres de cette page datés par construction. **La sonde fait
+foi ; cette section dit ce qu'elle mesurait le 2026-09-20.**
 
 ---
 

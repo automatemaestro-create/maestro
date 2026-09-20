@@ -669,10 +669,12 @@ Ce n'est pas un écran du produit, et rien ne l'y fait entrer :
   `scripts/presentation/ecrans-touches.sh`.
 
 Elle reste en revanche jugée par les balayages qui lisent tout `app/` +
-`components/` (`couleurs.test.ts`, `typographie.test.ts`, la garde de mouvement
-et les contrôles de saisie d'`a11y.test.tsx`), et c'est voulu : une page qui
-inventerait une couleur ou un pas pour se montrer elle-même mentirait sur ce
-qu'elle montre.
+`components/` — **les quatre sondes du socle** (`couleurs.test.ts`,
+`typographie.test.ts`, `rayons-ombres.test.ts`, `espacements.test.ts`, voir « Le
+filet du socle visuel » plus bas), la garde de mouvement et les contrôles de
+saisie d'`a11y.test.tsx` —, et c'est voulu : une page qui inventerait une
+couleur, un pas ou un rayon pour se montrer elle-même mentirait sur ce qu'elle
+montre. Elle n'est d'ailleurs dans le résidu d'aucune des quatre.
 
 Les deux thèmes ne coûtent **aucun CSS** : `globals.css` déclare ses tokens sur
 `[data-theme="clair"]` / `[data-theme="sombre"]` — des sélecteurs d'attribut — et
@@ -680,6 +682,21 @@ le variant `dark:` matche `[data-theme="sombre"] *`. Poser `data-theme` sur un
 `<div>` bascule tout son sous-arbre. C'est le seul endroit de la page qui le
 fait (son composant `Scene`), et le panneau peint son fond lui-même
 (`bg-surface-creuse`), `--background` n'étant consommé que par la règle `body`.
+
+**Ce qui l'empêche de prendre du retard sur le socle** (`tests/catalogue-socle.test.tsx`,
+#975) : la liste des primitives n'y est **pas écrite**, elle est dérivée du
+module (`Object.keys(Primitives)`) — donc **un export ajouté à `Primitives.tsx`
+sans entrée au catalogue fait rougir**, le jour où il est écrit et pas le jour où
+quelqu'un s'en aperçoit. C'est la mécanique de la table d'écrans dérivée de
+`MENU`, et elle compte ici plus qu'ailleurs : une référence en retard est **pire**
+que pas de référence — on y montre du doigt une variante que le socle n'écrit
+plus, ou on ne trouve pas celle qui vient d'être ajoutée et on recopie l'écran
+voisin, c'est-à-dire le défaut même que le catalogue existe pour corriger. La
+même suite garde la mise en regard (les deux thèmes, **les mêmes spécimens des
+deux côtés**, chaque scène nommée) et les trois versants du « ce n'est pas un
+écran » ci-dessus. Son motif est **prouvé sur un échantillon fautif** : un nom qui
+n'est que le **préfixe** d'un autre est le faux vert évident — sans cette
+frontière, `ChampListe` répondrait pour `Champ` et `BoutonLien` pour `Bouton`.
 
 #### Le bouton — `Bouton`, `BoutonLien`
 
@@ -2111,6 +2128,56 @@ pire, pour un défaut à corriger dans l'urgence d'une revue.
 soumis au reste du filet (contraste, mouvement, taille des cibles, lint), et
 « AAA non visé » ne dispense d'**aucun** critère AA.
 
+### Le filet du socle visuel (#973)
+
+Le filet ci-dessus garde ce qu'un écran **doit** à qui le lit ; celui-ci garde ce
+qui rend les écrans **cohérents entre eux**. Il est né du même constat, et d'une
+mesure : avant #973, **seule la couleur** était gardée (#895). La typographie, les
+rayons, les ombres et les paddings n'avaient aucune sonde — docs/30 §2.3 en avait
+pourtant mesuré la dispersion. Or une session construit un écran **en imitant le
+code voisin** : sans filet, elle recopie la dispersion, et ce qui rend un écran
+élégant ici est d'abord la **cohérence** — peu de valeurs, toujours les mêmes.
+
+Quatre sondes, une par dimension, **toutes de la même forme** :
+
+| Dimension | Sonde | Ce qu'elle refuse | Résidu au 2026-09-20 | Le barème est lu dans |
+| --- | --- | --- | ---: | --- |
+| Couleur (#895) | `tests/couleurs.test.ts` | une paire `dark:` + couleur brute là où un token existe | **648** / 64 fichiers | `app/globals.css` |
+| Typographie (#981) | `tests/typographie.test.ts` | un pas de Tailwind (`text-xs`…) ou une valeur arbitraire hors de l'échelle | **165** / 37 fichiers | `globals.css` + le `theme.css` de Tailwind |
+| Rayons et ombres (#982) | `tests/rayons-ombres.test.ts` | un rayon ou une ombre hors des **4 + 1** pas nommés | **165** / 59 fichiers | `app/globals.css` |
+| Padding (#983) | `tests/espacements.test.ts` | un `p-<n>`, ou une paire `px`/`py` qui **habille**, hors des **6** pas | **70** / 39 fichiers | `components/Primitives.tsx` |
+
+Chaque section « ci-dessus » dit ce que sa sonde juge en détail (« La palette
+sémantique », « L'échelle typographique », « Le barème des rayons et des ombres »,
+« Le barème de padding »). **Ce qui vaut d'être lu une fois ici est ce qu'elles ont
+en commun**, parce que c'est ce qu'une cinquième dimension devra reprendre :
+
+1. **Le barème est lu, jamais recopié.** Deux tables à tenir d'accord divergent au
+   premier ticket — et un barème recopié dans un test, c'est un test qui finit par
+   garder autre chose que ce que le produit écrit.
+2. **Le résidu est nommé fichier par fichier, avec son compte exact** — jamais un
+   plafond. Un écart de plus rougit ; un écart de **moins** rougit aussi tant que
+   la ligne n'est pas mise à jour. C'est ce qui fait qu'un résidu ne peut que
+   **décroître**, et que chaque décroissance est un geste **écrit**.
+3. **La sonde est prouvée sur un échantillon fautif** avant de balayer (règle de
+   #534) : un motif mort rendrait « rien à signaler » avec les mots de « tout est
+   au barème ».
+4. **Des planchers anti-mutisme**, parce que tout ce qui précède rend un ✓ si le
+   parcours des sources ramène une liste vide.
+5. **Aucun écran n'est migré** par ces lots. Chaque sonde **pose le compte et
+   refuse le suivant** ; la migration se fait écran par écran, dans des tickets à
+   part — c'est le partage de #533/#895, et c'est ce qui a permis de poser quatre
+   filets sans toucher à un seul rendu.
+
+⚠ **Un chiffre du tableau n'est pas à recopier ailleurs** : chacun est épinglé
+dans sa sonde (`TOTAL_ANNONCE`) et confronté au compte réel à chaque pipeline.
+Ici il est daté ; là-bas il est **tenu**.
+
+Et le vocabulaire que ces quatre sondes défendent se **voit**, dans les deux
+thèmes, sur le catalogue `/socle` (voir « Le langage visuel » ci-dessus) — lui-même
+gardé par `tests/catalogue-socle.test.tsx`, et lui-même jugé par les quatre
+sondes, puisqu'il vit dans `app/`.
+
 ### La suite de tests
 
 Posée par le ticket #124 (lot final de la refonte #116, où les tests des lots 1
@@ -2188,6 +2255,7 @@ le pixel — le bout en bout dans un vrai navigateur reste le rôle du skill
 | `tests/espacements.test.ts` | Le **padding des conteneurs et des contrôles** (#983, voir « Le barème de padding » ci-dessus) — le rythme intérieur, là où `couleurs.test.ts` juge la couleur : aucun padding hors des **six pas du socle** en dehors du résidu **nommé fichier par fichier avec son compte exact** (70 dans 39 fichiers au lot), le compte étant exact et non un plafond — un padding de moins rougit aussi, si bien que le résidu ne peut que décroître. Le barème est **lu dans `Primitives.tsx`**, jamais recopié, et **épinglé** : une primitive qui ajoute un septième pas rougit, au lieu d'élargir le barème en silence. La **portée est étroite à dessein** — les `p-<n>` partout (un écart égal des quatre côtés est le rythme d'une boîte, et c'est ce qui fait voir `<Carte densite="aucune" className="p-5">`), la paire `px`/`py` seulement quand sa feuille habille quelque chose (rayon ou interaction), parce que `px-3 py-2` rend aussi bien un onglet qu'une bannière et que `px-4 py-3` ne rend que les bandes d'un panneau : réclamer `Bouton` à qui pose le padding d'un `<main>` discréditerait le résidu entier. **Prouvée avant de servir en deux étages**, comme `couleurs.test.ts` : le motif d'abord (les cinq pas hors barème de docs/30 §2.3, la surcharge de densité de `PosteVide`, le contournement par valeur arbitraire, et ce sur quoi il ne doit pas crier — la mise en page, les `gap`, la prose), puis le **verdict** sur une mesure fabriquée |
 | `tests/typographie.test.ts` | La **taille de texte écrite hors de l'échelle** (#981, voir « L'échelle typographique » ci-dessus) — l'**usage** de l'échelle, ce que `couleurs.test.ts` est à la palette : aucun pas de Tailwind (`text-xs`, `text-sm`, `text-base`, `text-lg`…) ni valeur arbitraire (`text-[13px]`, `text-[length:var(--x)]`, `text-(length:--x)`) hors du résidu **nommé fichier par fichier avec son compte exact** (165 dans 37 fichiers au lot), le compte étant exact et non un plafond — une taille de moins rougit aussi, si bien que le résidu ne peut que décroître et que chaque décroissance est un geste écrit. Les deux ensembles sont **lus** et non recopiés : les noms de pas dans le `theme.css` de Tailwind, les pas nommés et leurs alias dans le bloc `@theme` de `globals.css` — d'où un contrôle qui rougit si un alias de #533 reprenait une valeur propre, et un autre si un pas de l'échelle portait un nom de Tailwind (la sonde refuserait le socle qu'elle recommande). Un **manque de l'échelle** y est nommé avec sa raison (`graduation`, l'étiquette d'axe d'un graphique à 10 px quand le plus petit pas est à 11), et un test rougit le jour où l'échelle le comble. **Prouvée avant de servir en deux étages** : le motif d'abord — les jumelles du ticket, les variantes, les contournements arbitraires, et surtout ce sur quoi il ne doit **pas** crier, `text-` étant surchargé par cinq autres familles (couleur, alignement, retour à la ligne, débordement, ombre de texte) —, puis le **verdict** lui-même sur une mesure fabriquée |
 | `tests/rayons-ombres.test.ts` | Le **rayon et l'ombre écrits hors barème** (#982, voir « Le barème des rayons et des ombres » ci-dessus) — le pendant de `couleurs.test.ts` pour les deux propriétés qui disent la **profondeur**. Elle juge le **nom**, pas la valeur : `rounded-lg` et `rounded-carte` rendent le même pixel, et pourtant l'un ne dit pas si l'auteur visait un contrôle ou s'il a recopié la ligne d'à côté. Le barème est **lu dans `globals.css`, jamais recopié**, et un **pas** (valeur littérale) s'y distingue d'une **jumelle** (`var(…)`) — on ne peut donc pas ajouter un pas en le faisant passer pour un alias, et deux contrôles tiennent le « peu de pas » : **exactement 4 rayons et 1 ombre**, un de plus rougit. Résidu **nommé fichier par fichier avec son compte exact** (165 dans 59 fichiers au lot), exact et non plafonné. **Prouvée avant de servir en deux étages** comme `couleurs.test.ts` : le motif d'abord — les cinq rayons et cinq ombres relevés le 2026-09-20, les variantes dans les deux ordres, le rayon et l'ombre **nus** (les deux pas dépréciés de Tailwind v4), les coins dirigés, la valeur arbitraire, l'écriture **en ligne** (`style={{ boxShadow }}`), et ce sur quoi elle ne doit pas crier (le barème lui-même, `ring-*`, `inset-shadow-*`, `drop-shadow-*`, la prose) —, puis le **verdict** sur une mesure fabriquée. Un plancher de plus qu'elle seule a besoin de poser : **le barème doit être employé et pas seulement déclaré**, sans quoi un barème que personne n'écrit rendrait « zéro écart de moins » avec les mots de « tout est au barème » |
+| `tests/catalogue-socle.test.tsx` | Le **catalogue `/socle`** (#975, voir « Les voir — le catalogue » ci-dessus) — la seule des cinq suites du socle qui ne juge pas les écrans mais **la référence qui les décrit**. La liste des primitives n'y est **pas écrite** : elle est dérivée du module (`Object.keys(Primitives)`), donc un export ajouté à `Primitives.tsx` sans entrée au catalogue rougit — mécanique de la table d'écrans dérivée de `MENU` (#270), et elle compte ici plus qu'ailleurs, une référence en retard étant **pire** que pas de référence. Elle garde aussi la **mise en regard** (chaque brique rendue dans les deux thèmes, **les mêmes spécimens des deux côtés**, chaque scène portant son nom accessible, `data-theme` nulle part ailleurs que sur les scènes) et les trois versants du « ce n'est pas un écran du produit » : ni dans `MENU` ni dans `HORS_MENU` — donc invisible à `a11y`/`sobriete`, dont les tables dérivent de `MENU`, et à la frontière écrans ↔ `navigation.ts` de `tests/test_retex_utilisateur.py` —, et **pas servi en production**, la redirection étant lue sur les octets de `next.config.ts` (technique d'`hydratation.test.ts`, puisque `NODE_ENV` vaut `test` sous Vitest) *et* vérifiée branchée dans `redirects`. **Prouvée avant de servir** : le faux vert est le nom qui n'est que le **préfixe** d'un autre — sans frontière d'identifiant, `ChampListe` répondrait pour `Champ`, `BoutonLien` pour `Bouton` et `classesCarte` pour `Carte`, soit les trois briques les plus employées |
 | `tests/hydratation.test.ts` | Ce que le layout racine **tolère du dehors** (#730) : les deux `suppressHydrationWarning`, celui de `<html>` (le `data-theme` que `SCRIPT_INIT_THEME` corrige, #118) et celui de `<body>` (les attributs qu'une extension y pose avant l'hydratation — Grammarly, LastPass…). Ils ont l'air d'un doublon et n'en sont pas : déplacer l'un sur l'autre, le geste qu'on fait en croyant simplifier, ramène l'un des deux écarts. La sonde lit les **octets du layout**, et ce n'est pas ici un pis-aller mais le seul filet possible — le symptôme exige un navigateur, un rendu serveur à hydrater et une extension installée, donc ni jsdom ni la CI ne le verront jamais revenir. Comme `contraste.test.ts`, elle est **prouvée avant de servir**, sur un échantillon fautif qui porte le piège : la prose du layout nomme `<body>` *avant* la balise, si bien qu'une recherche naïve rougirait un fichier correct |
 
 Cinq fichiers portent l'outillage plutôt que des tests :

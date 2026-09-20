@@ -292,6 +292,39 @@ def test_un_composant_partage_rend_une_ligne_indeterminee(depot: DepotEcrans) ->
 
 
 @besoin_de_git
+def test_le_catalogue_du_socle_est_ecarte_nommement(depot: DepotEcrans) -> None:
+    """`apps/web/app/socle/` est une ROUTE RÉELLE qui n'est pas un écran du produit (#984) : le
+    catalogue des primitives n'est pas servi en production, donc la stack de `captures.sh` — qui
+    est une stack de production — ne peut pas le photographier, et l'annoncer en « écran touché »
+    promettrait une capture qui n'existera jamais.
+
+    Les deux moitiés comptent. Il ne rend **pas** de route `/socle` (sans quoi une présentation de
+    jalon en attendrait une capture) et il rend quand même une ligne **indéterminée** (sans quoi
+    un ticket qui n'aurait touché que lui dirait « rien changé à l'écran », ce qui est faux — c'est
+    la règle du fichier : l'absence est muette, l'INCONNU est nommé).
+    """
+    depot.commit(
+        "feat: catalogue du socle\n\nCloses #18",
+        ["apps/web/app/socle/page.tsx"],
+    )
+    resultat = depot.ecrans(18)
+    assert routes(resultat.stdout) == [("18", "-", "-")]
+    assert lignes(resultat.stdout)[0][3] == "apps/web/app/socle/page.tsx"
+
+
+@besoin_de_git
+def test_l_ecart_du_catalogue_ne_deborde_pas_sur_ses_voisins(depot: DepotEcrans) -> None:
+    """L'exclusion est NOMMÉE, jamais un motif : une route qui commence par les mêmes lettres reste
+    un écran. Sans ce contrôle, un `socle-v2/` — ou n'importe quel dossier préfixé — disparaîtrait
+    des présentations en silence, ce qui est exactement ce qu'un écart nommé doit éviter."""
+    depot.commit(
+        "feat: deux routes\n\nCloses #19",
+        ["apps/web/app/socles/page.tsx", "apps/web/app/socle/page.tsx"],
+    )
+    assert routes(depot.ecrans(19).stdout) == [("19", "/socles", "socles"), ("19", "-", "-")]
+
+
+@besoin_de_git
 def test_la_plomberie_de_l_ui_est_hors_perimetre(depot: DepotEcrans) -> None:
     """`lib/` est exclu À DESSEIN, hooks compris (ils y vivent) : presque tous les tickets de la
     Control Tower y touchent, et les compter ferait rendre une ligne indéterminée à presque tous."""

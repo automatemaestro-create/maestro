@@ -47,9 +47,19 @@
  * **Rien de neuf.** Aucune couleur hors des tokens, aucun pas hors de
  * l'échelle, aucune primitive refaite à la main : une page qui inventerait pour
  * se montrer elle-même mentirait sur ce qu'elle montre. Les balayages qui
- * lisent tout `app/` + `components/` la jugent comme le reste
- * (`couleurs.test.ts`, `typographie.test.ts`, la garde de mouvement et les
- * contrôles de saisie d'`a11y.test.tsx`), et c'est voulu.
+ * lisent tout `app/` + `components/` la jugent comme le reste — les **quatre
+ * sondes du socle** (`couleurs.test.ts`, `typographie.test.ts`,
+ * `rayons-ombres.test.ts`, `espacements.test.ts`), la garde de mouvement et les
+ * contrôles de saisie d'`a11y.test.tsx` —, et c'est voulu. Elle n'est dans le
+ * résidu d'aucune des quatre.
+ *
+ * ── Ce qui l'empêche de prendre du retard (#975) ─────────────────────────────
+ *
+ * `tests/catalogue-socle.test.tsx` **dérive** la liste des primitives du module
+ * (`Object.keys(Primitives)`) au lieu de la recopier : un export ajouté à
+ * `Primitives.tsx` sans entrée ici fait rougir. Il garde aussi la mise en regard
+ * — les deux thèmes, **les mêmes spécimens des deux côtés**, chaque scène nommée
+ * — et les quatre garde-fous du « ce n'est pas un écran » ci-dessus.
  *
  * ── Les deux thèmes, sans une ligne de CSS ───────────────────────────────────
  *
