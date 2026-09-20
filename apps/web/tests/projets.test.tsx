@@ -41,7 +41,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ListeProjets } from "@/components/projets/ListeProjets";
 import { ErreurProjet } from "@/lib/api";
-import type { ChoixSelecteur, DisponibiliteSelecteur } from "@/lib/types";
+import type {
+  ChoixSelecteur,
+  DisponibiliteSelecteur,
+  RepertoireProjets,
+} from "@/lib/types";
 import {
   cheminEnfant,
   motifsDepuisTexte,
@@ -59,6 +63,7 @@ const supprimerProjet = vi.fn();
 const versionnerProjet = vi.fn();
 const chargerDisponibiliteSelecteur = vi.fn();
 const ouvrirSelecteurNatif = vi.fn();
+const chargerRepertoireProjets = vi.fn();
 
 // `importOriginal` plutôt qu'un objet nu : `ErreurProjet` doit rester **la**
 // classe du module, sinon le `instanceof` qui distingue un refus motivé d'une
@@ -77,8 +82,23 @@ vi.mock("@/lib/api", async (importOriginal) => {
     versionnerProjet: (id: string) => versionnerProjet(id),
     chargerDisponibiliteSelecteur: () => chargerDisponibiliteSelecteur(),
     ouvrirSelecteurNatif: (depart: string | null) => ouvrirSelecteurNatif(depart),
+    chargerRepertoireProjets: () => chargerRepertoireProjets(),
   };
 });
+
+/** Le répertoire des projets tel que l'API le rend (#1022). */
+function repertoireFactice(
+  surcharges: Partial<RepertoireProjets> = {},
+): RepertoireProjets {
+  return {
+    chemin: "D:/projets",
+    par_defaut: true,
+    existe: true,
+    cree: false,
+    refus: null,
+    ...surcharges,
+  };
+}
 
 /** L'explorateur montre « D:/projets », qui contient le dépôt « depensio ». */
 function pageProjets() {
@@ -116,6 +136,7 @@ beforeEach(() => {
   supprimerProjet.mockResolvedValue(undefined);
   versionnerProjet.mockResolvedValue(projetFactice());
   chargerDisponibiliteSelecteur.mockResolvedValue(selecteurIndisponible());
+  chargerRepertoireProjets.mockResolvedValue(repertoireFactice());
   ouvrirSelecteurNatif.mockResolvedValue({
     annule: true,
     chemin: null,
@@ -254,6 +275,10 @@ describe("le choix de la racine (explorateur servi par l'API)", () => {
   it("compose la racine d'un nouveau dossier à partir d'un parent énuméré", async () => {
     // Le cas que l'explorateur ne peut pas montrer — le dossier n'existe pas
     // encore. La saisie se réduit alors à un **nom**, jamais à un chemin.
+    //
+    // Le bouton dit « Changer » et non « Choisir » depuis #1022 : le parent est
+    // déjà rempli par le répertoire des projets, et le choisir soi-même est
+    // désormais un **remplacement**.
     const utilisateur = userEvent.setup();
     await page();
     await utilisateur.click(
@@ -261,7 +286,7 @@ describe("le choix de la racine (explorateur servi par l'API)", () => {
     );
     await utilisateur.click(screen.getByLabelText("Nouveau dossier"));
     await utilisateur.click(
-      screen.getByRole("button", { name: /Choisir un dossier/ }),
+      await screen.findByRole("button", { name: /Changer de dossier/ }),
     );
     const explorateur = await screen.findByRole("region", {
       name: "Explorateur de dossiers",
@@ -296,7 +321,7 @@ describe("le choix de la racine (explorateur servi par l'API)", () => {
     );
     await utilisateur.click(screen.getByLabelText("Nouveau dossier"));
     await utilisateur.click(
-      screen.getByRole("button", { name: /Choisir un dossier/ }),
+      await screen.findByRole("button", { name: /Changer de dossier/ }),
     );
     const explorateur = await screen.findByRole("region", {
       name: "Explorateur de dossiers",
@@ -315,6 +340,171 @@ describe("le choix de la racine (explorateur servi par l'API)", () => {
       screen.getByRole("button", { name: "Déclarer le projet" }),
     ).toBeDisabled();
     expect(screen.getByText(/pas un chemin/)).toBeInTheDocument();
+  });
+});
+
+describe("le répertoire des projets (#1022)", () => {
+  /** Le formulaire de création, basculé sur « Nouveau dossier ». */
+  async function formulaireNouveauDossier(
+    utilisateur: ReturnType<typeof userEvent.setup>,
+  ) {
+    await page();
+    await utilisateur.click(
+      screen.getByRole("button", { name: /Nouveau projet/ }),
+    );
+    await utilisateur.click(screen.getByLabelText("Nouveau dossier"));
+  }
+
+  it("remplit d'office le dossier parent d'un projet neuf", async () => {
+    const utilisateur = userEvent.setup();
+    await formulaireNouveauDossier(utilisateur);
+
+    // Le chemin est là **sans qu'on ait choisi** — deux fois : le parent, et la
+    // racine déclarée qui s'en compose (vide, elle vaut le parent).
+    expect(await screen.findAllByText("D:/projets")).toHaveLength(2);
+    await utilisateur.type(
+      screen.getByLabelText("Nom du dossier à créer"),
+      "depensio",
+    );
+    expect(screen.getByText("D:/projets/depensio")).toBeInTheDocument();
+  });
+
+  it("dit d'où vient la valeur, et que la changer ici n'engage que ce projet", async () => {
+    // La variante retenue sur pièces : ce que la veille reproche à IntelliJ, à
+    // GitHub Desktop et à Unity Hub est qu'aucun ne dit *pourquoi ce chemin-là*.
+    const utilisateur = userEvent.setup();
+    await formulaireNouveauDossier(utilisateur);
+
+    expect(
+      await screen.findByText(/ne vaut que pour ce projet/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Paramètres" }),
+    ).toHaveAttribute("href", "/parametres#projets");
+  });
+
+  it("laisse choisir un autre dossier pour ce projet, sans rien régler", async () => {
+    const utilisateur = userEvent.setup();
+    chargerExplorateur.mockResolvedValue(
+      pageExplorateurFactice({
+        chemin: "D:/ailleurs",
+        parent: null,
+        dossiers: [],
+      }),
+    );
+    await formulaireNouveauDossier(utilisateur);
+    await utilisateur.click(
+      await screen.findByRole("button", { name: /Changer de dossier/ }),
+    );
+    const explorateur = await screen.findByRole("region", {
+      name: "Explorateur de dossiers",
+    });
+    await utilisateur.click(
+      within(explorateur).getByRole("button", { name: "Choisir ce dossier" }),
+    );
+
+    // Le chemin a changé, la ligne le dit — et rien n'a été écrit côté réglage :
+    // le formulaire ne connaît que la lecture.
+    expect(
+      await screen.findByText(/Hors de votre répertoire des projets/),
+    ).toBeInTheDocument();
+    await utilisateur.type(
+      screen.getByLabelText("Nom du dossier à créer"),
+      "depensio",
+    );
+    expect(screen.getByText("D:/ailleurs/depensio")).toBeInTheDocument();
+
+    // Et le retour au répertoire des projets, qui est la seconde moitié de
+    // « modifiable » : un choix qu'on ne peut pas défaire n'en est pas un.
+    await utilisateur.click(
+      screen.getByRole("button", { name: /Revenir au répertoire des projets/ }),
+    );
+    expect(screen.getByText("D:/projets/depensio")).toBeInTheDocument();
+  });
+
+  it("ne dit « hors du répertoire » que d'un dossier qui l'est vraiment", async () => {
+    // Constat de la relecture visuelle : choisir soi-même, dans l'explorateur,
+    // le dossier qui EST le répertoire des projets faisait dire à l'écran le
+    // contraire de ce qu'il montrait. Les deux chemins viennent de la même API,
+    // canonicalisés de la même façon : l'égalité suffit à les reconnaître.
+    const utilisateur = userEvent.setup();
+    chargerExplorateur.mockResolvedValue(
+      pageExplorateurFactice({ chemin: "D:/projets", parent: null, dossiers: [] }),
+    );
+    await formulaireNouveauDossier(utilisateur);
+    await utilisateur.click(
+      await screen.findByRole("button", { name: /Changer de dossier/ }),
+    );
+    const explorateur = await screen.findByRole("region", {
+      name: "Explorateur de dossiers",
+    });
+    await utilisateur.click(
+      within(explorateur).getByRole("button", { name: "Choisir ce dossier" }),
+    );
+
+    expect(
+      await screen.findByText(/ne vaut que pour ce projet/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Hors de votre répertoire des projets/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("n'impose rien à l'import d'un projet existant", async () => {
+    // Le troisième critère du ticket, et la seule chose que GitHub Desktop
+    // vérifie de la même façon : *Add Local Repository* ne préremplit rien.
+    const utilisateur = userEvent.setup();
+    await page();
+    await utilisateur.click(
+      screen.getByRole("button", { name: /Nouveau projet/ }),
+    );
+
+    expect(await screen.findByText("aucun dossier choisi")).toBeInTheDocument();
+    expect(screen.queryByText("D:/projets")).not.toBeInTheDocument();
+
+    // Et le réglage ne s'impose pas davantage au retour : ce qu'il avait posé
+    // pour « nouveau dossier » se retire avec lui.
+    await utilisateur.click(screen.getByLabelText("Nouveau dossier"));
+    expect(await screen.findAllByText("D:/projets")).toHaveLength(2);
+    await utilisateur.click(screen.getByLabelText("Dossier existant"));
+    expect(await screen.findByText("aucun dossier choisi")).toBeInTheDocument();
+    expect(screen.queryByText("D:/projets")).not.toBeInTheDocument();
+  });
+
+  it("dit un répertoire devenu indisponible au lieu de le taire", async () => {
+    const utilisateur = userEvent.setup();
+    chargerRepertoireProjets.mockResolvedValue(
+      repertoireFactice({
+        chemin: "E:/disparu",
+        par_defaut: false,
+        existe: false,
+        refus: {
+          motif: "dossier-absent",
+          message: "Racine introuvable : E:/disparu n'existe pas.",
+        },
+      }),
+    );
+    await formulaireNouveauDossier(utilisateur);
+
+    expect(
+      await screen.findByText(/répertoire des projets est indisponible/),
+    ).toBeInTheDocument();
+    // Rien n'est prérempli d'un chemin qu'on sait refusé : le dossier se choisit
+    // comme avant, et le formulaire n'est pas en panne pour autant.
+    expect(screen.getByText("aucun dossier choisi")).toBeInTheDocument();
+  });
+
+  it("n'appelle pas le réglage quand on modifie un projet", async () => {
+    // Modifier un projet ne le déplace pas : le répertoire n'a rien à y dire.
+    const utilisateur = userEvent.setup();
+    chargerProjets.mockResolvedValue([projetFactice()]);
+    await page();
+    await utilisateur.click(
+      await screen.findByRole("button", { name: "Modifier" }),
+    );
+
+    await screen.findByRole("form", { name: "Modifier Dépensio" });
+    expect(chargerRepertoireProjets).not.toHaveBeenCalled();
   });
 });
 
@@ -927,6 +1117,22 @@ describe("le vocabulaire du périmètre (lib/projets)", () => {
     expect(cheminEnfant("D:/projets", "depensio")).toBe("D:/projets/depensio");
     expect(cheminEnfant("D:/projets/", "depensio")).toBe("D:/projets/depensio");
     expect(cheminEnfant("D:/projets", "  ")).toBe("D:/projets");
+  });
+
+  it("garde le séparateur du parent, sans en mélanger deux (#1022)", () => {
+    // Un parent rendu par le dialogue du poste porte des antislashs, et la
+    // ligne « Racine déclarée » le montre : `C:\Users\moi\Maestro/depensio` ne
+    // ressemble à un chemin d'aucun poste. Relevé par le regard neuf sur les
+    // variantes de #1022 — c'était déjà vrai avant le préremplissage.
+    expect(cheminEnfant("C:\\Users\\moi\\Maestro", "depensio")).toBe(
+      "C:\\Users\\moi\\Maestro\\depensio",
+    );
+    expect(cheminEnfant("C:\\Users\\moi\\Maestro\\", "depensio")).toBe(
+      "C:\\Users\\moi\\Maestro\\depensio",
+    );
+    // Un chemin mixte reste en POSIX : c'est la forme que l'API rend, et la
+    // seule dont on soit sûr qu'elle vienne d'elle.
+    expect(cheminEnfant("C:/Users\\moi", "depensio")).toBe("C:/Users\\moi/depensio");
   });
 
   it("ne prend pour nom de dossier qu'un nom de dossier", () => {

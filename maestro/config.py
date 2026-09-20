@@ -109,6 +109,13 @@ class Settings:
     #: un fichier <id>.json par projet : racine sur le disque, origine, vcs,
     #: périmètre). Ce sont les projets de l'utilisateur, jamais versionnés.
     projets_dir: str | None = None
+    #: Racine du dépôt des **réglages du poste** (`MAESTRO_REGLAGES_DIR`), ou
+    #: None : le dossier `core/reglages/` du dépôt (cf.
+    #: maestro.projets.reglages, #1022 — un `projets.json` unique, qui porte le
+    #: **répertoire des projets**). ⚠ À ne pas confondre avec `projets_dir`,
+    #: qui est le dépôt des **déclarations** : celui-ci dit *où naît* un projet
+    #: neuf, celui-là *ce qu'on sait* des projets déclarés.
+    reglages_dir: str | None = None
     #: Racine du stockage d'**ingestion** des sources téléversées
     #: (`MAESTRO_INGESTION_DIR`), ou None : le dossier `core/ingestion/` du dépôt
     #: (cf. maestro.sources.resolution, #315 — un sous-dossier par run). Jamais
@@ -208,6 +215,7 @@ class Settings:
             secrets_key=(os.getenv("MAESTRO_SECRETS_KEY") or "").strip() or None,
             permissions_dir=(os.getenv("MAESTRO_PERMISSIONS_DIR") or "").strip() or None,
             projets_dir=(os.getenv("MAESTRO_PROJETS_DIR") or "").strip() or None,
+            reglages_dir=(os.getenv("MAESTRO_REGLAGES_DIR") or "").strip() or None,
             ingestion_dir=(os.getenv("MAESTRO_INGESTION_DIR") or "").strip() or None,
             explorateur_racines=(os.getenv("MAESTRO_EXPLORATEUR_RACINES") or "").strip() or None,
             selecteur_natif=(os.getenv("MAESTRO_SELECTEUR_NATIF") or "").strip().lower() or None,

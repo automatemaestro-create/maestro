@@ -123,6 +123,8 @@ from typing import TYPE_CHECKING
 import pytest
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from maestro.config import Settings
 
 #: Les deux clés dont la présence suffit à poser l'exporteur (`activer_export_langfuse`).
@@ -139,6 +141,12 @@ CLE_COULEUR_ORCHESTRATE = "MAESTRO_ORCHESTRATE_COULEUR"
 #: Le dépôt que vise `scripts/gitlab/lib.sh`, et le commutateur de forge que #344 a retiré.
 #: Neutralisés ensemble : ni l'un ni l'autre ne doit être hérité du poste.
 CLES_FORGE = ("MAESTRO_FORGE", "MAESTRO_GITHUB_REPO")
+
+#: Le dépôt des **réglages du poste** (#1022). Pointé sur un dossier jetable par
+#: `_reglages_du_poste_isoles` : un répertoire des projets réglé sur le poste
+#: ajouterait un point d'entrée à l'explorateur, et le verdict de la suite ne
+#: dépend pas du poste (docs/10 §8.7).
+CLE_REGLAGES_DIR = "MAESTRO_REGLAGES_DIR"
 
 #: La reprise des agents dans leur projet, jouée au démarrage de l'API (#1038).
 CLE_REPRISE_AGENTS = "MAESTRO_REPRISE_AGENTS"
@@ -310,6 +318,35 @@ _neutralise_langfuse()
 _neutralise_couleur_orchestrate()
 _neutralise_forge()
 _neutralise_reprise_agents()
+
+
+@pytest.fixture(autouse=True)
+def _reglages_du_poste_isoles(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    """Coupe le dépôt des **réglages du poste** de celui du dépôt Git (#1022).
+
+    `ReglagesProjetsStore.default()` retombe sur `core/reglages/` du dépôt, que
+    la Control Tower du poste remplit dès qu'on ouvre l'écran Projets. Un
+    répertoire des projets réglé à la main y ferait apparaître un **point
+    d'entrée de plus** dans l'explorateur : le verdict de la suite dépendrait
+    alors du poste, ce que docs/10 §8.7 interdit. Le dépôt est donc pointé sur
+    un dossier jetable — vide, donc « aucun réglage posé », donc le défaut.
+
+    Posée sur la variable d'environnement et non par injection : elle protège
+    aussi les suites qui construisent un `ServiceProjets` sans passer de dépôt
+    de réglages, c'est-à-dire toutes celles qui existaient avant ce réglage.
+    """
+    ancienne = os.environ.get(CLE_REGLAGES_DIR)
+    os.environ[CLE_REGLAGES_DIR] = str(tmp_path_factory.mktemp("reglages"))
+    try:
+        yield
+    finally:
+        # `pop` et non `del` : un test a le droit de retirer la variable pour
+        # mesurer le repli sur `core/reglages/`, et la remise en état ne doit
+        # pas se casser sur ce qu'elle protège.
+        if ancienne is None:
+            os.environ.pop(CLE_REGLAGES_DIR, None)
+        else:
+            os.environ[CLE_REGLAGES_DIR] = ancienne
 
 
 @pytest.fixture(autouse=True)

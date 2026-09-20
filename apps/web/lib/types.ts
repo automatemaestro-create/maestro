@@ -2587,6 +2587,164 @@ export type RapportGenerationOutillage = {
   application: Record<string, unknown> | null;
 };
 
+// --- L'équipe d'un projet (#1039 la propose, #1040 la crée) ----------------
+//
+// Les formes servies par `POST …/equipe/proposition` et `POST …/equipe`, docs/37.
+// Elles descendent de `maestro.equipe.modele` et de `maestro.equipe.creation` :
+// une **proposition** ne crée rien et le dit (`cree: false`), un **rapport** de
+// création dit ce qui existe désormais dans le projet.
+
+/**
+ * Une politique d'autorisations telle que l'API la sert et la reçoit
+ * (`PolitiqueOutils.to_dict`, #110) — reprise ici sans être retraduite.
+ *
+ * ⚠ C'est **exactement** l'objet que la proposition a rendu, et qui repart tel
+ * quel à la validation : la traduction « autorisations proposées → politique »
+ * a lieu une seule fois, côté serveur (`RolePropose.politique()`). Une seconde,
+ * écrite dans l'écran, finirait par ne plus dire la même chose que celle qu'on
+ * a montrée.
+ */
+export type PolitiqueEquipe = {
+  allow: string[];
+  ask: Record<string, string>;
+  deny: string[];
+};
+
+/**
+ * Une autorisation proposée : un outil, son **cran**, et **sa raison**
+ * (`AutorisationProposee.to_dict`, #1039).
+ *
+ * `cran` vaut `allow` / `ask` / `deny` ; `decideur` n'a de sens que sur `ask`
+ * (#586) et porte alors le décideur **effectif** — `auto` ou `humain`, jamais
+ * l'absence. La `raison` est le critère du ticket (#716) : un cran `auto` est
+ * une décision humaine prise à froid, et une décision sans sa raison n'est
+ * décidée par personne.
+ */
+export type AutorisationEquipe = {
+  outil: string;
+  cran: string;
+  decideur: string | null;
+  raison: string;
+};
+
+/**
+ * Un skill de l'outillage du projet que ce rôle branche
+ * (`SkillBranche.to_dict`, #1039).
+ *
+ * `etat` est celui de l'entrée d'outillage dont il sort : un `a-generer`
+ * n'existera qu'une fois l'outillage écrit (#1033), et un rôle branché dessus
+ * n'est pas une erreur mais un ordre de marche.
+ */
+export type SkillEquipe = {
+  nom: string;
+  chemin: string;
+  etat: string;
+  raison: string;
+  commandes: string[];
+};
+
+/**
+ * Un rôle que l'analyse propose de recruter (`RolePropose.to_dict`, #1039).
+ *
+ * `justification` est **l'endroit du projet** qui fait exister ce rôle — le
+ * fichier lu, pas une phrase : c'est ce qui rend la proposition contestable.
+ * `gabarit` est le rôle figé dont il descend (docs/37 §2.1), `outils` ce qu'il
+ * aura dans les mains (ce n'est **pas** une autorisation : c'est ce sur quoi
+ * les autorisations portent), et `politique` les mêmes autorisations sous la
+ * forme que la création persiste.
+ */
+export type RoleEquipe = {
+  nom: string;
+  role: string;
+  gabarit: string;
+  competences: string[];
+  raison: string;
+  justification: PieceOutillage | null;
+  instances: number;
+  raison_instances: string;
+  outils: string[];
+  playbook: string;
+  /** `genere` : écrit pour ce projet (#257). `gabarit` : repli, dit comme tel. */
+  playbook_origine: string;
+  playbook_raison: string;
+  intention: string;
+  skills: SkillEquipe[];
+  autorisations: AutorisationEquipe[];
+  politique: PolitiqueEquipe;
+};
+
+/**
+ * Un rôle que l'analyse a **choisi de ne pas** proposer (`RoleEcarte.to_dict`).
+ *
+ * L'orchestrateur en fait toujours partie, *par décision* : c'est Maestro, et
+ * c'est lui qui recrute (docs/37 §4.2). Sans cette liste, « pas de rôle base de
+ * données » se lirait comme un oubli plutôt que comme un fait du projet.
+ */
+export type RoleEcarteEquipe = {
+  nom: string;
+  role: string;
+  raison: string;
+};
+
+/**
+ * L'équipe proposée pour un projet
+ * (`POST /api/projets/{id}/equipe/proposition`, #1039, docs/37).
+ *
+ * `cree` est **toujours faux** et `validation` toujours « requise » : ce ne sont
+ * pas des réglages mais les deux promesses du ticket rendues lisibles par
+ * l'appelant, au patron de `lecture_seule` dans les bornes d'analyse.
+ */
+export type PropositionEquipe = {
+  proposition: number;
+  id: string;
+  projet_id: string;
+  faite_le: string;
+  resume: string;
+  source: Record<string, unknown> | null;
+  roles: RoleEquipe[];
+  ecartes: RoleEcarteEquipe[];
+  instances_total: number;
+  cree: boolean;
+  validation: string;
+};
+
+/** Un rôle validé, tel qu'il repart à la création (`RoleEquipeRequete`, #1040). */
+export type RoleValideEquipe = {
+  nom: string;
+  role: string;
+  competences: string[];
+  playbook: string;
+  instances: number;
+  gabarit: string;
+  skills: { nom: string; chemin: string; commandes: string[] }[];
+  politique: PolitiqueEquipe | null;
+};
+
+/** Un agent que la validation a créé dans le projet (`AgentCree.to_dict`, #1040). */
+export type AgentCreeEquipe = {
+  nom: string;
+  role: string;
+  instances: number;
+  gabarit: string;
+  skills: string[];
+  politique: PolitiqueEquipe | null;
+};
+
+/**
+ * Ce que la validation a créé (`POST /api/projets/{id}/equipe`, #1040).
+ *
+ * Le pendant du `cree: false` d'une proposition : celui-ci dit ce qui **a** été
+ * fait. L'équipe se revoit et se modifie ensuite depuis les écrans d'agents du
+ * projet (`/agents`, #1038).
+ */
+export type RapportCreationEquipe = {
+  projet_id: string;
+  proposition_id: string;
+  cree: boolean;
+  agents: AgentCreeEquipe[];
+  instances_total: number;
+};
+
 /** Corps de `POST`/`PUT /api/projets` — le `vcs` n'y figure pas : il est constaté. */
 export type DeclarationProjet = {
   nom: string;
@@ -2608,21 +2766,40 @@ export type DossierExplorateur = {
   projet_id: string | null;
   /**
    * Pourquoi ce dossier est proposé — renseigné sur la **page d'entrée**
-   * seulement (#278), `null` pour un sous-dossier énuméré. `utilisateur` : le
-   * dossier utilisateur ; `recent` : le parent d'un projet récemment déclaré ;
-   * `projet` : une racine déjà déclarée ; `volume` : un disque du poste ;
-   * `configuree` : une racine de `MAESTRO_EXPLORATEUR_RACINES`.
+   * seulement (#278), `null` pour un sous-dossier énuméré. `repertoire` : le
+   * répertoire des projets (#1022) ; `utilisateur` : le dossier utilisateur ;
+   * `recent` : le parent d'un projet récemment déclaré ; `projet` : une racine
+   * déjà déclarée ; `volume` : un disque du poste ; `configuree` : une racine
+   * de `MAESTRO_EXPLORATEUR_RACINES`.
    */
   origine: OrigineDossier | null;
 };
 
 /** Les origines qu'un point d'entrée de l'explorateur peut porter (#278). */
 export type OrigineDossier =
+  | "repertoire"
   | "utilisateur"
   | "recent"
   | "projet"
   | "volume"
   | "configuree";
+
+/**
+ * Le **répertoire des projets** (`GET`/`PUT /api/projets/repertoire`, #1022) :
+ * où naît un projet neuf. `par_defaut` dit qu'aucun réglage n'a été posé —
+ * c'est alors `Maestro` sous le dossier personnel. `cree` dit que **la lecture**
+ * a créé le dossier (« créé à la première utilisation ») : l'écran peut le
+ * mentionner, il ne le devine pas. `refus` porte le motif quand le répertoire
+ * réglé est devenu indéclarable — un disque débranché n'empêche pas de déclarer
+ * un projet ailleurs.
+ */
+export type RepertoireProjets = {
+  chemin: string;
+  par_defaut: boolean;
+  existe: boolean;
+  cree: boolean;
+  refus: RefusProjet | null;
+};
 
 /**
  * L'état du **sélecteur de dossier natif** (`GET /api/projets/selecteur`, #278).

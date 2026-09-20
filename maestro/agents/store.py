@@ -424,7 +424,7 @@ class AgentStore(RangeParProjet):
         est invalide (nom hors slug ou réservé, rôle/playbook vides, aucune
         compétence) — le dépôt ne stocke jamais un agent inexécutable.
         """
-        propre = _valide(definition)
+        propre = definition_validee(definition)
         existante = self.lire(propre.nom)
         maintenant = _maintenant()
         propre = replace(
@@ -552,8 +552,15 @@ def _surcharge_appliquee(
     )
 
 
-def _valide(definition: AgentDefinition) -> AgentDefinition:
+def definition_validee(definition: AgentDefinition) -> AgentDefinition:
     """La définition normalisée (compétences épurées), ou `ValueError` si invalide.
+
+    **Publique** depuis #1040, au même titre et pour la même raison que
+    `politique_validee` dans `maestro.agents.permissions` : la validation d'une
+    équipe entière se fait **avant** d'écrire le premier fichier
+    (`maestro.equipe.creation.refus_de`), et une seconde définition de « fiche
+    valide » finirait par refuser ce que le dépôt accepte, ou l'inverse. Une
+    seule règle, appelée des deux côtés.
 
     L'`effort` (#253) est **normalisé, jamais refusé** : épuré, et ramené à `None`
     s'il ne reste rien — une chaîne vide et « pas de réglage » ne doivent pas

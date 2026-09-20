@@ -30,7 +30,13 @@
  *   qu'il a rendu un projet, et c'est elle qui se ferme — générée ou reportée.
  *   Un projet reporté le **dit** sur sa carte (`outillage.a_faire`) et offre d'y
  *   revenir, sauf pendant que l'étape est ouverte sur lui : le report se dit
- *   après le choix, pas pendant.
+ *   après le choix, pas pendant ;
+ * - **et l'outillage généré enchaîne sur l'équipe** (#1040, docs/37 §4.6) :
+ *   `EtapeEquipe` prend la suite, parce que c'est elle qui *branche* les skills
+ *   qu'on vient d'écrire. Un « outiller plus tard », lui, referme le parcours —
+ *   poser une seconde question derrière un report contredirait le report. Les
+ *   réponses du questionnaire d'un projet neuf voyagent d'une étape à l'autre :
+ *   sans elles, l'équipe se dériverait d'une analyse qui n'a rien à lire.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -49,8 +55,14 @@ import {
 } from "@/lib/api";
 import { formatDateHeure } from "@/lib/format";
 import { libelleOrigine } from "@/lib/projets";
-import type { DeclarationProjet, Projet, RefusProjet } from "@/lib/types";
+import type {
+  ChoixOutillage,
+  DeclarationProjet,
+  Projet,
+  RefusProjet,
+} from "@/lib/types";
 
+import { EtapeEquipe } from "./EtapeEquipe";
 import { EtapeOutillage } from "./EtapeOutillage";
 import { refusDepuis, RefusMotive } from "./ExplorateurDossiers";
 import { FormulaireProjet } from "./FormulaireProjet";
@@ -302,6 +314,15 @@ export function ListeProjets({ apresEcriture }: Props = {}) {
   // Le projet qui vient d'être déclaré et dont l'outillage se décide : l'étape
   // suivante du parcours, pas un écran à part (#1034).
   const [aOutiller, setAOutiller] = useState<Projet | null>(null);
+  // Puis celui dont l'**équipe** se décide (#1040) — troisième et dernière
+  // étape, ouverte par l'outillage généré. Deux états plutôt qu'un rang : le
+  // parcours peut se reprendre à l'outillage depuis une carte, et un compteur
+  // d'étape obligerait chaque entrée à savoir d'où elle vient.
+  const [aRecruter, setARecruter] = useState<Projet | null>(null);
+  // Les réponses du questionnaire d'un projet **neuf**, transmises de l'étape
+  // d'outillage à celle d'équipe : sans elles, l'équipe d'un projet neuf se
+  // dériverait d'une analyse qui n'a rien à lire (#1031).
+  const [choixOutillage, setChoixOutillage] = useState<ChoixOutillage[]>([]);
 
   const recharger = useCallback(async () => {
     try {
@@ -337,8 +358,22 @@ export function ListeProjets({ apresEcriture }: Props = {}) {
     await rechargerApresEcriture();
   };
 
-  const finirOutillage = () => {
+  const finirOutillage = (
+    suite: "equipe" | "fin",
+    choix: ChoixOutillage[] = [],
+  ) => {
+    const projet = aOutiller;
     setAOutiller(null);
+    if (suite === "equipe" && projet !== null) {
+      setChoixOutillage(choix);
+      setARecruter(projet);
+    }
+    void rechargerApresEcriture();
+  };
+
+  const finirEquipe = () => {
+    setARecruter(null);
+    setChoixOutillage([]);
     void rechargerApresEcriture();
   };
 
@@ -389,6 +424,14 @@ export function ListeProjets({ apresEcriture }: Props = {}) {
 
         {aOutiller !== null && (
           <EtapeOutillage projet={aOutiller} onTermine={finirOutillage} />
+        )}
+
+        {aRecruter !== null && (
+          <EtapeEquipe
+            projet={aRecruter}
+            choix={choixOutillage}
+            onTermine={finirEquipe}
+          />
         )}
 
         {creationOuverte && (

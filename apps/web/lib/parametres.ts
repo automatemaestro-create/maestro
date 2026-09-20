@@ -21,6 +21,13 @@
  * listes à tenir d'accord seraient le premier moyen qu'une section entre au
  * sommaire sans entrer dans une famille — donc sans être rendue nulle part.
  *
+ * ⚠ **Une section de plus depuis #1022** — « Projets », le répertoire où naît un
+ * projet neuf. Une **section**, jamais une famille : le plafond de docs/30 §4
+ * porte sur les blocs de plein format, et ce sont les trois familles qui en
+ * sont. Elle est rangée sous « Le poste » parce que c'est bien ce qu'elle
+ * engage — cette installation-ci, pas un projet déclaré, et rien de ce que la
+ * page Projets montre (docs/05 §2.7.1).
+ *
  * ⚠ **Six sections depuis #270**, et non plus sept : « Intégrations MCP » est
  * partie tenir son propre écran (`/integrations`), une intégration décidant de
  * ce qu'un agent sait faire plutôt que de la façon dont ce poste-ci est réglé.
@@ -37,6 +44,7 @@
  */
 export type IdSection =
   | "general"
+  | "projets"
   | "apparence"
   | "agents"
   | "fournisseurs"
@@ -83,6 +91,16 @@ export const FAMILLES_PARAMETRES: FamilleParametres[] = [
         id: "general",
         libelle: "Général",
         description: "Backend visé par l'interface et vitalité du service.",
+      },
+      {
+        id: "projets",
+        libelle: "Projets",
+        // La section dit **de quoi il est question**, la ligne du réglage dit
+        // **ce qu'il fait** : les faire dire la même chose donnait trois fois
+        // la même phrase avant la valeur (constat de la relecture visuelle de
+        // #1022). C'est le partage que tient déjà « Général » — « Backend visé
+        // par l'interface » au-dessus, « Réglée au build par … » dans la ligne.
+        description: "Où naissent les projets neufs déclarés depuis ce poste.",
       },
       {
         id: "apparence",

@@ -140,6 +140,12 @@ Endpoints :
   **dossier déposé** sur l'écran de déclaration. Même corps que la route
   ci-dessus, `annule` en moins. C'est la **porte unique** : aucun chemin réel
   n'entre sans passer par elle ;
+- `GET  /api/projets/repertoire` — le **répertoire des projets** (#1022) : où
+  naît un projet neuf. `par_defaut` dit qu'aucun réglage n'a été posé (c'est
+  alors `~/Maestro`) ; la lecture **crée** le dossier s'il manque et le dit
+  (`cree`) — « créé à la première utilisation » ;
+- `PUT  /api/projets/repertoire` — pose ce répertoire ; `chemin: null` revient au
+  défaut. Validé et créé avant d'être stocké, sinon rien n'est écrit ;
 - `GET  /api/projets/{id}` — un projet déclaré ;
 - `POST /api/projets` — déclare un projet : racine **validée** (EF-38, refus
   motivé en 422) et VCS **constaté** sur le disque ;
@@ -175,7 +181,15 @@ Endpoints :
   (#716). Corps vide : le projet est analysé ; avec les réponses du
   questionnaire d'outillage : l'équipe se dérive d'elles. `ecartes` nomme ce qui
   n'est **pas** proposé — l'orchestrateur en fait partie par décision. **Rien
-  n'est créé** (`cree`, `validation`) : valider et créer est #1040 ;
+  n'est créé** (`cree`, `validation`) : valider et créer est la route suivante ;
+- `POST /api/projets/{id}/equipe` — **crée** dans le projet l'équipe validée
+  (#1040, docs/37) : par rôle gardé, sa fiche et son playbook (les skills
+  branchés y sont nommés), sa politique d'autorisations et sa capacité. Le corps
+  rapporte la proposition **telle qu'elle a été servie** — la rejouer rendrait un
+  autre playbook, donc un agent que personne n'a validé. L'équipe entière est
+  vérifiée avant la première écriture : un refus (`equipe-refusee`) les nomme
+  tous et **rien** n'est créé. L'équipe se revoit ensuite depuis
+  `GET /api/catalogue?projet=…` ;
 - `GET  /api/fournisseurs` — ce qui existe côté modèles (#253) **et ce qui est
   déjà là** (#487) : les fournisseurs du **registre**, leurs modèles annoncés et,
   pour chacun, les niveaux d'effort admis (liste vide quand le fournisseur
@@ -335,7 +349,7 @@ from maestro.agents.mcp_registry import (
     SOURCE_TOUTES,
     RegistreMcp,
 )
-from maestro.agents.permissions import PermissionStore, entree_valide
+from maestro.agents.permissions import PermissionStore, PolitiqueOutils, entree_valide
 from maestro.agents.playbooks import PLAYBOOK_DEFAUTS, PlaybookDefaut, PlaybookStore
 from maestro.agents.reprise import reprendre
 from maestro.agents.secrets import SecretStore
@@ -383,7 +397,7 @@ from maestro.controltower.chat import (
     ServiceChat,
 )
 from maestro.controltower.decisions import decisions_du_run
-from maestro.controltower.equipe import ServiceEquipe
+from maestro.controltower.equipe import EquipeRefusee, ServiceEquipe
 from maestro.controltower.events import (
     EVENEMENT_AGENT_CAPACITE,
     EVENEMENT_BRIEF_DECISION,
@@ -472,6 +486,7 @@ from maestro.controltower.state import (
 )
 from maestro.controltower.validation import ValidateurControlTower
 from maestro.engine.brief import MODE_BRIEF_AUTO, MODE_BRIEF_HUMAIN
+from maestro.equipe import RoleValide, SkillRetenu
 from maestro.messaging import InMemoryMailbox, Mailbox, RedisMailbox
 from maestro.orchestrator.errors import BriefValidationError
 from maestro.orchestrator.schema import validate_brief
@@ -834,6 +849,18 @@ class RacineRequete(BaseModel):
     chemin: str
 
 
+class RepertoireRequete(BaseModel):
+    """Corps d'un réglage du répertoire des projets (#1022).
+
+    `chemin` à `null` **revient au défaut** (`~/Maestro`) — ce n'est pas « pas
+    de répertoire », c'est « celui que Maestro propose ». Non canonicalisé, pour
+    la même raison que `RacineRequete` : la canonicalisation appartient à
+    `valider_racine`.
+    """
+
+    chemin: str | None = None
+
+
 class ChatEnvoiRequete(BaseModel):
     """Corps d'un envoi de chat (#84) : le message de l'utilisateur à l'agent.
 
@@ -970,6 +997,95 @@ class GenerationOutillageRequete(BaseModel):
     """
 
     retenus: list[str] | None = None
+
+
+class SkillEquipeRequete(BaseModel):
+    """Un skill de l'outillage que le rôle validé branche (#1040).
+
+    Repris de la proposition, jamais ressaisi : `chemin` et `commandes` sont ceux
+    de l'entrée d'outillage qui l'a recommandé, et c'est le playbook du rôle qui
+    les portera (`maestro.equipe.creation.playbook_branche`).
+    """
+
+    nom: str
+    chemin: str = ""
+    commandes: list[str] = []
+
+
+class RoleEquipeRequete(BaseModel):
+    """Un rôle que l'utilisateur a **gardé** dans l'équipe proposée (#1040).
+
+    C'est délibérément la forme **servie** par `…/equipe/proposition`, rapportée
+    telle quelle — pas un identifiant à re-dériver. Deux champs portent tout le
+    poids de ce choix :
+
+    - `playbook` est le texte qu'on a lu à l'écran. Le regénérer à la validation
+      rendrait un **autre** playbook (c'est un appel modèle), donc créerait un
+      agent que personne n'a validé ;
+    - `politique` est la `PolitiqueOutils` que `RolePropose.politique()` a
+      rendue à la proposition — la traduction « autorisations → politique » a
+      donc lieu **une seule fois**, côté serveur, et ce qui est écrit est le cran
+      qu'on a lu avec sa raison (#716). `None` : ce rôle ne pose aucune
+      politique, ce qui n'est pas la même chose qu'une politique vide.
+
+    `instances` est le seul champ que l'écran ajuste librement ; les bornes sont
+    celles de `maestro.equipe.creation` et se vérifient là-bas, avec les autres
+    refus, pour qu'un refus de forme et un refus de fond se lisent au même
+    endroit.
+    """
+
+    nom: str
+    role: str
+    competences: list[str] = []
+    playbook: str = ""
+    instances: int = 1
+    gabarit: str = ""
+    skills: list[SkillEquipeRequete] = []
+    politique: dict[str, Any] | None = None
+
+
+class EquipeValideeRequete(BaseModel):
+    """L'équipe validée : ce qui doit être créé dans le projet (#1040).
+
+    `proposition_id` ne conditionne rien — il **trace** de quelle proposition
+    cette équipe sort, et se relit dans le rapport. Le lier à un état serveur
+    demanderait de garder les propositions en mémoire, ce que #1039 a refusé
+    (« l'équipe se relit, se modifie et se redemande sans conséquence »).
+
+    Une liste `roles` vide est refusée : « je ne veux aucune équipe » se dit en
+    ne validant pas, pas en validant le vide.
+    """
+
+    proposition_id: str = ""
+    roles: list[RoleEquipeRequete] = []
+
+    def roles_valides(self) -> list[RoleValide]:
+        """Les rôles en objets du domaine — la politique relue, jamais reconstruite.
+
+        `PolitiqueOutils.from_dict` est le même lecteur que celui du dépôt : une
+        politique mal formée lève ici avec le motif exact (« décideur inconnu »,
+        « entrée deny … »), avant qu'aucun agent ne soit écrit.
+        """
+        return [
+            RoleValide(
+                nom=r.nom,
+                role=r.role,
+                competences=tuple(r.competences),
+                playbook=r.playbook,
+                instances=r.instances,
+                gabarit=r.gabarit,
+                skills=tuple(
+                    SkillRetenu(
+                        nom=s.nom, chemin=s.chemin, commandes=tuple(s.commandes)
+                    )
+                    for s in r.skills
+                ),
+                politique=(
+                    None if r.politique is None else PolitiqueOutils.from_dict(r.politique)
+                ),
+            )
+            for r in self.roles
+        ]
 
 
 class SecretPoolRequete(BaseModel):
@@ -1504,8 +1620,10 @@ def create_app(
     # de #257 (pour écrire les playbooks). Le **même** générateur que
     # `POST /api/catalogue/generation` : deux instances auraient deux
     # fournisseurs à tenir d'accord, et un test qui en injecte un n'en verrait
-    # qu'un. Aucun validateur ici — une proposition n'écrit rien, c'est #1040
-    # qui crée.
+    # qu'un. Le **même** service porte aussi la création (#1040) : c'est le seul
+    # endroit qui sait cadrer les six dépôts sur le projet visé, et le séparer en
+    # deux services obligerait à tenir deux fois d'accord ce qui est proposé et
+    # ce qui est écrit.
     equipe = ServiceEquipe(projets, gabarits, generateur=generateur_agent)
     mailbox = mailbox if mailbox is not None else InMemoryMailbox()
     chat_store = chat_store if chat_store is not None else ChatStore.default()
@@ -4312,6 +4430,49 @@ def create_app(
             }
         return {"chemin": resolu.as_posix(), "racine_valide": True, "refus": None}
 
+    @app.get("/api/projets/repertoire")
+    async def repertoire_des_projets() -> dict[str, Any]:
+        """Le **répertoire des projets** : où naît un projet neuf (#1022).
+
+        Ce que le formulaire lit pour **remplir d'office** le dossier parent
+        d'un projet neuf, et ce que les Paramètres affichent. Rend `chemin`,
+        `par_defaut` (aucun réglage posé — c'est `~/Maestro`), `existe`, `cree`
+        et `refus`.
+
+        ⚠ **Cette lecture crée le dossier s'il manque**, et le dit (`cree`).
+        C'est la décision de #1022 : « créé à la première utilisation », la
+        première utilisation étant la première fois qu'on demande *où naît un
+        projet neuf*. Rendre un chemin qui n'existe pas serait pire — le bouton
+        « Changer de dossier… » s'ouvre dessus, et l'explorateur le refuserait
+        (`dossier-absent`). La création est idempotente et porte sur un dossier
+        que Maestro propose ; elle n'est jamais silencieuse.
+
+        Toujours **200** : un répertoire devenu indéclarable (disque débranché,
+        dossier devenu fichier) revient avec son `refus` motivé plutôt qu'en
+        4xx — l'écran doit le **montrer** et laisser parcourir ailleurs, pas
+        traiter la page en panne.
+        """
+        return projets.repertoire(creer=True)
+
+    @app.put("/api/projets/repertoire")
+    async def regler_repertoire_des_projets(corps: RepertoireRequete) -> dict[str, Any]:
+        """Pose le répertoire des projets — `chemin: null` revient au défaut (#1022).
+
+        Le dossier est **validé et créé** avant d'être stocké : un réglage posé
+        est toujours un dossier déclarable, jamais une intention qui échouerait
+        plus tard et ailleurs. Comme partout, le chemin **ne se tape pas** côté
+        écran (#225) — il vient de l'explorateur ou du dialogue du poste ; la
+        route, elle, valide ce qu'on lui donne.
+
+        422/403/404 motivés quand la racine est refusée (`valider_racine`,
+        EF-38) — et dans ce cas **rien n'est écrit** : le réglage précédent
+        reste en place.
+        """
+        try:
+            return projets.regler_repertoire(corps.chemin)
+        except ValueError as exc:
+            raise _refus_projet(exc) from exc
+
     @app.get("/api/projets/explorateur")
     async def explorer_dossiers(chemin: str | None = None) -> dict[str, Any]:
         """Énumère les **dossiers** de `chemin`, ou les racines explorables sans `chemin`.
@@ -5196,6 +5357,66 @@ def create_app(
             return await equipe.proposer(id_projet, choix)
         except (ValueError, ProjetInconnu) as exc:
             raise _refus_projet(exc) from exc
+
+    @app.post("/api/projets/{id_projet}/equipe", status_code=201)
+    async def creer_equipe(
+        id_projet: str, requete: EquipeValideeRequete
+    ) -> dict[str, Any]:
+        """Crée dans le projet l'équipe que l'utilisateur a **validée** (#1040, docs/37).
+
+        Le quatrième geste du chantier (#1021), et le premier qui écrit quelque
+        chose : `…/equipe/proposition` ne crée rien, celui-ci crée tout. Pour
+        chaque rôle gardé, trois écritures **dans le projet** (#1038) — sa fiche
+        et son playbook, sa politique d'autorisations, sa capacité (le nombre
+        d'instances validé). L'équipe se revoit et se modifie ensuite depuis les
+        écrans d'agents du projet (`/api/catalogue?projet=…`).
+
+        **Ce qui est créé est ce qui a été montré.** Le corps rapporte la
+        proposition telle que l'API l'a servie — playbook compris, `politique`
+        comprise —, plutôt qu'un identifiant à re-dériver : rejouer la
+        proposition appellerait à nouveau un modèle et rendrait un *autre*
+        playbook, c'est-à-dire un agent que personne n'a validé. Et la
+        traduction « autorisations proposées → politique » reste unique
+        (`RolePropose.politique()`), si bien que le cran `auto` qu'on a lu avec
+        sa raison est le cran qui est écrit : *c'est l'utilisateur qui le décide,
+        à froid* (#716, docs/37 §4.3).
+
+        **Tout ou rien.** L'équipe entière est vérifiée avant que le premier
+        fichier ne soit écrit — nom déjà pris dans ce projet ou réservé,
+        doublon dans la liste, instances hors bornes, fiche ou politique que les
+        dépôts refuseraient. Un seul blocage rend un 422 `equipe-refusee` qui
+        les nomme **tous**, et rien n'a été créé : sans transaction de système de
+        fichiers, une demi-équipe serait pire qu'un refus.
+
+        404 si le projet est inconnu, 422 motivé s'il est illisible ou si
+        l'équipe est refusée — jamais un 500.
+        """
+        if not requete.roles:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "motif": "equipe-vide",
+                    "message": (
+                        "aucun rôle validé : ne pas recruter se dit en ne validant "
+                        "pas l'équipe, pas en validant une équipe vide."
+                    ),
+                },
+            )
+        try:
+            roles = requete.roles_valides()
+            rapport = await asyncio.to_thread(
+                equipe.creer,
+                id_projet,
+                roles,
+                proposition_id=requete.proposition_id,
+            )
+        except (EquipeRefusee, ValueError, ProjetInconnu) as exc:
+            raise _refus_projet(exc) from exc
+        # Les agents créés entrent immédiatement dans la vue `GET /api/agents`,
+        # comme ceux du `POST /api/catalogue` : même geste, même conséquence.
+        for agent in rapport["agents"]:
+            state.ajouter_agent(agent["nom"], agent["role"])
+        return rapport
 
     async def _flux_reponse(
         agent: str,

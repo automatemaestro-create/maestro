@@ -184,11 +184,20 @@ export function nomDepuisChemin(chemin: string): string {
  * Un nom vide rend le parent inchangé, et un nom qui contient un séparateur est
  * refusé par l'appelant : le seul chemin absolu du formulaire reste celui que
  * l'API a énuméré.
+ *
+ * **Le séparateur est celui du parent** (#1022). Toutes les racines que l'API
+ * rend sont canonicalisées en POSIX (docs/05 §6.7), donc le cas ne se présente
+ * pas aujourd'hui — mais un parent en antislashs donnerait
+ * `C:\Users\…\Maestro/depensio`, deux séparateurs dans un même chemin, et
+ * c'est la ligne « Racine déclarée » qui le montrerait à quelqu'un en train de
+ * vérifier où son projet va naître. La garde a été écrite en voyant ce chemin
+ * mixte sur un brouillon de #1022 ; la cause, elle, a été corrigée à la source.
  */
 export function cheminEnfant(parent: string, nom: string): string {
   const propre = nom.trim();
   if (propre === "") return parent;
-  return `${parent.replace(/\/+$/, "")}/${propre}`;
+  const separateur = parent.includes("\\") && !parent.includes("/") ? "\\" : "/";
+  return `${parent.replace(/[/\\]+$/, "")}${separateur}${propre}`;
 }
 
 /** Vrai si ce nom de dossier est saisissable tel quel (pas un bout de chemin). */
