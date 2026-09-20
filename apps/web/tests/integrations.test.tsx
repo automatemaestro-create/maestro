@@ -110,7 +110,19 @@ describe("l'écran Intégrations", () => {
 
     // `dev` a activé `figma-officiel` (harnais) : son nom est un lien vers
     // l'onglet où l'activation se défait, pas vers la fiche nue.
-    expect(screen.getByRole("link", { name: "dev" })).toHaveAttribute(
+    //
+    // ⚠ `findBy` et non `getBy`, et c'est le seul endroit du fichier qui en a
+    // besoin : les deux premiers tests lisent le **pool**, celui-ci lit le
+    // **catalogue**, chargé par une seconde promesse que `monterEcran` ne draine
+    // que d'un tick (voir son commentaire). Un tick suffit sur un poste au repos
+    // — la suite entière est verte ici —, pas sur un exécutant partagé qui monte
+    // l'écran cinq fois plus lentement : le pipeline du 2026-09-20 a rendu le
+    // pool peuplé et l'usage encore inconnu, donc « Catalogue illisible » à la
+    // place des liens. Attendre ne masque aucune panne réelle — un catalogue qui
+    // échoue vraiment échoue toujours, au bout du délai — et, en prime, rend son
+    // sens à l'assertion négative qui suit : avant l'arrivée des données, elle
+    // passait pour la mauvaise raison.
+    expect(await screen.findByRole("link", { name: "dev" })).toHaveAttribute(
       "href",
       "/agents/dev/mcp",
     );
