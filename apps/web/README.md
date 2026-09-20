@@ -1292,6 +1292,62 @@ est un geste **écrit**. Les cinq plus gros porteurs disent où le gain est :
 `CentreNotifications` (4), `MenuAide` (3). Ce ticket ne migre aucun écran ; la
 migration se fait écran par écran, dans des tickets à part.
 
+#### La taille écrite hors de l'échelle — le résidu compté (#981)
+
+#533 a **posé** l'échelle ; il n'a migré aucun appelant, et rien ne refusait la
+taille suivante. Le compte l'a montré : `text-annexe` 214 emplois contre
+`text-xs` 93 **pour la même taille**, `text-sm` 70, et `text-titre` **une seule
+fois** (mesuré le 2026-09-17 pour #973). Le pas qui donne du relief n'était donc
+pas employé, et la dispersion se recopiait d'écran en écran.
+
+`tests/typographie.test.ts` est à la typographie ce que `tests/couleurs.test.ts`
+est à la couleur — l'**usage**, là où `globals.css` ne porte que l'échelle. Il
+refuse deux familles, qui ne disent pas la même chose mais appellent le même
+geste :
+
+- **un pas de Tailwind** (`text-xs`, `text-sm`, `text-base`, `text-lg`…). Pour
+  les deux jumelles, c'est le même corps sous un autre nom — un défaut qui **ne
+  se voit pas à l'écran**, et ne se voit donc que là ;
+- **une valeur arbitraire** (`text-[13px]`, `text-[length:var(--x)]`,
+  `text-(length:--x)`) — la sortie de secours d'une ligne, et un filet qu'on
+  contourne en une ligne n'en est pas un.
+
+Les deux ensembles sont **lus, jamais recopiés** : les noms de pas viennent du
+`theme.css` de Tailwind (une taille qu'il ajouterait serait refusée le jour de la
+mise à jour), les pas nommés et leurs alias du bloc `@theme` de `globals.css` —
+ce qui permet au message d'échec de dire *par quel pas* remplacer, et à un
+contrôle de rougir si un alias reprenait un jour une valeur propre.
+
+⚠ `text-` est **surchargé** : le même préfixe porte la taille, la couleur
+(`text-neutral-500`), l'alignement (`text-left`), le retour à la ligne
+(`text-balance`), le débordement (`text-ellipsis`) et l'ombre de texte de
+Tailwind v4 (`text-shadow-sm`). Une sonde de préfixe crierait sur six familles
+pour en juger une — d'où l'ancrage sur des ensembles fermés, et un contrôle qui
+lui pose les cinq autres familles avant qu'elle ne balaie.
+
+Ce qui reste, mesuré le **2026-09-20** : **165 tailles hors de l'échelle dans
+37 fichiers** — 150 jumelles (`text-xs` 85, `text-sm` 65), 6 pas que l'échelle
+n'a pas (`text-lg`, `text-base`, `text-xl`) et 9 valeurs arbitraires. Le compte
+est **exact et non un plafond** : une taille de plus rougit, une taille de
+**moins** rougit aussi tant que la ligne n'est pas mise à jour — si bien que le
+résidu ne peut que décroître, et que chaque décroissance est un geste **écrit**.
+Ce lot ne migre rien : employer `text-titre`/`text-page` là où ils manquent est
+une **décision d'écran** (chantier #972), pas un compte à mettre à jour.
+
+Un **manque de l'échelle** y est nommé avec sa raison — `graduation`,
+l'étiquette d'axe d'un graphique, à 10 px quand le plus petit pas est à 11 : les
+cinq pas sont nommés par un rôle d'interface, aucun ne décrit une échelle de
+graphique, et s'y replier changerait la densité du graphique pour faire taire un
+test. C'est le pendant typographique du manque `serie` que `couleurs.test.ts`
+nomme sur ce même fichier, et un test rougit le jour où l'échelle le comble.
+
+Ce que ce fichier ne juge **pas** : l'interligne (`leading-*`), la graisse et la
+casse. L'interligne des jumelles n'est délibérément pas aliasée (`text-xs` garde
+`calc(1 / 0.75)`), donc la refuser réclamerait la migration que ce lot
+s'interdit. À ne pas confondre non plus avec la sonde **locale** de
+`chat-pleine-page.test.tsx` (#878), qui juge le bandeau d'aparté **rendu** : même
+intention, un écran au lieu du produit entier.
+
 ### L'ascenseur discret — `app/globals.css` et `lib/ascenseur.ts` (#725, #882)
 
 Le socle ne disait rien des ascenseurs, si bien que les **seize surfaces
@@ -2037,6 +2093,7 @@ le pixel — le bout en bout dans un vrai navigateur reste le rôle du skill
 | `tests/contraste.test.ts` | Le contraste de la palette sémantique (#534) : les **36 paires légitimes par thème** de #533 mesurées en octets dans `globals.css`, au seuil 4,5:1 (texte) ou 3:1 (contour, aplat d'état) — **et la sonde prouvée avant de servir**, sur les ratios que #471 avait mesurés au navigateur puis sur une faute glissée exprès. Le contrôle qui en fait un filet plutôt qu'un instantané est le dernier : un token ajouté sans paire **rougit** au lieu d'être vert par construction |
 | `tests/couleurs.test.ts` | La **couleur écrite à la main** dans les écrans (#895, voir « La palette sémantique » ci-dessus) — l'**usage** de la palette, là où `contraste.test.ts` juge la palette et `a11y.test.tsx` les seuls contrôles de saisie : aucune paire `dark:` + couleur brute hors du résidu **nommé fichier par fichier avec son compte exact** (689 dans 65 fichiers au lot, 684 depuis #910, 680 depuis #911, 678 depuis #912, 648 dans 64 fichiers depuis #945), le compte étant exact et non un plafond — une paire de moins rougit aussi, si bien que le résidu ne peut que décroître et que chaque décroissance est un geste écrit. Deux **manques du socle** y sont nommés avec leur raison (six au lot — #910 en a comblé deux par une opacité de token existant, #911 a comblé `selectionne` par un token, #912 `provenance` par trois tokens ajoutés), et un test rougit le jour où la palette les comble — c'est ce qui a fait sortir `selectionne` (#911) puis `provenance` (#912) de la liste. **Prouvée avant de servir en deux étages** : le motif d'abord (les trois paires que la veille #868 a relevées, les variantes dans les deux ordres, le contournement par valeur arbitraire, et ce sur quoi il ne doit pas crier — les tokens, la prose), puis le **verdict** lui-même sur une mesure fabriquée — sans quoi une comparaison qui cesserait de comparer rendrait « rien à signaler » |
 | `tests/espacements.test.ts` | Le **padding des conteneurs et des contrôles** (#983, voir « Le barème de padding » ci-dessus) — le rythme intérieur, là où `couleurs.test.ts` juge la couleur : aucun padding hors des **six pas du socle** en dehors du résidu **nommé fichier par fichier avec son compte exact** (70 dans 39 fichiers au lot), le compte étant exact et non un plafond — un padding de moins rougit aussi, si bien que le résidu ne peut que décroître. Le barème est **lu dans `Primitives.tsx`**, jamais recopié, et **épinglé** : une primitive qui ajoute un septième pas rougit, au lieu d'élargir le barème en silence. La **portée est étroite à dessein** — les `p-<n>` partout (un écart égal des quatre côtés est le rythme d'une boîte, et c'est ce qui fait voir `<Carte densite="aucune" className="p-5">`), la paire `px`/`py` seulement quand sa feuille habille quelque chose (rayon ou interaction), parce que `px-3 py-2` rend aussi bien un onglet qu'une bannière et que `px-4 py-3` ne rend que les bandes d'un panneau : réclamer `Bouton` à qui pose le padding d'un `<main>` discréditerait le résidu entier. **Prouvée avant de servir en deux étages**, comme `couleurs.test.ts` : le motif d'abord (les cinq pas hors barème de docs/30 §2.3, la surcharge de densité de `PosteVide`, le contournement par valeur arbitraire, et ce sur quoi il ne doit pas crier — la mise en page, les `gap`, la prose), puis le **verdict** sur une mesure fabriquée |
+| `tests/typographie.test.ts` | La **taille de texte écrite hors de l'échelle** (#981, voir « L'échelle typographique » ci-dessus) — l'**usage** de l'échelle, ce que `couleurs.test.ts` est à la palette : aucun pas de Tailwind (`text-xs`, `text-sm`, `text-base`, `text-lg`…) ni valeur arbitraire (`text-[13px]`, `text-[length:var(--x)]`, `text-(length:--x)`) hors du résidu **nommé fichier par fichier avec son compte exact** (165 dans 37 fichiers au lot), le compte étant exact et non un plafond — une taille de moins rougit aussi, si bien que le résidu ne peut que décroître et que chaque décroissance est un geste écrit. Les deux ensembles sont **lus** et non recopiés : les noms de pas dans le `theme.css` de Tailwind, les pas nommés et leurs alias dans le bloc `@theme` de `globals.css` — d'où un contrôle qui rougit si un alias de #533 reprenait une valeur propre, et un autre si un pas de l'échelle portait un nom de Tailwind (la sonde refuserait le socle qu'elle recommande). Un **manque de l'échelle** y est nommé avec sa raison (`graduation`, l'étiquette d'axe d'un graphique à 10 px quand le plus petit pas est à 11), et un test rougit le jour où l'échelle le comble. **Prouvée avant de servir en deux étages** : le motif d'abord — les jumelles du ticket, les variantes, les contournements arbitraires, et surtout ce sur quoi il ne doit **pas** crier, `text-` étant surchargé par cinq autres familles (couleur, alignement, retour à la ligne, débordement, ombre de texte) —, puis le **verdict** lui-même sur une mesure fabriquée |
 | `tests/hydratation.test.ts` | Ce que le layout racine **tolère du dehors** (#730) : les deux `suppressHydrationWarning`, celui de `<html>` (le `data-theme` que `SCRIPT_INIT_THEME` corrige, #118) et celui de `<body>` (les attributs qu'une extension y pose avant l'hydratation — Grammarly, LastPass…). Ils ont l'air d'un doublon et n'en sont pas : déplacer l'un sur l'autre, le geste qu'on fait en croyant simplifier, ramène l'un des deux écarts. La sonde lit les **octets du layout**, et ce n'est pas ici un pis-aller mais le seul filet possible — le symptôme exige un navigateur, un rendu serveur à hydrater et une extension installée, donc ni jsdom ni la CI ne le verront jamais revenir. Comme `contraste.test.ts`, elle est **prouvée avant de servir**, sur un échantillon fautif qui porte le piège : la prose du layout nomme `<body>` *avant* la balise, si bien qu'une recherche naïve rougirait un fichier correct |
 
 Cinq fichiers portent l'outillage plutôt que des tests :
