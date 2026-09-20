@@ -286,6 +286,7 @@ from maestro.controltower.chat import (
     transcription,
 )
 from maestro.controltower.events import ACTEUR_RUN, ROLE_RUN
+from maestro.controltower.outillage import ConducteurOutillage
 from maestro.controltower.portee import PorteeProjet
 from maestro.controltower.state import (
     EXECUTION_ANNULEE,
@@ -297,6 +298,7 @@ from maestro.controltower.state import (
     EXECUTION_TERMINEE,
     ControlTowerState,
 )
+from maestro.outillage.questionnaire import QuestionOutillage
 from maestro.providers.base import ModelProvider
 
 #: Le nom du fil global — la clé de stockage (`core/chat/orchestrateur.jsonl`), le
@@ -659,10 +661,12 @@ class RepondeurOrchestration(RepondeurChat):
         lanceur: LanceurRun | None = None,
         apercu: ApercuOrchestration | None = None,
         provider: ModelProvider | None = None,
+        conducteur: ConducteurOutillage | None = None,
     ) -> None:
         self._lanceur = lanceur
         self._apercu = apercu
         self._provider = provider
+        self._conducteur = conducteur or ConducteurOutillage()
 
     async def repondre(self, agent: Agent, fil: Sequence[MessageChat]) -> str:
         """La réponse seule — `produire` est la voie complète (rattachement compris)."""
@@ -776,6 +780,35 @@ class RepondeurOrchestration(RepondeurChat):
         return await self._ouvrir_un_run(
             redaction, objectif.strip(), projet_id, bornes
         )
+
+    async def ouvrir_questionnaire(
+        self, agent: Agent, fil: Sequence[MessageChat]
+    ) -> ReponseChat:
+        """Ouvre — ou reprend — le questionnaire d'outillage d'un projet neuf (#1031).
+
+        Ce fil-ci le porte, et pas un autre, parce que c'est la seule porte d'entrée
+        du produit (#666) : un questionnaire posé dans un second fil demanderait de
+        quitter la conversation où l'on vient de déclarer son projet, ce que « sans
+        formulaire à part » refuse.
+
+        **Aucun appel modèle**, comme pour le geste de cadrage et pour une raison de
+        plus : ici la suite du questionnaire est une fonction pure de ce que le fil
+        porte (`maestro.outillage.questionnaire`). Le juge de ce module n'est consulté que
+        sur ce qu'il est seul à savoir faire — dire si un message est une demande de
+        travail.
+        """
+        return await self._conducteur.ouvrir(fil)
+
+    async def repondre_question(
+        self,
+        agent: Agent,
+        fil: Sequence[MessageChat],
+        *,
+        question: QuestionOutillage,
+        valeur: str,
+    ) -> ReponseChat:
+        """Enchaîne sur le geste : ce qu'il déduit, puis la question suivante (#1031)."""
+        return await self._conducteur.repondre(fil, question, valeur)
 
     async def _juger(
         self, agent: Agent, fil: Sequence[MessageChat], projet_id: str | None

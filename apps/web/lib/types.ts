@@ -1148,6 +1148,66 @@ export type Fournisseur = {
 };
 
 /**
+ * Un choix offert par une question d'outillage (`Option.to_dict`, #1031).
+ *
+ * `raison` est **ce que ce choix-là entraîne**, en une ligne — pas un argument de
+ * vente. C'est elle que la carte pose sous le libellé de l'option, et elle y va
+ * option par option : la veille de #1031 l'a retenue du sondage de Slack Block Kit,
+ * où chaque ligne porte son explication plutôt qu'une légende commune.
+ */
+export type OptionOutillage = {
+  valeur: string;
+  libelle: string;
+  raison: string;
+};
+
+/**
+ * Une question qui décide de l'outillage d'un projet neuf
+ * (`QuestionOutillage.to_dict`, #1031).
+ *
+ * `recommande` est la valeur que Maestro propose, `pourquoi` **ce qui l'a
+ * désignée** — les deux voyagent ensemble parce que séparés ils mentent : une
+ * recommandation sans sa cause se lit comme un défaut arbitraire.
+ *
+ * `total` est le **plafond** de questions, jamais le nombre restant : il ne bouge
+ * pas d'une question à l'autre, là où le nombre restant dépendrait des déductions à
+ * venir et ferait reculer la barre sous les yeux. `rang` compte les questions
+ * réellement **posées** — les déduites ne le sont pas, les compter creuserait des
+ * trous que personne ne peut expliquer.
+ */
+export type QuestionOutillage = {
+  cle: string;
+  intitule: string;
+  options: OptionOutillage[];
+  recommande: string;
+  pourquoi: string;
+  rang: number;
+  total: number;
+};
+
+/**
+ * Une réponse d'outillage acquise (`Choix.to_dict`, #1031).
+ *
+ * `deduit` distingue les deux façons dont une réponse est acquise : quelqu'un l'a
+ * choisie, ou elle **découlait** d'une réponse antérieure — `parce_que` porte alors
+ * sa cause. Une question qu'on ne pose pas n'est pas une question qu'on cache.
+ */
+export type ChoixOutillage = {
+  cle: string;
+  valeur: string;
+  deduit: boolean;
+  parce_que: string;
+};
+
+/* ⚠ Aucun type pour la **recommandation** d'outillage ici (#1031). Elle est servie
+   par `POST /api/projets/{id}/outillage/recommandation` dans la forme du lot 2
+   (`maestro.outillage.modele.Recommandation`), la même que
+   `GET …/outillage/analyse` — à laquelle le front n'a pas non plus de type. C'est
+   #1034 qui affichera l'une et l'autre, et qui les déclarera alors **une fois**
+   pour les deux. En écrire ici la moitié qui sert un seul des deux appelants
+   donnerait deux déclarations d'un même contrat, dont une que rien n'exerce. */
+
+/**
  * Un message du fil de chat utilisateur ↔ agent (`MessageChat.to_dict`, #84) :
  * `agent` est le fil d'appartenance (le nom d'agent du catalogue), `auteur`
  * l'émetteur — `utilisateur` ou ce même nom d'agent.
@@ -1177,6 +1237,12 @@ export type Fournisseur = {
  * run —, et c'est ce qui fait exister une demande de cadrage ailleurs que dans
  * une phrase. Vide partout ailleurs ; ce n'est **pas** lui qui dit si la
  * demande tient encore (`propositionEnAttente`, `lib/brief`).
+ *
+ * `question`/`choix` (#1031) sont la **quatrième**, et elle est double parce qu'un
+ * questionnaire a deux moitiés : ce qu'un message **demande** (`question`, sur un
+ * message d'agent) et ce qu'il **répond** (`choix`, sur un message d'utilisateur).
+ * `null` partout ailleurs, et ce n'est pas `question` qui dit si la demande tient
+ * encore (`questionEnAttente`, `lib/outillage`).
  */
 export type MessageChat = {
   agent: string;
@@ -1187,6 +1253,10 @@ export type MessageChat = {
   tache_id: string;
   /** L'objectif soumis à l'accord par ce message (#943) — vide : aucune demande. */
   proposition?: string;
+  /** La question d'outillage que ce message pose (#1031) — `null` : aucune. */
+  question?: QuestionOutillage | null;
+  /** La réponse d'outillage que ce message porte (#1031) — `null` : aucune. */
+  choix?: ChoixOutillage | null;
   /** La conversation d'appartenance (#694) — `origine` pour celle d'un agent par défaut. */
   conversation?: string;
   /** La matière résolue que le message embarque (#482) — absente ou vide : aucune. */

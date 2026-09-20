@@ -5,9 +5,10 @@ créer ou importer un projet **commence par son outillage** — `AGENTS.md`, des
 Agent Skills dans `.agents/skills/`, et des scripts —, recommandé par l'analyse
 sur un projet existant, choisi par l'utilisateur sur un projet neuf.
 
-Il porte deux lots, qui regardent le même outillage par ses deux bouts — le
-**lot 2** (#1030) l'analyse et le recommande, le **lot 4** (#1032) le relit pour
-le transmettre aux agents qui travaillent dans le projet :
+Il porte trois lots, qui regardent le même outillage par ses trois bouts — le
+**lot 2** (#1030) l'analyse sur un projet existant, le **lot 3** (#1031) le
+demande sur un projet neuf, le **lot 4** (#1032) le relit pour le transmettre
+aux agents qui travaillent dans le projet :
 
     from maestro.outillage import analyser, outillage_du_projet
 
@@ -17,15 +18,31 @@ le transmettre aux agents qui travaillent dans le projet :
     analyse.recommandation.entrees     # AGENTS.md, les deux ponts, les skills justifiés
     analyse.source_manifeste()         # le fragment `source` du manifeste (docs/38 §4.1)
 
+    from maestro.outillage import Choix, question_suivante, recommandation_depuis_choix
+
+    question_suivante([])              # « Quelle sorte de projet est-ce ? », recommandée
+    reco = recommandation_depuis_choix([Choix("nature", "service-api"), …])
+    reco.entrees                       # la **même** forme que `analyse.recommandation`
+
     outillage = outillage_du_projet(projet)
     outillage.instructions             # le texte d'`AGENTS.md`, dans la portée déclarée
     outillage.skills                   # l'**index** : nom, description, chemin
     outillage.consigne()               # ce qui part dans le message de la tâche
 
-Quatre modules, et la frontière entre eux est celle du disque :
+⚠ **Les deux premiers bouts se rejoignent sur `recommander`**, et c'est le
+critère de #1031 : les réponses de l'utilisateur deviennent des `Constats`
+(`constats_depuis_choix`), et la suite est celle d'un projet analysé. Il n'y a
+donc **pas deux chemins** de « ce qu'il faut à ce projet » à tenir d'accord — ce
+que #1033 générera vient de la même fonction, quelle que soit sa provenance.
+
+Six modules, et la frontière entre eux est celle du disque :
 
 - `maestro.outillage.modele` — les formes, **inertes** : elles décrivent et
   sérialisent, elles ne touchent à rien ;
+- `maestro.outillage.questionnaire` — le **lot 3** (#1031) : les questions qui
+  décident de l'outillage d'un projet **neuf**, et la mue de leurs réponses en
+  `Constats`. C'est le pendant d'`analyse` — là-bas on lit un projet existant,
+  ici on le demande —, et les deux aboutissent au même `recommander` ;
 - `maestro.outillage.detection` — les **tables** (extensions, gestionnaires, CI,
   forges, conventions) et les lecteurs de manifestes. Tout y est lu, **rien n'y
   est exécuté** ;
@@ -90,6 +107,23 @@ from maestro.outillage.modele import (
     Recommandation,
     nouvel_id,
 )
+from maestro.outillage.questionnaire import (
+    CATALOGUE,
+    QUESTIONS_MAX,
+    SOURCE_CHOIX,
+    Choix,
+    Option,
+    QuestionOutillage,
+    cles_connues,
+    constats_depuis_choix,
+    deductions,
+    options_admissibles,
+    question_suivante,
+    recommandation_depuis_choix,
+    resume_des_choix,
+    source_manifeste_des_choix,
+    valeur_admissible,
+)
 from maestro.outillage.recommandation import DOSSIER_SKILLS, SKILL_PAR_USAGE, recommander
 
 #: ⚠ `Bornes` exporté ici est celui de l'**analyse** (`maestro.outillage.modele`).
@@ -99,19 +133,23 @@ from maestro.outillage.recommandation import DOSSIER_SKILLS, SKILL_PAR_USAGE, re
 __all__ = [
     "BALISE_DEBUT",
     "BALISE_FIN",
+    "CATALOGUE",
     "CHAMP_OUTILS",
     "CHEMIN_MANIFESTE",
     "DOSSIER_SKILLS",
     "ETATS_ENTREE",
     "ORIGINES_COMMANDE",
     "PREFIXE_ID",
+    "QUESTIONS_MAX",
     "ROLES_TRANSMIS",
     "SKILL_PAR_USAGE",
+    "SOURCE_CHOIX",
     "USAGES",
     "VERSION_ANALYSE",
     "VERSION_MANIFESTE",
     "Analyse",
     "Bornes",
+    "Choix",
     "Commande",
     "Constats",
     "DossierScripts",
@@ -121,14 +159,25 @@ __all__ = [
     "Gestionnaire",
     "Langage",
     "NonTransmis",
+    "Option",
     "OutillageDuProjet",
     "Parcours",
     "Piece",
+    "QuestionOutillage",
     "Recommandation",
     "SkillDuProjet",
     "analyser",
+    "cles_connues",
+    "constats_depuis_choix",
+    "deductions",
     "nouvel_id",
+    "options_admissibles",
     "outillage_du_projet",
+    "question_suivante",
+    "recommandation_depuis_choix",
     "recommander",
     "resume",
+    "resume_des_choix",
+    "source_manifeste_des_choix",
+    "valeur_admissible",
 ]
