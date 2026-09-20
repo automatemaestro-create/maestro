@@ -1430,12 +1430,26 @@ def test_le_silence_n_est_pas_un_accord() -> None:
 
     assert lanceur.objectifs == []
     assert len(juge.prompts) == 1
-    # Aucun état de session : le répondeur porte **exactement** les trois
+    # Aucun état de session : le répondeur porte **exactement** les
     # collaborateurs qu'on lui a passés, et pas un attribut de plus où loger une
     # proposition en attente. C'est cette forme-là qu'on garde plutôt qu'une
     # recherche de l'objectif dans `vars()` — un objectif rangé dans un objet
     # imbriqué y échapperait, alors qu'un attribut nouveau, lui, se voit toujours.
-    assert set(vars(repondeur)) == {"_lanceur", "_apercu", "_provider"}
+    #
+    # ⚠ #1031 en a ajouté un quatrième, `_conducteur` (le questionnaire
+    # d'outillage), et la faille que le commentaire ci-dessus nomme devenait donc
+    # réelle : un collaborateur est précisément l'« objet imbriqué » où une
+    # proposition pourrait se loger. La garantie est donc **poussée d'un cran**
+    # sur lui plutôt qu'élargie — le conducteur ne porte que l'identifiant du
+    # projet, et son propre état est le fil qu'on lui passe à chaque appel
+    # (`maestro.controltower.outillage`).
+    assert set(vars(repondeur)) == {
+        "_lanceur",
+        "_apercu",
+        "_provider",
+        "_conducteur",
+    }
+    assert set(vars(repondeur._conducteur)) == {"_projet_id"}
 
 
 def test_l_objectif_lance_est_celui_qui_a_ete_montre_pas_ce_que_le_fil_contient() -> None:

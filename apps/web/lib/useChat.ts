@@ -116,6 +116,7 @@ import {
   diffuserMessageChat,
   ErreurReponse,
   ouvrirConversationChat,
+  repondreQuestionOutillage,
   trancherCadrageChat,
   urlEvenements,
   PORTEE_TOUS,
@@ -247,6 +248,18 @@ export type Chat = {
     objectif?: string | null,
     bornes?: BornesRun | null,
   ) => Promise<void>;
+  /**
+   * Répond d'un geste à la question d'outillage que le fil porte (#1031).
+   *
+   * `valeur` est l'option retenue. La **question** n'est pas dite : c'est celle
+   * qui attend, et l'API la relit du fil — ce qui fait qu'un double clic ou un
+   * geste tardif tombe sur un refus plutôt que de répondre à une question déjà
+   * tranchée.
+   *
+   * Le geste et la suite rejoignent le fil comme un tour ordinaire, exactement
+   * comme le cadrage : le fil reste la seule mémoire du questionnaire.
+   */
+  repondreQuestion: (valeur: string) => Promise<void>;
   /**
    * La conversation **servie** (#696) — celle qu'on lit et où part l'envoi.
    * `""` tant que l'API n'a pas répondu : personne ne peut la nommer avant.
@@ -566,6 +579,34 @@ export function useChat(agent: string, projetId: string | null = null): Chat {
     [agent, projetId, conversation, recharger],
   );
 
+  /**
+   * Le geste qui répond à une question d'outillage (#1031).
+   *
+   * Jumeau de `trancherCadrage`, et pour les mêmes raisons : il emprunte `envoi`
+   * — un échange en vol désarme les gestes —, ne passe pas par le flux (la suite
+   * est calculée, pas rédigée) et laisse le rechargement rendre l'écran juste
+   * socket coupée.
+   *
+   * Il ne dit **pas** à quelle question il répond : c'est celle que le fil porte,
+   * et l'API la relit. Un écran ne peut donc pas se tromper de question.
+   */
+  const repondreQuestion = useCallback(
+    async (valeur: string) => {
+      setEnvoi(true);
+      try {
+        const paire = await repondreQuestionOutillage(agent, {
+          valeur,
+          conversation,
+        });
+        setDirects((gardes) => [...gardes, ...paire]);
+      } finally {
+        setEnvoi(false);
+        await recharger();
+      }
+    },
+    [agent, conversation, recharger],
+  );
+
   const interrompre = useCallback(() => {
     const vol = enVol.current;
     if (vol === null) return;
@@ -620,6 +661,7 @@ export function useChat(agent: string, projetId: string | null = null): Chat {
     envoyer,
     interrompre,
     trancherCadrage,
+    repondreQuestion,
     conversation,
     conversations,
     nouvelleConversation,

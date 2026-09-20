@@ -45,6 +45,7 @@ import type {
   PropositionPlaybook,
   PropositionPlaybookDetail,
   ProvenanceRegistreMcp,
+  RecommandationOutillage,
   RapportLecture,
   RedactionPlaybook,
   RefusProjet,
@@ -774,6 +775,93 @@ export async function trancherCadrageChat(
   }
   const paire = (await reponse.json()) as { messages: MessageChat[] };
   return paire.messages;
+}
+
+/**
+ * Répond d'un geste à la question d'outillage que le fil porte
+ * (`POST /api/chat/{agent}/outillage`, #1031) et rend la paire (geste, réponse).
+ *
+ * La question visée **n'est pas** dans le corps : c'est celle qui attend. La laisser
+ * désigner par l'écran ouvrirait la porte à une réponse qui vise une question déjà
+ * tranchée — le geste tardif et le double clic, que le `409` attrape.
+ *
+ * Un `409` n'est pas une panne, comme sur le cadrage : la question a reçu sa réponse
+ * entre-temps, ou la conversation a repris. L'appelant recharge plutôt qu'il ne
+ * réessaie.
+ */
+export async function repondreQuestionOutillage(
+  agent: string,
+  reponseChoisie: { valeur: string; conversation?: string },
+): Promise<MessageChat[]> {
+  const reponse = await fetch(
+    `${API_URL}/api/chat/${encodeURIComponent(agent)}/outillage`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        valeur: reponseChoisie.valeur,
+        conversation: reponseChoisie.conversation,
+      }),
+    },
+  );
+  if (!reponse.ok) {
+    throw new Error(
+      reponse.status === 409
+        ? "cette question n'attend plus — la conversation a repris."
+        : `réponse refusée (${reponse.status})`,
+    );
+  }
+  const paire = (await reponse.json()) as { messages: MessageChat[] };
+  return paire.messages;
+}
+
+/**
+ * Ouvre — ou reprend — le questionnaire d'outillage sur le fil
+ * (`POST /api/chat/{agent}/outillage/questionnaire`, #1031).
+ *
+ * N'écrit **aucun message d'utilisateur** : personne n'a rien demandé, seulement la
+ * question est posée. Idempotente — rappelée sur un questionnaire en cours, elle
+ * repose la question là où il en est.
+ */
+export async function ouvrirQuestionnaireOutillage(
+  agent: string,
+  conversation?: string,
+): Promise<MessageChat[]> {
+  const requete = new URLSearchParams();
+  if (conversation) requete.set("conversation", conversation);
+  const suffixe = requete.toString() ? `?${requete}` : "";
+  const reponse = await fetch(
+    `${API_URL}/api/chat/${encodeURIComponent(agent)}/outillage/questionnaire${suffixe}`,
+    { method: "POST", headers: { "Content-Type": "application/json" } },
+  );
+  if (!reponse.ok) {
+    throw new Error(`ouverture du questionnaire refusée (${reponse.status})`);
+  }
+  const paire = (await reponse.json()) as { messages: MessageChat[] };
+  return paire.messages;
+}
+
+/**
+ * L'outillage que ces réponses recommandent
+ * (`POST /api/outillage/recommandation`, #1031) — **la forme de l'analyse** (#1030).
+ *
+ * Sans état : le client dit ce qu'il a, l'API dit ce qui en découle. Rendue à tout
+ * moment, questionnaire fini ou non — ce qui n'a pas été répondu ne justifie
+ * simplement aucune pièce.
+ */
+export async function recommandationOutillage(
+  choix: { cle: string; valeur: string }[],
+  projetId?: string | null,
+): Promise<RecommandationOutillage> {
+  const reponse = await fetch(`${API_URL}/api/outillage/recommandation`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ choix, projet_id: projetId ?? null }),
+  });
+  if (!reponse.ok) {
+    throw new Error(`recommandation indisponible (${reponse.status})`);
+  }
+  return (await reponse.json()) as RecommandationOutillage;
 }
 
 /**

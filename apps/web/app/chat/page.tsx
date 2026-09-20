@@ -151,6 +151,7 @@
 import { useMemo, useState } from "react";
 
 import { DemandeDeCadrage } from "@/components/chat/DemandeDeCadrage";
+import { QuestionDOutillage } from "@/components/chat/QuestionDOutillage";
 import { FilDeCadrage } from "@/components/chat/FilDeCadrage";
 import { Conversation } from "@/components/Conversation";
 import {
@@ -172,6 +173,7 @@ import {
 } from "@/components/Primitives";
 import { cheminOnglet } from "@/lib/agents";
 import { propositionEnAttente, runsEnAttente } from "@/lib/brief";
+import { questionEnAttente } from "@/lib/outillage";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import { formatHeureRelative } from "@/lib/format";
 import { useHorloge } from "@/lib/horloge";
@@ -232,6 +234,15 @@ export default function PageChat() {
   // question est posée, c'est nécessairement ce fil-là qu'on a sous les yeux,
   // puisqu'elle répond à ce qu'on vient d'y écrire.
   const proposition = global ? propositionEnAttente(fil.messages) : null;
+
+  // La question d'outillage d'un projet neuf (#1031), lue de la même façon et au
+  // même endroit : c'est l'autre demande que ce canal sait porter, et elle attend
+  // selon la même règle — le dernier message, et lui seul.
+  //
+  // Les deux ne cohabitent jamais : un message demande un accord, ou pose une
+  // question, jamais les deux. Le pied du fil n'a donc pas à arbitrer entre elles,
+  // et l'ordre ci-dessous ne fait que le dire.
+  const question = global ? questionEnAttente(fil.messages) : null;
 
   /**
    * Chaque frappe passe ici : une mention close par une espace change le
@@ -307,13 +318,30 @@ export default function PageChat() {
               <ConversationOuverte fil={fil} />
             </>
           }
-          /* Le geste au pied du fil (#943) — là où l'œil vient de lire la
-             question, et où la main allait taper la réponse. */
+          /* Le geste au pied du fil (#943, #1031) — là où l'œil vient de lire la
+             question, et où la main allait taper la réponse. Deux demandes y
+             passent, jamais ensemble : un message propose un run, ou pose une
+             question d'outillage. */
           pied={
             proposition !== null ? (
               <DemandeDeCadrage
                 demande={proposition}
                 trancher={fil.trancherCadrage}
+                enCours={fil.envoi}
+              />
+            ) : question?.question ? (
+              /* La `key` remet la carte à zéro d'une question à la suivante —
+                 même geste et même raison que `FilDeCadrage` d'un tour de
+                 clarification au suivant. Sans elle, React réutilise l'instance
+                 (même position dans l'arbre), donc la sélection garde la
+                 recommandation de la question **précédente** : elle n'est plus
+                 une option de celle-ci, plus rien n'est coché, et le bouton
+                 enverrait une valeur que l'API refuserait. Mesuré sur la stack
+                 de démo avant de le corriger. */
+              <QuestionDOutillage
+                key={question.question.cle}
+                question={question.question}
+                repondre={fil.repondreQuestion}
                 enCours={fil.envoi}
               />
             ) : undefined
