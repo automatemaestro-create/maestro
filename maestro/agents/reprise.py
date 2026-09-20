@@ -58,12 +58,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TextIO
 
-from maestro.agents.capacity import CapacityStore
-from maestro.agents.mcp import McpStore
-from maestro.agents.permissions import PermissionStore
-from maestro.agents.playbooks import PlaybookStore
+from maestro.agents.configuration import ConfigurationAgents
 from maestro.agents.rangement import SEGMENT_PROJETS, racine_du_projet
-from maestro.agents.store import AgentStore, SurchargeStore
 from maestro.config import Settings, load_settings
 from maestro.projets.store import ProjetStore
 
@@ -186,18 +182,24 @@ def reprendre(
     *,
     settings: Settings | None = None,
     projets: ProjetStore | None = None,
+    configuration: ConfigurationAgents | None = None,
     check: bool = False,
 ) -> RapportReprise:
     """Rattache au projet ce que la racine de chaque dépôt porte encore. Idempotent.
 
     `check=True` calcule exactement le même rapport **sans rien écrire** — le
     `--check` de la CLI, et ce qui permet de regarder avant de toucher.
+
+    `configuration` fixe **quels** dépôts sont repris. C'est ce que l'API passe
+    au démarrage : ses six dépôts sont ceux qu'on lui a injectés, et une reprise
+    qui les redemanderait à la config toucherait le `core/` du dépôt pendant que
+    l'app travaille ailleurs. None : les dépôts configurés du poste.
     """
     settings = settings or load_settings()
     cible, motif = projet_cible(projet_id, projets=projets)
     if cible is None:
         return RapportReprise(projet_id=None, motif=motif, ecrit=not check)
-    racines = _racines(settings)
+    racines = _racines(configuration or ConfigurationAgents.default(settings))
     domaines = tuple(
         rapport
         for domaine, libelle in _DOMAINES
@@ -208,20 +210,21 @@ def reprendre(
     return RapportReprise(projet_id=cible, motif=motif, ecrit=not check, domaines=domaines)
 
 
-def _racines(settings: Settings) -> dict[str, Path]:
+def _racines(configuration: ConfigurationAgents) -> dict[str, Path]:
     """La racine de chaque dépôt, **demandée aux dépôts eux-mêmes**.
 
     Jamais recopiée ici : c'est la règle que `maestro.controltower.purge` s'est
     déjà donnée (#830). Un `MAESTRO_*_DIR` posé sur un poste vaut donc pour la
-    reprise sans qu'elle ait à connaître un seul nom de variable.
+    reprise sans qu'elle ait à connaître un seul nom de variable, et une
+    configuration injectée (l'API, les tests) est reprise là où elle vit.
     """
     return {
-        "agents": AgentStore.default(settings).racine,
-        "playbooks": PlaybookStore.default(settings).racine,
-        "permissions": PermissionStore.default(settings).racine,
-        "mcp": McpStore.default(settings).racine,
-        "capacite": CapacityStore.default(settings).racine,
-        "surcharges": SurchargeStore.default(settings).racine,
+        "agents": configuration.agents.racine,
+        "playbooks": configuration.playbooks.racine,
+        "permissions": configuration.permissions.racine,
+        "mcp": configuration.mcp.racine,
+        "capacite": configuration.capacites.racine,
+        "surcharges": configuration.surcharges.racine,
     }
 
 

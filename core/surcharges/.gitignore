@@ -2,3 +2,6 @@
 # d'exécution, pas du code : on ne les commite pas.
 *.json
 *.tmp
+
+# Le rangement par projet (#1038) : un dossier par projet, jamais commité.
+_projets/

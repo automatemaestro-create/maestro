@@ -280,6 +280,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
@@ -321,6 +322,7 @@ from maestro.agents.mcp_registry import (
 )
 from maestro.agents.permissions import PermissionStore, entree_valide
 from maestro.agents.playbooks import PLAYBOOK_DEFAUTS, PlaybookDefaut, PlaybookStore
+from maestro.agents.reprise import reprendre
 from maestro.agents.secrets import SecretStore
 from maestro.agents.store import (
     AGENT_SOURCE_DEFAUT,
@@ -1015,6 +1017,18 @@ class Diffusion:
 _LOGGER = logging.getLogger("maestro.controltower")
 
 
+def _reprise_agents_activee() -> bool:
+    """La reprise des agents dans leur projet (#1038) est-elle jouée au démarrage ?
+
+    `MAESTRO_REPRISE_AGENTS=0` s'en passe — même convention que les autres
+    mécanismes best-effort du dépôt (`MAESTRO_WORKFLOW_POSE`,
+    `MAESTRO_AUDIT_FIN_RUN`…) : on coupe avec un `0`, jamais avec une valeur
+    inventée. Lue **à chaque démarrage** et non figée à l'import, pour qu'un test
+    puisse la poser sans réimporter le module.
+    """
+    return (os.environ.get("MAESTRO_REPRISE_AGENTS") or "").strip() != "0"
+
+
 #: Le code HTTP de chaque motif de refus d'une **relance** (#349). La table vit
 #: ici et non dans le service : c'est la route qui parle HTTP, le service ne
 #: connaît que ses motifs. Repli à `422` pour un motif non listé — un refus qu'on
@@ -1515,6 +1529,25 @@ def create_app(
                 "Rejeu du journal des événements impossible : démarrage sur la "
                 "projection courante (l'historique persisté n'a pas pu être relu)."
             )
+        # Reprise des agents et réglages globaux dans le projet qui les utilise
+        # (#1038, critère 2). Ici parce que c'est le seul moment où une
+        # installation d'avant ce lot croise le nouveau code sans que personne ait
+        # rien à taper — et **best-effort** : elle n'ajoute jamais, ne supprime
+        # jamais, et une reprise impossible ne doit pas empêcher l'API de
+        # démarrer. Idempotente, donc rejouée à chaque démarrage sans effet.
+        # `MAESTRO_REPRISE_AGENTS=0` s'en passe ; la CLI
+        # `python -m maestro.agents.reprise [--check]` la rejoue et la détaille.
+        if _reprise_agents_activee():
+            try:
+                rapport = reprendre(projets=projets.store, configuration=gabarits)
+                if rapport.nb_reprises:
+                    _LOGGER.info("%s", rapport)
+            except Exception:
+                _LOGGER.exception(
+                    "Reprise des agents dans leur projet impossible : les réglages "
+                    "globaux restent lisibles comme gabarits (rien n'est perdu). "
+                    "La rejouer : python -m maestro.agents.reprise --check"
+                )
         pompe = asyncio.create_task(_pompe(bus, state, diffusion, journal))
         try:
             yield

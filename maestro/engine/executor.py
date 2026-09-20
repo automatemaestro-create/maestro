@@ -59,6 +59,7 @@ from maestro.agents.permissions import (
 from maestro.agents.playbooks import PlaybookStore, PlaybookVersion
 from maestro.agents.runtime import AgentRuntime
 from maestro.agents.secrets import SecretStore
+from maestro.agents.store import AgentStore, SurchargeStore, catalogue
 from maestro.decideur import DECIDEUR_DEFAUT
 from maestro.deliberation import (
     CreditArbitrage,
@@ -523,6 +524,9 @@ class LocalExecutor(TaskExecutor):
         permissions: PermissionStore | None = None,
         relance: PolitiqueRelance | None = None,
         projets: ProjetStore | None = None,
+        agents_store: AgentStore | None = None,
+        surcharges: SurchargeStore | None = None,
+        modele: str | None = None,
         mailbox: Mailbox | None = None,
         questionneur: ArbitreQuestion | None = None,
         bornes_question: BornesArbitrage | None = None,
@@ -622,6 +626,19 @@ class LocalExecutor(TaskExecutor):
             if router is not None
             else Router(tuple(agents), classifier=TaskClassifier(provider))
         )
+        # Les agents **du projet de la tâche** (#1038) : un agent créé dans un
+        # projet naît après le câblage du routeur et dans son propre dossier, donc
+        # le catalogue figé ne peut pas le connaître. Ces deux dépôts servent à
+        # recomposer ses candidats à chaque tâche — c'est tout ce que ce lot fait
+        # du routage, *qui* prend la tâche parmi l'équipe restant le sujet de
+        # #1041. None : le catalogue du câblage, comportement d'avant ce lot.
+        self._agents_store = agents_store
+        self._surcharges = surcharges
+        # La bascule globale de modèle (#69, `MAESTRO_MODEL`), retenue parce que
+        # le catalogue recomposé par projet doit l'appliquer comme celui du
+        # câblage : sans elle, les agents d'un projet échapperaient à un réglage
+        # qui se veut sans exception. None : les modèles du code et des fiches.
+        self._modele = modele
         # Garde-fous (#9) : plafond de dépense par exécution (#56), time-out et
         # validation par tâche. Le défaut laisse plafond et time-out inactifs
         # mais garde la détection d'actions sensibles (refusées sans validateur).
@@ -703,7 +720,11 @@ class LocalExecutor(TaskExecutor):
             if refus is not None:
                 result = refus
             else:
-                decision = await self._router.route(task, exclus=self._desactives())
+                decision = await self._router.route(
+                    task,
+                    exclus=self._desactives(task.projet_id),
+                    agents=self._equipe(task.projet_id),
+                )
                 if decision.agent is None:
                     # Repli explicite (#42) : tâche marquée « à assigner » plutôt que
                     # mal routée — l'assignation revient à un humain.
@@ -720,11 +741,17 @@ class LocalExecutor(TaskExecutor):
                     # résolus ici, à chaque tâche — jamais retenus entre deux
                     # exécutions. Une déclaration MCP ou une politique invalide
                     # (validées à la lecture) est un échec propre, avant toute
-                    # exécution.
-                    playbook = self._playbook_courant(decision.agent.nom)
+                    # exécution. Et **dans le projet de la tâche** depuis #1038 :
+                    # c'est ici que le rangement par projet atteint l'exécution,
+                    # au même endroit et au même moment que la relecture à chaud.
+                    playbook = self._playbook_courant(decision.agent.nom, task.projet_id)
                     try:
-                        serveurs_mcp = self._serveurs_mcp(decision.agent.nom)
-                        politique = self._politique_permissions(decision.agent.nom)
+                        serveurs_mcp = self._serveurs_mcp(
+                            decision.agent.nom, task.projet_id
+                        )
+                        politique = self._politique_permissions(
+                            decision.agent.nom, task.projet_id
+                        )
                     except ValueError as exc:
                         result = _echec(
                             task,
@@ -752,7 +779,9 @@ class LocalExecutor(TaskExecutor):
                         # jamais à `None` : ici on a mesuré, et mesurer qu'on n'a
                         # pas attendu n'est pas ne pas savoir.
                         debut_creneau = perf_counter()
-                        async with self._creneau_capacite(decision.agent.nom):
+                        async with self._creneau_capacite(
+                            decision.agent.nom, task.projet_id
+                        ):
                             attente_creneau_ms = _ecoule_ms(debut_creneau)
                             debut_atelier = perf_counter()
                             async with self._atelier_projet(task):
@@ -821,29 +850,69 @@ class LocalExecutor(TaskExecutor):
         )
         return result
 
-    def _desactives(self) -> frozenset[str]:
+    def _equipe(self, projet_id: str | None) -> tuple[Agent, ...] | None:
+        """Les agents candidats pour une tâche de `projet_id` — None : ceux du câblage.
+
+        Le catalogue du routeur est figé à la construction ; un agent créé dans
+        un projet naît après, et dans le dossier de ce projet (#1038). Sans cette
+        relecture, un agent recruté pour un projet ne recevrait jamais de tâche —
+        une régression, pas un choix de routage.
+
+        None dans trois cas, tous ramenés au catalogue du câblage : tâche sans
+        projet, dépôts non câblés (tests et câblages sans Control Tower), et
+        dépôt illisible — un incident de stockage ne doit pas faire partir toutes
+        les tâches en repli « à assigner ». Les deux dépôts vont **ensemble** :
+        recomposer le catalogue sans les surcharges du projet le rendrait sur les
+        modèles du code, ce qui serait un réglage perdu en silence.
+        """
+        if projet_id is None or self._agents_store is None:
+            return None
+        if self._surcharges is None:
+            return None
+        try:
+            return catalogue(
+                self._agents_store.pour_projet(projet_id),
+                self._modele,
+                surcharges=self._surcharges.pour_projet(projet_id),
+            )
+        except (OSError, ValueError):  # dépôt illisible : on garde le catalogue câblé
+            return None
+
+    def _desactives(self, projet_id: str | None = None) -> frozenset[str]:
         """Les agents désactivés (#86), relus dans le dépôt à chaque tâche.
 
         C'est la moitié « ne reçoit plus de tâches » du contrôle de capacité :
         le routage les écarte des candidats — la tâche va au meilleur agent
         restant, ou en repli « à assigner ». Vide sans dépôt câblé.
+
+        Lu **dans le projet de la tâche** depuis #1038 : un agent désactivé pour
+        un projet reste disponible pour les autres. Le réglage du gabarit vaut
+        tant que le projet n'a rien posé par-dessus.
         """
         if self._capacites is None:
             return frozenset()
-        return self._capacites.inactifs()
+        return self._capacites.pour_projet(projet_id).inactifs()
 
-    def _creneau_capacite(self, nom: str) -> AbstractAsyncContextManager[None]:
+    def _creneau_capacite(
+        self, nom: str, projet_id: str | None = None
+    ) -> AbstractAsyncContextManager[None]:
         """Un créneau d'exécution de l'agent `nom`, borné à son plafond d'instances (#86).
 
         Le plafond est relu dans le dépôt à chaque prise (application à chaud,
         comme les playbooks) : ajuster les instances depuis la Control Tower
         vaut pour la prochaine tâche disputée. Sans dépôt câblé, aucun plafond —
-        comportement historique.
+        comportement historique. Relu **dans le projet de la tâche** (#1038).
+
+        ⚠ La jauge, elle, reste celle de l'exécuteur, et c'est voulu : le nombre
+        d'instances est un plafond **de ce que le poste fait tourner en même
+        temps** pour cet agent, pas un quota par projet. Deux projets qui
+        accordent trois instances au même agent n'en ouvrent pas six.
         """
         capacites = self._capacites
         if capacites is None:
             return nullcontext()
-        return self._jauge.creneau(nom, lambda: capacites.lire(nom).instances)
+        depot = capacites.pour_projet(projet_id)
+        return self._jauge.creneau(nom, lambda: depot.lire(nom).instances)
 
     def _atelier_projet(self, task: Task) -> AbstractAsyncContextManager[None]:
         """L'atelier de `task` : la racine d'un projet non versionné, une tâche à la fois (#839).
@@ -880,7 +949,9 @@ class LocalExecutor(TaskExecutor):
             return nullcontext()
         return self._verrou_projet(projet.id)
 
-    def _serveurs_mcp(self, agent: str) -> tuple[ServeurMcp, ...]:
+    def _serveurs_mcp(
+        self, agent: str, projet_id: str | None = None
+    ) -> tuple[ServeurMcp, ...]:
         """Les serveurs MCP déclarés pour `agent`, relus à chaque tâche (#104).
 
         Même application **à chaud** que les playbooks : une déclaration ajoutée
@@ -888,12 +959,17 @@ class LocalExecutor(TaskExecutor):
         Propage le `ValueError` de la validation à la lecture — l'appelant le
         mue en échec de tâche consigné. Vide sans dépôt câblé, ou pour un agent
         sans déclaration — comportement d'origine.
+
+        Lus **dans le projet de la tâche** depuis #1038 : c'est là tout l'objet
+        du jalon — un agent partagé monterait chez l'un les serveurs de l'autre.
         """
         if self._mcp is None:
             return ()
-        return self._mcp.lire(agent)
+        return self._mcp.pour_projet(projet_id).lire(agent)
 
-    def _politique_permissions(self, agent: str) -> PolitiqueOutils | None:
+    def _politique_permissions(
+        self, agent: str, projet_id: str | None = None
+    ) -> PolitiqueOutils | None:
         """La politique allow/deny de `agent`, relue à chaque tâche (#110).
 
         Même application **à chaud** que les playbooks et les déclarations
@@ -902,12 +978,18 @@ class LocalExecutor(TaskExecutor):
         validation à la lecture — l'appelant le mue en échec de tâche
         consigné. None sans dépôt câblé, ou pour un agent sans politique —
         tout permis, comportement d'origine.
+
+        Lue **dans le projet de la tâche** depuis #1038, avec le repli sur le
+        gabarit que le dépôt tient : sans lui, ranger les autorisations par
+        projet ferait d'un projet neuf un projet **tout permis**.
         """
         if self._permissions is None:
             return None
-        return self._permissions.lire(agent)
+        return self._permissions.pour_projet(projet_id).lire(agent)
 
-    def _playbook_courant(self, agent: str) -> PlaybookVersion | None:
+    def _playbook_courant(
+        self, agent: str, projet_id: str | None = None
+    ) -> PlaybookVersion | None:
         """La version courante du playbook stocké de `agent`, relue à chaque tâche (#78).
 
         C'est la relecture par tâche qui rend l'édition applicable **à chaud** :
@@ -915,10 +997,13 @@ class LocalExecutor(TaskExecutor):
         récente au moment où la tâche démarre est celle qui exécute. None sans
         dépôt câblé, ou pour un agent jamais édité — l'exécution garde alors les
         prompts du code (catalogue et runtimes), comportement d'origine.
+
+        Lue **dans le projet de la tâche** depuis #1038 : le playbook que ce
+        projet a publié, celui du gabarit tant qu'il n'a rien publié.
         """
         if self._playbooks is None:
             return None
-        return self._playbooks.lire(agent)
+        return self._playbooks.pour_projet(projet_id).lire(agent)
 
     def _projet(self, task: Task) -> Projet | None:
         """Le projet dans lequel `task` travaille, relu à chaque tâche (#224, EF-36).

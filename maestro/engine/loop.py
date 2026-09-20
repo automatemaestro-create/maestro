@@ -82,7 +82,7 @@ from maestro.agents.permissions import PermissionStore
 from maestro.agents.playbooks import PlaybookStore
 from maestro.agents.runtime import AgentRuntime
 from maestro.agents.secrets import SecretStore
-from maestro.agents.store import AgentStore, catalogue
+from maestro.agents.store import AgentStore, SurchargeStore, catalogue
 from maestro.config import Settings, load_settings
 from maestro.engine.brief import (
     MODE_BRIEF_AUTO,
@@ -391,6 +391,9 @@ class OrchestrationEngine:
         permissions: PermissionStore | None = None,
         relance: PolitiqueRelance | None = None,
         projets: ProjetStore | None = None,
+        agents_store: AgentStore | None = None,
+        surcharges: SurchargeStore | None = None,
+        modele: str | None = None,
         arbitre_brief: ArbitreBrief | None = None,
         arbitre_clarification: ArbitreClarification | None = None,
         tours_clarification: int | None = None,
@@ -454,6 +457,13 @@ class OrchestrationEngine:
                 permissions=permissions,
                 relance=relance,
                 projets=projets,
+                # Les agents **du projet de la tâche** (#1038) : ces deux dépôts
+                # descendent pour la même raison que les quatre au-dessus — un
+                # agent recruté pour un projet naît après le câblage, et le
+                # catalogue figé du routeur ne peut pas le connaître.
+                agents_store=agents_store,
+                surcharges=surcharges,
+                modele=modele,
                 mailbox=mailbox,
                 # La question libre d'un agent (#1023) descend jusqu'à
                 # l'exécuteur, où elle est posée et consignée : c'est lui qui tient
@@ -557,10 +567,12 @@ class OrchestrationEngine:
         settings = settings or load_settings()
         provider = provider_from_settings(settings)
         orchestrator = Orchestrator(provider, model=default_model(settings))
+        agents_store = AgentStore.default(settings)
+        surcharges = SurchargeStore.default(settings)
         return cls(
             provider,
             orchestrator,
-            agents=catalogue(AgentStore.default(settings), settings.model),
+            agents=catalogue(agents_store, settings.model, surcharges=surcharges),
             runtimes=default_runtimes(provider, model=settings.model),
             guardrails=guardrails,
             mailbox=mailbox,
@@ -570,6 +582,9 @@ class OrchestrationEngine:
             secrets=SecretStore.default(settings),
             permissions=PermissionStore.default(settings),
             projets=ProjetStore.default(settings),
+            agents_store=agents_store,
+            surcharges=surcharges,
+            modele=settings.model,
             relance=relance,
             max_parallele=max_parallele,
             arbitre_brief=arbitre_brief,
