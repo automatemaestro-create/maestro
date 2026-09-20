@@ -62,10 +62,10 @@ from maestro.controltower.events import (
     EVENEMENT_RUN_PLAN,
     EVENEMENT_TACHE_STATUT,
     EVENEMENT_VALIDATION_DEMANDE,
+    ROLE_RUN,
     Event,
     EventBus,
     InMemoryEventBus,
-    ROLE_RUN,
     ReferenceTicket,
 )
 from maestro.controltower.fixtures import FixturesControlTower
