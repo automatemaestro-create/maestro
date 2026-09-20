@@ -374,7 +374,12 @@ const RESIDU = new Map<string, number>([
   //   bouton « Envoyer » recopiés —, il monte désormais `Conversation`, le fil du
   //   produit. La ligne la plus haute qu'on ait retirée d'un coup, et elle ne s'est
   //   pas retirée classe par classe : c'est la **recopie** qui est partie.
-  ["components/BanniereErreurApi.tsx", 3],
+  // `components/BanniereErreurApi.tsx` est **sorti** du tableau par #996 (3 → 0) :
+  //   le bandeau nommait sa teinte à la main (`rose-200` / `rose-50` / `rose-800` et
+  //   leurs trois `dark:`) alors que la palette porte exactement ce rôle — `alerte`,
+  //   `alerte-creux`, `alerte-texte`, déjà employés par le fil (`Conversation`). Le
+  //   ticket réécrivait le bandeau pour qu'il nomme la panne : la teinte est partie
+  //   avec, plutôt que de rester une paire de plus dans un fichier qu'on rouvrait.
   // 8 → 4 par #911 : les deux fonds d'entrée (`selectionne`, `survol`) et le
   //   fond et le bord de la barre, que `surface-creuse` et `bord` rendent **au
   //   pixel près** dans les deux thèmes (mesuré — le ticket les donnait pour
@@ -462,7 +467,7 @@ const RESIDU = new Map<string, number>([
 ]);
 
 /** Le compte du README — épinglé ici pour qu'il ne puisse pas dériver en silence. */
-const TOTAL_ANNONCE = 648;
+const TOTAL_ANNONCE = 645;
 
 /** Ce que le produit porte aujourd'hui, fichier par fichier. */
 function residuMesure(): Map<string, string[]> {

@@ -36,7 +36,7 @@ import { useCallback, useEffect, useState } from "react";
 import { BanniereErreurApi } from "@/components/BanniereErreurApi";
 import { IconeAgent, IconeAlerte, IconeMcp } from "@/components/Icones";
 import { TuileChiffre } from "@/components/Primitives";
-import { chargerCatalogue, chargerPoolMcp } from "@/lib/api";
+import { chargerCatalogue, chargerPoolMcp, panneDe, type PanneApi } from "@/lib/api";
 import { entreeParLibelle } from "@/lib/navigation";
 import type { IntegrationPoolMcp } from "@/lib/types";
 
@@ -56,7 +56,7 @@ export function EcranIntegrations() {
   const [poolErreur, setPoolErreur] = useState<string | null>(null);
   const [usage, setUsage] = useState<UsageDuPool>(USAGE_INCONNU);
   const [chargement, setChargement] = useState(true);
-  const [erreur, setErreur] = useState<string | null>(null);
+  const [erreur, setErreur] = useState<PanneApi | null>(null);
 
   const rechargerPool = useCallback(async () => {
     const rendu = await chargerPoolMcp();
@@ -87,7 +87,7 @@ export function EcranIntegrations() {
           await recharger();
           setErreur(null);
         } catch (e) {
-          setErreur(e instanceof Error ? e.message : String(e));
+          setErreur(panneDe(e));
         } finally {
           setChargement(false);
         }

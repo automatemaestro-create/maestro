@@ -505,7 +505,11 @@ const RESIDU = new Map<string, number>([
   ["app/couts/page.tsx", 8],
   ["app/journal/page.tsx", 7],
   ["app/page.tsx", 1],
-  ["components/BanniereErreurApi.tsx", 1],
+  // `components/BanniereErreurApi.tsx` est **sorti** du tableau par #996 (1 → 0) :
+  //   son `text-sm` était le seul pas hors échelle du fichier, et le bandeau
+  //   réécrit pour nommer la panne écrit `text-corps` et `text-annexe` — la
+  //   hiérarchie entre le message et le diagnostic est précisément ce que
+  //   l'échelle sert à dire.
   ["components/BarreLaterale.tsx", 2],
   ["components/BarreSuperieure.tsx", 3],
   ["components/BasculeTheme.tsx", 1],
@@ -542,7 +546,7 @@ const RESIDU = new Map<string, number>([
 ]);
 
 /** Le compte du README — épinglé ici pour qu'il ne puisse pas dériver en silence. */
-const TOTAL_ANNONCE = 165;
+const TOTAL_ANNONCE = 164;
 
 /** Ce que le produit porte aujourd'hui, fichier par fichier. */
 function residuMesure(): Map<string, string[]> {
