@@ -78,6 +78,8 @@ from maestro.controltower import frise as frise_mod
 from maestro.controltower.events import (
     EVENEMENT_AGENT_ACTIVITE,
     EVENEMENT_MESSAGE_INTER_AGENTS,
+    EVENEMENT_QUESTION_DEMANDE,
+    EVENEMENT_QUESTION_REPONSE,
     EVENEMENT_TACHE_BLOCAGE,
     EVENEMENT_TACHE_REASSIGNATION,
     EVENEMENT_TACHE_STATUT,
@@ -737,6 +739,12 @@ def test_un_couloir_declare_mais_muet_peut_porter_un_signe():
 # ------------------------------------------ ⑤ `TYPES_FRISE` est gardé, deux fois
 
 
+#: ⚠ Ce contrat s'est élargi une fois de plus en #1023, et pour la raison qui
+#: avait déjà fait entrer `tache.blocage` (#719) : la **question libre** d'un
+#: agent est la seconde où quelqu'un est attendu — le signal exact dont l'absence
+#: a coûté les 53 minutes du 14 août —, pas du bruit de fond. Elle entre par la
+#: porte de `validation.*`, qui porte déjà la même nature (une demande, puis son
+#: issue), et non par celle d'`agent.activite`, qui reste fermée.
 _CONTRAT_FRISE = frozenset(
     {
         EVENEMENT_TACHE_STATUT,
@@ -744,6 +752,8 @@ _CONTRAT_FRISE = frozenset(
         EVENEMENT_VALIDATION_DEMANDE,
         EVENEMENT_VALIDATION_DECISION,
         EVENEMENT_TACHE_BLOCAGE,
+        EVENEMENT_QUESTION_DEMANDE,
+        EVENEMENT_QUESTION_REPONSE,
     }
 )
 
@@ -776,6 +786,8 @@ _NOMS_CONTRAT = {
     "EVENEMENT_VALIDATION_DEMANDE",
     "EVENEMENT_VALIDATION_DECISION",
     "EVENEMENT_TACHE_BLOCAGE",
+    "EVENEMENT_QUESTION_DEMANDE",
+    "EVENEMENT_QUESTION_REPONSE",
 }
 
 

@@ -73,6 +73,12 @@ from maestro.engine.guardrails import (
     DemandeValidation,
     Guardrails,
 )
+from maestro.engine.questions import (
+    VERBE_QUESTION,
+    ArbitreQuestion,
+    DemandeQuestion,
+    identifiant_question,
+)
 from maestro.engine.retry import PolitiqueRelance, est_transitoire
 from maestro.messaging.mailbox import (
     MESSAGE_NOTIFICATION,
@@ -92,9 +98,10 @@ from maestro.projets.modele import Projet
 from maestro.projets.racine import RacineRefusee
 from maestro.projets.store import ProjetStore
 from maestro.providers.activite import PERIODE_ACTIVITE_S
-from maestro.providers.arbitrage import Arbitre, ArbitreActe
+from maestro.providers.arbitrage import Arbitre, ArbitreActe, BornesArbitrage
 from maestro.providers.base import ModelProvider, UnsupportedCapability, stderr_de
 from maestro.providers.courrier import Courrier
+from maestro.providers.question import Questionneur
 from maestro.router.classifier import TaskClassifier
 from maestro.router.router import Router
 from maestro.sandbox import ProducedFile, branche_de_tache
@@ -248,6 +255,34 @@ SUFFIXE_ETAPE_BLOCAGE = ":blocage"
 #: que la projection n'utilise que pour rafraîchir la dernière activité de
 #: l'agent — jamais le statut d'une tâche.
 STATUT_BLOCAGE_SIGNALE = "blocage_signale"
+
+#: Suffixe des étapes de **question posée par l'agent** (#1023) :
+#: `<task.id>:question`, une par appel de `poser_une_question`
+#: (`maestro.providers.question`) une fois l'échange **soldé** — réponse reçue ou
+#: reprise sur hypothèse. Le pont Control Tower les range en activité d'agent,
+#: comme `:validation` : c'est la **narration** de l'échange au journal du run, là
+#: où le couple `question.demande`/`question.reponse` en est le **mécanisme**
+#: (`maestro.controltower.question`). Exactement le partage de #48, et pour la
+#: même raison — la file des questions se reconstruit du journal **durable des
+#: événements** (#699), pas de celui des étapes.
+#:
+#: Une seule étape par échange, écrite **à la fin** : l'entrée porte la question
+#: telle que l'agent l'a écrite (choix et hypothèse compris), la sortie ce qui en
+#: est sorti. Deux lignes — l'une à la question, l'autre à la réponse — se
+#: liraient comme deux faits alors qu'il n'y en a qu'un, et laisseraient un
+#: orphelin chaque fois qu'une tâche meurt en attendant.
+SUFFIXE_ETAPE_QUESTION = ":question"
+
+#: Statuts d'une étape `:question` (#1023) — les deux issues, et il en faut deux.
+#:
+#: `question_repondue` : quelqu'un a répondu, la sortie porte sa réponse.
+#: `question_sans_reponse` : personne n'a répondu avant la borne, et la sortie
+#: porte l'**hypothèse que l'agent avait annoncée** — c'est le troisième critère
+#: du ticket, et c'est ce qui distingue « il a tranché seul » de « on ne sait
+#: pas ». Une question restée sans réponse n'est ni un échec ni un refus : c'est
+#: une décision que l'agent a prise, écrite avant de la prendre.
+STATUT_QUESTION_REPONDUE = "question_repondue"
+STATUT_QUESTION_SANS_REPONSE = "question_sans_reponse"
 
 #: Suffixe des étapes de **décision tranchée seul** (#1024) : `<task.id>:decision`,
 #: une par appel de `consigner_decision` (`maestro.providers.decision`) — le pont
@@ -489,8 +524,28 @@ class LocalExecutor(TaskExecutor):
         relance: PolitiqueRelance | None = None,
         projets: ProjetStore | None = None,
         mailbox: Mailbox | None = None,
+        questionneur: ArbitreQuestion | None = None,
+        bornes_question: BornesArbitrage | None = None,
     ) -> None:
         self._provider = provider
+        # À qui porter la question libre d'un agent (#1023) — en pratique
+        # `maestro.controltower.question.ArbitreQuestionControlTower`. None : le
+        # verbe n'est **pas servi du tout**, comme `signaler_blocage` sans
+        # journal — servir à un agent un outil qui suspend sa tâche pour personne
+        # serait pire que ne pas le lui servir. C'est un câblage de déploiement,
+        # au même titre que le validateur des garde-fous (#9) : *où* la question
+        # est posée ne se décide pas dans le moteur.
+        self._questionneur = questionneur
+        # Ce qu'on laisse à qui répond, avant que l'agent ne reprenne sur son
+        # hypothèse (#1023). `BornesArbitrage.attente_s` — la valeur que #583
+        # décrit comme « ce qu'on laisse à la personne qui tranche » —, et **pas**
+        # `attente_effective`, qui retranche la marge d'une échéance de hook :
+        # aucun hook n'intercepte ce verbe, et l'y adosser ferait raccourcir
+        # l'attente d'une question parce qu'on aurait resserré le time-out d'un
+        # point de contrôle qui ne la voit jamais passer.
+        self._bornes_question = (
+            bornes_question if bornes_question is not None else BornesArbitrage()
+        )
         # Messagerie inter-agents (#44) vue de l'exécuteur (#720) : la boîte sur
         # laquelle **notifier** le mot qu'un agent adresse à un pair. None — le
         # cas courant, un run se lance sans `--messagerie` — n'éteint pas le
@@ -1495,6 +1550,163 @@ class LocalExecutor(TaskExecutor):
 
         return courrier
 
+    def _question(
+        self,
+        task: Task,
+        agent: Agent,
+        journal: RunJournal,
+        memoire: MemoireArbitrage,
+    ) -> Questionneur:
+        """Le canal par lequel un agent **demande un renseignement** (#1023).
+
+        Rend au fournisseur un `Questionneur` — question, choix, hypothèse en
+        entrée ; la réponse humaine ou `None` en sortie — et c'est ici, et nulle
+        part ailleurs, que se décident les trois choses que le fournisseur ne peut
+        pas décider : **combien de temps** on attend, **ce qu'on écrit** des deux
+        issues, et **ce qu'on retient** d'une réponse tardive.
+
+        ## La borne vit ici, avec le journal
+
+        Le fournisseur suspend l'appel, mais il ne borne rien (cf.
+        `maestro.providers.question.Questionneur`) : à la borne, il faut consigner
+        que l'agent **reprend sur son hypothèse**, et seul l'endroit qui tient le
+        journal peut le faire. Un fournisseur qui aurait renoncé de son côté
+        ferait repartir l'agent sans qu'une ligne nulle part ne dise pourquoi —
+        exactement le silence que le troisième critère du ticket interdit.
+
+        `asyncio.wait_for` renonce sans annuler la demande : `MemoireArbitrage`
+        protège l'attente partagée (`asyncio.shield`), et c'est le dispositif de
+        #583 réemployé tel quel — *l'appelant qui renonce renonce par
+        construction*. La demande reste donc en vol, la réponse qui arrive plus
+        tard est consignée par `soumettre` (qui, lui, tourne encore) puis retenue
+        par la mémoire, et le même appel rejoué la retrouve sans nouvelle attente.
+
+        ## Ce qui est écrit, et quand
+
+        **Une seule étape par échange, à la fin** (cf. `SUFFIXE_ETAPE_QUESTION`) :
+        l'entrée porte la question telle que l'agent l'a écrite, la sortie porte
+        la réponse ou l'hypothèse. La question *en vol*, elle, vit sur le bus
+        (`question.demande`, publié par l'arbitre) — c'est le partage de #48 entre
+        la narration et le mécanisme.
+
+        ## Ce que ce canal ne fait pas
+
+        Il ne compose **aucune** `DemandeValidation`, ne touche pas au
+        `Guardrails`, et ce qu'un humain écrit en réponse n'approuve rien : un
+        acte classé `ask` reste refusé sans canal d'arbitrage, qu'une question ait
+        été posée ou non (EF-08). Les deux canaux partagent une `MemoireArbitrage`
+        et **ne peuvent pas se croiser** : les clés d'un acte portent le nom
+        préfixé de l'outil intercepté (`mcp__…`), celles d'une question le verbe
+        nu (`VERBE_QUESTION`).
+
+        Un arbitre qui **lève** (bus refermé, transport en panne) ne tue pas la
+        tâche : l'exception remonte au fournisseur, qui sert à l'agent « je n'ai pu
+        demander à personne, reprends sur ton hypothèse ». Une question sans
+        réponse n'a jamais été un motif de condamner un travail en cours.
+        """
+        questionneur = self._questionneur
+        if questionneur is None:  # pragma: no cover — le verbe n'est alors pas monté
+            raise RuntimeError("aucun canal de question n'est câblé sur cet exécuteur")
+        attente_s = self._bornes_question.attente_s
+
+        async def question(
+            texte: str, choix: tuple[str, ...], hypothese: str
+        ) -> str | None:
+            cle = cle_acte(
+                VERBE_QUESTION,
+                {"question": texte, "hypothese": hypothese, "choix": " · ".join(choix)},
+            )
+            demande = DemandeQuestion(
+                question_id=identifiant_question(task.id, cle),
+                question=texte,
+                hypothese=hypothese,
+                choix=choix,
+                # Fermés ici, jamais demandés à l'agent (même règle qu'en #582 et
+                # #720) : il pourrait sinon signer d'un autre nom, ou rattacher sa
+                # question à la tâche d'un tiers.
+                tache_id=task.id,
+                titre=task.titre,
+                agent=agent.nom,
+                role=agent.role,
+                run_id=journal.run_id,
+                projet_id=task.projet_id,
+                attente_s=attente_s,
+            )
+
+            async def soumettre() -> tuple[bool, str]:
+                reponse = await questionneur(demande)
+                self._consigne_question(task, agent, demande, journal, reponse=reponse)
+                return True, reponse
+
+            try:
+                _, reponse = await asyncio.wait_for(
+                    memoire.tranche(cle, soumettre), attente_s
+                )
+            except TimeoutError:
+                # Personne n'a lu. L'agent reprend sur ce qu'il avait annoncé, et
+                # c'est cette ligne-là qui le dit — la demande, elle, reste en vol.
+                self._consigne_question(task, agent, demande, journal, reponse=None)
+                return None
+            return reponse
+
+        return question
+
+    def _consigne_question(
+        self,
+        task: Task,
+        agent: Agent,
+        demande: DemandeQuestion,
+        journal: RunJournal,
+        *,
+        reponse: str | None,
+    ) -> None:
+        """Trace l'issue d'une question posée par l'agent (#1023) — donc au fil temps réel.
+
+        Étape dédiée `<task.id>:question` (même modèle que `:validation`), rangée
+        par le pont en activité d'agent : une question ne fait pas changer sa tâche
+        de colonne — l'agent travaille, il demande un renseignement, et il
+        reprendra quoi qu'il arrive.
+
+        `entree` porte la question **telle que l'agent l'a écrite**, choix et
+        hypothèse compris (`DemandeQuestion.resume`) : sans eux, relire la trace ne
+        permettrait pas de juger la réponse. `sortie` porte l'issue, et les deux
+        issues sont écrites de la même façon parce qu'elles ont la même valeur —
+        une réponse humaine est un renseignement reçu, une reprise sur hypothèse
+        est une décision prise par l'agent, et les deux doivent se lire.
+
+        La **borne** est nommée dans la seconde : c'est ici qu'elle est réglée,
+        donc ici qu'on la dit. L'agent, lui, ne la lit pas (cf.
+        `maestro.providers.question.SANS_REPONSE`) — la redire des deux côtés
+        ferait deux supports pour un même chiffre.
+
+        Usage nul : demander ne dépense pas — le coût de la tâche est porté par
+        son étape finale. Le pont écarte de lui-même la mesure de ces étapes.
+        """
+        repondue = reponse is not None
+        journal.consigne(
+            etape=f"{task.id}{SUFFIXE_ETAPE_QUESTION}",
+            nom=f"Question de l'agent — {task.titre}",
+            agent=agent.nom,
+            role=agent.role,
+            statut=(
+                STATUT_QUESTION_REPONDUE if repondue else STATUT_QUESTION_SANS_REPONSE
+            ),
+            entree=demande.resume(),
+            sortie=(
+                f"réponse : {reponse}"
+                if repondue
+                else (
+                    f"aucune réponse après {demande.attente_s:g} s — l'agent reprend "
+                    f"sur son hypothèse : {demande.hypothese}"
+                )
+            ),
+            usage=StepUsage(),
+            # Le projet (#222) est porté par **toutes** les étapes de la tâche,
+            # annexes comprises : une étape qui ne le porterait pas disparaîtrait
+            # des vues restreintes à ce projet.
+            projet_id=task.projet_id,
+        )
+
     def _consigne_validation(
         self,
         task: Task,
@@ -2282,6 +2494,13 @@ class LocalExecutor(TaskExecutor):
         n'a personne à notifier, ce qui est exactement le régime du pair absent
         (docs/31 §3.2).
 
+        La **question libre** (#1023) suit ce chemin-là aussi, et pour une raison
+        de plus que les autres : un appel texte n'a pas de tours — il ne peut ni
+        être suspendu, ni reprendre sur une hypothèse. Elle demande **deux**
+        câblages plutôt qu'un : un canal (à qui porter la question) et un journal
+        (où écrire ce qui en est sorti). L'un sans l'autre suspendrait l'agent
+        pour personne, ou le ferait reprendre sans trace.
+
         Le **projet** de la tâche (#224) n'équipe lui aussi que le chemin
         outillé : c'est de lui qu'est dérivé l'espace de travail (worktree ou
         copie). Le chemin texte ne produit aucun fichier — il n'a pas d'espace
@@ -2377,6 +2596,17 @@ class LocalExecutor(TaskExecutor):
                     # aucune des promesses de sa description.
                     on_courrier=(
                         None if journal is None else self._courrier(task, agent, journal)
+                    ),
+                    # Deux conditions, et aucune n'est de confort (#1023) : sans
+                    # **canal**, la question n'atteindrait personne et l'agent
+                    # serait suspendu pour rien ; sans **journal**, sa reprise sur
+                    # hypothèse ne s'écrirait nulle part, ce que le troisième
+                    # critère interdit. Dans les deux cas le verbe n'est pas monté
+                    # du tout, plutôt que monté sans aboutir.
+                    on_question=(
+                        None
+                        if journal is None or self._questionneur is None
+                        else self._question(task, agent, journal, deliberation.memoire)
                     ),
                     projet=self._projet(task),
                     tache_id=task.id,

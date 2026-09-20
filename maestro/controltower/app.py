@@ -52,6 +52,13 @@ Endpoints :
   (approuver/refuser) : le moteur, en attente sur le bus, reprend ou annule. Un
   refus peut porter un `motif` (#272), facultatif, qui rejoint le `detail` de
   l'événement — donc le journal et la `decision` de la demande ;
+- `GET  /api/questions` — les questions **libres** posées par les agents pendant
+  leur tâche (#1023) : la question, ses choix facultatifs, l'hypothèse que
+  l'agent suivra sans réponse, puis la réponse une fois écrite. Une question
+  reste servie tant que personne n'y a répondu, même après que l'agent a repris ;
+- `POST /api/questions/{question_id}/reponse` — la réponse humaine, du **texte**
+  : l'agent, suspendu sur le bus, la reçoit et reprend. Répondre n'approuve
+  aucun acte — un outil classé `ask` reste refusé sans arbitrage (EF-08) ;
 - `GET  /api/playbooks` — les playbooks des agents (#76 : version courante et
   provenance — défaut du code ou stockage versionné) ;
 - `GET  /api/playbooks/{agent}` — le playbook courant d'un agent (contenu) ;
@@ -360,6 +367,7 @@ from maestro.controltower.events import (
     EVENEMENT_AGENT_CAPACITE,
     EVENEMENT_BRIEF_DECISION,
     EVENEMENT_BRIEF_REPONSES,
+    EVENEMENT_QUESTION_REPONSE,
     EVENEMENT_TACHE_REASSIGNATION,
     EVENEMENT_TACHE_REFERENCE,
     EVENEMENT_VALIDATION_DECISION,
@@ -434,6 +442,7 @@ from maestro.controltower.state import (
     CAPACITE_DESACTIVE,
     EXECUTION_EN_ATTENTE_BRIEF,
     EXECUTION_EN_ATTENTE_REPONSES,
+    QUESTION_REPONDUE,
     STATUTS_EXECUTION_TERMINAUX,
     VALIDATION_APPROUVEE,
     VALIDATION_REFUSEE,
@@ -449,6 +458,7 @@ from maestro.providers.arbitrage import OUTIL_ARBITRAGE
 from maestro.providers.blocage import OUTIL_BLOCAGE
 from maestro.providers.courrier import OUTIL_COURRIER
 from maestro.providers.decision import OUTIL_DECISION
+from maestro.providers.question import OUTIL_QUESTION
 from maestro.references import ReferenceTicket
 from maestro.sources import DepotTeleversements, SourceRefusee, apercu_sources
 
@@ -571,6 +581,24 @@ class DecisionRequete(BaseModel):
 
     approuve: bool
     motif: str = ""
+
+
+class ReponseQuestionRequete(BaseModel):
+    """Corps de la réponse à une question d'agent (#1023) : du **texte**, rien d'autre.
+
+    Pas de booléen, et c'est tout ce qui sépare ce geste de `DecisionRequete` :
+    une question ne soumet aucun acte, il n'y a donc ni oui, ni non, ni motif de
+    refus — il y a ce qu'on répond. Un choix retenu se répond en le recopiant :
+    l'agent a écrit ses options, il sait les relire, et un index de choix ferait
+    voyager un numéro dont la signification vivrait dans un autre événement.
+
+    La réponse est **obligatoire et non vide** (refusée en 422 par le contrôle
+    ci-dessous) : une réponse vide n'apprend rien à l'agent, qui reprendrait sur
+    son hypothèse en croyant qu'on lui a répondu — c'est-à-dire pire que le
+    silence, qui lui dit au moins la vérité.
+    """
+
+    reponse: str
 
 
 class DecisionBriefRequete(BaseModel):
@@ -2506,6 +2534,94 @@ def create_app(
         await bus.publish(event)
         return demande.to_dict()
 
+    @app.get("/api/questions")
+    async def questions(projet: str | None = None) -> list[dict[str, Any]]:
+        """Les questions posées par les agents (#1023) : contexte, hypothèse, réponse.
+
+        `projet` est **obligatoire** (#277), au contrat commun
+        (`<id>` | `tous` | `aucun`) : une question appartient au projet de la
+        tâche qui la pose, et une Control Tower cadrée sur un projet n'a pas à
+        faire répondre pour un travail qui se déroule ailleurs.
+
+        Une question **reste servie tant que personne n'y a répondu**, y compris
+        après que l'agent a repris sur son hypothèse : une réponse tardive sert
+        encore (`MemoireArbitrage`, #584 — le même appel rejoué la retrouvera).
+        Ce que l'agent a fait entre-temps se lit au journal du run, étape
+        `<tache>:question`.
+        """
+        return [q.to_dict() for q in state.questions(_portee(projet))]
+
+    @app.post("/api/questions/{question_id}/reponse")
+    async def repondre_question(
+        question_id: str, requete: ReponseQuestionRequete
+    ) -> dict[str, Any]:
+        """Répond à la question d'un agent (#1023) : la réponse part vers le moteur.
+
+        Même patron que `POST /api/validations/{tache_id}/decision` : la réponse
+        est appliquée à l'état (le REST répond déjà à jour) puis publiée sur le
+        bus — l'agent, suspendu sur ce même bus, la reçoit et reprend. La pompe
+        réapplique l'événement sans effet (idempotence).
+
+        `404` si aucune question ne porte cet identifiant ; `409` si elle a déjà
+        reçu une réponse — jamais deux fois répondu, l'agent n'ayant lu que la
+        première. `422` si la réponse est vide : ce serait dire à l'agent qu'on
+        lui a répondu sans rien lui apprendre, c'est-à-dire pire que le silence.
+
+        ⚠ **Répondre n'approuve rien.** Le texte écrit ici n'autorise aucun acte :
+        un outil classé `ask` reste refusé sans canal d'arbitrage, et la file des
+        validations est le seul endroit où un acte se tranche (EF-08, docs/32 §5).
+
+        Une réponse **tardive** est acceptée, et ce n'est pas une tolérance : la
+        question est restée posée précisément parce qu'elle sert encore. L'agent
+        a peut-être déjà repris sur son hypothèse — le journal du run le dit —, et
+        la réponse le rattrapera au prochain appel identique.
+        """
+        question = state.question(question_id)
+        if question is None:
+            raise HTTPException(
+                status_code=404, detail=f"aucune question : {question_id}"
+            )
+        if not question.en_attente:
+            raise HTTPException(
+                status_code=409,
+                detail=f"question déjà répondue ({question.statut}) : {question_id}",
+            )
+        reponse = requete.reponse.strip()
+        if not reponse:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "une réponse vide n'apprend rien à l'agent : écrivez ce que "
+                    "vous lui répondez, ou laissez-le reprendre sur son hypothèse."
+                ),
+            )
+        event = Event(
+            type=EVENEMENT_QUESTION_REPONSE,
+            # Le run et la tâche sont recopiés depuis la question projetée : c'est
+            # `question.demande` qui les porte (comme `validation.demande` porte
+            # le sien, #570), et la réponse peut venir d'ailleurs — cet endpoint,
+            # une rediffusion, un journal durable rejoué. Une seule source, celle
+            # qui a posé la question.
+            run_id=question.run_id,
+            tache_id=question.tache_id,
+            titre=question.titre,
+            agent=question.agent,
+            role=question.role,
+            statut=QUESTION_REPONDUE,
+            # La réponse voyage dans `detail`, et nulle part ailleurs : c'est le
+            # champ que la projection recopie et que le journal durable conserve.
+            # Lui ouvrir un champ à lui aurait demandé de le faire traverser le
+            # schéma d'événement pour un texte que `detail` porte déjà.
+            detail=reponse,
+            projet_id=question.projet_id,
+            question_id=question_id,
+        )
+        # `appliquer` met à jour la question **en place** : ce qu'on rend est donc
+        # déjà l'état d'après, comme sur la décision de validation.
+        state.appliquer(event)
+        await bus.publish(event)
+        return question.to_dict()
+
     def _playbook_origine(agent: str) -> PlaybookDefaut | None:
         """Le playbook **d'origine** de `agent` — code ou personnalisé —, None si inconnu.
 
@@ -2952,9 +3068,9 @@ def create_app(
         Trois origines, et aucune n'est écrite en dur ici : les outils
         **intégrés** de son profil de rôle (`RoleProfile.outils`, `DEFAULT_TOOLS`
         pour un agent hors des profils outillés), les verbes du serveur
-        in-process **maestro** (arbitrage, blocage, courrier, décision consignée
-        — leurs constantes existent précisément pour qu'une politique les
-        désigne, #805) et les
+        in-process **maestro** (arbitrage, blocage, courrier, décision
+        consignée, question — leurs constantes existent précisément pour qu'une
+        politique les désigne, #805, #1023) et les
         **serveurs MCP** effectivement montés pour lui, cités en entier
         (`mcp__<serveur>`, qui couvre tous leurs outils).
 
@@ -2982,6 +3098,7 @@ def create_app(
                 "origine": "maestro",
                 "libelle": "consigner une décision tranchée seul",
             },
+            {"nom": OUTIL_QUESTION, "origine": "maestro", "libelle": "poser une question"},
         ]
         try:
             serveurs = mcp.lire(nom)

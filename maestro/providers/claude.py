@@ -58,7 +58,7 @@ from maestro.config import ConfigError, Settings
 from maestro.decideur import Decideur
 from maestro.deliberation import CreditArbitrage
 from maestro.detail_tache import EtapeTache
-from maestro.providers import blocage, courrier, decision
+from maestro.providers import blocage, courrier, decision, question
 from maestro.providers.activite import Geste, RegulateurActivite
 from maestro.providers.arbitrage import (
     CANAL_EN_ERREUR,
@@ -366,6 +366,7 @@ class ClaudeProvider(ModelProvider):
         on_decision: decision.Consigneur | None = None,
         credit_arbitrage: CreditArbitrage | None = None,
         on_courrier: courrier.Courrier | None = None,
+        on_question: question.Questionneur | None = None,
         plafond_tours: int | None = PLAFOND_TOURS_DEFAUT,
         projet: Projet | None = None,
         effort: str | None = None,
@@ -551,6 +552,20 @@ class ClaudeProvider(ModelProvider):
         pendant sa tâche. C'est aussi pourquoi l'issue de la publication ne
         remonte pas jusqu'ici — elle ne prouverait rien de plus que son échec.
 
+        `on_question` (#1023, `maestro.providers.question`) fait porter au même
+        serveur l'outil `poser_une_question(question, hypothese, choix)` : l'agent
+        demande un **renseignement** à l'utilisateur et son appel est suspendu
+        jusqu'à la réponse. C'est le **second** canal qui attende quelque chose, et
+        il reçoit donc le même `credit_arbitrage` que le premier — mais ce qu'il
+        transporte est du **texte**, là où l'arbitrage transporte un booléen : les
+        deux ne se remplacent pas, et une réponse n'a jamais autorisé un acte
+        (EF-08, cf. le module).
+
+        Il ne **borne rien** ici : l'attente est réglée par l'appelant, seul à
+        pouvoir consigner les deux issues (réponse reçue, reprise sur hypothèse).
+        Ce que ce fournisseur fait de `None` est donc une réponse servie à l'agent
+        — « reprends sur ton hypothèse » — et jamais un refus.
+
         `effort` (#253) alimente l'option homonyme du SDK (`--effort` du CLI),
         après le même tamis que sur `generate` : c'est un **conseil de dépense**,
         au même titre que le modèle, et pas une borne — à la différence de
@@ -578,6 +593,7 @@ class ClaudeProvider(ModelProvider):
                 on_decision=on_decision,
                 credit=credit_arbitrage,
                 on_courrier=on_courrier,
+                on_question=on_question,
             ),
         )
         options = ClaudeAgentOptions(
@@ -761,6 +777,88 @@ def _outil_courrier(on_courrier: courrier.Courrier) -> SdkMcpTool[Any]:
     return ecrire_a_un_pair
 
 
+def _outil_question(
+    on_question: question.Questionneur, credit: CreditArbitrage | None = None
+) -> SdkMcpTool[Any]:
+    """L'outil `poser_une_question(question, hypothese, choix)` servi à l'agent (#1023).
+
+    Le quatrième verbe du porte-outils (#718), et le **second** qui attende
+    quelque chose — mais pas la même chose que le premier : `demander_arbitrage`
+    soumet un acte et reçoit un oui/non, celui-ci pose une question et reçoit du
+    texte. Toute la forme de ce qu'il rend vit dans `maestro.providers.question`,
+    avec les deux frontières qui l'ont dessiné, pour rester lisible sans monter de
+    session SDK.
+
+    Quatre réponses se ressemblent et n'ont pas la même cause ; aucune n'est
+    rendue en **erreur d'outil** — même raison qu'en #582 et #720 : une erreur
+    invite à réessayer, or dans trois cas sur quatre il n'y a rien à réessayer
+    tout de suite.
+
+    - **question vide** : rien n'a été posé à personne, donc rien n'est refusé.
+      C'est un champ à remplir ;
+    - **hypothèse vide** : la question n'est **pas posée**, et ce n'est pas un
+      formalisme. L'attente est bornée : sans hypothèse, l'agent n'aurait rien à
+      reprendre à la borne et le journal rien à consigner — la question se
+      terminerait sur un silence, c'est-à-dire sur le défaut qu'on répare ;
+    - **réponse reçue** : servie telle qu'elle a été écrite, avec la suite à
+      donner ;
+    - **personne n'a répondu** (`None`) : ce n'est **pas** un refus et on ne le
+      dit pas comme tel. L'agent reprend sur son hypothèse, qu'on lui recopie, et
+      on lui dit que la question reste posée — c'est la nuance de
+      `arbitrage.motif_attente`, ici sur un canal où l'attente a une issue par
+      défaut au lieu d'un appel écarté.
+
+    Et un cinquième cas, le **canal en erreur** : le callback a levé. On le dit —
+    l'agent attendait quelque chose, donc son échec change quelque chose pour lui
+    — et on ne laisse surtout pas l'exception remonter : elle tuerait la tâche au
+    moment précis où l'agent cherchait à bien faire.
+
+    `credit` (#584) mesure l'attente, et la fenêtre couvre **le seul `await` qui
+    bloque** — pas la composition de la réponse. C'est le canal où un délai par
+    tâche ferait le plus de dégâts après celui de l'arbitrage : un `timeout_s` de
+    dix minutes tuerait une tâche dont l'agent a eu la prudence de demander plutôt
+    que de deviner, ce qui lui apprendrait exactement le contraire de ce qu'on
+    veut lui apprendre.
+
+    L'outil est rendu **séparément de son serveur**, comme ses trois voisins et
+    pour la même raison : ce qui décide ici tient en une poignée de lignes, et les
+    éprouver ne doit coûter ni CLI, ni sous-processus, ni quota (tests → #1027).
+    """
+
+    @tool(question.NOM_OUTIL, question.DESCRIPTION_OUTIL, question.SCHEMA_ENTREE)
+    async def poser_une_question(args: dict[str, Any]) -> dict[str, Any]:
+        texte = str(args.get("question") or "").strip()
+        hypothese = str(args.get("hypothese") or "").strip()
+        choix = question.choix_nettoyes(args.get("choix"))
+        if not texte:
+            reponse_servie = question.QUESTION_MANQUANTE
+        elif not hypothese:
+            reponse_servie = question.HYPOTHESE_MANQUANTE
+        else:
+            try:
+                with _fenetre_arbitrage(credit):
+                    recue = await on_question(texte, choix, hypothese)
+            except Exception as exc:  # noqa: BLE001 — servi à l'agent, jamais une tâche tuée
+                reponse_servie = question.CANAL_EN_ERREUR.format(
+                    cause=exc, hypothese=hypothese
+                )
+            else:
+                reponse_servie = (
+                    question.reponse_recue(recue)
+                    if recue is not None
+                    # `None` n'est pas un refus : personne n'a dit non, personne
+                    # n'a lu. La borne, elle, n'est **pas nommée à l'agent** —
+                    # elle vit chez l'appelant (cf. `Questionneur`), et la
+                    # recopier ici en ferait un second support à tenir d'accord
+                    # pour un chiffre qui n'apprend rien à qui doit reprendre son
+                    # travail. Le journal, lui, la porte : c'est là qu'on la lit.
+                    else question.sans_reponse(hypothese)
+                )
+        return {"content": [{"type": "text", "text": reponse_servie}]}
+
+    return poser_une_question
+
+
 def _outil_blocage(on_blocage: blocage.Signaleur) -> SdkMcpTool[Any]:
     """L'outil `signaler_blocage(raison)` servi à l'agent (#719).
 
@@ -880,6 +978,7 @@ def _outils_maestro(
     on_decision: decision.Consigneur | None = None,
     credit: CreditArbitrage | None = None,
     on_courrier: courrier.Courrier | None = None,
+    on_question: question.Questionneur | None = None,
 ) -> list[SdkMcpTool[Any]]:
     """Les outils que le serveur `maestro` a **effectivement** à porter (#718).
 
@@ -897,6 +996,10 @@ def _outils_maestro(
     Les canaux sont **indépendants** : un run peut servir l'arbitrage sans le
     courrier, l'inverse, tous ou aucun. Rien ici ne les ordonne, et l'ordre de la
     liste n'a pas de sens pour le SDK — c'est celui de la lecture.
+
+    `on_question` (#1023) est le cinquième, et il prend le `credit` comme le
+    premier : ce sont les deux seuls verbes qui **suspendent** l'agent, donc les
+    deux seuls dont l'attente ne doit pas être facturée au délai de la tâche.
     """
     outils: list[SdkMcpTool[Any]] = []
     if on_arbitrage is not None:
@@ -907,6 +1010,8 @@ def _outils_maestro(
         outils.append(_outil_decision(on_decision))
     if on_courrier is not None:
         outils.append(_outil_courrier(on_courrier))
+    if on_question is not None:
+        outils.append(_outil_question(on_question, credit))
     return outils
 
 

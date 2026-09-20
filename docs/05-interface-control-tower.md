@@ -5340,3 +5340,105 @@ Implémentation : [`maestro/controltower/bornes.py`](../maestro/controltower/bor
 `apps/web/components/parametres/ParametresCouts.tsx`. Couverture :
 [`tests/test_chat_global.py`](../tests/test_chat_global.py) section ⑦ et
 `apps/web/tests/demande-cadrage.test.tsx` section ⑤.
+
+### 6.17 La question libre d'un agent — la poser, y répondre (#1023) — **moteur et API livrés**
+
+Un agent ne pouvait demander qu'un **oui/non sur un acte** (`demander_arbitrage`, §2.6). Le canal
+« question », dont la réponse serait du texte, a été renvoyé de #647 à #354 puis rendu à #647 — les
+deux tickets se sont fermés sans le construire, et le socle des playbooks disait l'inverse de ce
+qu'on veut : *personne ne répondra pendant la tâche, préfère une hypothèse à une question*. Ces deux
+routes-ci sont la moitié moteur + API du chantier #1019 ; **l'écran de réponse est le lot #1025**,
+et il empruntera ce contrat sans en ouvrir un second.
+
+- `GET  /api/questions?projet=<id|tous|aucun>` → `200` + `EtatQuestion[]` — les questions posées par
+  les agents, en attente d'abord, puis avec leur réponse. `projet` est **obligatoire**, au contrat
+  commun du §6.0 : une question appartient au projet de la tâche qui la pose.
+- `POST /api/questions/{question_id}/reponse` → `200` + `EtatQuestion` — la réponse humaine. L'agent,
+  suspendu sur le bus, la reçoit et reprend.
+
+```jsonc
+// EtatQuestion (GET /api/questions)
+{
+  "question_id": "t2:9f1c0a4bd3",       // <tache>:<empreinte de la question> — **pas** la tâche seule
+  "tache_id": "t2",
+  "titre": "Rédiger le schéma de données",
+  "question": "Postgres ou SQLite pour la démo ?",
+  "hypothese": "je pars sur SQLite, plus simple à embarquer",
+  "choix": ["Postgres", "SQLite"],       // [] quand l'agent n'en propose pas
+  "agent": "bdd",
+  "role": "Base de données",
+  "attente": "sans réponse d'ici 240 s, l'agent reprendra sur son hypothèse : …",
+  "statut": "en_attente",                // puis "repondue"
+  "reponse": "",                         // le texte humain, une fois écrit
+  "projet_id": "prj-demo",
+  "run_id": "run-2026-09-20-01",
+  "horodatage": "2026-09-20T09:12:31+00:00"
+}
+
+// ReponseQuestion (corps de …/reponse)
+{ "reponse": "Postgres — la démo tourne déjà sur le compose" }
+```
+
+**Du texte, pas un booléen — et c'est le contenu de la décision.** `POST …/reponse` ne porte ni
+`approuve` ni `motif` : une question ne soumet **aucun acte**, il n'y a donc rien à approuver ni à
+refuser. Faire voyager une question dans le canal des validations aurait demandé d'élargir ses trois
+contrats (`Validateur`, `Arbitre`, `ArbitreActe`), tous typés pour un `bool` — exactement ce que #320
+avait déjà tranché dans l'autre sens en donnant au brief un canal à lui
+([docs/32 §5.2](./32-decision-cran-orchestrateur.md)).
+
+⚠ **Répondre n'approuve rien, et c'est le troisième critère du ticket (EF-08).** Le texte écrit ici
+n'autorise aucun appel d'outil : il ne traverse pas le hook `PreToolUse`, ne compose aucune
+`DemandeValidation`, et un outil classé `ask` reste **refusé** sans canal d'arbitrage, qu'une
+question ait été posée ou non. La file du §2.6 reste le seul endroit où un acte se tranche.
+
+**L'identité est la question, pas la tâche.** La file des validations s'indexe par `tache_id` et
+l'assume (#48 : une nouvelle demande remplace la précédente) ; ici ce serait faux — une tâche pose
+plusieurs questions, et une question laissée sans réponse **reste en vol** pendant que son agent
+reprend. Deux questions d'une même tâche peuvent donc attendre ensemble, et la réponse écrite pour
+l'une ne doit pas être rendue à l'autre. `question_id` est **déterministe** (la tâche, puis
+l'empreinte de la question) : la même question reposée porte le même identifiant, ce qui est
+exactement ce que la mémoire des réponses tardives promet.
+
+**`404` / `409` / `422`, et chacun dit autre chose.** `404` : aucune question ne porte cet
+identifiant. `409` : elle a déjà reçu une réponse — jamais deux fois répondu, l'agent n'ayant lu que
+la première. `422` : la réponse est **vide** — ce serait dire à l'agent qu'on lui a répondu sans rien
+lui apprendre, c'est-à-dire pire que le silence, qui lui dit au moins la vérité.
+
+**Une question reste servie tant que personne n'y a répondu**, même après que l'agent a repris. Ce
+n'est pas un oubli de fermeture : à la borne, l'agent reprend sur **l'hypothèse qu'il avait
+annoncée** (troisième critère), et la question continue de valoir — une réponse tardive est retenue
+(`MemoireArbitrage`, #584) et le même appel rejoué la retrouve sans nouvelle attente. Ce que l'agent
+a fait entre-temps se lit **au journal du run**, étape `<tache>:question`, statut
+`question_sans_reponse`, sortie = l'hypothèse. C'est la raison pour laquelle il n'existe pas de
+statut « sans réponse » côté file : fermer la question dirait à l'écran qu'il n'y a plus rien à
+écrire, ce qui serait faux.
+
+**Le run n'est pas suspendu.** `_suspend_sur_arbitrage` (#571) existe parce qu'une tâche arrêtée sur
+un acte sensible l'est *indéfiniment* — sans décision, elle ne repart jamais. Une question a une
+**issue par défaut** : marquer le run « en attente » le laisserait bloqué à l'écran quelques minutes
+après que plus personne n'attend, c'est-à-dire refaire en plus petit la promesse fausse que #571 a
+supprimée.
+
+**Deux événements, comme les deux autres canaux d'attente** : `question.demande` (le moteur publie,
+avant d'attendre) et `question.reponse` (cette route publie, la projection l'applique en place puis
+le bus le porte au moteur — l'état est appliqué **d'abord**, comme pour la décision de validation,
+si bien que le REST répond déjà à jour et que la pompe réapplique sans effet). Ils entrent dans la
+**frise** d'un run (§6.13) au même titre que `validation.*` : une question est la seconde où un agent
+attend quelqu'un, et la frise est le seul écran qui dise *l'instant* où cela arrive.
+
+**Ce qui est expurgé, et ce qui ne l'est pas.** Question, choix et hypothèse sont du texte qu'un
+modèle a composé : ils passent par `redact_secrets` avant de partir sur le bus, comme la `raison`
+d'un arbitrage. Les identifiants (`question_id`, `tache_id`, `run_id`, `projet_id`), eux, sont les
+nôtres et ne le sont pas. La **réponse humaine** ne l'est pas non plus : elle ne voyage pas pour être
+affichée mais pour **atteindre l'agent**, et un `[REDACTED]` au milieu lui ferait lire autre chose
+que ce qu'on a écrit — c'est la raison qui vaut déjà pour les réponses de clarification (§6.10).
+
+Implémentation : [`maestro/providers/question.py`](../maestro/providers/question.py) (le vocabulaire
+du verbe `mcp__maestro__poser_une_question` et ses deux frontières),
+[`maestro/providers/claude.py`](../maestro/providers/claude.py) (`_outil_question`),
+[`maestro/engine/questions.py`](../maestro/engine/questions.py) (`DemandeQuestion`,
+`identifiant_question`), [`maestro/engine/executor.py`](../maestro/engine/executor.py) (`_question`,
+`_consigne_question` — c'est là que vit la **borne**, avec le journal),
+[`maestro/controltower/question.py`](../maestro/controltower/question.py)
+(`ArbitreQuestionControlTower`) et [`maestro/controltower/app.py`](../maestro/controltower/app.py)
+pour les deux routes. Tests différés au lot final de #1019 (**#1027**).
