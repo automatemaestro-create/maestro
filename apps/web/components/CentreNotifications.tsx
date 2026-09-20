@@ -209,7 +209,7 @@ export function CentreNotifications() {
         {issuesNeuves && (
           <span
             aria-hidden="true"
-            className="absolute -right-0.5 -bottom-0.5 size-2 rounded-full bg-positif ring-2 ring-surface"
+            className="absolute -right-0.5 -bottom-0.5 size-2 rounded-pastille bg-positif ring-2 ring-surface"
           />
         )}
       </button>
@@ -301,11 +301,21 @@ export function CentreNotifications() {
               // elle (docs/30 §2, `tests/couleurs.test.ts`). Le rendu est le
               // même au bit près — `--bord` **est** `neutral-200` en clair — et
               // le résidu du fichier ne grandit pas d'une ligne de plus.
+              //
+              // Même règle pour la taille et le pas, depuis que les trois lots
+              // de #973 les ont mis au barème : `text-annexe` (#981) est le pas
+              // de second plan — au pixel près le `text-xs` que les sections
+              // voisines écrivent encore, `--text-xs` **étant** `--text-annexe`
+              // — et `p-2.5` (#983) la densité « compacte » du socle. Seul le
+              // padding bouge vraiment, de 8 à 10 px : `p-2` n'a pas de jumelle
+              // au barème, et un écran neuf s'y replie plutôt que d'allonger un
+              // résidu qui ne peut que décroître. Replier les trois sections
+              // voisines avec lui est une migration, pas ce ticket.
               <section
                 aria-label="Runs terminés"
-                className="border-t border-bord p-2"
+                className="border-t border-bord p-2.5"
               >
-                <h3 className="px-1 pb-1 text-xs font-semibold tracking-wide text-texte-secondaire uppercase">
+                <h3 className="px-1 pb-1 text-annexe font-semibold tracking-wide text-texte-secondaire uppercase">
                   Ce que le travail a rendu
                 </h3>
                 <ul className="space-y-2">
