@@ -2341,8 +2341,10 @@ Les deux décisions sont consignées sur #1025, sous « ## Veille de conception 
 retenue ». Implémentation :
 [`apps/web/components/chat/QuestionDansLeFil.tsx`](../apps/web/components/chat/QuestionDansLeFil.tsx),
 [`apps/web/lib/questions.ts`](../apps/web/lib/questions.ts), `app/chat/page.tsx`,
-`components/FilChat.tsx`, `components/CentreNotifications.tsx`. Tests différés au lot final de #1019
-(**#1027**).
+`components/FilChat.tsx`, `components/CentreNotifications.tsx`. Gardé par
+`apps/web/tests/question-agent.test.tsx` (#1027) : les gestes sont ceux que l'agent a déclarés, la
+phrase d'attente vient de l'API, la carte dit que l'agent est reparti **et reste répondable**, et le
+fil de l'orchestration porte toutes les questions là où un aparté ne porte que les siennes.
 
 ### 2.8 🗒️ Journal — l'activité, en plein format et **persistée** *(#249, #250, #478 — **livré**)*
 
@@ -5537,7 +5539,12 @@ du verbe `mcp__maestro__poser_une_question` et ses deux frontières),
 `_consigne_question` — c'est là que vit la **borne**, avec le journal),
 [`maestro/controltower/question.py`](../maestro/controltower/question.py)
 (`ArbitreQuestionControlTower`) et [`maestro/controltower/app.py`](../maestro/controltower/app.py)
-pour les deux routes. Tests différés au lot final de #1019 (**#1027**).
+pour les deux routes. Gardé par
+[`tests/test_questions_agents.py`](../tests/test_questions_agents.py) (#1027) — la suspension et sa
+borne, l'hypothèse écrite à l'échéance dans ses deux champs, la réponse tardive retrouvée **sans
+nouvelle demande**, le refus d'un acte malgré une réponse (EF-08), et les trois refus de la route
+(`404`/`409`/`422`) — et, pour le cadrage projet, par
+[`tests/test_appartenance_projet.py`](../tests/test_appartenance_projet.py).
 
 ---
 
@@ -5625,5 +5632,9 @@ raisons sont consignés sur le ticket (commentaire `## Variante retenue`).
 
 Implémentation : [`maestro/controltower/decisions.py`](../maestro/controltower/decisions.py)
 (la composition), [`maestro/controltower/app.py`](../maestro/controltower/app.py) (la route),
-`apps/web/components/runs/DecisionsRun.tsx` et `apps/web/lib/vuesRun.ts` (l'écran). Tests différés
-au lot final de #1019 (**#1027**).
+`apps/web/components/runs/DecisionsRun.tsx` et `apps/web/lib/vuesRun.ts` (l'écran). Gardé par
+[`tests/test_decisions_autonomes.py`](../tests/test_decisions_autonomes.py) (#1027) — les deux
+familles jamais mêlées, la question **répondue** qui n'y entre pas, le sens de lecture, le plafond
+qui se dit, et le 404 de la route — et par `apps/web/tests/decisions-run.test.tsx` pour l'écran :
+une ligne par décision dans l'ordre servi, l'hypothèse marquée par **une forme et un mot**, et les
+trois états d'une liste vide (chargement, échec de lecture, run qui n'a rien tranché seul).
