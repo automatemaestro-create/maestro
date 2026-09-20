@@ -7,6 +7,7 @@
  */
 
 import { AUCUNE_BORNE, type BornesRun } from "./bornes";
+import { lireProjetActifId } from "./projetActif";
 import type {
   AgentCatalogue,
   AgentCatalogueDetail,
@@ -93,6 +94,31 @@ export function urlApi(): string {
 export type PorteeProjet = string;
 export const PORTEE_TOUS = "tous";
 export const PORTEE_AUCUN = "aucun";
+
+/**
+ * Le cadre d'une route de **configuration d'agent** (#1038) : `?projet=<actif>`.
+ *
+ * Depuis [docs/37 §2.1], un agent appartient à un projet — sa définition, son
+ * playbook, ses autorisations, ses serveurs MCP et sa capacité y sont rangés —,
+ * et l'API sert ces routes cadrées par le projet demandé.
+ *
+ * Il se lit **ici** et non en paramètre de chaque appel, contrairement à la
+ * portée de #281 juste au-dessus, et la différence n'est pas une commodité :
+ * une lecture qui agrège a **trois** issues (un projet, `tous`, `aucun`), donc
+ * un défaut y serait une fuite silencieuse vers la vue transverse — c'est ce
+ * que #277 a fermé. Une route de configuration n'en a que deux, et aucune n'est
+ * transverse : le projet actif, ou les **gabarits** (la configuration rangée
+ * hors de tout projet) quand la Control Tower est ouverte sans projet. Passer
+ * l'identifiant de main en main sur une vingtaine d'appels n'achèterait donc
+ * aucune garantie que `lireProjetActifId` ne donne déjà — elle *est* la source
+ * du projet actif, celle que le shell écrit.
+ */
+function cadreProjet(chemin: string): string {
+  const projet = lireProjetActifId();
+  if (projet === null) return chemin;
+  const separateur = chemin.includes("?") ? "&" : "?";
+  return `${chemin}${separateur}projet=${encodeURIComponent(projet)}`;
+}
 
 /** L'URL du flux d'événements temps réel (`WS /ws/evenements`), à la portée demandée. */
 export function urlEvenements(portee: PorteeProjet): string {
@@ -212,16 +238,20 @@ export function chargerTaches(
 /**
  * L'état des agents (libre/occupé, tâche courante, compteurs, coût cumulé).
  *
- * **Sans portée projet, et c'est une décision** (#281, docs/05 §2.3) : un agent
- * est une ressource du **poste** — son playbook, sa capacité et ses instances
- * (#86) valent pour toute la Control Tower —, il n'appartient à aucun projet et
- * le backend ne le filtre pas (#277 ne porte pas `?projet=` sur cette route).
- * Ce qui doit être cadré, c'est ce qu'un écran en **dit** : voir
- * `IndicateursTableauDeBord`, dont la tuile compte les agents au travail **sur
- * le projet actif** et nomme le parc comme partagé.
+ * ⚠ **Le parc est celui du projet actif depuis #1038** (docs/37 §2.1), ce qui
+ * renverse la décision #281 écrite ici : un agent n'est plus une ressource du
+ * poste, il **appartient** à un projet — définition, playbook, autorisations,
+ * serveurs MCP et capacité y sont rangés. La route est donc cadrée comme les
+ * autres routes de configuration (`cadreProjet`), et la vue rend les agents de
+ * l'équipe de ce projet.
+ *
+ * Ce qui est cadré est l'**appartenance**, pas les compteurs : ceux-ci restent
+ * ceux que la projection a vus. La question « qu'a fait cet agent **ici** ? » se
+ * pose aux tâches (`chargerTaches`), et la tuile d'`IndicateursTableauDeBord`
+ * continue de la poser là.
  */
 export function chargerAgents(): Promise<EtatAgent[]> {
-  return chargerJson<EtatAgent[]>("/api/agents");
+  return chargerJson<EtatAgent[]>(cadreProjet("/api/agents"));
 }
 
 /** Les demandes de validation humaine (#48) : contexte, statut, décision. */
@@ -431,13 +461,13 @@ async function envoyerJson(
 
 /** Les playbooks des agents (#76) : version courante et provenance de chacun. */
 export function chargerPlaybooks(): Promise<PlaybookFiche[]> {
-  return chargerJson<PlaybookFiche[]>("/api/playbooks");
+  return chargerJson<PlaybookFiche[]>(cadreProjet("/api/playbooks"));
 }
 
 /** Le playbook courant d'un agent, contenu compris (celui chargé par le moteur). */
 export function chargerPlaybook(agent: string): Promise<PlaybookDetail> {
   return chargerJson<PlaybookDetail>(
-    `/api/playbooks/${encodeURIComponent(agent)}`,
+    cadreProjet(`/api/playbooks/${encodeURIComponent(agent)}`),
   );
 }
 
@@ -446,7 +476,7 @@ export function chargerVersionsPlaybook(
   agent: string,
 ): Promise<VersionPlaybook[]> {
   return chargerJson<VersionPlaybook[]>(
-    `/api/playbooks/${encodeURIComponent(agent)}/versions`,
+    cadreProjet(`/api/playbooks/${encodeURIComponent(agent)}/versions`),
   );
 }
 
@@ -456,7 +486,9 @@ export function chargerVersionPlaybook(
   version: number,
 ): Promise<VersionPlaybookDetail> {
   return chargerJson<VersionPlaybookDetail>(
-    `/api/playbooks/${encodeURIComponent(agent)}/versions/${version}`,
+    cadreProjet(
+      `/api/playbooks/${encodeURIComponent(agent)}/versions/${version}`,
+    ),
   );
 }
 
@@ -467,7 +499,7 @@ export function chargerVersionPlaybook(
  */
 export function ecrirePlaybook(agent: string, contenu: string): Promise<void> {
   return envoyerJson(
-    `/api/playbooks/${encodeURIComponent(agent)}`,
+    cadreProjet(`/api/playbooks/${encodeURIComponent(agent)}`),
     { contenu },
     "publication refusée",
     "PUT",
@@ -483,7 +515,7 @@ export function restaurerPlaybook(
   version: number,
 ): Promise<void> {
   return envoyerJson(
-    `/api/playbooks/${encodeURIComponent(agent)}/restaurer`,
+    cadreProjet(`/api/playbooks/${encodeURIComponent(agent)}/restaurer`),
     { version },
     "restauration refusée",
   );
@@ -498,7 +530,7 @@ export function chargerPropositionsPlaybook(
   agent: string,
 ): Promise<PropositionPlaybook[]> {
   return chargerJson<PropositionPlaybook[]>(
-    `/api/playbooks/${encodeURIComponent(agent)}/propositions`,
+    cadreProjet(`/api/playbooks/${encodeURIComponent(agent)}/propositions`),
   );
 }
 
@@ -508,7 +540,9 @@ export function chargerPropositionPlaybook(
   numero: number,
 ): Promise<PropositionPlaybookDetail> {
   return chargerJson<PropositionPlaybookDetail>(
-    `/api/playbooks/${encodeURIComponent(agent)}/propositions/${numero}`,
+    cadreProjet(
+      `/api/playbooks/${encodeURIComponent(agent)}/propositions/${numero}`,
+    ),
   );
 }
 
@@ -522,7 +556,9 @@ export function appliquerPropositionPlaybook(
   numero: number,
 ): Promise<void> {
   return envoyerJson(
-    `/api/playbooks/${encodeURIComponent(agent)}/propositions/${numero}/appliquer`,
+    cadreProjet(
+      `/api/playbooks/${encodeURIComponent(agent)}/propositions/${numero}/appliquer`,
+    ),
     undefined,
     "application refusée",
   );
@@ -534,7 +570,9 @@ export function rejeterPropositionPlaybook(
   numero: number,
 ): Promise<void> {
   return envoyerJson(
-    `/api/playbooks/${encodeURIComponent(agent)}/propositions/${numero}/rejeter`,
+    cadreProjet(
+      `/api/playbooks/${encodeURIComponent(agent)}/propositions/${numero}/rejeter`,
+    ),
     undefined,
     "rejet refusé",
   );
@@ -566,7 +604,7 @@ export function redigerPlaybook(
   consigne?: string,
 ): Promise<RedactionPlaybook> {
   return envoyerJsonEtLire<RedactionPlaybook>(
-    `/api/playbooks/${encodeURIComponent(agent)}/redaction`,
+    cadreProjet(`/api/playbooks/${encodeURIComponent(agent)}/redaction`),
     { contenu, ...(consigne !== undefined && consigne !== "" && { consigne }) },
     "rédaction refusée",
   );
@@ -593,7 +631,7 @@ export function chargerFournisseurs(): Promise<CatalogueFournisseurs> {
 
 /** Le catalogue d'agents (#72) : les agents par défaut du code puis les personnalisés. */
 export function chargerCatalogue(): Promise<AgentCatalogue[]> {
-  return chargerJson<AgentCatalogue[]>("/api/catalogue");
+  return chargerJson<AgentCatalogue[]>(cadreProjet("/api/catalogue"));
 }
 
 /** La définition complète d'un agent du catalogue, playbook compris. */
@@ -601,7 +639,7 @@ export function chargerAgentCatalogue(
   nom: string,
 ): Promise<AgentCatalogueDetail> {
   return chargerJson<AgentCatalogueDetail>(
-    `/api/catalogue/${encodeURIComponent(nom)}`,
+    cadreProjet(`/api/catalogue/${encodeURIComponent(nom)}`),
   );
 }
 
@@ -613,7 +651,11 @@ export function creerAgent(
   nom: string,
   definition: DefinitionAgent,
 ): Promise<void> {
-  return envoyerJson("/api/catalogue", { nom, ...definition }, "création refusée");
+  return envoyerJson(
+    cadreProjet("/api/catalogue"),
+    { nom, ...definition },
+    "création refusée",
+  );
 }
 
 /**
@@ -630,7 +672,7 @@ export function genererDefinitionAgent(
   intention: string,
 ): Promise<DefinitionAgentProposee> {
   return envoyerJsonEtLire<DefinitionAgentProposee>(
-    "/api/catalogue/generation",
+    cadreProjet("/api/catalogue/generation"),
     { intention },
     "génération refusée",
   );
@@ -645,7 +687,7 @@ export function modifierAgent(
   definition: DefinitionAgent,
 ): Promise<void> {
   return envoyerJson(
-    `/api/catalogue/${encodeURIComponent(nom)}`,
+    cadreProjet(`/api/catalogue/${encodeURIComponent(nom)}`),
     definition,
     "modification refusée",
     "PUT",
@@ -655,7 +697,7 @@ export function modifierAgent(
 /** Supprime un agent personnalisé du catalogue (`DELETE /api/catalogue/{nom}`). */
 export function supprimerAgent(nom: string): Promise<void> {
   return envoyerJson(
-    `/api/catalogue/${encodeURIComponent(nom)}`,
+    cadreProjet(`/api/catalogue/${encodeURIComponent(nom)}`),
     undefined,
     "suppression refusée",
     "DELETE",
@@ -676,7 +718,7 @@ export function surchargerAgent(
   reglages: ReglagesModele,
 ): Promise<void> {
   return envoyerJson(
-    `/api/catalogue/${encodeURIComponent(nom)}/reglages`,
+    cadreProjet(`/api/catalogue/${encodeURIComponent(nom)}/reglages`),
     reglages,
     "surcharge refusée",
     "PUT",
@@ -693,7 +735,7 @@ export function surchargerAgent(
  */
 export function annulerSurchargeAgent(nom: string): Promise<void> {
   return envoyerJson(
-    `/api/catalogue/${encodeURIComponent(nom)}/reglages`,
+    cadreProjet(`/api/catalogue/${encodeURIComponent(nom)}/reglages`),
     undefined,
     "retour au défaut refusé",
     "DELETE",
@@ -720,7 +762,7 @@ export function reglerCapaciteAgent(
   reglage: { actif?: boolean; instances?: number },
 ): Promise<void> {
   return envoyerJson(
-    `/api/agents/${encodeURIComponent(nom)}/capacite`,
+    cadreProjet(`/api/agents/${encodeURIComponent(nom)}/capacite`),
     reglage,
     "réglage de capacité refusé",
   );
@@ -1241,7 +1283,7 @@ export function revoquerAdmissionMcp(
  * l'allowlist (révoquée : elle reste montée, et l'écran doit le dire).
  */
 export function chargerPoolMcp(): Promise<PoolMcp> {
-  return chargerJson<PoolMcp>("/api/mcp/pool");
+  return chargerJson<PoolMcp>(cadreProjet("/api/mcp/pool"));
 }
 
 /**
@@ -1259,7 +1301,7 @@ export function ajouterIntegrationPoolMcp(corps: {
   secrets: { cle: string; valeur: string; expire_le?: string | null }[];
 }): Promise<IntegrationPoolMcp> {
   return envoyerJsonEtLire<IntegrationPoolMcp>(
-    "/api/mcp/pool",
+    cadreProjet("/api/mcp/pool"),
     corps,
     "ajout au pool refusé",
   );
@@ -1272,7 +1314,7 @@ export function ajouterIntegrationPoolMcp(corps: {
  */
 export function supprimerIntegrationPoolMcp(id: string): Promise<void> {
   return envoyerJson(
-    `/api/mcp/pool/${encodeURIComponent(id)}`,
+    cadreProjet(`/api/mcp/pool/${encodeURIComponent(id)}`),
     undefined,
     "retrait du pool refusé",
     "DELETE",
@@ -1289,7 +1331,7 @@ export function definirActivationsMcp(
   integrations: string[],
 ): Promise<void> {
   return envoyerJson(
-    `/api/mcp/activations/${encodeURIComponent(agent)}`,
+    cadreProjet(`/api/mcp/activations/${encodeURIComponent(agent)}`),
     { integrations },
     "activation refusée",
     "PUT",
@@ -1308,7 +1350,7 @@ export function definirActivationsMcp(
  */
 export function migrerDeclarationsMcp(agent: string): Promise<MigrationMcp> {
   return envoyerJsonEtLire<MigrationMcp>(
-    `/api/mcp/migration/${encodeURIComponent(agent)}`,
+    cadreProjet(`/api/mcp/migration/${encodeURIComponent(agent)}`),
     {},
     "migration refusée",
   );
@@ -1328,7 +1370,7 @@ export function definirPermissions(
   politique: PolitiquePermissions,
 ): Promise<void> {
   return envoyerJson(
-    `/api/permissions/${encodeURIComponent(agent)}`,
+    cadreProjet(`/api/permissions/${encodeURIComponent(agent)}`),
     politique,
     "politique refusée",
     "PUT",

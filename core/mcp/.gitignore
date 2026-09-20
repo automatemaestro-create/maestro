@@ -2,3 +2,6 @@
 # elles se commitent (secrets par référence ${VAR}, jamais en clair). Seuls
 # les fichiers temporaires d'écriture sont ignorés.
 *.tmp
+# Les serveurs MCP d'un projet (#1038) sont de la configuration d'installation,
+# pas du dépôt : le rangement par projet ne se commite pas.
+_projets/

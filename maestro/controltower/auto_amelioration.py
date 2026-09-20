@@ -162,7 +162,12 @@ class AnalyseurEchecs(_AppelModele):
         self._playbooks = playbooks if playbooks is not None else PlaybookStore.default()
 
     async def proposer_revision(
-        self, agent: Agent, run_id: str, echecs: Sequence[EchecTache]
+        self,
+        agent: Agent,
+        run_id: str,
+        echecs: Sequence[EchecTache],
+        *,
+        store: PlaybookStore | None = None,
     ) -> PlaybookVersion:
         """Analyse `echecs` et enregistre une proposition de nouveau playbook pour `agent`.
 
@@ -170,10 +175,15 @@ class AnalyseurEchecs(_AppelModele):
         existe, sinon son playbook du code, #76). Lève `ValueError` si `echecs` est vide
         (rien à analyser) et `RevisionIndisponible` si le fournisseur échoue ou rend une
         réponse inexploitable — aucun brouillon n'est alors écrit.
+
+        `store` (#1038) est le dépôt de playbooks **cadré sur un projet** : la base
+        lue et le brouillon écrit sont alors ceux de ce projet. None garde celui du
+        câblage, c'est-à-dire les gabarits.
         """
         if not echecs:
             raise ValueError("aucun échec à analyser : rien à proposer.")
-        base = self._playbooks.prompt_systeme(agent.nom, _playbook_du_code(agent))
+        playbooks = store if store is not None else self._playbooks
+        base = playbooks.prompt_systeme(agent.nom, _playbook_du_code(agent))
         prompt = _prompt_analyse(agent, run_id, echecs, base)
         try:
             texte = await self._generer(prompt, modele=agent.modele, cadre=_CADRE_ANALYSE)
@@ -183,7 +193,7 @@ class AnalyseurEchecs(_AppelModele):
             ) from exc
         rationale, contenu = _decouper(texte)
         justification = _justification(run_id, echecs, rationale)
-        return self._playbooks.proposer(agent.nom, contenu, justification)
+        return playbooks.proposer(agent.nom, contenu, justification)
 
 
 @dataclass(frozen=True)

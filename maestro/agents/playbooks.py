@@ -46,6 +46,7 @@ from typing import Any
 
 from maestro.agents.catalog import DEFAULT_AGENTS, Agent
 from maestro.agents.playbook_du_code import playbook_du_code
+from maestro.agents.rangement import RangeParProjet
 from maestro.config import Settings, load_settings
 
 #: Nom d'agent admissible comme dossier de stockage : slug sûr, sans séparateur ni
@@ -131,22 +132,26 @@ PLAYBOOK_DEFAUTS: dict[str, PlaybookDefaut] = {
 }
 
 
-class PlaybookStore:
+class PlaybookStore(RangeParProjet):
     """Dépôt versionné des playbooks, sur fichiers (`<racine>/<agent>/vNNNN.md`).
 
     Append-only (voir le module) : `ecrire` publie la version suivante, `lire`
     sans numéro rend la courante, `restaurer` republie une version passée. Un
     seul écrivain à la fois au POC (l'API Control Tower) : la numérotation ne
     porte pas de verrou de concurrence.
+
+    Cadré sur un projet (#1038), il **recouvre** le gabarit, et la règle est
+    lisible d'une phrase : *tant que le projet n'a publié aucune version pour
+    cet agent, tout se lit au gabarit* — playbook courant et historique. La
+    première publication du projet **poursuit la numérotation** du gabarit (une
+    v0004 après la v0003 héritée), si bien que la frise ne recule jamais et que
+    deux niveaux ne se disputent jamais un numéro. Ensuite le projet a son
+    histoire, qui commence là où elle a bifurqué.
+
+    ⚠ **Les propositions, elles, ne s'héritent pas** : une proposition est un
+    geste en attente (#111), et l'appliquer écrit une version — on l'applique là
+    où on l'a déposée, jamais ailleurs.
     """
-
-    def __init__(self, racine: Path) -> None:
-        self._racine = racine
-
-    @property
-    def racine(self) -> Path:
-        """La racine du dépôt (un dossier par agent)."""
-        return self._racine
 
     @classmethod
     def default(cls, settings: Settings | None = None) -> PlaybookStore:
@@ -157,7 +162,14 @@ class PlaybookStore:
         return cls(Path(__file__).resolve().parents[2] / "core" / "playbooks")
 
     def numeros(self, agent: str) -> tuple[int, ...]:
-        """Les numéros de version stockés pour `agent`, croissants (vide si aucun)."""
+        """Les numéros de version de `agent`, croissants — ceux du gabarit à défaut."""
+        propres = self._numeros_propres(agent)
+        if propres or self._gabarits is None:
+            return propres
+        return self._gabarits.numeros(agent)
+
+    def _numeros_propres(self, agent: str) -> tuple[int, ...]:
+        """Les numéros de version stockés **dans ce dépôt-ci**, sans rien hériter."""
         dossier = self._dossier(agent)
         if not dossier.is_dir():
             return ()
@@ -178,9 +190,16 @@ class PlaybookStore:
         )
 
     def lire(self, agent: str, version: int | None = None) -> PlaybookVersion | None:
-        """La version `version` du playbook (la courante si None), ou None si absente."""
+        """La version `version` du playbook (la courante si None), ou None si absente.
+
+        Tant que le projet n'a rien publié pour cet agent, la lecture est
+        **déléguée au gabarit** — numéro compris : l'historique hérité se
+        consulte comme s'il était le sien (#1038).
+        """
+        if self._gabarits is not None and not self._numeros_propres(agent):
+            return self._gabarits.lire(agent, version)
         if version is None:
-            numeros = self.numeros(agent)
+            numeros = self._numeros_propres(agent)
             if not numeros:
                 return None
             version = numeros[-1]
@@ -200,6 +219,10 @@ class PlaybookStore:
         Écriture atomique (fichier temporaire puis renommage) : une version
         n'apparaît dans l'historique que complète. Lève `ValueError` sur un
         contenu vide — un playbook vide n'a aucun sens comme prompt système.
+
+        Dans un dépôt cadré sur un projet (#1038), le numéro **poursuit** celui
+        du gabarit tant que le projet n'a rien publié : la frise ne recule pas,
+        et deux niveaux ne se disputent jamais un numéro.
         """
         if not contenu.strip():
             raise ValueError(f"contenu de playbook vide pour l'agent {agent!r}.")

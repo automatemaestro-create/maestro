@@ -31,3 +31,31 @@ moteur en process, elle ne coordonne pas encore plusieurs workers entre eux
 `actif`/`instances_max` de l'entité `AGENT`, docs/03) sans changer le contrat.
 
 Tests (#86) : `tests/test_capacity.py` (dépôt, routage, jauge, API).
+
+## Rangement par projet (#1038)
+
+Depuis [docs/37 §2.1](../../docs/37-decision-equipe-sur-mesure.md), **un agent
+appartient à un projet**. Ce dossier porte donc deux niveaux :
+
+- **la racine** — les **gabarits de rôle**, ce qui vaut hors de tout projet et ce
+  que l'analyse d'équipe consultera (#1039) ;
+- **`_projets/<projet_id>/`** — la même arborescence, pour un projet. Le tiret bas
+  le met hors d'atteinte d'un nom d'agent, qui commence par `[a-z0-9]`.
+
+L'API sert ces deux niveaux par `?projet=<id>` (omis : les gabarits), et
+l'exécution lit ceux du projet de la tâche. Code :
+`maestro/agents/rangement.py` (la règle), `maestro/agents/configuration.py`
+(les six dépôts d'un bloc).
+
+**Ce que le projet ne règle pas, il l'hérite du gabarit.** Un agent que le projet n'a pas réglé
+garde le réglage du gabarit, et un agent **désactivé** au gabarit le reste. Retomber sur
+« actif, une instance » serait ici un garde-fou qui saute, pas un défaut.
+
+⚠ Le **plafond d'instances** reste celui du poste à l'exécution : c'est ce que la
+machine fait tourner en même temps pour cet agent, pas un quota par projet. Deux
+projets qui lui accordent trois instances n'en ouvrent pas six.
+
+**Reprise.** Ce qu'un poste portait ici avant #1038 est rattaché au projet qui
+l'utilise au démarrage de l'API — idempotente, sans rien supprimer, et elle dit
+ce qu'elle a fait. À la main : `python -m maestro.agents.reprise [--check]
+[--projet <id>]` (`MAESTRO_REPRISE_AGENTS=0` pour s'en passer).

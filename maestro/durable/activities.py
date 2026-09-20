@@ -57,7 +57,7 @@ from maestro.agents.mcp import McpStore
 from maestro.agents.permissions import PermissionStore
 from maestro.agents.playbooks import PlaybookStore
 from maestro.agents.secrets import SecretStore
-from maestro.agents.store import AgentStore, catalogue
+from maestro.agents.store import AgentStore, SurchargeStore, catalogue
 from maestro.config import load_settings
 from maestro.engine.executor import (
     STATUT_ECHEC,
@@ -160,9 +160,11 @@ def _executeur() -> LocalExecutor:
     if _executor is None:
         provider = _provider_factory()
         settings = load_settings()
+        agents_store = AgentStore.default(settings)
+        surcharges = SurchargeStore.default(settings)
         _executor = LocalExecutor(
             provider,
-            agents=catalogue(AgentStore.default(settings), settings.model),
+            agents=catalogue(agents_store, settings.model, surcharges=surcharges),
             guardrails=_guardrails,
             playbooks=PlaybookStore.default(settings),
             capacites=CapacityStore.default(settings),
@@ -170,6 +172,11 @@ def _executeur() -> LocalExecutor:
             secrets=SecretStore.default(settings),
             permissions=PermissionStore.default(settings),
             projets=ProjetStore.default(settings),
+            # Les agents du projet de la tâche (#1038), comme en process et comme
+            # côté Celery : trois câblages, un seul contrat de routage.
+            agents_store=agents_store,
+            surcharges=surcharges,
+            modele=settings.model,
             relance=_relance,
         )
     return _executor
