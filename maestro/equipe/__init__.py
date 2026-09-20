@@ -25,7 +25,7 @@ seulement : une équipe *branche* les skills que l'outillage a recommandés
 ait à les distinguer — un projet analysé (#1030) et un projet neuf dont on a
 recueilli les choix (#1031) rendent la même paire `Constats` / `Recommandation`.
 
-Quatre modules, et la frontière entre eux est celle de ce qui décide :
+Cinq modules, et la frontière entre eux est celle de ce qui décide :
 
 - `maestro.equipe.modele` — les formes, **inertes** : elles décrivent et
   sérialisent, elles ne touchent à rien ;
@@ -37,7 +37,12 @@ Quatre modules, et la frontière entre eux est celle de ce qui décide :
 - `maestro.equipe.creation` (#1040) — de l'équipe **validée** aux trois artefacts
   d'un agent de projet : sa fiche (playbook compris, skills branchés dedans), sa
   politique d'autorisations, sa capacité. Pur lui aussi — l'écriture est le seul
-  verbe de `maestro.controltower.equipe` qui touche un dépôt.
+  verbe de `maestro.controltower.equipe` qui touche un dépôt ;
+- `maestro.equipe.manque` — le rôle qui **manquerait** à une équipe déjà créée
+  pour prendre une tâche (#1041). Le seul des cinq qui regarde un run en cours
+  plutôt qu'un projet qui naît, et il n'en recrute pas davantage : il nomme, le
+  moteur signale, et le recrutement reste un geste validé hors du run
+  (docs/37 §3.5).
 
 ⚠ **La politique proposée laisse `allow` ouvert**, et c'est une décision. Une
 liste `allow` non vide est *fermée* (`maestro.agents.permissions`) : la remplir
@@ -90,6 +95,11 @@ from maestro.equipe.gabarits import (
     Gabarit,
     Justification,
 )
+from maestro.equipe.manque import (
+    RoleManquant,
+    competences_non_couvertes,
+    role_manquant,
+)
 from maestro.equipe.modele import (
     CRANS,
     ORIGINE_PLAYBOOK_GABARIT,
@@ -137,15 +147,18 @@ __all__ = [
     "PropositionEquipe",
     "Refus",
     "RoleEcarte",
+    "RoleManquant",
     "RolePropose",
     "RoleValide",
     "SkillBranche",
     "SkillRetenu",
     "avec_playbook",
     "capacite",
+    "competences_non_couvertes",
     "definition",
     "nouvel_id",
     "playbook_branche",
     "proposer_equipe",
     "refus_de",
+    "role_manquant",
 ]
