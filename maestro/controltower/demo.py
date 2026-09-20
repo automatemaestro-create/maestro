@@ -57,6 +57,7 @@ from maestro.controltower.chat import UTILISATEUR, ChatStore, MessageChat, Repon
 from maestro.controltower.events import (
     ACTEUR_RUN,
     EVENEMENT_AGENT_ACTIVITE,
+    EVENEMENT_EXECUTION_STATUT,
     EVENEMENT_MESSAGE_INTER_AGENTS,
     EVENEMENT_RUN_PLAN,
     EVENEMENT_TACHE_STATUT,
@@ -64,10 +65,12 @@ from maestro.controltower.events import (
     Event,
     EventBus,
     InMemoryEventBus,
+    ROLE_RUN,
     ReferenceTicket,
 )
 from maestro.controltower.fixtures import FixturesControlTower
 from maestro.controltower.orchestration import NOM_ORCHESTRATION
+from maestro.controltower.state import EXECUTION_TERMINEE
 from maestro.detail_tache import (
     ETAPE_A_FAIRE,
     ETAPE_EN_COURS,
@@ -95,6 +98,56 @@ RUN_ID = "demo-live"
 #: l'autre. Le scénario laisse à dessein une tâche **hors projet** (`demo-t4`) :
 #: un travail sans projet reste normal, et c'est ce qui rend le filtre visible.
 PROJET_ID = "prj-demo"
+
+#: **Le run déjà fini** (#928) — celui qu'on retrouve en arrivant, par opposition
+#: à `RUN_ID`, qu'on regarde travailler.
+#:
+#: Distinct de `RUN_ID` pour la raison exacte qui a fait exister `RUN_CHARGE` :
+#: aucune vue ne doit laisser croire que c'est le même run. Il existe parce que la
+#: démo n'avait **aucun** run soldé — le scénario ne publiait que des statuts de
+#: tâches, jamais d'`execution.statut` — donc aucun écran ne pouvait montrer ce
+#: qu'un run rend en finissant, qui est tout l'objet du retex du 2026-09-11 (G1).
+RUN_SOLDE = "demo-livre"
+
+#: Ce que ce run avait à faire, tel que le fil l'a demandé. Il voyage sur
+#: l'événement d'issue (`titre`) et c'est lui que l'annonce cite : un run se
+#: reconnaît à son objectif, jamais à son identifiant.
+OBJECTIF_SOLDE = "Exporter les contacts du mini-CRM en CSV, avec un rapport de qualité"
+
+#: Les tâches de ce run, avec ce qu'elles ont coûté. Deux, et pas quatre : ce run
+#: n'est pas là pour peupler un Kanban — il est là pour qu'un run **fini** existe.
+_TACHES_SOLDEES: tuple[tuple[str, str, str, str, StepUsage], ...] = (
+    (
+        "livre-t1",
+        "Extraire les contacts et écrire contacts.csv",
+        "developpeur",
+        "Développeur",
+        StepUsage(
+            appels=2,
+            tokens_entree=6100,
+            tokens_sortie=1480,
+            cout_usd=0.0560,
+            duree_ms=41000,
+            tours=3,
+            outils=("Read", "Write"),
+        ),
+    ),
+    (
+        "livre-t2",
+        "Vérifier l'export et rédiger le rapport de qualité",
+        "qa",
+        "Assurance qualité",
+        StepUsage(
+            appels=1,
+            tokens_entree=3400,
+            tokens_sortie=920,
+            cout_usd=0.0310,
+            duree_ms=22000,
+            tours=2,
+            outils=("Read",),
+        ),
+    ),
+)
 
 #: Cadence de la pulsation QA : assez lente pour rester lisible, assez rapide
 #: pour qu'un badge « Temps réel connecté » ait quelque chose à montrer.
@@ -270,6 +323,51 @@ async def _avancer_tache(
             await asyncio.sleep(PAUSE_ENTRE_STATUTS_S)
 
 
+async def _run_solde(bus: EventBus) -> None:
+    """Publie **un run déjà fini**, tâches comprises (#928).
+
+    Trois choses, et aucune n'est décorative :
+
+    - **ses deux tâches**, soldées d'un coup (pas de pause entre les statuts :
+      elles sont du passé, personne ne les regarde avancer) — sans elles le run
+      n'aurait ni volume ni coût, et l'annonce de fin citerait un run vide ;
+    - **son issue** (`execution.statut` = `terminee`), le seul événement que la
+      démo ne publiait pas : c'est lui qui fait passer le run dans les vues qui
+      lisent `GET /api/executions`, donc le seul qui puisse dire « c'est fini » ;
+    - **son projet** : `projet_id` est ce qui rattache le run à une racine sur le
+      disque, et donc ce dont l'annonce tire le chemin du livrable.
+    """
+    for tache_id, titre, agent, role, usage in _TACHES_SOLDEES:
+        for statut in (STATUT_EN_COURS, STATUT_TERMINEE):
+            dernier = statut == STATUT_TERMINEE
+            await bus.publish(
+                Event(
+                    type=EVENEMENT_TACHE_STATUT,
+                    run_id=RUN_SOLDE,
+                    tache_id=tache_id,
+                    titre=titre,
+                    agent=agent,
+                    role=role,
+                    statut=statut,
+                    cout_usd=usage.cout_usd if dernier else None,
+                    usage=usage if dernier else None,
+                    projet_id=PROJET_ID,
+                )
+            )
+    await bus.publish(
+        Event(
+            type=EVENEMENT_EXECUTION_STATUT,
+            run_id=RUN_SOLDE,
+            titre=OBJECTIF_SOLDE,
+            agent=ACTEUR_RUN,
+            role=ROLE_RUN,
+            statut=EXECUTION_TERMINEE,
+            detail="2 tâche(s) terminée(s), 0 en échec",
+            projet_id=PROJET_ID,
+        )
+    )
+
+
 async def _scenario(bus: EventBus) -> None:
     """Publie le scénario : un état initial parlant, puis une pulsation continue.
 
@@ -277,7 +375,14 @@ async def _scenario(bus: EventBus) -> None:
     d'activité), tâches dans plusieurs colonnes du Kanban avec leur coût,
     message inter-agents, et une validation humaine **laissée en attente** —
     approuver/refuser depuis l'UI publie la décision sur le bus, comme en vrai.
+
+    ⚠ Il couvre aussi, depuis #928, **un run déjà soldé** (`_run_soldé`) : sans
+    lui la démo n'avait aucun run terminé, donc aucun écran ne pouvait montrer ce
+    qu'un run rend en finissant. C'est la scène du retex du 2026-09-11 (G1), et
+    elle se joue **avant** le run vivant : un run fini est ce qu'on retrouve en
+    arrivant, pas ce qu'on regarde se faire.
     """
+    await _run_solde(bus)
     await bus.publish(
         Event(
             type=EVENEMENT_AGENT_ACTIVITE,
@@ -752,6 +857,41 @@ async def _scenario_charge(bus: EventBus) -> None:
     print(f"[scenario] charge publiée : {CHARGE_TACHES} tâches, {CHARGE_RUNS} runs", flush=True)
 
 
+def _peupler_chat_nominal(store: ChatStore) -> None:
+    """Met dans le fil global **la demande qui a ouvert le run soldé**, et sa réponse (#928).
+
+    Deux messages, pas un de plus. C'est la scène exacte du retex du 2026-09-11 :
+    on demande quelque chose, l'orchestration répond « c'est parti », et le
+    dernier message du fil reste le **lancement** — le run finit ailleurs, sans
+    que le fil en sache rien.
+
+    La réponse porte `run_id` (#268) : c'est le rattachement persisté par lequel
+    le fil sait de quel run il parle, et il existe depuis #269. Rien de neuf ici
+    — ce qui manquait est ce que l'écran en fait une fois le run soldé.
+    """
+    ouverture = datetime.now(UTC) - timedelta(minutes=53)
+    store.ajouter(
+        MessageChat(
+            agent=NOM_ORCHESTRATION,
+            auteur=UTILISATEUR,
+            contenu=f"{OBJECTIF_SOLDE} — le fichier doit être relisible tel quel.",
+            horodatage=ouverture.isoformat(timespec="seconds"),
+        )
+    )
+    store.ajouter(
+        MessageChat(
+            agent=NOM_ORCHESTRATION,
+            auteur=NOM_ORCHESTRATION,
+            contenu=(
+                "C'est parti : deux tâches, l'extraction puis la vérification. "
+                "Je vous préviens dès que c'est fini."
+            ),
+            horodatage=(ouverture + timedelta(seconds=12)).isoformat(timespec="seconds"),
+            run_id=RUN_SOLDE,
+        )
+    )
+
+
 def _peupler_chat_charge(store: ChatStore) -> None:
     """Remplit le fil global de conversations nombreuses, et l'une d'elles de messages longs.
 
@@ -852,6 +992,8 @@ async def _servir(hote: str, port: int, scenario: str = SCENARIO_NOMINAL) -> int
     chat_store = ChatStore(Path(tempfile.mkdtemp(prefix="maestro-chat-demo-")))
     if scenario == SCENARIO_CHARGE:
         _peupler_chat_charge(chat_store)
+    elif scenario == SCENARIO_NOMINAL:
+        _peupler_chat_nominal(chat_store)
     app = create_app(
         bus=bus,
         # Chat de démo (#84) : réponses scriptées (aucun modèle ni auth) sur un
