@@ -450,19 +450,27 @@ from maestro.controltower.state import (
     VALIDATION_REFUSEE,
     ControlTowerState,
 )
+from maestro.controltower.validation import ValidateurControlTower
 from maestro.engine.brief import MODE_BRIEF_AUTO, MODE_BRIEF_HUMAIN
 from maestro.messaging import InMemoryMailbox, Mailbox, RedisMailbox
 from maestro.orchestrator.errors import BriefValidationError
 from maestro.orchestrator.schema import validate_brief
 from maestro.outillage.questionnaire import Choix
 from maestro.poste import SondePoste
-from maestro.projets import RacineRefusee, VersionnementRefuse, canonique, valider_racine
+from maestro.projets import (
+    ApplicationRefusee,
+    RacineRefusee,
+    VersionnementRefuse,
+    canonique,
+    valider_racine,
+)
 from maestro.providers.arbitrage import OUTIL_ARBITRAGE
 from maestro.providers.blocage import OUTIL_BLOCAGE
 from maestro.providers.courrier import OUTIL_COURRIER
 from maestro.providers.decision import OUTIL_DECISION
 from maestro.providers.question import OUTIL_QUESTION
 from maestro.references import ReferenceTicket
+from maestro.sandbox import EspaceProjetIndisponible
 from maestro.sources import DepotTeleversements, SourceRefusee, apercu_sources
 
 
@@ -1406,8 +1414,12 @@ def create_app(
     projets = projets if projets is not None else ServiceProjets.default()
     # L'analyse d'outillage (#1030) se greffe sur le **même** service de projets :
     # elle n'a pas de dépôt à elle, et un second lecteur de fiches finirait par ne
-    # plus refuser les mêmes racines que le premier.
-    outillage = ServiceOutillage(projets)
+    # plus refuser les mêmes racines que le premier. La **génération** (#1033) y
+    # ajoute un validateur, et c'est le seul qu'elle ait : écrire l'outillage d'un
+    # projet versionné est une action sensible au sens exact de EF-37, et elle
+    # passe donc par le canal de validation de toujours — la demande sort sur le
+    # bus, l'écran la montre, `POST /api/validations/{tache}/decision` la tranche.
+    outillage = ServiceOutillage(projets, validateur=ValidateurControlTower(bus))
     state = (
         state
         if state is not None
@@ -4201,6 +4213,48 @@ def create_app(
         try:
             return await asyncio.to_thread(outillage.analyser, id_projet)
         except (ValueError, ProjetInconnu) as exc:
+            raise _refus_projet(exc) from exc
+
+    @app.post("/api/projets/{id_projet}/outillage/generation")
+    async def generer_outillage_du_projet(id_projet: str) -> dict[str, Any]:
+        """Écrit dans le projet l'outillage que son analyse recommande (#1033, docs/38).
+
+        Le second geste du chantier, et celui qui touche au dossier de
+        quelqu'un : `AGENTS.md`, les deux ponts d'une ligne, les skills dans
+        `.agents/skills/` et le manifeste `.maestro/outillage/manifeste.json`,
+        qui dit ce qui vient de Maestro.
+
+        **Rien n'est jamais écrasé en silence** (docs/38 §4.2). Un fichier que le
+        projet portait et que Maestro n'a pas écrit n'est pas touché ; un fichier
+        qu'il avait écrit et que quelqu'un a modifié depuis n'est pas réécrit — la
+        version neuve est déposée dans `.maestro/outillage/refuses/`, et le
+        rapport la nomme. Un `AGENTS.md` déjà présent reçoit un **bloc délimité**
+        plutôt qu'un remplacement, et c'est ce bloc-là, et lui seul, que Maestro
+        possède ensuite. Régénérer ne duplique rien : ce que le manifeste déclare
+        déjà à jour n'est pas réécrit.
+
+        **Le régime d'écriture est celui du projet** (docs/24 §2.4), et la
+        réponse le dit (`regime`) : un projet **non versionné** est servi *en
+        place* et c'est fait à la réponse ; un projet **versionné** reçoit son
+        outillage sur une branche `maestro/outillage-…` que la **validation
+        humaine** fusionne (`application`), diff sous les yeux. ⚠ Dans ce second
+        cas la requête **attend la décision**, sans time-out : c'est le contrat du
+        validateur (#9), et l'attente se voit sur l'écran des validations. Un
+        refus laisse la branche intacte — le travail reste consultable et se
+        récupère d'un `git merge`.
+
+        404 si le projet est inconnu, 422 motivé si sa fiche est illisible, si sa
+        racine n'est plus un dossier lisible, si le worktree ne se monte pas ou si
+        la fusion est refusée (racine occupée, conflit) — jamais un 500.
+        """
+        try:
+            return await outillage.generer(id_projet)
+        except (
+            ValueError,
+            ProjetInconnu,
+            ApplicationRefusee,
+            EspaceProjetIndisponible,
+        ) as exc:
             raise _refus_projet(exc) from exc
 
     @app.get("/api/fournisseurs")
