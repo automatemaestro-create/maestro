@@ -2429,6 +2429,59 @@ d'une attente **en cours** — une tâche qui attend son atelier *maintenant* �
 montrait ; et la **frise**, qui n'affiche aucune durée soldée. Le ticket #989 porte `veille::arbitree`
 depuis cette veille.
 
+#### La fin d'un fil au téléphone — 2026-09-20 (#1011, différée de #941)
+
+Surface : **`/chat` sous `@4xl`** (capturé à 420 × 860) — où la page s'ouvre, et à quoi ressemble
+le bas de la conversation quand la colonne de propriétés est **empilée dessous** au lieu d'être
+posée à côté. Veille **différée** : #941 était un `type::bug` dont le diagnostic était fait, mais sa
+correction a dû trancher deux choses à l'écran sans référence — l'ouverture du fil, et les 64 px
+qui laissent dépasser la carte suivante. Décision complète en commentaire de **#1011**, captures
+dans l'atelier de la session. La question : « quand la conversation n'est pas toute la page, où
+finit-elle ? »
+
+**Mesuré avant** (démo, 420 × 860, relevé de #941) : le fil de démo fait **338 px** dans un écran de
+860, donc la cible de « coller en bas » retombe à `scrollTop = 0` ; l'écran montre l'en-tête du fil,
+le mot d'accueil, le composeur et ses deux amorces, puis la carte « Conversations » à **446 px**.
+Sur un fil débordant, la réserve `after:h-24` de `ColonneConversation.tsx` laisse voir **64 px** du
+bloc suivant sous le bouton flottant.
+
+**Vérifié en direct**, trois produits capturés à 420 × 860 : **Zulip** (`chat.zulip.org`, vue
+publique, canal `#issues`) — le fil s'ouvre sur le **dernier message**, entier, composeur à quai sur
+le bord, une bande de fond entre les deux ; **rien ne suit la conversation**, elle occupe tout
+l'écran. **GitHub Discussions** (`community/discussions/203416`, 78 commentaires) — **notre cas
+exact** : fil long suivi d'autres blocs en une colonne ; le dernier commentaire se **ferme entier**
+(son pied `↑ 1` / `0 replies` compris), puis un **filet pleine largeur**, un blanc franc, puis le
+bloc suivant **comme un bloc** ; la colonne de propriétés (Category, Labels, 73 participants) est
+empilée dessous, et un **en-tête collant** garde le titre et les compteurs pendant le défilement.
+**Perplexity** (accueil, fil vide) — composeur **à quai sur le bord**, **aucune amorce**, une seule
+ligne d'invitation centrée, et le vide au-dessus est assumé.
+
+**Le fait qui tranche est constant sur les trois : aucune ne pose de bouton flottant par-dessus son
+composeur.** `sticky bottom-16` (#726), la réserve `after:h-24` (#888) et le sliver de #941 sont
+tous les conséquences d'une contrainte — le flottant de #123 calé sur la fenêtre — que personne
+d'autre ne s'impose.
+
+**Non vérifié, donc non cité** : ChatGPT, Claude.ai, HuggingChat (derrière une connexion, comme
+l'avait déjà relevé #831) ; le comportement au clavier ouvert, où la hauteur visible change.
+
+**Cinq partis pris.** **La fin d'un fil suivi d'autres blocs se marque par un filet, jamais par un
+sliver** — `border-t border-bord` entre le cadre du fil et la carte « Conversations » sous `@4xl` ;
+le sliver *dit vrai*, mais par un accident de hauteur, là où un filet le dit exprès. **Le bloc
+suivant commence comme un bloc** — la réserve se termine, puis il commence. **Au téléphone, le
+flottant rejoint le composeur** au lieu de flotter dessus : c'est le plus lourd, il touche #123,
+#726 et #888, et il vaut un ticket à lui seul. **Un fil vide ne propose pas d'amorces au
+téléphone** — d'après Perplexity ; cela **renverse** l'arbitrage de #891, qui en gardait deux, et se
+tranche sur pièces. **Le contexte reste lisible pendant le défilement** — en-tête du fil en
+`sticky top-0` sous `@4xl`, d'après GitHub et Zulip.
+
+**Ce que la veille n'a pas regardé** : **où le fil s'ouvre quand il est long**, la première question
+du constat de #941. Zulip ouvre sur le dernier message, mais Zulip n'a rien sous son fil — son
+« dernier message » *est* le bas de l'écran. Dès qu'un bloc suit, « coller en bas » et « montrer la
+fin du fil » cessent de désigner le même point, et **aucune des trois références ne tranche ce
+cas** : GitHub n'a pas de composeur collant, Perplexity n'a pas de bloc suivant. C'est le seul
+endroit où la veille n'apporte rien, et il reste ouvert. Le ticket #1011 porte `veille::arbitree`
+depuis cette veille.
+
 ---
 
 ### 5.8 Un écran se juge contre l'attente — 2026-09-17 (chantier #972)
