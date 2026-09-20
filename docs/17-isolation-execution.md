@@ -158,4 +158,10 @@ consigné au journal, comme les autres échecs.
 - **Tests** (#107) : câblage, commande durcie et shim couverts par
   `tests/test_isolation.py` ; le lancement **réel** d'un conteneur exige Docker,
   absent des runners CI — procédure de smoke test manuelle dans
-  [docs/19 §4](./19-securite-modele-de-menace.md).
+  [docs/19 §4](./19-securite-modele-de-menace.md) ;
+- **en distribution bureau, le défaut ne change pas** — il reste le mode non
+  isolé, et le contrat du §3 ci-dessus est intact : la coque (#923,
+  [docs/35 §2](./35-decision-poste-de-bureau-et-disposition.md)) ne le touche
+  pas. Ce que cela **implique** est écrit une fois et une seule, dans
+  [docs/19 §2.4](./19-securite-modele-de-menace.md) : le filet y est alors le
+  **périmètre du projet**, pas le conteneur ([docs/24 §4.6](./24-projets-locaux-et-poste-de-travail.md)).

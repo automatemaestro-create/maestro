@@ -9,6 +9,12 @@ et tests + doc (#107, cette page). Elle consigne le **modèle de menace** commun
 aux trois mécanismes, leur activation, la **vérification** (tests automatisés +
 procédure manuelle du mode isolé) et les limites connues consolidées.
 
+Elle a grandi avec le produit, et chaque élargissement porte sa date : le **projet
+local** de l'utilisateur (§2.1), les **sources** d'un objectif (§2.2), la
+**bibliothèque MCP** (§2.3) et la **fenêtre de bureau** (§2.4) — celle-ci étant le
+premier endroit où la frontière n'est plus tenue par un navigateur tiers, mais par
+notre code.
+
 > **Pourquoi** : les agents exécutent du code (`Bash`, fichiers produits,
 > serveurs MCP stdio) et manipulent des tokens d'intégration. L'ouverture MCP
 > (#101) et le multi-instances (#100) élargissent la surface : ce chantier
@@ -215,6 +221,131 @@ rien ici n'inspecte ce que le serveur fait une fois monté. Ce qui borne cela es
 ailleurs et n'a pas bougé — la politique d'outils par agent (#110), le coffre par
 agent (#109) et l'isolation d'exécution (#108).
 
+### 2.4 Ce que la fenêtre de bureau ajoute *(en vigueur — [docs/35 §2](./35-decision-poste-de-bureau-et-disposition.md), chantier #921)*
+
+Ce modèle a été écrit pour un backend servi à un **navigateur**, et jusqu'à #923 il n'avait
+aucune raison de nommer une fenêtre : celle qui affichait la Control Tower appartenait à
+quelqu'un d'autre — Chrome, Edge, Firefox. Ce tiers appliquait sa politique d'origine, son bac à
+sable de rendu, ses règles de téléchargement et d'ouverture de protocole. Nous en étions les
+bénéficiaires **sans l'avoir écrit**.
+
+La coque de bureau déplace cette frontière, et le dire franchement est le premier travail de
+cette section : **le tiers de confiance, c'est nous maintenant**. `apps/desktop/main.js` est un
+processus Node complet, lancé avec les droits de l'utilisateur, qui démarre la stack locale et
+affiche ce qu'elle sert. Ce qui sépare la page du poste n'est plus la politique d'un navigateur
+tiers : c'est ce que ce fichier-là accepte de faire.
+
+**Aucun actif nouveau pour autant** (§1) : la fenêtre n'ouvre aucune donnée que le poste hôte et
+le projet de l'utilisateur (§2.1) ne portaient déjà. Ce qu'elle ajoute, ce sont des **surfaces**
+sur ces actifs, et un attaquant qui n'était pas dans la liste du §2 — **du code exécuté dans la
+page**. Ce n'est pas une hypothèse d'école : la page affiche du contenu de projet, des livrables
+de run et des sources ingérées, c'est-à-dire exactement la matière que §2.1 et §2.2 tiennent pour
+hostile par défaut.
+
+#### La surface, ligne à ligne
+
+| Surface | Ce qui la borne | Ce qui reste assumé |
+|---|---|---|
+| **Processus principal** — Node complet, droits de l'utilisateur (`apps/desktop/main.js`) | Il n'exécute **qu'un** programme, `scripts/controltower/start.sh`, jamais une commande venue de la page ; ce qu'il lui transmet est une **liste blanche** d'options (`--demo`), le reste de son `argv` — celui d'Electron — étant écarté ; l'interpréteur est celui que le lanceur lui passe (`MAESTRO_BASH`), pas un `bash` nu qui sous Windows tomberait sur WSL ; une seconde instance sort immédiatement (`requestSingleInstanceLock`) | Ce processus **a tous les droits de l'utilisateur**, et rien ne l'en prive : ni conteneur, ni jeton, ni politique d'outils. C'est lui la frontière — il ne peut pas être derrière elle. Le lanceur est joué depuis la racine du dépôt (`cwd`) et hérite de l'environnement de la coque tel quel |
+| **Injection dans la page** — `executeJavaScript` (écran d'attente) | La seule charge injectée est un `JSON.stringify({ etat, message })` : un **littéral**, jamais du code ; la page ne l'affiche que par `textContent` (`attente.html`), et l'appel devient sans effet dès que l'UI a pris la place de l'écran d'attente | Ce message porte la **sortie de `start.sh`** — du texte produit par le poste, pas par nous. Ce qui le borne n'est donc pas la confiance qu'on lui fait, ce sont la sérialisation et le `textContent` : les deux doivent le rester |
+| **Préchargement — le pont** (`apps/desktop/preload.js`) | `sandbox: true` et `contextIsolation: true` : le préchargement n'a **pas** accès à Node (ni `fs`, ni `child_process`, ni `shell`), il ne peut donc pas donner ce qu'il n'a pas. Ce qu'il expose est **trois fonctions nommées par ce qu'elles font**, jamais `ipcRenderer` ni un `invoke(canal, …)` générique, qui rouvrirait tout le pont derrière un nom neutre | Ces trois verbes sont atteignables par **tout** ce qui s'exécute dans la page — y compris un script qu'un contenu affiché aurait réussi à y faire entrer. Ce qui les borne n'est donc pas **qui** appelle, mais ce que le processus principal accepte de faire (lignes suivantes). Le pont est attaché à la **fenêtre**, pas à une origine : l'écran d'attente (`attente.html`, chargé en `file://`) le porte aussi |
+| **IPC** — deux canaux | `ipcMain.handle` sur `maestro:ouvrir-dossier` et `maestro:choisir-dossier`, **nommés**, et rien d'autre ; chaque argument est **revalidé** côté processus principal, sans faire confiance au typage du preload | L'**émetteur n'est pas vérifié** (`senderFrame`). Ce qui rend cela tenable est une hypothèse à quatre termes — une seule fenêtre, une seule origine, aucun `<webview>`, aucune iframe tierce dans le front — et non un contrôle. Elle tombe le jour où l'un des quatre change : c'est alors qu'il faudra filtrer l'émetteur |
+| **Navigation et ouverture de fenêtres** | `will-navigate` n'autorise que les deux noms de l'hôte local **sur le port de l'UI** ; `setWindowOpenHandler` rend `deny` sans exception — jamais de seconde fenêtre de coque ; ce qui est refusé part au navigateur du système **si et seulement si** son schéma est `http(s)`, tout autre étant refusé net | Une URL externe en `http(s)` s'ouvre **sans confirmation**, et rien ne distingue un clic d'une navigation déclenchée par du script. C'est un canal de sortie *visible* (une fenêtre s'ouvre) mais réel — une URL porte ce qu'on met dans sa requête —, et il relève de la même limite que l'**égress non filtré** (§5) |
+| **Contenu distant affiché** — aucun | La fenêtre ne charge que l'origine locale ; `webviewTag: false` ; le contenu extérieur qui entre dans le produit (document, URL — §2.2) entre par l'**API**, converti en Markdown, et le front ne pose aucun HTML brut (`apps/web/lib/markdown.ts`). Il n'est donc jamais *rendu* comme une page | **Aucune CSP** n'est posée sur l'origine locale : la fenêtre n'en pose pas plus que l'onglet, et lui en poser une ferait diverger les deux régimes sans qu'ENF-12 l'appelle. Une ressource distante demandée par la page (police, image) se charge — dans la fenêtre comme dans l'onglet |
+| **Ouvrir un chemin** (#928) — `shell.openPath` | Refusé par défaut, puis trois gardes : chaîne non vide, chemin **absolu**, **existant**, et **répertoire**. La dernière est celle qui porte la menace — `openPath` sur un `.exe`, un `.bat` ou un `.lnk` l'**exécuterait** avec les droits de l'utilisateur. Le pont n'ouvre donc que des répertoires, ce qui suffit au livrable d'un run et ne lance rien | **N'importe quel** répertoire du poste, pas seulement celui d'un projet déclaré : la coque ne connaît pas les racines interdites, et c'est voulu (porte unique, ci-dessous). La garde a la même fenêtre **TOCTOU** que `chemin_dans_racine` (§2.1) — entre le contrôle et l'ouverture, un lien peut changer. Ce qu'on accepte ici et nulle part ailleurs, c'est que le dégât borné soit « un dossier s'affiche dans l'explorateur » |
+| **Désigner un dossier** (#938) — dialogue natif, dossier déposé | Les deux ne font que **rendre une chaîne**. Le dialogue est **modal** sur la fenêtre, donc il ne s'empile pas — là où celui du backend a dû se donner un verrou, N requêtes HTTP pouvant empiler N fenêtres (#278) ; `webUtils.getPathForFile` s'exécute dans le rendu et rend `null` pour ce qui ne vient pas du disque | La coque lit ainsi le chemin de n'importe quel dossier, **y compris une racine interdite** — et c'est correct : lire un chemin n'est pas y accéder. Le refus arrive à la **porte**, avec son motif (§2.1) |
+
+#### Les réglages de sûreté, rattachés à la menace qu'ils traitent
+
+#923 en nomme **trois** dans son critère d'acceptation — `nodeIntegration` désactivé,
+`contextIsolation` activé, origine locale seule — et en pose deux de plus au passage. Ils sont
+justes ; ce sont des **critères d'acceptation**, pas un modèle de menace, et une liste de bonnes
+pratiques dit ce qu'on configure, jamais **contre quoi**. Chacun a sa menace, et chacun laisse
+quelque chose derrière lui :
+
+| Réglage (`main.js`) | La menace qu'il traite | Ce qu'il ne traite pas |
+|---|---|---|
+| `nodeIntegration: false` | Du code exécuté dans la page obtiendrait `require('fs')` et `child_process` : lecture et écriture du poste avec les droits de l'utilisateur, **sans passer par aucun pont** | Ce que le pont expose volontairement. Le réglage borne l'**implicite**, jamais l'explicite |
+| `contextIsolation: true` | Le monde du préchargement et celui de la page partageraient leurs prototypes : un script de la page pourrait **remplacer** ce dont le pont se sert et détourner un appel légitime | Une fonction exposée reste **appelable** : le réglage garantit qu'elle n'est pas remplaçable, pas qu'elle est réservée |
+| `sandbox: true` *(posé par #923, hors de son critère ; **maintenu** par #928 quand le pont est né)* | Un préchargement non sandboxé garde Node : sa seule existence remettrait dans le processus de rendu ce que `nodeIntegration: false` venait d'en retirer | Rien de plus — c'est lui qui rend les deux précédents cohérents une fois qu'un pont existe, et c'est pourquoi l'ouvrir « pour faire passer » une capacité les annulerait tous les trois |
+| `webviewTag: false` *(idem, hors critère)* | Une balise `<webview>` créerait un contenu embarqué avec **ses propres** réglages, hors de ceux-ci : c'est la faille par le bas d'une politique de fenêtre | L'iframe ordinaire, que rien n'interdit côté coque. Qu'il n'y en ait aucune est une propriété du **front**, pas de la fenêtre |
+| **origine locale seule** (navigation) | Une page distante chargée **dans** la fenêtre s'exécuterait devant le pont, avec la même adresse que le produit | Ce que la page locale, elle, va chercher (ligne « contenu distant » ci-dessus) |
+
+#### La porte unique : un chemin qui entre par la fenêtre est jugé au même endroit que les autres
+
+**C'est une propriété du modèle, pas la note d'un lot** — #938 l'écrit pour lui-même, elle vaut
+pour tout ce qui viendra ensuite. Un chemin peut désormais entrer par cinq portes : saisi au
+clavier, choisi dans l'explorateur servi par l'API (#223), rendu par le dialogue que le backend
+ouvre (#278), rendu par le dialogue de la fenêtre (#938), lu sur un dossier déposé (#938). Toutes
+aboutissent à `valider_racine` **côté backend** (EF-38, #221) — canonicalisation, racines
+interdites, refus motivé — et à lui seul.
+
+La coque n'en applique **aucune**, et ne doit jamais en appliquer : deux formules à tenir d'accord
+ne restent pas d'accord, et c'est la garde qui perdrait. Le corollaire est ce qui rend la règle
+utilisable pour la capacité suivante, celle que personne n'a encore écrite :
+
+- une capacité qui **rend** un chemin n'ajoute **aucune garde** à écrire. Elle allonge la liste
+  des portes ; la porte, elle, est ailleurs ;
+- une capacité qui **agit** sur un chemin (#928) en ajoute une — et cette garde se juge sur **ce
+  que l'action peut faire**, jamais sur la provenance du chemin. C'est pourquoi la seule garde qui
+  compte vraiment dans `ouvrirDossier` est « c'est un répertoire » : les deux autres évitent une
+  erreur, celle-là évite une exécution.
+
+#### L'isolation d'exécution en distribution bureau : le défaut est le mode non isolé
+
+[docs/24 §4.6](./24-projets-locaux-et-poste-de-travail.md) l'avait écrit au cadrage, et **rien
+ici ne le change** : une application qu'on double-clique ne peut pas exiger Docker sur le poste.
+En distribution bureau, `MAESTRO_ISOLATION` reste **non posé** par défaut, le mode isolé
+([docs/17](./17-isolation-execution.md)) demeure une option pour postes équipés, et le contrat du
+conteneur ([docs/17 §3](./17-isolation-execution.md)) ne bouge pas d'une ligne — la coque ne le
+touche pas.
+
+Ce qui change, c'est **qui est devant l'écran**. Ne pas avoir Docker se constatait jusqu'ici sur
+un poste de développement, par quelqu'un qui avait lancé la stack à la main et lu l'avertissement.
+La fenêtre ouvre le produit à quelqu'un qui n'a pas de terminal — le persona de docs/24 —, et la
+question « qu'est-ce qui protège le poste quand le conteneur n'est pas là ? » cesse d'être
+théorique. La réponse, en toutes lettres :
+
+**Le filet du mode bureau est le périmètre du projet, pas le conteneur** (docs/24 §4.6, et §2.1
+ci-dessus pour le détail) : racine canonicalisée et racines interdites (EF-38), exclusions du
+périmètre, frontière d'écriture de `maestro.sandbox.en_place` sur un projet non versionné, travail
+hors de la racine et fusion sous accord humain sur un projet versionné (EF-36, EF-37).
+
+Et le **prix** de cette réponse, qui ne se lit nulle part d'un seul tenant : ces gardes vivent
+**sur l'hôte**, où elles ne confrontent que les **outils de fichiers** de l'agent — jamais ce
+qu'un `Bash` fait ([docs/17 §4](./17-isolation-execution.md), encart #839). En mode isolé les
+exclusions deviennent une clôture dure, parce que c'est le conteneur qui les porte ; hors mode
+isolé — donc **par défaut en distribution bureau** — un `Bash` permis n'est borné que par la
+**politique d'outils par agent** (#110) et par le time-out de la tâche (#64).
+
+Il n'y a pas de troisième filet à inventer ici, et en suggérer un serait pire que de se taire :
+refermer cela, c'est activer l'isolation sur un poste qui peut la porter, ou refuser `Bash` à
+l'agent, ou ne pas lancer d'agent sur un poste où l'on n'accepte ni l'un ni l'autre. Ce document
+ne dit pas que le régime est confortable ; il dit que **c'est le régime**.
+
+#### Ce que le modèle attend du mode local durci (#638)
+
+L'API de la Control Tower n'a **aucune authentification** et accepte toutes les origines. Ce n'est
+pas la fenêtre qui creuse ce trou — il est là depuis que l'API existe, il est nommé comme bloquant
+par [docs/24 §6](./24-projets-locaux-et-poste-de-travail.md) (point 3), et #638 le traite en
+Phase 9. **Il ne se refait pas ici** ; deux choses s'en disent, qu'on ne voit bien qu'en regardant
+la fenêtre :
+
+- **la fenêtre n'aggrave pas ce trou et n'y donne pas accès.** Un programme du poste qui parle à
+  l'API locale obtient l'API — déjà de quoi lancer un run sur le disque —, il n'obtient **pas** le
+  pont : celui-ci vit dans le processus de rendu, derrière `contextBridge`, et rien du réseau n'y
+  arrive. Confondre les deux surfaces ferait attendre de #638 une protection qu'il n'apporte pas ;
+- **ce que #638 fermera, et ce qu'il ne fermera pas.** Un jeton et une liste d'origines ferment
+  l'accès *depuis l'extérieur de la page* — une autre page du navigateur, un autre programme du
+  poste. Ils ne ferment rien *à l'intérieur* : du code qui s'exécute dans la fenêtre a le jeton,
+  l'origine et le pont. Ce qui borne celui-là est écrit plus haut — ce que le processus principal
+  accepte de faire, et le fait que la page ne charge que l'origine locale.
+
+**ENF-12 n'est pas en cause dans cette section** : elle décrit une surface, elle ne la change pas.
+Aucun embranchement de code applicatif n'existe dans `apps/web/**` — le front teste une
+**capacité** (`apps/web/lib/poste.ts`), jamais sa plateforme, et c'est ce qui fait que la même
+page, servie dans un onglet, répond « non » et prend l'autre chemin.
+
 ## 3. Activation (récapitulatif)
 
 Chaque mécanisme est **opt-in** et détaillé dans sa page ; l'ensemble tient
@@ -301,4 +432,16 @@ Chaque page de lot garde le détail ; l'essentiel, assumé au POC :
   d'outils et le scoping qui réduisent ce risque à la source ;
 - **smoke test conteneur hors CI** (démon Docker indisponible sur les runners) :
   procédure manuelle ci-dessus, à rejouer quand `infra/sandbox/` ou
-  `maestro/sandbox/` changent.
+  `maestro/sandbox/` changent ;
+- **la coque de bureau n'est pas isolée, et ne peut pas l'être** (§2.4) : son
+  processus principal lance la stack avec les droits de l'utilisateur, parce que
+  c'est lui qui porte la frontière de la fenêtre. En distribution bureau le défaut
+  reste le **mode non isolé**, le filet est le **périmètre du projet**, et un
+  `Bash` permis n'y est borné que par la politique d'outils (#110) ;
+- **le pont de la fenêtre n'authentifie pas son appelant** (§2.4) : ses deux canaux
+  IPC servent tout ce qui s'exécute dans la page. Ce qui rend cela tenable est une
+  hypothèse à quatre termes — une fenêtre, une origine, pas de `<webview>`, pas
+  d'iframe tierce — et non un contrôle ;
+- **l'API locale n'a ni jeton ni liste d'origines** (#638, Phase 9) : indépendant
+  de la fenêtre, mais c'est en distribution bureau que ce défaut cesse d'être une
+  commodité de développement (§2.4).
