@@ -9,6 +9,18 @@
  * La mesure d'usage d'une étape (`StepUsage.to_dict`, #57) : tokens
  * entrée/sortie, coût estimé, durées. `cout_usd` et les durées restent null
  * quand rien n'a été rapporté (inconnu ≠ nul).
+ *
+ * `duree_ms` est la durée **horloge** — celle qui contient les attentes. Ce que
+ * les écrans affichent est `duree_execution_ms`, le **travail** (#989) ; les
+ * attentes se lisent à part, chacune par son nom (`duree_arbitrage_ms` #584,
+ * `duree_attente_creneau_ms` #86, `duree_attente_atelier_ms` #839) et
+ * `duree_attente_ms` en porte le cumul.
+ *
+ * ⚠ `duree_execution_ms` et `duree_attente_ms` sont **dérivés côté Python** et
+ * arrivent calculés, comme `tokens_total`. Ne pas les recalculer ici : la règle
+ * « ce qui est du travail, ce qui est de l'attente » n'a qu'un seul endroit où
+ * vivre (`maestro/telemetry/usage.py`), et la réécrire ici serait s'en donner
+ * deux qui divergeront.
  */
 export type Usage = {
   appels: number;
@@ -18,6 +30,11 @@ export type Usage = {
   cout_usd: number | null;
   duree_ms: number | null;
   duree_api_ms: number | null;
+  duree_arbitrage_ms?: number | null;
+  duree_attente_creneau_ms?: number | null;
+  duree_attente_atelier_ms?: number | null;
+  duree_attente_ms?: number | null;
+  duree_execution_ms?: number | null;
   tours: number;
   outils: string[];
 };
@@ -1807,7 +1824,14 @@ export type NoeudGraphe = {
   cout_usd: number | null;
   /** Le même coût que la carte de la tâche, avec la même réserve (#835, `Tache.cout_partiel`). */
   cout_partiel?: boolean;
+  /** L'**horloge** de la tâche — attentes comprises. Ce n'est pas ce que la boîte affiche. */
   duree_ms: number | null;
+  /**
+   * Le **travail** de la tâche (#989) : l'horloge moins ses attentes. C'est ce
+   * que la ligne chrono de la boîte rend, exactement comme la carte du Kanban —
+   * une seule règle pour les deux surfaces, jamais deux lectures du même fait.
+   */
+  duree_execution_ms?: number | null;
   etapes: EtapeTache[];
   /** Le signe de vie du nœud en cours (#836) : `null` sur tout autre nœud. */
   activite?: SigneDeVie | null;

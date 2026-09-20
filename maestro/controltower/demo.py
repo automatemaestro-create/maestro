@@ -431,6 +431,8 @@ async def _scenario(bus: EventBus) -> None:
             tokens_sortie=1240,
             cout_usd=0.0480,
             duree_ms=38000,
+            duree_attente_creneau_ms=0,
+            duree_attente_atelier_ms=0,
             tours=3,
             outils=("Write", "Bash"),
         ),
@@ -461,7 +463,13 @@ async def _scenario(bus: EventBus) -> None:
             tokens_entree=9870,
             tokens_sortie=2610,
             cout_usd=0.0910,
-            duree_ms=61000,
+            duree_ms=819000,
+            # La tâche du retex (#989, G4) : 13 min 39 s d'horloge, dont 12 min 38 s
+            # passées à attendre l'atelier du projet que `demo-t1` tenait. La démo
+            # porte les deux cas côte à côte — celle-ci a attendu, `demo-t1` non —
+            # pour qu'on voie du même coup d'œil ce qui s'affiche et ce qui se tait.
+            duree_attente_creneau_ms=0,
+            duree_attente_atelier_ms=758000,
             tours=5,
             outils=("Write", "Edit", "Bash"),
         ),

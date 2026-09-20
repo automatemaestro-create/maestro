@@ -751,6 +751,11 @@ function NoeudCarte({
   const travailleDepuis =
     (etat === NOEUD_EN_COURS && noeud.activite?.travaille_depuis) || null;
 
+  // Ce que la boîte affiche d'une tâche soldée (#989) : son **travail**, jamais
+  // son horloge. Le repli couvre un backend d'avant ce ticket, qui ne sert pas
+  // encore la décomposition — exactement le repli de la carte du Kanban.
+  const dureeSoldee = noeud.duree_execution_ms ?? noeud.duree_ms;
+
   const surClic = (evenement: MouseEvent<HTMLElement>) => {
     if (!ouvrable || tache === undefined) return;
     if ((evenement.target as HTMLElement).closest("a, select, option, button")) {
@@ -858,11 +863,18 @@ function NoeudCarte({
       )}
 
       {/* La ligne chrono, et les **deux** durées qu'elle peut porter (#894) :
-          celle d'une tâche soldée (`duree_ms`, un fait figé) et, tant qu'elle
-          travaille, le temps qu'elle y passe — compté en direct dans la place
-          existante, jamais dans une ligne de plus. Les deux ne coexistent pas :
-          `duree_ms` n'arrive qu'à l'issue, quand plus rien ne travaille. */}
-      {(noeud.cout_usd !== null || noeud.duree_ms !== null || travailleDepuis !== null) && (
+          celle d'une tâche soldée (un fait figé) et, tant qu'elle travaille, le
+          temps qu'elle y passe — compté en direct dans la place existante,
+          jamais dans une ligne de plus. Les deux ne coexistent pas : la durée
+          d'une tâche soldée n'arrive qu'à l'issue, quand plus rien ne travaille.
+
+          Depuis #989, la durée soldée est le **travail** (`duree_execution_ms`)
+          et non l'horloge : une tâche restée douze minutes à attendre son
+          atelier se lisait ici comme une tâche de treize minutes. Les attentes
+          se lisent à part, dans le panneau de détail — le nœud garde sa place
+          compacte, comme la carte du Kanban (variante retenue de #989). Le
+          repli sur `duree_ms` couvre un backend d'avant ce ticket. */}
+      {(noeud.cout_usd !== null || dureeSoldee !== null || travailleDepuis !== null) && (
         <p className="chiffre mt-1 flex justify-between gap-2 text-annexe text-neutral-500 dark:text-neutral-400">
           <span>{noeud.cout_usd === null ? "" : formatCout(noeud.cout_usd)}</span>
           {travailleDepuis !== null ? (
@@ -871,10 +883,11 @@ function NoeudCarte({
               <ChronoEnVol depuis={travailleDepuis} />
             </span>
           ) : (
-            noeud.duree_ms !== null && (
+            dureeSoldee !== null && (
               <span className="inline-flex items-center gap-1">
                 <IconeChrono className="size-3.5 shrink-0" />
-                {formatDuree(noeud.duree_ms)}
+                <span className="sr-only">Travail </span>
+                {formatDuree(dureeSoldee)}
               </span>
             )
           )}

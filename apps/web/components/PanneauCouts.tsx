@@ -58,7 +58,18 @@ function GrandLivre({ cout }: { cout: CoutExecution }) {
           {" · "}
           {formatTokens(cout.total.tokens_total)} tokens
           {" · "}
-          {formatDuree(cout.total.duree_ms)}
+          {/* La durée **du run** : l'union des intervalles de ses étapes (#989),
+              posée par le backend — deux tâches menées de front ne l'occupent
+              qu'une fois. C'est le « Total duration » d'un run de GitHub
+              Actions, et non la somme des durées de ses lignes.
+
+              Elle porte son **mot**, et c'est ce qui la sépare de la colonne
+              « Durée » du tableau juste en dessous, qui compte du **travail** :
+              deux mesures de sens différent sous une seule étiquette faisaient
+              une addition qui ne tombait pas juste, et rien n'en disait la
+              raison. La référence donne deux noms et deux places ; « de mur »
+              est ce nom-ci. */}
+          {formatDuree(cout.total.duree_ms)} de mur
         </p>
       </div>
       <div className="mt-2 overflow-x-auto">
@@ -109,7 +120,18 @@ function GrandLivre({ cout }: { cout: CoutExecution }) {
             <tr className="font-medium">
               <td className="py-1 pr-3">Total</td>
               <td className="py-1 pr-3" />
-              <CellulesUsage usage={cout.total} />
+              {/* Le pied **totalise sa colonne**, et rien d'autre (#989) : la
+                  durée du run, elle, est un temps de mur, et elle s'annonce
+                  dans l'en-tête avec son mot. Les mettre au même endroit sous
+                  la même étiquette donnait une ligne « Total » qui ne tombait
+                  pas juste — de moins que ses lignes sur un run dont deux
+                  tâches se recouvrent, de beaucoup plus sur un run qui a
+                  attendu. Un total qui ne totalise pas est ce qui fait douter
+                  des lignes, pas du total. */}
+              <CellulesUsage
+                usage={cout.total}
+                dureeMs={dureeTravailCumulee(cout, planificationRapportee)}
+              />
             </tr>
           </tfoot>
         </table>
@@ -118,8 +140,46 @@ function GrandLivre({ cout }: { cout: CoutExecution }) {
   );
 }
 
-/** Les trois cellules chiffrées d'une ligne du grand livre : tokens, coût, durée. */
-function CellulesUsage({ usage }: { usage: Usage }) {
+/**
+ * La somme des durées de **travail** que le tableau affiche (#989) — le total
+ * de sa colonne, ni plus ni moins.
+ *
+ * Il se compte sur les lignes **rendues**, et c'est le point : une ligne que le
+ * tableau ne montre pas (la planification d'une exécution qui n'en a pas
+ * rapporté) ne doit pas entrer dans un total qu'on vérifie à l'œil. `null`
+ * quand aucune ligne ne porte de durée — inconnu n'est pas zéro.
+ */
+function dureeTravailCumulee(
+  cout: CoutExecution,
+  avecPlanification: boolean,
+): number | null {
+  const lignes: Usage[] = [
+    ...(avecPlanification ? [cout.planification] : []),
+    cout.brief,
+    ...cout.taches.map((tache) => tache.usage),
+  ];
+  const mesurees = lignes
+    .map(dureeTravail)
+    .filter((duree): duree is number => duree !== null);
+  return mesurees.length === 0
+    ? null
+    : mesurees.reduce((somme, duree) => somme + duree, 0);
+}
+
+/**
+ * Les trois cellules chiffrées d'une ligne du grand livre : tokens, coût, durée.
+ *
+ * `dureeMs` permet au **pied** d'afficher le total de sa colonne plutôt que la
+ * durée portée par `usage` — qui, sur l'agrégat d'un run, est un temps de mur
+ * et non une somme de travail (#989).
+ */
+function CellulesUsage({
+  usage,
+  dureeMs,
+}: {
+  usage: Usage;
+  dureeMs?: number | null;
+}) {
   return (
     <>
       <td className="chiffre py-1 pr-3 text-right">
@@ -132,7 +192,24 @@ function CellulesUsage({ usage }: { usage: Usage }) {
         </Infobulle>
       </td>
       <td className="chiffre py-1 pr-3 text-right">{formatCout(usage.cout_usd)}</td>
-      <td className="chiffre py-1 text-right">{formatDuree(usage.duree_ms)}</td>
+      <td className="chiffre py-1 text-right">
+        {formatDuree(dureeMs === undefined ? dureeTravail(usage) : dureeMs)}
+      </td>
     </>
   );
+}
+
+/**
+ * La durée qu'une ligne du grand livre affiche (#989) : le **travail**, jamais
+ * l'horloge.
+ *
+ * Une seule fonction pour les trois familles de lignes, et c'est le point : sur
+ * une tâche, elle retire les attentes que le moteur range déjà hors du travail ;
+ * sur la planification et le brief, qui n'attendent rien, elle rend la durée
+ * inchangée ; sur la ligne de **total**, le backend a déjà posé l'union des
+ * intervalles du run et n'y déclare aucune attente — la même expression rend
+ * donc cette union telle quelle. Le repli couvre un backend d'avant ce ticket.
+ */
+function dureeTravail(usage: Usage): number | null {
+  return usage.duree_execution_ms ?? usage.duree_ms;
 }

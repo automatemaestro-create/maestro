@@ -341,17 +341,34 @@ function CarteTache({
   const travailleDepuis = tache.activite?.travaille_depuis || null;
 
   // La ligne chrono porte **deux** durées selon le moment : celle d'une tâche
-  // soldée (`duree_ms`, un fait figé) et, tant qu'elle travaille, le temps
-  // qu'elle y passe — dans la place existante, qui affichait « — » en vol faute
-  // d'une durée que le relevé en cours (#835) ne mesure pas. Les deux ne
-  // coexistent jamais : `duree_ms` n'arrive qu'à l'issue.
+  // soldée (un fait figé) et, tant qu'elle travaille, le temps qu'elle y passe —
+  // dans la place existante, qui affichait « — » en vol faute d'une durée que le
+  // relevé en cours (#835) ne mesure pas. Les deux ne coexistent jamais : la
+  // durée d'une tâche soldée n'arrive qu'à l'issue.
+  //
+  // Depuis #989, la durée soldée est le **travail** (`duree_execution_ms`) et
+  // non l'horloge : une tâche restée douze minutes à attendre l'atelier de son
+  // projet se lisait ici comme une tâche de treize minutes (retex du
+  // 2026-09-11, G4). Les attentes se lisent **à part**, nommées, dans le
+  // panneau de détail — la carte garde un seul chiffre, et c'est la variante
+  // retenue de ce ticket : aucune des références (GitHub Actions, Buildkite,
+  // GitLab CI) ne charge d'un second temps l'élément compact d'une liste.
+  // Le repli sur `duree_ms` couvre un backend d'avant ce ticket.
   const chrono = (
     <span className="inline-flex items-center gap-1">
       <IconeChrono className="size-3.5 shrink-0" />
       {travailleDepuis !== null ? (
         <ChronoEnVol depuis={travailleDepuis} />
       ) : (
-        formatDuree(tache.usage?.duree_ms ?? null)
+        <>
+          {/* Le chiffre porte son mot : depuis #894 cette place rend déjà deux
+              mesures de sens différent, et « 8 min 05 » de travail ne se lit
+              plus comme « 8 min 05 » d'horloge. `ChronoEnVol` pose le sien. */}
+          <span className="sr-only">Travail </span>
+          {formatDuree(
+            tache.usage?.duree_execution_ms ?? tache.usage?.duree_ms ?? null,
+          )}
+        </>
       )}
     </span>
   );

@@ -36,12 +36,15 @@ Six briques, assemblées par la boucle d'orchestration (`maestro.engine`) :
 from __future__ import annotations
 
 from maestro.telemetry.costs import (
+    ETAPE_BRIEF,
     ETAPE_PLANIFICATION,
     PlafondDepense,
     PlafondDepenseDepasse,
     RunCost,
     TaskCost,
+    intervalle_depuis,
     resume_controle_depense,
+    union_ms,
 )
 from maestro.telemetry.journal import (
     LOGGER_NAME,
@@ -65,6 +68,7 @@ from maestro.telemetry.usage import (
 )
 
 __all__ = [
+    "ETAPE_BRIEF",
     "ETAPE_PLANIFICATION",
     "LOGGER_NAME",
     "MARQUEUR_SECRET",
@@ -82,9 +86,11 @@ __all__ = [
     "enregistre_secret",
     "est_releve_usage",
     "evaluer_run_langfuse",
+    "intervalle_depuis",
     "redact_secrets",
     "report_usage",
     "resume_controle_depense",
     "scores_depuis_journal",
+    "union_ms",
     "usage_en_cours",
 ]

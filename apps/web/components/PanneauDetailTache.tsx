@@ -48,7 +48,7 @@ import {
   type LienAffiche,
   type NatureAffichee,
 } from "@/lib/detailTache";
-import { formatCout, libelleStatut } from "@/lib/format";
+import { formatCout, formatDuree, libelleStatut } from "@/lib/format";
 import { type EtatAgent, type Tache } from "@/lib/types";
 import { usePiegeDeFocus } from "@/lib/usePiegeDeFocus";
 
@@ -183,6 +183,35 @@ export function PanneauDetailTache({
             </section>
           )}
 
+          {/* Le temps de la tâche, décomposé (#989). Monté **seulement** quand
+              une attente a été mesurée non nulle : sans attente il n'y a rien à
+              décomposer, et répéter ici la durée que la carte porte déjà
+              ouvrirait un panneau sur chaque tâche mesurée.
+
+              Le travail vient **en tête**, et c'est la réserve n°2 du regard
+              neuf : une attente seule ne se rapporte à rien. La référence fait
+              exactement cela (GitLab CI, bloc de faits d'un job : « Durée »
+              puis « En file d'attente », étiquetées, empilées, même taille). */}
+          {detail.attentes.length > 0 && (
+            <section aria-label="Temps">
+              <TitreSection>Temps</TitreSection>
+              <dl className="space-y-1 text-corps">
+                <LigneTemps
+                  libelle="Travail"
+                  dureeMs={detail.travailMs}
+                  accentue
+                />
+                {detail.attentes.map((attente) => (
+                  <LigneTemps
+                    key={attente.libelle}
+                    libelle={attente.libelle}
+                    dureeMs={attente.dureeMs}
+                  />
+                ))}
+              </dl>
+            </section>
+          )}
+
           {detail.liens.length > 0 && (
             <section aria-label="Liens utiles">
               <TitreSection>Liens utiles</TitreSection>
@@ -209,6 +238,34 @@ export function PanneauDetailTache({
         </footer>
       </div>
     </>
+  );
+}
+
+/**
+ * Une ligne du bloc de temps (#989) : son nom à gauche, sa durée à droite.
+ *
+ * `accentue` distingue le **travail** de ce qui l'a retardé, par la graisse et
+ * non par la couleur : la ligne doit rester lisible pour qui ne sépare pas les
+ * gris, et le filet d'accessibilité refuse un état porté par la seule teinte.
+ */
+function LigneTemps({
+  libelle,
+  dureeMs,
+  accentue = false,
+}: {
+  libelle: string;
+  dureeMs: number | null;
+  accentue?: boolean;
+}) {
+  // Les tokens de la palette sémantique, et aucun `dark:` : les deux thèmes
+  // viennent avec le token (apps/web/README.md, « La palette sémantique »), et
+  // le résidu de couleurs écrites à la main ne peut que décroître (#895).
+  const ton = accentue ? "font-medium text-texte" : "text-texte-secondaire";
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <dt className={ton}>{libelle}</dt>
+      <dd className={`chiffre shrink-0 ${ton}`}>{formatDuree(dureeMs)}</dd>
+    </div>
   );
 }
 

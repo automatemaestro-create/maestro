@@ -324,6 +324,14 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
             description=str(record.get("description") or ""),
             etapes=(etapes_depuis(record["etapes"]) if record.get("etapes") is not None else None),
             liens=(liens_depuis(record["liens"]) if record.get("liens") is not None else None),
+            # Quelle étape du run (#989) : les trois étapes sans tâche arrivaient
+            # à la projection comme la même chose — une activité d'agent sans
+            # `tache_id` —, et le grand livre comptait donc le cadrage en
+            # planification ; le seau `brief` (#318) restait vide quel que soit
+            # l'écran qui avait lancé le run (défaut S9 de la revue #568). Le nom
+            # de l'étape voyage avec l'événement plutôt que de se deviner du
+            # titre — le dépôt ne juge pas un texte par son libellé (#746).
+            etape_run=etape if etape in _ETAPES_RUN else "",
             horodatage=str(record.get("horodatage", "")),
         ),
         *(

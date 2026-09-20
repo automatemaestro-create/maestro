@@ -337,6 +337,109 @@ def test_grand_livre_execution_inconnue_404(client):
     assert client.get("/api/executions/nulle-part/cout").status_code == 404
 
 
+def test_le_cadrage_a_son_seau_dans_le_grand_livre(client, state):
+    """Le défaut **S9** de la revue #568, corrigé par #989.
+
+    Le seau `brief` (#318) restait vide **quel que soit l'écran** qui avait lancé
+    le run, et la cause n'était pas l'ancien écran de brief : le grand livre servi
+    par la Control Tower se reconstruit du **flux d'événements**, où les trois
+    étapes de run arrivaient comme la même chose — une activité d'agent sans
+    `tache_id`. Le cadrage était donc compté en planification.
+
+    Ce que l'événement porte désormais est le **nom de l'étape**, pas un indice à
+    interpréter : juger « c'est un brief » sur son titre serait un lexique (#746).
+    """
+    state.appliquer(Event(
+        type=EVENEMENT_AGENT_ACTIVITE, run_id="run-brief",
+        agent="orchestrateur", role="Orchestrateur", statut="terminee",
+        etape_run="brief", titre="Brief de l'objectif",
+        usage=StepUsage(appels=1, tokens_entree=300, cout_usd=0.02, duree_ms=3000),
+    ))
+    state.appliquer(Event(
+        type=EVENEMENT_AGENT_ACTIVITE, run_id="run-brief",
+        agent="orchestrateur", role="Orchestrateur", statut="terminee",
+        etape_run="planification", titre="Planification",
+        usage=StepUsage(appels=1, tokens_entree=200, cout_usd=0.05, duree_ms=2000),
+    ))
+
+    cout = client.get("/api/executions/run-brief/cout").json()
+
+    assert cout["brief"]["cout_usd"] == pytest.approx(0.02)
+    assert cout["planification"]["cout_usd"] == pytest.approx(0.05)
+    # Compté une fois, pas deux : le total reste celui du run.
+    assert cout["total"]["cout_usd"] == pytest.approx(0.07)
+
+
+def test_une_activite_de_run_sans_etape_nommee_reste_en_planification(client, state):
+    """Un événement d'avant #989 n'annonce pas son étape — et ne se devine pas.
+
+    Le repli est celui d'avant : compté en planification. C'est le seul honnête —
+    rien ne permet après coup de dire ce que l'étape était.
+    """
+    state.appliquer(Event(
+        type=EVENEMENT_AGENT_ACTIVITE, run_id="run-ancien",
+        agent="orchestrateur", role="Orchestrateur", statut="terminee",
+        titre="Brief de l'objectif",
+        usage=StepUsage(appels=1, cout_usd=0.02),
+    ))
+
+    cout = client.get("/api/executions/run-ancien/cout").json()
+
+    assert cout["planification"]["cout_usd"] == pytest.approx(0.02)
+    assert cout["brief"]["cout_usd"] is None
+
+
+def test_la_duree_d_un_run_unit_les_intervalles_de_ses_taches(client, state):
+    """Second critère de #989 : deux tâches qui se recouvrent ne comptent pas deux fois.
+
+    L'erreur que l'outillage avait déjà corrigée sur ses propres runs (#497) et
+    que le produit répétait : 47 min annoncées pour 43,5 min de mur.
+    """
+    # Deux tâches d'une minute, décalées de trente secondes : elles occupent le
+    # run pendant 90 s, pas 120.
+    state.appliquer(Event(
+        type=EVENEMENT_TACHE_STATUT, run_id="run-union", tache_id="t1",
+        titre="Une", agent="dev", role="Développeur", statut="terminee",
+        horodatage="2026-09-20T10:01:00+00:00",
+        usage=StepUsage(appels=1, cout_usd=0.1, duree_ms=60_000),
+    ))
+    state.appliquer(Event(
+        type=EVENEMENT_TACHE_STATUT, run_id="run-union", tache_id="t2",
+        titre="Deux", agent="qa", role="QA", statut="terminee",
+        horodatage="2026-09-20T10:01:30+00:00",
+        usage=StepUsage(appels=1, cout_usd=0.1, duree_ms=60_000),
+    ))
+
+    cout = client.get("/api/executions/run-union/cout").json()
+
+    assert cout["total"]["duree_ms"] == 90_000
+    # Les compteurs, eux, se somment bien : deux tâches de front coûtent deux fois.
+    assert cout["total"]["cout_usd"] == pytest.approx(0.2)
+
+
+def test_la_duree_d_une_tache_du_grand_livre_est_son_travail(client, state):
+    """Premier critère de #989, sur la forme que l'écran lit.
+
+    La tâche a duré treize minutes d'horloge dont douze à attendre l'atelier de
+    son projet ; c'est une minute de travail, et c'est ce que `/couts` affiche.
+    L'horloge reste servie à côté — elle n'est pas fausse, elle ne répond juste
+    pas à la question.
+    """
+    state.appliquer(Event(
+        type=EVENEMENT_TACHE_STATUT, run_id="run-attente", tache_id="t1",
+        titre="Attendue", agent="dev", role="Développeur", statut="terminee",
+        usage=StepUsage(appels=1, cout_usd=0.1).avec_duree(
+            780_000, attente_creneau_ms=0, attente_atelier_ms=720_000
+        ),
+    ))
+
+    (tache,) = client.get("/api/executions/run-attente/cout").json()["taches"]
+
+    assert tache["usage"]["duree_ms"] == 780_000
+    assert tache["usage"]["duree_attente_atelier_ms"] == 720_000
+    assert tache["usage"]["duree_execution_ms"] == 60_000
+
+
 def test_le_grand_livre_survit_au_redemarrage_de_l_api():
     """Persistance #97 (critère #93) : les grands livres sont reconstruits au redémarrage.
 

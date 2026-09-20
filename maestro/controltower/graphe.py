@@ -173,6 +173,11 @@ class EtatNoeud:
     # tâche ? Posé par la projection, qui seule sait ce qui a été relevé.
     cout_partiel: bool = False
     duree_ms: int | None = None
+    # Le **travail** de la tâche (#989) : sa durée horloge moins ses attentes
+    # (créneau d'agent, atelier de projet, arbitrage). C'est ce que la boîte
+    # affiche ; `duree_ms` reste l'horloge, et les deux voyagent parce qu'elles
+    # ne disent pas la même chose — la seconde contient la première.
+    duree_execution_ms: int | None = None
     etapes: tuple[EtapeTache, ...] = ()
     activite: SigneDeVie | None = None
 
@@ -203,6 +208,11 @@ class NoeudGraphe:
     cout_usd: float | None = None
     cout_partiel: bool = False
     duree_ms: int | None = None
+    # Le **travail** de la tâche (#989) : sa durée horloge moins ses attentes
+    # (créneau d'agent, atelier de projet, arbitrage). C'est ce que la boîte
+    # affiche ; `duree_ms` reste l'horloge, et les deux voyagent parce qu'elles
+    # ne disent pas la même chose — la seconde contient la première.
+    duree_execution_ms: int | None = None
     etapes: tuple[EtapeTache, ...] = ()
     activite: SigneDeVie | None = None
 
@@ -225,6 +235,10 @@ class NoeudGraphe:
             # relevé en cours, `false` dès que son issue l'a soldé.
             "cout_partiel": self.cout_partiel,
             "duree_ms": self.duree_ms,
+            # Le travail, à côté de l'horloge (#989) : un client qui ignore la
+            # clé lit exactement la forme d'avant, et la boîte qui la lit
+            # n'affiche plus une attente comme si c'était du travail.
+            "duree_execution_ms": self.duree_execution_ms,
             "etapes": etapes_en_liste(self.etapes),
             # `null` sur un nœud qui ne travaille pas (#836) : un client qui
             # ignore la clé lit exactement la forme d'avant.
@@ -465,6 +479,7 @@ def graphe_du_run(
                 cout_usd=etat.cout_usd,
                 cout_partiel=etat.cout_partiel,
                 duree_ms=etat.duree_ms,
+                duree_execution_ms=etat.duree_execution_ms,
                 etapes=_etapes_du_noeud(noeud, etat),
                 activite=etat.activite,
             )
