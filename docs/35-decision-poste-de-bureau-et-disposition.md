@@ -175,6 +175,13 @@ de `if (electron)` dans `apps/web/**`.
 coque **de développement** — elle sert la stack locale. L'empaquetage sans Python ni Node reste en
 Phase 9. On n'empaquette pas une cible mouvante, et la disposition bouge ici.
 
+⚠ **Ce qu'elle change, en revanche, et où c'est écrit** (#949) : la frontière que le navigateur
+tenait pour nous. Un onglet appartenait à un tiers qui appliquait sa politique d'origine ; la
+fenêtre est notre code, avec Node complet sur le poste. Les réglages de sûreté du lot 2 sont des
+**critères d'acceptation**, pas un modèle de menace — celui-ci est
+[docs/19 §2.4](./19-securite-modele-de-menace.md), qui porte la surface de la coque, ce qui la
+borne, ce qui reste assumé, et le rapport à l'isolation d'exécution en distribution bureau.
+
 ### 2.6 Deux pièges de poste, trouvés en écrivant le lot 2
 
 Écrits ici parce qu'ils ne se devinent pas et que leurs symptômes ne nomment pas leur cause. Les

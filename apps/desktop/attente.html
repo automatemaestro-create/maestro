@@ -110,8 +110,12 @@
 
     <script>
       // Appelée par le processus principal (`annoncer`), jamais par la page elle-même.
-      // Aucun pont n'est exposé dans l'autre sens : la coque ne donne AUCUNE capacité à ce qu'elle
-      // affiche — ni ici, ni a fortiori au front du mode web qui prendra sa place (ENF-12).
+      //
+      // ⚠ Écrit en #923 : « aucun pont n'est exposé dans l'autre sens ». Ce n'est plus vrai depuis
+      // #928 et #938, et le dire faux serait pire que ne rien dire : le préchargement est attaché à
+      // la FENÊTRE et non à une origine, donc `window.maestro` existe ici comme sur le front — trois
+      // verbes, décrits par docs/19 §2.4. Cette page ne s'en sert pas, et ce qu'elle affiche n'entre
+      // que par `textContent`, depuis la seule sortie de notre propre lanceur.
       window.maestroAttente = function (charge) {
         var messages = {
           demarrage: 'Démarrage de la stack locale…',
