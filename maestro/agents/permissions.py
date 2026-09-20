@@ -100,6 +100,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from maestro.agents.rangement import RangeParProjet
 from maestro.config import Settings, load_settings
 from maestro.decideur import DECIDEUR_DEFAUT, Decideur, decideur_depuis
 
@@ -426,7 +427,7 @@ def _ask_depuis(brut: Any) -> tuple[EntreeArbitrage, ...]:
     return tuple(EntreeArbitrage(str(entree)) for entree in brut)
 
 
-class PermissionStore:
+class PermissionStore(RangeParProjet):
     """Dépôt des politiques de permissions par agent (`<racine>/<agent>.json`).
 
     Un fichier par agent : `{"allow": [...], "ask": [...], "deny": [...]}` — le
@@ -445,15 +446,12 @@ class PermissionStore:
     valide d'abord et écrit atomiquement ensuite, et **ne relit jamais** ce
     qu'elle remplace — c'est ce qui permet de réparer depuis l'écran une
     politique que `lire` refuse.
+
+    Cadré sur un projet (#1038), il **recouvre** le gabarit : un agent dont le
+    projet ne déclare pas la politique garde celle du gabarit. C'est le repli le
+    moins discutable des six dépôts — l'absence de politique vaut ici « tout
+    permis », et *un garde-fou qui saute est pire qu'un garde-fou absent*.
     """
-
-    def __init__(self, racine: Path) -> None:
-        self._racine = racine
-
-    @property
-    def racine(self) -> Path:
-        """La racine du dépôt (un fichier JSON par agent)."""
-        return self._racine
 
     @classmethod
     def default(cls, settings: Settings | None = None) -> PermissionStore:
@@ -464,7 +462,10 @@ class PermissionStore:
         return cls(Path(__file__).resolve().parents[2] / "core" / "permissions")
 
     def lire(self, agent: str) -> PolitiqueOutils | None:
-        """La politique de `agent`, validée — None s'il n'en déclare pas (tout permis).
+        """La politique de `agent`, validée — celle du gabarit à défaut, sinon None.
+
+        None ne survient donc que lorsque **personne** ne déclare de politique
+        pour cet agent (tout permis, comportement d'origine).
 
         Lève `ValueError` (cause exacte, agent nommé) si le fichier est
         illisible ou la politique invalide : l'appelant (exécuteur, API) la
@@ -472,6 +473,8 @@ class PermissionStore:
         """
         chemin = self._chemin(agent)
         if not chemin.is_file():
+            if self._gabarits is not None:
+                return self._gabarits.lire(agent)
             return None
         try:
             data = json.loads(chemin.read_text(encoding="utf-8"))
@@ -522,7 +525,14 @@ class PermissionStore:
         return propre
 
     def agents(self) -> tuple[str, ...]:
-        """Les noms des agents ayant une politique stockée, triés (vide si aucun)."""
+        """Les noms des agents ayant une politique, triés — gabarit compris (vide si aucun)."""
+        noms = set(self._agents_stockes())
+        if self._gabarits is not None:
+            noms.update(self._gabarits.agents())
+        return tuple(sorted(noms))
+
+    def _agents_stockes(self) -> tuple[str, ...]:
+        """Les agents dont **ce dépôt-ci** porte la politique, sans rien hériter."""
         if not self._racine.is_dir():
             return ()
         return tuple(

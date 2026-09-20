@@ -75,6 +75,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from maestro.agents.rangement import RangeParProjet
 from maestro.config import Settings, load_settings
 from maestro.providers.base import McpServerUnavailable
 from maestro.telemetry.redact import enregistre_secret
@@ -251,7 +252,7 @@ class MigrationAgent:
     fichier_retire: bool
 
 
-class McpStore:
+class McpStore(RangeParProjet):
     """Dépôt des configurations MCP, sur fichiers (`<racine>/…`).
 
     Trois fichiers cohabitent sous la racine :
@@ -270,15 +271,19 @@ class McpStore:
     jamais une configuration douteuse. Le pool et les activations sont aussi
     **écrivables** (`ecrire_pool`/`ecrire_activations`) — la Control Tower en
     devient la source (#129), l'écriture reste atomique et versionnée.
+
+    Cadré sur un projet (#1038), il **recouvre** le gabarit, fichier par
+    fichier : le pool du projet s'il en a un, sinon celui du gabarit ; les
+    activations d'un agent que le projet ne mentionne pas, celles du gabarit ;
+    de même pour sa déclaration héritée. Le mot « pool **projet** » (#130)
+    devient ainsi exact — il désignait jusqu'ici un stockage unique au poste.
+
+    ⚠ **La migration, elle, ne migre que ce dépôt-ci** (`migrer`,
+    `migrer_agent`, `composer_migration`) : elle lit les fichiers hérités
+    présents à son propre niveau et retire les siens. Migrer un fichier qu'on
+    hérite le laisserait en place, donc autoritaire à la lecture — une
+    migration invisible.
     """
-
-    def __init__(self, racine: Path) -> None:
-        self._racine = racine
-
-    @property
-    def racine(self) -> Path:
-        """La racine du dépôt (fichiers hérités par agent + pool + activations)."""
-        return self._racine
 
     @classmethod
     def default(cls, settings: Settings | None = None) -> McpStore:
@@ -310,7 +315,7 @@ class McpStore:
         monte jamais une configuration douteuse. Vide s'il n'y a ni fichier
         hérité ni activation.
         """
-        heritees = self._lire_fichier_agent(agent)
+        heritees = self.heritees(agent)
         actives = self.activations(agent)
         if not actives:
             return heritees
@@ -344,7 +349,12 @@ class McpStore:
 
         Lève `ValueError` (cause exacte, agent nommé) si le fichier est illisible
         ou invalide — même validation à la lecture que `lire`.
+
+        Cadré sur un projet (#1038), rend celle du gabarit quand le projet n'a
+        pas de fichier pour cet agent.
         """
+        if self._gabarits is not None and not self._chemin(agent).is_file():
+            return self._gabarits.heritees(agent)
         return self._lire_fichier_agent(agent)
 
     def pool(self) -> tuple[IntegrationMcp, ...]:
@@ -355,9 +365,14 @@ class McpStore:
         le fichier est illisible, la forme inattendue, un id ou une déclaration
         invalide, ou deux intégrations de même id — on ne compose jamais depuis
         un pool douteux.
+
+        Cadré sur un projet (#1038), rend celui du gabarit tant que le projet
+        n'a pas son propre `pool.json`.
         """
         chemin = self._racine / _FICHIER_POOL
         if not chemin.is_file():
+            if self._gabarits is not None:
+                return self._gabarits.pool()
             return ()
         try:
             data = json.loads(chemin.read_text(encoding="utf-8"))
@@ -408,8 +423,17 @@ class McpStore:
         Lit la table d'activation `activations.json` (`{"<agent>": ["id", …]}`).
         Ordre préservé, doublons écartés. Lève `ValueError` si la table est
         illisible, de forme inattendue, ou porte un agent/id hors slug.
+
+        Cadré sur un projet (#1038), rend celles du gabarit pour un agent que la
+        table du projet ne mentionne pas. Une liste **vide** posée par le projet
+        (`ecrire_activations(agent, [])`) retire l'entrée, donc hérite à nouveau :
+        « plus aucune intégration pour cet agent ici » se dit en réglant le
+        gabarit, pas en écrivant un vide qui ne se distinguerait pas du silence.
         """
-        return self._table_activations().get(agent, ())
+        propres = self._table_activations().get(agent)
+        if propres is None and self._gabarits is not None:
+            return self._gabarits.activations(agent)
+        return propres or ()
 
     def ecrire_activations(self, agent: str, ids: Sequence[str]) -> tuple[str, ...]:
         """Fixe les intégrations activées pour `agent` (remplacement intégral). Les renvoie (#130).
@@ -531,7 +555,9 @@ class McpStore:
         Lève `ValueError` **sans rien écrire** si l'agent n'a pas de déclaration
         héritée, si son nom est hors slug, ou si une source est invalide.
         """
-        heritees = self.heritees(agent)
+        # Les fichiers de **ce dépôt-ci**, jamais ceux du gabarit (#1038) : migrer
+        # un fichier hérité le laisserait en place, donc autoritaire à la lecture.
+        heritees = self._lire_fichier_agent(agent)
         if not heritees:
             raise ValueError(
                 f"aucune déclaration héritée à migrer pour l'agent {agent!r} "
@@ -585,10 +611,13 @@ class McpStore:
         Union des agents déclarant un fichier hérité `<agent>.json` et des
         agents portant une activation dans le pool (#130). Les fichiers réservés
         du dépôt (`pool.json`, `activations.json`) n'y figurent pas — ce ne sont
-        pas des agents.
+        pas des agents. Cadré sur un projet (#1038), l'union s'étend au gabarit :
+        un agent qui n'a de configuration MCP qu'au gabarit en a bien une ici.
         """
         noms = set(self._agents_fichiers())
         noms.update(self._table_activations())
+        if self._gabarits is not None:
+            noms.update(self._gabarits.agents())
         return tuple(sorted(noms))
 
     def _agents_fichiers(self) -> tuple[str, ...]:

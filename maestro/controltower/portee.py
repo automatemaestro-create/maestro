@@ -38,6 +38,13 @@ bas). Elle **s'ajoute** — le mot est le critère : `?run=` ne remplace pas
 les deux questions ne sont pas la même. Les deux portées se composent donc au
 lieu de se relayer, et chacune garde son unique prédicat.
 
+Depuis #1038 s'y ajoute une **troisième question**, qui n'est pas une portée :
+`resoudre_projet_configuration`, le projet d'une **configuration d'agent**. Elle
+vit ici pour que les deux ne divergent pas, et elle diffère sur deux points
+justement parce qu'elle ne porte pas sur une agrégation : `tous` et `aucun` y
+sont refusés (une configuration appartient à un projet réel), et l'omission rend
+le niveau des **gabarits** au lieu d'un refus. Voir sa docstring.
+
 Ce module est volontairement une **feuille de la couche lecture** : il ne connaît
 ni FastAPI ni HTTP (la traduction du motif en code est le rôle d'`app.py`, via
 `maestro.controltower.projets.statut_http`), et il n'importe du dépôt de projets
@@ -223,6 +230,45 @@ def resoudre_portee_run(
             f"Run inconnu : {valeur} (voir GET /api/executions).",
         )
     return PorteeRun.run(valeur)
+
+
+def resoudre_projet_configuration(
+    brut: str | None, *, projet_connu: object = None
+) -> str | None:
+    """Le projet d'une lecture ou d'une écriture de **configuration d'agent** (#1038).
+
+    Le pendant de `resoudre_portee` pour les routes qui servent ce qu'un agent
+    *est* — définition, playbook, autorisations, serveurs MCP, capacité — et non
+    ce qu'il *fait*. Deux différences avec la portée d'une lecture qui agrège, et
+    chacune est une décision :
+
+    - **`tous` et `aucun` sont refusés** (`projet-inconnu`). Ils n'ont pas de
+      sens ici : une configuration appartient à un projet, il n'y a ni union ni
+      complément à servir. Les accepter rendrait un catalogue mélangé, c'est-à-
+      dire précisément ce que ce jalon supprime ;
+    - **l'omission n'est pas un refus** : elle rend `None`, qui désigne le niveau
+      des **gabarits** (la racine de chaque dépôt). Ce n'est pas le
+      « `?projet=tous` implicite » que #277 a fermé — il n'y a pas de vue
+      transverse à fuir, seulement deux niveaux nommés, et le niveau sans projet
+      est exactement ce que ces routes servaient avant ce lot. C'est aussi ce qui
+      rend le lot additif : un appel d'avant continue de répondre la même chose.
+
+    `projet_connu` est ce qui sait dire « cet identifiant est-il déclaré ? » — le
+    `ServiceProjets` de l'app, dont seul `existe` est appelé, comme pour
+    `resoudre_portee`.
+    """
+    valeur = (brut or "").strip()
+    if not valeur:
+        return None
+    identifiant = None if valeur in PORTEES_RESERVEES else projet_id_valide(valeur)
+    if identifiant is None or not _existe(identifiant, projet_connu):
+        raise PorteeRefusee(
+            "projet-inconnu",
+            f"Projet inconnu : {valeur} (voir GET /api/projets) — une configuration "
+            "d'agent appartient à un projet réel, jamais à "
+            f"`{PORTEE_TOUS}` ni à `{PORTEE_AUCUN}`.",
+        )
+    return identifiant
 
 
 def resoudre_portee(brut: str | None, *, projet_connu: object = None) -> PorteeProjet:

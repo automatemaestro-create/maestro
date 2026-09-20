@@ -302,6 +302,7 @@ from pydantic import BaseModel
 from maestro.agents import DEFAULT_TOOLS, TOOLED_PROFILES
 from maestro.agents.capacity import CapaciteAgent, CapacityStore
 from maestro.agents.catalog import DEFAULT_AGENTS, Agent
+from maestro.agents.configuration import ConfigurationAgents
 from maestro.agents.lexique_playbook import lexique_dict
 from maestro.agents.mcp import IntegrationMcp, McpStore, ServeurMcp, references_env
 from maestro.agents.mcp_admission import (
@@ -428,6 +429,7 @@ from maestro.controltower.portee import (
     PorteeRun,
     resoudre_portee,
     resoudre_portee_run,
+    resoudre_projet_configuration,
 )
 from maestro.controltower.projets import (
     ProjetInconnu,
@@ -1365,6 +1367,18 @@ def create_app(
         )
     )
     playbooks = playbooks if playbooks is not None else PlaybookStore.default()
+    # Les six dépôts d'un bloc (#1038) : c'est cet objet-là que `_config` cadre sur
+    # le projet demandé, une fois par requête. Les variables individuelles restent
+    # pour ce qui n'a pas de projet à connaître — le démarrage, le chat, l'analyse
+    # d'auto-amélioration —, et elles désignent le **même** niveau : les gabarits.
+    gabarits = ConfigurationAgents(
+        agents=agents_store,
+        surcharges=surcharges,
+        playbooks=playbooks,
+        permissions=permissions,
+        mcp=mcp,
+        capacites=capacites,
+    )
     analyseur = analyseur if analyseur is not None else AnalyseurEchecs(playbooks=playbooks)
     redacteur_playbook = (
         redacteur_playbook if redacteur_playbook is not None else RedacteurPlaybook()
@@ -1602,6 +1616,23 @@ def create_app(
         except PorteeRefusee as exc:
             raise _refus_projet(exc) from exc
 
+    def _config(projet: str | None) -> ConfigurationAgents:
+        """La configuration d'agent cadrée par le projet demandé (#1038), ou un refus motivé.
+
+        Le pendant d'`_portee` pour ce qu'un agent **est** — définition,
+        playbook, autorisations, serveurs MCP, capacité — plutôt que pour ce
+        qu'il fait. Deux différences, et chacune est une décision (voir
+        `resoudre_projet_configuration`) : `tous`/`aucun` sont refusés, une
+        configuration appartenant à un projet réel ; et `?projet=` **omis** rend
+        le niveau des **gabarits**, qui est exactement ce que ces routes
+        servaient avant ce lot — un appel d'avant répond donc la même chose.
+        """
+        try:
+            projet_id = resoudre_projet_configuration(projet, projet_connu=projets)
+        except PorteeRefusee as exc:
+            raise _refus_projet(exc) from exc
+        return gabarits.pour_projet(projet_id)
+
     def _portee_run(run: str | None) -> PorteeRun:
         """La **portée run** d'une lecture (#473), ou un refus motivé.
 
@@ -1723,9 +1754,26 @@ def create_app(
         return [t.to_dict() for t in state.taches(_portee(projet), _portee_run(run))]
 
     @app.get("/api/agents")
-    async def agents() -> list[dict[str, Any]]:
-        """L'état des agents : libre/occupé, tâche courante, compteurs, coût cumulé."""
-        return [a.to_dict() for a in state.agents()]
+    async def agents(projet: str | None = None) -> list[dict[str, Any]]:
+        """L'état des agents : libre/occupé, tâche courante, compteurs, coût cumulé.
+
+        `projet` cadre le **parc** sur l'équipe de ce projet (#1038, renverse la
+        première ligne du tableau « ce qui reste global » de docs/05 §2.0) : la
+        vue rend les agents de son catalogue, jamais ceux d'un autre projet.
+
+        Ce qui est cadré est l'**appartenance**, pas les compteurs : ceux-ci
+        restent ceux que la projection a vus, et ils ne se recalculent pas par
+        projet — c'est la vue des tâches (`/api/taches?projet=`) qui répond à
+        « qu'a fait cet agent ici ». Le **routage** sur l'équipe d'un projet,
+        lui, est le lot #1041.
+
+        Omis, la vue rend le parc entier, comme avant ce lot.
+        """
+        cfg = _config(projet)
+        if cfg.projet_id is None:
+            return [a.to_dict() for a in state.agents()]
+        equipe = {agent.nom for agent in cfg.catalogue()}
+        return [a.to_dict() for a in state.agents() if a.nom in equipe]
 
     @app.get("/api/executions")
     async def executions_liste(projet: str | None = None) -> list[dict[str, Any]]:
@@ -2422,7 +2470,9 @@ def create_app(
         return tache.to_dict()
 
     @app.post("/api/agents/{nom}/capacite")
-    async def regler_capacite(nom: str, requete: CapaciteRequete) -> dict[str, Any]:
+    async def regler_capacite(
+        nom: str, requete: CapaciteRequete, projet: str | None = None
+    ) -> dict[str, Any]:
         """Règle la capacité d'un agent (#86, EF-21) : actif/désactivé, instances.
 
         Persiste le réglage dans le dépôt partagé — celui que moteur et workers
@@ -2433,7 +2483,12 @@ def create_app(
         en temps réel, et la pompe le réapplique sans effet (idempotence).
         404 si l'agent est inconnu, 422 si la requête ne règle rien ou si le
         plafond d'instances est invalide (< 1).
+
+        Le réglage est écrit **dans le projet** demandé (#1038) : le même agent
+        peut avoir trois instances ici et une ailleurs — c'est le « nombre
+        d'instances rangé par projet » du critère.
         """
+        cfg = _config(projet)
         fiche = state.agent(nom)
         if fiche is None:
             raise HTTPException(
@@ -2444,9 +2499,9 @@ def create_app(
                 status_code=422,
                 detail="rien à régler : renseigner `actif` et/ou `instances`.",
             )
-        courante = capacites.lire(nom)
+        courante = cfg.capacites.lire(nom)
         try:
-            capacite = capacites.ecrire(
+            capacite = cfg.capacites.ecrire(
                 CapaciteAgent(
                     nom=nom,
                     actif=courante.actif if requete.actif is None else requete.actif,
@@ -2622,7 +2677,9 @@ def create_app(
         await bus.publish(event)
         return question.to_dict()
 
-    def _playbook_origine(agent: str) -> PlaybookDefaut | None:
+    def _playbook_origine(
+        agent: str, cfg: ConfigurationAgents | None = None
+    ) -> PlaybookDefaut | None:
         """Le playbook **d'origine** de `agent` — code ou personnalisé —, None si inconnu.
 
         Deux origines, un seul contrat (#259) : pour un agent du code, le
@@ -2643,21 +2700,24 @@ def create_app(
         defaut = PLAYBOOK_DEFAUTS.get(agent)
         if defaut is not None:
             return defaut
-        definition = _personnalise_ou_none(agent)
+        definition = _personnalise_ou_none(agent, cfg)
         if definition is None:
             return None
         return PlaybookDefaut(
             agent=agent, role=definition.role, contenu=definition.playbook
         )
 
-    def _exige_playbook_connu(agent: str) -> PlaybookDefaut:
+    def _exige_playbook_connu(
+        agent: str, cfg: ConfigurationAgents | None = None
+    ) -> PlaybookDefaut:
         """404 si `agent` n'est pas un agent du catalogue — et son origine sinon.
 
         L'API n'édite que les playbooks des agents du catalogue, du code comme
         personnalisés : pas de création de playbook orphelin par une simple
-        faute de frappe dans l'URL.
+        faute de frappe dans l'URL. Cadré sur un projet (#1038), « du catalogue »
+        veut dire de **son** catalogue : un agent d'un autre projet y est inconnu.
         """
-        origine = _playbook_origine(agent)
+        origine = _playbook_origine(agent, cfg)
         if origine is None:
             raise HTTPException(
                 status_code=404,
@@ -2665,7 +2725,9 @@ def create_app(
             )
         return origine
 
-    def _fiche_playbook(agent: str, *, avec_contenu: bool) -> dict[str, Any]:
+    def _fiche_playbook(
+        agent: str, *, avec_contenu: bool, cfg: ConfigurationAgents | None = None
+    ) -> dict[str, Any]:
         """La fiche du playbook d'un agent : version courante et provenance.
 
         `version` 0 et `source` « defaut » tant que le playbook n'a jamais été
@@ -2673,17 +2735,22 @@ def create_app(
         prompt du code, ou la définition pour un agent personnalisé (#259).
         `provenance` est celle de la version courante (« humain » — une proposition
         n'est jamais courante, #111), None quand le contenu vient de l'origine.
+
+        Cadré sur un projet (#1038), c'est le playbook **de ce projet** — celui
+        du gabarit tant qu'il n'a rien publié par-dessus.
         """
-        origine = _playbook_origine(agent)
-        courant = playbooks.lire(agent)
+        cfg = cfg if cfg is not None else gabarits
+        origine = _playbook_origine(agent, cfg)
+        courant = cfg.playbooks.lire(agent)
         fiche: dict[str, Any] = {
             "agent": agent,
             "role": origine.role if origine else agent,
             "version": courant.version if courant else 0,
-            "nb_versions": len(playbooks.numeros(agent)),
+            "nb_versions": len(cfg.playbooks.numeros(agent)),
             "source": "stockage" if courant else "defaut",
             "provenance": courant.provenance if courant else None,
             "cree_le": courant.cree_le if courant else None,
+            "projet": cfg.projet_id,
         }
         if avec_contenu:
             fiche["contenu"] = (
@@ -2692,17 +2759,21 @@ def create_app(
         return fiche
 
     @app.get("/api/playbooks")
-    async def playbooks_liste() -> list[dict[str, Any]]:
+    async def playbooks_liste(projet: str | None = None) -> list[dict[str, Any]]:
         """Les playbooks des agents (#76) : version courante et provenance de chacun.
 
         Les agents du code d'abord, puis les personnalisés — l'ordre du
         catalogue. Ces derniers y figurent depuis #259 : leur playbook s'édite
         et se versionne comme les autres, l'onglet Playbook étant devenu le
         chemin d'écriture unique.
+
+        `projet` cadre la lecture (#1038) : les agents **de ce projet** et leurs
+        playbooks. Omis, ce sont les gabarits.
         """
+        cfg = _config(projet)
         return [
-            _fiche_playbook(agent, avec_contenu=False)
-            for agent in (*PLAYBOOK_DEFAUTS, *(d.nom for d in agents_store.lister()))
+            _fiche_playbook(agent, avec_contenu=False, cfg=cfg)
+            for agent in (*PLAYBOOK_DEFAUTS, *(d.nom for d in cfg.agents.lister()))
         ]
 
     @app.get("/api/playbooks/lexique")
@@ -2721,41 +2792,57 @@ def create_app(
         return lexique_dict()
 
     @app.get("/api/playbooks/{agent}")
-    async def playbook_courant(agent: str) -> dict[str, Any]:
+    async def playbook_courant(agent: str, projet: str | None = None) -> dict[str, Any]:
         """Le playbook courant d'un agent : le contenu effectivement chargé par le moteur."""
-        _exige_playbook_connu(agent)
-        return _fiche_playbook(agent, avec_contenu=True)
+        cfg = _config(projet)
+        _exige_playbook_connu(agent, cfg)
+        return _fiche_playbook(agent, avec_contenu=True, cfg=cfg)
 
     @app.put("/api/playbooks/{agent}")
-    async def ecrire_playbook(agent: str, requete: PlaybookEcritureRequete) -> dict[str, Any]:
+    async def ecrire_playbook(
+        agent: str, requete: PlaybookEcritureRequete, projet: str | None = None
+    ) -> dict[str, Any]:
         """Publie une nouvelle version du playbook (le contenu intégral, pas un diff).
 
         La version créée devient la courante : elle sera chargée par les moteurs
         construits ensuite (l'application à chaud d'un moteur déjà en vie est le
         lot #78). 422 si le contenu est vide.
+
+        Écrit **dans le projet** demandé (#1038) : publier pour un projet ne
+        change rien au gabarit ni aux autres projets. Le numéro poursuit celui
+        du gabarit tant que le projet n'avait rien publié.
         """
-        _exige_playbook_connu(agent)
+        cfg = _config(projet)
+        _exige_playbook_connu(agent, cfg)
         try:
-            version = playbooks.ecrire(agent, requete.contenu)
+            version = cfg.playbooks.ecrire(agent, requete.contenu)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return version.to_dict()
 
     @app.get("/api/playbooks/{agent}/versions")
-    async def versions_playbook(agent: str) -> list[dict[str, Any]]:
+    async def versions_playbook(
+        agent: str, projet: str | None = None
+    ) -> list[dict[str, Any]]:
         """L'historique consultable (EF-25) : les versions, de la première à la courante.
 
         Métadonnées seules — le contenu d'une version passée se lit sur
-        `GET /api/playbooks/{agent}/versions/{version}`.
+        `GET /api/playbooks/{agent}/versions/{version}`. Cadré sur un projet
+        (#1038), c'est l'historique hérité du gabarit tant qu'il n'a rien publié,
+        le sien ensuite.
         """
-        _exige_playbook_connu(agent)
-        return [v.to_dict(avec_contenu=False) for v in playbooks.versions(agent)]
+        cfg = _config(projet)
+        _exige_playbook_connu(agent, cfg)
+        return [v.to_dict(avec_contenu=False) for v in cfg.playbooks.versions(agent)]
 
     @app.get("/api/playbooks/{agent}/versions/{version}")
-    async def version_playbook(agent: str, version: int) -> dict[str, Any]:
+    async def version_playbook(
+        agent: str, version: int, projet: str | None = None
+    ) -> dict[str, Any]:
         """Une version passée du playbook, contenu compris. 404 si elle n'existe pas."""
-        _exige_playbook_connu(agent)
-        lue = playbooks.lire(agent, version)
+        cfg = _config(projet)
+        _exige_playbook_connu(agent, cfg)
+        lue = cfg.playbooks.lire(agent, version)
         if lue is None:
             raise HTTPException(
                 status_code=404, detail=f"version inconnue : {agent} v{version}"
@@ -2763,23 +2850,33 @@ def create_app(
         return lue.to_dict()
 
     @app.get("/api/playbooks/{agent}/propositions")
-    async def propositions_playbook(agent: str) -> list[dict[str, Any]]:
+    async def propositions_playbook(
+        agent: str, projet: str | None = None
+    ) -> list[dict[str, Any]]:
         """Les propositions d'auto-amélioration en brouillon (#111), listées à part des versions.
 
         Métadonnées + justification (sans le contenu) — une proposition n'est jamais la
         version courante et le moteur ne la charge pas tant qu'elle n'est pas appliquée.
+
+        ⚠ Les propositions ne s'héritent **pas** du gabarit (#1038) : un
+        brouillon est un geste en attente, et l'appliquer écrit une version — on
+        l'applique là où il a été déposé.
         """
-        _exige_playbook_connu(agent)
-        return [p.to_dict(avec_contenu=False) for p in playbooks.propositions(agent)]
+        cfg = _config(projet)
+        _exige_playbook_connu(agent, cfg)
+        return [p.to_dict(avec_contenu=False) for p in cfg.playbooks.propositions(agent)]
 
     @app.get("/api/playbooks/{agent}/propositions/{numero}")
-    async def proposition_playbook(agent: str, numero: int) -> dict[str, Any]:
+    async def proposition_playbook(
+        agent: str, numero: int, projet: str | None = None
+    ) -> dict[str, Any]:
         """Une proposition en brouillon, contenu compris — de quoi la relire avant d'agir.
 
         404 si elle n'existe pas (jamais créée, ou déjà appliquée/rejetée).
         """
-        _exige_playbook_connu(agent)
-        lue = playbooks.lire_proposition(agent, numero)
+        cfg = _config(projet)
+        _exige_playbook_connu(agent, cfg)
+        lue = cfg.playbooks.lire_proposition(agent, numero)
         if lue is None:
             raise HTTPException(
                 status_code=404, detail=f"proposition inconnue : {agent} p{numero}"
@@ -2787,35 +2884,41 @@ def create_app(
         return lue.to_dict()
 
     @app.post("/api/playbooks/{agent}/propositions/{numero}/appliquer")
-    async def appliquer_proposition_playbook(agent: str, numero: int) -> dict[str, Any]:
+    async def appliquer_proposition_playbook(
+        agent: str, numero: int, projet: str | None = None
+    ) -> dict[str, Any]:
         """L'action humaine qui adopte une proposition (#140) : elle devient la courante.
 
         Le contenu candidat rejoint l'historique comme version ordinaire — donc chargée
         à chaud par le moteur dès la tâche suivante (#78) — et sort des brouillons.
         Renvoie la version publiée. 404 si la proposition n'existe pas.
         """
-        _exige_playbook_connu(agent)
+        cfg = _config(projet)
+        _exige_playbook_connu(agent, cfg)
         try:
-            version = playbooks.appliquer_proposition(agent, numero)
+            version = cfg.playbooks.appliquer_proposition(agent, numero)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return version.to_dict()
 
     @app.post("/api/playbooks/{agent}/propositions/{numero}/rejeter")
-    async def rejeter_proposition_playbook(agent: str, numero: int) -> dict[str, Any]:
+    async def rejeter_proposition_playbook(
+        agent: str, numero: int, projet: str | None = None
+    ) -> dict[str, Any]:
         """Écarte une proposition (#140) : elle disparaît, la version courante ne bouge pas.
 
         Renvoie la proposition rejetée (contenu compris — l'appelant garde une trace de
         ce qu'il vient d'écarter). 404 si elle n'existe pas.
         """
-        _exige_playbook_connu(agent)
+        cfg = _config(projet)
+        _exige_playbook_connu(agent, cfg)
         try:
-            rejetee = playbooks.rejeter_proposition(agent, numero)
+            rejetee = cfg.playbooks.rejeter_proposition(agent, numero)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return rejetee.to_dict()
 
-    def _agent_du_catalogue(nom: str) -> Agent:
+    def _agent_du_catalogue(nom: str, cfg: ConfigurationAgents | None = None) -> Agent:
         """La fiche catalogue de `nom` (modèle, prompt du code) — un rôle du code au pire.
 
         Sert à l'analyse d'auto-amélioration, qui a besoin du modèle de l'agent. Le
@@ -2824,7 +2927,8 @@ def create_app(
         accepte désormais le playbook —, `DEFAULT_AGENTS` restant le repli qui
         garantit une fiche aux rôles du code si le catalogue ne renvoyait pas ce nom.
         """
-        for agent in (*catalogue(agents_store, surcharges=surcharges), *DEFAULT_AGENTS):
+        cfg = cfg if cfg is not None else gabarits
+        for agent in (*cfg.catalogue(), *DEFAULT_AGENTS):
             if agent.nom == nom:
                 return agent
         # Injoignable en pratique : `_exige_playbook_connu` a déjà garanti un agent connu.
@@ -2834,7 +2938,7 @@ def create_app(
 
     @app.post("/api/playbooks/{agent}/propositions")
     async def proposer_playbook(
-        agent: str, requete: PlaybookPropositionRequete
+        agent: str, requete: PlaybookPropositionRequete, projet: str | None = None
     ) -> dict[str, Any]:
         """Analyse **à la demande** les échecs d'un run → proposition de révision (#139).
 
@@ -2844,8 +2948,12 @@ def create_app(
         courante, jamais appliquée sans action humaine (lot UI #140). Renvoie la proposition
         créée (métadonnées + justification + contenu). 404 si le run est inconnu, 422 s'il
         n'a aucun échec pour cet agent, 502 si la génération échoue.
+
+        La proposition est déposée **dans le projet** demandé (#1038) — là où
+        elle sera relue, et où l'appliquer publiera une version.
         """
-        _exige_playbook_connu(agent)
+        cfg = _config(projet)
+        _exige_playbook_connu(agent, cfg)
         execution = state.execution(requete.run_id)
         if execution is None:
             raise HTTPException(
@@ -2862,7 +2970,7 @@ def create_app(
             )
         try:
             proposition = await analyseur.proposer_revision(
-                _agent_du_catalogue(agent), requete.run_id, echecs
+                _agent_du_catalogue(agent, cfg), requete.run_id, echecs, store=cfg.playbooks
             )
         except RevisionIndisponible as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -2870,7 +2978,7 @@ def create_app(
 
     @app.post("/api/playbooks/{agent}/redaction")
     async def rediger_playbook(
-        agent: str, requete: PlaybookRedactionRequete
+        agent: str, requete: PlaybookRedactionRequete, projet: str | None = None
     ) -> dict[str, Any]:
         """Réécrit le **brouillon en cours** d'un playbook, sans rien enregistrer (#261).
 
@@ -2885,10 +2993,11 @@ def create_app(
         hors bornes, 502 si la génération échoue — dans tous les cas le texte de
         l'utilisateur est intact, il n'a jamais quitté son écran.
         """
-        _exige_playbook_connu(agent)
+        cfg = _config(projet)
+        _exige_playbook_connu(agent, cfg)
         try:
             redaction = await redacteur_playbook.proposer_redaction(
-                _agent_du_catalogue(agent), requete.contenu, requete.consigne
+                _agent_du_catalogue(agent, cfg), requete.contenu, requete.consigne
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -2898,16 +3007,19 @@ def create_app(
 
     @app.post("/api/playbooks/{agent}/restaurer")
     async def restaurer_playbook(
-        agent: str, requete: PlaybookRestaurationRequete
+        agent: str, requete: PlaybookRestaurationRequete, projet: str | None = None
     ) -> dict[str, Any]:
         """Retour arrière (EF-25) : republie une version passée comme nouvelle courante.
 
         L'historique reste linéaire — rien n'est supprimé, la restauration crée
-        une version de plus. 404 si la version demandée n'existe pas.
+        une version de plus. 404 si la version demandée n'existe pas. Cadré sur
+        un projet (#1038), restaurer une version **héritée** la republie dans le
+        projet : l'historique y bifurque plutôt que de toucher au gabarit.
         """
-        _exige_playbook_connu(agent)
+        cfg = _config(projet)
+        _exige_playbook_connu(agent, cfg)
         try:
-            version = playbooks.restaurer(agent, requete.version)
+            version = cfg.playbooks.restaurer(agent, requete.version)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return version.to_dict()
@@ -2995,16 +3107,21 @@ def create_app(
             "secrets": secrets_etat,
         }
 
-    def _pool_mcp() -> dict[str, Any]:
+    def _pool_mcp(cfg: ConfigurationAgents | None = None) -> dict[str, Any]:
         """Le pool projet des intégrations MCP + l'état de leurs secrets (#133).
 
         `{integrations: [...], erreur}` : chaque intégration est enrichie de
         l'état de ses secrets (coffre projet). `erreur` porte la cause si le
         pool stocké est invalide — même contrat de visibilité que `mcp_erreur`
         (la misconfiguration s'affiche sans casser la fiche ni le listing).
+
+        `cfg` est la configuration cadrée sur le projet demandé (#1038) ; son
+        absence désigne le niveau des **gabarits**, ici comme dans les autres
+        fabricants de fiche — c'est un niveau, pas un cas particulier.
         """
+        cfg = cfg if cfg is not None else gabarits
         try:
-            integrations = mcp.pool()
+            integrations = cfg.mcp.pool()
         except ValueError as exc:
             return {"integrations": [], "erreur": str(exc)}
         try:
@@ -3018,7 +3135,7 @@ def create_app(
             "erreur": None,
         }
 
-    def _volet_mcp(nom: str) -> dict[str, Any]:
+    def _volet_mcp(nom: str, cfg: ConfigurationAgents | None = None) -> dict[str, Any]:
         """Le volet « serveurs MCP » d'une fiche catalogue (#104, #133).
 
         `mcp_serveurs` porte les serveurs **effectifs** montés pour l'agent
@@ -3036,12 +3153,17 @@ def create_app(
         réapparaître l'héritée comme un serveur de plus. C'est aussi ce sur quoi
         la fiche décide de proposer la migration — donc une liste qu'on lit, pas
         qu'on devine.
+
+        `cfg` cadre le volet sur un projet (#1038) : le pool, les activations et
+        la déclaration héritée sont alors ceux de ce projet — ceux du gabarit
+        tant qu'il n'a rien posé par-dessus.
         """
+        cfg = cfg if cfg is not None else gabarits
         try:
-            serveurs = mcp.lire(nom)
+            serveurs = cfg.mcp.lire(nom)
             volet_serveurs: dict[str, Any] = {
                 "mcp_serveurs": [s.to_dict() for s in serveurs],
-                "mcp_herites": [s.to_dict() for s in mcp.heritees(nom)],
+                "mcp_herites": [s.to_dict() for s in cfg.mcp.heritees(nom)],
                 "mcp_erreur": None,
             }
         except ValueError as exc:
@@ -3050,9 +3172,9 @@ def create_app(
                 "mcp_herites": [],
                 "mcp_erreur": str(exc),
             }
-        pool = _pool_mcp()
+        pool = _pool_mcp(cfg)
         try:
-            activations = list(mcp.activations(nom))
+            activations = list(cfg.mcp.activations(nom))
         except ValueError:
             activations = []
         return {
@@ -3062,7 +3184,9 @@ def create_app(
             "mcp_activations": activations,
         }
 
-    def _outils_exposes(nom: str) -> list[dict[str, str]]:
+    def _outils_exposes(
+        nom: str, cfg: ConfigurationAgents | None = None
+    ) -> list[dict[str, str]]:
         """Ce que l'agent `nom` peut réellement appeler — de quoi **suggérer** (#262).
 
         Trois origines, et aucune n'est écrite en dur ici : les outils
@@ -3082,8 +3206,10 @@ def create_app(
 
         Les serveurs MCP se lisent au mieux : une source invalide a déjà sa
         cause dans `mcp_erreur`, et une liste de suggestions n'est pas l'endroit
-        où la redire.
+        où la redire. Ils se lisent aussi **dans le projet demandé** (#1038) :
+        suggérer un serveur qu'un autre projet a monté n'aiderait personne.
         """
+        cfg = cfg if cfg is not None else gabarits
         profil = next((p for p in TOOLED_PROFILES if p.nom == nom), None)
         outils: list[dict[str, str]] = [
             {"nom": outil, "origine": "integre", "libelle": "outil intégré du profil"}
@@ -3101,7 +3227,7 @@ def create_app(
             {"nom": OUTIL_QUESTION, "origine": "maestro", "libelle": "poser une question"},
         ]
         try:
-            serveurs = mcp.lire(nom)
+            serveurs = cfg.mcp.lire(nom)
         except ValueError:
             serveurs = ()
         for serveur in serveurs:
@@ -3116,7 +3242,9 @@ def create_app(
                 )
         return outils
 
-    def _volet_permissions(nom: str) -> dict[str, Any]:
+    def _volet_permissions(
+        nom: str, cfg: ConfigurationAgents | None = None
+    ) -> dict[str, Any]:
         """Le volet « permissions » d'une fiche catalogue (#110), **écrivable** depuis #262.
 
         `permissions` porte la politique allow/ask/deny effective (celle que le
@@ -3132,10 +3260,15 @@ def create_app(
         lui faire retrouver les noms exacts ailleurs. Servi **avec la fiche**, et
         pas par une route à lui : c'est la même question, posée du même écran, au
         même moment — un second aller n'apprendrait rien de plus.
+
+        `cfg` cadre la politique sur un projet (#1038) : celle qu'il a posée,
+        sinon celle du gabarit — l'absence d'une politique vaut « tout permis »,
+        et c'est le repli le moins discutable des six dépôts.
         """
-        outils = _outils_exposes(nom)
+        cfg = cfg if cfg is not None else gabarits
+        outils = _outils_exposes(nom, cfg)
         try:
-            politique = permissions.lire(nom)
+            politique = cfg.permissions.lire(nom)
         except ValueError as exc:
             return {
                 "permissions": None,
@@ -3148,7 +3281,9 @@ def create_app(
             "permissions_outils": outils,
         }
 
-    def _fiche_defaut(agent: Agent, *, avec_playbook: bool) -> dict[str, Any]:
+    def _fiche_defaut(
+        agent: Agent, *, avec_playbook: bool, cfg: ConfigurationAgents | None = None
+    ) -> dict[str, Any]:
         """La fiche catalogue d'un agent du code — surchargé ou non (#259).
 
         La définition vit dans le code (`maestro.agents.catalog`) : rôle,
@@ -3169,8 +3304,12 @@ def create_app(
 
         Les deux formes de fiche portent les **mêmes champs**, ici comme depuis
         #253 : un client n'a jamais à deviner ses clés d'après la `source`.
+
+        `cfg` cadre les volets sur un projet (#1038) — surcharge, serveurs MCP
+        et autorisations viennent alors de lui.
         """
-        surcharge = surcharges.lire(agent.nom)
+        cfg = cfg if cfg is not None else gabarits
+        surcharge = cfg.surcharges.lire(agent.nom)
         fiche: dict[str, Any] = {
             "nom": agent.nom,
             "role": agent.role,
@@ -3187,15 +3326,19 @@ def create_app(
             },
             "cree_le": None,
             "modifie_le": surcharge.modifie_le or None,
-            **_volet_mcp(agent.nom),
-            **_volet_permissions(agent.nom),
+            "projet": cfg.projet_id,
+            **_volet_mcp(agent.nom, cfg),
+            **_volet_permissions(agent.nom, cfg),
         }
         if avec_playbook:
             fiche["playbook"] = agent.prompt_systeme
         return fiche
 
     def _fiche_personnalise(
-        definition: AgentDefinition, *, avec_playbook: bool
+        definition: AgentDefinition,
+        *,
+        avec_playbook: bool,
+        cfg: ConfigurationAgents | None = None,
     ) -> dict[str, Any]:
         """La fiche catalogue d'un agent personnalisé : sa définition persistée (#72).
 
@@ -3204,23 +3347,35 @@ def create_app(
         deux clés sont servies quand même — voir `_fiche_defaut` : une fiche
         dont les champs dépendraient de la `source` obligerait chaque client à
         les deviner.
+
+        `projet` (#1038) dit à quel projet la fiche appartient — None pour un
+        **gabarit**, c'est-à-dire une fiche rangée hors de tout projet. La clé
+        est servie sur les deux formes, par la même règle que les deux
+        précédentes.
         """
+        cfg = cfg if cfg is not None else gabarits
         fiche = definition.to_dict(avec_playbook=avec_playbook)
         fiche["source"] = AGENT_SOURCE_PERSONNALISE
         fiche["herite"] = []
         fiche["reglages_du_code"] = None
-        fiche.update(_volet_mcp(definition.nom))
-        fiche.update(_volet_permissions(definition.nom))
+        fiche["projet"] = cfg.projet_id
+        fiche.update(_volet_mcp(definition.nom, cfg))
+        fiche.update(_volet_permissions(definition.nom, cfg))
         return fiche
 
-    def _personnalise_ou_none(nom: str) -> AgentDefinition | None:
+    def _personnalise_ou_none(
+        nom: str, cfg: ConfigurationAgents | None = None
+    ) -> AgentDefinition | None:
         """La définition persistée de `nom`, ou None (nom hors slug compris — jamais levé)."""
+        cfg = cfg if cfg is not None else gabarits
         try:
-            return agents_store.lire(nom)
+            return cfg.agents.lire(nom)
         except ValueError:
             return None
 
-    def _exige_personnalise(nom: str) -> AgentDefinition:
+    def _exige_personnalise(
+        nom: str, cfg: ConfigurationAgents | None = None
+    ) -> AgentDefinition:
         """La définition personnalisée de `nom`, ou l'erreur HTTP qui explique son absence.
 
         403 sur un agent par défaut (défini par le code : ni modifiable ni
@@ -3236,7 +3391,7 @@ def create_app(
                     "PUT /api/playbooks/{agent})."
                 ),
             )
-        definition = _personnalise_ou_none(nom)
+        definition = _personnalise_ou_none(nom, cfg)
         if definition is None:
             raise HTTPException(
                 status_code=404,
@@ -3244,7 +3399,7 @@ def create_app(
             )
         return definition
 
-    def _exige_du_code(nom: str) -> Agent:
+    def _exige_du_code(nom: str, cfg: ConfigurationAgents | None = None) -> Agent:
         """L'agent du code `nom`, ou l'erreur HTTP qui explique son absence (#259).
 
         Le **symétrique** d'`_exige_personnalise`, et ses refus se répondent :
@@ -3257,7 +3412,7 @@ def create_app(
         agent = next((a for a in DEFAULT_AGENTS if a.nom == nom), None)
         if agent is not None:
             return agent
-        if _personnalise_ou_none(nom) is not None:
+        if _personnalise_ou_none(nom, cfg) is not None:
             raise HTTPException(
                 status_code=403,
                 detail=(
@@ -3561,7 +3716,7 @@ def create_app(
         }
 
     @app.get("/api/mcp/pool")
-    async def mcp_pool() -> dict[str, Any]:
+    async def mcp_pool(projet: str | None = None) -> dict[str, Any]:
         """Le pool projet des intégrations MCP configurées (#133), avec l'état des secrets.
 
         `{integrations: [...], erreur}` : les intégrations ajoutées au pool
@@ -3569,11 +3724,16 @@ def create_app(
         l'état (présent/valide) de ses secrets côté coffre projet — jamais une
         valeur de secret. `erreur` porte la cause si le pool stocké est invalide.
         C'est ce que liste la section « Intégrations MCP » des Paramètres.
+
+        Le mot « pool **projet** » devient exact avec #1038 : `?projet=<id>` rend
+        celui de ce projet — celui du gabarit tant qu'il n'a pas le sien.
         """
-        return _pool_mcp()
+        return _pool_mcp(_config(projet))
 
     @app.post("/api/mcp/pool", status_code=201)
-    async def ajouter_integration_pool(requete: IntegrationPoolRequete) -> dict[str, Any]:
+    async def ajouter_integration_pool(
+        requete: IntegrationPoolRequete, projet: str | None = None
+    ) -> dict[str, Any]:
         """Ajoute (ou reconfigure) une intégration du registre dans le pool projet (#133).
 
         Le parcours **configuration** du critère 1 : instancie l'entrée de
@@ -3592,6 +3752,7 @@ def create_app(
         exactement celle que lèverait `instancier` deux lignes plus bas, et deux
         formulations pour un même refus finiraient par se contredire.
         """
+        cfg = _config(projet)
         courant = registre()
         entree = courant.get(requete.registre_id)
         if entree is None:
@@ -3605,9 +3766,9 @@ def create_app(
         try:
             serveur = registre().instancier(requete.registre_id, nom=requete.nom or None)
             integration = IntegrationMcp(id=requete.registre_id, serveur=serveur)
-            pool = [i for i in mcp.pool() if i.id != integration.id]
+            pool = [i for i in cfg.mcp.pool() if i.id != integration.id]
             pool.append(integration)
-            mcp.ecrire_pool(pool)
+            cfg.mcp.ecrire_pool(pool)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         # Les secrets, une seule fois, dans le coffre projet partagé. On ne
@@ -3635,7 +3796,7 @@ def create_app(
         return _integration_pool_dict(integration, etats)
 
     @app.delete("/api/mcp/pool/{id}")
-    async def retirer_integration_pool(id: str) -> dict[str, Any]:
+    async def retirer_integration_pool(id: str, projet: str | None = None) -> dict[str, Any]:
         """Retire une intégration du pool projet (#133) et fait le ménage derrière elle.
 
         Sort l'intégration du pool, **désactive** son id chez tout agent qui
@@ -3643,9 +3804,14 @@ def create_app(
         orpheline) et **supprime** du coffre projet les secrets qu'elle était
         seule à référencer (un secret encore utilisé par une autre intégration
         du pool reste). 404 si l'id n'est pas dans le pool.
+
+        Cadré sur un projet (#1038), le retrait **descend le pool hérité** dans
+        le projet amputé de cette intégration : le gabarit n'est pas touché, et
+        retirer chez soi n'enlève rien aux autres projets.
         """
+        cfg = _config(projet)
         try:
-            pool = list(mcp.pool())
+            pool = list(cfg.mcp.pool())
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         cible = next((i for i in pool if i.id == id), None)
@@ -3654,14 +3820,14 @@ def create_app(
                 status_code=404,
                 detail=f"intégration inconnue du pool : {id} (voir GET /api/mcp/pool).",
             )
-        mcp.ecrire_pool([i for i in pool if i.id != id])
-        for agent in mcp.agents():
-            actives = mcp.activations(agent)
+        cfg.mcp.ecrire_pool([i for i in pool if i.id != id])
+        for agent in cfg.mcp.agents():
+            actives = cfg.mcp.activations(agent)
             if id in actives:
-                mcp.ecrire_activations(agent, [a for a in actives if a != id])
+                cfg.mcp.ecrire_activations(agent, [a for a in actives if a != id])
         # Secrets : ne retirer que ceux qu'aucune intégration restante ne référence.
         references_restantes = {
-            cle for i in mcp.pool() for cle in references_env(i.serveur)
+            cle for i in cfg.mcp.pool() for cle in references_env(i.serveur)
         }
         for cle in references_env(cible.serveur):
             if cle not in references_restantes:
@@ -3670,7 +3836,7 @@ def create_app(
 
     @app.put("/api/mcp/activations/{agent}")
     async def definir_activations_mcp(
-        agent: str, requete: ActivationsMcpRequete
+        agent: str, requete: ActivationsMcpRequete, projet: str | None = None
     ) -> dict[str, Any]:
         """Fixe les intégrations du pool **activées** pour un agent (#133) — critère 2.
 
@@ -3679,10 +3845,14 @@ def create_app(
         derrière l'interrupteur par agent qui remplace l'affichage lecture seule
         des serveurs MCP. 404 si l'agent n'est pas au catalogue, 422 si un id
         n'est pas dans le pool (une activation orpheline casserait la lecture).
+
+        Écrit **dans le projet** demandé (#1038) : activer une intégration ici
+        n'en active aucune ailleurs.
         """
-        _exige_agent_du_catalogue(agent)
+        cfg = _config(projet)
+        _exige_agent_du_catalogue(agent, cfg)
         try:
-            pool_ids = {i.id for i in mcp.pool()}
+            pool_ids = {i.id for i in cfg.mcp.pool()}
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         inconnues = sorted(set(requete.integrations) - pool_ids)
@@ -3695,7 +3865,7 @@ def create_app(
                 ),
             )
         try:
-            activees = mcp.ecrire_activations(agent, requete.integrations)
+            activees = cfg.mcp.ecrire_activations(agent, requete.integrations)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {"agent": agent, "integrations": list(activees)}
@@ -3730,7 +3900,9 @@ def create_app(
         return None
 
     @app.post("/api/mcp/migration/{agent}")
-    async def migrer_declarations_mcp(agent: str) -> dict[str, Any]:
+    async def migrer_declarations_mcp(
+        agent: str, projet: str | None = None
+    ) -> dict[str, Any]:
         """Migre la déclaration héritée `core/mcp/{agent}.json` vers le pool projet (#263).
 
         L'issue qui manquait au bloc « hérités » de la fiche d'un agent : ses
@@ -3747,10 +3919,16 @@ def create_app(
 
         404 si l'agent n'est pas au catalogue, 422 s'il n'a rien à migrer ou si
         une source est invalide (rien n'est écrit dans ce cas).
+
+        ⚠ Elle ne migre que les fichiers **du niveau demandé** (#1038) : la
+        déclaration d'un projet cadré, celle du gabarit sinon. Migrer depuis un
+        projet un fichier qu'il *hérite* le laisserait en place — donc
+        autoritaire à la lecture —, ce qui ferait une migration invisible.
         """
-        _exige_agent_du_catalogue(agent)
+        cfg = _config(projet)
+        _exige_agent_du_catalogue(agent, cfg)
         try:
-            heritees = mcp.heritees(agent)
+            heritees = cfg.mcp.heritees(agent)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         ids = {
@@ -3759,7 +3937,7 @@ def create_app(
             if (id_registre := _id_registre_de(serveur)) is not None
         }
         try:
-            migration = mcp.migrer_agent(agent, ids=ids)
+            migration = cfg.mcp.migrer_agent(agent, ids=ids)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         try:
@@ -3776,7 +3954,7 @@ def create_app(
 
     @app.put("/api/permissions/{agent}")
     async def definir_permissions(
-        agent: str, requete: PolitiquePermissionsRequete
+        agent: str, requete: PolitiquePermissionsRequete, projet: str | None = None
     ) -> dict[str, Any]:
         """Écrit la politique allow/ask/deny d'un agent (#262) — remplacement intégral.
 
@@ -3795,10 +3973,16 @@ def create_app(
         c'est ce qui permet de réparer depuis l'écran un fichier que `lire`
         refuse — un `GET` préalable échouerait précisément là où le geste est
         nécessaire.
+
+        Écrit **dans le projet** demandé (#1038) : régler les autorisations d'un
+        agent ici ne touche ni au gabarit ni aux autres projets. C'est tout le
+        point du jalon — un agent partagé porterait les autorisations de l'un
+        chez l'autre.
         """
-        _exige_agent_du_catalogue(agent)
+        cfg = _config(projet)
+        _exige_agent_du_catalogue(agent, cfg)
         try:
-            politique = permissions.ecrire(agent, requete.model_dump())
+            politique = cfg.permissions.ecrire(agent, requete.model_dump())
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {"agent": agent, "permissions": politique.to_dict()}
@@ -4146,33 +4330,45 @@ def create_app(
         return catalogue_fournisseurs(await sonde_poste.rapport())
 
     @app.get("/api/catalogue")
-    async def catalogue_liste() -> list[dict[str, Any]]:
+    async def catalogue_liste(projet: str | None = None) -> list[dict[str, Any]]:
         """Le catalogue d'agents (#72) : les agents par défaut puis les personnalisés.
 
         Métadonnées seules (le playbook d'une fiche se lit sur
         `GET /api/catalogue/{nom}`), dans l'ordre du catalogue effectif — celui
         que les moteurs chargent au démarrage.
+
+        `projet` cadre la lecture (#1038) : les agents **de ce projet**, jamais
+        ceux d'un autre. Omis, ce sont les **gabarits** — les agents rangés hors
+        de tout projet, que l'analyse d'équipe consultera (#1039). Les agents du
+        code restent des deux côtés tant que #1042 n'en a pas fait des gabarits.
         """
-        return [_fiche_defaut(a, avec_playbook=False) for a in DEFAULT_AGENTS] + [
-            _fiche_personnalise(d, avec_playbook=False) for d in agents_store.lister()
+        cfg = _config(projet)
+        return [
+            _fiche_defaut(a, avec_playbook=False, cfg=cfg) for a in DEFAULT_AGENTS
+        ] + [
+            _fiche_personnalise(d, avec_playbook=False, cfg=cfg)
+            for d in cfg.agents.lister()
         ]
 
     @app.get("/api/catalogue/{nom}")
-    async def catalogue_fiche(nom: str) -> dict[str, Any]:
+    async def catalogue_fiche(nom: str, projet: str | None = None) -> dict[str, Any]:
         """La définition complète d'un agent du catalogue, playbook compris."""
+        cfg = _config(projet)
         defaut = next((a for a in DEFAULT_AGENTS if a.nom == nom), None)
         if defaut is not None:
-            return _fiche_defaut(defaut, avec_playbook=True)
-        definition = _personnalise_ou_none(nom)
+            return _fiche_defaut(defaut, avec_playbook=True, cfg=cfg)
+        definition = _personnalise_ou_none(nom, cfg)
         if definition is None:
             raise HTTPException(
                 status_code=404,
                 detail=f"agent inconnu : {nom} (voir GET /api/catalogue)",
             )
-        return _fiche_personnalise(definition, avec_playbook=True)
+        return _fiche_personnalise(definition, avec_playbook=True, cfg=cfg)
 
     @app.post("/api/catalogue", status_code=201)
-    async def creer_agent(requete: AgentCreationRequete) -> dict[str, Any]:
+    async def creer_agent(
+        requete: AgentCreationRequete, projet: str | None = None
+    ) -> dict[str, Any]:
         """Crée un agent personnalisé (#72) : définition persistée hors du code.
 
         L'agent entre immédiatement dans la vue `GET /api/agents` (cible de
@@ -4180,8 +4376,17 @@ def create_app(
         et workers construits ensuite, qui chargent le catalogue effectif à
         leur démarrage. 409 si le nom est déjà pris (agent par défaut, acteur
         système ou personnalisé existant), 422 si la définition est invalide.
+
+        L'agent naît **dans le projet** demandé (#1038) : c'est son équipe, et un
+        homonyme peut exister dans un autre projet sans conflit. Le nom reste
+        unique **dans ce projet-là**, et les noms du code restent réservés
+        partout — ils désignent le même rôle d'un projet à l'autre.
         """
-        if requete.nom in NOMS_RESERVES or _personnalise_ou_none(requete.nom) is not None:
+        cfg = _config(projet)
+        if (
+            requete.nom in NOMS_RESERVES
+            or _personnalise_ou_none(requete.nom, cfg) is not None
+        ):
             raise HTTPException(
                 status_code=409,
                 detail=(
@@ -4190,7 +4395,7 @@ def create_app(
                 ),
             )
         try:
-            definition = agents_store.ecrire(
+            definition = cfg.agents.ecrire(
                 AgentDefinition(
                     nom=requete.nom,
                     role=requete.role,
@@ -4204,10 +4409,12 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         state.ajouter_agent(definition.nom, definition.role)
-        return _fiche_personnalise(definition, avec_playbook=True)
+        return _fiche_personnalise(definition, avec_playbook=True, cfg=cfg)
 
     @app.post("/api/catalogue/generation")
-    async def generer_definition_agent(requete: AgentGenerationRequete) -> dict[str, Any]:
+    async def generer_definition_agent(
+        requete: AgentGenerationRequete, projet: str | None = None
+    ) -> dict[str, Any]:
         """Propose une définition d'agent à partir d'une intention (#257) — sans rien créer.
 
         Le modèle rend rôle, compétences, playbook et — confrontés au registre
@@ -4224,7 +4431,8 @@ def create_app(
         est injoignable, muet, ou répond hors contrat : dans les trois cas rien
         n'est écrit et l'appel se rejoue sans conséquence.
         """
-        pris = set(NOMS_RESERVES) | {d.nom for d in agents_store.lister()}
+        cfg = _config(projet)
+        pris = set(NOMS_RESERVES) | {d.nom for d in cfg.agents.lister()}
         try:
             proposition = await generateur_agent.proposer(requete.intention, noms_pris=pris)
         except ValueError as exc:
@@ -4234,16 +4442,20 @@ def create_app(
         return proposition.to_dict()
 
     @app.put("/api/catalogue/{nom}")
-    async def modifier_agent(nom: str, requete: AgentModificationRequete) -> dict[str, Any]:
+    async def modifier_agent(
+        nom: str, requete: AgentModificationRequete, projet: str | None = None
+    ) -> dict[str, Any]:
         """Remplace la définition d'un agent personnalisé (l'intégrale, pas un diff).
 
         La définition modifiée vaut pour les moteurs construits ensuite. 403
         sur un agent par défaut (défini par le code), 404 si l'agent n'existe
-        pas, 422 si la nouvelle définition est invalide.
+        pas, 422 si la nouvelle définition est invalide — 404 aussi sur l'agent
+        d'un **autre** projet, qui est inconnu d'ici (#1038).
         """
-        _exige_personnalise(nom)
+        cfg = _config(projet)
+        _exige_personnalise(nom, cfg)
         try:
-            definition = agents_store.ecrire(
+            definition = cfg.agents.ecrire(
                 AgentDefinition(
                     nom=nom,
                     role=requete.role,
@@ -4257,26 +4469,32 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         state.ajouter_agent(definition.nom, definition.role)
-        return _fiche_personnalise(definition, avec_playbook=True)
+        return _fiche_personnalise(definition, avec_playbook=True, cfg=cfg)
 
     @app.delete("/api/catalogue/{nom}")
-    async def supprimer_agent(nom: str) -> dict[str, Any]:
+    async def supprimer_agent(nom: str, projet: str | None = None) -> dict[str, Any]:
         """Supprime un agent personnalisé du catalogue.
 
         Sa fiche quitte la vue `GET /api/agents` ; les moteurs construits
         ensuite ne le chargent plus. Son réglage de capacité (#86) part avec
         lui — un homonyme recréé plus tard repartira des défauts. 403 sur un
         agent par défaut, 404 s'il n'existe pas.
+
+        Le retrait ne touche que **ce projet-là** (#1038) : un homonyme d'un
+        autre projet, et le gabarit du même nom, restent.
         """
-        _exige_personnalise(nom)
-        agents_store.supprimer(nom)
-        capacites.supprimer(nom)
-        surcharges.supprimer(nom)
+        cfg = _config(projet)
+        _exige_personnalise(nom, cfg)
+        cfg.agents.supprimer(nom)
+        cfg.capacites.supprimer(nom)
+        cfg.surcharges.supprimer(nom)
         state.retirer_agent(nom)
         return {"nom": nom, "supprime": True}
 
     @app.put("/api/catalogue/{nom}/reglages")
-    async def surcharger_agent(nom: str, requete: SurchargeRequete) -> dict[str, Any]:
+    async def surcharger_agent(
+        nom: str, requete: SurchargeRequete, projet: str | None = None
+    ) -> dict[str, Any]:
         """Surcharge les réglages de modèle d'un agent du code (#259), sans le dupliquer.
 
         Le troisième état du catalogue : l'agent reste celui du code — rôle,
@@ -4289,9 +4507,13 @@ def create_app(
         `fournisseur` reste déclaratif au POC. 403 sur un agent personnalisé
         (ses réglages s'éditent par `PUT /api/catalogue/{nom}`) ou un acteur
         système, 404 sur un nom inconnu.
+
+        La surcharge est posée **dans le projet** demandé (#1038) : le même
+        agent du code peut tourner sur deux modèles dans deux projets.
         """
-        agent = _exige_du_code(nom)
-        surcharges.ecrire(
+        cfg = _config(projet)
+        agent = _exige_du_code(nom, cfg)
+        cfg.surcharges.ecrire(
             SurchargeAgent(
                 nom=nom,
                 fournisseur=requete.fournisseur,
@@ -4299,10 +4521,10 @@ def create_app(
                 effort=requete.effort,
             )
         )
-        return _fiche_defaut(agent, avec_playbook=True)
+        return _fiche_defaut(agent, avec_playbook=True, cfg=cfg)
 
     @app.delete("/api/catalogue/{nom}/reglages")
-    async def annuler_surcharge(nom: str) -> dict[str, Any]:
+    async def annuler_surcharge(nom: str, projet: str | None = None) -> dict[str, Any]:
         """Annule la surcharge d'un agent du code : retour à ses réglages du code (#259).
 
         ⚠ **Annule, ne supprime pas** — et c'est tout le sujet du critère 3 de
@@ -4314,21 +4536,31 @@ def create_app(
         Idempotent : annuler une surcharge absente rend la même fiche, sans
         erreur — il n'y a rien à signaler à qui demande un état déjà atteint.
         403/404 comme `PUT`.
-        """
-        agent = _exige_du_code(nom)
-        surcharges.supprimer(nom)
-        return _fiche_defaut(agent, avec_playbook=True)
 
-    def _exige_agent_du_catalogue(nom: str) -> Agent:
+        Cadré sur un projet (#1038), « retour aux réglages du code » veut dire
+        retour au **gabarit** — c'est-à-dire au code tant que rien n'y est
+        surchargé, ce qui est l'invariant du #259 dans le nouveau rangement.
+        """
+        cfg = _config(projet)
+        agent = _exige_du_code(nom, cfg)
+        cfg.surcharges.supprimer(nom)
+        return _fiche_defaut(agent, avec_playbook=True, cfg=cfg)
+
+    def _exige_agent_du_catalogue(
+        nom: str, cfg: ConfigurationAgents | None = None
+    ) -> Agent:
         """La fiche catalogue de `nom` (défaut ou personnalisé), ou l'erreur 404.
 
         Le chat ne s'adresse qu'aux agents du catalogue effectif — celui que
         les moteurs chargent : un nom inconnu n'ouvre pas de fil orphelin.
+        Cadré sur un projet (#1038), « du catalogue » veut dire de **son**
+        catalogue : un agent d'un autre projet y est inconnu, ce qui est
+        exactement ce qu'on veut d'une route de configuration.
         """
         defaut = next((a for a in DEFAULT_AGENTS if a.nom == nom), None)
         if defaut is not None:
             return defaut
-        definition = _personnalise_ou_none(nom)
+        definition = _personnalise_ou_none(nom, cfg)
         if definition is None:
             raise HTTPException(
                 status_code=404,
