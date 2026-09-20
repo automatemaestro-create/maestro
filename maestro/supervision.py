@@ -42,10 +42,11 @@ from collections.abc import Awaitable
 from time import perf_counter
 from typing import Any
 
-from maestro.agents import default_runtimes
+from maestro.agents.fiche_outillee import runtime_outille
 from maestro.agents.mcp import McpStore
 from maestro.agents.runtime import AgentRuntime
 from maestro.agents.secrets import SecretStore
+from maestro.agents.store import AgentStore, catalogue
 from maestro.config import ConfigError, Settings, load_settings
 from maestro.engine.executor import STATUT_ECHEC, STATUT_TERMINEE
 from maestro.engine.guardrails import DemandeValidation, Validateur
@@ -110,6 +111,13 @@ class NotificateurRun:
         run) : canal renseigné, runtime outillé existant pour `agent`, et au
         moins un serveur MCP déclaré pour lui — sans serveur, l'agent n'aurait
         aucun moyen de poster. Lève `ConfigError` avec la marche à suivre.
+
+        Depuis #1037 le runtime se dérive de la **fiche** de `agent`, cherchée dans
+        le catalogue **effectif** : n'importe quel agent du catalogue peut donc
+        notifier, y compris un agent défini hors du code, du moment qu'il a un
+        serveur MCP. Ce qui reste refusé est un nom **hors catalogue** — un acteur
+        système (`orchestrateur`, `assistance`) n'a pas de fiche, donc pas de
+        runtime à équiper.
         """
         from maestro.providers.factory import provider_from_settings
 
@@ -120,15 +128,16 @@ class NotificateurRun:
                 "MAESTRO_SLACK_CANAL est absent : renseignez le canal Slack des "
                 "notifications de supervision (cf. .env.example, ticket #105)."
             )
-        runtime = default_runtimes(provider_from_settings(settings), model=settings.model).get(
-            agent
-        )
-        if runtime is None:
+        fiches = catalogue(AgentStore.default(settings), settings.model)
+        fiche = next((f for f in fiches if f.nom == agent), None)
+        if fiche is None:
             raise ConfigError(
                 f"l'agent {agent!r} n'a pas de runtime outillé : le notificateur de "
                 "supervision a besoin d'une exécution outillée pour monter le serveur "
-                "MCP Slack (agents outillés : developpeur, bdd, qa, devops)."
+                f"MCP Slack, et {agent!r} n'est pas au catalogue effectif "
+                f"(présents : {', '.join(f.nom for f in fiches)})."
             )
+        runtime = runtime_outille(provider_from_settings(settings), fiche)
         mcp = McpStore.default(settings)
         try:
             serveurs = mcp.lire(agent)

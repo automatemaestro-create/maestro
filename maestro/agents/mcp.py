@@ -46,9 +46,10 @@ Le montage vit dans la couche SDK (`ModelProvider.run_agent(mcp_serveurs=...)`,
 fournisseur Claude via l'Agent SDK) : l'exécuteur relit ce dépôt **à chaud** à
 chaque tâche — comme les playbooks (#78) — et confie la liste au runtime
 outillé. Les serveurs n'équipent donc que les **exécutions outillées** ; le
-chemin texte (`generate`, agents sans runtime) n'expose aucun outil, MCP
-compris. Au POC le dépôt est sur fichiers (`core/mcp/`, déclaré et versionné
-avec le dépôt Git) ; en V1 il passera en base sans changer ce contrat.
+chemin texte (`generate` — depuis #1037 le seul repli d'un fournisseur sans
+exécution outillée) n'expose aucun outil, MCP compris. Au POC le dépôt est sur
+fichiers (`core/mcp/`, déclaré et versionné avec le dépôt Git) ; en V1 il passera
+en base sans changer ce contrat.
 
 Les **secrets** (tokens d'API des serveurs) ne sont **jamais en clair** dans
 une déclaration versionnée : les valeurs d'`env`/`headers` portent des

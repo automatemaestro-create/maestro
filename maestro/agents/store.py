@@ -31,8 +31,12 @@ gestes que rien ne doit confondre.
 
 Le chargement se fait **au câblage** (construction du moteur, premier message d'un
 worker, démarrage de l'API) : un agent créé est routable et exécutable par les
-moteurs construits ensuite — sans runtime outillé, il produit son livrable par le
-chemin texte (`LocalExecutor._produce`), cadré par son playbook et son modèle.
+moteurs construits ensuite. Et depuis #1037 il est exécutable **outillé** : le
+runtime de chaque tâche se dérive de la fiche de l'agent routé
+(`maestro.agents.fiche_outillee`), si bien qu'un agent défini ici lit, écrit dans
+le projet et exécute sous ses autorisations (#110) et avec ses serveurs MCP (#104),
+par le même chemin que les rôles du code. Le chemin texte (`LocalExecutor._produce`)
+n'est plus que le repli d'un fournisseur sans exécution outillée.
 """
 
 from __future__ import annotations

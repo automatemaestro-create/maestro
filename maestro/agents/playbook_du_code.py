@@ -113,6 +113,22 @@ def socle() -> str:
     return _developpe(fragment(FRAGMENT_SOCLE))
 
 
+def cadre_outille() -> str:
+    """Le cadre d'exécution outillée (#1037), marqueurs substitués.
+
+    Servi à part pour les playbooks qui ne viennent **pas** d'un document du paquet : le
+    `playbook` d'une fiche d'agent (`maestro.agents.store.AgentDefinition`), qu'un rôle
+    du code porte de son côté par le `{{cadre}}` de son document. Sans lui, un agent
+    outillé pour la première fois garderait un playbook qui ne lui parle ni de son
+    répertoire de travail ni de son livrable en fichiers — il répondrait en texte avec
+    des outils dans les mains (`maestro.agents.fiche_outillee`).
+
+    Substitué comme `socle()`, et pour la même raison : les deux chemins doivent recevoir
+    le **même** texte que celui qu'un `{{cadre}}` de document insère.
+    """
+    return _developpe(fragment(FRAGMENT_CADRE))
+
+
 def registre() -> str:
     """Le registre de langue du produit (#945) : l'agent vouvoie l'utilisateur.
 

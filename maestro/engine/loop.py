@@ -74,7 +74,6 @@ from dataclasses import dataclass, replace
 from time import perf_counter
 from typing import Any
 
-from maestro.agents import default_runtimes
 from maestro.agents.capacity import CapacityStore
 from maestro.agents.catalog import DEFAULT_AGENTS, Agent
 from maestro.agents.mcp import McpStore
@@ -498,8 +497,11 @@ class OrchestrationEngine:
         agents par défaut plus les agents personnalisés persistés
         (`MAESTRO_AGENTS_DIR`, sinon `core/agents/`), chargés ici, à la
         construction du moteur — un agent créé ensuite vaut pour les moteurs
-        construits après lui. Sans runtime outillé, un agent personnalisé
-        produit son livrable par le chemin texte, cadré par son playbook.
+        construits après lui. **Aucune table de runtimes n'est passée** (#1037) :
+        l'exécuteur dérive celui de chaque tâche de la fiche de l'agent routé, si
+        bien qu'un agent personnalisé travaille outillé — fichiers, écriture dans
+        le projet, commandes — au lieu de produire son livrable en texte. Lui
+        passer `default_runtimes(...)` le restreindrait aux cinq rôles du code.
 
         Le **contrôle de capacité** (#86, EF-21) est branché sur le dépôt
         configuré (`MAESTRO_CAPACITE_DIR`, sinon `core/capacite/`), relu à
@@ -561,7 +563,6 @@ class OrchestrationEngine:
             provider,
             orchestrator,
             agents=catalogue(AgentStore.default(settings), settings.model),
-            runtimes=default_runtimes(provider, model=settings.model),
             guardrails=guardrails,
             mailbox=mailbox,
             playbooks=PlaybookStore.default(settings),

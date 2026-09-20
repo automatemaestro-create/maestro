@@ -34,7 +34,6 @@ from typing import Any
 from celery import shared_task
 from celery.signals import celeryd_after_setup
 
-from maestro.agents import default_runtimes
 from maestro.agents.capacity import CapacityStore
 from maestro.agents.mcp import McpStore
 from maestro.agents.permissions import PermissionStore
@@ -157,7 +156,10 @@ def _executeur() -> LocalExecutor:
     Control Tower doivent voir le même stockage. Le catalogue d'exécutants est
     le catalogue **effectif** (#72) — agents par défaut plus personnalisés
     (`MAESTRO_AGENTS_DIR`, même exigence de stockage partagé) — chargé ici, à la
-    construction : un agent créé ensuite attend le redémarrage du worker.
+    construction : un agent créé ensuite attend le redémarrage du worker. Son
+    **runtime outillé** n'est en revanche pas câblé ici (#1037) : l'exécuteur le
+    dérive de la fiche de l'agent routé, à chaque tâche, de sorte qu'un agent
+    personnalisé travaille outillé côté workers comme en local.
     Le **contrôle de capacité** (#86) est relu à chaque tâche dans le dépôt
     partagé (`MAESTRO_CAPACITE_DIR`) : un agent désactivé depuis la Control
     Tower n'est plus routé par les workers dès le message suivant. Le plafond
@@ -177,7 +179,6 @@ def _executeur() -> LocalExecutor:
         _executor = LocalExecutor(
             provider,
             agents=catalogue(AgentStore.default(settings), settings.model),
-            runtimes=default_runtimes(provider, model=settings.model),
             guardrails=_guardrails,
             playbooks=PlaybookStore.default(settings),
             capacites=CapacityStore.default(settings),
