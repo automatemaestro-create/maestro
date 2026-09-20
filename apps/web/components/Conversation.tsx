@@ -292,10 +292,13 @@ import {
   type Renvoi,
 } from "@/components/Primitives";
 import { RegionLive } from "@/components/RegionLive";
+import { AnnonceIssueRun } from "@/components/runs/AnnonceIssueRun";
 import { mesureDesMessages } from "@/lib/annonces";
 import { ErreurReponse, ErreurSource } from "@/lib/api";
 import { useBrouillon } from "@/lib/brouillons";
 import { ascenseurDe, estEnBas } from "@/lib/defilement";
+import { estSolde } from "@/lib/execution";
+import { issuesDuFil } from "@/lib/issueRun";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import { useHorloge } from "@/lib/horloge";
 import { jourDe, libelleDuJour } from "@/lib/journees";
@@ -660,6 +663,10 @@ export function Conversation({
     transfert !== null && Array.from(transfert.types).includes("Files");
 
   const filVide = !chargement && messages.length === 0;
+  // Ce fil a-t-il ouvert un run (#928) ? Lu sur les messages, qui portent le
+  // rattachement (#268) : c'est ce qui décide de monter l'annonce de fin, et
+  // c'est tout ce qu'on peut savoir sans consulter l'état du projet.
+  const ouvreDesRuns = messages.some((message) => (message.run_id ?? "") !== "");
   // La réponse a-t-elle **commencé** à s'écrire ? Le texte fait foi, pas la
   // présence du flux : entre la trame d'ouverture et le premier incrément, il
   // n'y a rien à montrer, et une bulle vide dirait « il a commencé » alors que
@@ -897,6 +904,17 @@ export function Conversation({
             Fil illisible : {erreur}
           </li>
         )}
+        {/* **Ce que le travail a rendu** (#928) — à la fin du fil, après le
+            dernier message, parce qu'une fin de run est un événement de cette
+            conversation et qu'elle arrive après tout ce qui s'y est dit. Elle
+            vient **avant** les deux fautes ci-dessous : celles-là parlent de
+            l'envoi qu'on vient de tenter, donc du présent.
+
+            Monté **seulement** si un message de ce fil a ouvert un run, ce qui
+            se lit sur les messages sans rien consulter. Même règle que `Suite`
+            plus bas — un fil qui n'a rien lancé n'a rien à annoncer, et il n'y a
+            pas de raison d'aller lire l'état du projet pour l'apprendre. */}
+        {ouvreDesRuns && <IssuesDesRunsDuFil messages={messages} />}
         {echecEnvoi !== null && (
           <li className="text-annexe text-alerte-texte" role="alert">
             {echecEnvoi.cause}
@@ -1521,12 +1539,20 @@ function Bulle({
  * d'un message (#482).
  */
 function Suite({ message }: { message: MessageChat }) {
-  const { taches, validations } = useEtatGlobal();
+  const { taches, validations, executions } = useEtatGlobal();
   const runId = message.run_id ?? "";
   const tacheId = message.tache_id ?? "";
   if (runId === "" && tacheId === "") return null;
 
-  const duRun = taches.filter((tache) => tache.run_id === runId);
+  // Un run **soldé** ne porte plus de tâches « ouvertes » (#928) : le compte
+  // restait affiché tel quel après la fin, et « 2 tâches ouvertes » sous un run
+  // terminé était simplement faux. Ce que ce run a produit se lit désormais dans
+  // son annonce de fin, au pied du fil — le redire ici en donnerait deux
+  // versions, dont une périmée.
+  const solde = executions.some(
+    (execution) => execution.run_id === runId && estSolde(execution),
+  );
+  const duRun = solde ? [] : taches.filter((tache) => tache.run_id === runId);
   const enAttente = validations.filter(
     (validation) =>
       validation.statut === VALIDATION_EN_ATTENTE &&
@@ -1593,5 +1619,46 @@ function Suite({ message }: { message: MessageChat }) {
         </p>
       )}
     </div>
+  );
+}
+
+/**
+ * **Les runs de ce fil qui ont fini** (#928, lot 7 de #921), en fin de
+ * conversation.
+ *
+ * Le constat du retex du 2026-09-11 (G1) tient en une phrase : *un run qui se
+ * termine ne prévient personne, et ne dit pas où est le livrable*. Le dernier
+ * message du fil restait le lancement, pour un run de 53 minutes et 12,51 $
+ * dont le livrable fonctionnait — su en allant regarder le disque.
+ *
+ * Trois choses à ne pas défaire, et la première est celle qui porte le
+ * troisième critère du ticket :
+ *
+ * - **rien ici ne vient du temps réel.** `issuesDuFil` croise les `run_id`
+ *   **persistés** des messages (#268) avec les `executions` rechargées par le
+ *   REST : une fin arrivée pendant qu'on regardait ailleurs est là au retour,
+ *   au même titre qu'une fin arrivée sous les yeux. Brancher ceci sur le flux
+ *   d'événements — qui part vide à chaque chargement — rendrait l'annonce
+ *   dépendante d'avoir eu l'écran ouvert au bon moment, ce que le critère 3
+ *   interdit nommément ;
+ * - **une fin par run, jamais une par message.** C'est `issuesDuFil` qui le
+ *   tient ; le dire ici en plus donnerait deux règles à accorder ;
+ * - **des `<li>` du même `<ol>`.** L'annonce est un élément du fil et non un
+ *   bloc posé dessous : c'est le parti pris 1 de la veille (un événement, pas
+ *   une bulle) et c'est aussi ce qui la fait défiler avec la conversation, dans
+ *   la colonne de droite comme sur `/chat`.
+ */
+function IssuesDesRunsDuFil({ messages }: { messages: MessageChat[] }) {
+  const { executions, projet } = useEtatGlobal();
+  const issues = issuesDuFil(messages, executions, projet);
+  if (issues.length === 0) return null;
+  return (
+    <>
+      {issues.map((issue) => (
+        <li key={issue.execution.run_id} className="pt-1">
+          <AnnonceIssueRun issue={issue} />
+        </li>
+      ))}
+    </>
   );
 }

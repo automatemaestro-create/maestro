@@ -44,10 +44,17 @@ import {
 } from "@/components/Icones";
 import { LigneActivite } from "@/components/LigneActivite";
 import { BadgeEtat, Bouton, Carte, CIBLE_MINIMALE } from "@/components/Primitives";
+import { AnnonceIssueRun } from "@/components/runs/AnnonceIssueRun";
 import { resumeArbitrages } from "@/lib/annonces";
 import { PAGE_DU_CADRAGE, runsEnAttente } from "@/lib/brief";
 import { estNotableNotification, grouperEvenements } from "@/lib/evenements";
 import { useEtatGlobal } from "@/lib/etatGlobal";
+import {
+  aDesIssuesNonLues,
+  ecrireIssuesVues,
+  issuesRecentes,
+  lireIssuesVues,
+} from "@/lib/issueRun";
 import { entreeParLibelle } from "@/lib/navigation";
 import { useSurfaceDeroulee } from "@/lib/useSurfaceDeroulee";
 import {
@@ -67,6 +74,14 @@ type Decider = (tacheId: string, approuve: boolean) => Promise<void>;
 const MAX_EVENEMENTS_NOTABLES = 8;
 
 /**
+ * Nombre de **fins de run** rappelées (#928). Moins que les événements ci-dessus
+ * parce qu'une fin porte quatre lignes — verdict, faits, chemin, gestes — là où
+ * une ligne d'activité en porte une : cinq remplissent déjà la hauteur du
+ * panneau, et ce qui déborde se lit sur l'écran Runs.
+ */
+const MAX_ISSUES_RAPPELEES = 5;
+
+/**
  * Ce que la cloche annonce — le seul endroit où le compte est **nommé**, la
  * pastille n'étant qu'un chiffre décoratif (`aria-hidden`).
  *
@@ -76,14 +91,32 @@ const MAX_EVENEMENTS_NOTABLES = 8;
  * reste ici est le cadrage propre à la cloche : le nom du bouton quand rien
  * n'attend.
  */
-function etiquetteCloche(validations: number, briefs: number): string {
+function etiquetteCloche(
+  validations: number,
+  briefs: number,
+  issuesNeuves: boolean,
+): string {
   const resume = resumeArbitrages(validations, briefs);
-  return resume === null ? "Notifications" : `Notifications — ${resume}`;
+  // Les fins de run viennent **après** la file d'arbitrage et ne s'y ajoutent
+  // pas : « 2 à valider, et du travail terminé » se lit dans l'ordre où l'on
+  // agit. Sans arbitrage en attente, la phrase tient seule.
+  const fins = issuesNeuves ? "du travail terminé" : "";
+  if (resume === null && fins === "") return "Notifications";
+  if (resume === null) return `Notifications — ${fins}`;
+  return fins === ""
+    ? `Notifications — ${resume}`
+    : `Notifications — ${resume}, et ${fins}`;
 }
 
 export function CentreNotifications() {
-  const { validations, executions, evenements, decider } = useEtatGlobal();
+  const { validations, executions, evenements, projet, decider } =
+    useEtatGlobal();
   const [ouvert, setOuvert] = useState(false);
+  // Le repère de lecture des fins de run (#928), lu **une fois par ouverture**
+  // du composant et reposé à chaque ouverture du panneau : le tenir dans un état
+  // plutôt que de relire le stockage à chaque rendu est ce qui fait disparaître
+  // le point au moment où l'on ouvre, sans attendre le rendu suivant.
+  const [issuesVues, setIssuesVues] = useState(() => lireIssuesVues());
   const conteneur = useRef<HTMLDivElement>(null);
   const declencheur = useRef<HTMLButtonElement>(null);
   const surface = useRef<HTMLDivElement>(null);
@@ -96,6 +129,12 @@ export function CentreNotifications() {
   const notables = grouperEvenements(
     evenements.filter(estNotableNotification),
   ).slice(0, MAX_EVENEMENTS_NOTABLES);
+  // **Dérivées du persisté** (#928, `lib/issueRun`) et non du flux temps réel
+  // qui peuple `evenements` : celui-ci part vide à chaque chargement, donc une
+  // fin arrivée pendant qu'on regardait ailleurs n'y serait plus — c'est-à-dire
+  // exactement le cas que le troisième critère du ticket vise.
+  const issues = issuesRecentes(executions, projet, MAX_ISSUES_RAPPELEES);
+  const issuesNeuves = aDesIssuesNonLues(issues, issuesVues);
 
   // Clic à l'extérieur, `Échap` et focus d'entrée viennent du hook partagé
   // (#536). Les flèches, elles, ne s'y appliquent pas — et c'est le hook qui
@@ -104,7 +143,35 @@ export function CentreNotifications() {
   const fermer = useCallback(() => setOuvert(false), []);
   useSurfaceDeroulee({ ouvert, fermer, conteneur, declencheur, surface });
 
-  const etiquette = etiquetteCloche(enAttente.length, briefs.length);
+  const etiquette = etiquetteCloche(
+    enAttente.length,
+    briefs.length,
+    issuesNeuves,
+  );
+
+  /**
+   * Ouvrir le panneau **acquitte** les fins de run (#928) : ce qu'on vient de
+   * montrer est lu. Le repère est l'horodatage de la fin la plus récente, et
+   * non « maintenant » : une fin qui arriverait pendant que le panneau est
+   * ouvert reste neuve, ce qu'une horloge aurait avalé.
+   */
+  const basculer = () =>
+    setOuvert((avant) => {
+      if (!avant) {
+        const derniere = issues.reduce(
+          (max, issue) => {
+            const fin = issue.execution.fin ?? "";
+            return fin > max ? fin : max;
+          },
+          issuesVues,
+        );
+        if (derniere !== issuesVues) {
+          ecrireIssuesVues(derniere);
+          setIssuesVues(derniere);
+        }
+      }
+      return !avant;
+    });
 
   return (
     // `data-guide` : la visite guidée (#122) éclaire la cloche — et s'y replie
@@ -113,7 +180,7 @@ export function CentreNotifications() {
       <button
         ref={declencheur}
         type="button"
-        onClick={() => setOuvert((avant) => !avant)}
+        onClick={basculer}
         aria-haspopup="dialog"
         aria-expanded={ouvert}
         aria-label={etiquette}
@@ -128,6 +195,22 @@ export function CentreNotifications() {
           >
             {nb > 9 ? "9+" : nb}
           </span>
+        )}
+        {/* **Un point, jamais un second chiffre** (#928). La pastille ci-dessus
+            répond « combien de choses m'attendent » (#322) et une fin de run
+            n'attend rien : deux compteurs côte à côte obligeraient à en faire la
+            somme, et le brief suspendu que #322 a fait entrer dans le premier y
+            reperdrait sa place. Le point dit seulement « il y a du neuf », et il
+            s'efface à l'ouverture. Décoratif comme la pastille : l'`aria-label`
+            du bouton le dit en toutes lettres.
+            Il se range **sous** la pastille quand les deux sont là — en bas à
+            droite contre en haut à droite —, si bien qu'aucun des deux n'en
+            masque un autre. */}
+        {issuesNeuves && (
+          <span
+            aria-hidden="true"
+            className="absolute -right-0.5 -bottom-0.5 size-2 rounded-full bg-positif ring-2 ring-surface"
+          />
         )}
       </button>
 
@@ -198,6 +281,44 @@ export function CentreNotifications() {
                 </ul>
               )}
             </section>
+
+            {/* **Ce que le travail a rendu** (#928) — après les deux files qui
+                attendent un geste, avant l'activité récente qui n'en attend
+                aucun : c'est l'ordre dans lequel on agit. Une fin de run n'est
+                pas une demande, c'est un résultat, et le panneau la range donc
+                entre les deux.
+
+                Elle est **dérivée du persisté** et non du flux : c'est ce qui
+                tient le troisième critère du ticket, et c'est aussi pourquoi
+                `execution.statut` n'a **pas** été ajouté à
+                `estNotableNotification` — le dire ici et en activité récente
+                donnerait deux annonces de la même fin dans le même panneau,
+                dont une qui disparaîtrait au rechargement. */}
+            {issues.length > 0 && (
+              // Sur les **jetons du socle** (`bord`, `texte-secondaire`) et non
+              // sur les `neutral-*` que ses sections voisines portent encore :
+              // une couleur se choisit une fois, les deux thèmes viennent avec
+              // elle (docs/30 §2, `tests/couleurs.test.ts`). Le rendu est le
+              // même au bit près — `--bord` **est** `neutral-200` en clair — et
+              // le résidu du fichier ne grandit pas d'une ligne de plus.
+              <section
+                aria-label="Runs terminés"
+                className="border-t border-bord p-2"
+              >
+                <h3 className="px-1 pb-1 text-xs font-semibold tracking-wide text-texte-secondaire uppercase">
+                  Ce que le travail a rendu
+                </h3>
+                <ul className="space-y-2">
+                  {issues.map((issue) => (
+                    <li key={issue.execution.run_id}>
+                      <Carte densite="compacte">
+                        <AnnonceIssueRun issue={issue} compacte />
+                      </Carte>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
 
             {/* L'activité récente notable : le panneau reste consultable même
                 quand plus aucune validation n'est en attente (critère #119). */}

@@ -21,12 +21,19 @@
 //
 // ENF-12 (docs/35 §2.5) : AUCUN embranchement de code applicatif. Le front servi ici est celui du
 // mode web, au bit près — rien dans `apps/web/**` ne sait qu'il tourne dans une fenêtre, et il ne
-// doit rien en savoir. Ce fichier est le seul endroit où le mot « Electron » a le droit d'exister.
+// doit rien en savoir. Ce dossier est le seul endroit où le mot « Electron » a le droit d'exister.
+//
+// ⚠ Depuis #928 la coque expose UN pont, et un seul verbe : ouvrir un dossier dans l'explorateur du
+// système (`preload.js`, `ouvrirDossier` plus bas). C'est la capacité que docs/35 §2.4 donne comme
+// l'une des trois qui justifient une fenêtre, et ENF-12 n'en souffre pas : le front teste si la
+// fonction EXISTE, jamais où il tourne (`apps/web/lib/poste.ts`) — dans un onglet elle n'existe
+// pas, et le chemin du livrable reste affiché et copiable.
 
 'use strict';
 
-const { app, BrowserWindow, nativeTheme, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, nativeTheme, shell } = require('electron');
 const { spawn } = require('node:child_process');
+const fs = require('node:fs');
 const path = require('node:path');
 
 const RACINE = path.resolve(__dirname, '..', '..');
@@ -146,6 +153,51 @@ function encadrerNavigation(contenu) {
   });
 }
 
+/**
+ * Ouvrir un dossier dans l'explorateur du système (#928) — la seule chose que la page puisse nous
+ * demander, et elle est REFUSÉE par défaut.
+ *
+ * Trois gardes, et la troisième est celle qu'on oublie :
+ *
+ *   1. le chemin est une chaîne non vide et ABSOLUE — un chemin relatif serait résolu contre le
+ *      répertoire de travail de la coque, c'est-à-dire la racine du dépôt ;
+ *   2. il EXISTE — `openPath` sur un chemin inconnu rend une erreur que l'utilisateur ne verrait
+ *      pas, là où la page peut dire « dossier introuvable » à l'endroit où il regarde ;
+ *   3. c'est un DOSSIER. `shell.openPath` ouvre un fichier avec son application par défaut : sur un
+ *      `.exe`, un `.bat` ou un `.lnk`, cela revient à l'EXÉCUTER. La page est servie par un serveur
+ *      local qu'un autre programme du poste peut atteindre ; ce pont n'ouvre donc que des
+ *      répertoires, ce qui suffit au livrable d'un run (sa racine de projet) et ne lance rien.
+ *
+ * Rend un booléen plutôt que de lever : la page a déjà le chemin sous les yeux et le dit elle-même
+ * quand c'est non. Le détail part sur la console de la coque, qui est un terminal de développement.
+ */
+async function ouvrirDossier(chemin) {
+  if (typeof chemin !== 'string' || chemin.trim() === '') return false;
+  const cible = path.normalize(chemin);
+  if (!path.isAbsolute(cible)) {
+    process.stderr.write(`[coque] ouverture refusée (chemin relatif) : ${chemin}\n`);
+    return false;
+  }
+  let etat;
+  try {
+    etat = fs.statSync(cible);
+  } catch {
+    process.stderr.write(`[coque] ouverture refusée (introuvable) : ${cible}\n`);
+    return false;
+  }
+  if (!etat.isDirectory()) {
+    process.stderr.write(`[coque] ouverture refusée (pas un dossier) : ${cible}\n`);
+    return false;
+  }
+  // `openPath` rend la chaîne vide en cas de succès, un message d'erreur sinon.
+  const erreur = await shell.openPath(cible);
+  if (erreur !== '') {
+    process.stderr.write(`[coque] ouverture impossible : ${erreur}\n`);
+    return false;
+  }
+  return true;
+}
+
 function chargerAttente() {
   if (!fenetre || fenetre.isDestroyed()) return Promise.resolve();
   return fenetre.loadFile(path.join(__dirname, 'attente.html')).catch(() => {});
@@ -166,13 +218,16 @@ function ouvrirFenetre() {
     show: true,
     webPreferences: {
       // Les trois réglages de sûreté du troisième critère d'acceptation. `sandbox` n'y est pas
-      // nommé mais va dans le même sens, et rien ici n'a besoin qu'il soit levé : la coque
-      // n'expose AUCUN pont vers la page (pas de preload, pas d'IPC) — ENF-12 veut que le front
-      // servi soit celui du mode web, donc il ne peut rien attendre de nous.
+      // nommé mais va dans le même sens, et il reste POSÉ depuis que la coque expose un pont
+      // (#928) : un preload sandboxé n'a pas accès à Node, seulement à `contextBridge` et
+      // `ipcRenderer`, ce qui est exactement la surface voulue. La page reçoit une fonction, pas
+      // un canal — et ENF-12 tient, le front testant une CAPACITÉ et jamais sa plateforme
+      // (`apps/web/lib/poste.ts`).
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
       webviewTag: false,
+      preload: path.join(__dirname, 'preload.js'),
     },
   });
   encadrerNavigation(fenetre.webContents);
@@ -189,6 +244,10 @@ function ouvrirFenetre() {
 let demarrageStack = Promise.resolve(0);
 
 async function demarrer() {
+  // Le seul canal que la page puisse emprunter (#928), armé avant qu'elle ne charge. `handle` et
+  // non `on` : la page attend une réponse, et c'est cette réponse qui lui dit si le dossier s'est
+  // ouvert — un canal à sens unique l'aurait laissée sans rien à afficher.
+  ipcMain.handle('maestro:ouvrir-dossier', (_evenement, chemin) => ouvrirDossier(chemin));
   ouvrirFenetre();
   await chargerAttente();
   annoncer('demarrage', optionsStack.length > 0 ? 'Scénario de démonstration.' : null);
