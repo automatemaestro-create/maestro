@@ -20,7 +20,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { chargerAnalyticsCouts, urlEvenements, type PorteeProjet } from "./api";
+import {
+  chargerAnalyticsCouts,
+  panneDe,
+  urlEvenements,
+  type PanneApi,
+  type PorteeProjet,
+} from "./api";
 import type { AnalyticsCouts, PasSerie } from "./types";
 
 /** Fenêtre de coalescence des rechargements sur rafale d'événements (ms). */
@@ -58,8 +64,8 @@ export type VueAnalytics = {
   chargement: boolean;
   /** Rechargement en cours : la vue précédente reste affichée, estompée. */
   rafraichissement: boolean;
-  /** API injoignable au dernier chargement (null si tout va bien). */
-  erreur: string | null;
+  /** La panne du dernier chargement (null si tout va bien), **typée** (#996). */
+  erreur: PanneApi | null;
 };
 
 export function useAnalyticsCouts(
@@ -70,7 +76,7 @@ export function useAnalyticsCouts(
   const [connecte, setConnecte] = useState(false);
   const [chargement, setChargement] = useState(true);
   const [rafraichissement, setRafraichissement] = useState(false);
-  const [erreur, setErreur] = useState<string | null>(null);
+  const [erreur, setErreur] = useState<PanneApi | null>(null);
 
   const rechargementPrevu = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -89,7 +95,7 @@ export function useAnalyticsCouts(
       setVue(nouvelle);
       setErreur(null);
     } catch (e) {
-      setErreur(e instanceof Error ? e.message : String(e));
+      setErreur(panneDe(e));
     } finally {
       setChargement(false);
       setRafraichissement(false);

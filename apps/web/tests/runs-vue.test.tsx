@@ -43,6 +43,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { VueRun } from "@/components/runs/VueRun";
+import { ErreurApi } from "@/lib/api";
 import { FournisseurEtatGlobal } from "@/lib/etatGlobal";
 import { evenementDepuisEntree, fusionnerJournal } from "@/lib/journal";
 import {
@@ -234,7 +235,9 @@ describe("les quatre cas qui ne se confondent pas", () => {
   });
 
   it("montre la bannière et rien d'autre quand l'API est injoignable", async () => {
-    monter({ erreur: "connexion refusée", executions: [] });
+    // Panne **typée** depuis #996 : rien n'a répondu, ce que la bannière nomme
+    // sans avoir à relire un message.
+    monter({ erreur: ErreurApi.injoignable("/api/executions"), executions: [] });
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/API injoignable/);
   });

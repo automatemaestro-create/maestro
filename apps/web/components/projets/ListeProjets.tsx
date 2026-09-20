@@ -36,8 +36,10 @@ import {
   chargerProjets,
   creerProjet,
   modifierProjet,
+  panneDe,
   supprimerProjet,
   versionnerProjet,
+  type PanneApi,
 } from "@/lib/api";
 import { formatDateHeure } from "@/lib/format";
 import { libelleOrigine } from "@/lib/projets";
@@ -252,7 +254,7 @@ type Props = {
 export function ListeProjets({ apresEcriture }: Props = {}) {
   const [projets, setProjets] = useState<Projet[]>([]);
   const [chargement, setChargement] = useState(true);
-  const [erreur, setErreur] = useState<string | null>(null);
+  const [erreur, setErreur] = useState<PanneApi | null>(null);
   const [creationOuverte, setCreationOuverte] = useState(false);
   const [editionId, setEditionId] = useState<string | null>(null);
 
@@ -261,7 +263,7 @@ export function ListeProjets({ apresEcriture }: Props = {}) {
       setProjets(await chargerProjets());
       setErreur(null);
     } catch (e) {
-      setErreur(e instanceof Error ? e.message : String(e));
+      setErreur(panneDe(e));
     } finally {
       setChargement(false);
     }

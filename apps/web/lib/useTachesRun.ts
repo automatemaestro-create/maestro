@@ -36,15 +36,15 @@
 
 import { useEffect, useState } from "react";
 
-import { chargerTaches, type PorteeProjet } from "./api";
+import { chargerTaches, panneDe, type PanneApi, type PorteeProjet } from "./api";
 import type { Tache } from "./types";
 
 export type TachesRun = {
   taches: Tache[];
   /** Aucune lecture n'a encore abouti **pour ce run**. */
   chargement: boolean;
-  /** API injoignable ou run refusé (404 `run-inconnu`) à la dernière lecture. */
-  erreur: string | null;
+  /** La panne de la dernière lecture — API muette, ou run refusé (404 `run-inconnu`) — **typée** (#996). */
+  erreur: PanneApi | null;
 };
 
 export function useTachesRun(
@@ -57,7 +57,7 @@ export function useTachesRun(
   // Le run de la dernière lecture aboutie — et non un booléen : c'est lui qui
   // distingue « rien encore lu » de « lu, mais pour le run d'avant ».
   const [lu, setLu] = useState<string | null>(null);
-  const [erreur, setErreur] = useState<string | null>(null);
+  const [erreur, setErreur] = useState<PanneApi | null>(null);
 
   useEffect(() => {
     if (runId === null) return;
@@ -70,7 +70,7 @@ export function useTachesRun(
       })
       .catch((e: unknown) => {
         if (abandonne) return;
-        setErreur(e instanceof Error ? e.message : String(e));
+        setErreur(panneDe(e));
       })
       .finally(() => {
         // Posé même en échec : la question « a-t-on essayé pour ce run ? » a sa
