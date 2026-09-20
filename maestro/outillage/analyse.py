@@ -53,6 +53,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from maestro.outillage.detection import (
+    CHEMIN_MANIFESTE,
     CI_PAR_MARQUEUR,
     DOSSIERS_SCRIPTS,
     DOSSIERS_SKILLS,
@@ -717,9 +718,8 @@ def _outillage_present(base: Path) -> tuple[Piece, ...]:
             pieces.append(Piece(nom=nom, chemin=nom, role=role))
     for dossier in DOSSIERS_SKILLS:
         pieces.extend(_skills_de(base, dossier))
-    manifeste = ".maestro/outillage/manifeste.json"
-    if (base / manifeste).is_file():
-        pieces.append(Piece(nom="manifeste.json", chemin=manifeste, role="manifeste"))
+    if (base / CHEMIN_MANIFESTE).is_file():
+        pieces.append(Piece(nom="manifeste.json", chemin=CHEMIN_MANIFESTE, role="manifeste"))
     return tuple(pieces)
 
 

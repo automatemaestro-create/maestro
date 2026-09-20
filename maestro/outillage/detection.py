@@ -326,6 +326,12 @@ CONVENTIONS_ALIAS: dict[str, str] = {
 #: que lorsqu'il n'en a aucun.
 DOSSIERS_SCRIPTS: tuple[str, ...] = ("scripts", "bin", "tools")
 
+#: Le manifeste d'outillage d'un projet (docs/38 §4.3), relatif à sa racine.
+#: Écrit **une fois** : l'analyse le reconnaît comme une pièce présente (#1030),
+#: le contexte d'un agent n'est lu que de lui (#1032) et #1033 l'écrira. Deux
+#: orthographes de ce chemin donneraient un outillage généré ici et relu là.
+CHEMIN_MANIFESTE = ".maestro/outillage/manifeste.json"
+
 #: Où chercher des skills **déjà écrits**. `.agents/skills` est l'emplacement
 #: retenu (docs/38 §3.3) ; les trois autres sont ceux que les clients lisent, et
 #: un skill qui y vit est un skill que le projet porte — le redonner ailleurs
