@@ -1242,6 +1242,63 @@ sous les yeux** (un compteur temps réel) porte la classe `chiffre`
 elle, le passage de « 1 » à « 8 » élargit la valeur et fait sauter la ligne
 autour d'elle.
 
+### Le barème des rayons et des ombres — `app/globals.css` (#982)
+
+Quatre rayons, **un seul** pas d'ombre, nommés par leur **rôle** comme les pas de
+texte le sont. Avant #982 ni l'un ni l'autre n'avait de token, et le produit
+écrivait six rayons et cinq ombres.
+
+| Token | Valeur | Ce qu'il dit |
+| --- | --- | --- |
+| `rounded-controle` | 6 px | ce qu'on manipule : bouton, champ, sélecteur, entrée de navigation, onglet |
+| `rounded-carte` | 8 px | une surface **posée** sur la page : carte, encart, conteneur en place |
+| `rounded-flottant` | 12 px | une surface qui **survole** la page : panneau, menu déroulant, modale |
+| `rounded-pastille` | pleine | ce qui est circulaire ou en pilule : badge d'état, avatar, point d'état |
+| `shadow-flottant` | l'ombre de `shadow-lg` | **le seul** pas d'ombre : « cette surface flotte » |
+
+**Une surface posée se sépare par son bord (`border-bord`), jamais par une
+ombre.** Le pas d'ombre unique est la décision la moins évidente du barème, et
+c'est une mesure qui l'a tranchée : relevé dans le navigateur le 2026-09-20,
+GitHub porte **une** ombre d'élévation sur toute une page d'Actions (ses 32
+autres `box-shadow` sont des `inset`, donc des filets) et Grafana **une** aussi.
+Un second pas — « posé », qui aurait gardé l'ombre des cartes — a été rendu,
+comparé à ces références et écarté : il nomme une surface, pas un état.
+
+**Un pas, un nom.** Comme pour la typographie, la classe Tailwind jumelle est
+**aliasée** sur le pas de rôle (`--radius-md: var(--radius-controle)`,
+`--radius-lg: var(--radius-carte)`, `--radius-xl: var(--radius-flottant)`,
+`--shadow-lg: var(--shadow-flottant)`). Conséquence utile pendant toute la
+migration : **renommer `rounded-lg` en `rounded-carte` ne change aucun pixel**,
+et les deux noms ne peuvent plus porter deux valeurs.
+
+⚠ `shadow-sm`, `shadow-md`, `shadow-2xl` et le `shadow` **nu** n'ont **pas**
+d'alias : aucun n'a de pas dans le barème. Les remplacer change le rendu, donc
+c'est une **migration** — avec sa relecture visuelle et son thème sombre —, pas
+un renommage. Et deux écritures sont à connaître parce qu'elles ne disent pas ce
+qu'on croit : `rounded` **nu** rend le pas que Tailwind v4 donne pour *déprécié*
+(4 px — 20 emplois dans le produit, un sixième rayon que personne n'a choisi), et
+`shadow` **nu** est déprécié lui aussi et rend **exactement `shadow-sm`**.
+
+**Ce qui le garde** : `tests/rayons-ombres.test.ts`, sur le modèle de
+`couleurs.test.ts` — la sonde est prouvée sur un échantillon fautif avant de
+juger le produit, et le **résidu est nommé et compté fichier par fichier**,
+exact et non plafonné, donc il ne peut que décroître. Elle reconnaît quatre
+écritures : la classe nue, la classe dirigée (`rounded-t-md`), la valeur
+arbitraire (`rounded-[10px]`) et l'écriture en ligne
+(`style={{ boxShadow: … }}`) — un filet qu'on contourne en une ligne n'en est
+pas un. Elle se tait sur `ring-*`, `inset-shadow-*` et `drop-shadow-*`, qui ne
+sont pas l'élévation d'une surface, et chacune a sa raison écrite en tête du
+fichier.
+
+**Résidu au 2026-09-20 : 165 écritures sur 59 fichiers** — 136 rayons, 28 ombres,
+1 écriture en ligne. Le socle (`components/Primitives.tsx`) en est déjà sorti
+pour ses huit rayons, qui ont pris leur nom de rôle à valeur constante ; ses
+trois ombres y restent, parce que les retirer changerait le rendu. Un manque du
+barème est **nommé et non toléré** : le voile du guide de prise en main
+(`0 0 0 9999px`) n'est pas une élévation et aucun pas ne peut l'exprimer — il est
+inscrit dans `MANQUES_DU_BAREME`, **dans** le compte, et dit seulement jusqu'où
+le résidu peut descendre sans que le barème bouge.
+
 ### L'ascenseur discret — `app/globals.css` et `lib/ascenseur.ts` (#725, #882)
 
 Le socle ne disait rien des ascenseurs, si bien que les **seize surfaces
@@ -1986,6 +2043,7 @@ le pixel — le bout en bout dans un vrai navigateur reste le rôle du skill
 | `tests/sobriete.test.tsx` | La **règle des trois places** (#539, voir « Le langage visuel » ci-dessus) rendue opposable : les écrans du menu recensés, bandeau de tête ≤ 4 chiffres, corps ≤ 3 blocs, une seule colonne de propriétés, aucun bloc anonyme. Rien n'y est **déclaré** — le bandeau se reconnaît à ses `TuileChiffre`, la colonne à sa balise `<aside>`, et l'**arbitrage se prouve** en montant chaque écran une seconde fois files vides : un bloc qui prétendrait arbitrer sans disparaître compterait comme les autres. Sonde prouvée sur un échantillon fautif avant de balayer, comme `contraste.test.ts` |
 | `tests/contraste.test.ts` | Le contraste de la palette sémantique (#534) : les **36 paires légitimes par thème** de #533 mesurées en octets dans `globals.css`, au seuil 4,5:1 (texte) ou 3:1 (contour, aplat d'état) — **et la sonde prouvée avant de servir**, sur les ratios que #471 avait mesurés au navigateur puis sur une faute glissée exprès. Le contrôle qui en fait un filet plutôt qu'un instantané est le dernier : un token ajouté sans paire **rougit** au lieu d'être vert par construction |
 | `tests/couleurs.test.ts` | La **couleur écrite à la main** dans les écrans (#895, voir « La palette sémantique » ci-dessus) — l'**usage** de la palette, là où `contraste.test.ts` juge la palette et `a11y.test.tsx` les seuls contrôles de saisie : aucune paire `dark:` + couleur brute hors du résidu **nommé fichier par fichier avec son compte exact** (689 dans 65 fichiers au lot, 684 depuis #910, 680 depuis #911, 678 depuis #912, 648 dans 64 fichiers depuis #945), le compte étant exact et non un plafond — une paire de moins rougit aussi, si bien que le résidu ne peut que décroître et que chaque décroissance est un geste écrit. Deux **manques du socle** y sont nommés avec leur raison (six au lot — #910 en a comblé deux par une opacité de token existant, #911 a comblé `selectionne` par un token, #912 `provenance` par trois tokens ajoutés), et un test rougit le jour où la palette les comble — c'est ce qui a fait sortir `selectionne` (#911) puis `provenance` (#912) de la liste. **Prouvée avant de servir en deux étages** : le motif d'abord (les trois paires que la veille #868 a relevées, les variantes dans les deux ordres, le contournement par valeur arbitraire, et ce sur quoi il ne doit pas crier — les tokens, la prose), puis le **verdict** lui-même sur une mesure fabriquée — sans quoi une comparaison qui cesserait de comparer rendrait « rien à signaler » |
+| `tests/rayons-ombres.test.ts` | Le **rayon et l'ombre écrits hors barème** (#982, voir « Le barème des rayons et des ombres » ci-dessus) — le pendant de `couleurs.test.ts` pour les deux propriétés qui disent la **profondeur**. Elle juge le **nom**, pas la valeur : `rounded-lg` et `rounded-carte` rendent le même pixel, et pourtant l'un ne dit pas si l'auteur visait un contrôle ou s'il a recopié la ligne d'à côté. Le barème est **lu dans `globals.css`, jamais recopié**, et un **pas** (valeur littérale) s'y distingue d'une **jumelle** (`var(…)`) — on ne peut donc pas ajouter un pas en le faisant passer pour un alias, et deux contrôles tiennent le « peu de pas » : **exactement 4 rayons et 1 ombre**, un de plus rougit. Résidu **nommé fichier par fichier avec son compte exact** (165 dans 59 fichiers au lot), exact et non plafonné. **Prouvée avant de servir en deux étages** comme `couleurs.test.ts` : le motif d'abord — les cinq rayons et cinq ombres relevés le 2026-09-20, les variantes dans les deux ordres, le rayon et l'ombre **nus** (les deux pas dépréciés de Tailwind v4), les coins dirigés, la valeur arbitraire, l'écriture **en ligne** (`style={{ boxShadow }}`), et ce sur quoi elle ne doit pas crier (le barème lui-même, `ring-*`, `inset-shadow-*`, `drop-shadow-*`, la prose) —, puis le **verdict** sur une mesure fabriquée. Un plancher de plus qu'elle seule a besoin de poser : **le barème doit être employé et pas seulement déclaré**, sans quoi un barème que personne n'écrit rendrait « zéro écart de moins » avec les mots de « tout est au barème » |
 | `tests/hydratation.test.ts` | Ce que le layout racine **tolère du dehors** (#730) : les deux `suppressHydrationWarning`, celui de `<html>` (le `data-theme` que `SCRIPT_INIT_THEME` corrige, #118) et celui de `<body>` (les attributs qu'une extension y pose avant l'hydratation — Grammarly, LastPass…). Ils ont l'air d'un doublon et n'en sont pas : déplacer l'un sur l'autre, le geste qu'on fait en croyant simplifier, ramène l'un des deux écarts. La sonde lit les **octets du layout**, et ce n'est pas ici un pis-aller mais le seul filet possible — le symptôme exige un navigateur, un rendu serveur à hydrater et une extension installée, donc ni jsdom ni la CI ne le verront jamais revenir. Comme `contraste.test.ts`, elle est **prouvée avant de servir**, sur un échantillon fautif qui porte le piège : la prose du layout nomme `<body>` *avant* la balise, si bien qu'une recherche naïve rougirait un fichier correct |
 
 Cinq fichiers portent l'outillage plutôt que des tests :
