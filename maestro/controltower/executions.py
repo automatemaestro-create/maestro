@@ -204,6 +204,7 @@ from maestro.controltower.events import (
     ROLE_RUN,
     Event,
     EventBus,
+    titre_court,
 )
 from maestro.controltower.hote import DemarrageHoteRate, HoteRun, OrdreRun
 from maestro.controltower.hote_en_process import HoteRunEnProcess
@@ -1643,12 +1644,22 @@ class ServiceExecutions:
         structuré et déjà validé, dont le `chemin` doit rester **exact** — c'est
         la destination où le téléversement (#317) écrira. Un masquage y
         corromprait la donnée pour un gain hypothétique.
+
+        **L'objectif voyage en deux exemplaires** depuis #991 (défaut S12) : son
+        `titre_court` dans `titre`, ce que le journal, la frise et la liste des
+        runs *montrent* ; l'objectif entier dans `description`, ce que la
+        projection garde et que la vue du run *lit*. Deux champs plutôt qu'un
+        parce que les deux usages ne demandent pas la même chose — et c'est la
+        `description` que la projection relit, `titre` ne lui servant plus que de
+        repli pour un événement émis avant ce lot (rejeu du journal durable, #97).
         """
+        objectif_expurge = redact_secrets(objectif)
         self._emettre(
             Event(
                 type=EVENEMENT_EXECUTION_STATUT,
                 run_id=run_id,
-                titre=redact_secrets(objectif),
+                titre=titre_court(objectif_expurge),
+                description=objectif_expurge,
                 agent=ACTEUR_RUN,
                 role=ROLE_RUN,
                 statut=statut,

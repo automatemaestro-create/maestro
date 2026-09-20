@@ -27,7 +27,7 @@ import {
   type PanneApi,
   type PorteeProjet,
 } from "./api";
-import type { AnalyticsCouts, PasSerie } from "./types";
+import type { AnalyticsCouts, PasDemande } from "./types";
 
 /** Fenêtre de coalescence des rechargements sur rafale d'événements (ms). */
 const DELAI_RECHARGEMENT_MS = 150;
@@ -44,15 +44,24 @@ export type Periode = {
   id: string;
   libelle: string;
   dureeMs: number | null;
-  pas: PasSerie;
+  pas: PasDemande;
 };
 
-/** Les préréglages de période, du plus court au plus large. */
+/**
+ * Les préréglages de période, du plus court au plus large.
+ *
+ * Les trois fenêtres bornées déclarent leur pas : elles connaissent leur
+ * étendue, donc le nombre de colonnes qu'elles produiront. « Tout » ne la
+ * connaît pas — c'est tout l'historique projeté — et déclarait « heure » par
+ * défaut : sur douze jours, le graphe rendait 291 colonnes horaires dont 280
+ * vides, chacune nommée pour les technologies d'assistance (#991, défaut S10).
+ * Elle demande donc `auto`, et le backend rend le pas qu'il a retenu.
+ */
 export const PERIODES: readonly Periode[] = [
   { id: "1h", libelle: "Dernière heure", dureeMs: 3_600_000, pas: "minute" },
   { id: "24h", libelle: "24 heures", dureeMs: 86_400_000, pas: "heure" },
   { id: "7j", libelle: "7 jours", dureeMs: 7 * 86_400_000, pas: "jour" },
-  { id: "tout", libelle: "Tout", dureeMs: null, pas: "heure" },
+  { id: "tout", libelle: "Tout", dureeMs: null, pas: "auto" },
 ] as const;
 
 export type VueAnalytics = {

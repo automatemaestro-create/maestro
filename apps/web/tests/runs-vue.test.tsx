@@ -577,3 +577,65 @@ describe("une entrée de journal relue devient un événement du fil", () => {
     expect(evenement.usage).toBeNull();
   });
 });
+
+// ------------- ④ Le titre en tête, l'objectif entier dessous (#991, défaut S12)
+
+/**
+ * L'en-tête portait l'objectif lui-même, ramené à trois lignes par un
+ * `line-clamp` : sur un run relancé (#349), où le brief approuvé tient lieu
+ * d'objectif, l'œil en voyait trois lignes et un lecteur d'écran quinze pages.
+ *
+ * Le ticket demande les deux moitiés, et elles vont ensemble : un titre **court**
+ * en tête, et l'objectif entier **disponible là où on le lit** — c'est-à-dire
+ * ici, et nulle part ailleurs.
+ */
+describe("l'en-tête d'un run", () => {
+  const OBJECTIF_LONG =
+    "Reprendre l'écran des coûts de bout en bout\n\n## Contexte\n\nLa portée " +
+    "« Tout » garde le pas horaire quelle que soit l'étendue.";
+
+  const monterRunLong = () =>
+    monter({
+      executions: [
+        runFactice({
+          run_id: RUN,
+          objectif: OBJECTIF_LONG,
+          titre: "Reprendre l'écran des coûts de bout en bout",
+        }),
+      ],
+    });
+
+  it("titre le run par sa forme courte, pas par son objectif", async () => {
+    monterRunLong();
+    const tete = await screen.findByRole("heading", {
+      level: 2,
+      name: /Reprendre l'écran des coûts/,
+    });
+    // Le nom accessible s'arrête au titre : c'est tout le défaut S12, et il se
+    // lit ici plutôt que sur le rendu, qu'un `line-clamp` aurait déjà borné.
+    expect(tete).toHaveTextContent("Reprendre l'écran des coûts de bout en bout");
+    expect(tete).not.toHaveTextContent("garde le pas horaire");
+  });
+
+  it("garde l'objectif entier à un geste, replié", async () => {
+    monterRunLong();
+    const depliant = await screen.findByText("Objectif complet");
+    // Replié : c'est une réponse à une question qu'on ne se pose pas à chaque
+    // ouverture — mais le texte est bien là, dans le document.
+    expect(depliant.closest("details")).not.toHaveAttribute("open");
+    await userEvent.click(depliant);
+    expect(depliant.closest("details")).toHaveAttribute("open");
+    expect(screen.getByText(/garde le pas horaire/)).toBeInTheDocument();
+  });
+
+  it("ne déplie rien quand le titre **est** l'objectif", async () => {
+    // Le cas courant — un objectif d'une ligne. Un dépliant qui redirait la
+    // ligne du dessus serait un geste pour rien.
+    monter();
+    await screen.findByRole("heading", {
+      level: 2,
+      name: "Prototyper un mini-CRM",
+    });
+    expect(screen.queryByText("Objectif complet")).not.toBeInTheDocument();
+  });
+});

@@ -41,6 +41,7 @@ from maestro.controltower.events import (
     EVENEMENT_BRIEF_REPONSES,
     Event,
     EventBus,
+    titre_court,
 )
 from maestro.controltower.persistence import bus_durable
 from maestro.controltower.state import (
@@ -86,9 +87,11 @@ ROLE_BRIEF = "Orchestrateur"
 def evenement_demande_brief(demande: DemandeBrief) -> Event:
     """Mue une `DemandeBrief` du moteur en événement `brief.demande`.
 
-    Porte ce qu'il faut pour trancher : le run visé, l'**objectif d'origine** (dans
-    `titre`) et le brief proposé. L'objectif est expurgé des secrets avant de
-    partir, comme partout ailleurs sur le bus (#115).
+    Porte ce qu'il faut pour trancher : le run visé, l'**objectif d'origine** et
+    le brief proposé. L'objectif est expurgé des secrets avant de partir, comme
+    partout ailleurs sur le bus (#115), et voyage en deux exemplaires depuis #991
+    — son titre court dans `titre` (ce que le journal montre), entier dans
+    `description` (ce qu'on lit).
 
     Le **brief, lui, ne l'est pas**, et c'est un choix assumé plutôt qu'un oubli.
     Deux raisons, dans cet ordre : c'est le texte que l'humain doit lire
@@ -103,7 +106,8 @@ def evenement_demande_brief(demande: DemandeBrief) -> Event:
     return Event(
         type=EVENEMENT_BRIEF_DEMANDE,
         run_id=demande.run_id,
-        titre=redact_secrets(demande.objectif),
+        titre=titre_court(redact_secrets(demande.objectif)),
+        description=redact_secrets(demande.objectif),
         agent=ACTEUR_BRIEF,
         role=ROLE_BRIEF,
         statut=EXECUTION_EN_ATTENTE_BRIEF,
@@ -178,8 +182,9 @@ async def _premiere_decision(flux: AsyncIterator[Event], run_id: str) -> Decisio
 def evenement_questions_brief(demande: DemandeClarification) -> Event:
     """Mue une `DemandeClarification` du moteur en événement `brief.questions` (#321).
 
-    Porte le run visé, l'objectif d'origine (expurgé, comme partout ailleurs sur le
-    bus), le **brief dont on pose les questions** — jamais une copie de sa liste : le
+    Porte le run visé, l'objectif d'origine (expurgé comme partout ailleurs sur le
+    bus, et scindé titre court / objectif entier comme en #991), le **brief dont on
+    pose les questions** — jamais une copie de sa liste : le
     brief est régénéré en entier à chaque tour, dupliquer ses questions créerait deux
     vérités dont l'une se périmerait — et le **rang du tour avec son plafond**.
 
@@ -191,7 +196,8 @@ def evenement_questions_brief(demande: DemandeClarification) -> Event:
     return Event(
         type=EVENEMENT_BRIEF_QUESTIONS,
         run_id=demande.run_id,
-        titre=redact_secrets(demande.objectif),
+        titre=titre_court(redact_secrets(demande.objectif)),
+        description=redact_secrets(demande.objectif),
         agent=ACTEUR_BRIEF,
         role=ROLE_BRIEF,
         statut=EXECUTION_EN_ATTENTE_REPONSES,

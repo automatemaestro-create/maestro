@@ -65,6 +65,7 @@ import {
   type CleSectionListe,
 } from "@/lib/brief";
 import { useEtatGlobal } from "@/lib/etatGlobal";
+import { nomDuRun } from "@/lib/execution";
 import { formatHeureRelative } from "@/lib/format";
 import { useHorloge } from "@/lib/horloge";
 import {
@@ -197,8 +198,12 @@ export function CadrageDansLeFil({
 
   return (
     <div className="flex flex-col gap-3">
+      {/* Le **titre** du run dans le nom accessible (#991), pas son objectif :
+          un nom accessible est annoncé à chaque entrée dans la liste, et le
+          brief de quinze pages d'un run relancé y tenait en entier. L'objectif,
+          lui, est juste en dessous — c'est la première bulle du fil. */}
       <ol
-        aria-label={`Cadrage de ${execution.objectif || runId}`}
+        aria-label={`Cadrage de ${nomDuRun(execution)}`}
         className="flex flex-col gap-2 rounded-md border border-neutral-200 bg-neutral-50 p-3 dark:border-neutral-800 dark:bg-neutral-950"
       >
         {/* L'objectif d'origine ouvre le fil, **côté utilisateur** : c'est la

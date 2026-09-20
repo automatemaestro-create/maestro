@@ -49,6 +49,7 @@ import { resumeArbitrages } from "@/lib/annonces";
 import { PAGE_DU_CADRAGE, runsEnAttente } from "@/lib/brief";
 import { estNotableNotification, grouperEvenements } from "@/lib/evenements";
 import { useEtatGlobal } from "@/lib/etatGlobal";
+import { nomDuRun } from "@/lib/execution";
 import {
   aDesIssuesNonLues,
   ecrireIssuesVues,
@@ -387,8 +388,11 @@ function CarteBriefCompacte({
 
   return (
     <Carte densite="compacte" ton="attention">
+      {/* Le titre court du run (#991), plus l'objectif entier en infobulle :
+          ici le `title` apprend quelque chose, là où #536 l'a retiré des
+          endroits où il redisait le texte visible. */}
       <p className="line-clamp-2 text-annexe font-medium" title={run.objectif}>
-        {run.objectif || run.run_id}
+        {nomDuRun(run)}
       </p>
       <p className="mt-0.5 flex items-center gap-1 text-micro text-neutral-500 dark:text-neutral-400">
         <IconeBrief className="size-3 shrink-0" />

@@ -42,10 +42,45 @@ if TYPE_CHECKING:  # import différé : seul le typage en a besoin (pas de cycle
     from maestro.controltower.state import EtatExecution
 
 #: Granularités de la série temporelle — le paramètre `pas` de l'endpoint.
+#: Écrites de la plus fine à la plus grossière : `_pas_pour` descend cette
+#: liste, et l'inverser changerait son verdict.
 PAS_MINUTE = "minute"
 PAS_HEURE = "heure"
 PAS_JOUR = "jour"
 PAS_VALIDES = (PAS_MINUTE, PAS_HEURE, PAS_JOUR)
+
+#: La granularité **déduite de l'étendue** (#991, défaut S10) — une valeur de
+#: requête, jamais de réponse : la vue rend toujours le pas qu'elle a retenu.
+#:
+#: Elle existe parce qu'une fenêtre sans borne (« Tout ») n'a pas d'étendue
+#: connue de l'appelant : l'écran demandait donc « heure » quoi qu'il arrive et
+#: obtenait ~290 seaux horaires presque tous vides sur douze jours d'historique,
+#: que le graphe comblait puis étiquetait un à un. Le client ne peut pas choisir
+#: ce qu'il ignore ; la projection, elle, sait de quand date son premier
+#: événement.
+PAS_AUTO = "auto"
+
+#: Les valeurs acceptées **en entrée** — les trois granularités, plus `auto`.
+PAS_DEMANDABLES = (*PAS_VALIDES, PAS_AUTO)
+
+#: Le nombre de seaux au-delà duquel `auto` passe au pas suivant (#991).
+#:
+#: 96 n'est pas un réglage d'écran mais le seuil qui **reproduit les trois
+#: périodes bornées** : une heure y tient en 61 seaux d'une minute, 24 heures en
+#: 25 seaux d'une heure, 7 jours en 8 seaux d'un jour — soit exactement les pas
+#: que ces trois préréglages déclarent. Déduit, il rend donc ce qui était écrit,
+#: et ne répond différemment que là où personne ne pouvait répondre.
+SEAUX_MAX = 96
+
+#: Durée d'un seau, par granularité (secondes) — de quoi compter les seaux d'une
+#: étendue. Un mois n'en est pas un : un pas non constant se compterait mal, et
+#: le jour suffit à tenir n'importe quelle étendue sous un nombre lisible de
+#: seaux jusqu'à plusieurs mois.
+_DUREE_PAS_S: dict[str, int] = {
+    PAS_MINUTE: 60,
+    PAS_HEURE: 3_600,
+    PAS_JOUR: 86_400,
+}
 
 #: Types d'événements porteurs d'usage — la même liste que le grand livre du
 #: run (`EtatExecution.cout`, #57) : compter un autre type créerait un écart
@@ -216,6 +251,26 @@ def _parse_horodatage(horodatage: str) -> datetime | None:
     return date if date.tzinfo is not None else date.replace(tzinfo=UTC)
 
 
+def _pas_pour(etendue_s: float) -> str:
+    """Le pas le plus fin dont `etendue_s` tient sous `SEAUX_MAX` seaux (#991).
+
+    C'est la règle entière du pas `auto`, et elle tient en une phrase : on garde
+    la granularité la plus fine tant que le graphe reste lisible, et on passe à
+    la suivante dès qu'il ne l'est plus. Un historique de douze jours se lit donc
+    en jours (13 colonnes) là où il rendait 291 colonnes horaires dont 280 vides,
+    chacune nommée pour les technologies d'assistance.
+
+    Au-delà du jour, il n'y a plus de pas où aller : une étendue de deux ans rend
+    `jour` quand même, et c'est le bon verdict — la série servie est alors
+    **creuse** (seuls les jours qui ont dépensé), et c'est le graphe qui renonce
+    à combler plutôt que d'aligner sept cents colonnes.
+    """
+    for pas in PAS_VALIDES:
+        if etendue_s / _DUREE_PAS_S[pas] + 1 <= SEAUX_MAX:
+            return pas
+    return PAS_JOUR
+
+
 def _seau(date: datetime, pas: str) -> str:
     """Le début du seau contenant `date`, tronqué au `pas` demandé (ISO)."""
     if pas == PAS_MINUTE:
@@ -284,7 +339,11 @@ def agrege_couts(
     `depuis` (aware) restreint la fenêtre : seuls les événements datés à partir
     de cette borne comptent — un événement sans horodatage lisible est alors
     écarté (fenêtre indémontrable) ; sans borne, il compte dans les agrégats
-    mais pas dans la série. `pas` fixe la granularité des seaux temporels.
+    mais pas dans la série. `pas` fixe la granularité des seaux temporels, ou
+    vaut `PAS_AUTO` : elle se **déduit alors de l'étendue réellement couverte**
+    (#991, `_pas_pour`), ce que l'appelant ne peut pas faire sur une fenêtre sans
+    borne. La vue rend toujours le pas **retenu**, jamais `auto` : c'est par là
+    que l'écran apprend à quelle granularité lire ses colonnes.
 
     `portee` (#277, contrat de `maestro.controltower.portee`) restreint la
     dépense : seuls les événements que la portée **retient** comptent. Le filtre
@@ -294,8 +353,10 @@ def agrege_couts(
     vaut la vue transverse : comme pour la projection, refuser une question sans
     périmètre est le rôle des routes, pas celui du calcul.
     """
-    if pas not in PAS_VALIDES:
-        raise ValueError(f"pas invalide : {pas} (attendus : {', '.join(PAS_VALIDES)})")
+    if pas not in PAS_DEMANDABLES:
+        raise ValueError(
+            f"pas invalide : {pas} (attendus : {', '.join(PAS_DEMANDABLES)})"
+        )
     portee = portee if portee is not None else PorteeProjet.tous()
     if depuis is not None and depuis.tzinfo is None:
         depuis = depuis.replace(tzinfo=UTC)
@@ -304,7 +365,12 @@ def agrege_couts(
     par_execution: dict[str, _Accumulateur] = {}
     par_agent: dict[str, _Accumulateur] = {}
     par_tache: dict[str, _Accumulateur] = {}
-    par_seau: dict[str, StepUsage] = {}
+    # Les usages datés, **avant** d'être mis en seaux (#991) : le pas peut n'être
+    # connu qu'à la fin (`PAS_AUTO` le déduit de l'étendue), et la découpe ne peut
+    # donc plus se faire au fil de la boucle. Rien n'y est conservé de plus que ce
+    # que la projection tient déjà en mémoire — une date et un usage par
+    # événement comptable retenu.
+    usages_dates: list[tuple[datetime, StepUsage]] = []
     # Les tickets externes (#187) se collectent **à part** : ils n'ont pas de
     # coût, donc ils arrivent aussi sur des événements sans usage (le
     # `tache.reference` n'en porte jamais) — les accumuler dans `par_tache`
@@ -348,8 +414,7 @@ def agrege_couts(
             total = total.fusion(usage)
             run.usage = run.usage.fusion(usage)
             if date is not None:
-                seau = _seau(date, pas)
-                par_seau[seau] = par_seau.get(seau, StepUsage()).fusion(usage)
+                usages_dates.append((date, usage))
 
             if event.agent not in _AGENTS_NON_EXECUTANTS:
                 acteur = par_agent.setdefault(event.agent, _Accumulateur())
@@ -385,6 +450,20 @@ def agrege_couts(
         retenu = par_execution.get(execution.run_id)
         if retenu is not None:
             retenu.nb_taches_du_run = len(execution.taches_vues)
+
+    # Le pas retenu, puis la mise en seaux (#991). `auto` se résout sur l'étendue
+    # **couverte par la série** — premier et dernier usage daté —, et non sur
+    # `depuis` : une fenêtre de sept jours qui n'a vu travailler qu'une heure se
+    # lit à la minute, et c'est ce qu'on veut dire. Une série d'au plus un point
+    # n'a pas d'étendue : le pas le plus fin la rend telle quelle.
+    if pas == PAS_AUTO:
+        dates = [date for date, _ in usages_dates]
+        etendue = (max(dates) - min(dates)).total_seconds() if dates else 0.0
+        pas = _pas_pour(etendue)
+    par_seau: dict[str, StepUsage] = {}
+    for date, usage in usages_dates:
+        seau = _seau(date, pas)
+        par_seau[seau] = par_seau.get(seau, StepUsage()).fusion(usage)
 
     return AnalyticsCouts(
         depuis=depuis.isoformat() if depuis is not None else None,

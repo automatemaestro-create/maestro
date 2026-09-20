@@ -52,6 +52,7 @@ from maestro.controltower.events import (
     Brief,
     Event,
     ReferenceTicket,
+    titre_court,
 )
 from maestro.controltower.graphe import EtatNoeud, GrapheRun, graphe_du_run
 from maestro.controltower.portee import PorteeProjet, PorteeRun
@@ -688,7 +689,9 @@ class EtatExecution:
         """Le **résumé** du run (`ResumeExecution` du contrat #183), sans sa trace.
 
         La forme que servent `GET /api/executions` et le lancement (#185) :
-        identité, objectif, statut, volume, coût et bornes temporelles. `ticket`
+        identité, objectif, statut, volume, coût et bornes temporelles. L'objectif
+        y vient en deux formes depuis #991 — `titre`, court et borné, ce que les
+        écrans montrent ; `objectif`, entier, ce que la vue du run lit. `ticket`
         est le ticket externe dont part le run (#187) — lu **ici**, dans la
         projection, depuis l'événement de lancement : la référence voyage
         désormais sur le bus, donc elle survit au redémarrage de l'API comme le
@@ -709,6 +712,14 @@ class EtatExecution:
         return {
             "run_id": self.run_id,
             "objectif": self.objectif,
+            # Le **titre** du run (#991, défaut S12) : la forme courte et bornée
+            # de l'objectif, celle que la liste des runs et l'en-tête montrent.
+            # Dérivé ici plutôt que stocké, pour deux raisons : il n'y a qu'une
+            # vérité (l'objectif) et donc rien qui puisse se désaccorder, et un
+            # run relu d'un journal antérieur à ce lot obtient son titre court
+            # comme les autres. L'objectif reste servi à côté, entier — c'est la
+            # vue d'un run qui le lit, et c'est là qu'il doit rester lisible.
+            "titre": titre_court(self.objectif),
             "statut": self.statut,
             "nb_taches": self.nb_taches,
             "cout_usd": self.cout_usd,
@@ -1613,7 +1624,12 @@ class ControlTowerState:
         if event.statut in ORDRES_PAUSE:
             execution.en_pause = event.statut == ORDRE_PAUSE
             return
-        execution.objectif = event.titre or execution.objectif
+        # L'objectif **entier** est dans `description` depuis #991 (défaut S12),
+        # `titre` ne portant plus que sa forme courte. Le repli sur `titre` n'est
+        # pas décoratif : il est ce qui fait relire correctement un événement
+        # émis avant ce lot, au rejeu du journal durable (#97) comme sur un bus
+        # où un producteur plus ancien parlerait encore.
+        execution.objectif = event.description or event.titre or execution.objectif
         execution.statut = event.statut or execution.statut
         if event.ticket is not None:
             # Le ticket dont part le run (#187) : posé par le lancement, jamais
