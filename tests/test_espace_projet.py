@@ -41,6 +41,7 @@ from maestro.projets.racine import RacineRefusee, detecter_vcs
 from maestro.projets.store import ProjetStore
 from maestro.providers.base import ModelProvider
 from maestro.sandbox import (
+    DOSSIER_ATELIER,
     EspaceProjetIndisponible,
     FrontiereEcriture,
     branche_de_tache,
@@ -241,6 +242,124 @@ def test_rien_n_est_retire_de_la_racine_meme_sur_exception(tmp_path: Path) -> No
     # Le `rmtree` du `finally` est ce qui a effacé `squelette-p1` (#568) : plus jamais.
     assert (racine / "README.md").is_file()
     assert (racine / "en-cours.md").read_text(encoding="utf-8") == "à moitié"
+
+
+# --------------------------------------------------------------------------- #
+# L'atelier de la tâche : la racine garde le livrable, pas les brouillons (#944)
+# --------------------------------------------------------------------------- #
+
+
+def test_l_atelier_de_la_tache_est_ouvert_dans_la_racine(tmp_path: Path) -> None:
+    """Créé et pas seulement nommé : un agent qui y `cd` ou y lance un script en a
+    besoin, là où `Write` l'aurait créé au passage."""
+    projet = _projet_copie(tmp_path)
+    racine = Path(projet.racine)
+
+    with espace_de_travail(projet, tache_id="verification-qa") as ws:
+        assert ws.atelier == f"{DOSSIER_ATELIER}/verification-qa"
+        assert (racine / DOSSIER_ATELIER / "verification-qa").is_dir()
+
+
+def test_l_atelier_n_entre_jamais_au_recensement(tmp_path: Path) -> None:
+    """Le défaut G12 vu du rapport de run : un harnais de vérification rangé à
+    l'atelier ne doit pas ressortir en livrable — sans quoi on n'aurait fait que
+    déplacer le désordre du disque vers le rapport."""
+    projet = _projet_copie(tmp_path)
+
+    with espace_de_travail(projet, tache_id="t1") as ws:
+        atelier = ws.path / ws.atelier
+        (atelier / "verif.mjs").write_text("// harnais", encoding="utf-8")
+        (atelier / "notes").mkdir()
+        (atelier / "notes" / "essai.txt").write_text("brouillon", encoding="utf-8")
+        (ws.path / "index.html").write_text("<!doctype html>", encoding="utf-8")
+        produits = [f.chemin for f in ws.produced_files()]
+
+    assert produits == ["index.html"]
+    # Rien n'est effacé pour autant : ce qui a servi reste lisible, rangé à part.
+    assert (Path(projet.racine) / DOSSIER_ATELIER / "t1" / "verif.mjs").is_file()
+
+
+def test_l_atelier_d_une_tache_voisine_n_entre_pas_davantage(tmp_path: Path) -> None:
+    """Les tâches d'un projet non versionné se succèdent dans la même racine :
+    l'atelier de la précédente n'est pas le livrable de la suivante."""
+    projet = _projet_copie(tmp_path)
+    racine = Path(projet.racine)
+    (racine / DOSSIER_ATELIER / "t0").mkdir(parents=True)
+    (racine / DOSSIER_ATELIER / "t0" / "vieux.txt").write_text("d'avant", encoding="utf-8")
+
+    with espace_de_travail(projet, tache_id="t1") as ws:
+        (racine / DOSSIER_ATELIER / "t0" / "vieux.txt").write_text("touché", encoding="utf-8")
+        (ws.path / "livrable.md").write_text("ok", encoding="utf-8")
+        produits = [f.chemin for f in ws.produced_files()]
+
+    assert produits == ["livrable.md"]
+
+
+def test_l_atelier_s_ecrit_sans_que_la_frontiere_le_refuse(tmp_path: Path) -> None:
+    """L'atelier est **dans** la racine et hors des exclusions : c'est une adresse
+    donnée, pas un refus de plus — l'inverse d'une exclusion de périmètre, qui
+    vaut aussi à l'écriture."""
+    projet = _projet_copie(tmp_path)
+    frontiere = frontiere_de(Path(projet.racine), projet)
+
+    assert frontiere is not None
+    assert frontiere.refus("Write", {"file_path": f"{DOSSIER_ATELIER}/t1/verif.mjs"}) is None
+
+
+def test_l_espace_nomme_son_atelier_a_l_agent(tmp_path: Path) -> None:
+    """Le fond du défaut : rien ne disait à l'agent où ranger ce qui n'est pas le
+    livrable. La consigne le dit, et dit aussi que la racine est celle de
+    quelqu'un."""
+    projet = _projet_copie(tmp_path)
+
+    with espace_de_travail(projet, tache_id="module-audio") as ws:
+        consigne = ws.consigne_espace()
+
+    assert f"{DOSSIER_ATELIER}/module-audio/" in consigne
+    assert "racine du projet de l'utilisateur" in consigne
+
+
+def test_les_autres_regimes_ne_disent_rien_de_leur_espace(tmp_path: Path) -> None:
+    """Un répertoire jetable disparaît avec la tâche, un worktree est une copie
+    conforme d'une branche : ni l'un ni l'autre n'a d'atelier à nommer, et leur
+    message de tâche est celui d'avant #944, au caractère près."""
+    with espace_de_travail(None, tache_id="t1") as jetable:
+        assert jetable.consigne_espace() == ""
+
+
+@besoin_de_git
+def test_un_projet_versionne_n_a_pas_d_atelier(tmp_path: Path) -> None:
+    """Son worktree est hors de la racine et sa branche porte tout : ce qu'un agent
+    y laisse ne salit le projet de personne avant la fusion."""
+    projet = _projet_git(tmp_path)
+
+    with espace_de_travail(projet, tache_id="t1") as ws:
+        assert ws.consigne_espace() == ""
+        assert not (Path(projet.racine) / DOSSIER_ATELIER).exists()
+
+
+def test_le_message_de_la_tache_porte_l_atelier(tmp_path: Path) -> None:
+    """Dit dans le message de la **tâche** et non dans le playbook du rôle : le
+    régime dépend du projet, pas de l'agent."""
+    projet = _projet_copie(tmp_path)
+    fournisseur = _FournisseurEcrivain()
+    runtime = AgentRuntime(fournisseur, DEVELOPER_PROFILE)
+
+    asyncio.run(runtime.execute("Corriger le calcul", projet=projet, tache_id="t1"))
+
+    (prompt,) = fournisseur.prompts
+    assert f"{DOSSIER_ATELIER}/t1/" in prompt
+
+
+def test_sans_projet_le_message_de_la_tache_ne_gagne_rien(tmp_path: Path) -> None:
+    """La contrepartie : une tâche sans projet compose le message d'avant."""
+    fournisseur = _FournisseurEcrivain()
+    runtime = AgentRuntime(fournisseur, DEVELOPER_PROFILE)
+
+    asyncio.run(runtime.execute("Corriger le calcul", tache_id="t1"))
+
+    (prompt,) = fournisseur.prompts
+    assert DOSSIER_ATELIER not in prompt
 
 
 # --------------------------------------------------------------------------- #
@@ -570,6 +689,7 @@ class _FournisseurEcrivain(ModelProvider):
 
     def __init__(self) -> None:
         self.espaces: list[Path] = []
+        self.prompts: list[str] = []
 
     def supports(self, model: str) -> bool:
         return True
@@ -586,6 +706,7 @@ class _FournisseurEcrivain(ModelProvider):
         plafond_tours=None, projet=None,
     ):
         self.espaces.append(Path(workspace))
+        self.prompts.append(prompt)
         (Path(workspace) / "RAPPORT.md").write_text("fait", encoding="utf-8")
         return "Fait."
 

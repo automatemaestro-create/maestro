@@ -334,6 +334,13 @@ class SuiviChecklist:
     `rapporte` rend `None` quand la checklist n'a **pas changé** : un agent
     rappelle volontiers sa liste à l'identique, et republier à chaque fois
     coûterait une ligne de journal, un événement de bus et un rendu pour rien.
+
+    Une quatrième règle est venue de l'usage (#944), et c'est le pendant des trois
+    autres : ce qui n'est **pas** acquis se lit aussi. Un agent conclut souvent
+    sans cocher sa dernière ligne — la tâche s'affichait alors « Terminée » sur
+    une checklist à 14/15 sans que rien ne dise pourquoi (retex du 2026-09-11,
+    G12). `inachevees` rend l'écart ; le forcer à 15/15 serait mentir, et le
+    taire est ce qu'on corrige.
     """
 
     def __init__(self, ossature: Sequence[str] = ()) -> None:
@@ -355,6 +362,22 @@ class SuiviChecklist:
     def etapes(self) -> list[EtapeTache]:
         """La checklist courante, dans l'ordre où elle se lit."""
         return list(self._etapes.values())
+
+    def inachevees(self) -> list[EtapeTache]:
+        """Les étapes que le dernier relevé ne donne **pas** pour faites (#944).
+
+        L'écart entre ce que la tâche montre et ce que l'agent a coché. Il n'a de
+        sens qu'une fois la tâche soldée : pendant qu'elle tourne, une étape non
+        cochée est simplement une étape à venir. C'est donc l'appelant
+        (`maestro.engine.executor`) qui choisit l'instant, et lui seul qui connaît
+        le verdict ; ici on ne fait que compter.
+
+        Tout ce qui n'est pas `ETAPE_FAITE` en est, y compris un état inconnu :
+        « rien ne se refuse » le laisse passer côté flux, mais rien n'autorise à
+        le lire comme un acquis (même raison que `_RANGS_ETAT`, qui ne le classe
+        pas).
+        """
+        return [etape for etape in self._etapes.values() if etape.etat != ETAPE_FAITE]
 
     def rapporte(self, relevees: Sequence[EtapeTache]) -> list[EtapeTache] | None:
         """Intègre un relevé — rend la checklist si elle a **changé**, `None` sinon.

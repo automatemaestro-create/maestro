@@ -76,7 +76,11 @@ from maestro.detail_tache import (
     EtapeTache,
     SuiviChecklist,
 )
-from maestro.engine.executor import LocalExecutor, _build_task_description
+from maestro.engine.executor import (
+    SUFFIXE_ETAPE_ACTIVITE,
+    LocalExecutor,
+    _build_task_description,
+)
 from maestro.engine.retry import PolitiqueRelance
 from maestro.orchestrator.schema import Task
 from maestro.providers import claude as claude_mod
@@ -427,6 +431,45 @@ def test_une_ossature_vide_se_remplace_aussi_bien_qu_une_pleine():
     assert [e.etat for e in suivi.etapes()] == [ETAPE_FAITE]
 
 
+def test_les_etapes_inachevees_sont_tout_ce_qui_n_est_pas_fait():
+    """La quatrième règle (#944) : ce qui n'est pas acquis se lit aussi.
+
+    Tout ce qui n'est pas « faite » en est — y compris un **état inconnu**, que
+    « rien ne se refuse » laisse passer sans autoriser pour autant à le lire
+    comme un acquis.
+    """
+    suivi = SuiviChecklist()
+    suivi.rapporte(
+        _releve(
+            ("Lire le schéma", ETAPE_FAITE),
+            ("Écrire les routes", ETAPE_EN_COURS),
+            ("Tester", ETAPE_A_FAIRE),
+            ("Documenter", "skipped"),
+        )
+    )
+
+    assert [e.libelle for e in suivi.inachevees()] == [
+        "Écrire les routes",
+        "Tester",
+        "Documenter",
+    ]
+
+
+def test_une_checklist_entierement_faite_n_a_aucune_etape_inachevee():
+    suivi = SuiviChecklist()
+    suivi.rapporte(_releve(("Écrire le code", ETAPE_FAITE)))
+
+    assert suivi.inachevees() == []
+
+
+def test_une_ossature_jamais_relevee_est_entierement_inachevee():
+    """Un agent qui n'a rien dit laisse l'ossature du plan telle quelle, donc « à
+    faire » de bout en bout : l'écart est alors la checklist entière."""
+    suivi = SuiviChecklist(["Lire l'existant", "Écrire le code"])
+
+    assert len(suivi.inachevees()) == 2
+
+
 # ------------------------- ③ La lecture de l'outil : le pire cas est qu'il ne se passe rien
 
 
@@ -720,6 +763,100 @@ def test_l_ossature_n_est_posee_qu_une_fois_malgre_la_relance():
 
     assert provider.tentatives == 2
     assert _details(journal) == [[("Étape annoncée", ETAPE_A_FAIRE)]]
+
+
+# ---- ⑤bis L'écart entre le verdict et la checklist (#944, retex du 2026-09-11 G12)
+
+
+def _ecarts(journal: RunJournal) -> list[str]:
+    """Ce que le journal dit de l'écart — les lignes d'activité qui le nomment."""
+    return [
+        record.sortie
+        for record in journal.records
+        if record.etape.endswith(SUFFIXE_ETAPE_ACTIVITE)
+        and record.sortie.startswith("Checklist incomplète")
+    ]
+
+
+def test_une_tache_terminee_sur_une_checklist_incomplete_dit_l_ecart():
+    """Le défaut mesuré : « Terminée » à 14/15, sans que rien ne dise laquelle.
+
+    L'agent conclut sans cocher sa dernière ligne, la tâche livre et se solde en
+    succès. La cocher d'office lui ferait dire ce qu'il n'a pas dit, refuser le
+    verdict ferait échouer une tâche qui a livré : reste à **dire** l'écart, et à
+    nommer l'étape en cause.
+    """
+    provider = FournisseurChecklist(
+        [[_releve(("Lire le schéma", ETAPE_FAITE), ("Écrire les routes", ETAPE_EN_COURS))]]
+    )
+
+    journal = _joue(_executeur(provider), _tache())
+
+    (ecart,) = _ecarts(journal)
+    assert "1 étape(s) sur 2 non cochée(s)" in ecart
+    assert "Écrire les routes" in ecart
+    # Ce que l'agent a coché n'est pas rappelé comme un manque.
+    assert "Lire le schéma" not in ecart
+
+
+def test_une_checklist_entierement_cochee_ne_dit_rien():
+    """Le cas nominal ne gagne aucune ligne : ce lot est muet quand tout va bien."""
+    provider = FournisseurChecklist(
+        [[_releve(("Lire le schéma", ETAPE_FAITE), ("Écrire les routes", ETAPE_FAITE))]]
+    )
+
+    journal = _joue(_executeur(provider), _tache())
+
+    assert _ecarts(journal) == []
+
+
+def test_une_tache_sans_checklist_ne_dit_aucun_ecart():
+    """Pas de checklist, pas d'écart : un agent qui ne tient pas de liste laisse la
+    tâche exactement ce qu'elle était (règle de #246)."""
+    journal = _joue(_executeur(FournisseurChecklist()), _tache())
+
+    assert _ecarts(journal) == []
+
+
+def test_une_tache_en_echec_ne_dit_aucun_ecart():
+    """Sur un échec, une checklist inachevée n'apprend rien — c'est ce qu'un échec
+    veut dire. L'écart n'est une information que sous un verdict de succès."""
+    provider = FournisseurChecklist(
+        [[_releve(("Écrire les routes", ETAPE_EN_COURS))]], echecs=1
+    )
+
+    journal = _joue(_executeur(provider), _tache())
+
+    assert _ecarts(journal) == []
+
+
+def test_l_ecart_est_dit_avant_que_la_tache_ne_s_annonce_terminee():
+    """L'ordre au journal est la moitié du critère : la ligne d'écart précède
+    l'étape terminale, pour qu'on ne lise jamais « Terminée » sans elle."""
+    provider = FournisseurChecklist([[_releve(("Écrire les routes", ETAPE_EN_COURS))]])
+
+    journal = _joue(_executeur(provider), _tache())
+
+    etapes = [record.etape for record in journal.records]
+    assert etapes.index(f"api-crud{SUFFIXE_ETAPE_ACTIVITE}") < etapes.index("api-crud")
+
+
+def test_l_ecart_ne_cree_aucune_tache_fantome():
+    """Aucun suffixe neuf (#944) : le pont traite ce qu'il ne reconnaît pas comme
+    l'issue d'une tâche, et un `<tache>:ecart` ferait une tâche de plus dans les
+    comptes — le défaut C8 du même retex, corrigé par #924."""
+    provider = FournisseurChecklist([[_releve(("Écrire les routes", ETAPE_EN_COURS))]])
+    journal = _joue(_executeur(provider), _tache())
+
+    (ligne,) = [
+        r for r in journal.records
+        if r.etape.endswith(SUFFIXE_ETAPE_ACTIVITE) and r.sortie.startswith("Checklist")
+    ]
+    (event,) = evenements_depuis_step(ligne.to_dict())
+
+    assert event.tache_id == "api-crud"
+    assert event.type != EVENEMENT_TACHE_DETAIL  # une activité, pas un détail
+    assert event.cout_usd is None  # rien au grand livre
 
 
 # ------------------- ⑥ De bout en bout : ce que l'agent coche ressort par l'API

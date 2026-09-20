@@ -31,7 +31,13 @@ le répertoire jetable d'avant, au caractère près.
 from __future__ import annotations
 
 from maestro.sandbox.container import IsolationConfig
-from maestro.sandbox.en_place import EspaceEnPlace, FrontiereEcriture, frontiere_de
+from maestro.sandbox.en_place import (
+    DOSSIER_ATELIER,
+    EspaceEnPlace,
+    FrontiereEcriture,
+    chemin_atelier,
+    frontiere_de,
+)
 from maestro.sandbox.projet import (
     PREFIXE_BRANCHE,
     EspaceProjetIndisponible,
@@ -41,6 +47,7 @@ from maestro.sandbox.projet import (
 from maestro.sandbox.workspace import ProducedFile, Workspace, isolated_workspace
 
 __all__ = [
+    "DOSSIER_ATELIER",
     "PREFIXE_BRANCHE",
     "EspaceEnPlace",
     "EspaceProjetIndisponible",
@@ -49,6 +56,7 @@ __all__ = [
     "ProducedFile",
     "Workspace",
     "branche_de_tache",
+    "chemin_atelier",
     "espace_de_travail",
     "frontiere_de",
     "isolated_workspace",

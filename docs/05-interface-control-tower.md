@@ -150,6 +150,12 @@ notifications, et le **flux temps réel** qui les alimente tous.
 
 **Ce qui reste global, et pourquoi** :
 
+> ⚠ **Les deux premières lignes de ce tableau sont renversées** (2026-09-19, [docs/37 §2.1](./37-decision-equipe-sur-mesure.md)).
+> Le parc d'agents, le catalogue et les playbooks cessent d'être une ressource du poste. Chaque
+> projet reçoit son équipe, dérivée de son analyse et validée par l'utilisateur (#1021). Le
+> catalogue devient des gabarits de rôle. Le tableau décrit l'état présent : les lots #1038 et
+> #1043 le réécriront.
+
 | ce qui reste global | pourquoi | ce qui est cadré malgré tout |
 | --- | --- | --- |
 | `GET /api/agents` — état du parc | un agent est une ressource du **poste** : son playbook, sa capacité et ses instances (#86) valent pour toute la Control Tower. Il n'appartient à aucun projet, et #277 ne lui a pas donné de portée | la tuile « Agents » compte les agents **au travail sur ce projet** (dérivé de ses tâches) et renvoie au détail le parc et les « occupés ailleurs » |
@@ -606,6 +612,26 @@ replient en lignes en dessous, au lieu d'être toutes tassées de front.
 > [`apps/web/tests/pipeline.test.tsx`](../apps/web/tests/pipeline.test.tsx) pour
 > la rangée de cases — dont le contrôle qui compte : le dénominateur grandit sans
 > que le numérateur bouge.
+
+> **Ce qui reste non coché à la clôture se dit (#944).** Un agent conclut souvent
+> sans cocher sa dernière ligne : la tâche 4 du run du
+> [retex du 2026-09-11](./retex/2026-09-11-premiere-session-utilisateur.md)
+> s'affichait **Terminée** sur une checklist à **14/15**, et rien nulle part ne
+> disait laquelle des quinze manquait — on lisait donc soit un compteur faux, soit
+> un verdict faux, sans pouvoir trancher (constat **G12**). Les deux remèdes
+> évidents effacent la question au lieu d'y répondre : cocher d'office ferait dire
+> à l'agent ce qu'il n'a pas dit, refuser le verdict ferait échouer une tâche qui a
+> livré — sur une liste de travail que le contrat donne lui-même pour faillible.
+> Reste le troisième, et c'est le critère du ticket : **le dire**. À la clôture
+> d'une tâche soldée en **succès** dont la checklist porte des étapes non cochées,
+> le moteur consigne une ligne qui les **nomme**
+> (`LocalExecutor._consigne_ecart_checklist`), par le canal d'activité existant
+> (`<tache>:activite`) et **avant** l'étape terminale, pour qu'on ne lise jamais
+> « Terminée » sans elle. Aucun suffixe neuf : le pont traite ce qu'il ne reconnaît
+> pas comme l'issue d'une tâche, et un `<tache>:ecart` ferait une tâche fantôme de
+> plus dans les comptes — le défaut **C8** du même retex, corrigé par #924. Muet
+> partout ailleurs : sur un échec (une checklist inachevée n'y apprend rien), sans
+> checklist, et sur un run où tout est coché.
 
 Le **glisser-déposer** entre colonnes reste une **cible non livrée** : le statut
 d'une tâche est aujourd'hui posé par la machine à états du moteur, et seule la
@@ -2017,16 +2043,47 @@ poliment le dirait deux fois ; celle du fil, elle, compte les messages et rien d
 renvoi du panneau ne désigne **pas un run précis** (`?run=…`) : il ouvre le cadrage sur le plus
 ancien en attente, avec le sélecteur pour les autres, exactement comme `/brief`.
 
+##### La file avait une seconde entrée, que personne ne voyait (#943)
+
+Le retex du 2026-09-11 (constat **G10**) a trouvé le panneau « Cadrage en attente » affirmant
+« Aucun cadrage en attente » **pendant** que l'orchestration demandait l'accord dans le fil, sans
+bouton pour le donner. Le panneau disait vrai sur ce qu'il regardait : il lit les runs **arrêtés sur
+leur brief**, et une proposition de l'orchestration — « Je lance ? » — n'a pas encore de run. La
+demande, elle, n'existait que dans une phrase.
+
+Ce qui a changé tient en une ligne de contrat et un partage de places. Le contrat est au §6.15 : la
+demande voyage sur le message (`proposition`), et « ce qui attend » se lit **une seule fois** par
+`propositionEnAttente` (`lib/brief`), avec `runsEnAttente`, précisément pour que les deux surfaces ne
+puissent plus désigner des files différentes. Le partage est celui que ce §2.7.5 tient déjà :
+
+- le **geste va là où on lit la demande** — au pied du fil, à la place de la zone de saisie
+  (`components/chat/DemandeDeCadrage.tsx`, monté par le `pied` de `components/Conversation.tsx`). Et
+  dans la **forme déjà tranchée** par la carte « Décision » du brief : ce qui part est éditable
+  au-dessus, deux boutons en dessous, et le badge « corrigé » dit laquelle des deux versions partira.
+  Les trois gestes du critère y tiennent sans en inventer une quatrième — accepter et refuser sont
+  les boutons, **amender** est la correction sur place ;
+- le **panneau signale et achemine**, comme `PanneauBriefs` : il montre l'objectif proposé et depuis
+  quand, et renvoie au bas du fil. Deux boutons pour une seule question, ce serait la poser deux fois
+  sur le même écran ;
+- le bloc de cadrage **ne remonte pas dans le corps** pour autant. Une proposition est déjà sous les
+  yeux, dans le fil qui occupe l'écran : l'y recopier en tête repousserait la conversation vers le bas
+  pour redire ce qu'elle dit — ce que #691 a précisément corrigé.
+
 Implémentation : `apps/web/app/chat/page.tsx`, `components/chat/FilDeCadrage.tsx` (la file et son
 sélecteur), `components/chat/CadrageDansLeFil.tsx` (la conversation, le chargement du détail et les
-deux gestes) et `components/chat/BulleFil.tsx` — l'enveloppe de bulle sortie du composant de fil
+deux gestes), `components/chat/DemandeDeCadrage.tsx` (#943) et `components/chat/BulleFil.tsx` —
+l'enveloppe de bulle sortie du composant de fil
 (`components/Conversation.tsx` depuis #269) pour que les messages (#482) et le cadrage n'aient pas
 deux formes sur le même écran.
 
 **Couverture** (#485, lot final) — l'écran est gardé par
 [`apps/web/tests/fil-cadrage.test.tsx`](../apps/web/tests/fil-cadrage.test.tsx) (les sept sections
 éditables, l'approbation *telle quelle* ou *corrigée* par le canal existant, le refus qui n'emporte
-jamais de brief, les questions et leur plafond, les trois surfaces d'acheminement). Mais **ce que le
+jamais de brief, les questions et leur plafond, les trois surfaces d'acheminement), et la demande de
+cadrage du fil par
+[`apps/web/tests/demande-cadrage.test.tsx`](../apps/web/tests/demande-cadrage.test.tsx) (#943 : la
+règle et son unicité, les trois gestes et ce que chacun envoie, le panneau qui montre la demande et
+ne dit « aucun » que lorsqu'il n'y en a pas). Mais **ce que le
 déménagement ne devait pas desserrer ne se voit pas de cet écran-là**, et c'est ce que
 [`tests/test_brief.py`](../tests/test_brief.py) ⑦ mesure sur le moteur : à l'instant où l'humain est
 sollicité, **aucun plan n'a été demandé et aucun exécutant n'a tourné** (D5, #218) — une
@@ -4909,3 +4966,85 @@ dirait « la rétro-compatibilité marche » d'une question jamais posée. ④ g
 `201`, l'idempotence tant que rien n'a été dit, l'ordre par dernière activité **dans les deux sens**
 (la neuve passe devant, écrire dans une ancienne la ramène), les deux fils qui ne se mélangent pas,
 et les trois réponses à un identifiant — `422` mal formé, `404` inconnu, absent = le cas nominal.
+
+### 6.15 La demande de cadrage du fil — et le geste qui la tranche (#943) — **livré**
+
+Une route, et un champ de plus sur le message. Les deux répondent à la **même** question, celle que
+le constat **G10** du [retex du 2026-09-11](retex/2026-09-11-premiere-session-utilisateur.md) a
+rendue visible : *où vit une demande de cadrage, et qui la voit ?*
+
+Jusqu'ici, nulle part. L'orchestration proposait un run dans le **texte** de sa réponse — « Je
+lance ? » — et ce texte était tout ce qui en restait. Le fil ne pouvait donc offrir aucun bouton, et
+le panneau « Cadrage en attente » affirmait « aucun » au moment même où la question était posée : il
+ne lisait que les runs **arrêtés sur leur brief** (§6.10), or une proposition n'a pas encore de run.
+Deux surfaces qui se contredisent lisent deux endroits ; ici la seconde lisait le seul qui existait.
+
+**Le champ.** `MessageChat.proposition` porte l'objectif soumis à l'accord — la troisième question
+que le même objet porte, après ce qu'il **embarque** (`sources`, §6.12) et ce qu'il **ouvre**
+(`run_id`, §6.5). Vide partout ailleurs ; une ligne écrite avant ce lot se relit à l'identique.
+
+```jsonc
+// MessageChat — le champ qui fait exister la demande
+{
+  "auteur": "orchestrateur",
+  "contenu": "J'ouvrirais un run sur : « … ». Je lance ?",
+  "run_id": "",                  // rien n'est ouvert : proposer n'est pas lancer (#685)
+  "proposition": "Développer …"  // ce qu'il DEMANDE — vide sur tout autre message
+}
+
+// CadrageDecisionRequete (corps de …/cadrage)
+{
+  "approuve": true,
+  "objectif": null,     // la version CORRIGÉE ; null : la proposition part telle quelle
+  "projet_id": "prj-…", // le projet de la fenêtre — il rattachera le run, comme à l'envoi
+  "conversation": null
+}
+```
+
+**La route.** `POST /api/chat/{agent}/cadrage` → `201` + la **même paire** qu'un envoi (le geste,
+puis la réponse). Elle ne repasse **pas** par le juge, et les deux raisons sont mécaniques :
+
+- un accord au bouton n'est pas un texte à reconnaître, c'est un **acte**. Le faire rejuger paierait
+  un appel modèle pour rejuger une décision déjà prise, et pourrait rendre autre chose qu'un accord
+  sur une décision qui, elle, est certaine ;
+- un objectif **amendé** ne survivrait pas au tour : le contrat de `_PROMPT_ORCHESTRATION` demande au
+  juge, sur un accord, de recopier *mot pour mot* la proposition qu'il a faite. La correction serait
+  silencieusement remplacée par l'original — c'est ce qui rend cette route nécessaire, et pas
+  seulement économique.
+
+⚠ **La propriété de #685 ne bouge pas : aucun run sans accord explicite.** Ce qui a été retiré à
+l'époque est le lexique qui *devinait* un accord, jamais l'exigence d'en avoir un — et un bouton est
+l'accord le plus explicite qu'on puisse recevoir.
+
+**Le geste est écrit dans le fil**, et ce n'est pas une politesse : le canal n'a pas d'autre mémoire
+que sa conversation (`maestro/controltower/orchestration.py`). Un accord donné au bouton sans trace
+laisserait le tour suivant devant une proposition sans réponse, que le juge reproposerait. Il s'y
+écrit dans les mots que le contrat du juge donne lui-même en exemple — « Oui, lance. », « Non, ne
+lance pas. » —, et un objectif corrigé y est **recopié en toutes lettres** : sinon la relecture d'un
+run amendé ne retrouverait nulle part ce qu'on a corrigé.
+
+**`409` quand rien n'attend**, et c'est le `409` de §6.10 un cran plus tôt : aucune proposition, une
+déjà tranchée, ou un fil dont le répondeur n'en fait pas (un agent du catalogue ne propose pas de
+run). Il se tient **sans verrou** — le premier geste ayant écrit dans le fil, la demande n'est plus
+la dernière chose dite —, et il couvre du même coup le double geste de deux fenêtres ouvertes.
+
+**Une demande attend tant que rien n'a suivi**, et cette règle est énoncée **une seule fois** de
+chaque côté : `proposition_en_attente` (`maestro/controltower/chat.py`) et `propositionEnAttente`
+(`apps/web/lib/brief`). Ce n'est pas le temps qui périme une demande, c'est qu'on y ait répondu —
+quoi qu'on ait répondu. Deux formulations de « ce qui attend » redonneraient exactement les deux
+surfaces qui se contredisent.
+
+Côté écran (§2.7.5) le partage est celui de `PanneauBriefs` : le **panneau signale et achemine**, le
+**geste vit là où on lit la demande** — au pied du fil, à la place de la zone de saisie, dans la
+forme que la carte « Décision » du brief a déjà fixée (accepter, refuser, et corriger sur place pour
+amender). Deux boutons pour une seule question, ce serait la poser deux fois sur le même écran.
+
+Implémentation : [`maestro/controltower/chat.py`](../maestro/controltower/chat.py)
+(`MessageChat.proposition`, `proposition_en_attente`, `ServiceChat.trancher_cadrage`),
+[`maestro/controltower/orchestration.py`](../maestro/controltower/orchestration.py)
+(`RepondeurOrchestration.trancher_cadrage`) et
+[`maestro/controltower/app.py`](../maestro/controltower/app.py) pour la route ; côté UI
+`apps/web/lib/brief`, `apps/web/components/chat/DemandeDeCadrage.tsx` et le pied de
+`apps/web/components/Conversation.tsx`. Couverture :
+[`tests/test_chat_global.py`](../tests/test_chat_global.py) section ⑨ et
+`apps/web/tests/demande-cadrage.test.tsx`.

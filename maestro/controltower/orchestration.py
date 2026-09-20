@@ -164,6 +164,32 @@ qu'un « oui » ne peut structurellement pas partir comme objectif de run. On a
 messages précédents) : ce serait un second juge, en expression régulière, juste
 après en avoir retiré un.
 
+## La proposition sort de la phrase, et se répond d'un geste (#943)
+
+Jusqu'ici la proposition n'existait que dans le **texte** de la réponse : « Je
+lance ? », sans rien qui la désigne. Un écran n'a donc rien pu en faire — pas de
+bouton dans le fil, et le panneau « Cadrage en attente » affirmant « aucun » au
+moment même où la question était posée (retex du 2026-09-11, constat G10). Deux
+surfaces qui se contredisent lisent deux endroits ; celle qui avait raison
+lisait le seul qui existait.
+
+La réponse porte donc l'objectif proposé (`ReponseChat.proposition`), jusqu'au
+message persisté et diffusé, comme `run_id` porte déjà ce qu'elle a ouvert. Et
+la décision revient par `trancher_cadrage`, **sans repasser par le juge** :
+
+- un accord au bouton n'est pas un texte à reconnaître, c'est un acte. Le lui
+  faire retraverser paierait un appel modèle pour rejuger une décision déjà
+  prise, et pourrait rendre autre chose qu'un accord sur une décision qui, elle,
+  est certaine ;
+- un objectif **amendé** ne survivrait pas au tour : le contrat ci-dessous
+  demande au juge, sur `accord`, de recopier *mot pour mot* la proposition qu'il
+  a faite. L'amendement serait silencieusement remplacé par l'original — c'est
+  ce qui rend ce chemin nécessaire, et non simplement économique.
+
+La propriété que #685 a payée ne bouge pas : **aucun run sans accord explicite**.
+Un bouton est l'accord le plus explicite qu'on puisse recevoir ; ce qui a été
+retiré est le lexique qui *devinait* un accord, jamais l'exigence d'en avoir un.
+
 Un verdict **illisible vaut un échange** : le texte du modèle est rendu tel quel
 et rien ne s'ouvre. Une réponse hors contrat coûte ainsi une reformulation, jamais
 un run — et jamais non plus un 502 sur une conversation que le modèle a pourtant
@@ -248,6 +274,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from maestro.agents.catalog import MODELE_EXECUTANT_DEFAUT, Agent
+from maestro.agents.playbook_du_code import registre
 from maestro.controltower.causes import cause_lisible
 from maestro.controltower.chat import (
     Incrementeur,
@@ -260,10 +287,13 @@ from maestro.controltower.chat import (
 from maestro.controltower.events import ACTEUR_RUN, ROLE_RUN
 from maestro.controltower.portee import PorteeProjet
 from maestro.controltower.state import (
+    EXECUTION_ANNULEE,
+    EXECUTION_ECHEC,
     EXECUTION_EN_ATTENTE_ARBITRAGE,
     EXECUTION_EN_ATTENTE_BRIEF,
     EXECUTION_EN_ATTENTE_REPONSES,
     EXECUTION_EN_COURS,
+    EXECUTION_TERMINEE,
     ControlTowerState,
 )
 from maestro.providers.base import ModelProvider
@@ -296,7 +326,14 @@ VERDICTS = frozenset({VERDICT_PROPOSITION, VERDICT_ACCORD, VERDICT_ECHANGE})
 #: Il existait depuis #268 « si un jour elle passe par un modèle » et n'avait
 #: jamais été branché ; #685 le branche et lui ajoute le verdict, puisque c'est le
 #: **même** appel qui rend la réponse et la décision.
-_PROMPT_ORCHESTRATION = """\
+#:
+#: ⚠ **Concaténé, et non interpolé** : le contrat de réponse ci-dessous est un objet
+#: JSON, donc ce texte porte des accolades littérales qu'une f-string lirait comme des
+#: champs. Le registre (#945) s'ajoute donc par `+`, ce qui laisse le gabarit JSON
+#: intact — c'est le second des deux tutoiements que le retex du 2026-09-11 a relevés
+#: (C5 : « Je te propose »).
+_PROMPT_ORCHESTRATION = (
+    """\
 Tu es l'orchestrateur de Maestro : tu reçois les demandes de l'utilisateur, tu les
 cadres et tu les confies à l'équipe d'agents (Développeur, QA, DevOps, BDD,
 Design). Tu n'exécutes pas le travail toi-même et tu ne parles pas à la place des
@@ -335,7 +372,11 @@ L'objectif :
 La réponse : le texte affiché à l'utilisateur, en français, bref. Sur
 "proposition", il énonce l'objectif et demande explicitement l'accord. Sur
 "accord", il confirme que le run part. Sur "echange", il répond — en s'appuyant
-sur l'état de l'orchestration quand la question porte dessus."""
+sur l'état de l'orchestration quand la question porte dessus.
+
+"""
+    + registre()
+)
 
 #: La fiche de l'orchestration, hors catalogue (voir le module) : le chat n'a
 #: besoin que du nom, du rôle et du prompt système. Les compétences restent vides
@@ -374,6 +415,30 @@ _STATUTS_ACTIFS = frozenset(
         EXECUTION_EN_ATTENTE_ARBITRAGE,
     }
 )
+
+#: Ce que le fil dit d'un statut d'exécution (#946, C7 du retex du 2026-09-11) :
+#: l'ouverture d'un run annonçait « statut « en_cours » », c'est-à-dire
+#: l'identifiant de la machine à états rendu tel quel dans une conversation.
+#:
+#: Les libellés sont ceux de `libelleStatutExecution` (`apps/web/lib/format.ts`)
+#: **au mot près** — c'est la règle de #571, et le même run lu dans le fil puis
+#: sur son écran ne doit pas paraître dans deux états. Un statut absent de la
+#: table se dit brut plutôt que traduit à l'aveugle.
+_LIBELLES_STATUT_EXECUTION = {
+    EXECUTION_EN_COURS: "En cours",
+    EXECUTION_TERMINEE: "Terminée",
+    EXECUTION_ANNULEE: "Annulée",
+    EXECUTION_ECHEC: "Échec",
+    EXECUTION_EN_ATTENTE_BRIEF: "Brief à valider",
+    EXECUTION_EN_ATTENTE_REPONSES: "Questions en attente",
+    EXECUTION_EN_ATTENTE_ARBITRAGE: "Validation en attente",
+}
+
+
+def libelle_statut_execution(statut: str) -> str:
+    """Le statut d'un run en mots d'interface, ou brut si le flux s'est enrichi."""
+    return _LIBELLES_STATUT_EXECUTION.get(statut, statut)
+
 
 #: Un bloc de code Markdown, que les modèles posent volontiers autour d'un JSON
 #: qu'on leur a demandé nu.
@@ -639,7 +704,56 @@ class RepondeurOrchestration(RepondeurChat):
                 " ⚠ Aucune exécution n'est branchée sur ce fil pour l'instant : je "
                 "peux en parler, pas encore l'ouvrir."
             )
-        return ReponseChat(contenu=redaction.texte)
+        # La demande **sort de la phrase** (#943) : l'objectif proposé voyage sur
+        # le message, donc l'écran peut en faire un geste au lieu d'attendre une
+        # réponse tapée. Rien n'est posé quand il n'y a pas de quoi trancher —
+        # sans objectif il n'y aurait rien à lancer, et sans lanceur le message
+        # vient de dire que le run n'ouvrirait pas : offrir le bouton serait
+        # promettre deux fois ce qu'on annonce impossible une ligne plus haut.
+        propose = (
+            verdict.objectif
+            if verdict.nom == VERDICT_PROPOSITION and self._lanceur is not None
+            else ""
+        )
+        return ReponseChat(contenu=redaction.texte, proposition=propose)
+
+    async def trancher_cadrage(
+        self,
+        agent: Agent,
+        fil: Sequence[MessageChat],
+        *,
+        approuve: bool,
+        objectif: str,
+        projet_id: str | None = None,
+    ) -> ReponseChat:
+        """Exécute la décision prise **au geste** sur une proposition (#943).
+
+        Aucun appel modèle ici, et c'est le sujet : la question que le juge
+        tranche — « ce message est-il un accord ? » — n'a plus lieu d'être quand
+        l'accord est un clic. Le chemin vers le lanceur reste **unique** dans son
+        esprit : il part d'une décision explicite de l'utilisateur, jamais d'un
+        silence ni d'un texte reconnu. Ce qui change est la façon dont la
+        décision arrive, pas ce qui l'autorise.
+
+        `objectif` est ce qui **part** : la proposition telle quelle, ou la
+        version amendée à l'écran. Elle ne peut pas traverser un tour de
+        jugement — le contrat demande au juge de recopier mot pour mot *sa*
+        proposition —, donc la corriger exige ce chemin-ci ou ne serait pas
+        possible du tout.
+
+        Un refus n'ouvre rien et ne solde rien : le fil garde la proposition,
+        l'utilisateur reformule. C'est la symétrie du brief refusé (§6.10) à
+        ceci près qu'il n'y a pas encore de run à annuler.
+        """
+        redaction = Redaction(None)
+        if not approuve:
+            await redaction.ecrire(
+                "Entendu, je n'ouvre rien. Dites-moi ce qu'il faut changer et je "
+                "vous proposerai autre chose."
+            )
+            return ReponseChat(contenu=redaction.texte)
+        await redaction.ecrire("C'est parti.")
+        return await self._ouvrir_un_run(redaction, objectif.strip(), projet_id)
 
     async def _juger(
         self, agent: Agent, fil: Sequence[MessageChat], projet_id: str | None
@@ -746,7 +860,7 @@ class RepondeurOrchestration(RepondeurChat):
         statut = str(resume.get("statut", ""))
         await redaction.ecrire(f" Run {run_id} ouvert" if run_id else " Run ouvert")
         if statut:
-            await redaction.ecrire(f", statut « {statut} »")
+            await redaction.ecrire(f", statut « {libelle_statut_execution(statut)} »")
         await redaction.ecrire(
             ". Les tâches apparaîtront au tableau de bord à mesure que la "
             "décomposition les produit."

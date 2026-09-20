@@ -1,7 +1,7 @@
 ---
 description: Démarre le travail sur un ticket (branche + assignation + état « En cours »)
 argument-hint: <issue-iid>
-allowed-tools: Bash(bash:*), Bash(gh:*), Bash(git:*), EnterWorktree, Skill, AskUserQuestion, Read, Grep, Glob, Write, WebSearch, WebFetch, mcp__chrome-maestro
+allowed-tools: Bash(bash:*), Bash(gh:*), Bash(git:*), EnterWorktree, Skill, Agent, AskUserQuestion, Read, Grep, Glob, Write, WebSearch, WebFetch, mcp__chrome-maestro
 ---
 
 Tu vas démarrer le travail sur le ticket d'IID `$ARGUMENTS` selon les règles de Maestro
@@ -126,6 +126,9 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
    **`surface visible :`**, ce ticket touche un écran de la Control Tower et la question
    « qu'est-ce qu'on vise ? » n'a jamais été tranchée dessus. Alors, **et seulement alors** — et
    les deux régimes diffèrent sur **qui rend le verdict**, jamais sur le fait qu'il en faille un :
+   - **Un ticket qui DÉCIDE de l'écran** (critère du §7.2 de `/design-veille`) : ne demande rien, en
+     aucun régime — sa veille se joue à l'étape 7, parce que son choix se rend contre les
+     références qu'elle rapporte (#1009). Les points suivants valent pour les autres tickets.
    - **En session interactive, demande** — une phrase, un « oui » explicite : jouer
      `/design-veille <surface>` avant d'écrire l'interface, ou passer. Ne la lance **jamais**
      d'office : une veille coûte des
@@ -177,33 +180,40 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
    scripts/gitlab/lib.sh startables <iid-parent>`) — de quoi permettre à quelqu'un d'autre d'en
    prendre un tout de suite. Le résumé cadre le travail, ce n'est **pas une demande de validation** : n'attends
    aucun « go » et commence tout de suite (les critères d'acceptation font foi). Ne t'arrête pour
-   demander que si le ticket est réellement ambigu au point de ne pas pouvoir commencer — ou que
-   l'étape 7 te l'impose.
+   demander que si le ticket est réellement ambigu au point de ne pas pouvoir commencer — la forme
+   d'un écran n'en est pas un cas : l'étape 7 la tranche (#1009).
 
-7. **Variantes — un ticket qui DÉCIDE de l'écran montre ses variantes, puis attend le choix** (#979,
-   chantier #972). La question est celle du §7.2 de `/design-veille` — *ce ticket décide-t-il de
-   quelque chose à l'écran, ou applique-t-il une décision déjà prise ?* —, et son critère n'est écrit
-   **que là** : juges-en par lui, sans le recopier. Elle se pose sur tout ticket qui touche un écran —
-   bloc `surface visible :` de l'étape 1, section `## Rendu attendu` écrite, ou ce que tu t'apprêtes à
-   modifier sous `apps/web/` —, que la veille ait été jouée, jugée inutile ou arbitrée avant toi : la
-   veille dit *ce qu'on vise*, les variantes *laquelle de ces formes*. Ce qui est automatique est la
-   **détection**, jamais le choix (#562, #714). Aucun écran touché : passe sans rien dire.
+7. **Variantes — un ticket qui DÉCIDE de l'écran tranche sa forme sur pièces, puis l'implémente**
+   (#979, renversé par #1009 ; chantier #972). La question est celle du §7.2 de `/design-veille` —
+   *ce ticket décide-t-il de quelque chose à l'écran, ou applique-t-il une décision déjà prise ?* —,
+   et son critère n'est écrit **que là** : juges-en par lui, sans le recopier. Elle se pose sur tout
+   ticket qui touche un écran — bloc `surface visible :` de l'étape 1, section `## Rendu attendu`
+   écrite, ou ce que tu t'apprêtes à modifier sous `apps/web/` —, que la veille ait été jouée, jugée
+   inutile ou arbitrée avant toi : la veille dit *ce qu'on vise*, les variantes *laquelle de ces
+   formes*. **Personne n'est attendu, dans aucun régime** (#1009) : le choix se rend **sur pièces** et
+   se **consigne**, ce qui le rend contestable après coup — jamais une pause, jamais un arrêt. Aucun
+   écran touché : passe sans rien dire.
    - **Un choix est déjà consigné** — un commentaire du ticket qui **commence** par
      `## Variante retenue` (`gh issue view <iid> --comments`, lu seulement quand le ticket décide) :
      le ticket **applique** désormais
      une décision prise. Implémente-la, sans reposer la question.
-   - **Il applique** : pas de variantes, et enchaîne. En session interactive, dis-le **en une
-     ligne**, avec ta raison — c'est ton jugement, et la personne le renverse en demandant les
-     variantes.
-   - **Il décide, en session interactive** : montre **2 ou 3 variantes rendues**, puis attends. Comme
-     le découpage (étape 1) et la veille (étape 5), c'est une **vraie pause**.
-     1. **Des brouillons sur la vraie stack, pas une maquette.** Une variante est le minimum de code
+   - **Il applique** : pas de variantes, et enchaîne. Dis-le **en une ligne**, avec ta raison —
+     c'est ton jugement, et il se lit dans ton résumé.
+   - **Il décide** — en session interactive **comme en run**, et sans rien demander :
+     1. **Les références d'abord.** Si aucun commentaire du ticket ne **commence** par
+        `## Veille de conception`, ouvre `/design-veille <surface>` maintenant — la surface que le
+        ticket retouche, que l'étape 5 l'ait détectée ou non (#928 ne portait ni `agent::design` ni
+        route nommée, et il décidait). C'est elle qui va chercher les **produits professionnels
+        comparables** à ce que le ticket attend et en **capture** au moins deux : sans ces captures,
+        il n'y aurait rien à quoi comparer tes variantes. Ouverte d'ici, elle consigne ses partis pris
+        puis pose l'arbitrage (son §7.3), dans les deux régimes.
+     2. **Des brouillons sur la vraie stack, pas une maquette.** Une variante est le minimum de code
         qui rend sa direction visible — tokens et primitives du socle, aucune identité nouvelle
         (docs/30 §6.1), ni tests ni finitions. Les variantes divergent sur **ce que le ticket
         décide**, jamais sur un détail. Deux ou trois, pas une galerie ; une variante **unique** n'est
-        pas un choix mais une **validation**, et se présente comme telle. Figma sert à explorer avant
+        pas un choix mais une **validation**, et se consigne comme telle. Figma sert à explorer avant
         de brouillonner, jamais de capture (docs/30 §5.1).
-     2. **Rien ne reste dans l'arbre.** Un brouillon ne crée **aucun fichier** (un composant neuf se
+     3. **Rien ne reste dans l'arbre.** Un brouillon ne crée **aucun fichier** (un composant neuf se
         brouillonne dans un fichier existant), pour que `git diff` le contienne tout entier et que
         `git restore` le défasse tout entier. Écris le premier, puis monte la stack par
         `bash scripts/design/relecture-visuelle.sh <iid>` — son plan se dérive du diff, donc d'un
@@ -217,43 +227,51 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
         chaque capture (`Read`), sauve le brouillon par
         `git diff > .maestro/variantes/<iid>/<lettre>.patch`, puis `git restore` ses fichiers. Un
         thème suffit à choisir une direction ; les deux sont l'affaire de la relecture.
-     3. **Avant de poser la question** : `bash scripts/design/relecture-visuelle.sh --fin`,
-        `browser_close`, et `git status --porcelain` **vide**. La réponse peut venir le lendemain, et
-        la session être coupée d'ici là : aucune variante non choisie ne doit pouvoir finir dans un
-        commit, et aucune stack ne doit tenir un port.
-     4. **Présente**, variante par variante : ses captures (en liens), ce qu'elle décide en une
-        ligne, sa confrontation au **rendu attendu** rubrique par rubrique — la question a-t-elle sa
-        réponse d'un coup d'œil, la référence est-elle tenue, ce qui ne bouge pas a-t-il bougé (contre
-        l'avant) — puis aux **partis pris de la veille** quand un commentaire du ticket en porte :
-        lesquels elle tient, lesquels elle plie. Section « non renseigné » ou absente : dis-le, et
-        confronte aux critères. Recommande-en une en le disant — une recommandation n'est pas un
-        choix —, puis demande (`AskUserQuestion`, une option par variante).
-     5. **Consigne le choix avant la première ligne d'implémentation** : écris avec `Write`
-        `.maestro/session/variante-<iid>.md`, qui commence par `## Variante retenue` et dit laquelle
-        (ou la direction que la personne a décrite à la place : c'est un choix aussi), celles écartées
-        et pourquoi — dans ses mots quand elle en a donné —, puis
-        `bash scripts/gitlab/lib.sh issue-note <iid> <fichier>`. Consignation en échec :
-        n'implémente pas, dis-le et réessaie. Ensuite seulement, repars du brouillon retenu
-        (`git apply .maestro/variantes/<iid>/<lettre>.patch`) et implémente pour de bon.
-   - **Il décide, en session autonome** (run `/orchestrate`) : personne ne choisira, et **tu ne
-     choisis pas à sa place**. Implémenter la variante la plus proche des partis pris et ouvrir la
-     question après coup fabriquerait un choix que personne n'a fait, déjà parti dans `main` quand
-     quelqu'un le lirait. Ne produis **aucune variante** — personne ne les regardera, et `gh` ne joint
-     pas d'image à un ticket —, n'écris **aucune ligne** d'implémentation, et écarte le ticket du run :
-     1. écris avec `Write`, dans `.maestro/session/`, ce que le ticket décide à l'écran, les partis
-        pris de la veille à confronter s'il y en a, et qu'il **attend un choix** ; puis
-        `bash scripts/gitlab/lib.sh issue-note <iid> <fichier>` ;
-     2. **puis** `bash scripts/gitlab/lib.sh set-workflow <iid> "À faire"`, en **gardant
-        l'assignation** posée à l'étape 4 : « À faire » **et** assigné est la protection qui tient un
-        ticket hors des plans de run (#621), et c'est une personne qui le reprendra par
-        `/ticket-start` — cette étape lui montrera les variantes ;
-     3. termine sur `ORCHESTRATE: ECHEC choix de variante attendu`. Les lots suivants du parent seront
-        sautés, et c'est juste : ils bâtiraient sur un écran que personne n'a choisi.
+     4. **Avant le choix** : `bash scripts/design/relecture-visuelle.sh --fin`, `browser_close`, et
+        `git status --porcelain` **vide**. Le choix se rend sur le disque, pas sur l'écran, et aucune
+        variante non retenue ne doit pouvoir finir dans un commit si la session est coupée d'ici là.
+     5. **Le choix est rendu par le regard neuf**, pas par toi (#980 : l'auteur des brouillons voit ce
+        qu'il a voulu faire). Écris avec `Write` sa saisine, `.maestro/variantes/<iid>/saisine.md`,
+        en chemins **absolus** (le sous-agent ne connaît pas ton répertoire — `pwd` te le donne) :
+        pour chaque lettre, ses captures et ce qu'elle décide en une ligne ; les captures de
+        référence de la veille (`.maestro/session/design-veille/`) ; l'avant ; la section
+        `## Rendu attendu` du ticket (ou « non renseigné ») et ses critères d'acceptation ; les
+        commentaires qui **commencent** par `## Veille de conception`, recopiés tels quels — **ni le
+        code, ni le diff, ni ton raisonnement** ; et ce gabarit, à rendre rempli :
+        ```
+        ### Choix — #<iid>
+        | variante | rendu attendu | partis pris | références | ce qui ne bouge pas |
+        |---|---|---|---|---|
+        | A | … | … | … | … |
+        **Retenue : <lettre>** — <pourquoi, références à l'appui>
+        **Écartées** : <lettre> — <pourquoi> ; …
+        ```
+        Puis `Agent`, `subagent_type: "regard-neuf"`, et pour prompt la phrase de la relecture, au mot
+        près : « Ta saisine : <chemin> — lis-la, puis rends-la remplie. » (même repli que le skill
+        `relecture-visuelle` si l'agent est introuvable, et nommé). Sa réponse va telle quelle dans
+        `.maestro/variantes/<iid>/choix.md`. Il en **retient toujours une** : la saisine existe parce
+        que personne d'autre ne choisira. S'il n'en retient aucune, ou répond « non vu » faute de
+        pièces, complète la saisine et saisis-le **une** fois de plus ; au second refus, tranche
+        toi-même sur les mêmes pièces, et dis-le dans la consignation.
+     6. **Consigne le choix avant la première ligne d'implémentation** : écris avec `Write`
+        `.maestro/session/variante-<iid>.md`, qui commence par `## Variante retenue` et dit laquelle,
+        qui l'a retenue (le regard neuf, ou toi au second refus), celles écartées et pourquoi, et les
+        **références** qui ont tranché, puis `bash scripts/gitlab/lib.sh issue-note <iid> <fichier>`.
+        Consignation en échec : n'implémente pas, dis-le et réessaie. Ensuite seulement, repars du
+        brouillon retenu (`git apply .maestro/variantes/<iid>/<lettre>.patch`) et implémente pour de
+        bon.
+     7. **Dis-le**, dans ton résumé : la variante retenue, ses captures (en liens), ce qu'elle a
+        battu et sur quelles pièces. Ce n'est **pas une question** : qui veut une autre forme consigne
+        une nouvelle `## Variante retenue` sur le ticket — ou en ouvre un —, et la relecture visuelle
+        de `/ticket-finish` juge l'écran livré contre ce choix.
 
-     L'ordre est celui de #934 : la trace, **puis** la protection — un ticket écarté sans trace ne
-     dirait pas pourquoi. Aucun ticket à part : `veille-differe` en ouvre un parce que le ticket
-     source se ferme au merge, or celui-ci ne se ferme pas, et la question se repose d'elle-même au
-     prochain `/ticket-start` (le critère de #795 : *se repose-t-elle d'elle-même ?*).
+   **Ce que #1009 a renversé** (docs/30 §5.8). Jusque-là, un ticket qui décidait **attendait** une
+   personne : en interactif une question, en run un `ECHEC` qui l'écartait du plan — et son premier
+   run a arrêté #928 et fait sauter les quatre lots suivants de son parent. Un run traite désormais
+   tous les tickets et tranche. Ce qui sépare ce choix de celui que #979 avait écarté, « la variante
+   la plus proche des partis pris », est ce qu'il a sous les yeux : des références vérifiées en
+   direct, des variantes rendues, un juge qui n'en est pas l'auteur, et une trace écrite avant le
+   code. **Un choix sans ces pièces reste un choix fabriqué**, et ne se fait pas.
 
 Pas de Pull Request à ce stade (aucun commit à proposer). La clôture passe par les commandes
 dédiées — `/ticket-ship` (commit auto + push + PR + état) ou `/ticket-finish` (commit déjà

@@ -25,6 +25,7 @@ Jusqu'à #295 le playbook « du code » était une **chaîne Python** de trois p
 Deux morceaux sont communs à tous les rôles et vivent à part, appelés par les marqueurs `{{socle}}` et `{{cadre}}` que la lecture substitue (un marqueur inconnu ou mal fermé lève : mieux vaut un import en échec qu'un prompt système servi avec un trou) :
 
 - **`_socle.md` — le régime sénior** (#293), le cœur du dispositif. Il porte les trois volets que tout rôle applique : **ce qu'il décide seul** (l'approche, les patrons, les bibliothèques, l'ordre de travail — tout ce qui est réversible, sans demander d'accord) ; **ce qu'il remonte au lieu de le décider** (l'irréversible et le destructif, le hors-périmètre, le risque non couvert) ; **ce qu'il rend** (deux sections obligatoires, « Décisions & arbitrages » et « Recommandations »). Sa règle centrale : *une hypothèse énoncée vaut mieux qu'une question posée* — personne ne répond en cours de tâche, donc on tranche, on le signale, et on avance.
+  ⚠ **Cette règle centrale tombe** (2026-09-19, [docs/37 §2.2](./37-decision-equipe-sur-mesure.md)). Un agent **demande** quand la décision requiert un humain, et sa tâche est suspendue jusqu'à la réponse ou une borne (#1023). Il tranche seul le reste **et le consigne** (#1024). Les deux autres volets du socle restent.
 - **`_cadre_outille.md` — le cadre d'exécution outillée** : répertoire de travail isolé, livrable **matérialisé en fichiers**, rien de destructif au-dehors, aucun processus qui survive à la tâche. Réservé aux runtimes ; l'exécution texte du catalogue n'a pas d'outils et ne le charge pas.
 
 ### 1.3 Structure d'un document de rôle
@@ -116,6 +117,11 @@ Un même agent s'exécute de deux façons, et les deux doivent porter le même m
 ---
 
 ## 2. Catalogue des agents par défaut
+
+> ⚠ **Ce catalogue cesse d'être instancié d'office** (2026-09-19, [docs/37 §2.1](./37-decision-equipe-sur-mesure.md)).
+> Un projet naît **sans agent**. L'analyse du projet propose son équipe, que l'utilisateur valide, et
+> les agents ci-dessous deviennent des **gabarits de rôle** qu'elle consulte (#1021, #1042). Ce
+> tableau décrit l'état présent : #1043 le réécrira.
 
 | Agent | Rôle | Compétences (tags) | Modèle conseillé (défaut POC — Claude) |
 |-------|------|--------------------|------------------|

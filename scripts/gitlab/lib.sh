@@ -1191,6 +1191,197 @@ EOF
   printf '%s' "$sortie"
 }
 
+# --- Planification : l'ordre des jalons et des tickets (#1013) ------------------------------------
+# Deux ordres décident de ce qui se traite en premier, et aucun n'est une liste tenue à part :
+#   * ENTRE JALONS, L'ÉCHÉANCE. `gh_current_milestone` trie par `DUE_DATE` et retient le premier du
+#     rail qui porte encore un ticket ouvert : la date EST l'ordre de traitement (docs/06, « L'atelier
+#     passe DEVANT la Phase 9 »). Déplacer un jalon dans la file, c'est déplacer son échéance.
+#   * DANS UN JALON, `prio::`. `queue.sh` trie par priorité puis par iid, un parent prenant la
+#     meilleure de ses lots.
+# `/idee` les ajuste quand une idée arrive. Ce sont des VERBES et non un `gh api` dans le prompt, pour
+# la raison de `milestone-rail` (#617) : les écritures de forge sont interdites sous
+# `.claude/commands/**`, et `--add-label` y est refusé nommément par `tests/test_cycle_de_vie.py`.
+#
+# LES REFUS GRATUITS TOMBENT AVANT LA FORGE (règle de `gl_milestone_section`) : une date mal formée ou
+# un niveau inconnu se voient sans rien demander à personne, et un refus ne laisse rien derrière lui.
+#
+# AUCUN DE CES VERBES NE FERME NI NE RENOMME UN JALON : la fermeture reste une décision humaine
+# (docs/10 §3.4), et un titre est la clé de tout ce qui se résout par son nom (#358).
+
+# La fiche d'un jalon — « <numéro> TAB <échéance AAAA-MM-JJ, ou « - » sans échéance> TAB
+# <open|closed> » —, fermés compris, sélectionnée PAR TITRE côté API. ⚠ Le « - » n'est pas décoratif :
+# `IFS=$'\t' read` FUSIONNE deux tabulations consécutives (la tabulation est un blanc pour IFS), si
+# bien qu'une échéance vide ferait glisser l'état dans sa colonne — un champ optionnel voyage avec un
+# marqueur (piège déjà payé par `scripts/migration/`). Le programme vit dans une variable parce que le double de
+# `tests/harnais_forge.py` le rejoue en Python (il n'exécute pas jq) et que `tests/test_idee.py`
+# garde qu'il n'a pas bougé sans lui : une sélection modifiée ici laisserait le double rendre
+# l'ancienne, et la suite verte.
+GL_MS_FICHE_JQ='map(select(.title == env.GL_MS_TITRE)) | if length == 0 then empty else "\(.[0].number)\t\((.[0].due_on // "-")[0:10])\t\(.[0].state)" end'
+
+# gl_milestone_fiche <titre-exact> -> la fiche sur stdout ; 1 = aucun jalon de ce titre.
+gl_milestone_fiche() {
+  local brut
+  brut="$(GL_MS_TITRE="$1" gh api "repos/$GL_GH_REPO/milestones?state=all&per_page=100" \
+    --jq "$GL_MS_FICHE_JQ" 2>/dev/null)"
+  [ -n "$brut" ] || return 1
+  printf '%s\n' "$brut"
+}
+
+# gl_date_valide <AAAA-MM-JJ> -> 0 si c'est une date du calendrier ÉCRITE dans cette forme. La forme
+# d'abord (un « 2027-9-1 » que `date -d` accepterait ne se relirait pas à l'identique), puis
+# l'aller-retour par `date -d`, qui écarte un 31 juin.
+gl_date_valide() {
+  case "$1" in
+    [0-9][0-9][0-9][0-9]-[01][0-9]-[0-3][0-9]) ;;
+    *) return 1 ;;
+  esac
+  [ "$(date -d "$1" +%F 2>/dev/null)" = "$1" ]
+}
+
+# gl_milestone_echeance <titre-exact> [<AAAA-MM-JJ>] -> LIT l'échéance du jalon, ou la POSE.
+# Codes : 0 = lue (date sur stdout) / posée / déjà à jour · 3 = aucune échéance, rien sur stdout ·
+# 2 = usage ou date invalide · 1 = jalon inconnu ou échec côté forge.
+#
+# Un jalon SANS échéance se trie en DERNIER chez GitHub (`DUE_DATE ASC`) : c'est une place dans la
+# file, pas une absence — d'où le 3 muet, qui n'est pas une panne.
+gl_milestone_echeance() {
+  local titre="$1" date="${2:-}" fiche numero courant
+  if [ -z "$titre" ]; then
+    echo "usage: gl_milestone_echeance <titre-exact-du-jalon> [<AAAA-MM-JJ>]" >&2; return 2
+  fi
+  if [ -n "$date" ] && ! gl_date_valide "$date"; then
+    echo "gl_milestone_echeance : « $date » n'est pas une date AAAA-MM-JJ — rien n'a été demandé à la forge." >&2
+    return 2
+  fi
+  gh_require || return 1
+
+  fiche="$(gl_milestone_fiche "$titre")" || {
+    echo "gl_milestone_echeance : aucun jalon intitulé « $titre »" >&2; return 1; }
+  IFS=$'\t' read -r numero courant _ <<<"$fiche"
+  [ "$courant" = - ] && courant=""
+
+  if [ -z "$date" ]; then
+    [ -n "$courant" ] || return 3
+    printf '%s\n' "$courant"
+    return 0
+  fi
+  if [ "$courant" = "$date" ]; then
+    printf 'jalon « %s » : échéance déjà au %s — rien à écrire.\n' "$titre" "$date"
+    return 0
+  fi
+  # Minuit UTC, comme les échéances déjà posées sur le dépôt : c'est la date qu'on relit, et la
+  # comparer à des jalons posés autrement la décalerait d'un jour selon le fuseau.
+  gh api --method PATCH "repos/$GL_GH_REPO/milestones/$numero" \
+    --raw-field due_on="${date}T00:00:00Z" >/dev/null || {
+      echo "gl_milestone_echeance : échec de l'écriture sur « $titre » — l'échéance reste « ${courant:-aucune} »." >&2
+      return 1; }
+  printf 'jalon « %s » : échéance %s → %s.\n' "$titre" "${courant:-aucune}" "$date"
+}
+
+# gl_milestone_cree <titre> <AAAA-MM-JJ> [produit|outillage] -> CRÉE un jalon, échéance et rail
+# posés d'un coup. Codes : 0 = créé · 4 = un jalon porte déjà ce titre (fermé compris), rien créé ·
+# 2 = usage, date ou rail invalide · 1 = échec côté forge.
+#
+# L'ÉCHÉANCE EST OBLIGATOIRE, et c'est la raison d'être du verbe plutôt qu'un détail : un jalon sans
+# date se range DERNIER de son rail, donc personne ne le choisit en le créant — il y tombe. Créer un
+# jalon, c'est décider de sa place dans la file ; le verbe demande la décision.
+#
+# UN TITRE DÉJÀ PRIS EST UN REFUS ET NON UN SUCCÈS IDEMPOTENT : le jalon qui le porte peut être un
+# autre (fermé, d'une phase passée), et « déjà là » y poserait des tickets sans que personne l'ait
+# vu. Le geste d'après est nommé : régler l'existant par `milestone-echeance` / `milestone-rail`.
+#
+# ⚠ L'ÉCHÉANCE NE VOYAGE PAS DANS LE POST, ET C'EST UNE CORRECTION (#1018). GitHub enregistre la
+# VEILLE quand `due_on` accompagne la création (`2028-01-05T00:00:00Z` → `2028-01-04`, mesuré le
+# 2026-09-19 sur le jalon n° 21), alors qu'un PATCH de la même valeur la garde. La version de #1013
+# l'envoyait dans le POST : elle annonçait une date qu'elle n'avait pas posée, et un jour d'écart
+# suffit à inverser deux jalons voisins. Le jalon naît donc SANS échéance, `gl_milestone_echeance`
+# la pose par PATCH — un seul chemin d'écriture de la date —, puis la fiche est RELUE : l'échéance
+# annoncée est celle que la forge rend, ou le verbe échoue en le disant.
+gl_milestone_cree() {
+  local titre="$1" date="${2:-}" rail="${3:-produit}" fiche relue
+  if [ -z "$titre" ] || [ -z "$date" ]; then
+    echo "usage: gl_milestone_cree <titre> <AAAA-MM-JJ> [produit|outillage]" >&2; return 2
+  fi
+  if ! gl_date_valide "$date"; then
+    echo "gl_milestone_cree : « $date » n'est pas une date AAAA-MM-JJ — rien n'a été demandé à la forge." >&2
+    return 2
+  fi
+  if ! gl_rail_valide "$rail"; then
+    echo "gl_milestone_cree : rail inconnu « $rail » (attendu : produit | outillage)" >&2; return 2
+  fi
+  gh_require || return 1
+
+  if fiche="$(gl_milestone_fiche "$titre")"; then
+    echo "gl_milestone_cree : un jalon s'intitule déjà « $titre » (n° ${fiche%%$'\t'*}) — rien n'a été créé." >&2
+    echo "  Son échéance se règle par « milestone-echeance », son rail par « milestone-rail »." >&2
+    return 4
+  fi
+
+  # Le marqueur de rail est la description entière d'un jalon d'outillage neuf, EN TÊTE comme le
+  # pose `gl_milestone_rail` ; un jalon produit naît sans description (« produit » est l'absence du
+  # marqueur). Les sections de cadrage s'ajoutent ensuite en queue, par `milestone-criteres`.
+  if [ "$rail" = outillage ]; then
+    gh api --method POST "repos/$GL_GH_REPO/milestones" --raw-field title="$titre" \
+      --raw-field description="rail: outillage" >/dev/null
+  else
+    gh api --method POST "repos/$GL_GH_REPO/milestones" --raw-field title="$titre" >/dev/null
+  fi || { echo "gl_milestone_cree : échec de la création de « $titre »" >&2; return 1; }
+
+  gl_milestone_echeance "$titre" "$date" >/dev/null || {
+    echo "gl_milestone_cree : « $titre » est créé SANS échéance — il se range dernier de son rail." >&2
+    echo "  À reposer : milestone-echeance \"$titre\" $date" >&2
+    return 1; }
+  relue="$(gl_milestone_echeance "$titre")" || relue=""
+  if [ "$relue" != "$date" ]; then
+    echo "gl_milestone_cree : « $titre » est créé, mais la forge rend l'échéance « ${relue:-aucune} » au lieu de $date." >&2
+    return 1
+  fi
+  printf 'jalon « %s » créé — échéance %s (relue), rail %s.\n' "$titre" "$date" "$rail"
+}
+
+# gl_prio_pose <iid> <haute|moyenne|basse> -> REMPLACE la priorité d'un ticket. Codes : 0 = posée /
+# déjà à jour · 2 = usage ou niveau inconnu · 1 = ticket illisible ou échec côté forge.
+#
+# L'AJOUT PRÉCÈDE LE RETRAIT : une panne entre les deux laisse un ticket à DEUX priorités — visible,
+# nommée, et que `queue.sh` range encore quelque part —, jamais un ticket SANS priorité, que rien ne
+# signalerait. Tous les `prio::` autres que la cible partent, pas seulement le premier : un ticket
+# qui en porte deux est justement celui qu'il faut réparer.
+gl_prio_pose() {
+  local iid="$1" niveau="${2:-}" brut labels cible ancien anciens="" present=0
+  if [ -z "$iid" ] || [ -z "$niveau" ]; then
+    echo "usage: gl_prio_pose <iid> <haute|moyenne|basse>" >&2; return 2
+  fi
+  case "$niveau" in
+    haute|moyenne|basse) ;;
+    *) echo "gl_prio_pose : niveau inconnu « $niveau » (attendu : haute | moyenne | basse)" >&2; return 2 ;;
+  esac
+  gh_require || return 1
+  cible="prio::$niveau"
+
+  # Une lecture, celle de la vue canonique : ses labels sont joints par « , ».
+  brut="$(gl_issue_raw "$iid")" || {
+    echo "gl_prio_pose : ticket #$iid illisible — rien n'a été écrit." >&2; return 1; }
+  labels="$(printf '%s\n' "$brut" | awk -F'\t' '$1 == "labels:" { print $2; exit }')"
+  for ancien in $(printf '%s\n' "$labels" | grep -o 'prio::[a-z]*'); do
+    if [ "$ancien" = "$cible" ]; then present=1; else anciens="$anciens $ancien"; fi
+  done
+  anciens="${anciens# }"
+
+  if [ "$present" = 1 ] && [ -z "$anciens" ]; then
+    printf '#%s : déjà %s — rien à écrire.\n' "$iid" "$cible"
+    return 0
+  fi
+  if [ "$present" = 0 ]; then
+    gh_add_label "$iid" "$cible" || return 1
+  fi
+  for ancien in $anciens; do
+    gh_remove_label "$iid" "$ancien" || {
+      echo "gl_prio_pose : #$iid porte encore « $ancien » à côté de « $cible » — à retirer." >&2
+      return 1; }
+  done
+  printf '#%s : %s → %s.\n' "$iid" "${anciens:-aucune priorité}" "$cible"
+}
+
 # --- Sous-tickets (découpage parent / lots) -------------------------------------------------------
 # Convention (docs/10-workflow-git.md §5.1) : un besoin qui dépasse ~1 session de travail est porté
 # par un ticket PARENT de suivi auquel ses lots sont rattachés en SUB-ISSUES natives — `Issue.parent`
@@ -2223,8 +2414,7 @@ gh_relecture_empreintes() {
     *'"issue":null'*) return 3 ;;
   esac
   if [ -z "$(printf '%s' "$raw" | gl_json_string_field title)" ]; then return 1; fi
-  printf '%s' "$raw" | sed 's/.*"comments"//' \
-    | grep -o 'empreinte [0-9][0-9]*-[0-9][0-9]*' | sed 's/^empreinte //' || true
+  printf '%s' "$raw" | gl_empreintes_commentaires
 }
 
 # gl_relecture_section <empreinte> [raison] — l'en-tête du commentaire. Sa forme est un CONTRAT :
@@ -2483,6 +2673,360 @@ gl_relecture_attente() {
           for (k = 1; k <= na; k++)
             if (index(parts[i], ancres[k]) == 1) { print "{\"body\":\"" parts[i]; break }
       }')
+}
+
+# --- Les critères d'acceptation confrontés au diff, à la clôture (#968) --------------------------
+#
+# Les critères d'un ticket sont ÉCRITS par `/ticket-create`, LUS au cadrage par `/ticket-start` — et
+# n'étaient plus jamais regardés : `/ticket-finish` cochait la checklist de la PR (le PROCÉDÉ), puis
+# `merge-mr` vérifiait que la PR était mergeable, et le merge fermait le ticket. Personne ne
+# demandait « ce ticket fait-il ce qu'il disait ? ». C'est le défaut que #756/#759 ont corrigé un
+# cran au-dessus, au jalon — à l'échelle du ticket, et sans occasion de rattrapage : après le merge
+# la branche est supprimée et le worktree ramassé.
+#
+# DEUX VERBES, sur le modèle de la relecture visuelle (#935) : une QUESTION qui ne coûte qu'une
+# lecture (`criteres`, le pendant de `relecture-visuelle.sh --plan`) et une TRACE (`criteres-note`,
+# le pendant de `relecture-note`). Le partage de #562, #612 et #714 tient : la machine DÉSIGNE ce
+# qu'il y a à confronter et REFUSE qu'une question soit tue ; la confrontation elle-même est un
+# jugement de la session, que le verbe ne refait pas.
+#
+# CE QUI SE VÉRIFIE EST UNE FORME, JAMAIS UN SENS (#746) — comme la grille de #980 :
+#   · chaque critère du ticket (`C1`…`Cn`, numérotés par `criteres`) a une ligne de tableau
+#     `| Cn | <réponse> | <pièce> |` dont la réponse COMMENCE par ✓, ✗ ou « hors diff » ;
+#   · la pièce n'est jamais vide — un ✗ dit pourquoi, un « hors diff » dit ce qui le montre ;
+#   · un ✓ NOMME UN FICHIER DU DIFF (chemin ou nom, bornés). C'est la règle de `/milestone-bilan` —
+#     « un critère tenu sans pièce nommée n'est pas tenu » — rendue vérifiable : « ✓ | fait | » est
+#     refusé, et un critère qu'aucun fichier du diff ne porte se dit ✗ ou « hors diff », jamais ✓.
+# Qu'un ✓ soit MÉRITÉ, aucune machine n'en décide ici.
+#
+# LES CRITÈRES SE LISENT DANS UNE SEULE RÈGLE, celle de `GL_SECTION_PROG` : les cases garnies
+# (`- [ ] <texte>`) sous « Critères d'acceptation ». Une case laissée vide par le gabarit n'est pas un
+# critère. Mesuré le 2026-09-19 : les 612 sections du backlog ont toutes cette forme exacte.
+#
+# LE REPLI BUG, arbitré sur #968 : le gabarit `bug.md` n'a pas de section de critères — son contrat
+# est « Comportement attendu ». Un ticket sans case garnie mais qui porte cette section se juge sur
+# elle, comptée comme critère unique `C1`.
+#
+# SANS CRITÈRE, ON LE SIGNALE, et c'est l'inverse de la relecture sans écran (arbitré sur #968). Un
+# ticket sans écran n'a rien à faire regarder : c'est un état normal, et l'étape se tait. Un ticket
+# sans critère avait quelque chose à tenir et ne l'a pas écrit : c'est le manque lui-même, et il est
+# assez rare (76 tickets fermés sur 667) pour qu'un signalement ne devienne pas du bruit.
+# `criteres-note --aucun` le consigne — après avoir RELU le ticket : on ne se déclare pas sans
+# critère, la forge le constate. Et aucun critère n'est écrit à sa place — des critères rédigés à la
+# clôture seraient taillés sur ce qui a été livré (règle de `/milestone-bilan`).
+#
+# ⚠ Le défaut de la première constante s'affecte en DEUX temps, et ce n'est pas du style : dans
+# « "${VAR:-Critères d'acceptation}" », bash ouvre une chaîne à l'apostrophe, et tout le fichier qui
+# suit se lit de travers — une erreur de syntaxe quatre-vingts lignes plus bas.
+GL_ACCEPTATION_SECTION="Critères d'acceptation"
+[ -n "${MAESTRO_ACCEPTATION_SECTION:-}" ] && GL_ACCEPTATION_SECTION="$MAESTRO_ACCEPTATION_SECTION"
+GL_ATTENDU_SECTION="${MAESTRO_ATTENDU_SECTION:-Comportement attendu}"
+GL_CRITERES_ANCRE="${GL_CRITERES_ANCRE:-Critères confrontés au diff}"
+
+# gl_empreintes_commentaires — les empreintes déjà consignées dans une réponse GraphQL brute (stdin),
+# une par ligne. Cherchées APRÈS la clé « comments » : un titre ou une description qui parlerait
+# d'empreintes ne doit pas passer pour une trace. Partagé par `relecture-note` et `criteres-note`.
+gl_empreintes_commentaires() {
+  sed 's/.*"comments"//' | grep -o 'empreinte [0-9][0-9]*-[0-9][0-9]*' | sed 's/^empreinte //' || true
+}
+
+# gl_acceptation_de — les critères d'un ticket, sur une description DÉJÀ LUE (stdin) : une ligne
+# d'en-tête `# source<TAB><section>`, puis `C<n><TAB><texte>` par critère. Codes : 0 · 3 aucun critère,
+# rien sur stdout.
+gl_acceptation_de() {
+  local corps section items
+  corps="$(cat)"
+  if section="$(printf '%s\n' "$corps" | gl_section_de "$GL_ACCEPTATION_SECTION")"; then
+    items="$(printf '%s\n' "$section" | LC_ALL=C awk '
+      { sub(/\r$/, "") }
+      /^[ \t]*[-*+][ \t]+\[[ xX]\][ \t]+[^ \t]/ {
+        t = $0
+        sub(/^[ \t]*[-*+][ \t]+\[[ xX]\][ \t]+/, "", t)
+        sub(/[ \t]+$/, "", t)
+        printf "C%d\t%s\n", ++n, t
+      }')"
+    if [ -n "$items" ]; then
+      printf '# source\t%s\n%s\n' "$GL_ACCEPTATION_SECTION" "$items"
+      return 0
+    fi
+  fi
+  if section="$(printf '%s\n' "$corps" | gl_section_de "$GL_ATTENDU_SECTION")"; then
+    printf '# source\t%s (repli : critère unique)\n' "$GL_ATTENDU_SECTION"
+    printf 'C1\t%s\n' "$(printf '%s\n' "$section" | tr -s ' \t\r\n' ' ' | sed 's/^ //; s/ $//')"
+    return 0
+  fi
+  return 3
+}
+
+# gh_criteres_lecture <iid> — UN aller (#602) : titre, description et commentaires, la forme de
+# requête de `gl_relecture_attente`. La réponse brute sur stdout. Codes : 0 · 3 ticket inconnu ·
+# 1 forge muette ou ticket illisible.
+gh_criteres_lecture() {
+  local iid="$1" raw
+  raw="$(gh_graphql_read '{ '"$(gh_depot_gql)"' { issue(number:'"$iid"') { title body comments(first: 100) { nodes { body } } } } }')" || return 1
+  case "$raw" in
+    *'"issue":null'*) return 3 ;;
+  esac
+  if [ -z "$(printf '%s' "$raw" | gl_json_string_field title)" ]; then return 1; fi
+  printf '%s' "$raw"
+}
+
+# gl_criteres_corps — la description, sur une réponse brute (stdin). AVANT la clé « comments » : un
+# commentaire porte lui aussi un champ `body`.
+gl_criteres_corps() {
+  sed 's/"comments".*//' | gl_json_string_field body
+}
+
+# gl_criteres <iid> -> LES CRITÈRES À CONFRONTER, numérotés — la question de l'étape 4ter de
+# `/ticket-finish`. Lecture seule. Codes : 0 critères sur stdout · 3 aucun critère (rien sur stdout) ·
+# 1 ticket introuvable ou forge muette · 2 usage.
+#
+# ⚠ Ici « ticket inconnu » rend 1 et non 3 : le 3 est la RÉPONSE « aucun critère », sur laquelle
+# l'appelant consigne un signalement. Les confondre ferait signaler « sans critère » un iid mal tapé.
+gl_criteres() {
+  local iid="$1" raw rc
+  if [ -z "$iid" ]; then echo "usage: gl_criteres <iid>" >&2; return 2; fi
+  case "$iid" in
+    *[!0-9]*) echo "gl_criteres : « $iid » n'est pas un iid de ticket." >&2; return 2 ;;
+  esac
+  raw="$(gh_criteres_lecture "$iid")"; rc=$?
+  case "$rc" in
+    0) ;;
+    3) echo "gl_criteres : ticket #$iid introuvable dans $GL_GH_REPO." >&2; return 1 ;;
+    *) echo "gl_criteres : ticket #$iid illisible." >&2; return 1 ;;
+  esac
+  if ! printf '%s' "$raw" | gl_criteres_corps | gl_acceptation_de; then
+    echo "#$iid : aucun critère d'acceptation écrit (ni case garnie sous « $GL_ACCEPTATION_SECTION »," >&2
+    echo "  ni « $GL_ATTENDU_SECTION ») — rien à confronter : le signaler (criteres-note --aucun)." >&2
+    return 3
+  fi
+}
+
+# gl_criteres_chemins_du_diff -> les fichiers que la branche livre, un par ligne : ce qui a changé
+# depuis sa base commune avec `origin/main`, travail non commité et fichiers nouveaux compris. C'est
+# le même périmètre que celui qu'un ✓ doit nommer. Code 1 si la base est introuvable.
+gl_criteres_chemins_du_diff() {
+  local base
+  base="$(git merge-base "${GL_CRITERES_BASE:-origin/main}" HEAD 2>/dev/null)" || return 1
+  [ -n "$base" ] || return 1
+  { git diff --name-only "$base" && git ls-files --others --exclude-standard; } | sort -u
+}
+
+# gl_criteres_constat <fichier> — la FORME du constat, confrontée aux critères attendus (ENVIRON
+# ATTENDUS, « C1 C2 … ») et aux fichiers du diff (ENVIRON CHEMINS, un par ligne). Sur stdout : une
+# ligne `!<TAB>Cn<TAB>motif` par critère sans réponse recevable, puis `=<TAB>✓<TAB>✗<TAB>hors-diff`.
+#
+# Un nom de fichier compte s'il est BORNÉ — ni lettre, ni chiffre, ni `_`/`-` de part et d'autre :
+# sans quoi `lib.sh` serait « nommé » par `glib.sh`, et un fichier `a` par n'importe quelle pièce.
+# Lecture en LC_ALL=C, comme la grille de #980 : ✓ et ✗ se comparent octet à octet.
+gl_criteres_constat() {
+  local fichier="$1"
+  LC_ALL=C awk '
+    function nu(s) { sub(/^[ \t]+/, "", s); sub(/[ \t\r]+$/, "", s); return s }
+    function borne(c) { return c == "" || c !~ /[A-Za-z0-9_-]/ }
+    function nomme(piece, nom,   off, p, avant, apres) {
+      if (nom == "") return 0
+      off = 0
+      while ((p = index(substr(piece, off + 1), nom)) > 0) {
+        p += off
+        avant = (p > 1) ? substr(piece, p - 1, 1) : ""
+        apres = substr(piece, p + length(nom), 1)
+        if (borne(avant) && borne(apres)) return 1
+        off = p
+      }
+      return 0
+    }
+    function du_diff(piece,   i, base) {
+      for (i = 1; i <= nc; i++) {
+        base = chemins[i]; sub(/.*\//, "", base)
+        if (nomme(piece, chemins[i]) || nomme(piece, base)) return 1
+      }
+      return 0
+    }
+    BEGIN {
+      na = split(ENVIRON["ATTENDUS"], attendus, " ")
+      nc = split(ENVIRON["CHEMINS"], chemins, "\n")
+    }
+    {
+      ligne = $0
+      sub(/^[ \t]+/, "", ligne)
+      if (substr(ligne, 1, 1) != "|") next
+      if (split(ligne, cel, "|") < 4) next
+      id = nu(cel[2]); gsub(/[*`]/, "", id)
+      if (id !~ /^C[0-9]+$/ || (id in rendu)) next
+      reponse = nu(cel[3]); piece = nu(cel[4])
+      if (index(reponse, "✓") == 1)                 genre = "ok"
+      else if (index(reponse, "✗") == 1)            genre = "ko"
+      else if (tolower(reponse) ~ /^hors diff/)     genre = "hors"
+      else { motif[id] = "réponse ni ✓, ni ✗, ni « hors diff »"; next }
+      if (piece == "") { motif[id] = "pièce vide — un ✗ dit pourquoi, un ✓ nomme un fichier du diff"; next }
+      if (genre == "ok" && !du_diff(piece)) {
+        motif[id] = "✓ sans fichier du diff nommé dans la pièce"; next
+      }
+      rendu[id] = genre
+    }
+    END {
+      for (i = 1; i <= na; i++) {
+        id = attendus[i]
+        if (id in rendu) { compte[rendu[id]]++; continue }
+        printf "!\t%s\t%s\n", id, (id in motif) ? motif[id] : "sans réponse"
+      }
+      printf "=\t%d\t%d\t%d\n", compte["ok"], compte["ko"], compte["hors"]
+    }
+  ' "$fichier"
+}
+
+# gl_criteres_section <empreinte> <entête-du-compte> — l'en-tête du commentaire. Sa forme est un
+# CONTRAT : « empreinte <n>-<n> » sur UNE ligne et en clair, relu au tour suivant.
+gl_criteres_section() {
+  printf '## %s — %s — empreinte %s\n\n' "$GL_CRITERES_ANCRE" "$2" "$1"
+  cat <<'ENTETE'
+Les critères d'acceptation de ce ticket ont été confrontés, à sa clôture, au **diff livré**
+(`/ticket-finish`, #968). Chacun est **couvert** par un fichier du diff qui est nommé (✓), **non
+couvert** (✗, avec pourquoi), ou tenu **hors du diff** — un geste de forge, une mesure — avec ce qui
+le montre. Un critère non couvert est nommé ici, jamais coché, et il n'a pas bloqué le merge : ce
+que le dispositif rend difficile est l'absence de trace, pas la livraison. Et ce constat dit ce qui
+a été **écrit**, pas ce qui a été exercé — l'exercice reste l'affaire du pipeline et, au jalon, de
+`/milestone-bilan`.
+
+ENTETE
+}
+
+# gl_criteres_aucun_corps — le signalement d'un ticket sans critère. Texte FIXE : son empreinte l'est
+# donc aussi, et c'est ce qui rend `--aucun` idempotent sans fichier.
+gl_criteres_aucun_corps() {
+  cat <<'AUCUN'
+Ce ticket se ferme **sans critère d'acceptation écrit** — ni case garnie sous « Critères
+d'acceptation », ni section « Comportement attendu » : rien n'a donc été confronté au diff livré à
+sa clôture (#968). Aucun critère n'a été écrit à sa place : rédigés à la clôture, ils seraient
+taillés sur ce qui a été livré. Ce signalement est ce qui empêche « rien à confronter » de
+ressembler à « tout est couvert ».
+AUCUN
+}
+
+# gl_criteres_note [--aucun] <iid> [<fichier>] -> CONSIGNE la confrontation sur le ticket, en
+# commentaire ancré et idempotent. Sans option, le fichier porte le CONSTAT (le tableau des `Cn`) ;
+# `--aucun <iid>`, sans fichier, signale un ticket qui n'a aucun critère — après l'avoir vérifié.
+#
+# Codes : 0 consigné (ou déjà consigné à l'identique) · 2 usage · 3 iid inconnu · 4 fichier absent ou
+# vide · 5 le constat ne tient pas (un critère sans réponse recevable, un ✓ sans fichier du diff, un
+# constat sur un ticket sans critère, un `--aucun` sur un ticket qui en a) · 1 forge muette, ou base
+# du diff introuvable. Les refus tombent AVANT toute écriture, et ceux qui ne coûtent rien (4, 3, un
+# fichier sans aucune ligne `Cn`) avant la première lecture de forge (règle de `gl_reste_claude`).
+gl_criteres_note() {
+  local aucun=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --aucun) aucun=1; shift ;;
+      --) shift; break ;;
+      *) break ;;
+    esac
+  done
+  local iid="$1" fichier="$2"
+  if [ -z "$iid" ] || { [ "$aucun" = 0 ] && [ -z "$fichier" ]; } || { [ "$aucun" = 1 ] && [ -n "$fichier" ]; }; then
+    echo "usage: gl_criteres_note <iid> <fichier> | gl_criteres_note --aucun <iid>" >&2; return 2
+  fi
+  if [ "$aucun" = 0 ]; then
+    if [ ! -f "$fichier" ]; then
+      echo "gl_criteres_note : fichier introuvable : $fichier" >&2
+      echo "  Le CONSTAT est le corps du commentaire : l'écrire d'abord (outil Write), une ligne" >&2
+      echo "  « | Cn | ✓/✗/hors diff | pièce | » par critère rendu par « lib.sh criteres <iid> »." >&2
+      return 4
+    fi
+    if [ ! -s "$fichier" ]; then
+      echo "gl_criteres_note : $fichier est vide — un constat vide ne dit pas si les critères ont été" >&2
+      echo "  confrontés, ce qui est précisément la question posée." >&2
+      return 4
+    fi
+  fi
+  case "$iid" in
+    ''|*[!0-9]*)
+      echo "gl_criteres_note : « $iid » n'est pas un iid de ticket — rien n'a été écrit." >&2
+      return 3 ;;
+  esac
+  if [ "$aucun" = 0 ] && ! LC_ALL=C grep -Eq '^[[:space:]]*\|[[:space:]]*[*`]*C[0-9]+[*`]*[[:space:]]*\|' "$fichier"; then
+    echo "gl_criteres_note : $fichier ne porte aucune ligne « | Cn | … | » — rien n'a été écrit." >&2
+    return 5
+  fi
+  local chemins=""
+  if [ "$aucun" = 0 ]; then
+    chemins="$(gl_criteres_chemins_du_diff)" || {
+      echo "gl_criteres_note : base du diff introuvable (${GL_CRITERES_BASE:-origin/main}) — rien n'a été écrit." >&2
+      return 1
+    }
+  fi
+
+  local raw rc
+  raw="$(gh_criteres_lecture "$iid")"; rc=$?
+  case "$rc" in
+    0) ;;
+    3) echo "gl_criteres_note : ticket #$iid introuvable dans $GL_GH_REPO — rien n'a été écrit." >&2
+       return 3 ;;
+    *) echo "gl_criteres_note : ticket #$iid illisible — rien n'a été écrit." >&2
+       return 1 ;;
+  esac
+  local criteres attendus
+  criteres="$(printf '%s' "$raw" | gl_criteres_corps | gl_acceptation_de)"
+  attendus="$(printf '%s\n' "$criteres" | awk -F'\t' '/^C[0-9]+\t/ { printf "%s%s", s, $1; s = " " }')"
+
+  local corps_note entete
+  if [ "$aucun" = 1 ]; then
+    if [ -n "$attendus" ]; then
+      echo "gl_criteres_note : #$iid porte des critères ($attendus) — ils se confrontent, un ticket ne" >&2
+      echo "  se déclare pas sans critère. Rien n'a été écrit." >&2
+      return 5
+    fi
+    corps_note="$(gl_criteres_aucun_corps)"
+    entete="AUCUN CRITÈRE"
+  else
+    if [ -z "$attendus" ]; then
+      echo "gl_criteres_note : #$iid n'a aucun critère d'acceptation écrit — il n'y a rien à confronter," >&2
+      echo "  et c'est « criteres-note --aucun $iid » qui le consigne. Rien n'a été écrit." >&2
+      return 5
+    fi
+    local verdict manques
+    verdict="$(ATTENDUS="$attendus" CHEMINS="$chemins" gl_criteres_constat "$fichier")"
+    manques="$(printf '%s\n' "$verdict" | awk -F'\t' '$1 == "!" { print "    - " $2 " : " $3 }')"
+    if [ -n "$manques" ]; then
+      echo "gl_criteres_note : le constat de $fichier ne répond pas à tous les critères de #$iid — rien n'a été écrit." >&2
+      printf '%s\n' "$manques" >&2
+      echo "  Un critère qu'aucun fichier du diff ne porte se dit ✗ (avec pourquoi) ou « hors diff » (avec" >&2
+      echo "  ce qui le montre) — jamais ✓ pour faire passer le constat." >&2
+      return 5
+    fi
+    entete="$(printf '%s\n' "$verdict" | awk -F'\t' '$1 == "=" { printf "%s ✓ · %s ✗ · %s hors diff", $2, $3, $4 }')"
+    corps_note="$(cat "$fichier")"
+  fi
+
+  local empreinte
+  empreinte="$(printf '%s\n' "$corps_note" | cksum | awk '{ printf "%s-%s", $1, $2 }')"
+  if [ -z "$empreinte" ]; then
+    echo "gl_criteres_note : empreinte illisible (cksum absent ?)" >&2; return 1
+  fi
+  if printf '%s' "$raw" | gl_empreintes_commentaires | grep -qx "$empreinte"; then
+    printf '#%s : cette confrontation y est déjà (empreinte %s) — rien à écrire.\n' "$iid" "$empreinte"
+    gl_issue_url "$iid"
+    return 0
+  fi
+
+  # Brouillon relu par personne — il repart tel quel vers la forge : temporaire du système, pas
+  # `.maestro/` (règle #234, docs/10 §8.5).
+  local corps
+  corps="$(mktemp "${TMPDIR:-/tmp}/maestro-criteres.XXXXXX")" || return 1
+  gl_criteres_section "$empreinte" "$entete" > "$corps"
+  printf '%s\n' "$corps_note" >> "$corps"
+  if ! gl_issue_note "$iid" "$corps" >/dev/null; then
+    rm -f "$corps"
+    echo "gl_criteres_note : échec de la publication sur #$iid — la confrontation n'y est PAS." >&2
+    return 1
+  fi
+  rm -f "$corps"
+  if [ "$aucun" = 1 ]; then
+    printf '#%s : AUCUN CRITÈRE — signalé sur le ticket (empreinte %s).\n' "$iid" "$empreinte"
+  else
+    printf '#%s : critères confrontés et consignés — %s (empreinte %s).\n' "$iid" "$entete" "$empreinte"
+  fi
+  gl_issue_url "$iid"
 }
 
 # --- Fermeture du parent (#515, docs/10 §5.1) ---------------------------------------------------
@@ -7048,6 +7592,17 @@ gh_add_label() {
   fi
 }
 
+# gh_remove_label <iid> <label> -> retire UN label sans toucher aux autres — le pendant exact de
+# gh_add_label, et pour la même raison : `DELETE /issues/<n>/labels/<nom>` n'ôte que celui-là. Le
+# nom voyage dans le CHEMIN : ses deux-points s'encodent (`prio::haute` → `prio%3A%3Ahaute`).
+gh_remove_label() {
+  local iid="$1" label="$2"
+  if [ -z "$iid" ] || [ -z "$label" ]; then echo "usage: gh_remove_label <iid> <label>" >&2; return 2; fi
+  if ! gh api -X DELETE "repos/$GL_GH_REPO/issues/$iid/labels/${label//:/%3A}" >/dev/null 2>&1; then
+    echo "Échec du retrait du label « $label » de #$iid" >&2; return 1
+  fi
+}
+
 gh_get_mr_description() {
   local mr="$1"
   if [ -z "$mr" ]; then echo "usage: gh_get_mr_description <mr>" >&2; return 2; fi
@@ -8608,6 +9163,9 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     milestone-criteres) gl_milestone_criteres "$@" ;;
     milestone-verdict)  gl_milestone_verdict "$@" ;;
     milestones-a-boucler) gl_milestones_a_boucler ;;
+    milestone-echeance) gl_milestone_echeance "$@" ;;
+    milestone-cree)     gl_milestone_cree "$@" ;;
+    prio-pose)          gl_prio_pose "$@" ;;
     issue-link)     gl_issue_link "$@" ;;
     subticket-add)   gl_subticket_add "$@" ;;
     subticket-order) gl_subticket_order "$@" ;;
@@ -8623,6 +9181,8 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     veille-differe) gl_veille_differe "$@" ;;
     relecture-note) gl_relecture_note "$@" ;;
     relecture-attente) gl_relecture_attente "$@" ;;
+    criteres)       gl_criteres "$@" ;;
+    criteres-note)  gl_criteres_note "$@" ;;
     ferme-parent)   gl_ferme_parent "$@" ;;
     garde-fermeture) gl_garde_fermeture "$@" ;;
     demarre-parent) gl_demarre_parent "$@" ;;
@@ -8727,6 +9287,11 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "  relecture-attente <iid>            (lecture seule : le rendu attendu et les décisions déjà prises à l'écran —" >&2
       echo "                                      commentaires « ## Veille de conception » / « ## Variante retenue » —, ce" >&2
       echo "                                      contre quoi le regard neuf juge, #980)" >&2
+      echo "  criteres <iid>                     (lecture seule : les critères d'acceptation à confronter au diff, numérotés" >&2
+      echo "                                      C1…Cn ; repli bug sur « Comportement attendu ». 0=il y en a, 3=aucun — #968)" >&2
+      echo "  criteres-note <iid> <fichier> | --aucun <iid>  (CONSIGNE la confrontation des critères au diff sur le" >&2
+      echo "                                      ticket, ancrée et idempotente. 5 = un Cn sans réponse, un ✓ sans fichier du" >&2
+      echo "                                      diff ; --aucun signale un ticket sans critère, vérifié — #968)" >&2
       echo "  current-milestone [produit|outillage] (titre du milestone courant du rail — le plus ancien actif portant" >&2
       echo "                                      encore un ticket ouvert ; soldé et vide sont sautés, chacun nommé sur stderr. Défaut produit)" >&2
       echo "  milestones                         (tous les milestones : titre/état/dates/avancement, TSV)" >&2
@@ -8738,6 +9303,11 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "                                      fichier — idempotent. 0=lu/écrit, 3=aucun, muet — #757)" >&2
       echo "  milestones-a-boucler               (jalons actifs entièrement soldés SANS verdict consigné : titre/rail/" >&2
       echo "                                      critères/fermés/total, TSV. 0=il y en a, 3=aucun et muet — #758)" >&2
+      echo "  milestone-echeance <titre> [<AAAA-MM-JJ>]  (lit l'échéance du jalon, ou la pose — la date EST l'ordre" >&2
+      echo "                                      des jalons d'un rail. 0=lue/posée, 3=aucune et muet — #1013)" >&2
+      echo "  milestone-cree <titre> <AAAA-MM-JJ> [produit|outillage]  (crée un jalon, échéance et rail posés ;" >&2
+      echo "                                      4 = titre déjà pris, rien créé — #1013)" >&2
+      echo "  prio-pose <iid> <haute|moyenne|basse>  (remplace le prio:: d'un ticket — idempotent, #1013)" >&2
       echo "  slug <titre> | branch-prefix <type> | host   (hôte de la forge, déduit du remote)" >&2
       echo "  Sous-tickets (découpage parent/lots, docs/10 §5.1) :" >&2
       echo "    issue-link <iid-parent> <iid-lot> [--parallele]  (rattache un lot à son parent — alias de" >&2

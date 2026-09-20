@@ -397,6 +397,91 @@
   --text-sm: var(--text-corps);
 }
 
+/* =====================================================================
+   Le barème des rayons et des ombres (#982, lot 2 de #973)
+   =====================================================================
+
+   Quatre rayons, **un seul** pas d'ombre, chacun nommé par son RÔLE. Avant ce
+   lot, ni l'un ni l'autre n'avait de token : le produit écrivait 5 rayons
+   (`rounded-md` 74 · `rounded-full` 34 · `rounded-lg` 14 · `rounded-t-md` 2 ·
+   `rounded-xl` 1) et 5 ombres (`shadow-sm` 16 · `shadow-lg` 7 · `shadow` 4 ·
+   `shadow-2xl` 3 · `shadow-md` 1), mesurés le 2026-09-20.
+
+   **Le barème a été décidé avant la sonde, pas déduit de l'usage** — un barème
+   déduit n'aurait fait que figer la dispersion. Il sort d'une veille (trois
+   références vérifiées en direct) et d'un choix rendu sur trois variantes
+   rendues, par un regard qui n'en était pas l'auteur (#980). Les deux sont
+   consignés sur le ticket ; ce qui suit n'en garde que les décisions.
+
+   **Une seule ombre, et c'est la décision la moins évidente.** Relevé dans le
+   navigateur sur deux produits en service le 2026-09-20 : GitHub (liste de runs
+   d'Actions) porte **une** ombre d'élévation réelle sur toute la page — celle
+   des menus déroulants ; ses 32 autres `box-shadow` sont des `inset`, donc des
+   *filets*, pas de l'élévation. Grafana (liste de tableaux de bord) en porte
+   **une** aussi. Chez les deux, une surface *posée* se sépare par son bord.
+   D'où le partage : le bord dit « ceci est une surface », l'ombre dit « cette
+   surface flotte » — et elle ne dit que ça. Un second pas d'ombre (« posé »,
+   qui aurait gardé l'ombre des cartes) a été rendu, comparé et écarté : il
+   nomme une surface, pas un état.
+
+   **Les jumelles Tailwind sont aliasées sur le pas nommé**, exactement comme
+   `--text-xs: var(--text-annexe)` plus haut — et pour une raison qui vaut
+   pendant toute la migration : les 125 rayons et 31 ombres du produit se
+   migrent écran par écran, sur plusieurs tickets, et sans l'alias un
+   `--radius-carte` retouché laisserait les `rounded-lg` pas encore renommés à
+   l'ancienne valeur. Conséquence qu'on peut promettre : **renommer une de ces
+   classes en son pas de rôle ne change aucun pixel.** C'est ce qui rend la
+   migration du résidu sûre ligne à ligne.
+
+   ⚠ Ce bloc n'est donc **pas** `inline`, pour la raison écrite au bloc
+   typographique : un alias exige que sa source existe à l'exécution, et un
+   bloc `inline` n'émet rien.
+
+   Restent **sans** alias, et c'est délibéré : `shadow-sm`, `shadow-md`,
+   `shadow-2xl` et le `shadow` nu — que Tailwind v4 donne lui-même pour
+   déprécié, et qui rend exactement `shadow-sm`. Aucun n'a de pas dans le
+   barème : les renommer changera le rendu, donc chacun est une **migration**,
+   pas un renommage, et se fait dans son propre ticket avec sa relecture
+   visuelle. En attendant, la sonde les compte (`tests/rayons-ombres.test.ts`).
+
+   Un pas de plus se discute ici. Le symptôme qu'il en manque un, c'est un
+   `rounded-[10px]` improvisé dans un composant. */
+@theme {
+  /* Ce qu'on manipule : bouton, champ, sélecteur, entrée de navigation, onglet.
+     C'est le pas dominant, ici comme ailleurs — 87 % des éléments arrondis chez
+     GitHub, 91 % chez Grafana, et 74 de nos 125 rayons l'écrivent déjà. */
+  --radius-controle: 0.375rem; /* 6 px */
+
+  /* Une surface **posée** sur la page : carte, encart, conteneur en place.
+     C'est la valeur que `Carte` rend depuis #245 — le nom change, pas le
+     pixel. */
+  --radius-carte: 0.5rem; /* 8 px */
+
+  /* Une surface qui **survole** la page : panneau, menu déroulant, modale.
+     Un pas au-delà de la carte, parce qu'une surface qui flotte se lit d'abord
+     à sa silhouette ; l'ombre vient en second. */
+  --radius-flottant: 0.75rem; /* 12 px */
+
+  /* Ce qui est circulaire ou en pilule : badge d'état, avatar, point d'état.
+     C'est un **rôle**, pas un écart — la même décision qu'Atlassian, dont
+     `radius.full` est réservé aux circulaires. La valeur est celle que
+     `rounded-full` rend en Tailwind v4, au caractère près. */
+  --radius-pastille: calc(infinity * 1px);
+
+  /* LE pas d'ombre. Sa valeur est celle de `shadow-lg`, la plus employée des
+     ombres de surface flottante du produit (7 emplois contre 3 à `shadow-2xl`),
+     donc celle qui fait bouger le moins d'écrans quand le résidu se migrera. */
+  --shadow-flottant:
+    0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+
+  /* Les jumelles. Le pas nommé est la source de la valeur, la classe Tailwind
+     son alias : les deux noms ne peuvent plus porter deux valeurs. */
+  --radius-md: var(--radius-controle);
+  --radius-lg: var(--radius-carte);
+  --radius-xl: var(--radius-flottant);
+  --shadow-lg: var(--shadow-flottant);
+}
+
 /* Tout chiffre qui se compare en colonne (un tableau) ou qui change sous les
    yeux (un compteur temps réel) se rend en chasse tabulaire : sinon le passage
    de « 1 » à « 8 » élargit la valeur et fait sauter la ligne autour d'elle.

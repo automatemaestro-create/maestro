@@ -113,6 +113,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from maestro.agents.catalog import MODELE_EXECUTANT_DEFAUT, Agent
+from maestro.agents.playbook_du_code import registre
 from maestro.controltower.chat import MessageChat, RepondeurChat, normaliser
 
 #: Le nom du fil d'assistance — la clé de stockage (`core/chat/assistance.jsonl`),
@@ -131,7 +132,12 @@ NOM_ASSISTANCE = "assistance"
 #: partir des seules sections qu'on lui passe (c'est du jugement, pas de la
 #: plomberie), il peut le lui **demander** sans ambiguïté. La propriété est éprouvée
 #: au lot 3 sur un échantillon hors périmètre ; elle se prescrit ici.
-_PROMPT_ASSISTANCE = """\
+#:
+#: ⚠ Il porte aussi le **registre** (#945, `playbook_du_code.registre()`), et c'est le
+#: défaut que le retex du 2026-09-11 a relevé en premier (C5) : l'assistant tutoyait
+#: deux lignes sous `ACCUEIL_ASSISTANCE`, qui vouvoie. Rien dans ce prompt ne le lui
+#: disait, et un modèle rend alors le registre dans lequel on s'adresse à lui.
+_PROMPT_ASSISTANCE = f"""\
 Tu es l'assistant de la Control Tower de Maestro, le poste de pilotage depuis
 lequel un humain supervise une équipe d'agents IA (tableau de bord, runs, fil avec
 l'orchestration, agents et playbooks, intégrations MCP, coûts, validations
@@ -147,7 +153,9 @@ seule. Quand elle ne porte pas la réponse, DIS QUE TU NE SAIS PAS, et dis ce qu
 te manque : n'invente ni nom d'écran, ni bouton, ni réglage, ni raccourci, et ne
 complète jamais un extrait par ce que tu crois savoir du produit. Une réponse
 plausible mais fausse coûte bien plus cher à qui la suit qu'un « je ne trouve pas
-ça dans la documentation »."""
+ça dans la documentation ».
+
+{registre()}"""
 
 #: La fiche de l'assistant, hors catalogue (voir le module) : le chat n'a besoin
 #: que du nom, du rôle et du prompt système. Les compétences restent vides — rien

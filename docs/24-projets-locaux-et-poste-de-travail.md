@@ -117,6 +117,9 @@ Conséquences en chaîne, toutes petites prises une à une — **les trois sont 
   montre que le projet actif (#281). Ce qui reste **global** est nommé et justifié dans
   [docs/05 §2.0](./05-interface-control-tower.md) : le parc d'agents, le catalogue, les playbooks,
   le chat et les paramètres du poste.
+  ⚠ **Les agents cessent d'être globaux** (2026-09-19, [docs/37 §2.1](./37-decision-equipe-sur-mesure.md)) :
+  un projet naît sans agent et reçoit une équipe dérivée de son analyse (#1021). Cette ligne décrit
+  l'état présent, et les lots de #1021 la réécriront.
 
 > **La dette de cette section est donc soldée.** Ce qu'elle annonçait sans le livrer — « la
 > Control Tower devient multi-projets », « les coûts, le Kanban et le journal se filtrent par
@@ -168,7 +171,7 @@ tâche, sous trois propriétés tenues ensemble : temps réel, annulable, sans c
 | Projet | Espace de travail de la tâche | Ce qui atteint la racine, et quand | Accord humain | Retour arrière |
 |---|---|---|---|---|
 | **Versionné** | Option **B**, inchangée : un worktree Git **hors** de la racine, sur `maestro/<tâche>` (`maestro.sandbox.projet`) | La branche est **fusionnée dans la branche de base dès que la tâche est soldée en succès** (#705, `--no-ff`) ; une tâche en échec ne fusionne rien, et sa branche conserve le travail commité au démontage | **Un par run et par projet**, demandé à la **première** fusion, diff sous les yeux, par le validateur de toujours (EF-08) ; vaut pour les fusions suivantes du run, refus compris (#706) | Natif : un commit de fusion se défait par `git revert`, et la branche `maestro/<tâche>` n'est **jamais** supprimée |
-| **Non versionné** | **La racine elle-même**, en place (#839, `maestro.sandbox.en_place`) — rien n'est copié, rien n'est retiré | Ce que l'agent écrit, **pendant qu'il l'écrit** ; les tâches d'un même projet sont **sérialisées** (une seule à la fois dans l'arbre) | **Aucun** : il n'y a pas de moment de fusion où l'accrocher — ce qui garde est la frontière d'écriture, la sérialisation et le journal | Aucun historique : c'est le régime d'un projet **neuf**. Un projet qui a de la valeur se met sous Git (`versionner`, #704) et passe dans la ligne du dessus |
+| **Non versionné** | **La racine elle-même**, en place (#839, `maestro.sandbox.en_place`) — rien n'est copié, rien n'est retiré —, plus un **atelier** `.maestro/<tâche>/` pour ce qui n'est pas le livrable (#944) | Ce que l'agent écrit, **pendant qu'il l'écrit** ; les tâches d'un même projet sont **sérialisées** (une seule à la fois dans l'arbre) | **Aucun** : il n'y a pas de moment de fusion où l'accrocher — ce qui garde est la frontière d'écriture, la sérialisation et le journal | Aucun historique : c'est le régime d'un projet **neuf**. Un projet qui a de la valeur se met sous Git (`versionner`, #704) et passe dans la ligne du dessus |
 | **Sans projet** | Le `mkdtemp()` jetable d'avant | Rien — il n'y a pas de racine | — | — |
 
 **Pourquoi l'objection de l'option A est satisfaite, et non écartée.** D2 écartait l'écriture
@@ -227,6 +230,24 @@ Control Tower (`origine: nouveau`), donc le cas le plus courant du premier run.
   dans tous les cas — `ecriture_en_place` avec les fichiers écrits, `ecriture_sans_objet` si la
   tâche a réussi sans rien déposer. Il n'y a **pas d'accord humain** (ci-dessus) et **pas de retour
   arrière** : c'est le régime d'un projet neuf.
+- **Ce que #944 y ajoute : la racine reçoit le livrable, pas les brouillons.** L'espace de travail
+  étant la racine, tout ce qu'un agent écrit *pour* travailler y atterrissait au même rang que ce
+  qu'il livre — le run du [retex du 2026-09-11](./retex/2026-09-11-premiere-session-utilisateur.md)
+  a rendu quatre fichiers de livrable **et** `_verif/`, `_verif_timer/`, `qa/` (constat **G12**).
+  Un ménage de fin de run serait le mauvais remède : le harnais `qa/verif.mjs` a servi au retex à
+  rejouer les vérifications lui-même, l'effacer aurait détruit ce qui avait le plus de valeur après
+  le livrable. La cause est **une fausse prémisse dans le prompt** — le cadre d'exécution promettait
+  à l'agent un « répertoire de travail **isolé** » là où son répertoire courant est le projet de
+  quelqu'un. La réponse est donc une **adresse donnée**, et c'est la règle que le dépôt s'applique à
+  lui-même ([docs/10 §11.7](./10-workflow-git.md)) transposée au projet d'un utilisateur : *ce qu'on
+  invite à relire va sous `.maestro/`, ce que personne ne lit va dans le temporaire*. Chaque tâche
+  reçoit donc un **atelier** `.maestro/<tâche>/`, ouvert avec son espace, **nommé dans le message
+  de sa tâche** (`EspaceEnPlace.consigne_espace` — pas dans le playbook du rôle : le régime dépend
+  du projet, pas de l'agent) et **jamais recensé** (ni empreinte de départ, ni fichier produit — un
+  atelier qui ressortirait en livrable n'aurait fait que déplacer le désordre du disque vers le
+  rapport de run). Il n'y a **aucun refus de plus** : l'atelier est dans la racine et hors des
+  exclusions, donc il s'écrit — et aucune règle de chemin ne saurait distinguer un livrable d'un
+  brouillon, ce qui est précisément pourquoi la réponse ne pouvait pas être une frontière.
 - **Ce que le lot 1 (#704) lui offre** : **changer de régime**. `ProjetStore.versionner` /
   `initialiser_depot` fait de la racine un dépôt Git **sur demande** — `git init`, puis un
   **premier commit** « Maestro : état initial du projet » qui enregistre la racine telle qu'elle
@@ -287,7 +308,9 @@ et `apps/web/tests/arbitrage.test.tsx` (#572), et le contrat d'API est au
 > par la vraie boucle), et trois refus qui laissent le projet intact sans faire échouer la tâche
 > (conflit, racine occupée, chemin hors périmètre) — sur de vrais dépôts, de vrais worktrees et de
 > vrais conflits. La frontière d'écriture et la sérialisation d'un projet non versionné sont dans
-> [`tests/test_espace_projet.py`](../tests/test_espace_projet.py) (#839), l'accord par run dans
+> [`tests/test_espace_projet.py`](../tests/test_espace_projet.py) (#839 — et l'**atelier** de #944 :
+> ouvert dans la racine, jamais recensé, nommé au message de la tâche, muet dans les deux autres
+> régimes), l'accord par run dans
 > [`tests/test_accord_ecriture_continue.py`](../tests/test_accord_ecriture_continue.py) (#706).
 
 Un corollaire est à assumer : **le premier lot ne rend pas les agents capables de lire tout un
@@ -645,6 +668,11 @@ Recensé en analysant le code, à arbitrer avec le reste :
 6. **Modèles de projet.** « Initier un projet » suppose des points de départ (application web,
    API, script) : c'est du **playbook**, mécanisme qui existe déjà ([docs/22](./22-auto-amelioration-playbooks.md)),
    à ne surtout pas réimplémenter en dur.
+   ⚠ **Le point de départ d'un projet devient son outillage** (2026-09-19,
+   [docs/37](./37-decision-equipe-sur-mesure.md)). Un projet existant est analysé, un projet neuf
+   s'outille sur les choix de l'utilisateur, et l'outillage est généré dans son dossier dans des
+   formats ouverts, AGENTS.md et Agent Skills (#1020). Ce ne sont pas des modèles figés en dur :
+   la règle ci-dessus tient.
 
 ---
 

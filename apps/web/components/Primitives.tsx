@@ -150,7 +150,7 @@ export function classesCarte({
   ton?: TonCarte;
   className?: string;
 } = {}): string {
-  return ["rounded-lg border", SURFACE[ton], DENSITE[densite], className]
+  return ["rounded-carte border", SURFACE[ton], DENSITE[densite], className]
     .filter(Boolean)
     .join(" ");
 }
@@ -226,8 +226,8 @@ export type TonBouton = keyof typeof BOUTON_PLEIN;
  * troisième se discute ici, pas dans un composant.
  */
 const TAILLE_BOUTON = {
-  petite: "gap-1 rounded-md px-2.5 py-1 text-annexe",
-  normale: "gap-1.5 rounded-md px-3 py-1.5 text-annexe",
+  petite: "gap-1 rounded-controle px-2.5 py-1 text-annexe",
+  normale: "gap-1.5 rounded-controle px-3 py-1.5 text-annexe",
 } as const;
 
 export type TailleBouton = keyof typeof TAILLE_BOUTON;
@@ -276,7 +276,7 @@ function AnneauOccupe() {
   return (
     <span
       aria-hidden="true"
-      className="size-3 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent motion-reduce:animate-none"
+      className="size-3 shrink-0 animate-spin rounded-pastille border-2 border-current border-t-transparent motion-reduce:animate-none"
     />
   );
 }
@@ -390,7 +390,7 @@ export function BoutonLien({
  * composeur nomme (`components/Conversation`).
  */
 export const CLASSE_CONTROLE =
-  "w-full rounded-md border border-bord bg-surface px-3 py-1.5 text-corps " +
+  "w-full rounded-controle border border-bord bg-surface px-3 py-1.5 text-corps " +
   "text-texte shadow-sm placeholder:text-texte-secondaire " +
   "focus:border-bord-fort focus-visible:outline-2 focus-visible:outline-offset-1 " +
   "focus-visible:outline-accent disabled:opacity-50";
@@ -916,7 +916,7 @@ export function BadgeEtat({
   children: ReactNode;
 }) {
   const classes = [
-    "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-annexe font-medium",
+    "inline-flex items-center gap-1.5 rounded-pastille px-2 py-0.5 text-annexe font-medium",
     contour ? TON_CONTOUR[ton] : TON_PLEIN[ton],
     className,
   ]
@@ -935,7 +935,7 @@ export function BadgeEtat({
         pastille && (
           <span
             aria-hidden="true"
-            className={`size-1.5 shrink-0 rounded-full ${TON_PASTILLE[ton]} ${
+            className={`size-1.5 shrink-0 rounded-pastille ${TON_PASTILLE[ton]} ${
               pulse ? "animate-pulse motion-reduce:animate-none" : ""
             }`}
           />
@@ -976,7 +976,7 @@ export function EtatVide({
   children?: ReactNode;
 }) {
   return (
-    <div className="rounded-lg border border-dashed border-neutral-300 p-4 text-corps dark:border-neutral-700">
+    <div className="rounded-carte border border-dashed border-neutral-300 p-4 text-corps dark:border-neutral-700">
       <div className="flex gap-2.5">
         {Icone && (
           <Icone className="mt-0.5 size-4 shrink-0 text-neutral-400 dark:text-neutral-500" />

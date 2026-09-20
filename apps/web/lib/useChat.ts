@@ -115,6 +115,7 @@ import {
   diffuserMessageChat,
   ErreurReponse,
   ouvrirConversationChat,
+  trancherCadrageChat,
   urlEvenements,
   PORTEE_TOUS,
 } from "./api";
@@ -226,6 +227,20 @@ export type Chat = {
    * entière tomber ensuite, c'est-à-dire un arrêt qui n'arrête rien.
    */
   interrompre: () => void;
+  /**
+   * Tranche la demande de cadrage que le fil porte (#943) : accepter, refuser,
+   * ou accepter un objectif **amendé** (`objectif`, `null` = la proposition
+   * telle quelle).
+   *
+   * Le geste et la réponse rejoignent le fil comme un tour ordinaire — c'en est
+   * un : quelqu'un s'est adressé au canal, et le fil reste sa seule mémoire.
+   * Rejette avec la cause quand la demande n'attend plus (la conversation a
+   * repris entre-temps) : il n'y a rien à renvoyer, l'écran relit le fil.
+   */
+  trancherCadrage: (
+    approuve: boolean,
+    objectif?: string | null,
+  ) => Promise<void>;
   /**
    * La conversation **servie** (#696) — celle qu'on lit et où part l'envoi.
    * `""` tant que l'API n'a pas répondu : personne ne peut la nommer avant.
@@ -510,6 +525,36 @@ export function useChat(agent: string, projetId: string | null = null): Chat {
     [agent, projetId, conversation, recharger],
   );
 
+  /**
+   * Le geste qui tranche une demande de cadrage (#943).
+   *
+   * Il emprunte `envoi` — c'est un tour comme un autre, et l'écran a besoin de
+   * la même chose qu'à l'envoi : savoir qu'un échange est en vol pour désarmer
+   * les boutons. Il ne passe **pas** par le flux : rien ne s'écrit au fil de
+   * l'eau ici, la réponse est exécutée et non rédigée, et le REST rend la paire
+   * d'un coup.
+   */
+  const trancherCadrage = useCallback(
+    async (approuve: boolean, objectif: string | null = null) => {
+      setEnvoi(true);
+      try {
+        const paire = await trancherCadrageChat(agent, {
+          approuve,
+          objectif,
+          projetId,
+          conversation,
+        });
+        setDirects((gardes) => [...gardes, ...paire]);
+      } finally {
+        setEnvoi(false);
+        // Même rattrapage qu'à l'envoi : la paire arrivera aussi par le
+        // WebSocket, ce rechargement rend l'écran juste socket coupée.
+        await recharger();
+      }
+    },
+    [agent, projetId, conversation, recharger],
+  );
+
   const interrompre = useCallback(() => {
     const vol = enVol.current;
     if (vol === null) return;
@@ -563,6 +608,7 @@ export function useChat(agent: string, projetId: string | null = null): Chat {
     reponseEnCours,
     envoyer,
     interrompre,
+    trancherCadrage,
     conversation,
     conversations,
     nouvelleConversation,

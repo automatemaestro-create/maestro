@@ -146,6 +146,26 @@ l'orchestration au message « ajoute la pagination » nomme ainsi le run qu'elle
 ouvert. Vides partout ailleurs (une conversation ordinaire ne rattache rien), ils
 voyagent avec le message — stockage, REST, et `Event.run_id`/`Event.tache_id` sur
 le bus, où ils existaient déjà.
+
+## Ce qu'un message **demande** y est rattaché aussi (#943)
+
+Troisième question portée par le même objet, après ce qu'il embarque et ce qu'il
+ouvre : `proposition` est l'objectif qu'une réponse de l'orchestration soumet à
+l'accord de l'utilisateur. Sans lui, une demande de cadrage n'existait **que
+dans une phrase** — « Je lance ? » —, c'est-à-dire nulle part pour une surface :
+le fil ne pouvait pas offrir de geste pour y répondre, et le panneau
+« Cadrage en attente » affirmait « aucun » au moment même où la question était
+posée (retex du 2026-09-11, constat G10).
+
+Deux pièces vont avec, et aucune ne juge un texte :
+
+- `proposition_en_attente` — la demande qu'un fil porte **encore**, énoncée une
+  seule fois pour les deux côtés (le geste qui tranche, et les écrans qui la
+  montrent) ;
+- `ServiceChat.trancher_cadrage` — le **geste** : il écrit l'acte au fil, puis
+  fait exécuter la décision par le répondeur sans repasser par le juge. Un
+  accord au bouton n'est pas un texte à reconnaître, c'est un acte ; et un
+  objectif amendé ne survivrait pas à un tour de jugement de plus.
 """
 
 from __future__ import annotations
@@ -163,6 +183,7 @@ from pathlib import Path
 from typing import Any
 
 from maestro.agents.catalog import Agent
+from maestro.agents.playbook_du_code import registre
 from maestro.agents.playbooks import PlaybookStore
 from maestro.config import Settings, load_settings
 from maestro.controltower.events import EVENEMENT_CHAT_MESSAGE, Event, EventBus
@@ -265,12 +286,21 @@ _LONGUEUR_OBJET = 80
 #: Cadre de conversation ajouté au playbook de l'agent : le chat n'est pas une
 #: tâche à livrer (le playbook exige « strictement le livrable ») mais un
 #: échange direct avec un humain — on le dit explicitement au modèle.
-_CADRE_CONVERSATION = """\
+#:
+#: ⚠ Il **redit le registre** (#945), alors que le playbook de l'agent le porte déjà
+#: par son socle. Ce n'est pas une recopie : un agent **personnalisé** (#72) a le
+#: playbook que son auteur lui a écrit, lequel ne passe par aucun socle — et c'est
+#: précisément en conversation directe, ici, qu'un registre à lui se verrait. La
+#: source reste unique (`playbook_du_code.registre()`), seul le nombre de fois où on
+#: la sert change.
+_CADRE_CONVERSATION = f"""\
 Contexte particulier : tu es en CONVERSATION DIRECTE avec un utilisateur humain
 depuis la Control Tower de Maestro — ce n'est pas une tâche à livrer. Réponds au
 dernier message de l'utilisateur, en français, de façon concise et utile, dans
 les limites de ton rôle et de tes garde-fous. Si la demande sort de ton domaine,
-dis-le et oriente vers l'agent compétent."""
+dis-le et oriente vers l'agent compétent.
+
+{registre()}"""
 
 
 def _horodatage() -> str:
@@ -329,6 +359,53 @@ def titre_conversation(fil: Sequence[MessageChat]) -> str:
     return f"{coupe}…"
 
 
+def proposition_en_attente(fil: Sequence[MessageChat]) -> MessageChat | None:
+    """La **demande de cadrage** que ce fil porte encore, `None` s'il n'y en a pas (#943).
+
+    C'est le dernier message, et lui seul, quand il porte une `proposition` :
+    une demande est en attente tant que **rien n'a suivi**. La règle est la
+    lecture littérale de la propriété que `orchestration` tient déjà — « le fil
+    est la seule mémoire », « le silence n'est pas un accord » : ce qui rend une
+    proposition caduque n'est pas le temps, c'est qu'on ait répondu, quoi qu'on
+    ait répondu.
+
+    Elle est **énoncée une fois** et appelée par les deux côtés — le geste qui
+    tranche (`ServiceChat.trancher_cadrage`) et les surfaces qui la montrent
+    (`apps/web/lib/brief`) —, parce que c'est exactement la divergence que ce
+    lot corrige : deux formulations de « y a-t-il un cadrage en attente ? »
+    finissent par ne plus désigner la même chose, et l'écran affirme « aucun »
+    pendant que la question est posée.
+    """
+    dernier = fil[-1] if fil else None
+    if dernier is None or not dernier.proposition:
+        return None
+    return dernier
+
+
+def _geste_de_cadrage(
+    approuve: bool, retenu: str, demande: MessageChat
+) -> str:
+    """Ce que le geste écrit dans le fil — le message que le clic vaut (#943).
+
+    Le canal n'a pas d'autre mémoire que sa conversation, donc un accord donné
+    au bouton doit s'y lire ; et il s'y lit comme une personne l'aurait écrit,
+    parce que c'est le tour suivant qui le relira — les formulations sont celles
+    que le contrat du juge donne lui-même en exemple d'accord et de refus
+    (`orchestration._PROMPT_ORCHESTRATION`). Une trace que le juge ne
+    reconnaîtrait pas serait une trace qui ment sur ce qui s'est passé.
+
+    L'objectif **amendé** est recopié en toutes lettres : c'est la seule chose
+    que la proposition ne dit pas déjà, et le fil doit porter ce qui part —
+    sinon la relecture d'un run corrigé ne retrouverait nulle part ce qu'on a
+    corrigé.
+    """
+    if not approuve:
+        return "Non, ne lance pas."
+    if retenu == demande.proposition:
+        return "Oui, lance."
+    return f"Oui, lance — avec cet objectif : {retenu}"
+
+
 def normaliser(texte: str) -> str:
     """Le texte réduit pour la comparaison : minuscules, sans accents ni ponctuation.
 
@@ -375,6 +452,21 @@ class FluxInterrompu(RuntimeError):
     """
 
 
+class CadrageIntrouvable(RuntimeError):
+    """Ce fil n'a **aucune demande de cadrage en attente** à trancher (#943).
+
+    Le pendant, pour le geste du fil, du `409` que les routes de brief rendent
+    sur un run qui n'attend plus (§6.10) : un cadrage tranché deux fois, ou un
+    geste arrivé après que la conversation a repris, ne doit pas ouvrir un run
+    de plus. L'API la traduit en `409`.
+
+    Elle couvre les trois façons de n'avoir rien à trancher, qui appellent la
+    même conduite : aucune proposition n'a jamais été faite, la dernière est
+    déjà tranchée (un message a suivi), ou le répondeur de ce fil n'en fait
+    pas — un agent du catalogue ne propose pas de run.
+    """
+
+
 @dataclass(frozen=True)
 class MessageChat:
     """Un message du fil utilisateur ↔ agent, prêt à voyager en JSON.
@@ -417,6 +509,18 @@ class MessageChat:
     vient, ce dont le passage en base (docs/03) aura besoin. À la relecture,
     c'est le **chemin qui fait foi** (`ChatStore.fil`) : de deux traces d'un même
     fait, une seule peut décider, sinon elles divergent.
+
+    `proposition` (#943) est la troisième question que le même objet porte :
+    après ce que le message **embarque** (`sources`) et ce qu'il **ouvre**
+    (`run_id`), ce qu'il **demande**. C'est l'objectif qu'une proposition de
+    l'orchestration soumet à l'accord de l'utilisateur — la reformulation
+    qu'elle enverrait au run —, et c'est ce champ qui fait exister une *demande
+    de cadrage* ailleurs que dans une phrase du fil.
+
+    Il est vide partout ailleurs, et un fil écrit avant ce lot se relit à
+    l'identique. **Rien n'en dérive l'attente** : savoir si la demande tient
+    encore est une propriété de la *suite* des messages, pas de l'un d'eux, et
+    elle s'énonce une fois (`proposition_en_attente`).
     """
 
     agent: str
@@ -425,6 +529,7 @@ class MessageChat:
     horodatage: str = field(default_factory=_horodatage)
     run_id: str = ""
     tache_id: str = ""
+    proposition: str = ""
     sources: tuple[Source, ...] = ()
     rapport: RapportLecture | None = None
     contexte: str = ""
@@ -446,6 +551,7 @@ class MessageChat:
             "horodatage": self.horodatage,
             "run_id": self.run_id,
             "tache_id": self.tache_id,
+            "proposition": self.proposition,
             "sources": sources_en_liste(self.sources),
             "rapport": self.rapport.to_dict() if self.rapport is not None else None,
         }
@@ -498,6 +604,7 @@ class MessageChat:
             horodatage=data.get("horodatage", ""),
             run_id=data.get("run_id", ""),
             tache_id=data.get("tache_id", ""),
+            proposition=str(data.get("proposition") or ""),
             sources=tuple(sources_depuis(data.get("sources"))),
             rapport=rapport_depuis(rapport) if isinstance(rapport, Mapping) else None,
             contexte=str(data.get("contexte") or ""),
@@ -557,11 +664,18 @@ class ReponseChat:
     sont vides pour tout répondeur qui se contente de parler — c'est-à-dire pour
     tous ceux d'avant ce lot, que l'implémentation par défaut de
     `RepondeurChat.produire` enveloppe sans qu'ils aient à la connaître.
+
+    `proposition` (#943) est ce qu'il **demande** : l'objectif soumis à l'accord
+    de l'utilisateur quand la réponse est une proposition de run. Il voyage
+    jusqu'au `MessageChat` persisté et diffusé, exactement comme `run_id` — et
+    c'est ce qui donne à la demande une existence ailleurs que dans la phrase
+    qui la formule, donc un geste pour y répondre.
     """
 
     contenu: str
     run_id: str = ""
     tache_id: str = ""
+    proposition: str = ""
 
 
 @dataclass(frozen=True)
@@ -945,6 +1059,38 @@ class RepondeurChat(ABC):
             await incrementer(texte)
         return ReponseChat(contenu=texte)
 
+    async def trancher_cadrage(
+        self,
+        agent: Agent,
+        fil: Sequence[MessageChat],
+        *,
+        approuve: bool,
+        objectif: str,
+        projet_id: str | None = None,
+    ) -> ReponseChat:
+        """La réponse au **geste** qui tranche une demande de cadrage (#943).
+
+        Le pendant de `produire` pour un acte plutôt qu'un message : l'accord
+        n'a pas à repasser devant un juge, il *est* le verdict. C'est ce qui
+        distingue ce chemin d'un « oui » retapé dans la zone de saisie, et les
+        deux raisons sont mécaniques : un jugement de plus peut se tromper sur
+        une décision déjà prise, et un objectif **amendé** ne survivrait pas au
+        tour — le contrat du juge lui demande de recopier mot pour mot la
+        proposition qu'il a faite, donc l'originale (`orchestration`).
+
+        La propriété que #685 tient n'en bouge pas : *aucun run sans accord
+        explicite*. Un bouton est l'accord le plus explicite qu'on puisse
+        recevoir ; ce qui ouvre reste un acte de l'utilisateur, jamais un texte
+        reconnu ni un silence.
+
+        Par défaut, un répondeur **ne propose rien**, donc n'a rien à trancher :
+        il le dit plutôt que de le laisser deviner. Seul celui qui pose une
+        `ReponseChat.proposition` a cette méthode à écrire.
+        """
+        raise CadrageIntrouvable(
+            f"le fil {agent.nom} ne propose pas de cadrage : rien à trancher."
+        )
+
 
 class RepondeurModele(RepondeurChat):
     """Le répondeur réel : confie le fil au fournisseur configuré (#32/#69).
@@ -1169,6 +1315,67 @@ class ServiceChat:
         fil = self._resoudre(agent, conversation)
         message = await self._deposer(agent, contenu, sources, conversation=fil)
         return message, await self._repondre(agent, conversation=fil, projet_id=projet_id)
+
+    async def trancher_cadrage(
+        self,
+        agent: Agent,
+        *,
+        approuve: bool,
+        objectif: str | None = None,
+        projet_id: str | None = None,
+        conversation: str | None = None,
+    ) -> tuple[MessageChat, MessageChat]:
+        """Tranche la demande de cadrage en attente ; rend la paire (geste, réponse).
+
+        La **même forme** qu'`envoyer` — un message d'utilisateur, puis la
+        réponse — parce que c'est la même chose : quelqu'un s'est adressé au
+        fil. Ce qui change est que le contenu vient d'un **geste** et non d'une
+        frappe, et que la réponse n'est pas jugée mais exécutée
+        (`RepondeurChat.trancher_cadrage`).
+
+        L'acte est écrit dans le fil, et ce n'est pas une politesse : le fil est
+        la seule mémoire du canal (`orchestration`). Un accord donné au bouton
+        sans trace laisserait le tour suivant devant une proposition sans
+        réponse, que le juge reproposerait.
+
+        `objectif` est la version **amendée**, `None` la proposition telle
+        quelle — exactement le `brief: null` de `POST …/brief/decision` (§6.10),
+        et pour la même raison : le corps ne recopie jamais ce qu'on n'a pas
+        touché. Il est ignoré sur un refus, où il n'y a rien à lancer.
+
+        `CadrageIntrouvable` quand rien n'attend — c'est le `409` de l'API, et
+        il couvre le double geste comme le geste tardif.
+        """
+        fil = self._resoudre(agent, conversation)
+        demande = proposition_en_attente(self._store.fil(agent.nom, fil))
+        if demande is None:
+            raise CadrageIntrouvable(
+                f"aucune demande de cadrage en attente sur le fil {agent.nom}."
+            )
+        retenu = (objectif or "").strip() or demande.proposition
+        geste = await self._deposer(
+            agent, _geste_de_cadrage(approuve, retenu, demande), conversation=fil
+        )
+        try:
+            reponse = await self._repondeur.trancher_cadrage(
+                agent,
+                self._store.fil(agent.nom, fil),
+                approuve=approuve,
+                objectif=retenu,
+                projet_id=projet_id,
+            )
+        except CadrageIntrouvable:
+            # Le geste est déjà au fil : il a bien eu lieu, c'est la suite qui
+            # manque. Remonter tel quel plutôt que d'envelopper — l'API en fait
+            # un 409, pas un 502, et la conversation garde la trace du clic.
+            raise
+        except Exception as exc:
+            raise ReponseIndisponible(
+                f"l'agent {agent.nom} n'a pas pu trancher le cadrage : {exc}"
+            ) from exc
+        return geste, await self._persister_reponse(
+            agent, conversation=fil, reponse=reponse
+        )
 
     async def diffuser(
         self,
@@ -1461,6 +1668,21 @@ class ServiceChat:
             raise ReponseIndisponible(
                 f"l'agent {agent.nom} n'a pas pu répondre : {exc}"
             ) from exc
+        return await self._persister_reponse(
+            agent, conversation=conversation, reponse=reponse
+        )
+
+    async def _persister_reponse(
+        self, agent: Agent, *, conversation: str, reponse: ReponseChat
+    ) -> MessageChat:
+        """Écrit une `ReponseChat` au fil — la moitié commune des deux voies.
+
+        Partagée par `_repondre` (une réponse jugée) et `trancher_cadrage` (une
+        réponse exécutée, #943) : ce qu'un répondeur rend se persiste, s'achemine
+        et se diffuse toujours de la même façon, et c'est ici que les trois
+        champs du contrat (`run_id`, `tache_id`, `proposition`) passent du
+        répondeur au message.
+        """
         texte = reponse.contenu.strip()
         if not texte:
             raise ReponseIndisponible(
@@ -1474,6 +1696,7 @@ class ServiceChat:
             contenu=texte,
             run_id=reponse.run_id,
             tache_id=reponse.tache_id,
+            proposition=reponse.proposition,
         )
         await self._acheminer(message, agent, type_message=MESSAGE_REPONSE)
         return message

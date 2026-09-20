@@ -479,7 +479,12 @@ describe("le sélecteur de dossier natif (#278)", () => {
 
     await utilisateur.click(bouton()!);
 
-    expect(await screen.findByText(/racine de disque/i)).toBeInTheDocument();
+    // Le message du backend **et** le motif en mots (#946, C7) disent tous deux
+    // « racine de disque » : viser le bandeau plutôt qu'un texte, qui en
+    // trouverait deux.
+    const bandeau = await screen.findByRole("alert");
+    expect(bandeau).toHaveTextContent("Une racine de disque ne peut pas être un projet.");
+    expect(bandeau).toHaveTextContent("motif : Racine de disque");
     await waitFor(() => expect(chargerExplorateur).toHaveBeenLastCalledWith("D:/"));
   });
 
@@ -517,7 +522,8 @@ describe("le sélecteur de dossier natif (#278)", () => {
     // backend, le geste qui en sort, et le motif brut affiché tel quel.
     const bandeau = await screen.findByRole("alert");
     expect(bandeau).toHaveTextContent("Un dialogue de dossier est déjà ouvert.");
-    expect(bandeau).toHaveTextContent("selecteur-en-cours");
+    expect(bandeau).toHaveTextContent("motif : Une fenêtre de choix est déjà ouverte");
+    expect(bandeau).not.toHaveTextContent("selecteur-en-cours");
   });
 
   it("reste un explorateur utilisable quand la disponibilité est injoignable", async () => {
@@ -600,7 +606,8 @@ describe("un refus motivé (EF-38)", () => {
 
     const refus = await screen.findByRole("alert");
     expect(refus).toHaveTextContent("Zone sensible");
-    expect(refus).toHaveTextContent("chemin-sensible");
+    expect(refus).toHaveTextContent("motif : Zone protégée");
+    expect(refus).not.toHaveTextContent("chemin-sensible");
     // Le conseil prolonge le message du backend, il ne le remplace pas.
     expect(refus).toHaveTextContent(/Zone protégée/);
 
@@ -627,7 +634,9 @@ describe("un refus motivé (EF-38)", () => {
     );
 
     const refus = await within(explorateur).findByRole("alert");
-    expect(refus).toHaveTextContent("hors-racines-explorables");
+    // Le motif en mots, pas son identifiant d'API (#946, C7).
+    expect(refus).toHaveTextContent("Hors des dossiers explorables");
+    expect(refus).not.toHaveTextContent("hors-racines-explorables");
     expect(refus).toHaveTextContent("MAESTRO_EXPLORATEUR_RACINES");
     // La page précédente est toujours là, et une porte de sortie est offerte.
     expect(within(explorateur).getByText("depensio")).toBeInTheDocument();
@@ -744,9 +753,12 @@ describe("la modification et la suppression", () => {
     );
 
     const carte = screen.getByRole("listitem", { name: "Projet Dépensio" });
-    expect(await within(carte).findByRole("alert")).toHaveTextContent(
-      "projet-inconnu",
-    );
+    const refus = await within(carte).findByRole("alert");
+    expect(refus).toHaveTextContent("Projet inconnu : prj-7f3a1c2b");
+    // Le motif se lit en mots (#946, C7) : « motif : projet-inconnu » rendait à
+    // l'utilisateur l'identifiant de l'API.
+    expect(refus).toHaveTextContent("motif : Projet inconnu");
+    expect(refus).not.toHaveTextContent("projet-inconnu");
   });
 });
 
@@ -853,13 +865,48 @@ describe("la mise sous Git d'un projet non versionné (#855)", () => {
     const refus = await within(carte).findByRole("alert");
     expect(refus).toHaveTextContent("Mise sous Git refusée");
     expect(refus).toHaveTextContent("dépôt imbriqué");
-    expect(refus).toHaveTextContent("depot-englobant");
+    expect(refus).toHaveTextContent("motif : Dépôt Git englobant");
+    expect(refus).not.toHaveTextContent("depot-englobant");
     // Le conseil prolonge le message du backend, il ne le remplace pas.
     expect(refus).toHaveTextContent(/racine de ce dépôt/);
     // La carte reste utilisable : le projet est toujours non versionné, le
     // geste se repropose, et rien n'a été relu (rien n'a été écrit).
     expect(bouton()).toBeInTheDocument();
     expect(chargerProjets).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("le texte de l'écran (#946)", () => {
+  it("dit ce qu'est un projet sans recoller deux mots autour du gras", async () => {
+    const region = await page();
+
+    expect(region).toHaveTextContent(
+      "racine sur le disque et ce qu'elle expose aux agents",
+    );
+  });
+
+  it("ne promet pas l'inverse du champ « Aller à un chemin absolu »", async () => {
+    const region = await page();
+
+    // La phrase disait « jamais en tapant un chemin » alors que l'explorateur
+    // offre justement d'y sauter : c'est l'écran qu'elle décrit qu'elle
+    // contredisait (C2 du retex du 2026-09-11).
+    expect(region).not.toHaveTextContent("jamais en tapant un chemin");
+  });
+
+  it("donne un nom accessible au titre du formulaire de création", async () => {
+    const utilisateur = userEvent.setup();
+    await page();
+
+    await utilisateur.click(
+      screen.getByRole("button", { name: /Nouveau projet/ }),
+    );
+
+    // Le `aria-label` du `<form>` ne dispense pas le titre d'un nom : sans lui,
+    // la carte n'a pas de tête dans l'arbre d'accessibilité (C12).
+    expect(
+      screen.getByRole("heading", { level: 3, name: "Nouveau projet" }),
+    ).toBeInTheDocument();
   });
 });
 

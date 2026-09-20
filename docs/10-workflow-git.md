@@ -1682,6 +1682,108 @@ ni commit sur `main` (voir §8).
 
 Détail des commandes : [`.claude/commands/`](../.claude/commands/).
 
+### 5.2 D'une idée au backlog ordonné — `/idee` (#1013)
+
+`/ticket-create` crée **un** ticket bien formé ; rien ne disait comment **instruire** une idée
+exposée en conversation — ce qu'elle prolonge, ce qu'elle renverse, comment la découper —, ni ce
+qu'elle change à l'**ordre** du reste, ni comment la **roadmap** la reçoit. #274 et #228 ont été
+ouverts après coup pour rattraper dans [docs/06](./06-roadmap.md) des chantiers qu'elle ne décrivait
+pas. [`/idee`](../.claude/commands/idee.md) joue le cycle entier, en session interactive seulement
+(un run n'a personne pour exposer une idée) :
+
+1. **instruire** — backlog ouvert et fermé, branches, jalons, décisions écrites, code, et l'état de
+   l'art quand l'idée s'appuie sur un standard extérieur (ce qui n'est pas vérifié n'est pas cité) ;
+2. **recommander** — une analyse écrite : l'idée reformulée, ce qui existe, ce qu'elle renverse, les
+   chantiers et leurs lots, leur place dans la file, les arbitrages rendus ;
+3. **arbitrer seul ce qui ne demande pas d'humain, et le dire** ; **demander** (une seule salve de
+   questions, recommandation en premier) une décision documentée que l'idée renverse sans que la
+   personne l'ait voulu, un abandon, un choix produit à deux issues défendables ;
+4. **créer** par `/ticket-create`, et mettre à jour plutôt que doubler un ticket que l'idée prolonge ;
+5. **reclasser** — les jalons et les tickets (ci-dessous) ;
+6. **consigner** — un ticket `type::doc` porte l'analyse, et `/idee` passe la main à `/ticket-start`
+   dessus : section de [docs/06](./06-roadmap.md), et note de décision quand une décision tombe.
+
+**Les deux ordres qu'elle tient, et aucun n'est une liste à part.** Entre jalons, **l'échéance est
+l'ordre** : `current-milestone` retient le jalon actif le plus tôt échu du rail qui porte encore un
+ticket ouvert (§3.4), et `/orchestrate` le propose — déplacer un jalon dans la file, c'est déplacer son
+échéance. Dans un jalon, **`prio::`** : `queue.sh` trie par priorité puis par iid (§11.2). Trois verbes
+les écrivent, parce que les écritures de forge sont interdites sous `.claude/commands/**` et que
+`--add-label` y est refusé par [`tests/test_cycle_de_vie.py`](../tests/test_cycle_de_vie.py) :
+
+| verbe | ce qu'il fait | codes |
+|---|---|---|
+| `lib.sh milestone-echeance "<titre>" [<AAAA-MM-JJ>]` | lit l'échéance d'un jalon, ou la pose (minuit UTC, comme les échéances déjà posées) | `0` lue/posée/déjà à jour · `3` aucune, muet · `2` date invalide · `1` jalon inconnu |
+| `lib.sh milestone-cree "<titre>" <AAAA-MM-JJ> [produit\|outillage]` | crée un jalon, **échéance obligatoire** et rail posés | `0` créé · `4` titre déjà pris, rien créé · `2` usage · `1` forge |
+| `lib.sh prio-pose <iid> <haute\|moyenne\|basse>` | remplace le `prio::` d'un ticket — **l'ajout précède le retrait** | `0` posée/déjà à jour · `2` niveau inconnu · `1` forge |
+
+Trois décisions à ne pas défaire :
+
+- **L'échéance est obligatoire à la création.** Un jalon sans date se range **dernier** de son rail
+  (`DUE_DATE ASC`) : personne ne le choisit en le créant, il y tombe. Créer un jalon, c'est décider de
+  sa place ; le verbe demande la décision.
+- **L'échéance d'un jalon neuf ne voyage pas dans sa création** (#1018) : GitHub enregistre la
+  **veille** d'un `due_on` envoyé dans le `POST` (`2028-01-05` → `2028-01-04`, mesuré le 2026-09-19),
+  alors qu'un `PATCH` la garde. `milestone-cree` crée donc le jalon sans date, la pose par le chemin
+  de `milestone-echeance`, puis la **relit** : il annonce ce que la forge rend, ou il échoue en le
+  disant. Le double de `tests/harnais_forge.py` reproduit le décalage.
+- **Un titre déjà pris est un refus (`4`), pas un succès idempotent** : le jalon qui le porte peut être
+  un autre, fermé, d'une phase passée — « déjà là » y rangerait des tickets sans que personne l'ait vu.
+- **Dans `prio-pose`, l'ajout précède le retrait** : une panne entre les deux laisse un ticket à deux
+  priorités, visible et nommé — jamais un ticket sans priorité, que rien ne signalerait.
+
+Aucun de ces verbes ne **ferme** ni ne **renomme** un jalon, et `/idee` n'**abandonne** aucun ticket :
+un ticket que l'idée rend caduc est demandé ou proposé, jamais soldé d'office. Gardé par
+[`tests/test_idee.py`](../tests/test_idee.py).
+
+### 5.3 Où en est le projet, et quoi faire ensuite — `/etat-des-lieux` (#1049)
+
+Chaque commande de supervision répond à une question étroite, et bien : `/backlog` rend le backlog
+par état, `/run-audit` le temps d'un run, `/milestone-bilan` le verdict d'un jalon **sur pièces**,
+`/mr-review` la synthèse d'une PR, `/idee` instruit une idée qu'une personne vient d'exposer.
+Aucune ne répondait à celle qu'on pose en rouvrant le dépôt après quelques jours : **où en est
+Maestro, et que faut-il faire ensuite ?** On la refaisait à la main — six ou sept verbes joués dans
+un ordre qu'il fallait retrouver, puis un tri de tête dont rien ne restait.
+[`/etat-des-lieux`](../.claude/commands/etat-des-lieux.md) la tient, en session interactive
+seulement (elle se termine par une recommandation ; un run n'a personne à qui la faire).
+
+**Elle lit par délégation**, jamais par une analyse recopiée (§8.3, #310) :
+
+| lecture | verbe | ce qu'elle apporte au plan |
+|---|---|---|
+| backlog ouvert | `lib.sh backlog-table` | qui est **libre** (colonne `assigne`), qui est sans état |
+| PR en souffrance | `lib.sh review-queue` | depuis #418, ce que `merge-mr` a **refusé de merger** |
+| jalons | `lib.sh milestones`, `current-milestone <rail>` | l'avancement, et le jalon courant de chaque rail |
+| bouclages dus | `lib.sh milestones-a-boucler` | un rail qu'un jalon soldé retient (muet s'il n'y a rien) |
+| « En cours » | `lib.sh reconcile-en-cours` | vivant · **orphelin** · hors de portée |
+| santé de la forge | `scripts/gitlab/doctor.sh` | les dérives dures, sans recopier ses sept sections |
+| runs | `status.sh --list`, `journal.sh refus --claude` | un run en vol, et les **butées `.claude/`** (§11.7) |
+
+Puis elle confronte [docs/06](./06-roadmap.md) au réel — un chantier annoncé que porte aucun ticket,
+un jalon actif que la roadmap ne décrit pas, une décision qu'un travail en cours renverse sans note
+—, et termine par un **plan en trois temps** : **maintenant** (ce qui débloque le reste), **ensuite**
+(ce qui se prend, jalon courant et `prio::`), **à décider** (ce qui ne se fait pas sans la personne).
+
+Quatre décisions à ne pas défaire :
+
+- **Elle n'écrit rien, et ne crée aucun ticket — même sur un « go ».** Le plan **nomme** la commande
+  qui l'exécute (`/idee`, `/ticket-create`, `/mr-fix`, `/milestone-bilan`) ; il ne la joue pas.
+  C'est le partage de #562 : ce qui est automatique est la **détection du manque**, jamais le
+  verdict. C'est aussi ce qui la tient hors des chaînages de `allowed-tools:` (§7.1) — elle passe la
+  main, elle ne joue aucune étape.
+- **Elle ne rend aucun verdict de bouclage.** Un jalon soldé apparaît dans « à décider » avec
+  `/milestone-bilan` en face, jamais avec un GO. *Lire le code n'est pas l'exercer* (§3.4, #759) —
+  dupliquer le verdict ici l'aurait rendu sur des chiffres au lieu de pièces.
+- **Le rail pondère le plan, il ne filtre pas la lecture.** Les deux rails se tiennent l'un l'autre :
+  un outillage cassé arrête le produit. `$ARGUMENTS` descend l'autre rail d'un cran, il ne l'efface
+  pas.
+- **Chaque ligne du plan porte son chiffre et sa commande.** Une ligne sans chiffre est une
+  impression, une ligne sans commande est une intention ; et le plan est **fini** — cinq lignes par
+  temps au plus, sans quoi il redevient le backlog une seconde fois.
+
+⚠ Elle se joue **depuis le clone principal** : `status.sh` lit le `.maestro/orchestrate` du
+répertoire d'où on l'appelle (là où `journal.sh` remonte au dépôt commun), si bien que depuis un
+worktree il annonce « aucun run » — ce qui n'est pas « aucun run n'a tourné ».
+
 ---
 
 ## 6. Garde-fous
@@ -1831,6 +1933,32 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
   `/mr-fix`). Le verbe est **idempotent** (empreinte `cksum`), ses refus tombent avant toute
   écriture (`4` fichier absent ou vide, `3` iid inconnu), et un `1` (forge muette) **ne bloque pas
   la clôture** — ce que le dispositif rend difficile est l'absence de **trace**, jamais le merge.
+- **Aucune clôture sans que les critères d'acceptation aient été confrontés au diff livré** (#968).
+  Les critères étaient écrits par `/ticket-create`, lus au cadrage — puis plus jamais regardés : la
+  checklist de PR juge le procédé, `merge-mr` la mergeabilité, et le merge fermait le ticket sans
+  que personne ait demandé « fait-il ce qu'il disait ? ». C'est le défaut que `/milestone-bilan`
+  corrige au jalon (#759), ici à l'échelle du ticket, où l'occasion se détruit au merge (branche
+  supprimée, worktree ramassé). À l'étape **4ter** de `/ticket-finish` — après la relecture
+  visuelle, **avant** le filet CI —, `bash scripts/gitlab/lib.sh criteres <iid>` rend les critères
+  numérotés `C1…Cn` : les cases garnies de « Critères d'acceptation » (les 612 sections du backlog
+  ont toutes cette forme, mesuré le 2026-09-19) ou, **repli bug**, la section « Comportement
+  attendu », comptée comme critère unique — le gabarit `bug.md` n'en a pas d'autre. La session
+  confronte chacun au diff et consigne un tableau `| Cn | ✓ / ✗ / hors diff | pièce |` par `bash
+  scripts/gitlab/lib.sh criteres-note <iid> <fichier>`. Sur `3` (aucun critère), elle le
+  **signale** par `criteres-note --aucun <iid>`, qui relit le ticket avant d'écrire — on ne se
+  déclare pas sans critère — et n'écrit jamais de critères à sa place. Les deux arbitrages sont
+  consignés sur #968 : **signaler plutôt que taire** — contrairement à « aucun écran », l'absence
+  de critère *est* le manque, et elle est assez rare (76 tickets fermés sur 667) pour ne pas devenir
+  du bruit ; **avant le filet CI** — un manque corrigeable change le diff, même ordre que la
+  relecture et `/mr-fix`. Ce qui se vérifie est une **forme**, jamais un sens (#746) : chaque `Cn` a
+  une réponse, la pièce n'est jamais vide, et un **✓ nomme un fichier du diff** — la règle « un
+  critère tenu sans pièce nommée n'est pas tenu » de `/milestone-bilan`, rendue vérifiable. Un
+  constat qui ne tient pas est refusé (`5`) avant toute écriture, et se répare en disant ✗ ou « hors
+  diff », jamais en cochant. Le verbe est **idempotent** (empreinte `cksum`), un `1` ne bloque pas
+  la clôture, et **un ✗ ne bloque pas le merge**. Ce constat dit ce qui a été **écrit**, pas ce qui
+  a été exercé : l'exercice reste celui du pipeline et, au jalon, de `/milestone-bilan`.
+  `/ticket-ship` en hérite sans une ligne à elle. Gardé par
+  [`tests/test_criteres_cloture.py`](../tests/test_criteres_cloture.py).
 - **Aucune clôture d'un ticket que la session ne traite pas.** `/ticket-finish` et `/ticket-ship`
   vérifient, **avant toute écriture** (commit, push, PR, statut, temps), que le ticket
   visé est bien celui de la session : `bash scripts/gitlab/lib.sh close-guard <iid> [branche]`.
@@ -2187,7 +2315,8 @@ personnelles vont dans `.claude/settings.local.json`, non versionné).
     garde-fou qui s'arrête faute d'argument ou sur une anomalie n'en est pas une ;
   - **chaînages compris** : une commande qu'elle **joue comme une de ses étapes** lui transmet toute
     sa déclaration — `/ticket-ship` ⊇ `/ticket-finish` ⊇ `/mr-fix`, `/ticket-start` ⊇
-    `/design-veille` et `/ticket-create` (découpage), `/milestone-verdict` ⊇ `/ticket-create`. Celle à
+    `/design-veille` et `/ticket-create` (découpage), `/milestone-verdict` ⊇ `/ticket-create`,
+    `/idee` ⊇ `/ticket-create`. Celle à
     qui elle **passe la main** en fin de parcours (`/ticket-create` → `/ticket-start`) ne lui
     transmet rien : c'est une autre commande, qui porte sa propre déclaration ;
   - **un skill garde ses outils** : le jouer se déclare `Skill`, jamais ce qu'il appelle — les

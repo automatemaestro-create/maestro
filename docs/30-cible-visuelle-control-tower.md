@@ -196,6 +196,85 @@ valent 0,875 rem. Et `text-titre` (1 rem), déclaré, n'est employé **nulle par
 plat du §1.3 : **408 des 439 usages typographiques (93 %) tiennent sur deux pas** — 0,75 rem et
 0,875 rem —, sans titre intermédiaire.
 
+### 2.3bis Le barème des rayons et des ombres — décidé le 2026-09-20 (#982)
+
+La ligne « Rayon » et la ligne « Ombre » du tableau ci-dessus sont un **constat**. Voici la
+**décision** qui y répond. Elle a été prise dans cet ordre, et l'ordre compte : un barème déduit de
+l'usage courant n'aurait fait que figer la dispersion qu'on vient de mesurer.
+
+1. une **veille** sur trois produits en service, dont les valeurs ont été relevées dans le
+   navigateur (§5.7) ;
+2. **trois variantes** rendues sur la vraie stack, et un choix rendu par un regard qui n'en était
+   pas l'auteur (§5.8) ;
+3. **puis** la sonde, qui garde ce qui a été décidé.
+
+> **Quatre rayons, un seul pas d'ombre, chacun nommé par son rôle.**
+>
+> | Token | Valeur | Ce qu'il dit |
+> |---|---|---|
+> | `--radius-controle` | 6 px | ce qu'on manipule : bouton, champ, sélecteur, entrée de navigation, onglet |
+> | `--radius-carte` | 8 px | une surface **posée** sur la page : carte, encart, conteneur en place |
+> | `--radius-flottant` | 12 px | une surface qui **survole** la page : panneau, menu déroulant, modale |
+> | `--radius-pastille` | pleine | ce qui est circulaire ou en pilule : badge d'état, avatar, point d'état |
+> | `--shadow-flottant` | l'ombre de `shadow-lg` | **le seul** pas d'ombre : « cette surface flotte » |
+>
+> **Une surface posée se sépare par son bord (`border-bord`), jamais par une ombre.**
+
+**Le pas d'ombre unique est la décision la moins évidente**, et c'est la mesure qui l'a tranchée.
+Relevé dans le navigateur le 2026-09-20 sur deux produits en service : **GitHub** (liste de runs
+d'Actions) porte **une** ombre d'élévation réelle sur toute la page — celle des menus déroulants ;
+ses 32 autres `box-shadow` sont des `inset`, donc des *filets*, pas de l'élévation. **Grafana**
+(liste de tableaux de bord) en porte **une** aussi. Un second pas d'ombre — « posé », qui aurait
+gardé l'ombre des cartes — a été rendu, comparé et écarté : il nomme une surface, pas un état.
+
+Le barème vit dans `apps/web/app/globals.css`, et **les jumelles Tailwind y sont aliasées sur leur
+pas** (`--radius-md: var(--radius-controle)`, `--radius-lg: var(--radius-carte)`,
+`--radius-xl: var(--radius-flottant)`, `--shadow-lg: var(--shadow-flottant)`) — la mécanique de
+`--text-xs: var(--text-annexe)`, et pour une raison qui vaut pendant toute la migration : sans
+l'alias, un pas retouché laisserait les classes pas encore renommées à l'ancienne valeur. D'où une
+propriété qu'on peut promettre : **renommer une de ces classes en son pas de rôle ne change aucun
+pixel.** Restent sans alias `shadow-sm`, `shadow-md`, `shadow-2xl` et le `shadow` nu — aucun n'a de
+pas : leur retrait change le rendu, donc c'est une **migration**, avec sa relecture visuelle et son
+thème sombre, jamais un renommage.
+
+**Ce qui garde le barème** : `apps/web/tests/rayons-ombres.test.ts`, sur le modèle de
+`couleurs.test.ts` (#895) — sonde prouvée sur un échantillon fautif, résidu **nommé et compté**
+fichier par fichier, exact et non plafonné, donc qui ne peut que décroître. Elle lit le barème dans
+`globals.css` plutôt que de le recopier, et distingue un **pas** (valeur littérale) d'une **jumelle**
+(un `var(…)`) : on ne peut donc pas ajouter un pas en le faisant passer pour un alias.
+
+**Le résidu au 2026-09-20**, compté par la sonde — c'est la ligne de départ, et elle est plus haute
+que ne le laissait croire le relevé à la main de §2.3 :
+
+| | Écritures | Détail |
+|---|---:|---|
+| Rayons | **136** | `rounded-md` 70 · `rounded-full` 31 · `rounded` **nu** 20 · `rounded-lg` 12 · `rounded-t-md` 2 · `rounded-xl` 1 |
+| Ombres | **28** | `shadow-sm` 14 · `shadow-lg` 7 · `shadow` **nu** 3 · `shadow-2xl` 3 · `shadow-md` 1 |
+| En ligne | **1** | un `boxShadow` dans un objet `style` (`GuidePriseEnMain`) |
+
+**165 écritures sur 59 fichiers**, une fois retirés les **8 rayons du socle**
+(`components/Primitives.tsx`), qui ont pris leur nom de rôle avec ce lot, à valeur constante.
+
+Deux choses que le relevé à la main de §2.3 avait manquées, et que la sonde voit — parce qu'elle
+lit les jetons d'une feuille de classes au lieu de chercher un préfixe :
+
+- le **`rounded` nu**, **20 emplois** et non deux ou trois : il rend le pas que Tailwind v4 donne
+  lui-même pour *déprécié* (0,25 rem, soit 4 px). C'est un **sixième rayon**, le troisième par
+  fréquence, et personne ne l'a choisi — on l'écrit en croyant écrire « arrondi » ;
+- le **`shadow` nu** (3 emplois) est lui aussi déprécié et rend **exactement `shadow-sm`** : 17 des
+  28 ombres du produit rendent le même pixel sous deux noms. C'est le défaut des « jumelles » que
+  l'échelle typographique avait déjà tranché pour `text-xs` / `text-annexe`.
+
+⚠ Le relevé à la main comptait aussi les classes citées **dans les commentaires** — d'où un
+`rounded-md` de plus que ce que le produit rend. C'est la raison pour laquelle le chiffre de
+référence est désormais celui de la sonde, pas celui d'un `grep`.
+
+**Un manque du barème est nommé, pas toléré** : le voile du guide de prise en main
+(`0 0 0 9999px`, qui assombrit la page *sauf* un rectangle) n'est pas une élévation et aucun pas ne
+peut l'exprimer. Il est inscrit dans `MANQUES_DU_BAREME` avec sa raison — il reste **dans** le
+compte du résidu, et il dit seulement jusqu'où ce compte peut descendre sans que le barème bouge
+d'abord.
+
 ### 2.4 Les couleurs ne sont pas tokenisées
 
 **1 750 occurrences** de classes Tailwind brutes ; **0 occurrence** de classe sémantique
@@ -205,6 +284,50 @@ sont consommés que par la règle `body`.
 Conséquence directe : **542 lignes portant un `dark:`** sur 59 fichiers — chaque couleur est écrite
 deux fois, à la main, partout où la primitive n'est pas utilisée. **C'est le multiplicateur de coût
 de toute la refonte** : changer une couleur, aujourd'hui, c'est éditer deux valeurs dans N fichiers.
+
+### 2.5 Le barème de padding — conteneurs et contrôles (#983)
+
+Le §2.3 mesure la dispersion ; celui-ci écrit le barème qui la tient. **Six pas, et pas un de
+plus** : trois pour l'intérieur d'une boîte, trois pour un élément réglé sur une ligne de texte.
+
+| Rôle | Le pas | Ce qui le rend | Quand |
+|---|---|---|---|
+| Conteneur | `p-2.5` | `<Carte densite="compacte">` | ce qui s'empile en nombre — cartes du Kanban, lignes de liste |
+| Conteneur | `p-3` | `<Carte>` (défaut) | le cas courant |
+| Conteneur | `p-4` | `<Carte densite="aeree">` | une section de plein format qu'on lit posément |
+| Conteneur | *(aucun)* | `<Carte densite="aucune">` | la carte encadre un contenu qui gère le sien (tableau…) |
+| Contrôle | `px-2 py-0.5` | `<Badge>` | ce qui qualifie sans agir |
+| Contrôle | `px-2.5 py-1` | `<Bouton taille="petite">` | une action posée dans une ligne |
+| Contrôle | `px-3 py-1.5` | `<Bouton>`, `CLASSE_CONTROLE` | la taille courante d'un formulaire |
+
+**Le barème n'est pas cette table : c'est ce que `components/Primitives.tsx` écrit.** La table le
+rend lisible, la sonde le **lit** — deux tables recopiées divergeraient au premier ticket, et c'est
+précisément ce que §2.3 mesure sur les couleurs. Un **septième pas** est donc une décision d'écran,
+qui se prend dans `Primitives.tsx` et se discute là : l'écrire dans un écran ne l'ajoute pas au
+barème, ça le contourne.
+
+**Ce que la sonde juge** (`apps/web/tests/espacements.test.ts`), et c'est **étroit à dessein** — un
+résidu étalé sur tout le dépôt ne serait plus lu :
+
+- **`p-<n>`, partout et sans condition.** Un écart égal des quatre côtés est le rythme intérieur
+  d'une boîte : rien d'autre ne s'écrit ainsi. C'est ce qui fait voir la surcharge la plus directe,
+  `<Carte densite="aucune" className="p-5">`.
+- **La paire `px-<a> py-<b>`, quand sa feuille habille quelque chose** — un rayon, ou une marque
+  d'interaction (`hover:`, `focus:`, `disabled:`, `cursor-pointer`…). La condition n'est pas un
+  confort : mesuré le 2026-09-20, `px-3 py-2` rend **à la fois** l'onglet d'`OngletsAgent` et la
+  bannière de `BanniereErreurApi`, tandis que `px-4 py-3` ne rend **que** les trois bandes de
+  `PanneauDetailTache` (en-tête, corps, pied). Sans elle, la sonde réclamerait `Bouton` à qui pose
+  le padding d'un `<main>` — et quelques faux positifs suffisent à ce qu'on cesse de lire un résidu.
+- **Hors compte** : les marges, les `gap`, les paddings dirigés (`pt-`, `pl-`…) et un `px-`/`py-`
+  seul. Ils règlent la mise en page, pas le rythme intérieur. Hors compte aussi,
+  `components/Primitives.tsx` — il **porte** le barème, il n'est pas jugé par lui ; son
+  élargissement rougit ailleurs, là où les six pas sont épinglés.
+
+**Le résidu au 2026-09-20 : 70 paddings hors barème dans 39 fichiers**, nommés fichier par fichier
+dans le test avec leur compte **exact** — un de plus rougit, un de **moins** rougit aussi tant que
+la ligne n'est pas mise à jour. C'est ce qui fait qu'un résidu ne peut que décroître, et que chaque
+décroissance est un geste écrit (mécanique de #895). Ce ticket ne migre aucun écran : il pose le
+compte et refuse le suivant.
 
 ---
 
@@ -2188,7 +2311,9 @@ non choisie ne doit pouvoir finir dans un commit. Le choix se consigne sur le ti
 commentaire qui commence par `## Variante retenue`, **avant** la première ligne d'implémentation —
 c'est aussi ce titre qui fait du ticket un ticket qui **applique** au démarrage suivant.
 
-**Le régime de run était l'arbitrage du lot**, consigné sur #979 et en tête du prompt de `run.sh` :
+**Le régime de run était l'arbitrage du lot**, consigné sur #979 et en tête du prompt de `run.sh` —
+⚠ **renversé par #1009** (« Le run tranche la forme lui-même », plus bas), qui retient une quatrième
+voie ; le tableau reste ici comme la trace de ce qui a été pesé :
 
 | voie | verdict | raison |
 |---|---|---|
@@ -2199,13 +2324,15 @@ c'est aussi ce titre qui fait du ticket un ticket qui **applique** au démarrage
 Le prix est connu : une session par ticket de ce genre (sa veille reste acquise et nourrira les
 variantes), et les lots suivants du parent sautés par la cascade — ce qui est juste, ils bâtiraient
 sur un écran que personne n'a choisi. Conséquence sur #934 : une veille jouée en run **ne se conclut
-plus par une implémentation**, puisqu'elle dit que le ticket décide.
+plus par une implémentation**, puisqu'elle dit que le ticket décide. *(Payé dès le premier run, puis
+renversé par #1009 : la cascade a sauté des lots qui ne bâtissaient sur aucun écran.)*
 
 **Écarté aussi :** une **maquette** plutôt que des brouillons — Figma sert à explorer, jamais de
 source de vérité, Code Connect étant refusé sur ce plan (§5.1, [docs/36](./36-outillage-du-design.md)) ;
 une **galerie** — deux ou trois variantes, et une variante **unique** se présente comme une
 validation, pas comme un choix ; des variantes **produites en run** — personne ne les regarderait,
-`gh` ne joint pas d'image à un ticket, et la démo aura avancé quand quelqu'un l'ouvrira ; des captures
+`gh` ne joint pas d'image à un ticket, et la démo aura avancé quand quelqu'un l'ouvrira (renversé par
+#1009 : le regard neuf les regarde, dans la session qui les a rendues) ; des captures
 de variantes sous `.maestro/relecture/`, que `--couverture` compterait à la clôture comme un regard
 porté sur l'écran livré.
 
@@ -2292,6 +2419,61 @@ session appelante comprise ; `--saisine` 6,6 s ; `--planche` 3,3 s pour 329 Ko.
 - **Un regard par écran.** Le sous-agent coûte au nombre de captures qu'il ouvre ; un seul regard par
   relecture.
 
+#### Le run tranche la forme lui-même, sur pièces (#1009) — 2026-09-19
+
+> **Renverse la voie (a) de #979** (« La direction se valide avant le code », plus haut), et avec
+> elle la pause interactive : un ticket qui décide de l'écran n'attend plus personne, dans aucun
+> régime.
+
+**Le fait.** Premier run sous la voie (a), `20260919-205116` : #928 (« un run qui se termine
+l'annonce ») a été jugé *décide* — trois formes possibles pour l'annonce dans le fil, aucun
+précédent — et arrêté comme prévu, pour 4,06 $ et zéro ligne. La cascade a sauté les quatre lots
+suivants de #921 : #938 et #929, qui en dépendaient, mais aussi #947 (Tauri dans la doc) et #949
+(modèle de menace), qui ne touchaient aucun écran (constat dans #1008). **La décision** de
+l'utilisateur, le même jour : *un run doit pouvoir traiter tous les types de tickets et savoir
+trancher* — la forme d'un écran comprise, sur une comparaison avec des produits professionnels
+similaires à ce qui est attendu.
+
+**Le régime** (étape 7 de `/ticket-start`, et la règle du prompt de `run.sh` qui y renvoie) :
+
+1. **les références d'abord** — sans commentaire `## Veille de conception` sur le ticket, la veille
+   se joue, que `touche-surface` ait détecté le ticket ou non (#928 n'était détectable par aucun des
+   deux motifs) ; elle cherche des **produits professionnels comparables** et en rapporte au moins
+   deux **captures**, qui seront la base de comparaison ;
+2. **2 ou 3 variantes rendues**, comme sous #979 — brouillons sur la vraie stack, patchs sous
+   `.maestro/variantes/<iid>/`, arbre vide entre deux et avant le choix ;
+3. **le choix rendu par le regard neuf** (#980) sur une saisine qui confronte chaque variante aux
+   références, au rendu attendu, aux critères et aux partis pris ; il en retient **toujours une**,
+   et seul un « non vu » faute de pièces le dispense de trancher (une seconde saisine, puis la
+   session tranche elle-même en le disant) ;
+4. **le choix consigné avant le code** (`## Variante retenue` : la retenue, qui l'a retenue, les
+   écartées et pourquoi, les références qui ont tranché), puis la variante implémentée et le ticket
+   clos comme les autres.
+
+**Pourquoi ce n'est pas la voie (c).** Elle reste écartée, et pour la raison que #979 lui donnait :
+« la variante la plus proche des partis pris », c'est un choix **fabriqué** — rien ne l'a comparé à
+rien. Ce qui sépare (d) de (c) est exactement ce qui manquait à (c) : des références vérifiées en
+direct, des variantes rendues, un juge qui n'en est pas l'auteur, une trace écrite **avant** le
+code. Le partage de #562 tient : aucun script ne rend ce verdict ; il change de juge, comme la veille
+l'avait fait en run avec #934 — un modèle qui juge sur pièces, jamais un lexique (#746).
+
+**Le prix**, connu : une veille et un regard neuf de plus par ticket qui décide (le regard neuf d'une
+relecture coûte **105 s et 1,29 $**, mesuré par #980). En échange, le ticket est livré et aucun lot
+de son parent n'est sauté. Qui veut une autre forme consigne une nouvelle `## Variante retenue` —
+elle fait du ticket suivant un ticket qui **applique** — et la relecture de `/ticket-finish` juge
+l'écran livré contre le choix consigné.
+
+**Écarté, avec sa raison :**
+
+- **Garder la pause en interactif.** La personne présente peut toujours renverser le choix après
+  coup ; l'attendre ferait d'elle le goulot que la décision de #1009 retire (« sans moi »).
+- **Laisser la session choisir entre ses propres brouillons.** C'est le juge que #980 a retiré de la
+  relecture : l'auteur voit ce qu'il a voulu faire.
+- **Une saisine écrite par un script.** Celle de la relecture l'est (`--saisine`) parce qu'elle
+  apparie des captures avant/après par écran et par thème ; celle du choix est un tableau de 2 ou 3
+  variantes que la session remplit en une fois. À scripter si l'écart entre deux saisines devient
+  un constat.
+
 #### Ce qui est gardé, et où
 
 | lot | ce qui est gardé | suite |
@@ -2299,7 +2481,8 @@ session appelante comprise ; `--saisine` 6,6 s ; `--planche` 3,3 s pour 329 Ko.
 | #976 | la section dans les gabarits (et pas ailleurs), ses rubriques tenues avec la saisine, les trois sorts de `/ticket-create`, le rendu du brief (vide muet, « non renseigné » imprimé, fermeture au titre suivant) | [`test_relecture_visuelle.py`](../tests/test_relecture_visuelle.py) |
 | #977 | l'avant sur les ports + 200, l'écran nouveau jamais capturé, le best-effort, l'état suivi ou rien, `--fin` qui arrête et retire | `test_relecture_visuelle.py` |
 | #978 | les scénarios servis (panne sous le CORS, charge), demandés au lanceur, montés et comptés par la relecture | [`test_cli_smoke.py`](../tests/test_cli_smoke.py), [`test_controltower_mode_reel.py`](../tests/test_controltower_mode_reel.py), `test_relecture_visuelle.py` |
-| #979 | le critère écrit une fois, l'arbre vide avant la question, le choix consigné avant le code, la voie (a) en run et ses voies écartées | [`test_design_veille.py`](../tests/test_design_veille.py) |
+| #979 | le critère écrit une fois, l'arbre vide avant le choix, le choix consigné avant le code, les voies écartées | [`test_design_veille.py`](../tests/test_design_veille.py) |
+| #1009 | aucun arrêt ni pause sur un ticket qui décide, la veille avant les variantes, le choix rendu par le regard neuf sur références, la voie (a) renversée et (c) toujours écartée | `test_design_veille.py` |
 | #980 | la grille (refus, fichier unique), `relecture-attente` (ancres, un aller), la saisine (pièces et rien d'autre), la planche (autonome, survit au worktree), `regard-neuf` réduit à `Read` | `test_relecture_visuelle.py` |
 
 Chaque contrôle qui conclut d'une **absence** — une recopie, une section manquante — éprouve d'abord
