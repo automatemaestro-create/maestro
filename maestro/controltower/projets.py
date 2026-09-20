@@ -590,7 +590,7 @@ class ServiceProjets:
         return par_racine
 
     def _fiche(self, projet: Projet) -> dict[str, Any]:
-        """La forme JSON d'un projet — celle du fichier stocké, **plus l'outillage constaté** (#1034).
+        """La forme JSON d'un projet — le fichier stocké, **plus l'outillage constaté** (#1034).
 
         Le fragment `outillage` du fichier ne porte qu'une décision
         (`reporte_le`, docs/37 §4.6) ; la fiche servie y ajoute deux champs que

@@ -24,47 +24,34 @@
  *   régime « écriture en place » au régime « worktree + fusion sous accord »
  *   (docs/24 §2.4) — d'où une confirmation, là où déclarer ou modifier n'en
  *   demandent pas. Le `vcs` n'est pas envoyé : il est **constaté** au retour
- *   (EF-38), et la liste se relit comme après toute écriture.
+ *   (EF-38), et la liste se relit comme après toute écriture ;
+ * - **déclarer un projet ne s'arrête plus à sa racine** (#1034, docs/37 §4.6) :
+ *   l'**étape d'outillage** (`EtapeOutillage`) prend la place du formulaire dès
+ *   qu'il a rendu un projet, et c'est elle qui se ferme — générée ou reportée.
+ *   Un projet reporté le **dit** sur sa carte (`outillage.a_faire`) et offre d'y
+ *   revenir, sauf pendant que l'étape est ouverte sur lui : le report se dit
+ *   après le choix, pas pendant.
  */
 
 import { useCallback, useEffect, useState } from "react";
 
 import { BanniereErreurApi } from "@/components/BanniereErreurApi";
-import { QuestionDOutillage } from "@/components/chat/QuestionDOutillage";
 import { IconeDossier, IconePlus } from "@/components/Icones";
+import { BadgeEtat, Bouton, Carte, EtatVide } from "@/components/Primitives";
 import {
-  BadgeEtat,
-  Bouton,
-  Carte,
-  EnTeteSection,
-  EtatVide,
-} from "@/components/Primitives";
-import {
-  analyserOutillage,
   chargerProjets,
   creerProjet,
-  genererOutillage,
   modifierProjet,
   panneDe,
-  questionOutillage,
-  recommandationOutillage,
-  reporterOutillage,
   supprimerProjet,
   versionnerProjet,
   type PanneApi,
 } from "@/lib/api";
 import { formatDateHeure } from "@/lib/format";
 import { libelleOrigine } from "@/lib/projets";
-import type {
-  ChoixOutillage,
-  DeclarationProjet,
-  EntreeOutillage,
-  Projet,
-  QuestionOutillage,
-  RecommandationOutillage,
-  RefusProjet,
-} from "@/lib/types";
+import type { DeclarationProjet, Projet, RefusProjet } from "@/lib/types";
 
+import { EtapeOutillage } from "./EtapeOutillage";
 import { refusDepuis, RefusMotive } from "./ExplorateurDossiers";
 import { FormulaireProjet } from "./FormulaireProjet";
 
@@ -84,334 +71,6 @@ function Perimetre({ projet }: { projet: Projet }) {
   );
 }
 
-/* ===================== BROUILLON #1034 — variante A ======================
-   L'étape d'outillage, rendue ici le temps de choisir sa forme (étape 7 de
-   /ticket-start). Rien de définitif : ce bloc part dans un fichier à lui une
-   fois la variante retenue. */
-
-/** Ce qu'une entrée recommandée vaut par défaut : à écrire, ou déjà là. */
-function retenueParDefaut(entree: EntreeOutillage): boolean {
-  return entree.etat !== "deja-present";
-}
-
-const LIBELLE_ETAT: Record<string, string> = {
-  "a-generer": "à écrire",
-  "a-completer": "à compléter",
-  "deja-present": "déjà présent",
-};
-
-const LIBELLE_TYPE: Record<string, string> = {
-  instructions: "Instructions",
-  pont: "Pont",
-  skill: "Skill",
-  script: "Script",
-};
-
-function LigneEntree({
-  entree,
-  retenue,
-  basculer,
-  fige,
-}: {
-  entree: EntreeOutillage;
-  retenue: boolean;
-  basculer: () => void;
-  fige: boolean;
-}) {
-  return (
-    <li>
-      <label
-        className={[
-          "flex cursor-pointer items-start gap-3 rounded-carte border p-3",
-          retenue
-            ? "border-bord bg-surface"
-            : "border-bord bg-surface-creuse opacity-70",
-        ].join(" ")}
-      >
-        <input
-          type="checkbox"
-          checked={retenue}
-          disabled={fige}
-          onChange={basculer}
-          className="mt-0.5 size-4 shrink-0 rounded border-bord-fort"
-        />
-        <span className="flex min-w-0 flex-col gap-0.5">
-          <span className="flex flex-wrap items-center gap-2">
-            <span
-              className={[
-                "text-corps font-medium text-texte",
-                retenue ? "" : "line-through",
-              ].join(" ")}
-            >
-              {entree.nom}
-            </span>
-            <BadgeEtat contour>
-              {LIBELLE_TYPE[entree.type] ?? entree.type}
-            </BadgeEtat>
-            {entree.etat === "deja-present" && (
-              <BadgeEtat ton="info" contour>
-                {LIBELLE_ETAT[entree.etat]}
-              </BadgeEtat>
-            )}
-          </span>
-          <span className="min-w-0 break-words text-annexe text-texte-secondaire">
-            {entree.raison}
-          </span>
-          <span className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-micro text-texte-secondaire">
-            <code className="font-mono break-all">{entree.chemin}</code>
-            {entree.justification && (
-              <span>
-                d&apos;après{" "}
-                <code className="font-mono break-all">
-                  {entree.justification.chemin}
-                </code>
-              </span>
-            )}
-          </span>
-        </span>
-      </label>
-    </li>
-  );
-}
-
-function VueRecommandation({
-  recommandation,
-  retenus,
-  basculer,
-  fige,
-}: {
-  recommandation: RecommandationOutillage;
-  retenus: Set<string>;
-  basculer: (chemin: string) => void;
-  fige: boolean;
-}) {
-  return (
-    <>
-      <ul className="flex flex-col gap-2">
-        {recommandation.entrees.map((entree) => (
-          <LigneEntree
-            key={entree.chemin}
-            entree={entree}
-            retenue={retenus.has(entree.chemin)}
-            basculer={() => basculer(entree.chemin)}
-            fige={fige}
-          />
-        ))}
-      </ul>
-      {recommandation.ecartes.length > 0 && (
-        <details className="mt-3 text-annexe text-texte-secondaire">
-          <summary className="cursor-pointer">
-            {recommandation.ecartes.length} élément
-            {recommandation.ecartes.length > 1 ? "s" : ""} écarté
-            {recommandation.ecartes.length > 1 ? "s" : ""}, et pourquoi
-          </summary>
-          <ul className="mt-2 flex flex-col gap-1">
-            {recommandation.ecartes.map((ecarte) => (
-              <li key={`${ecarte.type}-${ecarte.nom}`}>
-                <span className="font-medium text-texte">{ecarte.nom}</span> —{" "}
-                {ecarte.raison}
-              </li>
-            ))}
-          </ul>
-        </details>
-      )}
-    </>
-  );
-}
-
-function EtapeOutillage({
-  projet,
-  onTermine,
-  onReporte,
-}: {
-  projet: Projet;
-  onTermine: () => void;
-  onReporte: () => void;
-}) {
-  const neuf = projet.origine === "nouveau";
-  const [recommandation, setRecommandation] =
-    useState<RecommandationOutillage | null>(null);
-  const [resume, setResume] = useState("");
-  const [question, setQuestion] = useState<QuestionOutillage | null>(null);
-  const [choix, setChoix] = useState<ChoixOutillage[]>([]);
-  const [retenus, setRetenus] = useState<Set<string>>(new Set());
-  const [chargement, setChargement] = useState(true);
-  const [enCours, setEnCours] = useState(false);
-  const [refus, setRefus] = useState<RefusProjet | null>(null);
-
-  const poser = useCallback((reco: RecommandationOutillage) => {
-    setRecommandation(reco);
-    setRetenus(
-      new Set(reco.entrees.filter(retenueParDefaut).map((e) => e.chemin)),
-    );
-  }, []);
-
-  useEffect(() => {
-    let vivant = true;
-    const partir = async () => {
-      try {
-        if (neuf) {
-          const etape = await questionOutillage(projet.id, []);
-          if (!vivant) return;
-          setQuestion(etape.question);
-          setChoix(etape.deductions);
-          if (etape.terminee) {
-            const reco = await recommandationOutillage(
-              projet.id,
-              etape.deductions,
-            );
-            if (!vivant) return;
-            poser(reco.recommandation);
-          }
-        } else {
-          const analyse = await analyserOutillage(projet.id);
-          if (!vivant) return;
-          setResume(analyse.resume);
-          poser(analyse.recommandation);
-        }
-      } catch (erreur) {
-        if (vivant) setRefus(refusDepuis(erreur));
-      } finally {
-        if (vivant) setChargement(false);
-      }
-    };
-    void partir();
-    return () => {
-      vivant = false;
-    };
-  }, [neuf, projet.id, poser]);
-
-  const repondre = async (valeur: string) => {
-    if (question === null) return;
-    const acquis = [
-      ...choix,
-      { cle: question.cle, valeur, deduit: false, parce_que: "" },
-    ];
-    setEnCours(true);
-    try {
-      const etape = await questionOutillage(projet.id, acquis);
-      const tous = [...acquis, ...etape.deductions];
-      setChoix(tous);
-      setQuestion(etape.question);
-      if (etape.terminee) {
-        const reco = await recommandationOutillage(projet.id, tous);
-        poser(reco.recommandation);
-      }
-    } finally {
-      setEnCours(false);
-    }
-  };
-
-  const basculer = (chemin: string) =>
-    setRetenus((avant) => {
-      const apres = new Set(avant);
-      if (apres.has(chemin)) apres.delete(chemin);
-      else apres.add(chemin);
-      return apres;
-    });
-
-  const generer = async () => {
-    setEnCours(true);
-    setRefus(null);
-    try {
-      await genererOutillage(projet.id, [...retenus]);
-      onTermine();
-    } catch (erreur) {
-      setRefus(refusDepuis(erreur));
-      setEnCours(false);
-    }
-  };
-
-  const reporter = async () => {
-    setEnCours(true);
-    setRefus(null);
-    try {
-      await reporterOutillage(projet.id);
-      onReporte();
-    } catch (erreur) {
-      setRefus(refusDepuis(erreur));
-      setEnCours(false);
-    }
-  };
-
-  return (
-    <Carte
-      balise="section"
-      densite="aeree"
-      aria-label={`Outillage de ${projet.nom}`}
-      className="flex flex-col gap-4"
-    >
-      <EnTeteSection
-        niveau={3}
-        titre={`Outillage de « ${projet.nom} »`}
-        aside={
-          <span className="text-annexe text-texte-secondaire">
-            étape 2 sur 2
-          </span>
-        }
-      />
-      <p className="max-w-2xl text-annexe text-texte-secondaire">
-        Maestro écrit dans votre dossier un outillage que <strong>tout</strong>{" "}
-        agent sait lire — <code className="font-mono">AGENTS.md</code>, des
-        skills et des scripts. Retirez ce dont vous ne voulez pas, puis générez.{" "}
-        <strong>Ou repoussez :</strong> le projet est déclaré, il restera
-        utilisable, et son outillage vous sera rappelé.
-      </p>
-      {resume !== "" && (
-        <p className="text-annexe text-texte">
-          <span className="font-medium">Ce que l&apos;analyse a lu :</span>{" "}
-          {resume}
-        </p>
-      )}
-
-      {chargement && (
-        <p className="text-corps text-texte-secondaire">
-          {neuf ? "Préparation des questions…" : "Analyse du projet…"}
-        </p>
-      )}
-
-      {question !== null && (
-        <QuestionDOutillage
-          question={question}
-          repondre={repondre}
-          enCours={enCours}
-        />
-      )}
-
-      {recommandation !== null && (
-        <VueRecommandation
-          recommandation={recommandation}
-          retenus={retenus}
-          basculer={basculer}
-          fige={enCours}
-        />
-      )}
-
-      {refus && <RefusMotive refus={refus} titre="Outillage refusé" />}
-
-      <div className="flex flex-wrap items-center gap-3">
-        <Bouton
-          disabled={recommandation === null || retenus.size === 0}
-          occupe={enCours}
-          onClick={() => void generer()}
-        >
-          {enCours ? "Génération…" : `Générer l'outillage (${retenus.size})`}
-        </Bouton>
-        <Bouton
-          variante="contour"
-          ton="neutre"
-          disabled={enCours}
-          onClick={() => void reporter()}
-        >
-          Outiller plus tard
-        </Bouton>
-      </div>
-    </Carte>
-  );
-}
-
-/* =================== FIN DU BROUILLON #1034 ============================= */
-
 /**
  * Les deux gestes de la carte qui s'arment en deux temps. Un seul à la fois :
  * armer l'un désarme l'autre, sans quoi la carte porterait deux confirmations
@@ -428,6 +87,7 @@ function CarteProjet({
   onSupprime,
   onVersionne,
   onOutiller,
+  outillageOuvert = false,
 }: {
   projet: Projet;
   onModifier: () => void;
@@ -435,6 +95,16 @@ function CarteProjet({
   onVersionne: () => Promise<void>;
   /** Rouvre l'étape d'outillage sur ce projet — la sortie d'un « plus tard ». */
   onOutiller: () => void;
+  /**
+   * L'étape d'outillage est ouverte **sur ce projet**, juste au-dessus.
+   *
+   * La carte se tait alors sur l'outillage — ni badge « reporté », ni bouton
+   * « Outiller maintenant ». Relevé par le regard neuf sur les trois variantes :
+   * l'étape proposait « Outiller plus tard » pendant que la carte, deux cents
+   * pixels plus bas, annonçait déjà le report et offrait de le défaire. Le report
+   * se dit **après** le choix, pas pendant.
+   */
+  outillageOuvert?: boolean;
 }) {
   const [geste, setGeste] = useState<GesteArme | null>(null);
   const [enCours, setEnCours] = useState(false);
@@ -489,7 +159,7 @@ function CarteProjet({
             **tant qu'il ne l'est pas** : `a_faire` croise la décision (reporté)
             et le disque (manifeste absent), si bien que générer suffit à faire
             taire le rappel. */}
-        {projet.outillage?.a_faire && (
+        {projet.outillage?.a_faire && !outillageOuvert && (
           <BadgeEtat ton="attention" contour>
             Outillage reporté
           </BadgeEtat>
@@ -560,7 +230,7 @@ function CarteProjet({
           )}
           {/* Un report n'est pas un cul-de-sac : la question revient d'un clic,
               là où elle a été posée. */}
-          {projet.outillage?.a_faire && geste === null && (
+          {projet.outillage?.a_faire && !outillageOuvert && geste === null && (
             <Bouton
               variante="contour"
               ton="attention"
@@ -718,11 +388,7 @@ export function ListeProjets({ apresEcriture }: Props = {}) {
         </div>
 
         {aOutiller !== null && (
-          <EtapeOutillage
-            projet={aOutiller}
-            onTermine={finirOutillage}
-            onReporte={finirOutillage}
-          />
+          <EtapeOutillage projet={aOutiller} onTermine={finirOutillage} />
         )}
 
         {creationOuverte && (
@@ -774,6 +440,7 @@ export function ListeProjets({ apresEcriture }: Props = {}) {
                     setCreationOuverte(false);
                     setEditionId(null);
                   }}
+                  outillageOuvert={aOutiller?.id === projet.id}
                 />
               ),
             )}

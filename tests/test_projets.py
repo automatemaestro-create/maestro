@@ -141,9 +141,13 @@ def test_projet_se_serialise_a_la_forme_documentee() -> None:
         "origine",
         "vcs",
         "perimetre",
+        # La décision d'outillage (#1034) : ce que quelqu'un a répondu à l'étape
+        # d'outillage, et rien d'autre — l'état du disque n'est pas stocké ici.
+        "outillage",
         "cree_le",
         "modifie_le",
     }
+    assert document["outillage"] == {"reporte_le": ""}
     assert document["vcs"] == {
         "type": "git",
         "branche_base": "main",
