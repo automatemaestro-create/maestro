@@ -1,7 +1,7 @@
 # 35 — Le poste de travail de bureau : la coque, et la disposition à trois zones
 
-**Date :** 2026-09-11 · **Chantier :** #921 (8 lots) · **Jalon :** *L'atelier — le travail au centre,
-la conversation à portée*
+**Date :** 2026-09-11 · **Chantier :** #921 (11 lots — 8 au cadrage, §5) · **Jalon :** *L'atelier — le
+travail au centre, la conversation à portée*
 
 ---
 
@@ -287,7 +287,7 @@ fait son livrable :
 
 ---
 
-## 5. Le découpage — 8 lots
+## 5. Le découpage — 11 lots
 
 | # | Lot | Ticket | ∥ |
 |---|---|---|---|
@@ -298,7 +298,18 @@ fait son livrable :
 | 5 | La conversation occupe la colonne de droite | #926 | |
 | 6 | Le centre montre le run qui tourne | #927 | |
 | 7 | Un run qui se termine l'annonce, et remet son livrable | #928 | |
-| 8 | Tests + doc — dont **la frontière shell / écran** | #929 | |
+| 8 | Choisir une racine depuis la fenêtre — sélecteur natif sans détour, glisser-déposer d'un dossier | #938 | |
+| 9 | Ce que le renversement de D4 laisse derrière lui dans la doc et les tickets | #947 | ∥ |
+| 10 | Le modèle de menace face à la fenêtre — ce que la coque expose, ce qui le borne | #949 | |
+| 11 | Tests + doc — dont **la frontière shell / écran** | #929 | |
+
+> **Trois lots ont été ajoutés après ce cadrage**, qui n'en annonçait que huit (#922–#929) : #938
+> (ce que la fenêtre apporte au choix d'une racine — §2.4 le nommait sans lui donner de lot), #947
+> (les documents et les tickets que le renversement de D4 laissait à contre-sens) et #949 (le modèle
+> de menace, que §4 déclarait hors périmètre avant que la coque n'existe). Ce tableau est une
+> **commodité de lecture** : depuis #389/#395 la relation parent/lot, son ordre et son état vivent
+> dans la forge, et aucun outil ne lit ces lignes — raison de plus pour qu'elles ne mentent pas.
+> `bash scripts/gitlab/lib.sh start-brief 921` rend le découpage qui fait foi.
 
 **L'ordre porte deux décisions**, et aucune n'est un séquencement de confort :
 

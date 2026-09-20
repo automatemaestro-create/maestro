@@ -1800,10 +1800,14 @@ pas en erreur mais **avec son motif**, et l'écran ouvre l'explorateur **dessus*
 descendre d'un cran plutôt que de tout recommencer. Fermer la fenêtre, enfin, n'est pas une erreur :
 c'est un geste normal, qui ne touche à rien.
 
-Le sélecteur natif de l'**enveloppe de bureau** reste prévu en Phase 9
-([docs/24 §4.4](./24-projets-locaux-et-poste-de-travail.md)) ; ce lot ne l'a pas attendu pour lever
-le blocage, et ce qu'il livre ne le rend pas caduc — un backend distant n'aura jamais de dialogue
-natif, et c'est l'enveloppe qui apportera le glisser-déposer.
+Le sélecteur natif de l'**enveloppe de bureau** n'est plus une échéance de Phase 9 : l'enveloppe est
+**Electron** et elle est livrée par **#923** ([docs/35 §2](./35-decision-poste-de-bureau-et-disposition.md),
+qui renverse D4 le 2026-09-11 — le cadrage de [docs/24 §4.4](./24-projets-locaux-et-poste-de-travail.md)
+la rangeait en Phase 9 sous le nom de Tauri). Ce que la fenêtre ajoute — le sélecteur natif **sans
+détour** et le **glisser-déposer** d'un dossier — est le lot **#938** du chantier « L'atelier ». Ce
+lot-ci ne l'a pas attendu pour lever le blocage, et ce qu'il livre ne devient pas caduc pour autant :
+un backend distant n'aura jamais de dialogue natif, et les trois voies ci-dessus restent les trois
+voies.
 
 Implémentation : `maestro/controltower/selecteur.py` et `projets.py` (`points_entree`),
 `apps/web/components/projets/ExplorateurDossiers.tsx`. Couverture :

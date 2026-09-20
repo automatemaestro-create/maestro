@@ -27,7 +27,7 @@
 | **Conteneurisation / déploiement** | **Docker Compose** (dev) → **Kubernetes** (échelle) | Fly.io, Render, ECS |
 | **Authentification** | **Clerk** ou **Auth.js** | Supabase Auth, Keycloak |
 | **Extraction de documents** *(Phase 8)* | **markitdown** (unifié) ou `python-docx` + `pypdf` — tout ramené à du Markdown | Unstructured, Tika |
-| **Empaquetage bureau** *(Phase 9 — D4)* | **Lanceur/installeur d'abord**, puis **Tauri** (WebView système, backend Python en *sidecar*) | Electron (~150 Mo contre ~10, sans gain ici) |
+| **Empaquetage bureau** *(D4, **renversée le 2026-09-11** — [docs/35 §2](./35-decision-poste-de-bureau-et-disposition.md))* | **Lanceur/installeur d'abord** *(Phase 9)*, puis **Electron** (Chromium embarqué, backend Python en *sidecar*) — coque de développement **livrée** par #923 | Tauri (WebView système) — **écarté** : plus léger sur le papier (~10 Mo annoncés, jamais mesurés ici, contre 158 Mo d'archive relevés pour Electron), mais trois moteurs de rendu selon l'OS, dont aucun n'est celui que le filet visuel regarde |
 | **Persistance selon le mode** *(Phase 9 — D3)* | **SQLite** en local/bureau, **PostgreSQL** en serveur — derrière **une seule** couche d'accès | Postgres embarqué, DuckDB |
 
 > **Décision de langage.** Deux options cohérentes :

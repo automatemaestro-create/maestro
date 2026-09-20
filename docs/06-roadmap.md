@@ -130,8 +130,10 @@ d'exécution ; l'utilisateur reçoit une copie de fichiers à recopier lui-même
 > projets locaux (D1), écriture par worktree ou copie + diff sous validation humaine (D2 —
 > **révisée le 2026-09-04** par #703 : fusion continue sous un accord par run si versionné,
 > écriture en place sinon, [docs/24 §2.4](./24-projets-locaux-et-poste-de-travail.md)), le
-> bureau est une **enveloppe** et non la finalité (D3), lanceur puis Tauri (D4), brief validé
-> avant décomposition (D5), ordre 7 → 8 → 9 (D6), Phases 5 et 6 **inchangées** (D7).
+> bureau est une **enveloppe** et non la finalité (D3), lanceur puis Tauri (D4 — **renversée le
+> 2026-09-11** par #921 : la coque est **Electron** et Tauri est écarté, l'**ordre** restant
+> lanceur → installeur → enveloppe, [docs/35 §2](./35-decision-poste-de-bureau-et-disposition.md)),
+> brief validé avant décomposition (D5), ordre 7 → 8 → 9 (D6), Phases 5 et 6 **inchangées** (D7).
 
 | Phase | But | Dépend de | Fenêtre | État |
 |---|---|---|---|---|
@@ -271,7 +273,7 @@ numéro de phase**, pour la raison déjà écrite pour la vague front — un cha
 | **Résilience des runs** | Un run ne se perd plus : il survit à l'arrêt de son API (**hôte détaché**, livré), se voit quand il meurt, se rattrape sur son brief — et, depuis la revue du 2026-08-24, **se solde quand on éteint Maestro exprès** | 2027-06-30 | **#441** — 6 lots (#442–#447), **#347** et #486 |
 | **Collaboration inter-agents** | Ce que les agents se disent pendant un run, et une surface qu'ils écrivent ensemble | 2027-09-01 | #354, #355, #356 |
 | **Outillage de la forge** | Le workflow lui-même : merge automatique en fin de ticket, découpage porté par les sub-issues natives | 2027-09-15 | **#413** et **#389** |
-| **L'atelier — le travail au centre, la conversation à portée** | La Control Tower devient un **poste de travail de bureau** : une fenêtre **Electron**, un shell à **trois zones** (navigation à gauche, travail au centre, conversation à droite), le **pipeline du run** comme vue de travail — et les quatre constats du retex qui vivent dans ces surfaces | 2027-11-09 | **#921** — 8 lots (#922–#929) |
+| **L'atelier — le travail au centre, la conversation à portée** | La Control Tower devient un **poste de travail de bureau** : une fenêtre **Electron**, un shell à **trois zones** (navigation à gauche, travail au centre, conversation à droite), le **pipeline du run** comme vue de travail — et les quatre constats du retex qui vivent dans ces surfaces | 2027-11-09 | **#921** — 11 lots (#922–#928, puis #938, #947, #949 et #929 « tests + doc ») |
 
 **Le chantier « Le run, objet de premier plan » est le seul des quatre à être né d'une décision
 écrite** : la revue d'usage du **2026-08-24** portait seize demandes, dont **trois renversaient une
@@ -401,7 +403,7 @@ Trois choses **ne bougent pas** :
 | Fin Phase 2 | Les coûts sont-ils maîtrisés et l'UI suffisante au pilotage quotidien ? |
 | Fin Phase 3 | Faut-il un framework d'orchestration dédié (LangGraph) ou rester sur l'Agent SDK ? |
 | ~~Avant Phase 7~~ **tranché le 2026-08-04** | Maestro travaille-t-il sur les **projets locaux** de l'utilisateur, et selon quel patron d'écriture ? → **oui**, par worktree/branche si versionné et copie + diff sinon, l'application restant une action sensible *(D1/D2, #218)* — *D2 révisée le 2026-09-04 (#703) : fusion continue sous un accord par run si versionné, écriture en place sinon ([docs/24 §2.4](./24-projets-locaux-et-poste-de-travail.md))* |
-| ~~Avant Phase 9~~ **tranché le 2026-08-04** | L'**application de bureau** est-elle la finalité, ou une enveloppe autour d'un produit qui reste web ? → **une enveloppe** ; lanceur/installeur d'abord, Tauri ensuite, Electron écarté *(D3/D4, #218)* |
+| ~~Avant Phase 9~~ **tranché le 2026-08-04** | L'**application de bureau** est-elle la finalité, ou une enveloppe autour d'un produit qui reste web ? → **une enveloppe** ; lanceur/installeur d'abord, Tauri ensuite, Electron écarté *(D3/D4, #218)* — *D4 renversée le 2026-09-11 (#921) : c'est **Electron** qui est retenu et **Tauri** qui est écarté ; D3 et l'ordre (lanceur → installeur → enveloppe) ne bougent pas ([docs/35 §2](./35-decision-poste-de-bureau-et-disposition.md))* |
 | **Fin Phase 7** | La Phase **10 — Continuité & multi-projet** se confirme-t-elle, et avec quel périmètre ? |
 
 > **Verdicts rendus.** Chaque jalon est tranché **sur pièces** dans la démo de fin de phase :
