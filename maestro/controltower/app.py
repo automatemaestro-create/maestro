@@ -3066,8 +3066,10 @@ def create_app(
         """Ce que l'agent `nom` peut réellement appeler — de quoi **suggérer** (#262).
 
         Trois origines, et aucune n'est écrite en dur ici : les outils
-        **intégrés** de son profil de rôle (`RoleProfile.outils`, `DEFAULT_TOOLS`
-        pour un agent hors des profils outillés), les verbes du serveur
+        **intégrés** de son profil de rôle (`RoleProfile.outils` — le cadre que
+        le code déclare pour ce rôle, sinon `DEFAULT_TOOLS`, ceux que le cadre
+        générique d'une fiche sert depuis #1037 : tout agent du catalogue est
+        outillé, seules ses consignes de métier lui sont propres), les verbes du serveur
         in-process **maestro** (arbitrage, blocage, courrier, décision
         consignée, question — leurs constantes existent précisément pour qu'une
         politique les désigne, #805, #1023) et les

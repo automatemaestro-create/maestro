@@ -230,9 +230,16 @@ et se **persiste hors du code** (`core/agents/<nom>.json`, racine remplaçable p
 `MAESTRO_AGENTS_DIR`). Le catalogue effectif d'une exécution assemble les agents par
 défaut du code puis les personnalisés : un agent créé est **routable et exécutable**
 par les moteurs construits ensuite ([guide de démarrage §6.3](./07-guide-de-demarrage.md)).
-Restent pour la suite : la **liaison d'outils** scopés (au POC, un agent personnalisé
-exécute par le chemin texte, sans runtime outillé) et l'**exécution multi-fournisseurs**
-(le champ `fournisseur` est déclaratif, le moteur exécute sur `MAESTRO_PROVIDER`).
+Depuis **#1037**, un agent défini par sa fiche **travaille avec des outils**, par le
+même chemin que les rôles du code : l'exécuteur ne cherche plus son runtime dans une
+table de cinq noms, il le **dérive de la fiche** de l'agent routé
+(`maestro.agents.fiche_outillee`) — modèle, effort et playbook de la fiche, outils et
+espace de travail d'un **cadre générique** quand le code n'en déclare pas de propre pour
+ce rôle, autorisations (#110) et serveurs MCP (#104) déjà indexés par nom d'agent. Le
+playbook d'une fiche reçoit en plus le **cadre d'exécution** (`{{cadre}}`), sans quoi
+l'agent répondrait en texte avec des outils dans les mains. Reste pour la suite
+l'**exécution multi-fournisseurs** (le champ `fournisseur` est déclaratif, le moteur
+exécute sur `MAESTRO_PROVIDER`).
 
 ### 4.1 Régler un agent du code sans le dupliquer (#259)
 
@@ -341,7 +348,7 @@ Deux formes, verrouillées sur leur `type` : une **commande locale** (`stdio` : 
 
 Le moteur relit la déclaration **à chaud à chaque tâche** (comme les playbooks, #78) et confie la liste à la **couche SDK** (`ModelProvider.run_agent(mcp_serveurs=…)`) : aucune logique d'agent n'appelle un fournisseur en direct, la traduction vers le format natif (Agent SDK pour Claude) vit dans la couche fournisseur. La session est **verrouillée sur les serveurs déclarés** : aucune configuration MCP ambiante (utilisateur, projet, plugin) n'est jamais chargée — permissions scopées (docs/02 §7). Elle est aussi **retenue jusqu'à la connexion des serveurs** (statut sondé, délai borné à 60 s) : le CLI enregistre les outils MCP après son ouverture de session, et sans ce sas le premier tour du modèle partirait sans eux — l'agent conclurait amputé de ses capacités (constat du pilote #105, corrigé dans la couche fournisseur).
 
-Les serveurs n'équipent que les **exécutions outillées** : le chemin texte (`generate` — agents sans runtime outillé, ou repli d'un fournisseur texte-seul) n'expose aucun outil, MCP compris.
+Les serveurs n'équipent que les **exécutions outillées** : le chemin texte (`generate`) n'expose aucun outil, MCP compris. Depuis #1037 ce chemin n'est plus qu'un **repli** — fournisseur texte-seul (`UnsupportedCapability`), ou table de runtimes injectée où l'agent ne figure pas : tout agent du catalogue a désormais un runtime outillé, dérivé de sa fiche.
 
 ### 6.3 Serveur indisponible — comportement garanti
 
