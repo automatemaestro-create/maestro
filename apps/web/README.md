@@ -985,6 +985,14 @@ comme les autres. Comme `contraste.test.ts` et `a11y.test.tsx`, la sonde est
 **prouvée sur un échantillon fautif avant de balayer** — sans quoi un comptage
 mal branché rendrait « 0 dépassement » sur une question jamais posée.
 
+⚠ **Et ce qui est hors de l'écran n'est pas hors de la règle** (#929, docs/30
+§4.6). Ce comptage-ci ne recense que `#contenu-principal` — juste, puisqu'une
+zone du **shell** n'est pas un bloc d'écran, et c'est précisément ce qui en
+ferait une sortie de secours. L'autre moitié vit dans
+`tests/frontiere-shell-ecran.test.tsx`, et les deux partagent **une seule** sonde
+(`tests/places.ts`), plafonds compris : une recopie qui dériverait d'un caractère
+rendrait « conforme » un bloc rangé dans le shell et compté nulle part.
+
 **L'ordre dans la colonne n'est pas neutre, et un renvoi depuis le corps ne
 coûte aucune place** (#831). La règle dit *où* un bloc a le droit d'être, pas
 dans quel ordre la colonne les empile — or la colonne défile, et sa troisième
@@ -2130,7 +2138,10 @@ le pixel — le bout en bout dans un vrai navigateur reste le rôle du skill
 | `tests/parametres.test.tsx` | Sommaire, ancres, préférences du poste (#121) |
 | `tests/guide.test.tsx` | Déclenchement unique, étapes, sortie clavier, ancres et pages réelles (#122, #193) |
 | `tests/assistant.test.tsx` | Ouverture, envoi, échec d'envoi, non-fermeture au clic extérieur (#123) |
-| `tests/shell.test.tsx` | La composition : les sept lots effectivement branchés dans le cadre |
+| `tests/shell.test.tsx` | La composition : les sept lots effectivement branchés dans le cadre, puis la **troisième zone** (#925) — fermée par défaut, sa bascule qui passe par le stockage, sa croix, et le fait de base dont la frontière dépend : la colonne est hors de `<main>` |
+| `tests/frontiere-shell-ecran.test.tsx` | **La frontière shell / écran** (#929, docs/30 §4.6, docs/35 §3.4) : une zone du shell ne peut pas servir de sortie de secours à la règle des trois places. Trois temps — les plafonds confrontés au **texte** de docs/30 §4.1 (donc `BLOCS_MAX` ne se relève pas dans un fichier de test) ; écran par écran, ce qui est rendu **hors** de `#contenu-principal` comparé à ce que le shell rend **seul**, colonne ouverte comme fermée ; et l'écran qui ne gagne aucune place quand la conversation s'ouvre. La sonde est prouvée sur un échantillon fautif — un écran qui range un bloc par un portail est vu, `<section>` comme `<aside>` — et l'inventaire des zones du shell est **épinglé**, faute de quoi une quatrième zone s'ajouterait sans que rien ne rougisse |
+| `tests/fil-continu.test.tsx` | **La continuité du fil** (#926, docs/35 §3.3) : une seule conversation à l'écran (le fil n'est monté que colonne ouverte — `useChat` ouvre une WebSocket par instance —, et la colonne se replie sur `/chat` **sans éteindre la préférence**), le même canal et la même portée que `/chat`, et le brouillon qui **suit** d'une surface à l'autre (`lib/brouillons` : hissé hors du composant, par interlocuteur, jamais persisté) |
+| `tests/issue-de-run.test.tsx` | **L'annonce de fin d'un run** (#928, docs/05 §2.9) : `lib/issueRun` (une fin par run et non par message, « fini » ≠ « abouti », les deux raisons de n'avoir pas de livrable, le repère de lecture de la cloche), l'annonce rendue (l'heure de la **fin**, le chemin qui n'est pas un lien, « aucun livrable » écrit à sa place, les deux gestes dont « Copier le chemin » **toujours**), et les deux surfaces — le fil qui la retrouve **sans aucun temps réel**, la cloche qui marque d'un point et l'acquitte à l'ouverture |
 | `tests/agents.test.tsx` | La fiche agent à onglets, la liste, et la survie des chemins v1 par redirection (#190, testé en #193) ; puis le **cadre** de l'écran de création (#254) — sa route, la porte en tête de liste, la sortie par Échap, la garde du brouillon, le nom que la route occupe |
 | `tests/agent-onglets.test.tsx` | L'**aiguillage** des cinq facettes (`ContenuOngletAgent`, #190 relu par #267) : chaque onglet ouvre *le bon* composant, une seule facette à la fois, et la table des repères se compare à `ONGLETS_AGENT` — un onglet déclaré sans être branché rougit. Le typage n'y suffit pas : le `switch` est exhaustif par construction, mais il accepterait sans un mot qu'un cas monte le composant du voisin — deux lignes de copier-coller, invisibles au lint comme au build |
 | `tests/agent-creation.test.tsx` | La création **jusqu'au bout** (#254, #257, testés en #267), là où `agents.test.tsx` n'en garde que le cadre : la définition composée puis envoyée, la fiche née ouverte sur son profil, « rien de choisi » rendu en `null` (le défaut légitime, pas un trou), la saisie gardée sur un refus ; puis l'assistant — il remplit **à partir de l'intention**, ce qu'il pose reste modifiable mot à mot, l'abandon rend l'état d'**avant** (pas celui d'un essai précédent), et un échec **ne touche à rien** |

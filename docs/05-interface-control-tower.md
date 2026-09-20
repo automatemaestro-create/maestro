@@ -132,6 +132,78 @@ URL. Leurs **composants**, eux, sont toujours montés — `components/brief/` pa
 fil du cadrage (#483), `components/composer/` par ses suites. Supprimer les
 coquilles est une décision à part, qui ne relève ni du menu ni des chemins.
 
+### 1.2 Le shell a **trois zones**, et la frontière shell / écran est comptée
+
+Le chantier « L'atelier » (#921, [docs/35](./35-decision-poste-de-bureau-et-disposition.md))
+a changé le cadre dans lequel tous les écrans ci-dessus sont servis. Le shell
+n'a plus deux zones mais **trois** :
+
+| Zone | Ce qu'elle porte | Composant |
+| --- | --- | --- |
+| **Gauche** | la navigation — le menu de §1, repliable | `BarreLaterale` |
+| **Centre** | **le travail** : l'écran, et rien d'autre | `<main id="contenu-principal">` |
+| **Droite** | **la conversation**, repliable, disponible depuis n'importe quel écran | `ColonneConversation` (#925, #926) |
+
+La demande qui la fonde est celle du retex du 2026-09-11 : on parle à Maestro sur
+un écran (`/chat`) et on regarde ce qu'il fait sur un autre (`/runs/<id>`), par
+gestes alternés — et l'interface imposait de choisir lequel on regarde. Trois
+propriétés de la colonne de droite valent d'être redites ici, parce que les
+défaire est facile et coûteux :
+
+- **ce n'est pas une modale.** Ni voile, ni `aria-modal`, ni piège de focus : on
+  parle **pendant** qu'on agit. « Durcir » cela plus tard retirerait au fil la
+  seule propriété qui le rend utile à droite ;
+- **c'est la MÊME conversation que `/chat`**, servie par le même appel. Il n'y a
+  rien à synchroniser parce qu'il n'y a qu'un fil — et la colonne se **replie**
+  sur `/chat`, où il occupe déjà le centre (`useChat` ouvre une WebSocket par
+  instance) ;
+- **changer d'écran ne perd pas ce qu'on écrivait.** Le brouillon vit hors du
+  composant (`apps/web/lib/brouillons.ts`), donc il suit — commencé dans la
+  colonne, il est là en grand sur `/chat`, et réciproquement.
+
+#### La frontière shell / écran — comptée, jamais convenue
+
+La **règle des trois places** ([docs/30 §4](./30-cible-visuelle-control-tower.md))
+borne ce qu'un **écran** occupe : bandeau ≤ 4 chiffres, corps ≤ 3 blocs, **une**
+colonne de propriétés. Une zone du **shell** n'est pas un bloc de plus dans
+l'écran — mais c'est précisément ce qui ferait d'elle une **sortie de secours** :
+un écran plein pourrait y ranger son quatrième bloc, qui ne serait alors compté
+nulle part.
+
+Cette frontière est portée par le code depuis #929, et non par une convention
+(docs/35 §3.4) :
+[`apps/web/tests/frontiere-shell-ecran.test.tsx`](../apps/web/tests/frontiere-shell-ecran.test.tsx)
+compare, écran par écran, ce qui est rendu **hors** de `#contenu-principal` à ce
+que le shell rend **seul** sur le même chemin et dans le même état. L'écart doit
+être vide, colonne ouverte comme fermée. Et les deux plafonds y sont confrontés
+au **texte** de docs/30 §4.1 : les relever demande de réécrire la règle, là où
+elle se discute — jamais de monter une constante dans un fichier de test.
+
+#### La fenêtre : une coque, pas un second produit
+
+Maestro s'ouvre aussi comme une **application de bureau**
+(`bash scripts/controltower/desktop.sh`, docs/35 §2) : une fenêtre Electron qui
+démarre la stack locale, l'affiche, et l'arrête en se fermant. Elle est une
+**enveloppe** — le mode web reste de premier ordre (D3), et **ENF-12** tient :
+aucun embranchement de code applicatif dans `apps/web/**`. Ce que la fenêtre sait
+faire de plus — ouvrir un dossier dans l'explorateur, ouvrir le dialogue de
+dossier de l'OS, lire le chemin d'un dossier déposé — passe par un pont de trois
+verbes, et le front teste une **capacité** (`apps/web/lib/poste.ts`), jamais sa
+plateforme : dans un onglet la fonction n'est pas là, et l'autre chemin reste.
+
+**Ce que ce chantier ne fait pas**, écrit ici pour que personne n'ait à le
+deviner : aucune identité visuelle nouvelle, aucun écran nouveau, et pas
+d'**installeur**, de mises à jour ni de premier lancement — #641, #644 et #642
+restent en Phase 9. La coque livrée est une coque de **développement**, qui sert
+la stack locale du dépôt.
+
+Couverture : [`apps/web/tests/shell.test.tsx`](../apps/web/tests/shell.test.tsx)
+(les zones branchées), `frontiere-shell-ecran.test.tsx` (la frontière),
+[`apps/web/tests/fil-continu.test.tsx`](../apps/web/tests/fil-continu.test.tsx)
+(une seule conversation, et le brouillon qui suit),
+[`tests/test_coque_bureau.py`](../tests/test_coque_bureau.py) (sûreté de la
+fenêtre, cycle de vie des processus, ENF-12).
+
 ---
 
 ## 2. Les écrans en détail
@@ -2484,6 +2556,41 @@ est affiché, un fragment actif y est repéré, et un JSONL d'avant #694 y est
 vérifié sans son champ `conversation`. ⚠ **Aucune géométrie** n'y est mesurée
 (#308) — ce qui s'y observe est le contrat de mise en page *tel qu'il est écrit* ;
 l'effet reste le rôle de `/banc-mise-en-page`.
+
+#### La fin d'un run s'annonce dans le fil, et remet son livrable (#928) — **livré**
+
+Le constat le plus net du retex du 2026-09-11 (G1) : *un run qui se termine ne
+prévient personne, et ne dit pas où est le livrable*. Le run avait duré
+53 minutes et coûté 12,51 $ ; le livrable fonctionnait ; on ne l'a su qu'en
+allant regarder le disque.
+
+L'annonce paraît **à la fin du fil qui a demandé le travail** — un `<li>` du même
+`<ol>` que les messages, donc elle défile avec eux, dans la colonne de droite
+comme sur `/chat` — et **dans la cloche**, où les fins récentes sont rappelées.
+Le rendu est partagé (`components/runs/AnnonceIssueRun`) : deux recopies auraient
+fini par annoncer deux choses différentes de la même fin. Quatre décisions la
+portent :
+
+- **tout vient du persisté**, jamais du flux temps réel. `lib/issueRun` croise les
+  `run_id` **persistés** des messages (#268) avec les `executions` rechargées par
+  le REST — si bien qu'une fin arrivée pendant qu'on regardait ailleurs est là au
+  retour. Le flux d'événements, lui, part vide à chaque chargement ;
+- **le livrable, c'est la racine du projet du run** — c'est là que le travail
+  atterrit dans les deux régimes du moteur (fusion, écriture en place) ;
+- **« aucun livrable » s'écrit**, à la place que le chemin occuperait : un run hors
+  projet, ou d'un autre projet que celui qu'on regarde, rend sa **raison** et non
+  `null` en silence ;
+- **deux gestes, jamais un seul** — « Ouvrir le dossier » quand le poste sait le
+  faire (la fenêtre, §1.2), « Copier le chemin » **toujours**. Le second n'est pas
+  le lot de consolation du premier : c'est lui qui rend le chemin utilisable dans
+  un terminal, un explorateur, un ticket.
+
+La cloche marque d'un **point**, jamais d'un second chiffre : sa pastille répond
+« combien de choses m'attendent » (#322) et une fin de run n'attend rien. Le point
+s'éteint à l'ouverture du panneau, sur l'horodatage de la fin la plus récente et
+non sur l'horloge — une fin qui arrive pendant que le panneau est ouvert reste
+neuve. Couverture :
+[`apps/web/tests/issue-de-run.test.tsx`](../apps/web/tests/issue-de-run.test.tsx).
 
 ---
 

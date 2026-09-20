@@ -41,6 +41,15 @@
  * et c'est la frontière de #308 — la géométrie appartient au skill
  * `/banc-mise-en-page`. On compte des blocs, ce qui est précisément ce que la
  * règle plafonne.
+ *
+ * ⚠ Ce qui ne se compte **pas ici non plus**, depuis #929 : ce que le **shell**
+ * pose autour de l'écran. Cette suite-ci ne recense que `#contenu-principal`,
+ * et c'est juste — une zone du shell n'est pas un bloc de plus dans l'écran.
+ * Mais c'est précisément ce qui en ferait une sortie de secours, et c'est
+ * `frontiere-shell-ecran.test.tsx` qui tient cette moitié-là (docs/35 §3.4).
+ * Les deux suites partagent **une seule** sonde (`./places`) : une recopie qui
+ * dériverait rendrait « conforme » un bloc rangé dans le shell et compté nulle
+ * part.
  */
 
 import { readFileSync } from "node:fs";
@@ -51,7 +60,6 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TITRE_RUNS_IMMOBILES } from "@/components/PanneauRunsImmobiles";
-import { ID_CONTENU_PRINCIPAL } from "@/components/Shell";
 import { marquerGuideVu } from "@/lib/guide";
 import { MENU } from "@/lib/navigation";
 
@@ -63,6 +71,13 @@ import {
   peuplerEtatSansArbitrage,
   type Ecran,
 } from "./ecrans";
+import {
+  BLOCS_MAX,
+  CHIFFRES_MAX,
+  contenuPrincipal,
+  placesDe,
+  type Places,
+} from "./places";
 
 // --- Le réseau, débranché comme pour l'audit d'accessibilité ----------------
 
@@ -78,112 +93,11 @@ vi.mock("@/lib/useAnalyticsCouts", async (original) => {
   return { ...(await original<Record<string, unknown>>()), ...mockAnalytics() };
 });
 
-// --- Les plafonds (docs/30 §4.1) -------------------------------------------
-
-/** Bandeau de tête : « quatre est un plafond, pas une cible » (docs/30 §4.3). */
-const CHIFFRES_MAX = 4;
-/** Corps : trois blocs de plein format, arbitrage non compté. */
-const BLOCS_MAX = 3;
-
-/**
- * Ce qui est un bloc dans le DOM. `<section>` pour le corps et le bandeau,
- * `<aside>` pour la colonne de propriétés — les deux balises que le produit
- * emploie déjà, et non un attribut inventé pour l'occasion.
- *
- * Ce qui n'en est **pas** un, et le compte le montre : une `<nav>` (le filtre de
- * période de `/couts`, le sommaire de `/parametres`, la bascule de vues d'un
- * run) règle l'écran ou y navigue, elle n'occupe pas une place ; un `<article>`
- * ou une `<div>` est du contenu **dans** un bloc.
- */
-const SELECTEUR_BLOC = "section, aside";
-
-// --- La sonde ---------------------------------------------------------------
-
-/** Le bloc est-il de premier niveau, c'est-à-dire sans bloc au-dessus de lui ? */
-function estDePremierNiveau(noeud: Element, racine: Element): boolean {
-  let parent = noeud.parentElement;
-  while (parent !== null && parent !== racine) {
-    if (parent.matches(SELECTEUR_BLOC)) return false;
-    parent = parent.parentElement;
-  }
-  return true;
-}
-
-/**
- * Le nom d'un bloc — ce sous quoi le recensement le désigne, et ce qui permet de
- * le suivre d'un montage à l'autre. `aria-label` d'abord (la forme majoritaire),
- * puis le texte que `aria-labelledby` désigne, puis l'`id` de l'ancre. Un bloc
- * qui n'a rien de tout cela rend la chaîne vide, et c'est un échec.
- */
-function nomDe(bloc: Element): string {
-  const etiquette = bloc.getAttribute("aria-label");
-  if (etiquette !== null && etiquette.trim() !== "") return etiquette.trim();
-  const cible = bloc.getAttribute("aria-labelledby");
-  if (cible !== null) {
-    const titre = bloc.ownerDocument.getElementById(cible);
-    const texte = (titre?.textContent ?? "").trim();
-    if (texte !== "") return texte;
-  }
-  return bloc.id ?? "";
-}
-
-/**
- * Le bandeau de tête : un bloc dont **tous** les enfants directs sont des
- * chiffres (`TuileChiffre`). La condition porte sur *tous* et non sur *au moins
- * un* : sans cela, un bloc de corps qui afficherait une tuile en tête passerait
- * pour le bandeau et sortirait du plafond — c'est la seule façon de tricher que
- * ce comptage laisserait ouverte.
- */
-function estBandeauDeTete(bloc: Element): boolean {
-  return (
-    bloc.children.length > 0 &&
-    [...bloc.children].every((enfant) => enfant.matches("[data-chiffre]"))
-  );
-}
-
-type Places = {
-  /** Les chiffres du bandeau de tête — au plus `CHIFFRES_MAX`. */
-  chiffres: string[];
-  /** Les blocs du corps, par leur nom — au plus `BLOCS_MAX`. */
-  corps: string[];
-  /** La ou les colonnes de propriétés — il n'en faut jamais plus d'une. */
-  colonnes: string[];
-  /** Les blocs de premier niveau sans nom : toujours une faute. */
-  anonymes: string[];
-};
-
-/** Range les blocs de premier niveau de `racine` dans les trois places. */
-function placesDe(racine: Element): Places {
-  const places: Places = { chiffres: [], corps: [], colonnes: [], anonymes: [] };
-  const blocs = [...racine.querySelectorAll(SELECTEUR_BLOC)].filter((bloc) =>
-    estDePremierNiveau(bloc, racine),
-  );
-  for (const bloc of blocs) {
-    const nom = nomDe(bloc);
-    if (nom === "") {
-      places.anonymes.push(`<${bloc.tagName.toLowerCase()}>`);
-      continue;
-    }
-    if (bloc.tagName === "ASIDE") places.colonnes.push(nom);
-    else if (estBandeauDeTete(bloc))
-      places.chiffres.push(
-        ...[...bloc.querySelectorAll("[data-chiffre]")].map(
-          (tuile) => (tuile.textContent ?? "").trim().slice(0, 30) || nom,
-        ),
-      );
-    else places.corps.push(nom);
-  }
-  return places;
-}
-
-/** Le corps de l'écran monté : la racine sur laquelle le comptage porte. */
-function contenuPrincipal(): HTMLElement {
-  const contenu = document.getElementById(ID_CONTENU_PRINCIPAL);
-  if (contenu === null) throw new Error("l'écran n'a pas de contenu principal");
-  return contenu;
-}
-
 // --- 1. La sonde, prouvée avant de servir -----------------------------------
+//
+// La sonde et les deux plafonds vivent dans `./places` depuis #929, parce
+// qu'une seconde suite les emploie (voir l'en-tête). Ce sont les mêmes ; la
+// moitié qui les **prouve** reste ici, où elle est née.
 
 describe("la sonde de sobriété", () => {
   /** Rend un écran de laboratoire et rend ses places. */

@@ -713,6 +713,54 @@ arrêté que le payload doterait d'un signe, que la vue refuse de montrer. La r�
 n'a rien eu à apprendre : `sobriete.test.tsx` et `a11y.test.tsx` comptent le même nombre de places
 qu'avant #837.
 
+### 4.6 Une zone du **shell** n'est pas une place de l'écran — 2026-09-20 (#929, lot 11 de #921)
+
+Le chantier « L'atelier » ([docs/35](./35-decision-poste-de-bureau-et-disposition.md)) a donné au
+shell une **troisième zone** : la conversation, à droite, disponible depuis n'importe quel écran.
+Elle est rendue en `<aside>`, hors de `#contenu-principal` — donc hors du comptage de §4.2, qui ne
+recense que l'écran. C'est **juste**, et c'est exactement ce qui en ferait une sortie de secours.
+La phrase de #539 vaut ici mot pour mot :
+
+> il n'y a **qu'une** colonne de propriétés par écran, faute de quoi la seule place sans plafond
+> deviendrait la sortie de secours des deux autres.
+
+Une zone du shell est une place sans plafond de plus, et rien ne la rattache à un écran : un écran
+plein pourrait y ranger son quatrième bloc, qui ne serait compté nulle part. docs/35 §3.4 l'avait
+nommé comme le point de vigilance du chantier ; ce lot en fait une **machine**, parce qu'une règle
+qu'aucune machine ne vérifie ne tient pas (§3.6).
+
+[`apps/web/tests/frontiere-shell-ecran.test.tsx`](../apps/web/tests/frontiere-shell-ecran.test.tsx),
+en trois temps :
+
+1. **le plafond ne se relève pas.** Les deux nombres du comptage sont **confrontés au texte** de
+   §4.1 — lus par une extraction prouvée d'abord sur une règle fautive, qui doit rendre 9 et 7
+   quand c'est 9 et 7 qui sont écrits. Les déplacer demande donc de réécrire la règle, là où elle
+   se discute, plutôt que de monter une constante dans un fichier de test que personne ne relit
+   avec la règle sous les yeux ;
+2. **le shell a ses zones, l'écran n'en pose aucune.** Pour chacun des écrans du menu, ce qui est
+   rendu **hors** de `#contenu-principal` est comparé à ce que le shell rend **seul**, sur le même
+   chemin et dans le même état de colonne. L'écart doit être **vide**. La sonde est prouvée sur un
+   échantillon fautif : un écran qui range un bloc par un portail — la forme réaliste de l'évasion
+   — est vu, `<section>` comme `<aside>` ;
+3. **ouvrir la troisième zone ne rend aucune place à l'écran.** Les places comptées *dans* l'écran
+   sont les mêmes, colonne ouverte ou fermée : ce qu'un écran doit à la règle ne dépend pas d'une
+   préférence d'affichage. C'est l'autre sens de la sortie de secours, et le plus insidieux — un
+   écran qui déplacerait un bloc quand la colonne est ouverte tiendrait le plafond dans l'état que
+   `sobriete.test.tsx` mesure, et le dépasserait à l'usage.
+
+**Une seule sonde pour les deux côtés** ([`apps/web/tests/places.ts`](../apps/web/tests/places.ts)) :
+le comptage et les deux plafonds ont quitté `sobriete.test.tsx` pour un module partagé, qui garde
+sa moitié de preuve là où elle est née. Deux sondes recopiées seraient ici pires qu'ailleurs — la
+frontière n'a de sens que si les deux côtés se comptent de la même façon, et une divergence d'un
+caractère rendrait « conforme » un bloc rangé dans le shell.
+
+**L'inventaire du shell est épinglé**, et c'est la moitié que la comparaison ne donne pas : elle
+compare le shell à lui-même, donc elle resterait verte s'il gagnait une quatrième zone. Le shell
+pose aujourd'hui **deux** `<aside>` — le rail de navigation (nommé par la `<nav>` qu'il contient) et
+la colonne de conversation —, et **aucune** `<section>` : il n'occupe ni le corps ni le bandeau de
+tête. Le jour où il en poserait une, la question « à quelle place compte-t-elle ? » se poserait
+pour de bon, et c'est ce jour-là qu'on veut voir rougir.
+
 ---
 
 ## 5. Inventaire de l'outillage — éprouvé
