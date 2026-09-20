@@ -1,10 +1,11 @@
-"""L'équipe d'un projet, côté Control Tower : la proposer, et en écrire les playbooks.
+"""L'équipe d'un projet, côté Control Tower : la proposer, puis la **créer**.
 
-La pièce que `POST /api/projets/{id}/equipe/proposition` appelle, au patron de
+La pièce que `POST /api/projets/{id}/equipe/proposition` (#1039) et
+`POST /api/projets/{id}/equipe` (#1040) appellent, au patron de
 [`maestro.controltower.outillage`](./outillage.py) : le service tient la forme
 JSON et les refus, `app.py` ne fait que les traduire en codes HTTP.
 
-**Une couche mince, et deux choses qu'elle seule peut faire.** Toute la
+**Une couche mince, et trois choses qu'elle seule peut faire.** Toute la
 dérivation vit dans `maestro.equipe`, qui ne connaît ni HTTP, ni projet déclaré,
 ni fournisseur de modèle. Ce module n'ajoute que ce qui demande l'un des trois :
 
@@ -13,7 +14,18 @@ ni fournisseur de modèle. Ce module n'ajoute que ce qui demande l'un des trois 
    seulement la racine d'un projet déjà déclaré, donc déjà passée par
    `valider_racine` (EF-38) ;
 2. il **écrit les playbooks** par la mécanique de #257
-   (`GenerateurDefinitionAgent`), seule couche à savoir appeler un modèle.
+   (`GenerateurDefinitionAgent`), seule couche à savoir appeler un modèle ;
+3. il **écrit l'équipe validée dans le projet** (#1040) — et c'est le seul verbe
+   de ce module qui touche un dépôt en écriture, `creer`.
+
+## Proposer et créer sont deux verbes, jamais deux moitiés d'un seul
+
+`proposer` n'écrit rien, `creer` n'analyse rien. Ce n'est pas une coquetterie :
+la proposition appelle un modèle pour rédiger les playbooks, si bien que la
+rejouer rendrait un **autre** texte. Ce que `creer` reçoit est donc l'équipe
+**telle que l'utilisateur l'a lue et ajustée** (`maestro.equipe.creation`), et ce
+qui est écrit est exactement ce qui a été montré — la seule façon de tenir la
+promesse du ticket sur le cran `auto` : *c'est vous qui le décidez* (#716).
 
 ## Les deux provenances se rejoignent avant d'arriver ici
 
@@ -34,10 +46,13 @@ ferait perdre une analyse de projet entière pour un appel modèle, alors qu'un
 playbook générique annoncé comme tel reste validable, modifiable et remplaçable
 (#1040).
 
-⚠ **Rien n'est créé**, et ce module n'écrit nulle part : il ne tient aucun dépôt
-d'agents en écriture, et la seule chose qu'il demande à `ConfigurationAgents` est
-la **liste des noms déjà pris** dans ce projet, pour ne pas proposer un nom qui
-se heurterait à la validation. La création est #1040.
+⚠ **Une proposition ne crée rien.** `proposer` ne tient aucun dépôt en écriture,
+et la seule chose qu'il demande à `ConfigurationAgents` est la **liste des noms
+déjà pris** dans ce projet, pour ne pas proposer un nom qui se heurterait à la
+validation. L'écriture a un seul point d'entrée, `creer`, et elle vérifie
+**toute** l'équipe avant d'écrire le premier fichier
+(`maestro.equipe.creation.refus_de`) : sans transaction de système de fichiers,
+c'est le seul moyen de ne pas laisser une demi-équipe derrière un refus.
 """
 
 from __future__ import annotations
@@ -57,10 +72,17 @@ from maestro.controltower.projets import ServiceProjets
 from maestro.equipe import (
     ORIGINE_PLAYBOOK_GABARIT,
     ORIGINE_PLAYBOOK_GENERE,
+    AgentCree,
+    EquipeCreee,
     PropositionEquipe,
+    Refus,
     RolePropose,
+    RoleValide,
     avec_playbook,
+    capacite,
+    definition,
     proposer_equipe,
+    refus_de,
 )
 from maestro.outillage import Analyse, Bornes, analyser
 from maestro.outillage.modele import Constats, Recommandation
@@ -82,12 +104,37 @@ RAISON_PLAYBOOK_GENERE = (
 )
 
 
+class EquipeRefusee(ValueError):
+    """L'équipe validée ne peut pas être créée — et **rien** ne l'a été (#1040).
+
+    Une seule exception pour toutes les causes de `refus_de` (nom pris, doublon,
+    instances hors bornes, fiche ou politique que les dépôts refuseraient) :
+    ce que l'appelant doit distinguer n'est pas la famille du refus mais **quel
+    rôle** l'a provoqué, et `refus` le porte rôle par rôle. La traduction en 422
+    motivé est celle des routes projets, dans `app.py`.
+    """
+
+    #: Le code stable que les routes projets servent en `{motif, message}` — il
+    #: permet à l'écran de reconnaître ce refus-là sans analyser une phrase
+    #: (`detail_refus`, docs/05 §2.7).
+    motif = "equipe-refusee"
+
+    def __init__(self, refus: Sequence[Refus]) -> None:
+        self.refus = tuple(refus)
+        detail = " ; ".join(f"{r.nom or '?'} : {r.raison}" for r in self.refus)
+        super().__init__(
+            f"équipe refusée, aucun agent créé — {detail}" if detail else "équipe refusée"
+        )
+
+
 class ServiceEquipe:
-    """L'équipe qu'un projet déclaré appelle — proposée, jamais créée (#1039).
+    """L'équipe qu'un projet déclaré appelle : proposée (#1039), puis créée (#1040).
 
     `gabarits` est la configuration d'agent au niveau des **gabarits**
-    (`ConfigurationAgents`, #1038) : elle ne sert qu'à savoir quels noms sont
-    déjà pris dans le projet visé, et elle n'est jamais écrite.
+    (`ConfigurationAgents`, #1038). `proposer` ne lui demande que les noms déjà
+    pris ; `creer` la **cadre sur le projet** (`pour_projet`) et écrit dans les
+    dépôts de ce projet-là — jamais dans ceux des gabarits, qui n'appartiennent
+    à personne.
 
     `generateur` est la mécanique de #257. `None` en construit un, résolu
     **paresseusement** comme partout ailleurs dans la Control Tower : construire
@@ -152,6 +199,72 @@ class ServiceEquipe:
             source=source,
         )
         return (await self._avec_playbooks(proposition)).to_dict()
+
+    def creer(
+        self,
+        id_projet: str,
+        roles: Sequence[RoleValide],
+        *,
+        proposition_id: str = "",
+    ) -> dict[str, Any]:
+        """Crée dans le projet l'équipe que l'utilisateur a validée (#1040).
+
+        Le déroulé, et l'ordre **est** la garantie :
+
+        1. le projet est **résolu** (404/422 motivés) — un agent ne naît jamais
+           dans un projet qu'on ne sait pas lire ;
+        2. l'équipe entière est **vérifiée** (`refus_de`). Un seul refus arrête
+           tout, et **rien n'est écrit** : trois dépôts × N rôles n'offrent
+           aucune transaction, et une demi-équipe serait pire qu'un refus ;
+        3. chaque rôle est écrit dans les trois dépôts **du projet** — fiche et
+           playbook, politique d'autorisations, capacité. La politique n'est
+           écrite que si le rôle en porte une : un fichier de politique vide
+           *serait* une politique (liste `allow` vide = ouverte), et poser ce
+           qu'on n'a pas décidé est ce que ce chantier évite.
+
+        Rend le rapport de `EquipeCreee` : ce qui existe désormais dans le
+        projet, à charge pour les écrans d'agents de prendre la suite (#1038).
+
+        Lève `EquipeRefusee` (422 motivé), et les refus de projet de ses couches.
+        Synchrone : les trois écritures sont de petits fichiers, et il n'y a
+        aucun appel modèle ici — c'est justement ce qui distingue `creer` de
+        `proposer`.
+        """
+        projet = self._projets.entite(id_projet)
+        cfg = self._gabarits.pour_projet(projet.id)
+        blocages = refus_de(roles, noms_pris=cfg.agents.noms())
+        if blocages:
+            raise EquipeRefusee(blocages)
+        crees = [self._ecrire_role(cfg, role) for role in roles]
+        return EquipeCreee(
+            projet_id=projet.id,
+            proposition_id=proposition_id,
+            agents=tuple(crees),
+        ).to_dict()
+
+    @staticmethod
+    def _ecrire_role(cfg: ConfigurationAgents, role: RoleValide) -> AgentCree:
+        """Les trois écritures d'un rôle, dans l'ordre qui laisse le moins de dette.
+
+        La **fiche d'abord** : c'est elle qui fait exister l'agent au catalogue,
+        et les deux autres ne sont que des réglages indexés par son nom. Une
+        coupure après la fiche laisse un agent aux défauts (une instance, aucune
+        politique dédiée) — lisible, modifiable, et que les écrans d'agents
+        rattrapent. L'inverse laisserait une capacité et une politique orphelines
+        que rien n'affiche.
+        """
+        fiche = cfg.agents.ecrire(definition(role))
+        if role.politique is not None:
+            cfg.permissions.ecrire(fiche.nom, role.politique)
+        cfg.capacites.ecrire(capacite(role))
+        return AgentCree(
+            nom=fiche.nom,
+            role=fiche.role,
+            instances=role.instances,
+            gabarit=role.gabarit,
+            skills=tuple(skill.nom for skill in role.skills),
+            politique=role.politique,
+        )
 
     def _matiere_analysee(
         self, projet: Projet

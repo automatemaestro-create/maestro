@@ -25,7 +25,7 @@ seulement : une équipe *branche* les skills que l'outillage a recommandés
 ait à les distinguer — un projet analysé (#1030) et un projet neuf dont on a
 recueilli les choix (#1031) rendent la même paire `Constats` / `Recommandation`.
 
-Trois modules, et la frontière entre eux est celle de ce qui décide :
+Quatre modules, et la frontière entre eux est celle de ce qui décide :
 
 - `maestro.equipe.modele` — les formes, **inertes** : elles décrivent et
   sérialisent, elles ne touchent à rien ;
@@ -33,7 +33,11 @@ Trois modules, et la frontière entre eux est celle de ce qui décide :
   des agents figés devenus **gabarits** (docs/37 §2.1), et la règle qui dit si
   ce projet-là en appelle un ;
 - `maestro.equipe.proposition` — des constats et de l'outillage à l'équipe, avec
-  pour chaque rôle sa raison, son endroit, ses instances et ses autorisations.
+  pour chaque rôle sa raison, son endroit, ses instances et ses autorisations ;
+- `maestro.equipe.creation` (#1040) — de l'équipe **validée** aux trois artefacts
+  d'un agent de projet : sa fiche (playbook compris, skills branchés dedans), sa
+  politique d'autorisations, sa capacité. Pur lui aussi — l'écriture est le seul
+  verbe de `maestro.controltower.equipe` qui touche un dépôt.
 
 ⚠ **La politique proposée laisse `allow` ouvert**, et c'est une décision. Une
 liste `allow` non vide est *fermée* (`maestro.agents.permissions`) : la remplir
@@ -62,6 +66,21 @@ fournisseur. Ce que la proposition rend est **servi par l'API** —
 
 from __future__ import annotations
 
+from maestro.equipe.creation import (
+    AUCUN_SKILL,
+    INSTANCES_MAX_CREEES,
+    INTRO_SKILLS,
+    TITRE_SKILLS,
+    AgentCree,
+    EquipeCreee,
+    Refus,
+    RoleValide,
+    SkillRetenu,
+    capacite,
+    definition,
+    playbook_branche,
+    refus_de,
+)
 from maestro.equipe.gabarits import (
     GABARITS,
     INSTANCES_MAX_PROPOSEES,
@@ -93,10 +112,13 @@ from maestro.equipe.proposition import (
 )
 
 __all__ = [
+    "AUCUN_SKILL",
     "CRANS",
     "ECARTE_ORCHESTRATEUR",
     "GABARITS",
+    "INSTANCES_MAX_CREEES",
     "INSTANCES_MAX_PROPOSEES",
+    "INTRO_SKILLS",
     "LANGAGES_INTERFACE",
     "ORIGINES_PLAYBOOK",
     "ORIGINE_PLAYBOOK_GABARIT",
@@ -105,15 +127,25 @@ __all__ = [
     "PART_SUBSTANTIELLE",
     "PREFIXE_ID",
     "RAISON_UNE_INSTANCE",
+    "TITRE_SKILLS",
     "VERSION_PROPOSITION",
+    "AgentCree",
     "AutorisationProposee",
+    "EquipeCreee",
     "Gabarit",
     "Justification",
     "PropositionEquipe",
+    "Refus",
     "RoleEcarte",
     "RolePropose",
+    "RoleValide",
     "SkillBranche",
+    "SkillRetenu",
     "avec_playbook",
+    "capacite",
+    "definition",
     "nouvel_id",
+    "playbook_branche",
     "proposer_equipe",
+    "refus_de",
 ]
