@@ -229,38 +229,56 @@ describe("le grand livre d'un run", () => {
     expect(screen.queryByText("13 min 39 s")).toBeNull();
   });
 
-  it("rend la durée du run telle que le backend l'a unie", () => {
-    // La durée d'un run est l'union des intervalles de ses tâches, posée côté
+  it("annonce le temps de mur du run dans son en-tête, avec son mot", () => {
+    // La durée d'un run est l'union des intervalles de ses étapes, posée côté
     // serveur (`RunCost.duree_mur_ms`) : deux tâches menées de front ne
-    // l'occupent qu'une fois. L'écran la rend, il ne la recalcule pas — c'est le
-    // partage de GitHub Actions, dont l'en-tête d'un run porte « Total duration »
-    // quand la somme de ses jobs vit ailleurs, sous un autre nom.
-    render(
-      <PanneauCouts
-        couts={[
-          coutExecutionFactice({
-            total: usageFactice({
-              duree_ms: 90_000,
-              duree_execution_ms: 90_000,
-              cout_usd: 0.2,
-            }),
-            taches: [
-              coutTacheFactice({
-                tache_id: "T-1",
-                usage: usageFactice({ duree_ms: 60_000, duree_execution_ms: 60_000 }),
-              }),
-              coutTacheFactice({
-                tache_id: "T-2",
-                usage: usageFactice({ duree_ms: 60_000, duree_execution_ms: 60_000 }),
-              }),
-            ],
-          }),
-        ]}
-      />,
-    );
+    // l'occupent qu'une fois. L'écran la rend, il ne la recalcule pas — et elle
+    // porte « de mur », qui la sépare de la colonne « Durée » du tableau, où
+    // c'est du travail qu'on compte. La référence donne deux noms et deux
+    // places ; sans le mot, les deux mesures partageaient une étiquette.
+    rendreGrandLivreDeuxTaches();
 
-    // 1 min 30 s, et non les 2 min que la somme annoncerait.
-    expect(screen.getAllByText("1 min 30 s").length).toBeGreaterThan(0);
-    expect(screen.queryByText("2 min 00 s")).toBeNull();
+    expect(screen.getByText(/1 min 30 s de mur/)).toBeTruthy();
+  });
+
+  it("garde un pied qui totalise sa colonne, et qui tombe donc juste", () => {
+    // Le constat du regard neuf sur la première version : les lignes montraient
+    // du travail et le pied un temps de mur, sous une seule étiquette — une
+    // addition qui ne tombait pas juste, et rien n'en disait la raison. Un total
+    // qui ne totalise pas fait douter des lignes, jamais du total.
+    rendreGrandLivreDeuxTaches();
+
+    const total = screen.getByText("Total").closest("tr") as HTMLElement;
+    // 60 s + 60 s de travail : la somme de ce que le tableau montre.
+    expect(within(total).getByText("2 min 00 s")).toBeTruthy();
+    // …et surtout pas le temps de mur, qui vit dans l'en-tête.
+    expect(within(total).queryByText(/1 min 30 s/)).toBeNull();
   });
 });
+
+/** Un grand livre : un run de 1 min 30 s de mur, deux tâches d'une minute. */
+function rendreGrandLivreDeuxTaches() {
+  render(
+    <PanneauCouts
+      couts={[
+        coutExecutionFactice({
+          total: usageFactice({
+            duree_ms: 90_000,
+            duree_execution_ms: 90_000,
+            cout_usd: 0.2,
+          }),
+          taches: [
+            coutTacheFactice({
+              tache_id: "T-1",
+              usage: usageFactice({ duree_ms: 60_000, duree_execution_ms: 60_000 }),
+            }),
+            coutTacheFactice({
+              tache_id: "T-2",
+              usage: usageFactice({ duree_ms: 60_000, duree_execution_ms: 60_000 }),
+            }),
+          ],
+        }),
+      ]}
+    />,
+  );
+}
