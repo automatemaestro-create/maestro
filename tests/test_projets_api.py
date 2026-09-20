@@ -634,14 +634,26 @@ def test_le_depot_des_projets_vient_de_l_environnement(
 def test_le_fichier_stocke_et_la_reponse_http_ont_la_meme_forme(
     client: TestClient, atelier: Path, store: ProjetStore
 ) -> None:
-    """Aucune seconde définition du contrat, donc aucune dérive possible (docs/24 §2.3)."""
+    """Aucune seconde définition du contrat, donc aucune dérive possible (docs/24 §2.3).
+
+    ⚠ Une exception depuis #1034, et elle est **explicite** : le fragment
+    `outillage` de la fiche servie porte deux champs de plus que celui du
+    fichier — `genere` (le manifeste est-il sur le disque ?) et `a_faire` (leur
+    croisement). Ils sont **constatés**, jamais stockés, pour la raison exacte
+    qui fait constater le `vcs` : un manifeste peut naître, disparaître ou venir
+    d'un clone sans que la fiche en sache rien. Le test le dit en toutes lettres
+    plutôt que de comparer moins : deux champs qui se glisseraient là sans raison
+    seraient exactement la dérive qu'il garde.
+    """
     fiche = _declarer(client, "Dépensio", _dossier(atelier, "depensio"))
 
     sur_disque = json.loads(
         (store.racine / f"{fiche['id']}.json").read_text(encoding="utf-8")
     )
 
-    assert sur_disque == fiche
+    assert fiche["outillage"] == {"reporte_le": "", "genere": False, "a_faire": False}
+    assert sur_disque["outillage"] == {"reporte_le": ""}
+    assert sur_disque == {**fiche, "outillage": sur_disque["outillage"]}
 
 
 # --- ⑤ Les racines élargies et les points d'entrée (#278) --------------------
