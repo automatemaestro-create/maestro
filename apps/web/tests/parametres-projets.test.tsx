@@ -82,9 +82,19 @@ async function monter() {
 }
 
 describe("① le répertoire se lit, et se choisit sans se taper", () => {
-  it("montre le répertoire courant et dit que c'est celui que Maestro propose", async () => {
+  it("décrit le réglage d'une phrase qui ne change pas avec son état", async () => {
+    // Constat de la relecture visuelle : la description changeait selon que la
+    // valeur était le défaut ou non — et donc aussi quand la lecture échouait,
+    // sans que rien n'ait changé. Un réglage, un libellé.
     await monter();
-    expect(screen.getByText(/celui que Maestro propose/)).toBeInTheDocument();
+    const attendu = /en est rempli d'office/;
+    expect(screen.getByText(attendu)).toBeInTheDocument();
+
+    chargerRepertoireProjets.mockResolvedValue(
+      repertoireFactice({ chemin: "D:/projets", par_defaut: false }),
+    );
+    render(<ParametresProjets />);
+    expect(await screen.findAllByText(attendu)).toHaveLength(2);
   });
 
   it("n'offre aucun champ de saisie de chemin", async () => {
@@ -161,6 +171,22 @@ describe("③ ce qui rate se dit", () => {
     expect(await screen.findByText(/E:\/disparu n'existe pas/)).toBeInTheDocument();
     // Le chemin réglé reste affiché : on corrige ce qu'on voit, pas un blanc.
     expect(screen.getByText("E:/disparu")).toBeInTheDocument();
+  });
+
+  it("distingue une lecture en panne d'un réglage refusé", async () => {
+    // Constat de la relecture visuelle de #1022, en état « erreur » : la section
+    // annonçait « Réglage refusé » à quelqu'un qui n'avait rien réglé, et laissait
+    // « … » à l'écran alors que plus rien n'arrivait.
+    const { ErreurProjet } = await import("@/lib/api");
+    chargerRepertoireProjets.mockRejectedValue(
+      new ErreurProjet("api-injoignable", "Erreur simulée."),
+    );
+    render(<ParametresProjets />);
+
+    expect(await screen.findByText(/Répertoire illisible/)).toBeInTheDocument();
+    expect(screen.queryByText(/Réglage refusé/)).not.toBeInTheDocument();
+    expect(screen.getByText("—")).toBeInTheDocument();
+    expect(screen.queryByText("…")).not.toBeInTheDocument();
   });
 
   it("garde le réglage précédent quand l'écriture est refusée", async () => {

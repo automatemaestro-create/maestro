@@ -226,6 +226,11 @@ class ServiceProjets:
         déclarer un projet ailleurs — l'écran affiche le motif et laisse
         parcourir. Le seul cas qui lève est l'écriture (`regler`), parce qu'un
         réglage refusé ne doit pas être stocké.
+
+        `chemin` est rendu en **POSIX**, comme toute racine servie par cette
+        API (docs/05 §6.7) : l'écran compare ce chemin à celui que l'explorateur
+        lui rend, et deux écritures du même dossier lui feraient dire « hors de
+        votre répertoire des projets » d'un dossier qui en est la racine même.
         """
         try:
             chemin, par_defaut, cree = self._reglages.resoudre(creer=creer)
@@ -240,7 +245,7 @@ class ServiceProjets:
                 "refus": detail_refus(refus),
             }
         return {
-            "chemin": str(chemin),
+            "chemin": chemin.as_posix(),
             "par_defaut": par_defaut,
             "existe": True,
             "cree": cree,

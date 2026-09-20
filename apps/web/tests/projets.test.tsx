@@ -422,6 +422,34 @@ describe("le répertoire des projets (#1022)", () => {
     expect(screen.getByText("D:/projets/depensio")).toBeInTheDocument();
   });
 
+  it("ne dit « hors du répertoire » que d'un dossier qui l'est vraiment", async () => {
+    // Constat de la relecture visuelle : choisir soi-même, dans l'explorateur,
+    // le dossier qui EST le répertoire des projets faisait dire à l'écran le
+    // contraire de ce qu'il montrait. Les deux chemins viennent de la même API,
+    // canonicalisés de la même façon : l'égalité suffit à les reconnaître.
+    const utilisateur = userEvent.setup();
+    chargerExplorateur.mockResolvedValue(
+      pageExplorateurFactice({ chemin: "D:/projets", parent: null, dossiers: [] }),
+    );
+    await formulaireNouveauDossier(utilisateur);
+    await utilisateur.click(
+      await screen.findByRole("button", { name: /Changer de dossier/ }),
+    );
+    const explorateur = await screen.findByRole("region", {
+      name: "Explorateur de dossiers",
+    });
+    await utilisateur.click(
+      within(explorateur).getByRole("button", { name: "Choisir ce dossier" }),
+    );
+
+    expect(
+      await screen.findByText(/ne vaut que pour ce projet/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Hors de votre répertoire des projets/),
+    ).not.toBeInTheDocument();
+  });
+
   it("n'impose rien à l'import d'un projet existant", async () => {
     // Le troisième critère du ticket, et la seule chose que GitHub Desktop
     // vérifie de la même façon : *Add Local Repository* ne préremplit rien.

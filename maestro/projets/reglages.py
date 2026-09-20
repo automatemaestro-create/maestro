@@ -151,7 +151,11 @@ class ReglagesProjetsStore:
         """
         valeur: str | None = None
         if repertoire is not None and str(repertoire).strip():
-            valeur = str(valider_racine(repertoire, creer=True))
+            # Stocké en **POSIX**, comme toute racine que l'API rend (docs/05
+            # §6.7) : sans quoi le même dossier s'écrirait `C:\…` ici et `C:/…`
+            # dans l'explorateur, et l'écran ne saurait plus qu'il s'agit du
+            # même — constat de la relecture visuelle de #1022.
+            valeur = valider_racine(repertoire, creer=True).as_posix()
         propre = replace(ReglagesProjets(repertoire=valeur), modifie_le=_maintenant())
         self._racine.mkdir(parents=True, exist_ok=True)
         chemin = self._racine / _FICHIER

@@ -95,7 +95,12 @@ export const FAMILLES_PARAMETRES: FamilleParametres[] = [
       {
         id: "projets",
         libelle: "Projets",
-        description: "Le répertoire où naît un projet neuf (#1022).",
+        // La section dit **de quoi il est question**, la ligne du réglage dit
+        // **ce qu'il fait** : les faire dire la même chose donnait trois fois
+        // la même phrase avant la valeur (constat de la relecture visuelle de
+        // #1022). C'est le partage que tient déjà « Général » — « Backend visé
+        // par l'interface » au-dessus, « Réglée au build par … » dans la ligne.
+        description: "Où naissent les projets neufs déclarés depuis ce poste.",
       },
       {
         id: "apparence",

@@ -185,12 +185,13 @@ export function nomDepuisChemin(chemin: string): string {
  * refusé par l'appelant : le seul chemin absolu du formulaire reste celui que
  * l'API a énuméré.
  *
- * **Le séparateur est celui du parent** (#1022) : un parent Windows rendu par le
- * dialogue du poste (`C:\Users\…\Maestro`) donnait jusqu'ici
- * `C:\Users\…\Maestro/depensio`, deux séparateurs dans un même chemin — l'API
- * l'accepte, mais la ligne « Racine déclarée » le montre, et ce qu'on montre à
- * quelqu'un qui vérifie où son projet va naître doit ressembler à un chemin de
- * son poste. Relevé par le regard neuf sur les variantes de #1022.
+ * **Le séparateur est celui du parent** (#1022). Toutes les racines que l'API
+ * rend sont canonicalisées en POSIX (docs/05 §6.7), donc le cas ne se présente
+ * pas aujourd'hui — mais un parent en antislashs donnerait
+ * `C:\Users\…\Maestro/depensio`, deux séparateurs dans un même chemin, et
+ * c'est la ligne « Racine déclarée » qui le montrerait à quelqu'un en train de
+ * vérifier où son projet va naître. La garde a été écrite en voyant ce chemin
+ * mixte sur un brouillon de #1022 ; la cause, elle, a été corrigée à la source.
  */
 export function cheminEnfant(parent: string, nom: string): string {
   const propre = nom.trim();

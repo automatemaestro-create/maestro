@@ -42,6 +42,10 @@ export function ParametresProjets() {
   const [repertoire, setRepertoire] = useState<RepertoireProjets | null>(null);
   const [explorateurOuvert, setExplorateurOuvert] = useState(false);
   const [enCours, setEnCours] = useState(false);
+  // Deux échecs, deux états — et c'est un constat de la relecture visuelle : les
+  // confondre faisait dire « Réglage refusé » à une **lecture** en panne, c'est-à-dire
+  // à quelqu'un qui n'avait rien réglé.
+  const [echecLecture, setEchecLecture] = useState<RefusProjet | null>(null);
   const [refus, setRefus] = useState<RefusProjet | null>(null);
 
   useEffect(() => {
@@ -51,7 +55,7 @@ export function ParametresProjets() {
         if (vivant) setRepertoire(lu);
       })
       .catch((erreur) => {
-        if (vivant) setRefus(refusDepuis(erreur));
+        if (vivant) setEchecLecture(refusDepuis(erreur));
       });
     return () => {
       vivant = false;
@@ -77,15 +81,25 @@ export function ParametresProjets() {
     <div className="flex flex-col">
       <LigneReglage
         libelle="Répertoire des projets"
-        aide={
-          repertoire?.par_defaut === true
-            ? "Le dossier où naît un projet neuf — celui que Maestro propose, créé à la première utilisation. Le dossier parent d'une déclaration s'en remplit d'office, et s'y remplace sans rien régler."
-            : "Le dossier où naît un projet neuf. Le dossier parent d'une déclaration s'en remplit d'office, et s'y remplace sans rien régler."
-        }
+        // Une phrase, **invariante** : elle décrit le réglage, pas son état du
+        // moment. La faire changer selon que la valeur est le défaut ou non
+        // donnait deux libellés pour un même réglage — et, quand la lecture
+        // échouait, la description changeait sans que rien n'ait changé
+        // (constat de la relecture visuelle). Ce que le défaut a de particulier
+        // se dit là où c'est actionnable : le bouton « Revenir au dossier
+        // proposé », qui n'apparaît que lorsqu'il y a quelque chose à défaire.
+        aide="Le dossier parent d'un projet neuf en est rempli d'office. En choisir un autre pour un projet ne change pas ce réglage."
       >
         <div className="flex flex-wrap items-center justify-end gap-2">
+          {/* « … » dit « ça arrive », et il ne doit donc pas rester à l'écran
+              quand plus rien n'arrive : une lecture en panne rend « — », le
+              tiret de l'inconnu qu'emploie déjà la dépense cumulée. */}
           <code className="font-mono text-corps break-all">
-            {repertoire === null ? "…" : repertoire.chemin}
+            {repertoire !== null
+              ? repertoire.chemin
+              : echecLecture !== null
+                ? "—"
+                : "…"}
           </code>
           <Bouton
             variante="contour"
@@ -109,6 +123,9 @@ export function ParametresProjets() {
         </div>
       </LigneReglage>
 
+      {echecLecture && (
+        <RefusMotive refus={echecLecture} titre="Répertoire illisible" />
+      )}
       {repertoire !== null && repertoire.refus !== null && (
         <RefusMotive
           refus={repertoire.refus}

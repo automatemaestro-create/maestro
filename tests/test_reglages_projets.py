@@ -128,7 +128,7 @@ def test_un_repertoire_regle_est_stocke_resolu(
     cible = atelier / "ailleurs"
     cible.mkdir()
     ecrit = reglages.ecrire(atelier / "ailleurs" / "." / ".." / "ailleurs")
-    assert ecrit.repertoire == str(cible.resolve())
+    assert ecrit.repertoire == cible.resolve().as_posix()
     assert ecrit.modifie_le != ""
     chemin, par_defaut, _ = reglages.resoudre()
     assert chemin == cible.resolve()
@@ -163,7 +163,7 @@ def test_un_reglage_refuse_n_ecrit_rien(
     reglages.ecrire(atelier / "bon")
     with pytest.raises(RacineRefusee):
         reglages.ecrire(maison)  # dossier personnel nu
-    assert reglages.lire().repertoire == str((atelier / "bon").resolve())
+    assert reglages.lire().repertoire == (atelier / "bon").resolve().as_posix()
 
 
 def test_un_depot_corrompu_rend_les_defauts(
@@ -216,6 +216,28 @@ def test_poser_un_repertoire_le_relit(client: TestClient, atelier: Path) -> None
     assert client.get("/api/projets/repertoire").json()["chemin"] == corps["chemin"]
 
 
+def test_le_chemin_est_rendu_en_posix_comme_les_autres_racines(
+    client: TestClient, atelier: Path
+) -> None:
+    """Un seul dossier, une seule écriture — sinon l'écran ne sait plus les reconnaître.
+
+    L'explorateur rend ses chemins en POSIX (`_fiche_dossier`), et l'écran
+    **compare** le dossier choisi au répertoire réglé pour savoir s'il est
+    « hors » de lui. Deux écritures du même dossier lui faisaient annoncer le
+    contraire de ce qu'il affichait (relecture visuelle de #1022).
+    """
+    cible = atelier / "mes-projets"
+    pose = client.put("/api/projets/repertoire", json={"chemin": str(cible)}).json()
+    assert pose["chemin"] == cible.resolve().as_posix()
+    assert "\\" not in client.get("/api/projets/repertoire").json()["chemin"]
+    # Et le défaut suit la même règle : `~/Maestro` n'échappe pas à la forme.
+    defaut = client.put("/api/projets/repertoire", json={"chemin": None}).json()
+    assert "\\" not in defaut["chemin"]
+    # Le même dossier, énuméré par l'explorateur, s'écrit exactement pareil.
+    vue = client.get("/api/projets/explorateur", params={"chemin": str(cible)}).json()
+    assert vue["chemin"] == pose["chemin"]
+
+
 def test_poser_null_revient_au_defaut(
     client: TestClient, atelier: Path, maison: Path
 ) -> None:
@@ -253,7 +275,9 @@ def test_un_repertoire_devenu_indisponible_rend_200_avec_son_motif(
     corps = client.get("/api/projets/repertoire").json()
     assert corps["existe"] is False
     assert corps["refus"]["motif"] == "pas-un-dossier"
-    assert corps["chemin"] == str(cible.resolve())
+    # Le chemin réglé reste rendu, et dans la même forme que d'habitude : on
+    # corrige ce qu'on voit, et on doit le reconnaître.
+    assert corps["chemin"] == cible.resolve().as_posix()
 
 
 def test_le_repertoire_regle_est_un_point_d_entree_de_l_explorateur(

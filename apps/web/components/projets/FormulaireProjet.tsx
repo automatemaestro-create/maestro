@@ -173,6 +173,14 @@ export function FormulaireProjet({
   const dossier =
     dossierChoisi ?? (nouveauDossier ? repertoireUtilisable : null);
 
+  // « Hors de votre répertoire des projets » se dit du dossier, pas du geste :
+  // choisir soi-même le répertoire des projets dans l'explorateur y mène, et
+  // l'écran affirmait alors le contraire de ce qu'il montrait (constat de la
+  // relecture visuelle). La comparaison est une égalité de chaînes parce que
+  // les deux chemins viennent de la même API, canonicalisés en POSIX.
+  const horsRepertoire =
+    dossier !== null && repertoireUtilisable !== null && dossier !== repertoireUtilisable;
+
   const racine = nouveauDossier
     ? dossier === null
       ? null
@@ -385,7 +393,11 @@ export function FormulaireProjet({
             (docs/30 §4), et c'est le manque commun aux trois références de la
             veille — aucune ne dit *pourquoi ce chemin-là*. */}
         {nouveauDossier && repertoire !== null && (
-          <p className="text-annexe text-texte-secondaire">
+          // `-mt-1` : cette phrase commente la **valeur au-dessus**, pas le
+          // champ en dessous. À l'écart uniforme du `gap-2`, le regard neuf l'a
+          // lue comme un chapeau du « Nom du dossier à créer » ; c'est l'idiome
+          // déjà employé plus bas pour « Laissés vides, les deux champs… ».
+          <p className="-mt-1 text-annexe text-texte-secondaire">
             {repertoire.refus !== null ? (
               <>
                 Votre répertoire des projets est indisponible :{" "}
@@ -393,7 +405,7 @@ export function FormulaireProjet({
                 projet, ou corrigez le réglage dans les{" "}
                 <LienParametres />.
               </>
-            ) : dossierChoisi !== null ? (
+            ) : horsRepertoire ? (
               <>
                 Hors de votre répertoire des projets.{" "}
                 <button
@@ -496,8 +508,10 @@ export function FormulaireProjet({
           // suivait n'était rattaché à rien pour un lecteur d'écran.
           <Champ
             id="projet-nom-dossier"
+            // `mt-1` : le pendant du `-mt-1` ci-dessus — ce champ ouvre son
+            // propre sujet, il ne prolonge pas la phrase qui le précède.
+            className="mt-1 sm:max-w-sm"
             libelle="Nom du dossier à créer"
-            className="sm:max-w-sm"
             monospace
             erreur={
               nomDossier !== "" && !nomDossierValide(nomDossier)
