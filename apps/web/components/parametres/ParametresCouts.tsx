@@ -51,9 +51,13 @@ export function ParametresCouts() {
         </span>
       </LigneReglage>
 
+      {/* L'aide tient en deux lignes courtes : la ligne de réglage donne sa
+          largeur au texte et laisse le renvoi à droite (`LigneReglage`), si
+          bien qu'une phrase longue vient buter contre lui — constat de la
+          relecture visuelle sur la première rédaction. */}
       <LigneReglage
         libelle="Bornes d'un run"
-        aide="Coût maximal, tokens maximum, délai par tâche, tâches en parallèle : ils se posent au lancement, dans la carte « Lancer ce run ? » de la conversation — là où la décision se prend. Sans borne, le run va jusqu'au bout, et la carte le dit."
+        aide="Coût, tokens, délai par tâche, parallélisme : ils se posent au lancement, dans la carte « Lancer ce run ? ». Sans borne, le run va jusqu'au bout — et la carte le dit."
       >
         <LienRenvoi
           renvoi={{ href: "/chat", libelle: "Aller à la conversation" }}

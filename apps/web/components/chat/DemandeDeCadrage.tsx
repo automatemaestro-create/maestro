@@ -72,11 +72,7 @@
 
 import { useState } from "react";
 
-import {
-  IconeDeplier,
-  IconeObjectif,
-  IconeReplier,
-} from "@/components/Icones";
+import { IconeChevronBas, IconeObjectif } from "@/components/Icones";
 import {
   BadgeEtat,
   Bouton,
@@ -222,7 +218,13 @@ export function DemandeDeCadrage({
             variante="discret"
             ton="neutre"
             taille="petite"
-            icone={bornesOuvertes ? IconeReplier : IconeDeplier}
+            // `IconeChevronBas` dit « ce contrôle s'ouvre » (#280), et c'est la
+            // seule du jeu qui le dise : `IconeDeplier`/`IconeReplier` sont les
+            // chevrons **horizontaux** de la barre latérale, qui pointeraient
+            // de côté sur un repli qui s'ouvre vers le bas (constat de la
+            // relecture visuelle). L'état, lui, est porté par `aria-expanded`
+            // et par les champs qui apparaissent — jamais par l'icône seule.
+            icone={IconeChevronBas}
             aria-expanded={bornesOuvertes}
             aria-controls="cadrage-bornes"
             onClick={() => setBornesOuvertes((ouvertes) => !ouvertes)}
