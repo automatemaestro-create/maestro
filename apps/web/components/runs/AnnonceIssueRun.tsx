@@ -70,6 +70,7 @@ import {
   IconeStatutTerminee,
 } from "@/components/Icones";
 import { Bouton, CIBLE_MINIMALE, LienRenvoi } from "@/components/Primitives";
+import { nomDuRun } from "@/lib/execution";
 import { formatCout, formatDateHeure, formatHeureCourte } from "@/lib/format";
 import {
   libelleIssue,
@@ -109,7 +110,9 @@ export function AnnonceIssueRun({
         >
           <span className={`font-medium ${ton}`}>{libelleIssue(issue)}</span>
           {" — "}
-          {issue.execution.objectif || issue.execution.run_id}
+          {/* Le titre du run (#991) : cette annonce est une ligne du fil, et une
+              ligne ne porte pas un brief. */}
+          {nomDuRun(issue.execution)}
         </p>
         {/* Les faits, séparés par le **point médian** que le fil emploie partout
             ailleurs (« vous · 07:49 », « Agent devops · DevOps ») : juxtaposés

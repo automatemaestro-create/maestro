@@ -290,8 +290,9 @@ describe("le shell applicatif (Shell)", () => {
     // n'est pas un bloc de plus dans l'**écran**. Rendue dans `<main>`, elle
     // deviendrait la « sortie de secours » de la règle des trois places — la
     // seule place sans plafond, où un écran plein rangerait son quatrième bloc.
-    // La frontière portée par le code reste le lot 8 (#929) ; ce qui est gardé
-    // ici est qu'on ne l'a pas déjà franchie.
+    // La frontière elle-même est comptée par `frontiere-shell-ecran.test.tsx`
+    // (#929), écran par écran ; ce qui est gardé ici est le fait de base dont
+    // ce comptage dépend : la colonne est hors de `<main>`.
     // Second contrôle : le bouton dit commander la colonne (`aria-controls`), et
     // l'identifiant doit désigner un élément **qui existe** — la colonne reste
     // donc dans le DOM une fois fermée, simplement masquée.

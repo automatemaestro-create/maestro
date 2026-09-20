@@ -196,6 +196,46 @@ CANAL_EVENEMENTS = "maestro.evenements"
 REDIS_URL_DEFAUT = "redis://localhost:6379/0"
 
 
+#: Longueur maximale du `titre` d'un événement de run (#991, défaut S12).
+#: 80 signes : la première ligne d'un objectif écrit comme un objectif y tient
+#: en entier, et un brief de quinze pages s'y arrête. Ce n'est pas une mesure de
+#: la largeur d'un écran — celui qui affiche ce titre le tronque déjà en CSS,
+#: chacun à sa largeur ; c'est la borne au-delà de laquelle le texte cesse
+#: d'être un titre, et elle vaut donc pour le bus, le journal et la projection.
+TITRE_MAX = 80
+
+
+def titre_court(texte: str, *, limite: int = TITRE_MAX) -> str:
+    """Le **titre** d'un run, dérivé de son objectif et borné (#991, défaut S12).
+
+    L'objectif entier servait de titre à chaque événement du cycle de vie d'un
+    run (`execution.statut`, `brief.*`) : le journal, la frise, la liste des runs
+    et l'en-tête du run le portaient en entier et se contentaient de le tronquer
+    en CSS — donc un lecteur d'écran lisait quinze pages là où l'œil voyait une
+    ligne, et chaque ligne de journal pesait un brief.
+
+    Ce qu'on garde : la **première ligne**, espaces condensés, coupée au dernier
+    mot entier avant `limite`. La première ligne parce qu'un objectif écrit comme
+    un objectif y met son intention, et qu'un brief y met son titre ; le dernier
+    mot entier parce qu'une coupe au milieu d'un mot se lit comme une faute.
+
+    Ce n'est **jamais** une perte : l'objectif entier voyage à côté, dans
+    `description`, et la projection continue de le porter (`EtatExecution.objectif`).
+    Le titre est ce qu'on **montre**, l'objectif ce qu'on **lit**.
+
+    Un texte vide — ou fait des seuls blancs — rend la chaîne vide, et c'est ce
+    qui permet aux appelants de choisir leur repli (l'identifiant du run) plutôt
+    que d'afficher un nom invisible : un lien dont le nom accessible n'est fait
+    que d'espaces est une violation `link-name` (#991, défaut S11).
+    """
+    premiere = texte.strip().split("\n", 1)[0]
+    condense = " ".join(premiere.split())
+    if len(condense) <= limite:
+        return condense
+    coupe = condense[:limite].rsplit(" ", 1)[0] or condense[:limite]
+    return coupe.rstrip(" ,;:.…-—") + "…"
+
+
 def _horodatage() -> str:
     """Horodatage UTC ISO-8601, même précision que le journal (#8)."""
     return datetime.now(UTC).isoformat(timespec="seconds")

@@ -69,6 +69,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from maestro.controltower.app import create_app
+from maestro.controltower.bornes import AUCUNE_BORNE, BornesRun
 from maestro.controltower.chat import (
     CONVERSATION_ORIGINE,
     FRAGMENT_CHAT_DEBUT,
@@ -170,21 +171,28 @@ def _fil(*contenus: str) -> list[MessageChat]:
 class LanceurEspion:
     """Un `LanceurRun` qui note ce qu'on lui demande — aucun moteur, aucun quota.
 
-    Il note **les deux** arguments du contrat (#683) : l'objectif et le projet
-    de la fenêtre. Un double qui n'accepterait que le premier rendrait le canal
-    vert sur un lancement que le vrai service refuserait — et le répondeur
-    rattrapant toute exception du lanceur, l'échec se lirait « le lancement a
-    échoué » au lieu d'une erreur de signature.
+    Il note **les trois** arguments du contrat : l'objectif, le projet de la
+    fenêtre (#683) et les bornes du run (#990). Un double qui n'accepterait que
+    les premiers rendrait le canal vert sur un lancement que le vrai service
+    refuserait — et le répondeur rattrapant toute exception du lanceur, l'échec
+    se lirait « le lancement a échoué » au lieu d'une erreur de signature.
     """
 
     def __init__(self, *, run_id: str = "run-42", statut: str = "en_cours") -> None:
         self.objectifs: list[str] = []
         self.projets: list[str | None] = []
+        self.bornes: list[BornesRun] = []
         self._resume = {"run_id": run_id, "statut": statut}
 
-    async def __call__(self, objectif: str, projet_id: str | None = None) -> dict[str, str]:
+    async def __call__(
+        self,
+        objectif: str,
+        projet_id: str | None = None,
+        bornes: BornesRun = AUCUNE_BORNE,
+    ) -> dict[str, str]:
         self.objectifs.append(objectif)
         self.projets.append(projet_id)
+        self.bornes.append(bornes)
         return dict(self._resume)
 
 
@@ -634,7 +642,11 @@ def test_l_apercu_est_cadre_sur_le_projet_de_la_fenetre() -> None:
 def test_un_lancement_en_echec_se_raconte_dans_le_fil() -> None:
     """Levée, l'exception deviendrait un 502 sans trace — or la demande est acquise."""
 
-    async def lanceur_qui_echoue(objectif: str, projet_id: str | None = None) -> dict[str, str]:
+    async def lanceur_qui_echoue(
+        objectif: str,
+        projet_id: str | None = None,
+        bornes: BornesRun = AUCUNE_BORNE,
+    ) -> dict[str, str]:
         raise RuntimeError("objectif refusé : plafond hors bornes")
 
     repondeur = RepondeurOrchestration(
@@ -1131,8 +1143,23 @@ class MoteurMuet:
     def __init__(self) -> None:
         self.projets: list[str | None] = []
         self.objectifs: list[str] = []
+        #: Les garde-fous reçus à la fabrication (#990), dans l'ordre du contrat
+        #: de `lancer` : coût, tokens, délai par tâche, parallélisme. C'est ici
+        #: qu'ils arrivent — `ServiceExecutions` les passe en `guardrails` et
+        #: `max_parallele` — et c'est donc ici qu'on voit si le chat les a
+        #: réellement transmis, ou s'il a seulement écrit la bonne phrase.
+        self.garde_fous: list[tuple[float | None, int | None, float | None, int | None]] = []
 
     def __call__(self, **reglages: Any) -> MoteurMuet:
+        gardes = reglages.get("guardrails")
+        self.garde_fous.append(
+            (
+                getattr(gardes, "plafond_cout_usd", None),
+                getattr(gardes, "plafond_tokens", None),
+                getattr(gardes, "timeout_s", None),
+                reglages.get("max_parallele"),
+            )
+        )
         return self
 
     async def run(self, objectif: str, *, projet_id: str | None = None, **reste: Any) -> RunReport:
@@ -1928,3 +1955,218 @@ def test_une_ligne_ecrite_avant_ce_lot_se_relit_sans_demande() -> None:
     }
 
     assert MessageChat.from_dict(ancienne).proposition == ""
+
+
+# ── ⑦ borner le run depuis le chat (#990) ─────────────────────────────────────
+#
+# Le moteur savait arrêter un run sur quatre garde-fous ; la conversation, seule
+# porte de lancement depuis #666, ne les passait pas — un run mesuré à 12,51 $
+# n'a pas pu l'être. Ce qui se garde ici est la **traversée**, du corps HTTP
+# jusqu'au lanceur, et ce que le fil en dit.
+#
+# Les bornes reçues sont lues sur le double (`LanceurEspion.bornes`) et jamais
+# déduites d'un texte : un canal qui écrirait la bonne phrase en lançant sans
+# borne serait exactement le défaut que ce ticket corrige, et il passerait un
+# test de prose.
+
+
+def test_les_quatre_bornes_traversent_le_geste_jusqu_au_lanceur(
+    client_proposition, lanceur
+) -> None:
+    """Critère 1 : posables depuis l'interface, et **transmises** au lancement."""
+    reponse = client_proposition.post(
+        f"/api/chat/{NOM_ORCHESTRATION}/cadrage",
+        json={
+            "approuve": True,
+            "plafond_cout_usd": 5,
+            "plafond_tokens": 200000,
+            "timeout_tache_s": 120,
+            "parallelisme": 2,
+        },
+    )
+
+    assert reponse.status_code == 201
+    assert lanceur.bornes == [
+        BornesRun(
+            plafond_cout_usd=5.0,
+            plafond_tokens=200000,
+            timeout_tache_s=120.0,
+            parallelisme=2,
+        )
+    ]
+
+
+def test_un_geste_sans_borne_lance_sans_borne(client_proposition, lanceur) -> None:
+    """Le corps d'avant #990 reste valable, et il vaut « aucune borne »."""
+    client_proposition.post(
+        f"/api/chat/{NOM_ORCHESTRATION}/cadrage", json={"approuve": True}
+    )
+
+    assert lanceur.bornes == [AUCUNE_BORNE]
+
+
+def test_le_fil_garde_la_trace_des_bornes_posees(client_proposition) -> None:
+    """Le fil est la seule mémoire du canal : un run borné doit s'y relire.
+
+    Sans cette trace, on retrouverait plus tard un run arrêté à 5 $ sans qu'aucune
+    ligne ne dise que quelqu'un l'avait voulu.
+    """
+    reponse = client_proposition.post(
+        f"/api/chat/{NOM_ORCHESTRATION}/cadrage",
+        json={"approuve": True, "plafond_cout_usd": 5, "parallelisme": 2},
+    )
+
+    geste, _ = reponse.json()["messages"]
+    assert geste["contenu"].startswith("Oui, lance — bornes : ")
+    assert "5,00 $" in geste["contenu"]
+    assert "2 tâches à la fois" in geste["contenu"]
+
+
+def test_un_run_sans_borne_le_dit_a_son_lancement(client_proposition) -> None:
+    """Critère 3 : l'illimité est un **choix affiché**, pas un oubli.
+
+    Même règle que la ligne `plan :` d'un run d'outillage (#286) — le régime
+    s'annonce dans les deux sens. C'est la réponse qui ouvre le run qui le dit,
+    et non le geste : celui-ci ne porte que ce qu'il a **ajouté**.
+    """
+    reponse = client_proposition.post(
+        f"/api/chat/{NOM_ORCHESTRATION}/cadrage", json={"approuve": True}
+    )
+
+    geste, repondu = reponse.json()["messages"]
+    assert geste["contenu"] == "Oui, lance."
+    assert "aucune borne : le run ira jusqu'au bout" in repondu["contenu"]
+
+
+def test_un_run_borne_annonce_a_quoi_il_s_arretera(client_proposition) -> None:
+    """L'autre sens du même régime : ce qui borne se lit à l'ouverture."""
+    reponse = client_proposition.post(
+        f"/api/chat/{NOM_ORCHESTRATION}/cadrage",
+        json={"approuve": True, "plafond_cout_usd": 5},
+    )
+
+    _, repondu = reponse.json()["messages"]
+    assert "s'interrompt à 5,00 $" in repondu["contenu"]
+    assert "aucune borne" not in repondu["contenu"]
+
+
+def test_un_refus_ne_borne_rien_parce_qu_il_n_ouvre_rien(
+    client_proposition, lanceur
+) -> None:
+    """Les bornes suivent l'objectif : ignorées sur un refus, faute de run."""
+    reponse = client_proposition.post(
+        f"/api/chat/{NOM_ORCHESTRATION}/cadrage",
+        json={"approuve": False, "plafond_cout_usd": 5},
+    )
+
+    geste, _ = reponse.json()["messages"]
+    assert geste["contenu"] == "Non, ne lance pas."
+    assert lanceur.bornes == []
+
+
+def test_un_accord_tape_ne_porte_aucune_borne() -> None:
+    """Le juge rend un objectif, jamais un formulaire — donc aucun run borné par lui.
+
+    La distinction n'est pas cosmétique : c'est elle qui fait que les bornes ne
+    peuvent venir que d'un **geste** d'écran, seul endroit où quelqu'un a pu les
+    poser.
+    """
+    lanceur = LanceurEspion()
+    repondeur, _ = _repondeur(
+        _verdict(VERDICT_ACCORD, "C'est parti.", OBJECTIF), lanceur=lanceur
+    )
+
+    asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil_approuve()))
+
+    assert lanceur.bornes == [AUCUNE_BORNE]
+
+
+def test_une_borne_hors_bornes_est_refusee_par_le_moteur_et_racontee() -> None:
+    """La règle « un plafond est un maximum » vit dans `lancer`, pas dans le canal.
+
+    Le canal ne la redouble pas : il transmet, et il **raconte** le refus dans le
+    fil plutôt que de le laisser remonter en 502 — la demande, elle, est acquise.
+    """
+
+    async def lanceur_du_vrai_service(
+        objectif: str,
+        projet_id: str | None = None,
+        bornes: BornesRun = AUCUNE_BORNE,
+    ) -> dict[str, str]:
+        plafond = bornes.plafond_cout_usd
+        if plafond is not None and plafond <= 0:
+            raise ValueError(f"plafond_cout_usd doit être > 0 (reçu : {plafond}).")
+        return {"run_id": "run-42", "statut": "en_cours"}
+
+    repondeur = RepondeurOrchestration(
+        lanceur=lanceur_du_vrai_service,
+        provider=JugeScripte(_verdict(VERDICT_ACCORD, "C'est parti.", OBJECTIF)),
+    )
+
+    reponse = asyncio.run(
+        repondeur.trancher_cadrage(
+            AGENT_ORCHESTRATION,
+            [],
+            approuve=True,
+            objectif=OBJECTIF,
+            bornes=BornesRun(plafond_cout_usd=0),
+        )
+    )
+
+    assert reponse.run_id == ""
+    assert "Le lancement a échoué" in reponse.contenu
+    assert "doit être > 0" in reponse.contenu
+
+
+@pytest.fixture()
+def fournisseur_qui_propose(monkeypatch: pytest.MonkeyPatch) -> JugeScripte:
+    """Le juge que `create_app` résoudra seul, et qui **propose** plutôt qu'il n'accorde.
+
+    Jumeau de `fournisseur_par_defaut`, à un verdict près : le geste de cadrage
+    exige une proposition **en attente** dans le fil, donc un premier tour qui en
+    pose une.
+    """
+    juge = JugeScripte(_verdict(VERDICT_PROPOSITION, _propose(), OBJECTIF))
+    monkeypatch.setattr(
+        "maestro.providers.factory.provider_from_settings", lambda *a, **k: juge
+    )
+    return juge
+
+
+def test_les_bornes_du_geste_arrivent_au_moteur(
+    bus, depot_chat, projets, moteur, fournisseur_qui_propose
+) -> None:
+    """La traversée **entière**, sans double de lanceur : corps HTTP → moteur.
+
+    Les tests ci-dessus lisent un `LanceurEspion` : ils gardent le canal, pas le
+    lanceur que `create_app` construit. Or c'est précisément lui qui était en
+    défaut — `ouvrir_un_run` appelait `lancer(objectif)` sans garde-fou, et le
+    run naissait sans borne quoi qu'on ait saisi. Celui-ci monte donc l'app
+    **entière**, avec un moteur muet, et lit ce que le moteur a reçu.
+    """
+    with TestClient(
+        create_app(
+            bus=bus,
+            state=ControlTowerState(),
+            chat_store=depot_chat,
+            projets=projets,
+            fabrique_moteur=moteur,
+        )
+    ) as client:
+        client.post(
+            f"/api/chat/{NOM_ORCHESTRATION}/messages",
+            json={"contenu": "Génère une application d'agenda"},
+        )
+        reponse = client.post(
+            f"/api/chat/{NOM_ORCHESTRATION}/cadrage",
+            json={
+                "approuve": True,
+                "plafond_cout_usd": 5,
+                "plafond_tokens": 200000,
+                "timeout_tache_s": 120,
+                "parallelisme": 2,
+            },
+        )
+        assert reponse.status_code == 201
+
+    assert moteur.garde_fous == [(5.0, 200000, 120.0, 2)]

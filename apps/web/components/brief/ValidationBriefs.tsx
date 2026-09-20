@@ -23,6 +23,7 @@ import { RegionLive } from "@/components/RegionLive";
 import { mesuresDesRuns } from "@/lib/annonces";
 import { runsEnAttente } from "@/lib/brief";
 import { useEtatGlobal } from "@/lib/etatGlobal";
+import { nomDuRun } from "@/lib/execution";
 import { formatHeureRelative } from "@/lib/format";
 import { useHorloge } from "@/lib/horloge";
 import { entreeParLibelle, PAGE_DU_FIL } from "@/lib/navigation";
@@ -91,7 +92,7 @@ export function ValidationBriefs() {
                   }
                 >
                   <span className="block truncate font-medium">
-                    {run.objectif || run.run_id}
+                    {nomDuRun(run)}
                   </span>
                   <span className="mt-0.5 flex items-center gap-1.5 text-micro text-neutral-500 dark:text-neutral-400">
                     <BadgeEtat

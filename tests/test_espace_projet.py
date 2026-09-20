@@ -23,7 +23,6 @@ partout.
 import asyncio
 import shutil
 import subprocess
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -640,8 +639,11 @@ def test_un_temporaire_dans_la_racine_est_refuse(
     racine = Path(_projet_copie(tmp_path).racine)
     projet = _projet(racine, vcs=Vcs(type="git", branche_base="main"))
     # Un TMPDIR posé *dans* le projet ferait du worktree une écriture en place —
-    # contrôle joué avant tout appel à Git, donc sans dépôt réel.
-    monkeypatch.setattr(tempfile, "tempdir", projet.racine)
+    # contrôle joué avant tout appel à Git, donc sans dépôt réel. Par la variable
+    # et non par `tempfile.tempdir` depuis #992 : c'est l'environnement qui décide
+    # de la racine des espaces (`maestro.sandbox.ramassage.racine_des_espaces`),
+    # et c'est de là que vient le cas réel que ce contrôle attrape.
+    monkeypatch.setenv("TMPDIR", projet.racine)
     with pytest.raises(EspaceProjetIndisponible) as refus:
         with espace_de_travail(projet, tache_id="t1"):
             pass  # pragma: no cover - le montage a déjà échoué

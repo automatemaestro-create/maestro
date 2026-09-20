@@ -111,6 +111,7 @@ from maestro.engine.guardrails import DemandeValidation
 from maestro.orchestrator.errors import OrchestratorError
 from maestro.orchestrator.schema import Brief
 from maestro.references import ReferenceTicket
+from maestro.sandbox.ramassage import pid_vivant
 
 RUN = "run-detache"
 
@@ -457,43 +458,15 @@ def _process_de_ma_console() -> list[int]:
 def _vivant(pid: int) -> bool:
     """Ce pid **tourne**-t-il encore ? — et un zombie ne tourne pas.
 
-    Sous Windows, `OpenProcess` + `GetExitCodeProcess` : `os.kill(pid, 0)` y **tue**
-    au lieu d'interroger, ce qui ferait de la question sa propre réponse.
-
-    Sous POSIX, `os.kill(pid, 0)` réussit encore sur un **zombie** — un process
-    mort dont personne n'a lu le code de sortie —, et c'est exactement ce qu'on
-    rencontre ici : le petit-fils est le fils de l'hôte, `_eteindre` les emporte
-    tous les deux, et plus personne n'est là pour le récolter. Dans le conteneur du
-    filet CI le PID 1 n'adopte ni ne récolte, si bien que la dépouille reste
-    visible pour toujours et qu'un test qui interroge le signal 0 conclut « il a
-    survécu » d'un process que le noyau donne pour mort. D'où la lecture de
-    `/proc/<pid>/stat`, où l'état `Z` tranche ; le repli sur le signal 0 couvre les
-    POSIX sans `/proc` (macOS), où le cas ne se pose pas de la même façon.
-
-    Le champ `comm` de `stat` peut contenir des espaces et des parenthèses : l'état
-    se lit **après la dernière** `)`, jamais en découpant sur les espaces.
+    La question n'est plus posée ici : #992 en a eu besoin en production, pour
+    décider si une tâche occupe encore son espace de travail, et deux sondes qui
+    répondraient « vivant » sur des critères voisins finiraient par se contredire.
+    `maestro.sandbox.ramassage.pid_vivant` en porte le raisonnement entier — le
+    `os.kill(pid, 0)` qui **tue** sous Windows, le zombie POSIX que le pid 1 du
+    conteneur CI n'adopte ni ne récolte. Cette suite reste l'endroit où elle est
+    éprouvée sur de vrais process.
     """
-    if sys.platform != "win32":
-        try:
-            stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            try:
-                os.kill(pid, 0)
-            except OSError:
-                return False
-            return True
-        etat = stat.rpartition(")")[2].split()
-        return bool(etat) and etat[0] != "Z"
-    import ctypes
-
-    k = ctypes.windll.kernel32
-    handle = k.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
-    if not handle:
-        return False
-    code = ctypes.c_ulong()
-    k.GetExitCodeProcess(handle, ctypes.byref(code))
-    k.CloseHandle(handle)
-    return code.value == 259  # STILL_ACTIVE
+    return pid_vivant(pid)
 
 
 @pytest.fixture()

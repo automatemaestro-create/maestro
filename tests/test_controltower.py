@@ -66,7 +66,11 @@ critères d'acceptation du ticket #46 :
    re-tentatives), par agent (planification comprise) et par exécution, série
    temporelle en seaux (minute/heure/jour), fenêtre `depuis` (période
    sélectionnable), cohérence avec les grands livres (#57) — et les refus :
-   `pas` ou `depuis` invalides (422).
+   `pas` ou `depuis` invalides (422). Depuis #991 (défaut S10 de #568), le pas
+   peut être **déduit de l'étendue** (`pas=auto`) : c'est la réponse à la portée
+   « Tout », qui n'a pas de fenêtre et gardait donc le pas horaire quelle que
+   soit la durée d'historique — près de trois cents colonnes vides sur douze
+   jours, chacune nommée pour les technologies d'assistance.
 """
 
 import asyncio
@@ -728,6 +732,105 @@ def test_analytics_pas_ou_depuis_invalides_422(client):
     assert client.get(
         "/api/analytics/couts", params={"projet": "tous", "depuis": "pas-une-date"}
     ).status_code == 422
+
+
+# ------------------------- ⑨bis Le pas déduit de l'étendue (#991, défaut S10)
+
+
+def _etale(state, debut: str, fin: str):
+    """Deux usages datés, aux deux bouts d'une étendue — de quoi la mesurer."""
+    for horodatage in (debut, fin):
+        state.appliquer(Event(
+            type=EVENEMENT_AGENT_ACTIVITE, run_id="run-1",
+            agent="orchestrateur", role="Orchestrateur",
+            usage=_usage(0.10), horodatage=horodatage,
+        ))
+    return state
+
+
+@pytest.mark.parametrize(
+    ("fin", "attendu", "pourquoi"),
+    [
+        ("2026-07-14T11:00:00+00:00", "minute", "une heure — le pas de « Dernière heure »"),
+        ("2026-07-15T10:00:00+00:00", "heure", "24 heures — le pas de « 24 heures »"),
+        ("2026-07-21T10:00:00+00:00", "jour", "7 jours — le pas de « 7 jours »"),
+        ("2026-07-26T10:00:00+00:00", "jour", "12 jours — le cas relevé par #568"),
+    ],
+)
+def test_analytics_pas_auto_suit_l_etendue(client, state, fin, attendu, pourquoi):
+    """`pas=auto` rend la granularité la plus fine qui reste lisible (#991).
+
+    Les trois premières lignes ne sont pas un réglage mais une **preuve** : sur
+    les étendues des trois périodes bornées de l'écran, le pas déduit rend
+    exactement celui qu'elles déclarent. Ce qui change est donc seulement la
+    quatrième — la portée « Tout », qui n'a pas de fenêtre et où personne ne
+    pouvait répondre.
+    """
+    _etale(state, "2026-07-14T10:00:00+00:00", fin)
+    vue = client.get(
+        "/api/analytics/couts", params={"projet": "tous", "pas": "auto"}
+    ).json()
+    assert vue["pas"] == attendu, pourquoi
+
+
+def test_analytics_pas_auto_ne_rend_jamais_auto(client, state_analytics):
+    """La réponse porte le pas **retenu** : `auto` est une demande, pas un verdict.
+
+    C'est ce qui permet au graphe de lire `vue.pas` sans rien redéduire — il
+    étiquette ses colonnes à la granularité que le backend a choisie.
+    """
+    vue = client.get(
+        "/api/analytics/couts", params={"projet": "tous", "pas": "auto"}
+    ).json()
+    assert vue["pas"] in ("minute", "heure", "jour")
+
+
+def test_analytics_pas_auto_sur_une_serie_vide(client):
+    """Aucun usage daté : pas d'étendue, donc le pas le plus fin et une série vide.
+
+    Le cas d'un poste neuf, et il ne doit pas lever — `max()` sur une liste vide
+    est exactement le genre de panne qu'un écran vide révélerait en production.
+    """
+    vue = client.get(
+        "/api/analytics/couts", params={"projet": "tous", "pas": "auto"}
+    ).json()
+    assert vue["serie"] == [] and vue["pas"] == "minute"
+
+
+def test_analytics_douze_jours_ne_rendent_plus_des_centaines_de_seaux(client, state):
+    """Le défaut S10, dit en nombres : ~290 seaux horaires deviennent 13 seaux.
+
+    Un usage par heure pendant douze jours. Au pas horaire, la série couvre 290
+    seaux dont la plupart n'ont rien à dire — le graphe les comble puis nomme
+    chacune de ses colonnes. Le pas déduit rend la même dépense en treize
+    colonnes.
+    """
+    for jour in range(1, 13):
+        state.appliquer(Event(
+            type=EVENEMENT_AGENT_ACTIVITE, run_id="run-1",
+            agent="orchestrateur", role="Orchestrateur", usage=_usage(0.01),
+            horodatage=f"2026-07-{jour:02d}T10:00:00+00:00",
+        ))
+
+    par_heure = client.get(
+        "/api/analytics/couts", params={"projet": "tous", "pas": "heure"}
+    ).json()
+    auto = client.get(
+        "/api/analytics/couts", params={"projet": "tous", "pas": "auto"}
+    ).json()
+
+    # Le pas horaire étale la série sur onze jours d'écart : les 12 seaux servis
+    # sont distants de 264 heures, et c'est cet **écart** que le graphe comble.
+    assert par_heure["pas"] == "heure"
+    assert len(par_heure["serie"]) == 12
+    ecart = par_heure["serie"][-1]["periode"], par_heure["serie"][0]["periode"]
+    assert ecart == ("2026-07-12T10:00:00+00:00", "2026-07-01T10:00:00+00:00")
+
+    assert auto["pas"] == "jour"
+    assert len(auto["serie"]) == 12  # un seau par jour, plus rien à combler
+    # Et la dépense n'a pas bougé d'un centime : ce lot change la découpe, jamais
+    # ce qui est compté.
+    assert auto["total"]["cout_usd"] == pytest.approx(par_heure["total"]["cout_usd"])
 
 
 # ----------------------------------------------------------- ② WebSocket

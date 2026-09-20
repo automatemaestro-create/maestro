@@ -930,6 +930,80 @@ def test_l_ancien_marqueur_n_est_plus_une_chaine_du_script() -> None:
     )
 
 
+# --- L'autre moitié de la frontière : les textes que les gestes visent (#929) --------------------
+#
+# Le signal « page prête » n'est pas tout ce que `captures.mjs` attend de l'UI : chaque geste d'un
+# parcours s'ancre sur un TEXTE (« jamais de délai fixe pour attendre un état », `parcours.mjs`).
+# Une refonte de disposition peut donc laisser le signal intact et vider les parcours de leurs
+# gestes — un clip qui se filme, et dans lequel il ne se passe rien. C'est le mode de panne de
+# #830, à un cran de là, et c'est ce que les notes techniques de #929 demandaient de vérifier.
+
+
+def _sans_les_commentaires(source: str) -> str:
+    """La source privée de ses lignes de commentaire — un USAGE, jamais une MENTION.
+
+    Le partage du dépôt : la prose d'un fichier cite les libellés qu'elle explique, et un texte qui
+    n'existerait plus qu'en commentaire est exactement ce qu'on cherche à voir. Seules les lignes
+    ENTIÈREMENT commentées partent : un commentaire de fin de ligne reste, ce qui rend la sonde
+    conservatrice — elle dira « présent » une fois de trop plutôt qu'une fois de moins.
+    """
+    return "\n".join(
+        ligne
+        for ligne in source.splitlines()
+        if not ligne.lstrip().startswith(("//", "*", "/*"))
+    )
+
+
+def _textes_des_parcours() -> list[str]:
+    """Les textes que les gestes visent — LUS dans `parcours.mjs`, jamais recopiés."""
+    return sorted(
+        set(re.findall(r'texte:\s*"([^"]+)"', PARCOURS_MJS.read_text(encoding="utf-8")))
+    )
+
+
+def _vocabulaire_du_front() -> str:
+    """Ce que le front écrit, tous commentaires retirés."""
+    dossiers = [RACINE / "apps" / "web" / nom for nom in ("app", "components", "lib")]
+    return "\n".join(
+        _sans_les_commentaires(chemin.read_text(encoding="utf-8"))
+        for dossier in dossiers
+        for motif in ("*.ts", "*.tsx")
+        for chemin in dossier.rglob(motif)
+    )
+
+
+def test_la_sonde_de_vocabulaire_ne_prend_pas_un_commentaire_pour_un_ecran() -> None:
+    """Prouver la sonde sur l'échantillon fautif avant de balayer.
+
+    Sans cette moitié, un libellé retiré de l'écran mais resté dans la prose qui l'explique — le
+    cas exact de #691, et de la moitié des fichiers de ce dépôt — rendrait « tout va bien » sur la
+    question jamais posée.
+    """
+    fautif = _sans_les_commentaires(
+        '// Le bouton disait autrefois "Mettre en pause".\n * "Reprendre" aussi.\n'
+        'const libelle = "Approuver";\n'
+    )
+
+    assert "Mettre en pause" not in fautif
+    assert "Reprendre" not in fautif
+    assert "Approuver" in fautif
+
+
+def test_chaque_geste_d_un_parcours_vise_un_texte_que_le_front_ecrit_encore() -> None:
+    """Le balayage. Un parcours dont l'ancre a disparu de l'écran ne joue plus aucun geste, et son
+    clip part quand même au manifeste (#545, par construction : un parcours en échec garde sa
+    ligne). La présentation d'un milestone montre alors des vidéos immobiles, sans que rien nulle
+    part n'ait rougi — c'est précisément ce qui a caché #830 pendant un mois.
+    """
+    vocabulaire = _vocabulaire_du_front()
+    perdus = [texte for texte in _textes_des_parcours() if texte not in vocabulaire]
+
+    assert perdus == [], (
+        "scripts/presentation/parcours.mjs vise des textes que apps/web n'écrit plus : "
+        + ", ".join(f"« {texte} »" for texte in perdus)
+    )
+
+
 # ==================================================================================================
 # 3. Le rendu — `build.py` (#546)
 # ==================================================================================================

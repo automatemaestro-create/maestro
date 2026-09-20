@@ -203,7 +203,10 @@ Endpoints :
 - `POST /api/chat/{agent}/cadrage` — **tranche** la demande de cadrage que le
   fil porte (#943) : accepter, refuser, ou accepter un objectif **amendé**, sans
   repasser par la zone de saisie ni par le juge. Même paire rendue qu'un envoi ;
-  `409` quand rien n'attend ;
+  `409` quand rien n'attend. Le corps porte aussi les quatre **bornes** du run
+  (#990) — coût, tokens, délai par tâche, parallélisme —, aux mêmes noms que sur
+  `POST /api/executions` : c'est par ce geste qu'un run lancé depuis l'interface
+  se borne, la conversation en étant la seule porte depuis #666 ;
 - `GET  /api/chat/{agent}/flux` — la même réponse rendue **au fur et à mesure**
   (SSE, trames `debut`/`fragment`/`fin`/`interrompu`/`erreur`, #268) : un canal,
   valable pour les trois fils ; `?projet_id=` y porte le même rattachement que le
@@ -316,7 +319,7 @@ from maestro.agents.store import (
 from maestro.appartenance import projet_id_valide
 from maestro.config import ConfigError, Settings, load_settings
 from maestro.controltower import selecteur
-from maestro.controltower.analytics import PAS_HEURE, PAS_VALIDES, agrege_couts
+from maestro.controltower.analytics import PAS_DEMANDABLES, PAS_HEURE, agrege_couts
 from maestro.controltower.assistance import (
     AGENT_ASSISTANCE,
     NOM_ASSISTANCE,
@@ -334,6 +337,7 @@ from maestro.controltower.battement import (
     RegistreBattementsMemoire,
     RegistreBattementsRedis,
 )
+from maestro.controltower.bornes import AUCUNE_BORNE, BornesRun
 from maestro.controltower.brief import ACTEUR_BRIEF, ROLE_BRIEF
 from maestro.controltower.chat import (
     CadrageIntrouvable,
@@ -355,6 +359,7 @@ from maestro.controltower.events import (
     InMemoryEventBus,
     RedisEventBus,
     brief_depuis,
+    titre_court,
 )
 from maestro.controltower.executions import (
     MOTIF_RELANCE_RUN_INCONNU,
@@ -789,7 +794,7 @@ class ChatEnvoiRequete(BaseModel):
 
 
 class CadrageDecisionRequete(BaseModel):
-    """Corps du geste qui tranche une demande de cadrage du fil (#943).
+    """Corps du geste qui tranche une demande de cadrage du fil (#943, #990).
 
     La **même forme** que `DecisionBrief` (§6.10), parce que c'est la même
     décision un cran plus tôt : `approuve` dit oui ou non, et le second champ
@@ -797,14 +802,38 @@ class CadrageDecisionRequete(BaseModel):
     corps ne recopie jamais un objectif non touché — et `null` n'est pas une
     omission, c'est une affirmation.
 
-    `objectif` est ignoré sur un refus : il n'y a rien à lancer. `projet_id` et
-    `conversation` ont exactement le sens qu'ils ont sur un envoi.
+    Les quatre **garde-fous** (#990) sont ceux de `LancementExecutionRequete`,
+    aux mêmes noms et avec le même contrat : chacun optionnel, `null` laissant
+    le run aller jusqu'au bout. Les mêmes noms parce que c'est le même moteur
+    qui les reçoit — un second vocabulaire pour la même chose se paierait au
+    premier écran qui voudrait afficher les deux. Ils sont **refusés hors
+    bornes** par `lancer` et non ici : la règle « un plafond est un maximum »
+    vit là où elle est appliquée, et le refus se raconte dans le fil comme tout
+    lancement qui échoue (`orchestration._ouvrir_un_run`).
+
+    `objectif` et les bornes sont ignorés sur un refus : il n'y a rien à lancer.
+    `projet_id` et `conversation` ont exactement le sens qu'ils ont sur un envoi.
     """
 
     approuve: bool
     objectif: str | None = None
+    plafond_cout_usd: float | None = None
+    plafond_tokens: int | None = None
+    timeout_tache_s: float | None = None
+    parallelisme: int | None = None
     projet_id: str | None = None
     conversation: str | None = None
+
+    def bornes_posees(self) -> BornesRun:
+        """Les quatre garde-fous d'un bloc — `AUCUNE_BORNE` quand aucun n'est posé."""
+        return BornesRun.depuis(
+            {
+                "plafond_cout_usd": self.plafond_cout_usd,
+                "plafond_tokens": self.plafond_tokens,
+                "timeout_tache_s": self.timeout_tache_s,
+                "parallelisme": self.parallelisme,
+            }
+        )
 
 
 class SecretPoolRequete(BaseModel):
@@ -1357,7 +1386,11 @@ def create_app(
         hote=hote_run,
     )
 
-    async def ouvrir_un_run(objectif: str, projet_id: str | None = None) -> dict[str, Any]:
+    async def ouvrir_un_run(
+        objectif: str,
+        projet_id: str | None = None,
+        bornes: BornesRun = AUCUNE_BORNE,
+    ) -> dict[str, Any]:
         """Le lanceur du fil global (#268) — un run sur l'objectif dicté au chat.
 
         `MODE_BRIEF_AUTO` et non le `humain` des lancements par l'écran : le
@@ -1372,9 +1405,22 @@ def create_app(
         validation de forme (`projet_id_valide`), donc une seule règle pour les
         deux portes d'entrée. Sans projet, le run part sans projet : le
         rattachement est une donnée, jamais une condition du lancement (#222).
+
+        `bornes` (#990) achève le rapprochement des deux portes : les quatre
+        garde-fous que `POST /api/executions` transmettait depuis #185 passent
+        désormais aussi par celle-ci, qui est **la seule qu'un écran offre**
+        depuis #666. Elles arrivent du geste de cadrage, où l'écran les a
+        posées ; `AUCUNE_BORNE` — le défaut — rend exactement l'appel d'avant ce
+        ticket, et c'est `lancer` qui refuse une valeur hors bornes.
         """
         return await executions.lancer(
-            objectif, projet_id=projet_id, mode_brief=MODE_BRIEF_AUTO
+            objectif,
+            plafond_cout_usd=bornes.plafond_cout_usd,
+            plafond_tokens=bornes.plafond_tokens,
+            timeout_tache_s=bornes.timeout_tache_s,
+            parallelisme=bornes.parallelisme,
+            projet_id=projet_id,
+            mode_brief=MODE_BRIEF_AUTO,
         )
 
     # Le fil global (#268) : mêmes rouages que le chat — persistance, messagerie,
@@ -1925,7 +1971,10 @@ def create_app(
         event = Event(
             type=EVENEMENT_BRIEF_DECISION,
             run_id=run_id,
-            titre=resume["objectif"],
+            # Le titre court à montrer, l'objectif entier à lire (#991) : la
+            # projection tient déjà celui-ci, l'événement ne fait que le porter.
+            titre=titre_court(resume["objectif"]),
+            description=resume["objectif"],
             agent=ACTEUR_BRIEF,
             role=ROLE_BRIEF,
             statut=BRIEF_APPROUVE if requete.approuve else BRIEF_REFUSE,
@@ -1997,7 +2046,9 @@ def create_app(
         event = Event(
             type=EVENEMENT_BRIEF_REPONSES,
             run_id=run_id,
-            titre=resume["objectif"],
+            # Même partage qu'à la décision ci-dessus (#991).
+            titre=titre_court(resume["objectif"]),
+            description=resume["objectif"],
             agent=ACTEUR_BRIEF,
             role=ROLE_BRIEF,
             detail=(
@@ -2199,7 +2250,10 @@ def create_app(
         Recalculée des exécutions projetées, avec la même convention
         d'attribution que le grand livre d'un run (#57) : coût agrégé par
         tâche, par agent (planification comprise) et par exécution, total, et
-        série temporelle du coût en seaux de `pas` (minute/heure/jour).
+        série temporelle du coût en seaux de `pas` (minute/heure/jour), ou
+        `auto` : le pas se **déduit alors de l'étendue** couverte (#991), ce que
+        l'appelant ne peut pas faire sur une fenêtre sans borne. La réponse rend
+        toujours le pas **retenu**, jamais `auto`.
         `depuis` (ISO-8601, réputé UTC sans fuseau) restreint la fenêtre — la
         période sélectionnable de l'UI. `projet` est **obligatoire** (#277) et
         restreint la dépense : seuls les événements que la portée retient
@@ -2209,10 +2263,10 @@ def create_app(
         `pas` ou un `depuis` invalide.
         """
         portee = _portee(projet)
-        if pas not in PAS_VALIDES:
+        if pas not in PAS_DEMANDABLES:
             raise HTTPException(
                 status_code=422,
-                detail=f"pas invalide : {pas} (attendus : {', '.join(PAS_VALIDES)})",
+                detail=f"pas invalide : {pas} (attendus : {', '.join(PAS_DEMANDABLES)})",
             )
         borne = None
         if depuis is not None:
@@ -4277,6 +4331,12 @@ def create_app(
         que c'est bien un tour de conversation : ce qui change est que la
         décision vient d'un clic.
 
+        Les quatre **garde-fous** (#990) voyagent avec l'accord : c'est le même
+        geste qui dit « lance » et « jusque-là ». Ils ne sont pas jugés ici —
+        `lancer` refuse une valeur hors bornes, et son refus se raconte dans le
+        fil plutôt que de remonter en statut, parce que le geste, lui, a bien eu
+        lieu et reste acquis au fil.
+
         `409` quand rien n'attend : aucune proposition, une déjà tranchée, ou un
         fil dont le répondeur n'en fait pas — c'est le `409` de §6.10 un cran
         plus tôt, et il couvre le double geste comme le geste tardif. `404` hors
@@ -4293,6 +4353,7 @@ def create_app(
                 # Normalisé **ici**, à la frontière, comme sur un envoi : c'est
                 # le projet de la fenêtre, et c'est lui qui rattachera le run.
                 projet_id=projet_id_valide(requete.projet_id),
+                bornes=requete.bornes_posees(),
                 conversation=fil,
             )
         except CadrageIntrouvable as exc:

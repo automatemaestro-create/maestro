@@ -72,6 +72,7 @@ import {
   causeDAttente,
   estEnPause,
   estRelancable,
+  nomDuRun,
   peutEtreInterrompu,
   peutEtreSuspendu,
   regimeDuRun,
@@ -794,7 +795,7 @@ export function CarteRun({
   const regime = regimeDuRun(run, attendUneValidation);
   const attente =
     regime === REGIME_SUSPENDU ? causeDAttente(run, attendUneValidation) : null;
-  const nom = run.objectif || run.run_id;
+  const nom = nomDuRun(run);
   const vue = hrefRun(run.run_id);
   // Combien de temps il a tourné — vivante tant qu'aucune `fin` n'est posée,
   // figée dessus ensuite. Le discriminant est `fin` et non le régime : la durée

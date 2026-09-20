@@ -108,6 +108,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import type { BornesRun } from "./bornes";
 import {
   arreterFluxChat,
   chargerConversationsChat,
@@ -232,6 +233,10 @@ export type Chat = {
    * ou accepter un objectif **amendé** (`objectif`, `null` = la proposition
    * telle quelle).
    *
+   * `bornes` (#990) est jusqu'où le run pourra aller — les quatre garde-fous du
+   * moteur. Elles partent avec l'accord, parce que c'est le même geste qui dit
+   * « lance » et « jusque-là » ; omises, le run part sans borne.
+   *
    * Le geste et la réponse rejoignent le fil comme un tour ordinaire — c'en est
    * un : quelqu'un s'est adressé au canal, et le fil reste sa seule mémoire.
    * Rejette avec la cause quand la demande n'attend plus (la conversation a
@@ -240,6 +245,7 @@ export type Chat = {
   trancherCadrage: (
     approuve: boolean,
     objectif?: string | null,
+    bornes?: BornesRun | null,
   ) => Promise<void>;
   /**
    * La conversation **servie** (#696) — celle qu'on lit et où part l'envoi.
@@ -535,12 +541,17 @@ export function useChat(agent: string, projetId: string | null = null): Chat {
    * d'un coup.
    */
   const trancherCadrage = useCallback(
-    async (approuve: boolean, objectif: string | null = null) => {
+    async (
+      approuve: boolean,
+      objectif: string | null = null,
+      bornes: BornesRun | null = null,
+    ) => {
       setEnvoi(true);
       try {
         const paire = await trancherCadrageChat(agent, {
           approuve,
           objectif,
+          bornes,
           projetId,
           conversation,
         });

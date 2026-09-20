@@ -54,6 +54,7 @@ import {
   runsEnAttenteDeValidation,
   type CauseAttente,
 } from "@/lib/execution";
+import { ErreurApi } from "@/lib/api";
 import { libelleCause, libelleStatutExecution } from "@/lib/format";
 import { entreeParLibelle, hrefRun, PAGE_DU_FIL } from "@/lib/navigation";
 import {
@@ -728,8 +729,10 @@ describe("la liste des runs (l'écran)", () => {
   it("ne conseille pas de lancer un run à qui n'a pas de backend", () => {
     // C'est l'argument du poste vide (#186) : une API injoignable garde sa
     // bannière et **rien d'autre** — un écran vide *et muet* ne se diagnostique
-    // pas comme un écran vide *et connecté*.
-    monter({ erreur: "connexion refusée" });
+    // pas comme un écran vide *et connecté*. La panne est **typée** depuis #996 :
+    // une API qui n'a pas répondu, et non une chaîne dont la bannière devrait
+    // deviner la classe.
+    monter({ erreur: ErreurApi.injoignable("/api/executions") });
 
     expect(screen.getByRole("alert")).toHaveTextContent(/API injoignable/);
     expect(

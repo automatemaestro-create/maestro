@@ -102,6 +102,46 @@ function runSolde() {
   });
 }
 
+/**
+ * Les deux **objectifs de bordure** (#991, défaut S11) : celui qui déborde, et
+ * celui qui n'est fait que de blancs.
+ *
+ * La revue du 2026-08-26 relevait un lien **sans nom accessible** dans `/runs`
+ * « quand l'objectif est long », et personne n'avait su le reproduire faute de
+ * données réelles. Ces deux runs sont la tentative, versionnée : le filet audite
+ * `/runs` et le tableau de bord avec eux dans la liste, donc la question se
+ * repose à chaque exécution de la suite au lieu de dépendre d'un poste.
+ *
+ * Le second est celui qui compte. Un objectif long a toujours un nom accessible
+ * — `truncate` ne coupe que le rendu, jamais le texte —, mais un objectif fait
+ * d'espaces est **truthy** en JavaScript : `run.objectif || run.run_id` rendait
+ * alors un titre invisible, donc un lien sans nom (`link-name`, *serious*). C'est
+ * pourquoi `nomDuRun` (`lib/execution`) élague chaque repli.
+ */
+function runsDeBordure() {
+  return [
+    runFactice({
+      run_id: "run-long",
+      statut: EXECUTION_TERMINEE,
+      objectif:
+        "Reprendre l'écran des coûts de bout en bout et le rendre lisible sur " +
+        "une longue période\n\n## Contexte\n\nLa portée « Tout » garde le pas " +
+        "horaire quelle que soit l'étendue, si bien qu'un historique de douze " +
+        "jours rend près de trois cents colonnes presque toutes vides.",
+      titre:
+        "Reprendre l'écran des coûts de bout en bout et le rendre lisible sur une longue…",
+      fin: "2026-07-28T09:00:00Z",
+    }),
+    runFactice({
+      run_id: "run-blanc",
+      statut: EXECUTION_TERMINEE,
+      objectif: "   ",
+      titre: "",
+      fin: "2026-07-28T08:00:00Z",
+    }),
+  ];
+}
+
 function poserJournalDuProjet(): void {
   poserJournal([
     entreeJournalFactice({ titre: "Écrire les tests", statut: "en_cours" }),
@@ -115,10 +155,10 @@ function poserJournalDuProjet(): void {
 
 /**
  * Un projet qui travaille **et qui attend un arbitrage** : des tâches à
- * plusieurs statuts, deux agents, une validation en attente, deux runs — dont un
- * arrêté sur son brief — et un grand livre. Un écran vide n'a presque pas de
- * balises : l'auditer rendrait un vert qui ne parle que du vide, et c'est
- * exactement le verdict qu'on ne veut pas.
+ * plusieurs statuts, deux agents, une validation en attente, quatre runs — dont
+ * un arrêté sur son brief et les deux **bordures** de #991 — et un grand livre.
+ * Un écran vide n'a presque pas de balises : l'auditer rendrait un vert qui ne
+ * parle que du vide, et c'est exactement le verdict qu'on ne veut pas.
  */
 export function peuplerEtat(): void {
   poserEtatGlobal({
@@ -127,6 +167,7 @@ export function peuplerEtat(): void {
     executions: [
       runFactice({ run_id: "run-1", statut: EXECUTION_EN_ATTENTE_BRIEF }),
       runSolde(),
+      ...runsDeBordure(),
     ],
   });
   poserJournalDuProjet();

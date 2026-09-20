@@ -54,7 +54,7 @@ import {
   EnTeteSection,
   type Icone,
 } from "@/components/Primitives";
-import { chargerCatalogue } from "@/lib/api";
+import { chargerCatalogue, panneDe, type PanneApi } from "@/lib/api";
 import {
   CHEMIN_CREATION_AGENT,
   type CleOngletAgent,
@@ -97,7 +97,7 @@ export function ListeAgents({
   const { agents } = useEtatGlobal();
   const [fiches, setFiches] = useState<AgentCatalogue[]>([]);
   const [chargement, setChargement] = useState(true);
-  const [erreur, setErreur] = useState<string | null>(null);
+  const [erreur, setErreur] = useState<PanneApi | null>(null);
   const [filtres, setFiltres] = useState<FiltresAgents>(FILTRES_VIDES);
   const [tri, setTri] = useState<CleTriAgents>(TRI_AGENTS_DEFAUT);
 
@@ -106,7 +106,7 @@ export function ListeAgents({
       setFiches(await chargerCatalogue());
       setErreur(null);
     } catch (e) {
-      setErreur(e instanceof Error ? e.message : String(e));
+      setErreur(panneDe(e));
     } finally {
       setChargement(false);
     }

@@ -35,7 +35,7 @@
 
 import { useEffect, useState } from "react";
 
-import { chargerJournal, type PorteeProjet } from "./api";
+import { chargerJournal, panneDe, type PanneApi, type PorteeProjet } from "./api";
 import { evenementDepuisEntree } from "./journal";
 import {
   ORDRE_DESC,
@@ -51,8 +51,8 @@ export type JournalPersiste = {
   total: number;
   /** Aucune lecture n'a encore abouti pour cette portée. */
   chargement: boolean;
-  /** API injoignable ou lecture refusée à la dernière tentative. */
-  erreur: string | null;
+  /** La panne de la dernière tentative (null si tout va bien), **typée** (#996). */
+  erreur: PanneApi | null;
 };
 
 /**
@@ -75,7 +75,7 @@ export function useJournal(
   // La portée de la dernière lecture aboutie — et non un booléen : c'est elle
   // qui distingue « rien encore lu » de « lu, mais pour le projet d'avant ».
   const [lu, setLu] = useState<string | null>(null);
-  const [erreur, setErreur] = useState<string | null>(null);
+  const [erreur, setErreur] = useState<PanneApi | null>(null);
 
   // Les filtres sont dépliés en variables **avant** l'effet, qui dépend d'elles
   // et jamais de l'objet : un littéral passé à l'appel change d'identité à
@@ -101,7 +101,7 @@ export function useJournal(
       })
       .catch((e: unknown) => {
         if (abandonne) return;
-        setErreur(e instanceof Error ? e.message : String(e));
+        setErreur(panneDe(e));
       })
       .finally(() => {
         // Posé même en échec : la question « a-t-on essayé ? » a sa réponse, et

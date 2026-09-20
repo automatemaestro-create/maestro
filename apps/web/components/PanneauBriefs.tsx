@@ -36,6 +36,7 @@ import Link from "next/link";
 import { IconeBrief, IconeFlecheDroite } from "@/components/Icones";
 import { BadgeEtat, Carte, EnTeteSection } from "@/components/Primitives";
 import { PAGE_DU_CADRAGE, runsEnAttente } from "@/lib/brief";
+import { nomDuRun } from "@/lib/execution";
 import { formatHeureRelative } from "@/lib/format";
 import { useHorloge } from "@/lib/horloge";
 import { entreeParLibelle } from "@/lib/navigation";
@@ -80,7 +81,7 @@ export function PanneauBriefs({
               >
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-corps font-medium">
-                    {run.objectif || run.run_id}
+                    {nomDuRun(run)}
                   </span>
                   <span className="mt-0.5 block text-annexe text-neutral-600 dark:text-neutral-300">
                     {reponses

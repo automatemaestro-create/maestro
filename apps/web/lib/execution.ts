@@ -28,6 +28,35 @@ import {
 } from "./types";
 
 /**
+ * **Comment s'appelle un run** à l'écran (#991, défauts S12 et S11).
+ *
+ * Sept surfaces posaient la même question en recopiant la même expression —
+ * `run.objectif || run.run_id` —, et elles se trompaient toutes de la même
+ * façon, deux fois :
+ *
+ * - **l'objectif entier servait de nom.** L'écran le tronquait en CSS, ce qui ne
+ *   trompe que l'œil : un lecteur d'écran lisait le brief de quinze pages d'un
+ *   run relancé, ligne de liste après ligne de liste. Le backend sert désormais
+ *   un `titre` court et borné à côté de l'objectif (`EtatExecution.resume`), et
+ *   c'est lui qu'on nomme ;
+ * - **un objectif fait de blancs passait pour un nom.** `" " || …` est vrai en
+ *   JavaScript : le titre d'une carte était alors une chaîne d'espaces, donc un
+ *   lien **sans nom accessible** (axe `link-name`, *serious*). D'où le `trim()`
+ *   sur chaque repli, qui est ce qui fait retomber sur l'identifiant du run —
+ *   lequel, lui, n'est jamais vide.
+ *
+ * L'objectif **entier** n'est pas perdu pour autant : il reste servi dans le
+ * résumé, et la vue d'un run le donne à lire sous son titre. Un run servi par
+ * une API antérieure à ce lot n'a pas de `titre` et retombe sur son objectif,
+ * c'est-à-dire sur le comportement d'avant.
+ */
+export function nomDuRun(execution: ResumeExecution): string {
+  return (
+    (execution.titre ?? "").trim() || execution.objectif.trim() || execution.run_id
+  );
+}
+
+/**
  * Ce run est-il **orphelin** — son hôte a battu, puis s'est tu (#348) ?
  *
  * Strictement le verdict du backend, jamais une seconde déduction faite ici à

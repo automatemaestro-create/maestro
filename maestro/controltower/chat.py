@@ -186,6 +186,7 @@ from maestro.agents.catalog import Agent
 from maestro.agents.playbook_du_code import registre
 from maestro.agents.playbooks import PlaybookStore
 from maestro.config import Settings, load_settings
+from maestro.controltower.bornes import AUCUNE_BORNE, BornesRun
 from maestro.controltower.events import EVENEMENT_CHAT_MESSAGE, Event, EventBus
 from maestro.engine.guardrails import GardeFousIngestion
 from maestro.messaging import (
@@ -383,7 +384,10 @@ def proposition_en_attente(fil: Sequence[MessageChat]) -> MessageChat | None:
 
 
 def _geste_de_cadrage(
-    approuve: bool, retenu: str, demande: MessageChat
+    approuve: bool,
+    retenu: str,
+    demande: MessageChat,
+    bornes: BornesRun = AUCUNE_BORNE,
 ) -> str:
     """Ce que le geste écrit dans le fil — le message que le clic vaut (#943).
 
@@ -398,12 +402,24 @@ def _geste_de_cadrage(
     que la proposition ne dit pas déjà, et le fil doit porter ce qui part —
     sinon la relecture d'un run corrigé ne retrouverait nulle part ce qu'on a
     corrigé.
+
+    Les **bornes** (#990) suivent exactement cette règle, et c'est pourquoi
+    elles ne s'écrivent que lorsqu'il y en a : elles sont ce que le formulaire a
+    ajouté, et que ni la proposition ni la réponse à venir ne portent. Le régime
+    par défaut, lui, est annoncé par la réponse qui ouvre le run
+    (`orchestration._ouvrir_un_run`) — le dire ici aussi ferait répéter au
+    geste ce que le tour suivant énonce à la ligne près.
     """
     if not approuve:
         return "Non, ne lance pas."
-    if retenu == demande.proposition:
+    amende = retenu != demande.proposition
+    if not amende and bornes.aucune:
         return "Oui, lance."
-    return f"Oui, lance — avec cet objectif : {retenu}"
+    if amende and bornes.aucune:
+        return f"Oui, lance — avec cet objectif : {retenu}"
+    if not amende:
+        return f"Oui, lance — bornes : {bornes.en_phrase()}"
+    return f"Oui, lance — avec cet objectif : {retenu} — bornes : {bornes.en_phrase()}"
 
 
 def normaliser(texte: str) -> str:
@@ -1067,6 +1083,7 @@ class RepondeurChat(ABC):
         approuve: bool,
         objectif: str,
         projet_id: str | None = None,
+        bornes: BornesRun = AUCUNE_BORNE,
     ) -> ReponseChat:
         """La réponse au **geste** qui tranche une demande de cadrage (#943).
 
@@ -1082,6 +1099,10 @@ class RepondeurChat(ABC):
         explicite*. Un bouton est l'accord le plus explicite qu'on puisse
         recevoir ; ce qui ouvre reste un acte de l'utilisateur, jamais un texte
         reconnu ni un silence.
+
+        `bornes` (#990) est ce que l'écran a posé au moment de lancer, et il
+        arrive par ce chemin pour la raison qui y fait passer l'objectif
+        amendé : un tour de jugement ne le rendrait pas.
 
         Par défaut, un répondeur **ne propose rien**, donc n'a rien à trancher :
         il le dit plutôt que de le laisser deviner. Seul celui qui pose une
@@ -1323,6 +1344,7 @@ class ServiceChat:
         approuve: bool,
         objectif: str | None = None,
         projet_id: str | None = None,
+        bornes: BornesRun = AUCUNE_BORNE,
         conversation: str | None = None,
     ) -> tuple[MessageChat, MessageChat]:
         """Tranche la demande de cadrage en attente ; rend la paire (geste, réponse).
@@ -1343,6 +1365,13 @@ class ServiceChat:
         et pour la même raison : le corps ne recopie jamais ce qu'on n'a pas
         touché. Il est ignoré sur un refus, où il n'y a rien à lancer.
 
+        `bornes` (#990) est ce jusqu'où le run pourra aller — coût, tokens,
+        délai par tâche, parallélisme. Elles sont **écrites dans le fil** avec
+        le geste quand il y en a, parce que le fil est la seule mémoire du canal
+        et qu'un run borné dont la trace ne dirait pas à quoi il s'est arrêté
+        serait un run qu'on ne peut plus relire. Ignorées sur un refus, comme
+        l'objectif.
+
         `CadrageIntrouvable` quand rien n'attend — c'est le `409` de l'API, et
         il couvre le double geste comme le geste tardif.
         """
@@ -1354,7 +1383,9 @@ class ServiceChat:
             )
         retenu = (objectif or "").strip() or demande.proposition
         geste = await self._deposer(
-            agent, _geste_de_cadrage(approuve, retenu, demande), conversation=fil
+            agent,
+            _geste_de_cadrage(approuve, retenu, demande, bornes),
+            conversation=fil,
         )
         try:
             reponse = await self._repondeur.trancher_cadrage(
@@ -1363,6 +1394,7 @@ class ServiceChat:
                 approuve=approuve,
                 objectif=retenu,
                 projet_id=projet_id,
+                bornes=bornes,
             )
         except CadrageIntrouvable:
             # Le geste est déjà au fil : il a bien eu lieu, c'est la suite qui

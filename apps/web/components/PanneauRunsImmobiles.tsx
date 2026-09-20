@@ -78,6 +78,7 @@ import { ATTENTES } from "@/components/runs/EtatRun";
 import {
   causeDAttente,
   estEteint,
+  nomDuRun,
   runsEnSouffrance,
   runsRelancables,
 } from "@/lib/execution";
@@ -244,7 +245,7 @@ function CarteRunEnSouffrance({ run }: { run: ResumeExecution }) {
               d'écran lit en entier même tronqué — et l'identifiant, lui, est sur
               la ligne juste en dessous. */}
           <span className="block truncate font-medium">
-            {run.objectif || run.run_id}
+            {nomDuRun(run)}
           </span>
           <span className="chiffre mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-annexe text-neutral-500 dark:text-neutral-400">
             <span className="min-w-0 truncate">{run.run_id}</span>
@@ -306,7 +307,7 @@ function CarteRunPerdu({
       <div className="flex items-start gap-3">
         <span className="min-w-0 flex-1">
           <span className="block truncate font-medium" title={run.run_id}>
-            {run.objectif || run.run_id}
+            {nomDuRun(run)}
           </span>
           <span className="chiffre mt-0.5 block text-annexe text-neutral-500 dark:text-neutral-400">
             {run.run_id}

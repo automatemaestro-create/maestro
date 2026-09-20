@@ -41,6 +41,14 @@ Deux volets, les deux critères de données de #188 :
    depuis l'origine. Trois faits gardés : les tâches en vol sont soldées et les
    agents libérés, ce qui était **déjà fait** n'est pas défait, et la cause de
    l'arrêt voyage avec le soldage.
+
+⑤ **Le titre d'un run est court, son objectif reste entier** (#991, défaut S12 de
+   #568) — l'objectif entier servait de `titre` à chaque événement de cycle de vie,
+   et le brief de quinze pages d'un run relancé pesait sur le journal, la liste
+   des runs et l'en-tête du run, que l'écran se contentait de tronquer en CSS. Le
+   volet garde le **partage** : titre court sur le bus et dans le résumé,
+   objectif entier dans `description` et dans le résumé — plus le **repli** qui
+   fait relire un événement d'avant ce lot sans lui retirer son objectif.
 """
 
 from __future__ import annotations
@@ -53,6 +61,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from maestro.controltower import (
+    EVENEMENT_EXECUTION_STATUT,
     EVENEMENT_TACHE_STATUT,
     ControlTowerState,
     Event,
@@ -848,3 +857,98 @@ def test_la_tache_soldee_dit_pourquoi_elle_s_est_arretee(state):
     assert "interrompue depuis la Control Tower" in soldage.detail
     # L'agent est nommé : sans lui, la projection n'aurait aucun créneau à rendre.
     assert soldage.agent == "designer"
+
+
+# ------------------- ⑤ Le titre d'un run est court, l'objectif reste entier (#991)
+
+
+#: Un objectif de la taille d'un brief approuvé — le cas d'un run relancé (#349),
+#: qui est exactement celui que #568 a relevé (défaut S12).
+OBJECTIF_LONG = (
+    "Reprendre l'écran des coûts de bout en bout et le rendre lisible sur une "
+    "longue période\n\n"
+    "## Contexte\n\n"
+    "La portée « Tout » garde le pas horaire quelle que soit l'étendue."
+)
+
+#: Ce que `titre_court` doit en tirer : la première ligne, coupée au dernier mot
+#: entier sous 80 signes. Écrit en toutes lettres plutôt que recalculé ici — un
+#: test qui rejouerait la formule de la fonction ne dirait rien de son résultat.
+TITRE_ATTENDU = (
+    "Reprendre l'écran des coûts de bout en bout et le rendre lisible sur une longue…"
+)
+
+
+def test_le_titre_du_run_est_court_et_l_objectif_reste_entier(state):
+    """Le résumé sert les deux formes : `titre` borné, `objectif` intact (#991, S12).
+
+    C'est le partage du ticket — « un événement porte un titre court dérivé de
+    l'objectif ; l'objectif entier reste disponible là où on le lit ». Les deux
+    dans le même résumé, parce que les deux écrans qui les lisent sont servis par
+    lui : la liste des runs montre le titre, la vue d'un run lit l'objectif.
+    """
+    with app_avec(MoteurDouble(), state) as client:
+        resume = client.post("/api/executions", json={"objectif": OBJECTIF_LONG}).json()
+
+        assert resume["titre"] == TITRE_ATTENDU
+        assert resume["objectif"] == OBJECTIF_LONG
+        # Et le détail du run sert le même partage : `to_dict` part du résumé.
+        detail = client.get(f"/api/executions/{resume['run_id']}").json()
+        assert detail["titre"] == TITRE_ATTENDU
+        assert detail["objectif"] == OBJECTIF_LONG
+
+
+def test_l_evenement_de_cycle_de_vie_ne_porte_plus_l_objectif_en_titre(state):
+    """Sur le bus, `titre` est court et `description` porte l'objectif entier.
+
+    Le défaut vivait là : chaque `execution.statut` embarquait l'objectif complet
+    comme titre, si bien que le journal, la frise et le fil le répétaient en
+    entier à chaque étape du run. Rien n'est perdu pour autant — c'est ce que la
+    seconde moitié du test vérifie, et c'est elle qui rend la coupe acceptable.
+    """
+    with app_avec(MoteurDouble(), state) as client:
+        run_id = client.post("/api/executions", json={"objectif": OBJECTIF_LONG}).json()[
+            "run_id"
+        ]
+        attendre_statut(client, run_id, EXECUTION_TERMINEE)
+
+    execution = next(e for e in state.executions() if e.run_id == run_id)
+    lancement = next(
+        e for e in execution.evenements if e.type == EVENEMENT_EXECUTION_STATUT
+    )
+    assert lancement.titre == TITRE_ATTENDU
+    assert lancement.description == OBJECTIF_LONG
+
+
+def test_un_evenement_d_avant_ce_lot_garde_son_objectif(state):
+    """Rejeu : un `execution.statut` sans `description` pose l'objectif depuis `titre`.
+
+    Le journal durable (#97) contient des événements émis avant #991, et un bus
+    peut porter ceux d'un producteur plus ancien. Sans ce repli, rejouer un run
+    d'hier lui retirerait son objectif — la projection l'a perdu, personne ne le
+    remet.
+    """
+    state.appliquer(
+        Event(
+            type=EVENEMENT_EXECUTION_STATUT,
+            run_id="run-ancien",
+            titre=OBJECTIF_LONG,
+            statut=EXECUTION_EN_COURS,
+        )
+    )
+    execution = state.execution("run-ancien")
+    assert execution is not None
+    assert execution.objectif == OBJECTIF_LONG
+    # Et son titre court est **dérivé à la lecture** : un run relu d'un journal
+    # ancien est nommé comme les autres, sans qu'on ait rien réécrit.
+    assert execution.resume()["titre"] == TITRE_ATTENDU
+
+
+def test_un_objectif_court_est_son_propre_titre(state):
+    """Rien ne se coupe sous la borne : le cas courant ne change pas d'un signe."""
+    with app_avec(MoteurDouble(), state) as client:
+        resume = client.post(
+            "/api/executions", json={"objectif": "Prototyper un mini-CRM"}
+        ).json()
+    assert resume["titre"] == "Prototyper un mini-CRM"
+    assert resume["objectif"] == "Prototyper un mini-CRM"
