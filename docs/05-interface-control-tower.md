@@ -1926,6 +1926,15 @@ non l'un d'eux. L'écran reste servi à `/projets` et s'atteint depuis le sélec
 n'a pas changé : déclarer *où* Maestro travaille n'est pas un réglage du poste — ce n'est toujours
 pas une section des Paramètres.
 
+⚠ **Ce que #1022 a précisé, sans renverser la phrase ci-dessus.** La **liste des projets déclarés**
+reste l'écran Projets et n'ira jamais aux Paramètres. Le **répertoire des projets** — *où naît un
+projet neuf*, un dossier par défaut commun à tous — est une autre question, et celle-là est bien un
+réglage de cette installation-ci : il ne dit rien d'un projet déclaré, il dit dans quel dossier le
+**prochain** sera créé. Il vit donc dans une section « Projets » des Paramètres, sous la famille
+« Le poste », et le formulaire de déclaration s'en sert pour **remplir d'office** le dossier parent
+d'un projet neuf. La ligne de partage : ce qui décrit un projet est sur l'écran Projets, ce qui
+décrit ce poste-ci est dans les Paramètres.
+
 **Ce que la liste montre**, une carte par projet : le **nom**, la **racine** canonicalisée telle que
 le backend l'a enregistrée, l'**origine** (« Dossier existant » / « Nouveau dossier »), le **VCS
 constaté** (`git · <branche>`, ou « Non versionné » — jamais tu, puisque c'est lui qui décide du
@@ -1946,6 +1955,27 @@ visé n'existe pas encore — origine « nouveau » — se résout **sans except
 **parent** vient de l'explorateur et l'utilisateur ne saisit qu'un **nom de dossier**, refusé s'il
 contient un séparateur. Le §2.7.2 ajoute deux raccourcis vers un dossier lointain, sans changer
 qui valide quoi.
+
+**Ce parent est rempli d'office** depuis #1022, par le **répertoire des projets** (`GET
+/api/projets/repertoire`, §6.7) — et *prérempli* ne veut pas dire *saisissable* : la règle ne bouge
+pas, le parent reste du texte et un bouton. Trois choses tiennent ce préremplissage, et la forme
+retenue l'a été **sur pièces**, trois variantes rendues et jugées par un regard neuf contre les
+produits comparables capturés par la veille du ticket :
+
+- **l'écran dit d'où vient la valeur**, sur une ligne de second plan sous le choix — *« Votre
+  répertoire des projets, réglé dans les Paramètres. En choisir un autre ici ne vaut que pour ce
+  projet. »* C'est le manque commun aux trois références (IntelliJ, GitHub Desktop, Unity Hub) :
+  aucune ne dit *pourquoi ce chemin-là*. Une variante muette et une variante à deux boutons radio
+  ont été écartées — la première laisse sans réponse la moitié « sans rien casser ailleurs » de la
+  question, la seconde empile un second groupe de radios sous « Origine » et aplatit la hiérarchie
+  du formulaire ;
+- **en changer ici ne règle rien.** Le formulaire ne fait que *lire* le réglage ; le poser est un
+  geste des Paramètres. Un dossier choisi à la main fait passer la ligne à « Hors de votre
+  répertoire des projets », avec le **retour** qui va avec — un choix qu'on ne peut pas défaire n'en
+  est pas un ;
+- **l'import d'un projet existant ne reçoit rien.** Le réglage dit où un projet **naît** ; un projet
+  déjà là se parcourt. Ce que le réglage avait posé se retire au retour sur « Dossier existant »,
+  ce que l'utilisateur a choisi ne bouge jamais.
 
 **Mettre sous Git** (#855) — sur une carte « Non versionné », et sur elle seule, un bouton
 **« Mettre sous Git »** qui s'arme **en deux temps**, comme la suppression : le premier clic ouvre
@@ -4373,6 +4403,19 @@ comportement réel.
   panne.
 - `POST /api/projets/selecteur` → `ChoixSelecteur` (#278) — ouvre ce dialogue et rend le chemin
   choisi, confronté à EF-38. Corps facultatif `{ "depart": "D:/projets" }`.
+- `GET /api/projets/repertoire` → `RepertoireProjets` (#1022) — le **répertoire des projets** : où
+  naît un projet neuf. **Toujours 200** : un répertoire devenu indéclarable revient avec son
+  `refus`, parce qu'un disque débranché n'empêche pas de déclarer un projet ailleurs. ⚠ **Cette
+  lecture crée le dossier s'il manque**, et le dit (`cree`) — c'est le « créé à la première
+  utilisation » du ticket, la première utilisation étant la première fois qu'on demande *où naît un
+  projet neuf*. Rendre un chemin qui n'existe pas serait pire : le bouton « Changer de dossier… »
+  s'ouvre dessus, et l'explorateur le refuserait (`dossier-absent`).
+- `PUT /api/projets/repertoire` → `RepertoireProjets` (#1022) — pose ce répertoire. Corps
+  `{ "chemin": "D:/projets" }`, ou `{ "chemin": null }` pour **revenir au défaut** — ce qui n'est
+  pas « plus de répertoire » mais « celui que Maestro propose ». Le dossier est **validé et créé**
+  avant d'être stocké : un réglage posé est toujours déclarable, jamais une intention qui échouerait
+  plus tard et ailleurs. Refus motivé (422/403/404) — et **rien n'est écrit**, le réglage précédent
+  reste en place.
 
 Le `vcs` n'est **jamais** un champ de requête : il est constaté sur le disque à chaque écriture.
 Un client qui l'annoncerait pourrait mentir, et c'est lui qui décide du patron d'écriture de
@@ -4432,13 +4475,24 @@ Un client qui l'annoncerait pourrait mentir, et c'est lui qui décide du patron 
   "racine_valide": false,           // le chemin est lisible, mais pas déclarable tel quel
   "refus": { "motif": "racine-de-disque", "message": "…" }   // null quand racine_valide
 }
+
+// RepertoireProjets (réponse de GET et PUT /api/projets/repertoire) — #1022
+{
+  "chemin": "C:/Users/moi/Maestro", // le répertoire courant, résolu
+  "par_defaut": true,               // aucun réglage posé : c'est « Maestro » sous le dossier personnel
+  "existe": true,
+  "cree": false,                    // true : CET appel vient de le créer — jamais en silence
+  "refus": null                     // motivé quand le répertoire réglé n'est plus déclarable
+}
 ```
 
 **La frontière et les points d'entrée sont deux choses** (#278). `racines` dit ce qu'on a le
 **droit** d'énumérer ; la page d'entrée (`GET /api/projets/explorateur` sans `chemin`) dit par où
 **commencer**. Elles ont divergé quand la frontière s'est élargie aux **volumes du poste** : elle
 dédoublonne par contenance, donc elle se réduirait à `C:/` (ou `/`), et il faudrait redescendre
-tout l'arbre à chaque fois. Chaque point d'entrée porte son `origine` — `utilisateur`, `recent`
+tout l'arbre à chaque fois. Chaque point d'entrée porte son `origine` — `repertoire` (le répertoire
+des projets, #1022 : le premier endroit à regarder, puisque c'est celui d'où l'on vient),
+`utilisateur`, `recent`
 (le **parent** d'un projet récemment déclaré : là où l'on range ses dépôts), `projet`, `volume`,
 `configuree` — et reste **dans** la frontière : un point qui refuserait au clic serait pire que
 son absence. C'est aussi ce qui garde `MAESTRO_EXPLORATEUR_RACINES` **restrictif** — les volumes

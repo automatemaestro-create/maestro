@@ -2755,21 +2755,40 @@ export type DossierExplorateur = {
   projet_id: string | null;
   /**
    * Pourquoi ce dossier est proposé — renseigné sur la **page d'entrée**
-   * seulement (#278), `null` pour un sous-dossier énuméré. `utilisateur` : le
-   * dossier utilisateur ; `recent` : le parent d'un projet récemment déclaré ;
-   * `projet` : une racine déjà déclarée ; `volume` : un disque du poste ;
-   * `configuree` : une racine de `MAESTRO_EXPLORATEUR_RACINES`.
+   * seulement (#278), `null` pour un sous-dossier énuméré. `repertoire` : le
+   * répertoire des projets (#1022) ; `utilisateur` : le dossier utilisateur ;
+   * `recent` : le parent d'un projet récemment déclaré ; `projet` : une racine
+   * déjà déclarée ; `volume` : un disque du poste ; `configuree` : une racine
+   * de `MAESTRO_EXPLORATEUR_RACINES`.
    */
   origine: OrigineDossier | null;
 };
 
 /** Les origines qu'un point d'entrée de l'explorateur peut porter (#278). */
 export type OrigineDossier =
+  | "repertoire"
   | "utilisateur"
   | "recent"
   | "projet"
   | "volume"
   | "configuree";
+
+/**
+ * Le **répertoire des projets** (`GET`/`PUT /api/projets/repertoire`, #1022) :
+ * où naît un projet neuf. `par_defaut` dit qu'aucun réglage n'a été posé —
+ * c'est alors `Maestro` sous le dossier personnel. `cree` dit que **la lecture**
+ * a créé le dossier (« créé à la première utilisation ») : l'écran peut le
+ * mentionner, il ne le devine pas. `refus` porte le motif quand le répertoire
+ * réglé est devenu indéclarable — un disque débranché n'empêche pas de déclarer
+ * un projet ailleurs.
+ */
+export type RepertoireProjets = {
+  chemin: string;
+  par_defaut: boolean;
+  existe: boolean;
+  cree: boolean;
+  refus: RefusProjet | null;
+};
 
 /**
  * L'état du **sélecteur de dossier natif** (`GET /api/projets/selecteur`, #278).
