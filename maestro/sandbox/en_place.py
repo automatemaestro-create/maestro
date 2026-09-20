@@ -133,6 +133,28 @@ OUTILS_ECRITURE: frozenset[str] = frozenset({"Write", "Edit", "MultiEdit", "Note
 #: on sait d'un coup d'œil que ce n'est pas le livrable. Jamais recensé.
 DOSSIER_ATELIER = ".maestro"
 
+#: Les noms que la **comptabilité de Maestro** occupe déjà sous `.maestro/`, et
+#: qu'un atelier de tâche ne peut donc pas prendre (docs/38 §4.3, #1033).
+#: `.maestro/outillage/` porte le manifeste de l'outillage généré dans le projet
+#: (`maestro.outillage.detection.CHEMIN_MANIFESTE`) et le dossier `refuses/` des
+#: versions qu'une régénération n'a pas écrasées. Rien n'empêchait un identifiant
+#: de tâche de se réduire à `outillage` (`_slug` ne garde que `[A-Za-z0-9_-]`) :
+#: les deux se seraient alors partagé le même dossier, et l'atelier — qui n'est
+#: *jamais recensé* et que personne ne relit — aurait cohabité avec la seule
+#: mémoire de ce que Maestro possède dans le projet.
+#:
+#: ⚠ Une constante littérale, et non le segment dérivé de `CHEMIN_MANIFESTE` :
+#: importer `maestro.outillage` d'ici refermerait un cycle (son paquet importe
+#: `FrontiereEcriture` pour écrire l'outillage). Le lien se lit dans les deux
+#: sens par ce commentaire, et il n'y a qu'un nom à tenir.
+ATELIERS_RESERVES: frozenset[str] = frozenset({"outillage"})
+
+#: Ce qu'un atelier au nom réservé devient. Suffixé plutôt que refusé : le nom
+#: d'une tâche n'est pas un geste de l'utilisateur, et faire échouer une tâche
+#: parce que son identifiant s'est réduit à un mot déplacerait le problème sur
+#: quelqu'un qui n'y peut rien.
+SUFFIXE_ATELIER_RESERVE = "-tache"
+
 
 def chemin_atelier(tache: str) -> str:
     """L'atelier de la tâche `tache`, relatif à la racine — `.maestro/<tâche>`.
@@ -142,7 +164,13 @@ def chemin_atelier(tache: str) -> str:
     identifiant vide n'arrive pas jusqu'ici. Une fonction plutôt qu'un f-string
     recopié, pour que « où est l'atelier » n'ait qu'une seule orthographe — c'est
     elle que le message de la tâche nomme et que le recensement saute.
+
+    Un nom **réservé** (`ATELIERS_RESERVES`) est écarté ici, et nulle part
+    ailleurs : c'est le seul endroit qui compose le chemin, donc le seul où la
+    collision peut se produire.
     """
+    if tache.strip().lower() in ATELIERS_RESERVES:
+        return f"{DOSSIER_ATELIER}/{tache}{SUFFIXE_ATELIER_RESERVE}"
     return f"{DOSSIER_ATELIER}/{tache}"
 
 
