@@ -45,6 +45,7 @@ from maestro.controltower.events import (
     EVENEMENT_MESSAGE_INTER_AGENTS,
     EVENEMENT_RUN_PLAN,
     EVENEMENT_TACHE_BLOCAGE,
+    EVENEMENT_TACHE_DECISION,
     EVENEMENT_TACHE_DETAIL,
     EVENEMENT_TACHE_REFERENCE,
     EVENEMENT_TACHE_STATUT,
@@ -129,6 +130,13 @@ _SUFFIXE_DETAIL = SUFFIXE_ETAPE_DETAIL
 #: pont est la couche basse de la Control Tower et n'importe pas le moteur.
 _SUFFIXE_BLOCAGE = ":blocage"
 
+#: Suffixe des étapes de **décision tranchée seul** (#1024 — cf.
+#: `maestro.engine.executor`, `SUFFIXE_ETAPE_DECISION`). Recopié plutôt
+#: qu'importé, comme `:blocage`, `:activite`, `:relance`, `:debut` et
+#: `:refus-outil` : ce pont est la couche basse de la Control Tower et n'importe
+#: pas le moteur.
+_SUFFIXE_DECISION = ":decision"
+
 #: Suffixe des **relevés d'usage** d'une tâche en cours (#835). **Importé** et non
 #: recopié, à la différence des suffixes du moteur ci-dessus : il vit avec le
 #: format de ligne (`maestro.telemetry.journal`), que ce pont lit déjà, et un
@@ -200,6 +208,11 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
       rien changer d'autre. Même forme que les deux précédentes et pour la même
       raison — un agent qui bute n'est pas une tâche bloquée (la cascade de #43
       appartient au moteur, docs/31 §3.4) ;
+    - les étapes `<tache>:decision` (#1024) deviennent un `tache.decision` :
+      elles portent **ce que l'agent a tranché seul** (`detail`) et **pourquoi**
+      (`description`), sans rien changer d'autre. Même forme que la précédente,
+      et le même sens : l'agent a décidé *dans* sa tâche, pas *du sort* de sa
+      tâche ;
     - les relevés `<tache>:usage` (#835) deviennent un `tache.usage` : ce que la
       tâche **en cours** a consommé jusqu'ici, mesure d'usage **conservée** —
       c'est tout leur objet — mais sous un type que les lecteurs comptables du
@@ -241,6 +254,7 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
     est_reference = etape.endswith(_SUFFIXE_REFERENCE)
     est_detail = etape.endswith(_SUFFIXE_DETAIL)
     est_blocage = etape.endswith(_SUFFIXE_BLOCAGE)
+    est_decision = etape.endswith(_SUFFIXE_DECISION)
     est_usage = etape.endswith(_SUFFIXE_USAGE)
     est_activite = etape in _ETAPES_RUN or etape.endswith(_SUFFIXES_ACTIVITE)
     if est_reference:
@@ -265,6 +279,18 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
         # de #719 — la déclaration est gratuite au grand livre, faute de quoi
         # dire qu'on est bloqué coûterait, et un agent aurait une raison de se
         # taire.
+        mesure = None
+        cout_brut = None
+    elif est_decision:
+        type_evenement = EVENEMENT_TACHE_DECISION
+        tache_id = etape.removesuffix(_SUFFIXE_DECISION)
+        detail = str(record.get("sortie") or "")
+        # Idem : rendre compte de ce qu'on a tranché seul ne dépense rien, et
+        # c'est la même raison qu'en #719 — le jour où consigner coûterait, se
+        # taire deviendrait la stratégie payante, et l'autonomie cesserait
+        # d'être vérifiable après coup (#1019). Le **motif** de la décision
+        # voyage dans `description`, que l'événement porte déjà pour tous les
+        # types (cf. `_consigne_decision_autonome`).
         mesure = None
         cout_brut = None
     elif est_usage:

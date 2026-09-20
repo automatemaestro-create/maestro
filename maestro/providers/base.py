@@ -23,6 +23,7 @@ from maestro.deliberation import CreditArbitrage
 from maestro.providers.arbitrage import Arbitre, ArbitreActe
 from maestro.providers.blocage import Signaleur
 from maestro.providers.courrier import Courrier
+from maestro.providers.decision import Consigneur
 
 if TYPE_CHECKING:  # imports de typage seuls — pas de dépendance d'exécution vers agents
     from maestro.agents.mcp import ServeurMcp
@@ -461,6 +462,7 @@ class ModelProvider(ABC):
         on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,
         on_arbitrage: Arbitre | None = None,
         on_blocage: Signaleur | None = None,
+        on_decision: Consigneur | None = None,
         credit_arbitrage: CreditArbitrage | None = None,
         on_courrier: Courrier | None = None,
         plafond_tours: int | None = PLAFOND_TOURS_DEFAUT,
@@ -598,6 +600,23 @@ class ModelProvider(ABC):
         et n'en aura jamais : on ne mesure que les attentes, et celle-ci n'existe
         pas. Capacité optionnelle au second degré, comme `on_etapes` et
         `on_arbitrage`.
+
+        `on_decision` (#1024, `maestro.providers.decision`) part de l'agent et
+        n'en revient pas non plus : un fournisseur qui l'honore expose un outil
+        `consigner_decision(decision, raison)` et appelle ce canal quand l'agent
+        s'en sert. Il dit ce que l'agent a **tranché seul** et pourquoi, au
+        moment où il le tranche ; l'appelant l'écrit au journal du run.
+
+        C'est la seconde moitié du régime de docs/37 §2.2 — ce qui demande un
+        humain se demande (les deux canaux d'arbitrage plus haut), **tout le
+        reste se tranche seul et se consigne** —, et c'est pourquoi ce canal ne
+        transporte ni décision à rendre, ni attente : rien n'est soumis à
+        personne. Mêmes exigences que `on_blocage`, au mot près, y compris sur
+        l'échec (l'agent attend un accusé, pas une réponse) : le fournisseur lui
+        dit que sa décision **n'a pas** été consignée
+        (`maestro.providers.decision.CANAL_EN_ERREUR`) au lieu d'avaler
+        l'exception, faute de quoi il la croit écrite et ne la répète pas dans
+        son compte-rendu final, seul endroit qui lui reste.
 
         L'exigence sur l'échec est celle du canal d'arbitrage et non celle des
         canaux d'observation, pour une raison qui leur est commune : l'agent
