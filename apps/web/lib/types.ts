@@ -2082,6 +2082,59 @@ export type FriseRun = {
   tronquee: boolean;
 };
 
+/** Une décision que l'agent a jugée sienne : rien à demander, il a tranché (#1024). */
+export const ORIGINE_TRANCHEE = "tranchee";
+/** Une décision prise faute de réponse : la question a été posée, personne n'a répondu (#1023). */
+export const ORIGINE_HYPOTHESE = "hypothese";
+
+/**
+ * Une décision qu'un agent a tranchée **seul** pendant un run (#1026).
+ *
+ * `decision` et `raison` sont les deux champs que le moteur sépare à
+ * l'écriture : le front ne les redécoupe pas, il les rend. `origine` dit
+ * laquelle des deux familles — « je n'avais pas à demander » (`tranchee`) ou
+ * « j'ai demandé et personne n'a répondu » (`hypothese`) — et `hypothese` en est
+ * le raccourci booléen, servi plutôt que recalculé d'une comparaison de chaîne.
+ *
+ * `tache` est le **titre** de la tâche, résolu par le backend depuis sa
+ * projection ; vide quand elle n'est pas connue, et la ligne rend alors
+ * `tache_id`, qui reste un renvoi valable.
+ */
+export type Decision = {
+  id: string;
+  origine: string;
+  hypothese: boolean;
+  tache_id: string;
+  tache: string;
+  agent: string;
+  role: string;
+  decision: string;
+  raison: string;
+  horodatage: string;
+};
+
+/**
+ * Les décisions autonomes d'un run, servies par
+ * `GET /api/executions/{run_id}/decisions` (#1026) : la lecture qui dit **ce qui
+ * a été décidé sans moi, et pourquoi**.
+ *
+ * `entrees` va du plus **récent** au plus ancien — comme le journal du run, et
+ * non comme la frise : deux lectures chronologiques dans la même bascule doivent
+ * aller dans le même sens.
+ *
+ * `total` et `hypotheses` comptent **avant** le plafond, et `tronquee` dit s'il a
+ * mordu : les recompter sur ce qui a été reçu donnerait faux dès que la liste est
+ * tronquée.
+ */
+export type DecisionsRun = {
+  run_id: string;
+  entrees: Decision[];
+  total: number;
+  hypotheses: number;
+  plafond: number;
+  tronquee: boolean;
+};
+
 /** Clés de tri et sens du journal requêtable (maestro/controltower/journal.py). */
 export const TRI_JOURNAL_HORODATAGE = "horodatage";
 export const TRI_JOURNAL_AGENT = "agent";

@@ -4,12 +4,13 @@
  * La vue d'un run (#475, lot 3 de #472, docs/05 §2.4.2) : sa progression en tête,
  * et **la lecture qu'on a choisie** dessous.
  *
- * Cette lecture est **triple** — #491 l'a rendue double (le **pipeline**, le flux
- * — quoi après quoi ; le **Kanban**, les états — combien dans quelle colonne),
- * #516 y a ajouté le **journal** (qu'a-t-il fait), qui se lisait jusque-là au
- * pied de la vue, sous les deux autres. Le raisonnement complet, ce que l'ordre
- * des onglets conserve de #478 et les options écartées vivent dans `lib/vuesRun`
- * — pas ici : cette page les monte, elle ne les tranche pas.
+ * Cette lecture est **multiple** — #491 l'a rendue double (le **pipeline**, le
+ * flux — quoi après quoi ; le **Kanban**, les états — combien dans quelle
+ * colonne), #516 y a ajouté le **journal** (qu'a-t-il fait), qui se lisait
+ * jusque-là au pied de la vue, #355 la **frise** (qui, quand, et à qui) et #1026
+ * les **décisions** (ce qui a été tranché sans moi). Le raisonnement complet, ce
+ * que l'ordre des onglets conserve de #478 et les options écartées vivent dans
+ * `lib/vuesRun` — pas ici : cette page les monte, elle ne les tranche pas.
  *
  * Ouvrir un run donne enfin son backlog. Jusqu'ici le Kanban était celui du
  * **projet** (#248) et un run n'avait pas de vue à lui : impossible de voir ce que
@@ -53,6 +54,7 @@ import { BasculeDeVues } from "@/components/BasculeDeVues";
 import { IconeFlecheGauche, IconeRuns } from "@/components/Icones";
 import { Kanban } from "@/components/Kanban";
 import { Carte, CIBLE_MINIMALE, EtatVide } from "@/components/Primitives";
+import { DecisionsRun } from "@/components/runs/DecisionsRun";
 import {
   Avancement,
   BadgeRun,
@@ -86,6 +88,7 @@ import type { ResumeExecution } from "@/lib/types";
 import { useTachesRun } from "@/lib/useTachesRun";
 import {
   VUES_RUN,
+  VUE_DECISIONS,
   VUE_FRISE,
   VUE_JOURNAL,
   VUE_KANBAN,
@@ -253,6 +256,22 @@ export function VueRun({ runId }: { runId: string }) {
               `vue === …`, ce fil s'affichait sous les deux autres lectures, donc
               sous le pipeline : collé à un graphe, il s'en lisait comme le
               détail. */}
+          {/* Ce que les agents ont tranché **seuls** (#1026), et pourquoi :
+              l'autonomie du chantier #1019 n'est acceptable que si elle se
+              vérifie après coup. Elle prend les tâches du run pour ouvrir le
+              détail de celle qu'une ligne désigne — `taches` est déjà là, et
+              une seconde lecture pour la même liste en ferait deux à tenir
+              d'accord. */}
+          {vue === VUE_DECISIONS && (
+            <DecisionsRun
+              runId={runId}
+              taches={taches}
+              agents={agents}
+              reassigner={reassigner}
+              revision={revision}
+            />
+          )}
+
           {vue === VUE_JOURNAL && (
             <JournalRun
               portee={portee}

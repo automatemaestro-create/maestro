@@ -1161,6 +1161,28 @@ class ControlTowerState:
                 couloirs[tache.agent] = tache.role
         return couloirs
 
+    def titres_du_run(self, run_id: str) -> dict[str, str]:
+        """Les tâches du run `run_id` par leur titre (identifiant → titre) — #1026.
+
+        Le pendant d'`agents_du_run` pour ce qui **nomme** : la liste des décisions
+        autonomes renvoie vers la tâche où chacune a été prise, et une ligne qui
+        n'afficherait que `coquille-ui` n'y mènerait personne.
+
+        Le titre vient de la projection et non du `nom` de l'étape de journal, qui
+        le porte préfixé (« Décision de l'agent — … ») : découper ce préfixe
+        reviendrait à deviner par la forme ce que la projection sait déjà.
+
+        Une tâche sans titre n'entre pas dans la table — l'absence y vaut « je ne
+        sais pas », et `decisions.decisions_du_run` rend alors l'identifiant, qui
+        reste un renvoi valable.
+        """
+        vues = self.taches_du_run(run_id)
+        return {
+            tache.id: tache.titre
+            for tache in self._taches.values()
+            if tache.id in vues and tache.titre
+        }
+
     def signes_de_vie_du_run(self, run_id: str) -> dict[str, SigneDeVie]:
         """Le signe de vie de chaque agent du run `run_id` (agent → signe) — #836.
 
