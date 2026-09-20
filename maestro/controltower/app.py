@@ -161,6 +161,16 @@ Endpoints :
   sa **raison** et l'**endroit du projet** qui la justifie, ce que le projet
   porte déjà étant reconnu (`deja-present`) plutôt que dupliqué. N'écrit rien :
   la génération est #1033 ;
+- `POST /api/projets/{id}/equipe/proposition` — l'**équipe** que ce projet
+  appelle (#1039, docs/37) : chaque rôle avec sa **raison** et l'endroit du
+  projet qui la prouve, son nombre d'**instances** et pourquoi ce nombre, son
+  **playbook** (écrit par la mécanique de #257, à défaut celui de son gabarit —
+  `playbook_origine` le dit), les **skills** de l'outillage qu'il branche et ses
+  **autorisations proposées**, chacune avec sa raison, cran `auto` compris
+  (#716). Corps vide : le projet est analysé ; avec les réponses du
+  questionnaire d'outillage : l'équipe se dérive d'elles. `ecartes` nomme ce qui
+  n'est **pas** proposé — l'orchestrateur en fait partie par décision. **Rien
+  n'est créé** (`cree`, `validation`) : valider et créer est #1040 ;
 - `GET  /api/fournisseurs` — ce qui existe côté modèles (#253) **et ce qui est
   déjà là** (#487) : les fournisseurs du **registre**, leurs modèles annoncés et,
   pour chacun, les niveaux d'effort admis (liste vide quand le fournisseur
@@ -368,6 +378,7 @@ from maestro.controltower.chat import (
     ServiceChat,
 )
 from maestro.controltower.decisions import decisions_du_run
+from maestro.controltower.equipe import ServiceEquipe
 from maestro.controltower.events import (
     EVENEMENT_AGENT_CAPACITE,
     EVENEMENT_BRIEF_DECISION,
@@ -1463,6 +1474,16 @@ def create_app(
     generateur_agent = (
         generateur_agent if generateur_agent is not None else GenerateurDefinitionAgent()
     )
+    # La proposition d'équipe (#1039) se greffe sur les trois pièces qu'elle a
+    # besoin de connaître et sur aucune autre : le service de projets (pour
+    # résoudre et analyser le projet visé), la configuration d'agent au niveau
+    # des **gabarits** (pour savoir quels noms sont déjà pris) et le générateur
+    # de #257 (pour écrire les playbooks). Le **même** générateur que
+    # `POST /api/catalogue/generation` : deux instances auraient deux
+    # fournisseurs à tenir d'accord, et un test qui en injecte un n'en verrait
+    # qu'un. Aucun validateur ici — une proposition n'écrit rien, c'est #1040
+    # qui crée.
+    equipe = ServiceEquipe(projets, gabarits, generateur=generateur_agent)
     mailbox = mailbox if mailbox is not None else InMemoryMailbox()
     chat_store = chat_store if chat_store is not None else ChatStore.default()
     # Un seul dépôt de téléversement (#317) pour la route qui reçoit les octets et
@@ -5067,6 +5088,52 @@ def create_app(
         """
         try:
             return outillage.recommandation(id_projet, requete.choix_acquis())
+        except (ValueError, ProjetInconnu) as exc:
+            raise _refus_projet(exc) from exc
+
+    @app.post("/api/projets/{id_projet}/equipe/proposition")
+    async def proposition_equipe(
+        id_projet: str, requete: QuestionnaireOutillageRequete | None = None
+    ) -> dict[str, Any]:
+        """L'équipe que ce projet appelle — **proposée**, jamais créée (#1039, docs/37).
+
+        Le troisième geste du chantier « équipe sur mesure » (#1021) : un projet
+        naît sans agent, et c'est son analyse qui lui propose son équipe. Chaque
+        rôle sort avec **sa raison** et l'endroit du projet qui la prouve, son
+        **nombre d'instances** et pourquoi ce nombre, son **playbook**, les
+        **skills** de l'outillage qu'il branche et ses **autorisations
+        proposées** — chacune avec sa raison, le cran `auto` compris (#716,
+        docs/37 §4.3). `politique` porte les mêmes autorisations sous la forme
+        que #1040 persistera, pour que ce qu'on valide soit exactement ce qu'on
+        a lu.
+
+        **Une route, deux provenances.** Corps vide (ou `choix` vide) : le projet
+        est **analysé** (#1030) — c'est le cas d'un projet existant. Avec des
+        réponses au questionnaire d'outillage (#1031) : l'équipe se dérive de
+        ces **réponses**, sans qu'aucun fichier soit ouvert — c'est le cas d'un
+        projet neuf. Les deux passent par la même dérivation, et `source` dit
+        laquelle a servi.
+
+        **Rien n'est créé**, et la réponse le dit (`cree`, `validation`) : aucun
+        agent, aucun playbook, aucune politique, aucune capacité n'est écrit. La
+        validation et la création sont le lot 4 (#1040) ; d'ici là l'équipe se
+        relit, se modifie et se redemande sans conséquence.
+
+        `ecartes` nomme les rôles **non** proposés avec leur raison —
+        l'orchestrateur en fait partie *par décision* : c'est Maestro, et c'est
+        lui qui recrute (docs/37 §4.2).
+
+        Les playbooks sont écrits par la mécanique de #257. Un rôle dont la
+        rédaction échoue garde le playbook de son **gabarit** et le dit
+        (`playbook_origine`) : une équipe entière perdue parce qu'un quota est
+        épuisé serait une bien pire réponse.
+
+        404 si le projet est inconnu, 422 motivé si sa fiche est illisible ou si
+        sa racine n'est plus un dossier lisible — jamais un 500.
+        """
+        choix = requete.choix_acquis() if requete is not None else []
+        try:
+            return await equipe.proposer(id_projet, choix)
         except (ValueError, ProjetInconnu) as exc:
             raise _refus_projet(exc) from exc
 
