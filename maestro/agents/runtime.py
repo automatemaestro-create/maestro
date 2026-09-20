@@ -34,6 +34,7 @@ from maestro.providers.arbitrage import Arbitre, ArbitreActe
 from maestro.providers.base import PLAFOND_TOURS_DEFAUT, ModelProvider
 from maestro.providers.blocage import Signaleur
 from maestro.providers.courrier import Courrier
+from maestro.providers.decision import Consigneur
 from maestro.sandbox import ProducedFile, espace_de_travail
 
 #: Outils confiés par défaut à un rôle outillé : lire/écrire/éditer des fichiers,
@@ -214,6 +215,7 @@ class AgentRuntime:
         on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,
         on_arbitrage: Arbitre | None = None,
         on_blocage: Signaleur | None = None,
+        on_decision: Consigneur | None = None,
         credit_arbitrage: CreditArbitrage | None = None,
         on_courrier: Courrier | None = None,
         projet: Projet | None = None,
@@ -291,6 +293,13 @@ class AgentRuntime:
         l'un ni l'autre, et il n'a en particulier rien à attendre : ce verbe ne
         suspend personne, à la différence de celui du dessus. None : l'outil
         n'est pas servi du tout, plutôt que servi sans aboutir.
+
+        `on_decision` (#1024) traverse de la même façon et dans le même sens :
+        l'agent **consigne ce qu'il a tranché seul**, le fournisseur lui expose
+        l'outil, l'appelant écrit au journal du run. Le runtime ne connaît ni la
+        tâche, ni le run, ni le nom sous lequel l'agent signe — c'est pour cela
+        que ces trois champs ne sont pas demandés à l'agent (règle de
+        `on_courrier`, plus bas). None : l'outil n'est pas servi du tout.
 
         `credit_arbitrage` (#584) traverse aussi, et c'est le seul des six qui
         ne porte ni observation ni décision mais du **temps** : le fournisseur y
@@ -389,6 +398,7 @@ class AgentRuntime:
                 on_etapes=on_etapes,
                 on_arbitrage=on_arbitrage,
                 on_blocage=on_blocage,
+                on_decision=on_decision,
                 credit_arbitrage=credit_arbitrage,
                 on_courrier=on_courrier,
                 plafond_tours=self._plafond_tours,
