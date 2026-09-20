@@ -254,36 +254,47 @@ function EnTeteListe({
   })).filter((n) => n.nombre > 0);
   const retires = entrees.length - gardes.length;
   return (
-    <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-      <p className="text-corps text-texte">
-        {gardes.length === 0 ? (
-          <span className="text-attention-texte">
-            Rien ne sera écrit — tout a été retiré.
-          </span>
-        ) : (
-          <>
-            <strong>
-              {gardes.length} fichier{gardes.length > 1 ? "s" : ""}
-            </strong>{" "}
-            {gardes.length > 1 ? "seront écrits" : "sera écrit"} dans votre
-            dossier : {parNature.map((n) => compte(n.type, n.nombre)).join(" · ")}
-            .{" "}
-            {retires > 0 && (
-              <span className="text-attention-texte">
-                {retires} retiré{retires > 1 ? "s" : ""} par vous.
-              </span>
-            )}
-          </>
-        )}
+    <div className="flex flex-col gap-1">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <p className="text-corps text-texte">
+          {gardes.length === 0 ? (
+            <span className="text-attention-texte">
+              Rien ne sera écrit — tout a été retiré.
+            </span>
+          ) : (
+            <>
+              <strong>
+                {gardes.length} fichier{gardes.length > 1 ? "s" : ""}
+              </strong>{" "}
+              {gardes.length > 1 ? "seront écrits" : "sera écrit"} dans votre
+              dossier :{" "}
+              {parNature.map((n) => compte(n.type, n.nombre)).join(" · ")}.{" "}
+              {retires > 0 && (
+                <span className="text-attention-texte">
+                  {retires} retiré{retires > 1 ? "s" : ""} par vous.
+                </span>
+              )}
+            </>
+          )}
+        </p>
+        <button
+          type="button"
+          disabled={fige}
+          onClick={() => toutBasculer(gardes.length === 0)}
+          className="min-h-6 text-annexe text-texte-secondaire underline underline-offset-2 hover:text-texte"
+        >
+          {gardes.length === 0 ? "tout remettre" : "tout retirer"}
+        </button>
+      </div>
+      {/* La promesse de docs/38 §4.2, **avant** le geste et non dans le rapport
+          qui le suit : c'est ce qu'on veut savoir au moment de laisser un outil
+          écrire chez soi. Relevé manquant par le regard neuf — la correction
+          demandait le compte *et* cette phrase, et seul le compte y était. */}
+      <p className="text-annexe text-texte-secondaire">
+        Rien n&apos;est écrasé : un fichier déjà là que Maestro n&apos;a pas
+        écrit n&apos;est pas touché, et un fichier modifié depuis n&apos;est pas
+        réécrit.
       </p>
-      <button
-        type="button"
-        disabled={fige}
-        onClick={() => toutBasculer(gardes.length === 0)}
-        className="min-h-6 text-annexe text-texte-secondaire underline underline-offset-2 hover:text-texte"
-      >
-        {gardes.length === 0 ? "tout remettre" : "tout retirer"}
-      </button>
     </div>
   );
 }
