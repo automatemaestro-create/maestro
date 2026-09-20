@@ -899,7 +899,9 @@ def _outil_question(
 
     L'outil est rendu **séparément de son serveur**, comme ses trois voisins et
     pour la même raison : ce qui décide ici tient en une poignée de lignes, et les
-    éprouver ne doit coûter ni CLI, ni sous-processus, ni quota (tests → #1027).
+    éprouver ne doit coûter ni CLI, ni sous-processus, ni quota — c'est ce que
+    fait `tests/test_questions_agents.py` (#1027), qui appelle cet outil comme le
+    ferait le SDK et lit le texte servi à l'agent.
     """
 
     @tool(question.NOM_OUTIL, question.DESCRIPTION_OUTIL, question.SCHEMA_ENTREE)
@@ -1009,7 +1011,9 @@ def _outil_decision(on_decision: decision.Consigneur) -> SdkMcpTool[Any]:
 
     Rendu **séparément de son serveur** comme ses trois voisins : ce qui décide
     tient en quelques lignes, et les éprouver ne doit coûter ni CLI, ni
-    sous-processus, ni quota (tests → #1027).
+    sous-processus, ni quota — c'est ce que fait `tests/test_decisions_autonomes.py`
+    (#1027), qui appelle cet outil comme le ferait le SDK et lit le texte servi à
+    l'agent.
     """
 
     @tool(decision.NOM_OUTIL, decision.DESCRIPTION_OUTIL, decision.SCHEMA_ENTREE)

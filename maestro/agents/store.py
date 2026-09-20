@@ -55,6 +55,7 @@ from maestro.agents.catalog import (
     Agent,
     agents_pour,
 )
+from maestro.agents.rangement import RangeParProjet
 from maestro.config import Settings, load_settings
 
 #: Nom d'agent admissible comme fichier de stockage : slug sûr, sans séparateur ni
@@ -248,7 +249,7 @@ class SurchargeAgent:
         )
 
 
-class SurchargeStore:
+class SurchargeStore(RangeParProjet):
     """Dépôt des surcharges d'agents du code, sur fichiers (`<racine>/<nom>.json`).
 
     Même pattern que `maestro.agents.capacity.CapacityStore` — un fichier par
@@ -264,15 +265,12 @@ class SurchargeStore:
     états indiscernables à l'usage dont l'un afficherait pourtant un agent comme
     modifié — c'est le même piège que la chaîne vide d'`effort` dans `_valide`.
     Annuler une surcharge et n'en poser aucune sont ainsi le **même** état.
+
+    Cadré sur un projet (#1038), il **recouvre** le gabarit : une surcharge que
+    le projet n'a pas posée est celle du gabarit. Annuler une surcharge dans un
+    projet le ramène donc au gabarit — c'est-à-dire à l'agent du code tant que
+    rien n'y est surchargé, l'invariant du #259 dans le nouveau rangement.
     """
-
-    def __init__(self, racine: Path) -> None:
-        self._racine = racine
-
-    @property
-    def racine(self) -> Path:
-        """La racine du dépôt (un fichier JSON par agent surchargé)."""
-        return self._racine
 
     @classmethod
     def default(cls, settings: Settings | None = None) -> SurchargeStore:
@@ -283,16 +281,31 @@ class SurchargeStore:
         return cls(Path(__file__).resolve().parents[2] / "core" / "surcharges")
 
     def lire(self, nom: str) -> SurchargeAgent:
-        """La surcharge de l'agent `nom` — vide s'il n'a jamais été surchargé."""
+        """La surcharge de l'agent `nom` — celle du gabarit, ou vide, à défaut."""
         chemin = self._chemin(nom)
         if not chemin.is_file():
+            if self._gabarits is not None:
+                return self._gabarits.lire(nom)
             return SurchargeAgent(nom=nom)
         surcharge = SurchargeAgent.from_dict(json.loads(chemin.read_text(encoding="utf-8")))
         # Le nom fait foi côté fichier, comme pour les définitions et les capacités.
         return replace(surcharge, nom=nom)
 
     def lister(self) -> tuple[SurchargeAgent, ...]:
-        """Les surcharges **posées** (stockées), par nom — les autres agents sont au code."""
+        """Les surcharges **posées**, par nom — celles du projet par-dessus celles du gabarit.
+
+        L'union, et non le remplacement : c'est elle que `catalogue()` applique,
+        donc la seule façon qu'une surcharge héritée atteigne l'exécution.
+        """
+        posees = {surcharge.nom: surcharge for surcharge in self._stockees()}
+        if self._gabarits is not None:
+            heritees = {s.nom: s for s in self._gabarits.lister()}
+            heritees.update(posees)
+            posees = heritees
+        return tuple(posees[nom] for nom in sorted(posees))
+
+    def _stockees(self) -> tuple[SurchargeAgent, ...]:
+        """Les surcharges posées **dans ce dépôt-ci**, sans rien hériter."""
         if not self._racine.is_dir():
             return ()
         return tuple(
@@ -347,22 +360,23 @@ class SurchargeStore:
         return self._racine / f"{nom}.json"
 
 
-class AgentStore:
+class AgentStore(RangeParProjet):
     """Dépôt des définitions d'agents personnalisés, sur fichiers (`<racine>/<nom>.json`).
 
     Un fichier par agent, écrit atomiquement ; `ecrire` crée ou remplace la
     définition (la date de création survit au remplacement), `supprimer` la
     retire. Un seul écrivain à la fois au POC (l'API Control Tower) : le dépôt
     ne porte pas de verrou de concurrence.
+
+    ⚠ **Seul des six dépôts à n'hériter de rien** (#1038) : ce qu'il stocke
+    décide de l'**existence** d'un agent, et l'appartenance n'a pas de défaut
+    sensé là où un réglage en a un. Une définition rangée au niveau gabarit est
+    un *gabarit de rôle* (ce que #1039 consultera), pas un membre de l'équipe
+    d'un projet — et c'est la reprise (`maestro.agents.reprise`) qui rattache au
+    projet ceux qui y travaillaient déjà, sans rien supprimer.
     """
 
-    def __init__(self, racine: Path) -> None:
-        self._racine = racine
-
-    @property
-    def racine(self) -> Path:
-        """La racine du dépôt (un fichier JSON par agent)."""
-        return self._racine
+    herite_du_gabarit = False
 
     @classmethod
     def default(cls, settings: Settings | None = None) -> AgentStore:
@@ -463,6 +477,12 @@ def catalogue(
     l'exécution — les trois appelants (moteur, worker, activité durable) en
     héritent sans une ligne. Un dépôt de surcharges vide rend exactement le
     catalogue d'avant.
+
+    **Cadré sur un projet** (#1038) quand les deux dépôts le sont
+    (`store.pour_projet(id)`) : le catalogue rend alors les agents du code et
+    les agents **de ce projet**, jamais ceux d'un autre. Les agents du code y
+    restent tant que #1042 n'en a pas fait des gabarits — c'est ce lot-là qui
+    fera naître un projet sans agent, pas celui-ci.
     """
     store = store if store is not None else AgentStore.default()
     surcharges = surcharges if surcharges is not None else SurchargeStore.default()

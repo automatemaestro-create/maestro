@@ -141,6 +141,22 @@ deux cadrages voisins :
 Ne pas attendre est ce qui le rend gratuit *et* ce qui l'empêche d'empiéter sur #647. Un verbe qui
 attendrait serait un troisième canal d'arbitrage, à tenir d'accord avec les deux autres.
 
+> ⚠ **Le canal « question » existe depuis le 2026-09-20, et la frontière écrite ici a tenu**
+> (chantier #1019, [docs/37 §2.2](./37-decision-equipe-sur-mesure.md)). Ce paragraphe le renvoyait à
+> #647, [docs/32 §5](./32-decision-cran-orchestrateur.md) le renvoyait à #354 : les deux tickets se
+> sont fermés sans le construire. Il vit désormais dans
+> [`maestro/providers/question.py`](../maestro/providers/question.py)
+> (`mcp__maestro__poser_une_question`), il **suspend** l'agent jusqu'à la réponse ou jusqu'à une
+> borne — après quoi celui-ci reprend sur l'hypothèse qu'il avait annoncée, consignée au journal —,
+> il arrive **dans le fil** de l'utilisateur, et ses deux routes sont figées en
+> [docs/05 §6.17](./05-interface-control-tower.md). Rien de ce qui est écrit ci-dessus n'est défait :
+> `signaler_blocage` n'attend toujours rien, et c'est précisément ce qui le distingue du nouveau
+> verbe. Un **cinquième** verbe est né du même chantier, `consigner_decision` (#1024) — *voici ce que
+> j'ai tranché seul* —, et il tombe du côté **ouvert** de la règle du §2 : il dit ce qui **est**,
+> s'ajoute, ne retire rien, et le moteur peut l'ignorer sans que le run change de sens. Les deux sont
+> gardés par [`tests/test_questions_agents.py`](../tests/test_questions_agents.py) et
+> [`tests/test_decisions_autonomes.py`](../tests/test_decisions_autonomes.py) (#1027).
+
 **À qui ça sert immédiatement.** À **#651**, qui cadre la surveillance côté *push* et note que
 « un agent tué, muet, ou bloqué sans avoir jamais démarré ne demandera jamais rien ». Ce verbe est
 le versant *pull* de la même chaîne : il ne remplace pas la détection par règles, il lui donne le

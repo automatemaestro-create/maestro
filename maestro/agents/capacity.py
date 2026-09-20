@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any
 from weakref import WeakKeyDictionary
 
+from maestro.agents.rangement import RangeParProjet
 from maestro.config import Settings, load_settings
 
 #: Plafond d'instances par défaut : un agent = une exécution à la fois (docs/09 :
@@ -83,7 +84,7 @@ class CapaciteAgent:
         )
 
 
-class CapacityStore:
+class CapacityStore(RangeParProjet):
     """Dépôt des capacités d'agents, sur fichiers (`<racine>/<nom>.json`).
 
     Un fichier par agent, écrit atomiquement ; un agent sans fichier a la
@@ -91,15 +92,12 @@ class CapacityStore:
     Un seul écrivain à la fois au POC (l'API Control Tower) : le dépôt ne porte
     pas de verrou de concurrence. Les lecteurs (moteur, workers) relisent à
     chaque tâche — l'application est à chaud, comme les playbooks (#78).
+
+    Cadré sur un projet (#1038), il **recouvre** le gabarit : un agent que le
+    projet n'a pas réglé garde le réglage du gabarit, et un agent **désactivé**
+    au gabarit le reste. Retomber sur « actif, une instance » serait ici un
+    garde-fou qui saute, pas un défaut.
     """
-
-    def __init__(self, racine: Path) -> None:
-        self._racine = racine
-
-    @property
-    def racine(self) -> Path:
-        """La racine du dépôt (un fichier JSON par agent)."""
-        return self._racine
 
     @classmethod
     def default(cls, settings: Settings | None = None) -> CapacityStore:
@@ -110,16 +108,32 @@ class CapacityStore:
         return cls(Path(__file__).resolve().parents[2] / "core" / "capacite")
 
     def lire(self, nom: str) -> CapaciteAgent:
-        """La capacité de l'agent `nom` — celle par défaut s'il n'a jamais été réglé."""
+        """La capacité de `nom` — celle du gabarit, sinon celle par défaut, à défaut."""
         chemin = self._chemin(nom)
         if not chemin.is_file():
+            if self._gabarits is not None:
+                return self._gabarits.lire(nom)
             return CapaciteAgent(nom=nom)
         capacite = CapaciteAgent.from_dict(json.loads(chemin.read_text(encoding="utf-8")))
         # Le nom fait foi côté fichier, comme pour les définitions d'agents.
         return replace(capacite, nom=nom)
 
     def lister(self) -> tuple[CapaciteAgent, ...]:
-        """Les capacités **réglées** (stockées), par nom — les autres sont aux défauts."""
+        """Les capacités **réglées**, par nom — celles du projet par-dessus celles du gabarit.
+
+        L'union, et non le remplacement : c'est d'elle que sortent `inactifs()`
+        et l'état initial de la Control Tower, donc la seule façon qu'un réglage
+        hérité pèse encore sur le routage.
+        """
+        reglees = {capacite.nom: capacite for capacite in self._stockees()}
+        if self._gabarits is not None:
+            heritees = {c.nom: c for c in self._gabarits.lister()}
+            heritees.update(reglees)
+            reglees = heritees
+        return tuple(reglees[nom] for nom in sorted(reglees))
+
+    def _stockees(self) -> tuple[CapaciteAgent, ...]:
+        """Les capacités réglées **dans ce dépôt-ci**, sans rien hériter."""
         if not self._racine.is_dir():
             return ()
         return tuple(
