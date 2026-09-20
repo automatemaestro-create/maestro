@@ -23,15 +23,30 @@
 // mode web, au bit près — rien dans `apps/web/**` ne sait qu'il tourne dans une fenêtre, et il ne
 // doit rien en savoir. Ce dossier est le seul endroit où le mot « Electron » a le droit d'exister.
 //
-// ⚠ Depuis #928 la coque expose UN pont, et un seul verbe : ouvrir un dossier dans l'explorateur du
-// système (`preload.js`, `ouvrirDossier` plus bas). C'est la capacité que docs/35 §2.4 donne comme
-// l'une des trois qui justifient une fenêtre, et ENF-12 n'en souffre pas : le front teste si la
-// fonction EXISTE, jamais où il tourne (`apps/web/lib/poste.ts`) — dans un onglet elle n'existe
-// pas, et le chemin du livrable reste affiché et copiable.
+// ⚠ Depuis #928 la coque expose un pont, et #938 lui ajoute son deuxième verbe. Les deux servent
+// la même règle : le front teste si la fonction EXISTE, jamais où il tourne
+// (`apps/web/lib/poste.ts`) — dans un onglet elle n'existe pas, et l'autre chemin reste.
+//
+//   - `ouvrirDossier` (#928) — montrer un dossier dans l'explorateur du système ;
+//   - `choisirDossier` (#938) — ouvrir le dialogue de dossier de l'OS DANS LA FENÊTRE.
+//
+// Le second est la capacité que docs/35 §2.4 nommait en premier, et il vaut la peine de dire
+// pourquoi il n'est PAS un doublon de `POST /api/projets/selecteur` (#278). Cette route-là ouvre
+// le dialogue depuis le BACKEND, et elle porte ses limites en toutes lettres : elle refuse quand
+// la requête vient du réseau (`selecteur-hors-poste` — le dialogue s'ouvrirait sur le serveur,
+// devant personne) et quand le poste n'a ni PowerShell, ni `osascript`, ni `zenity`/`kdialog`
+// (`selecteur-sans-outil`). Dans une fenêtre, ces deux empêchements **n'existent pas** : le
+// dialogue s'ouvre là où la personne regarde, et il est celui d'Electron, pas celui d'un
+// sous-process à trouver dans le PATH. C'est le premier critère d'acceptation de #938.
+//
+// ⚠ ET IL N'AUTORISE RIEN. Le chemin rendu ici est celui de l'OS, **non canonicalisé** : c'est la
+// page qui le fait juger par `POST /api/projets/racine`, où vivent les frontières d'EF-38 (#221).
+// Une seconde validation ici serait deux formules à tenir d'accord, et c'est la garde qui
+// perdrait. La coque ouvre une fenêtre et lit un chemin ; elle ne dit jamais s'il est déclarable.
 
 'use strict';
 
-const { app, BrowserWindow, ipcMain, nativeTheme, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } = require('electron');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -198,6 +213,42 @@ async function ouvrirDossier(chemin) {
   return true;
 }
 
+/**
+ * Ouvrir le dialogue de dossier de l'OS **dans la fenêtre** (#938) — le second verbe du pont.
+ *
+ * Rend le chemin choisi, ou `null`. **Annuler n'est pas une erreur** : fermer la fenêtre est un
+ * geste normal, et c'est le même contrat que `POST /api/projets/selecteur` côté backend
+ * (`selecteur.choisir_dossier` rend `None`). La page ne distingue donc que deux cas, et elle n'a
+ * rien à afficher sur le premier.
+ *
+ * `depart` (facultatif) est le dossier d'ouverture : un confort, jamais une permission — le chemin
+ * **rendu** est jugé par l'API quel que soit l'endroit d'où l'on est parti. Il n'est retenu que
+ * s'il est absolu, pour la même raison qu'à `ouvrirDossier` : un relatif serait résolu contre le
+ * répertoire de travail de la coque, c'est-à-dire la racine du dépôt.
+ *
+ * `createDirectory` accompagne `openDirectory` : c'est le pendant macOS du `ShowNewFolderButton`
+ * que le dialogue PowerShell pose déjà (`maestro/controltower/selecteur.py`), et il est inerte
+ * ailleurs. L'origine « nouveau dossier » du formulaire de projet en dépend.
+ *
+ * ⚠ **Pas de verrou « un dialogue à la fois » ici**, là où le backend en a un (#278) : celui-ci a
+ * pour parent `fenetre`, donc il est MODAL sur elle — rien d'autre n'est cliquable tant qu'il est
+ * ouvert. Le verrou du backend existe parce que N requêtes HTTP peuvent empiler N fenêtres
+ * modales que personne n'a demandées ; ici il n'y a qu'une page, et elle est bloquée.
+ */
+async function choisirDossier(depart) {
+  if (!fenetre || fenetre.isDestroyed()) return null;
+  const options = {
+    title: 'Choisir le dossier du projet',
+    properties: ['openDirectory', 'createDirectory'],
+  };
+  if (typeof depart === 'string' && depart.trim() !== '' && path.isAbsolute(depart)) {
+    options.defaultPath = path.normalize(depart);
+  }
+  const { canceled, filePaths } = await dialog.showOpenDialog(fenetre, options);
+  if (canceled || filePaths.length === 0) return null;
+  return filePaths[0];
+}
+
 function chargerAttente() {
   if (!fenetre || fenetre.isDestroyed()) return Promise.resolve();
   return fenetre.loadFile(path.join(__dirname, 'attente.html')).catch(() => {});
@@ -244,10 +295,11 @@ function ouvrirFenetre() {
 let demarrageStack = Promise.resolve(0);
 
 async function demarrer() {
-  // Le seul canal que la page puisse emprunter (#928), armé avant qu'elle ne charge. `handle` et
-  // non `on` : la page attend une réponse, et c'est cette réponse qui lui dit si le dossier s'est
-  // ouvert — un canal à sens unique l'aurait laissée sans rien à afficher.
+  // Les deux canaux que la page puisse emprunter (#928, #938), armés avant qu'elle ne charge.
+  // `handle` et non `on` : la page attend une réponse — si le dossier s'est ouvert, quel chemin a
+  // été choisi —, et un canal à sens unique l'aurait laissée sans rien à afficher.
   ipcMain.handle('maestro:ouvrir-dossier', (_evenement, chemin) => ouvrirDossier(chemin));
+  ipcMain.handle('maestro:choisir-dossier', (_evenement, depart) => choisirDossier(depart));
   ouvrirFenetre();
   await chargerAttente();
   annoncer('demarrage', optionsStack.length > 0 ? 'Scénario de démonstration.' : null);
