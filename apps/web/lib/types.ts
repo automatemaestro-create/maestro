@@ -1199,13 +1199,12 @@ export type ChoixOutillage = {
   parce_que: string;
 };
 
-/* ⚠ Aucun type pour la **recommandation** d'outillage ici (#1031). Elle est servie
-   par `POST /api/projets/{id}/outillage/recommandation` dans la forme du lot 2
-   (`maestro.outillage.modele.Recommandation`), la même que
-   `GET …/outillage/analyse` — à laquelle le front n'a pas non plus de type. C'est
-   #1034 qui affichera l'une et l'autre, et qui les déclarera alors **une fois**
-   pour les deux. En écrire ici la moitié qui sert un seul des deux appelants
-   donnerait deux déclarations d'un même contrat, dont une que rien n'exerce. */
+/* ⚠ La **recommandation** d'outillage ne se déclare pas ici, et elle n'est plus un
+   trou : `RecommandationOutillage` vit plus bas, avec les types de projet, parce
+   que ses deux routes sont rangées sous un projet (`POST …/outillage/recommandation`
+   pour les choix d'un projet neuf, `GET …/outillage/analyse` pour un projet
+   existant) et qu'elles servent **la même forme**. #1031 l'avait laissée à #1034,
+   qui l'affiche : une seule déclaration pour les deux appelants, comme prévu. */
 
 /**
  * Un message du fil de chat utilisateur ↔ agent (`MessageChat.to_dict`, #84) :
@@ -2514,6 +2513,67 @@ export type AnalyseOutillage = {
   resume: string;
   parcours: ParcoursOutillage;
   recommandation: RecommandationOutillage;
+};
+
+/**
+ * Une étape du questionnaire d'un projet neuf
+ * (`POST /api/projets/{id}/outillage/questionnaire`, #1031).
+ *
+ * `question` est `null` quand il n'y en a plus — `terminee` le dit alors, et
+ * c'est la recommandation qui a quelque chose à montrer. `deductions` porte les
+ * réponses que les choix donnés **entraînent**, chacune avec sa cause : une
+ * question qu'on ne pose pas n'est pas une question qu'on cache, et l'écran les
+ * rend acquises au même titre que celles qu'on a choisies.
+ */
+export type EtapeQuestionnaireOutillage = {
+  question: QuestionOutillage | null;
+  deductions: ChoixOutillage[];
+  terminee: boolean;
+};
+
+/**
+ * L'outillage que des réponses recommandent
+ * (`POST /api/projets/{id}/outillage/recommandation`, #1031).
+ *
+ * `choix` rend **toutes** les réponses acquises, déductions comprises : c'est ce
+ * qui permet à l'écran de montrer ce qui a été décidé sans le recalculer.
+ * `recommandation` est la forme exacte que l'analyse d'un projet existant sert,
+ * ce qui fait que l'étape d'outillage n'a qu'un rendu pour les deux origines.
+ */
+export type ReponseRecommandationOutillage = {
+  projet_id: string;
+  source: Record<string, unknown>;
+  choix: ChoixOutillage[];
+  recommandation: RecommandationOutillage;
+};
+
+/**
+ * Ce que la génération a fait, fichier par fichier
+ * (`POST /api/projets/{id}/outillage/generation`, #1033, docs/38 §4.2).
+ *
+ * Quatre listes de chemins plutôt qu'un « ok » : `ecrits` (posés sur le disque),
+ * `refuses` (**jamais écrasés** — la version neuve attend dans
+ * `.maestro/outillage/refuses/`), `ignores` (le projet les portait déjà et
+ * Maestro ne les possède pas) et `retires` (ils quittent le manifeste sans
+ * quitter le disque). `refus` porte le motif d'un renoncement **global**, et
+ * c'est la seule forme sous laquelle rien n'a été écrit.
+ */
+export type RapportGenerationOutillage = {
+  projet_id: string;
+  analyse: string;
+  /** `en-place` : c'est fait. `branche` : passé par l'accord humain (docs/24 §2.4). */
+  regime: string;
+  branche?: string;
+  rapport: {
+    cible: string;
+    manifeste: string;
+    refus: string;
+    ecrits: string[];
+    refuses: string[];
+    ignores: string[];
+    retires: string[];
+  };
+  application: Record<string, unknown> | null;
 };
 
 /** Corps de `POST`/`PUT /api/projets` — le `vcs` n'y figure pas : il est constaté. */
