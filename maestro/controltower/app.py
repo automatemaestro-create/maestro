@@ -145,6 +145,15 @@ Endpoints :
   corps : le `vcs` ne se déclare pas (EF-38), il se déclenche. Un projet déjà
   versionné rend sa fiche telle quelle ; un refus (`depot-englobant` 409,
   `commit-refuse` 422, `git-indisponible` 503…) porte son motif, jamais un 500 ;
+- `GET  /api/projets/{id}/outillage/analyse` — l'**analyse** d'un projet
+  existant et l'outillage qu'elle recommande (#1030, docs/38) : la racine lue
+  **en lecture seule**, dans des bornes qui voyagent dans la réponse, sans
+  jamais exécuter le code du projet. Rend les langages, les gestionnaires, les
+  commandes de construction/test/lint, la CI, la forge et les conventions déjà
+  écrites — puis chaque skill, script ou fichier d'instructions recommandé avec
+  sa **raison** et l'**endroit du projet** qui la justifie, ce que le projet
+  porte déjà étant reconnu (`deja-present`) plutôt que dupliqué. N'écrit rien :
+  la génération est #1033 ;
 - `GET  /api/fournisseurs` — ce qui existe côté modèles (#253) **et ce qui est
   déjà là** (#487) : les fournisseurs du **registre**, leurs modèles annoncés et,
   pour chacun, les niveaux d'effort admis (liste vide quand le fournisseur
@@ -398,6 +407,7 @@ from maestro.controltower.orchestration import (
     RepondeurOrchestration,
     apercu_de,
 )
+from maestro.controltower.outillage import ServiceOutillage
 from maestro.controltower.persistence import (
     BusDurable,
     EventLog,
@@ -1315,6 +1325,10 @@ def create_app(
     secrets = secrets if secrets is not None else SecretStore.default()
     permissions = permissions if permissions is not None else PermissionStore.default()
     projets = projets if projets is not None else ServiceProjets.default()
+    # L'analyse d'outillage (#1030) se greffe sur le **même** service de projets :
+    # elle n'a pas de dépôt à elle, et un second lecteur de fiches finirait par ne
+    # plus refuser les mêmes racines que le premier.
+    outillage = ServiceOutillage(projets)
     state = (
         state
         if state is not None
@@ -3940,6 +3954,45 @@ def create_app(
         try:
             return await asyncio.to_thread(projets.versionner, id_projet)
         except (ValueError, ProjetInconnu, VersionnementRefuse) as exc:
+            raise _refus_projet(exc) from exc
+
+    @app.get("/api/projets/{id_projet}/outillage/analyse")
+    async def analyser_outillage(id_projet: str) -> dict[str, Any]:
+        """L'analyse d'un projet existant et l'outillage qu'elle recommande (#1030, docs/38).
+
+        Le premier geste du chantier « outillage universel » (#1020) : avant de
+        proposer quoi que ce soit à écrire dans le dossier de quelqu'un, on
+        regarde ce qu'il y a. La racine est lue **en lecture seule** et le code
+        du projet n'est **jamais exécuté** — le VCS lui-même est lu dans
+        `.git/config` plutôt qu'obtenu d'un `git remote`.
+
+        La réponse porte ses propres **bornes** (nombre de fichiers, profondeur,
+        octets par fichier, dossiers ignorés) et ce que le parcours a vu : une
+        analyse tronquée le dit, là où un plafond resté dans le code ferait lire
+        un projet plus petit qu'il n'est. Le périmètre déclaré du projet
+        s'applique en plus, donc ni `.env` ni `**/secrets/**` ne sont ouverts.
+
+        `constats` porte les langages, les gestionnaires (avec leur verrou), les
+        commandes de construction/test/lint — chacune avec le fichier et
+        l'extrait qui la justifient, et son `origine` : `declaree` par le projet
+        ou `convention` de l'outil —, la CI, la forge, les conventions déjà
+        écrites et le **dossier de scripts constaté**. `recommandation` porte
+        chaque skill, script ou fichier d'instructions avec sa raison et son
+        `etat` : ce que le projet porte déjà sort en `deja-present`, avec son
+        chemin, jamais dupliqué. `ecartes` nomme ce qui n'est pas recommandé et
+        pourquoi — les commandes le sont par décision (docs/38 §3.5).
+
+        **Rien n'est écrit** : la génération est #1033. 404 si le projet est
+        inconnu, 422 motivé si sa fiche est illisible ou si sa racine n'est plus
+        un dossier lisible — jamais un 500.
+
+        Joué **hors de la boucle d'événements** : parcourir un projet réel prend
+        des secondes, et une route qui bloquerait la boucle figerait les flux
+        SSE des autres écrans.
+        """
+        try:
+            return await asyncio.to_thread(outillage.analyser, id_projet)
+        except (ValueError, ProjetInconnu) as exc:
             raise _refus_projet(exc) from exc
 
     @app.get("/api/fournisseurs")
