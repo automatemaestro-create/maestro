@@ -368,12 +368,10 @@ def _corps_projet(constats: Constats, source: Mapping[str, Any] | None = None) -
             "L'analyse n'a constaté ni langage dominant, ni gestionnaire de paquets : "
             "demande à la personne qui te confie la tâche ce qu'est ce projet."
         )
-    return [_ligne_origine(source), *lignes] if _vient_des_choix(source) else lignes
-
-
-def _vient_des_choix(source: Mapping[str, Any] | None) -> bool:
-    """L'outillage vient-il des réponses d'un projet neuf ? Le manifeste le dit, pas le texte."""
-    return source is not None and source.get("type") == SOURCE_CHOIX
+    # D'où vient l'outillage : le manifeste le dit (`source.type`), jamais le texte.
+    if source is not None and source.get("type") == SOURCE_CHOIX:
+        return [_ligne_origine(source), *lignes]
+    return lignes
 
 
 def _ligne_origine(source: Mapping[str, Any]) -> str:
