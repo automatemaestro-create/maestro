@@ -263,13 +263,21 @@ export function BarreSuperieure({
                   repris de la variante C.
                   Seulement quand la colonne est **repliée** : ouverte, elle est
                   sous les yeux et se titre elle-même — le libellé ne dirait
-                  qu'une seconde fois ce que l'écran montre déjà. Et masqué sous
-                  `sm`, où le titre de page a la priorité, comme le coût cumulé
-                  et « Reconnexion… » juste au-dessus. Le nom accessible, lui,
-                  ne dépend pas de la largeur : il reste porté par
-                  l'`aria-label`. */}
+                  qu'une seconde fois ce que l'écran montre déjà. Et masqué
+                  quand la barre est étroite, où le titre de page a la priorité,
+                  comme le coût cumulé et « Reconnexion… » juste au-dessus. Le
+                  nom accessible, lui, ne dépend pas de la largeur : il reste
+                  porté par l'`aria-label`.
+                  ⚠ Ce seuil est lu sur la **barre** (`@xl`) depuis #1108, et
+                  non plus sur la fenêtre (`sm`) : « comme le coût cumulé et
+                  Reconnexion… juste au-dessus » était l'intention de #1107, ce
+                  n'était plus le cas depuis que ces deux-là se mesurent à la
+                  barre. Un libellé de 110 px qui apparaît sur la foi d'une
+                  largeur de fenêtre est précisément ce que ce ticket corrige :
+                  la colonne repliée rend la barre large, mais c'est la barre
+                  qui doit le dire. */}
               {!conversationOuverte && (
-                <span className="hidden text-corps sm:inline">Conversation</span>
+                <span className="hidden text-corps @xl:inline">Conversation</span>
               )}
             </button>
           )}
