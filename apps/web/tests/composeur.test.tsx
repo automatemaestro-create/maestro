@@ -99,15 +99,18 @@ import {
 import { marquerGuideVu } from "@/lib/guide";
 import {
   AGENT_ORCHESTRATION,
-  AMORCES_ORCHESTRATION,
+  AMORCE_PISTES,
   INTERLOCUTEUR_ORCHESTRATION,
   ROLE_ORCHESTRATION,
+  SUJET_SANS_NOM,
+  amorcesDuProjet,
 } from "@/lib/orchestration";
 
 import {
   agentFactice,
   poserFilAssistance,
   poserProjetActif,
+  projetFactice,
   rendreAvecEtat,
   reserveDuFlottantRem,
 } from "./aides";
@@ -1351,6 +1354,10 @@ describe("⑩ les amorces se bornent à deux sous `sm` (#891)", () => {
         agentFactice({ nom: AGENT_ORCHESTRATION, role: ROLE_ORCHESTRATION }),
       ],
     });
+    // Les amorces sont dérivées du projet ouvert depuis #942 : la liste de
+    // référence est donc celle du projet que `rendreAvecEtat` a posé, jamais
+    // une constante — c'est la même fonction que l'écran appelle.
+    const attendues = amorcesDuProjet(projetFactice());
     const groupe = screen.getByRole("group", {
       name: "Suggestions pour commencer",
     });
@@ -1358,13 +1365,11 @@ describe("⑩ les amorces se bornent à deux sous `sm` (#891)", () => {
     // en page, jamais un `slice` — rien n'est perdu au-dessus du point de
     // rupture, et c'est ce que la note technique du ticket exige.
     expect(within(groupe).getAllByRole("button")).toHaveLength(
-      AMORCES_ORCHESTRATION.length,
+      attendues.length,
     );
     // Et ce sont bien les deux **premières** qui restent : les suivantes
     // portent le marqueur, dans l'ordre où elles sont proposées.
-    expect(amorcesHorsSm(groupe)).toEqual(
-      AMORCES_ORCHESTRATION.slice(AMORCES_SOUS_SM),
-    );
+    expect(amorcesHorsSm(groupe)).toEqual(attendues.slice(AMORCES_SOUS_SM));
   });
 
   it("n'a rien à borner sur l'onglet Chat d'une fiche agent", () => {
@@ -1392,11 +1397,12 @@ describe("⑪ les amorces ne s'enveloppent plus (#908)", () => {
         agentFactice({ nom: AGENT_ORCHESTRATION, role: ROLE_ORCHESTRATION }),
       ],
     });
+    const attendues = amorcesDuProjet(projetFactice());
     const groupe = screen.getByRole("group", {
       name: "Suggestions pour commencer",
     });
     expect(within(groupe).getAllByRole("button")).toHaveLength(
-      AMORCES_ORCHESTRATION.length,
+      attendues.length,
     );
     // Aucune ne peut passer à la ligne sur elle-même — pas même celles que le
     // marqueur de #891 retire sous `sm`, qui reprennent leur place au-dessus.
@@ -1407,32 +1413,31 @@ describe("⑪ les amorces ne s'enveloppent plus (#908)", () => {
       expect.arrayContaining(["flex", "flex-wrap"]),
     );
     // Le bornage de ⑩ n'a pas bougé : les deux premières restent sous `sm`.
-    expect(amorcesHorsSm(groupe)).toEqual(
-      AMORCES_ORCHESTRATION.slice(AMORCES_SOUS_SM),
-    );
+    expect(amorcesHorsSm(groupe)).toEqual(attendues.slice(AMORCES_SOUS_SM));
   });
 
   it("tient les deux listes au calibre mesuré, sans changer ce que chacune propose", () => {
     // Le calibre de Duck.ai (10 à 28 caractères) — `nowrap` sans lui ferait
     // déborder une amorce à 375 px, ce qui serait pire que l'enveloppement.
     expect(CALIBRE_AMORCE).toBe(28);
-    expect(auDelaDuCalibre(AMORCES_ORCHESTRATION)).toEqual([]);
+    expect(auDelaDuCalibre(amorcesDuProjet(projetFactice()))).toEqual([]);
     expect(auDelaDuCalibre(AMORCES_ASSISTANCE)).toEqual([]);
-    // Ce que chacune propose n'a pas bougé, et l'ordre non plus — il est
+    // Ce que chacune propose parle désormais du **projet ouvert** (#942) et
+    // non plus du backlog de Maestro ; l'ordre, lui, n'a pas bougé — il est
     // éditorial (les deux premières mènent à une proposition de run, les deux
     // dernières à une réponse), et « garder les deux plus courtes » sous `sm`
     // le rendrait imprévisible : ce sont bien les deux **premières** que ⑩
     // garde, et elles doivent donc tenir la rangée à elles deux.
-    expect(AMORCES_ORCHESTRATION).toEqual([
-      "Pagine les projets",
-      "Corrige le tri Kanban",
+    expect(amorcesDuProjet(projetFactice())).toEqual([
+      "Décris Dépensio",
+      "Propose des pistes",
       "Où en sont les runs ?",
       "Que dois-je arbitrer ?",
     ]);
     // La rangée à 375 px : 262,8 px pour les deux boutons, soit ~40 caractères
     // à elles deux (banc du 2026-09-10 — 39 tiennent, 42 dépassent de 7 px).
     // Une borne de rédaction : le pixel est au banc, ce compte l'approche.
-    const paire = AMORCES_ORCHESTRATION.slice(0, AMORCES_SOUS_SM);
+    const paire = amorcesDuProjet(projetFactice()).slice(0, AMORCES_SOUS_SM);
     expect(paire).toHaveLength(AMORCES_SOUS_SM);
     expect(
       paire.reduce((total, amorce) => total + Array.from(amorce).length, 0),
@@ -1451,6 +1456,64 @@ describe("⑪ les amorces ne s'enveloppent plus (#908)", () => {
       "Où voir les coûts ?",
       "Modifier un playbook ?",
     ]);
+  });
+
+  /**
+   * Le nom d'un projet est une **donnée de l'utilisateur** : trois caractères
+   * ou quarante. Le calibre, lui, ne se négocie pas (#908). La borne est donc
+   * jouée sur ce qui la met en défaut — un nom trop long —, et non seulement
+   * sur le projet factice qui tient.
+   */
+  it("garde le calibre quel que soit le nom du projet (#942)", () => {
+    // Le dernier nom qui tient : 15 points de code, soit 22 pour l'amorce et
+    // exactement `CALIBRE_PAIRE_SOUS_SM` avec la seconde. L'échantillon n'est
+    // pas inventé — c'est le nom du projet de la démo, celui que la relecture
+    // visuelle a sous les yeux (et celui qui a fait raccourcir le gabarit).
+    const juste = amorcesDuProjet(projetFactice({ nom: "mini-CRM (démo)" }));
+    expect(juste[0]).toBe("Décris mini-CRM (démo)");
+    expect(Array.from(juste[0]).length + Array.from(AMORCE_PISTES).length).toBe(
+      CALIBRE_PAIRE_SOUS_SM,
+    );
+
+    // Un caractère de plus, et la paire déborderait : le démonstratif reprend
+    // sa place plutôt que de tronquer un nom — tronqué, il ne nommerait plus
+    // rien, et c'est nommer qui avait un sens.
+    const trop = amorcesDuProjet(
+      projetFactice({ nom: "Application de suivi des dépenses" }),
+    );
+    expect(trop[0]).toBe(`Décris ${SUJET_SANS_NOM}`);
+
+    // Les deux branches restent au calibre, chacune seule et les deux en paire.
+    for (const amorces of [juste, trop]) {
+      expect(auDelaDuCalibre(amorces)).toEqual([]);
+      expect(
+        amorces
+          .slice(0, AMORCES_SOUS_SM)
+          .reduce((total, amorce) => total + Array.from(amorce).length, 0),
+      ).toBeLessThanOrEqual(CALIBRE_PAIRE_SOUS_SM);
+    }
+
+    // Un nom vide n'écrit pas « Décris  » : c'est la même bascule.
+    expect(amorcesDuProjet(projetFactice({ nom: "   " }))[0]).toBe(
+      `Décris ${SUJET_SANS_NOM}`,
+    );
+  });
+
+  /**
+   * Le fond du ticket (#942, constat G9 du retex du 2026-09-11) : ce que ces
+   * amorces **ne** disent plus. Joué sur ce qui était affiché à quelqu'un dont
+   * le projet est un minuteur — c'est l'échantillon fautif, et il est nommé.
+   */
+  it("ne propose plus le backlog de Maestro à qui ouvre son projet (#942)", () => {
+    const amorces = amorcesDuProjet(projetFactice({ nom: "minuteur" }));
+    // Les deux libellés de la capture `03-chat-vide.png` ont disparu.
+    expect(amorces).not.toContain("Pagine les projets");
+    expect(amorces).not.toContain("Corrige le tri Kanban");
+    // Et la première parle du projet ouvert, qu'elle nomme.
+    expect(amorces[0]).toBe("Décris minuteur");
+    // Sans rien prétendre en connaître : aucune n'affirme ce qu'il contient ni
+    // ce qui lui manque — elles proposent d'aller voir.
+    expect(amorces[1]).toBe(AMORCE_PISTES);
   });
 });
 

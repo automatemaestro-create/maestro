@@ -1828,6 +1828,53 @@ livrent pas séparément** :
    sans `nowrap` ne prouve rien, le prochain libellé un peu long enveloppant à
    nouveau. C'est pourquoi les deux vivent dans le même ticket.
 
+**Et elles parlent du projet ouvert, pas du backlog de Maestro** (#942, constat
+**G9** du retex du 2026-09-11). Ce qui précède réglait leur *calibrage* ; leur
+*contenu*, lui, était resté une liste figée — « Pagine les projets », « Corrige
+le tri Kanban » — proposée à quelqu'un dont le projet est un minuteur. C'est
+**G6** sous une autre forme : le produit parle de lui-même. Quatre points :
+
+- `AMORCES_ORCHESTRATION` est devenue **`amorcesDuProjet(projet)`**
+  (`lib/orchestration`), appelée par les deux surfaces qui montent ce fil —
+  `/chat` et la colonne de droite (`ColonneConversation`), qui est la **même**
+  conversation et ne peut donc pas proposer autre chose ;
+- **les deux premières changent de sujet** : au lieu d'un travail que nous
+  aurions choisi, elles proposent d'**aller voir** ce projet-ci —
+  « Décris <nom> » et « Propose des pistes ». C'est ce qui tient le second
+  critère du ticket : sur un projet dont on ne sait rien, l'amorce reste utile
+  **et honnête**, parce qu'elle ne prétend rien en connaître. Les deux
+  dernières (« Où en sont les runs ? », « Que dois-je arbitrer ? ») ne bougent
+  pas : elles portent la frontière du canal et parlent déjà du projet ouvert,
+  l'aperçu que lit l'orchestration étant cadré sur lui (#683) ;
+- **rien n'est lu sur le disque, et aucun modèle n'est appelé** : la fonction
+  est pure et ne lit que la fiche déjà en mémoire (`lib/etatGlobal`).
+  L'analyse d'un projet existe (`GET …/outillage/analyse`, #1030) et rendrait
+  les langages et les commandes, mais elle **parcourt** la racine par milliers
+  de fichiers, et cette surface se monte à chaque ouverture de la colonne — ce
+  serait le prix par visite que la note technique du ticket écarte. Ce que le
+  projet contient, c'est la première amorce qui va le chercher, par le seul
+  moyen dont le produit dispose : un run ;
+- **le nom entre s'il tient, et pas autrement.** Un nom de projet est une
+  donnée de l'utilisateur ; le calibre, lui, ne se négocie pas. La première
+  amorce le porte **si et seulement si** `CALIBRE_AMORCE` et
+  `CALIBRE_PAIRE_SOUS_SM` tiennent encore — **15 points de code** de nom, la
+  paire sous `sm` étant la borne qui mord —, sinon le démonstratif (« ce
+  projet ») reprend sa place ; un libellé tronqué ne nommerait plus rien, et
+  c'est nommer qui avait un sens. C'est pourquoi les deux nombres ont quitté
+  `components/Conversation` pour **`lib/amorces`** : la dérivation doit les
+  lire, elle vit dans `lib/`, et l'arête `lib → components` a été **mesurée
+  fausse** (elle casse `tests/dernier-message.test.tsx`, sept cas, sur les deux
+  surfaces de fil ; vérifié dans les deux sens). Le composant les ré-exporte,
+  le nombre n'ayant qu'une place.
+
+  L'**ordre** ne bouge pas, et le **nombre** non plus — quatre. Que seules deux
+  soient atteignables à 420 px est le constat **G8** du même retex, qui a son
+  propre ticket : le corriger ici trancherait à sa place. La phrase de « Ouvert
+  depuis ce fil » à file vide a suivi la même règle, sur la même capture
+  (`03-chat-vide.png`) : son exemple était « ajoute la pagination à la liste des
+  projets », elle nomme désormais le projet et laisse l'utilisateur dire son
+  travail.
+
 **Ce qui le garde** (#728) : `tests/composeur.test.tsx` — la hauteur posée quand
 le contenu déborde et rendue quand il rentre (les mesures sont **simulées**,
 jsdom rendant zéro), le plafond et la poignée au CSS, le cadre qui contient

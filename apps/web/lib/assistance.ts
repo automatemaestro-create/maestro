@@ -35,9 +35,10 @@ export const ACCUEIL_ASSISTANCE =
  * et évitent la page blanche du premier usage.
  *
  * ⚠ **Chaque libellé tient en `CALIBRE_AMORCE` caractères au plus** (#908 —
- * même règle que `AMORCES_ORCHESTRATION`, même raison : une amorce ne
- * s'enveloppe jamais sur elle-même, `whitespace-nowrap`, donc sa longueur est
- * toute sa largeur). Raccourcir n'a rien changé à ce que chacune demande, et
+ * même règle que les amorces du fil d'orchestration, même raison : une amorce
+ * ne s'enveloppe jamais sur elle-même, `whitespace-nowrap`, donc sa longueur
+ * est toute sa largeur ; le nombre vit dans `lib/amorces` depuis #942).
+ * Raccourcir n'a rien changé à ce que chacune demande, et
  * `tests/test_assistance.py` le tient d'un autre côté : chacune doit encore
  * trouver son sujet dans le repli (`sujet_assistance`), en démo comme sans
  * fournisseur — le mot qui porte le sujet (« tableau de bord », « validation »,

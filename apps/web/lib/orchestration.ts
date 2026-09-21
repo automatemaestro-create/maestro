@@ -24,6 +24,9 @@
  * autour de la conversation.
  */
 
+import { CALIBRE_AMORCE, CALIBRE_PAIRE_SOUS_SM, calibreDe } from "./amorces";
+import type { Projet } from "./types";
+
 /**
  * Le nom du fil global — le segment d'URL de `/api/chat/{agent}` et le `agent`
  * des événements `chat.message` correspondants. Réservé côté backend
@@ -59,48 +62,125 @@ export const ACCUEIL_ORCHESTRATION =
   "Dites ce qu'il y a à faire — je vous propose un objectif, et j'ouvre le run dès que vous l'approuvez : je le découpe alors en tâches que je confie aux agents compétents. Rien ne part sans votre accord. Une question sur l'état en cours n'ouvre rien : j'y réponds. Pour vous adresser à un agent précis sans quitter cet écran, commencez par « @ » suivi de son nom.";
 
 /**
- * Des amorces proposées tant que la conversation n'a pas commencé. Elles montrent
- * le périmètre du fil mieux qu'une phrase d'explication — et, ici, la **frontière
- * qui compte** : une demande de travail se fait **proposer** un run, une question
- * n'en propose aucun (`maestro/controltower/orchestration.py`). Les deux premières
- * mènent à une proposition, les deux dernières à une réponse.
- *
- * ⚠ Depuis #685, **aucune des quatre n'ouvre un run à elle seule** : le canal
- * montre l'objectif qu'il enverrait et attend un accord explicite, le silence
- * n'en étant pas un. La frontière que ces amorces donnent à voir est donc celle
- * entre « proposer » et « converser », plus celle entre « lancer » et « ne pas
- * lancer » — la seconde ne dépend plus du texte mais de l'accord qui suit.
- *
- * ⚠ Ce ne sont **pas** le lexique retiré en #685 : celui-là jugeait les demandes
- * côté Python (`_AMORCES`/`_VERBES_TRAVAIL`) et n'existe plus. L'homonymie est
- * gênante et assumée — `AMORCES_ASSISTANCE` porte le même nom pour la même
- * chose —, et c'est pour elle que la garde de `tests/test_chat_global.py` lit des
- * identifiants Python plutôt que de chercher du texte.
- *
- * ⚠ **Chaque libellé tient en `CALIBRE_AMORCE` caractères au plus** (#908,
- * parti pris 5 de la veille #899, d'après Duck.ai : 10 à 28 caractères, 2 à 5
- * mots). Une amorce ne s'enveloppe jamais sur elle-même (`whitespace-nowrap`,
- * `components/Conversation`), donc sa longueur est **toute** sa largeur — et
- * sous `sm` les deux premières doivent partager une rangée à 375 px, où le
- * composeur ne fait que **268,8 px** (rail de 64 px, marges de 16 px) : les
- * deux boutons disposent de 262,8 px à eux deux, soit ~40 caractères en tout
- * (`CALIBRE_PAIRE_SOUS_SM`) — « Corrige le tri du Kanban » à côté de « Pagine
- * les projets » dépassait encore de 7 px, mesuré au banc du 2026-09-10. Les
- * quatre d'avant #908 (43, 35, 21 et 36 caractères) étaient des phrases
- * entières, et le bornage à deux de #891 gardait précisément les deux plus
- * longues. Raccourcir est une décision de **rédaction** : chacune propose
- * exactement ce qu'elle proposait — paginer la liste des projets, corriger le
- * tri des tâches du Kanban, l'état des runs, ce qui attend un arbitrage —, et
- * l'**ordre** ne bouge pas (il est éditorial : l'orchestration propose d'abord
- * ce qu'elle fait le mieux, et garder « les deux plus courtes » sous `sm` le
- * rendrait imprévisible).
+ * Comment la première amorce désigne le projet quand son nom ne tient pas dans
+ * le calibre — voir `amorcesDuProjet`. Un démonstratif, et non un nom générique
+ * (« votre projet ») : l'écran est déjà **dans** le projet, que la barre
+ * supérieure nomme.
  */
-export const AMORCES_ORCHESTRATION: string[] = [
-  "Pagine les projets",
-  "Corrige le tri Kanban",
-  "Où en sont les runs ?",
-  "Que dois-je arbitrer ?",
-];
+export const SUJET_SANS_NOM = "ce projet";
+
+/**
+ * La première amorce : *va lire le projet et dis-moi ce qu'il est*.
+ *
+ * ⚠ **« Décris » et non « Décris-moi »**, qui se lisait mieux : les quatre
+ * caractères de plus coûtaient quatre caractères de **nom de projet**, et à
+ * 11 caractères de budget le repli tombait sur des noms ordinaires — relevé
+ * sur le projet de la démo, « mini-CRM (démo) », qui n'y entrait pas. À 15,
+ * il entre tout juste, et c'est lui l'échantillon de la borne dans
+ * `composeur.test.tsx`. Nommer le projet est ce que ce ticket est venu faire ;
+ * un gabarit plus élégant qui ne nomme presque jamais l'aurait manqué.
+ *
+ * L'impératif n'est pas un détail de style. Une amorce est envoyée **telle
+ * quelle** au fil (`components/Conversation`), donc c'est le juge du canal qui
+ * la lit (`maestro/controltower/orchestration.py`) : une demande de travail se
+ * fait proposer un run, et c'est le run — seul à travailler dans la racine du
+ * projet (#222) — qui peut réellement aller voir. La même idée tournée en
+ * question (« Que fait ce projet ? ») serait rangée en « échange » et le modèle
+ * y répondrait sans avoir rien lu : une amorce qui promet ce que le produit ne
+ * fait pas est pire qu'une amorce générique.
+ */
+function decrire(sujet: string): string {
+  return `Décris ${sujet}`;
+}
+
+/**
+ * La seconde amorce — l'autre geste honnête sur un projet qu'on ne connaît pas
+ * encore : *lis-le et propose-moi quelque chose*. Elle ne présume rien du
+ * contenu, là où « Corrige un bug » ou « Écris le README » affirmeraient qu'il
+ * y a un bug, ou qu'il n'y a pas de README.
+ */
+export const AMORCE_PISTES = "Propose des pistes";
+
+/**
+ * Les deux amorces d'**état**, inchangées depuis #908 : elles portent la
+ * frontière du canal (les deux premières mènent à une proposition de run, les
+ * deux dernières à une réponse) et elles parlent déjà du projet ouvert —
+ * l'aperçu que le canal lit est cadré sur lui (#683), comme toutes les vues de
+ * travail (#277). Ce ne sont pas elles que le retex du 2026-09-11 a relevées.
+ */
+export const AMORCE_RUNS = "Où en sont les runs ?";
+export const AMORCE_ARBITRAGES = "Que dois-je arbitrer ?";
+
+/**
+ * Les amorces d'un fil vide, **dérivées du projet ouvert** (#942, constat G9 du
+ * retex du 2026-09-11).
+ *
+ * ## Ce qui a changé, et pourquoi
+ *
+ * Elles étaient une liste figée — « Pagine les projets », « Corrige le tri
+ * Kanban » —, c'est-à-dire le **backlog de Maestro** proposé à quelqu'un qui
+ * vient de déclarer un minuteur. C'est G6 sous une autre forme : le produit
+ * parle de lui-même. #916 avait réglé leur *calibrage*, jamais leur *contenu*.
+ *
+ * Les deux premières changent donc de sujet : au lieu de proposer un travail
+ * que nous aurions choisi, elles proposent d'**aller voir** le projet ouvert.
+ * C'est ce qui tient le second critère du ticket — *sur un projet dont on ne
+ * sait rien encore, l'amorce reste utile et honnête plutôt que générique* : ni
+ * l'une ni l'autre ne prétend connaître le projet, et la première le **nomme**,
+ * ce qu'aucune liste figée ne peut faire.
+ *
+ * ## Ce qu'elle lit, et ce qu'elle ne lit pas
+ *
+ * La **fiche du projet**, déjà dans l'état global (`lib/etatGlobal`) : aucun
+ * appel réseau, aucun appel de modèle, rien à charger. C'est la note technique
+ * du ticket tenue au mot — *dériver une amorce ne doit pas coûter un appel de
+ * modèle à chaque ouverture d'un chat vide* —, et le plus court chemin pour y
+ * arriver : la fonction est pure, donc son prix est nul.
+ *
+ * Elle **ne lit pas la racine** du projet, bien que l'analyse existe
+ * (`GET /api/projets/{id}/outillage/analyse`, #1030) et rendrait les langages
+ * et les commandes. Deux raisons : cette analyse **parcourt le disque** par
+ * milliers de fichiers, et cette surface-ci se monte à chaque ouverture de la
+ * colonne de conversation (`components/ColonneConversation`) — ce serait le
+ * prix par visite que le ticket écarte ; et ce qu'elle rendrait (« Python,
+ * pytest ») ne dit pas *quel* geste proposer, seulement avec quoi il se ferait.
+ * Ce que le projet contient, c'est la **première amorce** qui va le chercher,
+ * par le seul moyen dont le produit dispose : un run.
+ *
+ * ## Le nom entre quand il tient, et pas autrement
+ *
+ * Le calibre n'est pas négociable (#908) : chaque libellé tient en
+ * `CALIBRE_AMORCE` points de code, parce qu'une amorce ne s'enveloppe jamais
+ * sur elle-même (`AMORCE_NOWRAP`) et que sa longueur est donc toute sa largeur ;
+ * et les **deux premières** partagent une rangée à 375 px, d'où
+ * `CALIBRE_PAIRE_SOUS_SM` à elles deux. Un nom de projet est une donnée de
+ * l'utilisateur : il peut faire trois caractères comme quarante. Il entre donc
+ * dans la première amorce **si et seulement si** les deux bornes tiennent
+ * encore, et sinon le démonstratif reprend sa place. Un libellé tronqué
+ * (« Décris mon-très-long-pr… ») a été écarté : il ne nomme plus rien, et
+ * c'est précisément nommer qui avait un sens ici. La borne effective est de
+ * **15 points de code** de nom — c'est la paire sous `sm` qui la fixe, la
+ * seconde amorce en consommant 18 sur 40 ; elle se vérifie sur le projet de la
+ * démo, « mini-CRM (démo) », qui les fait exactement.
+ *
+ * L'**ordre** ne bouge pas (il reste éditorial, #908), et le **nombre** non
+ * plus : quatre, comme avant. Que seules deux soient atteignables à 420 px est
+ * le constat G8 du même retex, et il a son ticket — le corriger ici trancherait
+ * à sa place.
+ */
+export function amorcesDuProjet(projet: Projet): string[] {
+  const nom = projet.nom.trim();
+  const nommee = decrire(nom);
+  const tientSeule = calibreDe(nommee) <= CALIBRE_AMORCE;
+  const tientEnPaire =
+    calibreDe(nommee) + calibreDe(AMORCE_PISTES) <= CALIBRE_PAIRE_SOUS_SM;
+  return [
+    nom !== "" && tientSeule && tientEnPaire ? nommee : decrire(SUJET_SANS_NOM),
+    AMORCE_PISTES,
+    AMORCE_RUNS,
+    AMORCE_ARBITRAGES,
+  ];
+}
 
 /**
  * Les destinataires que `/chat` propose : l'orchestration en tête, puis le parc.
