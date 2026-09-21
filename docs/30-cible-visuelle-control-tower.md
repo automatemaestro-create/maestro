@@ -2771,6 +2771,37 @@ de #545 en dépendent) ; changer d'état **à chaud** (le scénario est celui de
 redémarre la stack, ~18 s, et c'est annoncé) ; un état « **largeur téléphone** » (ce n'est pas un état
 de l'API : il va à « ce que je n'ai pas pu voir »).
 
+#### La phase de décomposition s'ouvre aussi (#1109)
+
+Un cinquième scénario, `decomposition`, et **la seule phase de la liste** : les quatre précédents
+sont des états qu'on trouve en arrivant, celui-ci est un moment qui passe. #927 avait appris à
+l'écran à dire qu'un run décompose (constat **G11** : « les quatre premières minutes du run ne
+montrent rien ») ; aucun scénario ne savait alors l'ouvrir, le nominal publiant son plan à la
+première seconde — si bien que le bouclage de ce critère n'a pu le voir dans aucun navigateur.
+
+Ce qui tient, et à ne pas défaire :
+
+- **Rien n'est fabriqué pour l'écran.** Le verdict de `estEnDecomposition` est une conjonction — le
+  run **travaille** et n'a **aucune tâche** —, et le scénario ne publie que ce qu'un vrai run publie
+  à ce moment-là : son lancement, puis des activités d'agent **sans `tache_id`** (`etape_run` =
+  planification, la forme du pont). Le verdict tombe tout seul.
+- **La durée est celle du constat** — 4 minutes —, et pendant ce temps le journal avance et le coût
+  monte : le retex ne relève pas seulement « aucune tâche », il relève *« journal à deux lignes
+  pendant que le coût monte »*. Un scénario muet montrerait le même trou.
+- **Il boucle**, et c'est ce qui le sépare des trois états limites ci-dessus. Eux sont publiés d'un
+  coup pour que deux captures se comparent ; ici le sujet *est* un moment qui passe, donc joué une
+  seule fois il ne serait visible que dans les premières minutes — manquable, c'est-à-dire le défaut
+  qu'on répare. Rejoué, la phase est là ~80 % du temps, et deux relectures prises à deux moments
+  quelconques montrent la même chose. Le prix est nommé : chaque passage laisse un run soldé et ses
+  quatre tâches derrière lui.
+- **Chaque passage a ses propres tâches** (`PLAN_DEMO` réécrit, jamais un second plan) : des
+  identifiants partagés feraient rejouer sous les yeux le pipeline du passage précédent.
+
+**Écarté :** montrer la phase en **figeant** un run sans plan (le critère demande de voir la
+transition, pas seulement l'avant) ; peupler un **fil de conversation** (le run change à chaque
+passage, aucun message ne saurait le nommer durablement — le rattachement de #268 est écrit une fois
+pour toutes).
+
 #### Le jugement est rendu par un regard neuf, sur une grille fixe (#980)
 
 **L'auteur voit ce qu'il a voulu faire ; il faut quelqu'un qui voie ce qu'il a produit.** Le jugement
@@ -2878,6 +2909,7 @@ l'écran livré contre le choix consigné.
 | #979 | le critère écrit une fois, l'arbre vide avant le choix, le choix consigné avant le code, les voies écartées | [`test_design_veille.py`](../tests/test_design_veille.py) |
 | #1009 | aucun arrêt ni pause sur un ticket qui décide, la veille avant les variantes, le choix rendu par le regard neuf sur références, la voie (a) renversée et (c) toujours écartée | `test_design_veille.py` |
 | #980 | la grille (refus, fichier unique), `relecture-attente` (ancres, un aller), la saisine (pièces et rien d'autre), la planche (autonome, survit au worktree), `regard-neuf` réduit à `Read` | `test_relecture_visuelle.py` |
+| #1109 | la phase servie (aucune tâche publiée avant le plan, durée lisible, coût qui monte), lue sur la projection ; des tâches propres à chaque passage | `test_cli_smoke.py`, `test_controltower_mode_reel.py` |
 
 Chaque contrôle qui conclut d'une **absence** — une recopie, une section manquante — éprouve d'abord
 son motif sur un **échantillon fautif**, et un prompt se lit **normalisé** : replié à 100 colonnes, il

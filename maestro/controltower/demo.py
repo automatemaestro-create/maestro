@@ -33,6 +33,12 @@ souvent : **vide** (aucun run, aucune tâche, aucune validation), **erreur**
 centaines de lignes, des noms et des textes longs, un jeton sans espace). Ils
 sont **demandés** : ni `/verify`, ni les tests de câblage, ni `captures.sh` ne
 les rencontrent sans l'avoir voulu.
+
+Depuis #1109, un cinquième : **décomposition**, la seule **phase** de la liste —
+un run qui travaille sans aucune tâche pendant plusieurs minutes, puis publie
+son plan d'un coup. Les quatre autres sont des états qu'on trouve en arrivant ;
+celui-ci est un moment qui passe, et c'est exactement pour cela qu'aucun écran
+ne savait le montrer (constat **G11** du retex du 2026-09-11).
 """
 
 from __future__ import annotations
@@ -43,7 +49,7 @@ import itertools
 import sys
 import tempfile
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -74,7 +80,11 @@ from maestro.controltower.events import (
 )
 from maestro.controltower.fixtures import FixturesControlTower
 from maestro.controltower.orchestration import NOM_ORCHESTRATION
-from maestro.controltower.state import EXECUTION_TERMINEE, QUESTION_EN_ATTENTE
+from maestro.controltower.state import (
+    EXECUTION_EN_COURS,
+    EXECUTION_TERMINEE,
+    QUESTION_EN_ATTENTE,
+)
 from maestro.detail_tache import (
     ETAPE_A_FAIRE,
     ETAPE_EN_COURS,
@@ -96,6 +106,7 @@ from maestro.engine.executor import (
 )
 from maestro.equipe.gabarits import GABARITS
 from maestro.plan_run import NoeudPlan
+from maestro.telemetry.costs import ETAPE_PLANIFICATION
 from maestro.telemetry.usage import StepUsage
 
 #: Écoute par défaut : locale, même défaut que `maestro-api` — et que l'UI
@@ -224,7 +235,14 @@ SCENARIO_NOMINAL = "nominal"
 SCENARIO_VIDE = "vide"
 SCENARIO_ERREUR = "erreur"
 SCENARIO_CHARGE = "charge"
-SCENARIOS: tuple[str, ...] = (SCENARIO_NOMINAL, SCENARIO_VIDE, SCENARIO_ERREUR, SCENARIO_CHARGE)
+SCENARIO_DECOMPOSITION = "decomposition"
+SCENARIOS: tuple[str, ...] = (
+    SCENARIO_NOMINAL,
+    SCENARIO_VIDE,
+    SCENARIO_ERREUR,
+    SCENARIO_CHARGE,
+    SCENARIO_DECOMPOSITION,
+)
 
 #: Les routes que le scénario « erreur » **laisse répondre**, et pas une de plus.
 #:
@@ -1246,6 +1264,293 @@ def _peupler_chat_charge(store: ChatStore) -> None:
             )
 
 
+# --- Scénario « décomposition » (#1109) --------------------------------------------------------
+#
+# **La seule phase de la liste**, et c'est ce qui la rend difficile à montrer : les
+# quatre autres scénarios sont des états qu'on trouve en arrivant, celui-ci est un
+# moment qui passe. C'est le constat **G11** du retex du 2026-09-11 — « les quatre
+# premières minutes du run ne montrent rien » —, traité à l'écran par #927
+# (`estEnDecomposition`, `messageVideDuRun`) mais qu'aucun scénario ne savait alors
+# ouvrir : le nominal publie son plan d'un coup, à la première seconde.
+#
+# Ce qu'il faut à l'écran pour dire « ça décompose » est une **conjonction** (#927,
+# `apps/web/lib/execution.ts`) : le run **travaille** — donc il existe, et rien ne
+# le suspend — **et** il n'a **aucune tâche**. Le scénario ne fabrique donc rien de
+# spécial : il publie le lancement du run, puis les étapes de planification, qui
+# sont des activités d'agent **sans `tache_id`** — c'est-à-dire exactement ce que
+# le pont publie d'un vrai run pendant sa décomposition (`bridge.py`, `etape_run`).
+# Le verdict de l'écran tombe tout seul, sur la forme d'arrivée d'un vrai run.
+
+#: Le **préfixe** des runs qui décomposent — un par passage, numéroté. Distinct de
+#: `RUN_ID` et de `RUN_CHARGE` pour la même raison qu'eux : aucune vue ne doit
+#: laisser croire que c'est le même run.
+RUN_DECOMPOSITION = "demo-decompose"
+
+#: Ce que ce run a à faire, tel que le fil l'aurait demandé — les quatre tâches de
+#: `PLAN_DEMO`, qu'il publiera à la fin de sa décomposition.
+OBJECTIF_DECOMPOSITION = (
+    "Mettre en place la gestion des contacts du mini-CRM : schéma, API, écran et pipeline"
+)
+
+#: Combien de temps le run travaille **sans aucune tâche** — 4 minutes, le chiffre
+#: du retex, pas une durée inventée : c'est la phase telle qu'elle dure vraiment.
+#:
+#: Une « durée lisible » se mesure à ce qu'on peut en faire : la stack monte en
+#: ~18 s, et il reste alors de quoi ouvrir le tableau de bord, la vue du run et le
+#: Kanban sans courir. La raccourcir rendrait la phase inatteignable — c'est
+#: précisément le défaut qu'on répare.
+DUREE_DECOMPOSITION_S = 240.0
+
+#: Le temps pendant lequel le plan publié, puis le run soldé, restent à regarder
+#: avant qu'un nouveau passage ne reparte. C'est l'**après** de la transition, et
+#: il doit se voir autant que l'avant.
+PAUSE_APRES_LE_PLAN_S = 45.0
+
+#: Ce que l'orchestrateur consigne pendant qu'il décompose, dans l'ordre, avec ce
+#: que chaque étape coûte. Six plutôt qu'une, et c'est la moitié du sujet : le
+#: retex relève un « journal à deux lignes » pendant que le coût monte, donc un
+#: scénario qui publierait une seule activité montrerait le même trou. Les montants
+#: sont **croissants et cumulés à l'écran** — ce qu'on doit voir est que ça monte,
+#: jamais un total juste.
+_ETAPES_DECOMPOSITION: tuple[tuple[str, StepUsage], ...] = (
+    (
+        "Relit le brief et relève les livrables attendus",
+        StepUsage(appels=1, tokens_entree=2140, tokens_sortie=380, cout_usd=0.0210, duree_ms=9800),
+    ),
+    (
+        "Repère les entités du domaine : contacts, segments, imports",
+        StepUsage(appels=1, tokens_entree=3260, tokens_sortie=610, cout_usd=0.0290, duree_ms=12400),
+    ),
+    (
+        "Découpe l'objectif en tâches candidates",
+        StepUsage(
+            appels=2, tokens_entree=5900, tokens_sortie=1480, cout_usd=0.0540, duree_ms=21000
+        ),
+    ),
+    (
+        "Ordonne les tâches et pose leurs dépendances",
+        StepUsage(appels=1, tokens_entree=4100, tokens_sortie=940, cout_usd=0.0380, duree_ms=15600),
+    ),
+    (
+        "Vérifie qu'aucune tâche n'attend une compétence que l'équipe n'a pas",
+        StepUsage(appels=1, tokens_entree=2980, tokens_sortie=520, cout_usd=0.0260, duree_ms=11200),
+    ),
+    (
+        "Relit le plan avant de le publier",
+        StepUsage(appels=1, tokens_entree=3540, tokens_sortie=700, cout_usd=0.0310, duree_ms=13500),
+    ),
+)
+
+#: Qui porte chaque tâche du plan, et ce qu'elle coûte — **aligné sur `PLAN_DEMO`**,
+#: jamais une seconde liste de tâches. Le `strict=True` de l'appariement est le
+#: garde-fou : un nœud ajouté au plan sans exécutant se verrait ici, au démarrage
+#: du scénario, plutôt qu'en silence à l'écran.
+_EXECUTANTS_DU_PLAN: tuple[tuple[str, StepUsage], ...] = (
+    (
+        AGENT_DONNEES,
+        StepUsage(
+            appels=2,
+            tokens_entree=5320,
+            tokens_sortie=1240,
+            cout_usd=0.0480,
+            duree_ms=38000,
+            tours=3,
+            outils=("Write", "Bash"),
+        ),
+    ),
+    (
+        AGENT_DEV,
+        StepUsage(
+            appels=3,
+            tokens_entree=9870,
+            tokens_sortie=2610,
+            cout_usd=0.0910,
+            duree_ms=74000,
+            tours=5,
+            outils=("Write", "Edit", "Bash"),
+        ),
+    ),
+    (
+        AGENT_INTERFACE,
+        StepUsage(
+            appels=1,
+            tokens_entree=4260,
+            tokens_sortie=1130,
+            cout_usd=0.0400,
+            duree_ms=26000,
+            tours=2,
+            outils=("Write",),
+        ),
+    ),
+    (
+        AGENT_INFRA,
+        StepUsage(
+            appels=2,
+            tokens_entree=6480,
+            tokens_sortie=1520,
+            cout_usd=0.0590,
+            duree_ms=45000,
+            tours=3,
+            outils=("Write", "Bash"),
+        ),
+    ),
+)
+
+
+def _plan_du_passage(run_id: str) -> tuple[NoeudPlan, ...]:
+    """`PLAN_DEMO` réécrit aux identifiants de ce passage — jamais un second plan.
+
+    Chaque passage a ses **propres** tâches, arêtes comprises : un identifiant de
+    tâche est un slug partagé dès que deux runs décomposent le même objectif, et
+    deux passages qui se les partageraient feraient rejouer sous les yeux le
+    pipeline du passage précédent (le cas que `EtatExecution.taches_vues`
+    documente pour une relance). La topologie, les titres et les ossatures de
+    checklist, eux, restent ceux du plan de la démo.
+    """
+    rang = {noeud.id: f"{run_id}-t{n}" for n, noeud in enumerate(PLAN_DEMO, start=1)}
+    return tuple(
+        replace(
+            noeud,
+            id=rang[noeud.id],
+            dependances=tuple(rang[dependance] for dependance in noeud.dependances),
+        )
+        for noeud in PLAN_DEMO
+    )
+
+
+async def _un_passage_de_decomposition(bus: EventBus, passage: int) -> None:
+    """Un run, de son lancement à son issue : il décompose longtemps, puis travaille vite.
+
+    Trois temps, et le premier est tout l'objet du scénario :
+
+    1. **le lancement** (`execution.statut` = `en_cours`) — sans lui le run n'aurait
+       pas d'objectif, et un run se reconnaît à ce qu'il a à faire, jamais à son
+       identifiant ;
+    2. **la décomposition** — `DUREE_DECOMPOSITION_S` pendant lesquelles
+       l'orchestrateur consigne ses étapes et dépense, **sans publier une seule
+       tâche**. C'est là que l'écran doit dire « ça décompose » ;
+    3. **le plan, puis les tâches** — le plan paraît d'un coup (#924 : le compte
+       bascule une fois, de 0 au total), les quatre tâches s'enchaînent, le run se
+       solde. C'est l'**après** de la transition, et il se regarde autant que
+       l'avant : sans lui, on ne verrait pas que la phase s'est terminée.
+    """
+    run_id = f"{RUN_DECOMPOSITION}-{passage:02d}"
+    await bus.publish(
+        Event(
+            type=EVENEMENT_EXECUTION_STATUT,
+            run_id=run_id,
+            titre=OBJECTIF_DECOMPOSITION,
+            agent=ACTEUR_RUN,
+            role=ROLE_RUN,
+            statut=EXECUTION_EN_COURS,
+            projet_id=PROJET_ID,
+        )
+    )
+    print(
+        f"[scenario] décomposition n°{passage} : {run_id} travaille sans tâche "
+        f"pendant {DUREE_DECOMPOSITION_S:.0f} s",
+        flush=True,
+    )
+    # La durée se répartit entre les étapes, et non en une attente d'un bloc : ce
+    # qu'on regarde pendant ces minutes est un journal qui avance et un coût qui
+    # monte — un run muet serait le trou qu'on répare.
+    respiration = DUREE_DECOMPOSITION_S / len(_ETAPES_DECOMPOSITION)
+    for detail, usage in _ETAPES_DECOMPOSITION:
+        await asyncio.sleep(respiration)
+        await bus.publish(
+            Event(
+                type=EVENEMENT_AGENT_ACTIVITE,
+                run_id=run_id,
+                agent=ACTEUR_RUN,
+                role=ROLE_RUN,
+                detail=detail,
+                cout_usd=usage.cout_usd,
+                usage=usage,
+                # L'étape est **portée par l'événement** (#989) et non devinée de
+                # son titre : c'est ce qui range sa dépense en planification plutôt
+                # qu'en cadrage, et c'est ce qu'un vrai run publie.
+                etape_run=ETAPE_PLANIFICATION,
+                projet_id=PROJET_ID,
+            )
+        )
+
+    plan = _plan_du_passage(run_id)
+    enchainements = sum(len(noeud.dependances) for noeud in plan)
+    await bus.publish(
+        Event(
+            type=EVENEMENT_RUN_PLAN,
+            run_id=run_id,
+            agent=ACTEUR_RUN,
+            role=ROLE_RUN,
+            detail=f"{len(plan)} tâche(s), {enchainements} enchaînement(s)",
+            projet_id=PROJET_ID,
+            plan=list(plan),
+        )
+    )
+    print(
+        f"[scenario] décomposition n°{passage} : plan publié — "
+        f"{len(plan)} tâche(s), {enchainements} enchaînement(s)",
+        flush=True,
+    )
+
+    for noeud, (agent, usage) in zip(plan, _EXECUTANTS_DU_PLAN, strict=True):
+        for statut in ("assignee", STATUT_EN_COURS, STATUT_TERMINEE):
+            dernier = statut == STATUT_TERMINEE
+            await bus.publish(
+                Event(
+                    type=EVENEMENT_TACHE_STATUT,
+                    run_id=run_id,
+                    tache_id=noeud.id,
+                    titre=noeud.titre,
+                    agent=agent,
+                    role=ROLE_DE[agent],
+                    statut=statut,
+                    cout_usd=usage.cout_usd if dernier else None,
+                    usage=usage if dernier else None,
+                    projet_id=PROJET_ID,
+                )
+            )
+            await asyncio.sleep(PAUSE_ENTRE_STATUTS_S)
+    await bus.publish(
+        Event(
+            type=EVENEMENT_EXECUTION_STATUT,
+            run_id=run_id,
+            titre=OBJECTIF_DECOMPOSITION,
+            agent=ACTEUR_RUN,
+            role=ROLE_RUN,
+            statut=EXECUTION_TERMINEE,
+            detail=f"{len(plan)} tâche(s) terminée(s), 0 en échec",
+            projet_id=PROJET_ID,
+        )
+    )
+
+
+async def _scenario_decomposition(bus: EventBus) -> None:
+    """Rouvre la phase, passage après passage — une phase qu'on ne peut voir qu'en vol.
+
+    **Le scénario boucle**, et c'est la décision qui le distingue des trois états
+    limites de #978 : eux sont publiés d'un coup pour qu'une capture prise à la
+    minute 1 et une autre à la minute 3 montrent le même écran ; ici le sujet
+    *est* un moment qui passe. Joué une seule fois, il ne serait visible que dans
+    les premières minutes après le démarrage — c'est-à-dire manquable, exactement
+    le défaut qu'on répare. Rejoué, il est là **~80 % du temps** (4 min de
+    décomposition pour ~1 min d'après), et deux relectures faites à deux moments
+    quelconques ont toutes les chances de montrer la même chose.
+
+    Le prix est nommé : chaque passage laisse derrière lui un run soldé et ses
+    quatre tâches. C'est l'accumulation d'un projet qui tourne, et elle reste bien
+    en deçà de ce que le scénario « charge » publie d'entrée.
+
+    Le fil de conversation reste **vide** : ce scénario montre une phase, pas une
+    conversation — et son run change à chaque passage, donc aucun message ne
+    saurait le nommer durablement (le rattachement de #268 est un `run_id` écrit
+    une fois pour toutes).
+    """
+    for passage in itertools.count(1):
+        await _un_passage_de_decomposition(bus, passage)
+        await asyncio.sleep(PAUSE_APRES_LE_PLAN_S)
+
+
 # --- Scénario « erreur » (#978) ----------------------------------------------------------------
 
 
@@ -1304,7 +1609,8 @@ async def _servir(hote: str, port: int, scenario: str = SCENARIO_NOMINAL) -> int
     `scenario` (#978) choisit ce que l'app sert : le **nominal** par défaut ;
     **vide** ne publie rien ; **erreur** ne publie rien non plus et fait répondre
     l'API en panne ; **charge** remplit le fil de conversation puis publie la
-    charge d'un coup.
+    charge d'un coup ; **décomposition** (#1109) rouvre en boucle la phase où un
+    run travaille sans aucune tâche, puis publie son plan.
     """
     # Import local : seul ce point d'entrée dépend du serveur uvicorn (cf. cli.py).
     import uvicorn
@@ -1356,7 +1662,11 @@ async def _servir(hote: str, port: int, scenario: str = SCENARIO_NOMINAL) -> int
     )
     # « vide » et « erreur » ne publient rien : un état vide est l'absence
     # d'événement, et une API en panne n'a rien à montrer derrière sa panne.
-    publications = {SCENARIO_NOMINAL: _scenario, SCENARIO_CHARGE: _scenario_charge}
+    publications = {
+        SCENARIO_NOMINAL: _scenario,
+        SCENARIO_CHARGE: _scenario_charge,
+        SCENARIO_DECOMPOSITION: _scenario_decomposition,
+    }
     publier = publications.get(scenario)
     deroule = asyncio.create_task(publier(bus)) if publier is not None else None
     try:
@@ -1388,7 +1698,8 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
         default=SCENARIO_NOMINAL,
         help=(
             f"ce que la démo sert (défaut : {SCENARIO_NOMINAL}) — {SCENARIO_VIDE} : aucun run ; "
-            f"{SCENARIO_ERREUR} : API en panne ; {SCENARIO_CHARGE} : listes et textes longs"
+            f"{SCENARIO_ERREUR} : API en panne ; {SCENARIO_CHARGE} : listes et textes longs ; "
+            f"{SCENARIO_DECOMPOSITION} : un run qui décompose, puis publie son plan"
         ),
     )
     return parser.parse_args(list(argv))

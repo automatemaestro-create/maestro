@@ -33,6 +33,7 @@ from maestro.controltower.events import (
     EVENEMENT_VALIDATION_DEMANDE,
 )
 from maestro.controltower.orchestration import NOM_ORCHESTRATION
+from maestro.controltower.state import EXECUTION_EN_COURS, ControlTowerState
 from maestro.engine import (
     MODE_BRIEF_SANS,
     STATUT_TERMINEE,
@@ -339,6 +340,7 @@ class _ServeurFactice:
         ("vide", None, False),
         ("erreur", None, True),
         ("charge", "charge", False),
+        ("decomposition", "decomposition", False),
     ],
 )
 def test_demo_controltower_chaque_scenario_sert_ce_qu_il_annonce(
@@ -379,6 +381,9 @@ def test_demo_controltower_chaque_scenario_sert_ce_qu_il_annonce(
     monkeypatch.setattr(controltower_demo, "create_app", _create_app)
     monkeypatch.setattr(controltower_demo, "_scenario", _publication("nominal"))
     monkeypatch.setattr(controltower_demo, "_scenario_charge", _publication("charge"))
+    monkeypatch.setattr(
+        controltower_demo, "_scenario_decomposition", _publication("decomposition")
+    )
 
     assert asyncio.run(controltower_demo._servir("127.0.0.1", 0, scenario)) == 0
     assert publies == ([publie] if publie else [])
@@ -447,6 +452,81 @@ def test_demo_controltower_charge_depasse_ce_qu_un_ecran_affiche(tmp_path):
     assert len([c for c in conversations if c.messages]) == d.CHARGE_CONVERSATIONS
     assert conversations[0].messages == d.CHARGE_MESSAGES_CHAT, (
         "la plus récente porte le fil long : c'est celle que l'écran ouvre d'office"
+    )
+
+
+def _sans_attendre(bus, attentes):
+    """`asyncio.sleep` réduit à un compteur : le scénario se déroule d'un trait, mais dit combien
+    de temps il aurait attendu et **où il en était** (le nombre d'événements déjà publiés), de quoi
+    rattacher chaque attente à sa phase. Substitué **dans le module de démo seul** — remplacer
+    `asyncio` du process déborderait sur `asyncio.run` ci-dessous."""
+
+    async def dormir(delai):
+        attentes.append((len(bus.evenements), delai))
+
+    return types.SimpleNamespace(sleep=dormir)
+
+
+def test_demo_controltower_decomposition_travaille_sans_tache_puis_publie_son_plan(monkeypatch):
+    """Le critère de #1109 (constat G11), lu là où l'écran le lit : pendant `DUREE_DECOMPOSITION_S`,
+    le run existe, n'est pas soldé et n'a **aucune tâche** — la conjonction exacte de
+    `estEnDecomposition` (`apps/web/lib/execution.ts`) —, puis son plan paraît d'un coup."""
+    d = controltower_demo
+    attentes = []
+    bus = _BusQuiRetient()
+    monkeypatch.setattr(d, "asyncio", _sans_attendre(bus, attentes))
+
+    asyncio.run(d._un_passage_de_decomposition(bus, 1))
+
+    types_publies = [e.type for e in bus.evenements]
+    rang_plan = types_publies.index(EVENEMENT_RUN_PLAN)
+    avant_le_plan = bus.evenements[:rang_plan]
+    assert EVENEMENT_TACHE_STATUT not in types_publies[:rang_plan], (
+        "une seule tâche publiée avant le plan et l'écran ne dirait plus « décomposition »"
+    )
+    attendu_avant_le_plan = sum(delai for vus, delai in attentes if vus <= rang_plan)
+    assert attendu_avant_le_plan == d.DUREE_DECOMPOSITION_S
+    assert d.DUREE_DECOMPOSITION_S >= 60, "une durée lisible : de quoi ouvrir deux écrans"
+
+    # Le verdict se rend sur la projection, pas sur la liste d'événements : c'est elle que
+    # `GET /api/executions` sert, et `nb_taches` est le compte unique de #924.
+    etat = ControlTowerState()
+    for event in avant_le_plan:
+        etat.appliquer(event)
+    run = etat.execution(avant_le_plan[0].run_id)
+    assert run is not None
+    assert run.statut == EXECUTION_EN_COURS
+    assert run.nb_taches == 0
+    assert run.objectif == d.OBJECTIF_DECOMPOSITION
+    assert run.cout_usd is not None and run.cout_usd > 0, (
+        "le coût monte pendant que rien ne bouge — c'est la moitié du constat G11"
+    )
+
+    etat.appliquer(bus.evenements[rang_plan])
+    assert run.nb_taches == len(d.PLAN_DEMO), "le compte bascule une fois, quand le plan arrive"
+    soldes = [
+        e
+        for e in bus.evenements[rang_plan:]
+        if e.type == EVENEMENT_TACHE_STATUT and e.statut == STATUT_TERMINEE
+    ]
+    assert len(soldes) == len(d.PLAN_DEMO), "l'après de la transition se regarde aussi"
+
+
+def test_demo_controltower_decomposition_donne_ses_propres_taches_a_chaque_passage():
+    """Deux passages ne partagent ni run ni tâche : des identifiants communs feraient rejouer sous
+    les yeux le pipeline du passage précédent (le cas de relance que `taches_vues` documente)."""
+    d = controltower_demo
+    premier = d._plan_du_passage(f"{d.RUN_DECOMPOSITION}-01")
+    second = d._plan_du_passage(f"{d.RUN_DECOMPOSITION}-02")
+
+    assert not {n.id for n in premier} & {n.id for n in second}
+    assert [n.titre for n in premier] == [n.titre for n in d.PLAN_DEMO]
+    # Les arêtes suivent les identifiants réécrits : un plan dont les dépendances pointeraient
+    # encore vers `demo-t1` serait un graphe sans une seule arête.
+    connus = {noeud.id for noeud in premier}
+    assert {dep for noeud in premier for dep in noeud.dependances} <= connus
+    assert sum(len(noeud.dependances) for noeud in premier) == sum(
+        len(noeud.dependances) for noeud in d.PLAN_DEMO
     )
 
 
