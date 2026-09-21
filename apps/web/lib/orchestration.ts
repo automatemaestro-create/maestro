@@ -72,6 +72,14 @@ export const SUJET_SANS_NOM = "ce projet";
 /**
  * La première amorce : *va lire le projet et dis-moi ce qu'il est*.
  *
+ * ⚠ **« Décris » et non « Décris-moi »**, qui se lisait mieux : les quatre
+ * caractères de plus coûtaient quatre caractères de **nom de projet**, et à
+ * 11 caractères de budget le repli tombait sur des noms ordinaires — relevé
+ * sur le projet de la démo, « mini-CRM (démo) », qui n'y entrait pas. À 15,
+ * il entre tout juste, et c'est lui l'échantillon de la borne dans
+ * `composeur.test.tsx`. Nommer le projet est ce que ce ticket est venu faire ;
+ * un gabarit plus élégant qui ne nomme presque jamais l'aurait manqué.
+ *
  * L'impératif n'est pas un détail de style. Une amorce est envoyée **telle
  * quelle** au fil (`components/Conversation`), donc c'est le juge du canal qui
  * la lit (`maestro/controltower/orchestration.py`) : une demande de travail se
@@ -82,7 +90,7 @@ export const SUJET_SANS_NOM = "ce projet";
  * fait pas est pire qu'une amorce générique.
  */
 function decrire(sujet: string): string {
-  return `Décris-moi ${sujet}`;
+  return `Décris ${sujet}`;
 }
 
 /**
@@ -149,8 +157,11 @@ export const AMORCE_ARBITRAGES = "Que dois-je arbitrer ?";
  * l'utilisateur : il peut faire trois caractères comme quarante. Il entre donc
  * dans la première amorce **si et seulement si** les deux bornes tiennent
  * encore, et sinon le démonstratif reprend sa place. Un libellé tronqué
- * (« Décris-moi mon-très-long-p… ») a été écarté : il ne nomme plus rien, et
- * c'est précisément nommer qui avait un sens ici.
+ * (« Décris mon-très-long-pr… ») a été écarté : il ne nomme plus rien, et
+ * c'est précisément nommer qui avait un sens ici. La borne effective est de
+ * **15 points de code** de nom — c'est la paire sous `sm` qui la fixe, la
+ * seconde amorce en consommant 18 sur 40 ; elle se vérifie sur le projet de la
+ * démo, « mini-CRM (démo) », qui les fait exactement.
  *
  * L'**ordre** ne bouge pas (il reste éditorial, #908), et le **nombre** non
  * plus : quatre, comme avant. Que seules deux soient atteignables à 420 px est

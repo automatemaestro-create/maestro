@@ -1429,7 +1429,7 @@ describe("⑪ les amorces ne s'enveloppent plus (#908)", () => {
     // le rendrait imprévisible : ce sont bien les deux **premières** que ⑩
     // garde, et elles doivent donc tenir la rangée à elles deux.
     expect(amorcesDuProjet(projetFactice())).toEqual([
-      "Décris-moi Dépensio",
+      "Décris Dépensio",
       "Propose des pistes",
       "Où en sont les runs ?",
       "Que dois-je arbitrer ?",
@@ -1465,10 +1465,12 @@ describe("⑪ les amorces ne s'enveloppent plus (#908)", () => {
    * sur le projet factice qui tient.
    */
   it("garde le calibre quel que soit le nom du projet (#942)", () => {
-    // Le dernier nom qui tient : 11 points de code, soit 22 pour l'amorce et
-    // exactement `CALIBRE_PAIRE_SOUS_SM` avec la seconde.
-    const juste = amorcesDuProjet(projetFactice({ nom: "Chronomètre" }));
-    expect(juste[0]).toBe("Décris-moi Chronomètre");
+    // Le dernier nom qui tient : 15 points de code, soit 22 pour l'amorce et
+    // exactement `CALIBRE_PAIRE_SOUS_SM` avec la seconde. L'échantillon n'est
+    // pas inventé — c'est le nom du projet de la démo, celui que la relecture
+    // visuelle a sous les yeux (et celui qui a fait raccourcir le gabarit).
+    const juste = amorcesDuProjet(projetFactice({ nom: "mini-CRM (démo)" }));
+    expect(juste[0]).toBe("Décris mini-CRM (démo)");
     expect(Array.from(juste[0]).length + Array.from(AMORCE_PISTES).length).toBe(
       CALIBRE_PAIRE_SOUS_SM,
     );
@@ -1479,7 +1481,7 @@ describe("⑪ les amorces ne s'enveloppent plus (#908)", () => {
     const trop = amorcesDuProjet(
       projetFactice({ nom: "Application de suivi des dépenses" }),
     );
-    expect(trop[0]).toBe(`Décris-moi ${SUJET_SANS_NOM}`);
+    expect(trop[0]).toBe(`Décris ${SUJET_SANS_NOM}`);
 
     // Les deux branches restent au calibre, chacune seule et les deux en paire.
     for (const amorces of [juste, trop]) {
@@ -1491,9 +1493,9 @@ describe("⑪ les amorces ne s'enveloppent plus (#908)", () => {
       ).toBeLessThanOrEqual(CALIBRE_PAIRE_SOUS_SM);
     }
 
-    // Un nom vide n'écrit pas « Décris-moi  » : c'est la même bascule.
+    // Un nom vide n'écrit pas « Décris  » : c'est la même bascule.
     expect(amorcesDuProjet(projetFactice({ nom: "   " }))[0]).toBe(
-      `Décris-moi ${SUJET_SANS_NOM}`,
+      `Décris ${SUJET_SANS_NOM}`,
     );
   });
 
@@ -1508,7 +1510,7 @@ describe("⑪ les amorces ne s'enveloppent plus (#908)", () => {
     expect(amorces).not.toContain("Pagine les projets");
     expect(amorces).not.toContain("Corrige le tri Kanban");
     // Et la première parle du projet ouvert, qu'elle nomme.
-    expect(amorces[0]).toBe("Décris-moi minuteur");
+    expect(amorces[0]).toBe("Décris minuteur");
     // Sans rien prétendre en connaître : aucune n'affirme ce qu'il contient ni
     // ce qui lui manque — elles proposent d'aller voir.
     expect(amorces[1]).toBe(AMORCE_PISTES);

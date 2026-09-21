@@ -1834,7 +1834,7 @@ le tri Kanban » — proposée à quelqu'un dont le projet est un minuteur. C'es
   conversation et ne peut donc pas proposer autre chose ;
 - **les deux premières changent de sujet** : au lieu d'un travail que nous
   aurions choisi, elles proposent d'**aller voir** ce projet-ci —
-  « Décris-moi <nom> » et « Propose des pistes ». C'est ce qui tient le second
+  « Décris <nom> » et « Propose des pistes ». C'est ce qui tient le second
   critère du ticket : sur un projet dont on ne sait rien, l'amorce reste utile
   **et honnête**, parce qu'elle ne prétend rien en connaître. Les deux
   dernières (« Où en sont les runs ? », « Que dois-je arbitrer ? ») ne bougent
@@ -1851,8 +1851,9 @@ le tri Kanban » — proposée à quelqu'un dont le projet est un minuteur. C'es
 - **le nom entre s'il tient, et pas autrement.** Un nom de projet est une
   donnée de l'utilisateur ; le calibre, lui, ne se négocie pas. La première
   amorce le porte **si et seulement si** `CALIBRE_AMORCE` et
-  `CALIBRE_PAIRE_SOUS_SM` tiennent encore, sinon le démonstratif (« ce
-  projet ») reprend sa place — un libellé tronqué ne nommerait plus rien, et
+  `CALIBRE_PAIRE_SOUS_SM` tiennent encore — **15 points de code** de nom, la
+  paire sous `sm` étant la borne qui mord —, sinon le démonstratif (« ce
+  projet ») reprend sa place ; un libellé tronqué ne nommerait plus rien, et
   c'est nommer qui avait un sens. C'est pourquoi les deux nombres ont quitté
   `components/Conversation` pour **`lib/amorces`** : la dérivation doit les
   lire, elle vit dans `lib/`, et l'arête `lib → components` a été **mesurée

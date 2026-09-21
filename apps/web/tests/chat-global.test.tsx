@@ -212,7 +212,7 @@ describe("le chat global (#269)", () => {
     // depuis #942 : la première le nomme (le projet factice est « Dépensio »),
     // là où « Pagine les projets » proposait le backlog de Maestro.
     expect(
-      screen.getByRole("button", { name: "Décris-moi Dépensio" }),
+      screen.getByRole("button", { name: "Décris Dépensio" }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Où en sont les runs ?" }),
