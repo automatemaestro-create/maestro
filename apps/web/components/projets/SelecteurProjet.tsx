@@ -26,6 +26,25 @@
  *    identité n'est plus une intention tenue à la relecture : les quatre
  *    surfaces **appellent le même hook**, `useSurfaceDeroulee`, qui leur a
  *    apporté d'un coup la navigation aux flèches qu'aucune n'avait.
+ *
+ * ── Ce que #1108 y change : le bouton ne peint plus hors de sa boîte ────────
+ *
+ * C'est ici qu'était la **cause** du chevauchement de la barre, et elle ne se
+ * voyait pas à la lecture : un `<button>` est un contrôle de formulaire, donc
+ * sa largeur `auto` est un *shrink-to-fit* sur son contenu — pas un « remplis
+ * ton parent », comme pour un `<div>`. Le conteneur ci-dessous rétrécissait
+ * donc bien (`min-w-0`), et le bouton, lui, gardait ses 254 px : il les
+ * peignait **par-dessus** le titre de page, qui se croyait seul à cet endroit.
+ * `max-w-full` referme le piège en une classe — le bouton ne peut plus dépasser
+ * la boîte qu'on lui donne, et c'est son propre libellé qui tronque.
+ *
+ * Le reste applique l'ordre de cession de la variante retenue (voir l'en-tête
+ * de `BarreSuperieure`) : le nom du projet est **le deuxième** à céder, après le
+ * coût cumulé et avant le titre de page. Il se raccourcit par paliers lus sur la
+ * largeur de la **barre** (`@2xl`, `@3xl`), et ne descend jamais sous `min-w-8` :
+ * un préfixe reste lisible, comme une cellule tronquée de GitHub Actions. C'est
+ * le point qui a fait écarter la variante B, où le nom disparaissait pour ne
+ * laisser qu'une icône — un nom accessible ne répare pas un libellé absent.
  */
 
 import Link from "next/link";
@@ -71,7 +90,13 @@ export function SelecteurProjet() {
   };
 
   return (
-    <div ref={conteneur} className="relative min-w-0">
+    // Pas de `min-w-0` (#1108) : sans lui, la taille minimale automatique de cet
+    // élément flex est son contenu minimal — icône, préfixe de nom, chevron —,
+    // et c'est ce **plancher** qui garde le sélecteur lisible quand la barre se
+    // resserre. Avec `min-w-0` il pouvait tomber à zéro, et le nom du projet
+    // avec lui : la barre aurait dit sur quelle page on est, plus sur quel
+    // projet.
+    <div ref={conteneur} className="relative">
       <button
         ref={declencheur}
         type="button"
@@ -84,10 +109,23 @@ export function SelecteurProjet() {
         // c'est-à-dire nulle part pour qui n'a pas de souris, alors que c'est
         // elle qui départage deux clones d'un même dépôt.
         aria-label={`Projet actif : ${projet.nom} (${projet.racine}) — changer de projet`}
-        className="flex min-w-0 items-center gap-1.5 rounded-md border border-neutral-200 px-2 py-1 text-sm text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900 dark:border-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-900 dark:hover:text-neutral-100"
+        // `max-w-full` (#1108) : la classe qui referme le chevauchement — un
+        // `<button>` se dimensionne sur son contenu, jamais sur son parent.
+        className="flex max-w-full min-w-0 items-center gap-1.5 rounded-md border border-neutral-200 px-2 py-1 text-sm text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900 dark:border-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-900 dark:hover:text-neutral-100"
       >
         <IconeProjets className="size-4 shrink-0 text-neutral-500 dark:text-neutral-400" />
-        <span className="max-w-32 truncate font-medium sm:max-w-48">
+        {/* Quatre paliers, lus sur la largeur de la BARRE (#1108) : 4 rem quand
+            elle est au plus serré, puis 6, 8 et 12 à mesure qu'elle respire.
+            `min-w-8` plutôt que rien : c'est lui qui interdit au nom de se
+            réduire à une lettre — ce que faisait la variante C, écartée pour
+            cela.
+            ⚠ Le palier de 4 rem a été ajouté **après** le balayage de 960 à
+            1440 px, pas au brouillon : sans lui, le nom restait à son plafond
+            de 6 rem pendant que le titre de page tombait à « Tabl… » (mesuré à
+            1024 px, colonne ouverte, nom de projet long) — c'est-à-dire l'ordre
+            de cession à l'envers. Un plafond qui ne baisse jamais est un
+            plancher déguisé. */}
+        <span className="min-w-8 max-w-16 truncate font-medium @lg:max-w-24 @2xl:max-w-32 @3xl:max-w-48">
           {projet.nom}
         </span>
         <IconeChevronBas className="size-4 shrink-0 text-neutral-400 dark:text-neutral-500" />

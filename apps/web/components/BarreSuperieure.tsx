@@ -20,6 +20,51 @@
  * shadcn/ui) : le produit n'en a aucun aujourd'hui, celui-ci serait le premier
  * d'une famille que personne ne tient, et il entrerait en collision avec la
  * saisie du composeur qui rejoint la colonne au lot #926.
+ *
+ * ── Ce que #1108 y change : la barre se mesure ELLE-MÊME ────────────────────
+ *
+ * Depuis #925 la barre n'occupe plus la fenêtre : elle est dans la colonne
+ * centrale, dont la colonne de conversation retranche 320 px dès qu'on l'ouvre.
+ * Ses seuils étaient pourtant des `media queries` de **viewport** (`sm:`), qui
+ * ne savent rien de cette colonne — si bien qu'entre ~1024 et ~1270 px la barre
+ * croyait avoir 1116 px de large là où elle en avait 508, gardait tout ce
+ * qu'elle affiche à 1116, et ses éléments se **recouvraient** (mesuré au banc,
+ * projet au nom long : sélecteur 304→558 par-dessus le titre 398→434 et le coût
+ * 446→591). Une largeur de fenêtre ne dit donc plus rien de la place disponible
+ * ici : les seuils sont lus sur la **barre** (`@container`, la primitive que
+ * `<main>` emploie déjà dans `Shell.tsx`), et ils redeviennent vrais quelle que
+ * soit la zone qu'on ouvre ou qu'on replie.
+ *
+ * Variante retenue par le regard neuf le 2026-09-21 (#1009, consignée sur le
+ * ticket sous « ## Variante retenue »), d'après la veille de #1108 — VS Code
+ * for the Web, Grafana, GitHub Actions, Zulip : **ce qui rassure s'efface avant
+ * ce qui situe**. L'ordre de cession, quand la barre se resserre :
+ *
+ *   1. le **coût cumulé** part le premier (`@3xl`) — il se relit dans `/couts`
+ *      et sur le tableau de bord, donc rien ne se perd ;
+ *   2. le **nom du projet** se raccourcit ensuite, en gardant un préfixe
+ *      lisible (`SelecteurProjet`) ;
+ *   3. le **titre de page** cède en dernier — c'est le seul de la barre qui ne
+ *      se lise nulle part ailleurs.
+ *
+ * Et les **deux extrémités ne rétrécissent jamais** : le groupe de droite est
+ * `shrink-0`, comme le centre de commande de VS Code est borné entre deux bouts
+ * fixes. Écartés ici, avec leur raison : la seconde ligne de Grafana (notre
+ * barre ne porte aucune action de page à reléguer) et le menu `…` de GitHub
+ * (ce qu'elle porte n'est pas homogène — un chiffre, un thème, une aide et deux
+ * bascules de zone ne se rangent pas dans le même tiroir).
+ *
+ * ⚠ Le seuil `@3xl` du coût n'est pas celui auquel il *tiendrait* : c'est celui
+ * à partir duquel il tient **sans faire tronquer le titre**. Le descendre à
+ * `@2xl` a été mesuré et refusé — à 1280 px de fenêtre, colonne ouverte et nom
+ * de projet long, le coût revenait et le titre repassait à « Tableau de b… »,
+ * c'est-à-dire l'ordre de cession à l'envers.
+ *
+ * ⚠ Le `lg:block` du bouton de navigation, lui, **reste** une media query de
+ * viewport, et c'est volontaire : il ne parle pas de la place dans la barre mais
+ * du rail de gauche, qui est imposé sous `lg` par la fenêtre. Gardé par
+ * `tests/barre-superieure-largeur.test.tsx`, qui refuse toute autre variante de
+ * viewport dans cette barre.
  */
 
 import { usePathname } from "next/navigation";
@@ -84,7 +129,7 @@ export function BarreSuperieure({
   const titre = entreeCourante(chemin)?.libelle ?? "Control Tower";
 
   return (
-    <header className="sticky top-0 z-10 flex h-14 shrink-0 items-center gap-x-3 gap-y-2 border-b border-neutral-200 bg-white/90 px-4 backdrop-blur sm:px-6 dark:border-neutral-800 dark:bg-neutral-950/90">
+    <header className="@container sticky top-0 z-10 flex h-14 shrink-0 items-center gap-x-3 gap-y-2 border-b border-neutral-200 bg-white/90 px-4 backdrop-blur @2xl:px-6 dark:border-neutral-800 dark:bg-neutral-950/90">
       <button
         type="button"
         onClick={basculerRepli}
@@ -101,9 +146,10 @@ export function BarreSuperieure({
         )}
       </button>
       {selecteurProjet}
-      {/* Les deux rétrécissent ensemble (`min-w-0 truncate`) : sur une fenêtre
-          étroite, un nom de projet long ne doit pas pousser le titre de page
-          hors de la barre, ni l'inverse. */}
+      {/* Le milieu de la barre — le seul endroit qui rétrécit. Le sélecteur
+          cède d'abord (il garde un préfixe lisible, voir `SelecteurProjet`),
+          le titre en dernier : `min-w-0 truncate` lui laisse prendre tout ce
+          qui reste et tronquer plutôt que déborder. */}
       <h1
         // Pas de `title` (#536) : il ne répétait que le texte du titre, donc
         // n'apprenait rien à personne — ni à la souris, ni au lecteur d'écran,
@@ -113,7 +159,13 @@ export function BarreSuperieure({
         {titre}
       </h1>
 
-      <div className="ml-auto flex items-center gap-2 sm:gap-3">
+      {/* `shrink-0` (#1108) : l'extrémité droite ne rétrécit pas. Sans lui, le
+          groupe se serait mis à disputer la place au titre dès que la barre se
+          resserre — or ce qu'il porte ne se tronque pas (des icônes, un montant
+          en `whitespace-nowrap`) : il aurait simplement débordé. Ce qui doit
+          céder ici cède en **disparaissant** (le coût, `@3xl`), jamais en se
+          comprimant. */}
+      <div className="ml-auto flex shrink-0 items-center gap-2 @xl:gap-3">
         {/* ⚠ **Ce qui va bien ne s'affiche plus** (#691). Cette pastille a porté
             « Temps réel connecté » en permanence depuis #117, sur les onze
             écrans, à la place la plus visible de la fenêtre — pour dire, en
@@ -125,17 +177,21 @@ export function BarreSuperieure({
             l'utilisateur ne peut pas déduire de ce qu'il voit. Même règle que le
             reste du produit (docs/30 §4) : une place se gagne, elle ne se garde
             pas parce qu'on l'avait.
-            Le texte reste masqué sous `sm` — la pastille seule y suffit, et le
-            titre de page a la priorité sur une fenêtre étroite. */}
+            Le texte reste masqué quand la barre est étroite (`@xl` depuis
+            #1108, `sm` avant lui) — la pastille seule y suffit, et le titre de
+            page a la priorité sur une barre étroite. */}
         {!connecte && (
           <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-950 dark:text-amber-300">
             <span className="size-1.5 animate-pulse rounded-full bg-amber-500 motion-reduce:animate-none" />
-            <span className="hidden sm:inline">Reconnexion…</span>
+            <span className="hidden @xl:inline">Reconnexion…</span>
           </span>
         )}
 
-        {/* Masqué sur les écrans les plus étroits : le titre de page y a la
-            priorité, et le coût reste lisible dans la page elle-même.
+        {/* Le **premier** à s'effacer quand la barre se resserre (#1108) : le
+            titre de page a la priorité, et le coût reste lisible dans la page
+            elle-même (`/couts`, tableau de bord). Seuil sur la largeur de la
+            barre et non de la fenêtre — `@3xl`, celui à partir duquel il tient
+            sans faire tronquer le titre, pas celui où il tiendrait tout juste.
             Depuis #281 c'est la dépense **du projet actif** — le titre le dit,
             un montant qui suit l'utilisateur de page en page ne pouvant pas
             rester le seul chiffre de l'écran à parler de tous les projets. */}
@@ -144,7 +200,7 @@ export function BarreSuperieure({
             comme à la souris. */}
         <Infobulle
           texte={`Coût cumulé sur ${projet.nom} — somme des grands livres, planification comprise`}
-          className="hidden whitespace-nowrap text-sm text-neutral-600 sm:inline-flex dark:text-neutral-400"
+          className="hidden whitespace-nowrap text-sm text-neutral-600 @3xl:inline-flex dark:text-neutral-400"
         >
           <span data-guide="cout-cumule">
             Coût cumulé :{" "}
@@ -154,7 +210,7 @@ export function BarreSuperieure({
           </span>
         </Infobulle>
 
-        <div className="flex items-center gap-1 border-l border-neutral-200 pl-2 sm:pl-3 dark:border-neutral-800">
+        <div className="flex items-center gap-1 border-l border-neutral-200 pl-2 @xl:pl-3 dark:border-neutral-800">
           {notifications ?? (
             <EmplacementReserve
               libelle="Notifications"
@@ -207,13 +263,21 @@ export function BarreSuperieure({
                   repris de la variante C.
                   Seulement quand la colonne est **repliée** : ouverte, elle est
                   sous les yeux et se titre elle-même — le libellé ne dirait
-                  qu'une seconde fois ce que l'écran montre déjà. Et masqué sous
-                  `sm`, où le titre de page a la priorité, comme le coût cumulé
-                  et « Reconnexion… » juste au-dessus. Le nom accessible, lui,
-                  ne dépend pas de la largeur : il reste porté par
-                  l'`aria-label`. */}
+                  qu'une seconde fois ce que l'écran montre déjà. Et masqué
+                  quand la barre est étroite, où le titre de page a la priorité,
+                  comme le coût cumulé et « Reconnexion… » juste au-dessus. Le
+                  nom accessible, lui, ne dépend pas de la largeur : il reste
+                  porté par l'`aria-label`.
+                  ⚠ Ce seuil est lu sur la **barre** (`@xl`) depuis #1108, et
+                  non plus sur la fenêtre (`sm`) : « comme le coût cumulé et
+                  Reconnexion… juste au-dessus » était l'intention de #1107, ce
+                  n'était plus le cas depuis que ces deux-là se mesurent à la
+                  barre. Un libellé de 110 px qui apparaît sur la foi d'une
+                  largeur de fenêtre est précisément ce que ce ticket corrige :
+                  la colonne repliée rend la barre large, mais c'est la barre
+                  qui doit le dire. */}
               {!conversationOuverte && (
-                <span className="hidden text-corps sm:inline">Conversation</span>
+                <span className="hidden text-corps @xl:inline">Conversation</span>
               )}
             </button>
           )}
