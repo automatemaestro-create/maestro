@@ -20,6 +20,10 @@ cinq semaines). Cette suite est la moitié qui survit.
 - `TestChainagesDesDeclarations` — une commande jouée comme étape transmet son `allowed-tools:` à
   celle qui la joue (#964, docs/10 §7.1).
 
+Une cinquième, née d'un renversement plutôt que d'un constat de l'audit :
+`TestLotFinalRenverse` — aucun prompt ne redit la règle des tests différés au lot final
+« tests + doc », retirée par #1150 (docs/40 §3) après avoir été la forme de 42 parents sur 42.
+
 **Le temps d'une phrase ne se juge pas par des mots.** « Au passé » n'a pas de forme lexicale
 fiable — « du temps de », « pendant la migration », « la version GitLab de cette boucle coûtait »
 ne partagent rien —, et juger un texte humain par un lexique est proscrit dans ce dépôt : il
@@ -561,3 +565,91 @@ class TestChainagesDesDeclarations:
             "une commande jouée comme étape déclare ce que son appelante ne déclare pas — "
             f"compléter l'en-tête de l'appelante (docs/10 §7.1) : {manques}"
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# 5. Le lot final « tests + doc » renversé (#1150)
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+#: Une mention des tests différés à un lot dédié. La règle a vécu de #53 à #1150 dans trois textes
+#: qu'une session relit à chaque ticket, et elle y revenait d'elle-même : c'était la forme de 42
+#: parents sur 42. Un prompt qui la redit la refait vivre, quel que soit ce que docs/10 en dit.
+_LOT_FINAL = re.compile(r"(?i)tests \+ doc|tests? différés|lot final")
+
+_AVANT_1150 = (
+    "vrai au présent : un lot né avant #1150 porte encore la mention, et `start-brief` la rend"
+)
+
+#: Les mentions jugées. Une mention neuve se corrige (chaque ticket livre ses tests, docs/10 §5.1)
+#: ou s'inscrit ici avec sa raison.
+LOT_FINAL_ADMISES: Mapping[str, tuple[Admise, ...]] = {
+    ".claude/commands/ticket-start.md": (
+        Admise("les tests différés d'un lot né avant #1150", _AVANT_1150),
+        Admise(
+            "ses tests différés s'il en porte (« tests différés → #<iid> » — seulement un lot né "
+            "avant #1150",
+            _AVANT_1150,
+        ),
+    ),
+}
+
+#: Les phrases que #1150 a retirées, telles qu'elles étaient (`git show a4fcc7e:<fichier>`).
+_LOT_FINAL_FAUTIVES: Mapping[str, str] = {
+    ".claude/commands/ticket-create.md": (
+        "   - **Tests différés** : les tests sont un **sous-ticket dédié** — par défaut le **lot "
+        "final\n     « tests + doc »**. Les lots intermédiaires n'embarquent des tests que si leur "
+        "logique est\n     critique, et portent la mention « Tests différés → "
+        "#<iid-du-lot-tests> »."
+    ),
+    "CLAUDE.md": (
+        "description commençant par `Sous-ticket de #<parent>`, tests différés au **lot final "
+        "« tests + doc »** (jamais parallèle)."
+    ),
+}
+
+
+def fichiers_du_perimetre_lot_final() -> list[str]:
+    """Ce qu'une session relit avant de découper : `CLAUDE.md`, `.claude/**` et le prompt de run."""
+    return ["CLAUDE.md", *fichiers_du_perimetre_forge()]
+
+
+class TestLotFinalRenverse:
+    """Aucun prompt ne redit la règle du lot final « tests + doc » (#1150, docs/40 §3)."""
+
+    def test_le_motif_arrete_les_phrases_que_1150_a_retirees(self) -> None:
+        for relatif, fautive in _LOT_FINAL_FAUTIVES.items():
+            assert non_jugees(fautive, _LOT_FINAL, LOT_FINAL_ADMISES.get(relatif, ())), relatif
+
+    def test_le_motif_laisse_passer_la_regle_nouvelle_et_ce_qui_est_inscrit(self) -> None:
+        """L'autre moitié : la règle d'aujourd'hui ne fait pas rougir, un ajout à côté si."""
+        assert not non_jugees(
+            "chaque lot écrit et fait passer les tests de ce qu'il livre. Aucun lot ne porte que "
+            "des tests.",
+            _LOT_FINAL,
+        )
+        admises = LOT_FINAL_ADMISES[".claude/commands/ticket-start.md"]
+        inscrite = "le marqueur éventuel, les tests différés d'un lot né avant #1150 et le contrôle"
+        assert not non_jugees(inscrite, _LOT_FINAL, admises)
+        assert non_jugees(inscrite + ", puis un lot final pour la doc.", _LOT_FINAL, admises)
+
+    def test_aucune_mention_du_lot_final_non_jugee(self) -> None:
+        fautes = [
+            f"{relatif} : {contexte}"
+            for relatif in fichiers_du_perimetre_lot_final()
+            for contexte in non_jugees(
+                lire(relatif), _LOT_FINAL, LOT_FINAL_ADMISES.get(relatif, ())
+            )
+        ]
+        assert not fautes, (
+            "mention(s) des tests différés à un lot dédié que personne n'a jugée(s). Une règle : "
+            "corriger, chaque ticket livre ses tests (#1150, docs/10 §5.1). Vraie au présent ou "
+            "au passé : l'inscrire dans LOT_FINAL_ADMISES avec sa raison.\n" + "\n".join(fautes)
+        )
+
+    def test_l_inventaire_ne_couvre_que_ce_qui_existe(self) -> None:
+        perimes = [
+            f"{relatif} : {extrait}"
+            for relatif, admises in LOT_FINAL_ADMISES.items()
+            for extrait in absentes(lire(relatif), admises)
+        ]
+        assert not perimes, "extrait(s) inscrit(s) introuvable(s) :\n" + "\n".join(perimes)

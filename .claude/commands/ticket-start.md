@@ -43,7 +43,8 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
      est une anomalie à signaler (`bash scripts/gitlab/lib.sh lots-ouverts <iid-parent>` le
      confirme en lecture seule), pas un geste à faire à la main.
    - **Sous-ticket** : la sortie donne le parent, le rang (« lot n/total »), le marqueur
-     « parallèle » éventuel, les tests différés et le contrôle des lots précédents. Si elle
+     « parallèle » éventuel, les tests différés d'un lot né avant #1150 et le contrôle des lots
+     précédents. Si elle
      signale des lots précédents non livrés (⚠ — encore « À faire » ou « En cours »), arrête-toi :
      les terminer d'abord. Ne bloquent **pas** : un lot précédent « En revue » (PR ouverte pas
      encore mergée — les lots sont additifs et la branche part de `main`), ni un lot précédent
@@ -58,11 +59,12 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
      d'acceptation, ou des livrables indépendants. Un besoin multi-facettes qui tient en une
      session (ex. un script + sa doc) se démarre tel quel, au besoin avec une checklist interne
      dans sa description. Au-delà du seuil, ne l'enchaîne pas tel quel : propose le découpage —
-     le ticket devient le parent (sa description garde l'objectif, rien de plus), les sous-tickets
-     sont créés puis **rattachés en sub-issues** selon la convention de `/ticket-create` (1-3
-     critères chacun, mergeables seuls sur `main`, lot final « tests + doc »,
-     `lib.sh issue-link <parent> <lot> [--parallele]` puis `lib.sh subticket-order`), puis on
-     démarre le premier lot.
+     des livrables **indépendants** deviennent des tickets sans parent ; **une** capacité qui
+     dépasse une session fait du ticket le parent (sa description garde l'objectif, rien de plus),
+     et les sous-tickets sont créés puis **rattachés en sub-issues** selon la convention de
+     `/ticket-create` (1-3 critères chacun, mergeables seuls sur `main`, **chacun avec ses tests**
+     — #1150 —, `lib.sh issue-link <parent> <lot> [--parallele]` puis `lib.sh subticket-order`),
+     puis on démarre le premier lot.
      Contrairement à l'étape 6, c'est une **vraie pause** : attends la décision de l'utilisateur.
    - **Branche proposée sans préfixe** (label `type::` absent) : déduis le type du titre/de la
      description, ou demande à l'utilisateur si ambigu.
@@ -175,8 +177,9 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
    laquelle l'écran sera jugé : elle cadre l'implémentation au même titre que les critères, et ne
    la réécris pas à ta façon. Section absente du brief : ne dis rien. Une section « non renseigné »
    **n'est pas une pause** — dis-le en une ligne et enchaîne ; pour un sous-ticket, le parent, le rang du
-   lot, ses tests différés (« tests différés → #<iid> » : livrer sans tests est prévu, pas un
-   oubli) et, s'il y en a, les **autres lots démarrables en parallèle** (`bash
+   lot, ses tests différés s'il en porte (« tests différés → #<iid> » — seulement un lot né
+   avant #1150 : pour lui, livrer sans tests reste prévu ; tout autre lot livre les siens) et, s'il
+   y en a, les **autres lots démarrables en parallèle** (`bash
    scripts/gitlab/lib.sh startables <iid-parent>`) — de quoi permettre à quelqu'un d'autre d'en
    prendre un tout de suite. Le résumé cadre le travail, ce n'est **pas une demande de validation** : n'attends
    aucun « go » et commence tout de suite (les critères d'acceptation font foi). Ne t'arrête pour

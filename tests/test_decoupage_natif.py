@@ -179,7 +179,7 @@ def lectures(depot: Depot) -> list[str]:
 # L'ordre n'est pas de l'affichage. `queue.sh` garde les lots d'un parent CONTIGUS et dans cet
 # ordre-là, et `gl_subtickets_startables` juge « ce lot est-il démarrable ? » sur ce qui le PRÉCÈDE.
 # Rattacher sans ordonner ne casserait pas l'affichage d'une page : ça ferait partir le dernier lot
-# en premier, et le lot final « tests + doc » avant ce qu'il teste.
+# en premier, et un lot qui assemble avant ce qu'il assemble.
 
 ORDRE_VOULU = ("390", "391", "392", "393")
 
@@ -462,7 +462,8 @@ def test_sans_le_drapeau_le_comportement_est_celui_d_avant_au_bit_pres(depot: De
 # l'endroit où la décision est écrite.
 #
 # La table est celle du parent de référence du dépôt : un socle livré, deux lots marqués au milieu,
-# un lot final « tests + doc » jamais marqué. C'est la forme de 42 parents sur 42.
+# un dernier lot non marqué qui dépend des trois. C'était la forme de 42 parents sur 42 avant #1150,
+# ce dernier lot étant alors leur lot final « tests + doc » ; le verdict de blocage n'a pas bougé.
 REFERENCE = (
     # iid,  marqué,  cycle de vie,  démarrable ?
     ("201", False, "Terminé", False),
@@ -500,9 +501,9 @@ def test_le_verdict_de_startables_est_celui_d_avant_le_changement_de_support(
 ) -> None:
     """Le critère de #393, gardé sous la seule forme qui lui survive.
 
-    Deux lots marqués se prennent ensemble, le socle livré ne barre plus personne, et le lot final
-    « tests + doc » reste derrière tout le monde — parce qu'il n'est PAS marqué, et qu'un lot non
-    marqué est barré par tout ce qui le précède, marqueurs compris.
+    Deux lots marqués se prennent ensemble, le socle livré ne barre plus personne, et le dernier
+    lot reste derrière tout le monde — parce qu'il n'est PAS marqué, et qu'un lot non marqué est
+    barré par tout ce qui le précède, marqueurs compris.
     """
     depot.pose_etat(issues={"389": parent_de_reference()}, graphql=etats_de_reference())
     acheve = depot.lib("startables", "389")

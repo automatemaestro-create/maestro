@@ -1307,13 +1307,25 @@ n'est donc plus une salle d'attente mais un **état de passage**, où le ticket 
    (ex. sans démarrer de nouveau ticket) ou pour supprimer aussi la branche distante si la case
    « Delete source branch » avait été décochée au merge.
 
-### 5.1 Découpage en sous-tickets — besoins trop gros & tests différés
+### 5.1 Découpage en sous-tickets — une capacité qui dépasse une session
 
-> ⚠ **Renversé en partie le 2026-09-21** (#1153, [docs/40 §3](./40-decision-rythme-et-scenarios-de-reference.md)). Les **tests différés au lot
-> final « tests + doc »** cessent d'être la règle : chaque ticket, et chaque lot quand un découpage
-> reste nécessaire, livre ses propres tests, et un parent n'existe que si **une capacité** dépasse une
-> session. La mécanique des sub-issues, de `lot::parallele` et de `lot::arbitre` ne bouge pas. Ce
-> paragraphe et `/ticket-create` sont réécrits par #1150. Les lots « tests + doc » déjà découpés restent.
+> ⚠ **Renversé en partie le 2026-09-21** (#1153, [docs/40 §3](./40-decision-rythme-et-scenarios-de-reference.md)),
+> réécrit ici par #1150. Depuis #53, les tests d'un chantier étaient **différés à un lot final
+> « tests + doc »**, jamais parallèle : une fonctionnalité devenait couramment 4 à 9 tickets, dont un
+> qui ne livrait rien de visible et barrait la clôture de son parent. La règle est désormais : **un
+> ticket = une capacité visible pour l'utilisateur, ses tests compris**, et chaque lot, quand un
+> découpage reste nécessaire, livre ses propres tests et sa doc. La mécanique des sub-issues, de
+> `lot::parallele` et de `lot::arbitre` ne bouge pas. **Rien n'est rétroactif** : les chantiers
+> découpés avant la règle gardent leur lot final (#1128, #1133, #645), qui se traite tel quel — le
+> refondre coûterait un découpage de plus pour un gain nul, et `start-brief` continue d'afficher la
+> mention « tests différés → #… » des lots qui la portent.
+
+**L'unité est une capacité visible, pas une couche.** Un ticket rend à l'utilisateur quelque chose
+qu'il peut faire ou voir, avec les tests qui le prouvent : c'est ce qu'un bilan de jalon juge, et
+c'est ce que le rythme compte (docs/40 §1 : en septembre, 10 % des tickets fermés étaient des lots
+« tests + doc », des roadmaps ou des cadrages). Plusieurs capacités **indépendantes** font plusieurs
+tickets **sans parent**, chacun démarrable seul ; un parent n'existe que si **une** capacité dépasse
+une session — jamais par réflexe dès qu'il y a deux couches.
 
 Un ticket doit tenir en **~1 session de travail** (§1, règle 4) — chaque session `/ticket-start`
 reste ainsi légère en contexte. L'évaluation de taille se fait en **charge estimée**, sur la
@@ -1560,26 +1572,28 @@ Ce que chacun porte :
   `main`) qui permet d'**enchaîner les lots sans attendre le merge** du précédent : un lot
   « En revue » (PR ouverte) ne bloque pas le suivant, seul un lot encore « À faire » ou
   « En cours » l'arrête (recalibrage ticket #63).
-- **Tests différés** — les tests sont un **sous-ticket dédié**, par défaut le **lot final
-  « tests + doc »**. Les lots intermédiaires n'embarquent des tests que si leur logique est
-  critique, et portent la mention « Tests différés → #<iid-du-lot-tests> » — livrer un lot
-  intermédiaire sans tests est donc **prévu**, pas un oubli (la case « Tests » de la checklist de
-  PR reste vide, le relecteur sait pourquoi).
+- **Tests et doc livrés avec le lot** (#1150) — chaque lot écrit et fait passer les tests de ce
+  qu'il livre, et met à jour la doc de ce qu'il change, **dans sa propre PR** ; ses critères
+  d'acceptation le disent, et la case « Tests » de la checklist de PR se coche. **Aucun lot ne
+  porte que des tests.** Un lot se découpe de préférence en **tranche visible** — un morceau qui
+  marche de bout en bout — plutôt qu'en couche, pour que chaque merge rende quelque chose à
+  l'utilisateur. Seule exception, les lots nés avant #1150 qui portent « Tests différés →
+  #<iid> » : leur livraison sans tests reste **prévue**, et leur lot final les couvre.
 - **Lots parallélisables** (ticket #160, support changé par #389) — la sérialisation des lots
   protège les vraies dépendances, mais elle est souvent **artificielle** : les lots sont déjà
   additifs et mergeables seuls sur `main`, et deux personnes se bloquent alors mutuellement pour
   rien. Un lot qui porte le label **`lot::parallele`** déclare qu'il **ne dépend pas des autres lots
   marqués qui le précèdent** — dans l'ordre du parent, celui que la forge tient. Sur le chantier
-  #155, par exemple : un socle (#157) puis deux lots marqués (#158, #159) puis le lot final
-  « tests + doc » (#156), non marqué.
+  #155, par exemple (découpé avant #1150) : un socle (#157) puis deux lots marqués (#158, #159)
+  puis un dernier lot (#156), non marqué, qui dépendait des trois.
 
   La règle de blocage appliquée par `lib.sh start-brief` est alors : **un lot précédent non livré
   (ni « Terminé » ni « En revue ») bloque, sauf si le lot visé *et* ce lot précédent sont tous
   deux marqués.** Trois conséquences :
   - #158 et #159 sont **démarrables en même temps** par deux personnes, quel que soit l'état de
     l'autre ;
-  - un lot **non marqué** reste barré par tout ce qui le précède — le lot final **« tests + doc »
-    n'est donc jamais marqué**, et attend bien l'ensemble des lots ;
+  - un lot **non marqué** reste barré par tout ce qui le précède — c'est la forme d'un lot qui
+    **assemble** ce que les précédents ont livré, et il attend bien l'ensemble des lots ;
   - un lot non marqué au milieu des lots (#157 ci-dessus) fait **barrière** : les lots
     parallèles qui le suivent l'attendent, ce qui permet d'exprimer un socle commun.
 
@@ -1599,7 +1613,7 @@ Ce que chacun porte :
 
 - **L'arbitrage, et pourquoi « pas de marqueur » ne voulait rien dire** (ticket #562) — le marqueur
   étant facultatif, son **absence est ambiguë** : elle dit indifféremment « ce lot dépend réellement
-  de ce qui le précède » (l'intention de #160, et le cas du lot final « tests + doc ») ou « personne
+  de ce qui le précède » (l'intention de #160 : un socle, un lot qui assemble) ou « personne
   n'y a pensé ». Un run part alors en séquentiel sans que ce séquentiel ait jamais été décidé, et
   rien ne le distingue d'un séquentiel voulu. Mesure du 2026-08-26, en rejouant le parsing de
   `gl_subticket_rows` sur les 42 parents du dépôt : **77 lots marqués sur 228 (34 %)**, 43 % depuis
@@ -1650,7 +1664,7 @@ Comportement des commandes (helpers `lib.sh` : `issue-link`, `subticket-order`, 
 
 | Commande | Besoin/ticket trop gros | Ticket parent | Sous-ticket |
 |---|---|---|---|
-| `/ticket-create` | crée le parent **+** les sous-tickets, les lui **rattache dans l'ordre** (`lib.sh issue-link`, `--parallele` sur les lots indépendants, lot tests en dernier) et pose `lot::arbitre` sur le parent, **quel qu'ait été le verdict** (#562) | — | — |
+| `/ticket-create` | crée le parent **+** les sous-tickets, les lui **rattache dans l'ordre** (`lib.sh issue-link`, `--parallele` sur les lots indépendants, chaque lot avec ses tests) et pose `lot::arbitre` sur le parent, **quel qu'ait été le verdict** (#562) | — | — |
 | `/ticket-start` | **propose le découpage** au lieu d'enchaîner (vraie pause) | affiche **tous les lots démarrables** (`lib.sh startables`) et **redirige** vers le premier ; **rien à démarrer** ⇒ le travail est en route (« En cours ») ou livré et on n'attend plus que des merges — un parent dont tout est fermé s'est fermé tout seul (#515) | vérifie que les lots **précédents** sont livrés (« Terminé » ou « En revue » — une PR en attente de merge ne bloque pas), **hors lots marqués `lot::parallele` quand le lot visé l'est aussi** ; sinon s'arrête. Et **fait passer le parent « En cours »** s'il était « À faire » (#515 à l'autre bout, ici #517, `lib.sh begin` → `demarre-parent`) |
 | `/ticket-ship` | — | — | **annonce les lots démarrables** dès maintenant sans attendre le merge — plusieurs si des lots sont parallèles — (ou, si c'était le dernier, que le parent **se fermera de lui-même** au merge, #515). Rien à synchroniser sur le parent : l'avancement s'y lit tout seul (#395) |
 | l'événement `issues: closed` | — | **ferme le parent** dès que son dernier lot se ferme (#515, `lib.sh ferme-parent`) — quels que soient l'auteur du merge et la machine —, et **le rouvre** s'il a été fermé alors qu'il lui restait des lots (#394, `lib.sh garde-fermeture`, qui passe **avant** les deux autres questions) | pose « Terminé » (#377) |
