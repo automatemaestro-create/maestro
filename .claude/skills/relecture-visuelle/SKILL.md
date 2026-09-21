@@ -193,18 +193,24 @@ bash scripts/design/relecture-visuelle.sh <iid> --scenario <nom>
 | `vide` | aucun run, aucune tâche, aucune validation, aucun fil | un état vide qui **explique** et propose la suite, pas un cadre blanc |
 | `erreur` | toutes les routes en 500, WebSocket refusée — sauf `/api/sante` et `/api/projets` | l'erreur **nommée**, lisible dans les deux thèmes, sans casser la mise en page |
 | `charge` | 200 tâches sur 20 niveaux, 24 runs, 30 validations, 641 lignes de journal, 31 conversations dont une de 80 messages, un nom d'agent de 80 caractères, un jeton sans espace | ce qui **déborde** : colonne élargie, texte coupé sans ellipse, défilement horizontal |
+| `decomposition` | une **phase**, pas un état : un run qui travaille 4 minutes **sans publier une seule tâche** — journal qui avance, coût qui monte —, puis son plan d'un coup et ses quatre tâches ; rejoué en boucle (#1109) | que l'écran **dise** que le run décompose au lieu de montrer un vide, et que la **transition** se voie : le compte de tâches bascule une fois, de 0 au total |
 
 Les noms sont **lus** dans `maestro/controltower/demo.py` (le plan les
 annonce) : un nom que la démo ne sert pas est refusé avant la stack. Écran
 « Projets » en `erreur` : rien à voir, sa seule route est épargnée pour que le
-shell laisse entrer dans les autres écrans.
+shell laisse entrer dans les autres écrans. `decomposition` est le seul nom qui
+**passe** : ce qu'on y capture dépend du moment, et le journal de l'API (que
+`start.sh` nomme au démarrage) annonce chaque passage.
 
 **Quels états ouvrir.** Ceux que la rubrique **« États à couvrir »** du ticket
 nomme (section `## Rendu attendu`, #976), rapprochés des noms ci-dessus par
 jugement (« contenu long » est `charge`). Quand le ticket ne les nomme pas
-(section absente ou « non renseigné »), on ouvre **les trois** : un état jamais
-ouvert est un état que personne ne regarde, et ce qu'on paie en échange, c'est
-~18 s de redémarrage par état. Un état que la démo ne sait pas servir, par
+(section absente ou « non renseigné »), on ouvre **les trois états limites** —
+`vide`, `erreur`, `charge` : un état jamais ouvert est un état que personne ne
+regarde, et ce qu'on paie en échange, c'est ~18 s de redémarrage par état.
+`decomposition` n'entre pas dans ce défaut : c'est une **phase**, elle ne
+s'ouvre que si le ticket la nomme ou si l'écran montre le **début** d'un run,
+et chaque passage coûte 4 minutes et laisse un run soldé derrière lui. Un état que la démo ne sait pas servir, par
 exemple une largeur téléphone, va à « ce que je n'ai pas pu voir ».
 
 **Comment.** Chaque état **redémarre** la stack : le scénario est celui de
