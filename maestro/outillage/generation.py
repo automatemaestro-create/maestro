@@ -313,7 +313,7 @@ def _poser(
                 fichier,
                 "ignore",
                 "le projet porte déjà ce fichier et Maestro ne l'a pas écrit : "
-                "il n'y touche pas (docs/38 §4.2).",
+                "il n'y touche pas.",
             ),
             None,
         )

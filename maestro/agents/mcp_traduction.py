@@ -459,7 +459,8 @@ def _remote(
         raise _Irreductible(
             MOTIF_URL,
             f"variable en URL, non résoluble : {url} — "
-            "les ${VAR} ne sont résolus que dans env et headers (docs/21 §3.4).",
+            "les ${VAR} ne sont résolus que dans les variables d'environnement et "
+            "les en-têtes.",
         )
 
     headers: dict[str, str] = {}

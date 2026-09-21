@@ -1866,7 +1866,7 @@ def create_app(
                 status_code=501,
                 detail=(
                     "route de contrat (API v2) non encore implémentée : servie en "
-                    "fixtures par la démo (maestro.controltower.demo, #183)."
+                    "fixtures par le mode démonstration."
                 ),
             )
         return fixtures

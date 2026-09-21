@@ -210,25 +210,25 @@ _CLI_CONNUS: tuple[_CliConnu, ...] = (
         commande="codex",
         libelle="Codex CLI",
         fournisseur=None,
-        role="agent CLI tiers — non branché (docs/34)",
+        role="agent CLI tiers — non branché",
     ),
     _CliConnu(
         commande="gemini",
         libelle="Gemini CLI",
         fournisseur=None,
-        role="agent CLI tiers — non branché (docs/34)",
+        role="agent CLI tiers — non branché",
     ),
     _CliConnu(
         commande="opencode",
         libelle="opencode",
         fournisseur=None,
-        role="agent CLI tiers — non branché (docs/34)",
+        role="agent CLI tiers — non branché",
     ),
     _CliConnu(
         commande="cursor-agent",
         libelle="Cursor Agent",
         fournisseur=None,
-        role="agent CLI tiers — non branché (docs/34)",
+        role="agent CLI tiers — non branché",
     ),
 )
 
@@ -363,7 +363,7 @@ class SondePoste:
             modeles=modeles or (),
             # #113 : un fournisseur local reste un cas valide du catalogue, mais il
             # ne rapporte aucun coût — le plafond de dépense n'a donc pas de prise.
-            incertitude="aucun coût rapporté par ce fournisseur (#113)",
+            incertitude="aucun coût rapporté par ce fournisseur",
         )
 
     async def _compatible(self, base: str) -> Constat:

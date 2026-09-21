@@ -152,21 +152,34 @@ franchement et dis ce qui manque — ne comble aucun trou.
 
 N'écris pas toi-même la liste des sources : elle est ajoutée automatiquement sous ta
 réponse, à partir des extraits qui t'ont réellement été passés. Tu peux en revanche
-nommer une section dans ta phrase quand cela aide à lire."""
+nommer une section dans ta phrase quand cela aide à lire — par son titre, celui qui
+ouvre l'extrait, jamais par son nom de fichier.
+
+Si l'utilisateur demande à voir l'un des passages cités, **reproduis-le** à partir de
+l'extrait que tu as reçu, tel quel et sans le résumer : c'est ce qui rend la source
+vérifiable pour quelqu'un qui n'a pas les fichiers. Si tu ne l'as pas reçu, dis-le au
+lieu de le reconstituer de mémoire."""
 
 #: L'en-tête du bloc de citations. Le mot dit **ce que l'assistant a lu**, et non ce
 #: qu'il a utilisé : c'est la seule des deux affirmations qui soit vérifiable.
-_TITRE_SOURCES = "Sources lues :"
+#:
+#: Depuis #939 il dit aussi **comment on le vérifie**. Les sources citées étaient des
+#: fichiers du dépôt (`docs/07-guide-de-demarrage.md`…) que l'utilisateur ne peut pas
+#: ouvrir : une source qu'on ne peut pas consulter n'est pas une source, c'est une
+#: affirmation de plus. La citation nomme donc désormais le document
+#: (`SectionDoc.citation`), et la phrase dit le geste qui en rend le texte — le
+#: demander ici même, ce que `_CONSIGNE_DOCUMENTEE` oblige à honorer.
+_TITRE_SOURCES = "Ce que j'ai lu pour répondre — demandez-m'en le passage pour le vérifier :"
 
 #: La réponse quand le modèle n'a retenu **aucune** section : la documentation ne
 #: porte pas de quoi répondre, et on le dit. Ce n'est pas un repli — le modèle a
 #: répondu, et sa réponse est « rien ici » — d'où une phrase et non une table.
 _AVEU_IGNORANCE = (
-    "Je n'ai rien trouvé dans la documentation de Maestro (les fichiers de `docs/` et "
-    "`apps/web/README.md`) qui réponde à votre message, et je préfère vous le dire "
-    "plutôt que d'improviser. Reformulez-le si le sujet a un autre nom dans le "
-    "produit ; s'il porte sur le contenu de votre projet plutôt que sur l'outil, "
-    "c'est la page Chat qui vous met en relation avec l'orchestration."
+    "Je n'ai rien trouvé dans la documentation de Maestro qui réponde à votre "
+    "message, et je préfère vous le dire plutôt que d'improviser. Reformulez-le si "
+    "le sujet a un autre nom dans le produit ; s'il porte sur le contenu de votre "
+    "projet plutôt que sur l'outil, c'est la page Chat qui vous met en relation "
+    "avec l'orchestration."
 )
 
 #: Ce que le canal dit quand il n'a pas pu lire la documentation. Même ordre qu'à
@@ -375,10 +388,15 @@ def bloc_sources(sections: Sequence[SectionDoc]) -> str:
     Écrit ici et jamais demandé au modèle : c'est ce qui fait que les sources citées
     sont celles qu'il a reçues (cf. le docstring du module). Sans section, pas de
     bloc — un en-tête suivi de rien laisserait croire à une citation perdue.
+
+    Chaque ligne porte la `citation` de la section et non son `chemin` (#939) : le
+    document s'y nomme par son titre, jamais par son fichier. Nommée ainsi, la
+    source est **redemandable** — c'est ce que l'en-tête annonce, et ce qui la rend
+    vérifiable sans quitter le produit.
     """
     if not sections:
         return ""
-    lignes = [f"- {section.chemin}" for section in sections]
+    lignes = [f"- {section.citation}" for section in sections]
     return "\n\n".join((_TITRE_SOURCES, "\n".join(lignes)))
 
 

@@ -823,11 +823,11 @@ function SectionPermissions({ fiche }: { fiche: AgentCatalogueDetail }) {
       </p>
       <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
         Écrite dans{" "}
-        <code className="font-mono">core/permissions/{fiche.nom}.json</code>,{" "}
-        <strong>versionné avec le dépôt</strong> : chaque enregistrement modifie
-        un fichier suivi par git — celui du dossier de travail où tourne cette
-        Control Tower, à commiter comme le reste. Elle vaut pour la tâche
-        suivante, sans redémarrage.
+        <code className="font-mono">core/permissions/{fiche.nom}.json</code>, dans
+        le dossier de travail où tourne cette Control Tower : chaque
+        enregistrement modifie ce fichier, et si ce dossier est sous gestion de
+        versions, c&apos;est une modification comme une autre. Elle vaut pour la
+        tâche suivante, sans redémarrage.
       </p>
     </section>
   );

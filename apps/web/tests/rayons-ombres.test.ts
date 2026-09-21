@@ -472,7 +472,7 @@ const RESIDU = new Map<string, number>([
   ["components/PanneauBriefs.tsx", 1],
   ["components/PanneauDetailTache.tsx", 3],
   ["components/PanneauValidations.tsx", 2],
-  ["components/PosteVide.tsx", 3],
+  ["components/PosteVide.tsx", 2],
   // Le socle lui-même, et il compte double — un écart retiré ici en retire des
   // recopies partout. Ses huit rayons sont partis avec ce lot (ils ont pris
   // leur nom de rôle, à valeur constante) ; ce qui reste est l'ombre de la
@@ -513,7 +513,7 @@ const RESIDU = new Map<string, number>([
 ]);
 
 /** Le compte du README — épinglé ici pour qu'il ne puisse pas dériver en silence. */
-const TOTAL_ANNONCE = 165;
+const TOTAL_ANNONCE = 164;
 
 /** Ce que le produit porte aujourd'hui, fichier par fichier. */
 function residuMesure(): Map<string, string[]> {

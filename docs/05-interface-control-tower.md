@@ -464,8 +464,21 @@ une panne ; l'écran est donc remplacé par **ce qu'il faut faire pour le rempli
   > poste vide à ce que #186 avait corrigé : un écran qui ne nomme aucun geste.
   > La destination est résolue par le menu (`PAGE_DU_FIL`), donc elle suivra le
   > prochain déménagement toute seule ;
-- **juste explorer l'interface** — `bash scripts/controltower/start.sh --demo`,
-  scénario factice sur bus mémoire, qui **dit** que ses données le sont.
+- **juste explorer l'interface** — la **visite guidée** (#122), un tour des écrans
+  qui ne lance rien.
+
+  > ⚠ **Cette porte-là a changé le 2026-09-21** (#939, constat G6 du retex du
+  > 2026-09-11) : elle rendait une **ligne de commande** —
+  > `bash scripts/controltower/start.sh --demo`, « à relancer depuis le dépôt » —
+  > à quelqu'un qui, une fois Maestro installé, n'a ni terminal ouvert ni dépôt.
+  > C'était un cul-de-sac là où l'écran est la seule source de ce qu'il faut
+  > faire, exactement le défaut que la note de #484 nomme juste au-dessus. Le
+  > choix de forme a été rendu sur pièces (variantes rendues, jugées contre les
+  > états vides de Grafana et d'Argo CD — commentaires « Veille de conception » et
+  > « Variante retenue » de #939) : la porte n'a **pas** été retirée, elle a été
+  > remplacée par le geste que le produit avait déjà. Le mode de démonstration,
+  > lui, n'a pas bougé : il reste ce qu'on lance depuis le dépôt, et c'est
+  > précisément pourquoi il ne se propose pas ici.
 
 Ce n'est **pas un état d'erreur**, et la distinction est le point de conception :
 une API injoignable garde ses panneaux et sa bannière d'erreur, parce qu'un écran

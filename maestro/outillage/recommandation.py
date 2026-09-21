@@ -89,9 +89,9 @@ USAGES_VERIFICATION: tuple[str, ...] = ("lint", "formater", "types")
 #: parce que c'est la phrase que l'appelant affiche ; la décision, elle, vit
 #: dans la note et pas dans ce module.
 RAISON_AUCUNE_COMMANDE = (
-    "aucun format de commande n'est commun aux clients (docs/38 §3.5) — "
-    "un point d'entrée qu'on déclenche par son nom est un skill, et un skill "
-    "s'appelle déjà par son nom dans deux clients sur quatre"
+    "aucun format de commande n'est commun aux clients — un point d'entrée qu'on "
+    "déclenche par son nom est un skill, et un skill s'appelle déjà par son nom "
+    "dans deux clients sur quatre"
 )
 
 
@@ -127,10 +127,10 @@ def _instructions(constats: Constats, presents: dict[str, Piece]) -> Entree:
         etat="a-completer" if deja else "a-generer",
         raison=(
             "le projet porte déjà un AGENTS.md : Maestro n'y écrirait qu'un bloc délimité, "
-            "sans toucher au reste (docs/38 §4.2)"
+            "sans toucher au reste"
             if deja
             else "le fichier d'instructions que tous les clients lisent, et celui qui désigne "
-            "où sont les skills du projet (docs/38 §3.1, §3.3)"
+            "où sont les skills du projet"
         ),
         justification=readme
         or Piece(
@@ -156,7 +156,7 @@ def _ponts(presents: dict[str, Piece]) -> list[Entree]:
             etat="a-completer" if nom in presents else "a-generer",
             raison=(
                 f"{client} ne lit pas AGENTS.md par défaut : {nom} l'importe en une ligne "
-                "(@AGENTS.md), sans dupliquer son texte (docs/38 §2.2, §3.2)"
+                "(@AGENTS.md), sans dupliquer son texte"
             ),
             justification=Piece(nom="AGENTS.md", chemin="AGENTS.md", role="instructions"),
             commandes=(),

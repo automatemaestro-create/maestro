@@ -1,10 +1,19 @@
-"""Un seul registre de langue dans toute l'interface, agents compris (#945).
+"""Un seul registre de langue dans toute l'interface, agents compris (#945, #939).
 
 Constat **C5** du [retex du 2026-09-11](../docs/retex/2026-09-11-premiere-session-utilisateur.md) :
 l'assistant et l'orchestration **tutoyaient** l'utilisateur (« Je te propose », « Ce que je peux
 te dire ») quand tout le reste du produit **vouvoie** — y compris le message d'accueil du chat,
 deux lignes au-dessus. La cause n'était pas une phrase mal écrite : **aucun prompt ne disait le
 registre**, et un modèle rend alors celui dans lequel on s'adresse à lui.
+
+⚠ **Le constat G6 du même retex a la même forme, et vit donc au même endroit** (#939) : ce que le
+produit dit à son utilisateur parlait du **dépôt** — une commande `bash scripts/…`, des numéros de
+tickets, des `docs/*.md` cités en sources, un renvoi vers `/orchestrate --status`, « une commande
+du workflow de développement qui n'existe pas pour un utilisateur ». La part *rendue par un agent*
+n'était, là encore, prescrite nulle part. Elle l'est désormais dans le même fragment, pour la même
+raison : deux endroits finiraient par dire deux choses. La part *écrite dans le front* est gardée
+de l'autre côté, par `apps/web/tests/langue-du-produit.test.ts` — deux moitiés, deux filets, un
+seul texte de règle de chaque côté.
 
 Ce que cette suite garde tient en une phrase : **le registre existe une fois, et tout ce que le
 produit sert le porte**. Les deux moitiés comptent autant —
@@ -21,6 +30,10 @@ de #748). On peut le lui demander sans ambiguïté, et c'est tout ce qui se test
 """
 
 from __future__ import annotations
+
+import ast
+import re
+from pathlib import Path
 
 import pytest
 
@@ -64,6 +77,47 @@ def test_le_registre_distingue_les_deux_adresses():
     # peut se réécrire, la distinction non — sans elle la consigne redevient ambiguë.
     assert "tutoient" in texte, "la consigne ne dit plus que c'est l'agent qu'on tutoie"
     assert "vouvoie" in texte, "la consigne ne dit plus que c'est l'utilisateur qu'on vouvoie"
+
+
+def test_le_registre_interdit_de_parler_du_depot():
+    """G6 : ce qu'un agent écrit ne renvoie pas vers ce que l'utilisateur n'a pas (#939).
+
+    Les quatre familles relevées par le retex, et **pas** une phrase qui les
+    résumerait : chacune a été observée à l'écran, et chacune se perd différemment.
+    On vérifie que la consigne les nomme, jamais ce qu'un modèle en fait — même
+    partage qu'au vouvoiement ci-dessus.
+    """
+    texte = registre()
+    assert "scripts/" in texte, "la consigne ne nomme plus les commandes du dépôt"
+    assert "docs/" in texte, "la consigne ne nomme plus les fichiers de documentation"
+    assert "/orchestrate --status" in texte, "la consigne ne nomme plus le renvoi de G6"
+    assert "#481" in texte, "la consigne ne nomme plus les numéros de tickets internes"
+
+
+def test_le_registre_dit_par_quoi_remplacer():
+    """Le second critère du ticket, prescrit et non espéré (#939).
+
+    « Ce qui remplace dit **quoi faire**, pas seulement autre chose. » Une consigne
+    qui se contenterait d'interdire ferait taire l'agent là où il doit orienter :
+    elle doit donc nommer l'interface comme le lieu du geste, et autoriser l'aveu
+    quand le geste n'y est pas — sans quoi le modèle comblerait, ce qui est
+    exactement comment `/orchestrate --status` est arrivé à l'écran.
+    """
+    texte = registre()
+    assert "nomme cet endroit" in texte
+    assert "dis franchement qu'il n'y est pas" in texte
+
+
+def test_le_registre_laisse_le_projet_de_l_utilisateur_au_developpeur():
+    """La garde de la garde : l'interdit vise **Maestro**, jamais le projet traité.
+
+    Un agent qui livre du code nomme des fichiers, donne des commandes et cite des
+    chemins — c'est son travail. Sans cette distinction écrite, la consigne
+    précédente lui ferait rendre des comptes-rendus sans aucun repère, et c'est le
+    genre de dégât qu'un prompt fait en silence.
+    """
+    texte = registre()
+    assert "projet de l'utilisateur" in texte
 
 
 # --- Une source unique, que le socle diffuse ------------------------------------------
@@ -175,3 +229,122 @@ def _vide_les_caches() -> None:
     pdc.playbook_du_code.cache_clear()
     pdc.fragment.cache_clear()
     pdc.roles_du_code.cache_clear()
+
+
+# --- L'autre porteur : ce que le backend écrit en toutes lettres (#939) ----------------
+#
+# Le registre prescrit à un **modèle** ce qu'il ne doit pas dire ; il ne peut rien
+# contre une chaîne que le code écrit lui-même et que l'API sert telle quelle. Or c'est
+# par là que plusieurs fuites de G6 sont arrivées à l'écran : la description d'une
+# entrée du catalogue MCP (« dans ce dépôt »), un message d'erreur, la raison d'un rôle
+# écarté. Ce balayage est cette moitié-là — le pendant Python d'
+# `apps/web/tests/langue-du-produit.test.ts`, qui tient la même règle sur le front.
+
+#: Le renvoi interne dans une chaîne servie : un numéro de ticket entre parenthèses ou
+#: suivi d'une ponctuation, un chemin de script, un document numéroté ou nommé du dépôt.
+_RENVOI_INTERNE = re.compile(r"\(#\d{2,4}\b|#\d{2,4}[),.]|\bscripts/|\bdocs/\d|\bdocs/[\w.-]+\.md")
+
+#: Ce que le retex du 2026-09-11 a lu, et ce qui lui ressemble sans en être. Le motif se
+#: prouve avant de balayer : une sonde écrite sur un dépôt déjà propre ne prouve rien,
+#: et c'est ainsi qu'un balayage finit par ne plus rien voir.
+_FAUTIFS = (
+    "C'est le serveur derrière `chrome-maestro` dans ce dépôt (docs/19).",
+    "Erreur simulée par le scénario « erreur » de la démo (#978).",
+    "playbook écrit pour ce projet à partir de l'intention ci-dessous (#257) ;",
+    "réinstaller les dépendances (bash scripts/setup.sh --only python).",
+    "une fourchette, sourcée de docs/09",
+)
+_INNOCENTS = (
+    "Rien encore sur ce projet — lancez une exécution pour le remplir.",
+    "La clé d'API du fournisseur : write-only, jamais renvoyée en clair.",
+    "le canal #general de votre espace Slack",  # un salon, pas un ticket
+    "POST /api/mcp/admissions",
+)
+
+#: Les modules dont les chaînes s'adressent à quelqu'un **dans un terminal**, pas à
+#: l'interface : ils nomment donc légitimement une commande du dépôt. Chacun est ici
+#: avec sa raison, et la liste est courte — un module de plus se justifie, il ne
+#: s'ajoute pas.
+_HORS_INTERFACE = {
+    "maestro/controltower/cli.py": "la ligne de commande de la Control Tower",
+    "maestro/controltower/purge.py": "la purge, jouée depuis un terminal",
+    "maestro/engine/cli.py": "la ligne de commande du moteur (`maestro-run`)",
+    "maestro/demo.py": "la démonstration de bout en bout (`maestro-demo`)",
+}
+
+#: Le champ du registre MCP qui porte, pour une poignée d'entrées, un pointeur relatif
+#: au dépôt à l'usage de qui contribue. Il n'atteint plus l'écran depuis #939 — la
+#: bibliothèque ne rend que les procédures en `https://` — et un test de
+#: `test_mcp_registry.py` exige que **chaque** entrée en porte une : le vider ici
+#: reviendrait à faire échouer l'un pour satisfaire l'autre.
+_CHAMP_POUR_LE_DEPOT = "procedure_url"
+
+_RACINE = Path(__file__).resolve().parents[1]
+
+
+def _chaines_servies(source: str) -> list[tuple[int, str]]:
+    """Les littéraux de chaîne d'un module qui peuvent voyager vers l'écran.
+
+    Lire l'**AST** plutôt que les lignes est ce qui rend le balayage juste : un `#123`
+    de commentaire ou de docstring parle à qui relit le code, jamais à l'utilisateur, et
+    un balayage textuel les confondrait — il crierait alors sur toute la prose du dépôt,
+    et on cesserait de le lire.
+    """
+    arbre = ast.parse(source)
+    hors: set[int] = set()
+    for noeud in ast.walk(arbre):
+        if isinstance(noeud, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
+            corps = noeud.body
+            premier = corps[0] if corps else None
+            if (
+                isinstance(premier, ast.Expr)
+                and isinstance(premier.value, ast.Constant)
+                and isinstance(premier.value.value, str)
+            ):
+                hors.add(id(premier.value))
+        if isinstance(noeud, ast.Call):
+            for mot in noeud.keywords:
+                if mot.arg == _CHAMP_POUR_LE_DEPOT and isinstance(mot.value, ast.Constant):
+                    hors.add(id(mot.value))
+    return [
+        (noeud.lineno, noeud.value)
+        for noeud in ast.walk(arbre)
+        if isinstance(noeud, ast.Constant)
+        and isinstance(noeud.value, str)
+        and id(noeud) not in hors
+    ]
+
+
+@pytest.mark.parametrize("extrait", _FAUTIFS)
+def test_le_motif_reconnait_ce_que_le_retex_a_lu(extrait):
+    assert _RENVOI_INTERNE.search(extrait), extrait
+
+
+@pytest.mark.parametrize("extrait", _INNOCENTS)
+def test_le_motif_ne_crie_pas_sur_ce_qui_lui_ressemble(extrait):
+    assert _RENVOI_INTERNE.search(extrait) is None, extrait
+
+
+def test_aucune_chaine_servie_ne_renvoie_au_depot():
+    """Ce que le backend écrit à l'utilisateur ne nomme ni ticket, ni script, ni doc.
+
+    Le pendant du balayage front, sur l'autre moitié du produit. L'exemption se lit
+    dans `_HORS_INTERFACE`, module par module et avec sa raison : une chaîne qui
+    s'adresse à un terminal a le droit de nommer une commande, puisque celui qui la lit
+    en a un sous les doigts.
+    """
+    fautifs: list[str] = []
+    for chemin in sorted((_RACINE / "maestro").rglob("*.py")):
+        relatif = chemin.relative_to(_RACINE).as_posix()
+        if relatif in _HORS_INTERFACE:
+            continue
+        for ligne, texte in _chaines_servies(chemin.read_text(encoding="utf-8")):
+            if _RENVOI_INTERNE.search(texte):
+                fautifs.append(f"{relatif}:{ligne}: {' '.join(texte.split())[:120]}")
+    assert not fautifs, "le produit parle son dépôt :\n" + "\n".join(fautifs)
+
+
+@pytest.mark.parametrize("module", sorted(_HORS_INTERFACE))
+def test_chaque_module_exempte_existe_encore(module):
+    """Une exemption qui survit à son module protège autre chose que ce qu'elle nomme."""
+    assert (_RACINE / module).is_file(), f"{module} — {_HORS_INTERFACE[module]}"
