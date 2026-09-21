@@ -89,6 +89,14 @@ import {
   recommandationOutillage,
   reporterOutillage,
 } from "@/lib/api";
+// Les libellés de natures et « tout arrive retenu » vivent dans `lib/outillage`
+// depuis #1104 : la conclusion du questionnaire au pied du fil les rend aussi, et
+// deux tables de pluriels finiraient par ne plus s'accorder.
+import {
+  comptesParNature,
+  libelleNature,
+  retenueParDefaut,
+} from "@/lib/outillage";
 import type {
   ChoixOutillage,
   EntreeOutillage,
@@ -100,45 +108,6 @@ import type {
 } from "@/lib/types";
 
 import { refusDepuis, RefusMotive } from "./ExplorateurDossiers";
-
-/**
- * Ce qu'une entrée vaut **par défaut**, et c'est le parti pris n° 1 : tout ce
- * qu'il y a à écrire est retenu d'avance.
- *
- * `deja-present` fait exception, et ce n'est pas un oubli : le projet le porte
- * déjà, il n'y a rien à faire. Il reste **dans la liste** (c'est ce que #1030 a
- * voulu en gardant l'entrée plutôt qu'en la supprimant) et sa case se coche —
- * c'est ce que le ticket appelle *ajouter* : demander que Maestro reprenne un
- * fichier qu'on croyait acquis.
- */
-function retenueParDefaut(entree: EntreeOutillage): boolean {
-  return entree.etat !== "deja-present";
-}
-
-/** Le nom d'une nature (docs/38 §3), au singulier et au pluriel. */
-const NATURES: Record<string, { un: string; des: string }> = {
-  instructions: { un: "fichier d'instructions", des: "fichiers d'instructions" },
-  pont: { un: "pont", des: "ponts" },
-  skill: { un: "skill", des: "skills" },
-  script: { un: "script", des: "scripts" },
-};
-
-/** L'ordre des natures — celui de docs/38 §3.6, jamais l'ordre alphabétique. */
-const ORDRE_NATURES = ["instructions", "pont", "skill", "script"];
-
-/** « 2 ponts », « 1 skill » — le compte et sa nature, accordés. */
-function compte(type: string, nombre: number): string {
-  const nature = NATURES[type];
-  if (nature === undefined) return `${nombre} ${type}`;
-  return `${nombre} ${nombre > 1 ? nature.des : nature.un}`;
-}
-
-/** Le badge de nature d'une ligne — toujours au singulier, il qualifie une entrée. */
-function libelleNature(type: string): string {
-  const nature = NATURES[type];
-  if (nature === undefined) return type;
-  return nature.un.charAt(0).toUpperCase() + nature.un.slice(1);
-}
 
 /**
  * Une entrée recommandée : ce qu'on écrira, **pourquoi**, et d'où ça sort.
@@ -252,10 +221,6 @@ function EnTeteListe({
   fige: boolean;
 }) {
   const gardes = entrees.filter((e) => retenus.has(e.chemin));
-  const parNature = ORDRE_NATURES.map((type) => ({
-    type,
-    nombre: gardes.filter((e) => e.type === type).length,
-  })).filter((n) => n.nombre > 0);
   const retires = entrees.length - gardes.length;
   return (
     <div className="flex flex-col gap-1">
@@ -271,8 +236,7 @@ function EnTeteListe({
                 {gardes.length} fichier{gardes.length > 1 ? "s" : ""}
               </strong>{" "}
               {gardes.length > 1 ? "seront écrits" : "sera écrit"} dans votre
-              dossier :{" "}
-              {parNature.map((n) => compte(n.type, n.nombre)).join(" · ")}.{" "}
+              dossier : {comptesParNature(gardes)}.{" "}
               {retires > 0 && (
                 <span className="text-attention-texte">
                   {retires} retiré{retires > 1 ? "s" : ""} par vous.

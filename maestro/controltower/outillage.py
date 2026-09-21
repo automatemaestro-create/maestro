@@ -59,6 +59,22 @@ Enfin la question ne se pose **nulle part ailleurs** que dans le fil : l'étape
 d'outillage du parcours de création (#1034) montera cette même carte, elle n'en fera
 pas une seconde.
 
+## Et le fil **écrit**, depuis #1104
+
+Les deux voies du questionnaire mènent maintenant au même endroit. Celle du parcours
+de création y menait depuis #1100 ; celle du fil concluait sur « rien n'est écrit
+tant que vous ne l'avez pas validé » et **rien ne validait** — le pied du fil
+redevenait vide dès que le dernier message ne portait plus de question (réserve R7
+du bouclage de « L'équipe sur mesure »).
+
+Rien n'a été ajouté ici pour cela, et c'est le signe que le partage était bon : la
+conclusion du fil se valide par **la même route** que l'étape de création
+(`POST …/outillage/generation`, corps `{retenus, choix}`), parce que cette route ne
+sait pas de quelle surface viennent les réponses — elle sait seulement qu'on lui en
+donne au lieu d'une analyse. Ce que ce lot a changé tient en deux choses : une
+surface qui offre le geste (`apps/web/components/chat/ConclusionOutillage.tsx`), et
+une phrase de conclusion qui dit où il est.
+
 ## L'analyse et la génération : une couche mince sur `maestro.outillage`
 
 La pièce que les routes `GET /api/projets/{id}/outillage/analyse` et
@@ -224,6 +240,14 @@ def _phrase_de_conclusion(acquis: Sequence[Choix]) -> str:
     répondre. Le détail, lui, se sert par l'API (`POST …/outillage/recommandation`)
     et s'affiche là où on le valide (#1034) : le redire ici en entier ferait du fil un
     second écran de recommandation.
+
+    ⚠ **La dernière phrase promet un geste, donc elle le nomme** (#1104). « Rien
+    n'est écrit tant que vous ne l'avez pas validé » était vraie et pourtant
+    trompeuse : jusqu'à ce lot, aucune surface n'offrait de quoi valider — le pied
+    du fil redevenait vide dès que le dernier message ne portait plus de question.
+    Le geste existe désormais (`ConclusionOutillage`, au pied de la conversation),
+    et la phrase dit où il est. C'est la règle du canal, pas une politesse : ce
+    qu'un message annonce doit se trouver là où il dit qu'il est.
     """
     reco = recommandation_depuis_choix(acquis)
     skills = sum(1 for e in reco.entrees if e.type == "skill")
@@ -231,7 +255,9 @@ def _phrase_de_conclusion(acquis: Sequence[Choix]) -> str:
         f"C'est tout ce qu'il me fallait — {resume_des_choix(acquis)}.\n"
         f"L'outillage recommandé : {len(reco.entrees)} entrée(s), dont {skills} skill(s), "
         "chacune avec la raison qui la justifie. Rien n'est écrit dans le projet tant "
-        "que vous ne l'avez pas validé."
+        "que vous ne l'avez pas validé.\n"
+        "Le geste est au pied de cette conversation : il dit ce qui sera écrit, "
+        "et dans quel dossier."
     )
 
 

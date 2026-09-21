@@ -592,6 +592,28 @@ def test_le_questionnaire_se_conclut_sur_l_outillage_qu_il_recommande() -> None:
     assert "Rien n'est écrit dans le projet tant que vous ne l'avez pas validé." in reponse.contenu
 
 
+def test_la_conclusion_dit_ou_se_donne_la_validation_qu_elle_promet() -> None:
+    """La phrase de conclusion ne promet rien que l'écran ne permette (#1104).
+
+    « Rien n'est écrit tant que vous ne l'avez pas validé » était vraie et pourtant
+    trompeuse : aucune surface n'offrait de quoi valider, le pied du fil redevenant
+    vide dès que le dernier message ne portait plus de question. Le geste existe
+    désormais au pied de la conversation, et la promesse dit **où** il est — sans
+    quoi elle renvoie à un endroit que personne ne trouve.
+    """
+    fil = [_geste(c["cle"], c["valeur"]) for c in _donnes(_parcours_python())]
+
+    reponse = asyncio.run(ConducteurOutillage().ouvrir(fil))
+
+    assert reponse.question is None
+    assert "au pied de cette conversation" in reponse.contenu
+    # Le geste est nommé **après** la promesse : on dit d'abord que rien n'est
+    # écrit, puis où l'on décide que ça le soit.
+    assert reponse.contenu.index(
+        "pas validé."
+    ) < reponse.contenu.index("au pied de cette conversation")
+
+
 # --- ⑥ Les routes : la voie du fil, et la voie sans état ----------------------
 
 

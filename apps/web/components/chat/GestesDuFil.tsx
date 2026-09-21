@@ -12,6 +12,15 @@
  * fait que les **composer** dans l'ordre que #1025 a posé et que #1031 a étendu
  * d'un cran.
  *
+ * ⚠ La question d'outillage a **deux moments**, et le second est arrivé avec
+ * #1104 : tant qu'une question attend, c'est `QuestionDOutillage` ; une fois le
+ * questionnaire conclu, c'est `ConclusionOutillage` — la carte qui écrit. Les
+ * deux ne cohabitent **jamais** (des réponses sans question en attente est
+ * exactement ce que la seconde lit, `choixAValider`), donc elles occupent le même
+ * rang dans l'ordre ci-dessous. Sans la seconde, le fil concluait sur « rien
+ * n'est écrit tant que vous ne l'avez pas validé » et le pied redevenait vide :
+ * la promesse n'avait aucune surface.
+ *
  * ## Pourquoi il existe — le défaut que #1106 corrige
  *
  * Ce pied vivait **dans `app/chat/page.tsx`**. `ColonneConversation` (#926)
@@ -59,6 +68,7 @@
 
 import { useMemo, type ReactNode } from "react";
 
+import { useConclusionOutillage } from "@/components/chat/ConclusionOutillage";
 import { DemandeDeCadrage } from "@/components/chat/DemandeDeCadrage";
 import { QuestionDOutillage } from "@/components/chat/QuestionDOutillage";
 import { QuestionsDuFil } from "@/components/chat/QuestionDansLeFil";
@@ -100,10 +110,17 @@ export function useGestesDuFil(
   const proposition = global ? propositionEnAttente(fil.messages) : null;
   const outillage = global ? questionEnAttente(fil.messages) : null;
 
+  // Le second moment du questionnaire (#1104) : il a conclu, et ce qu'il a
+  // décidé attend d'être écrit. Le hook est appelé **sans condition** — les
+  // règles de React l'exigent, et il rend `undefined` de lui-même quand il n'y a
+  // rien à valider, y compris sur un aparté `@agent`.
+  const conclusion = useConclusionOutillage(fil, global);
+
   if (
     questions.length === 0 &&
     proposition === null &&
-    !outillage?.question
+    !outillage?.question &&
+    conclusion === undefined
   ) {
     return undefined;
   }
@@ -126,6 +143,7 @@ export function useGestesDuFil(
           enCours={fil.envoi}
         />
       )}
+      {conclusion}
       {proposition !== null && (
         <DemandeDeCadrage
           demande={proposition}
