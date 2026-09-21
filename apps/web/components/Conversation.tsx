@@ -370,27 +370,19 @@ export const AMORCE_HORS_SM = "max-sm:hidden";
 export const AMORCE_NOWRAP = "whitespace-nowrap";
 
 /**
- * Combien de caractères un libellé d'amorce peut compter (#908, parti pris 5
- * de la veille #899) — le **calibre mesuré** chez Duck.ai à 390 px, 10 à 28
- * caractères. Avec `AMORCE_NOWRAP`, la longueur d'une amorce est toute sa
- * largeur, et sous `sm` les deux premières doivent partager une rangée à
- * 375 px : c'est le banc qui tranche le pixel, ce plafond garde la rédaction.
- * Il vaut pour les deux listes (`lib/orchestration`, `lib/assistance`).
+ * Le **calibre** des libellés d'amorce (#908, parti pris 5 de la veille #899) —
+ * `CALIBRE_AMORCE` pour chacune, `CALIBRE_PAIRE_SOUS_SM` pour les deux qui
+ * partagent une rangée sous `sm`. Ils sont le pendant écrit d'`AMORCE_NOWRAP`
+ * ci-dessus : une amorce qui ne s'enveloppe pas a sa longueur pour largeur.
+ *
+ * ⚠ Ils **vivent dans `lib/amorces`** depuis #942, et sont ré-exportés ici
+ * parce que c'est de là que les tests et la doc les nomment depuis #908. Le
+ * déménagement n'est pas un rangement : la liste d'orchestration est devenue
+ * une **dérivation** (`lib/orchestration`), qui doit donc lire ces nombres — et
+ * l'arête `lib → components` a été mesurée fausse (voir `lib/amorces`, qui en
+ * porte le relevé). Ne pas les redéclarer ici : le nombre n'a qu'une place.
  */
-export const CALIBRE_AMORCE = 28;
-
-/**
- * Combien de caractères les **deux amorces visibles sous `sm`** peuvent compter
- * **à elles deux** (#908) — pour partager une rangée à 375 px, où le composeur
- * ne fait que 268,8 px (rail de 64 px, marges de 16 px du `main`) : 262,8 px
- * pour deux boutons de `petite` taille, moins 44 px de marges intérieures et de
- * filets, à ~5,2 px le caractère en `text-annexe`. Mesuré au banc du
- * 2026-09-10 : 39 caractères tiennent (252,2 px), 42 ne tiennent plus
- * (269,7 px, 7 px de trop). C'est une **borne de rédaction**, un compte de
- * caractères n'étant qu'une approximation d'une largeur ; le pixel reste au
- * banc.
- */
-export const CALIBRE_PAIRE_SOUS_SM = 40;
+export { CALIBRE_AMORCE, CALIBRE_PAIRE_SOUS_SM } from "@/lib/amorces";
 
 /**
  * Fait grandir la zone de saisie avec ce qu'on y écrit (#726 — parti pris 3 de

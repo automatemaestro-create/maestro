@@ -24,11 +24,7 @@
  * autour de la conversation.
  */
 
-import {
-  CALIBRE_AMORCE,
-  CALIBRE_PAIRE_SOUS_SM,
-} from "@/components/Conversation";
-
+import { CALIBRE_AMORCE, CALIBRE_PAIRE_SOUS_SM, calibreDe } from "./amorces";
 import type { Projet } from "./types";
 
 /**
@@ -107,11 +103,6 @@ export const AMORCE_PISTES = "Propose des pistes";
 export const AMORCE_RUNS = "Où en sont les runs ?";
 export const AMORCE_ARBITRAGES = "Que dois-je arbitrer ?";
 
-/** La longueur d'un libellé en **points de code**, comme le calibre la compte. */
-function calibre(libelle: string): number {
-  return Array.from(libelle).length;
-}
-
 /**
  * Les amorces d'un fil vide, **dérivées du projet ouvert** (#942, constat G9 du
  * retex du 2026-09-11).
@@ -169,9 +160,9 @@ function calibre(libelle: string): number {
 export function amorcesDuProjet(projet: Projet): string[] {
   const nom = projet.nom.trim();
   const nommee = decrire(nom);
-  const tientSeule = calibre(nommee) <= CALIBRE_AMORCE;
+  const tientSeule = calibreDe(nommee) <= CALIBRE_AMORCE;
   const tientEnPaire =
-    calibre(nommee) + calibre(AMORCE_PISTES) <= CALIBRE_PAIRE_SOUS_SM;
+    calibreDe(nommee) + calibreDe(AMORCE_PISTES) <= CALIBRE_PAIRE_SOUS_SM;
   return [
     nom !== "" && tientSeule && tientEnPaire ? nommee : decrire(SUJET_SANS_NOM),
     AMORCE_PISTES,

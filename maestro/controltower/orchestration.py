@@ -255,8 +255,9 @@ moteur. Trois choses y méritent d'être connues avant d'y toucher :
   jamais par un `grep` — ce module *doit* citer `_AMORCES` et `_VERBES_TRAVAIL`
   pour raconter leur retrait, et une garde textuelle se déclencherait sur la
   docstring même qui les documente. Elle porte sur les identifiants **Python**,
-  ce qui écarte du même geste les `AMORCES_ORCHESTRATION` de `apps/web`, qui sont
-  les amorces de conversation d'un fil vide et n'ont jamais été ce lexique.
+  ce qui écarte du même geste les amorces de conversation d'`apps/web`
+  (`amorcesDuProjet`, `lib/orchestration`), qui sont les propositions de message
+  d'un fil vide et n'ont jamais été ce lexique.
 
 La moitié que ces tests **n'atteignent pas** est nommée plutôt que masquée : la
 qualité du jugement. Le juge y est un double, donc « cette phrase est-elle une
