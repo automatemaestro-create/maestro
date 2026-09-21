@@ -558,6 +558,39 @@ def gabarits_du_code(
     )
 
 
+def catalogue_du_projet(
+    store: AgentStore | None,
+    projet_id: str | None,
+    modele: str | None = None,
+) -> tuple[Agent, ...] | None:
+    """L'équipe d'un projet — `None` quand il faut s'en tenir au catalogue du câblage.
+
+    La **règle unique** de « quels agents pour ce travail-là », écrite ici parce
+    qu'elle a deux lecteurs depuis #1041 et qu'ils doivent lire la même chose :
+    l'exécuteur, qui route la tâche (`LocalExecutor._equipe`), et la boucle, qui
+    fait découper l'objectif (`OrchestrationEngine._plan`). Un plan proposé sur
+    une équipe et exécuté sur une autre enverrait toutes ses tâches en repli
+    « à assigner » sans que rien ne le dise.
+
+    `None` dans trois cas, tous à ramener au catalogue du câblage par l'appelant :
+    tâche (ou run) **sans projet**, dépôt **non câblé** — tests et câblages sans
+    Control Tower —, et dépôt **illisible** : un incident de stockage ne doit pas
+    faire partir toutes les tâches en repli.
+
+    ⚠ Un **tuple vide** n'est aucun des trois (#1042) : c'est un projet qui n'a
+    encore recruté personne, et non une absence d'information. C'est la différence
+    entre « je ne sais pas » et « il n'y a personne ». Le dépôt de **surcharges**
+    a disparu d'ici pour la même raison : une surcharge règle un **gabarit**
+    (`gabarits_du_code`), et un catalogue de projet n'en porte aucun.
+    """
+    if projet_id is None or store is None:
+        return None
+    try:
+        return catalogue(store.pour_projet(projet_id), modele)
+    except (OSError, ValueError):  # dépôt illisible : on garde le catalogue câblé
+        return None
+
+
 def _surcharge_appliquee(
     agent: Agent, surcharge: SurchargeAgent | None, modele_impose: str | None
 ) -> Agent:

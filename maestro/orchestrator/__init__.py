@@ -41,6 +41,7 @@ from maestro.orchestrator.prompt import (
     ORCHESTRATOR_SYSTEM_PROMPT,
     build_brief_user_prompt,
     build_user_prompt,
+    prompt_orchestrateur,
 )
 from maestro.orchestrator.schema import (
     BRIEF_SCHEMA_PATH,
@@ -74,6 +75,7 @@ __all__ = [
     "build_user_prompt",
     "load_brief_schema",
     "load_task_schema",
+    "prompt_orchestrateur",
     "topological_order",
     "validate_brief",
     "validate_plan",

@@ -1367,6 +1367,17 @@ export const EVENEMENT_TACHE_REFERENCE = "tache.reference";
  * est un **cumul** que l'`agent.activite` n'aurait pas su distinguer d'une part.
  */
 export const EVENEMENT_TACHE_USAGE = "tache.usage";
+/**
+ * Ce qui **bute** sur une tâche, sans la faire changer de colonne : le blocage
+ * qu'un agent déclare en travaillant encore (#719, statut `blocage_signale`), et
+ * le **rôle qui manque** à l'équipe du projet pour seulement la prendre (#1041,
+ * statut `role_manquant`). Un seul type parce que c'est un seul fait — ça
+ * n'avance pas, et il faut quelqu'un —, deux statuts parce que ce n'est pas la
+ * même personne qu'il faut : quelqu'un qui débloque, ou quelqu'un à recruter
+ * (hors du run, docs/37 §3.5). La phrase est dans `detail`, composée par le
+ * backend.
+ */
+export const EVENEMENT_TACHE_BLOCAGE = "tache.blocage";
 export const EVENEMENT_AGENT_ACTIVITE = "agent.activite";
 export const EVENEMENT_AGENT_CAPACITE = "agent.capacite";
 export const EVENEMENT_MESSAGE_INTER_AGENTS = "message.inter_agents";

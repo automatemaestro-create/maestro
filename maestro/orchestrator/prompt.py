@@ -1,5 +1,15 @@
 """Prompts système de l'orchestrateur — playbooks « Chef de projet » (#3, #298, #318).
 
+⚠ **Les rôles et les compétences ne sont plus écrits dans le playbook** (#1041,
+[docs/37 §3.5](../../docs/37-decision-equipe-sur-mesure.md)) : ils sont **dérivés de
+l'équipe** qu'on passe à `prompt_orchestrateur`, c'est-à-dire des agents du projet
+(`maestro.agents.store.catalogue_du_projet`). Une liste figée dans le document ne
+pouvait décrire qu'un seul projet — celui aux cinq rôles du code —, si bien que les
+compétences d'un agent recruté pour *ce* projet n'étaient jamais proposées au
+découpage, et que ses tâches ne l'atteignaient que par le classifieur de repli ou
+par une réassignation à la main.
+
+
 Deux documents, un seul agent : `playbook.md` le fait **décomposer** (#3), et
 `playbook_brief.md` le fait **cadrer** avant de décomposer (#318). Le brief est un
 geste du Chef de projet et non un septième agent — d'où son prompt ici, avec les
@@ -45,6 +55,7 @@ import re
 from collections.abc import Sequence
 from pathlib import Path
 
+from maestro.agents.catalog import GABARITS_DU_CODE, Agent
 from maestro.orchestrator.schema import Clarification
 
 #: Fourchette visée. Guidage, pas une règle de schéma, et depuis #298 le playbook la
@@ -64,41 +75,125 @@ CHEMIN_PLAYBOOK = Path(__file__).resolve().parent / "playbook.md"
 #: de brief, et un prompt système qui décrirait les deux laisserait le modèle choisir.
 CHEMIN_PLAYBOOK_BRIEF = Path(__file__).resolve().parent / "playbook_brief.md"
 
-#: Les substitutions admises dans le document. Volontairement fermée : un marqueur hors
-#: de cette table lève, plutôt que de partir tel quel dans le prompt système.
-_VALEURS = {"min_taches": str(MIN_TASKS), "max_taches": str(MAX_TASKS)}
-
-#: Un marqueur dans le document : `{{min_taches}}`, `{{max_taches}}`.
+#: Un marqueur dans le document : `{{min_taches}}`, `{{max_taches}}`, `{{roles}}`,
+#: `{{equipe}}`, `{{competences}}`.
 _MARQUEUR = re.compile(r"\{\{\s*([a-z_]+)\s*\}\}")
 
 
-def _substitue(m: re.Match[str]) -> str:
-    """Remplace un marqueur `{{…}}` par sa valeur (lève s'il est inconnu)."""
-    cle = m.group(1)
-    if cle not in _VALEURS:
-        raise ValueError(
-            f"marqueur de playbook inconnu : {{{{{cle}}}}} (attendus : "
-            f"{', '.join(sorted(_VALEURS))})."
-        )
-    return _VALEURS[cle]
+def _valeurs(equipe: Sequence[Agent]) -> dict[str, str]:
+    """Les substitutions admises dans le document, pour cette équipe-ci.
+
+    Volontairement **fermée** : un marqueur hors de cette table lève, plutôt que
+    de partir tel quel dans le prompt système. Elle est calculée par appel depuis
+    #1041, et non plus figée au module : trois de ses cinq entrées décrivent
+    l'équipe du projet, qui change d'un projet à l'autre.
+
+    Les deux entrées de découpage (`min_taches`, `max_taches`) restent des
+    constantes de guidage : elles ne dépendent pas de qui exécute.
+    """
+    return {
+        "min_taches": str(MIN_TASKS),
+        "max_taches": str(MAX_TASKS),
+        "roles": _roles(equipe),
+        "equipe": _bloc_equipe(equipe),
+        "competences": _liste_competences(equipe),
+    }
 
 
-def _lire_playbook(chemin: Path) -> str:
+def _roles(equipe: Sequence[Agent]) -> str:
+    """Les rôles de l'équipe en une énumération — « Développeur, QA / Testeur »."""
+    return ", ".join(agent.role for agent in equipe)
+
+
+def _bloc_equipe(equipe: Sequence[Agent]) -> str:
+    """L'équipe en liste Markdown : un rôle par ligne, avec ses compétences.
+
+    Le **nom** de la fiche voyage à côté du rôle parce que c'est lui qui identifie
+    l'agent partout ailleurs (routage, journal, Kanban), et que deux fiches d'un
+    même projet peuvent porter un rôle homonyme — deux instances d'un même
+    gabarit, par exemple. Les compétences sont triées : `Agent.competences` est un
+    `frozenset`, et un prompt système dont l'ordre bouge à chaque construction
+    n'est pas comparable d'un run à l'autre (même règle que `Gabarit.competences`).
+    """
+    return "\n".join(
+        f"- **{agent.role}** (`{agent.nom}`) — {', '.join(sorted(agent.competences))}"
+        for agent in equipe
+    )
+
+
+def _liste_competences(equipe: Sequence[Agent]) -> str:
+    """Les tags admis pour `competences_requises` — ceux de l'équipe, et eux seuls.
+
+    Groupés par rôle dans l'ordre du catalogue puis dédupliqués : un tag partagé
+    par deux rôles n'apparaît qu'une fois, à sa première occurrence. C'est la même
+    liste que celle du bloc ci-dessus, aplatie — jamais une seconde table à tenir
+    d'accord avec elle.
+    """
+    tags = dict.fromkeys(
+        tag for agent in equipe for tag in sorted(agent.competences)
+    )
+    return ", ".join(tags) + "."
+
+
+def _lire_playbook(chemin: Path, equipe: Sequence[Agent]) -> str:
     """Le playbook de `chemin`, marqueurs substitués — un prompt système effectif."""
     if not chemin.is_file():
         raise FileNotFoundError(f"playbook du Chef de projet introuvable : {chemin}")
-    texte = _MARQUEUR.sub(_substitue, chemin.read_text(encoding="utf-8").strip())
+    valeurs = _valeurs(equipe)
+
+    def substitue(m: re.Match[str]) -> str:
+        cle = m.group(1)
+        if cle not in valeurs:
+            raise ValueError(
+                f"marqueur de playbook inconnu : {{{{{cle}}}}} (attendus : "
+                f"{', '.join(sorted(valeurs))})."
+            )
+        return valeurs[cle]
+
+    texte = _MARQUEUR.sub(substitue, chemin.read_text(encoding="utf-8").strip())
     if "{{" in texte:
         raise ValueError(f"marqueur mal formé dans le playbook {chemin.name}.")
     return texte
 
 
-ORCHESTRATOR_SYSTEM_PROMPT = _lire_playbook(CHEMIN_PLAYBOOK)
+def prompt_orchestrateur(equipe: Sequence[Agent] | None = None) -> str:
+    """Le prompt système de décomposition, cadré sur `equipe` (#1041).
+
+    C'est **le seul** endroit où les rôles et les compétences entrent dans le
+    playbook du Chef de projet : ils n'y sont plus écrits, ils en sont dérivés
+    (cf. la docstring du module). Le routage (`maestro.router`) lit les mêmes
+    fiches, si bien qu'un tag proposé au découpage est par construction un tag que
+    quelqu'un sait prendre.
+
+    `None` — et une séquence **vide**, qui vaut omission — retombe sur les agents
+    du code (`GABARITS_DU_CODE`), c'est-à-dire sur les gabarits de rôle : un plan
+    hors projet (la CLI `maestro-plan`, une activité durable, un test) garde
+    exactement le prompt d'avant ce lot, et un projet né sans agent (#1042)
+    continue de se faire découper au lieu de recevoir un playbook sans équipe.
+    C'est une **dérivation**, jamais une liste recopiée : élargir les compétences
+    d'un rôle du catalogue les élargit ici sans une ligne.
+
+    Le document est relu à chaque appel, comme les playbooks des rôles le sont à
+    chaque tâche (#78) : l'équipe change entre deux runs, et retenir un prompt
+    construit une fois ferait découper le second sur l'équipe du premier.
+    """
+    return _lire_playbook(
+        CHEMIN_PLAYBOOK, tuple(equipe) if equipe else GABARITS_DU_CODE
+    )
+
+
+#: Le prompt système de décomposition **sans projet** : celui des gabarits du code.
+#: Conservé comme constante pour les appelants qui ne cadrent rien (la CLI, les
+#: doubles de fournisseur des tests) ; tout ce qui connaît un projet passe par
+#: `prompt_orchestrateur`.
+ORCHESTRATOR_SYSTEM_PROMPT = prompt_orchestrateur()
 
 #: Prompt système de l'étape **brief** (#318). Le playbook du brief ne porte aucun
 #: marqueur aujourd'hui — il passe par le même chargeur pour hériter du même échec
-#: franc si l'un y était ajouté sans être déclaré dans `_VALEURS`.
-BRIEF_SYSTEM_PROMPT = _lire_playbook(CHEMIN_PLAYBOOK_BRIEF)
+#: franc si l'un y était ajouté sans être déclaré dans `_valeurs`. Il ne prend pas
+#: d'équipe : cadrer un objectif ne demande pas de savoir qui l'exécutera, et le
+#: brief ne nomme aucune compétence.
+BRIEF_SYSTEM_PROMPT = _lire_playbook(CHEMIN_PLAYBOOK_BRIEF, GABARITS_DU_CODE)
 
 #: Ce qu'on dit au modèle quand aucune source n'accompagne l'objectif. Le dire
 #: explicitement plutôt que se taire : un silence laisse le modèle supposer qu'un
