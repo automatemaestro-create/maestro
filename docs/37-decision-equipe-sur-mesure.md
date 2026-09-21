@@ -118,6 +118,20 @@ Les lots marqués ∥ portent `lot::parallele`.
 | 6 | #1042 | Un projet naît sans agent |
 | 7 | #1043 | Tests + doc |
 
+### 5.1 Ce que le chantier #1021 a livré, et ce qui le garde (#1043)
+
+Les lots 1 à 6 ont livré **sans tests**, par la convention de découpage ([docs/10 §5.1](./10-workflow-git.md)) : ils sont différés au lot final, qui les écrit d'un bloc. Ce que chaque suite tient, dans l'ordre du chantier :
+
+| Ce qui est gardé | Où |
+| --- | --- |
+| Le **runtime outillé se dérive de la fiche** — métier de la fiche, cadre du code quand il en déclare un, cadre générique sinon, et le **cadre d'exécution ajouté** au playbook d'une fiche : sans lui l'agent répondrait en texte avec des outils dans les mains | [`tests/test_fiche_outillee.py`](../tests/test_fiche_outillee.py) |
+| Le **rangement par projet** des six dépôts, le repli du gabarit là où il a un sens, l'**exception** de l'existence qui ne s'hérite pas, et la **reprise** des agents globaux — sans perte, idempotente, et qui dit ce qu'elle a fait | [`tests/test_rangement_projet.py`](../tests/test_rangement_projet.py) |
+| La **proposition** : rien n'est créé (aucun module du paquet n'ouvre un fichier en écriture), rien sans son endroit, ce qui n'est pas proposé est nommé — l'orchestrateur compris —, et **chaque autorisation porte sa raison**, le cran `auto` en premier (§4.3) | [`tests/test_equipe_proposition.py`](../tests/test_equipe_proposition.py) |
+| La **création validée** : tout est vérifié avant la première écriture et un seul refus n'écrit rien, ce qui est créé est ce qui a été montré, l'écriture va **dans le projet** — et déclarer un projet n'instancie **aucun** agent | [`tests/test_equipe_creation.py`](../tests/test_equipe_creation.py) |
+| Le **routage sur l'équipe** : une règle pour ses deux lecteurs, le catalogue remplacé pour l'appel, ce que personne ne couvre nommé en **poste**, et le signal qui redit que **le recrutement se fait hors du run** (§3.5) | [`tests/test_equipe_routage.py`](../tests/test_equipe_routage.py) |
+
+⚠ Ces suites sont écrites pour **survivre au chantier**, pas seulement pour le constater : elles n'affirment rien sur la composition du catalogue du code, dont le lot 6 change le sens. Ce qu'elles tiennent est ce qui ne bougera plus — la dérivation, le rangement, les promesses servies, et les gestes qui écrivent.
+
 **Différé, et pourquoi.** L'**exécution outillée par un fournisseur non-Anthropic dans Maestro** reste hors du jalon. Le format de l'outillage est universel, et un autre agent le lit sur le poste de l'utilisateur. Mais dans Maestro, seuls les modèles Claude ont des outils : `openai_compat.py` ne fait que du texte. C'est l'objectif O7 ([docs/00](./00-cahier-des-charges.md)), un chantier à lui seul, noté dans [docs/06](./06-roadmap.md) « Au-delà ».
 
 ## 6. La place dans la file
@@ -142,12 +156,12 @@ Sur le rail produit, l'échéance d'un jalon **est** son rang (`current-mileston
 ## 8. Où cette décision est écrite ailleurs
 
 Un renvoi ⚠ vers cette note est posé à l'endroit de chaque décision renversée ou rendue fausse :
-- [docs/04 §1.2 et §2](./04-specifications-agents.md) ;
-- [docs/05 §2.0](./05-interface-control-tower.md) ;
+- [docs/04 §1.2, §2 (le catalogue **est** devenu celui des gabarits, #1043) et §4](./04-specifications-agents.md) ;
+- [docs/05 §2.0 et §6.19](./05-interface-control-tower.md) ;
 - [docs/06, Phase 2](./06-roadmap.md) ;
 - [docs/00 EF-03 et EF-21](./00-cahier-des-charges.md) ;
 - [docs/24 §2.3 et §6](./24-projets-locaux-et-poste-de-travail.md) ;
 - [docs/32 §5](./32-decision-cran-orchestrateur.md) ;
 - la section « Les agents (par défaut) » du [README](../README.md).
 
-Ces documents décrivent l'état **présent** : les lots qui changent le code les réécriront. Ce renvoi dit seulement que l'état change.
+Ces documents décrivaient l'état **d'avant** : le lot final (#1043) a réécrit ceux que le chantier #1021 rend faux — docs/04 §2 et §4, docs/05 §2.0 et §6.19, docs/00 EF-01, EF-02, EF-03 et EF-21. Les autres renvois restent des avertissements : ils disent que l'état change là où le code n'a pas encore bougé.
