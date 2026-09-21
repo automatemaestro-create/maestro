@@ -50,7 +50,6 @@ import { useEtatGlobal } from "@/lib/etatGlobal";
 import { nomDuRun } from "@/lib/execution";
 import { formatHeureRelative } from "@/lib/format";
 import { useHorloge } from "@/lib/horloge";
-import { entreeParLibelle } from "@/lib/navigation";
 import {
   EXECUTION_EN_ATTENTE_REPONSES,
   type MessageChat,
@@ -72,7 +71,6 @@ export function FilDeCadrage({
 
   const runs = runsEnAttente(executions);
   const courant = runs.find((r) => r.run_id === choisi) ?? runs[0];
-  const composer = entreeParLibelle("Composer un objectif");
 
   if (chargement) {
     return <p className="text-sm text-neutral-500">Chargement du cadrage…</p>;
@@ -88,10 +86,14 @@ export function FilDeCadrage({
       )}
       {courant === undefined ? (
         proposition === null && (
+          // Sans renvoi (#1176) : cet état vide s'affiche **dans** la page du
+          // fil, à côté de son composeur. Il renvoyait vers « Composer un
+          // objectif », une entrée partie du menu avec #484 : le lien s'était
+          // éteint sans bruit, et un renvoi vers le fil ramènerait sur place.
+          // Il dit donc où la demande s'écrit, ce qu'un lien ne dirait pas.
           <EtatVide
-            message={`Aucun cadrage en attente sur ${projet.nom}. Un run lancé depuis la Control Tower s'arrête ici avant de décomposer : c'est le moment où corriger coûte un message.`}
+            message={`Aucun cadrage en attente sur ${projet.nom}. Écrivez votre demande dans le fil : l'orchestrateur vous en propose le cadrage ici, avant de lancer quoi que ce soit — c'est le moment où corriger coûte un message.`}
             icone={IconeObjectif}
-            lien={composer && { href: composer.href, libelle: "Composer un objectif" }}
           />
         )
       ) : (

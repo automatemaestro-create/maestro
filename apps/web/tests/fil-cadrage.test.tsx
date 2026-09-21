@@ -299,4 +299,15 @@ describe("critère 3 — un run suspendu reste visible hors du fil", () => {
       await screen.findByText(/Aucun cadrage en attente sur Dépensio/),
     ).toBeTruthy();
   });
+
+  it("dit où la demande s'écrit, sans renvoi mort (#1176)", async () => {
+    // Il renvoyait vers « Composer un objectif », parti du menu avec #484 : le
+    // lien s'était éteint en silence. L'état vide vit dans la page du fil, donc
+    // il dit où écrire au lieu de renvoyer sur place.
+    rendreAvecEtat(<FilDeCadrage />, { executions: [] });
+
+    const message = await screen.findByText(/Écrivez votre demande dans le fil/);
+    expect(message).toBeTruthy();
+    expect(screen.queryByRole("link")).toBeNull();
+  });
 });
