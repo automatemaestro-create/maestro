@@ -40,6 +40,7 @@ from maestro.outillage import (
     REGIME_BRANCHE,
     REGIME_EN_PLACE,
     VERSION_MANIFESTE,
+    Choix,
     Commande,
     Constats,
     DossierScripts,
@@ -52,11 +53,14 @@ from maestro.outillage import (
     Piece,
     Recommandation,
     analyser,
+    constats_depuis_choix,
     generer,
     generer_outillage,
     nouvel_id_de_generation,
     portees_declarees,
+    recommandation_depuis_choix,
     rediger,
+    source_manifeste_des_choix,
 )
 from maestro.outillage.generation import REFUS_VERSION
 from maestro.outillage.redaction import bloc, texte_script, texte_skill
@@ -206,6 +210,39 @@ def _recommandation() -> Recommandation:
             Ecarte(type="commande", nom="—", raison="aucun format de commande n'est commun"),
         ),
     )
+
+
+def _choix_du_projet_neuf() -> list[Choix]:
+    """Les réponses des étapes de reproduction de #1105, dans leur ordre.
+
+    Celles du bouclage du 2026-09-21 : les options recommandées d'un projet neuf
+    « application web ». Elles passent par le vrai `constats_depuis_choix` plutôt
+    que par des constats fabriqués — c'est cette mue-là qui donne aux commandes
+    leur `origine: convention` et leur chemin « où elle vivra », donc c'est elle
+    qui expose le texte au défaut du ticket.
+    """
+    return [
+        Choix(cle=cle, valeur=valeur)
+        for cle, valeur in (
+            ("nature", "application-web"),
+            ("langages", "typescript"),
+            ("tests", "vitest"),
+            ("forge", "github"),
+            ("ci", "github-actions"),
+            ("conventions", "conventional-commits"),
+        )
+    ]
+
+
+def _rediges_depuis_les_reponses() -> dict[str, str]:
+    """`chemin → contenu` de l'outillage qu'un projet neuf reçoit de ses réponses."""
+    choix = _choix_du_projet_neuf()
+    fichiers = rediger(
+        constats_depuis_choix(choix),
+        recommandation_depuis_choix(choix),
+        source=source_manifeste_des_choix("prj-0000dead", choix),
+    )
+    return {fichier.chemin: fichier.contenu for fichier in fichiers}
 
 
 def _fichier(
@@ -409,6 +446,53 @@ def test_un_outillage_venu_des_reponses_le_dit_en_tete_du_projet() -> None:
     assert "**Origine**" not in depuis_analyse.contenu
     assert SOURCE["reference"] not in depuis_analyse.contenu
     assert depuis_analyse.contenu == rediger(_constats(), _recommandation())[0].contenu
+
+
+def test_un_projet_neuf_ne_dit_jamais_constate_d_un_fichier_qui_n_existe_pas() -> None:
+    """#1105 : la rédaction dit ce que la réponse **implique**, jamais ce qu'elle a lu.
+
+    Le défaut relevé au bouclage du 2026-09-21 : `AGENTS.md` renvoyait à
+    « l'outil constaté dans `package.json` » et à un `CONTRIBUTING.md` que « ce
+    projet écrit déjà », sur un dossier qui ne portait ni l'un ni l'autre. La
+    ligne d'origine de #1100 avertissait en tête ; c'est la ligne lue au moment
+    d'agir qui envoie l'agent ouvrir un fichier absent.
+    """
+    ecrits = _rediges_depuis_les_reponses()
+    agents = ecrits["AGENTS.md"]
+    skill = ecrits[f"{DOSSIER_SKILLS}/lancer-les-tests/SKILL.md"]
+
+    # Aucun des registres de lecture, dans aucun des deux fichiers.
+    for texte in (agents, skill):
+        assert "constaté" not in texte.lower()
+        assert "déclarée dans" not in texte
+        assert "écrit déjà" not in texte
+
+    # Ce que les réponses impliquent, dit comme tel — et l'endroit reste nommé.
+    assert "- **Gestionnaires** : npm (`package.json`, à créer)." in agents
+    assert (
+        "- **Installer les dépendances** : `npm ci` — attendue une fois "
+        "`package.json` créé (réponse « langages » = typescript)." in agents
+    )
+    assert "`.github/workflows/ci.yml`, à créer" in agents
+    assert "Ces conventions viennent des réponses données à Maestro" in agents
+    assert "- à créer : `CONTRIBUTING.md` — convention de message de commit" in agents
+    assert "À créer : `package.json` (réponse « tests » = vitest)." in skill
+
+    # Aucune part de langage : rien n'a été compté sur un dossier vide.
+    projet = agents.split("## Le projet\n\n", 1)[1].split("\n## ", 1)[0]
+    assert "- **Langages** : TypeScript." in projet
+    assert "%" not in projet
+
+
+def test_une_analyse_garde_ses_constats_quand_le_registre_des_reponses_existe() -> None:
+    """Le second registre n'a rien changé au premier : un projet lu parle au passé."""
+    entree = {e.nom: e for e in _recommandation().entrees}["lancer-les-tests"]
+
+    assert texte_skill(entree, source=SOURCE) == texte_skill(entree)
+    assert "Constaté dans `pyproject.toml` (manifeste Python)." in texte_skill(
+        entree, source=SOURCE
+    )
+    assert "à créer" not in texte_skill(entree, source=SOURCE)
 
 
 def test_une_section_sans_matiere_dit_l_absence_plutot_que_de_disparaitre() -> None:
