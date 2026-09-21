@@ -3415,6 +3415,11 @@ décrit le comportement réel, pas une fixture.
   refusé sous le même statut : seule la cause les sépare, et les confondre reproposerait de
   reprendre un run que quelqu'un venait d'arrêter. Le laissez-passer est **consommé** — la reprise
   re-solde le run en `annulation` —, ce qui garde le garde-fou du double clic.
+  ⚠ **Un run lancé depuis le fil a un brief approuvé** (#1174). Il part en mode `auto`, donc sans
+  demande ni décision de brief ; son brief atteint la projection par l'étape `brief` du journal, et
+  **l'accord donné dans le fil vaut approbation**. Jusque-là, aucun run lancé normalement ne se
+  relançait. Un run **relancé** hérite du brief approuvé qu'il reprend, donc se relance encore s'il
+  meurt à son tour. En mode `humain`, rien ne change : seule la décision approuve.
 - `POST /api/extinction` → `{runs: ResumeExecution[], nb: number}` — **Maestro s'éteint** (#486,
   [docs/28 §11](./28-decision-frontiere-execution-run.md)) : chaque run que cette API porte est
   soldé `annulee` avec la cause `extinction`, son hôte éteint **avec sa descendance**, ses tâches

@@ -72,6 +72,7 @@ from maestro.detail_tache import (
     etapes_en_liste,
     liens_en_liste,
 )
+from maestro.engine.brief import MODE_BRIEF_AUTO
 from maestro.engine.executor import (
     STATUT_BLOQUEE,
     STATUT_ECHEC,
@@ -1753,7 +1754,12 @@ class ControlTowerState:
         et une tâche que la projection ne connaît pas n'est pas créée : un
         signe de vie n'ouvre pas de carte, il ne fait qu'animer celle qui
         existe — le moteur consigne toujours `:debut` avant le premier geste.
+
+        L'étape `brief` y apporte aussi le **brief rédigé** (#1174) : voir
+        `_retient_brief_auto`.
         """
+        if event.etape_run == ETAPE_BRIEF and event.brief is not None:
+            self._retient_brief_auto(event)
         if event.tache_id:
             tache = self._taches.get(event.tache_id)
             if tache is not None:
@@ -1764,6 +1770,29 @@ class ControlTowerState:
             event.agent, EtatAgent(nom=event.agent, role=event.role)
         )
         agent.derniere_activite = event.horodatage or agent.derniere_activite
+
+    def _retient_brief_auto(self, event: Event) -> None:
+        """Le brief d'un run en mode `auto` : retenu, et **approuvé** (#1174).
+
+        Un run lancé depuis le fil part en mode `auto` (#484) : son brief est
+        rédigé sans être soumis, donc il ne passe ni par `_applique_brief_demande`
+        ni par `_applique_brief_decision`. La projection n'en savait rien, et la
+        relance (#349), qui exige un brief approuvé, refusait **tous** les runs
+        lancés normalement. La personne avait pourtant dit « oui » dans le fil, et
+        le cadrage était payé.
+
+        D'où la règle, et c'est une décision : **en mode `auto`, l'accord donné
+        dans le fil vaut approbation du brief**. `brief_approuve` restait posé
+        « à l'approbation et nulle part ailleurs » ; cette approbation-là a
+        simplement eu lieu avant le run, dans la conversation. En mode `humain`,
+        rien ne change : le brief rédigé n'est qu'un brouillon tant que la décision
+        ne l'a pas tranché, et seul `_applique_brief_decision` l'approuve.
+        """
+        execution = self._executions.get(event.run_id)
+        if execution is None or execution.mode_brief != MODE_BRIEF_AUTO:
+            return
+        execution.brief = event.brief
+        execution.brief_approuve = True
 
     def _applique_capacite(self, event: Event) -> None:
         """Règle la capacité d'un agent (#86) : activé/désactivé, plafond d'instances.
@@ -1899,6 +1928,14 @@ class ControlTowerState:
             # d'une relance en porte un ; l'issue du run, qui n'en sait rien, ne doit
             # pas effacer de qui il était la suite.
             execution.reprise_de = event.reprise_de
+            # Et il **hérite** du brief approuvé qu'il reprend (#1174). Une relance
+            # part en mode `sans` sur la synthèse de ce brief : sans héritage, un
+            # run relancé qui meurt à son tour ne serait plus relançable, alors
+            # que le cadrage qu'il porte a été payé et validé une fois pour toutes.
+            repris = self._executions.get(event.reprise_de)
+            if repris is not None and repris.brief_approuve and execution.brief is None:
+                execution.brief = repris.brief
+                execution.brief_approuve = True
         # La cause d'arrêt (#479) suit **exactement** le régime de `fin`, et pour
         # la même raison : elle ne vaut que d'un run soldé. Elle est donc posée
         # avec le statut terminal et **effacée** si le run repart — un run relancé

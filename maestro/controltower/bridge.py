@@ -53,6 +53,7 @@ from maestro.controltower.events import (
     REDIS_URL_DEFAUT,
     ROLE_RUN,
     Event,
+    brief_depuis,
 )
 from maestro.controltower.persistence import CLE_JOURNAL_EVENEMENTS
 from maestro.detail_tache import SUFFIXE_ETAPE_DETAIL, etapes_depuis, liens_depuis
@@ -403,6 +404,10 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
             # de l'étape voyage avec l'événement plutôt que de se deviner du
             # titre — le dépôt ne juge pas un texte par son libellé (#746).
             etape_run=etape if etape in _ETAPES_RUN else "",
+            # Le brief rédigé (#1174), porté par la seule étape `brief` : pour un
+            # run en mode `auto`, c'est ainsi que la projection l'apprend, et
+            # qu'elle peut le relancer dessus. Ailleurs, rien — donc None.
+            brief=brief_depuis(record.get("brief")) if etape == _ETAPE_BRIEF else None,
             horodatage=str(record.get("horodatage", "")),
         ),
         *(

@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -110,6 +110,7 @@ class StepRecord:
     etapes: list[EtapeTache] = field(default_factory=list)
     liens: list[LienUtile] = field(default_factory=list)
     plan: list[NoeudPlan] = field(default_factory=list)
+    brief: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Réémet la trace en dict JSON-sérialisable (la ligne du journal)."""
@@ -140,6 +141,11 @@ class StepRecord:
             # un `run.plan` que sur une liste non vide — un plan vide n'est pas
             # un plan, et le publier ferait annoncer un graphe sans nœud.
             "plan": noeuds_en_liste(self.plan) or None,
+            # Le brief rédigé (#1174), porté par la seule étape `brief` : c'est
+            # l'instant où il existe. Un run en mode `auto` ne publie ni demande
+            # ni décision de brief, donc c'était pour lui le **seul** chemin par
+            # lequel le brief pouvait atteindre la projection, et il manquait.
+            "brief": self.brief,
         }
 
 
@@ -193,6 +199,7 @@ class RunJournal:
         etapes: Sequence[EtapeTache] = (),
         liens: Sequence[LienUtile] = (),
         plan: Sequence[NoeudPlan] = (),
+        brief: Mapping[str, Any] | None = None,
     ) -> StepRecord:
         """Consigne une étape (textes expurgés des secrets) et émet sa ligne JSON."""
         record = StepRecord(
@@ -223,6 +230,10 @@ class RunJournal:
             # (`entree`/`sortie`/`erreur`), et les étapes de checklist suivent
             # `etapes` (#246) : des libellés, déjà bornés.
             plan=list(plan),
+            # Pas expurgé, même règle que les événements de brief du bus (#320) :
+            # c'est le texte que la personne relit et approuve, et le masquer la
+            # ferait approuver autre chose que ce qui sera décomposé.
+            brief=dict(brief) if brief is not None else None,
         )
         self._records.append(record)
         self._logger.info(json.dumps(record.to_dict(), ensure_ascii=False))
