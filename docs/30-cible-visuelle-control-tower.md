@@ -2482,6 +2482,58 @@ cas** : GitHub n'a pas de composeur collant, Perplexity n'a pas de bloc suivant.
 endroit où la veille n'apporte rien, et il reste ouvert. Le ticket #1011 porte `veille::arbitree`
 depuis cette veille.
 
+#### Le rythme des contrôles et des boîtes — 2026-09-21 (#1057, différée de #983)
+
+Surface : **le padding des contrôles et des boîtes**, et la question que la sonde de #983 a rendue
+visible sans y répondre (§2.5) — `px-3 py-2`, **31 emplois hors barème**, le pas de contrôle le
+plus écrit du produit, doit-il entrer au barème ? Veille **différée**, jouée en interactif sur une
+surface déjà livrée. Décision complète en commentaire de **#1057**, captures dans l'atelier de la
+session.
+
+**Ce que la question cachait**, relevé emploi par emploi : les 31 ne sont pas un pas mais **quatre
+rôles**. **10 contrôles** — 8 entrées de menu ou de navigation, 2 onglets — et **21 boîtes** :
+15 encarts (bannière d'erreur, avertissement, confirmation), 5 lignes encadrées dans une liste,
+1 bulle du fil. La sonde compte les boîtes parce qu'elles portent un rayon ; le barème des rayons
+(§2.3bis) les range pourtant déjà ailleurs — « encart » y est sous `--radius-carte`.
+
+**Vérifié en direct**, valeurs relevées par `getComputedStyle` sur trois produits : **GitHub**
+(`cli/cli/actions`, menu « Event » ouvert, et le `Banner` de Primer) — **un seul composant**,
+ActionList, rend le menu déroulant et la navigation latérale : 6 / 8 px, **33 px**, pour un bouton
+et un champ de 32 px ; l'encart pose son texte à 16 px du bord. **Grafana** (`play.grafana.org`)
+— tout se règle sur **32 px**, bouton, champ, entrée de navigation, entrée de menu (4 / 12 px),
+**sauf l'onglet** : 8 / 12 px, **38 px**, exactement notre `px-3 py-2`. **Atlassian**
+(atlassian.design, exemples vivants de `Menu` et `Section message`) — l'entrée de menu a **deux
+densités** nommées (40 px, et 32 px en compacte) pour un bouton de 32 px ; l'encart a 16 px
+uniformes et un rayon de 8 px, celui d'une carte.
+
+**Le fait qui tranche est constant sur les trois : l'entrée de menu n'est jamais un bouton
+recopié, et l'encart n'est jamais une paire de contrôle.** La première a son composant et sa
+hauteur, au moins celle du bouton ; le second est une boîte au padding uniforme.
+
+**Non vérifié, donc non cité** : Linear (l'application est derrière une connexion), Cursor.
+
+**Quatre partis pris.** **Le pas de l'entrée entre au barème, porté par une primitive** — un
+septième pas `px-3 py-2` écrit dans `Primitives.tsx` (entrée de menu, de navigation, onglet :
+choisir parmi des voisins, là où le bouton agit), et aucun pixel ne bouge sur ses 10 emplois,
+qui rendent 36 à 40 px, dans la fourchette des trois références. **Un encart est une boîte** — il
+se replie sur `<Carte ton="…">` à la densité par défaut, ce qui demande à `SURFACE` les tons
+`alerte`, `info` et `positif` ; 11 des 15 écrivent encore leurs couleurs à la main, le même geste
+en solde une part. **Une ligne encadrée est une `Carte` compacte** — le barème l'a déjà (§2.5,
+« lignes de liste »). **Un contrôle se juge à sa hauteur, pas à son padding** — et ce que la
+hauteur fait voir se nomme : le `Bouton` courant (28,8 px, texte `annexe`) est **7 px plus bas**
+que le champ voisin (35,6 px, texte `corps`), là où GitHub et Grafana les alignent. Ce dernier
+point n'est pas tranché ici : il change chaque bouton du produit.
+
+**La réponse à la question de #983** : les deux lectures du §2.5 étaient vraies, chacune pour une
+partie. Le socle **manque un pas** pour 10 emplois, et **21 emplois ont recopié** une paire de
+contrôle pour dessiner une boîte.
+
+**Ce que la veille n'a pas regardé** : le `p-5` de `PosteVide` (aucun état vide de référence n'a
+été mesuré) ; la bulle de `BulleFil`, dont la forme appartient aux veilles du fil. **Vu au
+passage** : 5 des 8 `p-2` hors barème sont des **boutons à icône seule**, que la sonde compte comme
+des conteneurs et que `Bouton` ne propose pas — un manque du socle, pas un pas de conteneur. Les
+tickets #983 et #1057 portent `veille::arbitree` depuis cette veille.
+
 ---
 
 ### 5.8 Un écran se juge contre l'attente — 2026-09-17 (chantier #972)
