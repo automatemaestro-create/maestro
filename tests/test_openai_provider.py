@@ -36,6 +36,7 @@ from maestro.providers import (
     provider_from_settings,
     resolve_provider,
 )
+from maestro.providers.factory import modele_du_canal
 from maestro.providers.openai_compat import DEFAULT_BASE_URL
 from maestro.telemetry import collect_usage
 
@@ -324,3 +325,171 @@ def test_demo_aboutit_de_bout_en_bout_sur_l_endpoint_openai(endpoint, monkeypatc
     # Les livrables portent la réponse de l'endpoint : le résultat vient bien de lui.
     livrable = (racine / "livrables" / "api-contacts" / "livrable.md").read_text(encoding="utf-8")
     assert "LIVRABLE (mistral-small-latest)" in livrable
+
+
+# --- #1173 : chaque canal suit le fournisseur configuré --------------------------------
+
+
+class _Enregistreur(OpenAICompatProvider):
+    """Un fournisseur « openai » qui note le modèle qu'on lui demande, sans réseau."""
+
+    def __init__(self, reponse: str = "", *, modele_configure: str | None = None) -> None:
+        super().__init__(Credentials())
+        self.modele_configure = modele_configure
+        self.reponse = reponse
+        self.modeles: list[str] = []
+
+    async def generate(self, prompt, *, model, system_prompt=None, effort=None):
+        self.modeles.append(model)
+        return self.reponse
+
+
+def test_la_fabrique_pose_le_modele_impose_sur_le_fournisseur():
+    """Le modèle voyage avec le fournisseur : un canal n'a pas à relire la configuration."""
+    impose = provider_from_settings(_settings(provider="openai", model="qwen2.5"))
+    assert impose.modele_configure == "qwen2.5"
+    assert provider_from_settings(_settings(provider="openai")).modele_configure is None
+
+
+def test_le_modele_du_canal_suit_la_regle_de_default_model():
+    """MAESTRO_MODEL fait foi ; sinon le défaut du canal chez Claude ; ailleurs, réglage absent."""
+    defaut = "claude-sonnet-5"
+    assert modele_du_canal(defaut, _Enregistreur(modele_configure="qwen2.5")) == "qwen2.5"
+    claude = ClaudeProvider(Credentials())
+    assert modele_du_canal(defaut, claude) == defaut
+    claude.modele_configure = "claude-opus-5"
+    assert modele_du_canal(defaut, claude) == "claude-opus-5"
+    with pytest.raises(ConfigError, match="MAESTRO_MODEL"):
+        modele_du_canal(defaut, _Enregistreur())
+
+
+def test_un_double_inconnu_de_la_fabrique_garde_le_defaut_du_canal():
+    """Rien ne permet de juger un fournisseur construit à la main : il garde le défaut."""
+
+    class Double(OpenAICompatProvider):
+        name = "double"
+
+    assert modele_du_canal("claude-sonnet-5", Double(Credentials())) == "claude-sonnet-5"
+
+
+def _fil_de_l_orchestrateur(contenu: str):
+    from maestro.controltower.chat import UTILISATEUR, MessageChat
+    from maestro.controltower.orchestration import NOM_ORCHESTRATION
+
+    return [MessageChat(agent=NOM_ORCHESTRATION, auteur=UTILISATEUR, contenu=contenu)]
+
+
+def test_le_fil_demande_au_fournisseur_configure_le_modele_configure(monkeypatch):
+    """Le critère 1, sur le fil : plus jamais `claude-sonnet-5` envoyé à un Ollama."""
+    from maestro.controltower.orchestration import AGENT_ORCHESTRATION, RepondeurOrchestration
+
+    fournisseur = _Enregistreur(
+        json.dumps({"verdict": "echange", "reponse": "Bonjour."}), modele_configure="qwen2.5"
+    )
+    monkeypatch.setattr(
+        "maestro.providers.factory.provider_from_settings", lambda *a, **k: fournisseur
+    )
+
+    reponse = _run(
+        RepondeurOrchestration().produire(AGENT_ORCHESTRATION, _fil_de_l_orchestrateur("Bonjour"))
+    )
+
+    assert fournisseur.modeles == ["qwen2.5"]
+    assert "Bonjour." in reponse.contenu
+
+
+def test_sans_modele_le_fil_dit_le_reglage_et_ce_que_le_poste_offre(monkeypatch):
+    """Le critère 2 : un réglage absent se dit comme tel, avec ce que la sonde a trouvé.
+
+    Jamais « renvoyez tel quel » : rien ne répondra tant que le modèle n'est pas
+    posé. Et le fil ne renvoie pas vers une variable à deviner, il dit ce qui
+    tourne ici et quel réglage le branche.
+    """
+    from maestro.controltower.orchestration import AGENT_ORCHESTRATION, RepondeurOrchestration
+    from maestro.poste import GENRE_SERVEUR, Constat, RapportSonde
+
+    fournisseur = _Enregistreur()
+    monkeypatch.setattr(
+        "maestro.providers.factory.provider_from_settings", lambda *a, **k: fournisseur
+    )
+
+    async def sonde() -> RapportSonde:
+        return RapportSonde(
+            constats=(
+                Constat(
+                    genre=GENRE_SERVEUR,
+                    cle="serveur:ollama",
+                    libelle="Ollama",
+                    fournisseur="openai",
+                    utilisable=True,
+                    detail="répond sur le port 11434",
+                    modeles=("qwen2.5", "llama3"),
+                ),
+            )
+        )
+
+    reponse = _run(
+        RepondeurOrchestration(sonde=sonde).produire(
+            AGENT_ORCHESTRATION, _fil_de_l_orchestrateur("Bonjour")
+        )
+    )
+
+    assert fournisseur.modeles == []  # rien n'est parti vers le fournisseur
+    assert "réglage absent" in reponse.contenu
+    assert "MAESTRO_MODEL" in reponse.contenu
+    assert "renvoyez-le tel quel" not in reponse.contenu
+    assert (
+        "Sur ce poste, je trouve : Ollama (MAESTRO_PROVIDER=openai, "
+        "MAESTRO_MODEL parmi : qwen2.5, llama3)"
+    ) in reponse.contenu
+
+
+def test_le_chat_d_un_agent_suit_le_modele_impose_comme_un_run(monkeypatch):
+    """Parler à un agent obéit à MAESTRO_MODEL, exactement comme le faire travailler."""
+    from maestro.agents.catalog import GABARITS_DU_CODE
+    from maestro.controltower.chat import UTILISATEUR, MessageChat, RepondeurModele
+
+    fournisseur = _Enregistreur("Réponse.", modele_configure="qwen2.5")
+    monkeypatch.setattr(
+        "maestro.providers.factory.provider_from_settings", lambda *a, **k: fournisseur
+    )
+    agent = GABARITS_DU_CODE[0]
+    fil = [MessageChat(agent=agent.nom, auteur=UTILISATEUR, contenu="Salut")]
+
+    _run(RepondeurModele().repondre(agent, fil))
+
+    assert fournisseur.modeles == ["qwen2.5"]
+
+
+def test_la_generation_d_agent_demande_le_modele_configure(monkeypatch):
+    """Décrire un agent en une phrase passait, lui aussi, `claude-sonnet-5` à tout fournisseur."""
+    from maestro.controltower.generation_agent import (
+        GenerateurDefinitionAgent,
+        GenerationIndisponible,
+    )
+
+    fournisseur = _Enregistreur("hors contrat", modele_configure="qwen2.5")
+    monkeypatch.setattr(
+        "maestro.providers.factory.provider_from_settings", lambda *a, **k: fournisseur
+    )
+
+    with pytest.raises(GenerationIndisponible):
+        _run(
+            GenerateurDefinitionAgent(fournisseurs=lambda: ()).proposer(
+                "un agent qui relit mes migrations SQL"
+            )
+        )
+
+    assert fournisseur.modeles == ["qwen2.5"]
+
+
+def test_le_classifieur_du_routage_suit_le_modele_impose():
+    """Chaque routage ambigu envoyait `claude-haiku-4-5`, quel que soit le fournisseur."""
+    from maestro.agents.catalog import GABARITS_DU_CODE
+    from maestro.engine.executor import LocalExecutor
+    from maestro.router.classifier import MODELE_CLASSIFIEUR
+
+    impose = LocalExecutor(_Enregistreur(), agents=GABARITS_DU_CODE, modele="qwen2.5")
+    assert impose._router._classifier._model == "qwen2.5"
+    sans = LocalExecutor(_Enregistreur(), agents=GABARITS_DU_CODE)
+    assert sans._router._classifier._model == MODELE_CLASSIFIEUR

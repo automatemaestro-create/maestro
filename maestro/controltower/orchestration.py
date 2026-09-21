@@ -272,7 +272,7 @@ import json
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from maestro.agents.catalog import MODELE_EXECUTANT_DEFAUT, Agent
 from maestro.agents.playbook_du_code import registre
@@ -302,6 +302,9 @@ from maestro.controltower.state import (
 )
 from maestro.outillage.questionnaire import QuestionOutillage
 from maestro.providers.base import ModelProvider
+
+if TYPE_CHECKING:  # pragma: no cover - typage seul, cf. `SondeDuPoste`
+    from maestro.poste import RapportSonde
 
 #: Le nom du fil global — la clé de stockage (`core/chat/orchestrateur.jsonl`), le
 #: segment d'URL des endpoints `/api/chat/{agent}` et le `agent` des événements
@@ -520,6 +523,45 @@ _REPARATION_CONFIGURATION = (
     "configuration, puis renvoyez votre message — il reste dans ce fil."
 )
 
+#: Ce que le poste offre côté modèles (#253, `maestro.poste.SondePoste.rapport`) —
+#: injecté plutôt qu'importé : le fil n'a pas à savoir comment on sonde un poste.
+SondeDuPoste = Callable[[], Awaitable["RapportSonde"]]
+
+#: Le nombre de modèles nommés par fournisseur trouvé : de quoi choisir, pas un
+#: inventaire — un serveur local peut en servir des dizaines.
+_MODELES_NOMMES = 3
+
+
+async def reparation_configuration(sonde: SondeDuPoste | None) -> str:
+    """Le geste qui répare un réglage absent, **avec ce que le poste offre** (#1173).
+
+    Un produit qui sait sonder le poste ne renvoie pas vers une variable à
+    deviner : il dit ce qu'il a trouvé et quel réglage le branche — Claude Code
+    sur le `PATH`, un Ollama qui écoute et les modèles qu'il sert, une clé posée.
+    C'est la règle de la personne pour tout prérequis manquant que Maestro sait
+    combler : le proposer là où il manque. La sonde ne lance rien (résolution sur
+    le `PATH`, sondes HTTP locales bornées) ; si elle échoue ou ne trouve rien, le
+    message d'avant reste, complété de ce constat.
+    """
+    if sonde is None:
+        return _REPARATION_CONFIGURATION
+    try:
+        rapport = await sonde()
+    except Exception:  # noqa: BLE001 — la sonde éclaire, elle ne décide de rien
+        return _REPARATION_CONFIGURATION
+    prets = [c for c in rapport.constats if c.fournisseur and c.utilisable]
+    if not prets:
+        return f"{_REPARATION_CONFIGURATION} Je n'ai trouvé aucun fournisseur prêt sur ce poste."
+    offres = []
+    for constat in prets:
+        modeles = ", ".join(constat.modeles[:_MODELES_NOMMES])
+        offres.append(
+            f"{constat.libelle} (MAESTRO_PROVIDER={constat.fournisseur}"
+            + (f", MAESTRO_MODEL parmi : {modeles}" if modeles else "")
+            + ")"
+        )
+    return f"Sur ce poste, je trouve : {' ; '.join(offres)}. {_REPARATION_CONFIGURATION}"
+
 
 class _JugeInjoignable(RuntimeError):
     """Le juge n'a rendu **aucun** verdict, et ce que le fil doit en dire (#686).
@@ -699,11 +741,17 @@ class RepondeurOrchestration(RepondeurChat):
         apercu: ApercuOrchestration | None = None,
         provider: ModelProvider | None = None,
         conducteur: ConducteurOutillage | None = None,
+        sonde: SondeDuPoste | None = None,
     ) -> None:
         self._lanceur = lanceur
         self._apercu = apercu
         self._provider = provider
+        # Le modèle suit le fournisseur (#1173) : résolu avec lui depuis la
+        # configuration, jamais épinglé. Un fournisseur **injecté** (les tests,
+        # un câblage explicite) garde le modèle de la fiche.
+        self._modele: str | None = None
         self._conducteur = conducteur or ConducteurOutillage()
+        self._sonde = sonde
 
     async def repondre(self, agent: Agent, fil: Sequence[MessageChat]) -> str:
         """La réponse seule — `produire` est la voie complète (rattachement compris)."""
@@ -879,21 +927,27 @@ class RepondeurOrchestration(RepondeurChat):
         redémarrer la Control Tower.
         """
         if self._provider is None:
-            from maestro.providers.factory import provider_from_settings
+            from maestro.providers.factory import modele_du_canal, provider_from_settings
 
             try:
-                self._provider = provider_from_settings()
+                fournisseur = provider_from_settings()
+                # Le modèle avec le fournisseur (#1173) : `claude-sonnet-5` n'a de
+                # sens que chez Claude. Un modèle manquant est un réglage absent,
+                # donc de la même famille que le fournisseur manquant, et il se dit
+                # comme tel.
+                self._modele = modele_du_canal(agent.modele, fournisseur)
+                self._provider = fournisseur
             except Exception as echec:  # noqa: BLE001 — la position classe, cf. docstring
                 raise _JugeInjoignable(
                     f"aucun fournisseur de modèle n'est utilisable "
                     f"({cause_lisible(echec)})",
-                    _REPARATION_CONFIGURATION,
+                    await reparation_configuration(self._sonde),
                 ) from echec
         etat = self._apercu(projet_id) if self._apercu is not None else ""
         try:
             texte = await self._provider.generate(
                 _prompt(fil, etat),
-                model=agent.modele,
+                model=self._modele or agent.modele,
                 system_prompt=agent.prompt_systeme,
             )
         except Exception as echec:  # noqa: BLE001 — la position classe, cf. docstring

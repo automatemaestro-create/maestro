@@ -42,7 +42,11 @@ def provider_from_settings(settings: Settings | None = None) -> ModelProvider:
             f"MAESTRO_PROVIDER={settings.provider!r} inconnu. "
             f"Fournisseurs configurables : {connus}."
         ) from exc
-    return fabrique(settings)
+    fournisseur = fabrique(settings)
+    # Le modèle imposé voyage avec le fournisseur (#1173) : un canal qui le résout
+    # sait quel modèle demander sans relire la configuration.
+    fournisseur.modele_configure = settings.model or None
+    return fournisseur
 
 
 def default_model(settings: Settings) -> str:
@@ -62,3 +66,34 @@ def default_model(settings: Settings) -> str:
         "(pas de modèle par défaut pour ce fournisseur). Renseignez un modèle "
         "servi par votre endpoint."
     )
+
+
+def modele_du_canal(defaut_claude: str, fournisseur: ModelProvider) -> str:
+    """Le modèle d'un appel **que personne n'a réglé** — fil, assistant, génération d'agent (#1173).
+
+    Ces canaux portent un défaut écrit dans le code, et ce défaut est un nom
+    Claude (`claude-sonnet-5`). Il était envoyé tel quel au fournisseur configuré,
+    quel qu'il soit : avec un endpoint OpenAI-compatible, le fil — seule porte
+    d'entrée du produit — demandait `claude-sonnet-5` à un Ollama, et lisait le
+    refus comme une indisponibilité passagère. Les runs, eux, suivaient déjà
+    `MAESTRO_MODEL` (#69) : seuls ces appels-là y échappaient.
+
+    La règle est celle de `default_model`, lue sur le **fournisseur** et non sur
+    la configuration, parce que la fabrique y a posé ce qu'elle imposait :
+    `MAESTRO_MODEL` fait foi quand il est posé ; sinon le défaut du canal chez
+    Claude, seul fournisseur à savoir ce qu'il désigne ; chez un autre fournisseur
+    **connu de la fabrique**, la même erreur de configuration, qui dit quoi
+    renseigner. Un fournisseur qu'elle ne connaît pas — un double, un câblage à la
+    main — garde le défaut : rien ne permet d'en juger.
+    """
+    impose = getattr(fournisseur, "modele_configure", None)
+    if impose:
+        return str(impose)
+    nom = getattr(fournisseur, "name", "")
+    if nom in _FABRIQUES and nom != ClaudeProvider.name:
+        raise ConfigError(
+            f"MAESTRO_MODEL est requis avec MAESTRO_PROVIDER={nom!r} "
+            "(pas de modèle par défaut pour ce fournisseur). Renseignez un modèle "
+            "servi par votre endpoint."
+        )
+    return defaut_claude
