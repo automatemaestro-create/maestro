@@ -55,6 +55,7 @@ from maestro.controltower import (
     create_app,
 )
 from maestro.controltower.battement import SEUIL_ORPHELIN_S, horodatage_battement
+from maestro.controltower.bridge import evenements_depuis_step
 from maestro.controltower.brief import evenement_demande_brief
 from maestro.controltower.events import (
     EVENEMENT_BRIEF_DECISION,
@@ -79,13 +80,17 @@ from maestro.controltower.state import (
     STATUTS_TACHE_TERMINAUX,
 )
 from maestro.engine import (
+    MODE_BRIEF_AUTO,
     MODE_BRIEF_HUMAIN,
     MODE_BRIEF_SANS,
     STATUT_EN_COURS,
+    STATUT_TERMINEE,
     DemandeBrief,
 )
 from maestro.orchestrator import Brief
 from maestro.sources import Source
+from maestro.telemetry import RunJournal, StepUsage
+from maestro.telemetry.costs import ETAPE_BRIEF
 
 #: Le run **mort** de tous les scénarios — celui dont l'hôte est tombé.
 MORT = "3ff0bcb065f9"
@@ -692,3 +697,91 @@ def test_la_relance_solde_les_taches_du_run_repris_et_libere_ses_agents():
         bdd = _fiche(client, "bdd")
         assert bdd["statut"] == AGENT_LIBRE
         assert bdd["taches_en_cours"] == []
+
+
+# ------------------------------- ⑤ un run lancé depuis le fil (#1174)
+
+
+def _etape_de_brief(brief: Brief = BRIEF) -> tuple[Event, ...]:
+    """L'étape `brief` du run mort, telle que le **vrai** journal et le **vrai** pont la rendent.
+
+    Le décor ne fabrique pas l'événement à la main : c'est le chemin même que #1174
+    ouvre — `RunJournal.consigne(brief=…)`, puis `evenements_depuis_step` — qui doit
+    faire connaître le brief à la projection. Un événement écrit ici prouverait
+    seulement que la projection sait lire ce qu'on lui tend.
+    """
+    record = RunJournal(run_id=MORT).consigne(
+        etape=ETAPE_BRIEF,
+        nom="Brief de l'objectif",
+        agent="orchestrateur",
+        role="Orchestrateur",
+        statut=STATUT_TERMINEE,
+        entree="Fais-moi un CRM",
+        sortie="1 critère(s) d'acceptation, 0 question(s)",
+        usage=StepUsage(),
+        projet_id=PROJET,
+        brief=brief.to_dict(),
+    )
+    return evenements_depuis_step(record.to_dict())
+
+
+def test_un_run_lance_depuis_le_fil_se_relance_sur_son_brief():
+    """Le critère 1 : le fil est la seule porte d'entrée, et ses runs ne se relançaient pas.
+
+    Un run du fil part en mode `auto` : son brief est rédigé sans demande ni
+    décision. Il n'atteignait la projection par aucun chemin, et la relance
+    répondait 422 « sans brief approuvé » à un run que la personne avait approuvé
+    dans le fil, cadrage payé. L'accord du fil vaut désormais approbation.
+    """
+    journal = _journal(_lancement(mode_brief=MODE_BRIEF_AUTO), *_etape_de_brief())
+    battements = RegistreBattementsMemoire()
+    asyncio.run(battements.battre(MORT, horodatage=_il_y_a(SEUIL_ORPHELIN_S + 60)))
+    moteur = MoteurEnVol()
+
+    with _app(journal, battements, moteur) as client:
+        reponse = client.post(f"/api/executions/{MORT}/relancer")
+
+        assert reponse.status_code == 202
+        assert reponse.json()["objectif"] == BRIEF.synthese().strip()
+        _attendre(lambda: moteur.objectifs, "le moteur du run relancé")
+        # Relancé sur son brief, sans repayer le cadrage : le mode `sans`.
+        assert moteur.modes_brief == [MODE_BRIEF_SANS]
+
+
+def test_en_mode_humain_un_brief_redige_n_approuve_rien():
+    """Le critère 2 : sans décision, le brief rédigé n'est qu'un brouillon.
+
+    Le même événement d'étape, sur un run en mode `humain` mort avant que personne
+    ne tranche : la relance refuse, avec le motif d'avant. Seule la décision
+    approuve un brief qu'une personne doit relire.
+    """
+    journal = _journal(_lancement(mode_brief=MODE_BRIEF_HUMAIN), *_etape_de_brief())
+    battements = RegistreBattementsMemoire()
+    asyncio.run(battements.battre(MORT, horodatage=_il_y_a(SEUIL_ORPHELIN_S + 60)))
+
+    with _app(journal, battements, MoteurEnVol()) as client:
+        reponse = client.post(f"/api/executions/{MORT}/relancer")
+
+        assert reponse.status_code == 422
+        assert reponse.json()["detail"]["motif"] == MOTIF_RELANCE_SANS_CADRAGE
+
+
+def test_un_run_relance_qui_meurt_a_son_tour_se_relance_encore():
+    """Un run relancé hérite du brief approuvé qu'il reprend.
+
+    La relance part en mode `sans`, sur la synthèse du brief : sans héritage, un
+    second arrêt aurait rendu le run définitivement non relançable, alors que son
+    cadrage a été payé et validé une fois pour toutes.
+    """
+    journal, battements, moteur = _decor(battement=_il_y_a(SEUIL_ORPHELIN_S + 60))
+    with _app(journal, battements, moteur) as client:
+        suite = client.post(f"/api/executions/{MORT}/relancer").json()["run_id"]
+        _attendre(lambda: moteur.objectifs, "le moteur du run relancé")
+        # Son hôte tombe à son tour : son dernier battement vieillit.
+        asyncio.run(battements.battre(suite, horodatage=_il_y_a(SEUIL_ORPHELIN_S + 60)))
+
+        reponse = client.post(f"/api/executions/{suite}/relancer")
+
+        assert reponse.status_code == 202
+        assert reponse.json()["objectif"] == BRIEF.synthese().strip()
+        assert reponse.json()["reprise_de"] == suite

@@ -1093,6 +1093,10 @@ class OrchestrationEngine:
             ),
             usage=usage,
             projet_id=projet_id,
+            # Le brief lui-même (#1174) : c'est par cette ligne qu'un run en mode
+            # `auto`, qui ne demande ni ne reçoit de décision, fait connaître son
+            # brief à la Control Tower — donc devient relançable dessus.
+            brief=brief.to_dict(),
         )
         return usage, brief
 

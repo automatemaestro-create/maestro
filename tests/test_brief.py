@@ -517,6 +517,9 @@ def test_l_etape_de_brief_est_consignee_au_journal():
     assert etapes[0].statut == "terminee"
     assert "2 critère(s) d'acceptation" in etapes[0].sortie
     assert "1 question(s)" in etapes[0].sortie
+    # Le brief lui-même voyage sur la ligne (#1174) : c'est le seul chemin par
+    # lequel un run en mode `auto` le fait connaître à la Control Tower.
+    assert etapes[0].to_dict()["brief"]["objectif"] == BRIEF_COMPLET["objectif"]
 
 
 def test_un_brief_illisible_est_consigne_puis_remonte():
