@@ -33,7 +33,9 @@ gantt
 > bas, puis les **Phases 7 à 9** issues du cadrage #215 et planifiées par #218, et la **vague
 > front « Control Tower v3 »** ouverte par la revue d'usage du 2026-08-05, menée **en parallèle**
 > des Phases 8 et 9. Les chantiers nés de l'usage viennent ensuite, puis le jalon **« L'équipe sur
-> mesure »**, né d'une idée le 2026-09-19 et placé devant la Phase 9.
+> mesure »**, né d'une idée le 2026-09-19 et placé devant la Phase 9. Le jalon **« Avant
+> l'installeur »** vient ensuite (2026-09-21) : il réunit les réserves des deux jalons précédents et
+> passe à son tour devant la Phase 9.
 
 ---
 
@@ -139,7 +141,7 @@ d'exécution ; l'utilisateur reçoit une copie de fichiers à recopier lui-même
 |---|---|---|---|---|
 | **7 — Projets & espace de travail réel** | Un projet a une **racine sur le disque** ; les agents y travaillent par branche/worktree ou copie, et l'application des modifications passe par la validation humaine. Le contrat d'isolation et le modèle de menace s'étendent au projet de l'utilisateur | Phase 5 (lancement de run par l'API — livré) | 2027-03-18 → 2027-04-28 | **livrée** (#219, 8 lots) |
 | **8 — De l'intention au brief** | Un objectif se **compose** (prompt + documents téléversés + dossier de références), se **discute** (questions de clarification) et se **valide** (brief structuré) avant toute décomposition payante | Phase 7 | 2027-04-29 → 2027-06-09 | **livrée** (#314, 9 lots) |
-| **9 — Poste de travail : distribution** | Le produit s'**installe** : mode local durci (jeton, SQLite), lanceur/installeur et parcours de premier lancement. L'**enveloppe de bureau** en est **sortie** le 2026-09-11 (#643 abandonné) : elle est livrée par « L'atelier » et devient **Electron** ([docs/35](./35-decision-poste-de-bureau-et-disposition.md)) | Phases 7 et 8 — ne pas empaqueter une cible mouvante | 2027-06-10 → 2027-07-21 | découpée (#637, 8 lots) |
+| **9 — Poste de travail : distribution** | Le produit s'**installe** : mode local durci (jeton, SQLite), lanceur/installeur et parcours de premier lancement. L'**enveloppe de bureau** en est **sortie** le 2026-09-11 (#643 abandonné) : elle est livrée par « L'atelier » et devient **Electron** ([docs/35](./35-decision-poste-de-bureau-et-disposition.md)) | Phases 7 et 8 — ne pas empaqueter une cible mouvante | 2027-06-10 → 2027-07-21 | découpée (#637, 8 lots) ; critères de sortie posés le 2026-09-21 |
 
 Les fenêtres reprennent la cadence des phases précédentes (~6 semaines) et s'enchaînent après
 l'échéance de la Phase 6. Ce sont des repères de planification : une échéance de milestone se
@@ -183,6 +185,22 @@ réservé.
 > **ENF-12**). Ce que la Phase 9 garde est l'**empaquetage** : #640, #641, #642, #644. Le
 > renversement porte sur *quelle* coque, jamais sur *quand* — voir
 > [docs/35 §2](./35-decision-poste-de-bureau-et-disposition.md).
+
+**Les critères de sortie de la Phase 9 sont posés depuis le 2026-09-21** (#1113), dans la
+description de son milestone, section `## Critères de sortie`, C1 à C9. C'est cette section qui fait
+foi au bouclage (docs/10 §3.4), pas ce résumé. Ils ont été posés **avant le premier lot** : aucun lot
+de #637 n'avait démarré. Ils ne sont pas rédigés : ils sont recopiés des textes de cadrage (EF-41,
+ENF-12, D3, le corps de #637 et les critères des lots #638 à #645), et chacun cite sa source. La
+description du milestone a été corrigée le même jour. Elle parlait encore d'une enveloppe Tauri et
+d'une échéance au 2027-11-10.
+
+**Sa place dans la file a changé le même jour.** Les réserves des verdicts précédents passent devant
+elle, dans le jalon « Avant l'installeur » (section du même nom, plus bas).
+Un effet de bord est assumé : dans un run autonome, **#638, #639 et #640** (jeton d'API, SQLite,
+lanceur) passent eux aussi derrière les réserves. Aucun ordre ne peut placer les réserves entre #640
+et #641, parce que les lots d'un parent restent contigus dans le plan. Ces trois lots ne sont pas de
+l'empaquetage : ils **restent démarrables à la main** sans attendre, et #638 ferme un trou ouvert
+aujourd'hui.
 
 ---
 
@@ -371,6 +389,7 @@ Trois choses **ne bougent pas** :
 | --- | --- |
 | « L'atelier » | 2027-11-09 |
 | **« L'équipe sur mesure »** | **2028-01-05** |
+| « Avant l'installeur » *(ajouté le 2026-09-21, section suivante)* | 2028-01-26 |
 | Phase 9 | 2028-02-16 (était 2027-11-10) |
 
 - Le jalon vient **après « L'atelier »**, qui est en cours et qu'on ne double pas.
@@ -381,6 +400,69 @@ Trois choses **ne bougent pas** :
 > ⚠ **Les critères de sortie du jalon sont dans sa description**, section `## Critères de sortie`
 > (C1 à C5, dans les mots de la demande). C'est elle qui fait foi au bouclage (docs/10 §3.4), pas ce
 > résumé.
+
+---
+
+## « Avant l'installeur » — les réserves levées avant l'empaquetage (2026-09-21)
+
+Ce jalon est né d'une demande du 2026-09-21, instruite par [`/idee`](../.claude/commands/idee.md)
+et consignée par #1113 : *« les réserves doivent passer devant l'installeur »*. Comme « L'équipe sur
+mesure », il ne prend **pas de numéro de phase**.
+
+| Milestone | Contenu | Échéance | Suivi |
+|---|---|---|---|
+| **Avant l'installeur — les réserves levées** | Les réserves des verdicts de « L'atelier » et de « L'équipe sur mesure », et trois constats du retex du 2026-09-11 | 2028-01-26 | 14 tickets indépendants, sans parent de suivi |
+
+**Son contenu : ce qui était rangé en Phase 9 derrière l'installeur.** Les deux verdicts du
+2026-09-21 ont rangé leurs réserves au milestone courant du rail produit, comme le veut
+`/milestone-verdict`. Leurs jalons étant soldés, ce milestone courant était la Phase 9. Le plan de
+`queue.sh` y plaçait l'installeur #641 au **rang 4**, et ces 14 tickets aux **rangs 8 à 21**.
+- **Verdict de « L'atelier »** : R1 → #1106 (la colonne ne porte pas les gestes du fil), R2 → #1107,
+  R3 → #1108, R4 → #1109 ; ses relevés hors critères → #1110, #1111, #1112.
+- **Verdict de « L'équipe sur mesure »** : R3 → #1101, R4 → #1102, R7 → #1104 ; son relevé hors
+  critères → #1105.
+- **Retex du 2026-09-11** : G6 → #939 (le produit parle le dépôt), G7 → #940 (la visite guidée),
+  G9 → #942 (les amorces du chat).
+
+**Pourquoi un jalon, et pas des priorités.** Dans un jalon, `queue.sh` trie par blocs. Les lots d'un
+même parent restent **contigus** et prennent la **meilleure priorité** de leurs lots. À priorité
+égale, le plus petit iid passe. Le bloc #637 est donc `haute` et part de #638 : il passe devant
+toute réserve. Même avec tous ses lots en `basse`, il resterait devant les quatre réserves `basse`,
+puisque `638 < 1105`. Il aurait fallu, en plus, remonter ces quatre-là. `prio::` n'aurait alors plus
+rien dit : une élision manquante en `moyenne`, un trou de sécurité en `basse`. Entre jalons,
+l'échéance **est** l'ordre, et c'est le seul levier honnête. Les réserves portent aussi leurs propres
+critères, ceux des deux verdicts. Ce ne sont pas ceux de la Phase 9, qui sont d'installer, de lancer
+et de mettre à jour.
+
+**Place dans la file**, sur le rail produit :
+
+| Jalon | Échéance |
+| --- | --- |
+| « L'atelier » (soldé, verdict rendu) | 2027-11-09 |
+| « L'équipe sur mesure » (soldé, verdict rendu) | 2028-01-05 |
+| **« Avant l'installeur »** | **2028-01-26** |
+| Phase 9 | 2028-02-16 (inchangée) |
+
+- Il passe **devant la Phase 9**, pour l'argument de la Phase 9 elle-même : on n'empaquette pas une
+  cible mouvante (§4.8 de docs/24). C'est la troisième fois que cet argument range un jalon devant
+  elle, après « L'atelier » et « L'équipe sur mesure ». Le bilan de « L'atelier » l'avait nommé : un
+  premier lancement (#642) montrerait la colonne repliée (R2), et une proposition de run qu'on ne
+  tranche pas depuis la colonne (R1).
+- Son échéance tombe **strictement entre** ses voisins : **aucune autre échéance n'a bougé**.
+- Les deux jalons plus anciens n'ont plus de ticket ouvert. Il devient donc le **milestone courant**
+  du rail produit. C'est lui que `/orchestrate` propose et que `/ticket-create` prend par défaut.
+- **Aucune priorité n'a changé.** Dans le jalon, le plan suit l'ordre des verdicts : #1102 et
+  #1106 (`haute`, R1 de l'atelier étant « la plus lourde »), puis huit tickets `moyenne`, puis
+  quatre `basse`.
+- Un effet de bord est assumé : #638, #639 et #640 passent eux aussi derrière les réserves dans un
+  run, et restent démarrables à la main (section Phase 9, plus haut).
+
+**Ce qui ne bouge pas.** Aucune décision n'est renversée. Les verdicts consignés de « L'atelier » et
+de « L'équipe sur mesure » disent leurs réserves « suivies en Phase 9 ». On ne réécrit pas un
+verdict rendu : elles sont maintenant suivies dans ce jalon, qui passe devant la Phase 9.
+
+> ⚠ **Les critères de sortie du jalon sont dans sa description**, section `## Critères de sortie`
+> (C1 à C4). C'est elle qui fait foi au bouclage (docs/10 §3.4), pas ce résumé.
 
 ---
 
