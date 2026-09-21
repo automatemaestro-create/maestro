@@ -18,7 +18,12 @@
  * - **la suite est estimée** — une fourchette, sourcée de docs/09 (lib/estimation)
  *   et d'aucune mesure de ce run-ci. D'où le « ≈ », la fourchette plutôt qu'un
  *   montant, et la phrase qui dit d'où elle vient : un chiffre dont on ignore la
- *   provenance ne se conteste pas, donc ne se décide pas.
+ *   provenance ne se conteste pas, donc ne se décide pas. Cette phrase nomme
+ *   désormais la **nature** de la provenance (« ordre de grandeur estimé, pas une
+ *   mesure de ce run ») et non plus le fichier du dépôt qui la porte (#939) :
+ *   `docs/09` ne s'ouvre pas depuis un produit installé, donc ne se conteste pas
+ *   davantage qu'un chiffre nu — l'information utile était la nature, pas la
+ *   cote.
  */
 
 import { IconeGrandLivre, IconeMonnaie } from "@/components/Icones";
@@ -52,7 +57,7 @@ export function CoutBrief({
         valeur={`≈ ${formatCout(estimation.bas)} à ${formatCout(estimation.haut)}`}
         detail={`Découpage puis ≈ ${estimation.nbTaches} tâche${
           estimation.nbTaches > 1 ? "s" : ""
-        } — ordre de grandeur, docs/09`}
+        } — ordre de grandeur estimé, pas une mesure de ce run`}
       />
       {/* Ce que le refus **ne** coûte pas : c'est la moitié de l'information, et
           celle qu'on oublie. Aucune tâche n'a été créée à ce stade — refuser

@@ -328,9 +328,9 @@ INSTANCES_MAX_PROPOSEES = 3
 #: à « pourquoi une seule ? », et elle est la même pour tous les rôles qui ne se
 #: démultiplient pas.
 RAISON_UNE_INSTANCE = (
-    "une instance : un seul travail à la fois sur ce rôle, c'est le défaut "
-    "(docs/09 — on augmente les instances pour absorber la charge, on ne les "
-    "pose pas par principe)"
+    "une instance : un seul travail à la fois sur ce rôle, c'est le défaut — on "
+    "augmente les instances pour absorber la charge, on ne les pose pas par "
+    "principe"
 )
 
 

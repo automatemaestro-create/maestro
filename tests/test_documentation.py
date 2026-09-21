@@ -417,6 +417,64 @@ class TestIdentiteStable:
         for ancetre in section.ancetres:
             assert ancetre in section.chemin
 
+    def test_la_citation_nomme_le_document_et_jamais_son_fichier(
+        self, corpus_reel: CarteDocumentation
+    ) -> None:
+        """Ce qui sort vers l'utilisateur ne nomme aucun fichier du dépôt (#939).
+
+        `chemin` reste ce qu'il était — il sert le prompt et qui relit — mais il ouvre
+        sur un chemin de fichier, et c'est ce que le produit a cessé d'afficher. La
+        citation prend la même chaîne de titres et remplace sa tête par le **titre du
+        document**, qui est le seul nom qu'un utilisateur puisse reconnaître puis
+        redemander.
+        """
+        section = corpus_reel.section(
+            "docs/10-workflow-git.md#3.3 Dates & time tracking — renseignés automatiquement"
+        )
+        assert section is not None
+        assert section.document
+        assert section.citation.startswith(f"{section.document} › ")
+        assert section.citation.endswith(section.titre)
+        assert "docs/" not in section.citation
+        assert ".md" not in section.citation
+
+    def test_le_document_est_derive_de_son_titre_de_niveau_1(self, tmp_path: Path) -> None:
+        """Dérivé du corpus, jamais listé à côté — la règle de tout ce module.
+
+        Une table `fichier → nom` tenue à la main finirait par nommer un document qui
+        a changé de titre, et l'écran citerait alors une source qui n'existe plus sous
+        ce nom-là.
+        """
+        carte = construire_carte(
+            ecrire_corpus(tmp_path, {"docs/00-a.md": "# Guide de démarrage\n\n## Prérequis\n\nx\n"})
+        )
+
+        section = carte.section("docs/00-a.md#Prérequis")
+        assert section is not None
+        assert section.document == "Guide de démarrage"
+        assert section.citation == "Guide de démarrage › Prérequis"
+
+    def test_la_section_de_tete_ne_se_nomme_pas_deux_fois(self, tmp_path: Path) -> None:
+        """Le seul cas où ajouter le document retirerait de l'information (#939)."""
+        carte = construire_carte(
+            ecrire_corpus(tmp_path, {"docs/00-a.md": "# Guide de démarrage\n\nx\n"})
+        )
+
+        section = carte.section("docs/00-a.md#Guide de démarrage")
+        assert section is not None
+        assert section.citation == "Guide de démarrage"
+
+    def test_un_fichier_sans_titre_de_niveau_1_n_invente_aucun_nom(self, tmp_path: Path) -> None:
+        """Pas de repli sur le nom de fichier : ce serait remettre le dépôt à l'écran."""
+        carte = construire_carte(
+            ecrire_corpus(tmp_path, {"docs/00-a.md": "## Prérequis\n\nx\n"})
+        )
+
+        section = carte.section("docs/00-a.md#Prérequis")
+        assert section is not None
+        assert section.document == ""
+        assert section.citation == "Prérequis"
+
     def test_le_chemin_complet_couterait_trois_fois_la_carte(
         self, corpus_reel: CarteDocumentation
     ) -> None:

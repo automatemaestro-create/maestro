@@ -2,8 +2,8 @@
  * Le périmètre du produit et la lecture de ses sources — partagés par les
  * balayages qui jugent ce qui est **écrit** dans les écrans plutôt que ce
  * qu'ils rendent : `a11y.test.tsx` (la garde de mouvement, les contrôles de
- * saisie) et `couleurs.test.ts` (les paires de couleur écrites à la main,
- * #895).
+ * saisie), `couleurs.test.ts` (les paires de couleur écrites à la main, #895)
+ * et `langue-du-produit.test.ts` (ce que le produit dit du dépôt, #939).
  *
  * Ce qui est partagé ici est le **périmètre**, jamais un verdict : chaque suite
  * garde son motif et sa table. Deux parcours recopiés seraient le premier moyen
@@ -64,11 +64,30 @@ export function sansCommentaires(source: string): string {
  */
 export function sourcesDuProduit(
   extensions: readonly string[] = [".tsx"],
+  dossiers: readonly string[] = DOSSIERS_RENDUS,
 ): string[] {
-  return ["app", "components"].flatMap((dossier) =>
+  return dossiers.flatMap((dossier) =>
     readdirSync(path.join(RACINE, dossier), { recursive: true })
       .map(String)
       .filter((fichier) => extensions.some((ext) => fichier.endsWith(ext)))
       .map((fichier) => path.posix.join(dossier, fichier.split(path.sep).join("/"))),
   );
 }
+
+/** Ce qui **rend** : les écrans et les composants. Le périmètre par défaut. */
+export const DOSSIERS_RENDUS = ["app", "components"] as const;
+
+/**
+ * Le périmètre élargi à `lib/`, pour les balayages qui jugent le **texte** plutôt
+ * que les classes (#939 : la langue du produit). Une phrase affichée y vit aussi —
+ * les descriptions des sections de Paramètres (`lib/parametres.ts`), les messages
+ * d'erreur de `lib/projets.ts`, les libellés de `lib/detailTache.ts` — et un
+ * balayage qui s'arrêterait à `app/` + `components/` laisserait ces phrases-là
+ * hors de portée.
+ *
+ * Il reste **séparé** du périmètre par défaut, et ce n'est pas une recopie : les
+ * sondes de couleur et de mouvement jugent ce que le produit **peint**, ce qui
+ * n'arrive que dans du JSX. Élargir le leur y ferait entrer des fichiers qu'aucune
+ * de leurs mesures n'a jugés.
+ */
+export const DOSSIERS_AFFICHANT_DU_TEXTE = ["app", "components", "lib"] as const;

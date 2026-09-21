@@ -180,6 +180,11 @@ class SectionDoc:
     ancetres: tuple[str, ...] = ()
     ligne: int = 0
     rang: int = 1
+    #: Le nom **humain** du document, son titre de niveau 1 (#939). Dérivé et non
+    #: recopié : c'est le document qui se nomme, pas une table à tenir à jour.
+    #: Vide quand le fichier n'ouvre pas sur un `#` — `citation` retombe alors sur
+    #: le chemin de titres seul plutôt que d'inventer un nom.
+    document: str = ""
 
     @property
     def cle_titre(self) -> str:
@@ -205,8 +210,30 @@ class SectionDoc:
 
     @property
     def chemin(self) -> str:
-        """Le chemin de titres complet, pour un lecteur humain."""
+        """Le chemin de titres complet, **fichier en tête** — pour le prompt et les tests.
+
+        Il nomme un fichier du dépôt : il ne sort donc jamais vers l'utilisateur
+        (#939). Ce qu'on lui montre est `citation`.
+        """
         return SEPARATEUR_CHEMIN.join((self.fichier, *self.ancetres, self.titre))
+
+    @property
+    def citation(self) -> str:
+        """La section telle qu'on la **cite à l'utilisateur** — sans nom de fichier (#939).
+
+        Le document s'y nomme par son titre (« Guide de démarrage ») et non par son
+        chemin (`docs/07-guide-de-demarrage.md`) : quelqu'un qui a *installé* Maestro
+        n'a pas ce fichier, et une source qu'on ne peut pas ouvrir ne se vérifie pas.
+        Ce qui la rend vérifiable est qu'elle se **nomme** : ainsi désignée, elle peut
+        être redemandée à l'assistant, qui en rendra le passage.
+        """
+        chaine = (*self.ancetres, self.titre)
+        # La section de niveau 1 **est** le document : la nommer deux fois
+        # (« Guide de démarrage › Guide de démarrage ») serait le seul cas où la
+        # citation dirait moins en disant plus.
+        if self.document and self.document != chaine[0]:
+            chaine = (self.document, *chaine)
+        return SEPARATEUR_CHEMIN.join(chaine)
 
     def to_dict(self) -> dict[str, Any]:
         """La section en dict JSON-sérialisable — la forme d'une citation."""
@@ -218,6 +245,8 @@ class SectionDoc:
             "ancetres": list(self.ancetres),
             "ligne": self.ligne,
             "chemin": self.chemin,
+            "document": self.document,
+            "citation": self.citation,
         }
 
 
@@ -441,6 +470,13 @@ def _sections_du_fichier(relatif: str, texte: str) -> tuple[tuple[SectionDoc, st
         for index, niveau, titre in _titres(lignes)
         if niveau <= NIVEAU_MAX
     ]
+    # Le nom humain du document (#939) : son **premier** titre de niveau 1. Dérivé
+    # et non listé, pour la raison qui vaut partout ici — une table de noms à tenir
+    # à côté du corpus finirait par nommer un document qui a changé de titre. Un
+    # fichier qui n'en porte pas garde un nom vide, et sa citation se réduit à son
+    # chemin de titres : on ne lui en invente pas un depuis son nom de fichier,
+    # qui est précisément ce que ce ticket retire de l'écran.
+    document = next((titre for _index, niveau, titre in titres if niveau == 1), "")
     trouvees: list[tuple[SectionDoc, str]] = []
     pile: list[tuple[int, str]] = []
     rangs: dict[str, int] = {}
@@ -456,6 +492,7 @@ def _sections_du_fichier(relatif: str, texte: str) -> tuple[tuple[SectionDoc, st
             ancetres=tuple(ancetre for _niveau, ancetre in pile),
             ligne=index + 1,
             rang=rangs[titre],
+            document=document,
         )
         trouvees.append((section, "\n".join(lignes[index:fin]).rstrip()))
         pile.append((niveau, titre))

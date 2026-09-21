@@ -145,7 +145,7 @@ class NotificateurRun:
         if not canal:
             raise ConfigError(
                 "MAESTRO_SLACK_CANAL est absent : renseignez le canal Slack des "
-                "notifications de supervision (cf. .env.example, ticket #105)."
+                "notifications de supervision dans la configuration."
             )
         cfg = ConfigurationAgents.default(settings).pour_projet(projet_id)
         fiches = cfg.catalogue(settings.model)
@@ -168,7 +168,7 @@ class NotificateurRun:
             raise ConfigError(
                 f"aucun serveur MCP déclaré pour l'agent {agent!r} "
                 f"({mcp.racine / f'{agent}.json'}) : le notificateur n'aurait aucun "
-                "outil pour poster — déclarez le serveur Slack (docs/04 §6)."
+                "outil pour poster — déclarez le serveur Slack pour cet agent."
             )
         return cls(
             runtime, agent=agent, canal=canal, mcp=mcp, secrets=SecretStore.default(settings)

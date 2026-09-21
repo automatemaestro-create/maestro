@@ -62,7 +62,7 @@ class RoleManquant:
         return (
             f"aucun rôle de l'équipe ne couvre : {manque} — {poste}. "
             "Le recrutement se fait hors du run : un agent n'en crée pas un autre "
-            "en cours d'exécution (docs/37 §3.5)."
+            "en cours d'exécution."
         )
 
 

@@ -124,7 +124,7 @@ export const FAMILLES_PARAMETRES: FamilleParametres[] = [
         id: "agents",
         libelle: "Agents & capacité",
         description:
-          "Activer un agent et borner ses exécutions simultanées (#86, EF-21).",
+          "Activer un agent et borner ses exécutions simultanées.",
       },
       {
         id: "fournisseurs",

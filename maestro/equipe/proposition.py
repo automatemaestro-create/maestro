@@ -77,8 +77,8 @@ ECARTE_ORCHESTRATEUR = RoleEcarte(
     role="Orchestrateur",
     raison=(
         "l'orchestrateur n'est pas un membre de l'équipe : c'est Maestro, présent "
-        "dans tout projet, et c'est lui qui recrute (docs/37 §4.2). Il n'y a donc "
-        "rien à créer pour lui, ni playbook ni autorisations de projet"
+        "dans tout projet, et c'est lui qui recrute. Il n'y a donc rien à créer "
+        "pour lui, ni playbook ni autorisations de projet"
     ),
 )
 
@@ -366,7 +366,7 @@ def _ecarte(gabarit: Gabarit, constats: Constats) -> RoleEcarte:
         raison=(
             f"rien dans les bornes de l'analyse ne justifie un rôle « {gabarit.role} » : "
             f"{_manque(gabarit)}. Vous pouvez l'ajouter à la validation si le projet en "
-            "a besoin (#1040)"
+            "a besoin"
         ),
     )
 

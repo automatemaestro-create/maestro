@@ -35,6 +35,8 @@ from maestro.controltower.assistance import (
     repondre_assistance,
 )
 from maestro.controltower.assistance_documentee import (
+    _CONSIGNE_DOCUMENTEE,
+    _TITRE_SOURCES,
     BUDGET_SECTIONS_TOKENS,
     SECTIONS_MAX,
     RepondeurAssistanceDocumentee,
@@ -335,18 +337,53 @@ class TestSelectionSections:
 
 
 class TestBlocSources:
-    def test_une_ligne_par_section_avec_son_chemin_complet(self, tmp_path: Path) -> None:
-        """Fichier **et** section, ce que le critère 2 demande — `SectionDoc.chemin`."""
+    def test_une_ligne_par_section_nommee_par_son_document(self, tmp_path: Path) -> None:
+        """Document **et** section, jamais le fichier — `SectionDoc.citation` (#939).
+
+        Le critère 2 de #764 demande de citer ce qui a été lu ; celui de #939 demande
+        que la citation soit **vérifiable par l'utilisateur**. Nommer le fichier
+        (`docs/00-runs.md`) ne l'était pas : qui a installé Maestro ne l'a pas. Ce qui
+        reste est ce qu'il peut redemander — le document par son titre, la section par
+        le sien.
+        """
         carte = construire_carte(ecrire_corpus(tmp_path, CORPUS))
 
         bloc = bloc_sources(selection_sections(carte, [RELANCER]).retenues)
 
-        assert "docs/00-runs.md" in bloc
-        assert "Relancer un run" in bloc
+        assert "Runs › Relancer un run" in bloc
+        assert "docs/" not in bloc
+        assert ".md" not in bloc
+
+    def test_l_en_tete_dit_le_geste_qui_verifie(self, tmp_path: Path) -> None:
+        """Une source se vérifie en la **demandant** : l'en-tête le dit (#939).
+
+        Sans cette phrase, la citation resterait une liste de noms — mieux qu'un
+        chemin de fichier, mais toujours pas quelque chose qu'on puisse aller lire.
+        Le geste existe (le modèle a l'extrait, et sa consigne l'oblige à le rendre) ;
+        ce qui manquait est de le dire.
+        """
+        carte = construire_carte(ecrire_corpus(tmp_path, CORPUS))
+
+        bloc = bloc_sources(selection_sections(carte, [RELANCER]).retenues)
+
+        assert bloc.startswith(_TITRE_SOURCES)
+        assert "demandez-m'en le passage" in _TITRE_SOURCES
 
     def test_sans_section_il_n_y_a_pas_d_en_tete_orphelin(self) -> None:
         assert bloc_sources(()) == ""
         assert bloc_sources(Selection().retenues) == ""
+
+    def test_la_consigne_oblige_a_rendre_le_passage_qu_on_lui_redemande(self) -> None:
+        """Ce qui ferme la boucle du critère 3 (#939), et sans quoi l'en-tête mentirait.
+
+        L'en-tête promet à l'utilisateur qu'il peut demander le passage ; c'est ici
+        que la promesse est tenue — le modèle a l'extrait, on lui dit de le rendre
+        **tel quel**, et de dire qu'il ne l'a pas plutôt que de le reconstituer. Une
+        source qu'on ne peut pas consulter n'est pas une source ; une source qu'on
+        consulte de mémoire est pire.
+        """
+        assert "reproduis-le" in _CONSIGNE_DOCUMENTEE
+        assert "jamais par son nom de fichier" in _CONSIGNE_DOCUMENTEE
 
 
 # ── ③ les deux appels, et ce qui les atteint ─────────────────────────────────
@@ -425,15 +462,16 @@ class TestDeuxAppels:
 
 
 class TestCitations:
-    def test_la_reponse_cite_le_fichier_et_la_section_lus(self, tmp_path: Path) -> None:
+    def test_la_reponse_cite_le_document_et_la_section_lus(self, tmp_path: Path) -> None:
+        """La citation nomme le **document**, pas son fichier (#939) — voir `TestBlocSources`."""
         racine = ecrire_corpus(tmp_path, CORPUS)
         repondeur, _modele = _monte(racine, RELANCER, "Par « Reprendre ».")
 
         reponse = _repondre(repondeur, QUESTION_684)
 
         assert "Par « Reprendre »." in reponse
-        assert "docs/00-runs.md" in reponse
-        assert "Relancer un run" in reponse
+        assert "Runs › Relancer un run" in reponse
+        assert "docs/00-runs.md" not in reponse
 
     def test_une_section_que_le_modele_n_a_pas_recue_n_est_pas_citee(self, tmp_path: Path) -> None:
         """L'invariant, éprouvé par les deux façons de ne pas recevoir une section.
@@ -459,7 +497,7 @@ class TestCitations:
         assert "Le bouton « Reprendre » vit sur la carte du run." in prompt_reponse
         # Et ni l'écartée ni l'inconnue ne sont citées : la citation dirait avoir lu
         # ce qui n'a jamais été ouvert.
-        sources = reponse.split("Sources lues :")[1]
+        sources = reponse.split(_TITRE_SOURCES)[1]
         assert "Le thème" not in sources
         assert "Inventée" not in sources
         assert "Relancer un run" in sources
@@ -478,7 +516,7 @@ class TestCitations:
 
         assert len(modele.prompts) == 1
         assert "Je n'ai rien trouvé dans la documentation" in reponse
-        assert "Sources lues" not in reponse
+        assert _TITRE_SOURCES not in reponse
 
     def test_un_rendu_vide_est_une_indisponibilite_et_non_une_liste_vide(
         self, tmp_path: Path
@@ -532,7 +570,7 @@ class TestRepli:
         assert "sans source" in reponse
         # Et la réponse de l'aide intégrée est là — le canal n'est pas muet (#65).
         assert repondre_assistance(QUESTION_684) in reponse
-        assert "Sources lues" not in reponse
+        assert _TITRE_SOURCES not in reponse
 
     def test_un_fournisseur_absent_est_un_reglage_et_non_une_panne_passagere(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -670,7 +708,7 @@ def test_une_question_hors_table_est_servie_par_le_contenu_du_corpus_reel(
     reponse = _repondre(repondeur, QUESTION_684)
 
     assert "Voici ce que dit la doc." in reponse
-    assert section.chemin in reponse
+    assert section.citation in reponse
     # La réponse ne vient pas de la table : celle-ci répondrait tout autre chose.
     assert repondre_assistance(QUESTION_684) not in reponse
 
@@ -780,5 +818,5 @@ def test_le_cablage_va_jusqu_aux_sources_quand_un_modele_repond(
     assert poste.status_code == 201
     reponse = poste.json()["messages"][1]["contenu"]
     assert "D'après la documentation : oui." in reponse
-    assert section.chemin in reponse
+    assert section.citation in reponse
     assert len(modele.prompts) == 2

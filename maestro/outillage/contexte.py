@@ -442,7 +442,7 @@ def _skill(
                 chemin=chemin,
                 role=CHAMP_OUTILS,
                 raison="ignoré : une permission se déclare par une personne, "
-                "jamais par un fichier du projet (docs/38 §5.1)",
+                "jamais par un fichier du projet",
             )
         )
     nom = entetes.get("name", "").strip()[: bornes.nom_max] or _nom_du_dossier(chemin)
@@ -550,7 +550,7 @@ def _refus_de_chemin(racine: Path, chemin: str) -> str:
     for partie in relatif.parts:
         courant = courant / partie
         if courant.is_symlink():
-            return "lien symbolique — jamais suivi (docs/24 §2.5)"
+            return "lien symbolique — jamais suivi"
     if not courant.exists():
         return "déclaré au manifeste, absent du disque"
     if not courant.is_file():
