@@ -83,8 +83,8 @@ _LOG = logging.getLogger(__name__)
 
 #: La cause servie quand le lot 2 n'est pas encore là (voir l'en-tête du module).
 CAUSE_SANS_TRADUCTION = (
-    "traduction des entrées d'amont indisponible (maestro.agents.mcp_traduction, "
-    "lot 2 du parent #673) : seules les entrées curées sont servies."
+    "traduction des entrées du registre officiel indisponible : seules les entrées "
+    "curées sont servies."
 )
 
 #: Le type du verbe attendu du lot 2 — `EntreeAmont` → objet portant `.entree`

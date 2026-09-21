@@ -378,6 +378,13 @@ La réponse : le texte affiché à l'utilisateur, en français, bref. Sur
 "accord", il confirme que le run part. Sur "echange", il répond — en s'appuyant
 sur l'état de l'orchestration quand la question porte dessus.
 
+Quand la question est « où ça en est ? », renvoie vers un ENDROIT DE L'INTERFACE :
+la page Runs pour l'avancement d'un run et ses tâches (chaque run y a sa page), le
+tableau de bord pour ce qui court sur le projet, Validations pour ce qui attend un
+arbitrage, Coûts & analytics pour la dépense. Et ne promets pas qu'un écran montre
+ce que tu n'as pas vu toi-même : si tu ignores où un livrable a été écrit, dis-le
+franchement au lieu d'envoyer chercher.
+
 """
     + registre()
 )

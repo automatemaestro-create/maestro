@@ -239,7 +239,7 @@ ROUTES_EPARGNEES_PAR_L_ERREUR: tuple[str, ...] = ("/api/sante", "/api/projets")
 #: Le code que le scénario « erreur » rend partout ailleurs : une panne serveur,
 #: la plus ordinaire. L'UI la nomme telle quelle (« <chemin> a répondu 500 »).
 STATUT_ERREUR_SIMULEE = 500
-MESSAGE_ERREUR_SIMULEE = "Erreur simulée par le scénario « erreur » de la démo (#978)."
+MESSAGE_ERREUR_SIMULEE = "Erreur simulée par le scénario « erreur » de la démo."
 
 #: **Le plan du run** (#490), tel que la décomposition l'aurait rendu — publié une
 #: fois, sur `run.plan`, juste après l'activité de planification qu'il détaille.

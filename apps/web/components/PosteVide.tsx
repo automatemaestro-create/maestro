@@ -27,9 +27,11 @@
  *
  * Il dit aussi **pourquoi il peut rester vide alors qu'un run tourne** : un run
  * publié sans `projet_id` ne relève d'aucun projet et n'entre donc dans la vue
- * d'aucun (#277). C'est le cas de `maestro-run --publier`, qui n'a pas d'option
- * de rattachement — le taire ferait chercher une panne là où il n'y a qu'un
- * périmètre.
+ * d'aucun (#277) — le taire ferait chercher une panne là où il n'y a qu'un
+ * périmètre. Depuis #939 l'encart dit le **périmètre** sans nommer l'outil qui
+ * y mène (`maestro-run --publier`) : le fait à comprendre est qu'un run peut
+ * naître hors projet, et le nom d'une commande de ligne ne l'apprend à personne
+ * qui n'en a pas.
  */
 
 import { Bouton, BoutonLien, Carte } from "@/components/Primitives";
@@ -86,13 +88,13 @@ export function PosteVide({
           titre="Lancer une orchestration dans ce projet"
           detail="Dites à Maestro ce que vous voulez : il cadre l'objectif avec vous, puis le moteur le découpe en tâches, les assigne aux agents et publie chaque étape ici."
           lien={fil && { href: fil.href, libelle: "Ouvrir le chat" }}
-          note="Tout se passe dans le fil (#481) — l'objectif, les fichiers déposés, le dossier de références, les adresses, puis la validation du cadrage. L'API reste servie pour les scripts."
+          note="Tout se passe dans la conversation — l'objectif, les fichiers déposés, le dossier de références, les adresses, puis la validation du cadrage."
         />
         <Action
           titre="Juste explorer l'interface"
-          detail="Un scénario de démonstration, sans Redis ni appel modèle — les données sont factices et le disent."
-          commande="bash scripts/controltower/start.sh --demo"
-          note="À relancer depuis le dépôt : le mode remplace la session courante."
+          detail="Un tour des écrans en sept étapes, sans rien lancer : où se donne un objectif, où se suit un run, où se valide une étape."
+          geste={{ libelle: "Faire la visite guidée", action: lancerGuide }}
+          note="Elle se quitte à tout moment, et se relance depuis le menu d'aide."
         />
       </div>
 
@@ -100,11 +102,10 @@ export function PosteVide({
           vide parce que ce run n'appartient à aucun projet. Le dire ici est ce
           qui distingue « rien encore sur ce projet » d'une panne. */}
       <p className="mt-3 max-w-2xl rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
-        Un run lancé <strong className="font-medium">sans projet</strong> —
-        c&apos;est le cas de <code>maestro-run --publier</code>, qui n&apos;a pas
-        d&apos;option de rattachement — ne relève d&apos;aucun projet et
-        n&apos;apparaît donc sur l&apos;écran d&apos;aucun. Ses tâches existent,
-        elles ne sont simplement pas ici.
+        Un run lancé <strong className="font-medium">hors d&apos;un projet</strong>{" "}
+        — il en existe des façons qui ne demandent aucun rattachement — ne relève
+        d&apos;aucun projet et n&apos;apparaît donc sur l&apos;écran d&apos;aucun.
+        Ses tâches existent, elles ne sont simplement pas ici.
       </p>
 
       <div className="mt-5 border-t border-neutral-200 pt-4 dark:border-neutral-800">
@@ -128,24 +129,20 @@ export function PosteVide({
           L&apos;historique, lui, est conservé : un redémarrage de l&apos;API
           rejoue les événements déjà publiés.
         </p>
-        <Bouton
-          variante="contour"
-          ton="neutre"
-          onClick={lancerGuide}
-          className="mt-3"
-        >
-          Faire la visite guidée
-        </Bouton>
       </div>
     </Carte>
   );
 }
 
 /**
- * Une porte de sortie du poste vide : une commande à copier, ou — depuis #319 —
- * un **écran** de l'interface quand il en existe un. Les deux et pas l'un ou
- * l'autre : le geste de lancement existe désormais dans l'interface, la ligne de
- * commande reste ce dont un script a besoin.
+ * Une porte de sortie du poste vide — et, depuis #939, **rien qu'un geste
+ * atteignable d'ici** : un écran de l'interface (`lien`) ou une action rendue
+ * sur place (`geste`). La prop `commande` et son bloc noir ont disparu, avec la
+ * ligne `bash scripts/…` qu'ils servaient : cet écran s'adresse à quelqu'un qui
+ * a *installé* Maestro, donc sans terminal ouvert et sans dépôt. C'est la
+ * variante A, choisie sur pièces (commentaire « Variante retenue » du ticket) :
+ * la porte « explorer » n'a pas été retirée, elle a été **remplacée** par le
+ * geste que le produit a déjà, la visite guidée.
  *
  * L'écran visé a changé avec #484 — c'était le formulaire de #319, c'est le fil
  * — sans que ce composant-ci en sache rien : il reçoit un lien déjà résolu.
@@ -153,13 +150,13 @@ export function PosteVide({
 function Action({
   titre,
   detail,
-  commande,
+  geste,
   lien,
   note,
 }: {
   titre: string;
   detail: string;
-  commande?: string;
+  geste?: { libelle: string; action: () => void };
   lien?: { href: string; libelle: string };
   note: string;
 }) {
@@ -167,15 +164,15 @@ function Action({
     <article className="rounded-md border border-neutral-200 bg-neutral-50 p-3 dark:border-neutral-800 dark:bg-neutral-950">
       <h3 className="text-sm font-medium">{titre}</h3>
       <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-300">{detail}</p>
-      {commande && (
-        <pre className="mt-2 overflow-x-auto rounded bg-neutral-900 px-2 py-1.5 text-xs text-neutral-100 dark:bg-black">
-          <code>{commande}</code>
-        </pre>
-      )}
       {lien && (
         <BoutonLien href={lien.href} className="mt-2">
           {lien.libelle}
         </BoutonLien>
+      )}
+      {geste && (
+        <Bouton variante="contour" ton="neutre" onClick={geste.action} className="mt-2">
+          {geste.libelle}
+        </Bouton>
       )}
       <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">{note}</p>
     </article>

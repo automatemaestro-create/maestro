@@ -1066,12 +1066,12 @@ class RegistreMcp:
                 "l'allowlist tant qu'un humain ne l'y a pas fait entrer — c'est "
                 "l'admission (POST /api/mcp/admissions), un geste tracé qui fige "
                 "la version et enregistre qui l'a admise. Découverte ≠ "
-                "installation : voir docs/19."
+                "installation."
             )
         return (
             f"serveur MCP {id!r} hors allowlist : non instanciable (découverte ≠ "
             "installation — un serveur doit être curé dans le registre, ou admis "
-            "depuis le registre officiel, avant d'être monté ; voir docs/19)."
+            "depuis le registre officiel, avant d'être monté)."
         )
 
 
@@ -1233,8 +1233,8 @@ PROVENANCE = Provenance(
     resume=(
         "Cette liste-ci est une sélection curée à la main parmi les serveurs MCP "
         "les plus utilisés de l'écosystème, d'après les annuaires publics "
-        "ci-dessous : chaque entrée y est écrite, relue en revue de code et "
-        "versionnée avec le dépôt. Est instanciable ce qui appartient à "
+        "ci-dessous : chaque entrée y est écrite à la main et relue avant d'être "
+        "livrée avec Maestro. Est instanciable ce qui appartient à "
         "l'allowlist — cette liste, plus ce qu'un geste humain y a admis."
     ),
     sources=(
@@ -1780,7 +1780,7 @@ SEED: tuple[EntreeRegistre, ...] = (
         description=(
             "Piloter un vrai navigateur : naviguer, remplir, cliquer, capturer — "
             "sur l'arbre d'accessibilité plutôt que sur des pixels. "
-            "C'est le serveur derrière `chrome-maestro` dans ce dépôt."
+            "C'est le serveur derrière l'intégration « chrome-maestro »."
         ),
         mode_auth="sans_secret",
         transport="stdio",

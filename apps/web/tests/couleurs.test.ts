@@ -260,15 +260,14 @@ const MANQUES_DU_SOCLE: readonly Manque[] = [
   //   a ajouté `--provenance`, `-texte`, `-creux` sur les valeurs violettes que
   //   le badge rendait déjà, et sa ligne est partie parce que le contrôle
   //   ci-dessous l'exigeait — c'est exactement ce pour quoi il existe.
-  {
-    token: "code",
-    temoin: "components/PosteVide.tsx",
-    classe: "dark:bg-black",
-    raison:
-      "le fond d'un bloc de commande, qui reste sombre dans les **deux** " +
-      "thèmes — c'est la convention d'un terminal, et aucune des deux surfaces " +
-      "de la palette n'est faite pour être invariante",
-  },
+  // `code` est parti par un quatrième chemin, et le plus net des quatre : le
+  //   manque n'a pas été comblé, son **objet** a disparu. Il décrivait le fond
+  //   d'un bloc de commande — invariant dans les deux thèmes, comme un terminal
+  //   —, et #939 a retiré la dernière commande shell que le produit montrait
+  //   (`bash scripts/controltower/start.sh --demo`, sur la page d'accueil). Plus
+  //   aucun écran ne rend de terminal, donc plus rien ne demande cette couleur.
+  //   Le jour où un écran en rendrait un, la ligne se réécrira — mais elle se
+  //   réécrira avec son témoin, pas en héritage d'un besoin éteint.
   {
     token: "serie",
     temoin: "components/GraphiqueEvolutionCout.tsx",
@@ -418,7 +417,7 @@ const RESIDU = new Map<string, number>([
   ["components/PanneauDetailTache.tsx", 14],
   ["components/PanneauRunsImmobiles.tsx", 4],
   ["components/PanneauValidations.tsx", 5],
-  ["components/PosteVide.tsx", 13], // manque : `code`
+  ["components/PosteVide.tsx", 12],
   // Le socle lui-même : la carte, les quatre tons d'état du badge (plein et
   // contour) et le contour de `provenance`, l'en-tête de section. C'est la
   // ligne qui compte double — une paire retirée ici retire des recopies
@@ -467,7 +466,7 @@ const RESIDU = new Map<string, number>([
 ]);
 
 /** Le compte du README — épinglé ici pour qu'il ne puisse pas dériver en silence. */
-const TOTAL_ANNONCE = 645;
+const TOTAL_ANNONCE = 644;
 
 /** Ce que le produit porte aujourd'hui, fichier par fichier. */
 function residuMesure(): Map<string, string[]> {

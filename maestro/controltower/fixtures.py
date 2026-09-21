@@ -217,7 +217,7 @@ _REGLAGES_CONFIGURATION: tuple[dict[str, Any], ...] = (
         "cle_api_fournisseur",
         "••••••••",
         type="secret",
-        description="Clé d'API du fournisseur — write-only, jamais renvoyée en clair (#132).",
+        description="Clé d'API du fournisseur — write-only, jamais renvoyée en clair.",
         categorie="integrations",
         valeur_defaut="",
         secret=True,

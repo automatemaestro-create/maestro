@@ -55,7 +55,7 @@ export function ParametresGeneral() {
 
       <LigneReglage
         libelle="Flux temps réel"
-        aide="Le WebSocket qui pousse les événements — dérivé de l'URL de l'API, et cadré sur le projet actif (#281) : c'est l'URL réellement ouverte, portée comprise, pas un gabarit."
+        aide="Le WebSocket qui pousse les événements — dérivé de l'URL de l'API, et cadré sur le projet actif : c'est l'URL réellement ouverte, portée comprise, pas un gabarit."
       >
         <div className="flex flex-wrap items-center justify-end gap-2">
           <code className="font-mono text-sm break-all">

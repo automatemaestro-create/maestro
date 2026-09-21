@@ -580,7 +580,7 @@ export function LigneInterruption({
   if (regime !== REGIME_INTERROMPU) return null;
   return (
     <p className={`text-annexe text-alerte-texte ${className}`}>
-      Son hôte ne répond plus (#348)
+      Son hôte ne répond plus
       {estRelancable(run)
         ? " — son brief a été validé, il peut repartir depuis le tableau de bord."
         : " et rien ne s'y joue plus."}

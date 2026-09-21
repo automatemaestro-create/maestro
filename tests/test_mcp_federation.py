@@ -883,7 +883,11 @@ def test_instancier_refuse_une_decouverte_et_nomme_le_geste_qui_manque(racines) 
     cause = str(leve.value)
     assert "non admis" in cause
     assert "POST /api/mcp/admissions" in cause
-    assert "docs/19" in cause
+    # Le geste qui manque est nommé, la **distinction** aussi — mais plus le fichier
+    # de décision qui la porte : depuis #939 une cause servie ne renvoie pas vers un
+    # document du dépôt, que celui qui la lit n'a pas.
+    assert "Découverte ≠ installation" in cause
+    assert "docs/" not in cause
     assert "1.4.0" in cause
 
 

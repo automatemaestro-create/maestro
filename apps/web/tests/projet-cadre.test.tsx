@@ -181,9 +181,12 @@ describe("un écran vide dit de quel projet il est vide", () => {
     expect(screen.queryByRole("alert")).toBeNull();
     // …ni l'absence de projet, que la garde du shell traite avant d'arriver ici.
     expect(poste).toHaveTextContent(/n'est ni une panne/);
-    // Et le piège que ce lot rend possible : un run sans projet n'apparaît nulle
-    // part, ce qui se cherche longtemps quand l'écran ne le dit pas.
-    expect(poste).toHaveTextContent(/sans projet/);
+    // Et le piège que ce lot rend possible : un run lancé hors d'un projet
+    // n'apparaît nulle part, ce qui se cherche longtemps quand l'écran ne le dit
+    // pas. Ce qu'il dit a changé de mots avec #939 — l'encart nommait la commande
+    // qui y mène, que l'utilisateur n'a pas — mais pas de rôle : c'est toujours le
+    // périmètre qu'il faut comprendre, et lui seul.
+    expect(poste).toHaveTextContent(/hors d'un projet/);
   });
 
   it("sur le Kanban, quand le reste de l'écran vit", () => {

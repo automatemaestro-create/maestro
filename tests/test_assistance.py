@@ -63,6 +63,7 @@ from maestro.controltower.assistance import (
 )
 from maestro.controltower.assistance_documentee import (
     _AVEU_IGNORANCE,
+    _TITRE_SOURCES,
     RepondeurAssistanceDocumentee,
 )
 from maestro.controltower.chat import MessageChat, normaliser
@@ -383,7 +384,7 @@ REPONSES_FABRIQUEES = (
         id="reponse-de-table",
     ),
     pytest.param(
-        f"{_AVEU_IGNORANCE}\n\nSources lues :\n- docs/00-runs.md › Relancer un run",
+        f"{_AVEU_IGNORANCE}\n\n{_TITRE_SOURCES}\n- Runs › Relancer un run",
         id="aveu-mais-sources",
     ),
 )
@@ -541,7 +542,7 @@ class TestBancHorsPerimetre:
         assert aveu_du_modele in reponse
         assert len(modele.prompts) == 2
         # Ce qu'il a lu est cité — l'aveu reste vérifiable.
-        assert "Sources lues" in reponse
+        assert _TITRE_SOURCES in reponse
         assert "Relancer un run" in reponse
         # Et la table ne vient pas « compléter » : ce serait rendre une réponse
         # d'écran sous un bloc de sources qui ne la porte pas.

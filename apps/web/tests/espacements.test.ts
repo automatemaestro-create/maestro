@@ -369,7 +369,7 @@ const RESIDU = new Map<string, number>([
   // dit pourquoi — « le pas de 1,25 rem de cet écran n'est aucun des trois » —,
   // et c'est exactement le genre d'écart que le barème est là pour rendre
   // visible : soit l'écran se replie, soit le quatrième pas se discute.
-  ["components/PosteVide.tsx", 2],
+  ["components/PosteVide.tsx", 1],
   ["components/SelecteurReassignation.tsx", 1],
   ["components/Shell.tsx", 1],
   ["components/chat/BulleFil.tsx", 1],
@@ -388,7 +388,7 @@ const RESIDU = new Map<string, number>([
 ]);
 
 /** Le compte du README — épinglé ici pour qu'il ne puisse pas dériver en silence. */
-const TOTAL_ANNONCE = 70;
+const TOTAL_ANNONCE = 69;
 
 /** Les sources jugées : le produit, moins le fichier qui porte le barème. */
 const sourcesJugees = (): string[] =>

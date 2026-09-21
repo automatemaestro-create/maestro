@@ -1,4 +1,4 @@
-# apps/web — Control Tower
+# L'interface de la Control Tower
 
 Interface web de supervision (le poste de pilotage, docs/05) — v1 du ticket #47,
 refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
@@ -1164,7 +1164,10 @@ il monte désormais `Conversation` : la plus grosse décroissance à ce jour, et
 elle vient d'une recopie retirée, pas de trente classes migrées une à une —, et
 **645** depuis #996, qui a sorti la bannière d'erreur (3 paires `rose-*`) en la
 réécrivant pour qu'elle nomme la panne : la teinte est partie avec le texte,
-dans un fichier qu'on rouvrait de toute façon. Ce ticket ne les
+dans un fichier qu'on rouvrait de toute façon, et **644** depuis #939, qui a
+retiré de la page d'accueil le dernier bloc de commande du produit — sa paire
+partie avec lui, et avec elle le **manque du socle** `code`, dont c'était
+l'unique témoin. Ce ticket ne les
 migre pas — il pose le compte et **refuse la suivante** (`tests/couleurs.test.ts`),
 comme #832 l'a fait pour les contrôles de saisie et #534 pour le contraste. La
 689ᵉ est arrivée pendant l'attente de merge de ce lot (#894, une cinquième
@@ -1347,7 +1350,8 @@ marges, les `gap`, les paddings dirigés (`pt-`, `pl-`…), un `px-`/`py-` seul 
 `Primitives.tsx`, qui **porte** le barème au lieu d'être jugé par lui.
 
 Ce qui reste, mesuré le **2026-09-20** : **70 paddings hors barème dans 39
-fichiers**. Le tableau vit **dans le test** (`RESIDU`), fichier par fichier, le
+fichiers** ; **69** depuis #939, qui a retiré le bloc de commande de la page
+d'accueil et son `px-2 py-1.5`. Le tableau vit **dans le test** (`RESIDU`), fichier par fichier, le
 README ne le recopie pas. Le compte y est **exact et non un plafond** : un de plus
 rougit, un de **moins** rougit aussi tant que la ligne n'est pas mise à jour —
 c'est ce qui fait qu'un résidu ne peut que décroître, et que chaque décroissance
@@ -1393,7 +1397,8 @@ Ce qui reste, mesuré le **2026-09-20** : **165 tailles hors de l'échelle dans
 37 fichiers** — 150 jumelles (`text-xs` 85, `text-sm` 65), 6 pas que l'échelle
 n'a pas (`text-lg`, `text-base`, `text-xl`) et 9 valeurs arbitraires ; **164**
 depuis #996, qui a sorti la bannière d'erreur du tableau (son `text-sm` unique)
-en la réécrivant sur `text-corps` et `text-annexe`. Le compte
+en la réécrivant sur `text-corps` et `text-annexe`, et **163** depuis #939, dont
+le bloc de commande retiré emportait un `text-xs`. Le compte
 est **exact et non un plafond** : une taille de plus rougit, une taille de
 **moins** rougit aussi tant que la ligne n'est pas mise à jour — si bien que le
 résidu ne peut que décroître, et que chaque décroissance est un geste **écrit**.
@@ -1463,7 +1468,8 @@ sont pas l'élévation d'une surface, et chacune a sa raison écrite en tête du
 fichier.
 
 **Résidu au 2026-09-20 : 165 écritures sur 59 fichiers** — 136 rayons, 28 ombres,
-1 écriture en ligne. Le socle (`components/Primitives.tsx`) en est déjà sorti
+1 écriture en ligne ; **164** depuis #939, dont le bloc de commande retiré de la
+page d'accueil portait un `rounded` nu. Le socle (`components/Primitives.tsx`) en est déjà sorti
 pour ses huit rayons, qui ont pris leur nom de rôle à valeur constante ; ses
 trois ombres y restent, parce que les retirer changerait le rendu. Un manque du
 barème est **nommé et non toléré** : le voile du guide de prise en main
@@ -2359,6 +2365,7 @@ le pixel — le bout en bout dans un vrai navigateur reste le rôle du skill
 | `tests/typographie.test.ts` | La **taille de texte écrite hors de l'échelle** (#981, voir « L'échelle typographique » ci-dessus) — l'**usage** de l'échelle, ce que `couleurs.test.ts` est à la palette : aucun pas de Tailwind (`text-xs`, `text-sm`, `text-base`, `text-lg`…) ni valeur arbitraire (`text-[13px]`, `text-[length:var(--x)]`, `text-(length:--x)`) hors du résidu **nommé fichier par fichier avec son compte exact** (165 dans 37 fichiers au lot, 164 dans 36 depuis #996), le compte étant exact et non un plafond — une taille de moins rougit aussi, si bien que le résidu ne peut que décroître et que chaque décroissance est un geste écrit. Les deux ensembles sont **lus** et non recopiés : les noms de pas dans le `theme.css` de Tailwind, les pas nommés et leurs alias dans le bloc `@theme` de `globals.css` — d'où un contrôle qui rougit si un alias de #533 reprenait une valeur propre, et un autre si un pas de l'échelle portait un nom de Tailwind (la sonde refuserait le socle qu'elle recommande). Un **manque de l'échelle** y est nommé avec sa raison (`graduation`, l'étiquette d'axe d'un graphique à 10 px quand le plus petit pas est à 11), et un test rougit le jour où l'échelle le comble. **Prouvée avant de servir en deux étages** : le motif d'abord — les jumelles du ticket, les variantes, les contournements arbitraires, et surtout ce sur quoi il ne doit **pas** crier, `text-` étant surchargé par cinq autres familles (couleur, alignement, retour à la ligne, débordement, ombre de texte) —, puis le **verdict** lui-même sur une mesure fabriquée |
 | `tests/rayons-ombres.test.ts` | Le **rayon et l'ombre écrits hors barème** (#982, voir « Le barème des rayons et des ombres » ci-dessus) — le pendant de `couleurs.test.ts` pour les deux propriétés qui disent la **profondeur**. Elle juge le **nom**, pas la valeur : `rounded-lg` et `rounded-carte` rendent le même pixel, et pourtant l'un ne dit pas si l'auteur visait un contrôle ou s'il a recopié la ligne d'à côté. Le barème est **lu dans `globals.css`, jamais recopié**, et un **pas** (valeur littérale) s'y distingue d'une **jumelle** (`var(…)`) — on ne peut donc pas ajouter un pas en le faisant passer pour un alias, et deux contrôles tiennent le « peu de pas » : **exactement 4 rayons et 1 ombre**, un de plus rougit. Résidu **nommé fichier par fichier avec son compte exact** (165 dans 59 fichiers au lot), exact et non plafonné. **Prouvée avant de servir en deux étages** comme `couleurs.test.ts` : le motif d'abord — les cinq rayons et cinq ombres relevés le 2026-09-20, les variantes dans les deux ordres, le rayon et l'ombre **nus** (les deux pas dépréciés de Tailwind v4), les coins dirigés, la valeur arbitraire, l'écriture **en ligne** (`style={{ boxShadow }}`), et ce sur quoi elle ne doit pas crier (le barème lui-même, `ring-*`, `inset-shadow-*`, `drop-shadow-*`, la prose) —, puis le **verdict** sur une mesure fabriquée. Un plancher de plus qu'elle seule a besoin de poser : **le barème doit être employé et pas seulement déclaré**, sans quoi un barème que personne n'écrit rendrait « zéro écart de moins » avec les mots de « tout est au barème » |
 | `tests/catalogue-socle.test.tsx` | Le **catalogue `/socle`** (#975, voir « Les voir — le catalogue » ci-dessus) — la seule des cinq suites du socle qui ne juge pas les écrans mais **la référence qui les décrit**. La liste des primitives n'y est **pas écrite** : elle est dérivée du module (`Object.keys(Primitives)`), donc un export ajouté à `Primitives.tsx` sans entrée au catalogue rougit — mécanique de la table d'écrans dérivée de `MENU` (#270), et elle compte ici plus qu'ailleurs, une référence en retard étant **pire** que pas de référence. Elle garde aussi la **mise en regard** (chaque brique rendue dans les deux thèmes, **les mêmes spécimens des deux côtés**, chaque scène portant son nom accessible, `data-theme` nulle part ailleurs que sur les scènes) et les trois versants du « ce n'est pas un écran du produit » : ni dans `MENU` ni dans `HORS_MENU` — donc invisible à `a11y`/`sobriete`, dont les tables dérivent de `MENU`, et à la frontière écrans ↔ `navigation.ts` de `tests/test_retex_utilisateur.py` —, et **pas servi en production**, la redirection étant lue sur les octets de `next.config.ts` (technique d'`hydratation.test.ts`, puisque `NODE_ENV` vaut `test` sous Vitest) *et* vérifiée branchée dans `redirects`. **Prouvée avant de servir** : le faux vert est le nom qui n'est que le **préfixe** d'un autre — sans frontière d'identifiant, `ChampListe` répondrait pour `Champ`, `BoutonLien` pour `Bouton` et `classesCarte` pour `Carte`, soit les trois briques les plus employées |
+| `tests/langue-du-produit.test.ts` | **Le produit ne parle pas son dépôt** (#939, constat G6 du retex du 2026-09-11) : nulle part dans `app/`, `components/` et `lib/` — commentaires retirés — un numéro de ticket interne (`#481`), un chemin `scripts/…` ou un fichier `docs/…` affiché à l'écran. Trois motifs, **chacun prouvé sur les chaînes que le retex a lues** avant de balayer, et chacun sur ses faux amis (une couleur arbitraire `dark:bg-[#3987e5]` n'est pas un numéro de ticket, une route `/journal` n'est pas un chemin du dépôt) — une sonde écrite sur un dépôt déjà propre ne prouve rien. Le périmètre s'élargit à `lib/`, où vivent des **phrases affichées** (les descriptions des sections de Paramètres), sans toucher à celui des sondes de couleur et de mouvement, qui jugent ce que le produit *peint*. Une seule exemption, `app/socle/page.tsx`, et elle se **vérifie** : la redirection qui l'écarte de la production est relue dans `next.config.ts` plutôt que crue sur parole. La moitié *rendue par un agent* (l'assistant, l'orchestration) n'est pas ici — son remède est dans le prompt, `maestro/agents/playbooks_defaut/_registre.md`, gardé par `tests/test_registre_de_langue.py` |
 | `tests/hydratation.test.ts` | Ce que le layout racine **tolère du dehors** (#730) : les deux `suppressHydrationWarning`, celui de `<html>` (le `data-theme` que `SCRIPT_INIT_THEME` corrige, #118) et celui de `<body>` (les attributs qu'une extension y pose avant l'hydratation — Grammarly, LastPass…). Ils ont l'air d'un doublon et n'en sont pas : déplacer l'un sur l'autre, le geste qu'on fait en croyant simplifier, ramène l'un des deux écarts. La sonde lit les **octets du layout**, et ce n'est pas ici un pis-aller mais le seul filet possible — le symptôme exige un navigateur, un rendu serveur à hydrater et une extension installée, donc ni jsdom ni la CI ne le verront jamais revenir. Comme `contraste.test.ts`, elle est **prouvée avant de servir**, sur un échantillon fautif qui porte le piège : la prose du layout nomme `<body>` *avant* la balise, si bien qu'une recherche naïve rougirait un fichier correct |
 
 Cinq fichiers portent l'outillage plutôt que des tests :

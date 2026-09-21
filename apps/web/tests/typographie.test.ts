@@ -520,7 +520,7 @@ const RESIDU = new Map<string, number>([
   ["components/IndicateursTableauDeBord.tsx", 1],
   ["components/MenuAide.tsx", 4],
   ["components/OngletMcpAgent.tsx", 8],
-  ["components/PosteVide.tsx", 10],
+  ["components/PosteVide.tsx", 9],
   ["components/RepartitionAgents.tsx", 4],
   ["components/brief/ValidationBrief.tsx", 1],
   ["components/brief/ValidationBriefs.tsx", 1],
@@ -546,7 +546,7 @@ const RESIDU = new Map<string, number>([
 ]);
 
 /** Le compte du README — épinglé ici pour qu'il ne puisse pas dériver en silence. */
-const TOTAL_ANNONCE = 164;
+const TOTAL_ANNONCE = 163;
 
 /** Ce que le produit porte aujourd'hui, fichier par fichier. */
 function residuMesure(): Map<string, string[]> {

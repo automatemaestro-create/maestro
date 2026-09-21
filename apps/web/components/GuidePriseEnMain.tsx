@@ -21,6 +21,9 @@
  *   elle-même, puis reprend la mesure quand le chemin a suivi.
  * - **Une ancre peut manquer** (panneau vide, chargement en cours) : passé un
  *   délai de patience, l'étape est présentée au centre plutôt que sautée.
+ * - **Une ancre déjà sous les yeux n'est pas recentrée** (#940, `enVue`), et la
+ *   visite **rend la main** dans le champ qu'elle désignait quand elle est menée
+ *   à son terme sur une étape qui le demande (`rendreLaMain`, `lib/guide`).
  */
 
 import { usePathname, useRouter } from "next/navigation";
@@ -77,20 +80,29 @@ export function GuidePriseEnMain() {
     setActif(true);
   }, []);
 
-  const arreter = useCallback(() => {
+  const arreter = useCallback((menee = false) => {
     // Quittée en route ou menée à son terme, la visite ne se relance plus
     // d'elle-même : dans les deux cas l'utilisateur a tranché.
     marquerGuideVu();
     setActif(false);
     setCible(null);
-    focusInitial.current?.focus();
+    // **Où va la main à la sortie** (#940). Menée à son terme sur une étape qui
+    // le demande (`rendreLaMain`), la visite pose le curseur dans le contrôle
+    // qu'elle désignait — le composeur du chat : c'est « Terminer » qui fait le
+    // geste, sans contrôle de plus, et c'est ce qui distingue « mène à un
+    // premier objectif composé » d'une phrase. Quittée en route, l'utilisateur
+    // a tranché : on lui rend le focus qu'il avait.
+    const fin = ETAPES_GUIDE[ETAPES_GUIDE.length - 1];
+    const main =
+      menee && fin.rendreLaMain === true ? premierControle(fin.ancres) : null;
+    (main ?? focusInitial.current)?.focus();
   }, []);
 
   const aller = useCallback(
     (prochain: number) => {
       if (prochain < 0) return;
       if (prochain >= ETAPES_GUIDE.length) {
-        arreter();
+        arreter(true);
         return;
       }
       // Remis à zéro avant le changement d'étape : sans quoi la surbrillance
@@ -132,13 +144,23 @@ export function GuidePriseEnMain() {
     const suivre = () => {
       const element = trouverAncre(etape.ancres);
       if (element) {
+        let rect = element.getBoundingClientRect();
         if (!centre) {
           centre = true;
-          // Défilement instantané : une surbrillance en transition douce
-          // dériverait visiblement derrière un défilement animé.
-          element.scrollIntoView({ block: "center", behavior: "auto" });
+          // **On ne défile que si l'ancre n'est pas déjà sous les yeux** (#940).
+          // `scrollIntoView({block:"center"})` recentre même ce qui est entier à
+          // l'écran : sur la barre latérale, haute comme la fenêtre, il décalait
+          // la page de quelques dizaines de pixels — bandeau supérieur coupé,
+          // bande vide sous la barre (relevé par le regard neuf sur la variante
+          // retenue). Une ancre plus haute que la fenêtre est « en vue » dès
+          // qu'elle la remplit : la recentrer ne montrerait rien de plus.
+          if (!enVue(rect)) {
+            // Défilement instantané : une surbrillance en transition douce
+            // dériverait visiblement derrière un défilement animé.
+            element.scrollIntoView({ block: "center", behavior: "auto" });
+            rect = element.getBoundingClientRect();
+          }
         }
-        const rect = element.getBoundingClientRect();
         const suivant: Rect = {
           haut: rect.top,
           gauche: rect.left,
@@ -233,7 +255,11 @@ export function GuidePriseEnMain() {
           </p>
           <button
             type="button"
-            onClick={arreter}
+            // `() => arreter()` et non `arreter` : l'événement de clic passerait
+            // en premier argument, et la visite se croirait menée à son terme
+            // (#940) — elle poserait le curseur dans le composeur d'une visite
+            // qu'on vient d'abandonner.
+            onClick={() => arreter()}
             // Le raccourci a rejoint le nom accessible (#536) : dans un `title`
             // il n'était annoncé à personne, alors que c'est précisément le
             // clavier qu'il concerne.
@@ -305,6 +331,33 @@ function trouverAncre(selecteurs: string[]): HTMLElement | null {
     if (rect.width > 0 && rect.height > 0) return element;
   }
   return null;
+}
+
+/**
+ * L'ancre est-elle déjà sous les yeux ? (#940) Deux cas, et le second est celui
+ * qui manquait : une ancre qui **tient** dans la fenêtre y est entière, une
+ * ancre plus haute que la fenêtre y est « en vue » dès qu'elle la remplit — la
+ * recentrer ne montrerait rien de plus, et ferait sauter la page.
+ */
+function enVue(rect: DOMRect): boolean {
+  const hauteur = window.innerHeight;
+  return rect.height >= hauteur
+    ? rect.top <= 0 && rect.bottom >= hauteur
+    : rect.top >= 0 && rect.bottom <= hauteur;
+}
+
+/**
+ * Le premier champ de saisie d'une ancre — ce que « Terminer » met sous la main
+ * quand la visite s'achève sur un geste (#940, `rendreLaMain`). Un bouton n'en
+ * est pas un : la visite finit sur ce qu'on écrit, pas sur ce qu'on clique.
+ */
+function premierControle(selecteurs: string[]): HTMLElement | null {
+  const element = trouverAncre(selecteurs);
+  return (
+    element?.querySelector<HTMLElement>(
+      "textarea, input:not([type='hidden']), select, [contenteditable='true']",
+    ) ?? null
+  );
 }
 
 function memeRect(a: Rect | null, b: Rect): boolean {

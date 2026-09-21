@@ -99,7 +99,7 @@ from maestro.projets import Projet
 #: Une phrase, parce que la vraie explication est l'`intention` que le rôle
 #: porte déjà — et qu'on ne la redit pas deux fois.
 RAISON_PLAYBOOK_GENERE = (
-    "playbook écrit pour ce projet à partir de l'intention ci-dessous (#257) ; "
+    "playbook écrit pour ce projet à partir de l'intention ci-dessous ; "
     "il se relit et se modifie avant la validation"
 )
 

@@ -347,9 +347,9 @@ export function BibliothequeMcp({
       )}
       <p className="text-annexe text-neutral-500 dark:text-neutral-400">
         Seules les intégrations de l&apos;allowlist sont installables — les
-        curées, et les découvertes qu&apos;un geste humain y a admises
-        (découverte ≠ installation, docs/19). Les secrets sont chiffrés côté
-        serveur — jamais dans le dépôt Git.
+        curées, et les découvertes qu&apos;un geste humain y a admises : trouver
+        une intégration ne l&apos;installe pas. Les secrets sont chiffrés côté
+        serveur — jamais en clair dans un fichier de configuration.
       </p>
       {provenance && <Provenance provenance={provenance} />}
     </section>
@@ -909,26 +909,28 @@ function FormulaireConfiguration({
           />
         </label>
       )}
-      {entree.procedure_url && (
+      {/*
+        Seulement quand la procédure est **ouvrable d'ici** (#939). Le registre
+        porte aussi des pointeurs relatifs au dépôt de Maestro
+        (`docs/15-pilote-mcp-slack.md#…`, `scripts/mcp/playwright-mcp.mjs`), utiles
+        à qui contribue et illisibles pour qui a installé le produit : les rendre
+        en clair donnait une piste que personne ne pouvait suivre. Le registre les
+        garde — c'est sa donnée, et un test exige que chaque entrée en porte une —,
+        l'écran ne montre que celles qui mènent quelque part. Ce que le lien
+        apprenait d'essentiel, la description du secret le dit déjà (« PAT GitLab
+        (glpat-…), scope api, créé dans l'UI GitLab »).
+      */}
+      {entree.procedure_url.startsWith("https://") && (
         <p className="text-annexe text-neutral-500 dark:text-neutral-400">
           Procédure d&apos;obtention côté outil :{" "}
-          {/*
-            Cliquable si c'est une URL, en clair si c'est un chemin du dépôt : la
-            bibliothèque élargie (#271) renvoie surtout vers la documentation de
-            l'éditeur, qu'on ne recopie pas à la main dans une barre d'adresse.
-          */}
-          {entree.procedure_url.startsWith("https://") ? (
-            <a
-              href={entree.procedure_url}
-              target="_blank"
-              rel="noreferrer"
-              className="font-mono underline hover:no-underline"
-            >
-              {entree.procedure_url}
-            </a>
-          ) : (
-            <code className="font-mono">{entree.procedure_url}</code>
-          )}
+          <a
+            href={entree.procedure_url}
+            target="_blank"
+            rel="noreferrer"
+            className="font-mono underline hover:no-underline"
+          >
+            {entree.procedure_url}
+          </a>
         </p>
       )}
       <div className="flex flex-wrap items-center gap-3">

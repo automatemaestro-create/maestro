@@ -468,6 +468,26 @@ class EtatAgent:
         if tache_id in self.taches_en_cours:
             self.taches_en_cours.remove(tache_id)
 
+    def avec_capacite(self, capacite: CapaciteAgent) -> EtatAgent:
+        """Une **copie** de la fiche portant `capacite` — l'activité vue, le réglage lu.
+
+        Copie et non mutation, et c'est la décision de #1101 : la fiche de la
+        projection est **une** par nom d'agent, alors que la capacité est rangée
+        **par projet** (#1038) — le même `dev` peut avoir deux instances ici et
+        une ailleurs. Poser le réglage sur l'objet partagé ferait lire à un
+        projet le plafond qu'un autre vient de régler, et la fuite ne se verrait
+        qu'à la lecture suivante.
+
+        La liste des tâches en vol est recopiée ; tout le reste est repris tel
+        quel, pour qu'un champ ajouté à la fiche suive sans qu'on y pense.
+        """
+        return replace(
+            self,
+            taches_en_cours=list(self.taches_en_cours),
+            actif=capacite.actif,
+            instances=capacite.instances,
+        )
+
     def to_dict(self) -> dict[str, Any]:
         """Réémet l'agent en dict JSON-sérialisable (la forme du REST)."""
         return {
@@ -1061,6 +1081,10 @@ class ControlTowerState:
     `validations` (demandes de validation humaine, #48). Plus deux **lectures
     dérivées** d'un run, qui ne stockent rien et se recomposent à chaque appel :
     `progression(run_id)` (#473) et `graphe(run_id)` (#490).
+
+    La vue des agents en a une troisième, `equipe(catalogue, capacites)` (#1101) :
+    le parc **d'un projet**, dont l'appartenance et la capacité viennent du
+    disque et non du flux — la projection y apporte l'activité, et elle seule.
     """
 
     def __init__(
@@ -1360,6 +1384,41 @@ class ControlTowerState:
     def agent(self, nom: str) -> EtatAgent | None:
         """L'agent `nom`, ou None s'il est inconnu (catalogue et événements confondus)."""
         return self._agents.get(nom)
+
+    def equipe(
+        self,
+        catalogue: Sequence[Agent],
+        capacites: Sequence[CapaciteAgent] = (),
+    ) -> list[EtatAgent]:
+        """Le parc **d'un projet** : son catalogue, sa capacité, et l'activité qu'on a vue.
+
+        La vue transverse (`agents`) part de la projection, qui est en mémoire
+        et se reconstruit du flux ; celle-ci part du **disque** — le catalogue du
+        projet et ses réglages de capacité —, et la projection n'y apporte plus
+        que ce qu'elle est seule à savoir : statut, tâches en vol, compteurs,
+        coût, dernière activité. C'est le renversement de #1101 : l'équipe d'un
+        projet est validée une fois puis rangée dans le projet, quand la
+        projection, elle, repart vide à chaque redémarrage de l'API — la faire
+        arbitrer de l'appartenance rendait `[]` après un redémarrage, et une
+        instance là où le disque en portait deux.
+
+        Le **catalogue fait foi** sur qui en est et sur le rôle ; les
+        **capacités** font foi sur `actif` et `instances`, avec les défauts du
+        code pour un agent que rien n'a réglé — même contrat que
+        `CapacityStore.lire`. Un projet qui n'a pas encore recruté a un
+        catalogue vide, donc un parc vide (#1042), et c'est la même phrase qui
+        le dit.
+
+        L'ordre est celui du catalogue : c'est lui qu'on vient de lire.
+        """
+        reglages = {capacite.nom: capacite for capacite in capacites}
+        parc = []
+        for agent in catalogue:
+            vue = self._agents.get(agent.nom) or EtatAgent(nom=agent.nom, role=agent.role)
+            fiche = vue.avec_capacite(reglages.get(agent.nom) or CapaciteAgent(nom=agent.nom))
+            fiche.role = agent.role or fiche.role
+            parc.append(fiche)
+        return parc
 
     def execution(self, run_id: str) -> EtatExecution | None:
         """Le détail de l'exécution `run_id`, ou None si aucune trace reçue."""

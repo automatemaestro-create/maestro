@@ -21,7 +21,11 @@ qu'il envoie**, puis on regarde le **disque** — jamais seulement la réponse :
 ④ **le report** ne touche pas au dossier, se répète sans effet et se tait une fois
    l'outillage généré ;
 ⑤ **la proposition d'équipe** ne crée rien et branche les skills des réponses ;
-⑥ **la création d'équipe** écrit ce qui a été montré, dans le projet, ou rien.
+⑥ **la création d'équipe** écrit ce qui a été montré, dans le projet, ou rien ;
+⑦ **la vue des agents suit l'équipe** (#1101) : l'équipe validée, avec la capacité
+   du projet, juste après la création **comme après un redémarrage** — réserve C4
+   du même bouclage. Cette section-là rouvre l'API sur les mêmes dépôts, parce que
+   c'est le seul moyen de voir la moitié du défaut qu'un process ne montre pas.
 
 Ni réseau ni modèle : les playbooks d'équipe passent par un générateur « hors
 ligne », qui fait retomber chaque rôle sur le playbook de son gabarit — le repli
@@ -31,11 +35,13 @@ que la route promet elle-même.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from maestro.agents.capacity import CapacityStore
@@ -102,12 +108,14 @@ def gabarits(tmp_path: Path) -> ConfigurationAgents:
     )
 
 
-@pytest.fixture()
-def client(
-    tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents
-) -> Iterator[TestClient]:
-    """L'app réelle, projets bornés à l'atelier, dépôts d'agents temporaires."""
-    app = create_app(
+def _app(tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents) -> FastAPI:
+    """L'app réelle, projets bornés à l'atelier, dépôts d'agents temporaires.
+
+    Une **projection neuve** à chaque appel, les dépôts restant les mêmes : c'est
+    exactement ce qu'est un redémarrage de l'API, et c'est la moitié du défaut de
+    #1101 qu'un seul process ne peut pas voir.
+    """
+    return create_app(
         bus=InMemoryEventBus(),
         state=ControlTowerState(),
         projets=ServiceProjets(
@@ -121,8 +129,24 @@ def client(
         capacites=gabarits.capacites,
         generateur_agent=_GenerateurHorsLigne(),
     )
-    with TestClient(app) as client:
+
+
+@pytest.fixture()
+def client(
+    tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents
+) -> Iterator[TestClient]:
+    """L'app réelle, ouverte pour la durée du test."""
+    with TestClient(_app(tmp_path, atelier, gabarits)) as client:
         yield client
+
+
+@pytest.fixture()
+def relancer(
+    tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents
+) -> Iterator[Callable[[], TestClient]]:
+    """Rouvre l'API sur les **mêmes dépôts**, projection neuve — le redémarrage (#1101)."""
+    with ExitStack() as pile:
+        yield lambda: pile.enter_context(TestClient(_app(tmp_path, atelier, gabarits)))
 
 
 def _declarer(client: TestClient, racine: Path, *, origine: str) -> str:
@@ -602,3 +626,107 @@ def test_la_creation_dans_un_projet_inconnu_est_un_404(client: TestClient) -> No
     )
 
     assert reponse.status_code == 404, reponse.text
+
+
+# --- ⑦ La vue des agents suit l'équipe du projet (#1101) -----------------------
+#
+# Réserve C4 du même bouclage (2026-09-21) : « types, nombre et **instances** sont
+# dérivés de l'analyse ». La donnée était juste — sur le disque, et en run, où
+# l'exécuteur lit déjà la capacité du projet ; c'est la **vue** qui ne la montrait
+# pas, parce qu'elle filtrait une projection que rien ne peuple hors du flux. Deux
+# symptômes, et le second ne se voit qu'en rouvrant l'API : une instance au lieu de
+# deux juste après la création, puis plus personne au redémarrage suivant.
+
+
+def _equipe_a_deux_instances(client: TestClient, atelier: Path) -> tuple[str, dict[str, int]]:
+    """Un projet dont l'équipe validée porte un rôle à **2 instances** — le cas du bilan."""
+    projet, _ = _projet_existant(client, atelier)
+    proposition = client.post(f"/api/projets/{projet}/equipe/proposition").json()
+    validee = _validee(proposition)
+    validee["roles"][0]["instances"] = 2
+    creation = client.post(f"/api/projets/{projet}/equipe", json=validee)
+    assert creation.status_code == 201, creation.text
+    return projet, {r["nom"]: r["instances"] for r in validee["roles"]}
+
+
+def _instances(reponse: Any) -> dict[str, int]:
+    """La vue du parc réduite à ce qui se lit à l'écran : qui en est, et combien d'instances."""
+    assert reponse.status_code == 200, reponse.text
+    return {a["nom"]: a["instances"] for a in reponse.json()}
+
+
+def test_la_vue_des_agents_rend_l_equipe_validee_avec_ses_instances(
+    client: TestClient, atelier: Path
+) -> None:
+    """Le premier symptôme : la création rendait `instances: 1` sur un rôle validé à 2."""
+    projet, attendues = _equipe_a_deux_instances(client, atelier)
+
+    assert _instances(client.get("/api/agents", params={"projet": projet})) == attendues
+
+
+def test_l_equipe_d_un_projet_survit_a_un_redemarrage_de_l_api(
+    client: TestClient, atelier: Path, relancer: Callable[[], TestClient]
+) -> None:
+    """Le second, et le pire : l'équipe validée disparaissait de l'écran, qui rendait `[]`.
+
+    Le catalogue, lui, la gardait — d'où la forme du correctif : la vue se dérive
+    de ce que le projet a sur le disque, et non de ce que la projection a vu.
+    """
+    projet, attendues = _equipe_a_deux_instances(client, atelier)
+
+    apres_redemarrage = relancer()
+
+    assert _instances(apres_redemarrage.get("/api/agents", params={"projet": projet})) == attendues
+
+
+def test_un_projet_sans_equipe_rend_toujours_une_vue_vide(
+    client: TestClient, atelier: Path
+) -> None:
+    """#1042 tient : dériver la vue du catalogue n'y fait entrer aucun gabarit."""
+    projet, _ = _projet_existant(client, atelier)
+
+    assert client.get("/api/agents", params={"projet": projet}).json() == []
+
+
+def test_la_capacite_se_regle_encore_apres_un_redemarrage(
+    client: TestClient,
+    atelier: Path,
+    gabarits: ConfigurationAgents,
+    relancer: Callable[[], TestClient],
+) -> None:
+    """Ce que la vue montre est **réglable** : le 404 se prononçait sur la projection.
+
+    Montrer l'équipe sans pouvoir toucher ses curseurs aurait laissé la réserve à
+    moitié levée — « sa capacité ne se règle plus » est le second membre du
+    constat, et il tient au même 404.
+    """
+    projet, attendues = _equipe_a_deux_instances(client, atelier)
+    nom = next(n for n, instances in attendues.items() if instances == 2)
+    apres_redemarrage = relancer()
+
+    reponse = apres_redemarrage.post(
+        f"/api/agents/{nom}/capacite", params={"projet": projet}, json={"instances": 3}
+    )
+
+    assert reponse.status_code == 200, reponse.text
+    assert reponse.json()["instances"] == 3
+    assert gabarits.pour_projet(projet).capacites.lire(nom).instances == 3
+    vue = _instances(apres_redemarrage.get("/api/agents", params={"projet": projet}))
+    assert vue[nom] == 3
+
+
+def test_lire_le_parc_d_un_projet_ne_reecrit_pas_la_projection(
+    client: TestClient, atelier: Path
+) -> None:
+    """La capacité est rangée par projet ; la fiche de la projection est une, et partagée.
+
+    D'où la copie (`EtatAgent.avec_capacite`) plutôt qu'un réglage posé sur la
+    fiche : poser 2 instances en lisant ce projet-ci les ferait lire à tout autre
+    lecteur de la même fiche — un second projet qui nomme son agent pareil, et le
+    parc transverse ci-dessous, qui n'a aucun projet où lire une capacité.
+    """
+    projet, attendues = _equipe_a_deux_instances(client, atelier)
+    nom = next(n for n, instances in attendues.items() if instances == 2)
+    assert _instances(client.get("/api/agents", params={"projet": projet}))[nom] == 2
+
+    assert _instances(client.get("/api/agents"))[nom] == 1
