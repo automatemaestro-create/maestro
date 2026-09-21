@@ -47,19 +47,23 @@ import type {
   PolitiquePermissions,
   PoolMcp,
   Projet,
+  PropositionEquipe,
   PropositionPlaybook,
   PropositionPlaybookDetail,
   ProvenanceRegistreMcp,
   Question,
+  RapportCreationEquipe,
   RapportGenerationOutillage,
   RapportLecture,
   RedactionPlaybook,
   ReponseRecommandationOutillage,
   RefusProjet,
   ReglagesModele,
+  RepertoireProjets,
   ReponsesBrief,
   ResumeExecution,
   RevocationAdmissionMcp,
+  RoleValideEquipe,
   Sante,
   SourceDeclaree,
   SourceRegistreMcp,
@@ -1495,6 +1499,36 @@ export function chargerExplorateur(
 }
 
 /**
+ * Le **répertoire des projets** (`GET /api/projets/repertoire`, #1022) : où naît
+ * un projet neuf. Toujours 200 — un répertoire devenu indéclarable revient avec
+ * son `refus`, et l'écran le montre au lieu de tomber en panne. ⚠ Cette lecture
+ * **crée** le dossier s'il manque (« créé à la première utilisation ») et le dit
+ * (`cree`).
+ */
+export function chargerRepertoireProjets(): Promise<RepertoireProjets> {
+  return lireProjets<RepertoireProjets>(
+    "/api/projets/repertoire",
+    "répertoire des projets illisible",
+  );
+}
+
+/**
+ * Pose le répertoire des projets (`PUT /api/projets/repertoire`, #1022).
+ * `null` revient au défaut. Le chemin **ne se tape pas** : il vient de
+ * l'explorateur ou du dialogue du poste, comme toute racine (#225).
+ */
+export function reglerRepertoireProjets(
+  chemin: string | null,
+): Promise<RepertoireProjets> {
+  return ecrireProjet<RepertoireProjets>(
+    "/api/projets/repertoire",
+    { chemin },
+    "répertoire refusé",
+    "PUT",
+  );
+}
+
+/**
  * L'état du sélecteur de dossier natif (`GET /api/projets/selecteur`, #278).
  * Toujours 200 : une indisponibilité est une **réponse**, pas une panne — c'est
  * elle que l'écran affiche à la place d'un bouton mort.
@@ -1707,6 +1741,60 @@ export function reporterOutillage(id: string): Promise<Projet> {
     `/api/projets/${encodeURIComponent(id)}/outillage/report`,
     undefined,
     "report refusé",
+    "POST",
+  );
+}
+
+// --- L'équipe d'un projet (#1039 la propose, #1040 la crée) ----------------
+//
+// Deux verbes, jamais deux moitiés d'un seul : proposer n'écrit rien, créer
+// n'analyse rien. Ce qui est créé est ce qui a été **montré** — d'où une
+// validation qui rapporte la proposition telle qu'elle a été servie plutôt
+// qu'un identifiant à re-dériver : la rejouer appellerait à nouveau un modèle
+// et rendrait un autre playbook, donc un agent que personne n'a validé.
+
+/**
+ * L'équipe que ce projet appelle (`POST /api/projets/{id}/equipe/proposition`,
+ * #1039, docs/37) — **rien n'est créé**, et la réponse le dit (`cree`).
+ *
+ * Deux provenances, une seule forme : sans `choix`, le projet est **analysé**
+ * (#1030) ; avec les réponses du questionnaire d'outillage (#1031), l'équipe se
+ * dérive d'elles sans qu'aucun fichier soit ouvert. L'appel prend des secondes
+ * sur un projet réel — la racine est lue, puis un playbook est rédigé par rôle
+ * (#257).
+ */
+export function proposerEquipe(
+  id: string,
+  choix: ChoixOutillage[] = [],
+): Promise<PropositionEquipe> {
+  return ecrireProjet<PropositionEquipe>(
+    `/api/projets/${encodeURIComponent(id)}/equipe/proposition`,
+    { choix },
+    "proposition d'équipe indisponible",
+  );
+}
+
+/**
+ * Crée dans le projet l'équipe validée (`POST /api/projets/{id}/equipe`, #1040).
+ *
+ * `roles` est ce que l'écran a **gardé**, playbook et `politique` compris,
+ * repris de la proposition : c'est ainsi que le cran `auto` qu'on a lu avec sa
+ * raison est le cran qui sera écrit (#716).
+ *
+ * **Tout ou rien** : un seul rôle refusé (nom déjà pris, instances hors bornes)
+ * rend un refus `equipe-refusee` qui les nomme tous, et **rien** n'est créé —
+ * affichable à l'endroit du geste par le même `RefusMotive` que le reste de
+ * l'écran Projets.
+ */
+export function creerEquipe(
+  id: string,
+  roles: RoleValideEquipe[],
+  propositionId = "",
+): Promise<RapportCreationEquipe> {
+  return ecrireProjet<RapportCreationEquipe>(
+    `/api/projets/${encodeURIComponent(id)}/equipe`,
+    { proposition_id: propositionId, roles },
+    "création d'équipe refusée",
     "POST",
   );
 }

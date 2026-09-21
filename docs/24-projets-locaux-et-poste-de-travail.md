@@ -70,6 +70,14 @@ même coût :
 Les trois passent par la même brique — **un projet a une racine sur le disque** — mais A est
 livrable seul et sans risque, ce qui en fait le bon premier lot.
 
+⚠ **A et B ne se choisissent pas de la même façon** (#1022). Un projet **neuf** naît dans le
+**répertoire des projets**, un réglage du poste dont le dossier parent se remplit d'office
+(`GET /api/projets/repertoire`, docs/05 §6.7 ; défaut `~/Maestro`, validé par `valider_racine` comme
+n'importe quelle racine, créé à la première utilisation). Un projet **existant** ne se voit rien
+imposer : on le parcourt soi-même, exactement comme avant. C'est le partage qu'on retrouve dans les
+produits en service — GitHub Desktop préremplit le chemin de *Clone* et de *Create*, jamais celui
+d'*Add Local Repository*.
+
 ### 2.2 Pourquoi c'est la brique n° 1
 
 Sans elle, les autres questions n'ont pas de sujet. Un document téléversé décrit un projet
@@ -385,7 +393,7 @@ de la tâche le dit à l'agent en toutes lettres.
 Maestro — l'outillage est lisible par d'autres agents, mais Maestro ne les pilote pas encore
 (objectif O7, [docs/06](./06-roadmap.md)).
 
-Les routes sont au [docs/05 §6.19](./05-interface-control-tower.md), l'étape du parcours de création
+Les routes sont au [docs/05 §6.20](./05-interface-control-tower.md), l'étape du parcours de création
 à [docs/37 §4.6](./37-decision-equipe-sur-mesure.md) — première, proposée d'office, et **reportable**.
 Gardé par [`tests/test_outillage_analyse.py`](../tests/test_outillage_analyse.py),
 [`test_outillage_questionnaire.py`](../tests/test_outillage_questionnaire.py),

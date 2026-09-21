@@ -355,8 +355,16 @@ export function EtapeOutillage({
    * L'étape est finie — générée ou reportée. L'appelant relit la liste des
    * projets : la fiche a changé dans les deux cas (le manifeste pour l'une, la
    * date de report pour l'autre), et c'est elle qui fait foi.
+   *
+   * `suite` dit **ce qui vient après** (#1040, docs/37 §4.6) : l'outillage
+   * généré enchaîne sur l'**équipe**, qui branche justement les skills qu'on
+   * vient d'écrire ; un « plus tard » referme le parcours. Enchaîner sur une
+   * seconde étape derrière un report contredirait le geste qu'on vient de
+   * faire — le report dit « laissez-moi », pas « posez-moi une autre
+   * question ». Les réponses du questionnaire voyagent avec, pour qu'un projet
+   * neuf n'ait pas à les redonner.
    */
-  onTermine: () => void;
+  onTermine: (suite: "equipe" | "fin", choix?: ChoixOutillage[]) => void;
 }) {
   // L'origine décide du chemin, et elle vient de la **fiche** : c'est la
   // déclaration qui dit si le dossier était là avant nous (#221).
@@ -479,7 +487,7 @@ export function EtapeOutillage({
     setRefus(null);
     try {
       await reporterOutillage(projet.id);
-      onTermine();
+      onTermine("fin");
     } catch (erreur) {
       setRefus(refusDepuis(erreur));
       setEnCours(false);
@@ -500,7 +508,9 @@ export function EtapeOutillage({
         titre={`Outillage de « ${projet.nom} »`}
         aside={
           <span className="text-annexe text-texte-secondaire">
-            {rapport === null ? "étape 2 sur 2" : "terminé"}
+            {/* Trois étapes depuis #1040 : la racine, l'outillage, l'équipe. Le
+                rang se dit ici et dans `EtapeEquipe`, nulle part ailleurs. */}
+            {rapport === null ? "étape 2 sur 3" : "outillage terminé"}
           </span>
         }
       />
@@ -608,7 +618,12 @@ export function EtapeOutillage({
             </Bouton>
           </>
         ) : (
-          <Bouton onClick={onTermine}>Terminer</Bouton>
+          // L'outillage est écrit : la suite du parcours est l'équipe, qui
+          // branche les skills qu'on vient de poser. Le libellé le dit plutôt
+          // que de promettre une fin qui n'en est pas une.
+          <Bouton onClick={() => onTermine("equipe", choix)}>
+            Composer l&apos;équipe
+          </Bouton>
         )}
       </div>
     </Carte>

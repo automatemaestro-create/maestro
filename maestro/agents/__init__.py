@@ -1,16 +1,18 @@
 """Agents exécutants de Maestro : catalogue, profils outillés et runtime (tickets #6, #35).
 
-Expose la forme d'un agent (`Agent` : compétences, modèle, prompt système) et le
-catalogue par défaut du POC (`DEFAULT_AGENTS`). Le routeur (`maestro.router`) s'en
-sert pour l'auto-assignation ; le moteur (`maestro.engine`) pour l'exécution.
+Expose la forme d'un agent (`Agent` : compétences, modèle, prompt système) et les
+**gabarits de rôle** du code (`GABARITS_DU_CODE`). Le routeur (`maestro.router`) se
+sert d'un catalogue d'agents pour l'auto-assignation ; le moteur (`maestro.engine`)
+pour l'exécution.
 
-    from maestro.agents import DEFAULT_AGENTS
+    from maestro.agents import GABARITS_DU_CODE
 
-Le catalogue n'est plus figé au code (#72, EF-03) : des **agents personnalisés**
-se définissent hors du code (`maestro.agents.store`, dépôt `core/agents/`, API
-Control Tower `/api/catalogue`) et `catalogue()` assemble le catalogue effectif —
-les agents par défaut, puis les personnalisés. En V1 ce dépôt passera en base
-(table AGENT) sans changer ce contrat.
+Le catalogue n'est plus figé au code (#72, EF-03) : les agents se définissent hors
+du code (`maestro.agents.store`, dépôt `core/agents/`, API Control Tower
+`/api/catalogue`) et `catalogue()` assemble le catalogue effectif. Depuis #1042 il
+ne contient **que** ceux-là : les cinq fiches du code sont des gabarits que
+l'analyse d'équipe consulte (`gabarits_du_code`), et un projet neuf n'en reçoit
+aucun. En V1 ce dépôt passera en base (table AGENT) sans changer ce contrat.
 
 Au-delà de l'identité (`Agent`), **tout** agent du catalogue dispose d'un **runtime
 outillé** — un sous-agent du SDK qui exécute une tâche de bout en bout dans un
@@ -68,7 +70,7 @@ from maestro.agents.capacity import (
     CapacityStore,
     JaugeInstances,
 )
-from maestro.agents.catalog import DEFAULT_AGENTS, Agent, agents_pour
+from maestro.agents.catalog import GABARITS_DU_CODE, Agent, gabarits_pour
 from maestro.agents.database import DATABASE_PROFILE
 from maestro.agents.designer import DESIGNER_PROFILE
 from maestro.agents.developer import DEVELOPER_PROFILE
@@ -110,6 +112,7 @@ from maestro.agents.store import (
     AgentDefinition,
     AgentStore,
     catalogue,
+    gabarits_du_code,
 )
 from maestro.providers.base import PLAFOND_TOURS_DEFAUT
 
@@ -117,11 +120,11 @@ __all__ = [
     "CADRES_DU_CODE",
     "CADRE_GENERIQUE",
     "DATABASE_PROFILE",
-    "DEFAULT_AGENTS",
     "DEFAULT_TOOLS",
     "DESIGNER_PROFILE",
     "DEVELOPER_PROFILE",
     "DEVOPS_PROFILE",
+    "GABARITS_DU_CODE",
     "INSTANCES_DEFAUT",
     "NOMS_RESERVES",
     "PLAFOND_TOURS_DEFAUT",
@@ -151,10 +154,11 @@ __all__ = [
     "SecretStore",
     "ServeurMcp",
     "Verdict",
-    "agents_pour",
     "avec_playbooks",
     "catalogue",
     "default_runtimes",
+    "gabarits_du_code",
+    "gabarits_pour",
     "playbook_outille",
     "profil_outille",
     "runtime_outille",

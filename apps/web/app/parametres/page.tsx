@@ -36,6 +36,7 @@ import { ParametresCouts } from "@/components/parametres/ParametresCouts";
 import { ParametresFournisseurs } from "@/components/parametres/ParametresFournisseurs";
 import { ParametresGeneral } from "@/components/parametres/ParametresGeneral";
 import { ParametresNotifications } from "@/components/parametres/ParametresNotifications";
+import { ParametresProjets } from "@/components/parametres/ParametresProjets";
 import { RedirectionAncreMcp } from "@/components/parametres/RedirectionAncreMcp";
 import {
   EspaceDefilement,
@@ -50,6 +51,7 @@ import { FAMILLES_PARAMETRES, type IdSection } from "@/lib/parametres";
  */
 const CONTENUS: Record<IdSection, () => React.ReactNode> = {
   general: ParametresGeneral,
+  projets: ParametresProjets,
   apparence: ParametresApparence,
   agents: ParametresAgents,
   fournisseurs: ParametresFournisseurs,

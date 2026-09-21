@@ -85,9 +85,11 @@ L'utilisateur passe ainsi du rôle d'« opérateur » (qui exécute) à celui de
 ### 4.1 Agents spécialisés
 
 - **EF-01 (DOIT)** — Le système fournit des agents préconfigurés : Chef de projet, Développeur, Base de données, DevOps, Designer, QA.
+  ⚠ *2026-09-19, [docs/37 §2.1](./37-decision-equipe-sur-mesure.md) : ces cinq rôles exécutants ne sont plus **instanciés** — ce sont des **gabarits** que l'analyse d'équipe consulte ([docs/04 §2](./04-specifications-agents.md)). Le Chef de projet, lui, n'a jamais été un membre d'équipe : c'est Maestro, et c'est lui qui recrute (docs/37 §4.2).*
 - **EF-02 (DOIT)** — Chaque agent possède un rôle, un jeu d'outils et un *playbook* (workflow d'instructions).
+  ⚠ *Depuis #1037, « un jeu d'outils » vaut pour **tout** agent : le runtime outillé se dérive de sa **fiche** et non d'un profil du code, si bien qu'un agent proposé par l'analyse d'un projet travaille avec des outils — sans quoi une équipe sur mesure n'aurait pu exister (docs/04 §4).*
 - **EF-03 (DEVRAIT)** — L'utilisateur peut créer un nouvel agent et le configurer entièrement.
-  ⚠ *2026-09-19, [docs/37](./37-decision-equipe-sur-mesure.md) : les agents d'un projet sont proposés par l'analyse du projet puis validés par l'utilisateur, et ils appartiennent au projet (#1021).*
+  ⚠ *2026-09-19, [docs/37](./37-decision-equipe-sur-mesure.md) : les agents d'un projet sont proposés par l'analyse du projet puis validés par l'utilisateur, et ils appartiennent au projet (#1021). **Livré** : la proposition (#1039) sort chaque rôle avec sa raison, l'endroit du projet qui la prouve, son playbook, les skills qu'il branche et ses autorisations — chacune avec la sienne ; la validation (#1040) est le seul geste qui écrit, et elle écrit **dans le projet** (#1038) ; le travail s'y répartit (#1041). Contrats : [docs/05 §6.19](./05-interface-control-tower.md). Le formulaire de création reste ce par quoi on ajoute un rôle qu'aucun constat ne désignait.*
 - **EF-04 (DOIT)** — Chaque agent déclare ses **capacités** (tags/compétences) servant au routage.
 
 ### 4.2 Autonomie
@@ -125,7 +127,7 @@ L'utilisateur passe ainsi du rôle d'« opérateur » (qui exécute) à celui de
 - **EF-19 (DOIT)** — **Interagir** : ouvrir une conversation avec un agent.
 - **EF-20 (DOIT)** — **Assigner / réassigner** une tâche à un agent.
 - **EF-21 (DEVRAIT)** — **Contrôler la capacité** : activer/désactiver un agent, ajuster le nombre d'instances.
-  ⚠ *2026-09-19, [docs/37](./37-decision-equipe-sur-mesure.md) : le nombre d'instances est d'abord proposé par l'analyse du projet, puis ajusté par l'utilisateur, et la capacité se range par projet. **Le rangement est livré** (#1038, `core/capacite/_projets/<id>/`, docs/05 §2.0) ; la proposition par l'analyse reste #1039. Le plafond appliqué à l'exécution, lui, demeure celui du poste : c'est ce que la machine fait tourner en même temps pour cet agent, pas un quota par projet.*
+  ⚠ *2026-09-19, [docs/37](./37-decision-equipe-sur-mesure.md) : le nombre d'instances est d'abord **proposé** par l'analyse du projet, puis **ajusté** par l'utilisateur, et la capacité se range par projet. **Livré de bout en bout** : le rangement (#1038, `core/capacite/_projets/<id>/`, docs/05 §2.0), la proposition (#1039 — une instance par défaut, davantage pour le seul rôle dont la charge se lit dans les constats, plafond de 3 qui est **une décision, pas une mesure**), et l'écriture à la validation (#1040 — `actif`, plafond de 20 contre la faute de frappe, docs/05 §6.19). Ce que le projet ne règle pas, il l'**hérite** du gabarit : un agent désactivé au gabarit le reste, retomber sur « actif » serait ici un garde-fou qui saute. Le plafond appliqué à l'exécution, lui, demeure celui du poste : c'est ce que la machine fait tourner en même temps pour cet agent, pas un quota par projet.*
 - **EF-22 (DEVRAIT)** — Visualiser pour chaque exécution la **trace** détaillée (étapes, outils, coût, durée).
 - **EF-23 (POURRAIT)** — Tableau de bord analytique (coûts, débit, taux de réussite).
 

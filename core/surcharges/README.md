@@ -57,10 +57,19 @@ le même stockage au POC (fichiers partagés). En V1, ce stockage passera en bas
 Tests (#259) : `tests/test_surcharge_agent.py`, livrés par le lot 15 du chantier
 #243 (#267). Trois étages, dans l'ordre où une surcharge traverse le produit — le
 **dépôt** (la surcharge vide qui ne se stocke pas, `herite()`, le refus d'un nom
-hors `NOMS_DU_CODE`), le **catalogue effectif** (le seul chemin par lequel elle
-atteint l'exécution : `MAESTRO_MODEL` prime sur le modèle et pas sur l'effort, le
-fournisseur reste déclaratif), et les **deux routes** (les trois états de
-`source`, `herite`/`reglages_du_code`, et surtout *annuler n'est pas supprimer*).
+hors `NOMS_DU_CODE`), les **gabarits surchargés** (`gabarits_du_code()` : depuis
+#1042 c'est là que se lit une surcharge, et elle atteint l'exécution par le
+catalogue de câblage d'un run hors projet — `MAESTRO_MODEL` prime sur le modèle et
+pas sur l'effort, le fournisseur reste déclaratif), et les **deux routes** (les
+trois états de `source`, `herite`/`reglages_du_code`, et surtout *annuler n'est
+pas supprimer*).
+
+⚠ **Une surcharge règle un gabarit, plus un agent** (#1042) : les cinq fiches du
+code ne sont plus au catalogue effectif d'un projet — un projet naît sans agent et
+recrute son équipe. Les réglages posés ici valent donc pour ce que le paquet
+livre, et ils s'éditent au niveau gabarit (`/api/catalogue` sans `?projet=`) ; un
+projet, lui, règle les agents de **son** équipe, dont la définition *est* le
+réglage.
 
 ## Rangement par projet (#1038)
 

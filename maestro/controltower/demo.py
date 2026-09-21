@@ -53,6 +53,7 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from maestro.agents.capacity import CapacityStore
+from maestro.agents.store import AgentDefinition, AgentStore
 from maestro.controltower.app import create_app
 from maestro.controltower.chat import UTILISATEUR, ChatStore, MessageChat, RepondeurScripte
 from maestro.controltower.events import (
@@ -92,6 +93,7 @@ from maestro.engine.executor import (
     STATUT_QUESTION_SANS_REPONSE,
     STATUT_TERMINEE,
 )
+from maestro.equipe.gabarits import GABARITS
 from maestro.plan_run import NoeudPlan
 from maestro.telemetry.usage import StepUsage
 
@@ -108,6 +110,33 @@ RUN_ID = "demo-live"
 #: l'autre. Le scénario laisse à dessein une tâche **hors projet** (`demo-t4`) :
 #: un travail sans projet reste normal, et c'est ce qui rend le filtre visible.
 PROJET_ID = "prj-demo"
+
+#: **L'équipe du projet de démo** (#1042) : nom du rôle → libellé, dans l'ordre.
+#:
+#: Le scénario nommait `developpeur`, `bdd`, `devops`… — les cinq agents que tout
+#: poste recevait d'office. Ils sont devenus des **gabarits**
+#: ([docs/37 §2.1](../../docs/37-decision-equipe-sur-mesure.md)) : plus aucun
+#: projet n'en reçoit, et un dépôt d'agents refuse même ces noms-là
+#: (`NOMS_RESERVES`). La démo montre donc ce qu'un projet a vraiment après #1040 —
+#: **une équipe validée**, écrite dans le projet —, et ses rôles sont ceux que
+#: l'analyse proposerait pour ce mini-CRM.
+#:
+#: Dérivée de `maestro.equipe.gabarits.GABARITS`, jamais recopiée : un rôle
+#: renommé là-bas suit ici, et la démo ne peut pas montrer une équipe que
+#: l'analyse ne saurait pas proposer.
+EQUIPE_DEMO: tuple[tuple[str, str], ...] = tuple(
+    (gabarit.nom, gabarit.role) for gabarit in GABARITS
+)
+
+#: Les rôles de l'équipe, nommés un à un pour que le scénario les cite sans
+#: littéral — un nom de rôle écrit en dur dans un événement serait un agent que
+#: le projet n'a pas.
+AGENT_DEV, AGENT_DONNEES, AGENT_INFRA, AGENT_INTERFACE, AGENT_TESTS = (
+    nom for nom, _ in EQUIPE_DEMO
+)
+
+#: Le libellé d'un rôle de l'équipe — les événements portent les deux (#46).
+ROLE_DE: dict[str, str] = dict(EQUIPE_DEMO)
 
 #: **Le run déjà fini** (#928) — celui qu'on retrouve en arrivant, par opposition
 #: à `RUN_ID`, qu'on regarde travailler.
@@ -139,8 +168,8 @@ _TACHES_SOLDEES: tuple[tuple[str, str, str, str, StepUsage], ...] = (
     (
         "livre-t1",
         "Extraire les contacts et écrire contacts.csv",
-        "developpeur",
-        "Développeur",
+        AGENT_DEV,
+        ROLE_DE[AGENT_DEV],
         StepUsage(
             appels=2,
             tokens_entree=6100,
@@ -154,8 +183,8 @@ _TACHES_SOLDEES: tuple[tuple[str, str, str, str, StepUsage], ...] = (
     (
         "livre-t2",
         "Vérifier l'export et rédiger le rapport de qualité",
-        "qa",
-        "Assurance qualité",
+        AGENT_TESTS,
+        ROLE_DE[AGENT_TESTS],
         StepUsage(
             appels=1,
             tokens_entree=3400,
@@ -511,8 +540,8 @@ async def _scenario(bus: EventBus) -> None:
         bus,
         tache_id="demo-t1",
         titre="Concevoir le schéma SQL de la table contacts",
-        agent="bdd",
-        role="Base de données",
+        agent=AGENT_DONNEES,
+        role=ROLE_DE[AGENT_DONNEES],
         etapes=["assignee", "en_cours", "terminee"],
         usage=StepUsage(
             appels=2,
@@ -542,10 +571,10 @@ async def _scenario(bus: EventBus) -> None:
         Event(
             type=EVENEMENT_MESSAGE_INTER_AGENTS,
             run_id=RUN_ID,
-            agent="bdd",
-            role="Base de données",
+            agent=AGENT_DONNEES,
+            role=ROLE_DE[AGENT_DONNEES],
             detail=(
-                "→ developpeur : schéma prêt, la table `contacts` et sa migration "
+                f"→ {AGENT_DEV} : schéma prêt, la table `contacts` et sa migration "
                 "sont disponibles"
             ),
         )
@@ -556,8 +585,8 @@ async def _scenario(bus: EventBus) -> None:
         bus,
         tache_id="demo-t2",
         titre="Implémenter l'API REST des contacts (créer / lister)",
-        agent="developpeur",
-        role="Développeur",
+        agent=AGENT_DEV,
+        role=ROLE_DE[AGENT_DEV],
         etapes=["assignee", "en_cours", "terminee"],
         usage=StepUsage(
             appels=3,
@@ -637,8 +666,8 @@ async def _scenario(bus: EventBus) -> None:
         bus,
         tache_id="demo-t3",
         titre="Pipeline CI et déploiement de l'API",
-        agent="devops",
-        role="DevOps",
+        agent=AGENT_INFRA,
+        role=ROLE_DE[AGENT_INFRA],
         etapes=["assignee", "en_cours"],
         # Une décision prise **pendant** que la tâche travaille encore, et dont
         # la validation en attente juste en dessous est le contraire : ce que
@@ -659,8 +688,8 @@ async def _scenario(bus: EventBus) -> None:
             run_id=RUN_ID,
             tache_id="demo-t3",
             titre="Pipeline CI et déploiement de l'API",
-            agent="devops",
-            role="DevOps",
+            agent=AGENT_INFRA,
+            role=ROLE_DE[AGENT_INFRA],
             description=(
                 "L'agent veut pousser la configuration de déploiement vers l'environnement "
                 "de démo (action sensible : écriture hors du bac à sable)."
@@ -684,8 +713,8 @@ async def _scenario(bus: EventBus) -> None:
             run_id=RUN_ID,
             tache_id="demo-t3",
             titre="Pipeline CI et déploiement de l'API",
-            agent="devops",
-            role="DevOps",
+            agent=AGENT_INFRA,
+            role=ROLE_DE[AGENT_INFRA],
             statut=QUESTION_EN_ATTENTE,
             description=(
                 "Le déploiement de démo doit-il tourner sur le même compose que "
@@ -709,8 +738,8 @@ async def _scenario(bus: EventBus) -> None:
         bus,
         tache_id="demo-t4",
         titre="Maquette de l'écran de gestion des contacts",
-        agent="designer",
-        role="Designer",
+        agent=AGENT_INTERFACE,
+        role=ROLE_DE[AGENT_INTERFACE],
         etapes=["assignee"],
         # Hors projet à dessein (#222) : le Kanban filtré sur `prj-demo` ne
         # doit pas la montrer — un travail sans projet reste du travail.
@@ -723,8 +752,8 @@ async def _scenario(bus: EventBus) -> None:
             bus,
             tache_id="demo-qa",
             titre="Vérification de santé de l'API (QA)",
-            agent="qa",
-            role="QA / Testeur",
+            agent=AGENT_TESTS,
+            role=ROLE_DE[AGENT_TESTS],
             etapes=["assignee", "en_cours", "terminee"],
             usage=StepUsage(
                 appels=1,
@@ -809,14 +838,12 @@ TEXTE_LONG = (
     "qui demande un fournisseur externe et un arbitrage sur son coût."
 )
 
-#: Les agents de la charge : ceux du nominal, plus quelques-uns, dont **un** porte le
-#: nom long — un seul suffit à élargir chaque colonne qui l'affiche.
+#: Les agents de la charge : l'équipe du nominal, plus quelques-uns, dont **un**
+#: porte le nom long — un seul suffit à élargir chaque colonne qui l'affiche. Les
+#: deux derniers sont des rôles qu'une équipe peut très bien porter en plus des
+#: cinq proposés : une équipe est sur mesure, elle n'a pas de taille fixe (#1042).
 _AGENTS_CHARGE: tuple[tuple[str, str], ...] = (
-    ("developpeur", "Développeur"),
-    ("bdd", "Base de données"),
-    ("devops", "DevOps"),
-    ("designer", "Designer"),
-    ("qa", "QA / Testeur"),
+    *EQUIPE_DEMO,
     (AGENT_LONG, ROLE_LONG),
     ("analyste", "Analyste"),
     ("securite", "Sécurité"),
@@ -1036,6 +1063,39 @@ async def _scenario_charge(bus: EventBus) -> None:
     print(f"[scenario] charge publiée : {CHARGE_TACHES} tâches, {CHARGE_RUNS} runs", flush=True)
 
 
+def _depot_agents_demo() -> AgentStore:
+    """Un dépôt d'agents **éphémère**, où l'équipe du projet de démo est écrite (#1042).
+
+    La démo ne peut plus compter sur cinq agents reçus d'office : un projet naît
+    sans agent, et les rôles du code sont devenus des gabarits. Elle écrit donc
+    l'équipe qu'elle montre, là où une équipe validée se range — **dans le
+    projet** (`_projets/<PROJET_ID>/`, #1038) —, avec le playbook du gabarit dont
+    chaque rôle descend, exactement ce que `#1040` écrit après une validation.
+
+    Éphémère comme le fil de chat et le dépôt de capacités : la démo n'écrit rien
+    dans `core/agents/`. La racine du dépôt reste **vide** : c'est le niveau des
+    gabarits, et y poser une fiche en ferait un gabarit, pas un membre d'équipe.
+
+    ⚠ Ces agents ne sont lisibles que si le projet `prj-demo` est **déclaré** (les
+    routes de configuration refusent un projet inconnu) — ce que fait
+    `scripts/presentation/captures.sh` via `MAESTRO_PROJETS_DIR`. Sans
+    déclaration, la démo reste ce qu'elle était : des agents que le flux
+    d'événements fait apparaître au fil du scénario.
+    """
+    depot = AgentStore(Path(tempfile.mkdtemp(prefix="maestro-agents-demo-")))
+    equipe = depot.pour_projet(PROJET_ID)
+    for gabarit in GABARITS:
+        equipe.ecrire(
+            AgentDefinition(
+                nom=gabarit.nom,
+                role=gabarit.role,
+                competences=gabarit.competences,
+                playbook=gabarit.playbook_de_repli(),
+            )
+        )
+    return depot
+
+
 def _peupler_chat_nominal(store: ChatStore) -> None:
     """Met dans le fil global **la demande qui a ouvert le run soldé**, et sa réponse (#928).
 
@@ -1216,6 +1276,10 @@ async def _servir(hote: str, port: int, scenario: str = SCENARIO_NOMINAL) -> int
         # Capacités éphémères (#86) : activer/désactiver ou régler les instances
         # depuis l'UI de démo n'écrit rien dans core/capacite/.
         capacites=CapacityStore(Path(tempfile.mkdtemp(prefix="maestro-capacite-demo-"))),
+        # L'équipe du projet de démo (#1042), écrite dans un dépôt éphémère : la
+        # démo ne suppose plus qu'un `devops` existe, elle montre l'équipe que ce
+        # projet a validée.
+        agents_store=_depot_agents_demo(),
         # Contrats d'API v2 (#183) : la démo sert les routes des Phases 5/6 en
         # données factices — la voie front code contre elles sans backend réel.
         fixtures=FixturesControlTower(),

@@ -44,7 +44,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from maestro.agents.catalog import DEFAULT_AGENTS, Agent
+from maestro.agents.catalog import GABARITS_DU_CODE, Agent
 from maestro.agents.playbook_du_code import playbook_du_code
 from maestro.agents.rangement import RangeParProjet
 from maestro.config import Settings, load_settings
@@ -113,22 +113,24 @@ class PlaybookDefaut:
     contenu: str
 
 
-#: Les playbooks par défaut, indexés par nom d'agent du catalogue : le document
+#: Les playbooks par défaut, indexés par nom de **gabarit de rôle** : le document
 #: Markdown livré avec le paquet pour chaque rôle (#295,
-#: `maestro.agents.playbook_du_code`) — les instructions effectives d'exécution du
-#: POC. C'est aussi la liste des agents que l'API accepte d'éditer.
+#: `maestro.agents.playbook_du_code`). C'est la matière que l'analyse d'équipe
+#: reprend quand la rédaction d'un playbook de projet n'aboutit pas (#1039,
+#: `Gabarit.playbook_de_repli`), et la liste des playbooks que l'API accepte
+#: d'éditer au niveau gabarit.
 #:
-#: Construit sur le **catalogue** et non sur les profils outillés : c'est ce qui
+#: Construit sur les **gabarits** et non sur les profils outillés : c'est ce qui
 #: évite la boucle d'import, chaque module de rôle prenant désormais son
 #: `prompt_systeme` à la même source. L'invariant « playbook du code = prompt
 #: système du profil » tient donc par construction, des deux côtés le même fichier.
-#: Un rôle du catalogue sans document lève à l'import — mieux qu'un playbook
-#: silencieusement absent.
+#: Un gabarit sans document lève à l'import — mieux qu'un playbook silencieusement
+#: absent.
 PLAYBOOK_DEFAUTS: dict[str, PlaybookDefaut] = {
     agent.nom: PlaybookDefaut(
         agent=agent.nom, role=agent.role, contenu=playbook_du_code(agent.nom)
     )
-    for agent in DEFAULT_AGENTS
+    for agent in GABARITS_DU_CODE
 }
 
 

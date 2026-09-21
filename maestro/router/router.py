@@ -28,6 +28,7 @@ from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 
 from maestro.agents.catalog import Agent
+from maestro.equipe.manque import competences_non_couvertes
 from maestro.orchestrator.schema import Task
 from maestro.router.classifier import TaskClassifier
 
@@ -61,6 +62,15 @@ class RoutingDecision:
     `raison` explique alors pourquoi. `methode` trace le signal qui a tranché
     (`competences`, `classifieur`, ou `repli`) et `confiance` sa certitude
     (1.0 pour une règle nette, la confiance du classifieur sinon).
+
+    `non_couvertes` (#1041) porte les compétences requises qu'**aucun candidat
+    actif** ne possède. C'est le fait brut que seul le routage constate, et il ne
+    se redéduit pas d'ailleurs : l'appelant ne connaît ni les agents que la
+    capacité a écartés, ni le catalogue du projet que le routeur a reçu pour cet
+    appel-là. Vide dans tous les cas où la question ne se pose pas — un agent
+    assigné, un ex æquo que le classifieur n'a pas tranché, un catalogue
+    entièrement désactivé (là, l'équipe a le rôle : il est éteint, pas absent).
+    C'est `maestro.equipe.manque` qui en fait un **poste** nommé.
     """
 
     task: Task
@@ -69,6 +79,7 @@ class RoutingDecision:
     confiance: float
     methode: str
     raison: str = ""
+    non_couvertes: tuple[str, ...] = ()
 
     @property
     def a_assigner(self) -> bool:
@@ -119,16 +130,29 @@ class Router:
         les agents **de ce projet**, un catalogue figé au câblage ne pouvant pas
         les connaître (ils naissent après lui, et pas dans le même dossier).
         L'ordre reste celui du catalogue reçu — c'est lui qui départage les ex
-        æquo, et il ne doit donc pas être trié ici. Une séquence **vide** vaut
-        omission : un projet sans agent propre se route sur le catalogue du
-        câblage plutôt que de partir en repli, la réponse à « un projet naît sans
-        agent » étant le lot #1042, pas une tâche qui ne part nulle part.
+        æquo, et il ne doit donc pas être trié ici.
+
+        ⚠ Une séquence **vide n'est pas une omission** (#1042). Elle l'était, et
+        un projet sans agent se routait alors sur le catalogue du câblage : c'est
+        ce qui faisait travailler les cinq rôles du code dans un projet qui n'avait
+        recruté personne. Désormais `None` seul veut dire « je n'ai pas d'équipe à
+        te donner » (tâche hors projet, dépôts non câblés) ; `()` veut dire « ce
+        projet n'a aucun agent », et la tâche part en repli « à assigner » —
+        laquelle est la réponse juste à *un projet naît sans agent* : personne ne
+        peut la prendre, et c'est un fait à montrer, pas à combler.
         """
-        catalogue = tuple(agents) if agents else self._agents
+        catalogue = self._agents if agents is None else tuple(agents)
         candidats_actifs = tuple(a for a in catalogue if a.nom not in exclus)
         if not candidats_actifs:
+            # Deux causes, et le repli les distingue : elles ne se corrigent pas du
+            # tout pareil — réactiver un agent, ou en recruter un (#1042).
             return self._repli(
-                task, raison="tous les agents du catalogue sont désactivés"
+                task,
+                raison=(
+                    "tous les agents du catalogue sont désactivés"
+                    if catalogue
+                    else "aucun agent dans ce catalogue — l'équipe reste à recruter"
+                ),
             )
         required = frozenset(task.competences_requises)
         couvertures = [(agent, agent.couverture(required)) for agent in candidats_actifs]
@@ -147,21 +171,41 @@ class Router:
         # Ambigu : ex æquo (le classifieur départage les seuls candidats à égalité)
         # ou aucun recouvrement (il choisit parmi les agents actifs, depuis le texte).
         candidats = ex_aequo if meilleur_score > 0 else candidats_actifs
-        return await self._departage(task, candidats, required)
+        # Ce que personne ne couvre (#1041), constaté sur les **candidats actifs**
+        # et non sur le catalogue : un agent désactivé ne prendra pas la tâche, et
+        # compter ses compétences comme couvertes ferait taire le signal juste au
+        # moment où il est vrai. Vide dès qu'un candidat couvre quelque chose : la
+        # tâche est alors routable, et l'ambiguïté est celle du départage.
+        non_couvertes = (
+            competences_non_couvertes(required, candidats_actifs)
+            if meilleur_score == 0
+            else ()
+        )
+        return await self._departage(task, candidats, required, non_couvertes)
 
     async def _departage(
-        self, task: Task, candidats: tuple[Agent, ...], required: frozenset[str]
+        self,
+        task: Task,
+        candidats: tuple[Agent, ...],
+        required: frozenset[str],
+        non_couvertes: tuple[str, ...] = (),
     ) -> RoutingDecision:
         """Tranche un cas ambigu au classifieur, ou replie en « à assigner »."""
         noms = ", ".join(a.nom for a in candidats)
         if self._classifier is None:
             return self._repli(
-                task, raison=f"règles de compétences non concluantes ({noms}) et aucun classifieur"
+                task,
+                raison=f"règles de compétences non concluantes ({noms}) et aucun classifieur",
+                non_couvertes=non_couvertes,
             )
         try:
             verdict = await self._classifier.classify(task, candidats)
         except Exception as exc:  # repli plutôt qu'un mauvais routage — jamais levé
-            return self._repli(task, raison=f"classifieur indisponible ({exc})")
+            return self._repli(
+                task,
+                raison=f"classifieur indisponible ({exc})",
+                non_couvertes=non_couvertes,
+            )
 
         if verdict.agent is not None and verdict.confiance >= self._seuil:
             agent = next(a for a in candidats if a.nom == verdict.agent)
@@ -179,9 +223,17 @@ class Router:
                 f"({verdict.confiance:.2f} < seuil {self._seuil:.2f})"
             ),
             confiance=verdict.confiance,
+            non_couvertes=non_couvertes,
         )
 
-    def _repli(self, task: Task, *, raison: str, confiance: float = 0.0) -> RoutingDecision:
+    def _repli(
+        self,
+        task: Task,
+        *,
+        raison: str,
+        confiance: float = 0.0,
+        non_couvertes: tuple[str, ...] = (),
+    ) -> RoutingDecision:
         """Construit la décision de repli : tâche marquée « à assigner », cause consignée."""
         return RoutingDecision(
             task=task,
@@ -190,6 +242,7 @@ class Router:
             confiance=confiance,
             methode=METHODE_REPLI,
             raison=f"à assigner : {raison} — repli explicite plutôt qu'un mauvais routage.",
+            non_couvertes=non_couvertes,
         )
 
 

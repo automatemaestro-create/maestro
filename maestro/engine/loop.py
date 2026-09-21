@@ -75,13 +75,17 @@ from time import perf_counter
 from typing import Any
 
 from maestro.agents.capacity import CapacityStore
-from maestro.agents.catalog import DEFAULT_AGENTS, Agent
+from maestro.agents.catalog import GABARITS_DU_CODE, Agent
 from maestro.agents.mcp import McpStore
 from maestro.agents.permissions import PermissionStore
 from maestro.agents.playbooks import PlaybookStore
 from maestro.agents.runtime import AgentRuntime
 from maestro.agents.secrets import SecretStore
-from maestro.agents.store import AgentStore, SurchargeStore, catalogue
+from maestro.agents.store import (
+    AgentStore,
+    catalogue_du_projet,
+    catalogue_hors_projet,
+)
 from maestro.config import Settings, load_settings
 from maestro.engine.brief import (
     MODE_BRIEF_AUTO,
@@ -97,6 +101,8 @@ from maestro.engine.brief import (
     tours_clarification_valide,
 )
 from maestro.engine.executor import (
+    ACTEUR_ORCHESTRATEUR,
+    ROLE_ORCHESTRATEUR,
     STATUT_BLOQUEE,
     STATUT_ECHEC,
     STATUT_TERMINEE,
@@ -377,7 +383,9 @@ class OrchestrationEngine:
         provider: ModelProvider,
         orchestrator: Orchestrator,
         *,
-        agents: Sequence[Agent] = DEFAULT_AGENTS,
+        # Le catalogue du **câblage**, hors projet (cf. `LocalExecutor`) : les
+        # gabarits du code par défaut, jamais ce qu'un projet reçoit (#1042).
+        agents: Sequence[Agent] = GABARITS_DU_CODE,
         runtimes: Mapping[str, AgentRuntime] | None = None,
         max_parallele: int | None = None,
         guardrails: Guardrails | None = None,
@@ -391,7 +399,6 @@ class OrchestrationEngine:
         relance: PolitiqueRelance | None = None,
         projets: ProjetStore | None = None,
         agents_store: AgentStore | None = None,
-        surcharges: SurchargeStore | None = None,
         modele: str | None = None,
         arbitre_brief: ArbitreBrief | None = None,
         arbitre_clarification: ArbitreClarification | None = None,
@@ -402,6 +409,15 @@ class OrchestrationEngine:
         if max_parallele is not None and max_parallele < 1:
             raise ValueError(f"max_parallele doit être ≥ 1 (reçu : {max_parallele}).")
         self._orchestrator = orchestrator
+        # L'équipe **du projet** pour la décomposition (#1041) : les mêmes entrées
+        # que l'exécuteur reçoit pour le routage, retenues ici parce que la
+        # planification arrive **avant** lui et doit découper sur la même équipe.
+        # `agents` reste le catalogue du câblage — ce qui vaut hors projet, et le
+        # repli quand le dépôt n'est pas branché. Le dépôt de **surcharges** n'y
+        # est plus (#1042) : une surcharge règle un gabarit, pas une équipe.
+        self._agents = tuple(agents)
+        self._agents_store = agents_store
+        self._modele = modele
         # À qui poser les questions du brief (#321) — None : personne, et les
         # questions partent alors telles quelles en validation (le comportement de
         # #320). Même nature que `arbitre_brief` : du câblage de déploiement.
@@ -456,12 +472,11 @@ class OrchestrationEngine:
                 permissions=permissions,
                 relance=relance,
                 projets=projets,
-                # Les agents **du projet de la tâche** (#1038) : ces deux dépôts
-                # descendent pour la même raison que les quatre au-dessus — un
-                # agent recruté pour un projet naît après le câblage, et le
-                # catalogue figé du routeur ne peut pas le connaître.
+                # Les agents **du projet de la tâche** (#1038) : ce dépôt descend
+                # pour la même raison que les quatre au-dessus — un agent recruté
+                # pour un projet naît après le câblage, et le catalogue figé du
+                # routeur ne peut pas le connaître.
                 agents_store=agents_store,
-                surcharges=surcharges,
                 modele=modele,
                 mailbox=mailbox,
                 # La question libre d'un agent (#1023) descend jusqu'à
@@ -570,11 +585,12 @@ class OrchestrationEngine:
         provider = provider_from_settings(settings)
         orchestrator = Orchestrator(provider, model=default_model(settings))
         agents_store = AgentStore.default(settings)
-        surcharges = SurchargeStore.default(settings)
         return cls(
             provider,
             orchestrator,
-            agents=catalogue(agents_store, settings.model, surcharges=surcharges),
+            # Le catalogue du câblage : ce moteur route hors projet avec lui, et
+            # relit l'équipe du projet de chaque tâche qui en a un (#1038, #1042).
+            agents=catalogue_hors_projet(agents_store, modele=settings.model),
             guardrails=guardrails,
             mailbox=mailbox,
             playbooks=PlaybookStore.default(settings),
@@ -584,7 +600,6 @@ class OrchestrationEngine:
             permissions=PermissionStore.default(settings),
             projets=ProjetStore.default(settings),
             agents_store=agents_store,
-            surcharges=surcharges,
             modele=settings.model,
             relance=relance,
             max_parallele=max_parallele,
@@ -915,17 +930,26 @@ class OrchestrationEngine:
         démarrages, donnerait à lire une découverte progressive d'un ordre qui a
         été décidé une fois pour toutes. Un plan **en échec** n'en porte aucun :
         il n'y a pas de graphe à dessiner.
+
+        Le découpage se fait sur l'**équipe du projet** (#1041) : les rôles et les
+        compétences transmis à l'orchestrateur sont ceux des agents de `projet_id`
+        — les mêmes fiches que le routage lira tâche par tâche
+        (`LocalExecutor._equipe`), par la même règle
+        (`maestro.agents.store.catalogue_du_projet`). C'est ce qui fait qu'un tag
+        proposé au découpage est un tag que quelqu'un sait prendre.
         """
         debut = perf_counter()
         with collect_usage() as recolte:
             try:
-                tasks = await self._orchestrator.plan(objective)
+                tasks = await self._orchestrator.plan(
+                    objective, equipe=self._equipe(projet_id)
+                )
             except Exception as exc:
                 journal.consigne(
                     etape="planification",
                     nom="Planification de l'objectif",
-                    agent="orchestrateur",
-                    role="Orchestrateur",
+                    agent=ACTEUR_ORCHESTRATEUR,
+                    role=ROLE_ORCHESTRATEUR,
                     statut=STATUT_ECHEC,
                     entree=objective,
                     sortie="",
@@ -938,8 +962,8 @@ class OrchestrationEngine:
         journal.consigne(
             etape="planification",
             nom="Planification de l'objectif",
-            agent="orchestrateur",
-            role="Orchestrateur",
+            agent=ACTEUR_ORCHESTRATEUR,
+            role=ROLE_ORCHESTRATEUR,
             statut=STATUT_TERMINEE,
             entree=objective,
             sortie=f"{len(tasks)} tâche(s) planifiée(s)",
@@ -948,6 +972,29 @@ class OrchestrationEngine:
             plan=noeuds_du_plan(tasks),
         )
         return usage, tasks
+
+    def _equipe(self, projet_id: str | None) -> tuple[Agent, ...]:
+        """L'équipe sur laquelle découper — celle du projet, sinon celle du câblage.
+
+        Une seule règle pour deux lecteurs (#1041) : la même que l'exécuteur
+        applique tâche par tâche, appelée ici une fois par run parce qu'un plan se
+        découpe une fois. Le repli est **le catalogue du câblage** et non une
+        liste vide : `prompt_orchestrateur` retomberait sinon sur les gabarits du
+        code en ignorant les agents personnalisés que ce moteur a chargés au
+        démarrage (#72).
+
+        ⚠ Le repli couvre donc aussi l'**équipe vide** que #1042 a rendue
+        possible, et c'est voulu : découper sur zéro rôle ne donnerait pas un
+        meilleur plan qu'en découper un sur les rôles du code. Ce n'est pas un
+        contournement du « projet sans agent » — le routage, lui, distingue bien
+        les deux (`LocalExecutor._equipe`), et toutes les tâches d'un projet sans
+        équipe finissent « à assigner ». Ici on choisit selon quoi *découper*, là
+        on choisit *qui prend*.
+        """
+        return (
+            catalogue_du_projet(self._agents_store, projet_id, self._modele)
+            or self._agents
+        )
 
     async def etape_brief(
         self,
@@ -995,8 +1042,8 @@ class OrchestrationEngine:
                 journal.consigne(
                     etape=ETAPE_BRIEF,
                     nom=f"Brief de l'objectif{rang}",
-                    agent="orchestrateur",
-                    role="Orchestrateur",
+                    agent=ACTEUR_ORCHESTRATEUR,
+                    role=ROLE_ORCHESTRATEUR,
                     statut=STATUT_ECHEC,
                     entree=objectif,
                     sortie="",
@@ -1009,8 +1056,8 @@ class OrchestrationEngine:
         journal.consigne(
             etape=ETAPE_BRIEF,
             nom=f"Brief de l'objectif{rang}",
-            agent="orchestrateur",
-            role="Orchestrateur",
+            agent=ACTEUR_ORCHESTRATEUR,
+            role=ROLE_ORCHESTRATEUR,
             statut=STATUT_TERMINEE,
             entree=objectif,
             sortie=(

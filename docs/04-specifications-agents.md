@@ -142,21 +142,47 @@ Un même agent s'exécute de deux façons, et les deux doivent porter le même m
 
 ---
 
-## 2. Catalogue des agents par défaut
+## 2. Catalogue des gabarits de rôle
 
-> ⚠ **Ce catalogue cesse d'être instancié d'office** (2026-09-19, [docs/37 §2.1](./37-decision-equipe-sur-mesure.md)).
-> Un projet naît **sans agent**. L'analyse du projet propose son équipe, que l'utilisateur valide, et
-> les agents ci-dessous deviennent des **gabarits de rôle** qu'elle consulte (#1021, #1042). Ce
-> tableau décrit l'état présent : #1043 le réécrira.
+Ce que le paquet **livre** n'est pas une équipe : c'est la matière dont une équipe se propose. La
+demande du 2026-09-19 ([docs/37 §2.1](./37-decision-equipe-sur-mesure.md)) a renversé la décision
+d'origine — cinq agents définis dans le code, reçus d'office par tout poste, tout projet, toute
+exécution. **Un projet naît sans agent** : `catalogue()` ne rend que les agents de son dépôt, son
+analyse lui propose une équipe, l'utilisateur la valide, et c'est cette validation qui écrit les
+fiches (#1021, chantier livré par #1037 à #1042).
 
-| Agent | Rôle | Compétences (tags) | Modèle conseillé (défaut POC — Claude) |
-|-------|------|--------------------|------------------|
-| 🧭 Chef de projet | Orchestration, découpage, priorisation | `planning`, `routing`, `synthesis` | Opus |
-| 💻 Développeur | Code applicatif | `backend`, `frontend`, `api`, `refactor` | Sonnet |
-| 🗄️ Base de données | Schéma, migrations, requêtes | `sql`, `schema`, `migration`, `data` | Sonnet |
-| ⚙️ DevOps | CI/CD, infra, déploiement | `ci-cd`, `infra`, `deploy`, `docker` | Sonnet |
-| 🎨 Designer | UI/UX, maquettes, design system | `ui`, `ux`, `design-system`, `figma` | Sonnet |
-| 🧪 QA / Testeur | Tests, validation, revue | `tests`, `e2e`, `review`, `qa` | Sonnet (ou Haiku pour checks simples) |
+Les cinq lignes ci-dessous sont donc des **gabarits** (`GABARITS_DU_CODE`) : l'analyse d'équipe les
+consulte (`maestro.equipe.gabarits`), personne ne les instancie. Leurs playbooks « senior » ne sont pas jetés
+— ils servent de **repli** au rôle proposé tant que la rédaction pour ce projet-là n'a pas abouti,
+et la proposition dit toujours laquelle des deux origines elle porte.
+
+| Gabarit | Rôle | Compétences (tags) | Modèle conseillé (défaut POC — Claude) | Rôle proposé |
+|-------|------|--------------------|------------------|------|
+| 💻 Développeur | Code applicatif | `backend`, `frontend`, `api`, `refactor` | Sonnet | `dev` — toujours proposé, et le seul qui se démultiplie (une instance par langage substantiel, plafond 3) |
+| 🗄️ Base de données | Schéma, migrations, requêtes | `sql`, `schema`, `migration`, `data` | Sonnet | `donnees` — du SQL constaté |
+| ⚙️ DevOps | CI/CD, infra, déploiement | `ci-cd`, `infra`, `deploy`, `docker` | Sonnet | `infra` — une CI, une construction ou une forge |
+| 🎨 Designer | UI/UX, maquettes, design system | `ui`, `ux`, `design-system`, `figma` | Sonnet | `interface` — un langage d'écran, ou une nature déclarée |
+| 🧪 QA / Testeur | Tests, validation, revue | `tests`, `e2e`, `review`, `qa` | Sonnet (ou Haiku pour checks simples) | `tests` — une commande de test, de style, de format ou de types |
+
+Le **Chef de projet** (`planning`, `routing`, `synthesis` — Opus) n'y figure plus, et ce n'est pas un
+oubli : il n'exécute aucune tâche, il les découpe (§3.1), et il n'est **jamais** un membre de
+l'équipe — c'est Maestro, et c'est lui qui recrute (docs/37 §4.2). Chaque proposition l'écarte
+**nommément**, avec sa raison : l'écarter en silence laisserait croire qu'aucun projet n'en a.
+
+> ⚠ **Le rôle proposé ne porte jamais le nom de son gabarit**, et c'est une décision de sûreté : le
+> paquet livre un document de playbook sous chacun de ces cinq noms, et il est servi **à la place**
+> du playbook de la fiche pour tout agent qui en porte un (`playbook_outille`). Un rôle de projet
+> nommé `developpeur` partirait donc en exécution avec le playbook du code, et le texte écrit pour ce
+> projet-là n'atteindrait jamais le modèle — en silence. Les cinq noms restent **réservés** pour
+> cette raison (`NOMS_RESERVES`), et la filiation se lit dans le champ `gabarit` du rôle.
+
+**Ce qu'un projet reçoit, et où.** Un agent validé est écrit dans le projet — fiche, playbook,
+autorisations, capacité —, jamais au niveau des gabarits, qui n'appartiennent à personne
+([docs/05 §2.0](./05-interface-control-tower.md)). Hors de tout projet, un moteur travaille encore
+avec les gabarits — c'est son repli de câblage (`catalogue_hors_projet`) : `maestro-run` et
+`maestro-demo` n'ont pas de projet et n'en ont jamais eu. Ce n'est pas une exception au principe,
+c'en est le complément — il n'y a pas d'équipe où chercher. Dans un projet, en revanche, il y en a
+une : une équipe **vide** y laisse la tâche « à assigner » plutôt que de retomber ici.
 
 > **Le fournisseur est configurable par agent** (voir §4 et [stack §2](./02-stack-technique.md)). Les modèles ci-dessus sont le **défaut Claude du POC** ; on peut affecter à chaque agent un autre fournisseur/modèle (OpenAI, Google, ouvert/local) **sans changer son rôle ni son playbook** — c'est l'objet de la couche d'abstraction.
 
@@ -249,10 +275,17 @@ Depuis la Control Tower, l'utilisateur peut créer un agent en définissant :
 **Disponible au POC** (EF-03, tickets #70/#72/#73) : la définition — nom, rôle,
 compétences, playbook (qui sert de prompt système d'exécution), fournisseur/modèle —
 se crée depuis la page `/catalogue` de la Control Tower ou l'API `/api/catalogue`,
-et se **persiste hors du code** (`core/agents/<nom>.json`, racine remplaçable par
-`MAESTRO_AGENTS_DIR`). Le catalogue effectif d'une exécution assemble les agents par
-défaut du code puis les personnalisés : un agent créé est **routable et exécutable**
-par les moteurs construits ensuite ([guide de démarrage §6.3](./07-guide-de-demarrage.md)).
+et se **persiste hors du code** — `core/agents/_projets/<projet_id>/<nom>.json` depuis
+#1038, la racine (`MAESTRO_AGENTS_DIR`) étant devenue le niveau des **gabarits**. Un
+agent créé est **routable et exécutable** par les moteurs construits ensuite
+([guide de démarrage §6.3](./07-guide-de-demarrage.md)), et dans **son** projet : le
+catalogue effectif d'une exécution est celui de l'équipe du projet de la tâche
+(`catalogue_du_projet`), jamais celui d'un autre.
+
+⚠ **Créer un agent à la main n'est plus le chemin nominal** : sur un projet neuf, c'est
+l'**analyse qui propose l'équipe** et l'utilisateur qui la valide (#1039, #1040 —
+[docs/05 §6.19](./05-interface-control-tower.md)). Ce formulaire reste ce par quoi on
+ajoute un rôle qu'aucun constat ne désignait, ou qu'on ajuste une fiche après coup.
 Depuis **#1037**, un agent défini par sa fiche **travaille avec des outils**, par le
 même chemin que les rôles du code : l'exécuteur ne cherche plus son runtime dans une
 table de cinq noms, il le **dérive de la fiche** de l'agent routé

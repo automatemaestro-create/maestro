@@ -43,6 +43,7 @@ from maestro.controltower import (
     demo,
 )
 from maestro.controltower.journal import TAILLE_PAGE_MAX
+from maestro.equipe.gabarits import GABARITS
 from maestro.orchestrator.errors import TaskValidationError
 from maestro.orchestrator.schema import validate_plan, validate_task
 
@@ -336,7 +337,9 @@ def test_registre_de_configuration(client):
 
 def test_propositions_de_playbook_globales(client):
     propositions = client.get("/api/playbooks/propositions").json()
-    assert {p["agent"] for p in propositions} == {"qa", "developpeur"}
+    # Deux rôles de l'équipe de démo (#1042) : les fixtures ne nomment plus des
+    # agents du code, qui n'existent dans aucun projet.
+    assert {p["agent"] for p in propositions} == {GABARITS[0].nom, GABARITS[-1].nom}
     # Chaque proposition porte le role de son agent (affichable sans le catalogue).
     assert all(p["role"] and p["provenance"] == "proposition" for p in propositions)
 

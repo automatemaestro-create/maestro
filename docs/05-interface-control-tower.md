@@ -237,13 +237,29 @@ un projet Python et un projet mobile porterait les skills et les autorisations d
 | ce qui est désormais cadré | où c'est rangé | ce qui reste au niveau du poste |
 | --- | --- | --- |
 | `GET /api/agents` — le parc | la vue rend l'**équipe du projet actif** (`?projet=<id>`). ⚠ Elle rend les **exécutants**, jamais l'orchestration (#1028, §2.5.0) : elle dépense et on lui parle, mais elle n'exécute rien | les **compteurs** d'un agent (occupé, coût cumulé) restent ceux que la projection a vus : le cadre porte sur l'appartenance, pas sur l'activité — « qu'a-t-il fait **ici** ? » se lit sur les tâches |
-| le **catalogue** d'agents et les **playbooks** | `core/agents/_projets/<id>/`, `core/playbooks/_projets/<id>/` | la racine de chaque dépôt devient le niveau des **gabarits de rôle** : ce que l'analyse d'équipe consultera (#1039), jamais instancié d'office (#1042) |
+| le **catalogue** d'agents et les **playbooks** | `core/agents/_projets/<id>/`, `core/playbooks/_projets/<id>/` | la racine de chaque dépôt est le niveau des **gabarits de rôle** : ce que l'analyse d'équipe consulte (#1039) et que plus rien n'instancie d'office (#1042 — le catalogue effectif d'un projet est celui de son équipe, vide tant qu'elle n'existe pas) |
 | les **autorisations** et la **capacité** (instances) | `core/permissions/_projets/<id>/`, `core/capacite/_projets/<id>/` | idem — et ce que le projet ne règle pas, il l'**hérite** du gabarit : sans ce repli, ranger les autorisations par projet ferait d'un projet neuf un projet « tout permis » |
 | le **pool** d'intégrations MCP et les **activations** par agent | `core/mcp/_projets/<id>/` | le mot « pool **projet** » (#130) devient exact : c'était jusqu'ici un stockage unique (`core/mcp/pool.json`) |
 
-**Ce que ce cadre ne décide pas encore** : *quel* agent de l'équipe prend *quelle* tâche. Le routage
-sur l'équipe d'un projet est le lot #1041 ; #1038 garantit seulement que les agents d'un projet sont
-**candidats** — un agent recruté pour un projet recevrait sinon des tâches de nulle part.
+**Le travail se répartit sur cette équipe-là** (#1041). #1038 rendait les agents d'un projet
+**candidats** ; le routage les choisit désormais pour de bon, et par **une seule règle**
+(`catalogue_du_projet`) que ses deux lecteurs partagent : l'exécuteur, qui route tâche par tâche, et
+la boucle, qui fait découper l'objectif — un plan proposé sur une équipe et exécuté sur une autre
+enverrait toutes ses tâches en repli « à assigner » sans que rien ne le dise. Le catalogue du
+routeur est **remplacé pour l'appel** et jamais retrié : c'est l'ordre reçu qui départage les ex
+æquo. Et un projet qui n'a encore recruté personne **ne retombe pas** sur les gabarits (#1042) :
+`None` dit « je n'ai pas d'équipe à te donner » (tâche hors projet, dépôts non câblés, dépôt
+illisible — un incident de stockage ne doit pas faire partir toutes les tâches en repli), `()` dit
+« ce projet n'a personne », et la tâche attend alors quelqu'un.
+
+Et **ce que personne ne couvre est nommé**. Une tâche qu'aucun rôle de l'équipe ne sait prendre
+reste « à assigner », mais l'écran ne s'en tient pas là : le manque part au fil comme un blocage
+(`tache.blocage`, statut `role_manquant`, §6.13) avec le **poste** qui y répondrait — le gabarit qui
+couvre le plus des compétences non couvertes, ou les compétences telles quelles si aucun ne les
+couvre. *Un rôle fabriqué se lirait comme un rôle existant.* ⚠ **Un agent ne recrute pas pendant un
+run** ([docs/37 §3.5](./37-decision-equipe-sur-mesure.md)) : le signal le dit en toutes lettres,
+sans quoi le lecteur d'un run en cours croirait que Maestro va s'en charger et la tâche resterait là
+sans que personne bouge.
 
 **Reprise sans perte.** Un poste installé avant ce lot voit ses agents et réglages globaux rattachés
 au projet qui les utilise, au démarrage de l'API : idempotente, elle ne supprime jamais rien et dit
@@ -802,8 +818,15 @@ garde donc son décompte dérivé des tâches, et cesse simplement de nommer le 
 
 ⚠ **Ce que le cadre ne décide pas encore** : quel agent de l'équipe prend quelle tâche. Ce routage
 est le lot #1041 ; #1038 garantit que les agents d'un projet sont **candidats**, et que les cinq
-réglages que l'écran édite sont ceux que l'exécution lira. Et un projet **naît** encore avec les
-agents du code — les en retirer pour n'en faire que des gabarits de rôle est le lot #1042.
+réglages que l'écran édite sont ceux que l'exécution lira.
+
+✅ **Un projet naît sans agent** depuis #1042 : les cinq fiches du code ne sont plus au catalogue
+effectif, ce sont des **gabarits de rôle** (`GABARITS_DU_CODE`) que l'analyse d'équipe consulte et
+que personne n'instancie. `GET /api/catalogue?projet=<id>` et `GET /api/agents?projet=<id>` rendent
+donc une liste **vide** sur un projet qu'on vient de créer ou d'importer, et une tâche de ce projet
+reste « à assigner » tant que son équipe n'a pas été validée (#1040) — un fait à montrer, pas à
+combler. Les gabarits, eux, se lisent et se règlent au niveau gabarit (`/api/catalogue` sans
+`?projet=`), où leur playbook reste éditable.
 
 #### 2.3.1 Fournisseur, modèle, effort — une chaîne, pas trois champs (#253, #255)
 
@@ -1926,6 +1949,15 @@ non l'un d'eux. L'écran reste servi à `/projets` et s'atteint depuis le sélec
 n'a pas changé : déclarer *où* Maestro travaille n'est pas un réglage du poste — ce n'est toujours
 pas une section des Paramètres.
 
+⚠ **Ce que #1022 a précisé, sans renverser la phrase ci-dessus.** La **liste des projets déclarés**
+reste l'écran Projets et n'ira jamais aux Paramètres. Le **répertoire des projets** — *où naît un
+projet neuf*, un dossier par défaut commun à tous — est une autre question, et celle-là est bien un
+réglage de cette installation-ci : il ne dit rien d'un projet déclaré, il dit dans quel dossier le
+**prochain** sera créé. Il vit donc dans une section « Projets » des Paramètres, sous la famille
+« Le poste », et le formulaire de déclaration s'en sert pour **remplir d'office** le dossier parent
+d'un projet neuf. La ligne de partage : ce qui décrit un projet est sur l'écran Projets, ce qui
+décrit ce poste-ci est dans les Paramètres.
+
 **Ce que la liste montre**, une carte par projet : le **nom**, la **racine** canonicalisée telle que
 le backend l'a enregistrée, l'**origine** (« Dossier existant » / « Nouveau dossier »), le **VCS
 constaté** (`git · <branche>`, ou « Non versionné » — jamais tu, puisque c'est lui qui décide du
@@ -1946,6 +1978,27 @@ visé n'existe pas encore — origine « nouveau » — se résout **sans except
 **parent** vient de l'explorateur et l'utilisateur ne saisit qu'un **nom de dossier**, refusé s'il
 contient un séparateur. Le §2.7.2 ajoute deux raccourcis vers un dossier lointain, sans changer
 qui valide quoi.
+
+**Ce parent est rempli d'office** depuis #1022, par le **répertoire des projets** (`GET
+/api/projets/repertoire`, §6.7) — et *prérempli* ne veut pas dire *saisissable* : la règle ne bouge
+pas, le parent reste du texte et un bouton. Trois choses tiennent ce préremplissage, et la forme
+retenue l'a été **sur pièces**, trois variantes rendues et jugées par un regard neuf contre les
+produits comparables capturés par la veille du ticket :
+
+- **l'écran dit d'où vient la valeur**, sur une ligne de second plan sous le choix — *« Votre
+  répertoire des projets, réglé dans les Paramètres. En choisir un autre ici ne vaut que pour ce
+  projet. »* C'est le manque commun aux trois références (IntelliJ, GitHub Desktop, Unity Hub) :
+  aucune ne dit *pourquoi ce chemin-là*. Une variante muette et une variante à deux boutons radio
+  ont été écartées — la première laisse sans réponse la moitié « sans rien casser ailleurs » de la
+  question, la seconde empile un second groupe de radios sous « Origine » et aplatit la hiérarchie
+  du formulaire ;
+- **en changer ici ne règle rien.** Le formulaire ne fait que *lire* le réglage ; le poser est un
+  geste des Paramètres. Un dossier choisi à la main fait passer la ligne à « Hors de votre
+  répertoire des projets », avec le **retour** qui va avec — un choix qu'on ne peut pas défaire n'en
+  est pas un ;
+- **l'import d'un projet existant ne reçoit rien.** Le réglage dit où un projet **naît** ; un projet
+  déjà là se parcourt. Ce que le réglage avait posé se retire au retour sur « Dossier existant »,
+  ce que l'utilisateur a choisi ne bouge jamais.
 
 **Mettre sous Git** (#855) — sur une carte « Non versionné », et sur elle seule, un bouton
 **« Mettre sous Git »** qui s'arme **en deux temps**, comme la suppression : le premier clic ouvre
@@ -4373,6 +4426,19 @@ comportement réel.
   panne.
 - `POST /api/projets/selecteur` → `ChoixSelecteur` (#278) — ouvre ce dialogue et rend le chemin
   choisi, confronté à EF-38. Corps facultatif `{ "depart": "D:/projets" }`.
+- `GET /api/projets/repertoire` → `RepertoireProjets` (#1022) — le **répertoire des projets** : où
+  naît un projet neuf. **Toujours 200** : un répertoire devenu indéclarable revient avec son
+  `refus`, parce qu'un disque débranché n'empêche pas de déclarer un projet ailleurs. ⚠ **Cette
+  lecture crée le dossier s'il manque**, et le dit (`cree`) — c'est le « créé à la première
+  utilisation » du ticket, la première utilisation étant la première fois qu'on demande *où naît un
+  projet neuf*. Rendre un chemin qui n'existe pas serait pire : le bouton « Changer de dossier… »
+  s'ouvre dessus, et l'explorateur le refuserait (`dossier-absent`).
+- `PUT /api/projets/repertoire` → `RepertoireProjets` (#1022) — pose ce répertoire. Corps
+  `{ "chemin": "D:/projets" }`, ou `{ "chemin": null }` pour **revenir au défaut** — ce qui n'est
+  pas « plus de répertoire » mais « celui que Maestro propose ». Le dossier est **validé et créé**
+  avant d'être stocké : un réglage posé est toujours déclarable, jamais une intention qui échouerait
+  plus tard et ailleurs. Refus motivé (422/403/404) — et **rien n'est écrit**, le réglage précédent
+  reste en place.
 
 Le `vcs` n'est **jamais** un champ de requête : il est constaté sur le disque à chaque écriture.
 Un client qui l'annoncerait pourrait mentir, et c'est lui qui décide du patron d'écriture de
@@ -4432,13 +4498,24 @@ Un client qui l'annoncerait pourrait mentir, et c'est lui qui décide du patron 
   "racine_valide": false,           // le chemin est lisible, mais pas déclarable tel quel
   "refus": { "motif": "racine-de-disque", "message": "…" }   // null quand racine_valide
 }
+
+// RepertoireProjets (réponse de GET et PUT /api/projets/repertoire) — #1022
+{
+  "chemin": "C:/Users/moi/Maestro", // le répertoire courant, résolu
+  "par_defaut": true,               // aucun réglage posé : c'est « Maestro » sous le dossier personnel
+  "existe": true,
+  "cree": false,                    // true : CET appel vient de le créer — jamais en silence
+  "refus": null                     // motivé quand le répertoire réglé n'est plus déclarable
+}
 ```
 
 **La frontière et les points d'entrée sont deux choses** (#278). `racines` dit ce qu'on a le
 **droit** d'énumérer ; la page d'entrée (`GET /api/projets/explorateur` sans `chemin`) dit par où
 **commencer**. Elles ont divergé quand la frontière s'est élargie aux **volumes du poste** : elle
 dédoublonne par contenance, donc elle se réduirait à `C:/` (ou `/`), et il faudrait redescendre
-tout l'arbre à chaque fois. Chaque point d'entrée porte son `origine` — `utilisateur`, `recent`
+tout l'arbre à chaque fois. Chaque point d'entrée porte son `origine` — `repertoire` (le répertoire
+des projets, #1022 : le premier endroit à regarder, puisque c'est celui d'où l'on vient),
+`utilisateur`, `recent`
 (le **parent** d'un projet récemment déclaré : là où l'on range ses dépôts), `projet`, `volume`,
 `configuree` — et reste **dans** la frontière : un point qui refuserait au clic serait pire que
 son absence. C'est aussi ce qui garde `MAESTRO_EXPLORATEUR_RACINES` **restrictif** — les volumes
@@ -5690,7 +5767,133 @@ qui se dit, et le 404 de la route — et par `apps/web/tests/decisions-run.test.
 une ligne par décision dans l'ordre servi, l'hypothèse marquée par **une forme et un mot**, et les
 trois états d'une liste vide (chargement, échec de lecture, run qui n'a rien tranché seul).
 
-### 6.19 L'outillage d'un projet — l'analyser, le choisir, l'écrire (#1020) — **livré**
+### 6.19 L'équipe d'un projet — proposée, puis créée (#1039, #1040) — **livré**
+
+Deux routes, et **tout** les sépare : la première ne crée rien, la seconde crée tout. C'est le cœur
+du chantier « équipe sur mesure » ([docs/37](./37-decision-equipe-sur-mesure.md)) — *un projet naît
+sans agent, son analyse lui propose une équipe, l'utilisateur la valide*.
+
+- `POST /api/projets/{id}/equipe/proposition` → `PropositionEquipe`. Corps **vide** : le projet est
+  **analysé** (#1030) — le cas d'un projet existant. Corps portant les `choix` du questionnaire
+  d'outillage (#1031) : l'équipe se dérive de ces **réponses**, sans qu'aucun fichier soit ouvert —
+  le cas d'un projet neuf. Même dérivation dans les deux cas, et `source` dit laquelle a servi.
+- `POST /api/projets/{id}/equipe` → `EquipeCreee`, **201**. Le corps rapporte la proposition **telle
+  que l'API l'a servie**, rôles retirés ou instances ajustées.
+
+`404` si le projet est inconnu, `422` motivé s'il est illisible, si sa racine ne l'est plus, ou si
+l'équipe est refusée — jamais un `500`.
+
+```jsonc
+// PropositionEquipe — POST …/equipe/proposition
+{
+  "proposition": 1,                    // VERSION de la forme : un consommateur doit
+                                       // pouvoir dire « je ne sais pas lire ça »
+  "id": "equ-9f3a21bc", "projet_id": "prj-depensio",
+  "faite_le": "2026-09-21T10:12:44+00:00",
+  "resume": "Développeur ×2, QA / Testeur — 2 rôle(s), 3 instance(s) ; 4 rôle(s) écarté(s)",
+  "source": { "origine": "analyse", "analyse_id": "ana-4c21" },  // repris tel quel
+  "roles": [
+    { "nom": "dev",                    // le slug de la FICHE qui sera créée…
+      "role": "Développeur",
+      "gabarit": "developpeur",        // …jamais celui du gabarit : le playbook du
+                                       // code le masquerait (docs/04 §2)
+      "competences": ["api", "backend", "frontend", "refactor"],
+      "raison": "le projet est écrit en Python (62 % des fichiers de code vus) : …",
+      // L'ENDROIT du projet qui le justifie — le fichier lu, pas une phrase. `null`
+      // quand rien ne le désigne (un projet sans code garde un développeur).
+      "justification": { "nom": "Python", "chemin": "src/app.py", "role": "48 fichier(s) Python" },
+      "instances": 2,
+      "raison_instances": "2 langages substantiels (Python 62 %, TypeScript 31 %) : …",
+      "outils": ["Read", "Write", "Edit", "Glob", "Grep", "Bash", "TodoWrite"],
+      "playbook": "…",                 // celui qu'on lit à l'écran, et qui sera écrit
+      "playbook_origine": "genere",    // "genere" (écrit pour CE projet, #257) ou
+                                       // "gabarit" (la rédaction n'a pas abouti) :
+                                       // les deux ne valent pas la même chose
+      "playbook_raison": "…", "intention": "Un agent « Développeur » pour un projet …",
+      "skills": [ { "nom": "mettre-en-route", "chemin": ".agents/skills/mettre-en-route/SKILL.md",
+                    "etat": "a-generer",   // un skill que l'outillage n'a pas encore
+                                           // écrit n'est pas une erreur, c'est un
+                                           // ordre de marche
+                    "raison": "il installe les dépendances avant d'écrire la première ligne",
+                    "commandes": ["pip install -e ."] } ],
+      // CHAQUE autorisation avec SA raison — le critère de #716. `decideur` n'a de
+      // sens que sur `ask`, et l'absence y vaut `humain` : un cran non précisé
+      // escalade, il ne s'auto-approuve pas.
+      "autorisations": [
+        { "outil": "Bash", "cran": "ask", "decideur": "auto",
+          "raison": "les commandes de ce rôle sont écrites dans le projet et l'analyse les y a lues (Makefile (test:)). Le cran « auto » les laisse passer **en les traçant** … ⚠ Il ne les borne pas à celles-là : un cran porte sur un outil, pas sur ses arguments" }
+      ],
+      // Les MÊMES autorisations, sous la forme que la création persistera. Seul
+      // chemin de cette traduction : une seconde finirait par ne plus dire la même
+      // chose que ce qu'on a montré. `allow` VIDE = ouverte, et c'est voulu — la
+      // fermer refuserait les canaux in-process de Maestro (poser une question,
+      // consigner une décision) et rendrait l'agent muet.
+      "politique": { "allow": [], "ask": { "Bash": "auto" }, "deny": [] } }
+  ],
+  // Ce qui n'est PAS proposé, avec sa raison : sans cette liste, « pas de rôle base
+  // de données » se lirait comme un oubli de Maestro plutôt que comme un fait du
+  // projet. L'orchestrateur y figure PAR DÉCISION (docs/37 §4.2).
+  "ecartes": [
+    { "nom": "orchestrateur", "role": "Orchestrateur",
+      "raison": "l'orchestrateur n'est pas un membre de l'équipe : c'est Maestro, …" },
+    { "nom": "donnees", "role": "Base de données",
+      "raison": "rien dans les bornes de l'analyse ne justifie un rôle « Base de données » : aucun fichier SQL n'a été vu, … Vous pouvez l'ajouter à la validation si le projet en a besoin" }
+  ],
+  "instances_total": 3,
+  // LES DEUX PROMESSES DU TICKET, rendues lisibles par l'appelant — pas des
+  // réglages : aucun appel ne peut les changer.
+  "cree": false, "validation": "requise"
+}
+```
+
+```jsonc
+// EquipeCreee — POST …/equipe (201)
+{
+  "projet_id": "prj-depensio",
+  "proposition_id": "equ-9f3a21bc",   // de quoi cette équipe est née
+  "cree": true,                       // le pendant du `cree: false` ci-dessus
+  "agents": [
+    { "nom": "dev", "role": "Développeur", "instances": 2, "gabarit": "developpeur",
+      "skills": ["mettre-en-route"],
+      "politique": { "allow": [], "ask": { "Bash": "auto" }, "deny": [] } }
+  ],
+  "instances_total": 2
+}
+```
+
+**Tout ou rien.** L'équipe entière est vérifiée **avant** que le premier fichier ne soit écrit — nom
+déjà pris dans ce projet ou réservé (les cinq gabarits, l'orchestrateur, l'assistant), doublon dans
+la liste, instances hors bornes (1 à 20), playbook vide, fiche ou politique que les dépôts
+refuseraient. Un seul blocage rend un `422 equipe-refusee` qui les nomme **tous**, et rien n'a été
+créé : sans transaction de système de fichiers, une demi-équipe serait pire qu'un refus. Et les
+nommer tous d'un coup évite de corriger une équipe de cinq rôles un refus à la fois.
+
+```jsonc
+// 422 — { "detail": { … } }
+{ "motif": "equipe-refusee",
+  "message": "équipe refusée, aucun agent créé — developpeur : « developpeur » est déjà pris …",
+  "refus": [ { "nom": "developpeur", "raison": "…" } ] }
+```
+
+⚠ **Une équipe vide n'est pas une équipe** : `422 equipe-vide`. *Ne pas recruter se dit en ne
+validant pas l'équipe, pas en validant une équipe vide.*
+
+**Ce qui est écrit, et où** : trois dépôts **du projet** (#1038, §2.0) — la fiche et son playbook
+(`core/agents/_projets/<id>/`), la politique d'autorisations *si le rôle en porte une* (un fichier
+de politique vide **serait** une politique), la capacité. La fiche d'abord : c'est elle qui fait
+exister l'agent au catalogue, et une coupure après elle laisse un agent aux défauts — lisible,
+modifiable, que les écrans d'agents rattrapent — là où l'ordre inverse laisserait une capacité et
+une politique orphelines que rien n'affiche.
+
+Implémentation : [`maestro/equipe/`](../maestro/equipe/) (la dérivation et la création, **pures** —
+aucun module n'y ouvre un fichier en écriture), [`maestro/controltower/equipe.py`](../maestro/controltower/equipe.py)
+(la seule couche qui touche un dépôt et connaisse un fournisseur de modèle),
+[`maestro/controltower/app.py`](../maestro/controltower/app.py) (les deux routes),
+`apps/web/components/projets/EtapeEquipe.tsx` (l'écran de validation). Gardé par
+[`tests/test_equipe_proposition.py`](../tests/test_equipe_proposition.py) et
+[`tests/test_equipe_creation.py`](../tests/test_equipe_creation.py) (#1043).
+
+### 6.20 L'outillage d'un projet — l'analyser, le choisir, l'écrire (#1020) — **livré**
 
 Le chantier #1020 : **créer ou importer un projet commence par son outillage**. Le format est arrêté
 par [docs/38](./38-decision-outillage-universel-du-projet.md) — `AGENTS.md`, deux ponts d'une ligne,

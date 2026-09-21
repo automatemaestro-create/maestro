@@ -25,7 +25,7 @@ from __future__ import annotations
 import pytest
 
 from maestro.agents import playbook_du_code as pdc
-from maestro.agents.catalog import DEFAULT_AGENTS
+from maestro.agents.catalog import GABARITS_DU_CODE
 from maestro.agents.playbook_du_code import playbook_du_code, registre, roles_du_code, socle
 from maestro.controltower.assistance import _PROMPT_ASSISTANCE
 from maestro.controltower.chat import _CADRE_CONVERSATION
@@ -87,7 +87,7 @@ def test_chaque_playbook_du_code_porte_le_registre(role):
     assert "{{" not in contenu
 
 
-@pytest.mark.parametrize("agent", DEFAULT_AGENTS, ids=lambda a: a.nom)
+@pytest.mark.parametrize("agent", GABARITS_DU_CODE, ids=lambda a: a.nom)
 def test_chaque_agent_du_catalogue_porte_le_registre(agent):
     # L'autre chemin d'exécution — le texte du catalogue, qui prend le socle sans le
     # cadre outillé. Les deux doivent recevoir la même consigne, sans quoi le même rôle

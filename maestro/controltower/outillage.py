@@ -104,7 +104,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from maestro.controltower.chat import MessageChat, ReponseChat, choix_du_fil
-from maestro.controltower.projets import ProjetInconnu, ServiceProjets
+from maestro.controltower.projets import ServiceProjets
 from maestro.controltower.validation import appliquer_sous_validation
 from maestro.engine.guardrails import Validateur
 from maestro.outillage import (
@@ -478,13 +478,10 @@ class ServiceOutillage:
         """Le projet déclaré, relu par le service des projets — jamais un second lecteur.
 
         `ServiceProjets.detail` rend un dict ; ici il faut l'entité (sa racine
-        en `Path`, son périmètre). On passe donc par le **dépôt** que le service
-        expose, ce qui garde un seul lecteur de projets dans la Control Tower :
-        deux relectures de la même fiche finiraient par ne plus se refuser les
-        mêmes fichiers.
+        en `Path`, son périmètre), et c'est `ServiceProjets.entite` qui la rend.
+        On garde ainsi un seul lecteur de projets dans la Control Tower : deux
+        relectures de la même fiche finiraient par ne plus se refuser les mêmes
+        fichiers. Ses refus (404/422 motivés) tombent **avant** toute lecture du
+        disque.
         """
-        self._projets.detail(id_projet)  # 404/422 motivés, avant toute lecture du disque
-        projet = self._projets.store.lire(id_projet)
-        if projet is None:  # pragma: no cover - `detail` a déjà levé dans ce cas
-            raise ProjetInconnu(id_projet)
-        return projet
+        return self._projets.entite(id_projet)

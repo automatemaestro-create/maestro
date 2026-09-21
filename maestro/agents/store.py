@@ -11,23 +11,34 @@ Au POC le dépôt est sur fichiers (`core/agents/<nom>.json`) ; en V1 il passera
 base (table AGENT, docs/03) sans changer ce contrat.
 
 Le catalogue **effectif** d'une exécution est l'assemblage `catalogue()` : les
-agents par défaut du code (`DEFAULT_AGENTS`) suivis des agents personnalisés du
-dépôt — l'ordre préserve le départage déterministe du routeur (les rôles du code
-restent prioritaires à score égal). Un dépôt vide rend le catalogue par défaut à
-l'identique, ce qui rend ce lot mergeable seul.
+agents **du dépôt**, et eux seuls. Les cinq fiches du code n'y entrent plus
+(#1042, [docs/37 §2.1](../../docs/37-decision-equipe-sur-mesure.md)) — elles sont
+devenues des **gabarits de rôle** (`gabarits_du_code`), une matière que l'analyse
+d'équipe consulte et que personne n'instancie. Un dépôt vide rend donc un
+catalogue vide, et c'est exactement ce que veut dire *un projet naît sans agent* :
+un projet créé ou importé n'a aucun agent tant que son équipe n'a pas été
+proposée, validée et écrite (`maestro.equipe`).
 
 **Trois états, et non deux** (#259). « Du code » et « personnalisé » ne suffisaient
 pas : changer le modèle d'un agent du code obligeait à le **dupliquer** en agent
 personnalisé, c'est-à-dire à recopier son playbook pour ne toucher qu'un réglage —
 après quoi les deux exemplaires divergent en silence. Le troisième état est « du
-code, **surchargé** » : `SurchargeStore` persiste, à côté de l'agent et sans le
+code, **surchargé** » : `SurchargeStore` persiste, à côté de la fiche et sans la
 remplacer, les trois réglages de modèle (`fournisseur`, `modele`, `effort`) que
-l'on veut poser sur lui. Ce qui n'est pas surchargé reste **hérité** du code et le
+l'on veut poser sur elle. Ce qui n'est pas surchargé reste **hérité** du code et le
 suit — un playbook amélioré dans `maestro.agents.catalog` continue de valoir pour
-un agent dont on a seulement changé le modèle. La surcharge **s'annule**
+une fiche dont on a seulement changé le modèle. La surcharge **s'annule**
 (`supprimer`) là où un agent personnalisé se **supprime** : retirer la surcharge
-rend l'agent du code, retirer un agent personnalisé le fait disparaître — deux
+rend la fiche du code, retirer un agent personnalisé le fait disparaître — deux
 gestes que rien ne doit confondre.
+
+⚠ Depuis #1042 une surcharge est le réglage d'un **gabarit**, et non plus d'un
+agent que le catalogue effectif porterait : elle se lit par `gabarits_du_code()`,
+que l'API sert et que l'analyse d'équipe consulte. Elle n'atteint donc plus une
+exécution — `catalogue()` ne rend que des agents de projet, et un nom de gabarit
+reste réservé (`NOMS_RESERVES`), donc aucun agent de projet ne peut en porter un.
+C'est la conséquence assumée de docs/37 §2.1 : ce qu'un projet règle, il le règle
+sur **ses** agents, et ce que le code livre, il le livre en gabarit.
 
 Le chargement se fait **au câblage** (construction du moteur, premier message d'un
 worker, démarrage de l'API) : un agent créé est routable et exécutable par les
@@ -50,10 +61,10 @@ from pathlib import Path
 from typing import Any
 
 from maestro.agents.catalog import (
-    DEFAULT_AGENTS,
+    GABARITS_DU_CODE,
     MODELE_EXECUTANT_DEFAUT,
     Agent,
-    agents_pour,
+    gabarits_pour,
 )
 from maestro.agents.rangement import RangeParProjet
 from maestro.config import Settings, load_settings
@@ -62,21 +73,33 @@ from maestro.config import Settings, load_settings
 #: point — verrouille toute traversée de chemin depuis un nom venu de l'API.
 _NOM_AGENT = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
-#: Noms réservés : les agents par défaut du code (un agent personnalisé ne peut pas
-#: les masquer) et les acteurs système de la Control Tower — l'orchestrateur, et
-#: l'assistant du canal d'aide (#123, `maestro.controltower.assistance.NOM_ASSISTANCE` :
-#: la chaîne est répétée ici plutôt qu'importée, la couche agents ne dépendant pas de
-#: la Control Tower). Sans cette réserve, un agent personnalisé homonyme partagerait le
-#: fil `core/chat/assistance.jsonl` de l'assistant et serait masqué par lui au chat.
-NOMS_RESERVES: frozenset[str] = frozenset(
-    {agent.nom for agent in DEFAULT_AGENTS} | {"orchestrateur", "assistance"}
-)
+#: Les noms **du code** : ceux des gabarits de rôle, et les seuls qu'une surcharge
+#: puisse viser (#259). Strictement plus étroit que `NOMS_RESERVES`, qui couvre aussi
+#: l'orchestrateur et l'assistant : ces deux-là n'ont ni fiche ni réglage de modèle à
+#: surcharger.
+NOMS_DU_CODE: frozenset[str] = frozenset(agent.nom for agent in GABARITS_DU_CODE)
 
-#: Les agents **du code** : ceux que `DEFAULT_AGENTS` définit, et les seuls qu'une
-#: surcharge puisse viser (#259). Strictement plus étroit que `NOMS_RESERVES`, qui
-#: couvre aussi l'orchestrateur et l'assistant : ces deux-là ne sont pas des agents
-#: du catalogue, ils n'ont ni fiche ni réglage de modèle à surcharger.
-NOMS_DU_CODE: frozenset[str] = frozenset(agent.nom for agent in DEFAULT_AGENTS)
+#: Les acteurs **système** de la Control Tower — l'orchestrateur, et l'assistant du
+#: canal d'aide (#123, `maestro.controltower.assistance.NOM_ASSISTANCE` : la chaîne
+#: est répétée ici plutôt qu'importée, la couche agents ne dépendant pas de la Control
+#: Tower). Sans cette réserve, un agent homonyme partagerait le fil
+#: `core/chat/assistance.jsonl` de l'assistant et serait masqué par lui au chat.
+NOMS_SYSTEME: frozenset[str] = frozenset({"orchestrateur", "assistance"})
+
+#: Noms qu'une fiche d'agent ne peut pas porter — et **la réserve a changé de raison**
+#: avec #1042, pas de contenu. Elle disait : « un agent personnalisé ne peut pas
+#: masquer un agent par défaut ». Il n'y a plus d'agent par défaut à masquer. Ce qui
+#: reste, et qui suffit : le paquet livre un **document de playbook** sous chacun de
+#: ces cinq noms (`maestro.agents.playbook_du_code.roles_du_code`), et
+#: `maestro.agents.fiche_outillee.playbook_outille` le sert **à la place** du playbook
+#: de la fiche pour tout agent qui en porte un. Un rôle de projet nommé `developpeur`
+#: partirait donc en exécution avec le playbook du code, et le texte écrit pour ce
+#: projet-là (#257) n'atteindrait jamais le modèle — en silence. C'est aussi ce qui
+#: fait que les rôles proposés par l'analyse d'équipe portent d'autres noms que leur
+#: gabarit (`maestro.equipe.gabarits`, `dev` descend de `developpeur`).
+#:
+#: Les acteurs système s'y ajoutent pour leur raison propre, ci-dessus.
+NOMS_RESERVES: frozenset[str] = NOMS_DU_CODE | NOMS_SYSTEME
 
 #: Les **trois états** d'une fiche du catalogue, tels que l'API les nomme (#259).
 #: Ils vivent ici, avec la règle qui les produit, plutôt qu'en littéraux dans
@@ -128,7 +151,7 @@ class AgentDefinition:
         """La définition muée en `Agent` du catalogue, routable et exécutable.
 
         `modele_impose` (#69, `MAESTRO_MODEL`) prime sur le modèle de la
-        définition — même bascule globale que pour les agents par défaut. Elle ne
+        définition — même bascule globale que pour les gabarits du code. Elle ne
         touche **pas** à l'effort (#253) : `MAESTRO_MODEL` bascule le modèle, et
         un effort n'est pas un modèle — l'écraser au passage retirerait en silence
         un réglage que personne n'a demandé de retirer.
@@ -424,7 +447,7 @@ class AgentStore(RangeParProjet):
         est invalide (nom hors slug ou réservé, rôle/playbook vides, aucune
         compétence) — le dépôt ne stocke jamais un agent inexécutable.
         """
-        propre = _valide(definition)
+        propre = definition_validee(definition)
         existante = self.lire(propre.nom)
         maintenant = _maintenant()
         propre = replace(
@@ -460,37 +483,112 @@ class AgentStore(RangeParProjet):
 def catalogue(
     store: AgentStore | None = None,
     modele: str | None = None,
-    surcharges: SurchargeStore | None = None,
 ) -> tuple[Agent, ...]:
-    """Le catalogue effectif : les agents par défaut, puis les personnalisés du dépôt.
+    """Le catalogue effectif : les agents **du dépôt**, par nom — et eux seuls (#1042).
 
     C'est le point de chargement « au démarrage » du #72 : les moteurs
     (`OrchestrationEngine.default`), les workers (`maestro.queue.worker`) et
-    l'état Control Tower assemblent leur catalogue ici. Les agents par défaut
-    gardent la tête (leur ordre départage les ex æquo de routage) ; les
-    personnalisés suivent, par nom. `modele` (#69, `MAESTRO_MODEL`) bascule
-    l'ensemble sur un modèle unique, définitions personnalisées comprises.
+    l'état Control Tower assemblent leur catalogue ici. `modele` (#69,
+    `MAESTRO_MODEL`) bascule l'ensemble sur un modèle unique.
 
-    `surcharges` (#259) recouvre les réglages de modèle des agents **du code**,
-    ici et non ailleurs : c'est le seul endroit où le catalogue effectif
-    s'assemble, donc le seul par lequel une surcharge posée depuis l'UI atteint
-    l'exécution — les trois appelants (moteur, worker, activité durable) en
-    héritent sans une ligne. Un dépôt de surcharges vide rend exactement le
-    catalogue d'avant.
+    **Cadré sur un projet** (#1038) quand le dépôt l'est (`store.pour_projet(id)`) :
+    le catalogue rend alors les agents **de ce projet**, jamais ceux d'un autre —
+    l'existence d'un agent ne s'héritant pas du gabarit (`AgentStore`).
 
-    **Cadré sur un projet** (#1038) quand les deux dépôts le sont
-    (`store.pour_projet(id)`) : le catalogue rend alors les agents du code et
-    les agents **de ce projet**, jamais ceux d'un autre. Les agents du code y
-    restent tant que #1042 n'en a pas fait des gabarits — c'est ce lot-là qui
-    fera naître un projet sans agent, pas celui-ci.
+    ⚠ **Les cinq fiches du code n'y entrent plus** (#1042, docs/37 §2.1). Elles y
+    étaient en tête, et c'est ce qui donnait cinq agents à tout projet sans que
+    personne les ait recrutés. Elles sont désormais des gabarits
+    (`gabarits_du_code`), consultés par l'analyse d'équipe et jamais instanciés.
+    Conséquence directe, et c'est le critère : **un dépôt de projet neuf rend un
+    catalogue vide**. Un moteur construit sans équipe garde, lui, son repli de
+    câblage (`LocalExecutor`, `OrchestrationEngine`), qui ne décrit aucun projet.
     """
     store = store if store is not None else AgentStore.default()
+    return tuple(definition.to_agent(modele) for definition in store.lister())
+
+
+def catalogue_hors_projet(
+    store: AgentStore | None = None,
+    surcharges: SurchargeStore | None = None,
+    modele: str | None = None,
+) -> tuple[Agent, ...]:
+    """Le catalogue de **câblage** d'un moteur : avec quoi travailler hors de tout projet.
+
+    Les trois câblages de production le partagent — moteur en process
+    (`OrchestrationEngine.default`), worker Celery, activité durable —, et c'est
+    pour qu'ils ne répondent pas trois fois, différemment, à la même question :
+    *que route un moteur quand la tâche n'appartient à aucun projet ?*
+
+    La règle, en une phrase : **les agents rangés hors projet, et à défaut les
+    gabarits du code.** Le repli est ce qui fait qu'un `maestro-run` ou un
+    `maestro-demo` — qui n'ont pas de projet et n'en ont jamais eu — continuent de
+    travailler avec les cinq rôles que le paquet livre. Il ne contredit pas #1042 :
+    hors de tout projet il n'y a pas d'équipe où chercher, alors que **dans** un
+    projet il y en a une, et c'est `LocalExecutor._equipe` qui la relit à chaque
+    tâche — vide, elle laisse la tâche « à assigner » sans jamais retomber ici.
+    """
+    hors_projet = catalogue(store, modele)
+    if hors_projet:
+        return hors_projet
+    return gabarits_du_code(surcharges, modele)
+
+
+def gabarits_du_code(
+    surcharges: SurchargeStore | None = None,
+    modele: str | None = None,
+) -> tuple[Agent, ...]:
+    """Les gabarits de rôle du code, leurs réglages posés — **jamais instanciés** (#1042).
+
+    Le pendant de `catalogue()` pour ce que le paquet **livre** plutôt que pour ce
+    qu'un projet **a** : les cinq fiches de `maestro.agents.catalog`, dans leur
+    ordre, recouvertes des surcharges (#259) posées sur elles. C'est ce que l'API
+    sert au niveau gabarit (`GET /api/catalogue` sans `?projet=`), ce que les
+    écrans de réglages éditent, et la matière dont l'analyse d'équipe tire les
+    rôles proposés (`maestro.equipe.gabarits`).
+
+    Rien ici n'est exécuté : un gabarit ne reçoit pas de tâche, il se recopie dans
+    un projet qui le valide. `modele` (#69) bascule les cinq fiches comme ailleurs ;
+    un dépôt de surcharges vide rend les gabarits tels que le code les écrit.
+    """
     surcharges = surcharges if surcharges is not None else SurchargeStore.default()
     posees = {surcharge.nom: surcharge for surcharge in surcharges.lister()}
     return tuple(
         _surcharge_appliquee(agent, posees.get(agent.nom), modele)
-        for agent in agents_pour(modele)
-    ) + tuple(definition.to_agent(modele) for definition in store.lister())
+        for agent in gabarits_pour(modele)
+    )
+
+
+def catalogue_du_projet(
+    store: AgentStore | None,
+    projet_id: str | None,
+    modele: str | None = None,
+) -> tuple[Agent, ...] | None:
+    """L'équipe d'un projet — `None` quand il faut s'en tenir au catalogue du câblage.
+
+    La **règle unique** de « quels agents pour ce travail-là », écrite ici parce
+    qu'elle a deux lecteurs depuis #1041 et qu'ils doivent lire la même chose :
+    l'exécuteur, qui route la tâche (`LocalExecutor._equipe`), et la boucle, qui
+    fait découper l'objectif (`OrchestrationEngine._plan`). Un plan proposé sur
+    une équipe et exécuté sur une autre enverrait toutes ses tâches en repli
+    « à assigner » sans que rien ne le dise.
+
+    `None` dans trois cas, tous à ramener au catalogue du câblage par l'appelant :
+    tâche (ou run) **sans projet**, dépôt **non câblé** — tests et câblages sans
+    Control Tower —, et dépôt **illisible** : un incident de stockage ne doit pas
+    faire partir toutes les tâches en repli.
+
+    ⚠ Un **tuple vide** n'est aucun des trois (#1042) : c'est un projet qui n'a
+    encore recruté personne, et non une absence d'information. C'est la différence
+    entre « je ne sais pas » et « il n'y a personne ». Le dépôt de **surcharges**
+    a disparu d'ici pour la même raison : une surcharge règle un **gabarit**
+    (`gabarits_du_code`), et un catalogue de projet n'en porte aucun.
+    """
+    if projet_id is None or store is None:
+        return None
+    try:
+        return catalogue(store.pour_projet(projet_id), modele)
+    except (OSError, ValueError):  # dépôt illisible : on garde le catalogue câblé
+        return None
 
 
 def _surcharge_appliquee(
@@ -518,8 +616,15 @@ def _surcharge_appliquee(
     )
 
 
-def _valide(definition: AgentDefinition) -> AgentDefinition:
+def definition_validee(definition: AgentDefinition) -> AgentDefinition:
     """La définition normalisée (compétences épurées), ou `ValueError` si invalide.
+
+    **Publique** depuis #1040, au même titre et pour la même raison que
+    `politique_validee` dans `maestro.agents.permissions` : la validation d'une
+    équipe entière se fait **avant** d'écrire le premier fichier
+    (`maestro.equipe.creation.refus_de`), et une seconde définition de « fiche
+    valide » finirait par refuser ce que le dépôt accepte, ou l'inverse. Une
+    seule règle, appelée des deux côtés.
 
     L'`effort` (#253) est **normalisé, jamais refusé** : épuré, et ramené à `None`
     s'il ne reste rien — une chaîne vide et « pas de réglage » ne doivent pas
@@ -533,7 +638,7 @@ def _valide(definition: AgentDefinition) -> AgentDefinition:
         )
     if definition.nom in NOMS_RESERVES:
         raise ValueError(
-            f"nom d'agent réservé : {definition.nom!r} (agent par défaut ou acteur système)."
+            f"nom d'agent réservé : {definition.nom!r} (gabarit de rôle ou acteur système)."
         )
     if not definition.role.strip():
         raise ValueError(f"rôle vide pour l'agent {definition.nom!r}.")

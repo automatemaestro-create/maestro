@@ -15,7 +15,7 @@ import asyncio
 
 import pytest
 
-from maestro.agents import DEFAULT_AGENTS
+from maestro.agents import GABARITS_DU_CODE
 from maestro.agents.catalog import Agent
 from maestro.orchestrator import Task
 from maestro.providers.base import ModelProvider
@@ -78,29 +78,29 @@ class BrokenProvider(ModelProvider):
 
 def _router(provider: ModelProvider | None = None, **kwargs) -> Router:
     classifier = TaskClassifier(provider) if provider is not None else None
-    return Router(DEFAULT_AGENTS, classifier=classifier, **kwargs)
+    return Router(GABARITS_DU_CODE, classifier=classifier, **kwargs)
 
 
 # --- Règles de compétences pures (#6) ---------------------------------------------------
 
 
 def test_assign_choisit_le_meilleur_recouvrement():
-    result = assign(_task(competences_requises=("sql", "migration")), DEFAULT_AGENTS)
+    result = assign(_task(competences_requises=("sql", "migration")), GABARITS_DU_CODE)
     assert result.agent.nom == "bdd"
     assert result.score == 2
 
 
 def test_assign_route_chaque_domaine_vers_son_agent():
-    assert assign(_task(competences_requises=("ui",)), DEFAULT_AGENTS).agent.nom == "designer"
-    assert assign(_task(competences_requises=("tests",)), DEFAULT_AGENTS).agent.nom == "qa"
-    assert assign(_task(competences_requises=("deploy",)), DEFAULT_AGENTS).agent.nom == "devops"
-    assert assign(_task(competences_requises=("api",)), DEFAULT_AGENTS).agent.nom == "developpeur"
+    assert assign(_task(competences_requises=("ui",)), GABARITS_DU_CODE).agent.nom == "designer"
+    assert assign(_task(competences_requises=("tests",)), GABARITS_DU_CODE).agent.nom == "qa"
+    assert assign(_task(competences_requises=("deploy",)), GABARITS_DU_CODE).agent.nom == "devops"
+    assert assign(_task(competences_requises=("api",)), GABARITS_DU_CODE).agent.nom == "developpeur"
 
 
 def test_assign_sans_agent_competent_leve_routing_error():
     # 'planning' est une compétence du Chef de projet, absente des exécutants.
     with pytest.raises(RoutingError):
-        assign(_task(competences_requises=("planning",)), DEFAULT_AGENTS)
+        assign(_task(competences_requises=("planning",)), GABARITS_DU_CODE)
 
 
 def test_assign_sans_agents_leve_value_error():
@@ -192,7 +192,7 @@ def test_route_sans_recouvrement_interroge_tout_le_catalogue():
 
     assert decision.agent is not None and decision.agent.nom == "designer"
     (appel,) = provider.calls
-    for agent in DEFAULT_AGENTS:
+    for agent in GABARITS_DU_CODE:
         assert agent.nom in appel["prompt"]
 
 
@@ -267,7 +267,7 @@ def test_jeu_assignation_versionne_et_varie():
     assert len(jeu) >= 10  # critère d'acceptation : ≥ 10 tâches variées
     # Varié : les cinq agents du catalogue sont attendus au moins une fois…
     attendus = {cas.agent_attendu for cas in jeu}
-    assert {a.nom for a in DEFAULT_AGENTS} <= attendus
+    assert {a.nom for a in GABARITS_DU_CODE} <= attendus
     # …et le jeu contient au moins un cas de repli « à assigner ».
     assert None in attendus
 
@@ -284,3 +284,27 @@ def test_le_cas_hors_perimetre_finit_a_assigner_plutot_que_mal_route():
     for detail in replis:
         assert detail.decision.a_assigner
         assert "à assigner" in detail.decision.raison
+
+
+# --- Une équipe vide n'est pas une omission (#1042) -------------------------------------
+
+
+def test_une_equipe_vide_laisse_la_tache_a_assigner():
+    """Le pivot de #1042 côté routage : un projet sans agent ne route rien.
+
+    C'est ce qui rend « un projet naît sans agent » observable au lieu d'être
+    silencieusement rattrapé : avant, `()` valait omission et la tâche partait
+    aux cinq rôles du code. Et la cause est nommée — on ne corrige pas une équipe
+    à recruter comme on réactive un agent désactivé.
+    """
+    decision = asyncio.run(_router().route(_task(), agents=()))
+
+    assert decision.a_assigner
+    assert "à recruter" in decision.raison
+
+
+def test_aucune_equipe_donnee_retombe_sur_le_catalogue_du_cablage():
+    """`None` reste l'omission : une tâche hors projet se route comme avant."""
+    decision = asyncio.run(_router().route(_task(), agents=None))
+
+    assert decision.agent is not None and decision.agent.nom == "bdd"
