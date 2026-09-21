@@ -5111,7 +5111,7 @@ def create_app(
             )
         return definition.to_agent()
 
-    def _canal_chat(nom: str) -> tuple[Agent, ServiceChat]:
+    def _canal_chat(nom: str, projet: str | None = None) -> tuple[Agent, ServiceChat]:
         """La fiche et le service du fil `nom` — agent, assistant (#123), orchestration (#268).
 
         Les trois canaux se servent des mêmes endpoints : `assistance` résout sur
@@ -5126,7 +5126,47 @@ def create_app(
             return AGENT_ASSISTANCE, assistance
         if nom == NOM_ORCHESTRATION:
             return AGENT_ORCHESTRATION, orchestration
-        return _exige_agent_du_catalogue(nom), chat
+        if projet is None:
+            return _exige_agent_du_catalogue(nom), chat
+        # L'agent **d'une équipe de projet** (#1175) : résolu dans la
+        # configuration de ce projet, comme toutes les routes d'agent depuis #1038.
+        # Sans elle, `developpeur-2` rendait 404 et un `developpeur` de projet
+        # parlait avec la fiche du gabarit homonyme — playbook, compétences et
+        # serveurs d'un autre agent, sans que rien ne le signale.
+        cfg = _config(projet)
+        return _exige_agent_du_catalogue(nom, cfg), _chat_du_projet(cfg)
+
+    #: Un service de chat par projet (#1175), construit au premier fil ouvert.
+    chats_de_projet: dict[str, ServiceChat] = {}
+
+    def _chat_du_projet(cfg: ConfigurationAgents) -> ServiceChat:
+        """Le chat des agents de `cfg` : leurs fils, et leurs playbooks à eux.
+
+        Le **dépôt** est propre au projet — deux projets ont chacun leur
+        `developpeur`, et leurs conversations ne se mêlent pas. Il vit sous
+        `_projets/` dans la racine du chat : un nom qu'aucun agent ne peut porter
+        (un nom d'agent commence par une lettre ou un chiffre), donc jamais pris
+        pour le dossier de conversations d'un agent. Le **répondeur** lit les
+        playbooks du projet, pour la raison qui fait résoudre la fiche dans le
+        projet : un playbook édité du gabarit n'est pas celui de l'agent.
+        """
+        if cfg.projet_id is None:
+            return chat
+        service = chats_de_projet.get(cfg.projet_id)
+        if service is None:
+            service = ServiceChat(
+                store=ChatStore(chat_store.racine / "_projets" / cfg.projet_id),
+                repondeur=(
+                    chat_repondeur
+                    if chat_repondeur is not None
+                    else RepondeurModele(playbooks=cfg.playbooks)
+                ),
+                mailbox=mailbox,
+                bus=bus,
+                televersements=televersements,
+            )
+            chats_de_projet[cfg.projet_id] = service
+        return service
 
     def _conversation_demandee(
         service: ServiceChat, fiche: Agent, demandee: str | None
@@ -5157,7 +5197,9 @@ def create_app(
         return demandee
 
     @app.get("/api/chat/{agent}")
-    async def fil_chat(agent: str, conversation: str | None = None) -> dict[str, Any]:
+    async def fil_chat(
+        agent: str, conversation: str | None = None, projet: str | None = None
+    ) -> dict[str, Any]:
         """Le fil de conversation utilisateur ↔ agent (#84), relu de la persistance.
 
         Vide tant que l'agent n'a jamais été contacté ; 404 si l'agent n'est
@@ -5168,8 +5210,12 @@ def create_app(
         fil exact d'avant ce lot. 404 si l'identifiant est inconnu, 422 s'il est
         mal formé. La réponse **nomme** la conversation servie, ce dont un client
         qui n'en a demandé aucune a besoin pour savoir dans laquelle il est.
+
+        `?projet=` (#1175) désigne le projet dont l'agent est membre, comme sur
+        toute route d'agent (#1038) : son équipe, sa fiche, ses conversations.
+        Omis, les gabarits — le fil d'avant ce ticket.
         """
-        fiche, service = _canal_chat(agent)
+        fiche, service = _canal_chat(agent, projet)
         fil = _conversation_demandee(service, fiche, conversation)
         return {
             "agent": fiche.nom,
@@ -5179,7 +5225,7 @@ def create_app(
         }
 
     @app.get("/api/chat/{agent}/conversations")
-    async def conversations_chat(agent: str) -> dict[str, Any]:
+    async def conversations_chat(agent: str, projet: str | None = None) -> dict[str, Any]:
         """Les conversations d'un fil, **la plus récente d'abord** (#694).
 
         De quoi peupler un historique sans charger un seul message : identifiant,
@@ -5187,8 +5233,9 @@ def create_app(
         de messages. Jamais vide — un agent a toujours au moins la conversation
         `origine`, fût-elle vierge —, et la première de la liste est celle qu'un
         envoi sans précision rejoindrait. 404 si l'agent n'est pas au catalogue.
+        `?projet=` (#1175) : comme `GET /api/chat/{agent}`.
         """
-        fiche, service = _canal_chat(agent)
+        fiche, service = _canal_chat(agent, projet)
         return {
             "agent": fiche.nom,
             "role": fiche.role,
@@ -5196,7 +5243,7 @@ def create_app(
         }
 
     @app.post("/api/chat/{agent}/conversations", status_code=201)
-    async def ouvrir_conversation_chat(agent: str) -> dict[str, Any]:
+    async def ouvrir_conversation_chat(agent: str, projet: str | None = None) -> dict[str, Any]:
         """Ouvre une conversation neuve sur un fil et rend sa carte (#694).
 
         **Idempotent tant que rien n'a été dit** : si la plus récente est vierge,
@@ -5207,8 +5254,9 @@ def create_app(
 
         L'écrire ne rend pas l'ancienne moins accessible : elle reste listée et
         relisible par `?conversation=`. 404 si l'agent n'est pas au catalogue.
+        `?projet=` (#1175) : comme `GET /api/chat/{agent}`.
         """
-        fiche, service = _canal_chat(agent)
+        fiche, service = _canal_chat(agent, projet)
         return {
             "agent": fiche.nom,
             "role": fiche.role,
@@ -5216,7 +5264,9 @@ def create_app(
         }
 
     @app.post("/api/chat/{agent}/messages", status_code=201)
-    async def envoyer_chat(agent: str, requete: ChatEnvoiRequete) -> dict[str, Any]:
+    async def envoyer_chat(
+        agent: str, requete: ChatEnvoiRequete, projet: str | None = None
+    ) -> dict[str, Any]:
         """Envoie un message utilisateur à l'agent et rend la paire message/réponse.
 
         Le message et la réponse sont persistés au fil, passés par la
@@ -5238,8 +5288,9 @@ def create_app(
         `conversation` (#694) range l'échange dans **un** des fils de l'agent ;
         absente, il rejoint la plus récente. La réponse la nomme, et message
         comme réponse la portent : les deux moitiés d'un tour vont ensemble.
+        `?projet=` (#1175) : comme `GET /api/chat/{agent}`.
         """
-        fiche, service = _canal_chat(agent)
+        fiche, service = _canal_chat(agent, projet)
         fil = _conversation_demandee(service, fiche, requete.conversation)
         try:
             message, reponse = await service.envoyer(
@@ -5554,6 +5605,7 @@ def create_app(
         sources: list[dict[str, Any]] | None,
         projet_id: str | None,
         conversation: str | None,
+        projet: str | None = None,
     ) -> StreamingResponse:
         """Le flux SSE d'une réponse — la mécanique des **deux** verbes (#268, #692).
 
@@ -5584,7 +5636,7 @@ def create_app(
         Un identifiant inconnu est un 404, mal formé un 422, absent le cas
         nominal (la conversation la plus récente).
         """
-        fiche, service = _canal_chat(agent)
+        fiche, service = _canal_chat(agent, projet)
         projet = projet_id_valide(projet_id)
         fil = _conversation_demandee(service, fiche, conversation)
 
@@ -5621,6 +5673,7 @@ def create_app(
         contenu: str = "",
         projet_id: str | None = None,
         conversation: str | None = None,
+        projet: str | None = None,
     ) -> StreamingResponse:
         """Flux SSE d'une réponse de chat — le contrat #183, servi pour de bon (#268).
 
@@ -5641,10 +5694,12 @@ def create_app(
         `?conversation=` désigne le fil où diffuser (#694), comme sur les deux
         autres verbes ; absent, la conversation la plus récente.
         """
-        return await _flux_reponse(agent, contenu, None, projet_id, conversation)
+        return await _flux_reponse(agent, contenu, None, projet_id, conversation, projet)
 
     @app.post("/api/chat/{agent}/flux")
-    async def flux_chat_poste(agent: str, requete: ChatEnvoiRequete) -> StreamingResponse:
+    async def flux_chat_poste(
+        agent: str, requete: ChatEnvoiRequete, projet: str | None = None
+    ) -> StreamingResponse:
         """Le flux d'une réponse pour un message qui **embarque** quelque chose (#692).
 
         Même corps que `POST …/messages` — `contenu`, `sources` (#482),
@@ -5670,10 +5725,13 @@ def create_app(
             requete.sources,
             requete.projet_id,
             requete.conversation,
+            projet,
         )
 
     @app.post("/api/chat/{agent}/flux/{echange}/arret")
-    async def arreter_flux_chat(agent: str, echange: str) -> dict[str, Any]:
+    async def arreter_flux_chat(
+        agent: str, echange: str, projet: str | None = None
+    ) -> dict[str, Any]:
         """Arrête la génération en vol de `echange` — le geste, pas l'accident (#695).
 
         L'`echange` est celui que les trames du flux portent (`FragmentChat`). La
@@ -5693,7 +5751,7 @@ def create_app(
         cliquer au moment où la réponse tombe est une course normale, pas une
         panne.
         """
-        _, service = _canal_chat(agent)
+        _, service = _canal_chat(agent, projet)
         if not service.interrompre(echange):
             raise HTTPException(
                 status_code=404,
