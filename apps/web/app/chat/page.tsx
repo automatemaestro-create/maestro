@@ -62,6 +62,13 @@
  * celle du cadrage sont la même (`components/chat/BulleFil`), sans quoi un seul
  * écran donnerait deux conversations à l'œil.
  *
+ * ⚠ Depuis #1106, jusqu'aux **gestes du fil** : la composition du pied —
+ * question d'agent, question d'outillage, demande de cadrage — vit dans
+ * `components/chat/GestesDuFil` et non plus ici. Elle vivait dans cette page,
+ * donc la colonne de droite (#926) montait le même fil sans elle : « Je
+ * lance ? » s'y affichait sans rien pour lancer, et il fallait venir ici pour
+ * répondre. Ce fichier appelle désormais la règle, il ne la porte plus.
+ *
  * **La mention change de destinataire, elle ne duplique rien.** `@dev …` envoie
  * dans le fil de `dev` — celui-là même que sert sa fiche —, et l'écran bascule
  * dessus sans navigation. Copier le message dans les deux fils aurait donné deux
@@ -150,10 +157,8 @@
 
 import { useMemo, useState } from "react";
 
-import { DemandeDeCadrage } from "@/components/chat/DemandeDeCadrage";
-import { QuestionDOutillage } from "@/components/chat/QuestionDOutillage";
 import { FilDeCadrage } from "@/components/chat/FilDeCadrage";
-import { QuestionsDuFil } from "@/components/chat/QuestionDansLeFil";
+import { useGestesDuFil } from "@/components/chat/GestesDuFil";
 import { Conversation } from "@/components/Conversation";
 import {
   IconeAgent,
@@ -174,8 +179,6 @@ import {
 } from "@/components/Primitives";
 import { cheminOnglet } from "@/lib/agents";
 import { propositionEnAttente, runsEnAttente } from "@/lib/brief";
-import { questionEnAttente } from "@/lib/outillage";
-import { questionsDuFil } from "@/lib/questions";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import { formatHeureRelative } from "@/lib/format";
 import { useHorloge } from "@/lib/horloge";
@@ -193,14 +196,7 @@ import type { ConversationChat, MessageChat } from "@/lib/types";
 import { useChat, type Chat } from "@/lib/useChat";
 
 export default function PageChat() {
-  const {
-    agents,
-    taches,
-    projet,
-    executions,
-    questions: toutesLesQuestions,
-    repondreAUneQuestion,
-  } = useEtatGlobal();
+  const { agents, taches, projet, executions } = useEtatGlobal();
   const [destinataire, setDestinataire] = useState(AGENT_ORCHESTRATION);
   // Le projet **de cette fenêtre** part avec chaque message (#683) : c'est ce
   // qui rattache au projet actif le run que l'orchestration ouvre, et donc ce
@@ -250,30 +246,20 @@ export default function PageChat() {
   // est persistée sur son message et revient avec le fil ; et au moment où la
   // question est posée, c'est nécessairement ce fil-là qu'on a sous les yeux,
   // puisqu'elle répond à ce qu'on vient d'y écrire.
+  //
+  // ⚠ Lue **ici aussi**, et ce n'est pas un doublon du pied : le panneau
+  // « Cadrage en attente » de la colonne de propriétés en a besoin pour la
+  // montrer à file vide, et c'est la **même** règle qui répond aux deux (#1106
+  // n'a rien changé de cela).
   const proposition = global ? propositionEnAttente(fil.messages) : null;
 
-  // Les questions d'agents que **ce fil** concerne (#1025). La règle est
-  // appelée, jamais recopiée (`lib/questions`, même raison que `lib/brief`) :
-  // le fil de l'orchestration les porte toutes — il est la porte d'entrée
-  // (docs/29) et c'est là que la cloche achemine —, un aparté `@agent` ne porte
-  // que les siennes, pour qu'on ne réponde pas à côté.
-  const questions = useMemo(
-    () =>
-      questionsDuFil(toutesLesQuestions, destinataire, AGENT_ORCHESTRATION),
-    [toutesLesQuestions, destinataire],
-  );
-
-  // La question d'**outillage** d'un projet neuf (#1031), lue de la même façon
-  // que la proposition et au même endroit : le dernier message du fil, et lui
-  // seul. C'est une troisième demande que ce pied peut porter, et ce ne sont pas
-  // les mêmes que les précédentes — celle d'un agent (#1025) suspend une tâche
-  // en cours et vient de l'exécution, celle-ci décide de ce qu'on va écrire dans
-  // un projet et vient de la conversation.
-  //
-  // Elles ne cohabitent jamais sur un même message : il porte une proposition,
-  // une question d'outillage, ou rien. L'ordre du pied ci-dessous n'arbitre donc
-  // pas entre elles, il dit seulement laquelle regarder en premier.
-  const question = global ? questionEnAttente(fil.messages) : null;
+  // Ce qui attend un geste au pied du fil — question d'agent (#1025), question
+  // d'outillage (#1031), demande de cadrage (#943). Composé hors de cette page
+  // depuis #1106 (`components/chat/GestesDuFil`), parce que la colonne de droite
+  // monte le **même** fil : le laisser ici revenait à ce que les gestes existent
+  // sur `/chat` et nulle part ailleurs, c'est-à-dire à devoir changer de page
+  // pour lancer un run.
+  const gestes = useGestesDuFil(fil, destinataire);
 
   /**
    * Chaque frappe passe ici : une mention close par une espace change le
@@ -350,55 +336,12 @@ export default function PageChat() {
             </>
           }
           /* Les gestes au pied du fil (#943, #1025, #1031) — là où l'œil vient
-             de lire la question, et où la main allait taper la réponse.
-             L'ordre est celui de #1025, étendu d'un cran par #1031 : ce qui est
-             le plus loin de la saisie est ce qui a le moins à voir avec elle.
-             Les **questions d'agents** d'abord — elles portent sur un travail
-             déjà en vol ; la **question d'outillage** ensuite — elle se répond
-             d'un choix, pas d'une frappe ; la **demande de cadrage** en dernier,
-             parce que c'est la seule qui remplace vraiment la zone de saisie :
-             son objectif est éditable, donc il se tient là où la main allait
-             écrire.
-             Aucune des trois ne s'exclut : un fil peut porter une question
-             d'agent **et** une proposition. Seules les deux qui vivent sur le
-             **message** — proposition et question d'outillage — ne cohabitent
-             jamais, un message ne portant que l'une ou l'autre. */
-          pied={
-            questions.length > 0 ||
-            proposition !== null ||
-            question?.question ? (
-              <div className="flex flex-col gap-3">
-                <QuestionsDuFil
-                  questions={questions}
-                  repondre={repondreAUneQuestion}
-                />
-                {question?.question && (
-                  /* La `key` remet la carte à zéro d'une question à la
-                     suivante — même geste et même raison que `FilDeCadrage`
-                     d'un tour de clarification au suivant. Sans elle, React
-                     réutilise l'instance (même position dans l'arbre), donc la
-                     sélection garde la recommandation de la question
-                     **précédente** : elle n'est plus une option de celle-ci,
-                     plus rien n'est coché, et le bouton enverrait une valeur
-                     que l'API refuserait. Mesuré sur la stack de démo avant de
-                     le corriger. */
-                  <QuestionDOutillage
-                    key={question.question.cle}
-                    question={question.question}
-                    repondre={fil.repondreQuestion}
-                    enCours={fil.envoi}
-                  />
-                )}
-                {proposition !== null && (
-                  <DemandeDeCadrage
-                    demande={proposition}
-                    trancher={fil.trancherCadrage}
-                    enCours={fil.envoi}
-                  />
-                )}
-              </div>
-            ) : undefined
-          }
+             de lire la question, et où la main allait taper la réponse. Leur
+             composition et leur ordre vivent dans `chat/GestesDuFil` depuis
+             #1106 : la colonne de droite monte le même fil, et deux
+             formulations de « qu'est-ce qui attend un geste ? » finiraient par
+             ne plus désigner la même chose. */
+          pied={gestes}
           bandeau={
             /* Un fait neutre mis en avant, donc le ton `info` — pas `attention`,
                qui ferait lire « quelque chose attend un geste » là où le bandeau

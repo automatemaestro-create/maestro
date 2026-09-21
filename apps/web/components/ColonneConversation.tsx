@@ -72,6 +72,22 @@
  *    `Shell`, #248) — un seul maillon manquant et la colonne s'étire sous son
  *    contenu au lieu de le faire défiler.
  *
+ * ── Ce que #1106 y ajoute : les gestes, pas une surface ─────────────────────
+ *
+ * Le fil montait ses **messages** et s'arrêtait là. Les gestes qui répondent à
+ * ce qu'on vient d'y lire — la question d'un agent (#1025), la question
+ * d'outillage (#1031), « Je lance ? » (#943) — vivaient au pied du fil de
+ * `/chat`, et cette page seule savait les composer : la colonne affichait donc
+ * la proposition sans rien pour lancer, corriger ou refuser, et répondre
+ * obligeait à changer de page. C'est la réserve C2 du bouclage de « L'atelier ».
+ *
+ * La composition a donc quitté la page pour `chat/GestesDuFil`, et les deux
+ * surfaces l'appellent. Rien d'autre n'a bougé, et c'est le point à ne pas
+ * défaire : **aucun rendu propre à la colonne**. Le point 1 ci-dessus vaut pour
+ * le pied comme pour le fil — pas de mode « étroit », pas de carte abrégée, pas
+ * de renvoi vers `/chat` à la place du geste. Ce qui tiendrait mal à 320 px est
+ * une **mesure** (`/banc-mise-en-page`), pas une seconde mise en page.
+ *
  * ⚠ Fermée, la colonne reste **dans le DOM** — c'est ce qui permet à
  * l'`aria-controls` du bouton de la barre supérieure de désigner un élément qui
  * existe, ouverte comme fermée. Elle est alors masquée **deux fois**, et il faut
@@ -85,6 +101,7 @@
 
 import Link from "next/link";
 
+import { useGestesDuFil } from "@/components/chat/GestesDuFil";
 import { Conversation } from "@/components/Conversation";
 import { IconeAgrandir, IconeFermer } from "@/components/Icones";
 import { Infobulle } from "@/components/Infobulle";
@@ -236,6 +253,12 @@ function FilDeLaColonne() {
   // C'est ce qui tient le critère « `/chat` reste servi et reste la même
   // conversation » sans rien synchroniser : il n'y a rien à synchroniser.
   const fil = useChat(AGENT_ORCHESTRATION, projet.id);
+  // …et les mêmes gestes (#1106). Le fil est celui de l'orchestration, donc il
+  // porte les trois demandes : question d'un agent, question d'outillage,
+  // « Je lance ? ». La composition vient de `chat/GestesDuFil`, appelée et
+  // jamais recopiée — sans quoi la colonne et `/chat` finiraient par ne plus
+  // désigner la même attente, et c'est le défaut que ce ticket corrige.
+  const gestes = useGestesDuFil(fil, AGENT_ORCHESTRATION);
 
   return (
     // L'ascenseur de la colonne (point 3 de l'en-tête). `min-h-0` est ce qui lui
@@ -278,6 +301,12 @@ function FilDeLaColonne() {
         // Les mêmes amorces que `/chat`, donc dérivées du même projet (#942) :
         // c'est la même conversation, elle ne peut pas proposer deux choses.
         amorces={amorcesDuProjet(projet)}
+        /* Les gestes du fil, **tels quels** (#1106) — même carte, même place,
+           même ordre que sur `/chat`. Aucun rendu propre à la colonne : le
+           parti pris 1 de la veille de #926 vaut pour le pied comme pour le
+           fil, et une carte qui tiendrait mal à 320 px est une mesure
+           (`/banc-mise-en-page`), jamais une seconde mise en page. */
+        pied={gestes}
       />
     </div>
   );

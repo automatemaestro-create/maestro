@@ -57,7 +57,7 @@
  * `attention` *est* le ton de « quelque chose attend un geste »).
  */
 
-import { useState } from "react";
+import { useId, useState } from "react";
 
 import { IconeAide } from "@/components/Icones";
 import {
@@ -90,10 +90,17 @@ export function QuestionDansLeFil({
   // change ce que la carte dit de l'attente (`lib/questions`).
   const echue = questionEchue(question, maintenant);
   const retenue = ecrite.trim();
-  // Un identifiant stable par question : deux questions d'une même tâche peuvent
-  // attendre ensemble, et deux champs de même `id` dans un document feraient
-  // perdre son nom accessible au second (le refus écrit de `CadreChamp`).
-  const idChamp = `question-${question.question_id}`;
+  // Un identifiant unique **par carte montée**, et non par question (#1106).
+  // Deux champs de même `id` dans un document feraient perdre son nom
+  // accessible au second (le refus écrit de `CadreChamp`) — et depuis que la
+  // colonne de droite porte les gestes du fil, la **même** question s'affiche
+  // deux fois sur un même écran : le fil de l'orchestration les porte toutes,
+  // l'onglet Chat d'une fiche agent porte les siennes, et les deux sont montés
+  // ensemble dès qu'on ouvre la colonne sur `/agents`. `question_id` ne
+  // distinguait pas ces deux montages ; `useId` les distingue par
+  // construction, et distingue toujours deux questions d'une même tâche.
+  const idCarte = useId();
+  const idChamp = `question-${idCarte}`;
 
   const envoyer = async (reponse: string) => {
     if (reponse === "" || enCours) return;
