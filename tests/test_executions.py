@@ -161,7 +161,10 @@ class MoteurDouble:
         projet_id: str | None = None,
         mode_brief: str = MODE_BRIEF_SANS,
         porte: object = None,
+        contexte_sources: str = "",
     ) -> RunReport:
+        # `contexte_sources` (#1172) : les sources lues au lancement, que le vrai
+        # moteur donne à lire au brief.
         # `ticket` (#187), `projet_id` (#222), `mode_brief` (#320) et `porte` (#477)
         # font partie de la signature du vrai moteur : le service les lui passe pour
         # qu'il en dote chaque tâche du plan, pour lui dire sous quel régime de brief

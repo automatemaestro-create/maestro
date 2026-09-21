@@ -815,9 +815,14 @@ def test_un_ordre_relu_est_le_meme_champ_pour_champ() -> None:
         ticket=ReferenceTicket(id="#42", url="https://exemple.test/issues/42"),
         projet_id="prj-7f3a",
         mode_brief=MODE_BRIEF_AUTO,
+        # Un contexte déjà encadré, clôture comprise (#1172) : il doit revenir à
+        # l'octet près, sans quoi l'encadrement ENF-13 pourrait se défaire en route.
+        contexte_sources="## Sources fournies\n\n````text\nSIRET ```\n````\n",
     )
 
-    relu = hote_detache.ordre_depuis_dict(hote_detache.ordre_vers_dict(complet))
+    relu = hote_detache.ordre_depuis_dict(
+        json.loads(json.dumps(hote_detache.ordre_vers_dict(complet), ensure_ascii=False))
+    )
 
     assert relu == complet
 
@@ -828,6 +833,8 @@ def test_un_ordre_minimal_retombe_sur_les_defauts_du_contrat() -> None:
 
     assert relu == OrdreRun(run_id=RUN, objectif="Objectif")
     assert relu.mode_brief == MODE_BRIEF_HUMAIN
+    # Un ordre écrit avant #1172 n'a pas de contexte : il n'en a donc aucun.
+    assert relu.contexte_sources == ""
 
 
 @pytest.mark.parametrize(
@@ -1714,6 +1721,25 @@ def test_le_mode_du_brief_voyage_avec_l_ordre_et_l_arbitre_reste_cable(
 
     assert cable["run"]["mode_brief"] == MODE_BRIEF_AUTO
     assert isinstance(cable["arbitre_brief"], ArbitreBriefControlTower)
+
+
+def test_le_process_remet_au_moteur_les_sources_que_l_ordre_porte(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#1172 : les sources lues traversaient la frontière… vers nulle part.
+
+    L'ordre les porte désormais, et c'est ici qu'elles doivent atteindre le moteur :
+    un champ sérialisé que personne ne transmet serait le même défaut, déplacé.
+    """
+    cable = deroule(
+        monkeypatch,
+        InMemoryEventBus(),
+        tmp_path,
+        mode_brief=MODE_BRIEF_AUTO,
+        contexte_sources="## Sources fournies\n\nLes fiches portent un SIRET.",
+    )
+
+    assert "Les fiches portent un SIRET." in cable["run"]["contexte_sources"]
 
 
 def test_un_bus_referme_sans_decision_fait_lever_le_brief_et_les_clarifications(

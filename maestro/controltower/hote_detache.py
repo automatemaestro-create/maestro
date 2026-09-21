@@ -36,11 +36,13 @@ sérialisation (`hote.py`), et c'est ce qui laisse `ordre_vers_dict` être un d�
 d'ici plutôt qu'un point du contrat.
 
 **Ce qui traverse.** L'ordre — objectif, plafonds, `ticket`, `projet_id`,
-`mode_brief` — et rien d'autre. Les **sources** sont absentes parce qu'elles sont
-déjà **résolues** : la Control Tower les canonicalise, les plafonne et copie les
-octets téléversés vers l'emplacement d'ingestion du run **avant** le lancement
-(#315/#317) ; ce qui atteint le process est un objectif, et le disque a déjà la
-matière. Le `projet_id` est le **prérequis commun** que ce lot paie pour tout hôte
+`mode_brief`, et depuis #1172 `contexte_sources` — et rien d'autre. Les sources
+traversent **lues**, en texte déjà encadré, et non en références : la Control
+Tower les canonicalise, les plafonne, copie les octets téléversés (#315/#317) et
+les **lit** avant le lancement. Ce qui a été lu est ce que le brief reçoit. Jusqu'à
+#1172 elles ne traversaient pas du tout, au motif que « le disque a déjà la
+matière » ; mais rien, de ce côté, ne relisait ce disque, et le brief s'écrivait
+sans elles. Le `projet_id` est le **prérequis commun** que ce lot paie pour tout hôte
 qui n'est pas l'API (docs/28 §3) : sans lui, `espace_de_travail(None)` retombe sur
 un `mkdtemp()` et le livrable n'atteint jamais le projet.
 
@@ -299,6 +301,7 @@ def ordre_vers_dict(ordre: OrdreRun) -> dict[str, Any]:
         "ticket": None if ordre.ticket is None else ordre.ticket.to_dict(),
         "projet_id": ordre.projet_id,
         "mode_brief": ordre.mode_brief,
+        "contexte_sources": ordre.contexte_sources,
     }
 
 
@@ -332,6 +335,9 @@ def ordre_depuis_dict(data: Mapping[str, Any]) -> OrdreRun:
         ticket=ReferenceTicket.depuis(data.get("ticket")),
         projet_id=str(data.get("projet_id") or "").strip() or None,
         mode_brief=str(data.get("mode_brief") or "").strip() or defaut.mode_brief,
+        # Relu tel quel, jamais « nettoyé » : c'est un texte déjà encadré (ENF-13),
+        # et la moindre retouche pourrait défaire sa clôture.
+        contexte_sources=str(data.get("contexte_sources") or ""),
     )
 
 
@@ -1095,6 +1101,7 @@ async def _derouler(ordre: OrdreRun, atelier: Path) -> RunReport:
                 projet_id=ordre.projet_id,
                 mode_brief=ordre.mode_brief,
                 porte=porte,
+                contexte_sources=ordre.contexte_sources,
             )
         )
         attendus: set[asyncio.Future[Any]] = {run, guet}

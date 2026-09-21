@@ -205,16 +205,27 @@ _SANS_SOURCE = (
 )
 
 
-def build_user_prompt(objective: str) -> str:
-    """Compose le message utilisateur transmis au modèle pour un objectif donné."""
+def build_user_prompt(objective: str, contexte_sources: str = "") -> str:
+    """Compose le message utilisateur transmis au modèle pour un objectif donné.
+
+    `contexte_sources` (#1172) est la sortie de `contexte_markdown`, jamais du
+    Markdown brut — même frontière donnée / consigne qu'au brief (ENF-13). Il n'est
+    passé que par un run **sans brief** : le plan est alors le premier à lire
+    l'objectif, donc le premier à devoir lire ce qui l'accompagne. Avec un brief,
+    c'est le brief qui a digéré les sources, et le plan décompose ce qui a été
+    approuvé. Vide, le prompt est exactement celui d'avant.
+    """
     cleaned = objective.strip()
-    return (
+    prompt = (
         "Découpe l'objectif suivant en un plan de tâches raisonné, en respectant "
         "strictement le format JSON imposé par tes instructions. Chaque description "
         "porte ses quatre sections : objectif, périmètre et limites, latitude de "
         "décision, critères de réussite.\n\n"
         f"Objectif :\n{cleaned}"
     )
+    if contexte_sources.strip():
+        prompt += f"\n\n{contexte_sources.strip()}"
+    return prompt
 
 
 def build_brief_user_prompt(

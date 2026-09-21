@@ -58,6 +58,7 @@ from maestro.controltower.events import (
     InMemoryEventBus,
     brief_depuis,
 )
+from maestro.controltower.executions import ServiceExecutions
 from maestro.controltower.state import (
     BRIEF_APPROUVE,
     BRIEF_REFUSE,
@@ -89,6 +90,7 @@ from maestro.orchestrator import (
     validate_brief,
 )
 from maestro.providers.base import ModelProvider
+from maestro.sources.extraction import ETAT_LU, Lecture, RapportLecture
 from maestro.telemetry import RunJournal, StepUsage
 from maestro.telemetry.costs import ETAPE_BRIEF, ETAPE_PLANIFICATION, ETAPE_REPRISE
 
@@ -536,6 +538,88 @@ def test_un_brief_hors_schema_est_refuse_par_l_orchestrateur():
     engine, _, _ = moteur(cadrage=ProviderCadrage(brief_json=hors_schema))
     with pytest.raises(BriefValidationError):
         asyncio.run(engine.run("Prototyper un mini-CRM", mode_brief=MODE_BRIEF_AUTO))
+
+
+SOURCE_LUE = "## Sources fournies\n\n#### Source 1 — cdc.md\n\nLes fiches ont un champ SIRET."
+
+
+def test_les_sources_du_lancement_nourrissent_le_brief_et_non_le_plan():
+    """#1172 : le brief est la première étape qui lit l'objectif, donc les sources.
+
+    Le plan décompose ensuite **le brief**, qui les a digérées : les lui redonner
+    ferait décomposer autre chose que ce qui a été approuvé.
+    """
+    engine, cadrage, _ = moteur()
+    asyncio.run(
+        engine.run(
+            "Prototyper un mini-CRM",
+            mode_brief=MODE_BRIEF_AUTO,
+            contexte_sources=SOURCE_LUE,
+        )
+    )
+    assert "Les fiches ont un champ SIRET." in cadrage.prompts_brief[0]
+    assert "Aucune source n'a été fournie" not in cadrage.prompts_brief[0]
+    assert "SIRET" not in cadrage.prompts_plan[0]
+
+
+def test_de_bout_en_bout_la_source_jointe_au_lancement_atteint_le_prompt_du_brief():
+    """#1172, critère 1 : du lancement par le service au prompt du brief, sans raccourci.
+
+    Le service lit la source, l'ordre la porte, l'hôte en process la remet au vrai
+    moteur, et le brief la lit. Chaque maillon a son test ; celui-ci prouve que la
+    chaîne tient **entière**. C'est elle qui était rompue : chaque morceau marchait,
+    et la source se perdait entre deux.
+    """
+    cadrage = ProviderCadrage()
+
+    def fabrique(**_reglages: Any) -> OrchestrationEngine:
+        return OrchestrationEngine(
+            ProviderExecution(), Orchestrator(cadrage, model="claude-opus-4-8")
+        )
+
+    def lecteur(matiere: Any) -> RapportLecture:
+        return RapportLecture(
+            lectures=tuple(
+                Lecture(nom="cdc.md", type=source.type, etat=ETAT_LU,
+                        markdown="Les fiches portent un SIRET.", tokens=9)
+                for source in matiere
+            )
+        )
+
+    async def scenario() -> None:
+        pilote = ServiceExecutions(
+            InMemoryEventBus(),
+            ControlTowerState(),
+            fabrique_moteur=fabrique,
+            lecteur_sources=lecteur,
+        )
+        await pilote.lancer(
+            "Prototyper un mini-CRM",
+            sources=[{"type": "url", "valeur": "https://exemple.test/cdc"}],
+            mode_brief=MODE_BRIEF_AUTO,
+        )
+        # La tâche de fond de l'hôte en process : attendue, jamais devinée par un délai.
+        await asyncio.gather(*pilote._hote._taches.values())
+
+    asyncio.run(scenario())
+
+    assert "Les fiches portent un SIRET." in cadrage.prompts_brief[0]
+
+
+def test_sans_brief_c_est_le_plan_qui_lit_les_sources():
+    """En mode « sans », le plan est le premier à lire l'objectif : il lit ce qui l'accompagne."""
+    engine, cadrage, _ = moteur()
+    asyncio.run(engine.run("Prototyper un mini-CRM", contexte_sources=SOURCE_LUE))
+    assert cadrage.prompts_brief == []
+    assert "Les fiches ont un champ SIRET." in cadrage.prompts_plan[0]
+
+
+def test_sans_source_les_prompts_sont_ceux_d_avant():
+    """Le défaut ne change rien : aucun en-tête, aucune ligne de plus."""
+    engine, cadrage, _ = moteur()
+    asyncio.run(engine.run("Prototyper un mini-CRM", mode_brief=MODE_BRIEF_AUTO))
+    assert "Aucune source n'a été fournie" in cadrage.prompts_brief[0]
+    assert "Sources fournies" not in cadrage.prompts_plan[0]
 
 
 def test_les_sources_entrent_par_le_prompt_en_dernier_et_jamais_comme_consigne():

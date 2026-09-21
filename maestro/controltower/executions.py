@@ -238,6 +238,7 @@ from maestro.sources import (
     RapportLecture,
     Source,
     composer_sources,
+    contexte_markdown,
     extraire_sources,
 )
 from maestro.telemetry import LOGGER_NAME, RunJournal, redact_secrets
@@ -578,6 +579,7 @@ class ServiceExecutions:
         sources: Sequence[Mapping[str, Any] | Source] | None = None,
         mode_brief: str | None = MODE_BRIEF_HUMAIN,
         reprise_de: str = "",
+        contexte_sources: str = "",
     ) -> dict[str, Any]:
         """Confie une exécution à l'hôte et rend son résumé **immédiatement**.
 
@@ -632,6 +634,16 @@ class ServiceExecutions:
         va **pas** dans l'événement de lancement : il décrit une lecture, pas un
         fait du run, et le rendre durable est le travail de la validation du
         brief (#320).
+
+        Ce qui a été lu **part avec le run** depuis #1172 : l'hôte reçoit le
+        contenu, encadré par `contexte_markdown`, et le brief le lit. Avant, la
+        lecture n'alimentait que le rapport rendu ici, et le brief s'écrivait sans
+        les sources que l'écran venait de dire « lues ».
+
+        `contexte_sources` (#1172) est une matière **déjà lue** ailleurs, à joindre
+        à celle-ci : celle d'une conversation, que le fil a lue message par message
+        (`orchestration.contexte_du_fil`). Elle n'est pas relue, et elle n'entre pas
+        au rapport, qui ne décrit que la lecture faite ici. Vide, rien ne change.
 
         `mode_brief` (#320, décision D5) est le **régime du brief** de ce run.
         Son défaut est `humain` — et c'est le seul endroit du dépôt où il l'est :
@@ -749,6 +761,15 @@ class ServiceExecutions:
                     ticket=reference,
                     projet_id=projet,
                     mode_brief=regime_brief,
+                    # Ce qui vient d'être lu (#1172) : le rapport rendu à l'appelant
+                    # et le contexte confié à l'hôte sortent de la même lecture,
+                    # donc « lu » à l'écran veut dire « lu par le brief ». S'y
+                    # joint, tel quel, ce qu'une conversation avait déjà lu.
+                    contexte_sources="\n\n".join(
+                        morceau
+                        for morceau in (contexte_markdown(rapport), contexte_sources.strip())
+                        if morceau.strip()
+                    ),
                 )
             )
         except DemarrageHoteRate as echec:
@@ -1592,6 +1613,7 @@ class ServiceExecutions:
                 projet_id=ordre.projet_id,
                 mode_brief=ordre.mode_brief,
                 porte=porte,
+                contexte_sources=ordre.contexte_sources,
             )
         except asyncio.CancelledError:
             raise

@@ -534,11 +534,24 @@ def test_le_contexte_porte_le_rapport_de_lecture_et_le_cout(tmp_path: Path) -> N
     assert "Coût estimé" in rendu
 
 
-def test_sans_contenu_lu_le_contexte_reste_vide(tmp_path: Path) -> None:
-    """Un en-tête sans contenu n'apprend rien et coûterait des tokens."""
+def test_sans_source_fournie_le_contexte_reste_vide() -> None:
+    """Rien n'a été joint : un en-tête sans rien dessous coûterait des tokens pour rien."""
+    assert contexte_markdown(extraire_sources([])) == ""
+
+
+def test_une_source_fournie_mais_illisible_se_nomme_dans_le_contexte(tmp_path: Path) -> None:
+    """#1172 : la taire faisait lire « aucune source n'a été fournie » au brief.
+
+    La personne a joint un document. Le modèle doit savoir qu'il était attendu, et
+    pourquoi il manque, au lieu de travailler comme si on ne lui avait rien donné.
+    """
     rendu = contexte_markdown(extraire_sources([fichier(tmp_path, "img.png", "x")]))
 
-    assert rendu == ""
+    assert "`img.png`" in rendu
+    assert "ignoré : format-non-gere" in rendu
+    assert "Aucune de ces sources n'a pu être lue" in rendu
+    # Rien n'a été lu, donc aucun bloc de contenu n'est ouvert.
+    assert "### Contenu" not in rendu
 
 
 def test_la_troncature_se_voit_dans_le_contexte_lui_meme(tmp_path: Path) -> None:

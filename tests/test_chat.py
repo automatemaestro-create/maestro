@@ -690,9 +690,13 @@ def test_un_format_non_gere_est_ignore_au_rapport_et_ne_refuse_rien(tmp_path):
         (lecture,) = message.rapport.lectures
         assert lecture.etat == "ignore" and lecture.motif == "format-non-gere"
         assert lecture.tokens == 0
-        # Rien de lu, donc pas de contexte : un en-tête sans contenu coûterait des
-        # tokens pour ne rien dire.
-        assert message.contexte == ""
+        # Rien de lu, mais quelque chose de joint (#1172) : le contexte le nomme,
+        # avec son motif, et n'ouvre aucun bloc de contenu. L'agent sait qu'une
+        # maquette était attendue, au lieu de répondre comme si on ne lui avait
+        # rien donné.
+        assert "maquette.png" in message.contexte
+        assert "format-non-gere" in message.contexte
+        assert "### Contenu" not in message.contexte
         assert len(store.fil("qa")) == 2  # le message et sa réponse
 
     asyncio.run(scenario())

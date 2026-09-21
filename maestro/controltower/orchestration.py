@@ -279,6 +279,7 @@ from maestro.agents.playbook_du_code import registre
 from maestro.controltower.bornes import AUCUNE_BORNE, BornesRun
 from maestro.controltower.causes import cause_lisible
 from maestro.controltower.chat import (
+    UTILISATEUR,
     Incrementeur,
     MessageChat,
     Redaction,
@@ -411,7 +412,35 @@ AGENT_ORCHESTRATION = Agent(
 #: plutôt qu'en quatre paramètres — voir `controltower.bornes` —, et
 #: `AUCUNE_BORNE` est le régime de tous les runs ouverts depuis le fil avant ce
 #: ticket, donc ce que rend un appelant qui n'en pose pas.
-LanceurRun = Callable[[str, str | None, BornesRun], Awaitable[Mapping[str, Any]]]
+#:
+#: Le quatrième est le **contexte des sources** de la conversation (#1172,
+#: `contexte_du_fil`) : ce que les messages ont joint, déjà lu et encadré comme
+#: donnée. Avant lui, un run ouvert depuis le fil partait sans les pièces jointes
+#: dont on venait de parler. `""` quand la conversation n'en porte aucune.
+LanceurRun = Callable[[str, str | None, BornesRun, str], Awaitable[Mapping[str, Any]]]
+
+
+def contexte_du_fil(fil: Sequence[MessageChat]) -> str:
+    """Les sources que la conversation a jointes, déjà lues et encadrées (#1172).
+
+    Chaque message d'utilisateur qui a porté des sources persiste leur contexte
+    (`MessageChat.contexte`), sorti de `contexte_markdown` et de lui seul : c'est
+    ce qui a été annoncé « lu » dans le fil. On les reprend **tels quels**, dans
+    l'ordre de la conversation, sans relire aucune source. Relire enverrait au
+    brief une matière qui n'est peut-être plus celle que la personne a vue (une
+    page, #316), ou plus du tout (un téléversement ramassé). Un contexte identique
+    joint deux fois ne compte qu'une fois.
+
+    Les réponses de l'agent n'en portent jamais (`MessageChat` : les sources n'ont
+    de valeur que sur un message d'utilisateur). Le filtre sur l'auteur est donc
+    une ceinture, pas une règle de plus.
+    """
+    vus: list[str] = []
+    for message in fil:
+        contexte = message.contexte.strip()
+        if message.auteur == UTILISATEUR and contexte and contexte not in vus:
+            vus.append(contexte)
+    return "\n\n".join(vus)
 
 #: L'état de l'orchestration en une phrase, pour répondre « où en est-on ? » sans
 #: donner à ce module la connaissance de la projection. Il prend le projet de la
@@ -719,7 +748,7 @@ class RepondeurOrchestration(RepondeurChat):
             # objectif, pas un formulaire. Les bornes viennent du geste
             # (`trancher_cadrage`), seul chemin où un écran a pu les poser.
             return await self._ouvrir_un_run(
-                redaction, verdict.objectif, projet_id, AUCUNE_BORNE
+                redaction, verdict.objectif, projet_id, AUCUNE_BORNE, contexte_du_fil(fil)
             )
         if verdict.nom == VERDICT_PROPOSITION and self._lanceur is None:
             # Prévenir **avant** le « oui » : proposer un run qu'on ne pourra pas
@@ -786,7 +815,7 @@ class RepondeurOrchestration(RepondeurChat):
             return ReponseChat(contenu=redaction.texte)
         await redaction.ecrire("C'est parti.")
         return await self._ouvrir_un_run(
-            redaction, objectif.strip(), projet_id, bornes
+            redaction, objectif.strip(), projet_id, bornes, contexte_du_fil(fil)
         )
 
     async def ouvrir_questionnaire(
@@ -885,8 +914,13 @@ class RepondeurOrchestration(RepondeurChat):
         objectif: str,
         projet_id: str | None,
         bornes: BornesRun = AUCUNE_BORNE,
+        contexte_sources: str = "",
     ) -> ReponseChat:
         """Ouvre le run de `objectif`, dans son projet, et le rattache à la réponse.
+
+        `contexte_sources` (#1172) est ce que la conversation a joint, déjà lu
+        (`contexte_du_fil`). Il part avec l'objectif, sans quoi le brief se rédige
+        sans la spec dont on vient de parler.
 
         `objectif` est **la reformulation approuvée** et jamais le dernier message
         (#685) : la méthode ne reçoit pas le fil, donc un « oui » ne peut pas
@@ -922,7 +956,7 @@ class RepondeurOrchestration(RepondeurChat):
             return ReponseChat(contenu=redaction.texte)
 
         try:
-            resume = await self._lanceur(objectif, projet_id, bornes)
+            resume = await self._lanceur(objectif, projet_id, bornes, contexte_sources)
         except Exception as echec:
             # Nommé dans le fil plutôt que levé : voir la classe. Un objectif
             # refusé (vide, plafond hors bornes) et un moteur qui ne démarre pas

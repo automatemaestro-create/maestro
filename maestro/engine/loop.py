@@ -124,7 +124,6 @@ from maestro.projets.store import ProjetStore
 from maestro.providers.arbitrage import BornesArbitrage
 from maestro.providers.base import ModelProvider
 from maestro.references import ReferenceTicket
-from maestro.sources.extraction import RapportLecture
 from maestro.telemetry import (
     RunJournal,
     StepUsage,
@@ -619,6 +618,7 @@ class OrchestrationEngine:
         projet_id: str | None = None,
         mode_brief: str = MODE_BRIEF_SANS,
         porte: PorteExecution | None = None,
+        contexte_sources: str = "",
     ) -> RunReport:
         """Exécute la boucle complète pour `objective` et renvoie l'agrégat.
 
@@ -679,18 +679,31 @@ class OrchestrationEngine:
         tâche nouvelle n'atteint l'exécuteur, et celles qui y sont déjà vont à leur
         terme. None (le défaut) : rien à franchir, le comportement d'avant ce lot.
         Le moteur ne sait ni qui la ferme ni pourquoi — voir `maestro.engine.pause`.
+
+        `contexte_sources` (#1172) est ce que la personne a joint à l'objectif, déjà
+        lu et **encadré comme donnée** par `contexte_markdown` (ENF-13). Il nourrit
+        la première étape qui lit l'objectif : le **brief** et chacune de ses
+        régénérations, ou le **plan** d'un run sans brief. Vide (le défaut), rien ne
+        change.
         """
         journal = journal if journal is not None else RunJournal()
         mode_brief = mode_brief_valide(mode_brief)
         cadrage, brief, tours_clarification = await self._cadrage(
-            objective, journal, mode_brief, projet_id
+            objective, journal, mode_brief, projet_id, contexte_sources
         )
         # L'entrée de la décomposition : le brief retenu, ou l'objectif brut en mode
         # « sans ». `Brief.synthese()` plutôt que le seul `brief.objectif` — c'est le
         # texte que l'humain a relu pour approuver, périmètre et critères compris, et
         # décomposer moins que ce qui a été approuvé rendrait l'approbation trompeuse.
+        # Les sources suivent la même règle : le brief les a digérées, sinon le plan
+        # est le premier à les lire.
         entree_plan = objective if brief is None else brief.synthese()
-        plan_usage, tasks = await self._plan(entree_plan, journal, projet_id)
+        plan_usage, tasks = await self._plan(
+            entree_plan,
+            journal,
+            projet_id,
+            contexte_sources=contexte_sources if brief is None else "",
+        )
         if ticket is not None:
             tasks = [
                 task
@@ -793,6 +806,7 @@ class OrchestrationEngine:
         journal: RunJournal,
         mode_brief: str,
         projet_id: str | None,
+        contexte_sources: str = "",
     ) -> tuple[StepUsage, Brief | None, int]:
         """Rédige le brief, lève ses zones d'ombre, le fait trancher — avant tout plan.
 
@@ -822,11 +836,13 @@ class OrchestrationEngine:
                 "mode de brief « humain » demandé sans arbitre configuré : "
                 "personne ne pourrait trancher, le run resterait suspendu."
             )
-        cadrage, brief = await self.etape_brief(objective, journal, projet_id=projet_id)
+        cadrage, brief = await self.etape_brief(
+            objective, journal, projet_id=projet_id, contexte_sources=contexte_sources
+        )
         if arbitre is None or mode_brief == MODE_BRIEF_AUTO:
             return cadrage, brief, 0
         cadrage, brief, tours = await self._clarifications(
-            objective, brief, cadrage, journal, projet_id
+            objective, brief, cadrage, journal, projet_id, contexte_sources
         )
         # Mode humain : l'attente est indéfinie et n'est bornée par aucun time-out —
         # même parti pris que la validation d'action sensible (#48). Le time-out par
@@ -848,6 +864,7 @@ class OrchestrationEngine:
         cadrage: StepUsage,
         journal: RunJournal,
         projet_id: str | None,
+        contexte_sources: str = "",
     ) -> tuple[StepUsage, Brief, int]:
         """Lève les zones d'ombre du brief par allers-retours **bornés** (#321).
 
@@ -895,9 +912,12 @@ class OrchestrationEngine:
             # tour, donc le modèle a besoin de tout l'historique pour ne pas reperdre
             # ce qu'un tour précédent avait levé.
             clarifications += tuple(reponses)
+            # Les sources à chaque tour, pas seulement au premier : le brief est
+            # régénéré en entier, et un tour qui ne les verrait plus les perdrait.
             usage, brief = await self.etape_brief(
                 objective,
                 journal,
+                contexte_sources=contexte_sources,
                 projet_id=projet_id,
                 clarifications=clarifications,
                 dernier_tour=tour >= tours_max,
@@ -909,7 +929,12 @@ class OrchestrationEngine:
         return cadrage, brief, tour
 
     async def _plan(
-        self, objective: str, journal: RunJournal, projet_id: str | None = None
+        self,
+        objective: str,
+        journal: RunJournal,
+        projet_id: str | None = None,
+        *,
+        contexte_sources: str = "",
     ) -> tuple[StepUsage, list[Task]]:
         """Planifie l'objectif en consignant l'étape (usage et issue) dans le journal.
 
@@ -942,7 +967,9 @@ class OrchestrationEngine:
         with collect_usage() as recolte:
             try:
                 tasks = await self._orchestrator.plan(
-                    objective, equipe=self._equipe(projet_id)
+                    objective,
+                    equipe=self._equipe(projet_id),
+                    contexte_sources=contexte_sources,
                 )
             except Exception as exc:
                 journal.consigne(
@@ -1001,7 +1028,7 @@ class OrchestrationEngine:
         objectif: str,
         journal: RunJournal,
         *,
-        sources_extraites: RapportLecture | None = None,
+        contexte_sources: str = "",
         projet_id: str | None = None,
         clarifications: Sequence[Clarification] = (),
         dernier_tour: bool = False,
@@ -1034,7 +1061,7 @@ class OrchestrationEngine:
             try:
                 brief = await self._orchestrator.brief(
                     objectif,
-                    sources_extraites,
+                    contexte_sources,
                     clarifications,
                     dernier_tour=dernier_tour,
                 )

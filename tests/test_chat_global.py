@@ -61,6 +61,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import dataclasses
 import json
 from pathlib import Path
 from typing import Any
@@ -97,6 +98,7 @@ from maestro.controltower.orchestration import (
     VERDICT_PROPOSITION,
     RepondeurOrchestration,
     apercu_de,
+    contexte_du_fil,
 )
 from maestro.controltower.projets import ServiceProjets
 from maestro.controltower.state import (
@@ -171,8 +173,9 @@ def _fil(*contenus: str) -> list[MessageChat]:
 class LanceurEspion:
     """Un `LanceurRun` qui note ce qu'on lui demande — aucun moteur, aucun quota.
 
-    Il note **les trois** arguments du contrat : l'objectif, le projet de la
-    fenêtre (#683) et les bornes du run (#990). Un double qui n'accepterait que
+    Il note **les quatre** arguments du contrat : l'objectif, le projet de la
+    fenêtre (#683), les bornes du run (#990) et le contexte des sources de la
+    conversation (#1172). Un double qui n'accepterait que
     les premiers rendrait le canal vert sur un lancement que le vrai service
     refuserait — et le répondeur rattrapant toute exception du lanceur, l'échec
     se lirait « le lancement a échoué » au lieu d'une erreur de signature.
@@ -182,6 +185,7 @@ class LanceurEspion:
         self.objectifs: list[str] = []
         self.projets: list[str | None] = []
         self.bornes: list[BornesRun] = []
+        self.contextes: list[str] = []
         self._resume = {"run_id": run_id, "statut": statut}
 
     async def __call__(
@@ -189,10 +193,12 @@ class LanceurEspion:
         objectif: str,
         projet_id: str | None = None,
         bornes: BornesRun = AUCUNE_BORNE,
+        contexte_sources: str = "",
     ) -> dict[str, str]:
         self.objectifs.append(objectif)
         self.projets.append(projet_id)
         self.bornes.append(bornes)
+        self.contextes.append(contexte_sources)
         return dict(self._resume)
 
 
@@ -531,6 +537,57 @@ def _fil_approuve() -> list[MessageChat]:
     )
 
 
+SPEC_LUE = "## Sources fournies\n\n#### Source 1 — cdc.md\n\nLes fiches portent un SIRET."
+
+
+def _fil_avec_une_piece_jointe() -> list[MessageChat]:
+    """Le fil d'un accord dont la demande a joint une spec, lue par le fil."""
+    fil = _fil_approuve()
+    fil[0] = dataclasses.replace(fil[0], contexte=SPEC_LUE)
+    return fil
+
+
+def test_les_pieces_jointes_de_la_conversation_partent_avec_le_run() -> None:
+    """#1172 : le run ouvert depuis le fil partait sans la spec dont on venait de parler."""
+    lanceur = LanceurEspion()
+    repondeur, _ = _repondeur(
+        _verdict(VERDICT_ACCORD, "C'est parti.", OBJECTIF), lanceur=lanceur
+    )
+
+    asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil_avec_une_piece_jointe()))
+
+    assert lanceur.contextes == [SPEC_LUE]
+
+
+def test_le_geste_d_accord_emporte_aussi_les_pieces_jointes() -> None:
+    """Le bouton ouvre le même run que l'accord tapé, sources comprises."""
+    lanceur = LanceurEspion()
+    repondeur = RepondeurOrchestration(lanceur=lanceur)
+
+    asyncio.run(
+        repondeur.trancher_cadrage(
+            AGENT_ORCHESTRATION,
+            _fil_avec_une_piece_jointe(),
+            approuve=True,
+            objectif=OBJECTIF,
+        )
+    )
+
+    assert lanceur.contextes == [SPEC_LUE]
+
+
+def test_le_contexte_du_fil_ne_retient_que_ce_que_l_utilisateur_a_joint() -> None:
+    """Dans l'ordre de la conversation, une seule fois chacun, jamais les réponses."""
+    fil = _fil("demande", "réponse", "précision", "réponse")
+    fil[0] = dataclasses.replace(fil[0], contexte="## A")
+    fil[1] = dataclasses.replace(fil[1], contexte="## pas d'utilisateur")
+    fil[2] = dataclasses.replace(fil[2], contexte="## A")
+    fil.append(dataclasses.replace(fil[0], contenu="encore", contexte="## B"))
+
+    assert contexte_du_fil(fil) == "## A\n\n## B"
+    assert contexte_du_fil(_fil("demande sans pièce jointe")) == ""
+
+
 def test_un_accord_ouvre_le_run_et_le_rattache() -> None:
     lanceur = LanceurEspion()
     repondeur, _ = _repondeur(
@@ -646,6 +703,7 @@ def test_un_lancement_en_echec_se_raconte_dans_le_fil() -> None:
         objectif: str,
         projet_id: str | None = None,
         bornes: BornesRun = AUCUNE_BORNE,
+        contexte_sources: str = "",
     ) -> dict[str, str]:
         raise RuntimeError("objectif refusé : plafond hors bornes")
 
@@ -2106,6 +2164,7 @@ def test_une_borne_hors_bornes_est_refusee_par_le_moteur_et_racontee() -> None:
         objectif: str,
         projet_id: str | None = None,
         bornes: BornesRun = AUCUNE_BORNE,
+        contexte_sources: str = "",
     ) -> dict[str, str]:
         plafond = bornes.plafond_cout_usd
         if plafond is not None and plafond <= 0:
