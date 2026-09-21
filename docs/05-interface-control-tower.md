@@ -6025,6 +6025,20 @@ Dans le fil : `POST /api/chat/{agent}/outillage/questionnaire` pose la première
 c'est celle qui attend —, si bien qu'un geste tardif ou un double clic tombe sur `409` au lieu de
 répondre à une question déjà tranchée. `422` sur une valeur hors des options posées.
 
+**Et la voie du fil écrit** (#1104). Elle conduisait le questionnaire, le concluait sur « rien n'est
+écrit tant que vous ne l'avez pas validé »… et rien ne validait : le pied du fil redevenait vide dès
+que le dernier message ne portait plus de question. Aucune route n'a été ajoutée pour y remédier, et
+c'est le signe que le partage était bon — la conclusion se valide par **la génération ci-dessous**,
+avec le corps de l'étape de création (`{retenus, choix}`), parce que cette route ne sait pas de
+quelle surface viennent les réponses. Ce qui a changé tient en deux choses : une carte au pied de la
+conversation ([`ConclusionOutillage`](../apps/web/components/chat/ConclusionOutillage.tsx), montée
+comme les trois autres gestes par `GestesDuFil`, donc aussi dans la colonne de conversation), et une
+phrase de conclusion qui dit **où** se donne la validation qu'elle promet. Les réponses se relisent
+là où elles vivent — le champ `choix` des messages, seule mémoire du canal —, et le **projet visé est
+celui de la fenêtre** : le fil est transverse (#281), ses messages n'en portent aucun, d'où une carte
+qui le nomme avant d'écrire. Joué de bout en bout par
+[`tests/test_outillage_voie_du_fil.py`](../tests/test_outillage_voie_du_fil.py).
+
 #### La génération — `POST /api/projets/{id}/outillage/generation`
 
 Corps **facultatif** : `{"retenus": ["AGENTS.md", "…"], "choix": [{"cle": "…", "valeur": "…"}]}`.

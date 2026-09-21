@@ -14,9 +14,22 @@
  * Toute la logique — quelles options, quelle recommandation, quelle déduction — vit
  * côté moteur (`maestro/projets/outillage.py`), parce qu'elle décide de fichiers
  * qu'on écrira dans le projet de quelqu'un.
+ *
+ * ## Et comment on **nomme** ce que l'outillage contient (#1104)
+ *
+ * Les natures de docs/38 — un fichier d'instructions, un pont, un skill, un script —
+ * s'écrivaient dans l'étape d'outillage du parcours de création, et elles s'écrivent
+ * désormais aussi au pied du fil. Deux tables de libellés finiraient par ne plus
+ * accorder les mêmes pluriels, et la même liste se lirait « 4 skills » ici et
+ * « 4 skill » là. Elles vivent donc ici, avec le reste de ce que les deux surfaces
+ * partagent, et aucune des deux ne les recopie.
  */
 
-import type { ChoixOutillage, MessageChat } from "@/lib/types";
+import type {
+  ChoixOutillage,
+  EntreeOutillage,
+  MessageChat,
+} from "@/lib/types";
 
 /**
  * La **question d'outillage** que ce fil porte encore — `null` s'il n'y en a pas.
@@ -50,4 +63,86 @@ export function choixDuFil(messages: MessageChat[]): ChoixOutillage[] {
   return messages
     .map((m) => m.choix)
     .filter((c): c is ChoixOutillage => c !== null && c !== undefined);
+}
+
+/**
+ * Les réponses d'un questionnaire **dont plus aucune question n'attend** —
+ * `null` quand une question est posée, ou qu'aucune réponse n'a été donnée (#1104).
+ *
+ * C'est le troisième état du même questionnaire, à côté des deux que ce module
+ * énonçait déjà : une question **attend** (`questionEnAttente`), des réponses ont
+ * été **données** (`choixDuFil`)… et il arrive un moment où les secondes existent
+ * sans la première. Jusqu'à ce lot, ce moment n'était lu nulle part : le fil
+ * concluait sur « rien n'est écrit tant que vous ne l'avez pas validé » et aucune
+ * surface n'offrait de quoi valider.
+ *
+ * ⚠ Il ne dit **pas** que le questionnaire est fini — cela, c'est le moteur qui le
+ * dit (`terminee`, `POST …/outillage/questionnaire`), et l'écran le lui demande
+ * plutôt que de le déduire. Un geste dont la suite n'a pas pu être produite (502
+ * après l'écriture du geste) laisse exactement cette trace : des réponses, aucune
+ * question. La différence entre « conclu » et « interrompu » n'est pas lisible dans
+ * le fil, elle l'est dans les réponses — donc elle se demande.
+ */
+export function choixAValider(messages: MessageChat[]): ChoixOutillage[] | null {
+  if (questionEnAttente(messages) !== null) return null;
+  const choix = choixDuFil(messages);
+  return choix.length > 0 ? choix : null;
+}
+
+/**
+ * Ce qu'une entrée vaut **par défaut** : tout ce qu'il y a à écrire est retenu
+ * d'avance — le parti pris n° 1 de l'étape d'outillage (#1034), d'après Vercel
+ * (« sets the best settings for you »), repris tel quel au pied du fil (#1104).
+ *
+ * `deja-present` fait exception, et ce n'est pas un oubli : le projet le porte
+ * déjà, il n'y a rien à faire. L'entrée reste **dans la liste** (c'est ce que #1030
+ * a voulu en la gardant plutôt qu'en la supprimant) et sa case se coche — c'est ce
+ * qu'*ajouter* veut dire : demander que Maestro reprenne un fichier qu'on croyait
+ * acquis.
+ */
+export function retenueParDefaut(entree: EntreeOutillage): boolean {
+  return entree.etat !== "deja-present";
+}
+
+/** Le nom d'une nature (docs/38 §3), au singulier et au pluriel. */
+const NATURES: Record<string, { un: string; des: string }> = {
+  instructions: { un: "fichier d'instructions", des: "fichiers d'instructions" },
+  pont: { un: "pont", des: "ponts" },
+  skill: { un: "skill", des: "skills" },
+  script: { un: "script", des: "scripts" },
+};
+
+/** L'ordre des natures — celui de docs/38 §3.6, jamais l'ordre alphabétique. */
+export const ORDRE_NATURES = ["instructions", "pont", "skill", "script"];
+
+/** « 2 ponts », « 1 skill » — le compte et sa nature, accordés. */
+export function compte(type: string, nombre: number): string {
+  const nature = NATURES[type];
+  if (nature === undefined) return `${nombre} ${type}`;
+  return `${nombre} ${nombre > 1 ? nature.des : nature.un}`;
+}
+
+/** Le badge de nature d'une ligne — toujours au singulier, il qualifie une entrée. */
+export function libelleNature(type: string): string {
+  const nature = NATURES[type];
+  if (nature === undefined) return type;
+  return nature.un.charAt(0).toUpperCase() + nature.un.slice(1);
+}
+
+/**
+ * « 1 fichier d'instructions · 2 ponts · 4 skills » — ce que des entrées pèsent,
+ * dans l'ordre des natures, les natures absentes tues.
+ *
+ * Écrit ici et pas dans l'un des deux appelants : l'étape d'outillage le rend dans
+ * son en-tête de liste, la conclusion du fil dans sa phrase de compte, et c'est la
+ * même phrase.
+ */
+export function comptesParNature(entrees: EntreeOutillage[]): string {
+  return ORDRE_NATURES.map((type) => ({
+    type,
+    nombre: entrees.filter((e) => e.type === type).length,
+  }))
+    .filter((n) => n.nombre > 0)
+    .map((n) => compte(n.type, n.nombre))
+    .join(" · ");
 }
