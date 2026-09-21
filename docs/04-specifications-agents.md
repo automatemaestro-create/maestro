@@ -142,12 +142,16 @@ Un même agent s'exécute de deux façons, et les deux doivent porter le même m
 
 ---
 
-## 2. Catalogue des agents par défaut
+## 2. Catalogue des gabarits de rôle
 
-> ⚠ **Ce catalogue cesse d'être instancié d'office** (2026-09-19, [docs/37 §2.1](./37-decision-equipe-sur-mesure.md)).
-> Un projet naît **sans agent**. L'analyse du projet propose son équipe, que l'utilisateur valide, et
-> les agents ci-dessous deviennent des **gabarits de rôle** qu'elle consulte (#1021, #1042). Ce
-> tableau décrit l'état présent : #1043 le réécrira.
+> ✅ **Ce catalogue n'est plus instancié d'office** (#1042, 2026-09-19, [docs/37 §2.1](./37-decision-equipe-sur-mesure.md)).
+> Un projet naît **sans agent** : `catalogue()` ne rend que les agents de son dépôt, et les fiches
+> ci-dessous sont des **gabarits de rôle** (`GABARITS_DU_CODE`) que l'analyse d'équipe consulte
+> (#1039) avant que l'utilisateur ne valide (#1040). Leurs noms restent **réservés** — le paquet
+> livre un playbook sous chacun, qui masquerait celui d'une fiche de projet homonyme —, d'où les
+> noms distincts des rôles proposés (`dev` descend de `developpeur`). Hors de tout projet, un moteur
+> travaille encore avec eux : c'est son repli de câblage (`catalogue_hors_projet`). Ce tableau
+> décrit l'état présent : #1043 le réécrira.
 
 | Agent | Rôle | Compétences (tags) | Modèle conseillé (défaut POC — Claude) |
 |-------|------|--------------------|------------------|

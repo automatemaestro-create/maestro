@@ -41,7 +41,7 @@ import pytest
 
 from maestro.agents import TOOLED_PROFILES
 from maestro.agents import playbook_du_code as pdc
-from maestro.agents.catalog import DEFAULT_AGENTS
+from maestro.agents.catalog import GABARITS_DU_CODE
 from maestro.agents.playbook_du_code import (
     CONSIGNE_RENDU_COMPTE,
     playbook_du_code,
@@ -59,7 +59,7 @@ ROLES = sorted(PLAYBOOK_DEFAUTS)
 PROFILS = {profil.nom: profil for profil in TOOLED_PROFILES}
 
 #: Les agents du catalogue indexés par nom (le chemin d'exécution texte).
-AGENTS = {agent.nom: agent for agent in DEFAULT_AGENTS}
+AGENTS = {agent.nom: agent for agent in GABARITS_DU_CODE}
 
 #: Les sections que docs/04 §1 pose comme structure d'un playbook. Un lot peut en
 #: **ajouter** (les lots #296/#297 en ajoutent quatre) ; aucun ne doit en retirer.

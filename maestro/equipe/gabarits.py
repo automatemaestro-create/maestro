@@ -9,7 +9,7 @@ touche à aucun dépôt et ne fabrique pas de proposition — c'est
 
 Ce qu'un gabarit apporte, et d'où :
 
-- son **rôle** et ses **compétences** viennent de `DEFAULT_AGENTS`
+- son **rôle** et ses **compétences** viennent de `GABARITS_DU_CODE`
   (`maestro.agents.catalog`), **dérivés et jamais recopiés** : un rôle dont on
   élargirait les compétences dans le catalogue les élargirait ici sans une
   ligne, et deux listes finiraient par ne plus dire la même chose ;
@@ -50,7 +50,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
-from maestro.agents.catalog import DEFAULT_AGENTS, Agent
+from maestro.agents.catalog import GABARITS_DU_CODE, Agent
 from maestro.agents.playbook_du_code import playbook_du_code
 from maestro.outillage.detection import LANGAGE_PAR_EXTENSION
 from maestro.outillage.modele import Constats, Piece
@@ -58,7 +58,7 @@ from maestro.outillage.modele import Constats, Piece
 #: Les agents figés, indexés par nom — la matière des gabarits. Un gabarit qui
 #: nommerait un agent absent lève à l'import de ce module, ce qui est préférable
 #: à un rôle proposé sans compétences.
-_AGENT_PAR_NOM: dict[str, Agent] = {agent.nom: agent for agent in DEFAULT_AGENTS}
+_AGENT_PAR_NOM: dict[str, Agent] = {agent.nom: agent for agent in GABARITS_DU_CODE}
 
 #: Les extensions qui n'existent que pour dessiner un écran. C'est le signal
 #: d'interface le plus honnête que l'analyse porte : `.ts` ne dit pas si le
@@ -377,7 +377,7 @@ def _instances_developpeur(constats: Constats) -> tuple[int, str]:
     )
 
 
-#: Les cinq gabarits, **dans l'ordre du catalogue** (`DEFAULT_AGENTS`). L'ordre
+#: Les cinq gabarits, **dans l'ordre du catalogue** (`GABARITS_DU_CODE`). L'ordre
 #: fait foi pour le rendu : deux propositions du même projet rendent la même
 #: liste, sans tri à l'affichage.
 GABARITS: tuple[Gabarit, ...] = (

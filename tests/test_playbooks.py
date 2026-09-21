@@ -33,7 +33,7 @@ from pathlib import Path
 import pytest
 
 from maestro.agents import default_runtimes
-from maestro.agents.catalog import DEFAULT_AGENTS
+from maestro.agents.catalog import GABARITS_DU_CODE
 from maestro.agents.playbooks import PLAYBOOK_DEFAUTS, PlaybookStore, avec_playbooks
 from maestro.config import load_settings
 from maestro.engine import OrchestrationEngine
@@ -132,7 +132,7 @@ def _moteur(provider, store, *, competences=("backend",)):
 
 def _agent_du_code(nom):
     """L'agent du catalogue (son prompt « du code » sert de témoin)."""
-    return next(a for a in DEFAULT_AGENTS if a.nom == nom)
+    return next(a for a in GABARITS_DU_CODE if a.nom == nom)
 
 
 # --- ① Stockage versionné (#76) : append-only, historique, retour arrière -------------
@@ -290,14 +290,14 @@ def test_les_playbooks_par_defaut_couvrent_les_roles_outilles():
 def test_avec_playbooks_ne_remplace_que_les_prompts_stockes(store):
     store.ecrire("qa", "Playbook QA stocké.")
 
-    agents = avec_playbooks(DEFAULT_AGENTS, store)
+    agents = avec_playbooks(GABARITS_DU_CODE, store)
 
     par_nom = {a.nom: a for a in agents}
     assert par_nom["qa"].prompt_systeme == "Playbook QA stocké."
     # Les agents jamais édités sont rendus à l'identique — un dépôt vide aussi.
     assert par_nom["developpeur"] == _agent_du_code("developpeur")
-    assert avec_playbooks(DEFAULT_AGENTS, PlaybookStore(store.racine / "vide")) == tuple(
-        DEFAULT_AGENTS
+    assert avec_playbooks(GABARITS_DU_CODE, PlaybookStore(store.racine / "vide")) == tuple(
+        GABARITS_DU_CODE
     )
 
 

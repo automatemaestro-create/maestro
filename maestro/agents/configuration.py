@@ -24,7 +24,12 @@ from maestro.agents.catalog import Agent
 from maestro.agents.mcp import McpStore
 from maestro.agents.permissions import PermissionStore
 from maestro.agents.playbooks import PlaybookStore
-from maestro.agents.store import AgentStore, SurchargeStore, catalogue
+from maestro.agents.store import (
+    AgentStore,
+    SurchargeStore,
+    catalogue,
+    gabarits_du_code,
+)
 from maestro.config import Settings, load_settings
 
 
@@ -85,10 +90,18 @@ class ConfigurationAgents:
         )
 
     def catalogue(self, modele: str | None = None) -> tuple[Agent, ...]:
-        """Le catalogue effectif à ce niveau : agents du code + agents de ce projet.
+        """Le catalogue effectif à ce niveau : les agents **de ce niveau**, et eux seuls.
 
-        Les agents du code y restent tant que #1042 n'en a pas fait des
-        gabarits — c'est ce lot-là qui fera naître un projet sans agent, pas
-        celui-ci (`maestro.agents.store.catalogue`).
+        Vide sur un projet qui n'a pas encore recruté (#1042) : les cinq fiches
+        du code n'y entrent plus, elles sont des gabarits (`gabarits_du_code`).
         """
-        return catalogue(self.agents, modele, surcharges=self.surcharges)
+        return catalogue(self.agents, modele)
+
+    def gabarits_du_code(self, modele: str | None = None) -> tuple[Agent, ...]:
+        """Les gabarits de rôle, leurs surcharges de **ce niveau** posées (#1042).
+
+        Servi à côté du catalogue et jamais mélangé avec lui : un gabarit se
+        consulte et se règle, il ne travaille pas. Les surcharges suivent le
+        rangement de #1038 — celles du projet par-dessus celles du gabarit.
+        """
+        return gabarits_du_code(self.surcharges, modele)

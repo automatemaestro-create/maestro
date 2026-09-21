@@ -84,7 +84,7 @@ from pathlib import Path
 import pytest
 
 from maestro.agents import QA_PROFILE, AgentRuntime
-from maestro.agents.catalog import DEFAULT_AGENTS
+from maestro.agents.catalog import GABARITS_DU_CODE
 from maestro.agents.mcp import ServeurMcp
 from maestro.agents.permissions import (
     DecisionOutil,
@@ -810,7 +810,7 @@ def test_les_politiques_versionnees_nomment_des_agents_du_catalogue():
     `developer.json` ou un `orchestrateur.json` ne serait lu par personne, et
     « pas de fichier = pas de politique » ne distingue pas les deux cas.
     """
-    connus = {agent.nom for agent in DEFAULT_AGENTS}
+    connus = {agent.nom for agent in GABARITS_DU_CODE}
     assert set(PermissionStore(DEPOT_VERSIONNE).agents()) <= connus
 
 

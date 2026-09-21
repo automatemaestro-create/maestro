@@ -29,12 +29,14 @@ import json
 
 import pytest
 
-from maestro.agents.catalog import DEFAULT_AGENTS, MODELE_EXECUTANT_DEFAUT
+from maestro.agents.catalog import GABARITS_DU_CODE, MODELE_EXECUTANT_DEFAUT
 from maestro.agents.store import (
     NOMS_RESERVES,
     AgentDefinition,
     AgentStore,
+    SurchargeStore,
     catalogue,
+    gabarits_du_code,
 )
 from maestro.config import load_settings
 from maestro.engine import OrchestrationEngine
@@ -215,21 +217,24 @@ def test_la_racine_du_depot_est_configurable(tmp_path, monkeypatch):
     assert depot.racine == tmp_path / "ailleurs"
 
 
-# --- ② Catalogue effectif : défauts du code + personnalisés ---------------------------
+# --- ② Catalogue effectif : les agents du dépôt, et eux seuls (#1042) -----------------
 
 
-def test_un_depot_vide_reproduit_le_catalogue_par_defaut(store):
-    assert catalogue(store) == DEFAULT_AGENTS
+def test_un_depot_vide_rend_un_catalogue_vide(store):
+    # #1042 : les cinq fiches du code n'entrent plus dans le catalogue effectif —
+    # ce sont des gabarits. Un projet qui n'a rien recruté n'a donc aucun agent.
+    assert catalogue(store) == ()
+    # Et elles restent lisibles là où on les consulte : le catalogue de gabarits.
+    assert gabarits_du_code(SurchargeStore(store.racine / "surcharges")) == GABARITS_DU_CODE
 
 
-def test_les_personnalises_suivent_les_agents_du_code(store):
+def test_le_catalogue_ne_porte_que_les_agents_du_depot(store):
     store.ecrire(_definition())
 
     agents = catalogue(store)
 
-    assert agents[: len(DEFAULT_AGENTS)] == DEFAULT_AGENTS
+    assert [a.nom for a in agents] == ["redacteur"]
     dernier = agents[-1]
-    assert dernier.nom == "redacteur"
     assert dernier.competences == frozenset({"redaction", "documentation"})
     # Le playbook de la définition devient le prompt système d'exécution.
     assert dernier.prompt_systeme == "Tu rédiges la documentation technique demandée."
@@ -263,13 +268,15 @@ def test_une_tache_est_routee_vers_l_agent_personnalise(store):
     assert assignation.agent.nom == "redacteur"
 
 
-def test_a_score_egal_les_agents_du_code_gardent_la_priorite(store):
-    # Mêmes compétences que le QA du code : l'ordre du catalogue effectif départage.
-    store.ecrire(_definition(nom="doublure", competences=("tests", "review")))
+def test_a_score_egal_l_ordre_du_depot_departage(store):
+    # Les rôles du code ne sont plus au catalogue (#1042) : ce qui départage deux
+    # candidats à score égal est l'ordre du dépôt, c'est-à-dire l'ordre des noms.
+    store.ecrire(_definition(nom="aaa-verificateur", competences=("tests", "review")))
+    store.ecrire(_definition(nom="zzz-doublure", competences=("tests", "review")))
 
     assignation = assign(_task(competences_requises=frozenset({"tests"})), catalogue(store))
 
-    assert assignation.agent.nom == "qa"
+    assert assignation.agent.nom == "aaa-verificateur"
 
 
 # --- ④ Exécution : le moteur exécute l'agent personnalisé, cadré par son playbook -----

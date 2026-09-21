@@ -17,8 +17,16 @@ consigne la configuration, le fonctionnement et la démonstration réelle.
 
 ## 1. Ce qui est notifié
 
-`maestro-run --notifier devops "<objectif>"` arme le notificateur de
+`maestro-run --notifier <agent> "<objectif>"` arme le notificateur de
 supervision ([maestro/supervision.py](../maestro/supervision.py)) sur le run :
+
+> ⚠ **L'agent notificateur se nomme, il ne se suppose plus** (#1042). Ce pilote
+> l'avait par défaut — `devops`, l'un des cinq rôles que tout poste recevait
+> d'office. Ces rôles sont devenus des **gabarits** ([docs/37 §2.1](./37-decision-equipe-sur-mesure.md))
+> et un projet naît sans agent : le notificateur se prend dans **l'équipe du
+> projet** du run (`maestro-run --projet <id> --notifier <agent>`), ou dans le
+> catalogue hors projet. Les traces de la session ci-dessous datent d'avant, et
+> `devops` y est donc à lire comme le nom de l'agent équipé de l'époque.
 
 | Événement | Moment | Contenu posté |
 |-----------|--------|---------------|
@@ -203,8 +211,10 @@ Capture du canal : ![Notifications Slack du run](./assets/pilote-mcp-slack.png)
 
 ## 5. Limites connues (POC)
 
-- Le notificateur exige un agent à **runtime outillé** (`developpeur`, `bdd`,
-  `qa`, `devops`) : un fournisseur texte-seul (`MAESTRO_PROVIDER=openai` sans
+- Le notificateur exige un agent **du catalogue** — depuis #1042, un agent de
+  l'équipe du projet (ou du catalogue hors projet), jamais un gabarit de rôle :
+  un acteur système (`orchestrateur`, `assistance`) n'a pas de fiche, donc pas de
+  runtime à équiper. Et un fournisseur texte-seul (`MAESTRO_PROVIDER=openai` sans
   exécution agentique) ne peut pas monter de serveur MCP — la notification
   échouerait proprement (`UnsupportedCapability` consignée).
 - Chaque notification est une exécution outillée complète (espace isolé +

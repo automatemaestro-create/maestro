@@ -1,16 +1,24 @@
-"""Catalogue des agents exécutants et leurs compétences (ticket #6).
+"""Les **gabarits de rôle** du code et leurs compétences (tickets #6, #1042).
 
-Matérialise le catalogue d'agents par défaut (docs/04-specifications-agents.md §2)
-et les entités `AGENT`/`CAPABILITY` (docs/03-modele-de-donnees.md) : chaque agent
-déclare ses **compétences** (tags) — base de l'auto-assignation par le routeur
-(`maestro.router`) — et le **modèle** + **prompt système** avec lesquels il exécute
-ses tâches via la couche fournisseur (`ModelProvider`).
+Matérialise les entités `AGENT`/`CAPABILITY` (docs/03-modele-de-donnees.md) :
+chaque fiche déclare ses **compétences** (tags) — base de l'auto-assignation par le
+routeur (`maestro.router`) — et le **modèle** + **prompt système** avec lesquels un
+agent qui en descend exécute ses tâches via la couche fournisseur (`ModelProvider`).
 
-Ne figurent ici que les **agents exécutants par défaut** (Développeur, BDD, DevOps,
-Designer, QA) : le Chef de projet n'exécute pas de tâche, il les découpe
-(`maestro.orchestrator`) et synthétise. Ce module reste la part « du code » du
-catalogue ; les **agents personnalisés** (#72, EF-03) se définissent hors du code
-(`maestro.agents.store`) et `catalogue()` assemble le catalogue effectif.
+⚠ **Ces cinq fiches ne sont plus des agents** (#1042,
+[docs/37 §2.1](../../docs/37-decision-equipe-sur-mesure.md)). Elles l'étaient : tout
+poste, tout projet, toute exécution les recevait d'office, et c'est ce que la demande
+du 2026-09-19 renverse — *« à la création ou import d'un projet, aucun agent défini
+encore »*. Ce sont désormais des **gabarits de rôle** : une matière que l'analyse
+d'équipe consulte (`maestro.equipe.gabarits`) pour proposer les rôles d'un projet, et
+que personne n'instancie. Un projet naît **sans agent** ; ses agents sont ceux que sa
+validation d'équipe a écrits (`maestro.agents.store.catalogue`).
+
+Ne figurent ici que les cinq rôles **exécutants** (Développeur, BDD, DevOps, Designer,
+QA) : le Chef de projet n'exécute pas de tâche, il les découpe
+(`maestro.orchestrator`) et synthétise — et il n'est pas non plus un membre d'équipe,
+c'est Maestro (docs/37 §4.2). Les **agents** d'un projet, eux, se définissent hors du
+code (`maestro.agents.store`) et `catalogue()` assemble le catalogue effectif.
 """
 
 from __future__ import annotations
@@ -26,7 +34,7 @@ MODELE_EXECUTANT_DEFAUT = "claude-sonnet-5"
 
 @dataclass(frozen=True)
 class Agent:
-    """Un agent exécutant : une identité, des compétences, un modèle, un playbook.
+    """Une fiche exécutable : une identité, des compétences, un modèle, un playbook.
 
     `competences` sont les tags de l'entité CAPABILITY : le routeur y confronte les
     `competences_requises` d'une tâche pour l'auto-assignation. `prompt_systeme`
@@ -35,7 +43,7 @@ class Agent:
 
     `effort` (#253) est le niveau d'effort demandé au modèle — le réglage frère de
     `modele`, et servi par la même source : ce que le fournisseur admet se lit au
-    catalogue (`GET /api/fournisseurs`). `None` — le cas de tous les agents du
+    catalogue (`GET /api/fournisseurs`). `None` — le cas de tous les gabarits du
     code — laisse au fournisseur le régime qu'il aurait sans ce réglage ; une
     valeur que le fournisseur retenu n'admet pas est **ignorée sans erreur**
     (`ModelProvider.effort_admis`), un effort étant un conseil de dépense et
@@ -92,10 +100,13 @@ puis, après lui, les deux sections « Décisions & arbitrages » et « Recomman
 brèves et sans remplissage."""
 
 
-#: Les cinq agents exécutants par défaut (docs/04 §2). L'ordre fait foi pour départager
-#: les ex æquo de routage (cf. `maestro.router.assign`) : les compétences étant deux à
-#: deux disjointes ici, ce départage ne joue qu'en cas de tâche multi-domaine.
-DEFAULT_AGENTS: tuple[Agent, ...] = (
+#: Les cinq **gabarits de rôle** du code (docs/04 §2, docs/37 §2.1) — ce que Maestro
+#: sait proposer, jamais ce qu'un projet reçoit (#1042). L'ordre fait foi : il est
+#: celui des gabarits proposés (`maestro.equipe.gabarits.GABARITS`) et celui qui
+#: départage les ex æquo de routage d'un catalogue qui les reprendrait
+#: (cf. `maestro.router.assign`) — les compétences étant deux à deux disjointes ici,
+#: ce départage ne joue qu'en cas de tâche multi-domaine.
+GABARITS_DU_CODE: tuple[Agent, ...] = (
     Agent(
         nom="developpeur",
         role="Développeur",
@@ -212,13 +223,13 @@ DEFAULT_AGENTS: tuple[Agent, ...] = (
 )
 
 
-def agents_pour(modele: str | None) -> tuple[Agent, ...]:
-    """Le catalogue par défaut, chaque agent basculé sur `modele` s'il est renseigné.
+def gabarits_pour(modele: str | None) -> tuple[Agent, ...]:
+    """Les gabarits du code, chacun basculé sur `modele` s'il est renseigné.
 
     C'est la moitié « exécutants » de la bascule par configuration (#69) :
     `MAESTRO_MODEL` impose un modèle unique à tous les rôles sans toucher au
-    catalogue ni à la logique d'agent. `None` rend le catalogue tel quel.
+    catalogue ni à la logique d'agent. `None` rend les gabarits tels quels.
     """
     if not modele:
-        return DEFAULT_AGENTS
-    return tuple(replace(agent, modele=modele) for agent in DEFAULT_AGENTS)
+        return GABARITS_DU_CODE
+    return tuple(replace(agent, modele=modele) for agent in GABARITS_DU_CODE)

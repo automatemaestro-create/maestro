@@ -24,7 +24,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from maestro.agents.catalog import DEFAULT_AGENTS, Agent
+from maestro.agents.catalog import GABARITS_DU_CODE, Agent
 from maestro.agents.playbooks import PLAYBOOK_DEFAUTS, PlaybookStore
 from maestro.controltower.app import create_app
 from maestro.controltower.auto_amelioration import (
@@ -184,7 +184,7 @@ def test_proposer_revision_revise_le_document_pas_sa_condensation(tmp_path):
     fournisseur = FournisseurScript()
     analyseur = AnalyseurEchecs(provider=fournisseur, playbooks=depot)
     echecs = echecs_du_run(EtatExecution("run-1", [_echec()]), "developpeur")
-    catalogue = next(a for a in DEFAULT_AGENTS if a.nom == "developpeur")
+    catalogue = next(a for a in GABARITS_DU_CODE if a.nom == "developpeur")
 
     asyncio.run(analyseur.proposer_revision(catalogue, "run-1", echecs))
 
@@ -409,7 +409,7 @@ def _moteur(executant, depot):
 
 def _prompt_du_code(nom="developpeur"):
     """Le prompt système « du code » de l'agent — le repli tant que rien n'est publié (#76)."""
-    return next(a for a in DEFAULT_AGENTS if a.nom == nom).prompt_systeme
+    return next(a for a in GABARITS_DU_CODE if a.nom == nom).prompt_systeme
 
 
 def _etat_depuis(journal):

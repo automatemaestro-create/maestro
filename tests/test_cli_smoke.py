@@ -112,13 +112,18 @@ class _MoteurFactice:
     def __init__(self, report):
         self._report = report
         self.modes_brief: list[str] = []
+        self.projets: list[str | None] = []
 
-    async def run(self, objectif, *, journal=None, mode_brief=MODE_BRIEF_SANS):
+    async def run(
+        self, objectif, *, journal=None, mode_brief=MODE_BRIEF_SANS, projet_id=None
+    ):
         # `mode_brief` (#320) fait partie de la signature du vrai moteur : la CLI le
         # lui passe pour dire sous quel régime de brief tourner. Le factice la
         # reproduit et retient ce qu'il a reçu, sans jouer le régime — il n'appelle
-        # aucun modèle, donc aucun brief n'est rédigé.
+        # aucun modèle, donc aucun brief n'est rédigé. `projet_id` (#222, #1042) de
+        # même : c'est lui qui décide de l'équipe qui prend les tâches.
         self.modes_brief.append(mode_brief)
+        self.projets.append(projet_id)
         return self._report
 
 

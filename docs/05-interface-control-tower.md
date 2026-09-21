@@ -237,7 +237,7 @@ un projet Python et un projet mobile porterait les skills et les autorisations d
 | ce qui est désormais cadré | où c'est rangé | ce qui reste au niveau du poste |
 | --- | --- | --- |
 | `GET /api/agents` — le parc | la vue rend l'**équipe du projet actif** (`?projet=<id>`). ⚠ Elle rend les **exécutants**, jamais l'orchestration (#1028, §2.5.0) : elle dépense et on lui parle, mais elle n'exécute rien | les **compteurs** d'un agent (occupé, coût cumulé) restent ceux que la projection a vus : le cadre porte sur l'appartenance, pas sur l'activité — « qu'a-t-il fait **ici** ? » se lit sur les tâches |
-| le **catalogue** d'agents et les **playbooks** | `core/agents/_projets/<id>/`, `core/playbooks/_projets/<id>/` | la racine de chaque dépôt devient le niveau des **gabarits de rôle** : ce que l'analyse d'équipe consultera (#1039), jamais instancié d'office (#1042) |
+| le **catalogue** d'agents et les **playbooks** | `core/agents/_projets/<id>/`, `core/playbooks/_projets/<id>/` | la racine de chaque dépôt est le niveau des **gabarits de rôle** : ce que l'analyse d'équipe consulte (#1039) et que plus rien n'instancie d'office (#1042 — le catalogue effectif d'un projet est celui de son équipe, vide tant qu'elle n'existe pas) |
 | les **autorisations** et la **capacité** (instances) | `core/permissions/_projets/<id>/`, `core/capacite/_projets/<id>/` | idem — et ce que le projet ne règle pas, il l'**hérite** du gabarit : sans ce repli, ranger les autorisations par projet ferait d'un projet neuf un projet « tout permis » |
 | le **pool** d'intégrations MCP et les **activations** par agent | `core/mcp/_projets/<id>/` | le mot « pool **projet** » (#130) devient exact : c'était jusqu'ici un stockage unique (`core/mcp/pool.json`) |
 
@@ -802,8 +802,15 @@ garde donc son décompte dérivé des tâches, et cesse simplement de nommer le 
 
 ⚠ **Ce que le cadre ne décide pas encore** : quel agent de l'équipe prend quelle tâche. Ce routage
 est le lot #1041 ; #1038 garantit que les agents d'un projet sont **candidats**, et que les cinq
-réglages que l'écran édite sont ceux que l'exécution lira. Et un projet **naît** encore avec les
-agents du code — les en retirer pour n'en faire que des gabarits de rôle est le lot #1042.
+réglages que l'écran édite sont ceux que l'exécution lira.
+
+✅ **Un projet naît sans agent** depuis #1042 : les cinq fiches du code ne sont plus au catalogue
+effectif, ce sont des **gabarits de rôle** (`GABARITS_DU_CODE`) que l'analyse d'équipe consulte et
+que personne n'instancie. `GET /api/catalogue?projet=<id>` et `GET /api/agents?projet=<id>` rendent
+donc une liste **vide** sur un projet qu'on vient de créer ou d'importer, et une tâche de ce projet
+reste « à assigner » tant que son équipe n'a pas été validée (#1040) — un fait à montrer, pas à
+combler. Les gabarits, eux, se lisent et se règlent au niveau gabarit (`/api/catalogue` sans
+`?projet=`), où leur playbook reste éditable.
 
 #### 2.3.1 Fournisseur, modèle, effort — une chaîne, pas trois champs (#253, #255)
 

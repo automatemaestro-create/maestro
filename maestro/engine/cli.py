@@ -95,13 +95,19 @@ dépendants annonce l'issue par message (handoff) et chaque tâche aval attend c
 message avant de démarrer. L'échange est journalisé (visible avec `--trace`, et
 dans la Control Tower avec `--publier`). Requiert le même Redis que `--queue`.
 
+`--projet <id>` (#222, #1042) est le **projet dans lequel le run travaille** : il
+rattache les tâches à sa racine et, depuis #1042, décide de **l'équipe** qui les
+prend — les agents de ce projet, et eux seuls. Omis, le run travaille hors
+projet, avec le catalogue du câblage.
+
 `--notifier <agent>` (#105) branche les **notifications de supervision Slack**
-(`maestro.supervision`) : l'agent nommé (ex. `devops`), équipé de son serveur
-MCP Slack déclaré (#104, `core/mcp/<agent>.json`), poste sur le canal
-`MAESTRO_SLACK_CANAL` la fin de run (bilan tâches/coût) et chaque validation
-humaine en attente — best-effort : un échec de notification est consigné au
-journal sans altérer le run. Non combinable avec `--queue` (les garde-fous, donc
-la notification de validation, s'appliquent côté worker).
+(`maestro.supervision`) : l'agent nommé, **pris dans l'équipe du projet** (ou du
+catalogue hors projet) et équipé de son serveur MCP Slack déclaré (#104,
+`core/mcp/<agent>.json`), poste sur le canal `MAESTRO_SLACK_CANAL` la fin de run
+(bilan tâches/coût) et chaque validation humaine en attente — best-effort : un
+échec de notification est consigné au journal sans altérer le run. Non combinable
+avec `--queue` (les garde-fous, donc la notification de validation, s'appliquent
+côté worker).
 
 L'export **Langfuse** (#81) ne passe pas par une option : il est purement
 configuratif. Dès que `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY` sont dans
@@ -152,7 +158,8 @@ if TYPE_CHECKING:
 _USAGE = (
     "Usage : maestro-run [--json] [--trace] [--queue] [--durable] "
     "[--reprendre <run_id>] [--publier] "
-    "[--messagerie] [--validation-ui] [--notifier <agent>] [--plafond-cout <usd>] "
+    "[--messagerie] [--validation-ui] [--projet <id>] [--notifier <agent>] "
+    "[--plafond-cout <usd>] "
     "[--plafond-tokens <n>] [--timeout <s>] [--brief sans|auto|humain] "
     '[--relances <n>] [--parallele <n>] "<objectif en langage naturel>"'
 )
@@ -173,6 +180,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     messagerie = False
     validation_ui = False
     notifier_agent: str | None = None
+    projet_id: str | None = None
     plafond_cout: float | None = None
     plafond_tokens: int | None = None
     timeout: float | None = None
@@ -181,7 +189,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     mode_brief = MODE_BRIEF_SANS
     flags_connus = {
         "--json", "--trace", "--queue", "--durable", "--reprendre", "--publier",
-        "--messagerie", "--validation-ui", "--notifier", "--plafond-cout",
+        "--messagerie", "--validation-ui", "--notifier", "--projet", "--plafond-cout",
         "--plafond-tokens", "--timeout", "--relances", "--parallele", "--brief",
     }
     while args and args[0] in flags_connus:
@@ -220,11 +228,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif flag == "--notifier":
             if not args or args[0].startswith("--"):
                 print(
-                    "--notifier attend un nom d'agent équipé MCP (ex. devops).",
+                    "--notifier attend le nom d'un agent équipé MCP de l'équipe "
+                    "(celui de --projet, ou du catalogue hors projet).",
                     file=sys.stderr,
                 )
                 return 2
             notifier_agent = args.pop(0)
+        elif flag == "--projet":
+            if not args or args[0].startswith("--"):
+                print(
+                    "--projet attend l'identifiant d'un projet déclaré "
+                    "(celui de la Control Tower, ex. prj-a1b2c3).",
+                    file=sys.stderr,
+                )
+                return 2
+            projet_id = args.pop(0)
         elif flag == "--brief":
             if not args or args[0].startswith("--"):
                 print(
@@ -321,6 +339,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
+    if via_durable and projet_id is not None:
+        print(
+            "--projet n'est pas géré en mode --durable : le workflow ne porte pas "
+            "encore le projet du run, donc ni sa racine ni son équipe (#1042). "
+            "L'accepter sans effet ferait travailler le run hors projet en "
+            "laissant croire le contraire.",
+            file=sys.stderr,
+        )
+        return 2
     if via_durable and (messagerie or validation_ui or notifier_agent is not None):
         print(
             "--durable ne se combine pas encore avec --messagerie/--validation-ui/"
@@ -366,7 +393,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         from maestro.supervision import NotificateurRun
 
         try:
-            notificateur = NotificateurRun.default(notifier_agent)
+            # L'agent notificateur est cherché dans l'équipe du projet du run
+            # (#1042) : c'est là que vivent sa fiche, ses serveurs MCP et son
+            # coffre. Sans `--projet`, le catalogue hors projet.
+            notificateur = NotificateurRun.default(notifier_agent, projet_id=projet_id)
         except ConfigError as exc:
             print(f"Configuration : {exc}", file=sys.stderr)
             return 1
@@ -456,7 +486,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             locale = cast(OrchestrationEngine, engine)
             report = run_borne(
-                locale.run(objective, journal=journal, mode_brief=mode_brief)
+                locale.run(
+                    objective,
+                    journal=journal,
+                    mode_brief=mode_brief,
+                    # Le projet du run (#222) : il rattache les tâches, donc il
+                    # décide aussi de **l'équipe** qui les prend (#1042). Sans
+                    # lui, le run travaille hors projet, avec le catalogue du
+                    # câblage.
+                    projet_id=projet_id,
+                )
             )
     except ConfigError as exc:
         print(f"Configuration : {exc}", file=sys.stderr)

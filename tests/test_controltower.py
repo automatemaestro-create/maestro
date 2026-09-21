@@ -82,7 +82,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from maestro.agents.catalog import DEFAULT_AGENTS
+from maestro.agents.catalog import GABARITS_DU_CODE
 from maestro.agents.mcp import IntegrationMcp, McpStore, ServeurMcp
 from maestro.agents.mcp_registry import RegistreMcp
 from maestro.agents.playbooks import PLAYBOOK_DEFAUTS, PlaybookStore
@@ -141,8 +141,14 @@ def bus():
 
 @pytest.fixture()
 def state():
-    """Projection d'état injectée : les tests REST la peuplent directement."""
-    return ControlTowerState()
+    """Projection d'état injectée : les tests REST la peuplent directement.
+
+    Le **parc** est donné explicitement : depuis #1042 la projection ne reçoit
+    plus d'agents d'office (un projet naît sans agent), et ces tests interrogent
+    `GET /api/agents` et réassignent vers des rôles nommés. Les gabarits du code
+    font ici l'équipe de ce test.
+    """
+    return ControlTowerState(GABARITS_DU_CODE)
 
 
 @pytest.fixture()
@@ -1419,10 +1425,10 @@ def test_le_catalogue_expose_les_agents_du_code_puis_les_personnalises(client_ca
     fiches = client_cat.get("/api/catalogue").json()
 
     # L'ordre est celui du catalogue effectif — celui que chargent les moteurs.
-    assert [f["nom"] for f in fiches[: len(DEFAULT_AGENTS)]] == [
-        a.nom for a in DEFAULT_AGENTS
+    assert [f["nom"] for f in fiches[: len(GABARITS_DU_CODE)]] == [
+        a.nom for a in GABARITS_DU_CODE
     ]
-    assert all(f["source"] == "defaut" for f in fiches[: len(DEFAULT_AGENTS)])
+    assert all(f["source"] == "defaut" for f in fiches[: len(GABARITS_DU_CODE)])
     assert fiches[-1]["nom"] == "redacteur"
     assert fiches[-1]["source"] == "personnalise"
     assert all("playbook" not in f for f in fiches)  # métadonnées seules sur la liste
@@ -1431,7 +1437,7 @@ def test_le_catalogue_expose_les_agents_du_code_puis_les_personnalises(client_ca
 def test_la_fiche_d_un_agent_par_defaut_rend_sa_definition_du_code(client_cat):
     fiche = client_cat.get("/api/catalogue/developpeur").json()
 
-    developpeur = next(a for a in DEFAULT_AGENTS if a.nom == "developpeur")
+    developpeur = next(a for a in GABARITS_DU_CODE if a.nom == "developpeur")
     assert fiche["source"] == "defaut" and fiche["role"] == developpeur.role
     assert fiche["playbook"] == developpeur.prompt_systeme
     assert fiche["cree_le"] is None  # la définition vit dans le code, sans dates

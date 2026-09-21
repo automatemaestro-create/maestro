@@ -39,7 +39,7 @@ from maestro.agents.mcp import McpStore
 from maestro.agents.permissions import PermissionStore
 from maestro.agents.playbooks import PlaybookStore
 from maestro.agents.secrets import SecretStore
-from maestro.agents.store import AgentStore, SurchargeStore, catalogue
+from maestro.agents.store import AgentStore, catalogue_hors_projet
 from maestro.config import load_settings
 from maestro.engine.executor import LocalExecutor, TaskResult
 from maestro.engine.guardrails import Guardrails
@@ -177,10 +177,9 @@ def _executeur() -> LocalExecutor:
         provider = _provider_factory()
         settings = load_settings()
         agents_store = AgentStore.default(settings)
-        surcharges = SurchargeStore.default(settings)
         _executor = LocalExecutor(
             provider,
-            agents=catalogue(agents_store, settings.model, surcharges=surcharges),
+            agents=catalogue_hors_projet(agents_store, modele=settings.model),
             guardrails=_guardrails,
             playbooks=PlaybookStore.default(settings),
             capacites=CapacityStore.default(settings),
@@ -191,7 +190,6 @@ def _executeur() -> LocalExecutor:
             # Les agents du projet de la tâche (#1038) : un worker distribué
             # route comme le moteur en process, donc il a besoin des mêmes dépôts.
             agents_store=agents_store,
-            surcharges=surcharges,
             modele=settings.model,
             relance=_relance,
         )

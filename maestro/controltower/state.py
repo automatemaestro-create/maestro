@@ -30,7 +30,7 @@ from datetime import datetime
 from typing import Any
 
 from maestro.agents.capacity import INSTANCES_DEFAUT, CapaciteAgent
-from maestro.agents.catalog import DEFAULT_AGENTS, Agent
+from maestro.agents.catalog import Agent
 from maestro.controltower.events import (
     ACTEUR_RUN,
     EVENEMENT_AGENT_ACTIVITE,
@@ -1065,7 +1065,10 @@ class ControlTowerState:
 
     def __init__(
         self,
-        agents: Sequence[Agent] = DEFAULT_AGENTS,
+        # Aucun agent d'office (#1042) : la projection part du catalogue qu'on lui
+        # sert, et un projet naît sans agent. Ce qui la peuple ensuite est ce que
+        # le flux montre — un agent apparaît quand une tâche lui est confiée.
+        agents: Sequence[Agent] = (),
         capacites: Sequence[CapaciteAgent] = (),
     ) -> None:
         self._taches: dict[str, EtatTache] = {}

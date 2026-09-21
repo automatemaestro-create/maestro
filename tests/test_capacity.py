@@ -31,7 +31,7 @@ import asyncio
 import pytest
 from fastapi.testclient import TestClient
 
-from maestro.agents import DEFAULT_AGENTS
+from maestro.agents import GABARITS_DU_CODE
 from maestro.agents.capacity import CapaciteAgent, CapacityStore
 from maestro.agents.catalog import Agent
 from maestro.agents.store import AgentStore
@@ -40,6 +40,7 @@ from maestro.controltower import (
     CAPACITE_DESACTIVE,
     EVENEMENT_AGENT_CAPACITE,
     EVENEMENT_TACHE_STATUT,
+    ControlTowerState,
     Event,
     InMemoryEventBus,
     create_app,
@@ -369,11 +370,18 @@ def capacites(tmp_path):
 
 @pytest.fixture()
 def client(bus, capacites, tmp_path):
-    """TestClient de l'app sur bus mémoire, dépôts (capacités, agents) temporaires."""
+    """TestClient de l'app sur bus mémoire, dépôts (capacités, agents) temporaires.
+
+    La projection reçoit un **parc explicite** : depuis #1042 un dépôt d'agents
+    vide rend un catalogue vide (un projet naît sans agent), et régler la capacité
+    d'un agent suppose un agent. Les gabarits du code font ici l'équipe de ce
+    test — un nom et un rôle, c'est tout ce que la capacité demande.
+    """
     app = create_app(
         bus=bus,
         capacites=capacites,
         agents_store=AgentStore(tmp_path / "agents"),
+        state=ControlTowerState(GABARITS_DU_CODE, capacites=capacites.lister()),
     )
     with TestClient(app) as client:
         yield client
@@ -390,7 +398,7 @@ def _fiche(client, nom):
 
 
 def test_les_fiches_agents_exposent_la_capacite_par_defaut(client):
-    for agent in DEFAULT_AGENTS:
+    for agent in GABARITS_DU_CODE:
         fiche = _fiche(client, agent.nom)
         assert fiche["actif"] is True
         assert fiche["instances"] == 1
@@ -433,7 +441,10 @@ def test_le_reglage_est_diffuse_en_temps_reel_sur_le_websocket(client):
 def test_les_reglages_persistes_sont_visibles_des_le_demarrage(bus, capacites, tmp_path):
     capacites.ecrire(CapaciteAgent(nom="devops", actif=False, instances=3))
     app = create_app(
-        bus=bus, capacites=capacites, agents_store=AgentStore(tmp_path / "agents")
+        bus=bus,
+        capacites=capacites,
+        agents_store=AgentStore(tmp_path / "agents"),
+        state=ControlTowerState(GABARITS_DU_CODE, capacites=capacites.lister()),
     )
     with TestClient(app) as client:
         fiche = _fiche(client, "devops")
@@ -489,12 +500,20 @@ def test_supprimer_un_agent_personnalise_purge_son_reglage(client, capacites):
 
 def test_le_reglage_capacite_survit_a_un_redemarrage_de_l_app(bus, capacites, tmp_path):
     agents_store = AgentStore(tmp_path / "agents")
-    app = create_app(bus=bus, capacites=capacites, agents_store=agents_store)
+    app = create_app(
+        bus=bus,
+        capacites=capacites,
+        agents_store=agents_store,
+        state=ControlTowerState(GABARITS_DU_CODE, capacites=capacites.lister()),
+    )
     with TestClient(app) as client:
         client.post("/api/agents/bdd/capacite", json={"instances": 5})
 
     relance = create_app(
-        bus=InMemoryEventBus(), capacites=capacites, agents_store=agents_store
+        bus=InMemoryEventBus(),
+        capacites=capacites,
+        agents_store=agents_store,
+        state=ControlTowerState(GABARITS_DU_CODE, capacites=capacites.lister()),
     )
     with TestClient(relance) as client:
         assert _fiche(client, "bdd")["instances"] == 5

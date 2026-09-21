@@ -47,7 +47,7 @@ from time import monotonic, perf_counter
 from typing import Any
 
 from maestro.agents.capacity import CapacityStore, JaugeInstances
-from maestro.agents.catalog import DEFAULT_AGENTS, Agent
+from maestro.agents.catalog import GABARITS_DU_CODE, Agent
 from maestro.agents.fiche_outillee import runtime_outille
 from maestro.agents.mcp import McpStore, ServeurMcp
 from maestro.agents.permissions import (
@@ -59,7 +59,7 @@ from maestro.agents.permissions import (
 from maestro.agents.playbooks import PlaybookStore, PlaybookVersion
 from maestro.agents.runtime import AgentRuntime
 from maestro.agents.secrets import SecretStore
-from maestro.agents.store import AgentStore, SurchargeStore, catalogue_du_projet
+from maestro.agents.store import AgentStore, catalogue_du_projet
 from maestro.decideur import DECIDEUR_DEFAUT
 from maestro.deliberation import (
     CreditArbitrage,
@@ -552,7 +552,13 @@ class LocalExecutor(TaskExecutor):
         self,
         provider: ModelProvider,
         *,
-        agents: Sequence[Agent] = DEFAULT_AGENTS,
+        # Le catalogue du **câblage** : celui qui sert aux tâches **hors projet**,
+        # une tâche de projet faisant relire l'équipe de son projet à chaque
+        # routage (`_equipe`). Son défaut est les gabarits du code, et c'est le
+        # seul endroit où ils travaillent encore (#1042) : hors de tout projet il
+        # n'y a pas d'équipe où en chercher une. Un projet, lui, n'en reçoit
+        # jamais — vide, il laisse ses tâches « à assigner ».
+        agents: Sequence[Agent] = GABARITS_DU_CODE,
         runtimes: Mapping[str, AgentRuntime] | None = None,
         guardrails: Guardrails | None = None,
         router: Router | None = None,
@@ -564,7 +570,6 @@ class LocalExecutor(TaskExecutor):
         relance: PolitiqueRelance | None = None,
         projets: ProjetStore | None = None,
         agents_store: AgentStore | None = None,
-        surcharges: SurchargeStore | None = None,
         modele: str | None = None,
         mailbox: Mailbox | None = None,
         questionneur: ArbitreQuestion | None = None,
@@ -667,12 +672,14 @@ class LocalExecutor(TaskExecutor):
         )
         # Les agents **du projet de la tâche** (#1038) : un agent créé dans un
         # projet naît après le câblage du routeur et dans son propre dossier, donc
-        # le catalogue figé ne peut pas le connaître. Ces deux dépôts servent à
-        # recomposer ses candidats à chaque tâche — c'est tout ce que ce lot fait
-        # du routage, *qui* prend la tâche parmi l'équipe restant le sujet de
-        # #1041. None : le catalogue du câblage, comportement d'avant ce lot.
+        # le catalogue figé ne peut pas le connaître. Ce dépôt sert à recomposer
+        # ses candidats à chaque tâche — c'est tout ce que ce lot fait du routage,
+        # *qui* prend la tâche parmi l'équipe restant le sujet de #1041. None : le
+        # catalogue du câblage, c'est-à-dire le travail hors de tout projet.
+        #
+        # Le dépôt de **surcharges** n'y est plus (#1042) : une surcharge est le
+        # réglage d'un gabarit, et un catalogue de projet n'en porte aucun.
         self._agents_store = agents_store
-        self._surcharges = surcharges
         # La bascule globale de modèle (#69, `MAESTRO_MODEL`), retenue parce que
         # le catalogue recomposé par projet doit l'appliquer comme celui du
         # câblage : sans elle, les agents d'un projet échapperaient à un réglage
@@ -922,10 +929,14 @@ class LocalExecutor(TaskExecutor):
         l'équipe qui l'exécutera. Deux exemplaires finiraient par ne plus rendre
         le même catalogue, et le plan partirait tout entier en repli « à
         assigner » sans que rien ne le dise.
+
+        ⚠ Un **tuple vide** n'est pas un des cas `None` (#1042) : c'est un projet
+        qui n'a encore recruté personne, et le routeur le traite comme tel — ses
+        tâches restent « à assigner » au lieu d'aller aux rôles du code. C'est la
+        différence entre « je ne sais pas » et « il n'y a personne », et elle se
+        lit jusque dans la raison du repli.
         """
-        return catalogue_du_projet(
-            self._agents_store, self._surcharges, projet_id, self._modele
-        )
+        return catalogue_du_projet(self._agents_store, projet_id, self._modele)
 
     def _desactives(self, projet_id: str | None = None) -> frozenset[str]:
         """Les agents désactivés (#86), relus dans le dépôt à chaque tâche.
