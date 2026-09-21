@@ -430,6 +430,8 @@ class RepondeurAssistanceDocumentee(RepondeurChat):
         budget_tokens: int = BUDGET_SECTIONS_TOKENS,
     ) -> None:
         self._provider = provider
+        # Le modèle suit le fournisseur (#1173) ; un fournisseur injecté garde celui de la fiche.
+        self._modele: str | None = None
         self._repli = repli if repli is not None else RepondeurAssistance()
         self._racine = racine
         self._sections_max = sections_max
@@ -459,7 +461,7 @@ class RepondeurAssistanceDocumentee(RepondeurChat):
         # fournisseur on va replier de toute façon, et analyser 1,58 Mio pour s'en
         # apercevoir ensuite ferait payer la démo (#65) à chaque question. Résoudre,
         # lui, ne coûte rien et ne touche aucun réseau.
-        fournisseur = self._fournisseur()
+        fournisseur = self._fournisseur(agent.modele)
         carte = self._carte()
         choisis = identifiants_choisis(
             await self._appeler(
@@ -511,7 +513,7 @@ class RepondeurAssistanceDocumentee(RepondeurChat):
                 _REPARATION_CORPUS,
             ) from echec
 
-    def _fournisseur(self) -> ModelProvider:
+    def _fournisseur(self, defaut_modele: str) -> ModelProvider:
         """Le fournisseur des deux appels, résolu au premier usage.
 
         Ce qui casse **ici** n'a touché aucun réseau : c'est un réglage, et réessayer
@@ -526,10 +528,14 @@ class RepondeurAssistanceDocumentee(RepondeurChat):
         if self._provider is None:
             # Import local : ne tire la couche fournisseur (SDK…) qu'au premier
             # message — l'app se construit et se teste sans elle (#84).
-            from maestro.providers.factory import provider_from_settings
+            from maestro.providers.factory import modele_du_canal, provider_from_settings
 
             try:
-                self._provider = provider_from_settings()
+                fournisseur = provider_from_settings()
+                # Le modèle suit le fournisseur (#1173), jamais épinglé sur un nom
+                # Claude ; un modèle manquant est un réglage absent, même famille.
+                self._modele = modele_du_canal(defaut_modele, fournisseur)
+                self._provider = fournisseur
             except Exception as echec:  # noqa: BLE001 — la position classe, cf. docstring
                 raise _ModeleInjoignable(
                     f"aucun fournisseur de modèle n'est utilisable ({cause_lisible(echec)})",
@@ -548,7 +554,9 @@ class RepondeurAssistanceDocumentee(RepondeurChat):
         appels en tirent la même conclusion.
         """
         try:
-            texte = await fournisseur.generate(prompt, model=agent.modele, system_prompt=systeme)
+            texte = await fournisseur.generate(
+                prompt, model=self._modele or agent.modele, system_prompt=systeme
+            )
         except Exception as echec:  # noqa: BLE001 — la position classe, cf. docstring
             raise _ModeleInjoignable(
                 f"le fournisseur de modèle n'a pas répondu ({cause_lisible(echec)})",

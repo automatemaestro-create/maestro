@@ -1276,12 +1276,18 @@ class RepondeurModele(RepondeurChat):
     ) -> None:
         self._provider = provider
         self._playbooks = playbooks
+        # `MAESTRO_MODEL` (#69), relu avec le fournisseur (#1173) : il prime sur le
+        # modèle de l'agent, exactement comme dans un run (`catalogue_*`). Sans lui,
+        # parler à un agent envoyait son modèle — `claude-sonnet-5` pour un
+        # gabarit — à un fournisseur qui n'est peut-être pas Claude.
+        self._modele_impose: str | None = None
 
     async def repondre(self, agent: Agent, fil: Sequence[MessageChat]) -> str:
         """La réponse en un aller — `produire` est la voie qui diffuse (#693)."""
-        return await self._resolu().generate(
+        fournisseur = self._resolu()
+        return await fournisseur.generate(
             transcription(fil),
-            model=agent.modele,
+            model=self._modele_impose or agent.modele,
             system_prompt=self._systeme(agent),
         )
 
@@ -1315,9 +1321,10 @@ class RepondeurModele(RepondeurChat):
         """
         redaction = Redaction(incrementer)
         try:
-            async for morceau in self._resolu().generate_stream(
+            fournisseur = self._resolu()
+            async for morceau in fournisseur.generate_stream(
                 transcription(fil),
-                model=agent.modele,
+                model=self._modele_impose or agent.modele,
                 system_prompt=self._systeme(agent),
             ):
                 await redaction.ecrire(morceau)
@@ -1336,6 +1343,7 @@ class RepondeurModele(RepondeurChat):
             from maestro.providers.factory import provider_from_settings
 
             self._provider = provider_from_settings()
+            self._modele_impose = getattr(self._provider, "modele_configure", None)
         return self._provider
 
     def _systeme(self, agent: Agent) -> str:

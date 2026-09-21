@@ -1501,13 +1501,22 @@ def test_le_silence_n_est_pas_un_accord() -> None:
     # sur lui plutôt qu'élargie — le conducteur ne porte **aucun** attribut, son
     # état étant le fil qu'on lui passe à chaque appel
     # (`maestro.controltower.outillage`).
+    #
+    # #1173 en ajoute deux, et aucun n'est un état de session. `_sonde` est un
+    # collaborateur injecté (la sonde du poste, appelée seulement quand aucun
+    # fournisseur n'est réglé). `_modele` est le modèle **résolu avec le
+    # fournisseur**, posé une fois depuis la configuration et jamais par un
+    # message : il reste `None` avec un fournisseur injecté, ce que ce test prouve.
     assert set(vars(repondeur)) == {
         "_lanceur",
         "_apercu",
         "_provider",
+        "_modele",
         "_conducteur",
+        "_sonde",
     }
     assert vars(repondeur._conducteur) == {}
+    assert repondeur._modele is None
 
 
 def test_l_objectif_lance_est_celui_qui_a_ete_montre_pas_ce_que_le_fil_contient() -> None:

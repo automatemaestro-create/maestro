@@ -132,6 +132,7 @@ class ModeleScripte(ModelProvider):
         self.reponses = list(reponses)
         self.prompts: list[str] = []
         self.systemes: list[str | None] = []
+        self.modeles: list[str] = []
 
     def supports(self, model: str) -> bool:
         return True
@@ -139,6 +140,7 @@ class ModeleScripte(ModelProvider):
     async def generate(self, prompt: str, *, model: str, system_prompt: str | None = None) -> str:
         self.prompts.append(prompt)
         self.systemes.append(system_prompt)
+        self.modeles.append(model)
         if not self.reponses:
             raise AssertionError(f"appel modèle n°{len(self.prompts)} non prévu par le script")
         return self.reponses.pop(0)
@@ -820,3 +822,21 @@ def test_le_cablage_va_jusqu_aux_sources_quand_un_modele_repond(
     assert "D'après la documentation : oui." in reponse
     assert section.citation in reponse
     assert len(modele.prompts) == 2
+
+
+def test_l_assistant_demande_le_modele_configure_pour_ses_deux_appels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1173 : l'assistant envoyait `claude-sonnet-5` à n'importe quel fournisseur.
+
+    Le modèle que la configuration impose voyage avec le fournisseur que la fabrique
+    rend ; les deux appels — le choix, puis la réponse — le demandent l'un et l'autre.
+    """
+    racine = ecrire_corpus(tmp_path, CORPUS)
+    modele = ModeleScripte(RELANCER, "Le bouton « Reprendre » vit sur la carte du run.")
+    modele.modele_configure = "qwen2.5"
+    monkeypatch.setattr("maestro.providers.factory.provider_from_settings", lambda: modele)
+
+    _repondre(RepondeurAssistanceDocumentee(racine=racine), QUESTION_684)
+
+    assert modele.modeles == ["qwen2.5", "qwen2.5"]
