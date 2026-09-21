@@ -336,6 +336,12 @@ Et il reste une **commodité de lecture** : depuis #389/#395 la relation parent/
 - **le lot 3 avant le lot 6** — §1.2 ;
 - **le lot 4 avant le lot 5** — la zone d'abord vide, puis son contenu. C'est ce qui rend le lot 4
   mergeable seul : une colonne repliée par défaut ne change aucun écran.
+  ⚠ Cette phrase a été lue comme une **décision de produit** pendant tout le chantier, alors qu'elle
+  n'était qu'un argument de **découpage** — vrai tant que la colonne était vide, et jamais rediscuté
+  quand le lot 5 l'a remplie. Le bouclage du jalon l'a relevé (réserve C2), et #1107 a arbitré le
+  défaut pour de bon : **ouverte au premier passage, au large seulement** (sous `lg` elle recouvre le
+  travail). La décision, ses variantes et ce qui les a départagées sont consignées sur #1107 ; le
+  code la tient dans `apps/web/lib/preferences.ts`.
 
 Les lots 2, 3 et 4 sont **indépendants** : ils ne se touchent pas. Le lot 2 l'est particulièrement —
 ENF-12 fait de la coque un objet extérieur au front.
