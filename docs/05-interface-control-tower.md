@@ -627,6 +627,14 @@ minimaliste, planification en échec), et c'est assumé : de l'extérieur les de
 situations sont la même — le run travaille, rien n'est encore arrivé —, et la phrase
 ne promet donc pas de plan pour bientôt, elle dit ce qu'on sait.
 
+**La phase s'ouvre dans un navigateur** (#1109) :
+`bash scripts/controltower/start.sh --demo --scenario decomposition` sert un run qui
+travaille quatre minutes sans aucune tâche — journal qui avance, coût qui monte —
+puis publie son plan d'un coup, et recommence. Au bouclage de ce critère, aucun
+scénario ne savait montrer cette phase : le nominal publie son plan à la première
+seconde, et seuls deux tests jsdom la gardaient. Le détail du scénario est en
+[docs/30 §5.8](./30-cible-visuelle-control-tower.md).
+
 Composants : `apps/web/components/runs/RunAuCentre.tsx` (le bloc),
 `apps/web/lib/execution.ts` (`runsParRegime`, `estEnDecomposition`,
 `messageVideDuRun` — cette dernière a quitté `VueRun` pour que les deux écrans qui
