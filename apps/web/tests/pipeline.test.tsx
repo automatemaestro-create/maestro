@@ -528,6 +528,98 @@ describe("l'avancement des étapes", () => {
     ).toHaveAttribute("aria-valuenow", "1");
   });
 
+  it("dit l'écart à voix haute quand la tâche est soldée sans être cochée", () => {
+    // #1112 : « Terminée » à 2/4 laisse un lecteur devant deux affirmations
+    // contraires sans pouvoir trancher. On ne coche pas d'office et on ne refuse
+    // pas le verdict (l'arbitrage de #944) : on **date** le relevé.
+    render(
+      <AvancementEtapes
+        etapes={[
+          { libelle: "A", etat: ETAPE_FAITE },
+          { libelle: "B", etat: ETAPE_EN_COURS },
+          { libelle: "C", etat: ETAPE_A_FAIRE },
+        ]}
+        faites={1}
+        soldee
+      />,
+    );
+
+    const jauge = screen.getByRole("progressbar", { name: "Avancement des étapes" });
+    // Le compteur ne bouge pas : c'est la moitié du contrat.
+    expect(jauge).toHaveAttribute("aria-valuenow", "1");
+    expect(jauge).toHaveAttribute(
+      "aria-valuetext",
+      "1 étape terminée sur 3 — 2 non rapportées à la clôture",
+    );
+  });
+
+  it("ne dit rien de l'écart sur une tâche soldée entièrement cochée", () => {
+    // Le silence complet du cas nominal : une tâche qui a tout coché rend
+    // exactement la rangée d'avant ce ticket.
+    render(
+      <AvancementEtapes
+        etapes={[{ libelle: "A", etat: ETAPE_FAITE }]}
+        faites={1}
+        soldee
+      />,
+    );
+
+    expect(
+      screen.getByRole("progressbar", { name: "Avancement des étapes" }),
+    ).toHaveAttribute("aria-valuetext", "1 étape terminée sur 1");
+  });
+
+  it("distingue à l'œil « non rapportée » de « à faire » et « en cours »", () => {
+    // La règle du socle : un état ne se porte jamais par la couleur seule. Les
+    // cases non cochées d'une tâche soldée changent donc **de forme** (hachurées,
+    // le motif de la barre d'avancement d'un run) en plus de teinte — et les
+    // trois lectures ne se confondent pas.
+    const etapes: EtapeAffichee[] = [
+      { libelle: "A", etat: ETAPE_FAITE },
+      { libelle: "B", etat: ETAPE_EN_COURS },
+      { libelle: "C", etat: ETAPE_A_FAIRE },
+    ];
+    const { rerender } = render(<AvancementEtapes etapes={etapes} faites={1} />);
+    const cases = () =>
+      Array.from(
+        screen.getByRole("progressbar", { name: "Avancement des étapes" }).children,
+      ) as HTMLElement[];
+    const [, enVol, aFaire] = cases();
+    expect(enVol.className).not.toBe(aFaire.className);
+    expect(enVol.style.backgroundImage).toBe("");
+
+    rerender(<AvancementEtapes etapes={etapes} faites={1} soldee />);
+
+    const [fait, ...restantes] = cases();
+    // L'acquis ne change pas — ce qui est coché reste coché.
+    expect(fait.className).toContain("bg-emerald-500");
+    for (const boite of restantes) {
+      expect(boite.className).toContain("bg-attention");
+      expect(boite.style.backgroundImage).toContain("repeating-linear-gradient");
+    }
+  });
+
+  it("garde les cases comptables quand elles sont hachurées", () => {
+    // À 2 px de haut, la hachure rend des tirets horizontaux : avec l'interstice
+    // ordinaire de 2 px, la rangée d'une tâche soldée se lisait comme **un seul
+    // filet tireté** et ses cases ne se comptaient plus — alors que les compter
+    // est tout l'objet d'une case par étape (#489). Constat du regard neuf sur
+    // le nœud à 0/3 de l'état « charge » (#1112).
+    const etapes: EtapeAffichee[] = [
+      { libelle: "A", etat: ETAPE_A_FAIRE },
+      { libelle: "B", etat: ETAPE_A_FAIRE },
+      { libelle: "C", etat: ETAPE_A_FAIRE },
+    ];
+    const { rerender } = render(<AvancementEtapes etapes={etapes} faites={0} />);
+    const rangee = () => screen.getByRole("progressbar", { name: "Avancement des étapes" });
+    expect(rangee().className).toContain("gap-0.5");
+
+    rerender(<AvancementEtapes etapes={etapes} faites={0} soldee />);
+
+    expect(rangee().className).toContain("gap-1");
+    expect(rangee().className).not.toContain("gap-0.5");
+  });
+
   it("garde la même unité de compte quelle que soit la taille", () => {
     // `compacte` sur un nœud de graphe, `ample` dans un panneau : seule
     // l'épaisseur change, sans quoi les deux écrans ne compteraient pas pareil.
@@ -557,6 +649,35 @@ describe("une ligne de checklist", () => {
 
     expect(screen.getByText(/Écrire les routes/)).toHaveTextContent("terminée");
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+  });
+
+  it("nomme l'étape qui n'a pas été rapportée quand la tâche est soldée", () => {
+    // Le partage retenu par #1112 : le nœud dit **combien**, cette liste dit
+    // **lesquelles**. Et le mot est écrit, pas seulement entendu : « à faire »
+    // sous un verdict soldé annonce une suite qui ne viendra pas.
+    render(
+      <ul>
+        <LigneEtape etape={{ libelle: "Tests d'intégration", etat: ETAPE_A_FAIRE }} soldee />
+      </ul>,
+    );
+
+    const ligne = screen.getByText(/Tests d'intégration/);
+    expect(ligne).toHaveTextContent("non rapportée à la clôture");
+    // Le mot remplace la mention `sr-only`, il ne s'y ajoute pas : « à faire »
+    // et « non rapportée » lus à la suite se contrediraient.
+    expect(ligne).not.toHaveTextContent("à faire");
+  });
+
+  it("laisse intacte une étape cochée d'une tâche soldée", () => {
+    render(
+      <ul>
+        <LigneEtape etape={{ libelle: "Écrire les routes", etat: ETAPE_FAITE }} soldee />
+      </ul>,
+    );
+
+    const ligne = screen.getByText(/Écrire les routes/);
+    expect(ligne).toHaveTextContent("terminée");
+    expect(ligne).not.toHaveTextContent("non rapportée");
   });
 });
 
@@ -590,6 +711,49 @@ describe("le nœud, tel qu'on le lit", () => {
     const pipeline = await pipelineCharge();
     expect(within(pipeline).getByText("1/3")).toBeInTheDocument();
     expect(within(pipeline).getByText("Sérialiseurs")).toBeInTheDocument();
+  });
+
+  it("dit « non cochées » plutôt qu'une étape à venir sur un nœud soldé", async () => {
+    // Le défaut de #1112, relevé au bouclage du 2026-09-21 : une boîte
+    // « Terminée » affichait « 0/2 Lister les entités » — un verdict, un
+    // compteur et une étape à venir, tous les trois en désaccord. Le verdict et
+    // le compteur restent ; ce qui promettait une suite cède la place à l'écart.
+    lecture.graphe = grapheDeReference({
+      noeuds: [
+        noeudGrapheFactice({
+          id: "schema",
+          titre: "Schéma SQL",
+          niveau: 0,
+          statut: "terminee",
+          compartiment: "terminees",
+          etapes: [
+            { libelle: "Lister les entités", etat: ETAPE_FAITE },
+            { libelle: "Écrire la migration", etat: ETAPE_A_FAIRE },
+          ],
+        }),
+      ],
+      aretes: [],
+      niveaux: [["schema"]],
+    });
+    monter();
+
+    const pipeline = await pipelineCharge();
+    expect(within(pipeline).getByText("1/2")).toBeInTheDocument();
+    // La mention ne porte **aucun nombre** et ne se lit pas comme un compte :
+    // « 0/3 non cochées », le premier essai, se lisait « 0 sur 3 non cochées »,
+    // l'inverse de ce que la boîte dit (constat du regard neuf sur « charge »).
+    expect(within(pipeline).getByText("· relevé incomplet")).toBeInTheDocument();
+    expect(within(pipeline).queryByText("Écrire la migration")).not.toBeInTheDocument();
+  });
+
+  it("se tait quand un nœud soldé a tout coché", async () => {
+    // Le nœud `schema` du graphe de référence est terminé à 1/1 : aucune ligne
+    // de plus, et la boîte d'avant ce ticket au pixel près.
+    monter();
+
+    const pipeline = await pipelineCharge();
+    expect(within(pipeline).getByText("1/1")).toBeInTheDocument();
+    expect(within(pipeline).queryByText("· relevé incomplet")).not.toBeInTheDocument();
   });
 
   it("porte son coût et sa durée quand ils sont mesurés", async () => {
@@ -626,6 +790,51 @@ describe("le nœud, tel qu'on le lit", () => {
     );
 
     expect(await screen.findByRole("dialog")).toHaveTextContent("Exposer le CRUD.");
+  });
+
+  it("nomme dans le panneau les étapes que le nœud soldé compte sans les dire", async () => {
+    // La seconde moitié du partage de #1112 : le nœud dit **combien**, le
+    // panneau dit **lesquelles**. Le verdict vient de la même table que la
+    // boîte (`etatDuNoeud`), jamais d'une seconde lecture du statut brut.
+    lecture.graphe = grapheDeReference({
+      noeuds: [
+        noeudGrapheFactice({
+          id: "schema",
+          titre: "Schéma SQL",
+          niveau: 0,
+          statut: "terminee",
+          compartiment: "terminees",
+        }),
+      ],
+      aretes: [],
+      niveaux: [["schema"]],
+    });
+    lecture.taches = [
+      tacheFactice({
+        id: "schema",
+        titre: "Schéma SQL",
+        statut: "terminee",
+        description: "Poser la table contacts.",
+        etapes: [
+          { libelle: "Lister les entités", etat: ETAPE_FAITE },
+          { libelle: "Écrire la migration", etat: ETAPE_A_FAIRE },
+        ],
+      }),
+    ];
+    monter();
+
+    await pipelineCharge();
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Ouvrir le détail de la tâche Schéma SQL" }),
+    );
+
+    const etapes = within(await screen.findByRole("dialog")).getByRole("region", {
+      name: "Étapes",
+    });
+    expect(within(etapes).getByText(/Écrire la migration/)).toHaveTextContent(
+      "non rapportée à la clôture",
+    );
+    expect(within(etapes).getByText(/Lister les entités/)).toHaveTextContent("terminée");
   });
 });
 

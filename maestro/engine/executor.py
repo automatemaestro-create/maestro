@@ -67,7 +67,12 @@ from maestro.deliberation import (
     MemoireArbitrage,
     cle_acte,
 )
-from maestro.detail_tache import EtapeTache, SuiviChecklist, consigne_detail
+from maestro.detail_tache import (
+    EtapeTache,
+    SuiviChecklist,
+    consigne_detail,
+    phrase_ecart_checklist,
+)
 from maestro.engine.guardrails import (
     ORIGINE_AGENT,
     ORIGINE_POLITIQUE,
@@ -2600,14 +2605,13 @@ class LocalExecutor(TaskExecutor):
         restantes = suivi.inachevees()
         if not restantes:
             return
-        total = len(suivi.etapes())
-        libelles = " · ".join(etape.libelle for etape in restantes)
+        # La phrase vit dans `maestro.detail_tache` depuis #1112 : le scénario de
+        # démo la publie aussi, et deux formulations du même écart finiraient par
+        # diverger.
         self._consigne_activite(
             task,
             agent,
-            f"Checklist incomplète à la clôture : {len(restantes)} étape(s) sur "
-            f"{total} non cochée(s) par l'agent — {libelles}. La tâche est "
-            "terminée ; ces étapes ne sont pas rapportées comme faites.",
+            phrase_ecart_checklist(restantes, len(suivi.etapes())),
             journal,
         )
 

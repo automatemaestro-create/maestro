@@ -111,7 +111,14 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   mesurées (aucune dépendance de rendu de graphe : `apps/web` tient en trois
   paquets). Chaque nœud porte son agent, son état et sa **checklist qui se coche en
   direct** (#489) ; le détail complet rouvre le panneau de #251, en croisant le nœud
-  avec la tâche de même identifiant. Deux choses s'y voient et nulle part ailleurs :
+  avec la tâche de même identifiant. Sur un nœud **soldé**, cette checklist est
+  **datée** plutôt que réécrite (#1112) : le compteur et le verdict ne bougent pas,
+  mais ce qui n'est pas coché cesse de promettre une suite — les cases prennent la
+  hachure de « présent, compté, pas fini » (#709), et le libellé de l'étape courante
+  cède la place à « non cochées ». Le nœud dit *combien*, le panneau dit
+  *lesquelles*. C'est le pendant à l'écran de la ligne que le moteur consigne déjà
+  au journal dans ce cas (#944) : l'écart se **dit**, il ne se comble pas.
+  Deux choses s'y voient et nulle part ailleurs :
   ce qui **attend un humain** — teinté et immobile, quand ce qui travaille bat —, lu
   dans la file des validations et non sur la tâche (le moteur n'émet pas
   `en_attente_validation`, et la table des compartiments le rangerait dans « en

@@ -73,11 +73,24 @@ export function PanneauDetailTache({
   agents,
   reassigner,
   fermer,
+  soldee = false,
 }: {
   tache: Tache;
   agents: EtatAgent[];
   reassigner: Reassigner;
   fermer: () => void;
+  /**
+   * La tâche est **soldée** (#1112) : une étape non cochée ne le sera plus, et
+   * la liste le dit ligne à ligne — c'est la moitié « lesquelles » du partage
+   * avec le nœud du graphe, qui ne dit que « combien ».
+   *
+   * Le verdict vient de l'appelant, qui le tient déjà de la table partagée des
+   * compartiments (`lib/graphe.etatDuNoeud`) : le déduire ici du statut brut
+   * serait une seconde lecture du même fait, et deux lectures finissent par
+   * diverger. `false` par défaut — un appelant qui ne le passe pas rend
+   * exactement le panneau d'avant ce ticket.
+   */
+  soldee?: boolean;
 }) {
   const panneau = useRef<HTMLDivElement>(null);
   const detail = detailDe(tache);
@@ -174,10 +187,15 @@ export function PanneauDetailTache({
               <AvancementEtapes
                 etapes={detail.etapes}
                 faites={detail.faites}
+                soldee={soldee}
               />
               <ul className="mt-2 space-y-1.5">
                 {detail.etapes.map((etape, rang) => (
-                  <LigneEtape key={`${rang}-${etape.libelle}`} etape={etape} />
+                  <LigneEtape
+                    key={`${rang}-${etape.libelle}`}
+                    etape={etape}
+                    soldee={soldee}
+                  />
                 ))}
               </ul>
             </section>
