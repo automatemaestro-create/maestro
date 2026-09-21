@@ -58,7 +58,7 @@ Les versions **Word (.docx)** prêtes à partager sont dans `deliverables/` — 
 
 ---
 
-## 🧩 Les agents (par défaut)
+## 🧩 Les agents (gabarits de rôle)
 
 | Agent | Rôle | Exemples de tâches |
 |-------|------|--------------------|
@@ -71,10 +71,10 @@ Les versions **Word (.docx)** prêtes à partager sont dans `deliverables/` — 
 
 > Ces agents sont **entièrement configurables** depuis l'interface, et vous pouvez en **créer de nouveaux**.
 
-> ⚠ **Ce catalogue ne sera bientôt plus instancié d'office** ([docs/37](./docs/37-decision-equipe-sur-mesure.md), jalon *L'équipe sur mesure*).
-> Un projet naîtra sans agent, et son équipe (rôles, nombre, instances, playbooks, skills et
-> autorisations) sera proposée par l'analyse du projet, puis validée par l'utilisateur. Les agents
-> ci-dessus deviendront des gabarits de rôle.
+> ✅ **Ce catalogue n'est plus instancié d'office** ([docs/37](./docs/37-decision-equipe-sur-mesure.md), jalon *L'équipe sur mesure*).
+> Un projet naît **sans agent** : son équipe — rôles, nombre, instances, playbooks, skills et
+> autorisations — est proposée par l'analyse du projet, puis validée par vous. Les rôles ci-dessus
+> sont des **gabarits** que cette analyse consulte, et qu'aucun projet ne reçoit d'office.
 
 ---
 

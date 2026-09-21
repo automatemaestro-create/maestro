@@ -60,6 +60,7 @@ import redis.asyncio
 from fastapi.testclient import TestClient
 
 from maestro.agents.capacity import CapacityStore
+from maestro.agents.catalog import GABARITS_DU_CODE
 from maestro.agents.store import AgentStore
 from maestro.controltower import (
     EVENEMENT_AGENT_CAPACITE,
@@ -506,7 +507,9 @@ def client_reel(tmp_path) -> TestClient:
     log = InMemoryEventLog()
     app = create_app(
         bus=InMemoryEventBus(),
-        state=ControlTowerState(),
+        # Un parc explicite (#1042) : régler la capacité d'un agent suppose un
+        # agent, et la projection n'en reçoit plus d'office.
+        state=ControlTowerState(GABARITS_DU_CODE),
         event_log=log,
         capacites=CapacityStore(tmp_path / "capacite"),
         agents_store=AgentStore(tmp_path / "agents"),

@@ -75,13 +75,13 @@ from time import perf_counter
 from typing import Any
 
 from maestro.agents.capacity import CapacityStore
-from maestro.agents.catalog import DEFAULT_AGENTS, Agent
+from maestro.agents.catalog import GABARITS_DU_CODE, Agent
 from maestro.agents.mcp import McpStore
 from maestro.agents.permissions import PermissionStore
 from maestro.agents.playbooks import PlaybookStore
 from maestro.agents.runtime import AgentRuntime
 from maestro.agents.secrets import SecretStore
-from maestro.agents.store import AgentStore, SurchargeStore, catalogue
+from maestro.agents.store import AgentStore, catalogue_hors_projet
 from maestro.config import Settings, load_settings
 from maestro.engine.brief import (
     MODE_BRIEF_AUTO,
@@ -377,7 +377,9 @@ class OrchestrationEngine:
         provider: ModelProvider,
         orchestrator: Orchestrator,
         *,
-        agents: Sequence[Agent] = DEFAULT_AGENTS,
+        # Le catalogue du **câblage**, hors projet (cf. `LocalExecutor`) : les
+        # gabarits du code par défaut, jamais ce qu'un projet reçoit (#1042).
+        agents: Sequence[Agent] = GABARITS_DU_CODE,
         runtimes: Mapping[str, AgentRuntime] | None = None,
         max_parallele: int | None = None,
         guardrails: Guardrails | None = None,
@@ -391,7 +393,6 @@ class OrchestrationEngine:
         relance: PolitiqueRelance | None = None,
         projets: ProjetStore | None = None,
         agents_store: AgentStore | None = None,
-        surcharges: SurchargeStore | None = None,
         modele: str | None = None,
         arbitre_brief: ArbitreBrief | None = None,
         arbitre_clarification: ArbitreClarification | None = None,
@@ -456,12 +457,11 @@ class OrchestrationEngine:
                 permissions=permissions,
                 relance=relance,
                 projets=projets,
-                # Les agents **du projet de la tâche** (#1038) : ces deux dépôts
-                # descendent pour la même raison que les quatre au-dessus — un
-                # agent recruté pour un projet naît après le câblage, et le
-                # catalogue figé du routeur ne peut pas le connaître.
+                # Les agents **du projet de la tâche** (#1038) : ce dépôt descend
+                # pour la même raison que les quatre au-dessus — un agent recruté
+                # pour un projet naît après le câblage, et le catalogue figé du
+                # routeur ne peut pas le connaître.
                 agents_store=agents_store,
-                surcharges=surcharges,
                 modele=modele,
                 mailbox=mailbox,
                 # La question libre d'un agent (#1023) descend jusqu'à
@@ -570,11 +570,12 @@ class OrchestrationEngine:
         provider = provider_from_settings(settings)
         orchestrator = Orchestrator(provider, model=default_model(settings))
         agents_store = AgentStore.default(settings)
-        surcharges = SurchargeStore.default(settings)
         return cls(
             provider,
             orchestrator,
-            agents=catalogue(agents_store, settings.model, surcharges=surcharges),
+            # Le catalogue du câblage : ce moteur route hors projet avec lui, et
+            # relit l'équipe du projet de chaque tâche qui en a un (#1038, #1042).
+            agents=catalogue_hors_projet(agents_store, modele=settings.model),
             guardrails=guardrails,
             mailbox=mailbox,
             playbooks=PlaybookStore.default(settings),
@@ -584,7 +585,6 @@ class OrchestrationEngine:
             permissions=PermissionStore.default(settings),
             projets=ProjetStore.default(settings),
             agents_store=agents_store,
-            surcharges=surcharges,
             modele=settings.model,
             relance=relance,
             max_parallele=max_parallele,

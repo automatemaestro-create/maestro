@@ -48,6 +48,7 @@ from maestro.controltower.chat import (
     FRAGMENT_CHAT_FIN,
     FRAGMENT_CHAT_INTERROMPU,
 )
+from maestro.equipe.gabarits import GABARITS
 
 #: Les types de trame du flux de chat, définis avec le canal qui les émet
 #: (`maestro.controltower.chat`) depuis #268 et réexportés ici : le nom d'import
@@ -227,11 +228,19 @@ _REGLAGES_CONFIGURATION: tuple[dict[str, Any], ...] = (
 )
 
 
+#: Les deux rôles que ces propositions visent — **l'équipe du projet de démo**
+#: (#1042), et non plus deux agents du code. Ils sont dérivés des gabarits, comme
+#: l'équipe que la démo écrit dans son projet (`maestro.controltower.demo`) : une
+#: proposition de playbook pour un agent qui n'existe dans aucun projet montrerait
+#: un badge sur un fil que personne ne peut ouvrir. Dérivés et non importés de la
+#: démo, qui importe déjà ce module.
+_ROLE_VERIFICATION, _ROLE_ECRITURE = GABARITS[-1], GABARITS[0]
+
 #: Les propositions de playbook figées, tous agents confondus (badge/notifications).
 _PROPOSITIONS_PLAYBOOK: tuple[dict[str, Any], ...] = (
     {
-        "agent": "qa",
-        "role": "QA / Testeur",
+        "agent": _ROLE_VERIFICATION.nom,
+        "role": _ROLE_VERIFICATION.role,
         "version": 1,
         "cree_le": "2026-07-30T18:42:00+00:00",
         "provenance": "proposition",
@@ -241,8 +250,8 @@ _PROPOSITIONS_PLAYBOOK: tuple[dict[str, Any], ...] = (
         ),
     },
     {
-        "agent": "developpeur",
-        "role": "Développeur",
+        "agent": _ROLE_ECRITURE.nom,
+        "role": _ROLE_ECRITURE.role,
         "version": 2,
         "cree_le": "2026-07-31T07:15:00+00:00",
         "provenance": "proposition",

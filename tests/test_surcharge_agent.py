@@ -13,10 +13,12 @@ troisième est celle qui donne son sens aux deux autres :
    **vide qui ne se stocke pas** (annuler et n'avoir rien posé sont le *même* état),
    `herite()` qui nomme ce qui reste au code, le refus d'un nom hors `NOMS_DU_CODE`
    et le verrou de traversée de chemin ;
-② **le catalogue effectif** (`catalogue(surcharges=…)`) : le seul endroit par lequel
-   une surcharge atteint l'exécution — un dépôt vide rend exactement le catalogue
-   d'avant, `MAESTRO_MODEL` prime sur le modèle et **pas** sur l'effort, et le
-   `fournisseur` reste déclaratif ;
+② **les gabarits surchargés** (`gabarits_du_code`) : le seul endroit par lequel une
+   surcharge atteint l'exécution depuis #1042 — un dépôt vide rend exactement les
+   gabarits du code, `MAESTRO_MODEL` prime sur le modèle et **pas** sur l'effort,
+   et le `fournisseur` reste déclaratif. Le **catalogue effectif**, lui, ne porte
+   plus aucun rôle du code : c'est l'équipe d'un projet, et elle est vide tant que
+   personne n'a recruté ;
 ③ **les routes** (`PUT`/`DELETE /api/catalogue/{nom}/reglages`) : la fiche à trois
    états, `herite`/`reglages_du_code` qui disent d'où vient chaque valeur, et les
    **deux gestes voisins que rien ne doit confondre** — annuler une surcharge rend
@@ -33,7 +35,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from maestro.agents.catalog import DEFAULT_AGENTS, MODELE_EXECUTANT_DEFAUT
+from maestro.agents.catalog import GABARITS_DU_CODE, MODELE_EXECUTANT_DEFAUT
 from maestro.agents.mcp import McpStore
 from maestro.agents.permissions import PermissionStore
 from maestro.agents.store import (
@@ -47,6 +49,8 @@ from maestro.agents.store import (
     SurchargeAgent,
     SurchargeStore,
     catalogue,
+    catalogue_hors_projet,
+    gabarits_du_code,
 )
 from maestro.config import load_settings
 from maestro.controltower import InMemoryEventBus, create_app
@@ -84,7 +88,7 @@ def client(tmp_path, agents, depot):
 
 def _agent_du_code(nom=AGENT_DU_CODE):
     """L'agent `nom` tel que le code le définit."""
-    agent = next((a for a in DEFAULT_AGENTS if a.nom == nom), None)
+    agent = next((a for a in GABARITS_DU_CODE if a.nom == nom), None)
     assert agent is not None, f"{nom!r} n'est plus un agent du code"
     return agent
 
@@ -221,17 +225,40 @@ def test_l_aller_retour_dict_preserve_la_surcharge():
     assert SurchargeAgent.from_dict(surcharge.to_dict()) == surcharge
 
 
-# --- ② Le catalogue effectif : le seul chemin vers l'exécution -------------------------
+# --- ② Les gabarits surchargés : le seul chemin vers l'exécution -----------------------
+#
+# Depuis #1042 ce chemin n'est plus `catalogue()` — qui ne rend que les agents du
+# dépôt, aucun rôle du code — mais `gabarits_du_code()` : une surcharge est le
+# réglage d'un **gabarit**, et elle atteint l'exécution par le catalogue de
+# câblage d'un run hors projet (`catalogue_hors_projet`).
 
 
-def test_un_depot_de_surcharges_vide_rend_le_catalogue_d_avant(agents, depot):
-    assert catalogue(agents, surcharges=depot) == DEFAULT_AGENTS
+def test_un_depot_de_surcharges_vide_rend_les_gabarits_d_avant(agents, depot):
+    assert gabarits_du_code(depot) == GABARITS_DU_CODE
+
+
+def test_le_catalogue_effectif_ne_porte_plus_les_roles_du_code(agents, depot):
+    # #1042 : même surchargés, les gabarits ne sont plus des agents. Le catalogue
+    # d'un projet est celui de son équipe, et il est vide tant qu'elle n'existe pas.
+    depot.ecrire(SurchargeAgent(nom=AGENT_DU_CODE, modele="claude-opus-5"))
+
+    assert catalogue(agents) == ()
+
+
+def test_le_catalogue_hors_projet_retombe_sur_les_gabarits_surcharges(agents, depot):
+    # Le repli de câblage (`maestro-run` hors projet) : c'est par lui qu'une
+    # surcharge posée depuis l'UI atteint encore une exécution.
+    depot.ecrire(SurchargeAgent(nom=AGENT_DU_CODE, modele="claude-opus-5"))
+
+    effectif = catalogue_hors_projet(agents, depot)
+
+    assert _du_catalogue(effectif, AGENT_DU_CODE).modele == "claude-opus-5"
 
 
 def test_la_surcharge_recouvre_le_modele_de_l_agent_du_code(agents, depot):
     depot.ecrire(SurchargeAgent(nom=AGENT_DU_CODE, modele="claude-opus-5"))
 
-    effectif = catalogue(agents, surcharges=depot)
+    effectif = gabarits_du_code(depot)
 
     surcharge = _du_catalogue(effectif, AGENT_DU_CODE)
     assert surcharge.modele == "claude-opus-5"
@@ -248,7 +275,7 @@ def test_la_surcharge_recouvre_le_modele_de_l_agent_du_code(agents, depot):
 def test_l_effort_surcharge_atteint_l_execution(agents, depot):
     depot.ecrire(SurchargeAgent(nom=AGENT_DU_CODE, effort="xhigh"))
 
-    effectif = catalogue(agents, surcharges=depot)
+    effectif = gabarits_du_code(depot)
 
     surcharge = _du_catalogue(effectif, AGENT_DU_CODE)
     assert surcharge.effort == "xhigh"
@@ -258,7 +285,7 @@ def test_l_effort_surcharge_atteint_l_execution(agents, depot):
 def test_le_fournisseur_reste_declaratif_et_n_entre_pas_dans_l_agent(agents, depot):
     depot.ecrire(SurchargeAgent(nom=AGENT_DU_CODE, fournisseur="openai"))
 
-    effectif = catalogue(agents, surcharges=depot)
+    effectif = gabarits_du_code(depot)
 
     # Le moteur exécute sur `MAESTRO_PROVIDER` : le champ est stocké et affiché,
     # il n'entre pas dans l'`Agent`, qui ne le porte pas.
@@ -271,24 +298,21 @@ def test_la_bascule_globale_prime_sur_le_modele_surcharge(agents, depot):
     # réglage par agent la viderait de son sens.
     depot.ecrire(SurchargeAgent(nom=AGENT_DU_CODE, modele="claude-opus-5", effort="xhigh"))
 
-    effectif = catalogue(agents, modele="modele-unique", surcharges=depot)
+    effectif = gabarits_du_code(depot, "modele-unique")
 
     assert {a.modele for a in effectif} == {"modele-unique"}
     # …mais elle ne touche pas à l'effort : un effort n'est pas un modèle.
     assert _du_catalogue(effectif, AGENT_DU_CODE).effort == "xhigh"
 
 
-def test_les_personnalises_suivent_les_agents_du_code_surcharges(agents, depot):
-    agents.ecrire(_definition())
+def test_les_gabarits_gardent_leur_ordre_meme_surcharges(agents, depot):
     depot.ecrire(SurchargeAgent(nom=AGENT_DU_CODE, modele="claude-opus-5"))
 
-    effectif = catalogue(agents, surcharges=depot)
+    effectif = gabarits_du_code(depot)
 
-    # L'ordre du routage est préservé : les agents du code d'abord, surchargés ou non.
-    assert [a.nom for a in effectif[: len(DEFAULT_AGENTS)]] == [
-        a.nom for a in DEFAULT_AGENTS
-    ]
-    assert effectif[-1].nom == "redacteur"
+    # L'ordre du catalogue de gabarits est préservé, surchargés ou non : c'est lui
+    # que reprend le repli de câblage, et lui qui départage les ex æquo de routage.
+    assert [a.nom for a in effectif] == [a.nom for a in GABARITS_DU_CODE]
 
 
 # --- ③ Les routes : la fiche à trois états ---------------------------------------------

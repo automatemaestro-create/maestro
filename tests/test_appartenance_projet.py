@@ -37,7 +37,12 @@ projection → vues ; ces tests le suivent d'un bout à l'autre.
    uniquement à travers l'API, donc jamais sur ses branches sans HTTP — le
    libellé rappelé dans les réponses, les mots réservés résolus sans dépôt, et
    le **dépôt injoignable**, qui accorde la portée plutôt que de ressortir un
-   « projet inconnu » faux.
+   « projet inconnu » faux ;
+⑧ **un projet naît sans agent** (#1042) : le parc d'un projet déclaré est vide
+   tant que son équipe n'a pas été validée, les **gabarits** de rôle restent
+   lisibles hors projet, et la fiche d'un gabarit répond comme la liste. Mesuré
+   ici parce qu'une liste vide ne prouve quelque chose que sur un projet dont on
+   sait qu'il est déclaré.
 
 Ni réseau ni Redis : bus mémoire, fournisseurs factices, TestClient de Starlette,
 dépôt de projets jetable (la portée exige des projets réellement déclarés).
@@ -52,6 +57,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from maestro.agents.catalog import GABARITS_DU_CODE
+from maestro.agents.store import AgentStore
 from maestro.appartenance import LONGUEUR_MAX_ID, projet_id_valide
 from maestro.controltower import (
     EVENEMENT_TACHE_STATUT,
@@ -755,3 +762,63 @@ def test_un_identifiant_mal_forme_est_refuse_meme_sans_depot_pour_le_dire() -> N
         resoudre_portee("../evasion")
 
     assert capture.value.motif == "projet-inconnu"
+
+
+# --- ⑧ Un projet naît sans agent (#1042) -----------------------------------------------
+#
+# Le critère se lit sur les deux vues du parc, et il se lit en creux : une liste
+# **vide**. C'est pour cela qu'il est mesuré ici, où les projets sont réellement
+# déclarés — une liste vide parce qu'un projet est inconnu ne prouverait rien.
+
+
+@pytest.fixture()
+def client_parc(projets: ServiceProjets, tmp_path: Path) -> TestClient:
+    """TestClient sur un dépôt d'agents **vide** : l'état d'un poste qui vient de naître."""
+    with TestClient(
+        create_app(
+            bus=InMemoryEventBus(),
+            state=ControlTowerState(),
+            projets=projets,
+            agents_store=AgentStore(tmp_path / "agents"),
+        )
+    ) as client:
+        yield client
+
+
+def test_un_projet_neuf_n_a_aucun_agent(
+    client_parc: TestClient, ids: tuple[str, str]
+) -> None:
+    """Le critère de #1042 : créer ou importer un projet n'instancie **aucun** agent."""
+    projet, _ = ids
+
+    assert client_parc.get("/api/catalogue", params={"projet": projet}).json() == []
+    assert client_parc.get("/api/agents", params={"projet": projet}).json() == []
+
+
+def test_les_gabarits_restent_lisibles_hors_projet(client_parc: TestClient) -> None:
+    """Ce que #1042 retire est l'instanciation, pas la matière.
+
+    Au niveau gabarit — `?projet=` omis — les cinq rôles du code sont là, dans
+    leur ordre : c'est ce que l'analyse d'équipe consulte (#1039), et c'est là que
+    leurs réglages s'éditent.
+    """
+    fiches = client_parc.get("/api/catalogue").json()
+
+    assert [f["nom"] for f in fiches] == [a.nom for a in GABARITS_DU_CODE]
+
+
+def test_un_gabarit_n_est_pas_une_fiche_du_projet(
+    client_parc: TestClient, ids: tuple[str, str]
+) -> None:
+    """La fiche d'un gabarit répond comme la liste : 404 sur un projet.
+
+    Sans cette symétrie, `GET /api/catalogue/{nom}?projet=` servirait un agent que
+    `GET /api/catalogue?projet=` ne liste pas — et l'écran du projet montrerait un
+    membre d'équipe que le projet n'a pas.
+    """
+    projet, _ = ids
+    nom = GABARITS_DU_CODE[0].nom
+
+    assert client_parc.get(f"/api/catalogue/{nom}").status_code == 200
+    reponse = client_parc.get(f"/api/catalogue/{nom}", params={"projet": projet})
+    assert reponse.status_code == 404

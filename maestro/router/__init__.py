@@ -5,10 +5,10 @@ du routage (docs/01 §3.2) : les **règles de compétences** (recouvrement
 `competences_requises` ∩ `competences` de l'agent) et un **classifieur léger**
 (modèle rapide via `ModelProvider`) pour les cas ambigus. Point d'entrée :
 
-    from maestro.agents import DEFAULT_AGENTS
+    from maestro.agents import catalogue
     from maestro.router import Router, TaskClassifier
 
-    router = Router(DEFAULT_AGENTS, classifier=TaskClassifier(provider))
+    router = Router(catalogue(), classifier=TaskClassifier(provider))
     decision = await router.route(task)   # -> RoutingDecision
     if decision.a_assigner:               # repli explicite : confiance trop faible
         ...                               # la tâche attend une assignation manuelle

@@ -2,12 +2,19 @@
 
 Premier pilote du socle MCP (#104) : prolonger la supervision d'un run là où
 l'équipe vit déjà — un canal Slack. Le principe : **aucun connecteur Slack dans
-Maestro**. C'est un agent du catalogue (le DevOps par défaut), *équipé* d'un
-serveur MCP Slack déclaré dans son dépôt (`core/mcp/<agent>.json`), qui poste
-les événements clés : le moteur ne parle jamais à Slack, il confie une mission
-de publication à l'agent outillé, qui la réalise avec ses outils MCP
-(`mcp__slack__…`). Changer de canal (Teams, Discord…) = changer la déclaration,
-pas ce module.
+Maestro**. C'est un agent du catalogue, *équipé* d'un serveur MCP Slack déclaré
+dans son dépôt (`core/mcp/<agent>.json`), qui poste les événements clés : le
+moteur ne parle jamais à Slack, il confie une mission de publication à l'agent
+outillé, qui la réalise avec ses outils MCP (`mcp__slack__…`). Changer de canal
+(Teams, Discord…) = changer la déclaration, pas ce module.
+
+⚠ **Quel agent notifie est dit, jamais supposé** (#1042). Ce module avait un
+défaut — `devops`, un des cinq rôles que tout poste recevait d'office. Ces rôles
+sont devenus des gabarits ([docs/37 §2.1](./../docs/37-decision-equipe-sur-mesure.md)),
+et supposer qu'un projet a un DevOps reviendrait à supposer qu'il a une équipe
+que personne n'a validée. `default()` exige donc un **nom**, et le cherche dans
+l'équipe du **projet** qu'on lui donne : c'est là que vit l'agent équipé, avec
+ses serveurs MCP et son coffre de secrets.
 
 Deux événements couverts (les critères du ticket) :
 
@@ -42,11 +49,11 @@ from collections.abc import Awaitable
 from time import perf_counter
 from typing import Any
 
+from maestro.agents.configuration import ConfigurationAgents
 from maestro.agents.fiche_outillee import runtime_outille
 from maestro.agents.mcp import McpStore
 from maestro.agents.runtime import AgentRuntime
 from maestro.agents.secrets import SecretStore
-from maestro.agents.store import AgentStore, catalogue
 from maestro.config import ConfigError, Settings, load_settings
 from maestro.engine.executor import STATUT_ECHEC, STATUT_TERMINEE
 from maestro.engine.guardrails import DemandeValidation, Validateur
@@ -104,7 +111,13 @@ class NotificateurRun:
         self._secrets = secrets
 
     @classmethod
-    def default(cls, agent: str = "devops", settings: Settings | None = None) -> NotificateurRun:
+    def default(
+        cls,
+        agent: str,
+        settings: Settings | None = None,
+        *,
+        projet_id: str | None = None,
+    ) -> NotificateurRun:
         """Le notificateur configuré : agent équipé + canal `MAESTRO_SLACK_CANAL`.
 
         Valide la configuration **à la construction** (échec propre avant tout
@@ -114,10 +127,16 @@ class NotificateurRun:
 
         Depuis #1037 le runtime se dérive de la **fiche** de `agent`, cherchée dans
         le catalogue **effectif** : n'importe quel agent du catalogue peut donc
-        notifier, y compris un agent défini hors du code, du moment qu'il a un
-        serveur MCP. Ce qui reste refusé est un nom **hors catalogue** — un acteur
-        système (`orchestrateur`, `assistance`) n'a pas de fiche, donc pas de
-        runtime à équiper.
+        notifier, du moment qu'il a un serveur MCP. Ce qui reste refusé est un nom
+        **hors catalogue** — un acteur système (`orchestrateur`, `assistance`) n'a
+        pas de fiche, donc pas de runtime à équiper.
+
+        `projet_id` (#1042) dit **de quelle équipe** cet agent est : la fiche, ses
+        serveurs MCP et son coffre se lisent alors dans la configuration de ce
+        projet (#1038). Omis, c'est le niveau hors projet — ce que lit un
+        `maestro-run` qui ne travaille dans aucun projet. Et `agent` n'a plus de
+        valeur par défaut : supposer un `devops` reviendrait à supposer une équipe
+        que personne n'a validée.
         """
         from maestro.providers.factory import provider_from_settings
 
@@ -128,17 +147,19 @@ class NotificateurRun:
                 "MAESTRO_SLACK_CANAL est absent : renseignez le canal Slack des "
                 "notifications de supervision (cf. .env.example, ticket #105)."
             )
-        fiches = catalogue(AgentStore.default(settings), settings.model)
+        cfg = ConfigurationAgents.default(settings).pour_projet(projet_id)
+        fiches = cfg.catalogue(settings.model)
         fiche = next((f for f in fiches if f.nom == agent), None)
         if fiche is None:
+            ou = f"l'équipe du projet {projet_id!r}" if projet_id else "le catalogue"
             raise ConfigError(
                 f"l'agent {agent!r} n'a pas de runtime outillé : le notificateur de "
                 "supervision a besoin d'une exécution outillée pour monter le serveur "
-                f"MCP Slack, et {agent!r} n'est pas au catalogue effectif "
-                f"(présents : {', '.join(f.nom for f in fiches)})."
+                f"MCP Slack, et {agent!r} n'est pas dans {ou} "
+                f"(présents : {', '.join(f.nom for f in fiches) or 'aucun'})."
             )
         runtime = runtime_outille(provider_from_settings(settings), fiche)
-        mcp = McpStore.default(settings)
+        mcp = cfg.mcp
         try:
             serveurs = mcp.lire(agent)
         except ValueError as exc:

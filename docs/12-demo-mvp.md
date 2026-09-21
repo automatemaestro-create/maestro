@@ -50,13 +50,13 @@ Deux façons de le rejouer :
 # La mesure sur le vrai classifieur Claude (celui du moteur)
 .venv/Scripts/python.exe -c "
 import asyncio
-from maestro.agents.catalog import DEFAULT_AGENTS
+from maestro.agents.catalog import GABARITS_DU_CODE
 from maestro.config import load_settings
 from maestro.providers.claude import ClaudeProvider
 from maestro.router import Router, TaskClassifier
 from maestro.router.evaluation import evaluer
 async def main():
-    router = Router(DEFAULT_AGENTS, classifier=TaskClassifier(ClaudeProvider.from_settings(load_settings())))
+    router = Router(GABARITS_DU_CODE, classifier=TaskClassifier(ClaudeProvider.from_settings(load_settings())))
     resultat = await evaluer(router)
     print(resultat.resume())
 asyncio.run(main())

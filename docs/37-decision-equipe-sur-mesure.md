@@ -39,6 +39,13 @@ L'analyse complète, avec ce qui existait, les standards vérifiés et chaque ar
 
 **Ce qui est gardé.** Les playbooks « senior » des agents figés ne sont pas jetés : ils deviennent la matière des gabarits. C'est un arbitrage (§4.1), et il se défait en un lot si l'on n'en veut pas.
 
+**Livré par #1042.** `catalogue()` ne rend plus que les agents de son dépôt : un projet créé ou importé n'en a **aucun**, et `GET /api/catalogue?projet=<id>` comme `GET /api/agents?projet=<id>` le disent en rendant une liste vide. Trois conséquences qui se tiennent ensemble :
+- **une équipe vide n'est pas une omission** : le routeur distingue « je n'ai pas d'équipe à te donner » (hors projet) de « ce projet n'a personne », et une tâche du second part en repli « à assigner » au lieu d'aller aux rôles du code ;
+- **les noms des gabarits restent réservés**, pour une raison neuve : le paquet livre un playbook sous chacun d'eux, qui masquerait celui d'une fiche de projet homonyme (`playbook_outille`) — c'est aussi pourquoi les rôles proposés portent d'autres noms (`dev` descend de `developpeur`) ;
+- **une surcharge (#259) règle désormais un gabarit**, plus un agent : elle se lit par `gabarits_du_code()` et n'atteint l'exécution que par le catalogue de câblage d'un run **hors projet** (`catalogue_hors_projet`) — dans un projet, ce qu'on règle est la fiche d'un agent de l'équipe, dont la définition *est* le réglage.
+
+Hors de tout projet, un moteur travaille encore avec les gabarits : `maestro-run` et `maestro-demo` n'ont pas de projet et n'en ont jamais eu. Ce n'est pas une exception au principe, c'est son complément — il n'y a pas d'équipe où chercher. `maestro-run --projet <id>` dit dans quel projet travailler, et prend alors son équipe, y compris pour l'agent de `--notifier`.
+
 ### 2.2 « Personne ne répond en cours de tâche » tombe
 
 **Avant.** Le socle des playbooks (`maestro/agents/playbooks_defaut/_socle.md`, [docs/04 §1.2](./04-specifications-agents.md)) portait trois volets, et deux d'entre eux **restent** :

@@ -22,7 +22,7 @@ depuis #298 : structuré, relisable et diffable, comme ceux des cinq rôles exé
 décision ouverte du ticket :
 
 - ce dossier-là est le repli du **catalogue** (`PLAYBOOK_DEFAUTS` est construit sur
-  `DEFAULT_AGENTS`) et la liste des agents que la Control Tower édite et versionne
+  `GABARITS_DU_CODE`) et la liste des agents que la Control Tower édite et versionne
   (`core/playbooks/<agent>/`). Le Chef de projet n'est ni dans le catalogue — il n'exécute
   pas de tâche — ni éditable : y déposer son document ferait mentir `roles_du_code()` et
   laisserait croire à un repli versionné qui n'existe pas ;
