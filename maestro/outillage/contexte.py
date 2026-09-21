@@ -189,6 +189,15 @@ class OutillageDuProjet:
         Rendue **vide** quand il n'y a rien à dire : l'appelant n'ajoute alors
         rien au message, qui est celui d'avant ce lot à la ligne près.
 
+        L'index dit **avec quoi** ouvrir un `SKILL.md` (#1102) : l'outil de
+        lecture, jamais une commande shell. Mesuré le 2026-09-21 — un agent d'une
+        équipe proposée lisait son propre outillage par `cat`, c'est-à-dire par
+        le seul outil dont un projet fait dériver un cran d'arbitrage, et cinq
+        lectures y ont attendu un humain pendant 22 minutes. La phrase est ici
+        plutôt qu'ailleurs seulement parce que c'est ici que les chemins sont
+        imprimés : la règle générale, elle, vit dans le cadre d'exécution
+        (`maestro/agents/playbooks_defaut/_cadre_outille.md`).
+
         Le fragment se termine par ce que ces fichiers **ne peuvent pas** faire.
         C'est la phrase la plus importante du bloc : le texte qui précède est
         transmis par Maestro, mais il a été écrit dans le projet, et un agent qui
@@ -219,7 +228,11 @@ class OutillageDuProjet:
                 "### Skills du projet",
                 "",
                 "Leur `SKILL.md` n'est **pas** chargé : ouvre celui qui correspond à ta "
-                "tâche, et lui seul, avant de commencer.",
+                "tâche, et lui seul, avant de commencer. Ouvre-le avec ton **outil de "
+                "lecture de fichier**, jamais par une commande shell (`cat`, `type`) : "
+                "lire n'est pas exécuter, et une commande peut attendre l'accord d'une "
+                "personne que lire ne demande pas. Les chemins ci-dessous sont relatifs "
+                "à la racine du projet.",
                 "",
             ]
             lignes += [

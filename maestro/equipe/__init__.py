@@ -117,6 +117,7 @@ from maestro.equipe.modele import (
 from maestro.equipe.proposition import (
     ECARTE_ORCHESTRATEUR,
     OUTIL_EXECUTION,
+    REGIME_EXECUTION,
     avec_playbook,
     proposer_equipe,
 )
@@ -137,6 +138,7 @@ __all__ = [
     "PART_SUBSTANTIELLE",
     "PREFIXE_ID",
     "RAISON_UNE_INSTANCE",
+    "REGIME_EXECUTION",
     "TITRE_SKILLS",
     "VERSION_PROPOSITION",
     "AgentCree",

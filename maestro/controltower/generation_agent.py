@@ -96,6 +96,14 @@ _SLUG_AGENT = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 #: Il dit **deux fois** que le playbook doit être intégral, parce que la demande
 #: « propose une définition » appelle spontanément un résumé de playbook, qui
 #: arriverait dans le formulaire comme un texte à finir plutôt qu'à relire.
+#:
+#: Il porte aussi la règle que #1102 a tirée d'un run réel : **un playbook ne fait
+#: pas d'une commande le premier geste obligatoire**. L'intention dit le *fait* —
+#: le cran proposé pour l'outil d'exécution de ce rôle
+#: (`maestro.equipe.proposition.REGIME_EXECUTION`) —, le cadre en tire la
+#: *consigne*, et les deux ne se recopient pas. La règle est écrite
+#: conditionnellement (« si l'intention dit que… ») parce que ce cadre sert aussi
+#: la saisie libre du formulaire, où aucune intention ne parle de cran.
 _CADRE_GENERATION = f"""\
 Tu conçois la définition d'un agent IA pour Maestro, un orchestrateur qui répartit
 du travail entre des agents autonomes. On te donne l'intention de l'utilisateur en
@@ -122,6 +130,15 @@ intégration qu'elle ne mentionne pas.
 vouvoie l'utilisateur. Le playbook que tu écris doit donc le lui prescrire en
 toutes lettres — c'est le registre de toute l'interface de Maestro, et un agent à
 qui personne ne l'a dit rend le registre dans lequel on s'adresse à lui.
+
+⚠ Ne fais jamais d'une commande à exécuter le premier geste obligatoire de
+l'agent, ni le préalable de tout le reste. Une commande peut être soumise à
+l'accord d'une personne, et sans réponse elle est refusée : un playbook qui en
+ordonne une avant toute chose suspend l'agent à cet accord dès sa première tâche.
+Si l'intention dit que ses commandes attendent l'accord d'une personne, écris-le
+dans le playbook : il lit ce dont il a besoin — avec son outil de lecture, jamais
+par le shell —, commence son travail, et ne demande une exécution que lorsqu'elle
+sert le livrable. Sur un refus, il poursuit et le signale, il ne réessaie pas.
 
 N'écris dans FOURNISSEUR et MODELE que des noms de la liste qui t'est donnée. Si
 rien n'y convient, laisse les deux lignes vides : l'agent prendra les réglages par

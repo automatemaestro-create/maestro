@@ -31,6 +31,10 @@ son runtime. Ce chantier est précisément celui qui rend cette règle difficile
 Maestro écrit un `CLAUDE.md` et que le runtime de Maestro **est** Claude Code : §5.3 mesure la porte
 restée ouverte, et la referme dans #1032.
 
+Un troisième temps s'y est ajouté (§5.5, #1102) : une fois l'outillage transmis, **lire n'est pas
+exécuter**. Un agent n'a besoin de l'accord de personne pour ouvrir le `SKILL.md` qu'on lui
+désigne — et son playbook ne fait pas d'une commande à approuver son premier geste.
+
 ## 1. Pourquoi une note, et pas un choix d'implémentation
 
 Six lots suivent celui-ci. Trois **écrivent** cet outillage (#1030 le recommande, #1031 le choisit,
@@ -429,6 +433,46 @@ Reste vrai ce que §5.1 disait déjà, et que le lot n'a pas eu à changer : un 
 monte rien (`strict_mcp_config`). Les deux verrous ne se remplacent pas — l'un ferme les serveurs
 MCP, l'autre les réglages, les fichiers d'instructions et les skills.
 
+### 5.5 Lire l'outillage n'est pas l'exécuter (#1102)
+
+Mesuré le 2026-09-21 par `/milestone-bilan`, sur un run réel (`c285b6e55fd8`) dans un projet Python
+existant, avec l'équipe proposée puis **validée telle quelle** (`dev` ×2, `tests`). Trois pièces
+justes isolément, et un assemblage qui rendait l'équipe dépendante d'un humain dès sa première
+tâche :
+
+| La pièce | Ce qu'elle faisait, et pourquoi c'était juste |
+| --- | --- |
+| L'**autorisation** de `dev` | `Bash` en `ask`, décideur `humain` : la seule commande du rôle, `pip install -e .`, était d'origine `convention` — une supposition, pas une lecture (§4.1, `_commandes_declarees`) |
+| Le **playbook** de `dev`, écrit par #257 | « Avant toute intervention, appelle le skill `mettre-en-route` […]. Ne suppose jamais que l'environnement est prêt sans être passé par ce skill » — fidèle à son intention |
+| Le **run** | L'agent ouvrait `.agents/skills/mettre-en-route/SKILL.md` par `Bash` (`cat …`). Chaque appel attendait un humain : **5 validations × 295 s en 22 minutes**, toutes refusées faute de réponse (EF-08, conforme), et la seconde tâche recommençait la même séquence |
+
+**Ce qui est décidé.** Deux règles, et aucune ne touche à qui autorise quoi :
+
+1. **Lire n'est pas exécuter.** Un fichier — le sien, celui du projet, un `SKILL.md` qu'on lui
+   désigne — s'ouvre avec l'outil de lecture, jamais par une commande shell. La règle générale vit
+   dans le **cadre d'exécution** (`maestro/agents/playbooks_defaut/_cadre_outille.md`), le seul
+   endroit qui atteigne les deux chemins — les documents des rôles du code par leur `{{cadre}}`,
+   les fiches par `playbook_outille` ; l'index des skills la redit une fois, parce que c'est là que
+   les chemins sont imprimés (`OutillageDuProjet.consigne`). Le même cadre ajoute qu'un **appel
+   d'outil refusé est une décision, pas un incident** : ce sont les rejeux qui ont fait les 22
+   minutes, pas le premier refus.
+2. **Le playbook et l'autorisation sont d'accord.** L'`intention` d'où #257 écrit le playbook porte
+   désormais le **cran proposé pour l'outil d'exécution** (`maestro.equipe.proposition`, le *fait*),
+   et le cadre de génération en tire la *consigne* : un playbook ne fait jamais d'une commande le
+   premier geste obligatoire de l'agent (`generation_agent._CADRE_GENERATION`). Les deux ne se
+   recopient pas — c'est la frontière que `_intention` posait déjà pour tout le reste.
+
+**Ce qui est écarté, et c'est le point.** Compter les commandes que *Maestro lui-même* a écrites
+dans un skill du projet comme « déclarées par le projet », ce qui aurait fait passer `Bash` en
+`auto` et réglé le symptôme. Elle est bien écrite dans le projet, mais personne ne l'y a décidée :
+c'est la même commande de convention, recopiée un cran plus loin. La retenir ferait de Maestro
+l'auteur de sa propre autorisation, quand §5.1 dit que *ce qui autorise un outil n'est pas
+l'origine du fichier, c'est le geste d'une personne* — et le cran obtenu ne serait pas borné à
+cette commande, un cran portant sur un outil et non sur ses arguments. La règle de
+[docs/37 §3](./37-decision-equipe-sur-mesure.md) et d'EF-08 reste donc **inchangée** : seules les
+commandes que personne n'a décidées d'avance attendent une validation. `pip install -e .` en est
+une ; ouvrir un `SKILL.md` n'en était pas une.
+
 ## 6. Ce qui est écarté, et pourquoi
 
 | Écarté | Pourquoi |
@@ -441,6 +485,7 @@ MCP, l'autre les réglages, les fichiers d'instructions et les skills.
 | Générer les trois formats de commande | Aucun format commun, et le skill rend déjà le service dans deux clients sur quatre (§3.5) |
 | Le manifeste dans `.agents/` | Il finirait lu comme une consigne par les trois clients qui balaient ce dossier (§4.3) |
 | Honorer `allowed-tools` d'un skill du projet | Une permission se déclare par une personne, jamais par un fichier — fût-il écrit par Maestro (§5.1) |
+| Compter les commandes que **Maestro** a écrites dans un skill du projet comme « déclarées » | Même raison, par une autre porte : elles n'y ont été décidées par personne, et le cran obtenu porterait sur l'outil, pas sur ces commandes (§5.5) |
 
 ## 7. Ce qui rouvrirait la décision
 
