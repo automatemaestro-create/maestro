@@ -20,6 +20,11 @@ Ce qu'il ne décide **pas**, et c'est délibéré : rien du socle visuel. La dir
 [docs/30 §6.1](./30-cible-visuelle-control-tower.md) — « le même produit, avec du relief » — tient.
 Aucune identité nouvelle, aucune palette, aucune police.
 
+> ⚠ **docs/30 §6.1 est renversée le 2026-09-21** (#1134, [docs/39](./39-decision-niveau-visuel-choisi.md)) :
+> les valeurs du socle se rouvrent une fois, par une direction qu'une personne choisit. Ce que ce
+> document décide ne bouge pas. La coque et les trois zones sont indépendantes du niveau visuel, et
+> la frontière shell / écran (§3.4) fait partie des mécanismes que la direction ne touche pas.
+
 ---
 
 ## 1. D'où vient la demande

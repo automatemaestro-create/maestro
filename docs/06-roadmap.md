@@ -35,7 +35,8 @@ gantt
 > des Phases 8 et 9. Les chantiers nés de l'usage viennent ensuite, puis le jalon **« L'équipe sur
 > mesure »**, né d'une idée le 2026-09-19 et placé devant la Phase 9. Le jalon **« Avant
 > l'installeur »** vient ensuite (2026-09-21) : il réunit les réserves des deux jalons précédents et
-> passe à son tour devant la Phase 9.
+> passe à son tour devant la Phase 9. Le jalon **« Le niveau visuel »** le suit (2026-09-21) : une
+> direction visuelle choisie par une personne, et un écran étalon, toujours devant la Phase 9.
 
 ---
 
@@ -463,6 +464,77 @@ verdict rendu : elles sont maintenant suivies dans ce jalon, qui passe devant la
 
 > ⚠ **Les critères de sortie du jalon sont dans sa description**, section `## Critères de sortie`
 > (C1 à C4). C'est elle qui fait foi au bouclage (docs/10 §3.4), pas ce résumé.
+
+> ⚠ **Un jalon s'est inséré derrière celui-ci le 2026-09-21** (#1134) : « Le niveau visuel »
+> (2028-02-05), section suivante. Ce qui est écrit ici ne change pas : ce jalon reste devant, et son
+> échéance n'a pas bougé.
+
+---
+
+## « Le niveau visuel » — une direction choisie, un écran étalon (2026-09-21)
+
+Ce jalon est né d'une demande du 2026-09-21, instruite par [`/idee`](../.claude/commands/idee.md)
+(#1013) et consignée par #1134 : *un processus de conception qui produise un design « vraiment
+satisfaisant »*, et non plus un design mesuré contre VS Code, GitHub et GitLab. Comme les jalons
+nés d'une idée, il ne prend **pas de numéro de phase**.
+
+| Milestone | Contenu | Échéance | Suivi |
+|---|---|---|---|
+| **Le niveau visuel — une direction choisie, un écran étalon** | Trois directions poussées rendues sur le tableau de bord, choisies par une personne, figées dans le socle et dans un écran étalon | 2028-02-05 | **#1124** — 4 lots (#1125–#1128), plus des lots de propagation créés après le choix |
+| *Outillage de la forge* (jalon existant, rail outillage) | Une bibliothèque de références, la veille et le regard neuf qui partent de l'étalon, le regard de la personne par jalon | 2027-09-15 | **#1129** — 4 lots (#1130–#1133) |
+
+**Le constat, mesuré.** Sur les 21 veilles consignées des tickets #925 à #1107, les références sont
+GitHub (~120 mentions), VS Code (46), Vercel (42), Grafana (37) et GitLab (21), contre Linear (5)
+et Cursor (5). Ce sont souvent des pages de doc lues, pas des interfaces vues. Trois causes :
+- on cite ce qui est **public sans connexion** ;
+- la veille était conçue pour **ne pas chercher de niveau** (docs/30 §6.1) ;
+- **personne ne porte le goût** depuis que les runs tranchent seuls (#1009).
+
+**Le contenu, en deux chantiers.** La **structure** d'un écran garde sa veille par ticket. La
+**qualité visuelle** se choisit **une fois, par une personne** :
+- **#1124 (produit)** : trois directions poussées, dont une audacieuse, sur le tableau de bord dans
+  son shell ; la personne choisit (#1125) ; la direction entre dans le socle (#1126) ; le tableau de
+  bord devient l'**écran étalon** (#1127) ; tests + doc (#1128) ;
+- **#1129 (outillage)** : une bibliothèque de références versionnée, choisie par une personne,
+  y compris derrière une connexion (#1130) ; la veille et le regard neuf partent de l'étalon et de
+  la bibliothèque, le dehors en dernier (#1131) ; le regard de la personne par jalon, dont les
+  verdicts deviennent des précédents (#1132) ; tests + doc (#1133).
+
+**Une décision tombe, à la demande de la personne**, et une note l'écrit :
+[docs/39](./39-decision-niveau-visuel-choisi.md). C'est [docs/30 §6.1](./30-cible-visuelle-control-tower.md),
+« pas de nouvelle identité » (et le verdict du banc, §1.6). Les **valeurs** du socle se rouvrent une
+fois.
+
+Ne bougent pas :
+- les **mécanismes** du socle (tokens sémantiques, primitives, trois places, forme + couleur, AA) ;
+- « aucune identité nouvelle » à l'échelle d'un ticket, qui désigne désormais la direction retenue ;
+- #1009, nuancé mais pas renversé : un run tranche toujours seul, mais contre l'étalon.
+
+**Hors des runs, et c'est voulu.** #1125 attend une personne. #1131 et #1132 écrivent sous
+`.claude/`. Les trois naissent **assignés** (#621) et se démarrent à la main. #1125 n'attend pas son
+tour dans la file : il peut commencer maintenant.
+
+**Place dans la file**, sur le rail produit :
+
+| Jalon | Échéance |
+| --- | --- |
+| « L'équipe sur mesure » (soldé, verdict rendu) | 2028-01-05 |
+| « Avant l'installeur » | 2028-01-26 |
+| **« Le niveau visuel »** | **2028-02-05** |
+| Phase 9 | 2028-02-16 (inchangée) |
+
+- **Derrière « Avant l'installeur ».** Ses réserves sont indépendantes de la direction. Placé
+  devant, ce jalon deviendrait courant alors que son premier lot attend une personne, et un run n'y
+  trouverait rien à prendre.
+- **Devant la Phase 9**, pour l'argument de la Phase 9 elle-même : on n'empaquette pas une cible
+  mouvante (§4.8 de docs/24). Le premier lancement (#642) et l'installeur (#641) montreraient un
+  niveau visuel sur le point de changer. C'est la quatrième fois que cet argument range un jalon
+  devant elle.
+- Son échéance tombe **strictement entre** ses voisins : **aucune autre échéance n'a bougé**, et
+  **aucune priorité** existante non plus.
+
+> ⚠ **Les critères de sortie du jalon sont dans sa description**, section `## Critères de sortie`
+> (C1 à C5). C'est elle qui fait foi au bouclage (docs/10 §3.4), pas ce résumé.
 
 ---
 
