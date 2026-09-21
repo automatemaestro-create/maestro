@@ -13,6 +13,12 @@ questionnaire, un projet neuf n'a rien à analyser. Ce qu'ils partagent est ce q
 rendent — la `Recommandation` du lot 2, que `recommandation_depuis_choix` produit en
 muant les réponses en `Constats` plutôt qu'en refaisant le chemin.
 
+⚠ **La génération prend l'une ou l'autre, jamais l'analyse par défaut d'un projet
+neuf** (#1100). Elle reçoit les réponses quand il y en a, et les mue par les mêmes
+fonctions que la recommandation : analyser la racine vide d'un projet neuf rendait un
+outillage vide, et les skills que l'écran avait lus dans la recommandation des
+réponses disparaissaient à l'écriture sans que le rapport les nomme.
+
 ## Le questionnaire : pourquoi dans le fil, et pas dans un formulaire
 
 « Chaque question propose une recommandation et se répond d'un geste, par la mécanique
@@ -118,6 +124,7 @@ from maestro.outillage.modele import Recommandation
 from maestro.outillage.questionnaire import (
     Choix,
     QuestionOutillage,
+    constats_depuis_choix,
     deductions,
     question_suivante,
     recommandation_depuis_choix,
@@ -129,8 +136,8 @@ from maestro.projets import Projet
 
 def _retenue(
     recommandation: Recommandation, retenus: Sequence[str] | None
-) -> Recommandation:
-    """La recommandation réduite à ce que l'écran a **gardé** (#1034).
+) -> tuple[Recommandation, tuple[str, ...]]:
+    """La recommandation réduite à ce que l'écran a **gardé** (#1034) — et ce qui ne désignait rien.
 
     `None` rend la recommandation telle quelle — un appel qui ne vient pas d'un
     écran écrit tout ce qui est recommandé, et c'est le comportement de #1033
@@ -144,17 +151,27 @@ def _retenue(
     la liste ne gardait pas d'office : dans les deux cas son `chemin` revient
     ici, et rien d'autre ne change.
 
-    Un chemin inconnu est **ignoré sans bruit** : la liste vient d'un écran qui
-    a lu la même analyse, et un chemin qui n'y correspond plus ne désigne rien
-    à écrire. Ce n'est pas une saisie à refuser, c'est une ligne qui a disparu
-    entre deux lectures du projet.
+    Un chemin inconnu n'est **pas refusé**, mais il est **rendu** (second terme,
+    dans l'ordre reçu, sans doublon) : ce n'est pas une saisie fautive, c'est une
+    entrée que l'écran a lue et que la génération ne reconnaît plus. Jusqu'à
+    #1100 il était ignoré sans bruit — et c'est ainsi que les quatre skills d'un
+    projet neuf disparaissaient d'une génération qui rendait `retires: []` : la
+    génération dérivait de l'analyse d'une racine vide, et aucun des chemins que
+    l'écran avait lus dans la recommandation des **réponses** n'y correspondait.
+    Une ligne qui disparaît entre deux lectures doit se lire dans le rapport,
+    sans quoi « non écrit » se confond avec « écrit ».
     """
     if retenus is None:
-        return recommandation
+        return recommandation, ()
     gardes = set(retenus)
-    return Recommandation(
-        entrees=tuple(e for e in recommandation.entrees if e.chemin in gardes),
-        ecartes=recommandation.ecartes,
+    connus = {e.chemin for e in recommandation.entrees}
+    inconnus = tuple(dict.fromkeys(c for c in retenus if c not in connus))
+    return (
+        Recommandation(
+            entrees=tuple(e for e in recommandation.entrees if e.chemin in gardes),
+            ecartes=recommandation.ecartes,
+        ),
+        inconnus,
     )
 
 
@@ -353,14 +370,16 @@ class ServiceOutillage:
         id_projet: str,
         *,
         retenus: Sequence[str] | None = None,
+        choix: Sequence[Choix] = (),
         run_id: str = "",
     ) -> dict[str, Any]:
-        """Écrit dans `id_projet` l'outillage que son analyse recommande (docs/38, #1033).
+        """Écrit dans `id_projet` l'outillage que son analyse — ou ses réponses — recommandent.
 
         Le déroulé, dans cet ordre — il compte :
 
-        1. le projet est **résolu** puis **analysé** (lecture seule) : on ne
-           propose jamais d'écrire sans avoir regardé ce qu'il y a ;
+        1. le projet est **résolu**, puis sa **matière** est obtenue : l'analyse
+           de sa racine (lecture seule) quand aucun choix n'est donné, la mue des
+           **réponses** au questionnaire sinon (#1100) ;
         2. l'outillage est **préparé** au régime du projet, hors de la boucle
            d'événements (parcours du disque, et sous-processus Git sur un projet
            versionné) ;
@@ -377,7 +396,20 @@ class ServiceOutillage:
         que l'analyse ne recommande plus ». C'est le seul endroit où le choix de
         l'écran entre dans la génération : filtrer la **recommandation** suffit,
         parce que c'est elle, et elle seule, que la rédaction parcourt. `None` —
-        un appel sans écran — écrit tout ce qui est recommandé.
+        un appel sans écran — écrit tout ce qui est recommandé. Un chemin qui ne
+        correspond à aucune entrée est rendu dans `retenus_inconnus`, jamais
+        perdu en silence (`_retenue`).
+
+        `choix` (#1100) sont les réponses d'un projet **neuf** : elles tiennent
+        lieu d'analyse, par les **mêmes** fonctions que `recommandation` et que
+        la proposition d'équipe (`ServiceEquipe._matiere_choisie`). Une racine
+        neuve n'a rien à montrer — l'analyser rendait un outillage vide, et
+        l'écran, qui avait lu celui des réponses, voyait ses skills disparaître.
+        Ce sont les **réponses** qui voyagent, jamais les entrées ni leur
+        contenu : une réponse est une donnée d'entrée de la dérivation, au même
+        titre que la racine, et le quoi et le où restent dérivés ici. `source`
+        dit alors d'où sort l'outillage (`type: "choix"`, les réponses en
+        `reference`) et `analyse` est vide : il n'y en a pas eu.
 
         Rend le rapport dans les deux régimes, `application` portant le verdict
         de la validation quand il y en a eu une. Lève les refus **motivés** de
@@ -386,19 +418,27 @@ class ServiceOutillage:
         refusé, ce n'est pas une panne.
         """
         projet = self._projet(id_projet)
-        analyse = await asyncio.to_thread(self._analyse, projet)
-        recommandation = _retenue(analyse.recommandation, retenus)
+        acquis = [*choix, *deductions(choix)] if choix else []
+        if acquis:
+            reference = ""
+            constats = constats_depuis_choix(acquis)
+            recommandee = recommandation_depuis_choix(acquis)
+            source = source_manifeste_des_choix(projet.id, acquis)
+        else:
+            analyse = await asyncio.to_thread(self._analyse, projet)
+            reference = analyse.id
+            constats, recommandee = analyse.constats, analyse.recommandation
+            source = analyse.source_manifeste()
+        recommandation, inconnus = _retenue(recommandee, retenus)
         preparation = await asyncio.to_thread(
-            generer_outillage,
-            projet,
-            analyse.constats,
-            recommandation,
-            source=analyse.source_manifeste(),
+            generer_outillage, projet, constats, recommandation, source=source
         )
         reponse: dict[str, Any] = {
             "projet_id": projet.id,
-            "analyse": analyse.id,
+            "analyse": reference,
+            "source": dict(source),
             **preparation.to_dict(),
+            "retenus_inconnus": list(inconnus),
             "application": None,
         }
         if preparation.regime != REGIME_BRANCHE:

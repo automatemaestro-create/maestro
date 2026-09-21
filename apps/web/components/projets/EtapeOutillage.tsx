@@ -64,7 +64,11 @@
  *
  * Rien n'est écrit tant qu'on n'a pas validé, et ce qui est écrit l'est par la
  * génération (#1033) : l'écran lui passe les **chemins retenus**, pas des
- * fichiers. Un projet versionné y gagne en plus l'accord humain sur la fusion
+ * fichiers — et, pour un projet neuf, les **réponses** d'où la liste a été
+ * dérivée (#1100). Sans elles le serveur rederivait la liste de l'analyse d'une
+ * racine vide, et les skills cochés n'étaient pas écrits. Un chemin retenu que
+ * la génération ne reconnaît pas revient nommé dans le rapport, jamais tu.
+ * Un projet versionné y gagne en plus l'accord humain sur la fusion
  * (docs/24 §2.4), et la requête attend cette décision — d'où un bouton qui reste
  * occupé, sans délai annoncé.
  */
@@ -302,6 +306,7 @@ function EnTeteListe({
 /** Ce que la génération a fait — quatre listes plutôt qu'un « ok » (docs/38 §4.2). */
 function RapportGeneration({ rapport }: { rapport: RapportGenerationOutillage }) {
   const { ecrits, refuses, ignores } = rapport.rapport;
+  const inconnus = rapport.retenus_inconnus ?? [];
   return (
     <div className="flex flex-col gap-2">
       <p className="text-corps text-texte">
@@ -327,6 +332,22 @@ function RapportGeneration({ rapport }: { rapport: RapportGenerationOutillage })
           ))}
           : la version neuve attend dans{" "}
           <code className="font-mono">.maestro/outillage/refuses/</code>.
+        </p>
+      )}
+      {/* Ce qu'on avait gardé et que la génération n'a pas reconnu (#1100) : la
+          liste lue et celle écrite ont divergé. Le taire ferait lire « rien de
+          refusé » là où des éléments cochés manquent. */}
+      {inconnus.length > 0 && (
+        <p className="text-annexe text-attention-texte">
+          {inconnus.length} élément{inconnus.length > 1 ? "s" : ""} retenu
+          {inconnus.length > 1 ? "s" : ""} non écrit
+          {inconnus.length > 1 ? "s" : ""} —{" "}
+          {inconnus.map((chemin) => (
+            <code key={chemin} className="font-mono break-all">
+              {chemin}{" "}
+            </code>
+          ))}
+          : la génération ne les recommande plus.
         </p>
       )}
       {ignores.length > 0 && (
@@ -474,7 +495,16 @@ export function EtapeOutillage({
     try {
       // Le rapport reste à l'écran : c'est la seule trace de ce qui n'a PAS été
       // écrasé, et refermer l'étape dessus la ferait disparaître sans l'avoir lue.
-      setRapport(await genererOutillage(projet.id, [...retenus]));
+      // Un projet neuf envoie ses **réponses** avec (#1100) : c'est d'elles que la
+      // liste qu'on vient de trier a été dérivée, et c'est d'elles que le serveur
+      // doit la rederiver — sa racine vide, analysée, ne recommande rien.
+      setRapport(
+        await genererOutillage(
+          projet.id,
+          [...retenus],
+          neuf ? choix : undefined,
+        ),
+      );
     } catch (erreur) {
       setRefus(refusDepuis(erreur));
     } finally {

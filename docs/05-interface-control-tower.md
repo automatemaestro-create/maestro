@@ -6014,13 +6014,22 @@ répondre à une question déjà tranchée. `422` sur une valeur hors des option
 
 #### La génération — `POST /api/projets/{id}/outillage/generation`
 
-Corps **facultatif**, et il ne porte qu'une chose : `{"retenus": ["AGENTS.md", "…"]}`, les chemins
-que l'étape d'outillage a gardés cochés (#1034). Absent — un appel qui ne vient pas d'un écran —,
-tout ce qui est recommandé est écrit.
+Corps **facultatif** : `{"retenus": ["AGENTS.md", "…"], "choix": [{"cle": "…", "valeur": "…"}]}`.
+`retenus` porte les chemins que l'étape d'outillage a gardés cochés (#1034). Absent — un appel qui ne
+vient pas d'un écran —, tout ce qui est recommandé est écrit. `choix` porte les réponses au
+questionnaire d'un projet **neuf** (#1100), dans la forme de `…/outillage/recommandation`.
+L'outillage se dérive alors **d'elles**, par la même fonction que la recommandation, et non de
+l'analyse d'une racine encore vide. Ce que l'écran a montré est donc ce qui s'écrit. Vide, il se
+dérive de l'analyse, comme pour la proposition d'équipe. Les réponses voyagent, jamais les entrées ni
+leur contenu : une réponse est une donnée d'entrée de la dérivation, au même titre que la racine.
 
 ```jsonc
 {
-  "projet_id": "prj-7f3a", "analyse": "ana-3c9f0011",
+  "projet_id": "prj-7f3a",
+  // D'OÙ SORT L'OUTILLAGE, recopié dans le manifeste : `analyse` (et `analyse` porte son id)
+  // ou `choix` (les réponses en `reference`, et `analyse` vide — il n'y en a pas eu).
+  "analyse": "ana-3c9f0011",
+  "source": { "type": "analyse", "projet_id": "prj-7f3a", "reference": "ana-3c9f0011", "resume": "…" },
   // LE RÉGIME D'ÉCRITURE EST CELUI DU PROJET (docs/24 §2.4) : `en-place` sur un
   // projet non versionné — c'est fait à la réponse —, `branche` sinon, et la
   // requête ATTEND alors l'accord humain, sans time-out (contrat du validateur).
@@ -6034,9 +6043,16 @@ tout ce qui est recommandé est écrit.
     // CE QUI N'A PAS ÉTÉ ÉCRASÉ, et où la version neuve attend.
     "refuses": [], "ignores": [], "retires": []
   },
+  // UN CHEMIN RETENU QUI NE DÉSIGNE AUCUNE ENTRÉE (#1100) : rendu, jamais perdu en silence.
+  "retenus_inconnus": [],
   "application": null      // le verdict de la validation humaine, sur un projet versionné
 }
 ```
+
+⚠ **`retenus_inconnus` n'est pas un refus** : c'est une entrée que l'écran a lue et que la génération
+ne reconnaît plus. Le projet a pu changer entre les deux lectures. Jusqu'à #1100, ces chemins étaient
+ignorés sans bruit, et les quatre skills d'un projet neuf disparaissaient ainsi d'une génération qui
+rendait `retires: []`.
 
 **Rien n'est jamais écrasé en silence**, et les quatre cas de docs/38 §4.2 sont le contrat de cette
 route : un fichier que le projet portait et que Maestro n'a pas écrit n'est **pas touché**

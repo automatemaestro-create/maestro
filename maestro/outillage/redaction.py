@@ -45,11 +45,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Any
 
 from maestro import __version__
 from maestro.outillage.contexte import BALISE_DEBUT, BALISE_FIN
 from maestro.outillage.detection import CHEMIN_MANIFESTE
 from maestro.outillage.modele import Commande, Constats, Entree, Recommandation
+from maestro.outillage.questionnaire import SOURCE_CHOIX
 from maestro.outillage.recommandation import DOSSIER_SKILLS, SKILL_PAR_USAGE, USAGES_VERIFICATION
 
 #: Les portées d'un fichier généré (docs/38 §4.1, champ `portee`) : le fichier
@@ -169,6 +171,7 @@ def rediger(
     recommandation: Recommandation,
     *,
     portees: Mapping[str, str] | None = None,
+    source: Mapping[str, Any] | None = None,
 ) -> tuple[Fichier, ...]:
     """Les fichiers à écrire pour l'outillage que `recommandation` retient.
 
@@ -192,6 +195,10 @@ def rediger(
     dupliqué. Une entrée d'un type inconnu est sautée plutôt que devinée — un
     type que ce module ne sait pas rédiger n'a rien à faire dans l'arbre du
     projet.
+
+    `source` est le fragment de provenance que le manifeste gardera (docs/38
+    §4.1). `AGENTS.md` n'en retient qu'une chose : un outillage qui vient des
+    **réponses** d'un projet neuf le dit (#1100, `_ligne_origine`).
     """
     declarees = portees or {}
     index = _index_des_skills(recommandation)
@@ -200,7 +207,7 @@ def rediger(
         declaree = declarees.get(entree.chemin)
         if entree.etat == "deja-present" and declaree is None:
             continue
-        fichier = _fichier(entree, constats, index, declaree)
+        fichier = _fichier(entree, constats, index, declaree, source)
         if fichier is not None:
             fichiers.append(fichier)
     return tuple(fichiers)
@@ -211,6 +218,7 @@ def _fichier(
     constats: Constats,
     index: tuple[tuple[str, str], ...],
     declaree: str | None,
+    source: Mapping[str, Any] | None = None,
 ) -> Fichier | None:
     """Le fichier que rend une entrée recommandée, ou `None` si son type n'en rend pas.
 
@@ -225,7 +233,7 @@ def _fichier(
             chemin=entree.chemin,
             role="instructions",
             portee=portee,
-            contenu=texte_instructions(constats, index),
+            contenu=texte_instructions(constats, index, source),
         )
     if entree.type == "pont":
         return Fichier(chemin=entree.chemin, role="pont", portee=portee, contenu=TEXTE_PONT)
@@ -284,7 +292,11 @@ def _raison_stable(entree: Entree) -> str:
     return connu[1] if connu is not None else entree.raison
 
 
-def texte_instructions(constats: Constats, index: tuple[tuple[str, str], ...]) -> str:
+def texte_instructions(
+    constats: Constats,
+    index: tuple[tuple[str, str], ...],
+    source: Mapping[str, Any] | None = None,
+) -> str:
     """Le texte d'`AGENTS.md` — les six sections de docs/38 §3.1, dans l'ordre.
 
     Une section sans matière n'est pas supprimée : elle porte une phrase qui dit
@@ -298,7 +310,7 @@ def texte_instructions(constats: Constats, index: tuple[tuple[str, str], ...]) -
         "",
         "Les instructions de ce projet, pour tout agent qui y travaille.",
         "",
-        *_section("Le projet", _corps_projet(constats)),
+        *_section("Le projet", _corps_projet(constats, source)),
         *_section("Monter et lancer", _corps_monter(constats)),
         *_section("Vérifier", _corps_verifier(constats)),
         *_section("Conventions", _corps_conventions(constats)),
@@ -318,7 +330,7 @@ def _section(titre: str, corps: list[str]) -> list[str]:
     return [f"## {titre}", "", *corps, ""]
 
 
-def _corps_projet(constats: Constats) -> list[str]:
+def _corps_projet(constats: Constats, source: Mapping[str, Any] | None = None) -> list[str]:
     """Ce que le projet **est** — langages, gestionnaires, forge, intégration continue.
 
     En liste et non en paragraphe rédigé : chaque ligne est un constat avec son
@@ -356,7 +368,36 @@ def _corps_projet(constats: Constats) -> list[str]:
             "L'analyse n'a constaté ni langage dominant, ni gestionnaire de paquets : "
             "demande à la personne qui te confie la tâche ce qu'est ce projet."
         )
-    return lignes
+    return [_ligne_origine(source), *lignes] if _vient_des_choix(source) else lignes
+
+
+def _vient_des_choix(source: Mapping[str, Any] | None) -> bool:
+    """L'outillage vient-il des réponses d'un projet neuf ? Le manifeste le dit, pas le texte."""
+    return source is not None and source.get("type") == SOURCE_CHOIX
+
+
+def _ligne_origine(source: Mapping[str, Any]) -> str:
+    """La ligne qui dit qu'un outillage vient des **réponses**, et pas d'une lecture (#1100).
+
+    Sans elle, les lignes qui suivent se liraient comme des constats : « npm
+    (`package.json`) », « convention de l'outil constaté dans `package.json` »
+    sur un dossier où `package.json` n'existe pas encore. Les constats d'un
+    projet neuf sont ceux que ses réponses **impliquent** (`constats_depuis_choix`),
+    et un agent qui les prendrait pour une lecture chercherait des fichiers
+    absents. Elle ne sort que pour une source `choix` : une analyse dit déjà sa
+    provenance ligne par ligne (« déclarée dans … »), et y ajouter son
+    identifiant réécrirait `AGENTS.md` à chaque lecture du projet.
+
+    Le résumé est celui du manifeste (`resume_des_choix`) : stable pour des
+    réponses inchangées, donc une régénération ne réécrit rien.
+    """
+    resume = str(source.get("resume") or "").strip()
+    reponses = f" ({resume})" if resume else ""
+    return (
+        f"- **Origine** : cet outillage vient des réponses données à Maestro{reponses}, "
+        "pas d'une lecture du dossier. Les fichiers nommés ici sont ceux que ces "
+        "réponses impliquent : certains n'existent peut-être pas encore."
+    )
 
 
 def _corps_monter(constats: Constats) -> list[str]:

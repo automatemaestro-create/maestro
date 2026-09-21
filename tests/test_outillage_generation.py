@@ -383,6 +383,34 @@ def test_agents_md_porte_les_six_sections_et_les_constats_avec_leur_source() -> 
     assert QUAND not in texte
 
 
+def test_un_outillage_venu_des_reponses_le_dit_en_tete_du_projet() -> None:
+    """#1100 : les constats d'un projet neuf sont **impliqués** par ses réponses.
+
+    Sans la ligne d'origine, « npm (`package.json`) » se lirait comme un constat
+    sur un dossier où le fichier n'existe pas encore. Une analyse, elle, dit sa
+    provenance ligne par ligne : pas de ligne d'origine, et pas son identifiant,
+    qui réécrirait `AGENTS.md` à chaque lecture du projet.
+    """
+    choix = {
+        "type": "choix",
+        "projet_id": "prj-0000dead",
+        "reference": "langages=python ; tests=pytest",
+        "resume": "Python ; tests : pytest",
+    }
+
+    (depuis_choix, *_) = rediger(_constats(), _recommandation(), source=choix)
+    (depuis_analyse, *_) = rediger(_constats(), _recommandation(), source=SOURCE)
+
+    premiere = depuis_choix.contenu.split("## Le projet\n\n", 1)[1].splitlines()[0]
+    assert premiere.startswith(
+        "- **Origine** : cet outillage vient des réponses données à Maestro "
+        "(Python ; tests : pytest)"
+    )
+    assert "**Origine**" not in depuis_analyse.contenu
+    assert SOURCE["reference"] not in depuis_analyse.contenu
+    assert depuis_analyse.contenu == rediger(_constats(), _recommandation())[0].contenu
+
+
 def test_une_section_sans_matiere_dit_l_absence_plutot_que_de_disparaitre() -> None:
     """Un gabarit à sections variables serait illisible à la régénération."""
     (instructions,) = rediger(

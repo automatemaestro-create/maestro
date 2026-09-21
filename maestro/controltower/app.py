@@ -983,21 +983,32 @@ class QuestionnaireOutillageRequete(BaseModel):
 
 
 class GenerationOutillageRequete(BaseModel):
-    """Corps — facultatif — de la génération d'outillage (#1034).
+    """Corps — facultatif — de la génération d'outillage (#1034, #1100).
 
-    Un seul champ, `retenus` : les **chemins** des entrées que l'étape
-    d'outillage a gardées cochées. Pas les entrées elles-mêmes — le quoi, le où
-    et le contenu se rederivent de l'analyse côté serveur, et les laisser voyager
-    depuis un écran ouvrirait une seconde façon de décider ce qu'on écrit dans le
-    dossier de quelqu'un.
+    `retenus` : les **chemins** des entrées que l'étape d'outillage a gardées
+    cochées. Pas les entrées elles-mêmes — le quoi, le où et le contenu se
+    rederivent côté serveur, et les laisser voyager depuis un écran ouvrirait une
+    seconde façon de décider ce qu'on écrit dans le dossier de quelqu'un.
 
     `None` (le champ absent, ou pas de corps du tout) et une **liste vide** ne
     disent pas la même chose : le premier veut dire « je n'ai rien à trier, écris
     ce qui est recommandé », le second « je n'ai rien gardé ». Un défaut à `[]`
     confondrait les deux, et un appel sans corps n'écrirait plus rien.
+
+    `choix` (#1100) : les réponses au questionnaire d'un projet **neuf**, dans la
+    forme de `…/outillage/recommandation`. Ce ne sont pas des entrées, et c'est ce
+    qui les laisse voyager sans rouvrir la porte fermée plus haut : une réponse
+    est une **donnée d'entrée** de la dérivation, au même titre que la racine
+    qu'on analyse. Vide — le défaut —, l'outillage se dérive de l'analyse, comme
+    pour la proposition d'équipe.
     """
 
     retenus: list[str] | None = None
+    choix: list[ChoixOutillageRequete] = []
+
+    def choix_acquis(self) -> list[Choix]:
+        """Les réponses en objets du domaine — `deduit`/`parce_que` recalculés."""
+        return [Choix(cle=c.cle, valeur=c.valeur) for c in self.choix]
 
 
 class SkillEquipeRequete(BaseModel):
@@ -4719,12 +4730,20 @@ def create_app(
         refus laisse la branche intacte — le travail reste consultable et se
         récupère d'un `git merge`.
 
-        **Le corps est facultatif, et il ne porte qu'une chose** (#1034) :
-        `retenus`, les chemins que l'étape d'outillage a gardés cochés. Absent —
-        un appel qui ne vient pas d'un écran —, tout ce qui est recommandé est
-        écrit, ce qui est le comportement d'origine. Ce qui n'y est pas n'est pas
-        écrit, et **quitte le manifeste sans quitter le disque** : c'est déjà la
-        règle de docs/38 §4.2 pour un fichier que l'analyse ne recommande plus.
+        **Le corps est facultatif** (#1034). `retenus` porte les chemins que
+        l'étape d'outillage a gardés cochés. Absent — un appel qui ne vient pas
+        d'un écran —, tout ce qui est recommandé est écrit, ce qui est le
+        comportement d'origine. Ce qui n'y est pas n'est pas écrit, et **quitte
+        le manifeste sans quitter le disque** : c'est déjà la règle de docs/38
+        §4.2 pour un fichier que l'analyse ne recommande plus. Un chemin qui ne
+        désigne aucune entrée revient dans `retenus_inconnus` (#1100) : jamais
+        perdu en silence.
+
+        `choix` porte les réponses d'un projet **neuf** (#1100) : l'outillage se
+        dérive alors d'elles, et non de l'analyse d'une racine encore vide — la
+        même dérivation que `…/outillage/recommandation`, donc ce que l'écran a
+        montré est ce qui s'écrit. `source` dit d'où il sort (`analyse` ou
+        `choix`), et le manifeste le garde.
 
         404 si le projet est inconnu, 422 motivé si sa fiche est illisible, si sa
         racine n'est plus un dossier lisible, si le worktree ne se monte pas ou si
@@ -4732,7 +4751,9 @@ def create_app(
         """
         try:
             return await outillage.generer(
-                id_projet, retenus=None if requete is None else requete.retenus
+                id_projet,
+                retenus=None if requete is None else requete.retenus,
+                choix=() if requete is None else requete.choix_acquis(),
             )
         except (
             ValueError,
