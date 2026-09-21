@@ -87,8 +87,8 @@ démarrables**, et il peut y en avoir plusieurs. Les lots sont des **sub-issues*
 apparaissent dans le panneau du parent, avec leur ordre et leur avancement, et il n'y a **aucune
 liste à tenir à jour** dans les descriptions. Un lot qui porte le label **`lot::parallele`** ne
 dépend pas des autres lots marqués qui le précèdent : deux personnes peuvent les prendre en même
-temps. Un lot non marqué attend tout ce qui le précède — c'est ce qui garde le lot final
-« tests + doc » derrière l'ensemble ([docs/10 §5.1](./docs/10-workflow-git.md)).
+temps. Un lot non marqué attend tout ce qui le précède. Chaque ticket, et chaque lot, livre **ses
+propres tests** : il n'y a plus de lot final « tests + doc » ([docs/10 §5.1](./docs/10-workflow-git.md), #1150).
 
 ---
 

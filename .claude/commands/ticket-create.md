@@ -23,33 +23,39 @@ lieu d'inventer.
 
 3. Détermine le **titre** depuis `$ARGUMENTS`. S'il est absent ou vague, demande-le.
 
-4. **Évalue la taille du besoin** (convention de découpage, `docs/10-workflow-git.md` §5.1). Un
+4. **Évalue la taille du besoin** (convention de découpage, `docs/10-workflow-git.md` §5.1). **Un
+   ticket porte une capacité visible pour l'utilisateur, ses tests compris** (#1150, docs/40 §3) :
+   c'est l'unité, et elle ne se coupe ni par couche ni en « le code d'abord, les tests après ». Un
    ticket doit tenir en **~1 session de travail**, et la taille se juge en **charge estimée** sur
    **toute la matière du besoin** — notes techniques et références croisées (tickets, docs,
    composants cités) comprises, pas seulement le nombre de critères d'acceptation. Les
    **couches/composants distincts** touchés (moteur, backend, UI, script, commande, doc…) sont un
    **signal** qui oblige à estimer finement, pas un déclencheur automatique : un script + sa doc
    tiennent en une session (ticket unique) ; le #48 — moteur + backend + UI, trois couches
-   substantielles — non. Si le besoin **dépasse ~1 session** — plusieurs couches substantielles,
-   plus de 3-4 critères d'acceptation, ou plusieurs livrables indépendants — ne crée pas un
-   ticket monolithique : crée un **ticket parent de suivi + des sous-tickets liés** :
+   substantielles — non. Si **une capacité** dépasse ~1 session — plusieurs couches substantielles,
+   plus de 3-4 critères d'acceptation —, ne crée pas un ticket monolithique : crée un **ticket
+   parent de suivi + des sous-tickets liés**. Plusieurs capacités **indépendantes** ne font pas un
+   parent : elles font plusieurs tickets sans parent, chacun démarrable seul. Le parent n'est donc
+   jamais un réflexe dès qu'il y a deux couches :
    - **Parent de suivi** : un ticket du type du besoin dont la description porte l'objectif
      global, et **rien d'autre** — les lots lui sont rattachés en **sub-issues natives** (#389),
      que GitHub rend lui-même au-dessus de la description, dans l'ordre et avec leur état. Ne
      recrée **aucune** section `## Sous-tickets` : elle a été retirée des 47 parents du dépôt par
      #395, et plus aucun parseur ne la lit — la réécrire fabriquerait un second support, c'est-à-dire
      un parent dont la moitié des lots viendrait d'un côté et l'autre moitié de l'autre. Le parent
-     ne porte ni branche ni code ; il reste ouvert tant qu'un lot l'est — lot tests final compris —
-     et **se ferme tout seul** quand le dernier se ferme (#515, docs/10 §5.1). Rien à prévoir pour
+     ne porte ni branche ni code ; il reste ouvert tant qu'un lot l'est, et **se ferme tout seul** quand le dernier se ferme (#515, docs/10 §5.1). Rien à prévoir pour
      ça : c'est l'événement `issues: closed` qui le fait.
    - **Sous-tickets** : un par lot d'~1 session, **1 à 3 critères d'acceptation chacun**, et
      surtout chaque lot **mergeable directement sur `main` sans casser l'existant** (code additif
-     ou inoffensif tant que les lots suivants manquent). La description de chaque sous-ticket
-     **commence par** `Sous-ticket de #<iid-parent> — lot <n>/<total>.` (marqueur détecté par
-     `lib.sh parent-of`).
-   - **Tests différés** : les tests sont un **sous-ticket dédié** — par défaut le **lot final
-     « tests + doc »**. Les lots intermédiaires n'embarquent des tests que si leur logique est
-     critique, et portent la mention « Tests différés → #<iid-du-lot-tests> ».
+     ou inoffensif tant que les lots suivants manquent). Découpe de préférence en **tranches
+     visibles** — chaque lot rend à l'utilisateur un morceau qui marche — plutôt qu'en couches. La
+     description de chaque sous-ticket **commence par** `Sous-ticket de #<iid-parent> — lot
+     <n>/<total>.` (phrase pour le lecteur ; la relation vit dans la forge).
+   - **Tests et doc livrés avec le lot** (#1150) : chaque lot écrit et fait passer les tests de ce
+     qu'il livre, et met à jour la doc de ce qu'il change, **dans sa propre PR** ; ses critères
+     d'acceptation le disent. **Aucun lot ne porte que des tests** : il ne livrerait rien de
+     visible et barrerait la clôture de son parent. Les chantiers découpés avant la règle gardent
+     leur dernier lot tel quel (#1128, #1133, #645) — ne les refonds pas.
    - **Lots parallélisables** : passe **`--parallele`** au rattachement du lot (étape « Mécanique »
      ci-dessous) quand il **ne dépend pas** des lots parallèles qui le précèdent — c'est le cas
      courant, les lots étant déjà additifs et mergeables seuls sur `main`. Le drapeau pose le label
@@ -58,8 +64,8 @@ lieu d'inventer.
      salirait tous les noms de branches. `/ticket-start` ne bloque alors plus ces lots entre eux :
      deux personnes peuvent les prendre en même temps. Le marqueur est **facultatif** ; un lot
      **sans** label reste barré tant que tout ce qui le précède n'est pas livré — c'est ce qu'on
-     veut pour le **lot final « tests + doc »** (jamais marqué) et pour un lot socle dont les
-     suivants dépendent réellement.
+     veut pour un **lot socle** dont les suivants dépendent réellement, et pour un lot qui
+     **assemble** ce que les précédents ont livré.
 
      **La question se pose toujours, et sa réponse s'enregistre** (#562) : une fois les lots
      rattachés, enregistre l'arbitrage sur le **parent** — `bash scripts/gitlab/lib.sh arbitre
@@ -79,7 +85,7 @@ lieu d'inventer.
      rattaché ailleurs — une anomalie qui cesse d'être muette.
      Termine par l'**ordre**, qui n'est pas de l'affichage : `queue.sh` garde les lots d'un parent
      contigus **dans cet ordre**, et `startables` juge « ce lot est-il démarrable ? » sur ce qui le
-     **précède**. Un seul appel, tous les lots nommés, lot tests en dernier :
+     **précède**. Un seul appel, tous les lots nommés, dans l'ordre de réalisation :
      ```
      bash scripts/gitlab/lib.sh subticket-order <iid-parent> <iid-lot-1> <iid-lot-2> …
      ```
@@ -158,11 +164,11 @@ lieu d'inventer.
    le **produit Maestro** (moteur, API, Control Tower, agents) ? C'est un **jugement**, au même
    titre que le choix d'`agent::` à l'étape 6, et il ne se dérive **pas** des labels : mesuré sur
    113 tickets classés par les fichiers que leurs commits ont touchés, le meilleur critère de
-   labels plafonne à **91 %**, et il se trompe **systématiquement** sur le lot final « tests + doc »
-   d'un chantier d'outillage (`agent::qa`, cf. #345/#363/#366/#414) et sur l'outillage de
+   labels plafonne à **91 %**, et il se trompait **systématiquement** sur les lots de tests des
+   chantiers d'outillage (`agent::qa`, cf. #345/#363/#366/#414) et sur l'outillage de
    présentation (`agent::dev`, cf. #544→#547). Deux repères pour trancher :
-   - **Un lot hérite du rail de son PARENT**, toujours — un « tests + doc » d'un chantier
-     d'outillage est de l'outillage, quels que soient ses labels (vérifié : 8 lots sur 8 sont du
+   - **Un lot hérite du rail de son PARENT**, toujours — un lot d'un chantier d'outillage est de
+     l'outillage, même s'il porte `agent::qa` (vérifié : 8 lots sur 8 sont du
      rail de leur parent). Lis le rail du parent avec
      `bash scripts/gitlab/lib.sh milestone-rail "<son milestone>"`.
    - Dans le doute, demande — se tromper de rail range le ticket dans un backlog que personne ne

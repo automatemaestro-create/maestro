@@ -1397,8 +1397,8 @@ gl_prio_pose() {
 # gl_start_brief et gl_subtickets_startables :
 #   un lot précédent non livré (ni « Terminé » ni « En revue ») bloque, SAUF si le lot visé ET ce
 #   lot précédent portent tous deux le marqueur.
-# Un lot NON marqué reste donc barré par tout ce qui le précède — c'est ce qui garde le lot final
-# « tests + doc » derrière l'ensemble des lots, marqueurs compris.
+# Un lot NON marqué reste donc barré par tout ce qui le précède — c'est la forme d'un socle, et d'un
+# lot qui assemble ce que les précédents ont livré (#1150 : plus de lot final « tests + doc »).
 #
 # ================================================================================================
 # UN SEUL SUPPORT — les sub-issues natives (#395, chantier #389)
@@ -1678,7 +1678,7 @@ gl_subtickets_startables() {
 # --- Arbitrage des lots parallélisables (#562, docs/10 §5.1) ------------------------------------
 # Le marqueur « (parallèle) » est FACULTATIF (#160), et c'est ce qui rend son absence AMBIGUË : un
 # lot non marqué veut dire « il dépend réellement de ce qui le précède » (l'intention du marqueur, et
-# le cas du lot final « tests + doc ») ou « personne n'y a pensé », et rien ne les distingue. Un run
+# le cas d'un socle) ou « personne n'y a pensé », et rien ne les distingue. Un run
 # part alors en séquentiel sans que ce séquentiel ait jamais été décidé.
 #
 # CE VERBE NE TRANCHE QUE LA MOITIÉ QU'UNE MACHINE PEUT TRANCHER — « ce parent a-t-il été

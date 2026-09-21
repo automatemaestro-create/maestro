@@ -188,7 +188,8 @@ toi-même.
       lot si son titre ne suffit pas à trancher ;
    2. décide, lot par lot, s'il **ne dépend pas** des lots parallèles qui le précèdent. Le cas
       courant est qu'il n'en dépende pas — les lots sont additifs et mergeables seuls sur `main` —
-      mais un **lot socle** dont les suivants héritent, et le **lot final « tests + doc »**, ne se
+      mais un **lot socle** dont les suivants héritent, et un lot qui **assemble** ce que les
+      précédents ont livré (dont le dernier lot des chantiers découpés avant #1150), ne se
       marquent jamais ;
    3. pose le marqueur **sur le lot**, un appel par lot retenu :
       ```
