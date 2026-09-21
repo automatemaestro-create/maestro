@@ -149,10 +149,13 @@ Sur le rail produit, l'échéance d'un jalon **est** son rang (`current-mileston
 | --- | --- |
 | L'atelier | 2027-11-09 |
 | **L'équipe sur mesure** | **2028-01-05** |
+| Avant l'installeur — les réserves levées *(ajouté le 2026-09-21)* | 2028-01-26 |
 | Phase 9 | **2028-02-16** (était 2027-11-10) |
 
 - **Après « L'atelier »**, qui est en cours (#921) et qu'on ne double pas.
 - **Devant la Phase 9**, pour l'argument de la Phase 9 elle-même : on n'empaquette pas une cible mouvante ([docs/24 §4.8](./24-projets-locaux-et-poste-de-travail.md)). La création d'un projet et le modèle d'agents changent ici : ils doivent changer **avant** l'installeur, pas pendant. Le même argument avait fait passer « L'atelier » devant la Phase 9 ([docs/35 §2](./35-decision-poste-de-bureau-et-disposition.md)).
+
+> ⚠ **Un jalon s'est inséré le 2026-09-21** (#1113) : « Avant l'installeur — les réserves levées ». Il réunit les réserves des verdicts de ce jalon (R3 #1101, R4 #1102, R7 #1104, et #1105) et celles de « L'atelier », qu'on avait rangées en Phase 9 derrière l'installeur. Le même argument le place devant la Phase 9. Ce qui est écrit ici ne change pas : ce jalon-ci reste devant la Phase 9, et son échéance n'a pas bougé. Voir [docs/06](./06-roadmap.md), section « Avant l'installeur ».
 
 ## 7. Ce qui rouvrirait la décision
 
