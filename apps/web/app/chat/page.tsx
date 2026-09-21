@@ -183,8 +183,9 @@ import { hrefRun } from "@/lib/navigation";
 import {
   ACCUEIL_ORCHESTRATION,
   AGENT_ORCHESTRATION,
-  AMORCES_ORCHESTRATION,
   INTERLOCUTEUR_ORCHESTRATION,
+  SUJET_SANS_NOM,
+  amorcesDuProjet,
   destinatairesDuFil,
   mentionEnTete,
 } from "@/lib/orchestration";
@@ -267,6 +268,13 @@ export default function PageChat() {
   // pas entre elles, il dit seulement laquelle regarder en premier.
   const question = global ? questionEnAttente(fil.messages) : null;
 
+  // Les amorces d'un fil vide, **dérivées du projet ouvert** (#942) : elles
+  // parlaient du backlog de Maestro, elles proposent désormais d'aller voir ce
+  // projet-ci. Mémoïsées sur la fiche, non par prudence de performance — la
+  // fonction est pure et ne lit rien — mais pour que la liste garde son
+  // identité entre deux rendus, `Conversation` la recevant en propriété.
+  const amorces = useMemo(() => amorcesDuProjet(projet), [projet]);
+
   /**
    * Chaque frappe passe ici : une mention close par une espace change le
    * destinataire et quitte le brouillon, tout le reste passe tel quel. Écrire
@@ -329,7 +337,7 @@ export default function PageChat() {
           titre={global ? "Chat global" : `Aparté avec ${destinataire}`}
           icone={IconeChat}
           accueil={global ? ACCUEIL_ORCHESTRATION : undefined}
-          amorces={global ? AMORCES_ORCHESTRATION : []}
+          amorces={global ? amorces : []}
           surSaisie={detacherLaMention}
           entete={
             <>
@@ -504,7 +512,11 @@ export default function PageChat() {
         )}
         <Carte densite="aeree">
           <EnTeteSection titre="Ouvert depuis ce fil" icone={IconeRuns} />
-          <SuitesDuFil messages={fil.messages} taches={taches} />
+          <SuitesDuFil
+            messages={fil.messages}
+            taches={taches}
+            projet={projet.nom}
+          />
         </Carte>
       </aside>
     </div>
@@ -787,9 +799,12 @@ function LigneConversation({
 function SuitesDuFil({
   messages,
   taches,
+  projet,
 }: {
   messages: MessageChat[];
   taches: { run_id: string }[];
+  /** Le nom du projet ouvert — ce dont la file vide parle (#942). */
+  projet: string;
 }) {
   const runs = useMemo(() => {
     const vus = new Set<string>();
@@ -806,9 +821,18 @@ function SuitesDuFil({
   if (runs.length === 0) {
     return (
       <div className="mt-3">
+        {/* ⚠ L'exemple a disparu, et ce n'est pas une perte de pédagogie (#942,
+            constat G9 du retex du 2026-09-11) : il disait « ajoute la
+            pagination à la liste des projets », c'est-à-dire le backlog de
+            Maestro donné en modèle à quelqu'un qui vient de déclarer un
+            minuteur. Un exemple ne peut ici qu'être le nôtre — nous ne savons
+            pas ce qu'il y a dans ce projet —, donc la phrase **nomme le
+            projet** et laisse l'utilisateur dire son travail, plutôt que de lui
+            en souffler un qui n'est pas le sien. C'est la même règle que les
+            amorces du fil (`lib/orchestration`), sur la même capture. */}
         <EtatVide
           icone={IconeRuns}
-          message="Rien encore. Dites le travail à faire — « ajoute la pagination à la liste des projets » — et l'orchestrateur vous proposera un run : une fois que vous l'aurez approuvé, il apparaît ici avec ses tâches."
+          message={`Rien encore. Dites le travail à faire dans ${projet.trim() === "" ? SUJET_SANS_NOM : projet.trim()} et l'orchestrateur vous proposera un run : une fois que vous l'aurez approuvé, il apparaît ici avec ses tâches.`}
         />
       </div>
     );

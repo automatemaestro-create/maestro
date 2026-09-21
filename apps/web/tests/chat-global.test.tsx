@@ -208,10 +208,11 @@ describe("le chat global (#269)", () => {
     // Deux mènent à une proposition de run, deux à une simple réponse : c'est la
     // frontière que le canal distingue. Aucune n'ouvre de run à elle seule depuis
     // #685 — c'est l'accord qui suit qui ouvre, jamais le texte de l'amorce.
-    // Les libellés sont au calibre depuis #908 (« Pagine les projets » demande
-    // ce que demandait « Ajoute la pagination à la liste des projets »).
+    // Les libellés sont au calibre depuis #908, et parlent du **projet ouvert**
+    // depuis #942 : la première le nomme (le projet factice est « Dépensio »),
+    // là où « Pagine les projets » proposait le backlog de Maestro.
     expect(
-      screen.getByRole("button", { name: "Pagine les projets" }),
+      screen.getByRole("button", { name: "Décris-moi Dépensio" }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Où en sont les runs ?" }),
@@ -326,6 +327,20 @@ describe("« Ouvert depuis ce fil » (#268/#269)", () => {
     monterLeChat();
 
     expect(screen.getByText(/Rien encore\./)).toBeInTheDocument();
+  });
+
+  it("nomme le projet plutôt que de souffler un exemple qui n'est pas le sien (#942)", () => {
+    monterLeChat();
+
+    // L'exemple d'avant #942 était « ajoute la pagination à la liste des
+    // projets » — le backlog de Maestro donné en modèle sur la même capture
+    // que les amorces (`03-chat-vide.png`). La phrase nomme désormais le
+    // projet ouvert et laisse l'utilisateur dire son travail.
+    const carte = carteDeLaColonne("Ouvert depuis ce fil");
+    expect(
+      within(carte).getByText(/Dites le travail à faire dans Dépensio/),
+    ).toBeInTheDocument();
+    expect(within(carte).queryByText(/pagination/)).toBeNull();
   });
 
   it("liste les runs rattachés aux messages, du plus récent au plus ancien", () => {

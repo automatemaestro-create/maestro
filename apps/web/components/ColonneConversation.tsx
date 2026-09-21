@@ -93,8 +93,8 @@ import { entreeParLibelle } from "@/lib/navigation";
 import {
   ACCUEIL_ORCHESTRATION,
   AGENT_ORCHESTRATION,
-  AMORCES_ORCHESTRATION,
   INTERLOCUTEUR_ORCHESTRATION,
+  amorcesDuProjet,
 } from "@/lib/orchestration";
 import { useChat } from "@/lib/useChat";
 
@@ -275,7 +275,9 @@ function FilDeLaColonne() {
         niveauTitre={3}
         titreMasque
         accueil={ACCUEIL_ORCHESTRATION}
-        amorces={AMORCES_ORCHESTRATION}
+        // Les mêmes amorces que `/chat`, donc dérivées du même projet (#942) :
+        // c'est la même conversation, elle ne peut pas proposer deux choses.
+        amorces={amorcesDuProjet(projet)}
       />
     </div>
   );
