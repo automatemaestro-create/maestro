@@ -123,52 +123,26 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
    bloquer la branche déjà créée. Ne touche pas aux labels `type::`/`agent::`/`prio::` (triage, pas
    ce workflow).
 
-5. **Veille de conception — la détection est automatique, le verdict jamais** (#714, #934,
-   `docs/30 §5.2` et `§5.4`). Si et seulement si la sortie de l'étape 1 porte un bloc
-   **`surface visible :`**, ce ticket touche un écran de la Control Tower et la question
-   « qu'est-ce qu'on vise ? » n'a jamais été tranchée dessus. Alors, **et seulement alors** — et
-   les deux régimes diffèrent sur **qui rend le verdict**, jamais sur le fait qu'il en faille un :
-   - **Un ticket qui DÉCIDE de l'écran** (critère du §7.2 de `/design-veille`) : ne demande rien, en
-     aucun régime — sa veille se joue à l'étape 7, parce que son choix se rend contre les
-     références qu'elle rapporte (#1009). Les points suivants valent pour les autres tickets.
-   - **En session interactive, demande** — une phrase, un « oui » explicite : jouer
-     `/design-veille <surface>` avant d'écrire l'interface, ou passer. Ne la lance **jamais**
-     d'office : une veille coûte des
-     recherches web, des captures et du quota, et la jouer sur un correctif sans enjeu visuel
-     serait du gaspillage. C'est le partage de #562 et #612 — ce qui est automatique est la
-     **détection du manque**, jamais le verdict. Comme le découpage d'un ticket trop gros
-     (étape 1), et contrairement au résumé de l'étape 6, c'est une **vraie pause** : attends la
-     réponse.
-   - **En session interactive, enregistre la réponse, quelle qu'elle soit** —
-     `bash scripts/gitlab/lib.sh veille-arbitre $ARGUMENTS` — dès que la personne a tranché, que
-     la veille ait été **faite** ou **jugée inutile**. Sans cet enregistrement, « inutile ici »
-     est indiscernable de « personne n'y a pensé » et la question reviendra à chaque démarrage,
-     jusqu'à ce qu'on cesse de la lire. N'enregistre **rien** tant que personne n'a répondu : un
-     arbitrage posé d'office ferme la question sans que personne l'ait jugée. ⚠ Ce « quelle qu'elle
-     soit » est **propre à l'interactif**, et c'est ce que #934 a tranché : ici le « non » vient
-     d'une personne qui connaît le contexte, donc c'est un **jugement** ; en run il ne viendrait de
-     personne, donc c'est une **abstention**, et une abstention ne s'enregistre pas.
-   - **En session autonome** (run `/orchestrate`), il n'y a personne à qui demander — mais la
-     veille s'y **joue** depuis #934 (`docs/30 §5.4`), l'accès web ayant été ouvert par #933. Ce
-     qui disparaît est la **question**, pas le geste : n'attends aucun « oui », **ouvre
-     `/design-veille <surface>`** en dérivant la surface du bloc `surface visible :`, et laisse la
-     commande trancher — son §7.2 porte le critère (*ce ticket décide-t-il de quelque chose à
-     l'écran, ou applique-t-il une décision déjà prise ?*), et il n'est écrit qu'à cet
-     endroit-là. N'enregistre **rien toi-même** : si elle joue la veille, elle consigne ses partis
-     pris sur le ticket puis pose l'arbitrage (§7.3) ; si elle s'abstient, elle n'écrit rien et te
-     le dit.
-   - **En session autonome, si la veille ne s'est pas jouée**, la question se **diffère** au lieu
-     de se perdre (#795, `docs/30 §5.3`) — ce chemin ne se referme pas, il devient **rare** : une
-     fois le ticket implémenté, écris avec l'outil `Write` un constat qui nomme la **surface**
-     touchée et ce que tu as décidé à l'écran faute de référence, puis `bash
-     scripts/gitlab/lib.sh veille-differe <iid> <fichier>`. Le ticket de veille naît **assigné** —
-     donc hors des plans d'un run — et il **survit** à la fermeture du tien, ce qu'un résumé de fin
-     de session ne fait pas : mesuré le 2026-08-30, sur 76 tickets livrés par un run, 13 touchaient
-     une surface visible et **aucun** n'a été arbitré. Nomme-le quand même dans ton résumé final.
-     N'appelle **jamais** `veille-arbitre` dans ce cas : un « non » qui ne vient de personne est une
-     abstention, pas un jugement (#562).
-   - **Bloc absent** : il n'y a rien à demander — soit le ticket ne touche aucune surface visible,
-     soit l'arbitrage est déjà enregistré. Ne le mentionne pas, n'appelle pas le verbe, passe.
+5. **Veille de conception — seulement pour un ticket qui décide d'un écran** (#1151, docs/40 §3).
+   Si la sortie de l'étape 1 porte un bloc **`surface visible :`**, ou si tu t'apprêtes à modifier
+   `apps/web/`, pose une seule question, celle du §7.2 de `/design-veille` — *ce ticket décide-t-il
+   de quelque chose à l'écran, ou applique-t-il une décision déjà prise ?* —, et juges-en par son
+   critère, sans le recopier :
+   - **Il décide** : sa veille se joue à l'étape 7, avant ses variantes, dans les deux régimes et
+     sans rien demander (#1009). Rien à faire ici.
+   - **Il applique** (correctif, alignement, suite d'une direction déjà consignée) : **ni veille, ni
+     question, ni veille différée**. N'ouvre pas `/design-veille`, n'appelle ni `veille-arbitre` ni
+     `veille-differe`, et implémente dans le socle (docs/30, tokens et primitives, aucune identité
+     nouvelle). Le bloc `surface visible :` est une détection : il reste affiché, et n'appelle plus
+     de geste pour ce ticket. Sa relecture visuelle reste jouée à la clôture (`/ticket-finish`,
+     étape 4bis), et c'est la session qui la juge.
+   - **Bloc absent et `apps/web/` intact** : aucun écran, rien à dire.
+
+   ⚠ Jusqu'au 2026-09-21, toute surface visible non arbitrée faisait **proposer** une veille en
+   interactif (#714) et la faisait **jouer** en run (#934), et une veille non jouée se **différait**
+   en ticket satellite (#795). En septembre, onze tickets « Veille de conception à jouer » ont été
+   fermés, et une trentaine de finitions ont porté chacune leur veille. docs/40 §3 réserve la
+   cérémonie aux tickets qui décident d'un écran, là où la qualité se décide.
 
 6. **Résumé court, puis enchaîne immédiatement** — sur l'étape 7, puis l'implémentation : nom de la branche, titre
    du ticket, dates posées, critères d'acceptation ; si le brief porte une section **`## Rendu

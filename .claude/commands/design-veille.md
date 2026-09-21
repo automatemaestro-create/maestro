@@ -9,6 +9,11 @@ produits comparables la rendent aujourd'hui, puis tu en tires **3 à 5 partis pr
 chacun rattaché à sa référence et **tenable dans le socle du dépôt**. Tu n'écris ni code, ni
 ticket : tu rends une décision, et tu proposes la suite.
 
+⚠ **Elle est réservée aux tickets qui décident d'un écran** (#1151, docs/40 §3) : elle s'ouvre depuis
+l'étape 7 de `/ticket-start`, avant les variantes, ou à la demande d'une personne sur une surface
+qu'elle nomme. Un ticket qui **applique** une décision déjà prise n'en a pas, et rien ne se diffère
+pour lui.
+
 Elle se joue **des deux côtés** — session interactive, et depuis #934 **session de run**. Le régime
 n'y change que sur deux points, et le §7 les porte tous les deux : **qui choisit la surface**, et
 **ce qu'on fait de la décision** une fois rendue. La méthode des §1 à §6, elle, est la même : ce qui
@@ -184,10 +189,10 @@ personne, en run toi. La question :
 
 ⚠ **L'asymétrie des deux erreurs est écrite, et elle penche.** Jouer pour rien coûte du quota et un
 commentaire de trop — borné, et visible. Ne pas jouer quand il fallait laisse un écran de plus écrit
-sans référence, et c'est le défaut que ce chantier corrige (mesure du 2026-08-30 : **13 surfaces
-visibles sur 76 tickets livrés par un run, zéro arbitrée**). Le ticket de veille (#795) borne cette
-seconde erreur sans l'annuler — la question survit, mais l'écran est déjà écrit. **Dans le doute,
-joue** ; et le doute est rare, un ticket qui dit quoi faire le disant en toutes lettres.
+sans référence. **Dans le doute, joue** ; et le doute est rare, un ticket qui dit quoi faire le
+disant en toutes lettres. ⚠ Depuis #1151, rien ne rattrape plus un « applique » rendu à tort : la
+veille différée en ticket satellite (#795) est retirée pour les tickets qui appliquent, parce qu'elle
+fabriquait un ticket de cérémonie par finition d'interface (onze en septembre, docs/40 §1).
 
 ⚠ **Ce critère a deux appelants**, et c'est pourquoi il ne vit qu'ici : il décide aussi de l'étape 7
 de `/ticket-start` (#979, #1009) — un ticket qui **décide** rend 2 ou 3 variantes, en fait choisir une
@@ -222,8 +227,8 @@ contre tes partis pris et tes captures avant qu'une seule soit implémentée (#1
 
 **N'appelle ni `veille-arbitre`, ni `veille-differe`, ni `issue-note`.** Sors en disant que la veille
 n'avait pas d'objet sur ce ticket, et **pourquoi** en une ligne : c'est la session qui reprendra la
-main, et le régime de #795 est le sien — son constat s'écrit **après** l'implémentation, puisqu'il
-nomme ce qu'elle a décidé à l'écran faute de référence. Ici, ce constat n'existe pas encore.
+main, et elle implémente dans le socle sans rien différer (#1151) — sa relecture visuelle, jouée à
+la clôture, est ce qui regarde l'écran qu'elle aura écrit.
 
 ⚠ **Pourquoi `veille-arbitre` est refusé dans ce cas-là, alors qu'il est posé dans l'autre.** En
 interactif, le « non » d'une personne *est* un jugement — elle connaît le contexte, on lui a demandé,
