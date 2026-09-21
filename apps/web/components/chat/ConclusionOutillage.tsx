@@ -250,12 +250,22 @@ export function useConclusionOutillage(
       densite="aeree"
       aria-label="Outillage à écrire"
     >
+      {/* ⚠ Le nom du projet n'est **pas** dans le titre, et c'est un constat du
+          regard neuf : `EnTeteSection` rend ses titres en capitales, si bien que
+          « mini-CRM (démo) » s'y affichait « MINI-CRM (DÉMO) » — le nom perdait sa
+          casse à l'endroit même où il sert à vérifier dans quel dossier on écrit,
+          et ne s'accordait plus avec le sélecteur de projet du bandeau ni avec la
+          liste des projets. Il va donc dans l'`aside`, qui ne transforme rien, et
+          se redit dans la phrase de compte. */}
       <EnTeteSection
         niveau={3}
         icone={IconeDossier}
-        titre={`Écrire l'outillage de « ${projet.nom} » ?`}
+        titre="Écrire l'outillage ?"
         ton="attention"
         className="mb-3"
+        aside={
+          <span className="text-annexe text-texte-secondaire">{projet.nom}</span>
+        }
       />
       {rapport !== null ? (
         <RapportCourt rapport={rapport} />
@@ -378,10 +388,16 @@ function CompteAEcrire({
       <strong>
         {gardes.length} fichier{gardes.length > 1 ? "s" : ""}
       </strong>{" "}
-      {gardes.length > 1 ? "seront écrits" : "sera écrit"} dans{" "}
-      <code className="font-mono text-annexe break-all">{projet.racine}</code> :{" "}
-      {comptesParNature(gardes)}. Rien n&apos;est écrasé : un fichier déjà là que
-      Maestro n&apos;a pas écrit n&apos;est pas touché.
+      {gardes.length > 1 ? "seront écrits" : "sera écrit"} dans {projet.nom} —{" "}
+      {/* Le chemin **recule** (`text-texte-secondaire`) : en chasse fixe et en
+          pleine longueur, il tirait l'œil autant que le compte qu'il accompagne
+          (réserve du regard neuf). C'est une preuve qu'on veut pouvoir relire,
+          pas la première chose à lire. */}
+      <code className="font-mono text-annexe break-all text-texte-secondaire">
+        {projet.racine}
+      </code>{" "}
+      : {comptesParNature(gardes)}. Rien n&apos;est écrasé : un fichier déjà là
+      que Maestro n&apos;a pas écrit n&apos;est pas touché.
     </p>
   );
 }

@@ -215,13 +215,17 @@ describe("la conclusion du questionnaire, au pied du fil", () => {
     rendreAvecEtat(<PageChat />);
 
     const carte = await carteAttendue();
-    // Le projet visé est **nommé** : le fil est transverse, ses messages ne
-    // portent aucun projet, et c'est celui de la fenêtre qui recevra l'écriture.
-    expect(
-      within(carte).getByRole("heading", {
-        name: "Écrire l'outillage de « Dépensio » ?",
-      }),
-    ).toBeInTheDocument();
+    const titre = within(carte).getByRole("heading", {
+      name: "Écrire l'outillage ?",
+    });
+    // Le projet visé est **nommé**, et dans sa casse : le fil est transverse, ses
+    // messages ne portent aucun projet, et c'est celui de la fenêtre qui recevra
+    // l'écriture. Le titre le portait d'abord — mais `EnTeteSection` rend ses
+    // titres en capitales (`uppercase`), donc « Dépensio » s'y serait lu
+    // « DÉPENSIO », là même où le nom sert à reconnaître son projet (constat du
+    // regard neuf). D'où la garde : le nom vit hors du titre, et il y est.
+    expect(titre.textContent).not.toContain("Dépensio");
+    expect(within(carte).getAllByText(/Dépensio/).length).toBeGreaterThan(0);
     // Le compte se lit sans rien ouvrir, avec le dossier de destination.
     expect(within(carte).getByText(/2 fichier/)).toBeInTheDocument();
     expect(
