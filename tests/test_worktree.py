@@ -1985,7 +1985,7 @@ def test_purge_ne_compte_pas_les_fichiers_non_suivis_du_clone_principal(depot: D
     assert "changements non commités" not in acheve.stderr, acheve.stderr
     assert "supprimée : chore/140-livree" in acheve.stdout, acheve.stdout
     assert depot.git("branch", "--list", "chore/140-livree") == ""
-    assert rapport.read_text(encoding="utf-8") == "rapport non commité\n", "le non-suivi reste intact"
+    assert rapport.read_text(encoding="utf-8") == "rapport non commité\n", "non-suivi intact"
 
 
 def test_purge_vise_le_clone_principal_meme_appelee_depuis_un_worktree(depot: Depot) -> None:
@@ -2211,7 +2211,7 @@ def test_sync_main_avance_malgre_un_fichier_non_suivi_hors_du_chemin(depot: Depo
     assert "main mis à jour : 1 commit(s)" in acheve.stdout
     assert depot.git("rev-parse", "main") == attendu
     assert (depot.racine / "NOUVEAU.md").exists(), "le répertoire de travail devait suivre la ref"
-    assert rapport.read_text(encoding="utf-8") == "rapport non commité\n", "le non-suivi reste intact"
+    assert rapport.read_text(encoding="utf-8") == "rapport non commité\n", "non-suivi intact"
 
 
 def test_sync_main_s_abstient_si_un_non_suivi_serait_ecrase(depot: Depot) -> None:
@@ -2230,7 +2230,7 @@ def test_sync_main_s_abstient_si_un_non_suivi_serait_ecrase(depot: Depot) -> Non
     assert "refusé par git" in acheve.stderr
     assert "NOUVEAU.md" in acheve.stderr, "le refus doit nommer le fichier qui le cause"
     assert depot.git("rev-parse", "main") == attendu_avant, "main ne devait pas bouger"
-    assert a_moi.read_text(encoding="utf-8") == "le mien, jamais commité\n", "le non-suivi reste intact"
+    assert a_moi.read_text(encoding="utf-8") == "le mien, jamais commité\n", "non-suivi intact"
 
 
 def test_sync_main_s_abstient_si_main_a_diverge(depot: Depot) -> None:
