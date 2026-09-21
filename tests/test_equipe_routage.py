@@ -34,7 +34,7 @@ from pathlib import Path
 import pytest
 
 from maestro.agents.catalog import Agent
-from maestro.agents.store import AgentDefinition, AgentStore, SurchargeStore, catalogue_du_projet
+from maestro.agents.store import AgentDefinition, AgentStore, catalogue_du_projet
 from maestro.controltower.bridge import evenements_depuis_step
 from maestro.controltower.events import EVENEMENT_TACHE_BLOCAGE
 from maestro.engine.executor import (
@@ -159,6 +159,36 @@ def test_une_equipe_entierement_desactivee_replie_sans_lever() -> None:
     assert decision.non_couvertes == ()
 
 
+def test_une_equipe_vide_n_est_pas_une_omission() -> None:
+    """Elle l'était, et un projet sans agent se routait alors sur le catalogue du
+    câblage : c'est ce qui faisait travailler les cinq rôles du code dans un projet
+    qui n'avait recruté personne (#1042). `()` veut désormais dire « ce projet n'a
+    aucun agent », et la tâche part en repli — la réponse juste à *un projet naît
+    sans agent*."""
+    decision = asyncio.run(Router([_agent("cablage", "backend")]).route(
+        _tache("t1", "backend"), agents=()
+    ))
+
+    assert decision.a_assigner
+    assert decision.agent is None
+    assert "l'équipe reste à recruter" in decision.raison
+
+
+def test_les_deux_causes_d_un_repli_sans_candidat_ne_se_confondent_pas() -> None:
+    """Elles ne se corrigent pas du tout pareil : réactiver un agent, ou en
+    recruter un."""
+    eteinte = asyncio.run(Router([_agent("cablage", "backend")]).route(
+        _tache("t1", "backend"), agents=[_agent("titulaire", "backend")],
+        exclus={"titulaire"},
+    ))
+    vide = asyncio.run(Router([_agent("cablage", "backend")]).route(
+        _tache("t1", "backend"), agents=()
+    ))
+
+    assert "désactivés" in eteinte.raison
+    assert "désactivés" not in vide.raison
+
+
 # --- ① Une règle, deux lecteurs ----------------------------------------------
 
 
@@ -166,14 +196,13 @@ def test_sans_projet_il_n_y_a_pas_d_equipe_a_donner(tmp_path: Path) -> None:
     """`None` dit « je n'ai pas d'équipe à te donner » : l'appelant s'en tient au
     catalogue de son câblage."""
     agents = AgentStore(tmp_path / "agents")
-    surcharges = SurchargeStore(tmp_path / "surcharges")
 
-    assert catalogue_du_projet(agents, surcharges, None) is None
+    assert catalogue_du_projet(agents, None) is None
 
 
-def test_sans_depots_cables_il_n_y_a_pas_d_equipe_a_donner() -> None:
+def test_sans_depot_cable_il_n_y_a_pas_d_equipe_a_donner() -> None:
     """Tests et câblages sans Control Tower : la question ne se pose pas."""
-    assert catalogue_du_projet(None, None, PROJET) is None
+    assert catalogue_du_projet(None, PROJET) is None
 
 
 def test_un_depot_illisible_ne_fait_pas_partir_toutes_les_taches_en_repli(
@@ -182,18 +211,28 @@ def test_un_depot_illisible_ne_fait_pas_partir_toutes_les_taches_en_repli(
     """Un incident de stockage n'est pas une équipe vide : on garde le catalogue
     du câblage plutôt que de router toutes les tâches nulle part."""
     agents = AgentStore(tmp_path / "agents")
-    surcharges = SurchargeStore(tmp_path / "surcharges")
 
-    assert catalogue_du_projet(agents, surcharges, "prj/../evade") is None
+    assert catalogue_du_projet(agents, "prj/../evade") is None
+
+
+def test_un_projet_sans_agent_rend_une_equipe_vide_et_non_une_absence(
+    tmp_path: Path,
+) -> None:
+    """Le tuple vide n'est aucun des trois `None` (#1042) : c'est la différence
+    entre « je ne sais pas » et « il n'y a personne », et c'est elle qui fait
+    qu'une tâche d'un projet qui n'a recruté personne attend quelqu'un au lieu
+    d'aller aux gabarits du code."""
+    agents = AgentStore(tmp_path / "agents")
+
+    assert catalogue_du_projet(agents, PROJET) == ()
 
 
 def test_l_equipe_d_un_projet_porte_les_agents_de_ce_projet(tmp_path: Path) -> None:
     agents = AgentStore(tmp_path / "agents")
-    surcharges = SurchargeStore(tmp_path / "surcharges")
     agents.pour_projet(PROJET).ecrire(_fiche("dev-du-projet", "backend"))
     agents.pour_projet(AUTRE).ecrire(_fiche("dev-du-voisin", "backend"))
 
-    ici = catalogue_du_projet(agents, surcharges, PROJET)
+    ici = catalogue_du_projet(agents, PROJET)
 
     assert ici is not None
     noms = {agent.nom for agent in ici}
@@ -312,14 +351,12 @@ def test_la_phrase_du_manque_dit_les_trois_choses_qu_il_faut_pour_agir() -> None
 def _executeur_de_projet(tmp_path: Path, *competences: str) -> LocalExecutor:
     """Un exécuteur dont l'équipe du projet ne couvre que `competences`."""
     agents = AgentStore(tmp_path / "agents")
-    surcharges = SurchargeStore(tmp_path / "surcharges")
     agents.pour_projet(PROJET).ecrire(_fiche("dev-du-projet", *competences))
     return LocalExecutor(
         _Constant(),
         agents=[_agent("cablage", "backend")],
         runtimes={},
         agents_store=agents,
-        surcharges=surcharges,
     )
 
 
@@ -359,6 +396,43 @@ def test_le_signal_est_consigne_au_nom_de_l_orchestrateur_et_ne_coute_rien(
     assert "Le recrutement se fait hors du run" in manque.sortie
 
 
+def test_une_tache_d_un_projet_sans_agent_attend_quelqu_un(tmp_path: Path) -> None:
+    """Le critère de bout en bout : un projet qui n'a recruté personne ne fait pas
+    travailler les gabarits du code à sa place. La tâche part en repli, et c'est un
+    fait à montrer, pas à combler."""
+    agents = AgentStore(tmp_path / "agents")
+    executeur = LocalExecutor(
+        _Constant(),
+        agents=[_agent("cablage", "backend")],
+        runtimes={},
+        agents_store=agents,
+    )
+
+    resultat = asyncio.run(
+        executeur.execute(_tache("t1", "backend", projet_id=PROJET), [], RunJournal())
+    )
+
+    assert resultat.statut == "echec"
+    assert "l'équipe reste à recruter" in (resultat.erreur or "")
+
+
+def test_hors_projet_le_cablage_travaille_comme_avant(tmp_path: Path) -> None:
+    """Le complément : sans projet il n'y a pas d'équipe où chercher, donc le
+    catalogue du câblage reste celui qui travaille — `maestro-run` et
+    `maestro-demo` n'ont pas de projet et n'en ont jamais eu."""
+    agents = AgentStore(tmp_path / "agents")
+    executeur = LocalExecutor(
+        _Constant(),
+        agents=[_agent("cablage", "backend")],
+        runtimes={},
+        agents_store=agents,
+    )
+
+    resultat = asyncio.run(executeur.execute(_tache("t1", "backend"), [], RunJournal()))
+
+    assert resultat.agent == "cablage"
+
+
 def test_une_equipe_qui_couvre_la_tache_ne_signale_aucun_manque(tmp_path: Path) -> None:
     journal = RunJournal()
     executeur = _executeur_de_projet(tmp_path, "comptabilite")
@@ -396,14 +470,12 @@ def test_le_moteur_ne_recrute_jamais_de_lui_meme(tmp_path: Path, competence: str
     """La frontière de docs/37 §3.5, prise là où elle se tiendrait mal : après un
     manque signalé, l'équipe du projet est **inchangée**."""
     agents = AgentStore(tmp_path / "agents")
-    surcharges = SurchargeStore(tmp_path / "surcharges")
     agents.pour_projet(PROJET).ecrire(_fiche("dev-du-projet", "backend"))
     executeur = LocalExecutor(
         _Constant(),
         agents=[_agent("cablage", "backend")],
         runtimes={},
         agents_store=agents,
-        surcharges=surcharges,
     )
 
     asyncio.run(

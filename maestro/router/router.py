@@ -130,16 +130,29 @@ class Router:
         les agents **de ce projet**, un catalogue figé au câblage ne pouvant pas
         les connaître (ils naissent après lui, et pas dans le même dossier).
         L'ordre reste celui du catalogue reçu — c'est lui qui départage les ex
-        æquo, et il ne doit donc pas être trié ici. Une séquence **vide** vaut
-        omission : un projet sans agent propre se route sur le catalogue du
-        câblage plutôt que de partir en repli, la réponse à « un projet naît sans
-        agent » étant le lot #1042, pas une tâche qui ne part nulle part.
+        æquo, et il ne doit donc pas être trié ici.
+
+        ⚠ Une séquence **vide n'est pas une omission** (#1042). Elle l'était, et
+        un projet sans agent se routait alors sur le catalogue du câblage : c'est
+        ce qui faisait travailler les cinq rôles du code dans un projet qui n'avait
+        recruté personne. Désormais `None` seul veut dire « je n'ai pas d'équipe à
+        te donner » (tâche hors projet, dépôts non câblés) ; `()` veut dire « ce
+        projet n'a aucun agent », et la tâche part en repli « à assigner » —
+        laquelle est la réponse juste à *un projet naît sans agent* : personne ne
+        peut la prendre, et c'est un fait à montrer, pas à combler.
         """
-        catalogue = tuple(agents) if agents else self._agents
+        catalogue = self._agents if agents is None else tuple(agents)
         candidats_actifs = tuple(a for a in catalogue if a.nom not in exclus)
         if not candidats_actifs:
+            # Deux causes, et le repli les distingue : elles ne se corrigent pas du
+            # tout pareil — réactiver un agent, ou en recruter un (#1042).
             return self._repli(
-                task, raison="tous les agents du catalogue sont désactivés"
+                task,
+                raison=(
+                    "tous les agents du catalogue sont désactivés"
+                    if catalogue
+                    else "aucun agent dans ce catalogue — l'équipe reste à recruter"
+                ),
             )
         required = frozenset(task.competences_requises)
         couvertures = [(agent, agent.couverture(required)) for agent in candidats_actifs]

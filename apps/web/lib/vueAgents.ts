@@ -57,9 +57,10 @@ import {
  * ------------------------------------------------------------------ */
 
 /**
- * Les rôles que le code déclare, et leur icône. Les libellés sont ceux de
- * `DEFAULT_AGENTS` (`maestro/agents/catalog.py`) — ils voyagent tels quels dans
- * `AgentCatalogue.role`, donc c'est sur eux que la table porte.
+ * Les rôles que le code déclare, et leur icône. Les libellés sont ceux des
+ * **gabarits de rôle** (`GABARITS_DU_CODE`, `maestro/agents/catalog.py`) — un
+ * rôle d'équipe qui en descend porte le même libellé, et il voyage tel quel dans
+ * `AgentCatalogue.role`, donc c'est sur lui que la table porte.
  *
  * Un libellé recopié ici et changé là-bas ne casse rien : l'agent retombe sur
  * l'icône générique. C'est la propriété qui rend cette table acceptable en
@@ -292,8 +293,8 @@ export const TRIS_AGENTS: ReadonlyArray<{
 
 /**
  * Le tri par défaut. Alphabétique et non « l'ordre du catalogue » : celui-ci est
- * celui du routage (`DEFAULT_AGENTS` départage les ex æquo), il n'a jamais été
- * un ordre de lecture, et un agent personnalisé s'y range à la fin, là où on ne
+ * celui du routage (il départage les ex æquo), il n'a jamais été un ordre de
+ * lecture, et un agent recruté après les autres s'y range à la fin, là où on ne
  * le cherche pas.
  */
 export const TRI_AGENTS_DEFAUT: CleTriAgents = "nom";

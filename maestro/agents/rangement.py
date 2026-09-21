@@ -15,7 +15,8 @@ et divergerait au premier dépôt qu'on oublie.
 
 - **Le gabarit** — la racine de chaque dépôt (`core/agents/`, …). C'est ce qui
   existait avant, et c'est ce que #1039 consultera pour proposer une équipe :
-  un catalogue de rôles, jamais instancié d'office (#1042).
+  un catalogue de rôles, jamais instancié d'office (#1042) — ni les fiches
+  rangées là, ni les cinq gabarits que le code livre.
 - **Le projet** — `<racine>/_projets/<projet_id>/`, la même arborescence, un
   cran plus bas. C'est là que vit ce qu'un projet a réglé pour lui.
 
@@ -37,8 +38,9 @@ garde-fou absent*.
 **Une exception, nommée** : l'**existence** d'un agent ne s'hérite pas
 (`AgentStore.herite_du_gabarit = False`). Un réglage a un défaut sensé, pas
 l'appartenance : un agent personnalisé rangé au niveau gabarit est un *gabarit*,
-pas un membre de l'équipe d'un projet — c'est exactement ce que #1042 achèvera
-en retirant aussi les agents figés du code. La **reprise**
+pas un membre de l'équipe d'un projet — ce que #1042 a achevé en retirant aussi
+les fiches du code du catalogue effectif : un projet naît sans agent, et son
+catalogue est vide tant que son équipe n'a pas été validée. La **reprise**
 (`maestro.agents.reprise`) est ce qui rattache au projet ceux qui y travaillaient
 déjà, sans rien supprimer.
 

@@ -147,11 +147,12 @@ Un même agent s'exécute de deux façons, et les deux doivent porter le même m
 Ce que le paquet **livre** n'est pas une équipe : c'est la matière dont une équipe se propose. La
 demande du 2026-09-19 ([docs/37 §2.1](./37-decision-equipe-sur-mesure.md)) a renversé la décision
 d'origine — cinq agents définis dans le code, reçus d'office par tout poste, tout projet, toute
-exécution. **Un projet naît sans agent** : son analyse lui propose une équipe, l'utilisateur la
-valide, et c'est cette validation qui écrit les fiches (#1021, chantier livré par #1037 à #1042).
+exécution. **Un projet naît sans agent** : `catalogue()` ne rend que les agents de son dépôt, son
+analyse lui propose une équipe, l'utilisateur la valide, et c'est cette validation qui écrit les
+fiches (#1021, chantier livré par #1037 à #1042).
 
-Les cinq lignes ci-dessous sont donc des **gabarits** : l'analyse d'équipe les consulte
-(`maestro.equipe.gabarits`), personne ne les instancie. Leurs playbooks « senior » ne sont pas jetés
+Les cinq lignes ci-dessous sont donc des **gabarits** (`GABARITS_DU_CODE`) : l'analyse d'équipe les
+consulte (`maestro.equipe.gabarits`), personne ne les instancie. Leurs playbooks « senior » ne sont pas jetés
 — ils servent de **repli** au rôle proposé tant que la rédaction pour ce projet-là n'a pas abouti,
 et la proposition dit toujours laquelle des deux origines elle porte.
 
@@ -178,8 +179,10 @@ l'équipe — c'est Maestro, et c'est lui qui recrute (docs/37 §4.2). Chaque pr
 **Ce qu'un projet reçoit, et où.** Un agent validé est écrit dans le projet — fiche, playbook,
 autorisations, capacité —, jamais au niveau des gabarits, qui n'appartiennent à personne
 ([docs/05 §2.0](./05-interface-control-tower.md)). Hors de tout projet, un moteur travaille encore
-avec les gabarits : `maestro-run` et `maestro-demo` n'ont pas de projet et n'en ont jamais eu. Ce
-n'est pas une exception au principe, c'en est le complément — il n'y a pas d'équipe où chercher.
+avec les gabarits — c'est son repli de câblage (`catalogue_hors_projet`) : `maestro-run` et
+`maestro-demo` n'ont pas de projet et n'en ont jamais eu. Ce n'est pas une exception au principe,
+c'en est le complément — il n'y a pas d'équipe où chercher. Dans un projet, en revanche, il y en a
+une : une équipe **vide** y laisse la tâche « à assigner » plutôt que de retomber ici.
 
 > **Le fournisseur est configurable par agent** (voir §4 et [stack §2](./02-stack-technique.md)). Les modèles ci-dessus sont le **défaut Claude du POC** ; on peut affecter à chaque agent un autre fournisseur/modèle (OpenAI, Google, ouvert/local) **sans changer son rôle ni son playbook** — c'est l'objet de la couche d'abstraction.
 

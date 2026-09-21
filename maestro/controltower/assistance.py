@@ -11,7 +11,7 @@ chat (`ChatStore` pour la persistance, `ServiceChat` pour l'acheminement, le bus
 d'événements #46 pour le temps réel) avec deux pièces qui lui sont propres :
 
 - `AGENT_ASSISTANCE` : la fiche de l'assistant. Ce n'est **pas** un agent du
-  catalogue (`DEFAULT_AGENTS`) — il n'exécute aucune tâche, ne consomme pas de
+  catalogue (`GABARITS_DU_CODE`) — il n'exécute aucune tâche, ne consomme pas de
   budget et n'apparaît ni au routage ni au Kanban. Il n'a de l'`Agent` que ce
   dont le chat a besoin : un nom (la clé du fil), un rôle et un prompt système.
 - `RepondeurAssistance` : la production de la réponse, **déterministe et sans

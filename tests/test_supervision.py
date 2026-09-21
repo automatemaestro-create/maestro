@@ -38,6 +38,7 @@ from maestro.agents import DEVOPS_PROFILE
 from maestro.agents.mcp import McpStore
 from maestro.agents.runtime import AgentRuntime
 from maestro.agents.secrets import SecretStore
+from maestro.agents.store import AgentDefinition, AgentStore
 from maestro.config import ConfigError, Settings
 from maestro.engine.executor import (
     STATUT_BLOQUEE,
@@ -575,6 +576,26 @@ def provider_factice(monkeypatch) -> Publieur:
     return provider
 
 
+#: Le nom de l'agent notificateur dans ces tests. Un nom d'équipe, pas un rôle du
+#: code : depuis #1042 `devops` est un **gabarit**, qu'aucun projet ne reçoit et
+#: qu'un dépôt d'agents refuse (`NOMS_RESERVES`). Le notificateur se prend donc
+#: dans l'équipe, et `default()` exige qu'on le nomme.
+AGENT_NOTIFICATEUR = "infra"
+
+
+def _recrute(racine: Path, nom: str = AGENT_NOTIFICATEUR, projet: str | None = None) -> None:
+    """Écrit la fiche de `nom` dans le dépôt d'agents `racine` (dans `projet` s'il est donné)."""
+    depot = AgentStore(racine).pour_projet(projet)
+    depot.ecrire(
+        AgentDefinition(
+            nom=nom,
+            role="Infrastructure",
+            competences=("infra", "ci-cd"),
+            playbook="Tu tiens l'infrastructure et les vérifications automatiques.",
+        )
+    )
+
+
 def test_default_refuse_un_canal_absent(monkeypatch, tmp_path):
     # Le canal est contrôlé **avant** la fabrique de fournisseur : sans canal, il n'y
     # a rien à faire, on ne construit pas un fournisseur pour le découvrir ensuite.
@@ -584,47 +605,105 @@ def test_default_refuse_un_canal_absent(monkeypatch, tmp_path):
     monkeypatch.setattr("maestro.providers.factory.provider_from_settings", _jamais)
 
     with pytest.raises(ConfigError, match="MAESTRO_SLACK_CANAL"):
-        NotificateurRun.default(settings=_settings(slack_canal=None, mcp_dir=str(tmp_path)))
+        NotificateurRun.default(
+            AGENT_NOTIFICATEUR,
+            _settings(slack_canal=None, mcp_dir=str(tmp_path)),
+        )
 
 
 def test_default_refuse_un_agent_sans_runtime_outille(provider_factice, tmp_path):
-    settings = _settings(slack_canal=CANAL, mcp_dir=str(tmp_path))
+    settings = _settings(
+        slack_canal=CANAL, mcp_dir=str(tmp_path), agents_dir=str(tmp_path / "agents")
+    )
 
     with pytest.raises(ConfigError, match="runtime outillé"):
-        NotificateurRun.default(agent="orchestrateur", settings=settings)
+        NotificateurRun.default("orchestrateur", settings)
+
+
+def test_default_refuse_un_agent_absent_de_l_equipe_du_projet(provider_factice, tmp_path):
+    # #1042 : le notificateur se prend dans l'équipe **du projet** du run. Un agent
+    # recruté ailleurs n'y est pas, et le refus nomme le projet qu'on a demandé.
+    _recrute(tmp_path / "agents", projet="prj-autre")
+    settings = _settings(
+        slack_canal=CANAL, mcp_dir=str(tmp_path), agents_dir=str(tmp_path / "agents")
+    )
+
+    with pytest.raises(ConfigError, match="prj-ici"):
+        NotificateurRun.default(AGENT_NOTIFICATEUR, settings, projet_id="prj-ici")
 
 
 def test_default_refuse_un_agent_sans_serveur_mcp(provider_factice, tmp_path):
     # Sans serveur déclaré, l'agent n'aurait aucun outil pour poster : le refus
     # nomme le fichier attendu plutôt que de laisser le run échouer plus tard.
-    settings = _settings(slack_canal=CANAL, mcp_dir=str(tmp_path / "vide"))
+    _recrute(tmp_path / "agents")
+    settings = _settings(
+        slack_canal=CANAL,
+        mcp_dir=str(tmp_path / "vide"),
+        agents_dir=str(tmp_path / "agents"),
+    )
 
     with pytest.raises(ConfigError, match="aucun serveur MCP déclaré"):
-        NotificateurRun.default(settings=settings)
+        NotificateurRun.default(AGENT_NOTIFICATEUR, settings)
 
 
 def test_default_refuse_une_declaration_mcp_invalide(provider_factice, tmp_path):
     # La `ValueError` de la validation à la lecture est muée en `ConfigError` : pour
     # l'appelant, c'est une erreur de configuration comme les autres.
+    _recrute(tmp_path / "agents")
     racine = tmp_path / "mcp"
     racine.mkdir()
-    (racine / "devops.json").write_text("{ pas du json", encoding="utf-8")
+    (racine / f"{AGENT_NOTIFICATEUR}.json").write_text("{ pas du json", encoding="utf-8")
 
     with pytest.raises(ConfigError, match="illisible"):
-        NotificateurRun.default(settings=_settings(slack_canal=CANAL, mcp_dir=str(racine)))
+        NotificateurRun.default(
+            AGENT_NOTIFICATEUR,
+            _settings(
+                slack_canal=CANAL,
+                mcp_dir=str(racine),
+                agents_dir=str(tmp_path / "agents"),
+            ),
+        )
 
 
 def test_default_construit_un_notificateur_qui_poste_sur_le_canal_configure(
     provider_factice, tmp_path
 ):
-    _declare(tmp_path / "mcp", "devops", [_declaration_slack()])
+    _recrute(tmp_path / "agents")
+    _declare(tmp_path / "mcp", AGENT_NOTIFICATEUR, [_declaration_slack()])
     settings = _settings(
         slack_canal="#supervision",
         mcp_dir=str(tmp_path / "mcp"),
         secrets_dir=str(tmp_path / "coffre"),
+        agents_dir=str(tmp_path / "agents"),
     )
 
-    notificateur = NotificateurRun.default(settings=settings)
+    notificateur = NotificateurRun.default(AGENT_NOTIFICATEUR, settings)
+    asyncio.run(
+        notificateur.fin_de_run(RunReport(objectif="Livrer", resultats=()), RunJournal())
+    )
+
+    assert "#supervision" in provider_factice.mission
+
+
+def test_default_prend_le_notificateur_dans_l_equipe_du_projet(provider_factice, tmp_path):
+    # Le critère de #1042 côté supervision : la fiche, ses serveurs MCP et son
+    # coffre se lisent dans la configuration **du projet** du run.
+    _recrute(tmp_path / "agents", projet="prj-ici")
+    _declare(
+        tmp_path / "mcp" / "_projets" / "prj-ici",
+        AGENT_NOTIFICATEUR,
+        [_declaration_slack()],
+    )
+    settings = _settings(
+        slack_canal="#supervision",
+        mcp_dir=str(tmp_path / "mcp"),
+        secrets_dir=str(tmp_path / "coffre"),
+        agents_dir=str(tmp_path / "agents"),
+    )
+
+    notificateur = NotificateurRun.default(
+        AGENT_NOTIFICATEUR, settings, projet_id="prj-ici"
+    )
     asyncio.run(
         notificateur.fin_de_run(RunReport(objectif="Livrer", resultats=()), RunJournal())
     )

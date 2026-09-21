@@ -34,6 +34,7 @@ from maestro.agents.capacity import CapacityStore
 from maestro.agents.configuration import ConfigurationAgents
 from maestro.agents.mcp import McpStore
 from maestro.agents.permissions import EntreeArbitrage, PermissionStore, PolitiqueOutils
+from maestro.agents.playbook_du_code import roles_du_code
 from maestro.agents.playbooks import PlaybookStore
 from maestro.agents.rangement import SEGMENT_PROJETS
 from maestro.agents.store import AgentStore, SurchargeStore
@@ -254,7 +255,30 @@ def test_declarer_un_projet_n_instancie_aucun_agent(tmp_path: Path, origine: str
     assert cfg.agents.noms() == ()
     assert cfg.capacites.lister() == ()
     assert cfg.permissions.agents() == ()
+    # Le catalogue **effectif** du projet, et pas seulement ses dépôts : les cinq
+    # fiches du code n'y entrent plus (#1042), ce sont des gabarits.
+    assert cfg.catalogue() == ()
     assert not (gabarits.agents.racine / SEGMENT_PROJETS).exists()
+
+
+def test_les_fiches_du_code_restent_consultables_en_gabarits(tmp_path: Path) -> None:
+    """« Sans agent » ne veut pas dire « sans matière » : les cinq fiches sont là,
+    au niveau gabarit, et c'est d'elles que l'analyse tire les rôles proposés."""
+    gabarits = _gabarits(tmp_path)
+
+    assert {fiche.nom for fiche in gabarits.gabarits_du_code()} == set(roles_du_code())
+    assert gabarits.catalogue() == ()
+
+
+def test_le_catalogue_du_projet_est_exactement_l_equipe_validee(tmp_path: Path) -> None:
+    """L'autre moitié du critère : après la validation, le projet a une équipe —
+    celle-là, et rien d'autre."""
+    service, gabarits, projet_id = _service(tmp_path)
+
+    service.creer(projet_id, [_role(), _role("tests", role="QA", competences=("tests",))])
+
+    equipe = gabarits.pour_projet(projet_id).catalogue()
+    assert {agent.nom for agent in equipe} == {"dev", "tests"}
 
 
 def test_l_equipe_validee_est_ecrite_dans_le_projet_et_pas_au_gabarit(

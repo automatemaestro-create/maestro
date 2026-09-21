@@ -75,7 +75,7 @@ from time import perf_counter
 from typing import Any
 
 from maestro.agents.capacity import CapacityStore
-from maestro.agents.catalog import DEFAULT_AGENTS, Agent
+from maestro.agents.catalog import GABARITS_DU_CODE, Agent
 from maestro.agents.mcp import McpStore
 from maestro.agents.permissions import PermissionStore
 from maestro.agents.playbooks import PlaybookStore
@@ -83,9 +83,8 @@ from maestro.agents.runtime import AgentRuntime
 from maestro.agents.secrets import SecretStore
 from maestro.agents.store import (
     AgentStore,
-    SurchargeStore,
-    catalogue,
     catalogue_du_projet,
+    catalogue_hors_projet,
 )
 from maestro.config import Settings, load_settings
 from maestro.engine.brief import (
@@ -384,7 +383,9 @@ class OrchestrationEngine:
         provider: ModelProvider,
         orchestrator: Orchestrator,
         *,
-        agents: Sequence[Agent] = DEFAULT_AGENTS,
+        # Le catalogue du **câblage**, hors projet (cf. `LocalExecutor`) : les
+        # gabarits du code par défaut, jamais ce qu'un projet reçoit (#1042).
+        agents: Sequence[Agent] = GABARITS_DU_CODE,
         runtimes: Mapping[str, AgentRuntime] | None = None,
         max_parallele: int | None = None,
         guardrails: Guardrails | None = None,
@@ -398,7 +399,6 @@ class OrchestrationEngine:
         relance: PolitiqueRelance | None = None,
         projets: ProjetStore | None = None,
         agents_store: AgentStore | None = None,
-        surcharges: SurchargeStore | None = None,
         modele: str | None = None,
         arbitre_brief: ArbitreBrief | None = None,
         arbitre_clarification: ArbitreClarification | None = None,
@@ -409,14 +409,14 @@ class OrchestrationEngine:
         if max_parallele is not None and max_parallele < 1:
             raise ValueError(f"max_parallele doit être ≥ 1 (reçu : {max_parallele}).")
         self._orchestrator = orchestrator
-        # L'équipe **du projet** pour la décomposition (#1041) : les trois mêmes
-        # entrées que l'exécuteur reçoit pour le routage, retenues ici parce que
-        # la planification arrive **avant** lui et doit découper sur la même
-        # équipe. `agents` reste le catalogue du câblage — ce qui vaut hors
-        # projet, et le repli quand les dépôts ne sont pas branchés.
+        # L'équipe **du projet** pour la décomposition (#1041) : les mêmes entrées
+        # que l'exécuteur reçoit pour le routage, retenues ici parce que la
+        # planification arrive **avant** lui et doit découper sur la même équipe.
+        # `agents` reste le catalogue du câblage — ce qui vaut hors projet, et le
+        # repli quand le dépôt n'est pas branché. Le dépôt de **surcharges** n'y
+        # est plus (#1042) : une surcharge règle un gabarit, pas une équipe.
         self._agents = tuple(agents)
         self._agents_store = agents_store
-        self._surcharges = surcharges
         self._modele = modele
         # À qui poser les questions du brief (#321) — None : personne, et les
         # questions partent alors telles quelles en validation (le comportement de
@@ -472,12 +472,11 @@ class OrchestrationEngine:
                 permissions=permissions,
                 relance=relance,
                 projets=projets,
-                # Les agents **du projet de la tâche** (#1038) : ces deux dépôts
-                # descendent pour la même raison que les quatre au-dessus — un
-                # agent recruté pour un projet naît après le câblage, et le
-                # catalogue figé du routeur ne peut pas le connaître.
+                # Les agents **du projet de la tâche** (#1038) : ce dépôt descend
+                # pour la même raison que les quatre au-dessus — un agent recruté
+                # pour un projet naît après le câblage, et le catalogue figé du
+                # routeur ne peut pas le connaître.
                 agents_store=agents_store,
-                surcharges=surcharges,
                 modele=modele,
                 mailbox=mailbox,
                 # La question libre d'un agent (#1023) descend jusqu'à
@@ -586,11 +585,12 @@ class OrchestrationEngine:
         provider = provider_from_settings(settings)
         orchestrator = Orchestrator(provider, model=default_model(settings))
         agents_store = AgentStore.default(settings)
-        surcharges = SurchargeStore.default(settings)
         return cls(
             provider,
             orchestrator,
-            agents=catalogue(agents_store, settings.model, surcharges=surcharges),
+            # Le catalogue du câblage : ce moteur route hors projet avec lui, et
+            # relit l'équipe du projet de chaque tâche qui en a un (#1038, #1042).
+            agents=catalogue_hors_projet(agents_store, modele=settings.model),
             guardrails=guardrails,
             mailbox=mailbox,
             playbooks=PlaybookStore.default(settings),
@@ -600,7 +600,6 @@ class OrchestrationEngine:
             permissions=PermissionStore.default(settings),
             projets=ProjetStore.default(settings),
             agents_store=agents_store,
-            surcharges=surcharges,
             modele=settings.model,
             relance=relance,
             max_parallele=max_parallele,
@@ -983,11 +982,17 @@ class OrchestrationEngine:
         liste vide : `prompt_orchestrateur` retomberait sinon sur les gabarits du
         code en ignorant les agents personnalisés que ce moteur a chargés au
         démarrage (#72).
+
+        ⚠ Le repli couvre donc aussi l'**équipe vide** que #1042 a rendue
+        possible, et c'est voulu : découper sur zéro rôle ne donnerait pas un
+        meilleur plan qu'en découper un sur les rôles du code. Ce n'est pas un
+        contournement du « projet sans agent » — le routage, lui, distingue bien
+        les deux (`LocalExecutor._equipe`), et toutes les tâches d'un projet sans
+        équipe finissent « à assigner ». Ici on choisit selon quoi *découper*, là
+        on choisit *qui prend*.
         """
         return (
-            catalogue_du_projet(
-                self._agents_store, self._surcharges, projet_id, self._modele
-            )
+            catalogue_du_projet(self._agents_store, projet_id, self._modele)
             or self._agents
         )
 

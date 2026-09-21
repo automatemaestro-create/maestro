@@ -32,7 +32,7 @@ depuis #298 : structuré, relisable et diffable, comme ceux des cinq rôles exé
 décision ouverte du ticket :
 
 - ce dossier-là est le repli du **catalogue** (`PLAYBOOK_DEFAUTS` est construit sur
-  `DEFAULT_AGENTS`) et la liste des agents que la Control Tower édite et versionne
+  `GABARITS_DU_CODE`) et la liste des agents que la Control Tower édite et versionne
   (`core/playbooks/<agent>/`). Le Chef de projet n'est ni dans le catalogue — il n'exécute
   pas de tâche — ni éditable : y déposer son document ferait mentir `roles_du_code()` et
   laisserait croire à un repli versionné qui n'existe pas ;
@@ -55,7 +55,7 @@ import re
 from collections.abc import Sequence
 from pathlib import Path
 
-from maestro.agents.catalog import DEFAULT_AGENTS, Agent
+from maestro.agents.catalog import GABARITS_DU_CODE, Agent
 from maestro.orchestrator.schema import Clarification
 
 #: Fourchette visée. Guidage, pas une règle de schéma, et depuis #298 le playbook la
@@ -166,7 +166,7 @@ def prompt_orchestrateur(equipe: Sequence[Agent] | None = None) -> str:
     quelqu'un sait prendre.
 
     `None` — et une séquence **vide**, qui vaut omission — retombe sur les agents
-    du code (`DEFAULT_AGENTS`), c'est-à-dire sur les gabarits de rôle : un plan
+    du code (`GABARITS_DU_CODE`), c'est-à-dire sur les gabarits de rôle : un plan
     hors projet (la CLI `maestro-plan`, une activité durable, un test) garde
     exactement le prompt d'avant ce lot, et un projet né sans agent (#1042)
     continue de se faire découper au lieu de recevoir un playbook sans équipe.
@@ -177,7 +177,9 @@ def prompt_orchestrateur(equipe: Sequence[Agent] | None = None) -> str:
     chaque tâche (#78) : l'équipe change entre deux runs, et retenir un prompt
     construit une fois ferait découper le second sur l'équipe du premier.
     """
-    return _lire_playbook(CHEMIN_PLAYBOOK, tuple(equipe) if equipe else DEFAULT_AGENTS)
+    return _lire_playbook(
+        CHEMIN_PLAYBOOK, tuple(equipe) if equipe else GABARITS_DU_CODE
+    )
 
 
 #: Le prompt système de décomposition **sans projet** : celui des gabarits du code.
@@ -191,7 +193,7 @@ ORCHESTRATOR_SYSTEM_PROMPT = prompt_orchestrateur()
 #: franc si l'un y était ajouté sans être déclaré dans `_valeurs`. Il ne prend pas
 #: d'équipe : cadrer un objectif ne demande pas de savoir qui l'exécutera, et le
 #: brief ne nomme aucune compétence.
-BRIEF_SYSTEM_PROMPT = _lire_playbook(CHEMIN_PLAYBOOK_BRIEF, DEFAULT_AGENTS)
+BRIEF_SYSTEM_PROMPT = _lire_playbook(CHEMIN_PLAYBOOK_BRIEF, GABARITS_DU_CODE)
 
 #: Ce qu'on dit au modèle quand aucune source n'accompagne l'objectif. Le dire
 #: explicitement plutôt que se taire : un silence laisse le modèle supposer qu'un

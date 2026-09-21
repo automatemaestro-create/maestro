@@ -331,7 +331,7 @@ from pydantic import BaseModel
 
 from maestro.agents import DEFAULT_TOOLS, TOOLED_PROFILES
 from maestro.agents.capacity import CapaciteAgent, CapacityStore
-from maestro.agents.catalog import DEFAULT_AGENTS, Agent
+from maestro.agents.catalog import GABARITS_DU_CODE, Agent
 from maestro.agents.configuration import ConfigurationAgents
 from maestro.agents.lexique_playbook import lexique_dict
 from maestro.agents.mcp import IntegrationMcp, McpStore, ServeurMcp, references_env
@@ -357,6 +357,7 @@ from maestro.agents.store import (
     AGENT_SOURCE_DEFAUT,
     AGENT_SOURCE_PERSONNALISE,
     AGENT_SOURCE_SURCHARGE,
+    NOMS_DU_CODE,
     NOMS_RESERVES,
     AgentDefinition,
     AgentStore,
@@ -1586,12 +1587,15 @@ def create_app(
     # passe donc par le canal de validation de toujours — la demande sort sur le
     # bus, l'écran la montre, `POST /api/validations/{tache}/decision` la tranche.
     outillage = ServiceOutillage(projets, validateur=ValidateurControlTower(bus))
+    # La projection part du catalogue **hors projet** : les agents rangés à la
+    # racine du dépôt. Vide sur un poste neuf depuis #1042 — les cinq rôles du
+    # code n'y sont plus —, et c'est voulu : le parc d'agents se peuple projet par
+    # projet, par l'équipe que chacun valide. Ce que `GET /api/agents?projet=`
+    # rend est ensuite filtré sur l'équipe demandée.
     state = (
         state
         if state is not None
-        else ControlTowerState(
-            catalogue(agents_store, surcharges=surcharges), capacites=capacites.lister()
-        )
+        else ControlTowerState(catalogue(agents_store), capacites=capacites.lister())
     )
     playbooks = playbooks if playbooks is not None else PlaybookStore.default()
     # Les six dépôts d'un bloc (#1038) : c'est cet objet-là que `_config` cadre sur
@@ -2024,6 +2028,10 @@ def create_app(
         projet — c'est la vue des tâches (`/api/taches?projet=`) qui répond à
         « qu'a fait cet agent ici ». Le **routage** sur l'équipe d'un projet,
         lui, est le lot #1041.
+
+        Un projet qu'on vient de créer rend une liste **vide** (#1042) : il n'a
+        aucun agent tant que son équipe n'a pas été validée, et une vue vide le
+        dit mieux que cinq rôles que personne n'a recrutés.
 
         Omis, la vue rend le parc entier, comme avant ce lot.
         """
@@ -3219,12 +3227,12 @@ def create_app(
 
         Sert à l'analyse d'auto-amélioration, qui a besoin du modèle de l'agent. Le
         catalogue effectif est interrogé **d'abord** — c'est lui qui porte les
-        surcharges (#259) et les agents personnalisés, dont `_exige_playbook_connu`
-        accepte désormais le playbook —, `DEFAULT_AGENTS` restant le repli qui
-        garantit une fiche aux rôles du code si le catalogue ne renvoyait pas ce nom.
+        agents du projet —, les **gabarits** restant le repli qui garantit une
+        fiche aux rôles du code, dont le playbook reste éditable au niveau gabarit
+        même si plus aucun projet ne les reçoit d'office (#1042).
         """
         cfg = cfg if cfg is not None else gabarits
-        for agent in (*cfg.catalogue(), *DEFAULT_AGENTS):
+        for agent in (*cfg.catalogue(), *cfg.gabarits_du_code()):
             if agent.nom == nom:
                 return agent
         # Injoignable en pratique : `_exige_playbook_connu` a déjà garanti un agent connu.
@@ -3698,7 +3706,7 @@ def create_app(
         return definition
 
     def _exige_du_code(nom: str, cfg: ConfigurationAgents | None = None) -> Agent:
-        """L'agent du code `nom`, ou l'erreur HTTP qui explique son absence (#259).
+        """Le **gabarit de rôle** `nom`, ou l'erreur HTTP qui explique son absence (#259).
 
         Le **symétrique** d'`_exige_personnalise`, et ses refus se répondent :
         403 sur un agent personnalisé — sa définition *est* son réglage et
@@ -3706,10 +3714,28 @@ def create_app(
         second chemin d'écriture vers les trois mêmes valeurs, le doublon même
         que #259 supprime côté playbook. 403 aussi sur `orchestrateur` et
         `assistance`, qui n'ont pas de fiche au catalogue. 404 sur un inconnu.
+
+        Depuis #1042 ce qu'il rend est un **gabarit** et non un agent, et il ne se
+        règle donc qu'au niveau gabarit : demandé sur un projet il sort en 404, au
+        même titre que sa fiche et pour la même raison — le projet ne l'a pas, et
+        un réglage écrit là ne recouvrirait aucun agent du projet.
         """
-        agent = next((a for a in DEFAULT_AGENTS if a.nom == nom), None)
-        if agent is not None:
-            return agent
+        cfg = cfg if cfg is not None else gabarits
+        if cfg.projet_id is None:
+            # Le gabarit **nu** : c'est `_fiche_defaut` qui pose la surcharge
+            # par-dessus, et la lui donner déjà recouverte ferait afficher
+            # l'ancien réglage juste après l'avoir remplacé.
+            agent = next((a for a in GABARITS_DU_CODE if a.nom == nom), None)
+            if agent is not None:
+                return agent
+        elif nom in NOMS_DU_CODE:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"gabarit de rôle : {nom} — un gabarit se règle hors projet "
+                    "(sans ?projet=) ; un projet règle les agents de son équipe."
+                ),
+            )
         if _personnalise_ou_none(nom, cfg) is not None:
             raise HTTPException(
                 status_code=403,
@@ -4751,30 +4777,47 @@ def create_app(
 
     @app.get("/api/catalogue")
     async def catalogue_liste(projet: str | None = None) -> list[dict[str, Any]]:
-        """Le catalogue d'agents (#72) : les agents par défaut puis les personnalisés.
+        """Le catalogue d'agents (#72), dans l'ordre que les moteurs chargent.
 
         Métadonnées seules (le playbook d'une fiche se lit sur
-        `GET /api/catalogue/{nom}`), dans l'ordre du catalogue effectif — celui
-        que les moteurs chargent au démarrage.
+        `GET /api/catalogue/{nom}`).
 
-        `projet` cadre la lecture (#1038) : les agents **de ce projet**, jamais
-        ceux d'un autre. Omis, ce sont les **gabarits** — les agents rangés hors
-        de tout projet, que l'analyse d'équipe consultera (#1039). Les agents du
-        code restent des deux côtés tant que #1042 n'en a pas fait des gabarits.
+        `projet` cadre la lecture (#1038) : **l'équipe de ce projet**, jamais
+        celle d'un autre — et rien d'autre. Un projet qu'on vient de créer ou
+        d'importer rend donc une liste **vide** (#1042) : il n'a aucun agent tant
+        que son équipe n'a pas été proposée et validée (#1039, #1040). C'est le
+        critère, et c'est ici qu'il se lit.
+
+        Omis, la lecture est celle du niveau **gabarit** : les gabarits de rôle du
+        code, puis les fiches rangées hors de tout projet. Ce niveau se consulte
+        et se règle — l'analyse d'équipe y puise —, il ne travaille pas.
         """
         cfg = _config(projet)
-        return [
-            _fiche_defaut(a, avec_playbook=False, cfg=cfg) for a in DEFAULT_AGENTS
-        ] + [
+        fiches = [
             _fiche_personnalise(d, avec_playbook=False, cfg=cfg)
             for d in cfg.agents.lister()
         ]
+        if cfg.projet_id is not None:
+            return fiches
+        return [
+            _fiche_defaut(a, avec_playbook=False, cfg=cfg)
+            for a in GABARITS_DU_CODE
+        ] + fiches
 
     @app.get("/api/catalogue/{nom}")
     async def catalogue_fiche(nom: str, projet: str | None = None) -> dict[str, Any]:
-        """La définition complète d'un agent du catalogue, playbook compris."""
+        """La définition complète d'un agent du catalogue, playbook compris.
+
+        Symétrique de la liste (#1042) : un **gabarit** de rôle ne se lit qu'au
+        niveau gabarit. Demandé sur un projet, il sort en 404 — le projet ne l'a
+        pas, et le servir ferait dire à la fiche le contraire de la liste.
+        """
         cfg = _config(projet)
-        defaut = next((a for a in DEFAULT_AGENTS if a.nom == nom), None)
+        defaut = (
+            None
+            if cfg.projet_id is not None
+            else next((a for a in GABARITS_DU_CODE if a.nom == nom), None)
+        )
         if defaut is not None:
             return _fiche_defaut(defaut, avec_playbook=True, cfg=cfg)
         definition = _personnalise_ou_none(nom, cfg)
@@ -4976,8 +5019,18 @@ def create_app(
         Cadré sur un projet (#1038), « du catalogue » veut dire de **son**
         catalogue : un agent d'un autre projet y est inconnu, ce qui est
         exactement ce qu'on veut d'une route de configuration.
+
+        Au niveau **gabarit**, les gabarits de rôle en font partie (#1042) : ce
+        niveau est celui qu'on consulte et qu'on règle, et leurs serveurs MCP,
+        autorisations et fils de chat s'y adressent comme avant. Dans un projet,
+        non — il n'a que son équipe.
         """
-        defaut = next((a for a in DEFAULT_AGENTS if a.nom == nom), None)
+        niveau = cfg if cfg is not None else gabarits
+        defaut = (
+            None
+            if niveau.projet_id is not None
+            else next((a for a in GABARITS_DU_CODE if a.nom == nom), None)
+        )
         if defaut is not None:
             return defaut
         definition = _personnalise_ou_none(nom, cfg)

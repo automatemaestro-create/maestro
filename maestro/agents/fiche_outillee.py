@@ -46,7 +46,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from maestro.agents.catalog import MODELE_EXECUTANT_DEFAUT, Agent, agents_pour
+from maestro.agents.catalog import MODELE_EXECUTANT_DEFAUT, Agent, gabarits_pour
 from maestro.agents.database import DATABASE_PROFILE
 from maestro.agents.designer import DESIGNER_PROFILE
 from maestro.agents.developer import DEVELOPER_PROFILE
@@ -194,11 +194,11 @@ def default_runtimes(
     qu'on injecte pour figer un régime (tests, câblages qui veulent exactement ces cinq
     rôles et rien d'autre).
 
-    `model` (#69) bascule les cinq fiches sur un modèle unique (`agents_pour`), d'où les
+    `model` (#69) bascule les cinq fiches sur un modèle unique (`gabarits_pour`), d'où les
     runtimes suivent : le modèle vient de la fiche, comme le reste. `playbooks` (#76)
     fige le prompt système sur la version courante du dépôt (cf. `runtime_outille`).
     """
     return {
         agent.nom: runtime_outille(provider, agent, playbooks=playbooks)
-        for agent in agents_pour(model)
+        for agent in gabarits_pour(model)
     }
