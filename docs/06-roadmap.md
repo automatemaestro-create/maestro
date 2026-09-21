@@ -37,6 +37,9 @@ gantt
 > l'installeur »** vient ensuite (2026-09-21) : il réunit les réserves des deux jalons précédents et
 > passe à son tour devant la Phase 9. Le jalon **« Le niveau visuel »** le suit (2026-09-21) : une
 > direction visuelle choisie par une personne, et un écran étalon, toujours devant la Phase 9.
+> Le jalon **« Les scénarios de référence »** s'insère entre les deux (2026-09-21) : le produit se
+> juge sur ce qu'un utilisateur lui demande, joué avec le vrai modèle, pendant que le rail outillage
+> est gelé jusqu'au 2026-10-12 ([docs/40](./40-decision-rythme-et-scenarios-de-reference.md)).
 
 ---
 
@@ -47,6 +50,9 @@ gantt
 - Mettre en place le dépôt, l'environnement, l'accès au Claude Agent SDK.
 - Poser la **couche d'abstraction fournisseur** (interface `ModelProvider` : `fournisseur + modèle + credentials`) comme frontière d'architecture — **un seul fournisseur câblé (Claude)** pour l'instant, mais l'interface est en place (O7 / ENF-11).
 - Un **orchestrateur** qui décompose un objectif simple en 2-3 tâches.
+  ⚠ *Renversé pour les actions le 2026-09-21* (#1153, [docs/40 §4](./40-decision-rythme-et-scenarios-de-reference.md)) :
+  une action simple sur le projet (« vide le dossier ») est **une** tâche qui agit, et le plancher
+  de 3 tâches (`MIN_TASKS`, ticket #6) ne s'y applique plus. Le texte du planificateur change avec #1149.
 - **Deux agents** (ex. Développeur + BDD) qui exécutent une tâche chacun.
 - Exécution **en ligne de commande** (pas encore d'UI), résultats dans des fichiers.
 
@@ -535,6 +541,100 @@ tour dans la file : il peut commencer maintenant.
 
 > ⚠ **Les critères de sortie du jalon sont dans sa description**, section `## Critères de sortie`
 > (C1 à C5). C'est elle qui fait foi au bouclage (docs/10 §3.4), pas ce résumé.
+
+> ⚠ **Un jalon s'est inséré devant celui-ci le 2026-09-21** (#1153) : « Les scénarios de référence »
+> (2028-01-30), section suivante. La décision de ce jalon (docs/39) tient et son échéance n'a pas
+> bougé ; il passe simplement derrière. #1125 reste démarrable à la main. Le chantier outillage
+> #1129 est **différé** par le gel du rail outillage (`prio::basse`), et se rejuge à sa levée.
+
+---
+
+## « Les scénarios de référence » — le produit fait ce qu'on lui demande (2026-09-21)
+
+Ce jalon est né d'une demande du 2026-09-21, instruite par [`/idee`](../.claude/commands/idee.md)
+(#1013) et consignée par #1153 : *« on n'avance pas du tout, on fait du sur-place »*. Il a été
+confirmé par un « go » sur quatre recommandations, avec pour objectif *un résultat de qualité et un
+rythme accéléré*. Comme les jalons nés d'une idée, il ne prend **pas de numéro de phase**.
+
+| Milestone | Contenu | Échéance | Suivi |
+|---|---|---|---|
+| **Les scénarios de référence — le produit fait ce qu'on lui demande** | Quatre scénarios joués de bout en bout avec le vrai modèle, qui conditionnent le bouclage d'un jalon produit ; une action simple qui s'exécute | 2028-01-30 | #1148 et #1149, indépendants et **sans parent** ; #1146 dans « Avant l'installeur » |
+| *Outillage de la forge* (jalon existant, rail outillage) | Trois allègements du processus, seule exception au gel | 2027-09-15 | #1150, #1151, #1152 (nés assignés : ils écrivent sous `.claude/`) |
+
+**Le constat, mesuré.** Sur les 158 tickets fermés en septembre :
+- 23 % touchaient l'outillage de la forge ;
+- 22 % étaient des finitions d'interface ;
+- 7 % des « veilles à jouer » ;
+- 10 % des lots « tests + doc », roadmaps et cadrages ;
+- 37 % des capacités ou des bugs du produit.
+
+Le produit n'a été essayé en vrai qu'une fois en six semaines (retex du 2026-09-11). Dix jours plus
+tard, le même geste échoue sur un projet antérieur à #1042 (#1146), sans qu'aucun bilan l'ait vu.
+La démonstration est dans [docs/40](./40-decision-rythme-et-scenarios-de-reference.md).
+
+**Le contenu :**
+- **#1148 (produit)** : un banc (`python -m maestro.scenarios`) joue quatre scénarios par la porte
+  d'entrée réelle, le fil de l'orchestrateur, et rend un verdict par scénario (coût, durée, run).
+  S1 vider un dossier, S2 créer une petite application, S3 reprendre un projet existant sans équipe,
+  S4 « pourquoi le run a échoué ? ». Il n'est pas en CI : il coûte du vrai modèle.
+- **#1149 (produit)** : une action simple sur le projet s'exécute comme **une** tâche. Plus
+  d'utilitaire écrit pour « vider le dossier », plus de plancher de 3 tâches, plus de tâche humaine
+  quand l'accord nomme déjà l'acte. C'est la pièce de S1.
+- **#1146** (« Avant l'installeur », premier de la file) : un projet sans équipe ne paie plus pour
+  échouer, et le fil de l'orchestrateur sait dire pourquoi un run a échoué. C'est la pièce de S3
+  et S4.
+- **#1150 (outillage)** : un ticket porte une capacité visible **et ses tests**. Il n'y a plus de lot
+  final « tests + doc » par défaut.
+- **#1151 (outillage)** : la veille, les variantes et le regard neuf sont réservés aux tickets qui
+  **décident** d'un écran. Les autres gardent leur relecture visuelle, jugée par la session.
+- **#1152 (outillage)** : `/milestone-bilan` joue les scénarios, et un rouge interdit un GO. À
+  démarrer après #1148.
+
+**Le gel du rail outillage, jusqu'au 2026-10-12.**
+- **Ce qui passe** : #1150, #1151, #1152, et les pannes qui bloquent réellement le travail. Un
+  incident de forge qui ne bloque pas se note, il ne devient pas un chantier.
+- **Ce qui est différé, pas abandonné** : #1052 (le plan d'un run traverse les jalons, 6 tickets) et
+  #1129 (bibliothèque de références, regard de la personne par jalon, 5 tickets). Tous deux passent
+  en `prio::basse`.
+- **Ce qui est abandonné**, sur décision de la personne : deux veilles satellites dont les tickets
+  sources étaient fermés, #1141 et #1117.
+
+**Des décisions tombent, à la demande de la personne**, et
+[docs/40](./40-decision-rythme-et-scenarios-de-reference.md) les écrit :
+- le lot final « tests + doc » (docs/10 §5.1) ;
+- la veille, le ticket satellite et le regard neuf sur toute surface visible (docs/30 §5.2 à §5.4,
+  §5.8) ;
+- le plancher de 3 tâches (ticket #6).
+
+Ne bougent pas :
+- #1009, pour les tickets qui décident d'un écran ;
+- le merge vérifié ;
+- les sub-issues.
+
+**Place dans la file**, sur le rail produit :
+
+| Jalon | Échéance |
+| --- | --- |
+| « L'équipe sur mesure » (soldé, verdict rendu) | 2028-01-05 |
+| « Avant l'installeur » (reste #1146) | 2028-01-26 |
+| **« Les scénarios de référence »** | **2028-01-30** |
+| « Le niveau visuel » | 2028-02-05 (inchangée) |
+| Phase 9 | 2028-02-16 (inchangée) |
+
+- **Derrière « Avant l'installeur »**, parce qu'il n'y reste que #1146, qui est justement la première
+  pièce des scénarios S3 et S4. Il passe donc en premier.
+- **Devant « Le niveau visuel »** : la fonction avant le poli. On ne fige pas l'écran étalon d'un
+  produit dont les parcours de base ne tiennent pas. #1125, le choix d'une direction par la personne,
+  reste démarrable à la main.
+- **Devant la Phase 9**, pour l'argument de la Phase 9 elle-même : on n'empaquette pas une cible
+  mouvante (§4.8 de docs/24).
+- Son échéance tombe **strictement entre** ses voisins : **aucune autre échéance n'a bougé**.
+
+Sur le rail outillage, « Outillage de la forge » reste le jalon courant. #1150, #1151 et #1152 y
+sont en `haute`, et les deux chantiers différés en `basse` : les allègements passent devant tout.
+
+> ⚠ **Les critères de sortie du jalon sont dans sa description**, section `## Critères de sortie`
+> (C1 à C4). C'est elle qui fait foi au bouclage (docs/10 §3.4), pas ce résumé.
 
 ---
 

@@ -936,6 +936,10 @@ rendu est jugé par un regard neuf, contre l'avant et sur une grille fixe.
 
 ### 5.2 Le maillon 0 se déclenche, le 2026-08-28 (#714)
 
+> ⚠ **Restreint le 2026-09-21** (#1153, [docs/40 §3](./40-decision-rythme-et-scenarios-de-reference.md)). La veille n'est plus proposée ni
+> jouée pour toute surface visible non arbitrée : seul un ticket qui **décide** d'un écran (§7.2 de
+> `/design-veille`) en a une. Réécrit avec les commandes par #1151.
+
 Livré, `/design-veille` **n'était appelé par rien**. Aucun prompt de `/ticket-start`,
 `/ticket-ship` ou `/orchestrate` ne le nommait : son déclencheur était une phrase de `CLAUDE.md`
 que la session est censée lire et appliquer. Ça marche — la veille a été jouée sur #709 sans qu'on
@@ -1117,6 +1121,10 @@ deux fichiers — un seul refermé laisserait un régime à moitié, indiscernab
 
 ### 5.3 La question différée, faute de répondant — 2026-08-30 (#795)
 
+> ⚠ **Renversé le 2026-09-21** (#1153, [docs/40 §3](./40-decision-rythme-et-scenarios-de-reference.md)). Une veille ne se diffère plus en
+> ticket satellite « Veille de conception à jouer » pour un ticket qui ne décide pas de l'écran.
+> Réécrit par #1151.
+
 #714 a donné à la veille un **déclencheur**. Il lui manquait un **contenant** : en run, la question
 était posée puis perdue.
 
@@ -1194,6 +1202,9 @@ Ce qui manque est son **appelant** — il n'y a pas de verbe de lecture `veille-
 écrire un sans appelant serait du code mort. C'est un ticket à part entière, pas une omission.
 
 ### 5.4 La veille se joue en run — 2026-09-11 (#934)
+
+> ⚠ **Restreint le 2026-09-21** (#1153, [docs/40 §3](./40-decision-rythme-et-scenarios-de-reference.md)). En run comme en interactif, la
+> veille ne se joue plus que pour un ticket qui **décide** d'un écran. Réécrit par #1151.
 
 #714 a donné à la veille un **déclencheur**, #795 un **contenant**, #933 l'**accès**. Il lui manquait
 d'être **jouable** du côté où elle ne l'était pas.
@@ -2637,6 +2648,10 @@ passage** — le reste technique n'est plus dans le motif mais dans la **phrase 
 ---
 
 ### 5.8 Un écran se juge contre l'attente — 2026-09-17 (chantier #972)
+
+> ⚠ **Restreint le 2026-09-21** (#1153, [docs/40 §3](./40-decision-rythme-et-scenarios-de-reference.md)). Le **regard neuf** (#980) n'est
+> plus saisi que pour les tickets qui décident d'un écran. Les autres gardent la relecture visuelle
+> de `/ticket-finish`, jugée par la session. #1009 ne bouge pas. Réécrit par #1151.
 
 > **Pourquoi après le journal des veilles.** Le §5.7 est un journal qui s'allonge ; ce paragraphe
 > est un régime. Il vient à la suite parce qu'il a été écrit après, et renvoie au §5.6 pour ce qu'il
