@@ -64,9 +64,14 @@ from maestro.controltower import (
     InMemoryEventBus,
     InMemoryEventLog,
     create_app,
+    demo,
 )
 from maestro.controltower.bridge import evenements_depuis_step
-from maestro.controltower.events import EVENEMENT_TACHE_DETAIL
+from maestro.controltower.events import (
+    EVENEMENT_AGENT_ACTIVITE,
+    EVENEMENT_TACHE_DETAIL,
+    EVENEMENT_TACHE_STATUT,
+)
 from maestro.controltower.state import EVENEMENT_EXECUTION_STATUT, EXECUTION_EN_COURS
 from maestro.detail_tache import (
     ETAPE_A_FAIRE,
@@ -75,8 +80,10 @@ from maestro.detail_tache import (
     SUFFIXE_ETAPE_DETAIL,
     EtapeTache,
     SuiviChecklist,
+    phrase_ecart_checklist,
 )
 from maestro.engine.executor import (
+    STATUT_TERMINEE,
     SUFFIXE_ETAPE_ACTIVITE,
     LocalExecutor,
     _build_task_description,
@@ -768,6 +775,51 @@ def test_l_ossature_n_est_posee_qu_une_fois_malgre_la_relance():
 # ---- ⑤bis L'écart entre le verdict et la checklist (#944, retex du 2026-09-11 G12)
 
 
+class _FinDuScenario(Exception):
+    """Le scénario de démo est allé jusqu'où on voulait le lire."""
+
+
+class _BusEnregistreur:
+    """Un bus qui ne fait que noter — tout ce que `_scenario` lui demande (#1112).
+
+    Le scénario se termine par une **pulsation sans fin** (`itertools.count`) :
+    on l'arrête donc à son premier événement, la tâche de surveillance `demo-qa`,
+    qui est aussi ce qui suit immédiatement la dernière tâche déclarée du plan.
+    """
+
+    def __init__(self) -> None:
+        self.evenements: list[Event] = []
+
+    async def publish(self, event: Event) -> None:
+        if event.tache_id == "demo-qa":
+            raise _FinDuScenario
+        self.evenements.append(event)
+
+
+@pytest.fixture
+def evenements_demo(monkeypatch) -> list[Event]:
+    """Ce que le scénario nominal de la démo **publie**, jusqu'à sa pulsation.
+
+    Les attentes sont retirées : ce qu'on mesure est ce qui part sur le bus, et
+    jamais quand — le rythme est l'affaire de la démo montrée à l'écran.
+    """
+
+    async def _sans_attente(_delai: float) -> None:
+        return None
+
+    monkeypatch.setattr(demo.asyncio, "sleep", _sans_attente)
+    bus = _BusEnregistreur()
+
+    async def jouer() -> None:
+        try:
+            await demo._scenario(bus)
+        except _FinDuScenario:
+            pass
+
+    asyncio.run(jouer())
+    return bus.evenements
+
+
 def _ecarts(journal: RunJournal) -> list[str]:
     """Ce que le journal dit de l'écart — les lignes d'activité qui le nomment."""
     return [
@@ -857,6 +909,90 @@ def test_l_ecart_ne_cree_aucune_tache_fantome():
     assert event.tache_id == "api-crud"
     assert event.type != EVENEMENT_TACHE_DETAIL  # une activité, pas un détail
     assert event.cout_usd is None  # rien au grand livre
+
+
+def test_la_phrase_de_l_ecart_a_une_seule_source():
+    """Deux émetteurs, une formulation (#1112).
+
+    Le moteur la consigne à la clôture d'une vraie tâche ; le scénario de démo la
+    publie pour que ce qu'un écran lit en démo soit bit pour bit ce qu'un vrai run
+    lui envoie. Recopiée des deux côtés, elle finirait par diverger — et la démo
+    validerait alors un rendu que la production ne produit pas.
+    """
+    provider = FournisseurChecklist([[_releve(("Écrire les routes", ETAPE_EN_COURS))]])
+    journal = _joue(_executeur(provider), _tache())
+
+    (ecart,) = _ecarts(journal)
+    assert ecart == phrase_ecart_checklist(
+        [EtapeTache(libelle="Écrire les routes", etat=ETAPE_EN_COURS)], 1
+    )
+
+
+# --------------- ⑤bis Le scénario de démo publie la forme d'arrivée d'un vrai run
+
+
+def test_la_demo_ne_solde_plus_une_tache_sur_une_checklist_muette():
+    """Le défaut relevé au bouclage du 2026-09-21 (#1112).
+
+    `demo-t1` ne publiait **aucun** relevé : le graphe retombait sur l'ossature du
+    plan et affichait une tâche « Terminée » à **0/2**. La démo ne portait donc que
+    des relevés qui contredisent leur verdict, et pas un seul qui le confirme —
+    alors que montrer les deux côte à côte est exactement ce qu'on lui demande.
+    """
+    (noeud_t1,) = [noeud for noeud in demo.PLAN_DEMO if noeud.id == "demo-t1"]
+
+    assert demo.CHECKLIST_DEMO_T1
+    # Le relevé porte les libellés du plan : la démo ne raconte pas deux histoires.
+    assert [etape.libelle for etape in demo.CHECKLIST_DEMO_T1] == list(noeud_t1.etapes)
+    assert all(etape.etat == ETAPE_FAITE for etape in demo.CHECKLIST_DEMO_T1)
+
+
+def test_la_demo_garde_le_cas_incomplet_mais_en_dit_l_ecart(evenements_demo):
+    """`demo-t2` reste à 2/4 — c'est le cas que l'écran doit savoir rendre (#944).
+
+    Ce qui manquait n'était pas le relevé incomplet mais son **écart** : un vrai
+    run publie la ligne, la démo n'en publiait aucune, si bien que rien nulle part
+    ne disait laquelle des quatre étapes manquait.
+    """
+    restantes = [
+        etape for etape in demo.CHECKLIST_DEMO_T2 if etape.etat != ETAPE_FAITE
+    ]
+    assert len(restantes) == 2
+
+    ecarts = [
+        event
+        for event in evenements_demo
+        if event.type == EVENEMENT_AGENT_ACTIVITE
+        and event.detail.startswith("Checklist incomplète")
+    ]
+
+    (ecart,) = ecarts
+    assert ecart.tache_id == "demo-t2"
+    assert ecart.detail == phrase_ecart_checklist(restantes, len(demo.CHECKLIST_DEMO_T2))
+    assert "Tests d'intégration" in ecart.detail
+
+
+def test_aucune_tache_soldee_de_la_demo_ne_publie_un_releve_muet(evenements_demo):
+    """La propriété, et non le cas : une tâche que le scénario solde publie soit une
+    checklist, soit rien — mais jamais un plan qui déclare des étapes en face d'un
+    relevé absent, qui est précisément ce qui fabriquait le 0/2."""
+    declare = {noeud.id: noeud.etapes for noeud in demo.PLAN_DEMO}
+    releves: dict[str, list] = {}
+    soldees: set[str] = set()
+    for event in evenements_demo:
+        if event.type != EVENEMENT_TACHE_STATUT or event.tache_id is None:
+            continue
+        if event.etapes:
+            releves[event.tache_id] = event.etapes
+        if event.statut == STATUT_TERMINEE:
+            soldees.add(event.tache_id)
+
+    muettes = [
+        tache_id
+        for tache_id in soldees
+        if declare.get(tache_id) and not releves.get(tache_id)
+    ]
+    assert muettes == []
 
 
 # ------------------- ⑥ De bout en bout : ce que l'agent coche ressort par l'API

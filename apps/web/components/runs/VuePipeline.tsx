@@ -550,6 +550,11 @@ function GraphePipeline({
           agents={agents}
           reassigner={reassigner}
           fermer={fermer}
+          // Le partage retenu par #1112 : le nœud dit **combien** d'étapes ne
+          // sont pas rapportées, le panneau dit **lesquelles**. Le verdict vient
+          // de la même table que la boîte, jamais d'un second jugement sur le
+          // statut brut.
+          soldee={etats.get(affichee.id) === NOEUD_TERMINE}
         />
       )}
     </SectionPipeline>
@@ -736,6 +741,13 @@ function NoeudCarte({
   const etapes = normaliserEtapes(noeud.etapes);
   const { faites, total } = comptesEtapes(etapes);
   const courante = etapeCourante(etapes);
+  // Ce que la boîte ne savait pas dire (#1112) : la tâche est soldée, et son
+  // relevé ne la suit pas. Le verdict vient du moteur et ne se réécrit pas ici,
+  // le compteur non plus — seul l'**écart** s'ajoute, comme #944 l'a tranché
+  // côté journal. `NOEUD_TERMINE` et lui seul : sur un échec, une checklist
+  // inachevée n'apprend rien, c'est ce qu'un échec veut dire.
+  const soldee = etat === NOEUD_TERMINE;
+  const ecartAuVerdict = soldee && total > 0 && faites < total;
 
   // Y a-t-il seulement quelque chose à ouvrir ? Même règle que la carte du
   // Kanban : un nœud dont la tâche n'a pas démarré, ou qui n'a ni description ni
@@ -845,18 +857,34 @@ function NoeudCarte({
 
       {/* La checklist qui se coche en direct — premier critère du ticket. La
           rangée dit *combien*, la ligne dessous dit *quoi* ; la liste entière
-          s'ouvre dans le panneau, un nœud n'ayant pas la place de la porter. */}
+          s'ouvre dans le panneau, un nœud n'ayant pas la place de la porter.
+
+          Depuis #1112, cette ligne dit une seconde chose, et sur une tâche
+          soldée elle la dit **à la place** de l'étape courante : « non cochées ».
+          Le libellé d'une étape courante y annoncerait une suite qui ne viendra
+          pas — c'est le troisième signal que le bouclage du 2026-09-21 a relevé,
+          sous un badge « Terminée » et à côté d'un compteur qui n'atteint pas son
+          total. Aucun nombre dans la mention : le compteur juste à gauche le
+          porte déjà, et le répéter faisait se croiser deux fois le même chiffre
+          (réserve du regard neuf sur la variante A). */}
       {total > 0 && (
         <div className="mt-2">
           <AvancementEtapes
             etapes={etapes}
             faites={faites}
             taille="compacte"
+            soldee={soldee}
           />
           <p className="chiffre mt-1 flex items-baseline gap-1.5 text-annexe text-neutral-500 dark:text-neutral-400">
             <span>{`${faites}/${total}`}</span>
-            {courante !== null && (
-              <span className="min-w-0 truncate">{courante.libelle}</span>
+            {ecartAuVerdict ? (
+              <span className="min-w-0 truncate text-attention-texte">
+                non cochées
+              </span>
+            ) : (
+              courante !== null && (
+                <span className="min-w-0 truncate">{courante.libelle}</span>
+              )
             )}
           </p>
         </div>

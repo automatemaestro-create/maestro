@@ -268,6 +268,28 @@ def liens_en_liste(liens: Sequence[LienUtile]) -> list[dict[str, str]]:
     return [lien.to_dict() for lien in liens]
 
 
+def phrase_ecart_checklist(restantes: Sequence[EtapeTache], total: int) -> str:
+    """La ligne qui dit l'écart entre le verdict d'une tâche et sa checklist (#944).
+
+    Elle vit **ici**, avec le contrat qu'elle décrit, parce qu'elle a deux
+    émetteurs (#1112) : le moteur, qui la consigne à la clôture d'une vraie tâche
+    (`maestro.engine.executor`), et le scénario de démo, qui doit publier la
+    **forme d'arrivée** d'un vrai run et non un raccourci à lui
+    (`maestro.controltower.demo`). Deux formulations du même fait finiraient par
+    diverger, et la démo validerait alors un rendu que la production ne produit
+    pas.
+
+    Elle ne juge rien : c'est l'appelant qui sait si la tâche est soldée, et en
+    succès. Ici on ne fait que la dire.
+    """
+    libelles = " · ".join(etape.libelle for etape in restantes)
+    return (
+        f"Checklist incomplète à la clôture : {len(restantes)} étape(s) sur "
+        f"{total} non cochée(s) par l'agent — {libelles}. La tâche est "
+        "terminée ; ces étapes ne sont pas rapportées comme faites."
+    )
+
+
 #: Rang d'avancement des trois états connus — ce qui permet de dire qu'une étape
 #: a **progressé**, et donc de refuser qu'elle recule. Un état inconnu n'y figure
 #: pas à dessein : on ne sait pas le classer, donc on ne le laisse pas défaire un

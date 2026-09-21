@@ -84,6 +84,7 @@ from maestro.detail_tache import (
     LIEN_TICKET,
     EtapeTache,
     LienUtile,
+    phrase_ecart_checklist,
 )
 from maestro.engine.executor import (
     STATUT_BLOQUEE,
@@ -284,6 +285,38 @@ PLAN_DEMO: tuple[NoeudPlan, ...] = (
         dependances=("demo-t2",),
         etapes=("Écrire le workflow", "Brancher le déploiement"),
     ),
+)
+
+#: Le relevé de `demo-t1`, **entièrement coché** (#1112) : une tâche qui se solde
+#: sur une checklist qui le confirme, c'est-à-dire le cas ordinaire.
+#:
+#: Il manquait, et c'est ce que le bouclage du 2026-09-21 a relevé : `demo-t1` ne
+#: publiait aucun relevé, si bien que le graphe retombait sur l'ossature du plan
+#: et affichait une tâche « Terminée » à **0/2**. La démo ne portait alors que des
+#: relevés qui contredisent leur verdict, et pas un seul qui le confirme — alors
+#: que porter les deux cas côte à côte est tout ce qu'on lui demande.
+#:
+#: Ses libellés sont ceux du plan, et un test le garde : deux listes qui divergent
+#: raconteraient deux histoires de la même tâche.
+CHECKLIST_DEMO_T1: tuple[EtapeTache, ...] = (
+    EtapeTache(libelle="Lister les entités", etat=ETAPE_FAITE),
+    EtapeTache(libelle="Écrire la migration", etat=ETAPE_FAITE),
+)
+
+#: Le relevé de `demo-t2`, **inachevé à la clôture** (#1112) : l'agent a livré
+#: sans cocher ses deux dernières lignes, ce qui est le cas ordinaire que le
+#: retex du 2026-09-11 a relevé (G12) et que #944 a tranché côté moteur — l'écart
+#: se **dit**, il ne se comble pas.
+#:
+#: Nommé plutôt qu'écrit sur place parce qu'il a deux lecteurs : la tâche qui le
+#: publie, et la ligne d'écart qui en dérive ses libellés. Les recopier ferait de
+#: la démo le seul endroit du dépôt où l'écart et la checklist peuvent se
+#: contredire.
+CHECKLIST_DEMO_T2: tuple[EtapeTache, ...] = (
+    EtapeTache(libelle="Définir le contrat OpenAPI", etat=ETAPE_FAITE),
+    EtapeTache(libelle="Implémenter la création", etat=ETAPE_FAITE),
+    EtapeTache(libelle="Implémenter la liste paginée", etat=ETAPE_EN_COURS),
+    EtapeTache(libelle="Tests d'intégration", etat=ETAPE_A_FAIRE),
 )
 
 
@@ -554,6 +587,10 @@ async def _scenario(bus: EventBus) -> None:
             tours=3,
             outils=("Write", "Bash"),
         ),
+        # Le cas ordinaire (#1112) : une tâche soldée dont le relevé confirme le
+        # verdict. `demo-t2`, juste en dessous, garde le cas incomplet — avec la
+        # ligne d'écart qu'un vrai run publie.
+        checklist=CHECKLIST_DEMO_T1,
         # Une décision tranchée seul (#1024), de la famille « choix technique qui
         # ne dépasse pas le brief » : rien à demander, donc rien de suspendu.
         decisions=(
@@ -615,12 +652,7 @@ async def _scenario(bus: EventBus) -> None:
             "`GET /contacts` pour lister (pagination, tri par nom). Validation "
             "des champs obligatoires côté API, erreurs au format du projet."
         ),
-        checklist=(
-            EtapeTache(libelle="Définir le contrat OpenAPI", etat=ETAPE_FAITE),
-            EtapeTache(libelle="Implémenter la création", etat=ETAPE_FAITE),
-            EtapeTache(libelle="Implémenter la liste paginée", etat=ETAPE_EN_COURS),
-            EtapeTache(libelle="Tests d'intégration", etat=ETAPE_A_FAIRE),
-        ),
+        checklist=CHECKLIST_DEMO_T2,
         liens=(
             LienUtile(
                 libelle="Maquette de l'écran contacts",
@@ -661,6 +693,28 @@ async def _scenario(bus: EventBus) -> None:
             ),
         ),
     )
+    # L'écart entre le verdict et le relevé, **tel que le moteur le consigne**
+    # (#944) : `demo-t2` se solde à 2/4, et un vrai run publie alors cette ligne
+    # sur `agent.activite`. Sans elle, la démo montrait un compteur inachevé sous
+    # un badge « Terminée » et rien nulle part pour dire laquelle des quatre
+    # étapes manquait — le défaut que le bouclage du 2026-09-21 a relevé (#1112).
+    # La phrase vient de `maestro.detail_tache`, jamais recopiée ici.
+    await bus.publish(
+        Event(
+            type=EVENEMENT_AGENT_ACTIVITE,
+            run_id=RUN_ID,
+            tache_id="demo-t2",
+            titre="Implémenter l'API REST des contacts (créer / lister)",
+            agent=AGENT_DEV,
+            role=ROLE_DE[AGENT_DEV],
+            detail=phrase_ecart_checklist(
+                [etape for etape in CHECKLIST_DEMO_T2 if etape.etat != ETAPE_FAITE],
+                len(CHECKLIST_DEMO_T2),
+            ),
+            projet_id=PROJET_ID,
+        )
+    )
+    await asyncio.sleep(1)
 
     await _avancer_tache(
         bus,
