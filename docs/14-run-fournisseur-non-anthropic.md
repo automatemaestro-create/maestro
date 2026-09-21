@@ -38,6 +38,15 @@ MAESTRO_PROVIDER=openai MAESTRO_MODEL=qwen2.5:3b OPENAI_BASE_URL=http://localhos
 ce qu'il fait, pour qui, et comment l'essayer."
 ```
 
+> ⚠ **Depuis #1173, `MAESTRO_MODEL` vaut aussi pour la Control Tower.** Le fil de
+> l'orchestrateur, l'assistant, la génération d'agent, le chat direct avec un agent et le
+> classifieur du routage envoyaient leur défaut Claude (`claude-sonnet-5`,
+> `claude-haiku-4-5`) à n'importe quel fournisseur : le run marchait, le fil, seule porte
+> d'entrée, non. La fabrique pose le modèle imposé sur le fournisseur qu'elle construit
+> (`modele_configure`), et chaque canal le lit là (`providers.factory.modele_du_canal`).
+> Sans `MAESTRO_MODEL` hors Claude, le fil dit le réglage absent et ce que la sonde du poste
+> a trouvé, jamais une panne passagère.
+
 `MAESTRO_MODEL` (requis hors Claude) impose le modèle unique à l'orchestrateur **et**
 aux exécutants ; le fournisseur ne sachant pas exécuter d'agent outillé, chaque rôle
 retombe automatiquement sur son **livrable texte** (`UnsupportedCapability` → repli

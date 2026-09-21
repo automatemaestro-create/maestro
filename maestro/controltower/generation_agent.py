@@ -279,9 +279,15 @@ class GenerateurDefinitionAgent:
         de l'échec un brouillon de formulaire effacé.
         """
         if self._provider is None:
-            from maestro.providers.factory import provider_from_settings
+            from maestro.providers.factory import modele_du_canal, provider_from_settings
 
-            self._provider = provider_from_settings()
+            fournisseur = provider_from_settings()
+            # Le modèle suit le fournisseur configuré (#1173) : le défaut de ce
+            # canal est un nom Claude, qui n'a de sens que chez Claude. Résolu
+            # **avant** de retenir le fournisseur, pour qu'un échec laisse tout à
+            # résoudre au prochain appel plutôt qu'un fournisseur sans son modèle.
+            self._modele = modele_du_canal(self._modele, fournisseur)
+            self._provider = fournisseur
         texte = await self._provider.generate(
             prompt, model=self._modele, system_prompt=_CADRE_GENERATION
         )

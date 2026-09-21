@@ -670,10 +670,20 @@ class LocalExecutor(TaskExecutor):
         self._jauge = JaugeInstances()
         # Routage combiné (#42) : règles de compétences + classifieur léger adossé
         # au même fournisseur. Un routeur injecté remplace `agents` pour le routage.
+        # Le classifieur suit `MAESTRO_MODEL` quand il est posé (#1173), comme les
+        # agents du run : son défaut (`claude-haiku-4-5`) n'a de sens que chez
+        # Claude, et chaque routage ambigu l'envoyait à n'importe quel fournisseur.
         self._router = (
             router
             if router is not None
-            else Router(tuple(agents), classifier=TaskClassifier(provider))
+            else Router(
+                tuple(agents),
+                classifier=(
+                    TaskClassifier(provider)
+                    if not modele
+                    else TaskClassifier(provider, model=modele)
+                ),
+            )
         )
         # Les agents **du projet de la tâche** (#1038) : un agent créé dans un
         # projet naît après le câblage du routeur et dans son propre dossier, donc

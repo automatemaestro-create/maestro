@@ -1755,7 +1755,13 @@ def create_app(
         repondeur=(
             orchestration_repondeur
             if orchestration_repondeur is not None
-            else RepondeurOrchestration(lanceur=ouvrir_un_run, apercu=apercu_de(state))
+            else RepondeurOrchestration(
+                lanceur=ouvrir_un_run,
+                apercu=apercu_de(state),
+                # La même sonde que `GET /api/fournisseurs` (#1173) : quand aucun
+                # fournisseur n'est réglé, le fil dit ce que le poste offre.
+                sonde=sonde_poste.rapport,
+            )
         ),
         mailbox=mailbox,
         bus=bus,

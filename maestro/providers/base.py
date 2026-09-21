@@ -326,6 +326,13 @@ class ModelProvider(ABC):
     #: d'avance à l'UI. Faux par défaut : annoncer une gamme, c'est s'y tenir.
     MODELES_LIBRES: ClassVar[bool] = False
 
+    #: Le modèle que la configuration impose (`MAESTRO_MODEL`, #69), posé par la
+    #: fabrique sur le fournisseur qu'elle construit (#1173) — `None` quand rien
+    #: n'est imposé, ou pour un fournisseur construit à la main. Il voyage **avec**
+    #: le fournisseur pour qu'un canal qui le résout sache quel modèle lui demander
+    #: sans relire la configuration : les deux viennent d'une seule lecture.
+    modele_configure: str | None = None
+
     @classmethod
     def catalogue(cls) -> FournisseurDisponible:
         """La fiche de ce fournisseur pour le catalogue (#253) — sans rien construire."""
