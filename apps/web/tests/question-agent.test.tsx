@@ -84,12 +84,35 @@ describe("la carte d'une question", () => {
     // Qui demande, en en-tête — c'est la grammaire de la demande de cadrage
     // (#943), et les deux moments sont jumeaux.
     expect(
-      region.getByRole("heading", { name: /Question de bdd/ }),
+      region.getByRole("heading", { name: /Question de l'agent bdd/ }),
     ).toBeInTheDocument();
     // Son rôle et sa tâche, en une ligne et en place fixe.
     expect(region.getByText("Base de données · Rédiger le schéma de données")).toBeInTheDocument();
     // Et la question elle-même, telle que l'agent l'a écrite.
     expect(region.getByText(question.question)).toBeInTheDocument();
+  });
+
+  it("nomme l'agent sans dépendre de son initiale", () => {
+    // #1110 : « Question de infra » — l'élision manquait, et elle manquait
+    // pour un nom que l'équipe d'un projet déclare librement. Le titre ne
+    // colle donc plus le nom derrière « de » : ce qu'on garde ici n'est pas
+    // une élision réussie sur `infra`, c'est qu'**aucun** nom ne puisse la
+    // rater. D'où les deux bouts de la même garde : le nom est rendu, et il
+    // ne suit jamais un « de » nu.
+    // Le cas relevé — une voyelle —, puis une consonne, puis un sigle dont
+    // l'oreille tranche l'élision autrement que la lettre (« un SMS », mais
+    // « de l'agent sms » quoi qu'il arrive). Un seul montage par nom : deux
+    // cartes de même agent rendraient deux régions homonymes.
+    const titres = ["infra", "bdd", "sms"].map((agent) => {
+      const { region } = carte(questionFactice({ agent }));
+      return [agent, region.getByRole("heading", { level: 3 }).textContent ?? ""] as const;
+    });
+
+    for (const [agent, titre] of titres) {
+      expect(titre).toContain(agent);
+      expect(titre).not.toMatch(new RegExp(`\\bde ${agent}\\b`));
+      expect(titre).not.toMatch(new RegExp(`\\bd'${agent}\\b`));
+    }
   });
 
   it("ne fabrique aucun choix que l'agent n'a pas proposé", () => {

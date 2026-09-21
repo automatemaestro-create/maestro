@@ -124,10 +124,20 @@ export function QuestionDansLeFil({
       densite="aeree"
       aria-label={`Question de l'agent ${question.agent}`}
     >
+      {/* « Question de l'agent <nom> », et non « Question de <nom> » : le nom
+          d'un agent est déclaré par l'équipe d'un projet, donc arbitraire
+          (`Question.agent`), et « Question de infra » y manquait son élision
+          (#1110). Des deux issues que le ticket ouvre, celle-ci est la seule
+          qui tienne pour **tous** les noms : l'élision française se décide à
+          l'oreille et non à la lettre, si bien qu'une règle dérivée de
+          l'initiale se tromperait au premier sigle, h muet ou « u »
+          semi-voyelle — on supprime la classe de coquilles au lieu de la
+          rétrécir. Le titre dit du même coup exactement ce que l'`aria-label`
+          de la carte annonce. */}
       <EnTeteSection
         niveau={3}
         icone={IconeAide}
-        titre={`Question de ${question.agent}`}
+        titre={`Question de l'agent ${question.agent}`}
         ton="attention"
         className="mb-1"
         aside={
