@@ -287,6 +287,8 @@ Deux choses constatées ici, et utiles au lot 2 (#932) :
 - **Ses racines d'écriture sont celles du répertoire courant.** Depuis un worktree, il écrit dans
   ce worktree — un chemin absolu hors racines est refusé (« *outside allowed roots* »), et la
   **casse du lecteur compte** (`e:/…` refusé, `E:/…` accepté). Un nom **relatif** est le geste sûr.
+- ⚠ *Le mode démo quitte le dépôt ([docs/41](./41-decision-maestro-juge-il-ne-bride-pas.md),
+  #1156) : le point suivant décrit un état présent que #1166 et #1168 retirent.*
 - **La démo d'un worktree rend « Choisir le projet »**, pas le tableau de bord : le scénario
   estampille tout du projet `prj-demo` (`maestro/controltower/demo.py`) et le dépôt de projets d'un
   clone neuf est vide. Les deux moitiés sont indissociables — déclarer `core/projets/prj-demo.json`

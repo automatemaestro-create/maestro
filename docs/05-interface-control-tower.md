@@ -3139,6 +3139,12 @@ réellement indépendantes, les **formes JSON** des routes à venir sont **arrê
 **servies en fixtures par la démo** (`maestro.controltower.demo`) : la voie front code contre
 elles sans attendre le backend réel (ticket #183).
 
+> ⚠ **Le mode démo quitte le dépôt** ([docs/41](./41-decision-maestro-juge-il-ne-bride-pas.md),
+> #1168). Les fixtures (`fixtures.py`) et les deux routes qui ne servaient qu'elles
+> (`GET /api/configuration`, `GET /api/playbooks/propositions`, `501` en réel) partent avec lui. Ce
+> chapitre reste le répertoire des formes JSON de l'API. Les passages qui décrivent la démo au
+> présent sont réécrits par #1168.
+
 **État de livraison.** Ces routes sont déclarées dans `create_app` mais **répondent `501`** tant
 que leur lot n'est pas livré (Phase 5, #184+). Fournir des fixtures (`create_app(fixtures=…)`, ce
 que fait la démo) les fait servir des données factices cohérentes avec le scénario existant. La

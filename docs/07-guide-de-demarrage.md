@@ -549,6 +549,10 @@ bash scripts/controltower/start.sh
 bash scripts/controltower/start.sh --demo
 ```
 
+> ⚠ **Le mode démo quitte le dépôt** ([docs/41](./41-decision-maestro-juge-il-ne-bride-pas.md),
+> #1168). Toute vérification du produit se joue sur la vraie stack. Ce passage est réécrit par
+> #1168.
+
 **Le mode réel est le défaut** depuis #186. La simulation a longtemps été le seul moyen de
 « regarder l'UI vivre » ; elle n'a plus à l'être, et surtout un utilisateur qui découvre le
 produit ne doit pas prendre des données factices pour la réalité. Ce que cela change :

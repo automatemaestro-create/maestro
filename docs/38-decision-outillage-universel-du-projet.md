@@ -519,6 +519,16 @@ constate, pas une propriété acquise.
 
 ## 8. Ce que les lots suivants en tiennent — et où ils l'appliquent
 
+> ⚠ **Renversé en partie le 2026-09-21** ([docs/41](./41-decision-maestro-juge-il-ne-bride-pas.md),
+> chantier #1155). Deux mécanismes sont renversés :
+> - le questionnaire de #1031, **borné, à options fermées et sans modèle**. Un projet neuf se
+>   décrit avec les mots de la personne (#1147) ;
+> - les tables de détection de #1030, qui fixaient ce que l'analyse savait reconnaître. Le modèle
+>   lit le projet, et les tables deviennent des indices (#1158).
+>
+> Les commandes écrites sans exécution sont vérifiées avant d'être écrites (#1160). Le format
+> arrêté par cette note (§3 à §5) ne bouge pas, ni le `recommander` commun aux deux chemins.
+
 Les six lots sont **livrés** (2026-09-21). Le tableau dit ce que chacun a pris ici et par quel
 code il l'applique : c'est le chemin que prend quelqu'un qui conteste une décision de cette note —
 de la règle à la ligne qui l'exécute, et à la suite qui la garde.

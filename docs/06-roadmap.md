@@ -40,6 +40,9 @@ gantt
 > Le jalon **« Les scénarios de référence »** s'insère entre les deux (2026-09-21) : le produit se
 > juge sur ce qu'un utilisateur lui demande, joué avec le vrai modèle, pendant que le rail outillage
 > est gelé jusqu'au 2026-10-12 ([docs/40](./40-decision-rythme-et-scenarios-de-reference.md)).
+> Le jalon **« Rien de figé »** vient juste derrière (2026-09-21) : Maestro comprend n'importe quel
+> projet, propose, se laisse corriger et vérifie en exécutant. Le même jour, le mode démo quitte le
+> dépôt ([docs/41](./41-decision-maestro-juge-il-ne-bride-pas.md)).
 
 ---
 
@@ -547,6 +550,10 @@ tour dans la file : il peut commencer maintenant.
 > bougé ; il passe simplement derrière. #1125 reste démarrable à la main. Le chantier outillage
 > #1129 est **différé** par le gel du rail outillage (`prio::basse`), et se rejuge à sa levée.
 
+> ⚠ **Un second jalon s'est inséré devant celui-ci le 2026-09-21** (#1169) : « Rien de figé »
+> (2028-02-02), plus bas. La fonction passe avant le poli, et l'on n'habille pas une capacité qui va
+> changer. L'échéance de ce jalon n'a pas bougé.
+
 ---
 
 ## « Les scénarios de référence » — le produit fait ce qu'on lui demande (2026-09-21)
@@ -560,6 +567,7 @@ rythme accéléré*. Comme les jalons nés d'une idée, il ne prend **pas de num
 |---|---|---|---|
 | **Les scénarios de référence — le produit fait ce qu'on lui demande** | Quatre scénarios joués de bout en bout avec le vrai modèle, qui conditionnent le bouclage d'un jalon produit ; une action simple qui s'exécute | 2028-01-30 | #1148 et #1149, indépendants et **sans parent** ; #1146 dans « Avant l'installeur » |
 | *Outillage de la forge* (jalon existant, rail outillage) | Trois allègements du processus, seule exception au gel | 2027-09-15 | #1150, #1151, #1152 (nés assignés : ils écrivent sous `.claude/`) |
+| *Les scénarios de référence* (ajout du 2026-09-21, #1169) | Le mode démo quitte le dépôt ; le produit se vérifie sur le réel | 2028-01-30 | **#1156** — 5 lots (#1164–#1168) |
 
 **Le constat, mesuré.** Sur les 158 tickets fermés en septembre :
 - 23 % touchaient l'outillage de la forge ;
@@ -632,6 +640,96 @@ Ne bougent pas :
 
 Sur le rail outillage, « Outillage de la forge » reste le jalon courant. #1150, #1151 et #1152 y
 sont en `haute`, et les deux chantiers différés en `basse` : les allègements passent devant tout.
+
+**Le mode démo quitte le dépôt** (ajout du 2026-09-21, #1169). *« À partir de maintenant, supprime
+le mode démo. Tous les tests seront faits sur la version réelle de Maestro. »* Le jalon gagne un
+critère **C5** et le chantier **#1156**, qui s'appuie sur le banc #1148. On remplace d'abord, on
+supprime ensuite :
+- **#1164** : une stack réelle par copie de travail, isolée, et l'état d'un vrai passage du banc qui
+  se rouvre par l'API réelle ;
+- **#1165, #1166, #1167** (parallèles, nés assignés, ils écrivent sous `.claude/`) : la relecture
+  visuelle, les captures et films de présentation, les skills et textes de vérification passent à
+  la vraie stack ;
+- **#1168** : `demo.py`, `fixtures.py`, `start.sh --demo`, `maestro-controltower-demo` et
+  `maestro-demo` quittent le produit.
+
+La personne a arbitré deux points : les tests unitaires **gardent leurs doubles**, et l'écran peuplé
+vient de **l'état du dernier vrai passage du banc**, rejoué à la demande. La démonstration est dans
+[docs/41](./41-decision-maestro-juge-il-ne-bride-pas.md).
+
+> ⚠ **Les critères de sortie du jalon sont dans sa description**, section `## Critères de sortie`
+> (C1 à C5). C'est elle qui fait foi au bouclage (docs/10 §3.4), pas ce résumé.
+
+---
+
+## « Rien de figé » — Maestro comprend le projet, propose, vérifie (2026-09-21)
+
+Ce jalon est né d'une demande du 2026-09-21, instruite par [`/idee`](../.claude/commands/idee.md)
+(#1013) et consignée par #1169. La personne venait de créer un projet qu'aucune des quatre natures
+du questionnaire d'outillage ne décrivait (#1147) :
+
+> *« Maestro n'est pas un outil qui impose et bride. Rien ne doit être figé, supposé, fixe,
+> statique… L'outil doit être intelligent. Ce projet sera vendu, c'est un projet professionnel. »*
+
+Comme les jalons nés d'une idée, il ne prend **pas de numéro de phase**.
+
+| Milestone | Contenu | Échéance | Suivi |
+|---|---|---|---|
+| **Rien de figé — Maestro comprend le projet, propose, vérifie** | Un projet de n'importe quelle sorte se crée ou s'importe sans entrer dans une case : le modèle le comprend, propose son outillage et son équipe, se laisse corriger en langage naturel, et vérifie en l'exécutant ce qu'il écrit | 2028-02-02 | **#1155** — 6 lots (#1158, #1147, #1159, #1160, #1161, #1162) ; **#1163**, sans parent |
+
+**Le constat.** Les premières minutes d'un projet, son outillage puis son équipe, passaient par des
+fonctions pures appliquées à des tables fermées. Le modèle en était écarté à dessein, alors qu'il
+tient déjà le fil de conversation où ces questions se posent :
+- un questionnaire à options figées, sans réponse libre ;
+- des commandes par langage écrites sans jamais être exécutées ;
+- une détection par extensions ;
+- cinq gabarits de rôle retenus par des règles fixes.
+
+L'inventaire est dans [docs/41 §2](./41-decision-maestro-juge-il-ne-bride-pas.md).
+
+**Le contenu :**
+- **#1158** (parallèle) : un projet existant se comprend en le lisant. Les tables de détection
+  deviennent des indices, jamais un plafond.
+- **#1147** (parallèle, périmètre redéfini) : un projet neuf se décrit avec les mots de la personne.
+  Les questions ne portent que sur un vrai manque, les options sont générées pour ce projet, une
+  réponse libre reste toujours possible.
+- **#1159** (parallèle) : l'équipe se propose pour le besoin réel, quel que soit le rôle, et se
+  corrige en langage naturel.
+- **#1160** : ce que Maestro écrit dans un projet est **vérifié en l'exécutant**. C'est la pièce qui
+  concilie « ce qui n'est pas vérifié n'est pas cité » avec l'intelligence demandée.
+- **#1161** : l'outillage proposé se corrige en langage naturel, sur les deux chemins.
+- **#1162** : le banc des scénarios de référence joue un projet qu'aucune liste ne prévoyait, en
+  création et en import. C'est la pièce du bouclage (C4).
+- **#1163** : les sources d'un brief se lisent quel qu'en soit le format.
+
+**Une décision tombe, à la demande de la personne**, et
+[docs/41](./41-decision-maestro-juge-il-ne-bride-pas.md) l'écrit : *Maestro juge, il ne bride pas*.
+Elle renverse le questionnaire borné et sans modèle (docs/38, #1031), les tables de détection
+(#1030) et l'équipe dérivée par des règles (docs/37, #1039).
+
+Ne bougent pas :
+- les garde-fous (secrets, frontière d'écriture, diff à valider, arbitrage des actes) ;
+- l'analyse qui n'exécute rien ;
+- le `recommander` commun aux deux chemins.
+
+**Place dans la file**, sur le rail produit :
+
+| Jalon | Échéance |
+| --- | --- |
+| « Avant l'installeur » (reste #1146) | 2028-01-26 |
+| « Les scénarios de référence » | 2028-01-30 |
+| **« Rien de figé »** | **2028-02-02** |
+| « Le niveau visuel » | 2028-02-05 (inchangée) |
+| Phase 9 | 2028-02-16 (inchangée) |
+
+- **Derrière « Les scénarios de référence »** : le banc est l'instrument de mesure de ce jalon (#1162
+  en est un scénario), et le retrait de la démo s'appuie sur lui.
+- **Devant « Le niveau visuel »** : la plainte porte sur les fonctionnalités, et l'on n'habille pas
+  une capacité qui va changer.
+- **Devant la Phase 9**, pour l'argument de la Phase 9 elle-même : on n'empaquette pas une cible
+  mouvante (§4.8 de docs/24).
+- Son échéance tombe **strictement entre** ses voisins : **aucune autre échéance n'a bougé**. #1147
+  est passé de `moyenne` à `haute` en rejoignant ce jalon.
 
 > ⚠ **Les critères de sortie du jalon sont dans sa description**, section `## Critères de sortie`
 > (C1 à C4). C'est elle qui fait foi au bouclage (docs/10 §3.4), pas ce résumé.
