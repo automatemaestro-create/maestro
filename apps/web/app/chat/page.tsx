@@ -219,6 +219,13 @@ export default function PageChat() {
   const global = destinataire === AGENT_ORCHESTRATION;
   const interlocuteur = global ? INTERLOCUTEUR_ORCHESTRATION : destinataire;
 
+  // Les amorces d'un fil vide, **dérivées du projet ouvert** (#942) : elles
+  // parlaient du backlog de Maestro, elles proposent désormais d'aller voir ce
+  // projet-ci. Mémoïsées sur la fiche, non par prudence de performance — la
+  // fonction est pure et ne lit rien — mais pour que la liste garde son
+  // identité entre deux rendus, `Conversation` la recevant en propriété.
+  const amorces = useMemo(() => amorcesDuProjet(projet), [projet]);
+
   // Y a-t-il un run **arrêté** qui attend un geste ? La même règle que le fil de
   // cadrage lui-même (`runsEnAttente`, `lib/brief`) — appelée, jamais recopiée :
   // deux formulations de « ce qui attend » finiraient par ne plus désigner la
@@ -267,13 +274,6 @@ export default function PageChat() {
   // une question d'outillage, ou rien. L'ordre du pied ci-dessous n'arbitre donc
   // pas entre elles, il dit seulement laquelle regarder en premier.
   const question = global ? questionEnAttente(fil.messages) : null;
-
-  // Les amorces d'un fil vide, **dérivées du projet ouvert** (#942) : elles
-  // parlaient du backlog de Maestro, elles proposent désormais d'aller voir ce
-  // projet-ci. Mémoïsées sur la fiche, non par prudence de performance — la
-  // fonction est pure et ne lit rien — mais pour que la liste garde son
-  // identité entre deux rendus, `Conversation` la recevant en propriété.
-  const amorces = useMemo(() => amorcesDuProjet(projet), [projet]);
 
   /**
    * Chaque frappe passe ici : une mention close par une espace change le
