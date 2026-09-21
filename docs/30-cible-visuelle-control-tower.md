@@ -2534,6 +2534,51 @@ passage** : 5 des 8 `p-2` hors barème sont des **boutons à icône seule**, que
 des conteneurs et que `Bouton` ne propose pas — un manque du socle, pas un pas de conteneur. Les
 tickets #983 et #1057 portent `veille::arbitree` depuis cette veille.
 
+#### L'en-tête d'un run : un titre court, le texte entier à portée — 2026-09-21 (#1072, différée de #991)
+
+Surface : **l'en-tête d'un run** (`components/runs/VueRun.tsx`) et, accessoirement, le **pas du
+graphe des coûts**. Veille **différée**, jouée en interactif sur une surface déjà livrée. #991, un
+`type::bug` d'hygiène, avait dû trancher trois choses à l'écran sans référence : un `<details>`
+« Objectif complet » **replié** sous le titre ; un titre dérivé de la **première ligne**, borné à
+**80 signes** et coupé au dernier mot entier (`titre_court`) ; un plafond de **96 seaux** pour la
+portée « Tout ». Décision complète en commentaire de **#1072**, captures dans l'atelier de la
+session. La question : « comment un objet nommé par du texte libre montre-t-il un titre court sans
+perdre son texte ? »
+
+**Vérifié en direct**, valeurs relevées dans le navigateur : **GitHub**, liste des commits — le
+titre est la **première ligne** du message, le reste une description **repliée** derrière un bouton
+de 28 px posé sur la ligne du titre, nommé « Show description for <sha> » ; aucune coupe, un titre
+de 112 signes s'affiche entier. **GitHub**, page d'un commit — dans la vue d'un **seul** objet, le
+texte entier se lit **sous le titre, dans la même boîte**, déplié ; seul l'onglet du navigateur,
+place de largeur fixe, borne le titre, à **70 signes** « … » compris, coupé **au signe près**
+(relevé sur trois commits). **GitHub Actions**, en-tête d'un run — le titre de 126 signes passe
+sur deux lignes, sans `line-clamp`, et le texte long n'y est pas : il est à un lien. **GitLab**,
+liste des commits — le même geste que GitHub, un bouton « Développer <titre> », mais en bout de
+ligne. **Grafana**, page lue (*Query options*) — le nombre de points se déduit de la **largeur du
+graphe**, l'utilisateur n'en règle qu'un plancher.
+
+**Le fait qui tranche est constant sur GitHub et GitLab : le titre d'un objet est la première
+ligne de son texte, et le reste se replie derrière un geste nommé dans les listes, puis se lit sous
+le titre dans la vue de l'objet.**
+
+**Non vérifié, donc non cité** : Linear et Cursor (derrière une connexion) ; la densité à laquelle
+un graphe de coûts cesse d'être lisible, qu'aucune référence ne chiffre.
+
+**Quatre partis pris, et aucun ne demande de reprise.** **Le titre reste la première ligne, bornée
+et coupée au mot** — 80 est dans la fourchette de GitHub, et la coupe au mot vaut mieux que sa
+coupe au signe, qui se lit comme une faute. **L'objectif reste dans la tête, juste sous le titre**
+— c'est la place que lui donne la page d'un commit. **Replié par défaut, et c'est un écart
+assumé** à cette même page : elle déplie parce qu'elle n'a rien d'autre à montrer, là où l'en-tête
+d'un run porte l'avancement, l'attente et les gestes qu'un brief de quinze pages pousserait hors de
+l'écran. **Le plafond du graphe est une densité, pas un compte** — 96 seaux sur les 656 unités de
+la trace, soit environ 7 par seau : c'est ainsi qu'il se relit le jour où la largeur change, et
+aucun sélecteur de pas n'est à ajouter, les trois périodes bornées déclarant déjà le leur.
+
+**Ce que la veille n'a pas regardé** : le mobile. **Vu au passage** — la question vaut pour tout
+objet nommé par du texte libre, et le code y répond deux fois : `titre_court` pour un run (première
+ligne, 80 signes) et `titre_conversation` pour une conversation (texte entier condensé, 60 signes).
+Les tickets #991 et #1072 portent `veille::arbitree` depuis cette veille.
+
 ---
 
 ### 5.8 Un écran se juge contre l'attente — 2026-09-17 (chantier #972)
