@@ -21,8 +21,10 @@
  *
  * - **Le Kanban est réutilisé, pas réimplémenté.** `components/Kanban` rend les
  *   mêmes colonnes, les mêmes cartes et le même détail sur place (#251) — ce qui
- *   change est ce qu'on lui donne : les tâches de ce run. Seul son **vide** est
- *   nommé ici, la phrase par défaut désignant le projet (`messageVide`).
+ *   change est ce qu'on lui donne : les tâches de ce run, et depuis #1111 celles
+ *   qui sont **arrêtées sur un humain**, que le statut servi ne dit pas. Seul son
+ *   **vide** est nommé ici, la phrase par défaut désignant le projet
+ *   (`messageVide`).
  * - **L'appartenance au run vient de l'API.** Les tâches arrivent par
  *   `?run=<run_id>` (#473) et non d'un filtre sur `etatGlobal.taches` : un
  *   identifiant de tâche est partagé entre un run et sa relance, si bien qu'un
@@ -135,6 +137,11 @@ export function VueRun({ runId }: { runId: string }) {
     validations,
     tachesDuProjet,
   ).has(runId);
+  // Les tâches arrêtées sur un humain, lues **une fois** pour les deux lectures
+  // qui les montrent : le pipeline colore un nœud (#491), le Kanban dément une
+  // carte (#1111). Deux appels rendraient deux ensembles identiques et
+  // laisseraient croire à deux questions.
+  const tachesArretees = tachesEnAttenteDeValidation(validations);
   const attente =
     run === undefined || regimeDuRun(run, attendUneValidation) !== REGIME_SUSPENDU
       ? null
@@ -208,7 +215,7 @@ export function VueRun({ runId }: { runId: string }) {
               // la tâche : le moteur n'émet pas encore `en_attente_validation`
               // (`lib/execution`). C'est le troisième critère de #491, et le
               // défaut d'origine du chantier.
-              enAttenteHumaine={tachesEnAttenteDeValidation(validations)}
+              enAttenteHumaine={tachesArretees}
               revision={revision}
               messageVide={messageVideDuRun(run, attente)}
             />
@@ -220,6 +227,11 @@ export function VueRun({ runId }: { runId: string }) {
               agents={agents}
               reassigner={reassigner}
               projet={projet}
+              // Ce que le Kanban ne peut pas savoir du statut servi (#1111) :
+              // une tâche arrêtée sur un humain reste `en_cours`. Sans cette
+              // liste, sa carte dirait « Travaille depuis 1 min » d'une tâche
+              // que la tête du même écran dit en attente.
+              enAttenteHumaine={tachesArretees}
               messageVide={
                 chargementTaches
                   ? "Chargement des tâches de ce run…"

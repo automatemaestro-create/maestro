@@ -27,13 +27,45 @@
  * (#836), et le shell relit ses tâches en entier à chaque battement, jamais par
  * retouche locale : ce que la carte lit est toujours d'accord avec son statut.
  * Une tâche qui ne travaille pas rend donc la carte d'avant, au pixel près.
+ *
+ * ## Une carte qui dément sa colonne (#1111)
+ *
+ * Une tâche **arrêtée sur un humain** reste `en_cours` pour le moteur — il
+ * n'émet pas encore `en_attente_validation`, et la table partagée
+ * (`progression.py`) la compte en vol, à raison : elle est en vol. Elle tombe
+ * donc dans la colonne « En cours », et c'est **ce qui ne bouge pas** : les
+ * colonnes suivent la machine à états, les comptes restent ceux de #924.
+ *
+ * Ce qui bougeait, ce sont les **mots** : la carte disait « En cours »,
+ * « Travaille depuis 1 min » et son dernier geste, pendant que le pipeline
+ * disait « Attente humaine », l'en-tête « Validation en attente » et le tableau
+ * de bord « aucun run ne travaille en ce moment ». Les comptes concordaient, le
+ * vocabulaire non — et le Kanban était seul à dire qu'une tâche travaillait.
+ *
+ * D'où : la carte **dément sa colonne**. Elle prend la surface `attention` —
+ * l'ambre que `Carte` accorde déjà au nœud de pipeline en attente humaine,
+ * aucune couleur nouvelle —, porte le lien qui mène à l'écran des validations,
+ * écrit « Attente humaine » dans la place où elle écrivait son statut, et tait
+ * les deux marques de travail (signe de vie, chrono en vol). La question qu'elle
+ * pose n'est pas la sienne : `lib/execution.tacheArreteeSurUnHumain` la pose une
+ * fois, pour le Kanban comme pour le pipeline.
+ *
+ * Variante retenue sur pièces (regard neuf, commentaire « ## Variante retenue »
+ * du ticket) contre deux autres : le mot seul, qui **taisait** sans démentir, et
+ * la pastille d'état, qui repliait la ligne de statut sur deux lignes. La veille
+ * qui l'a cadrée — Jira (la carte reste en colonne, son apparence dément),
+ * Buildkite (glyphe pause et flèche vers le geste, jamais un indicateur de
+ * course), GitHub Actions (« Waiting » est un statut, pas « In progress ») —
+ * vit dans le commentaire « ## Veille de conception » du même ticket.
  */
 
+import Link from "next/link";
 import { useRef, useState, type MouseEvent } from "react";
 
 import {
   IconeAgent,
   IconeChrono,
+  IconeFlecheDroite,
   IconeJetons,
   IconePuce,
   IconeStatutAFaire,
@@ -56,10 +88,16 @@ import { detailDe } from "@/lib/detailTache";
 import {
   BadgeEtat,
   Carte,
+  CIBLE_MINIMALE,
   EnTeteSection,
   type Icone,
   type TonBadge,
 } from "@/components/Primitives";
+import { ATTENTES } from "@/components/runs/EtatRun";
+import {
+  ATTENTE_VALIDATION,
+  tacheArreteeSurUnHumain,
+} from "@/lib/execution";
 import {
   formatCout,
   formatDuree,
@@ -67,7 +105,13 @@ import {
   formatTokens,
   libelleStatut,
 } from "@/lib/format";
-import type { EtatAgent, Projet, Tache } from "@/lib/types";
+import { entreeParLibelle } from "@/lib/navigation";
+import {
+  STATUT_EN_ATTENTE_VALIDATION,
+  type EtatAgent,
+  type Projet,
+  type Tache,
+} from "@/lib/types";
 
 type Props = {
   taches: Tache[];
@@ -89,7 +133,23 @@ type Props = {
    * cadre autrement nomme donc son vide ; les autres n'ont rien à changer.
    */
   messageVide?: string;
+  /**
+   * Les tâches dont une demande de validation **dort** (#1111), telles que
+   * `lib/execution.tachesEnAttenteDeValidation` les rend — la même valeur que
+   * la vue pipeline reçoit sous le même nom, et pour la même raison : une
+   * demande de validation porte sa tâche, jamais son run, et le statut servi ne
+   * la dit pas.
+   *
+   * **Optionnelle**, et le défaut est « aucune » : le Kanban se monte aussi
+   * hors de la vue d'un run, où les validations du projet ne sont pas à portée.
+   * Un appelant qui ne la passe pas rend exactement la carte d'avant ce ticket
+   * — jamais une carte qui *devine* une attente qu'on ne lui a pas dite.
+   */
+  enAttenteHumaine?: ReadonlySet<string>;
 };
+
+/** Le défaut de `enAttenteHumaine` — hissé pour ne pas en recréer un par rendu. */
+const AUCUNE_ATTENTE: ReadonlySet<string> = new Set<string>();
 
 /**
  * Les colonnes du Kanban, dans l'ordre du flux de travail. Chaque statut porte
@@ -163,6 +223,7 @@ export function Kanban({
   reassigner,
   projet,
   messageVide,
+  enAttenteHumaine = AUCUNE_ATTENTE,
 }: Props) {
   // Le panneau est tenu **ici**, pas dans la carte : il est modal (une tâche à
   // la fois), et une carte est un `<article>` cliquable au fond d'une colonne
@@ -286,6 +347,10 @@ export function Kanban({
                   agents={agents}
                   reassigner={reassigner}
                   ouvrir={ouvrir}
+                  attendUnHumain={tacheArreteeSurUnHumain(
+                    tache,
+                    enAttenteHumaine,
+                  )}
                 />
               ))}
               {colonne.taches.length === 0 && (
@@ -320,11 +385,19 @@ function CarteTache({
   agents,
   reassigner,
   ouvrir,
+  attendUnHumain,
 }: {
   tache: Tache;
   agents: EtatAgent[];
   reassigner: Reassigner;
   ouvrir: Ouvrir;
+  /**
+   * Cette tâche est-elle arrêtée sur quelqu'un (#1111) ? **Résolu par le
+   * tableau**, pas par la carte : la question a une réponse
+   * (`lib/execution.tacheArreteeSurUnHumain`) et une seule, et la laisser à la
+   * carte la ferait reposer une fois par tâche rendue.
+   */
+  attendUnHumain: boolean;
 }) {
   const declencheur = useRef<HTMLButtonElement>(null);
 
@@ -338,7 +411,14 @@ function CarteTache({
   // voyage dans le signe de vie, qui n'est servi que pour une tâche en cours :
   // la carte n'a donc aucune règle à rejouer — elle le montre quand elle l'a,
   // exactement comme la ligne du signe juste au-dessus.
-  const travailleDepuis = tache.activite?.travaille_depuis || null;
+  //
+  // Une réserve de plus depuis #1111, et c'est **la même** que celle du nœud de
+  // pipeline : une tâche arrêtée sur un humain ne « travaille » pas, donc les
+  // deux temps se taisent ensemble. Le `sr-only` de `ChronoEnVol` dit
+  // « Travaille », et c'était le mot de trop — « Travaille depuis 1 min » sur
+  // une tâche que le reste de l'écran disait en attente.
+  const travailleDepuis =
+    (!attendUnHumain && tache.activite?.travaille_depuis) || null;
 
   // La ligne chrono porte **deux** durées selon le moment : celle d'une tâche
   // soldée (un fait figé) et, tant qu'elle travaille, le temps qu'elle y passe —
@@ -385,12 +465,22 @@ function CarteTache({
     ouvrir(tache, declencheur.current);
   };
 
+  // Où l'on tranche l'attente — la même entrée de navigation que le nœud de
+  // pipeline (`VuePipeline`), lue dans la table `ATTENTES` et jamais réécrite.
+  const validations = entreeParLibelle(ATTENTES[ATTENTE_VALIDATION].page);
+
   // La surface vient de `Carte` (#245, balise `article` par défaut) ; ne reste
   // ici que ce qui est propre à l'ouverture du panneau (#251) — le curseur et
   // le survol, posés **seulement** si la carte a un détail.
+  //
+  // `attention` sur une tâche arrêtée sur un humain (#1111) : l'ambre que
+  // `Carte` accorde déjà au nœud de pipeline en attente humaine, aucune couleur
+  // nouvelle. C'est ce qui rend le démenti lisible **à distance** — la carte
+  // reste dans « En cours », mais elle ne ressemble plus à ce qui y travaille.
   return (
     <Carte
       densite="compacte"
+      ton={attendUnHumain ? "attention" : "pleine"}
       onClick={surClicCarte}
       className={
         "text-corps" +
@@ -416,6 +506,31 @@ function CarteTache({
           {nom}
         </p>
       )}
+      {/* Le geste qui lève l'attente est **ailleurs**, et la carte y mène —
+          exactement ce que le nœud de pipeline fait déjà (`VuePipeline`), et
+          pour la même raison : un arbitrage se tranche sur l'écran qui montre
+          de quoi trancher, pas dans une carte de 11 rem.
+
+          Il double le « Trancher → » de la bannière du run, à quelques
+          centimètres au-dessus, et c'est assumé (réserve du regard neuf) : la
+          bannière dit **qu'**une tâche attend, la carte dit **laquelle** — et
+          c'est ce qui manquait à l'écran, où l'attente s'annonçait en haut
+          pendant que le tableau du bas montrait une tâche au travail. */}
+      {attendUnHumain && validations && (
+        <p className="mt-1.5">
+          <Link
+            href={validations.href}
+            /* `text-attention-texte` et non la paire `amber-800`/`amber-300`
+               du nœud de pipeline : la couleur se choisit une fois, les deux
+               thèmes viennent avec le token (`tests/couleurs.test.ts`). Même
+               classe que le lien d'arbitrage de `CentreNotifications`. */
+            className={`inline-flex items-center gap-1 ${CIBLE_MINIMALE} text-annexe font-medium text-attention-texte hover:underline`}
+          >
+            {ATTENTES[ATTENTE_VALIDATION].action}
+            <IconeFlecheDroite className="size-3.5 shrink-0" />
+          </Link>
+        </p>
+      )}
       {/* Le ticket qui a motivé la tâche (#192) — absent : la carte est
           exactement celle d'avant, la marge partant avec le composant. */}
       <LienTicketExterne
@@ -431,12 +546,26 @@ function CarteTache({
         {tache.role ? ` · ${tache.role}` : ""}
       </p>
       {/* Le signe de vie (#837) : servi seulement sur une tâche qui travaille
-          — la carte le montre quand elle l'a, et n'en déduit rien sinon. */}
-      {tache.activite && (
+          — la carte le montre quand elle l'a, et n'en déduit rien sinon. Sous
+          la réserve de #1111, qui est celle du nœud de pipeline : l'attente
+          humaine l'emporte sur le signe comme elle l'emporte sur l'état, une
+          tâche arrêtée sur quelqu'un ne « bougeant » pas quel qu'ait été son
+          dernier geste. */}
+      {!attendUnHumain && tache.activite && (
         <LigneSigneDeVie signe={tache.activite} className="mt-1" />
       )}
       <p className="chiffre mt-0.5 flex justify-between gap-2 text-annexe text-neutral-500 dark:text-neutral-400">
-        <span>{libelleStatut(tache.statut)}</span>
+        {/* La place de l'état, et **un seul** mot dedans (#1111) : le statut
+            servi dit « en cours » d'une tâche arrêtée sur un humain, parce que
+            le moteur n'émet pas encore `en_attente_validation` et que la table
+            partagée (`progression.py`) la compte en vol, à raison. La colonne
+            garde donc ce rangement — c'est ce qui ne bouge pas —, et c'est le
+            mot de la carte qui le dément. */}
+        <span>
+          {libelleStatut(
+            attendUnHumain ? STATUT_EN_ATTENTE_VALIDATION : tache.statut,
+          )}
+        </span>
         <span>
           {formatCout(tache.cout_usd)}
           {tache.horodatage ? ` · ${formatHeure(tache.horodatage)}` : ""}

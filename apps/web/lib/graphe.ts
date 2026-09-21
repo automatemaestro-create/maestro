@@ -37,21 +37,21 @@ import {
   ARETE_FRANCHIE,
   ETAPE_EN_COURS,
   ETAPE_FAITE,
+  // Le statut de la machine à états (docs/03 §3) qui dit « cette tâche attend
+  // un humain ». Le moteur ne l'émet pas encore — la source qui existe
+  // aujourd'hui est la file des validations
+  // (`lib/execution.tachesEnAttenteDeValidation`) —, mais il est nommé dans le
+  // **contrat partagé** et une vue qui l'ignorerait deviendrait fausse le jour
+  // où il circulera, c'est-à-dire au pire moment. Ce module en portait sa
+  // propre copie jusqu'à #1111 : deux déclarations du même mot, dont la
+  // seconde n'aurait pas suivi si le backend en changeait.
+  STATUT_EN_ATTENTE_VALIDATION,
   type AreteGraphe,
   type EtapeTache,
   type GrapheRun,
   type NoeudGraphe,
   type Progression,
 } from "./types";
-
-/**
- * Le statut de la machine à états (docs/03 §3) qui dit « cette tâche attend un
- * humain ». Le moteur ne l'émet pas encore — la source qui existe aujourd'hui
- * est la file des validations (`lib/execution.tachesEnAttenteDeValidation`) —,
- * mais il est nommé dans le contrat partagé et une vue qui l'ignorerait
- * deviendrait fausse le jour où il circulera, c'est-à-dire au pire moment.
- */
-export const STATUT_EN_ATTENTE_VALIDATION = "en_attente_validation";
 
 /* ------------------------------------------------------------------ *
  * L'état d'un nœud, tel que la vue le distingue
