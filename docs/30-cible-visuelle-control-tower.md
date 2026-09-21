@@ -141,6 +141,12 @@ métadonnées** au lieu de blocs qui s'ajoutent.
 Aucun des quatre ne doit son niveau à une identité graphique forte. **Il n'y a pas de style à aller
 chercher** — il y a un socle à tenir.
 
+> ⚠ **Renversé le 2026-09-21** (#1134, [docs/39](./39-decision-niveau-visuel-choisi.md)). Ce verdict
+> répondait à la question de #471 : un socle **non tenu**. Le chantier #973 l'a tenu depuis. La
+> question suivante, celle d'un écran conforme mais plat, ne se mesure pas : un niveau visuel se
+> **choisit**, une fois, par une personne, entre des directions poussées (#1125). Le banc ci-dessus
+> reste valable pour la **structure** d'un écran, pas comme plafond de son niveau.
+
 ---
 
 ## 2. L'état actuel, mesuré
@@ -904,6 +910,10 @@ Trois choses qu'il reprend de cette note et qu'il ne faut pas défaire :
   contrainte mais un filtre appliqué à des idées auxquelles on s'est déjà attaché ;
 - **aucune identité nouvelle** (§6.1) — « il n'y a pas de style à aller chercher, il y a un socle à
   tenir » (§1.6) reste le verdict du banc, et la veille ne le rouvre pas surface par surface.
+  ⚠ *Le verdict du banc est renversé le 2026-09-21 ([docs/39](./39-decision-niveau-visuel-choisi.md)).
+  La veille, elle, ne rouvre toujours rien surface par surface. Seul change ce que la règle
+  désigne : la direction retenue et son étalon, qu'elle consulte en premier. Réécrit par #1131
+  (commande) et #1133 (ce §).*
 
 Il ne rejoue aucun des cinq : ni contraste, ni géométrie, ni accessibilité. Il n'écrit ni code ni
 forge — il rend une décision et propose de la consigner sur le ticket.
@@ -2882,6 +2892,14 @@ d'acceptation à la clôture (#968, dont ce chantier ne traite que la part visue
 ## 6. Recommandation
 
 ### 6.1 Direction visuelle retenue — « le même produit, avec du relief »
+
+> ⚠ **Renversé le 2026-09-21** (#1134, [docs/39 §3](./39-decision-niveau-visuel-choisi.md)). Les
+> **valeurs** du socle (police, échelle, rythme, rayons, ombres, espacements, usage des tons) se
+> rouvrent **une fois**. Trois directions poussées, dont une audacieuse, sont rendues sur le tableau
+> de bord, et **une personne choisit** (#1125). Le choix est figé dans le socle (#1126) et dans un
+> écran étalon (#1127). Ne bougent pas : les **mécanismes** listés ci-dessous (points 2 à 5), et
+> « aucune identité nouvelle » **à l'échelle d'un ticket**, qui désigne désormais la direction
+> retenue. La direction retenue s'écrira dans ce §6.
 
 **Pas de nouvelle identité.** Le socle #245 est bon et récent ; le refaire coûterait des sessions
 pour un gain nul sur le problème mesuré. La direction est de **donner du relief à ce qui existe** :

@@ -27,6 +27,11 @@ est « le même produit, avec du relief ». Un outil qui pousse une palette, une
 esthétique se juge sur ce critère **avant** tout autre — et c'est ce qui écarte une partie de
 `artifact-design` (§3.3), dont la posture est explicitement l'inverse.
 
+> ⚠ **docs/30 §6.1 est renversée le 2026-09-21** (#1134, [docs/39](./39-decision-niveau-visuel-choisi.md)).
+> La direction se choisit une fois, par une personne, entre des directions poussées (#1125). Le
+> critère ci-dessus tient **pour un ticket ordinaire**, qui applique la direction retenue au lieu
+> de la choisir. Il ne vaut plus pour le lot qui la choisit.
+
 ## 1. Ce que l'inventaire a trouvé en chemin : la couleur des données est orpheline
 
 Le constat n'était pas dans le ticket. Il est sorti de l'épreuve de `dataviz`, et c'est lui qui
@@ -209,6 +214,10 @@ de la direction du dépôt. Le charger dans une session qui travaille la Control
 introduire une pression vers l'identité nouvelle, précisément ce que docs/30 §6.1 refuse.
 
 - **Verdict** : écarté comme outil de travail sur la Control Tower.
+  ⚠ *Depuis le 2026-09-21 ([docs/39](./39-decision-niveau-visuel-choisi.md)), le risque nommé
+  ci-dessus ne vaut plus pour **un** lot : #1125 rend précisément une direction audacieuse, que la
+  personne choisit ou écarte. Ce lot peut consulter la posture du skill. Pour tout autre ticket,
+  qui applique la direction retenue, le verdict tient.*
 - **La ligne retenue** : « *Draw charts to the scale — chart text takes its color from the theme
   tokens so it reads in both themes* ». C'est vrai du produit **et non tenu** : le texte du
   graphique est en `fill-neutral-500 dark:fill-neutral-400`, écrit à la main. Cette ligne rejoint
