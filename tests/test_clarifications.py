@@ -230,6 +230,28 @@ def test_les_questions_sont_posees_et_les_reponses_regenerent_le_brief():
     assert rapport.brief is not None and rapport.brief.questions == ()
 
 
+def test_chaque_regeneration_relit_les_sources_du_lancement():
+    """#1172 : le brief est réécrit en entier à chaque tour, sources comprises.
+
+    Un tour qui ne les verrait plus les perdrait : le brief régénéré serait écrit
+    sans la spec que le premier avait lue.
+    """
+    questions = ArbitreQuestionsEnregistreur()
+    moteur, _, planificateur = _moteur(
+        [_brief_json(["Qui se connecte ?"]), _brief_json([])],
+        arbitre_questions=questions,
+    )
+    asyncio.run(
+        moteur.run(
+            "Un CRM",
+            mode_brief=MODE_BRIEF_HUMAIN,
+            contexte_sources="## Sources fournies\n\nLes fiches portent un SIRET.",
+        )
+    )
+    assert len(planificateur.prompts_brief) == 2
+    assert all("Les fiches portent un SIRET." in p for p in planificateur.prompts_brief)
+
+
 def test_les_clarifications_sont_cumulees_d_un_tour_a_l_autre():
     """Le brief étant réécrit en entier, un tour ne doit pas perdre le précédent."""
     questions = ArbitreQuestionsEnregistreur("Réponse.")
@@ -416,6 +438,7 @@ class MoteurQuiQuestionne:
         projet_id=None,
         mode_brief="",
         porte=None,
+        contexte_sources="",
     ):
         run_id = journal.run_id if journal is not None else ""
         try:

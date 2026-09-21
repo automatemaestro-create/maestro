@@ -150,6 +150,13 @@ class OrdreRun:
     Les plafonds sont supposés **déjà validés** (`> 0` ou `None`) : l'ordre est
     construit après les refus du service, jamais à leur place — un ordre qui
     refuserait serait un second endroit où le message d'erreur s'écrit.
+
+    `contexte_sources` (#1172) est ce que le lancement a **lu** des sources jointes,
+    encadré comme donnée par `contexte_markdown` (ENF-13) : une chaîne, donc une
+    donnée. Il voyage **lu** et non en références à relire. L'hôte rédige alors le
+    brief sur ce que l'écran a annoncé « lu », jamais sur une relecture qui aurait
+    pu changer entre-temps (une page, #316). Avant lui, l'ordre ne portait pas les
+    sources : elles étaient lues, affichées, puis perdues avant le brief.
     """
 
     run_id: str
@@ -161,6 +168,7 @@ class OrdreRun:
     ticket: ReferenceTicket | None = None
     projet_id: str | None = None
     mode_brief: str = MODE_BRIEF_HUMAIN
+    contexte_sources: str = ""
 
 
 class HoteRun(ABC):

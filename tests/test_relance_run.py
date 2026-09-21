@@ -152,6 +152,7 @@ class MoteurEnVol:
         projet_id: str | None = None,
         mode_brief: str = MODE_BRIEF_SANS,
         porte: object = None,
+        contexte_sources: str = "",
     ) -> None:
         self.objectifs.append(objectif)
         self.modes_brief.append(mode_brief)

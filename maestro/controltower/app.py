@@ -1707,6 +1707,7 @@ def create_app(
         objectif: str,
         projet_id: str | None = None,
         bornes: BornesRun = AUCUNE_BORNE,
+        contexte_sources: str = "",
     ) -> dict[str, Any]:
         """Le lanceur du fil global (#268) — un run sur l'objectif dicté au chat.
 
@@ -1729,6 +1730,10 @@ def create_app(
         depuis #666. Elles arrivent du geste de cadrage, où l'écran les a
         posées ; `AUCUNE_BORNE` — le défaut — rend exactement l'appel d'avant ce
         ticket, et c'est `lancer` qui refuse une valeur hors bornes.
+
+        `contexte_sources` (#1172) : les pièces jointes de la conversation, déjà
+        lues par le fil. Elles passent en contexte et non en `sources` à relire
+        (cf. `orchestration.contexte_du_fil`).
         """
         return await executions.lancer(
             objectif,
@@ -1738,6 +1743,7 @@ def create_app(
             parallelisme=bornes.parallelisme,
             projet_id=projet_id,
             mode_brief=MODE_BRIEF_AUTO,
+            contexte_sources=contexte_sources,
         )
 
     # Le fil global (#268) : mêmes rouages que le chat — persistance, messagerie,

@@ -28,7 +28,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from maestro.agents.catalog import Agent
 from maestro.config import Settings, load_settings
@@ -47,9 +47,6 @@ from maestro.orchestrator.schema import (
     validate_plan,
 )
 from maestro.providers.base import ModelProvider
-
-if TYPE_CHECKING:  # pragma: no cover - typage seul, cf. `brief`
-    from maestro.sources.extraction import RapportLecture
 
 # Bloc de code Markdown éventuel autour du JSON (```json … ``` ou ``` … ```).
 _FENCE_RE = re.compile(r"```(?:json)?\s*(?P<body>.*?)\s*```", re.DOTALL | re.IGNORECASE)
@@ -76,7 +73,11 @@ class Orchestrator:
         return cls(provider_from_settings(settings), model=default_model(settings))
 
     async def plan(
-        self, objective: str, *, equipe: Sequence[Agent] | None = None
+        self,
+        objective: str,
+        *,
+        equipe: Sequence[Agent] | None = None,
+        contexte_sources: str = "",
     ) -> list[Task]:
         """Produit le plan de tâches pour `objective`.
 
@@ -88,6 +89,9 @@ class Orchestrator:
         objectif sans projet : la CLI `maestro-plan` et les activités durables
         gardent ainsi exactement le prompt d'avant.
 
+        `contexte_sources` (#1172) : les sources d'un run **sans brief**, déjà
+        encadrées par `contexte_markdown` (cf. `build_user_prompt`).
+
         Lève `ValueError` si l'objectif est vide, `PlanParsingError` si la réponse
         du modèle n'est pas un tableau JSON exploitable, `TaskValidationError` si le
         plan enfreint le schéma ou les règles inter-tâches.
@@ -96,7 +100,7 @@ class Orchestrator:
             raise ValueError("L'objectif est vide.")
 
         response = await self._provider.generate(
-            build_user_prompt(objective),
+            build_user_prompt(objective, contexte_sources),
             model=self._model,
             system_prompt=prompt_orchestrateur(equipe),
         )
@@ -106,7 +110,7 @@ class Orchestrator:
     async def brief(
         self,
         objectif: str,
-        sources_extraites: RapportLecture | None = None,
+        contexte_sources: str = "",
         clarifications: Sequence[Clarification] = (),
         *,
         dernier_tour: bool = False,
@@ -117,12 +121,14 @@ class Orchestrator:
         rendue **relisable par un humain** avant qu'une seule tâche soit payée
         (EF-40, docs/24 §3.3). C'est le lot 6 (#320) qui arrête le run dessus.
 
-        `sources_extraites` est le rapport de lecture produit par
-        `maestro.sources.extraction.extraire_sources` (#316). Il est facultatif : sans
-        lui — ou quand rien n'a pu être lu — le brief travaille **sur le texte seul**,
-        ce qui est un cas nominal et non une entrée manquante. Le contenu n'entre dans
-        le prompt que par `contexte_markdown`, seul chemin qui l'encadre comme donnée
-        et non comme consigne (ENF-13).
+        `contexte_sources` est le contenu des sources **déjà encadré** par
+        `maestro.sources.extraction.contexte_markdown` (#316) — le seul chemin qui
+        l'encadre comme donnée et non comme consigne (ENF-13). Il arrive encadré et
+        non en rapport de lecture depuis #1172 : un run part chez un hôte, et
+        `Lecture.to_dict` n'emporte pas le contenu (à dessein), si bien qu'un rapport
+        sérialisé arrivait vide. C'est la forme que le chat persiste déjà
+        (`MessageChat.contexte`). Vide, le brief travaille **sur le texte seul**, ce
+        qui est un cas nominal et non une entrée manquante.
 
         `clarifications` (#321) sont les allers-retours **déjà joués**, cumulés depuis
         le premier tour. Les passer **régénère** le brief au lieu de le rapiécer : la
@@ -139,18 +145,9 @@ class Orchestrator:
         if not objectif or not objectif.strip():
             raise ValueError("L'objectif est vide.")
 
-        # Import différé, pour la raison qui vaut déjà pour la fabrique de
-        # fournisseurs ci-dessus, et une de plus : `maestro.sources` remonte à
-        # `maestro.engine.guardrails` (plafonds d'ingestion, #315), qui redescend ici
-        # par `maestro.orchestrator.schema` — en tête de module, ce cycle casse
-        # l'import du paquet selon l'ordre d'entrée. Le brief est le seul point de
-        # contact, il porte donc le report.
-        from maestro.sources.extraction import contexte_markdown
-
-        contexte = "" if sources_extraites is None else contexte_markdown(sources_extraites)
         response = await self._provider.generate(
             build_brief_user_prompt(
-                objectif, contexte, clarifications, dernier_tour=dernier_tour
+                objectif, contexte_sources, clarifications, dernier_tour=dernier_tour
             ),
             model=self._model,
             system_prompt=BRIEF_SYSTEM_PROMPT,
