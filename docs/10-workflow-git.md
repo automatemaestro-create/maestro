@@ -4707,13 +4707,25 @@ casse pas. Jamais de `reset --hard`, jamais de non-fast-forward.
 |---|---|---|
 | `0` | à jour, ou mise à jour faite | muet quand il n'y a rien à faire |
 | `3` | `main` local **divergent** | s'abstient — un commit non poussé, l'écraser serait une perte |
-| `4` | répertoire porteur de `main` **sale** | s'abstient et nomme le répertoire |
+| `4` | répertoire porteur de `main` **sale** (un fichier **suivi** modifié), ou fast-forward refusé par git dans ce répertoire | s'abstient, nomme le répertoire et relaie le refus de git |
 | `1` | hors dépôt git, `origin/main` absent | s'abstient |
+
+**« Sale » ne compte que les fichiers suivis** (#1115). Un fichier non suivi ne gêne pas un
+`merge --ff-only` : ou bien le chemin entrant ne le touche pas, et il reste en place ; ou bien il
+l'écraserait, et git **refuse d'emblée**, avant d'écrire quoi que ce soit — c'est le second cas du
+code `4`, et le refus relayé nomme le fichier. Les compter faisait sauter la remise à niveau de
+chaque `ensure` dès qu'une sortie laissée hors de git **à dessein** traînait dans le clone
+principal : constat du 2026-09-21, deux rapports de `/milestone-bilan` sous `docs/bilans/`, dont le
+versionnement est une décision humaine (docs/retex/README.md). Ignorer `docs/bilans/` a été écarté
+pour cette raison : le rapport aurait cessé de se voir dans `git status`, qui est ce qui rappelle
+qu'il reste à décider. Même règle pour la purge des branches (§9.5).
 
 Un code non nul n'est **pas fatal** pour l'appelant : une abstention n'empêche jamais un ticket de
 démarrer ni un run de continuer. Couvert par [`test_worktree.py`](../tests/test_worktree.py) — mise
-à jour depuis un worktree, ref posée sans répertoire de travail, les deux abstentions, idempotence,
-et le fait qu'`ensure` démarre le ticket même quand `main` ne peut pas suivre.
+à jour depuis un worktree, ref posée sans répertoire de travail, les abstentions (divergence,
+fichier suivi modifié, non-suivi que le chemin entrant écraserait), l'avance malgré un non-suivi
+hors du chemin, idempotence, et le fait qu'`ensure` démarre le ticket même quand `main` ne peut pas
+suivre.
 
 ### 9.4 Les dépendances ajoutées au dépôt suivent d'elles-mêmes (#216)
 
@@ -4833,7 +4845,7 @@ comptée à part et **nommée**, avec le worktree qui la retient :
 Nettoyage des branches : 32 supprimée(s), 6 conservée(s), 3 mergée(s) mais empruntée(s) par un worktree.
 ```
 
-Deux autres choix à connaître avant d'y toucher :
+Trois autres choix à connaître avant d'y toucher :
 
 1. **Un seul point d'appel automatique.** La purge a été **retirée** de `start-branch` plutôt que
    laissée en double. Un second déclencheur inatteignable est exactement ce qui a rendu la panne
@@ -4843,6 +4855,11 @@ Deux autres choix à connaître avant d'y toucher :
    de partout ; ce qui change, c'est ce sur quoi portent ses garde-fous. L'arbre regardé est celui
    du clone principal, normalement propre et sur `main`, et non celui d'un worktree en plein
    travail — qui ferait sauter la purge en silence à chaque reprise de session.
+3. **« Sale » ne compte que les fichiers suivis** (#1115), comme pour `sync-main` (§9.3). `git
+   branch -D` ne touche aucun fichier du répertoire de travail, et un non-suivi n'est sur aucune
+   branche : en supprimer une ne peut pas le perdre. Un rapport de `/milestone-bilan` laissé sous
+   `docs/bilans/` suspendait pourtant la purge de chaque `ensure`. Un fichier suivi modifié fait
+   toujours s'abstenir.
 
 ```bash
 bash scripts/gitlab/lib.sh cleanup-merged           # purge et rend son bilan
@@ -4856,8 +4873,8 @@ worktree, et c'est justement parce que la purge tourne à nouveau que ce nombre 
 
 `MAESTRO_PURGE_BRANCHES=0` désactive le passage automatique. Couvert par
 [`test_worktree.py`](../tests/test_worktree.py) (le câblage, l'ordre vis-à-vis du ramassage, le
-compte rendu d'une branche retenue, l'abstention sur arbre sale et le fait que `start-branch` ne
-purge plus) — dépôt jetable, sans réseau ni `gh`.
+compte rendu d'une branche retenue, l'abstention sur un fichier suivi modifié mais pas sur un
+non-suivi, et le fait que `start-branch` ne purge plus) — dépôt jetable, sans réseau ni `gh`.
 
 #### `/branch-cleanup` appelle ce même helper (#309)
 

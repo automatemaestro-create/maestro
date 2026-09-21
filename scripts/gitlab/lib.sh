@@ -4657,7 +4657,8 @@ gl_mr_state() {
 #   • ne supprime QUE ce que la forge confirme mergé (garde-fou docs/10 §6) — jamais une branche au
 #     statut incertain (opened/closed/aucune PR) ;
 #   • `git branch -D` est sûr ici car le merge est confirmé (le projet merge en squash) ;
-#   • ne change jamais de branche, n'écrit rien côté forge, et s'abstient si l'arbre est sale.
+#   • ne change jamais de branche, n'écrit rien côté forge, et s'abstient si l'arbre est sale —
+#     « sale » voulant dire ici un fichier SUIVI modifié, jamais un fichier non suivi (#1115).
 #
 # Opère sur le CLONE PRINCIPAL d'où qu'on l'appelle (#305) — même parti pris que gl_sync_main et
 # que worktree.sh gc, et pour une raison précise. Les refs, elles, sont partagées par tous les
@@ -4708,8 +4709,13 @@ gl_cleanup_merged() {
     echo "Nettoyage des branches ignoré : hors d'un dépôt git." >&2
     return 0
   }
-  if [ -n "$(git -C "$principal" status --porcelain 2>/dev/null)" ]; then
-    echo "Nettoyage des branches ignoré : changements non commités présents." >&2
+  # Les fichiers NON SUIVIS ne comptent pas (#1115) : `git branch -D` ne touche aucun fichier du
+  # répertoire de travail, et un non-suivi n'appartient par définition à aucune branche — supprimer
+  # une branche ne peut donc pas le perdre. Les compter faisait sauter la purge de chaque `ensure` dès qu'une
+  # sortie laissée hors de git à dessein traînait dans le clone principal : un rapport de
+  # `/milestone-bilan` sous `docs/bilans/`, dont le versionnement est une décision humaine.
+  if [ -n "$(git -C "$principal" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+    echo "Nettoyage des branches ignoré : changements non commités présents sur des fichiers suivis." >&2
     return 0
   fi
   # Pruning cosmétique des refs de suivi ; non bloquant (jamais de prompt d'identifiants) et non
@@ -5127,11 +5133,19 @@ gl_worktree_de_main() { gl_worktree_de_branche "${1:-}" main; }
 # ça ne casse pas. Jamais de `reset --hard`, jamais de non-fast-forward — un `main` local divergent
 # porte un commit que personne n'a poussé, l'écraser serait une perte de données.
 #
+# « Non propre » veut dire un fichier SUIVI modifié, jamais un fichier non suivi (#1115). Un
+# non-suivi ne gêne pas un `merge --ff-only` : ou bien il n'est pas sur le chemin entrant et reste
+# en place, ou bien il le serait et git REFUSE D'EMBLÉE, avant d'écrire quoi que ce soit (« would be
+# overwritten by merge ») — ce refus est relayé tel quel, puisqu'il nomme le fichier. Les compter
+# faisait sauter la remise à niveau de chaque `ensure` dès qu'une sortie laissée hors de git à
+# dessein traînait dans le clone principal (un rapport de `/milestone-bilan` sous `docs/bilans/`).
+#
 # Codes de retour, pour l'appelant (best-effort : un code non nul n'est PAS une erreur fatale, il
 # ne doit interrompre ni un /ticket-start ni un run /orchestrate) :
 #   0 = à jour, ou mise à jour faite      3 = main local divergent (non fast-forward) — abstention
 #   1 = état illisible (hors dépôt git, origin/main absent)
-#   2 = usage                             4 = répertoire porteur de main non propre — abstention
+#   2 = usage                             4 = répertoire porteur de main non propre, ou fast-forward
+#                                             refusé par git dans ce répertoire — abstention
 gl_sync_main() {
   local check=0
   case "${1:-}" in
@@ -5175,8 +5189,8 @@ gl_sync_main() {
   porteur="$(gl_worktree_de_main "$principal")"
 
   if [ -n "$porteur" ]; then
-    if [ -n "$(git -C "$porteur" status --porcelain 2>/dev/null)" ]; then
-      printf '⚠ sync-main : main en retard de %s commit(s), mais son répertoire de travail a des changements non commités — mise à jour sautée.\n' "$retard" >&2
+    if [ -n "$(git -C "$porteur" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+      printf '⚠ sync-main : main en retard de %s commit(s), mais son répertoire de travail a des changements non commités sur des fichiers suivis — mise à jour sautée.\n' "$retard" >&2
       printf '  %s\n' "$porteur" >&2
       return 4
     fi
@@ -5184,9 +5198,14 @@ gl_sync_main() {
       printf 'sync-main : main avancerait de %s commit(s) (merge --ff-only dans %s).\n' "$retard" "$porteur"
       return 0
     fi
-    if ! git -C "$porteur" merge --ff-only origin/main >/dev/null 2>&1; then
-      printf '⚠ sync-main : fast-forward de main refusé par git — mise à jour sautée.\n' >&2
-      return 3
+    local refus
+    if ! refus="$(git -C "$porteur" merge --ff-only origin/main 2>&1 >/dev/null)"; then
+      # Divergence déjà écartée et fichiers suivis propres : ce qui reste, c'est le répertoire —
+      # le plus souvent un non-suivi que le chemin entrant écraserait. Git le nomme ; on relaie.
+      printf '⚠ sync-main : fast-forward de main refusé par git dans son répertoire de travail — mise à jour sautée.\n' >&2
+      printf '  %s\n' "$porteur" >&2
+      printf '%s\n' "$refus" | grep -v '^[[:space:]]*$' | sed 's/^/    /' >&2
+      return 4
     fi
   else
     if [ "$check" = 1 ]; then
@@ -9368,7 +9387,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "                                 Rejouable sans doublon ; ÉCRASE un Status déjà posé)" >&2
       echo "  Branches :" >&2
       echo "    cleanup-merged [--auto] [--sans-fetch] [<branche>…]  (supprime les branches locales dont la PR est mergée ; sans argument, toutes ; --auto = muet si rien ; --sans-fetch quand l'appelant vient de fetcher)" >&2
-      echo "    sync-main [--check]         (avance main du clone principal sur origin/main, fast-forward seul ; 0=à jour/fait, 3=divergent, 4=arbre sale)" >&2
+      echo "    sync-main [--check]         (avance main du clone principal sur origin/main, fast-forward seul ; 0=à jour/fait, 3=divergent, 4=fichier suivi modifié ou ff refusé par git)" >&2
       echo "    mr-state <branche>          (opened|closed|merged)" >&2
       echo "    mr-briefs <branche>…        (etat+numéro+sha de N PR en UNE lecture ; aucune ligne pour une branche sans PR)" >&2
       echo "    open-mr-branches            (branche source de chaque PR ouverte, une par ligne)" >&2
