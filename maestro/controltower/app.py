@@ -484,6 +484,7 @@ from maestro.controltower.state import (
     VALIDATION_APPROUVEE,
     VALIDATION_REFUSEE,
     ControlTowerState,
+    EtatAgent,
 )
 from maestro.controltower.validation import ValidateurControlTower
 from maestro.engine.brief import MODE_BRIEF_AUTO, MODE_BRIEF_HUMAIN
@@ -1601,8 +1602,13 @@ def create_app(
     # La projection part du catalogue **hors projet** : les agents rangés à la
     # racine du dépôt. Vide sur un poste neuf depuis #1042 — les cinq rôles du
     # code n'y sont plus —, et c'est voulu : le parc d'agents se peuple projet par
-    # projet, par l'équipe que chacun valide. Ce que `GET /api/agents?projet=`
-    # rend est ensuite filtré sur l'équipe demandée.
+    # projet, par l'équipe que chacun valide.
+    # ⚠ Ce vide est donc l'état **normal** de la projection, et c'est pourquoi
+    # `GET /api/agents?projet=` ne s'y adosse plus (#1101) : elle la filtrait sur
+    # l'équipe demandée, si bien qu'une équipe validée disparaissait de l'écran au
+    # redémarrage suivant. La vue d'un projet se dérive désormais de son catalogue
+    # et de ses capacités (`ControlTowerState.equipe`), la projection n'y apportant
+    # que l'activité — la seule chose qu'elle soit seule à savoir.
     state = (
         state
         if state is not None
@@ -1906,6 +1912,25 @@ def create_app(
             raise _refus_projet(exc) from exc
         return gabarits.pour_projet(projet_id)
 
+    def _parc(cfg: ConfigurationAgents) -> list[EtatAgent]:
+        """Le parc que `cfg` désigne : l'équipe d'un projet, ou la projection entière.
+
+        Le pendant d'`_config` pour la vue des agents, **écrit une fois** (#1101)
+        parce que deux routes le lisent et qu'elles doivent le lire pareil :
+        `GET /api/agents` et `POST /api/agents/{nom}/capacite`, qui décide de son
+        404. Les avoir laissées diverger est précisément ce qui a produit le
+        symptôme du ticket — une équipe qu'un écran ne montrait plus et dont la
+        capacité ne se réglait donc plus.
+
+        Cadré sur un projet, il part du **disque** (`state.equipe`) : c'est là
+        que vit l'équipe validée, quand la projection, elle, repart vide à chaque
+        redémarrage. Sans projet, c'est le niveau des gabarits, et le parc rendu
+        est celui de la projection — ce que cette route servait avant #1038.
+        """
+        if cfg.projet_id is None:
+            return state.agents()
+        return state.equipe(cfg.catalogue(), cfg.capacites.lister())
+
     def _portee_run(run: str | None) -> PorteeRun:
         """La **portée run** d'une lecture (#473), ou un refus motivé.
 
@@ -2040,17 +2065,23 @@ def create_app(
         « qu'a fait cet agent ici ». Le **routage** sur l'équipe d'un projet,
         lui, est le lot #1041.
 
+        ⚠ Cadrée sur un projet, la vue est **dérivée du disque** depuis #1101 :
+        son catalogue et ses capacités, la projection n'y apportant que
+        l'activité. Elle filtrait auparavant la projection, qui repart vide à
+        chaque redémarrage de l'API (le catalogue de la racine est vide depuis
+        #1042) : l'équipe validée d'un projet disparaissait de l'écran au
+        redémarrage, et portait une instance là où son projet en avait rangé
+        deux. Le routage, lui, lisait déjà la bonne — c'est bien la vue qui
+        mentait.
+
         Un projet qu'on vient de créer rend une liste **vide** (#1042) : il n'a
         aucun agent tant que son équipe n'a pas été validée, et une vue vide le
-        dit mieux que cinq rôles que personne n'a recrutés.
+        dit mieux que cinq rôles que personne n'a recrutés. Même phrase qu'avant
+        #1101, et pour une raison de plus : un catalogue vide n'a rien à rendre.
 
         Omis, la vue rend le parc entier, comme avant ce lot.
         """
-        cfg = _config(projet)
-        if cfg.projet_id is None:
-            return [a.to_dict() for a in state.agents()]
-        equipe = {agent.nom for agent in cfg.catalogue()}
-        return [a.to_dict() for a in state.agents() if a.nom in equipe]
+        return [a.to_dict() for a in _parc(_config(projet))]
 
     @app.get("/api/executions")
     async def executions_liste(projet: str | None = None) -> list[dict[str, Any]]:
@@ -2802,9 +2833,15 @@ def create_app(
         Le réglage est écrit **dans le projet** demandé (#1038) : le même agent
         peut avoir trois instances ici et une ailleurs — c'est le « nombre
         d'instances rangé par projet » du critère.
+
+        L'agent est cherché dans le **parc du projet demandé** (`_parc`, #1101),
+        le même que `GET /api/agents` rend : réglable est exactement ce qui est
+        montré. Le chercher dans la seule projection revenait à 404 sur toute
+        l'équipe d'un projet au redémarrage de l'API — l'écran la listait déjà
+        (depuis ce lot), et aucun de ses curseurs n'aurait répondu.
         """
         cfg = _config(projet)
-        fiche = state.agent(nom)
+        fiche = next((a for a in _parc(cfg) if a.nom == nom), None)
         if fiche is None:
             raise HTTPException(
                 status_code=404, detail=f"agent inconnu : {nom} (voir GET /api/agents)"
@@ -2839,7 +2876,13 @@ def create_app(
         )
         state.appliquer(event)
         await bus.publish(event)
-        return fiche.to_dict()
+        # La réponse porte le réglage **qu'on vient d'écrire**, et pas celui que
+        # la projection tient : cadrée sur un projet, la fiche est une copie dont
+        # `actif`/`instances` viennent du dépôt du projet, que l'événement appliqué
+        # ci-dessus ne touche pas (#1101). Au niveau des gabarits, `avec_capacite`
+        # rend la même chose que la fiche partagée — `_applique_capacite` vient
+        # d'y poser les deux mêmes valeurs.
+        return fiche.avec_capacite(capacite).to_dict()
 
     @app.get("/api/validations")
     async def validations(projet: str | None = None) -> list[dict[str, Any]]:
@@ -5486,8 +5529,15 @@ def create_app(
             )
         except (EquipeRefusee, ValueError, ProjetInconnu) as exc:
             raise _refus_projet(exc) from exc
-        # Les agents créés entrent immédiatement dans la vue `GET /api/agents`,
-        # comme ceux du `POST /api/catalogue` : même geste, même conséquence.
+        # Les agents créés entrent dans la **projection**, comme ceux du
+        # `POST /api/catalogue` : même geste, même conséquence — ils y deviennent
+        # cibles de réassignation manuelle (`POST /api/taches/{id}/reassigner`,
+        # qui n'a pas de projet à connaître) et peuplent le parc transverse.
+        # ⚠ La vue de l'équipe, elle, n'en dépend plus (#1101) :
+        # `GET /api/agents?projet=` la dérive du catalogue du projet et de ses
+        # capacités. C'est ce qui la rend juste au redémarrage, quand la
+        # projection repart vide — et c'est pourquoi l'appel qui suit ne porte
+        # pas la capacité : ce n'est plus lui qui la dit.
         for agent in rapport["agents"]:
             state.ajouter_agent(agent["nom"], agent["role"])
         return rapport
