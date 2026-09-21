@@ -2579,6 +2579,51 @@ objet nommé par du texte libre, et le code y répond deux fois : `titre_court` 
 ligne, 80 signes) et `titre_conversation` pour une conversation (texte entier condensé, 60 signes).
 Les tickets #991 et #1072 portent `veille::arbitree` depuis cette veille.
 
+#### Le bandeau de refus motivé : l'explication en clair, le code au second plan — 2026-09-21 (#1036, différée de #946)
+
+Surface : **le bandeau de refus motivé** — `RefusMotive` et son pendant `RefusSource`, montés sur la
+porte d'entrée, `/projets`, l'explorateur de dossiers, la composition d'un objectif et le fil.
+Veille **différée**, jouée en interactif sur une surface déjà livrée. #946 avait fait perdre au
+motif sa typographie de code — `motif : projet-inconnu` en `<code>` devenu `motif : Projet inconnu`
+en texte courant — sans référence, et laissé un repli brut pour les motifs que l'écran ne connaît
+pas. Décision complète en commentaire de **#1036**, captures dans l'atelier de la session. La
+question : « comment un refus parle-t-il à la fois à qui découvre et à qui dépanne ? »
+
+**Mesuré avant**, pour `projet-inconnu` : `<titre> — projet inconnu : prj-x (voir GET /api/projets)`,
+puis le conseil, puis `motif : Projet inconnu` — la troisième ligne **redit** la première.
+
+**Vérifié en direct**, deux pages d'erreur publiques relevées dans le navigateur : **Vercel**
+(déploiement inexistant) — deux étages : un titre et une phrase en clair, puis, plus bas et séparé,
+le code `404 DEPLOYMENT_NOT_FOUND` et l'identifiant de requête en **mono, 12 px, gris**, avec un lien
+vers la documentation **de ce code**. **Google** (erreur OAuth, client inexistant) — le code
+**visible**, `Erreur 401 : invalid_client`, sous une phrase qui dit à qui il sert (« Si vous avez
+développé cette appli… ») ; les détails de requête derrière un geste. À rebours, la phrase du
+backend y est laissée **en anglais** dans une page française : l'écueil même d'un repli brut qu'on
+ne relit pas.
+
+**Le fait qui tranche est constant sur les deux : l'explication est dite en clair, et le code
+reste affiché, au second plan, comme un code — jamais caché, jamais déguisé en phrase.**
+
+**Non vérifié, donc non cité** : Microsoft Entra ID (son erreur n'apparaît qu'après la saisie d'un
+compte), Stripe (derrière une connexion).
+
+**Quatre partis pris.** **Un refus se lit en deux étages, et le motif appartient au second** — la
+ligne « motif » cesse d'être une troisième phrase et devient la **ligne de diagnostic** : le code
+tel quel, en `font-mono`, `text-micro`, `text-texte-secondaire`. ⚠ C'est un **renversement
+partiel** de #946 — le libellé traduit quitte cette ligne —, et il ne rend pas ce que le retex du
+2026-09-11 reprochait : l'identifiant n'y est plus l'explication, la phrase et le conseil la
+portent. **Un motif inconnu de l'écran se montre comme un code** — la question du repli disparaît
+avec le premier parti pris, la ligne de diagnostic rendant toujours le code brut. **Le code mène à
+ce qui l'explique, et c'est le conseil** — nous n'avons pas de page par motif, `conseilMotif` en
+tient lieu. **Le bandeau est un encart** — déjà tranché par la veille de #1057 : ces deux
+bandeaux sont deux de ses quinze encarts, et migrent avec eux.
+
+**Ce que la veille n'a pas regardé** : le fil et la composition d'un objectif en situation. **Vu au
+passage** — le reste technique n'est plus dans le motif mais dans la **phrase du backend** :
+« (voir GET /api/projets) » nomme une route à quelqu'un qui n'appelle aucune API, et 22 lignes de
+`maestro/` l'écrivent ainsi. La même phrase sert le client d'API et l'écran. Les tickets #946 et
+#1036 portent `veille::arbitree` depuis cette veille.
+
 ---
 
 ### 5.8 Un écran se juge contre l'attente — 2026-09-17 (chantier #972)
