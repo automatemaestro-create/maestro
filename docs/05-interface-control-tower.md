@@ -236,7 +236,7 @@ un projet Python et un projet mobile porterait les skills et les autorisations d
 
 | ce qui est désormais cadré | où c'est rangé | ce qui reste au niveau du poste |
 | --- | --- | --- |
-| `GET /api/agents` — le parc | la vue rend l'**équipe du projet actif** (`?projet=<id>`). ⚠ Elle rend les **exécutants**, jamais l'orchestration (#1028, §2.5.0) : elle dépense et on lui parle, mais elle n'exécute rien | les **compteurs** d'un agent (occupé, coût cumulé) restent ceux que la projection a vus : le cadre porte sur l'appartenance, pas sur l'activité — « qu'a-t-il fait **ici** ? » se lit sur les tâches |
+| `GET /api/agents` — le parc | la vue rend l'**équipe du projet actif** (`?projet=<id>`), **dérivée de son catalogue et de ses capacités** (#1101) et non filtrée sur la projection, qui repart vide à chaque redémarrage. ⚠ Elle rend les **exécutants**, jamais l'orchestration (#1028, §2.5.0) : elle dépense et on lui parle, mais elle n'exécute rien | les **compteurs** d'un agent (occupé, coût cumulé) restent ceux que la projection a vus : le cadre porte sur l'appartenance, pas sur l'activité — « qu'a-t-il fait **ici** ? » se lit sur les tâches |
 | le **catalogue** d'agents et les **playbooks** | `core/agents/_projets/<id>/`, `core/playbooks/_projets/<id>/` | la racine de chaque dépôt est le niveau des **gabarits de rôle** : ce que l'analyse d'équipe consulte (#1039) et que plus rien n'instancie d'office (#1042 — le catalogue effectif d'un projet est celui de son équipe, vide tant qu'elle n'existe pas) |
 | les **autorisations** et la **capacité** (instances) | `core/permissions/_projets/<id>/`, `core/capacite/_projets/<id>/` | idem — et ce que le projet ne règle pas, il l'**hérite** du gabarit : sans ce repli, ranger les autorisations par projet ferait d'un projet neuf un projet « tout permis » |
 | le **pool** d'intégrations MCP et les **activations** par agent | `core/mcp/_projets/<id>/` | le mot « pool **projet** » (#130) devient exact : c'était jusqu'ici un stockage unique (`core/mcp/pool.json`) |
@@ -815,6 +815,18 @@ Le **cadre porte sur l'appartenance, pas sur l'activité**. Les compteurs d'une 
 tâches traitées, coût cumulé — restent ceux que la projection a vus : la question « qu'a fait cet
 agent **ici** ? » se pose aux tâches du projet, pas au parc. La tuile « Agents » du tableau de bord
 garde donc son décompte dérivé des tâches, et cesse simplement de nommer le parc comme partagé.
+
+⚠ **Chaque moitié vient d'où elle est vraie** (#1101, réserve C4 du bouclage du 2026-09-21).
+L'appartenance et la capacité viennent du **disque** — le catalogue du projet et ses réglages
+d'instances ; l'activité vient de la **projection**, qui est seule à la connaître. Cadrer une vue
+n'est donc pas la filtrer : `GET /api/agents?projet=<id>` la dérive (`ControlTowerState.equipe`),
+là où elle retenait d'abord les lignes de la projection dont le nom était au catalogue. Ce filtre
+lisait l'appartenance au mauvais endroit, et le prix se voyait à l'écran : la projection repartant
+vide à chaque redémarrage de l'API (le catalogue de la racine est vide depuis #1042), une équipe
+validée disparaissait de *Paramètres › Agents & capacité*, et y portait entre-temps une instance là
+où son projet en avait rangé deux. Le **routage**, lui, lisait déjà la capacité du projet — c'était
+bien la vue qui mentait. `POST /api/agents/{nom}/capacite?projet=<id>` cherche son agent dans le
+**même** parc : réglable est exactement ce qui est montré.
 
 ⚠ **Ce que le cadre ne décide pas encore** : quel agent de l'équipe prend quelle tâche. Ce routage
 est le lot #1041 ; #1038 garantit que les agents d'un projet sont **candidats**, et que les cinq
