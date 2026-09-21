@@ -20,6 +20,7 @@ import {
   EXECUTION_EN_ATTENTE_ARBITRAGE,
   EXECUTION_EN_ATTENTE_REPONSES,
   EXECUTION_TERMINEE,
+  STATUT_EN_ATTENTE_VALIDATION,
   VALIDATION_EN_ATTENTE,
   VITALITE_ORPHELIN,
   type ResumeExecution,
@@ -306,6 +307,28 @@ export function tachesEnAttenteDeValidation(
     taches.add(validation.tache_id);
   }
   return taches;
+}
+
+/**
+ * Cette tâche est-elle **arrêtée sur quelqu'un** (#1111) ?
+ *
+ * La même question que `lib/graphe.etatDuNoeud` pose au premier de ses trois
+ * crans, et écrite ici pour qu'elle n'ait **qu'une** formulation : le pipeline
+ * la posait sur un nœud, le Kanban la pose sur une carte, et deux règles
+ * divergeraient au premier statut ajouté.
+ *
+ * Les deux moitiés comptent, comme au pipeline : la file des validations est la
+ * source qui existe aujourd'hui (le moteur n'émet pas encore
+ * `en_attente_validation`), et le statut est celle qui existera.
+ */
+export function tacheArreteeSurUnHumain(
+  tache: Tache,
+  enAttenteHumaine: ReadonlySet<string>,
+): boolean {
+  return (
+    enAttenteHumaine.has(tache.id) ||
+    tache.statut === STATUT_EN_ATTENTE_VALIDATION
+  );
 }
 
 /**

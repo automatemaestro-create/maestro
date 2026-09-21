@@ -55,7 +55,6 @@ import {
   NOEUD_EN_COURS,
   NOEUD_PRET,
   NOEUD_TERMINE,
-  STATUT_EN_ATTENTE_VALIDATION,
 } from "@/lib/graphe";
 import {
   ARETE_ATTENDUE,
@@ -64,6 +63,7 @@ import {
   ETAPE_A_FAIRE,
   ETAPE_EN_COURS,
   ETAPE_FAITE,
+  STATUT_EN_ATTENTE_VALIDATION,
   type GrapheRun,
   type PageJournal,
   type Tache,
