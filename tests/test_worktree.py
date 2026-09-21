@@ -1967,6 +1967,27 @@ def test_purge_s_abstient_quand_le_clone_principal_est_sale(depot: Depot) -> Non
     assert "chore/140-livree" in depot.git("branch", "--list", "chore/140-livree")
 
 
+def test_purge_ne_compte_pas_les_fichiers_non_suivis_du_clone_principal(depot: Depot) -> None:
+    """Un non-suivi n'est sur aucune branche : en supprimer une ne peut pas le perdre (#1115).
+
+    Le cas qui l'a fait voir : un rapport de `/milestone-bilan` laissé sous `docs/bilans/`, hors de
+    git à dessein, suspendait la purge de chaque `ensure`. L'échantillon fautif — un fichier SUIVI
+    modifié — est celui du test précédent, et il fait toujours s'abstenir.
+    """
+    depot.git("branch", "chore/140-livree")
+    depot.impose_mr({"chore/140-livree": "merged"})
+    rapport = depot.racine / "docs" / "bilans" / "phase.md"
+    rapport.parent.mkdir(parents=True, exist_ok=True)
+    rapport.write_text("rapport non commité\n", encoding="utf-8", newline="\n")
+
+    acheve = depot.lib("cleanup-merged")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "changements non commités" not in acheve.stderr, acheve.stderr
+    assert "supprimée : chore/140-livree" in acheve.stdout, acheve.stdout
+    assert depot.git("branch", "--list", "chore/140-livree") == ""
+    assert rapport.read_text(encoding="utf-8") == "rapport non commité\n", "le non-suivi reste intact"
+
+
 def test_purge_vise_le_clone_principal_meme_appelee_depuis_un_worktree(depot: Depot) -> None:
     """L'arbre regardé est celui du clone principal, d'où qu'on appelle (#305).
 
@@ -2171,6 +2192,45 @@ def test_sync_main_s_abstient_si_le_repertoire_porteur_de_main_est_sale(depot: D
     assert acheve.returncode == 4, acheve.stdout + acheve.stderr
     assert "changements non commités" in acheve.stderr
     assert depot.git("rev-parse", "main") == attendu_avant, "main ne devait pas bouger"
+
+
+def test_sync_main_avance_malgre_un_fichier_non_suivi_hors_du_chemin(depot: Depot) -> None:
+    """Un non-suivi que rien n'écrase ne retient plus `main` (#1115).
+
+    Même déclencheur que la purge : un rapport de `/milestone-bilan` sous `docs/bilans/` suspendait
+    la remise à niveau de chaque `ensure`. L'échantillon fautif — un fichier suivi modifié — est
+    celui du test précédent, et il fait toujours s'abstenir.
+    """
+    attendu = _avance_origin(depot)
+    rapport = depot.racine / "docs" / "bilans" / "phase.md"
+    rapport.parent.mkdir(parents=True, exist_ok=True)
+    rapport.write_text("rapport non commité\n", encoding="utf-8", newline="\n")
+
+    acheve = depot.lib("sync-main")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "main mis à jour : 1 commit(s)" in acheve.stdout
+    assert depot.git("rev-parse", "main") == attendu
+    assert (depot.racine / "NOUVEAU.md").exists(), "le répertoire de travail devait suivre la ref"
+    assert rapport.read_text(encoding="utf-8") == "rapport non commité\n", "le non-suivi reste intact"
+
+
+def test_sync_main_s_abstient_si_un_non_suivi_serait_ecrase(depot: Depot) -> None:
+    """Le cas qui justifie encore une abstention : le chemin entrant écraserait un non-suivi.
+
+    Git refuse ce fast-forward D'EMBLÉE, avant d'écrire quoi que ce soit : ni `main` ni le fichier
+    ne bougent, et le refus relayé nomme le fichier en cause.
+    """
+    attendu_avant = depot.git("rev-parse", "main")
+    _avance_origin(depot)
+    a_moi = depot.racine / "NOUVEAU.md"
+    a_moi.write_text("le mien, jamais commité\n", encoding="utf-8", newline="\n")
+
+    acheve = depot.lib("sync-main")
+    assert acheve.returncode == 4, acheve.stdout + acheve.stderr
+    assert "refusé par git" in acheve.stderr
+    assert "NOUVEAU.md" in acheve.stderr, "le refus doit nommer le fichier qui le cause"
+    assert depot.git("rev-parse", "main") == attendu_avant, "main ne devait pas bouger"
+    assert a_moi.read_text(encoding="utf-8") == "le mien, jamais commité\n", "le non-suivi reste intact"
 
 
 def test_sync_main_s_abstient_si_main_a_diverge(depot: Depot) -> None:
