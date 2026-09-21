@@ -2059,6 +2059,10 @@ L'état limite se regarde sans le provoquer : `bash
 scripts/controltower/start.sh --demo --scenario erreur` fait répondre l'API en
 500 sur toutes les routes sauf la santé et les projets (#978).
 
+> ⚠ Le mode démo quitte le dépôt
+> ([docs/41](../../docs/41-decision-maestro-juge-il-ne-bride-pas.md), #1168). L'état d'erreur se
+> regarde sur une vraie panne de la stack réelle. Ce passage est réécrit par #1168.
+
 ## Lancer en local
 
 1. **Backend** (API REST + WebSocket, ticket #46) — Redis du docker-compose requis

@@ -1420,6 +1420,11 @@ le navigateur est celui du skill `relecture-visuelle`, et un skill garde ses out
 > *quand* on regarde et *ce qu'on en garde*, celui-ci *ce qu'on regarde et avec quoi*. Le numéro
 > suit la lecture, pas la chronologie.
 
+> ⚠ **La stack que ce geste regarde change** ([docs/41 §4](./41-decision-maestro-juge-il-ne-bride-pas.md),
+> 2026-09-21). Il ne monte plus la démo (`start.sh --demo`), mais la vraie stack, peuplée par l'état
+> du dernier passage du banc des scénarios (#1164, #1165). Le reste de ce qui suit, ce qu'il regarde
+> et ce qu'il ne sait pas voir, ne bouge pas.
+
 Le trou est nommé au §5.1 et il tient en une phrase : **personne ne regarde**. Les cinq maillons
 répondent à « est-ce que ça tient ? » — ratios, hauteurs, rôles, câblage, nombre de blocs —, aucun à
 *« à quoi ça ressemble, et est-ce que ça a l'air juste ? »*. Une session écrit une interface, voit
@@ -2758,6 +2763,15 @@ même état. La voie — un second worktree détaché, servi à côté —, ses 
 référence de la rubrique « ce qui ne bouge pas », et c'est la **paire** que le regard neuf juge.
 
 #### Les états limites s'ouvrent dans la démo (#978)
+
+> ⚠ **Renversé le 2026-09-21** ([docs/41 §4](./41-decision-maestro-juge-il-ne-bride-pas.md),
+> chantier #1156). Le mode démo quitte le dépôt, et la relecture regarde la vraie stack :
+> - **vide** : une stack neuve ;
+> - **erreur** : une vraie panne, magasin coupé ou API coupée ;
+> - **peuplé et charge** : l'état laissé par le dernier passage du banc des scénarios.
+>
+> Un état que le réel ne produit pas est nommé non couvert, jamais fabriqué. Ce qui suit décrit
+> l'état présent jusqu'à #1165.
 
 La démo sert des **scénarios nommés** : `nominal` (celui d'avant, inchangé, toujours le défaut),
 `vide`, `erreur` et `charge`. Ils se **demandent** — `start.sh --demo --scenario <nom>`,
