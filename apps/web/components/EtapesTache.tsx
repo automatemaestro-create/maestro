@@ -118,7 +118,13 @@ export function AvancementEtapes({
           ? ` — ${restantes} ${restantes > 1 ? "non rapportées" : "non rapportée"} à la clôture`
           : "")
       }
-      className="flex w-full gap-0.5"
+      // L'écart entre les cases s'ouvre quand elles sont hachurées (#1112) : à
+      // 2 px de haut, la hachure rend des tirets horizontaux, et avec
+      // l'interstice de 2 px la rangée d'une tâche soldée se lisait comme **un
+      // seul filet tireté** — les cases ne se comptaient plus, alors que les
+      // compter est tout l'objet d'une case par étape (#489). Constat du regard
+      // neuf, sur le nœud à 0/3 de l'état « charge ».
+      className={"flex w-full " + (marque ? "gap-1" : "gap-0.5")}
     >
       {etapes.map((etape, rang) => {
         const faite = etape.etat === ETAPE_FAITE;

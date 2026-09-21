@@ -860,13 +860,19 @@ function NoeudCarte({
           s'ouvre dans le panneau, un nœud n'ayant pas la place de la porter.
 
           Depuis #1112, cette ligne dit une seconde chose, et sur une tâche
-          soldée elle la dit **à la place** de l'étape courante : « non cochées ».
-          Le libellé d'une étape courante y annoncerait une suite qui ne viendra
-          pas — c'est le troisième signal que le bouclage du 2026-09-21 a relevé,
-          sous un badge « Terminée » et à côté d'un compteur qui n'atteint pas son
-          total. Aucun nombre dans la mention : le compteur juste à gauche le
-          porte déjà, et le répéter faisait se croiser deux fois le même chiffre
-          (réserve du regard neuf sur la variante A). */}
+          soldée elle la dit **à la place** de l'étape courante : le libellé
+          d'une étape courante y annoncerait une suite qui ne viendra pas —
+          c'est le troisième signal que le bouclage du 2026-09-21 a relevé, sous
+          un badge « Terminée » et à côté d'un compteur qui n'atteint pas son
+          total.
+
+          La mention **ne porte aucun nombre, et ne se lit pas comme un compte** :
+          le compteur est juste à gauche, et « 0/3 non cochées » — le premier
+          essai — se lisait « 0 sur 3 non cochées », c'est-à-dire l'inverse de ce
+          que la boîte veut dire (constat du regard neuf sur l'état « charge »).
+          « relevé incomplet » qualifie la **liste**, pas une quantité, et reprend
+          le vocabulaire de la ligne que le moteur consigne déjà au journal dans
+          ce cas (#944, « Checklist incomplète à la clôture… »). */}
       {total > 0 && (
         <div className="mt-2">
           <AvancementEtapes
@@ -879,7 +885,7 @@ function NoeudCarte({
             <span>{`${faites}/${total}`}</span>
             {ecartAuVerdict ? (
               <span className="min-w-0 truncate text-attention-texte">
-                non cochées
+                · relevé incomplet
               </span>
             ) : (
               courante !== null && (

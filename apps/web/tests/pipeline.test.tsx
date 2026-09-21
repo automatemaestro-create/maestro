@@ -599,6 +599,27 @@ describe("l'avancement des étapes", () => {
     }
   });
 
+  it("garde les cases comptables quand elles sont hachurées", () => {
+    // À 2 px de haut, la hachure rend des tirets horizontaux : avec l'interstice
+    // ordinaire de 2 px, la rangée d'une tâche soldée se lisait comme **un seul
+    // filet tireté** et ses cases ne se comptaient plus — alors que les compter
+    // est tout l'objet d'une case par étape (#489). Constat du regard neuf sur
+    // le nœud à 0/3 de l'état « charge » (#1112).
+    const etapes: EtapeAffichee[] = [
+      { libelle: "A", etat: ETAPE_A_FAIRE },
+      { libelle: "B", etat: ETAPE_A_FAIRE },
+      { libelle: "C", etat: ETAPE_A_FAIRE },
+    ];
+    const { rerender } = render(<AvancementEtapes etapes={etapes} faites={0} />);
+    const rangee = () => screen.getByRole("progressbar", { name: "Avancement des étapes" });
+    expect(rangee().className).toContain("gap-0.5");
+
+    rerender(<AvancementEtapes etapes={etapes} faites={0} soldee />);
+
+    expect(rangee().className).toContain("gap-1");
+    expect(rangee().className).not.toContain("gap-0.5");
+  });
+
   it("garde la même unité de compte quelle que soit la taille", () => {
     // `compacte` sur un nœud de graphe, `ample` dans un panneau : seule
     // l'épaisseur change, sans quoi les deux écrans ne compteraient pas pareil.
@@ -718,7 +739,10 @@ describe("le nœud, tel qu'on le lit", () => {
 
     const pipeline = await pipelineCharge();
     expect(within(pipeline).getByText("1/2")).toBeInTheDocument();
-    expect(within(pipeline).getByText("non cochées")).toBeInTheDocument();
+    // La mention ne porte **aucun nombre** et ne se lit pas comme un compte :
+    // « 0/3 non cochées », le premier essai, se lisait « 0 sur 3 non cochées »,
+    // l'inverse de ce que la boîte dit (constat du regard neuf sur « charge »).
+    expect(within(pipeline).getByText("· relevé incomplet")).toBeInTheDocument();
     expect(within(pipeline).queryByText("Écrire la migration")).not.toBeInTheDocument();
   });
 
@@ -729,7 +753,7 @@ describe("le nœud, tel qu'on le lit", () => {
 
     const pipeline = await pipelineCharge();
     expect(within(pipeline).getByText("1/1")).toBeInTheDocument();
-    expect(within(pipeline).queryByText("non cochées")).not.toBeInTheDocument();
+    expect(within(pipeline).queryByText("· relevé incomplet")).not.toBeInTheDocument();
   });
 
   it("porte son coût et sa durée quand ils sont mesurés", async () => {
