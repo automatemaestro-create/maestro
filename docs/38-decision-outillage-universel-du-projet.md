@@ -122,7 +122,7 @@ régénérer et à #1032 de lire :
 | Section | Ce qu'elle porte |
 | --- | --- |
 | `## Le projet` | Ce qu'il est, en un paragraphe. Un agent qui arrive ne le sait pas |
-| `## Monter et lancer` | Installation, build, exécution — les commandes réelles, constatées sur le projet |
+| `## Monter et lancer` | Installation, build, exécution — les commandes du projet, constatées ou impliquées par ses réponses |
 | `## Vérifier` | Tests et lint, et comment n'en jouer qu'une partie |
 | `## Conventions` | Style, nommage, ce qu'on ne fait pas ici |
 | `## L'outillage de ce projet` | **La désignation** (§3.3) : où sont les skills, où sont les scripts, et l'index des skills |
@@ -134,6 +134,18 @@ inerte pour un agent et utile pour la personne qui ouvre le fichier et se demand
 **L'index des skills est dérivé, jamais écrit à la main** : c'est le couple `name` / `description`
 du frontmatter de chaque skill, recopié au moment de la génération. Deux orthographes d'une même
 description finiraient par diverger, et c'est la description qui décide si un agent ouvre le skill.
+
+**Deux registres, décidés par `source.type` (§4.1) et pas par le disque** (#1105). Ce que l'analyse
+a **lu** se dit au passé — « constaté dans `package.json` », « déclarée dans `pyproject.toml` ».
+Ce que les **réponses** d'un projet neuf impliquent (`source.type: "choix"`) se dit au futur —
+« à créer : `CONTRIBUTING.md` », « attendue une fois `package.json` créé ». Le dossier d'un projet
+neuf ne porte encore aucun de ces fichiers : mesuré au bouclage du 2026-09-21, `AGENTS.md` envoyait
+un agent lire un `CONTRIBUTING.md` que « ce projet écrit déjà ». Un avertissement en tête ne suffit
+pas — c'est la ligne lue **au moment d'agir** qui décide —, et deviner le registre en testant
+l'existence des fichiers serait pire : un `package.json` créé à la main entre-temps ferait dire
+« constaté » d'un contenu que personne n'a ouvert. La même règle vaut pour les `SKILL.md`, et elle
+interdit aussi les **mesures** dont le projet neuf n'a pas la matière : une part de langage se tait
+plutôt que d'annoncer « 100 % » de zéro fichier.
 
 ### 3.2 Deux ponts d'une ligne, jamais une copie
 

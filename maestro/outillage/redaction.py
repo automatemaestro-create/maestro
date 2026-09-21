@@ -14,7 +14,7 @@ réel.
     fichiers[0].chemin      # "AGENTS.md"
     fichiers[0].portee      # "bloc" si le projet en avait déjà un, "fichier" sinon
 
-## Trois propriétés à ne pas défaire
+## Quatre propriétés à ne pas défaire
 
 1. **Le rendu est déterministe.** Aucun horodatage, aucun identifiant, aucun
    ordre de dictionnaire ne rentre dans le texte : deux rédactions des mêmes
@@ -33,6 +33,14 @@ réel.
    le seul intérieur de `<!-- BEGIN:maestro-outillage -->`, jamais le fichier.
    `deja-present` ne rend **rien** : ce que le projet porte est reconnu, pas
    dupliqué (docs/38 §3.3).
+4. **Deux registres, jamais un seul** (#1105). Ce que l'analyse a **lu** se dit
+   « constaté dans `package.json` », « déclarée dans `pyproject.toml` » ; ce que
+   des **réponses impliquent** (`source.type: "choix"`, un projet neuf) se dit
+   « à créer », « attendue une fois `package.json` créé ». Le dossier d'un projet
+   neuf ne porte ni `package.json` ni `CONTRIBUTING.md` : un agent qui lirait
+   « constaté » irait ouvrir un fichier absent, et `AGENTS.md` est le premier
+   fichier qu'il lit. Le registre se décide **une fois**, sur la source
+   (`_depuis_les_reponses`), jamais en devinant fichier par fichier.
 
 ## Ce que ce module ne décide pas
 
@@ -197,8 +205,12 @@ def rediger(
     projet.
 
     `source` est le fragment de provenance que le manifeste gardera (docs/38
-    §4.1). `AGENTS.md` n'en retient qu'une chose : un outillage qui vient des
-    **réponses** d'un projet neuf le dit (#1100, `_ligne_origine`).
+    §4.1), et il décide du **registre** du texte (propriété 4) : un outillage qui
+    vient des **réponses** d'un projet neuf le dit en tête (#1100,
+    `_ligne_origine`) et parle ensuite de fichiers « à créer » plutôt que
+    « constatés » — dans `AGENTS.md` comme dans chaque `SKILL.md` (#1105). Sans
+    `source`, le registre est celui d'une analyse : c'est ce que rend une
+    rédaction dont personne n'a dit d'où elle sort.
     """
     declarees = portees or {}
     index = _index_des_skills(recommandation)
@@ -242,7 +254,7 @@ def _fichier(
             chemin=entree.chemin,
             role="skill",
             portee=portee,
-            contenu=texte_skill(entree),
+            contenu=texte_skill(entree, source=source),
         )
     if entree.type == "script":
         return Fichier(
@@ -253,6 +265,31 @@ def _fichier(
             executable=True,
         )
     return None
+
+
+def _depuis_les_reponses(source: Mapping[str, Any] | None) -> bool:
+    """Ce qu'on s'apprête à écrire est-il **impliqué par des réponses** plutôt que lu ?
+
+    L'unique porte entre les deux registres de la propriété 4, et elle ne regarde
+    qu'une chose : `source.type`. C'est le même champ que le manifeste garde
+    (docs/38 §4.1), donc le régime d'un fichier régénéré est celui de l'outillage
+    qui l'a écrit — et pas l'état du disque au moment où on le relit.
+
+    Deviner à la place, en testant l'existence des fichiers nommés, serait pire
+    que faux : un projet neuf dont quelqu'un vient de créer `package.json` à la
+    main se remettrait à dire « constaté » d'un contenu que personne n'a lu.
+    """
+    return source is not None and source.get("type") == SOURCE_CHOIX
+
+
+def _endroit(chemin: str, implique: bool) -> str:
+    """Le chemin d'un fichier, et le fait qu'il **reste à créer** le cas échéant.
+
+    Une seule orthographe de « à créer » dans tout le module : la formule se lit
+    dans trois sections d'`AGENTS.md`, et trois variantes auraient fini par faire
+    croire à trois nuances.
+    """
+    return f"`{chemin}`, à créer" if implique else f"`{chemin}`"
 
 
 def _index_des_skills(recommandation: Recommandation) -> tuple[tuple[str, str], ...]:
@@ -285,7 +322,8 @@ def _raison_stable(entree: Entree) -> str:
     identique » de docs/38 §4.2 ne serait jamais atteint (mesuré sur le banc du
     2026-09-20). La raison rendue ici est celle de `SKILL_PAR_USAGE`, qui ne
     dépend que de l'usage servi ; ce que le projet apporte reste dit par les
-    commandes et par la ligne « constaté dans … ».
+    commandes et par la ligne qui nomme l'endroit du skill (« constaté dans … »
+    ou « à créer … », selon le registre de la propriété 4).
     """
     usage = SKILL_PAR_NOM.get(entree.nom, "")
     connu = SKILL_PAR_USAGE.get(usage)
@@ -304,16 +342,22 @@ def texte_instructions(
     illisible à la régénération (le diff porterait sur la structure), et surtout
     « le projet ne déclare pas comment on le teste » est une information que
     l'agent doit avoir — l'absence de section la lui cacherait.
+
+    `source` décide du **registre** des quatre premières sections (propriété 4) :
+    lu, ou impliqué par des réponses. Il se calcule une fois et descend, plutôt
+    que d'être relu dans chaque corps — deux lectures du même champ, c'est deux
+    occasions de diverger.
     """
+    implique = _depuis_les_reponses(source)
     blocs = [
         "# AGENTS.md",
         "",
         "Les instructions de ce projet, pour tout agent qui y travaille.",
         "",
-        *_section("Le projet", _corps_projet(constats, source)),
-        *_section("Monter et lancer", _corps_monter(constats)),
-        *_section("Vérifier", _corps_verifier(constats)),
-        *_section("Conventions", _corps_conventions(constats)),
+        *_section("Le projet", _corps_projet(constats, source, implique)),
+        *_section("Monter et lancer", _corps_monter(constats, implique)),
+        *_section("Vérifier", _corps_verifier(constats, implique)),
+        *_section("Conventions", _corps_conventions(constats, implique)),
         *_section("L'outillage de ce projet", _corps_outillage(constats, index)),
         *_section("Ce qu'un agent ne touche pas", [f"- {ligne}" for ligne in INTOUCHABLES]),
         "---",
@@ -330,7 +374,9 @@ def _section(titre: str, corps: list[str]) -> list[str]:
     return [f"## {titre}", "", *corps, ""]
 
 
-def _corps_projet(constats: Constats, source: Mapping[str, Any] | None = None) -> list[str]:
+def _corps_projet(
+    constats: Constats, source: Mapping[str, Any] | None = None, implique: bool = False
+) -> list[str]:
     """Ce que le projet **est** — langages, gestionnaires, forge, intégration continue.
 
     En liste et non en paragraphe rédigé : chaque ligne est un constat avec son
@@ -339,20 +385,28 @@ def _corps_projet(constats: Constats, source: Mapping[str, Any] | None = None) -
     """
     lignes: list[str] = []
     if constats.langages:
+        # La part d'un langage est une **mesure** : un projet impliqué par des
+        # réponses n'a aucun fichier de compté, et « 100 % » y serait un chiffre
+        # fabriqué (#1105). Le nom seul est ce que la réponse dit.
         parts = ", ".join(
-            f"{langage.nom} ({round(langage.part * 100)} %)" for langage in constats.langages
+            langage.nom if implique else f"{langage.nom} ({round(langage.part * 100)} %)"
+            for langage in constats.langages
         )
         lignes.append(f"- **Langages** : {parts}.")
     if constats.gestionnaires:
         outils = ", ".join(
-            f"{g.nom} (`{g.chemin}`{'' if not g.verrou else f', verrou `{g.verrou}`'})"
+            f"{g.nom} ({_endroit(g.chemin, implique)}"
+            f"{'' if not g.verrou else f', verrou `{g.verrou}`'})"
             for g in constats.gestionnaires
         )
         lignes.append(f"- **Gestionnaires** : {outils}.")
     if constats.ci:
         lignes.append(
             "- **Intégration continue** : "
-            + ", ".join(f"{piece.role or piece.nom} (`{piece.chemin}`)" for piece in constats.ci)
+            + ", ".join(
+                f"{piece.role or piece.nom} ({_endroit(piece.chemin, implique)})"
+                for piece in constats.ci
+            )
             + "."
         )
     if constats.forge is not None:
@@ -365,11 +419,16 @@ def _corps_projet(constats: Constats, source: Mapping[str, Any] | None = None) -
         )
     if not lignes:
         lignes.append(
-            "L'analyse n'a constaté ni langage dominant, ni gestionnaire de paquets : "
-            "demande à la personne qui te confie la tâche ce qu'est ce projet."
+            "Les réponses données à Maestro ne désignent ni langage, ni gestionnaire "
+            "de paquets : demande à la personne qui te confie la tâche ce qu'est ce "
+            "projet."
+            if implique
+            else "L'analyse n'a constaté ni langage dominant, ni gestionnaire de "
+            "paquets : demande à la personne qui te confie la tâche ce qu'est ce "
+            "projet."
         )
     # D'où vient l'outillage : le manifeste le dit (`source.type`), jamais le texte.
-    if source is not None and source.get("type") == SOURCE_CHOIX:
+    if implique and source is not None:
         return [_ligne_origine(source), *lignes]
     return lignes
 
@@ -377,14 +436,15 @@ def _corps_projet(constats: Constats, source: Mapping[str, Any] | None = None) -
 def _ligne_origine(source: Mapping[str, Any]) -> str:
     """La ligne qui dit qu'un outillage vient des **réponses**, et pas d'une lecture (#1100).
 
-    Sans elle, les lignes qui suivent se liraient comme des constats : « npm
-    (`package.json`) », « convention de l'outil constaté dans `package.json` »
-    sur un dossier où `package.json` n'existe pas encore. Les constats d'un
-    projet neuf sont ceux que ses réponses **impliquent** (`constats_depuis_choix`),
-    et un agent qui les prendrait pour une lecture chercherait des fichiers
-    absents. Elle ne sort que pour une source `choix` : une analyse dit déjà sa
-    provenance ligne par ligne (« déclarée dans … »), et y ajouter son
-    identifiant réécrirait `AGENTS.md` à chaque lecture du projet.
+    Elle dit **en tête** ce que la propriété 4 dit ensuite ligne par ligne (« à
+    créer », « attendue une fois … créé ») : les constats d'un projet neuf sont
+    ceux que ses réponses **impliquent** (`constats_depuis_choix`), et un agent
+    qui les prendrait pour une lecture chercherait des fichiers absents. Les deux
+    ne font pas double emploi — #1105 a montré qu'un avertissement en tête ne
+    rattrape pas une affirmation trois lignes plus bas : c'est la ligne lue au
+    moment d'agir qui décide. Elle ne sort que pour une source `choix` : une
+    analyse dit déjà sa provenance ligne par ligne (« déclarée dans … »), et y
+    ajouter son identifiant réécrirait `AGENTS.md` à chaque lecture du projet.
 
     Le résumé est celui du manifeste (`resume_des_choix`) : stable pour des
     réponses inchangées, donc une régénération ne réécrit rien.
@@ -398,12 +458,12 @@ def _ligne_origine(source: Mapping[str, Any]) -> str:
     )
 
 
-def _corps_monter(constats: Constats) -> list[str]:
-    """Installer, construire, démarrer — les commandes **constatées**, avec leur source."""
+def _corps_monter(constats: Constats, implique: bool = False) -> list[str]:
+    """Installer, construire, démarrer — les commandes, avec leur source ou leur attente."""
     lignes = [
-        _ligne_commande(constats, "installer", "Installer les dépendances"),
-        _ligne_commande(constats, "construire", "Construire"),
-        _ligne_commande(constats, "demarrer", "Démarrer en local"),
+        _ligne_commande(constats, "installer", "Installer les dépendances", implique),
+        _ligne_commande(constats, "construire", "Construire", implique),
+        _ligne_commande(constats, "demarrer", "Démarrer en local", implique),
     ]
     presentes = [ligne for ligne in lignes if ligne]
     if not presentes:
@@ -414,12 +474,12 @@ def _corps_monter(constats: Constats) -> list[str]:
     return ["Depuis la **racine du projet** :", "", *presentes]
 
 
-def _corps_verifier(constats: Constats) -> list[str]:
+def _corps_verifier(constats: Constats, implique: bool = False) -> list[str]:
     """Tests, style, formatage, types — et ce qu'il faut savoir d'une suite partielle."""
     lignes = [
-        _ligne_commande(constats, "tester", "Tests"),
+        _ligne_commande(constats, "tester", "Tests", implique),
         *(
-            _ligne_commande(constats, usage, libelle)
+            _ligne_commande(constats, usage, libelle, implique)
             for usage, libelle in (
                 ("lint", "Style"),
                 ("formater", "Formatage"),
@@ -444,19 +504,36 @@ def _corps_verifier(constats: Constats) -> list[str]:
     ]
 
 
-def _corps_conventions(constats: Constats) -> list[str]:
-    """Les conventions **déjà écrites** du projet — à lire avant d'en inventer d'autres."""
+def _corps_conventions(constats: Constats, implique: bool = False) -> list[str]:
+    """Les conventions du projet — **déjà écrites**, ou **à créer** quand elles sont impliquées.
+
+    La section que #1105 vise en toutes lettres : « Ce projet écrit déjà ses
+    conventions… `CONTRIBUTING.md` » sur un dossier neuf envoie un agent ouvrir
+    un fichier que personne n'a encore écrit. Les mêmes pièces, le même ordre, un
+    autre registre — la liste ne change pas, ce qu'on en dit change.
+    """
     lisibles = [piece for piece in constats.conventions if piece.role != "instructions d'agent"]
     if not lisibles:
         return [
-            "Le projet n'écrit aucune convention (ni README, ni CONTRIBUTING, ni "
+            "Les réponses données à Maestro ne désignent aucune convention de "
+            "contribution. Tiens-toi au style du code que tu écris : ce sera la "
+            "seule convention de ce projet."
+            if implique
+            else "Le projet n'écrit aucune convention (ni README, ni CONTRIBUTING, ni "
             "fichier de style). Tiens-toi au style du code que tu modifies : c'est "
             "la seule convention constatable ici."
         ]
+    entete = (
+        "Ces conventions viennent des réponses données à Maestro : elles sont **à "
+        "créer**, personne ne les a encore écrites."
+        if implique
+        else "Ce projet écrit déjà ses conventions. Lis-les avant d'en inventer :"
+    )
+    prefixe = "à créer : " if implique else ""
     return [
-        "Ce projet écrit déjà ses conventions. Lis-les avant d'en inventer :",
+        entete,
         "",
-        *[f"- `{piece.chemin}` — {piece.role or 'convention'}." for piece in lisibles],
+        *[f"- {prefixe}`{piece.chemin}` — {piece.role or 'convention'}." for piece in lisibles],
         "",
         "Et, en toute circonstance, écris du code qui ressemble à celui qui "
         "l'entoure — nommage, densité de commentaires, idiomes.",
@@ -498,7 +575,9 @@ def _corps_outillage(constats: Constats, index: tuple[tuple[str, str], ...]) -> 
     return lignes
 
 
-def _ligne_commande(constats: Constats, usage: str, libelle: str) -> str:
+def _ligne_commande(
+    constats: Constats, usage: str, libelle: str, implique: bool = False
+) -> str:
     """Une ligne « **Libellé** : `commande` — lu dans `fichier` », ou "" sans constat.
 
     La provenance est dite et ne s'omet pas : une commande `declaree` est écrite
@@ -510,18 +589,30 @@ def _ligne_commande(constats: Constats, usage: str, libelle: str) -> str:
     commande = constats.commande_de(usage)
     if commande is None:
         return ""
-    return f"- **{libelle}** : `{commande.commande}` — {_provenance(commande)}."
+    return f"- **{libelle}** : `{commande.commande}` — {_provenance(commande, implique)}."
 
 
-def _provenance(commande: Commande) -> str:
-    """D'où sort une commande : le fichier qui la déclare, ou l'outil qui la conventionne."""
+def _provenance(commande: Commande, implique: bool = False) -> str:
+    """D'où sort une commande : le fichier qui la déclare, l'outil qui la conventionne, l'attente.
+
+    Trois registres et non deux, depuis #1105. Sur un projet impliqué par des
+    réponses, `origine` vaut toujours `convention` (le projet n'existe pas encore,
+    il ne déclare rien — `questionnaire.constats_depuis_choix`) et `chemin` est
+    l'endroit où la commande **vivra**, pas un fichier qu'on a ouvert. « constaté
+    dans `package.json` » y désignerait un fichier absent ; « attendue une fois
+    `package.json` créé » dit la même chose sans l'affirmation de lecture.
+    """
+    if implique:
+        precision = f" ({commande.extrait})" if commande.extrait else ""
+        endroit = f"`{commande.chemin}`" if commande.chemin else "le manifeste du projet"
+        return f"attendue une fois {endroit} créé{precision}"
     if commande.origine == "convention":
         return f"convention de l'outil constaté dans `{commande.chemin}` (non déclarée)"
     extrait = f" ({commande.extrait})" if commande.extrait else ""
     return f"déclarée dans `{commande.chemin}`{extrait}"
 
 
-def texte_skill(entree: Entree) -> str:
+def texte_skill(entree: Entree, *, source: Mapping[str, Any] | None = None) -> str:
     """Le `SKILL.md` d'un skill recommandé — frontmatter minimal, puis quoi faire.
 
     Le frontmatter porte les deux champs **requis** par la spécification Agent
@@ -532,6 +623,10 @@ def texte_skill(entree: Entree) -> str:
 
     Le corps appelle les commandes **depuis la racine du projet** : c'est la seule
     forme qui ne dépende pas du répertoire courant de l'agent (docs/38 §3.4).
+
+    `source` décide du registre de la ligne qui nomme l'endroit du skill
+    (propriété 4) — « Constaté dans … » pour une analyse, « À créer : … » pour des
+    réponses. C'est le seul endroit d'un `SKILL.md` qui parle du disque.
     """
     nom = entree.nom
     raison = _raison_stable(entree)
@@ -555,11 +650,17 @@ def texte_skill(entree: Entree) -> str:
         "```",
     ]
     if entree.justification is not None:
+        role = f" ({entree.justification.role})" if entree.justification.role else ""
+        endroit = f"`{entree.justification.chemin}`{role}"
         lignes += [
             "",
-            f"Constaté dans `{entree.justification.chemin}`"
-            + (f" ({entree.justification.role})" if entree.justification.role else "")
-            + ". Si le projet a changé depuis, c'est ce fichier qui fait foi, pas celui-ci.",
+            (
+                f"À créer : {endroit}. Quand ce fichier existera, c'est lui qui fera "
+                "foi, pas celui-ci."
+                if _depuis_les_reponses(source)
+                else f"Constaté dans {endroit}. Si le projet a changé depuis, c'est ce "
+                "fichier qui fait foi, pas celui-ci."
+            ),
         ]
     if _usages_couverts(nom):
         lignes += ["", _rappel_usages(nom)]
