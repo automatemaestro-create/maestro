@@ -251,10 +251,21 @@ captures présentes sur le disque. Il ne démarre rien et ne rend aucun verdict.
 Il ne sait voir qu'une **capture**, jamais un regard : une capture qu'on n'a
 pas relue ne compte pas, et c'est à toi de le tenir.
 
-### 5. Le regard neuf — c'est lui qui juge (#980)
+### 5. Qui juge : le regard neuf pour un ticket qui décide, la session sinon (#980, #1151)
 
-**L'auteur voit ce qu'il a voulu faire ; il faut quelqu'un qui voie ce qu'il a
-produit.** Le jugement est rendu par le sous-agent `regard-neuf`
+**Un ticket qui décide d'un écran** (critère du §7.2 de `/design-veille`) est jugé
+par le regard neuf, comme ci-dessous. **Tout autre ticket** — correctif,
+alignement, suite d'une direction consignée — est jugé par **la session
+elle-même** (#1151, docs/40 §3) : joue la saisine comme ci-dessous, puis remplis
+toi-même son gabarit dans `.maestro/relecture/<iid>/regard.md`, sous le titre
+`### Regard de la session — #<iid>`, **ligne à ligne sur la grille**, et dis
+d'emblée que c'est la session qui a jugé. La grille ne change pas, `relecture-note`
+la garde de la même façon, et un ✗ se traite de même (corrigé, ticket, contesté
+sur pièces). Ce qui change est le prix : ni sous-agent, ni 105 s, ni 1,29 $ par
+ticket de finition.
+
+**Pour un ticket qui décide, l'auteur voit ce qu'il a voulu faire ; il faut
+quelqu'un qui voie ce qu'il a produit.** Le jugement est rendu par le sous-agent `regard-neuf`
 (`.claude/agents/regard-neuf.md`, outil `Read` seul), qui ne reçoit que trois
 choses : les **captures** avant/après, le **rendu attendu** du ticket (#976) et
 les **décisions déjà prises** à l'écran — partis pris d'une veille, variante
@@ -327,7 +338,7 @@ sur ce poste le ramasse dès que son ticket n'a plus de worktree.
 
 Écrire `.maestro/relecture/<iid>/jugement.md`, **et le reprendre dans le résumé
 de la session** — le fichier vit dans un worktree que le merge fera ramasser.
-Il **commence par le regard neuf**, recopié de `regard.md` au caractère près —
+Il **commence par le regard** — neuf, ou de la session (étape 5) —, recopié de `regard.md` au caractère près —
 la grille, puis la confrontation au rendu attendu et aux décisions prises —, et
 c'est la grille qui fait foi : `relecture-note` refuse (`5`) un jugement dont
 une ligne manque ou reste sans réponse ✓, ✗ ou « non vu ».
@@ -398,8 +409,9 @@ bash scripts/gitlab/lib.sh relecture-note --raison <iid> <fichier-de-la-raison>
 Le verbe est **idempotent** (empreinte `cksum`) : une clôture rejouée après un
 pipeline rouge n'empile rien, et un jugement enrichi s'ajoute au lieu d'écraser.
 Il **garde la grille** : un jugement sans elle est refusé (`5`) avant toute
-lecture de la forge, et la liste des lignes manquantes est imprimée. La réponse
-n'est jamais de les remplir toi-même — c'est rejouer le regard neuf. Une
+lecture de la forge, et la liste des lignes manquantes est imprimée. Pour un
+ticket qui décide d'un écran, la réponse n'est jamais de les remplir toi-même —
+c'est rejouer le regard neuf ; pour tout autre, c'est compléter ta grille. Une
 `--raison` n'en porte pas : rien n'a été regardé.
 
 ## Le prix, annoncé plutôt que masqué (règle de #418)

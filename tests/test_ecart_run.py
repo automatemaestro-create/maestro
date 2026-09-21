@@ -738,37 +738,25 @@ def test_rejoue_a_lidentique_il_necrit_rien(depot: Depot) -> None:
     assert not ecritures(depot), "le même constat rejoué ne doit rien réécrire"
 
 
-def test_le_prompt_de_run_prescrit_de_differer_en_plus_du_resume(depot: Depot) -> None:
-    """« En plus », jamais « à la place » — et c'est ce qui a changé au lot 5.
+def test_le_prompt_de_run_ne_differe_plus_la_veille_d_un_ticket_qui_applique(depot: Depot) -> None:
+    """#795 prescrivait `veille-differe` en plus du résumé ; #1151 (docs/40 §3) retire ce chemin.
 
-    Le prompt disait déjà « nomme ce ticket dans ton résumé final », c'est-à-dire le contenant que
-    #608 venait de juger insuffisant : les sessions ont TENU cette conduite (le résumé de #698 le
-    dit en toutes lettres) et personne ne l'a lu. Le résumé reste utile — il se lit dans la console
-    d'un run —, mais il ne survit pas ; le ticket, si.
+    La veille est réservée aux tickets qui DÉCIDENT d'un écran. Un ticket qui applique n'a plus ni
+    veille, ni veille différée, ni ticket satellite : onze tickets « Veille de conception à jouer »
+    ont été fermés en septembre, la cérémonie pesant plus lourd que ce qu'elle encadrait.
+
+    Ce que le test garde de l'ancien : les deux verbes se ressemblent et ne font pas la même chose,
+    et le prompt doit les NOMMER ENSEMBLE dans l'interdit — sans quoi une session « ferait propre »
+    en différant ou en arbitrant une question que personne n'a jugée. L'abstention de #934 n'a plus
+    de geste attaché : elle n'enregistre rien et ne diffère rien.
     """
     prompt = prompt_de_session()
-    assert "veille-differe" in prompt, (
-        "le verbe n'est prescrit nulle part : le support est inatteignable"
+    assert "NI VEILLE, NI VEILLE DIFFÉRÉE, NI TICKET SATELLITE" in prompt
+    assert "n'appelle ni « lib.sh veille-differe » ni « lib.sh veille-arbitre »" in prompt, (
+        "l'interdit doit NOMMER les deux verbes ensemble : l'un fabriquerait un ticket de "
+        "cérémonie, l'autre fermerait une question que personne n'a jugée"
     )
-    assert "Nomme-le quand même dans ton résumé final" in prompt, "le résumé n'est pas remplacé"
-    # Les deux verbes se ressemblent et ne font pas la même chose : le prompt doit prescrire l'un
-    # ET interdire l'autre dans la même phrase, faute de quoi une session « ferait propre » en
-    # enregistrant un arbitrage que personne n'a rendu.
-    #
-    # ⚠ #934 a rendu cet interdit CONDITIONNEL sans le lever, et c'est la nuance que ce test garde
-    # désormais : la veille se joue en run, donc un arbitrage s'y enregistre — mais seulement
-    # quand elle a été JOUÉE, auquel cas un jugement a été rendu ET écrit (les partis pris, en
-    # commentaire du ticket). Sur l'ABSTENTION, le « marquer d'office » de #562 reste écarté, et
-    # c'est ce cas-là — le seul où `veille-differe` s'applique — que la phrase doit couvrir.
-    assert "N'APPELLE JAMAIS « lib.sh veille-arbitre » DANS CE CAS" in prompt, (
-        "l'interdit doit NOMMER le verbe qu'il vise ET son cas — « n'arbitre pas » sans son nom se "
-        "relit mal à côté d'un « veille-differe » prescrit deux lignes plus haut, et un interdit "
-        "GLOBAL serait faux depuis #934"
-    )
-    assert "ABSTENTION" in prompt, (
-        "le mot qui sépare les deux cas : un « non » rendu par une personne est un jugement et "
-        "s'enregistre, un « non » qui ne vient de personne ne ferme rien"
-    )
+    assert "DIFFÈRE LA QUESTION" not in prompt, "le chemin de #795 ne survit pas à #1151"
     assert "Tu traites intégralement le ticket" in prompt, "ce n'est pas le prompt qui a été lu"
 
 

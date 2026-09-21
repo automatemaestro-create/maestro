@@ -2101,6 +2101,14 @@ lance_session() {
 # distinction qu'il porte est celle de tout le lot : CONSIGNER n'est pas TRANCHER. Le ticket de
 # veille diffère la question ; `veille-arbitre` la fermerait.
 #
+# ⚠ RENVERSÉ EN PARTIE LE 2026-09-21 (#1151, docs/40 §3) : la veille est RÉSERVÉE aux tickets qui
+# DÉCIDENT d'un écran. En septembre, onze tickets « Veille de conception à jouer » ont été fermés,
+# et une trentaine de finitions d'interface ont chacune porté leur veille : la cérémonie pesait
+# plus lourd que ce qu'elle encadrait. Un ticket qui APPLIQUE n'a plus ni veille, ni veille
+# différée, ni ticket satellite ; ce qui suit raconte le régime d'avant, qui ne vaut plus que pour
+# un ticket qui décide — et celui-là joue sa veille à l'étape 7 de `/ticket-start`, avant ses
+# variantes (#1009).
+#
 # ⚠ ET CETTE QUESTION SE JOUE DÉSORMAIS AU LIEU DE SE DIFFÉRER, LE PLUS SOUVENT (#934, lot 4 de
 # #930). Le lot 3 a rendu la recherche joignable ; celui-ci rend la commande jouable de l'autre
 # côté. Ce qui disparaît en run est la QUESTION — la proposition qui attendait un « oui » —, jamais
@@ -2242,38 +2250,16 @@ Règles de ce run autonome :
     <chemin-du-fichier> ». Le ticket de reprise naît assigné — donc hors des plans d'un run, qui s'y
     ferait refuser la même écriture — et avec son état ; rejoué dans le même ticket, il complète le
     même ticket de reprise au lieu d'en ouvrir un second. Nomme-le dans ton résumé final.
-- LA VEILLE DE CONCEPTION SE JOUE ICI (#934), et ce qui disparaît en run est la QUESTION, pas le
-  geste. Si /ticket-start affiche un bloc « surface visible : », ce ticket touche un écran et la
-  question « qu'est-ce qu'on vise ? » n'a jamais été tranchée dessus. N'attends aucun « oui » que
-  personne ne te donnera : ouvre /design-veille en lui passant LA SURFACE QUE LE TICKET RETOUCHE,
-  dérivée de ce bloc — « la carte d'un run », « /couts », « la barre d'avancement d'un run » —, et
-  jamais « la Control Tower », qui rendrait une galerie au lieu d'une décision.
-  C'EST LA COMMANDE QUI TRANCHE, et son critère n'est écrit que là (son §7.2) : ce ticket
-  DÉCIDE-t-il de quelque chose à l'écran, ou APPLIQUE-t-il une décision déjà prise ? S'il décide,
-  elle joue ; s'il applique, elle s'abstient et te le dit. Ses exemples sont dans son §7.2 et
-  nulle part ailleurs : deux formulations du même critère finiraient par ne plus rendre le même
-  verdict (#979).
-  N'ENREGISTRE RIEN TOI-MÊME, dans les deux cas. Si elle a joué, elle a déjà consigné ses partis
-  pris sur le ticket puis posé l'arbitrage — « lib.sh issue-note » puis « lib.sh veille-arbitre »,
-  dans cet ordre, parce qu'un label qui ferme la question sans sa trace ne dit rien de ce qui a été
-  décidé. Nomme ces partis pris dans ton résumé final — puis applique la règle « UN TICKET QUI
-  DÉCIDE DE L'ÉCRAN » plus bas : une veille jouée dit que le ticket décide, et ses captures de
-  référence sont ce contre quoi tes variantes seront jugées.
-- SI LA VEILLE NE S'EST PAS JOUÉE, DIFFÈRE LA QUESTION au lieu de la perdre — ce chemin ne se
-  referme pas, il devient RARE. Implémente en t'en tenant au socle (docs/30, tokens et primitives
-  du dépôt, aucune identité nouvelle), puis écris avec l'outil Write, dans « .maestro/session/ », un
-  constat qui nomme la SURFACE touchée et ce que tu as décidé à l'écran faute de référence, puis
-  « bash scripts/gitlab/lib.sh veille-differe <iid-du-ticket> <chemin-du-fichier> ». Ce constat est
-  la seule chose que personne d'autre n'a : sans lui le ticket de veille n'apprendrait rien de plus
-  que « lib.sh touche-surface ». Le ticket de veille naît assigné — donc hors des plans d'un run —
-  et il SURVIT à la fermeture du tien, ce qu'un résumé de fin de session ne fait pas : ce processus
-  s'arrête à la fin de ton tour, et ton ticket se ferme au merge dans l'heure.
-  Nomme-le quand même dans ton résumé final.
-  N'APPELLE JAMAIS « lib.sh veille-arbitre » DANS CE CAS. Un « oui » ou un « non » rendu par une
-  personne est un jugement, et le label l'enregistre ; un « non » qui ne vient de personne est une
-  ABSTENTION, et une abstention ne ferme pas une question — la poser d'office serait le « marquer
-  d'office » que #562 a écarté. Ce qui autorise l'enregistrement n'est pas QUI a joué la veille,
-  c'est qu'un jugement ait été RENDU ET ÉCRIT.
+- LA VEILLE DE CONCEPTION EST RÉSERVÉE AUX TICKETS QUI DÉCIDENT D'UN ÉCRAN (#1151, docs/40 §3).
+  Si /ticket-start affiche un bloc « surface visible : », ou si tu touches apps/web/, pose une
+  seule question, celle du §7.2 de /design-veille, et juges-en par son critère sans le recopier :
+  ce ticket DÉCIDE-t-il de quelque chose à l'écran, ou APPLIQUE-t-il une décision déjà prise ?
+  S'il décide, suis la règle « UN TICKET QUI DÉCIDE DE L'ÉCRAN » plus bas : la veille s'y joue,
+  avant ses variantes. S'il applique — correctif, alignement, suite d'une direction consignée —,
+  il n'a NI VEILLE, NI VEILLE DIFFÉRÉE, NI TICKET SATELLITE : n'ouvre pas /design-veille,
+  n'appelle ni « lib.sh veille-differe » ni « lib.sh veille-arbitre », et implémente dans le socle
+  (docs/30, tokens et primitives du dépôt, aucune identité nouvelle). Sa relecture visuelle reste
+  jouée à la clôture, et c'est toi qui la juges, sur la grille.
 - UN TICKET QUI DÉCIDE DE L'ÉCRAN SE TRANCHE ICI, SUR PIÈCES, PUIS S'IMPLÉMENTE (#1009). Un run
   traite tous les tickets : personne ne viendra choisir, donc tu ne t'arrêtes JAMAIS pour attendre
   un choix. L'étape 7 de /ticket-start porte la conduite : si le ticket touche un écran et DÉCIDE

@@ -107,10 +107,12 @@ qui est couvert, ce qui ne l'est pas — nommé, jamais coché — ou que le tic
      porte la séquence entière : stack sur les ports du worktree, `localStorage`, chaque écran dans
      les **deux thèmes**, captures **relues**, puis `--fin`. Ne la recopie jamais ici — une recette
      recopiée dans un prompt fige l'outil au jour où elle a été écrite (#310), et le skill en est la
-     source unique.
+     source unique. **Qui juge dépend du ticket** (#1151, docs/40 §3) : le sous-agent `regard-neuf`
+     pour un ticket qui **décide** d'un écran (critère du §7.2 de `/design-veille`), la **session
+     elle-même** pour tout autre ticket, sur la même grille. Le skill porte les deux conduites.
 
-   ⚠ **On ne demande pas, on joue** — et c'est la différence avec la veille de l'étape 5 de
-   `/ticket-start`, qui elle **propose**. Une veille est un **jugement** sur l'opportunité de
+   ⚠ **On ne demande pas, on joue** — et c'est la différence avec la veille, qui ne se joue que pour
+   un ticket qui décide d'un écran. Une veille est un **jugement** sur l'opportunité de
    chercher des références, et elle coûte des recherches web ; regarder l'écran qu'on vient d'écrire
    est un **constat**, il coûte ~50 s pour trois écrans, et le verdict — *est-ce que ça a l'air
    juste ?* — reste entier, il est seulement rendu après avoir regardé plutôt qu'avant. Le
@@ -132,8 +134,8 @@ qui est couvert, ce qui ne l'est pas — nommé, jamais coché — ou que le tic
    Le verbe est **idempotent** (empreinte `cksum` : un rejeu à l'identique est muet, un jugement
    enrichi s'ajoute), donc une clôture rejouée après un pipeline rouge n'empile rien. Ses refus
    tombent **avant toute écriture** : `4` fichier absent ou vide, `3` iid inconnu, `5` jugement
-   sans sa **grille** entière (#980) — qui se répare en rejouant le regard neuf du skill, jamais en
-   la remplissant toi-même. Un `1` (forge muette) **ne bloque pas la clôture** — signale-le dans le
+   sans sa **grille** entière (#980) — qui se répare en rejouant le regard neuf du skill pour un
+   ticket qui décide d'un écran, et en complétant ta propre grille pour tout autre. Un `1` (forge muette) **ne bloque pas la clôture** — signale-le dans le
    résumé final. Et **nomme dans ce résumé la planche** que le skill a écrite (la ligne
    `PLANCHE <chemin>` de `relecture-visuelle.sh --planche`) : c'est sa copie dans le clone
    principal, la seule qui survit au ramassage de l'étape 14, et la seule façon pour une personne

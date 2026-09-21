@@ -847,6 +847,16 @@ pour de bon, et c'est ce jour-là qu'on veut voir rougir.
 
 ## 5. Inventaire de l'outillage — éprouvé
 
+> ⚠ **Renversé en partie le 2026-09-21** ([docs/40 §3](./40-decision-rythme-et-scenarios-de-reference.md),
+> écrit par #1151) : **la cérémonie de conception est réservée aux tickets qui décident d'un
+> écran** (critère du §7.2 de `/design-veille`). Pour eux, rien ne bouge : veille, variantes
+> rendues, choix du regard neuf consigné avant le code (§5.8, #1009). Tout autre ticket qui touche
+> un écran n'a plus ni veille proposée ou jouée (§5.2, §5.4), ni veille différée en ticket
+> satellite (§5.3). Sa relecture visuelle reste jouée à la clôture (§5.5), mais **la session la
+> juge elle-même**, sur la même grille : le regard neuf (§5.8, #980) n'est saisi que pour un
+> ticket qui décide. Les sous-sections ci-dessous racontent le régime d'avant, qui ne vaut plus
+> que pour ceux-là.
+
 Chaque ligne a été **appelée**. La réponse est citée.
 
 | Outil | Éprouvé comment | Verdict |

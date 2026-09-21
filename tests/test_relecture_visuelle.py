@@ -1952,7 +1952,10 @@ def test_les_ancres_lues_par_la_relecture_ont_chacune_leur_ecrivain() -> None:
 def test_la_cloture_dit_le_refus_de_grille_et_nomme_la_planche() -> None:
     etape = etape_4bis()
     assert "`5` jugement sans sa **grille** entière" in etape
-    assert "jamais en la remplissant toi-même" in etape
+    # #1151 : la réparation dépend de qui juge — rejouer le regard neuf pour un ticket qui décide
+    # d'un écran, compléter sa propre grille pour tout autre. Jamais la grille retirée.
+    assert "rejouant le regard neuf du skill pour un ticket qui décide d'un écran" in etape
+    assert "en complétant ta propre grille pour tout autre" in etape
     assert "`PLANCHE <chemin>`" in etape, (
         "la planche est la seule façon pour une personne de VOIR ce que le texte consigné juge"
     )

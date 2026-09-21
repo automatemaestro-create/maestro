@@ -417,15 +417,23 @@ def test_le_prompt_nomme_le_verbe_et_jamais_gh() -> None:
     assert "surface visible" in texte, "le prompt reconnaît le bloc que start-brief imprime"
 
 
-def test_le_prompt_ne_lance_jamais_la_veille_doffice() -> None:
-    """Ce qui est automatique est la détection du manque, jamais le verdict (#562, #612).
+def test_un_ticket_qui_applique_n_a_ni_veille_ni_question() -> None:
+    """#1151 (docs/40 §3) : la cérémonie de conception est réservée aux tickets qui décident.
 
-    Lancer la veille d'office est le mauvais calcul évident — recherches web, captures et quota sur
-    un ticket qui n'en a peut-être pas besoin — et c'est nommément hors du périmètre de #714.
+    Jusque-là, toute surface visible non arbitrée faisait proposer une veille en interactif
+    (#714) et la faisait jouer en run (#934), et une veille non jouée se différait en ticket
+    satellite (#795) : onze tickets « Veille de conception à jouer » en septembre. Ce qui reste
+    est la question du §7.2, posée une fois ; un ticket qui applique n'a plus ni veille, ni
+    question à une personne, ni veille différée. Le test garde la disparition des trois gestes,
+    et que la détection reste nommée.
     """
-    texte = PROMPT_START.read_text(encoding="utf-8")
-    assert "jamais" in texte and "d'office" in texte
-    assert "un « oui » explicite" in texte or "oui » explicite" in texte
+    texte = normalise(PROMPT_START.read_text(encoding="utf-8"))
+    etape_5 = texte[texte.index("5. **Veille de conception") : texte.index("6. **Résumé court")]
+    assert "seulement pour un ticket qui décide d'un écran" in etape_5
+    assert "ni veille, ni question, ni veille différée" in etape_5
+    assert "n'appelle ni `veille-arbitre` ni `veille-differe`" in etape_5
+    assert "vraie pause" not in etape_5, "plus aucune pause sur la veille d'un ticket qui applique"
+    assert "surface visible" in etape_5, "la détection reste le point de départ de la question"
 
 
 def test_lacces_web_est_ouvert_dans_les_deux_allowlists() -> None:
@@ -571,17 +579,19 @@ def test_le_prompt_de_run_joue_la_veille_et_narbitre_que_ce_qui_a_ete_juge() -> 
     « ne la joue pas » qu'elle justifiait.
     """
     texte = RUN_SH.read_text(encoding="utf-8")
-    assert "/design-veille" in texte, "le prompt nomme la commande qu'il fait ouvrir"
-    # Le refus d'arbitrer est nommé AVEC son cas : un « jamais » nu interdirait les deux côtés, et
-    # c'est précisément ce que le lot a tranché — l'un s'enregistre, l'autre non.
-    assert "N'APPELLE JAMAIS « lib.sh veille-arbitre » DANS CE CAS" in texte, (
-        "l'interdit porte sur l'abstention seule, jamais sur la veille jouée"
-    )
-    assert "ABSTENTION" in texte, "le mot qui porte la distinction avec le jugement d'une personne"
+    prompt = normalise(texte[texte.index("prompt_ticket() {") : texte.index("prompt_reprise() {")])
+    assert "/design-veille" in prompt, "le prompt nomme la commande qu'il fait ouvrir"
     assert "NE SE JOUE PAS ENCORE ICI" not in texte, (
         "la conduite d'avant #934 ne survit pas à son renversement"
     )
-    assert "veille-differe" in texte, "le chemin de #795 reste ouvert — il devient rare, pas fermé"
+    # ⚠ #1151 (docs/40 §3) réserve la veille aux tickets qui DÉCIDENT d'un écran : un ticket qui
+    # applique n'a plus ni veille, ni veille différée (#795), ni arbitrage. Ce que #934 gardait —
+    # seule la veille jouée s'arbitre — tient toujours pour celui qui décide ; le « diffère la
+    # question » de l'abstention disparaît du prompt avec son cas.
+    assert "RÉSERVÉE AUX TICKETS QUI DÉCIDENT D'UN ÉCRAN" in prompt
+    assert "NI VEILLE, NI VEILLE DIFFÉRÉE, NI TICKET SATELLITE" in prompt
+    assert "n'appelle ni « lib.sh veille-differe » ni « lib.sh veille-arbitre »" in prompt
+    assert "DIFFÈRE LA QUESTION" not in prompt, "le chemin de #795 est fermé pour qui applique"
     assert "WebSearch et WebFetch ne sont dans aucune" not in texte, (
         "cette raison est fausse depuis #933 : les deux gestes sont dans les deux allowlists"
     )
@@ -698,12 +708,13 @@ def test_l_etape_5_ne_demande_pas_la_veille_d_un_ticket_qui_decide() -> None:
     ferait revenir, par l'étape d'avant, la pause que #1009 retire."""
     texte = normalise(PROMPT_START.read_text(encoding="utf-8"))
     etape_5 = texte[texte.index("5. **Veille de conception") : texte.index("6. **Résumé court")]
-    decide = etape_5.index(
-        "**Un ticket qui DÉCIDE de l'écran** (critère du §7.2 de `/design-veille`)"
-    )
-    demande = etape_5.index("**En session interactive, demande**")
-    assert decide < demande, "l'exception se lit avant la question qu'elle écarte"
-    assert "ne demande rien, en aucun régime" in etape_5
+    # Depuis #1151 il n'y a plus de question à une personne dans cette étape : un ticket qui décide
+    # renvoie à l'étape 7, un ticket qui applique n'a pas de veille.
+    decide = etape_5.index("**Il décide** : sa veille se joue à l'étape 7")
+    applique = etape_5.index("**Il applique**")
+    assert decide < applique
+    assert "sans rien demander (#1009)" in etape_5
+    assert "**En session interactive, demande**" not in etape_5
 
 
 @pytest.mark.parametrize("source", ["ticket-start", "run.sh"])
@@ -854,4 +865,6 @@ def test_une_veille_jouee_nourrit_le_choix_des_variantes() -> None:
     assert "Puis implémente en appliquant tes propres partis pris" not in veille
     assert "Puis rends la main à `/ticket-start`" in veille
     assert "le regard neuf les juge contre tes partis pris et tes captures" in veille
-    assert "ses captures de référence sont ce contre quoi tes variantes seront jugées" in run
+    # Le prompt de run porte la même conséquence dans la règle des tickets qui décident, seule à
+    # parler de veille depuis #1151.
+    assert "une saisine qui confronte chaque variante aux références" in run
