@@ -105,9 +105,16 @@ function CadreControlTower({
 }) {
   const pathname = usePathname();
   const [repliee, setRepliee] = useState(false);
-  // La troisième zone (#925) : fermée au premier rendu, puis restituée comme le
-  // repli ci-dessous. Fermée est aussi le défaut du chantier — c'est ce qui rend
-  // ce lot mergeable seul, une colonne repliée ne changeant aucun écran.
+  // La troisième zone (#925) : fermée au premier rendu, puis résolue comme le
+  // repli ci-dessous.
+  //
+  // ⚠ `false` ici est l'état du **rendu serveur**, pas le défaut du produit :
+  // depuis #1107 celui-ci est « ouverte au large » et se résout dans l'effet,
+  // contre le `localStorage` et la largeur de la fenêtre — deux choses que le
+  // serveur ne connaît pas. La colonne s'ouvre donc juste après l'hydratation,
+  // exactement comme elle était restituée jusqu'ici pour qui l'avait laissée
+  // ouverte : c'est le même chemin, et il n'y en a pas d'autre sans rendre la
+  // largeur au serveur.
   const [conversationOuverte, setConversationOuverte] = useState(false);
 
   // Lu après l'hydratation : le rendu serveur ne connaît pas le localStorage,

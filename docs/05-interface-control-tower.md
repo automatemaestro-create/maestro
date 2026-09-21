@@ -2523,7 +2523,13 @@ plafond.
   retrouvé au rechargement) et réponse en direct par le WebSocket
   (`chat.message`). Un fil vide s'ouvre sur un mot d'accueil et quatre amorces
   choisies pour montrer la **frontière qui compte** : les deux premières ouvrent
-  un run, les deux dernières sont des questions et n'ouvrent rien.
+  un run, les deux dernières sont des questions et n'ouvrent rien. Elles sont
+  **dérivées du projet ouvert** depuis #942 (`amorcesDuProjet`,
+  `apps/web/lib/orchestration.ts`) : les deux premières proposent d'aller voir
+  *ce* projet — la première le **nomme** quand son nom tient dans le calibre —
+  au lieu de la liste figée qui proposait le backlog de Maestro (constat G9 du
+  retex du 2026-09-11). Aucune lecture de disque, aucun appel de modèle : la
+  fonction est pure et ne lit que la fiche déjà en mémoire.
 - **La colonne** — « Parler à » (les destinataires, l'orchestration en tête),
   « Conversations » (§2.11 : en ouvrir une neuve, retrouver les précédentes) et
   « Ouvert depuis ce fil » (les runs que les messages du fil rattachent, du plus
@@ -4329,8 +4335,8 @@ qui pourraient tous passer pour un objectif, un seul part.
 L'absence du lexique est gardée **structurellement**, sur l'arbre syntaxique et jamais par un
 `grep` : le module *doit* citer `_AMORCES` et `_VERBES_TRAVAIL` pour raconter leur retrait, et une
 garde textuelle se déclencherait sur la docstring même qui les documente. Elle porte sur les
-identifiants **Python**, ce qui écarte du même geste les `AMORCES_ORCHESTRATION` de `apps/web` — les
-amorces de conversation d'un fil vide, qui n'ont jamais été ce lexique. Sa moitié **comportementale**
+identifiants **Python**, ce qui écarte du même geste les amorces de conversation d'`apps/web`
+(`amorcesDuProjet`, `AMORCE_PISTES`… — `lib/orchestration`), qui n'ont jamais été ce lexique. Sa moitié **comportementale**
 compte pour autant : le juge est appelé **une fois** sur chacune des cinq formulations, donc aucune
 voie rapide ne tranche avant lui.
 
@@ -4395,8 +4401,8 @@ module et sa suite *doivent* citer `_AMORCES` et `_VERBES_TRAVAIL` pour raconter
 garde textuelle rougirait sur la docstring même qui les documente, et la seule façon de la faire
 passer serait d'effacer l'explication. Elle lit donc les **identifiants** de l'arbre syntaxique, où
 un nom cité dans une chaîne ou un commentaire n'existe pas ; ce qui écarte du même geste les
-`AMORCES_ORCHESTRATION` de `apps/web/lib/orchestration.ts`, homonymes sans parenté — ce sont les
-amorces de conversation d'un fil vide.
+amorces de conversation d'`apps/web/lib/orchestration.ts` (`amorcesDuProjet` depuis #942),
+homonymes sans parenté — ce sont les propositions de message d'un fil vide.
 
 ### 6.6 Référence de ticket externe portée par une tâche (#187)
 

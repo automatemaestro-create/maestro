@@ -1568,7 +1568,7 @@ def test_le_point_d_injection_dispense_l_app_de_tout_fournisseur(
 LEXIQUE_RETIRE = ("_AMORCES", "_VERBES_TRAVAIL", "_sans_amorce")
 LEXIQUE_RETIRE_LOCAL = LEXIQUE_RETIRE + ("intention", "INTENTION_TRAVAIL", "INTENTION_ECHANGE")
 
-#: `AMORCES_ORCHESTRATION` / `AMORCES_ASSISTANCE` (côté TypeScript) ne sont **pas**
+#: `amorcesDuProjet` / `AMORCES_ASSISTANCE` (côté TypeScript) ne sont **pas**
 #: ce lexique : ce sont les amorces de conversation proposées sur un fil vide. Le
 #: motif porte sur des identifiants **Python**, ce qui rend la confusion
 #: impossible — et c'est pourquoi il passe par l'arbre syntaxique plutôt que par

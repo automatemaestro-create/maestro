@@ -110,8 +110,8 @@ import { entreeParLibelle } from "@/lib/navigation";
 import {
   ACCUEIL_ORCHESTRATION,
   AGENT_ORCHESTRATION,
-  AMORCES_ORCHESTRATION,
   INTERLOCUTEUR_ORCHESTRATION,
+  amorcesDuProjet,
 } from "@/lib/orchestration";
 import { useChat } from "@/lib/useChat";
 
@@ -298,7 +298,9 @@ function FilDeLaColonne() {
         niveauTitre={3}
         titreMasque
         accueil={ACCUEIL_ORCHESTRATION}
-        amorces={AMORCES_ORCHESTRATION}
+        // Les mêmes amorces que `/chat`, donc dérivées du même projet (#942) :
+        // c'est la même conversation, elle ne peut pas proposer deux choses.
+        amorces={amorcesDuProjet(projet)}
         /* Les gestes du fil, **tels quels** (#1106) — même carte, même place,
            même ordre que sur `/chat`. Aucun rendu propre à la colonne : le
            parti pris 1 de la veille de #926 vaut pour le pied comme pour le

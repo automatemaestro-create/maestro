@@ -244,12 +244,32 @@ export function BarreSuperieure({
                   ? "Replier la conversation"
                   : "Déplier la conversation"
               }
-              className="rounded-md p-2 text-texte-secondaire hover:bg-survol hover:text-texte"
+              className="flex items-center gap-1.5 rounded-md p-2 text-texte-secondaire hover:bg-survol hover:text-texte"
             >
               {conversationOuverte ? (
                 <IconeDeplier className="size-5" />
               ) : (
                 <IconeReplier className="size-5" />
+              )}
+              {/* **Le repli se nomme** (#1107). Depuis #1107 la colonne est
+                  ouverte au premier passage, mais seulement au large : sous
+                  `lg`, et pour qui l'a repliée, il reste un chevron — et un
+                  chevron à l'extrémité d'une barre ne dit pas ce qu'il ouvre.
+                  C'est le parti pris que la veille a pris à Grafana, dont
+                  l'assistant n'est jamais ouvert d'office mais dont le bouton
+                  est **nommé et à la même place partout** : un défaut fermé ne
+                  se rattrape pas par un onboarding, il se rattrape par un bouton
+                  qui ne bouge pas. Le regard neuf de #1107 l'a explicitement
+                  repris de la variante C.
+                  Seulement quand la colonne est **repliée** : ouverte, elle est
+                  sous les yeux et se titre elle-même — le libellé ne dirait
+                  qu'une seconde fois ce que l'écran montre déjà. Et masqué sous
+                  `sm`, où le titre de page a la priorité, comme le coût cumulé
+                  et « Reconnexion… » juste au-dessus. Le nom accessible, lui,
+                  ne dépend pas de la largeur : il reste porté par
+                  l'`aria-label`. */}
+              {!conversationOuverte && (
+                <span className="hidden text-corps sm:inline">Conversation</span>
               )}
             </button>
           )}

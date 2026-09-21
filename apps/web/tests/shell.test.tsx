@@ -20,12 +20,14 @@
 
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Shell } from "@/components/Shell";
 import { marquerGuideVu } from "@/lib/guide";
 import { MENU } from "@/lib/navigation";
 import {
+  CLE_CONVERSATION_OUVERTE,
+  REQUETE_COLONNE_AU_LARGE,
   ecrireConversationOuverte,
   ecrireRepliSidebar,
   lireConversationOuverte,
@@ -36,6 +38,7 @@ import {
   coutExecutionFactice,
   poserChemin,
   poserEtatGlobal,
+  poserLargeurFenetre,
   poserProjetActif,
   usageFactice,
   validationFactice,
@@ -216,11 +219,37 @@ describe("le shell applicatif (Shell)", () => {
   // les 420 px sans débordement — n'est pas oublié : il ne se mesure pas ici
   // (#308), c'est le banc de mise en page qui le tranche.
 
-  it("garde la colonne de droite fermée tant que personne ne l'a ouverte", async () => {
-    // Le défaut du chantier, et ce qui rend ce lot mergeable seul : une colonne
-    // repliée ne change aucun écran (docs/35 §5).
+  // --- Le défaut arbitré (#1107) -------------------------------------------
+  //
+  // Ce que ces quatre sondes tiennent est une **décision**, pas une commodité :
+  // la colonne est ouverte au premier passage parce qu'un projet est déjà
+  // choisi, et seulement au large parce qu'en dessous de `lg` elle recouvre le
+  // travail. Les quatre états que le ticket nomme y sont : premier passage,
+  // largeur sous `lg`, repli mémorisé, stockage bloqué. Le cinquième — `/chat`,
+  // où la colonne se retire — est plus bas, inchangé depuis #926.
+
+  it("ouvre la colonne au premier passage, sur une fenêtre large", async () => {
+    // Sur un poste neuf, la conversation est **là** : c'est le critère C2 du
+    // jalon, et ce que le défaut de #925 ne tenait plus depuis que #926 a rempli
+    // la colonne.
     await monterShell();
-    const bascule = screen.getByRole("button", {
+    const colonne = await screen.findByRole("complementary", {
+      name: "Conversation",
+    });
+    expect(colonne).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Replier la conversation" }),
+    ).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("la laisse fermée au premier passage quand la fenêtre est étroite", async () => {
+    // L'autre moitié de la décision, et elle est indissociable : sous `lg` la
+    // colonne **recouvre** (#925), donc l'ouvrir d'office poserait 320 px de
+    // conversation sur ce qu'on était venu regarder. Mesuré à 420 px sur les
+    // variantes de #1107.
+    poserLargeurFenetre(420);
+    await monterShell();
+    const bascule = await screen.findByRole("button", {
       name: "Déplier la conversation",
     });
     expect(bascule).toHaveAttribute("aria-expanded", "false");
@@ -229,16 +258,82 @@ describe("le shell applicatif (Shell)", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("respecte un repli choisi, même sur une fenêtre large", async () => {
+    // Un défaut n'est pas un choix : `"0"` est ce qu'écrit quelqu'un qui vient
+    // de replier la colonne, et le confondre avec une clé absente la rouvrirait
+    // à chaque visite. C'est la distinction que #1107 introduit dans
+    // `preferenceBooleenne`.
+    ecrireConversationOuverte(false);
+    await monterShell();
+    const bascule = await screen.findByRole("button", {
+      name: "Déplier la conversation",
+    });
+    expect(bascule).toHaveAttribute("aria-expanded", "false");
+    expect(
+      screen.queryByRole("complementary", { name: "Conversation" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("applique le défaut quand le stockage refuse de répondre", async () => {
+    // Navigation privée, cookies bloqués : l'état est celui d'un premier
+    // passage, il ne sera simplement pas mémorisé. Traiter le refus comme un
+    // « non » rendrait un autre produit dans la fenêtre privée que dans celle
+    // d'à côté.
+    // Seule **cette** clé se voit refuser : le reste du shell (le projet actif,
+    // le thème, la visite guidée) continue de lire le sien, sans quoi on
+    // n'observerait ici que la porte d'entrée.
+    const vrai = Storage.prototype.getItem;
+    const bloque = vi
+      .spyOn(Storage.prototype, "getItem")
+      .mockImplementation(function (this: Storage, cle: string) {
+        if (cle === CLE_CONVERSATION_OUVERTE) {
+          throw new DOMException("stockage refusé", "SecurityError");
+        }
+        return vrai.call(this, cle);
+      });
+    try {
+      await monterShell();
+      expect(
+        await screen.findByRole("complementary", { name: "Conversation" }),
+      ).toBeInTheDocument();
+    } finally {
+      bloque.mockRestore();
+    }
+  });
+
+  it("nomme la colonne dans la barre tant qu'elle est repliée", async () => {
+    // Le parti pris pris à Grafana : un défaut fermé — la fenêtre étroite, ou
+    // qui vient de replier — ne se rattrape pas par un onboarding mais par un
+    // bouton nommé, à la même place partout. Ouverte, la colonne se titre
+    // elle-même : le libellé ne dirait qu'une seconde fois ce que l'écran
+    // montre.
+    ecrireConversationOuverte(false);
+    await monterShell();
+    const replie = await screen.findByRole("button", {
+      name: "Déplier la conversation",
+    });
+    expect(replie).toHaveTextContent("Conversation");
+
+    ecrireConversationOuverte(true);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Replier la conversation" }),
+      ).toHaveTextContent(""),
+    );
+  });
+
   it("fait passer l'ouverture de la conversation par le stockage", async () => {
     // Même contrat que le repli de la sidebar : le stockage tranche, l'abonnement
     // met l'état à jour. C'est ce qui permettra à un autre contrôle — un onglet
     // voisin, une préférence — de commander la même colonne sans connaître le
-    // shell.
+    // shell. Joué depuis l'état replié, pour que le clic observé soit bien une
+    // **ouverture** : au large, le défaut de #1107 ouvre la colonne de lui-même.
     const utilisateur = userEvent.setup();
+    ecrireConversationOuverte(false);
     await monterShell();
 
     await utilisateur.click(
-      screen.getByRole("button", { name: "Déplier la conversation" }),
+      await screen.findByRole("button", { name: "Déplier la conversation" }),
     );
     expect(lireConversationOuverte()).toBe(true);
     await waitFor(() =>
@@ -249,6 +344,20 @@ describe("le shell applicatif (Shell)", () => {
     expect(
       screen.getByRole("button", { name: "Replier la conversation" }),
     ).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("résout le défaut sur le seuil même du recouvrement", async () => {
+    // La frontière est dite deux fois — en CSS (`max-lg:` / `lg:` de la
+    // colonne) et en JavaScript (`REQUETE_COLONNE_AU_LARGE`) — parce qu'aucun
+    // des deux ne sait lire l'autre. Désaccordées, le défaut ouvrirait une
+    // colonne qui recouvre, ou fermerait une colonne qui avait la place.
+    expect(REQUETE_COLONNE_AU_LARGE).toBe("(min-width: 64rem)");
+    await monterShell();
+    const colonne = await screen.findByRole("complementary", {
+      name: "Conversation",
+    });
+    expect(colonne.className).toContain("max-lg:fixed");
+    expect(colonne.className).toContain("lg:sticky");
   });
 
   it("restitue la colonne ouverte d'une session à l'autre", async () => {

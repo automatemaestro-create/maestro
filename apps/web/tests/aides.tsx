@@ -78,19 +78,52 @@ let ecouteursMedia = new Set<EcouteurMedia>();
 let systemeSombre = false;
 
 /**
+ * La largeur de fenêtre que voient les requêtes `(min-width: …)` (#1107).
+ *
+ * jsdom n'a pas de mise en page : `window.innerWidth` vaut 1024 et ne dit rien
+ * de ce qu'un `lg:` rendrait. Or le défaut de la colonne de conversation s'y
+ * adosse — ouverte au large, fermée en dessous de `lg` —, et un `matchMedia` qui
+ * répondrait toujours « non » ferait passer les tests du shell **par accident**,
+ * en ne montrant jamais le cas nominal.
+ *
+ * Le défaut est donc **large** : c'est le poste de bureau, celui que docs/35
+ * décrit et que la plupart des suites entendent monter. Un test qui veut la
+ * fenêtre étroite le dit — `poserLargeurFenetre(420)`.
+ */
+const LARGEUR_PAR_DEFAUT = 1440;
+const MIN_WIDTH = /^\(min-width:\s*([\d.]+)(rem|px)\)$/;
+let largeurFenetre = LARGEUR_PAR_DEFAUT;
+
+/** La largeur que rendront les requêtes `(min-width: …)`, en pixels CSS. */
+export function poserLargeurFenetre(pixels: number): void {
+  largeurFenetre = pixels;
+}
+
+/** Évalue une requête média contre l'état posé par les aides ci-dessus. */
+function evaluerRequete(requete: string): boolean {
+  if (requete === REQUETE_SOMBRE) return systemeSombre;
+  const seuil = MIN_WIDTH.exec(requete);
+  if (seuil === null) return false;
+  const valeur = Number(seuil[1]);
+  // 16 px par rem : le pas par défaut du navigateur, que le socle ne change pas.
+  return largeurFenetre >= (seuil[2] === "rem" ? valeur * 16 : valeur);
+}
+
+/**
  * Installe le `matchMedia` que jsdom n'a pas. Appelé avant chaque test
- * (`setup.ts`) : l'OS y est en clair par défaut, et sans écouteur hérité du
- * test précédent.
+ * (`setup.ts`) : l'OS y est en clair par défaut, la fenêtre large, et sans
+ * écouteur hérité du test précédent.
  */
 export function installerMatchMedia(): void {
   ecouteursMedia = new Set();
   systemeSombre = false;
+  largeurFenetre = LARGEUR_PAR_DEFAUT;
   window.matchMedia = ((requete: string) => ({
     media: requete,
-    // Getter et non valeur figée : une bascule d'OS doit être vue par les
-    // appels suivants sans qu'on ait à réinstaller quoi que ce soit.
+    // Getter et non valeur figée : une bascule d'OS — ou de largeur — doit être
+    // vue par les appels suivants sans qu'on ait à réinstaller quoi que ce soit.
     get matches() {
-      return requete === REQUETE_SOMBRE && systemeSombre;
+      return evaluerRequete(requete);
     },
     addEventListener: (_type: string, ecouteur: EcouteurMedia) => {
       ecouteursMedia.add(ecouteur);
