@@ -1233,8 +1233,8 @@ PROVENANCE = Provenance(
     resume=(
         "Cette liste-ci est une sélection curée à la main parmi les serveurs MCP "
         "les plus utilisés de l'écosystème, d'après les annuaires publics "
-        "ci-dessous : chaque entrée y est écrite, relue en revue de code et "
-        "versionnée avec le dépôt. Est instanciable ce qui appartient à "
+        "ci-dessous : chaque entrée y est écrite à la main et relue avant d'être "
+        "livrée avec Maestro. Est instanciable ce qui appartient à "
         "l'allowlist — cette liste, plus ce qu'un geste humain y a admis."
     ),
     sources=(
