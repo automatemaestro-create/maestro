@@ -505,6 +505,27 @@ def test_la_consigne_nomme_le_manifeste_et_borne_ce_que_les_fichiers_peuvent(
     assert "`.agents/skills/lancer-les-tests/SKILL.md`" in consigne
 
 
+def test_l_index_dit_avec_quoi_ouvrir_un_skill_et_ce_n_est_pas_le_shell(
+    tmp_path: Path,
+) -> None:
+    """#1102 : un agent d'une équipe proposée lisait son propre outillage par
+    `cat`, donc par l'outil dont un projet fait dériver un cran d'arbitrage — cinq
+    lectures ont attendu un humain 22 minutes. La phrase est ici parce que c'est
+    ici que les chemins sont imprimés ; la règle générale vit dans le cadre
+    d'exécution."""
+    projet = projet_outille(tmp_path / "depensio")
+
+    consigne = outillage_du_projet(projet).consigne()
+
+    assert "**outil de lecture de fichier**" in consigne
+    assert "jamais par une commande shell" in consigne
+    assert "lire n'est pas exécuter" in consigne
+    # Ce que le chemin imprimé juste en dessous veut dire, dit une fois.
+    assert "relatifs à la racine du projet" in consigne
+    # Et ce qui reste vrai : un script appelé par un skill, lui, s'exécute.
+    assert "sous tes autorisations" in consigne
+
+
 def test_l_outillage_se_montre_tel_quel_avec_ses_bornes(tmp_path: Path) -> None:
     """`to_dict` sert un appelant qui veut **montrer** ce qui a été transmis."""
     projet = projet_outille(tmp_path / "depensio")

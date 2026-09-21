@@ -34,6 +34,13 @@ seule couche qui connaisse un fournisseur de modèle. Un rôle dont la générat
 (`playbook_origine`) : une équipe entière perdue parce qu'un quota est épuisé
 serait une réponse bien pire qu'un playbook générique annoncé comme tel.
 
+⚠ Ce que ce module doit en revanche à #257, c'est de lui dire **sous quel régime
+le rôle exécute** : l'`intention` porte le cran proposé pour l'outil d'exécution
+(#1102). Un playbook écrit sans lui faisait d'une commande à approuver le premier
+geste de l'agent, si bien qu'une équipe validée telle quelle attendait un humain
+dès sa première tâche. Le fait est ici, la règle qu'on en tire est dans le cadre
+de #257 — jamais les deux.
+
 **Le modèle de chaque rôle.** L'analyse d'un projet ne dit rien du modèle avec
 lequel un rôle doit travailler. Une fiche sans réglage prend le modèle par
 défaut des exécutants, et c'est exactement ce qu'on veut dire.
@@ -158,6 +165,7 @@ def _role(
 ) -> RolePropose:
     """Le rôle proposé pour ce gabarit : ses skills, ses instances, ses autorisations."""
     branches = _skills_du_role(gabarit, skills)
+    autorisations = _autorisations(gabarit, constats)
     instances, raison_instances = (
         gabarit.instances_selon(constats)
         if gabarit.instances_selon is not None
@@ -178,10 +186,10 @@ def _role(
             f"playbook du gabarit « {gabarit.gabarit} » : sa rédaction pour ce projet "
             "n'a pas encore eu lieu"
         ),
-        intention=_intention(gabarit, constats, branches),
+        intention=_intention(gabarit, constats, branches, autorisations),
         outils=profil_outille(gabarit.agent).outils,
         skills=branches,
-        autorisations=_autorisations(gabarit, constats),
+        autorisations=autorisations,
     )
 
 
@@ -282,7 +290,9 @@ def _cran_execution(gabarit: Gabarit, constats: Constats) -> AutorisationPropose
             raison=(
                 "aucune commande de ce rôle n'a été lue dans le projet : ce qu'il "
                 "lancerait, il le composerait lui-même. Personne n'a rien décidé "
-                "d'avance là-dessus, donc une personne tranche chaque appel"
+                "d'avance là-dessus, donc une personne tranche chaque appel. Cela "
+                "ne l'empêche pas de travailler : **lire** les fichiers du projet, "
+                "son outillage compris, ne passe pas par cet outil"
             ),
         )
     return AutorisationProposee(
@@ -309,6 +319,17 @@ def _commandes_declarees(gabarit: Gabarit, constats: Constats) -> tuple[str, ...
     détecté, que le projet n'écrit nulle part — la retenir ferait passer une
     supposition pour une lecture, l'exact travers qu'`ORIGINES_COMMANDE` existe
     pour empêcher.
+
+    ⚠ **Une commande que Maestro a lui-même écrite dans un skill du projet n'en
+    est pas une non plus**, et #1102 l'a pesé plutôt que supposé. Elle est bien
+    *écrite dans le projet*, mais elle n'y a été décidée par personne : elle
+    vient de la même convention, recopiée un cran plus loin. La compter ferait
+    de Maestro l'auteur de sa propre autorisation, quand docs/38 §5.1 dit que
+    *ce qui autorise un outil n'est pas l'origine du fichier, c'est le geste
+    d'une personne* — et le cran obtenu ne serait pas borné à cette commande, un
+    cran portant sur un outil et non sur ses arguments. Ce que #1102 corrige est
+    ailleurs, et sans toucher à ce cran : un agent n'a pas besoin d'exécuter pour
+    **lire** son outillage.
     """
     usages = {usage for usage, _ in gabarit.usages}
     endroits: list[str] = []
@@ -325,15 +346,41 @@ def _commandes_declarees(gabarit: Gabarit, constats: Constats) -> tuple[str, ...
     return tuple(dict.fromkeys(endroits))
 
 
+#: Ce que l'intention dit du **régime d'exécution** du rôle, décideur par
+#: décideur (#1102). Un **fait**, jamais une consigne : ce que le playbook doit
+#: en faire est écrit dans le cadre de #257
+#: (`maestro.controltower.generation_agent._CADRE_GENERATION`), et le redire ici
+#: ferait deux consignes à tenir d'accord — la frontière que `_intention` pose
+#: déjà pour tout le reste.
+REGIME_EXECUTION: dict[Decideur, str] = {
+    Decideur.HUMAIN: (
+        " Ses commandes shell attendent l'accord d'une personne, qui peut ne pas "
+        "venir pendant sa tâche ; lire un fichier, lui, ne passe pas par là."
+    ),
+    Decideur.AUTO: (
+        " Ses commandes shell passent sans attendre personne, en étant tracées."
+    ),
+}
+
+
 def _intention(
-    gabarit: Gabarit, constats: Constats, skills: Sequence[SkillBranche]
+    gabarit: Gabarit,
+    constats: Constats,
+    skills: Sequence[SkillBranche],
+    autorisations: Sequence[AutorisationProposee],
 ) -> str:
     """La phrase d'où #257 écrira le playbook de ce rôle — *pour ce projet*.
 
-    Une phrase, comme l'entrée de #257 : le rôle, ce que le projet est, et les
-    skills qu'il branche. Rien de ce que le playbook doit dire n'y est écrit —
-    c'est le cadre de #257 qui le demande, et le redire ici en ferait une
-    seconde consigne à tenir d'accord.
+    Une phrase, comme l'entrée de #257 : le rôle, ce que le projet est, les
+    skills qu'il branche, et **sous quel régime il exécute**. Rien de ce que le
+    playbook doit dire n'y est écrit — c'est le cadre de #257 qui le demande, et
+    le redire ici en ferait une seconde consigne à tenir d'accord.
+
+    Le régime d'exécution y est entré par #1102, et c'est le premier fait qui ne
+    vienne pas du projet mais de la **proposition elle-même** : un playbook écrit
+    dans l'ignorance du cran de son agent ordonnait, en premier geste, une
+    commande qu'une personne devait approuver — la tâche commençait donc par
+    attendre quelqu'un. L'intention le dit, le cadre de #257 en tire la règle.
 
     Elle vit **dans la proposition** et pas seulement dans l'appel : c'est elle
     qu'on relit pour juger un playbook qu'on trouve à côté de la plaque, et un
@@ -348,8 +395,29 @@ def _intention(
         ". Il travaille dans le dossier du projet",
         f" et appelle les skills du projet : {noms}" if noms else "",
         ".",
+        _regime_execution(autorisations),
     ]
     return "".join(morceaux)
+
+
+def _regime_execution(autorisations: Sequence[AutorisationProposee]) -> str:
+    """Ce que l'intention dit du cran proposé pour l'outil d'exécution.
+
+    Vide quand le rôle n'a pas cet outil dans les mains, ou quand son cran ne
+    désigne aucun décideur (`allow`, `deny` : personne ne tranche) : une phrase
+    sur un régime qui ne s'applique pas serait pire que son absence.
+    """
+    decideur = next(
+        (
+            autorisation.decideur_effectif
+            for autorisation in autorisations
+            if autorisation.outil == OUTIL_EXECUTION
+        ),
+        None,
+    )
+    if decideur is None:
+        return ""
+    return REGIME_EXECUTION.get(decideur, "")
 
 
 def _ecarte(gabarit: Gabarit, constats: Constats) -> RoleEcarte:

@@ -20,6 +20,15 @@ Quatre règles décident dans `maestro.equipe`, et ce sont elles qu'on tient ici
 ④ **rien n'est créé** — `cree: False`, `validation: "requise"`, et aucun dépôt
    ouvert en écriture.
 
+S'y ajoute, depuis #1102, une cinquième règle que le module ne portait pas et
+qu'un run réel a désignée :
+
+⑤ **le playbook et l'autorisation d'un rôle sont d'accord** — l'`intention` d'où
+   #257 écrira le playbook porte le **cran proposé pour l'outil d'exécution**.
+   Sans lui, le playbook ordonnait en premier geste une commande qu'une personne
+   devait approuver, et une équipe validée telle quelle attendait un humain dès
+   sa première tâche.
+
 Les constats sont **fabriqués** : c'est ce qui rend la dérivation éprouvable sans
 projet réel, sans disque et sans fournisseur de modèle. La recommandation
 d'outillage, elle, est dérivée de ces constats par `recommander` — la vraie, pour
@@ -35,6 +44,7 @@ import pytest
 
 from maestro import equipe
 from maestro.agents.store import NOMS_RESERVES
+from maestro.controltower.generation_agent import _CADRE_GENERATION, INTENTION_MAX
 from maestro.decideur import Decideur
 from maestro.equipe import (
     ECARTE_ORCHESTRATEUR,
@@ -342,6 +352,101 @@ def test_un_ask_sans_decideur_escalade_plutot_que_de_s_auto_approuver() -> None:
     servi = AutorisationProposee(outil="Bash", cran="ask", raison="…").to_dict()
 
     assert servi["decideur"] == str(Decideur.HUMAIN)
+
+
+# --- ⑤ Le playbook et l'autorisation sont d'accord (#1102) --------------------
+
+
+def test_l_intention_dit_sous_quel_regime_le_role_execute() -> None:
+    """#1102 : le playbook était écrit dans l'ignorance du cran de son agent, si
+    bien qu'il lui ordonnait en premier geste une commande qu'une personne devait
+    approuver. L'intention porte désormais le fait ; la règle qu'on en tire vit
+    dans le cadre de #257, et nulle part ailleurs."""
+    dev = _role(_propose(_constats()), "dev")
+
+    execution = next(a for a in dev.autorisations if a.outil == OUTIL_EXECUTION)
+    assert execution.decideur_effectif is Decideur.HUMAIN
+    assert equipe.REGIME_EXECUTION[Decideur.HUMAIN] in dev.intention
+
+
+def test_l_intention_suit_le_cran_quand_le_projet_declare_ses_commandes() -> None:
+    """Le régime annoncé est **celui de l'autorisation proposée**, jamais une
+    phrase écrite à côté d'elle : un projet qui déclare ses commandes fait passer
+    les deux à `auto` du même coup."""
+    constats = _constats(
+        commandes=(
+            Commande(
+                usage="tester",
+                commande="pytest -q",
+                chemin="Makefile",
+                extrait="test:",
+                origine="declaree",
+            ),
+        )
+    )
+
+    tests = _role(_propose(constats), "tests")
+
+    execution = next(a for a in tests.autorisations if a.outil == OUTIL_EXECUTION)
+    assert execution.decideur_effectif is Decideur.AUTO
+    assert equipe.REGIME_EXECUTION[Decideur.AUTO] in tests.intention
+    assert equipe.REGIME_EXECUTION[Decideur.HUMAIN] not in tests.intention
+
+
+@pytest.mark.parametrize("decideur", list(Decideur))
+def test_chaque_decideur_a_sa_phrase_de_regime(decideur: Decideur) -> None:
+    """Un décideur sans phrase ferait une intention muette sur le régime — le
+    défaut que #1102 corrige, revenu par la porte d'un cran neuf."""
+    assert equipe.REGIME_EXECUTION[decideur].strip()
+
+
+def test_l_intention_tient_sous_la_borne_du_generateur() -> None:
+    """`ServiceEquipe._playbook` coupe l'intention à `INTENTION_MAX` : le régime
+    étant en fin de phrase, il serait le premier perdu."""
+    constats = _constats(
+        langages=(
+            _langage("Python", 0.5, exemple="src/app.py"),
+            _langage("TypeScript", 0.3, exemple="web/app.ts"),
+            _langage("CSS", 0.2, exemple="web/app.css"),
+        ),
+        commandes=tuple(
+            Commande(usage=usage, commande=f"make {usage}", chemin="Makefile", origine="declaree")
+            for usage in ("installer", "construire", "demarrer", "tester", "lint")
+        ),
+    )
+
+    for role in _propose(constats).roles:
+        # La coupe de `_playbook` doit être un non-événement : sinon le régime,
+        # qui ferme la phrase, partirait le premier.
+        assert role.intention[:INTENTION_MAX] == role.intention
+        assert any(phrase in role.intention for phrase in equipe.REGIME_EXECUTION.values())
+
+
+def test_le_cadre_de_generation_interdit_de_faire_d_une_commande_le_premier_geste() -> None:
+    """L'autre moitié de ⑤, et la seule qui porte une **consigne** : l'intention
+    dit le fait, le cadre de #257 en tire la règle. La règle y est écrite
+    conditionnellement parce que ce cadre sert aussi la saisie libre du
+    formulaire, où aucune intention ne parle de cran."""
+    # Le cadre est enveloppé à ~80 colonnes : une phrase attendue y traverse une
+    # fin de ligne. On compare donc sur le texte remis à plat, pas sur la mise en page.
+    cadre = " ".join(_CADRE_GENERATION.split())
+
+    assert "jamais d'une commande à exécuter le premier geste obligatoire" in cadre
+    assert "Si l'intention dit que ses commandes attendent l'accord d'une personne" in cadre
+    # Et la conduite qu'il prescrit à la place, jusqu'au refus.
+    assert "avec son outil de lecture, jamais par le shell" in cadre
+    assert "il poursuit et le signale, il ne réessaie pas" in cadre
+
+
+def test_l_autorisation_humaine_dit_que_lire_ne_passe_pas_par_la() -> None:
+    """La raison se relit dans l'écran de validation (#1040) : sans cette phrase,
+    « Bash : une personne tranche chaque appel » se lirait comme un agent qui ne
+    peut rien faire, alors qu'il lit son outillage sans demander personne."""
+    dev = _role(_propose(_constats()), "dev")
+
+    execution = next(a for a in dev.autorisations if a.outil == OUTIL_EXECUTION)
+    assert "lire" in execution.raison.lower()
+    assert "ne passe pas par cet outil" in execution.raison
 
 
 # --- Les instances : combien, et pourquoi -----------------------------------

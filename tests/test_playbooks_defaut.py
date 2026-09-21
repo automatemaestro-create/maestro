@@ -212,6 +212,25 @@ def test_le_document_inclut_le_tronc_commun_senior(role):
     assert "{{" not in contenu and "}}" not in contenu
 
 
+def test_le_cadre_outille_dit_de_lire_avec_l_outil_de_lecture_et_pas_par_le_shell():
+    """#1102 : mesuré le 2026-09-21, un agent lisait le `SKILL.md` de son propre
+    outillage par `cat`, c'est-à-dire par le seul outil dont un projet fait dériver
+    un cran d'arbitrage — cinq lectures ont attendu un humain 22 minutes. Le cadre
+    est le seul endroit qui atteigne les **deux** chemins (les documents du code par
+    leur `{{cadre}}`, les fiches par `playbook_outille`)."""
+    brut = pdc.cadre_outille()
+    cadre = _normalise(brut)
+
+    assert "Lire n'est pas exécuter" in cadre
+    # Les outils nommés, pas une périphrase : ce sont eux que l'agent doit appeler,
+    # et c'est la commande qu'il prenait à leur place qui est nommée en face.
+    assert "`Read`" in brut and "`Glob`/`Grep`" in brut
+    assert "`cat`" in brut
+    # Un refus est une décision : le rejouer est ce qui a coûté les 22 minutes.
+    assert "Un appel d'outil refusé est une décision, pas un incident." in cadre
+    assert "Ne le rejoue pas à l'identique" in cadre
+
+
 def test_le_socle_porte_le_regime_senior_en_entier():
     texte = _normalise(socle())
 
