@@ -822,3 +822,99 @@ def test_un_gabarit_n_est_pas_une_fiche_du_projet(
     assert client_parc.get(f"/api/catalogue/{nom}").status_code == 200
     reponse = client_parc.get(f"/api/catalogue/{nom}", params={"projet": projet})
     assert reponse.status_code == 404
+
+
+# --- ⑦ Le chat direct avec un agent d'équipe (#1175) ---------------------------
+
+
+@pytest.fixture()
+def client_chat_equipe(projets: ServiceProjets, tmp_path: Path) -> TestClient:
+    """Un poste neuf dont le chat répond sans modèle, en nommant le rôle qui parle."""
+    from maestro.controltower.chat import ChatStore, RepondeurScripte
+
+    with TestClient(
+        create_app(
+            bus=InMemoryEventBus(),
+            state=ControlTowerState(),
+            projets=projets,
+            agents_store=AgentStore(tmp_path / "agents"),
+            chat_store=ChatStore(tmp_path / "chat"),
+            chat_repondeur=RepondeurScripte(),
+        )
+    ) as client:
+        yield client
+
+
+def _recrute(client: TestClient, projet: str, nom: str, role: str) -> None:
+    corps = {
+        "nom": nom,
+        "role": role,
+        "competences": ["python"],
+        "playbook": f"Tu es {role}.",
+    }
+    reponse = client.post("/api/catalogue", params={"projet": projet}, json=corps)
+    assert reponse.status_code == 201, reponse.text
+
+
+def test_le_chat_d_un_agent_d_equipe_repond_dans_son_projet(
+    client_chat_equipe: TestClient, ids: tuple[str, str]
+) -> None:
+    """Le critère 1 : `developpeur-2` rendait 404, faute de chercher dans son projet."""
+    projet, _ = ids
+    _recrute(client_chat_equipe, projet, "developpeur-2", "Développeur de Depensio")
+
+    # Hors projet, ce n'est pas un gabarit : 404, comme avant.
+    assert client_chat_equipe.get("/api/chat/developpeur-2").status_code == 404
+    assert (
+        client_chat_equipe.get("/api/chat/developpeur-2", params={"projet": projet}).status_code
+        == 200
+    )
+    envoi = client_chat_equipe.post(
+        "/api/chat/developpeur-2/messages",
+        params={"projet": projet},
+        json={"contenu": "Salut"},
+    )
+    assert envoi.status_code == 201
+    # C'est **sa** fiche qui répond, rôle du projet compris.
+    assert "Développeur de Depensio" in envoi.json()["messages"][1]["contenu"]
+
+
+def test_deux_projets_ne_melent_pas_les_conversations_d_agents_homonymes(
+    client_chat_equipe: TestClient, ids: tuple[str, str]
+) -> None:
+    """Le critère 2 : deux équipes ont chacune leur `developpeur-2`, et leur fil à elles.
+
+    Le dépôt de chat était unique et rangé par nom d'agent : un agent de projet y
+    aurait partagé ses conversations avec son homonyme de l'autre projet.
+    """
+    depensio, autre = ids
+    _recrute(client_chat_equipe, depensio, "developpeur-2", "Développeur de Depensio")
+    _recrute(client_chat_equipe, autre, "developpeur-2", "Développeur de l'autre projet")
+
+    client_chat_equipe.post(
+        "/api/chat/developpeur-2/messages",
+        params={"projet": depensio},
+        json={"contenu": "Message pour Depensio"},
+    )
+    fil_autre = client_chat_equipe.get(
+        "/api/chat/developpeur-2", params={"projet": autre}
+    ).json()
+
+    assert all("Depensio" not in m["contenu"] for m in fil_autre["messages"])
+    reponse = client_chat_equipe.post(
+        "/api/chat/developpeur-2/messages",
+        params={"projet": autre},
+        json={"contenu": "Et toi ?"},
+    ).json()
+    assert "Développeur de l'autre projet" in reponse["messages"][1]["contenu"]
+
+
+def test_l_assistance_ignore_le_projet_de_configuration(
+    client_chat_equipe: TestClient, ids: tuple[str, str]
+) -> None:
+    """Les fils système restent hors de tout projet : l'écran peut cadrer tous ses appels."""
+    projet, _ = ids
+    assert (
+        client_chat_equipe.get("/api/chat/assistance", params={"projet": projet}).status_code
+        == 200
+    )

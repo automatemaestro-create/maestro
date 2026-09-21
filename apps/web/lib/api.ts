@@ -793,7 +793,12 @@ export function chargerFilChat(
   const fil = conversation
     ? `?conversation=${encodeURIComponent(conversation)}`
     : "";
-  return chargerJson<FilChat>(`/api/chat/${encodeURIComponent(agent)}${fil}`);
+  // Cadré par le projet actif (#1175) : l'agent d'une équipe se résout dans son
+  // projet, et ses conversations lui sont propres. Sans effet sur l'orchestrateur
+  // et l'assistance, que le serveur sert hors de tout projet.
+  return chargerJson<FilChat>(
+    cadreProjet(`/api/chat/${encodeURIComponent(agent)}${fil}`),
+  );
 }
 
 /**
@@ -809,7 +814,7 @@ export function chargerConversationsChat(
   agent: string,
 ): Promise<ConversationsChat> {
   return chargerJson<ConversationsChat>(
-    `/api/chat/${encodeURIComponent(agent)}/conversations`,
+    cadreProjet(`/api/chat/${encodeURIComponent(agent)}/conversations`),
   );
 }
 
@@ -826,7 +831,7 @@ export async function ouvrirConversationChat(
   agent: string,
 ): Promise<ConversationChat> {
   const reponse = await fetch(
-    `${API_URL}/api/chat/${encodeURIComponent(agent)}/conversations`,
+    cadreProjet(`${API_URL}/api/chat/${encodeURIComponent(agent)}/conversations`),
     { method: "POST", headers: { "Content-Type": "application/json" } },
   );
   if (!reponse.ok) {
@@ -1037,7 +1042,7 @@ export async function diffuserMessageChat(
   surTrame: (trame: FragmentChat) => void = () => {},
 ): Promise<void> {
   const reponse = await fetch(
-    `${API_URL}/api/chat/${encodeURIComponent(agent)}/flux`,
+    cadreProjet(`${API_URL}/api/chat/${encodeURIComponent(agent)}/flux`),
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1130,7 +1135,9 @@ export async function arreterFluxChat(
 ): Promise<void> {
   try {
     await fetch(
-      `${API_URL}/api/chat/${encodeURIComponent(agent)}/flux/${encodeURIComponent(echange)}/arret`,
+      cadreProjet(
+        `${API_URL}/api/chat/${encodeURIComponent(agent)}/flux/${encodeURIComponent(echange)}/arret`,
+      ),
       { method: "POST" },
     );
   } catch {
