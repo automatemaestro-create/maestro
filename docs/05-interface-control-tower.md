@@ -241,9 +241,25 @@ un projet Python et un projet mobile porterait les skills et les autorisations d
 | les **autorisations** et la **capacité** (instances) | `core/permissions/_projets/<id>/`, `core/capacite/_projets/<id>/` | idem — et ce que le projet ne règle pas, il l'**hérite** du gabarit : sans ce repli, ranger les autorisations par projet ferait d'un projet neuf un projet « tout permis » |
 | le **pool** d'intégrations MCP et les **activations** par agent | `core/mcp/_projets/<id>/` | le mot « pool **projet** » (#130) devient exact : c'était jusqu'ici un stockage unique (`core/mcp/pool.json`) |
 
-**Ce que ce cadre ne décide pas encore** : *quel* agent de l'équipe prend *quelle* tâche. Le routage
-sur l'équipe d'un projet est le lot #1041 ; #1038 garantit seulement que les agents d'un projet sont
-**candidats** — un agent recruté pour un projet recevrait sinon des tâches de nulle part.
+**Le travail se répartit sur cette équipe-là** (#1041). #1038 rendait les agents d'un projet
+**candidats** ; le routage les choisit désormais pour de bon, et par **une seule règle**
+(`catalogue_du_projet`) que ses deux lecteurs partagent : l'exécuteur, qui route tâche par tâche, et
+la boucle, qui fait découper l'objectif — un plan proposé sur une équipe et exécuté sur une autre
+enverrait toutes ses tâches en repli « à assigner » sans que rien ne le dise. Le catalogue du
+routeur est **remplacé pour l'appel** et jamais retrié : c'est l'ordre reçu qui départage les ex
+æquo. Et un projet qui n'a encore recruté personne **ne retombe pas** sur les gabarits (#1042) :
+`None` dit « je n'ai pas d'équipe à te donner » (tâche hors projet, dépôts non câblés, dépôt
+illisible — un incident de stockage ne doit pas faire partir toutes les tâches en repli), `()` dit
+« ce projet n'a personne », et la tâche attend alors quelqu'un.
+
+Et **ce que personne ne couvre est nommé**. Une tâche qu'aucun rôle de l'équipe ne sait prendre
+reste « à assigner », mais l'écran ne s'en tient pas là : le manque part au fil comme un blocage
+(`tache.blocage`, statut `role_manquant`, §6.13) avec le **poste** qui y répondrait — le gabarit qui
+couvre le plus des compétences non couvertes, ou les compétences telles quelles si aucun ne les
+couvre. *Un rôle fabriqué se lirait comme un rôle existant.* ⚠ **Un agent ne recrute pas pendant un
+run** ([docs/37 §3.5](./37-decision-equipe-sur-mesure.md)) : le signal le dit en toutes lettres,
+sans quoi le lecteur d'un run en cours croirait que Maestro va s'en charger et la tâche resterait là
+sans que personne bouge.
 
 **Reprise sans perte.** Un poste installé avant ce lot voit ses agents et réglages globaux rattachés
 au projet qui les utilise, au démarrage de l'API : idempotente, elle ne supprime jamais rien et dit
@@ -5750,3 +5766,129 @@ familles jamais mêlées, la question **répondue** qui n'y entre pas, le sens d
 qui se dit, et le 404 de la route — et par `apps/web/tests/decisions-run.test.tsx` pour l'écran :
 une ligne par décision dans l'ordre servi, l'hypothèse marquée par **une forme et un mot**, et les
 trois états d'une liste vide (chargement, échec de lecture, run qui n'a rien tranché seul).
+
+### 6.19 L'équipe d'un projet — proposée, puis créée (#1039, #1040) — **livré**
+
+Deux routes, et **tout** les sépare : la première ne crée rien, la seconde crée tout. C'est le cœur
+du chantier « équipe sur mesure » ([docs/37](./37-decision-equipe-sur-mesure.md)) — *un projet naît
+sans agent, son analyse lui propose une équipe, l'utilisateur la valide*.
+
+- `POST /api/projets/{id}/equipe/proposition` → `PropositionEquipe`. Corps **vide** : le projet est
+  **analysé** (#1030) — le cas d'un projet existant. Corps portant les `choix` du questionnaire
+  d'outillage (#1031) : l'équipe se dérive de ces **réponses**, sans qu'aucun fichier soit ouvert —
+  le cas d'un projet neuf. Même dérivation dans les deux cas, et `source` dit laquelle a servi.
+- `POST /api/projets/{id}/equipe` → `EquipeCreee`, **201**. Le corps rapporte la proposition **telle
+  que l'API l'a servie**, rôles retirés ou instances ajustées.
+
+`404` si le projet est inconnu, `422` motivé s'il est illisible, si sa racine ne l'est plus, ou si
+l'équipe est refusée — jamais un `500`.
+
+```jsonc
+// PropositionEquipe — POST …/equipe/proposition
+{
+  "proposition": 1,                    // VERSION de la forme : un consommateur doit
+                                       // pouvoir dire « je ne sais pas lire ça »
+  "id": "equ-9f3a21bc", "projet_id": "prj-depensio",
+  "faite_le": "2026-09-21T10:12:44+00:00",
+  "resume": "Développeur ×2, QA / Testeur — 2 rôle(s), 3 instance(s) ; 4 rôle(s) écarté(s)",
+  "source": { "origine": "analyse", "analyse_id": "ana-4c21" },  // repris tel quel
+  "roles": [
+    { "nom": "dev",                    // le slug de la FICHE qui sera créée…
+      "role": "Développeur",
+      "gabarit": "developpeur",        // …jamais celui du gabarit : le playbook du
+                                       // code le masquerait (docs/04 §2)
+      "competences": ["api", "backend", "frontend", "refactor"],
+      "raison": "le projet est écrit en Python (62 % des fichiers de code vus) : …",
+      // L'ENDROIT du projet qui le justifie — le fichier lu, pas une phrase. `null`
+      // quand rien ne le désigne (un projet sans code garde un développeur).
+      "justification": { "nom": "Python", "chemin": "src/app.py", "role": "48 fichier(s) Python" },
+      "instances": 2,
+      "raison_instances": "2 langages substantiels (Python 62 %, TypeScript 31 %) : …",
+      "outils": ["Read", "Write", "Edit", "Glob", "Grep", "Bash", "TodoWrite"],
+      "playbook": "…",                 // celui qu'on lit à l'écran, et qui sera écrit
+      "playbook_origine": "genere",    // "genere" (écrit pour CE projet, #257) ou
+                                       // "gabarit" (la rédaction n'a pas abouti) :
+                                       // les deux ne valent pas la même chose
+      "playbook_raison": "…", "intention": "Un agent « Développeur » pour un projet …",
+      "skills": [ { "nom": "mettre-en-route", "chemin": ".agents/skills/mettre-en-route/SKILL.md",
+                    "etat": "a-generer",   // un skill que l'outillage n'a pas encore
+                                           // écrit n'est pas une erreur, c'est un
+                                           // ordre de marche
+                    "raison": "il installe les dépendances avant d'écrire la première ligne",
+                    "commandes": ["pip install -e ."] } ],
+      // CHAQUE autorisation avec SA raison — le critère de #716. `decideur` n'a de
+      // sens que sur `ask`, et l'absence y vaut `humain` : un cran non précisé
+      // escalade, il ne s'auto-approuve pas.
+      "autorisations": [
+        { "outil": "Bash", "cran": "ask", "decideur": "auto",
+          "raison": "les commandes de ce rôle sont écrites dans le projet et l'analyse les y a lues (Makefile (test:)). Le cran « auto » les laisse passer **en les traçant** … ⚠ Il ne les borne pas à celles-là : un cran porte sur un outil, pas sur ses arguments" }
+      ],
+      // Les MÊMES autorisations, sous la forme que la création persistera. Seul
+      // chemin de cette traduction : une seconde finirait par ne plus dire la même
+      // chose que ce qu'on a montré. `allow` VIDE = ouverte, et c'est voulu — la
+      // fermer refuserait les canaux in-process de Maestro (poser une question,
+      // consigner une décision) et rendrait l'agent muet.
+      "politique": { "allow": [], "ask": { "Bash": "auto" }, "deny": [] } }
+  ],
+  // Ce qui n'est PAS proposé, avec sa raison : sans cette liste, « pas de rôle base
+  // de données » se lirait comme un oubli de Maestro plutôt que comme un fait du
+  // projet. L'orchestrateur y figure PAR DÉCISION (docs/37 §4.2).
+  "ecartes": [
+    { "nom": "orchestrateur", "role": "Orchestrateur",
+      "raison": "l'orchestrateur n'est pas un membre de l'équipe : c'est Maestro, …" },
+    { "nom": "donnees", "role": "Base de données",
+      "raison": "rien dans les bornes de l'analyse ne justifie un rôle « Base de données » : aucun fichier SQL n'a été vu, … Vous pouvez l'ajouter à la validation si le projet en a besoin" }
+  ],
+  "instances_total": 3,
+  // LES DEUX PROMESSES DU TICKET, rendues lisibles par l'appelant — pas des
+  // réglages : aucun appel ne peut les changer.
+  "cree": false, "validation": "requise"
+}
+```
+
+```jsonc
+// EquipeCreee — POST …/equipe (201)
+{
+  "projet_id": "prj-depensio",
+  "proposition_id": "equ-9f3a21bc",   // de quoi cette équipe est née
+  "cree": true,                       // le pendant du `cree: false` ci-dessus
+  "agents": [
+    { "nom": "dev", "role": "Développeur", "instances": 2, "gabarit": "developpeur",
+      "skills": ["mettre-en-route"],
+      "politique": { "allow": [], "ask": { "Bash": "auto" }, "deny": [] } }
+  ],
+  "instances_total": 2
+}
+```
+
+**Tout ou rien.** L'équipe entière est vérifiée **avant** que le premier fichier ne soit écrit — nom
+déjà pris dans ce projet ou réservé (les cinq gabarits, l'orchestrateur, l'assistant), doublon dans
+la liste, instances hors bornes (1 à 20), playbook vide, fiche ou politique que les dépôts
+refuseraient. Un seul blocage rend un `422 equipe-refusee` qui les nomme **tous**, et rien n'a été
+créé : sans transaction de système de fichiers, une demi-équipe serait pire qu'un refus. Et les
+nommer tous d'un coup évite de corriger une équipe de cinq rôles un refus à la fois.
+
+```jsonc
+// 422 — { "detail": { … } }
+{ "motif": "equipe-refusee",
+  "message": "équipe refusée, aucun agent créé — developpeur : « developpeur » est déjà pris …",
+  "refus": [ { "nom": "developpeur", "raison": "…" } ] }
+```
+
+⚠ **Une équipe vide n'est pas une équipe** : `422 equipe-vide`. *Ne pas recruter se dit en ne
+validant pas l'équipe, pas en validant une équipe vide.*
+
+**Ce qui est écrit, et où** : trois dépôts **du projet** (#1038, §2.0) — la fiche et son playbook
+(`core/agents/_projets/<id>/`), la politique d'autorisations *si le rôle en porte une* (un fichier
+de politique vide **serait** une politique), la capacité. La fiche d'abord : c'est elle qui fait
+exister l'agent au catalogue, et une coupure après elle laisse un agent aux défauts — lisible,
+modifiable, que les écrans d'agents rattrapent — là où l'ordre inverse laisserait une capacité et
+une politique orphelines que rien n'affiche.
+
+Implémentation : [`maestro/equipe/`](../maestro/equipe/) (la dérivation et la création, **pures** —
+aucun module n'y ouvre un fichier en écriture), [`maestro/controltower/equipe.py`](../maestro/controltower/equipe.py)
+(la seule couche qui touche un dépôt et connaisse un fournisseur de modèle),
+[`maestro/controltower/app.py`](../maestro/controltower/app.py) (les deux routes),
+`apps/web/components/projets/EtapeEquipe.tsx` (l'écran de validation). Gardé par
+[`tests/test_equipe_proposition.py`](../tests/test_equipe_proposition.py) et
+[`tests/test_equipe_creation.py`](../tests/test_equipe_creation.py) (#1043).
