@@ -1309,6 +1309,12 @@ n'est donc plus une salle d'attente mais un **état de passage**, où le ticket 
 
 ### 5.1 Découpage en sous-tickets — besoins trop gros & tests différés
 
+> ⚠ **Renversé en partie le 2026-09-21** (#1153, [docs/40 §3](./40-decision-rythme-et-scenarios-de-reference.md)). Les **tests différés au lot
+> final « tests + doc »** cessent d'être la règle : chaque ticket, et chaque lot quand un découpage
+> reste nécessaire, livre ses propres tests, et un parent n'existe que si **une capacité** dépasse une
+> session. La mécanique des sub-issues, de `lot::parallele` et de `lot::arbitre` ne bouge pas. Ce
+> paragraphe et `/ticket-create` sont réécrits par #1150. Les lots « tests + doc » déjà découpés restent.
+
 Un ticket doit tenir en **~1 session de travail** (§1, règle 4) — chaque session `/ticket-start`
 reste ainsi légère en contexte. L'évaluation de taille se fait en **charge estimée**, sur la
 **description intégrale** — notes techniques et références croisées comprises, pas seulement le
