@@ -176,7 +176,9 @@ def _ecrire(
     de « où a-t-on le droit d'écrire » auraient fini par ne pas refuser les mêmes
     chemins.
     """
-    fichiers = rediger(constats, recommandation, portees=portees_declarees(cible))
+    fichiers = rediger(
+        constats, recommandation, portees=portees_declarees(cible), source=source
+    )
     return generer(
         cible,
         fichiers,

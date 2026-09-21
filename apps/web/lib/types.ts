@@ -2571,7 +2571,10 @@ export type ReponseRecommandationOutillage = {
  */
 export type RapportGenerationOutillage = {
   projet_id: string;
+  /** L'analyse qui a servi — vide quand l'outillage vient des réponses (#1100). */
   analyse: string;
+  /** D'où sort l'outillage, recopié dans le manifeste : `type` vaut `analyse` ou `choix`. */
+  source?: Record<string, unknown>;
   /** `en-place` : c'est fait. `branche` : passé par l'accord humain (docs/24 §2.4). */
   regime: string;
   branche?: string;
@@ -2584,6 +2587,12 @@ export type RapportGenerationOutillage = {
     ignores: string[];
     retires: string[];
   };
+  /**
+   * Les chemins retenus qui ne désignaient **aucune** entrée (#1100) : lus à
+   * l'écran, inconnus de la génération, donc non écrits — et nommés pour qu'un
+   * « non écrit » ne passe pas pour un « écrit ».
+   */
+  retenus_inconnus?: string[];
   application: Record<string, unknown> | null;
 };
 

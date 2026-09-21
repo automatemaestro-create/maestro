@@ -1707,8 +1707,14 @@ export function recommandationOutillage(
  * (`POST /api/projets/{id}/outillage/generation`, #1033, docs/38 §4.2).
  *
  * `retenus` est la liste des **chemins** que l'écran a gardés cochés : rien de
- * plus, parce que le reste — quoi écrire, où, avec quel contenu — se rederive de
- * l'analyse côté serveur. L'omettre revient à tout générer.
+ * plus, parce que le reste — quoi écrire, où, avec quel contenu — se rederive
+ * côté serveur. L'omettre revient à tout générer.
+ *
+ * `choix` sont les réponses d'un projet **neuf** (#1100) : c'est d'elles, et non
+ * de l'analyse d'une racine encore vide, que le serveur rederive l'outillage —
+ * celui que `recommandationOutillage` a montré. Sans elles, la génération d'un
+ * projet neuf n'écrivait aucun des skills recommandés. Un projet existant ne les
+ * passe pas : son outillage se dérive de son analyse.
  *
  * ⚠ **L'appel peut être long, et pour deux raisons différentes** : la racine est
  * ré-analysée, et, sur un projet **versionné**, la requête **attend l'accord
@@ -1718,10 +1724,14 @@ export function recommandationOutillage(
 export function genererOutillage(
   id: string,
   retenus?: string[],
+  choix?: ChoixOutillage[],
 ): Promise<RapportGenerationOutillage> {
   return ecrireProjet<RapportGenerationOutillage>(
     `/api/projets/${encodeURIComponent(id)}/outillage/generation`,
-    retenus === undefined ? {} : { retenus },
+    {
+      ...(retenus === undefined ? {} : { retenus }),
+      ...(choix === undefined ? {} : { choix }),
+    },
     "génération refusée",
     "POST",
   );
