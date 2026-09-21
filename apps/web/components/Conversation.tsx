@@ -1083,6 +1083,7 @@ export function Conversation({
           suit). */}
       <form
         ref={quai}
+        data-guide="composeur"
         onSubmit={(e) => {
           e.preventDefault();
           void soumettre(brouillon);
