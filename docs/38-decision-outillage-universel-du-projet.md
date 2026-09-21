@@ -460,13 +460,32 @@ Et une qui tient au dépôt : **la frontière de §5.3 se mesure, elle ne se dé
 Elle reste à **rejouer** quand le SDK ou le CLI bougent : c'est le contrat d'une version qu'elle
 constate, pas une propriété acquise.
 
-## 8. Ce que les lots suivants en tiennent
+## 8. Ce que les lots suivants en tiennent — et où ils l'appliquent
 
-| Lot | Ce qu'il prend ici |
-| --- | --- |
-| #1030 — analyse d'un projet existant | Le dossier de scripts se **constate** (§3.4) ; ce qu'elle recommande remplit `source` du manifeste (§4.1) |
-| #1031 — choix d'un projet neuf | Les choix remplissent `source` de la même façon ; l'arbre de §3.6 est la cible |
-| #1032 — les agents lisent l'outillage | §5 en entier, et `setting_sources=[]` comme condition (§5.3). **Fait**, mesuré en §5.4 |
-| #1033 — génération | §3.6 pour l'arbre, §4.2 pour les quatre cas, et le nom d'atelier réservé (§4.3) |
-| #1034 — parcours de création | L'étape d'outillage écrit ce que §3.6 décrit, et reste reportable ([docs/37 §4.6](./37-decision-equipe-sur-mesure.md)) |
-| #1035 — tests + doc | Les faits de §2 se revérifient ; §7 dit lesquels |
+Les six lots sont **livrés** (2026-09-21). Le tableau dit ce que chacun a pris ici et par quel
+code il l'applique : c'est le chemin que prend quelqu'un qui conteste une décision de cette note —
+de la règle à la ligne qui l'exécute, et à la suite qui la garde.
+
+| Lot | Ce qu'il prend ici | Où il l'applique |
+| --- | --- | --- |
+| #1030 — analyse d'un projet existant | Le dossier de scripts se **constate** (§3.4) ; ce qu'elle recommande remplit `source` du manifeste (§4.1) | [`maestro/outillage/analyse.py`](../maestro/outillage/analyse.py), `detection.py`, `modele.py`, `recommandation.py` ; `GET /api/projets/{id}/outillage/analyse` ([docs/05 §6.20](./05-interface-control-tower.md)) |
+| #1031 — choix d'un projet neuf | Les choix remplissent `source` de la même façon ; l'arbre de §3.6 est la cible | [`maestro/outillage/questionnaire.py`](../maestro/outillage/questionnaire.py) — les réponses deviennent des `Constats`, et c'est le `recommander` de #1030 qui tranche : **pas deux chemins** |
+| #1032 — les agents lisent l'outillage | §5 en entier, et `setting_sources=[]` comme condition (§5.3). **Fait**, mesuré en §5.4 | [`maestro/outillage/contexte.py`](../maestro/outillage/contexte.py) (ce qui est transmis), [`maestro/providers/claude.py`](../maestro/providers/claude.py) (ce qui n'entre pas), `maestro/agents/runtime.py` (le message de la tâche) |
+| #1033 — génération | §3.6 pour l'arbre, §4.2 pour les quatre cas, et le nom d'atelier réservé (§4.3) | [`maestro/outillage/redaction.py`](../maestro/outillage/redaction.py) (le texte), `generation.py` (les quatre cas), `ecriture.py` (le régime de [docs/24 §2.4](./24-projets-locaux-et-poste-de-travail.md)) ; `POST …/outillage/generation` |
+| #1034 — parcours de création | L'étape d'outillage écrit ce que §3.6 décrit, et reste reportable ([docs/37 §4.6](./37-decision-equipe-sur-mesure.md)) | `apps/web/components/projets/EtapeOutillage.tsx` ; `POST …/outillage/report`, et `outillage.a_faire` sur la fiche du projet |
+| #1035 — tests + doc | Les faits de §2 se revérifient ; §7 dit lesquels | [`tests/test_outillage_analyse.py`](../tests/test_outillage_analyse.py), [`test_outillage_questionnaire.py`](../tests/test_outillage_questionnaire.py), [`test_outillage_generation.py`](../tests/test_outillage_generation.py), [`test_outillage_contexte.py`](../tests/test_outillage_contexte.py), [`test_outillage_skills_ref.py`](../tests/test_outillage_skills_ref.py) ; [docs/24 §2.6](./24-projets-locaux-et-poste-de-travail.md) et [docs/05 §6.20](./05-interface-control-tower.md) |
+
+**Ce que les tests gardent de cette note, et pas ailleurs** (#1035) : les trois promesses de
+l'analyse — lecture seule, bornes dites dans la réponse, aucune exécution — sont mesurées **sur les
+appels**, jamais sur le résultat (un module qui écrirait puis effacerait passerait une comparaison
+avant/après) ; la frontière de §5 est gardée des deux côtés, `contexte.py` pour ce qui est transmis
+et un balayage de **chaque** `ClaudeAgentOptions` de `claude.py` pour ce qui n'entre pas ; et les
+skills écrits sur le disque sont validés contre la spécification Agent Skills.
+
+Cette dernière validation est un **équivalent** de `skills-ref validate` (§2.1) et non l'outil
+lui-même : l'appeler demanderait une dépendance installée depuis le réseau dans un job qui n'en a
+pas besoin, là où les règles tiennent en une douzaine de lignes citées de la spécification. Le
+validateur est écrit **indépendamment** du lecteur de frontmatter du code de production — le
+réutiliser reviendrait à valider un texte avec l'outil qui l'a écrit — et chacune de ses règles est
+prouvée sur un échantillon fautif avant de servir de verdict. Si `skills-ref` devient installable
+sans réseau dans le job, le remplacer est une amélioration, pas une correction.

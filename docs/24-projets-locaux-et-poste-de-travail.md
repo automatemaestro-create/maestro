@@ -346,6 +346,61 @@ il gagne simplement un voisin : **le projet de l'utilisateur**. En mode isolé, 
 gagne un second montage (la racine du projet, ou le worktree de la tâche) ; tout le reste du
 contrat de [docs/17 §3](./17-isolation-execution.md) tient inchangé.
 
+### 2.6 L'outillage d'un projet *(chantier #1020 — **livré**)*
+
+Un projet déclaré ne porte pas qu'une racine et un périmètre : depuis #1020, **créer ou importer un
+projet commence par son outillage**. Le format est arrêté par
+[docs/38](./38-decision-outillage-universel-du-projet.md), qui le justifie et le date ; cette
+section dit ce que ça change **ici**, dans le chantier des projets locaux.
+
+**Ce que c'est, en une ligne** : un `AGENTS.md` à la racine, deux ponts d'une ligne (`CLAUDE.md`,
+`GEMINI.md`), des skills au format Agent Skills dans `.agents/skills/<nom>/`, les scripts du projet
+tels qu'ils sont, et un **manifeste** `.maestro/outillage/manifeste.json` qui dit ce que Maestro a
+écrit, depuis quelle analyse ou quels choix, et par quelle version. Les formats sont ouverts : un
+autre agent que Claude sait les lire.
+
+**D'où il sort — deux voies, une seule recommandation.** Un projet **existant** est *analysé*
+(#1030) : sa racine est parcourue en lecture seule, bornes explicites et aucune exécution du code du
+projet, et l'analyse rend ce qu'elle recommande avec, pour chaque entrée, le fichier du projet qui
+la justifie. Un projet **neuf** est *questionné* (#1031) : les réponses deviennent les mêmes
+`Constats`, et c'est la **même** fonction qui recommande. Il n'y a donc pas deux idées de « ce qu'il
+faut à ce projet » à tenir d'accord.
+
+**Où il s'écrit : sous le patron de §2.4, sans exception.** La génération (#1033) passe par le
+régime d'écriture du projet — **en place** sur un projet non versionné, sur une **branche à fusionner
+sous accord** s'il est versionné —, et par la même frontière d'écriture que les agents (#839). Un
+outillage généré est un livrable comme un autre : il n'a pas de voie réservée.
+
+**Rien n'est jamais écrasé en silence.** Le manifeste est ce qui rend « régénérer » possible :
+Maestro ne possède que ce qu'il a déclaré avoir écrit, une modification faite à la main n'est jamais
+remplacée (la version neuve attend dans `.maestro/outillage/refuses/`, nommée au rapport), et un
+fichier que le projet portait déjà reçoit un **bloc délimité** plutôt qu'un remplacement. Les quatre
+cas sont à [docs/38 §4.2](./38-decision-outillage-universel-du-projet.md).
+
+**Et il ne revient pas par la fenêtre.** C'est le point qui touche §2.5 : Maestro écrit un
+`CLAUDE.md` dans un projet où son propre runtime travaille, et le répertoire courant d'une tâche
+**est** ce projet. L'outillage ne voyage donc que dans un sens — les agents reçoivent ce que Maestro
+leur **transmet** (#1032), dérivé du manifeste et borné à ce qu'il déclare, et la configuration du
+projet n'entre jamais d'elle-même dans le runtime (`setting_sources=[]`, `skills=[]`, en plus du
+`strict_mcp_config` qui ferme déjà les serveurs MCP). En particulier, un `allowed-tools:` écrit dans
+un `SKILL.md` du projet est **inerte** : une permission se déclare par une personne, outil par outil
+([docs/32](./32-decision-cran-orchestrateur.md)), et l'origine du fichier n'y change rien — fût-il
+écrit par Maestro. Cette ligne s'ajoute au tableau des menaces de §2.5 sous « prompt injection par
+le contenu du projet » : le contenu transmis reste **une donnée, pas une consigne**, et la consigne
+de la tâche le dit à l'agent en toutes lettres.
+
+**Ce qui n'est pas couvert** : l'exécution avec outils par un fournisseur **non-Anthropic** dans
+Maestro — l'outillage est lisible par d'autres agents, mais Maestro ne les pilote pas encore
+(objectif O7, [docs/06](./06-roadmap.md)).
+
+Les routes sont au [docs/05 §6.20](./05-interface-control-tower.md), l'étape du parcours de création
+à [docs/37 §4.6](./37-decision-equipe-sur-mesure.md) — première, proposée d'office, et **reportable**.
+Gardé par [`tests/test_outillage_analyse.py`](../tests/test_outillage_analyse.py),
+[`test_outillage_questionnaire.py`](../tests/test_outillage_questionnaire.py),
+[`test_outillage_generation.py`](../tests/test_outillage_generation.py),
+[`test_outillage_contexte.py`](../tests/test_outillage_contexte.py) et
+[`test_outillage_skills_ref.py`](../tests/test_outillage_skills_ref.py) (#1035).
+
 ---
 
 ## 3. Question 3 — De l'intention au brief : prompt, documents, sources
