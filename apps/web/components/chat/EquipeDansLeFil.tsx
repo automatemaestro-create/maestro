@@ -52,6 +52,7 @@ import {
   autorisationsDecideesDavance,
   composition,
   compteAgents,
+  propositionPourDemande,
   rolesValides,
 } from "@/lib/equipe";
 import { useEtatGlobal } from "@/lib/etatGlobal";
@@ -64,10 +65,18 @@ import type {
 
 export function EquipeDansLeFil({
   demande,
+  cle,
   recruter,
   enCours,
 }: {
   demande: DemandeRecrutement;
+  /**
+   * Ce qui identifie la demande — son message. La proposition est retenue sous
+   * cette clé (`propositionPourDemande`) : la carte est montée sur chaque écran,
+   * et la redemander à chaque navigation paierait une analyse et un appel modèle
+   * par rôle.
+   */
+  cle: string;
   /** Le geste du fil (`useChat.recruter`) : valider l'équipe gardée, ou décliner. */
   recruter: (
     approuve: boolean,
@@ -94,7 +103,9 @@ export function EquipeDansLeFil({
     let vivant = true;
     const partir = async () => {
       try {
-        const rendue = await proposerEquipe(demande.projet_id);
+        const rendue = await propositionPourDemande(cle, () =>
+          proposerEquipe(demande.projet_id),
+        );
         if (!vivant) return;
         setProposition(rendue);
         setRetenus(new Set(rendue.roles.map((r) => r.nom)));
@@ -111,6 +122,11 @@ export function EquipeDansLeFil({
     return () => {
       vivant = false;
     };
+    // La clé n'entre pas en dépendance : une demande **reposée** après un refus
+    // de création (même projet, nouveau message) garde la proposition déjà
+    // composée et ce qu'on y a ajusté. Ce qui relance la proposition est le
+    // projet — et, au montage suivant, une clé que la mémoire ne connaît pas.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [demande.projet_id]);
 
   // Le projet **de la demande**, nommé dans sa casse. Le fil ne connaît que celui

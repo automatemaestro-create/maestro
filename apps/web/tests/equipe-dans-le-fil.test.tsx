@@ -29,7 +29,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import PageChat from "@/app/chat/page";
-import { recrutementEnAttente } from "@/lib/equipe";
+import { oublierPropositions, recrutementEnAttente } from "@/lib/equipe";
 import { AGENT_ORCHESTRATION } from "@/lib/orchestration";
 import type {
   MessageChat,
@@ -137,6 +137,9 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.clearAllMocks();
+  // La mémoire des propositions vit au module : sans l'oublier, un test hériterait
+  // de la proposition du précédent et ne demanderait rien à l'API.
+  oublierPropositions();
 });
 
 describe("la demande de recrutement, dans le fil", () => {
@@ -176,6 +179,20 @@ describe("la demande de recrutement, dans le fil", () => {
       screen.queryByRole("region", { name: "Équipe à valider" }),
     ).not.toBeInTheDocument();
     expect(proposerEquipe).not.toHaveBeenCalled();
+  });
+
+  it("ne redemande pas la proposition quand la carte est remontée (une navigation)", async () => {
+    // La colonne porte la carte sur chaque écran, et une proposition coûte une
+    // analyse et un appel modèle par rôle : relevé à la relecture de #1146.
+    poserFilAssistance({ messages: [demandeDeRecrutement()] });
+    const premier = rendreAvecEtat(<PageChat />);
+    await within(await carteAttendue()).findByText(/2 agents/);
+    premier.unmount();
+
+    rendreAvecEtat(<PageChat />);
+
+    await within(await carteAttendue()).findByText(/2 agents/);
+    expect(proposerEquipe).toHaveBeenCalledTimes(1);
   });
 
   it("demande la proposition du projet de la demande, pas de la fenêtre", async () => {

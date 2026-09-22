@@ -33,6 +33,42 @@ export function recrutementEnAttente(
   return dernier.recrutement ? dernier : null;
 }
 
+/**
+ * Les propositions déjà demandées pour une demande de recrutement, par clé.
+ *
+ * La carte d'équipe du fil est montée **sur chaque écran** — la colonne de
+ * conversation la porte partout (`GestesDuFil`, #1106) —, et une proposition coûte
+ * une analyse du projet plus un appel modèle par rôle (#257). Sans cette mémoire,
+ * chaque navigation la redemandait tant que la demande attendait : relevé à la
+ * relecture de #1146. La clé est la **demande** (son projet et son message), donc
+ * une nouvelle demande repart d'une proposition neuve.
+ */
+const propositions = new Map<string, Promise<PropositionEquipe>>();
+
+/**
+ * La proposition d'équipe de cette demande — demandée une fois, puis partagée.
+ *
+ * Un échec n'est pas retenu : la clé est oubliée, et le montage suivant réessaie.
+ */
+export function propositionPourDemande(
+  cle: string,
+  charger: () => Promise<PropositionEquipe>,
+): Promise<PropositionEquipe> {
+  const deja = propositions.get(cle);
+  if (deja !== undefined) return deja;
+  const promesse = charger();
+  propositions.set(cle, promesse);
+  promesse.catch(() => {
+    if (propositions.get(cle) === promesse) propositions.delete(cle);
+  });
+  return promesse;
+}
+
+/** Oublie toutes les propositions retenues — l'état d'une session neuve (tests). */
+export function oublierPropositions(): void {
+  propositions.clear();
+}
+
 /** « 2 agents », « 1 agent » — le compte et son nom, accordés. */
 export function compteAgents(nombre: number): string {
   return `${nombre} agent${nombre > 1 ? "s" : ""}`;

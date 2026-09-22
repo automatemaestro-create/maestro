@@ -119,9 +119,8 @@ export function useGestesDuFil(
   // questionnaire d'outillage, donc un aparté avec un agent n'en porte jamais.
   const proposition = global ? propositionEnAttente(fil.messages) : null;
   const outillage = global ? questionEnAttente(fil.messages) : null;
-  const recrutement = global
-    ? (recrutementEnAttente(fil.messages)?.recrutement ?? null)
-    : null;
+  const messageRecrutement = global ? recrutementEnAttente(fil.messages) : null;
+  const recrutement = messageRecrutement?.recrutement ?? null;
 
   // Le second moment du questionnaire (#1104) : il a conclu, et ce qu'il a
   // décidé attend d'être écrit. Le hook est appelé **sans condition** — les
@@ -172,6 +171,7 @@ export function useGestesDuFil(
         <EquipeDansLeFil
           key={recrutement.projet_id}
           demande={recrutement}
+          cle={`${recrutement.projet_id}|${messageRecrutement?.horodatage ?? ""}`}
           recruter={fil.recruter}
           enCours={fil.envoi}
         />

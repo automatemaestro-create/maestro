@@ -257,15 +257,21 @@ export function LigneRole({
               à tenir d'accord — et c'est toujours celle de l'écran qui dérive.
               « Moins d'une instance », lui, n'est pas une décision : c'est
               l'absence d'agent, qui se dit en décochant. */}
-          <input
-            id={idInstances}
-            type="number"
-            min={1}
-            value={instances}
-            disabled={fige || !retenu}
-            onChange={(e) => changerInstances(Number(e.target.value))}
-            className={`${CLASSE_CONTROLE} w-20`}
-          />
+          {/* La largeur tient à l'**enveloppe** : `CLASSE_CONTROLE` porte
+              `w-full`, qui l'emportait sur un `w-20` posé à côté — le champ
+              prenait toute la ligne et renvoyait sa raison dessous (relevé à
+              la relecture de #1146). */}
+          <span className="w-20 shrink-0">
+            <input
+              id={idInstances}
+              type="number"
+              min={1}
+              value={instances}
+              disabled={fige || !retenu}
+              onChange={(e) => changerInstances(Number(e.target.value))}
+              className={CLASSE_CONTROLE}
+            />
+          </span>
           <span className="min-w-0 flex-1 break-words text-micro text-texte-secondaire">
             {role.raison_instances}
           </span>
