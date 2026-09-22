@@ -6,10 +6,12 @@ Sept briques, assemblées par l'app FastAPI (`maestro.controltower.app`) :
   circule (statut de tâche, activité d'agent, message inter-agents, validation
   humaine, chat) et son bus de diffusion — mémoire pour les tests, Redis
   Pub/Sub en production ;
-- `EventLog` (`InMemoryEventLog`, `RedisEventLog`) : le journal **durable** des
-  événements (#97) — pendant persistant du bus éphémère, rejoué au démarrage
-  pour reconstruire la projection après un redémarrage de l'API (liste Redis en
-  production, mémoire pour les tests) ;
+- `EventLog` (`InMemoryEventLog`, `RedisEventLog`, `SqliteEventLog`) : le journal
+  **durable** des événements (#97) — pendant persistant du bus éphémère, rejoué
+  au démarrage pour reconstruire la projection après un redémarrage de l'API
+  (liste Redis en serveur, fichier SQLite en **local** depuis #639, mémoire pour
+  les tests). Le support est un **réglage** (`support_persistance`,
+  `journal_configure`), jamais un embranchement de code ;
 - `BusDurable` / `bus_durable` : le bus qui **consigne en publiant** (#699) — la
   durabilité d'un événement ne dépend plus d'un consommateur vivant, donc un run
   qui publie pendant que l'API est arrêtée garde son histoire ;
@@ -230,11 +232,18 @@ from maestro.controltower.orchestration import (
 )
 from maestro.controltower.persistence import (
     CLE_JOURNAL_EVENEMENTS,
+    SUPPORT_REDIS,
+    SUPPORT_SQLITE,
+    SUPPORTS,
     BusDurable,
     EventLog,
     InMemoryEventLog,
     RedisEventLog,
+    SqliteEventLog,
     bus_durable,
+    chemin_sqlite,
+    journal_configure,
+    support_persistance,
 )
 from maestro.controltower.souffrance import SEUIL_SOUFFRANCE_S, en_souffrance
 from maestro.controltower.state import (
@@ -318,6 +327,9 @@ __all__ = [
     "SEUIL_SOUFFRANCE_S",
     "STATUTS_EXECUTION_TERMINAUX",
     "STATUTS_TACHE_TERMINAUX",
+    "SUPPORTS",
+    "SUPPORT_REDIS",
+    "SUPPORT_SQLITE",
     "UTILISATEUR",
     "VALIDATION_APPROUVEE",
     "VALIDATION_EN_ATTENTE",
@@ -388,6 +400,7 @@ __all__ = [
     "ServiceChat",
     "ServiceExecutions",
     "ServiceJournal",
+    "SqliteEventLog",
     "ValidateurControlTower",
     "activer_publication",
     "agrege_couts",
@@ -396,6 +409,7 @@ __all__ = [
     "batteur_redis",
     "bus_durable",
     "cause_de",
+    "chemin_sqlite",
     "create_app",
     "create_default_app",
     "detail_avec_cause",
@@ -403,12 +417,14 @@ __all__ = [
     "evenements_depuis_step",
     "faits_des_runs",
     "graphe_du_run",
+    "journal_configure",
     "moteur_par_defaut",
     "normaliser",
     "oublieur_redis",
     "publieur_redis",
     "runs_du_fil",
     "solder_le_run",
+    "support_persistance",
     "titre_conversation",
     "transcription",
     "validateur_redis",

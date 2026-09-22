@@ -15,7 +15,9 @@ avec le reste de la configuration, plutôt que d'être réécrite en shell. Quan
 bus répond, il **annonce les données** que la stack verra (#1164) — son espace
 Redis et ses dépôts de fichiers (`maestro.controltower.donnees.annonce`) : c'est
 ainsi que la séparation entre copies de travail est dite au démarrage, sans un
-appel Python de plus au lanceur.
+appel Python de plus au lanceur. En **mode local** (`MAESTRO_PERSISTANCE=sqlite`,
+#639) il n'y a aucun service à joindre : le préflight le dit, nomme le fichier du
+journal, annonce les mêmes données et rend `0`.
 
 `--etat-banc` (#1164) place la stack sur le **jeu de données du banc** de la
 copie (`maestro.controltower.donnees.donnees_du_banc`) : son espace et ses
@@ -73,14 +75,33 @@ def verifier_redis() -> int:
 
     Quand il répond, annonce les données que la stack verra (#1164) — celles de
     l'environnement courant, donc celles du banc si `--etat-banc` les y a posées.
+
+    ⚠ **En mode local il n'y a rien à pinguer** (`MAESTRO_PERSISTANCE=sqlite`,
+    #639) : la stack ne parle à aucun service, et exiger un Redis qu'elle n'ouvre
+    pas ferait refuser au lanceur un démarrage qui marche. Le préflight le dit et
+    rend `0`, avec la même annonce — c'est ce qui laisse `start.sh` inchangé : il
+    ne connaît aucun nom de variable, il demande, et Python résout.
     """
     # Imports locaux : `--verifier-redis` est un mode à part, et le client Redis
     # n'est pas nécessaire pour servir l'API sur un autre bus.
     from maestro.config import load_settings
     from maestro.controltower.events import REDIS_URL_DEFAUT
+    from maestro.controltower.persistence import (
+        SUPPORT_SQLITE,
+        chemin_sqlite,
+        support_persistance,
+    )
     from maestro.telemetry.redact import redact_secrets
 
-    url = load_settings().redis_url or REDIS_URL_DEFAUT
+    settings = load_settings()
+    if support_persistance(settings) == SUPPORT_SQLITE:
+        print(
+            f"Persistance locale ({SUPPORT_SQLITE}) : aucun service externe à lancer — "
+            f"journal dans {chemin_sqlite(settings)}."
+        )
+        return _annoncer_les_donnees()
+
+    url = settings.redis_url or REDIS_URL_DEFAUT
     lisible = endpoint_lisible(url)
     try:
         import redis
@@ -106,6 +127,11 @@ def verifier_redis() -> int:
         client.close()
 
     print(f"Redis joignable sur {lisible}.")
+    return _annoncer_les_donnees()
+
+
+def _annoncer_les_donnees() -> int:
+    """Dit ce que la stack verra, et rend `0` — la fin commune des deux préflights."""
     # Import local : l'annonce résout les dépôts de fichiers, ce dont un Redis
     # injoignable n'a pas besoin.
     from maestro.controltower.donnees import annonce, donnees_de_la_stack

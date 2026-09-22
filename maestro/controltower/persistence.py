@@ -15,7 +15,7 @@ on garde le flux qui la reconstruit : rejouer le journal au démarrage rebâtit 
 l'identique tâches, agents, exécutions (donc grands livres et analytics, qui en
 dérivent) et validations, sans nouveau code de projection.
 
-Deux implémentations au même contrat, comme le bus (`EventBus`) et les boîtes
+Trois implémentations au même contrat, comme le bus (`EventBus`) et les boîtes
 (`Mailbox`) :
 
 - `InMemoryEventLog` : une liste en process — le levier des tests et d'un
@@ -24,7 +24,17 @@ Deux implémentations au même contrat, comme le bus (`EventBus`) et les boîtes
 - `RedisEventLog` : une **liste Redis** (`RPUSH`/`LRANGE`) sur l'instance déjà
   mutualisée avec la file de tâches (#41), le bus (#46) et les boîtes (#44) —
   le chemin de production. L'événement y est appendu au fil de l'eau et relu
-  intégralement au démarrage, dans l'ordre d'arrivée.
+  intégralement au démarrage, dans l'ordre d'arrivée ;
+- `SqliteEventLog` (#639) : une **table SQLite** dans un fichier, sans aucun
+  service à installer — le mode **local**, celui d'un produit qu'on pose sur un
+  poste. Même contrat, donc aucun appelant ne change : ce qui bascule est un
+  **réglage** (`MAESTRO_PERSISTANCE`, `support_persistance` ci-dessous), jamais
+  un embranchement de code (ENF-12, docs/24 §4.7).
+
+Le support se choisit **à un seul endroit**, `create_default_app`, là où sont
+déjà résolus le bus, le registre des battements et l'hôte des runs : le journal
+est un choix de déploiement parmi les autres, et le résoudre ailleurs en ferait
+une connaissance que chaque appelant aurait à porter.
 
 Le journal double le canal pub/sub **sans le remplacer** : le bus reste le
 transport temps réel (diffusion aux WebSockets), le journal en est la mémoire
@@ -69,17 +79,21 @@ les mêmes rangs (`j-0002`, `journal.py`) d'un redémarrage à l'autre.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import sqlite3
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
+from pathlib import Path
 
+from maestro.config import ConfigError, Settings, load_settings
 from maestro.controltower.events import (
     REDIS_URL_DEFAUT,
     Event,
     EventBus,
     RedisEventBus,
 )
-from maestro.espace import nom_redis
+from maestro.espace import espace_courant, nom_redis
 
 _LOGGER = logging.getLogger("maestro.controltower")
 
@@ -88,6 +102,39 @@ _LOGGER = logging.getLogger("maestro.controltower")
 #: proche du canal du bus (`CANAL_EVENEMENTS`) sans lui être confondue. Nom de
 #: l'espace commun, rangé dans celui de la stack à la construction (#1164).
 CLE_JOURNAL_EVENEMENTS = "maestro.evenements:journal"
+
+#: Les deux supports du journal durable (`MAESTRO_PERSISTANCE`, #639) : le
+#: **serveur** (Redis, le défaut et le comportement d'avant ce lot) et le
+#: **local** (un fichier SQLite, aucun service à installer). Le mode de
+#: distribution change les défauts, pas les fonctions (docs/24 §4.7).
+SUPPORT_REDIS = "redis"
+SUPPORT_SQLITE = "sqlite"
+SUPPORTS = (SUPPORT_REDIS, SUPPORT_SQLITE)
+
+#: Où vit le journal local quand rien n'est réglé : un dossier du **poste**, sous
+#: le dossier personnel — jamais dans le dépôt, qu'un `git clean` emporterait et
+#: qu'une installation n'a pas. `~/Maestro` est déjà le répertoire *des projets*
+#: (`maestro.projets.reglages`) : ce dossier-ci porte les données du produit, pas
+#: le travail de l'utilisateur, d'où un nom masqué et distinct.
+DOSSIER_LOCAL = ".maestro"
+
+#: Un fichier de journal par **espace** (#1164), comme les clés Redis : deux
+#: copies de travail ne se relisent pas l'une l'autre, et l'état du banc
+#: (`<espace>.banc`) a le sien sans qu'on ait rien à régler.
+SUFFIXE_SQLITE = ".sqlite3"
+
+#: La table du journal — une ligne par événement, `rang` croissant : l'ordre de
+#: consignation, donc l'ordre du rejeu.
+TABLE_EVENEMENTS = "evenements"
+
+#: Version du schéma, posée dans `PRAGMA user_version` : ce par quoi une reprise
+#: ultérieure (PostgreSQL, rétention) saura à quoi elle a affaire. `1` est le
+#: schéma de ce lot.
+SCHEMA_VERSION = 1
+
+#: Ce qu'une écriture attend que l'autre process rende le verrou d'écriture, en
+#: millisecondes (`PRAGMA busy_timeout`) — voir `SqliteEventLog` pour le régime.
+ATTENTE_VERROU_MS = 5_000
 
 
 class EventLog(ABC):
@@ -167,6 +214,183 @@ class RedisEventLog(EventLog):
 
     async def close(self) -> None:
         await self._client.aclose()
+
+
+class SqliteEventLog(EventLog):
+    """Journal adossé à un fichier SQLite — la durabilité **sans service** (#639).
+
+    Une table append-only (`rang INTEGER PRIMARY KEY`, `charge TEXT`) : `consigner`
+    y insère le JSON compact de l'événement (`Event.to_json`, le même octet à
+    octet que sur Redis), `relire` les rend tous `ORDER BY rang`, c'est-à-dire
+    dans l'ordre de consignation — l'ordre du rejeu. Aucune dépendance ajoutée :
+    `sqlite3` est dans la bibliothèque standard, et c'est tout l'intérêt pour un
+    produit qu'on installe en double-cliquant (docs/24 §4.6).
+
+    **Le régime de concurrence, écrit ici plutôt que découvert en production.**
+    SQLite n'a pas le modèle de Redis : un seul écrivain à la fois sur la base,
+    là où Redis sérialise N clients. Trois réglages, et ce qu'ils promettent :
+
+    - `journal_mode=WAL` — les lecteurs ne bloquent pas l'écrivain et
+      réciproquement, et **plusieurs process** peuvent ouvrir la même base. C'est
+      ce qui permet à une API et à un producteur voisin d'appendre au même
+      journal ;
+    - `busy_timeout` (`ATTENTE_VERROU_MS`) — une écriture qui trouve le verrou
+      pris **attend** au lieu d'échouer sur-le-champ. Un `INSERT` d'une ligne se
+      compte en fractions de milliseconde : cinq secondes d'attente ne sont pas
+      un délai, c'est la borne au-delà de laquelle quelque chose est cassé ;
+    - `synchronous=NORMAL` — en WAL, une transaction commise survit à l'arrêt du
+      process (c'est le cas qui nous intéresse : `start.sh` arrête et relance
+      l'API à chaque fois) ; seule une coupure de courant peut coûter les toutes
+      dernières. C'est **strictement plus sûr** que le Redis d'`infra/` en face,
+      dont les snapshots RDB perdent, eux, jusqu'à la dernière minute.
+
+    Ce que cela ne fait pas : un bus. Le journal est ce qui **survit**, le bus ce
+    qui **diffuse en direct** — deux questions distinctes, et une table qu'on
+    interrogerait en boucle pour imiter un pub/sub serait la réponse à aucune des
+    deux. En mode local, le transport temps réel est celui d'un déploiement
+    mono-process (`InMemoryEventBus`), et c'est `create_default_app` qui le dit.
+
+    Côté asyncio : `sqlite3` est synchrone, donc chaque accès part dans un
+    thread (`asyncio.to_thread`) et un verrou asyncio sérialise les accès à la
+    connexion — elle est ouverte avec `check_same_thread=False` précisément parce
+    qu'un thread de service n'est pas toujours le même d'un appel à l'autre. La
+    connexion est **paresseuse** (construite ici, ouverte au premier appel),
+    comme celle de `RedisEventLog` : se construire n'exige ni fichier ni dossier,
+    ce qui laisse `create_default_app` fabriquer l'app sans rien écrire sur le
+    disque.
+    """
+
+    def __init__(self, chemin: Path | str | None = None) -> None:
+        self._chemin = Path(chemin) if chemin is not None else chemin_sqlite()
+        self._connexion: sqlite3.Connection | None = None
+        self._verrou = asyncio.Lock()
+
+    @property
+    def chemin(self) -> Path:
+        """Le fichier de ce journal — ce que l'annonce du démarrage montre."""
+        return self._chemin
+
+    async def consigner(self, event: Event) -> None:
+        charge = event.to_json()
+        async with self._verrou:
+            await asyncio.to_thread(self._inserer, charge)
+
+    async def relire(self) -> list[Event]:
+        async with self._verrou:
+            charges = await asyncio.to_thread(self._lire)
+        # Hors du verrou, comme la relecture Redis : décoder N événements est du
+        # calcul, et rien n'oblige une consignation concurrente à l'attendre.
+        return [Event.from_json(charge) for charge in charges]
+
+    async def close(self) -> None:
+        async with self._verrou:
+            await asyncio.to_thread(self._fermer)
+
+    # ── Ce qui tourne dans le thread ──────────────────────────────────────────
+
+    def _ouvrir(self) -> sqlite3.Connection:
+        """Ouvre (et crée au besoin) le fichier, ses réglages et sa table."""
+        self._chemin.parent.mkdir(parents=True, exist_ok=True)
+        # `isolation_level=None` : autocommit. Un journal est append-only, chaque
+        # ligne est une transaction, et il n'existe aucun geste à regrouper — la
+        # transaction implicite de `sqlite3` ne ferait que retenir une écriture
+        # qu'on vient de promettre.
+        connexion = sqlite3.connect(
+            str(self._chemin), check_same_thread=False, isolation_level=None
+        )
+        connexion.execute("PRAGMA journal_mode=WAL")
+        connexion.execute(f"PRAGMA busy_timeout={ATTENTE_VERROU_MS}")
+        connexion.execute("PRAGMA synchronous=NORMAL")
+        connexion.execute(
+            f"CREATE TABLE IF NOT EXISTS {TABLE_EVENEMENTS} "
+            "(rang INTEGER PRIMARY KEY, charge TEXT NOT NULL)"
+        )
+        connexion.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+        return connexion
+
+    def _connexion_ouverte(self) -> sqlite3.Connection:
+        if self._connexion is None:
+            self._connexion = self._ouvrir()
+        return self._connexion
+
+    def _inserer(self, charge: str) -> None:
+        self._connexion_ouverte().execute(
+            f"INSERT INTO {TABLE_EVENEMENTS} (charge) VALUES (?)", (charge,)
+        )
+
+    def _lire(self) -> list[str]:
+        curseur = self._connexion_ouverte().execute(
+            f"SELECT charge FROM {TABLE_EVENEMENTS} ORDER BY rang"
+        )
+        return [str(ligne[0]) for ligne in curseur.fetchall()]
+
+    def _fermer(self) -> None:
+        if self._connexion is not None:
+            self._connexion.close()
+            self._connexion = None
+
+
+def support_persistance(settings: Settings | None = None) -> str:
+    """Le support du journal durable — `redis` par défaut, `sqlite` en mode local.
+
+    Une valeur inconnue est une **erreur franche** et non un repli silencieux :
+    `MAESTRO_PERSISTANCE=sqlit` laisserait croire qu'un poste persiste dans son
+    fichier alors qu'il parle à un Redis absent — et cela ne se verrait qu'au
+    premier redémarrage, c'est-à-dire trop tard. Même parti pris que
+    `MAESTRO_HOTE_RUN` (#446) et `MAESTRO_ISOLATION` (#108).
+    """
+    settings = settings or load_settings()
+    nom = (settings.persistance or SUPPORT_REDIS).strip().lower()
+    if nom not in SUPPORTS:
+        raise ConfigError(
+            f"MAESTRO_PERSISTANCE : support inconnu {nom!r} "
+            f"(attendu : {' | '.join(SUPPORTS)}, ou vide pour « {SUPPORT_REDIS} »)."
+        )
+    return nom
+
+
+def chemin_sqlite(
+    settings: Settings | None = None, environnement: Mapping[str, str] | None = None
+) -> Path:
+    """Le fichier du journal local : `MAESTRO_SQLITE_FICHIER`, sinon l'espace sous `~/.maestro`.
+
+    **Hors du dépôt** dans les deux cas par défaut : une installation n'a pas de
+    clone, et un fichier rangé dans l'arbre de travail serait emporté par le
+    premier ménage. Le nom dérive de l'**espace** de la stack (#1164), donc deux
+    copies de travail — et l'état du banc, `<espace>.banc` — ont chacune le leur
+    sans qu'on ait rien à régler. Un chemin réglé à la main, lui, est partagé par
+    toute stack réglée dessus : c'est un choix explicite, comme pour les dépôts
+    de fichiers déplacés par variable (`maestro.controltower.donnees`).
+
+    Rendu **non créé** : c'est `SqliteEventLog` qui pose le dossier et le fichier,
+    au premier accès.
+    """
+    settings = settings or load_settings()
+    regle = (settings.sqlite_fichier or "").strip()
+    if regle:
+        return Path(regle).expanduser()
+    try:
+        maison = Path.home()
+    except (RuntimeError, OSError) as exc:  # pragma: no cover - dépend de l'environnement
+        raise ConfigError(
+            "Dossier personnel introuvable : nommez le fichier du journal local "
+            "par MAESTRO_SQLITE_FICHIER."
+        ) from exc
+    return maison / DOSSIER_LOCAL / f"{espace_courant(environnement).nom}{SUFFIXE_SQLITE}"
+
+
+def journal_configure(settings: Settings | None = None) -> EventLog:
+    """Le journal durable que le **réglage** désigne — le seul point de bascule (#639).
+
+    `redis` rend exactement l'objet d'avant ce lot, sur la même URL et la même
+    clé ; `sqlite` rend le journal local. Aucun appelant d'`EventLog` ne change :
+    c'est la fabrique qui sait, et elle est appelée là où se résolvent déjà le
+    bus, le registre des battements et l'hôte des runs.
+    """
+    settings = settings or load_settings()
+    if support_persistance(settings) == SUPPORT_SQLITE:
+        return SqliteEventLog(chemin_sqlite(settings))
+    return RedisEventLog(settings.redis_url)
 
 
 class BusDurable(EventBus):
