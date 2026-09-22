@@ -1,6 +1,20 @@
 #!/usr/bin/env bash
 # Lancement local de la Control Tower en une commande (tickets #65, #149, #186).
 #
+# ⚠ CE SCRIPT EST L'OUTIL DE DÉVELOPPEMENT, PAS LE LANCEUR DU PRODUIT (#640). Il
+# suppose une chaîne de développement entière — un `bash` (sous Windows, celui de Git),
+# le venv du clone à sa place, `npm run dev` et son rechargement à chaud, `setup.sh`
+# passé — et c'est très bien : c'est ce qu'on veut pour travailler. Ce qu'une
+# installation embarque, et ce que la coque appellera une fois le produit empaqueté
+# (#641), est l'autre lanceur :
+#
+#   python -m maestro.lanceur [--no-browser|--stop|--etat|--diagnostic]
+#
+# Il sert un front CONSTRUIT, ne suppose rien d'autre que le runtime Python qui le
+# joue, et tient les mêmes promesses d'arrêt (soldage des runs en vol compris). Les
+# deux savent démarrer la même stack ; ils ne s'adressent pas à la même personne, et
+# aucun des deux n'est la version dégradée de l'autre.
+#
 # Nettoie d'abord les anciennes sessions (uniquement les processus qui écoutent
 # sur les ports Maestro — jamais de kill large), puis démarre :
 #   - l'API — port 8000 —, en MODE RÉEL par défaut (maestro.controltower.cli,

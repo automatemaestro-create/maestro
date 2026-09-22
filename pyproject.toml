@@ -94,6 +94,12 @@ maestro-devops = "maestro.agents.runtime_cli:main_devops"
 maestro-designer = "maestro.agents.runtime_cli:main_designer"
 # Backend Control Tower : sert l'API REST + WebSocket (bus Redis, ticket #46).
 maestro-api = "maestro.controltower.cli:main"
+# LE LANCEUR DU PRODUIT (ticket #640) : démarre l'API et le front, les attend, les
+# arrête proprement — sans rien supposer d'une chaîne de développement (EF-41). C'est
+# lui qu'une installation expose, et celui que la coque appellera à la place de
+# `scripts/controltower/start.sh` une fois le produit empaqueté (#641). Dans un clone
+# qui n'a pas réinstallé le paquet : `python -m maestro.lanceur`.
+maestro-lanceur = "maestro.lanceur.cli:main"
 # Démo : workflow + worker hello-world contre le Temporal local (socle des
 # workflows durables, ticket #94).
 maestro-temporal-demo = "maestro.temporal_demo:main"
