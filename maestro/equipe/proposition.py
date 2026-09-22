@@ -271,6 +271,9 @@ def _cran_execution(gabarit: Gabarit, constats: Constats) -> AutorisationPropose
       prise à froid (`maestro.decideur`, #716) ;
     - aucune commande de ce rôle n'a été lue : `humain`. Ce qu'il lancerait, il
       le composerait lui-même, et personne n'a rien décidé d'avance là-dessus.
+      La raison dit alors que **lire** n'attend personne (#1197) — le renvoi au
+      ticket reste ici, jamais dans la raison servie, qui s'adresse à quelqu'un
+      qui n'a pas ce dépôt sous les yeux (`tests/test_registre_de_langue.py`).
 
     ⚠ La raison le dit, parce que c'est vrai : `auto` **ne borne pas** les
     commandes à celles qui ont été lues — un cran porte sur un outil, pas sur
@@ -294,7 +297,7 @@ def _cran_execution(gabarit: Gabarit, constats: Constats) -> AutorisationPropose
                 "ne l'empêche pas de commencer : **lire** son projet et son "
                 "outillage — lister, chercher, ouvrir un fichier — n'attend "
                 "personne, au shell comme avec ses outils de lecture, parce que "
-                "lire n'est pas exécuter (#1197)"
+                "lire n'est pas exécuter"
             ),
         )
     return AutorisationProposee(
