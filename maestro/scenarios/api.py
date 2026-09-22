@@ -355,6 +355,26 @@ def equipe_validee(proposition: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def cle_demande(demande: Mapping[str, Any]) -> tuple[str, str, str]:
+    """L'identité d'une demande de validation aux yeux du banc — tâche **et** acte (#1198).
+
+    Le pendant de `maestro.deliberation.cle_acte` de ce côté-ci de l'API : la
+    tâche situe la demande, l'acte la distingue de la suivante. Les arguments
+    sont sérialisés **clés triées**, pour que deux lectures du même acte donnent
+    la même clé quel que soit l'ordre rendu par le JSON.
+
+    Une demande qui ne porte pas d'acte — validation de tâche, accord
+    d'écriture — se réduit à sa tâche, exactement comme avant : elle est seule de
+    son espèce sur cette tâche.
+    """
+    arguments = demande.get("arguments")
+    return (
+        str(demande.get("tache_id") or ""),
+        str(demande.get("outil") or ""),
+        json.dumps(arguments, sort_keys=True, ensure_ascii=False) if arguments else "",
+    )
+
+
 def attendre_le_run(
     client: ClientAPI,
     run_id: str,
@@ -377,11 +397,22 @@ def attendre_le_run(
     il attend simplement qu'on lui réponde. Chaque approbation est **notée** au
     déroulé : le rapport dit ce que le banc a tranché.
 
+    ⚠ **Ce qui est tranché s'identifie par l'acte, jamais par la tâche** (#1198).
+    La file des validations s'indexe par tâche et l'assume (une demande y
+    remplace la précédente, `maestro.controltower.state`), si bien qu'un banc qui
+    retiendrait le `tache_id` ne répondrait qu'à la **première** demande d'une
+    tâche : les suivantes resteraient devant lui sans qu'il les voie, et
+    expireraient à la borne d'arbitrage. Mesuré le 2026-09-22 sur S1 — cinq
+    demandes, une seule approuvée, run rouge. L'identité retenue est donc celle
+    que le moteur utilise pour ses propres décisions (`maestro.deliberation`) :
+    la tâche **et** l'acte. Deux appels au même acte ne reviennent de toute façon
+    pas ici, le moteur leur servant la décision qu'il a gardée.
+
     À l'expiration du délai, le dernier état lu est rendu tel quel : c'est à
     l'oracle de juger qu'un run encore en vol n'est pas un run abouti.
     """
     limite = horloge() + delai_s
-    tranchees: set[str] = set()
+    tranchees: set[tuple[str, str, str]] = set()
     detail = client.execution(run_id, projet_id=projet_id)
     while True:
         statut = str(detail.get("statut") or "")
@@ -392,10 +423,10 @@ def attendre_le_run(
                 if (
                     str(demande.get("run_id") or "") == run_id
                     and str(demande.get("statut") or "") == VALIDATION_EN_ATTENTE
-                    and str(demande.get("tache_id") or "") not in tranchees
+                    and cle_demande(demande) not in tranchees
                 ):
                     tache = str(demande["tache_id"])
-                    tranchees.add(tache)
+                    tranchees.add(cle_demande(demande))
                     client.decider(tache, approuve=True)
                     note(
                         "arbitrage approuvé",

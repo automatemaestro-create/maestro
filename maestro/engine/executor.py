@@ -78,6 +78,7 @@ from maestro.engine.guardrails import (
     ORIGINE_POLITIQUE,
     DemandeValidation,
     Guardrails,
+    detail_accorde,
 )
 from maestro.engine.questions import (
     VERBE_QUESTION,
@@ -87,6 +88,7 @@ from maestro.engine.questions import (
 )
 from maestro.engine.retry import PolitiqueRelance, est_transitoire
 from maestro.equipe.manque import RoleManquant, role_manquant
+from maestro.equipe.proposition import OUTIL_EXECUTION
 from maestro.messaging.mailbox import (
     MESSAGE_NOTIFICATION,
     AgentMessage,
@@ -2306,6 +2308,38 @@ class LocalExecutor(TaskExecutor):
         Sans mémoire, chaque demande repart de zéro : le comportement exact de
         #583, celui qu'ont les appelants qui ne composent pas de délibération.
 
+        **L'accord de l'objectif court-circuite tout cela** (#1198), et c'est la
+        seule chose qui se décide ici plutôt que dans la politique : le hook ne
+        connaît ni la tâche, ni ce que l'objectif a nommé — il ne voit qu'un
+        outil. Quand la tâche porte un `acte_accorde`, l'appel de l'**outil
+        d'exécution** rend son verdict sur place, sans composer de demande ni
+        toucher la mémoire. Pourquoi c'est un accord et non une entorse :
+        l'objectif a été montré à une personne qui l'a approuvé — c'est ce qui
+        ouvre un plan (#685) — et il **nommait cet acte**. #1149 en a tiré la
+        moitié visible, le plan n'ajoute plus de tâche « faire valider » ; il
+        restait celle-ci, et sans elle la validation retirée du plan revenait à
+        l'exécution, une fois **par commande** : S1 du banc des scénarios, le
+        2026-09-22, a vu cinq demandes écartées à 240 s et un dossier intact.
+
+        Ce que cet accord ne couvre pas, et c'est délibérément étroit :
+
+        - **un seul outil**, celui par lequel l'acte se fait (`OUTIL_EXECUTION`).
+          C'est aussi le seul sur lequel une équipe proposée pose un cran
+          (`maestro.equipe.proposition`), et le seul que l'observation nomme.
+          Tout autre outil classé `ask` garde son humain — « vide le dossier »
+          n'a jamais accordé un message dans Slack, que `core/permissions/devops`
+          met en `ask`/`humain` ;
+        - **rien d'autre ne bouge** : la liste `deny` refuse toujours, la
+          frontière d'écriture (#839) juge toujours avant la politique, et le
+          périmètre exclu du projet n'est ni lu ni écrit ;
+        - **la trace reste entière**. Le verdict revient au hook, qui le consigne
+          comme n'importe quelle approbation (`motif_approbation` → `on_refus` →
+          `:refus-outil`), et son détail **nomme l'acte accordé**. Un accord qui
+          passerait sans ligne au journal serait un trou, pas un raccourci.
+
+        Un acte que l'objectif ne nomme pas n'a, lui, rien reçu : sa tâche ne
+        porte pas de `acte_accorde`, et ce canal fait exactement ce qu'il faisait.
+
         `politique` (#586) est ce qui permet de dire **qui tranche**. Le cran
         n'est pas transporté depuis le hook mais **redemandé** à la politique,
         exactement comme `_consigne_refus_outil` lui redemande son verdict
@@ -2320,6 +2354,12 @@ class LocalExecutor(TaskExecutor):
         async def arbitre(
             outil: str, arguments: dict[str, str], motif: str
         ) -> tuple[bool, str]:
+            if task.acte_accorde and outil == OUTIL_EXECUTION:
+                # L'accord est déjà donné : il n'y a personne à déranger, donc
+                # rien à composer, rien à mémoriser et rien à attendre. Le
+                # détail part quand même — c'est lui qui portera l'acte accordé
+                # jusqu'au journal.
+                return True, detail_accorde(task.acte_accorde)
             demande = DemandeValidation(
                 task_id=task.id,
                 titre=task.titre,

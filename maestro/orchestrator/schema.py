@@ -118,6 +118,25 @@ class Task:
     courant (l'orchestrateur peut n'en déclarer aucune), et la clé est alors
     **omise** de `to_dict` : un plan sans ossature doit rester sérialisable tel
     quel, comme pour `ticket` et `projet_id`.
+
+    `acte_accorde` (#1198) porte l'**acte que l'objectif nomme lui-même** et que
+    cette tâche exécute, écrit tel qu'il a été accordé — « supprimer tout le
+    contenu du dossier du projet ». C'est la moitié qui manquait à #1149 : le
+    plan avait cessé d'ajouter une tâche « faire valider », mais rien ne
+    transportait l'accord jusqu'à l'exécution, où l'outil d'exécution classé
+    `ask`/`humain` le redemandait **à chaque commande** (S1 du banc des
+    scénarios, verdict du 2026-09-22 : cinq demandes écartées, run rouge). Vide
+    dans le cas courant — une tâche qui *construit* n'exécute aucun acte accordé
+    d'avance —, et la clé est alors **omise** de `to_dict`, comme les trois
+    au-dessus.
+
+    Ce que ce champ **ne fait pas**, et il faut le lire avant de l'élargir : il
+    ne porte que sur l'**outil d'exécution** (`maestro.engine.executor`), pas sur
+    tout ce qu'une politique classe `ask` — poster dans Slack n'est pas couvert
+    par « vide le dossier » —, il ne lève ni la liste `deny`, ni la frontière
+    d'écriture, ni le périmètre exclu du projet, et il ne dispense pas de la
+    trace : chaque appel qui passe sur cet accord laisse sa ligne au journal et
+    au fil, avec l'acte accordé dedans.
     """
 
     id: str
@@ -129,6 +148,7 @@ class Task:
     ticket: ReferenceTicket | None = None
     projet_id: str | None = None
     etapes: tuple[str, ...] = ()
+    acte_accorde: str = ""
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Task:
@@ -143,6 +163,7 @@ class Task:
             ticket=ReferenceTicket.depuis(data.get("ticket")),
             projet_id=projet_id_valide(data.get("projet_id")),
             etapes=tuple(data.get("etapes", ())),
+            acte_accorde=str(data.get("acte_accorde", "") or "").strip(),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -161,6 +182,8 @@ class Task:
             data["projet_id"] = self.projet_id
         if self.etapes:
             data["etapes"] = list(self.etapes)
+        if self.acte_accorde:
+            data["acte_accorde"] = self.acte_accorde
         return data
 
 

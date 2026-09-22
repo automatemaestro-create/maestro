@@ -67,6 +67,12 @@
       "maxItems": 12,
       "default": []
     },
+    "acte_accorde": {
+      "type": "string",
+      "description": "L'acte que l'OBJECTIF NOMME LUI-MEME et que cette tache execute (#1198), ecrit tel qu'il a ete accorde : 'supprimer tout le contenu du dossier du projet', 'renommer les modules du paquet'. L'objectif a ete montre a une personne qui l'a approuve — c'est ce qui ouvre un plan — donc cet acte-la a deja son humain, et le redemander a chaque commande rendrait a l'execution la validation que le plan n'a plus a porter. A l'execution, l'outil d'execution (Bash) classe 'ask' passe sur cet accord, en etant trace ; tout autre outil classe 'ask' garde son arbitrage, et la liste 'deny' comme le perimetre exclu du projet ne bougent pas. Absente par defaut, et c'est le cas courant : une tache qui CONSTRUIT n'execute aucun acte accorde d'avance. Ne l'ecris JAMAIS pour un acte que l'objectif ne nomme pas, ni pour elargir le geste au-dela de ce qu'il dit — c'est exactement ce que l'arbitrage existe pour attraper.",
+      "minLength": 1,
+      "maxLength": 200
+    },
     "projet_id": {
       "type": "string",
       "description": "Identifiant optionnel du projet (entite PROJECT, #221) auquel la tache appartient (#222). Absent par defaut : un plan sans projet reste valide et se deroule comme avant. Pose par le lancement du run, dont chaque tache du plan herite ; c'est ce qui permet aux vues (Kanban, couts, journal) de filtrer par projet.",

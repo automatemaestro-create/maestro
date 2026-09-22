@@ -60,6 +60,13 @@ juge rien. Faute de pouvoir l'y armer, `consigne_espace` **nomme les exclusions 
 l'agent** — la même réponse qu'à l'atelier ci-dessous, une adresse donnée plutôt
 qu'un refus de plus.
 
+⚠ Depuis #1198, cette adresse est aussi **la seule chose** qui borne le geste sur
+une tâche qui porte un acte accordé (`Task.acte_accorde`) : l'appel d'exécution ne
+réveille plus personne, puisque l'objectif le nommait et qu'une personne l'a
+approuvé. Ce qui reste est donc entier ici — le périmètre écrit à l'agent, et les
+outils de fichiers confrontés à la frontière — et c'est ce qui rend le **mode
+isolé** (`maestro.sandbox.container`) plus pressant, pas moins.
+
 `Perimetre.inclus` ne restreint rien ici : l'inclusion disait ce qu'on **montrait**
 à l'agent, or l'agent est dans la racine. Seules les exclusions tiennent — et
 elles tiennent à l'écriture. Le worktree ne l'appliquait pas davantage (une copie

@@ -29,7 +29,7 @@ banc **pose bien les questions** et **rend bien le verdict** qu'il a mesuré.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -45,6 +45,7 @@ from maestro.controltower.state import (
     VALIDATION_APPROUVEE,
     VALIDATION_EN_ATTENTE,
 )
+from maestro.sandbox.en_place import DOSSIER_ATELIER
 from maestro.scenarios import banc, etat
 from maestro.scenarios.api import FIL, ClientAPI, ErreurAPI, Reponse, equipe_validee
 from maestro.scenarios.juge import (
@@ -554,6 +555,86 @@ def test_le_banc_approuve_l_arbitrage_de_son_propre_run(tmp_path: Path) -> None:
     assert "arbitrage approuvé" in libelles
 
 
+def _acte_en_attente(commande: str) -> dict[str, Any]:
+    """Une demande d'arbitrage **sur un acte** (#581), telle que l'API la rend."""
+    return {
+        "tache_id": "t1",
+        "run_id": "run-1",
+        "statut": VALIDATION_EN_ATTENTE,
+        "titre": "Vider le dossier du projet",
+        "outil": "Bash",
+        "arguments": {"command": commande},
+    }
+
+
+class ApiQuiRedemande(FausseAPI):
+    """La file des validations telle qu'elle est vraiment : **une par tâche**.
+
+    `maestro.controltower.state` indexe les demandes par tâche et l'assume — une
+    nouvelle demande y **remplace** la précédente. Une tâche qui agit en émet donc
+    plusieurs, l'une après l'autre, et jamais deux ensemble. La `FausseAPI` de
+    base sert une liste figée : elle ne pouvait pas montrer ce que le banc rate
+    quand il retient le `tache_id`.
+    """
+
+    def __init__(self, suite: Sequence[dict[str, Any]], **kwargs: Any) -> None:
+        super().__init__(validations=[dict(suite[0])], **kwargs)
+        self._suite = [dict(demande) for demande in suite[1:]]
+        #: Les commandes effectivement tranchées, dans l'ordre.
+        self.commandes: list[str] = []
+
+    def _decider(self, tache_id: str) -> Reponse:
+        reponse = super()._decider(tache_id)
+        self.commandes.extend(
+            str(d.get("arguments", {}).get("command", "")) for d in self.validations
+        )
+        self.validations = [self._suite.pop(0)] if self._suite else []
+        return reponse
+
+
+def test_le_banc_repond_a_chaque_acte_d_une_meme_tache(tmp_path: Path) -> None:
+    """Le banc répond à **chaque acte**, pas à la première demande d'une tâche (#1198).
+
+    Le 2026-09-22, S1 a vu cinq demandes et une seule réponse : le banc retenait
+    le `tache_id`, or c'est l'identité que la file **réutilise** d'une demande à
+    l'autre. Les quatre restantes ont expiré à la borne d'arbitrage, et le
+    scénario est sorti rouge sur un produit qui attendait simplement qu'on lui
+    réponde — le pire verdict qu'un banc puisse rendre, puisqu'il accuse ce qu'il
+    n'a pas exercé.
+
+    L'identité retenue est désormais celle du moteur : la tâche **et** l'acte.
+    """
+    lectures = 3
+    api = ApiQuiRedemande(
+        [
+            _acte_en_attente("ls -la"),
+            _acte_en_attente("cat lisez-moi.txt"),
+            _acte_en_attente("rm -rf notes lisez-moi.txt rapport.csv"),
+        ],
+        moteur=_moteur_qui_attend_puis_vide(lectures),
+    )
+
+    issue, _ctx = _banc(tmp_path, api).jouer(_scenario("S1"))
+
+    assert issue.vert, issue.motif
+    assert api.commandes == [
+        "ls -la",
+        "cat lisez-moi.txt",
+        "rm -rf notes lisez-moi.txt rapport.csv",
+    ]
+
+
+def _moteur_qui_attend_puis_vide(lectures: int) -> Callable[[RunFactice, Path], None]:
+    """Un run suspendu sur un arbitrage pendant `lectures` lectures, puis soldé."""
+
+    def moteur(run: RunFactice, racine: Path) -> None:
+        run.statut_en_attente = EXECUTION_EN_ATTENTE_ARBITRAGE
+        run.lectures_avant_la_fin = lectures
+        _moteur_qui_vide(run, racine)
+
+    return moteur
+
+
 def test_un_run_qui_n_en_finit_pas_n_est_pas_un_run_abouti(tmp_path: Path) -> None:
     """Le délai dépassé rend le dernier état lu : c'est l'oracle qui le juge rouge."""
 
@@ -821,6 +902,29 @@ def test_restes_ne_descend_pas_dans_un_chemin_exclu(tmp_path: Path) -> None:
 
 def test_restes_d_un_dossier_absent_est_vide(tmp_path: Path) -> None:
     assert restes(tmp_path / "jamais-cree") == ()
+
+
+def test_l_atelier_des_taches_n_est_pas_le_contenu_du_projet(tmp_path: Path) -> None:
+    """Ce que le produit ne recense jamais, l'oracle ne le compte pas (#944, #1198).
+
+    Mesuré le 2026-09-22 : le run avait bien vidé la racine, et S1 est sorti rouge
+    sur « 3 entrée(s) restent » — le journal que l'agent avait déposé dans son
+    propre atelier. Aucun run n'aurait pu faire mieux : le cadre d'exécution lui
+    **dit** d'écrire là.
+
+    Le témoin, à côté, est ce qui empêche la correction d'aveugler l'oracle : un
+    fichier ordinaire resté dans la racine compte toujours.
+    """
+    racine = tmp_path / "projet"
+    (racine / DOSSIER_ATELIER / "vider-le-dossier").mkdir(parents=True)
+    (racine / DOSSIER_ATELIER / "vider-le-dossier" / "journal.md").write_text(
+        "# ce que j'ai fait\n", encoding="utf-8"
+    )
+
+    assert restes(racine) == ()
+
+    (racine / "notes.txt").write_text("resté là\n", encoding="utf-8")
+    assert restes(racine) == ("notes.txt",)
 
 
 # --- L'atelier ---------------------------------------------------------------
