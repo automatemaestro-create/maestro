@@ -289,8 +289,8 @@ def test_demo_controltower_nominal_sert_sur_l_ecoute_demandee(monkeypatch):
 # Les états limites de la démo (#978, lot 3 de #972) : la relecture visuelle reconnaissait ne pas
 # savoir atteindre une file vide ou une API en panne — c'est là que le rendu casse. Ce qui se garde
 # ici est qu'ils sont ATTEIGNABLES et qu'ils servent ce qu'ils annoncent ; leur montage par le
-# lanceur est gardé dans test_controltower_mode_reel.py, par la relecture dans
-# test_relecture_visuelle.py.
+# lanceur est gardé dans test_controltower_mode_reel.py. La relecture ne les monte plus : elle
+# regarde la vraie stack depuis #1165 (test_relecture_visuelle.py).
 
 
 @pytest.mark.parametrize("scenario", controltower_demo.SCENARIOS)
@@ -313,7 +313,7 @@ def test_demo_controltower_refuse_un_scenario_inconnu():
 
 
 def test_demo_controltower_declare_ses_scenarios_sous_la_forme_que_les_scripts_lisent():
-    """`start.sh` et `relecture-visuelle.sh` LISENT les noms dans le source (#830), par une ligne
+    """`start.sh` LIT les noms dans le source (#830), par une ligne
     `SCENARIO_<NOM> = "<nom>"` en début de ligne. Une constante annotée ou calculée serait un état
     que la démo sert et qu'aucun script ne sait demander."""
     motif = re.compile(r'^SCENARIO_[A-Z_]* *= *"([^"]*)"', re.M)

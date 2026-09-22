@@ -1,6 +1,6 @@
 """L'état qu'un passage du banc a laissé : sauvé, rouvert, rejoué à la demande (#1164).
 
-    .venv/Scripts/python.exe -m maestro.scenarios.etat --verifier [--rejouer]
+    .venv/Scripts/python.exe -m maestro.scenarios.etat --verifier [--rejouer | --neuf]
     .venv/Scripts/python.exe -m maestro.scenarios.etat --rouvrir
     .venv/Scripts/python.exe -m maestro.scenarios.etat --vider
     .venv/Scripts/python.exe -m maestro.scenarios.etat --decrire
@@ -41,10 +41,21 @@ ni les données du poste.
   rejoue ce journal comme après n'importe quel redémarrage — **rien n'est
   rejoué** du côté du modèle, et chaque ouverture repart du même état.
 - **`--verifier`** est le préflight du lanceur : Redis joignable, rien en vol sur
-  le banc, et — sauf `--rejouer` — un état à rouvrir, dont il **dit l'âge**.
+  le banc, et — sauf `--rejouer` ou `--neuf` — un état à rouvrir, dont il **dit
+  l'âge**.
 - **`--decrire`** rend, en JSON sur une ligne, l'état que `--rouvrir` rouvrirait :
   passage, date, âge, verdicts, contenu. Il ne lit que le disque — ni Redis, ni le
   banc — et c'est ce qu'une présentation de jalon dit de ce qu'elle montre (#1166).
+
+## Une stack neuve (#1165)
+
+`start.sh --etat-neuf` sert le banc **remis à neuf, sans rien jouer** : aucun
+run, aucun fil, aucun projet, la configuration de la copie. C'est l'état « vide »
+que regarde la relecture visuelle — une stack réelle neuve, et non la démo qui
+simulait l'absence. Le geste est celui qui précède un rejeu (`--vider`) ; seul
+change qu'aucun passage ne suit, d'où `--verifier --neuf`, qui n'exige aucun état
+sauvé et le dit autrement que `--rejouer`. Le banc vidé ne perd rien : l'état
+d'un passage vit dans son atelier, et `--rouvrir` l'y reprend.
 
 ## Ce qu'il ne faut pas défaire
 
@@ -122,10 +133,15 @@ CODE_USAGE = 2
 CODE_REFUS = 3
 CODE_AUCUN_ETAT = 4
 
-_USAGE = f"Usage : python -m {MODULE} --verifier [--rejouer] | --rouvrir | --vider | --decrire"
+_USAGE = (
+    f"Usage : python -m {MODULE} --verifier [--rejouer | --neuf] | --rouvrir | --vider | --decrire"
+)
 
 #: Les gestes qu'accepte la ligne de commande — un seul par appel.
 GESTES = ("--verifier", "--rouvrir", "--vider", "--decrire")
+
+#: Ce qui accompagne `--verifier`, et lui seul — l'un ou l'autre.
+MODES_VERIFIER = ("--rejouer", "--neuf")
 
 
 class ClientRedis(ClientRedisPurge, Protocol):
@@ -434,12 +450,14 @@ def main(
     erreur = erreur or sys.stderr
     args = list(sys.argv[1:] if argv is None else argv)
     gestes = [a for a in args if a in GESTES]
-    reste = [a for a in args if a not in (*GESTES, "--rejouer")]
-    rejouer = "--rejouer" in args
-    if len(gestes) != 1 or reste or (rejouer and gestes != ["--verifier"]):
+    modes = [a for a in args if a in MODES_VERIFIER]
+    reste = [a for a in args if a not in (*GESTES, *MODES_VERIFIER)]
+    if len(gestes) != 1 or reste or len(modes) > 1 or (modes and gestes != ["--verifier"]):
         print(_USAGE, file=erreur)
         return CODE_USAGE
     geste = gestes[0]
+    rejouer = modes == ["--rejouer"]
+    neuf = modes == ["--neuf"]
 
     # Décrire ne lit que le disque : ni Redis ni le banc n'ont à répondre pour dire
     # ce qu'on rouvrirait.
@@ -473,12 +491,18 @@ def main(
     if _refus_vivant(banc, client, sonde, erreur):
         return CODE_REFUS
 
-    if geste == "--vider" or (geste == "--verifier" and rejouer):
+    if geste == "--vider" or (geste == "--verifier" and (rejouer or neuf)):
         if geste == "--vider":
             vider(banc, donnees_copie, client)
             print(
                 "Banc remis à neuf : aucun run, aucun fil, aucun projet — la configuration "
                 "de la copie, sans ses rangements de projets.",
+                file=sortie,
+            )
+        elif neuf:
+            print(
+                "Une stack neuve : le banc repart à neuf et se sert tel quel, sans rien "
+                "jouer ni rouvrir — aucun run, aucun fil, aucun projet.",
                 file=sortie,
             )
         else:

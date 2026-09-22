@@ -104,8 +104,11 @@ qui est couvert, ce qui ne l'est pas — nommé, jamais coché — ou que le tic
      mentionne pas**, n'appelle aucun verbe, passe à l'étape 5. L'abstention nominale est muette
      (règle de `gc --auto`).
    - **code `0` — il y a des écrans.** **Joue le skill `relecture-visuelle`** (outil `Skill`), qui
-     porte la séquence entière : stack sur les ports du worktree, `localStorage`, chaque écran dans
-     les **deux thèmes**, captures **relues**, puis `--fin`. Ne la recopie jamais ici — une recette
+     porte la séquence entière : la **vraie stack** sur les ports du worktree — l'état réel du
+     dernier passage du banc, une stack neuve, l'API coupée (#1165), jamais un scénario factice —,
+     `localStorage`, chaque écran dans les **deux thèmes**, captures **relues**, puis `--fin`. Un
+     état que la vraie stack ne produit pas est **nommé non couvert** dans la note de relecture,
+     jamais imité. Ne la recopie jamais ici — une recette
      recopiée dans un prompt fige l'outil au jour où elle a été écrite (#310), et le skill en est la
      source unique. **Qui juge dépend du ticket** (#1151, docs/40 §3) : le sous-agent `regard-neuf`
      pour un ticket qui **décide** d'un écran (critère du §7.2 de `/design-veille`), la **session

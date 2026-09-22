@@ -1430,10 +1430,12 @@ le navigateur est celui du skill `relecture-visuelle`, et un skill garde ses out
 > *quand* on regarde et *ce qu'on en garde*, celui-ci *ce qu'on regarde et avec quoi*. Le numéro
 > suit la lecture, pas la chronologie.
 
-> ⚠ **La stack que ce geste regarde change** ([docs/41 §4](./41-decision-maestro-juge-il-ne-bride-pas.md),
-> 2026-09-21). Il ne monte plus la démo (`start.sh --demo`), mais la vraie stack, peuplée par l'état
-> du dernier passage du banc des scénarios (#1164, #1165). Le reste de ce qui suit, ce qu'il regarde
-> et ce qu'il ne sait pas voir, ne bouge pas.
+> ⚠ **La stack que ce geste regarde a changé** ([docs/41 §4](./41-decision-maestro-juge-il-ne-bride-pas.md),
+> 2026-09-21, livré par #1165). Il ne monte plus la démo (`start.sh --demo`) ni ne déclare de projet
+> à la main, mais la vraie stack, peuplée par l'état du dernier passage du banc des scénarios
+> (#1164) — le détail au §5.8, *Les états viennent de la vraie stack*. Ce qui suit décrit le geste
+> tel que le lot 2 l'a livré : ce qu'il regarde et ce qu'il ne sait pas voir ne bougent pas, la démo
+> et son projet ne sont plus.
 
 Le trou est nommé au §5.1 et il tient en une phrase : **personne ne regarde**. Les cinq maillons
 répondent à « est-ce que ça tient ? » — ratios, hauteurs, rôles, câblage, nombre de blocs —, aucun à
@@ -2780,8 +2782,9 @@ référence de la rubrique « ce qui ne bouge pas », et c'est la **paire** que 
 > - **erreur** : une vraie panne, magasin coupé ou API coupée ;
 > - **peuplé et charge** : l'état laissé par le dernier passage du banc des scénarios.
 >
-> Un état que le réel ne produit pas est nommé non couvert, jamais fabriqué. Ce qui suit décrit
-> l'état présent jusqu'à #1165.
+> Un état que le réel ne produit pas est nommé non couvert, jamais fabriqué. **Livré par #1165** :
+> voir *Les états viennent de la vraie stack* plus bas. Ce qui suit décrit le régime de la démo, qui
+> reste servi par `start.sh --demo` jusqu'à sa suppression (#1168) mais que la relecture ne lit plus.
 
 La démo sert des **scénarios nommés** : `nominal` (celui d'avant, inchangé, toujours le défaut),
 `vide`, `erreur` et `charge`. Ils se **demandent** — `start.sh --demo --scenario <nom>`,
@@ -2840,6 +2843,60 @@ Ce qui tient, et à ne pas défaire :
 transition, pas seulement l'avant) ; peupler un **fil de conversation** (le run change à chaque
 passage, aucun message ne saurait le nommer durablement — le rattachement de #268 est écrit une fois
 pour toutes).
+
+#### Les états viennent de la vraie stack (#1165)
+
+La relecture ne lit plus la démo : ni `demo.py`, ni `--demo`, ni sur la branche ni sur `origin/main`
+(docs/41 §4, chantier #1156). Chaque état qu'elle ouvre (`relecture-visuelle.sh <iid> --etat <nom>`)
+vient de la vraie stack, servie sur le **jeu de données du banc** de la copie (#1164) — les fils,
+projets et runs d'un worktree ne sont jamais touchés :
+
+| État | Source réelle | Geste du lanceur |
+| --- | --- | --- |
+| `peuple` (défaut) | l'état du dernier passage du banc des scénarios, rouvert sans rien rejouer ; son âge est dit | `start.sh --etat-banc` |
+| `vide` | une stack neuve, puis un projet neuf **déclaré par l'API** (`origine: nouveau`) sous `~/maestro-relecture/<iid>/` | `start.sh --etat-neuf` |
+| `injoignable` | l'API **coupée** sous la stack montée, l'UI encore servie (#996) — une coupure, pas un montage | `start.sh --couper-api` |
+
+**Ne se produisent pas, et se nomment** — dans le plan, la couverture (que le jugement recopie) et la
+saisine ; demandés par `--etat`, ils sont refusés avec leur raison :
+
+- **`erreur`, une API qui répond en erreur.** Mesuré le 2026-09-22 : son magasin (Redis) coupé, au
+  démarrage comme en cours de route (un relais TCP coupé entre l'API et Redis, le Redis partagé du
+  poste intact), la vraie API répond `200` sur chaque lecture d'écran, listes vides, et `/api/sante`
+  dit « ok ». Aucun écran n'affiche donc de 500 sur la vraie stack. C'est aussi un **constat
+  produit** : une API qui a perdu son magasin ne le dit à personne (#1206).
+- **`charge` au-delà du passage** : des listes de centaines de lignes, des noms de 80 caractères. La
+  charge regardée est celle que le passage du banc a laissée ; rien n'est gonflé.
+
+Ce qui tient, et à ne pas défaire :
+
+- **Le projet actif vient de l'API.** La préparation liste les projets servis et leurs runs (l'état du
+  banc en porte un par scénario joué), et nomme celui de l'état `vide` — qui diffère d'une stack à
+  l'autre, chaque API déclarant le sien. Plus une constante, plus un fichier écrit à la main.
+- **L'âge ne se corrige pas d'office.** Rejouer un passage coûte du vrai modèle (des dizaines de
+  minutes) : sans état sur le poste, l'état `peuple` s'arrête en nommant
+  `start.sh --etat-banc --rejouer`, jamais en le jouant.
+- **Ce qu'`origin/main` sait servir, son lanceur le dit** : l'avant pose la question à son
+  `--diagnostic-navigateur`, qui refuse une option inconnue sans rien démarrer. Aucune option n'est
+  cherchée dans son source — c'était le `grep` sur le `demo.py` d'`origin/main`.
+- **« injoignable » se regarde par le menu.** Vérifié le 2026-09-22 : l'écran ouvert avant la coupure
+  passe en « Reconnexion… », un écran atteint par le menu montre la bannière « API injoignable —
+  rien n'a répondu » ; une navigation par l'URL recharge la page, et le shell, sans API pour confirmer
+  son projet, reste sur sa porte, qui montre sa propre panne.
+- **Une stack de la copie n'est pas soldée.** Avant de monter un état, seule une API qui sert
+  l'espace du **banc** sur ces ports est arrêtée (elle est à la relecture, et le préflight du banc la
+  refuserait) ; une stack lancée par la session sur les données de sa copie est **remplacée** par le
+  lanceur, sans que ses runs soient soldés (#441).
+
+Mesuré le 2026-09-22 sur un écran, poste de référence : `peuple` avec un avant monté pour la première
+fois **95 s** (dont l'avant 61 s), passage à `vide` **69 s**, `--couper-api` ~2 s, `--fin` **27 s**.
+
+**Écarté :** fabriquer la réponse 500 (le middleware de la démo, ou tout équivalent branché sur la
+vraie API : c'est l'imitation que #1156 retire) ; couper le **Redis partagé** du poste pour obtenir
+l'erreur (il sert toutes les stacks et tous les runs) ; servir l'état `vide` sur les **données de la
+copie** (rien ne garantit qu'une session ne s'en est pas servie, et y déclarer un projet les
+salirait) ; rejouer un passage du banc à chaque relecture (payé en modèle et en minutes à chaque
+clôture — arbitré par la personne, docs/41 §5).
 
 #### Le jugement est rendu par un regard neuf, sur une grille fixe (#980)
 

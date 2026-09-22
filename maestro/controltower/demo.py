@@ -227,10 +227,10 @@ PAUSE_ENTRE_STATUTS_S = 0.8
 #: lignes.
 #:
 #: ⚠ Une constante par ligne, en début de ligne, entre guillemets droits : le
-#: lanceur (`scripts/controltower/start.sh`) et la relecture
-#: (`scripts/design/relecture-visuelle.sh`) les **lisent ici** plutôt que de les
+#: lanceur (`scripts/controltower/start.sh`) les **lit ici** plutôt que de les
 #: recopier — une constante recopiée des deux côtés d'une frontière est ce que #830
 #: a vu casser. `SCENARIOS` en fixe l'**ordre**, celui dans lequel on les annonce.
+#: La relecture visuelle ne les lit plus : elle regarde la vraie stack (#1165).
 SCENARIO_NOMINAL = "nominal"
 SCENARIO_VIDE = "vide"
 SCENARIO_ERREUR = "erreur"

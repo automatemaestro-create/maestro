@@ -414,6 +414,19 @@ def test_rejouer_ne_demande_aucun_etat(
     assert "repart à neuf" in sortie
 
 
+def test_une_stack_neuve_ne_demande_aucun_etat_et_ne_promet_aucun_passage(
+    monkeypatch: pytest.MonkeyPatch, client: ClientSynchrone, copie: Path, ateliers: Path
+) -> None:
+    """`start.sh --etat-neuf` (#1165) : le banc vidé et servi tel quel. Rien à rouvrir n'est pas
+    un refus ici, et l'annonce ne parle pas d'un passage qui n'aura pas lieu."""
+    code, sortie, _erreur = commande(
+        monkeypatch, ["--verifier", "--neuf"], client=client, copie=copie, ateliers=ateliers
+    )
+    assert code == etat.CODE_FAIT
+    assert "stack neuve" in sortie
+    assert "rejoue" not in sortie, "aucun passage ne suit une stack neuve"
+
+
 def test_un_run_en_vol_sur_le_banc_fait_refuser(
     monkeypatch: pytest.MonkeyPatch,
     client: ClientSynchrone,
@@ -423,7 +436,7 @@ def test_un_run_en_vol_sur_le_banc_fait_refuser(
 ) -> None:
     """Il republierait dans le journal qu'on réécrit : même règle que la purge."""
     client.hset(etat.cles_du_banc(banc)[1], "run-vivant", datetime.now(UTC).isoformat())
-    for args in (["--rouvrir"], ["--vider"], ["--verifier", "--rejouer"]):
+    for args in (["--rouvrir"], ["--vider"], ["--verifier", "--rejouer"], ["--verifier", "--neuf"]):
         code, _sortie, erreur = commande(
             monkeypatch, args, client=client, copie=copie, ateliers=ateliers
         )
@@ -530,8 +543,11 @@ def test_decrire_sans_etat_est_le_meme_refus_que_rouvrir(copie: Path, ateliers: 
         ["--rouvrir", "--vider"],
         ["--rouvrir", "--rejouer"],
         ["--verifier", "--x"],
+        ["--vider", "--neuf"],
+        ["--verifier", "--rejouer", "--neuf"],
         ["--decrire", "--rejouer"],
         ["--decrire", "--rouvrir"],
+        ["--decrire", "--neuf"],
     ],
 )
 def test_un_geste_mal_forme_est_un_usage(

@@ -2,8 +2,9 @@
 # LA RELECTURE VISUELLE — ce qu'il faut regarder, et de quoi le regarder (#932, lot 2 de #930).
 #
 #   bash scripts/design/relecture-visuelle.sh --plan <iid>   # ce qu'il y a à regarder. Ne démarre rien.
-#   bash scripts/design/relecture-visuelle.sh <iid>          # le plan, + les stacks montées : après et avant
-#   bash scripts/design/relecture-visuelle.sh <iid> --scenario vide   # les mêmes, sur un état limite (#978)
+#   bash scripts/design/relecture-visuelle.sh <iid>          # le plan, + les stacks réelles : après et avant
+#   bash scripts/design/relecture-visuelle.sh <iid> --etat vide       # un autre état de la vraie stack (#1165)
+#   bash scripts/design/relecture-visuelle.sh <iid> --etat injoignable  # la vraie panne, sur la stack montée
 #   bash scripts/design/relecture-visuelle.sh --couverture <iid>      # écran par écran, les états capturés
 #   bash scripts/design/relecture-visuelle.sh --saisine <iid>         # ce que le regard neuf reçoit (#980)
 #   bash scripts/design/relecture-visuelle.sh --planche <iid>         # la planche HTML avant/après (#980)
@@ -62,10 +63,15 @@
 #     compare les chemins LITTÉRALEMENT — un `e:/…` (la forme qu'on obtient en convertissant la racine
 #     MSYS) est refusé « outside allowed roots » face à un `E:/…` pourtant identique. Le relatif rend la
 #     question sans objet plutôt que de la traiter une fois de plus.
-#   - `core/projets/<PROJET_DEMO>.json` — sans projet actif, le shell ne rend que sa porte d'entrée
-#     (#279) et il n'y a rien à regarder. Le fichier est gitignoré (`core/projets/.gitignore`), son
-#     identifiant est LU dans `maestro/controltower/demo.py` plutôt que recopié, et il n'est retiré que
-#     si c'est nous qui l'avons posé — un projet déclaré avant nous ne nous appartient pas.
+#   - Rien dans les données de la copie : la stack se sert sur le JEU DE DONNÉES DU BANC
+#     (`<espace>.banc`, `.maestro/banc/`, #1164), que `start.sh` rouvre ou remet à neuf à chaque état.
+#     Ce qu'un worktree porte en propre — ses fils, ses projets, ses runs — n'est jamais touché.
+#   - Le projet neuf de l'état « vide » (section 5) : déclaré PAR L'API, qui crée son dossier sous
+#     `${MAESTRO_RELECTURE_ATELIER:-~/maestro-relecture}/<iid>/projet-neuf` — hors d'`AppData` et
+#     du dépôt, que la validation des racines refuse (EF-38). Son témoin,
+#     `.maestro/relecture/.projet-neuf`, dit à `--fin` quel dossier retirer.
+#   - `.maestro/relecture/.etat` — l'état que les stacks servent (section 5), pour qu'« injoignable »,
+#     qui coupe une stack au lieu d'en monter une, sache qu'il y en a une.
 #   - `.maestro/relecture/.avant` — le témoin de l'avant (section 6) : où il est monté et sur quels
 #     ports, pour que `--fin`, qui ne prend pas d'iid, sache quoi arrêter et quoi retirer.
 #   - `.maestro/relecture/<iid>/saisine.md`, `paires.tsv` et `planche.html` — le regard neuf et sa
@@ -84,26 +90,40 @@
 # n'y avait rien à regarder. L'avant ajoute sa part — ~50 s de plus la première fois, mesurés au
 # cadrage de #977 —, et la préparation dit ce qu'elle a réellement coûté, chronomètre en main.
 #
-# --- 5. LES ÉTATS LIMITES : ouverts par la démo, comptés par écran (#978) ---------------------------
+# --- 5. LES ÉTATS : ceux que la vraie stack produit, et ceux qu'elle ne produit pas (#1165) ----------
 #
-# La démo peuple l'état NOMINAL, et c'est rarement là que le rendu casse : c'est dans une file vide,
-# une API en panne, un nom de 80 caractères ou une liste de 200 lignes. `maestro/controltower/demo.py`
-# sert donc des SCÉNARIOS nommés, et ce script sait les monter (`--scenario <nom>`, relayé à `start.sh`).
-# Deux choses à ne pas défaire :
+# L'état peuplé est rarement celui qui casse : c'est une file vide, une API en panne, une liste longue.
+# De #978 à #1165, la démo les SIMULAIT — cinq scénarios factices, qui montraient ce qu'on avait
+# scénarisé et pas ce que le produit fait (docs/41 §4). Chaque état vient désormais de la VRAIE stack,
+# et un état qu'elle ne sait pas produire est NOMMÉ NON COUVERT, jamais fabriqué :
 #
-#   - LES NOMS SONT LUS dans `demo.py` (`SCENARIO_* = "…"`), jamais recopiés — même règle que le projet
-#     de démo, même raison (#830). Un nom que la démo ne sert pas est refusé ICI, avant la stack : le
-#     module le refuserait aussi, mais en arrière-plan, et l'on ne lirait qu'« API injoignable ».
-#   - CE QUI A ÉTÉ VU SE COMPTE SUR LE DISQUE, pas dans une déclaration. `--couverture` croise les écrans
-#     du plan, les scénarios et les deux thèmes avec les captures déposées — celles du nominal à la
-#     racine du dossier du ticket (le chemin d'avant #978, inchangé), celles d'un autre état dans un
-#     sous-dossier à son nom. Le script ne sait voir qu'une CAPTURE, jamais un regard : une capture
-#     qu'on n'a pas relue ne vaut rien, et c'est au skill de le tenir. Il ne décide pas non plus quels
-#     états il FALLAIT couvrir — c'est la rubrique « États à couvrir » du ticket (#976), un texte, que
-#     seule la session sait juger (#746) : ce mode constate, il ne rend aucun verdict.
+#   - `peuple` (le défaut) — l'état réel que le dernier passage du banc des scénarios a laissé (#1148),
+#     rouvert par l'API réelle sans rien rejouer (`start.sh --etat-banc`, #1164). Son âge est dit au
+#     démarrage : un passage se rejoue à la demande (`--etat-banc --rejouer`, vrai modèle, des dizaines
+#     de minutes), JAMAIS d'office ici. C'est aussi la « charge » : celle que le passage a laissée.
+#   - `vide` — une stack neuve (`start.sh --etat-neuf`), puis un projet neuf déclaré par l'API : ce
+#     que voit quelqu'un qui vient de déclarer son premier projet. Sans projet, le shell resterait sur
+#     sa porte (#279), et la porte d'une stack neuve n'est pas l'état vide des écrans.
+#   - `injoignable` — la vraie panne (#996) : l'API COUPÉE (`start.sh --couper-api`) sous la stack
+#     déjà montée, l'UI encore servie. Ce n'est pas un montage mais une coupure : les écrans ouverts
+#     avant elle montrent leur panne, et c'est l'ordre d'un vrai crash. Relancer un état la rétablit.
 #
-# Chaque état se monte par un redémarrage de la stack (le scénario est celui de l'API, qu'on ne change
-# pas à chaud) : ~18 s par état, qui s'annoncent au même titre que le reste.
+# Ne se produisent pas, et se disent comme tels (`NON_COUVERTS`, dans le plan, la couverture et la
+# saisine) : une API qui RÉPOND EN ERREUR (mesuré le 2026-09-22 : son magasin coupé, au démarrage
+# comme en route, la vraie API dit « ok » et sert des listes vides — aucune lecture d'écran ne rend
+# 500), et une charge AU-DELÀ de ce que le passage a laissé — rien n'est gonflé.
+#
+# CE QUI A ÉTÉ VU SE COMPTE SUR LE DISQUE, pas dans une déclaration. `--couverture` croise les écrans
+# du plan, les états et les deux thèmes avec les captures déposées — celles de l'état peuplé à la
+# racine du dossier du ticket (le chemin d'avant #978, inchangé), celles d'un autre état dans un
+# sous-dossier à son nom. Le script ne sait voir qu'une CAPTURE, jamais un regard : une capture qu'on
+# n'a pas relue ne vaut rien, et c'est au skill de le tenir. Il ne décide pas non plus quels états il
+# FALLAIT couvrir — c'est la rubrique « États à couvrir » du ticket (#976), un texte, que seule la
+# session sait juger (#746) : ce mode constate, il ne rend aucun verdict.
+#
+# Les noms des états sont ceux de CE script, et de lui seul : `start.sh` ne connaît que ses options
+# (`--etat-banc`, `--etat-neuf`, `--couper-api`), le skill décrit chaque nom et un test le garde.
+# Chaque état monté redémarre la stack, puisque ce sont des données que l'API rejoue à son démarrage.
 #
 # --- 6. L'AVANT : `origin/main`, servi à côté et jamais à la place (#977) --------------------------
 #
@@ -126,9 +146,13 @@
 #     d'origin/main, classées par `ecrans-touches.sh --chemins`. Seules comptent les pages SANS
 #     segment dynamique, parce que `/runs/[runId]/page.tsx` se range sous `/runs` sans que `/runs`
 #     réponde pour autant.
-#   - UN ÉTAT (§5) que la démo d'origin/main ne déclare pas n'a pas d'avant non plus : l'avant sert le
-#     même scénario que l'après ou ne sert rien — comparer un état limite au nominal ferait voir une
-#     différence que le ticket n'a pas faite.
+#   - UN ÉTAT (§5) qu'origin/main ne sait pas servir n'a pas d'avant non plus : l'avant sert le même
+#     état que l'après ou ne sert rien — comparer une stack neuve à un état peuplé ferait voir une
+#     différence que le ticket n'a pas faite. C'est le LANCEUR d'origin/main qui répond, sans rien
+#     démarrer (`--diagnostic-navigateur` refuse une option qu'il ne connaît pas) : aucune option
+#     n'est cherchée dans son source. Le même état veut dire les mêmes données : l'état du banc se
+#     rouvre du même passage des deux côtés ; le projet neuf, déclaré par chaque API, n'a pas le même
+#     identifiant de part et d'autre, et le plan dit les deux.
 #   - L'AVANT EST BEST-EFFORT : `origin/main` introuvable, montage ou stack en échec — l'après reste
 #     prêt, l'avant est dit indisponible avec sa cause, et c'est la session qui le reporte à « ce que je
 #     n'ai pas pu voir ». Un avant manquant ne vaut jamais une relecture manquante.
@@ -172,16 +196,16 @@ SOUS_DOSSIER=".maestro/relecture"
 MODE="preparer"
 TSV=0
 IID=""
-SCENARIO=""
+ETAT=""
 PARTIS_PRIS=""
 
 usage() {
   cat <<'USAGE'
-La relecture visuelle : ce qu'il faut regarder, et de quoi le regarder.
+La relecture visuelle : ce qu'il faut regarder, et de quoi le regarder — sur la vraie stack.
 
   bash scripts/design/relecture-visuelle.sh --plan <iid>          Ce qu'il y a à regarder. Ne démarre rien.
-  bash scripts/design/relecture-visuelle.sh <iid>                 Le plan, puis les stacks montées : après et avant.
-  bash scripts/design/relecture-visuelle.sh <iid> --scenario <nom>  Les mêmes, sur un état de la démo.
+  bash scripts/design/relecture-visuelle.sh <iid>                 Le plan, puis les stacks réelles : après et avant.
+  bash scripts/design/relecture-visuelle.sh <iid> --etat <nom>    Les mêmes, dans un autre état de la vraie stack.
   bash scripts/design/relecture-visuelle.sh --couverture <iid>    Écran par écran, les états capturés.
   bash scripts/design/relecture-visuelle.sh --saisine <iid>       Ce que le regard neuf reçoit : paires, attente, grille.
   bash scripts/design/relecture-visuelle.sh --planche <iid>       La planche HTML autonome, avant et après côte à côte.
@@ -189,7 +213,8 @@ La relecture visuelle : ce qu'il faut regarder, et de quoi le regarder.
 
 Options :
   --plan            N'écrit rien, ne démarre rien : dit seulement s'il y a matière, et laquelle.
-  --scenario <nom>  L'état que sert la démo (noms lus dans maestro/controltower/demo.py).
+  --etat <nom>      peuple (défaut) : l'état du dernier passage du banc · vide : une stack neuve et un
+                    projet neuf · injoignable : l'API coupée sous la stack montée, l'UI servie.
   --couverture      N'écrit rien, ne démarre rien : croise écrans, états et thèmes avec les captures.
   --saisine         Écrit .maestro/relecture/<iid>/saisine.md (lecture seule de la forge) ; sa
                     dernière ligne est « SAISINE <chemin absolu> », à donner au sous-agent regard-neuf.
@@ -203,6 +228,7 @@ Options :
   -h, --help        Cette aide.
 
 L'avant (origin/main) se sert sur les ports de l'après + 200. MAESTRO_RELECTURE_AVANT=0 l'éteint.
+Le projet neuf de l'état « vide » naît sous MAESTRO_RELECTURE_ATELIER (défaut ~/maestro-relecture).
 
 Codes de retour : 0 = il y a à regarder · 3 = aucune surface visible · 4 = aucune capture (saisine,
 planche) · 1 = échec · 2 = usage.
@@ -223,12 +249,17 @@ while [ $# -gt 0 ]; do
       fi
       PARTIS_PRIS="$2"; shift ;;
     --tsv) TSV=1 ;;
-    --scenario)
+    --etat)
       if [ $# -lt 2 ] || [ -z "$2" ]; then
-        printf 'relecture-visuelle.sh : --scenario attend un nom de scénario.\n\n' >&2
+        printf 'relecture-visuelle.sh : --etat attend un nom d'\''état.\n\n' >&2
         usage >&2; exit 2
       fi
-      SCENARIO="$2"; shift ;;
+      ETAT="$2"; shift ;;
+    # Le geste de la démo (#978), retiré par #1165 : le dire vaut mieux qu'un « option inconnue ».
+    --scenario)
+      printf 'relecture-visuelle.sh : --scenario montait un état de la démo, retirée (#1165) — les états\n' >&2
+      printf 'viennent de la vraie stack : --etat <nom>.\n\n' >&2
+      usage >&2; exit 2 ;;
     -h | --help) usage; exit 0 ;;
     -*) printf 'Option inconnue : %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
     *)
@@ -278,33 +309,45 @@ case "$PORT_API$PORT_UI" in
   *) PORT_API_AVANT=$((PORT_API + DECALAGE_AVANT)); PORT_UI_AVANT=$((PORT_UI + DECALAGE_AVANT)) ;;
 esac
 
-# --- Le projet de la démo -----------------------------------------------------------------------------
-# L'identifiant est LU dans le scénario : le jour où la démo change de projet, le script suit.
-PROJET_DEMO="$(sed -n 's/^PROJET_ID *= *"\([^"]*\)".*/\1/p' "$RACINE/maestro/controltower/demo.py" | head -n 1)"
-PROJET_DEMO="${PROJET_DEMO:-prj-demo}"
-PROJET_FICHIER="$RACINE/core/projets/$PROJET_DEMO.json"
-TEMOIN_PROJET="$RACINE/$SOUS_DOSSIER/.projet-pose"
+# --- Les états de la vraie stack (section 5 de l'en-tête) --------------------------------------------
+# Dans l'ordre de l'annonce ; le premier est le défaut. Ces noms sont ceux de ce script et de lui seul :
+# `start.sh` ne connaît que ses options, et le skill décrit chacun (un test le garde).
+ETATS="peuple vide injoignable"
+ETAT_DEFAUT="peuple"
+TEMOIN_ETAT="$RACINE/$SOUS_DOSSIER/.etat"
 
-# --- Les scénarios de la démo (#978) ------------------------------------------------------------------
-# LUS dans le même fichier, dans l'ordre où la démo les déclare (voir l'en-tête, §5). Une démo qui n'en
-# déclare aucun — antérieure à #978 — rend une liste vide : le plan le dit, `--scenario` est refusé, et
-# la couverture ne compte que le nominal, qui existe toujours.
-SCENARIOS_DEMO="$(sed -n 's/^SCENARIO_[A-Z_]* *= *"\([^"]*\)".*/\1/p' \
-  "$RACINE/maestro/controltower/demo.py" 2>/dev/null | tr '\n' ' ')"
-SCENARIOS_DEMO="${SCENARIOS_DEMO% }"
-SCENARIO_NOMINAL="$(sed -n 's/^SCENARIO_NOMINAL *= *"\([^"]*\)".*/\1/p' \
-  "$RACINE/maestro/controltower/demo.py" 2>/dev/null | head -n 1)"
-SCENARIO_NOMINAL="${SCENARIO_NOMINAL:-nominal}"
+# Ce que montre chaque état, en une ligne : le plan, la couverture et la saisine disent la même.
+description_etat() {
+  case "$1" in
+    peuple) printf "l'état du dernier passage du banc, rouvert par l'API réelle — son âge est dit au montage" ;;
+    vide) printf "une stack neuve, puis un projet neuf déclaré par l'API — rien n'y a été lancé" ;;
+    injoignable) printf "l'API coupée sous la stack montée, l'UI encore servie — la vraie panne (#996)" ;;
+  esac
+}
 
-# Le dossier des captures d'un état, RELATIF à la racine. Le nominal garde le chemin d'avant #978 — le
-# dossier du ticket lui-même —, un autre état a le sien dessous : deux états d'un même écran ne
-# s'écrasent pas, et une relecture qui n'ouvre que le nominal n'a rien à apprendre de neuf.
+# Les options de `start.sh` qui MONTENT un état. `injoignable` n'en a pas : il coupe, il ne monte rien.
+options_start() {
+  case "$1" in
+    peuple) printf '%s' "--etat-banc" ;;
+    vide) printf '%s' "--etat-neuf" ;;
+  esac
+}
+
+# Les états que la vraie stack NE PRODUIT PAS, avec leur raison — `nom <TAB> raison`. Ils sont nommés
+# partout où les autres se comptent (plan, couverture, saisine), et jamais imités (en-tête, §5).
+NON_COUVERTS="$(printf '%s\t%s\n%s\t%s' \
+  erreur "une API qui répond en erreur (500) : la vraie stack ne la produit sur aucun écran — son magasin (Redis) coupé, au démarrage comme en route, l'API dit « ok » et sert des listes vides (mesuré le 2026-09-22 ; ce silence est #1206)" \
+  charge "au-delà de ce que le dernier passage du banc a laissé — des listes de centaines de lignes, des noms de 80 caractères : rien n'est gonflé")"
+
+# Le dossier des captures d'un état, RELATIF à la racine. L'état par défaut garde le chemin d'avant
+# #978 — le dossier du ticket lui-même —, un autre état a le sien dessous : deux états d'un même écran
+# ne s'écrasent pas, et une relecture qui n'ouvre que le défaut n'a rien à apprendre de neuf.
 dossier_captures() {
-  local iid="$1" scenario="${2:-}"
-  if [ -z "$scenario" ] || [ "$scenario" = "$SCENARIO_NOMINAL" ]; then
+  local iid="$1" etat="${2:-}"
+  if [ -z "$etat" ] || [ "$etat" = "$ETAT_DEFAUT" ]; then
     printf '%s/%s' "$SOUS_DOSSIER" "$iid"
   else
-    printf '%s/%s/%s' "$SOUS_DOSSIER" "$iid" "$scenario"
+    printf '%s/%s/%s' "$SOUS_DOSSIER" "$iid" "$etat"
   fi
 }
 
@@ -314,53 +357,108 @@ nom_capture() { printf '%s-%s.png' "$1" "$2"; }
 # Son avant (#977), à côté : même clé, même thème, suffixe `-avant`.
 nom_capture_avant() { printf '%s-%s-avant.png' "$1" "$2"; }
 
-# Le dossier que l'écran « Projets » affichera. Il ne sert qu'à ça : rien n'y est écrit, et la validation
-# des racines (`maestro/projets/racine.py`) n'est pas rejouée à la LECTURE du dépôt de projets — c'est
-# déjà ce dont `captures.sh` se sert pour poser un identifiant fixe. Forme à slashes, et le temporaire
-# WINDOWS de préférence à `/tmp` : un `/tmp` de Git Bash n'est pas le même chemin pour le Python du venv.
-base_temporaire() {
-  local base="${TMPDIR:-${TEMP:-/tmp}}"
-  printf '%s' "${base//\\//}"
+# --- Les projets de la vraie stack --------------------------------------------------------------------
+# Sans projet actif, le shell ne rend que sa porte d'entrée (#279) : la session pose l'identifiant d'un
+# projet dans le `localStorage` de chaque origine. Il vient de l'API, jamais d'une constante : l'état du
+# banc en porte un par scénario joué, et le projet neuf de l'état « vide » est déclaré par elle. Tout
+# passe par `relecture-projets.py`, qui ne parle qu'à l'API — pas de JSON lu en shell.
+RELECTURE_PROJETS="$RACINE/scripts/design/relecture-projets.py"
+TEMOIN_PROJET_NEUF="$RACINE/$SOUS_DOSSIER/.projet-neuf"
+
+# chemin_natif <chemin> : la forme qu'un programme Windows comprend (`E:/…`) — la forme MSYS `/e/…` n'y
+# désigne rien —, le chemin tel quel ailleurs.
+chemin_natif() {
+  if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s' "$1"; fi
 }
 
-# ecris_projet <fichier> <id> : la déclaration du projet de démo, écrite UNE fois pour les deux stacks.
-ecris_projet() {
-  local fichier="$1" id="$2" racine_fictive
-  racine_fictive="$(base_temporaire)/maestro-relecture/mini-crm"
-  mkdir -p "$racine_fictive" 2>/dev/null
-  mkdir -p "$(dirname "$fichier")" 2>/dev/null
-  printf '{"id":"%s","nom":"mini-CRM (démo)","racine":"%s","origine":"existant","vcs":null}\n' \
-    "$id" "$racine_fictive" >"$fichier"
+# Le dossier du projet neuf : sous l'atelier des relectures, dans le profil de l'utilisateur. Ni
+# `AppData` (le temporaire d'un poste Windows) ni le dépôt : la validation des racines les refuse
+# (EF-38, mesuré en #221) — même raison, même parade que l'atelier du banc (`~/maestro-scenarios`).
+racine_projet_neuf() {
+  local base="${MAESTRO_RELECTURE_ATELIER:-$HOME/maestro-relecture}"
+  printf '%s/%s/projet-neuf' "${base//\\//}" "$1"
 }
 
-pose_projet() {
-  if [ -f "$PROJET_FICHIER" ]; then
-    # Posé par une relecture précédente de ce dépôt (un autre état monté, #978) : il est à nous, et
-    # `--fin` le retirera. Le dire autrement laisserait croire qu'il appartient à quelqu'un d'autre.
-    if [ -f "$TEMOIN_PROJET" ]; then
-      dire "  projet     : « $PROJET_DEMO » déjà posé par cette relecture (retiré par --fin)"
-    else
-      dire "  projet     : « $PROJET_DEMO » déjà déclaré — laissé en place"
-    fi
+# annonce_projets <port api> <côté> : les projets que la stack sert, et le nombre de runs de chacun —
+# ce qui dit dans lequel un écran a quelque chose à montrer. PROJETS_SERVIS garde la liste de l'après,
+# pour ne redire celle de l'avant que si elle diffère.
+PROJETS_SERVIS=""
+annonce_projets() {
+  local port="$1" cote="$2" python lignes id nom runs _racine
+  python="$(python_du_depot)" || { dire "  ⚠ projets  : [$cote] aucun interpréteur Python pour les lire"; return 0; }
+  if ! lignes="$(PYTHONIOENCODING=utf-8 "$python" "$RELECTURE_PROJETS" lister --port "$port" 2>&1)"; then
+    dire "  ⚠ projets  : [$cote] liste illisible — $(printf '%s\n' "$lignes" | tail -n 1)"
     return 0
   fi
-  if ! ecris_projet "$PROJET_FICHIER" "$PROJET_DEMO"; then
-    dire "  ⚠ projet    : déclaration impossible — les écrans rendront la porte d'entrée"
-    return 1
+  if [ "$cote" = "avant" ] && [ "$(printf '%s\n' "$lignes" | cut -f1)" = "$(printf '%s\n' "$PROJETS_SERVIS" | cut -f1)" ]; then
+    dire "  projets    : [avant] les mêmes"
+    return 0
   fi
-  mkdir -p "$(dirname "$TEMOIN_PROJET")" 2>/dev/null
-  printf '%s\n' "$PROJET_FICHIER" >"$TEMOIN_PROJET"
-  dire "  projet     : « $PROJET_DEMO » déclaré (retiré par --fin)"
+  [ "$cote" = "après" ] && PROJETS_SERVIS="$lignes"
+  if [ -z "$lignes" ]; then
+    dire "  projets    : [$cote] aucun — l'état n'en porte pas, les écrans resteront sur la porte d'entrée"
+    return 0
+  fi
+  dire "  projets    : [$cote] l'identifiant à poser comme projet actif de cette origine :"
+  while IFS=$'\t' read -r id nom runs _racine; do
+    [ -n "$id" ] && dire "$(printf '               %-16s %s — %s run(s)' "$id" "$nom" "$runs")"
+  done <<<"$lignes"
 }
 
-retire_projet() {
-  [ -f "$TEMOIN_PROJET" ] || return 0
-  local cible
-  cible="$(head -n 1 "$TEMOIN_PROJET")"
-  if [ -n "$cible" ] && [ -f "$cible" ]; then
-    rm -f "$cible" && printf '  ✓ projet « %s » retiré\n' "$PROJET_DEMO"
+# declare_projet_neuf <port api> <côté> : le projet de l'état « vide », déclaré par l'API de ce côté-là
+# (`origine: nouveau` : c'est elle qui valide la racine et crée le dossier, comme pour quelqu'un qui
+# démarre). Le même dossier pour les deux stacks, un identifiant différent pour chacune — dit.
+declare_projet_neuf() {
+  local port="$1" cote="$2" racine python sortie
+  racine="$(racine_projet_neuf "$IID")"
+  # Le témoin AVANT la déclaration : un dossier créé par une API qui aurait ensuite échoué reste à nous.
+  mkdir -p "$(dirname "$TEMOIN_PROJET_NEUF")" 2>/dev/null
+  printf '%s\n' "$racine" >"$TEMOIN_PROJET_NEUF"
+  python="$(python_du_depot)" || { dire "  ⚠ projet   : [$cote] aucun interpréteur Python pour le déclarer"; return 0; }
+  if sortie="$(PYTHONIOENCODING=utf-8 "$python" "$RELECTURE_PROJETS" declarer --port "$port" \
+    --racine "$(chemin_natif "$racine")" 2>&1)"; then
+    dire "  projet     : [$cote] « Projet neuf » déclaré par l'API — $(printf '%s\n' "$sortie" | tail -n 1)"
+  else
+    dire "  ⚠ projet   : [$cote] non déclaré — $(printf '%s\n' "$sortie" | tail -n 1) ; l'écran restera sur sa porte"
   fi
-  rm -f "$TEMOIN_PROJET"
+}
+
+# retire_projet_neuf : le dossier du projet neuf, s'il est celui que le témoin nomme et qu'il est bien
+# SOUS l'atelier (`…/<iid>/projet-neuf`) — la déclaration, elle, vit dans le banc, que le prochain état
+# réécrit. Le dossier de l'iid part avec lui s'il n'y reste rien.
+retire_projet_neuf() {
+  [ -f "$TEMOIN_PROJET_NEUF" ] || return 0
+  local cible
+  cible="$(head -n 1 "$TEMOIN_PROJET_NEUF")"
+  case "$cible" in
+    */[0-9]*/projet-neuf)
+      if [ -d "$cible" ]; then
+        rm -rf "$cible" && printf '  ✓ projet neuf retiré (%s)\n' "$cible"
+      fi
+      rmdir "$(dirname "$cible")" 2>/dev/null
+      ;;
+  esac
+  rm -f "$TEMOIN_PROJET_NEUF"
+}
+
+# sert_le_banc <port api> : une API de CETTE relecture, restée d'un état précédent, sert-elle le jeu de
+# données du banc sur ce port ? Le préflight du banc la refuserait (elle republierait dans le journal
+# qu'on réécrit), et elle est à nous : on l'arrête. Une autre stack sur ces ports — celle que la
+# session a lancée sur les données de sa copie — est remplacée par le lanceur sans que ses runs soient
+# soldés, comme avant ce ticket.
+sert_le_banc() {
+  curl -s --max-time 3 "http://127.0.0.1:$1/api/sante" 2>/dev/null | grep -q '"espace" *: *"[^"]*\.banc"'
+}
+
+# monte <start.sh> <port api> <port ui> <options…> : (re)démarre une stack sur ses ports, dans un état.
+monte() {
+  local lanceur="$1" api="$2" ui="$3"
+  shift 3
+  if sert_le_banc "$api"; then
+    MAESTRO_PORT_API="$api" MAESTRO_PORT_UI="$ui" bash "$RACINE/scripts/controltower/start.sh" --stop \
+      >/dev/null 2>&1
+  fi
+  MAESTRO_PORT_API="$api" MAESTRO_PORT_UI="$ui" bash "$lanceur" "$@"
 }
 
 # --- Les écrans ---------------------------------------------------------------------------------------
@@ -549,7 +647,7 @@ retire_avant() {
 # se paie pas pour une relecture qui ne pourra pas avoir lieu. Best-effort de bout en bout : il ne
 # change jamais le code de retour.
 prepare_avant() {
-  local debut sortie code chemin id journal ligne
+  local debut sortie code chemin journal ligne
   case "$AVANT_ETAT" in
     eteint) dire "  avant      : éteint ($AVANT_RAISON) — l'après seul"; return 0 ;;
     actif) ;;
@@ -562,19 +660,6 @@ prepare_avant() {
   if [ ! -f "$WORKTREE_SH" ]; then
     dire "  avant      : indisponible — scripts/git/worktree.sh introuvable ; l'après seul"
     return 0
-  fi
-  # Le même état que l'après, ou rien (en-tête, §6). Lu dans le `demo.py` d'origin/main AVANT de monter
-  # quoi que ce soit : ne rien servir coûte moins cher qu'un worktree monté pour rien. Une stack d'avant
-  # restée d'un état précédent est arrêtée — elle servirait un autre état sous la même URL.
-  local args_avant=(--demo --no-browser)
-  if [ -n "$SCENARIO" ] && [ "$SCENARIO" != "$SCENARIO_NOMINAL" ]; then
-    if ! git -C "$RACINE" show "$AVANT_SHA:maestro/controltower/demo.py" 2>/dev/null \
-      | grep -q "^SCENARIO_[A-Z_]* *= *\"$SCENARIO\""; then
-      arrete_stack_avant >/dev/null
-      dire "  avant      : $REF_AVANT ne sert pas l'état « $SCENARIO » — l'après seul pour cet état"
-      return 0
-    fi
-    args_avant+=(--scenario "$SCENARIO")
   fi
 
   dire "  avant      : montage d'$REF_AVANT — worktree détaché et seconde stack (~50 s la première fois)"
@@ -591,19 +676,28 @@ prepare_avant() {
   mkdir -p "$(dirname "$TEMOIN_AVANT")" 2>/dev/null
   printf '%s\t%s\t%s\t%s\n' "$IID" "$chemin" "$PORT_API_AVANT" "$PORT_UI_AVANT" >"$TEMOIN_AVANT"
 
-  # Le projet de démo de l'AVANT : son identifiant est lu dans SON scénario, qui peut différer de celui
-  # de la branche. Aucun témoin : l'arbre entier part avec `--fin`.
-  id="$(sed -n 's/^PROJET_ID *= *"\([^"]*\)".*/\1/p' "$chemin/maestro/controltower/demo.py" 2>/dev/null | head -n 1)"
-  id="${id:-$PROJET_DEMO}"
-  [ -f "$chemin/core/projets/$id.json" ] || ecris_projet "$chemin/core/projets/$id.json" "$id"
-
-  # Le `start.sh` de l'AVANT, et non celui de la branche : l'avant est origin/main tel qu'il se lance.
-  if MAESTRO_PORT_API="$PORT_API_AVANT" MAESTRO_PORT_UI="$PORT_UI_AVANT" \
-    bash "$chemin/scripts/controltower/start.sh" "${args_avant[@]}" >/dev/null 2>&1; then
-    dire "  ✓ avant prêt en $((SECONDS - debut)) s : http://localhost:$PORT_UI_AVANT ($REF_AVANT ${AVANT_SHA:0:7}, état « $ETAT_ANNONCE »)"
+  # Le même état que l'après, ou rien (en-tête, §6). C'est le lanceur d'ORIGIN/MAIN qui dit s'il sait
+  # le servir : son diagnostic ne démarre rien et refuse une option qu'il ne connaît pas — une
+  # branche plus jeune que son lanceur n'a pas à le deviner dans son source. Refusé, la stack d'avant
+  # restée d'un autre état est arrêtée : elle servirait cet autre état sous la même URL.
+  local lanceur="$chemin/scripts/controltower/start.sh"
+  if ! MAESTRO_BROWSER_DEFAUT=firefox MAESTRO_PORT_API="$PORT_API_AVANT" MAESTRO_PORT_UI="$PORT_UI_AVANT" \
+    bash "$lanceur" "${ARGS_ETAT[@]}" --diagnostic-navigateur >/dev/null 2>&1; then
+    arrete_stack_avant >/dev/null
+    dire "  avant      : $REF_AVANT ne sait pas servir l'état « $ETAT » (son lanceur refuse ${ARGS_ETAT[*]}) — l'après seul pour cet état"
     return 0
   fi
-  dire "  ⚠ avant indisponible — la stack d'$REF_AVANT n'a pas démarré. Fin de ses journaux :"
+
+  # Le `start.sh` de l'AVANT, et non celui de la branche : l'avant est origin/main tel qu'il se lance.
+  if monte "$lanceur" "$PORT_API_AVANT" "$PORT_UI_AVANT" "${ARGS_ETAT[@]}" --no-browser >/dev/null 2>&1; then
+    dire "  ✓ avant prêt en $((SECONDS - debut)) s : http://localhost:$PORT_UI_AVANT ($REF_AVANT ${AVANT_SHA:0:7}, état « $ETAT »)"
+    case "$ETAT" in
+      vide) declare_projet_neuf "$PORT_API_AVANT" "avant" ;;
+      *) annonce_projets "$PORT_API_AVANT" "avant" ;;
+    esac
+    return 0
+  fi
+  dire "  ⚠ avant indisponible — la stack d'$REF_AVANT n'a pas démarré dans l'état « $ETAT ». Fin de ses journaux :"
   for journal in api ui; do
     while IFS= read -r ligne; do
       dire "      [$journal] $ligne"
@@ -623,11 +717,9 @@ LIB_SH="$RACINE/scripts/gitlab/lib.sh"
 # RELATIF de la capture quand elle est sur le disque, `-` sinon, et `avant` vaut `nouveau` pour un écran
 # absent d'origin/main. Toutes les combinaisons y sont, capturées ou non : ce qui manque se nomme.
 paires_de() {
-  local iid="$1" lignes="$2" etats scenario dossier route cle _origine _fichiers av theme apres avant
-  etats="$SCENARIO_NOMINAL"
-  [ -n "$SCENARIOS_DEMO" ] && etats="$SCENARIOS_DEMO"
-  for scenario in $etats; do
-    dossier="$(dossier_captures "$iid" "$scenario")"
+  local iid="$1" lignes="$2" etat dossier route cle _origine _fichiers av theme apres avant
+  for etat in $ETATS; do
+    dossier="$(dossier_captures "$iid" "$etat")"
     while IFS=$'\t' read -r route cle _origine _fichiers; do
       [ -z "$route" ] && continue
       av="$(avant_de "$route")"
@@ -639,7 +731,7 @@ paires_de() {
           avant="-"
           [ "$av" = "nouveau" ] && avant="nouveau"
         fi
-        printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$scenario" "$route" "$cle" "$theme" "$apres" "$avant"
+        printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$etat" "$route" "$cle" "$theme" "$apres" "$avant"
       done
     done <<<"$lignes"
   done
@@ -650,11 +742,8 @@ compte_captures() {
   awk -F'\t' '$5 != "-" { n++ } $6 != "-" && $6 != "nouveau" { n++ } END { print n + 0 }'
 }
 
-# La racine sous la forme que l'outil `Read` du sous-agent accepte : `E:/…` sous Windows — la forme MSYS
-# `/e/…` n'y désigne rien —, le chemin tel quel ailleurs.
-racine_native() {
-  if command -v cygpath >/dev/null 2>&1; then cygpath -m "$RACINE"; else printf '%s' "$RACINE"; fi
-}
+# La racine sous la forme que l'outil `Read` du sous-agent accepte (voir `chemin_natif`).
+racine_native() { chemin_natif "$RACINE"; }
 
 # cellule_capture <chemin|-|nouveau> <racine> : ce qu'une case du tableau de la saisine dit d'un côté.
 cellule_capture() {
@@ -673,7 +762,7 @@ en_citation() { awk '{ print ($0 == "" ? ">" : "> " $0) }'; }
 # introuvable — une saisine sans grille ferait rendre un texte libre, c'est-à-dire ce que #980 retire.
 ecris_saisine() {
   local iid="$1" paires="$2" sortie="$3" racine attente code_attente=0 rendu="" decisions="" etats
-  local scenario du_etat nb route _cle theme apres avant libelle question source n
+  local etat du_etat nb route _cle theme apres avant libelle question source n nom raison
   if [ ! -f "$GRILLE" ]; then
     printf 'relecture-visuelle.sh : grille introuvable (%s) — pas de saisine.\n' "$GRILLE" >&2
     return 1
@@ -697,22 +786,33 @@ rends le gabarit de la section 5, rempli.
 
 Une ligne = une paire : même écran, même thème, même état. « écran nouveau » : il n'existe pas avant
 ce ticket et n'a que son après. « non capturé » : personne ne l'a pris — ce qui en dépend est « non vu ».
+Chaque état vient de la vraie stack, jamais d'un scénario factice : deux stacks qui servent le même
+état ne le servent pas au même instant, et un âge relatif ou un identifiant peut différer d'un côté
+à l'autre sans que le ticket y soit pour rien.
 TETE
-    while IFS= read -r scenario; do
-      [ -z "$scenario" ] && continue
-      du_etat="$(printf '%s\n' "$paires" | ETAT="$scenario" awk -F'\t' '$1 == ENVIRON["ETAT"]')"
+    while IFS= read -r etat; do
+      [ -z "$etat" ] && continue
+      du_etat="$(printf '%s\n' "$paires" | ETAT="$etat" awk -F'\t' '$1 == ENVIRON["ETAT"]')"
       nb="$(printf '%s\n' "$du_etat" | compte_captures)"
       if [ "$nb" -eq 0 ]; then
-        printf '\n### État « %s » — aucune capture\n\nRien de cet état n'\''a été capturé : tout ce qui le concerne est « non vu ».\n' "$scenario"
+        printf '\n### État « %s » — aucune capture\n\n%s.\n\nRien de cet état n'\''a été capturé : tout ce qui le concerne est « non vu ».\n' \
+          "$etat" "$(description_etat "$etat")"
         continue
       fi
-      printf '\n### État « %s »\n\n| Écran | Thème | Après | Avant |\n|---|---|---|---|\n' "$scenario"
+      printf '\n### État « %s »\n\n%s.\n\n| Écran | Thème | Après | Avant |\n|---|---|---|---|\n' \
+        "$etat" "$(description_etat "$etat")"
       while IFS=$'\t' read -r _e route _cle theme apres avant; do
         [ -z "$route" ] && continue
         printf '| `%s` | %s | %s | %s |\n' "$route" "$theme" \
           "$(cellule_capture "$apres" "$racine")" "$(cellule_capture "$avant" "$racine")"
       done <<<"$du_etat"
     done <<<"$etats"
+
+    printf '\n### États que la vraie stack ne produit pas — non couverts\n\n'
+    while IFS=$'\t' read -r nom raison; do
+      [ -n "$nom" ] && printf -- '- `%s` — %s.\n' "$nom" "$raison"
+    done <<<"$NON_COUVERTS"
+    printf '\nAucune capture ne les montre et aucune ne les imite : ce qui en dépend est « non vu ».\n'
 
     printf '\n## 2. Le rendu attendu\n\n'
     if [ "$code_attente" -ne 0 ]; then
@@ -804,7 +904,7 @@ python_du_depot() {
 
 # --- Les modes ------------------------------------------------------------------------------------
 affiche_plan() {
-  local iid="$1" lignes="$2" nb="$3" indet="$4" route _cle origine fichiers suffixe f avant
+  local iid="$1" lignes="$2" nb="$3" indet="$4" route _cle origine fichiers suffixe f avant e raison
   dire "Relecture visuelle du ticket #$iid"
   dire ""
   dire "  ports      : UI $PORT_UI · API $PORT_API"
@@ -819,13 +919,15 @@ affiche_plan() {
     dire "  captures   : $SOUS_DOSSIER/$iid/<ecran>-<theme>.png — chemin RELATIF, jamais absolu"
   fi
   dire "  thèmes     : clair, sombre — les deux, toujours (le socle en porte deux, on en garde deux)"
-  if [ -n "$SCENARIOS_DEMO" ]; then
-    dire "  états      : ${SCENARIOS_DEMO// / · } — lus dans maestro/controltower/demo.py"
-    dire "               un état autre que « $SCENARIO_NOMINAL » se monte par --scenario <nom>, ses captures"
-    dire "               sous $SOUS_DOSSIER/$iid/<nom>/ ; --couverture dit, écran par écran, lesquels sont vus"
-  else
-    dire "  états      : « $SCENARIO_NOMINAL » seul — cette démo ne déclare aucun autre scénario"
-  fi
+  dire "  états      : ceux de la vraie stack — le premier par défaut, les autres par --etat <nom>,"
+  dire "               leurs captures sous $SOUS_DOSSIER/$iid/<état>/ :"
+  for e in $ETATS; do
+    dire "$(printf '                 %-12s %s' "$e" "$(description_etat "$e")")"
+  done
+  dire "  non couverts : la vraie stack ne les produit pas — à nommer dans le jugement, jamais à imiter :"
+  while IFS=$'\t' read -r e raison; do
+    [ -n "$e" ] && dire "$(printf '                 %-12s %s' "$e" "$raison")"
+  done <<<"$NON_COUVERTS"
   dire ""
   if [ "$nb" -eq 0 ]; then
     dire "  aucun écran : ce ticket n'a touché aucune surface visible."
@@ -871,19 +973,19 @@ case "$MODE" in
       printf 'relecture-visuelle.sh : --fin ne prend pas d'\''iid (la stack est celle du dépôt courant).\n' >&2
       exit 2
     fi
-    if [ -n "$SCENARIO" ]; then
-      printf 'relecture-visuelle.sh : --fin ne prend pas de scénario (il arrête la stack, quel que soit son état).\n' >&2
+    if [ -n "$ETAT" ]; then
+      printf 'relecture-visuelle.sh : --fin ne prend pas d'\''état (il arrête la stack, quel que soit le sien).\n' >&2
       exit 2
     fi
     printf 'Fin de la relecture visuelle — ports UI %s · API %s\n' "$PORT_UI" "$PORT_API"
-    # L'arrêt d'abord : un projet retiré sous une API vivante la laisserait servir un projet fantôme.
     # Les DEUX stacks avant tout retrait — et l'avant d'abord, ce qui laisse à ses processus le temps
     # de lâcher leurs fichiers pendant que l'après s'arrête : un dossier encore tenu résisterait au
-    # retrait de son worktree (#422).
+    # retrait de son worktree (#422). Le projet neuf ensuite : son dossier sert encore une API vivante.
     arrete_stack_avant
     MAESTRO_PORT_API="$PORT_API" MAESTRO_PORT_UI="$PORT_UI" \
       bash "$RACINE/scripts/controltower/start.sh" --stop
-    retire_projet
+    retire_projet_neuf
+    rm -f "$TEMOIN_ETAT"
     retire_avant
     exit 0
     ;;
@@ -893,56 +995,64 @@ case "$MODE" in
       usage >&2
       exit 2
     fi
-    if [ -n "$SCENARIO" ] && [ "$MODE" != "preparer" ]; then
-      printf 'relecture-visuelle.sh : --scenario ne vaut que pour monter la stack (le plan et la couverture valent pour tous les états).\n' >&2
+    if [ -n "$ETAT" ] && [ "$MODE" != "preparer" ]; then
+      printf 'relecture-visuelle.sh : --etat ne vaut que pour monter la stack (le plan et la couverture valent pour tous les états).\n' >&2
       exit 2
     fi
-    # Refusé ICI, avant la stack : `demo.py` le refuserait aussi, mais en arrière-plan (voir §5).
-    if [ -n "$SCENARIO" ]; then
-      case " $SCENARIOS_DEMO " in
-        *" $SCENARIO "*) ;;
+    if [ -n "$ETAT" ]; then
+      case " $ETATS " in
+        *" $ETAT "*) ;;
         *)
-          printf 'relecture-visuelle.sh : scénario inconnu « %s » (la démo sert : %s).\n' \
-            "$SCENARIO" "${SCENARIOS_DEMO:-aucun}" >&2
+          # Un état que la vraie stack ne produit pas se REFUSE avec sa raison : c'est la même
+          # réponse que le plan, au moment où on le demande.
+          raison="$(printf '%s\n' "$NON_COUVERTS" | ETAT="$ETAT" awk -F'\t' '$1 == ENVIRON["ETAT"] { print $2 }')"
+          if [ -n "$raison" ]; then
+            printf 'relecture-visuelle.sh : l'\''état « %s » n'\''est pas couvert — %s.\n' "$ETAT" "$raison" >&2
+            printf '  Il se nomme dans « ce que je n'\''ai pas pu voir », jamais ne s'\''imite.\n' >&2
+          else
+            printf 'relecture-visuelle.sh : état inconnu « %s » (la vraie stack sert : %s).\n' \
+              "$ETAT" "$ETATS" >&2
+          fi
           exit 2
           ;;
       esac
     fi
     ;;
 esac
+ETAT="${ETAT:-$ETAT_DEFAUT}"
 
 # La couverture : pour chaque écran du plan, chaque état et chaque thème, la capture est-elle là ?
 # Lecture du disque seule — ni stack, ni navigateur, ni forge. Voir l'en-tête, §5 : elle CONSTATE.
-# Une cellule de 10 colonnes. La largeur VISIBLE est passée à la main : `printf '%-10s'` compte des
-# octets sous une locale C, et `✓`, `—` en pèsent trois chacun — le tableau se décalait d'une ligne à
-# l'autre selon ce qu'elle contenait (même piège que la vue de `run.sh`, #325).
-cellule() { printf '%s%*s' "$1" "$((10 - $2))" ''; }
+# La largeur VISIBLE d'une cellule est passée à la main : `printf '%-10s'` compte des octets sous une
+# locale C, et `✓`, `—` en pèsent trois chacun — le tableau se décalait d'une ligne à l'autre selon ce
+# qu'elle contenait (même piège que la vue de `run.sh`, #325).
+#
+# Une colonne par état : 12 de large, pour que « injoignable » tienne sans coller au suivant.
+cellule() { printf '%s%*s' "$1" "$((12 - $2))" ''; }
 
 affiche_couverture() {
-  local iid="$1" lignes="$2" route cle scenario theme fichier etats marque clair sombre
-  etats="$SCENARIO_NOMINAL"
-  [ -n "$SCENARIOS_DEMO" ] && etats="$SCENARIOS_DEMO"
+  local iid="$1" lignes="$2" route cle etat theme fichier marque clair sombre nom raison
   if [ "$TSV" = 1 ]; then
-    printf '# route\tcle\tscenario\tclair\tsombre\n'
+    printf '# route\tcle\tetat\tclair\tsombre\n'
   else
     dire "Couverture de la relecture du ticket #$iid — captures sous $SOUS_DOSSIER/$iid/"
     dire ""
-    dire "  écran         $(for scenario in $etats; do printf '%-10s' "$scenario"; done)"
+    dire "  écran         $(for etat in $ETATS; do printf '%-12s' "$etat"; done)"
   fi
   while IFS=$'\t' read -r route cle _origine _fichiers; do
     [ -z "$route" ] && continue
     marque=""
-    for scenario in $etats; do
+    for etat in $ETATS; do
       clair=0; sombre=0
       for theme in clair sombre; do
-        fichier="$(dossier_captures "$iid" "$scenario")/$(nom_capture "$cle" "$theme")"
+        fichier="$(dossier_captures "$iid" "$etat")/$(nom_capture "$cle" "$theme")"
         if [ -s "$RACINE/$fichier" ]; then
           [ "$theme" = clair ] && clair=1
           [ "$theme" = sombre ] && sombre=1
         fi
       done
       if [ "$TSV" = 1 ]; then
-        printf '%s\t%s\t%s\t%s\t%s\n' "$route" "$cle" "$scenario" "$clair" "$sombre"
+        printf '%s\t%s\t%s\t%s\t%s\n' "$route" "$cle" "$etat" "$clair" "$sombre"
       else
         case "$clair$sombre" in
           11) marque="${marque}$(cellule '✓' 1)" ;;
@@ -954,12 +1064,25 @@ affiche_couverture() {
     done
     [ "$TSV" = 1 ] || dire "$(printf '  %-14s' "$route")$marque"
   done <<<"$lignes"
+  # Les états que la vraie stack ne produit pas SE COMPTENT AUSSI, en le disant : la couverture est ce
+  # que le jugement recopie, et c'est ce qui fait qu'un état non couvert y est nommé (#1165).
+  while IFS=$'\t' read -r nom raison; do
+    [ -z "$nom" ] && continue
+    if [ "$TSV" = 1 ]; then
+      printf '# non-couvert\t%s\t%s\n' "$nom" "$raison"
+    fi
+  done <<<"$NON_COUVERTS"
   if [ "$TSV" != 1 ]; then
     dire ""
     dire "  ✓ les deux thèmes · clair / sombre : un seul · — rien de capturé"
     dire "  une capture n'est pas un regard : ne compte comme vue que celle qu'on a relue."
     dire "  fichiers attendus : $SOUS_DOSSIER/$iid/[<état>/]<clé>-<thème>.png — clés : $(
       printf '%s\n' "$lignes" | cut -f2 | sed '/^$/d' | tr '\n' ' ')"
+    dire ""
+    dire "  non couverts — la vraie stack ne les produit pas ; nommés dans « ce que je n'ai pas pu voir » :"
+    while IFS=$'\t' read -r nom raison; do
+      [ -n "$nom" ] && dire "$(printf '    %-12s %s' "$nom" "$raison")"
+    done <<<"$NON_COUVERTS"
   fi
 }
 
@@ -1071,9 +1194,12 @@ fi
 if [ "$TSV" = 1 ]; then
   # `avant` en DERNIÈRE colonne : les quatre premières sont un contrat qu'un appelant lit par leur rang.
   printf '# route\turl\torigine\tfichiers\tavant\n'
-  # Les états que la démo sait servir, en commentaire : un appelant machine les lit sans rejouer le
-  # `sed` sur `demo.py`, et un lecteur de TSV qui ignore les `#` n'y voit rien de changé.
-  printf '# scenarios\t%s\n' "${SCENARIOS_DEMO:-$SCENARIO_NOMINAL}"
+  # Les états de la vraie stack, et ceux qu'elle ne produit pas, en commentaire : un appelant machine
+  # les lit, et un lecteur de TSV qui ignore les `#` n'y voit rien de changé.
+  printf '# etats\t%s\n' "$ETATS"
+  while IFS=$'\t' read -r nom raison; do
+    [ -n "$nom" ] && printf '# non-couvert\t%s\t%s\n' "$nom" "$raison"
+  done <<<"$NON_COUVERTS"
   while IFS=$'\t' read -r route _cle origine fichiers; do
     [ -z "$route" ] && continue
     if [ "$route" = "-" ]; then
@@ -1099,40 +1225,79 @@ fi
 
 # --- Préparation ------------------------------------------------------------------------------------
 dire ""
-CAPTURES="$(dossier_captures "$IID" "$SCENARIO")"
+CAPTURES="$(dossier_captures "$IID" "$ETAT")"
 mkdir -p "$RACINE/$CAPTURES" 2>/dev/null
-pose_projet
+LANCEUR="$RACINE/scripts/controltower/start.sh"
 
-# `--demo` : bus mémoire, aucun Redis requis, et surtout des écrans PEUPLÉS — un poste vide ne montre
-# pas le rendu qu'on vient d'écrire. `--no-browser` est obligatoire : sans lui le script ouvre sa propre
-# fenêtre et arrête la stack dès qu'elle se ferme (#149), ce qui couperait l'API sous le navigateur
-# qu'on pilote. Un état limite (#978) n'est passé que s'il est DEMANDÉ : sans `--scenario`, l'appel est
-# celui d'avant, au caractère près.
-ARGS_START=(--demo --no-browser)
-ETAT_ANNONCE="$SCENARIO_NOMINAL"
-if [ -n "$SCENARIO" ]; then
-  ARGS_START+=(--scenario "$SCENARIO")
-  ETAT_ANNONCE="$SCENARIO"
-fi
-dire "  stack      : démarrage (mode démo, état « $ETAT_ANNONCE », sans navigateur) — le premier passage construit l'UI"
-if MAESTRO_PORT_API="$PORT_API" MAESTRO_PORT_UI="$PORT_UI" \
-  bash "$RACINE/scripts/controltower/start.sh" "${ARGS_START[@]}"; then
+# « injoignable » ne monte rien : il COUPE l'API de la stack que cette relecture a montée, et laisse
+# l'UI servie (en-tête, §5). Sans stack montée, il n'y aurait rien à voir tomber.
+if [ "$ETAT" = "injoignable" ]; then
+  if [ ! -f "$TEMOIN_ETAT" ]; then
+    dire "  ✗ aucune stack montée par cette relecture : « injoignable » coupe l'API d'une stack servie."
+    dire "    D'abord un état (bash scripts/design/relecture-visuelle.sh $IID), les écrans ouverts, puis celui-ci."
+    exit 1
+  fi
+  IFS=$'\t' read -r _iid ETAT_MONTE <"$TEMOIN_ETAT"
+  dire "  panne      : l'API coupée sous l'état « ${ETAT_MONTE:-?} » — l'UI reste servie, rien n'est soldé"
+  MAESTRO_PORT_API="$PORT_API" MAESTRO_PORT_UI="$PORT_UI" bash "$LANCEUR" --couper-api | sed 's/^/    /'
+  if [ -f "$TEMOIN_AVANT" ]; then
+    IFS=$'\t' read -r _iid _chemin api_avant ui_avant <"$TEMOIN_AVANT"
+    if [ -n "$api_avant" ] && [ -n "$ui_avant" ]; then
+      MAESTRO_PORT_API="$api_avant" MAESTRO_PORT_UI="$ui_avant" bash "$LANCEUR" --couper-api \
+        | sed 's/^/    [avant] /'
+    fi
+  fi
   dire ""
-  dire "  ✓ prête : http://localhost:$PORT_UI — état « $ETAT_ANNONCE »"
+  dire "    à faire ensuite — un écran ouvert AVANT la coupure montre sa panne : passer d'un écran à"
+  dire "    l'autre PAR LE MENU. Une navigation par l'URL recharge la page, et le shell, sans API pour"
+  dire "    confirmer son projet, reste sur sa porte — qui montre sa propre panne, à capturer une fois."
+  dire "    Captures sous $CAPTURES/ ; remonter un état (bash scripts/design/relecture-visuelle.sh $IID)"
+  dire "    rétablit l'API, et pour finir :"
+  dire "        bash scripts/design/relecture-visuelle.sh --couverture $IID"
+  dire "        bash scripts/design/relecture-visuelle.sh --fin"
+  exit 0
+fi
+
+# La vraie stack, sur le jeu de données du banc (#1164) : l'état du dernier passage rouvert, ou une
+# stack neuve. `--no-browser` est obligatoire : sans lui le lanceur ouvre sa propre fenêtre et arrête
+# la stack dès qu'elle se ferme (#149), ce qui couperait l'API sous le navigateur qu'on pilote. La
+# sortie du lanceur passe telle quelle : c'est elle qui dit l'âge de l'état du banc.
+read -r -a ARGS_ETAT <<<"$(options_start "$ETAT")"
+dire "  stack      : démarrage de la vraie stack, état « $ETAT » — $(description_etat "$ETAT")"
+dire "               (sans navigateur ; le premier passage construit l'UI)"
+code=0
+monte "$LANCEUR" "$PORT_API" "$PORT_UI" "${ARGS_ETAT[@]}" --no-browser || code=$?
+if [ "$code" -eq 0 ]; then
+  mkdir -p "$(dirname "$TEMOIN_ETAT")" 2>/dev/null
+  printf '%s\t%s\n' "$IID" "$ETAT" >"$TEMOIN_ETAT"
+  dire ""
+  dire "  ✓ prête : http://localhost:$PORT_UI — état « $ETAT »"
+  case "$ETAT" in
+    vide) declare_projet_neuf "$PORT_API" "après" ;;
+    *) annonce_projets "$PORT_API" "après" ;;
+  esac
   prepare_avant
   dire ""
-  dire "    à faire ensuite — poser le localStorage (guide vu, thème, projet actif) SUR CHAQUE ORIGINE"
-  dire "    servie, ouvrir chaque écran dans les deux thèmes, capturer l'après et l'avant côte à côte"
-  dire "    sous $CAPTURES/, puis l'état suivant (--scenario <nom>), et pour finir :"
+  dire "    à faire ensuite — poser le localStorage (guide vu, thème, projet actif ci-dessus) SUR CHAQUE"
+  dire "    ORIGINE servie, ouvrir chaque écran dans les deux thèmes, capturer l'après et l'avant côte à"
+  dire "    côte sous $CAPTURES/, puis l'état suivant (--etat <nom>), et pour finir :"
   dire "        bash scripts/design/relecture-visuelle.sh --couverture $IID"
   dire "        bash scripts/design/relecture-visuelle.sh --fin"
   exit 0
 fi
 
 dire ""
-dire "  ✗ la stack n'a pas démarré — journaux sous .maestro/controltower/$PORT_API-$PORT_UI/"
-dire "    rien n'est laissé derrière : arrêt et retrait du projet."
-MAESTRO_PORT_API="$PORT_API" MAESTRO_PORT_UI="$PORT_UI" \
-  bash "$RACINE/scripts/controltower/start.sh" --stop >/dev/null 2>&1
-retire_projet
+if [ "$ETAT" = "peuple" ] && [ "$code" -eq 4 ]; then
+  # Aucun passage n'a laissé d'état sur ce poste : l'en jouer un coûte du vrai modèle (des dizaines de
+  # minutes), ce qui ne se décide pas au détour d'une relecture — on le nomme, et on s'arrête.
+  dire "  ✗ état « peuple » non servi : aucun passage du banc n'a laissé d'état sur ce poste."
+  dire "    En jouer un est une demande, jamais un geste d'office (vrai modèle, des dizaines de minutes) :"
+  dire "        bash scripts/controltower/start.sh --etat-banc --rejouer"
+  dire "    Les autres états restent montables (--etat vide) ; celui-ci va à « ce que je n'ai pas pu voir »."
+else
+  dire "  ✗ la stack n'a pas démarré (code $code) — journaux sous .maestro/controltower/$PORT_API-$PORT_UI/"
+fi
+dire "    rien n'est laissé derrière : la stack est arrêtée."
+MAESTRO_PORT_API="$PORT_API" MAESTRO_PORT_UI="$PORT_UI" bash "$LANCEUR" --stop >/dev/null 2>&1
+rm -f "$TEMOIN_ETAT"
 exit 1

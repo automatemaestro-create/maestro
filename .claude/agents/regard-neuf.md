@@ -26,10 +26,14 @@ et avant), le rendu attendu du ticket, les décisions déjà prises à l'écran 
 - **La paire, pas l'image seule.** Même écran, même thème, même état : qu'est-ce qui a changé entre
   l'avant et l'après, et le changement a-t-il abîmé ce qui allait ? Un écran **nouveau** n'a que son
   après : juge-le contre ses voisins.
-- **La mise en page, jamais les valeurs.** La démo avance avec le temps et les deux stacks n'ont pas
-  démarré ensemble : un coût, un nombre de tokens ou d'appels qui diffère n'est pas un constat.
-- **En état `erreur`**, la pastille « Reconnexion… » est attendue : c'est la connexion refusée par la
-  démo, pas un défaut de l'écran.
+- **La mise en page, jamais les valeurs.** Les captures viennent de la vraie stack : les deux côtés
+  servent le même état, mais pas au même instant. Un âge relatif (« il y a 4 j »), un identifiant de
+  projet ou une horloge qui diffère d'un côté à l'autre n'est pas un constat.
+- **En état `injoignable`**, l'API est réellement coupée : la pastille « Reconnexion… » et la bannière
+  « API injoignable » sont ce qu'on y regarde, pas un défaut à signaler — juge comment elles se
+  lisent et ce qu'elles font à la mise en page.
+- **Un état que la saisine dit non couvert** (la vraie stack ne le produit pas) se répond **non vu**,
+  avec sa raison : aucune capture ne le montre, et aucune ne l'imite.
 - **Tu nommes, tu ne mesures pas.** Ni ratio de contraste, ni pixel, ni comptage de règles : d'autres
   outils le font sur pièces. Si quelque chose *paraît* peu contrasté ou déborde, dis où et comment ça
   se voit — la mesure n'est pas ton travail.
