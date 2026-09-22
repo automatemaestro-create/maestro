@@ -58,6 +58,7 @@ from maestro.config import ConfigError, Settings
 from maestro.decideur import Decideur
 from maestro.deliberation import CreditArbitrage
 from maestro.detail_tache import EtapeTache
+from maestro.lecture import OUTIL_LECTURE, lecture_sans_arbitrage
 from maestro.providers import blocage, courrier, decision, question
 from maestro.providers.activite import Geste, RegulateurActivite
 from maestro.providers.arbitrage import (
@@ -1301,6 +1302,39 @@ def _hook_permissions(
         trace(outil, motif_approbation(outil, detail))
         return {}
 
+    def dispense_de_lecture(outil: str, entree: object) -> bool:
+        """L'appel est-il une **lecture**, donc rien à faire trancher (#1197) ?
+
+        « Lire n'est pas exécuter » était une consigne de playbook (#1102) ; c'est
+        ici qu'elle devient une règle. Un agent dont les commandes sont classées
+        `ask`/`humain` commençait sa tâche par lister son projet au shell, donc
+        par attendre quelqu'un — pendant une tâche, personne ne vient (EF-08), et
+        le scénario de référence S3 restait « en attente d'arbitrage ».
+
+        Deux bornes, et aucune n'ouvre quoi que ce soit :
+
+        - la question ne se pose qu'**en dernier**, après la politique et après
+          `auto`. Un `Bash` en `deny` reste donc refusé — la dispense retire une
+          attente, jamais un refus —, et un `Bash` en `auto` garde sa **trace**,
+          qui est tout ce qui le distingue d'un `allow` (#586) : ce qu'on retire
+          ici est l'attente d'une **personne**, et rien d'autre ;
+        - elle ne donne **pas plus que `Read`** (`OUTIL_LECTURE`) : une politique
+          qui arbitre ou refuse l'ouverture de fichiers ne se contourne pas d'un
+          `cat`.
+
+        Il n'y en a **pas de troisième**, et c'est une décision prise sur pièces :
+        borner en plus la dispense aux commandes qui ne *nomment* aucun chemin
+        exclu punissait le geste juste — le premier passage réel du banc écrit
+        `find . -path ./.git -prune … | grep -v node_modules`, où les chemins
+        exclus sont nommés **pour être évités** — sans rien fermer, un
+        `grep -rn motif .` lisant le `.env` sans le nommer. Ce qui borne les
+        secrets reste où il est : la frontière sur les outils de fichiers (#839),
+        les exclusions du périmètre, la rédaction des valeurs (#109).
+        """
+        if politique is None or politique.decide(OUTIL_LECTURE).verdict is not Verdict.PASSE:
+            return False
+        return lecture_sans_arbitrage(outil, entree)
+
     async def hook(
         input_data: HookInput, tool_use_id: str | None, context: HookContext
     ) -> HookJSONOutput:
@@ -1327,6 +1361,11 @@ def _hook_permissions(
             # déranger. Il laisse quand même sa trace : c'est la seule chose qui
             # le distingue d'un `allow`.
             trace(outil, motif_auto(outil))
+            return {}
+        if dispense_de_lecture(outil, input_data.get("tool_input")):
+            # Rien n'est tracé, et c'est la même règle que `Verdict.PASSE` : il
+            # n'y a pas d'acte à consigner. Ce que l'agent a fait reste visible
+            # au fil temps réel, qui rend ses appels d'outils (#479).
             return {}
         return await arbitre(outil, decision.motif, input_data.get("tool_input"))
 

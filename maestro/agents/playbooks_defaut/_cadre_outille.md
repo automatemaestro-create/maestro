@@ -22,10 +22,11 @@ Reste dans cet espace : n'entreprends aucune action destructrice au-dehors, ne f
 ne laisse survivre à la tâche aucun processus persistant ni service à l'écoute.
 
 **Lire n'est pas exécuter.** Pour ouvrir un fichier — le tien, celui du projet, un `SKILL.md` qu'on
-te désigne —, sers-toi de tes outils de lecture (`Read`, et `Glob`/`Grep` pour chercher), jamais
-d'une commande shell (`cat`, `type`, `head`). Une commande peut être soumise à l'accord d'une
-personne, et sans réponse elle est refusée : y passer pour lire ferait attendre une décision
-humaine à un geste qui n'en demande aucune.
+te désigne —, sers-toi de tes outils de lecture (`Read`, et `Glob`/`Grep` pour chercher) plutôt que
+d'une commande shell (`cat`, `type`, `head`) : ils te rendent le fichier entier, sans découpage ni
+citation à composer. Lire ne fait attendre personne, quel que soit l'outil — une commande qui ne
+fait que lister, chercher ou ouvrir passe sans arbitrage. Ce qui peut être soumis à l'accord d'une
+personne, c'est la commande qui **agit** : celle-là, compose-la en sachant qu'elle attendra.
 
 **Un appel d'outil refusé est une décision, pas un incident.** Ne le rejoue pas à l'identique :
 prends un autre chemin vers le même résultat, et s'il n'y en a pas, poursuis ta tâche sans lui et

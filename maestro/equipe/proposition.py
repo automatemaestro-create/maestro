@@ -271,6 +271,9 @@ def _cran_execution(gabarit: Gabarit, constats: Constats) -> AutorisationPropose
       prise à froid (`maestro.decideur`, #716) ;
     - aucune commande de ce rôle n'a été lue : `humain`. Ce qu'il lancerait, il
       le composerait lui-même, et personne n'a rien décidé d'avance là-dessus.
+      La raison dit alors que **lire** n'attend personne (#1197) — le renvoi au
+      ticket reste ici, jamais dans la raison servie, qui s'adresse à quelqu'un
+      qui n'a pas ce dépôt sous les yeux (`tests/test_registre_de_langue.py`).
 
     ⚠ La raison le dit, parce que c'est vrai : `auto` **ne borne pas** les
     commandes à celles qui ont été lues — un cran porte sur un outil, pas sur
@@ -291,8 +294,10 @@ def _cran_execution(gabarit: Gabarit, constats: Constats) -> AutorisationPropose
                 "aucune commande de ce rôle n'a été lue dans le projet : ce qu'il "
                 "lancerait, il le composerait lui-même. Personne n'a rien décidé "
                 "d'avance là-dessus, donc une personne tranche chaque appel. Cela "
-                "ne l'empêche pas de travailler : **lire** les fichiers du projet, "
-                "son outillage compris, ne passe pas par cet outil"
+                "ne l'empêche pas de commencer : **lire** son projet et son "
+                "outillage — lister, chercher, ouvrir un fichier — n'attend "
+                "personne, au shell comme avec ses outils de lecture, parce que "
+                "lire n'est pas exécuter"
             ),
         )
     return AutorisationProposee(
@@ -330,6 +335,13 @@ def _commandes_declarees(gabarit: Gabarit, constats: Constats) -> tuple[str, ...
     cran portant sur un outil et non sur ses arguments. Ce que #1102 corrige est
     ailleurs, et sans toucher à ce cran : un agent n'a pas besoin d'exécuter pour
     **lire** son outillage.
+
+    ⚠ #1102 avait confié cette correction au **texte** du playbook, et #1197 a
+    mesuré qu'elle n'avait pas suivi sur un vrai run : l'agent lisait au shell
+    quand même. Elle vit désormais dans l'exécution (`maestro.lecture`), où une
+    commande qui ne fait que lire ne suspend plus rien. Ce cran-ci n'a toujours
+    pas bougé, et c'est le même motif : *ce qui autorise un outil est le geste
+    d'une personne*.
     """
     usages = {usage for usage, _ in gabarit.usages}
     endroits: list[str] = []
@@ -355,7 +367,8 @@ def _commandes_declarees(gabarit: Gabarit, constats: Constats) -> tuple[str, ...
 REGIME_EXECUTION: dict[Decideur, str] = {
     Decideur.HUMAIN: (
         " Ses commandes shell attendent l'accord d'une personne, qui peut ne pas "
-        "venir pendant sa tâche ; lire un fichier, lui, ne passe pas par là."
+        "venir pendant sa tâche — sauf celles qui ne font que lire, qui passent "
+        "sans attendre personne."
     ),
     Decideur.AUTO: (
         " Ses commandes shell passent sans attendre personne, en étant tracées."

@@ -485,6 +485,82 @@ cette commande, un cran portant sur un outil et non sur ses arguments. La règle
 commandes que personne n'a décidées d'avance attendent une validation. `pip install -e .` en est
 une ; ouvrir un `SKILL.md` n'en était pas une.
 
+### 5.6 La consigne n'a pas suffi : la règle passe dans l'exécution (#1197)
+
+§5.5 a été fermé sur le **texte** d'un prompt. Mesuré le 2026-09-22 par
+`/milestone-bilan`, sur la vraie stack (`origin/main` à `54aa6e8`) et le passage
+`20260922-100639` du banc des scénarios de référence, le comportement ne suivait pas — c'est
+exactement ce que le critère C1 du jalon excluait, « exercées, pas seulement fermées » :
+
+| Ce qui était écrit | Ce que le run a fait |
+| --- | --- |
+| « Pour ouvrir un fichier, sers-toi de `Read` […], jamais d'une commande shell » | **S3** (`c7962b66ceed`), premier geste : `find . -not -path './.git*' … \| sort; echo …; find .agents -maxdepth 4`, par `Bash` |
+| Idem | **S1** (`3d4d032fd154`), premier geste : `ls -la .git; ls -la notes; …; git status; find . -maxdepth 1 -name ".*"` |
+| L'autorisation disait « lire […] ne passe pas par cet outil » | Vrai du geste *attendu*, faux du geste *constaté* — et S3 est resté « en attente d'arbitrage » à l'échéance de 900 s |
+
+**Ce qui est décidé.** *Lire n'est pas exécuter* devient une règle **exécutée**
+(`maestro/lecture.py`), consultée par le hook `PreToolUse` du fournisseur : une commande qui ne
+fait que **lister, chercher ou ouvrir** ne suspend plus rien, même quand l'outil d'exécution est
+classé `ask`/`humain`. La consigne du cadre reste, mais comme un conseil d'outil (`Read` rend le
+fichier entier), plus comme le seul rempart : *une consigne écrite ne suffit pas*.
+
+**Les deux bornes qui l'empêchent d'ouvrir quoi que ce soit** — sans elles, ce serait un
+laissez-passer déguisé :
+
+1. **la politique tranche d'abord, et `auto` aussi.** La dispense se pose en dernier : un `Bash` en
+   `deny` reste refusé — on retire une *attente*, jamais une interdiction — et un `Bash` en `auto`
+   (le cran des cinq politiques livrées avec le dépôt) garde sa **trace**, qui est tout ce qui le
+   distingue d'un `allow` (#586). Ce qu'on retire est l'attente d'une **personne**, rien d'autre ;
+2. **elle ne donne pas plus que `Read`.** Si la politique arbitre ou refuse l'ouverture de
+   fichiers, lire au shell n'a plus rien d'anodin et la dispense tombe avec elle — sinon
+   `ask: Read` se contournerait d'un `cat`.
+
+**Le sens dans lequel ce module se trompe** est le seul qui soit tenable (EF-08/ENF-04) : ce qu'il
+ne **reconnaît** pas — un verbe absent de sa liste, un opérateur qu'il ne sait pas lire, une
+substitution, des guillemets déséquilibrés — rend *faux*, c'est-à-dire *rien de changé*. Le pire
+qu'il puisse faire est de laisser attendre une lecture, et cela se répare en nommant son verbe.
+
+**Il n'y a pas de troisième borne, et c'est une décision prise sur pièces.** Le premier jet en
+posait une : retirer la dispense à toute commande qui **nomme** un chemin exclu du périmètre, pour
+qu'un `cat .env` continue d'attendre quelqu'un. Le premier passage joué *avec* la règle
+(`20260922-115803`, run `c4a4c14806a3`) l'a réfutée en deux gestes — l'agent écrit
+`find . -path ./.git -prune -o -type f -print | grep -v node_modules | sort | head -200`,
+c'est-à-dire qu'il nomme `.git` et `node_modules` **pour les éviter** : la garde punissait
+exactement le bon geste. Et elle n'aurait rien fermé, un `grep -rn motif .` lisant le `.env` sans
+le nommer. *Un garde-fou qui saute est pire qu'un garde-fou absent* ; un garde-fou qui refuse le
+geste juste et laisse passer le mauvais l'est davantage. Ce qui borne les secrets reste donc où il
+est, et n'a pas bougé : la frontière d'écriture sur les **outils de fichiers** (`Read` sur un
+`.env` est *refusé*, pas arbitré), les exclusions du périmètre, et la rédaction des valeurs (#109).
+[docs/24 §2.5](./24-projets-locaux-et-poste-de-travail.md) dit pourquoi une commande shell ne se
+borne pas par l'analyse de son texte ; ce module ne prétend pas le contraire — il dit qu'une
+commande **n'agit pas**, pas qu'elle lit peu.
+
+**Ce que les passages successifs ont appris**, et qu'aucun exemple écrit à la table n'aurait donné.
+Trois rejeux, trois gestes qu'on n'avait pas prévus — la liste des verbes s'allonge **sur des gestes
+constatés**, jamais sur ce qu'on imagine qu'un agent pourrait taper :
+
+| Le geste observé | Ce qu'il a appris |
+| --- | --- |
+| `find / -iname "SKILL.md" 2>/dev/null` | Un agent **jette le bruit** d'un `find`. Une redirection vers le puits est traversée — elle n'écrit nulle part —, comme un descripteur branché sur un autre (`2>&1`) ; toute autre cible reste un fichier écrit, donc un acte |
+| `cd "<racine>" && ls -la .maestro` | `cd` ne touche à rien, et chaque maillon est jugé pour lui-même de toute façon |
+| `ls -la src; git -C . status \| head -20` | La **valeur** d'une option globale de `git` occupe la place où l'on cherche la sous-commande. Les globales connues se franchissent ; `-c <clé>=<valeur>` **non**, parce qu'il règle `core.pager`, c'est-à-dire qu'il choisit une commande que `git` lancera |
+
+**Une correction de plus, sur le banc lui-même, et elle n'est pas celle qui fait passer les
+lectures.** `attendre_le_run` n'approuvait qu'**une demande par tâche**. Une fois les lectures
+libérées, le run `5508ebb01cb8` a montré ce que cela coûtait : `python --version` — une exécution,
+donc arbitrée à juste titre — consommait l'unique approbation, et le `mkdir -p src/depensio` qui
+suivait expirait. C'était un rouge qui ne disait rien du produit, seulement de l'utilisateur qu'on
+simulait ; or celui-là **regarde son run** et répond à chaque demande. Le banc tranche donc
+désormais **par acte** (`maestro.deliberation.cle_acte`, l'identité que le moteur utilise déjà), ce
+qui garde la borne qui compte : il ne répond jamais deux fois au même acte, donc une commande
+rejouée à l'identique ne fabrique pas une boucle d'approbations.
+
+**Ce qui n'a toujours pas bougé**, et c'est le même motif qu'en §5.5 : le **cran** proposé pour
+l'outil d'exécution. Une commande que Maestro a écrite dans un skill du projet ne compte toujours
+pas comme « déclarée », et la règle de [docs/37 §3](./37-decision-equipe-sur-mesure.md) et d'EF-08
+reste entière — *seules les commandes que personne n'a décidées d'avance attendent une validation*.
+`pip install -e .` en est une ; `ls -la` n'en est pas une.
+
 ## 6. Ce qui est écarté, et pourquoi
 
 | Écarté | Pourquoi |
@@ -498,6 +574,8 @@ une ; ouvrir un `SKILL.md` n'en était pas une.
 | Le manifeste dans `.agents/` | Il finirait lu comme une consigne par les trois clients qui balaient ce dossier (§4.3) |
 | Honorer `allowed-tools` d'un skill du projet | Une permission se déclare par une personne, jamais par un fichier — fût-il écrit par Maestro (§5.1) |
 | Compter les commandes que **Maestro** a écrites dans un skill du projet comme « déclarées » | Même raison, par une autre porte : elles n'y ont été décidées par personne, et le cran obtenu porterait sur l'outil, pas sur ces commandes (§5.5) |
+| Corriger #1197 en faisant passer `Bash` en `auto` pour ces rôles | Troisième porte de la même chose : le cran porte sur l'**outil**, donc `rm -rf` passerait avec `ls`. Ce qui est dispensé est la **lecture**, jugée appel par appel (§5.6) |
+| Retirer la dispense à une commande qui **nomme** un chemin exclu du périmètre | Réfuté sur pièces au premier passage : un agent nomme `.git` et `node_modules` *pour les éviter*, et un `grep -rn motif .` lit le `.env` sans le nommer — la garde refusait le geste juste sans fermer le mauvais (§5.6) |
 
 ## 7. Ce qui rouvrirait la décision
 
