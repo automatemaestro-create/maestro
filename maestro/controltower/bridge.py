@@ -57,6 +57,7 @@ from maestro.controltower.events import (
 )
 from maestro.controltower.persistence import CLE_JOURNAL_EVENEMENTS
 from maestro.detail_tache import SUFFIXE_ETAPE_DETAIL, etapes_depuis, liens_depuis
+from maestro.espace import nom_redis
 from maestro.plan_run import NoeudPlan, noeuds_depuis
 from maestro.references import SUFFIXE_ETAPE_TICKET, ReferenceTicket
 from maestro.telemetry import LOGGER_NAME, redact_secrets
@@ -483,8 +484,8 @@ class JournalEventHandler(logging.Handler):
 def publieur_redis(
     url: str | None = None,
     *,
-    canal: str = CANAL_EVENEMENTS,
-    cle: str = CLE_JOURNAL_EVENEMENTS,
+    canal: str | None = None,
+    cle: str | None = None,
 ) -> Callable[[Event], None]:
     """Construit le callable de publication Redis (synchrone) du pont.
 
@@ -508,11 +509,16 @@ def publieur_redis(
     (`persistence.CLE_JOURNAL_EVENEMENTS`), et c'est le seul endroit où les deux
     moitiés du dispositif se rejoignent — comme `CLE_BATTEMENTS` pour le
     battement (#351).
+
+    Canal et liste sont ceux de **l'espace de la stack** (#1164) : l'hôte détaché
+    hérite de l'espace de l'API qui l'a lancé, donc publie là où elle écoute.
     """
     # Import local : seule la publication Redis dépend du client.
     import redis
 
     client = redis.Redis.from_url(url or REDIS_URL_DEFAUT)
+    canal = canal if canal is not None else nom_redis(CANAL_EVENEMENTS)
+    cle = cle if cle is not None else nom_redis(CLE_JOURNAL_EVENEMENTS)
 
     def publier(evenement: Event) -> None:
         charge = evenement.to_json()
@@ -534,7 +540,7 @@ def solder_le_run(
     *,
     cause: str = "",
     url: str | None = None,
-    canal: str = CANAL_EVENEMENTS,
+    canal: str | None = None,
 ) -> bool:
     """Un hôte **publie son issue en partant** et se tait (#446) — jamais une levée.
 

@@ -168,9 +168,10 @@ def publie(client, bus, *events):
 
 
 def test_sante(client):
+    """La vitalité, et l'espace de données servi (#1164) — `commun` sous la suite."""
     reponse = client.get("/api/sante")
     assert reponse.status_code == 200
-    assert reponse.json() == {"statut": "ok"}
+    assert reponse.json() == {"statut": "ok", "espace": "commun"}
 
 
 def test_cors_ouvert_pour_l_ui(client):

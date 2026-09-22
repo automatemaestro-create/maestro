@@ -11,7 +11,18 @@ moteur, `maestro-run --publier` (ou un worker #41) alimente le canal.
 sinon le geste exact pour le lancer. C'est le **préflight** du lanceur local
 (`scripts/controltower/start.sh`), qui démarre le mode réel par défaut : la
 résolution de l'URL (`REDIS_URL` du `.env`, sinon l'instance locale) vit ici,
-avec le reste de la configuration, plutôt que d'être réécrite en shell.
+avec le reste de la configuration, plutôt que d'être réécrite en shell. Quand le
+bus répond, il **annonce les données** que la stack verra (#1164) — son espace
+Redis et ses dépôts de fichiers (`maestro.controltower.donnees.annonce`) : c'est
+ainsi que la séparation entre copies de travail est dite au démarrage, sans un
+appel Python de plus au lanceur.
+
+`--etat-banc` (#1164) place la stack sur le **jeu de données du banc** de la
+copie (`maestro.controltower.donnees.donnees_du_banc`) : son espace et ses
+dépôts, posés sur l'environnement du process avant de servir, donc hérités par
+les hôtes détachés. Avec `--verifier-redis`, c'est ce jeu-là qui est annoncé.
+Rouvrir ou vider ce jeu est l'affaire de `maestro.scenarios.etat`, que le
+lanceur joue entre l'arrêt de l'ancienne session et le démarrage de l'API.
 """
 
 from __future__ import annotations
@@ -20,7 +31,10 @@ import sys
 from collections.abc import Sequence
 from urllib.parse import urlsplit, urlunsplit
 
-_USAGE = "Usage : maestro-api [--hote <adresse>] [--port <port>] [--verifier-redis]"
+_USAGE = (
+    "Usage : maestro-api [--hote <adresse>] [--port <port>] [--etat-banc] | "
+    "--verifier-redis [--etat-banc]"
+)
 
 #: Écoute par défaut : locale (l'API est un backend de développement au POC).
 HOTE_DEFAUT = "127.0.0.1"
@@ -55,7 +69,11 @@ def endpoint_lisible(url: str) -> str:
 
 
 def verifier_redis() -> int:
-    """Ping le bus Redis de l'API : 0 s'il répond, 1 sinon (diagnostic sur stderr)."""
+    """Ping le bus Redis de l'API : 0 s'il répond, 1 sinon (diagnostic sur stderr).
+
+    Quand il répond, annonce les données que la stack verra (#1164) — celles de
+    l'environnement courant, donc celles du banc si `--etat-banc` les y a posées.
+    """
     # Imports locaux : `--verifier-redis` est un mode à part, et le client Redis
     # n'est pas nécessaire pour servir l'API sur un autre bus.
     from maestro.config import load_settings
@@ -88,6 +106,11 @@ def verifier_redis() -> int:
         client.close()
 
     print(f"Redis joignable sur {lisible}.")
+    # Import local : l'annonce résout les dépôts de fichiers, ce dont un Redis
+    # injoignable n'a pas besoin.
+    from maestro.controltower.donnees import annonce, donnees_de_la_stack
+
+    print("\n".join(annonce(donnees_de_la_stack())))
     return 0
 
 
@@ -97,6 +120,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args and args[0] in {"-h", "--help"}:
         print(_USAGE, file=sys.stderr)
         return 0
+    if "--etat-banc" in args:
+        args.remove("--etat-banc")
+        # Import local : seul ce mode a besoin des dépôts de fichiers.
+        from maestro.controltower.donnees import donnees_du_banc, poser_sur_le_process
+
+        poser_sur_le_process(donnees_du_banc())
     if args == ["--verifier-redis"]:
         return verifier_redis()
 

@@ -160,6 +160,16 @@ sur un clic. Rien n'est recruté sans cette validation, ni pendant un run (docs/
 est joué de bout en bout, juge et moteur mis à part, par `tests/test_projet_outille_http.py` (section
 ⑧). Le banc de #1148 le rejoue avec le vrai modèle.
 
+**L'état qu'un passage laisse se rouvre, sans rien rejouer** (#1164). L'écran peuplé que
+regardent la relecture visuelle et les captures n'est plus un scénario factice : c'est l'état réel
+qu'un passage du banc a laissé, servi par l'API réelle. `bash scripts/controltower/start.sh
+--etat-banc` le rouvre sur la stack de la copie, dans un jeu de données à part (`<espace>.banc`,
+`.maestro/banc/`) qui ne touche ni aux données du worktree ni à celles du poste, et **dit son âge**.
+`--etat-banc --rejouer[=S2,S4]` le refait à la demande : banc remis à neuf, stack servie, passage
+joué au premier plan avec le vrai modèle, état sauvé dans l'atelier du passage. Un passage joué
+ailleurs (celui du bouclage, par exemple) ne sauve rien : son état serait mêlé à celui de la stack
+qui l'a servi. Le détail est dans `maestro/scenarios/etat.py`.
+
 **Un jalon produit ne se boucle pas GO avec un scénario rouge** (#1152). Les scénarios ne sont pas
 en CI : un passage coûte du vrai modèle (le run du retex a coûté ~10 $). S2 et S4 ne sont pas
 déterministes, donc un rouge se rejoue une fois avant d'être cru.

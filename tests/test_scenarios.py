@@ -35,7 +35,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from redis_factice import ClientSynchrone, ServeurFactice
 
+from maestro.controltower.donnees import Donnees, donnees_du_banc
 from maestro.controltower.state import (
     EXECUTION_ECHEC,
     EXECUTION_EN_ATTENTE_ARBITRAGE,
@@ -45,7 +47,7 @@ from maestro.controltower.state import (
     VALIDATION_EN_ATTENTE,
 )
 from maestro.sandbox.en_place import DOSSIER_ATELIER
-from maestro.scenarios import banc
+from maestro.scenarios import banc, etat
 from maestro.scenarios.api import FIL, ClientAPI, ErreurAPI, Reponse, equipe_validee
 from maestro.scenarios.juge import (
     MARQUEUR_POURQUOI,
@@ -159,6 +161,7 @@ class FausseAPI:
         roles: int = 1,
         validations: list[dict[str, Any]] | None = None,
         sante: bool = True,
+        espace: str = "commun",
     ) -> None:
         self._moteur = moteur
         self._propose_un_run = propose_un_run
@@ -168,6 +171,7 @@ class FausseAPI:
         self._roles = roles
         self.validations = validations or []
         self._sante = sante
+        self._espace = espace
         self.projets: dict[str, Path] = {}
         self.equipes: dict[str, int] = {}
         self.runs: list[RunFactice] = []
@@ -193,7 +197,7 @@ class FausseAPI:
         if chemin == "/api/sante":
             if not self._sante:
                 raise ErreurAPI("API injoignable (test)", chemin=chemin)
-            return Reponse(statut=200, corps={"statut": "ok"})
+            return Reponse(statut=200, corps={"statut": "ok", "espace": self._espace})
         if chemin == "/api/projets" and methode == "POST":
             return self._declarer(corps or {})
         if chemin.startswith("/api/projets/") and methode == "DELETE":
@@ -1084,6 +1088,7 @@ def _main(
     *,
     juge: JugeQuiDit | None = None,
     lanceur: Callable[[Path, str], tuple[int, str]] | None = None,
+    **reste: Any,
 ) -> tuple[int, _Muet, _Muet]:
     sortie, erreur = _Muet(), _Muet()
     code = banc.main(
@@ -1097,6 +1102,7 @@ def _main(
         lancer_application=lanceur or (lambda _r, _p: (0, "bonjour")),
         sortie=sortie,
         erreur=erreur,
+        **reste,
     )
     return code, sortie, erreur
 
@@ -1485,3 +1491,84 @@ def test_le_banc_ne_se_plaint_pas_d_une_declaration_deja_oubliee(tmp_path: Path)
             return Reponse(statut=404, corps={"detail": "inconnu"}, texte="inconnu")
 
     ClientAPI(ApiSansProjet()).retirer_projet("prj-1")
+
+
+# --- ⑥ L'état qu'un passage laisse (#1164) -----------------------------------
+
+
+def _banc_de(tmp_path: Path) -> Donnees:
+    """Le banc d'une copie factice — jamais le `.maestro/banc/` du poste qui joue la suite."""
+    return donnees_du_banc(racine=tmp_path / "copie")
+
+
+def test_un_passage_joue_sur_le_banc_sauve_son_etat(tmp_path: Path) -> None:
+    """Le passage joué, son état rangé dans son atelier, et le geste pour le rouvrir."""
+    banc_ = _banc_de(tmp_path)
+    redis_ = ClientSynchrone(ServeurFactice())
+    redis_.rpush(etat.cles_du_banc(banc_)[0], '{"type": "execution.statut"}')
+    api = FausseAPI(moteur=_moteur_qui_vide, espace=banc_.espace.nom)
+
+    code, sortie, _erreur = _main(
+        ["--scenario", "S1", "--sauver-etat"], api, tmp_path,
+        client_redis=redis_, donnees_banc=banc_,
+    )
+
+    assert code == banc.CODE_VERT
+    instantane = etat.Instantane.lire(tmp_path / "atelier" / etat.DOSSIER_ETAT)
+    assert instantane is not None
+    assert instantane.scenarios == (("S1", "vert"),)
+    assert instantane.evenements == 1
+    assert "État du passage sauvé" in sortie.texte
+    assert etat.GESTE_ROUVRIR in sortie.texte
+
+
+def test_sauver_l_etat_d_une_autre_stack_est_refuse_avant_de_jouer(tmp_path: Path) -> None:
+    """Sauver les données d'une stack qui n'est pas le banc mêlerait au passage celles de
+    la copie ou du poste : refusé, et rien n'est joué — pas un run payé pour rien."""
+    api = FausseAPI(moteur=_moteur_qui_vide, espace="commun")
+
+    code, _sortie, erreur = _main(
+        ["--scenario", "S1", "--sauver-etat"], api, tmp_path,
+        client_redis=ClientSynchrone(ServeurFactice()), donnees_banc=_banc_de(tmp_path),
+    )
+
+    assert code == banc.CODE_USAGE
+    assert api.conversations == [] and api.runs == []
+    assert etat.GESTE_REJOUER in erreur.texte
+    assert not (tmp_path / "rapports").exists()
+
+
+def test_sauver_l_etat_et_nettoyer_l_atelier_s_excluent(tmp_path: Path) -> None:
+    code, _sortie, erreur = _main(
+        ["--sauver-etat", "--nettoyer"], FausseAPI(), tmp_path, donnees_banc=_banc_de(tmp_path)
+    )
+    assert code == banc.CODE_USAGE
+    assert "--nettoyer" in erreur.texte
+
+
+def test_un_etat_non_sauve_se_dit_et_le_verdict_reste_au_rapport(tmp_path: Path) -> None:
+    class RedisEnPanne(ClientSynchrone):
+        def lrange(self, cle: str, debut: int, fin: int) -> list[bytes]:
+            raise ConnectionError("Redis coupé")
+
+    banc_ = _banc_de(tmp_path)
+    api = FausseAPI(moteur=_moteur_qui_vide, espace=banc_.espace.nom)
+
+    code, _sortie, erreur = _main(
+        ["--scenario", "S1", "--sauver-etat"], api, tmp_path,
+        client_redis=RedisEnPanne(ServeurFactice()), donnees_banc=banc_,
+    )
+
+    assert code == banc.CODE_ETAT_NON_SAUVE
+    assert "Redis coupé" in erreur.texte
+    assert (tmp_path / "rapports").is_dir(), "le passage a eu lieu : son rapport est écrit"
+    assert not (tmp_path / "atelier" / etat.DOSSIER_ETAT).exists()
+
+
+def test_sans_l_option_un_passage_ne_sauve_rien(tmp_path: Path) -> None:
+    """Un passage de bouclage (#1152) n'écrit pas d'état : rien ne change pour lui."""
+    api = FausseAPI(moteur=_moteur_qui_vide)
+    code, _sortie, _erreur = _main(["--scenario", "S1"], api, tmp_path)
+
+    assert code == banc.CODE_VERT
+    assert not (tmp_path / "atelier" / etat.DOSSIER_ETAT).exists()

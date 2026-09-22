@@ -111,6 +111,15 @@ explicite du code appelant — aucun test n'y passe, tous injectent leur fabriqu
 La garde est éprouvée sur un cas fautif avant de balayer
 (`tests/test_garde_fournisseur.py`) : un test qui poste sans injecter y **passe**
 sa phase d'appel, et c'est la garde qui le fait rougir.
+
+Huitième garde-fou (#1164) : **l'espace de données est figé à `commun`**. Depuis
+que chaque copie de travail range ses clés et canaux Redis dans son propre espace
+(`maestro.espace`), le nom se **déduit** de la copie qui joue le code — celui de
+son worktree. Sans épinglage, la même suite nommerait ses clés autrement selon
+qu'on la joue dans le clone principal, dans un worktree ou dans le conteneur du
+filet local (qui monte un worktree tel quel), et un test qui compare un nom Redis
+rendrait deux verdicts. `commun` est l'espace sans préfixe, celui de la CI ; les
+tests qui exercent la séparation posent eux-mêmes `MAESTRO_ESPACE`.
 """
 
 from __future__ import annotations
@@ -137,6 +146,13 @@ HOTE_LANGFUSE_NEUTRE = "http://127.0.0.1:9"
 
 #: La variable qui force les couleurs de `scripts/orchestrate/run.sh` hors console (#236).
 CLE_COULEUR_ORCHESTRATE = "MAESTRO_ORCHESTRATE_COULEUR"
+
+#: La variable qui fixe l'espace de données d'une stack (#1164), et sa valeur de test :
+#: l'espace sans préfixe, celui de la CI. Écrites ici et non importées de
+#: `maestro.espace` : importer le paquet depuis le conftest le chargerait avant que
+#: les autres neutralisations soient posées. `tests/test_espace.py` les confronte.
+CLE_ESPACE = "MAESTRO_ESPACE"
+ESPACE_DES_TESTS = "commun"
 
 #: Le dépôt que vise `scripts/gitlab/lib.sh`, et le commutateur de forge que #344 a retiré.
 #: Neutralisés ensemble : ni l'un ni l'autre ne doit être hérité du poste.
@@ -311,6 +327,15 @@ def _neutralise_reprise_agents() -> None:
     os.environ[CLE_REPRISE_AGENTS] = "0"
 
 
+def _fige_espace() -> None:
+    """Fige l'espace de données à `commun` (#1164) — voir l'en-tête du module.
+
+    À l'import et non dans une fixture : la file Celery (`maestro.queue.celery_app`)
+    nomme sa file à l'import de son module, donc avant la première fixture.
+    """
+    os.environ[CLE_ESPACE] = ESPACE_DES_TESTS
+
+
 # Posés à l'import du conftest, donc avant l'import du premier module de test :
 # un test qui appelle `load_settings()` dès son import voit déjà l'environnement
 # neutralisé (la config relit `os.environ` à chaque appel, rien n'est mis en cache).
@@ -318,6 +343,7 @@ _neutralise_langfuse()
 _neutralise_couleur_orchestrate()
 _neutralise_forge()
 _neutralise_reprise_agents()
+_fige_espace()
 
 
 @pytest.fixture(autouse=True)

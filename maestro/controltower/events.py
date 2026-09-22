@@ -36,6 +36,7 @@ from maestro.appartenance import projet_id_valide
 from maestro.detail_tache import EtapeTache as EtapeTache  # ré-export explicite
 from maestro.detail_tache import LienUtile as LienUtile  # ré-export explicite
 from maestro.detail_tache import etapes_depuis, liens_depuis
+from maestro.espace import nom_redis
 from maestro.orchestrator.schema import Brief as Brief  # ré-export explicite
 from maestro.plan_run import NoeudPlan as NoeudPlan  # ré-export explicite
 from maestro.plan_run import noeuds_depuis
@@ -228,7 +229,9 @@ EVENEMENT_BRIEF_REPONSES = "brief.reponses"
 EVENEMENT_RUN_PLAN = "run.plan"
 
 #: Canal Redis Pub/Sub des événements — sur l'instance mutualisée avec la file
-#: de tâches (#41), d'où un canal nommé plutôt que le canal par défaut.
+#: de tâches (#41), d'où un canal nommé plutôt que le canal par défaut. C'est le
+#: nom **dans l'espace commun** : chaque objet Redis le range dans l'espace de sa
+#: stack à la construction (`maestro.espace.nom_redis`, #1164).
 CANAL_EVENEMENTS = "maestro.evenements"
 
 #: URL Redis par défaut : l'instance locale du docker-compose (infra/README.md).
@@ -750,13 +753,15 @@ class RedisEventBus(EventBus):
     La connexion est paresseuse : construite ici, ouverte au premier appel.
     """
 
-    def __init__(self, url: str | None = None, *, canal: str = CANAL_EVENEMENTS) -> None:
+    def __init__(self, url: str | None = None, *, canal: str | None = None) -> None:
         # Import local : seule la branche Redis dépend du client (l'API testée
         # sur bus mémoire n'en a pas besoin).
         import redis.asyncio as redis_asyncio
 
         self._client = redis_asyncio.Redis.from_url(url or REDIS_URL_DEFAUT)
-        self._canal = canal
+        # Le canal de **l'espace de la stack** (#1164) : un canal Pub/Sub est
+        # partagé par toutes les bases d'une instance, seul le nom sépare.
+        self._canal = canal if canal is not None else nom_redis(CANAL_EVENEMENTS)
 
     async def publish(self, event: Event) -> None:
         await self._client.publish(self._canal, event.to_json())
