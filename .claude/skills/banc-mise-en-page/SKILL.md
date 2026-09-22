@@ -39,11 +39,19 @@ et 5 : les sauter coûte une séquence entière, sans que la cause soit lisible.
 
 Deux voies, selon qu'on veut la page réelle ou un fragment isolé.
 
-**a. La page réelle** — le cas normal, et le seul qui vaille pour un verdict.
+**a. La page réelle** — le cas normal, et le seul qui vaille pour un verdict. Elle
+se mesure sur **la vraie stack**, jamais sur un scénario factice (#1156) : une
+hauteur ne se juge que sur le contenu que le produit rend. Deux états, selon ce
+que le ticket met en jeu (skill `control-tower`) :
 
 ```bash
-bash scripts/controltower/start.sh --demo --no-browser
+bash scripts/controltower/start.sh --etat-banc --no-browser   # peuplé, listes longues : l'état laissé par le banc
+bash scripts/controltower/start.sh --no-browser               # vide : une stack neuve
 ```
+
+Le **peuplé** est le cas utile : un défaut de hauteur se cache sous une liste
+courte. `--etat-banc` sert l'état réel qu'un passage du banc des scénarios a
+laissé, et dit son âge. Redis est requis dans les deux cas.
 
 `--no-browser` est indispensable : sans lui le script ouvre sa propre fenêtre et
 **arrête la stack dès qu'elle est fermée** (#149), ce qui couperait l'API sous le
@@ -52,7 +60,7 @@ session relocalisée par `/ticket-start` n'hérite **pas** du bloc `env` du
 worktree (docs/10 §9.1), donc les passer à la main :
 
 ```bash
-MAESTRO_PORT_API=8008 MAESTRO_PORT_UI=3008 bash scripts/controltower/start.sh --demo --no-browser
+env MAESTRO_PORT_API=8008 MAESTRO_PORT_UI=3008 bash scripts/controltower/start.sh --etat-banc --no-browser
 ```
 
 Le mode **dev** suffit ici, contrairement à ce que fait
@@ -112,24 +120,30 @@ browser_navigate  http://localhost:3008/<page>      ← 2e passe : c'est celle q
 
 `maestro.projet.actif` n'est pas un confort : depuis #279 **aucun écran n'est
 atteint sans projet actif**, et un identifiant inconnu renvoie à la porte
-d'entrée. En mode `--demo` aucun projet n'est déclaré — en déclarer un, sur un
-dossier **hors du dépôt** (le dépôt de Maestro se refuse lui-même) et hors
-`AppData` (chemin sensible refusé) :
+d'entrée. Sur l'**état du banc**, les projets du passage sont déjà déclarés :
+lire leurs identifiants par `GET /api/projets` et prendre celui dont les runs
+peuplent la page. Sur une **stack neuve**, aucun projet n'est déclaré — en
+déclarer un, sur un dossier **hors du dépôt** (le dépôt de Maestro se refuse
+lui-même) et hors `AppData` (chemin sensible refusé) :
 
 ```bash
-mkdir -p .maestro/banc
+mkdir -p .maestro/mise-en-page
 # Séparateurs **en avant**, et par un fichier : un `\` de chemin Windows passé en
 # ligne devient une échappée JSON invalide, et un `/tmp/…` de Git Bash n'est pas
 # le même chemin pour le curl de Windows (il y lit `C:\tmp`).
-printf '{"nom":"Banc","racine":"D:/un/dossier/quelconque"}\n' > .maestro/banc/projet.json
+printf '{"nom":"Banc","racine":"D:/un/dossier/quelconque"}\n' > .maestro/mise-en-page/projet.json
 curl -s -X POST http://127.0.0.1:8008/api/projets \
-  -H 'Content-Type: application/json' -d @.maestro/banc/projet.json
+  -H 'Content-Type: application/json' -d @.maestro/mise-en-page/projet.json
 # … puis, le banc passé :
 curl -s -X DELETE http://127.0.0.1:8008/api/projets/<id>
 ```
 
 Il laisse un `core/projets/<id>.json` dans le répertoire de travail — gitignoré,
 mais à retirer par le `DELETE` ci-dessus plutôt qu'à laisser traîner.
+
+L'atelier de ce banc est **`.maestro/mise-en-page/`**, et plus `.maestro/banc/` :
+ce dossier-là porte depuis #1164 le jeu de données du banc des scénarios, que
+`--etat-banc` réécrit.
 
 Quand c'est **la visite guidée elle-même** qu'on mesure, c'est l'inverse : ne pas
 poser la clé, ou la retirer et recharger.
@@ -167,14 +181,14 @@ la zone sans toucher à la fenêtre — mêmes 1280 px, mise en page différente
 browser_evaluate  () => localStorage.setItem("maestro.sidebar.repliee", "1")
 ```
 
-> ⚠ **Les captures vont sous `.maestro/banc/`**, jamais à la racine. Un
+> ⚠ **Les captures vont sous `.maestro/mise-en-page/`**, jamais à la racine. Un
 > `filename` sans dossier (`banc-375.png`) atterrit **à la racine du répertoire
 > de travail** — pas dans `.playwright-mcp/` — où `/ticket-ship` le commiterait
 > avec le reste. `.maestro/` est gitignoré et c'est là que va, par convention du
 > dépôt, ce qu'un outil invite à relire.
 
 ```
-browser_take_screenshot  filename: .maestro/banc/<page>-1280x500.png
+browser_take_screenshot  filename: .maestro/mise-en-page/<page>-1280x500.png
 ```
 
 ### 4. Rendre le constat
