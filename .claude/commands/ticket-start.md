@@ -194,7 +194,8 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
         brouillonne dans un fichier existant), pour que `git diff` le contienne tout entier et que
         `git restore` le défasse tout entier. Écris le premier, puis monte la stack par
         `bash scripts/design/relecture-visuelle.sh <iid>` — son plan se dérive du diff, donc d'un
-        brouillon présent : ports du worktree, projet de démo, et l'**avant** servi depuis
+        brouillon présent : la **vraie stack** sur les ports du worktree — l'état du dernier passage
+        du banc, dont la préparation nomme les projets à poser (#1165) —, et l'**avant** servi depuis
         `origin/main`, qui est la référence de « ce qui ne bouge pas » ; prépare le navigateur et
         attends qu'une page soit prête comme le disent les étapes 3 et 4 du skill
         `relecture-visuelle`. L'UI tourne en `next dev` : les brouillons suivants s'échangent à chaud.

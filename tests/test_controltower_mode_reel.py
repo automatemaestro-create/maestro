@@ -39,6 +39,11 @@ par le levier qui l'expose sans rien lancer :
    Son préflight passe, comme ③, avant tout nettoyage. Ce que l'état contient, et la
    façon dont il se sauve et se rouvre, est gardé par `tests/test_etat_banc.py`.
 
+⑥ **La stack neuve et la vraie panne** (#1165) — ce que la relecture visuelle ouvre à la place
+   des scénarios de la démo. `--etat-neuf` se demande comme ⑤ et ne se mêle ni à lui, ni à la
+   démo, ni à un rejeu ; `--couper-api` fait tomber l'API **seule**, sans rien solder — éprouvé
+   sur deux vrais processus à l'écoute, puisque c'est un geste et non une sélection.
+
 Ce qui n'est **pas** testé ici, faute de pouvoir l'être sans démarrer la stack :
 que le mode démo saute effectivement le préflight Redis. Le lancer pour
 l'observer contredirait la contrainte du ticket ; ① établit que `--demo`
@@ -49,8 +54,10 @@ from __future__ import annotations
 
 import os
 import shutil
+import socket
 import subprocess
 import sys
+import time
 import types
 from pathlib import Path
 
@@ -450,3 +457,115 @@ def test_le_lanceur_refuse_l_etat_du_banc_sans_redis() -> None:
     assert "rien n'a été démarré ni arrêté" in acheve.stderr
     assert "[nettoyage]" not in acheve.stdout
     assert "[api]" not in acheve.stdout
+
+
+# ------------------------------------------- ⑥ La stack neuve et la vraie panne (#1165)
+
+
+def test_la_stack_neuve_se_demande_et_ne_change_que_les_donnees() -> None:
+    """L'état « vide » de la relecture : la stack réelle, sur un jeu de données neuf."""
+    reel = diagnostic()
+    neuf = diagnostic("--etat-neuf")
+
+    assert neuf["donnees"] == "neuf"
+    assert neuf["stack"] == "reel", "une stack neuve est une stack RÉELLE, jamais la démo"
+    assert {c: v for c, v in neuf.items() if c != "donnees"} == reel
+
+
+@pytest.mark.parametrize(
+    ("options", "motif"),
+    [
+        (("--etat-neuf", "--demo"), "incompatible avec --demo"),
+        (("--etat-neuf", "--etat-banc"), "l'un ou l'autre"),
+        (("--etat-banc", "--etat-neuf"), "l'un ou l'autre"),
+        (("--etat-neuf", "--rejouer"), "--etat-banc --rejouer"),
+    ],
+)
+def test_la_stack_neuve_ne_se_mele_a_rien(options: tuple[str, ...], motif: str) -> None:
+    """Neuve et rouverte s'excluent, la démo n'est pas une stack neuve, et rejouer coûte du
+    vrai modèle : aucun des trois ne se demande avec elle."""
+    acheve = lanceur(*options, "--diagnostic-navigateur")
+    assert acheve.returncode == 2, acheve.stdout + acheve.stderr
+    assert motif in acheve.stderr
+    assert "stack:" not in acheve.stdout, "refusé avant le diagnostic, donc avant tout le reste"
+
+
+def _port_libre() -> int:
+    with socket.socket() as sonde:
+        sonde.bind(("127.0.0.1", 0))
+        return int(sonde.getsockname()[1])
+
+
+def _ecoute(port: int) -> bool:
+    with socket.socket() as sonde:
+        sonde.settimeout(1)
+        return sonde.connect_ex(("127.0.0.1", port)) == 0
+
+
+def _couper(api: int, ui: int) -> subprocess.CompletedProcess[str]:
+    """`start.sh --couper-api` sur ces ports-là, et sur aucun autre."""
+    environnement = os.environ.copy()
+    for cle in _A_NETTOYER:
+        environnement.pop(cle, None)
+    environnement.update({"MAESTRO_PORT_API": str(api), "MAESTRO_PORT_UI": str(ui)})
+    assert BASH is not None
+    return subprocess.run(  # noqa: S603
+        [BASH, str(SCRIPT), "--couper-api"],
+        cwd=str(RACINE),
+        env=environnement,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+    )
+
+
+def test_couper_l_api_sans_rien_a_couper_n_est_pas_une_erreur() -> None:
+    """La panne est déjà là : on le dit, et rien d'autre n'est touché — ni soldage, ni UI."""
+    acheve = _couper(_port_libre(), _port_libre())
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "déjà coupée" in acheve.stdout
+    assert "[extinction]" not in acheve.stdout, "une panne ne solde rien : ce n'est pas un arrêt"
+    assert "[nettoyage]" not in acheve.stdout
+
+
+@pytest.mark.skipif(
+    os.name != "nt" and shutil.which("lsof") is None,
+    reason="hors Windows, le lanceur repère un port par lsof, absent de ce poste",
+)
+def test_couper_l_api_la_fait_tomber_et_laisse_l_ui_servie() -> None:
+    """La vraie panne « API injoignable » (#996) : l'API tombe net, l'UI reste servie.
+
+    Deux vrais processus à l'écoute, pour que le test dise ce que le lanceur FAIT — ce que
+    l'écran montre ensuite est l'affaire de la relecture, pas de ce module.
+    """
+    api, ui = _port_libre(), _port_libre()
+    serveurs = [
+        subprocess.Popen(  # noqa: S603
+            [sys.executable, "-m", "http.server", str(port), "--bind", "127.0.0.1"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        for port in (api, ui)
+    ]
+    try:
+        for _ in range(100):
+            if _ecoute(api) and _ecoute(ui):
+                break
+            time.sleep(0.1)
+        assert _ecoute(api) and _ecoute(ui), "les deux serveurs d'essai n'ont pas démarré"
+
+        acheve = _couper(api, ui)
+
+        assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+        assert "coupée net, sans soldage" in acheve.stdout
+        assert "[extinction]" not in acheve.stdout
+        assert serveurs[0].wait(timeout=10) is not None, "l'API est tombée"
+        assert serveurs[1].poll() is None, "l'UI est restée servie"
+        assert _ecoute(ui)
+    finally:
+        for serveur in serveurs:
+            if serveur.poll() is None:
+                serveur.kill()
+                serveur.wait(timeout=10)

@@ -694,10 +694,8 @@ DEMO_ADMISES: Mapping[str, tuple[Admise, ...]] = {
 #: Les textes que les lots voisins du chantier font passer au réel : ils sortent du balayage le
 #: temps de leur lot, entiers, pour que chaque lot reste mergeable seul (`lot::parallele`). Le
 #: dernier lot, #1168, retire la démo du produit : il vide cette table et inscrit ce qui reste.
+#: #1165 (la relecture visuelle, son agent, `/ticket-start`) en est sorti : ses textes sont balayés.
 DEMO_AUX_LOTS_VOISINS: Mapping[str, str] = {
-    ".claude/skills/relecture-visuelle/SKILL.md": "#1165",
-    ".claude/agents/regard-neuf.md": "#1165",
-    ".claude/commands/ticket-start.md": "#1165",
     ".claude/commands/milestone-presentation.md": "#1166",
     ".claude/commands/milestone-bilan.md": "#1166",
 }

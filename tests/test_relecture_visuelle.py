@@ -14,10 +14,11 @@ variantes, #979) vit dans [`test_design_veille.py`](test_design_veille.py), à c
 * **l'attente** (#976) — la section « Rendu attendu » des gabarits, ce que `/ticket-create` en fait,
   ce que le brief de `/ticket-start` en rend ; et sa lecture par `lib.sh relecture-attente` (#980) ;
 * **l'avant** (#977) — `origin/main` servi à côté de la branche, jamais à sa place, et best-effort ;
-* **les états limites** (#978), côté relecture — montés par `--scenario`, comptés par
-  `--couverture`. Côté démo, ils sont gardés là où vivent leurs voisins : le lanceur dans
-  [`test_controltower_mode_reel.py`](test_controltower_mode_reel.py), le module dans
-  [`test_cli_smoke.py`](test_cli_smoke.py) ;
+* **les états** (#978, sur la vraie stack depuis #1165) — montés par `--etat`, comptés par
+  `--couverture`, et ceux que la vraie stack ne produit pas **nommés non couverts**, jamais imités.
+  Les gestes du lanceur qui les servent (`--etat-banc`, `--etat-neuf`, `--couper-api`) sont gardés
+  dans [`test_controltower_mode_reel.py`](test_controltower_mode_reel.py), l'état du banc dans
+  [`test_etat_banc.py`](test_etat_banc.py) ;
 * **le regard neuf** (#980) — la grille que `relecture-note` refuse de voir amputée, la saisine qui
   ne porte que les pièces, la planche qui survit au worktree, et le sous-agent qui n'a que `Read`.
 
@@ -60,6 +61,9 @@ sur la même question serait le premier moyen d'en laisser un se périmer sans q
 ⚠ **Aucune stack n'est montée ici.** `scripts/controltower/start.sh` est un double qui journalise ce
 qu'on lui demande — même raison que le `docker` neutralisé de `harnais_forge.py` : ce qui se teste
 est la **décision** de le lancer, ses arguments et ses ports, jamais le fait que Next démarre.
+Ce que le script demande à l'API elle-même — les projets servis, la déclaration du projet neuf,
+l'espace qu'elle sert — l'est à une fausse API **sur un vrai port HTTP** (`FausseApi`) : la
+conversation se joue pour de vrai, seules les réponses sont écrites d'avance.
 """
 
 from __future__ import annotations
@@ -68,10 +72,15 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import textwrap
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from harnais_forge import BASH, GIT, RACINE, Depot, corps_ticket, ecritures, monte_depot
@@ -94,45 +103,153 @@ GRILLE = RACINE / "scripts" / "design" / "grille-relecture.tsv"
 PLANCHE_PY = RACINE / "scripts" / "design" / "planche.py"
 BUILD_PY = RACINE / "scripts" / "presentation" / "build.py"
 LIB_SH = RACINE / "scripts" / "gitlab" / "lib.sh"
-DEMO_PY = RACINE / "maestro" / "controltower" / "demo.py"
+RELECTURE_PROJETS = RACINE / "scripts" / "design" / "relecture-projets.py"
 GABARITS = RACINE / ".github" / "ISSUE_TEMPLATE"
 REGLAGES_RUN = RACINE / "scripts" / "orchestrate" / "settings.run.json"
 REGLAGES_DEPOT = RACINE / ".claude" / "settings.json"
 
-#: Les états d'un décor qui en déclare (#978). Ce sont les noms du dépôt, mais le décor les ÉCRIT :
-#: ce qui se teste avec eux est la mécanique du script, et `test_les_etats_sont_lus_dans_la_demo`
-#: prouve qu'il suit n'importe quel nom — pas seulement ceux-là.
-ETATS = ("nominal", "vide", "erreur", "charge")
+
+def etats_du_script() -> list[str]:
+    """Les états que le script déclare — LUS dans le script, pour que le skill et ces tests suivent
+    le jour où il en change."""
+    trouve = re.search(r'^ETATS="([^"]+)"', RELECTURE_SH.read_text(encoding="utf-8"), re.M)
+    assert trouve, "ETATS introuvable dans relecture-visuelle.sh"
+    return trouve.group(1).split()
+
 
 #: Un PNG de quelques octets : ni la planche ni le script ne le décodent, ils le COMPTENT et
 #: l'encodent — la même économie que les fixtures de `test_presentation.py`.
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 120
 
-#: Le double de `start.sh` : il journalise la commande ET les ports reçus — les deux sont la
-#: décision à garder —, et son code de retour se pilote pour jouer la stack qui ne démarre pas.
-FAUX_START = """#!/usr/bin/env bash
-racine="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+def faux_start(refuse: str = "") -> str:
+    """Le double de `start.sh` : il journalise la commande ET les ports reçus — les deux sont la
+    décision à garder —, et son code de retour se pilote pour jouer la stack qui ne démarre pas.
+    `refuse` lui fait refuser une option, comme un lanceur plus ancien qui ne la connaît pas (code
+    `2`, avant de rien journaliser — ce que fait le vrai)."""
+    return f"""#!/usr/bin/env bash
+racine="$(cd "$(dirname "${{BASH_SOURCE[0]}}")/../.." && pwd)"
+refuse="{refuse}"
+for option in "$@"; do
+  if [ -n "$refuse" ] && [ "$option" = "$refuse" ]; then
+    echo "Option inconnue : $option" >&2; exit 2
+  fi
+done
 mkdir -p "$racine/.maestro"
-printf '%s\\tapi=%s\\tui=%s\\n' "$*" "${MAESTRO_PORT_API:-}" "${MAESTRO_PORT_UI:-}" \\
+printf '%s\\tapi=%s\\tui=%s\\n' "$*" "${{MAESTRO_PORT_API:-}}" "${{MAESTRO_PORT_UI:-}}" \\
   >>"$racine/.maestro/start.log"
-exit "${MAESTRO_FAUX_START_CODE:-0}"
+exit "${{MAESTRO_FAUX_START_CODE:-0}}"
 """
+
+
+FAUX_START = faux_start()
+
+
+def ports_libres() -> int:
+    """Un port d'API libre ET son décalé de 200 (celui de l'avant) : deux fausses API peuvent y
+    répondre."""
+    for _ in range(200):
+        with socket.socket() as sonde:
+            sonde.bind(("127.0.0.1", 0))
+            port = int(sonde.getsockname()[1])
+        if port + 200 > 65535:
+            continue
+        with socket.socket() as sonde:
+            try:
+                sonde.bind(("127.0.0.1", port + 200))
+            except OSError:
+                continue
+        return port
+    raise RuntimeError("aucune paire de ports libres")
+
+
+class FausseApi:
+    """L'API réelle réduite à ce que la relecture lui demande, sur un vrai port HTTP.
+
+    `GET /api/sante` rend l'espace qu'elle sert (celui du banc ou d'une copie), `GET /api/projets`
+    et `GET /api/executions?projet=<id>` les projets et leurs runs, `POST /api/projets` déclare un
+    projet (ou le refuse en 422, comme la validation des racines). Tout ce qu'elle reçoit est
+    gardé dans `recus`.
+    """
+
+    def __init__(
+        self,
+        port: int,
+        *,
+        espace: str = "1165-copie",
+        projets: tuple[dict[str, Any], ...] = (),
+        runs: dict[str, int] | None = None,
+        refus: str = "",
+    ) -> None:
+        self.espace = espace
+        self.projets = [dict(projet) for projet in projets]
+        self.runs = runs or {}
+        self.refus = refus
+        self.recus: list[tuple[str, str, Any]] = []
+        api = self
+
+        class Guichet(BaseHTTPRequestHandler):
+            def log_message(self, *args: object) -> None:  # silence : pytest n'a pas à le lire
+                pass
+
+            def _rendre(self, statut: int, corps: Any) -> None:
+                donnees = json.dumps(corps).encode("utf-8")
+                self.send_response(statut)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(donnees)))
+                self.end_headers()
+                self.wfile.write(donnees)
+
+            def do_GET(self) -> None:  # noqa: N802 - nom imposé par http.server
+                url = urlparse(self.path)
+                api.recus.append(("GET", url.path, parse_qs(url.query)))
+                if url.path == "/api/sante":
+                    self._rendre(200, {"statut": "ok", "espace": api.espace})
+                elif url.path == "/api/projets":
+                    self._rendre(200, api.projets)
+                elif url.path == "/api/executions":
+                    projet = parse_qs(url.query).get("projet", [""])[0]
+                    self._rendre(200, [{"run_id": f"r{i}"} for i in range(api.runs.get(projet, 0))])
+                else:
+                    self._rendre(404, {"detail": "inconnu"})
+
+            def do_POST(self) -> None:  # noqa: N802 - nom imposé par http.server
+                longueur = int(self.headers.get("Content-Length") or 0)
+                corps = json.loads(self.rfile.read(longueur).decode("utf-8") or "{}")
+                api.recus.append(("POST", self.path, corps))
+                if api.refus:
+                    self._rendre(422, {"detail": {"motif": "refus", "message": api.refus}})
+                    return
+                projet = {"id": f"prj-neuf{len(api.projets) + 1}", **corps}
+                api.projets.append(projet)
+                self._rendre(201, projet)
+
+        self._serveur = ThreadingHTTPServer(("127.0.0.1", port), Guichet)
+        self._fil = threading.Thread(target=self._serveur.serve_forever, daemon=True)
+
+    def __enter__(self) -> FausseApi:
+        self._fil.start()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self._serveur.shutdown()
+        self._serveur.server_close()
+
+    def declarations(self) -> list[dict[str, Any]]:
+        return [corps for methode, chemin, corps in self.recus if methode == "POST"]
 
 
 class DepotRelecture:
     """Un dépôt jetable où `relecture-visuelle.sh` se croit chez lui.
 
     Le script résout sa racine par `$(dirname $BASH_SOURCE)/../..` et tout le reste en dérive —
-    `ecrans-touches.sh`, `demo.py`, `.claude/settings.local.json`, `apps/web/`, `core/projets/`.
-    Le recopier sous `scripts/design/` du dépôt d'essai suffit donc à le faire travailler là, sans
+    `ecrans-touches.sh`, `relecture-projets.py`, `.claude/settings.local.json`, `apps/web/`. Le
+    recopier sous `scripts/design/` du dépôt d'essai suffit donc à le faire travailler là, sans
     rien injecter : c'est la même mécanique qu'en production.
     """
 
-    def __init__(
-        self, racine: Path, *, projet: str = "prj-demo", scenarios: tuple[str, ...] = ()
-    ) -> None:
+    def __init__(self, racine: Path) -> None:
         self.racine = racine
-        self.projet = projet
         racine.mkdir(parents=True)
         self._git("init", "-b", "main")
         # Identité LOCALE : l'image du job pytest n'en pose aucune globalement, et c'est délibéré
@@ -142,6 +259,7 @@ class DepotRelecture:
 
         for source, relatif in (
             (RELECTURE_SH, "scripts/design/relecture-visuelle.sh"),
+            (RELECTURE_PROJETS, "scripts/design/relecture-projets.py"),
             (ECRANS_TOUCHES, "scripts/presentation/ecrans-touches.sh"),
         ):
             cible = racine / relatif
@@ -149,10 +267,6 @@ class DepotRelecture:
             shutil.copy2(source, cible)
 
         self.ecris("scripts/controltower/start.sh", FAUX_START)
-        # L'identifiant du projet de démo est LU dans le scénario, jamais recopié : le jour où la
-        # démo change de projet, le script suit. Le décor le prouve en le déplaçant. Sans
-        # `scenarios`, la démo est celle d'avant #978 : aucun état déclaré.
-        self.ecris("maestro/controltower/demo.py", demo_py(projet, scenarios))
         self._git("add", "-A")
         self._git("commit", "-m", "chore: squelette\n\nRefs #1")
 
@@ -215,6 +329,8 @@ class DepotRelecture:
         # L'avant non plus : un poste qui l'aurait éteint rendrait muets les tests qui le regardent.
         for cle in ("MAESTRO_PORT_API", "MAESTRO_PORT_UI", "MAESTRO_RELECTURE_AVANT"):
             environnement.pop(cle, None)
+        # Et le projet neuf de l'état « vide » naît à côté du décor, jamais dans le profil du poste.
+        environnement["MAESTRO_RELECTURE_ATELIER"] = str(self.atelier)
         environnement.update(env or {})
         assert BASH is not None
         return subprocess.run(  # noqa: S603
@@ -232,12 +348,13 @@ class DepotRelecture:
             return []
         return [ligne for ligne in journal.read_text(encoding="utf-8").splitlines() if ligne]
 
+    @property
+    def atelier(self) -> Path:
+        """L'atelier des relectures du décor (`MAESTRO_RELECTURE_ATELIER`)."""
+        return self.racine.parent / "atelier-relecture"
 
-def demo_py(projet: str, scenarios: tuple[str, ...] = ()) -> str:
-    """Le `demo.py` d'un décor : les seules lignes que les scripts en lisent, à la forme du vrai."""
-    lignes = [f'PROJET_ID = "{projet}"']
-    lignes += [f'SCENARIO_{nom.upper()} = "{nom}"' for nom in scenarios]
-    return "\n".join(lignes) + "\n"
+    def temoin(self, nom: str) -> Path:
+        return self.racine / ".maestro" / "relecture" / nom
 
 
 @pytest.fixture
@@ -429,65 +546,187 @@ def test_le_plan_necrit_rien_du_tout(depot: DepotRelecture) -> None:
     assert not (depot.racine / "core" / "projets").exists()
 
 
-def test_la_preparation_monte_la_stack_en_demo_et_sans_navigateur(depot: DepotRelecture) -> None:
-    """`--demo` pour des écrans PEUPLÉS — un poste vide ne montre pas le rendu qu'on vient
-    d'écrire —, `--no-browser` parce que sans lui le script ouvre sa propre fenêtre et arrête la
-    stack dès qu'elle se ferme (#149), coupant l'API sous le navigateur qu'on pilote."""
-    depot.ports(8036, 3036)
+def test_la_preparation_monte_la_vraie_stack_sur_l_etat_du_banc_sans_navigateur(
+    depot: DepotRelecture,
+) -> None:
+    """L'état peuplé est celui qu'un vrai passage du banc a laissé (`--etat-banc`, #1164) — plus
+    la démo (#1165). `--no-browser` parce que sans lui le lanceur ouvre sa propre fenêtre et arrête
+    la stack dès qu'elle se ferme (#149), coupant l'API sous le navigateur qu'on pilote. Et rien
+    n'est écrit dans les données de la copie : ni `core/projets/`, ni projet posé à la main."""
+    api = ports_libres()
+    depot.ports(api, 3036)
     depot.ecris("apps/web/app/runs/page.tsx", "// en cours\n")
     resultat = depot.joue("51")
     assert resultat.returncode == 0, resultat.stdout + resultat.stderr
-    assert depot.appels_start() == ["--demo --no-browser\tapi=8036\tui=3036"]
+    assert depot.appels_start() == [f"--etat-banc --no-browser\tapi={api}\tui=3036"]
+    assert all("--demo" not in appel for appel in depot.appels_start())
     assert (depot.racine / ".maestro" / "relecture" / "51").is_dir()
-    assert (depot.racine / "core" / "projets" / "prj-demo.json").is_file()
+    assert not (depot.racine / "core").exists(), "les données de la copie ne sont pas touchées"
+    assert depot.temoin(".etat").read_text(encoding="utf-8") == "51\tpeuple\n"
 
 
 def test_une_stack_qui_ne_demarre_pas_ne_laisse_rien_derriere(depot: DepotRelecture) -> None:
-    """Le chemin d'échec est celui qui salit : le projet est posé AVANT le démarrage.
-
-    Sans le retrait, un `--demo` raté laisserait un projet déclaré qui suivrait la session jusqu'au
-    commit — et `core/projets/` est gitignoré, donc personne ne le verrait passer.
-    """
-    depot.ports(8036, 3036)
+    """Le chemin d'échec est celui qui salit : la stack est arrêtée, et le témoin d'état ne reste
+    pas — « injoignable » croirait ensuite couper une stack qui n'a jamais tourné."""
+    depot.ports(ports_libres(), 3036)
     depot.ecris("apps/web/app/runs/page.tsx", "// en cours\n")
     resultat = depot.joue("52", env={"MAESTRO_FAUX_START_CODE": "1"})
     assert resultat.returncode == 1
-    assert not (depot.racine / "core" / "projets" / "prj-demo.json").exists()
     assert depot.appels_start()[-1].startswith("--stop"), "la stack est arrêtée avant qu'on parte"
+    assert not depot.temoin(".etat").exists()
 
 
-def test_le_projet_pose_est_celui_du_scenario_de_demo(tmp_path: Path) -> None:
-    """L'identifiant est LU dans `maestro/controltower/demo.py`, jamais recopié.
-
-    Une constante recopiée des deux côtés d'une frontière est ce que #830 a vu casser : le jour où
-    la démo change de projet, le script suit sans que personne ait à s'en souvenir.
-    """
-    depot = DepotRelecture(tmp_path / "depot", projet="prj-autre")
+def test_sans_etat_du_banc_le_peuple_se_nomme_et_rien_ne_se_rejoue(depot: DepotRelecture) -> None:
+    """Aucun passage n'a laissé d'état sur le poste (code `4` du lanceur) : en jouer un coûte du
+    vrai modèle, des dizaines de minutes — ça se DEMANDE, ça ne se décide pas au détour d'une
+    relecture. Le geste est nommé, jamais joué."""
+    depot.ports(ports_libres(), 3036)
     depot.ecris("apps/web/app/runs/page.tsx", "// en cours\n")
-    assert depot.joue("53").returncode == 0
-    assert (depot.racine / "core" / "projets" / "prj-autre.json").is_file()
+    resultat = depot.joue("53", env={"MAESTRO_FAUX_START_CODE": "4"})
+    assert resultat.returncode == 1
+    assert "aucun passage du banc n'a laissé d'état sur ce poste" in resultat.stdout
+    assert "bash scripts/controltower/start.sh --etat-banc --rejouer" in resultat.stdout
+    assert all("--rejouer" not in appel for appel in depot.appels_start()), "rien n'est rejoué"
 
 
-def test_fin_arrete_la_stack_et_retire_ce_quelle_a_pose(depot: DepotRelecture) -> None:
-    """L'arrêt d'abord : un projet retiré sous une API vivante la laisserait servir un fantôme."""
+def test_les_projets_a_poser_viennent_de_l_api_avec_leurs_runs(tmp_path: Path) -> None:
+    """Sans projet actif, le shell reste sur sa porte (#279) : la session pose un identifiant, et il
+    vient de l'API réelle — l'état du banc en porte un par scénario joué —, avec le nombre de runs
+    qui dit dans lequel un écran a quelque chose à montrer. Plus jamais une constante."""
+    depot = DepotRelecture(tmp_path / "depot")
+    api = ports_libres()
+    depot.ports(api, 3036)
+    depot.ecris("apps/web/app/runs/page.tsx", "// en cours\n")
+    projets = (
+        {"id": "prj-s1abc", "nom": "S1 — vider", "racine": "C:/a"},
+        {"id": "prj-s2def", "nom": "S2 — application", "racine": "C:/b"},
+    )
+    with FausseApi(api, espace="1165-copie.banc", projets=projets, runs={"prj-s2def": 3}):
+        # Le banc servi sur ce port est celui d'une relecture précédente : elle est à nous.
+        resultat = depot.joue("54", env={"PATH": python_sur_le_chemin(tmp_path / "bin")})
+    assert resultat.returncode == 0, resultat.stdout + resultat.stderr
+    assert "prj-s1abc        S1 — vider — 0 run(s)" in resultat.stdout
+    assert "prj-s2def        S2 — application — 3 run(s)" in resultat.stdout
+    assert depot.appels_start() == [
+        f"--stop\tapi={api}\tui=3036",
+        f"--etat-banc --no-browser\tapi={api}\tui=3036",
+    ], "une API de ce banc restée d'un état précédent est arrêtée avant de rouvrir"
+
+
+def test_une_stack_sur_les_donnees_de_la_copie_n_est_pas_soldee(tmp_path: Path) -> None:
+    """Contre-exemple du précédent : la stack que la session a lancée sur SA copie n'est pas celle
+    du banc. `--stop` solderait ses runs ; le lanceur la REMPLACE, sans rien solder (#441)."""
+    depot = DepotRelecture(tmp_path / "depot")
+    api = ports_libres()
+    depot.ports(api, 3036)
+    depot.ecris("apps/web/app/runs/page.tsx", "// en cours\n")
+    with FausseApi(api, espace="1165-copie"):
+        resultat = depot.joue("55", env={"PATH": python_sur_le_chemin(tmp_path / "bin")})
+    assert resultat.returncode == 0, resultat.stdout + resultat.stderr
+    assert depot.appels_start() == [f"--etat-banc --no-browser\tapi={api}\tui=3036"]
+
+
+def test_l_etat_vide_est_une_stack_neuve_et_un_projet_declare_par_l_api(tmp_path: Path) -> None:
+    """Une stack NEUVE (`--etat-neuf`), puis un projet neuf déclaré par l'API — `origine: nouveau`,
+    donc la validation des racines du produit et le dossier créé par lui —, sous l'atelier des
+    relectures (jamais `AppData` ni le dépôt, qu'EF-38 refuse). Ses captures ont leur
+    sous-dossier."""
+    depot = DepotRelecture(tmp_path / "depot")
+    api = ports_libres()
+    depot.ports(api, 3036)
+    depot.ecris("apps/web/app/runs/page.tsx", "// en cours\n")
+    with FausseApi(api) as fausse:
+        resultat = depot.joue(
+            "56", "--etat", "vide", env={"PATH": python_sur_le_chemin(tmp_path / "bin")}
+        )
+    assert resultat.returncode == 0, resultat.stdout + resultat.stderr
+    assert depot.appels_start() == [f"--etat-neuf --no-browser\tapi={api}\tui=3036"]
+    [declaration] = fausse.declarations()
+    assert declaration["origine"] == "nouveau"
+    assert declaration["racine"].replace("\\", "/").endswith("atelier-relecture/56/projet-neuf")
+    assert "« Projet neuf » déclaré par l'API — prj-neuf1" in resultat.stdout
+    assert (depot.racine / ".maestro" / "relecture" / "56" / "vide").is_dir()
+    assert depot.temoin(".etat").read_text(encoding="utf-8") == "56\tvide\n"
+
+
+def test_une_racine_refusee_par_l_api_se_dit_avec_son_motif(tmp_path: Path) -> None:
+    """La validation est celle du produit : un refus n'est ni contourné ni tu, et la stack reste
+    montée — l'écran montrera sa porte, ce qui se regarde aussi."""
+    depot = DepotRelecture(tmp_path / "depot")
+    api = ports_libres()
+    depot.ports(api, 3036)
+    depot.ecris("apps/web/app/runs/page.tsx", "// en cours\n")
+    with FausseApi(api, refus="Racine refusée : AppData"):
+        resultat = depot.joue(
+            "57", "--etat", "vide", env={"PATH": python_sur_le_chemin(tmp_path / "bin")}
+        )
+    assert resultat.returncode == 0, resultat.stdout + resultat.stderr
+    assert "non déclaré — refusé par l'API (422) : Racine refusée : AppData" in resultat.stdout
+
+
+def test_injoignable_coupe_l_api_des_deux_stacks_sans_rien_remonter(depot: DepotRelecture) -> None:
+    """La vraie panne (#996) : l'API COUPÉE sous la stack montée, l'UI encore servie — jamais une
+    stack remontée pour l'occasion, et l'avant tombe avec l'après (même état, des deux côtés)."""
+    api = ports_libres()
+    depot.ports(api, 3036)
+    depot.ecris("apps/web/app/runs/page.tsx", "// en cours\n")
+    assert depot.joue("58").returncode == 0
+    depot.ecris(".maestro/relecture/.avant", f"58\tC:/avant-58\t{api + 200}\t3236\n")
+
+    resultat = depot.joue("58", "--etat", "injoignable")
+    assert resultat.returncode == 0, resultat.stdout + resultat.stderr
+    assert depot.appels_start()[1:] == [
+        f"--couper-api\tapi={api}\tui=3036",
+        f"--couper-api\tapi={api + 200}\tui=3236",
+    ]
+    assert "l'API coupée sous l'état « peuple »" in resultat.stdout
+    assert "PAR LE MENU" in resultat.stdout, "une navigation par l'URL renverrait à la porte"
+    assert (depot.racine / ".maestro" / "relecture" / "58" / "injoignable").is_dir()
+
+
+def test_injoignable_sans_stack_montee_ne_coupe_rien(depot: DepotRelecture) -> None:
+    """Contre-exemple : sans stack montée par cette relecture, il n'y aurait rien à voir tomber —
+    et couper les ports du worktree arrêterait peut-être la stack de quelqu'un d'autre."""
     depot.ports(8036, 3036)
     depot.ecris("apps/web/app/runs/page.tsx", "// en cours\n")
-    depot.joue("54")
+    resultat = depot.joue("59", "--etat", "injoignable")
+    assert resultat.returncode == 1
+    assert "aucune stack montée par cette relecture" in resultat.stdout
+    assert depot.appels_start() == []
+
+
+def test_fin_arrete_la_stack_et_retire_ce_quelle_a_pose(tmp_path: Path) -> None:
+    """Les stacks d'abord, puis le dossier du projet neuf — il sert encore une API vivante —, et le
+    témoin d'état. La déclaration, elle, vit dans le banc, que le prochain état réécrit."""
+    depot = DepotRelecture(tmp_path / "depot")
+    api = ports_libres()
+    depot.ports(api, 3036)
+    depot.ecris("apps/web/app/runs/page.tsx", "// en cours\n")
+    with FausseApi(api):
+        depot.joue("60", "--etat", "vide", env={"PATH": python_sur_le_chemin(tmp_path / "bin")})
+    neuf = depot.atelier / "60" / "projet-neuf"
+    (neuf / ".maestro").mkdir(parents=True)  # ce que l'API y a créé, et ce qu'elle y a écrit
+    (neuf / ".maestro" / "trace.txt").write_text("x\n", encoding="utf-8")
+
     resultat = depot.joue("--fin")
     assert resultat.returncode == 0, resultat.stdout + resultat.stderr
-    assert depot.appels_start()[-1] == "--stop\tapi=8036\tui=3036"
-    assert not (depot.racine / "core" / "projets" / "prj-demo.json").exists()
+    assert depot.appels_start()[-1] == f"--stop\tapi={api}\tui=3036"
+    assert not neuf.exists() and not neuf.parent.exists()
+    assert not depot.temoin(".projet-neuf").exists()
+    assert not depot.temoin(".etat").exists()
 
 
-def test_fin_ne_retire_pas_un_projet_quon_na_pas_pose(depot: DepotRelecture) -> None:
-    """Un projet déclaré avant nous ne nous appartient pas — c'est le témoin qui tranche, jamais le
-    nom du fichier. Contre-exemple du test précédent : sans témoin, rien ne part."""
-    depot.ports(8036, 3036)
-    depot.ecris("core/projets/prj-demo.json", '{"id":"prj-demo"}\n')
-    depot.ecris("apps/web/app/runs/page.tsx", "// en cours\n")
-    depot.joue("55")
+def test_fin_ne_retire_que_le_dossier_que_son_temoin_nomme_sous_l_atelier(
+    depot: DepotRelecture,
+) -> None:
+    """C'est le témoin ET sa forme qui tranchent : un chemin qui n'est pas `…/<iid>/projet-neuf`
+    n'est pas un projet neuf de relecture, et rien ne part."""
+    etranger = depot.racine.parent / "mes-projets" / "compta"
+    etranger.mkdir(parents=True)
+    depot.ecris(".maestro/relecture/.projet-neuf", f"{etranger.as_posix()}\n")
     depot.joue("--fin")
-    assert (depot.racine / "core" / "projets" / "prj-demo.json").is_file()
+    assert etranger.is_dir()
+    assert not depot.temoin(".projet-neuf").exists(), "le témoin, lui, est soldé"
 
 
 # =================================================================================================
@@ -502,6 +741,9 @@ def test_fin_ne_retire_pas_un_projet_quon_na_pas_pose(depot: DepotRelecture) -> 
         (("--plan", "couts"), "n'est pas un iid"),
         (("--fin", "42"), "ne prend pas d'iid"),
         (("--inconnue", "42"), "Option inconnue"),
+        (("42", "--etat"), "--etat attend un nom"),
+        # Le geste de la démo (#978) : retiré par #1165, et DIT, plutôt qu'« option inconnue ».
+        (("42", "--scenario", "vide"), "viennent de la vraie stack : --etat <nom>"),
     ],
 )
 def test_les_usages_fautifs_sont_refuses(
@@ -1309,10 +1551,12 @@ def test_l_attente_ne_confond_pas_inconnu_muet_et_usage(
 # L'avant — origin/main, servi à côté de la branche et jamais à sa place (#977, docs/30 §5.6)
 # =================================================================================================
 # Le décor n'a pas de remote : `origin/main` y est une ref figée sur HEAD, et c'est tout ce que le
-# script lit — `rev-parse` pour la trouver, `ls-tree` pour ses pages, `show` pour sa démo.
+# script lit — `rev-parse` pour la trouver, `ls-tree` pour ses pages. Ce qu'origin/main sait
+# SERVIR, c'est son lanceur qui le dit : le double de `worktree.sh` le recopie d'origin/main, pas
+# de l'arbre.
 
 #: Le double de `worktree.sh avant` : il journalise ce qu'on lui demande, monte un « avant » à côté
-#: du décor — avec le `start.sh` factice, pour que l'avant se lance par SON lanceur — et sait
+#: du décor — avec le `start.sh` d'ORIGIN/MAIN, pour que l'avant se lance par SON lanceur — et sait
 #: échouer au montage comme au retrait.
 FAUX_WORKTREE = """#!/usr/bin/env bash
 racine="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -1322,11 +1566,16 @@ if [ "$2" = --retirer ]; then exit "${MAESTRO_FAUX_RETRAIT_CODE:-0}"; fi
 if [ -n "${MAESTRO_FAUX_MONTAGE_ECHEC:-}" ]; then echo "  ✗ $MAESTRO_FAUX_MONTAGE_ECHEC"; exit 1; fi
 iid="${*: -1}"
 dest="$(dirname "$racine")/avant-$iid"
-mkdir -p "$dest/scripts/controltower" "$dest/maestro/controltower"
-cp "$racine/scripts/controltower/start.sh" "$dest/scripts/controltower/start.sh"
-git -C "$racine" show origin/main:maestro/controltower/demo.py >"$dest/maestro/controltower/demo.py"
+mkdir -p "$dest/scripts/controltower"
+git -C "$racine" show origin/main:scripts/controltower/start.sh \\
+  >"$dest/scripts/controltower/start.sh"
 echo "AVANT $dest"
 """
+
+
+def lances(appels: list[str]) -> list[str]:
+    """Les appels qui LANCENT une stack — sans les questions posées au lanceur (son diagnostic)."""
+    return [appel for appel in appels if "--diagnostic-navigateur" not in appel]
 
 
 def ecran_retouche(depot: DepotRelecture, route: str = "couts") -> None:
@@ -1409,11 +1658,13 @@ def test_l_avant_se_monte_a_cote_et_se_lance_par_son_propre_lanceur(
     """Le chemin nominal de bout en bout, préparation puis `--fin`.
 
     Ce qui se garde : l'avant est monté par `worktree.sh avant` et servi par SON `start.sh`, sur
-    SES ports ; l'arbre du ticket n'est pas touché ; `--fin` arrête les DEUX stacks, l'avant
+    SES ports, dans LE MÊME ÉTAT que l'après — l'état du banc, rouvert des deux côtés du même
+    passage ; l'arbre du ticket n'est pas touché ; `--fin` arrête les DEUX stacks, l'avant
     d'abord, puis retire l'avant et son témoin — `--fin` ne prend pas d'iid, c'est le témoin qui
     sait quoi retirer.
     """
-    depot.ports(8036, 3036)
+    api = ports_libres()
+    depot.ports(api, 3036)
     depot.ecris("scripts/git/worktree.sh", FAUX_WORKTREE)
     ecran_retouche(depot)
     avant = tmp_path / "avant-115"
@@ -1421,21 +1672,24 @@ def test_l_avant_se_monte_a_cote_et_se_lance_par_son_propre_lanceur(
     prepare = depot.joue("115")
     assert prepare.returncode == 0, prepare.stdout + prepare.stderr
     assert journal_worktree(depot) == ["avant --sans-fetch 115"]
-    assert depot.appels_start(avant) == ["--demo --no-browser\tapi=8236\tui=3236"]
-    assert depot.appels_start() == ["--demo --no-browser\tapi=8036\tui=3036"], (
+    assert lances(depot.appels_start(avant)) == [
+        f"--etat-banc --no-browser\tapi={api + 200}\tui=3236"
+    ]
+    assert depot.appels_start() == [f"--etat-banc --no-browser\tapi={api}\tui=3036"], (
         "l'après n'a pas bougé"
     )
-    assert (avant / "core" / "projets" / "prj-demo.json").is_file(), "l'avant a son projet de démo"
     assert "avant prêt" in prepare.stdout
-    iid, _chemin, api, ui = temoin_avant(depot).read_text(encoding="utf-8").rstrip("\n").split("\t")
-    assert (iid, api, ui) == ("115", "8236", "3236")
+    iid, _chemin, api_avant, ui = (
+        temoin_avant(depot).read_text(encoding="utf-8").rstrip("\n").split("\t")
+    )
+    assert (iid, api_avant, ui) == ("115", str(api + 200), "3236")
     diff = depot._git("diff", "--name-only").stdout.split()
     assert diff == ["apps/web/app/couts/page.tsx"], "aucun fichier suivi du ticket n'est touché"
 
     fin = depot.joue("--fin")
     assert fin.returncode == 0, fin.stdout + fin.stderr
     arrets = [ligne for ligne in depot.appels_start() if ligne.startswith("--stop")]
-    assert arrets == ["--stop\tapi=8236\tui=3236", "--stop\tapi=8036\tui=3036"]
+    assert arrets == [f"--stop\tapi={api + 200}\tui=3236", f"--stop\tapi={api}\tui=3036"]
     assert journal_worktree(depot)[-1] == "avant --retirer 115"
     assert not temoin_avant(depot).exists()
 
@@ -1457,7 +1711,8 @@ def test_un_avant_indisponible_ne_vaut_jamais_une_relecture_manquante(
     depot: DepotRelecture, cause: str
 ) -> None:
     """Best-effort de bout en bout : l'après reste prêt, la cause est dite, rien n'est laissé."""
-    depot.ports(8036, 3036)
+    api = ports_libres()
+    depot.ports(api, 3036)
     env: dict[str, str] = {}
     if cause == "montage-en-echec":
         depot.ecris("scripts/git/worktree.sh", FAUX_WORKTREE)
@@ -1465,7 +1720,7 @@ def test_un_avant_indisponible_ne_vaut_jamais_une_relecture_manquante(
     ecran_retouche(depot)
     resultat = depot.joue("117", env=env)
     assert resultat.returncode == 0, resultat.stdout + resultat.stderr
-    assert depot.appels_start() == ["--demo --no-browser\tapi=8036\tui=3036"]
+    assert depot.appels_start() == [f"--etat-banc --no-browser\tapi={api}\tui=3036"]
     assert not temoin_avant(depot).exists()
     if cause == "script-absent":
         assert (
@@ -1477,69 +1732,94 @@ def test_un_avant_indisponible_ne_vaut_jamais_une_relecture_manquante(
 
 
 def test_l_avant_sert_le_meme_etat_ou_rien(tmp_path: Path) -> None:
-    """Comparer un état limite au nominal ferait voir une différence que le ticket n'a pas faite.
-
-    L'état est lu dans le `demo.py` d'ORIGIN/MAIN, avant tout montage : ne rien servir coûte moins
-    cher qu'un worktree monté pour rien.
-    """
-    depot = DepotRelecture(tmp_path / "depot", scenarios=("nominal",))
+    """Comparer une stack neuve à un état peuplé ferait voir une différence que le ticket n'a pas
+    faite. C'est le LANCEUR d'origin/main qui dit s'il sait servir l'état, par son diagnostic —
+    aucune option n'est cherchée dans son source. Refusé : l'après seul, et dit."""
+    depot = DepotRelecture(tmp_path / "depot")
+    api = ports_libres()
+    depot.ports(api, 3036)
     depot.ecris("scripts/git/worktree.sh", FAUX_WORKTREE)
+    # origin/main porte un lanceur plus ancien, qui ne connaît pas la stack neuve ; la branche, le
+    # lanceur d'aujourd'hui.
+    depot.ecris("scripts/controltower/start.sh", faux_start(refuse="--etat-neuf"))
+    depot._git("add", "scripts/controltower/start.sh")
+    depot._git("commit", "-m", "chore: un lanceur ancien\n\nRefs #1")
     ecran_retouche(depot)
-    depot.ecris("maestro/controltower/demo.py", demo_py("prj-demo", ("nominal", "vide")))
+    depot.ecris("scripts/controltower/start.sh", FAUX_START)
 
-    resultat = depot.joue("118", "--scenario", "vide")
+    resultat = depot.joue("118", "--etat", "vide")
     assert resultat.returncode == 0, resultat.stdout + resultat.stderr
-    assert "origin/main ne sert pas l'état « vide » — l'après seul pour cet état" in resultat.stdout
-    assert journal_worktree(depot) == [], "aucun worktree monté pour un avant qui ne servirait rien"
+    assert (
+        "origin/main ne sait pas servir l'état « vide » (son lanceur refuse --etat-neuf) — "
+        "l'après seul pour cet état"
+    ) in resultat.stdout
+    assert depot.appels_start(tmp_path / "avant-118") == [], "rien n'est lancé côté avant"
 
-    # Contre-exemple : l'état arrivé sur origin/main, l'avant est monté DANS cet état.
-    depot._git("add", "maestro/controltower/demo.py")
-    depot._git("commit", "-m", "chore: l'état vide\n\nRefs #1")
+    # Contre-exemple : le lanceur arrivé sur origin/main, l'avant est lancé DANS cet état.
+    depot._git("add", "scripts/controltower/start.sh")
+    depot._git("commit", "-m", "chore: la stack neuve\n\nRefs #1")
     depot.origin_main()
-    assert depot.joue("118", "--scenario", "vide").returncode == 0
-    assert depot.appels_start(tmp_path / "avant-118") == [
-        "--demo --no-browser --scenario vide\tapi=8200\tui=3200"
+    assert depot.joue("118", "--etat", "vide").returncode == 0
+    assert lances(depot.appels_start(tmp_path / "avant-118")) == [
+        f"--etat-neuf --no-browser\tapi={api + 200}\tui=3236"
     ]
 
 
 # =================================================================================================
-# Les états limites — montés par `--scenario`, comptés par `--couverture` (#978)
+# Les états — ceux de la vraie stack, montés par `--etat`, comptés par `--couverture` (#978, #1165)
 # =================================================================================================
-# La démo peuple l'état nominal, et c'est rarement là que le rendu casse. Ce qui se garde ici est le
-# côté relecture ; que la démo SERVE ces états est gardé avec elle (voir l'en-tête du module).
+# L'état peuplé est rarement celui qui casse. De #978 à #1165, la démo SIMULAIT les autres ; ils
+# viennent désormais de la vraie stack, et ceux qu'elle ne produit pas sont NOMMÉS, jamais imités.
 
 
-def test_les_etats_sont_lus_dans_la_demo_jamais_recopies(tmp_path: Path) -> None:
-    """Un nom que le dépôt ne connaît pas est suivi quand la démo le déclare (#830)."""
-    depot = DepotRelecture(tmp_path / "depot", scenarios=("nominal", "plein"))
+def non_couverts(depot: DepotRelecture, iid: str) -> dict[str, str]:
+    """Les états non couverts, tels que le plan TSV les rend à un appelant machine."""
+    lignes = depot.joue("--plan", "--tsv", iid).stdout.splitlines()
+    return {
+        champs[1]: champs[2]
+        for champs in (ligne.split("\t") for ligne in lignes if ligne.startswith("# non-couvert\t"))
+    }
+
+
+def test_le_plan_annonce_les_etats_de_la_vraie_stack_et_ceux_qu_elle_ne_produit_pas(
+    depot: DepotRelecture,
+) -> None:
+    """Chaque état se dit avec ce qu'il montre, et ce que la vraie stack ne sait pas produire se
+    nomme avec sa raison — le magasin coupé mesuré, la charge qu'on ne gonfle pas."""
     depot.ecris("apps/web/app/couts/page.tsx", "// en cours\n")
-    assert "états      : nominal · plein" in depot.joue("--plan", "120").stdout
-    assert "# scenarios\tnominal plein" in depot.joue("--plan", "--tsv", "120").stdout.splitlines()
-    assert depot.joue("120", "--scenario", "plein").returncode == 0
-    assert depot.appels_start()[-1].startswith("--demo --no-browser --scenario plein\t")
+    plan = depot.joue("--plan", "120").stdout
+    for etat in etats_du_script():
+        assert re.search(rf"^ +{etat} +\S", plan, re.M), f"l'état « {etat} » n'est pas annoncé"
+    assert f"# etats\t{' '.join(etats_du_script())}" in depot.joue(
+        "--plan", "--tsv", "120"
+    ).stdout.splitlines()
+    manquants = non_couverts(depot, "120")
+    assert set(manquants) == {"erreur", "charge"}
+    assert "l'API dit « ok » et sert des listes vides" in manquants["erreur"]
+    assert "rien n'est gonflé" in manquants["charge"]
+    assert "non couverts" in plan and "jamais à imiter" in plan
+    assert "démo" not in plan.lower() and "demo" not in plan.lower(), "plus un mot de la démo"
 
 
-def test_une_demo_sans_etats_ne_sert_que_le_nominal(depot: DepotRelecture) -> None:
-    """La démo d'avant #978 : le plan le dit, et `--scenario` est refusé au lieu d'être ignoré."""
+@pytest.mark.parametrize("etat", ["erreur", "charge"])
+def test_un_etat_non_couvert_se_refuse_avec_sa_raison(depot: DepotRelecture, etat: str) -> None:
+    """Demander un état que la vraie stack ne produit pas ne monte rien : la réponse est celle du
+    plan — sa raison, et l'endroit où il se nomme."""
     depot.ecris("apps/web/app/couts/page.tsx", "// en cours\n")
-    assert "« nominal » seul — cette démo ne déclare aucun autre scénario" in (
-        depot.joue("--plan", "121").stdout
-    )
-    refus = depot.joue("121", "--scenario", "vide")
-    assert refus.returncode == 2
-    assert "la démo sert : aucun" in refus.stderr
-
-
-def test_un_etat_inconnu_est_refuse_avant_la_stack(tmp_path: Path) -> None:
-    """Refusé ICI : la démo le refuserait aussi, mais en arrière-plan, et l'on ne lirait qu'« API
-    injoignable ». Rien n'est posé — ni stack, ni projet."""
-    depot = DepotRelecture(tmp_path / "depot", scenarios=ETATS)
-    depot.ecris("apps/web/app/couts/page.tsx", "// en cours\n")
-    refus = depot.joue("122", "--scenario", "plein")
+    raison = non_couverts(depot, "121")[etat]
+    refus = depot.joue("121", "--etat", etat)
     assert refus.returncode == 2, refus.stdout + refus.stderr
-    assert "scénario inconnu « plein » (la démo sert : nominal vide erreur charge)" in refus.stderr
+    assert f"l'état « {etat} » n'est pas couvert — {raison}" in refus.stderr
+    assert "ce que je n'ai pas pu voir" in refus.stderr
     assert depot.appels_start() == []
-    assert not (depot.racine / "core" / "projets").exists()
+
+
+def test_un_etat_inconnu_est_refuse_avant_la_stack(depot: DepotRelecture) -> None:
+    depot.ecris("apps/web/app/couts/page.tsx", "// en cours\n")
+    refus = depot.joue("122", "--etat", "plein")
+    assert refus.returncode == 2, refus.stdout + refus.stderr
+    assert "état inconnu « plein » (la vraie stack sert : peuple vide injoignable)" in refus.stderr
+    assert depot.appels_start() == []
 
 
 @pytest.mark.parametrize(
@@ -1552,52 +1832,58 @@ def test_un_etat_inconnu_est_refuse_avant_la_stack(tmp_path: Path) -> None:
         ("--fin",),
     ],
 )
-def test_le_scenario_ne_vaut_que_pour_monter_la_stack(
-    tmp_path: Path, args: tuple[str, ...]
+def test_l_etat_ne_vaut_que_pour_monter_la_stack(
+    depot: DepotRelecture, args: tuple[str, ...]
 ) -> None:
     """Le plan, la couverture, la saisine et la planche valent pour TOUS les états ; `--fin` arrête
-    la stack quel que soit le sien. Un `--scenario` là serait une question mal posée."""
-    depot = DepotRelecture(tmp_path / "depot", scenarios=ETATS)
+    la stack quel que soit le sien. Un `--etat` là serait une question mal posée."""
     depot.ecris("apps/web/app/couts/page.tsx", "// en cours\n")
-    refus = depot.joue(*args, "--scenario", "vide")
+    refus = depot.joue(*args, "--etat", "vide")
     assert refus.returncode == 2, refus.stdout + refus.stderr
     assert depot.appels_start() == []
 
 
-def test_un_etat_limite_a_son_sous_dossier_et_le_nominal_garde_le_sien(tmp_path: Path) -> None:
-    """Deux états d'un même écran ne s'écrasent pas — et le nominal garde le chemin d'avant #978."""
-    depot = DepotRelecture(tmp_path / "depot", scenarios=ETATS)
-    depot.ports(8036, 3036)
+def test_un_etat_a_son_sous_dossier_et_le_defaut_garde_le_sien(depot: DepotRelecture) -> None:
+    """Deux états d'un même écran ne s'écrasent pas — et l'état par défaut garde le chemin d'avant
+    #978, le dossier du ticket lui-même."""
+    depot.ports(ports_libres(), 3036)
     depot.ecris("apps/web/app/couts/page.tsx", "// en cours\n")
-    assert depot.joue("124", "--scenario", "vide").returncode == 0
-    assert depot.appels_start() == ["--demo --no-browser --scenario vide\tapi=8036\tui=3036"]
+    assert depot.joue("124", "--etat", "vide").returncode == 0
     assert (depot.racine / ".maestro" / "relecture" / "124" / "vide").is_dir()
-    assert depot.joue("124", "--scenario", "nominal").returncode == 0
-    assert not (depot.racine / ".maestro" / "relecture" / "124" / "nominal").exists()
+    assert depot.joue("124", "--etat", "peuple").returncode == 0
+    assert not (depot.racine / ".maestro" / "relecture" / "124" / "peuple").exists()
+    assert lances(depot.appels_start())[-1].startswith("--etat-banc --no-browser\t")
 
 
-def test_la_couverture_compte_ce_qui_est_sur_le_disque_et_rien_d_autre(tmp_path: Path) -> None:
+def test_la_couverture_compte_ce_qui_est_sur_le_disque_et_nomme_ce_qui_ne_s_y_trouvera_pas(
+    depot: DepotRelecture,
+) -> None:
     """Elle CONSTATE : une capture vide n'est pas un regard, un avant n'est pas un regard sur la
-    branche — et elle ne démarre ni n'écrit rien."""
-    depot = DepotRelecture(tmp_path / "depot", scenarios=ETATS)
+    branche — et elle ne démarre ni n'écrit rien. Les états que la vraie stack ne produit pas y
+    sont NOMMÉS : c'est elle que le jugement recopie, et c'est ce qui les fait arriver dans la note
+    de relecture (#1165)."""
     depot.ecris("apps/web/app/couts/page.tsx", "// en cours\n")
     base = ".maestro/relecture/125"
     depot.capture(f"{base}/couts-clair.png")
     depot.capture(f"{base}/couts-sombre.png")
     depot.capture(f"{base}/vide/couts-clair.png")
-    depot.capture(f"{base}/erreur/couts-clair.png", b"")
-    depot.capture(f"{base}/charge/couts-clair-avant.png")
+    depot.capture(f"{base}/injoignable/couts-clair.png", b"")
+    depot.capture(f"{base}/injoignable/couts-sombre-avant.png")
     present = sorted((depot.racine / ".maestro").rglob("*"))
 
     resultat = depot.joue("--couverture", "--tsv", "125")
     assert resultat.returncode == 0, resultat.stdout + resultat.stderr
     assert tsv(resultat.stdout) == [
-        ("/couts", "couts", "nominal", "1", "1"),
+        ("/couts", "couts", "peuple", "1", "1"),
         ("/couts", "couts", "vide", "1", "0"),
-        ("/couts", "couts", "erreur", "0", "0"),
-        ("/couts", "couts", "charge", "0", "0"),
+        ("/couts", "couts", "injoignable", "0", "0"),
     ]
-    assert "une capture n'est pas un regard" in depot.joue("--couverture", "125").stdout
+    assert "# non-couvert\terreur\t" in resultat.stdout
+    lisible = depot.joue("--couverture", "125").stdout
+    assert "une capture n'est pas un regard" in lisible
+    assert "non couverts" in lisible and "ce que je n'ai pas pu voir" in lisible
+    for etat, raison in non_couverts(depot, "125").items():
+        assert f"{etat}" in lisible and raison in lisible
     assert depot.appels_start() == []
     assert sorted((depot.racine / ".maestro").rglob("*")) == present, "la couverture n'écrit rien"
 
@@ -1637,7 +1923,7 @@ ATTENTE = (
 
 def depot_regard(tmp_path: Path, attente_du_ticket: str = "@@decisions@@\n") -> DepotRelecture:
     """Un écran retouché (`/couts`, qui a un avant) et un écran neuf (`/agents`, qui n'en a pas)."""
-    depot = DepotRelecture(tmp_path / "depot", scenarios=("nominal", "vide"))
+    depot = DepotRelecture(tmp_path / "depot")
     depot.recopie(GRILLE)
     depot.ecris("scripts/gitlab/lib.sh", FAUSSE_LIB)
     depot.ecris(".maestro/attente.txt", attente_du_ticket)
@@ -1808,7 +2094,7 @@ def test_la_planche_est_autonome_et_survit_au_ramassage_du_worktree(tmp_path: Pa
     html = copie.read_text(encoding="utf-8")
     assert "data:image/png;base64," in html
     assert "le total disparaît" in html
-    assert html.index("<h2>Jugement") < html.index("État « nominal »"), "le jugement est en tête"
+    assert html.index("<h2>Jugement") < html.index("État « peuple »"), "le jugement est en tête"
     assert not re.search(r'(?:src|href)="https?://', html), "autonome : aucune ressource externe"
 
 
@@ -1913,19 +2199,38 @@ def test_l_avant_se_capture_sous_le_nom_que_le_script_construit() -> None:
     assert f".maestro/relecture/<iid>/<etat>/{forme(avant.group(1))}" in skill
 
 
-def test_le_skill_decrit_chaque_etat_que_la_demo_sert() -> None:
-    """Le script LIT les états dans la démo ; le skill, lui, DIT ce qu'on y cherche. Un état ajouté
-    sans sa ligne serait monté et capturé sans que personne sache quoi y regarder."""
-    demo = DEMO_PY.read_text(encoding="utf-8")
-    noms = re.findall(r'^SCENARIO_[A-Z_]* *= *"([^"]*)"', demo, re.M)
-    nominal = re.search(r'^SCENARIO_NOMINAL *= *"([^"]*)"', demo, re.M)
-    assert nominal and len(noms) >= 2, "motif creux : aucun état lu dans la démo"
+def test_le_skill_decrit_chaque_etat_de_la_vraie_stack_et_chaque_non_couvert(
+    tmp_path: Path,
+) -> None:
+    """Le script DÉCLARE les états ; le skill, lui, DIT ce qu'on y cherche. Un état ajouté sans sa
+    ligne serait monté et capturé sans que personne sache quoi y regarder — et un non couvert que le
+    skill tairait finirait imité (#1165)."""
+    depot = DepotRelecture(tmp_path / "depot")
+    depot.ecris("apps/web/app/couts/page.tsx", "// en cours\n")
+    noms = etats_du_script() + list(non_couverts(depot, "140"))
+    assert len(noms) >= 4, "motif creux : aucun état lu dans le script"
     skill = SKILL.read_text(encoding="utf-8")
     for nom in noms:
-        if nom != nominal.group(1):
-            assert f"| `{nom}` |" in skill, f"l'état « {nom} » n'est pas décrit par le skill"
-    assert "relecture-visuelle.sh <iid> --scenario <nom>" in skill
+        assert f"| `{nom}` |" in skill, f"l'état « {nom} » n'est pas décrit par le skill"
+    assert "relecture-visuelle.sh <iid> --etat <nom>" in skill
     assert "relecture-visuelle.sh --couverture <iid>" in skill
+    assert "--scenario" not in skill and "start.sh --demo" not in skill, "plus un geste de la démo"
+
+
+def test_la_relecture_ne_lit_plus_la_demo_nulle_part() -> None:
+    """Critère de #1165 : ni `demo.py`, ni `--demo`, ni sur la branche ni sur origin/main. Le
+    script ne cite la démo que pour dater ce qu'elle faisait ; il ne lit, ne lance ni ne déclare
+    rien d'elle. L'échantillon fautif prouve que le balayage voit ce qu'il cherche."""
+    motif = re.compile(r"controltower/demo\.py|--demo\b|prj-demo|PROJET_ID|SCENARIO_")
+    fautif = (
+        "PROJET_DEMO=\"$(sed -n 's/^PROJET_ID *= *\"\\([^\"]*\\)\".*/\\1/p' "
+        '"$RACINE/maestro/controltower/demo.py")"'
+    )
+    assert motif.search(fautif), "motif creux : la ligne d'avant #1165 ne se verrait pas"
+    for lecteur in (RELECTURE_SH, RELECTURE_PROJETS):
+        trouve = [ligne for ligne in lecteur.read_text(encoding="utf-8").splitlines()
+                  if motif.search(ligne)]
+        assert trouve == [], f"{lecteur.name} s'appuie encore sur la démo : {trouve}"
 
 
 def test_les_ancres_lues_par_la_relecture_ont_chacune_leur_ecrivain() -> None:

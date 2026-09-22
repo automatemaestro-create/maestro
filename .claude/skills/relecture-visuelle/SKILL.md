@@ -77,20 +77,36 @@ bash scripts/design/relecture-visuelle.sh <iid>
 ```
 
 Même plan, plus : les **ports du worktree** (jamais 8000/3000 — ils sont ceux
-de la stack d'à côté), le **projet de démo** déclaré (sans projet actif, le
-shell ne rend que sa porte d'entrée, #279) et `start.sh --demo --no-browser`.
+de la stack d'à côté) et la **vraie stack** — l'API réelle sur Redis, l'UI, sans
+navigateur (`start.sh --etat-banc --no-browser`).
 
-`--demo` est voulu : le scénario factice **peuple** les écrans, et un poste vide
-ne montre pas le rendu qu'on vient d'écrire. C'est l'inverse du choix de
-`/retex-utilisateur`, qui veut précisément le poste vide d'un nouvel arrivant.
+**Ce qu'elle sert, par défaut, est l'état `peuple`** : l'état réel que le
+dernier passage du banc des scénarios a laissé (#1148), rouvert par l'API
+réelle sans rien rejouer (#1164). Plus de scénario factice (#1165, docs/41 §4) :
+il montrait ce qu'on avait scénarisé, pas ce que le produit fait. Le
+lanceur dit **l'âge** de cet état et ce qu'il contient ; il se sert sur un jeu
+de données à part (`<espace>.banc`), jamais sur les données de ta copie.
 
-Sans option, la démo sert l'état **nominal**. Les états limites se montent par
-le même geste, un état à la fois — voir l'étape 4bis.
+- **Son âge ne se corrige pas d'office.** Un passage se rejoue à la demande —
+  `bash scripts/controltower/start.sh --etat-banc --rejouer`, vrai modèle, des
+  dizaines de minutes —, jamais au détour d'une relecture. Un écran que l'état
+  n'atteint pas va à « ce que je n'ai pas pu voir », avec l'âge.
+- **Aucun état sur le poste** : le script le dit, nomme ce geste et s'arrête sur
+  cet état ; les autres restent montables.
+
+**Le projet actif vient de l'API.** Sans lui, le shell ne rend que sa porte
+d'entrée (#279). La préparation liste les projets que la stack sert, chacun avec
+son nombre de runs — l'état du banc en porte un par scénario joué : pose celui
+dont l'écran a quelque chose à montrer (étape 3).
+
+Les autres états se montent par le même geste, un état à la fois — voir
+l'étape 4bis.
 
 **Puis l'avant** (#977) : une **seconde stack**, servie depuis un worktree
 **détaché sur `origin/main`** (`<iid>.avant`, monté par `worktree.sh avant`),
-sur les ports de l'après **+ 200**, et dans **le même état** — un état
-qu'`origin/main` ne déclare pas n'a pas d'avant. Le worktree du ticket n'est
+sur les ports de l'après **+ 200**, et dans **le même état** — rouvert du même
+passage du banc. Un état que le lanceur d'`origin/main` ne sait pas servir n'a
+pas d'avant, et le script le dit. Le worktree du ticket n'est
 jamais touché pour l'obtenir — c'est la raison de cette voie, écrite en
 `docs/30 §5.6`. L'avant est **best-effort** : `origin/main` introuvable, montage
 ou stack en échec, et le script le dit — l'après reste prêt, et l'avant manquant
@@ -114,14 +130,17 @@ browser_navigate  http://localhost:<PORT_UI>/
 browser_evaluate  () => {
                     localStorage.setItem("maestro.guide.vu", "1");
                     localStorage.setItem("maestro.theme", "clair");   // ou "sombre"
-                    localStorage.setItem("maestro.projet.actif", "prj-demo");
+                    localStorage.setItem("maestro.projet.actif", "<id nommé par la préparation>");
                   }
 ```
 
 > ⚠ **Une fois PAR ORIGINE.** L'après (`localhost:<PORT_UI>`) et l'avant
 > (`localhost:<PORT_UI + 200>`) sont deux origines, donc deux `localStorage` :
 > des clés posées sur l'une n'existent pas sur l'autre, et l'avant s'ouvrirait
-> sur la visite guidée, dans le mauvais thème, sans projet.
+> sur la visite guidée, dans le mauvais thème, sans projet. **L'identifiant peut
+> différer d'une origine à l'autre** : l'état du banc porte les mêmes projets des
+> deux côtés (« [avant] les mêmes »), mais le projet neuf de l'état `vide` est
+> déclaré par chaque API, et la préparation nomme les deux.
 
 ### 4. Regarder — chaque écran, dans les deux thèmes
 
@@ -150,11 +169,10 @@ ce qui allait. Un écran **nouveau** n'a que son après ; le dire dans le jugeme
 > « Chargement » à l'écran — à attendre par un `browser_evaluate` qui interroge
 > la page jusqu'à ce qu'il tienne.
 
-> ⚠ **Les chiffres de la démo ne se comparent pas.** Le scénario factice
-> avance avec le temps, et les deux stacks n'ont pas démarré ensemble : coût,
-> tokens ou nombre d'appels diffèrent entre l'avant et l'après sans que le
-> ticket y soit pour rien. On compare la **mise en page et le rendu**, jamais
-> les valeurs.
+> ⚠ **On compare la mise en page et le rendu, jamais les valeurs.** Les deux
+> stacks servent le même état, mais pas au même instant : un âge relatif
+> (« il y a 4 j »), un identifiant de projet ou une horloge diffèrent de l'avant
+> à l'après sans que le ticket y soit pour rien.
 
 Puis **relire chaque capture** (outil `Read`) — pour vérifier qu'elle **montre
 l'écran** : prête, pas sur « Chargement… », pas sur la visite guidée, le bon
@@ -177,68 +195,75 @@ plus souvent dans un seul des deux.
 `<ecran>` est la **clé** de l'écran (`/` → `accueil`, `/couts` → `couts`) :
 `--couverture` (étape 4bis) nomme les fichiers qu'il attend.
 
-### 4bis. Les états limites — là où le rendu casse (#978)
+### 4bis. Les autres états — là où le rendu casse (#978, sur la vraie stack depuis #1165)
 
-L'état nominal est rarement celui qui casse. C'est **une file vide** sans
-explication, **une erreur** qui déborde, **un nom de 80 caractères**, **une
-liste de 200 lignes**. La démo sert ces états sous un nom, et le script les
-monte :
+L'état peuplé est rarement celui qui casse. C'est **une file vide** sans
+explication, **une panne** qui déborde, **une liste longue**. Chacun vient de la
+**vraie stack** — jamais d'un scénario factice —, et le script le monte :
 
 ```bash
-bash scripts/design/relecture-visuelle.sh <iid> --scenario <nom>
+bash scripts/design/relecture-visuelle.sh <iid> --etat <nom>
 ```
 
-| État | Ce que la démo sert | Ce qu'on y cherche |
+| État | Ce que la vraie stack sert | Ce qu'on y cherche |
 | --- | --- | --- |
-| `vide` | aucun run, aucune tâche, aucune validation, aucun fil | un état vide qui **explique** et propose la suite, pas un cadre blanc |
-| `erreur` | toutes les routes en 500, WebSocket refusée — sauf `/api/sante` et `/api/projets` | l'erreur **nommée**, lisible dans les deux thèmes, sans casser la mise en page |
-| `charge` | 200 tâches sur 20 niveaux, 24 runs, 30 validations, 641 lignes de journal, 31 conversations dont une de 80 messages, un nom d'agent de 80 caractères, un jeton sans espace | ce qui **déborde** : colonne élargie, texte coupé sans ellipse, défilement horizontal |
-| `decomposition` | une **phase**, pas un état : un run qui travaille 4 minutes **sans publier une seule tâche** — journal qui avance, coût qui monte —, puis son plan d'un coup et ses quatre tâches ; rejoué en boucle (#1109) | que l'écran **dise** que le run décompose au lieu de montrer un vide, et que la **transition** se voie : le compte de tâches bascule une fois, de 0 au total |
+| `peuple` | le défaut : l'état du dernier passage du banc, rouvert par l'API réelle — ses runs, ses fils, ses projets, et la **charge** qu'il a laissée | le rendu de ce que le produit a vraiment fait ; ce qui **déborde** de ce qu'il contient |
+| `vide` | une **stack neuve** (`start.sh --etat-neuf`), puis un **projet neuf** déclaré par l'API — rien n'y a été lancé | un état vide qui **explique** et propose la suite, pas un cadre blanc |
+| `injoignable` | l'API **coupée** sous la stack montée (`start.sh --couper-api`), l'UI encore servie — la vraie panne (#996) | la panne **nommée**, lisible dans les deux thèmes, sans casser la mise en page |
 
-Les noms sont **lus** dans `maestro/controltower/demo.py` (le plan les
-annonce) : un nom que la démo ne sert pas est refusé avant la stack. Écran
-« Projets » en `erreur` : rien à voir, sa seule route est épargnée pour que le
-shell laisse entrer dans les autres écrans. `decomposition` est le seul nom qui
-**passe** : ce qu'on y capture dépend du moment, et le journal de l'API (que
-`start.sh` nomme au démarrage) annonce chaque passage.
+**Et ce que la vraie stack ne produit pas se nomme, jamais ne s'imite.** Le plan,
+la couverture et la saisine les portent avec leur raison ; demandés par
+`--etat`, ils sont refusés avec elle :
+
+| État non couvert | Pourquoi |
+| --- | --- |
+| `erreur` | une API qui **répond en erreur** (500) : mesuré le 2026-09-22, son magasin (Redis) coupé, au démarrage comme en route, la vraie API dit « ok » et sert des listes vides — aucune lecture d'écran ne rend 500 (ce silence est #1206) |
+| `charge` | au-delà de ce que le passage du banc a laissé (des centaines de lignes, des noms de 80 caractères) : rien n'est gonflé |
+
+Ils vont à « ce que je n'ai pas pu voir », nommés — le pied de `--couverture`
+les porte, et c'est lui que le jugement recopie. Une largeur téléphone, ou tout
+état qu'aucun geste ne sert, y va de même.
 
 **Quels états ouvrir.** Ceux que la rubrique **« États à couvrir »** du ticket
 nomme (section `## Rendu attendu`, #976), rapprochés des noms ci-dessus par
-jugement (« contenu long » est `charge`). Quand le ticket ne les nomme pas
-(section absente ou « non renseigné »), on ouvre **les trois états limites** —
-`vide`, `erreur`, `charge` : un état jamais ouvert est un état que personne ne
-regarde, et ce qu'on paie en échange, c'est ~18 s de redémarrage par état.
-`decomposition` n'entre pas dans ce défaut : c'est une **phase**, elle ne
-s'ouvre que si le ticket la nomme ou si l'écran montre le **début** d'un run,
-et chaque passage coûte 4 minutes et laisse un run soldé derrière lui. Un état que la démo ne sait pas servir, par
-exemple une largeur téléphone, va à « ce que je n'ai pas pu voir ».
+jugement (« aucune donnée » est `vide`, « API en panne » est `injoignable`,
+« contenu long » est la charge de `peuple` — ou un non couvert, s'il faut plus
+que ce que le passage a laissé). Quand le ticket ne les nomme pas (section
+absente ou « non renseigné »), on ouvre **les trois** : un état jamais ouvert
+est un état que personne ne regarde.
 
-**Comment.** Chaque état **redémarre** la stack : le scénario est celui de
-l'API, qu'on ne change pas à chaud. Le `localStorage` posé à l'étape 3
-survit au redémarrage (même origine), donc il n'y a qu'à renaviguer. Les
-captures d'un état vont **dans son sous-dossier** :
+**Comment.** `peuple` et `vide` **redémarrent** la stack : ce sont des données
+que l'API rejoue à son démarrage. Le `localStorage` posé à l'étape 3 survit au
+redémarrage (même origine) — **sauf le projet actif de `vide`**, qui est neuf :
+pose l'identifiant que la préparation vient de nommer. Les captures d'un état
+vont **dans son sous-dossier** :
 
 ```
 browser_take_screenshot  filename: .maestro/relecture/<iid>/<etat>/<ecran>-<theme>.png
 browser_take_screenshot  filename: .maestro/relecture/<iid>/<etat>/<ecran>-<theme>-avant.png
 ```
 
-L'avant suit l'état : la préparation le redémarre dans le même scénario, ou
-dit qu'`origin/main` ne sert pas cet état — il n'y a alors que l'après.
+L'avant suit l'état : la préparation le relance dans le même, ou dit que le
+lanceur d'`origin/main` ne sait pas le servir — il n'y a alors que l'après.
+
+**`injoignable` ne monte rien : il coupe.** Monte d'abord `peuple` (ou `vide`),
+**ouvre un écran**, puis joue `--etat injoignable` : l'API des deux stacks tombe
+net, l'UI reste servie, rien n'est soldé. L'écran ouvert passe en
+« Reconnexion… » — attendue : c'est la WebSocket coupée —, puis **passe d'un
+écran à l'autre par le menu** (`browser_click` sur son lien) : chacun montre la
+bannière « API injoignable — rien n'a répondu » (vérifié le 2026-09-22 sur
+`/couts`). **Jamais par l'URL** : une navigation recharge la page, et le shell,
+sans API pour confirmer son projet, reste sur sa porte « Choisir le projet » —
+qui montre sa propre panne, à capturer **une** fois. Remonter un état
+(`relecture-visuelle.sh <iid>`) rétablit l'API.
 
 Les deux thèmes valent ici comme ailleurs, et on relit chaque capture avec
-`Read`, comme à l'étape 4. En `erreur`, la pastille « Reconnexion… » est
-**attendue** : c'est la WebSocket refusée, pas un défaut de l'écran. Et la
-bannière d'erreur n'arrive qu'**après** le premier chargement, environ 2 s
-mesurées sur `/runs` : capturée trop tôt, la page montre « Chargement… ». On
-attend donc qu'elle soit là (`browser_wait_for` sur « a répondu ») avant de
-capturer. En `charge`, tout est publié avant que l'UI ne démarre, mais **le
-rendu, lui, prend du temps** : sur `/chat`, une capture à 3 s montrait un bloc
-« Conversations » vide et un composeur sur la barre du haut, alors qu'à 8 s
-l'écran était juste. On attend donc un **contenu** (`browser_wait_for` sur un
-texte que l'écran doit afficher, par exemple « Voir les ») et jamais un délai
-fixe. Un écran qui paraît cassé à la première capture se recapture avant de
-devenir un constat.
+`Read`, comme à l'étape 4. La bannière de panne n'arrive qu'**après** la requête
+en échec : on attend qu'elle soit là (`browser_wait_for` sur « injoignable »)
+avant de capturer, jamais un délai fixe. De même dans l'état peuplé, **le
+rendu prend du temps** : on attend un **contenu** que l'écran doit afficher. Un
+écran qui paraît cassé à la première capture se recapture avant de devenir un
+constat.
 
 **Puis compter ce qui a été vu, écran par écran** :
 
@@ -328,7 +353,7 @@ es l'auteur, et « ce n'est pas ce que je voulais faire » n'est pas une pièce.
 bash scripts/design/relecture-visuelle.sh --fin
 ```
 
-Arrête **les deux** stacks, retire le projet déclaré et le worktree de l'avant —
+Arrête **les deux** stacks, retire le dossier du projet neuf et le worktree de l'avant —
 **y compris quand la relecture s'est mal passée** : une stack laissée derrière
 tient un port pour le ticket suivant, et un avant oublié pèse ~500 Mo. S'il en
 reste un malgré tout (session coupée avant `--fin`), le montage d'avant suivant
@@ -352,17 +377,20 @@ Suivent tes trois sections, et les trois sont obligatoires :
   (étape 5). Un constat sans suite est un constat perdu, et un ✗ passé sous
   silence est un jugement réécrit.
 - **ce que je n'ai pas pu voir** — les « non vu » de la grille, les
-  `indéterminé` du plan, un écran qui n'a pas chargé, un état que la démo ne
-  sert pas (une largeur téléphone) ou qu'on n'a pas ouvert, **nommé avec son
-  écran**, un **avant indisponible** avec la cause que le script a donnée.
+  `indéterminé` du plan, un écran qui n'a pas chargé, **chaque état non
+  couvert** avec sa raison (le pied de `--couverture`), un état qu'aucun geste
+  ne sert (une largeur téléphone) ou qu'on n'a pas ouvert, **nommé avec son
+  écran**, un **avant indisponible** avec la cause que le script a donnée, et
+  l'**âge** de l'état du banc quand il n'atteint pas l'écran touché.
   C'est la section qui distingue un jugement d'un ✓ : *ne pas avoir regardé
   n'est pas avoir trouvé que tout va bien.*
 
-Et sous les trois, **la couverture des états** : le tableau de
-`--couverture <iid>` recopié tel quel, écran par écran. C'est ce qui dit
-lesquels ont été vus sans qu'on ait à le reconstituer de la prose. Une
-case « — » sur un état que le ticket demandait doit se retrouver, nommée, dans
-« ce que je n'ai pas pu voir ».
+Et sous les trois, **la couverture des états** : la sortie de
+`--couverture <iid>` recopiée telle quelle, écran par écran, **son pied
+compris** — les états non couverts et leur raison. C'est ce qui dit lesquels
+ont été vus, et lesquels ne pouvaient pas l'être, sans qu'on ait à le
+reconstituer de la prose. Une case « — » sur un état que le ticket demandait
+doit se retrouver, nommée, dans « ce que je n'ai pas pu voir ».
 
 **Puis la planche**, pour qu'une personne **voie** ce que le texte juge — `gh` ne
 sait pas joindre une image à un commentaire, et le jugement consigné reste du
@@ -423,13 +451,17 @@ Mesuré le 2026-09-11, worktree déjà installé, poste de référence :
 | `--plan` | ~2 s (lecture git seule, aucune stack) |
 | montage de la stack | **18 s** |
 | par écran et par thème | ~4 s (une navigation, une capture) |
-| par état limite (`--scenario`, #978) | ~18 s de redémarrage, puis ~4 s par écran et par thème |
+| par autre état (`--etat`, #1165) | un redémarrage des deux stacks, puis ~4 s par écran et par thème ; `injoignable` ne redémarre rien (une coupure, ~2 s) |
 | `--couverture` | ~2 s (lecture git et disque, aucune stack) |
 | `--fin` | **6 s** |
 
-Soit ~50 s pour trois écrans dans l'état nominal, hors le temps de regarder,
-et ~2 min 30 avec les trois états limites. Ce sont des estimations, pas des
-mesures : aucune relecture complète n'a encore été chronométrée. C'est pourquoi
+Soit ~50 s pour trois écrans dans l'état par défaut, hors le temps de regarder.
+Ce sont des estimations, pas des mesures : aucune relecture complète n'a encore
+été chronométrée. **Sur la vraie stack** (#1165), mesuré le 2026-09-22 sur un
+écran, poste de référence : préparation de l'état `peuple` avec un avant monté
+pour la première fois **95 s** (dont l'avant 61 s), passage à `vide` **69 s**
+(l'avant refusé par un `origin/main` d'avant #1165), `--fin` **27 s** — le
+retrait du projet neuf et de l'avant compris. C'est pourquoi
 `--plan` existe séparément : un ticket sans surface visible coûte deux
 secondes pour l'apprendre. Un run à concurrence 3 monterait trois stacks — sur
 des ports distincts, ce que `worktree.sh` garantit depuis #152.
@@ -450,7 +482,7 @@ Soit **~50 s de plus** par relecture, plus ~4 s par écran et par thème, et
 économise, au prix de juger l'après sans référence.
 
 **Ce que le regard neuf ajoute** (#980), mesuré le 2026-09-17 sur un écran,
-nominal, les deux thèmes avec leur avant (4 captures), en session `claude -p`
+dans l'état par défaut, les deux thèmes avec leur avant (4 captures), en session `claude -p`
 sous le régime de run :
 
 | Étape | Coût |
