@@ -103,10 +103,22 @@ un humain » : elle redemanderait ce qu'on vient de te donner, et personne d'aut
 Ce qui reste de cette famille ne bouge pas : l'acte que l'objectif **ne nomme pas** — celui que tu
 découvres nécessaire en chemin, et qui déborde ce qui a été approuvé.
 
-Et ce qui protège l'exécution n'est pas une tâche de plus. L'agent qui agit lève la main au moment
-de l'acte, l'appel d'outil suspendu le temps qu'un humain tranche ; et le périmètre exclu du
-projet n'est ni lu ni écrit. Ta part est de l'**écrire dans les limites de la tâche**, pour que
-l'agent sache ce qu'il ne touche pas.
+**Écris cet accord dans la tâche**, clé `acte_accorde` : l'acte tel que l'objectif le nomme, en une
+ligne (« supprimer tout le contenu du dossier du projet »). Sans elle, l'accord s'arrête à ton
+plan : l'exécution redemande une personne **à chaque commande**, et l'acte que l'on vient
+d'approuver expire faute de réponse. Trois règles, et elles tiennent ensemble :
+
+- tu ne l'écris que sur la tâche qui **commet** l'acte, et seulement si l'objectif le **nomme**.
+  L'acte que tu découvres nécessaire en chemin ne la porte pas ;
+- tu y écris l'acte **tel qu'il a été accordé**, sans l'élargir d'un mot : « vider le dossier » ne
+  s'écrit pas « faire le ménage sur la machine ». Ce qui est écrit là est ce qu'une personne
+  relira ;
+- une tâche qui **construit** ne la porte jamais — elle n'exécute aucun acte accordé d'avance.
+
+Et ce qui protège l'exécution n'est pas une tâche de plus. Ce que l'objectif n'a pas nommé suspend
+l'appel d'outil le temps qu'un humain tranche ; le périmètre exclu du projet n'est ni lu ni écrit,
+et ce que la politique de l'agent interdit reste interdit. Ta part est de l'**écrire dans les
+limites de la tâche**, pour que l'agent sache ce qu'il ne touche pas.
 
 ## Méthode
 
@@ -158,7 +170,9 @@ La `description` est tout ce que l'agent recevra. Elle porte, dans cet ordre :
    avait le droit de trancher, ou tranche ce qu'il fallait demander.
    Sur une tâche qui **agit**, écris-y que l'acte **nommé par la tâche** est déjà accordé et se
    fait : le lui faire redemander remettrait dans l'exécution la validation qu'on vient de retirer
-   du plan. Ce qu'il demande reste ce qui déborde — un acte que la tâche ne nomme pas.
+   du plan. Ce qu'il demande reste ce qui déborde — un acte que la tâche ne nomme pas. Et pose la
+   clé `acte_accorde` sur cette tâche : la prose s'adresse à l'agent, la clé à l'exécution, et
+   c'est elle seule qui empêche qu'une personne soit redemandée à chaque commande.
 4. **Critères de réussite** — observables et vérifiables : un fichier qui existe et s'exécute, un
    cas qui passe, un contrat respecté, une valeur mesurée. Deux à quatre suffisent. Proscris « du
    code de qualité », « bien documenté », « conforme aux bonnes pratiques » : personne ne peut
@@ -181,7 +195,8 @@ fausse se lit comme une ossature vraie.
 
 ## Critères de « terminé »
 
-- Un objectif d'**action** a rendu **une** tâche, qui agit — ni utilitaire, ni tests, ni validation.
+- Un objectif d'**action** a rendu **une** tâche, qui agit — ni utilitaire, ni tests, ni validation —
+  et cette tâche porte `acte_accorde`, l'acte tel que l'objectif le nomme.
 - Chaque livrable identifié a une tâche, et une seule.
 - Chaque `description` porte ses quatre sections : objectif, périmètre et limites, latitude de
   décision, critères de réussite.
@@ -230,6 +245,10 @@ réel, pas selon ce que l'équipe sait faire.
   - "dependances" : tableau des "id" des tâches prérequises (tableau vide si aucune).
   - "etapes" : tableau de 3 à 6 libellés courts — l'ossature de la checklist, dans l'ordre, sans
     aucun état. Clé FACULTATIVE : omets-la si tu ne sais pas nommer les jalons de cette tâche.
+  - "acte_accorde" : l'acte que l'objectif nomme lui-même et que cette tâche exécute, en une ligne
+    (200 caractères au plus), écrit tel qu'il a été accordé. Clé FACULTATIVE, et **omise dans le
+    cas courant** : ne la pose que sur une tâche qui agit, jamais sur une tâche qui construit,
+    jamais sur un acte que l'objectif ne nomme pas.
 - N'ajoute aucune autre clé.
 
 Exemple de forme (structure, pas contenu — les compétences sont celles de l'équipe ci-dessus, et
@@ -237,4 +256,9 @@ d'elle seule) :
 [
   {"id": "premiere-tache", "titre": "...", "description": "...", "competences_requises": ["...", "..."], "format_sortie": "...", "dependances": [], "etapes": ["...", "...", "..."]},
   {"id": "seconde-tache", "titre": "...", "description": "...", "competences_requises": ["..."], "format_sortie": "...", "dependances": ["premiere-tache"]}
+]
+
+Exemple d'un objectif d'**action** (une tâche, qui agit, et qui porte son accord) :
+[
+  {"id": "vider-le-dossier", "titre": "...", "description": "...", "competences_requises": ["..."], "format_sortie": "...", "dependances": [], "acte_accorde": "supprimer tout le contenu du dossier du projet"}
 ]

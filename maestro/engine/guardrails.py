@@ -163,6 +163,25 @@ ORIGINE_AGENT = "agent"
 DETAIL_AUTO = "accordée d'office — décideur « auto », personne n'a été sollicité"
 
 
+def detail_accorde(acte: str) -> str:
+    """Le détail traçable d'un appel qui passe sur l'**accord de l'objectif** (#1198).
+
+    Le pendant de `DETAIL_AUTO` pour l'autre issue que personne n'a prononcée
+    *maintenant* — à ceci près qu'ici quelqu'un l'a bel et bien prononcée, plus
+    tôt : l'objectif a été montré à une personne qui l'a approuvé, et il nommait
+    cet acte-là (`Task.acte_accorde`). Le texte dit donc les deux moitiés — qui a
+    accordé, et **quoi** —, parce que c'est la seule ligne que le journal gardera
+    d'un `rm -rf` qui n'a dérangé personne au moment de se faire.
+
+    L'acte est repris **tel que le plan l'a écrit** : ce qui se relit doit être
+    ce qui a été accordé, pas une reformulation d'ici.
+    """
+    return (
+        f"accord donné au cadrage : l'acte que la tâche nomme (« {acte} ») a été "
+        "approuvé avec l'objectif, aucune nouvelle demande n'a été composée"
+    )
+
+
 @dataclass(frozen=True)
 class GardeFousIngestion:
     """Plafonds de la matière d'entrée d'un objectif (#315, EF-39, ENF-07). Immuable.
