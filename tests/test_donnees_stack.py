@@ -22,6 +22,7 @@ from pathlib import Path
 
 import pytest
 import uvicorn
+from redis_factice import brancher
 
 from maestro.config import Settings
 from maestro.controltower import cli
@@ -36,7 +37,6 @@ from maestro.controltower.donnees import (
     donnees_du_banc,
 )
 from maestro.espace import COMMUN, VARIABLE_ESPACE, racine_de_la_copie
-from tests.redis_factice import brancher
 
 
 @pytest.fixture()

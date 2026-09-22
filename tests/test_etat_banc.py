@@ -32,6 +32,7 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from redis_factice import ClientSynchrone, ServeurFactice, brancher
 
 from maestro.agents.rangement import SEGMENT_PROJETS
 from maestro.controltower.app import create_app
@@ -53,7 +54,6 @@ from maestro.projets.store import ProjetStore
 from maestro.scenarios import etat
 from maestro.scenarios.modele import Rapport, Resultat
 from maestro.scenarios.projets import VARIABLE_ATELIER
-from tests.redis_factice import ClientSynchrone, ServeurFactice, brancher
 
 PASSAGE = "20260922-100639"
 

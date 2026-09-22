@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from redis_factice import ClientSynchrone, ServeurFactice
 
 from maestro.controltower.donnees import Donnees, donnees_du_banc
 from maestro.controltower.state import (
@@ -78,7 +79,6 @@ from maestro.scenarios.scenarios import (
     Scenario,
     par_identifiant,
 )
-from tests.redis_factice import ClientSynchrone, ServeurFactice
 
 # --- La fausse API ------------------------------------------------------------
 

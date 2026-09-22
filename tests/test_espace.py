@@ -30,8 +30,10 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
+import conftest
 import pytest
 from fastapi.testclient import TestClient
+from redis_factice import ClientSynchrone, ServeurFactice, brancher
 
 from maestro import espace as espace_module
 from maestro.controltower.app import create_app
@@ -67,8 +69,6 @@ from maestro.espace import (
 from maestro.messaging.mailbox import MESSAGE_NOTIFICATION, AgentMessage, RedisMailbox
 from maestro.projets.store import ProjetStore
 from maestro.queue import celery_app
-from tests import conftest
-from tests.redis_factice import ClientSynchrone, ServeurFactice, brancher
 
 # ── ① Le nom ─────────────────────────────────────────────────────────────────
 
