@@ -498,6 +498,7 @@ from maestro.controltower.state import (
 from maestro.controltower.validation import ValidateurControlTower
 from maestro.engine.brief import MODE_BRIEF_AUTO, MODE_BRIEF_HUMAIN
 from maestro.equipe import RoleValide, SkillRetenu
+from maestro.espace import espace_courant
 from maestro.messaging import InMemoryMailbox, Mailbox, RedisMailbox
 from maestro.orchestrator.errors import BriefValidationError
 from maestro.orchestrator.schema import validate_brief
@@ -1905,8 +1906,14 @@ def create_app(
 
     @app.get("/api/sante")
     async def sante() -> dict[str, str]:
-        """Vitalité du service (sonde de supervision)."""
-        return {"statut": "ok"}
+        """Vitalité du service (sonde de supervision), et l'**espace** qu'il sert (#1164).
+
+        L'espace dit quelles données cette API voit — celles de sa copie de
+        travail, ou le jeu du banc. Le banc des scénarios le lit avant de sauver
+        l'état d'un passage : sauver les données d'une autre stack que celle où il
+        a joué ferait rouvrir un état qui n'est pas le sien.
+        """
+        return {"statut": "ok", "espace": espace_courant().nom}
 
     @app.post("/api/extinction")
     async def eteindre() -> dict[str, Any]:

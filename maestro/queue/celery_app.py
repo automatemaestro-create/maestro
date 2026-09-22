@@ -25,6 +25,7 @@ from __future__ import annotations
 from celery import Celery
 
 from maestro.config import Settings, load_settings
+from maestro.espace import nom_redis
 
 #: Nom public de la tâche Celery d'exécution — la clé du découplage : le côté
 #: orchestrateur l'envoie **par nom** (`send_task`), sans importer le code worker.
@@ -61,7 +62,9 @@ def create_app(
         result_serializer="json",
         accept_content=["json"],
         result_accept_content=["json"],
-        task_default_queue=FILE_TACHES,
+        # La file de **l'espace de la stack** (#1164) : un worker lancé depuis une
+        # copie ne prend que les tâches de cette copie.
+        task_default_queue=nom_redis(FILE_TACHES),
         # Le statut « démarrée » remonte au backend : l'orchestrateur voit une
         # tâche passer en file → chez un worker → terminée (remontée de statut).
         task_track_started=True,

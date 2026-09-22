@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from maestro.espace import espace_courant
 from maestro.telemetry import RunJournal, StepUsage
 
 #: Types de message inter-agents (entité AGENT_MESSAGE, docs/03 §2) : le
@@ -62,7 +63,8 @@ DIFFUSION = ""
 
 #: Canaux Redis Pub/Sub : une boîte par agent, plus le canal de diffusion —
 #: préfixes distincts pour qu'aucun nom d'agent n'entre en collision avec la
-#: diffusion. Instance mutualisée (#41, #46), d'où des canaux nommés.
+#: diffusion. Instance mutualisée (#41, #46), d'où des canaux nommés. Noms de
+#: l'espace commun : `RedisMailbox` les range dans celui de sa stack (#1164).
 CANAL_BOITE_PREFIXE = "maestro.boite."
 CANAL_DIFFUSION = "maestro.diffusion"
 
@@ -264,6 +266,9 @@ class RedisMailbox(Mailbox):
     ou sur `maestro.diffusion` pour une diffusion ; chaque boîte ouverte écoute
     ces deux canaux. La dépendance `redis` est déjà tirée par `celery[redis]`
     (#41) ; la connexion est paresseuse (ouverte au premier appel).
+
+    Les canaux sont ceux de **l'espace de la stack**, résolu une fois ici
+    (#1164) : deux copies de travail sur le même Redis ne s'entendent pas.
     """
 
     def __init__(self, url: str | None = None) -> None:
@@ -272,13 +277,17 @@ class RedisMailbox(Mailbox):
         import redis.asyncio as redis_asyncio
 
         self._client = redis_asyncio.Redis.from_url(url or REDIS_URL_DEFAUT)
+        self._espace = espace_courant()
 
     async def publish(self, message: AgentMessage) -> None:
         canal = CANAL_DIFFUSION if message.a_agent == DIFFUSION else canal_boite(message.a_agent)
-        await self._client.publish(canal, message.to_json())
+        await self._client.publish(self._espace.nommer(canal), message.to_json())
 
     async def subscribe(self, agent: str) -> MailboxSubscription:
-        canaux = (canal_boite(agent), CANAL_DIFFUSION)
+        canaux = (
+            self._espace.nommer(canal_boite(agent)),
+            self._espace.nommer(CANAL_DIFFUSION),
+        )
         pubsub = self._client.pubsub()
         await pubsub.subscribe(*canaux)
         return _AbonnementRedis(pubsub, canaux)

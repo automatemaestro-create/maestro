@@ -275,6 +275,10 @@ _HORS_INTERFACE = {
     # Taire `scripts/controltower/start.sh` laisserait « l'API ne répond pas » sans
     # suite, sur le seul écart que ce banc ne peut pas réparer lui-même.
     "maestro/scenarios/banc.py": "le banc des scénarios de référence, joué en terminal",
+    # Le préflight et les gestes de l'état du banc (#1164) : joués par `start.sh`, dont
+    # ils remontent la sortie au terminal. Un refus (« rien à rouvrir », « quelque chose
+    # vit sur le banc ») n'a de suite que s'il nomme le geste qui débloque.
+    "maestro/scenarios/etat.py": "l'état du banc, joué par le lanceur en terminal",
 }
 
 #: Le champ du registre MCP qui porte, pour une poignée d'entrées, un pointeur relatif

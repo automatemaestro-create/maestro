@@ -4194,6 +4194,7 @@ l'installation est déléguée à `scripts/setup.sh --only web`, source unique d
 |---|---|---|
 | Ports Control Tower | l'API et l'UI de la seconde session tueraient celles de la première | `MAESTRO_PORT_API` = 8000 + (iid mod 100), `MAESTRO_PORT_UI` = 3000 + (iid mod 100) |
 | Profil du navigateur MCP | Chrome n'accepte **qu'un consommateur par profil** (verrou ProcessSingleton) | `MAESTRO_CHROME_PROFILE` = `~/.maestro/chrome-profile-<iid>` |
+| Données de la stack réelle (#1164) | toutes les stacks du poste parlent au **même** Redis : sans séparation, une stack rejouerait au démarrage le journal d'une autre et recevrait ses événements en direct | rien à poser : l'**espace** Redis se **déduit** du worktree (`maestro.espace` — son nom git, `commun` et sans préfixe pour le clone principal), fils et projets vivent sous `core/` du worktree ; `start.sh` l'annonce au démarrage |
 
 Le reste suit tout seul : les **hooks git** sont une configuration du dépôt (`core.hooksPath`,
 partagée par tous les worktrees) dont le chemin est **relatif**, donc résolu depuis la racine du

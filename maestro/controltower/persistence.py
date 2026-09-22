@@ -74,18 +74,19 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 
 from maestro.controltower.events import (
-    CANAL_EVENEMENTS,
     REDIS_URL_DEFAUT,
     Event,
     EventBus,
     RedisEventBus,
 )
+from maestro.espace import nom_redis
 
 _LOGGER = logging.getLogger("maestro.controltower")
 
 #: Clé Redis de la liste des événements persistés — sur l'instance mutualisée
 #: avec la file (#41), le bus (#46) et les boîtes (#44), d'où une clé nommée
-#: proche du canal du bus (`CANAL_EVENEMENTS`) sans lui être confondue.
+#: proche du canal du bus (`CANAL_EVENEMENTS`) sans lui être confondue. Nom de
+#: l'espace commun, rangé dans celui de la stack à la construction (#1164).
 CLE_JOURNAL_EVENEMENTS = "maestro.evenements:journal"
 
 
@@ -147,13 +148,15 @@ class RedisEventLog(EventLog):
     ouverte au premier appel).
     """
 
-    def __init__(self, url: str | None = None, *, cle: str = CLE_JOURNAL_EVENEMENTS) -> None:
+    def __init__(self, url: str | None = None, *, cle: str | None = None) -> None:
         # Import local : seule la branche Redis dépend du client (le journal
         # mémoire des tests n'en a pas besoin).
         import redis.asyncio as redis_asyncio
 
         self._client = redis_asyncio.Redis.from_url(url or REDIS_URL_DEFAUT)
-        self._cle = cle
+        # Le journal de **l'espace de la stack** (#1164) : c'est lui que l'API
+        # rejoue au démarrage, donc lui qui décide de ce qu'une stack voit.
+        self._cle = cle if cle is not None else nom_redis(CLE_JOURNAL_EVENEMENTS)
 
     async def consigner(self, event: Event) -> None:
         await self._client.rpush(self._cle, event.to_json())
@@ -225,8 +228,8 @@ class BusDurable(EventBus):
 def bus_durable(
     url: str | None = None,
     *,
-    canal: str = CANAL_EVENEMENTS,
-    cle: str = CLE_JOURNAL_EVENEMENTS,
+    canal: str | None = None,
+    cle: str | None = None,
 ) -> BusDurable:
     """Le bus de production d'un producteur **hors de l'API** (#699).
 
@@ -239,7 +242,8 @@ def bus_durable(
     appelants concernés fermaient déjà leur bus (`hote_detache`), et leur
     demander un second geste serait la moitié de fuite qu'on ne remarque qu'au
     trentième run. Les deux connexions sont paresseuses, comme celles qu'elles
-    remplacent — se construire n'exige pas un Redis joignable.
+    remplacent — se construire n'exige pas un Redis joignable. Canal et liste
+    sont ceux de l'espace de la stack (#1164), résolus par les deux objets.
     """
     return BusDurable(
         RedisEventBus(url, canal=canal),

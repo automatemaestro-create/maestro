@@ -186,6 +186,20 @@ class ClientAPI:
         except ErreurAPI:
             return False
 
+    def espace(self) -> str:
+        """L'espace de données que sert l'API (#1164) — `""` si elle ne le dit pas.
+
+        C'est ce que le banc confronte au banc de sa copie avant de sauver un
+        état : sauver les données d'une autre stack que celle où il a joué ferait
+        rouvrir un état qui n'est pas celui du passage.
+        """
+        try:
+            reponse = self._transport.demander("GET", "/api/sante")
+        except ErreurAPI:
+            return ""
+        corps = reponse.corps if isinstance(reponse.corps, Mapping) else {}
+        return str(corps.get("espace") or "")
+
     # --- Les projets ----------------------------------------------------
 
     def declarer_projet(self, nom: str, racine: str, *, origine: str) -> str:
