@@ -15,6 +15,7 @@ CE QUI EST GARDÉ ICI, LOT PAR LOT :
 | #758 | un jalon soldé sans verdict est nommé, un jalon bouclé ne l'est plus, rien n'est écrit |
 | #759 | la commande **s'arrête** sans critères ; un critère non couvert est nommé, jamais coché |
 | #760 | le verdict consigné **éteint** la convocation ; aucune réserve sans « oui » |
+| #1152 | un jalon produit joue les scénarios ; un rouge interdit tout `GO`, l'injouable s'abstient|
 | transversal | aucune commande ne ferme un jalon ni ne pose de cycle de vie |
 
 ⚠ **CE QUE LE BOUCLAGE EST, ET CE QU'IL N'EST PAS.** Il ne ferme aucun milestone (`docs/10 §3.4`,
@@ -45,6 +46,8 @@ premier moyen de rendre une suite verte sur une forme de réponse que l'autre a 
 
 from __future__ import annotations
 
+import io
+import json
 import re
 from pathlib import Path
 
@@ -60,6 +63,10 @@ from harnais_forge import (
     jalon,
     monte_depot,
 )
+
+from maestro.scenarios import banc
+from maestro.scenarios import rapport as rapport_du_banc
+from maestro.scenarios.modele import VERDICT_ROUGE, VERDICT_VERT, Rapport, Resultat
 
 pytestmark = [
     pytest.mark.skipif(BASH is None, reason="bash introuvable"),
@@ -631,7 +638,7 @@ def test_le_bilan_propose_le_verdict_et_ne_le_rend_pas() -> None:
 
 
 def test_le_bilan_n_a_aucun_navigateur_en_propre() -> None:
-    """Quatre exécutants existent, ce sont les seuls — il les APPELLE, il n'en réécrit aucun.
+    """Cinq exécutants existent, ce sont les seuls — il les APPELLE, il n'en réécrit aucun.
 
     Déclarer `mcp__chrome-maestro` l'inviterait à tenir une seconde version de ce que
     `captures.sh`, `verify` et `banc-mise-en-page` font déjà. La décision est écrite dans le
@@ -649,6 +656,163 @@ def test_le_bilan_ne_commite_pas_son_rapport() -> None:
     texte = prose(BILAN)
     assert "docs/bilans/" in texte
     assert "n'est pas commité" in texte
+
+
+# =================================================================================================
+# #1152 — Un jalon produit ne se boucle pas sans les scénarios de référence joués
+# =================================================================================================
+# Le bilan exerçait les critères, jamais un parcours : « L'équipe sur mesure » a été bouclé pendant
+# qu'un run sur un projet antérieur échouait sans prévenir (#1146). Sur un jalon produit, le prompt
+# joue désormais le banc de #1148. Ce qui se garde ici est de deux natures : le CONTRAT avec le banc
+# — codes de sortie, fichier et champs relus, options et geste nommés —, éprouvé contre le banc
+# lui-même et jamais recopié, pour qu'un banc qui change rende ce module rouge au lieu de laisser le
+# prompt lire un fantôme ; et les INTERDITS du prompt, ce qu'une réécriture à la légère lui ferait
+# perdre — au premier rang, qu'un banc injouable passe pour un vert.
+
+#: Les champs d'un scénario que l'étape 5c fait lire dans `rapport.json`.
+CHAMPS_LUS = ("id", "titre", "verdict", "motif", "run_id", "rejoue", "empechement")
+
+
+def etape_5c() -> str:
+    """L'étape 5c du prompt, blancs repliés — bornée par l'étape 6, découpage avant repli."""
+    return section_de(BILAN, "**5c. Les scénarios de référence", "\n6. **Rattache")
+
+
+def test_un_jalon_produit_joue_le_banc_et_un_jalon_d_outillage_non() -> None:
+    """La commande est JOUÉE — dans un bloc de code, par le Python du venv — et déclarée.
+
+    Le nom du module est celui du banc (`banc.MODULE`, lui-même dérivé du paquet) : recopié, il
+    survivrait à un renommage et ferait jouer au bilan une commande qui n'existe plus.
+    """
+    commande = f".venv/Scripts/python.exe -m {banc.MODULE}"
+    assert any(commande in bloc for bloc in blocs_de_code(BILAN)), "le banc n'est pas joué"
+    # Contre-exemple : un bloc qui ne le porte pas est bien vu comme tel.
+    assert not all(commande in bloc for bloc in blocs_de_code(BILAN))
+
+    section = etape_5c()
+    assert "Rail `outillage` : **non concerné**" in section
+    assert "Rail `produit` : joue le banc de #1148, **sans option**" in section
+
+    entete = BILAN.read_text(encoding="utf-8").split("---")[1]
+    assert "Bash(.venv/Scripts/python.exe:*)" in entete and "Bash(.venv/bin/python:*)" in entete
+
+
+def test_les_codes_que_le_prompt_departage_sont_ceux_du_banc() -> None:
+    """`0`, `1`, `3` : chacun lu sur la constante du banc, jamais recopié.
+
+    Le `3` est celui qui compte le plus : c'est lui qui sépare « le produit s'est trompé » de « il
+    n'était pas allumé » — un banc renuméroté ferait lire l'un pour l'autre.
+    """
+    section = etape_5c()
+    assert f"`{banc.CODE_VERT}` — tous verts" in section
+    assert f"`{banc.CODE_ROUGE}` — au moins un rouge" in section
+    assert f"`{banc.CODE_API_MUETTE}` — l'API ne répond pas" in section
+    assert "tout autre code" in section, "un code que le prompt ne nomme pas n'est pas un vert"
+    assert len({banc.CODE_VERT, banc.CODE_ROUGE, banc.CODE_API_MUETTE}) == 3
+
+
+def test_le_bilan_relit_le_json_que_le_banc_ecrit(tmp_path: Path) -> None:
+    """Les champs que l'étape 5c fait lire existent dans ce que le banc écrit — sur un vrai rapport.
+
+    Le passage porte les deux sortes de rouge que le prompt départage : un rouge du produit et un
+    empêchement. Si `empechement` cessait de les distinguer, le bilan rendrait un `NO-GO` pour une
+    panne de stack — ou l'inverse.
+    """
+    passage = Rapport(
+        horodatage="20260922-120000",
+        resultats=(
+            Resultat(identifiant="S1", titre="Vider un dossier", verdict=VERDICT_ROUGE,
+                     motif="le dossier n'est pas vide", duree_s=1.0, run_id="r-1"),
+            Resultat(identifiant="S4", titre="Pourquoi le run a échoué ?", verdict=VERDICT_ROUGE,
+                     motif="juge indisponible", duree_s=1.0, run_id="r-4", empechement=True),
+        ),
+    )
+    dossier = rapport_du_banc.ecrire(passage, racine=tmp_path)
+    assert (dossier / rapport_du_banc.FICHIER_MARKDOWN).is_file(), "le Markdown recopié en annexe"
+    relu = json.loads((dossier / rapport_du_banc.FICHIER_JSON).read_text(encoding="utf-8"))
+
+    for scenario in relu["scenarios"]:
+        manquants = [champ for champ in CHAMPS_LUS if champ not in scenario]
+        assert not manquants, f"{scenario.get('id')} : champ(s) lu(s) par le bilan absent(s)"
+    assert [s["empechement"] for s in relu["scenarios"]] == [False, True]
+    assert relu["vert"] is False
+
+    section = etape_5c()
+    assert f"`{rapport_du_banc.FICHIER_JSON}`" in section
+    assert f"`{rapport_du_banc.FICHIER_MARKDOWN}`" in section
+    assert f"`{VERDICT_VERT}`" in section, "la valeur à laquelle le prompt compare le verdict"
+    absents = [champ for champ in CHAMPS_LUS if f"`{champ}`" not in section]
+    assert not absents, f"champ(s) que l'étape 5c ne nomme plus : {absents}"
+
+
+def test_les_options_et_le_geste_que_le_prompt_nomme_sont_ceux_du_banc() -> None:
+    """Un interdit sur une option disparue, ou un geste d'allumage périmé, ne garde plus rien.
+
+    `--liste` ne touche pas l'API : c'est ce qui rend les options éprouvables ici, sans réseau.
+    """
+    section = etape_5c()
+    assert "`--nettoyer`" in section and "`--scenario`" in section
+    code = banc.main(
+        ["--liste", "--nettoyer", "--scenario", "S1"], sortie=io.StringIO(), erreur=io.StringIO()
+    )
+    assert code == banc.CODE_VERT, "le banc ne reconnaît plus une option que le prompt nomme"
+    # Contre-exemple : une option inconnue est bien refusée — sinon le contrôle ne prouverait rien.
+    inconnue = banc.main(["--liste", "--tout-casser"], sortie=io.StringIO(), erreur=io.StringIO())
+    assert inconnue == banc.CODE_USAGE
+
+    assert f"`{banc.GESTE_PREALABLE} --no-browser`" in section
+    assert "jamais `--demo`" in section
+    assert "rejoue le banc **une** fois" in section
+
+
+def test_un_scenario_rouge_interdit_tout_go() -> None:
+    """La décision de docs/40 §5 : ni `GO`, ni `GO avec réserves` — ce dernier laisserait le jalon
+    fermable avec un scénario rouge, c'est-à-dire exactement ce que #1152 interdit.
+    """
+    texte = prose(BILAN)
+    assert "il ne se boucle pas `GO` avec un scénario de référence rouge" in texte
+    assert "réserve **bloquante par décision**" in texte
+    assert "tu ne la rétrogrades pas" in texte
+    assert "**Jamais avec un scénario rouge ou non joué.**" in texte
+    assert "Un scénario rouge en est une." in texte
+
+
+def test_un_banc_injouable_est_une_abstention_jamais_un_vert() -> None:
+    """Pas de passage silencieux : vert, rouge ou non joué, et le rapport le dit dans les trois cas.
+
+    Une abstention n'est pas non plus un `NO-GO` — le partage de l'étape 7 vaut pour les scénarios :
+    une stack éteinte n'est pas un produit jugé mauvais. Mais un `NO-GO` des critères n'attend pas
+    les scénarios pour tenir.
+    """
+    section = etape_5c()
+    assert "**Il n'y a pas de passage silencieux**" in section
+    assert "Un banc injouable est une **abstention** sur les scénarios, jamais un vert." in section
+    assert "Dans le doute, c'est un rouge." in section
+
+    texte = prose(BILAN)
+    assert "le bouclage attend le passage" in texte
+    assert "Un `NO-GO` des critères, lui, reste un `NO-GO`" in texte
+
+
+def test_un_rouge_ne_se_rejoue_pas_jusqu_au_vert() -> None:
+    """Le banc rejoue déjà une fois un rouge non déterministe ; relancer le passage jusqu'à ce qu'il
+    passe fabriquerait le verdict. Et ni le coût ni un sous-ensemble ne dispensent du passage.
+    """
+    section = etape_5c()
+    assert "Un rouge ne se rejoue pas jusqu'au vert." in section
+    assert "fabriquerait le verdict" in section
+    assert "ne le saute pas pour l'économiser" in section
+    assert "ne le réduis pas par `--scenario`" in section
+
+
+def test_le_rapport_du_banc_est_joint_au_bilan() -> None:
+    """Joint, pas seulement nommé : il vit sous `.maestro/`, et le déroulé d'un rouge se perdrait au
+    premier ménage — le bilan est le document qui attend l'arbitrage.
+    """
+    texte = prose(BILAN)
+    assert "**Scénarios de référence** — pour un jalon produit" in texte
+    assert "**Annexe — rapport du banc**" in texte
+    assert "**recopié tel quel**" in texte
 
 
 # =================================================================================================
@@ -984,3 +1148,25 @@ def test_claude_md_nomme_les_deux_commandes_de_supervision() -> None:
     assert "/milestone-bilan" in texte
     assert "/milestone-verdict" in texte
     assert "milestones-a-boucler" in texte
+
+
+def test_docs_10_et_claude_md_disent_la_condition_des_scenarios() -> None:
+    """La condition de #1152 est écrite là où on la lit : §3.4 pour la règle, la ligne de
+    `/milestone-bilan` de `CLAUDE.md` pour l'agent — rail outillage exclu dans les deux.
+
+    La ligne est cherchée par son début : une assertion sur tout `CLAUDE.md` serait vraie d'une
+    phrase écrite sous une autre commande.
+    """
+    section = section_de(DOC_WORKFLOW, "\n### 3.4 ", "\n### 3.5 ")
+    assert "ne se boucle pas `GO` avec un scénario de référence rouge" in section
+    assert f"-m {banc.MODULE}" in section
+    assert "**jamais un vert**" in section
+    assert "Un jalon du rail **outillage** n'est pas concerné" in section
+
+    lignes = [ligne for ligne in CLAUDE_MD.read_text(encoding="utf-8").splitlines()
+              if ligne.startswith("- `/milestone-bilan")]
+    assert len(lignes) == 1, "la ligne de `/milestone-bilan` est introuvable ou doublée"
+    assert f"-m {banc.MODULE}" in lignes[0]
+    assert "un scénario rouge interdit tout `GO`" in lignes[0]
+    assert "abstention, jamais un vert" in lignes[0]
+    assert "le rail outillage n'est pas concerné" in lignes[0]

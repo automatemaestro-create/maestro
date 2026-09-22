@@ -278,14 +278,14 @@ Ce que l'absence a laissé passer, sur pièces : les contrats d'API de [docs/05 
 
 | geste | commande | ce qu'elle fait | ce qu'elle n'écrit pas |
 |---|---|---|---|
-| **exercer** | `/milestone-bilan "<titre>"` (#759) | monte la stack, prend les captures, joue les verbes et les suites, rattache chaque critère à sa pièce, **propose** un verdict, écrit `docs/bilans/<slug>.md` | rien côté forge : rien n'y est encore arbitré |
+| **exercer** | `/milestone-bilan "<titre>"` (#759) | monte la stack, prend les captures, joue les verbes et les suites, **joue les scénarios de référence** sur un jalon produit (#1152), rattache chaque critère à sa pièce, **propose** un verdict, écrit `docs/bilans/<slug>.md` | rien côté forge : rien n'y est encore arbitré |
 | **enregistrer** | `/milestone-verdict "<titre>"` (#760) | prend la réponse d'une personne, la consigne dans la section `## Verdict` du jalon, **propose** chaque réserve en ticket | ne ferme aucun jalon, ne rejoue aucune pièce |
 
 `/milestone-bilan` **n'a aucun navigateur en propre** : les exécutants existent, elle les
 **appelle** — `ecrans-touches.sh` pour les surfaces livrées (dérivées des commits, jamais
 devinées), `captures.sh` pour les captures et les clips, le skill `verify` pour le câblage,
-`banc-mise-en-page` pour la géométrie, et pour un jalon d'**outillage** les verbes joués et les
-suites qui les gardent.
+`banc-mise-en-page` pour la géométrie, pour un jalon **produit** le banc des scénarios de
+référence (#1148), et pour un jalon d'**outillage** les verbes joués et les suites qui les gardent.
 
 `/milestone-verdict`, de son côté, **n'enregistre rien sans un « oui » explicite** — ni le verdict,
 ni un seul ticket de réserve : une réserve **acceptée telle quelle** est une décision, et un ticket
@@ -351,6 +351,26 @@ Quatre choses à ne pas défaire :
 Et une cinquième, qui tient à `/milestone-bilan` seule : **l'abstention n'est pas un `NO-GO`**. Un
 jalon dont aucun critère n'est exerçable rend une abstention, parce qu'un livrable qu'on n'a pas su
 éprouver n'est pas un livrable jugé mauvais.
+
+**Un jalon du rail produit ne se boucle pas `GO` avec un scénario de référence rouge** (#1152,
+[docs/40 §5](./40-decision-rythme-et-scenarios-de-reference.md)). Les critères disent ce que chaque
+ticket annonce ; aucun ne rejoue ce qu'un utilisateur fait, et c'est par cet écart que « L'équipe sur
+mesure » a été bouclé pendant qu'un run sur un projet antérieur échouait sans prévenir (#1146). Sur
+un jalon produit, `/milestone-bilan` joue donc le banc de #1148 —
+`.venv/Scripts/python.exe -m maestro.scenarios` : vraie stack, vrai modèle, porte d'entrée réelle —
+et **joint son rapport** au bilan. Le code de sortie du banc décide, son `rapport.json` nomme (jamais
+son Markdown, qu'on ne jugerait que par un motif, #746) :
+
+- **tous verts** → la condition est tenue, et le verdict se forme sur les critères ;
+- **un scénario rouge** → réserve **bloquante par décision**, nommée avec son scénario et son run :
+  ni `GO` ni `GO avec réserves` ;
+- **un banc injouable** — stack arrêtée après une tentative d'allumage, fournisseur absent, scénario
+  que le banc n'a pas mené jusqu'à son oracle → **abstention** sur les scénarios, **jamais un vert** :
+  aucun `GO` ne se propose, et un `NO-GO` des critères reste un `NO-GO`.
+
+Le banc n'est pas en CI : un passage coûte du vrai modèle (~10 $), et c'est le prix du bouclage. Il
+rejoue déjà une fois un rouge non déterministe ; relancer le passage jusqu'au vert fabriquerait le
+verdict. Un jalon du rail **outillage** n'est pas concerné : il ne livre aucun parcours utilisateur.
 
 Deux limites assumées plutôt que masquées. Le **rapport n'est pas commité** (décision alignée sur
 `/milestone-presentation`), donc son chemin dans la section consignée est un renvoi **local** que

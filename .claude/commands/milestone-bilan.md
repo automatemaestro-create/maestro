@@ -1,7 +1,7 @@
 ---
 description: Exerce le livrable d'un milestone sur pièces et propose un verdict de bouclage — GO, GO avec réserves, NO-GO — critère par critère
 argument-hint: "[milestone]  (titre ou fragment, ex. « Phase 3 » — sans argument, les jalons actifs soldés te sont proposés)"
-allowed-tools: Bash(bash:*), Skill, AskUserQuestion, Read, Write
+allowed-tools: Bash(bash:*), Bash(.venv/Scripts/python.exe:*), Bash(.venv/bin/python:*), Skill, AskUserQuestion, Read, Write
 ---
 
 <!-- `mcp__chrome-maestro` est ABSENT de cette liste, et c'est voulu : cette commande n'a aucun
@@ -32,6 +32,12 @@ Deux règles gouvernent tout le reste, et rien de ce qui suit ne les défait :
 - **Un critère qu'aucune pièce ne couvre est nommé comme tel, jamais coché.** Un ✓ sur une
   question jamais posée est pire qu'une case vide : c'est lui qui a laissé quatorze jalons se
   fermer sur « ça a été écrit ». Tu ne conclus **que** sur ce que tu as exercé.
+
+Et une condition, pour un jalon du rail **produit** seulement : **il ne se boucle pas `GO` avec un
+scénario de référence rouge** (#1152, docs/40 §5). Les critères disent ce que chaque ticket
+annonce, les scénarios rejouent ce qu'un utilisateur fait — c'est par cet écart que « L'équipe sur
+mesure » a été bouclé pendant qu'un run sur un projet antérieur échouait sans prévenir (#1146).
+C'est l'étape 5c.
 
 ---
 
@@ -115,9 +121,11 @@ Deux règles gouvernent tout le reste, et rien de ce qui suit ne les défait :
    les critères**, jamais par ce que l'outillage sait faire. Un critère qui parle de temps réel
    s'exerce en coupant la WebSocket, pas en photographiant un écran.
 
-   ⚠ **Tu n'écris aucun pilotage de navigateur, aucun lanceur, aucune capture.** Quatre exécutants
-   existent, ce sont les seuls : `ecrans-touches.sh`, `captures.sh` / `parcours.mjs`, le skill
-   **`verify`** et le skill **`banc-mise-en-page`**. Tu les **appelles** ; tu n'en réécris aucun.
+   ⚠ **Tu n'écris aucun pilotage de navigateur, aucun lanceur, aucune capture, aucun parcours.**
+   Cinq exécutants existent, ce sont les seuls : `ecrans-touches.sh`, `captures.sh` /
+   `parcours.mjs`, le skill **`verify`**, le skill **`banc-mise-en-page`** et, pour un jalon
+   produit, le banc des scénarios **`maestro.scenarios`** (5c). Tu les **appelles** ; tu n'en
+   réécris aucun.
 
    **5a. Les surfaces visibles** (les écrans dérivés à l'étape 4) :
    ```
@@ -153,6 +161,57 @@ Deux règles gouvernent tout le reste, et rien de ce qui suit ne les défait :
    Un critère que rien ne peut atteindre reste **non couvert** ; le déclarer tenu sur lecture est
    la seule erreur que cette commande ne doit jamais commettre.
 
+   **5c. Les scénarios de référence — rail `produit` seulement** (#1152, docs/40 §5).
+
+   Rail `outillage` : **non concerné**. Ne joue pas le banc — un jalon d'outillage ne livre aucun
+   parcours utilisateur — et dis-le d'une ligne dans le rapport.
+
+   Rail `produit` : joue le banc de #1148, **sans option** —
+   ```
+   .venv/Scripts/python.exe -m maestro.scenarios
+   ```
+   (`.venv/bin/python` sous Unix). Quatre choses à savoir avant de le lancer :
+   - **Il parle à la Control Tower réelle**, sur son port, par le fil de l'orchestrateur et avec le
+     vrai modèle. Joue-le **après** 5a et 5b : `verify` relance et arrête la stack sur ces mêmes
+     ports, et un redémarrage pendant le passage couperait ses runs.
+   - **Il dure bien plus qu'un appel** — un run peut prendre quinze minutes, et il y a quatre
+     scénarios : lance-le en arrière-plan, et attends sa fin avant l'étape 6.
+   - **Il coûte du vrai modèle** (~10 $ le passage du retex). C'est le prix du bouclage d'un jalon
+     produit, décidé (docs/40 §5) : ne le saute pas pour l'économiser, et ne le réduis pas par
+     `--scenario` — un passage partiel n'est pas le passage.
+   - **Pas de `--nettoyer`** : les projets jetables sont les pièces d'un rouge, et la réserve qui en
+     naîtra en aura besoin.
+
+   Son **code de sortie** décide, son rapport nomme :
+   - `0` — tous verts : la condition est **tenue**.
+   - `1` — au moins un rouge : lis `rapport.json`, dans le dossier du `rapport.md` que sa dernière
+     ligne nomme — jamais le Markdown, qu'on ne jugerait que par un motif (#746). Pour chaque
+     scénario dont le `verdict` n'est pas `vert` :
+     - `empechement` faux → **rouge du produit**. Nomme-le : son `id`, son `titre`, son `run_id`,
+       son `motif`, et `rejoue` s'il a été rejoué.
+     - `empechement` vrai → le banc n'a pas pu le mener jusqu'à son oracle : **non joué**, avec son
+       motif.
+
+     Un rouge dont le **déroulé** montre que l'environnement a manqué, et non le produit —
+     fournisseur non configuré ou injoignable, quota —, se dit aussi **non joué**, avec l'étape du
+     déroulé où il a manqué. Dans le doute, c'est un rouge.
+   - `3` — l'API ne répond pas, rien n'a été joué. Allume la stack **réelle** —
+     `bash scripts/controltower/start.sh --no-browser`, jamais `--demo`, contre lequel le banc
+     jouerait un scénario factice ; sans `--no-browser`, fermer la fenêtre qu'il ouvre arrêterait la
+     stack sous le banc —, relaie sa ligne d'arrêt, et rejoue le banc **une** fois. Un second refus,
+     ou une stack qui ne démarre pas (Redis absent…) : **non joué**, avec sa cause et le geste qui
+     débloque.
+   - tout autre code (usage, trace Python) : **non joué**, avec la sortie.
+
+   ⚠ **Un rouge ne se rejoue pas jusqu'au vert.** Le banc a déjà rejoué une fois ses scénarios non
+   déterministes, et c'est son second passage qui fait foi (docs/40 §5). Relancer le passage
+   jusqu'à ce qu'il passe fabriquerait le verdict. Le seul rejeu permis est celui d'un banc qui n'a
+   **rien** joué (`3`).
+
+   **Il n'y a pas de passage silencieux** : chaque scénario est vert, rouge ou non joué, et le
+   rapport le dit dans les trois cas. Un banc injouable est une **abstention** sur les scénarios,
+   jamais un vert.
+
 6. **Rattache chaque critère à ses pièces.** Reprends `C1`, `C2`, … et donne à chacun **un** état,
    avec la pièce qui le porte :
    - **tenu** — une pièce le montre. **Nomme-la** (telle capture, tel clip, la sortie de tel
@@ -164,19 +223,31 @@ Deux règles gouvernent tout le reste, et rien de ce qui suit ne les défait :
      de surface visible, stack qui n'a pas démarré, critère invérifiable de l'extérieur, ticket
      non mergé. Jamais coché par défaut, jamais fondu dans « tenu ».
 
-   Puis, pour chaque réserve, tranche : **bloquante** ou **non bloquante**. C'est ce jugement-là,
-   et lui seul, qui décide du verdict — dis sur quoi tu le fondes.
+   Les **scénarios** (5c) ne sont pas des critères et n'en prennent pas les numéros : chacun se
+   rattache à son identifiant (`S1`, `S2`…). Un scénario **rouge** est une réserve **bloquante par
+   décision** (docs/40 §5), pas par ton jugement : tu ne la rétrogrades pas. Un scénario **non
+   joué** est une réserve « non joué », rattachée de même.
+
+   Puis, pour chaque réserve **de critère**, tranche : **bloquante** ou **non bloquante**. C'est
+   ce jugement-là, avec l'état des scénarios, qui décide du verdict — dis sur quoi tu le fondes.
 
 7. **Propose un verdict.**
-   - **`GO`** — tous les critères tenus, aucune réserve.
+   - **`GO`** — tous les critères tenus, aucune réserve ; pour un jalon produit, les scénarios
+     **tous verts**.
    - **`GO avec réserves`** — aucune réserve bloquante. Les réserves et les critères non couverts
      sont nommés et suivis. Un critère **non couvert est une réserve à lui seul** (« non
-     vérifié ») : il ne laisse jamais un `GO` nu.
-   - **`NO-GO`** — au moins une réserve bloquante.
+     vérifié ») : il ne laisse jamais un `GO` nu. **Jamais avec un scénario rouge ou non joué.**
+   - **`NO-GO`** — au moins une réserve bloquante. Un scénario rouge en est une.
    - **Aucun verdict (abstention)** — si **aucun** critère n'a pu être exercé : ne propose rien et
      dis pourquoi. Une abstention n'est pas un `NO-GO` — un livrable qu'on n'a pas su éprouver
      n'est pas un livrable jugé mauvais, et les confondre ferait rejeter une phase pour une panne
      de stack.
+
+     Pour un jalon produit, c'est aussi le verdict quand **un scénario n'a pas été joué** et
+     qu'aucun n'est rouge, alors que les critères appelleraient un `GO` ou un `GO avec réserves` :
+     dis la conclusion que portent les critères, et que le bouclage attend le passage — avec le
+     geste qui débloque. Un `NO-GO` des critères, lui, reste un `NO-GO` : il n'a pas besoin des
+     scénarios pour tenir.
 
    Un `GO avec réserves` **n'est pas un `NO-GO`** : le jalon reste fermable, ses réserves restent
    nommées.
@@ -195,16 +266,26 @@ Deux règles gouvernent tout le reste, et rien de ce qui suit ne les défait :
       `verify`, banc de mise en page, verbes joués, suites jouées) et **ce qui n'a pas pu
       l'être**, avec sa cause.
    4. **Critère par critère** — le tableau de l'étape 6 : état, pièce, observation.
-   5. **Réserves** — numérotées, chacune **rattachée à son critère**, bloquante ou non.
-   6. **Verdict proposé** — avec son raisonnement, et la phrase qui dit que l'arbitrage revient à
+   5. **Scénarios de référence** — pour un jalon produit : le passage (horodatage, coût, durée),
+      l'état de la condition (**tenue**, **en défaut**, **non jouée**), et un tableau d'une ligne
+      par scénario — identifiant, titre, vert / rouge / non joué, `run_id`, motif. Pour un jalon
+      d'outillage, une ligne : non concerné.
+   6. **Réserves** — numérotées, chacune **rattachée à son critère** ou à son scénario, bloquante
+      ou non.
+   7. **Verdict proposé** — avec son raisonnement, et la phrase qui dit que l'arbitrage revient à
       une personne.
+   8. **Annexe — rapport du banc** — pour un jalon produit, le `rapport.md` du passage **recopié
+      tel quel**, ses titres descendus de deux rangs, et son chemin. C'est ce qui **joint** le
+      rapport au bilan : il vit sous `.maestro/`, et un bilan qui ne ferait que le nommer perdrait
+      le déroulé de ses rouges au premier ménage.
 
    ⚠ **Le rapport ne consigne rien côté forge** : la section `## Verdict` du jalon n'est pas
    écrite ici, et le fichier **n'est pas commité** — c'est une décision humaine, comme pour
    `/milestone-presentation`. Dis-le dans le résumé.
 
 9. **Résumé court** : le jalon bouclé et son état, le compte de critères **tenus / en défaut / non
-   couverts**, les pièces produites (et celles qui ont manqué), les réserves avec le nombre de
+   couverts**, pour un jalon produit les scénarios **verts / rouges / non joués** et le coût du
+   passage, les pièces produites (et celles qui ont manqué), les réserves avec le nombre de
    bloquantes, le **verdict proposé**, le chemin du rapport. Signale ce qui a échoué plutôt que de
    le taire.
 
@@ -235,6 +316,9 @@ Deux règles gouvernent tout le reste, et rien de ce qui suit ne les défait :
   ticket sans surface visible. C'est `--check` qui les distingue, sur stderr.
 - **Un jalon d'outillage n'a rien à photographier.** Son livrable s'exerce en **jouant** ses
   verbes et les suites qui les gardent ; l'absence de capture n'y est pas une lacune du bouclage.
+- **Les scénarios jouent le produit d'aujourd'hui**, pas celui de la phase, et un rouge peut venir
+  d'un ticket d'un autre jalon. Il bloque quand même : un jalon produit ne se ferme pas sur un
+  produit qui ne fait pas ce qu'on lui demande. Dis d'où il vient quand le déroulé le montre.
 - **Elle ne juge pas la pertinence des critères**, seulement s'ils sont tenus. Un critère mal
   posé rendra un verdict juste sur une mauvaise question — et ça, c'est à dire à voix haute.
 
