@@ -49,6 +49,10 @@ Couvre :
 ⑩ **le lexique ne revient pas** (#688) : les symboles retirés en #685 ne sont ni
    définis ni référencés, y compris comme repli — cherchés dans l'arbre
    syntaxique, jamais par un `grep` qui condamnerait les prose qui les racontent.
+⑪ **agir est une demande de travail** (#1205) : vider, supprimer, renommer,
+   déplacer atteignent le juge comme les autres demandes, et une action proposée
+   se répond d'un geste qui ouvre le run dans le projet de la fenêtre — le chemin
+   de S1, que le banc des scénarios joue sur la vraie stack.
 
 Ce que ces tests **ne** peuvent pas tenir, et l'assument : la qualité du jugement
 lui-même. Le juge est un double, donc « cette phrase est-elle une demande de
@@ -277,8 +281,25 @@ TEMOINS_NEGATIFS = [
     pytest.param("merci", id="salutation"),
 ]
 
+#: Le message de S1, mot pour mot : c'est celui que le banc des scénarios envoie
+#: (`maestro.scenarios.scenarios.s1_vider_un_dossier`), et celui que le juge
+#: refusait « étranger à Maestro » (#1205).
+DEMANDE_S1 = "Vide le dossier de ce projet : supprime tout son contenu."
 
-@pytest.mark.parametrize("demande", BANC_682 + TEMOINS_QUI_PASSAIENT_DEJA)
+#: Les demandes d'**agir** sur le projet (#1205) : rien à écrire, un geste à faire
+#: dans son dossier. Elles entrent au banc pour la même raison que celles de
+#: #682 — le canal ne doit en écarter aucune, ni avant le juge ni après lui. Ce
+#: que le juge **réel** en décide ne se tient pas ici (le juge est un double) :
+#: c'est S1, sur la vraie stack, qui le dit.
+BANC_1205 = [
+    pytest.param(DEMANDE_S1, id="vider-le-dossier-S1"),
+    pytest.param("Supprime les fichiers de log", id="supprimer"),
+    pytest.param("Renomme src en app", id="renommer"),
+    pytest.param("Déplace les images dans assets", id="deplacer"),
+]
+
+
+@pytest.mark.parametrize("demande", BANC_682 + TEMOINS_QUI_PASSAIENT_DEJA + BANC_1205)
 def test_une_demande_de_travail_est_proposee_et_n_ouvre_aucun_run(demande: str) -> None:
     """Critère 1 : une proposition, jamais un run — et la phrase atteint le juge."""
     lanceur = LanceurEspion()
@@ -296,7 +317,7 @@ def test_une_demande_de_travail_est_proposee_et_n_ouvre_aucun_run(demande: str) 
     assert OBJECTIF in reponse.contenu
 
 
-@pytest.mark.parametrize("demande", BANC_682)
+@pytest.mark.parametrize("demande", BANC_682 + BANC_1205)
 def test_le_canal_ne_tranche_plus_avant_le_juge(demande: str) -> None:
     """La moitié de #685 qu'aucune assertion sur le verdict ne couvre (#688).
 
@@ -2481,6 +2502,48 @@ def test_le_projet_de_la_fenetre_voyage_aussi_par_le_geste(
     )
 
     assert lanceur.projets == ["prj-depensio"]
+
+
+def test_une_demande_d_action_se_propose_puis_part_sur_l_accord_dans_son_projet(
+    bus, depot_chat, lanceur
+) -> None:
+    """S1 joué côté canal (#1205) : la porte exacte que le banc des scénarios emprunte.
+
+    Le juge propose l'action en disant qu'elle est irréversible, comme le fait le
+    juge réel depuis ce ticket. Ce que le canal en fait ne dépend pas de la nature
+    de la demande : la proposition devient un geste sur le message — c'est ce que
+    S1 lit (`reponse["proposition"]`) avant de donner l'accord —, rien ne s'ouvre
+    avant l'accord, et l'accord ouvre le run **sur l'action** et **dans le projet
+    de la fenêtre**, là où l'agent qui l'exécutera a sa racine.
+    """
+    action = "Vider le dossier du projet en supprimant tout son contenu"
+    irreversible = (
+        "Cette action est irréversible : elle supprimera tout le contenu du dossier "
+        "du projet. Confirmez-vous que je lance ce run ?"
+    )
+    repondeur = RepondeurOrchestration(
+        lanceur=lanceur,
+        provider=JugeScripte(_verdict(VERDICT_PROPOSITION, irreversible, action)),
+    )
+    with TestClient(
+        create_app(bus=bus, chat_store=depot_chat, orchestration_repondeur=repondeur)
+    ) as client:
+        propose = client.post(
+            f"/api/chat/{NOM_ORCHESTRATION}/messages",
+            json={"contenu": DEMANDE_S1, "projet_id": "prj-s1"},
+        ).json()["messages"][-1]
+        assert propose["proposition"] == action
+        assert irreversible in propose["contenu"]
+        assert lanceur.objectifs == []
+
+        accord = client.post(
+            f"/api/chat/{NOM_ORCHESTRATION}/cadrage",
+            json={"approuve": True, "projet_id": "prj-s1"},
+        ).json()["messages"][-1]
+
+    assert accord["run_id"] == "run-42"
+    assert lanceur.objectifs == [action]
+    assert lanceur.projets == ["prj-s1"]
 
 
 def test_un_geste_sans_demande_est_un_409(client_global, lanceur) -> None:
