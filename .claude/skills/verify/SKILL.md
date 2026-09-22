@@ -26,13 +26,17 @@ passer dès qu'un ticket porte sur ces sujets-là.
 ## Lancer l'ensemble (API + UI)
 
 Ne pas réécrire de lanceur ad hoc : le script du ticket #65 fait tout
-(nettoyage des anciennes sessions sur :8000/:3000, API de démo sur bus
-mémoire — `maestro.controltower.demo`, app FastAPI réelle + scénario
-d'événements factices en continu —, UI Next.js pointée dessus) :
+(nettoyage des anciennes sessions sur ses ports, **API réelle** sur Redis —
+`maestro.controltower.cli`, bus Pub/Sub et journal durable —, UI Next.js pointée
+dessus). La vérification se joue **sur la vraie stack**, jamais sur un scénario
+factice (#1156) : ce qui se vérifie ici est le câblage du produit, et un
+scénario ne montre que ce qu'on a scénarisé. Redis est donc requis ; s'il
+manque, le script le dit avant de rien toucher (skill `control-tower`).
 
 ```bash
-bash scripts/controltower/start.sh --no-browser   # UI sur :3000, API sur :8000
-bash scripts/controltower/start.sh --stop         # arrêt
+bash scripts/controltower/start.sh --no-browser               # stack neuve : poste vide
+bash scripts/controltower/start.sh --etat-banc --no-browser   # l'état laissé par le banc, son âge dit
+bash scripts/controltower/start.sh --stop                     # arrêt
 ```
 
 `--no-browser` est important ici : sans lui, le script ouvre sa propre fenêtre
@@ -41,13 +45,22 @@ sous le navigateur qu'on pilote. Avec l'option, c'est `--stop` qui fait foi.
 
 Dans un worktree, les ports sont dédiés (#152) : `MAESTRO_PORT_API` /
 `MAESTRO_PORT_UI` sont déjà posés — viser ceux-là plutôt que 8000/3000 en dur.
+Une session relocalisée par `/ticket-start` ne les hérite **pas** (docs/10 §9.1) :
+les passer, `env MAESTRO_PORT_API=<api> MAESTRO_PORT_UI=<ui> bash scripts/controltower/start.sh …`,
+avec les valeurs que `worktree.sh ensure` a annoncées.
 
-Pour un scénario **sur mesure** (autres événements, autre timing), s'inspirer
-de `maestro/controltower/demo.py` : `create_app(bus=InMemoryEventBus())` sous
-uvicorn programmatique, événements `EVENEMENT_*` publiés depuis une tâche
-asyncio du même process, toujours via `.venv/Scripts/python.exe` (jamais le
-python système). L'UI lit `NEXT_PUBLIC_MAESTRO_API_URL` au démarrage du dev
-server (inlinée au build en prod).
+**Ce qui fait bouger l'écran est un vrai run.** Une stack neuve est vide, l'état
+du banc est figé : pour voir les cartes naître et évoluer, lancer un run
+(`POST /api/executions` ou `maestro-run --publier "<objectif>"`, skill
+`control-tower`) ; pour une demande de validation humaine, un run qui en pose
+(`maestro-run --publier --validation-ui "<objectif>"`). Il se lance sur la stack
+de la copie, **sans** `--etat-banc` : `maestro-run` publie dans l'espace de la
+copie, que la stack du banc ne lit pas, et un run qu'on y lancerait par l'API se
+mêlerait à l'état du passage jusqu'à sa prochaine réouverture. Un run coûte du vrai
+modèle : un objectif court sur un projet jetable suffit. Un flux que le réel ne
+sait pas produire se **nomme non vérifié**, il ne se simule pas. L'UI lit
+`NEXT_PUBLIC_MAESTRO_API_URL` au démarrage du dev server (inlinée au build en
+prod).
 
 ## Piloter le navigateur
 
@@ -76,10 +89,11 @@ vérifie : profil sans cette clé, ou relance depuis le menu d'aide.
 Le cœur temps réel, ce que les tests unitaires ne voient pas :
 
 - badge « Temps réel connecté » en barre supérieure (WebSocket ouverte) ;
-- apparition/évolution des cartes Kanban pendant que le scénario publie ;
+- apparition/évolution des cartes Kanban pendant que le run publie ;
 - réassignation via le `<select>` d'une carte → la carte change d'agent et le
   fil d'activité affiche « réassignée à … » ;
-- validation humaine (#48) : publier un `validation.demande` → la demande
+- validation humaine (#48) : un run lancé avec `--validation-ui` pose un
+  `validation.demande` → la demande
   apparaît **aux deux endroits**, en tête du tableau de bord et au badge de la
   cloche (#119) ; la trancher depuis l'un ou l'autre → elle disparaît des deux,
   et un abonné du bus reçoit le `validation.decision` (c'est lui qui libère le

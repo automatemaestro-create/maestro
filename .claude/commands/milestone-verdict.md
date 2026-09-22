@@ -26,7 +26,7 @@ Le partage est celui que le dépôt tient partout — un verbe **lit** et propos
 `veille-arbitre` sur la veille de conception (#714). Ce sont deux commandes et non deux étapes de
 la même, pour deux raisons :
 
-- **Un bilan est long** — stack de démo, captures, clips, suites jouées — et l'arbitrage n'arrive
+- **Un bilan est long** — vraie stack, captures, clips, scénarios et suites joués — et l'arbitrage n'arrive
   pas toujours dans la foulée. Enchaîner l'enregistrement à la fin du bilan ferait perdre tout
   verdict que personne n'a arbitré dans la même session : c'est exactement la panne qu'on corrige
   (#608), pas celle qu'on recrée. Le rapport est un **document** ; il attend.

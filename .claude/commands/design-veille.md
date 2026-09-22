@@ -52,9 +52,11 @@ esthétique se serait trompée de question.
   C'est elle qui tranchera plus bas ; sans elle, tout ce qu'on trouvera dehors paraîtra bon à
   prendre.
 - **Ce qui ne va pas aujourd'hui**, en faits : ce que le ticket rapporte, ce qu'une capture montre,
-  ce que le code fait. Si la surface est visible en local, regarde-la — la stack de démo se monte
-  par le skill `control-tower` (`--demo`), sur les ports que `worktree.sh ensure` a annoncés pour ce
-  worktree.
+  ce que le code fait. Si la surface est visible en local, regarde-la **sur la vraie stack** — le
+  skill `control-tower` la monte, sur les ports que `worktree.sh ensure` a annoncés pour ce
+  worktree : `--etat-banc` pour la voir peuplée par l'état qu'un passage du banc a laissé, une
+  stack neuve pour la voir vide. Un état que le réel ne produit pas se note « non vu », il ne se
+  fabrique pas.
 
 ## 2. Relever le socle — **avant** d'aller chercher, jamais après
 

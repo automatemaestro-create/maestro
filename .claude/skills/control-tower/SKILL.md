@@ -1,6 +1,6 @@
 ---
 name: control-tower
-description: Démarrer (ou arrêter) la Control Tower en local — API réelle sur Redis par défaut, scénario factice en --demo — en nettoyant les anciennes sessions
+description: Démarrer (ou arrêter) la Control Tower en local — la vraie stack sur Redis, vide ou sur l'état laissé par le banc — en nettoyant les anciennes sessions
 ---
 
 # Lancer la Control Tower en local
@@ -31,51 +31,68 @@ du navigateur (ou …--stop)` ou `arrêt : bash scripts/controltower/start.sh
 
 À la fin, donner à l'utilisateur l'URL : **http://localhost:3000**.
 
-## Deux modes — le réel par défaut (#186)
+## La vraie stack, toujours (#186, #1156)
 
-|              | défaut (mode réel)                         | `--demo`                               |
-| ------------ | ------------------------------------------ | -------------------------------------- |
-| API          | `maestro.controltower.cli` (`maestro-api`) | `maestro.controltower.demo`            |
-| Bus          | Redis Pub/Sub + journal durable (#97)      | mémoire                                |
-| Données      | **la vraie orchestration**                 | scénario **factice**, qui le dit       |
-| Redis        | **requis**                                 | aucun                                  |
-| Au démarrage | poste **vide** tant qu'aucun run ne publie | Kanban peuplé, coûts, validation, chat |
+La Control Tower se regarde sur **la vraie orchestration** : l'API réelle
+(`maestro.controltower.cli`, alias `maestro-api`), son bus Redis Pub/Sub et son
+journal durable (#97), qui rend l'historique au redémarrage. Il n'y a pas d'autre
+stack à monter pour vérifier le produit — ni pour le travail d'écran, ni pour
+`verify`, ni pour les captures —, et c'est une décision : un scénario factice
+montre ce qu'on a scénarisé, pas ce que le produit fait (#1156).
 
-**Ne jamais retomber en douce sur `--demo`** quand le mode réel échoue : c'est
-exactement ce qui ferait prendre des données factices pour la réalité. Si Redis
-manque, le script s'arrête **avant d'avoir touché à quoi que ce soit** (ni
-session en place arrêtée, ni service démarré) et donne le geste exact :
+**Redis est donc requis, et rien ne s'y substitue.** S'il manque, le script
+s'arrête **avant d'avoir touché à quoi que ce soit** (ni session en place
+arrêtée, ni service démarré) et donne le geste exact :
 
 ```bash
 docker compose -f infra/docker-compose.yml up -d redis
 ```
 
-Le relayer tel quel à l'utilisateur, puis relancer. Proposer `--demo` seulement
-comme **alternative annoncée** (« explorer l'UI sans Redis »), jamais comme
-rattrapage silencieux. Le préflight seul, sans rien démarrer :
+Le relayer tel quel à l'utilisateur, puis relancer. Ne rien proposer d'autre à
+la place : sans Redis, il n'y a pas de Control Tower à regarder. Le préflight
+seul, sans rien démarrer :
 `.venv/Scripts/python.exe -m maestro.controltower.cli --verifier-redis`
 (`.venv/bin/python` sous Unix).
 
-`--demo` reste le bon choix pour le **développement front**, le skill `verify`
-et les captures de `/milestone-presentation`.
+**Chaque copie de travail a ses données** (#1164) : le clone principal et chaque
+worktree rangent leurs clés Redis dans leur **espace** et leurs fils et projets
+sous leur `core/`. Le préflight l'annonce — espace, fils, projets — avant de
+démarrer. Deux stacks lancées depuis deux copies ne se voient pas.
 
-`--demo --scenario <nom>` sert un **autre état** que le scénario nominal :
-`vide` (aucun run), `erreur` (API en 500, WebSocket refusée — sauf
-`/api/sante` et `/api/projets`), `charge` (listes et textes longs) — les trois
-états limites de #978 —, et `decomposition` (#1109), qui n'est pas un état mais
-une **phase** : un run travaille 4 minutes sans aucune tâche, puis publie son
-plan, et recommence. Les noms
-viennent de `maestro/controltower/demo.py`. Sans `--demo`, l'option est
-refusée : demander un scénario ne remplace pas le mode réel en silence. C'est
-le geste de la relecture visuelle, et il n'y en a pas d'autre pour regarder
-une file vide ou une panne.
+## Ce que l'écran montre — d'où viennent les états
+
+| Ce qu'on veut voir | D'où il vient | Le geste |
+| ------------------ | ------------- | -------- |
+| **vide** | une stack **neuve** | `start.sh` dans un worktree qui n'a encore rien servi ; ailleurs, la purge (plus bas) |
+| **peuplé**, **charge** (listes et textes longs) | l'**état laissé par le banc** des scénarios (#1148) | `start.sh --etat-banc` |
+| **erreur** | une **vraie panne** | l'API coupée, l'UI restant servie (l'écran dit « injoignable »), ou une API qui répond en erreur (#996) |
+
+`--etat-banc` sert, par l'API réelle, l'état que le dernier passage du banc a
+laissé : rouvert à chaque démarrage **sans rien rejouer**, dans un jeu de données
+à part (ni celles de la copie ni celles du poste ne sont touchées), et **son âge
+est dit** — le relayer : un état ancien ne porte pas les données que les derniers
+tickets ont ajoutées. Sans
+passage sauvé, le lanceur le dit et s'arrête. `--etat-banc --rejouer[=S2,S4]` le
+refait : banc remis à neuf, puis passage joué au premier plan contre la stack,
+**avec le vrai modèle** (des dizaines de minutes, de l'ordre du dollar) — à
+lancer en tâche de fond, jamais sous le plafond d'un appel, et seulement quand
+l'état date ou manque. Le détail vit dans docs/40 §5 et `maestro/scenarios/etat.py`.
+
+Un état que le réel ne sait pas produire **se nomme non couvert** : il ne se
+fabrique pas.
+
+La purge rend le poste vide sans toucher à la configuration ; elle est
+**destructive** et ne se joue qu'après un « oui » explicite, la stack arrêtée
+(`--check` dit d'abord ce qui partirait) :
+`.venv/Scripts/python.exe -m maestro.controltower.purge [--check]`.
 
 ## Remplir le poste : lancer un run
 
-En mode réel, un premier démarrage n'affiche **rien** — c'est normal, l'UI
-l'explique elle-même (`PosteVide`) au lieu d'aligner des panneaux à zéro. Ce
-n'est pas une panne : une API injoignable, elle, a sa bannière d'erreur. Deux
-façons de l'alimenter :
+Sur une stack neuve, un premier démarrage n'affiche **rien** — c'est normal,
+l'UI l'explique elle-même (`PosteVide`) au lieu d'aligner des panneaux à zéro. Ce
+n'est pas une panne : une API injoignable, elle, a sa bannière d'erreur. Pour
+regarder un écran peuplé sans rien dépenser, `--etat-banc` (plus haut) ; pour
+voir le produit travailler **maintenant**, deux façons de l'alimenter :
 
 ```bash
 # Depuis le dépôt — --publier est ce qui pousse les événements vers l'UI
