@@ -233,6 +233,38 @@ dit pourquoi rien n'a suivi — y compris quand le fournisseur tombe *entre* la
 proposition et l'accord, cas où le « oui » reste au fil sans rien ouvrir ni se
 perdre en silence.
 
+## Un projet sans équipe se voit proposer la sienne (#1146)
+
+Un run ouvert sur un projet **sans agent** échoue toujours, et tard : cadrage et
+plan payés (0,36 $ sur l'essai du 2026-09-21), puis chaque tâche en repli « à
+assigner » — personne pour la prendre. Or Maestro **sait** proposer une équipe
+(#1039) et la créer (#1040) ; la capacité n'était branchée que dans le parcours
+de création d'un projet, qu'un projet antérieur ne repasse jamais.
+
+Le canal regarde donc l'équipe du projet de la fenêtre **avant** de proposer un
+run, et au moment d'en ouvrir un. Quand il n'y a personne, il ne propose pas le
+run : il propose l'**équipe**, dit pourquoi, et attend qu'on la valide
+(`ReponseChat.recrutement`). Trois propriétés :
+
+- **la sonde lit ce que le routeur lira** — `EquipeDuProjet`, câblée sur
+  `catalogue_du_projet`, la règle unique de l'exécuteur et de la boucle. Elle ne
+  tranche que sur « il n'y a personne » : « je ne sais pas » (aucun projet,
+  dépôt illisible, projet inconnu) laisse le canal tel qu'avant ce lot, parce
+  qu'une sonde aveugle qui bloquerait les runs serait une bride ;
+- **rien n'est recruté sans validation** — la demande n'est qu'une demande, et
+  l'équipe n'est créée que par le geste (`recruter`), par la voie de #1040
+  (`RecruteurEquipe`, câblé sur `ServiceEquipe.creer`). Et rien pendant un run
+  (docs/31 §3.5) : le canal agit entre deux runs, jamais dans l'un ;
+- **la demande d'origine n'est pas perdue** — elle voyage sur la demande de
+  recrutement (`DemandeRecrutement.objectif`), et une fois l'équipe créée le
+  canal la **repropose**, sans nouvel accord deviné : le run part sur un clic,
+  comme tout run.
+
+La garde est posée à **deux** endroits, et c'est la même : au verdict (une
+proposition, ou un accord tapé) et au geste de cadrage. Le second couvre l'équipe
+retirée entre la proposition et le clic — rare, et c'est justement le cas qu'une
+seule garde laisserait passer.
+
 ## Ce qui est gardé, et par quoi (#688)
 
 `tests/test_chat_global.py` tient le tout, sans réseau, sans modèle et sans
@@ -280,6 +312,7 @@ from maestro.controltower.bornes import AUCUNE_BORNE, BornesRun
 from maestro.controltower.causes import cause_lisible
 from maestro.controltower.chat import (
     UTILISATEUR,
+    DemandeRecrutement,
     Incrementeur,
     MessageChat,
     Redaction,
@@ -300,6 +333,7 @@ from maestro.controltower.state import (
     EXECUTION_TERMINEE,
     ControlTowerState,
 )
+from maestro.equipe import RoleValide
 from maestro.outillage.questionnaire import QuestionOutillage
 from maestro.providers.base import ModelProvider
 
@@ -421,6 +455,42 @@ AGENT_ORCHESTRATION = Agent(
 #: donnée. Avant lui, un run ouvert depuis le fil partait sans les pièces jointes
 #: dont on venait de parler. `""` quand la conversation n'en porte aucune.
 LanceurRun = Callable[[str, str | None, BornesRun, str], Awaitable[Mapping[str, Any]]]
+
+#: Combien d'agents le projet `projet_id` compte — la sonde de #1146. `0` dit « il
+#: n'y a personne », et c'est la seule réponse qui change la conduite du canal ;
+#: `None` dit « je ne sais pas » (projet inconnu, dépôt illisible) et la laisse
+#: telle qu'avant ce lot. Le câblage la branche sur `catalogue_du_projet`, pour
+#: que le fil compte exactement les agents vers lesquels le routeur enverra les
+#: tâches.
+EquipeDuProjet = Callable[[str], int | None]
+
+#: Crée dans le projet l'équipe validée et rend son rapport (`EquipeCreee.to_dict`)
+#: — le seul geste de recrutement que le canal demande, par la voie de #1040.
+#: Arguments : le projet, les rôles retenus, la proposition dont ils sortent (une
+#: trace, jamais une condition). Une équipe refusée lève, et le canal le raconte.
+RecruteurEquipe = Callable[[str, Sequence[RoleValide], str], Awaitable[Mapping[str, Any]]]
+
+#: Ce que le canal dit quand il propose l'équipe au lieu du run (#1146). Les trois
+#: moments du critère, dans l'ordre : pourquoi pas de run (personne pour prendre
+#: les tâches, et ce que ça coûterait), ce qui est proposé à la place, et ce qui
+#: suit la validation — la demande reprise, sans rien retaper.
+_PHRASE_RECRUTEMENT = (
+    "Avant de lancer « {objectif} », il faut une équipe : ce projet n'a encore "
+    "aucun agent, donc personne pour prendre les tâches d'un run — il échouerait "
+    "après avoir payé son cadrage. Je vous propose l'équipe que son analyse "
+    "appelle, juste en dessous : validez-la, en retirant un rôle ou en ajustant "
+    "ses instances si besoin, et je vous proposerai aussitôt le run. Rien n'est "
+    "créé sans votre validation."
+)
+
+#: Le même constat, quand le canal ne peut pas créer d'équipe lui-même (aucun
+#: recruteur câblé) : il ne propose pas une demande à laquelle aucun geste ne
+#: pourrait répondre, il dit où la créer.
+_PHRASE_SANS_RECRUTEUR = (
+    "Je ne lance pas « {objectif} » : ce projet n'a encore aucun agent, donc "
+    "personne pour prendre les tâches d'un run. Créez son équipe depuis les "
+    "écrans d'agents du projet, puis redites-moi votre demande."
+)
 
 
 def contexte_du_fil(fil: Sequence[MessageChat]) -> str:
@@ -585,6 +655,26 @@ def _accord(nombre: int, singulier: str, pluriel: str) -> str:
     return f"{nombre} {singulier if nombre <= 1 else pluriel}"
 
 
+def _composition(rapport: Mapping[str, Any]) -> str:
+    """L'équipe créée en une ligne — « Développeur ×2 · QA — 3 agents » (#1146).
+
+    Lue dans le **rapport de création** (`EquipeCreee.to_dict`) et non dans ce qui
+    a été demandé : le fil dit ce qui existe désormais dans le projet, comme
+    l'étape d'équipe du parcours de création (« la liste, jamais un ok »).
+    """
+    agents = [a for a in rapport.get("agents") or () if isinstance(a, Mapping)]
+    roles = " · ".join(
+        f"{a.get('role') or a.get('nom')} ×{a['instances']}"
+        if int(a.get("instances") or 1) > 1
+        else str(a.get("role") or a.get("nom"))
+        for a in agents
+    )
+    total = int(rapport.get("instances_total") or 0) or sum(
+        int(a.get("instances") or 1) for a in agents
+    )
+    return f"{roles} — {_accord(total, 'agent', 'agents')}"
+
+
 def apercu_de(state: ControlTowerState) -> ApercuOrchestration:
     """L'aperçu de l'orchestration, lu **à chaque question** dans `state`.
 
@@ -732,6 +822,11 @@ class RepondeurOrchestration(RepondeurChat):
     (#686) : c'est le même invariant un cran plus tôt — l'empêchement porte alors
     sur le verdict lui-même, et le canal dit qu'il ne peut pas juger au lieu de
     laisser passer un 502.
+
+    `equipe` et `recruteur` (#1146) sont la sonde et le geste du recrutement :
+    le premier dit si le projet a quelqu'un pour prendre les tâches, le second
+    crée l'équipe validée. Sans sonde, le canal propose des runs comme avant ce
+    lot ; sans recruteur, il dit le manque sans proposer d'équipe.
     """
 
     def __init__(
@@ -742,10 +837,14 @@ class RepondeurOrchestration(RepondeurChat):
         provider: ModelProvider | None = None,
         conducteur: ConducteurOutillage | None = None,
         sonde: SondeDuPoste | None = None,
+        equipe: EquipeDuProjet | None = None,
+        recruteur: RecruteurEquipe | None = None,
     ) -> None:
         self._lanceur = lanceur
         self._apercu = apercu
         self._provider = provider
+        self._equipe = equipe
+        self._recruteur = recruteur
         # Le modèle suit le fournisseur (#1173) : résolu avec lui depuis la
         # configuration, jamais épinglé. Un fournisseur **injecté** (les tests,
         # un câblage explicite) garde le modèle de la fiche.
@@ -790,6 +889,17 @@ class RepondeurOrchestration(RepondeurChat):
         except _JugeInjoignable as injoignable:
             await redaction.ecrire(str(injoignable))
             return ReponseChat(contenu=redaction.texte)
+        if (
+            verdict.nom in (VERDICT_PROPOSITION, VERDICT_ACCORD)
+            and verdict.objectif
+            and self._lanceur is not None
+            and self._sans_equipe(projet_id)
+        ):
+            # Personne pour prendre les tâches (#1146) : ni la proposition ni
+            # l'accord ne tiennent, et le texte du juge — « je lance ? », « c'est
+            # parti » — non plus. Il est remplacé **avant** d'être écrit, par la
+            # phrase qui dit pourquoi et propose l'équipe.
+            return await self._proposer_recrutement(redaction, verdict.objectif, projet_id)
         await redaction.ecrire(verdict.reponse)
         if verdict.nom == VERDICT_ACCORD:
             # Un accord **tapé** ne porte aucune borne : le juge rend un
@@ -861,10 +971,81 @@ class RepondeurOrchestration(RepondeurChat):
                 "vous proposerai autre chose."
             )
             return ReponseChat(contenu=redaction.texte)
+        if self._sans_equipe(projet_id):
+            # L'équipe a pu disparaître entre la proposition et le clic, ou la
+            # proposition précéder ce lot (#1146) : la garde du verdict ne suffit
+            # pas, et « c'est parti » n'a pas encore été écrit.
+            return await self._proposer_recrutement(redaction, objectif.strip(), projet_id)
         await redaction.ecrire("C'est parti.")
         return await self._ouvrir_un_run(
             redaction, objectif.strip(), projet_id, bornes, contexte_du_fil(fil)
         )
+
+    async def recruter(
+        self,
+        agent: Agent,
+        fil: Sequence[MessageChat],
+        *,
+        demande: DemandeRecrutement,
+        approuve: bool,
+        roles: Sequence[RoleValide],
+        proposition_id: str = "",
+    ) -> ReponseChat:
+        """Crée l'équipe validée, puis **reprend** la demande d'origine (#1146).
+
+        Aucun appel modèle : la validation est un clic, et la suite se déduit.
+        Trois issues, et aucune n'ouvre de run — un run part sur son propre
+        accord, jamais par ricochet d'un recrutement :
+
+        - **déclinée** — rien n'est créé, rien n'est ouvert, et la phrase dit
+          pourquoi le run n'est pas proposé à la place : il n'aurait personne ;
+        - **créée** — la réponse dit qui a été recruté, puis **repropose** le run
+          sur l'objectif que la demande portait (`ReponseChat.proposition`) : la
+          demande de cadrage de #943 prend le relais, avec ses bornes ;
+        - **refusée** (`EquipeRefusee`, projet illisible…) — rien n'a été créé
+          (la création vérifie tout avant d'écrire), la cause est dite, et la
+          demande est **reposée** telle quelle pour qu'on puisse corriger et
+          valider à nouveau sans retaper sa demande.
+
+        `demande.projet_id` est le projet où l'équipe naît : celui dont la
+        demande parlait, relu du fil par le service — jamais la fenêtre.
+        """
+        redaction = Redaction(None)
+        if not approuve:
+            await redaction.ecrire(
+                "Entendu : je ne recrute personne, et je n'ouvre pas de run — sans "
+                "équipe, personne n'en prendrait les tâches. L'équipe se crée aussi "
+                "depuis les écrans d'agents du projet ; redites-moi votre demande "
+                "quand elle sera là."
+            )
+            return ReponseChat(contenu=redaction.texte)
+        if self._recruteur is None:
+            await redaction.ecrire(
+                "Je ne peux pas créer d'équipe depuis ce fil : aucun recrutement n'y "
+                "est branché. Créez-la depuis les écrans d'agents du projet."
+            )
+            return ReponseChat(contenu=redaction.texte)
+        try:
+            rapport = await self._recruteur(demande.projet_id, roles, proposition_id)
+        except Exception as echec:
+            # Nommé dans le fil plutôt que levé, comme un lancement qui échoue :
+            # le geste est déjà écrit, et c'est la cause qui permet de corriger.
+            await redaction.ecrire(
+                f"Je n'ai créé aucun agent : {echec}. Ajustez l'équipe ci-dessous "
+                "puis validez-la à nouveau — ou remettez à plus tard."
+            )
+            return ReponseChat(contenu=redaction.texte, recrutement=demande)
+        await redaction.ecrire(f"Équipe créée : {_composition(rapport)}. ")
+        if self._lanceur is None:
+            await redaction.ecrire(
+                "Je ne peux pas encore ouvrir de run depuis ce fil : aucune exécution "
+                "n'y est branchée."
+            )
+            return ReponseChat(contenu=redaction.texte)
+        await redaction.ecrire(
+            f"Je reprends votre demande : « {demande.objectif} ». Je lance ?"
+        )
+        return ReponseChat(contenu=redaction.texte, proposition=demande.objectif)
 
     async def ouvrir_questionnaire(
         self, agent: Agent, fil: Sequence[MessageChat]
@@ -961,6 +1142,40 @@ class RepondeurOrchestration(RepondeurChat):
                 _REPARATION_PASSAGERE,
             )
         return _verdict_depuis(texte)
+
+    def _sans_equipe(self, projet_id: str | None) -> bool:
+        """Le projet de la fenêtre n'a **personne** pour prendre les tâches (#1146).
+
+        Vrai seulement sur un compte **nul** et certain : sans projet, sans sonde,
+        ou quand la sonde ne sait pas (`None`) — et même quand elle lève —, le
+        canal garde sa conduite d'avant ce lot. Une sonde qui se trompe dans le
+        doute bloquerait des runs légitimes ; celle-ci ne parle que de ce qu'elle
+        a compté.
+        """
+        if not projet_id or self._equipe is None:
+            return False
+        try:
+            return self._equipe(projet_id) == 0
+        except Exception:  # noqa: BLE001 — la sonde éclaire, elle ne décide de rien
+            return False
+
+    async def _proposer_recrutement(
+        self, redaction: Redaction, objectif: str, projet_id: str | None
+    ) -> ReponseChat:
+        """Propose l'équipe au lieu du run — la demande et la phrase qui dit pourquoi.
+
+        Ne s'appelle que derrière `_sans_equipe`, donc avec un projet. Sans
+        recruteur, le constat est dit sans demande : poser une demande à laquelle
+        aucun geste ne peut répondre serait promettre ce qu'on sait impossible.
+        """
+        if self._recruteur is None or not projet_id:
+            await redaction.ecrire(_PHRASE_SANS_RECRUTEUR.format(objectif=objectif))
+            return ReponseChat(contenu=redaction.texte)
+        await redaction.ecrire(_PHRASE_RECRUTEMENT.format(objectif=objectif))
+        return ReponseChat(
+            contenu=redaction.texte,
+            recrutement=DemandeRecrutement(objectif=objectif, projet_id=projet_id),
+        )
 
     async def _ouvrir_un_run(
         self,

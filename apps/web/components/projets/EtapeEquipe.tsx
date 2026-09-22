@@ -76,6 +76,7 @@ import {
   EnTeteSection,
 } from "@/components/Primitives";
 import { creerEquipe, proposerEquipe } from "@/lib/api";
+import { compteAgents, rolesValides } from "@/lib/equipe";
 import type {
   AutorisationEquipe,
   ChoixOutillage,
@@ -84,7 +85,6 @@ import type {
   RapportCreationEquipe,
   RefusProjet,
   RoleEquipe,
-  RoleValideEquipe,
 } from "@/lib/types";
 
 import { refusDepuis, RefusMotive } from "./ExplorateurDossiers";
@@ -118,11 +118,6 @@ const SENS_DECIDEUR: Record<string, string> = {
   auto: "décidé d'avance par vous — l'appel passe, et il est tracé",
   humain: "une personne tranche, appel par appel",
 };
-
-/** « 2 agents », « 1 agent » — le compte et son nom, accordés. */
-function compteAgents(nombre: number): string {
-  return `${nombre} agent${nombre > 1 ? "s" : ""}`;
-}
 
 /**
  * Une autorisation proposée, **dépliée** : le cran, l'outil, qui tranche, et la
@@ -167,14 +162,21 @@ function LigneAutorisation({ autorisation }: { autorisation: AutorisationEquipe 
  * La grille est celle de `LigneEntree` (étape d'outillage, #1034) : le nom est
  * un enfant direct du `<label>` — c'est ce que le lint a11y cherche
  * (`label-has-associated-control`), et trois `<span>` empilés l'y cacheraient.
+ *
+ * Exportée depuis #1146 : la carte d'équipe du fil rend **la même ligne** dans son
+ * détail, pour qu'un rôle se lise pareil aux deux endroits où l'on recrute.
+ * `prefixe` fait les identifiants — les deux surfaces peuvent être à l'écran
+ * ensemble (l'écran Projets et la colonne du fil), et deux cases de même `id`
+ * feraient perdre son libellé à la seconde.
  */
-function LigneRole({
+export function LigneRole({
   role,
   retenu,
   basculer,
   instances,
   changerInstances,
   fige,
+  prefixe = "equipe",
 }: {
   role: RoleEquipe;
   retenu: boolean;
@@ -182,9 +184,10 @@ function LigneRole({
   instances: number;
   changerInstances: (valeur: number) => void;
   fige: boolean;
+  prefixe?: string;
 }) {
-  const idCase = `equipe-${role.nom}`;
-  const idInstances = `equipe-${role.nom}-instances`;
+  const idCase = `${prefixe}-${role.nom}`;
+  const idInstances = `${prefixe}-${role.nom}-instances`;
   return (
     <li
       className={[
@@ -502,23 +505,9 @@ export function EtapeEquipe({
     setRefus(null);
     try {
       // Ce qui repart est ce qui a été **montré** : playbook et `politique`
-      // repris de la proposition, jamais recomposés ici (cf. l'en-tête).
-      const valides: RoleValideEquipe[] = proposition.roles
-        .filter((r) => retenus.has(r.nom))
-        .map((r) => ({
-          nom: r.nom,
-          role: r.role,
-          competences: r.competences,
-          playbook: r.playbook,
-          instances: instances[r.nom] ?? r.instances,
-          gabarit: r.gabarit,
-          skills: r.skills.map((s) => ({
-            nom: s.nom,
-            chemin: s.chemin,
-            commandes: s.commandes,
-          })),
-          politique: r.politique,
-        }));
+      // repris de la proposition, jamais recomposés ici (cf. l'en-tête). La
+      // règle est partagée avec la carte d'équipe du fil (`lib/equipe`, #1146).
+      const valides = rolesValides(proposition, retenus, instances);
       setRapport(await creerEquipe(projet.id, valides, proposition.id));
     } catch (erreur) {
       setRefus(refusDepuis(erreur));

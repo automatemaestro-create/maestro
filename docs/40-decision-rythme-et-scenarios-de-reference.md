@@ -122,8 +122,16 @@ modèle, par la porte d'entrée réelle (le fil de l'orchestrateur) :
 | --- | --- | --- |
 | S1 | Vider un dossier | Le dossier est vide hors périmètre exclu, sans outil écrit |
 | S2 | Créer une petite application | Elle s'exécute |
-| S3 | Reprendre un projet existant sans équipe | Le run aboutit, ou le fil dit quoi faire **avant** de dépenser |
+| S3 | Reprendre un projet existant sans équipe | Le fil propose l'équipe **avant** de dépenser ; validée d'un geste, elle est créée et le run demandé aboutit |
 | S4 | « Pourquoi le run a échoué ? » | La réponse nomme la cause réelle, jugée par un modèle, jamais par un lexique (#746) |
+
+**S3 a son comportement depuis #1146.** Sur un projet sans agent, le fil ne propose plus de run : il
+dit pourquoi (personne pour prendre les tâches) et propose l'équipe que l'analyse du projet appelle
+(#1039). On la valide dans la conversation, rôle retiré ou instances ajustées compris. Elle est créée
+par la voie de l'étape d'équipe (#1040), puis le fil repropose la demande d'origine, et le run part
+sur un clic. Rien n'est recruté sans cette validation, ni pendant un run (docs/31 §3.5). Le parcours
+est joué de bout en bout, juge et moteur mis à part, par `tests/test_projet_outille_http.py` (section
+⑧). Le banc de #1148 le rejoue avec le vrai modèle.
 
 **Un jalon produit ne se boucle pas GO avec un scénario rouge** (#1152). Les scénarios ne sont pas
 en CI : un passage coûte du vrai modèle (le run du retex a coûté ~10 $). S2 et S4 ne sont pas

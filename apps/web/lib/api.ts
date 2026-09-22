@@ -895,6 +895,52 @@ export async function trancherCadrageChat(
 }
 
 /**
+ * Valide — ou décline — l'équipe que le fil propose à un projet sans agent
+ * (`POST /api/chat/{agent}/recrutement`, #1146) et rend la paire (geste, réponse).
+ *
+ * `roles` est l'équipe **gardée**, dans la forme de `creerEquipe` : c'est la même
+ * création (#1040), et ce qui repart est ce qui a été montré. Ni projet ni
+ * objectif dans le corps : ils sont sur la demande que le fil porte, et c'est elle
+ * qui fait foi — une fenêtre passée sur un autre projet ne recrute pas dans
+ * celui-là.
+ *
+ * Un `409` n'est pas une panne, comme sur le cadrage : l'équipe a été validée ou
+ * déclinée entre-temps, ou la conversation a repris.
+ */
+export async function recruterDansLeFil(
+  agent: string,
+  decision: {
+    approuve: boolean;
+    roles?: RoleValideEquipe[];
+    propositionId?: string;
+    conversation?: string;
+  },
+): Promise<MessageChat[]> {
+  const reponse = await fetch(
+    `${API_URL}/api/chat/${encodeURIComponent(agent)}/recrutement`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        approuve: decision.approuve,
+        roles: decision.approuve ? (decision.roles ?? []) : [],
+        proposition_id: decision.propositionId ?? "",
+        conversation: decision.conversation,
+      }),
+    },
+  );
+  if (!reponse.ok) {
+    throw new Error(
+      reponse.status === 409
+        ? "cette équipe n'attend plus de réponse — la conversation a repris."
+        : `validation de l'équipe refusée (${reponse.status})`,
+    );
+  }
+  const paire = (await reponse.json()) as { messages: MessageChat[] };
+  return paire.messages;
+}
+
+/**
  * Répond d'un geste à la question d'outillage que le fil porte
  * (`POST /api/chat/{agent}/outillage`, #1031) et rend la paire (geste, réponse).
  *

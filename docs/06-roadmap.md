@@ -589,8 +589,9 @@ La démonstration est dans [docs/40](./40-decision-rythme-et-scenarios-de-refere
   d'utilitaire écrit pour « vider le dossier », plus de plancher de 3 tâches, plus de tâche humaine
   quand l'accord nomme déjà l'acte. C'est la pièce de S1.
 - **#1146** (« Avant l'installeur », premier de la file) : un projet sans équipe ne paie plus pour
-  échouer, et le fil de l'orchestrateur sait dire pourquoi un run a échoué. C'est la pièce de S3
-  et S4.
+  échouer. Le fil lui propose son équipe au lieu d'un run, on la valide d'un geste, puis le run
+  demandé aboutit. C'est la pièce de S3. Dire pourquoi un run a échoué est une autre capacité :
+  #1157, la pièce de S4.
 - **#1150 (outillage)** : un ticket porte une capacité visible **et ses tests**. Il n'y a plus de lot
   final « tests + doc » par défaut.
 - **#1151 (outillage)** : la veille, les variantes et le regard neuf sont réservés aux tickets qui
@@ -629,8 +630,8 @@ Ne bougent pas :
 | « Le niveau visuel » | 2028-02-05 (inchangée) |
 | Phase 9 | 2028-02-16 (inchangée) |
 
-- **Derrière « Avant l'installeur »**, parce qu'il n'y reste que #1146, qui est justement la première
-  pièce des scénarios S3 et S4. Il passe donc en premier.
+- **Derrière « Avant l'installeur »**, parce qu'il n'y reste que #1146, qui est justement la pièce
+  du scénario S3. Il passe donc en premier.
 - **Devant « Le niveau visuel »** : la fonction avant le poli. On ne fige pas l'écran étalon d'un
   produit dont les parcours de base ne tiennent pas. #1125, le choix d'une direction par la personne,
   reste démarrable à la main.

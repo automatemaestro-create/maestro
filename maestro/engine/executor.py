@@ -301,6 +301,13 @@ SUFFIXE_ETAPE_MANQUE = ":manque"
 #: encore » alors qu'ici personne n'a commencé.
 STATUT_ROLE_MANQUANT = "role_manquant"
 
+#: Le rôle que porte le résultat d'une tâche **que personne n'a prise** — le repli
+#: explicite du routage (#42). Nommé parce qu'il a un lecteur de plus que son
+#: écrivain depuis #1146 : l'étape `:fusion` doit savoir qu'aucun agent n'a
+#: tourné, faute de quoi elle racontait « ce que l'agent a écrit avant d'échouer »
+#: sur une tâche où il n'y avait pas d'agent du tout.
+ROLE_A_ASSIGNER = "à assigner"
+
 #: Suffixe des étapes de **question posée par l'agent** (#1023) :
 #: `<task.id>:question`, une par appel de `poser_une_question`
 #: (`maestro.providers.question`) une fois l'échange **soldé** — réponse reçue ou
@@ -806,7 +813,7 @@ class LocalExecutor(TaskExecutor):
                     if manque is not None:
                         self._consigne_role_manquant(task, manque, journal)
                     result = _echec(
-                        task, agent="—", role="à assigner", score=decision.score,
+                        task, agent="—", role=ROLE_A_ASSIGNER, score=decision.score,
                         erreur=(
                             f"{decision.raison} {manque.phrase()}"
                             if manque is not None
@@ -1141,6 +1148,10 @@ class LocalExecutor(TaskExecutor):
         tâche de chaque run sans projet serait du bruit sur tous les écrans. Tout
         le reste se **dit**, par une étape `:fusion` dont le statut nomme le cas :
 
+        - **tâche que personne n'a prise** (repli « à assigner », #1146) — aucun
+          agent n'a tourné : la ligne le dit, sous le statut du régime du projet,
+          au lieu de raconter un travail qui n'a pas eu lieu (« ce que l'agent a
+          écrit avant d'échouer » sur une tâche sans agent) ;
         - **projet introuvable** — la tâche nomme un projet que le dépôt ne
           connaît plus ; elle a travaillé dans un `mkdtemp()` (règle de
           `_projet`) et rien n'a atteint aucune racine (`projet_introuvable`) ;
@@ -1168,6 +1179,22 @@ class LocalExecutor(TaskExecutor):
         if task.projet_id is None or self._projets is None:
             return
         projet = self._projet(task)
+        if result.role == ROLE_A_ASSIGNER:
+            # Personne n'a pris la tâche (#1146) : aucun agent n'a tourné, donc
+            # aucun espace de travail, aucune branche, rien d'écrit. Les trois
+            # phrases ci-dessous parlent toutes d'un agent qui a travaillé — même
+            # « ce qu'il a écrit avant d'échouer » —, et aucune n'est vraie ici.
+            self._consigne_fusion(
+                task,
+                result,
+                _statut_sans_agent(projet),
+                entree=(
+                    f"projet {task.projet_id}" if projet is None else f"projet {projet.racine}"
+                ),
+                detail=_phrase_sans_agent(projet, task.projet_id),
+                journal=journal,
+            )
+            return
         if projet is None:
             self._consigne_fusion(
                 task,
@@ -2951,6 +2978,40 @@ def _phrase_non_accordee(cause: str, branche: str, base: str) -> str:
     return (
         f"fusion non accordée — {cause}. Le projet est intact et {branche} conserve "
         f"le travail ; à rattraper à la main : git merge {branche} depuis {base}."
+    )
+
+
+def _statut_sans_agent(projet: Projet | None) -> str:
+    """Le statut `:fusion` d'une tâche que personne n'a prise (#1146).
+
+    Un des statuts existants, et celui du régime du projet : l'écran les connaît
+    déjà tous (`libelleStatut`), et ce qui distingue ce cas est la **phrase**, pas
+    un mot de plus dans le vocabulaire des étapes. Rien d'écrit en place pour un
+    projet non versionné, fusion non tentée pour un projet versionné, projet
+    introuvable quand il l'est.
+    """
+    if projet is None:
+        return STATUT_PROJET_INTROUVABLE
+    if projet.versionne:
+        return STATUT_FUSION_NON_TENTEE
+    return STATUT_ECRITURE_SANS_OBJET
+
+
+def _phrase_sans_agent(projet: Projet | None, projet_id: str | None) -> str:
+    """La phrase `:fusion` d'une tâche que personne n'a prise — rien n'a été écrit (#1146)."""
+    if projet is None:
+        return (
+            f"aucun agent n'a pris cette tâche (à assigner), et le projet {projet_id} "
+            "est introuvable dans le dépôt : rien n'a été écrit nulle part."
+        )
+    if projet.versionne:
+        return (
+            "aucun agent n'a pris cette tâche (à assigner) : aucune branche n'a été "
+            f"ouverte, rien n'est fusionné — {projet.racine} est intact."
+        )
+    return (
+        f"aucun agent n'a pris cette tâche (à assigner) : rien n'a été écrit dans "
+        f"{projet.racine}."
     )
 
 

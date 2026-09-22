@@ -199,6 +199,31 @@ describe("les gestes du fil, dans la colonne", () => {
     ]);
   });
 
+  it("porte l'équipe proposée à un projet sans agent, et la décline d'ici (#1146)", async () => {
+    // La quatrième demande du fil prend le rang de « Je lance ? », qu'elle
+    // remplace : elle doit agir depuis la colonne comme les trois autres.
+    const recruter = vi.fn(async () => {});
+    poserFilAssistance({
+      messages: [
+        messageFactice({
+          agent: AGENT_ORCHESTRATION,
+          auteur: AGENT_ORCHESTRATION,
+          contenu: "Avant de lancer, il faut une équipe…",
+          recrutement: { objectif: OBJECTIF, projet_id: "prj-7f3a1c2b" },
+        }),
+      ],
+      recruter,
+    });
+    const fil = await filDeLaColonne();
+
+    const carte = within(fil).getByRole("region", { name: "Équipe à valider" });
+    expect(gestesDe(fil)).toEqual(["Équipe à valider"]);
+    await userEvent.click(
+      await within(carte).findByRole("button", { name: "Plus tard" }),
+    );
+    await waitFor(() => expect(recruter).toHaveBeenCalledWith(false));
+  });
+
   it("lance le run depuis la colonne, sans changer de page", async () => {
     // ① Le cœur du ticket : le geste **agit** d'ici. Une carte rendue mais
     // débranchée referait le défaut sous une autre forme.

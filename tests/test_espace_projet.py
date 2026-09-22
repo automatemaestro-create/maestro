@@ -28,9 +28,12 @@ from pathlib import Path
 import pytest
 
 from maestro.agents import DEVELOPER_PROFILE, AgentRuntime
+from maestro.agents.store import AgentStore
 from maestro.engine.executor import (
+    ROLE_A_ASSIGNER,
     STATUT_ECRITURE_EN_PLACE,
     STATUT_ECRITURE_SANS_OBJET,
+    STATUT_FUSION_NON_TENTEE,
     STATUT_PROJET_INTROUVABLE,
     LocalExecutor,
 )
@@ -918,6 +921,90 @@ def test_sans_projet_aucune_ligne_projet_n_est_consignee(tmp_path: Path) -> None
     """La seule abstention muette : il n'y a pas de racine dont parler."""
     _, journal = _joue(_FournisseurEcrivain(), None, None)
     assert not any(r.etape.endswith(":fusion") for r in journal.records)
+
+
+# --------------------------------------------------------------------------- #
+# Une tâche que personne n'a prise ne raconte aucun travail d'agent (#1146)
+# --------------------------------------------------------------------------- #
+
+
+def _joue_sans_equipe(tmp_path: Path, depot: ProjetStore, projet_id: str):
+    """La tâche d'un projet **qui n'a recruté personne** : le routeur la replie.
+
+    Le dépôt d'agents est vide pour ce projet, donc `catalogue_du_projet` rend un
+    tuple vide — « il n'y a personne », pas « je ne sais pas » (#1042) — et la
+    tâche part en « à assigner » sans qu'aucun agent ne tourne. C'est le cas exact
+    de l'essai du 2026-09-21 (`8a15f78f45d3`).
+    """
+    fournisseur = _FournisseurEcrivain()
+    executeur = LocalExecutor(
+        fournisseur,
+        runtimes={DEVELOPER_PROFILE.nom: AgentRuntime(fournisseur, DEVELOPER_PROFILE)},
+        projets=depot,
+        agents_store=AgentStore(tmp_path / "agents"),
+    )
+    journal = RunJournal(run_id="run-1146")
+    resultat = asyncio.run(executeur.execute(_tache_routee("t1", projet_id), [], journal))
+    return resultat, journal
+
+
+def test_une_tache_a_assigner_ne_raconte_aucune_ecriture_d_agent(tmp_path: Path) -> None:
+    """Critère 2 de #1146, sur un projet non versionné — le cas de l'essai réel.
+
+    L'échantillon fautif est la phrase d'avant : « ce que l'agent a écrit avant
+    d'échouer est resté dans … », écrite sur une tâche où aucun agent n'avait
+    tourné. Le test lit la phrase **et** la racine : rien n'y a été écrit, et la
+    ligne le dit au lieu de laisser chercher un travail qui n'existe pas.
+    """
+    depot, projet = _depot_et_projet(tmp_path)
+    avant = sorted(p.name for p in Path(projet.racine).iterdir())
+
+    resultat, journal = _joue_sans_equipe(tmp_path, depot, projet.id)
+
+    assert not resultat.ok and resultat.role == ROLE_A_ASSIGNER
+    etape = _etape_projet(journal, "t1")
+    assert etape.statut == STATUT_ECRITURE_SANS_OBJET
+    assert "aucun agent n'a pris cette tâche" in etape.sortie
+    assert "avant d'échouer" not in etape.sortie
+    assert sorted(p.name for p in Path(projet.racine).iterdir()) == avant
+
+
+@besoin_de_git
+def test_une_tache_a_assigner_n_ouvre_ni_ne_fusionne_aucune_branche(tmp_path: Path) -> None:
+    """Le même critère sur un projet versionné : « la branche conserve le travail » serait faux.
+
+    La phrase d'avant renvoyait vers une branche de tâche qui n'avait jamais été
+    créée, faute d'agent pour la monter. Le test vérifie l'absence de la branche
+    dans le dépôt, pas seulement dans la phrase.
+    """
+    depot = ProjetStore(tmp_path / "depot")
+    projet_git = _projet_git(tmp_path)
+    projet = depot.creer("Versionné", Path(projet_git.racine))
+
+    resultat, journal = _joue_sans_equipe(tmp_path, depot, projet.id)
+
+    assert resultat.role == ROLE_A_ASSIGNER
+    etape = _etape_projet(journal, "t1")
+    assert etape.statut == STATUT_FUSION_NON_TENTEE
+    assert "aucune branche n'a été ouverte" in etape.sortie
+    assert "conserve le travail" not in etape.sortie
+    branches = _git(Path(projet.racine), "branch", "--list", branche_de_tache("t1"))
+    assert branches.strip() == ""
+
+
+def test_une_tache_a_assigner_d_un_projet_introuvable_ne_parle_d_aucun_espace(
+    tmp_path: Path,
+) -> None:
+    """Troisième régime : « la tâche a travaillé dans un espace jetable » serait faux aussi."""
+    depot = ProjetStore(tmp_path / "depot")
+
+    resultat, journal = _joue_sans_equipe(tmp_path, depot, "prj-00000000")
+
+    assert resultat.role == ROLE_A_ASSIGNER
+    etape = _etape_projet(journal, "t1")
+    assert etape.statut == STATUT_PROJET_INTROUVABLE
+    assert "aucun agent n'a pris cette tâche" in etape.sortie
+    assert "espace jetable" not in etape.sortie
 
 
 def test_deux_taches_du_meme_projet_non_versionne_ne_travaillent_jamais_ensemble(
