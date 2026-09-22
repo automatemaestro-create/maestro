@@ -84,6 +84,19 @@ désigner aucun fichier hors du corpus, la traversée de chemin est sans objet p
 que gardée — et le texte rendu est **exactement** celui que la carte décrit, sans
 fenêtre entre les deux où le fichier aurait changé.
 
+## Ce qu'une citation ne porte pas
+
+Ce que l'assistant montre de ses lectures (`SectionDoc.citation`) ne renvoie jamais
+à l'intérieur du dépôt : ni chemin ou lien vers un fichier, ni numéro de ticket.
+**La règle porte sur les titres, pas seulement sur le nom du fichier** — #939 avait
+retiré ce dernier, mais la citation enchaîne un chemin de **titres**, et ceux-ci
+portaient les mêmes renvois (10 liens, 31 chemins, 127 numéros sur 801 sections au
+2026-09-22). `titre_citable` en porte la démonstration et les trois temps.
+
+⚠ La **carte**, elle, garde les titres bruts : ce n'est pas un oubli. Ce qu'elle
+affiche est l'**identifiant** que le modèle recopie, et qui doit résoudre dans
+l'index — l'assainir ferait nommer des sections qui n'existent pas.
+
 ## Le budget est une erreur franche
 
 `BUDGET_CARTE_TOKENS` est **annoncé et testé**. Le dépasser lève `CarteTropGrande` :
@@ -135,6 +148,80 @@ BUDGET_CARTE_TOKENS = 16_000
 #: Ce qui sépare les titres dans le chemin lisible d'une section (`SectionDoc.chemin`).
 SEPARATEUR_CHEMIN = " › "
 
+#: Les extensions qui font d'un nom un **fichier**. Une liste de formats, pas un
+#: lexique : elle reconnaît une forme (`run.sh`), jamais une intention. Un nom qui
+#: n'en porte aucune et n'a pas de `/` — `maestro.queue`, `mcp__chrome` — n'est pas
+#: un chemin et reste dans la citation : c'est du vocabulaire du produit.
+EXTENSIONS_FICHIER: tuple[str, ...] = (
+    "md", "py", "sh", "json", "jsonl", "ts", "tsx", "js", "jsx", "mjs", "cjs",
+    "yml", "yaml", "toml", "cfg", "ini", "css", "html", "txt", "tsv", "csv",
+    "lock", "example", "Dockerfile",
+)
+
+#: Ce qui marque, le temps de la recouture, la place d'une mention retirée. Un
+#: caractère que le corpus ne porte pas : la carte est faite de Markdown, et un
+#: octet nul n'y survivrait pas à la relecture.
+_MARQUE = "\x00"
+
+#: Ce qui remplace une mention retirée quand son segment a encore quelque chose à
+#: dire. L'ellipse **avoue le trou** au lieu de recoudre une phrase que personne n'a
+#: écrite : une citation charcutée en silence se lirait comme le titre exact.
+ELLIPSE = "…"
+
+#: Un lien Markdown. Sa **cible** est un fichier du dépôt par construction dans ce
+#: corpus ; son texte, lui, repasse par les autres règles — il est souvent un chemin
+#: à son tour (`[docs/24](./24-projets-locaux-et-poste-de-travail.md)`).
+_LIEN = re.compile(r"\[([^\[\]]*)\]\([^()]*\)")
+
+#: Un numéro de ticket interne. Il n'y a rien derrière pour qui n'a pas la forge.
+_TICKET = re.compile(r"#\d+")
+
+#: Un segment de chemin — ce qui tient entre deux `/`.
+_SEGMENT = r"[A-Za-z0-9_@+.-]+"
+
+#: Un chemin vers un fichier du dépôt : soit il porte un `/` entre deux noms, soit
+#: il se termine par une extension de fichier. Le renvoi de section qui le suit
+#: (`docs/24 §2.5`) part avec lui — seul, il ne désignerait plus rien.
+#:
+#: Deux formes sont **exclues** à dessein, et c'est ce qui rend le motif utilisable :
+#: un rapport de nombres (« Phases 5/6 », « lot 11/15 ») n'est pas un chemin, d'où
+#: l'exigence d'une lettre ; une commande (`/run-audit`) ni une route (`/chat`) n'en
+#: sont un non plus, d'où le premier segment obligatoire avant le `/`.
+#: Deux pièges, tous deux vus sur le corpus réel et tous deux tenus par la forme du
+#: motif plutôt que par une exception :
+#:
+#: - le dernier segment s'écrit `(?:{_SEGMENT})?` et non `{_SEGMENT}?` — la seconde
+#:   forme rend le `+` **paresseux** au lieu de rendre le segment optionnel, et le
+#:   chemin est alors coupé après sa première lettre (`components/I`), la citation
+#:   gardant `…cones.tsx` ;
+#: - `(?!\w)` ferme le motif — sans lui, « activer/désactiver » est pris pour un
+#:   chemin jusqu'au premier accent (`activer/d`), parce qu'un `é` n'entre pas dans
+#:   un segment. Un chemin qui déborde sur un mot n'en est pas un.
+_CHEMIN = re.compile(
+    r"(?<![\w/])(?:"
+    rf"(?=[A-Za-z0-9_@+./-]*[A-Za-z]){_SEGMENT}(?:/{_SEGMENT})*/(?:{_SEGMENT})?"
+    rf"|{_SEGMENT}\.(?:{'|'.join(EXTENSIONS_FICHIER)})"
+    r")(?!\w)(?:\s*§[\d.]+)?"
+)
+
+#: Le balisage Markdown d'un titre. Une citation est du **texte** : elle s'affiche
+#: telle quelle, sans rendu. `_` n'en est pas — le corpus ne s'en sert pas pour
+#: l'emphase, mais il en porte dans des identifiants (`mcp__chrome`).
+_BALISAGE = re.compile(r"\*|~~|`")
+
+#: Un groupe parenthésé, sans imbrication — le corpus n'en porte pas.
+_GROUPE = re.compile(r"\s*\([^()]*\)")
+
+#: Ce qui découpe un titre en segments de haut niveau. Dans ce corpus, le tiret
+#: cadratin et le deux-points séparent presque toujours le **sujet** de ce qui le
+#: qualifie : c'est la coupe qui permet de laisser tomber une qualification devenue
+#: muette sans emporter le sujet.
+_SEPARATEUR_SEGMENT = re.compile(r"(\s+[—–]\s+|\s*:\s+)")
+
+#: Un caractère qui **dit** quelque chose — lettre ou chiffre. Un segment qui n'en
+#: porte plus aucun ne nomme plus rien.
+_SIGNIFIANT = re.compile(r"[^\W_]", re.UNICODE)
+
 #: Un titre ATX de niveau 1 à 3, en colonne 0 (la forme de tout le corpus : aucun
 #: titre indenté n'y existe, et l'exiger évite de prendre pour un titre le `#` d'un
 #: exemple mis en retrait). La suite finale de `#` est la clôture optionnelle de
@@ -153,6 +240,75 @@ class CarteTropGrande(RuntimeError):
     parmi des sections qu'elle ne montre plus, et l'ignorance qu'il avouerait alors
     serait celle qu'on lui aurait fabriquée. Voir le docstring du module.
     """
+
+
+def titre_citable(titre: str) -> str:
+    """Le titre tel qu'on peut le **montrer** — sans renvoi vers l'intérieur (#1199).
+
+    #939 avait retiré le nom de fichier de la citation, mais la citation reprend le
+    **chemin des titres**, et ces titres portent eux-mêmes ce qu'on venait d'ôter :
+    sur le corpus du 2026-09-22 (801 sections), 10 titres portent un lien Markdown
+    vers un `.md` du dépôt, 31 un chemin de fichier et 127 un numéro de ticket. Un
+    lien mort et un numéro de ticket interne ne sont pas des sources pour qui a
+    *installé* Maestro : ce sont deux façons de renvoyer l'utilisateur là où il ne
+    peut pas aller.
+
+    Trois temps, et le troisième est celui qui compte :
+
+    1. **le lien perd sa cible** et garde son texte, qui repasse par la suite ;
+    2. **la mention non citable** — numéro de ticket, chemin de fichier — est
+       marquée, et le balisage Markdown tombe (une citation est du texte) ;
+    3. **ce qui n'a plus rien à dire disparaît, le reste avoue son trou.** Un groupe
+       parenthésé qui citait un ticket ou un fichier tombe **en entier** : dans un
+       titre de documentation, une parenthèse est une annotation, et une annotation
+       qui a besoin d'un numéro de ticket est de l'appareil de suivi, pas du produit
+       (« Projets… — cadrage (ticket #215) » → « Projets… — cadrage »). Un segment
+       qui ne porte plus ni lettre ni chiffre tombe de même. Partout ailleurs, la
+       mention laisse `…` : la phrase dit alors qu'il lui manque un mot, au lieu de
+       se refermer sur un sens qu'elle n'a plus.
+
+    Rendre le titre brut en repli serait la seule façon de rater le ticket : quand
+    il ne reste rien, la fonction rend `""` et c'est `SectionDoc.citation` qui
+    décide — elle omet le maillon plutôt que de citer ce qu'elle doit cacher.
+    """
+    texte = _LIEN.sub(lambda lien: lien.group(1), titre or "")
+    texte = _TICKET.sub(_MARQUE, texte)
+    texte = _CHEMIN.sub(_MARQUE, texte)
+    texte = _BALISAGE.sub("", texte)
+    return _recoudre(texte)
+
+
+def _recoudre(texte: str) -> str:
+    """Le titre marqué, rendu lisible — groupes muets ôtés, trous avoués.
+
+    L'ordre est la décision : le groupe parenthésé part **avant** le découpage en
+    segments, sinon « (#223) — livré » laisserait une parenthèse vide au milieu
+    d'un segment qui, lui, a encore quelque chose à dire.
+    """
+    texte = _GROUPE.sub(lambda groupe: "" if _MARQUE in groupe.group(0) else groupe.group(0), texte)
+    morceaux = _SEPARATEUR_SEGMENT.split(texte)
+    garde = ""
+    for position in range(0, len(morceaux), 2):
+        segment = morceaux[position]
+        if not _SIGNIFIANT.search(segment.replace(_MARQUE, " ")):
+            continue
+        if garde:
+            garde += morceaux[position - 1]
+        garde += segment
+    garde = garde.replace(_MARQUE, ELLIPSE)
+    garde = re.sub(r"\(\s*\)", "", garde)
+    garde = re.sub(r"\s+", " ", garde)
+    # La virgule et la parenthèse fermante seulement : en français le deux-points
+    # et le point-virgule gardent leur espace, et la recoudre serait réécrire des
+    # titres que le ticket ne touche pas.
+    garde = re.sub(r"\s+([,)])", r"\1", garde)
+    garde = re.sub(r"^[\s—–:,;]+", "", garde)
+    # Le deux-points final ne tombe que **détaché** : collé, il fait partie du mot
+    # (« 3.2 Les labels de catégorisation — type::, agent::, prio:: »), et le
+    # retirer réécrirait le titre au lieu de le nettoyer.
+    garde = re.sub(r"[\s—–,;(]+$", "", garde)
+    garde = re.sub(r"\s+:+$", "", garde)
+    return "" if garde == ELLIPSE else garde.strip()
 
 
 @dataclass(frozen=True)
@@ -219,20 +375,31 @@ class SectionDoc:
 
     @property
     def citation(self) -> str:
-        """La section telle qu'on la **cite à l'utilisateur** — sans nom de fichier (#939).
+        """La section telle qu'on la **cite à l'utilisateur** — et rien de l'intérieur.
 
         Le document s'y nomme par son titre (« Guide de démarrage ») et non par son
         chemin (`docs/07-guide-de-demarrage.md`) : quelqu'un qui a *installé* Maestro
-        n'a pas ce fichier, et une source qu'on ne peut pas ouvrir ne se vérifie pas.
-        Ce qui la rend vérifiable est qu'elle se **nomme** : ainsi désignée, elle peut
-        être redemandée à l'assistant, qui en rendra le passage.
+        n'a pas ce fichier, et une source qu'on ne peut pas ouvrir ne se vérifie pas
+        (#939). Ce qui la rend vérifiable est qu'elle se **nomme** : ainsi désignée,
+        elle peut être redemandée à l'assistant, qui en rendra le passage.
+
+        Chaque maillon passe par `titre_citable` (#1199) : le nom de fichier avait
+        disparu de la citation, mais les **titres** qu'elle enchaîne portaient à leur
+        tour des liens vers des `.md` du dépôt et des numéros de ticket. Un maillon
+        qui ne survit pas à l'assainissement est **omis** — rendre son titre brut
+        pour ne pas perdre un maillon rendrait justement ce qu'on retire.
         """
-        chaine = (*self.ancetres, self.titre)
+        chaine = [
+            citable
+            for citable in (titre_citable(titre) for titre in (*self.ancetres, self.titre))
+            if citable
+        ]
+        document = titre_citable(self.document)
         # La section de niveau 1 **est** le document : la nommer deux fois
         # (« Guide de démarrage › Guide de démarrage ») serait le seul cas où la
         # citation dirait moins en disant plus.
-        if self.document and self.document != chaine[0]:
-            chaine = (self.document, *chaine)
+        if document and (not chaine or document != chaine[0]):
+            chaine.insert(0, document)
         return SEPARATEUR_CHEMIN.join(chaine)
 
     def to_dict(self) -> dict[str, Any]:

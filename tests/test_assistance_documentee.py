@@ -111,6 +111,26 @@ RELANCER = "docs/00-runs.md#Relancer un run"
 PAUSE = "docs/00-runs.md#Mettre en pause"
 THEME = "apps/web/README.md#Le thème"
 
+#: Le corpus qui **piège** la citation (#1199) : un lien vers un `.md` du dépôt, un
+#: numéro de ticket et un chemin de fichier, placés aux trois endroits que la
+#: citation enchaîne — le titre du document, un ancêtre, la section. Repris de
+#: `docs/05-interface-control-tower.md` et `docs/24-…` au 2026-09-22, resserrés.
+CORPUS_PIEGE = {
+    "docs/24-projets.md": (
+        "# Projets et poste de travail — cadrage (ticket #215)\n\n"
+        "## 2. Les écrans — `apps/web/app/`\n\n"
+        "cadre\n\n"
+        "### 2.7 Projets et composition d'un objectif "
+        "*(retenu — [docs/24](./24-projets.md), **Phase 7**)*\n\n"
+        "Un projet se déclare depuis l'écran Projets.\n"
+    ),
+}
+
+SECTION_PIEGEE = (
+    "docs/24-projets.md#2.7 Projets et composition d'un objectif "
+    "*(retenu — [docs/24](./24-projets.md), **Phase 7**)*"
+)
+
 
 class ModeleScripte(ModelProvider):
     """Un fournisseur qui rend ses réponses **dans l'ordre**, et note ce qu'on lui donne.
@@ -385,7 +405,29 @@ class TestBlocSources:
         consulte de mémoire est pire.
         """
         assert "reproduis-le" in _CONSIGNE_DOCUMENTEE
-        assert "jamais par son nom de fichier" in _CONSIGNE_DOCUMENTEE
+        assert "par le nom qui ANNONCE" in _CONSIGNE_DOCUMENTEE
+
+    def test_le_bloc_ne_renvoie_jamais_a_l_interieur_du_depot(self, tmp_path: Path) -> None:
+        """Ce que l'assistant affiche de ses lectures, sur un corpus qui piège (#1199).
+
+        #939 avait retiré le **fichier** de la citation ; restait le chemin des
+        **titres**, et les titres du corpus réel portent des liens vers des `.md` du
+        dépôt et des numéros de ticket. Le corpus jetable ci-dessous les reproduit
+        aux trois places où ils se trouvent — le titre du document, un ancêtre, la
+        section elle-même — parce que la citation les enchaîne tous les trois.
+        """
+        carte = construire_carte(ecrire_corpus(tmp_path, CORPUS_PIEGE))
+
+        bloc = bloc_sources(selection_sections(carte, [SECTION_PIEGEE]).retenues)
+
+        assert "docs/" not in bloc
+        assert ".md" not in bloc
+        assert "#215" not in bloc and "#223" not in bloc
+        assert "](" not in bloc
+        assert (
+            "Projets et poste de travail — cadrage › 2. Les écrans "
+            "› 2.7 Projets et composition d'un objectif" in bloc
+        )
 
 
 # ── ③ les deux appels, et ce qui les atteint ─────────────────────────────────
@@ -453,6 +495,42 @@ class TestDeuxAppels:
         _choix, reponse = modele.prompts
         assert "n'ont pas pu être jointes" in reponse
         assert "Mettre en pause" in reponse
+
+    def test_l_annonce_d_un_extrait_est_le_nom_que_l_utilisateur_verra(
+        self, tmp_path: Path
+    ) -> None:
+        """Le même nom des deux côtés, et rien du dépôt dans le prompt (#1199).
+
+        Le second appel annonçait chaque extrait par son chemin de fichier et sa
+        ligne, pendant que sa consigne demandait de ne pas les reprendre. Montrer au
+        modèle ce qu'on lui demande de taire est la façon la plus sûre de le voir
+        ressortir dans une phrase — et le numéro de ligne n'a aucun usage pour qui ne
+        peut pas ouvrir le fichier.
+
+        ⚠ Le **texte** des extraits, lui, n'est pas touché : il fait foi, et
+        « reproduis-le tel quel » deviendrait faux si on le réécrivait. Ce qui garde
+        la réponse propre est la consigne, testée juste à côté.
+        """
+        racine = ecrire_corpus(tmp_path, CORPUS)
+        repondeur, modele = _monte(racine, RELANCER, "Par « Reprendre ».")
+
+        _repondre(repondeur, QUESTION_684)
+
+        _choix, reponse = modele.prompts
+        annonce = next(ligne for ligne in reponse.splitlines() if ligne.startswith("--- "))
+        assert annonce == "--- Runs › Relancer un run"
+        assert "docs/00-runs.md" not in reponse.split("## Relancer un run")[0]
+        assert "ligne " not in annonce
+
+    def test_la_consigne_interdit_de_recopier_ce_que_les_extraits_portent(self) -> None:
+        """L'autre moitié : le texte d'un extrait garde ses renvois, la réponse non.
+
+        Sans cette phrase, un modèle consciencieux recopierait « docs/24 » parce que
+        l'extrait le porte — et l'utilisateur lirait un renvoi qui ne mène nulle part
+        chez lui.
+        """
+        assert "des numéros de ticket" in _CONSIGNE_DOCUMENTEE
+        assert "AUCUN dans ta réponse" in _CONSIGNE_DOCUMENTEE
 
 
 # ── ④ les sources citées sont celles qui ont été passées ─────────────────────
