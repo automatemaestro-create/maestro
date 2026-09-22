@@ -137,6 +137,20 @@ class Settings:
     #: voie complète). Un backend joint depuis le réseau n'ouvre jamais de
     #: fenêtre, quel que soit ce réglage.
     selecteur_natif: str | None = None
+    #: **Support de persistance** de la Control Tower (`MAESTRO_PERSISTANCE`, #639),
+    #: ou None : `redis` — le chemin de production, inchangé depuis #97. `sqlite`
+    #: est le **mode local** : le journal durable vit dans un fichier, et la stack
+    #: n'exige plus aucun service à installer (docs/24 §6, point 2). Interprété et
+    #: validé par `maestro.controltower.persistence.support_persistance` — toute
+    #: autre valeur non vide est une erreur de config explicite, jamais un repli
+    #: silencieux sur l'autre support (même parti pris que `MAESTRO_HOTE_RUN`).
+    persistance: str | None = None
+    #: Le fichier du journal en mode local (`MAESTRO_SQLITE_FICHIER`), ou None :
+    #: un fichier **hors du dépôt**, sous le dossier personnel, nommé d'après
+    #: l'espace de la stack (`maestro.controltower.persistence.chemin_sqlite`) —
+    #: deux copies de travail ne se relisent donc pas l'une l'autre, comme pour
+    #: les clés Redis (#1164).
+    sqlite_fichier: str | None = None
     #: **Hôte des runs** lancés par la Control Tower (`MAESTRO_HOTE_RUN`, #443), ou
     #: None : le process **détaché** (`detache`, le défaut depuis #446), qui fait
     #: vivre chaque run hors de `maestro-api` et lui survit — un Redis joignable en
@@ -245,6 +259,8 @@ class Settings:
             ingestion_dir=(os.getenv("MAESTRO_INGESTION_DIR") or "").strip() or None,
             explorateur_racines=(os.getenv("MAESTRO_EXPLORATEUR_RACINES") or "").strip() or None,
             selecteur_natif=(os.getenv("MAESTRO_SELECTEUR_NATIF") or "").strip().lower() or None,
+            persistance=(os.getenv("MAESTRO_PERSISTANCE") or "").strip().lower() or None,
+            sqlite_fichier=(os.getenv("MAESTRO_SQLITE_FICHIER") or "").strip() or None,
             hote_run=(os.getenv("MAESTRO_HOTE_RUN") or "").strip().lower() or None,
             api_auth=(os.getenv("MAESTRO_API_AUTH") or "").strip().lower() or None,
             api_jeton=(os.getenv("MAESTRO_API_JETON") or "").strip() or None,

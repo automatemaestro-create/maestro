@@ -4,7 +4,9 @@ Une stack réelle — l'API, et les hôtes détachés qu'elle lance — lit et �
 sortes de données :
 
 - **Redis**, rangé dans l'espace de la stack (`maestro.espace`) : le journal
-  qu'elle rejoue au démarrage, les battements, la file, les canaux ;
+  qu'elle rejoue au démarrage, les battements, la file, les canaux — ou, en
+  **mode local** (`MAESTRO_PERSISTANCE=sqlite`, #639), le fichier SQLite qui
+  tient ce journal à lui seul, sans aucun service ;
 - **des dépôts de fichiers**, un par sorte de donnée (`DEPOTS`) : les fils de
   conversation, les projets déclarés, les téléversements, et les réglages d'agent
   que chaque projet range sous `_projets/<id>/` (`maestro.agents.rangement`).
@@ -48,6 +50,11 @@ from maestro.agents.playbooks import PlaybookStore
 from maestro.agents.store import AgentStore, SurchargeStore
 from maestro.config import Settings, load_settings
 from maestro.controltower.chat import ChatStore
+from maestro.controltower.persistence import (
+    SUPPORT_SQLITE,
+    chemin_sqlite,
+    support_persistance,
+)
 from maestro.espace import VARIABLE_ESPACE, Espace, espace_courant, racine_de_la_copie
 from maestro.projets.store import ProjetStore
 from maestro.sources.resolution import racine_ingestion
@@ -208,11 +215,22 @@ def _lisible(chemin: Path, copie: Path) -> str:
         return str(chemin)
 
 
-def annonce(donnees: Donnees, *, copie: Path | None = None) -> list[str]:
-    """Les lignes qui disent, au démarrage, ce que cette stack voit — et ce qu'elle ne voit pas."""
+def annonce(
+    donnees: Donnees, *, copie: Path | None = None, settings: Settings | None = None
+) -> list[str]:
+    """Les lignes qui disent, au démarrage, ce que cette stack voit — et ce qu'elle ne voit pas.
+
+    La ligne `runs` nomme le **support** du journal durable (#639) : les clés
+    Redis de l'espace, ou le fichier local quand `MAESTRO_PERSISTANCE=sqlite`.
+    Une annonce qui parlerait de Redis à une stack qui n'en ouvre pas dirait
+    faux sur la seule chose qu'elle existe pour dire — où vivent les données.
+    """
     copie = copie or racine_de_la_copie()
+    settings = settings or load_settings()
     espace = donnees.espace
-    if espace.commun:
+    if support_persistance(settings) == SUPPORT_SQLITE:
+        runs = f"SQLite, fichier « {chemin_sqlite(settings)} » — aucun service à lancer"
+    elif espace.commun:
         runs = "Redis, noms sans préfixe (l'historique du poste) — aucun worktree ne les lit"
     else:
         runs = f"Redis, noms « {espace.prefixe}maestro.* » — aucune autre copie ne les lit"

@@ -5,7 +5,8 @@
 # sur les ports Maestro — jamais de kill large), puis démarre :
 #   - l'API — port 8000 —, en MODE RÉEL par défaut (maestro.controltower.cli,
 #     alias `maestro-api`) : bus Redis Pub/Sub et journal durable des événements
-#     (#97), donc l'historique rendu au redémarrage. C'est la vraie orchestration
+#     (#97), donc l'historique rendu au redémarrage — ou, en mode local, un
+#     journal SQLite sans aucun service (#639). C'est la vraie orchestration
 #     que le moteur alimente (`maestro-run --publier`, workers #41) ;
 #   - l'UI Next.js (apps/web) pointée sur cette API — port 3000 ;
 # ouvre l'UI dans le navigateur par défaut du poste (#200), et arrête l'ensemble
@@ -14,9 +15,12 @@
 # dossier temporaire, propre au couple de ports — deux sessions parallèles ne se
 # marchent donc pas dessus.
 #
-# Le mode réel EXIGE Redis : il est vérifié AVANT de toucher à quoi que ce soit
-# (`maestro-api --verifier-redis`, qui résout REDIS_URL et rend le geste exact
-# pour le lancer). Absent, le script s'arrête en le disant, sans rien démarrer.
+# Le mode réel EXIGE son support, vérifié AVANT de toucher à quoi que ce soit
+# (`maestro-api --verifier-redis`, qui résout le réglage et rend le geste exact).
+# En mode SERVEUR — le défaut — c'est Redis, et son absence arrête le script en le
+# disant, sans rien démarrer. En mode LOCAL (MAESTRO_PERSISTANCE=sqlite, #639) le
+# journal durable est un FICHIER : aucun service à lancer, le préflight le dit et
+# passe. Le script ne connaît aucun nom de variable — il demande, Python résout.
 #
 # LE MODE DÉMO A QUITTÉ LE PRODUIT (#1168, docs/41 §4). `--demo`, `--demonstration`
 # et `--scenario` servaient un scénario factice sur un bus mémoire ; ils sont
@@ -821,9 +825,16 @@ fi
 # script : sans elle, un tube sous Windows le ferait écrire en cp1252 (#141).
 export PYTHONIOENCODING="${PYTHONIOENCODING:-utf-8}"
 
-# Redis est une dépendance dure. On la vérifie plutôt que de la supposer. Le diagnostic (URL résolue, geste exact) vient du
-# CLI de l'API, seul endroit où REDIS_URL est résolue ; quand Redis répond, il
-# ANNONCE les données que la stack verra — son espace, ses fils, ses projets (#1164).
+# Le SUPPORT de la stack se vérifie plutôt que de se supposer. Le diagnostic (URL
+# résolue, geste exact) vient du CLI de l'API, seul endroit où REDIS_URL est
+# résolue ; quand le support répond, il ANNONCE les données que la stack verra —
+# son espace, ses fils, ses projets (#1164).
+#
+# Redis est une dépendance dure du mode SERVEUR — le défaut. En mode LOCAL
+# (MAESTRO_PERSISTANCE=sqlite, #639) il n'y a aucun service à joindre, et le même
+# préflight le dit et passe : ce script ne connaît aucun nom de variable, il
+# demande, et Python résout. C'est pourquoi les lignes de démarrage ci-dessous
+# ne nomment plus le support — l'annonce du préflight en est la source unique.
 #
 # Sur l'état du banc, le préflight est celui de `maestro.scenarios.etat` : le même
 # ping et la même annonce (celle du banc), plus ce qu'il faut pour le rouvrir —
@@ -848,7 +859,7 @@ if [ "$MODE" = "demarrer" ]; then
     fi
   elif ! (cd "$RACINE" && "$PYTHON" -m maestro.controltower.cli --verifier-redis); then
     echo >&2
-    echo "Control Tower impossible sans Redis — rien n'a été démarré ni arrêté." >&2
+    echo "Control Tower impossible sans son support — rien n'a été démarré ni arrêté." >&2
     echo "  · lancer Redis (ci-dessus), puis relancer cette commande." >&2
     exit 1
   fi
@@ -915,14 +926,14 @@ if [ "$DONNEES" = "banc" ] || [ "$DONNEES" = "neuf" ]; then
   # La stack neuve est servie sur le jeu de données du banc, vidé juste au-dessus : l'API ne
   # connaît qu'un jeu à part, et c'est celui-là.
   if [ "$DONNEES" = "neuf" ]; then
-    echo "[api] démarrage sur :${PORT_API} — mode réel sur Redis, stack neuve (log : $LOG_DIR_REL/api.log)"
+    echo "[api] démarrage sur :${PORT_API} — mode réel, stack neuve (log : $LOG_DIR_REL/api.log)"
   else
-    echo "[api] démarrage sur :${PORT_API} — mode réel sur Redis, état du banc (log : $LOG_DIR_REL/api.log)"
+    echo "[api] démarrage sur :${PORT_API} — mode réel, état du banc (log : $LOG_DIR_REL/api.log)"
   fi
   nohup "$PYTHON" -m maestro.controltower.cli --port "$PORT_API" --etat-banc \
     >"$LOG_DIR/api.log" 2>&1 &
 else
-  echo "[api] démarrage sur :${PORT_API} — mode réel sur Redis (log : $LOG_DIR_REL/api.log)"
+  echo "[api] démarrage sur :${PORT_API} — mode réel (log : $LOG_DIR_REL/api.log)"
   nohup "$PYTHON" -m maestro.controltower.cli --port "$PORT_API" \
     >"$LOG_DIR/api.log" 2>&1 &
 fi

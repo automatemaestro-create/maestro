@@ -304,10 +304,12 @@ reconstruire la projection (exécutions, grands livres, analytics, tâches,
 agents, validations) **et l'historique requêtable** d'avant un redémarrage de
 l'API : l'état survit à la vie du process (#97). `create_app` s'injecte bus, état
 et journal (les tests d'API tournent sur `InMemoryEventBus`/`InMemoryEventLog`,
-sans Redis) ; `create_default_app` câble le `RedisEventBus` et le
-`RedisEventLog` de production (canal `maestro.evenements`, alimenté par
-`maestro.controltower.bridge` côté moteur ; journal persistant sur la liste
-`maestro.evenements:journal`).
+sans Redis) ; `create_default_app` câble les supports que le **déploiement**
+désigne (`_supports_configures`, #639) : `RedisEventBus` + `RedisEventLog` en
+serveur — le défaut, canal `maestro.evenements` alimenté par
+`maestro.controltower.bridge` côté moteur, journal persistant sur la liste
+`maestro.evenements:journal` —, `InMemoryEventBus` + `SqliteEventLog` en local,
+où plus aucun service n'est à installer.
 """
 
 from __future__ import annotations
@@ -318,6 +320,7 @@ import logging
 import os
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager, suppress
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, Any
 
@@ -462,10 +465,12 @@ from maestro.controltower.orchestration import (
 )
 from maestro.controltower.outillage import ServiceOutillage
 from maestro.controltower.persistence import (
+    SUPPORT_SQLITE,
     BusDurable,
     EventLog,
     InMemoryEventLog,
-    RedisEventLog,
+    journal_configure,
+    support_persistance,
 )
 from maestro.controltower.portee import (
     PorteeProjet,
@@ -1501,8 +1506,9 @@ def create_app(
     **rejoue au démarrage** pour reconstruire la projection (exécutions, grands
     livres, analytics, tâches, agents, validations) après un redémarrage de
     l'API — par défaut un journal mémoire (pas de durabilité inter-redémarrage :
-    la configuration des tests). La production câble
-    `RedisEventLog` via `create_default_app`. Un état injecté (`state`) reste tel
+    la configuration des tests). La production câble celui que le **réglage**
+    désigne via `create_default_app` (`journal_configure`, #639) : `RedisEventLog`
+    en serveur, `SqliteEventLog` en local. Un état injecté (`state`) reste tel
     quel puis reçoit le rejeu par-dessus (idempotent : les événements
     reconstruisent le même état).
 
@@ -5910,21 +5916,84 @@ async def _attend_deconnexion(websocket: WebSocket) -> None:
             await websocket.receive_text()
 
 
-def create_default_app() -> FastAPI:
-    """L'app de production : bus Redis Pub/Sub configuré depuis l'environnement.
+@dataclass(frozen=True)
+class _SupportsDeploiement:
+    """Les quatre objets d'infrastructure que le **mode de distribution** choisit.
 
-    Consomme le canal `maestro.evenements` de l'instance `REDIS_URL` (celle du
-    docker-compose par défaut — la même que la file de tâches #41), alimenté
-    côté moteur par `maestro.controltower.bridge` ; le chat (#84) transite par
-    la messagerie Redis de la même instance (boîtes `maestro.boite.<agent>`).
-    Les événements y sont aussi **persistés** (#97) sur la liste Redis
-    `maestro.evenements:journal` et rejoués au démarrage : l'état de la Control
-    Tower survit au redémarrage de l'API.
+    Ils vont ensemble et c'est tout le sujet : un journal local derrière un bus
+    Redis exigerait encore un service, et un bus mémoire devant un journal Redis
+    ferait consigner dans une instance qu'aucun autre process ne lit. Les
+    résoudre d'un seul geste est ce qui rend le mode **nommable** — « serveur »
+    ou « local » — plutôt qu'assemblable de travers.
+    """
+
+    bus: EventBus
+    mailbox: Mailbox
+    journal: EventLog
+    battements: RegistreBattements
+
+
+def _supports_configures(settings: Settings) -> _SupportsDeploiement:
+    """Résout `MAESTRO_PERSISTANCE` en infrastructure — **Redis** par défaut (#639).
+
+    `redis` (le défaut, et le silence) rend exactement les quatre objets d'avant
+    ce lot : rien de ce qui marche aujourd'hui ne change, ni l'URL, ni les clés,
+    ni le canal.
+
+    `sqlite` est le **mode local** : le journal durable vit dans un fichier
+    (`SqliteEventLog`), et le reste passe aux implémentations mono-process. Ce
+    n'est pas un raccourci, c'est ce que chacune de ces classes documente
+    d'elle-même — `InMemoryEventBus`, `InMemoryMailbox` et
+    `RegistreBattementsMemoire` sont « le transport des tests **et d'un
+    déploiement mono-process** », et c'est exactement ce qu'est un produit posé
+    sur un poste : une API, et rien d'autre à installer.
+
+    Le bus et le journal restent **deux questions** (cf. l'en-tête de
+    `persistence`) : on ne fabrique pas un pub/sub avec une table qu'on
+    interrogerait en boucle. Ce que le mode local perd est la diffusion
+    **inter-process** — un producteur hors de l'API —, et c'est précisément ce
+    que `_hote_configure` refuse d'y câbler plutôt que de le laisser publier dans
+    le vide. Ce qu'il garde est l'essentiel : ce qui est publié est consigné
+    (`BusDurable`, #699), donc rejoué au démarrage suivant.
+    """
+    if support_persistance(settings) == SUPPORT_SQLITE:
+        return _SupportsDeploiement(
+            bus=InMemoryEventBus(),
+            mailbox=InMemoryMailbox(),
+            journal=journal_configure(settings),
+            battements=RegistreBattementsMemoire(),
+        )
+    return _SupportsDeploiement(
+        bus=RedisEventBus(settings.redis_url),
+        mailbox=RedisMailbox(settings.redis_url),
+        journal=journal_configure(settings),
+        battements=RegistreBattementsRedis(settings.redis_url),
+    )
+
+
+def create_default_app() -> FastAPI:
+    """L'app de production : ses supports résolus depuis l'environnement.
+
+    En **serveur** (le défaut) : consomme le canal `maestro.evenements` de
+    l'instance `REDIS_URL` (celle du docker-compose par défaut — la même que la
+    file de tâches #41), alimenté côté moteur par `maestro.controltower.bridge` ;
+    le chat (#84) transite par la messagerie Redis de la même instance (boîtes
+    `maestro.boite.<agent>`). Les événements y sont aussi **persistés** (#97) sur
+    la liste Redis `maestro.evenements:journal` et rejoués au démarrage : l'état
+    de la Control Tower survit au redémarrage de l'API.
 
     Les **battements** des runs (#348) vivent sur la même instance, dans le hash
     `maestro.runs:battements` — hors du process, seule façon de voir battre un run
     lancé par `maestro-run --publier` et de le retrouver vivant après un
     redémarrage de l'API.
+
+    En **local** (`MAESTRO_PERSISTANCE=sqlite`, #639) : le journal durable est un
+    fichier SQLite hors du dépôt, le reste vit dans le process, et **aucun
+    service n'est à installer** — la promesse d'un produit qu'on pose sur un
+    poste (docs/24 §4.7). La projection se reconstruit au démarrage du même
+    rejeu, par le même code : le support est un **réglage**, jamais un
+    embranchement (ENF-12), et `_supports_configures` est le seul endroit qui le
+    lit.
 
     L'**hôte des runs** (#443) se choisit ici, et nulle part ailleurs. Depuis #446
     le défaut est l'hôte **détaché** : chaque run vit dans un process indépendant,
@@ -5951,11 +6020,12 @@ def create_default_app() -> FastAPI:
     (ou le script `maestro-api`).
     """
     settings = load_settings()
+    supports = _supports_configures(settings)
     return create_app(
-        bus=RedisEventBus(settings.redis_url),
-        mailbox=RedisMailbox(settings.redis_url),
-        event_log=RedisEventLog(settings.redis_url),
-        battements=RegistreBattementsRedis(settings.redis_url),
+        bus=supports.bus,
+        mailbox=supports.mailbox,
+        event_log=supports.journal,
+        battements=supports.battements,
         hote_run=_hote_configure(settings),
         acces=politique_depuis(settings),
     )
@@ -5989,15 +6059,33 @@ def _hote_configure(settings: Settings) -> HoteRun | None:
     `subprocess` et, par la ligne de commande du fils, tout le moteur — une app
     qui ne le demande pas n'a pas à le charger, exactement comme `moteur_par_defaut`
     ne résout aucun fournisseur tant qu'aucun run ne part.
+
+    ⚠ **En mode local (`MAESTRO_PERSISTANCE=sqlite`, #639), le défaut est
+    `process`** — et c'est la même règle vue de l'autre côté : le mode de
+    distribution change les défauts, pas les fonctions (docs/24 §4.7). L'hôte
+    détaché *exige* un Redis joignable, sur lequel il publie, bat et consigne ;
+    un poste qui n'en a pas le verrait partir et ne recevrait jamais une ligne de
+    son run. Demandé **explicitement** dans ce mode, il est donc une **erreur
+    franche** plutôt qu'un run muet : le silence choisit l'hôte qui marche, la
+    demande impossible se dit.
     """
-    nom = (settings.hote_run or HOTE_RUN_DETACHE).strip().lower()
+    local = support_persistance(settings) == SUPPORT_SQLITE
+    defaut = HOTE_RUN_EN_PROCESS if local else HOTE_RUN_DETACHE
+    nom = (settings.hote_run or defaut).strip().lower()
     if nom == HOTE_RUN_EN_PROCESS:
         return None
     if nom == HOTE_RUN_DETACHE:
+        if local:
+            raise ConfigError(
+                f"MAESTRO_HOTE_RUN={HOTE_RUN_DETACHE} exige un Redis joignable "
+                f"(le run y publie, y bat et y consigne son issue), or "
+                f"MAESTRO_PERSISTANCE={SUPPORT_SQLITE} est le mode local, sans service. "
+                f"Laisser MAESTRO_HOTE_RUN vide y désigne « {HOTE_RUN_EN_PROCESS} »."
+            )
         from maestro.controltower.hote_detache import HoteRunDetache
 
         return HoteRunDetache()
     raise ConfigError(
         f"MAESTRO_HOTE_RUN : hôte inconnu {nom!r} "
-        f"(attendu : {' | '.join(HOTES_RUN)}, ou vide pour « {HOTE_RUN_DETACHE} »)."
+        f"(attendu : {' | '.join(HOTES_RUN)}, ou vide pour « {defaut} »)."
     )
