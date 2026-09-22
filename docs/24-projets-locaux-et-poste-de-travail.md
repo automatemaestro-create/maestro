@@ -736,6 +736,10 @@ Recensé en analysant le code, à arbitrer avec le reste :
 3. **Authentification.** L'API n'en a aucune (CORS `*`), déjà relevé par #182 comme prérequis
    des paramètres en écriture. Devient bloquant dès qu'un projet local est exposé : une page
    web tierce ne doit pas pouvoir lancer un run sur le disque de l'utilisateur.
+   ✅ **Traité par #638** (Phase 9, 2026-09-22) : jeton local exigé sur chaque requête, origines
+   limitées à celle du front, régime annoncé au démarrage et voie non authentifiée nommée —
+   [docs/19 §2.5](./19-securite-modele-de-menace.md),
+   [docs/05 §6.21](./05-interface-control-tower.md). Ce que cela ne ferme pas y est écrit.
 4. **Boucle de vérification.** L'agent QA produit des tests ; personne ne garantit qu'ils sont
    **exécutés** dans le projet. Un projet local rend cela possible (et attendu) : exécuter,
    lire le résultat, corriger — c'est ce qui sépare « du code plausible » de « du code qui

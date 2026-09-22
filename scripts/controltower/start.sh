@@ -107,6 +107,11 @@
 # Ports surchargables : MAESTRO_PORT_API (défaut 8000), MAESTRO_PORT_UI (3000). Un worktree créé
 # par scripts/git/worktree.sh les reçoit d'office, dérivés du numéro de ticket (#152).
 #
+# Accès à l'API (#638) : elle sert DURCIE — un jeton local sur chaque requête, et les seules
+# origines du front. Le lanceur résout ce jeton (`maestro-api --jeton`), le passe au front par
+# son environnement et n'a rien à demander à personne. MAESTRO_API_AUTH=ouvert rouvre la voie non
+# authentifiée, MAESTRO_API_ORIGINES règle les origines ; le régime est annoncé au démarrage.
+#
 # Choix du navigateur (#200), dans l'ordre :
 #   1. MAESTRO_BROWSER — binaire imposé (famille Chromium) ; il PRIME sur la détection.
 #   2. Le navigateur PAR DÉFAUT DU POSTE, lu à chaud depuis l'association système (registre
@@ -849,6 +854,25 @@ if [ "$MODE" = "demarrer" ]; then
   fi
 fi
 
+# Le JETON de l'API locale (#638), résolu ici — avant l'API, donc avant l'UI. L'API
+# le relira dans le même fichier (`~/.maestro/jeton-api`, engendré au premier
+# passage) et le front le reçoit par son environnement : personne ne le manipule.
+# Le CLI annonce le régime sur son erreur standard (on le laisse s'afficher) et rend
+# le jeton sur sa sortie standard ; en régime « ouvert » (MAESTRO_API_AUTH) il ne
+# rend rien et sort en 3 — le front n'envoie alors aucun en-tête, comme avant ce
+# lot. Toute autre sortie non nulle est une config fautive : on la dit et on
+# s'arrête, plutôt que de servir une API que le front ne pourra pas joindre.
+JETON_API=""
+if [ "$MODE" = "demarrer" ]; then
+  code_jeton=0
+  JETON_API="$(cd "$RACINE" && "$PYTHON" -m maestro.controltower.cli --jeton)" || code_jeton=$?
+  if [ "$code_jeton" != 0 ] && [ "$code_jeton" != 3 ]; then
+    echo >&2
+    echo "Jeton de l'API illisible (code $code_jeton) — rien n'a été démarré ni arrêté." >&2
+    exit 1
+  fi
+fi
+
 # ── Nettoyage puis démarrage ─────────────────────────────────────────────────
 # L'extinction des runs vient AVANT le nettoyage (qui tue l'API, seule à tenir les
 # hôtes) et **seulement** sur « --stop » : un démarrage rejoue arreter_session pour
@@ -909,7 +933,8 @@ fi
 
 echo "[ui] démarrage sur :${PORT_UI} (log : $LOG_DIR_REL/ui.log)"
 cd "$RACINE/apps/web" || exit 1
-NEXT_PUBLIC_MAESTRO_API_URL="http://127.0.0.1:${PORT_API}" PORT="$PORT_UI" \
+NEXT_PUBLIC_MAESTRO_API_URL="http://127.0.0.1:${PORT_API}" \
+  NEXT_PUBLIC_MAESTRO_API_JETON="$JETON_API" PORT="$PORT_UI" \
   nohup npm run dev >"$LOG_DIR/ui.log" 2>&1 &
 cd "$RACINE" || exit 1
 # Next.js (turbopack) peut mettre un moment à compiler la première page.

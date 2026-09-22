@@ -82,10 +82,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol, TextIO
 from urllib.error import URLError
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 from maestro.agents.rangement import SEGMENT_PROJETS
 from maestro.config import load_settings
+from maestro.controltower.acces import entetes_client
 from maestro.controltower.battement import CLE_BATTEMENTS
 from maestro.controltower.donnees import (
     DEPOTS,
@@ -375,9 +376,17 @@ def description(instantane: Instantane, *, maintenant: datetime | None = None) -
 
 
 def api_du_banc_en_marche(banc: Donnees, port: int) -> bool:
-    """Vrai si une API sert **l'espace du banc** sur ce port — elle rejouerait l'ancien état."""
+    """Vrai si une API sert **l'espace du banc** sur ce port — elle rejouerait l'ancien état.
+
+    La requête porte le **jeton local** (#638) : l'API sert durcie, et un `401`
+    lu comme « personne ne répond » ferait vider le banc sous une stack en
+    marche — exactement ce que ce refus est là pour empêcher.
+    """
+    requete = Request(  # noqa: S310 - l'URL est locale et construite ici
+        f"http://127.0.0.1:{port}/api/sante", headers=entetes_client()
+    )
     try:
-        with urlopen(f"http://127.0.0.1:{port}/api/sante", timeout=2.0) as reponse:
+        with urlopen(requete, timeout=2.0) as reponse:  # noqa: S310
             corps = json.loads(reponse.read().decode("utf-8") or "{}")
     except (URLError, OSError, ValueError):
         return False

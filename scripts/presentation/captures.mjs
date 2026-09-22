@@ -194,10 +194,22 @@ function arguments_() {
   return args;
 }
 
+/**
+ * Le **jeton de l'API locale** (#638), posé par `captures.sh` dans
+ * l'environnement : l'API sert durcie, et une lecture sans jeton sort en `401`.
+ * Vide en régime ouvert — on n'envoie alors aucun en-tête.
+ *
+ * ⚠ Il ne concerne que les lectures faites **ici**. Les appels que la page
+ * passe, eux, portent celui que le build du front a inliné — même jeton, autre
+ * chemin.
+ */
+const JETON_API = (process.env.MAESTRO_API_JETON ?? "").trim();
+
 /** Une lecture JSON de l'API réelle ; lève sur une panne, que l'appelant nomme. */
 async function lireApi(api, chemin) {
   const reponse = await fetch(new URL(chemin, api), {
     signal: AbortSignal.timeout(LECTURE_API_MS),
+    headers: JETON_API === "" ? {} : { Authorization: `Bearer ${JETON_API}` },
   });
   if (!reponse.ok) throw new Error(`${chemin} a répondu ${reponse.status}`);
   return reponse.json();

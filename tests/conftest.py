@@ -124,6 +124,7 @@ tests qui exercent la séparation posent eux-mêmes `MAESTRO_ESPACE`.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import shutil
@@ -166,6 +167,26 @@ CLE_REGLAGES_DIR = "MAESTRO_REGLAGES_DIR"
 
 #: La reprise des agents dans leur projet, jouée au démarrage de l'API (#1038).
 CLE_REPRISE_AGENTS = "MAESTRO_REPRISE_AGENTS"
+
+#: Le **régime d'accès** de l'API et ses réglages (#638), plus le port du front
+#: dont le défaut d'origines se dérive. Vidés par `_neutralise_acces_api` : les
+#: trois premiers se posent dans un `.env`, et `MAESTRO_PORT_UI` dans le bloc
+#: `env` du `.claude/settings.local.json` que `worktree.sh` écrit par copie de
+#: travail — d'où elle fuit dans l'environnement de toute session du poste. Un
+#: port hérité ferait attendre `http://localhost:3017` là où la CI attend 3000 :
+#: le verdict dépendrait du worktree qui joue la suite (docs/10 §8.7).
+CLES_ACCES_API = (
+    "MAESTRO_API_AUTH",
+    "MAESTRO_API_JETON",
+    "MAESTRO_API_ORIGINES",
+    "MAESTRO_PORT_UI",
+)
+
+#: Où le jeton de l'API est persisté (#638). Pointé sur un dossier jetable par
+#: `_jeton_api_isole` : la suite n'écrit pas dans le `~/.maestro/` du poste, et
+#: n'y lit pas non plus un jeton qui donnerait raison à un test pour la mauvaise
+#: raison.
+CLE_JETON_FICHIER = "MAESTRO_API_JETON_FICHIER"
 
 #: Variables posées d'office par les intégrations continues. `GITLAB_CI` reste de la liste bien
 #: après le retrait de la CI GitLab (#344) : ce qui est testé est « quelqu'un lira-t-il ce compte
@@ -327,6 +348,17 @@ def _neutralise_reprise_agents() -> None:
     os.environ[CLE_REPRISE_AGENTS] = "0"
 
 
+def _neutralise_acces_api() -> None:
+    """Vide le régime d'accès de l'API et le port du front (#638) — voir `CLES_ACCES_API`.
+
+    Vidées et non supprimées, comme les clés Langfuse : `maestro.config` charge
+    le `.env` du dépôt par `load_dotenv(override=False)`, qui recomplèterait une
+    clé *absente* au premier appel de `load_settings()`.
+    """
+    for cle in CLES_ACCES_API:
+        os.environ[cle] = ""
+
+
 def _fige_espace() -> None:
     """Fige l'espace de données à `commun` (#1164) — voir l'en-tête du module.
 
@@ -343,6 +375,7 @@ _neutralise_langfuse()
 _neutralise_couleur_orchestrate()
 _neutralise_forge()
 _neutralise_reprise_agents()
+_neutralise_acces_api()
 _fige_espace()
 
 
@@ -373,6 +406,39 @@ def _reglages_du_poste_isoles(tmp_path_factory: pytest.TempPathFactory) -> Itera
             os.environ.pop(CLE_REGLAGES_DIR, None)
         else:
             os.environ[CLE_REGLAGES_DIR] = ancienne
+
+
+@pytest.fixture(autouse=True)
+def _jeton_api_isole(
+    tmp_path_factory: pytest.TempPathFactory, request: pytest.FixtureRequest
+) -> Iterator[None]:
+    """Coupe le jeton de l'API du `~/.maestro/` du poste (#638).
+
+    `jeton_local()` engendre un secret au premier appel et le persiste : sans
+    cette isolation, la suite écrirait dans le dossier personnel de qui la joue
+    — et, pire, un test pourrait passer parce que le poste a déjà un jeton là où
+    la CI n'en a aucun. Le fichier pointé n'existe pas au départ : chaque test
+    part donc du cas « premier démarrage », celui du critère, et aucun jeton
+    n'est hérité du test précédent.
+
+    **Un dossier pour la session, un nom de fichier par test** (l'empreinte du
+    nodeid), plutôt qu'un `mktemp` par test : la quasi-totalité des tests ne
+    résout jamais de jeton et n'écrit donc rien du tout — leur créer à chacun un
+    dossier serait trois mille répertoires vides pour une variable
+    d'environnement.
+    """
+    ancienne = os.environ.get(CLE_JETON_FICHIER)
+    racine = tmp_path_factory.getbasetemp() / "jetons-api"
+    racine.mkdir(exist_ok=True)
+    empreinte = hashlib.sha1(request.node.nodeid.encode("utf-8")).hexdigest()[:16]
+    os.environ[CLE_JETON_FICHIER] = str(racine / empreinte)
+    try:
+        yield
+    finally:
+        if ancienne is None:
+            os.environ.pop(CLE_JETON_FICHIER, None)
+        else:
+            os.environ[CLE_JETON_FICHIER] = ancienne
 
 
 @pytest.fixture(autouse=True)

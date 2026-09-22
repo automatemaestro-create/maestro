@@ -386,7 +386,10 @@ PROJETS_SERVIS=""
 annonce_projets() {
   local port="$1" cote="$2" python lignes id nom runs _racine
   python="$(python_du_depot)" || { dire "  ⚠ projets  : [$cote] aucun interpréteur Python pour les lire"; return 0; }
-  if ! lignes="$(PYTHONIOENCODING=utf-8 "$python" "$RELECTURE_PROJETS" lister --port "$port" 2>&1)"; then
+  # `relecture-projets.py` n'a que la bibliothèque standard : le jeton lui arrive par l'environnement.
+  resoudre_jeton_api
+  if ! lignes="$(PYTHONIOENCODING=utf-8 MAESTRO_API_JETON="$JETON_API" \
+    "$python" "$RELECTURE_PROJETS" lister --port "$port" 2>&1)"; then
     dire "  ⚠ projets  : [$cote] liste illisible — $(printf '%s\n' "$lignes" | tail -n 1)"
     return 0
   fi
@@ -415,7 +418,9 @@ declare_projet_neuf() {
   mkdir -p "$(dirname "$TEMOIN_PROJET_NEUF")" 2>/dev/null
   printf '%s\n' "$racine" >"$TEMOIN_PROJET_NEUF"
   python="$(python_du_depot)" || { dire "  ⚠ projet   : [$cote] aucun interpréteur Python pour le déclarer"; return 0; }
-  if sortie="$(PYTHONIOENCODING=utf-8 "$python" "$RELECTURE_PROJETS" declarer --port "$port" \
+  resoudre_jeton_api
+  if sortie="$(PYTHONIOENCODING=utf-8 MAESTRO_API_JETON="$JETON_API" \
+    "$python" "$RELECTURE_PROJETS" declarer --port "$port" \
     --racine "$(chemin_natif "$racine")" 2>&1)"; then
     dire "  projet     : [$cote] « Projet neuf » déclaré par l'API — $(printf '%s\n' "$sortie" | tail -n 1)"
   else
@@ -441,13 +446,38 @@ retire_projet_neuf() {
   rm -f "$TEMOIN_PROJET_NEUF"
 }
 
+# resoudre_jeton_api : le jeton de l'API locale (#638), demandé UNE FOIS à `maestro-api --jeton`.
+# L'API sert durcie : sans lui, la sonde d'espace ci-dessous et `relecture-projets.py` liraient un 401
+# au lieu de l'état de la stack — donc « aucune API ne sert le banc » sous une stack en marche. Vide en
+# régime ouvert, et vide aussi sans venv : un poste sans dépendances ne sert de toute façon pas l'API
+# qu'on regarde. Le résultat vit dans une variable globale — une fonction appelée en `$(…)` tournerait
+# dans un sous-shell et redemanderait le jeton à chaque écran.
+JETON_API=""
+JETON_API_RESOLU=0
+resoudre_jeton_api() {
+  local python
+  [ "$JETON_API_RESOLU" = 1 ] && return 0
+  JETON_API_RESOLU=1
+  python="$(python_du_depot)" || return 0
+  JETON_API="$( (cd "$RACINE" && "$python" -m maestro.controltower.cli --jeton 2>/dev/null) )" || JETON_API=""
+  return 0
+}
+
 # sert_le_banc <port api> : une API de CETTE relecture, restée d'un état précédent, sert-elle le jeu de
 # données du banc sur ce port ? Le préflight du banc la refuserait (elle republierait dans le journal
 # qu'on réécrit), et elle est à nous : on l'arrête. Une autre stack sur ces ports — celle que la
 # session a lancée sur les données de sa copie — est remplacée par le lanceur sans que ses runs soient
 # soldés, comme avant ce ticket.
 sert_le_banc() {
-  curl -s --max-time 3 "http://127.0.0.1:$1/api/sante" 2>/dev/null | grep -q '"espace" *: *"[^"]*\.banc"'
+  local corps
+  resoudre_jeton_api
+  if [ -n "$JETON_API" ]; then
+    corps="$(curl -s --max-time 3 -H "Authorization: Bearer $JETON_API" \
+      "http://127.0.0.1:$1/api/sante" 2>/dev/null)"
+  else
+    corps="$(curl -s --max-time 3 "http://127.0.0.1:$1/api/sante" 2>/dev/null)"
+  fi
+  printf '%s' "$corps" | grep -q '"espace" *: *"[^"]*\.banc"'
 }
 
 # monte <start.sh> <port api> <port ui> <options…> : (re)démarre une stack sur ses ports, dans un état.

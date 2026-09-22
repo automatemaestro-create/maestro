@@ -32,6 +32,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from maestro.controltower.acces import entetes_client
 from maestro.controltower.orchestration import NOM_ORCHESTRATION
 from maestro.controltower.purge import port_api
 from maestro.controltower.state import (
@@ -105,11 +106,17 @@ class TransportHTTP:
 
     Synchrone à dessein : le banc est un déroulé, pas un serveur — il fait une
     chose après l'autre et attend chaque fois de savoir ce qui s'est passé.
+
+    Il porte le **jeton de l'API locale** (#638) sur chaque requête, résolu par
+    `maestro.controltower.acces` : le banc frappe la vraie API, qui sert durcie,
+    et l'en-tête se pose là où sont déjà l'URL et le délai — jamais recopié dans
+    un scénario. Vide en régime ouvert.
     """
 
     def __init__(self, base: str, *, delai_s: float = DELAI_REQUETE_S) -> None:
         self._base = base.rstrip("/")
         self._delai_s = delai_s
+        self._entetes = entetes_client()
 
     @property
     def base(self) -> str:
@@ -134,6 +141,7 @@ class TransportHTTP:
                     f"{self._base}{chemin}",
                     json=None if corps is None else dict(corps),
                     params=dict(params or {}),
+                    headers=dict(self._entetes),
                 )
         except httpx2.HTTPError as echec:
             raise ErreurAPI(f"API injoignable ({echec})", chemin=chemin) from echec
