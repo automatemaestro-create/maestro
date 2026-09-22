@@ -6,12 +6,22 @@
 #   1. installe playwright-core — et ffmpeg, que le rendu vidéo exige et que
 #      `-core` n'embarque pas — dans un dossier TEMPORAIRE (jamais dans le dépôt :
 #      il n'a rien à faire dans le build de l'UI) — idempotent, réutilisé ensuite ;
-#   2. déclare le PROJET de la démo, sans lequel l'UI ne montre que sa porte
-#      d'entrée (voir plus bas) ;
-#   3. démarre l'API de démo (maestro.controltower.demo) ;
+#   2. rouvre L'ÉTAT DU BANC — ce qu'un passage des scénarios de référence (#1148)
+#      a laissé, sur le jeu de données à part du banc (#1164) —, en dit l'âge et le
+#      décrit dans `<sortie>/etat.json` ;
+#   3. démarre l'API RÉELLE sur cet état (`maestro.controltower.cli --etat-banc`) ;
 #   4. construit l'UI (`next build`) et la sert (`next start`) ;
 #   5. lance captures.mjs, qui photographie les pages du menu principal PUIS
-#      filme les parcours de démonstration de `parcours.mjs`.
+#      filme les parcours de `parcours.mjs`.
+#
+# PLUS DE DÉMO (#1166, parent #1156). Jusque-là, la série tournait sur un scénario
+# factice (`maestro.controltower.demo`, projet `prj-demo` déclaré ici même) : elle
+# montrait ce qu'on avait scénarisé, pas ce que le produit fait. Elle montre
+# désormais ce qu'un vrai passage du banc a laissé, servi par la vraie API — rien
+# n'est fabriqué, et un parcours dont le geste ne trouve pas sa cible dans cet état
+# garde sa ligne au manifeste et le dit. L'état se ROUVRE, il ne se rejoue pas :
+# un passage coûte du vrai modèle (#1164). Le refaire est un geste à part, demandé :
+#   bash scripts/controltower/start.sh --etat-banc --rejouer
 #
 #   bash scripts/presentation/captures.sh --sortie <dossier> \
 #        [--sans-demarrage] [--garder] [--sans-videos]
@@ -33,7 +43,12 @@
 #
 # Par défaut la stack de captures est ARRÊTÉE en sortie (--garder la laisse tourner).
 # Le code de retour dit si des captures utilisables ont été produites : l'appelant retombe
-# alors sur une présentation sans visuels plutôt que d'échouer.
+# alors sur une présentation sans visuels plutôt que d'échouer. Sans état du banc à rouvrir,
+# ou avec Redis injoignable, il n'y a rien de réel à photographier : c'est ce cas-là, dit avec
+# le geste qui le lève, et jamais un repli sur un scénario factice.
+#
+# `--sans-demarrage` photographie une stack déjà servie, dont ce script ne sait pas ce qu'elle
+# sert : il n'écrit alors aucun `etat.json`, et captures.mjs relève l'espace que l'API déclare.
 
 set -euo pipefail
 
@@ -43,19 +58,14 @@ RACINE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # dépôt n'a pas à la porter. Il n'oriente personne vers rien à lire — juste le dossier où l'outil
 # s'installe (#234).
 CACHE_NODE="${TMPDIR:-/tmp}/maestro-presentation/node"
-# Le dépôt de PROJETS que voit l'API de démo — hors du dépôt lui aussi, et pour
-# une autre raison : c'est un état d'application, jamais quelque chose qu'on
-# relit, et le poser sous `core/projets/` mêlerait un projet fictif à ceux de la
-# personne qui lance la commande (#234 : ce que personne ne lit reste sous TMPDIR).
-CACHE_PROJETS="${TMPDIR:-/tmp}/maestro-presentation/projets"
 # Où Playwright range ce qu'il télécharge — ici son ffmpeg, et rien d'autre : les
 # navigateurs ne passent pas par là, la stack pilote l'Edge de la machine par son
 # `channel`. Poser la variable garde ce téléchargement dans le cache du script au
 # lieu du dossier partagé du poste (~/AppData/Local/ms-playwright).
 export PLAYWRIGHT_BROWSERS_PATH="${TMPDIR:-/tmp}/maestro-presentation/playwright"
-# La racine du projet fictif : un dossier vide, qui n'existe que pour que l'écran
-# « Projets » et le sélecteur du shell aient un chemin à afficher.
-RACINE_DEMO="${TMPDIR:-/tmp}/maestro-presentation/mini-crm"
+# Ce que Python imprime ici passe par ce terminal, en UTF-8 comme les lignes du script : sans
+# elle, un tube sous Windows le ferait écrire en cp1252 (#141).
+export PYTHONIOENCODING="${PYTHONIOENCODING:-utf-8}"
 # Les JOURNAUX, eux, vont sous la racine du worktree : c'est vers eux que ce script renvoie quand
 # l'API, le build ou l'UI échoue, et un chemin absolu hors du répertoire de travail met cette
 # raison hors de portée d'une session autonome (docs/10 §11), qui n'a personne pour approuver sa
@@ -169,40 +179,24 @@ if [ "$VIDEOS" = 1 ]; then
   fi
 fi
 
-# --- 2. Le projet de la démo ----------------------------------------------------------------------
-# Sans projet actif, le shell de la Control Tower n'affiche PAS le tableau de bord : il rend sa
-# porte d'entrée, « Choisir le projet » (#279). Or le scénario de démo estampille tout ce qu'il
-# publie du projet `PROJET_ID` (maestro/controltower/demo.py) et le dépôt de projets d'un clone neuf
-# est vide — toute la série, captures comprises, montrerait donc la porte.
-#
-# On déclare ce projet ici, dans un dépôt à nous : le nom de fichier fait foi sur l'identifiant
-# (maestro/projets/store.py), ce que l'API de création ne permet pas — elle en engendre un aléatoire.
-# L'identifiant est LU dans demo.py plutôt que recopié : le jour où le scénario change de projet, la
-# stack de captures suit sans qu'on y pense. Côté navigateur, c'est captures.mjs qui pose le choix
-# dans le localStorage (MAESTRO_PROJET_DEMO) — les deux moitiés sont indissociables.
-PROJET_DEMO="$(sed -n 's/^PROJET_ID *= *"\([^"]*\)".*/\1/p' "$RACINE/maestro/controltower/demo.py" | head -n 1)"
-PROJET_DEMO="${PROJET_DEMO:-prj-demo}"
-export MAESTRO_PROJET_DEMO="$PROJET_DEMO"
-
-if [ "$DEMARRER" = 1 ]; then
-  mkdir -p "$CACHE_PROJETS" "$RACINE_DEMO"
-  # `racine` est stockée en chemin POSIX (maestro/projets/modele.py) : les contre-obliques d'un
-  # TMPDIR Windows casseraient le JSON avant même de casser l'affichage.
-  printf '{"id":"%s","nom":"mini-CRM (démo)","racine":"%s","origine":"existant","vcs":null}\n' \
-    "$PROJET_DEMO" "${RACINE_DEMO//\\//}" >"$CACHE_PROJETS/$PROJET_DEMO.json"
-  export MAESTRO_PROJETS_DIR="$CACHE_PROJETS"
-  echo "[captures] projet de démo « $PROJET_DEMO » déclaré dans $CACHE_PROJETS"
-fi
-
 if [ "$VIDEOS" = 1 ]; then
   echo "[captures] parcours filmés : oui (--sans-videos pour s'en passer)"
 else
   echo "[captures] parcours filmés : non (--sans-videos)"
 fi
 
-# --- 3. Stack de captures -------------------------------------------------------------------------
+# --- 2. L'état du banc, puis 3. la stack de captures ----------------------------------------------
+# Rien ici ne connaît un nom de clé, d'espace ou de dépôt : `maestro.scenarios.etat` vérifie,
+# décrit et rouvre, `maestro-api --etat-banc` sert — Python résout, comme pour `start.sh
+# --etat-banc` (#1164), dont c'est la même séquence sur d'autres ports et un build de production.
+#
+# Sans projet actif, le shell ne rend que sa porte d'entrée (#279) : c'est captures.mjs qui le pose,
+# en choisissant parmi les projets QUE L'API DÉCLARE — ceux du passage, jamais un projet écrit ici.
+ETAT_JSON=""
 if [ "$DEMARRER" = 1 ]; then
-  # La stack de dev partage apps/web/.next avec le build : on la range avant de construire.
+  # La stack de dev partage apps/web/.next avec le build : on la range avant de construire. C'est
+  # aussi elle qui servirait peut-être le banc (`start.sh --etat-banc`) : rouvrir l'état sous une API
+  # qui le sert lui ferait garder l'ancien en mémoire — `--verifier` le refuserait, en le disant.
   bash "$RACINE/scripts/controltower/start.sh" --stop >/dev/null 2>&1 || true
   liberer_port "$PORT_API" "API"
   liberer_port "$PORT_UI" "UI"
@@ -217,8 +211,25 @@ if [ "$DEMARRER" = 1 ]; then
     exit 1
   fi
 
-  echo "[captures] API de démo sur :${PORT_API} (log : $LOG_DIR_REL/api.log)"
-  (cd "$RACINE" && nohup "$PYTHON" -m maestro.controltower.demo --port "$PORT_API" \
+  # Le préflight de `start.sh --etat-banc` : Redis joignable, rien de vivant sur le banc, un état
+  # à rouvrir — dont il DIT L'ÂGE. Son refus nomme le geste qui le lève (lancer Redis, arrêter la
+  # stack, jouer un passage) : on le relaie tel quel, sans visuels plutôt que sur du factice.
+  if ! (cd "$RACINE" && "$PYTHON" -m maestro.scenarios.etat --verifier); then
+    echo "[captures] ⚠ l'état du banc ne peut pas être servi (voir ci-dessus) — pas de visuels" >&2
+    exit 1
+  fi
+  ETAT_JSON="$SORTIE/etat.json"
+  if ! (cd "$RACINE" && "$PYTHON" -m maestro.scenarios.etat --decrire) >"$ETAT_JSON"; then
+    echo "[captures] ⚠ l'état du banc n'a pas pu être décrit — pas de visuels" >&2
+    exit 1
+  fi
+  if ! (cd "$RACINE" && "$PYTHON" -m maestro.scenarios.etat --rouvrir); then
+    echo "[captures] ⚠ l'état du banc n'a pas pu être rouvert — pas de visuels" >&2
+    exit 1
+  fi
+
+  echo "[captures] API réelle sur l'état du banc, :${PORT_API} (log : $LOG_DIR_REL/api.log)"
+  (cd "$RACINE" && nohup "$PYTHON" -m maestro.controltower.cli --port "$PORT_API" --etat-banc \
     >"$LOG_DIR/api.log" 2>&1 &)
   if ! attendre_http "http://127.0.0.1:${PORT_API}/api/sante" 30; then
     echo "[captures] ⚠ l'API n'a pas démarré — voir $LOG_DIR_REL/api.log" >&2
@@ -244,7 +255,9 @@ if [ "$DEMARRER" = 1 ]; then
 fi
 
 # --- 4. Captures et parcours -----------------------------------------------------------------------
-ARGS_CAPTURES=(--sortie "$SORTIE" --base "http://127.0.0.1:${PORT_UI}")
+ARGS_CAPTURES=(--sortie "$SORTIE" --base "http://127.0.0.1:${PORT_UI}"
+               --api "http://127.0.0.1:${PORT_API}")
+[ -z "$ETAT_JSON" ] || ARGS_CAPTURES+=(--etat "$ETAT_JSON")
 [ "$VIDEOS" = 1 ] || ARGS_CAPTURES+=(--sans-videos)
 
 MAESTRO_PLAYWRIGHT_HOME="$CACHE_NODE" \

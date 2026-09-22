@@ -3,9 +3,12 @@
     .venv/Scripts/python.exe -m maestro.scenarios.etat --verifier [--rejouer]
     .venv/Scripts/python.exe -m maestro.scenarios.etat --rouvrir
     .venv/Scripts/python.exe -m maestro.scenarios.etat --vider
+    .venv/Scripts/python.exe -m maestro.scenarios.etat --decrire
 
 Ce module n'est pas joué à la main : `scripts/controltower/start.sh --etat-banc`
-l'appelle, et c'est ce geste-là qu'on retient (voir plus bas).
+l'appelle, et c'est ce geste-là qu'on retient (voir plus bas). Les captures des
+présentations de jalon (`scripts/presentation/captures.sh`, #1166) l'appellent
+aussi, pour tourner sur ce même état.
 
 ## Pourquoi
 
@@ -39,6 +42,9 @@ ni les données du poste.
   rejoué** du côté du modèle, et chaque ouverture repart du même état.
 - **`--verifier`** est le préflight du lanceur : Redis joignable, rien en vol sur
   le banc, et — sauf `--rejouer` — un état à rouvrir, dont il **dit l'âge**.
+- **`--decrire`** rend, en JSON sur une ligne, l'état que `--rouvrir` rouvrirait :
+  passage, date, âge, verdicts, contenu. Il ne lit que le disque — ni Redis, ni le
+  banc — et c'est ce qu'une présentation de jalon dit de ce qu'elle montre (#1166).
 
 ## Ce qu'il ne faut pas défaire
 
@@ -116,7 +122,10 @@ CODE_USAGE = 2
 CODE_REFUS = 3
 CODE_AUCUN_ETAT = 4
 
-_USAGE = f"Usage : python -m {MODULE} --verifier [--rejouer] | --rouvrir | --vider"
+_USAGE = f"Usage : python -m {MODULE} --verifier [--rejouer] | --rouvrir | --vider | --decrire"
+
+#: Les gestes qu'accepte la ligne de commande — un seul par appel.
+GESTES = ("--verifier", "--rouvrir", "--vider", "--decrire")
 
 
 class ClientRedis(ClientRedisPurge, Protocol):
@@ -334,6 +343,18 @@ def annonce(instantane: Instantane, *, maintenant: datetime | None = None) -> li
     ]
 
 
+def description(instantane: Instantane, *, maintenant: datetime | None = None) -> dict[str, Any]:
+    """L'état à rouvrir, tel qu'un autre outil le relit — ce que `annonce` dit en prose."""
+    return {
+        "passage": instantane.passage,
+        "sauve_le": instantane.sauve_le.isoformat(timespec="seconds"),
+        "age_s": round(instantane.age_s(maintenant)),
+        "scenarios": [{"id": i, "verdict": v} for i, v in instantane.scenarios],
+        "evenements": instantane.evenements,
+        "projets": instantane.projets,
+    }
+
+
 # ── Les refus ────────────────────────────────────────────────────────────────
 
 
@@ -412,13 +433,24 @@ def main(
     sortie = sortie or sys.stdout
     erreur = erreur or sys.stderr
     args = list(sys.argv[1:] if argv is None else argv)
-    gestes = [a for a in args if a in ("--verifier", "--rouvrir", "--vider")]
-    reste = [a for a in args if a not in ("--verifier", "--rouvrir", "--vider", "--rejouer")]
+    gestes = [a for a in args if a in GESTES]
+    reste = [a for a in args if a not in (*GESTES, "--rejouer")]
     rejouer = "--rejouer" in args
     if len(gestes) != 1 or reste or (rejouer and gestes != ["--verifier"]):
         print(_USAGE, file=erreur)
         return CODE_USAGE
     geste = gestes[0]
+
+    # Décrire ne lit que le disque : ni Redis ni le banc n'ont à répondre pour dire
+    # ce qu'on rouvrirait.
+    if geste == "--decrire":
+        instantane = dernier(racine_ateliers)
+        if instantane is None:
+            return _aucun_etat(erreur)
+        # ASCII échappé : la ligne est faite pour être redirigée vers un fichier, et un
+        # tube Windows l'écrirait sinon en cp1252 (#141).
+        print(json.dumps(description(instantane, maintenant=maintenant)), file=sortie)
+        return CODE_FAIT
 
     # La copie d'abord, le banc ensuite : une fois le process placé sur le banc,
     # « les données de la stack » seraient celles du banc.

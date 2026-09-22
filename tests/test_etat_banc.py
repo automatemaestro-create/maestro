@@ -463,8 +463,76 @@ def test_rouvrir_par_la_commande_remet_l_etat_du_dernier_passage(
     assert len(client.lrange(etat.cles_du_banc(banc)[0], 0, -1)) == 1
 
 
+class RedisInterdit:
+    """Un client Redis qu'on n'a pas le droit de toucher : tout accès fait rougir."""
+
+    def __getattr__(self, nom: str) -> Any:
+        raise AssertionError(f"--decrire a demandé Redis ({nom}) : il ne lit que le disque")
+
+
+def test_decrire_rend_l_etat_a_rouvrir_sans_toucher_a_redis(
+    monkeypatch: pytest.MonkeyPatch,
+    client: ClientSynchrone,
+    banc: Donnees,
+    copie: Path,
+    ateliers: Path,
+) -> None:
+    """Ce qu'une présentation de jalon dit de ce qu'elle montre (#1166) : le passage, sa date,
+    son âge, ses verdicts — relus en JSON, sans Redis ni banc à interroger."""
+    atelier = ateliers / PASSAGE
+    atelier.mkdir(parents=True)
+    sauve = datetime(2026, 9, 22, 10, 44, tzinfo=UTC)
+    etat.sauver(rapport(("S1", "rouge"), ("S2", "vert")), atelier, banc, client, maintenant=sauve)
+
+    sortie, erreur = io.StringIO(), io.StringIO()
+    code = etat.main(
+        ["--decrire"],
+        client=RedisInterdit(),  # type: ignore[arg-type]
+        copie=copie,
+        racine_ateliers=ateliers,
+        maintenant=sauve + timedelta(hours=3),
+        sortie=sortie,
+        erreur=erreur,
+    )
+
+    assert code == etat.CODE_FAIT, erreur.getvalue()
+    lignes = sortie.getvalue().splitlines()
+    assert len(lignes) == 1, "une ligne : elle se redirige telle quelle vers un fichier"
+    decrit = json.loads(lignes[0])
+    assert decrit["passage"] == PASSAGE
+    assert datetime.fromisoformat(decrit["sauve_le"]) == sauve
+    assert decrit["age_s"] == 3 * 3600
+    assert decrit["scenarios"] == [
+        {"id": "S1", "verdict": "rouge"},
+        {"id": "S2", "verdict": "vert"},
+    ]
+
+
+def test_decrire_sans_etat_est_le_meme_refus_que_rouvrir(copie: Path, ateliers: Path) -> None:
+    sortie, erreur = io.StringIO(), io.StringIO()
+    code = etat.main(
+        ["--decrire"],
+        client=RedisInterdit(),  # type: ignore[arg-type]
+        copie=copie,
+        racine_ateliers=ateliers,
+        sortie=sortie,
+        erreur=erreur,
+    )
+    assert code == etat.CODE_AUCUN_ETAT
+    assert sortie.getvalue() == "", "rien sur la sortie : un fichier redirigé resterait vide"
+    assert etat.GESTE_REJOUER in erreur.getvalue()
+
+
 @pytest.mark.parametrize(
-    "args", [[], ["--rouvrir", "--vider"], ["--rouvrir", "--rejouer"], ["--verifier", "--x"]]
+    "args",
+    [
+        [],
+        ["--rouvrir", "--vider"],
+        ["--rouvrir", "--rejouer"],
+        ["--verifier", "--x"],
+        ["--decrire", "--rejouer"],
+        ["--decrire", "--rouvrir"],
+    ],
 )
 def test_un_geste_mal_forme_est_un_usage(
     monkeypatch: pytest.MonkeyPatch,
