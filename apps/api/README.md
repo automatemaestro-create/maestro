@@ -33,7 +33,7 @@ maestro-run --publier --validation-ui "<objectif>"
 
 | Méthode | Chemin | Rôle |
 |---|---|---|
-| GET | `/api/sante` | vitalité du service |
+| GET | `/api/sante` | vitalité du service, et l'espace de données qu'il sert (`espace`, #1164) |
 | GET | `/api/taches` | tâches : statut, agent assigné, coût détaillé — tokens, durée (source du Kanban). `?projet=` requis, `?run=` facultatif et **additif** (#473) : les tâches d'un run |
 | GET | `/api/agents` | le **parc** : libre/occupé, tâche courante, compteurs, coût cumulé. Les **exécutants** seulement — l'orchestration en est absente depuis #1028 (elle dépense et on lui parle, mais elle n'exécute aucune tâche ; sa dépense se lit sous `orchestration` dans la vue analytique) |
 | GET | `/api/fournisseurs` | catalogue des fournisseurs (#253 + #487) : **supporté par Maestro** (le registre du code — `modeles` annoncés et, par modèle, les `efforts` admis ; `modeles_libres` dit qu'un nom hors gamme reste recevable) × **présent ici** (la sonde du poste — CLI sur le `PATH`, serveur local qui répond, clé dans l'environnement ; `modeles_ici` est ce que la sonde a **vu**, jamais la gamme). `hors_registre` porte ce que le poste a de plus, `incertitudes` ce que la sonde ne peut pas savoir. Lecture seule et sans effet de bord : aucun binaire exécuté, aucun endpoint distant joint, aucune clé validée, aucune écriture |

@@ -26,8 +26,27 @@
 #   bash scripts/controltower/start.sh --demo              # scénario factice, sans Redis
 #   bash scripts/controltower/start.sh --demo --scenario vide   # un état limite (#978) : vide, erreur, charge
 #   bash scripts/controltower/start.sh --no-browser        # sans navigateur ni arrêt auto
+#   bash scripts/controltower/start.sh --etat-banc         # réel, sur l'état du dernier passage du banc (#1164)
+#   bash scripts/controltower/start.sh --etat-banc --rejouer[=S2,S4]  # le banc repart à neuf et rejoue
 #   bash scripts/controltower/start.sh --stop              # arrête seulement (et SOLDE les runs en vol)
 #   bash scripts/controltower/start.sh --diagnostic-navigateur  # dit quel navigateur serait ouvert
+#
+# UNE STACK PAR COPIE DE TRAVAIL (#1164). Chaque copie — le clone principal, chaque
+# worktree — voit ses propres données : ses dépôts de fichiers vivent sous son
+# `core/`, et ses clés et canaux Redis dans son ESPACE (`maestro.espace` : le nom du
+# worktree, « commun » pour le clone principal, sans préfixe). Deux stacks réelles
+# lancées depuis deux copies partagent le même Redis sans se voir. Le préflight
+# l'ANNONCE — espace, fils, projets — avant de toucher à quoi que ce soit ; ce
+# script n'en connaît aucun nom, Python résout.
+#
+# L'ÉTAT DU BANC (#1164, docs/40 §5). `--etat-banc` sert, par l'API réelle, l'état
+# que le dernier passage du banc des scénarios (#1148) a laissé, rouvert à chaque
+# démarrage sans rien rejouer, et DIT SON ÂGE. Il vit dans un jeu de données à
+# part (`<espace>.banc`, `.maestro/banc/`) : ni les données de la copie ni celles
+# du poste ne sont touchées. `--rejouer` le refait : banc remis à neuf, stack
+# servie, puis le banc joue ses scénarios au premier plan contre elle — le vrai
+# modèle, des dizaines de minutes — et sauve l'état qu'il laisse ; `=S2,S4` n'en
+# joue que certains. Le détail est dans `maestro/scenarios/etat.py`.
 #
 # ⚠ ARRÊTER LA CONTROL TOWER SOLDE SES RUNS (#700, docs/28 §11) — les DEUX gestes
 # d'arrêt, « --stop » comme la fermeture de la fenêtre du navigateur. Depuis #441 un
@@ -580,10 +599,26 @@ STACK="reel"
 # Le scénario de la démo (#978) : vide tant qu'aucun n'est demandé, et c'est alors
 # le nominal que la démo sert — le lancement d'avant, au bit près.
 SCENARIO=""
+# Les données que la stack réelle sert (#1164) : « copie » (celles de la copie de
+# travail) par défaut, « banc » sur `--etat-banc` (l'état du dernier passage du
+# banc). REJOUER=1 refait cet état ; REJOUER_SCENARIOS borne le passage.
+DONNEES="copie"
+REJOUER=0
+REJOUER_SCENARIOS=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --stop) MODE="arreter" ;;
     --demo | --demonstration) STACK="demo" ;;
+    --etat-banc) DONNEES="banc" ;;
+    --rejouer) REJOUER=1 ;;
+    --rejouer=*)
+      REJOUER=1
+      REJOUER_SCENARIOS="${1#--rejouer=}"
+      if [ -z "$REJOUER_SCENARIOS" ]; then
+        echo "--rejouer= attend des scénarios (ex. --rejouer=S2,S4), ou rien pour tous" >&2
+        exit 2
+      fi
+      ;;
     --scenario)
       if [ $# -lt 2 ]; then
         echo "--scenario attend un nom de scénario" >&2
@@ -631,6 +666,20 @@ if [ -n "$SCENARIO" ] && [ "$MODE" != "arreter" ]; then
   esac
 fi
 
+# L'état du banc est une propriété de la stack RÉELLE (#1164) : servi par l'API réelle, jamais
+# mêlé au scénario factice. Et rejouer ne se demande pas seul — c'est refaire CET état-là, et il
+# coûte du vrai modèle : un `--rejouer` égaré ne doit pas lancer un passage.
+if [ "$MODE" != "arreter" ]; then
+  if [ "$DONNEES" = "banc" ] && [ "$STACK" = "demo" ]; then
+    echo "--etat-banc sert l'état réel d'un passage du banc : incompatible avec --demo" >&2
+    exit 2
+  fi
+  if [ "$REJOUER" = 1 ] && [ "$DONNEES" != "banc" ]; then
+    echo "--rejouer refait l'état du banc : bash scripts/controltower/start.sh --etat-banc --rejouer" >&2
+    exit 2
+  fi
+fi
+
 # Stratégie navigateur résolue UNE FOIS, à chaud (association système + MAESTRO_BROWSER[_DEFAUT]).
 # Le chien de garde, relancé via ce même script, la recalcule à l'identique (env et poste inchangés).
 resoudre_strategie
@@ -641,6 +690,11 @@ if [ "$MODE" = "diagnostic" ]; then
   printf 'stack: %s\n' "$STACK"
   # Seulement quand il est demandé : la sortie d'un diagnostic sans scénario reste celle d'avant.
   if [ -n "$SCENARIO" ]; then printf 'scenario: %s\n' "$SCENARIO"; fi
+  # Même règle pour l'état du banc (#1164) : absent du diagnostic tant qu'il n'est pas demandé.
+  if [ "$DONNEES" = "banc" ]; then
+    printf 'donnees: %s\n' "$DONNEES"
+    if [ "$REJOUER" = 1 ]; then printf 'rejouer: %s\n' "${REJOUER_SCENARIOS:-tous}"; fi
+  fi
   printf 'famille: %s\n' "$STRAT_FAMILLE"
   printf 'mode: %s\n' "$STRAT_MODE"
   printf 'source: %s\n' "$STRAT_SOURCE"
@@ -742,12 +796,34 @@ if [ "$MODE" = "demarrer" ] && [ ! -x "$PYTHON" ]; then
   exit 1
 fi
 
+# Ce que Python imprime ici passe par ce terminal, en UTF-8 comme les lignes du
+# script : sans elle, un tube sous Windows le ferait écrire en cp1252 (#141).
+export PYTHONIOENCODING="${PYTHONIOENCODING:-utf-8}"
+
 # Mode réel : Redis est une dépendance dure. On la vérifie plutôt que de la
 # supposer — et on ne retombe PAS sur la démo, qui donnerait des données
 # factices pour la réalité. Le diagnostic (URL résolue, geste exact) vient du
-# CLI de l'API, seul endroit où REDIS_URL est résolue.
+# CLI de l'API, seul endroit où REDIS_URL est résolue ; quand Redis répond, il
+# ANNONCE les données que la stack verra — son espace, ses fils, ses projets (#1164).
+#
+# Sur l'état du banc, le préflight est celui de `maestro.scenarios.etat` : le même
+# ping et la même annonce (celle du banc), plus ce qu'il faut pour le rouvrir —
+# rien en vol sur le banc, et un passage sauvé dont il DIT L'ÂGE. Son code dit
+# pourquoi il refuse (3 : quelque chose vit sur le banc ; 4 : aucun état à rouvrir).
 if [ "$MODE" = "demarrer" ] && [ "$STACK" = "reel" ]; then
-  if ! (cd "$RACINE" && "$PYTHON" -m maestro.controltower.cli --verifier-redis); then
+  if [ "$DONNEES" = "banc" ]; then
+    code_banc=0
+    if [ "$REJOUER" = 1 ]; then
+      (cd "$RACINE" && "$PYTHON" -m maestro.scenarios.etat --verifier --rejouer) || code_banc=$?
+    else
+      (cd "$RACINE" && "$PYTHON" -m maestro.scenarios.etat --verifier) || code_banc=$?
+    fi
+    if [ "$code_banc" != 0 ]; then
+      echo >&2
+      echo "État du banc impossible à servir — rien n'a été démarré ni arrêté." >&2
+      exit "$code_banc"
+    fi
+  elif ! (cd "$RACINE" && "$PYTHON" -m maestro.controltower.cli --verifier-redis); then
     echo >&2
     echo "Mode réel impossible sans Redis — rien n'a été démarré ni arrêté." >&2
     echo "  · lancer Redis (ci-dessus), puis relancer cette commande ;" >&2
@@ -776,6 +852,24 @@ fi
 mkdir -p "$LOG_DIR" "$ETAT_DIR"
 cd "$RACINE" || exit 1
 
+# L'état du banc s'écrit ICI, entre l'arrêt de l'ancienne session et le démarrage de
+# l'API (#1164) : avant, une API encore en marche garderait l'ancien état en mémoire
+# et pourrait republier dans le journal réécrit ; après, elle aurait déjà rejoué le
+# mauvais. Rouvrir remet le banc dans l'état du dernier passage ; rejouer le remet à neuf.
+if [ "$DONNEES" = "banc" ]; then
+  if [ "$REJOUER" = 1 ]; then
+    geste_banc="--vider"
+  else
+    geste_banc="--rouvrir"
+  fi
+  code_banc=0
+  "$PYTHON" -m maestro.scenarios.etat "$geste_banc" || code_banc=$?
+  if [ "$code_banc" != 0 ]; then
+    echo "État du banc non préparé (code $code_banc) — la Control Tower n'est pas démarrée." >&2
+    exit "$code_banc"
+  fi
+fi
+
 if [ "$STACK" = "demo" ]; then
   if [ -n "$SCENARIO" ]; then
     echo "[api] démarrage sur :${PORT_API} — mode démo, scénario « $SCENARIO » (log : $LOG_DIR_REL/api.log)"
@@ -786,6 +880,10 @@ if [ "$STACK" = "demo" ]; then
     nohup "$PYTHON" -m maestro.controltower.demo --port "$PORT_API" \
       >"$LOG_DIR/api.log" 2>&1 &
   fi
+elif [ "$DONNEES" = "banc" ]; then
+  echo "[api] démarrage sur :${PORT_API} — mode réel sur Redis, état du banc (log : $LOG_DIR_REL/api.log)"
+  nohup "$PYTHON" -m maestro.controltower.cli --port "$PORT_API" --etat-banc \
+    >"$LOG_DIR/api.log" 2>&1 &
 else
   echo "[api] démarrage sur :${PORT_API} — mode réel sur Redis (log : $LOG_DIR_REL/api.log)"
   nohup "$PYTHON" -m maestro.controltower.cli --port "$PORT_API" \
@@ -839,6 +937,13 @@ fi
 echo
 if [ "$STACK" = "demo" ]; then
   echo "Control Tower prête (mode démo — scénario FACTICE${SCENARIO:+ « $SCENARIO »}) : $URL_UI"
+elif [ "$DONNEES" = "banc" ]; then
+  # L'âge et le contenu de l'état ont été dits au préflight, en tête de sortie.
+  if [ "$REJOUER" = 1 ]; then
+    echo "Control Tower prête (mode réel — banc remis à neuf, le passage commence ci-dessous) : $URL_UI"
+  else
+    echo "Control Tower prête (mode réel — état du banc rouvert, voir son âge plus haut) : $URL_UI"
+  fi
 else
   echo "Control Tower prête (mode réel) : $URL_UI"
   # Sans run, le poste de pilotage est vide — l'UI l'explique elle-même (#186),
@@ -862,4 +967,37 @@ elif [ "$ARRET_AUTO" = 1 ]; then
   echo "  runs en vol : soldés par l'arrêt (fermeture comprise), reprenables au redémarrage — trace : $LOG_DIR_REL/navigateur.log ; MAESTRO_EXTINCTION=0 pour laisser tourner"
 else
   echo "  runs en vol : soldés par l'arrêt, reprenables au redémarrage (MAESTRO_EXTINCTION=0 pour laisser tourner)"
+fi
+
+# ── Rejouer l'état du banc (#1164) ───────────────────────────────────────────
+# Le passage se joue AU PREMIER PLAN, contre la stack qu'on vient de servir : c'est
+# une demande explicite, et son verdict est ce qu'on attend. La stack reste servie
+# après lui, sur l'état qu'il a laissé et qu'il a sauvé pour les réouvertures.
+# Le port est passé en toutes lettres : le banc parle à CETTE API, et à aucune autre.
+# Son code décide du nôtre : 0 ou 1 (vert ou rouge), le passage est joué et son
+# état sauvé — un rouge est une mesure, pas une panne du lanceur ; tout autre code
+# (usage, API muette, état non sauvé) remonte tel quel.
+if [ "$DONNEES" = "banc" ] && [ "$REJOUER" = 1 ]; then
+  echo
+  echo "[banc] passage des scénarios de référence contre :${PORT_API} — vrai modèle, des dizaines de minutes"
+  if [ "$ARRET_AUTO" = 1 ]; then
+    echo "[banc] ⚠ fermer la fenêtre du navigateur arrêterait la stack sous le banc"
+  fi
+  code_passage=0
+  if [ -n "$REJOUER_SCENARIOS" ]; then
+    MAESTRO_PORT_API="$PORT_API" "$PYTHON" -m maestro.scenarios --sauver-etat \
+      --scenario "$REJOUER_SCENARIOS" || code_passage=$?
+  else
+    MAESTRO_PORT_API="$PORT_API" "$PYTHON" -m maestro.scenarios --sauver-etat || code_passage=$?
+  fi
+  case "$code_passage" in
+    0 | 1)
+      echo "[banc] état sauvé — la Control Tower le sert : $URL_UI"
+      exit 0
+      ;;
+    *)
+      echo "[banc] passage sans état sauvé (code $code_passage) — la Control Tower reste servie : $URL_UI" >&2
+      exit "$code_passage"
+      ;;
+  esac
 fi

@@ -33,6 +33,12 @@ par le levier qui l'expose sans rien lancer :
    constantes Python elles-mêmes : deux listes qui dériveraient se verraient ici. Ce que la démo
    **sert** dans chaque état est gardé avec le module, dans `test_cli_smoke.py`.
 
+⑤ **L'état du banc** (#1164) — `--etat-banc [--rejouer[=S…]]`, par le même
+   diagnostic que ① : il se **demande**, ne change que les données servies, ne se mêle
+   pas à la démo, et `--rejouer` ne vaut qu'avec lui (un rejeu coûte du vrai modèle).
+   Son préflight passe, comme ③, avant tout nettoyage. Ce que l'état contient, et la
+   façon dont il se sauve et se rouvre, est gardé par `tests/test_etat_banc.py`.
+
 Ce qui n'est **pas** testé ici, faute de pouvoir l'être sans démarrer la stack :
 que le mode démo saute effectivement le préflight Redis. Le lancer pour
 l'observer contredirait la contrainte du ticket ; ① établit que `--demo`
@@ -364,3 +370,83 @@ def test_le_lanceur_refuse_le_mode_reel_sans_redis() -> None:
     assert "[nettoyage]" not in acheve.stdout
     assert "[api]" not in acheve.stdout
     assert "[ui]" not in acheve.stdout
+
+
+# ------------------------------------------- ⑤ L'état du banc (#1164)
+
+
+def test_l_etat_du_banc_se_demande_et_ne_change_que_les_donnees() -> None:
+    """Sans l'option, le diagnostic d'avant ; avec, la même stack réelle sur d'autres données."""
+    reel = diagnostic()
+    banc = diagnostic("--etat-banc")
+
+    assert "donnees" not in reel, "sans --etat-banc, le diagnostic d'avant, au bit près"
+    assert banc["donnees"] == "banc"
+    assert banc["stack"] == "reel", "l'état du banc est servi par l'API réelle"
+    assert {c: v for c, v in banc.items() if c != "donnees"} == reel
+
+
+@pytest.mark.parametrize(
+    ("option", "attendu"), [("--rejouer", "tous"), ("--rejouer=S2,S4", "S2,S4")]
+)
+def test_rejouer_l_etat_du_banc_se_demande_avec_lui(option: str, attendu: str) -> None:
+    assert diagnostic("--etat-banc", option)["rejouer"] == attendu
+
+
+@pytest.mark.parametrize("option", ["--rejouer", "--rejouer=S2"])
+def test_rejouer_sans_l_etat_du_banc_est_refuse(option: str) -> None:
+    """Un rejeu égaré ne lance pas un passage du banc : il coûte du vrai modèle."""
+    acheve = lanceur(option, "--diagnostic-navigateur")
+    assert acheve.returncode == 2, acheve.stdout + acheve.stderr
+    assert "--etat-banc --rejouer" in acheve.stderr
+    assert "stack:" not in acheve.stdout, "refusé avant le diagnostic, donc avant tout le reste"
+
+
+def test_rejouer_sans_scenario_apres_le_egal_est_refuse() -> None:
+    acheve = lanceur("--etat-banc", "--rejouer=", "--diagnostic-navigateur")
+    assert acheve.returncode == 2, acheve.stdout + acheve.stderr
+    assert "stack:" not in acheve.stdout
+
+
+def test_l_etat_du_banc_ne_se_mele_pas_a_la_demo() -> None:
+    """L'état réel d'un passage et un scénario factice ne se servent pas ensemble."""
+    acheve = lanceur("--etat-banc", "--demo", "--diagnostic-navigateur")
+    assert acheve.returncode == 2, acheve.stdout + acheve.stderr
+    assert "incompatible avec --demo" in acheve.stderr
+
+
+@pytest.mark.skipif(
+    not PYTHON_VENV.exists(),
+    reason="préflight du lanceur : venv du dépôt requis (absent de l'image CI)",
+)
+def test_le_lanceur_refuse_l_etat_du_banc_sans_redis() -> None:
+    """Même promesse que ③ sur l'état du banc : le préflight tombe AVANT le nettoyage.
+
+    Le banc vit sur Redis : sans lui, rien à rouvrir, et la session en place n'est
+    pas sacrifiée pour le découvrir.
+    """
+    environnement = os.environ.copy()
+    for cle in _A_NETTOYER:
+        environnement.pop(cle, None)
+    environnement["REDIS_URL"] = "redis://127.0.0.1:6399/0"  # port fermé, refus immédiat
+    environnement["MAESTRO_PORT_API"] = "18099"
+    environnement["MAESTRO_PORT_UI"] = "18098"
+    environnement["MAESTRO_BROWSER_DEFAUT"] = "firefox"
+    assert BASH is not None
+
+    acheve = subprocess.run(  # noqa: S603
+        [BASH, str(SCRIPT), "--etat-banc"],
+        cwd=str(RACINE),
+        env=environnement,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=180,
+    )
+
+    assert acheve.returncode == 1, acheve.stdout + acheve.stderr
+    assert COMMANDE_REDIS in acheve.stderr
+    assert "rien n'a été démarré ni arrêté" in acheve.stderr
+    assert "[nettoyage]" not in acheve.stdout
+    assert "[api]" not in acheve.stdout

@@ -39,7 +39,6 @@ from maestro.controltower.state import (
     STATUTS_EXECUTION_TERMINAUX,
     VALIDATION_EN_ATTENTE,
 )
-from maestro.deliberation import cle_acte
 
 #: Le chemin du fil de l'orchestrateur — la seule porte de lancement qu'un écran
 #: offre depuis #666, donc la seule que le banc a le droit d'emprunter.
@@ -186,6 +185,20 @@ class ClientAPI:
             return self._transport.demander("GET", "/api/sante").statut > 0
         except ErreurAPI:
             return False
+
+    def espace(self) -> str:
+        """L'espace de données que sert l'API (#1164) — `""` si elle ne le dit pas.
+
+        C'est ce que le banc confronte au banc de sa copie avant de sauver un
+        état : sauver les données d'une autre stack que celle où il a joué ferait
+        rouvrir un état qui n'est pas celui du passage.
+        """
+        try:
+            reponse = self._transport.demander("GET", "/api/sante")
+        except ErreurAPI:
+            return ""
+        corps = reponse.corps if isinstance(reponse.corps, Mapping) else {}
+        return str(corps.get("espace") or "")
 
     # --- Les projets ----------------------------------------------------
 
@@ -342,6 +355,26 @@ def equipe_validee(proposition: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def cle_demande(demande: Mapping[str, Any]) -> tuple[str, str, str]:
+    """L'identité d'une demande de validation aux yeux du banc — tâche **et** acte (#1198).
+
+    Le pendant de `maestro.deliberation.cle_acte` de ce côté-ci de l'API : la
+    tâche situe la demande, l'acte la distingue de la suivante. Les arguments
+    sont sérialisés **clés triées**, pour que deux lectures du même acte donnent
+    la même clé quel que soit l'ordre rendu par le JSON.
+
+    Une demande qui ne porte pas d'acte — validation de tâche, accord
+    d'écriture — se réduit à sa tâche, exactement comme avant : elle est seule de
+    son espèce sur cette tâche.
+    """
+    arguments = demande.get("arguments")
+    return (
+        str(demande.get("tache_id") or ""),
+        str(demande.get("outil") or ""),
+        json.dumps(arguments, sort_keys=True, ensure_ascii=False) if arguments else "",
+    )
+
+
 def attendre_le_run(
     client: ClientAPI,
     run_id: str,
@@ -364,23 +397,22 @@ def attendre_le_run(
     il attend simplement qu'on lui réponde. Chaque approbation est **notée** au
     déroulé : le rapport dit ce que le banc a tranché.
 
-    ⚠ **Une décision par acte, et non une par tâche** (#1197). Le premier jet
-    retenait le `tache_id`, si bien qu'une tâche qui demandait deux gestes voyait
-    le second expirer : mesuré sur le run `5508ebb01cb8`, où `python --version` a
-    consommé l'unique approbation et le `mkdir -p src/depensio` qui suivait est
-    resté en attente — un rouge qui ne disait rien du produit, seulement de
-    l'utilisateur qu'on simulait. Or l'utilisateur simulé est quelqu'un qui
-    **regarde son run** : il répond à chaque demande, pas à la première. Ce qui
-    est tenu, c'est qu'il ne réponde jamais **deux fois au même acte**
-    (`maestro.deliberation.cle_acte`, l'identité que le moteur utilise déjà pour
-    ne pas rouvrir une demande) : un agent qui rejouerait sa commande à
-    l'identique ne fabrique donc pas une boucle d'approbations.
+    ⚠ **Ce qui est tranché s'identifie par l'acte, jamais par la tâche** (#1198).
+    La file des validations s'indexe par tâche et l'assume (une demande y
+    remplace la précédente, `maestro.controltower.state`), si bien qu'un banc qui
+    retiendrait le `tache_id` ne répondrait qu'à la **première** demande d'une
+    tâche : les suivantes resteraient devant lui sans qu'il les voie, et
+    expireraient à la borne d'arbitrage. Mesuré le 2026-09-22 sur S1 — cinq
+    demandes, une seule approuvée, run rouge. L'identité retenue est donc celle
+    que le moteur utilise pour ses propres décisions (`maestro.deliberation`) :
+    la tâche **et** l'acte. Deux appels au même acte ne reviennent de toute façon
+    pas ici, le moteur leur servant la décision qu'il a gardée.
 
     À l'expiration du délai, le dernier état lu est rendu tel quel : c'est à
     l'oracle de juger qu'un run encore en vol n'est pas un run abouti.
     """
     limite = horloge() + delai_s
-    tranchees: set[tuple[str, str]] = set()
+    tranchees: set[tuple[str, str, str]] = set()
     detail = client.execution(run_id, projet_id=projet_id)
     while True:
         statut = str(detail.get("statut") or "")
@@ -388,19 +420,13 @@ def attendre_le_run(
             return detail
         if statut == EXECUTION_EN_ATTENTE_ARBITRAGE:
             for demande in client.validations(projet_id=projet_id):
-                acte = (
-                    str(demande.get("tache_id") or ""),
-                    cle_acte(
-                        str(demande.get("outil") or ""), demande.get("arguments") or {}
-                    ),
-                )
                 if (
                     str(demande.get("run_id") or "") == run_id
                     and str(demande.get("statut") or "") == VALIDATION_EN_ATTENTE
-                    and acte not in tranchees
+                    and cle_demande(demande) not in tranchees
                 ):
                     tache = str(demande["tache_id"])
-                    tranchees.add(acte)
+                    tranchees.add(cle_demande(demande))
                     client.decider(tache, approuve=True)
                     note(
                         "arbitrage approuvé",

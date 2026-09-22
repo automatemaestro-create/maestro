@@ -70,6 +70,7 @@ from datetime import UTC, datetime
 
 from maestro.controltower.events import REDIS_URL_DEFAUT
 from maestro.controltower.state import STATUTS_EXECUTION_TERMINAUX
+from maestro.espace import nom_redis
 
 #: Les trois verdicts de vitalité d'un run **non soldé** (#348) : son hôte bat
 #: encore, il ne bat plus depuis le seuil, ou il n'a jamais battu. Un run soldé
@@ -105,7 +106,8 @@ SEUIL_ORPHELIN_S = 1800.0
 #: l'API lit tous les battements d'un coup (`HGETALL`) pour rendre `GET
 #: /api/executions`, et surtout un TTL **effacerait** le battement périmé d'un run
 #: mort, c'est-à-dire précisément le fait qu'on veut lire — l'expiration
-#: transformerait chaque orphelin en indéterminé au bout d'un moment.
+#: transformerait chaque orphelin en indéterminé au bout d'un moment. Nom de
+#: l'espace commun, rangé dans celui de la stack à la construction (#1164).
 CLE_BATTEMENTS = "maestro.runs:battements"
 
 _LOGGER = logging.getLogger("maestro.controltower")
@@ -237,13 +239,13 @@ class RegistreBattementsRedis(RegistreBattements):
     premier appel), comme celle de `RedisEventLog`.
     """
 
-    def __init__(self, url: str | None = None, *, cle: str = CLE_BATTEMENTS) -> None:
+    def __init__(self, url: str | None = None, *, cle: str | None = None) -> None:
         # Import local : seule la branche Redis dépend du client (le registre
         # mémoire des tests n'en a pas besoin).
         import redis.asyncio as redis_asyncio
 
         self._client = redis_asyncio.Redis.from_url(url or REDIS_URL_DEFAUT)
-        self._cle = cle
+        self._cle = cle if cle is not None else nom_redis(CLE_BATTEMENTS)
 
     async def battre(self, run_id: str, *, horodatage: str | None = None) -> None:
         await self._client.hset(self._cle, run_id, horodatage or horodatage_battement())
@@ -265,7 +267,7 @@ def _texte(valeur: bytes | str) -> str:
 
 
 def batteur_redis(
-    url: str | None = None, *, cle: str = CLE_BATTEMENTS
+    url: str | None = None, *, cle: str | None = None
 ) -> Callable[[str], None]:
     """Construit le poseur de battement **synchrone** — le pendant de `publieur_redis`.
 
@@ -278,15 +280,16 @@ def batteur_redis(
     import redis
 
     client = redis.Redis.from_url(url or REDIS_URL_DEFAUT)
+    registre = cle if cle is not None else nom_redis(CLE_BATTEMENTS)
 
     def battre(run_id: str) -> None:
-        client.hset(cle, run_id, horodatage_battement())
+        client.hset(registre, run_id, horodatage_battement())
 
     return battre
 
 
 def oublieur_redis(
-    url: str | None = None, *, cle: str = CLE_BATTEMENTS
+    url: str | None = None, *, cle: str | None = None
 ) -> Callable[[str], None]:
     """Construit l'effaceur de battement **synchrone** — le pendant de `batteur_redis` (#446).
 
@@ -304,9 +307,10 @@ def oublieur_redis(
     import redis
 
     client = redis.Redis.from_url(url or REDIS_URL_DEFAUT)
+    registre = cle if cle is not None else nom_redis(CLE_BATTEMENTS)
 
     def oublier(run_id: str) -> None:
-        client.hdel(cle, run_id)
+        client.hdel(registre, run_id)
 
     return oublier
 

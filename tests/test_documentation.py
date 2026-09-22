@@ -715,3 +715,230 @@ class TestSectionDoc:
             fichier="docs/00-a.md", titre="1.1 Le constat", niveau=3, ancetres=("A", "1. Contexte")
         )
         assert section.chemin == "docs/00-a.md › A › 1. Contexte › 1.1 Le constat"
+
+
+class TestCitationSansRenvoiInterne:
+    """Ce que l'assistant affiche de ses lectures ne renvoie jamais à l'intérieur (#1199).
+
+    #939 avait retiré le **nom du fichier** de la citation ; il restait le **chemin
+    des titres**, et les titres portent eux-mêmes ce qu'on venait d'ôter. La suite
+    est écrite dans l'ordre du dossier :
+
+    - **la sonde d'abord, et prouvée fautive** (`test_la_sonde_trouve_bien_les_titres_fautifs`).
+      Un balayage qui ne trouve rien ne prouve rien : elle est passée sur les titres
+      **bruts** du corpus, où elle doit trouver les trois familles, avant d'être
+      passée sur les citations, où elle ne doit plus rien trouver ;
+    - **les échantillons sont réels et figés** (`ECHANTILLONS`) : recopiés du corpus
+      du 2026-09-22, ils gardent leur valeur de preuve le jour où le corpus se
+      nettoie — un test qui cherche un titre fautif dans le corpus rougirait alors
+      sans qu'aucun défaut n'existe ;
+    - **les faux positifs sont des cas, pas des exceptions** (`TITRES_INTACTS`) :
+      « Phases 5/6 » n'est pas un chemin, `prio::` n'est pas un deux-points à
+      recoudre, et `/mr-fix` est une commande. Chacun a été vu sur le corpus réel,
+      chacun est tenu par la **forme** du motif.
+    """
+
+    #: Ce qui renvoie l'utilisateur là où il ne peut pas aller — trois familles,
+    #: nommées séparément pour que l'échantillon fautif se cherche avec la sonde
+    #: elle-même plutôt qu'avec un motif voisin qui lui mentirait.
+    #:
+    #: Elles sont écrites ici et **non importées** du module : une sonde qui
+    #: reprendrait le motif qu'elle contrôle validerait sa faute avec lui. Un chemin
+    #: s'y reconnaît à un dossier du dépôt ou à une extension de fichier — un `/`
+    #: entre deux mots (« activer/désactiver », « Phases 5/6 ») n'en fait pas un.
+    LIEN = r"\[[^\]]*\]\([^)]*\)"
+    TICKET = r"#\d+"
+    FICHIER = (
+        r"(?:docs|scripts|tests|maestro|apps|core|agents|infra|components|lib|app"
+        r"|\.claude|\.maestro|\.agents)/"
+        r"|[\w.@+-]+\.(?:md|py|sh|json|tsx|ts|yml|mjs|toml|css)\b"
+    )
+    SONDE = re.compile(f"{LIEN}|{TICKET}|{FICHIER}")
+
+    #: Des titres **du corpus réel** au 2026-09-22 — un par famille, et deux mixtes.
+    ECHANTILLONS = (
+        (
+            "2.7 📁 Projets et composition d'un objectif *(retenu — "
+            "[docs/24](./24-projets-locaux-et-poste-de-travail.md), **Phases 7 et 8**)*",
+            "2.7 📁 Projets et composition d'un objectif",
+        ),
+        (
+            "Projets, ressources locales et poste de travail — cadrage (ticket #215)",
+            "Projets, ressources locales et poste de travail — cadrage",
+        ),
+        (
+            "6.7 Projets de l'utilisateur — CRUD et explorateur de dossiers (#223) — **livré**",
+            "6.7 Projets de l'utilisateur — CRUD et explorateur de dossiers — livré",
+        ),
+        (
+            "3.9 Ce qui garde le dispositif — "
+            "[`tests/test_cycle_de_vie.py`](../tests/test_cycle_de_vie.py) (#366)",
+            "3.9 Ce qui garde le dispositif",
+        ),
+        ("11.3 Un ticket, une session — `run.sh`", "11.3 Un ticket, une session"),
+        ("Le jeu d'icônes — `components/Icones.tsx`", "Le jeu d'icônes"),
+        ("3. Le cas réel, chiffré : `scripts/orchestrate/`", "3. Le cas réel, chiffré"),
+        (
+            "2.1 Ce que l'ouverture aux projets locaux ajoute *(en vigueur — "
+            "[docs/24 §2.5](./24-projets-locaux-et-poste-de-travail.md), **Phase 7** livrée)*",
+            "2.1 Ce que l'ouverture aux projets locaux ajoute",
+        ),
+    )
+
+    #: Ce que le motif ne doit **pas** prendre, vu sur le corpus réel : un rapport de
+    #: nombres, un identifiant à double deux-points, une commande, une route, un
+    #: module Python, une paire de verbes.
+    TITRES_INTACTS = (
+        "6. Contrats d'API v2 (Phases 5/6) — formes JSON figées",
+        "3.2 Les labels de catégorisation — type::, agent::, prio::",
+        "8.3 PR non mergeable — remédiation (/mr-fix, anciennement /pipeline-fix)",
+        "4.2 O2 — Passer par la file (maestro.queue) : l'option n'existe pas",
+        "6.5 — Contrôle de capacité : activer/désactiver, instances",
+        "2.1 Le quatrième mode : sans_secret",
+    )
+
+    def test_la_sonde_trouve_bien_les_titres_fautifs(
+        self, corpus_reel: CarteDocumentation
+    ) -> None:
+        """L'échantillon fautif, avant le balayage — sinon le vert ne dit rien.
+
+        Le corpus du 2026-09-22 portait 10 titres à lien, 127 à numéro de ticket et
+        31 à chemin de fichier, sur 801 sections. Les planchers sont bas à dessein :
+        ils prouvent que la sonde mord, sans rougir le jour où la documentation se
+        nettoie d'elle-même.
+        """
+        titres = [section.titre for section in corpus_reel.sections]
+        liens = [titre for titre in titres if re.search(self.LIEN, titre)]
+        tickets = [titre for titre in titres if re.search(self.TICKET, titre)]
+        chemins = [titre for titre in titres if re.search(self.FICHIER, titre)]
+        assert liens, "le corpus ne porte plus de titre à lien : l'échantillon a disparu"
+        assert len(tickets) >= 20
+        assert len(chemins) >= 5
+        assert all(self.SONDE.search(titre) for titre in liens + tickets + chemins)
+
+    def test_aucune_citation_du_corpus_reel_ne_renvoie_a_l_interieur(
+        self, corpus_reel: CarteDocumentation
+    ) -> None:
+        """Le balayage, une fois la sonde prouvée : 801 sections, zéro renvoi.
+
+        C'est la cinquième surface du constat G6, et la seule qui se vérifie d'un
+        coup : la citation est **dérivée** des titres, donc tout titre fautif du
+        corpus passe ici sans qu'on ait à l'y chercher.
+        """
+        fautives = [
+            (section.identifiant, section.citation)
+            for section in corpus_reel.sections
+            if self.SONDE.search(section.citation)
+        ]
+        assert fautives == []
+
+    def test_aucune_citation_ne_perd_le_nom_de_sa_section(
+        self, corpus_reel: CarteDocumentation
+    ) -> None:
+        """Le critère 2 : une source citée reste **redemandable**, donc nommée.
+
+        Assainir ne doit pas vider : sur le corpus réel, aucune citation n'est vide,
+        et aucune ne se réduit à l'aveu d'un trou.
+        """
+        for section in corpus_reel.sections:
+            citation = section.citation
+            assert citation.strip(), section.identifiant
+            assert citation.replace(documentation.ELLIPSE, "").strip(), section.identifiant
+
+    @pytest.mark.parametrize(("brut", "attendu"), ECHANTILLONS)
+    def test_les_titres_reels_fautifs_se_citent_proprement(self, brut: str, attendu: str) -> None:
+        """Ce que le ticket demandait, titre par titre — et le rendu exact, pas « sans `#` ».
+
+        Vérifier l'absence de la faute laisserait passer un titre charcuté ; c'est la
+        chaîne entière qui est attendue, donc aussi la recouture.
+        """
+        assert documentation.titre_citable(brut) == attendu
+
+    @pytest.mark.parametrize("titre", TITRES_INTACTS)
+    def test_ce_qui_n_est_pas_un_renvoi_reste_entier(self, titre: str) -> None:
+        """Les faux positifs mesurés — chacun tenu par la forme du motif.
+
+        `activer/désactiver` est celui qui a coûté : un `/` entre deux mots, dont le
+        second commence par un accent que nul segment de chemin ne porte — sans le
+        `(?!\\w)` qui ferme le motif, la citation rendait « …ésactiver ».
+        """
+        assert documentation.titre_citable(titre) == titre
+
+    def test_une_mention_au_milieu_avoue_son_trou(self) -> None:
+        """L'ellipse plutôt qu'une phrase recousue : la citation ne ment pas.
+
+        « 7.1 Ce que a laissé derrière lui » se lirait comme le titre exact. Avec
+        l'ellipse, le lecteur voit qu'un mot a été retiré — et ce mot ne lui aurait
+        rien appris, puisqu'il n'a pas la forge.
+        """
+        assert documentation.titre_citable("7.1 Ce que #647 a laissé derrière lui") == (
+            "7.1 Ce que … a laissé derrière lui"
+        )
+
+    def test_un_groupe_parenthese_qui_cite_un_ticket_tombe_en_entier(self) -> None:
+        """Une annotation qui a besoin d'un numéro de ticket est de l'appareil de suivi.
+
+        La garder à moitié — « (disponible — ticket …) » — rendrait la citation plus
+        bavarde et moins informative que si elle tombait.
+        """
+        brut = "6.1 — File de tâches et workers parallèles (disponible — ticket #41)"
+        assert documentation.titre_citable(brut) == "6.1 — File de tâches et workers parallèles"
+
+    def test_un_segment_qui_n_a_plus_rien_a_dire_disparait(self) -> None:
+        """Le tiret cadratin sépare le sujet de ce qui le qualifie : la queue tombe seule.
+
+        Elle ne tombe que si elle n'a **plus rien** à dire : « — `journal.sh audit` »
+        garde son « audit », et la citation le montre plutôt que de trancher à la
+        place de qui l'a écrit.
+        """
+        assert documentation.titre_citable("11.5 Savoir où en est un run — `status.sh`") == (
+            "11.5 Savoir où en est un run"
+        )
+        assert documentation.titre_citable("11.2 L'ordre, figé une fois — `queue.sh`") == (
+            "11.2 L'ordre, figé une fois"
+        )
+
+    def test_le_balisage_markdown_ne_sort_pas_vers_l_utilisateur(self) -> None:
+        """Une citation est du **texte** : `**livré**` s'afficherait en gras ou en brut.
+
+        Le retrait vaut aussi pour les `*` d'un groupe en italique dont l'intérieur
+        vient de tomber — sans lui, la citation porterait des astérisques orphelins.
+        """
+        assert documentation.titre_citable("2.0 Le projet actif (#281) — **livré**") == (
+            "2.0 Le projet actif — livré"
+        )
+
+    def test_un_titre_entierement_fait_de_renvois_est_omis_du_chemin(self) -> None:
+        """Le repli : omettre le maillon, jamais rendre le titre brut.
+
+        Le corpus n'en porte aucun aujourd'hui — et c'est justement pourquoi le cas
+        se tient ici : le jour où il apparaît, la citation doit perdre un maillon,
+        pas afficher `docs/10-workflow-git.md`.
+        """
+        section = SectionDoc(
+            fichier="docs/00-a.md",
+            titre="`docs/10-workflow-git.md` (#366)",
+            niveau=3,
+            ancetres=("Guide", "2. Le cycle de vie"),
+            document="Guide",
+        )
+        assert documentation.titre_citable(section.titre) == ""
+        assert section.citation == "Guide › 2. Le cycle de vie"
+
+    def test_la_citation_assainit_aussi_le_nom_du_document(self, tmp_path: Path) -> None:
+        """Le nom du document est un titre de niveau 1 : il porte les mêmes renvois.
+
+        C'est le deuxième exemple du ticket — « Projets… — cadrage (ticket #215) »
+        ouvrait la citation, donc le renvoi s'affichait en tête de ligne.
+        """
+        contenu = (
+            "# Projets, ressources locales et poste de travail — cadrage (ticket #215)\n\n"
+            "## 2.3 L'entité Projet\n\nx\n"
+        )
+        carte = construire_carte(ecrire_corpus(tmp_path, {"docs/24-p.md": contenu}))
+
+        section = carte.section("docs/24-p.md#2.3 L'entité Projet")
+        assert section is not None
+        assert section.citation == (
+            "Projets, ressources locales et poste de travail — cadrage › 2.3 L'entité Projet"
+        )

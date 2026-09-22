@@ -107,10 +107,37 @@ Ce qui est décidé :
   Aucune tâche « faire valider et exécuter » ne s'y ajoute.
 
 Ce qui ne bouge pas :
-- **l'arbitrage sur l'acte** (#582, #583, hook `PreToolUse`) ;
+- **l'arbitrage sur l'acte** (#582, #583, hook `PreToolUse`) — *renversé en partie par #1198, voir
+  ci-dessous* ;
 - **le périmètre du projet** : `.git`, `.env`, les secrets et les exclusions déclarées ne sont
   jamais touchés ;
 - **le découpage d'un objectif de développement**, qui reste celui d'un lead technique.
+
+### 4bis. L'accord ne s'arrêtait pas au plan — #1198
+
+Le 2026-09-22, le banc des scénarios a joué S1 contre la vraie stack (passage `20260922-100639`,
+run `3d4d032fd154`). Le plan était celui que #1149 promettait : **une** tâche qui agit, aucune
+tâche « faire valider ». Et pourtant l'acte n'a pas eu lieu. L'équipe proposée posait `Bash` en
+`ask`/`humain` — le cran normal d'un projet qui ne déclare aucune commande —, si bien que **chaque
+commande** de la tâche émettait une demande de validation : les lectures d'abord, puis le
+`rm -rf`. Cinq demandes, une seule tranchée, les autres écartées à 240 s ; à l'échéance de 900 s le
+run était « en attente d'arbitrage » et le dossier intact. **S1 rouge.**
+
+Ce que la mesure dit : *« il lève la main au moment de l'acte »* ne voulait pas dire « une fois »,
+mais « une fois par appel d'outil ». La validation retirée du plan revenait dans l'exécution,
+multipliée.
+
+Ce qui est décidé en plus :
+- **l'accord donné au cadrage voyage jusqu'à l'exécution**, par une clé du plan
+  (`acte_accorde`, `packages/shared/schemas/task.schema.json`) qui porte l'acte tel que l'objectif
+  le nomme. Sur la tâche qui le déclare, l'**outil d'exécution** passe sans redemander personne ;
+- **l'arbitrage reste armé pour ce que personne n'a décidé** : toute autre tâche, tout autre outil
+  classé `ask`, la liste `deny`, la frontière d'écriture (#839) et le périmètre exclu ;
+- **rien ne passe en silence** : chaque appel laisse sa ligne au journal (`:refus-outil`, statut
+  `arbitrage_outil`) et son détail **nomme l'acte accordé**.
+
+Ce n'est pas la portée étendue d'une approbation, qui reste un choix de la personne (#1185) : ici
+la personne a déjà approuvé, et c'est son accord qu'on cesse de lui redemander.
 
 ## 5. Les scénarios de référence
 
@@ -132,6 +159,16 @@ par la voie de l'étape d'équipe (#1040), puis le fil repropose la demande d'or
 sur un clic. Rien n'est recruté sans cette validation, ni pendant un run (docs/31 §3.5). Le parcours
 est joué de bout en bout, juge et moteur mis à part, par `tests/test_projet_outille_http.py` (section
 ⑧). Le banc de #1148 le rejoue avec le vrai modèle.
+
+**L'état qu'un passage laisse se rouvre, sans rien rejouer** (#1164). L'écran peuplé que
+regardent la relecture visuelle et les captures n'est plus un scénario factice : c'est l'état réel
+qu'un passage du banc a laissé, servi par l'API réelle. `bash scripts/controltower/start.sh
+--etat-banc` le rouvre sur la stack de la copie, dans un jeu de données à part (`<espace>.banc`,
+`.maestro/banc/`) qui ne touche ni aux données du worktree ni à celles du poste, et **dit son âge**.
+`--etat-banc --rejouer[=S2,S4]` le refait à la demande : banc remis à neuf, stack servie, passage
+joué au premier plan avec le vrai modèle, état sauvé dans l'atelier du passage. Un passage joué
+ailleurs (celui du bouclage, par exemple) ne sauve rien : son état serait mêlé à celui de la stack
+qui l'a servi. Le détail est dans `maestro/scenarios/etat.py`.
 
 **Un jalon produit ne se boucle pas GO avec un scénario rouge** (#1152). Les scénarios ne sont pas
 en CI : un passage coûte du vrai modèle (le run du retex a coûté ~10 $). S2 et S4 ne sont pas

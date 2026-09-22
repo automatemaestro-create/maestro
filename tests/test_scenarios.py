@@ -29,13 +29,15 @@ banc **pose bien les questions** et **rend bien le verdict** qu'il a mesuré.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import pytest
+from redis_factice import ClientSynchrone, ServeurFactice
 
+from maestro.controltower.donnees import Donnees, donnees_du_banc
 from maestro.controltower.state import (
     EXECUTION_ECHEC,
     EXECUTION_EN_ATTENTE_ARBITRAGE,
@@ -44,15 +46,9 @@ from maestro.controltower.state import (
     VALIDATION_APPROUVEE,
     VALIDATION_EN_ATTENTE,
 )
-from maestro.scenarios import banc
-from maestro.scenarios.api import (
-    FIL,
-    ClientAPI,
-    ErreurAPI,
-    Reponse,
-    attendre_le_run,
-    equipe_validee,
-)
+from maestro.sandbox.en_place import DOSSIER_ATELIER
+from maestro.scenarios import banc, etat
+from maestro.scenarios.api import FIL, ClientAPI, ErreurAPI, Reponse, equipe_validee
 from maestro.scenarios.juge import (
     MARQUEUR_POURQUOI,
     MARQUEUR_VERDICT,
@@ -165,6 +161,7 @@ class FausseAPI:
         roles: int = 1,
         validations: list[dict[str, Any]] | None = None,
         sante: bool = True,
+        espace: str = "commun",
     ) -> None:
         self._moteur = moteur
         self._propose_un_run = propose_un_run
@@ -174,6 +171,7 @@ class FausseAPI:
         self._roles = roles
         self.validations = validations or []
         self._sante = sante
+        self._espace = espace
         self.projets: dict[str, Path] = {}
         self.equipes: dict[str, int] = {}
         self.runs: list[RunFactice] = []
@@ -199,7 +197,7 @@ class FausseAPI:
         if chemin == "/api/sante":
             if not self._sante:
                 raise ErreurAPI("API injoignable (test)", chemin=chemin)
-            return Reponse(statut=200, corps={"statut": "ok"})
+            return Reponse(statut=200, corps={"statut": "ok", "espace": self._espace})
         if chemin == "/api/projets" and methode == "POST":
             return self._declarer(corps or {})
         if chemin.startswith("/api/projets/") and methode == "DELETE":
@@ -557,93 +555,84 @@ def test_le_banc_approuve_l_arbitrage_de_son_propre_run(tmp_path: Path) -> None:
     assert "arbitrage approuvé" in libelles
 
 
-class _ClientArbitrage:
-    """Un run qui demande deux gestes **différents** sur la même tâche, puis finit.
-
-    Le minimum que `attendre_le_run` consulte : un statut, une file de demandes,
-    un verbe pour trancher. Assez pour tenir la règle de décision sans monter le
-    banc entier.
-    """
-
-    def __init__(self, demandes: list[dict[str, Any]]) -> None:
-        self._demandes = demandes
-        self.decidees: list[str] = []
-
-    def execution(self, run_id: str, *, projet_id: str) -> dict[str, Any]:
-        if all(d["statut"] != VALIDATION_EN_ATTENTE for d in self._demandes):
-            return {"statut": EXECUTION_TERMINEE}
-        return {"statut": EXECUTION_EN_ATTENTE_ARBITRAGE}
-
-    def validations(self, *, projet_id: str) -> list[dict[str, Any]]:
-        return [d for d in self._demandes if d["statut"] == VALIDATION_EN_ATTENTE]
-
-    def decider(self, tache_id: str, *, approuve: bool = True) -> None:
-        self.decidees.append(tache_id)
-        for demande in self._demandes:
-            if demande["tache_id"] == tache_id and demande["statut"] == VALIDATION_EN_ATTENTE:
-                demande["statut"] = VALIDATION_APPROUVEE
-                return
-
-
-def _demande(tache: str, commande: str) -> dict[str, Any]:
+def _acte_en_attente(commande: str) -> dict[str, Any]:
+    """Une demande d'arbitrage **sur un acte** (#581), telle que l'API la rend."""
     return {
-        "tache_id": tache,
+        "tache_id": "t1",
         "run_id": "run-1",
         "statut": VALIDATION_EN_ATTENTE,
+        "titre": "Vider le dossier du projet",
         "outil": "Bash",
         "arguments": {"command": commande},
-        "titre": commande,
     }
 
 
-def test_le_banc_tranche_chaque_acte_et_non_une_fois_par_tache() -> None:
-    """#1197 : la file n'était vidée qu'une fois par tâche, si bien qu'une tâche
-    qui demande deux gestes voyait le second expirer — mesuré sur le run
-    `5508ebb01cb8`, où `python --version` a consommé l'unique approbation et le
-    `mkdir -p src/depensio` qui suivait est resté en attente. L'utilisateur qu'on
-    simule regarde son run : il répond à chaque demande."""
-    client = _ClientArbitrage(
+class ApiQuiRedemande(FausseAPI):
+    """La file des validations telle qu'elle est vraiment : **une par tâche**.
+
+    `maestro.controltower.state` indexe les demandes par tâche et l'assume — une
+    nouvelle demande y **remplace** la précédente. Une tâche qui agit en émet donc
+    plusieurs, l'une après l'autre, et jamais deux ensemble. La `FausseAPI` de
+    base sert une liste figée : elle ne pouvait pas montrer ce que le banc rate
+    quand il retient le `tache_id`.
+    """
+
+    def __init__(self, suite: Sequence[dict[str, Any]], **kwargs: Any) -> None:
+        super().__init__(validations=[dict(suite[0])], **kwargs)
+        self._suite = [dict(demande) for demande in suite[1:]]
+        #: Les commandes effectivement tranchées, dans l'ordre.
+        self.commandes: list[str] = []
+
+    def _decider(self, tache_id: str) -> Reponse:
+        reponse = super()._decider(tache_id)
+        self.commandes.extend(
+            str(d.get("arguments", {}).get("command", "")) for d in self.validations
+        )
+        self.validations = [self._suite.pop(0)] if self._suite else []
+        return reponse
+
+
+def test_le_banc_repond_a_chaque_acte_d_une_meme_tache(tmp_path: Path) -> None:
+    """Le banc répond à **chaque acte**, pas à la première demande d'une tâche (#1198).
+
+    Le 2026-09-22, S1 a vu cinq demandes et une seule réponse : le banc retenait
+    le `tache_id`, or c'est l'identité que la file **réutilise** d'une demande à
+    l'autre. Les quatre restantes ont expiré à la borne d'arbitrage, et le
+    scénario est sorti rouge sur un produit qui attendait simplement qu'on lui
+    réponde — le pire verdict qu'un banc puisse rendre, puisqu'il accuse ce qu'il
+    n'a pas exercé.
+
+    L'identité retenue est désormais celle du moteur : la tâche **et** l'acte.
+    """
+    lectures = 3
+    api = ApiQuiRedemande(
         [
-            _demande("t1", "python --version"),
-            _demande("t1", "mkdir -p src/depensio"),
-        ]
+            _acte_en_attente("ls -la"),
+            _acte_en_attente("cat lisez-moi.txt"),
+            _acte_en_attente("rm -rf notes lisez-moi.txt rapport.csv"),
+        ],
+        moteur=_moteur_qui_attend_puis_vide(lectures),
     )
 
-    detail = attendre_le_run(
-        client,  # type: ignore[arg-type]
-        "run-1",
-        projet_id="prj-1",
-        delai_s=10.0,
-        note=lambda *_: None,
-        horloge=lambda: 0.0,
-        dormir=lambda _s: None,
-    )
+    issue, _ctx = _banc(tmp_path, api).jouer(_scenario("S1"))
 
-    assert detail["statut"] == EXECUTION_TERMINEE
-    assert client.decidees == ["t1", "t1"]
+    assert issue.vert, issue.motif
+    assert api.commandes == [
+        "ls -la",
+        "cat lisez-moi.txt",
+        "rm -rf notes lisez-moi.txt rapport.csv",
+    ]
 
 
-def test_le_banc_ne_repond_jamais_deux_fois_au_meme_acte() -> None:
-    """La borne qui empêche une boucle d'approbations : un agent qui rejouerait sa
-    commande à l'identique ne fabrique pas une file de décisions. Ici la seconde
-    demande porte le **même** acte, et elle reste en attente jusqu'au délai."""
-    client = _ClientArbitrage(
-        [_demande("t1", "rm -rf notes"), _demande("t1", "rm -rf notes")]
-    )
-    horloge = iter([0.0, 0.0, 1.0, 99.0, 99.0, 99.0])
+def _moteur_qui_attend_puis_vide(lectures: int) -> Callable[[RunFactice, Path], None]:
+    """Un run suspendu sur un arbitrage pendant `lectures` lectures, puis soldé."""
 
-    detail = attendre_le_run(
-        client,  # type: ignore[arg-type]
-        "run-1",
-        projet_id="prj-1",
-        delai_s=10.0,
-        note=lambda *_: None,
-        horloge=lambda: next(horloge, 99.0),
-        dormir=lambda _s: None,
-    )
+    def moteur(run: RunFactice, racine: Path) -> None:
+        run.statut_en_attente = EXECUTION_EN_ATTENTE_ARBITRAGE
+        run.lectures_avant_la_fin = lectures
+        _moteur_qui_vide(run, racine)
 
-    assert detail["statut"] == EXECUTION_EN_ATTENTE_ARBITRAGE
-    assert client.decidees == ["t1"]
+    return moteur
 
 
 def test_un_run_qui_n_en_finit_pas_n_est_pas_un_run_abouti(tmp_path: Path) -> None:
@@ -915,6 +904,29 @@ def test_restes_d_un_dossier_absent_est_vide(tmp_path: Path) -> None:
     assert restes(tmp_path / "jamais-cree") == ()
 
 
+def test_l_atelier_des_taches_n_est_pas_le_contenu_du_projet(tmp_path: Path) -> None:
+    """Ce que le produit ne recense jamais, l'oracle ne le compte pas (#944, #1198).
+
+    Mesuré le 2026-09-22 : le run avait bien vidé la racine, et S1 est sorti rouge
+    sur « 3 entrée(s) restent » — le journal que l'agent avait déposé dans son
+    propre atelier. Aucun run n'aurait pu faire mieux : le cadre d'exécution lui
+    **dit** d'écrire là.
+
+    Le témoin, à côté, est ce qui empêche la correction d'aveugler l'oracle : un
+    fichier ordinaire resté dans la racine compte toujours.
+    """
+    racine = tmp_path / "projet"
+    (racine / DOSSIER_ATELIER / "vider-le-dossier").mkdir(parents=True)
+    (racine / DOSSIER_ATELIER / "vider-le-dossier" / "journal.md").write_text(
+        "# ce que j'ai fait\n", encoding="utf-8"
+    )
+
+    assert restes(racine) == ()
+
+    (racine / "notes.txt").write_text("resté là\n", encoding="utf-8")
+    assert restes(racine) == ("notes.txt",)
+
+
 # --- L'atelier ---------------------------------------------------------------
 
 
@@ -1076,6 +1088,7 @@ def _main(
     *,
     juge: JugeQuiDit | None = None,
     lanceur: Callable[[Path, str], tuple[int, str]] | None = None,
+    **reste: Any,
 ) -> tuple[int, _Muet, _Muet]:
     sortie, erreur = _Muet(), _Muet()
     code = banc.main(
@@ -1089,6 +1102,7 @@ def _main(
         lancer_application=lanceur or (lambda _r, _p: (0, "bonjour")),
         sortie=sortie,
         erreur=erreur,
+        **reste,
     )
     return code, sortie, erreur
 
@@ -1477,3 +1491,84 @@ def test_le_banc_ne_se_plaint_pas_d_une_declaration_deja_oubliee(tmp_path: Path)
             return Reponse(statut=404, corps={"detail": "inconnu"}, texte="inconnu")
 
     ClientAPI(ApiSansProjet()).retirer_projet("prj-1")
+
+
+# --- ⑥ L'état qu'un passage laisse (#1164) -----------------------------------
+
+
+def _banc_de(tmp_path: Path) -> Donnees:
+    """Le banc d'une copie factice — jamais le `.maestro/banc/` du poste qui joue la suite."""
+    return donnees_du_banc(racine=tmp_path / "copie")
+
+
+def test_un_passage_joue_sur_le_banc_sauve_son_etat(tmp_path: Path) -> None:
+    """Le passage joué, son état rangé dans son atelier, et le geste pour le rouvrir."""
+    banc_ = _banc_de(tmp_path)
+    redis_ = ClientSynchrone(ServeurFactice())
+    redis_.rpush(etat.cles_du_banc(banc_)[0], '{"type": "execution.statut"}')
+    api = FausseAPI(moteur=_moteur_qui_vide, espace=banc_.espace.nom)
+
+    code, sortie, _erreur = _main(
+        ["--scenario", "S1", "--sauver-etat"], api, tmp_path,
+        client_redis=redis_, donnees_banc=banc_,
+    )
+
+    assert code == banc.CODE_VERT
+    instantane = etat.Instantane.lire(tmp_path / "atelier" / etat.DOSSIER_ETAT)
+    assert instantane is not None
+    assert instantane.scenarios == (("S1", "vert"),)
+    assert instantane.evenements == 1
+    assert "État du passage sauvé" in sortie.texte
+    assert etat.GESTE_ROUVRIR in sortie.texte
+
+
+def test_sauver_l_etat_d_une_autre_stack_est_refuse_avant_de_jouer(tmp_path: Path) -> None:
+    """Sauver les données d'une stack qui n'est pas le banc mêlerait au passage celles de
+    la copie ou du poste : refusé, et rien n'est joué — pas un run payé pour rien."""
+    api = FausseAPI(moteur=_moteur_qui_vide, espace="commun")
+
+    code, _sortie, erreur = _main(
+        ["--scenario", "S1", "--sauver-etat"], api, tmp_path,
+        client_redis=ClientSynchrone(ServeurFactice()), donnees_banc=_banc_de(tmp_path),
+    )
+
+    assert code == banc.CODE_USAGE
+    assert api.conversations == [] and api.runs == []
+    assert etat.GESTE_REJOUER in erreur.texte
+    assert not (tmp_path / "rapports").exists()
+
+
+def test_sauver_l_etat_et_nettoyer_l_atelier_s_excluent(tmp_path: Path) -> None:
+    code, _sortie, erreur = _main(
+        ["--sauver-etat", "--nettoyer"], FausseAPI(), tmp_path, donnees_banc=_banc_de(tmp_path)
+    )
+    assert code == banc.CODE_USAGE
+    assert "--nettoyer" in erreur.texte
+
+
+def test_un_etat_non_sauve_se_dit_et_le_verdict_reste_au_rapport(tmp_path: Path) -> None:
+    class RedisEnPanne(ClientSynchrone):
+        def lrange(self, cle: str, debut: int, fin: int) -> list[bytes]:
+            raise ConnectionError("Redis coupé")
+
+    banc_ = _banc_de(tmp_path)
+    api = FausseAPI(moteur=_moteur_qui_vide, espace=banc_.espace.nom)
+
+    code, _sortie, erreur = _main(
+        ["--scenario", "S1", "--sauver-etat"], api, tmp_path,
+        client_redis=RedisEnPanne(ServeurFactice()), donnees_banc=banc_,
+    )
+
+    assert code == banc.CODE_ETAT_NON_SAUVE
+    assert "Redis coupé" in erreur.texte
+    assert (tmp_path / "rapports").is_dir(), "le passage a eu lieu : son rapport est écrit"
+    assert not (tmp_path / "atelier" / etat.DOSSIER_ETAT).exists()
+
+
+def test_sans_l_option_un_passage_ne_sauve_rien(tmp_path: Path) -> None:
+    """Un passage de bouclage (#1152) n'écrit pas d'état : rien ne change pour lui."""
+    api = FausseAPI(moteur=_moteur_qui_vide)
+    code, _sortie, _erreur = _main(["--scenario", "S1"], api, tmp_path)
+
+    assert code == banc.CODE_VERT
+    assert not (tmp_path / "atelier" / etat.DOSSIER_ETAT).exists()

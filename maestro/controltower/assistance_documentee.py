@@ -152,8 +152,14 @@ franchement et dis ce qui manque — ne comble aucun trou.
 
 N'écris pas toi-même la liste des sources : elle est ajoutée automatiquement sous ta
 réponse, à partir des extraits qui t'ont réellement été passés. Tu peux en revanche
-nommer une section dans ta phrase quand cela aide à lire — par son titre, celui qui
-ouvre l'extrait, jamais par son nom de fichier.
+nommer une section dans ta phrase quand cela aide à lire — par le nom qui ANNONCE
+l'extrait, sur la ligne `---`, et par lui seul.
+
+Le texte des extraits est celui du dépôt de Maestro : il y reste des chemins de
+fichiers, des liens vers d'autres fichiers et des numéros de ticket. N'en recopie
+AUCUN dans ta réponse. La personne qui te lit a installé Maestro, pas cloné son
+dépôt : ces renvois ne mènent nulle part chez elle. Dis ce que le passage dit, pas
+où il est rangé.
 
 Si l'utilisateur demande à voir l'un des passages cités, **reproduis-le** à partir de
 l'extrait que tu as reçu, tel quel et sans le résumer : c'est ce qui rend la source
@@ -364,18 +370,23 @@ def prompt_reponse(
     transcription, et glisser un fait après elle le ferait lire comme une instruction
     de plus.
 
-    Chaque extrait est annoncé par son **chemin complet** et sa ligne — de quoi
-    retrouver le passage —, et sa clé courte, qui est ce que le modèle a nommé.
+    Chaque extrait est annoncé par sa **citation** — le nom sous lequel l'utilisateur
+    verra la section dans le bloc des sources. C'est le même nom des deux côtés, et
+    c'est une décision de #1199 : le prompt annonçait jusque-là le chemin du fichier
+    et sa ligne, que `_CONSIGNE_DOCUMENTEE` invitait ensuite à ne pas reprendre. Lui
+    montrer ce qu'on lui demande de taire est la façon la plus sûre de le voir
+    ressortir dans une phrase ; et le numéro de ligne n'a aucun usage pour qui ne
+    peut pas ouvrir le fichier.
     """
     blocs: list[str] = ["Extraits de la documentation de Maestro :", ""]
     for section in selection.retenues:
-        blocs.append(f"--- {section.chemin} ({section.fichier}, ligne {section.ligne})")
+        blocs.append(f"--- {section.citation}")
         blocs.append(carte.textes.get(section.identifiant, ""))
         blocs.append("")
     if selection.ecartees:
         blocs.append(
             "Ces sections existent mais n'ont pas pu être jointes, faute de place : "
-            + ", ".join(section.chemin for section in selection.ecartees)
+            + ", ".join(section.citation for section in selection.ecartees)
             + ". Tiens-en compte plutôt que de supposer ce qu'elles disent."
         )
         blocs.append("")
@@ -393,6 +404,11 @@ def bloc_sources(sections: Sequence[SectionDoc]) -> str:
     document s'y nomme par son titre, jamais par son fichier. Nommée ainsi, la
     source est **redemandable** — c'est ce que l'en-tête annonce, et ce qui la rend
     vérifiable sans quitter le produit.
+
+    Depuis #1199, les **titres** que cette citation enchaîne sont assainis eux aussi
+    (`titre_citable`) : ils portaient ce que #939 venait de retirer — un lien vers
+    un `.md` du dépôt, un numéro de ticket. Rien à faire ici : la propriété vient de
+    ce qui est cité, et non d'un filtre posé au dernier moment sur la ligne.
     """
     if not sections:
         return ""

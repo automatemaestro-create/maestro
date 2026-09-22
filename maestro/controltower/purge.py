@@ -81,6 +81,7 @@ from maestro.controltower.cli import PORT_DEFAUT
 from maestro.controltower.events import REDIS_URL_DEFAUT
 from maestro.controltower.persistence import CLE_JOURNAL_EVENEMENTS
 from maestro.controltower.state import EXECUTION_EN_COURS
+from maestro.espace import Espace, espace_courant
 from maestro.messaging.mailbox import CANAL_BOITE_PREFIXE, CANAL_DIFFUSION
 from maestro.projets.store import ProjetStore
 from maestro.queue.celery_app import FILE_TACHES
@@ -137,8 +138,14 @@ class ClientRedis(Protocol):
 
 @dataclass(frozen=True)
 class Perimetre:
-    """Ce que la purge vise — les clés Redis et les dossiers, lus des constantes."""
+    """Ce que la purge vise — les clés Redis et les dossiers, lus des constantes.
 
+    Les clés sont celles de **l'espace** de la copie où l'on joue la purge
+    (#1164) : jouée dans un worktree, elle vide les données de ce worktree et
+    jamais celles du clone principal, qui vivent sous d'autres noms.
+    """
+
+    espace: Espace
     journal: str
     battements: str
     file_taches: str
@@ -166,12 +173,14 @@ class Inventaire:
 def perimetre(settings: Settings | None = None) -> Perimetre:
     """Le périmètre de la purge, résolu comme l'API résout ses propres dépôts."""
     settings = settings or load_settings()
+    espace = espace_courant()
     return Perimetre(
-        journal=CLE_JOURNAL_EVENEMENTS,
-        battements=CLE_BATTEMENTS,
-        file_taches=FILE_TACHES,
-        prefixe_boites=CANAL_BOITE_PREFIXE,
-        diffusion=CANAL_DIFFUSION,
+        espace=espace,
+        journal=espace.nommer(CLE_JOURNAL_EVENEMENTS),
+        battements=espace.nommer(CLE_BATTEMENTS),
+        file_taches=espace.nommer(FILE_TACHES),
+        prefixe_boites=espace.nommer(CANAL_BOITE_PREFIXE),
+        diffusion=espace.nommer(CANAL_DIFFUSION),
         conversations=ChatStore.default(settings).racine,
         ingestion=racine_ingestion(settings),
         projets=ProjetStore.default(settings).racine,
@@ -316,6 +325,11 @@ def _lignes(compte: Inventaire, perimetre_: Perimetre) -> list[str]:
     return [f"  {nom.ljust(largeur)}  {valeur}  ({support})" for nom, support, valeur in postes]
 
 
+def _espace_lisible(espace: Espace) -> str:
+    """L'espace visé, en clair : une purge dit toujours **quelles** données elle vide."""
+    return f"espace « {espace.nom} » ({espace.origine})"
+
+
 def _texte(valeur: Any) -> str:
     """Décode ce que rend le client Redis (octets par défaut) — jamais de levée."""
     return valeur.decode("utf-8", "replace") if isinstance(valeur, bytes) else str(valeur)
@@ -383,12 +397,16 @@ def main(
         return CODE_REDIS_INJOIGNABLE
 
     api = (sonde_api or (lambda: api_repond(port_api())))()
-    vivants = () if api else hotes_vivants(client, CLE_BATTEMENTS)
     perimetre_ = perimetre(settings)
+    vivants = () if api else hotes_vivants(client, perimetre_.battements)
 
     if check:
         compte = inventaire(client, perimetre_, projets=projets)
-        print("Purge de l'état d'exécution — vérification, rien n'est écrit :", file=sortie)
+        print(
+            f"Purge de l'état d'exécution — {_espace_lisible(perimetre_.espace)} — "
+            "vérification, rien n'est écrit :",
+            file=sortie,
+        )
         print("\n".join(_lignes(compte, perimetre_)), file=sortie)
         if api or vivants:
             return _refus(vivants, api, erreur)
@@ -398,7 +416,10 @@ def main(
     if api or vivants:
         return _refus(vivants, api, erreur)
     compte = purger(client, perimetre_, projets=projets)
-    print("Purge de l'état d'exécution — retiré :", file=sortie)
+    print(
+        f"Purge de l'état d'exécution — {_espace_lisible(perimetre_.espace)} — retiré :",
+        file=sortie,
+    )
     print("\n".join(_lignes(compte, perimetre_)), file=sortie)
     return CODE_FAIT
 

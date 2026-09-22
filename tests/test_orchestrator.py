@@ -378,15 +378,47 @@ def test_un_acte_nomme_par_l_objectif_ne_se_refait_pas_valider():
 
 
 def test_le_playbook_dit_ce_qui_ne_bouge_pas_autour_de_l_acte():
-    """Les deux garde-fous que docs/40 §4 range dans « ce qui ne bouge pas » :
-    l'arbitrage au moment de l'acte, et le périmètre du projet. Le plan ne les
-    tient pas lui-même — il les **écrit dans la tâche**, seul endroit où l'agent
-    qui agit les lira."""
+    """Les garde-fous que docs/40 §4 range dans « ce qui ne bouge pas », **moins un**.
+
+    Le périmètre du projet et la politique de l'agent tiennent toujours, et le plan
+    ne les tient pas lui-même : il les **écrit dans la tâche**, seul endroit où
+    l'agent qui agit les lira.
+
+    Ce qui a bougé est l'arbitrage sur l'acte que l'objectif **nomme** (#1198).
+    #1149 promettait qu'« il lève la main au moment de l'acte » suffirait ; mesuré
+    le 2026-09-22 sur S1, cela voulait dire une personne redemandée à **chaque
+    commande**, cinq demandes écartées à 240 s et un dossier intact. L'escalade
+    reste entière sur ce que l'objectif n'a pas nommé — et c'est cette moitié-là
+    que le texte doit continuer de dire.
+    """
     texte = _playbook()
 
-    assert "lève la main au moment de l'acte" in texte
+    assert "suspend l'appel d'outil le temps qu'un humain tranche" in texte
+    assert "Ce que l'objectif n'a pas nommé" in texte
     assert ".git" in texte and ".env" in texte
     assert "exclusions déclarées" in texte
+
+
+def test_l_accord_de_l_objectif_s_ecrit_dans_la_tache():
+    """L'accord donné au cadrage voyage par une **clé**, pas par de la prose (#1198).
+
+    La description s'adresse à l'agent ; `acte_accorde` s'adresse à l'exécution,
+    qui ne lit aucune prose. Sans la clé, l'accord s'arrête au plan et la
+    validation qu'on vient d'en retirer revient une fois par commande.
+
+    Le playbook doit dire les trois bords, faute de quoi la clé deviendrait un
+    laissez-passer : seulement la tâche qui commet l'acte, seulement un acte que
+    l'objectif nomme, et l'acte écrit **tel qu'il a été accordé**.
+    """
+    texte = _playbook()
+
+    assert "acte_accorde" in texte
+    assert "à chaque commande" in texte
+    assert "tel qu'il a été accordé" in texte
+    # Une tâche qui construit ne la porte jamais — c'est ce qui la garde étroite.
+    assert "une tâche qui construit ne la porte jamais" in texte
+    # Et elle est annoncée au contrat de sortie, avec les autres clés.
+    assert '"acte_accorde" :' in texte
 
 
 def test_le_format_de_sortie_d_une_action_est_un_etat():

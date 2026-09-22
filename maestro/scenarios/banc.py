@@ -1,7 +1,7 @@
 """Le banc : il déroule les scénarios de référence et rend un verdict par scénario (#1148).
 
     .venv/Scripts/python.exe -m maestro.scenarios [--scenario S1[,S3]] [--delai <s>]
-                                                  [--nettoyer] [--liste]
+                                                  [--nettoyer | --sauver-etat] [--liste]
 
 Le retex du 2026-09-11 (#854) est la seule vérification qui ait trouvé de vrais
 défauts du produit. Il était manuel, et il n'a été joué **qu'une fois** : dix jours
@@ -30,12 +30,25 @@ phrase : les deux échouent parfois sans que le produit ait changé (docs/40 §5
 second passage fait foi, et `rejoue` reste écrit au rapport — un rejeu tu ferait
 lire deux runs comme un seul.
 
+## L'état qu'un passage laisse (#1164)
+
+`--sauver-etat` range l'état de la stack à la fin du passage — son journal et ses
+dépôts, sous `<atelier>/_etat/` —, pour que l'écran peuplé de la relecture et des
+captures soit **ce passage-là**, rouvert sans rien rejouer
+(`maestro.scenarios.etat`). Il ne vaut que sur **le banc de la copie**, que
+`start.sh --etat-banc --rejouer` vide, sert, puis fait jouer : le banc le vérifie
+auprès de l'API (`/api/sante`) **avant** de jouer, et refuse sinon — sauver les
+données d'une autre stack mêlerait au passage ce que la copie ou le poste
+contiennent. Sans l'option, rien ne change : un passage de bouclage (#1152) ne
+sauve rien.
+
 ## Codes de sortie
 
 `0` les scénarios joués sont **tous** verts · `1` au moins un rouge · `2` usage ·
-`3` l'API ne répond pas (rien n'a été joué). Le `3` est un refus et non un rouge :
-distinguer « le produit s'est trompé » de « le produit n'était pas allumé » est la
-première chose qu'un bouclage a besoin de savoir.
+`3` l'API ne répond pas (rien n'a été joué) · `4` le passage est joué mais son état
+n'a pas pu être sauvé (`--sauver-etat` ; le verdict est au rapport). Le `3` est un
+refus et non un rouge : distinguer « le produit s'est trompé » de « le produit
+n'était pas allumé » est la première chose qu'un bouclage a besoin de savoir.
 """
 
 from __future__ import annotations
@@ -44,8 +57,9 @@ import sys
 import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import TextIO
+from typing import TYPE_CHECKING, TextIO
 
+from maestro.controltower.donnees import Donnees, donnees_du_banc
 from maestro.scenarios import rapport as rapport_module
 from maestro.scenarios.api import ClientAPI, ErreurAPI, TransportHTTP, base_locale
 from maestro.scenarios.juge import Juge, JugeModele
@@ -67,6 +81,9 @@ from maestro.scenarios.scenarios import (
     par_identifiant,
 )
 
+if TYPE_CHECKING:
+    from maestro.scenarios.etat import ClientRedis
+
 #: Le nom sous lequel ce banc s'invoque (`python -m …`) — **dérivé** du paquet et
 #: jamais écrit, comme dans `maestro.controltower.purge` : un nom recopié survit à
 #: un renommage de module et envoie l'utilisateur sur une commande qui n'existe plus.
@@ -85,10 +102,11 @@ CODE_VERT = 0
 CODE_ROUGE = 1
 CODE_USAGE = 2
 CODE_API_MUETTE = 3
+CODE_ETAT_NON_SAUVE = 4
 
 _USAGE = (
     f"Usage : python -m {MODULE} [--scenario S1[,S3]] [--delai <secondes>] "
-    "[--nettoyer] [--liste]"
+    "[--nettoyer | --sauver-etat] [--liste]"
 )
 
 
@@ -167,13 +185,16 @@ def main(
     horloge: Callable[[], float] = time.monotonic,
     dormir: Callable[[float], None] = time.sleep,
     lancer_application: Callable[[Path, str], tuple[int, str]] | None = None,
+    client_redis: ClientRedis | None = None,
+    donnees_banc: Donnees | None = None,
     sortie: TextIO | None = None,
     erreur: TextIO | None = None,
 ) -> int:
     """Point d'entrée : voir l'en-tête du module pour les options et les codes.
 
-    `client`, `juge`, `atelier`, `racine_rapports`, `horloge`, `dormir` et
-    `lancer_application` sont injectables **pour les tests** — une fausse API, un
+    `client`, `juge`, `atelier`, `racine_rapports`, `horloge`, `dormir`,
+    `lancer_application`, `client_redis` et `donnees_banc` sont injectables **pour
+    les tests** — une fausse API, un
     faux fournisseur, des dossiers jetables, aucune attente réelle. C'est la même
     couture que `maestro.controltower.purge`, et elle a la même raison d'être : le
     déroulé du banc doit être éprouvable sans réseau ni modèle.
@@ -199,6 +220,13 @@ def main(
     except ValueError as refus:
         print(f"{_USAGE}\n  {refus}", file=erreur)
         return CODE_USAGE
+    if options.nettoyer and options.sauver_etat:
+        print(
+            f"{_USAGE}\n  --nettoyer efface l'atelier, donc l'état que --sauver-etat y range : "
+            "l'un ou l'autre.",
+            file=erreur,
+        )
+        return CODE_USAGE
 
     if client is None:
         client = ClientAPI(TransportHTTP(base_locale()))
@@ -210,6 +238,21 @@ def main(
             file=erreur,
         )
         return CODE_API_MUETTE
+
+    # Import paresseux : `python -m maestro.scenarios.etat` charge ce paquet, donc ce
+    # module ; un import au niveau du module chargerait `etat` avant qu'il ne s'exécute.
+    from maestro.scenarios import etat
+
+    banc = (donnees_banc or donnees_du_banc()) if options.sauver_etat else None
+    if banc is not None and client.espace() != banc.espace.nom:
+        print(
+            f"Banc refusé : --sauver-etat sauve l'état du banc de cette copie (espace "
+            f"« {banc.espace.nom} »), mais l'API de {base_locale()} sert l'espace "
+            f"« {client.espace() or '?'} ».\n  La démarrer sur le banc : "
+            f"{etat.GESTE_REJOUER}",
+            file=erreur,
+        )
+        return CODE_USAGE
 
     horodatage = horodatage_courant()
     atelier = atelier or Atelier.pour(horodatage)
@@ -248,6 +291,21 @@ def main(
 
     dossier = rapport_module.ecrire(rapport, racine=racine_rapports)
     print(_synthese(rapport, dossier), file=sortie)
+
+    if banc is not None:
+        try:
+            instantane = etat.sauver(
+                rapport, atelier_resolu.racine, banc, client_redis or etat.client_redis()
+            )
+        except Exception as exc:  # Redis ou disque : le verdict, lui, est au rapport
+            print(f"État du passage NON sauvé : {exc}", file=erreur)
+            return CODE_ETAT_NON_SAUVE
+        print(
+            f"État du passage sauvé : {instantane.dossier} "
+            f"({instantane.evenements} événement(s), {instantane.projets} projet(s)) — "
+            f"rouvrable sans rien rejouer : {etat.GESTE_ROUVRIR}",
+            file=sortie,
+        )
 
     if options.nettoyer:
         for ctx in contextes:
@@ -289,6 +347,7 @@ class _Options:
         self.scenarios: list[str] = []
         self.delai_s: float = DELAI_RUN_S
         self.nettoyer = False
+        self.sauver_etat = False
         self.liste = False
 
 
@@ -302,6 +361,8 @@ def _options(args: Sequence[str]) -> _Options:
             options.liste = True
         elif arg == "--nettoyer":
             options.nettoyer = True
+        elif arg == "--sauver-etat":
+            options.sauver_etat = True
         elif arg == "--scenario":
             options.scenarios.extend(_valeurs(_suivant(arg, reste)))
         elif arg.startswith("--scenario="):

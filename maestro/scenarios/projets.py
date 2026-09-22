@@ -22,7 +22,9 @@ banc en boucle.
 périmètre exclu » — se lit avec `maestro.projets.perimetre.exclusions` et
 `EXCLUS_DEFAUT`, c'est-à-dire avec la règle que le produit applique. Une seconde
 liste d'exclusions écrite ici finirait par juger vert un run qui a mangé le `.env`
-(#830).
+(#830). L'**atelier des tâches** (`DOSSIER_ATELIER`, #944) vient de la même source
+et pour la même raison : le produit ne le recense jamais, l'oracle ne le compte
+donc pas (cf. `restes`).
 """
 
 from __future__ import annotations
@@ -34,6 +36,7 @@ from pathlib import Path
 from maestro.fichiers import retirer_arbre
 from maestro.projets.modele import EXCLUS_DEFAUT, Perimetre
 from maestro.projets.perimetre import exclusions
+from maestro.sandbox.en_place import DOSSIER_ATELIER
 
 #: Le dossier où naissent les projets jetables — déplaçable, jamais deviné.
 VARIABLE_ATELIER = "MAESTRO_SCENARIOS_ATELIER"
@@ -142,10 +145,24 @@ def restes(racine: Path) -> tuple[str, ...]:
     Vide = le dossier est vide au sens de l'oracle de S1. Un chemin exclu n'est
     pas descendu : il compte pour une entrée absente, exactement comme le
     conteneur le masque d'un seul geste (`maestro.projets.perimetre`).
+
+    ⚠ **L'atelier des tâches n'est pas le contenu du projet** (#944,
+    `DOSSIER_ATELIER`). C'est la comptabilité de Maestro dans la racine — le
+    brouillon d'un agent, le manifeste de l'outillage —, et le produit ne la
+    recense **jamais** : `fichiers_du_perimetre` ne descend pas dedans. La compter
+    ici rendait S1 rouge sur un dossier que le run venait de vider (mesuré le
+    2026-09-22 : trois entrées restantes, toutes le journal de la tâche), et
+    surtout **aucun** run n'aurait pu la faire passer au vert — le cadre
+    d'exécution dit à l'agent d'écrire là.
+
+    Ce n'est pas une seconde liste d'exclusions : le nom vient de la constante du
+    produit, et le geste est celui que le produit fait déjà. Le ménage de fin de
+    run, lui, reste écarté (#944) — effacer l'atelier après coup parierait sur le
+    fait que rien dedans n'était voulu.
     """
     if not racine.is_dir():
         return ()
-    exclus = set(temoins_exclus(racine))
+    exclus = set(temoins_exclus(racine)) | {DOSSIER_ATELIER}
     trouves: list[str] = []
     for chemin in sorted(racine.rglob("*")):
         relatif = chemin.relative_to(racine).as_posix()
