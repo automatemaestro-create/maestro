@@ -260,6 +260,46 @@ def test_deux_ecrivains_sur_le_meme_fichier_n_en_perdent_aucun(tmp_path: Path) -
     assert set(relus) == {f"a{i}" for i in range(20)} | {f"b{i}" for i in range(20)}
 
 
+def test_le_passage_en_wal_attend_son_tour_au_lieu_d_echouer(tmp_path: Path) -> None:
+    """Le perdant de la course à l'ouverture **repasse**, il ne lève pas.
+
+    Ce que le test précédent n'attrape qu'une fois sur cinq : deux connexions
+    qui ouvrent le même fichier neuf se disputent le verrou exclusif du passage
+    en WAL, et SQLite rend là `SQLITE_BUSY` **sans** consulter le gestionnaire
+    d'attente — poser `busy_timeout` avant n'y change rien. Joué ici sur une
+    connexion doublée, donc sans dépendre d'un entrelacement : le premier essai
+    échoue, le second trouve la base déjà en WAL.
+    """
+
+    class ConnexionQuiPerdLaCourse:
+        """Une connexion dont le premier `journal_mode=WAL` trouve le verrou pris."""
+
+        def __init__(self) -> None:
+            self.instructions: list[str] = []
+            self.essais_wal = 0
+
+        def execute(self, instruction: str, *args: object) -> object:
+            self.instructions.append(instruction)
+            if not instruction.startswith("PRAGMA journal_mode=WAL"):
+                return self
+            self.essais_wal += 1
+            if self.essais_wal == 1:
+                raise sqlite3.OperationalError("database is locked")
+            return self
+
+        def fetchone(self) -> tuple[str]:
+            return ("wal",)
+
+    connexion = ConnexionQuiPerdLaCourse()
+    SqliteEventLog(tmp_path / "journal.sqlite3")._passer_en_wal(connexion)  # type: ignore[arg-type]
+
+    assert connexion.essais_wal == 2, "le perdant doit repasser, pas propager l'erreur"
+    assert connexion.instructions == [
+        "PRAGMA journal_mode=WAL",
+        "PRAGMA journal_mode=WAL",
+    ]
+
+
 # ── ② La projection se reconstruit, sans service ──────────────────────────────
 
 
