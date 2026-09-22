@@ -54,6 +54,12 @@ un shell peut écrire n'importe où, c'était déjà vrai de la copie et du work
 sont pas confrontés non plus : ils ne modifient rien, et la rédaction (#109,
 `maestro.projets.secrets`) couvre ce qu'ils pourraient citer.
 
+Ce trou-là a cessé d'être théorique avec #1149, qui fait de « vide le dossier du
+projet » **une tâche qui agit** : le geste se fait au shell, là où la frontière ne
+juge rien. Faute de pouvoir l'y armer, `consigne_espace` **nomme les exclusions à
+l'agent** — la même réponse qu'à l'atelier ci-dessous, une adresse donnée plutôt
+qu'un refus de plus.
+
 `Perimetre.inclus` ne restreint rien ici : l'inclusion disait ce qu'on **montrait**
 à l'agent, or l'agent est dans la racine. Seules les exclusions tiennent — et
 elles tiennent à l'écriture. Le worktree ne l'appliquait pas davantage (une copie
@@ -216,23 +222,57 @@ class EspaceEnPlace(Workspace):
             yield self.path / relatif
 
     def consigne_espace(self) -> str:
-        """Ce que l'agent doit savoir de cet espace — la racine, et son atelier (#944).
+        """Ce que l'agent doit savoir de cet espace — la racine, son atelier (#944), son périmètre.
 
         Dit dans le message de la **tâche** et non dans le playbook du rôle : le
         régime dépend du projet, pas de l'agent, et un prompt système qui
         promettrait un atelier là où il n'y en a pas serait le défaut d'avant,
         retourné. Vide tant qu'aucun atelier n'est ouvert — l'appelant n'ajoute
         alors rien au message.
+
+        Depuis #1149, la phrase dit aussi que le livrable peut être un **état** :
+        une tâche d'action (vider, supprimer, renommer, déplacer, lancer une
+        commande) ne dépose rien, et un agent à qui l'on promet que « ce que tu
+        laisses est le livrable » sans cette nuance cherche un artefact à poser.
         """
         if not self.atelier:
             return ""
         return (
             "Ton répertoire courant est la **racine du projet de l'utilisateur** : "
-            "ce que tu y laisses est le livrable qu'il recevra. Range ce qui n'est "
+            "ce que tu y laisses est le livrable qu'il recevra — et si ta tâche te "
+            "demande d'**agir** (vider, supprimer, renommer, déplacer, lancer une "
+            "commande), le livrable est l'état de cette racine après ton geste, sans "
+            "rien de plus à y déposer. Range ce qui n'est "
             f"pas le livrable — brouillons, essais, harnais de vérification, notes — "
             f"dans `{self.atelier}/`, ton atelier ; ce que personne n'aura à relire "
             "va dans le répertoire temporaire du système. Rien ne sera déplacé ni "
-            "effacé après toi."
+            "effacé après toi." + self._consigne_perimetre()
+        )
+
+    def _consigne_perimetre(self) -> str:
+        """Les chemins que le périmètre retire, **nommés** à l'agent (#1149).
+
+        La frontière d'écriture les refuse déjà, mais seulement aux outils de
+        fichiers : `Bash` n'est pas analysé, et ne peut pas l'être (cf. la
+        docstring du module, docs/24 §2.5). Or le geste qui a rendu ce ticket
+        nécessaire — « vide le dossier du projet » — se fait précisément au shell,
+        où un `rm` sans discernement emporterait `.git` et `.env`. Les nommer est
+        la seule garde qui vaille des deux côtés de cette frontière, et c'est la
+        même réponse qu'à l'atelier de #944 : une **adresse donnée** plutôt qu'un
+        refus de plus.
+
+        Le texte est **dérivé du périmètre du projet**, jamais une liste recopiée :
+        une exclusion que l'utilisateur ajoute est dite à l'agent sans une ligne de
+        plus, et un périmètre sans exclusion n'ajoute rien au message.
+        """
+        if not self.perimetre.exclus:
+            return ""
+        motifs = ", ".join(f"`{motif}`" for motif in self.perimetre.exclus)
+        return (
+            f"\n\nCes chemins sont **hors du périmètre du projet** : {motifs}. Ils ne "
+            "sont ni lus, ni écrits, ni renommés, ni supprimés — tes outils de fichiers "
+            "les refusent, et une commande shell ne les atteint pas davantage. Vider ou "
+            "nettoyer ce répertoire les laisse en place."
         )
 
 

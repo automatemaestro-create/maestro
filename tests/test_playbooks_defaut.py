@@ -17,7 +17,10 @@ Ce qu'elle tient, rôle par rôle :
    intercalent leurs propres sections (« Ce que tu tranches », « Exigences de qualité »…)
    et déplacent « Garde-fous » — c'est voulu, et ça ne doit pas casser ici ;
 ③ **le tronc commun sénior** (#293) — le socle est substitué dans chaque document, le cadre
-   outillé aussi, et aucun marqueur `{{…}}` ne survit à la lecture ;
+   outillé aussi, et aucun marqueur `{{…}}` ne survit à la lecture. Le **cadre** y est couvert
+   pour lui-même : c'est le seul fragment que les deux chemins d'exécution partagent, donc le
+   seul endroit où poser ce qui vaut pour tout agent outillé — lire sans passer par le shell
+   (#1102), et agir sur un répertoire au lieu d'y produire (#1149) ;
 ④ **les garde-fous propres au rôle** — QA n'écrit pas le livrable d'un autre, Designer
    propose la charte, BDD ne joue pas d'opération destructive, DevOps ne déploie pas,
    Développeur ne fusionne rien. C'est la frontière que le régime sénior (#293) ne devait
@@ -229,6 +232,30 @@ def test_le_cadre_outille_dit_de_lire_avec_l_outil_de_lecture_et_pas_par_le_shel
     # Un refus est une décision : le rejouer est ce qui a coûté les 22 minutes.
     assert "Un appel d'outil refusé est une décision, pas un incident." in cadre
     assert "Ne le rejoue pas à l'identique" in cadre
+
+
+def test_le_cadre_outille_prevoit_la_tache_qui_agit_au_lieu_de_produire():
+    """#1149 : « ce que tu laisses dans ce répertoire est le livrable » était la
+    **fausse prémisse** d'une tâche d'action — un agent à qui l'on demande de vider
+    un dossier n'a rien à y laisser, et le document le poussait à déposer quelque
+    chose. Mesuré le 2026-09-21 (run `8a15f78f45d3`, docs/40 §4) : « vide le
+    dossier » est devenu un utilitaire de vidage, ses tests, et sa validation.
+
+    Le cadre est le seul endroit qui atteigne les **deux** chemins d'exécution (les
+    documents du code par leur `{{cadre}}`, les fiches par `playbook_outille`) —
+    c'est le même motif que la règle de lecture ci-dessus."""
+    cadre = _normalise(pdc.cadre_outille())
+
+    # La phrase d'origine tient toujours : l'action est un cas de plus, pas sa levée.
+    assert "Ce que tu laisses dans ce répertoire est le livrable" in cadre
+    # Le cas de l'action, et ce qu'il vaut comme livrable.
+    assert "Une tâche peut te demander d'agir, pas de produire." in cadre
+    assert "état de ce répertoire après ton geste" in cadre
+    # Les deux réflexes que le plan produisait, coupés à la racine chez l'exécutant.
+    assert "N'écris pas l'outil qui ferait le travail" in cadre
+    assert "sur une arborescence factice" in cadre
+    # Le périmètre tient, et il tient aussi au shell — que la frontière n'analyse pas.
+    assert "commande shell comprise" in cadre
 
 
 def test_le_socle_porte_le_regime_senior_en_entier():

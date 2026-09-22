@@ -364,6 +364,67 @@ def test_sans_projet_le_message_de_la_tache_ne_gagne_rien(tmp_path: Path) -> Non
     assert DOSSIER_ATELIER not in prompt
 
 
+def test_l_espace_dit_que_le_livrable_peut_etre_un_etat(tmp_path: Path) -> None:
+    """#1149 : la racine promettait « ce que tu y laisses est le livrable », ce qui
+    est une fausse prémisse pour une tâche qui **agit** — vider un dossier n'y
+    laisse rien. La nuance se dit dans le message de la tâche, avec le reste du
+    régime, et non dans un playbook de rôle qui ne sait pas quel projet il sert."""
+    projet = _projet_copie(tmp_path)
+
+    with espace_de_travail(projet, tache_id="vider") as ws:
+        consigne = ws.consigne_espace()
+
+    assert "agir" in consigne
+    assert "état de cette racine après ton geste" in consigne
+
+
+def test_l_espace_nomme_les_chemins_hors_perimetre(tmp_path: Path) -> None:
+    """La frontière d'écriture refuse ces chemins aux outils de fichiers, mais
+    `Bash` n'est pas analysé (docs/24 §2.5) — et « vide le dossier » se fait au
+    shell. Les nommer est la seule garde qui vaille des deux côtés."""
+    projet = _projet_copie(tmp_path)
+
+    with espace_de_travail(projet, tache_id="vider") as ws:
+        consigne = ws.consigne_espace()
+
+    for motif in Perimetre().exclus:
+        assert motif in consigne, f"exclusion non dite à l'agent : {motif}"
+    assert "commande shell ne les atteint pas" in consigne
+
+
+def test_les_exclusions_dites_sont_celles_du_projet_jamais_une_liste_recopiee(
+    tmp_path: Path,
+) -> None:
+    """Dérivées du périmètre : une exclusion ajoutée par l'utilisateur arrive à
+    l'agent sans une ligne de plus, et un périmètre sans exclusion n'ajoute rien."""
+    racine = tmp_path / "projets" / "sur-mesure"
+    racine.mkdir(parents=True)
+    sur_mesure = _projet(racine, perimetre=Perimetre(exclus=("dossier/prive",)))
+
+    with espace_de_travail(sur_mesure, tache_id="t1") as ws:
+        consigne = ws.consigne_espace()
+    assert "dossier/prive" in consigne
+    assert ".git" not in consigne
+
+    sans_exclusion = _projet(racine, perimetre=Perimetre(exclus=()))
+    with espace_de_travail(sans_exclusion, tache_id="t1") as ws:
+        consigne = ws.consigne_espace()
+    assert "hors du périmètre du projet" not in consigne
+
+
+def test_le_message_de_la_tache_porte_le_perimetre_exclu(tmp_path: Path) -> None:
+    """Le bout de chaîne : ce que l'espace dit arrive bien dans le prompt de la
+    tâche, comme l'atelier — c'est là, et nulle part ailleurs, que l'agent le lit."""
+    projet = _projet_copie(tmp_path)
+    fournisseur = _FournisseurEcrivain()
+    runtime = AgentRuntime(fournisseur, DEVELOPER_PROFILE)
+
+    asyncio.run(runtime.execute("Vider le dossier", projet=projet, tache_id="vider"))
+
+    (prompt,) = fournisseur.prompts
+    assert ".env" in prompt and ".git" in prompt
+
+
 # --------------------------------------------------------------------------- #
 # La frontière d'écriture du régime en place (#839, EF-38)
 # --------------------------------------------------------------------------- #
