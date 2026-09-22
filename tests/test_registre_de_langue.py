@@ -270,6 +270,11 @@ _HORS_INTERFACE = {
     "maestro/controltower/purge.py": "la purge, jouée depuis un terminal",
     "maestro/engine/cli.py": "la ligne de commande du moteur (`maestro-run`)",
     "maestro/demo.py": "la démonstration de bout en bout (`maestro-demo`)",
+    # Même raison que la purge, et le même geste : le banc des scénarios (#1148) est
+    # joué dans un terminal, et son refus nomme la commande qui allume la stack.
+    # Taire `scripts/controltower/start.sh` laisserait « l'API ne répond pas » sans
+    # suite, sur le seul écart que ce banc ne peut pas réparer lui-même.
+    "maestro/scenarios/banc.py": "le banc des scénarios de référence, joué en terminal",
 }
 
 #: Le champ du registre MCP qui porte, pour une poignée d'entrées, un pointeur relatif

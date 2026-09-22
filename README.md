@@ -240,6 +240,27 @@ structuré). Aperçu de l'implémentation : `maestro/agents/` (catalogue + comp�
 
 Qualité : `ruff check .` (lint, lancé aussi en CI) · `pytest` (tests) · `mypy maestro` (types).
 
+**Les scénarios de référence** — *est-ce que le produit fait ce qu'on lui demande ?*
+La Control Tower démarrée (`bash scripts/controltower/start.sh`) :
+
+```bash
+.venv/Scripts/python.exe -m maestro.scenarios          # les quatre
+.venv/Scripts/python.exe -m maestro.scenarios --liste   # ce qu'ils vérifient
+.venv/Scripts/python.exe -m maestro.scenarios --scenario S1
+```
+
+Quatre scénarios joués de bout en bout contre la **vraie stack** et le **vrai modèle**,
+par la porte d'entrée réelle — le fil de l'orchestrateur, proposition puis accord —,
+sur des projets jetables que le banc déclare lui-même : vider un dossier, créer une
+petite application exécutable, reprendre un projet sans équipe, demander pourquoi un
+run a échoué. Un verdict, un coût, une durée et un `run_id` par scénario, dans
+`.maestro/scenarios/<horodatage>/` ; le code de sortie dit si tout est vert.
+
+⚠ Il n'est **pas** en CI : un passage coûte du vrai modèle (~10 $ pour le run du retex
+du 2026-09-11). Il se joue au bouclage d'un jalon et à la demande. Un rouge est un
+résultat, pas une panne : c'est son rôle de les montrer. Décision et oracles :
+[docs/40 §5](./docs/40-decision-rythme-et-scenarios-de-reference.md).
+
 ---
 
 ## 🚦 Statut
