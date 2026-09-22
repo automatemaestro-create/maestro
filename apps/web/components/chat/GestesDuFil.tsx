@@ -21,6 +21,14 @@
  * n'est écrit tant que vous ne l'avez pas validé » et le pied redevenait vide :
  * la promesse n'avait aucune surface.
  *
+ * ⚠ La demande de cadrage a, elle aussi, une remplaçante depuis #1146 : sur un
+ * projet **sans agent**, l'orchestration ne propose pas de run, elle propose
+ * l'équipe (`EquipeDansLeFil`). Les deux vivent sur le message et ne cohabitent
+ * jamais — on ne propose pas un run qu'on sait voué à l'échec —, donc la carte
+ * d'équipe prend le rang de la demande de cadrage : la dernière, au plus près de
+ * la saisie. Une fois l'équipe créée, c'est la demande de cadrage qui revient à ce
+ * rang, sur le travail d'origine.
+ *
  * ## Pourquoi il existe — le défaut que #1106 corrige
  *
  * Ce pied vivait **dans `app/chat/page.tsx`**. `ColonneConversation` (#926)
@@ -70,9 +78,11 @@ import { useMemo, type ReactNode } from "react";
 
 import { useConclusionOutillage } from "@/components/chat/ConclusionOutillage";
 import { DemandeDeCadrage } from "@/components/chat/DemandeDeCadrage";
+import { EquipeDansLeFil } from "@/components/chat/EquipeDansLeFil";
 import { QuestionDOutillage } from "@/components/chat/QuestionDOutillage";
 import { QuestionsDuFil } from "@/components/chat/QuestionDansLeFil";
 import { propositionEnAttente } from "@/lib/brief";
+import { recrutementEnAttente } from "@/lib/equipe";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import { AGENT_ORCHESTRATION } from "@/lib/orchestration";
 import { questionEnAttente } from "@/lib/outillage";
@@ -109,6 +119,8 @@ export function useGestesDuFil(
   // questionnaire d'outillage, donc un aparté avec un agent n'en porte jamais.
   const proposition = global ? propositionEnAttente(fil.messages) : null;
   const outillage = global ? questionEnAttente(fil.messages) : null;
+  const messageRecrutement = global ? recrutementEnAttente(fil.messages) : null;
+  const recrutement = messageRecrutement?.recrutement ?? null;
 
   // Le second moment du questionnaire (#1104) : il a conclu, et ce qu'il a
   // décidé attend d'être écrit. Le hook est appelé **sans condition** — les
@@ -119,6 +131,7 @@ export function useGestesDuFil(
   if (
     questions.length === 0 &&
     proposition === null &&
+    recrutement === null &&
     !outillage?.question &&
     conclusion === undefined
   ) {
@@ -148,6 +161,18 @@ export function useGestesDuFil(
         <DemandeDeCadrage
           demande={proposition}
           trancher={fil.trancherCadrage}
+          enCours={fil.envoi}
+        />
+      )}
+      {recrutement !== null && (
+        /* La `key` est le **projet** : une demande reposée après un refus de
+           création (même projet) garde la proposition déjà composée et ce qu'on
+           y avait ajusté, au lieu de redemander une analyse et N playbooks. */
+        <EquipeDansLeFil
+          key={recrutement.projet_id}
+          demande={recrutement}
+          cle={`${recrutement.projet_id}|${messageRecrutement?.horodatage ?? ""}`}
+          recruter={fil.recruter}
           enCours={fil.envoi}
         />
       )}

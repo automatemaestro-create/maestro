@@ -69,6 +69,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from maestro.agents.store import AgentStore
 from maestro.controltower.app import create_app
 from maestro.controltower.bornes import AUCUNE_BORNE, BornesRun
 from maestro.controltower.chat import (
@@ -78,9 +79,12 @@ from maestro.controltower.chat import (
     FRAGMENT_CHAT_FIN,
     CadrageIntrouvable,
     ChatStore,
+    DemandeRecrutement,
     MessageChat,
+    RecrutementIntrouvable,
     RepondeurScripte,
     proposition_en_attente,
+    recrutement_en_attente,
 )
 from maestro.controltower.events import (
     EVENEMENT_CHAT_MESSAGE,
@@ -109,6 +113,7 @@ from maestro.controltower.state import (
     ControlTowerState,
 )
 from maestro.engine import RunReport
+from maestro.equipe import RoleValide, definition
 from maestro.projets import ProjetStore
 from maestro.providers.base import ModelProvider
 
@@ -1271,7 +1276,31 @@ def fournisseur_par_defaut(monkeypatch: pytest.MonkeyPatch) -> JugeScripte:
 
 
 @pytest.fixture()
-def client_reel(bus, depot_chat, projets, moteur, fournisseur_par_defaut):
+def agents_equipes(tmp_path: Path, projets: ServiceProjets) -> AgentStore:
+    """Un dépôt d'agents jetable où **chaque projet déclaré a son équipe**.
+
+    Depuis #1146 le fil ne propose plus de run à un projet sans agent : il lui
+    propose son équipe. Les tests de cette section parlent du rattachement d'un
+    run à son projet, pas du recrutement — leurs projets ont donc quelqu'un pour
+    prendre les tâches, comme en vrai après l'étape d'équipe.
+    """
+    store = AgentStore(tmp_path / "agents")
+    for projet in projets.lister():
+        store.pour_projet(projet["id"]).ecrire(
+            definition(
+                RoleValide(
+                    nom="dev-projet",
+                    role="Développeur",
+                    competences=("backend",),
+                    playbook="Tu écris le code.",
+                )
+            )
+        )
+    return store
+
+
+@pytest.fixture()
+def client_reel(bus, depot_chat, projets, moteur, fournisseur_par_defaut, agents_equipes):
     """L'app **entière** : vrai répondeur d'orchestration, vrai service d'exécutions."""
     with TestClient(
         create_app(
@@ -1279,6 +1308,7 @@ def client_reel(bus, depot_chat, projets, moteur, fournisseur_par_defaut):
             state=ControlTowerState(),
             chat_store=depot_chat,
             projets=projets,
+            agents_store=agents_equipes,
             fabrique_moteur=moteur,
         )
     ) as client:
@@ -1507,6 +1537,12 @@ def test_le_silence_n_est_pas_un_accord() -> None:
     # fournisseur n'est réglé). `_modele` est le modèle **résolu avec le
     # fournisseur**, posé une fois depuis la configuration et jamais par un
     # message : il reste `None` avec un fournisseur injecté, ce que ce test prouve.
+    #
+    # #1146 en ajoute deux, injectés eux aussi et sans état : `_equipe` (la sonde
+    # qui compte les agents du projet) et `_recruteur` (la création d'équipe de
+    # #1040). L'équipe proposée, elle, ne loge **pas** dans le répondeur : elle
+    # voyage sur le message (`MessageChat.recrutement`), et c'est le fil qui la
+    # rend au geste — la même règle que la proposition de run.
     assert set(vars(repondeur)) == {
         "_lanceur",
         "_apercu",
@@ -1514,7 +1550,10 @@ def test_le_silence_n_est_pas_un_accord() -> None:
         "_modele",
         "_conducteur",
         "_sonde",
+        "_equipe",
+        "_recruteur",
     }
+    assert repondeur._equipe is None and repondeur._recruteur is None
     assert vars(repondeur._conducteur) == {}
     assert repondeur._modele is None
 
@@ -2252,3 +2291,472 @@ def test_les_bornes_du_geste_arrivent_au_moteur(
         assert reponse.status_code == 201
 
     assert moteur.garde_fous == [(5.0, 200000, 120.0, 2)]
+
+
+# ── ⑪ un projet sans équipe se la voit proposer (#1146) ───────────────────────
+#
+# L'essai du 2026-09-21 : un run proposé puis ouvert sur un projet qui n'avait
+# **aucun agent**, cadrage et plan payés (0,36 $), puis toutes les tâches en repli
+# « à assigner ». Ce qui se garde ici est la conduite du canal, sans modèle ni
+# moteur : la sonde d'équipe et le recruteur sont des doubles, comme le lanceur.
+# Le câblage réel — sonde sur `catalogue_du_projet`, création par la voie de
+# #1040, run qui aboutit — est joué de bout en bout dans
+# `tests/test_projet_outille_http.py` (section ⑧).
+
+#: Le projet de la fenêtre dans ces tests : un identifiant bien formé, dont seule
+#: la sonde d'équipe décide s'il a quelqu'un.
+PROJET_SANS_EQUIPE = "prj-9ab8b520"
+
+
+def _roles_valides() -> list[RoleValide]:
+    """L'équipe que l'écran rapporte : un rôle à deux instances, un rôle à une."""
+    return [
+        RoleValide(
+            nom="dev-p1",
+            role="Développeur",
+            competences=("backend",),
+            playbook="Tu écris le code de p1.",
+            instances=2,
+        ),
+        RoleValide(nom="qa-p1", role="QA", competences=("tests",), playbook="Tu testes p1."),
+    ]
+
+
+def _corps_roles() -> list[dict[str, Any]]:
+    """Les mêmes rôles dans la forme de `POST /api/projets/{id}/equipe`."""
+    return [
+        {
+            "nom": r.nom,
+            "role": r.role,
+            "competences": list(r.competences),
+            "playbook": r.playbook,
+            "instances": r.instances,
+        }
+        for r in _roles_valides()
+    ]
+
+
+class RecruteurEspion:
+    """Un `RecruteurEquipe` qui note ce qu'on lui demande et tient le compte des agents.
+
+    Il **est** aussi la sonde d'équipe (`compte`) : une équipe créée par lui fait
+    passer le projet de zéro à N agents, exactement comme la création réelle fait
+    passer `catalogue_du_projet` du vide à l'équipe. C'est ce qui permet de jouer
+    le protocole entier — équipe proposée, validée, puis run — sur un seul double.
+    """
+
+    def __init__(self, *, refus: Exception | None = None) -> None:
+        self.appels: list[tuple[str, list[RoleValide], str]] = []
+        self.agents: dict[str, int] = {}
+        self._refus = refus
+
+    def compte(self, projet_id: str) -> int | None:
+        return self.agents.get(projet_id, 0)
+
+    async def __call__(
+        self, projet_id: str, roles: Any, proposition_id: str = ""
+    ) -> dict[str, Any]:
+        self.appels.append((projet_id, list(roles), proposition_id))
+        if self._refus is not None:
+            raise self._refus
+        self.agents[projet_id] = sum(r.instances for r in roles)
+        return {
+            "projet_id": projet_id,
+            "proposition_id": proposition_id,
+            "cree": True,
+            "agents": [{"nom": r.nom, "role": r.role, "instances": r.instances} for r in roles],
+            "instances_total": sum(r.instances for r in roles),
+        }
+
+
+def _repondeur_sans_equipe(
+    verdict: str,
+    *,
+    lanceur: LanceurEspion,
+    recruteur: RecruteurEspion | None = None,
+    equipe: Any = None,
+) -> RepondeurOrchestration:
+    """Le répondeur d'un projet sans agent : la sonde dit zéro tant que rien n'est créé."""
+    recruteur = recruteur if recruteur is not None else RecruteurEspion()
+    return RepondeurOrchestration(
+        lanceur=lanceur,
+        provider=JugeScripte(verdict),
+        equipe=equipe if equipe is not None else recruteur.compte,
+        recruteur=recruteur,
+    )
+
+
+def test_un_projet_sans_equipe_se_voit_proposer_son_equipe_et_non_un_run() -> None:
+    """Critère 1 : pas de run voué à l'échec — l'équipe, et pourquoi.
+
+    L'échantillon fautif est le fil de l'essai : la proposition d'un run
+    (`proposition` posée, « Je lance ? ») sur un projet où `GET /api/agents`
+    rendait `[]`. Le test lit la **structure** de la réponse — plus de demande de
+    cadrage, une demande de recrutement qui porte l'objectif et le projet — puis
+    ce que la phrase dit : aucun agent, donc personne pour les tâches.
+    """
+    lanceur = LanceurEspion()
+    repondeur = _repondeur_sans_equipe(
+        _verdict(VERDICT_PROPOSITION, _propose(), OBJECTIF), lanceur=lanceur
+    )
+
+    reponse = asyncio.run(
+        repondeur.produire(
+            AGENT_ORCHESTRATION,
+            _fil("Peux-tu vider le dossier du projet ?"),
+            projet_id=PROJET_SANS_EQUIPE,
+        )
+    )
+
+    assert reponse.proposition == ""
+    assert reponse.recrutement == DemandeRecrutement(
+        objectif=OBJECTIF, projet_id=PROJET_SANS_EQUIPE
+    )
+    assert "aucun agent" in reponse.contenu
+    assert "personne pour prendre les tâches" in reponse.contenu
+    # Le « Je lance ? » du juge n'est pas écrit : il contredirait la phrase.
+    assert _propose() not in reponse.contenu
+    assert lanceur.objectifs == []
+
+
+def test_un_projet_equipe_garde_la_proposition_d_un_run() -> None:
+    """Le témoin : avec quelqu'un pour prendre les tâches, rien ne change."""
+    lanceur = LanceurEspion()
+    repondeur = _repondeur_sans_equipe(
+        _verdict(VERDICT_PROPOSITION, _propose(), OBJECTIF),
+        lanceur=lanceur,
+        equipe=lambda projet_id: 3,
+    )
+
+    reponse = asyncio.run(
+        repondeur.produire(
+            AGENT_ORCHESTRATION, _fil("Ajoute la pagination"), projet_id=PROJET_SANS_EQUIPE
+        )
+    )
+
+    assert reponse.proposition == OBJECTIF
+    assert reponse.recrutement is None
+
+
+def _sonde_qui_tombe(projet_id: str) -> int | None:
+    raise OSError("dépôt d'agents illisible")
+
+
+@pytest.mark.parametrize(
+    ("equipe", "projet_id"),
+    [
+        pytest.param(lambda projet_id: None, PROJET_SANS_EQUIPE, id="sonde-qui-ne-sait-pas"),
+        pytest.param(_sonde_qui_tombe, PROJET_SANS_EQUIPE, id="sonde-qui-tombe"),
+        pytest.param(lambda projet_id: 0, None, id="sans-projet"),
+    ],
+)
+def test_une_sonde_qui_ne_sait_pas_ne_bride_aucun_run(equipe: Any, projet_id: Any) -> None:
+    """« Je ne sais pas » n'est pas « il n'y a personne » (#1042) : le canal reste tel quel.
+
+    Une sonde aveugle qui bloquerait les runs serait une bride (docs/41) : le
+    canal ne détourne une demande que sur un compte **nul et certain**.
+    """
+    lanceur = LanceurEspion()
+    repondeur = _repondeur_sans_equipe(
+        _verdict(VERDICT_PROPOSITION, _propose(), OBJECTIF),
+        lanceur=lanceur,
+        equipe=equipe,
+    )
+
+    reponse = asyncio.run(
+        repondeur.produire(AGENT_ORCHESTRATION, _fil("Ajoute la pagination"), projet_id=projet_id)
+    )
+
+    assert reponse.proposition == OBJECTIF
+    assert reponse.recrutement is None
+
+
+def test_un_accord_tape_sur_un_projet_sans_equipe_n_ouvre_aucun_run() -> None:
+    """La garde au verdict vaut aussi pour « oui » : c'est lui qui ouvrait le run de l'essai."""
+    lanceur = LanceurEspion()
+    repondeur = _repondeur_sans_equipe(
+        _verdict(VERDICT_ACCORD, "C'est parti.", OBJECTIF), lanceur=lanceur
+    )
+
+    reponse = asyncio.run(
+        repondeur.produire(AGENT_ORCHESTRATION, _fil_approuve(), projet_id=PROJET_SANS_EQUIPE)
+    )
+
+    assert lanceur.objectifs == []
+    assert reponse.run_id == ""
+    assert reponse.recrutement is not None
+    assert "C'est parti" not in reponse.contenu
+
+
+def test_le_geste_de_cadrage_sur_un_projet_sans_equipe_propose_l_equipe() -> None:
+    """La seconde garde : une équipe retirée entre la proposition et le clic.
+
+    Sans elle, un accord au bouton ouvrirait le run que le verdict n'aurait plus
+    proposé — et « c'est parti » serait écrit juste avant l'échec.
+    """
+    lanceur = LanceurEspion()
+    repondeur = _repondeur_sans_equipe(_verdict(VERDICT_ECHANGE, "sans objet"), lanceur=lanceur)
+
+    reponse = asyncio.run(
+        repondeur.trancher_cadrage(
+            AGENT_ORCHESTRATION,
+            [],
+            approuve=True,
+            objectif=OBJECTIF,
+            projet_id=PROJET_SANS_EQUIPE,
+        )
+    )
+
+    assert lanceur.objectifs == []
+    assert reponse.recrutement == DemandeRecrutement(
+        objectif=OBJECTIF, projet_id=PROJET_SANS_EQUIPE
+    )
+    assert "C'est parti" not in reponse.contenu
+
+
+def test_sans_recruteur_le_manque_est_dit_sans_demande() -> None:
+    """Pas de demande à laquelle aucun geste ne pourrait répondre : le canal dit où créer."""
+    lanceur = LanceurEspion()
+    repondeur = RepondeurOrchestration(
+        lanceur=lanceur,
+        provider=JugeScripte(_verdict(VERDICT_PROPOSITION, _propose(), OBJECTIF)),
+        equipe=lambda projet_id: 0,
+    )
+
+    reponse = asyncio.run(
+        repondeur.produire(
+            AGENT_ORCHESTRATION, _fil("Ajoute la pagination"), projet_id=PROJET_SANS_EQUIPE
+        )
+    )
+
+    assert reponse.recrutement is None
+    assert reponse.proposition == ""
+    assert "écrans d'agents" in reponse.contenu
+    assert lanceur.objectifs == []
+
+
+def _demande() -> DemandeRecrutement:
+    return DemandeRecrutement(objectif=OBJECTIF, projet_id=PROJET_SANS_EQUIPE)
+
+
+def test_l_equipe_validee_est_creee_puis_la_demande_d_origine_est_reproposee() -> None:
+    """Critère 1, seconde moitié : créée par la voie existante, puis le run est **proposé**.
+
+    Proposé, pas ouvert : valider une équipe n'est pas accorder un run (#685).
+    La réponse porte donc une demande de cadrage sur l'objectif d'origine — celui
+    de la demande de recrutement, pas un texte à retaper.
+    """
+    lanceur = LanceurEspion()
+    recruteur = RecruteurEspion()
+    repondeur = _repondeur_sans_equipe(
+        _verdict(VERDICT_ECHANGE, "sans objet"), lanceur=lanceur, recruteur=recruteur
+    )
+
+    reponse = asyncio.run(
+        repondeur.recruter(
+            AGENT_ORCHESTRATION,
+            [],
+            demande=_demande(),
+            approuve=True,
+            roles=_roles_valides(),
+            proposition_id="equ-42",
+        )
+    )
+
+    assert recruteur.appels == [(PROJET_SANS_EQUIPE, _roles_valides(), "equ-42")]
+    assert "Équipe créée : Développeur ×2 · QA — 3 agents" in reponse.contenu
+    assert reponse.proposition == OBJECTIF
+    assert reponse.recrutement is None
+    assert lanceur.objectifs == []
+
+
+def test_decliner_l_equipe_ne_cree_rien_et_n_ouvre_rien() -> None:
+    lanceur = LanceurEspion()
+    recruteur = RecruteurEspion()
+    repondeur = _repondeur_sans_equipe(
+        _verdict(VERDICT_ECHANGE, "sans objet"), lanceur=lanceur, recruteur=recruteur
+    )
+
+    reponse = asyncio.run(
+        repondeur.recruter(AGENT_ORCHESTRATION, [], demande=_demande(), approuve=False, roles=())
+    )
+
+    assert recruteur.appels == []
+    assert lanceur.objectifs == []
+    assert reponse.proposition == "" and reponse.recrutement is None
+    assert "je ne recrute personne" in reponse.contenu
+
+
+def test_une_equipe_refusee_est_racontee_et_la_demande_reste_posee() -> None:
+    """Rien n'est créé (la création vérifie tout d'abord) : la cause, et on recommence.
+
+    La demande est **reposée** telle quelle, sans quoi corriger l'équipe
+    obligerait à redire sa demande de travail pour qu'on la repropose.
+    """
+    recruteur = RecruteurEspion(refus=ValueError("dev-p1 : nom déjà pris dans ce projet"))
+    repondeur = _repondeur_sans_equipe(
+        _verdict(VERDICT_ECHANGE, "sans objet"), lanceur=LanceurEspion(), recruteur=recruteur
+    )
+
+    reponse = asyncio.run(
+        repondeur.recruter(
+            AGENT_ORCHESTRATION,
+            [],
+            demande=_demande(),
+            approuve=True,
+            roles=_roles_valides(),
+        )
+    )
+
+    assert "Je n'ai créé aucun agent" in reponse.contenu
+    assert "nom déjà pris" in reponse.contenu
+    assert reponse.recrutement == _demande()
+    assert reponse.proposition == ""
+
+
+def test_un_repondeur_qui_ne_propose_pas_d_equipe_n_a_rien_a_valider() -> None:
+    with pytest.raises(RecrutementIntrouvable):
+        asyncio.run(
+            RepondeurScripte().recruter(
+                AGENT_ORCHESTRATION, [], demande=_demande(), approuve=True, roles=()
+            )
+        )
+
+
+def test_une_equipe_proposee_attend_tant_que_rien_n_a_suivi() -> None:
+    """La règle des deux autres demandes, et un fil d'avant ce lot qui se relit sans elle."""
+    demande = MessageChat(
+        agent=NOM_ORCHESTRATION,
+        auteur=NOM_ORCHESTRATION,
+        contenu="Il faut une équipe.",
+        recrutement=_demande(),
+    )
+    suite = MessageChat(agent=NOM_ORCHESTRATION, auteur=UTILISATEUR, contenu="plus tard")
+
+    assert recrutement_en_attente([demande]) is demande
+    assert recrutement_en_attente([demande, suite]) is None
+    assert recrutement_en_attente(_fil("bonjour")) is None
+    relue = MessageChat.from_dict(demande.to_ligne())
+    assert relue.recrutement == _demande()
+    ancienne = {"agent": NOM_ORCHESTRATION, "auteur": NOM_ORCHESTRATION, "contenu": "x"}
+    assert MessageChat.from_dict(ancienne).recrutement is None
+
+
+@pytest.fixture()
+def recruteur() -> RecruteurEspion:
+    return RecruteurEspion()
+
+
+@pytest.fixture()
+def client_sans_equipe(bus, depot_chat, lanceur, recruteur):
+    """L'app dont le projet de la fenêtre n'a personne : la demande a été faite."""
+    with TestClient(
+        create_app(
+            bus=bus,
+            chat_store=depot_chat,
+            orchestration_repondeur=_repondeur_sans_equipe(
+                _verdict(VERDICT_PROPOSITION, _propose(), OBJECTIF),
+                lanceur=lanceur,
+                recruteur=recruteur,
+            ),
+        )
+    ) as client:
+        reponse = client.post(
+            f"/api/chat/{NOM_ORCHESTRATION}/messages",
+            json={
+                "contenu": "Peux-tu vider le dossier du projet ?",
+                "projet_id": PROJET_SANS_EQUIPE,
+            },
+        )
+        assert reponse.status_code == 201, reponse.text
+        yield client
+
+
+def test_le_protocole_entier_equipe_proposee_validee_puis_run(
+    client_sans_equipe, lanceur, recruteur, depot_chat
+) -> None:
+    """L'oracle de S3 au niveau du canal (docs/40 §5) : l'équipe, puis le run aboutit.
+
+    Trois tours, sans quitter la conversation : la demande reçoit une équipe au
+    lieu d'un run ; l'équipe validée d'un geste est créée et la demande reprise ;
+    le run proposé part sur l'objectif d'origine. Le projet où l'équipe naît est
+    celui de la **demande** — le corps du geste n'en porte aucun.
+    """
+    fil = client_sans_equipe.get(f"/api/chat/{NOM_ORCHESTRATION}").json()["messages"]
+    assert fil[-1]["recrutement"] == {"objectif": OBJECTIF, "projet_id": PROJET_SANS_EQUIPE}
+    assert fil[-1]["proposition"] == ""
+
+    reponse = client_sans_equipe.post(
+        f"/api/chat/{NOM_ORCHESTRATION}/recrutement",
+        json={"approuve": True, "roles": _corps_roles(), "proposition_id": "equ-42"},
+    )
+
+    assert reponse.status_code == 201, reponse.text
+    geste, repondu = reponse.json()["messages"]
+    assert geste["auteur"] == UTILISATEUR
+    assert geste["contenu"] == "Je valide cette équipe : Développeur ×2 · QA."
+    assert [appel[0] for appel in recruteur.appels] == [PROJET_SANS_EQUIPE]
+    assert repondu["proposition"] == OBJECTIF and repondu["recrutement"] is None
+
+    lance = client_sans_equipe.post(
+        f"/api/chat/{NOM_ORCHESTRATION}/cadrage",
+        json={"approuve": True, "projet_id": PROJET_SANS_EQUIPE},
+    )
+
+    assert lance.status_code == 201, lance.text
+    assert lance.json()["messages"][1]["run_id"] == "run-42"
+    assert lanceur.objectifs == [OBJECTIF]
+    assert lanceur.projets == [PROJET_SANS_EQUIPE]
+    # Le fil garde les six tours : c'est sa seule mémoire.
+    assert [m.auteur for m in depot_chat.fil(NOM_ORCHESTRATION)] == [
+        UTILISATEUR,
+        NOM_ORCHESTRATION,
+    ] * 3
+
+
+def test_un_second_geste_de_recrutement_est_un_409_et_ne_cree_rien_de_plus(
+    client_sans_equipe, recruteur
+) -> None:
+    corps = {"approuve": True, "roles": _corps_roles()}
+    client_sans_equipe.post(f"/api/chat/{NOM_ORCHESTRATION}/recrutement", json=corps)
+
+    second = client_sans_equipe.post(f"/api/chat/{NOM_ORCHESTRATION}/recrutement", json=corps)
+
+    assert second.status_code == 409
+    assert len(recruteur.appels) == 1
+
+
+def test_un_geste_de_recrutement_sans_demande_est_un_409(client_global) -> None:
+    reponse = client_global.post(
+        f"/api/chat/{NOM_ORCHESTRATION}/recrutement",
+        json={"approuve": True, "roles": _corps_roles()},
+    )
+
+    assert reponse.status_code == 409
+
+
+def test_valider_une_equipe_vide_est_un_422_et_rien_n_est_ecrit(
+    client_sans_equipe, recruteur, depot_chat
+) -> None:
+    """« Ne pas recruter » se dit en déclinant : même règle que `POST …/equipe`."""
+    avant = len(depot_chat.fil(NOM_ORCHESTRATION))
+
+    reponse = client_sans_equipe.post(
+        f"/api/chat/{NOM_ORCHESTRATION}/recrutement", json={"approuve": True, "roles": []}
+    )
+
+    assert reponse.status_code == 422
+    assert recruteur.appels == []
+    assert len(depot_chat.fil(NOM_ORCHESTRATION)) == avant
+
+
+def test_decliner_au_geste_laisse_le_fil_sans_demande(client_sans_equipe, recruteur) -> None:
+    reponse = client_sans_equipe.post(
+        f"/api/chat/{NOM_ORCHESTRATION}/recrutement", json={"approuve": False}
+    )
+
+    assert reponse.status_code == 201, reponse.text
+    geste, repondu = reponse.json()["messages"]
+    assert geste["contenu"] == "Pas d'équipe pour l'instant."
+    assert recruteur.appels == []
+    assert repondu["recrutement"] is None and repondu["proposition"] == ""

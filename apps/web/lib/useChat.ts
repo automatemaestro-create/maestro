@@ -116,6 +116,7 @@ import {
   diffuserMessageChat,
   ErreurReponse,
   ouvrirConversationChat,
+  recruterDansLeFil,
   repondreQuestionOutillage,
   trancherCadrageChat,
   urlEvenements,
@@ -135,6 +136,7 @@ import {
   type ConversationChat,
   type Evenement,
   type MessageChat,
+  type RoleValideEquipe,
   type SourceDeclaree,
 } from "./types";
 
@@ -260,6 +262,20 @@ export type Chat = {
    * comme le cadrage : le fil reste la seule mémoire du questionnaire.
    */
   repondreQuestion: (valeur: string) => Promise<void>;
+  /**
+   * Valide — ou décline — l'équipe que le fil propose à un projet sans agent
+   * (#1146). `roles` est l'équipe gardée, `propositionId` la proposition dont
+   * elle sort ; les deux sont ignorés sur un refus.
+   *
+   * Le projet n'est **pas** dit : c'est celui de la demande, que l'API relit du
+   * fil. Le geste et la suite — l'équipe créée, puis la demande d'origine
+   * reproposée — rejoignent le fil comme un tour ordinaire.
+   */
+  recruter: (
+    approuve: boolean,
+    roles?: RoleValideEquipe[],
+    propositionId?: string,
+  ) => Promise<void>;
   /**
    * La conversation **servie** (#696) — celle qu'on lit et où part l'envoi.
    * `""` tant que l'API n'a pas répondu : personne ne peut la nommer avant.
@@ -607,6 +623,36 @@ export function useChat(agent: string, projetId: string | null = null): Chat {
     [agent, conversation, recharger],
   );
 
+  /**
+   * Le geste qui valide — ou décline — l'équipe proposée (#1146).
+   *
+   * Le troisième jumeau de `trancherCadrage` : il emprunte `envoi`, ne passe pas
+   * par le flux (la suite s'exécute, elle ne se rédige pas) et laisse le
+   * rechargement rendre l'écran juste socket coupée.
+   */
+  const recruter = useCallback(
+    async (
+      approuve: boolean,
+      roles: RoleValideEquipe[] = [],
+      propositionId = "",
+    ) => {
+      setEnvoi(true);
+      try {
+        const paire = await recruterDansLeFil(agent, {
+          approuve,
+          roles,
+          propositionId,
+          conversation,
+        });
+        setDirects((gardes) => [...gardes, ...paire]);
+      } finally {
+        setEnvoi(false);
+        await recharger();
+      }
+    },
+    [agent, conversation, recharger],
+  );
+
   const interrompre = useCallback(() => {
     const vol = enVol.current;
     if (vol === null) return;
@@ -662,6 +708,7 @@ export function useChat(agent: string, projetId: string | null = null): Chat {
     interrompre,
     trancherCadrage,
     repondreQuestion,
+    recruter,
     conversation,
     conversations,
     nouvelleConversation,

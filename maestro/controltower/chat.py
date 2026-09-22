@@ -166,6 +166,17 @@ Deux pièces vont avec, et aucune ne juge un texte :
   fait exécuter la décision par le répondeur sans repasser par le juge. Un
   accord au bouton n'est pas un texte à reconnaître, c'est un acte ; et un
   objectif amendé ne survivrait pas à un tour de jugement de plus.
+
+## …et ce qu'il demande peut être une équipe (#1146)
+
+Un projet sans agent ne peut rien faire d'un run : chaque tâche part en repli
+« à assigner » après que le cadrage et le plan ont été payés. L'orchestration ne
+lui propose donc pas de run, elle lui propose son **équipe** — et cette demande
+vit sur le message comme les deux autres : `recrutement` (`DemandeRecrutement`),
+l'objectif qui attend une équipe et le projet qui en manque. Mêmes pièces, même
+règle : `recrutement_en_attente` dit si elle tient encore, et
+`ServiceChat.recruter` est le geste qui y répond — il écrit l'acte au fil, puis
+le répondeur crée l'équipe validée et reprend la demande d'origine.
 """
 
 from __future__ import annotations
@@ -189,6 +200,7 @@ from maestro.config import Settings, load_settings
 from maestro.controltower.bornes import AUCUNE_BORNE, BornesRun
 from maestro.controltower.events import EVENEMENT_CHAT_MESSAGE, Event, EventBus
 from maestro.engine.guardrails import GardeFousIngestion
+from maestro.equipe import RoleValide
 from maestro.messaging import (
     MESSAGE_REPONSE,
     MESSAGE_REQUETE,
@@ -407,6 +419,21 @@ def question_en_attente(fil: Sequence[MessageChat]) -> MessageChat | None:
     return dernier
 
 
+def recrutement_en_attente(fil: Sequence[MessageChat]) -> MessageChat | None:
+    """La **demande de recrutement** que ce fil porte encore, `None` sinon (#1146).
+
+    La troisième demande du canal, et la troisième écriture de la même règle —
+    le dernier message, et lui seul —, pour la raison que `question_en_attente`
+    donne déjà : ce qui solde une demande n'a pas à devenir le réglage d'une
+    fonction commune. Une équipe proposée attend tant que rien n'a suivi ; ce qui
+    la solde est qu'on y ait répondu, d'un geste ou d'une phrase.
+    """
+    dernier = fil[-1] if fil else None
+    if dernier is None or dernier.recrutement is None:
+        return None
+    return dernier
+
+
 def choix_du_fil(fil: Sequence[MessageChat]) -> tuple[Choix, ...]:
     """Les réponses d'outillage acquises sur ce fil, dans l'ordre où elles sont venues.
 
@@ -474,6 +501,24 @@ def _geste_de_cadrage(
     if not amende:
         return f"Oui, lance — bornes : {bornes.en_phrase()}"
     return f"Oui, lance — avec cet objectif : {retenu} — bornes : {bornes.en_phrase()}"
+
+
+def _geste_de_recrutement(approuve: bool, roles: Sequence[RoleValide]) -> str:
+    """Ce que le geste écrit dans le fil — le message que le clic vaut (#1146).
+
+    Même règle que `_geste_de_cadrage` : le fil est la seule mémoire du canal,
+    donc ce qui a été validé doit s'y lire comme une personne l'aurait écrit. Ce
+    qui s'écrit est l'équipe **retenue**, instances ajustées comprises — c'est la
+    seule chose que la proposition ne dit pas déjà, puisqu'on a pu y retirer un
+    rôle ou y changer un nombre.
+    """
+    if not approuve:
+        return "Pas d'équipe pour l'instant."
+    composition = " · ".join(
+        f"{role.role} ×{role.instances}" if role.instances > 1 else role.role
+        for role in roles
+    )
+    return f"Je valide cette équipe : {composition}."
 
 
 def normaliser(texte: str) -> str:
@@ -551,6 +596,45 @@ class QuestionIntrouvable(RuntimeError):
     """
 
 
+class RecrutementIntrouvable(RuntimeError):
+    """Ce fil n'a **aucune équipe proposée en attente** à valider (#1146).
+
+    Le troisième pendant de `CadrageIntrouvable`, pour les mêmes trois façons de
+    n'avoir rien à valider : aucune équipe n'a été proposée, la dernière a déjà
+    reçu sa réponse (un message a suivi), ou le répondeur de ce fil n'en propose
+    pas. L'API la traduit en `409` — c'est ce qui empêche un double clic de créer
+    deux fois la même équipe.
+    """
+
+
+@dataclass(frozen=True)
+class DemandeRecrutement:
+    """Ce qu'une demande de recrutement porte : le travail qui attend, et où (#1146).
+
+    `objectif` est la reformulation que l'orchestration aurait proposée au run —
+    celle qu'elle **reprend** une fois l'équipe créée, pour que la demande
+    d'origine ne soit pas à retaper. `projet_id` est le projet qui n'a personne :
+    il est écrit **sur le message**, et non relu de la fenêtre au moment du geste,
+    parce que c'est de lui que la phrase parle — une équipe validée depuis une
+    fenêtre passée sur un autre projet naîtrait sinon dans ce dernier.
+    """
+
+    objectif: str
+    projet_id: str
+
+    def to_dict(self) -> dict[str, str]:
+        """La demande en JSON — la forme du REST et du stockage."""
+        return {"objectif": self.objectif, "projet_id": self.projet_id}
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> DemandeRecrutement:
+        """Relit une demande persistée, sans rien rejuger (même règle que `MessageChat`)."""
+        return cls(
+            objectif=str(data.get("objectif") or ""),
+            projet_id=str(data.get("projet_id") or ""),
+        )
+
+
 @dataclass(frozen=True)
 class MessageChat:
     """Un message du fil utilisateur ↔ agent, prêt à voyager en JSON.
@@ -618,6 +702,13 @@ class MessageChat:
     (`choix_du_fil`), donc aucune session, aucun cache et aucune table ne peuvent se
     désaccorder du fil. Les fondre en un seul champ obligerait chaque lecteur à
     deviner, sur un même objet, s'il lit une demande ou une réponse.
+
+    `recrutement` (#1146) est la troisième chose qu'un message d'agent peut
+    demander : une **équipe**, pour un projet qui n'en a pas et dont on vient de
+    demander un travail. Même patron encore — `None` partout ailleurs et sur une
+    ligne écrite avant ce lot, l'attente énoncée une fois
+    (`recrutement_en_attente`) — et jamais sur le même message qu'une proposition
+    ou une question : on ne propose pas un run qu'on sait ne pas pouvoir aboutir.
     """
 
     agent: str
@@ -628,6 +719,7 @@ class MessageChat:
     tache_id: str = ""
     proposition: str = ""
     question: QuestionOutillage | None = None
+    recrutement: DemandeRecrutement | None = None
     choix: Choix | None = None
     sources: tuple[Source, ...] = ()
     rapport: RapportLecture | None = None
@@ -652,6 +744,9 @@ class MessageChat:
             "tache_id": self.tache_id,
             "proposition": self.proposition,
             "question": self.question.to_dict() if self.question is not None else None,
+            "recrutement": (
+                self.recrutement.to_dict() if self.recrutement is not None else None
+            ),
             "choix": self.choix.to_dict() if self.choix is not None else None,
             "sources": sources_en_liste(self.sources),
             "rapport": self.rapport.to_dict() if self.rapport is not None else None,
@@ -696,6 +791,7 @@ class MessageChat:
         """
         rapport = data.get("rapport")
         question = data.get("question")
+        recrutement = data.get("recrutement")
         choix = data.get("choix")
         return cls(
             agent=data["agent"],
@@ -711,6 +807,11 @@ class MessageChat:
             question=(
                 QuestionOutillage.from_dict(question)
                 if isinstance(question, Mapping)
+                else None
+            ),
+            recrutement=(
+                DemandeRecrutement.from_dict(recrutement)
+                if isinstance(recrutement, Mapping)
                 else None
             ),
             choix=Choix.from_dict(choix) if isinstance(choix, Mapping) else None,
@@ -785,6 +886,10 @@ class ReponseChat:
     une question qui n'existerait que dans le texte d'une réponse ne pourrait pas
     porter de bouton. Les deux ne cohabitent jamais sur un même message : on
     demande un accord, ou on pose une question, jamais les deux à la fois.
+
+    `recrutement` (#1146) est la troisième : l'équipe qu'un projet sans agent
+    doit valider avant qu'un run puisse y aboutir. Elle ne cohabite avec aucune
+    des deux autres.
     """
 
     contenu: str
@@ -792,6 +897,7 @@ class ReponseChat:
     tache_id: str = ""
     proposition: str = ""
     question: QuestionOutillage | None = None
+    recrutement: DemandeRecrutement | None = None
 
 
 @dataclass(frozen=True)
@@ -1242,6 +1348,33 @@ class RepondeurChat(ABC):
             f"le fil {agent.nom} ne pose pas de question d'outillage : rien à répondre."
         )
 
+    async def recruter(
+        self,
+        agent: Agent,
+        fil: Sequence[MessageChat],
+        *,
+        demande: DemandeRecrutement,
+        approuve: bool,
+        roles: Sequence[RoleValide],
+        proposition_id: str = "",
+    ) -> ReponseChat:
+        """La réponse au **geste** qui valide — ou décline — l'équipe proposée (#1146).
+
+        Le troisième point d'extension « acte » du canal. Aucun appel modèle : la
+        décision est un clic, et ce qu'il y a à faire se déduit — créer l'équipe
+        retenue, puis reprendre la demande d'origine (`demande.objectif`).
+
+        `demande` est celle que le fil portait, **relue du fil** ; `roles` est
+        l'équipe telle que l'écran l'a montrée et ajustée, ignorée sur un refus.
+
+        Par défaut, un répondeur **ne propose aucune équipe** : il le dit plutôt
+        que de le laisser deviner. Seul celui qui pose un
+        `ReponseChat.recrutement` a cette méthode à écrire.
+        """
+        raise RecrutementIntrouvable(
+            f"le fil {agent.nom} ne propose pas d'équipe : rien à valider."
+        )
+
     async def ouvrir_questionnaire(
         self, agent: Agent, fil: Sequence[MessageChat]
     ) -> ReponseChat:
@@ -1674,6 +1807,61 @@ class ServiceChat:
             agent, conversation=fil, reponse=reponse
         )
 
+    async def recruter(
+        self,
+        agent: Agent,
+        *,
+        approuve: bool,
+        roles: Sequence[RoleValide] = (),
+        proposition_id: str = "",
+        conversation: str | None = None,
+    ) -> tuple[MessageChat, MessageChat]:
+        """Valide — ou décline — l'équipe proposée ; rend la paire (geste, réponse) (#1146).
+
+        Le troisième geste du canal, et **la même forme qu'`envoyer`** : un
+        message d'utilisateur, puis la réponse. Ce qui change est que le contenu
+        vient d'un clic, et que la suite s'exécute au lieu de se juger
+        (`RepondeurChat.recruter`).
+
+        La demande à laquelle on répond est **lue du fil**, jamais passée par
+        l'appelant — objectif et projet compris. C'est ce qui fait qu'un geste
+        tardif ou un double clic tombe sur `RecrutementIntrouvable` (le `409` de
+        l'API) au lieu de créer l'équipe une seconde fois, et qu'une fenêtre
+        passée sur un autre projet ne recrute pas dans celui-là.
+
+        `roles` est l'équipe **retenue**, telle que l'écran l'a montrée : un rôle
+        retiré n'y est pas, des instances ajustées y sont. Ignorée sur un refus.
+        """
+        fil = self._resoudre(agent, conversation)
+        attente = recrutement_en_attente(self._store.fil(agent.nom, fil))
+        if attente is None or attente.recrutement is None:
+            raise RecrutementIntrouvable(
+                f"aucune équipe proposée en attente sur le fil {agent.nom}."
+            )
+        geste = await self._deposer(
+            agent, _geste_de_recrutement(approuve, roles), conversation=fil
+        )
+        try:
+            reponse = await self._repondeur.recruter(
+                agent,
+                self._store.fil(agent.nom, fil),
+                demande=attente.recrutement,
+                approuve=approuve,
+                roles=roles,
+                proposition_id=proposition_id,
+            )
+        except RecrutementIntrouvable:
+            # Le geste est déjà au fil : il a bien eu lieu, c'est la suite qui
+            # manque — un 409, comme pour le cadrage, jamais un 502.
+            raise
+        except Exception as exc:
+            raise ReponseIndisponible(
+                f"l'agent {agent.nom} n'a pas pu donner suite à l'équipe : {exc}"
+            ) from exc
+        return geste, await self._persister_reponse(
+            agent, conversation=fil, reponse=reponse
+        )
+
     async def poser_question(
         self,
         agent: Agent,
@@ -2019,10 +2207,11 @@ class ServiceChat:
         """Écrit une `ReponseChat` au fil — la moitié commune des deux voies.
 
         Partagée par `_repondre` (une réponse jugée), `trancher_cadrage` (une
-        réponse exécutée, #943) et `repondre_question` (#1031) : ce qu'un
-        répondeur rend se persiste, s'achemine et se diffuse toujours de la même
-        façon, et c'est ici que les quatre champs du contrat (`run_id`,
-        `tache_id`, `proposition`, `question`) passent du répondeur au message.
+        réponse exécutée, #943), `repondre_question` (#1031) et `recruter`
+        (#1146) : ce qu'un répondeur rend se persiste, s'achemine et se diffuse
+        toujours de la même façon, et c'est ici que les cinq champs du contrat
+        (`run_id`, `tache_id`, `proposition`, `question`, `recrutement`) passent
+        du répondeur au message.
         """
         texte = reponse.contenu.strip()
         if not texte:
@@ -2039,6 +2228,7 @@ class ServiceChat:
             tache_id=reponse.tache_id,
             proposition=reponse.proposition,
             question=reponse.question,
+            recrutement=reponse.recrutement,
         )
         await self._acheminer(message, agent, type_message=MESSAGE_REPONSE)
         return message

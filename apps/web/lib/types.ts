@@ -1242,6 +1242,13 @@ export type ChoixOutillage = {
  * message d'agent) et ce qu'il **répond** (`choix`, sur un message d'utilisateur).
  * `null` partout ailleurs, et ce n'est pas `question` qui dit si la demande tient
  * encore (`questionEnAttente`, `lib/outillage`).
+ *
+ * `recrutement` (#1146) est la cinquième : l'**équipe** qu'un message de
+ * l'orchestration demande de valider, pour un projet qui n'a encore aucun agent
+ * et dont on vient de demander un travail — à la place d'un run qui n'aurait
+ * personne pour prendre ses tâches. `null` partout ailleurs, jamais sur le même
+ * message qu'une proposition, et l'attente se lit par `recrutementEnAttente`
+ * (`lib/equipe`).
  */
 export type MessageChat = {
   agent: string;
@@ -1256,6 +1263,8 @@ export type MessageChat = {
   question?: QuestionOutillage | null;
   /** La réponse d'outillage que ce message porte (#1031) — `null` : aucune. */
   choix?: ChoixOutillage | null;
+  /** L'équipe que ce message demande de valider (#1146) — `null` : aucune. */
+  recrutement?: DemandeRecrutement | null;
   /** La conversation d'appartenance (#694) — `origine` pour celle d'un agent par défaut. */
   conversation?: string;
   /** La matière résolue que le message embarque (#482) — absente ou vide : aucune. */
@@ -2715,6 +2724,19 @@ export type PropositionEquipe = {
   instances_total: number;
   cree: boolean;
   validation: string;
+};
+
+/**
+ * Ce qu'une demande de recrutement porte (`DemandeRecrutement.to_dict`, #1146) : le
+ * travail qui attend une équipe, et le projet qui en manque.
+ *
+ * `projet_id` est celui **dont le message parle**, et c'est dans lui que l'équipe
+ * naît — pas dans le projet de la fenêtre, qui a pu changer depuis. `objectif` est
+ * la demande que le fil reprendra, une fois l'équipe créée, sans rien à retaper.
+ */
+export type DemandeRecrutement = {
+  objectif: string;
+  projet_id: string;
 };
 
 /** Un rôle validé, tel qu'il repart à la création (`RoleEquipeRequete`, #1040). */

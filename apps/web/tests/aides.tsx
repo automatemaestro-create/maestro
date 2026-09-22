@@ -62,6 +62,7 @@ import type {
   Projet,
   Question,
   ResumeExecution,
+  RoleValideEquipe,
   SourceDeclaree,
   Tache,
   Usage,
@@ -213,6 +214,12 @@ export type FilFactice = {
   trancherCadrage: (approuve: boolean, objectif?: string | null) => Promise<void>;
   /** Le geste qui répond à une question d'outillage (#1031) — l'option retenue. */
   repondreQuestion: (valeur: string) => Promise<void>;
+  /** Le geste qui valide ou décline l'équipe proposée (#1146). */
+  recruter: (
+    approuve: boolean,
+    roles?: RoleValideEquipe[],
+    propositionId?: string,
+  ) => Promise<void>;
   /** La conversation ouverte du fil (#696) — `""` tant que rien n'a été servi. */
   conversation: string;
   /** Les conversations du fil, la plus récente d'abord (#696). */
@@ -240,6 +247,7 @@ function filParDefaut(): FilFactice {
     interrompre: () => {},
     trancherCadrage: async () => {},
     repondreQuestion: async () => {},
+    recruter: async () => {},
     conversation: CHAT_CONVERSATION_ORIGINE,
     conversations: [conversationFactice()],
     nouvelleConversation: async () => {},

@@ -252,6 +252,12 @@ Endpoints :
   (#990) — coût, tokens, délai par tâche, parallélisme —, aux mêmes noms que sur
   `POST /api/executions` : c'est par ce geste qu'un run lancé depuis l'interface
   se borne, la conversation en étant la seule porte depuis #666 ;
+- `POST /api/chat/{agent}/recrutement` — **valide** ou décline l'équipe que le
+  fil propose à un projet sans agent (#1146), au lieu d'un run qui n'aurait
+  personne pour prendre ses tâches. Le corps porte l'équipe retenue dans la forme
+  de `POST /api/projets/{id}/equipe` ; la création passe par la même voie
+  (#1040), puis le fil repropose le run demandé. Même paire rendue qu'un envoi ;
+  `409` quand rien n'attend ;
 - `GET  /api/chat/{agent}/flux` — la même réponse rendue **au fur et à mesure**
   (SSE, trames `debut`/`fragment`/`fin`/`interrompu`/`erreur`, #268) : un canal,
   valable pour les trois fils ; `?projet_id=` y porte le même rattachement que le
@@ -310,7 +316,7 @@ import asyncio
 import json
 import logging
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
 from typing import Annotated, Any
@@ -364,6 +370,7 @@ from maestro.agents.store import (
     SurchargeAgent,
     SurchargeStore,
     catalogue,
+    catalogue_du_projet,
 )
 from maestro.appartenance import projet_id_valide
 from maestro.config import ConfigError, Settings, load_settings
@@ -392,6 +399,7 @@ from maestro.controltower.chat import (
     CadrageIntrouvable,
     ChatStore,
     QuestionIntrouvable,
+    RecrutementIntrouvable,
     RepondeurChat,
     RepondeurModele,
     ReponseIndisponible,
@@ -1101,6 +1109,24 @@ class EquipeValideeRequete(BaseModel):
         ]
 
 
+class RecrutementDecisionRequete(EquipeValideeRequete):
+    """Corps du geste qui valide — ou décline — l'équipe proposée dans le fil (#1146).
+
+    L'équipe validée **dans la forme de `POST /api/projets/{id}/equipe`**, parce
+    que c'est la même création (#1040) : ce qui repart est ce qui a été montré,
+    playbook et politique compris. S'y ajoutent `approuve` — décliner ne porte
+    aucun rôle, `roles` est alors ignoré — et `conversation`, au sens qu'elle a
+    sur un envoi.
+
+    Ni projet ni objectif : les deux sont sur la demande que le fil porte
+    (`DemandeRecrutement`), et un corps qui les redirait ouvrirait une seconde
+    façon de décider où l'équipe naît.
+    """
+
+    approuve: bool
+    conversation: str | None = None
+
+
 class SecretPoolRequete(BaseModel):
     """Une valeur de secret saisie pour une intégration du pool (#133).
 
@@ -1746,6 +1772,36 @@ def create_app(
             contexte_sources=contexte_sources,
         )
 
+    def equipe_du_projet(projet_id: str) -> int | None:
+        """Combien d'agents le routeur trouvera pour ce projet — `None` : je ne sais pas (#1146).
+
+        La **règle unique** de l'exécuteur et de la boucle (`catalogue_du_projet`),
+        sur le même dépôt : le fil compte exactement les agents vers lesquels les
+        tâches seront routées. Un projet non déclaré n'est pas « sans équipe »,
+        il est inconnu — le fil n'en tire rien, et c'est la portée qui le dira.
+        """
+        if not projets.existe(projet_id):
+            return None
+        agents = catalogue_du_projet(agents_store, projet_id)
+        return None if agents is None else len(agents)
+
+    async def creer_equipe_du_projet(
+        projet_id: str, roles: Sequence[RoleValide], proposition_id: str = ""
+    ) -> dict[str, Any]:
+        """Crée l'équipe validée — la voie de #1040, que la route et le fil partagent.
+
+        Une seule écriture d'équipe, et ses deux conséquences ensemble : les
+        fichiers du projet (`ServiceEquipe.creer`, hors de la boucle d'événements),
+        puis la projection, où les agents deviennent cibles de réassignation
+        comme ceux du `POST /api/catalogue`.
+        """
+        rapport = await asyncio.to_thread(
+            equipe.creer, projet_id, roles, proposition_id=proposition_id
+        )
+        for agent in rapport["agents"]:
+            state.ajouter_agent(agent["nom"], agent["role"])
+        return rapport
+
     # Le fil global (#268) : mêmes rouages que le chat — persistance, messagerie,
     # bus —, un répondeur qui peut ouvrir un run, et rien de plus côté REST. Il se
     # construit ici, et pas avec les deux autres, parce qu'il tient son lanceur du
@@ -1761,6 +1817,11 @@ def create_app(
                 # La même sonde que `GET /api/fournisseurs` (#1173) : quand aucun
                 # fournisseur n'est réglé, le fil dit ce que le poste offre.
                 sonde=sonde_poste.rapport,
+                # Un projet sans équipe se la voit proposer au lieu d'un run
+                # voué à l'échec (#1146) — comptée comme le routeur la comptera,
+                # créée par la même voie que l'étape d'équipe du parcours.
+                equipe=equipe_du_projet,
+                recruteur=creer_equipe_du_projet,
             )
         ),
         mailbox=mailbox,
@@ -5378,6 +5439,60 @@ def create_app(
             "messages": [geste.to_dict(), reponse.to_dict()],
         }
 
+    @app.post("/api/chat/{agent}/recrutement", status_code=201)
+    async def recruter_chat(
+        agent: str, requete: RecrutementDecisionRequete
+    ) -> dict[str, Any]:
+        """Valide — ou décline — l'équipe que le fil propose, et rend la paire (#1146).
+
+        Le geste qui répond à « ce projet n'a encore aucun agent » : `approuve`
+        dit oui ou non, `roles` porte l'équipe **retenue** telle que l'écran l'a
+        montrée — la forme de `POST /api/projets/{id}/equipe`, parce que c'est la
+        même création (#1040). Le projet et le travail à reprendre ne sont pas
+        dans le corps : ils sont sur la demande que le fil porte, et c'est elle
+        qui fait foi.
+
+        Même forme et même réponse que `POST …/cadrage` — l'acte est écrit au
+        fil, la réponse suit —, et même traitement d'une équipe refusée par la
+        création : elle se **raconte** dans le fil (rien n'a été créé, la demande
+        reste posée), parce que le geste, lui, a bien eu lieu.
+
+        `422` sur une validation sans rôle (« ne pas recruter » se dit en
+        déclinant) ou une conversation mal formée, `409` quand rien n'attend —
+        le double clic ne crée pas deux équipes —, `404` hors catalogue, `502` si
+        la suite n'a pas pu être produite.
+        """
+        if requete.approuve and not requete.roles:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "aucun rôle validé : ne pas recruter se dit en déclinant "
+                    "l'équipe, pas en validant une équipe vide."
+                ),
+            )
+        fiche, service = _canal_chat(agent)
+        fil = _conversation_demandee(service, fiche, requete.conversation)
+        try:
+            geste, reponse = await service.recruter(
+                fiche,
+                approuve=requete.approuve,
+                roles=requete.roles_valides() if requete.approuve else (),
+                proposition_id=requete.proposition_id,
+                conversation=fil,
+            )
+        except RecrutementIntrouvable as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except ReponseIndisponible as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {
+            "agent": fiche.nom,
+            "role": fiche.role,
+            "conversation": fil,
+            "messages": [geste.to_dict(), reponse.to_dict()],
+        }
+
     @app.post("/api/chat/{agent}/outillage/questionnaire", status_code=201)
     async def ouvrir_questionnaire_chat(
         agent: str, conversation: str | None = None
@@ -5583,27 +5698,22 @@ def create_app(
                 },
             )
         try:
-            roles = requete.roles_valides()
-            rapport = await asyncio.to_thread(
-                equipe.creer,
-                id_projet,
-                roles,
-                proposition_id=requete.proposition_id,
+            # Les agents créés entrent aussi dans la **projection**, comme ceux
+            # du `POST /api/catalogue` : même geste, même conséquence — ils y
+            # deviennent cibles de réassignation manuelle
+            # (`POST /api/taches/{id}/reassigner`, qui n'a pas de projet à
+            # connaître) et peuplent le parc transverse. C'est
+            # `creer_equipe_du_projet` qui tient les deux, parce que le fil de
+            # l'orchestration crée une équipe par la même voie (#1146).
+            # ⚠ La vue de l'équipe, elle, n'en dépend plus (#1101) :
+            # `GET /api/agents?projet=` la dérive du catalogue du projet et de ses
+            # capacités. C'est ce qui la rend juste au redémarrage, quand la
+            # projection repart vide.
+            return await creer_equipe_du_projet(
+                id_projet, requete.roles_valides(), requete.proposition_id
             )
         except (EquipeRefusee, ValueError, ProjetInconnu) as exc:
             raise _refus_projet(exc) from exc
-        # Les agents créés entrent dans la **projection**, comme ceux du
-        # `POST /api/catalogue` : même geste, même conséquence — ils y deviennent
-        # cibles de réassignation manuelle (`POST /api/taches/{id}/reassigner`,
-        # qui n'a pas de projet à connaître) et peuplent le parc transverse.
-        # ⚠ La vue de l'équipe, elle, n'en dépend plus (#1101) :
-        # `GET /api/agents?projet=` la dérive du catalogue du projet et de ses
-        # capacités. C'est ce qui la rend juste au redémarrage, quand la
-        # projection repart vide — et c'est pourquoi l'appel qui suit ne porte
-        # pas la capacité : ce n'est plus lui qui la dit.
-        for agent in rapport["agents"]:
-            state.ajouter_agent(agent["nom"], agent["role"])
-        return rapport
 
     async def _flux_reponse(
         agent: str,

@@ -25,7 +25,9 @@ qu'il envoie**, puis on regarde le **disque** — jamais seulement la réponse :
 ⑦ **la vue des agents suit l'équipe** (#1101) : l'équipe validée, avec la capacité
    du projet, juste après la création **comme après un redémarrage** — réserve C4
    du même bouclage. Cette section-là rouvre l'API sur les mêmes dépôts, parce que
-   c'est le seul moyen de voir la moitié du défaut qu'un process ne montre pas.
+   c'est le seul moyen de voir la moitié du défaut qu'un process ne montre pas ;
+⑧ **le fil propose l'équipe** d'un projet qui n'en a pas (#1146), la crée au geste
+   par la même voie que ⑥, puis le run demandé aboutit — l'oracle du scénario S3.
 
 Ni réseau ni modèle : les playbooks d'équipe passent par un générateur « hors
 ligne », qui fait retomber chaque rôle sur le playbook de son gabarit — le repli
@@ -35,6 +37,7 @@ que la route promet elle-même.
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack
 from pathlib import Path
@@ -51,11 +54,14 @@ from maestro.agents.permissions import PermissionStore
 from maestro.agents.playbooks import PlaybookStore
 from maestro.agents.store import AgentStore, SurchargeStore
 from maestro.controltower import ControlTowerState, InMemoryEventBus, create_app
+from maestro.controltower.chat import ChatStore
 from maestro.controltower.generation_agent import GenerateurDefinitionAgent
 from maestro.controltower.projets import ServiceProjets
+from maestro.engine import RunReport
 from maestro.equipe.modele import ORIGINE_PLAYBOOK_GABARIT
 from maestro.outillage import CHEMIN_MANIFESTE
 from maestro.projets import ProjetStore
+from maestro.providers.base import ModelProvider
 
 #: Les réponses du bouclage du 2026-09-21 (#1100), telles que l'écran les a données.
 REPONSES_DU_BILAN: dict[str, str] = {
@@ -730,3 +736,167 @@ def test_lire_le_parc_d_un_projet_ne_reecrit_pas_la_projection(
     assert _instances(client.get("/api/agents", params={"projet": projet}))[nom] == 2
 
     assert _instances(client.get("/api/agents"))[nom] == 1
+
+
+# --- ⑧ Le fil propose l'équipe d'un projet qui n'en a pas, puis le run aboutit ---
+#
+# #1146, l'oracle du scénario S3 (docs/40 §5). L'essai du 2026-09-21 : sur un
+# projet sans agent, le fil proposait un run qui payait cadrage et plan puis
+# échouait au routage. Ici l'app est **entière** — vrai répondeur d'orchestration,
+# vraie sonde d'équipe sur `catalogue_du_projet`, vraie création par
+# `ServiceEquipe.creer`, vrai service d'exécutions —, et seuls le juge (#195) et
+# le moteur sont des doubles. On regarde le **disque** : l'équipe écrite dans le
+# projet, et le run qui descend jusqu'au moteur avec son projet.
+
+#: L'objectif que le juge reformule, et que le fil doit reprendre après le recrutement.
+OBJECTIF_S3 = "Vider le dossier du projet p1"
+
+
+class _JugeQuiPropose(ModelProvider):
+    """Le juge du fil, sans modèle : toute demande est une proposition sur `OBJECTIF_S3`."""
+
+    name = "juge-s3"
+
+    def supports(self, model: str) -> bool:
+        return True
+
+    async def generate(self, prompt: str, *, model: str, system_prompt: str | None = None) -> str:
+        return json.dumps(
+            {"verdict": "proposition", "objectif": OBJECTIF_S3, "reponse": "Je lance ?"},
+            ensure_ascii=False,
+        )
+
+
+class _MoteurQuiNote:
+    """Le moteur d'un run lancé : il ne fait rien, il note ce qu'il a reçu."""
+
+    def __init__(self) -> None:
+        self.runs: list[tuple[str, str | None]] = []
+
+    def __call__(self, **reglages: Any) -> _MoteurQuiNote:
+        return self
+
+    async def run(self, objectif: str, *, projet_id: str | None = None, **reste: Any) -> RunReport:
+        self.runs.append((objectif, projet_id))
+        return RunReport(objectif=objectif, resultats=())
+
+
+def _attendre_la_fin(client: TestClient, run_id: str, projet: str) -> None:
+    """Attend que le run lancé en fond soit soldé — par l'API, comme `test_executions`.
+
+    Le lancement rend la main **avant** que le moteur ne tourne : lire le double
+    tout de suite mesurerait l'ordonnancement, pas le câblage.
+    """
+    limite = time.monotonic() + 10
+    while True:
+        statut = client.get(f"/api/executions/{run_id}", params={"projet": projet}).json()
+        if statut.get("statut") not in (None, "en_cours"):
+            return
+        if time.monotonic() > limite:  # pragma: no cover - filet anti-blocage
+            pytest.fail(f"run {run_id} resté en cours")
+        time.sleep(0.02)
+
+
+@pytest.fixture()
+def fil_reel(
+    tmp_path: Path,
+    atelier: Path,
+    gabarits: ConfigurationAgents,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[tuple[TestClient, _MoteurQuiNote]]:
+    """L'app réelle avec son fil d'orchestration, sur des dépôts jetables."""
+    monkeypatch.setattr(
+        "maestro.providers.factory.provider_from_settings", lambda *a, **k: _JugeQuiPropose()
+    )
+    moteur = _MoteurQuiNote()
+    app = create_app(
+        bus=InMemoryEventBus(),
+        state=ControlTowerState(),
+        projets=ServiceProjets(ProjetStore(tmp_path / "depot"), racines_exploration=(atelier,)),
+        agents_store=gabarits.agents,
+        surcharges=gabarits.surcharges,
+        playbooks=gabarits.playbooks,
+        permissions=gabarits.permissions,
+        mcp=gabarits.mcp,
+        capacites=gabarits.capacites,
+        generateur_agent=_GenerateurHorsLigne(),
+        chat_store=ChatStore(tmp_path / "chat"),
+        fabrique_moteur=moteur,
+    )
+    with TestClient(app) as client:
+        yield client, moteur
+
+
+def test_s3_le_fil_propose_l_equipe_puis_le_run_aboutit(
+    fil_reel: tuple[TestClient, _MoteurQuiNote], atelier: Path, gabarits: ConfigurationAgents
+) -> None:
+    """Critère 1 et oracle de S3, par les appels exacts de l'écran.
+
+    1. la demande de travail sur un projet sans agent reçoit **l'équipe**, pas un
+       run — et rien n'a été lancé ;
+    2. l'écran demande la proposition (`…/equipe/proposition`, la route de #1039)
+       et la rapporte validée, instances ajustées, au geste du fil ;
+    3. l'équipe est écrite **dans le projet**, telle qu'ajustée — capacité comprise ;
+    4. le fil repropose la demande d'origine, et le run proposé part au moteur
+       avec son projet — là où les tâches trouveront désormais quelqu'un.
+    """
+    client, moteur = fil_reel
+    projet, _ = _projet_existant(client, atelier)
+    chat = "/api/chat/orchestrateur"
+
+    envoi = client.post(
+        f"{chat}/messages",
+        json={"contenu": "Peux-tu vider le dossier du projet ?", "projet_id": projet},
+    )
+
+    assert envoi.status_code == 201, envoi.text
+    demande = envoi.json()["messages"][1]
+    assert demande["recrutement"] == {"objectif": OBJECTIF_S3, "projet_id": projet}
+    assert demande["proposition"] == ""
+    assert moteur.runs == []
+
+    proposition = client.post(f"/api/projets/{projet}/equipe/proposition").json()
+    assert proposition["roles"], "l'analyse d'un projet Python appelle au moins un rôle"
+    validee = _validee(proposition)
+    validee["roles"][0]["instances"] = 2
+
+    recrutement = client.post(
+        f"{chat}/recrutement", json={"approuve": True, "conversation": None, **validee}
+    )
+
+    assert recrutement.status_code == 201, recrutement.text
+    _, reponse = recrutement.json()["messages"]
+    attendues = {r["nom"]: r["instances"] for r in validee["roles"]}
+    cfg = gabarits.pour_projet(projet)
+    assert set(cfg.agents.noms()) == set(attendues)
+    assert {nom: cfg.capacites.lire(nom).instances for nom in attendues} == attendues
+    assert reponse["proposition"] == OBJECTIF_S3
+    assert _instances(client.get("/api/agents", params={"projet": projet})) == attendues
+
+    lance = client.post(f"{chat}/cadrage", json={"approuve": True, "projet_id": projet})
+
+    assert lance.status_code == 201, lance.text
+    run_id = lance.json()["messages"][1]["run_id"]
+    assert run_id != ""
+    _attendre_la_fin(client, run_id, projet)
+    assert moteur.runs == [(OBJECTIF_S3, projet)]
+
+
+def test_s3_un_projet_equipe_se_voit_proposer_le_run_directement(
+    fil_reel: tuple[TestClient, _MoteurQuiNote], atelier: Path
+) -> None:
+    """Le témoin du câblage réel : la sonde compte l'équipe créée, et le run est proposé."""
+    client, _ = fil_reel
+    projet, _ = _projet_existant(client, atelier)
+    proposition = client.post(f"/api/projets/{projet}/equipe/proposition").json()
+    creation = client.post(f"/api/projets/{projet}/equipe", json=_validee(proposition))
+    assert creation.status_code == 201, creation.text
+
+    envoi = client.post(
+        "/api/chat/orchestrateur/messages",
+        json={"contenu": "Peux-tu vider le dossier du projet ?", "projet_id": projet},
+    )
+
+    demande = envoi.json()["messages"][1]
+    assert demande["proposition"] == OBJECTIF_S3
+    assert demande["recrutement"] is None
