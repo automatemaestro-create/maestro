@@ -48,7 +48,7 @@ L'analyse complète, avec ce qui existait, les standards vérifiés et chaque ar
 
 **Corrigé par #1101** (réserve C4 du bouclage, docs/05 §2.3). Ce vide est l'état **normal** du catalogue de la racine, donc aussi celui de la projection d'état de l'API, qui en part. `GET /api/agents?projet=<id>` s'y adossait : elle filtrait la projection sur les noms de l'équipe, si bien qu'une équipe validée disparaissait de l'écran au redémarrage suivant, et portait entre-temps une instance là où son projet en avait rangé deux. Elle **dérive** désormais son parc du catalogue du projet et de ses capacités, la projection n'y apportant que l'activité. Le critère « types, nombre et **instances** dérivés de l'analyse » n'était donc pas faux sur le disque ni en exécution — c'était la vue qui ne le montrait pas.
 
-Hors de tout projet, un moteur travaille encore avec les gabarits : `maestro-run` et `maestro-demo` n'ont pas de projet et n'en ont jamais eu. Ce n'est pas une exception au principe, c'est son complément — il n'y a pas d'équipe où chercher. `maestro-run --projet <id>` dit dans quel projet travailler, et prend alors son équipe, y compris pour l'agent de `--notifier`.
+Hors de tout projet, un moteur travaille encore avec les gabarits : `maestro-run` lancé sans `--projet` n'en a pas. Ce n'est pas une exception au principe, c'est son complément — il n'y a pas d'équipe où chercher. `maestro-run --projet <id>` dit dans quel projet travailler, et prend alors son équipe, y compris pour l'agent de `--notifier`.
 
 ### 2.2 « Personne ne répond en cours de tâche » tombe
 

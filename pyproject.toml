@@ -74,9 +74,6 @@ maestro-orchestrate = "maestro.orchestrator.cli:main"
 # Démo : déroule la boucle d'orchestration complète (assignation + exécution +
 # agrégation) et imprime la synthèse (moteur, ticket #6).
 maestro-run = "maestro.engine.cli:main"
-# Démo de bout en bout du POC : boucle complète + artefacts dans des fichiers +
-# vérification du critère de sortie Phase 0 (ticket #10).
-maestro-demo = "maestro.demo:main"
 # Démo : exécute une tâche de dev de bout en bout dans un espace isolé et imprime le
 # livrable produit (agent Développeur, ticket #4 ; CLI factorisé par #35).
 maestro-dev = "maestro.agents.runtime_cli:main_dev"
@@ -97,9 +94,6 @@ maestro-devops = "maestro.agents.runtime_cli:main_devops"
 maestro-designer = "maestro.agents.runtime_cli:main_designer"
 # Backend Control Tower : sert l'API REST + WebSocket (bus Redis, ticket #46).
 maestro-api = "maestro.controltower.cli:main"
-# Démo : Control Tower autonome — API réelle sur bus mémoire + scénario d'événements
-# factices, pour regarder l'UI sans Redis ni orchestration (ticket #65).
-maestro-controltower-demo = "maestro.controltower.demo:main"
 # Démo : workflow + worker hello-world contre le Temporal local (socle des
 # workflows durables, ticket #94).
 maestro-temporal-demo = "maestro.temporal_demo:main"
@@ -192,7 +186,6 @@ omit = [
     "maestro/engine/cli.py",
     "maestro/orchestrator/cli.py",
     "maestro/controltower/cli.py",
-    "maestro/controltower/demo.py",
     "maestro/agents/runtime_cli.py",
     # Démo Temporal (ticket #94) : point d'entrée d'invocation autour d'un serveur
     # Temporal vivant, comme les autres démos ci-dessus. Smoke test en contrepartie

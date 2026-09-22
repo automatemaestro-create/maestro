@@ -1304,10 +1304,8 @@ class ControlTowerState:
         # (#924) : elles existent, elles ont coûté, le Kanban les montre et la
         # barre les compte — les taire ici ferait mentir le pipeline sur le
         # volume du run, qui est le défaut que ce lot corrige, pris par l'autre
-        # bout. Le cas est réel et non théorique : la démo porte une tâche de
-        # santé qui se rejoue en boucle, publiée après la décomposition
-        # (`demo-qa`), et le moteur peut de même consigner une tâche qu'aucun
-        # plan n'annonçait. Elles arrivent **après** les nœuds du plan, dans
+        # bout. Le cas est réel et non théorique : le moteur peut consigner une
+        # tâche qu'aucun plan n'annonçait. Elles arrivent **après** les nœuds du plan, dans
         # leur ordre de première apparition — celui de `taches()`, et non celui
         # de `taches_vues`, qui est un `frozenset` et rendrait un graphe dont
         # l'ordre changerait d'un appel à l'autre —, et sans aucune arête :

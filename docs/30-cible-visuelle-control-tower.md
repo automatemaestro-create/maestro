@@ -448,7 +448,7 @@ Les seules paires confortables sont `neutral-600/700/900` sur clair et `neutral-
 2. Le **bouton d'action primaire** échoue dans les **deux** thèmes (3,65 des deux côtés).
 3. En thème sombre, le **libellé de navigation** est à 2,53 — présent sur chaque écran.
 
-⚠ Ces chiffres sont un **plancher** : les écrans étaient peu peuplés (le scénario de démo n'est pas
+⚠ Ces chiffres sont un **plancher** : les écrans étaient peu peuplés (le scénario de démo n'était pas
 rattaché à un projet), donc une partie du texte `neutral-400`/`500` n'était pas rendue.
 
 ### 3.3 Le trou principal : `aria-live` = 0 sur les 10 écrans
@@ -1495,16 +1495,17 @@ sans worktree).
   worktree de la session, mais son contrôle compare les chemins littéralement, si bien qu'un `e:/…`
   est refusé « outside allowed roots » face à un `E:/…` pourtant identique. Le relatif rend la
   question **sans objet** plutôt que de la traiter une fois de plus.
-- `core/projets/<PROJET_DEMO>.json` — sans projet actif, le shell ne rend que sa porte d'entrée
-  (#279) et il n'y a rien à regarder. Le fichier est gitignoré, son identifiant est **lu** dans
-  `maestro/controltower/demo.py` plutôt que recopié (une constante recopiée des deux côtés d'une
-  frontière est ce que #830 a vu casser), et il n'est retiré que **si c'est nous qui l'avons
-  posé** : un projet déclaré avant nous ne nous appartient pas.
+- *(régime du lot 2, retiré par #1165)* `core/projets/<PROJET_DEMO>.json` — sans projet actif, le
+  shell ne rend que sa porte d'entrée (#279) et il n'y a rien à regarder. Le lot 2 déclarait donc le
+  projet de la démo, identifiant **lu** dans son module plutôt que recopié (une constante recopiée
+  des deux côtés d'une frontière est ce que #830 a vu casser), et ne le retirait que **si c'était
+  lui qui l'avait posé** : un projet déclaré avant lui ne lui appartenait pas. Le projet actif vient
+  aujourd'hui de l'API (§5.8, *Les états viennent de la vraie stack*).
 
-`--fin` arrête la stack **puis** retire le projet, dans cet ordre — un projet retiré sous une API
-vivante la laisserait servir un fantôme. Et le chemin d'échec range de lui-même : une stack qui ne
-démarre pas est arrêtée et son projet repris, faute de quoi un `--demo` raté laisserait derrière lui
-un projet déclaré que personne ne verrait passer, `core/projets/` étant gitignoré.
+`--fin` arrêtait la stack **puis** retirait le projet, dans cet ordre — un projet retiré sous une API
+vivante la laisserait servir un fantôme. Et le chemin d'échec rangeait de lui-même : une stack qui ne
+démarrait pas était arrêtée et son projet repris, faute de quoi un montage raté aurait laissé derrière
+lui un projet déclaré que personne ne verrait passer, `core/projets/` étant gitignoré.
 
 #### Le prix est du temps de mur, et il s'annonce
 
@@ -1524,8 +1525,9 @@ l'état d'avant, le jugement ne peut répondre ni à « ce qui ne doit pas bouge
 regarde donc **deux fois**, dans le même thème et le même état : sur la branche et sur
 `origin/main`, capturés `<ecran>-<theme>.png` et `<ecran>-<theme>-avant.png` côte à côte, dans le
 dossier de l'état (#978). Le nom de l'après ne bouge pas : `--couverture` le compte, et il ne compte
-que les regards portés sur la branche. Un état que la démo d'`origin/main` ne déclare pas n'a pas
-d'avant — comparer un état limite au nominal ferait voir une différence que le ticket n'a pas faite.
+que les regards portés sur la branche. Un état que le lanceur d'`origin/main` ne sait pas servir n'a
+pas d'avant (§5.8) — comparer un état limite à l'état peuplé ferait voir une différence que le ticket
+n'a pas faite.
 
 Le ticket posait **trois voies à trancher sur mesure**, et c'est la mesure qui a tranché :
 
@@ -1572,8 +1574,8 @@ avant** le montage et **mesuré après** (« avant prêt en N s »), règle de #
 rencontre : l'après et l'avant sont **deux origines**, donc deux `localStorage` à préparer ; une
 paire dont un côté est encore sur « Chargement… » montre une différence qui n'en est pas une — la
 capture attend le signal « page prête » de `captures.mjs` (#830) **des deux côtés** ; et les
-**chiffres de la démo ne se comparent pas**, le scénario avançant avec le temps entre deux stacks
-démarrées à quarante secondes d'écart — on compare la mise en page et le rendu, jamais les valeurs.
+**chiffres ne se comparent pas** — la démo d'alors avançait avec le temps entre deux stacks démarrées
+à quarante secondes d'écart : on compare la mise en page et le rendu, jamais les valeurs.
 
 **Écarté aussi :** servir l'avant depuis le **clone principal**, qui a déjà ses dépendances. Son
 `main` n'est avancé qu'à certains passages (§9.3 de docs/10) et peut porter du travail, son
@@ -1899,7 +1901,7 @@ fonction derrière ; un plancher de deux lignes en option — on choisit ; rouvr
 #691, et aucune référence ne le fait.
 
 **Ce que la veille n'a pas regardé** : le mobile et `sm` (→ #873) ; le composeur à quai sur un fil
-long (mesuré par #726 au banc, non rejoué — la démo n'a qu'un message) ; le thème sombre ; le
+long (mesuré par #726 au banc, non rejoué — la démo n'avait qu'un message) ; le thème sombre ; le
 troisième composeur du produit, `PanneauAssistance` (« Envoyer » en texte lui aussi).
 
 **Rien de #728 n'est défait** : une sonde change de valeur (`rows`, 2 → 1), les autres tiennent — le
@@ -2777,67 +2779,65 @@ référence de la rubrique « ce qui ne bouge pas », et c'est la **paire** que 
 #### Les états limites s'ouvrent dans la démo (#978)
 
 > ⚠ **Renversé le 2026-09-21** ([docs/41 §4](./41-decision-maestro-juge-il-ne-bride-pas.md),
-> chantier #1156). Le mode démo quitte le dépôt, et la relecture regarde la vraie stack :
-> - **vide** : une stack neuve ;
-> - **erreur** : une vraie panne, magasin coupé ou API coupée ;
-> - **peuplé et charge** : l'état laissé par le dernier passage du banc des scénarios.
->
-> Un état que le réel ne produit pas est nommé non couvert, jamais fabriqué. **Livré par #1165** :
-> voir *Les états viennent de la vraie stack* plus bas. Ce qui suit décrit le régime de la démo, qui
-> reste servi par `start.sh --demo` jusqu'à sa suppression (#1168) mais que la relecture ne lit plus.
+> chantier #1156). La relecture regarde la vraie stack depuis #1165 — voir *Les états viennent de
+> la vraie stack* plus bas —, et le mode démo a quitté le dépôt avec #1168. Ce qui suit reste comme
+> la trace du régime de la démo et de ce qui y avait été pesé.
 
-La démo sert des **scénarios nommés** : `nominal` (celui d'avant, inchangé, toujours le défaut),
-`vide`, `erreur` et `charge`. Ils se **demandent** — `start.sh --demo --scenario <nom>`,
-`relecture-visuelle.sh <iid> --scenario <nom>` —, et `--couverture` dit, écran par écran, lesquels
-ont été capturés. Quels états ouvrir : ceux que la rubrique « États à couvrir » du ticket nomme, et
-les trois quand elle ne dit rien.
+La démo servait des **scénarios nommés** : `nominal` (le défaut), `vide`, `erreur` et `charge`. Ils
+se **demandaient** au lanceur comme à la relecture, et `--couverture` disait, écran par écran,
+lesquels avaient été capturés. Quels états ouvrir : ceux que la rubrique « États à couvrir » du
+ticket nomme, et les trois quand elle ne dit rien.
 
-Ce qui tient, et à ne pas défaire :
+Ce qui tenait :
 
-- **Les noms sont lus** dans `maestro/controltower/demo.py` par le lanceur et par la relecture,
-  jamais recopiés (#830). Un nom inconnu est refusé **avant** la stack : la démo le refuserait aussi,
-  mais en arrière-plan, et l'on ne lirait qu'« API injoignable ».
-- **« erreur » est une API en panne, pas une API coupée.** Le middleware se branche **sous** le
-  CORS : par-dessus, le navigateur cacherait la réponse au code, qui ne verrait qu'un « Failed to
-  fetch ». La santé et la liste des projets sont **épargnées** — sinon le lanceur échouerait, ou le
-  shell resterait sur sa porte et l'on ne verrait qu'une erreur, la sienne. Le prix est nommé :
-  l'écran « Projets » ne montre rien dans cet état.
-- **« charge » est publiée d'un coup, sans pulsation** : une capture prise à la minute 1 et une autre
-  à la minute 3 doivent montrer le même écran. Ses textes longs ont trois formes — un nom, une phrase,
-  un jeton sans espace —, parce qu'elles ne cassent pas le rendu de la même façon.
+- **Les noms étaient lus** dans le module de la démo par le lanceur et par la relecture, jamais
+  recopiés (#830). Un nom inconnu était refusé **avant** la stack : la démo l'aurait refusé aussi,
+  mais en arrière-plan, et l'on n'aurait lu qu'« API injoignable ».
+- **« erreur » était une API en panne, pas une API coupée.** Le middleware se branchait **sous** le
+  CORS : par-dessus, le navigateur aurait caché la réponse au code, qui n'aurait vu qu'un « Failed
+  to fetch ». La santé et la liste des projets étaient **épargnées** — sinon le lanceur aurait
+  échoué, ou le shell serait resté sur sa porte. Le prix était nommé : l'écran « Projets » ne
+  montrait rien dans cet état.
+- **« charge » était publiée d'un coup, sans pulsation** : une capture prise à la minute 1 et une
+  autre à la minute 3 devaient montrer le même écran. Ses textes longs avaient trois formes — un nom,
+  une phrase, un jeton sans espace —, parce qu'elles ne cassent pas le rendu de la même façon.
 - **Ce qui a été vu se compte sur le disque**, jamais dans une déclaration ; et la couverture
-  **constate** : décider quels états il fallait couvrir reste le jugement de la session (#746).
+  **constate** : décider quels états il fallait couvrir reste le jugement de la session (#746). Ce
+  point-là a survécu à la démo.
 
-**Écarté :** changer le **nominal** (`captures.sh`, `/milestone-presentation` et les parcours filmés
-de #545 en dépendent) ; changer d'état **à chaud** (le scénario est celui de l'API — chaque état
-redémarre la stack, ~18 s, et c'est annoncé) ; un état « **largeur téléphone** » (ce n'est pas un état
-de l'API : il va à « ce que je n'ai pas pu voir »).
+**Écarté :** changer le **nominal** (les captures de présentation et les parcours filmés de #545 en
+dépendaient) ; changer d'état **à chaud** (le scénario était celui de l'API — chaque état redémarrait
+la stack, ~18 s, et c'était annoncé) ; un état « **largeur téléphone** » (ce n'est pas un état de
+l'API : il va à « ce que je n'ai pas pu voir »).
 
 #### La phase de décomposition s'ouvre aussi (#1109)
 
+> ⚠ **Parti avec la démo** (#1168, [docs/41 §4](./41-decision-maestro-juge-il-ne-bride-pas.md)). La
+> phase se regarde sur un vrai run, dans ses premières minutes ; hors de là, elle est **non
+> couverte**, jamais fabriquée. Ce qui suit reste comme la trace de ce qui avait été pesé.
+
 Un cinquième scénario, `decomposition`, et **la seule phase de la liste** : les quatre précédents
-sont des états qu'on trouve en arrivant, celui-ci est un moment qui passe. #927 avait appris à
+étaient des états qu'on trouve en arrivant, celui-ci un moment qui passe. #927 avait appris à
 l'écran à dire qu'un run décompose (constat **G11** : « les quatre premières minutes du run ne
 montrent rien ») ; aucun scénario ne savait alors l'ouvrir, le nominal publiant son plan à la
 première seconde — si bien que le bouclage de ce critère n'a pu le voir dans aucun navigateur.
 
-Ce qui tient, et à ne pas défaire :
+Ce qui tenait :
 
-- **Rien n'est fabriqué pour l'écran.** Le verdict de `estEnDecomposition` est une conjonction — le
-  run **travaille** et n'a **aucune tâche** —, et le scénario ne publie que ce qu'un vrai run publie
-  à ce moment-là : son lancement, puis des activités d'agent **sans `tache_id`** (`etape_run` =
-  planification, la forme du pont). Le verdict tombe tout seul.
-- **La durée est celle du constat** — 4 minutes —, et pendant ce temps le journal avance et le coût
-  monte : le retex ne relève pas seulement « aucune tâche », il relève *« journal à deux lignes
-  pendant que le coût monte »*. Un scénario muet montrerait le même trou.
-- **Il boucle**, et c'est ce qui le sépare des trois états limites ci-dessus. Eux sont publiés d'un
-  coup pour que deux captures se comparent ; ici le sujet *est* un moment qui passe, donc joué une
-  seule fois il ne serait visible que dans les premières minutes — manquable, c'est-à-dire le défaut
-  qu'on répare. Rejoué, la phase est là ~80 % du temps, et deux relectures prises à deux moments
-  quelconques montrent la même chose. Le prix est nommé : chaque passage laisse un run soldé et ses
-  quatre tâches derrière lui.
-- **Chaque passage a ses propres tâches** (`PLAN_DEMO` réécrit, jamais un second plan) : des
-  identifiants partagés feraient rejouer sous les yeux le pipeline du passage précédent.
+- **Le scénario ne publiait que ce qu'un vrai run publie** à ce moment-là. Le verdict de
+  `estEnDecomposition` est une conjonction — le run **travaille** et n'a **aucune tâche** — : le
+  lancement, puis des activités d'agent **sans `tache_id`** (`etape_run` = planification, la forme
+  du pont), et le verdict tombait tout seul.
+- **La durée était celle du constat** — 4 minutes —, et pendant ce temps le journal avançait et le
+  coût montait : le retex ne relève pas seulement « aucune tâche », il relève *« journal à deux
+  lignes pendant que le coût monte »*. Un scénario muet aurait montré le même trou.
+- **Il bouclait**, et c'est ce qui le séparait des trois états limites ci-dessus. Eux étaient publiés
+  d'un coup pour que deux captures se comparent ; ici le sujet *est* un moment qui passe, donc joué
+  une seule fois il n'aurait été visible que dans les premières minutes. Rejoué, la phase était là
+  ~80 % du temps. Le prix était nommé : chaque passage laissait un run soldé et ses quatre tâches
+  derrière lui.
+- **Chaque passage avait ses propres tâches** (un seul plan, réécrit) : des identifiants partagés
+  auraient fait rejouer sous les yeux le pipeline du passage précédent.
 
 **Écarté :** montrer la phase en **figeant** un run sans plan (le critère demande de voir la
 transition, pas seulement l'avant) ; peupler un **fil de conversation** (le run change à chaque
@@ -3053,10 +3053,12 @@ pour un gain nul sur le problème mesuré. La direction est de **donner du relie
 - **Écarté** : le design system Figma comme source — **Code Connect refusé, aucune bibliothèque
   d'organisation** (§5). Figma reste un outil d'exploration.
 - ~~**À réparer** : `captures.sh` (projet actif manquant, §5).~~ **Réparé** (vérifié le 2026-08-26 au
-  lot 7) : `captures.sh` déclare le projet de la démo dans un dépôt à lui, en **lisant** son
-  identifiant dans `maestro/controltower/demo.py` plutôt qu'en le recopiant, et `captures.mjs` pose
-  `maestro.projet.actif` dans le `localStorage` — les deux moitiés sont indissociables et présentes.
-  Le lot 7 devait ouvrir un ticket « si quelqu'un le confirme » ; la confirmation a rendu l'inverse.
+  lot 7) : `captures.sh` déclarait alors le projet de la démo dans un dépôt à lui, en **lisant** son
+  identifiant dans le module de la démo plutôt qu'en le recopiant, et `captures.mjs` pose
+  `maestro.projet.actif` dans le `localStorage` — les deux moitiés étaient indissociables et
+  présentes. Le lot 7 devait ouvrir un ticket « si quelqu'un le confirme » ; la confirmation a rendu
+  l'inverse. Depuis #1166, les captures se tournent sur la vraie stack, et le projet ouvert est
+  choisi parmi ceux que l'API déclare.
 
 ### 6.3 Découpage du chantier — parent + 7 lots, 7 sessions
 

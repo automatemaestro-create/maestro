@@ -67,7 +67,7 @@ FROM python:3.11
 #     d'éditable pointant sur une autre branche, rien à départager.
 #   · NE PAS DÉSINSTALLER, en revanche. La première version faisait `pip uninstall maestro` après
 #     l'installation, et la suite entière l'a refusée : `[project.scripts]` déclare une dizaine de
-#     POINTS D'ENTRÉE (`maestro-sandbox-shim`, `maestro-run`, `maestro-demo`…) que la désinstallation
+#     POINTS D'ENTRÉE (`maestro-sandbox-shim`, `maestro-run`, `maestro-api`…) que la désinstallation
 #     emporte avec le paquet, et `tests/test_isolation.py` vérifie que le shim du mode isolé existe
 #     bien à côté de l'interpréteur. Les garder coûte zéro ambiguïté : ce sont de fins lanceurs qui
 #     importent `maestro.*`, donc le code du dépôt monté.

@@ -271,13 +271,10 @@ def liens_en_liste(liens: Sequence[LienUtile]) -> list[dict[str, str]]:
 def phrase_ecart_checklist(restantes: Sequence[EtapeTache], total: int) -> str:
     """La ligne qui dit l'écart entre le verdict d'une tâche et sa checklist (#944).
 
-    Elle vit **ici**, avec le contrat qu'elle décrit, parce qu'elle a deux
-    émetteurs (#1112) : le moteur, qui la consigne à la clôture d'une vraie tâche
-    (`maestro.engine.executor`), et le scénario de démo, qui doit publier la
-    **forme d'arrivée** d'un vrai run et non un raccourci à lui
-    (`maestro.controltower.demo`). Deux formulations du même fait finiraient par
-    diverger, et la démo validerait alors un rendu que la production ne produit
-    pas.
+    Elle vit **ici**, avec le contrat qu'elle décrit (#1112) : le moteur la
+    consigne à la clôture d'une vraie tâche (`maestro.engine.executor`), et les
+    tests la relisent à cette seule adresse. Deux formulations du même fait
+    finiraient par diverger de ce qu'un vrai run envoie à l'écran.
 
     Elle ne juge rien : c'est l'appelant qui sait si la tâche est soldée, et en
     succès. Ici on ne fait que la dire.

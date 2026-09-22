@@ -100,7 +100,7 @@ class _AppelModele:
     """La part commune aux deux voies : un fournisseur résolu au **premier usage**.
 
     Construire un analyseur ou un rédacteur ne doit rien coûter — l'app en instancie à
-    chaque démarrage, y compris là où aucun fournisseur n'est configuré (démo, tests). La
+    chaque démarrage, y compris là où aucun fournisseur n'est configuré (poste neuf, tests). La
     résolution passe donc par un import local, au moment où l'appel a réellement lieu.
     """
 

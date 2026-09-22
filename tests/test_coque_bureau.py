@@ -24,7 +24,8 @@ Quatre volets :
    navigation bornée à l'origine locale, et un pont qui n'expose que des verbes
    nommés (jamais `ipcRenderer`, jamais un `invoke(canal, …)` générique) ;
 ③ **le cycle de vie des processus** — `start.sh` source unique, l'arrêt qui
-   attend le démarrage en cours, l'instance unique, la liste blanche d'options.
+   attend le démarrage en cours, l'instance unique, aucun argument de la coque
+   relayé au lanceur.
    C'est le premier critère d'acceptation : *se ferme sans laisser de processus
    derrière elle* ;
 ④ **ENF-12** (docs/35 §2.5) — aucun embranchement de code applicatif dans
@@ -325,18 +326,27 @@ def test_la_coque_ne_lance_que_le_lanceur_du_depot(main_js):
 
 
 def test_les_deux_seuls_jeux_d_arguments_sont_le_demarrage_et_l_arret(main_js):
-    """Ni `--demo` en dur, ni un troisième verbe : ouvrir la fenêtre démarre,
+    """Ni un troisième verbe, ni une option ajoutée : ouvrir la fenêtre démarre,
     la fermer arrête."""
     appels = set(re.findall(r"jouerLanceur\((\[[^\]]*\])\)", main_js))
 
-    assert appels == {"['--no-browser', ...optionsStack]", "['--stop']"}
+    assert appels == {"['--no-browser']", "['--stop']"}
 
 
-def test_les_options_passees_au_lanceur_sont_en_liste_blanche(main_js):
-    """Ce processus reçoit **aussi** les arguments d'Electron : laisser passer le
-    reste enverrait `start.sh` sortir en « Option inconnue »."""
-    assert "const OPTIONS_STACK = new Set(['--demo', '--demonstration']);" in main_js
-    assert "OPTIONS_STACK.has(a)" in main_js
+def test_aucun_argument_de_la_coque_ne_passe_au_lanceur(main_js):
+    """Ce processus reçoit **aussi** les arguments d'Electron : en laisser passer un
+    enverrait `start.sh` sortir en « Option inconnue ». La seule option qu'on relayait,
+    `--demo`, est partie avec le mode démo (#1168) : il n'y a plus rien à relayer, donc
+    plus de liste blanche — la coque ne lit pas son `argv`."""
+    assert "process.argv" not in main_js
+    assert "--demo" not in main_js
+
+
+def test_le_lanceur_de_la_coque_refuse_le_mode_demo_en_le_disant(desktop_sh):
+    """La coque ne relaie plus rien : sans ce refus, `desktop.sh --demo` ouvrirait en
+    silence la stack réelle, et on croirait regarder le scénario factice (#1168)."""
+    assert "--demo | --demonstration)" in desktop_sh
+    assert "le mode démo a quitté le produit" in desktop_sh
 
 
 def test_fermer_la_fenetre_arrete_la_stack_avant_que_le_processus_ne_meure(main_js):

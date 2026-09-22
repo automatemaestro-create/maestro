@@ -358,7 +358,7 @@ class ServiceExecutions:
     endroits différents depuis #446. Ici, faute d'hôte injecté, c'est
     `HoteRunEnProcess` : le seul à qui l'on puisse passer une coroutine, donc le
     seul qu'une app puisse se donner sans avoir de process à fabriquer — c'est ce
-    que veulent les tests et une démo mono-process. Le défaut de **production**,
+    que veulent les tests. Le défaut de **production**,
     lui, est l'hôte détaché, et il se résout là où se résolvent le bus, le journal
     et le registre (`create_default_app`, `MAESTRO_HOTE_RUN`).
     """

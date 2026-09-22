@@ -102,7 +102,7 @@ L'intégration Langfuse est **purement configurative** : aucune option CLI, aucu
 | `LANGFUSE_SECRET_KEY` | Clé secrète du même projet. Jamais commitée ni logguée. |
 | `LANGFUSE_HOST` | Hôte de l'instance. Défaut : `https://cloud.langfuse.com` — pointez votre instance auto-hébergée le cas échéant. |
 
-Avec les **deux clés** renseignées, chaque exécution (`maestro-run`, `maestro-demo`) produit :
+Avec les **deux clés** renseignées, chaque exécution (`maestro-run`) produit :
 
 - sa **trace** (une par run, id = `run_id` — le même que dans le rapport, le journal #8 et la Control Tower) : une observation par étape, les appels modèle en *générations* avec tokens et coûts au format natif (#55), le reste (validation humaine, messages inter-agents, blocages) en *spans* ;
 - ses **scores d'évaluation** en fin de run (#80) : `run-reussi` (booléen — 1 si toutes les tâches sont terminées) et `taux-reussite` (0..1 — part des tâches réussies), posés sur la trace et exploitables dans Langfuse pour filtrer, agréger et comparer les exécutions.
@@ -130,10 +130,10 @@ un README qui renvoie vers le module réel du paquet (ex. `agents/developer/` �
 │   ├── queue/          #   File de tâches Celery + Redis, workers parallèles (Phase 1)
 │   ├── router/         #   Auto-assignation des tâches aux agents
 │   ├── sandbox/        #   Espace de travail isolé par tâche
+│   ├── scenarios/      #   Banc des scénarios de référence (#1148, python -m maestro.scenarios)
 │   ├── telemetry/      #   Journal des étapes, comptabilité de coût par tâche, secrets expurgés
 │   ├── check_env.py    #   Vérification d'environnement (maestro-check-env)
-│   ├── config.py       #   Modes d'authentification (§2.1)
-│   └── demo.py         #   Démo de bout en bout (voir doc 11)
+│   └── config.py       #   Modes d'authentification (§2.1)
 ├── tests/              # Tests pytest du paquet
 ├── apps/
 │   ├── api/            # Backend FastAPI (placeholder — Phase 1)
@@ -262,9 +262,7 @@ par la **messagerie inter-agents** (#44, la boîte de l'agent) et part en évén
 `chat.message` sur le WebSocket `/ws/evenements` : les clients temps réel voient le
 message utilisateur dès l'envoi, puis la réponse quand elle tombe. Si la réponse ne
 peut pas être produite (fournisseur en échec), l'API répond 502 mais le message
-utilisateur reste acquis — relancer ne perd pas le fil. La démo locale
-(`scripts/controltower/start.sh --demo`, #65 ; mode explicite depuis #186, §6.10) répond
-en **scripté** sur un fil éphémère : aucun modèle appelé, rien d'écrit dans `core/chat/`.
+utilisateur reste acquis — relancer ne perd pas le fil.
 Détails : [`core/chat/README.md`](../core/chat/README.md).
 
 ### 6.5 — Contrôle de capacité : activer/désactiver, instances (disponible — ticket #86)
@@ -536,59 +534,84 @@ de venir du playbook. Boucle complète, garde-fous et limites :
 [doc 22](./22-auto-amelioration-playbooks.md) ; tests sur fournisseurs factices :
 [`tests/test_auto_amelioration.py`](../tests/test_auto_amelioration.py).
 
-### 6.10 — Lancer la Control Tower en local : mode réel par défaut (ticket #186)
+### 6.10 — Lancer la Control Tower en local : la vraie stack (tickets #186, #1168)
 
 Le lancement local tient en une commande, qui démarre l'API, l'UI Next.js, ouvre le
 navigateur et arrête tout à la fermeture de la fenêtre (#149, #200) :
 
 ```bash
-# Mode RÉEL (défaut) : maestro-api sur Redis, journal durable des événements (§6.8)
+# La vraie stack : maestro-api sur Redis, journal durable des événements (§6.8)
 bash scripts/controltower/start.sh
 
-# Mode DÉMO : scénario factice sur bus mémoire, aucun Redis requis
-bash scripts/controltower/start.sh --demo
+# Sans navigateur ni arrêt automatique
+bash scripts/controltower/start.sh --no-browser
+
+# Arrêter (et solder les runs en vol)
+bash scripts/controltower/start.sh --stop
 ```
 
-> ⚠ **Le mode démo quitte le dépôt** ([docs/41](./41-decision-maestro-juge-il-ne-bride-pas.md),
-> #1168). Toute vérification du produit se joue sur la vraie stack. Ce passage est réécrit par
-> #1168.
-
-**Le mode réel est le défaut** depuis #186. La simulation a longtemps été le seul moyen de
-« regarder l'UI vivre » ; elle n'a plus à l'être, et surtout un utilisateur qui découvre le
-produit ne doit pas prendre des données factices pour la réalité. Ce que cela change :
+**Il n'y a qu'une stack, la réelle.** Le réel est devenu le défaut en #186 ; le mode démo,
+resté en option jusque-là (scénario factice sur un bus mémoire), a quitté le produit avec
+#1168 ([docs/41 §4](./41-decision-maestro-juge-il-ne-bride-pas.md)) : un scénario factice
+montre ce qu'on a scénarisé, pas ce que le produit fait. `--demo` est désormais refusé, et le
+refus nomme les états réels ci-dessous. Ce qu'il faut savoir :
 
 - **Redis est une dépendance dure, vérifiée avant tout** (`maestro-api --verifier-redis`,
   qui résout `REDIS_URL` comme le fait l'API elle-même). Absent, le script s'arrête en
-  donnant la commande exacte — `docker compose -f infra/docker-compose.yml up -d redis` —
-  et **ne retombe jamais en douce sur la démo** : un repli silencieux est précisément ce qui
-  ferait confondre les deux mondes. Le contrôle a lieu **avant** l'arrêt de la session en
-  place : un Redis manquant n'aura pas au passage coupé une Control Tower qui tournait.
+  donnant la commande exacte — `docker compose -f infra/docker-compose.yml up -d redis`. Le
+  contrôle a lieu **avant** l'arrêt de la session en place : un Redis manquant n'aura pas au
+  passage coupé une Control Tower qui tournait.
 - **Le poste de pilotage démarre vide, et le dit.** Sans run, il n'y a ni tâche, ni
-  événement, ni validation : l'UI affiche alors quoi faire (lancer
-  `maestro-run --publier "<objectif>"`, ou repasser en `--demo`) au lieu d'aligner des
-  panneaux à zéro qui feraient croire à une panne. Une API **injoignable**, elle, reste
-  signalée par sa bannière d'erreur — l'écran vide *connecté* et l'écran vide *muet* ne se
-  diagnostiquent pas pareil.
-- **L'historique survit au redémarrage** : en mode réel, les événements passent par le
-  journal durable de #97 (liste Redis) et sont rejoués à l'ouverture de l'API. Depuis
-  #478 ce rejeu remplit aussi le **journal requêtable** (`GET /api/journal`,
+  événement, ni validation : l'UI affiche alors quoi faire (lancer une orchestration dans le
+  projet, ou suivre la visite guidée — [docs/05 §2.1.1](./05-interface-control-tower.md)) au
+  lieu d'aligner des panneaux à zéro qui feraient croire à une panne. Une API
+  **injoignable**, elle, reste signalée par sa bannière d'erreur — l'écran vide *connecté* et
+  l'écran vide *muet* ne se diagnostiquent pas pareil.
+- **L'historique survit au redémarrage** : les événements passent par le journal durable de
+  #97 (liste Redis) et sont rejoués à l'ouverture de l'API. Depuis #478 ce rejeu remplit
+  aussi le **journal requêtable** (`GET /api/journal`,
   [docs/05 §6.2](./05-interface-control-tower.md)) : la page Journal et la vue d'un run
   partent de cet historique, donc un **rechargement de page** ne perd rien non plus.
+- **Une stack par copie de travail** (#1164) : le clone principal et chaque worktree ont
+  leurs ports (`MAESTRO_PORT_API`/`MAESTRO_PORT_UI`, dédiés par worktree), leur dossier de
+  logs et leur **espace** Redis. Deux stacks lancées depuis deux copies partagent le même
+  Redis sans se voir ; le lanceur annonce l'espace avant de démarrer.
 
-Le mode `--demo` reste le bon choix pour le **développement front**, le skill `/verify` et
-les captures de `/milestone-presentation` : app réelle, mêmes endpoints, mais bus mémoire et
-scénario simulé — Kanban peuplé, coûts par tâche, une validation laissée en attente,
-pulsation périodique, chat scripté sur un fil éphémère (§6.4). Tout le reste est **identique
-dans les deux modes** : ports (`MAESTRO_PORT_API`/`MAESTRO_PORT_UI`, dédiés par worktree),
-dossier de logs, nettoyage des sessions précédentes, chien de garde du navigateur et
-`--stop`. Détail d'usage : skill [`control-tower`](../.claude/skills/control-tower/SKILL.md).
+**Les états qu'on regarde viennent du réel** (#1164, #1165). Pour voir l'écran ailleurs que
+dans l'état de la copie, sans rien fabriquer :
+
+```bash
+# L'état réel laissé par le dernier passage du banc des scénarios (#1148) — son âge est dit
+bash scripts/controltower/start.sh --etat-banc
+
+# Le banc repart à neuf et rejoue ses scénarios : vrai modèle, des dizaines de minutes
+bash scripts/controltower/start.sh --etat-banc --rejouer        # ou --rejouer=S2,S4
+
+# Une stack neuve : aucun run, aucun fil, aucun projet
+bash scripts/controltower/start.sh --etat-neuf
+
+# Une vraie panne : l'API seule tombe, l'UI reste servie (relancer la rétablit)
+bash scripts/controltower/start.sh --couper-api
+```
+
+| État | D'où il vient |
+| --- | --- |
+| vide | une stack neuve (`--etat-neuf`) |
+| erreur | une vraie panne : l'API coupée (`--couper-api`, « API injoignable »). Une API qui **répond** en erreur ne se produit pas : mesuré le 2026-09-22, son magasin coupé, elle sert des listes vides et se dit « ok » (#1206, [docs/30 §5.8](./30-cible-visuelle-control-tower.md)) |
+| peuplé, charge | l'état réel laissé par le dernier passage du banc (`--etat-banc`, refait par `--rejouer`) |
+| ce que le réel ne produit pas | **non couvert**, jamais fabriqué |
+
+`--etat-banc` et `--etat-neuf` servent un jeu de données à part (`<espace>.banc`,
+`.maestro/banc/`) : les données de la copie ne sont pas touchées. `--couper-api` n'est pas un
+arrêt : rien n'est soldé et le chien de garde reste en place. Détail d'usage : skill
+[`control-tower`](../.claude/skills/control-tower/SKILL.md).
 
 ### 6.11 — Lancer, suivre et annuler un run (tickets #185, #187)
 
-En mode réel, le poste démarre vide : **c'est un run qui le remplit**. Deux voies, qui
+Sur une stack neuve, le poste démarre vide : **c'est un run qui le remplit**. Deux voies, qui
 alimentent la même projection — le suivi ne distingue pas leur origine.
 
-**Depuis le dépôt** (ce que propose l'écran vide) :
+**Depuis le dépôt** (sans rattachement à un projet, [docs/05 §2.1.1](./05-interface-control-tower.md)) :
 
 ```bash
 maestro-run --publier "Prototyper un mini-CRM"
@@ -641,4 +664,4 @@ du journal durable — la carte garde donc son lien après un redémarrage de l'
 Couverture : [`tests/test_executions.py`](../tests/test_executions.py) (routes et référence de
 ticket, sur l'app réelle en bus mémoire, moteur remplacé par un double) et
 [`tests/test_controltower_mode_reel.py`](../tests/test_controltower_mode_reel.py) (invariants du
-lanceur : mode réel par défaut, `--demo` explicite, diagnostic quand Redis manque).
+lanceur : la vraie stack seule, `--demo` refusé, diagnostic quand Redis manque).

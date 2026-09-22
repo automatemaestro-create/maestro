@@ -74,10 +74,9 @@ const ORIGINES_LOCALES = new Set([`http://localhost:${PORT_UI}`, `http://127.0.0
 // ne sert qu'à un lancement direct par `npm start` depuis un shell POSIX.
 const BASH = process.env.MAESTRO_BASH || 'bash';
 
-// Les options transmises à `start.sh`, en liste blanche : ce processus reçoit aussi les arguments
-// d'Electron, et laisser passer le reste enverrait `start.sh` sortir en « Option inconnue ».
-const OPTIONS_STACK = new Set(['--demo', '--demonstration']);
-const optionsStack = process.argv.slice(1).filter((a) => OPTIONS_STACK.has(a));
+// Aucun argument de ce processus ne passe à `start.sh` : il reçoit aussi ceux d'Electron, et la
+// seule option qu'on lui relayait, celle du mode démo, a quitté le produit avec lui (#1168). La coque
+// joue donc deux jeux d'arguments écrits ici même, jamais autre chose.
 
 /** Quelques lignes de diagnostic, gardées pour la fenêtre d'attente quand le démarrage échoue. */
 const journal = [];
@@ -302,9 +301,9 @@ async function demarrer() {
   ipcMain.handle('maestro:choisir-dossier', (_evenement, depart) => choisirDossier(depart));
   ouvrirFenetre();
   await chargerAttente();
-  annoncer('demarrage', optionsStack.length > 0 ? 'Scénario de démonstration.' : null);
+  annoncer('demarrage', null);
 
-  demarrageStack = jouerLanceur(['--no-browser', ...optionsStack]);
+  demarrageStack = jouerLanceur(['--no-browser']);
   const code = await demarrageStack;
 
   // La fenêtre a pu être fermée pendant le démarrage : `before-quit` s'occupe alors de l'arrêt,

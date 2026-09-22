@@ -1672,10 +1672,9 @@ elif [ "$NB_ECHECS_SOUPLES" -gt 0 ]; then
     "$NB_ECHECS_SOUPLES"
   printf 'voir « Reste à faire » ci-dessus.\n'
 else
-  # Le lanceur démarre en MODE RÉEL depuis #186 : il exige Redis, et le dit lui-même quand il
-  # manque. On annonce donc les deux modes ici plutôt que de laisser découvrir l'exigence.
+  # Le lanceur exige Redis (#186), et le dit lui-même quand il manque : on l'annonce ici plutôt
+  # que de laisser découvrir l'exigence. Il n'y a plus d'autre mode (#1168).
   printf '\nEnvironnement local prêt. Lancer la Control Tower :\n'
-  printf '  bash scripts/controltower/start.sh          # mode réel (Redis requis)\n'
-  printf '  bash scripts/controltower/start.sh --demo   # scénario de démonstration, sans Redis\n'
+  printf '  bash scripts/controltower/start.sh          # Redis requis\n'
 fi
 exit 0

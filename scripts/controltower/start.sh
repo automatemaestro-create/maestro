@@ -16,15 +16,15 @@
 #
 # Le mode réel EXIGE Redis : il est vérifié AVANT de toucher à quoi que ce soit
 # (`maestro-api --verifier-redis`, qui résout REDIS_URL et rend le geste exact
-# pour le lancer). Absent, le script s'arrête en le disant — jamais de repli
-# silencieux sur la démo, qui ferait prendre des données factices pour la
-# réalité (#186). Ce scénario factice reste disponible, mais DEMANDÉ : `--demo`
-# (app réelle sur bus mémoire + événements simulés, aucun Redis requis) — c'est
-# le mode du développement front, du skill `verify` et des captures.
+# pour le lancer). Absent, le script s'arrête en le disant, sans rien démarrer.
+#
+# LE MODE DÉMO A QUITTÉ LE PRODUIT (#1168, docs/41 §4). `--demo`, `--demonstration`
+# et `--scenario` servaient un scénario factice sur un bus mémoire ; ils sont
+# REFUSÉS, en nommant les états réels qui les remplacent : une stack neuve
+# (`--etat-neuf`), l'état du dernier passage du banc (`--etat-banc`) et une vraie
+# panne (`--couper-api`). Ce que le réel ne produit pas se dit « non couvert ».
 #
 #   bash scripts/controltower/start.sh                     # (re)démarre tout + navigateur (réel)
-#   bash scripts/controltower/start.sh --demo              # scénario factice, sans Redis
-#   bash scripts/controltower/start.sh --demo --scenario vide   # un état limite (#978) : vide, erreur, charge
 #   bash scripts/controltower/start.sh --no-browser        # sans navigateur ni arrêt auto
 #   bash scripts/controltower/start.sh --etat-banc         # réel, sur l'état du dernier passage du banc (#1164)
 #   bash scripts/controltower/start.sh --etat-banc --rejouer[=S2,S4]  # le banc repart à neuf et rejoue
@@ -52,7 +52,7 @@
 #
 # UNE STACK NEUVE ET UNE VRAIE PANNE (#1165). Deux gestes pour regarder le produit
 # ailleurs que dans son état peuplé, sans rien fabriquer — c'est ce que la relecture
-# visuelle ouvre à la place des scénarios de la démo :
+# visuelle ouvre :
 #   - `--etat-neuf` sert le banc de la copie REMIS À NEUF et rien de plus : aucun
 #     run, aucun fil, aucun projet, la configuration de la copie. Le geste qui
 #     précède un `--rejouer`, sans le passage qui le suit ; l'état sauvé d'un passage
@@ -612,12 +612,6 @@ resoudre_strategie() {
 MODE="demarrer"
 JETON_SURVEILLE=""
 NAVIGATEUR_AUTO=1
-# Ce qui alimente l'API : « reel » (maestro-api sur Redis) par défaut depuis
-# #186, « demo » sur demande explicite (bus mémoire + scénario factice).
-STACK="reel"
-# Le scénario de la démo (#978) : vide tant qu'aucun n'est demandé, et c'est alors
-# le nominal que la démo sert — le lancement d'avant, au bit près.
-SCENARIO=""
 # Les données que la stack réelle sert (#1164) : « copie » (celles de la copie de
 # travail) par défaut, « banc » sur `--etat-banc` (l'état du dernier passage du
 # banc), « neuf » sur `--etat-neuf` (le banc remis à neuf, #1165). REJOUER=1 refait
@@ -630,7 +624,16 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --stop) MODE="arreter" ;;
     --couper-api) MODE="couper-api" ;;
-    --demo | --demonstration) STACK="demo" ;;
+    # Le mode démo est parti (#1168) : on le dit, et on nomme ce qui le remplace, plutôt
+    # qu'un « Option inconnue » qui laisserait chercher une faute de frappe.
+    --demo | --demonstration | --scenario | --scenario=*)
+      echo "$1 : le mode démo a quitté le produit (#1168) — la Control Tower se lance sur le réel." >&2
+      echo "  Pour regarder un état, sans rien fabriquer :" >&2
+      echo "    · vide   : bash scripts/controltower/start.sh --etat-neuf" >&2
+      echo "    · peuplé : bash scripts/controltower/start.sh --etat-banc   (l'état du dernier passage du banc)" >&2
+      echo "    · panne  : bash scripts/controltower/start.sh --couper-api  (l'API seule tombe, l'UI reste servie)" >&2
+      exit 2
+      ;;
     --etat-banc) DONNEES="banc"; DONNEES_DEMANDEES="$DONNEES_DEMANDEES banc" ;;
     --etat-neuf) DONNEES="neuf"; DONNEES_DEMANDEES="$DONNEES_DEMANDEES neuf" ;;
     --rejouer) REJOUER=1 ;;
@@ -641,14 +644,6 @@ while [ $# -gt 0 ]; do
         echo "--rejouer= attend des scénarios (ex. --rejouer=S2,S4), ou rien pour tous" >&2
         exit 2
       fi
-      ;;
-    --scenario)
-      if [ $# -lt 2 ]; then
-        echo "--scenario attend un nom de scénario" >&2
-        exit 2
-      fi
-      SCENARIO="$2"
-      shift
       ;;
     --no-browser | --sans-navigateur) NAVIGATEUR_AUTO=0 ;;
     # Dit quel navigateur serait ouvert, et comment, sans rien démarrer ni ouvrir.
@@ -667,35 +662,12 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-# Le scénario est une propriété de la DÉMO, et il se vérifie avant de toucher à quoi que ce soit.
-# Les noms sont LUS dans `maestro/controltower/demo.py` (une constante `SCENARIO_* = "…"` par ligne),
-# jamais recopiés ici (#830) : le module refuserait de toute façon un nom inconnu, mais il le ferait
-# en arrière-plan, dans `api.log`, et ce script n'en dirait que « l'API ne répond pas ».
-# Sans `--demo`, on refuse au lieu de basculer : demander un scénario factice ne doit pas suffire à
-# remplacer la vraie orchestration en silence (#186).
-if [ -n "$SCENARIO" ] && [ "$MODE" != "arreter" ]; then
-  if [ "$STACK" != "demo" ]; then
-    echo "--scenario ne vaut qu'avec --demo : bash scripts/controltower/start.sh --demo --scenario $SCENARIO" >&2
-    exit 2
-  fi
-  SCENARIOS_CONNUS="$(sed -n 's/^SCENARIO_[A-Z_]* *= *"\([^"]*\)".*/\1/p' \
-    "$RACINE/maestro/controltower/demo.py" | tr '\n' ' ')"
-  case " $SCENARIOS_CONNUS " in
-    *" $SCENARIO "*) ;;
-    *)
-      echo "Scénario inconnu : $SCENARIO (connus : ${SCENARIOS_CONNUS% })" >&2
-      exit 2
-      ;;
-  esac
-fi
-
-# L'état du banc est une propriété de la stack RÉELLE (#1164) : servi par l'API réelle, jamais
-# mêlé au scénario factice. Et rejouer ne se demande pas seul — c'est refaire CET état-là, et il
-# coûte du vrai modèle : un `--rejouer` égaré ne doit pas lancer un passage.
+# Rejouer l'état du banc (#1164) ne se demande pas seul — c'est refaire CET état-là, et il coûte
+# du vrai modèle : un `--rejouer` égaré ne doit pas lancer un passage.
 #
-# La stack neuve (#1165) suit la même règle : c'est une stack RÉELLE sur un jeu de
-# données à part, jamais la démo. Et elle ne se demande pas avec l'état du banc — l'une
-# vide ce que l'autre rouvre : servir les deux à la fois n'a pas de sens.
+# La stack neuve (#1165) est une stack réelle sur un jeu de données à part. Elle ne se demande
+# pas avec l'état du banc — l'une vide ce que l'autre rouvre : servir les deux à la fois n'a pas
+# de sens.
 if [ "$MODE" != "arreter" ] && [ "$MODE" != "couper-api" ]; then
   case "$DONNEES_DEMANDEES" in
     *banc*neuf* | *neuf*banc*)
@@ -703,14 +675,6 @@ if [ "$MODE" != "arreter" ] && [ "$MODE" != "couper-api" ]; then
       exit 2
       ;;
   esac
-  if [ "$DONNEES" = "banc" ] && [ "$STACK" = "demo" ]; then
-    echo "--etat-banc sert l'état réel d'un passage du banc : incompatible avec --demo" >&2
-    exit 2
-  fi
-  if [ "$DONNEES" = "neuf" ] && [ "$STACK" = "demo" ]; then
-    echo "--etat-neuf sert une stack réelle neuve : incompatible avec --demo" >&2
-    exit 2
-  fi
   if [ "$REJOUER" = 1 ] && [ "$DONNEES" != "banc" ]; then
     echo "--rejouer refait l'état du banc : bash scripts/controltower/start.sh --etat-banc --rejouer" >&2
     exit 2
@@ -741,11 +705,8 @@ resoudre_strategie
 # Diagnostic : imprime le verdict (et le profil/marqueur, propres aux ports — l'indépendance de deux
 # sessions parallèles, #200/#152) sans démarrer la stack ni ouvrir de fenêtre.
 if [ "$MODE" = "diagnostic" ]; then
-  printf 'stack: %s\n' "$STACK"
-  # Seulement quand il est demandé : la sortie d'un diagnostic sans scénario reste celle d'avant.
-  if [ -n "$SCENARIO" ]; then printf 'scenario: %s\n' "$SCENARIO"; fi
-  # Même règle pour l'état du banc (#1164) et la stack neuve (#1165) : absents du diagnostic tant
-  # qu'ils ne sont pas demandés.
+  # L'état du banc (#1164) et la stack neuve (#1165) : absents du diagnostic tant qu'ils ne sont
+  # pas demandés.
   if [ "$DONNEES" != "copie" ]; then
     printf 'donnees: %s\n' "$DONNEES"
     if [ "$REJOUER" = 1 ]; then printf 'rejouer: %s\n' "${REJOUER_SCENARIOS:-tous}"; fi
@@ -855,9 +816,7 @@ fi
 # script : sans elle, un tube sous Windows le ferait écrire en cp1252 (#141).
 export PYTHONIOENCODING="${PYTHONIOENCODING:-utf-8}"
 
-# Mode réel : Redis est une dépendance dure. On la vérifie plutôt que de la
-# supposer — et on ne retombe PAS sur la démo, qui donnerait des données
-# factices pour la réalité. Le diagnostic (URL résolue, geste exact) vient du
+# Redis est une dépendance dure. On la vérifie plutôt que de la supposer. Le diagnostic (URL résolue, geste exact) vient du
 # CLI de l'API, seul endroit où REDIS_URL est résolue ; quand Redis répond, il
 # ANNONCE les données que la stack verra — son espace, ses fils, ses projets (#1164).
 #
@@ -867,7 +826,7 @@ export PYTHONIOENCODING="${PYTHONIOENCODING:-utf-8}"
 # pourquoi il refuse (3 : quelque chose vit sur le banc ; 4 : aucun état à rouvrir).
 #
 # La stack neuve (#1165) passe par le même préflight, sans état à rouvrir : `--neuf`.
-if [ "$MODE" = "demarrer" ] && [ "$STACK" = "reel" ]; then
+if [ "$MODE" = "demarrer" ]; then
   if [ "$DONNEES" = "banc" ] || [ "$DONNEES" = "neuf" ]; then
     code_banc=0
     if [ "$DONNEES" = "neuf" ]; then
@@ -884,10 +843,8 @@ if [ "$MODE" = "demarrer" ] && [ "$STACK" = "reel" ]; then
     fi
   elif ! (cd "$RACINE" && "$PYTHON" -m maestro.controltower.cli --verifier-redis); then
     echo >&2
-    echo "Mode réel impossible sans Redis — rien n'a été démarré ni arrêté." >&2
-    echo "  · lancer Redis (ci-dessus), puis relancer cette commande ;" >&2
-    echo "  · ou explorer l'UI sur un scénario factice, sans Redis :" >&2
-    echo "      bash scripts/controltower/start.sh --demo" >&2
+    echo "Control Tower impossible sans Redis — rien n'a été démarré ni arrêté." >&2
+    echo "  · lancer Redis (ci-dessus), puis relancer cette commande." >&2
     exit 1
   fi
 fi
@@ -930,17 +887,7 @@ if [ "$DONNEES" = "banc" ] || [ "$DONNEES" = "neuf" ]; then
   fi
 fi
 
-if [ "$STACK" = "demo" ]; then
-  if [ -n "$SCENARIO" ]; then
-    echo "[api] démarrage sur :${PORT_API} — mode démo, scénario « $SCENARIO » (log : $LOG_DIR_REL/api.log)"
-    nohup "$PYTHON" -m maestro.controltower.demo --port "$PORT_API" --scenario "$SCENARIO" \
-      >"$LOG_DIR/api.log" 2>&1 &
-  else
-    echo "[api] démarrage sur :${PORT_API} — mode démo, scénario factice (log : $LOG_DIR_REL/api.log)"
-    nohup "$PYTHON" -m maestro.controltower.demo --port "$PORT_API" \
-      >"$LOG_DIR/api.log" 2>&1 &
-  fi
-elif [ "$DONNEES" = "banc" ] || [ "$DONNEES" = "neuf" ]; then
+if [ "$DONNEES" = "banc" ] || [ "$DONNEES" = "neuf" ]; then
   # La stack neuve est servie sur le jeu de données du banc, vidé juste au-dessus : l'API ne
   # connaît qu'un jeu à part, et c'est celui-là.
   if [ "$DONNEES" = "neuf" ]; then
@@ -1001,9 +948,7 @@ if [ "$NAVIGATEUR_AUTO" = 1 ]; then
 fi
 
 echo
-if [ "$STACK" = "demo" ]; then
-  echo "Control Tower prête (mode démo — scénario FACTICE${SCENARIO:+ « $SCENARIO »}) : $URL_UI"
-elif [ "$DONNEES" = "neuf" ]; then
+if [ "$DONNEES" = "neuf" ]; then
   echo "Control Tower prête (mode réel — stack neuve : aucun run, aucun fil, aucun projet) : $URL_UI"
 elif [ "$DONNEES" = "banc" ]; then
   # L'âge et le contenu de l'état ont été dits au préflight, en tête de sortie.

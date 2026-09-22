@@ -47,7 +47,7 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   un bloc **« Sources lues »**, construit à partir de ce qui lui a été passé et
   jamais recopié de sa réponse ; il **dit qu'il ne sait pas** quand la
   documentation ne porte rien, au lieu d'orienter vers l'écran le plus proche ; et
-  **sans fournisseur de modèle** (la démo #65, un poste non configuré) le panneau
+  **sans fournisseur de modèle** (un poste non configuré) le panneau
   répond quand même, par la table restée en **repli**, en annonçant qu'il n'a rien
   lu — une réponse sans source ne peut donc pas se faire passer pour documentée ;
 - **Tableau de bord épuré** (#191, lot 2 de la navigation v2 #189) : l'essentiel
@@ -537,9 +537,9 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   projection rendant les acteurs vus au journal — la réserve de `NOMS_RESERVES`
   interdit qu'un agent *personnalisé* prenne ce nom, elle ne promet pas que le
   parc n'en porte aucun. La mettre en tête puis concaténer le parc entier donnait
-  deux entrées pour un seul fil, sous la même clé React ; invisible en `--demo` et
-  en test, dont les parcs n'ont jamais porté l'orchestrateur, donc **le parc monté
-  par les tests prend désormais la forme du mode réel**.
+  deux entrées pour un seul fil, sous la même clé React ; invisible dans la démo
+  d'alors et en test, dont les parcs n'ont jamais porté l'orchestrateur, donc
+  **le parc monté par les tests prend désormais la forme du mode réel**.
   **Ce qu'un message a ouvert est sous sa bulle** : le rattachement vient du
   message (`run_id`/`tache_id`, persisté), le compte des tâches et les validations
   en attente de l'état temps réel, avec renvoi vers `/runs/<run_id>` et
@@ -2055,13 +2055,16 @@ Trois décisions portent le mécanisme, et aucune ne se défait seule :
   4,5:1 sur un fond creux (`contraste.test.ts`) : son retrait vient de la taille
   et de la police.
 
-L'état limite se regarde sans le provoquer : `bash
-scripts/controltower/start.sh --demo --scenario erreur` fait répondre l'API en
-500 sur toutes les routes sauf la santé et les projets (#978).
-
-> ⚠ Le mode démo quitte le dépôt
-> ([docs/41](../../docs/41-decision-maestro-juge-il-ne-bride-pas.md), #1168). L'état d'erreur se
-> regarde sur une vraie panne de la stack réelle. Ce passage est réécrit par #1168.
+Les pannes se regardent sur la vraie stack
+([docs/41 §4](../../docs/41-decision-maestro-juge-il-ne-bride-pas.md)). **API
+injoignable** : `bash scripts/controltower/start.sh --couper-api` coupe l'API
+seule sous une stack montée, l'UI restant servie — la bannière se voit sur un
+écran atteint par le menu après la coupure, et relancer la stack la rétablit.
+**API en erreur**, elle, ne se produit pas : mesuré le 2026-09-22, la vraie API
+dont le magasin est coupé répond `200` et des listes vides (#1206). L'état est
+donc **non couvert** à l'écran, et `tests/banniere-erreur.test.tsx` le garde. Le
+scénario `erreur` de la démo (#978), qui fabriquait ces 500, est parti avec elle
+(#1168).
 
 ## Lancer en local
 

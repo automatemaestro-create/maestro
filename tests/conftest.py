@@ -12,7 +12,7 @@ du poste qui la joue — au même titre que le réseau débranché d'office côt
 (`apps/web/tests/setup.ts`). Sans ce garde-fou, un poste dont l'intégration
 Langfuse est *opérationnelle* joue la même suite pour le même verdict en
 **17 min 51 s** au lieu de 7 min 08 s (#195) : `activer_export_langfuse()` est
-appelée par chaque point d'entrée (`engine_cli.main`, `maestro.demo.main`), le
+appelée par chaque point d'entrée (`engine_cli.main`), le
 handler posé sur le logger **global** `maestro.trace` survit au test qui l'a
 déclenché, et chaque ligne journalisée ensuite part en POST synchrone vers le
 vrai hôte — au passage, les évènements des tests polluent le vrai projet

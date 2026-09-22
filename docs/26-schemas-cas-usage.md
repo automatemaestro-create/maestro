@@ -372,7 +372,7 @@ relit contre [docs/06](./06-roadmap.md), qui fait foi.
 | Consulter les coûts et le grand livre par exécution | **livré** | V1 (#57, #58) |
 | Personnaliser un agent : fiche complète, playbook publié, permissions | *en cours* | Control Tower v3 — agents (#243) |
 | Discuter avec un agent, puis chat global avec l'orchestration | *en cours* | Phase 6, puis v3 — conversation (#244) |
-| Registre de configuration et journal requêtable | *en cours* | Phase 5 — contrats figés ([§6.2](./05-interface-control-tower.md), §6.3), routes en `501` |
+| Journal requêtable | **livré** | Phase 5 — contrat de [§6.2](./05-interface-control-tower.md), servi depuis #478 ; le registre de configuration (§6.3), qui ne répondait qu'en démo, est retiré (#1168) |
 | Composer un objectif à partir de documents et de références | **livré** | Phase 8 (EF-39) — sources #315/#316/#317, écran #319 ([§2.7.3](./05-interface-control-tower.md)) |
 | Valider un brief structuré avant décomposition | planifié | Phase 8 (EF-40) |
 | Installer le produit sans chaîne de développement ; enveloppe de bureau | planifié | Phase 9 (EF-41, EF-42) |

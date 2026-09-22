@@ -4,14 +4,15 @@
 lanceur local passé en mode réel par défaut (#186) qui sont vérifiés ici, chacun
 par le levier qui l'expose sans rien lancer :
 
-① **Quel mode est choisi** — `scripts/controltower/start.sh` sait le dire sans
-   démarrer quoi que ce soit : `--diagnostic-navigateur` imprime `stack: reel` ou
-   `stack: demo` puis s'arrête (avant le préflight comme avant le nettoyage).
-   C'est le même levier que [`test_controltower_start.py`](test_controltower_start.py)
-   utilise pour le choix du navigateur (#200) — d'où des tests déterministes et
-   multiplateformes. On y vérifie que **le réel est le défaut**, que la démo est
-   **demandée** (`--demo`), et que le mode ne déteint pas sur le reste du
-   lanceur (même navigateur, mêmes ports).
+① **Le réel est le seul mode** — le mode démo a quitté le produit (#1168) :
+   `--demo`, `--demonstration` et `--scenario` sont **refusés en le disant**, avant
+   tout nettoyage ni démarrage, et le refus nomme les états réels qui les remplacent
+   (stack neuve, état du banc, vraie panne). `scripts/controltower/start.sh` sait
+   dire ce qu'il ferait sans démarrer quoi que ce soit : `--diagnostic-navigateur`
+   imprime ses lignes `clé: valeur` puis s'arrête (avant le préflight comme avant le
+   nettoyage). C'est le même levier que
+   [`test_controltower_start.py`](test_controltower_start.py) utilise pour le choix
+   du navigateur (#200) — d'où des tests déterministes et multiplateformes.
 
 ② **Le diagnostic quand Redis manque** — il vit dans `maestro.controltower.cli`
    (`--verifier-redis`), seul endroit où `REDIS_URL` est résolue. On l'exerce en
@@ -19,35 +20,24 @@ par le levier qui l'expose sans rien lancer :
    time-out réseau à subir, et les deux issues (répond / ne répond pas) sont
    jouables à volonté.
 
-③ **Le refus du lanceur** — bout en bout, en shell : mode réel sans Redis, le
-   script sort en erreur avec le geste exact **sans avoir rien démarré ni
-   arrêté** (c'est la promesse de #186 : jamais de repli silencieux sur la démo,
-   et pas de session en place sacrifiée pour découvrir que Redis manque). Ce
+③ **Le refus du lanceur** — bout en bout, en shell : sans Redis, le script sort
+   en erreur avec le geste exact **sans avoir rien démarré ni arrêté** (c'est la
+   promesse de #186 : pas de session en place sacrifiée pour découvrir que Redis
+   manque). Ce
    seul test a besoin du venv du dépôt — le préflight du script s'y réfère en dur
    —, donc il se saute là où il n'existe pas (l'image CI installe le paquet sans
    passer par `.venv/`) ; ② couvre le même diagnostic partout.
 
-④ **Les états limites de la démo** (#978, lot 3 de #972) — `--demo --scenario <nom>`, par le
-   même diagnostic que ① : un scénario se **demande** avec la démo et jamais sans elle, et ses
-   noms sont **lus** dans `maestro/controltower/demo.py` (#830). Le test les compare aux
-   constantes Python elles-mêmes : deux listes qui dériveraient se verraient ici. Ce que la démo
-   **sert** dans chaque état est gardé avec le module, dans `test_cli_smoke.py`.
-
 ⑤ **L'état du banc** (#1164) — `--etat-banc [--rejouer[=S…]]`, par le même
-   diagnostic que ① : il se **demande**, ne change que les données servies, ne se mêle
-   pas à la démo, et `--rejouer` ne vaut qu'avec lui (un rejeu coûte du vrai modèle).
+   diagnostic que ① : il se **demande**, ne change que les données servies, et
+   `--rejouer` ne vaut qu'avec lui (un rejeu coûte du vrai modèle).
    Son préflight passe, comme ③, avant tout nettoyage. Ce que l'état contient, et la
    façon dont il se sauve et se rouvre, est gardé par `tests/test_etat_banc.py`.
 
-⑥ **La stack neuve et la vraie panne** (#1165) — ce que la relecture visuelle ouvre à la place
-   des scénarios de la démo. `--etat-neuf` se demande comme ⑤ et ne se mêle ni à lui, ni à la
-   démo, ni à un rejeu ; `--couper-api` fait tomber l'API **seule**, sans rien solder — éprouvé
+⑥ **La stack neuve et la vraie panne** (#1165) — ce que la relecture visuelle ouvre pour les
+   états vide et erreur. `--etat-neuf` se demande comme ⑤ et ne se mêle ni à lui, ni à un
+   rejeu ; `--couper-api` fait tomber l'API **seule**, sans rien solder — éprouvé
    sur deux vrais processus à l'écoute, puisque c'est un geste et non une sélection.
-
-Ce qui n'est **pas** testé ici, faute de pouvoir l'être sans démarrer la stack :
-que le mode démo saute effectivement le préflight Redis. Le lancer pour
-l'observer contredirait la contrainte du ticket ; ① établit que `--demo`
-sélectionne l'autre stack, et le préflight est gardé par cette seule condition.
 """
 
 from __future__ import annotations
@@ -64,7 +54,6 @@ from pathlib import Path
 import pytest
 
 from maestro.controltower.cli import COMMANDE_REDIS, endpoint_lisible, verifier_redis
-from maestro.controltower.demo import SCENARIO_NOMINAL, SCENARIOS
 
 RACINE = Path(__file__).resolve().parent.parent
 SCRIPT = RACINE / "scripts" / "controltower" / "start.sh"
@@ -112,34 +101,42 @@ def diagnostic(*options: str, env_extra: dict[str, str] | None = None) -> dict[s
     return champs
 
 
-# ------------------------------------------- ① Le mode choisi par le lanceur (#186)
+# ------------------------------------ ① Le réel est le seul mode (#186, #1168)
 
 
-def test_le_mode_reel_est_le_defaut() -> None:
-    """Sans option, le lanceur monte la vraie orchestration — plus la démo (#186)."""
-    assert diagnostic()["stack"] == "reel"
+def test_le_diagnostic_ne_dit_plus_de_stack() -> None:
+    """Une seule stack, la réelle : le diagnostic n'a plus de mode à nommer (#1168)."""
+    champs = diagnostic()
+    assert "stack" not in champs
+    assert champs["famille"], "le diagnostic répond toujours"
 
 
-@pytest.mark.parametrize("option", ["--demo", "--demonstration"])
-def test_le_scenario_factice_doit_etre_demande(option: str) -> None:
-    """La démo n'est plus un défaut : elle a son drapeau, sous ses deux orthographes."""
-    assert diagnostic(option)["stack"] == "demo"
+@pytest.mark.parametrize(
+    "options",
+    [("--demo",), ("--demonstration",), ("--scenario", "vide"), ("--scenario=vide",)],
+)
+def test_le_mode_demo_est_refuse_en_le_disant(options: tuple[str, ...]) -> None:
+    """Le mode démo est parti : on le dit, on nomme ce qui le remplace, et rien n'est touché.
 
-
-def test_le_mode_ne_change_rien_au_reste_du_lanceur() -> None:
-    """« Tout le reste est IDENTIQUE dans les deux modes » : seule la stack change.
-
-    Mêmes ports, donc mêmes dossiers de logs et même profil de navigateur (#152),
-    et même stratégie d'ouverture : basculer en démo ne doit pas déplacer la
-    session ailleurs.
+    Un « Option inconnue » aurait laissé chercher une faute de frappe. Le refus tombe au
+    premier argument, donc avant le diagnostic, le préflight et tout nettoyage.
     """
-    reel = diagnostic()
-    demo = diagnostic("--demo")
+    acheve = lanceur(*options, "--diagnostic-navigateur")
 
-    assert reel != demo  # sans quoi le test ne prouverait rien
-    assert {c: v for c, v in reel.items() if c != "stack"} == {
-        c: v for c, v in demo.items() if c != "stack"
-    }
+    assert acheve.returncode == 2, acheve.stdout + acheve.stderr
+    assert "le mode démo a quitté le produit" in acheve.stderr
+    for geste in ("--etat-neuf", "--etat-banc", "--couper-api"):
+        assert geste in acheve.stderr
+    assert "famille:" not in acheve.stdout, "refusé avant le diagnostic, donc avant tout le reste"
+    assert "[nettoyage]" not in acheve.stdout
+    assert "[api]" not in acheve.stdout
+
+
+def test_le_lanceur_ne_connait_plus_le_module_de_la_demo() -> None:
+    """Plus rien à lancer : ni `maestro.controltower.demo`, ni une liste de scénarios à lire."""
+    source = SCRIPT.read_text(encoding="utf-8")
+    assert "maestro.controltower.demo" not in source
+    assert "controltower/demo.py" not in source
 
 
 def test_une_option_inconnue_est_refusee() -> None:
@@ -165,41 +162,6 @@ def lanceur(*options: str) -> subprocess.CompletedProcess[str]:
         errors="replace",
         timeout=60,
     )
-
-
-# ------------------------------------------- ④ Les états limites de la démo (#978)
-
-
-@pytest.mark.parametrize("scenario", SCENARIOS)
-def test_chaque_scenario_de_la_demo_se_demande_au_lanceur(scenario: str) -> None:
-    """Chaque nom que la démo déclare est un nom que le lanceur accepte — lu, jamais recopié."""
-    champs = diagnostic("--demo", "--scenario", scenario)
-    assert champs["stack"] == "demo"
-    assert champs["scenario"] == scenario
-
-
-def test_sans_scenario_le_lancement_est_celui_d_avant() -> None:
-    """Le nominal est servi SANS option, et le diagnostic d'un lancement ordinaire n'a pas bougé :
-    `captures.sh`, `/milestone-presentation` et les parcours filmés en dépendent (#978)."""
-    assert "scenario" not in diagnostic("--demo")
-    assert SCENARIO_NOMINAL == SCENARIOS[0], "le nominal ouvre la liste : c'est le défaut annoncé"
-
-
-def test_un_scenario_sans_la_demo_est_refuse() -> None:
-    """Demander un scénario factice ne suffit pas à remplacer la vraie orchestration (#186)."""
-    acheve = lanceur("--scenario", "vide", "--diagnostic-navigateur")
-    assert acheve.returncode == 2, acheve.stdout + acheve.stderr
-    assert "--scenario ne vaut qu'avec --demo" in acheve.stderr
-    assert "stack:" not in acheve.stdout, "refusé avant le diagnostic, donc avant tout le reste"
-
-
-def test_un_scenario_inconnu_est_refuse_avec_la_liste_lue_dans_la_demo() -> None:
-    """Refusé ICI : la démo le refuserait aussi, mais en arrière-plan, dans `api.log`, et le lanceur
-    n'en dirait que « l'API ne répond pas ». La liste citée est celle des constantes Python."""
-    acheve = lanceur("--demo", "--scenario", "plein", "--diagnostic-navigateur")
-    assert acheve.returncode == 2, acheve.stdout + acheve.stderr
-    assert f"Scénario inconnu : plein (connus : {' '.join(SCENARIOS)})" in acheve.stderr
-    assert "[api]" not in acheve.stdout
 
 
 # ------------------------------- ② Le diagnostic Redis, client remplacé par un double
@@ -370,8 +332,8 @@ def test_le_lanceur_refuse_le_mode_reel_sans_redis() -> None:
     # Le diagnostic du CLI, remonté tel quel par le lanceur.
     assert "redis://127.0.0.1:6399/0" in acheve.stderr
     assert COMMANDE_REDIS in acheve.stderr
-    # Jamais de repli silencieux : la démo est proposée, pas prise d'office.
-    assert "--demo" in acheve.stderr
+    # Le seul geste proposé est de lancer Redis : il n'y a plus d'autre stack (#1168).
+    assert "--demo" not in acheve.stderr
     assert "rien n'a été démarré ni arrêté" in acheve.stderr
     # Et c'est vrai : aucune session touchée, aucun service lancé.
     assert "[nettoyage]" not in acheve.stdout
@@ -389,7 +351,6 @@ def test_l_etat_du_banc_se_demande_et_ne_change_que_les_donnees() -> None:
 
     assert "donnees" not in reel, "sans --etat-banc, le diagnostic d'avant, au bit près"
     assert banc["donnees"] == "banc"
-    assert banc["stack"] == "reel", "l'état du banc est servi par l'API réelle"
     assert {c: v for c, v in banc.items() if c != "donnees"} == reel
 
 
@@ -406,20 +367,13 @@ def test_rejouer_sans_l_etat_du_banc_est_refuse(option: str) -> None:
     acheve = lanceur(option, "--diagnostic-navigateur")
     assert acheve.returncode == 2, acheve.stdout + acheve.stderr
     assert "--etat-banc --rejouer" in acheve.stderr
-    assert "stack:" not in acheve.stdout, "refusé avant le diagnostic, donc avant tout le reste"
+    assert "famille:" not in acheve.stdout, "refusé avant le diagnostic, donc avant tout le reste"
 
 
 def test_rejouer_sans_scenario_apres_le_egal_est_refuse() -> None:
     acheve = lanceur("--etat-banc", "--rejouer=", "--diagnostic-navigateur")
     assert acheve.returncode == 2, acheve.stdout + acheve.stderr
-    assert "stack:" not in acheve.stdout
-
-
-def test_l_etat_du_banc_ne_se_mele_pas_a_la_demo() -> None:
-    """L'état réel d'un passage et un scénario factice ne se servent pas ensemble."""
-    acheve = lanceur("--etat-banc", "--demo", "--diagnostic-navigateur")
-    assert acheve.returncode == 2, acheve.stdout + acheve.stderr
-    assert "incompatible avec --demo" in acheve.stderr
+    assert "famille:" not in acheve.stdout
 
 
 @pytest.mark.skipif(
@@ -468,26 +422,24 @@ def test_la_stack_neuve_se_demande_et_ne_change_que_les_donnees() -> None:
     neuf = diagnostic("--etat-neuf")
 
     assert neuf["donnees"] == "neuf"
-    assert neuf["stack"] == "reel", "une stack neuve est une stack RÉELLE, jamais la démo"
     assert {c: v for c, v in neuf.items() if c != "donnees"} == reel
 
 
 @pytest.mark.parametrize(
     ("options", "motif"),
     [
-        (("--etat-neuf", "--demo"), "incompatible avec --demo"),
         (("--etat-neuf", "--etat-banc"), "l'un ou l'autre"),
         (("--etat-banc", "--etat-neuf"), "l'un ou l'autre"),
         (("--etat-neuf", "--rejouer"), "--etat-banc --rejouer"),
     ],
 )
 def test_la_stack_neuve_ne_se_mele_a_rien(options: tuple[str, ...], motif: str) -> None:
-    """Neuve et rouverte s'excluent, la démo n'est pas une stack neuve, et rejouer coûte du
-    vrai modèle : aucun des trois ne se demande avec elle."""
+    """Neuve et rouverte s'excluent, et rejouer coûte du vrai modèle : aucun des deux ne se
+    demande avec elle."""
     acheve = lanceur(*options, "--diagnostic-navigateur")
     assert acheve.returncode == 2, acheve.stdout + acheve.stderr
     assert motif in acheve.stderr
-    assert "stack:" not in acheve.stdout, "refusé avant le diagnostic, donc avant tout le reste"
+    assert "famille:" not in acheve.stdout, "refusé avant le diagnostic, donc avant tout le reste"
 
 
 def _port_libre() -> int:

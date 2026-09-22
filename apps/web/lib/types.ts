@@ -1443,10 +1443,10 @@ export const EVENEMENT_RUN_PLAN = "run.plan";
 
 // ---------------------------------------------------------------------------
 // Contrats d'API v2 (#183) — formes JSON figées des routes des Phases 5/6,
-// servies en fixtures par la démo (maestro.controltower.demo, module
-// maestro/controltower/fixtures.py) et documentées à docs/05 §6. La voie front
-// code contre ces formes ; le backend réel les remplira à contrat identique —
-// les routes répondent 501 tant que leur lot n'est pas livré.
+// documentées à docs/05 §6 et servies par le backend réel à mesure que leur lot
+// a été livré. Les formes des deux routes qui ne répondaient qu'en fixtures du
+// mode démo (registre de configuration, propositions de playbook globales) sont
+// parties avec lui (#1168).
 // ---------------------------------------------------------------------------
 
 /**
@@ -2276,51 +2276,6 @@ export type PageJournal = {
   taille: number;
   pages: number;
 };
-
-/** Types d'un réglage de configuration (maestro/controltower/fixtures.py). */
-export type TypeReglage = "chaine" | "entier" | "decimal" | "booleen" | "secret";
-
-/**
- * Un réglage produit éditable (`GET /api/configuration`, couche 1 du cadrage
- * sécurité #182) : sa `valeur` courante (masquée par des points si `secret`),
- * son `type` (`TypeReglage`), sa `valeur_defaut`, s'il est `modifiable` depuis
- * l'UI (liste blanche stricte), sa `source` (`defaut` tant qu'il n'a jamais été
- * édité, `stockage` sinon), sa `version` (0 au défaut) et `modifie_le` (`null`
- * sur un réglage jamais touché).
- */
-export type ReglageConfiguration = {
-  cle: string;
-  valeur: string;
-  type: string;
-  description: string;
-  categorie: string;
-  valeur_defaut: string;
-  modifiable: boolean;
-  secret: boolean;
-  source: string;
-  version: number;
-  modifie_le: string | null;
-};
-
-/**
- * Le registre de configuration (`GET /api/configuration`) : les `reglages`, la
- * `version` du registre versionné (append-only) et une cause d'`erreur` si le
- * stockage est illisible (même contrat de visibilité que `mcp_erreur`).
- */
-export type RegistreConfiguration = {
-  reglages: ReglageConfiguration[];
-  version: number;
-  erreur: string | null;
-};
-
-/**
- * Une proposition d'auto-amélioration vue **globalement**
- * (`GET /api/playbooks/propositions`, #183) : la `PropositionPlaybook` de
- * l'agent enrichie de son `role` — de quoi l'afficher (badge, notifications)
- * sans un aller-retour par le catalogue. Le pendant temps réel est l'événement
- * `EVENEMENT_PLAYBOOK_PROPOSITION` du WebSocket.
- */
-export type PropositionPlaybookGlobale = PropositionPlaybook & { role: string };
 
 /** Types de trame d'un flux SSE de chat (maestro/controltower/chat.py). */
 export const FRAGMENT_CHAT_DEBUT = "debut";

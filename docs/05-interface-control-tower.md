@@ -477,8 +477,9 @@ une panne ; l'écran est donc remplacé par **ce qu'il faut faire pour le rempli
   > états vides de Grafana et d'Argo CD — commentaires « Veille de conception » et
   > « Variante retenue » de #939) : la porte n'a **pas** été retirée, elle a été
   > remplacée par le geste que le produit avait déjà. Le mode de démonstration,
-  > lui, n'a pas bougé : il reste ce qu'on lance depuis le dépôt, et c'est
-  > précisément pourquoi il ne se propose pas ici.
+  > lui, restait ce qu'on lançait depuis le dépôt, et c'est précisément pourquoi
+  > il ne se proposait pas ici. Il a depuis quitté le produit (#1168,
+  > [docs/41 §4](./41-decision-maestro-juge-il-ne-bride-pas.md)).
 
 Ce n'est **pas un état d'erreur**, et la distinction est le point de conception :
 une API injoignable garde ses panneaux et sa bannière d'erreur, parce qu'un écran
@@ -627,13 +628,11 @@ minimaliste, planification en échec), et c'est assumé : de l'extérieur les de
 situations sont la même — le run travaille, rien n'est encore arrivé —, et la phrase
 ne promet donc pas de plan pour bientôt, elle dit ce qu'on sait.
 
-**La phase s'ouvre dans un navigateur** (#1109) :
-`bash scripts/controltower/start.sh --demo --scenario decomposition` sert un run qui
-travaille quatre minutes sans aucune tâche — journal qui avance, coût qui monte —
-puis publie son plan d'un coup, et recommence. Au bouclage de ce critère, aucun
-scénario ne savait montrer cette phase : le nominal publie son plan à la première
-seconde, et seuls deux tests jsdom la gardaient. Le détail du scénario est en
-[docs/30 §5.8](./30-cible-visuelle-control-tower.md).
+**La phase se regarde sur un vrai run**, dans ses premières minutes : c'est le temps
+où l'orchestrateur écrit son plan. Hors de là, c'est un état **non couvert**
+([docs/41 §4](./41-decision-maestro-juge-il-ne-bride-pas.md)), jamais fabriqué. Le
+scénario `decomposition` qui la rejouait en boucle dans la démo (#1109) est parti avec
+elle (#1168) ; deux tests jsdom la gardent.
 
 Composants : `apps/web/components/runs/RunAuCentre.tsx` (le bloc),
 `apps/web/lib/execution.ts` (`runsParRegime`, `estEnDecomposition`,
@@ -1399,8 +1398,8 @@ vue ajoute **sa** réserve à celle du serveur : le signe n'apparaît que sur un
 dessinée « En cours », donc jamais sur une attente humaine, qui l'emporte sur le signe
 comme elle l'emporte sur l'état (`lib/graphe.etatDuNoeud`) — une tâche arrêtée sur
 quelqu'un ne « bouge » pas, quel qu'ait été son dernier geste. Un run soldé rend le
-dessin d'avant ce lot. La démo publie deux gestes pendant la pulsation QA, seul moment
-où une de ses tâches travaille assez longtemps pour qu'on voie le signe compter.
+dessin d'avant ce lot. Le signe se regarde sur une tâche d'un vrai run qui travaille
+assez longtemps pour qu'on le voie compter.
 Couverture (#838) : [`apps/web/tests/signe-de-vie.test.tsx`](../apps/web/tests/signe-de-vie.test.tsx)
 côté écran — détail en §6.13bis —, `tests/test_run_qui_travaille.py` côté contrat.
 
@@ -1427,12 +1426,6 @@ Deux notes de lecture, jamais confondues : `plan_connu: false` dit que le run n'
 publié son plan (nœuds reconstruits, aucune arête connue) ; `plat: true` qu'il n'a
 déclaré aucune dépendance — un graphe normal, et le cas le plus courant. La première
 recouvre la seconde, donc elle l'emporte.
-
-⚠ **La démo publie désormais son plan** (`maestro/controltower/demo.py`) : sans lui
-`--demo` rendait un graphe `plan_connu: false`, c'est-à-dire une file de boîtes grises
-sans une arête — l'écran que cette démo est justement là pour montrer n'aurait rien eu
-à montrer. La topologie reprend celle de l'exemple de §6.11 sur les tâches du scénario
-(schéma → API ∥ maquette → CI), ossature de checklist comprise.
 
 Vérification : [`apps/web/tests/pipeline.test.tsx`](../apps/web/tests/pipeline.test.tsx)
 (#492) porte la couverture, en trois étages qui ne se gardent pas de la même façon — les
@@ -3135,32 +3128,25 @@ graphe à montrer, et c'est justement celui qu'il ne faut pas taire.
 
 Le cadrage #182 répartit les prochaines améliorations en deux voies
 **parallèles** : Phase 5 (socle backend) et Phase 6 (Control Tower front). Pour les rendre
-réellement indépendantes, les **formes JSON** des routes à venir sont **arrêtées ici** et
-**servies en fixtures par la démo** (`maestro.controltower.demo`) : la voie front code contre
-elles sans attendre le backend réel (ticket #183).
+réellement indépendantes, les **formes JSON** des routes à venir ont été **arrêtées ici**
+(ticket #183) : la voie front codait contre elles sans attendre le backend réel.
 
-> ⚠ **Le mode démo quitte le dépôt** ([docs/41](./41-decision-maestro-juge-il-ne-bride-pas.md),
-> #1168). Les fixtures (`fixtures.py`) et les deux routes qui ne servaient qu'elles
-> (`GET /api/configuration`, `GET /api/playbooks/propositions`, `501` en réel) partent avec lui. Ce
-> chapitre reste le répertoire des formes JSON de l'API. Les passages qui décrivent la démo au
-> présent sont réécrits par #1168.
+**État de livraison.** La forme est le contrat, et le backend réel l'a remplie **à contrat
+identique** : les **exécutions** (§6.1, lot #185), le **journal requêtable** (§6.2, lot #478) et
+le **flux SSE d'un fil de chat** (§6.5, lot #268) se servent de
+`maestro.controltower.executions` / `maestro.controltower.journal` / `maestro.controltower.chat`,
+et la **référence de ticket** (§6.6) voyage avec la tâche. Miroir TypeScript :
+[`apps/web/lib/types.ts`](../apps/web/lib/types.ts).
 
-**État de livraison.** Ces routes sont déclarées dans `create_app` mais **répondent `501`** tant
-que leur lot n'est pas livré (Phase 5, #184+). Fournir des fixtures (`create_app(fixtures=…)`, ce
-que fait la démo) les fait servir des données factices cohérentes avec le scénario existant. La
-forme est le contrat ; le backend réel la remplira **à contrat identique** — les **exécutions**
-(§6.1, lot #185), le **journal requêtable** (§6.2, lot #478) puis le **flux SSE d'un fil de chat**
-(§6.5, lot #268) l'ont déjà fait : ils ne passent plus ni par le `501` ni par les fixtures, et se
-servent de `maestro.controltower.executions` / `maestro.controltower.journal` /
-`maestro.controltower.chat`. Une fixture livrée **quitte**
-donc ce module au lieu d'y rester en double : garder les deux ferait de la démo un écran nourri
-de faux à côté d'un vrai. Miroir TypeScript :
-[`apps/web/lib/types.ts`](../apps/web/lib/types.ts) ; fixtures : `maestro/controltower/fixtures.py`.
+> Les deux formes que seul le mode démo servait — le registre de configuration (§6.3) et les
+> propositions de playbook globales (§6.4), `501` en réel — sont **retirées par #1168** avec lui
+> ([docs/41 §4](./41-decision-maestro-juge-il-ne-bride-pas.md)) : routes, fixtures et paramètre
+> `fixtures` de `create_app` compris.
 
 Ce chapitre est depuis devenu **le** répertoire des formes JSON de l'API, phases 5/6 ou non : les
 routes livrées après lui y sont documentées au même endroit et au même niveau de détail plutôt que
-dans un second chapitre concurrent (§6.7, les projets de la Phase 7). Une section porte donc la
-mention **livré** quand elle décrit du code réel, et reste une forme figée servie en fixtures sinon.
+dans un second chapitre concurrent (§6.7, les projets de la Phase 7). Une section porte la mention
+**livré** quand elle décrit du code réel.
 
 Convention partagée avec les routes existantes : un champ **`null`** vaut « inconnu » et se
 distingue d'un zéro ou d'une absence ; les horodatages sont en **ISO-8601 UTC**.
@@ -3342,8 +3328,8 @@ Quatre choses à ne pas défaire :
   C'est ce que dit le bandeau en nommant ses « N tâche(s) **comptabilisée(s)** ».
 - **Le graphe complète le plan des tâches que le run a portées sans qu'il les annonce**, en nœuds
   isolés. La réciproque du point précédent, et elle a été trouvée **en regardant l'écran** (#935) :
-  la démo publie un plan de quatre nœuds puis exécute une cinquième tâche — une vérification de
-  santé rejouée en boucle —, si bien que le pipeline annonçait « 4 tâches » quand les trois autres
+  la démo d'alors publiait un plan de quatre nœuds puis exécutait une cinquième tâche — une
+  vérification de santé rejouée en boucle —, si bien que le pipeline annonçait « 4 tâches » quand les trois autres
   surfaces en disaient cinq. Faire entrer le plan dans les tâches ne suffisait pas ; il fallait
   aussi faire entrer les tâches dans le graphe. Écrit en **un seul geste** pour les deux régimes :
   sur un run sans plan publié, le complément rend exactement le repli d'avant, nœud pour nœud —
@@ -3456,7 +3442,7 @@ repaie une planification, sous un **nouveau** `run_id`.
 
 // ResumeExecution (réponse)
 {
-  "run_id": "demo-live",
+  "run_id": "4f2a91c07b3d",
   "objectif": "Prototyper un mini-CRM",
   // Le **titre** du run (#991) : l'objectif ramené à sa première ligne, coupé au
   // dernier mot entier sous 80 signes. C'est ce que la liste des runs, le fil et
@@ -3507,7 +3493,7 @@ repaie une planification, sous un **nouveau** `run_id`.
   "projet_id": "prj-7f3a",                 // null : hors de tout projet
   "sources": [                             // [] : aucune — les sources **résolues** (#315)
     { "type": "fichier", "nom": "CDC-v2.docx",
-      "chemin": "…/core/ingestion/demo-live/CDC-v2.docx",   // où la matière a atterri
+      "chemin": "…/core/ingestion/4f2a91c07b3d/CDC-v2.docx",   // où la matière a atterri
       "valeur": "", "taille": 184320, "lecture_seule": true }
   ],
   "debut": "2026-07-30T09:00:00+00:00",
@@ -3694,9 +3680,9 @@ choses à ne pas défaire :
   acquis par construction — un événement est publié une fois, donc consigné une fois ;
 - un `RedisEventBus` **nu** ne se construit plus pour publier : `bus_durable` est la fabrique de
   production, et le bus reçu par `create_app` est enveloppé une fois pour toutes, sur son propre
-  journal. Corollaire pour qui garde la main sur le bus qu'il injecte (la démo #65) : ce qu'il
-  publie par sa **propre** référence est diffusé et projeté, mais pas consigné — il court-circuite
-  le producteur, donc le geste qui consigne ;
+  journal. Corollaire pour qui garde la main sur le bus qu'il injecte (un test, comme le faisait la
+  démo #65 avant #1168) : ce qu'il publie par sa **propre** référence est diffusé et projeté, mais
+  pas consigné — il court-circuite le producteur, donc le geste qui consigne ;
 - une consignation en panne reste **tracée sans couper le direct**. C'est la promesse que portait la
   pompe, déplacée avec le geste : le flux temps réel et la projection valent mieux que rien, et le
   seul prix est que cet événement-là manquera au prochain rejeu.
@@ -3920,15 +3906,15 @@ Une page de journal d'événements interrogeable — la mémoire longue du fil d
     {
       "id": "j-0002",                       // id stable (référençable, triable)
       "type": "tache.statut",
-      "run_id": "demo-live",
-      "tache_id": "demo-t1",
+      "run_id": "4f2a91c07b3d",
+      "tache_id": "t1",
       "titre": "Schéma des contacts",       // #478 — ce que la ligne prononce
       "agent": "bdd",
       "role": "Base de données",
       "statut": "en_cours",
       "detail": "Concevoir le schéma SQL de la table contacts",
       "description": "",                    // #478 — le contexte long, vide le plus souvent
-      "projet_id": "prj-demo",
+      "projet_id": "prj-7f3a",
       "horodatage": "2026-07-30T09:00:12+00:00"
     }
   ],
@@ -3982,59 +3968,19 @@ page hors bornes, l'alimentation à deux sources et surtout **la promesse du lot
 le journal d'un run terminé la veille se lit encore, et ses identifiants sont les
 mêmes à chaque redémarrage.
 
-### 6.3 Registre de configuration
+### 6.3 Registre de configuration — *retiré* (#1168)
 
-Les **réglages produit éditables** (couche 1 du cadrage sécurité #182) : ils quittent
-l'environnement pour un registre versionné côté serveur, rechargé à chaud. **Liste blanche
-stricte** — aucune écriture arbitraire de variable d'environnement ; les secrets sont
-**write-only** (valeur masquée, jamais renvoyée en clair, #132).
+La forme figée en #183 pour les réglages produit éditables (`GET /api/configuration`) n'a jamais
+été servie qu'en fixtures par le mode démo, et rendait `501` en réel. Elle est partie avec lui
+([docs/41 §4](./41-decision-maestro-juge-il-ne-bride-pas.md)), types TypeScript compris
+(`RegistreConfiguration`, `ReglageConfiguration`, `TypeReglage`).
 
-- `GET /api/configuration` → `RegistreConfiguration`.
+### 6.4 Propositions de playbook globales — *retirées* (#1168)
 
-```jsonc
-// RegistreConfiguration
-{
-  "reglages": [
-    {
-      "cle": "plafond_cout_usd",
-      "valeur": "5.0",                       // masquée par des points si secret
-      "type": "decimal",                     // chaine | entier | decimal | booleen | secret
-      "description": "Plafond de coût (USD) d'une exécution avant arrêt du moteur.",
-      "categorie": "plafonds",               // modele | plafonds | execution | integrations | retention
-      "valeur_defaut": "10.0",
-      "modifiable": true,                    // false : lecture seule (hors liste blanche)
-      "secret": false,
-      "source": "stockage",                  // defaut (jamais édité) | stockage
-      "version": 3,                          // 0 au défaut ; incrémentée à chaque écriture
-      "modifie_le": "2026-07-29T08:05:00+00:00"  // null si jamais touché
-    }
-  ],
-  "version": 3,                              // version du registre versionné (append-only)
-  "erreur": null                             // cause si le stockage est illisible
-}
-```
-
-### 6.4 Propositions de playbook globales
-
-L'agrégat **transverse** des propositions d'auto-amélioration (#111 exposé par agent), source du
-badge d'attente et des notifications (items 8/9 du cadrage).
-
-- `GET /api/playbooks/propositions` → `PropositionPlaybookGlobale[]` — chaque proposition
-  (numéro de brouillon, provenance, justification) enrichie du `role` de son agent.
-- Pendant **temps réel** : l'événement `playbook.proposition` du WebSocket — un signal global
-  (sans `run_id`) que l'UI badge et pousse en notification.
-
-```jsonc
-// PropositionPlaybookGlobale
-{
-  "agent": "qa",
-  "role": "QA / Testeur",
-  "version": 1,                              // numéro de brouillon (numérotation propre)
-  "cree_le": "2026-07-30T18:42:00+00:00",
-  "provenance": "proposition",
-  "justification": "…"                       // raison liée aux échecs analysés
-}
-```
+Même sort pour l'agrégat transverse `GET /api/playbooks/propositions`
+(`PropositionPlaybookGlobale`), `501` en réel. Les propositions d'un agent restent servies par
+`GET /api/playbooks/{agent}/propositions`, et l'événement `playbook.proposition` du WebSocket
+reste publié.
 
 ### 6.4bis Catalogue des fournisseurs, modèles et efforts (#253) — **livré**
 
@@ -4919,7 +4865,7 @@ bascule, et se lit avec n'importe laquelle des quatre. Le décompte de cette sec
 ```jsonc
 // GrapheRun
 {
-  "run_id": "demo-live",
+  "run_id": "4f2a91c07b3d",
   // Le run a-t-il publié son plan ? À `false`, les nœuds sont reconstruits de
   // ses seules tâches vues et il n'y a AUCUNE arête, faute de les connaître.
   "plan_connu": true,
@@ -5175,7 +5121,7 @@ dise.
 ```jsonc
 // FriseRun
 {
-  "run_id": "demo-live",
+  "run_id": "4f2a91c07b3d",
   // La chronologie, TRIÉE PAR LE SERVEUR : instant, puis rang du journal.
   "entrees": [
     { "id": "j-0007",                     // l'id du journal requêtable (§6.2)
@@ -5233,7 +5179,7 @@ par run. Chaque entrée garde son `id` — les deux lectures ne peuvent donc pas
 nommée au §6.11 pour les arêtes : le relais n'existe que si une messagerie est injectée
 (`OrchestrationEngine(..., mailbox=…)`), or la Control Tower lance ses runs par
 `OrchestrationEngine.default()`, qui n'en injecte aucune. La frise **montre** ce flux dès qu'il
-existe (run CLI publié, démo) ; elle ne le fabrique pas.
+existe (run CLI publié) ; elle ne le fabrique pas.
 
 **Le tri se départage sur le rang, pas sur l'identifiant.** Les horodatages du dépôt sont à la
 **seconde** (`Event`, `StepRecord`, `AgentMessage` — tous les trois), donc sur un run parallèle deux
@@ -5680,7 +5626,7 @@ champ, `echeance`, dont la raison est écrite plus bas.
   "echeance": "2026-09-20T09:16:31+00:00", // la même borne, en date (#1025)
   "statut": "en_attente",                // puis "repondue"
   "reponse": "",                         // le texte humain, une fois écrit
-  "projet_id": "prj-demo",
+  "projet_id": "prj-7f3a",
   "run_id": "run-2026-09-20-01",
   "horodatage": "2026-09-20T09:12:31+00:00"
 }
@@ -5789,7 +5735,7 @@ le statut brut du bus.
 ```jsonc
 // DecisionsRun
 {
-  "run_id": "demo-live",
+  "run_id": "4f2a91c07b3d",
   // DU PLUS RÉCENT AU PLUS ANCIEN — comme le journal du run (§6.2) et non comme
   // la frise : les deux lectures chronologiques de la bascule vont dans le même
   // sens, sinon passer de l'une à l'autre demande de relire le sens de lecture.

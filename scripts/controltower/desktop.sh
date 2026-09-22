@@ -2,7 +2,7 @@
 # Ouvre Maestro dans une FENÊTRE NATIVE (ticket #923, docs/35 §2).
 #
 #   bash scripts/controltower/desktop.sh            # fenêtre + stack locale réelle (Redis)
-#   bash scripts/controltower/desktop.sh --demo     # idem, sur le scénario factice
+#   bash scripts/controltower/desktop.sh --help     # cet usage
 #
 # C'est la commande unique du premier critère d'acceptation : elle ouvre la fenêtre, et fermer
 # cette fenêtre arrête l'API comme l'UI. Elle ne démarre ni n'arrête rien elle-même — c'est la
@@ -41,6 +41,13 @@ case "${1:-}" in
   -h | --help)
     usage
     exit 0
+    ;;
+  # La coque ne relaie plus rien à `start.sh` (#1168) : sans ce refus, `--demo` ouvrirait en
+  # silence la stack réelle, et on croirait regarder le scénario factice.
+  --demo | --demonstration)
+    echo "$1 : le mode démo a quitté le produit (#1168) — la fenêtre s'ouvre sur la stack réelle." >&2
+    echo "  sans option : bash scripts/controltower/desktop.sh" >&2
+    exit 2
     ;;
 esac
 
