@@ -4385,6 +4385,52 @@ n'ouvrant **ni ne proposant** rien. Trois choses tiennent ensemble :
   compris quand le fournisseur tombe **entre** la proposition et l'accord, cas où le « oui » reste au
   fil sans rien ouvrir ni se perdre en silence.
 
+##### Le fil sait ce que ses runs ont fait (#1157)
+
+L'aperçu ci-dessus **compte** — « 1 run en cours, 3 tâches suivies » —, et c'était tout ce que le
+juge recevait de la projection. À « pourquoi le run a échoué ? », il n'avait donc rien, et le prompt
+lui demandait de renvoyer vers la page Runs : c'est ce qu'il a fait (essai réel du 2026-09-21 sur
+`p1`, run `8a15f78f45d3` — « Je n'ai pas cette information sous les yeux… »). La cause était
+pourtant écrite en clair à deux pas, sur chacune des tâches du run : « aucun agent dans ce catalogue
+— l'équipe reste à recruter ».
+
+Une **seconde lecture** entre donc dans le même prompt, à côté de l'aperçu et jamais à sa place
+(`faits_des_runs`) : les runs que **ce fil** a ouverts — rattachés par `MessageChat.run_id` (#268),
+donc quel que soit leur projet — puis ceux du projet de la fenêtre, du plus récent au plus ancien,
+chacun avec son statut, sa cause d'arrêt, l'issue de son dernier événement de cycle de vie et
+**chaque tâche avec son détail**. Les deux lectures ne répondent pas à la même question —
+« qu'est-ce qui tourne ? » et « qu'est-ce qui s'est passé ? » —, et fondre la seconde dans la phrase
+de la première rendrait une phrase illisible pour tuer un compteur qui marche.
+
+Trois décisions la tiennent :
+
+- **le détail se lit sur les événements du run, pas sur la tâche** — `EtatTache` ne porte aucune
+  erreur : ce qu'une tâche échouée a à dire voyage dans le `detail` de son `tache.statut`, où le
+  pont recopie son `erreur`. C'est exactement ce qui séparait le fil de la vérité le 2026-09-21,
+  l'issue du run n'annonçant qu'un **décompte** (« 0/3 tâche(s) réussie(s) ») pendant que ses tâches
+  disaient pourquoi ;
+- **la lecture est bornée, et sa borne se dit** — trois runs, douze tâches par run, trois cents
+  caractères par détail. Ce qui dépasse est **compté dans le texte** (« 3 autres tâches de ce run ne
+  sont pas montrées ici », « … (tronqué) ») plutôt que coupé en silence : un juge qui ne sait pas
+  qu'il lui manque quelque chose conclut sur un run qu'il croit connaître en entier ;
+- **le prompt ne renvoie plus vers un écran ce qu'il a sous les yeux**, et garde l'aveu pour ce qui
+  manque vraiment — au-delà de la borne, ou hors de ce que la projection sait. L'honnêteté de #686
+  ne change pas de camp, elle se déplace : de « je n'ai pas cette information » vers « je ne vois que
+  les trois derniers runs ».
+
+Statuts et causes sont dits en **mots d'interface** — les libellés de `libelleStatutExecution`,
+`LIBELLES_STATUT` et `libelleCause` (`apps/web/lib/format.ts`) au mot près, règle de #571 : le même
+run lu dans le fil puis sur son écran ne doit pas paraître dans deux états ni arrêté par deux
+choses. Une cause que le fil ne connaît pas encore ne sort **pas** en code brut (« hote_non_demarre »
+dans une conversation) : elle se tait, et le détail de l'issue reste rapporté à côté.
+
+Couverture : [`tests/test_chat_global.py`](../tests/test_chat_global.py) §②bis — les trois régimes
+du ticket (un run en échec, un terminé, un en cours), le scénario du 2026-09-21 **rejoué par ses
+événements** et non construit à la main (un double qui poserait les champs directement laisserait
+passer une lecture qui ne sait pas où regarder), les deux bornes avec leur annonce, et la question
+« pourquoi le run a échoué ? » jugée **sur ce que le prompt contient** — jamais par un lexique
+cherché dans la réponse du modèle (#746), qui relève du prompt et se mesure en usage.
+
 ```jsonc
 // MessageChat — deux champs de plus depuis #268, vides dans un fil ordinaire
 {

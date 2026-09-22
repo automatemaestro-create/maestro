@@ -458,6 +458,7 @@ from maestro.controltower.orchestration import (
     NOM_ORCHESTRATION,
     RepondeurOrchestration,
     apercu_de,
+    faits_des_runs,
 )
 from maestro.controltower.outillage import ServiceOutillage
 from maestro.controltower.persistence import (
@@ -1814,6 +1815,10 @@ def create_app(
             else RepondeurOrchestration(
                 lanceur=ouvrir_un_run,
                 apercu=apercu_de(state),
+                # Ce que les runs ont **fait** (#1157) : la même projection, lue
+                # pour raconter au lieu de compter — sans quoi « pourquoi le run
+                # a échoué ? » ne peut que renvoyer vers un écran.
+                faits=faits_des_runs(state),
                 # La même sonde que `GET /api/fournisseurs` (#1173) : quand aucun
                 # fournisseur n'est réglé, le fil dit ce que le poste offre.
                 sonde=sonde_poste.rapport,

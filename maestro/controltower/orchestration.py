@@ -265,6 +265,44 @@ proposition, ou un accord tapé) et au geste de cadrage. Le second couvre l'équ
 retirée entre la proposition et le clic — rare, et c'est justement le cas qu'une
 seule garde laisserait passer.
 
+## Le fil sait ce que ses runs ont fait (#1157)
+
+`apercu_de` **compte** — « 1 run en cours, 3 tâches suivies » —, et c'était tout
+ce que le juge recevait de la projection. À « pourquoi le run a échoué ? », il
+n'avait donc rien : le prompt lui demandait d'envoyer vers la page Runs, et c'est
+ce qu'il a fait (essai réel du 2026-09-21 sur `p1`, run `8a15f78f45d3` — « Je
+n'ai pas cette information sous les yeux… »). La cause était pourtant écrite en
+clair à deux pas, sur chacune des tâches du run : « aucun agent dans ce catalogue
+— l'équipe reste à recruter ».
+
+`faits_des_runs` est la **seconde lecture**, à côté de l'aperçu et jamais à sa
+place : les runs que **ce fil** a ouverts (rattachés par `MessageChat.run_id`,
+#268) puis ceux du projet de la fenêtre, du plus récent au plus ancien, chacun
+avec son statut, sa cause d'arrêt, l'issue écrite par son dernier événement de
+cycle de vie, et **chaque tâche avec son détail**. Les deux lectures ne répondent
+pas à la même question — « qu'est-ce qui tourne ? » et « qu'est-ce qui s'est
+passé ? » —, et fondre la seconde dans la phrase de la première rendrait une
+phrase illisible pour tuer un compteur qui marche.
+
+Trois choses tiennent ensemble.
+
+**Le détail se lit sur les événements du run, pas sur la tâche.** `EtatTache` ne
+porte aucune erreur : ce qu'une tâche échouée a à dire voyage dans le `detail` de
+son `tache.statut`, où `bridge` recopie son `erreur`. C'est exactement ce qui
+séparait le fil de la vérité le 2026-09-21 — l'issue du run disait « 0/3 tâche(s)
+réussie(s) », c'est-à-dire un **décompte** ; les tâches, elles, disaient pourquoi.
+
+**La lecture est bornée, et sa borne se dit.** Trois runs, douze tâches par run,
+trois cents caractères par détail. Ce qui dépasse est **compté dans le texte**
+(« 38 autres tâches non montrées ici », « … (tronqué) ») plutôt que coupé en
+silence : un juge qui ne sait pas qu'il lui manque quelque chose conclut sur un
+run qu'il croit connaître en entier, et cette certitude-là ne se rattrape plus.
+
+**Le prompt ne renvoie plus vers un écran ce qu'il a sous les yeux**, et garde
+l'aveu pour ce qui manque vraiment — au-delà de la borne, ou hors de ce que la
+projection sait. L'honnêteté de #686 ne change pas de camp : elle se déplace de
+« je n'ai pas cette information » vers « je ne vois que les trois derniers runs ».
+
 ## Ce qui est gardé, et par quoi (#688)
 
 `tests/test_chat_global.py` tient le tout, sans réseau, sans modèle et sans
@@ -309,7 +347,15 @@ from typing import TYPE_CHECKING, Any
 from maestro.agents.catalog import MODELE_EXECUTANT_DEFAUT, Agent
 from maestro.agents.playbook_du_code import registre
 from maestro.controltower.bornes import AUCUNE_BORNE, BornesRun
-from maestro.controltower.causes import cause_lisible
+from maestro.controltower.causes import (
+    CAUSE_ANNULATION,
+    CAUSE_EXTINCTION,
+    CAUSE_HOTE,
+    CAUSE_LIMITE_USAGE,
+    CAUSE_PLAFOND_COUT,
+    CAUSE_PLAFOND_TOURS,
+    cause_lisible,
+)
 from maestro.controltower.chat import (
     UTILISATEUR,
     DemandeRecrutement,
@@ -320,9 +366,26 @@ from maestro.controltower.chat import (
     ReponseChat,
     transcription,
 )
-from maestro.controltower.events import ACTEUR_RUN, ROLE_RUN
+from maestro.controltower.events import (
+    ACTEUR_RUN,
+    EVENEMENT_EXECUTION_STATUT,
+    EVENEMENT_TACHE_STATUT,
+    ROLE_RUN,
+)
 from maestro.controltower.outillage import ConducteurOutillage
-from maestro.controltower.portee import PorteeProjet
+from maestro.controltower.portee import PorteeProjet, PorteeRun
+
+# Les statuts de tâche viennent de leurs **deux** définitions, comme partout
+# ailleurs dans la projection (`progression`, `state`) : quatre que le moteur
+# émet, quatre que la machine à états nomme sans que le moteur les émette encore
+# (docs/03 §3). Les prendre en bloc à `progression`, qui les réunit déjà, serait
+# un ré-export implicite — ce que le typage du dépôt refuse.
+from maestro.controltower.progression import (
+    STATUT_ASSIGNEE,
+    STATUT_BACKLOG,
+    STATUT_EN_ATTENTE_VALIDATION,
+    STATUT_PRETE,
+)
 from maestro.controltower.state import (
     EXECUTION_ANNULEE,
     EXECUTION_ECHEC,
@@ -332,6 +395,14 @@ from maestro.controltower.state import (
     EXECUTION_EN_COURS,
     EXECUTION_TERMINEE,
     ControlTowerState,
+    EtatExecution,
+    EtatTache,
+)
+from maestro.engine.executor import (
+    STATUT_BLOQUEE,
+    STATUT_ECHEC,
+    STATUT_EN_COURS,
+    STATUT_TERMINEE,
 )
 from maestro.equipe import RoleValide
 from maestro.outillage.questionnaire import QuestionOutillage
@@ -416,12 +487,22 @@ La réponse : le texte affiché à l'utilisateur, en français, bref. Sur
 "accord", il confirme que le run part. Sur "echange", il répond — en s'appuyant
 sur l'état de l'orchestration quand la question porte dessus.
 
-Quand la question est « où ça en est ? », renvoie vers un ENDROIT DE L'INTERFACE :
-la page Runs pour l'avancement d'un run et ses tâches (chaque run y a sa page), le
-tableau de bord pour ce qui court sur le projet, Validations pour ce qui attend un
-arbitrage, Coûts & analytics pour la dépense. Et ne promets pas qu'un écran montre
-ce que tu n'as pas vu toi-même : si tu ignores où un livrable a été écrit, dis-le
-franchement au lieu d'envoyer chercher.
+Avant la conversation, tu reçois DES FAITS : l'état de l'orchestration, puis les
+runs de ce fil et de ce projet — statut, cause d'arrêt, issue, et chaque tâche
+avec son détail. Réponds AVEC ces faits ; n'envoie jamais vers un écran chercher
+ce que tu as déjà sous les yeux. À « pourquoi le run a échoué ? », nomme le run,
+son statut et la cause telle qu'elle est écrite là — le détail d'une tâche la
+porte souvent mieux que l'issue du run, qui n'est parfois qu'un décompte — puis
+dis le geste qui y répond.
+
+Cette lecture est BORNÉE : seulement les runs les plus récents, un nombre limité
+de tâches, des détails tronqués, et elle le signale quand elle coupe. Ce qui n'y
+est pas, tu ne l'as pas vu : dis-le, et renvoie alors vers l'endroit qui le
+montre — la page Runs pour le détail complet d'un run et ses tâches (chaque run y
+a sa page), le tableau de bord pour ce qui court sur le projet, Validations pour
+ce qui attend un arbitrage, Coûts & analytics pour la dépense. Et ne promets pas
+qu'un écran montre ce que tu n'as pas vu toi-même : si tu ignores où un livrable
+a été écrit, dis-le franchement au lieu d'envoyer chercher.
 
 """
     + registre()
@@ -557,6 +638,62 @@ _LIBELLES_STATUT_EXECUTION = {
 def libelle_statut_execution(statut: str) -> str:
     """Le statut d'un run en mots d'interface, ou brut si le flux s'est enrichi."""
     return _LIBELLES_STATUT_EXECUTION.get(statut, statut)
+
+
+#: Ce que le fil dit d'un statut de **tâche** (#1157) — les libellés de
+#: `LIBELLES_STATUT` (`apps/web/lib/format.ts`) au mot près, exactement la règle
+#: de la table au-dessus : la même tâche lue dans le fil puis sur le Kanban ne
+#: doit pas paraître dans deux états.
+#:
+#: Seuls les huit statuts que la **machine à états** donne à une tâche (docs/03
+#: §3) y figurent. La table du front en range aussi qui n'en sont pas — issues de
+#: fusion, arbitrages d'outil, blocage signalé : ce sont des faits *consignés sur*
+#: une tâche, jamais la colonne où elle se trouve. Les recopier ici ferait
+#: traduire, dans une phrase qui dit où en est une tâche, des mots qui n'y
+#: arrivent jamais.
+_LIBELLES_STATUT_TACHE = {
+    STATUT_BACKLOG: "À faire",
+    STATUT_PRETE: "Prête",
+    STATUT_ASSIGNEE: "Assignée",
+    STATUT_EN_COURS: "En cours",
+    STATUT_EN_ATTENTE_VALIDATION: "Attente humaine",
+    STATUT_BLOQUEE: "Bloquée",
+    STATUT_TERMINEE: "Terminée",
+    STATUT_ECHEC: "Échec",
+}
+
+
+def libelle_statut_tache(statut: str) -> str:
+    """Le statut d'une tâche en mots d'interface, ou brut si le flux s'est enrichi."""
+    return _LIBELLES_STATUT_TACHE.get(statut, statut)
+
+
+#: Ce que **dit** chaque cause d'arrêt d'un run (#479) — les phrases de
+#: `LIBELLES_CAUSE` (`apps/web/lib/format.ts`) au mot près, une troisième fois la
+#: règle de #571. Elles restent **génériques** là aussi : le chiffre — quelle
+#: borne, quel montant — vit dans le détail de l'issue, que le fil rapporte à
+#: côté.
+_LIBELLES_CAUSE = {
+    CAUSE_PLAFOND_TOURS: "Plafond de tours atteint",
+    CAUSE_PLAFOND_COUT: "Plafond de dépense atteint",
+    CAUSE_LIMITE_USAGE: "Limite d'usage du fournisseur",
+    CAUSE_HOTE: "L'hôte du run n'a pas démarré",
+    CAUSE_ANNULATION: "Interrompu",
+    CAUSE_EXTINCTION: "Maestro s'est éteint",
+}
+
+
+def libelle_cause(cause: str) -> str:
+    """La cause d'arrêt d'un run en une phrase — **vide** quand il n'y a rien à dire.
+
+    Deux cas rendent la chaîne vide, et le fil n'a aucune raison de les
+    distinguer : le moteur n'a pas su classer l'échec (`cause_de` rend `""`
+    plutôt qu'une cause fourre-tout), ou il a émis un code que cette table ne
+    connaît pas encore. Rendre le code brut écrirait « hote_non_demarre » dans
+    une conversation, ce que `libelleCause` refuse déjà côté écran — et le détail
+    de l'issue, lui, reste rapporté juste à côté.
+    """
+    return _LIBELLES_CAUSE.get(cause, "") if cause else ""
 
 
 #: Un bloc de code Markdown, que les modèles posent volontiers autour d'un JSON
@@ -727,6 +864,215 @@ def apercu_de(state: ControlTowerState) -> ApercuOrchestration:
     return apercu
 
 
+#: Ce que les runs ont **fait** — statut, cause d'arrêt, issue, et chaque tâche
+#: avec son détail (#1157). Deux arguments : le projet de la fenêtre, comme
+#: l'aperçu, et les runs que **ce fil** a ouverts (`runs_du_fil`), qui entrent
+#: quel que soit leur projet — un run dicté au fil avant #683 est orphelin, donc
+#: dans la vue d'aucun projet, et c'est pourtant de lui que la conversation
+#: parle. Rend `""` quand il n'y a aucun run à raconter : le bloc disparaît du
+#: prompt plutôt que d'y annoncer un vide que l'aperçu dit déjà.
+FaitsDesRuns = Callable[[str | None, Sequence[str]], str]
+
+#: Combien de runs le fil raconte au juge. Une borne, parce qu'un projet qui a
+#: tourné cent fois ferait un prompt que personne ne paie deux fois : ce dont une
+#: conversation parle est ce qui vient de se passer, pas l'histoire du projet.
+#: Trois couvre « le run que je viens d'ouvrir », « celui d'avant » et « celui
+#: qu'on a relancé ».
+_RUNS_RACONTES = 3
+
+#: Combien de tâches par run. Un run de la Control Tower en décompose une
+#: poignée ; la borne existe pour le jour où il en décomposera cinquante, et ce
+#: qui dépasse est **compté** dans le texte, jamais tu.
+_TACHES_RACONTEES = 12
+
+#: La longueur d'un détail rapporté. Un détail de tâche est une erreur, donc
+#: parfois une trace entière : sa première phrase porte la cause, la suite porte
+#: la pile. La coupe est **dite**, pour la même raison que le compte ci-dessus.
+_DETAIL_MAX = 300
+
+
+def runs_du_fil(fil: Sequence[MessageChat]) -> tuple[str, ...]:
+    """Les runs que **ce fil** a ouverts, du plus récent au plus ancien (#1157).
+
+    Chacun est rattaché au message qui l'a ouvert (`MessageChat.run_id`, #268) :
+    la conversation porte donc déjà la liste, rien n'est à stocker à côté, et un
+    fil relu du disque la retrouve entière. C'est la même propriété que « le fil
+    est la seule mémoire » (#685), appliquée à ce qu'il a déclenché.
+
+    L'ordre est celui de la question qu'on pose — « pourquoi le run a échoué ? »
+    parle du dernier —, et un même run rattaché deux fois ne compte qu'une fois.
+    """
+    vus: list[str] = []
+    for message in reversed(fil):
+        if message.run_id and message.run_id not in vus:
+            vus.append(message.run_id)
+    return tuple(vus)
+
+
+def faits_des_runs(state: ControlTowerState) -> FaitsDesRuns:
+    """Les faits des runs, lus **à chaque question** dans `state` (#1157).
+
+    Une fabrique et non une méthode du répondeur, exactement comme `apercu_de` et
+    pour les mêmes deux raisons : le répondeur ne connaît qu'un `FaitsDesRuns`,
+    ce qui le rend jouable sans projection, et la lecture est refaite à chaque
+    appel — figée à la construction de l'app, elle raconterait les runs d'hier.
+
+    Les runs du fil viennent **en premier et sans condition de projet** : ce sont
+    ceux dont la conversation parle, et `state.execution` les trouve par leur
+    seul identifiant. Ceux du projet de la fenêtre suivent, du plus récent au
+    plus ancien, par la portée du contrat de lecture (#277) — la même règle que
+    l'aperçu, pour que les deux blocs d'un même prompt ne parlent pas de deux
+    périmètres.
+    """
+
+    def faits(projet_id: str | None = None, runs: Sequence[str] = ()) -> str:
+        retenus: list[EtatExecution] = []
+        vus: set[str] = set()
+        for run_id in runs:
+            execution = state.execution(run_id)
+            if execution is not None and run_id not in vus:
+                vus.add(run_id)
+                retenus.append(execution)
+        portee = PorteeProjet.projet(projet_id) if projet_id else PorteeProjet.tous()
+        # `executions` rend l'ordre de première apparition : le plus récent est le
+        # dernier, et c'est par lui qu'une conversation commence.
+        for execution in reversed(state.executions(portee)):
+            if execution.run_id not in vus:
+                vus.add(execution.run_id)
+                retenus.append(execution)
+        if not retenus:
+            return ""
+        montres = retenus[:_RUNS_RACONTES]
+        lignes = [_entete_des_runs(len(montres), len(retenus))]
+        for execution in montres:
+            lignes.extend(_fiche_du_run(state, execution))
+        return "\n".join(lignes)
+
+    return faits
+
+
+def _entete_des_runs(montres: int, total: int) -> str:
+    """La ligne qui annonce le bloc — et **dit** qu'il est borné quand il l'est."""
+    compte = (
+        f"{montres} sur {total}, lecture bornée" if montres < total else str(total)
+    )
+    return f"Runs de ce fil et de ce projet, du plus récent au plus ancien ({compte}) :"
+
+
+def _fiche_du_run(state: ControlTowerState, execution: EtatExecution) -> list[str]:
+    """Un run en quelques lignes : ce qu'il visait, où il en est, ce qu'ont fait ses tâches.
+
+    Ses tâches sont celles que le run a **portées** (`PorteeRun`, #473) et non
+    celles dont le `run_id` le désigne : sur une relance, la seconde lecture
+    volerait ses tâches au run qu'on interroge. Aucune portée de projet ne s'y
+    ajoute — les tâches d'un run sont les siennes, et un filtre de projet les
+    ferait disparaître d'un run dont la projection n'a pas appris le projet.
+    """
+    entete = f"- Run {execution.run_id} — {libelle_statut_execution(execution.statut)}"
+    if execution.objectif:
+        entete += f" — « {_borne(execution.objectif)} »"
+    lignes = [entete]
+    cause = libelle_cause(execution.cause)
+    if cause:
+        lignes.append(f"  cause : {cause}")
+    issue = _borne(_issue_du_run(execution))
+    if issue:
+        lignes.append(f"  issue : {issue}")
+    taches = state.taches(run=PorteeRun.run(execution.run_id))
+    if not taches:
+        lignes.append("  tâches : aucune tâche connue de ce run.")
+        return lignes
+    details = _details_des_taches(execution)
+    lignes.append(f"  tâches ({len(taches)}) :")
+    lignes.extend(
+        f"    · {_ligne_de_tache(tache, details.get(tache.id, ''))}"
+        for tache in taches[:_TACHES_RACONTEES]
+    )
+    reste = len(taches) - _TACHES_RACONTEES
+    if reste > 0:
+        lignes.append(
+            "    · "
+            + _accord(
+                reste,
+                "autre tâche de ce run n'est pas montrée ici",
+                "autres tâches de ce run ne sont pas montrées ici",
+            )
+            + "."
+        )
+    return lignes
+
+
+def _ligne_de_tache(tache: EtatTache, detail: str) -> str:
+    """Une tâche en une ligne : ce qu'elle est, où elle en est, ce qu'elle a dit.
+
+    Le porteur est son **rôle** avant son nom d'agent, parce que c'est le rôle
+    qui porte le repli du routeur : une tâche que personne n'a pu prendre a pour
+    agent un tiret (`ROLE_A_ASSIGNER`, #42) et pour rôle « à assigner », et c'est
+    le second qui apprend quelque chose.
+
+    Le détail est **nommé** (« détail : ») et non simplement ajouté à la suite :
+    il porte lui-même des tirets cadratins — « aucun agent dans ce catalogue —
+    l'équipe reste à recruter » —, et sans l'étiquette il se confondrait avec les
+    champs qui le précèdent.
+    """
+    morceaux = [f"{tache.id} « {tache.titre} »" if tache.titre else tache.id]
+    morceaux.append(libelle_statut_tache(tache.statut) if tache.statut else "statut inconnu")
+    porteur = tache.role or tache.agent
+    if porteur:
+        morceaux.append(porteur)
+    borne = _borne(detail)
+    if borne:
+        morceaux.append(f"détail : {borne}")
+    return " — ".join(morceaux)
+
+
+def _issue_du_run(execution: EtatExecution) -> str:
+    """Ce que le dernier événement de cycle de vie a écrit sur l'issue du run.
+
+    Souvent un décompte (« 0/3 tâche(s) réussie(s) »), parfois la cause entière
+    (« PlafondDepenseDepasse : … ») : les deux méritent d'être rapportés tels
+    quels, et c'est précisément parce que le premier n'explique rien que les
+    détails des tâches viennent avec.
+    """
+    for event in reversed(execution.evenements):
+        if event.type == EVENEMENT_EXECUTION_STATUT and event.detail:
+            return event.detail
+    return ""
+
+
+def _details_des_taches(execution: EtatExecution) -> dict[str, str]:
+    """Le dernier détail écrit par chaque tâche du run — son erreur, le plus souvent.
+
+    Lu dans les **événements du run** et non sur `EtatTache`, qui n'en porte
+    aucun : ce qu'une tâche échouée a à dire voyage dans le `detail` de son
+    `tache.statut`, où `bridge` recopie son `erreur`. C'est là, et nulle part
+    ailleurs, qu'était la cause réelle de l'essai du 2026-09-21 — « aucun agent
+    dans ce catalogue — l'équipe reste à recruter » — pendant que l'issue du run
+    n'annonçait qu'un décompte.
+
+    Le dernier vu fait foi : une tâche qui repart puis retombe parle de sa
+    dernière chute, jamais de l'avant-dernière.
+    """
+    details: dict[str, str] = {}
+    for event in execution.evenements:
+        if event.type == EVENEMENT_TACHE_STATUT and event.tache_id and event.detail:
+            details[event.tache_id] = event.detail
+    return details
+
+
+def _borne(texte: str) -> str:
+    """Un texte ramené à `_DETAIL_MAX`, sur une seule ligne, coupé **en le disant**.
+
+    Les sauts de ligne partent d'abord : le bloc est lu ligne par ligne, et une
+    trace multi-ligne en ferait éclater la structure — une pile Python se lirait
+    comme autant de tâches.
+    """
+    propre = " ".join(texte.split())
+    if len(propre) <= _DETAIL_MAX:
+        return propre
+    return f"{propre[:_DETAIL_MAX].rstrip()}… (tronqué)"
+
+
 @dataclass(frozen=True)
 class _Verdict:
     """Ce qu'un appel modèle rend : ce que le canal dit, et ce qu'il en conclut.
@@ -791,18 +1137,24 @@ def _verdict_depuis(texte: str) -> _Verdict:
     )
 
 
-def _prompt(fil: Sequence[MessageChat], etat: str) -> str:
-    """Le fil rendu en prompt, précédé de l'état de l'orchestration quand on l'a.
+def _prompt(fil: Sequence[MessageChat], etat: str, faits: str = "") -> str:
+    """Le fil rendu en prompt, précédé de ce que le canal sait de l'orchestration.
 
     La conversation passe par `chat.transcription` — la **même** mise en forme
-    que le chat d'un agent, sources comprises — et l'état vient en tête plutôt
-    qu'en queue : la consigne de réponse ferme la transcription, et glisser un
-    fait après elle le ferait lire comme une instruction de plus.
+    que le chat d'un agent, sources comprises — et ce qu'on sait vient en tête
+    plutôt qu'en queue : la consigne de réponse ferme la transcription, et
+    glisser un fait après elle le ferait lire comme une instruction de plus.
+
+    Deux blocs plutôt qu'un depuis #1157, dans l'ordre où l'on interroge : l'état
+    d'abord, une phrase qui **compte** ce qui tourne, puis les faits des runs,
+    qui **racontent** ce qu'ils ont fait. Chacun disparaît quand il n'a rien à
+    dire, plutôt que d'annoncer un vide.
     """
+    entete = [bloc for bloc in (f"État de l'orchestration : {etat}" if etat else "", faits) if bloc]
     conversation = transcription(fil)
-    if not etat:
+    if not entete:
         return conversation
-    return f"État de l'orchestration : {etat}\n\n{conversation}"
+    return "\n\n".join([*entete, conversation])
 
 
 class RepondeurOrchestration(RepondeurChat):
@@ -811,6 +1163,9 @@ class RepondeurOrchestration(RepondeurChat):
     `lanceur` ouvre le run approuvé (`LanceurRun`) ; sans lui, le canal reste
     conversationnel et le dit. `apercu` rend l'état de l'orchestration en une
     phrase, qui entre dans le prompt ; sans lui, le modèle juge sur le seul fil.
+    `faits` (#1157) rend ce que les runs de ce fil et de ce projet ont **fait**,
+    qui entre dans le même prompt juste après ; sans lui, le canal compte sans
+    savoir raconter, c'est-à-dire exactement ce qu'il faisait avant ce lot.
     `provider` est le fournisseur du jugement — résolu **paresseusement** comme
     dans `RepondeurModele` : construire le répondeur ne coûte rien et ne lève
     aucune erreur de configuration, ce dont dépend `create_app`.
@@ -834,6 +1189,7 @@ class RepondeurOrchestration(RepondeurChat):
         *,
         lanceur: LanceurRun | None = None,
         apercu: ApercuOrchestration | None = None,
+        faits: FaitsDesRuns | None = None,
         provider: ModelProvider | None = None,
         conducteur: ConducteurOutillage | None = None,
         sonde: SondeDuPoste | None = None,
@@ -842,6 +1198,7 @@ class RepondeurOrchestration(RepondeurChat):
     ) -> None:
         self._lanceur = lanceur
         self._apercu = apercu
+        self._faits = faits
         self._provider = provider
         self._equipe = equipe
         self._recruteur = recruteur
@@ -1082,8 +1439,9 @@ class RepondeurOrchestration(RepondeurChat):
         """L'appel modèle — fournisseur résolu au premier usage (import local, comme #84).
 
         Le prompt système est celui de la fiche (`_PROMPT_ORCHESTRATION`), qui
-        porte le contrat de la réponse ; le prompt d'utilisateur est le fil, précédé
-        de l'état. Aucun `PlaybookStore` ici, contrairement à `RepondeurModele` :
+        porte le contrat de la réponse ; le prompt d'utilisateur est le fil,
+        précédé de l'état puis des faits des runs (#1157).
+        Aucun `PlaybookStore` ici, contrairement à `RepondeurModele` :
         l'orchestration n'est pas au catalogue, donc n'a pas de playbook éditable
         — et le contrat de sortie n'est pas un texte que l'UI doit pouvoir
         réécrire.
@@ -1125,9 +1483,15 @@ class RepondeurOrchestration(RepondeurChat):
                     await reparation_configuration(self._sonde),
                 ) from echec
         etat = self._apercu(projet_id) if self._apercu is not None else ""
+        # Les faits des runs (#1157), lus sur le **même** périmètre que l'aperçu
+        # et sur les runs que ce fil a ouverts : c'est ce qui permet de répondre
+        # « pourquoi le run a échoué ? » au lieu d'envoyer vers un écran.
+        faits = (
+            self._faits(projet_id, runs_du_fil(fil)) if self._faits is not None else ""
+        )
         try:
             texte = await self._provider.generate(
-                _prompt(fil, etat),
+                _prompt(fil, etat, faits),
                 model=self._modele or agent.modele,
                 system_prompt=agent.prompt_systeme,
             )
