@@ -20,9 +20,13 @@ cinq semaines). Cette suite est la moitié qui survit.
 - `TestChainagesDesDeclarations` — une commande jouée comme étape transmet son `allowed-tools:` à
   celle qui la joue (#964, docs/10 §7.1).
 
-Une cinquième, née d'un renversement plutôt que d'un constat de l'audit :
-`TestLotFinalRenverse` — aucun prompt ne redit la règle des tests différés au lot final
-« tests + doc », retirée par #1150 (docs/40 §3) après avoir été la forme de 42 parents sur 42.
+Deux autres, nées d'un renversement plutôt que d'un constat de l'audit :
+
+- `TestLotFinalRenverse` — aucun prompt ne redit la règle des tests différés au lot final
+  « tests + doc », retirée par #1150 (docs/40 §3) après avoir été la forme de 42 parents sur 42.
+- `TestDemoHorsDesTextes` — aucun texte qui dit comment vérifier le produit ne renvoie à la démo,
+  que le chantier #1156 retire (#1167) : le produit se vérifie sur la vraie stack, et un texte qui
+  renvoie à un mode qu'on retire fait refaire le geste qu'on a banni.
 
 **Le temps d'une phrase ne se juge pas par des mots.** « Au passé » n'a pas de forme lexicale
 fiable — « du temps de », « pendant la migration », « la version GitLab de cette boucle coûtait »
@@ -653,3 +657,168 @@ class TestLotFinalRenverse:
             for extrait in absentes(lire(relatif), admises)
         ]
         assert not perimes, "extrait(s) inscrit(s) introuvable(s) :\n" + "\n".join(perimes)
+
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# 6. La démo hors des textes de vérification (#1167, chantier #1156)
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+#: Une mention de la démo : son drapeau et ses états (`--demo`, `--demonstration`, `--scenario`),
+#: son projet (`prj-demo`), son module, et le mot lui-même — « démonstration » ne l'est pas. Le
+#: produit se vérifie sur la vraie stack (#1156) ; un texte qui renvoie encore à la démo fait
+#: refaire à la session suivante le geste qu'on a banni, quel que soit ce que la doc en dit.
+_DEMO = re.compile(
+    r"(?i)--demo\w*|--scenario\b|prj-demo|controltower[./]demo\b|\bdémos?\b|\bdemos?\b"
+)
+
+_INTERDIT = "nommée pour être interdite : la règle écrit ce qu'elle écarte"
+_RETEX = (
+    "nommée pour être interdite : `test_retex_utilisateur` exige que l'interdit reste écrit"
+)
+
+#: Les mentions jugées. Une mention neuve se corrige — la vérification se joue sur la vraie stack,
+#: ses états viennent du réel (docs/10 §4) — ou s'inscrit ici avec sa raison.
+DEMO_ADMISES: Mapping[str, tuple[Admise, ...]] = {
+    "CLAUDE.md": (
+        Admise("Le produit se vérifie **sur le réel** : plus de mode démo", _INTERDIT),
+        Admise("la démo dans un texte de vérification (#1167)", "nomme cette garde"),
+        Admise("`--check` rend le même verdict sans écrire ; **jamais `--demo`**", _RETEX),
+        Admise("Aucun skill ni aucune commande ne vérifie sur une démo.", _INTERDIT),
+    ),
+    ".claude/commands/retex-utilisateur.md": (
+        Admise("la Control Tower **réelle** (jamais `--demo`)", _RETEX),
+        Admise("**ne retombe jamais en douce sur `--demo`**", _RETEX),
+    ),
+}
+
+#: Les textes que les lots voisins du chantier font passer au réel : ils sortent du balayage le
+#: temps de leur lot, entiers, pour que chaque lot reste mergeable seul (`lot::parallele`). Le
+#: dernier lot, #1168, retire la démo du produit : il vide cette table et inscrit ce qui reste.
+DEMO_AUX_LOTS_VOISINS: Mapping[str, str] = {
+    ".claude/skills/relecture-visuelle/SKILL.md": "#1165",
+    ".claude/agents/regard-neuf.md": "#1165",
+    ".claude/commands/ticket-start.md": "#1165",
+    ".claude/commands/milestone-presentation.md": "#1166",
+    ".claude/commands/milestone-bilan.md": "#1166",
+}
+
+#: Les phrases que #1167 a retirées, telles qu'elles étaient (`git show e67aadf:<fichier>`).
+_DEMO_FAUTIVES: Mapping[str, str] = {
+    ".claude/skills/control-tower/SKILL.md": (
+        "`--demo` reste le bon choix pour le **développement front**, le skill `verify`\n"
+        "et les captures de `/milestone-presentation`."
+    ),
+    ".claude/skills/verify/SKILL.md": (
+        "(nettoyage des anciennes sessions sur :8000/:3000, API de démo sur bus\n"
+        "mémoire — `maestro.controltower.demo`, app FastAPI réelle + scénario\n"
+        "d'événements factices en continu —, UI Next.js pointée dessus) :"
+    ),
+    ".claude/skills/banc-mise-en-page/SKILL.md": (
+        "d'entrée. En mode `--demo` aucun projet n'est déclaré — en déclarer un, sur un"
+    ),
+    ".claude/commands/design-veille.md": (
+        "ce que le code fait. Si la surface est visible en local, regarde-la — la stack de démo se "
+        "monte\n  par le skill `control-tower` (`--demo`), sur les ports que `worktree.sh ensure` "
+        "a annoncés pour ce\n  worktree."
+    ),
+    ".github/ISSUE_TEMPLATE/feature.md": (
+        "       Les trois premiers s'ouvrent dans la démo (`start.sh --demo --scenario <nom>`, "
+        "#978). -->"
+    ),
+}
+
+#: Les textes qui disent comment regarder l'écran : chacun monte la vraie stack peuplée.
+_TEXTES_DE_VERIFICATION = (
+    ".claude/skills/control-tower/SKILL.md",
+    ".claude/skills/verify/SKILL.md",
+    ".claude/skills/banc-mise-en-page/SKILL.md",
+    ".claude/commands/design-veille.md",
+)
+
+#: Ce qui dit d'où viennent les états (critère 2 de #1167), et les trois origines à y lire.
+_ORIGINE_DES_ETATS = (
+    ".github/ISSUE_TEMPLATE/feature.md",
+    ".github/ISSUE_TEMPLATE/bug.md",
+    "CLAUDE.md",
+    "docs/10-workflow-git.md",
+)
+_ORIGINES = ("stack neuve", "vraie panne", "--etat-banc")
+
+
+def fichiers_du_perimetre_demo() -> list[str]:
+    """Ce qu'une session relit avant de vérifier : `CLAUDE.md`, `.claude/**`, les gabarits."""
+    gabarits = sorted(
+        p.relative_to(RACINE).as_posix()
+        for p in (RACINE / ".github" / "ISSUE_TEMPLATE").iterdir()
+        if p.is_file()
+    )
+    return [
+        relatif
+        for relatif in ["CLAUDE.md", *fichiers_du_perimetre_forge(), *gabarits]
+        if relatif not in DEMO_AUX_LOTS_VOISINS
+    ]
+
+
+class TestDemoHorsDesTextes:
+    """Aucun texte de vérification ne renvoie à la démo (#1167, docs/10 §4)."""
+
+    def test_le_motif_arrete_les_phrases_que_1167_a_retirees(self) -> None:
+        for relatif, fautive in _DEMO_FAUTIVES.items():
+            assert non_jugees(fautive, _DEMO, DEMO_ADMISES.get(relatif, ())), relatif
+        # Le projet et le drapeau long, qu'aucune de ces phrases ne portait seul.
+        assert non_jugees('localStorage.setItem("maestro.projet.actif", "prj-demo");', _DEMO)
+        assert non_jugees("bash scripts/controltower/start.sh --demonstration", _DEMO)
+
+    def test_le_motif_laisse_passer_le_reel_et_ce_qui_est_inscrit(self) -> None:
+        """L'autre moitié : la vraie stack et les démonstrations filmées ne font pas rougir."""
+        assert not non_jugees(
+            "bash scripts/controltower/start.sh --etat-banc --no-browser   # l'état du banc", _DEMO
+        )
+        assert not non_jugees("des **démonstrations filmées** sur la vraie stack", _DEMO)
+        admises = DEMO_ADMISES[".claude/commands/retex-utilisateur.md"]
+        inscrite = "sa seule interface, la Control Tower **réelle** (jamais `--demo`), pilotée"
+        assert not non_jugees(inscrite, _DEMO, admises)
+        # …mais un extrait inscrit ne blanchit pas une seconde mention dans la même phrase.
+        assert non_jugees(inscrite + ", ou sur `--demo --scenario vide`", _DEMO, admises)
+
+    def test_le_perimetre_couvre_claude_md_les_prompts_et_les_gabarits(self) -> None:
+        perimetre = fichiers_du_perimetre_demo()
+        assert {"CLAUDE.md", ".github/ISSUE_TEMPLATE/bug.md", *_TEXTES_DE_VERIFICATION} <= set(
+            perimetre
+        )
+        assert not set(DEMO_AUX_LOTS_VOISINS) & set(perimetre)
+
+    def test_aucune_mention_de_la_demo_non_jugee(self) -> None:
+        fautes = [
+            f"{relatif} : {contexte}"
+            for relatif in fichiers_du_perimetre_demo()
+            for contexte in non_jugees(lire(relatif), _DEMO, DEMO_ADMISES.get(relatif, ()))
+        ]
+        assert not fautes, (
+            "mention(s) de la démo que personne n'a jugée(s). Un renvoi : corriger, le produit se "
+            "vérifie sur la vraie stack et ses états viennent du réel (#1156, docs/10 §4). Un "
+            "interdit ou une règle : l'inscrire dans DEMO_ADMISES avec sa raison.\n"
+            + "\n".join(fautes)
+        )
+
+    def test_l_inventaire_ne_couvre_que_ce_qui_existe(self) -> None:
+        perimes = [
+            f"{relatif} : {extrait}"
+            for relatif, admises in DEMO_ADMISES.items()
+            for extrait in absentes(lire(relatif), admises)
+        ]
+        assert not perimes, "extrait(s) inscrit(s) introuvable(s) :\n" + "\n".join(perimes)
+        disparus = [f for f in DEMO_AUX_LOTS_VOISINS if not (RACINE / f).is_file()]
+        assert not disparus, f"texte d'un lot voisin introuvable : {disparus}"
+
+    @pytest.mark.parametrize("relatif", _TEXTES_DE_VERIFICATION)
+    def test_chaque_texte_de_verification_monte_la_vraie_stack_peuplee(self, relatif: str) -> None:
+        """Ne plus nommer la démo ne suffit pas : le texte dit comment voir l'écran peuplé."""
+        assert "--etat-banc" in lire(relatif), f"{relatif} ne dit pas comment voir l'écran peuplé"
+
+    @pytest.mark.parametrize("relatif", _ORIGINE_DES_ETATS)
+    def test_l_origine_des_etats_est_dite(self, relatif: str) -> None:
+        """Vide, erreur, charge : chacun a sa source dans le réel, et chaque texte la nomme."""
+        plat = aplatir(lire(relatif))
+        manquantes = [origine for origine in _ORIGINES if origine not in plat]
+        assert not manquantes, f"{relatif} ne dit pas d'où viennent les états : {manquantes}"

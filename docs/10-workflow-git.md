@@ -1200,6 +1200,22 @@ collision avec le paramètre `depot` de chaque test aux yeux de ruff (112 `F811`
   `/ticket-create`, lui, retire cet en-tête et pose les labels par `--label` — une création en ligne
   de commande n'a que faire d'un bloc qui sert l'UI web. Le label `agent::*` reste à ajouter
   manuellement au triage (aucun gabarit ne peut deviner quel agent est concerné).
+- **Rendu attendu** (`feature.md` et `bug.md` seulement, #976) : la section qu'un ticket d'écran
+  remplit, et contre laquelle l'écran est jugé à la relecture visuelle. Sa rubrique **« États à
+  couvrir »** dit aussi **d'où viennent les états** (#1167, chantier #1156), parce qu'on ne les
+  regarde plus que sur la vraie stack :
+
+  | État | D'où il vient | Le geste |
+  |---|---|---|
+  | vide | une **stack neuve** | `start.sh` dans un worktree qui n'a encore rien servi (chaque copie a ses données, §9.1) ; ailleurs, la purge (§3.4) |
+  | erreur | une **vraie panne** | l'API coupée (« injoignable »), ou une API qui répond en erreur (#996) |
+  | peuplé, charge | l'**état laissé par le banc** des scénarios | `start.sh --etat-banc`, qui dit son âge ; `--rejouer` le refait avec le vrai modèle ([docs/40 §5](./40-decision-rythme-et-scenarios-de-reference.md)) |
+
+  Un état que le réel ne sait pas produire se dit **non couvert** : il ne se fabrique pas. La
+  largeur téléphone n'est pas un état des données, c'est une fenêtre. Les skills qui regardent
+  l'écran (`control-tower`, `verify`, `banc-mise-en-page`) et `/design-veille` montent ces mêmes
+  états, et aucun ne renvoie à une démo : `TestDemoHorsDesTextes`
+  ([`tests/test_audit_commandes.py`](../tests/test_audit_commandes.py)) le garde.
 - **Pull Request** (`.github/pull_request_template.md`) : checklist de definition
   of done + rappel `Closes #`. La checklist est un **constat, pas un formulaire** :
   `/ticket-finish` coche lui-même les cases qu'il a **effectivement vérifiées** (conventions de
