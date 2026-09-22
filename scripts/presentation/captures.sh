@@ -193,6 +193,9 @@ fi
 # Sans projet actif, le shell ne rend que sa porte d'entrée (#279) : c'est captures.mjs qui le pose,
 # en choisissant parmi les projets QUE L'API DÉCLARE — ceux du passage, jamais un projet écrit ici.
 ETAT_JSON=""
+# Le jeton de l'API locale (#638), résolu plus bas avec la stack. Vide quand la série se branche sur
+# une stack déjà debout (`--sans-demarrer`) : c'est alors à son lanceur de l'avoir posé.
+JETON_API="${MAESTRO_API_JETON:-}"
 if [ "$DEMARRER" = 1 ]; then
   # La stack de dev partage apps/web/.next avec le build : on la range avant de construire. C'est
   # aussi elle qui servirait peut-être le banc (`start.sh --etat-banc`) : rouvrir l'état sous une API
@@ -228,6 +231,17 @@ if [ "$DEMARRER" = 1 ]; then
     exit 1
   fi
 
+  # Le jeton de l'API locale (#638), résolu AVANT elle : le build du front l'inline, et les
+  # lectures de `captures.mjs` le portent. Vide (code 3) en régime ouvert — la série se joue alors
+  # comme avant ce lot ; toute autre sortie non nulle est une config fautive, et on ne tourne pas
+  # une série contre une API qu'on ne pourra pas lire.
+  code_jeton=0
+  JETON_API="$( (cd "$RACINE" && "$PYTHON" -m maestro.controltower.cli --jeton) )" || code_jeton=$?
+  if [ "$code_jeton" != 0 ] && [ "$code_jeton" != 3 ]; then
+    echo "[captures] ⚠ jeton de l'API illisible (code $code_jeton) — pas de visuels" >&2
+    exit 1
+  fi
+
   echo "[captures] API réelle sur l'état du banc, :${PORT_API} (log : $LOG_DIR_REL/api.log)"
   (cd "$RACINE" && nohup "$PYTHON" -m maestro.controltower.cli --port "$PORT_API" --etat-banc \
     >"$LOG_DIR/api.log" 2>&1 &)
@@ -239,6 +253,7 @@ if [ "$DEMARRER" = 1 ]; then
   echo "[captures] build de l'UI (log : $LOG_DIR_REL/build.log)"
   if ! (cd "$RACINE/apps/web" \
         && NEXT_PUBLIC_MAESTRO_API_URL="http://127.0.0.1:${PORT_API}" \
+           NEXT_PUBLIC_MAESTRO_API_JETON="$JETON_API" \
            npm run build >"$LOG_DIR/build.log" 2>&1); then
     echo "[captures] ⚠ le build de l'UI a échoué — voir $LOG_DIR_REL/build.log" >&2
     exit 1
@@ -247,6 +262,7 @@ if [ "$DEMARRER" = 1 ]; then
   echo "[captures] UI sur :${PORT_UI} (log : $LOG_DIR_REL/ui.log)"
   (cd "$RACINE/apps/web" \
     && NEXT_PUBLIC_MAESTRO_API_URL="http://127.0.0.1:${PORT_API}" \
+       NEXT_PUBLIC_MAESTRO_API_JETON="$JETON_API" \
        nohup npx next start --port "$PORT_UI" >"$LOG_DIR/ui.log" 2>&1 &)
   if ! attendre_http "http://127.0.0.1:${PORT_UI}" 60; then
     echo "[captures] ⚠ l'UI n'a pas démarré — voir $LOG_DIR_REL/ui.log" >&2
@@ -260,5 +276,5 @@ ARGS_CAPTURES=(--sortie "$SORTIE" --base "http://127.0.0.1:${PORT_UI}"
 [ -z "$ETAT_JSON" ] || ARGS_CAPTURES+=(--etat "$ETAT_JSON")
 [ "$VIDEOS" = 1 ] || ARGS_CAPTURES+=(--sans-videos)
 
-MAESTRO_PLAYWRIGHT_HOME="$CACHE_NODE" \
+MAESTRO_PLAYWRIGHT_HOME="$CACHE_NODE" MAESTRO_API_JETON="$JETON_API" \
   node "$RACINE/scripts/presentation/captures.mjs" "${ARGS_CAPTURES[@]}"

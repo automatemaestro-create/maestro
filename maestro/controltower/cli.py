@@ -25,6 +25,19 @@ dépôts, posés sur l'environnement du process avant de servir, donc hérités 
 les hôtes détachés. Avec `--verifier-redis`, c'est ce jeu-là qui est annoncé.
 Rouvrir ou vider ce jeu est l'affaire de `maestro.scenarios.etat`, que le
 lanceur joue entre l'arrêt de l'ancienne session et le démarrage de l'API.
+
+Au démarrage, il **dit dans quel régime l'API sert** (#638) : durci (un jeton
+sur chaque requête) ou ouvert, et les origines admises —
+`maestro.controltower.acces`. La ligne part sur la sortie standard, donc dans
+`api.log`, là où on vient la lire quand une requête est refusée.
+
+`--jeton` ne démarre rien non plus : il rend le **jeton du poste** (engendré au
+besoin) sur la sortie standard et le régime sur l'erreur standard. C'est par là
+que `scripts/controltower/start.sh` l'obtient pour le passer au front, et c'est
+ici plutôt que dans `acces` parce que ce module-là est déjà importé par le
+paquet — l'exécuter comme `__main__` ferait précéder le jeton d'un
+`RuntimeWarning`, en tête du seul fichier qu'on lit pour comprendre un démarrage
+raté.
 """
 
 from __future__ import annotations
@@ -35,7 +48,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 _USAGE = (
     "Usage : maestro-api [--hote <adresse>] [--port <port>] [--etat-banc] | "
-    "--verifier-redis [--etat-banc]"
+    "--verifier-redis [--etat-banc] | --jeton"
 )
 
 #: Écoute par défaut : locale (l'API est un backend de développement au POC).
@@ -154,6 +167,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         poser_sur_le_process(donnees_du_banc())
     if args == ["--verifier-redis"]:
         return verifier_redis()
+    if args == ["--jeton"]:
+        # Import local, comme les autres modes à part : servir l'API n'a pas
+        # besoin de ce chemin, et le lanceur ne veut que cette ligne-là.
+        from maestro.controltower.acces import rendre_le_jeton
+
+        return rendre_le_jeton()
 
     hote = HOTE_DEFAUT
     port = PORT_DEFAUT
@@ -171,6 +190,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             print(_USAGE, file=sys.stderr)
             return 2
+
+    # Le régime d'accès, **dit avant de servir** (#638) : durci ou ouvert, et
+    # les origines admises. Imprimé ici et non journalisé dans l'app — uvicorn
+    # ne configure que ses propres loggers, un `logging.info` de
+    # `maestro.controltower` n'atteindrait donc pas `api.log`, où cette ligne
+    # est précisément ce qu'on vient lire. Résoudre la politique **engendre** le
+    # jeton du poste s'il manque, si bien que le lanceur peut le donner au front
+    # dès que l'API est démarrée. Une config fautive casse ici, avant le port.
+    from maestro.controltower.acces import politique_depuis
+
+    print(politique_depuis().annonce())
 
     # Import local : le CLI est le seul module à dépendre du serveur uvicorn.
     import uvicorn

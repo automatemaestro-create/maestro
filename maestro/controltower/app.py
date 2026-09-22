@@ -378,6 +378,7 @@ from maestro.agents.store import (
 from maestro.appartenance import projet_id_valide
 from maestro.config import ConfigError, Settings, load_settings
 from maestro.controltower import selecteur
+from maestro.controltower.acces import GardeAcces, PolitiqueAcces, politique_depuis
 from maestro.controltower.analytics import PAS_DEMANDABLES, PAS_HEURE, agrege_couts
 from maestro.controltower.assistance import (
     AGENT_ASSISTANCE,
@@ -1384,6 +1385,7 @@ def create_app(
     lecteur_sources: LecteurSources | None = None,
     hote_run: HoteRun | None = None,
     sonde_poste: SondePoste | None = None,
+    acces: PolitiqueAcces | None = None,
 ) -> FastAPI:
     """Construit l'app FastAPI de la Control Tower autour d'un bus et d'un état.
 
@@ -1568,7 +1570,17 @@ def create_app(
     `HoteRunEnProcess` — la tâche de fond, la configuration des tests ; la
     **production** câble l'hôte détaché, résolu depuis
     l'environnement par `create_default_app` (#446).
+
+    `acces` (#638) est **ce que l'API accepte** : le jeton exigé et les origines
+    autorisées (`maestro.controltower.acces`). `None` construit une app
+    **ouverte** — aucun jeton, toutes origines : c'est la configuration des
+    tests, qui montent l'app sans rien savoir d'un secret du poste, et elle est
+    explicite plutôt que déduite. La **production** passe par
+    `create_default_app`, qui résout la politique depuis l'environnement et sert
+    donc durcie ; le portier vit en middleware ASGI, devant toutes les routes et
+    devant le WebSocket.
     """
+    acces = acces if acces is not None else PolitiqueAcces.ouverte()
     event_log = event_log if event_log is not None else InMemoryEventLog()
     # Le mariage du transport et de la mémoire longue (#699), fait **ici** et une
     # seule fois : tout ce qui publie en aval — routes, services, hôte en process
@@ -1887,13 +1899,21 @@ def create_app(
         description="État de l'orchestration (REST) et flux d'événements (WebSocket).",
         lifespan=lifespan,
     )
+    # Ce que l'API accepte (#638), en deux couches montées dans cet ordre —
+    # `add_middleware` empile par le haut, donc CORS, ajouté en second, est
+    # **au-dessus** du portier. C'est ce qu'on veut : un préflight `OPTIONS` est
+    # tranché par CORS sans jamais arriver au portier (un navigateur ne porte
+    # pas d'`Authorization` sur un préflight), et un 401 du portier ressort avec
+    # ses en-têtes CORS, donc la page peut en lire le motif.
+    app.add_middleware(GardeAcces, politique=acces)
     # L'UI (apps/web, ticket #47) est servie sur une autre origine que l'API
     # (Next.js sur :3000, API sur :8000) : sans CORS le navigateur bloque les
-    # appels REST. Origines ouvertes au POC — l'API n'écoute qu'en local
-    # (127.0.0.1, cf. cli.py) et ne porte aucune authentification à restreindre.
+    # appels REST. La liste n'est plus `["*"]` depuis #638 — c'est un réglage
+    # (`MAESTRO_API_ORIGINES`), dont le défaut local est l'origine du front, et
+    # le mode serveur se règle par la même variable (ENF-12).
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=list(acces.origines),
         allow_methods=["GET", "POST", "PUT", "DELETE"],
         allow_headers=["*"],
     )
@@ -5988,6 +6008,13 @@ def create_default_app() -> FastAPI:
     bus, le journal et le registre met la frontière d'exécution parmi les autres
     choix de déploiement, ce qu'elle est.
 
+    La **politique d'accès** (#638) se résout ici aussi, et pour la même raison :
+    c'est un choix de déploiement. Le défaut est le mode **durci** — jeton du
+    poste exigé sur chaque requête, origines limitées à celle du front —, et le
+    régime `ouvert` se nomme (`MAESTRO_API_AUTH`, voir
+    `maestro.controltower.acces`). L'app des tests, elle, passe par `create_app`
+    sans politique : ouverte, explicitement.
+
     C'est la cible *factory* d'uvicorn :
     `uvicorn --factory maestro.controltower.app:create_default_app`
     (ou le script `maestro-api`).
@@ -6000,6 +6027,7 @@ def create_default_app() -> FastAPI:
         event_log=supports.journal,
         battements=supports.battements,
         hote_run=_hote_configure(settings),
+        acces=politique_depuis(settings),
     )
 
 

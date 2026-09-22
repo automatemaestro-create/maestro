@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -49,13 +50,33 @@ CODE_INJOIGNABLE = 1
 CODE_REFUS = 3
 
 
+def _entetes(donnees: bytes | None) -> dict[str, str]:
+    """Les en-têtes d'un appel : le type du corps, et le **jeton** s'il y en a un.
+
+    Le jeton (#638) vient de `MAESTRO_API_JETON`, que
+    `scripts/design/relecture-visuelle.sh` pose pour cet appel — il l'a demandé
+    à `maestro-api --jeton`. Ce module n'a que la bibliothèque standard
+    (« un poste sans venv le fait tourner ») : il ne peut pas le résoudre
+    lui-même, et le recevoir de son appelant est la seule voie qui garde cette
+    promesse. Absent, on n'en pose pas — l'API d'avant ce lot, ou le régime
+    ouvert.
+    """
+    entetes: dict[str, str] = {}
+    if donnees is not None:
+        entetes["Content-Type"] = "application/json"
+    jeton = (os.environ.get("MAESTRO_API_JETON") or "").strip()
+    if jeton:
+        entetes["Authorization"] = f"Bearer {jeton}"
+    return entetes
+
+
 def _appel(port: int, methode: str, chemin: str, corps: dict[str, Any] | None = None) -> Any:
     donnees = None if corps is None else json.dumps(corps).encode("utf-8")
     requete = Request(  # noqa: S310 - l'URL est locale et construite ici
         f"http://127.0.0.1:{port}{chemin}",
         data=donnees,
         method=methode,
-        headers={"Content-Type": "application/json"} if donnees is not None else {},
+        headers=_entetes(donnees),
     )
     with urlopen(requete, timeout=DELAI_S) as reponse:  # noqa: S310
         return json.loads(reponse.read().decode("utf-8") or "null")

@@ -11,9 +11,10 @@ procédure manuelle du mode isolé) et les limites connues consolidées.
 
 Elle a grandi avec le produit, et chaque élargissement porte sa date : le **projet
 local** de l'utilisateur (§2.1), les **sources** d'un objectif (§2.2), la
-**bibliothèque MCP** (§2.3) et la **fenêtre de bureau** (§2.4) — celle-ci étant le
+**bibliothèque MCP** (§2.3), la **fenêtre de bureau** (§2.4) — celle-ci étant le
 premier endroit où la frontière n'est plus tenue par un navigateur tiers, mais par
-notre code.
+notre code — et le **mode local durci** (§2.5), premier endroit où l'API elle-même
+porte une frontière d'authentification.
 
 > **Pourquoi** : les agents exécutent du code (`Bash`, fichiers produits,
 > serveurs MCP stdio) et manipulent des tokens d'intégration. L'ouverture MCP
@@ -52,6 +53,7 @@ L'opérateur humain et le poste lui-même sont réputés de confiance (POC).
 | Config MCP ambiante montée à l'insu | config utilisateur/projet/plugin du CLI | `strict_mcp_config` : la session ne monte que la liste déclarée de l'agent | #104 |
 | **Serveur MCP arbitraire monté depuis un catalogue** | entrée de bibliothèque non curée, paquet typosquatté, annuaire tiers | **Allowlist** : `RegistreMcp.instancier` est l'unique voie template → liaison et n'accepte que l'allowlist ; `POST /api/mcp/pool` refuse avant elle. *Découverte ≠ installation* — **§2.3** | #131/#271/#678 |
 | Secret en clair dans le dépôt Git | déclaration MCP ou politique versionnée | Déclarations à références `${VAR}` seulement, littéraux masqués (`•••`) dans la forme publique ; `core/secrets/*` gitignoré ; politiques sans secret par construction | #104/#109 |
+| **Run lancé sur le disque de l'utilisateur depuis l'extérieur de la page** | page web tierce ouverte dans le même navigateur, autre programme du poste | **Mode local durci** : jeton engendré au premier démarrage et exigé sur chaque requête (`401` sinon, WebSocket compris), origines limitées à celle du front. *Ce que cela ferme et ne ferme pas* — **§2.5** | #638 |
 
 Les trois mécanismes sont **cumulatifs et indépendants** : chacun s'active
 seul, la défense en profondeur vient de leur empilement (une politique d'outils
@@ -323,19 +325,21 @@ refermer cela, c'est activer l'isolation sur un poste qui peut la porter, ou ref
 l'agent, ou ne pas lancer d'agent sur un poste où l'on n'accepte ni l'un ni l'autre. Ce document
 ne dit pas que le régime est confortable ; il dit que **c'est le régime**.
 
-#### Ce que le modèle attend du mode local durci (#638)
+#### Ce que le modèle attend du mode local durci (#638) *(livré — voir §2.5)*
 
-L'API de la Control Tower n'a **aucune authentification** et accepte toutes les origines. Ce n'est
-pas la fenêtre qui creuse ce trou — il est là depuis que l'API existe, il est nommé comme bloquant
-par [docs/24 §6](./24-projets-locaux-et-poste-de-travail.md) (point 3), et #638 le traite en
-Phase 9. **Il ne se refait pas ici** ; deux choses s'en disent, qu'on ne voit bien qu'en regardant
-la fenêtre :
+⚠ **La première phrase de cette sous-section n'est plus vraie depuis #638**, et elle est gardée
+telle quelle parce que c'est l'état des lieux que la fenêtre décrivait : l'API de la Control Tower
+n'avait **aucune authentification** et acceptait toutes les origines. Ce n'est pas la fenêtre qui
+creusait ce trou — il était là depuis que l'API existe, il est nommé comme bloquant
+par [docs/24 §6](./24-projets-locaux-et-poste-de-travail.md) (point 3), et #638 l'a traité en
+Phase 9 (**§2.5**). **Il ne se refaisait pas ici** ; deux choses s'en disaient, qu'on ne voit bien
+qu'en regardant la fenêtre — et elles restent vraies après #638 :
 
 - **la fenêtre n'aggrave pas ce trou et n'y donne pas accès.** Un programme du poste qui parle à
   l'API locale obtient l'API — déjà de quoi lancer un run sur le disque —, il n'obtient **pas** le
   pont : celui-ci vit dans le processus de rendu, derrière `contextBridge`, et rien du réseau n'y
   arrive. Confondre les deux surfaces ferait attendre de #638 une protection qu'il n'apporte pas ;
-- **ce que #638 fermera, et ce qu'il ne fermera pas.** Un jeton et une liste d'origines ferment
+- **ce que #638 ferme, et ce qu'il ne ferme pas.** Un jeton et une liste d'origines ferment
   l'accès *depuis l'extérieur de la page* — une autre page du navigateur, un autre programme du
   poste. Ils ne ferment rien *à l'intérieur* : du code qui s'exécute dans la fenêtre a le jeton,
   l'origine et le pont. Ce qui borne celui-là est écrit plus haut — ce que le processus principal
@@ -346,19 +350,68 @@ Aucun embranchement de code applicatif n'existe dans `apps/web/**` — le front 
 **capacité** (`apps/web/lib/poste.ts`), jamais sa plateforme, et c'est ce qui fait que la même
 page, servie dans un onglet, répond « non » et prend l'autre chemin.
 
+### 2.5 Ce que le mode local durci ferme *(en vigueur — #638, [docs/05 §6.21](./05-interface-control-tower.md))*
+
+L'API de la Control Tower porte, pour la première fois, une **frontière d'authentification**. Ce
+n'était pas une omission tant que le produit ne touchait à rien : elle écoutait en local et ne
+servait qu'un état d'orchestration. La Phase 7 a changé la donne — un projet a une **racine sur le
+disque** (#221) et un run y écrit —, si bien qu'une page web ouverte dans le navigateur de
+l'utilisateur pouvait lancer un run chez lui. C'est le point 3 de
+[docs/24 §6](./24-projets-locaux-et-poste-de-travail.md), et c'est aussi le prérequis d'un produit
+**installable** : ce qui se tolère derrière un clone Git lancé à la main ne se tolère plus dans une
+application qu'on double-clique.
+
+**Deux gardes, et elles ne traitent pas la même menace.**
+
+| garde | ce qu'elle ferme | ce qu'elle ne ferme pas |
+|---|---|---|
+| **Jeton** (`Authorization: Bearer`, `?jeton=` sur le WebSocket) | tout appelant qui ne l'a pas : page tierce du navigateur, programme du poste qui ne lit pas le dossier personnel | rien de ce qui s'exécute *dans* la page servie, qui l'a par construction |
+| **Origines** (`allow_origins` réglé, plus `*`) | la page tierce qui aurait le jeton : hors liste, aucune en-tête CORS ne part, donc elle ne lit pas la réponse. Vérifiée **aussi sur le WebSocket**, que CORS ne couvre pas | un client non navigateur, qui écrit l'`Origin` qu'il veut — seul le jeton le juge |
+
+**Le secret, et son périmètre.** Le jeton est engendré au premier démarrage (`secrets.token_urlsafe`)
+et persisté **hors du dépôt**, dans `~/.maestro/jeton-api` en `0600` : hors du dépôt parce qu'un
+secret n'a rien à faire dans un arbre Git, dans le dossier personnel parce que c'est le périmètre
+que l'OS garde déjà pour l'utilisateur — le même raisonnement que le coffre par agent
+([docs/18](./18-secrets-par-agent.md)), un cran plus bas. **Sa lecture est donc la frontière** : un
+programme qui tourne sous le compte de l'utilisateur peut le lire, et c'est assumé — celui-là
+pouvait déjà écrire dans les dossiers de projets sans passer par l'API. Ce que le jeton ferme est
+l'accès *sans ce privilège*, c'est-à-dire tout ce qui arrive par le réseau local et par le
+navigateur.
+
+**Ce qui reste ouvert, dit franchement :**
+
+- **le poste est toujours réputé de confiance** (§2) : le jeton ne protège pas d'un programme qui a
+  déjà les droits de l'utilisateur, et ne prétend pas le faire ;
+- **le transport reste en clair** — `http://127.0.0.1`, pas de TLS. Le jeton voyage donc en clair
+  sur la boucle locale, qui ne sort pas de la machine. Un mode serveur exposé sur le réseau exige
+  du TLS devant l'API : c'est une décision de déploiement, pas un réglage de ce lot ;
+- **le jeton du WebSocket voyage dans l'URL**, faute d'en-tête possible sur une poignée de main
+  navigateur. Il peut donc apparaître dans un journal d'accès local. C'est le prix du protocole, et
+  il est borné : le paramètre n'est accepté **que** sur le WebSocket, jamais sur une route REST ;
+- **le régime `ouvert` reste disponible** (`MAESTRO_API_AUTH=ouvert`) pour un usage de
+  développement. Il se **nomme**, et l'API **annonce son régime au démarrage** : une API grande
+  ouverte ne doit jamais être ce qu'on obtient en se taisant, ni ce qu'on découvre après coup.
+
+**Le mode serveur ne change que des réglages** (**ENF-12**) : un jeton injecté par le déploiement
+(`MAESTRO_API_JETON`) et des origines nommées (`MAESTRO_API_ORIGINES`) passent par les mêmes clés
+que le mode local. Les **comptes** d'un mode serveur multi-utilisateur viendront derrière cette même
+couche, jamais dans une branche de code parallèle.
+
 ## 3. Activation (récapitulatif)
 
 Chaque mécanisme est **opt-in** et détaillé dans sa page ; l'ensemble tient
-dans le `.env` et les dépôts `core/` :
+dans le `.env` et les dépôts `core/` — **sauf le mode local durci, qui est le
+seul à être actif sans rien écrire**, et qui se désarme au lieu de s'armer :
 
 | Mécanisme | Activation | Défaut |
 |---|---|---|
 | Mode isolé (#108) | `MAESTRO_ISOLATION=conteneur` (+ image construite : `docker build -t maestro-sandbox:latest infra/sandbox`) — [docs/17 §4](./17-isolation-execution.md) | exécution sur l'hôte |
 | Coffre par agent (#109) | écrire le **premier** `core/secrets/<agent>.json` (bascule pour **tous** les agents) — [docs/18 §3](./18-secrets-par-agent.md) | environnement du process |
 | Permissions (#110, #580) | écrire `core/permissions/<agent>.json` (`{"allow": [...], "ask": {"<outil>": "<décideur>"}, "deny": [...]}`) — **ou l'onglet MCP & permissions de la fiche agent** depuis #262, qui écrit le même fichier (`PUT /api/permissions/<agent>`, mêmes règles de validation) — [README](../core/permissions/README.md) | tout permis (outils du profil) |
+| **Mode local durci (#638)** | **rien à écrire** : jeton engendré au premier démarrage (`~/.maestro/jeton-api`), origines limitées à celle du front. `MAESTRO_API_AUTH=ouvert` le **désarme**, `MAESTRO_API_ORIGINES` règle les origines — **§2.5**, [docs/05 §6.21](./05-interface-control-tower.md) | **actif** (`jeton`) |
 
 Racines remplaçables (`MAESTRO_ISOLATION_*`, `MAESTRO_SECRETS_DIR`,
-`MAESTRO_PERMISSIONS_DIR`) : cf. `.env.example`. En distribué (#41), moteur et
+`MAESTRO_PERMISSIONS_DIR`, `MAESTRO_API_JETON_FICHIER`) : cf. `.env.example`. En distribué (#41), moteur et
 workers doivent voir les mêmes dépôts. Une config bancale casse **au câblage**
 avec sa cause (mode inconnu, réseau invalide, shim introuvable) ; une politique
 ou un coffre invalides sont des **échecs de tâche propres**, jamais appliqués à
@@ -392,6 +445,16 @@ Compléments existants : `tests/test_mcp.py` (références `${VAR}`, littéraux
 masqués, `strict_mcp_config`), `tests/test_telemetry.py` et
 `tests/test_engine.py` (rédaction des valeurs d'environnement et motifs de
 clés au journal).
+
+Pour le **mode local durci** (#638, §2.5), `tests/test_acces_api.py` : jeton
+engendré au premier démarrage, persisté hors du dépôt et idempotent ; `401` sur
+une lecture comme sur une écriture, sur un mauvais jeton et sur un jeton passé
+en paramètre d'URL côté REST ; poignée de main WebSocket refusée sans jeton, avec
+un mauvais jeton, et depuis une origine tierce ; préflight `OPTIONS` laissé
+passer ; aucune en-tête CORS pour une origine hors liste. Côté front,
+`apps/web/tests/jeton-api.test.ts` : l'en-tête part sur une lecture, une écriture
+JSON et un téléversement, le flux le porte par l'URL — et rien de tout cela en
+régime ouvert.
 
 ### Smoke test manuel du mode isolé (Docker requis)
 
@@ -442,6 +505,8 @@ Chaque page de lot garde le détail ; l'essentiel, assumé au POC :
   IPC servent tout ce qui s'exécute dans la page. Ce qui rend cela tenable est une
   hypothèse à quatre termes — une fenêtre, une origine, pas de `<webview>`, pas
   d'iframe tierce — et non un contrôle ;
-- **l'API locale n'a ni jeton ni liste d'origines** (#638, Phase 9) : indépendant
-  de la fenêtre, mais c'est en distribution bureau que ce défaut cesse d'être une
-  commodité de développement (§2.4).
+- ~~**l'API locale n'a ni jeton ni liste d'origines**~~ — **levé par #638** (§2.5) : elle a les
+  deux, et le régime durci est le défaut. Ce qui reste assumé est écrit là-bas — le poste est
+  toujours réputé de confiance (qui lit `~/.maestro/jeton-api` a le jeton), le transport local
+  reste **en clair** (pas de TLS sur `127.0.0.1`), et le jeton du WebSocket voyage dans l'URL
+  faute d'en-tête possible sur une poignée de main navigateur.

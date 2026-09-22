@@ -82,6 +82,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sqlite3
+import time
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Mapping
 from pathlib import Path
@@ -135,6 +136,12 @@ SCHEMA_VERSION = 1
 #: Ce qu'une écriture attend que l'autre process rende le verrou d'écriture, en
 #: millisecondes (`PRAGMA busy_timeout`) — voir `SqliteEventLog` pour le régime.
 ATTENTE_VERROU_MS = 5_000
+
+#: Entre deux essais du passage en WAL (`_passer_en_wal`), en secondes. La
+#: fenêtre disputée est celle d'une réécriture d'en-tête — des microsecondes —,
+#: donc on repasse vite : c'est `ATTENTE_VERROU_MS` qui borne l'attente, pas ce
+#: pas.
+PAS_ESSAI_WAL_S = 0.005
 
 
 class EventLog(ABC):
@@ -233,7 +240,8 @@ class SqliteEventLog(EventLog):
     - `journal_mode=WAL` — les lecteurs ne bloquent pas l'écrivain et
       réciproquement, et **plusieurs process** peuvent ouvrir la même base. C'est
       ce qui permet à une API et à un producteur voisin d'appendre au même
-      journal ;
+      journal. Le **passage** en WAL est le seul geste que `busy_timeout` ne
+      couvre pas, et il s'attend donc à la main (`_passer_en_wal`) ;
     - `busy_timeout` (`ATTENTE_VERROU_MS`) — une écriture qui trouve le verrou
       pris **attend** au lieu d'échouer sur-le-champ. Un `INSERT` d'une ligne se
       compte en fractions de milliseconde : cinq secondes d'attente ne sont pas
@@ -298,8 +306,10 @@ class SqliteEventLog(EventLog):
         connexion = sqlite3.connect(
             str(self._chemin), check_same_thread=False, isolation_level=None
         )
-        connexion.execute("PRAGMA journal_mode=WAL")
+        # `busy_timeout` **en premier**, avant tout geste qui peut trouver le
+        # verrou pris : il ne vaut que pour les instructions qui le suivent.
         connexion.execute(f"PRAGMA busy_timeout={ATTENTE_VERROU_MS}")
+        self._passer_en_wal(connexion)
         connexion.execute("PRAGMA synchronous=NORMAL")
         connexion.execute(
             f"CREATE TABLE IF NOT EXISTS {TABLE_EVENEMENTS} "
@@ -307,6 +317,45 @@ class SqliteEventLog(EventLog):
         )
         connexion.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         return connexion
+
+    def _passer_en_wal(self, connexion: sqlite3.Connection) -> None:
+        """Passe la base en WAL en **attendant son tour** — la borne est `ATTENTE_VERROU_MS`.
+
+        Le seul geste de l'ouverture que `busy_timeout` ne couvre pas. Changer
+        le mode de journal exige un accès exclusif le temps de réécrire
+        l'en-tête, et SQLite rend alors `SQLITE_BUSY` **sur-le-champ** sans
+        appeler le gestionnaire d'attente : poser `busy_timeout` avant ne suffit
+        pas, c'est mesuré — 45 « database is locked » sur 300 ouvertures
+        concurrentes, l'attente posée d'abord. Or c'est exactement là que se
+        rencontrent les deux connexions du régime décrit plus haut — l'API et un
+        producteur voisin qui démarrent ensemble sur un fichier neuf.
+
+        On attend donc à la main ce que `busy_timeout` aurait attendu : la
+        fenêtre disputée est une réécriture d'en-tête, et le perdant retrouve au
+        second essai une base **déjà** en WAL, où il n'a plus rien à changer.
+        Au-delà de la borne, l'erreur passe — cinq secondes sur ce verrou-là
+        disent que quelque chose est cassé, et un journal qui resterait en mode
+        rollback perdrait justement l'ouverture multi-process qu'on promet.
+        """
+        echeance = time.monotonic() + ATTENTE_VERROU_MS / 1000
+        while True:
+            try:
+                ligne = connexion.execute("PRAGMA journal_mode=WAL").fetchone()
+            except sqlite3.OperationalError:
+                if time.monotonic() >= echeance:
+                    raise
+            else:
+                if ligne is not None and str(ligne[0]).lower() == "wal":
+                    return
+                # Pas d'erreur et pas WAL : un lecteur tient la base. Même
+                # attente, et une erreur franche si elle ne se libère pas.
+                if time.monotonic() >= echeance:
+                    mode = ligne[0] if ligne is not None else "inconnu"
+                    raise sqlite3.OperationalError(
+                        f"journal SQLite « {self._chemin} » : passage en WAL refusé "
+                        f"après {ATTENTE_VERROU_MS} ms (mode resté « {mode} »)"
+                    )
+            time.sleep(PAS_ESSAI_WAL_S)
 
     def _connexion_ouverte(self) -> sqlite3.Connection:
         if self._connexion is None:

@@ -4,9 +4,15 @@
  * L'URL de l'API vient de `NEXT_PUBLIC_MAESTRO_API_URL` (inlinée au build par
  * Next.js) et retombe sur l'écoute locale par défaut du backend
  * (`maestro-api`, 127.0.0.1:8000). Le WebSocket dérive de la même URL.
+ *
+ * Le **jeton de l'API locale** (#638) vient de `lib/jetonApi`, posé de la même
+ * façon, et part sur chaque appel — en en-tête pour le REST, en paramètre d'URL
+ * pour le WebSocket, qui n'admet pas d'en-tête. Tout passe par `appel()`
+ * ci-dessous : c'est le seul `fetch` du module.
  */
 
 import { AUCUNE_BORNE, type BornesRun } from "./bornes";
+import { jetonApi } from "./jetonApi";
 import { lireProjetActifId } from "./projetActif";
 import type {
   AgentCatalogue,
@@ -84,6 +90,29 @@ export function urlApi(): string {
   return API_URL;
 }
 
+/** L'en-tête du jeton (#638), ou rien du tout quand le poste sert en régime ouvert. */
+function entetesDuJeton(): Record<string, string> {
+  const jeton = jetonApi();
+  return jeton === "" ? {} : { Authorization: `Bearer ${jeton}` };
+}
+
+/**
+ * Le `fetch` de ce module, et le **seul** : il pose le jeton sur chaque appel.
+ *
+ * Un point de passage unique plutôt qu'un en-tête recopié seize fois — c'est ce
+ * qui fait qu'un appel ajouté demain le porte sans que personne y pense, et que
+ * le jeton ne se perd pas dans un `headers:` qui écraserait celui d'en dessous
+ * (les en-têtes de l'appelant sont fusionnés **par-dessus**, jamais en
+ * remplacement du lot).
+ */
+function appel(
+  url: string,
+  init: RequestInit & { headers?: Record<string, string> } = {},
+): Promise<Response> {
+  const { headers, ...reste } = init;
+  return fetch(url, { ...reste, headers: { ...entetesDuJeton(), ...headers } });
+}
+
 /**
  * La **portée projet** d'une lecture (#277) : l'identifiant d'un projet, ou l'un
  * des deux mots réservés. Le backend l'exige sur toutes les vues qui agrègent —
@@ -129,11 +158,20 @@ function cadreProjet(chemin: string): string {
   return `${chemin}${separateur}projet=${encodeURIComponent(projet)}`;
 }
 
-/** L'URL du flux d'événements temps réel (`WS /ws/evenements`), à la portée demandée. */
+/**
+ * L'URL du flux d'événements temps réel (`WS /ws/evenements`), à la portée demandée.
+ *
+ * Le jeton (#638) y voyage en **paramètre d'URL** et non en en-tête : un
+ * navigateur n'en pose aucun sur une poignée de main WebSocket. C'est le prix
+ * du protocole, et il est borné — l'API n'accepte ce paramètre que sur le
+ * WebSocket, jamais sur une route REST.
+ */
 export function urlEvenements(portee: PorteeProjet): string {
+  const jeton = jetonApi();
+  const porte = jeton === "" ? "" : `&jeton=${encodeURIComponent(jeton)}`;
   return (
     API_URL.replace(/^http/, "ws") +
-    `/ws/evenements?projet=${encodeURIComponent(portee)}`
+    `/ws/evenements?projet=${encodeURIComponent(portee)}${porte}`
   );
 }
 
@@ -206,7 +244,7 @@ async function motifDe(reponse: Response): Promise<string> {
 async function chargerJson<T>(chemin: string): Promise<T> {
   let reponse: Response;
   try {
-    reponse = await fetch(`${API_URL}${chemin}`, { cache: "no-store" });
+    reponse = await appel(`${API_URL}${chemin}`, { cache: "no-store" });
   } catch {
     throw ErreurApi.injoignable(chemin);
   }
@@ -449,7 +487,7 @@ async function envoyerJson(
   refusParDefaut: string,
   methode: "POST" | "PUT" | "DELETE" = "POST",
 ): Promise<void> {
-  const reponse = await fetch(`${API_URL}${chemin}`, {
+  const reponse = await appel(`${API_URL}${chemin}`, {
     method: methode,
     ...(corps !== undefined && {
       headers: { "Content-Type": "application/json" },
@@ -830,7 +868,7 @@ export function chargerConversationsChat(
 export async function ouvrirConversationChat(
   agent: string,
 ): Promise<ConversationChat> {
-  const reponse = await fetch(
+  const reponse = await appel(
     cadreProjet(`${API_URL}/api/chat/${encodeURIComponent(agent)}/conversations`),
     { method: "POST", headers: { "Content-Type": "application/json" } },
   );
@@ -869,7 +907,7 @@ export async function trancherCadrageChat(
   },
 ): Promise<MessageChat[]> {
   const bornes = decision.bornes ?? AUCUNE_BORNE;
-  const reponse = await fetch(
+  const reponse = await appel(
     `${API_URL}/api/chat/${encodeURIComponent(agent)}/cadrage`,
     {
       method: "POST",
@@ -916,7 +954,7 @@ export async function recruterDansLeFil(
     conversation?: string;
   },
 ): Promise<MessageChat[]> {
-  const reponse = await fetch(
+  const reponse = await appel(
     `${API_URL}/api/chat/${encodeURIComponent(agent)}/recrutement`,
     {
       method: "POST",
@@ -956,7 +994,7 @@ export async function repondreQuestionOutillage(
   agent: string,
   reponseChoisie: { valeur: string; conversation?: string },
 ): Promise<MessageChat[]> {
-  const reponse = await fetch(
+  const reponse = await appel(
     `${API_URL}/api/chat/${encodeURIComponent(agent)}/outillage`,
     {
       method: "POST",
@@ -993,7 +1031,7 @@ export async function ouvrirQuestionnaireOutillage(
   const requete = new URLSearchParams();
   if (conversation) requete.set("conversation", conversation);
   const suffixe = requete.toString() ? `?${requete}` : "";
-  const reponse = await fetch(
+  const reponse = await appel(
     `${API_URL}/api/chat/${encodeURIComponent(agent)}/outillage/questionnaire${suffixe}`,
     { method: "POST", headers: { "Content-Type": "application/json" } },
   );
@@ -1087,7 +1125,7 @@ export async function diffuserMessageChat(
   conversation: string = "",
   surTrame: (trame: FragmentChat) => void = () => {},
 ): Promise<void> {
-  const reponse = await fetch(
+  const reponse = await appel(
     cadreProjet(`${API_URL}/api/chat/${encodeURIComponent(agent)}/flux`),
     {
       method: "POST",
@@ -1180,7 +1218,7 @@ export async function arreterFluxChat(
   echange: string,
 ): Promise<void> {
   try {
-    await fetch(
+    await appel(
       cadreProjet(
         `${API_URL}/api/chat/${encodeURIComponent(agent)}/flux/${encodeURIComponent(echange)}/arret`,
       ),
@@ -1231,7 +1269,7 @@ async function envoyerJsonEtLire<T>(
   refusParDefaut: string,
   methode: "POST" | "PUT" = "POST",
 ): Promise<T> {
-  const reponse = await fetch(`${API_URL}${chemin}`, {
+  const reponse = await appel(`${API_URL}${chemin}`, {
     method: methode,
     ...(corps !== undefined && {
       headers: { "Content-Type": "application/json" },
@@ -1503,7 +1541,7 @@ async function lireProjets<T>(
 ): Promise<T> {
   let reponse: Response;
   try {
-    reponse = await fetch(`${API_URL}${chemin}`, { cache: "no-store" });
+    reponse = await appel(`${API_URL}${chemin}`, { cache: "no-store" });
   } catch {
     throw ErreurApi.injoignable(chemin);
   }
@@ -1518,7 +1556,7 @@ async function ecrireProjet<T>(
   refusParDefaut: string,
   methode: "POST" | "PUT" | "DELETE" = "POST",
 ): Promise<T> {
-  const reponse = await fetch(`${API_URL}${chemin}`, {
+  const reponse = await appel(`${API_URL}${chemin}`, {
     method: methode,
     ...(corps !== undefined && {
       headers: { "Content-Type": "application/json" },
@@ -1934,7 +1972,7 @@ export async function apercuSources(
   const corps = new FormData();
   corps.set("sources", JSON.stringify(sources));
   for (const fichier of fichiers) corps.append("fichier", fichier);
-  const reponse = await fetch(`${API_URL}/api/sources/apercu`, {
+  const reponse = await appel(`${API_URL}/api/sources/apercu`, {
     method: "POST",
     body: corps,
   });
@@ -1956,7 +1994,7 @@ export async function televerserSources(
 ): Promise<TeleversementSources> {
   const corps = new FormData();
   for (const fichier of fichiers) corps.append("fichier", fichier);
-  const reponse = await fetch(`${API_URL}/api/sources`, {
+  const reponse = await appel(`${API_URL}/api/sources`, {
     method: "POST",
     body: corps,
   });
@@ -1975,7 +2013,7 @@ export async function televerserSources(
 export async function lancerExecution(
   corps: LancementExecution,
 ): Promise<ResumeExecution> {
-  const reponse = await fetch(`${API_URL}/api/executions`, {
+  const reponse = await appel(`${API_URL}/api/executions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(corps),
@@ -2071,7 +2109,7 @@ export function annulerExecution(runId: string): Promise<ResumeExecution> {
 export async function relancerExecution(
   runId: string,
 ): Promise<ResumeExecution> {
-  const reponse = await fetch(
+  const reponse = await appel(
     `${API_URL}/api/executions/${encodeURIComponent(runId)}/relancer`,
     { method: "POST" },
   );

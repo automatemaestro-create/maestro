@@ -161,6 +161,32 @@ class Settings:
     #: est une erreur de config explicite, jamais une frontière d'exécution
     #: silencieusement autre (même parti pris que `MAESTRO_ISOLATION`).
     hote_run: str | None = None
+    #: **Régime d'accès** à l'API de la Control Tower (`MAESTRO_API_AUTH`, #638),
+    #: ou None : `jeton` — l'API sert **durcie**, chaque requête porte le jeton
+    #: local. `ouvert` la rouvre, et se nomme : la voie non authentifiée ne doit
+    #: jamais être ce qu'on obtient sans rien dire. Interprété et validé par
+    #: `maestro.controltower.acces` — toute autre valeur est une erreur franche
+    #: (même parti pris que `MAESTRO_HOTE_RUN`).
+    api_auth: str | None = None
+    #: Le **jeton** imposé à l'API (`MAESTRO_API_JETON`, #638), ou None : celui
+    #: du poste, engendré au premier démarrage et persisté hors du dépôt. C'est
+    #: la porte du mode serveur (secret injecté par le déploiement) et celle des
+    #: outils qui reçoivent le jeton de leur appelant.
+    api_jeton: str | None = None
+    #: Où le jeton du poste est persisté (`MAESTRO_API_JETON_FICHIER`, #638), ou
+    #: None : `~/.maestro/jeton-api`, en `0600`. Hors du dépôt : un secret n'a
+    #: rien à faire dans un arbre Git.
+    api_jeton_fichier: str | None = None
+    #: Les **origines autorisées** de l'API (`MAESTRO_API_ORIGINES`, #638),
+    #: séparées par des virgules — `*` admis et alors décidé par écrit —, ou
+    #: None : l'origine du front local (`MAESTRO_PORT_UI`). Le mode serveur se
+    #: règle par la même variable : aucune branche de code séparée (ENF-12).
+    api_origines: str | None = None
+    #: Le port du **front** (`MAESTRO_PORT_UI`, posé par `worktree.sh ensure`
+    #: pour chaque copie de travail), ou None : 3000, celui de
+    #: `scripts/controltower/start.sh`. Lu par `maestro.controltower.acces` pour
+    #: le défaut d'origines — une copie ne s'autorise pas la stack d'une autre.
+    port_ui: str | None = None
     #: Ce qu'on laisse à la personne qui **arbitre** un appel d'outil classé `ask`
     #: (`MAESTRO_ARBITRAGE_ATTENTE`, en secondes), ou None : le défaut du module
     #: (cf. maestro.providers.arbitrage, #583).
@@ -236,6 +262,11 @@ class Settings:
             persistance=(os.getenv("MAESTRO_PERSISTANCE") or "").strip().lower() or None,
             sqlite_fichier=(os.getenv("MAESTRO_SQLITE_FICHIER") or "").strip() or None,
             hote_run=(os.getenv("MAESTRO_HOTE_RUN") or "").strip().lower() or None,
+            api_auth=(os.getenv("MAESTRO_API_AUTH") or "").strip().lower() or None,
+            api_jeton=(os.getenv("MAESTRO_API_JETON") or "").strip() or None,
+            api_jeton_fichier=(os.getenv("MAESTRO_API_JETON_FICHIER") or "").strip() or None,
+            api_origines=(os.getenv("MAESTRO_API_ORIGINES") or "").strip() or None,
+            port_ui=(os.getenv("MAESTRO_PORT_UI") or "").strip() or None,
             arbitrage_attente=(os.getenv("MAESTRO_ARBITRAGE_ATTENTE") or "").strip() or None,
             arbitrage_borne_hook=(os.getenv("MAESTRO_ARBITRAGE_BORNE_HOOK") or "").strip()
             or None,

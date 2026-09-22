@@ -3151,6 +3151,10 @@ dans un second chapitre concurrent (§6.7, les projets de la Phase 7). Une secti
 Convention partagée avec les routes existantes : un champ **`null`** vaut « inconnu » et se
 distingue d'un zéro ou d'une absence ; les horodatages sont en **ISO-8601 UTC**.
 
+⚠ **Toutes ces routes sont derrière un jeton depuis #638** — §6.21, qui vaut pour le chapitre
+entier et pour le flux temps réel : une requête qui ne le porte pas sort en `401`, sans avoir
+atteint la route.
+
 ### 6.0 Portée projet d'une lecture — `?projet=` (#277) — **livré**
 
 Toutes les lectures qui **agrègent** portent le même paramètre, obligatoire : `GET /api/taches`,
@@ -6154,3 +6158,60 @@ conducteur du fil), [`maestro/controltower/app.py`](../maestro/controltower/app.
 [`test_outillage_skills_ref.py`](../tests/test_outillage_skills_ref.py) — cette dernière validant
 les skills **écrits sur le disque** contre la spécification Agent Skills, par un validateur
 indépendant du code qui les rédige.
+
+### 6.21 L'accès à l'API — jeton local et origines autorisées (#638) — **livré**
+
+Ce n'est pas une route de plus : c'est ce qui vient **avant** toutes celles de ce chapitre, flux
+temps réel compris. L'API écoute sur la boucle locale et, jusqu'à ce lot, n'avait aucune
+authentification et servait `allow_origins=["*"]` : n'importe quelle page ouverte dans le navigateur
+de l'utilisateur pouvait lancer un run sur son disque, depuis que Maestro travaille dans un vrai
+dossier (#221, [docs/24 §6](./24-projets-locaux-et-poste-de-travail.md) point 3). Le modèle de
+menace en tire les conséquences en
+[docs/19 §2.5](./19-securite-modele-de-menace.md).
+
+**Le contrat, en trois lignes.**
+
+| requête | ce qu'elle porte | sinon |
+|---|---|---|
+| REST (`/api/…`) | `Authorization: Bearer <jeton>` | `401`, `WWW-Authenticate: Bearer`, `detail` motivé |
+| WebSocket (`/ws/evenements`) | `?jeton=<jeton>` — un navigateur ne pose **aucun en-tête** sur une poignée de main | poignée de main refusée, fermeture `1008` |
+| préflight `OPTIONS` | rien | tranché par CORS, **jamais** `401` : un navigateur ne porte pas d'`Authorization` sur un préflight |
+
+Le paramètre d'URL est **réservé au WebSocket** : une route REST qui l'admettrait ferait voyager le
+secret dans les journaux d'accès et les historiques de navigation. Le refus se juge avant toute
+route, en middleware ASGI, et **sans exemption** — `/api/sante` comprise : une sonde de vitalité
+exemptée serait le premier précédent, et un `401` dit déjà « quelque chose sert ce port », qui est
+ce qu'une sonde cherche à savoir.
+
+**Deux gardes, deux menaces.** Le **jeton** ferme l'API à tout appelant qui ne l'a pas — une autre
+page du navigateur comme un autre programme du poste ; c'est la garde qui compte. Les **origines**
+ferment le navigateur : hors liste, aucune en-tête CORS ne part, donc la page tierce ne peut pas
+lire la réponse. Seules, elles n'arrêtent personne (un client non navigateur écrit l'`Origin` qu'il
+veut) — d'où les deux ensemble, et d'où la vérification d'origine **sur le WebSocket**, que CORS ne
+couvre pas.
+
+**Personne ne manipule le jeton.** Il est engendré au premier démarrage de `maestro-api` et persisté
+hors du dépôt (`~/.maestro/jeton-api`, mode `0600`) ; `scripts/controltower/start.sh` le lit et le
+passe au front par son environnement, qui l'envoie sur chaque appel
+([`apps/web/lib/jetonApi.ts`](../apps/web/lib/jetonApi.ts) le résout,
+[`apps/web/lib/api.ts`](../apps/web/lib/api.ts) le pose). Les outils du poste qui frappent la vraie
+API — le banc des scénarios, les captures de présentation, la relecture visuelle — lisent le **même**
+fichier : ils s'accordent sans se parler, comme deux programmes du même utilisateur.
+
+**Les réglages, et pourquoi l'ouvert se nomme.** `MAESTRO_API_AUTH` vaut `jeton` (le défaut, l'API
+sert durcie) ou `ouvert` ; `MAESTRO_API_ORIGINES` est la liste des origines, dont le défaut local est
+l'origine du front (`MAESTRO_PORT_UI` — une copie de travail sert la sienne sur ses propres ports).
+Le régime `ouvert` reste disponible pour un usage de développement qui en a besoin, mais **il se
+nomme** : une API grande ouverte ne doit jamais être ce qu'on obtient en se taisant, et l'API
+**annonce son régime au démarrage**. Une valeur inconnue est une erreur franche, jamais un repli
+silencieux — même parti pris que `MAESTRO_HOTE_RUN` (#446). Le **mode serveur** passe par ces mêmes
+clés : aucune branche de code séparée (**ENF-12**).
+
+Implémentation : [`maestro/controltower/acces.py`](../maestro/controltower/acces.py) (la politique et
+le portier), [`maestro/controltower/app.py`](../maestro/controltower/app.py) (le montage, CORS
+au-dessus du portier), [`maestro/controltower/cli.py`](../maestro/controltower/cli.py) (l'annonce au
+démarrage, et `maestro-api --jeton` par où le lanceur obtient le jeton).
+Gardé par [`tests/test_acces_api.py`](../tests/test_acces_api.py) — le refus `401` et le filtrage
+d'origine, livrés avec ce lot plutôt que différés (#645) — et, côté front, par
+[`apps/web/tests/jeton-api.test.ts`](../apps/web/tests/jeton-api.test.ts).
+
