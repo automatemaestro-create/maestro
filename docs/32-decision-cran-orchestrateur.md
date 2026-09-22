@@ -243,6 +243,26 @@ que personne ne prononce à l'instant de l'acte. La différence est entière et 
 différée**, pas une décision machine. Lire `auto` comme « la machine approuve » défairait #586 aussi
 sûrement que brancher le cran du milieu.
 
+### 4.4 La seconde décision humaine différée — l'accord du cadrage (#1198)
+
+Depuis #1198, un acte classé `humain` connaît une seconde issue qui ne dérange personne à l'instant
+de l'acte : celle d'une tâche qui porte un `acte_accorde`
+(`packages/shared/schemas/task.schema.json`). C'est le **même** déplacement que `auto`, par un autre
+chemin — une décision humaine posée plus tôt, par écrit, et relisible : l'objectif a été montré à
+une personne qui l'a approuvé, et il **nommait cet acte**. Ce qui change est *où* elle est écrite —
+dans le fil, pas dans une politique versionnée — et ce sur quoi elle porte — cet acte-là, pas un
+outil pour toujours.
+
+La confusion à ne pas faire est la même, dans l'autre sens : ce n'est ni un cran, ni un
+laissez-passer. Il ne vaut que pour l'**outil d'exécution**, que pour la tâche qui le déclare, et
+jamais contre `deny`, la frontière d'écriture (#839) ou le périmètre exclu du projet. Et la trace
+reste entière — sans elle, l'invariant de #586 (*qui a tranché se lit, il ne se déduit pas*) serait
+le premier à tomber : le détail consigné **nomme l'acte accordé**, mot pour mot.
+
+Ce qui l'a rendu nécessaire est une mesure, pas un confort : S1 du banc des scénarios, le
+2026-09-22, où l'accord donné au cadrage était redemandé une fois **par commande** — cinq demandes,
+quatre écartées à 240 s, dossier intact (docs/40 §4bis).
+
 ## 5. Arbitrage ③ — le canal « question » appartient à #354
 
 > **Verdict : la question est écartée de l'arbitrage et renvoyée à #354**, avec la frontière écrite.

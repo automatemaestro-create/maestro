@@ -35,6 +35,14 @@ et ont différé le reste ici. Ce fichier porte ce reste, en trois blocs :
    (`test_le_cran_par_defaut_d_une_demande_est_humain`) et le fail-safe sans
    validateur juste au-dessus.
 
+④ **l'accord que l'objectif a déjà donné** (#1198, `Task.acte_accorde`). C'est la
+   moitié que #1149 n'avait pas portée : le plan avait cessé d'ajouter une tâche
+   « faire valider », mais l'exécution redemandait une personne **à chaque
+   commande** — S1 du banc, le 2026-09-22, cinq demandes écartées à 240 s, dossier
+   intact. Le bloc éprouve l'accord *et ses bords*, parce que c'est un garde-fou
+   qu'on ouvre : il ne vaut que pour l'outil d'exécution, que pour la tâche qui le
+   déclare, jamais contre une liste `deny`, et jamais en silence.
+
 Aucun appel réseau : plans constants, fournisseurs factices, dépôts sur répertoire
 temporaire. Le harnais est celui de `tests/test_permissions.py` — mêmes doubles,
 mêmes aides — plutôt qu'un second à tenir d'accord.
@@ -50,6 +58,11 @@ from maestro.acte import ARGUMENT_MAX, arguments_depuis
 from maestro.agents.permissions import PermissionStore, Verdict
 from maestro.decideur import Decideur
 from maestro.engine import OrchestrationEngine
+from maestro.engine.executor import (
+    STATUT_ARBITRAGE_OUTIL,
+    STATUT_REFUS_OUTIL,
+    SUFFIXE_ETAPE_REFUS,
+)
 from maestro.engine.guardrails import (
     MOTS_SENSIBLES,
     ORIGINE_AGENT,
@@ -63,6 +76,7 @@ from maestro.providers.arbitrage import (
     NOM_SERVEUR,
     OUTIL_ARBITRAGE,
     RAISON_MANQUANTE,
+    motif_approbation,
     motif_refus,
     reponse,
 )
@@ -223,9 +237,14 @@ def store(tmp_path):
     return PermissionStore(tmp_path / "permissions")
 
 
-def _tache(id_: str, titre: str, description: str) -> dict:
-    """Une tâche de plan, routée vers le développeur (« backend »)."""
-    return {
+def _tache(id_: str, titre: str, description: str, acte_accorde: str = "") -> dict:
+    """Une tâche de plan, routée vers le développeur (« backend »).
+
+    `acte_accorde` (#1198) reste **absent** quand il est vide : c'est le cas
+    courant du schéma, et une clé posée à la chaîne vide dirait autre chose
+    qu'une clé omise.
+    """
+    tache = {
         "id": id_,
         "titre": titre,
         "description": description,
@@ -233,6 +252,9 @@ def _tache(id_: str, titre: str, description: str) -> dict:
         "format_sortie": "Texte",
         "dependances": [],
     }
+    if acte_accorde:
+        tache["acte_accorde"] = acte_accorde
+    return tache
 
 
 def _moteur(provider, store, guardrails, plan):
@@ -546,3 +568,293 @@ def test_l_issue_de_l_arbitrage_de_l_agent_est_consignee_au_journal(store):
 
     traces = [r for r in journal.records if "Arbitrage demandé par l'agent" in r.nom]
     assert len(traces) == 2
+
+
+# --- ④ L'accord que l'objectif a déjà donné (#1198) -------------------------------------
+
+
+#: L'acte, écrit comme l'objectif le nomme — c'est ce texte-là qui doit se
+#: retrouver au journal, sans reformulation par le moteur.
+ACTE_ACCORDE = "supprimer tout le contenu du dossier du projet"
+
+#: Les commandes de l'acte, dans l'ordre où l'agent les joue — les lectures, puis
+#: le geste. Trois et non une : le défaut mesuré le 2026-09-22 n'est pas « une
+#: demande de trop », c'est **une par commande** — le lire sur un seul appel
+#: laisserait croire qu'un accord unique en début de tâche aurait suffi.
+#:
+#: Trois commandes **distinctes**, et c'est nécessaire : la mémoire de
+#: délibération (#584) sert la décision déjà rendue à un acte identique, si bien
+#: qu'un `ls -la` rejoué ne composerait pas de seconde demande. Le témoin
+#: compterait alors deux demandes pour trois commandes et dirait à moitié ce
+#: qu'il prétend dire.
+COMMANDES = (
+    {"command": "ls -la"},
+    {"command": "cat lisez-moi.txt"},
+    {"command": "rm -rf notes lisez-moi.txt rapport.csv && ls -la"},
+)
+
+#: Le plan de S1 : **une** tâche qui agit (#1149), et une seconde qui construit,
+#: pour que le même run porte les deux régimes. Le compte des demandes ne veut
+#: rien dire sans elle — zéro demande pourrait aussi bien signifier « le canal
+#: est débranché ».
+TITRE_ACTE = "Vider le dossier du projet"
+TITRE_CONSTRUIT = "Écrire le guide de reprise"
+
+
+def _plan_s1(*, accorde: bool) -> str:
+    return json.dumps(
+        [
+            _tache(
+                "vider-le-dossier",
+                TITRE_ACTE,
+                "Supprimer tout le contenu de la racine, hors périmètre exclu.",
+                acte_accorde=ACTE_ACCORDE if accorde else "",
+            ),
+            _tache(
+                "guide",
+                TITRE_CONSTRUIT,
+                "Écrire un guide de reprise du projet.",
+            ),
+        ],
+        ensure_ascii=False,
+    )
+
+
+OBJECTIF_S1 = "Vide le dossier de ce projet : supprime tout son contenu."
+
+
+class JoueSesCommandes(_Executant):
+    """Exécutant qui joue une liste d'actes, **comme le hook les jouerait**.
+
+    Le double de `maestro.providers.claude._hook_permissions` vu du moteur : il
+    demande son verdict à la politique, part sur `on_arbitrage_acte` quand elle
+    dit `ARBITRAGE`, et trace **les deux issues** par `on_refus` — l'approbation
+    avec `motif_approbation`, le refus avec `motif_refus`. Reproduire la trace
+    compte ici autant que le verdict : ce qui est en jeu est un garde-fou qu'on
+    ouvre, et un accord qui passerait sans ligne au journal serait un trou.
+
+    Les actes se choisissent sur le **titre** de la tâche, que le tableau noir
+    porte en première ligne (`_build_task_description`) : c'est ce qui permet au
+    même run de faire agir une tâche et construire l'autre.
+    """
+
+    name = "joue-ses-commandes"
+
+    def __init__(self, actes: dict[str, tuple[tuple[str, dict[str, str]], ...]]) -> None:
+        super().__init__()
+        self.actes = actes
+        #: Ce que l'agent a réellement obtenu, acte par acte : (titre, outil,
+        #: approuvé, détail). C'est la moitié que le compte des demandes ne dit
+        #: pas — un acte peut passer sans demande, c'est tout l'objet du lot.
+        self.issues: list[tuple[str, str, bool, str]] = []
+
+    async def run_agent(
+        self, prompt, *, model, system_prompt=None, workspace, tools,
+        mcp_serveurs=(), politique=None, on_refus=None, on_arbitrage_acte=None,
+        on_activite=None, on_etapes=None, on_arbitrage=None, on_blocage=None, on_decision=None,
+        credit_arbitrage=None,
+        on_courrier=None, on_question=None,
+        plafond_tours=None, projet=None,
+    ):
+        for titre, actes in self.actes.items():
+            if titre not in prompt:
+                continue
+            for outil, arguments in actes:
+                decision = None if politique is None else politique.decide(outil)
+                if decision is None or decision.verdict is Verdict.PASSE:
+                    continue
+                if decision.verdict is Verdict.REFUS:
+                    if on_refus is not None:
+                        on_refus(outil, decision.motif)
+                    continue
+                approuve, detail = await on_arbitrage_acte(
+                    outil, dict(arguments), decision.motif
+                )
+                self.issues.append((titre, outil, approuve, detail))
+                if on_refus is not None:
+                    on_refus(
+                        outil,
+                        motif_approbation(outil, detail)
+                        if approuve
+                        else motif_refus(outil, detail),
+                    )
+        return await super().run_agent(
+            prompt, model=model, system_prompt=system_prompt, workspace=workspace,
+            tools=tools, mcp_serveurs=mcp_serveurs, politique=politique,
+            on_refus=on_refus, plafond_tours=plafond_tours,
+        )
+
+
+def _bash(titre: str) -> dict[str, tuple[tuple[str, dict[str, str]], ...]]:
+    """Les trois commandes de l'acte, jouées par la tâche `titre`."""
+    return {titre: tuple(("Bash", dict(arguments)) for arguments in COMMANDES)}
+
+
+def test_l_acte_que_l_objectif_a_nomme_ne_redemande_personne(store):
+    """Le critère du ticket : *l'action approuvée dans le fil s'exécute sans
+    redemander un humain à chaque commande* (#1198).
+
+    Le run est celui de S1 : `Bash` en `ask`/`humain` — le cran qu'une équipe
+    proposée pose sur un projet qui ne déclare aucune commande
+    (`maestro.equipe.proposition`) —, et une tâche qui agit sur un acte que
+    l'objectif nomme. Les trois commandes passent, et **aucune** n'a composé de
+    demande : c'est le compte, pas le verdict, qui porte le remède. Sous le
+    régime d'avant, ce même run rendait trois demandes ; la personne n'en
+    tranchait qu'une et les deux autres expiraient à la borne d'arbitrage.
+    """
+    _ecrire_politique(store.racine, "developpeur", {"ask": {"Bash": "humain"}})
+    validateur = ValidateurEnregistreur(decision=True)
+    provider = JoueSesCommandes(_bash(TITRE_ACTE))
+    journal = RunJournal(run_id="run-1198-accorde")
+
+    report = asyncio.run(
+        _moteur(provider, store, Guardrails(validateur=validateur), _plan_s1(accorde=True)).run(
+            OBJECTIF_S1, journal=journal
+        )
+    )
+
+    # La prémisse : les trois commandes ont bien été soumises au canal.
+    assert len(provider.issues) == len(COMMANDES)
+    # Et les trois sont passées, sans que personne ne soit dérangé une seule fois.
+    assert all(approuve for _, _, approuve, _ in provider.issues)
+    assert validateur.demandes == []
+
+    # Le détail **nomme l'acte accordé**, mot pour mot : c'est ce qu'on relira.
+    assert all(ACTE_ACCORDE in detail for _, _, _, detail in provider.issues)
+
+    # Et chaque appel a laissé sa ligne au journal : un accord n'est pas un
+    # silence. Statut d'arbitrage, jamais de refus.
+    traces = [
+        r for r in journal.records if r.etape == f"vider-le-dossier{SUFFIXE_ETAPE_REFUS}"
+    ]
+    assert len(traces) == len(COMMANDES)
+    assert all(t.statut == STATUT_ARBITRAGE_OUTIL for t in traces)
+    assert all(ACTE_ACCORDE in t.sortie for t in traces)
+
+    assert all(r.ok for r in report.resultats)
+
+
+def test_sans_l_accord_la_meme_tache_redemande_a_chaque_commande(store):
+    """Le témoin, et la mesure du 2026-09-22 rejouée : **une demande par commande**.
+
+    Même plan, même politique, même exécutant — seule la clé `acte_accorde`
+    disparaît. Sans ce témoin, « aucune demande » ci-dessus pourrait vouloir dire
+    que le canal n'est pas câblé, et le lot n'aurait rien prouvé du défaut qu'il
+    répare.
+    """
+    _ecrire_politique(store.racine, "developpeur", {"ask": {"Bash": "humain"}})
+    validateur = ValidateurEnregistreur(decision=True)
+    provider = JoueSesCommandes(_bash(TITRE_ACTE))
+
+    asyncio.run(
+        _moteur(provider, store, Guardrails(validateur=validateur), _plan_s1(accorde=False)).run(
+            OBJECTIF_S1, journal=RunJournal(run_id="run-1198-temoin")
+        )
+    )
+
+    assert len(validateur.demandes) == len(COMMANDES)
+    assert {d.task_id for d in validateur.demandes} == {"vider-le-dossier"}
+    assert [d.arguments for d in validateur.demandes] == [dict(c) for c in COMMANDES]
+
+
+def test_l_accord_ne_vaut_que_pour_la_tache_qui_le_declare(store):
+    """L'accord est posé sur **une** tâche, pas sur le run.
+
+    Le même run porte une tâche qui agit sous accord et une tâche qui construit.
+    La seconde n'a rien reçu : son `Bash` compose une demande, comme avant. C'est
+    ce qui sépare « l'acte que l'objectif nomme » de « tout ce que ce run fera ».
+    """
+    _ecrire_politique(store.racine, "developpeur", {"ask": {"Bash": "humain"}})
+    validateur = ValidateurEnregistreur(decision=True)
+    actes = _bash(TITRE_ACTE)
+    actes[TITRE_CONSTRUIT] = (("Bash", {"command": "npm run build"}),)
+    provider = JoueSesCommandes(actes)
+
+    asyncio.run(
+        _moteur(provider, store, Guardrails(validateur=validateur), _plan_s1(accorde=True)).run(
+            OBJECTIF_S1, journal=RunJournal(run_id="run-1198-portee")
+        )
+    )
+
+    (demande,) = validateur.demandes
+    assert demande.task_id == "guide"
+    assert demande.arguments == {"command": "npm run build"}
+
+
+def test_l_accord_ne_couvre_pas_un_autre_outil_soumis_a_arbitrage(store):
+    """« Vide le dossier » n'a jamais accordé un message dans Slack.
+
+    L'accord porte sur l'**outil d'exécution**, celui par lequel l'acte se fait —
+    c'est aussi le seul sur lequel une équipe proposée pose un cran. Un autre
+    outil classé `ask` garde son humain sur la tâche qui agit, et
+    `core/permissions/devops.json` en livre un.
+    """
+    _ecrire_politique(
+        store.racine,
+        "developpeur",
+        {"ask": {"Bash": "humain", "mcp__slack": "humain"}},
+    )
+    validateur = ValidateurEnregistreur(decision=True)
+    actes = _bash(TITRE_ACTE)
+    actes[TITRE_ACTE] = actes[TITRE_ACTE] + (
+        ("mcp__slack__send_message", {"text": "dossier vidé"}),
+    )
+    provider = JoueSesCommandes(actes)
+
+    asyncio.run(
+        _moteur(provider, store, Guardrails(validateur=validateur), _plan_s1(accorde=True)).run(
+            OBJECTIF_S1, journal=RunJournal(run_id="run-1198-autre-outil")
+        )
+    )
+
+    (demande,) = validateur.demandes
+    assert demande.outil == "mcp__slack__send_message"
+    assert demande.task_id == "vider-le-dossier"
+
+
+def test_l_accord_ne_leve_pas_la_liste_deny(store):
+    """Un accord n'est pas un laissez-passer : `deny` l'emporte, comme toujours.
+
+    C'est la priorité de `PolitiqueOutils` (#580), et elle se juge **avant** que
+    quoi que ce soit n'atteigne ce canal. Le vérifier ici plutôt que de s'en
+    remettre au test de priorité : ce qui est en cause n'est pas l'ordre des
+    listes, c'est qu'un champ du plan ne puisse pas s'y substituer.
+    """
+    _ecrire_politique(store.racine, "developpeur", {"deny": ["Bash"], "ask": {"Bash": "humain"}})
+    validateur = ValidateurEnregistreur(decision=True)
+    provider = JoueSesCommandes(_bash(TITRE_ACTE))
+    journal = RunJournal(run_id="run-1198-deny")
+
+    asyncio.run(
+        _moteur(provider, store, Guardrails(validateur=validateur), _plan_s1(accorde=True)).run(
+            OBJECTIF_S1, journal=journal
+        )
+    )
+
+    # Aucun acte n'a atteint le canal, et aucun n'est passé.
+    assert provider.issues == []
+    assert validateur.demandes == []
+    traces = [
+        r for r in journal.records if r.etape == f"vider-le-dossier{SUFFIXE_ETAPE_REFUS}"
+    ]
+    assert len(traces) == len(COMMANDES)
+    assert all(t.statut == STATUT_REFUS_OUTIL for t in traces)
+
+
+def test_l_acte_accorde_voyage_avec_la_tache(store):
+    """Le champ est de la **donnée durable** : il survit à l'aller-retour JSON.
+
+    Le plan est sérialisé et relu à chaque frontière — file de tâches, workflow
+    durable, API. Un champ qui ne ferait pas l'aller-retour laisserait l'accord
+    sur le quai, et la tâche redemanderait une personne de l'autre côté.
+    """
+    from maestro.orchestrator.schema import Task, validate_plan
+
+    (tache, _) = validate_plan(json.loads(_plan_s1(accorde=True)))
+    assert tache.acte_accorde == ACTE_ACCORDE
+    assert Task.from_dict(tache.to_dict()).acte_accorde == ACTE_ACCORDE
+
+    # Et son absence reste une absence : pas de clé posée à la chaîne vide.
+    (sans, _) = validate_plan(json.loads(_plan_s1(accorde=False)))
+    assert sans.acte_accorde == ""
+    assert "acte_accorde" not in sans.to_dict()
