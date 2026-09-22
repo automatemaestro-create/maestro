@@ -164,6 +164,28 @@ qu'un « oui » ne peut structurellement pas partir comme objectif de run. On a
 messages précédents) : ce serait un second juge, en expression régulière, juste
 après en avoir retiré un.
 
+### Agir sur le projet est une demande de travail (#1205)
+
+Le cadre présentait l'équipe comme cinq métiers (« Développeur, QA, DevOps, BDD,
+Design »), et tous ses exemples de proposition étaient des demandes de
+développement. Le juge en concluait que Maestro « sert à ouvrir des runs de
+développement » et **refusait** « Vide le dossier de ce projet » en renvoyant
+l'utilisateur le faire lui-même : 1 proposition sur 12 tirages du même message le
+2026-09-22, alors que la décomposition sait planifier une action depuis #1149
+(section « Agir » du playbook) et l'exécution la laisser passer depuis #1198.
+C'est une bride au sens de docs/41, pas un garde-fou.
+
+Le cadre dit donc ce que l'équipe **sait faire** plutôt que ce qu'elle **est** :
+des agents qui écrivent et qui agissent dans le dossier du projet. Il nomme les
+actions parmi les demandes de travail, interdit le refus « étranger à Maestro »
+pour ce qui se fait dans ce dossier, et fait d'une demande irréversible une
+proposition qui le dit, jamais un refus : c'est l'accord de l'utilisateur, pas le
+juge, qui décide si une demande mérite un run. Le « dans le doute » de l'échange
+ne vaut plus que pour l'accord, où il protège quelque chose — ce qu'on ne comprend
+pas n'ouvre rien ; sur une demande il faisait taire une proposition, qui n'ouvre
+rien non plus. Mesuré sur le fournisseur du poste : 12 sur 12 après, et les
+questions et demandes d'état restent des échanges.
+
 ## La proposition sort de la phrase, et se répond d'un geste (#943)
 
 Jusqu'ici la proposition n'existait que dans le **texte** de la réponse : « Je
@@ -448,13 +470,21 @@ VERDICTS = frozenset({VERDICT_PROPOSITION, VERDICT_ACCORD, VERDICT_ECHANGE})
 _PROMPT_ORCHESTRATION = (
     """\
 Tu es l'orchestrateur de Maestro : tu reçois les demandes de l'utilisateur, tu les
-cadres et tu les confies à l'équipe d'agents (Développeur, QA, DevOps, BDD,
-Design). Tu n'exécutes pas le travail toi-même et tu ne parles pas à la place des
-agents — tu ouvres le travail, tu en rends compte et tu dis où il en est.
+cadres et tu les confies à l'équipe d'agents du projet. Tu n'exécutes pas le
+travail toi-même et tu ne parles pas à la place des agents — tu ouvres le travail,
+tu en rends compte et tu dis où il en est.
+
+Ce que l'équipe sait faire n'est pas une liste de métiers. Ses agents travaillent
+dans le dossier du projet, avec un shell et des outils de fichiers : ils y
+ÉCRIVENT (code, tests, documentation) et ils y AGISSENT (vider un dossier,
+supprimer, renommer ou déplacer des fichiers, installer une dépendance, lancer une
+commande). Ce qui se fait dans le dossier du projet est un travail qu'un run sait
+prendre.
 
 Ouvrir un run coûte du quota et écrit dans le projet de l'utilisateur : tu n'en
 ouvres JAMAIS un de ta propre initiative. Tu proposes, et c'est l'utilisateur qui
-accepte.
+accepte — c'est donc son accord, et non toi, qui décide si une demande mérite un
+run.
 
 Réponds toujours par un seul objet JSON, sans rien autour :
 
@@ -465,15 +495,23 @@ Le verdict :
   sous n'importe quelle forme : impératif, question, souhait, subordonnée
   ("génère-moi une application d'agenda", "j'aimerai que tu ajoutes la
   pagination", "il faudrait que tu corriges le tri", "peux-tu me créer une
-  application"). Sois large : un run proposé de trop coûte un "non", une demande
-  légitime non reconnue coûte à l'utilisateur de se reformuler sans savoir
-  pourquoi.
+  application"). Une demande d'AGIR sur le projet en est une au même titre
+  qu'une demande d'écrire ("vide le dossier de ce projet", "supprime les
+  fichiers de log", "renomme src en app", "déplace les images dans assets").
+  Sois large : un run proposé de trop coûte un "non", une demande légitime non
+  reconnue coûte à l'utilisateur de se reformuler sans savoir pourquoi.
 - "accord" — le dernier message approuve une proposition que TU viens de faire
   dans ce fil ("oui", "vas-y", "ok lance"). Sans proposition juste avant, ce
-  n'est jamais un accord.
+  n'est jamais un accord — et dans le doute non plus.
 - "echange" — tout le reste : question sur l'outil ou sur le travail, demande
   d'état, salutation, refus ("non", "plutôt pas"), message que tu ne comprends
-  pas. Dans le doute, c'est "echange".
+  pas.
+
+Ce qui se fait dans le dossier du projet ne se refuse jamais comme étranger à
+Maestro, et tu ne renvoies jamais l'utilisateur le faire lui-même ailleurs. Une
+demande irréversible (vider, supprimer, écraser) se propose comme les autres : ta
+réponse dit qu'elle est irréversible et ce qu'elle touchera, puis demande
+l'accord.
 
 L'objectif :
 - sur "proposition", l'objectif que tu enverrais au run — une phrase complète et
