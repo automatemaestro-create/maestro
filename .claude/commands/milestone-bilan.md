@@ -136,6 +136,20 @@ C'est l'étape 5c.
    de `parcours.mjs` et arrête tout. Compte plusieurs minutes. `--sans-videos` s'en passe — à
    réserver aux cas où aucun critère ne porte sur un parcours.
 
+   ⚠ **Ces pièces viennent du réel** (#1166) : la vraie Control Tower, servie sur **l'état du
+   dernier passage du banc** — celui que le banc a sauvé, rouvert sans rien rejouer, dont le script
+   dit l'âge et que le bloc `source` du manifeste nomme. Plus aucun scénario factice : ce qu'une
+   capture montre, le produit l'a fait. Deux conséquences pour le bilan :
+   - un écran que ce passage n'a **pas peuplé** se photographie vide, et un parcours qui n'y trouve
+     pas sa cible le dit dans sa ligne (« … n'est pas à l'écran ») — c'est une pièce **sur l'état**,
+     pas un défaut du livrable : un critère qu'elle seule devait porter reste **non couvert**, avec
+     cette cause ;
+   - **sans état à rouvrir** (ou Redis injoignable), il n'y a aucun visuel : les critères
+     d'écran sont non couverts, avec le geste que le script nomme. Ne rejoue pas le banc pour
+     l'occasion — 5c le joue déjà, et c'est son passage qui fait foi.
+   Les parcours **n'exercent rien** : une écriture vers l'API y est refusée à la source. Ce qui se
+   prouve en agissant se prouve par `verify` ou par les scénarios (5c), jamais par un clip.
+
    Le manifeste `captures.json` porte deux listes, `pages` et `videos`, et **ce qui a échoué y
    laisse sa ligne avec son erreur** : c'est une pièce à part entière. Une page `complet: false` a
    été photographiée avant d'être peuplée ; un parcours sans `fichier` a été **tenté et n'a pas
@@ -306,9 +320,11 @@ C'est l'étape 5c.
 
 À dire dans le résumé quand le cas se présente, plutôt que de le laisser deviner :
 
-- **La stack de démo montre l'application d'aujourd'hui**, pas l'écran tel qu'il était pendant la
-  phase. Un défaut qu'on y voit est un défaut **maintenant** — c'est bien ce qu'un bouclage
-  cherche —, mais quelque chose de corrigé depuis n'est pas un défaut de la phase.
+- **Les captures montrent l'application d'aujourd'hui, sur l'état du dernier passage du banc**,
+  pas l'écran tel qu'il était pendant la phase. Un défaut qu'on y voit est un défaut
+  **maintenant** — c'est bien ce qu'un bouclage cherche —, mais quelque chose de corrigé depuis
+  n'est pas un défaut de la phase. Et l'état est celui du passage **sauvé**, qui peut précéder le
+  passage que joue 5c : son âge est dans la sortie du script, dis-le quand il compte.
 - **Un composant partagé ne se rattache à aucune route.** `apps/web/components/**` rend une ligne
   « indéterminée » (`-`) plutôt qu'un écran tiré au hasard ; `apps/web/lib/**` — hooks
   compris, ils y vivent — n'est pas compté du tout.

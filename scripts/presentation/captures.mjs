@@ -20,7 +20,21 @@
  * `captures.sh` qui enchaîne démarrage, bootstrap de playwright-core et appel.
  *
  *   node scripts/presentation/captures.mjs --sortie <dossier> \
- *        [--base http://127.0.0.1:3000] [--sans-videos]
+ *        [--base http://127.0.0.1:3000] [--api http://127.0.0.1:8000] \
+ *        [--etat <etat.json>] [--projet <id>] [--sans-videos]
+ *
+ * **La vraie stack, plus la démo** (#1166). La série photographie et filme la
+ * Control Tower réelle, sur l'état qu'un passage du banc a laissé (`captures.sh`
+ * le rouvre et le décrit dans `--etat`). Deux conséquences, et c'est ici qu'elles
+ * se tiennent :
+ *
+ *   - le **projet actif** n'est plus un identifiant écrit d'avance : il est choisi
+ *     parmi ceux que l'API déclare (`choisirProjet`), et le manifeste dit lequel ;
+ *   - une série sur le réel **montre, elle n'exerce rien** : toute requête
+ *     d'écriture vers l'API est refusée dans chaque contexte (`gardeLectureSeule`).
+ *     Un geste qui tenterait de trancher, lancer ou supprimer le fait donc à vide,
+ *     et le manifeste le nomme — jamais une présentation qui dépense du modèle ou
+ *     change l'état qu'elle photographie.
  *
  * Une page qui échoue (route cassée, timeout) n'interrompt pas la série : elle
  * est consignée dans le manifeste avec son erreur et les autres continuent —
@@ -58,7 +72,7 @@ const MENU_REPLI = [
 /** Largeur de capture : un écran de travail, pas un mobile — c'est un backoffice. */
 const VIEWPORT = { width: 1440, height: 900 };
 
-/** Délai laissé au scénario de démo pour peupler l'écran une fois les données là (ms). */
+/** Délai laissé à l'écran pour finir de se peupler une fois les données là (ms). */
 const REPOS_MS = 1500;
 
 /** Attente max du signal « page prête » pour une CAPTURE (WebSocket ouverte, plus de placeholder). */
@@ -123,19 +137,17 @@ const CLE_PROJET_ACTIF = "maestro.projet.actif";
 const CLE_GUIDE_VU = "maestro.guide.vu";
 
 /**
- * Le projet dans lequel s'ouvre la Control Tower de démo.
- *
- * Sans lui, **toute la série montre la porte d'entrée** et rien d'autre : le
- * shell n'affiche le tableau de bord qu'une fois un projet actif (#279), et
- * l'identifiant retenu vit dans le `localStorage` du navigateur. C'est donc ici
- * qu'il se pose, à côté du thème et pour la même raison — sinon la série
- * dépendrait de ce que la machine a mémorisé.
- *
- * L'identifiant vient de `captures.sh`, qui le lit dans `demo.py` (`PROJET_ID`)
- * et déclare le projet correspondant côté API ; le repli couvre l'appel direct
- * de ce script contre une stack déjà montée.
+ * Les méthodes qu'une série sur le réel laisse passer vers l'API : les lectures.
+ * `OPTIONS` en fait partie — c'est la question préalable du navigateur (CORS),
+ * pas une écriture.
  */
-const PROJET_DEMO = process.env.MAESTRO_PROJET_DEMO || "prj-demo";
+const METHODES_DE_LECTURE = new Set(["GET", "HEAD", "OPTIONS"]);
+
+/** Ce qui désigne l'API dans une URL — ses routes vivent toutes sous `/api/`. */
+const ROUTES_API = "**/api/**";
+
+/** Patience d'une lecture de l'API avant la série (projets, espace) (ms). */
+const LECTURE_API_MS = 5_000;
 
 /**
  * Ce qu'un geste `cliquer` accepte de viser quand il est déclaré par son texte.
@@ -161,15 +173,103 @@ const PATIENCE_GESTE_MS = 8_000;
 
 function arguments_() {
   const brut = process.argv.slice(2);
-  const args = { sortie: null, base: "http://127.0.0.1:3000", videos: true };
+  const args = {
+    sortie: null,
+    base: "http://127.0.0.1:3000",
+    api: "http://127.0.0.1:8000",
+    etat: null,
+    projet: null,
+    videos: true,
+  };
   for (let i = 0; i < brut.length; i += 1) {
     if (brut[i] === "--sortie") args.sortie = brut[++i];
     else if (brut[i] === "--base") args.base = brut[++i];
+    else if (brut[i] === "--api") args.api = brut[++i];
+    else if (brut[i] === "--etat") args.etat = brut[++i];
+    else if (brut[i] === "--projet") args.projet = brut[++i];
     else if (brut[i] === "--sans-videos") args.videos = false;
     else throw new Error(`argument inconnu : ${brut[i]}`);
   }
   if (!args.sortie) throw new Error("--sortie <dossier> est requis");
   return args;
+}
+
+/** Une lecture JSON de l'API réelle ; lève sur une panne, que l'appelant nomme. */
+async function lireApi(api, chemin) {
+  const reponse = await fetch(new URL(chemin, api), {
+    signal: AbortSignal.timeout(LECTURE_API_MS),
+  });
+  if (!reponse.ok) throw new Error(`${chemin} a répondu ${reponse.status}`);
+  return reponse.json();
+}
+
+/**
+ * Le projet dans lequel la série ouvre la Control Tower — **choisi parmi ceux que
+ * l'API déclare**, jamais écrit d'avance.
+ *
+ * Sans projet actif, toute la série montre la porte d'entrée (#279). Du temps de
+ * la démo, l'identifiant était celui du scénario factice (`prj-demo`) ; sur le
+ * réel, ce sont les projets du passage du banc qui sont déclarés, avec des
+ * identifiants engendrés. On prend **celui qui a bougé en dernier** — le dernier
+ * où le passage a travaillé —, à défaut le dernier créé, puis l'identifiant pour
+ * départager : deux séries sur le même état ouvrent le même projet.
+ */
+function choisirProjet(projets) {
+  if (!Array.isArray(projets) || projets.length === 0) return null;
+  const date = (projet, champ) => String(projet?.[champ] ?? "");
+  const tries = [...projets].sort(
+    (a, b) =>
+      date(b, "modifie_le").localeCompare(date(a, "modifie_le")) ||
+      date(b, "cree_le").localeCompare(date(a, "cree_le")) ||
+      String(a.id).localeCompare(String(b.id)),
+  );
+  return tries[0];
+}
+
+/**
+ * Ce que la série sait de la stack avant de commencer : l'espace servi, et le
+ * projet où elle s'ouvre. Rien n'y est bloquant — une API muette donne une série
+ * qui montre la porte ou la panne, et le manifeste le dit plutôt que de se taire.
+ */
+async function lireStack(api, projetDemande) {
+  const stack = { espace: null, projet: null, projets: 0, alerte: null };
+  try {
+    const sante = await lireApi(api, "/api/sante");
+    stack.espace = typeof sante?.espace === "string" ? sante.espace : null;
+  } catch (erreur) {
+    stack.alerte = `API injoignable (${api}) : ${erreur.message}`;
+    return stack;
+  }
+  let projets = [];
+  try {
+    projets = await lireApi(api, "/api/projets");
+  } catch (erreur) {
+    stack.alerte = `projets illisibles : ${erreur.message}`;
+    return stack;
+  }
+  stack.projets = Array.isArray(projets) ? projets.length : 0;
+  const retenu = projetDemande
+    ? (projets.find?.((projet) => projet.id === projetDemande) ?? null)
+    : choisirProjet(projets);
+  if (retenu) {
+    stack.projet = { id: retenu.id, nom: retenu.nom ?? retenu.id };
+  } else if (projetDemande) {
+    stack.alerte = `projet « ${projetDemande} » inconnu de l'API — la série montrera la porte d'entrée`;
+  } else {
+    stack.alerte = "aucun projet déclaré — la série montrera la porte d'entrée";
+  }
+  return stack;
+}
+
+/** L'état que `captures.sh` a rouvert et décrit (`etat.py --decrire`), ou `null`. */
+async function lireEtat(chemin) {
+  if (!chemin) return null;
+  try {
+    return JSON.parse(await readFile(chemin, "utf8"));
+  } catch (erreur) {
+    console.error(`[captures] ⚠ description de l'état illisible (${chemin}) : ${erreur.message}`);
+    return null;
+  }
 }
 
 /**
@@ -229,16 +329,52 @@ async function chargerPlaywright() {
 }
 
 /**
+ * Refuse, dans ce contexte, toute requête d'écriture vers l'API, et rend la liste
+ * où chaque refus s'inscrit (`"POST /api/…"`).
+ *
+ * C'est un garde-fou, pas une bride : la série tourne sur la **vraie** stack,
+ * où un clic sur « Approuver » accorderait une vraie validation et un « Lancer »
+ * dépenserait du vrai modèle. Un parcours déclare ce qu'il **montre** ; s'il
+ * tente d'écrire, l'écriture échoue à la source et la ligne du manifeste le dit,
+ * au lieu de changer l'état que la série photographie.
+ */
+async function gardeLectureSeule(contexte) {
+  const refusees = [];
+  await contexte.route(ROUTES_API, async (route) => {
+    const requete = route.request();
+    const methode = requete.method().toUpperCase();
+    if (METHODES_DE_LECTURE.has(methode)) {
+      await route.continue();
+      return;
+    }
+    let chemin = requete.url();
+    try {
+      chemin = new URL(chemin).pathname;
+    } catch {
+      // Une URL illisible se garde telle quelle : c'est un nom, pas une décision.
+    }
+    refusees.push(`${methode} ${chemin}`);
+    console.error(`[captures] ⚠ écriture refusée pendant la série : ${methode} ${chemin}`);
+    await route.abort("blockedbyclient");
+  });
+  return refusees;
+}
+
+/**
  * Un contexte de navigateur tel que la présentation les veut tous : même
- * fenêtre, même thème, même projet actif. `extra` ajoute ce qui distingue un
- * usage de l'autre — l'enregistrement vidéo, et rien d'autre à ce jour.
+ * fenêtre, même thème, même projet actif, et **en lecture seule** sur l'API
+ * (`gardeLectureSeule`). `extra` ajoute ce qui distingue un usage de l'autre —
+ * l'enregistrement vidéo, et rien d'autre à ce jour.
+ *
+ * Rend `{ contexte, refusees }` : la liste des écritures refusées se lit à la
+ * fin de l'usage, pour la ligne du manifeste.
  *
  * Un contexte par usage plutôt qu'un contexte partagé : Playwright écrit **une
  * vidéo par page** et ne la finalise qu'à la fermeture de la page ou du
  * contexte, si bien que filmer et photographier dans le même contexte rendrait
  * un seul clip pour toute la série.
  */
-async function nouveauContexte(navigateur, extra = {}) {
+async function nouveauContexte(navigateur, projet, extra = {}) {
   const contexte = await navigateur.newContext({
     viewport: VIEWPORT,
     // Thème clair imposé des deux façons : par la préférence système (l'UI
@@ -248,10 +384,12 @@ async function nouveauContexte(navigateur, extra = {}) {
     ...extra,
   });
   await contexte.addInitScript(
-    ([cleTheme, cleProjet, cleGuide, projet]) => {
+    ([cleTheme, cleProjet, cleGuide, projetId]) => {
       try {
         window.localStorage.setItem(cleTheme, "clair");
-        window.localStorage.setItem(cleProjet, projet);
+        // Sans projet que l'API déclare, on ne pose rien : la porte d'entrée
+        // rend alors ce qu'elle rend à tout le monde, et le manifeste dit pourquoi.
+        if (projetId) window.localStorage.setItem(cleProjet, projetId);
         // La visite guidée s'ouvre au premier passage (#116) : sa fenêtre et son
         // voile `fixed inset-0` recouvrent l'application — ils masquent les
         // captures et **interceptent les clics** des parcours, qui échouaient
@@ -262,9 +400,10 @@ async function nouveauContexte(navigateur, extra = {}) {
         // et la porte d'entrée dira elle-même qu'aucun projet n'est ouvert.
       }
     },
-    [CLE_THEME, CLE_PROJET_ACTIF, CLE_GUIDE_VU, PROJET_DEMO],
+    [CLE_THEME, CLE_PROJET_ACTIF, CLE_GUIDE_VU, projet?.id ?? null],
   );
-  return contexte;
+  const refusees = await gardeLectureSeule(contexte);
+  return { contexte, refusees };
 }
 
 /**
@@ -371,20 +510,58 @@ async function defiler(page, vers, duree) {
   );
 }
 
-/** Joue un geste ; lève si la cible n'est pas là ou si le verbe est inconnu. */
+/** Ce que vise un geste, tel qu'on le lit dans le manifeste. */
+function cibleLisible(geste) {
+  return geste.texte ? `« ${geste.texte} »` : `\`${geste.selecteur}\``;
+}
+
+/**
+ * La cause technique ramenée à sa première ligne, sans codes de couleur : Playwright
+ * y joint son journal d'appels, qui n'a rien à faire dans une ligne de manifeste
+ * qu'une présentation peut reprendre.
+ */
+function causeCourte(message) {
+  // eslint-disable-next-line no-control-regex
+  const nu = String(message ?? "").replace(/\[[0-9;]*m/g, "");
+  return nu.split(/\r?\n/, 1)[0].trim();
+}
+
+/**
+ * Joue un geste ; lève si la cible n'est pas là ou si le verbe est inconnu.
+ *
+ * L'erreur dit **ce que l'écran n'a pas montré**, et non la mécanique qui l'a
+ * constaté (#1166) : sur le réel, un parcours qui ne trouve pas sa cible dit
+ * quelque chose de l'état rouvert — aucune validation n'y a été demandée, aucun
+ * run n'y a tourné —, et c'est cette phrase-là que la présentation doit pouvoir
+ * reprendre. La cause technique suit, pour qui la cherche.
+ */
 async function jouerGeste(page, geste, echeance) {
   switch (geste.type) {
     case "attendre":
       if (geste.texte) {
-        await page
-          .getByText(geste.texte)
-          .first()
-          .waitFor({ state: "visible", timeout: patience(echeance) });
+        const delai = patience(echeance);
+        try {
+          await page
+            .getByText(geste.texte)
+            .first()
+            .waitFor({ state: "visible", timeout: delai });
+        } catch (erreur) {
+          throw new Error(
+            `${cibleLisible(geste)} n'est pas à l'écran (attendu ${delai} ms) — ` +
+              causeCourte(erreur.message),
+          );
+        }
       }
       break;
     case "cliquer": {
-      const cible = await cibleCliquable(page, geste);
-      await cible.click({ timeout: patience(echeance) });
+      try {
+        const cible = await cibleCliquable(page, geste);
+        await cible.click({ timeout: patience(echeance) });
+      } catch (erreur) {
+        throw new Error(
+          `rien de cliquable pour ${cibleLisible(geste)} — ${causeCourte(erreur.message)}`,
+        );
+      }
       break;
     }
     case "defiler":
@@ -450,7 +627,7 @@ async function jouerGestes(page, gestes, echeance) {
  * aucun geste ⇒ le clip est **écarté** (`fichier: null`, ligne conservée avec sa
  * cause) plutôt que proposé à la sélection.
  */
-async function filmer(navigateur, base, sortie, dossierBrut, parcours) {
+async function filmer(navigateur, base, sortie, dossierBrut, parcours, projet) {
   const { cle, libelle, route } = parcours;
   const plafond = parcours.duree_max_ms ?? DUREE_MAX_MS_DEFAUT;
   const gestes = parcours.gestes ?? [];
@@ -458,12 +635,16 @@ async function filmer(navigateur, base, sortie, dossierBrut, parcours) {
   const url = new URL(route, base).href;
   const debut = Date.now();
   let contexte = null;
+  // Les écritures que ce parcours a tentées — refusées (`gardeLectureSeule`) et
+  // nommées dans sa ligne, qu'il ait été filmé ou non : un film qui a voulu
+  // trancher quelque chose ne montre pas ce que dit son libellé.
+  let refusees = [];
   try {
-    contexte = await nouveauContexte(navigateur, {
+    ({ contexte, refusees } = await nouveauContexte(navigateur, projet, {
       // Même taille que les captures : deux formats dans une même présentation
       // se remarquent immédiatement, et pour rien.
       recordVideo: { dir: dossierBrut, size: VIEWPORT },
-    });
+    }));
     const page = await contexte.newPage();
     const echeance = Date.now() + plafond;
     let alerte = null;
@@ -486,7 +667,14 @@ async function filmer(navigateur, base, sortie, dossierBrut, parcours) {
     if (!video) throw new Error("aucun enregistrement ouvert pour cette page");
 
     const duree = Date.now() - debut;
-    const commun = { cle, libelle, duree_ms: duree, gestes: gestes.length, gestes_joues: joues };
+    const commun = {
+      cle,
+      libelle,
+      duree_ms: duree,
+      gestes: gestes.length,
+      gestes_joues: joues,
+      ecritures_refusees: refusees,
+    };
     if (alerte) console.error(`[parcours] ⚠ ${libelle} : ${alerte}`);
 
     // Un parcours qui n'a joué aucun de ses gestes ne démontre rien : le clip
@@ -535,6 +723,7 @@ async function filmer(navigateur, base, sortie, dossierBrut, parcours) {
       // une page qu'on a vue » et « aucune page » sont deux pannes qui ne se
       // soignent pas pareil, et le bilan de fin les nomme séparément.
       gestes_joues: null,
+      ecritures_refusees: refusees,
       complet: false,
       erreur: erreur.message,
     };
@@ -542,18 +731,18 @@ async function filmer(navigateur, base, sortie, dossierBrut, parcours) {
 }
 
 /**
- * Filme tous les parcours déclarés, l'un après l'autre. En série à dessein : le
- * scénario de démo est un état partagé, et deux parcours qui le manipulent en
- * même temps se filmeraient l'un l'autre.
+ * Filme tous les parcours déclarés, l'un après l'autre. En série à dessein : la
+ * stack est une seule, et deux parcours qui s'y promènent en même temps se
+ * disputeraient le serveur au lieu de se filmer chacun à son rythme.
  */
-async function filmerParcours(navigateur, base, sortie) {
+async function filmerParcours(navigateur, base, sortie, projet) {
   // Playwright nomme les vidéos lui-même : elles atterrissent d'abord ici, puis
   // `video.saveAs` leur donne le nom du parcours dans le dossier de sortie.
   const dossierBrut = join(sortie, "videos-brutes");
   await mkdir(dossierBrut, { recursive: true });
   const videos = [];
   for (const parcours of PARCOURS) {
-    videos.push(await filmer(navigateur, base, sortie, dossierBrut, parcours));
+    videos.push(await filmer(navigateur, base, sortie, dossierBrut, parcours, projet));
   }
   await rm(dossierBrut, { recursive: true, force: true }).catch(() => {});
   return videos;
@@ -567,8 +756,21 @@ async function principal() {
   const menu = await lireMenu();
   const { chromium } = await chargerPlaywright();
 
+  // Ce que la série montre, avant de le montrer : l'état rouvert, l'espace servi,
+  // le projet où elle s'ouvre. Relayé au manifeste tel quel — c'est lui qui dit à
+  // `/milestone-presentation` d'où viennent ses pièces.
+  const etat = await lireEtat(args.etat);
+  const stack = await lireStack(args.api, args.projet);
+  if (stack.alerte) console.error(`[captures] ⚠ ${stack.alerte}`);
+  if (stack.projet) {
+    console.error(
+      `[captures] projet ouvert : « ${stack.projet.nom} » (${stack.projet.id}), ` +
+        `${stack.projets} déclaré(s) — espace « ${stack.espace ?? "?"} »`,
+    );
+  }
+
   const navigateur = await chromium.launch({ channel: "msedge", headless: true });
-  const contexte = await nouveauContexte(navigateur);
+  const { contexte, refusees } = await nouveauContexte(navigateur, stack.projet);
 
   const pages = [];
   const page = await contexte.newPage();
@@ -608,7 +810,7 @@ async function principal() {
   if (args.videos) {
     console.error(`[parcours] ${PARCOURS.length} parcours à filmer`);
     try {
-      videos = await filmerParcours(navigateur, args.base, sortie);
+      videos = await filmerParcours(navigateur, args.base, sortie, stack.projet);
     } catch (erreur) {
       console.error(`[parcours] ⚠ tournage abandonné : ${erreur.message}`);
     }
@@ -620,8 +822,21 @@ async function principal() {
 
   const manifeste = {
     base: args.base,
+    api: args.api,
     genere: new Date().toISOString(),
     viewport: VIEWPORT,
+    // D'où viennent les pièces (#1166) : la vraie stack, l'espace qu'elle sert, l'état
+    // du banc qu'elle a rouvert (`null` quand ce script ne l'a pas su) et le projet
+    // ouvert (`null` : la série a montré la porte d'entrée, `alerte` dit pourquoi).
+    source: {
+      stack: "reelle",
+      espace: stack.espace,
+      etat,
+      projet: stack.projet,
+      projets: stack.projets,
+      alerte: stack.alerte,
+      ecritures_refusees: refusees,
+    },
     pages,
     videos,
   };

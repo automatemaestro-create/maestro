@@ -482,8 +482,8 @@ et ne rend aucun verdict (ci-dessus, le glissement de 2026-07).
 | étape | rôle |
 |---|---|
 | `ecrans-touches.sh` | **quels écrans la phase a touchés**, dérivés des commits (#544) |
-| `captures.sh` | monte une stack **de production** sur ses propres ports (8010/3010) ; `playwright-core` + Edge installés dans un dossier temporaire, jamais dans le dépôt |
-| `captures.mjs` | pilote le navigateur et, depuis #545, **tourne** les parcours déclarés dans `parcours.mjs` |
+| `captures.sh` | monte la **vraie** stack **de production** sur ses propres ports (8010/3010), rouverte sur l'**état du banc** (#1164) — plus de scénario factice (#1166) ; `playwright-core` + Edge installés dans un dossier temporaire, jamais dans le dépôt |
+| `captures.mjs` | pilote le navigateur et, depuis #545, **tourne** les parcours déclarés dans `parcours.mjs` ; ouvre le projet choisi parmi ceux que l'API déclare, et refuse toute écriture vers l'API (#1166) |
 | `build.py` | JSON → HTML autonome, gabarit et CSS inclus, clips en base64 sous deux plafonds |
 
 Ce que le chantier #543 a changé tient en une phrase : **le rattachement écran ↔ ticket se lit au

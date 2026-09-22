@@ -27,7 +27,7 @@ import sys
 import unicodedata
 import webbrowser
 from collections import Counter
-from datetime import date
+from datetime import date, datetime
 from html import escape
 from pathlib import Path
 from typing import Any
@@ -45,9 +45,16 @@ SCHEMA = """\
   "ecrans":    [{"cle": str, "libelle": str, "route": str|null}],
   "videos":    [{"cle": str, "libelle": str, "fichier": str,
                  "affiche": str|null}],            # image de repli si le clip est écarté
+  "source":    {"etat": {"passage": str, "sauve_le": str}|null}|null,
+                                                   # d'où viennent captures et clips : le bloc
+                                                   # `source` de captures.json, recopié tel quel
   "notes":     [str]                               # avertissements affichés en pied
 }
 """
+
+#: Ce que montrent captures et clips depuis #1166 : la Control Tower réelle — jamais plus un
+#: scénario factice. La phrase se complète de l'état rouvert quand `source` le nomme.
+STACK_REELLE = "sur la vraie Control Tower"
 
 # --- Vocabulaire ---------------------------------------------------------------------------------
 
@@ -547,7 +554,30 @@ def rendre_ecrans(
       </section>"""
 
 
-def rendre_demonstrations(clips: list[dict[str, Any]]) -> str:
+def provenance(source: Any) -> str:
+    """
+    D'où viennent les visuels, dit au lecteur : « sur la vraie Control Tower, dans l'état laissé
+    par le passage des scénarios de référence du 22/09/2026 ».
+
+    Depuis #1166, captures et clips tournent sur la stack réelle, rouverte sur ce qu'un passage du
+    banc a laissé. La page le dit parce qu'elle se partage : un lecteur doit pouvoir savoir que ce
+    qu'il voit a été produit par le produit, et quand. Sans `source` lisible, elle dit la stack
+    réelle et rien de plus — jamais une date devinée.
+    """
+    etat = source.get("etat") if isinstance(source, dict) else None
+    sauve = etat.get("sauve_le") if isinstance(etat, dict) else None
+    if not isinstance(sauve, str):
+        return STACK_REELLE
+    try:
+        jour = datetime.fromisoformat(sauve).astimezone().strftime("%d/%m/%Y")
+    except ValueError:
+        return STACK_REELLE
+    return (
+        f"{STACK_REELLE}, dans l'état laissé par le passage des scénarios de référence du {jour}"
+    )
+
+
+def rendre_demonstrations(clips: list[dict[str, Any]], origine: str = STACK_REELLE) -> str:
     """
     Les démonstrations filmées, jouables **dans le fichier** — source `data:`, zéro requête réseau.
 
@@ -591,9 +621,9 @@ def rendre_demonstrations(clips: list[dict[str, Any]]) -> str:
 
     retenus = sum(1 for c in clips if c["ecarte"] is None)
     aide = (
-        "Tournées sur la stack de démonstration, jouables ici même."
+        f"Tournées {origine}, jouables ici même."
         if retenus == len(clips)
-        else f"Tournées sur la stack de démonstration. {len(clips) - retenus} clip(s) sur "
+        else f"Tournées {origine}. {len(clips) - retenus} clip(s) sur "
         f"{len(clips)} écartés pour tenir le plafond de taille."
     )
     return f"""
@@ -606,7 +636,7 @@ def rendre_demonstrations(clips: list[dict[str, Any]]) -> str:
       </section>"""
 
 
-def rendre_galerie(captures: dict[str, dict[str, str]]) -> str:
+def rendre_galerie(captures: dict[str, dict[str, str]], origine: str = STACK_REELLE) -> str:
     if not captures:
         return ""
     # Le déclencheur est un `<button>` et non un `<a>` : ici il n'y a aucune ancre où aller — la
@@ -625,7 +655,7 @@ def rendre_galerie(captures: dict[str, dict[str, str]]) -> str:
       <section class="section" id="section-captures">
         <header class="section-entete">
           <h2>La Control Tower<span class="compte compte-fort">{len(captures)}</span></h2>
-          <p class="aide">Captures prises sur l'application au moment de la génération.</p>
+          <p class="aide">{escape(f"Captures prises {origine}, au moment de la génération.")}</p>
         </header>
         <div class="galerie">{figures}</div>
       </section>"""
@@ -1138,6 +1168,7 @@ def construire(donnees: dict[str, Any], racine_captures: Path) -> str:
         f'<a href="{escape(base_url)}">{escape(base_url)}</a>' if base_url else "GitLab"
     )
     notes_donnees = list(donnees.get("notes") or [])
+    origine = provenance(donnees.get("source"))
 
     def page(section_clips: str, notes: list[str]) -> str:
         bloc_notes = ""
@@ -1184,7 +1215,7 @@ def construire(donnees: dict[str, Any], racine_captures: Path) -> str:
 
   {section_clips}
 
-  {rendre_galerie(captures)}
+  {rendre_galerie(captures, origine)}
 
   <footer class="pied">
     <p>Généré le {date.today().isoformat()} depuis {lien_projet} — milestone
@@ -1237,7 +1268,7 @@ def construire(donnees: dict[str, Any], racine_captures: Path) -> str:
         for motif in motifs:
             print(f"[build] ⚠ clip écarté — {motif}", file=sys.stderr)
 
-    return page(rendre_demonstrations(clips), notes)
+    return page(rendre_demonstrations(clips, origine), notes)
 
 
 def ouvrir_dans_navigateur(cible: Path) -> bool:

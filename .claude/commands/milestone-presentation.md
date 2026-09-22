@@ -66,8 +66,9 @@ chose qui te reste à juger est la **prose**.
    Son échec n'arrête pas la commande : continue sans écrans dérivés et note-le à l'étape 7.
 
 5. **Prends les captures et les démonstrations filmées** — un seul appel, qui installe
-   `playwright-core` dans un dossier temporaire, démarre la stack de démo, photographie les pages
-   du menu principal, **filme les parcours de démonstration** et l'arrête :
+   `playwright-core` dans un dossier temporaire, rouvre **l'état du banc** — ce qu'un passage des
+   scénarios de référence a laissé —, sert **la vraie Control Tower** dessus, photographie les
+   pages du menu principal, **filme les parcours** et l'arrête :
    ```
    bash scripts/presentation/captures.sh --sortie <dossier-de-travail>/captures
    ```
@@ -76,17 +77,34 @@ chose qui te reste à juger est la **prose**.
    `--sans-videos` s'en passe (série plus courte, manifeste sans clip) — à réserver aux cas où
    seules les captures sont demandées.
 
-   Le script écrit un manifeste `captures.json` à **deux listes** :
+   ⚠ **Les pièces viennent du réel** (#1166) — plus d'un scénario factice. Ce que tu montres est ce
+   que le produit a fait lors du dernier passage du banc, servi par la vraie API ; le script dit
+   **son âge** en tête de sortie. Rien n'y est fabriqué : sans état à rouvrir, ou avec Redis
+   injoignable, il n'y a **aucun** visuel, et le script nomme le geste qui le lève — pour un état
+   absent ou trop vieux, `bash scripts/controltower/start.sh --etat-banc --rejouer`, qui rejoue le
+   banc avec le **vrai modèle**. Ne le lance pas de toi-même : il coûte, et c'est à la personne qui
+   présente de décider si l'état mérite d'être refait. Continue sans visuels et dis-le (étape 7).
+   Les parcours **montrent sans rien exercer** : une écriture vers l'API y est refusée à la source.
+
+   Le script écrit un manifeste `captures.json` à **deux listes**, et un bloc `source` :
+   - `source` — d'où viennent les pièces : `stack` (`reelle`), `espace` servi, `etat` (le passage
+     du banc rouvert : `passage`, `sauve_le`, `age_s`, `scenarios`), `projet` ouvert (`id`, `nom` —
+     choisi parmi ceux que l'API déclare), et `alerte` quand la série n'a pas pu ouvrir de projet :
+     elle a alors photographié la porte d'entrée, et ses captures ne montrent pas le produit.
    - `pages` — `cle`, `href`, `libelle`, `fichier`, `complet`, `erreur`. `complet: false` signale
      une page photographiée avant d'être peuplée : regarde-la avant de la retenir.
    - `videos` — `cle`, `libelle`, `fichier`, `duree_ms`, `octets`, `gestes`, `gestes_joues`,
      `complet`, `erreur`. Les parcours sont déclarés dans `scripts/presentation/parcours.mjs`.
      `gestes_joues` (#830) dit combien de gestes déclarés ont réellement joué : c'est lui qui
      sépare un clip **écourté** (au moins un geste, conservé) d'un clip **muet** (aucun geste —
-     écarté à la source, donc `fichier: null`).
+     écarté à la source, donc `fichier: null`). `ecritures_refusees` nomme ce qu'un parcours a
+     tenté d'écrire : non vide, le clip ne montre pas ce que dit son libellé — écarte-le.
 
    **Un parcours en échec laisse sa ligne** avec son erreur : c'est ainsi qu'on sait qu'il a été
-   tenté. Lis-la, ne la recopie pas telle quelle — voir l'étape 6.
+   tenté. Lis-la, ne la recopie pas telle quelle — voir l'étape 6. Sur le réel, l'erreur dit le
+   plus souvent **ce que l'état rouvert ne contient pas** (« « Déjà tranchées » n'est pas à
+   l'écran » : aucune validation n'a été demandée pendant le passage) : c'est un fait sur ce que le
+   produit a fait, pas une panne du tournage.
 
    **Son échec n'arrête pas la commande** : continue sans visuels et note-le à l'étape 7
    (`notes`) pour que la présentation le dise elle-même.
@@ -139,9 +157,14 @@ chose qui te reste à juger est la **prose**.
      "ecrans":   [{"cle": "couts", "libelle": "Coûts & analytics", "route": "/couts"}],
      "videos":   [{"cle": "couts", "libelle": "Coûts & analytics : la dépense, période par période",
                    "fichier": "<…>/captures/couts.webm", "affiche": null}],
+     "source":   {"stack": "reelle", "etat": {"passage": "20260922-120842",
+                                              "sauve_le": "2026-09-22T09:10:00+00:00", "…": "…"}},
      "notes":    []
    }
    ```
+   `source` se **recopie tel quel** depuis le manifeste : c'est par lui que la page dit, sous la
+   galerie et les clips, qu'ils viennent de la vraie Control Tower et de quel passage du banc. Sans
+   manifeste (captures non prises), omets-le.
    `projet.url` se déduit du dépôt : la base est `https://<hôte>/<dépôt>`, où l'hôte vient de
    `bash scripts/gitlab/lib.sh host` — il **suit la forge active** et non le remote, précisément
    pour rester juste tant qu'`origin` pointe encore ailleurs (#343). Les liens vers les tickets sont
@@ -207,9 +230,11 @@ chose qui te reste à juger est la **prose**.
   n'est pas un renoncement au MCP — c'est le même moteur, appelé là où le contexte du navigateur
   est déjà construit. Il n'y a donc **aucun** moyen de filmer un parcours depuis cette commande
   sans passer par `captures.sh`.
-- **Les captures et les clips montrent la stack de démonstration d'aujourd'hui**, pas l'écran tel
-  qu'il était pendant la phase. Ce que la dérivation rend, c'est *quels écrans la phase a touchés*
-  — jamais *à quoi ils ressemblaient avant*.
+- **Les captures et les clips montrent l'application d'aujourd'hui, sur l'état du dernier passage
+  du banc**, pas l'écran tel qu'il était pendant la phase. Ce que la dérivation rend, c'est *quels
+  écrans la phase a touchés* — jamais *à quoi ils ressemblaient avant*. Et l'état est celui que le
+  passage a laissé : un écran que ce passage n'a pas peuplé (aucune validation demandée, un seul
+  projet) le montre vide, et c'est vrai.
 - **Un ticket non mergé n'a pas de commit sur `origin/main`** : il ne rend donc aucun écran, comme
   un ticket sans surface visible. C'est `--check` qui les distingue, sur stderr.
 
