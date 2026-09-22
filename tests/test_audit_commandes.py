@@ -689,6 +689,18 @@ DEMO_ADMISES: Mapping[str, tuple[Admise, ...]] = {
         Admise("la Control Tower **réelle** (jamais `--demo`)", _RETEX),
         Admise("**ne retombe jamais en douce sur `--demo`**", _RETEX),
     ),
+    # Rentrée dans le balayage avec #1166, qui fait passer ses captures au réel.
+    ".claude/commands/milestone-bilan.md": (
+        Admise(
+            "ne le réduis pas par `--scenario`",
+            "l'option du banc des scénarios (`python -m maestro.scenarios`), pas un état de la "
+            "démo : `test_milestone_bilan` exige qu'elle reste écrite",
+        ),
+        Admise(
+            "jamais `--demo`, contre lequel le banc jouerait un scénario factice",
+            "nommée pour être interdite : `test_milestone_bilan` exige que l'interdit reste écrit",
+        ),
+    ),
 }
 
 #: Les textes que les lots voisins du chantier font passer au réel : ils sortent du balayage le
@@ -698,8 +710,6 @@ DEMO_AUX_LOTS_VOISINS: Mapping[str, str] = {
     ".claude/skills/relecture-visuelle/SKILL.md": "#1165",
     ".claude/agents/regard-neuf.md": "#1165",
     ".claude/commands/ticket-start.md": "#1165",
-    ".claude/commands/milestone-presentation.md": "#1166",
-    ".claude/commands/milestone-bilan.md": "#1166",
 }
 
 #: Les phrases que #1167 a retirées, telles qu'elles étaient (`git show e67aadf:<fichier>`).
