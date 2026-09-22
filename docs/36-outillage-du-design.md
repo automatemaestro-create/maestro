@@ -292,8 +292,8 @@ Deux choses constatées ici, et utiles au lot 2 (#932) :
 - **La démo d'un worktree rend « Choisir le projet »**, pas le tableau de bord : le scénario
   estampille tout du projet `prj-demo` (`maestro/controltower/demo.py`) et le dépôt de projets d'un
   clone neuf est vide. Les deux moitiés sont indissociables — déclarer `core/projets/prj-demo.json`
-  (gitignoré) **et** poser `maestro.projet.actif` dans le `localStorage`, exactement ce que fait
-  `scripts/presentation/captures.sh`.
+  (gitignoré) **et** poser `maestro.projet.actif` dans le `localStorage`, exactement ce que
+  faisait `scripts/presentation/captures.sh` — qui tourne depuis #1166 sur la vraie stack.
 
 ## 4. Ce qu'on adopte maintenant
 

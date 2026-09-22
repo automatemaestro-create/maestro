@@ -53,6 +53,7 @@ import re
 import shutil
 import subprocess
 import sys
+from html import escape
 from pathlib import Path
 from typing import Any
 
@@ -559,15 +560,24 @@ besoin_de_node = pytest.mark.skipif(NODE is None, reason="node introuvable")
 #:                                  `1:2` le clip ÉCOURTÉ en cours de route (conservé).
 #:   FAUX_ECHEC_CAPTURES=1          toutes les captures échouent → c'est le seul cas qui doit
 #:                                  changer le code de retour.
+#:   FAUX_ECRITURE_VIDEO=<n>        le premier clic du n-ième clip fait partir, par les routes du
+#:                                  contexte, une LECTURE puis une ÉCRITURE vers l'API (#1166) :
+#:                                  la garde doit laisser l'une et refuser l'autre.
+#:   FAUX_TRACE=<fichier>           le stub y consigne, une ligne JSON par fait, ce que le script
+#:                                  lui a demandé : les arguments des scripts d'initialisation
+#:                                  (`init`) et le sort de chaque requête routée (`continue`,
+#:                                  `abort`) — ce qu'un test ne peut pas lire dans le manifeste.
 FAUX_PLAYWRIGHT = """\
 "use strict";
 // Faux playwright-core — écrit par tests/test_presentation.py (#547). Aucun navigateur.
-const { mkdirSync, writeFileSync } = require("node:fs");
+const { appendFileSync, mkdirSync, writeFileSync } = require("node:fs");
 const { dirname } = require("node:path");
 
 const echecContexte = Number(process.env.FAUX_ECHEC_CONTEXTE_VIDEO || 0);
 const pageNonPrete = Number(process.env.FAUX_PAGE_NON_PRETE_VIDEO || 0);
 const echecCaptures = process.env.FAUX_ECHEC_CAPTURES === "1";
+const ecritureVideo = Number(process.env.FAUX_ECRITURE_VIDEO || 0);
+const trace = process.env.FAUX_TRACE || "";
 // « <rang>:<k> » — NaN quand la variable est absente, ce qui ne matche aucun rang.
 const gestesRegle = String(process.env.FAUX_GESTES_OK_VIDEO || "").split(":").map(Number);
 const [gestesRang, gestesMax] = gestesRegle;
@@ -578,20 +588,52 @@ function ecrire(chemin, contenu) {
   writeFileSync(chemin, contenu);
 }
 
-function faussePage(rangVideo) {
+function tracer(fait) {
+  if (trace) appendFileSync(trace, JSON.stringify(fait) + "\\n");
+}
+
+// Une requête qui traverse les routes du contexte, comme le navigateur les ferait
+// traverser : le premier gestionnaire enregistré la reçoit.
+async function router(routes, methode, url) {
+  const route = {
+    request: () => ({ method: () => methode, url: () => url }),
+    async continue() { tracer({ continue: `${methode} ${url}` }); },
+    async abort(raison) { tracer({ abort: `${methode} ${url}`, raison }); },
+  };
+  for (const [, gestionnaire] of routes) {
+    await gestionnaire(route);
+    return;
+  }
+  tracer({ sans_route: `${methode} ${url}` });
+}
+
+function faussePage(rangVideo, routes) {
   // Ce que le stub compte est ce que `jouerGeste` APPELLE : `waitFor` pour un
   // « attendre », `click` pour un « cliquer », `evaluate` pour un « defiler ».
   let gestes = 0;
+  let ecrit = false;
   const geste = () => {
     if (!rangVideo || rangVideo !== gestesRang) return;
-    if (gestes >= gestesMax) throw new Error("geste impossible (faux)");
+    // Le message imite celui de Playwright : une première ligne, puis son journal
+    // d'appels en couleur — que le manifeste ne doit pas recopier (#1166).
+    if (gestes >= gestesMax) {
+      throw new Error("geste impossible (faux)\\nCall log:\\n" +
+        "\\u001b[2m  - attente (faux)\\u001b[22m");
+    }
     gestes += 1;
   };
   const locator = {
     first: () => locator,
     filter: () => locator,
     async count() { return 1; },
-    async click() { geste(); },
+    async click() {
+      geste();
+      if (rangVideo && rangVideo === ecritureVideo && !ecrit) {
+        ecrit = true;
+        await router(routes, "GET", "http://127.0.0.1:9/api/validations?projet=p");
+        await router(routes, "POST", "http://127.0.0.1:9/api/validations/v1/decision");
+      }
+    },
     async waitFor() { geste(); },
   };
   return {
@@ -630,9 +672,11 @@ module.exports = {
               throw new Error("enregistrement impossible (faux)");
             }
           }
+          const routes = [];
           return {
-            async addInitScript() {},
-            async newPage() { return faussePage(rangVideo); },
+            async addInitScript(_fonction, args) { tracer({ init: args, video: rangVideo }); },
+            async route(motif, gestionnaire) { routes.push([motif, gestionnaire]); },
+            async newPage() { return faussePage(rangVideo, routes); },
             async close() {},
           };
         },
@@ -673,11 +717,18 @@ def maison_playwright(tmp_path: Path) -> Path:
 def tourner(
     sortie: Path, maison: Path, *options: str, **commutateurs: str
 ) -> tuple[subprocess.CompletedProcess[str], dict]:
-    """Joue `captures.mjs` contre le stub et rend (processus, manifeste)."""
+    """Joue `captures.mjs` contre le stub et rend (processus, manifeste).
+
+    L'API vise le port `discard` sauf si le test en désigne une : sans ça, la série
+    interrogerait la vraie Control Tower du poste (8000), et son verdict dépendrait
+    de ce qui y tourne.
+    """
     environnement = dict(os.environ)
     environnement["MAESTRO_PLAYWRIGHT_HOME"] = str(maison)
     environnement.update(commutateurs)
     appel = [NODE, str(CAPTURES_MJS), "--sortie", str(sortie), "--base", "http://127.0.0.1:9"]
+    if "--api" not in options:
+        appel += ["--api", "http://127.0.0.1:9"]
     processus = subprocess.run(
         [*appel, *options],
         capture_output=True,
@@ -825,6 +876,12 @@ def test_un_clip_sans_aucun_geste_est_ecarte_et_dit_pourquoi(
     assert muet["octets"] is None
     assert muet["complet"] is False
     assert muet["erreur"].startswith("aucun geste joué")
+    # La cause dit ce que l'écran n'a pas montré (#1166), sur une ligne : le journal d'appels de
+    # Playwright et ses codes de couleur ne voyagent pas jusqu'au manifeste.
+    assert "n'est pas à l'écran" in muet["erreur"] or "rien de cliquable" in muet["erreur"]
+    assert "geste impossible (faux)" in muet["erreur"]
+    assert "\n" not in muet["erreur"] and "\x1b" not in muet["erreur"]
+    assert "Call log" not in muet["erreur"]
     # Écarté veut dire écarté : rien n'est laissé sur le disque non plus.
     assert not (sortie / f"{muet['cle']}.webm").exists()
     # …et il est NOMMÉ dans le compte rendu, séparément du « n/N filmé(s) » : un tournage muet ne
@@ -876,6 +933,191 @@ def test_seules_les_captures_decident_du_code_de_retour(
     processus, manifeste = tourner(sortie, maison_playwright, FAUX_ECHEC_CAPTURES="1")
     assert processus.returncode == 1
     assert all(page["fichier"] is None and page["erreur"] for page in manifeste["pages"])
+
+
+# --- La vraie stack, plus la démo (#1166) ---------------------------------------------------------
+#
+# La série tourne désormais sur la Control Tower réelle, rouverte sur l'état qu'un passage du banc
+# a laissé. Trois décisions du script en découlent, et c'est elles qu'on épingle ici, toujours
+# contre le stub : le projet ouvert est CHOISI parmi ceux que l'API déclare (plus un `prj-demo`
+# écrit d'avance) ; la provenance voyage jusqu'au manifeste ; et une série sur le réel MONTRE sans
+# rien exercer — une écriture vers l'API est refusée à la source et nommée.
+
+
+def lire_trace(chemin: Path) -> list[dict[str, Any]]:
+    """Les faits que le stub a consignés (`FAUX_TRACE`), dans l'ordre."""
+    if not chemin.exists():
+        return []
+    return [json.loads(ligne) for ligne in chemin.read_text(encoding="utf-8").splitlines()]
+
+
+def projets_poses(trace: list[dict[str, Any]]) -> set[Any]:
+    """Les projets actifs que les scripts d'initialisation ont posés (4e argument, `projetId`)."""
+    return {fait["init"][3] for fait in trace if "init" in fait}
+
+
+class FausseApi:
+    """Une API qui ne sait rendre que ce que la série lui demande avant de commencer."""
+
+    def __init__(self, projets: list[dict[str, Any]], espace: str = "copie.banc") -> None:
+        import http.server
+        import threading
+
+        corps = {
+            "/api/sante": {"statut": "ok", "espace": espace},
+            "/api/projets": projets,
+        }
+
+        class Gestionnaire(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802 — nom imposé par http.server
+                reponse = corps.get(self.path.split("?", 1)[0])
+                if reponse is None:
+                    self.send_error(404)
+                    return
+                octets = json.dumps(reponse).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(octets)))
+                self.end_headers()
+                self.wfile.write(octets)
+
+            def log_message(self, *_args: Any) -> None:
+                return
+
+        self.serveur = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Gestionnaire)
+        self.url = f"http://127.0.0.1:{self.serveur.server_address[1]}"
+        self._fil = threading.Thread(target=self.serveur.serve_forever, daemon=True)
+
+    def __enter__(self) -> FausseApi:
+        self._fil.start()
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.serveur.shutdown()
+        self.serveur.server_close()
+
+
+def projet(identifiant: str, nom: str, modifie_le: str) -> dict[str, Any]:
+    return {"id": identifiant, "nom": nom, "cree_le": "2026-09-22T08:00:00+00:00",
+            "modifie_le": modifie_le}
+
+
+@besoin_de_node
+def test_le_projet_ouvert_est_celui_que_l_api_declare_et_qui_a_bouge_en_dernier(
+    tmp_path: Path, maison_playwright: Path
+) -> None:
+    """Le critère « ne déclarent plus `prj-demo` » : le projet vient de l'API réelle, jamais d'un
+    identifiant écrit d'avance — et il est posé dans CHAQUE contexte, captures comme clips."""
+    trace = tmp_path / "trace.jsonl"
+    declares = [
+        projet("prj-aaaa0001", "banc-s1-vider", "2026-09-22T09:00:00+00:00"),
+        projet("prj-bbbb0002", "banc-s4-pourquoi", "2026-09-22T09:40:00+00:00"),
+        projet("prj-cccc0003", "banc-s2-appli", "2026-09-22T09:20:00+00:00"),
+    ]
+    with FausseApi(declares) as api:
+        processus, manifeste = tourner(
+            tmp_path / "captures", maison_playwright, "--api", api.url, FAUX_TRACE=str(trace)
+        )
+
+    assert processus.returncode == 0, processus.stderr
+    source = manifeste["source"]
+    assert source["stack"] == "reelle"
+    assert source["espace"] == "copie.banc"
+    assert source["projet"] == {"id": "prj-bbbb0002", "nom": "banc-s4-pourquoi"}
+    assert source["projets"] == 3
+    assert source["alerte"] is None
+    assert projets_poses(lire_trace(trace)) == {"prj-bbbb0002"}, (
+        "un contexte s'est ouvert sur un autre projet que celui que le manifeste annonce"
+    )
+
+
+@besoin_de_node
+def test_un_projet_demande_l_emporte_et_un_inconnu_est_nomme(
+    tmp_path: Path, maison_playwright: Path
+) -> None:
+    declares = [
+        projet("prj-aaaa0001", "banc-s1-vider", "2026-09-22T09:00:00+00:00"),
+        projet("prj-bbbb0002", "banc-s4-pourquoi", "2026-09-22T09:40:00+00:00"),
+    ]
+    with FausseApi(declares) as api:
+        _p, demande = tourner(
+            tmp_path / "a", maison_playwright, "--api", api.url, "--projet", "prj-aaaa0001"
+        )
+        _p, inconnu = tourner(
+            tmp_path / "b", maison_playwright, "--api", api.url, "--projet", "prj-demo"
+        )
+
+    assert demande["source"]["projet"] == {"id": "prj-aaaa0001", "nom": "banc-s1-vider"}
+    assert inconnu["source"]["projet"] is None
+    assert "prj-demo" in inconnu["source"]["alerte"], "l'identifiant refusé n'est pas nommé"
+
+
+@besoin_de_node
+def test_sans_api_la_serie_part_sans_projet_et_le_dit(
+    tmp_path: Path, maison_playwright: Path
+) -> None:
+    """Une API muette ne se remplace par rien de fabriqué : aucun projet n'est posé, la porte
+    d'entrée rend ce qu'elle rend, et le manifeste nomme la cause. Les captures, elles, restent le
+    seul verdict du code de retour."""
+    trace = tmp_path / "trace.jsonl"
+    processus, manifeste = tourner(tmp_path / "captures", maison_playwright, FAUX_TRACE=str(trace))
+
+    assert processus.returncode == 0, processus.stderr
+    assert manifeste["source"]["projet"] is None
+    assert "API injoignable" in manifeste["source"]["alerte"]
+    assert projets_poses(lire_trace(trace)) == {None}
+
+
+@besoin_de_node
+def test_l_etat_rouvert_voyage_jusqu_au_manifeste(tmp_path: Path, maison_playwright: Path) -> None:
+    """Ce que `etat.py --decrire` a écrit est ce que la présentation dira de ses pièces."""
+    decrit = {"passage": "20260922-120842", "sauve_le": "2026-09-22T09:10:00+00:00",
+              "age_s": 60, "scenarios": [{"id": "S4", "verdict": "vert"}],
+              "evenements": 13, "projets": 1}
+    fichier = tmp_path / "etat.json"
+    fichier.write_text(json.dumps(decrit), encoding="utf-8")
+
+    _p, avec = tourner(tmp_path / "a", maison_playwright, "--etat", str(fichier))
+    _p, sans = tourner(tmp_path / "b", maison_playwright)
+
+    assert avec["source"]["etat"] == decrit
+    assert sans["source"]["etat"] is None, "sans description, rien n'est deviné"
+
+
+@besoin_de_node
+def test_une_ecriture_tentee_pendant_le_tournage_est_refusee_et_nommee(
+    tmp_path: Path, maison_playwright: Path
+) -> None:
+    """Le garde-fou : sur le réel, un clic qui accorderait une validation ou lancerait un run
+    dépenserait du vrai modèle et changerait l'état photographié. La lecture passe, l'écriture est
+    refusée À LA SOURCE, et la ligne du clip la nomme."""
+    trace = tmp_path / "trace.jsonl"
+    # Le premier parcours qui clique : c'est lui que le stub fait écrire.
+    rangs = [i for i, p in enumerate(gestes_de_parcours(), 1) if "cliquer" in p]
+    assert rangs, "aucun parcours ne clique : le test ne poserait aucune question"
+    _p, manifeste = tourner(
+        tmp_path / "captures", maison_playwright,
+        FAUX_ECRITURE_VIDEO=str(rangs[0]), FAUX_TRACE=str(trace),
+    )
+
+    faits = lire_trace(trace)
+    assert {"continue": "GET http://127.0.0.1:9/api/validations?projet=p"} in faits
+    refus = [fait for fait in faits if "abort" in fait]
+    assert [fait["abort"] for fait in refus] == [
+        "POST http://127.0.0.1:9/api/validations/v1/decision"
+    ]
+    clip = manifeste["videos"][rangs[0] - 1]
+    assert clip["ecritures_refusees"] == ["POST /api/validations/v1/decision"]
+    autres = [v for v in manifeste["videos"] if v is not clip]
+    assert all(v["ecritures_refusees"] == [] for v in autres)
+    assert manifeste["source"]["ecritures_refusees"] == [], "les captures n'ont rien tenté"
+
+
+def gestes_de_parcours() -> list[set[str]]:
+    """Les verbes de chaque parcours, dans l'ordre de `parcours.mjs` — lus, jamais recopiés."""
+    texte = PARCOURS_MJS.read_text(encoding="utf-8")
+    blocs = re.split(r"^\s+cle:\s*\"", texte, flags=re.MULTILINE)[1:]
+    return [set(re.findall(r'type:\s*"([a-z]+)"', bloc)) for bloc in blocs]
 
 
 # --- Le signal de page prête tient à l'UI, et cette garde-là manquait (#830) ----------------------
@@ -1035,6 +1277,78 @@ def test_chaque_geste_d_un_parcours_vise_un_texte_que_le_front_ecrit_encore() ->
         "scripts/presentation/parcours.mjs vise des textes que apps/web n'écrit plus : "
         + ", ".join(f"« {texte} »" for texte in perdus)
     )
+
+
+# --- Plus de démo dans ce que les scripts APPELLENT (#1166) ---------------------------------------
+#
+# Critère 1 : les quatre scripts n'importent plus `maestro.controltower.demo` et ne déclarent plus
+# `prj-demo`. Leurs en-têtes racontent encore d'où ils viennent — c'est leur histoire, et une sonde
+# qui la prendrait pour un appel rougirait sur une explication. On cherche donc un USAGE : les
+# lignes de code, commentaires retirés, jamais une mention (même partage que la sonde du front).
+
+CAPTURES_SH = RACINE / "scripts" / "presentation" / "captures.sh"
+
+#: Ce qui trahirait un retour de la démo dans le code : le module, son fichier, son projet et la
+#: variable par laquelle `captures.sh` le passait au navigateur.
+DEMO_DANS_LE_CODE = ("maestro.controltower.demo", "demo.py", "prj-demo", "MAESTRO_PROJET_DEMO")
+
+
+def _code_shell(source: str) -> str:
+    """Un script bash privé de ses lignes de commentaire (règle de `_sans_les_commentaires`)."""
+    return "\n".join(ligne for ligne in source.splitlines() if not ligne.lstrip().startswith("#"))
+
+
+def test_la_sonde_d_usage_ne_prend_pas_l_histoire_pour_un_appel() -> None:
+    """Prouver la sonde sur l'échantillon fautif avant de balayer, dans les deux sens."""
+    raconte = _code_shell(
+        "# Jusque-là : python -m maestro.controltower.demo, projet prj-demo.\n"
+        '"$PYTHON" -m maestro.controltower.cli --port 1 --etat-banc\n'
+    )
+    assert not [motif for motif in DEMO_DANS_LE_CODE if motif in raconte]
+    assert "--etat-banc" in raconte
+
+    appelle = _code_shell('  nohup "$PYTHON" -m maestro.controltower.demo --port 1 &\n')
+    assert "maestro.controltower.demo" in appelle
+    declare = _sans_les_commentaires(
+        'const PROJET = process.env.MAESTRO_PROJET_DEMO || "prj-demo";'
+    )
+    assert "prj-demo" in declare and "MAESTRO_PROJET_DEMO" in declare
+
+
+def test_aucun_script_de_presentation_n_appelle_plus_la_demo() -> None:
+    codes = {
+        CAPTURES_SH: _code_shell(CAPTURES_SH.read_text(encoding="utf-8")),
+        CAPTURES_MJS: _sans_les_commentaires(CAPTURES_MJS.read_text(encoding="utf-8")),
+        PARCOURS_MJS: _sans_les_commentaires(PARCOURS_MJS.read_text(encoding="utf-8")),
+        # Aucune mention à retirer ici : le texte entier est confronté.
+        BUILD_PY: BUILD_PY.read_text(encoding="utf-8"),
+    }
+    restes = {
+        chemin.name: [motif for motif in DEMO_DANS_LE_CODE if motif in code]
+        for chemin, code in codes.items()
+    }
+    assert {nom: motifs for nom, motifs in restes.items() if motifs} == {}, (
+        "un script de présentation tourne encore sur la démo"
+    )
+
+
+def test_captures_sh_rouvre_l_etat_du_banc_avant_de_servir_l_api_reelle() -> None:
+    """La séquence de `start.sh --etat-banc`, dans l'ordre qui compte : vérifier (et dire l'âge),
+    décrire, rouvrir, et SEULEMENT ALORS démarrer l'API — une API démarrée avant la réouverture
+    rejouerait l'ancien journal (#1164)."""
+    code = _code_shell(CAPTURES_SH.read_text(encoding="utf-8"))
+    etapes = [
+        "-m maestro.scenarios.etat --verifier",
+        "-m maestro.scenarios.etat --decrire",
+        "-m maestro.scenarios.etat --rouvrir",
+        "-m maestro.controltower.cli --port",
+    ]
+    positions = [code.find(etape) for etape in etapes]
+    assert -1 not in positions, f"étape absente : {etapes[positions.index(-1)]}"
+    assert positions == sorted(positions), "l'API réelle démarre avant que l'état soit rouvert"
+    ligne_api = next(ligne for ligne in code.splitlines() if etapes[-1] in ligne)
+    assert "--etat-banc" in ligne_api, "l'API de captures ne sert pas le jeu de données du banc"
+    assert "--api" in code and "--etat" in code, "captures.mjs n'apprend ni l'API ni l'état"
 
 
 # ==================================================================================================
@@ -1365,6 +1679,55 @@ def test_un_parcours_en_echec_n_ajoute_aucune_figure(presentation: Presentation)
     assert html.count("<video") == 1
 
 
+def test_la_page_dit_que_ses_pieces_viennent_de_la_vraie_stack(
+    presentation: Presentation,
+) -> None:
+    """Le texte de la page suit le changement de #1166 : captures et clips tournent sur la vraie
+    Control Tower, dans l'état qu'un passage du banc a laissé — dont la date est dite, parce que la
+    page se partage et que son lecteur doit savoir ce qu'il regarde. « Stack de démonstration »
+    n'y a plus de sens."""
+    clip = {"cle": "couts", "libelle": "Coûts", "affiche": None}
+    capture = {"cle": "accueil", "libelle": "Tableau de bord"}
+    donnees = donnees_minimales(
+        captures=[{**capture, "fichier": presentation.png("accueil.png")}],
+        videos=[{**clip, "fichier": presentation.webm("a.webm", 256)}],
+        source={"stack": "reelle", "etat": {"passage": "20260922-120842",
+                                             "sauve_le": "2026-09-22T09:10:00+00:00"}},
+    )
+    processus = presentation.construire(donnees)
+    assert processus.returncode == 0, processus.stderr
+    html = presentation.html()
+
+    assert "stack de démonstration" not in html
+    attendu = "dans l'état laissé par le passage des scénarios de référence du 22/09/2026"
+    assert html.count(escape(attendu)) == 2, "la galerie ET les clips disent d'où ils viennent"
+    assert escape("Captures prises sur la vraie Control Tower") in html
+    assert "Tournées sur la vraie Control Tower" in html
+
+
+@pytest.mark.parametrize(
+    "source",
+    [None, {}, {"etat": None}, {"etat": {"sauve_le": "hier"}}],
+    ids=["absente", "vide", "sans-etat", "date-illisible"],
+)
+def test_sans_etat_lisible_la_page_dit_la_vraie_stack_sans_date(
+    presentation: Presentation, source: Any
+) -> None:
+    """Une provenance qu'on ne sait pas lire ne s'invente pas : la page dit la stack réelle — ce
+    qui reste vrai — et aucune date."""
+    donnees = donnees_minimales(
+        videos=[{"cle": "couts", "libelle": "Coûts", "affiche": None,
+                 "fichier": presentation.webm("a.webm", 256)}],
+    )
+    if source is not None:
+        donnees["source"] = source
+    processus = presentation.construire(donnees)
+    assert processus.returncode == 0, processus.stderr
+    html = presentation.html()
+    assert "Tournées sur la vraie Control Tower, jouables ici même." in html
+    assert "scénarios de référence du" not in html
+
+
 def test_sans_clip_la_section_demonstrations_disparait(presentation: Presentation) -> None:
     """Une section vide dessert la présentation autant qu'une vignette hors sujet."""
     assert presentation.construire(donnees_minimales(tickets=[ticket(1)])).returncode == 0
@@ -1481,6 +1844,29 @@ MOTIFS_LIMITES = (
     "Le MCP `chrome-maestro` ne filme pas",
 )
 
+#: Ce que `/milestone-presentation` dit de ses pièces depuis #1166 : le réel, l'état qu'il montre,
+#: le bloc qui le fait savoir à la page, et le geste qui refait l'état — nommé, jamais joué
+#: d'office.
+MOTIFS_REEL_PRESENTATION = (
+    "l'état du banc",
+    "la vraie Control Tower",
+    "`source` se **recopie tel quel**",
+    "start.sh --etat-banc --rejouer",
+    "Ne le lance pas de toi-même",
+)
+
+#: Ce que `/milestone-bilan` en dit : même source, et ce qu'une cible absente de l'état veut dire
+#: pour un critère (non couvert, avec sa cause — jamais tenu, jamais en défaut par défaut).
+MOTIFS_REEL_BILAN = (
+    "Ces pièces viennent du réel",
+    "dernier passage du banc",
+    "pas un défaut du livrable",
+    "Les parcours **n'exercent rien**",
+)
+
+#: La source d'avant #1166, que ni l'une ni l'autre ne doit plus nommer comme la leur.
+DEMO_RETIREE = ("stack de démo", "stack de démonstration")
+
 #: La phrase de l'étape 5 d'avant #543, celle qui envoyait poser une clé de capture au jugé. Sa
 #: survivance serait une contradiction dans le même fichier : un prompt est ce que la session lit
 #: en dernier, et deux consignes opposées se tranchent par la dernière lue (leçon de #310).
@@ -1493,7 +1879,14 @@ def test_les_motifs_de_doc_attrapent_un_echantillon_fautif() -> None:
     Sans cette moitié, les quatre tests suivants rendraient un ✓ sur une question jamais posée —
     c'est la méthode déjà employée par `tests/test_ci_local.py` et `tests/test_cycle_de_vie.py`.
     """
-    for famille in (MOTIFS_DERIVATION, MOTIFS_PARCOURS, MOTIFS_RESUME, MOTIFS_LIMITES):
+    for famille in (
+        MOTIFS_DERIVATION,
+        MOTIFS_PARCOURS,
+        MOTIFS_RESUME,
+        MOTIFS_LIMITES,
+        MOTIFS_REEL_PRESENTATION,
+        MOTIFS_REEL_BILAN,
+    ):
         assert manques(" ".join(famille), famille) == []
         assert manques("", famille) == list(famille)
         # L'oubli le plus probable est celui du DERNIER motif ajouté : il doit ressortir seul.
@@ -1535,6 +1928,33 @@ def test_la_commande_dit_ce_qu_elle_ne_sait_pas() -> None:
         f"/milestone-presentation ne nomme pas ses limites {manques(texte, MOTIFS_LIMITES)} : "
         "une limite qu'on ne trouve pas là où l'on travaille se lit comme un oubli"
     )
+
+
+BILAN = RACINE / ".claude" / "commands" / "milestone-bilan.md"
+
+
+def test_la_presentation_dit_que_ses_pieces_viennent_du_reel() -> None:
+    """Critère 2 de #1166, côté `/milestone-presentation`."""
+    texte = COMMANDE.read_text(encoding="utf-8")
+    assert manques(texte, MOTIFS_REEL_PRESENTATION) == [], (
+        f"/milestone-presentation ne dit pas {manques(texte, MOTIFS_REEL_PRESENTATION)} : "
+        "la session présenterait encore ses pièces comme celles d'une démo"
+    )
+
+
+def test_le_bilan_dit_que_ses_pieces_viennent_du_reel() -> None:
+    """Critère 2 de #1166, côté `/milestone-bilan` — là où la différence décide d'un verdict."""
+    texte = BILAN.read_text(encoding="utf-8")
+    assert manques(texte, MOTIFS_REEL_BILAN) == [], (
+        f"/milestone-bilan ne dit pas {manques(texte, MOTIFS_REEL_BILAN)}"
+    )
+
+
+@pytest.mark.parametrize("chemin", [COMMANDE, BILAN], ids=lambda c: c.stem)
+def test_aucune_commande_ne_tient_plus_ses_pieces_de_la_demo(chemin: Path) -> None:
+    texte = chemin.read_text(encoding="utf-8")
+    restes = [motif for motif in DEMO_RETIREE if motif in texte]
+    assert restes == [], f"{chemin.name} dit encore ses pièces tournées sur la démo : {restes}"
 
 
 def test_claude_md_decrit_les_quatre_etapes_de_la_presentation() -> None:
@@ -1709,13 +2129,13 @@ def test_sans_note_le_pied_de_page_n_a_pas_de_liste(presentation: Presentation) 
 def test_une_note_de_generation_est_rendue_dans_le_pied(presentation: Presentation) -> None:
     """La mécanique reste : ce qui a MANQUÉ à cette génération-ci doit se lire sur la page, son
     lecteur n'ayant aucun moyen de le deviner en la regardant."""
-    manque = "Captures indisponibles : la stack de démo n'a pas démarré."
+    manque = "Captures indisponibles : l'état du banc n'a pas pu être rouvert."
     processus = presentation.construire(donnees_minimales(notes=[manque]))
     assert processus.returncode == 0, processus.stderr
 
     pied = pied_de(presentation.html())
     assert "<ul>" in pied
-    assert "la stack de démo n" in pied and "a pas démarré" in pied
+    assert "du banc n" in pied and "a pas pu être rouvert" in pied
 
 
 def test_la_commande_borne_ce_que_les_notes_acceptent() -> None:

@@ -689,16 +689,26 @@ DEMO_ADMISES: Mapping[str, tuple[Admise, ...]] = {
         Admise("la Control Tower **réelle** (jamais `--demo`)", _RETEX),
         Admise("**ne retombe jamais en douce sur `--demo`**", _RETEX),
     ),
+    # Rentrée dans le balayage avec #1166, qui fait passer ses captures au réel.
+    ".claude/commands/milestone-bilan.md": (
+        Admise(
+            "ne le réduis pas par `--scenario`",
+            "l'option du banc des scénarios (`python -m maestro.scenarios`), pas un état de la "
+            "démo : `test_milestone_bilan` exige qu'elle reste écrite",
+        ),
+        Admise(
+            "jamais `--demo`, contre lequel le banc jouerait un scénario factice",
+            "nommée pour être interdite : `test_milestone_bilan` exige que l'interdit reste écrit",
+        ),
+    ),
 }
 
 #: Les textes que les lots voisins du chantier font passer au réel : ils sortent du balayage le
 #: temps de leur lot, entiers, pour que chaque lot reste mergeable seul (`lot::parallele`). Le
 #: dernier lot, #1168, retire la démo du produit : il vide cette table et inscrit ce qui reste.
-#: #1165 (la relecture visuelle, son agent, `/ticket-start`) en est sorti : ses textes sont balayés.
-DEMO_AUX_LOTS_VOISINS: Mapping[str, str] = {
-    ".claude/commands/milestone-presentation.md": "#1166",
-    ".claude/commands/milestone-bilan.md": "#1166",
-}
+#: #1165 (la relecture visuelle, son agent, `/ticket-start`) et #1166 (les présentations et le
+#: bilan de jalon) en sont sortis : leurs textes sont balayés, et la table est vide.
+DEMO_AUX_LOTS_VOISINS: Mapping[str, str] = {}
 
 #: Les phrases que #1167 a retirées, telles qu'elles étaient (`git show e67aadf:<fichier>`).
 _DEMO_FAUTIVES: Mapping[str, str] = {
