@@ -397,7 +397,7 @@ l'humain, sans que rien ne soit rejouable**. Or c'est **avant** d'empaqueter (Ph
 avoir vécu le produit comme un utilisateur, et personne ne l'avait refait depuis.
 
 **`/retex-utilisateur [objectif]`** rend ce geste rejouable. La session joue le rôle d'un
-utilisateur qui ne connaît rien de Maestro, sur la Control Tower **réelle** (jamais `--demo`) et par
+utilisateur qui ne connaît rien de Maestro, sur la Control Tower **réelle** et par
 son seul navigateur (`mcp__chrome-maestro` — c'est **son** navigateur, à la différence de
 `/milestone-bilan` elle n'a aucun exécutant à qui déléguer le regard) : prérequis, parcours des
 écrans de `PAGES` (`apps/web/lib/navigation.ts`) un par un — **le menu d'abord, puis les pages hors
@@ -413,8 +413,9 @@ développement** : aucune commande du dépôt, aucun appel direct à l'API, aucu
 comprendre un écran — ce que l'interface n'explique pas est un constat. La séquence se termine par
 **`browser_close`**, comme toute séquence du navigateur partagé.
 
-**Jamais `--demo`**, et c'est une chose à ne pas défaire : ne pas retomber en douce sur la démo est
-la règle du skill `control-tower`, et un retex sur des données factices serait un retex faux.
+**Jamais sur des données factices**, et c'est une chose à ne pas défaire : un retex sur des données
+factices serait un retex faux. Le mode démo qui les servait a quitté le produit (#1168,
+[docs/41 §4](./41-decision-maestro-juge-il-ne-bride-pas.md)), et `start.sh` refuse désormais `--demo`.
 
 **Le prérequis est un poste vide, et aucun geste ne le vidait.** `start.sh --stop` solde les runs
 en vol sans rien effacer, et aucune route ne supprime une exécution : chaque essai partait donc d'un
@@ -470,8 +471,8 @@ et les dossiers de projet **intacts** sur un poste jetable ; l'absence d'écritu
 sans argument la phase courante, un fragment de titre suffisant (`Phase 3`). Elle regroupe les
 tickets par **état** (Livré / En revue / En cours / À venir) puis par `type::`, et y joint des
 **captures de la Control Tower prises en direct**, les **écrans que la phase a touchés** (dérivés
-des commits, jamais devinés — #544) et des **démonstrations filmées** sur la stack de démo (#545),
-jouables dans le fichier. Le livrable est un fichier **autonome** `docs/presentations/<slug>.html`
+des commits, jamais devinés — #544) et des **démonstrations filmées** (#545), tournées sur la vraie
+stack depuis #1166 et jouables dans le fichier. Le livrable est un fichier **autonome** `docs/presentations/<slug>.html`
 (CSS en ligne, images et clips en base64, sous plafond de taille), **non commité** — c'est une
 décision humaine — et la commande **n'écrit rien côté forge**. Elle **montre** ; elle n'exerce rien
 et ne rend aucun verdict (ci-dessus, le glissement de 2026-07).
@@ -2659,7 +2660,7 @@ ensuite part en POST **synchrone** de 10 s de plafond — vers le vrai projet La
 pollue au passage) ; sans la seconde, la prochaine fuite du même genre repasserait inaperçue,
 puisqu'elle ne se manifeste que par de la lenteur. Motif à connaître avant d'ajouter un handler à
 un logger de `maestro.` : `activer_export_langfuse()` est appelée par **chaque** point d'entrée
-(`engine_cli.main`, `maestro.demo.main`) et rien ne la retire, donc elle est **idempotente** — sans
+(`engine_cli.main`, `maestro.controltower.hote_detache.main`) et rien ne la retire, donc elle est **idempotente** — sans
 quoi N invocations dans un même processus accrochaient N handlers, et chaque ligne journalisée
 partait N fois : traces et coûts **dupliqués en production**, pas seulement en test. C'est aussi ce qui rend le filet CI local
 ([`scripts/ci/local.sh`](../scripts/ci/local.sh), ci-dessous) comparable au job qu'il prédit : le
@@ -4664,7 +4665,7 @@ pouvait le lire comme la suite de la dernière.
   | `.venv/Scripts/python.exe -m pytest` (ou `-c`, ou stdin) | le **répertoire courant** | le **worktree** ✅ |
   | `.venv/Scripts/pytest.exe` — script console | le dossier du **script** (`.venv/Scripts`) | le **clone principal** ❌ |
 
-  Les **points d'entrée console** (`maestro-run`, `maestro-demo`, `pytest`, `ruff`…) tombent tous
+  Les **points d'entrée console** (`maestro-run`, `maestro-api`, `pytest`, `ruff`…) tombent tous
   dans la seconde ligne. **Toujours passer par `python -m`** depuis un worktree.
 
   Mesuré sur #194, sur la même sonde et le même commit — la troisième ligne est le contrefactuel

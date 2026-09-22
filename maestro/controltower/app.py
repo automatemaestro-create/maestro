@@ -277,18 +277,18 @@ Endpoints :
   des agents, messages inter-agents, validations, chat), au format
   `Event.to_dict`.
 
-Contrats d'API **v2** (#183 — formes figées des Phases 5/6, servies en fixtures
-par la démo ; **501** en production tant que leur lot n'est pas livré) :
+Contrats d'API **v2** (#183 — formes figées des Phases 5/6, servies pour de vrai
+à mesure que leur lot a été livré) :
 
 - `GET  /api/executions` — la liste des runs (résumés : statut, coût, dates,
   ticket) ; `POST /api/executions` — lance un run (objectif + garde-fous) ;
   `POST /api/executions/{run_id}/annuler` — interrompt un run en cours (#185) ;
 - `GET  /api/journal` — le journal requêtable (filtres agent / type / run /
-  période, tri, pagination) — servi **pour de bon** depuis #478 ;
-- `GET  /api/configuration` — le registre de configuration éditable (réglages
-  produit, couche 1 du cadrage sécurité #182) ;
-- `GET  /api/playbooks/propositions` — les propositions d'auto-amélioration
-  **tous agents confondus** (badge + notifications).
+  période, tri, pagination) — servi **pour de bon** depuis #478.
+
+Les deux autres, `GET /api/configuration` et `GET /api/playbooks/propositions`,
+ne répondaient qu'en fixtures du mode démo et `501` en réel : elles sont parties
+avec lui (#1168).
 
 Assemblage : une **pompe** unique s'abonne au bus (`EventBus`), projette chaque
 événement sur l'état (`ControlTowerState`), l'ajoute au journal requêtable
@@ -431,7 +431,6 @@ from maestro.controltower.executions import (
     RelanceRefusee,
     ServiceExecutions,
 )
-from maestro.controltower.fixtures import FixturesControlTower
 from maestro.controltower.fournisseurs import catalogue as catalogue_fournisseurs
 from maestro.controltower.frise import frise_du_run
 from maestro.controltower.generation_agent import (
@@ -1375,7 +1374,6 @@ def create_app(
     event_log: EventLog | None = None,
     journal: ServiceJournal | None = None,
     battements: RegistreBattements | None = None,
-    fixtures: FixturesControlTower | None = None,
     fabrique_moteur: FabriqueMoteur | None = None,
     televersements: DepotTeleversements | None = None,
     lecteur_sources: LecteurSources | None = None,
@@ -1385,7 +1383,7 @@ def create_app(
     """Construit l'app FastAPI de la Control Tower autour d'un bus et d'un état.
 
     Par défaut : bus mémoire et état neuf (agents du catalogue, statut libre) —
-    la configuration des tests et d'une démo mono-process. La production passe
+    la configuration des tests. La production passe
     par `create_default_app` (bus Redis). La pompe vit avec l'app (lifespan) :
     démarrée à l'ouverture, annulée à l'arrêt, bus refermé derrière elle.
 
@@ -1411,16 +1409,15 @@ def create_app(
     où transitent les échanges (mémoire par défaut, Redis en production), le
     fil persisté (`MAESTRO_CHAT_DIR`, sinon `core/chat/` du dépôt) et la
     production de la réponse — par défaut le fournisseur configuré, cadré par
-    le playbook courant de l'agent ; la démo (#65) et les tests injectent un
-    répondeur scripté.
+    le playbook courant de l'agent ; les tests injectent un répondeur scripté.
 
     `assistance_repondeur` (#123) porte le **canal d'aide** `/api/chat/assistance` :
     un second `ServiceChat` sur le même fil persisté, la même messagerie et le même
     bus que le chat, mais avec son propre répondeur — depuis #764
     `RepondeurAssistanceDocumentee`, qui choisit ses sections dans la documentation
     du produit (#763) et cite ce qu'il a lu, avec le déterministe
-    `RepondeurAssistance` en **repli** quand aucun fournisseur n'est joignable
-    (démo #65). Les questions portent sur l'outil, pas sur le projet ; voir
+    `RepondeurAssistance` en **repli** quand aucun fournisseur n'est joignable.
+    Les questions portent sur l'outil, pas sur le projet ; voir
     `maestro.controltower.assistance_documentee`.
 
     `orchestration_repondeur` (#268) porte le **fil global**
@@ -1430,8 +1427,8 @@ def create_app(
     ouvre un run par le service d'exécutions de cette app, dont la réponse porte
     l'identifiant. Il est construit **après** `executions`, dont il tient son
     lanceur ; c'est aussi le point d'injection qui permet de jouer le fil **sans
-    fournisseur** — la démo (#65) y met un répondeur scripté, les tests un
-    répondeur à fournisseur factice, ou sans lanceur.
+    fournisseur** — les tests y mettent un répondeur scripté, un répondeur à
+    fournisseur factice, ou aucun lanceur.
 
     `analyseur` (#139) produit les propositions d'auto-amélioration servies par
     `POST /api/playbooks/{agent}/propositions` : à la demande, il analyse les
@@ -1502,7 +1499,7 @@ def create_app(
     **rejoue au démarrage** pour reconstruire la projection (exécutions, grands
     livres, analytics, tâches, agents, validations) après un redémarrage de
     l'API — par défaut un journal mémoire (pas de durabilité inter-redémarrage :
-    la configuration des tests et d'une démo mono-process). La production câble
+    la configuration des tests). La production câble
     `RedisEventLog` via `create_default_app`. Un état injecté (`state`) reste tel
     quel puis reçoit le rejeu par-dessus (idempotent : les événements
     reconstruisent le même état).
@@ -1512,8 +1509,8 @@ def create_app(
     ce que l'API publie est consigné à l'instant où elle le publie, et non plus
     quand sa pompe le reçoit. Le bus passé ici doit donc être un **transport
     nu** — l'envelopper une seconde fois en amont doublerait chaque ligne.
-    Corollaire pour un appelant qui garde la main sur le bus qu'il injecte (la
-    démo #65, quelques tests) : ce qu'il publie **par sa propre référence** est
+    Corollaire pour un appelant qui garde la main sur le bus qu'il injecte
+    (quelques tests) : ce qu'il publie **par sa propre référence** est
     diffusé et projeté comme avant, mais n'est pas consigné — il court-circuite
     le producteur, donc le geste qui consigne.
 
@@ -1530,15 +1527,6 @@ def create_app(
     `RegistreBattementsRedis` via `create_default_app` : c'est ce qui fait qu'un
     run lancé par `maestro-run --publier` reste reconnu vivant **à travers un
     redémarrage de l'API**, la lecture ne dépendant alors d'aucun process.
-
-    `fixtures` (#183) branche les **contrats d'API v2** (routes des Phases 5/6 :
-    registre de configuration, propositions de playbook globales) sur des
-    **données factices**. Les exécutions (#185), le journal requêtable (#478)
-    puis le flux SSE d'un fil de chat (#268) en sont sortis à mesure que leur lot
-    était livré.
-    None (production) : ces routes répondent **501** — le contrat est stable, son
-    lot d'implémentation n'est pas encore livré. Fourni (la démo, #65) : elles
-    servent les fixtures, et la voie front code contre elles sans backend réel.
 
     `fabrique_moteur` (#185) construit le moteur de chaque exécution lancée par
     `POST /api/executions` — par défaut `OrchestrationEngine.default`, résolu au
@@ -1571,8 +1559,8 @@ def create_app(
     déroule le run, l'hôte de *où* il vit. C'est par lui que l'hôte survivant à
     l'API (#441) se câble, sans que les routes, les événements ni la projection en
     sachent quoi que ce soit. `None` laisse le service se donner
-    `HoteRunEnProcess` — la tâche de fond, la configuration des tests et d'une démo
-    mono-process ; la **production** câble l'hôte détaché, résolu depuis
+    `HoteRunEnProcess` — la tâche de fond, la configuration des tests ; la
+    **production** câble l'hôte détaché, résolu depuis
     l'environnement par `create_default_app` (#446).
     """
     event_log = event_log if event_log is not None else InMemoryEventLog()
@@ -1703,8 +1691,8 @@ def create_app(
     # Il est servi par le **répondeur documenté** depuis #764 : le modèle choisit ses
     # sections sur la carte de `docs/` (#763) puis répond à partir d'elles, en citant
     # ce qu'il a lu. Le déterministe de #123 lui est passé en **repli** plutôt que
-    # d'être remplacé — sans fournisseur ni authentification (démo #65), le canal
-    # répond encore, et le dit. Construire ce répondeur ne résout aucun fournisseur
+    # d'être remplacé — sans fournisseur ni authentification, le canal répond
+    # encore, et le dit. Construire ce répondeur ne résout aucun fournisseur
     # et ne lit aucun fichier : les deux sont paresseux, comme partout ailleurs ici.
     assistance = ServiceChat(
         store=chat_store,
@@ -1945,23 +1933,6 @@ def create_app(
         soldes = await executions.eteindre()
         return {"runs": soldes, "nb": len(soldes)}
 
-    # --- Contrats d'API v2 (#183) : routes des Phases 5/6, formes JSON figées ---
-    # Le contrat (chemin, méthode, forme) est stable ; l'implémentation réelle
-    # vient dans les lots dédiés (Phase 5, #184+). Sans `fixtures` (production),
-    # ces routes répondent 501 ; branchées sur les fixtures (la démo), elles
-    # servent des données factices contre lesquelles la voie front code (docs/05 §6).
-    def _exige_fixtures() -> FixturesControlTower:
-        """Les fixtures v2, ou un 501 explicite tant que le lot réel n'est pas livré."""
-        if fixtures is None:
-            raise HTTPException(
-                status_code=501,
-                detail=(
-                    "route de contrat (API v2) non encore implémentée : servie en "
-                    "fixtures par le mode démonstration."
-                ),
-            )
-        return fixtures
-
     def _portee(projet: str | None) -> PorteeProjet:
         """La **portée projet** d'une lecture (#277), ou un refus motivé.
 
@@ -2052,9 +2023,7 @@ def create_app(
 
         Servi **en mode réel** depuis #478 : l'historique des événements consignés
         par la pompe et rejoués au démarrage (`ServiceJournal`, journal durable
-        #97). La gate 501 qui le murait hors démo a disparu avec l'implémentation
-        qu'elle annonçait, et les fixtures du journal avec elle — les exécutions
-        avaient ouvert la voie (#185).
+        #97).
 
         `depuis`/`jusqua` sont des horodatages ISO-8601 (bornes incluses).
         `projet` est **obligatoire** (#277) et suit le contrat commun :
@@ -2092,29 +2061,6 @@ def create_app(
             page=page,
             taille=taille,
         )
-
-    @app.get("/api/configuration")
-    async def configuration() -> dict[str, Any]:
-        """Le registre de configuration éditable (couche 1 du cadrage sécurité #182).
-
-        Les réglages produit (fournisseur, modèle, plafonds, isolation,
-        intégrations, rétention) : type, valeur courante (masquée si secret),
-        valeur par défaut, s'ils sont modifiables. Liste blanche stricte : aucune
-        écriture arbitraire de variable d'environnement.
-        """
-        return _exige_fixtures().configuration()
-
-    # Enregistrée **avant** `/api/playbooks/{agent}` (plus bas) pour que le chemin
-    # littéral l'emporte sur la capture `{agent}` (sinon agent = "propositions").
-    @app.get("/api/playbooks/propositions")
-    async def propositions_playbook_globales() -> list[dict[str, Any]]:
-        """Les propositions d'auto-amélioration, **tous agents confondus** (#111 global).
-
-        L'agrégat transverse qui alimente le badge d'attente et les notifications
-        (cadrage #182, items 8/9) — chaque proposition enrichie du `role` de son
-        agent. Le pendant temps réel est l'événement `playbook.proposition` du bus.
-        """
-        return _exige_fixtures().propositions_playbook()
 
     @app.get("/api/taches")
     async def taches(projet: str | None = None, run: str | None = None) -> list[dict[str, Any]]:
@@ -3229,8 +3175,7 @@ def create_app(
         une ligne de TypeScript.
 
         Déclarée **avant** `/api/playbooks/{agent}`, sans quoi « lexique » serait pris
-        pour un nom d'agent et rendrait un 404 (même précaution que la route littérale
-        `/api/playbooks/propositions`).
+        pour un nom d'agent et rendrait un 404.
         """
         return lexique_dict()
 
@@ -4481,7 +4426,7 @@ def create_app(
     # Enregistrées **avant** `/api/projets/{id_projet}` : « explorateur » et
     # « selecteur » sont des identifiants de projet valides au regard du slug
     # `ID_PROJET`, la capture les avalerait donc si elle passait la première
-    # (même piège qu'au-dessus avec `/api/playbooks/propositions`).
+    # (même piège qu'au-dessus avec `/api/playbooks/lexique`).
     @app.get("/api/projets/selecteur")
     async def selecteur_disponible(requete: Request) -> dict[str, Any]:
         """Le sélecteur de dossier **natif du poste** est-il ouvrable ici — et sinon, pourquoi ?

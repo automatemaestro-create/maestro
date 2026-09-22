@@ -179,8 +179,8 @@ l'équipe — c'est Maestro, et c'est lui qui recrute (docs/37 §4.2). Chaque pr
 **Ce qu'un projet reçoit, et où.** Un agent validé est écrit dans le projet — fiche, playbook,
 autorisations, capacité —, jamais au niveau des gabarits, qui n'appartiennent à personne
 ([docs/05 §2.0](./05-interface-control-tower.md)). Hors de tout projet, un moteur travaille encore
-avec les gabarits — c'est son repli de câblage (`catalogue_hors_projet`) : `maestro-run` et
-`maestro-demo` n'ont pas de projet et n'en ont jamais eu. Ce n'est pas une exception au principe,
+avec les gabarits — c'est son repli de câblage (`catalogue_hors_projet`) : `maestro-run` lancé sans
+`--projet` n'en a pas. Ce n'est pas une exception au principe,
 c'en est le complément — il n'y a pas d'équipe où chercher. Dans un projet, en revanche, il y en a
 une : une équipe **vide** y laisse la tâche « à assigner » plutôt que de retomber ici.
 

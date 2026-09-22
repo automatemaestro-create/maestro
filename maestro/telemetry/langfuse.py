@@ -244,8 +244,8 @@ def activer_export_langfuse(settings: Settings | None = None) -> logging.Handler
     posé (à retirer via `logging.getLogger(LOGGER_NAME).removeHandler(...)`).
 
     **Idempotente** (#195) : `maestro.trace` est un logger *global* et les points
-    d'entrée appellent cette fonction à chaque invocation (`engine_cli.main`,
-    `maestro.demo.main`) sans jamais retirer le handler. Sans garde, N appels
+    d'entrée appellent cette fonction à chaque invocation (`engine_cli.main`)
+    sans jamais retirer le handler. Sans garde, N appels
     dans un même processus accrochent N handlers, et chaque ligne journalisée
     part alors N fois vers Langfuse : traces et coûts dupliqués, et autant de
     POST synchrones (`_TIMEOUT_S` chacun) par ligne consignée. Un handler déjà

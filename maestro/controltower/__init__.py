@@ -64,7 +64,7 @@ Sept briques, assemblées par l'app FastAPI (`maestro.controltower.app`) :
   — même infrastructure que le chat sur le fil réservé `assistance`, mais une
   fiche hors catalogue (`AGENT_ASSISTANCE`) : les questions portent sur l'outil,
   pas sur le projet. Ce qu'il porte encore est le **repli** — `RepondeurAssistance`,
-  le déterministe de #123, qui répond sans fournisseur ni réseau (la démo #65) ;
+  le déterministe de #123, qui répond sans fournisseur ni réseau ;
   le chemin nominal, lui, est `maestro.controltower.assistance_documentee`, où le
   modèle lit la documentation du produit et cite ce qu'il a lu (#763/#764), la
   table de mots-clés ayant cessé d'être un juge en #765. ⚠ Ce **juge** n'est donc
@@ -191,7 +191,6 @@ from maestro.controltower.executions import (
     ServiceExecutions,
     moteur_par_defaut,
 )
-from maestro.controltower.fixtures import FixturesControlTower
 from maestro.controltower.graphe import (
     ARETE_ATTENDUE,
     ARETE_FRANCHIE,
@@ -355,7 +354,6 @@ __all__ = [
     "EventLog",
     "FabriqueMoteur",
     "FaitsDesRuns",
-    "FixturesControlTower",
     "FluxInterrompu",
     "FragmentChat",
     "GrapheRun",

@@ -643,8 +643,7 @@ def console_tolerante() -> None:
     Unicode peut s'y trouver, qu'une console Windows héritée (cp1252) ne sait pas
     encoder : sans cela, `print` planterait après une exécution pourtant réussie.
     Les caractères inencodables sont remplacés à l'affichage seulement ; les
-    artefacts écrits sur disque restent en UTF-8 intacts. Partagée avec
-    `maestro-demo` (ticket #10).
+    artefacts écrits sur disque restent en UTF-8 intacts.
     """
     for flux in (sys.stdout, sys.stderr):
         if isinstance(flux, io.TextIOWrapper):
@@ -771,8 +770,6 @@ def activer_publication_evenements() -> None:
 
 def activer_trace() -> None:
     """Émet le journal d'exécution (JSON Lines, #8) sur stderr.
-
-    Partagée avec `maestro-demo` (ticket #10) — d'où sa visibilité publique.
 
     Configure le logger `maestro.trace` sans toucher au root : la synthèse reste
     seule sur stdout, le journal part sur stderr (redirigeable vers un fichier).

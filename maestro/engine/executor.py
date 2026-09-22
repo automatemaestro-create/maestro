@@ -2682,9 +2682,8 @@ class LocalExecutor(TaskExecutor):
         restantes = suivi.inachevees()
         if not restantes:
             return
-        # La phrase vit dans `maestro.detail_tache` depuis #1112 : le scénario de
-        # démo la publie aussi, et deux formulations du même écart finiraient par
-        # diverger.
+        # La phrase vit dans `maestro.detail_tache` depuis #1112, à une seule
+        # adresse : deux formulations du même écart finiraient par diverger.
         self._consigne_activite(
             task,
             agent,

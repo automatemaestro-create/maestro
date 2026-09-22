@@ -8,9 +8,9 @@ trois critères d'acceptation du ticket :
 ② un agent **bascule par configuration seule** (`MAESTRO_PROVIDER`/`MAESTRO_MODEL`
   + variables `OPENAI_*`) — aucun changement de logique d'agent : les raccourcis
   `.default()` construisent tout depuis l'environnement ;
-③ une **exécution de démonstration aboutit de bout en bout** sur ce fournisseur :
-  la démo Phase 0 (plan → agents → artefacts → verdict) tourne entièrement sur
-  l'endpoint factice, chaque appel modèle portant le modèle configuré.
+③ une **exécution aboutit de bout en bout** sur ce fournisseur : la boucle
+  d'orchestration (plan → agents → livrables) tourne entièrement sur l'endpoint
+  factice, chaque appel modèle portant le modèle configuré.
 """
 
 import json
@@ -20,7 +20,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 
 from maestro.config import ConfigError, Settings
-from maestro.demo import run_demo
 from maestro.engine.loop import OrchestrationEngine
 from maestro.orchestrator.prompt import ORCHESTRATOR_SYSTEM_PROMPT
 from maestro.providers import (
@@ -267,10 +266,10 @@ def test_engine_default_refuse_openai_sans_modele(monkeypatch):
         OrchestrationEngine.default()
 
 
-# --- Critère ③ : la démo aboutit de bout en bout sur ce fournisseur --------------------
+# --- Critère ③ : une exécution aboutit de bout en bout sur ce fournisseur -------------
 
-#: Plan que « répond » l'endpoint à l'appel de planification : le duo bdd +
-#: developpeur de la démo Phase 0 (2 tâches chaînées, 2 agents distincts).
+#: Plan que « répond » l'endpoint à l'appel de planification : un duo bdd +
+#: developpeur (2 tâches chaînées, 2 agents distincts).
 _PLAN = [
     {
         "id": "schema-contacts",
@@ -299,32 +298,28 @@ def _reponse_planificateur_ou_agent(corps):
     return 200, _payload_texte(f"LIVRABLE ({corps['model']})")
 
 
-def test_demo_aboutit_de_bout_en_bout_sur_l_endpoint_openai(endpoint, monkeypatch, tmp_path):
+def test_une_execution_aboutit_de_bout_en_bout_sur_l_endpoint_openai(endpoint, monkeypatch):
     endpoint.reponse_pour = _reponse_planificateur_ou_agent
     # Toute la bascule tient dans l'environnement : fournisseur, modèle, endpoint.
     monkeypatch.setenv("MAESTRO_PROVIDER", "openai")
     monkeypatch.setenv("MAESTRO_MODEL", "mistral-small-latest")
     monkeypatch.setenv("OPENAI_BASE_URL", endpoint.base_url)
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-demo")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-essai")
 
-    code = run_demo(
-        OrchestrationEngine.default(), objectif="Prototyper un mini-CRM", dossier=tmp_path
-    )
+    rapport = _run(OrchestrationEngine.default().run("Prototyper un mini-CRM"))
 
-    assert code == 0
-    racine = next(tmp_path.glob("run-*"))
-    verdict = (racine / "verdict.md").read_text(encoding="utf-8")
-    assert "Critère de sortie Phase 0 — VALIDÉ" in verdict
+    assert [r.task_id for r in rapport.reussies] == ["schema-contacts", "api-contacts"]
+    assert rapport.echouees == () and rapport.bloquees == ()
 
     # Tous les appels modèle (planification + 2 tâches) ont bien visé l'endpoint
     # configuré, avec le modèle configuré : la preuve de la bascule sans code.
     assert len(endpoint.requetes) == 3
     assert {r["corps"]["model"] for r in endpoint.requetes} == {"mistral-small-latest"}
-    assert {r["autorisation"] for r in endpoint.requetes} == {"Bearer sk-demo"}
+    assert {r["autorisation"] for r in endpoint.requetes} == {"Bearer sk-essai"}
 
     # Les livrables portent la réponse de l'endpoint : le résultat vient bien de lui.
-    livrable = (racine / "livrables" / "api-contacts" / "livrable.md").read_text(encoding="utf-8")
-    assert "LIVRABLE (mistral-small-latest)" in livrable
+    (api,) = [r for r in rapport.resultats if r.task_id == "api-contacts"]
+    assert "LIVRABLE (mistral-small-latest)" in api.sortie
 
 
 # --- #1173 : chaque canal suit le fournisseur configuré --------------------------------

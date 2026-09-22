@@ -418,8 +418,8 @@ def test_une_tache_d_un_projet_sans_agent_attend_quelqu_un(tmp_path: Path) -> No
 
 def test_hors_projet_le_cablage_travaille_comme_avant(tmp_path: Path) -> None:
     """Le complément : sans projet il n'y a pas d'équipe où chercher, donc le
-    catalogue du câblage reste celui qui travaille — `maestro-run` et
-    `maestro-demo` n'ont pas de projet et n'en ont jamais eu."""
+    catalogue du câblage reste celui qui travaille — `maestro-run` n'a pas de
+    projet et n'en a jamais eu."""
     agents = AgentStore(tmp_path / "agents")
     executeur = LocalExecutor(
         _Constant(),

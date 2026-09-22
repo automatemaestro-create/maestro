@@ -520,9 +520,9 @@ def catalogue_hors_projet(
     *que route un moteur quand la tâche n'appartient à aucun projet ?*
 
     La règle, en une phrase : **les agents rangés hors projet, et à défaut les
-    gabarits du code.** Le repli est ce qui fait qu'un `maestro-run` ou un
-    `maestro-demo` — qui n'ont pas de projet et n'en ont jamais eu — continuent de
-    travailler avec les cinq rôles que le paquet livre. Il ne contredit pas #1042 :
+    gabarits du code.** Le repli est ce qui fait qu'un `maestro-run` — qui n'a
+    pas de projet et n'en a jamais eu — continue de travailler avec les cinq rôles
+    que le paquet livre. Il ne contredit pas #1042 :
     hors de tout projet il n'y a pas d'équipe où chercher, alors que **dans** un
     projet il y en a une, et c'est `LocalExecutor._equipe` qui la relit à chaque
     tâche — vide, elle laisse la tâche « à assigner » sans jamais retomber ici.

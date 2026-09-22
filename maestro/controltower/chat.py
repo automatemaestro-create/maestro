@@ -16,7 +16,7 @@ par les endpoints `/api/chat` de l'app (`maestro.controltower.app`) :
 - `RepondeurChat` : la production de la réponse — `RepondeurModele` confie le
   fil au fournisseur configuré (`ModelProvider.generate`), cadré par le playbook
   **courant** de l'agent (#76, rechargé à chaque message comme l'exécuteur) ;
-  `RepondeurScripte` répond sans modèle (démo #65, tests #83) ;
+  `RepondeurScripte` répond sans modèle (tests #83) ;
 - `ServiceChat` : le flux d'un envoi — persiste le message, le fait transiter
   par la **messagerie existante** (#44, `Mailbox` : requête vers la boîte de
   l'agent, réponse en retour) et publie chaque message en `chat.message` sur le
@@ -248,8 +248,8 @@ AUTEUR_AGENT = "agent"
 #: clôt un échange **arrêté à la demande** (#695) en portant ce qui en a été
 #: persisté, `erreur` dit qu'aucune réponse ne viendra. Ils vivent **ici**, avec
 #: le canal qui les émet, et non dans les fixtures qui les imitaient avant #268 :
-#: deux vocabulaires pour le même contrat, c'est la démo qui finit par diverger
-#: de ce que l'API sert.
+#: deux vocabulaires pour le même contrat finissent par diverger de ce que l'API
+#: sert.
 #:
 #: `interrompu` est distinct de `fin` parce que les deux ne disent pas la même
 #: chose du texte qu'ils portent : `fin` annonce la réponse **entière**, celle
@@ -1495,9 +1495,8 @@ class RepondeurModele(RepondeurChat):
 class RepondeurScripte(RepondeurChat):
     """Répondeur sans modèle : une réponse déterministe qui reflète le fil.
 
-    Le levier de la démo locale (#65 : regarder l'UI vivre sans fournisseur ni
-    authentification) et des tests d'API (#83) — même contrat que le répondeur
-    réel, zéro réseau.
+    Le levier des tests d'API (#83) — même contrat que le répondeur réel, zéro
+    réseau.
     """
 
     async def repondre(self, agent: Agent, fil: Sequence[MessageChat]) -> str:
@@ -1505,7 +1504,7 @@ class RepondeurScripte(RepondeurChat):
         return (
             f"Bien reçu : « {dernier} ». Je suis l'agent {agent.role} "
             f"(compétences : {', '.join(sorted(agent.competences))}) — réponse "
-            "scriptée de démonstration, aucun modèle n'a été appelé."
+            "scriptée, aucun modèle n'a été appelé."
         )
 
     async def ouvrir_questionnaire(
@@ -1515,16 +1514,12 @@ class RepondeurScripte(RepondeurChat):
 
         Le seul verbe de ce répondeur qui ne soit pas scripté, et c'est voulu : le
         questionnaire est une fonction pure de ce que le fil porte
-        (`maestro.outillage.questionnaire`), donc la démo n'a rien à simuler — elle joue
-        le mécanisme réel, questions, recommandations et déductions comprises. Une
-        version scriptée aurait montré un écran qui ressemble au produit sans se
-        comporter comme lui, et c'est exactement ce que le dépôt refuse ailleurs
-        (« deux vocabulaires pour le même contrat, c'est la démo qui finit par
-        diverger de ce que l'API sert »).
-
-        Il vit **ici** et non dans `controltower.demo` parce que ce répondeur sert
-        aussi les tests d'API (#83) : leur donner le questionnaire d'un côté et pas
-        de l'autre ferait deux comportements pour un même double.
+        (`maestro.outillage.questionnaire`), donc un double n'a rien à simuler — il
+        joue le mécanisme réel, questions, recommandations et déductions comprises.
+        Une version scriptée aurait éprouvé un comportement qui ressemble au produit
+        sans être le sien, et c'est exactement ce que le dépôt refuse ailleurs
+        (« deux vocabulaires pour le même contrat finissent par diverger de ce que
+        l'API sert »).
         """
         return await self._conducteur().ouvrir(fil)
 

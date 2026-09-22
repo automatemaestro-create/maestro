@@ -17,8 +17,8 @@ d'événements #46 pour le temps réel) avec deux pièces qui lui sont propres :
 - `RepondeurAssistance` : la production de la réponse, **déterministe et sans
   modèle**. Un choix assumé au POC : les questions portaient sur un produit dont
   aucun modèle n'avait la documentation, donc des réponses écrites ici étaient plus
-  justes qu'une génération — et le canal marche à l'identique dans la démo (#65),
-  sans fournisseur ni authentification. ⚠ Cette phrase décrit le **repli**
+  justes qu'une génération — et le canal marche à l'identique sans fournisseur ni
+  authentification. ⚠ Cette phrase décrit le **repli**
   d'aujourd'hui, plus le régime nominal : lire la suite avant de s'y fier.
 
 ⚠ **Cet arbitrage n'a pas été annulé, il a changé de portée** (#764, lot 2 de
@@ -29,7 +29,7 @@ corpus (#763) puis répond à partir d'elles, en citant ce qu'il a lu. C'est lui
 `create_app` câble désormais.
 
 Ce module reste donc, et sert **en repli** : sans fournisseur ni authentification
-— la démo #65, un poste non configuré —, c'est `RepondeurAssistance` qui répond,
+— un poste non configuré —, c'est `RepondeurAssistance` qui répond,
 et l'indisponibilité du modèle se dit dans le fil au lieu de lever un 502. Ce qui
 a disparu est son rôle de **juge**, pas son existence.
 
@@ -582,8 +582,8 @@ class RepondeurAssistance(RepondeurChat):
 
     Ne lit que le **dernier** message utilisateur du fil : chaque question d'aide
     se suffit à elle-même, et l'absence de contexte accumulé rend la réponse
-    reproductible — la même question donne la même réponse, en démo comme en
-    production.
+    reproductible — la même question donne la même réponse, avec ou sans
+    fournisseur.
 
     ⚠ Il n'est plus le titulaire depuis #764 : `create_app` le passe en `repli=` à
     `RepondeurAssistanceDocumentee`. C'est le seul symbole de ce module qu'un autre

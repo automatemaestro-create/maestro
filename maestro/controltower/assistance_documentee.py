@@ -54,7 +54,7 @@ documentation ne porte pas la réponse, et le second appel n'a alors pas lieu.
 
 ## Le repli, et ce qu'il n'est pas
 
-Sans fournisseur — la démo #65, un poste non configuré — le canal **répond quand
+Sans fournisseur — un poste non configuré — le canal **répond quand
 même** : `RepondeurAssistance`, le déterministe de #123, reste en repli. Et
 l'indisponibilité **se dit dans le fil** plutôt que de lever un 502, conduite reprise
 de #686 sur le fil global.
@@ -475,7 +475,7 @@ class RepondeurAssistanceDocumentee(RepondeurChat):
         """
         # Le fournisseur **avant** le corpus, et l'ordre porte une décision : sans
         # fournisseur on va replier de toute façon, et analyser 1,58 Mio pour s'en
-        # apercevoir ensuite ferait payer la démo (#65) à chaque question. Résoudre,
+        # apercevoir ensuite ferait payer un poste non configuré à chaque question. Résoudre,
         # lui, ne coûte rien et ne touche aucun réseau.
         fournisseur = self._fournisseur(agent.modele)
         carte = self._carte()
@@ -507,7 +507,7 @@ class RepondeurAssistanceDocumentee(RepondeurChat):
         """La phrase qui dit l'empêchement, puis la réponse du répondeur de repli.
 
         Les deux, jamais l'une à la place de l'autre : la phrase seule laisserait
-        l'utilisateur sans réponse là où l'aide intégrée en a une (démo #65), et la
+        l'utilisateur sans réponse là où l'aide intégrée en a une, et la
         réponse seule ferait passer une réponse de table pour une réponse documentée.
         """
         return "\n\n".join((phrase, await self._repli.repondre(agent, fil)))

@@ -1,15 +1,14 @@
-"""Contrats d'API v2 (ticket #183) : formes JSON figées et fixtures de la démo.
+"""Contrats d'API v2 (ticket #183) : les formes JSON figées, servies pour de vrai.
 
 Couvre les trois critères d'acceptation, sans réseau ni backend réel :
 
-① les **routes de contrat répondent 501** sans fixtures (le contrat est stable,
-  le lot d'implémentation n'est pas livré) et **servent des données factices**
-  une fois `create_app(fixtures=…)` fourni — ce que fait `maestro.controltower.demo`.
-  Trois contrats en sont sortis à mesure que leur lot était livré : les
+① les contrats ont été servis **à mesure que leur lot était livré** : les
   **exécutions** (#185, `maestro.controltower.executions`), le **journal
   requêtable** (#478, `maestro.controltower.journal`) puis le **flux SSE d'un
-  fil de chat** (#268, `ServiceChat.diffuser`), tous servis pour de vrai,
-  fixtures ou pas ;
+  fil de chat** (#268, `ServiceChat.diffuser`). Les deux routes qui ne
+  répondaient qu'en fixtures du mode démo — `GET /api/configuration` et
+  `GET /api/playbooks/propositions`, `501` en réel — sont parties avec lui
+  (#1168) : on garde ici qu'elles ne répondent plus ;
 ② les **formes** servies sont celles documentées (docs/05 §6) et typées
   (`apps/web/lib/types.ts`), filtres/tri/pagination du journal compris — ce
   dernier éprouvé sur son **implémentation réelle** depuis #478, l'historique
@@ -35,35 +34,23 @@ from maestro.controltower import (
     ChatStore,
     ControlTowerState,
     Event,
-    FixturesControlTower,
     InMemoryEventLog,
     ReferenceTicket,
     RepondeurScripte,
     create_app,
-    demo,
 )
 from maestro.controltower.journal import TAILLE_PAGE_MAX
-from maestro.equipe.gabarits import GABARITS
 from maestro.orchestrator.errors import TaskValidationError
 from maestro.orchestrator.schema import validate_plan, validate_task
 
-# Les routes de contrat v2, la méthode HTTP et un corps **valide** éventuel : le
-# corps doit passer la validation Pydantic (sinon 422 avant d'atteindre la gate
-# 501), pour prouver que c'est bien la gate qui répond 501.
-ROUTES_V2 = [
-    ("get", "/api/configuration", {}),
-    ("get", "/api/playbooks/propositions", {}),
-]
-
-#: Le run et le projet du scénario de la démo — ceux que portaient les fixtures
-#: du journal avant que #478 ne serve la route pour de vrai.
-RUN_DEMO = "demo-live"
-PROJET_DEMO = "prj-demo"
+#: Le run et le projet de l'historique consigné avant l'ouverture de l'API.
+RUN = "run-journal"
+PROJET = "prj-journal"
 
 
 def _evt(**champs) -> Event:
-    """Un événement du scénario, rattaché au run et au projet de la démo."""
-    return Event(run_id=RUN_DEMO, projet_id=PROJET_DEMO, **champs)
+    """Un événement de l'historique, rattaché à son run et à son projet."""
+    return Event(run_id=RUN, projet_id=PROJET, **champs)
 
 
 #: L'historique consigné avant l'ouverture de l'API : c'est lui que le rejeu du
@@ -83,7 +70,7 @@ EVENEMENTS_JOURNAL = [
         horodatage="2026-07-30T09:00:12+00:00",
         agent="bdd",
         role="Base de données",
-        tache_id="demo-t1",
+        tache_id="t1",
         statut="en_cours",
         detail="Concevoir le schéma SQL de la table contacts",
     ),
@@ -92,7 +79,7 @@ EVENEMENTS_JOURNAL = [
         horodatage="2026-07-30T09:00:50+00:00",
         agent="bdd",
         role="Base de données",
-        tache_id="demo-t1",
+        tache_id="t1",
         statut="terminee",
         detail="Schéma prêt",
     ),
@@ -108,7 +95,7 @@ EVENEMENTS_JOURNAL = [
         horodatage="2026-07-30T09:01:05+00:00",
         agent="developpeur",
         role="Développeur",
-        tache_id="demo-t2",
+        tache_id="t2",
         statut="en_cours",
         detail="Implémenter l'API REST des contacts",
     ),
@@ -117,7 +104,7 @@ EVENEMENTS_JOURNAL = [
         horodatage="2026-07-30T09:02:06+00:00",
         agent="developpeur",
         role="Développeur",
-        tache_id="demo-t2",
+        tache_id="t2",
         statut="terminee",
         detail="API créer/lister livrée",
     ),
@@ -126,7 +113,7 @@ EVENEMENTS_JOURNAL = [
         horodatage="2026-07-30T09:02:25+00:00",
         agent="devops",
         role="DevOps",
-        tache_id="demo-t3",
+        tache_id="t3",
         statut="en_attente",
         detail="validation requise avant déploiement",
     ),
@@ -135,7 +122,7 @@ EVENEMENTS_JOURNAL = [
         horodatage="2026-07-30T09:03:00+00:00",
         agent="qa",
         role="QA / Testeur",
-        tache_id="demo-qa",
+        tache_id="qa",
         statut="terminee",
         detail="Vérification de santé de l'API",
     ),
@@ -144,25 +131,17 @@ EVENEMENTS_JOURNAL = [
 
 @pytest.fixture()
 def client_nu():
-    """App sans fixtures : les routes de contrat doivent répondre 501 (production)."""
+    """L'app telle que la production la construit, sans rien d'injecté."""
     with TestClient(create_app()) as client:
         yield client
 
 
 @pytest.fixture()
-def client():
-    """App branchée sur les fixtures : les routes servent des données factices (la démo)."""
-    with TestClient(create_app(fixtures=FixturesControlTower())) as client:
-        yield client
-
-
-@pytest.fixture()
 def client_flux(tmp_path):
-    """App **sans fixtures** dont le flux de chat est servi par le vrai canal (#268).
+    """App dont le flux de chat est servi par le vrai canal (#268).
 
-    Le pendant de `client_journal` pour le troisième contrat sorti d'ici : la
-    route ne dépend plus d'aucune fixture, et ce qu'elle rend vient de
-    `ServiceChat.diffuser`. Deux injections, pour la raison qui vaut dans toute
+    Le pendant de `client_journal` pour le troisième contrat : ce que la route
+    rend vient de `ServiceChat.diffuser`. Deux injections, pour la raison qui vaut dans toute
     la suite — le répondeur **scripté** parce qu'aucun test n'appelle de
     fournisseur (`tests/conftest.py`, #195), et un dépôt de fil **temporaire**
     parce qu'un flux persiste ce qu'il diffuse : sans lui, jouer la suite
@@ -176,10 +155,10 @@ def client_flux(tmp_path):
 
 @pytest.fixture()
 def client_journal():
-    """App **sans fixtures** dont le journal durable porte déjà un historique.
+    """App dont le journal durable porte déjà un historique.
 
-    C'est le chemin réel : la route ne dépend plus d'aucune fixture, et ce
-    qu'elle sert vient du rejeu de l'`EventLog` à l'ouverture (`lifespan`).
+    C'est le chemin réel : ce que la route sert vient du rejeu de l'`EventLog` à
+    l'ouverture (`lifespan`).
     """
     log = InMemoryEventLog()
     for event in EVENEMENTS_JOURNAL:
@@ -188,50 +167,29 @@ def client_journal():
         yield client
 
 
-# --- ① 501 sans fixtures, servi avec ------------------------------------------------
+# --- ① Les routes du mode démo sont parties (#1168) -------------------------------
 
 
-@pytest.mark.parametrize(("methode", "chemin", "kwargs"), ROUTES_V2)
-def test_sans_fixtures_les_routes_de_contrat_repondent_501(client_nu, methode, chemin, kwargs):
-    """Le contrat est déclaré, l'implémentation pas encore livrée : 501 franc."""
-    reponse = getattr(client_nu, methode)(chemin, **kwargs)
-    assert reponse.status_code == 501
+@pytest.mark.parametrize("chemin", ["/api/configuration", "/api/playbooks/propositions"])
+def test_les_routes_qui_ne_servaient_que_la_demo_ne_repondent_plus(client_nu, chemin):
+    """Elles rendaient `501` en réel et des fixtures en démo : parties avec lui.
+
+    Un `404`, et non plus un `501` : un `501` annonce une implémentation à venir, et
+    aucune ne l'est. `/api/playbooks/propositions` tombe sur la capture
+    `/api/playbooks/{agent}`, où « propositions » n'est pas un agent.
+    """
+    assert client_nu.get(chemin).status_code == 404
 
 
-def test_les_routes_existantes_restent_servies_sans_fixtures(client_nu):
-    """La gate 501 ne touche que les routes v2 : le reste de l'API répond normalement."""
+def test_les_contrats_livres_restent_servis(client_nu):
+    """Le reste de l'API répond normalement, sans rien d'injecté."""
     assert client_nu.get("/api/sante").status_code == 200
     assert client_nu.get("/api/taches?projet=tous").status_code == 200
-    # Le journal a quitté la gate avec #478 : sans fixtures il est **servi**, et
-    # rend un journal vide plutôt qu'un 501 — c'est la fin du mur, pas un
-    # contournement.
+    # Le journal est servi depuis #478 : sans historique, il rend un journal vide.
     assert client_nu.get("/api/journal?projet=tous").status_code == 200
-    # /api/playbooks/propositions ne « mange » pas la capture {agent} : le playbook
-    # d'un agent reste servi, un agent inconnu reste un 404 (pas un 501).
+    # Le playbook d'un agent reste servi, un agent inconnu reste un 404.
     assert client_nu.get("/api/playbooks/qa").status_code == 200
     assert client_nu.get("/api/playbooks/inconnu").status_code == 404
-
-
-def test_la_demo_branche_les_fixtures_sur_son_app(monkeypatch):
-    """③ La démo est bien le backend de fixtures : elle construit son app **avec**.
-
-    Sans ce câblage, les routes de contrat répondraient 501 à la voie front — le
-    ticket ne serait pas rendu. On coupe juste après la construction de l'app :
-    au-delà, `_servir` lance uvicorn, qui est bloquant.
-    """
-    capture: dict = {}
-
-    class _Coupe(Exception):
-        """Interrompt `_servir` dès l'app construite."""
-
-    def _create_app_factice(**kwargs):
-        capture.update(kwargs)
-        raise _Coupe
-
-    monkeypatch.setattr(demo, "create_app", _create_app_factice)
-    with pytest.raises(_Coupe):
-        asyncio.run(demo._servir("127.0.0.1", 0))
-    assert isinstance(capture["fixtures"], FixturesControlTower)
 
 
 # --- ② Journal requêtable -----------------------------------------------------------
@@ -265,7 +223,7 @@ def test_journal_filtre_par_agent_et_trie(client_journal):
 def test_journal_filtre_par_run(client_journal):
     """`run_id` est un filtre du contrat, et c'est lui que la vue d'un run utilise."""
     a_lui = client_journal.get(
-        "/api/journal", params={"projet": "tous", "run_id": RUN_DEMO}
+        "/api/journal", params={"projet": "tous", "run_id": RUN}
     ).json()
     d_un_autre = client_journal.get(
         "/api/journal", params={"projet": "tous", "run_id": "run-inconnu"}
@@ -319,29 +277,6 @@ def test_journal_parametres_invalides_422(client_journal, params):
         client_journal.get("/api/journal", params={**params, "projet": "tous"}).status_code
         == 422
     )
-
-
-# --- ② Configuration & propositions -------------------------------------------------
-
-
-def test_registre_de_configuration(client):
-    registre = client.get("/api/configuration").json()
-    assert set(registre) == {"reglages", "version", "erreur"}
-    assert registre["erreur"] is None
-    par_cle = {r["cle"]: r for r in registre["reglages"]}
-    # Un secret ne renvoie jamais sa valeur en clair (#132) : masqué, write-only.
-    secret = par_cle["cle_api_fournisseur"]
-    assert secret["secret"] is True
-    assert set("•") >= set(secret["valeur"])  # que des points
-
-
-def test_propositions_de_playbook_globales(client):
-    propositions = client.get("/api/playbooks/propositions").json()
-    # Deux rôles de l'équipe de démo (#1042) : les fixtures ne nomment plus des
-    # agents du code, qui n'existent dans aucun projet.
-    assert {p["agent"] for p in propositions} == {GABARITS[0].nom, GABARITS[-1].nom}
-    # Chaque proposition porte le role de son agent (affichable sans le catalogue).
-    assert all(p["role"] and p["provenance"] == "proposition" for p in propositions)
 
 
 # --- ② Flux SSE d'un fil de chat ----------------------------------------------------
