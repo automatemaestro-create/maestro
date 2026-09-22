@@ -58,10 +58,22 @@ from pathlib import Path
 from maestro.agents.catalog import GABARITS_DU_CODE, Agent
 from maestro.orchestrator.schema import Clarification
 
-#: Fourchette visée. Guidage, pas une règle de schéma, et depuis #298 le playbook la
-#: présente comme une **conséquence** du découpage plutôt que comme un quota à remplir.
-#: MIN reste un vrai plancher : le critère d'acceptation du ticket #6 demande que la
-#: boucle assigne et exécute **au moins 3** tâches. MAX borne le découpage inutilement fin.
+#: Fourchette visée par un objectif de **construction**. Guidage, pas une règle de
+#: schéma, et depuis #298 le playbook la présente comme une **conséquence** du
+#: découpage plutôt que comme un quota à remplir. MAX borne le découpage inutilement fin.
+#:
+#: ⚠ **MIN n'est plus un plancher** (#1149,
+#: [docs/40 §4](../../docs/40-decision-rythme-et-scenarios-de-reference.md)). Il l'a
+#: été, sur le critère d'acceptation du ticket #6 — « la boucle assigne et exécute au
+#: moins 3 tâches » —, qui visait la preuve de concept et son objectif de
+#: construction. Mesuré le 2026-09-21 sur le run `8a15f78f45d3` : « vide le dossier du
+#: projet » est ressorti en trois tâches — écrire un utilitaire de vidage, le tester,
+#: le faire valider —, parce que le plancher demandait un compte que l'objectif
+#: n'appelait pas. Un objectif qui demande une **action** sur le projet rend désormais
+#: **une** tâche qui agit, et le playbook l'écrit comme telle. La constante reste : la
+#: fourchette garde son sens là où elle en a un, et c'est le playbook — pas une borne
+#: de schéma — qui dit quand elle s'applique (`validate_plan` n'a jamais compté les
+#: tâches, et ne commence pas ici).
 MIN_TASKS = 3
 MAX_TASKS = 5
 

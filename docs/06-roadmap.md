@@ -55,7 +55,9 @@ gantt
 - Un **orchestrateur** qui décompose un objectif simple en 2-3 tâches.
   ⚠ *Renversé pour les actions le 2026-09-21* (#1153, [docs/40 §4](./40-decision-rythme-et-scenarios-de-reference.md)) :
   une action simple sur le projet (« vide le dossier ») est **une** tâche qui agit, et le plancher
-  de 3 tâches (`MIN_TASKS`, ticket #6) ne s'y applique plus. Le texte du planificateur change avec #1149.
+  de 3 tâches (`MIN_TASKS`, ticket #6) ne s'y applique plus. Porté par #1149 : le playbook du
+  planificateur (`maestro/orchestrator/playbook.md`) distingue désormais **construire** et
+  **agir**, et `MIN_TASKS` n'est plus qu'une fourchette visée par la construction.
 - **Deux agents** (ex. Développeur + BDD) qui exécutent une tâche chacun.
 - Exécution **en ligne de commande** (pas encore d'UI), résultats dans des fichiers.
 

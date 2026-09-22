@@ -60,6 +60,20 @@ N'en pose **aucune** quand l'objectif se suffit : un brief limpide sort avec `qu
 c'est le bon résultat. À l'inverse, n'enterre pas une ambiguïté coûteuse dans une hypothèse pour
 faire propre — c'est exactement l'erreur que ce brief existe pour éviter.
 
+### Un acte que l'objectif nomme n'est pas une question
+
+L'objectif t'arrive **montré à une personne, qui l'a approuvé** — c'est ce qui ouvre un cadrage.
+Quand il nomme lui-même l'acte — « vide le dossier du projet », « supprime les fichiers
+temporaires », « renomme le module » —, cet acte est **ce qui a été demandé**, pas ce que tu en
+déduirais : le remettre en question ferait redemander ce qui vient d'être accordé, et le brief que
+tu écris serait le second endroit où la même personne doit dire oui.
+
+Il entre donc dans le brief comme un acquis : dans le **périmètre** (c'est ce qu'on fait), dans les
+**contraintes** ce qui n'est pas touché (`.git`, `.env`, les secrets et les exclusions déclarées du
+projet), et dans les **critères d'acceptation** l'état observable qui dira que c'est fait. La
+famille « acte irréversible » ne disparaît pas pour autant : elle vise ce que l'objectif **ne
+nomme pas** et que tu découvrirais nécessaire.
+
 Une question est **fermée ou à choix**, et porte sur un seul point : « L'authentification vise-t-elle
 les employés internes seulement, ou aussi les clients ? » — pas « Peux-tu préciser le contexte ? ».
 Cinq questions au maximum ; au-delà, tu n'as pas lu l'objectif, tu t'en débarrasses.
@@ -89,7 +103,9 @@ indéfiniment — c'est un humain qui le validera ensuite, et il verra tes hypot
 
 1. **Reformule.** Écris l'objectif tel que tu l'as compris, en une à trois phrases. Si ta
    reformulation est la paraphrase de l'énoncé, tu n'as encore rien compris : dis ce qui doit
-   **exister** à la fin.
+   **exister** à la fin — ou, quand l'objectif demande d'**agir** sur le projet plutôt que d'y
+   construire quelque chose, l'**état** dans lequel il le laisse. Un dossier vidé, des fichiers
+   renommés, une commande passée : c'est un résultat, et il ne s'écrit pas en artefact à produire.
 2. **Trace la frontière.** Ce qui est dedans, puis — plus important — ce qui est **dehors**. Le
    hors-périmètre est ce qui empêche la dérive : un lecteur qui découvre en fin de course qu'on
    n'avait pas prévu la migration des données aurait dû le lire ici. Cherche activement les sujets

@@ -9,8 +9,12 @@ Rien ici ne demande de backend ni de réseau ([docs/10 §8](../docs/10-workflow-
 les appels modèle sont joués par des `ModelProvider` factices, le bus est un
 `InMemoryEventBus`, et l'API est exercée par le `TestClient` de Starlette.
 
-Six couches, de la valeur au contrat HTTP :
+Sept couches, du document au contrat HTTP :
 
+0. le **playbook du brief** (`maestro/orchestrator/playbook_brief.md`) — depuis
+   #1149, un acte que l'objectif **nomme** n'est plus une question à reposer, et
+   une demande d'action se reformule en **état** plutôt qu'en artefact. Ce qui se
+   teste est ce que le document dit ; la qualité du jugement se mesure en usage ;
 1. le **schéma partagé** (`packages/shared/schemas/brief.schema.json`) refuse ce
    qui n'est pas un brief, et le dit en un seul message ;
 2. le **`Brief`** se relit sans se rejuger — aller-retour fidèle, synthèse
@@ -212,6 +216,61 @@ def arbitre_qui(decision: DecisionBrief, journal: list[DemandeBrief] | None = No
         return decision
 
     return _arbitre
+
+
+# --- ⓪ Le playbook du brief : un acte nommé n'est pas une question (#1149) ------------
+
+
+def _brief_normalise() -> str:
+    """Le playbook du brief sans sa mise en forme Markdown ni ses retours à la ligne.
+
+    Même normalisation que `tests/test_playbooks_defaut.py` : le document est
+    enveloppé à ~100 colonnes et emphatise au fil du texte, si bien qu'une phrase
+    attendue y traverse une fin de ligne et porte des `**` au milieu.
+    """
+    sans_emphase = BRIEF_SYSTEM_PROMPT.replace("**", "").replace("`", "")
+    return " ".join(sans_emphase.split())
+
+
+def test_un_acte_nomme_par_l_objectif_n_est_pas_une_question_du_brief():
+    """#1149, [docs/40 §4](../docs/40-decision-rythme-et-scenarios-de-reference.md) :
+    l'accord donné au cadrage vaut décision humaine. Le brief est le **premier**
+    endroit où cette décision pouvait être redemandée — « un acte irréversible que
+    l'objectif suppose » passait presque toujours en question —, et une question
+    posée ici coûte un aller-retour à quelqu'un qui vient de dire oui.
+
+    Ce qui est gardé est ce que le document **dit** : ce qu'un modèle en fait se
+    mesure en usage, par le banc des scénarios (#1148, S1)."""
+    texte = _brief_normalise()
+
+    assert "montré à une personne, qui l'a approuvé" in texte
+    assert "vide le dossier du projet" in texte
+    # Il entre dans le brief comme un acquis, aux trois endroits qui ont un effet.
+    assert "périmètre" in texte and "contraintes" in texte
+    assert "critères d'acceptation" in texte
+    # Et la famille ne disparaît pas : elle se replie sur ce que l'objectif tait.
+    assert "ne nomme pas" in texte
+
+
+def test_le_brief_reformule_un_etat_quand_l_objectif_demande_d_agir():
+    """« Dis ce qui doit exister à la fin » n'a pas de sens pour une action : rien
+    ne doit exister, quelque chose doit avoir changé. Sans cette nuance, la
+    reformulation fabrique l'artefact que le plan décomposera ensuite."""
+    texte = _brief_normalise()
+
+    assert "agir sur le projet" in texte
+    assert "l'état dans lequel il le laisse" in texte
+    assert "il ne s'écrit pas en artefact à produire" in texte
+
+
+def test_le_brief_garde_les_trois_familles_qui_demandent_un_humain():
+    """Non-régression : #1149 retire une redondance, jamais l'escalade. Les trois
+    familles restent, et le test du « même plan / deux plans » aussi."""
+    texte = _brief_normalise()
+
+    assert "acte irréversible" in texte
+    assert "coût ou une portée" in texte
+    assert "choix produit à deux issues défendables" in texte
 
 
 # --- ① Le schéma partagé refuse ce qui n'est pas un brief -----------------------------

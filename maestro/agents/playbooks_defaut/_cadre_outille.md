@@ -10,6 +10,14 @@ travail — ne se range donc pas à côté de lui : mets-le dans l'**atelier** q
 quand elle en ouvre un, et à défaut dans le répertoire temporaire du système. Personne ne fera ce
 tri après toi, et ce qui est utile à relire ne se supprime pas : ça se range.
 
+**Une tâche peut te demander d'agir, pas de produire.** Vider un dossier, supprimer, renommer ou
+déplacer des fichiers, installer une dépendance, lancer une commande : le livrable est alors
+l'**état** de ce répertoire après ton geste, et rien d'autre. N'écris pas l'outil qui ferait le
+travail — fais le travail, avec tes outils de fichiers et ton shell — et ne le répète pas d'abord
+sur une arborescence factice : ce qui prouve que c'est fait, c'est ce que tu constates ensuite sur
+place et que tu rapportes. Ce que ta tâche met explicitement hors du geste n'est jamais touché, par
+aucun moyen, commande shell comprise.
+
 Reste dans cet espace : n'entreprends aucune action destructrice au-dehors, ne fusionne rien, et
 ne laisse survivre à la tâche aucun processus persistant ni service à l'écoute.
 
