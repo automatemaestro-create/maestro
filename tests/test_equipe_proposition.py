@@ -438,15 +438,20 @@ def test_le_cadre_de_generation_interdit_de_faire_d_une_commande_le_premier_gest
     assert "il poursuit et le signale, il ne réessaie pas" in cadre
 
 
-def test_l_autorisation_humaine_dit_que_lire_ne_passe_pas_par_la() -> None:
+def test_l_autorisation_humaine_dit_que_lire_n_attend_personne() -> None:
     """La raison se relit dans l'écran de validation (#1040) : sans cette phrase,
     « Bash : une personne tranche chaque appel » se lirait comme un agent qui ne
-    peut rien faire, alors qu'il lit son outillage sans demander personne."""
+    peut rien faire, alors qu'il lit son outillage sans demander personne.
+
+    ⚠ Elle disait « lire ne passe pas par cet outil » — vrai du geste attendu,
+    faux du geste constaté : #1197 a mesuré qu'un agent lit au shell quand même,
+    et la règle vit désormais dans l'exécution (`maestro.lecture`). La raison dit
+    donc ce qui est appliqué, pas ce qu'on aurait préféré."""
     dev = _role(_propose(_constats()), "dev")
 
     execution = next(a for a in dev.autorisations if a.outil == OUTIL_EXECUTION)
     assert "lire" in execution.raison.lower()
-    assert "ne passe pas par cet outil" in execution.raison
+    assert "au shell" in execution.raison and "n'attend personne" in execution.raison
 
 
 # --- Les instances : combien, et pourquoi -----------------------------------

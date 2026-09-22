@@ -39,6 +39,7 @@ from maestro.controltower.state import (
     STATUTS_EXECUTION_TERMINAUX,
     VALIDATION_EN_ATTENTE,
 )
+from maestro.deliberation import cle_acte
 
 #: Le chemin du fil de l'orchestrateur — la seule porte de lancement qu'un écran
 #: offre depuis #666, donc la seule que le banc a le droit d'emprunter.
@@ -363,11 +364,23 @@ def attendre_le_run(
     il attend simplement qu'on lui réponde. Chaque approbation est **notée** au
     déroulé : le rapport dit ce que le banc a tranché.
 
+    ⚠ **Une décision par acte, et non une par tâche** (#1197). Le premier jet
+    retenait le `tache_id`, si bien qu'une tâche qui demandait deux gestes voyait
+    le second expirer : mesuré sur le run `5508ebb01cb8`, où `python --version` a
+    consommé l'unique approbation et le `mkdir -p src/depensio` qui suivait est
+    resté en attente — un rouge qui ne disait rien du produit, seulement de
+    l'utilisateur qu'on simulait. Or l'utilisateur simulé est quelqu'un qui
+    **regarde son run** : il répond à chaque demande, pas à la première. Ce qui
+    est tenu, c'est qu'il ne réponde jamais **deux fois au même acte**
+    (`maestro.deliberation.cle_acte`, l'identité que le moteur utilise déjà pour
+    ne pas rouvrir une demande) : un agent qui rejouerait sa commande à
+    l'identique ne fabrique donc pas une boucle d'approbations.
+
     À l'expiration du délai, le dernier état lu est rendu tel quel : c'est à
     l'oracle de juger qu'un run encore en vol n'est pas un run abouti.
     """
     limite = horloge() + delai_s
-    tranchees: set[str] = set()
+    tranchees: set[tuple[str, str]] = set()
     detail = client.execution(run_id, projet_id=projet_id)
     while True:
         statut = str(detail.get("statut") or "")
@@ -375,13 +388,19 @@ def attendre_le_run(
             return detail
         if statut == EXECUTION_EN_ATTENTE_ARBITRAGE:
             for demande in client.validations(projet_id=projet_id):
+                acte = (
+                    str(demande.get("tache_id") or ""),
+                    cle_acte(
+                        str(demande.get("outil") or ""), demande.get("arguments") or {}
+                    ),
+                )
                 if (
                     str(demande.get("run_id") or "") == run_id
                     and str(demande.get("statut") or "") == VALIDATION_EN_ATTENTE
-                    and str(demande.get("tache_id") or "") not in tranchees
+                    and acte not in tranchees
                 ):
                     tache = str(demande["tache_id"])
-                    tranchees.add(tache)
+                    tranchees.add(acte)
                     client.decider(tache, approuve=True)
                     note(
                         "arbitrage approuvé",

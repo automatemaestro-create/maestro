@@ -137,6 +137,16 @@ est joué de bout en bout, juge et moteur mis à part, par `tests/test_projet_ou
 en CI : un passage coûte du vrai modèle (le run du retex a coûté ~10 $). S2 et S4 ne sont pas
 déterministes, donc un rouge se rejoue une fois avant d'être cru.
 
+**Le banc simule un utilisateur qui regarde son run, donc il tranche par acte** (#1197). Il
+approuve les arbitrages d'action sensible de *son* run et de lui seul (#570) ; il n'en approuvait
+qu'**un par tâche**, si bien qu'une tâche demandant deux gestes voyait le second expirer — mesuré
+sur le run `5508ebb01cb8`, où `python --version` consommait l'unique approbation et le
+`mkdir -p src/depensio` qui suivait restait en attente. C'était un rouge qui ne disait rien du
+produit, seulement de l'utilisateur simulé. Il répond désormais à chaque demande, et jamais deux
+fois au **même acte** (`maestro.deliberation.cle_acte`) : une commande rejouée à l'identique ne
+fabrique donc pas une boucle d'approbations. Ce qui a **libéré les lectures**, lui, est ailleurs et
+n'a rien à voir avec le banc : [docs/38 §5.6](./38-decision-outillage-universel-du-projet.md).
+
 ## 6. Le gel du rail outillage
 
 Il court jusqu'au **2026-10-12**. Pendant le gel, le rail outillage ne reçoit que :

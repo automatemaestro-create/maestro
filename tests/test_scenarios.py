@@ -45,7 +45,14 @@ from maestro.controltower.state import (
     VALIDATION_EN_ATTENTE,
 )
 from maestro.scenarios import banc
-from maestro.scenarios.api import FIL, ClientAPI, ErreurAPI, Reponse, equipe_validee
+from maestro.scenarios.api import (
+    FIL,
+    ClientAPI,
+    ErreurAPI,
+    Reponse,
+    attendre_le_run,
+    equipe_validee,
+)
 from maestro.scenarios.juge import (
     MARQUEUR_POURQUOI,
     MARQUEUR_VERDICT,
@@ -548,6 +555,95 @@ def test_le_banc_approuve_l_arbitrage_de_son_propre_run(tmp_path: Path) -> None:
     assert [d["statut"] for d in api.validations] == [VALIDATION_APPROUVEE, VALIDATION_EN_ATTENTE]
     libelles = [e.libelle for e in ctx.journal.etapes]
     assert "arbitrage approuvé" in libelles
+
+
+class _ClientArbitrage:
+    """Un run qui demande deux gestes **différents** sur la même tâche, puis finit.
+
+    Le minimum que `attendre_le_run` consulte : un statut, une file de demandes,
+    un verbe pour trancher. Assez pour tenir la règle de décision sans monter le
+    banc entier.
+    """
+
+    def __init__(self, demandes: list[dict[str, Any]]) -> None:
+        self._demandes = demandes
+        self.decidees: list[str] = []
+
+    def execution(self, run_id: str, *, projet_id: str) -> dict[str, Any]:
+        if all(d["statut"] != VALIDATION_EN_ATTENTE for d in self._demandes):
+            return {"statut": EXECUTION_TERMINEE}
+        return {"statut": EXECUTION_EN_ATTENTE_ARBITRAGE}
+
+    def validations(self, *, projet_id: str) -> list[dict[str, Any]]:
+        return [d for d in self._demandes if d["statut"] == VALIDATION_EN_ATTENTE]
+
+    def decider(self, tache_id: str, *, approuve: bool = True) -> None:
+        self.decidees.append(tache_id)
+        for demande in self._demandes:
+            if demande["tache_id"] == tache_id and demande["statut"] == VALIDATION_EN_ATTENTE:
+                demande["statut"] = VALIDATION_APPROUVEE
+                return
+
+
+def _demande(tache: str, commande: str) -> dict[str, Any]:
+    return {
+        "tache_id": tache,
+        "run_id": "run-1",
+        "statut": VALIDATION_EN_ATTENTE,
+        "outil": "Bash",
+        "arguments": {"command": commande},
+        "titre": commande,
+    }
+
+
+def test_le_banc_tranche_chaque_acte_et_non_une_fois_par_tache() -> None:
+    """#1197 : la file n'était vidée qu'une fois par tâche, si bien qu'une tâche
+    qui demande deux gestes voyait le second expirer — mesuré sur le run
+    `5508ebb01cb8`, où `python --version` a consommé l'unique approbation et le
+    `mkdir -p src/depensio` qui suivait est resté en attente. L'utilisateur qu'on
+    simule regarde son run : il répond à chaque demande."""
+    client = _ClientArbitrage(
+        [
+            _demande("t1", "python --version"),
+            _demande("t1", "mkdir -p src/depensio"),
+        ]
+    )
+
+    detail = attendre_le_run(
+        client,  # type: ignore[arg-type]
+        "run-1",
+        projet_id="prj-1",
+        delai_s=10.0,
+        note=lambda *_: None,
+        horloge=lambda: 0.0,
+        dormir=lambda _s: None,
+    )
+
+    assert detail["statut"] == EXECUTION_TERMINEE
+    assert client.decidees == ["t1", "t1"]
+
+
+def test_le_banc_ne_repond_jamais_deux_fois_au_meme_acte() -> None:
+    """La borne qui empêche une boucle d'approbations : un agent qui rejouerait sa
+    commande à l'identique ne fabrique pas une file de décisions. Ici la seconde
+    demande porte le **même** acte, et elle reste en attente jusqu'au délai."""
+    client = _ClientArbitrage(
+        [_demande("t1", "rm -rf notes"), _demande("t1", "rm -rf notes")]
+    )
+    horloge = iter([0.0, 0.0, 1.0, 99.0, 99.0, 99.0])
+
+    detail = attendre_le_run(
+        client,  # type: ignore[arg-type]
+        "run-1",
+        projet_id="prj-1",
+        delai_s=10.0,
+        note=lambda *_: None,
+        horloge=lambda: next(horloge, 99.0),
+        dormir=lambda _s: None,
+    )
+
+    assert detail["statut"] == EXECUTION_EN_ATTENTE_ARBITRAGE
+    assert client.decidees == ["t1"]
 
 
 def test_un_run_qui_n_en_finit_pas_n_est_pas_un_run_abouti(tmp_path: Path) -> None:
