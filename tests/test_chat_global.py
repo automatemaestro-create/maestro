@@ -72,6 +72,7 @@ from fastapi.testclient import TestClient
 from maestro.agents.store import AgentStore
 from maestro.controltower.app import create_app
 from maestro.controltower.bornes import AUCUNE_BORNE, BornesRun
+from maestro.controltower.causes import CAUSE_PLAFOND_COUT
 from maestro.controltower.chat import (
     CONVERSATION_ORIGINE,
     FRAGMENT_CHAT_DEBUT,
@@ -95,6 +96,9 @@ from maestro.controltower.events import (
     InMemoryEventBus,
 )
 from maestro.controltower.orchestration import (
+    # Le texte du prompt lui-même est l'objet du critère 2 : il se lit ici, comme
+    # `test_registre_de_langue` le lit déjà pour la consigne de registre.
+    _PROMPT_ORCHESTRATION,
     AGENT_ORCHESTRATION,
     NOM_ORCHESTRATION,
     VERDICT_ACCORD,
@@ -103,9 +107,12 @@ from maestro.controltower.orchestration import (
     RepondeurOrchestration,
     apercu_de,
     contexte_du_fil,
+    faits_des_runs,
+    runs_du_fil,
 )
 from maestro.controltower.projets import ServiceProjets
 from maestro.controltower.state import (
+    EXECUTION_ECHEC,
     EXECUTION_EN_ATTENTE_ARBITRAGE,
     EXECUTION_EN_COURS,
     EXECUTION_TERMINEE,
@@ -208,12 +215,18 @@ class LanceurEspion:
 
 
 def _repondeur(
-    reponse_du_juge: str, *, lanceur: LanceurEspion | None = None, apercu: Any = None
+    reponse_du_juge: str,
+    *,
+    lanceur: LanceurEspion | None = None,
+    apercu: Any = None,
+    faits: Any = None,
 ) -> tuple[RepondeurOrchestration, JugeScripte]:
     """Le répondeur et son juge, montés ensemble — les tests ont besoin des deux."""
     juge = JugeScripte(reponse_du_juge)
     return (
-        RepondeurOrchestration(lanceur=lanceur, apercu=apercu, provider=juge),
+        RepondeurOrchestration(
+            lanceur=lanceur, apercu=apercu, faits=faits, provider=juge
+        ),
         juge,
     )
 
@@ -528,6 +541,443 @@ def test_un_run_sans_projet_ne_compte_dans_l_apercu_d_aucun_projet() -> None:
 
     assert apercu("prj-ici") == "Aucun run en cours."
     assert apercu().startswith("1 run en cours")
+
+
+# ── ②bis les faits des runs : ce qu'ils ont fait, et pourquoi l'un a échoué ───
+#
+# L'aperçu au-dessus **compte** ; ces tests-ci tiennent la seconde lecture, celle
+# qui **raconte** (#1157). Le scénario de référence est l'essai réel du
+# 2026-09-21 : un run échoué sur un projet sans agent, dont l'issue n'annonçait
+# qu'un décompte pendant que chacune de ses tâches portait la cause en clair.
+
+#: Le run de l'essai du 2026-09-21, et le projet sur lequel il a tourné.
+RUN_ECHOUE = "8a15f78f45d3"
+PROJET = "p1"
+
+#: La cause réelle, telle que le routeur l'écrit sur une tâche que personne ne
+#: peut prendre (`maestro.router.router`, repli de #1042). Elle est recopiée ici
+#: **mot pour mot** : c'est la phrase que le fil n'avait pas sous les yeux, et le
+#: ticket demande qu'elle y soit.
+RAISON_SANS_EQUIPE = "aucun agent dans ce catalogue — l'équipe reste à recruter"
+
+
+def _lancement(run_id: str, objectif: str, projet_id: str | None = None) -> Event:
+    """L'événement qui ouvre un run : son objectif, son projet."""
+    return Event(
+        type=EVENEMENT_EXECUTION_STATUT,
+        run_id=run_id,
+        statut=EXECUTION_EN_COURS,
+        description=objectif,
+        projet_id=projet_id,
+    )
+
+
+def _issue(run_id: str, statut: str, detail: str = "", cause: str = "") -> Event:
+    """L'événement qui solde un run : son statut terminal, son détail, sa cause."""
+    return Event(
+        type=EVENEMENT_EXECUTION_STATUT,
+        run_id=run_id,
+        statut=statut,
+        detail=detail,
+        cause=cause,
+    )
+
+
+def _etape(
+    tache_id: str,
+    run_id: str,
+    *,
+    statut: str,
+    detail: str = "",
+    titre: str = "Écrire les tests",
+    agent: str = "qa",
+    role: str = "QA / Testeur",
+    projet_id: str | None = None,
+) -> Event:
+    """Une tâche du run, avec le détail que son issue a écrit (l'erreur, souvent)."""
+    return Event(
+        type=EVENEMENT_TACHE_STATUT,
+        run_id=run_id,
+        tache_id=tache_id,
+        titre=titre,
+        agent=agent,
+        role=role,
+        statut=statut,
+        detail=detail,
+        projet_id=projet_id,
+    )
+
+
+def _state_du_2026_09_21() -> ControlTowerState:
+    """La projection de l'essai réel : trois tâches que personne n'a pu prendre.
+
+    Rejouée **par ses événements** et non construite à la main : c'est le chemin
+    que la vraie Control Tower emprunte (`bridge` recopie `erreur` dans le
+    `detail` d'un `tache.statut`), et un double qui poserait les champs
+    directement laisserait passer une lecture qui ne sait pas où regarder.
+    """
+    state = ControlTowerState()
+    state.appliquer(
+        _lancement(RUN_ECHOUE, "Générer une application Windows d'agenda", PROJET)
+    )
+    for rang in (1, 2, 3):
+        state.appliquer(
+            _etape(
+                f"T-{rang}",
+                RUN_ECHOUE,
+                statut="echec",
+                detail=RAISON_SANS_EQUIPE,
+                titre=f"Tâche {rang}",
+                agent="—",
+                role="à assigner",
+                projet_id=PROJET,
+            )
+        )
+    state.appliquer(_issue(RUN_ECHOUE, EXECUTION_ECHEC, "0/3 tâche(s) réussie(s)"))
+    return state
+
+
+def test_un_run_echoue_porte_sa_cause_reelle_et_pas_seulement_son_decompte() -> None:
+    """Le défaut du 2026-09-21, dans les deux sens (#1157, critère 1).
+
+    L'issue du run ne dit que « 0/3 tâche(s) réussie(s) » — un décompte, qui
+    n'explique rien. Ce que le fil doit avoir est ce que les **tâches** ont écrit,
+    et c'est la seule raison pour laquelle la lecture descend jusqu'à elles. Les
+    deux sont attendus : rapporter le décompte sans les détails redirait le
+    silence de l'essai, rapporter les détails sans le décompte perdrait l'issue
+    que l'écran, lui, montre.
+    """
+    faits = faits_des_runs(_state_du_2026_09_21())(PROJET, (RUN_ECHOUE,))
+
+    assert RUN_ECHOUE in faits
+    assert "Échec" in faits
+    assert "0/3 tâche(s) réussie(s)" in faits
+    # La cause réelle, telle que le routeur l'a écrite — et sur les trois tâches.
+    assert faits.count(RAISON_SANS_EQUIPE) == 3
+    # Et le porteur qui la rend lisible : personne n'a pris ces tâches.
+    assert "à assigner" in faits
+
+
+def test_un_run_termine_se_raconte_termine_avec_ses_taches() -> None:
+    """Le second des trois régimes du critère 3 : un run qui a abouti.
+
+    Il compte parce que « qu'est-ce qu'il a produit ? » est l'autre question du
+    ticket : un bloc qui ne saurait décrire que l'échec ferait répondre « je n'ai
+    pas cette information » à la moitié des questions.
+    """
+    state = ControlTowerState()
+    state.appliquer(_lancement("run-fini", "Ajouter la pagination", PROJET))
+    state.appliquer(
+        _etape("T-1", "run-fini", statut="terminee", titre="Paginer la liste",
+               projet_id=PROJET)
+    )
+    state.appliquer(_issue("run-fini", EXECUTION_TERMINEE, "1/1 tâche(s) réussie(s)"))
+
+    faits = faits_des_runs(state)(PROJET, ())
+
+    assert "run-fini" in faits
+    assert "Terminée" in faits
+    assert "Paginer la liste" in faits
+    assert "1/1 tâche(s) réussie(s)" in faits
+
+
+def test_un_run_en_cours_se_raconte_avec_l_etat_de_chaque_tache() -> None:
+    """Le troisième régime : un run en vol, dont les tâches ne sont pas au même point.
+
+    C'est le cas où le détail par tâche porte le plus : le statut du run dit
+    seulement « En cours », et ce qui répond à « où en est-on ? » est la
+    répartition en dessous.
+    """
+    state = ControlTowerState()
+    state.appliquer(_lancement("run-vol", "Câbler le tableau de bord", PROJET))
+    state.appliquer(
+        _etape("T-1", "run-vol", statut="terminee", titre="Poser la route",
+               projet_id=PROJET)
+    )
+    state.appliquer(
+        _etape("T-2", "run-vol", statut="en_cours", titre="Dessiner les tuiles",
+               projet_id=PROJET)
+    )
+
+    faits = faits_des_runs(state)(PROJET, ())
+
+    assert "En cours" in faits
+    assert "Poser la route" in faits
+    assert "Terminée" in faits
+    assert "Dessiner les tuiles" in faits
+
+
+def test_la_cause_classee_est_dite_en_mots_d_interface() -> None:
+    """#571 une troisième fois : le fil et l'écran ne nomment pas deux arrêts.
+
+    Le code voyage jusqu'à la projection (`CAUSE_*`, #479) ; ce que le fil en dit
+    est la **phrase** de `libelleCause`, au mot près. Rendre le code brut
+    écrirait « plafond_cout » dans une conversation.
+    """
+    state = ControlTowerState()
+    state.appliquer(_lancement("run-cher", "Tout réécrire", PROJET))
+    state.appliquer(
+        _issue("run-cher", EXECUTION_ECHEC, "PlafondDepenseDepasse : 12.51 $ > 10 $",
+               cause=CAUSE_PLAFOND_COUT)
+    )
+
+    faits = faits_des_runs(state)(PROJET, ())
+
+    assert "Plafond de dépense atteint" in faits
+    assert CAUSE_PLAFOND_COUT not in faits
+    # Le chiffre reste dans le détail de l'issue, qui vient avec.
+    assert "12.51 $ > 10 $" in faits
+
+
+def test_une_cause_que_le_fil_ne_connait_pas_ne_sort_pas_en_code_brut() -> None:
+    """Le jour où le backend prendra de l'avance : rien plutôt qu'un identifiant.
+
+    Même conduite que `libelleCause` côté écran, et pour la même raison — le
+    détail de l'issue, lui, reste rapporté juste à côté, donc rien n'est perdu.
+    """
+    state = ControlTowerState()
+    state.appliquer(_lancement("run-neuf", "Un objectif", PROJET))
+    state.appliquer(
+        _issue("run-neuf", EXECUTION_ECHEC, "quelque chose a cassé", cause="cause_inedite")
+    )
+
+    faits = faits_des_runs(state)(PROJET, ())
+
+    assert "cause_inedite" not in faits
+    assert "quelque chose a cassé" in faits
+
+
+def test_un_run_ouvert_par_ce_fil_entre_meme_s_il_n_a_pas_de_projet() -> None:
+    """« Au moins ceux que ce fil a ouverts » (#1157, critère 1).
+
+    Un run dicté au fil avant #683 est orphelin, donc dans la vue d'aucun
+    projet — et c'est pourtant de lui que la conversation parle. Le rattachement
+    par `run_id` passe donc **avant** la portée, sans quoi la question la plus
+    fréquente porterait sur le seul run que le bloc ne montrerait pas.
+    """
+    state = ControlTowerState()
+    state.appliquer(_lancement("run-orphelin", "Un travail sans projet"))
+    state.appliquer(_issue("run-orphelin", EXECUTION_ECHEC, "0/1 tâche(s) réussie(s)"))
+    faits = faits_des_runs(state)
+
+    # L'échantillon fautif : cadré sur le projet, ce run n'entre par aucune portée.
+    assert faits(PROJET, ()) == ""
+    assert "run-orphelin" in faits(PROJET, ("run-orphelin",))
+
+
+def test_les_runs_d_un_autre_projet_n_entrent_pas_dans_le_bloc() -> None:
+    """La règle de portée (#277), la même que l'aperçu : une seule fenêtre à la fois.
+
+    Deux périmètres dans un même prompt feraient un bloc qui se contredit — le
+    compteur parlant d'un projet et le récit d'un autre.
+    """
+    state = ControlTowerState()
+    state.appliquer(_lancement("run-ici", "Ici", PROJET))
+    state.appliquer(_lancement("run-ailleurs", "Ailleurs", "prj-ailleurs"))
+
+    faits = faits_des_runs(state)(PROJET, ())
+
+    assert "run-ici" in faits
+    assert "run-ailleurs" not in faits
+
+
+def test_sans_aucun_run_le_bloc_est_vide() -> None:
+    """Rien à raconter : le bloc disparaît au lieu d'annoncer un vide.
+
+    L'aperçu dit déjà « Aucun run en cours » ; une seconde phrase pour le même
+    fait ferait deux façons de dire qu'il ne s'est rien passé.
+    """
+    assert faits_des_runs(ControlTowerState())(PROJET, ()) == ""
+
+
+def test_les_faits_sont_relus_a_chaque_question() -> None:
+    """Figés à la construction de l'app, ils raconteraient les runs d'hier."""
+    state = ControlTowerState()
+    faits = faits_des_runs(state)
+    assert faits(PROJET, ()) == ""
+
+    state.appliquer(_lancement("run-1", "Un objectif", PROJET))
+
+    assert "run-1" in faits(PROJET, ())
+
+
+def test_la_lecture_est_bornee_en_runs_et_le_dit() -> None:
+    """La borne existe, et elle s'annonce (#1157, critère 1).
+
+    Un historique long ne doit pas faire exploser le prompt — mais une liste
+    coupée **en silence** ferait conclure le juge sur un projet qu'il croirait
+    connaître en entier. Les deux moitiés se tiennent : on coupe, et on le dit.
+    """
+    state = ControlTowerState()
+    for rang in range(6):
+        state.appliquer(_lancement(f"run-{rang}", f"Objectif {rang}", PROJET))
+
+    faits = faits_des_runs(state)(PROJET, ())
+
+    # Les trois plus récents, dans cet ordre — et pas les trois premiers vus.
+    assert "run-5" in faits
+    assert "run-3" in faits
+    assert "run-2" not in faits
+    assert "lecture bornée" in faits
+
+
+def test_un_run_qui_deborde_en_taches_les_compte_au_lieu_de_les_taire() -> None:
+    """Même règle un cran plus bas : ce qui dépasse est compté, jamais tu."""
+    state = ControlTowerState()
+    state.appliquer(_lancement("run-long", "Un gros objectif", PROJET))
+    for rang in range(15):
+        state.appliquer(
+            _etape(f"T-{rang}", "run-long", statut="terminee", titre=f"Tâche {rang}",
+                   projet_id=PROJET)
+        )
+
+    faits = faits_des_runs(state)(PROJET, ())
+
+    assert "tâches (15)" in faits
+    assert "Tâche 0" in faits
+    assert "Tâche 14" not in faits
+    assert "3 autres tâches de ce run ne sont pas montrées ici." in faits
+
+
+def test_un_detail_trop_long_est_tronque_en_le_disant() -> None:
+    """Une trace entière ne passe pas en prompt, et sa coupe ne se cache pas.
+
+    La première phrase d'une erreur porte la cause, la suite porte la pile : on
+    garde la première et on annonce qu'on a coupé, plutôt que de laisser croire
+    que l'erreur s'arrêtait là.
+    """
+    state = ControlTowerState()
+    state.appliquer(_lancement("run-verbeux", "Un objectif", PROJET))
+    state.appliquer(
+        _etape("T-1", "run-verbeux", statut="echec",
+               detail="La cause tient en une phrase. " + "pile " * 200,
+               projet_id=PROJET)
+    )
+
+    faits = faits_des_runs(state)(PROJET, ())
+
+    assert "La cause tient en une phrase." in faits
+    assert "(tronqué)" in faits
+
+
+def test_un_detail_multiligne_ne_casse_pas_la_structure_du_bloc() -> None:
+    """Le bloc se lit ligne par ligne : une pile Python s'y lirait comme des tâches.
+
+    C'est le seul endroit où la mise en forme est un fait et non un goût — une
+    trace de vingt lignes ferait vingt tâches apparentes sur un run qui en a une.
+    """
+    state = ControlTowerState()
+    state.appliquer(_lancement("run-pile", "Un objectif", PROJET))
+    state.appliquer(
+        _etape("T-1", "run-pile", statut="echec",
+               detail="Traceback :\n  fichier.py, ligne 3\nValueError : non", projet_id=PROJET)
+    )
+
+    faits = faits_des_runs(state)(PROJET, ())
+
+    assert "ValueError : non" in faits
+    # Une seule ligne de tâche, et la trace tient dedans.
+    assert len([ligne for ligne in faits.splitlines() if ligne.strip().startswith("·")]) == 1
+
+
+def test_runs_du_fil_rend_ce_que_le_fil_a_ouvert_du_plus_recent_au_plus_ancien() -> None:
+    """La liste vient du fil lui-même (#268) — rien n'est stocké à côté.
+
+    C'est « le fil est la seule mémoire » (#685) appliqué à ce qu'il a déclenché :
+    un fil relu du disque retrouve ses runs, et un même run rattaché deux fois ne
+    compte qu'une fois.
+    """
+    fil = [
+        MessageChat(agent=NOM_ORCHESTRATION, auteur=UTILISATEUR, contenu="fais ceci"),
+        MessageChat(agent=NOM_ORCHESTRATION, auteur=NOM_ORCHESTRATION,
+                    contenu="c'est parti", run_id="run-vieux"),
+        MessageChat(agent=NOM_ORCHESTRATION, auteur=UTILISATEUR, contenu="et cela"),
+        MessageChat(agent=NOM_ORCHESTRATION, auteur=NOM_ORCHESTRATION,
+                    contenu="c'est parti", run_id="run-neuf"),
+        MessageChat(agent=NOM_ORCHESTRATION, auteur=UTILISATEUR,
+                    contenu="pourquoi il a échoué ?"),
+    ]
+
+    assert runs_du_fil(fil) == ("run-neuf", "run-vieux")
+    assert runs_du_fil(_fil("bonjour")) == ()
+
+
+def test_pourquoi_le_run_a_echoue_atteint_le_juge_avec_la_cause(
+) -> None:
+    """Le critère 1 de bout en bout, jugé **sur le prompt** et jamais sur un lexique.
+
+    Ce que le canal doit à l'utilisateur est que la question *atteigne* le juge
+    avec de quoi y répondre — la qualité de la phrase rendue relève du modèle, et
+    l'affirmer ici demanderait de reconnaître des mots dans sa réponse, ce que
+    #746 refuse. On tient donc l'entrée : le run de ce fil, son statut, et la
+    cause réelle sont dans le prompt quand la question est posée.
+    """
+    state = _state_du_2026_09_21()
+    repondeur, juge = _repondeur(
+        _verdict(VERDICT_ECHANGE, "Le run a échoué faute d'équipe."),
+        apercu=apercu_de(state),
+        faits=faits_des_runs(state),
+    )
+    fil = [
+        MessageChat(agent=NOM_ORCHESTRATION, auteur=UTILISATEUR, contenu="génère l'agenda"),
+        MessageChat(agent=NOM_ORCHESTRATION, auteur=NOM_ORCHESTRATION,
+                    contenu="C'est parti.", run_id=RUN_ECHOUE),
+        MessageChat(agent=NOM_ORCHESTRATION, auteur=UTILISATEUR,
+                    contenu="Pourquoi le run a échoué ?"),
+    ]
+
+    asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, fil, projet_id=PROJET))
+
+    prompt = juge.prompts[0]
+    assert RUN_ECHOUE in prompt
+    assert "Échec" in prompt
+    assert RAISON_SANS_EQUIPE in prompt
+    # L'aperçu reste là, et il vient **avant** : compter puis raconter.
+    assert prompt.index("État de l'orchestration :") < prompt.index("Runs de ce fil")
+    # Et la conversation ferme le prompt, comme avant ce lot.
+    assert prompt.index("Runs de ce fil") < prompt.index("Pourquoi le run a échoué ?")
+
+
+def test_sans_lecture_des_faits_le_prompt_est_celui_d_avant_le_lot() -> None:
+    """Le bloc est injecté, donc absent quand personne ne le câble.
+
+    C'est ce qui garde jouable tout le reste de la suite sans projection — et
+    c'est la même propriété que l'aperçu : le répondeur ne connaît qu'un contrat,
+    jamais la projection.
+    """
+    repondeur, juge = _repondeur(_verdict(VERDICT_ECHANGE, "Bonjour."))
+
+    asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil("bonjour")))
+
+    assert "Runs de ce fil" not in juge.prompts[0]
+
+
+def test_le_prompt_ne_renvoie_plus_vers_un_ecran_ce_qu_il_a_sous_les_yeux() -> None:
+    """Critère 2 : la consigne de renvoi devient **conditionnelle**, et rien de plus.
+
+    Avant ce lot, `_PROMPT_ORCHESTRATION` ordonnait sans condition : « Quand la
+    question est "où ça en est ?", renvoie vers un ENDROIT DE L'INTERFACE ». Le
+    juge obéissait, et c'est exactement ce que l'essai du 2026-09-21 a rendu.
+
+    Ce qui la remplace tient en deux moitiés qu'on ne peut pas séparer : le
+    prompt annonce ce qu'il reçoit (donc ce avec quoi répondre), et il garde
+    l'aveu pour ce qu'il n'a pas — la borne de la lecture, ou ce que la
+    projection ignore. Retirer la seconde ferait combler le modèle, ce qui est le
+    défaut que #686 et #939 ont payé chacun de leur côté.
+    """
+    # Le prompt est écrit en colonnes de 80 : les retours à la ligne y coupent les
+    # phrases n'importe où, et une assertion qui les épouserait rougirait au
+    # premier reformatage sans qu'aucune consigne ait changé.
+    prompt = " ".join(_PROMPT_ORCHESTRATION.split())
+
+    assert "renvoie vers un ENDROIT DE L'INTERFACE" not in prompt
+    # Ce qu'il reçoit est annoncé : sans cette phrase, les faits arriveraient dans
+    # un prompt qui ne dit pas qu'il en a.
+    assert "cause d'arrêt" in prompt
+    assert "chaque tâche avec son détail" in prompt
+    # Et l'honnêteté, des deux côtés de la borne.
+    assert "Ce qui n'y est pas, tu ne l'as pas vu" in prompt
+    assert "dis-le franchement au lieu d'envoyer chercher" in prompt
 
 
 # ── ③ le répondeur : ce qu'il ouvre, et sur quel objectif ─────────────────────
@@ -1543,9 +1993,16 @@ def test_le_silence_n_est_pas_un_accord() -> None:
     # #1040). L'équipe proposée, elle, ne loge **pas** dans le répondeur : elle
     # voyage sur le message (`MessageChat.recrutement`), et c'est le fil qui la
     # rend au geste — la même règle que la proposition de run.
+    #
+    # #1157 en ajoute un, `_faits` : la lecture des runs, injectée comme l'aperçu
+    # et relue **à chaque question**. Elle ne retient donc rien d'un tour à
+    # l'autre, ce qui est exactement ce que ce test protège — un répondeur qui
+    # mémoriserait un run entre deux messages rouvrirait la porte que #685 a
+    # fermée.
     assert set(vars(repondeur)) == {
         "_lanceur",
         "_apercu",
+        "_faits",
         "_provider",
         "_modele",
         "_conducteur",
