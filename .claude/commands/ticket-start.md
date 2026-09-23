@@ -160,6 +160,18 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
    demander que si le ticket est réellement ambigu au point de ne pas pouvoir commencer — la forme
    d'un écran n'en est pas un cas : l'étape 7 la tranche (#1009).
 
+   **L'implémentation suit une méthode** (#1241), la même en run et en interactif — trois gestes,
+   pas une cérémonie :
+   - **Lis avant d'écrire** : le code que le ticket touche et les tests qui le gardent. Ils disent
+     ce qui ne doit pas bouger, et où le test du ticket s'écrit.
+   - **Un bug commence par son test** : écris d'abord le test qui reproduit le défaut et vois-le
+     échouer, puis corrige jusqu'à le voir passer. Un test qu'on n'a jamais vu échouer ne prouve
+     pas qu'il attrape le défaut.
+   - **Exerce chaque critère avant de clore** : un critère se clôt sur une preuve exercée — un test
+     nommé que tu as vu passer, ou une observation sur la vraie stack —, jamais sur un fichier du
+     diff (#1240). La conduite, et le banc des scénarios quand le diff touche leur chemin, vivent à
+     l'étape 4ter de `/ticket-finish`, qui les consigne.
+
 7. **Variantes — un ticket qui DÉCIDE de l'écran tranche sa forme sur pièces, puis l'implémente**
    (#979, renversé par #1009 ; chantier #972). La question est celle du §7.2 de `/design-veille` —
    *ce ticket décide-t-il de quelque chose à l'écran, ou applique-t-il une décision déjà prise ?* —,
