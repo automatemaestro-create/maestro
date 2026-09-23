@@ -1,4 +1,4 @@
-"""Les quatre scénarios de référence, et ce qui les rend verts (#1148, docs/40 §5).
+"""Les cinq scénarios de référence, et ce qui les rend verts (#1148, docs/40 §5).
 
 | | Scénario | Ce qui le rend vert |
 |---|---|---|
@@ -6,8 +6,9 @@
 | S2 | Créer une petite application | Elle s'exécute, sans commande soumise à la personne |
 | S3 | Reprendre un projet sans équipe | L'équipe est proposée avant de dépenser, puis ça part |
 | S4 | « Pourquoi le run a échoué ? » | La réponse nomme la cause de l'API, jugée par un modèle |
+| S5 | « Comment j'essaie le livrable ? » | La fin se raconte, lie un fichier réel, dit quoi taper |
 
-## Trois règles que ces quatre scénarios suivent
+## Trois règles que ces cinq scénarios suivent
 
 **La porte d'entrée est le fil, toujours.** Une demande passe par
 `POST /api/chat/orchestrateur/messages`, l'accord par le geste de cadrage. C'est la
@@ -15,29 +16,33 @@ seule porte qu'un écran offre depuis #666, donc la seule dont l'état vaut quel
 chose : un banc qui appellerait `POST /api/executions` vérifierait un chemin que
 personne n'emprunte.
 
-**Ce que le scénario mesure n'est pas ce qu'il prépare.** S1, S2 et S4 dotent leur
-projet d'une équipe **avant** de demander quoi que ce soit, par la route d'équipe
-du projet (#1039/#1040). C'est du montage, et le faire passer par le fil ferait
-de chacun une copie de S3 — trois scénarios qui échouent ensemble au premier
-défaut de recrutement, et plus aucun qui parle de vider un dossier. S3, lui,
-**part** d'un projet sans équipe : c'est son sujet.
+**Ce que le scénario mesure n'est pas ce qu'il prépare.** S1, S2, S4 et S5 dotent
+leur projet d'une équipe **avant** de demander quoi que ce soit, par la route
+d'équipe du projet (#1039/#1040). C'est du montage, et le faire passer par le fil
+ferait de chacun une copie de S3 — quatre scénarios qui échouent ensemble au
+premier défaut de recrutement, et plus aucun qui parle de vider un dossier. S3,
+lui, **part** d'un projet sans équipe : c'est son sujet.
 
 **L'oracle regarde le monde, pas la prose.** Le disque pour S1, l'application
-lancée pour S2, l'équipe écrite et le run soldé pour S3. Le seul oracle qui porte
-sur une phrase est celui de S4, et c'est pour cela qu'il passe par un modèle
+lancée pour S2, l'équipe écrite et le run soldé pour S3. Les deux oracles qui
+portent sur une phrase — S4 et S5 — passent par un modèle
 (`maestro.scenarios.juge`, #746) : un lexique se tromperait dans les deux sens.
+Et même là, ce qui peut se constater se constate : S5 vérifie **sur le disque**
+que le fichier mis en lien par le récit existe, avant de demander à qui que ce
+soit ce qu'il pense du texte.
 
-## Ce que ces scénarios coûtent, et pourquoi S2 et S4 se rejouent
+## Ce que ces scénarios coûtent, et pourquoi S2, S4 et S5 se rejouent
 
 Un passage coûte du vrai modèle (le run du retex du 2026-09-11 a coûté ~10 $),
-d'où le banc hors CI. S2 et S4 ne sont pas déterministes — l'un demande au modèle
-d'écrire du code qui s'exécute, l'autre de reconnaître une cause dans une phrase —
-donc un rouge se rejoue **une** fois avant d'être cru, et le rapport dit s'il l'a
-été (`Scenario.rejouable`, appliqué par `maestro.scenarios.banc`).
+d'où le banc hors CI. S2, S4 et S5 ne sont pas déterministes — écrire du code qui
+s'exécute, reconnaître une cause dans une phrase, dire comment essayer un
+livrable — donc un rouge se rejoue **une** fois avant d'être cru, et le rapport
+dit s'il l'a été (`Scenario.rejouable`, appliqué par `maestro.scenarios.banc`).
 """
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 import time
@@ -78,6 +83,14 @@ POINT_D_ENTREE = "app.py"
 
 #: Ce qu'on laisse à une application de S2 pour démarrer, s'afficher et sortir.
 DELAI_APPLICATION_S = 60.0
+
+#: Ce qu'on laisse au récit de fin pour paraître dans le fil, et l'intervalle
+#: entre deux lectures (#1224). Le récit part **après** que le run est soldé — sa
+#: rédaction est un appel modèle —, donc le lire une seule fois rendrait S5 rouge
+#: sur un produit qui marche. Deux minutes : c'est la marge d'un appel modèle
+#: unique sur un contexte borné, pas celle d'un run.
+ATTENTE_RECIT_S = 120.0
+INTERVALLE_RECIT_S = 2.0
 
 #: Le plafond qui provoque l'échec de S4. En **tokens** et non en dollars : les
 #: tokens sont toujours rapportés, quel que soit le fournisseur (#113), là où un
@@ -597,6 +610,181 @@ def s4_pourquoi_l_echec(ctx: Contexte) -> Issue:
     )
 
 
+# --- S5 — comment j'essaie ce qui vient d'être livré ? ---------------------
+
+
+def s5_comment_essayer_le_livrable(ctx: Contexte) -> Issue:
+    """À la fin du run, le fil dit **comment essayer** ce qui a été produit (#1224).
+
+    Le constat du 2026-09-22, mot pour mot : *« on ne me dit pas comment tester,
+    pourtant on a généré une documentation »*. La personne avait le lien du
+    dossier — l'annonce de #928 le donne — et rien pour s'en servir.
+
+    Trois choses à constater, dans cet ordre, et l'ordre est l'oracle :
+
+    1. **le fil porte un récit**, écrit de lui-même à la fin du run. C'est un
+       fait structurel, pas une phrase : un message de l'orchestrateur, postérieur
+       à celui qui a ouvert le run, portant le même `run_id` ;
+    2. **il nomme un fichier qui existe**, en lien. Vérifié **sur le disque** et
+       non dans le texte : un chemin cité qui ne mène à rien serait un geste mort,
+       ce qui est exactement ce que le critère interdit ;
+    3. **on sait comment l'essayer**, jugé par un modèle (`ctx.juge`) sur le
+       récit **et** sur la réponse à la question qu'on lui pose. Une abstention
+       du juge est un **empêchement**, jamais un rouge du produit : on ne met pas
+       une panne de quota sur le compte de ce qu'on mesure.
+
+    Le run demandé est celui de S2 — une petite application exécutable — parce
+    qu'il faut *quelque chose à essayer* pour que la question ait un sens, et que
+    c'est le livrable dont on sait qu'un run sait le produire. Le projet est
+    déclaré à part : chaque scénario a le sien, et `--scenario S5` doit jouer
+    exactement ce que le passage complet joue en cinquième.
+    """
+    racine = ctx.atelier.dossier("s5-essayer")
+    projet_id = _declarer(ctx, "banc-s5-essayer", racine, origine="nouveau")
+    _doter_d_une_equipe(ctx, projet_id)
+
+    conversation = ctx.client.ouvrir_conversation()
+    reponse = _demander(
+        ctx,
+        conversation,
+        projet_id,
+        "Crée dans ce projet une petite application Python exécutable : un fichier "
+        f"`{POINT_D_ENTREE}` à la racine qui, lancé par `python {POINT_D_ENTREE}`, "
+        "affiche une ligne de texte puis se termine sans erreur. Ajoute un "
+        "README.md qui dit comment la lancer.",
+    )
+    if not reponse.get("proposition"):
+        return rouge("le fil n'a proposé aucun run pour cette demande", cout_usd=None)
+    accord = _accorder(ctx, conversation, projet_id)
+    run_id = _run_de(accord)
+    if not run_id:
+        return rouge("l'accord n'a ouvert aucun run", cout_usd=None)
+    detail = _suivre(ctx, run_id, projet_id)
+    cout = _cout(detail)
+
+    if str(detail.get("statut")) != EXECUTION_TERMINEE:
+        return rouge(
+            f"le run s'est soldé « {detail.get('statut')} » "
+            f"(cause « {detail.get('cause') or '—'} ») : il n'y a rien à essayer",
+            run_id=run_id,
+            cout_usd=cout,
+        )
+
+    recit = _recit_de_fin(ctx, conversation, run_id)
+    if not recit:
+        return rouge(
+            f"la fin du run n'a rien écrit dans le fil en {ATTENTE_RECIT_S:.0f} s : "
+            "le dernier message reste celui du lancement",
+            run_id=run_id,
+            cout_usd=cout,
+        )
+    ctx.note("récit de fin", _extrait({"contenu": recit}, 400))
+
+    lies = _fichiers_lies(recit, racine)
+    if not lies:
+        presents = ", ".join(restes(racine)[:10]) or "rien"
+        return rouge(
+            "le récit ne met en lien aucun fichier existant du livrable — "
+            f"présents sur le disque : {presents}",
+            run_id=run_id,
+            cout_usd=cout,
+        )
+    ctx.note("fichiers liés par le récit", ", ".join(lies[:5]))
+
+    explication = _demander(
+        ctx, conversation, projet_id, "Comment j'essaie ce que tu viens de livrer ?"
+    )
+    avis = ctx.juge.dit_comment_essayer(
+        livrable=", ".join(restes(racine)[:30]) or "aucun fichier",
+        recit=recit,
+        reponse=str(explication.get("contenu") or ""),
+    )
+    ctx.note(
+        "jugement du modèle",
+        f"{'dit' if avis.nomme else 'ne dit pas'} comment essayer — {avis.pourquoi}",
+    )
+    if not avis.lisible:
+        return empeche(
+            f"le jugement n'a pas pu être rendu : {avis.pourquoi}",
+            run_id=run_id,
+            cout_usd=cout,
+        )
+    if not avis.nomme:
+        return rouge(
+            f"le fil ne dit pas comment essayer le livrable : {avis.pourquoi}",
+            run_id=run_id,
+            cout_usd=cout,
+        )
+    return vert(
+        f"la fin du run se raconte dans le fil, met {len(lies)} fichier(s) du "
+        f"livrable en lien, et dit comment l'essayer — {avis.pourquoi}",
+        run_id=run_id,
+        cout_usd=cout,
+    )
+
+
+def _recit_de_fin(ctx: Contexte, conversation: str, run_id: str) -> str:
+    """Le message que la **fin** du run a écrit dans le fil — vide s'il n'y vient pas.
+
+    Le récit se reconnaît à sa place et à son rattachement, jamais à ses mots :
+    un message de l'orchestrateur, portant ce `run_id`, et qui n'est pas le
+    premier — le premier étant la réponse qui a ouvert le run (#268). Juger sur
+    le contenu reviendrait à chercher un lexique (#746) dans ce que le modèle a
+    écrit, ce que ce banc existe précisément pour ne pas faire.
+
+    ⚠ **Il faut l'attendre**, et c'est une propriété du produit, pas une
+    commodité du banc : le récit s'écrit quand la fin **passe**, et sa rédaction
+    est un appel modèle qui part *après* que le run est soldé. Mesuré le
+    2026-09-23 sur le passage `20260923-185330` — le run était terminé, le fil
+    relu dans la foulée ne portait encore que le lancement, et le récit y est
+    arrivé quelques secondes plus tard. Lire une seule fois rendait donc S5 rouge
+    sur un produit qui marche, ce qui est le pire des verdicts.
+
+    L'attente est **bornée et dite** : passé `ATTENTE_RECIT_S`, on rend la chaîne
+    vide et l'oracle tranche. Elle passe par l'horloge et le sommeil du contexte,
+    comme le suivi d'un run — les tests jouent donc ce chemin sans attendre.
+    """
+    limite = ctx.horloge() + ATTENTE_RECIT_S
+    while True:
+        porteurs = [
+            str(message.get("contenu") or "")
+            for message in ctx.client.fil(conversation)
+            if str(message.get("run_id") or "") == run_id
+            and str(message.get("auteur") or "") != "utilisateur"
+        ]
+        if len(porteurs) > 1:
+            return porteurs[-1]
+        if ctx.horloge() >= limite:
+            return ""
+        ctx.dormir(INTERVALLE_RECIT_S)
+
+
+def _fichiers_lies(recit: str, racine: Path) -> list[str]:
+    """Les fichiers du livrable que `recit` met en lien **et qui existent**.
+
+    La forme lue est celle que l'écran sait rendre en geste
+    (`apps/web/lib/markdown.ts`) : `[libellé](<chemin>)`, chevrons compris,
+    parce qu'un chemin contient des espaces. L'existence est vérifiée sur le
+    **disque** — un chemin cité qui ne mène à rien est un geste mort, et le
+    critère demande un lien qui s'ouvre.
+
+    Le chemin est confronté à la racine du projet : un lien vers un fichier
+    d'ailleurs n'est pas un fichier du livrable, et le compter rendrait
+    l'oracle vert sur un récit qui parle d'autre chose.
+    """
+    trouves: list[str] = []
+    for brut in re.findall(r"\[[^\]\n]*\]\(<([^<>\n]+)>\)", recit):
+        chemin = Path(brut.strip())
+        if not chemin.is_absolute() or not chemin.is_file():
+            continue
+        try:
+            relatif = chemin.resolve().relative_to(racine.resolve())
+        except ValueError:
+            continue
+        trouves.append(relatif.as_posix())
+    return trouves
+
+
 # --- Le catalogue ----------------------------------------------------------
 
 
@@ -627,6 +815,12 @@ SCENARIOS: tuple[Scenario, ...] = (
     Scenario("S2", "Créer une petite application exécutable", s2_creer_une_application, True),
     Scenario("S3", "Reprendre un projet existant sans équipe", s3_reprendre_sans_equipe),
     Scenario("S4", "Pourquoi le run a-t-il échoué ?", s4_pourquoi_l_echec, True),
+    Scenario(
+        "S5",
+        "Comment j'essaie ce que le run a livré ?",
+        s5_comment_essayer_le_livrable,
+        True,
+    ),
 )
 
 

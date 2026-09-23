@@ -1,13 +1,9 @@
-## Résumé
-<!-- Qu'est-ce que cette PR change, et pourquoi -->
-
 Closes #
 
-## Checklist
-- [ ] Respecte les conventions de branche/commit ([docs/10-workflow-git.md](../docs/10-workflow-git.md))
-- [ ] Tests ajoutés/mis à jour si applicable
-- [ ] Documentation mise à jour si applicable
-- [ ] Pipeline CI verte (si configurée)
+<!-- Ce que cette PR change, et pourquoi. -->
 
-<!-- Le cycle de vie du ticket est posé par /ticket-finish (→ « En revue »), pas depuis la PR :
+<!-- Pas de checklist (#1244) : ce qui garde le merge est `lib.sh merge-mr` — PR prête qui ferme son
+     ticket, rien de non poussé, aucun conflit, pipeline vert sur la tête de la PR (#415) —, et ce
+     que le ticket promettait est confronté à ses critères, sur le ticket (#968).
+     Le cycle de vie du ticket est posé par /ticket-finish (→ « En revue »), pas depuis la PR :
      une PR ouverte en Draft ne doit pas marquer le ticket « en revue ». -->

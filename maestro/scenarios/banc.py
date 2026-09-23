@@ -20,13 +20,14 @@ en CI**, il coûte du vrai modèle (~10 $ pour le run du retex), et il se joue a
 bouclage d'un jalon (#1152) ou à la demande.
 
 **Un rouge est un résultat, pas une panne du banc.** Ce banc peut être livré avant
-que les quatre scénarios soient verts : c'est son rôle de montrer les rouges. S1
-passe au vert avec #1149, S4 avec #1157. Un code de sortie non nul n'est donc pas
-un défaut d'outillage — c'est la mesure.
+que les cinq scénarios soient verts : c'est son rôle de montrer les rouges. S1
+passe au vert avec #1149, S4 avec #1157, S5 avec #1224. Un code de sortie non nul
+n'est donc pas un défaut d'outillage — c'est la mesure.
 
 **Un rouge non déterministe se rejoue une fois, et le rapport le dit.** S2 demande
 au modèle d'écrire du code qui s'exécute, S4 de reconnaître une cause dans une
-phrase : les deux échouent parfois sans que le produit ait changé (docs/40 §5). Le
+phrase, S5 de dire comment essayer un livrable : les trois échouent parfois sans
+que le produit ait changé (docs/40 §5). Le
 second passage fait foi, et `rejoue` reste écrit au rapport — un rejeu tu ferait
 lire deux runs comme un seul.
 

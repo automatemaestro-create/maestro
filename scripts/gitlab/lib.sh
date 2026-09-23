@@ -79,9 +79,10 @@
 #
 #     <!-- maestro:suivi:v1
 #     debut=2026-08-04
+#     demarre=2026-08-04T09:12:40Z
 #     echeance=2026-08-06
 #     log=2026-08-17|4500|Historique importé de GitLab
-#     log=2026-08-21|1800|Cycle de dev (start->finish)
+#     log=2026-08-21|1800|Cycle de dev — mesuré : 1 session (interactif), 3 tours
 #     temps=6300
 #     -->
 #     **⏱ Suivi Maestro** — début … · échéance … · temps passé **1h 45m**
@@ -91,6 +92,11 @@
 # l'écriture) ; (3) `temps` est TOUJOURS recalculé comme la somme des `log=` — l'agrégat ne peut
 # donc pas dériver de son détail, même après une reprise ou une écriture partielle ; (4) les clés
 # inconnues traversent intactes, ce qui rend le format extensible sans migration.
+#
+# `demarre` (#1244) est l'INSTANT du premier `begin`, en UTC, posé une fois et jamais réécrit : il
+# borne la MESURE du temps passé (`log-time-mesure`), là où `debut` n'a que le jour. C'est la règle
+# (4) qui l'a rendu possible sans migration — un ticket démarré avant n'en porte pas, et sa mesure
+# se borne alors au jour de `debut`.
 #
 # LA JOINTURE AVEC L'HISTORIQUE IMPORTÉ (#400). L'import du backlog (#340) a écrit le temps passé de
 # chaque ticket dans un AUTRE commentaire, « <!-- maestro:meta v1 … temps_s=… --> », une seule ligne
@@ -107,8 +113,8 @@
 #     premier log. Le premier `gh_suivi_ecrire` qui suit pose le tout au format courant : la
 #     migration du ticket se fait au fil de l'eau, sans campagne.
 # L'entrée se reconnaît à son résumé ($GL_SUIVI_IMPORT), ce qui rend la fusion idempotente et permet
-# de la RETRANCHER : `get-time-spent --hors-import` est la forme que /ticket-finish interroge pour
-# son idempotence, un total importé n'étant pas un cycle de dev déjà loggé.
+# de la RETRANCHER : `get-time-spent --hors-import` est la forme que `log-time-mesure` retranche de
+# sa mesure, un total importé n'étant pas un cycle de dev déjà loggé.
 #
 # ================================================================================================
 # CYCLE DE VIE — le champ Status de GitHub Projects v2, seule autorité (#365, chantier #358)
@@ -2424,8 +2430,14 @@ gh_relecture_empreintes() {
 # Il dit POURQUOI il est là, et pas seulement ce qu'il porte. Un commentaire qui commence par un
 # jugement sans dire d'où il vient se lit, six mois plus tard, comme un avis de passage ; ce qu'on
 # veut qu'il dise est « la question a été posée à la clôture, et voici la réponse ».
+#
+# Le jugement ne vient pas toujours du même juge (#1151), ni du même régime (#1243) : un ticket qui
+# APPLIQUE une décision déjà prise est jugé par la session, sur l'après seul et les états qu'il nomme ;
+# un ticket qui DÉCIDE d'un écran, par le regard neuf, avant et après. L'en-tête le dit, sans quoi un
+# jugement sans avant se lirait comme une comparaison qui n'a pas eu lieu. Le juge se lit au titre que
+# la saisine a donné au regard (`gl_relecture_juge`) — une FORME, jamais un sens (#746).
 gl_relecture_section() {
-  local empreinte="$1" raison="${2:-0}"
+  local empreinte="$1" raison="${2:-0}" juge="${3:-neuf}"
   if [ "$raison" = 1 ]; then
     printf '## %s — NON JOUÉE — empreinte %s\n\n' "$GL_RELECTURE_ANCRE" "$empreinte"
     cat <<'ENTETE'
@@ -2438,6 +2450,19 @@ ENTETE
     return 0
   fi
   printf '## %s — empreinte %s\n\n' "$GL_RELECTURE_ANCRE" "$empreinte"
+  if [ "$juge" = "session" ]; then
+    cat <<'ENTETE'
+Le rendu des écrans touchés a été regardé avant la clôture, dans les **deux thèmes** (skill
+`relecture-visuelle`, #932), puis jugé **par la session** sur la **grille fixe** de la relecture
+(#980) : le ticket **applique** une décision déjà prise à l'écran (#1151). Son régime est
+proportionné (#1243) — l'**après seul**, sans stack « avant » : rien n'a été comparé à `origin/main`,
+et c'est à nommer dans « ce que je n'ai pas pu voir », avec les états que le ticket ne nommait pas.
+Ce qui suit est le jugement rendu — y compris ce qui n'a **pas** pu être vu, qui compte autant :
+*ne pas avoir regardé n'est pas avoir trouvé que tout va bien.*
+
+ENTETE
+    return 0
+  fi
   cat <<'ENTETE'
 Le rendu des écrans touchés a été regardé avant la clôture, dans les **deux thèmes** (skill
 `relecture-visuelle`, #932), puis jugé par un **regard neuf** sur la **grille fixe** de la relecture
@@ -2495,6 +2520,18 @@ gl_relecture_grille_manquante() {
     }
     END { for (i = 1; i <= n; i++) if (!(libelles[i] in repondu)) print libelles[i] }
   ' "$GL_RELECTURE_GRILLE" "$fichier"
+}
+
+# gl_relecture_juge <fichier> -> `session` quand le PREMIER regard du jugement porte le titre que la
+# saisine donne à un ticket qui applique (`### Regard de la session`), `neuf` sinon — le régime
+# complet, celui d'avant #1243. Le premier seulement : un jugement cite parfois un regard antérieur.
+gl_relecture_juge() {
+  local premier
+  premier="$(grep -m 1 '^### Regard ' "$1" 2>/dev/null)"
+  case "$premier" in
+    '### Regard de la session'*) printf 'session' ;;
+    *) printf 'neuf' ;;
+  esac
 }
 
 # gl_relecture_note [--raison] <iid> <fichier> -> CONSIGNE la relecture visuelle sur le ticket <iid>,
@@ -2561,8 +2598,13 @@ gl_relecture_note() {
       echo "gl_relecture_note : le jugement de $fichier ne porte pas sa grille entière — rien n'a été écrit." >&2
       echo "  Lignes sans réponse (✓, ✗ ou « non vu », dans un tableau « | <libellé> | <réponse> | … |) :" >&2
       printf '%s\n' "$manquantes" | sed 's/^/    - /' >&2
-      echo "  La grille est celle du regard neuf (skill « relecture-visuelle ») : la recopier telle" >&2
-      echo "  qu'il l'a rendue, jamais la compléter à sa place." >&2
+      if [ "$(gl_relecture_juge "$fichier")" = "session" ]; then
+        echo "  La grille est celle de la session (ticket qui applique, #1151) : la compléter sur ce" >&2
+        echo "  qu'elle a regardé, jamais en retirer une ligne." >&2
+      else
+        echo "  La grille est celle du regard neuf (skill « relecture-visuelle ») : la recopier telle" >&2
+        echo "  qu'il l'a rendue, jamais la compléter à sa place." >&2
+      fi
       return 5
     fi
   fi
@@ -2592,7 +2634,7 @@ gl_relecture_note() {
   # `.maestro/` (règle #234, docs/10 §8.5).
   local corps
   corps="$(mktemp "${TMPDIR:-/tmp}/maestro-relecture.XXXXXX")" || return 1
-  gl_relecture_section "$empreinte" "$raison" > "$corps"
+  gl_relecture_section "$empreinte" "$raison" "$(gl_relecture_juge "$fichier")" > "$corps"
   cat "$fichier" >> "$corps"
   printf '\n' >> "$corps"
   if ! gl_issue_note "$iid" "$corps" >/dev/null; then
@@ -3808,8 +3850,10 @@ gl_begin() {
 
 # --- Dates & time tracking ----------------------------------------------------------------------
 # Renseignés automatiquement le long du cycle de vie (voir docs/10-workflow-git.md §3.3) :
-#   • date de début + échéance  → posées par /ticket-start (gl_start_dates)
-#   • temps passé               → proposé puis loggé par /ticket-finish (gl_log_time)
+#   • date de début + échéance  → posées par /ticket-start (gl_start_dates), avec l'INSTANT du
+#                                 démarrage (`demarre`, #1244)
+#   • temps passé               → MESURÉ puis loggé par /ticket-finish (gl_log_time_mesure), jamais
+#                                 estimé
 # Tout passe par la mutation workItemUpdate, comme gl_set_workflow (widgets startAndDueDate / timeTracking).
 
 # gl_prio <iid> -> imprime le label prio du ticket (« prio::haute » | « prio::moyenne » | « prio::basse »),
@@ -3861,18 +3905,21 @@ gl_elapsed_days() {
   printf '%s\n' "$d"
 }
 
-# gl_set_dates <iid> [début] [échéance] -> pose le widget startAndDueDate (dates YYYY-MM-DD).
-# Un argument vide laisse le champ correspondant inchangé ; au moins une date est requise.
+# gl_set_dates <iid> [début] [échéance] [instant] -> pose le widget startAndDueDate (dates
+# YYYY-MM-DD). Un argument vide laisse le champ correspondant inchangé ; au moins une date est
+# requise. L'[instant] (UTC, `2026-09-23T17:10:02Z`) est celui du démarrage : il n'est posé que si le
+# ticket n'en porte pas encore — jamais réécrit (#1244).
 gl_set_dates() {
   local iid="$1" start="$2" due="$3"
-  if [ -z "$iid" ]; then echo "usage: gl_set_dates <iid> [début YYYY-MM-DD] [échéance YYYY-MM-DD]" >&2; return 2; fi
+  if [ -z "$iid" ]; then echo "usage: gl_set_dates <iid> [début YYYY-MM-DD] [échéance YYYY-MM-DD] [instant]" >&2; return 2; fi
   if [ -z "$start" ] && [ -z "$due" ]; then echo "gl_set_dates : au moins une date (début ou échéance) requise" >&2; return 2; fi
   gh_set_dates "$@"
 }
 
 # gl_start_dates <iid> -> pose les dates au démarrage : début = aujourd'hui (conservé si déjà
-# renseigné), échéance = début + délai dérivé de la priorité du ticket (gl_prio_delay). Idempotent :
-# une ré-exécution garde la date de début d'origine et recalcule l'échéance.
+# renseigné), échéance = début + délai dérivé de la priorité du ticket (gl_prio_delay), et l'INSTANT
+# du démarrage, qui bornera la mesure du temps passé (#1244). Idempotent : une ré-exécution garde la
+# date de début et l'instant d'origine, et recalcule l'échéance.
 gl_start_dates() {
   local iid="$1"
   if [ -z "$iid" ]; then echo "usage: gl_start_dates <iid>" >&2; return 2; fi
@@ -3884,7 +3931,7 @@ gl_start_dates() {
   delay="$(gl_prio_delay "$prio")"
   due="$(date -d "$start +$delay days" +%F 2>/dev/null)"
   if [ -z "$due" ]; then echo "gl_start_dates : calcul de l'échéance impossible (commande date indisponible ?)" >&2; return 1; fi
-  gl_set_dates "$iid" "$start" "$due" || return 1
+  gl_set_dates "$iid" "$start" "$due" "$(date -u +%FT%TZ)" || return 1
   printf '  (priorité %s → échéance à +%s j)\n' "${prio:-prio::moyenne (défaut)}" "$delay"
 }
 
@@ -3898,8 +3945,42 @@ gl_log_time() {
   gh_log_time "$@"
 }
 
+# gl_log_time_mesure <iid> [--check] -> MESURE le temps passé sur le ticket et en logge ce qui ne
+# l'est pas encore, la source dans le libellé (#1244). C'est le geste de /ticket-finish (étape 12),
+# en run comme en interactif, et il remplace l'estimation que la session faisait jusque-là.
+#
+# POURQUOI MESURER. L'estimation n'avait aucun lien avec la durée réelle : « 4h » loggées sur #1226,
+# 1 h 19 mesurées sur ses transcripts ; sur les dix tickets de #1199 à #1228 qui en portent,
+# l'estimation valait de 2 à 8 fois la mesure. La mesure est celle de `worktree.sh temps` — les TOURS
+# des sessions Claude Code du ticket, bornés par l'instant de son démarrage (`demarre`, posé par
+# `begin` ; à défaut le jour de `debut`) — et sa règle est écrite là, pas ici.
+#
+# CE QUI SE LOGGE EST UNE DIFFÉRENCE : la mesure, moins ce qui est déjà loggé hors historique importé
+# (`--hors-import`, #400), arrondie à la minute. C'est ce qui rend le verbe rejouable sans rien
+# doubler (un second passage n'ajoute que le travail fait depuis), là où l'ancienne idempotence —
+# « du temps est déjà loggé, n'en rajoute pas » — perdait le travail d'une reprise.
+#
+# Codes : 0 loggé (ou mesuré, avec --check, qui n'écrit rien) ; 3 rien loggé — aucune session du
+# ticket sur ce poste (un transcript vit sur la machine qui l'a produit), ou rien de neuf ; 1 panne ;
+# 2 usage. Un 3 n'est PAS une invitation à estimer : le temps d'un ticket sans mesure reste non loggé,
+# et le dire suffit.
+gl_log_time_mesure() {
+  local iid="" check=0 arg
+  for arg in "$@"; do
+    case "$arg" in
+      --check) check=1 ;;
+      -*) echo "gl_log_time_mesure : option « $arg » inconnue (attendu : --check)" >&2; return 2 ;;
+      *) iid="$arg" ;;
+    esac
+  done
+  case "$iid" in
+    ''|*[!0-9]*) echo "usage: gl_log_time_mesure <iid> [--check]" >&2; return 2 ;;
+  esac
+  gh_log_time_mesure "$iid" "$check"
+}
+
 # --- Descriptions : lecture/écriture fidèles aux octets (ticket #141) ------------------------------
-# Relire puis réécrire une description (mettre à jour la checklist d'une PR, corriger le périmètre
+# Relire puis réécrire une description (compléter celle d'une PR, corriger le périmètre
 # d'un ticket) est un aller-retour à risque : il a corrompu #111 le 2026-07-22 en y repoussant du
 # mojibake (« â€” » au lieu de « — », « Ã© » au lieu de « é »).
 #
@@ -8544,6 +8625,13 @@ gh_suivi_total() {
   LC_ALL=C sed -n 's/^log=//p' | LC_ALL=C awk -F'|' '{ t += $2 } END { printf "%d", t + 0 }'
 }
 
+# gh_suivi_hors_import (stdin = bloc machine) -> la somme des entrées `log=`, l'historique importé
+# de GitLab retranché. Une règle, deux lecteurs : `get-time-spent --hors-import` et la mesure de
+# `log-time-mesure`, qui en logge la différence.
+gh_suivi_hors_import() {
+  grep -v "^log=.*|$GL_SUIVI_IMPORT\$" | gh_suivi_total
+}
+
 # gh_suivi_ecrire <iid> <id-commentaire|-> (stdin = bloc machine) -> écrit ou réécrit le commentaire
 # de suivi. Le bloc machine fait foi ; le rendu humain en est DÉRIVÉ ici même, donc les deux ne
 # peuvent pas diverger. Les clés inconnues traversent intactes (règle 4 du format).
@@ -8600,24 +8688,29 @@ gh_get_time_spent() {
   if [ -z "$iid" ]; then echo "gh_get_time_spent : iid manquant" >&2; return 2; fi
   bloc="$(gh_suivi_lire "$iid" 2>/dev/null | tail -n +2)"
   case "$mode" in
-    --hors-import) v="$(printf '%s\n' "$bloc" | grep -v "^log=.*|$GL_SUIVI_IMPORT\$" | gh_suivi_total)" ;;
+    --hors-import) v="$(printf '%s\n' "$bloc" | gh_suivi_hors_import)" ;;
     '')            v="$(printf '%s\n' "$bloc" | gh_suivi_champ temps)" ;;
     *)             echo "gh_get_time_spent : option « $mode » inconnue (attendu : --hors-import)" >&2; return 2 ;;
   esac
   printf '%s\n' "${v:-0}"
 }
 
-# gh_set_dates <iid> [début] [échéance] -> pose les dates dans le suivi. Un argument vide laisse le
-# champ INCHANGÉ (même contrat que gl_set_dates), ce qui suppose de relire le bloc avant d'écrire.
+# gh_set_dates <iid> [début] [échéance] [instant] -> pose les dates dans le suivi. Un argument vide
+# laisse le champ INCHANGÉ (même contrat que gl_set_dates), ce qui suppose de relire le bloc avant
+# d'écrire. L'instant du démarrage (`demarre`) ne s'écrit que s'il manque : c'est la borne basse de
+# la mesure du temps passé (#1244), et un second /ticket-start ne doit pas la déplacer.
 gh_set_dates() {
-  local iid="$1" start="$2" due="$3" lu id bloc
-  if [ -z "$iid" ]; then echo "usage: gh_set_dates <iid> [début YYYY-MM-DD] [échéance YYYY-MM-DD]" >&2; return 2; fi
+  local iid="$1" start="$2" due="$3" instant="${4:-}" lu id bloc
+  if [ -z "$iid" ]; then echo "usage: gh_set_dates <iid> [début YYYY-MM-DD] [échéance YYYY-MM-DD] [instant]" >&2; return 2; fi
   if [ -z "$start" ] && [ -z "$due" ]; then echo "gh_set_dates : au moins une date (début ou échéance) requise" >&2; return 2; fi
   lu="$(gh_suivi_lire "$iid")" || return 1
   id="$(printf '%s\n' "$lu" | head -1)"
   bloc="$(printf '%s\n' "$lu" | tail -n +2)"
   [ -n "$start" ] && bloc="$(printf '%s\n' "$bloc" | grep -v '^debut=')"$'\n'"debut=$start"
   [ -n "$due" ]   && bloc="$(printf '%s\n' "$bloc" | grep -v '^echeance=')"$'\n'"echeance=$due"
+  if [ -n "$instant" ] && [ -z "$(printf '%s\n' "$bloc" | gh_suivi_champ demarre)" ]; then
+    bloc="$bloc"$'\n'"demarre=$instant"
+  fi
   if ! printf '%s\n' "$bloc" | gh_suivi_ecrire "$iid" "$id"; then
     echo "Échec de la pose des dates sur #$iid" >&2; return 1
   fi
@@ -8644,6 +8737,55 @@ gh_log_time() {
     echo "Échec du log de temps sur #$iid" >&2; return 1
   fi
   printf 'Temps loggé sur #%s : %s\n' "$iid" "$dur"
+}
+
+# gh_log_time_mesure <iid> <check 0|1> -> cf. gl_log_time_mesure. UNE lecture du suivi pour la
+# borne et le déjà-loggé, la mesure hors ligne, puis l'écriture par gh_log_time — qui relit le suivi
+# avant d'écrire, comme toute écriture du bloc.
+gh_log_time_mesure() {
+  local iid="$1" check="${2:-0}" lu bloc borne mesure rc secondes sessions tours regime deja minutes
+  local source resume
+  lu="$(gh_suivi_lire "$iid")" || return 1
+  bloc="$(printf '%s\n' "$lu" | tail -n +2)"
+  borne="$(printf '%s\n' "$bloc" | gh_suivi_champ demarre)"
+  [ -n "$borne" ] || borne="$(printf '%s\n' "$bloc" | gh_suivi_champ debut)"
+  deja="$(printf '%s\n' "$bloc" | gh_suivi_hors_import)"
+
+  mesure="$(bash "$GL_ICI/../git/worktree.sh" temps "$iid" ${borne:+--depuis "$borne"} 2>&1)"
+  rc=$?
+  case "$rc" in
+    0) ;;
+    3)
+      printf 'Temps de #%s non mesuré — %s. Rien loggé : le temps passé se mesure, il ne s'\''estime pas.\n' \
+        "$iid" "$mesure"
+      return 3 ;;
+    *)
+      printf '%s\n' "$mesure" >&2
+      echo "log-time-mesure : mesure de #$iid en échec (worktree.sh temps, code $rc)" >&2
+      return 1 ;;
+  esac
+  IFS=$'\t' read -r secondes sessions tours regime <<<"$mesure"
+  case "$secondes" in ''|*[!0-9]*) echo "log-time-mesure : mesure illisible « $mesure »" >&2; return 1 ;; esac
+
+  source="$sessions session(s) Claude Code ($regime), $tours tour(s)"
+  printf 'Temps mesuré sur #%s : %s — %s%s.\n' "$iid" "$(gh_duree "$secondes")" "$source" \
+    "$([ -n "$borne" ] && printf ', depuis %s' "$borne")"
+
+  # La différence, arrondie à la minute : une mesure à la seconde près se relirait comme une
+  # précision que les bornes d'un tour n'ont pas.
+  minutes=$(( (secondes - ${deja:-0} + 30) / 60 ))
+  if [ "$minutes" -lt 1 ]; then
+    printf 'Déjà loggé hors import : %s — rien à ajouter.\n' "$(gh_duree "${deja:-0}")"
+    return 3
+  fi
+  resume="Cycle de dev — mesuré sur $source"
+  if [ "$check" = 1 ]; then
+    printf 'À logger : %s (« %s ») — --check, rien écrit.\n' "$(gh_duree $((minutes * 60)))" "$resume"
+    return 0
+  fi
+  gh_log_time "$iid" "${minutes}m" "$resume" >/dev/null || return 1
+  printf 'Loggé : %s%s.\n' "$(gh_duree $((minutes * 60)))" \
+    "$([ "${deja:-0}" -gt 0 ] && printf ', en plus des %s déjà loggés' "$(gh_duree "$deja")")"
 }
 
 # --- Pull requests ----------------------------------------------------------------------------------
@@ -9393,6 +9535,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     set-dates)      gl_set_dates "$@" ;;
     start-dates)    gl_start_dates "$@" ;;
     log-time)       gl_log_time "$@" ;;
+    log-time-mesure) gl_log_time_mesure "$@" ;;
     mr-state)       gl_mr_state "$@" ;;
     project-humans) gl_project_humans "$@" ;;
     pick-reviewer)  gl_pick_reviewer "$@" ;;
@@ -9528,9 +9671,11 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "    begin <iid> [username]       (assignation + « En cours » + dates en une mutation groupée)" >&2
       echo "  Dates & temps :" >&2
       echo "    start-dates <iid>            (début=aujourd'hui + échéance selon prio)" >&2
-      echo "    set-dates <iid> [début] [échéance]   get-start-date <iid>" >&2
+      echo "    set-dates <iid> [début] [échéance] [instant]   get-start-date <iid>" >&2
       echo "    prio <iid>   prio-delay <prio>   elapsed-days <date>" >&2
       echo "    log-time <iid> <durée> [résumé]   get-time-spent <iid> [--hors-import]" >&2
+      echo "    log-time-mesure <iid> [--check]   (MESURE le temps sur les sessions du ticket et logge ce qui manque ;" >&2
+      echo "                                       3 = rien loggé — le temps passé ne s'estime pas)" >&2
       echo "  Descriptions (aller-retour fidèle aux octets — à utiliser au lieu d'improviser une lecture) :" >&2
       echo "    get-description <iid>              (description du ticket, UTF-8 intact, sur stdout)" >&2
       echo "    set-description <iid> <fichier>    (remplace la description du ticket par le fichier)" >&2

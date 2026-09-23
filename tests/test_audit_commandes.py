@@ -258,9 +258,7 @@ FORGE_ADMISES: Mapping[str, tuple[Admise, ...]] = {
     ),
     ".claude/commands/ticket-finish.md": (
         Admise("est parti avec la CI GitLab (#344", _PASSE),
-        Admise("(#165 sur GitLab, `on: pull_request` sur GitHub", _PASSE),
         Admise("normalisé vers le vocabulaire GitLab pour que ses appelants", _VOCABULAIRE),
-        Admise("sur un ticket importé de GitLab", _PASSE),
     ),
     RUN_SH: (
         Admise("troisième support après le champ natif de GitLab et les six labels", _PASSE),

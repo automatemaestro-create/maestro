@@ -114,7 +114,9 @@ avant de pousser. Un critère non tenu **ne bloque pas le merge**.
      recopiée dans un prompt fige l'outil au jour où elle a été écrite (#310), et le skill en est la
      source unique. **Qui juge dépend du ticket** (#1151, docs/40 §3) : le sous-agent `regard-neuf`
      pour un ticket qui **décide** d'un écran (critère du §7.2 de `/design-veille`), la **session
-     elle-même** pour tout autre ticket, sur la même grille. Le skill porte les deux conduites.
+     elle-même** pour tout autre ticket, sur la même grille. **Ce qu'on regarde aussi** (#1243) :
+     l'après seul et les états que le ticket nomme quand il applique, avant et après et les trois
+     états quand il décide — le plan annonce ce régime. Le skill porte les deux conduites.
 
    ⚠ **On ne demande pas, on joue** — et c'est la différence avec la veille, qui ne se joue que pour
    un ticket qui décide d'un écran. Une veille est un **jugement** sur l'opportunité de
@@ -156,9 +158,8 @@ avant de pousser. Un critère non tenu **ne bloque pas le merge**.
      effet de bord de la clôture.
 
 4ter. **Le ticket fait-il ce qu'il disait ?** (#968). Les critères d'acceptation sont écrits par
-   `/ticket-create`, lus au cadrage par `/ticket-start` — et plus personne ne les regardait : la
-   checklist de l'étape 8 juge le **procédé**, `merge-mr` juge la **mergeabilité**, jamais le
-   **contrat** du ticket. C'est le défaut que `/milestone-bilan` corrige au jalon (#759), ici à
+   `/ticket-create`, lus au cadrage par `/ticket-start` — et plus personne ne les regardait :
+   `merge-mr` juge la **mergeabilité**, jamais le **contrat** du ticket. C'est le défaut que `/milestone-bilan` corrige au jalon (#759), ici à
    l'échelle du ticket, et sans rattrapage possible : après le merge, la branche est supprimée et le
    worktree ramassé. Commence par la question, qui ne coûte qu'une lecture :
    ```
@@ -298,35 +299,13 @@ avant de pousser. Un critère non tenu **ne bloque pas le merge**.
    (ce repli garde un **préfixe de variable d'environnement**, immatchable lui aussi — c'est le
    domaine de #235, pas de ce lot : s'il est refusé, signale-le au lieu d'inventer une variante).
 
-8. Évalue la **checklist de definition of done** de la PR (les quatre cases du gabarit
-   `.github/pull_request_template.md` ; les quatre lignes sont de toute façon reproduites au
-   point 9.2) : pour chacune, détermine si tu peux la cocher
-   (`- [x]`) parce que tu l'as **effectivement vérifiée**, ou si elle reste vide (`- [ ]`). La
-   checklist est un constat, pas un formulaire — et ce qui garde le merge n'est pas une case cochée
-   mais les prérequis éprouvés par `merge-mr` : **aucun merge non vérifié** (#417, chantier #413).
-   - **Conventions de branche/commit** : nom de branche au motif `<type>/<iid>-<slug>` et messages
-     de `git log main..HEAD` conformes (Conventional Commits + `Refs`/`Closes #<iid>`). Le hook
-     `commit-msg` les valide déjà, mais un `--no-verify` a pu passer : re-vérifie rapidement.
-   - **Tests ajoutés/mis à jour si applicable** : juge d'après le diff de la branche
-     (`git diff main...HEAD --stat`) — des tests touchés avec le code, ou un diff sans surface à
-     tester (doc, config, prompts…) → coche ; du code applicatif sans test associé → laisse vide.
-   - **Documentation mise à jour si applicable** : même logique, d'après le diff.
-   - **Pipeline CI verte (si configurée)** : ne coche que si le dernier pipeline est **réellement
-     réussi** au moment de la vérification (`bash scripts/gitlab/lib.sh pipeline-latest <branche>`,
-     qui retrouve aussi le pipeline porté par la PR). En cours, échoué ou absent → laisse vide.
-     **Une case vide est le cas NORMAL ici** : la CI ne se déclenche qu'à partir de la PR (#165 sur
-     GitLab, `on: pull_request` sur GitHub — docs/10 §8), donc à la première clôture d'un ticket
-     **aucun pipeline n'existe encore** à ce stade — il naîtra de l'étape 9. N'attends pas **ici** :
-     l'attente a désormais sa propre étape (13), et ce qui garde le merge n'est de toute façon pas
-     cette case mais le verdict que `merge-mr` éprouvera **sur la tête de la PR**.
-
-9. **Crée (ou mets à jour) la PR — la description passe toujours par un FICHIER.** Jamais de
-   description sur la ligne de commande : elle fait par nature plusieurs lignes, la couche
-   permissions découpe une commande sur ses sauts de ligne et la refuse, puis refuse aussi les deux
-   replis naturels (`--body "$(cat …)"`, `D="$(cat …)"; … "$D"`) — aucune règle ne peut
-   matcher une **substitution de commande**. C'est ce qui a fait tomber 8 sessions autonomes sur 16
-   (#233), et toujours ici, sur la **dernière action du ticket** : tout est commité, rien ne le
-   déclare. Le fichier n'est pas un contournement, c'est la forme normale (#232).
+8. **Prépare la description de la PR — dans un FICHIER, jamais sur la ligne de commande.** Elle
+   fait par nature plusieurs lignes : la couche permissions découpe une commande sur ses sauts de
+   ligne et la refuse, puis refuse aussi les deux replis naturels (`--body "$(cat …)"`,
+   `D="$(cat …)"; … "$D"`) — aucune règle ne peut matcher une **substitution de commande**. C'est ce
+   qui a fait tomber 8 sessions autonomes sur 16 (#233), et toujours ici, sur la **dernière action
+   du ticket** : tout est commité, rien ne le déclare. Le fichier n'est pas un contournement, c'est
+   la forme normale (#232).
 
    1. **Une PR ouverte existe-t-elle déjà pour cette branche ?**
       ```
@@ -336,34 +315,30 @@ avant de pousser. Un critère non tenu **ne bloque pas le merge**.
       son nom `mr-iid` des deux côtés — c'est le **contrat de `lib.sh`**, normalisé vers le
       vocabulaire GitLab pour que ses appelants ne bougent pas (cf. son en-tête) : seul le mot
       change dans les prompts, jamais le nom d'un verbe.
-   2. **Prépare le fichier de description** dans **`.maestro/session/`** (l'atelier de session :
-      gitignoré, ce n'est pas un livrable ; `mkdir -p .maestro/session` s'il manque), et passe-le au
-      point 3 en chemin **relatif** — ni le scratchpad de session ni `/tmp`, chemins absolus qu'une
-      session de run se voit refuser (#962). **Écris-le avec l'outil `Write`** —
-      pas avec `cat`/`echo`/un heredoc, qui rejoueraient exactement le problème que cette étape
-      évite.
-      - **Aucune PR** : contenu neuf — `Closes #<iid>`, une ligne vide, puis la section
-        `## Checklist` **telle qu'évaluée à l'étape 8** (chaque case en `[x]` ou `[ ]` selon le
-        constat réel) :
-        ```
-        Closes #<iid>
-
-        ## Checklist
-        - [x] Respecte les conventions de branche/commit (docs/10-workflow-git.md)
-        - [ ] Tests ajoutés/mis à jour si applicable
-        - [x] Documentation mise à jour si applicable
-        - [ ] Pipeline CI verte (si configurée)
-        ```
-      - **PR déjà ouverte** : pars de l'**existant**, la mise à jour remplaçant la description
+   2. **Écris le fichier** dans **`.maestro/session/`** (l'atelier de session : gitignoré, ce n'est
+      pas un livrable ; `mkdir -p .maestro/session` s'il manque), et passe-le à l'étape 9 en chemin
+      **relatif** — ni le scratchpad de session ni `/tmp`, chemins absolus qu'une session de run se
+      voit refuser (#962). **Écris-le avec l'outil `Write`** — pas avec `cat`/`echo`/un heredoc, qui
+      rejoueraient exactement le problème que cette étape évite.
+      - **Aucune PR** : `Closes #<iid>`, une ligne vide, puis **ce que la PR change et pourquoi**, en
+        quelques lignes — la forme du gabarit `.github/pull_request_template.md`.
+      - **PR déjà ouverte** : pars de l'**existant**, `create-mr` remplaçant la description
         entière. Relis-la **via le helper** — `bash scripts/gitlab/lib.sh get-mr-description <mr> >
-        <fichier>` — puis édite le fichier de façon **idempotente** : modifie **uniquement** l'état
-        des cases de la section `## Checklist` (jamais le reste, notamment le `Closes #<iid>`),
-        coche celles vérifiées à l'étape 8, et **ne décoche jamais** une case déjà cochée (un
-        humain a pu la cocher). Si la section `## Checklist` manque, ajoute-la en fin de
-        description. Si rien ne change, passe directement au point 4. N'improvise **jamais** une
-        lecture du type `gh pr view --json body | python` : elle corrompt l'UTF-8 en mojibake
-        (« â€” » au lieu de « — ») — voir #141.
-   3. **Un seul appel, plat et court**, dans les deux cas :
+        <fichier>` — et n'y change rien, sauf ce que le point 9.3 demande d'ajouter. Si rien ne
+        change, passe directement au point 9.2. N'improvise **jamais** une lecture du type
+        `gh pr view --json body | python` : elle corrompt l'UTF-8 en mojibake (« â€” » au lieu de
+        « — ») — voir #141.
+
+   **La PR ne porte pas de checklist** (#1244). Ses quatre cases redisaient ce que d'autres
+   vérifient mieux : la **mergeabilité** par `merge-mr` — PR prête qui ferme son ticket, rien de non
+   poussé, aucun conflit, pipeline vert **sur la tête de la PR** (#415, **aucun merge non vérifié**,
+   #417) —, le **contrat du ticket** par la confrontation des critères de l'étape 4ter (#968), les
+   conventions de commit par le hook `commit-msg`. Et sa case « pipeline verte » restait vide dans le
+   cas nominal : le pipeline naît de la PR.
+
+9. **Crée (ou mets à jour) la PR.**
+
+   1. **Un seul appel, plat et court**, dans les deux cas :
       ```
       bash scripts/gitlab/lib.sh create-mr <iid> <fichier>
       ```
@@ -372,7 +347,7 @@ avant de pousser. Un critère non tenu **ne bloque pas le merge**.
       déjà pour la branche, il met sa description à jour au lieu d'échouer. La suppression de la
       branche source au merge est un **réglage du dépôt** des deux côtés (`doctor.sh` le vérifie),
       pas une option de cet appel.
-   4. **Passe la PR en « prête » — sans demander.** `create-mr` l'ouvre en Draft ; c'est ici
+   2. **Passe la PR en « prête » — sans demander.** `create-mr` l'ouvre en Draft ; c'est ici
       qu'on la lève :
       ```
       gh pr ready <numéro>
@@ -385,12 +360,12 @@ avant de pousser. Un critère non tenu **ne bloque pas le merge**.
       constat, pas un échec. Et ce n'est **pas** une promesse de merge : le brouillon n'est qu'**un**
       des quatre prérequis de `merge-mr`, qui refusera toujours une PR levée mais rouge, en conflit,
       ou qui ne ferme pas son ticket (#415).
-   5. **T'es-tu fait refuser une écriture sous `.claude/` pendant ce ticket ?** (#608, docs/10
+   3. **T'es-tu fait refuser une écriture sous `.claude/` pendant ce ticket ?** (#608, docs/10
       §11.7.) Si oui — et seulement si oui —, **deux gestes, jamais l'un à la place de l'autre** :
       - **RENDS** le correctif intégral dans la description de la PR, sous une section
         `## Reste à appliquer à la main` : contenu de remplacement complet (pas « modifier la ligne
         12 », mais l'avant et l'après), fichier par fichier. C'est là qu'il se **relit** — tu
-        l'ajoutes au fichier préparé au point 2, avant l'appel du point 3.
+        l'ajoutes au fichier préparé à l'étape 8, avant l'appel du point 1.
       - **CONSIGNE-LE** dans un ticket de reprise, parce que c'est ce qui lui **survit** : écris le
         correctif dans un fichier avec l'outil `Write` (dans `.maestro/session/`), puis
         ```
@@ -430,26 +405,17 @@ avant de pousser. Un critère non tenu **ne bloque pas le merge**.
    mutuelle des labels scopés est Premium, donc rien ne l'assurerait à notre place. Vérifie que la
    commande réussit. Ne touche pas aux labels `agent::*` / `prio::*` / `type::*`.
 
-12. Renseigne le **temps passé** — **estimé automatiquement, sans demander de confirmation** (voir
-   `docs/10-workflow-git.md` §3.3) :
-   - Vérifie d'abord ce qui est déjà loggé **depuis la bascule sur GitHub** :
-     `bash scripts/gitlab/lib.sh get-time-spent <iid> --hors-import` (secondes). Si le résultat
-     **n'est pas `0`**, du temps a déjà été enregistré — n'en rajoute pas (idempotence : ne double
-     pas un cycle déjà loggé) et passe à la suite. ⚠ `--hors-import` et non le total : sur un
-     ticket importé de GitLab, l'historique repris par la jointure de #400 fait répondre « oui »
-     au total avant qu'aucune session n'ait travaillé dessus, et le garde-fou avalerait alors en
-     silence le temps de celle qui termine le ticket.
-   - Sinon, **estime toi-même l'effort** d'après la **portée réelle du travail** de la branche
-     (ampleur du diff, nombre et nature des commits, ce que tu as fait durant la session) — pas le
-     temps calendaire écoulé, qui n'est qu'un plafond peu fidèle. Traduis-la en une durée au format
-     attendu par le helper (`30m`, `1h`, `2h 30m`, `1d`…), identique des deux côtés — sur GitHub
-     c'est le **suivi maison** de `lib.sh` qui l'enregistre, la forge n'ayant pas de temps passé
-     natif (docs/27 §5).
-   - Logge-la directement, sans question :
-     ```
-     bash scripts/gitlab/lib.sh log-time <iid> "<durée estimée>" "Cycle de dev (start->finish)"
-     ```
-   - Indique dans le résumé final la durée estimée et loggée (transparence a posteriori).
+12. Renseigne le **temps passé** — **mesuré, jamais estimé**, sans demander (#1244, docs/10 §3.3) :
+   ```
+   bash scripts/gitlab/lib.sh log-time-mesure <iid>
+   ```
+   Le verbe lit les transcripts des sessions Claude Code du ticket — en run comme en interactif,
+   ils sont rangés sous son worktree —, en compte les **tours** depuis le démarrage du ticket (pas
+   l'attente de la personne entre deux prompts), et logge ce qui n'est pas encore loggé, **la source
+   dans le libellé**. Rejoué, il n'ajoute que le travail fait depuis. **N'estime rien toi-même** :
+   « 4h » avaient été estimées sur #1226, 1 h 19 mesurées. Code `3` (aucune session du ticket sur ce
+   poste, ou rien de neuf) : rien n'est loggé, et c'est la bonne issue — ne logge pas de durée à la
+   main à sa place. Recopie ses lignes dans le résumé final.
 
 13. **Attends le pipeline, merge — et débloque ce qui est réparable** (#418 puis #460, chantier
    #413) — c'est ici que la clôture se termine vraiment. L'étape a été placée **après** l'état « En revue » et le log du temps, et pas
@@ -615,10 +581,10 @@ avant de pousser. Un critère non tenu **ne bloque pas le merge**.
    merge —, ce que le **ramassage** de l'étape 14 a retiré (ou la cause de son abstention), le
    lien de la PR, le **verdict du filet CI local** s'il n'était pas vert (étape 5 — quel job,
    et pourquoi tu as poussé quand même), le **retard éventuel sur `origin/main`** relevé à
-   l'étape 6 (et le rebase proposé si un conflit est probable), les cases de la checklist
-   cochées et celles restées vides (avec un mot sur pourquoi), et le temps loggé le cas
-   échéant. Si un refus du garde-fou de l'étape 3 a été **franchi sur demande explicite**,
-   dis-le en tête du résumé (quel motif, et qui l'a demandé). Et si l'étape 9.5 a joué, **nomme le
+   l'étape 6 (et le rebase proposé si un conflit est probable), et le **temps** de l'étape 12 —
+   mesuré et loggé avec sa source, ou la raison pour laquelle rien ne l'a été. Si un refus du
+   garde-fou de l'étape 3 a été **franchi sur demande explicite**,
+   dis-le en tête du résumé (quel motif, et qui l'a demandé). Et si l'étape 9.3 a joué, **nomme le
    ticket de reprise** (#608) — la PR qui portait le correctif vient d'être mergée, ce ticket est
    le seul endroit où il vit encore. Rends enfin la **confrontation des critères** de l'étape 4ter
    sur sa propre ligne : le compte (`n ✓ · n ✗ · n hors diff`), **chaque critère ✗ nommé**, le

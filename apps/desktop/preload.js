@@ -1,5 +1,5 @@
-// Le pont de la coque vers la page (#928, lot 7 de #921 — puis #938, lot 8) : trois verbes, pas un
-// de plus, et chacun nommé par ce qu'il fait.
+// Le pont de la coque vers la page (#928, lot 7 de #921 — puis #938, lot 8 ; puis #1224) : quatre
+// verbes, pas un de plus, et chacun nommé par ce qu'il fait.
 //
 // ## Pourquoi il existe maintenant, et pas avant
 //
@@ -36,7 +36,7 @@
 // `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false` (docs/19, et les tests qui
 // lisent `main.js` depuis #929). Un preload sandboxé n'a PAS accès à Node : il ne peut que
 // `contextBridge`, `ipcRenderer` et `webUtils`, ce qui est exactement la surface qu'on veut. La
-// page ne reçoit donc ni `fs`, ni `shell`, ni `ipcRenderer` — seulement trois fonctions qui
+// page ne reçoit donc ni `fs`, ni `shell`, ni `ipcRenderer` — seulement quatre fonctions qui
 // prennent une chaîne (ou un `File`) et rendent une chaîne ou un booléen. C'est le processus
 // principal qui décide ensuite, et qui refuse (`main.js`).
 //
@@ -60,6 +60,20 @@ contextBridge.exposeInMainWorld('maestro', {
    */
   ouvrirDossier: (chemin) =>
     ipcRenderer.invoke('maestro:ouvrir-dossier', String(chemin)).catch(() => false),
+
+  /**
+   * Montre `chemin` dans son dossier, **sélectionné** — jamais ouvert avec son application
+   * (#1224). Rend `true` si la cible existait, `false` sinon (chemin inconnu, relatif, ou qui
+   * n'est pas un fichier).
+   *
+   * Le verbe existe à côté d'`ouvrirDossier` parce qu'il ne fait pas la même chose : celui-là
+   * refuse un fichier pour ne rien exécuter, celui-ci le révèle sans rien lancer. Le motif est
+   * dans `main.js`, où vit la décision.
+   *
+   * Ne lève jamais : un rejet d'IPC vaut « non », et la page a un second geste à offrir.
+   */
+  montrerFichier: (chemin) =>
+    ipcRenderer.invoke('maestro:montrer-fichier', String(chemin)).catch(() => false),
 
   /**
    * Ouvre le dialogue de dossier de l'OS et rend le chemin choisi, `null` si la personne a annulé

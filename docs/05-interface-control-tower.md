@@ -3038,6 +3038,70 @@ non sur l'horloge — une fin qui arrive pendant que le panneau est ouvert reste
 neuve. Couverture :
 [`apps/web/tests/issue-de-run.test.tsx`](../apps/web/tests/issue-de-run.test.tsx).
 
+##### …et elle se **raconte** : ce qui a été produit, comment l'essayer (#1224) — **livré**
+
+L'annonce ci-dessus dit *où* est le livrable. Elle ne dit ni ce qu'il contient, ni
+comment s'en servir, et c'est le constat du retex du 2026-09-22 : la personne avait
+le lien du dossier et écrivait *« on ne me dit pas comment tester, pourtant on a
+généré une documentation »*.
+
+À la fin d'un run, l'orchestrateur **écrit donc dans le fil qui l'a demandé** un
+message rédigé : ce que le run a produit, **comment l'essayer** avec la commande
+lue dans le livrable, ce qui reste éventuellement à faire, et les fichiers qui
+comptent en **liens qui s'ouvrent d'un geste**. C'est un message ordinaire du fil —
+même bulle, même Markdown —, et il **s'ajoute** à l'annonce de #928, qui ne bouge
+pas (elle reste la ligne d'événement en fin de fil, avec ses deux gestes).
+
+Quatre décisions, et les trois premières sont des refus :
+
+- **le livrable est lu, jamais deviné.** La commande à taper ne se déduit d'aucun
+  catalogue de gabarits de projet ([docs/41](./41-decision-maestro-juge-il-ne-bride-pas.md)) :
+  elle se lit dans ce que le run vient d'écrire. La lecture emprunte la **chaîne
+  d'ingestion existante** (#316) avec une source `dossier` sur la racine du
+  projet — donc les mêmes plafonds, le même parcours qui ne suit aucun lien
+  symbolique, le même respect du **périmètre** (les gisements de secrets de
+  docs/24 §2.5 restent dehors) et le même encadrement de données (ENF-13). Aucun
+  nom de fichier n'est privilégié : c'est le modèle qui reconnaît un mode d'emploi
+  dans ce qu'il lit ;
+- **rien n'est fabriqué.** Un rédacteur injoignable ou muet n'écrit pas une phrase
+  gabarit à sa place : le récit n'est simplement pas posé, et l'annonce de #928
+  reste — elle est dérivée du persisté, donc elle ne dépend de rien d'ici ;
+- **la fenêtre est bornée, et elle est dite.** Le récit s'écrit quand la fin
+  **passe** sur le bus. Un run soldé pendant que l'API était arrêtée revient par
+  le rejeu du journal durable (#97), qui ne passe pas par la pompe : ce run-là
+  n'aura pas de récit, et c'est précisément le cas que l'annonce dérivée couvre.
+  L'idempotence, elle, se tient **sur le fil** — un run ouvert depuis le fil y
+  laisse *un* message d'agent portant son `run_id` ; le récit en est un second —
+  et non dans un registre en mémoire, qui ne survivrait pas au redémarrage après
+  lequel un doublon se verrait ;
+- **un fichier s'ouvre d'un geste, sans `file://`.** Une destination Markdown qui
+  n'est pas une adresse `http(s)` mais un **chemin absolu** devient un geste et
+  non une ancre : un `href` vers le disque n'est suivi ni par l'onglet ni par la
+  fenêtre (refus consigné dans la veille de #928). La forme lue est celle de
+  CommonMark pour une destination à espaces — `[libellé](<C:\Mes projets\app.py>)` —
+  et **elle seule** peut devenir un fichier : la forme nue garde exactement la
+  conduite de #697, où une destination relative reste du texte lisible.
+
+⚠ **Un seul geste par fichier, et c'est celui que le poste sait faire.** L'annonce
+de #928 en pose deux côte à côte parce qu'elle a une ligne à elle ; dans une
+phrase, deux boutons par fichier la rendraient illisible. C'est donc un test de
+**capacité** (ENF-12, `lib/poste`) : la fenêtre **montre le fichier** dans
+l'explorateur — sélectionné, jamais ouvert avec son application, ce qui reviendrait
+à exécuter un `.exe` —, l'onglet **copie son chemin**, qui est le second geste de
+#928 et non un lot de consolation. Le **nom accessible** dit lequel des deux va se
+produire, et le geste **dit ce qu'il a fait**.
+
+Implémentation : `maestro/controltower/recit.py` (le récit et sa lecture du
+livrable), `maestro/controltower/chat.py` (`raconter_la_fin`,
+`conversation_du_run`), `maestro/controltower/app.py` (la pompe passe la main
+**après** avoir projeté), `apps/web/lib/markdown.ts` + `apps/web/lib/liens.ts`
+(la destination qui vise le disque), `apps/web/components/chat/TexteMarkdown.tsx`
+(le geste), `apps/web/lib/poste.ts` et `apps/desktop/` (le quatrième verbe du
+pont). Couverture : [`tests/test_recit_de_fin.py`](../tests/test_recit_de_fin.py),
+[`apps/web/tests/recit-de-fin.test.tsx`](../apps/web/tests/recit-de-fin.test.tsx),
+[`tests/test_coque_bureau.py`](../tests/test_coque_bureau.py) — et, sur la vraie
+stack avec le vrai modèle, le scénario **S5** de [docs/40 §5](./40-decision-rythme-et-scenarios-de-reference.md).
+
 #### Le fil se lit comme un chat moderne (#1225) — **livré**
 
 La personne, le 2026-09-22 : *« je trouve que le chat est trop robotique et non
@@ -3110,6 +3174,7 @@ Implémentation : `apps/web/components/chat/BulleFil.tsx` (`EnTeteDeTour`),
 [`apps/web/tests/fil-moderne.test.tsx`](../apps/web/tests/fil-moderne.test.tsx),
 et [`apps/web/tests/fil-en-colonne.test.tsx`](../apps/web/tests/fil-en-colonne.test.tsx)
 pour le regroupement des tours, que ce lot a fait passer du pied à la tête.
+
 
 ---
 

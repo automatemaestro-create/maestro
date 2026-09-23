@@ -38,10 +38,13 @@
  * suit la dernière lettre et s'efface sans rien déplacer.
  */
 
-import { Fragment, type ReactNode } from "react";
+import { Fragment, useState, type ReactNode } from "react";
 
+import { IconeFichier } from "@/components/Icones";
 import { BlocDeCode } from "@/components/chat/BlocDeCode";
+import { nomDuFichier } from "@/lib/liens";
 import { analyserMarkdown, type Bloc, type Inline } from "@/lib/markdown";
+import { copierTexte, montrerFichier, peutMontrerFichier } from "@/lib/poste";
 
 /**
  * Le poids d'un titre de message. Deux pas seulement, et pris à l'échelle du
@@ -218,5 +221,86 @@ function RenduInline({ noeud }: { noeud: Inline }) {
           <RenduInlines noeuds={noeud.enfants} />
         </a>
       );
+
+    case "fichier":
+      return <LienDeFichier chemin={noeud.chemin} enfants={noeud.enfants} />;
   }
+}
+
+/**
+ * **Un fichier du poste, nommé dans une phrase et ouvrable d'un geste** (#1224).
+ *
+ * Le récit de fin d'un run nomme ce qu'il a produit ; le critère demande qu'au
+ * moins un de ces fichiers « s'ouvre d'un geste ». Trois décisions portent ce
+ * rendu, et les deux premières viennent de la veille de #928 :
+ *
+ * - **ce n'est pas une ancre, c'est un geste.** Un `href` vers le disque ne se
+ *   suit ni dans un onglet (`file:` est bloqué depuis une page http) ni dans la
+ *   fenêtre (qui ne navigue que sur l'origine locale) : poser une ancre morte
+ *   promettrait ce que rien ne tient. C'est un `<button>`, et il ressemble à un
+ *   lien parce que c'en est un pour le lecteur ;
+ * - **le geste nomme sa destination** (parti pris 5 de #928 : « Ouvrir le
+ *   dossier », jamais « Ouvrir »). Ici le libellé est le nom du fichier, et
+ *   c'est le **nom accessible** qui dit ce qui va se passer — « Montrer <nom>
+ *   dans l'explorateur », ou « Copier le chemin de <nom> » là où le poste ne
+ *   sait pas montrer ;
+ * - **un seul geste, celui que le poste sait faire.** L'annonce de #928 en pose
+ *   deux côte à côte parce qu'elle a une ligne à elle ; dans une phrase, deux
+ *   boutons par fichier rendraient le texte illisible. C'est donc un test de
+ *   **capacité** (`peutMontrerFichier`, ENF-12 : jamais « où suis-je ? »), et
+ *   le repli n'est pas une dégradation — copier le chemin est le second geste
+ *   de #928, celui qui le rend utilisable dans un terminal.
+ *
+ * Et comme là-bas, le geste **dit ce qu'il a fait** : un bouton sans retour ne
+ * se distingue pas d'une page figée.
+ */
+function LienDeFichier({
+  chemin,
+  enfants,
+}: {
+  chemin: string;
+  enfants: Inline[];
+}) {
+  const [dit, setDit] = useState<string | null>(null);
+  // Lu au rendu et non dans un effet : la capacité est posée par la coque avant
+  // le premier script de la page, elle ne change jamais en cours de vie.
+  const montrable = peutMontrerFichier();
+  const nom = nomDuFichier(chemin);
+
+  const agir = async () => {
+    if (montrable) {
+      setDit((await montrerFichier(chemin)) ? null : "Fichier introuvable");
+      return;
+    }
+    setDit((await copierTexte(chemin)) ? "Chemin copié" : "Copie refusée");
+  };
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => void agir()}
+        title={chemin}
+        aria-label={
+          montrable
+            ? `Montrer ${nom} dans l'explorateur`
+            : `Copier le chemin de ${nom}`
+        }
+        className="inline-flex items-baseline gap-1 text-accent-texte underline underline-offset-2"
+      >
+        <IconeFichier
+          className="size-3.5 shrink-0 self-center"
+          aria-hidden="true"
+        />
+        {enfants.length > 0 ? <RenduInlines noeuds={enfants} /> : nom}
+      </button>
+      {/* `role="status"` : le retour d'un geste se dit aussi à qui ne regarde
+          pas le bouton — même règle que l'annonce de fin (#928). */}
+      {dit !== null && (
+        <span role="status" className="ms-1 text-micro text-texte-secondaire">
+          {dit}
+        </span>
+      )}
+    </>
+  );
 }

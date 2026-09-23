@@ -2,10 +2,13 @@
 
 /**
  * **Ce que la fenêtre sait faire et qu'un onglet ne sait pas** (#928 lot 7,
- * #938 lot 8, de #921) — trois choses, et les deux dernières répondent à la
- * même question :
+ * #938 lot 8, de #921 ; #1224) — quatre choses, et les deux dernières répondent
+ * à la même question :
  *
  * 1. **ouvrir un dossier** dans l'explorateur du système (`ouvrirDossier`) ;
+ * 1bis. **montrer un fichier** dans l'explorateur, sélectionné et **jamais
+ *    exécuté** (`montrerFichier`, #1224) — le geste que le récit de fin d'un run
+ *    pose sur chaque fichier qu'il nomme ;
  * 2. **ouvrir le dialogue de dossier de l'OS** sans détour par le backend
  *    (`choisirDossierDuPoste`) ;
  * 3. **lire le chemin réel d'un dossier déposé** (`cheminDuDossierDepose`).
@@ -82,6 +85,7 @@ declare global {
   interface Window {
     maestro?: {
       ouvrirDossier?: (chemin: string) => Promise<boolean>;
+      montrerFichier?: (chemin: string) => Promise<boolean>;
       choisirDossier?: (depart: string | null) => Promise<string | null>;
       cheminDuFichier?: (fichier: File) => string | null;
     };
@@ -94,6 +98,38 @@ export function peutOuvrirDossier(): boolean {
     typeof window !== "undefined" &&
     typeof window.maestro?.ouvrirDossier === "function"
   );
+}
+
+/** Le poste peut-il **montrer un fichier** dans l'explorateur ? (#1224) */
+export function peutMontrerFichier(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.maestro?.montrerFichier === "function"
+  );
+}
+
+/**
+ * Montre `chemin` dans l'explorateur du système — **sélectionné**, jamais ouvert
+ * avec son application (#1224).
+ *
+ * C'est la distinction qui fait exister ce verbe à côté d'`ouvrirDossier`, et
+ * elle est de sûreté : `shell.openPath` sur un `.exe`, un `.bat` ou un `.lnk`
+ * **l'exécuterait**, et la page est servie par un serveur local qu'un autre
+ * programme du poste peut atteindre (voir `apps/desktop/main.js`, garde 3).
+ * Révéler un fichier dans son dossier ne lance rien, et c'est le geste que VS
+ * Code appelle « Reveal in File Explorer ».
+ *
+ * Ne lève pas : un pont absent ou qui rejette vaut « non », et l'appelant a un
+ * second geste à offrir (copier le chemin), comme l'annonce de fin (#928).
+ */
+export async function montrerFichier(chemin: string): Promise<boolean> {
+  const pont = window.maestro?.montrerFichier;
+  if (typeof pont !== "function") return false;
+  try {
+    return await pont(chemin);
+  } catch {
+    return false;
+  }
 }
 
 /**

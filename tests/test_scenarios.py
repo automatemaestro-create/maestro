@@ -88,6 +88,8 @@ from maestro.scenarios.scenarios import (
     SCENARIOS,
     Contexte,
     Scenario,
+    _fichiers_lies,
+    _recit_de_fin,
     par_identifiant,
 )
 
@@ -169,6 +171,12 @@ class FausseAPI:
     racine du projet, il écrit (ou n'écrit pas) sur le disque et peut changer
     l'issue du run. C'est la couture par laquelle un test décide si S1 vide bien le
     dossier ou s'il mange le `.env`.
+
+    `recit` (#1224) est ce que la **fin d'un run** écrit dans le fil, `{racine}`
+    remplacé par la racine du projet. `None` modélise le produit d'avant ce
+    lot — la fin ne dit rien —, et c'est la moitié qui rend l'oracle de S5
+    opposable : sans elle, « le fil porte un récit » serait vrai de n'importe
+    quel fil.
     """
 
     def __init__(
@@ -179,6 +187,8 @@ class FausseAPI:
         propose_une_equipe: bool = True,
         repropose_apres_recrutement: bool = True,
         explication: str = "",
+        recit: str | None = None,
+        recit_apres: int = 0,
         roles: int = 1,
         validations: list[dict[str, Any]] | None = None,
         sante: bool = True,
@@ -192,7 +202,18 @@ class FausseAPI:
         self._propose_une_equipe = propose_une_equipe
         self._repropose = repropose_apres_recrutement
         self._explication = explication
+        self._recit = recit
+        # Le récit ne paraît qu'au bout de `recit_apres` lectures du fil : dans le
+        # produit, sa rédaction est un appel modèle qui part **après** que le run
+        # est soldé (#1224). `0` = il est là tout de suite.
+        self._recit_apres = recit_apres
+        self._en_attente: list[tuple[str, dict[str, Any]]] = []
+        self.lectures_du_fil = 0
         self._roles = roles
+        # Le fil persisté, par conversation : le récit de fin n'est la réponse à
+        # aucune requête, donc il ne peut se constater que là (#1224).
+        self.fils: dict[str, list[dict[str, Any]]] = {}
+        self._conversation = ""
         self.validations = validations or []
         self._sante = sante
         self._espace = espace
@@ -220,6 +241,9 @@ class FausseAPI:
         """Route la requête vers la décision qu'elle porte."""
         self.appels.append((methode, chemin))
         self.delais.append((chemin, delai_s))
+        # La conversation de la requête en cours : c'est elle que `_paire`
+        # alimente, sans avoir à la traîner dans chaque décision.
+        self._conversation = str((corps or {}).get("conversation") or self._conversation)
         if _redige_par_le_modele(chemin):
             self._rediger(chemin, delai_s)
         if chemin == "/api/sante":
@@ -238,6 +262,13 @@ class FausseAPI:
         if chemin == f"{FIL}/conversations":
             self.conversations.append(f"conv-{len(self.conversations) + 1}")
             return Reponse(statut=201, corps={"conversation": {"id": self.conversations[-1]}})
+        if chemin == FIL and methode == "GET":
+            conversation = str((params or {}).get("conversation") or "")
+            self.lectures_du_fil += 1
+            self._publier_ce_qui_est_du()
+            return Reponse(
+                statut=200, corps={"messages": list(self.fils.get(conversation, []))}
+            )
         if chemin == f"{FIL}/messages":
             return self._message(corps or {})
         if chemin == f"{FIL}/recrutement":
@@ -355,7 +386,7 @@ class FausseAPI:
         self.runs.append(run)
         if self._moteur is not None:
             self._moteur(run, self.projets[projet_id])
-        return self._paire(
+        paire = self._paire(
             "oui",
             {
                 "contenu": f"Run {run.run_id} ouvert.",
@@ -364,6 +395,11 @@ class FausseAPI:
                 "run_id": run.run_id,
             },
         )
+        # Le run de la fausse API se solde à l'instant du lancement : la fin
+        # écrit donc ici, juste après la réponse qui l'a ouvert — le même ordre
+        # que dans le produit (#1224).
+        self._raconter_la_fin(run, self.projets[projet_id])
+        return paire
 
     def _execution(self, run_id: str) -> Reponse:
         for run in self.runs:
@@ -378,10 +414,32 @@ class FausseAPI:
         return Reponse(statut=200, corps={})
 
     def _paire(self, demande: str, reponse: Mapping[str, Any]) -> Reponse:
-        return Reponse(
-            statut=201,
-            corps={"messages": [{"contenu": demande}, dict(reponse)]},
-        )
+        messages = [
+            {"contenu": demande, "auteur": "utilisateur", "run_id": ""},
+            {"auteur": "orchestrateur", **dict(reponse)},
+        ]
+        self.fils.setdefault(self._conversation, []).extend(messages)
+        return Reponse(statut=201, corps={"messages": messages})
+
+    def _raconter_la_fin(self, run: RunFactice, racine: Path) -> None:
+        """Ce que la fin d'un run écrit dans le fil (#1224) — rien si `recit` est `None`."""
+        if self._recit is None:
+            return
+        message = {
+            "auteur": "orchestrateur",
+            "contenu": self._recit.format(racine=racine.as_posix()),
+            "run_id": run.run_id,
+        }
+        self._en_attente.append((self._conversation, message))
+        self._publier_ce_qui_est_du()
+
+    def _publier_ce_qui_est_du(self) -> None:
+        """Pose les récits dont l'heure est venue — après `recit_apres` lectures."""
+        if self.lectures_du_fil < self._recit_apres:
+            return
+        for conversation, message in self._en_attente:
+            self.fils.setdefault(conversation, []).append(message)
+        self._en_attente.clear()
 
 
 # --- Les faux juges -----------------------------------------------------------
@@ -396,6 +454,10 @@ class JugeQuiDit:
 
     def nomme_la_cause(self, *, cause: str, releve: str, reponse: str) -> Avis:
         self.saisines.append({"cause": cause, "releve": releve, "reponse": reponse})
+        return self._avis
+
+    def dit_comment_essayer(self, *, livrable: str, recit: str, reponse: str) -> Avis:
+        self.saisines.append({"livrable": livrable, "recit": recit, "reponse": reponse})
         return self._avis
 
 
@@ -515,10 +577,10 @@ def _scenario(identifiant: str) -> Scenario:
 # --- ① Le déroulé -----------------------------------------------------------
 
 
-def test_les_quatre_scenarios_sont_declares_dans_l_ordre_de_la_decision() -> None:
-    """Quatre scénarios, S1 à S4, et seuls S2 et S4 se rejouent (docs/40 §5)."""
-    assert [s.identifiant for s in SCENARIOS] == ["S1", "S2", "S3", "S4"]
-    assert {s.identifiant for s in SCENARIOS if s.rejouable} == {"S2", "S4"}
+def test_les_cinq_scenarios_sont_declares_dans_l_ordre_de_la_decision() -> None:
+    """Cinq scénarios, S1 à S5, et seuls S2, S4 et S5 se rejouent (docs/40 §5)."""
+    assert [s.identifiant for s in SCENARIOS] == ["S1", "S2", "S3", "S4", "S5"]
+    assert {s.identifiant for s in SCENARIOS if s.rejouable} == {"S2", "S4", "S5"}
 
 
 def test_chaque_scenario_declare_son_propre_projet_jetable(tmp_path: Path) -> None:
@@ -1095,6 +1157,184 @@ def test_s4_est_rouge_quand_l_api_ne_releve_aucune_cause(tmp_path: Path) -> None
     assert "ne relève aucune cause" in issue.motif
 
 
+# --- S5 — la fin du run se raconte, et dit comment essayer (#1224) -----------
+
+#: Ce que la fin d'un run écrit quand tout va bien : la commande, et le fichier
+#: mis en lien dans la forme que l'écran sait rendre en geste
+#: (`[libellé](<chemin>)`, `apps/web/lib/markdown.ts`).
+RECIT_COMPLET = (
+    "Vous avez une petite application Python.\n\n"
+    "```bash\npython app.py\n```\n\n"
+    "Le point d'entrée : [app.py](<{racine}/app.py>)"
+)
+
+
+def test_s5_est_vert_quand_la_fin_se_raconte_et_dit_comment_essayer(tmp_path: Path) -> None:
+    """Les trois constats, dans l'ordre : le récit, le lien qui existe, le jugement."""
+    api = FausseAPI(moteur=_moteur_qui_ecrit_l_application, recit=RECIT_COMPLET)
+    juge = _juge_oui()
+    issue, ctx = _banc(tmp_path, api, juge=juge).jouer(_scenario("S5"))
+
+    assert issue.vert, issue.motif
+    assert "1 fichier(s) du livrable en lien" in issue.motif
+    libelles = [e.libelle for e in ctx.journal.etapes]
+    assert "récit de fin" in libelles
+    assert libelles.index("récit de fin") < libelles.index("jugement du modèle")
+
+
+def test_s5_attend_le_recit_au_lieu_de_lire_le_fil_une_seule_fois(tmp_path: Path) -> None:
+    """Le défaut mesuré le 2026-09-23 (passage `20260923-185330`).
+
+    Le run était terminé, le produit marchait, et S5 était rouge : le récit part
+    **après** que le run est soldé — sa rédaction est un appel modèle —, si bien
+    que le fil relu dans la foulée ne portait encore que le lancement. L'oracle
+    lit donc jusqu'à `ATTENTE_RECIT_S`, et c'est ce que ce test tient : le récit
+    n'arrive qu'à la troisième lecture, et S5 est vert.
+    """
+    api = FausseAPI(
+        moteur=_moteur_qui_ecrit_l_application, recit=RECIT_COMPLET, recit_apres=3
+    )
+    issue, _ctx = _banc(tmp_path, api, juge=_juge_oui()).jouer(_scenario("S5"))
+
+    assert issue.vert, issue.motif
+    assert api.lectures_du_fil >= 3, "le fil a bien été relu"
+
+
+def test_s5_est_rouge_quand_la_fin_du_run_n_ecrit_rien(tmp_path: Path) -> None:
+    """Le produit d'avant ce lot : le dernier message du fil reste le lancement.
+
+    C'est la contre-épreuve du test précédent — sans elle, « le fil porte un
+    récit » serait vrai de n'importe quel fil qui porte deux messages.
+    """
+    api = FausseAPI(moteur=_moteur_qui_ecrit_l_application, recit=None)
+    juge = _juge_oui()
+    issue, _ctx = _banc(tmp_path, api, juge=juge).jouer(_scenario("S5"))
+
+    assert not issue.vert
+    assert not issue.empechement
+    assert "n'a rien écrit dans le fil" in issue.motif
+    assert juge.saisines == [], "on ne saisit pas le juge quand il n'y a rien à juger"
+
+
+def test_s5_est_rouge_quand_le_recit_ne_lie_aucun_fichier_existant(tmp_path: Path) -> None:
+    """Un chemin cité qui ne mène à rien est un geste mort, pas un lien."""
+    api = FausseAPI(
+        moteur=_moteur_qui_ecrit_l_application,
+        recit="Tapez `python app.py`. Voir [le guide](<{racine}/GUIDE.md>)",
+    )
+    issue, _ctx = _banc(tmp_path, api).jouer(_scenario("S5"))
+
+    assert not issue.vert
+    assert "aucun fichier existant du livrable" in issue.motif
+    assert "app.py" in issue.motif, "le rouge dit ce qui est réellement sur le disque"
+
+
+def test_s5_ne_compte_pas_un_lien_ecrit_dans_la_forme_que_l_ecran_ne_rend_pas(
+    tmp_path: Path,
+) -> None:
+    """La forme **nue** n'est pas un geste à l'écran, donc elle ne compte pas ici.
+
+    `apps/web/lib/markdown.ts` ne fait un fichier que d'une destination bornée
+    (`[x](<…>)`) : compter la forme nue rendrait S5 vert sur un récit dont
+    personne ne pourrait rien ouvrir.
+    """
+    api = FausseAPI(
+        moteur=_moteur_qui_ecrit_l_application,
+        recit="Tapez `python app.py`. Voir [app.py]({racine}/app.py)",
+    )
+    issue, _ctx = _banc(tmp_path, api).jouer(_scenario("S5"))
+
+    assert not issue.vert
+    assert "aucun fichier existant du livrable" in issue.motif
+
+
+def test_s5_saisit_le_juge_avec_le_livrable_reel_et_le_recit(tmp_path: Path) -> None:
+    """Le juge lit ce qui est **sur le disque**, jamais un livrable que le banc raconte."""
+    api = FausseAPI(moteur=_moteur_qui_ecrit_l_application, recit=RECIT_COMPLET)
+    juge = _juge_oui()
+    _banc(tmp_path, api, juge=juge).jouer(_scenario("S5"))
+
+    saisine = juge.saisines[0]
+    assert POINT_D_ENTREE in saisine["livrable"]
+    assert "python app.py" in saisine["recit"]
+    assert saisine["reponse"] != ""
+
+
+def test_s5_est_rouge_quand_le_juge_dit_qu_on_ne_sait_pas_essayer(tmp_path: Path) -> None:
+    api = FausseAPI(moteur=_moteur_qui_ecrit_l_application, recit=RECIT_COMPLET)
+    juge = JugeQuiDit(Avis(nomme=False, pourquoi="aucune commande n'est donnée"))
+    issue, _ctx = _banc(tmp_path, api, juge=juge).jouer(_scenario("S5"))
+
+    assert not issue.vert
+    assert not issue.empechement
+    assert "ne dit pas comment essayer" in issue.motif
+
+
+def test_s5_est_un_empechement_quand_le_juge_s_abstient(tmp_path: Path) -> None:
+    """Même asymétrie qu'en S4 : une panne de quota n'est pas un défaut du produit."""
+    api = FausseAPI(moteur=_moteur_qui_ecrit_l_application, recit=RECIT_COMPLET)
+    juge = JugeQuiDit(Avis(nomme=False, pourquoi="juge injoignable : 429", lisible=False))
+    issue, _ctx = _banc(tmp_path, api, juge=juge).jouer(_scenario("S5"))
+
+    assert not issue.vert
+    assert issue.empechement
+    assert "n'a pas pu être rendu" in issue.motif
+
+
+def test_s5_est_rouge_quand_le_run_n_aboutit_pas(tmp_path: Path) -> None:
+    """Rien à essayer : le scénario s'arrête avant de demander quoi que ce soit."""
+
+    def moteur(run: RunFactice, racine: Path) -> None:
+        run.statut = EXECUTION_ECHEC
+
+    api = FausseAPI(moteur=moteur, recit=RECIT_COMPLET)
+    issue, _ctx = _banc(tmp_path, api).jouer(_scenario("S5"))
+
+    assert not issue.vert
+    assert "il n'y a rien à essayer" in issue.motif
+
+
+def test_le_recit_se_reconnait_a_sa_place_jamais_a_ses_mots(tmp_path: Path) -> None:
+    """#746 à la lettre : la sonde cherche un **rattachement**, pas un vocabulaire.
+
+    Deux fils portant exactement les mêmes mots : dans le premier, le second
+    message d'agent porte le `run_id` du run — c'est un récit ; dans le second
+    il ne le porte pas, et il n'en est pas un. Un lexique les classerait pareil.
+    """
+    api = FausseAPI(moteur=_moteur_qui_ecrit_l_application)
+    ctx = _banc(tmp_path, api).contexte()
+    api.fils["c"] = [
+        {"auteur": "utilisateur", "contenu": "vas-y", "run_id": ""},
+        {"auteur": "orchestrateur", "contenu": "Run run-1 ouvert.", "run_id": "run-1"},
+        {"auteur": "orchestrateur", "contenu": "Voilà ce que ça a produit.", "run_id": "run-1"},
+    ]
+    api.fils["d"] = [
+        {"auteur": "utilisateur", "contenu": "vas-y", "run_id": ""},
+        {"auteur": "orchestrateur", "contenu": "Run run-1 ouvert.", "run_id": "run-1"},
+        {"auteur": "orchestrateur", "contenu": "Voilà ce que ça a produit.", "run_id": ""},
+    ]
+
+    assert _recit_de_fin(ctx, "c", "run-1") == "Voilà ce que ça a produit."
+    assert _recit_de_fin(ctx, "d", "run-1") == ""
+
+
+def test_un_lien_vers_un_fichier_hors_de_la_racine_n_est_pas_du_livrable(
+    tmp_path: Path,
+) -> None:
+    """Le récit parle du livrable : un fichier d'ailleurs ne le prouve pas."""
+    racine = tmp_path / "projet"
+    racine.mkdir()
+    (racine / "app.py").write_text("print('x')\n", encoding="utf-8")
+    ailleurs = tmp_path / "ailleurs.txt"
+    ailleurs.write_text("x\n", encoding="utf-8")
+
+    dedans = f"[app.py](<{(racine / 'app.py').as_posix()}>)"
+    dehors = f"[ailleurs](<{ailleurs.as_posix()}>)"
+
+    assert _fichiers_lies(dedans, racine) == ["app.py"]
+    assert _fichiers_lies(dehors, racine) == []
+
+
 # --- Le périmètre exclu, sur le disque --------------------------------------
 
 
@@ -1171,6 +1411,25 @@ def test_l_atelier_donne_un_dossier_par_scenario(tmp_path: Path) -> None:
     assert atelier.dossier("s2") != premier
     assert atelier.retirer()
     assert not atelier.racine.exists()
+
+
+def test_un_scenario_rejoue_obtient_une_autre_racine(tmp_path: Path) -> None:
+    """La promesse de `banc.jouer` — « un scénario rejoué déclare un autre projet
+    jetable » —, tenue par le dossier (#1224).
+
+    Elle ne l'était pas : le même nom rendait la même racine, et une racine déjà
+    déclarée fait refuser la déclaration (`POST /api/projets` → 422). Le rejeu
+    d'un scénario non déterministe mourait donc sur son premier appel — mesuré le
+    2026-09-23 sur S5, et vrai de S2 et S4 depuis qu'ils sont rejouables.
+    """
+    atelier = Atelier.pour("20260923-101010", environnement={VARIABLE_ATELIER: str(tmp_path)})
+
+    premier = atelier.dossier("s5-essayer")
+    second = atelier.dossier("s5-essayer")
+
+    assert premier.name == "s5-essayer", "la première tentative garde son nom nu"
+    assert second != premier
+    assert second.is_dir()
 
 
 # --- ③ Le rapport -----------------------------------------------------------
