@@ -41,7 +41,11 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { BanniereErreurApi } from "@/components/BanniereErreurApi";
+import {
+  BanniereErreurApi,
+  ContenuIndisponible,
+  useEcranEnPanne,
+} from "@/components/BanniereErreurApi";
 import { IconeDossier, IconePlus } from "@/components/Icones";
 import { BadgeEtat, Bouton, Carte, EtatVide } from "@/components/Primitives";
 import {
@@ -323,6 +327,7 @@ export function ListeProjets({ apresEcriture }: Props = {}) {
   // d'outillage à celle d'équipe : sans elles, l'équipe d'un projet neuf se
   // dériverait d'une analyse qui n'a rien à lire (#1031).
   const [choixOutillage, setChoixOutillage] = useState<ChoixOutillage[]>([]);
+  const enPanne = useEcranEnPanne(erreur);
 
   const recharger = useCallback(async () => {
     try {
@@ -448,8 +453,13 @@ export function ListeProjets({ apresEcriture }: Props = {}) {
         )}
         {/* « Aucun projet » n'est dit que si la liste a vraiment été lue :
             l'afficher sur une API injoignable ferait passer une panne pour un
-            backlog vide, et inviterait à re-déclarer des projets déjà là. */}
-        {!chargement && erreur === null && projets.length === 0 && (
+            backlog vide, et inviterait à re-déclarer des projets déjà là. En
+            panne, c'est la panne qui prend sa place (#1217) ; une liste déjà
+            lue reste, elle — on est peut-être en train d'en modifier un. */}
+        {!chargement && enPanne && projets.length === 0 && (
+          <ContenuIndisponible quoi="les projets déclarés" />
+        )}
+        {!chargement && !enPanne && projets.length === 0 && (
           <EtatVide
             icone={IconeDossier}
             message="Aucun projet déclaré. Les exécutions travaillent alors dans un espace jetable et leurs livrables restent dans le dossier de sortie — déclarer un projet, c'est leur donner une adresse."

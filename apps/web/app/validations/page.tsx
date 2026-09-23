@@ -20,7 +20,11 @@
  * attente » tout court se lit comme un état de l'orchestration entière.
  */
 
-import { BanniereErreurApi } from "@/components/BanniereErreurApi";
+import {
+  BanniereErreurApi,
+  ContenuIndisponible,
+  useEcranEnPanne,
+} from "@/components/BanniereErreurApi";
 import { IconeHistorique, IconeValidations } from "@/components/Icones";
 import { FileValidations } from "@/components/PanneauValidations";
 import { Carte, EnTeteSection, EtatVide } from "@/components/Primitives";
@@ -43,6 +47,7 @@ export default function PageValidations() {
   const tranchees = validations.filter(
     (v) => v.statut !== VALIDATION_EN_ATTENTE,
   );
+  const enPanne = useEcranEnPanne(erreur);
 
   return (
     <>
@@ -51,6 +56,24 @@ export default function PageValidations() {
         <p className="text-corps text-texte-secondaire">
           Chargement des demandes…
         </p>
+      ) : enPanne ? (
+        // En panne (#1217) : « rien encore » ou « aucune en attente » se
+        // liraient comme la réponse de la lecture qui vient d'échouer, et
+        // l'historique comme la trace à jour. Les demandes déjà lues restent,
+        // elles : on y tranche, et un refus motivé en cours de frappe ne doit
+        // pas partir avec une panne de quelques secondes.
+        <>
+          {enAttente.length > 0 && (
+            <FileValidations validations={validations} decider={decider} />
+          )}
+          <ContenuIndisponible
+            quoi={
+              enAttente.length > 0
+                ? `les arbitrages déjà tranchés sur ${projet.nom}`
+                : `les demandes d'arbitrage de ${projet.nom}`
+            }
+          />
+        </>
       ) : (
         <>
           {/* La région live de l'écran (#538) : elle annonce les décisions

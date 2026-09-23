@@ -42,7 +42,11 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { BanniereErreurApi } from "@/components/BanniereErreurApi";
+import {
+  BanniereErreurApi,
+  ContenuIndisponible,
+  useEcranEnPanne,
+} from "@/components/BanniereErreurApi";
 import { IconeAgents, IconeCapacite, IconePlus } from "@/components/Icones";
 import {
   BadgeEtat,
@@ -131,6 +135,8 @@ export function ListeAgents({
     [lignes, filtres, tri],
   );
 
+  const enPanne = useEcranEnPanne(erreur);
+
   const libelleCible = ONGLETS_AGENT.find(
     (onglet) => onglet.cle === ongletCible,
   );
@@ -164,6 +170,11 @@ export function ListeAgents({
 
       {chargement ? (
         <p className="text-corps text-neutral-500">Chargement du catalogue…</p>
+      ) : enPanne ? (
+        // Pas « aucun agent au catalogue » sous le bandeau (#1217) : un
+        // catalogue qu'on n'a pas lu n'est pas un catalogue vide, et l'inviter à
+        // créer un agent ferait doublon avec ceux qui existent déjà.
+        <ContenuIndisponible quoi="le catalogue des agents" />
       ) : (
         <>
           {lignes.length >= MINIMUM_POUR_FILTRER && (

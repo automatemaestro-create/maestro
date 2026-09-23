@@ -28,6 +28,7 @@
 
 import { useMemo } from "react";
 
+import { useEcranEnPanne } from "@/components/BanniereErreurApi";
 import { FilActivite } from "@/components/FilActivite";
 import type { PorteeProjet } from "@/lib/api";
 import { fusionnerJournal } from "@/lib/journal";
@@ -47,6 +48,9 @@ export function JournalRun({
   revision: number;
 }) {
   const historique = useJournal(portee, { runId }, revision);
+  // Le magasin perdu en route compte aussi (#1217) : cette lecture-ci n'a
+  // peut-être pas encore échoué, mais son « aucun événement » ne dirait rien.
+  const enPanne = useEcranEnPanne(historique.erreur);
 
   const evenements = useMemo(
     () =>
@@ -64,7 +68,7 @@ export function JournalRun({
       messageVide={
         historique.chargement
           ? "Lecture du journal de ce run…"
-          : historique.erreur !== null
+          : enPanne
             ? "Journal indisponible — la lecture a échoué."
             : "Aucun événement consigné pour ce run."
       }

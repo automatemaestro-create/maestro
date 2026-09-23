@@ -25,9 +25,10 @@
  *   sépare, à l'œil autant qu'en toutes lettres.
  *
  * L'écran **vide n'est pas une panne** (§2.1.1) : il nomme le projet, dit ce qui
- * apparaîtra ici et propose le geste qui le remplit. Une API injoignable, elle,
- * garde sa bannière et **rien d'autre** — conseiller « lancez un run » à qui n'a
- * pas de backend serait un contresens.
+ * apparaîtra ici et propose le geste qui le remplit. Un écran en panne, lui,
+ * garde sa bannière et dit à la place de la liste qu'il n'a pas pu la lire
+ * (#1217) — conseiller « lancez un run » à qui n'a pas de backend serait un
+ * contresens, et une liste d'avant la panne se lirait comme l'état du moment.
  *
  * Depuis #475 **une carte s'ouvre** : elle mène à la vue du run, qui porte son
  * Kanban et sa progression. Ce qui reste inchangé est l'autre renvoi — une attente
@@ -40,7 +41,11 @@
  * l'identique.
  */
 
-import { BanniereErreurApi } from "@/components/BanniereErreurApi";
+import {
+  BanniereErreurApi,
+  ContenuIndisponible,
+  useEcranEnPanne,
+} from "@/components/BanniereErreurApi";
 import { IconeRuns } from "@/components/Icones";
 import { CarteRun } from "@/components/runs/EtatRun";
 import { BadgeEtat, EnTeteSection, EtatVide } from "@/components/Primitives";
@@ -62,6 +67,7 @@ export function ListeRuns() {
   // lui. Le libellé vient de `PAGE_DU_FIL` et non de ce fichier : les trois
   // écrans vides qui nomment ce geste bougent ensemble ou pas du tout.
   const lancer = entreeParLibelle(PAGE_DU_FIL);
+  const enPanne = useEcranEnPanne(erreur);
 
   return (
     <>
@@ -81,6 +87,13 @@ export function ListeRuns() {
       )}
       {chargement ? (
         <p className="text-sm text-neutral-500">Chargement des runs…</p>
+      ) : enPanne ? (
+        // En panne (#1217), ni l'état vide ni la liste d'avant : l'un se lirait
+        // comme « aucun run », l'autre comme leur état à jour — « EN COURS » sur
+        // un run qui s'est peut-être soldé depuis. La liste est un index : ses
+        // gestes n'ont aucune saisie en cours à perdre, et chaque run les
+        // retrouve dans sa vue, qui garde le run déjà lu.
+        <ContenuIndisponible quoi={`les runs de ${projet.nom}`} />
       ) : executions.length > 0 ? (
         <section aria-label="Runs du projet">
           <EnTeteSection
@@ -108,7 +121,7 @@ export function ListeRuns() {
             ))}
           </ul>
         </section>
-      ) : erreur !== null ? null : (
+      ) : (
         // Rien sur ce projet, et l'API répond : ce n'est pas une panne, il n'y a
         // simplement pas encore eu de run ici (§2.1.1, convention #281 — l'écran
         // vide **nomme** le projet).

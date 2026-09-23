@@ -21,6 +21,7 @@
 
 import Link from "next/link";
 
+import { ContenuIndisponible } from "@/components/BanniereErreurApi";
 import { IconeAgent, IconeMcp } from "@/components/Icones";
 import {
   BadgeEtat,
@@ -47,12 +48,19 @@ export function PoolProjet({
   pool,
   erreur,
   chargement,
+  enPanne = false,
   usage,
   onChangement,
 }: {
   pool: IntegrationPoolMcp[];
   erreur: string | null;
   chargement: boolean;
+  /**
+   * L'écran est en panne (#1217) : un pool vide n'est alors pas « aucune
+   * intégration », c'est un pool qu'on n'a pas pu lire. Un pool déjà lu reste —
+   * on y retire une intégration, on y règle un secret.
+   */
+  enPanne?: boolean;
   usage: UsageDuPool;
   onChangement: () => void;
 }) {
@@ -83,6 +91,8 @@ export function PoolProjet({
         >
           Pool invalide : {erreur}
         </p>
+      ) : pool.length === 0 && enPanne ? (
+        <ContenuIndisponible quoi="le pool de ce projet" />
       ) : pool.length === 0 ? (
         <EtatVide
           icone={IconeMcp}

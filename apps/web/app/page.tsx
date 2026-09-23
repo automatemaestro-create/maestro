@@ -59,9 +59,18 @@
  * Depuis #281 ce vide est celui **d'un projet** : tout ce que la page rend est
  * cadré sur le projet actif, et `PosteVide` le nomme au lieu de laisser croire
  * que rien ne tourne nulle part.
+ *
+ * Et **rien à lire** (#1217) : quand la lecture échoue, les tuiles, le run au
+ * centre, l'état des runs et l'aperçu d'activité cèdent leur place à un seul
+ * `ContenuIndisponible` — sous le bandeau, un « Aucun » ou une tuile figée se
+ * lisait comme la réponse de la lecture qui venait d'échouer.
  */
 
-import { BanniereErreurApi } from "@/components/BanniereErreurApi";
+import {
+  BanniereErreurApi,
+  ContenuIndisponible,
+  useEcranEnPanne,
+} from "@/components/BanniereErreurApi";
 import { FilActivite } from "@/components/FilActivite";
 import { IndicateursTableauDeBord } from "@/components/IndicateursTableauDeBord";
 import { PanneauBriefs } from "@/components/PanneauBriefs";
@@ -128,12 +137,18 @@ export default function TableauDeBord() {
   // Ce que le centre a promu : `EtatDesRuns` ne le rendra plus une seconde fois.
   const promus = new Set(quiTournent.map((run) => run.run_id));
 
+  // En panne — une lecture qui a échoué, ou le magasin que le shell dit perdu
+  // alors que cet écran, déjà chargé, n'a rien relu (#1206) —, rien de ce que
+  // l'écran résume n'est la donnée : ni les tuiles, dernières valeurs lues ou
+  // zéros d'une lecture qui n'a rien rendu, ni « aucun run en cours », ni
+  // « aucun événement reçu ». La panne prend leur place (#1217).
+  const enPanne = useEcranEnPanne(erreur);
+
   // Rien reçu **sur ce projet**, et l'API répond : le poste n'est pas en panne,
   // il n'a pas encore de run à montrer ici (#186 — le mode réel est désormais le
   // défaut du lanceur local ; #281 — la portée est celle du projet actif). On
-  // explique quoi faire au lieu d'aligner quatre panneaux vides. Une API
-  // injoignable, elle, garde les panneaux : sa bannière dit déjà le problème, et
-  // conseiller « lancez un run » serait alors un contresens.
+  // explique quoi faire au lieu d'aligner quatre panneaux vides. Un écran en
+  // panne ne l'atteint pas : conseiller « lancez un run » serait un contresens.
   //
   // Les **exécutions** entrent dans le compte depuis #322, et ce n'était pas un
   // oubli anodin : un run arrêté sur son brief ne crée aucune tâche, n'ouvre
@@ -143,7 +158,6 @@ export default function TableauDeBord() {
   // de lancer un run, affiché à quelqu'un dont le run attend justement qu'on le
   // regarde.
   const rienARegarder =
-    erreur === null &&
     taches.length === 0 &&
     evenements.length === 0 &&
     validations.length === 0 &&
@@ -154,6 +168,17 @@ export default function TableauDeBord() {
       <BanniereErreurApi erreur={erreur} />
       {chargement ? (
         <p className="text-sm text-neutral-500">Chargement de l&apos;état…</p>
+      ) : enPanne ? (
+        <>
+          {/* Ce qui attend un geste reste : ces panneaux ne rendent rien quand
+              rien n'attend, et en retirer un pendant la panne emporterait le
+              motif d'un refus en cours de frappe. Le reste est un constat, et
+              c'est lui que la panne remplace. */}
+          <PanneauBriefs executions={executions} />
+          <PanneauValidations validations={validations} decider={decider} />
+          <PanneauRunsImmobiles executions={executions} relancer={relancerRun} />
+          <ContenuIndisponible quoi={`l'état de ${projet.nom}`} />
+        </>
       ) : rienARegarder ? (
         <PosteVide projet={projet} connecte={connecte} />
       ) : (

@@ -59,6 +59,7 @@
 
 import { useRef, useState } from "react";
 
+import { useEcranEnPanne } from "@/components/BanniereErreurApi";
 import { IconeDecision, IconeHypothese } from "@/components/Icones";
 import { PanneauDetailTache } from "@/components/PanneauDetailTache";
 import {
@@ -89,6 +90,9 @@ export function DecisionsRun({
   revision: number;
 }) {
   const { decisions, chargement, erreur } = useDecisionsRun(runId, revision);
+  // Le magasin perdu en route compte aussi (#1217) : cette lecture-ci n'a
+  // peut-être pas encore échoué, mais son « aucune décision » ne dirait rien.
+  const enPanne = useEcranEnPanne(erreur);
   // La tâche dont le panneau de détail est ouvert, et le bouton qui l'a ouvert —
   // c'est l'appelant qui rend le focus à la fermeture, lui seul connaissant le
   // déclencheur (`PanneauDetailTache`).
@@ -113,7 +117,7 @@ export function DecisionsRun({
           message={
             chargement
               ? "Lecture des décisions de ce run…"
-              : erreur !== null
+              : enPanne
                 ? "Décisions indisponibles — la lecture a échoué."
                 : "Aucune décision tranchée seule sur ce run : aucun agent n'a eu à trancher hors de son brief, et aucune question n'est restée sans réponse."
           }
