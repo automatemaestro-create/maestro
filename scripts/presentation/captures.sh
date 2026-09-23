@@ -9,7 +9,8 @@
 #   2. rouvre L'ÉTAT DU BANC — ce qu'un passage des scénarios de référence (#1148)
 #      a laissé, sur le jeu de données à part du banc (#1164) —, en dit l'âge et le
 #      décrit dans `<sortie>/etat.json` ;
-#   3. démarre l'API RÉELLE sur cet état (`maestro.controltower.cli --etat-banc`) ;
+#   3. démarre l'API RÉELLE sur cet état (`maestro.controltower.cli --etat-banc`), en lui
+#      donnant le port de l'UI servie au 4 : elle n'admet que l'origine de son front (#1233) ;
 #   4. construit l'UI (`next build`) et la sert (`next start`) ;
 #   5. lance captures.mjs, qui photographie les pages du menu principal PUIS
 #      filme les parcours de `parcours.mjs`.
@@ -242,8 +243,15 @@ if [ "$DEMARRER" = 1 ]; then
     exit 1
   fi
 
+  # L'API n'admet que les origines de son front (#638), et son front est ICI l'UI que ce script
+  # sert sur :$PORT_UI — pas celle de `start.sh` (3000), ni celle qu'un poste ou un worktree a
+  # réglée. Sans ces deux variables, elle retombait sur :3000 et refusait chaque appel du navigateur
+  # (#1233 : dix pages « API injoignable », aucun parcours filmé). Le port suffit, Python en tire les
+  # deux écritures de l'origine ; `MAESTRO_API_ORIGINES` est vidé parce qu'il l'emporterait sur le
+  # port, et que la stack des captures n'a pas d'autre client que l'UI qu'elle sert.
   echo "[captures] API réelle sur l'état du banc, :${PORT_API} (log : $LOG_DIR_REL/api.log)"
-  (cd "$RACINE" && nohup "$PYTHON" -m maestro.controltower.cli --port "$PORT_API" --etat-banc \
+  (cd "$RACINE" && MAESTRO_PORT_UI="$PORT_UI" MAESTRO_API_ORIGINES="" \
+    nohup "$PYTHON" -m maestro.controltower.cli --port "$PORT_API" --etat-banc \
     >"$LOG_DIR/api.log" 2>&1 &)
   if ! attendre_http "http://127.0.0.1:${PORT_API}/api/sante" 30; then
     echo "[captures] ⚠ l'API n'a pas démarré — voir $LOG_DIR_REL/api.log" >&2
