@@ -56,13 +56,9 @@
 
 import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 
+import { CarteDuFil } from "@/components/chat/CarteDuFil";
 import { IconeChevronBas, IconeDossier } from "@/components/Icones";
-import {
-  BadgeEtat,
-  Bouton,
-  Carte,
-  EnTeteSection,
-} from "@/components/Primitives";
+import { BadgeEtat, Bouton, Carte } from "@/components/Primitives";
 import {
   genererOutillage,
   recommandationOutillage,
@@ -244,29 +240,21 @@ export function useConclusionOutillage(
   );
 
   return (
-    <Carte
-      balise="section"
-      ton="attention"
-      densite="aeree"
-      aria-label="Outillage à écrire"
+    /* ⚠ Le nom du projet n'est **pas** dans le titre, et c'est un constat du
+       regard neuf : `EnTeteSection` rend ses titres en capitales, si bien que
+       « mini-CRM (démo) » s'y affichait « MINI-CRM (DÉMO) » — le nom perdait sa
+       casse à l'endroit même où il sert à vérifier dans quel dossier on écrit,
+       et ne s'accordait plus avec le sélecteur de projet du bandeau ni avec la
+       liste des projets. Il va donc dans l'`aside`, qui ne transforme rien, et
+       se redit dans la phrase de compte. */
+    <CarteDuFil
+      libelle="Outillage à écrire"
+      icone={IconeDossier}
+      titre="Écrire l'outillage ?"
+      aside={
+        <span className="text-annexe text-texte-secondaire">{projet.nom}</span>
+      }
     >
-      {/* ⚠ Le nom du projet n'est **pas** dans le titre, et c'est un constat du
-          regard neuf : `EnTeteSection` rend ses titres en capitales, si bien que
-          « mini-CRM (démo) » s'y affichait « MINI-CRM (DÉMO) » — le nom perdait sa
-          casse à l'endroit même où il sert à vérifier dans quel dossier on écrit,
-          et ne s'accordait plus avec le sélecteur de projet du bandeau ni avec la
-          liste des projets. Il va donc dans l'`aside`, qui ne transforme rien, et
-          se redit dans la phrase de compte. */}
-      <EnTeteSection
-        niveau={3}
-        icone={IconeDossier}
-        titre="Écrire l'outillage ?"
-        ton="attention"
-        className="mb-3"
-        aside={
-          <span className="text-annexe text-texte-secondaire">{projet.nom}</span>
-        }
-      />
       {rapport !== null ? (
         <RapportCourt rapport={rapport} />
       ) : reporte ? (
@@ -356,7 +344,7 @@ export function useConclusionOutillage(
           {refus}
         </p>
       )}
-    </Carte>
+    </CarteDuFil>
   );
 }
 

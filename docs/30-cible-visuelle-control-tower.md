@@ -2664,6 +2664,62 @@ passage** — le reste technique n'est plus dans le motif mais dans la **phrase 
 `maestro/` l'écrivent ainsi. La même phrase sert le client d'API et l'écran. Les tickets #946 et
 #1036 portent `veille::arbitree` depuis cette veille.
 
+#### Le fil de la Control Tower — 2026-09-23 (#1225, lot 4 de #1221, jouée en run)
+
+Surface : le fil de conversation — `components/Conversation.tsx` et `components/chat/*` —, donc
+ses **deux emplacements** (`/chat`, la colonne de droite) et l'onglet Chat d'une fiche agent.
+Ouverte par l'étape 7 de `/ticket-start` sur un ticket qui **décide** de l'écran (#1009). Décision
+complète en commentaire de **#1225**, captures dans l'atelier de la session. La question, reprise
+du *Rendu attendu* du ticket : « à qui je parle, qu'est-ce qu'il fait en ce moment, et qu'est-ce que
+je peux faire ici ? »
+
+**Mesuré avant**, sur la vraie stack (état du banc, 1440×900) : l'identité est un **pied**, posé
+sous le *dernier* message d'un tour et **aligné à droite** — donc du côté de la personne, sous une
+réponse alignée à gauche ; l'attente est un `<li>` d'italique au pied du `<ol>`, sans rapport de
+forme avec le tour qui va s'écrire ; aucun message n'a d'action ; et six objets du même fil portent
+**deux** enveloppes — cinq `Carte ton="attention"` et un `div` nu (la fin d'un run).
+
+**Vérifié en direct** (quatre captures, 1440×900, 2026-09-23) : **Duck.ai** — l'identité **ouvre**
+le tour (pastille ronde + nom du modèle au-dessus de la réponse), et un rail d'actions sous
+**chaque** message, des deux côtés. **ChatGPT** (déconnecté) — la demande en **bulle grise**, la
+réponse en **texte de page**, les actions en **icônes nues** sous elle ; et le `<form>` du composeur
+porte ses annonces d'état en attributs (`data-announcement-thinking="Réflexion"`,
+`…-complete="Réponse terminée"`, `…-stopped="Réponse interrompue"`). **Perplexity** — ce qu'il a
+fait tient sur **une ligne au-dessus de la réponse**, avec son icône et sa durée (« Recherche
+terminée 3s »), et sa carte « Sources » est la seule enveloppe de la page. **Zulip** (flux public
+`#issues`) — **gouttière d'identité** : avatar + nom + heure une seule fois en tête d'un groupe.
+
+**Non vérifié, donc non cité** : **Claude Code**, pourtant cité par la personne — son fil est un
+terminal, il n'y a pas d'UI capturable, et aucun parti pris ne s'y appuie.
+
+**Cinq partis pris.** **Un tour s'ouvre par qui parle, il ne se ferme plus par un pied qui le
+redit** *(Zulip, Duck.ai)* · **la personne garde sa bulle, l'interlocuteur garde le texte de la
+page** — parti pris 2 de #876, **confirmé** sur deux références de plus *(ChatGPT, Duck.ai)* ·
+**ce qu'il fait en ce moment se lit sur une ligne, à la place exacte où l'identité s'écrit**
+*(Perplexity, ChatGPT)* · **chaque message porte ses actions, en icônes nues sous lui, jamais au
+survol seul** *(ChatGPT, Duck.ai)* · **tout ce qui n'est pas de la prose porte la même enveloppe**
+*(Perplexity, Duck.ai)*.
+
+**Refusés sur place, avec leur raison** : l'avatar-image de Zulip — aucune identité nouvelle (§6.1),
+traduit en pastille d'**initiale** ; les actions **au survol seul** de Zulip — inatteignables au
+doigt et au clavier (`a11y.test.tsx`, WCAG 2.2 §2.5.8) ; une couleur d'accent pour marquer
+l'interlocuteur — l'état ne tient jamais à la couleur seule (§1.6), et `accent` est la couleur
+d'action ; un bloc de plein format de plus dans le corps de `/chat` — le fil en est le seul bloc
+permanent (§4) ; les pouces et le « 2ᵉ avis » de Duck.ai — aucun canal de retour dans le produit.
+
+**Ce que la veille n'a pas regardé** : le composeur (déjà tranché trois fois — #724, #866,
+#873/#899), le mobile et les points de rupture (#873), les liens de fichiers (livrés par #1224), et
+la direction visuelle, qui reste l'affaire de « Le niveau visuel » (#1124).
+
+**Puis trois variantes**, rendues sur la vraie stack et défaites de l'arbre une à une (#1009) : **A**
+l'en-tête de tour avec médaillon, **B** la gouttière d'identité à la Zulip, **C** la ligne
+d'ouverture sans médaillon. Le sous-agent `regard-neuf` a retenu **A**, sur mesure : B rétrécit la
+bulle de la personne de ~90 px en `/chat` et fait passer le premier paragraphe de 2 à 3 lignes dans
+la colonne de 320 px — elle bouge ce qui ne devait pas bouger —, et C se contente de remonter le
+pied existant, sans point d'ancrage pour l'œil ni pour l'état à venir. Sa **réserve** — aucune des
+quatre références ne médaillonne l'utilisateur — a été tranchée à l'implémentation : le médaillon
+est réservé à l'interlocuteur. **Livré par #1225** ; docs/05 §2.9 en porte le détail.
+
 ---
 
 ### 5.8 Un écran se juge contre l'attente — 2026-09-17 (chantier #972)

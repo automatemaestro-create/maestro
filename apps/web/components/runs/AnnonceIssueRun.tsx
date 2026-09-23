@@ -21,7 +21,8 @@
  *    Request GitHub, où un commentaire porte un cadre et un avatar, là où un
  *    événement n'est qu'une ligne à icône dans le même flux. Un message écrit
  *    par personne ne prend pas la forme d'un propos tenu par quelqu'un. D'où :
- *    aucune enveloppe, aucun avatar, aucune signature d'auteur ;
+ *    aucun avatar, aucune signature d'auteur — et, jusqu'à #1225, aucune
+ *    enveloppe (voir ci-dessous : l'enveloppe est revenue, la bulle non) ;
  * 2. **le livrable a une place FIXE, et « aucun » s'y écrit** — d'après la page
  *    d'un run terminé de GitHub Actions, dont la colonne `Artifacts` affiche
  *    `–` à la place qu'elle occuperait. La ligne « Livrable : … » est donc
@@ -63,6 +64,7 @@
 
 import { useState } from "react";
 
+import { CarteDuFil } from "@/components/chat/CarteDuFil";
 import {
   IconeCopier,
   IconeDossier,
@@ -86,6 +88,24 @@ import { hrefRun } from "@/lib/navigation";
  * `compacte` la resserre pour la cloche : mêmes faits, même chemin, mêmes
  * gestes, mais sans le renvoi vers le run (le panneau se referme sur un clic,
  * et il porte déjà ses propres chemins) et sur le pas typographique du panneau.
+ *
+ * ## Ce que #1225 y change : dans le fil, elle porte l'enveloppe des gestes
+ *
+ * Parti pris 5 de la veille de #1225 : *tout ce qui n'est pas de la prose porte
+ * la même enveloppe*, d'après Perplexity (la carte « Sources » est la seule
+ * enveloppe de la page) et Duck.ai. Les cinq autres objets du fil — proposition
+ * de run, équipe, question d'agent, question d'outillage, sa conclusion — sont
+ * des `chat/CarteDuFil` ; la fin d'un run était le seul `div` nu, si bien que
+ * l'événement le plus important du fil était aussi le moins visible.
+ *
+ * Elle prend donc **l'enveloppe**, pas la bulle : `ton="creuse"` et non
+ * `attention`, parce qu'elle ne demande rien — elle raconte. Le parti pris 1 de
+ * la veille de #928 (« un événement, pas une bulle ») tient : ni avatar, ni
+ * signature d'auteur, ni côté dans le fil.
+ *
+ * ⚠ **La cloche garde le rendu nu** (`compacte`). Le panneau de notifications
+ * n'est pas le fil : une carte par fin y empilerait des cadres dans 20 rem, et
+ * cette liste-là n'a jamais eu à s'accorder avec les gestes d'une conversation.
  */
 export function AnnonceIssueRun({
   issue,
@@ -98,55 +118,76 @@ export function AnnonceIssueRun({
   const ton = issue.abouti ? "text-positif-texte" : "text-alerte-texte";
   const fin = issue.execution.fin ?? "";
   const run = hrefRun(issue.execution.run_id);
+  // Les faits, séparés par le **point médian** que le fil emploie partout
+  // ailleurs (« vous · 07:49 », « Agent devops · DevOps ») : juxtaposés par un
+  // simple blanc, ils se lisaient comme une suite de mots plutôt que comme
+  // trois faits distincts (relevé de la relecture visuelle). Les séparateurs
+  // sont `aria-hidden` — un lecteur d'écran marque déjà la frontière entre deux
+  // éléments.
+  const faits = (
+    <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-micro text-texte-secondaire">
+      {/* L'heure de la FIN, et c'est ce qui a écarté la variante B : rangée
+          sous la bulle qui a lancé le run, l'annonce y portait l'heure du
+          lancement. Un run de 53 minutes annonçait sa fin à l'heure où il
+          avait commencé. */}
+      {fin !== "" && (
+        <>
+          <time dateTime={fin} title={formatDateHeure(fin)}>
+            {formatHeureCourte(fin)}
+          </time>
+          <Separateur />
+        </>
+      )}
+      <span>
+        {issue.execution.nb_taches === 1
+          ? "1 tâche"
+          : `${issue.execution.nb_taches} tâches`}
+      </span>
+      <Separateur />
+      <span className="chiffre">{formatCout(issue.execution.cout_usd)}</span>
+      {!compacte && run !== undefined && (
+        <>
+          <Separateur />
+          <LienRenvoi renvoi={{ href: run, libelle: "Voir le run" }} />
+        </>
+      )}
+    </p>
+  );
+
+  if (!compacte) {
+    return (
+      <CarteDuFil
+        ton="creuse"
+        libelle={`Fin du run ${nomDuRun(issue.execution)}`}
+        icone={Icone}
+        /* Le verdict garde sa couleur **dans** le titre : `EnTeteSection` teinte
+           ses titres selon son `ton`, et un `creuse` les rend gris. L'état ne
+           tient pas pour autant à la couleur — il est écrit, et l'icône en est
+           la seconde forme (docs/30 §3.2). */
+        titre={<span className={ton}>{libelleIssue(issue)}</span>}
+      >
+        {/* Le titre du run (#991) : cette annonce est une ligne du fil, et une
+            ligne ne porte pas un brief. */}
+        <p className="text-corps text-texte">{nomDuRun(issue.execution)}</p>
+        <div className="mt-1 flex flex-col gap-1">
+          {faits}
+          <LivrableDuRun issue={issue} />
+        </div>
+      </CarteDuFil>
+    );
+  }
+
   return (
     <div className="flex min-w-0 gap-2">
       {/* Décorative : le libellé à côté dit l'issue en toutes lettres. */}
       <Icone className={`mt-0.5 size-4 shrink-0 ${ton}`} aria-hidden="true" />
       <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <p
-          className={
-            compacte ? "text-annexe text-texte" : "text-corps text-texte"
-          }
-        >
+        <p className="text-annexe text-texte">
           <span className={`font-medium ${ton}`}>{libelleIssue(issue)}</span>
           {" — "}
-          {/* Le titre du run (#991) : cette annonce est une ligne du fil, et une
-              ligne ne porte pas un brief. */}
           {nomDuRun(issue.execution)}
         </p>
-        {/* Les faits, séparés par le **point médian** que le fil emploie partout
-            ailleurs (« vous · 07:49 », « Agent devops · DevOps ») : juxtaposés
-            par un simple blanc, ils se lisaient comme une suite de mots plutôt
-            que comme trois faits distincts (relevé de la relecture visuelle).
-            Les séparateurs sont `aria-hidden` — un lecteur d'écran marque déjà
-            la frontière entre deux éléments. */}
-        <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-micro text-texte-secondaire">
-          {/* L'heure de la FIN, et c'est ce qui a écarté la variante B : rangée
-              sous la bulle qui a lancé le run, l'annonce y portait l'heure du
-              lancement. Un run de 53 minutes annonçait sa fin à l'heure où il
-              avait commencé. */}
-          {fin !== "" && (
-            <>
-              <time dateTime={fin} title={formatDateHeure(fin)}>
-                {formatHeureCourte(fin)}
-              </time>
-              <Separateur />
-            </>
-          )}
-          <span>
-            {issue.execution.nb_taches === 1
-              ? "1 tâche"
-              : `${issue.execution.nb_taches} tâches`}
-          </span>
-          <Separateur />
-          <span className="chiffre">{formatCout(issue.execution.cout_usd)}</span>
-          {!compacte && run !== undefined && (
-            <>
-              <Separateur />
-              <LienRenvoi renvoi={{ href: run, libelle: "Voir le run" }} />
-            </>
-          )}
-        </p>
+        {faits}
         <LivrableDuRun issue={issue} />
       </div>
     </div>

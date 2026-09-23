@@ -378,7 +378,9 @@ describe("le panneau d'assistance", () => {
     poserFilAssistance({ envoi: true });
     rendreAvecEtat(<AssistantFlottant />);
     const panneau = await ouvrirPanneau(utilisateur);
-    expect(within(panneau).getByText("l'assistant répond…")).toBeInTheDocument();
+    // Le nom et l'état sont deux nœuds de l'en-tête de tour depuis #1225.
+    expect(within(panneau).getByText("l'assistant")).toBeInTheDocument();
+    expect(within(panneau).getByText("répond…")).toBeInTheDocument();
   });
 
   it("signale un fil illisible sans se refermer", async () => {

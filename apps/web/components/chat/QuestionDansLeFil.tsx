@@ -59,14 +59,9 @@
 
 import { useId, useState } from "react";
 
+import { CarteDuFil } from "@/components/chat/CarteDuFil";
 import { IconeAide } from "@/components/Icones";
-import {
-  BadgeEtat,
-  Bouton,
-  Carte,
-  ChampTexte,
-  EnTeteSection,
-} from "@/components/Primitives";
+import { BadgeEtat, Bouton, ChampTexte } from "@/components/Primitives";
 import { formatHeureRelative } from "@/lib/format";
 import { useHorloge } from "@/lib/horloge";
 import { questionEchue } from "@/lib/questions";
@@ -118,40 +113,32 @@ export function QuestionDansLeFil({
   };
 
   return (
-    <Carte
-      balise="section"
-      ton="attention"
-      densite="aeree"
-      aria-label={`Question de l'agent ${question.agent}`}
+    /* « Question de l'agent <nom> », et non « Question de <nom> » : le nom
+       d'un agent est déclaré par l'équipe d'un projet, donc arbitraire
+       (`Question.agent`), et « Question de infra » y manquait son élision
+       (#1110). Des deux issues que le ticket ouvre, celle-ci est la seule
+       qui tienne pour **tous** les noms : l'élision française se décide à
+       l'oreille et non à la lettre, si bien qu'une règle dérivée de
+       l'initiale se tromperait au premier sigle, h muet ou « u »
+       semi-voyelle — on supprime la classe de coquilles au lieu de la
+       rétrécir. Le titre dit du même coup exactement ce que l'`aria-label`
+       de la carte annonce. */
+    <CarteDuFil
+      libelle={`Question de l'agent ${question.agent}`}
+      icone={IconeAide}
+      titre={`Question de l'agent ${question.agent}`}
+      aside={
+        echue ? (
+          // L'état ne tient pas à la couleur seule (docs/30 §1.6) : il est
+          // écrit — ici en badge, et en toutes lettres au pied de la carte.
+          <BadgeEtat ton="attention">Reparti sans réponse</BadgeEtat>
+        ) : question.horodatage ? (
+          <span className="text-annexe text-texte-secondaire">
+            demandé {formatHeureRelative(question.horodatage, maintenant)}
+          </span>
+        ) : undefined
+      }
     >
-      {/* « Question de l'agent <nom> », et non « Question de <nom> » : le nom
-          d'un agent est déclaré par l'équipe d'un projet, donc arbitraire
-          (`Question.agent`), et « Question de infra » y manquait son élision
-          (#1110). Des deux issues que le ticket ouvre, celle-ci est la seule
-          qui tienne pour **tous** les noms : l'élision française se décide à
-          l'oreille et non à la lettre, si bien qu'une règle dérivée de
-          l'initiale se tromperait au premier sigle, h muet ou « u »
-          semi-voyelle — on supprime la classe de coquilles au lieu de la
-          rétrécir. Le titre dit du même coup exactement ce que l'`aria-label`
-          de la carte annonce. */}
-      <EnTeteSection
-        niveau={3}
-        icone={IconeAide}
-        titre={`Question de l'agent ${question.agent}`}
-        ton="attention"
-        className="mb-1"
-        aside={
-          echue ? (
-            // L'état ne tient pas à la couleur seule (docs/30 §1.6) : il est
-            // écrit — ici en badge, et en toutes lettres au pied de la carte.
-            <BadgeEtat ton="attention">Reparti sans réponse</BadgeEtat>
-          ) : question.horodatage ? (
-            <span className="text-annexe text-texte-secondaire">
-              demandé {formatHeureRelative(question.horodatage, maintenant)}
-            </span>
-          ) : undefined
-        }
-      />
       {/* Qui demande et à propos de quoi, en une ligne et en place fixe —
           d'après la table « Event · Environments · Comment » de GitHub Actions
           et le troisième manque du banc de #471. Le rôle peut manquer sur une
@@ -241,7 +228,7 @@ export function QuestionDansLeFil({
           {refus}
         </p>
       )}
-    </Carte>
+    </CarteDuFil>
   );
 }
 

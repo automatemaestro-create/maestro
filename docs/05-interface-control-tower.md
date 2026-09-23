@@ -3038,6 +3038,79 @@ non sur l'horloge — une fin qui arrive pendant que le panneau est ouvert reste
 neuve. Couverture :
 [`apps/web/tests/issue-de-run.test.tsx`](../apps/web/tests/issue-de-run.test.tsx).
 
+#### Le fil se lit comme un chat moderne (#1225) — **livré**
+
+La personne, le 2026-09-22 : *« je trouve que le chat est trop robotique et non
+informationnel […] je veux une refonte pour que le chat soit plus visuel. Regarde
+ce qui est fait pour Claude Code, ChatGPT, etc. »* Le lot 4 de #1221 vient
+**après** le streaming (#1222), les lectures (#1223) et le récit de fin (#1224),
+pour que la refonte se choisisse sur le vrai contenu et non sur une capacité qui
+allait changer (#1167).
+
+La question à laquelle un coup d'œil doit répondre : **à qui je parle, qu'est-ce
+qu'il fait en ce moment, et qu'est-ce que je peux faire ici ?** Le fil n'y
+répondait sur aucun des trois points. L'identité était un **pied**, posé sous le
+*dernier* message d'un tour et **aligné à droite** — c'est-à-dire du côté de la
+personne, sous une réponse alignée à gauche : un tour d'agent commençait par du
+texte anonyme, et la seule chose qui disait qui parlait n'arrivait qu'après
+lecture. L'attente était une ligne d'italique au pied du `<ol>`, sans rapport de
+forme avec le tour qui allait s'écrire. Aucun message n'avait d'action. Et la fin
+d'un run était un `div` nu quand les cinq autres gestes du fil étaient des cartes.
+
+**La forme a été choisie sur pièces** (#1009, #980), et les pièces sont dans le
+ticket : quatre références capturées en direct le 2026-09-23 — **Zulip**
+(avatar + nom + heure en tête d'un groupe), **Duck.ai** (pastille + nom
+au-dessus de la réponse, rail d'actions sous chaque message), **ChatGPT** (la
+demande en bulle, la réponse à plat, les actions en icônes nues ; et le composeur
+qui porte `data-announcement-thinking="Réflexion"`), **Perplexity** (« Recherche
+terminée 3s », une ligne au-dessus de la réponse) —, puis trois variantes rendues
+sur la vraie stack et jugées par le sous-agent `regard-neuf` : **A** l'en-tête de
+tour avec médaillon, **B** la gouttière d'identité à la Zulip, **C** la ligne
+d'ouverture sans médaillon. A l'emporte ; le choix est consigné sur le ticket sous
+« ## Variante retenue ».
+
+Quatre décisions en découlent :
+
+- **un tour s'ouvre par qui parle** — médaillon d'initiale, nom, heure, au-dessus
+  du **premier** message de la suite ; le pied passe en `sr-only`, si bien que le
+  nom reste annoncé à **chaque** message (la règle de #483 ne bouge pas, elle
+  change de place). Le médaillon est une **initiale**, jamais une image
+  (docs/30 §6.1), et il est réservé à l'**interlocuteur** : aucune des quatre
+  références ne médaillonne l'utilisateur, dont la bulle pleine dit déjà que c'est
+  lui — réserve du regard neuf, tranchée à l'implémentation ;
+- **ce qu'il fait en ce moment se lit à la place de l'heure**, dans ce même
+  en-tête. L'attente cesse donc d'être une ligne d'italique au pied du fil : elle
+  est l'en-tête du tour **qui va s'écrire**. ⚠ La règle de #695 ne bouge pas —
+  « répond… » ne couvre que l'avant-premier-mot, et s'efface dès qu'un incrément
+  arrive : un indicateur immobile sur toute la génération ne distingue pas une
+  réponse longue d'un blocage. Ce qui reste alors est l'identité ;
+- **chaque message porte ses actions** (`chat/ActionsDuMessage`) — « Copier »,
+  sous la bulle, du côté du message, **toujours présentes**. Zulip ne montre les
+  siennes qu'au survol : écarté, une action au survol seul est inatteignable au
+  doigt et au clavier (WCAG 2.2 §2.5.8, balayé par `a11y.test.tsx`). Rien à
+  copier ⇒ rien à rendre ;
+- **tout ce qui n'est pas de la prose porte la même enveloppe**
+  (`chat/CarteDuFil`) — proposition de run, équipe, question d'agent, question
+  d'outillage, sa conclusion, **et la fin d'un run**, qui était le seul `div` nu.
+  La fin d'un run la prend en `ton="creuse"` : elle ne demande rien, elle raconte,
+  et le parti pris 1 de #928 (« un événement, pas une bulle ») tient — ni avatar,
+  ni signature d'auteur. La **cloche**, elle, garde le rendu nu : ce panneau n'est
+  pas le fil, et une carte par fin y empilerait des cadres dans 20 rem.
+
+⚠ **Rien de tout cela n'ajoute un bloc au corps de l'écran.** Ces cartes sont
+rendues *dans* le fil — au pied de son `<ol>` ou comme un de ses `<li>` —, donc
+jamais au premier niveau de `#contenu-principal` : la règle des trois places
+(docs/30 §4) et la frontière shell / écran (§1.2) sont inchangées, et
+`sobriete.test.tsx` comme `frontiere-shell-ecran.test.tsx` le comptent.
+
+Implémentation : `apps/web/components/chat/BulleFil.tsx` (`EnTeteDeTour`),
+`apps/web/components/chat/ActionsDuMessage.tsx`,
+`apps/web/components/chat/CarteDuFil.tsx`, `apps/web/components/Conversation.tsx`,
+`apps/web/components/runs/AnnonceIssueRun.tsx`. Couverture :
+[`apps/web/tests/fil-moderne.test.tsx`](../apps/web/tests/fil-moderne.test.tsx),
+et [`apps/web/tests/fil-en-colonne.test.tsx`](../apps/web/tests/fil-en-colonne.test.tsx)
+pour le regroupement des tours, que ce lot a fait passer du pied à la tête.
+
 ---
 
 ### 2.10 🔌 Intégrations MCP — un écran, pas une section des Paramètres *(#270 — **livré**)*

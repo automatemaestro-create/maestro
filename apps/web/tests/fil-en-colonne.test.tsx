@@ -155,9 +155,20 @@ function espacementDe(ligne: HTMLElement): string[] {
     .sort();
 }
 
-/** L'enveloppe d'une bulle — la boîte que le `<li>` contient. */
+/**
+ * L'enveloppe d'une bulle — la boîte que le `<li>` contient.
+ *
+ * ⚠ Désignée par `data-bulle` depuis #1225, et non plus par « le premier enfant
+ * du `<li>` » : la ligne est devenue une **colonne** (en-tête de tour, bulle,
+ * actions du message), et le premier enfant y est l'en-tête.
+ */
 function enveloppeDe(ligne: HTMLElement): HTMLElement {
-  const enveloppe = ligne.firstElementChild;
+  // Le repli sur le premier enfant est ce qui garde la sonde utilisable sur
+  // l'**échantillon fautif** d'avant #876, posé à la main plus bas : il n'a
+  // évidemment pas de marqueur, et une sonde qui ne le reconnaîtrait plus ne
+  // prouverait plus rien avant de balayer le fil réel.
+  const enveloppe =
+    ligne.querySelector("[data-bulle]") ?? ligne.firstElementChild;
   if (!(enveloppe instanceof HTMLElement)) {
     throw new Error("cette ligne du fil n'a pas d'enveloppe");
   }
@@ -165,10 +176,26 @@ function enveloppeDe(ligne: HTMLElement): HTMLElement {
 }
 
 /**
- * Le pied d'une bulle : ce qu'il dit, et s'il le dit **à l'œil**. Le dernier
- * élément de l'enveloppe, par construction de `chat/BulleFil` — et non un
- * `getByText` sur le nom de l'auteur, qui remonterait aussi le contenu d'un
- * message qui nomme quelqu'un.
+ * De quel côté du fil une ligne se range. Depuis #1225 la ligne est une
+ * **colonne** (en-tête, bulle, actions) et c'est la rangée qui porte la bulle
+ * qui justifie — d'où une sonde plutôt qu'un `classList` lu sur le `<li>`.
+ */
+function coteDe(ligne: HTMLElement): "gauche" | "droite" | null {
+  const rangee = enveloppeDe(ligne).parentElement;
+  if (rangee === null) return null;
+  if (rangee.classList.contains("justify-end")) return "droite";
+  if (rangee.classList.contains("justify-start")) return "gauche";
+  return null;
+}
+
+/**
+ * Le pied d'une bulle : ce qu'il dit. Le dernier élément de l'enveloppe, par
+ * construction de `chat/BulleFil` — et non un `getByText` sur le nom de
+ * l'auteur, qui remonterait aussi le contenu d'un message qui nomme quelqu'un.
+ *
+ * Depuis #1225 il n'est **jamais** visible : c'est l'en-tête de tour qui nomme à
+ * l'œil, et le pied ne sert plus qu'au lecteur d'écran (#483 — le nom reste
+ * annoncé à chaque message).
  */
 function piedDe(ligne: HTMLElement): { dit: string; visible: boolean } {
   const pied = enveloppeDe(ligne).lastElementChild;
@@ -179,6 +206,15 @@ function piedDe(ligne: HTMLElement): { dit: string; visible: boolean } {
     dit: (pied.textContent ?? "").trim(),
     visible: !pied.classList.contains("sr-only"),
   };
+}
+
+/**
+ * L'en-tête de tour d'une ligne du fil (#1225) : ce qu'il dit, ou `null` quand
+ * ce message ne nomme pas son auteur — c'est-à-dire quand il continue un tour.
+ */
+function enteteDe(ligne: HTMLElement): string | null {
+  const entete = ligne.querySelector("[data-entete-de-tour]");
+  return entete === null ? null : (entete.textContent ?? "").trim();
 }
 
 // ---------------------------------------------------------------------------
@@ -282,9 +318,7 @@ describe.each(SURFACES)("le fil sur $nom", ({ monter, interlocuteur, section }) 
    */
   function bulles(): HTMLElement[] {
     return (Array.from(fil().children) as HTMLElement[]).filter(
-      (ligne) =>
-        ligne.classList.contains("justify-start") ||
-        ligne.classList.contains("justify-end"),
+      (ligne) => ligne.querySelector("[data-bulle]") !== null,
     );
   }
 
@@ -332,13 +366,17 @@ describe.each(SURFACES)("le fil sur $nom", ({ monter, interlocuteur, section }) 
       monter();
 
       // Ni bord, ni fond, ni ombre : la réponse est du texte de page, comme chez
-      // ChatGPT. Le pied reste là — c'est lui, avec le côté, qui dit qui parle.
+      // ChatGPT. Depuis #1225 c'est l'**en-tête de tour** qui dit qui parle, au
+      // lieu du pied — lequel reste, en `sr-only` (#483).
       expect(habillageDe(enveloppeDe(bulles()[0]).className)).toEqual({
         bord: false,
         fond: false,
         ombre: false,
       });
-      expect(piedDe(bulles()[0]).visible).toBe(true);
+      // `toContain` et non un ancrage : l'en-tête commence par le médaillon,
+      // dont l'initiale est du texte (masqué au lecteur d'écran, pas au DOM).
+      expect(enteteDe(bulles()[0])).toContain(interlocuteur);
+      expect(piedDe(bulles()[0]).visible).toBe(false);
       expect(piedDe(bulles()[0]).dit).toMatch(new RegExp(`^${interlocuteur} · `));
     });
 
@@ -365,7 +403,7 @@ describe.each(SURFACES)("le fil sur $nom", ({ monter, interlocuteur, section }) 
       expect(Array.from(enveloppe.classList)).toEqual(
         expect.arrayContaining(["bg-accent", "text-sur-ton"]),
       );
-      expect(bulles()[0].classList.contains("justify-end")).toBe(true);
+      expect(coteDe(bulles()[0])).toBe("droite");
     });
   });
 
@@ -416,17 +454,20 @@ describe.each(SURFACES)("le fil sur $nom", ({ monter, interlocuteur, section }) 
     it("nomme l'auteur une fois à l'œil, et à chaque message au lecteur d'écran", () => {
       filGroupe();
 
-      // Le pied n'est visible qu'au **dernier** message d'une suite ; les autres
-      // le portent en `sr-only`, si bien qu'un lecteur d'écran garde le nom à
-      // chaque message (#483 — une bulle relue n'a ni gauche ni droite).
-      expect(bulles().map((bulle) => piedDe(bulle).visible)).toEqual([
+      // Depuis #1225 c'est le **premier** message d'une suite qui nomme, en
+      // tête ; les suivants n'ont pas d'en-tête. Le pied, lui, n'est plus jamais
+      // visible — mais il reste sur chaque message, si bien qu'un lecteur
+      // d'écran garde le nom partout (#483 — une bulle relue n'a ni gauche ni
+      // droite).
+      expect(bulles().map((bulle) => enteteDe(bulle) !== null)).toEqual([
+        true,
         true,
         false,
         false,
-        true,
         true,
       ]);
       for (const bulle of bulles()) {
+        expect(piedDe(bulle).visible).toBe(false);
         expect(piedDe(bulle).dit).not.toBe("");
       }
     });
@@ -454,10 +495,9 @@ describe.each(SURFACES)("le fil sur $nom", ({ monter, interlocuteur, section }) 
 
       const [avant, apres] = bulles();
       expect(espacementDe(apres)).toEqual(["first:mt-0", "mt-3"]);
-      // Et chacun se nomme : le premier ferme sa suite, le second ouvre la
-      // sienne.
-      expect(piedDe(avant).visible).toBe(true);
-      expect(piedDe(apres).visible).toBe(true);
+      // Et chacun se nomme en tête : chacun ouvre sa propre suite (#1225).
+      expect(enteteDe(avant)).not.toBeNull();
+      expect(enteteDe(apres)).not.toBeNull();
     });
 
     it("ne groupe pas deux côtés sous un même nom d'auteur", () => {
@@ -489,10 +529,17 @@ describe.each(SURFACES)("le fil sur $nom", ({ monter, interlocuteur, section }) 
       const [un, deux, trois] = bulles();
       expect(espacementDe(deux)).toEqual([]);
       expect(espacementDe(trois)).toEqual(["first:mt-0", "mt-3"]);
-      expect([un, deux, trois].map((b) => piedDe(b).visible)).toEqual([
+      // Le second continue le tour du premier — il ne se nomme donc pas ; le
+      // troisième ouvre le sien, de l'autre côté du fil (#1225).
+      expect([un, deux, trois].map((b) => enteteDe(b) !== null)).toEqual([
+        true,
         false,
         true,
-        true,
+      ]);
+      expect([un, deux, trois].map(coteDe)).toEqual([
+        "droite",
+        "droite",
+        "gauche",
       ]);
     });
   });
@@ -547,7 +594,7 @@ describe("② le contenu pleine largeur garde son cadre", () => {
     // survole pas ce qu'on ne voit pas.
     const { container } = render(
       <ol>
-        <BulleFil auteur="dev" horodatage="2026-07-28T10:00:00Z" piedVisible={false}>
+        <BulleFil auteur="dev" horodatage="2026-07-28T10:00:00Z" nomme={false}>
           <p>Réponse</p>
         </BulleFil>
       </ol>,

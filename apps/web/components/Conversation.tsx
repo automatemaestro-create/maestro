@@ -287,7 +287,8 @@ import {
   type ReactNode,
 } from "react";
 
-import { BulleFil } from "@/components/chat/BulleFil";
+import { ActionsDuMessage } from "@/components/chat/ActionsDuMessage";
+import { BulleFil, EnTeteDeTour } from "@/components/chat/BulleFil";
 import { EtapesDuFil } from "@/components/chat/EtapesDuFil";
 import { SeparateurDeJour } from "@/components/chat/SeparateurDeJour";
 import { SourcesDuFil } from "@/components/chat/SourcesDuFil";
@@ -798,11 +799,6 @@ export function Conversation({
     if (index === 0 || ouvertures[index] !== null) return false;
     return tourDe(messages[index - 1].auteur) === tourDe(message.auteur);
   });
-  /** Le dernier message de sa suite : celui qui porte le pied à l'œil. */
-  const ferme = messages.map(
-    (_, index) =>
-      index === messages.length - 1 || !continuations[index + 1],
-  );
   // La réponse qui s'écrit ouvre un tour, sauf à prolonger celui du dernier
   // message — ce qui arrive quand l'agent enchaîne deux fois. Elle ne change
   // jamais le pied d'un message **persisté** : elle est transitoire, et le
@@ -947,10 +943,13 @@ export function Conversation({
                   libelle={libelleDuJour(ouverture, maintenant)}
                 />
               )}
+              {/* Depuis #1225, c'est le message qui **ouvre** la suite qui nomme
+                  son auteur, et non plus celui qui la ferme : l'identité est en
+                  tête du tour. Les deux drapeaux disent donc le même fait, et
+                  c'est voulu — l'espacement et le nom se déclenchent ensemble. */}
               <Bulle
                 message={message}
                 ouvreUnTour={!continuations[index]}
-                piedVisible={ferme[index]}
               />
             </Fragment>
           );
@@ -966,17 +965,32 @@ export function Conversation({
             ouvreUnTour={reponseOuvreUnTour}
           />
         )}
-        {/* « … répond… » ne couvre plus que l'attente **avant le premier
-            mot** : dès qu'un incrément arrive, c'est le texte lui-même qui dit
-            que ça travaille. C'était le défaut de départ — un indicateur
-            immobile sur toute la génération, où rien ne distinguait une réponse
-            longue d'un blocage. Une bulle vide à curseur aurait pu tenir ce
-            rôle, mais elle dit « il a commencé » quand rien n'est encore venu.
-            `min-h-6` : la ligne réserve sa place et la rend d'un bloc quand la
-            bulle la remplace, au lieu de la céder par à-coups (#697). */}
+        {/* L'attente **avant le premier mot** : dès qu'un incrément arrive,
+            c'est le texte lui-même qui dit que ça travaille. C'était le défaut
+            de départ — un indicateur immobile sur toute la génération, où rien
+            ne distinguait une réponse longue d'un blocage. Une bulle vide à
+            curseur aurait pu tenir ce rôle, mais elle dit « il a commencé »
+            quand rien n'est encore venu.
+
+            ⚠ Depuis #1225 ce n'est plus une ligne d'italique posée au pied du
+            fil, mais **l'en-tête du tour qui s'ouvre** : la même pastille, le
+            même nom, et l'état à la place de l'heure (parti pris 3 de la veille,
+            d'après « Recherche terminée 3s » de Perplexity et les annonces
+            « Réflexion / Réponse terminée » de ChatGPT). C'est ce qui fait que
+            l'attente se pose **là où la réponse va s'écrire**, et non ailleurs :
+            quand `BulleEnCours` la remplace, rien ne saute — l'en-tête est déjà
+            à sa place. `min-h-6` garde la réserve de hauteur de #697. */}
         {envoi && enTrainDEcrire === null && (
-          <li className="flex min-h-6 items-center text-corps italic text-texte-secondaire">
-            {interlocuteur} répond…
+          <li className="flex min-h-6 flex-col">
+            <EnTeteDeTour
+              auteur={interlocuteur}
+              utilisateur={false}
+              etat={
+                <span className="text-micro text-texte-secondaire">
+                  répond…
+                </span>
+              }
+            />
           </li>
         )}
         {/* Les deux fautes, au **pied du fil** et non de part et d'autre de lui
@@ -1550,7 +1564,20 @@ function BulleEnCours({
   ouvreUnTour: boolean;
 }) {
   return (
-    <BulleFil auteur={reponse.auteur} ouvreUnTour={ouvreUnTour}>
+    <BulleFil
+      auteur={reponse.auteur}
+      ouvreUnTour={ouvreUnTour}
+      /* Elle nomme **toujours**, même si elle prolonge le tour d'avant (#1225) :
+         c'est la ligne que l'attente vient de rendre, et la laisser tomber au
+         premier mot ferait sauter l'en-tête à l'instant où le texte arrive. Le
+         message persisté qui la remplacera, lui, refera le calcul de groupe.
+
+         ⚠ Et elle ne porte **pas** d'état : la règle de #695 ne bouge pas —
+         « répond… » ne couvre que l'attente avant le premier mot, parce qu'un
+         indicateur immobile sur toute la génération ne distingue pas une réponse
+         longue d'un blocage. Dès qu'un incrément arrive, c'est le texte qui dit
+         que ça travaille, et l'en-tête redevient une simple identité. */
+    >
       {/* Ce qu'il est en train de lire (#1223), **déplié** tant que rien n'est
           écrit : à cet instant, ce qu'il consulte est tout ce qu'il y a à voir.
           Le repli se referme quand le message persisté prend la place de cette
@@ -1592,13 +1619,14 @@ function BulleEnCours({
 function Bulle({
   message,
   ouvreUnTour,
-  piedVisible,
 }: {
   message: MessageChat;
-  /** Le message d'avant est d'un autre auteur, ou une journée les sépare (#876). */
+  /**
+   * Le message d'avant est d'un autre auteur, ou une journée les sépare (#876).
+   * Depuis #1225, c'est aussi ce qui décide que ce message **nomme** son auteur
+   * à l'œil : l'identité ouvre le tour au lieu de le fermer.
+   */
   ouvreUnTour: boolean;
-  /** Ce message ferme sa suite : c'est lui qui nomme l'auteur à l'œil (#876). */
-  piedVisible: boolean;
 }) {
   const utilisateur = message.auteur === CHAT_AUTEUR_UTILISATEUR;
   return (
@@ -1607,7 +1635,11 @@ function Bulle({
       utilisateur={utilisateur}
       horodatage={message.horodatage}
       ouvreUnTour={ouvreUnTour}
-      piedVisible={piedVisible}
+      nomme={ouvreUnTour}
+      /* Ce qu'on peut faire de ce message (#1225) — des deux côtés, comme
+         Duck.ai : on recopie aussi bien ce qu'on a demandé que ce qui a été
+         répondu. Rien à copier ⇒ rien à rendre (`chat/ActionsDuMessage`). */
+      actions={<ActionsDuMessage texte={message.contenu} />}
     >
       {/* Ce que l'interlocuteur a **lu** pour écrire ce message (#1223) — au-dessus
           du texte, parce que c'est l'ordre des choses : il lit, puis il rédige.
