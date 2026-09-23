@@ -12,8 +12,13 @@ Ce module garde, sur le modèle de la relecture visuelle (#935, `test_relecture_
   qui n'en est pas un, le **repli bug** sur « Comportement attendu » (arbitré sur #968), et le
   ticket inconnu qui ne se fait pas passer pour un ticket sans critère ;
 * **la trace** (`lib.sh criteres-note`) — l'ancre et son compte, l'idempotence, et la **forme** du
-  constat : chaque `Cn` répondu, une pièce jamais vide, un **✓ qui nomme un fichier du diff**. Ce
-  qui se vérifie est une forme, jamais un sens (#746) ;
+  constat : chaque `Cn` répondu, une pièce jamais vide, un **✓ qui nomme sa preuve exercée** —
+  un test défini dans l'arbre, un passage du banc que son rapport rend vert, un run, une capture
+  (#1240, qui remplace le ✓ « nomme un fichier du diff » de #968). Ce qui se vérifie est une forme,
+  jamais un sens (#746) ;
+* **le banc** (#1240) — un diff qui touche le chemin des scénarios porte une ligne `Banc` : le
+  verdict relu dans le rapport du passage écrit par le **vrai** `maestro.scenarios.rapport`, ou
+  « non joué » avec sa raison — un banc rouge ou injouable n'est jamais compté vert ;
 * **le signalement** (`criteres-note --aucun`) — un ticket sans critère se signale plutôt que de se
   taire (arbitré sur #968), mais ne se **déclare** pas : le verbe relit le ticket avant d'écrire ;
 * **le déclencheur** — l'étape 4ter de `/ticket-finish`, après la relecture visuelle et **avant** le
@@ -34,6 +39,9 @@ from pathlib import Path
 import pytest
 from harnais_forge import BASH, GIT, RACINE, Depot, ecritures, monte_depot
 
+from maestro.scenarios import rapport as rapport_du_banc
+from maestro.scenarios.modele import VERDICT_ROUGE, VERDICT_VERT, Rapport, Resultat
+
 pytestmark = [
     pytest.mark.skipif(BASH is None, reason="bash introuvable"),
     pytest.mark.skipif(GIT is None, reason="git introuvable"),
@@ -42,6 +50,13 @@ pytestmark = [
 PROMPT_FINISH = RACINE / ".claude" / "commands" / "ticket-finish.md"
 PROMPT_SHIP = RACINE / ".claude" / "commands" / "ticket-ship.md"
 DOSSIER_CLAUDE = RACINE / ".claude"
+LIB = RACINE / "scripts" / "gitlab" / "lib.sh"
+RUN = RACINE / "scripts" / "orchestrate" / "run.sh"
+DOC_WORKFLOW = RACINE / "docs" / "10-workflow-git.md"
+
+#: Le test que la branche de la fixture livre : c'est lui qu'un ✓ nomme pour être tenu.
+TEST_LIVRE = "test_le_verbe_rend_zero"
+PREUVE = f"`{TEST_LIVRE}` passé"
 
 #: La description d'un ticket ordinaire : trois cases garnies, une case laissée vide par le gabarit
 #: (qui n'est pas un critère), et une case hors de la section (qui n'en est pas un non plus).
@@ -102,16 +117,42 @@ def regle_criteres(iid: str, corps: str, notes: tuple[str, ...] = (), existe: bo
 
 @pytest.fixture
 def forge(tmp_path: Path) -> Depot:
-    """Le dépôt jetable, sur une branche de ticket qui livre `livre.sh`.
+    """Le dépôt jetable, sur une branche de ticket qui livre `livre.sh` et le test qui l'exerce.
 
     `.maestro/` est exclu comme dans le vrai dépôt : sans quoi le constat lui-même, fichier non
-    suivi, compterait parmi les fichiers « du diff » et pourrait se citer comme sa propre pièce.
+    suivi, compterait parmi les fichiers « du diff » — et un rapport du banc aussi.
     """
     depot = monte_depot(tmp_path)
     (depot.racine / ".git" / "info" / "exclude").write_text(".maestro/\n", encoding="utf-8")
     depot.git("checkout", "--quiet", "-b", "chore/60-essai")
     depot.commit("livre.sh", "echo livré\n", "feat: livre le verbe\n\nRefs #60")
+    (depot.racine / "tests").mkdir()
+    depot.commit(
+        "tests/test_livre.py",
+        f"def {TEST_LIVRE}():\n    assert True\n",
+        "test: exerce le verbe\n\nRefs #60",
+    )
     return depot
+
+
+def resultat(identifiant: str, verdict: str = VERDICT_VERT, **reste: object) -> Resultat:
+    return Resultat(
+        identifiant=identifiant,
+        titre=f"Scénario {identifiant}",
+        verdict=verdict,
+        motif="motif",
+        duree_s=85.0,
+        run_id="728afd3dae61",
+        **reste,  # type: ignore[arg-type]
+    )
+
+
+def passage(forge: Depot, horodatage: str, *resultats: Resultat) -> str:
+    """Un passage du banc, écrit par le VRAI rapporteur (`maestro.scenarios.rapport.ecrire`), là où
+    le banc l'écrit : si sa forme change, c'est ce test qui le dit, pas une clôture en run."""
+    racine = forge.racine / rapport_du_banc.RACINE_RAPPORTS
+    rapport_du_banc.ecrire(Rapport(horodatage=horodatage, resultats=resultats), racine=racine)
+    return horodatage
 
 
 def constat(forge: Depot, texte: str, nom: str = "criteres.md") -> str:
@@ -129,8 +170,8 @@ def tableau(*lignes: tuple[str, str, str]) -> str:
 
 
 CONSTAT_COMPLET = tableau(
-    ("C1", "✓ couvert", "`livre.sh` — le verbe"),
-    ("C2", "✗ non couvert", "aucun refus n'est écrit"),
+    ("C1", "✓ tenu", f"`tests/test_livre.py::{TEST_LIVRE}` passé — le verbe de `livre.sh`"),
+    ("C2", "✗ non tenu", "aucun refus n'est écrit"),
     ("C3", "hors diff", "la doc vit dans le wiki"),
 )
 
@@ -291,7 +332,7 @@ def test_un_constat_enrichi_sajoute_au_lieu_decraser(forge: Depot) -> None:
 def test_un_critere_sans_reponse_est_refuse_et_nomme(forge: Depot) -> None:
     """Le refus que tout le dispositif porte : une question tue n'est pas une question couverte."""
     forge.pose_etat(graphql=[regle_criteres("73", CORPS_TROIS)])
-    incomplet = tableau(("C1", "✓", "`livre.sh`"), ("C3", "hors diff", "le wiki"))
+    incomplet = tableau(("C1", "✓", f"`{TEST_LIVRE}` passé"), ("C3", "hors diff", "le wiki"))
     acheve = forge.lib("criteres-note", "73", constat(forge, incomplet))
     assert acheve.returncode == 5, acheve.stdout + acheve.stderr
     assert "- C2 : sans réponse" in acheve.stderr
@@ -301,76 +342,290 @@ def test_un_critere_sans_reponse_est_refuse_et_nomme(forge: Depot) -> None:
     assert ecritures(forge) == []
 
 
-def test_un_coche_qui_ne_nomme_aucun_fichier_du_diff_est_refuse(forge: Depot) -> None:
+@pytest.mark.parametrize("piece", ["fait", "`livre.sh` — le verbe", "tests/test_livre.py"])
+def test_un_coche_sans_preuve_exercee_est_refuse(forge: Depot, piece: str) -> None:
     """La règle de `/milestone-bilan` — « un critère tenu sans pièce nommée n'est pas tenu » —
-    rendue vérifiable. « ✓ | fait | » est exactement le ✓ sur une question jamais posée."""
+    portée de l'écrit à l'exercé (#1240). « ✓ | fait | » est le ✓ sur une question jamais posée ;
+    `livre.sh`, fichier du diff, était la preuve de #968 et n'en est plus une ; un fichier de suite
+    pytest ne nomme pas le test qui passe."""
     forge.pose_etat(graphql=[regle_criteres("74", CORPS_TROIS)])
-    fautif = tableau(("C1", "✓", "fait"), ("C2", "✗", "rien"), ("C3", "hors diff", "le wiki"))
+    fautif = tableau(("C1", "✓", piece), ("C2", "✗", "rien"), ("C3", "hors diff", "le wiki"))
     acheve = forge.lib("criteres-note", "74", constat(forge, fautif))
     assert acheve.returncode == 5, acheve.stdout + acheve.stderr
-    assert "C1 : ✓ sans fichier du diff" in acheve.stderr
+    assert "C1 : ✓ sans preuve exercée" in acheve.stderr
     assert "jamais ✓ pour faire passer" in acheve.stderr, "le refus dit comment se réparer"
-    assert ecritures(forge) == []
-
-
-def test_un_fichier_hors_du_diff_ne_couvre_rien(forge: Depot) -> None:
-    """`fichier-a.txt` existe — sur `main`, pas dans ce que la branche livre. Le nommer ne fait pas
-    un ✓ : la pièce doit être du DIFF, pas seulement du dépôt."""
-    forge.pose_etat(graphql=[regle_criteres("75", CORPS_TROIS)])
-    hors = tableau(
-        ("C1", "✓", "`fichier-a.txt`"), ("C2", "✗", "rien"), ("C3", "hors diff", "le wiki")
-    )
-    assert forge.lib("criteres-note", "75", constat(forge, hors)).returncode == 5
     assert ecritures(forge) == []
 
 
 @pytest.mark.parametrize(
     ("piece", "code"),
     [
-        ("`livre.sh`", 0),
-        ("livre.sh, ligne 1", 0),
-        ("`prelivre.sh`", 5),
-        ("livre.shx", 5),
+        (f"`{TEST_LIVRE}` passé", 0),
+        (f"tests/test_livre.py::{TEST_LIVRE} — 1 passed", 0),
+        (f"`{TEST_LIVRE}_bis` passé", 5),
+        (f"`mon{TEST_LIVRE}` passé", 5),
     ],
 )
-def test_un_nom_de_fichier_ne_compte_que_borne(forge: Depot, piece: str, code: int) -> None:
-    """Sans borne, `livre.sh` serait « nommé » par `prelivre.sh`, et un fichier au nom court par
-    n'importe quelle pièce. Les deux premiers cas sont les témoins : le motif sait dire oui."""
+def test_un_test_nomme_ne_compte_que_borne(forge: Depot, piece: str, code: int) -> None:
+    """Le ✓ avec test nommé ACCEPTÉ, et ses deux contrefaçons : sans borne,
+    `test_le_verbe_rend_zero` serait « nommé » par un nom plus long. Les deux premiers cas sont
+    les témoins : le motif sait dire oui, y compris sous la forme `fichier::fonction` de pytest."""
     forge.pose_etat(graphql=[regle_criteres("76", CORPS_TROIS)])
     texte = tableau(("C1", "✓", piece), ("C2", "✗", "rien"), ("C3", "hors diff", "le wiki"))
     acheve = forge.lib("criteres-note", "76", constat(forge, texte))
     assert acheve.returncode == code, acheve.stdout + acheve.stderr
 
 
-def test_le_chemin_entier_compte_autant_que_le_nom(forge: Depot) -> None:
-    (forge.racine / "outils").mkdir()
-    forge.commit("outils/verbe.sh", "echo verbe\n", "feat: verbe\n\nRefs #60")
+def test_un_test_invente_est_refuse_et_nomme(forge: Depot) -> None:
+    """Le verbe ne rejoue pas le test, mais un nom qu'aucun `def` ne porte n'a jamais passé : il
+    est refusé, et nommé — c'est le ✓ fabriqué le plus facile à écrire."""
+    forge.pose_etat(graphql=[regle_criteres("75", CORPS_TROIS)])
+    texte = tableau(
+        ("C1", "✓", "`test_le_verbe_invente` passé"),
+        ("C2", "✗", "rien"),
+        ("C3", "hors diff", "wiki"),
+    )
+    acheve = forge.lib("criteres-note", "75", constat(forge, texte))
+    assert acheve.returncode == 5, acheve.stdout + acheve.stderr
+    assert "test_le_verbe_invente n'est défini nulle part" in acheve.stderr
+    assert ecritures(forge) == []
+
+
+def test_une_suite_vitest_se_nomme_par_son_fichier(forge: Depot) -> None:
+    """Vitest nomme ses tests en prose (`it("…")`) : son nom de test est le fichier, par chemin ou
+    par nom. Un fichier `.test.tsx` absent de l'arbre ne prouve rien."""
+    (forge.racine / "apps" / "web" / "tests").mkdir(parents=True)
+    forge.commit(
+        "apps/web/tests/ecran.test.tsx", "it('rend', () => {})\n", "test: écran\n\nRefs #60"
+    )
     forge.pose_etat(graphql=[regle_criteres("77", CORPS_TROIS)])
     texte = tableau(
-        ("C1", "✓", "`outils/verbe.sh`"),
-        ("C2", "✓", "`./outils/verbe.sh`"),
-        ("C3", "✓", "verbe.sh"),
+        ("C1", "✓", "`apps/web/tests/ecran.test.tsx` — 3 passés"),
+        ("C2", "✓", "ecran.test.tsx vert"),
+        ("C3", "✓", "`absent.test.tsx` vert"),
     )
     acheve = forge.lib("criteres-note", "77", constat(forge, texte))
-    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
-    assert "3 ✓ · 0 ✗ · 0 hors diff" in acheve.stdout
+    assert acheve.returncode == 5, acheve.stdout + acheve.stderr
+    assert "C3 : ✓ sans preuve exercée" in acheve.stderr
+    assert "C1" not in acheve.stderr and "C2" not in acheve.stderr
 
 
-def test_le_travail_non_commite_compte_aussi(forge: Depot) -> None:
-    """Ce que la clôture va livrer, pas seulement ce qui est déjà commité — le même périmètre que le
-    plan de la relecture visuelle (#932)."""
-    (forge.racine / "neuf.md").write_text("doc\n", encoding="utf-8")
+def test_un_test_non_commite_compte_aussi(forge: Depot) -> None:
+    """Ce que la clôture va livrer, pas seulement ce qui est déjà commité : un test écrit et joué,
+    pas encore commité, est un test de l'arbre."""
+    (forge.racine / "tests" / "test_neuf.py").write_text(
+        "def test_le_neuf_passe():\n    assert True\n", encoding="utf-8"
+    )
     forge.pose_etat(graphql=[regle_criteres("78", CORPS_TROIS)])
-    texte = tableau(("C1", "✓", "`neuf.md`"), ("C2", "✗", "rien"), ("C3", "hors diff", "le wiki"))
+    texte = tableau(
+        ("C1", "✓", "`test_le_neuf_passe` passé"), ("C2", "✗", "rien"), ("C3", "hors diff", "wiki")
+    )
     assert forge.lib("criteres-note", "78", constat(forge, texte)).returncode == 0
+
+
+@pytest.mark.parametrize(
+    ("piece", "code"),
+    [
+        ("observé sur la vraie stack, run `728afd3dae61`", 0),
+        ("Run 728afd3dae61 : la réponse nomme la cause", 0),
+        ("run `728afd` — trop court pour un identifiant", 5),
+        ("le fichier 728afd3dae61 sans run", 5),
+    ],
+)
+def test_un_run_de_la_vraie_stack_prouve(forge: Depot, piece: str, code: int) -> None:
+    """Une observation sur la vraie stack se nomme par le run qui la montre (#1240). Le verbe ne
+    peut pas interroger une API peut-être éteinte : il garde la FORME — le mot et un identifiant de
+    run entier —, et la session répond du reste."""
+    forge.pose_etat(graphql=[regle_criteres("79", CORPS_TROIS)])
+    texte = tableau(("C1", "✓", piece), ("C2", "✗", "rien"), ("C3", "hors diff", "le wiki"))
+    acheve = forge.lib("criteres-note", "79", constat(forge, texte))
+    assert acheve.returncode == code, acheve.stdout + acheve.stderr
+
+
+def test_une_capture_de_la_vraie_stack_prouve_si_elle_existe(forge: Depot) -> None:
+    capture = forge.racine / ".maestro" / "relecture" / "60" / "ecran-clair.png"
+    capture.parent.mkdir(parents=True)
+    capture.write_bytes(b"\x89PNG\r\n")
+    forge.pose_etat(graphql=[regle_criteres("69", CORPS_TROIS)])
+    texte = tableau(
+        ("C1", "✓", "`.maestro/relecture/60/ecran-clair.png` — le bouton est là"),
+        ("C2", "✓", "`.maestro/relecture/60/ecran-sombre.png`"),
+        ("C3", "hors diff", "le wiki"),
+    )
+    acheve = forge.lib("criteres-note", "69", constat(forge, texte))
+    assert acheve.returncode == 5, acheve.stdout + acheve.stderr
+    assert "C2 : ✓ sans preuve exercée" in acheve.stderr, "une capture absente ne prouve rien"
+    assert "C1" not in acheve.stderr
+
+
+# =================================================================================================
+# Le banc — une preuve par son passage, et dû quand le diff touche le chemin des scénarios (#1240)
+# =================================================================================================
+
+
+def test_un_coche_prouve_par_un_passage_vert_est_accepte(forge: Depot) -> None:
+    """Le ✓ avec passage du banc ACCEPTÉ : l'horodatage nomme un rapport présent, et le scénario
+    cité y est vert. Le rapport est écrit par le vrai rapporteur du banc."""
+    h = passage(forge, "20260923-154349", resultat("S2"), resultat("S4", VERDICT_ROUGE))
+    forge.pose_etat(graphql=[regle_criteres("100", CORPS_TROIS)])
+    texte = tableau(
+        ("C1", "✓", f"S2 vert au passage {h}, run `728afd3dae61`"),
+        ("C2", "✗", "rien"),
+        ("C3", "hors diff", "le wiki"),
+    )
+    acheve = forge.lib("criteres-note", "100", constat(forge, texte))
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+
+
+@pytest.mark.parametrize(
+    ("resultats", "cite", "motif"),
+    [
+        ((resultat("S2", VERDICT_ROUGE),), "S2", "rend S2 rouge"),
+        ((resultat("S2", VERDICT_ROUGE, empechement=True),), "S2", "rend S2 rouge"),
+        ((resultat("S2"), resultat("S4", VERDICT_ROUGE)), "", "rend S4 rouge"),
+        ((resultat("S2"),), "S3", "S3 n'est pas au passage"),
+    ],
+)
+def test_un_banc_rouge_ou_injouable_nest_jamais_compte_vert(
+    forge: Depot, resultats: tuple[Resultat, ...], cite: str, motif: str
+) -> None:
+    """Le cœur du critère 2 : un ✓ qui cite un passage est relu dans son rapport. Un rouge, un
+    empêché (rouge au rapport, `empechement` vrai), un passage qui n'est pas vert en entier quand
+    aucun scénario n'est cité, un scénario absent du passage : aucun ne tient un ✓."""
+    h = passage(forge, "20260923-101010", *resultats)
+    forge.pose_etat(graphql=[regle_criteres("101", CORPS_TROIS)])
+    texte = tableau(
+        ("C1", "✓", f"{cite} au passage {h}".strip()),
+        ("C2", "✗", "rien"),
+        ("C3", "hors diff", "le wiki"),
+    )
+    acheve = forge.lib("criteres-note", "101", constat(forge, texte))
+    assert acheve.returncode == 5, acheve.stdout + acheve.stderr
+    assert motif in acheve.stderr
+    assert ecritures(forge) == []
+
+
+def test_un_passage_sans_rapport_ne_prouve_rien(forge: Depot) -> None:
+    forge.pose_etat(graphql=[regle_criteres("102", CORPS_TROIS)])
+    texte = tableau(
+        ("C1", "✓", "S2 vert au passage 20260923-000000"),
+        ("C2", "✗", "rien"),
+        ("C3", "hors diff", "w"),
+    )
+    acheve = forge.lib("criteres-note", "102", constat(forge, texte))
+    assert acheve.returncode == 5, acheve.stdout + acheve.stderr
+    assert "rapport introuvable : .maestro/scenarios/20260923-000000/rapport.json" in acheve.stderr
+
+
+@pytest.fixture
+def forge_produit(forge: Depot) -> Depot:
+    """La même branche, qui touche en plus le chemin des scénarios : le moteur du produit."""
+    (forge.racine / "maestro").mkdir()
+    forge.commit("maestro/moteur.py", "VALEUR = 1\n", "fix: le moteur\n\nRefs #60")
+    return forge
+
+
+def test_la_question_annonce_le_banc_quand_le_diff_touche_son_chemin(forge_produit: Depot) -> None:
+    forge_produit.pose_etat(graphql=[regle_criteres("103", CORPS_TROIS)])
+    acheve = forge_produit.lib("criteres", "103")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    derniere = acheve.stdout.splitlines()[-1]
+    assert derniere.startswith("# banc\tà jouer"), derniere
+    assert "maestro/moteur.py" in derniere
+
+
+@pytest.mark.parametrize(
+    "fichier", ["apps/web/app/page.tsx", "scripts/outil.sh", "agents/lisez-moi.md"]
+)
+def test_hors_du_chemin_la_question_ne_parle_pas_du_banc(forge: Depot, fichier: str) -> None:
+    """Le contre-exemple : l'écran (le banc parle à l'API, jamais à l'UI), l'outillage, et
+    `agents/`, qui ne porte que des README. Aucune ligne `# banc`, et le constat ordinaire passe
+    sans elle."""
+    (forge.racine / fichier).parent.mkdir(parents=True, exist_ok=True)
+    forge.commit(fichier, "x\n", "chore: hors chemin\n\nRefs #60")
+    forge.pose_etat(graphql=[regle_criteres("104", CORPS_TROIS)])
+    assert "# banc" not in forge.lib("criteres", "104").stdout
+    assert forge.lib("criteres-note", "104", constat(forge, CONSTAT_COMPLET)).returncode == 0
+
+
+def test_un_banc_du_et_tu_est_refuse(forge_produit: Depot) -> None:
+    """« Un ticket qui touche le chemin d'un scénario le joue avant de pousser » : un constat qui
+    ne dit rien du banc est refusé, et le refus nomme ce qui l'a rendu dû."""
+    forge_produit.pose_etat(graphql=[regle_criteres("105", CORPS_TROIS)])
+    acheve = forge_produit.lib("criteres-note", "105", constat(forge_produit, CONSTAT_COMPLET))
+    assert acheve.returncode == 5, acheve.stdout + acheve.stderr
+    assert "- Banc : le diff touche le chemin des scénarios" in acheve.stderr
+    assert "maestro/moteur.py" in acheve.stderr
+    assert ecritures(forge_produit) == []
+
+
+@pytest.mark.parametrize(
+    ("ligne", "entete"),
+    [
+        (("Banc", "non joué", "l'API ne démarre pas : Redis absent"), "banc non joué"),
+        (("Banc", "vert", "passage 20260923-154349 (S2)"), "banc vert (passage 20260923-154349)"),
+        (
+            ("Banc", "rouge", "S4 au passage 20260923-154349"),
+            "banc rouge (passage 20260923-154349)",
+        ),
+    ],
+)
+def test_le_verdict_du_banc_entre_au_constat(
+    forge_produit: Depot, ligne: tuple[str, str, str], entete: str
+) -> None:
+    """Son verdict entre au constat, et dans le TITRE du commentaire, là où on le lit sans
+    dérouler : vert ou rouge relus dans le rapport, ou « non joué » avec sa raison."""
+    passage(forge_produit, "20260923-154349", resultat("S2"), resultat("S4", VERDICT_ROUGE))
+    forge_produit.pose_etat(graphql=[regle_criteres("106", CORPS_TROIS)])
+    texte = CONSTAT_COMPLET + "| {} | {} | {} |\n".format(*ligne)
+    acheve = forge_produit.lib("criteres-note", "106", constat(forge_produit, texte))
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    titre = corps_poste(forge_produit, "106").splitlines()[0]
+    assert f"1 ✓ · 1 ✗ · 1 hors diff · {entete} — empreinte" in titre, titre
+
+
+@pytest.mark.parametrize(
+    ("ligne", "motif"),
+    [
+        (("Banc", "vert", "passage 20260923-154349"), "le constat dit vert, le passage"),
+        (("Banc", "vert", "S2 et S4 joués"), "nomme son passage"),
+        (("Banc", "rouge", "passage 20260923-154349 (S2)"), "le constat dit rouge"),
+        (("Banc", "non joué", ""), "« non joué » sans sa raison"),
+        (("Banc", "ok", "passage 20260923-154349"), "ni « vert », ni « rouge », ni « non joué »"),
+    ],
+)
+def test_une_ligne_banc_se_relit_dans_son_rapport(
+    forge_produit: Depot, ligne: tuple[str, str, str], motif: str
+) -> None:
+    """Le verdict n'est pas cru sur parole : un « vert » sur un passage qui a un rouge — ici S4 —
+    est refusé ; un verdict sans passage ne se relit pas ; un « non joué » sans raison ne dit
+    rien."""
+    passage(forge_produit, "20260923-154349", resultat("S2"), resultat("S4", VERDICT_ROUGE))
+    forge_produit.pose_etat(graphql=[regle_criteres("107", CORPS_TROIS)])
+    texte = CONSTAT_COMPLET + "| {} | {} | {} |\n".format(*ligne)
+    acheve = forge_produit.lib("criteres-note", "107", constat(forge_produit, texte))
+    assert acheve.returncode == 5, acheve.stdout + acheve.stderr
+    assert motif in acheve.stderr
+    assert ecritures(forge_produit) == []
+
+
+def test_le_chemin_des_scenarios_nomme_ce_qui_existe() -> None:
+    """Les préfixes de `GL_BANC_CHEMINS` sont des dossiers du dépôt : un renommage qui en laisserait
+    un orphelin rendrait le banc muet sur ce qu'il devait voir, sans que rien ne rougisse."""
+    ligne = re.search(r'^GL_BANC_CHEMINS="([^"]+)"$', LIB.read_text(encoding="utf-8"), re.M)
+    assert ligne, "GL_BANC_CHEMINS introuvable dans lib.sh"
+    prefixes = ligne.group(1).split()
+    assert "maestro/" in prefixes, "le paquet du produit est le premier chemin des scénarios"
+    for prefixe in prefixes:
+        assert (RACINE / prefixe).is_dir(), f"{prefixe} n'existe plus dans le dépôt"
 
 
 @pytest.mark.parametrize(
     ("reponse", "piece", "code"),
     [
-        ("✓ couvert", "`livre.sh`", 0),
-        ("couvert", "`livre.sh`", 5),
-        ("oui", "`livre.sh`", 5),
+        ("✓ couvert", PREUVE, 0),
+        ("couvert", PREUVE, 5),
+        ("oui", PREUVE, 5),
         ("✗ non couvert", "", 5),
         ("hors diff", "", 5),
         ("Hors diff", "le wiki", 0),
@@ -391,7 +646,7 @@ def test_seules_trois_reponses_valent_et_jamais_sans_piece(
 
 def test_un_bug_se_confronte_sur_son_critere_unique(forge: Depot) -> None:
     forge.pose_etat(graphql=[regle_criteres("80", CORPS_BUG)])
-    texte = tableau(("C1", "✓", "`livre.sh` rend 0 et dit pourquoi"))
+    texte = tableau(("C1", "✓", f"`{TEST_LIVRE}` passé — `livre.sh` rend 0 et dit pourquoi"))
     acheve = forge.lib("criteres-note", "80", constat(forge, texte))
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
     assert "1 ✓ · 0 ✗ · 0 hors diff" in corps_poste(forge, "80").splitlines()[0]
@@ -401,7 +656,7 @@ def test_un_constat_sur_un_ticket_sans_critere_est_refuse(forge: Depot) -> None:
     """Confronter des critères qui n'existent pas serait les avoir écrits à la clôture — taillés sur
     ce qui a été livré (règle de `/milestone-bilan`). Le refus nomme le geste juste."""
     forge.pose_etat(graphql=[regle_criteres("81", CORPS_SANS_RIEN)])
-    acheve = forge.lib("criteres-note", "81", constat(forge, tableau(("C1", "✓", "`livre.sh`"))))
+    acheve = forge.lib("criteres-note", "81", constat(forge, tableau(("C1", "✓", PREUVE))))
     assert acheve.returncode == 5, acheve.stdout + acheve.stderr
     assert "criteres-note --aucun 81" in acheve.stderr
     assert ecritures(forge) == []
@@ -561,11 +816,69 @@ def test_la_confrontation_passe_apres_la_relecture_et_avant_le_filet_ci() -> Non
     assert "reprends à l'étape 4" in etape_4ter(), "un manque corrigé repasse par le commit"
 
 
-def test_un_non_couvert_est_nomme_et_ne_bloque_pas_le_merge() -> None:
+def test_un_non_tenu_est_nomme_et_ne_bloque_pas_le_merge() -> None:
     etape = etape_4ter()
-    assert "Un critère non couvert est nommé, jamais coché" in etape
+    assert "Un critère non tenu est nommé, jamais coché" in etape
     assert "Un ✗ n'empêche pas le merge" in etape
     assert "jamais en cochant pour passer" in etape
+
+
+def test_la_cloture_demande_une_preuve_exercee_par_critere() -> None:
+    """Critère 1 de #1240, côté prompt : les deux preuves qui valent, et ce qui n'en est plus
+    une."""
+    etape = etape_4ter()
+    assert "**Exerce chacun** (#1240)" in etape
+    assert "plus sur un fichier du diff" in etape
+    assert "**un test nommé qui passe**" in etape
+    assert "**une observation sur la vraie stack**" in etape
+    assert "la pièce **nomme sa preuve exercée**" in etape
+
+
+def test_la_cloture_joue_le_banc_du_avant_de_pousser() -> None:
+    """Critère 2 de #1240, côté prompt : le banc se joue avant de pousser — donc avant l'étape 7 —,
+    par la commande qui le rejoue sur la stack du worktree, et son verdict entre au constat."""
+    etape = etape_4ter()
+    assert "**avant de pousser**" in etape
+    assert "bash scripts/controltower/start.sh --etat-banc --rejouer=<S…> --no-browser" in etape
+    assert "ligne **Banc**" in etape
+    assert "**Un banc injouable est nommé, jamais compté vert**" in etape
+    assert "un rouge ne se rejoue pas jusqu'au vert" in etape
+    texte = PROMPT_FINISH.read_text(encoding="utf-8")
+    assert texte.index("4ter. **Le ticket fait-il") < texte.index("7. **Pousse la branche.**")
+
+
+def prompt_de_run() -> str:
+    """Le prompt d'une session de ticket, tel que `run.sh` le rend — espaces normalisés."""
+    texte = RUN.read_text(encoding="utf-8")
+    debut = texte.index("prompt_ticket() {")
+    return " ".join(texte[debut : texte.index("\nPROMPT\n}", debut)].split())
+
+
+def test_le_prompt_de_run_demande_la_preuve_exercee_et_le_banc() -> None:
+    """Critère 1 de #1240, côté run : personne ne relit une session de run, donc l'exigence y est
+    dite en toutes lettres — la conduite, elle, reste celle de l'étape 4ter, jamais recopiée."""
+    prompt = prompt_de_run()
+    assert "puis EXERCE chacun : un critère se clôt sur une preuve exercée" in prompt
+    assert "jamais sur un fichier du diff" in prompt
+    assert "joue le banc AVANT de pousser, au premier plan" in prompt
+    assert "un banc injouable se dit « non joué » avec sa raison, jamais vert" in prompt
+    assert "La clôture que /ticket-ship enchaîne porte la conduite et la commande" in prompt
+    assert "start.sh --etat-banc" not in prompt, "la commande vit dans 4ter, une seule source"
+
+
+def test_la_doc_du_workflow_decrit_la_regle() -> None:
+    """Critère 3 de #1240 : docs/10 §6 décrit la règle — la preuve, le banc dû et ce qui ne bouge
+    pas. Bornée à la section 6, où vivent les garde-fous."""
+    texte = DOC_WORKFLOW.read_text(encoding="utf-8")
+    debut, fin = texte.index("## 6. Garde-fous"), texte.index("## 7. Prérequis")
+    section = " ".join(texte[debut:fin].split())
+    regle = "**Un critère se clôt sur ce qui a été exercé, pas sur ce qui a été écrit** (#1240)"
+    assert regle in section
+    assert "**test nommé qui passe**" in section
+    assert "**observation sur la vraie stack**" in section
+    assert "`GL_BANC_CHEMINS`" in section
+    assert "**Un banc injouable est nommé, jamais compté vert.**" in section
+    assert "un critère **hors diff** garde sa réponse" in section
 
 
 def test_sans_critere_on_signale_sans_en_ecrire() -> None:
