@@ -43,6 +43,10 @@ gantt
 > Le jalon **« Rien de figé »** vient juste derrière (2026-09-21) : Maestro comprend n'importe quel
 > projet, propose, se laisse corriger et vérifie en exécutant. Le même jour, le mode démo quitte le
 > dépôt ([docs/41](./41-decision-maestro-juge-il-ne-bride-pas.md)).
+> Le jalon **« Le fil, un vrai interlocuteur »** naît d'un retour d'expérience (2026-09-23) et passe
+> devant « Rien de figé ». L'orchestrateur y répond en direct, sait tout ce que Maestro sait et
+> raconte la fin d'un run. La personne n'y tranche plus que ce qui exige son arbitrage, et l'équipe
+> s'ajuste au plan pendant le run ([docs/42](./42-decision-equipe-ajustee-au-plan.md)).
 
 ---
 
@@ -736,6 +740,106 @@ Ne bougent pas :
 
 > ⚠ **Les critères de sortie du jalon sont dans sa description**, section `## Critères de sortie`
 > (C1 à C4). C'est elle qui fait foi au bouclage (docs/10 §3.4), pas ce résumé.
+
+---
+
+## « Le fil, un vrai interlocuteur » — il sait tout, répond en direct, ne dérange que pour trancher (2026-09-23)
+
+Ce jalon est né d'un retour d'expérience de la personne, le 2026-09-22. Elle venait de demander à
+Maestro, sur le projet `p1`, *« une petite animation du logo Maestro »* (run `96d0c3482649`).
+L'instruction [`/idee`](../.claude/commands/idee.md) (#1013) l'a consigné par #1229 :
+
+> *« Pour moi, il est prioritaire de traiter ces points, spécialement le chat : je veux que ce soit
+> naturel. […] Je veux une refonte pour que le chat soit plus visuel — regarde ce qui est fait pour
+> Claude Code, ChatGPT, etc. Il faut aussi surtout que le streaming fonctionne […] et que
+> l'orchestrateur sache répondre à toutes les questions et soit au courant de tout. »*
+
+Comme les jalons nés d'une idée, il ne prend **pas de numéro de phase**.
+
+| Milestone | Contenu | Échéance | Suivi |
+|---|---|---|---|
+| **Le fil, un vrai interlocuteur — il sait tout, répond en direct, ne dérange que pour trancher** | Le fil de l'orchestrateur répond en direct et avec ses mots. Il lit le projet, ses runs et leurs livrables, et raconte la fin d'un run avec la façon de l'essayer, sous une forme de chat moderne choisie sur pièces. La personne n'y tranche que ce qui exige son arbitrage, où qu'elle soit. L'équipe s'ajuste au plan | 2028-01-31 | **#1221**, 4 lots en séquence (#1222, #1223, #1224, #1225) ; **#1226**, **#1227**, **#1228**, sans parent |
+
+**Le constat.** Le journal du run et une carte du code l'ont établi le 2026-09-23 :
+- **Le fil de l'orchestrateur ne streame pas.** Il rend un JSON `{verdict, objectif, reponse}` qu'il
+  attend en entier, puis l'écrit d'un seul bloc. Seul le chat direct avec un agent streame
+  ([docs/05 §2.9](./05-interface-control-tower.md), signalé).
+- **L'orchestrateur n'a aucun outil**, et son contexte coupe le détail des tâches à 300 caractères.
+  À « comment je fais pour tester l'animation ? », il a répondu que *« le détail est tronqué »* et
+  qu'un README *« y a probablement été créé »*.
+- **La fin d'un run n'écrit rien dans le fil** : ni ce qui a été produit, ni comment l'essayer. Et le
+  code accole des **phrases gabarits** à la réponse du modèle.
+- **14 validations Bash**, toutes approuvées, sur le propre travail d'un agent dans son projet :
+  lancer, tester, créer ses dossiers, nettoyer ses caches.
+- **Quatre tâches pour un seul développeur**, sans qu'aucun ajustement d'équipe ne soit proposé : la
+  décomposition ne planifie qu'avec les compétences présentes.
+- **Depuis une vue du run, trancher renvoie vers `/validations`**, sans chemin de retour.
+
+**Le contenu :**
+- **#1221**, parent du fil, 4 lots **en séquence**. #1222 et #1223 touchent le même appel au modèle,
+  et #1225 retouche ce que #1223 et #1224 ont posé :
+  - **#1222** : la réponse s'écrit en direct, y compris sur le fournisseur compatible OpenAI, et le
+    code n'y accole plus de phrase gabarit ;
+  - **#1223** : l'orchestrateur **lit**, en lecture seule, bornée à la racine du projet et à l'état de
+    Maestro : le projet, ses runs, leurs livrables, les validations en attente et l'équipe réelle.
+    Ce qu'il lit se voit dans le fil. Il reprend le critère 3 de #1159 ;
+  - **#1224** : la fin d'un run se raconte dans le fil : ce qui a été produit, comment l'essayer, et
+    les fichiers en liens. Un scénario de référence la joue ;
+  - **#1225** : le fil se lit comme un chat moderne. C'est le lot qui **décide d'un écran** : veille
+    sur Claude Code, ChatGPT et comparables, variantes, regard neuf. Il vient **en dernier**, pour
+    être choisi sur le vrai contenu (#1167), et ne cherche aucune identité nouvelle : la direction
+    reste l'affaire de « Le niveau visuel ».
+- **#1226** (bug) : un agent d'une équipe proposée exécute son travail dans son projet sans attendre
+  un humain. Ce qui sort du projet, ou détruit ce que la personne y a posé, lui revient toujours.
+  C'est la ligne de politique que [docs/32 §8](./32-decision-cran-orchestrateur.md) prévoyait, pas
+  un nouveau décideur.
+- **#1227** : après la décomposition, l'équipe est confrontée au plan, et le rôle qui manque se
+  propose dans le fil.
+- **#1228** : une validation se tranche **sur place** depuis toute vue d'un run. La carte est
+  partagée avec le tableau de bord, la cloche et, plus tard, le fil (#1183).
+
+**Une décision tombe, à la demande de la personne**, et
+[docs/42](./42-decision-equipe-ajustee-au-plan.md) l'écrit : **l'équipe s'ajuste au plan**, proposée
+pendant le run et jamais recrutée sans accord. Elle renverse les deux dernières puces de
+[docs/37 §3](./37-decision-equipe-sur-mesure.md). Ne bougent pas : un agent ne recrute jamais
+(docs/31 §3.5), rien n'est recruté sans accord (#1040), le brief est validé avant la décomposition
+(D5), et aucune IA ne juge l'appel d'outil d'une autre (docs/32).
+
+**Ce que l'instruction a mis à jour sans l'ouvrir :**
+- **#1183** (trancher depuis le fil, jalon « Le run tient parole ») passe de `moyenne` à `haute`, et
+  réutilisera la carte de #1228 ;
+- **#1181** garde le rôle manquant découvert **en cours** d'exécution, #1227 prenant le moment de la
+  décomposition ;
+- le critère 3 de **#1159** passe à #1223.
+
+**Les risques nommés :**
+- **#1223 sur un fournisseur sans outils.** `openai_compat` ne fait que du texte (§ « Au-delà »). Là,
+  l'orchestrateur doit recevoir par son contexte ce qu'il ne peut pas lire, ou dire ce qu'il ne
+  sait pas, jamais le deviner.
+- **#1226 en écriture en place** (projet non versionné, docs/24 §2.4). Un `rm` y détruit sans fusion
+  ni diff : la portée y est prudente.
+
+**Place dans la file**, sur le rail produit :
+
+| Jalon | Échéance |
+| --- | --- |
+| « Les scénarios de référence » (reste #1212 en cours, #1217) | 2028-01-30 |
+| **« Le fil, un vrai interlocuteur »** | **2028-01-31** |
+| « Rien de figé » | 2028-02-02 (inchangée) |
+| « Le run tient parole » | 2028-02-03 (inchangée) |
+| « Le niveau visuel » | 2028-02-05 (inchangée) |
+| Phase 9 | 2028-02-16 (inchangée) |
+
+- **Juste derrière « Les scénarios de référence »**, qui n'a plus que deux tickets, dont un en cours.
+  C'est son banc qui mesurera le critère C8, joué sur le réel.
+- **Devant tout le reste du rail**, parce que la personne l'a déclaré prioritaire.
+- **Devant « Le niveau visuel »**, qui re-teintera un fil dont la structure aura été choisie. C'est
+  l'argument qui avait placé « Rien de figé » devant lui : on n'habille pas une capacité qui va
+  changer.
+- Son échéance tombe **strictement entre** ses voisins : **aucune autre échéance n'a bougé**.
+
+> ⚠ **Les critères de sortie du jalon sont dans sa description**, section `## Critères de sortie`
+> (C1 à C8). C'est elle qui fait foi au bouclage (docs/10 §3.4), pas ce résumé.
 
 ---
 

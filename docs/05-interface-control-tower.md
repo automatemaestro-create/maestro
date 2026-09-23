@@ -2649,6 +2649,13 @@ rattache rien et ne laisse aucun cadre vide.
 
 #### La réponse s'écrit en direct (#695)
 
+> ⚠ **Vrai pour le transport et pour le chat d'un agent, faux pour le fil de l'orchestrateur**
+> (relevé le 2026-09-23, [docs/42 §4.2](./42-decision-equipe-ajustee-au-plan.md)). L'orchestrateur
+> rend un JSON `{verdict, objectif, reponse}` qu'il attend en entier (`_juger`,
+> `maestro/controltower/orchestration.py`), puis l'écrit **en un seul incrément** : « … répond… »
+> y couvre toute la génération. Le fournisseur compatible OpenAI ne streame aucun fil. Rétabli par
+> **#1222**, qui réécrit cette section.
+
 Le lot 1 avait construit le canal de streaming (§6.5) et il a attendu son
 consommateur jusqu'ici. Deux raisons de ne pas le brancher, et **les deux sont
 levées, chacune à sa façon**. Il ne savait pas porter de **sources** — son

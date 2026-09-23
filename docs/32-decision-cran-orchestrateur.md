@@ -433,6 +433,16 @@ dans la forge ou dessine vraiment dans Figma. C'est le fait à produire avant de
 soit — et **ce n'est pas un reproche fait à #716**, dont l'objet était de créer la population, pas
 de la faire déborder.
 
+> ⚠ **La mesure existe depuis le 2026-09-22** ([docs/42 §4.1](./42-decision-equipe-ajustee-au-plan.md)),
+> et elle ne vient pas d'où on l'attendait. Ce ne sont ni les crans `auto` du catalogue ni un serveur
+> MCP. Ce sont les agents des **équipes proposées** (docs/37), en `Bash: ask, humain` dès qu'aucune
+> commande du rôle n'a été lue dans le projet, donc toujours sur un projet neuf. Le run `96d0c3482649`
+> a demandé **14 validations Bash**, et toutes ont été **approuvées** : `python`, `pytest` et `mkdir`
+> sur le propre travail de l'agent, et le ménage de ses caches. C'est le cas que le paragraphe
+> ci-dessus prévoyait, un taux d'approbation de 1. Le remède est celui qu'il nommait, **une ligne de
+> politique**, avec au besoin une portée (porte 2), et jamais un décideur intermédiaire : **#1226**.
+> La porte ne s'ouvre pas.
+
 **Porte 2 — un acte dont le verdict dépend des arguments.** Le cas `rm -rf {chemin}`. La réponse
 n'est alors **pas** ce cran-ci mais une **portée** sur l'entrée de politique (§3.1a) : déterministe,
 testable, évaluée là où le cran l'est déjà, sans canal ni fournisseur ni traversée de frontière
