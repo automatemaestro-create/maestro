@@ -1597,7 +1597,16 @@ async function lireProjets<T>(
   } catch {
     throw ErreurApi.injoignable(chemin);
   }
-  if (!reponse.ok) throw await refusProjet(reponse, refusParDefaut);
+  if (!reponse.ok) {
+    // La perte du magasin (#1206) n'est pas un refus motivé de la route : elle
+    // emprunte le chemin des autres lectures, pour que la porte d'entrée la dise
+    // comme les écrans — et non en « Lecture impossible ».
+    const { motif, magasin } = await lectureEnEchec(reponse.clone());
+    if (magasin !== null) {
+      throw new ErreurApi(chemin, reponse.status, motif, magasin);
+    }
+    throw await refusProjet(reponse, refusParDefaut);
+  }
   return (await reponse.json()) as T;
 }
 
