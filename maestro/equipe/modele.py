@@ -153,6 +153,8 @@ class SkillBranche:
     compte — un skill `deja-present` est déjà dans le projet, un `a-generer`
     n'existera qu'une fois l'outillage écrit (#1033), et un rôle branché sur un
     skill qui n'existe pas encore n'est pas une erreur mais un ordre de marche.
+    Ce n'est vrai que **dans la proposition** : à la création, seul ce que le
+    projet porte sur son disque est branché (`skills_constates`, #1212).
 
     `raison` dit pourquoi **ce rôle-là** le branche ; la raison du skill
     lui-même reste celle de la recommandation, et ne se recopie pas ici.

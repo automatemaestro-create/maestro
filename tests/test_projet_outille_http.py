@@ -625,6 +625,52 @@ def test_une_equipe_deja_creee_est_refusee_a_la_seconde_validation(
     }
 
 
+def _playbooks_crees(gabarits: ConfigurationAgents, projet: str) -> str:
+    """Les playbooks écrits dans le projet, bout à bout — ce que les agents liront."""
+    cfg = gabarits.pour_projet(projet)
+    fiches = [cfg.agents.lire(nom) for nom in cfg.agents.noms()]
+    return "\n".join(fiche.playbook for fiche in fiches if fiche is not None)
+
+
+@pytest.mark.parametrize("outille", [False, True], ids=["outillage-non-ecrit", "outille"])
+def test_la_creation_ne_branche_que_les_skills_que_le_projet_porte(
+    client: TestClient, atelier: Path, gabarits: ConfigurationAgents, outille: bool
+) -> None:
+    """#1212, par l'appel exact de l'écran : la proposition branche les skills que
+    l'outillage **recommande** ; la création ne nomme que ceux qui sont écrits.
+
+    Les deux cas partagent tout sauf la génération de l'outillage, et c'est ce qui
+    fait du second l'échantillon fautif du premier : la même équipe validée nomme
+    les chemins dès qu'ils existent. Le fil passe par la même création
+    (`creer_equipe_du_projet`), ce test la prend par la route."""
+    projet, racine = _projet_neuf(client, atelier)
+    choix = _repondre_au_questionnaire(client, projet)
+    proposition = client.post(
+        f"/api/projets/{projet}/equipe/proposition", json={"choix": choix}
+    ).json()
+    branches = {s["chemin"] for r in proposition["roles"] for s in r["skills"]}
+    assert branches, "les réponses du bilan branchent des skills"
+    if outille:
+        reco = client.post(
+            f"/api/projets/{projet}/outillage/recommandation", json={"choix": choix}
+        ).json()["recommandation"]
+        ecrit = client.post(
+            f"/api/projets/{projet}/outillage/generation",
+            json={"retenus": [e["chemin"] for e in reco["entrees"]], "choix": choix},
+        )
+        assert ecrit.status_code == 200, ecrit.text
+
+    reponse = client.post(f"/api/projets/{projet}/equipe", json=_validee(proposition))
+
+    assert reponse.status_code == 201, reponse.text
+    playbooks = _playbooks_crees(gabarits, projet)
+    for chemin in branches:
+        assert (chemin in playbooks) is outille, chemin
+        assert (racine / chemin).is_file() is outille, chemin
+    skills_rapportes = [s for a in reponse.json()["agents"] for s in a["skills"]]
+    assert bool(skills_rapportes) is outille
+
+
 def test_la_creation_dans_un_projet_inconnu_est_un_404(client: TestClient) -> None:
     reponse = client.post(
         "/api/projets/prj-00000000/equipe",

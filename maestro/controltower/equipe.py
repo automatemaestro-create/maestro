@@ -58,8 +58,9 @@ c'est le seul moyen de ne pas laisser une demi-équipe derrière un refus.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 from maestro.agents.configuration import ConfigurationAgents
@@ -83,6 +84,7 @@ from maestro.equipe import (
     definition,
     proposer_equipe,
     refus_de,
+    skills_constates,
 )
 from maestro.outillage import Analyse, Bornes, analyser
 from maestro.outillage.modele import Constats, Recommandation
@@ -212,7 +214,9 @@ class ServiceEquipe:
         Le déroulé, et l'ordre **est** la garantie :
 
         1. le projet est **résolu** (404/422 motivés) — un agent ne naît jamais
-           dans un projet qu'on ne sait pas lire ;
+           dans un projet qu'on ne sait pas lire — et ses rôles ne gardent que
+           les skills que **son disque porte** (`skills_constates`, #1212) : un
+           playbook ne nomme pas un chemin que l'outillage n'a pas écrit ;
         2. l'équipe entière est **vérifiée** (`refus_de`). Un seul refus arrête
            tout, et **rien n'est écrit** : trois dépôts × N rôles n'offrent
            aucune transaction, et une demi-équipe serait pire qu'un refus ;
@@ -231,6 +235,8 @@ class ServiceEquipe:
         `proposer`.
         """
         projet = self._projets.entite(id_projet)
+        porte = _porte_dans(projet.racine_chemin)
+        roles = [skills_constates(role, porte) for role in roles]
         cfg = self._gabarits.pour_projet(projet.id)
         blocages = refus_de(roles, noms_pris=cfg.agents.noms())
         if blocages:
@@ -376,3 +382,21 @@ class ServiceEquipe:
         if self._generateur is None:
             self._generateur = GenerateurDefinitionAgent()
         return self._generateur
+
+
+def _porte_dans(racine: Path) -> Callable[[str], bool]:
+    """Le constat que `skills_constates` demande : ce chemin est-il un fichier **du projet** ?
+
+    Le chemin vient du corps de la requête (l'équipe validée telle que l'écran la
+    rapporte) : il est résolu contre la racine, et tout ce qui en sort — `..`,
+    chemin absolu, lien qui mène ailleurs — n'est pas porté par le projet, même
+    si le fichier existe. Un skill est un `SKILL.md`, donc un **fichier** : un
+    dossier du même nom ne suffit pas à ce que l'agent ait quelque chose à lire.
+    """
+    base = racine.resolve()
+
+    def porte(chemin: str) -> bool:
+        cible = (base / chemin).resolve()
+        return cible.is_relative_to(base) and cible.is_file()
+
+    return porte

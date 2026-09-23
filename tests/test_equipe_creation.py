@@ -43,6 +43,7 @@ from maestro.controltower.projets import ServiceProjets
 from maestro.decideur import Decideur
 from maestro.equipe import (
     AUCUN_SKILL,
+    AUCUN_SKILL_ECRIT,
     INSTANCES_MAX_CREEES,
     TITRE_SKILLS,
     EquipeCreee,
@@ -52,6 +53,7 @@ from maestro.equipe import (
     definition,
     playbook_branche,
     refus_de,
+    skills_constates,
 )
 from maestro.projets.store import ProjetStore
 
@@ -373,3 +375,126 @@ def test_le_rapport_de_creation_dit_ce_qui_existe_desormais() -> None:
     assert rapport["cree"] is True
     assert rapport["agents"] == []
     assert rapport["instances_total"] == 0
+
+
+# --- ④ Ne sont branchés que les skills que le projet porte (#1212) -----------
+#
+# Relevé du bouclage du 2026-09-22 (passage `20260922-164402`) : sur S3 et S4,
+# l'équipe est créée sans que l'outillage soit écrit, et le playbook du `dev`
+# nommait `.agents/skills/mettre-en-route/SKILL.md` dans un projet sans
+# `.agents/`. Le fil et la route passent tous deux par `ServiceEquipe.creer`
+# (`creer_equipe_du_projet`, app.py) : c'est là que ces tests le prennent.
+
+#: Le skill exact du relevé, tel que la proposition le branche.
+CHEMIN_METTRE_EN_ROUTE = ".agents/skills/mettre-en-route/SKILL.md"
+METTRE_EN_ROUTE = SkillRetenu(
+    nom="mettre-en-route", chemin=CHEMIN_METTRE_EN_ROUTE, commandes=("pip install -e .",)
+)
+
+
+def _ecrire_skill(racine: Path, chemin: str) -> None:
+    fichier = racine / chemin
+    fichier.parent.mkdir(parents=True, exist_ok=True)
+    fichier.write_text("---\nname: skill\n---\n", encoding="utf-8")
+
+
+def _playbook_ecrit(gabarits: ConfigurationAgents, projet_id: str, nom: str = "dev") -> str:
+    fiche = gabarits.pour_projet(projet_id).agents.lire(nom)
+    assert fiche is not None
+    return fiche.playbook
+
+
+def test_un_skill_recommande_mais_non_ecrit_n_est_pas_branche(tmp_path: Path) -> None:
+    """Le relevé, rejoué : projet sans `.agents/`, équipe validée telle que proposée."""
+    service, gabarits, projet_id = _service(tmp_path)
+    role = _role(skills=(METTRE_EN_ROUTE,))
+    # L'échantillon fautif : la section d'avant #1212, posée sans regarder le
+    # disque, nomme bien le chemin — c'est ce qui rend l'absence ci-dessous
+    # imputable au constat, et non à un texte qui ne l'aurait jamais porté.
+    assert CHEMIN_METTRE_EN_ROUTE in playbook_branche(role)
+
+    rapport = service.creer(projet_id, [role])
+
+    playbook = _playbook_ecrit(gabarits, projet_id)
+    assert CHEMIN_METTRE_EN_ROUTE not in playbook
+    assert ".agents/" not in playbook
+    assert AUCUN_SKILL_ECRIT in playbook
+    assert rapport["agents"][0]["skills"] == []
+
+
+def test_un_projet_outille_garde_sa_section_intacte_chemins_compris(tmp_path: Path) -> None:
+    """L'autre moitié : l'outillage est écrit, la section est celle d'avant #1212 au
+    caractère près — le constat ne retire rien à un projet qui porte ses skills."""
+    service, gabarits, projet_id = _service(tmp_path)
+    _ecrire_skill(Path.home() / "depensio", CHEMIN_METTRE_EN_ROUTE)
+    role = _role(skills=(METTRE_EN_ROUTE,))
+
+    rapport = service.creer(projet_id, [role])
+
+    assert _playbook_ecrit(gabarits, projet_id) == playbook_branche(role)
+    assert "il enveloppe : `pip install -e .`" in _playbook_ecrit(gabarits, projet_id)
+    assert rapport["agents"][0]["skills"] == ["mettre-en-route"]
+
+
+def test_seuls_les_skills_ecrits_sont_nommes_quand_l_outillage_est_partiel(
+    tmp_path: Path,
+) -> None:
+    service, gabarits, projet_id = _service(tmp_path)
+    ecrit = SkillRetenu(nom="lancer-les-tests", chemin=".agents/skills/lancer-les-tests/SKILL.md")
+    _ecrire_skill(Path.home() / "depensio", ecrit.chemin)
+
+    service.creer(projet_id, [_role(skills=(METTRE_EN_ROUTE, ecrit))])
+
+    playbook = _playbook_ecrit(gabarits, projet_id)
+    assert ecrit.chemin in playbook
+    assert CHEMIN_METTRE_EN_ROUTE not in playbook
+    assert AUCUN_SKILL_ECRIT not in playbook
+
+
+@pytest.mark.parametrize(
+    "chemin",
+    ["../dehors/SKILL.md", "{dehors}/SKILL.md", ".agents/skills/dossier"],
+)
+def test_un_chemin_hors_du_projet_ou_qui_n_est_pas_un_fichier_n_est_pas_porte(
+    tmp_path: Path, chemin: str
+) -> None:
+    """Le chemin arrive dans le corps de la requête : un fichier qui existe **hors**
+    de la racine n'est pas un skill du projet, et un dossier n'est pas un
+    `SKILL.md` que l'agent pourrait lire."""
+    service, gabarits, projet_id = _service(tmp_path)
+    dehors = Path.home() / "dehors"
+    _ecrire_skill(dehors, "SKILL.md")
+    (Path.home() / "depensio" / ".agents" / "skills" / "dossier").mkdir(parents=True)
+    chemin = chemin.format(dehors=dehors.as_posix())
+
+    service.creer(projet_id, [_role(skills=(SkillRetenu(nom="x", chemin=chemin),))])
+
+    playbook = _playbook_ecrit(gabarits, projet_id)
+    assert chemin not in playbook
+    assert AUCUN_SKILL_ECRIT in playbook
+
+
+def test_le_constat_garde_l_ordre_et_ne_branche_pas_un_skill_sans_chemin() -> None:
+    """Pur : `skills_constates` ne touche aucun disque, il demande à `porte`."""
+    a, b = SkillRetenu(nom="a", chemin="a.md"), SkillRetenu(nom="b", chemin="b.md")
+    sans_chemin = SkillRetenu(nom="c")
+    demandes: list[str] = []
+
+    def porte(chemin: str) -> bool:
+        demandes.append(chemin)
+        return True
+
+    constate = skills_constates(_role(skills=(b, sans_chemin, a)), porte)
+
+    assert constate.skills == (b, a)
+    assert constate.skills_absents == (sans_chemin,)
+    assert demandes == ["b.md", "a.md"]
+
+
+def test_un_role_a_qui_rien_n_etait_recommande_garde_sa_phrase() -> None:
+    """« Rien n'a été recommandé » et « rien n'est écrit » sont deux raisons :
+    la seconde ne remplace pas la première là où elle est vraie."""
+    constate = skills_constates(_role(), lambda _chemin: False)
+
+    assert AUCUN_SKILL in playbook_branche(constate)
+    assert AUCUN_SKILL_ECRIT not in playbook_branche(constate)
