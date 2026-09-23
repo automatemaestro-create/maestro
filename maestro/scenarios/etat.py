@@ -16,7 +16,8 @@ L'écran peuplé que regardent la relecture visuelle et les captures venait d'un
 scénario **factice** (la démo). Arbitrage de #1156 : il vient désormais de
 **l'état réel qu'un passage du banc (#1148) a laissé**, servi par l'API réelle.
 Rien n'est fabriqué — un passage coûte du vrai modèle (~1 $ et ~40 min pour les
-quatre scénarios, mesuré le 2026-09-22), on ne le rejoue donc pas à chaque
+quatre scénarios d'alors, mesuré le 2026-09-22 ; S5 en ajoute un cinquième depuis
+#1224), on ne le rejoue donc pas à chaque
 regard : on **rouvre** ce qu'il a laissé, et on dit son âge.
 
 ## Le jeu de données du banc
