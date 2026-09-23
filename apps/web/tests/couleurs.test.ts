@@ -389,7 +389,16 @@ const RESIDU = new Map<string, number>([
   ["components/BarreSuperieure.tsx", 10],
   ["components/BasculeDeVues.tsx", 6],
   ["components/BasculeTheme.tsx", 8],
-  ["components/CentreNotifications.tsx", 17],
+  // Les cinq paires de la carte d'arbitrage, arrivées ici avec elle (#1228) :
+  // ce sont les tons du **diff** — vert/rouge/ambre par nature de modification
+  // —, que la palette sémantique ne couvre pas (un ajout n'est pas un
+  // « positif », une suppression n'est pas une « alerte »). Elles étaient
+  // inscrites sous `PanneauValidations`, d'où le code vient.
+  ["components/CarteValidation.tsx", 5],
+  // Trois de moins qu'avant #1228 : la carte de validation recopiée ici les
+  // portait (l'ambre du motif, les neutres de la description), et elle a été
+  // remplacée par la carte du produit.
+  ["components/CentreNotifications.tsx", 14],
   ["components/CreationAgentEcran.tsx", 4],
   ["components/EditeurAgent.tsx", 38],
   ["components/EditeurPlaybook.tsx", 4],
@@ -416,7 +425,9 @@ const RESIDU = new Map<string, number>([
   ["components/PanneauCouts.tsx", 9],
   ["components/PanneauDetailTache.tsx", 14],
   ["components/PanneauRunsImmobiles.tsx", 4],
-  ["components/PanneauValidations.tsx", 5],
+  // `components/PanneauValidations.tsx` a quitté ce tableau avec #1228 : ses
+  // cinq paires étaient celles du diff, parties avec la carte dans
+  // `CarteValidation`. Ce qui reste du fichier n'écrit que des tokens.
   ["components/PosteVide.tsx", 12],
   // Le socle lui-même : la carte, les quatre tons d'état du badge (plein et
   // contour) et le contour de `provenance`, l'en-tête de section. C'est la
@@ -461,12 +472,14 @@ const RESIDU = new Map<string, number>([
   ["components/runs/EtatDesRuns.tsx", 1],
   ["components/runs/FriseRun.tsx", 13],
   ["components/runs/ListeRuns.tsx", 1],
-  ["components/runs/VuePipeline.tsx", 26],
+  // Une de moins depuis #1228 : le lien « Trancher → » ambre du nœud est
+  // devenu un bouton du socle, qui prend son ton.
+  ["components/runs/VuePipeline.tsx", 25],
   ["components/runs/VueRun.tsx", 3],
 ]);
 
 /** Le compte du README — épinglé ici pour qu'il ne puisse pas dériver en silence. */
-const TOTAL_ANNONCE = 644;
+const TOTAL_ANNONCE = 640;
 
 /** Ce que le produit porte aujourd'hui, fichier par fichier. */
 function residuMesure(): Map<string, string[]> {

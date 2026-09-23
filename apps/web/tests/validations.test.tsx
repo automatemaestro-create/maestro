@@ -44,9 +44,12 @@ import userEvent from "@testing-library/user-event";
 import {
   FileValidations,
   PanneauValidations,
-  fileDAttente,
 } from "@/components/PanneauValidations";
 import { formatAttente } from "@/lib/format";
+// `fileDAttente` a quitté le composant avec #1228 : la règle « qu'est-ce qui
+// attend, et dans quel ordre ? » vit dans `lib/validations`, avec les deux
+// autres questions que cinq surfaces posent désormais de la même file.
+import { fileDAttente } from "@/lib/validations";
 import {
   NATURE_AJOUT,
   NATURE_MODIFICATION,

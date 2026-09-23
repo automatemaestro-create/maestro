@@ -471,7 +471,10 @@ const RESIDU = new Map<string, number>([
   ["components/OngletsAgent.tsx", 1],
   ["components/PanneauBriefs.tsx", 1],
   ["components/PanneauDetailTache.tsx", 3],
-  ["components/PanneauValidations.tsx", 2],
+  // `components/PanneauValidations.tsx` a quitté ce tableau avec #1228 : ses
+  // deux `rounded-md` sont partis avec la carte dans `CarteValidation`, où ils
+  // se sont repliés sur `rounded-controle` — le même pixel, le nom du barème.
+  // Le panneau neuf du même fichier prend `shadow-flottant`, donc n'ajoute rien.
   ["components/PosteVide.tsx", 2],
   // Le socle lui-même, et il compte double — un écart retiré ici en retire des
   // recopies partout. Ses huit rayons sont partis avec ce lot (ils ont pris
@@ -513,7 +516,7 @@ const RESIDU = new Map<string, number>([
 ]);
 
 /** Le compte du README — épinglé ici pour qu'il ne puisse pas dériver en silence. */
-const TOTAL_ANNONCE = 164;
+const TOTAL_ANNONCE = 162;
 
 /** Ce que le produit porte aujourd'hui, fichier par fichier. */
 function residuMesure(): Map<string, string[]> {

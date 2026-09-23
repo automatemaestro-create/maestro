@@ -178,3 +178,27 @@ export const VUES_RUN: VueRunOnglet[] = [
 
 /** La lecture sur laquelle la vue d'un run s'ouvre — voir l'arbitrage ci-dessus. */
 export const VUE_RUN_DEFAUT: VueRunCle = VUE_PIPELINE;
+
+/** Vrai si `valeur` désigne une lecture connue (garde des entrées non maîtrisées). */
+export function estVueRun(valeur: string | undefined): valeur is VueRunCle {
+  return VUES_RUN.some((vue) => vue.cle === valeur);
+}
+
+/**
+ * La lecture demandée par `?vue=`, ou le défaut (#1228).
+ *
+ * ⚠ **Ce n'est pas la route par lecture que cette page a écartée** (ci-dessus) :
+ * rien ne navigue vers ce paramètre, et changer d'onglet ne l'écrit pas dans
+ * l'URL. Il n'a qu'un seul appelant, et c'est tout son objet — le **retour**
+ * depuis `/validations`, qui doit ramener « au run *et à la vue* d'où l'on
+ * venait ». L'aller est écrit par l'écran qui part (`hrefAvecRetour`), le retour
+ * le relit ici. Le prix assumé de l'arbitrage — on partage un run, pas la façon
+ * de le regarder — ne bouge pas : personne ne fabrique cette URL à la main, et
+ * une valeur inconnue retombe sur le pipeline au lieu de casser la page.
+ */
+export function vueRunOuDefaut(
+  valeur: string | string[] | undefined,
+): VueRunCle {
+  const candidat = Array.isArray(valeur) ? valeur[0] : valeur;
+  return estVueRun(candidat) ? candidat : VUE_RUN_DEFAUT;
+}

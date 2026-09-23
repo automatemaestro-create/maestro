@@ -15,16 +15,32 @@
  *
  * L'identifiant est **décodé** (`decodeURIComponent`) comme celui d'un agent
  * (#190) : `hrefRun` l'encode à l'écriture, la symétrie se fait ici.
+ *
+ * `?vue=` se lit dans `searchParams` plutôt que par `useSearchParams` (#1228),
+ * comme `?onglet=` sur la liste des agents : côté serveur, pas de `Suspense` à
+ * ceinturer pour le rendu statique. Il n'a qu'un appelant — le **retour** depuis
+ * `/validations`, qui doit ramener au run *et à la lecture* d'où l'on venait —,
+ * et une valeur inconnue retombe sur le pipeline (`vueRunOuDefaut`).
  */
 
 import { VueRun } from "@/components/runs/VueRun";
+import { vueRunOuDefaut } from "@/lib/vuesRun";
 
 export default async function PageRun({
   params,
+  searchParams,
 }: {
   params: Promise<{ runId: string }>;
+  searchParams: Promise<{ [cle: string]: string | string[] | undefined }>;
 }) {
   const { runId } = await params;
+  const { vue } = await searchParams;
   const identifiant = decodeURIComponent(runId);
-  return <VueRun key={identifiant} runId={identifiant} />;
+  return (
+    <VueRun
+      key={identifiant}
+      runId={identifiant}
+      vueCible={vueRunOuDefaut(vue)}
+    />
+  );
 }

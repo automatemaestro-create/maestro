@@ -1065,6 +1065,14 @@ plusieurs runs se succèdent, *ce que ce run avait fait* n'était visible nulle 
 > pouls du shell —, seul le corps de l'écran a désormais cinq formes, dont on ne voit
 > **qu'une** à la fois. L'arbitrage est rendu en §2.4.4.
 
+> ⚠ **Depuis #1228, cette vue ne se contente plus de montrer** (§2.4.7). Une demande de
+> validation qui retient ce run s'y **tranche sur place**, dans les trois lectures où
+> elle se lisait : la **tête** la porte entière, sous la barre de progression ; le nœud
+> de pipeline et la carte de Kanban l'ouvrent dans un panneau. Le « Trancher → » de la
+> tête, qui menait à `/validations` sans chemin de retour, n'y est plus — la table
+> `ATTENTES`, elle, ne bouge pas : la liste des runs et le tableau de bord acheminent
+> toujours.
+
 **Le Kanban est réutilisé, pas réimplémenté.** C'est le composant de §2.2 :
 mêmes colonnes, mêmes cartes, même **détail sur place** (#251), même réassignation.
 Ce qui change est ce qu'on lui donne — les tâches de ce run — et une seule prise a été
@@ -1344,8 +1352,11 @@ plat tout serait « prêt » au niveau 0, et le signal ne dirait plus rien.
 **Ce qui attend un humain est teinté et immobile ; ce qui travaille bat.** C'est la
 règle du badge d'un run (§2.4.1), reprise telle quelle : la pastille ne pulse que pour
 ce qui avance. Le nœud en attente est le **seul** à porter une surface `attention`, et
-il renvoie vers l'écran qui porte le geste (« Trancher → », même table `ATTENTES` que
-la liste). ⚠ L'attente se lit dans la **file des validations**, pas sur la tâche : le
+il porte le bouton **« Trancher »**, qui ouvre la demande sur place (§2.4.7).
+⚠ **Il *renvoyait* vers l'écran des validations jusqu'à #1228** (« Trancher → », même
+table `ATTENTES` que la liste) : la boîte fait 16 rem, et un arbitrage ne s'y *lit* pas
+— ce qui reste vrai. Ce qui était faux est qu'il fallait pour autant quitter le graphe.
+⚠ L'attente se lit dans la **file des validations**, pas sur la tâche : le
 moteur n'émet pas le statut `en_attente_validation` de la machine à états, et la table
 partagée le rangerait de toute façon dans « en cours », à raison — la tâche est en vol.
 « En vol » et « quelqu'un doit trancher » ne se ressemblent pas à l'œil, et les
@@ -1583,6 +1594,76 @@ et son explication, l'invariant « aucune entrée perdue » vérifié ligne par 
 trois états côte à côte, la légende, la borne annoncée, et l'onglet inséré avant le
 journal — qui ferme toujours la rangée.
 
+#### 2.4.7 Trancher depuis la vue d'un run, quelle qu'elle soit (#1228) — **livré**
+
+Retour d'usage du 2026-09-22 : *« Si je suis par exemple dans la page run pipeline et que
+je dois trancher, ça me redirige vers la page validation et je ne sais pas comment revenir
+directement sur le run pipeline. »* La page d'un run n'offrait **aucun geste de
+décision** : la tête, le nœud de pipeline et la carte de Kanban menaient tous les trois
+à `/validations`, d'où rien ne ramenait. On ne tranchait sur place qu'au tableau de bord
+et dans la cloche.
+
+**Une demande se tranche là où on la voit, et l'on y reste.** Trois surfaces, un seul
+mécanisme :
+
+| Surface | Ce qu'elle porte |
+| --- | --- |
+| la **tête** du run (§2.4.2) | les demandes de ce run, **entières**, sous la barre de progression : on lit l'acte et on décide sans rien ouvrir |
+| le **nœud** de pipeline (§2.4.4) | un bouton « Trancher » qui ouvre la demande dans un panneau |
+| la **carte** du Kanban (§2.2, §2.4.2) | le même bouton, le même panneau |
+
+**La carte est celle du produit, et il n'y en a plus qu'une**
+(`apps/web/components/CarteValidation.tsx`). Elle était écrite deux fois — en plein dans
+`PanneauValidations`, en resserré dans la cloche —, et les deux ne disaient pas la même
+chose du même acte : la compacte affichait le **titre de la tâche** là où la pleine met
+l'**acte** en tête depuis #573, c'est-à-dire « Rédiger le README » au-dessus d'un
+`rm -rf`. La cloche y gagne donc l'acte, ses arguments, son diff et le **motif** du refus,
+qu'elle n'avait pas. Seule une **densité** change d'une surface à l'autre ; #1183
+montera la même dans le fil.
+
+**Le panneau est celui du socle.** Un nœud fait 16 rem et une carte de Kanban 11 rem :
+aucun des deux n'a la place d'un diff et d'un champ de motif — la prémisse qui faisait
+renvoyer ailleurs, et qui n'a pas changé. Ce qui a changé est la conclusion : le produit
+sait déjà montrer ce qui ne tient pas dans une carte **sans la quitter** (le détail d'une
+tâche, #251, §2.2). Le geste ouvre donc le même tiroir modal, avec la carte dedans. La
+veille du ticket l'a retrouvé dehors : GitHub Actions ouvre « Review deployments » en
+pop-up **sur la page du run**, GitLab ouvre l'approbation depuis le **badge** qui dit que
+ça attend — et les deux gardent un commentaire facultatif.
+
+**Rien ne referme le panneau : il se démonte avec sa demande.** Une demande tranchée
+quitte la file au pouls suivant du shell, la carte disparaît, le panneau avec elle. C'est
+ce qui fait que « la tâche qui attendait repart sous les yeux » sans qu'aucun code ne
+l'orchestre.
+
+**Aucun geste n'abandonne plus personne** (second critère). La page d'un run ne porte plus
+un seul lien nu vers `/validations` : le seul qui y mène encore — la file entière et
+l'historique, depuis la tête — emmène **d'où l'on vient** (`?retour=`), et l'écran
+d'arrivée le rend en tête. Le retour porte le run **et la lecture ouverte** (`?vue=`),
+sans quoi revenir rouvrirait le pipeline à qui lisait le Kanban. ⚠ Ce paramètre n'est
+**pas** la route par lecture que §2.4.4 a écartée : rien ne l'écrit en changeant d'onglet,
+il n'a qu'un appelant, et une valeur inconnue retombe sur le pipeline. Le `retour` est
+lui-même vérifié comme une entrée non maîtrisée — un chemin interne, jamais un `//ailleurs`
+ni un `https://` —, et refusé **en silence** : un paramètre d'URL est la seule entrée de
+l'interface que personne du produit n'a écrite.
+
+**Ce qui ne bouge pas.** La page `/validations` reste servie, file et historique (§2.6).
+La table `ATTENTES` (`components/runs/EtatRun`) n'est pas touchée : la liste des runs et
+le tableau de bord acheminent toujours vers elle — c'est la **tête d'un run** qui demande
+à ne plus acheminer, parce qu'elle porte désormais le geste. Et l'arbitrage des actes
+reste humain ([docs/32](./32-decision-arbitrage-des-actes.md)).
+
+Couverture :
+[`apps/web/tests/arbitrage-sur-place.test.tsx`](../apps/web/tests/arbitrage-sur-place.test.tsx)
+— la décision rendue depuis les trois surfaces (approbation, refus motivé, et l'appel
+exact qui part), le panneau qui n'est pas une navigation, Échap qui le referme en
+laissant la lecture ouverte, le détail de tâche qui ne s'ouvre pas par-dessus, la demande
+tranchée qui emporte le geste, l'absence de tout lien nu, le retour et sa lecture, le
+refus silencieux d'un retour externe, et la cloche montée sur la carte du produit. Le
+renversement lui-même est gardé là où il se défait :
+[`pipeline.test.tsx`](../apps/web/tests/pipeline.test.tsx) et
+[`attente-humaine-kanban.test.tsx`](../apps/web/tests/attente-humaine-kanban.test.tsx)
+exigent un **bouton** et refusent le lien.
+
 ### 2.5 💰 Coûts & analytics
 
 - Coût par agent / par projet / par jour, sur une **période sélectionnable** :
@@ -1727,6 +1808,18 @@ depuis cet écran l'arbitrage d'un projet qu'on n'a pas sous les yeux, et la clo
 supérieure ne compte pas ce qu'il ne montre pas. L'écran vide sépare deux cas que « aucune
 validation en attente » confondait : *rien encore sur ce projet* et *rien en attente, mais des
 arbitrages déjà rendus* — l'historique en dessous le prouve.
+
+**Cet écran n'est plus le seul endroit où l'on tranche, et il n'a jamais eu à l'être** (#1228,
+§2.4.7). La **carte** d'une demande est un composant unique
+(`apps/web/components/CarteValidation.tsx`) que montent cinq surfaces : cet écran, l'aperçu du
+tableau de bord, la cloche, la tête d'un run et ses deux lectures denses. Ce qui change d'une
+surface à l'autre est la **densité** et ce qu'on voit autour ; ce qu'on lit pour trancher ne
+change pas. La page, elle, garde ce qu'elle seule porte : **toute** la file du projet, et
+l'**historique**. Et depuis qu'un run peut y envoyer, elle sait **d'où l'on vient** : arrivée
+avec un `?retour=`, elle rend en tête un lien qui ramène au run et à la lecture d'où l'on
+venait — un chemin interne seulement, vérifié et refusé en silence sinon. L'écran est rendu par
+`components/EcranValidations` depuis ce ticket, la page n'étant plus qu'une coquille qui lit ce
+paramètre côté serveur (même partage que `/agents` et son `?onglet=`, §2.3).
 
 **Une demande porte son run et son projet** (#570, chantier #569) — elle ne les laisse pas
 déduire. C'est la règle que ce cadrage-là a coûté cher à apprendre : la demande naissait sans

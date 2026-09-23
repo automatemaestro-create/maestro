@@ -47,7 +47,7 @@ import PageIntegrations from "@/app/integrations/page";
 import PageJournalEcran from "@/app/journal/page";
 import PageParametres from "@/app/parametres/page";
 import PageRuns from "@/app/runs/page";
-import PageValidations from "@/app/validations/page";
+import { EcranValidations as PageValidations } from "@/components/EcranValidations";
 
 import {
   agentFactice,
@@ -205,11 +205,12 @@ export type Ecran = { href: string; rendu: () => React.ReactElement };
 /**
  * Un écran = une entrée de menu et le composant que sa route rend.
  *
- * `/agents` est le seul à ne pas passer par son fichier `page.tsx` : c'est un
- * composant **serveur `async`** qui ne fait que lire `?onglet=` avant de rendre
- * `ListeAgents`, et un composant async ne se monte pas dans Testing Library. On
- * rend donc ce qu'il rend, avec l'onglet qu'il aurait résolu — la coquille
- * sautée ne porte pas une balise.
+ * `/agents` et `/validations` sont les seuls à ne pas passer par leur fichier
+ * `page.tsx` : ce sont des composants **serveur `async`** qui ne font que lire
+ * un paramètre d'URL — `?onglet=` pour l'un, `?retour=` pour l'autre (#1228) —
+ * avant de rendre leur écran, et un composant async ne se monte pas dans
+ * Testing Library. On rend donc ce qu'ils rendent, avec ce qu'ils auraient
+ * résolu — une coquille sautée ne porte pas une balise.
  */
 export const ECRANS: Ecran[] = [
   { href: "/", rendu: () => <PageTableauDeBord /> },
