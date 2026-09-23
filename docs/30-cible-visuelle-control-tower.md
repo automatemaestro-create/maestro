@@ -1309,6 +1309,11 @@ forme que #519, et pour la même raison : la pièce manquante était une conduit
 
 ### 5.5 La relecture devient une condition de clôture — 2026-09-11 (#935)
 
+> ⚠ **Proportionnée le 2026-09-23** (#1243, §5.8 *La relecture se proportionne à ce que le ticket
+> décide*). Elle reste jouée à chaque clôture qui touche un écran, et consignée de même ; ce qu'elle
+> regarde dépend désormais du ticket — l'après seul et les états qu'il nomme quand il applique une
+> décision prise, le régime complet quand il décide d'un écran.
+
 Le lot 2 (#932) a rendu le geste **jouable** ; il restait **appelé par rien**. C'est le défaut de
 #714 à l'identique, un cran plus loin dans le cycle — et sa correction se transpose mot pour mot.
 
@@ -1518,6 +1523,11 @@ backlog, et non seulement sur les tickets d'interface — la règle de #418 tien
 ce que ça coûte se dit plutôt que de se masquer.
 
 #### L'avant : un second worktree, détaché sur `origin/main` — 2026-09-17 (#977)
+
+> ⚠ **Réservé aux tickets qui décident d'un écran depuis #1243** (§5.8, *La relecture se
+> proportionne à ce que le ticket décide*). Un ticket qui applique une décision prise se relit sur
+> l'après seul : ni worktree, ni `npm ci`, ni seconde stack. Ce qui suit vaut, inchangé, pour le
+> régime complet.
 
 Une capture seule ne dit ni ce qui a changé, ni si le changement a abîmé ce qui allait — et sans
 l'état d'avant, le jugement ne peut répondre ni à « ce qui ne doit pas bouger » du rendu attendu
@@ -2671,6 +2681,10 @@ passage** — le reste technique n'est plus dans le motif mais dans la **phrase 
 > ⚠ **Restreint le 2026-09-21** (#1153, [docs/40 §3](./40-decision-rythme-et-scenarios-de-reference.md)). Le **regard neuf** (#980) n'est
 > plus saisi que pour les tickets qui décident d'un écran. Les autres gardent la relecture visuelle
 > de `/ticket-finish`, jugée par la session. #1009 ne bouge pas. Réécrit par #1151.
+>
+> ⚠ **Et proportionné le 2026-09-23** (#1243) : l'avant (#977) et les trois états (#978) suivent le
+> même partage — un ticket qui applique se relit sur l'après seul et les états qu'il nomme. Voir
+> *La relecture se proportionne à ce que le ticket décide*, plus bas.
 
 > **Pourquoi après le journal des veilles.** Le §5.7 est un journal qui s'allonge ; ce paragraphe
 > est un régime. Il vient à la suite parce qu'il a été écrit après, et renvoie au §5.6 pour ce qu'il
@@ -2999,6 +3013,72 @@ l'écran livré contre le choix consigné.
   variantes que la session remplit en une fois. À scripter si l'écart entre deux saisines devient
   un constat.
 
+#### La relecture se proportionne à ce que le ticket décide (#1243) — 2026-09-23
+
+**Le fait.** Mesuré sur 13 tickets du 20 au 23 septembre (#1239) : **30 min** en médiane entre le
+premier appel du skill et la `relecture-note`, **6,3 h** en tout, pour **moins de 0,1 h** de
+corrections trouvées ; le regard neuf, 36 appels à 4,8 min (une partie avant #1151). #1151 avait
+déjà rendu le jugement à la session pour un ticket qui applique ; la mécanique, elle, restait celle
+du régime complet. **La décision** de la personne, le même jour (recommandation R4 de #1239) : un
+ticket qui applique une décision prise se relit en régime proportionné, hors gel.
+
+**Le régime** (`relecture-visuelle.sh`, §8 de son en-tête ; skill `relecture-visuelle`, étape 1) :
+
+| régime | le ticket… | l'avant (#977) | les états (#978) | qui juge |
+|---|---|---|---|---|
+| `decide` | **décide** d'un écran (critère du §7.2 de `/design-veille`) | monté, servi à côté | les trois | le regard neuf (#980) |
+| `applique` | **applique** une décision déjà prise | **aucun** — ni worktree, ni `npm ci`, ni seconde stack | ceux qu'il nomme, le défaut sinon | la session (#1151) |
+
+Ne bougent pas : les deux thèmes, la grille et sa garde par `relecture-note`, la couverture, la
+saisine, la planche, et la trace sur le ticket à chaque clôture (§5.5).
+
+**Le régime se lit sur un acte, jamais sur le texte** (#746). « Décide ou applique » est un jugement
+de la session ; le script n'en rend aucun, il lit ce qu'elle a **fait** en le rendant. Un ticket qui
+décide consigne sa décision avant la première ligne de code — la veille, puis `## Variante retenue`
+(étape 7 de `/ticket-start`, #1009) —, et ce sont les ancres que `lib.sh relecture-attente` tire déjà
+pour le regard neuf : une décision consignée → `decide`, aucune → `applique`. Un ticket **illisible**
+garde `decide` : un avant de trop se paie une minute, un regard manqué ne se rattrape pas. La session
+peut **imposer** l'autre (`--regime decide|applique`) quand son jugement diffère de l'acte, et le plan
+dit toujours d'où vient le régime. L'étape 7 de `/ticket-start` monte ses variantes en `--regime
+decide` : la veille n'y est pas forcément consignée quand le premier brouillon s'écrit, et l'avant est
+la référence de « ce qui ne bouge pas ».
+
+**Ce que la préparation a monté se consigne** (`.maestro/relecture/<iid>/.regime` et `.etats`) : la
+couverture, la saisine et la planche relisent le régime au lieu de redemander la forge, et un second
+état (`--etat vide`) garde le régime imposé au premier montage. **Les états demandés** d'un ticket
+qui applique sont ceux que la session a **montés** ou capturés — son jugement sur la rubrique « États
+à couvrir » (#976), rendu par un geste —, et le défaut quand elle n'en a monté aucun ; rien de capturé
+n'est jamais caché, et les autres se nomment « non demandés ».
+
+**L'avant absent se dit partout où l'avant se comptait** — c'est ce qui sépare un jugement sans avant
+d'une comparaison qui n'aurait pas eu lieu : le plan (`avant : aucun — le ticket applique…`), le pied
+de `--couverture` (`sans avant — … nommé dans « ce que je n'ai pas pu voir »`, que le jugement
+recopie), la saisine (la colonne « non monté », « à reporter dans « ce que je n'ai pas pu voir » », et
+des titres `### Regard de la session — …`), la planche (« Pas d'avant ») et l'en-tête que
+`relecture-note` écrit sur le ticket — le juge s'y lit au **titre** du regard, une forme.
+
+**Mesuré en vrai** le 2026-09-23 sur ce ticket, un écran retouché le temps de la mesure (`/couts`,
+état `peuple`, forge et stack réelles, poste de référence) : `--plan` **4,6 s** (dont l'aller vers la
+forge qui rend le régime), préparation **32 s** sans avant — contre **95 s** au premier montage avec
+lui (#1165) —, `--couverture` **2,9 s**, `--saisine` **6,0 s**, `--fin` **3,1 s** contre **27 s**. Ni
+second état (69 s chacun), ni regard neuf (105 s et 1,29 $).
+
+**Écarté, avec sa raison :**
+
+- **Juger « décide ou applique » dans le script sur le texte du ticket.** Un lexique (#746) — et
+  l'acte existe déjà : la décision consignée, que le ticket qui décide écrit avant de coder.
+- **Lire la rubrique « États à couvrir » pour choisir les états.** Même raison : un texte, que la
+  session juge (#976) ; le script compte ce qu'elle monte.
+- **`applique` sur un ticket illisible.** Le mauvais côté de l'erreur : on économiserait une minute
+  en risquant le seul regard qui compte.
+- **Un label ou un champ « décide / applique ».** Un second support pour un fait que les ancres
+  portent déjà — la panne que #365 a supprimée, et la raison qui a écarté `relecture::vue` au §5.5.
+- **Retirer la relecture des tickets qui appliquent.** Elle reste une trace sur le ticket (#935), et
+  ce qu'elle coûte encore — une stack, deux captures par écran, la note — n'est plus ce qui a été
+  mesuré.
+- **Un seul thème.** L'erreur la plus probable est dans le thème où l'on ne développe pas (skill,
+  étape 4) : le ticket le garde, inchangé.
+
 #### Ce qui est gardé, et où
 
 | lot | ce qui est gardé | suite |
@@ -3010,6 +3090,7 @@ l'écran livré contre le choix consigné.
 | #1009 | aucun arrêt ni pause sur un ticket qui décide, la veille avant les variantes, le choix rendu par le regard neuf sur références, la voie (a) renversée et (c) toujours écartée | `test_design_veille.py` |
 | #980 | la grille (refus, fichier unique), `relecture-attente` (ancres, un aller), la saisine (pièces et rien d'autre), la planche (autonome, survit au worktree), `regard-neuf` réduit à `Read` | `test_relecture_visuelle.py` |
 | #1109 | la phase servie (aucune tâche publiée avant le plan, durée lisible, coût qui monte), lue sur la projection ; des tâches propres à chaque passage | `test_cli_smoke.py`, `test_controltower_mode_reel.py` |
+| #1243 | le régime lu sur l'acte (illisible → complet, `--regime` qui l'emporte, consigné pour la suite), aucun avant monté pour un ticket qui applique, les états montés ou le défaut, l'avant absent dit par la couverture, la saisine, la planche et `relecture-note` | `test_relecture_visuelle.py` |
 
 Chaque contrôle qui conclut d'une **absence** — une recopie, une section manquante — éprouve d'abord
 son motif sur un **échantillon fautif**, et un prompt se lit **normalisé** : replié à 100 colonnes, il

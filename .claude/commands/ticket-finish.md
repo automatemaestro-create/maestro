@@ -114,7 +114,9 @@ avant de pousser. Un critère non tenu **ne bloque pas le merge**.
      recopiée dans un prompt fige l'outil au jour où elle a été écrite (#310), et le skill en est la
      source unique. **Qui juge dépend du ticket** (#1151, docs/40 §3) : le sous-agent `regard-neuf`
      pour un ticket qui **décide** d'un écran (critère du §7.2 de `/design-veille`), la **session
-     elle-même** pour tout autre ticket, sur la même grille. Le skill porte les deux conduites.
+     elle-même** pour tout autre ticket, sur la même grille. **Ce qu'on regarde aussi** (#1243) :
+     l'après seul et les états que le ticket nomme quand il applique, avant et après et les trois
+     états quand il décide — le plan annonce ce régime. Le skill porte les deux conduites.
 
    ⚠ **On ne demande pas, on joue** — et c'est la différence avec la veille, qui ne se joue que pour
    un ticket qui décide d'un écran. Une veille est un **jugement** sur l'opportunité de

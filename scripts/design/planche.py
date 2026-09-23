@@ -56,9 +56,12 @@ PLANCHE_MAX_MIO_DEFAUT = 25.0
 #: complet de la session (grille recopiée comprise), sinon le seul regard neuf.
 JUGEMENTS = ("jugement.md", "regard.md")
 
-#: Les deux marqueurs de « pas de fichier » d'une paire — le contrat de `paires_de`.
+#: Les trois marqueurs de « pas de fichier » d'une paire — le contrat de `paires_de`. `sans-avant` :
+#: le ticket applique une décision déjà prise, et sa relecture ne monte pas d'avant (#1243).
 ABSENT = "-"
 NOUVEAU = "nouveau"
+SANS_AVANT = "sans-avant"
+MARQUEURS = (ABSENT, NOUVEAU, SANS_AVANT)
 
 
 @dataclass
@@ -73,7 +76,7 @@ class Paire:
     avant: str
 
     def fichiers(self) -> list[str]:
-        return [f for f in (self.avant, self.apres) if f not in (ABSENT, NOUVEAU)]
+        return [f for f in (self.avant, self.apres) if f not in MARQUEURS]
 
 
 def lire_paires(chemin: Path) -> list[Paire]:
@@ -213,6 +216,11 @@ def rendre_cote(paire: Paire, cote: str, uris: dict[str, str], ecartees: dict[st
     if fichier == NOUVEAU:
         corps = (
             "<div class=\"absente\">Écran nouveau : absent d'origin/main, il n'a pas d'avant.</div>"
+        )
+    elif fichier == SANS_AVANT:
+        corps = (
+            "<div class=\"absente\">Pas d'avant : le ticket applique une décision déjà prise, "
+            "l'après se juge seul.</div>"
         )
     elif fichier == ABSENT:
         corps = '<div class="absente">Non capturé.</div>'
@@ -354,7 +362,7 @@ def construire(
     <p class="meta">Planche du {date.today().isoformat()}<span class="sep">·</span>
       {nb} capture(s)</p>
     <p class="resume">L'avant (origin/main) et l'après (la branche), côte à côte, avec le jugement
-      rendu par le regard neuf. Planche de travail : elle n'est envoyée à aucune forge.</p>
+      de la relecture. Planche de travail : elle n'est envoyée à aucune forge.</p>
   </header>
 
   {bloc_jugement}

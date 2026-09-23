@@ -22,7 +22,7 @@ visuelle sait **viser** (`/design-veille`), **tenir** (tokens, primitives) et
 | `contraste.test.ts` · `a11y.test.tsx` · `sobriete.test.tsx` | les **règles** — ratios, rôles, nombre de blocs | si le résultat est **beau, lisible, cohérent** |
 | `/banc-mise-en-page` | la **géométrie** — hauteurs, défilement, points de rupture | à quoi ressemble ce qui tient |
 | `/verify` | le **câblage** — WebSocket, reprise, absence de rechargement | tout le reste |
-| **ce geste** | le **rendu**, les deux thèmes, avant et après, jugé par un **regard neuf** sur une **grille fixe** | la logique, la géométrie mesurée, les règles |
+| **ce geste** | le **rendu**, les deux thèmes, sur une **grille fixe** — avant et après, jugé par un **regard neuf**, pour un ticket qui décide d'un écran ; l'après seul, jugé par la session, pour un ticket qui applique (#1243) | la logique, la géométrie mesurée, les règles |
 
 **Ne pas redoubler les quatre autres.** Une hauteur suspecte appelle
 `/banc-mise-en-page`, un contraste douteux se prouve dans `contraste.test.ts`
@@ -70,6 +70,29 @@ Trois réponses, et deux d'entre elles terminent le geste :
   Quand c'est le shell (`Shell.tsx`) ou la coquille, la réponse pratique est
   d'ouvrir **un** écran quelconque en plus — le changement y est, partout.
 
+**Le plan dit aussi le régime** (#1243), avec d'où il vient — et c'est lui qui
+décide de tout ce qui suit :
+
+| Régime | Le ticket… | Ce qu'on regarde | Qui juge |
+| --- | --- | --- | --- |
+| `decide` | **décide** d'un écran (critère du §7.2 de `/design-veille`) | l'**avant et l'après**, les **trois** états, les deux thèmes | le **regard neuf** (étape 5) |
+| `applique` | **applique** une décision déjà prise | l'**après seul** — aucune seconde stack —, les **états qu'il nomme** (le défaut sinon), les deux thèmes | **la session** (étape 5) |
+
+Le script ne juge pas « décide ou applique » (#746) : il en lit l'**acte**. Un
+ticket qui décide a consigné sa décision avant d'écrire une ligne — un
+commentaire qui commence par `## Veille de conception` ou `## Variante retenue`
+(étape 7 de `/ticket-start`) —, et c'est ce que le plan cherche sur le ticket :
+une décision consignée → `decide`, aucune → `applique`, un ticket illisible →
+`decide`, par prudence. **Tu peux l'imposer** (`--regime decide|applique`, sur
+n'importe quel appel sauf `--fin`) quand ton jugement diffère de l'acte — un
+ticket qui a décidé sans rien consigner, une vieille veille sur une finition —,
+et la préparation le **consigne** : la couverture, la saisine et la planche le
+relisent, et un second état (`--etat <nom>`) le garde.
+
+Pourquoi : mesurée sur 13 tickets du 20 au 23 septembre, la relecture complète
+a coûté 30 min en médiane et 6,3 h en tout, pour moins de 0,1 h de corrections
+trouvées. Le régime complet reste celui des tickets où la forme se décide.
+
 ### 2. Monter la stack
 
 ```bash
@@ -102,7 +125,10 @@ dont l'écran a quelque chose à montrer (étape 3).
 Les autres états se montent par le même geste, un état à la fois — voir
 l'étape 4bis.
 
-**Puis l'avant** (#977) : une **seconde stack**, servie depuis un worktree
+**Puis l'avant** (#977) — **en régime `decide` seulement** : un ticket qui
+applique n'en monte aucun, ni worktree, ni `npm ci`, ni seconde stack, et le
+script le dit (`avant : aucun — le ticket applique…`). Pour un ticket qui
+décide, c'est une **seconde stack**, servie depuis un worktree
 **détaché sur `origin/main`** (`<iid>.avant`, monté par `worktree.sh avant`),
 sur les ports de l'après **+ 200**, et dans **le même état** — rouvert du même
 passage du banc. Un état que le lanceur d'`origin/main` ne sait pas servir n'a
@@ -159,6 +185,9 @@ browser_take_screenshot  filename: .maestro/relecture/<iid>/<ecran>-<theme>-avan
 **L'après et l'avant côte à côte**, même écran, même thème — c'est la paire qui
 se juge, pas chaque image seule : ce qui a changé, et si le changement a abîmé
 ce qui allait. Un écran **nouveau** n'a que son après ; le dire dans le jugement.
+En régime **`applique`**, il n'y a que l'après : les deux lignes `-avant` ne se
+jouent pas, chaque capture se juge seule — contre les autres écrans —, et
+l'avant non monté va à « ce que je n'ai pas pu voir ».
 
 > ⚠ **Attendre que CHAQUE page soit prête avant de la capturer.** Les deux
 > stacks ne compilent pas au même moment, et une paire dont un côté est encore
@@ -229,8 +258,17 @@ nomme (section `## Rendu attendu`, #976), rapprochés des noms ci-dessus par
 jugement (« aucune donnée » est `vide`, « API en panne » est `injoignable`,
 « contenu long » est la charge de `peuple` — ou un non couvert, s'il faut plus
 que ce que le passage a laissé). Quand le ticket ne les nomme pas (section
-absente ou « non renseigné »), on ouvre **les trois** : un état jamais ouvert
-est un état que personne ne regarde.
+absente ou « non renseigné ») :
+
+- en régime **`decide`**, on ouvre **les trois** : un état jamais ouvert est un
+  état que personne ne regarde, et c'est là que la forme se décide ;
+- en régime **`applique`** (#1243), **le défaut seul** : le ticket suit une
+  décision déjà prise, et un état qu'il ne nomme pas n'a pas été touché.
+
+Le script ne lit pas la rubrique : il compte les états que tu as **montés** ou
+capturés — c'est ton jugement, rendu par un geste —, et le défaut quand tu n'en
+as monté aucun. `--couverture` et la saisine ne demandent que ceux-là, et
+nomment les autres « non demandés ».
 
 **Comment.** `peuple` et `vide` **redémarrent** la stack : ce sont des données
 que l'API rejoue à son démarrage. Le `localStorage` posé à l'étape 3 survit au
@@ -278,14 +316,16 @@ pas relue ne compte pas, et c'est à toi de le tenir.
 
 ### 5. Qui juge : le regard neuf pour un ticket qui décide, la session sinon (#980, #1151)
 
-**Un ticket qui décide d'un écran** (critère du §7.2 de `/design-veille`) est jugé
-par le regard neuf, comme ci-dessous. **Tout autre ticket** — correctif,
-alignement, suite d'une direction consignée — est jugé par **la session
-elle-même** (#1151, docs/40 §3) : joue la saisine comme ci-dessous, puis remplis
-toi-même son gabarit dans `.maestro/relecture/<iid>/regard.md`, sous le titre
-`### Regard de la session — #<iid>`, **ligne à ligne sur la grille**, et dis
-d'emblée que c'est la session qui a jugé. La grille ne change pas, `relecture-note`
-la garde de la même façon, et un ✗ se traite de même (corrigé, ticket, contesté
+**Le juge suit le régime du plan** (étape 1). En régime **`decide`**, le regard
+neuf, comme ci-dessous. En régime **`applique`** — correctif, alignement, suite
+d'une direction consignée —, **la session elle-même** (#1151, docs/40 §3) : joue
+la saisine comme ci-dessous — elle porte alors le régime, l'avant « non monté »
+et les seuls états demandés —, puis remplis toi-même son gabarit dans
+`.maestro/relecture/<iid>/regard.md`, **sous les titres qu'elle te donne**
+(`### Regard de la session — …`), **ligne à ligne sur la grille**. Ce titre est
+ce que `relecture-note` relit pour dire, sur le ticket, que la session a jugé
+l'après seul : ne le renomme pas. La grille ne change pas, `relecture-note` la
+garde de la même façon, et un ✗ se traite de même (corrigé, ticket, contesté
 sur pièces). Ce qui change est le prix : ni sous-agent, ni 105 s, ni 1,29 $ par
 ticket de finition.
 
@@ -381,7 +421,10 @@ Suivent tes trois sections, et les trois sont obligatoires :
   couvert** avec sa raison (le pied de `--couverture`), un état qu'aucun geste
   ne sert (une largeur téléphone) ou qu'on n'a pas ouvert, **nommé avec son
   écran**, un **avant indisponible** avec la cause que le script a donnée, et
-  l'**âge** de l'état du banc quand il n'atteint pas l'écran touché.
+  l'**âge** de l'état du banc quand il n'atteint pas l'écran touché. En régime
+  **`applique`**, l'**avant non monté** — rien n'a été comparé à `origin/main` —
+  et les états « non demandés » : la saisine et le pied de `--couverture` le
+  disent, et c'est ici qu'ils se recopient.
   C'est la section qui distingue un jugement d'un ✓ : *ne pas avoir regardé
   n'est pas avoir trouvé que tout va bien.*
 
@@ -494,6 +537,14 @@ sous le régime de run :
 Le sous-agent coûte au nombre de captures qu'il ouvre : c'est le poste qui
 grandit avec les états limites, et c'est pourquoi il n'y a **qu'un** regard par
 relecture, pas un par écran.
+
+**Ce que le régime `applique` retire** (#1243) — tout ce qui précède, sauf
+l'après : ni l'avant (~50 s par relecture, ~33 s de `npm ci`, ~500 Mo de disque,
+et la moitié des captures), ni les deux autres états (un redémarrage de la
+stack chacun, 69 s pour `vide` le 2026-09-22), ni le regard neuf (105 s et
+1,29 $). Il reste le montage de l'après, l'état que le ticket nomme dans les
+deux thèmes, la saisine et la note — mesuré en vrai sur ce ticket, voir
+docs/30 §5.8.
 
 ## En session de run
 

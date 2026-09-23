@@ -205,11 +205,13 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
      3. **Rien ne reste dans l'arbre.** Un brouillon ne crée **aucun fichier** (un composant neuf se
         brouillonne dans un fichier existant), pour que `git diff` le contienne tout entier et que
         `git restore` le défasse tout entier. Écris le premier, puis monte la stack par
-        `bash scripts/design/relecture-visuelle.sh <iid>` — son plan se dérive du diff, donc d'un
-        brouillon présent : la **vraie stack** sur les ports du worktree — l'état du dernier passage
-        du banc, dont la préparation nomme les projets à poser (#1165) —, et l'**avant** servi depuis
-        `origin/main`, qui est la référence de « ce qui ne bouge pas » ; prépare le navigateur et
-        attends qu'une page soit prête comme le disent les étapes 3 et 4 du skill
+        `bash scripts/design/relecture-visuelle.sh <iid> --regime decide` — son plan se dérive du
+        diff, donc d'un brouillon présent, et le régime complet (#1243) sert l'avant même si la
+        veille n'est pas encore consignée : la **vraie stack** sur les ports du worktree — l'état
+        du dernier passage du banc, dont la préparation nomme les projets à poser (#1165) —, et
+        l'**avant** servi depuis `origin/main`, qui est la référence de « ce qui ne bouge pas » ;
+        la préparation consigne ce régime, que la relecture de la clôture relira. Prépare le
+        navigateur et attends qu'une page soit prête comme le disent les étapes 3 et 4 du skill
         `relecture-visuelle`. L'UI tourne en `next dev` : les brouillons suivants s'échangent à chaud.
         Pour chaque lettre : écris-le, capture en chemin **relatif** vers
         `.maestro/variantes/<iid>/<lettre>/<ecran>-<theme>.png` — **jamais sous `.maestro/relecture/`**,
