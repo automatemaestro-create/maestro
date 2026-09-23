@@ -73,6 +73,7 @@ from __future__ import annotations
 
 from maestro.equipe.creation import (
     AUCUN_SKILL,
+    AUCUN_SKILL_ECRIT,
     INSTANCES_MAX_CREEES,
     INTRO_SKILLS,
     TITRE_SKILLS,
@@ -85,6 +86,7 @@ from maestro.equipe.creation import (
     definition,
     playbook_branche,
     refus_de,
+    skills_constates,
 )
 from maestro.equipe.gabarits import (
     GABARITS,
@@ -124,6 +126,7 @@ from maestro.equipe.proposition import (
 
 __all__ = [
     "AUCUN_SKILL",
+    "AUCUN_SKILL_ECRIT",
     "CRANS",
     "ECARTE_ORCHESTRATEUR",
     "GABARITS",
@@ -163,4 +166,5 @@ __all__ = [
     "proposer_equipe",
     "refus_de",
     "role_manquant",
+    "skills_constates",
 ]

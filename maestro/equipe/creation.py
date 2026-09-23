@@ -52,6 +52,26 @@ La section est **idempotente** : la reposer remplace la précédente au lieu de
 l'empiler, pour qu'une équipe re-validée ne laisse pas deux inventaires
 contradictoires dans le même prompt.
 
+## Ne sont branchés que les skills que le projet **porte** (#1212)
+
+La proposition branche un rôle sur les skills que l'outillage **recommande**, y
+compris ceux qui ne sont pas encore écrits (`a-generer`) : à ce stade, c'est un
+ordre de marche (`maestro.equipe.modele.SkillBranche`). Mais on peut valider une
+équipe sans avoir écrit l'outillage — sur S3, le fil la propose sans parler
+d'outillage —, et le playbook nommait alors `.agents/skills/…/SKILL.md` dans un
+projet qui n'a pas de `.agents/`. L'agent partait chercher le fichier, et sa
+recherche attendait un humain (#1211).
+
+La création tranche donc **sur le disque**, au moment où elle écrit :
+`skills_constates()` ne garde que les skills dont le chemin existe dans le
+projet, et range les autres à part (`RoleValide.skills_absents`) pour que la
+section dise le vrai — *l'outillage recommandé n'est pas écrit* — plutôt que
+*aucun n'a été recommandé*. Le module reste pur : c'est l'appelant
+(`maestro.controltower.equipe`), seul à connaître la racine du projet, qui fournit
+le constat. Un outillage écrit **après** l'équipe ne se rebranche pas tout seul ;
+le playbook se relit et se modifie depuis les écrans d'agents (#1038), et un
+chemin qu'on y rajoute existe, cette fois.
+
 ## Ce qui se vérifie **avant** d'écrire quoi que ce soit
 
 Une équipe s'écrit dans trois dépôts × N rôles : il n'y a pas de transaction, et
@@ -67,8 +87,8 @@ portée ici à l'échelle de l'équipe.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from maestro.agents.capacity import CapaciteAgent
@@ -102,6 +122,17 @@ AUCUN_SKILL = (
     "n'en a recommandé aucun pour ce que vous faites."
 )
 
+#: Ce qu'on écrit quand l'outillage **recommandait** des skills à ce rôle mais
+#: que le projet ne les porte pas (#1212). Même début que `AUCUN_SKILL` — le fait
+#: est le même, aucun skill n'est rattaché —, une autre raison, et la consigne
+#: qui manquait à l'agent de S3 : ne pas partir à leur recherche. Les noms ne
+#: sont pas redits : nommer un skill absent, c'est inviter à le chercher.
+AUCUN_SKILL_ECRIT = (
+    "Aucun skill du projet n'est rattaché à votre rôle : l'outillage recommandé "
+    "pour ce que vous faites n'est pas écrit dans le projet. Ne le cherchez pas ; "
+    "servez-vous des commandes que le projet déclare."
+)
+
 #: Le plafond d'instances qu'une **création** accepte. Décision, pas mesure — au
 #: même titre que le plafond de trois que la *proposition* pose
 #: (`INSTANCES_MAX_PROPOSEES`), et plus haut que lui parce que ce n'est plus
@@ -117,7 +148,8 @@ class SkillRetenu:
 
     `chemin` et `commandes` viennent de l'`Entree` d'outillage qui l'a
     recommandé (`maestro.outillage.modele`), au caractère près : le playbook
-    nomme un chemin qui existe dans le projet, jamais une reformulation.
+    nomme un chemin qui existe dans le projet, jamais une reformulation — et
+    c'est `skills_constates()` qui s'assure qu'il **existe** (#1212).
     """
 
     nom: str
@@ -147,6 +179,10 @@ class RoleValide:
 
     `instances` est le seul champ que l'écran **ajuste** librement. `gabarit` ne
     sert qu'à la trace (de quel rôle figé celui-ci descend, docs/37 §2.1).
+
+    `skills_absents` n'est **jamais** servi ni rapporté par l'API : c'est
+    `skills_constates()` qui le remplit, avec les skills validés que le projet ne
+    porte pas, pour que la section du playbook dise pourquoi elle est vide.
     """
 
     nom: str
@@ -157,6 +193,7 @@ class RoleValide:
     gabarit: str = ""
     skills: tuple[SkillRetenu, ...] = ()
     politique: PolitiqueOutils | None = None
+    skills_absents: tuple[SkillRetenu, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -337,6 +374,19 @@ def capacite(role: RoleValide) -> CapaciteAgent:
     return CapaciteAgent(nom=role.nom.strip(), actif=True, instances=role.instances)
 
 
+def skills_constates(role: RoleValide, porte: Callable[[str], bool]) -> RoleValide:
+    """Le rôle, ses skills réduits à ceux que le projet **porte** — les autres mis à part.
+
+    `porte(chemin)` répond pour le disque : l'appelant seul connaît la racine du
+    projet, et ce module n'en ouvre aucune. Un skill sans chemin n'est pas
+    constatable, donc pas branché : le playbook n'affirme que ce qu'on a vu.
+    L'ordre des skills gardés est celui de la validation.
+    """
+    gardes = tuple(s for s in role.skills if s.chemin and porte(s.chemin))
+    absents = tuple(s for s in role.skills if s not in gardes)
+    return replace(role, skills=gardes, skills_absents=role.skills_absents + absents)
+
+
 def playbook_branche(role: RoleValide) -> str:
     """Le playbook validé, sa section « skills » posée (ou reposée) en fin de document.
 
@@ -346,13 +396,15 @@ def playbook_branche(role: RoleValide) -> str:
     — un playbook est un prompt système, pas un fichier qu'on tronque.
     """
     corps = _sans_section_skills(role.playbook).rstrip()
-    return f"{corps}\n\n{_section_skills(role.skills)}\n"
+    return f"{corps}\n\n{_section_skills(role.skills, role.skills_absents)}\n"
 
 
-def _section_skills(skills: Sequence[SkillRetenu]) -> str:
+def _section_skills(
+    skills: Sequence[SkillRetenu], absents: Sequence[SkillRetenu] = ()
+) -> str:
     """La section, telle qu'elle apparaît dans le prompt système de l'agent."""
     if not skills:
-        return f"{TITRE_SKILLS}\n\n{AUCUN_SKILL}"
+        return f"{TITRE_SKILLS}\n\n{AUCUN_SKILL_ECRIT if absents else AUCUN_SKILL}"
     lignes = [TITRE_SKILLS, "", INTRO_SKILLS, ""]
     for skill in skills:
         chemin = f" — `{skill.chemin}`" if skill.chemin else ""
