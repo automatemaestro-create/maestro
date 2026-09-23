@@ -52,6 +52,7 @@ from maestro.controltower.state import (
     STATUTS_EXECUTION_TERMINAUX,
 )
 from maestro.scenarios.api import (
+    DELAI_RUN_S,
     ClientAPI,
     ErreurAPI,
     attendre_le_run,
@@ -103,7 +104,7 @@ class Contexte:
     atelier: Atelier
     juge: Juge
     journal: Journal = field(default_factory=Journal)
-    delai_run_s: float = 900.0
+    delai_run_s: float = DELAI_RUN_S
     horloge: Callable[[], float] = time.monotonic
     dormir: Callable[[float], None] = time.sleep
     lancer_application: Callable[[Path, str], tuple[int, str]] | None = None
