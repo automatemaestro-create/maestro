@@ -262,11 +262,26 @@ FRAGMENT_CHAT_FIN = "fin"
 FRAGMENT_CHAT_INTERROMPU = "interrompu"
 FRAGMENT_CHAT_ERREUR = "erreur"
 
+#: La sixième (#1223) : une **étape**, ce que l'interlocuteur vient de faire pour
+#: pouvoir répondre. Elle n'incrémente pas la réponse et ne la clôt pas — c'est
+#: exactement pourquoi elle n'est pas un `fragment` : la concaténation des
+#: `delta` **est** le texte final (`Redaction`), et y glisser « A lu README.md »
+#: ferait mentir le contrat SSE sur lequel un client recolle son message.
+FRAGMENT_CHAT_ETAPE = "etape"
+
 #: La publication d'un incrément de réponse — le seul geste que le canal demande
 #: à un répondeur qui sait produire par morceaux. Attendable, parce que publier
 #: peut céder la main (file, socket) ; sans valeur de retour, parce que le
 #: répondeur n'a rien à apprendre de la diffusion.
 Incrementeur = Callable[[str], Awaitable[None]]
+
+#: La publication d'une **étape** (#1223) — le second canal, et le seul autre que
+#: le canal demande à un répondeur. Même forme que l'`Incrementeur` et même
+#: raison : publier peut céder la main, et le répondeur n'a rien à apprendre de
+#: la diffusion. Deux canaux plutôt qu'un parce que les deux ne portent pas la
+#: même chose (voir `FRAGMENT_CHAT_ETAPE`), et un répondeur qui n'en a qu'un ne
+#: connaît jamais l'autre.
+Etapeur = Callable[["EtapeFil"], Awaitable[None]]
 
 #: Nom d'agent admissible comme fichier de stockage : slug sûr, sans séparateur
 #: ni point — verrouille toute traversée de chemin depuis un nom venu de l'API
@@ -636,6 +651,52 @@ class DemandeRecrutement:
 
 
 @dataclass(frozen=True)
+class EtapeFil:
+    """Une chose que l'interlocuteur a **faite** en répondant — une lecture (#1223).
+
+    `libelle` est la ligne qui s'affiche — « A lu « README.md » » —, écrite du
+    point de vue de qui le regarde travailler ; `detail` est ce que cette lecture
+    a rendu, déjà borné par celui qui l'a faite
+    (`maestro.controltower.consultation.Lecture`), et qui ne se lit qu'au dépli.
+
+    Elle voyage **deux fois** et c'est voulu : en direct sur le flux
+    (`FRAGMENT_CHAT_ETAPE`), pour se voir pendant que la réponse s'écrit, puis
+    sur le message persisté (`MessageChat.etapes`), pour être encore là au
+    rechargement. Un seul des deux chemins laisserait, au choix, une trace qui
+    disparaît d'elle-même ou une trace qui arrive après coup — or ce qui est
+    demandé est *voir ce qu'il consulte pendant qu'il répond*, puis pouvoir y
+    revenir.
+    """
+
+    libelle: str
+    detail: str = ""
+
+    def to_dict(self) -> dict[str, str]:
+        """L'étape en JSON — la forme du REST, du flux et du stockage."""
+        return {"libelle": self.libelle, "detail": self.detail}
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> EtapeFil:
+        """Relit une étape persistée, sans rien rejuger (même règle que `MessageChat`)."""
+        return cls(
+            libelle=str(data.get("libelle") or ""), detail=str(data.get("detail") or "")
+        )
+
+
+def etapes_depuis(brut: Any) -> tuple[EtapeFil, ...]:
+    """Les étapes d'une ligne relue — `()` sur un message écrit avant #1223.
+
+    Une entrée qui n'est pas un objet, ou dont le libellé est vide, est **sautée** :
+    une étape sans libellé n'aurait rien à afficher, et la rendre ferait une puce
+    vide dans le repli.
+    """
+    if not isinstance(brut, Sequence) or isinstance(brut, str | bytes):
+        return ()
+    lues = [EtapeFil.from_dict(item) for item in brut if isinstance(item, Mapping)]
+    return tuple(etape for etape in lues if etape.libelle)
+
+
+@dataclass(frozen=True)
 class MessageChat:
     """Un message du fil utilisateur ↔ agent, prêt à voyager en JSON.
 
@@ -709,6 +770,13 @@ class MessageChat:
     ligne écrite avant ce lot, l'attente énoncée une fois
     (`recrutement_en_attente`) — et jamais sur le même message qu'une proposition
     ou une question : on ne propose pas un run qu'on sait ne pas pouvoir aboutir.
+
+    `etapes` (#1223) est la cinquième, et la seule qui ne **demande** rien : ce
+    que l'interlocuteur a **fait** pour écrire ce message — les fichiers qu'il a
+    lus, les recherches qu'il a passées. Vide partout ailleurs et sur une ligne
+    écrite avant ce lot ; elle est persistée pour la raison qui fait persister
+    `sources` — ce qui a nourri un message se relit avec lui, sans quoi le fil
+    rouvert demain ne dirait plus sur quoi la réponse s'appuyait.
     """
 
     agent: str
@@ -725,6 +793,7 @@ class MessageChat:
     rapport: RapportLecture | None = None
     contexte: str = ""
     conversation: str = CONVERSATION_ORIGINE
+    etapes: tuple[EtapeFil, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         """Réémet le message en dict JSON-sérialisable (la forme du REST).
@@ -750,6 +819,7 @@ class MessageChat:
             "choix": self.choix.to_dict() if self.choix is not None else None,
             "sources": sources_en_liste(self.sources),
             "rapport": self.rapport.to_dict() if self.rapport is not None else None,
+            "etapes": [etape.to_dict() for etape in self.etapes],
         }
 
     @property
@@ -818,6 +888,7 @@ class MessageChat:
             sources=tuple(sources_depuis(data.get("sources"))),
             rapport=rapport_depuis(rapport) if isinstance(rapport, Mapping) else None,
             contexte=str(data.get("contexte") or ""),
+            etapes=etapes_depuis(data.get("etapes")),
         )
 
 
@@ -890,6 +961,11 @@ class ReponseChat:
     `recrutement` (#1146) est la troisième : l'équipe qu'un projet sans agent
     doit valider avant qu'un run puisse y aboutir. Elle ne cohabite avec aucune
     des deux autres.
+
+    `etapes` (#1223) ne demande rien : ce sont les lectures que le répondeur a
+    faites pour écrire cette réponse. Elles ont déjà été **diffusées** au fil de
+    l'eau quand un `Etapeur` était branché ; les porter ici est ce qui les fait
+    **persister** sur le message, et les deux chemins partent du même répondeur.
     """
 
     contenu: str
@@ -898,6 +974,7 @@ class ReponseChat:
     proposition: str = ""
     question: QuestionOutillage | None = None
     recrutement: DemandeRecrutement | None = None
+    etapes: tuple[EtapeFil, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -931,6 +1008,11 @@ class FragmentChat:
     `conversation` (#694) dit **où** la réponse s'écrit : un client qui affiche
     un fil sait ainsi si les incréments qui arrivent sont les siens, dès la trame
     `debut` et sans attendre le `MessageChat` de la trame `fin`.
+
+    `etape` (#1223) porte ce que l'interlocuteur vient de **faire** — sur la seule
+    trame `etape`, `None` partout ailleurs. Elle arrive **avant** les `fragment`
+    de la réponse, parce que c'est l'ordre réel des choses : il lit, puis il
+    rédige ; et elle ne touche pas au texte, que `delta` continue de porter seul.
     """
 
     type: str
@@ -940,6 +1022,7 @@ class FragmentChat:
     message: MessageChat | None = None
     echange: str = ""
     conversation: str = CONVERSATION_ORIGINE
+    etape: EtapeFil | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Réémet la trame en dict JSON-sérialisable (le `data:` du SSE)."""
@@ -951,6 +1034,7 @@ class FragmentChat:
             "delta": self.delta,
             "message": self.message.to_dict() if self.message is not None else None,
             "echange": self.echange,
+            "etape": self.etape.to_dict() if self.etape is not None else None,
         }
 
 
@@ -1254,6 +1338,7 @@ class RepondeurChat(ABC):
         fil: Sequence[MessageChat],
         *,
         incrementer: Incrementeur | None = None,
+        etapeur: Etapeur | None = None,
         projet_id: str | None = None,
     ) -> ReponseChat:
         """La réponse complète, diffusée au passage si un `incrementer` est fourni.
@@ -1275,6 +1360,12 @@ class RepondeurChat(ABC):
         diffusé. Elle n'intéresse que le répondeur qui **agit** — l'orchestration
         y rattache le run qu'elle ouvre —, d'où la valeur par défaut ici : un
         répondeur qui n'ouvre rien n'a rien à en faire et n'a pas à la connaître.
+
+        `etapeur` (#1223) est le second canal : ce que le répondeur **fait** avant
+        de parler. Même régime que l'incrémenteur — `None` quand personne ne
+        regarde, et l'implémentation par défaut ci-dessous ne le touche pas : un
+        répondeur qui ne lit rien n'a aucune étape à publier, et son fil est
+        exactement celui d'avant ce lot.
         """
         texte = await self.repondre(agent, fil)
         if incrementer is not None and texte:
@@ -1430,9 +1521,16 @@ class RepondeurModele(RepondeurChat):
         fil: Sequence[MessageChat],
         *,
         incrementer: Incrementeur | None = None,
+        etapeur: Etapeur | None = None,
         projet_id: str | None = None,
     ) -> ReponseChat:
         """La réponse du modèle, publiée **au fil de son arrivée** (#693).
+
+        `etapeur` (#1223) est accepté et **jamais utilisé** : ce répondeur parle
+        à un agent du catalogue, il ne lit rien du projet. Le nommer ici plutôt
+        que de l'avaler dans un `**kwargs` est ce qui fait que la signature
+        **dit** ce que le canal offre, et qu'un répondeur qui y branchera des
+        étapes un jour n'aura pas à découvrir le canal dans un dictionnaire.
 
         Ce répondeur n'avait pas surchargé `produire`, donc l'implémentation par
         défaut publiait la réponse en **un seul** incrément : un fil servi par le
@@ -1957,15 +2055,26 @@ class ServiceChat:
             message=message,
         )
 
-        file: asyncio.Queue[str | None] = asyncio.Queue()
+        # Une seule file pour les deux canaux (#1223) : un incrément est une
+        # chaîne, une étape est une `EtapeFil`, et c'est **l'ordre de la file**
+        # qui garantit qu'une étape arrive au client avant le texte qu'elle a
+        # rendu possible. Deux files auraient rendu cet ordre indéterminé.
+        file: asyncio.Queue[str | EtapeFil | None] = asyncio.Queue()
 
         async def incrementer(delta: str) -> None:
             await file.put(delta)
 
+        async def etapeur(etape: EtapeFil) -> None:
+            await file.put(etape)
+
         async def produire() -> MessageChat:
             try:
                 return await self._repondre(
-                    agent, conversation=fil, incrementer=incrementer, projet_id=projet_id
+                    agent,
+                    conversation=fil,
+                    incrementer=incrementer,
+                    etapeur=etapeur,
+                    projet_id=projet_id,
                 )
             finally:
                 # La sentinelle passe par le même canal que les incréments : elle
@@ -1982,16 +2091,28 @@ class ServiceChat:
         recu: list[str] = []
         try:
             while True:
-                delta = await file.get()
-                if delta is None:
+                publie = await file.get()
+                if publie is None:
                     break
-                recu.append(delta)
+                if isinstance(publie, EtapeFil):
+                    # Une étape ne rejoint **pas** `recu` : ce qui y est accumulé
+                    # est la réponse, et c'est elle que `_conclure_arret`
+                    # persisterait si l'échange était coupé ici.
+                    yield FragmentChat(
+                        type=FRAGMENT_CHAT_ETAPE,
+                        agent=agent.nom,
+                        conversation=fil,
+                        echange=echange,
+                        etape=publie,
+                    )
+                    continue
+                recu.append(publie)
                 yield FragmentChat(
                     type=FRAGMENT_CHAT_DELTA,
                     agent=agent.nom,
                     conversation=fil,
                     echange=echange,
-                    delta=delta,
+                    delta=publie,
                 )
             try:
                 reponse = await tache
@@ -2166,6 +2287,7 @@ class ServiceChat:
         *,
         conversation: str,
         incrementer: Incrementeur | None = None,
+        etapeur: Etapeur | None = None,
         projet_id: str | None = None,
     ) -> MessageChat:
         """Produit la réponse, la persiste, l'achemine et la diffuse.
@@ -2186,6 +2308,7 @@ class ServiceChat:
                 agent,
                 self._store.fil(agent.nom, conversation),
                 incrementer=incrementer,
+                etapeur=etapeur,
                 projet_id=projet_id,
             )
         except Exception as exc:
@@ -2204,9 +2327,9 @@ class ServiceChat:
         Partagée par `_repondre` (une réponse jugée), `trancher_cadrage` (une
         réponse exécutée, #943), `repondre_question` (#1031) et `recruter`
         (#1146) : ce qu'un répondeur rend se persiste, s'achemine et se diffuse
-        toujours de la même façon, et c'est ici que les cinq champs du contrat
-        (`run_id`, `tache_id`, `proposition`, `question`, `recrutement`) passent
-        du répondeur au message.
+        toujours de la même façon, et c'est ici que les six champs du contrat
+        (`run_id`, `tache_id`, `proposition`, `question`, `recrutement`,
+        `etapes`) passent du répondeur au message.
         """
         texte = reponse.contenu.strip()
         if not texte:
@@ -2224,6 +2347,7 @@ class ServiceChat:
             proposition=reponse.proposition,
             question=reponse.question,
             recrutement=reponse.recrutement,
+            etapes=reponse.etapes,
         )
         await self._acheminer(message, agent, type_message=MESSAGE_REPONSE)
         return message

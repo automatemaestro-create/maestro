@@ -131,9 +131,11 @@ import {
   FRAGMENT_CHAT_DEBUT,
   FRAGMENT_CHAT_DELTA,
   FRAGMENT_CHAT_ERREUR,
+  FRAGMENT_CHAT_ETAPE,
   FRAGMENT_CHAT_FIN,
   FRAGMENT_CHAT_INTERROMPU,
   type ConversationChat,
+  type EtapeFil,
   type Evenement,
   type MessageChat,
   type RoleValideEquipe,
@@ -193,6 +195,15 @@ export type ReponseEnCours = {
   auteur: string;
   /** Le texte reçu jusqu'ici — la concaténation exacte des `delta`. */
   texte: string;
+  /**
+   * Ce que l'interlocuteur a **lu** jusqu'ici (#1223), dans l'ordre d'arrivée.
+   *
+   * Elles précèdent le texte : la bulle en cours les affiche donc pendant que
+   * rien n'est encore écrit, ce qui est exactement ce que « voir ce qu'il
+   * consulte pendant qu'il répond » demande. À la clôture, le message persisté
+   * porte les mêmes (`MessageChat.etapes`) et prend la place de cette bulle.
+   */
+  etapes: EtapeFil[];
   /**
    * Le flux s'est arrêté avant sa trame de clôture (coupure, réponse
    * impossible) : ce qui est là est **incomplet**, et rien ne le persiste.
@@ -499,6 +510,7 @@ export function useChat(agent: string, projetId: string | null = null): Chat {
                 setReponseEnCours({
                   auteur: trame.auteur,
                   texte: "",
+                  etapes: [],
                   figee: false,
                 });
                 break;
@@ -508,6 +520,21 @@ export function useChat(agent: string, projetId: string | null = null): Chat {
                 setReponseEnCours((courante) => ({
                   auteur: courante?.auteur ?? trame.auteur,
                   texte: (courante?.texte ?? "") + trame.delta,
+                  etapes: courante?.etapes ?? [],
+                  figee: false,
+                }));
+                break;
+              }
+              case FRAGMENT_CHAT_ETAPE: {
+                // Une lecture, pas un incrément (#1223) : elle ne rejoint donc
+                // **pas** `vol.recu`, qui est le texte reçu et rien d'autre —
+                // c'est lui que `ErreurReponse` rend quand le flux casse.
+                const etape = trame.etape ?? null;
+                if (etape === null) break;
+                setReponseEnCours((courante) => ({
+                  auteur: courante?.auteur ?? trame.auteur,
+                  texte: courante?.texte ?? "",
+                  etapes: [...(courante?.etapes ?? []), etape],
                   figee: false,
                 }));
                 break;

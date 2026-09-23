@@ -325,6 +325,56 @@ l'aveu pour ce qui manque vraiment — au-delà de la borne, ou hors de ce que l
 projection sait. L'honnêteté de #686 ne change pas de camp : elle se déplace de
 « je n'ai pas cette information » vers « je ne vois que les trois derniers runs ».
 
+## Il va voir, et ce qu'il voit se voit (#1223)
+
+Le lot précédent a fait parler ce canal en direct ; celui-ci lui donne de quoi
+**savoir**. Jusqu'ici il répondait sur un contexte figé — des compteurs, trois
+runs, des détails coupés à 300 caractères — et il le disait honnêtement :
+*« le détail que j'ai ici est tronqué […] un README y a probablement été créé »*
+(2026-09-22, projet `p1`). Le fichier était à deux pas ; personne n'était allé le
+voir.
+
+**Un tour de lecture précède le jugement.** `_consulter` demande au modèle, au
+contrat étroit de `_PROMPT_CONSULTATION`, ce qu'il a besoin de lire ; ce qu'il
+nomme est exécuté par `maestro.controltower.consultation` — quatre verbes en
+lecture seule, bornés à la racine du projet, secrets exclus — puis rendu au juge
+dans son prompt. Deux tours au plus (`_TOURS_DE_LECTURE`), parce que le second
+sert la piste que le premier ouvre : lister, puis lire le README qu'on y a vu.
+
+**Ce qu'il lit se voit pendant qu'il répond.** Chaque lecture devient une
+`EtapeFil` publiée sur le canal d'étapes (#1223, `chat.Etapeur`) **avant** le
+premier mot de la réponse, puis persistée sur le message (`ReponseChat.etapes`) :
+l'ordre est celui des choses, et c'est lui qui distingue « il a regardé » d'« il
+a l'air sûr de lui ».
+
+**Trois blocs de contexte s'ajoutent**, et ils ne se demandent pas — ils sont
+toujours là (`_Contexte`) : l'**équipe** réelle du projet (rôles, agents,
+modèles), ce qui **attend** quelqu'un avec son contenu (validations, questions),
+et les faits des runs de #1157. La frontière entre les deux régimes est une
+question de taille et de certitude : ce qui est petit, borné et toujours utile
+entre dans le prompt ; ce qui est vaste et dépend de la question se **demande**.
+
+**Deux voies ont été écartées.**
+
+- **Les appels d'outil natifs** — la forme la plus propre, et celle que #1222
+  avait déjà écartée pour le verdict : `generate`/`generate_stream` sont texte
+  seul (`tools=[]`), l'exécution outillée passe par `run_agent`, et `run_agent`
+  est **refusée** par le fournisseur compatible OpenAI. Le risque était nommé au
+  ticket le 2026-09-23 — *« sur ce fournisseur, les lectures de ce lot
+  n'existent pas »* — et le protocole textuel (`%%LIRE%%`) le referme au lieu de
+  l'arbitrer : il traverse **tous** les fournisseurs, parce qu'il ne demande rien
+  de plus qu'une chaîne de caractères.
+- **Tout mettre dans le contexte** — livrables, arborescence, détails entiers.
+  Un prompt qui grossit à chaque message, payé à chaque « bonjour », pour une
+  matière dont on ne sait pas si elle sert. Le tour de lecture paie un appel
+  court quand il sert, et rien quand il n'y a rien à lire.
+
+**Le prix est assumé et il est écrit** : un appel modèle de plus par message.
+Court dans les deux sens — le prompt est celui du juge, la réponse tient en une
+ligne —, et il ne peut jamais coûter la réponse : sans fournisseur, hors contrat,
+lecture en échec, on rend ce qu'on a et le juge répond avec le contexte seul,
+c'est-à-dire exactement le fil d'avant ce lot.
+
 ## Ce qui est gardé, et par quoi (#688)
 
 `tests/test_chat_global.py` tient le tout, sans réseau, sans modèle et sans
@@ -363,7 +413,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from maestro.agents.catalog import MODELE_EXECUTANT_DEFAUT, Agent
@@ -381,12 +431,21 @@ from maestro.controltower.causes import (
 from maestro.controltower.chat import (
     UTILISATEUR,
     DemandeRecrutement,
+    EtapeFil,
+    Etapeur,
     Incrementeur,
     MessageChat,
     Redaction,
     RepondeurChat,
     ReponseChat,
     transcription,
+)
+from maestro.controltower.consultation import (
+    LECTURES_PAR_TOUR,
+    Demande,
+    Lecture,
+    catalogue,
+    demandes_de,
 )
 from maestro.controltower.events import (
     ACTEUR_RUN,
@@ -418,7 +477,9 @@ from maestro.controltower.state import (
     EXECUTION_TERMINEE,
     ControlTowerState,
     EtatExecution,
+    EtatQuestion,
     EtatTache,
+    EtatValidation,
 )
 from maestro.engine.executor import (
     STATUT_BLOQUEE,
@@ -542,8 +603,52 @@ ce qui attend un arbitrage, Coûts & analytics pour la dépense. Et ne promets p
 qu'un écran montre ce que tu n'as pas vu toi-même : si tu ignores où un livrable
 a été écrit, dis-le franchement au lieu d'envoyer chercher.
 
+Tu reçois aussi, quand il y en a, CE QUE TU VIENS DE LIRE dans le projet :
+fichiers ouverts, recherches passées, détail complet d'un run. C'est du RÉEL, et
+c'est ce qui doit porter ta réponse : donne la commande et le fichier tels qu'ils
+y sont écrits, entre guillemets ou en bloc de code, plutôt que d'envoyer lire la
+documentation. Ne renvoie vers un écran ou vers un fichier QUE si tu ne l'as pas
+lu — et dis alors que tu ne l'as pas lu.
+
 """
     + registre()
+)
+
+#: Le cadre du **tour de lecture** (#1223) — l'appel qui décide ce qu'il faut
+#: aller chercher, avant celui qui répond. Son contrat est aussi étroit que
+#: possible : des lignes de demande, ou le mot `RIEN`. Il ne parle pas à
+#: l'utilisateur et ne juge rien ; c'est l'appel suivant qui fait les deux.
+#:
+#: ⚠ **Concaténé comme `_PROMPT_ORCHESTRATION`**, et pour la même raison : le
+#: catalogue porte des accolades littérales (les gabarits JSON des demandes)
+#: qu'une f-string lirait comme des champs.
+_PROMPT_CONSULTATION = (
+    """\
+Tu prépares la réponse de l'orchestrateur de Maestro. Tu ne réponds PAS à
+l'utilisateur : tu décides ce qu'il faut LIRE pour pouvoir lui répondre avec des
+faits plutôt qu'avec des généralités.
+
+On te donne l'état de l'orchestration, l'équipe du projet, ce qui attend un
+arbitrage, les runs récents et la conversation. Tout cela, tu l'as déjà : ne le
+redemande pas.
+
+"""
+    + catalogue()
+    + """
+
+Demande une lecture dès que la réponse gagnerait à s'appuyer sur le projet réel —
+« comment je teste ce qui a été livré ? », « où est le code de X ? », « qu'est-ce
+que le run a produit ? », « pourquoi cette tâche a échoué ? » (le détail que tu
+vois est tronqué, `detail` le rend entier).
+
+Si rien n'a besoin d'être lu — une salutation, un accord, une demande de travail,
+une question à laquelle ce que tu as déjà répond —, écris exactement :
+
+RIEN
+
+N'écris jamais rien d'autre : ni phrase, ni explication, ni réponse à
+l'utilisateur. Des lignes de demande, ou RIEN.
+"""
 )
 
 #: La fiche de l'orchestration, hors catalogue (voir le module) : le chat n'a
@@ -588,6 +693,19 @@ EquipeDuProjet = Callable[[str], int | None]
 #: Arguments : le projet, les rôles retenus, la proposition dont ils sortent (une
 #: trace, jamais une condition). Une équipe refusée lève, et le canal le raconte.
 RecruteurEquipe = Callable[[str, Sequence[RoleValide], str], Awaitable[Mapping[str, Any]]]
+
+#: Exécute **une** lecture demandée par le modèle, dans le projet de la fenêtre
+#: (#1223). Attendable, parce que lire touche le disque ; elle ne lève jamais —
+#: un empêchement est une `Lecture` qui le dit (`consultation.Consultations`).
+#: Sans elle, le canal n'ouvre aucun tour de lecture.
+Consultation = Callable[[Demande, str | None], Awaitable[Lecture]]
+
+#: Combien de tours de lecture au plus (#1223). **Deux**, et c'est une décision :
+#: un tour trouve ce qu'on lui a nommé, le second suit la piste que le premier a
+#: ouverte — lister le projet, puis lire le README qu'on y a vu, c'est le geste
+#: exact du constat du 2026-09-22. Un troisième paierait un appel de plus pour
+#: une profondeur qu'aucune question de fil n'a demandée.
+_TOURS_DE_LECTURE = 2
 
 #: Ce que le canal dit quand il propose l'équipe au lieu du run (#1146). Les trois
 #: moments du critère, dans l'ordre : pourquoi pas de run (personne pour prendre
@@ -1111,6 +1229,169 @@ def _borne(texte: str) -> str:
     return f"{propre[:_DETAIL_MAX].rstrip()}… (tronqué)"
 
 
+def detail_du_run(state: ControlTowerState) -> Callable[[str], str]:
+    """Le détail **complet** d'un run — ce que la borne de `faits_des_runs` coupe (#1223).
+
+    La même fiche que `_fiche_du_run`, sans aucune des trois bornes : toutes les
+    tâches, chaque détail entier. C'est le verbe `detail` de `consultation`, et
+    c'est la réponse exacte au constat du ticket — *« le détail que j'ai ici est
+    tronqué »*. Il n'entre jamais dans le prompt de lui-même : il faut que le
+    modèle l'ait **demandé**, ce qui est la différence entre un contexte qui
+    grossit à chaque message et une lecture payée quand elle sert.
+
+    Rend `""` sur un run inconnu, que `consultation` traduit en « aucun run … ».
+    """
+
+    def detail(run_id: str) -> str:
+        execution = state.execution(run_id)
+        if execution is None:
+            return ""
+        lignes = [
+            f"Run {execution.run_id} — {libelle_statut_execution(execution.statut)}"
+        ]
+        if execution.objectif:
+            lignes.append(f"objectif : {execution.objectif}")
+        cause = libelle_cause(execution.cause)
+        if cause:
+            lignes.append(f"cause : {cause}")
+        issue = _issue_du_run(execution)
+        if issue:
+            lignes.append(f"issue : {issue}")
+        taches = state.taches(run=PorteeRun.run(execution.run_id))
+        details = _details_des_taches(execution)
+        if not taches:
+            lignes.append("tâches : aucune tâche connue de ce run.")
+            return "\n".join(lignes)
+        lignes.append(f"tâches ({len(taches)}) :")
+        for tache in taches:
+            entete = f"- {tache.id} « {tache.titre} »" if tache.titre else f"- {tache.id}"
+            statut = libelle_statut_tache(tache.statut) if tache.statut else "statut inconnu"
+            entete += f" — {statut}"
+            porteur = tache.role or tache.agent
+            if porteur:
+                entete += f" — {porteur}"
+            lignes.append(entete)
+            detail_tache = details.get(tache.id, "").strip()
+            if detail_tache:
+                lignes.append(f"  détail : {detail_tache}")
+        return "\n".join(lignes)
+
+    return detail
+
+
+#: L'équipe du projet **en clair** — rôles, agents, instances (#1223, critère 3).
+#: Distincte d'`EquipeDuProjet`, qui ne rend qu'un compte : celle-là décide de la
+#: conduite du canal (proposer une équipe au lieu d'un run), celle-ci entre dans
+#: le prompt pour que « qui travaille sur ce projet ? » trouve une réponse. Les
+#: fondre ferait dépendre un garde-fou d'une chaîne de caractères.
+EquipeDuFil = Callable[[str | None], str]
+
+#: Ce qui **attend quelqu'un**, avec son contenu (#1223, critère 3) : validations
+#: et questions en attente. L'aperçu les **compte** depuis #683 ; le fil ne
+#: pouvait donc dire ni ce qu'on lui demande d'arbitrer, ni ce qu'un agent a
+#: demandé. Rend `""` quand rien n'attend — le bloc disparaît plutôt que
+#: d'annoncer un vide que l'aperçu dit déjà.
+AttentesEnCours = Callable[[str | None], str]
+
+#: Combien d'attentes le fil raconte, et sur quelle longueur. Mêmes raisons que
+#: les bornes des runs (#1157), et elles se **disent** de la même façon.
+_ATTENTES_RACONTEES = 5
+_ATTENTE_MAX = 400
+
+
+def attentes_de(state: ControlTowerState) -> AttentesEnCours:
+    """Ce qui attend un arbitrage ou une réponse, **avec son contenu** (#1223).
+
+    Une fabrique, comme `apercu_de` et `faits_des_runs`, et pour les deux mêmes
+    raisons : le répondeur ne connaît qu'un `AttentesEnCours`, et la lecture est
+    refaite à chaque message — figée, elle annoncerait les attentes d'hier.
+
+    Deux files plutôt qu'une, parce qu'elles n'appellent pas le même geste : une
+    **validation** attend qu'on approuve ou refuse un acte (l'écran Validations),
+    une **question** attend une réponse écrite, et elle dit ce que l'agent fera
+    sans elle (`hypothese`, `attente`). Les fondre ferait perdre précisément ce
+    qui distingue « tranche » de « réponds ».
+
+    La portée est celle du contrat de lecture (#277) — la **même** que l'aperçu
+    et les faits des runs, pour qu'un seul prompt ne mélange pas deux périmètres.
+    """
+
+    def attentes(projet_id: str | None = None) -> str:
+        portee = PorteeProjet.projet(projet_id) if projet_id else PorteeProjet.tous()
+        validations = [v for v in state.validations(portee) if v.en_attente]
+        questions = [q for q in state.questions(portee) if q.en_attente]
+        if not validations and not questions:
+            return ""
+        lignes: list[str] = []
+        if validations:
+            lignes.append(
+                _entete_attentes("validation", "validations", len(validations))
+            )
+            for validation in validations[:_ATTENTES_RACONTEES]:
+                lignes.extend(_fiche_validation(validation))
+        if questions:
+            lignes.append(_entete_attentes("question", "questions", len(questions)))
+            for question in questions[:_ATTENTES_RACONTEES]:
+                lignes.extend(_fiche_question(question))
+        return "\n".join(lignes)
+
+    return attentes
+
+
+def _entete_attentes(singulier: str, pluriel: str, total: int) -> str:
+    """La ligne qui annonce une file — et **dit** qu'elle est bornée quand elle l'est."""
+    entete = f"{_accord(total, singulier + ' en attente', pluriel + ' en attente')}"
+    if total > _ATTENTES_RACONTEES:
+        entete += f" ({_ATTENTES_RACONTEES} montrées, lecture bornée)"
+    return f"{entete} :"
+
+
+def _fiche_validation(validation: EtatValidation) -> list[str]:
+    """Une validation : ce qu'elle retient, l'acte proposé, et pourquoi on demande."""
+    entete = f"- {validation.titre or validation.tache_id}"
+    porteur = validation.role or validation.agent
+    if porteur:
+        entete += f" — {porteur}"
+    if validation.run_id:
+        entete += f" — run {validation.run_id}"
+    lignes = [entete]
+    if validation.outil:
+        acte = validation.outil
+        arguments = " ".join(
+            f"{cle}={valeur}" for cle, valeur in (validation.arguments or {}).items()
+        )
+        lignes.append(f"  acte : {_attente_bornee(f'{acte} {arguments}'.strip())}")
+    if validation.description:
+        lignes.append(f"  ce qu'elle ferait : {_attente_bornee(validation.description)}")
+    if validation.raison:
+        lignes.append(f"  pourquoi on demande : {_attente_bornee(validation.raison)}")
+    return lignes
+
+
+def _fiche_question(question: EtatQuestion) -> list[str]:
+    """Une question d'agent : ce qu'elle demande, ses choix, et l'hypothèse de repli."""
+    entete = f"- {_attente_bornee(question.question) or question.question_id}"
+    porteur = question.role or question.agent
+    if porteur:
+        entete += f" — {porteur}"
+    lignes = [entete]
+    if question.choix:
+        lignes.append(f"  choix : {' · '.join(question.choix)}")
+    if question.hypothese:
+        lignes.append(f"  sans réponse : {_attente_bornee(question.hypothese)}")
+    if question.attente:
+        lignes.append(f"  délai : {_attente_bornee(question.attente)}")
+    return lignes
+
+
+def _attente_bornee(texte: str) -> str:
+    """Un texte d'attente ramené à `_ATTENTE_MAX`, sur une ligne, coupé **en le disant**."""
+    propre = " ".join(texte.split())
+    if len(propre) <= _ATTENTE_MAX:
+        return propre
+    return f"{propre[:_ATTENTE_MAX].rstrip()}… (tronqué)"
+
+
 @dataclass(frozen=True)
 class _Verdict:
     """Ce qu'un appel modèle rend : ce que le canal dit, et ce qu'il en conclut.
@@ -1175,7 +1456,70 @@ def _verdict_depuis(texte: str) -> _Verdict:
     )
 
 
-def _prompt(fil: Sequence[MessageChat], etat: str, faits: str = "") -> str:
+def _sans_echec(lecture: Callable[[], str]) -> str:
+    """Le texte que `lecture` rend, `""` si elle lève — une sonde éclaire, elle ne décide pas.
+
+    La règle de `_sans_equipe` (#1146), appliquée aux blocs du contexte : un
+    projet illisible, une projection à moitié rejouée ou un dépôt d'agents
+    disparu doivent coûter *un bloc de prompt*, jamais la réponse.
+    """
+    try:
+        return lecture() or ""
+    except Exception:  # noqa: BLE001 — un contexte manquant n'arrête jamais un fil
+        return ""
+
+
+def _bloc_des_lectures(lues: Sequence[Lecture]) -> str:
+    """Ce que le tour de lecture a rapporté, en un bloc de prompt — `""` s'il n'a rien lu.
+
+    Chaque lecture y porte **son libellé** (le même que l'étape affichée) puis
+    son contenu : le modèle doit pouvoir citer *d'où* vient ce qu'il avance, et
+    c'est la même ligne que la personne lit dans le fil. Deux formulations pour
+    la même lecture les feraient se contredire au premier « où as-tu vu ça ? ».
+    """
+    if not lues:
+        return ""
+    blocs = [f"{lecture.libelle} :\n{lecture.contenu}" for lecture in lues]
+    return "Ce que tu viens de lire dans le projet :\n\n" + "\n\n".join(blocs)
+
+
+def _signature(demande: Demande) -> tuple[str, tuple[tuple[str, str], ...]]:
+    """Ce qui fait qu'une lecture est **la même** qu'une autre : son verbe et ses arguments."""
+    return (demande.outil, tuple(sorted(demande.arguments.items())))
+
+
+def _avec_etapes(reponse: ReponseChat, etapes: tuple[EtapeFil, ...]) -> ReponseChat:
+    """La même réponse, portant les étapes du tour — sans toucher au reste.
+
+    Les deux voies de `produire` qui délèguent (`_proposer_recrutement`,
+    `_ouvrir_un_run`) rendent une `ReponseChat` qu'elles composent entièrement :
+    leur passer les étapes ferait traverser à chacune une donnée dont elle n'a
+    rien à faire. On les pose donc **là où le tour est connu**, en un seul
+    endroit, et `replace` garantit qu'aucun autre champ ne bouge.
+    """
+    return replace(reponse, etapes=etapes) if etapes else reponse
+
+
+@dataclass(frozen=True)
+class _Contexte:
+    """Ce que le canal sait **avant** d'appeler le modèle, en quatre blocs (#1223).
+
+    Les quatre sont lus à chaque message, dans la projection et le dépôt, et
+    chacun disparaît quand il n'a rien à dire. Ils sont groupés ici parce que les
+    **deux** appels d'un tour les reçoivent — celui qui décide des lectures et
+    celui qui répond — et que les construire deux fois les ferait diverger d'un
+    message à l'autre sur le même tour.
+    """
+
+    etat: str = ""
+    equipe: str = ""
+    attentes: str = ""
+    faits: str = ""
+
+
+def _prompt(
+    fil: Sequence[MessageChat], contexte: _Contexte, lectures: str = ""
+) -> str:
     """Le fil rendu en prompt, précédé de ce que le canal sait de l'orchestration.
 
     La conversation passe par `chat.transcription` — la **même** mise en forme
@@ -1183,12 +1527,24 @@ def _prompt(fil: Sequence[MessageChat], etat: str, faits: str = "") -> str:
     plutôt qu'en queue : la consigne de réponse ferme la transcription, et
     glisser un fait après elle le ferait lire comme une instruction de plus.
 
-    Deux blocs plutôt qu'un depuis #1157, dans l'ordre où l'on interroge : l'état
-    d'abord, une phrase qui **compte** ce qui tourne, puis les faits des runs,
-    qui **racontent** ce qu'ils ont fait. Chacun disparaît quand il n'a rien à
-    dire, plutôt que d'annoncer un vide.
+    Cinq blocs, dans l'ordre où l'on interroge : l'**état** (ce qui tourne, #683),
+    l'**équipe** (qui peut le prendre, #1223), les **attentes** (ce qui est
+    bloqué et pourquoi, #1223), les **faits des runs** (ce qu'ils ont fait,
+    #1157), puis les **lectures** du tour (ce qu'on vient d'aller chercher,
+    #1223). Les quatre premiers sont sus, le dernier est allé se chercher : il
+    vient donc en dernier, au plus près de la conversation qu'il sert.
     """
-    entete = [bloc for bloc in (f"État de l'orchestration : {etat}" if etat else "", faits) if bloc]
+    entete = [
+        bloc
+        for bloc in (
+            f"État de l'orchestration : {contexte.etat}" if contexte.etat else "",
+            contexte.equipe,
+            contexte.attentes,
+            contexte.faits,
+            lectures,
+        )
+        if bloc
+    ]
     conversation = transcription(fil)
     if not entete:
         return conversation
@@ -1220,6 +1576,14 @@ class RepondeurOrchestration(RepondeurChat):
     le premier dit si le projet a quelqu'un pour prendre les tâches, le second
     crée l'équipe validée. Sans sonde, le canal propose des runs comme avant ce
     lot ; sans recruteur, il dit le manque sans proposer d'équipe.
+
+    `consultation`, `roles` et `attentes` (#1223) sont ce qui fait que ce canal
+    **sait** au lieu de supposer : le premier exécute les lectures que le modèle
+    demande (fichiers du projet, détail complet d'un run), les deux autres
+    mettent dans le prompt l'équipe réelle et ce qui attend quelqu'un. Sans
+    `consultation`, aucun tour de lecture n'a lieu et le canal répond sur son
+    seul contexte — c'est-à-dire exactement ce qu'il faisait avant ce lot ; sans
+    `roles` ni `attentes`, les blocs correspondants disparaissent du prompt.
     """
 
     def __init__(
@@ -1233,6 +1597,9 @@ class RepondeurOrchestration(RepondeurChat):
         sonde: SondeDuPoste | None = None,
         equipe: EquipeDuProjet | None = None,
         recruteur: RecruteurEquipe | None = None,
+        consultation: Consultation | None = None,
+        roles: EquipeDuFil | None = None,
+        attentes: AttentesEnCours | None = None,
     ) -> None:
         self._lanceur = lanceur
         self._apercu = apercu
@@ -1240,6 +1607,9 @@ class RepondeurOrchestration(RepondeurChat):
         self._provider = provider
         self._equipe = equipe
         self._recruteur = recruteur
+        self._consultation = consultation
+        self._roles = roles
+        self._attentes = attentes
         # Le modèle suit le fournisseur (#1173) : résolu avec lui depuis la
         # configuration, jamais épinglé. Un fournisseur **injecté** (les tests,
         # un câblage explicite) garde le modèle de la fiche.
@@ -1257,6 +1627,7 @@ class RepondeurOrchestration(RepondeurChat):
         fil: Sequence[MessageChat],
         *,
         incrementer: Incrementeur | None = None,
+        etapeur: Etapeur | None = None,
         projet_id: str | None = None,
     ) -> ReponseChat:
         """Répond au dernier message, et ouvre le run que l'utilisateur vient d'approuver.
@@ -1277,13 +1648,24 @@ class RepondeurOrchestration(RepondeurChat):
         et s'arrête là. Le `LanceurRun` n'est alors pas atteint, et pas par une
         garde qu'il faudrait tenir : il n'existe qu'**un** chemin vers lui, et il
         part d'un verdict qui n'a pas été rendu.
+
+        **Le tour de lecture précède le jugement** (#1223), et l'ordre est le
+        sujet : l'orchestrateur va chercher ce qui lui manque, *puis* répond avec
+        ce qu'il a lu. Ce qu'il a lu se **voit** au passage (`etapeur`), donc
+        avant le premier mot de la réponse — c'est l'ordre réel des choses, et
+        c'est ce qui distingue « il a regardé » d'« il a l'air sûr de lui ». Un
+        tour de lecture qui échoue ne lève pas : il rend moins de lectures, et la
+        réponse se fait avec ce qu'elle a — la seule chose qu'un empêchement de
+        lecture ne doit jamais coûter est la réponse elle-même.
         """
         redaction = Redaction(incrementer)
+        contexte = self._contexte(fil, projet_id)
+        lectures, etapes = await self._consulter(agent, fil, contexte, projet_id, etapeur)
         try:
-            verdict = await self._juger(agent, fil, projet_id)
+            verdict = await self._juger(agent, fil, projet_id, contexte, lectures)
         except _JugeInjoignable as injoignable:
             await redaction.ecrire(str(injoignable))
-            return ReponseChat(contenu=redaction.texte)
+            return ReponseChat(contenu=redaction.texte, etapes=etapes)
         if (
             verdict.nom in (VERDICT_PROPOSITION, VERDICT_ACCORD)
             and verdict.objectif
@@ -1294,14 +1676,20 @@ class RepondeurOrchestration(RepondeurChat):
             # l'accord ne tiennent, et le texte du juge — « je lance ? », « c'est
             # parti » — non plus. Il est remplacé **avant** d'être écrit, par la
             # phrase qui dit pourquoi et propose l'équipe.
-            return await self._proposer_recrutement(redaction, verdict.objectif, projet_id)
+            return _avec_etapes(
+                await self._proposer_recrutement(redaction, verdict.objectif, projet_id),
+                etapes,
+            )
         await redaction.ecrire(verdict.reponse)
         if verdict.nom == VERDICT_ACCORD:
             # Un accord **tapé** ne porte aucune borne : le juge rend un
             # objectif, pas un formulaire. Les bornes viennent du geste
             # (`trancher_cadrage`), seul chemin où un écran a pu les poser.
-            return await self._ouvrir_un_run(
-                redaction, verdict.objectif, projet_id, AUCUNE_BORNE, contexte_du_fil(fil)
+            return _avec_etapes(
+                await self._ouvrir_un_run(
+                    redaction, verdict.objectif, projet_id, AUCUNE_BORNE, contexte_du_fil(fil)
+                ),
+                etapes,
             )
         if verdict.nom == VERDICT_PROPOSITION and self._lanceur is None:
             # Prévenir **avant** le « oui » : proposer un run qu'on ne pourra pas
@@ -1321,7 +1709,7 @@ class RepondeurOrchestration(RepondeurChat):
             if verdict.nom == VERDICT_PROPOSITION and self._lanceur is not None
             else ""
         )
-        return ReponseChat(contenu=redaction.texte, proposition=propose)
+        return ReponseChat(contenu=redaction.texte, proposition=propose, etapes=etapes)
 
     async def trancher_cadrage(
         self,
@@ -1472,13 +1860,20 @@ class RepondeurOrchestration(RepondeurChat):
         return await self._conducteur.repondre(fil, question, valeur)
 
     async def _juger(
-        self, agent: Agent, fil: Sequence[MessageChat], projet_id: str | None
+        self,
+        agent: Agent,
+        fil: Sequence[MessageChat],
+        projet_id: str | None,
+        contexte: _Contexte | None = None,
+        lectures: str = "",
     ) -> _Verdict:
         """L'appel modèle — fournisseur résolu au premier usage (import local, comme #84).
 
         Le prompt système est celui de la fiche (`_PROMPT_ORCHESTRATION`), qui
         porte le contrat de la réponse ; le prompt d'utilisateur est le fil,
-        précédé de l'état puis des faits des runs (#1157).
+        précédé du contexte (#683, #1157, #1223) puis des **lectures** du tour
+        (#1223) — ce que l'orchestrateur vient d'aller chercher dans le projet,
+        et qui doit porter sa réponse plutôt qu'un renvoi vers un écran.
         Aucun `PlaybookStore` ici, contrairement à `RepondeurModele` :
         l'orchestration n'est pas au catalogue, donc n'a pas de playbook éditable
         — et le contrat de sortie n'est pas un texte que l'UI doit pouvoir
@@ -1520,16 +1915,14 @@ class RepondeurOrchestration(RepondeurChat):
                     f"({cause_lisible(echec)})",
                     await reparation_configuration(self._sonde),
                 ) from echec
-        etat = self._apercu(projet_id) if self._apercu is not None else ""
-        # Les faits des runs (#1157), lus sur le **même** périmètre que l'aperçu
-        # et sur les runs que ce fil a ouverts : c'est ce qui permet de répondre
-        # « pourquoi le run a échoué ? » au lieu d'envoyer vers un écran.
-        faits = (
-            self._faits(projet_id, runs_du_fil(fil)) if self._faits is not None else ""
-        )
+        # Le contexte est **celui du tour** quand `produire` l'a construit : les
+        # deux appels d'un même message doivent voir le même état, faute de quoi
+        # le second jugerait sur une projection que le premier ne connaissait
+        # pas. `repondre`, qui n'en construit aucun, le fait relire ici.
+        vu = contexte if contexte is not None else self._contexte(fil, projet_id)
         try:
             texte = await self._provider.generate(
-                _prompt(fil, etat, faits),
+                _prompt(fil, vu, lectures),
                 model=self._modele or agent.modele,
                 system_prompt=agent.prompt_systeme,
             )
@@ -1544,6 +1937,157 @@ class RepondeurOrchestration(RepondeurChat):
                 _REPARATION_PASSAGERE,
             )
         return _verdict_depuis(texte)
+
+    def _contexte(self, fil: Sequence[MessageChat], projet_id: str | None) -> _Contexte:
+        """Ce que le canal sait de l'orchestration, lu **une fois par message** (#1223).
+
+        Les quatre lectures passent par le **même** projet de fenêtre, donc par la
+        même portée (#277) : un prompt qui mélangerait deux périmètres ferait
+        compter ce qu'il ne raconte pas. Chacune est facultative — un répondeur
+        construit sans elle rend simplement un bloc vide, et le prompt s'en passe.
+
+        Aucune ne lève : une sonde qui casse **éclaire**, elle ne décide de rien
+        (même règle que `_sans_equipe`). Un bloc manquant coûte une réponse moins
+        informée ; une exception coûterait la réponse.
+        """
+        # Les quatre sondes sont liées à des variables locales avant d'être
+        # appelées : c'est ce qui permet de les passer à `_sans_echec` sans
+        # refaire le test d'existence à l'intérieur de chaque lambda.
+        apercu, roles, attentes, faits = (
+            self._apercu,
+            self._roles,
+            self._attentes,
+            self._faits,
+        )
+        return _Contexte(
+            etat=_sans_echec(lambda: apercu(projet_id)) if apercu else "",
+            equipe=_sans_echec(lambda: roles(projet_id)) if roles else "",
+            attentes=_sans_echec(lambda: attentes(projet_id)) if attentes else "",
+            # Les faits des runs (#1157), lus sur le **même** périmètre que
+            # l'aperçu et sur les runs que ce fil a ouverts : c'est ce qui permet
+            # de répondre « pourquoi le run a échoué ? » sans envoyer vers un écran.
+            faits=(
+                _sans_echec(lambda: faits(projet_id, runs_du_fil(fil))) if faits else ""
+            ),
+        )
+
+    async def _consulter(
+        self,
+        agent: Agent,
+        fil: Sequence[MessageChat],
+        contexte: _Contexte,
+        projet_id: str | None,
+        etapeur: Etapeur | None,
+    ) -> tuple[str, tuple[EtapeFil, ...]]:
+        """Le **tour de lecture** : ce que l'orchestrateur va chercher avant de répondre.
+
+        Un appel modèle au contrat étroit (`_PROMPT_CONSULTATION`) : des lignes
+        `%%LIRE%% {…}`, ou le mot `RIEN`. Ce qu'il demande est exécuté par
+        `consultation` — quatre verbes en lecture seule, bornés à la racine du
+        projet, secrets exclus —, publié en **étape** dès que la lecture est
+        faite, puis rendu au juge dans son prompt.
+
+        **Deux tours au plus** (`_TOURS_DE_LECTURE`), et le second existe pour la
+        piste que le premier ouvre : lister le projet, puis lire le README qu'on
+        y a vu. Le tour s'arrête dès qu'un appel ne demande plus rien — c'est le
+        cas courant, et il coûte quelques jetons.
+
+        **Rien de tout cela ne peut coûter la réponse.** Sans `consultation`, le
+        tour n'a pas lieu. Un fournisseur qui ne répond pas, un texte hors
+        contrat, une lecture qui échoue : on rend ce qu'on a, et le juge répond
+        avec le contexte seul — c'est-à-dire exactement le fil d'avant ce lot. Ce
+        canal ne lève pas (#686), et une préparation ne peut pas être plus fatale
+        que ce qu'elle prépare.
+
+        Un **coût est payé** ici, et il s'assume : un appel modèle de plus par
+        message, court dans les deux sens (le prompt est celui du juge, la
+        réponse tient en une ligne). C'était le prix de la propriété que le
+        ticket demande — *répondre à partir de ce qu'on lit* — et le mesurer sur
+        le seul cas qui n'en profite pas (« oui ») reviendrait à ne jamais lire.
+        """
+        if self._consultation is None or not self._resolu(agent):
+            return "", ()
+        lues: list[Lecture] = []
+        etapes: list[EtapeFil] = []
+        # Une même lecture ne se fait qu'**une fois** par message. Un modèle qui
+        # redemande au second tour ce qu'il a déjà lu au premier — le cas le plus
+        # courant quand il n'a pas trouvé sa réponse — paierait sinon deux fois la
+        # même lecture et afficherait deux fois la même ligne. Ce n'est pas un
+        # garde-fou : c'est le doublon que le fil montrerait.
+        faites: set[tuple[str, tuple[tuple[str, str], ...]]] = set()
+        for tour in range(_TOURS_DE_LECTURE):
+            demandes = await self._demandes(agent, fil, contexte, lues)
+            neuves = [d for d in demandes if _signature(d) not in faites]
+            if not neuves:
+                break
+            for demande in neuves[:LECTURES_PAR_TOUR]:
+                faites.add(_signature(demande))
+                lecture = await self._lire(demande, projet_id)
+                lues.append(lecture)
+                etape = EtapeFil(libelle=lecture.libelle, detail=lecture.contenu)
+                etapes.append(etape)
+                if etapeur is not None:
+                    await etapeur(etape)
+            if tour + 1 >= _TOURS_DE_LECTURE:
+                break
+        return _bloc_des_lectures(lues), tuple(etapes)
+
+    async def _demandes(
+        self,
+        agent: Agent,
+        fil: Sequence[MessageChat],
+        contexte: _Contexte,
+        lues: Sequence[Lecture],
+    ) -> tuple[Demande, ...]:
+        """Ce que le modèle demande à lire — `()` quand il ne demande rien, ou qu'il rate.
+
+        L'échec est **silencieux par construction** : un fournisseur muet ne doit
+        pas empêcher de répondre, seulement de lire. C'est la seule place du
+        module où une exception se ravale sans rien écrire au fil, et elle le
+        peut parce que ce qu'elle protège est une préparation, jamais la réponse.
+        """
+        if self._provider is None:
+            return ()
+        try:
+            texte = await self._provider.generate(
+                _prompt(fil, contexte, _bloc_des_lectures(lues)),
+                model=self._modele or agent.modele,
+                system_prompt=_PROMPT_CONSULTATION,
+            )
+        except Exception:  # noqa: BLE001 — lire est facultatif, répondre ne l'est pas
+            return ()
+        return demandes_de(texte or "")
+
+    async def _lire(self, demande: Demande, projet_id: str | None) -> Lecture:
+        """Exécute une lecture — un empêchement est une `Lecture` qui le dit, jamais une levée."""
+        if self._consultation is None:  # pragma: no cover - garde de type, cf. `_consulter`
+            return Lecture(libelle="N'a rien pu lire", contenu="Aucune lecture branchée.")
+        try:
+            return await self._consultation(demande, projet_id)
+        except Exception as echec:  # noqa: BLE001 — cf. `consultation.Consultations.executer`
+            return Lecture(
+                libelle=f"N'a pas pu exécuter « {demande.outil} »",
+                contenu=f"La lecture a échoué : {echec}.",
+            )
+
+    def _resolu(self, agent: Agent) -> bool:
+        """Résout le fournisseur **sans lever** — le tour de lecture s'en passe s'il manque.
+
+        `_juger` le résout aussi, et c'est lui qui **dit** l'empêchement (#686) :
+        ici on se tait, parce qu'un fournisseur absent n'a pas deux causes ni deux
+        phrases, et que celle du juge arrive une ligne plus loin.
+        """
+        if self._provider is not None:
+            return True
+        from maestro.providers.factory import modele_du_canal, provider_from_settings
+
+        try:
+            fournisseur = provider_from_settings()
+            self._modele = modele_du_canal(agent.modele, fournisseur)
+            self._provider = fournisseur
+        except Exception:  # noqa: BLE001 — l'empêchement se dit au juge, pas ici
+            return False
+        return True
 
     def _sans_equipe(self, projet_id: str | None) -> bool:
         """Le projet de la fenêtre n'a **personne** pour prendre les tâches (#1146).

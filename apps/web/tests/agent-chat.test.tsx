@@ -155,7 +155,12 @@ describe("③ la réponse s'écrit (#264)", () => {
   it("laisse le texte prendre le relais dès le premier incrément", () => {
     poserFilAssistance({
       envoi: true,
-      reponseEnCours: { auteur: "dev", texte: "Je regarde le", figee: false },
+      reponseEnCours: {
+        auteur: "dev",
+        texte: "Je regarde le",
+        etapes: [],
+        figee: false,
+      },
     });
 
     monterOnglet();
@@ -168,7 +173,12 @@ describe("③ la réponse s'écrit (#264)", () => {
   it("garde ce qui est arrivé d'une réponse interrompue, en le disant", () => {
     poserFilAssistance({
       envoi: false,
-      reponseEnCours: { auteur: "dev", texte: "Je regarde le", figee: true },
+      reponseEnCours: {
+        auteur: "dev",
+        texte: "Je regarde le",
+        etapes: [],
+        figee: true,
+      },
     });
 
     monterOnglet();

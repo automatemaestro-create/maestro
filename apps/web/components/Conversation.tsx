@@ -288,6 +288,7 @@ import {
 } from "react";
 
 import { BulleFil } from "@/components/chat/BulleFil";
+import { EtapesDuFil } from "@/components/chat/EtapesDuFil";
 import { SeparateurDeJour } from "@/components/chat/SeparateurDeJour";
 import { SourcesDuFil } from "@/components/chat/SourcesDuFil";
 import {
@@ -1550,6 +1551,11 @@ function BulleEnCours({
 }) {
   return (
     <BulleFil auteur={reponse.auteur} ouvreUnTour={ouvreUnTour}>
+      {/* Ce qu'il est en train de lire (#1223), **déplié** tant que rien n'est
+          écrit : à cet instant, ce qu'il consulte est tout ce qu'il y a à voir.
+          Le repli se referme quand le message persisté prend la place de cette
+          bulle — c'est alors la réponse qu'on lit. */}
+      <EtapesDuFil etapes={reponse.etapes} enCours={!reponse.figee} />
       <TexteMarkdown
         texte={reponse.texte}
         curseur={
@@ -1603,6 +1609,10 @@ function Bulle({
       ouvreUnTour={ouvreUnTour}
       piedVisible={piedVisible}
     >
+      {/* Ce que l'interlocuteur a **lu** pour écrire ce message (#1223) — au-dessus
+          du texte, parce que c'est l'ordre des choses : il lit, puis il rédige.
+          Rend `null` quand il n'a rien lu, comme `Suite` et `SourcesDuFil`. */}
+      {!utilisateur && <EtapesDuFil etapes={message.etapes ?? []} />}
       {/* Le Markdown du **seul** côté de l'agent (#697) : c'est lui qui produit
           des titres, des listes et du code, et c'est ce que le critère nomme.
           Ce que l'utilisateur a tapé se relit tel qu'il l'a tapé — astérisques

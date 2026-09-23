@@ -1268,6 +1268,20 @@ export type ChoixOutillage = {
  * message qu'une proposition, et l'attente se lit par `recrutementEnAttente`
  * (`lib/equipe`).
  */
+/**
+ * Une chose que l'interlocuteur a **faite** pour écrire sa réponse (#1223) : une
+ * lecture du projet, une recherche, le détail complet d'un run relu.
+ *
+ * `libelle` est la ligne qui s'affiche — « A lu « README.md » » —, écrite du
+ * point de vue de qui le regarde travailler ; `detail` est ce que la lecture a
+ * rendu, déjà borné côté canal, et qui ne se lit **qu'au dépli**. Un `detail`
+ * vide est normal : une lecture peut n'avoir rien trouvé.
+ */
+export type EtapeFil = {
+  libelle: string;
+  detail: string;
+};
+
 export type MessageChat = {
   agent: string;
   auteur: string;
@@ -1275,6 +1289,8 @@ export type MessageChat = {
   horodatage: string;
   run_id: string;
   tache_id: string;
+  /** Ce que l'interlocuteur a lu pour écrire ce message (#1223) — absent ou vide : rien. */
+  etapes?: EtapeFil[];
   /** L'objectif soumis à l'accord par ce message (#943) — vide : aucune demande. */
   proposition?: string;
   /** La question d'outillage que ce message pose (#1031) — `null` : aucune. */
@@ -2301,6 +2317,8 @@ export const FRAGMENT_CHAT_DELTA = "fragment";
 export const FRAGMENT_CHAT_FIN = "fin";
 export const FRAGMENT_CHAT_INTERROMPU = "interrompu";
 export const FRAGMENT_CHAT_ERREUR = "erreur";
+/** Une **lecture** que l'interlocuteur vient de faire (#1223) — elle n'incrémente rien. */
+export const FRAGMENT_CHAT_ETAPE = "etape";
 
 /**
  * Une trame du flux SSE d'un fil de chat (`POST /api/chat/{agent}/flux`, #183) :
@@ -2324,6 +2342,10 @@ export const FRAGMENT_CHAT_ERREUR = "erreur";
  * `conversation` (#694) dit **où** la réponse s'écrit, et voyage elle aussi sur
  * toutes les trames — `debut` comprise : un fil affiché sait dès la première si
  * ce qui arrive est le sien, sans attendre le `MessageChat` de la trame `fin`.
+ *
+ * `etape` (#1223) porte une **lecture** de l'interlocuteur, sur la seule trame
+ * `etape` : elle arrive avant les `fragment` de la réponse et ne touche pas au
+ * texte — la concaténation des `delta` reste exactement le message final.
  */
 export type FragmentChat = {
   type: string;
@@ -2333,6 +2355,8 @@ export type FragmentChat = {
   message: MessageChat | null;
   echange: string;
   conversation?: string;
+  /** La lecture que porte la trame `etape` (#1223) — `null` sur toutes les autres. */
+  etape?: EtapeFil | null;
 };
 
 /**

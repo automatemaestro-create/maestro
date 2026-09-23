@@ -840,7 +840,7 @@ class RepondeurLent(RepondeurChat):
     async def repondre(self, agent, fil):
         return "".join(self.MORCEAUX).strip()
 
-    async def produire(self, agent, fil, *, incrementer=None, projet_id=None):
+    async def produire(self, agent, fil, *, incrementer=None, etapeur=None, projet_id=None):
         redaction = Redaction(incrementer)
         for morceau in self.MORCEAUX:
             await asyncio.sleep(0)

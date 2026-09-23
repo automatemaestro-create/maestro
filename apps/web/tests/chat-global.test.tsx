@@ -574,6 +574,7 @@ describe("la réponse s'écrit dans le fil", () => {
       reponseEnCours: {
         auteur: AGENT_ORCHESTRATION,
         texte: "Je regarde le",
+        etapes: [],
         figee: false,
       },
     });
@@ -604,6 +605,7 @@ describe("la réponse s'écrit dans le fil", () => {
       reponseEnCours: {
         auteur: AGENT_ORCHESTRATION,
         texte: "Je regarde le",
+        etapes: [],
         figee: true,
       },
     });

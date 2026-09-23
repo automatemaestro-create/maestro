@@ -125,6 +125,74 @@ describe("useChat consomme le flux", () => {
     ]);
   });
 
+  it("range les trames « etape » à part du texte, et les garde dans l'ordre", async () => {
+    // #1223 : une lecture n'est pas un incrément. Le contrat SSE dit que la
+    // concaténation des `delta` **est** le message final ; si une étape y
+    // entrait, un client qui recolle ses `delta` n'obtiendrait plus la trame
+    // `fin` — et `ErreurReponse.recu` mentirait sur ce qui a été reçu.
+    let persistes: MessageChat[] = [];
+    installer(
+      () => persistes,
+      () => {
+        persistes = [DEMANDE, REPONSE];
+        return sse(
+          trame("debut", { message: DEMANDE }),
+          trame("etape", {
+            etape: { libelle: "A lu « README.md »", detail: "npm run dev" },
+          }),
+          trame("etape", {
+            etape: { libelle: "A cherché « npm »", detail: "README.md:5" },
+          }),
+          trame("fragment", { delta: "Bon" }),
+          trame("fin", { message: REPONSE }),
+        );
+      },
+    );
+
+    const { result } = renderHook(() => useChat("qa"));
+    await waitFor(() => expect(result.current.chargement).toBe(false));
+
+    const vues: string[][] = [];
+    await act(async () => {
+      await result.current.envoyer("Salut");
+    });
+    vues.push(result.current.messages.map((m) => m.contenu));
+
+    // Le flux s'est clos : la bulle en cours a rendu la main, et le texte reçu
+    // ne porte rien des étapes.
+    expect(result.current.reponseEnCours).toBeNull();
+    expect(vues[0]).toEqual(["Salut", "Bonjour"]);
+  });
+
+  it("montre les lectures dans la bulle en cours, avant le premier mot", async () => {
+    // Le « pendant qu'il répond » du critère 2, vu du hook : les étapes sont
+    // dans `reponseEnCours` alors que `texte` est encore vide.
+    let vue: { texte: string; etapes: { libelle: string }[] } | null = null;
+    installer(
+      () => [DEMANDE],
+      () =>
+        sse(
+          trame("debut", { message: DEMANDE }),
+          trame("etape", {
+            etape: { libelle: "A lu « README.md »", detail: "npm run dev" },
+          }),
+          trame("erreur", { delta: "coupé" }),
+        ),
+    );
+
+    const { result } = renderHook(() => useChat("qa"));
+    await waitFor(() => expect(result.current.chargement).toBe(false));
+
+    await act(async () => {
+      await result.current.envoyer("Salut").catch(() => {});
+    });
+    vue = result.current.reponseEnCours;
+
+    expect(vue).not.toBeNull();
+    expect(vue?.texte).toBe("");
+    expect(vue?.etapes.map((e) => e.libelle)).toEqual(["A lu « README.md »"]);
+  });
+
   it("fige ce qui a été reçu quand le flux casse, et dit que le message est acquis", async () => {
     installer(
       () => [DEMANDE],
@@ -152,6 +220,9 @@ describe("useChat consomme le flux", () => {
     expect(result.current.reponseEnCours).toEqual({
       auteur: "qa",
       texte: "Bonj",
+      // Aucune étape ici (#1223) : ce flux n'en a publié aucune, et un agent du
+      // catalogue ne lit rien du projet — seul l'orchestrateur le fait.
+      etapes: [],
       figee: true,
     });
     // Et le message utilisateur, lui, n'est pas perdu.
