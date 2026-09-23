@@ -2008,14 +2008,39 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
   de critère *est* le manque, et elle est assez rare (76 tickets fermés sur 667) pour ne pas devenir
   du bruit ; **avant le filet CI** — un manque corrigeable change le diff, même ordre que la
   relecture et `/mr-fix`. Ce qui se vérifie est une **forme**, jamais un sens (#746) : chaque `Cn` a
-  une réponse, la pièce n'est jamais vide, et un **✓ nomme un fichier du diff** — la règle « un
+  une réponse, la pièce n'est jamais vide, et un **✓ nomme sa preuve exercée** — la règle « un
   critère tenu sans pièce nommée n'est pas tenu » de `/milestone-bilan`, rendue vérifiable. Un
-  constat qui ne tient pas est refusé (`5`) avant toute écriture, et se répare en disant ✗ ou « hors
-  diff », jamais en cochant. Le verbe est **idempotent** (empreinte `cksum`), un `1` ne bloque pas
-  la clôture, et **un ✗ ne bloque pas le merge**. Ce constat dit ce qui a été **écrit**, pas ce qui
-  a été exercé : l'exercice reste celui du pipeline et, au jalon, de `/milestone-bilan`.
-  `/ticket-ship` en hérite sans une ligne à elle. Gardé par
-  [`tests/test_criteres_cloture.py`](../tests/test_criteres_cloture.py).
+  constat qui ne tient pas est refusé (`5`) avant toute écriture, et se répare en exerçant, ou en
+  disant ✗ ou « hors diff », jamais en cochant. Le verbe est **idempotent** (empreinte `cksum`), un
+  `1` ne bloque pas la clôture, et **un ✗ ne bloque pas le merge**. `/ticket-ship` en hérite sans
+  une ligne à elle. Gardé par [`tests/test_criteres_cloture.py`](../tests/test_criteres_cloture.py).
+- **Un critère se clôt sur ce qui a été exercé, pas sur ce qui a été écrit** (#1240). Jusque-là, un
+  ✓ nommait un fichier du diff, et le constat l'avouait : « ce qui a été écrit, pas ce qui a été
+  exercé ». L'exercice n'avait lieu qu'au jalon, par les scénarios de `/milestone-bilan` (#1152) —
+  et #1197, #1198, #1205 et #1212 y ont tous été trouvés, un à deux jours **après** le merge de ce
+  qu'ils corrigeaient, chacun au prix d'un ticket de plus. La relecture de code n'était pas le
+  remède (#969 l'a écartée sur mesure) : ces bugs se trouvent en **se servant** du produit. La règle
+  a été **remplacée**, pas doublée — une étape en remplace une autre :
+  - **la preuve d'un ✓** est un **test nommé qui passe** — une fonction `test_…` de pytest, ou un
+    fichier `*.test.tsx` de Vitest (dont les tests se nomment en prose) — ou une **observation sur
+    la vraie stack** : le **passage** du banc (l'horodatage de `.maestro/scenarios/<h>/`), le
+    **run** (`run <id>`) ou la **capture** qui la montre. Le verbe vérifie ce qu'une forme permet
+    de vérifier : que le test est **défini dans l'arbre** (un nom inventé est refusé), que le
+    rapport du passage est là et rend **verts** les scénarios cités. Qu'un test nommé passe, il ne
+    le rejoue pas — c'est la session qui l'a vu passer, et qui le dit ;
+  - **le banc est dû** quand le diff touche le **chemin des scénarios** : ce que la stack réelle
+    charge — `maestro/`, `core/`, `packages/shared/` (`GL_BANC_CHEMINS`). La question `criteres`
+    le dit d'une ligne `# banc`, et le constat porte une ligne `| Banc | vert/rouge | passage <h> |`
+    — relue dans le rapport, un `vert` sur un passage qui ne l'est pas est refusé — ou `| Banc |
+    non joué | <raison> |`. **Un banc injouable est nommé, jamais compté vert.** Le banc se joue
+    **avant de pousser**, par `start.sh --etat-banc --rejouer=<S…>` sur la stack du worktree : le
+    même geste que docs/40 §5, et l'état qu'il laisse sert ensuite la relecture visuelle. Le chemin
+    est une **détection** ; **quel** scénario emprunte le changement — et s'il en est un — reste un
+    jugement de la session, qui se consigne (« non joué : aucun scénario ne passe par la purge ») ;
+  - **ce qui ne bouge pas** : un ✗ est nommé, jamais coché, et ne bloque pas le merge ; un critère
+    **hors diff** garde sa réponse ; les critères ne s'écrivent jamais à la clôture. Le prix est
+    connu et assumé : un passage coûte du vrai modèle (S2 : 0,41 $ et 1 min 25 s sur #1226, qui
+    l'avait joué de lui-même avant que le flux le prévoie).
 - **Aucune clôture d'un ticket que la session ne traite pas.** `/ticket-finish` et `/ticket-ship`
   vérifient, **avant toute écriture** (commit, push, PR, statut, temps), que le ticket
   visé est bien celui de la session : `bash scripts/gitlab/lib.sh close-guard <iid> [branche]`.

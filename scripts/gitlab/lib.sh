@@ -2694,10 +2694,23 @@ gl_relecture_attente() {
 #   · chaque critère du ticket (`C1`…`Cn`, numérotés par `criteres`) a une ligne de tableau
 #     `| Cn | <réponse> | <pièce> |` dont la réponse COMMENCE par ✓, ✗ ou « hors diff » ;
 #   · la pièce n'est jamais vide — un ✗ dit pourquoi, un « hors diff » dit ce qui le montre ;
-#   · un ✓ NOMME UN FICHIER DU DIFF (chemin ou nom, bornés). C'est la règle de `/milestone-bilan` —
-#     « un critère tenu sans pièce nommée n'est pas tenu » — rendue vérifiable : « ✓ | fait | » est
-#     refusé, et un critère qu'aucun fichier du diff ne porte se dit ✗ ou « hors diff », jamais ✓.
-# Qu'un ✓ soit MÉRITÉ, aucune machine n'en décide ici.
+#   · un ✓ NOMME UNE PREUVE EXERCÉE (#1240) : un TEST qui existe dans l'arbre (une fonction
+#     `test_…` de pytest, ou un fichier `*.test.ts[x]` de Vitest, dont les tests se nomment en
+#     prose), un PASSAGE DU BANC dont le rapport est là et rend verts les scénarios cités, un RUN de
+#     la vraie stack (`run <id>`), ou une CAPTURE de la vraie stack (`*.png` présent). C'est la règle
+#     de `/milestone-bilan` — « un critère tenu sans pièce nommée n'est pas tenu » — portée de ce
+#     qui a été ÉCRIT à ce qui a été EXERCÉ : « ✓ | fait | » est refusé, et un critère que rien n'a
+#     exercé se dit ✗ ou « hors diff », jamais ✓.
+#   · un diff qui touche LE CHEMIN DES SCÉNARIOS porte une ligne `| Banc | … | … |` : le verdict du
+#     passage joué (`vert`/`rouge`, relu dans son rapport), ou `non joué` avec sa raison.
+# Qu'un ✓ soit MÉRITÉ, aucune machine n'en décide ici. Qu'un test NOMMÉ passe non plus : le verbe
+# vérifie qu'il existe, pas qu'il est vert — le jouer est l'affaire de la session, et le dire aussi.
+#
+# ⚠ Jusqu'à #1240, un ✓ nommait un FICHIER DU DIFF, et l'en-tête du constat avouait « ce qui a été
+# écrit, pas ce qui a été exercé ». #1197, #1198, #1205 et #1212 ont tous été trouvés par le banc au
+# bouclage d'un jalon, un à deux jours après le merge de ce qu'ils corrigeaient : un ✓ sur un
+# fichier du diff les aurait tous laissés passer. La règle a été REMPLACÉE, pas doublée — nommer le
+# fichier reste permis, il ne prouve plus rien.
 #
 # LES CRITÈRES SE LISENT DANS UNE SEULE RÈGLE, celle de `GL_SECTION_PROG` : les cases garnies
 # (`- [ ] <texte>`) sous « Critères d'acceptation ». Une case laissée vide par le gabarit n'est pas un
@@ -2722,6 +2735,19 @@ GL_ACCEPTATION_SECTION="Critères d'acceptation"
 [ -n "${MAESTRO_ACCEPTATION_SECTION:-}" ] && GL_ACCEPTATION_SECTION="$MAESTRO_ACCEPTATION_SECTION"
 GL_ATTENDU_SECTION="${MAESTRO_ATTENDU_SECTION:-Comportement attendu}"
 GL_CRITERES_ANCRE="${GL_CRITERES_ANCRE:-Critères confrontés au diff}"
+
+# LE CHEMIN DES SCÉNARIOS DE RÉFÉRENCE (#1240, docs/40 §5) : ce que la stack réelle charge quand le
+# banc la sert — le paquet `maestro` (le seul que `pyproject.toml` installe), la configuration
+# `core/` qu'il lit (agents, permissions, playbooks…) et le schéma de tâche `packages/shared/` que
+# l'orchestrateur valide. N'en sont pas : `agents/`, qui ne porte que des README ; `apps/web/`, le
+# banc parlant à l'API, jamais à l'écran ; l'outillage et la doc. Un diff qui y touche fait jouer
+# le banc avant de pousser. C'est une DÉTECTION : QUEL scénario exerce le changement, et s'il en
+# existe un, reste un jugement de la session, qu'elle consigne (`| Banc | non joué | … |` le dit).
+# Les préfixes sont gardés par `tests/test_criteres_cloture.py`, qui vérifie qu'ils existent.
+GL_BANC_CHEMINS="maestro/ core/ packages/shared/"
+# Où un passage laisse son rapport, relatif à la racine d'où l'on joue — `RACINE_RAPPORTS` de
+# `maestro/scenarios/rapport.py`, que `start.sh --etat-banc --rejouer` sert depuis la racine.
+GL_BANC_RAPPORTS=".maestro/scenarios"
 
 # gl_empreintes_commentaires — les empreintes déjà consignées dans une réponse GraphQL brute (stdin),
 # une par ligne. Cherchées APRÈS la clé « comments » : un titre ou une description qui parlerait
@@ -2800,11 +2826,51 @@ gl_criteres() {
     echo "  ni « $GL_ATTENDU_SECTION ») — rien à confronter : le signaler (criteres-note --aucun)." >&2
     return 3
   fi
+  # Le banc est-il dû ? Une ligne de plus, et seulement quand il l'est : la question ne coûte que
+  # le diff local, et `criteres-note` refusera un constat qui l'aurait tue. Base introuvable :
+  # rien ici, c'est `criteres-note` qui le dira (`1`).
+  local touches
+  touches="$(gl_criteres_chemins_du_diff 2>/dev/null | gl_banc_touches)"
+  if [ -n "$touches" ]; then
+    printf '# banc\tà jouer — le diff touche le chemin des scénarios de référence : %s\n' \
+      "$(printf '%s\n' "$touches" | gl_banc_resume)"
+  fi
+}
+
+# gl_banc_touches — parmi les fichiers du diff (stdin, un par ligne), ceux qui sont sur le chemin
+# des scénarios (`GL_BANC_CHEMINS`). Les préfixes voyagent par ENVIRON, jamais par `awk -v`.
+gl_banc_touches() {
+  BANC_CHEMINS="$GL_BANC_CHEMINS" awk '
+    BEGIN { n = split(ENVIRON["BANC_CHEMINS"], p, " ") }
+    { for (i = 1; i <= n; i++) if (index($0, p[i]) == 1) { print; next } }'
+}
+
+# gl_banc_resume — « 3 fichier(s) : a, b, c » (stdin, un par ligne), les trois premiers nommés.
+gl_banc_resume() {
+  awk 'NF { f[++n] = $0 }
+    END {
+      s = n " fichier(s) : " f[1]
+      for (i = 2; i <= n && i <= 3; i++) s = s ", " f[i]
+      if (n > 3) s = s ", …"
+      print s
+    }'
+}
+
+# gl_criteres_tests_nommes — ce qu'un ✓ peut nommer comme TEST, un par ligne : les fonctions
+# `test_…` définies dans l'arbre (suivies ou nouvelles, jamais ignorées) et les fichiers Vitest
+# `*.test.*`, par chemin et par nom. Un inventaire de ~5 000 noms (~290 Ko) : il voyage par un
+# FICHIER, jamais par ENVIRON, qu'un noyau Linux borne à 128 Ko par variable.
+gl_criteres_tests_nommes() {
+  git grep -h -o -I -E --untracked 'def test_[A-Za-z0-9_]+' -- '*.py' 2>/dev/null | sed 's/^def //'
+  git ls-files --cached --others --exclude-standard -- \
+    '*.test.ts' '*.test.tsx' '*.test.js' '*.test.mjs' 2>/dev/null |
+    awk '{ print; n = $0; sub(/.*\//, "", n); print n }'
+  return 0
 }
 
 # gl_criteres_chemins_du_diff -> les fichiers que la branche livre, un par ligne : ce qui a changé
 # depuis sa base commune avec `origin/main`, travail non commité et fichiers nouveaux compris. C'est
-# le même périmètre que celui qu'un ✓ doit nommer. Code 1 si la base est introuvable.
+# sur lui que se juge si le banc est dû (`gl_banc_touches`). Code 1 si la base est introuvable.
 gl_criteres_chemins_du_diff() {
   local base
   base="$(git merge-base "${GL_CRITERES_BASE:-origin/main}" HEAD 2>/dev/null)" || return 1
@@ -2812,57 +2878,150 @@ gl_criteres_chemins_du_diff() {
   { git diff --name-only "$base" && git ls-files --others --exclude-standard; } | sort -u
 }
 
-# gl_criteres_constat <fichier> — la FORME du constat, confrontée aux critères attendus (ENVIRON
-# ATTENDUS, « C1 C2 … ») et aux fichiers du diff (ENVIRON CHEMINS, un par ligne). Sur stdout : une
-# ligne `!<TAB>Cn<TAB>motif` par critère sans réponse recevable, puis `=<TAB>✓<TAB>✗<TAB>hors-diff`.
+# gl_criteres_constat <inventaire> <fichier> — la FORME du constat, confrontée aux critères attendus
+# (ENVIRON ATTENDUS, « C1 C2 … »), aux tests de l'arbre (<inventaire>, `gl_criteres_tests_nommes`),
+# aux rapports du banc (ENVIRON RAPPORTS) et au chemin des scénarios (ENVIRON BANC_DU : le résumé
+# des fichiers du diff qui y touchent, vide sinon). Sur stdout : une ligne `!<TAB>Cn<TAB>motif` par
+# critère sans réponse recevable (`!<TAB>Banc<TAB>motif` pour le banc), puis
+# `=<TAB>✓<TAB>✗<TAB>hors-diff<TAB>banc` — `banc` vide quand le constat n'en porte pas.
 #
-# Un nom de fichier compte s'il est BORNÉ — ni lettre, ni chiffre, ni `_`/`-` de part et d'autre :
-# sans quoi `lib.sh` serait « nommé » par `glib.sh`, et un fichier `a` par n'importe quelle pièce.
-# Lecture en LC_ALL=C, comme la grille de #980 : ✓ et ✗ se comparent octet à octet.
+# Un nom compte s'il est BORNÉ — ni lettre, ni chiffre, ni `_`/`-` de part et d'autre : sans quoi
+# `test_verbe` serait « nommé » par `test_verbe_rend`, et un passage par un horodatage plus long.
+# Un passage se lit dans son `rapport.json` tel que `maestro/scenarios/rapport.py` l'écrit (indenté,
+# une clé par ligne : une valeur de chaîne ne passe jamais à la ligne en JSON), et un scénario cité
+# doit y être `vert` — un rouge, ou un empêché (un rouge au rapport), n'est jamais compté vert. Sans
+# scénario cité, c'est le passage entier qui doit l'être.
+#
+# Lecture en LC_ALL=C, comme la grille de #980 : ✓ et ✗ se comparent octet à octet. Les motifs de
+# longueur fixe sont construits dans BEGIN : un intervalle `{12}` n'est pas compris de tous les awk
+# (mawk, celui du conteneur de la CI).
 gl_criteres_constat() {
-  local fichier="$1"
+  local inventaire="$1" fichier="$2"
   LC_ALL=C awk '
     function nu(s) { sub(/^[ \t]+/, "", s); sub(/[ \t\r]+$/, "", s); return s }
     function borne(c) { return c == "" || c !~ /[A-Za-z0-9_-]/ }
-    function nomme(piece, nom,   off, p, avant, apres) {
-      if (nom == "") return 0
-      off = 0
-      while ((p = index(substr(piece, off + 1), nom)) > 0) {
-        p += off
-        avant = (p > 1) ? substr(piece, p - 1, 1) : ""
-        apres = substr(piece, p + length(nom), 1)
-        if (borne(avant) && borne(apres)) return 1
-        off = p
+    function repete(classe, n,   s, i) { s = ""; for (i = 0; i < n; i++) s = s classe; return s }
+    # Les occurrences BORNÉES de <motif> dans <texte>, dans t[1..n] ; rend n.
+    function jetons(texte, motif, t,   n, reste, off, avant, apres) {
+      n = 0; reste = texte; off = 0
+      while (match(reste, motif)) {
+        avant = (off + RSTART > 1) ? substr(texte, off + RSTART - 1, 1) : ""
+        apres = substr(texte, off + RSTART + RLENGTH, 1)
+        if (borne(avant) && borne(apres)) t[++n] = substr(reste, RSTART, RLENGTH)
+        off += RSTART + RLENGTH - 1
+        reste = substr(reste, RSTART + RLENGTH)
       }
-      return 0
+      return n
     }
-    function du_diff(piece,   i, base) {
-      for (i = 1; i <= nc; i++) {
-        base = chemins[i]; sub(/.*\//, "", base)
-        if (nomme(piece, chemins[i]) || nomme(piece, base)) return 1
+    # Le rapport de ce passage, lu une fois : verdict[h, Sn], liste[h] ; rend « absent », « vide » ou « ok ».
+    function passage(h,   f, ligne, id, v, r, n) {
+      if (h in etat) return etat[h]
+      f = ENVIRON["RAPPORTS"] "/" h "/rapport.json"
+      n = 0; id = ""
+      while ((r = (getline ligne < f)) > 0) {
+        if (ligne ~ /^[ \t]*"id": "S[0-9]+"/) {
+          id = ligne; sub(/^[ \t]*"id": "/, "", id); sub(/".*/, "", id); continue
+        }
+        if (id != "" && ligne ~ /^[ \t]*"verdict": "/) {
+          v = ligne; sub(/^[ \t]*"verdict": "/, "", v); sub(/".*/, "", v)
+          verdict[h, id] = v; liste[h] = liste[h] " " id; n++; id = ""
+        }
       }
-      return 0
+      if (r >= 0) close(f)
+      etat[h] = (n > 0) ? "ok" : ((r < 0 && n == 0) ? "absent" : "vide")
+      return etat[h]
+    }
+    # Le verdict de ce passage sur les scénarios cités dans <texte> (tous, faute de citation) :
+    # « vert », « rouge », ou « !<motif> » quand il ne peut pas être lu.
+    function verdict_du(h, texte,   e, cites, nc, i, s, rouges) {
+      e = passage(h)
+      if (e == "absent") return "!rapport introuvable : " ENVIRON["RAPPORTS"] "/" h "/rapport.json"
+      if (e == "vide") return "!le passage " h " ne porte aucun scénario — un passage vide n\047est pas vert"
+      nc = jetons(texte, "S[0-9]+", cites)
+      if (nc == 0) nc = split(liste[h], cites, " ")
+      rouges = ""
+      for (i = 1; i <= nc; i++) {
+        s = cites[i]
+        if (!((h, s) in verdict)) return "!" s " n\047est pas au passage " h
+        if (verdict[h, s] != "vert") rouges = rouges " " s " " verdict[h, s]
+      }
+      return (rouges == "") ? "vert" : "rouge" rouges
+    }
+    # La preuve exercée de ce ✓ : « » quand il en nomme une, sinon le motif du refus.
+    function preuve(piece,   t, n, i, bas, v, ok, motif_test, sans_py) {
+      ok = 0; motif_test = ""
+      # Un fichier de suite (`tests/test_x.py`) n est pas un test nommé : on le retire avant de
+      # chercher les fonctions, sans quoi `test_x` passerait pour un nom de test inventé.
+      sans_py = piece; gsub("[A-Za-z0-9_./-]*[.]py", " ", sans_py)
+      n = jetons(piece, HORODATAGE, t)
+      for (i = 1; i <= n; i++) {
+        v = verdict_du(t[i], piece)
+        if (v ~ /^!/) return substr(v, 2)
+        if (v != "vert") return "le passage " t[i] " rend" substr(v, 6) " — un banc rouge ou injouable n\047est jamais compté vert"
+        ok = 1
+      }
+      delete t; n = jetons(sans_py, "test_[A-Za-z0-9_]+", t)
+      for (i = 1; i <= n; i++) {
+        if (t[i] in nommes) ok = 1
+        else if (motif_test == "") motif_test = t[i] " n\047est défini nulle part dans l\047arbre — un test nommé existe"
+      }
+      delete t; n = jetons(piece, "[A-Za-z0-9_./-]+[.]test[.](tsx|ts|mjs|js)", t)
+      for (i = 1; i <= n; i++) { sub(/^[.]\//, "", t[i]); if (t[i] in nommes) ok = 1 }
+      bas = tolower(piece)
+      delete t; n = jetons(bas, "run[^a-z0-9]+" HEX12, t)
+      if (n > 0) ok = 1
+      delete t; n = jetons(piece, "[A-Za-z0-9_./-]+[.]png", t)
+      for (i = 1; i <= n; i++) if ((getline v < t[i]) >= 0) { close(t[i]); ok = 1 }
+      if (ok) return ""
+      if (motif_test != "") return motif_test
+      return "✓ sans preuve exercée — nommer le test qui passe, le passage du banc ou le run de la vraie stack"
     }
     BEGIN {
       na = split(ENVIRON["ATTENDUS"], attendus, " ")
-      nc = split(ENVIRON["CHEMINS"], chemins, "\n")
+      HEX12 = repete("[0-9a-f]", 12)
+      HORODATAGE = repete("[0-9]", 8) "-" repete("[0-9]", 6)
     }
+    FILENAME == ARGV[1] { nommes[$0] = 1; next }
     {
       ligne = $0
       sub(/^[ \t]+/, "", ligne)
       if (substr(ligne, 1, 1) != "|") next
       if (split(ligne, cel, "|") < 4) next
       id = nu(cel[2]); gsub(/[*`]/, "", id)
-      if (id !~ /^C[0-9]+$/ || (id in rendu)) next
       reponse = nu(cel[3]); piece = nu(cel[4])
+      if (tolower(id) == "banc") {
+        if (banc != "" || motif_banc != "") next
+        bas = tolower(reponse)
+        if (index(bas, "non jou") == 1) {
+          if (piece == "") motif_banc = "« non joué » sans sa raison"
+          else banc = "non joué"
+          next
+        }
+        if (index(bas, "vert") != 1 && index(bas, "rouge") != 1) {
+          motif_banc = "réponse ni « vert », ni « rouge », ni « non joué »"; next
+        }
+        delete h
+        if (jetons(reponse " " piece, HORODATAGE, h) == 0) {
+          motif_banc = "un verdict du banc nomme son passage (l\047horodatage de son rapport)"; next
+        }
+        v = verdict_du(h[1], reponse " " piece)
+        if (v ~ /^!/) { motif_banc = substr(v, 2); next }
+        if (index(bas, "vert") == 1 && v != "vert") {
+          motif_banc = "le constat dit vert, le passage " h[1] " rend" substr(v, 6) " — un banc rouge ou injouable n\047est jamais compté vert"; next
+        }
+        if (index(bas, "rouge") == 1 && v == "vert") {
+          motif_banc = "le constat dit rouge, le passage " h[1] " est vert"; next
+        }
+        banc = ((v == "vert") ? "vert" : "rouge") " (passage " h[1] ")"
+        next
+      }
+      if (id !~ /^C[0-9]+$/ || (id in rendu)) next
       if (index(reponse, "✓") == 1)                 genre = "ok"
       else if (index(reponse, "✗") == 1)            genre = "ko"
       else if (tolower(reponse) ~ /^hors diff/)     genre = "hors"
       else { motif[id] = "réponse ni ✓, ni ✗, ni « hors diff »"; next }
-      if (piece == "") { motif[id] = "pièce vide — un ✗ dit pourquoi, un ✓ nomme un fichier du diff"; next }
-      if (genre == "ok" && !du_diff(piece)) {
-        motif[id] = "✓ sans fichier du diff nommé dans la pièce"; next
-      }
+      if (piece == "") { motif[id] = "pièce vide — un ✗ dit pourquoi, un ✓ nomme sa preuve exercée"; next }
+      if (genre == "ok" && (m = preuve(piece)) != "") { motif[id] = m; next }
       rendu[id] = genre
     }
     END {
@@ -2871,9 +3030,12 @@ gl_criteres_constat() {
         if (id in rendu) { compte[rendu[id]]++; continue }
         printf "!\t%s\t%s\n", id, (id in motif) ? motif[id] : "sans réponse"
       }
-      printf "=\t%d\t%d\t%d\n", compte["ok"], compte["ko"], compte["hors"]
+      if (motif_banc != "") printf "!\tBanc\t%s\n", motif_banc
+      else if (ENVIRON["BANC_DU"] != "" && banc == "")
+        printf "!\tBanc\tle diff touche le chemin des scénarios de référence (%s) — joue le banc et consigne son verdict, ou dis-le « non joué » avec sa raison\n", ENVIRON["BANC_DU"]
+      printf "=\t%d\t%d\t%d\t%s\n", compte["ok"], compte["ko"], compte["hors"], banc
     }
-  ' "$fichier"
+  ' "$inventaire" "$fichier"
 }
 
 # gl_criteres_section <empreinte> <entête-du-compte> — l'en-tête du commentaire. Sa forme est un
@@ -2882,12 +3044,14 @@ gl_criteres_section() {
   printf '## %s — %s — empreinte %s\n\n' "$GL_CRITERES_ANCRE" "$2" "$1"
   cat <<'ENTETE'
 Les critères d'acceptation de ce ticket ont été confrontés, à sa clôture, au **diff livré**
-(`/ticket-finish`, #968). Chacun est **couvert** par un fichier du diff qui est nommé (✓), **non
-couvert** (✗, avec pourquoi), ou tenu **hors du diff** — un geste de forge, une mesure — avec ce qui
-le montre. Un critère non couvert est nommé ici, jamais coché, et il n'a pas bloqué le merge : ce
-que le dispositif rend difficile est l'absence de trace, pas la livraison. Et ce constat dit ce qui
-a été **écrit**, pas ce qui a été exercé — l'exercice reste l'affaire du pipeline et, au jalon, de
-`/milestone-bilan`.
+(`/ticket-finish`, #968). Chacun est **tenu** sur une preuve **exercée** qui est nommée — un test
+qui passe, ou une observation sur la vraie stack : passage du banc des scénarios, run, capture —
+(✓), **non tenu** (✗, avec pourquoi), ou tenu **hors du diff** — un geste de forge, une mesure —
+avec ce qui le montre (#1240). Quand le diff touche le chemin des scénarios de référence, la ligne
+**Banc** porte le verdict du passage joué avant de pousser, ou la raison pour laquelle il ne l'a
+pas été : un banc rouge ou injouable n'est jamais compté vert. Un critère non tenu est nommé ici,
+jamais coché, et il n'a pas bloqué le merge : ce que le dispositif rend difficile est l'absence de
+trace, pas la livraison.
 
 ENTETE
 }
@@ -2909,9 +3073,10 @@ AUCUN
 # `--aucun <iid>`, sans fichier, signale un ticket qui n'a aucun critère — après l'avoir vérifié.
 #
 # Codes : 0 consigné (ou déjà consigné à l'identique) · 2 usage · 3 iid inconnu · 4 fichier absent ou
-# vide · 5 le constat ne tient pas (un critère sans réponse recevable, un ✓ sans fichier du diff, un
-# constat sur un ticket sans critère, un `--aucun` sur un ticket qui en a) · 1 forge muette, ou base
-# du diff introuvable. Les refus tombent AVANT toute écriture, et ceux qui ne coûtent rien (4, 3, un
+# vide · 5 le constat ne tient pas (un critère sans réponse recevable, un ✓ sans preuve exercée, un
+# banc dû sans ligne `Banc` ou compté vert sur un passage qui ne l'est pas, un constat sur un ticket
+# sans critère, un `--aucun` sur un ticket qui en a) · 1 forge muette, ou base du diff introuvable —
+# sans elle, on ne sait pas si le banc est dû. Les refus tombent AVANT toute écriture, et ceux qui ne coûtent rien (4, 3, un
 # fichier sans aucune ligne `Cn`) avant la première lecture de forge (règle de `gl_reste_claude`).
 gl_criteres_note() {
   local aucun=0
@@ -2984,17 +3149,30 @@ gl_criteres_note() {
       echo "  et c'est « criteres-note --aucun $iid » qui le consigne. Rien n'a été écrit." >&2
       return 5
     fi
-    local verdict manques
-    verdict="$(ATTENDUS="$attendus" CHEMINS="$chemins" gl_criteres_constat "$fichier")"
+    # L'inventaire des tests voyage par un fichier (voir `gl_criteres_tests_nommes`). Brouillon que
+    # personne ne relit : temporaire du système, pas `.maestro/` (règle #234, docs/10 §8.5).
+    local inventaire touches banc_du="" verdict manques
+    inventaire="$(mktemp "${TMPDIR:-/tmp}/maestro-tests-nommes.XXXXXX")" || return 1
+    gl_criteres_tests_nommes > "$inventaire"
+    touches="$(printf '%s\n' "$chemins" | gl_banc_touches)"
+    [ -n "$touches" ] && banc_du="$(printf '%s\n' "$touches" | gl_banc_resume)"
+    verdict="$(ATTENDUS="$attendus" BANC_DU="$banc_du" RAPPORTS="$GL_BANC_RAPPORTS" \
+      gl_criteres_constat "$inventaire" "$fichier")"
+    rm -f "$inventaire"
     manques="$(printf '%s\n' "$verdict" | awk -F'\t' '$1 == "!" { print "    - " $2 " : " $3 }')"
     if [ -n "$manques" ]; then
       echo "gl_criteres_note : le constat de $fichier ne répond pas à tous les critères de #$iid — rien n'a été écrit." >&2
       printf '%s\n' "$manques" >&2
-      echo "  Un critère qu'aucun fichier du diff ne porte se dit ✗ (avec pourquoi) ou « hors diff » (avec" >&2
-      echo "  ce qui le montre) — jamais ✓ pour faire passer le constat." >&2
+      echo "  Un critère que rien n'a exercé se dit ✗ (avec pourquoi) ou « hors diff » (avec ce qui le" >&2
+      echo "  montre) — jamais ✓ pour faire passer le constat. Un ✓ nomme sa preuve : le test qui passe" >&2
+      echo "  (test_…, ou un fichier *.test.tsx), le passage du banc (son horodatage), le run de la vraie" >&2
+      echo "  stack (run <id>) ou sa capture." >&2
       return 5
     fi
-    entete="$(printf '%s\n' "$verdict" | awk -F'\t' '$1 == "=" { printf "%s ✓ · %s ✗ · %s hors diff", $2, $3, $4 }')"
+    entete="$(printf '%s\n' "$verdict" | awk -F'\t' '$1 == "=" {
+      printf "%s ✓ · %s ✗ · %s hors diff", $2, $3, $4
+      if ($5 != "") printf " · banc %s", $5
+    }')"
     corps_note="$(cat "$fichier")"
   fi
 
@@ -9307,10 +9485,11 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "                                      commentaires « ## Veille de conception » / « ## Variante retenue » —, ce" >&2
       echo "                                      contre quoi le regard neuf juge, #980)" >&2
       echo "  criteres <iid>                     (lecture seule : les critères d'acceptation à confronter au diff, numérotés" >&2
-      echo "                                      C1…Cn ; repli bug sur « Comportement attendu ». 0=il y en a, 3=aucun — #968)" >&2
+      echo "                                      C1…Cn ; repli bug sur « Comportement attendu » ; « # banc » quand le diff" >&2
+      echo "                                      touche le chemin des scénarios. 0=il y en a, 3=aucun — #968, #1240)" >&2
       echo "  criteres-note <iid> <fichier> | --aucun <iid>  (CONSIGNE la confrontation des critères au diff sur le" >&2
-      echo "                                      ticket, ancrée et idempotente. 5 = un Cn sans réponse, un ✓ sans fichier du" >&2
-      echo "                                      diff ; --aucun signale un ticket sans critère, vérifié — #968)" >&2
+      echo "                                      ticket, ancrée et idempotente. 5 = un Cn sans réponse, un ✓ sans preuve" >&2
+      echo "                                      exercée, un banc dû tu ; --aucun signale un ticket sans critère — #968, #1240)" >&2
       echo "  current-milestone [produit|outillage] (titre du milestone courant du rail — le plus ancien actif portant" >&2
       echo "                                      encore un ticket ouvert ; soldé et vide sont sautés, chacun nommé sur stderr. Défaut produit)" >&2
       echo "  milestones                         (tous les milestones : titre/état/dates/avancement, TSV)" >&2

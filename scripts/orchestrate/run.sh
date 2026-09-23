@@ -2185,12 +2185,27 @@ lance_session() {
 # aujourd'hui comme consigne a été écrit par l'équipe ; le web est la première source qui ne l'est
 # pas. Ce qui borne la casse ne bouge pas et n'est pas la garde : le `deny`, `guard.sh`, et `main`
 # protégée par six checks requis (#734).
+#
+# Et une EXIGENCE, à l'étape 2 : chaque critère se clôt sur une PREUVE EXERCÉE (#1240). En run
+# personne ne relit, donc le seul exercice qu'un ticket reçoit avant `main` est celui que sa
+# session fait : #1197, #1198, #1205 et #1212 ont été trouvés par le banc au jalon, un à deux jours
+# après leur merge. Le prompt dit l'exigence, la conduite reste celle de l'étape 4ter de la clôture
+# — une seule source, que le prompt ne nomme pas : `/ticket-finish` n'y entre que par `/ticket-ship`
+# (`test_audit_commandes.py`) —, et `criteres-note` refuse un ✓ qui ne nomme aucune preuve.
+# Le banc s'y joue AU PREMIER PLAN : c'est un résultat que la session attend dans son tour, pas un
+# résultat différé.
 prompt_ticket() {
   cat <<PROMPT
 Tu traites intégralement le ticket GitHub #$1 de ce dépôt, seul et sans supervision humaine.
 
 1. Lance la commande /ticket-start $1.
-2. Implémente tous les critères d'acceptation du ticket.
+2. Implémente tous les critères d'acceptation du ticket, puis EXERCE chacun : un critère se clôt
+   sur une preuve exercée — un test nommé que tu as joué et vu passer, ou une observation sur la
+   vraie stack (le run, le passage du banc des scénarios, la capture qui le montre) —, jamais sur un
+   fichier du diff. Si ton diff touche le chemin des scénarios de référence, joue le banc AVANT de
+   pousser, au premier plan, et consigne son verdict ; un banc injouable se dit « non joué » avec sa
+   raison, jamais vert. La clôture que /ticket-ship enchaîne porte la conduite et la commande, à
+   son étape 4ter.
 3. Clôture avec /ticket-ship.
 
 Règles de ce run autonome :
