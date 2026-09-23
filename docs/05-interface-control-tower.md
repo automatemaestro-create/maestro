@@ -2933,6 +2933,76 @@ vérifié sans son champ `conversation`. ⚠ **Aucune géométrie** n'y est mesu
 (#308) — ce qui s'y observe est le contrat de mise en page *tel qu'il est écrit* ;
 l'effet reste le rôle de `/banc-mise-en-page`.
 
+#### L'orchestrateur montre ce qu'il a lu (#1223) — **livré**
+
+Le fil répondait sur un contexte **figé** : des compteurs, au plus trois runs, le
+détail de chaque tâche coupé à 300 caractères. Le 2026-09-22, à « comment je fais
+pour tester l'animation ? » — après un run qui venait d'écrire sa doc de lancement
+— il a répondu : *« le détail que j'ai ici est tronqué […] je n'ai pas la commande
+exacte sous les yeux […] un README y a probablement été créé »*. La réponse était
+honnête et inutile : le fichier était à deux pas.
+
+Il **lit** désormais, en lecture seule et borné au dossier du projet :
+l'arborescence, le contenu d'un fichier, une recherche dans le projet, et le
+détail **complet** d'un run (`maestro.controltower.consultation`). Ce qu'il lit se
+voit dans le fil, **avant** sa réponse.
+
+⚠ **Trois propriétés de la lecture, qui ne se défont pas.** Aucun chemin ne sort
+de la racine du projet — la résolution est réelle, donc un `..`, un chemin absolu
+et un lien symbolique vers `~/.ssh` sont refusés du même geste. Les **secrets**
+restent fermés : les motifs `exclus` du projet s'appliquent, et ils retirent
+d'office `.env` et `**/secrets/**` (docs/24 §2.5) — c'est la propriété du périmètre
+qu'on hérite, comme pour l'analyse d'un projet (#1158). Et **rien n'est jamais
+écrit** : écrire dans le projet passe par un run, jamais par une réponse du fil.
+
+Le protocole est **du texte** (`%%LIRE%% {…}`), et c'est une décision : `generate`
+et `generate_stream` sont texte seul (`tools=[]`), l'exécution outillée passe par
+`run_agent`, et `run_agent` est refusée par le fournisseur compatible OpenAI. Des
+appels d'outil natifs auraient rendu ce lot inatteignable sur un Ollama local ;
+le marqueur, lui, traverse **tous** les fournisseurs. C'est le pendant du
+`%%MAESTRO%%` de #1222, et le même motif.
+
+- **Une seule ligne, repliée** — « A consulté 3 éléments » —, posée **au-dessus**
+  du texte de la réponse, en second plan (`text-annexe text-texte-secondaire`,
+  aucune carte, aucune couleur d'accent). C'est le compte qu'on lit sans rien
+  ouvrir ; les lectures n'apparaissent qu'au dépli, et chaque extrait a son propre
+  repli, fermé. La place des trois blocs du corps (docs/30 §4) ne bouge pas : rien
+  n'est ajouté à l'écran, tout vit **dans la bulle**.
+- **Pendant qu'il répond**, la bulle en cours les affiche **dépliées** et au
+  présent (« Consulte 3 éléments… ») : tant qu'aucun mot n'est écrit, ce qu'il lit
+  est tout ce qu'il y a à voir. Elles voyagent en trames `etape` du flux SSE
+  (§6.5), **distinctes** des `fragment` : la concaténation des `delta` reste
+  exactement le message final, invariant dont dépend un client qui recolle sa
+  réponse. Elles sont ensuite **persistées** sur le message (`MessageChat.etapes`),
+  donc encore là au rechargement.
+- **Rien à montrer ⇒ rien à rendre** : un message ordinaire n'a rien lu et ne
+  laisse aucune ligne au-dessus de lui — même règle que « Ce qui découle d'un
+  échange » et que les sources d'un message.
+
+**La forme a été choisie sur pièces** (#1009) : trois variantes rendues sur la
+vraie stack — la ligne repliée, les lectures à plat toujours visibles, la mention
+en pied de réponse —, confrontées à deux références capturées en direct le
+2026-09-23 (Perplexity, le détail d'un job GitHub Actions) par le sous-agent
+`regard-neuf`, qui a retenu la première ; le choix et ses écartés sont consignés
+sur le ticket. Ce qui a fait pencher : les lectures à plat occupaient plus de
+hauteur que les réponses, et la mention en pied plaçait la preuve **après** ce
+qu'elle appuie, contre les deux références.
+
+**L'orchestrateur connaît aussi, sans rien demander, l'équipe réelle du projet**
+(rôles, agents, modèles) et **le contenu** de ce qui attend quelqu'un — validations
+en attente avec l'acte proposé et sa raison, questions d'agents avec leurs choix et
+l'hypothèse de repli. L'aperçu les **comptait** depuis #683 ; il peut désormais en
+parler. La frontière entre les deux régimes est une question de taille et de
+certitude : ce qui est petit, borné et toujours utile entre dans le contexte ; ce
+qui est vaste et dépend de la question se **demande**.
+
+Implémentation : `maestro/controltower/consultation.py` (les quatre lectures et
+leur frontière), `maestro/controltower/orchestration.py` (le tour de lecture,
+l'équipe, les attentes), `maestro/controltower/chat.py` (`EtapeFil`, le canal
+`Etapeur`, la trame `etape`), `apps/web/components/chat/EtapesDuFil.tsx`,
+`apps/web/lib/useChat.ts`. Gardé par `tests/test_consultation_orchestrateur.py`,
+`tests/test_chat_global.py` et `apps/web/tests/etapes-du-fil.test.tsx`.
+
 #### La fin d'un run s'annonce dans le fil, et remet son livrable (#928) — **livré**
 
 Le constat le plus net du retex du 2026-09-11 (G1) : *un run qui se termine ne
@@ -4251,19 +4321,24 @@ navigateur, il l'a **remplacé** — c'est pour cela que le brancher dans un éc
 ```jsonc
 // FragmentChat (une trame SSE)
 {
-  "type": "fragment",        // debut (ouvre) | fragment (incrémente) | fin (clôt) | interrompu | erreur
+  "type": "fragment",        // debut (ouvre) | fragment (incrémente) | etape | fin (clôt) | interrompu | erreur
   "agent": "qa",
   "conversation": "origine", // où la réponse s'écrit (#694, §6.14) — sur TOUTES les trames
   "auteur": "agent",         // l'émetteur de la RÉPONSE — le même sur toutes les trames
   "delta": " morceau",       // incrément de texte ; vide hors `fragment` — porte la cause sur `erreur`
   "message": null,           // MessageChat complet sur `debut` (l'utilisateur), `fin` et `interrompu`
+  "etape": null,             // une LECTURE de l'interlocuteur sur `etape` (#1223) — null ailleurs
   "echange": "6dde09b6ebbe"  // le nom du flux — ce qu'on rend à `…/arret` (#695)
 }
 ```
 
 Trois propriétés à ne pas défaire. La concaténation des `delta` **reconstitue** le contenu de la
 trame `fin` : c'est ce qui permet à un client d'afficher pendant que ça arrive sans rien
-réconcilier ensuite. Une réponse impossible sort en trame **`erreur`**, jamais en statut HTTP :
+réconcilier ensuite. ⚠ C'est exactement pourquoi une **`etape`** (#1223, §2.9) est une trame à
+elle et non un `fragment` : « A lu `README.md` » n'est pas du texte de réponse, et l'y glisser
+ferait mentir cet invariant sur toutes les réponses de l'orchestrateur. Elle arrive **avant** les
+`fragment` — il lit, puis il rédige — et se retrouve sur le `MessageChat` de la trame `fin`
+(`etapes`), donc au rechargement. Une réponse impossible sort en trame **`erreur`**, jamais en statut HTTP :
 les en-têtes sont déjà partis quand elle se découvre, et le message utilisateur, lui, est déjà
 acquis — le fil ne perd rien, relancer suffit. Et les trames qui **bornent** l'échange portent
 chacune leur `MessageChat` — `debut` celui de l'utilisateur, `fin` la réponse : c'est la paire que

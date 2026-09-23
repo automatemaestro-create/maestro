@@ -81,6 +81,7 @@ from maestro.controltower.chat import (
     CONVERSATION_ORIGINE,
     FRAGMENT_CHAT_DEBUT,
     FRAGMENT_CHAT_DELTA,
+    FRAGMENT_CHAT_ETAPE,
     FRAGMENT_CHAT_FIN,
     CadrageIntrouvable,
     ChatStore,
@@ -91,6 +92,7 @@ from maestro.controltower.chat import (
     proposition_en_attente,
     recrutement_en_attente,
 )
+from maestro.controltower.consultation import MARQUEUR_LECTURE, Lecture
 from maestro.controltower.events import (
     EVENEMENT_CHAT_MESSAGE,
     EVENEMENT_EXECUTION_STATUT,
@@ -1805,6 +1807,68 @@ def test_le_flux_du_fil_global_rend_debut_fragments_et_fin(client_global) -> Non
     assert final["run_id"] == "run-42"
 
 
+def test_le_flux_porte_les_lectures_en_trames_a_part_avant_le_texte(
+    bus, depot_chat, lanceur, juge
+) -> None:
+    """Critère 2 de #1223, vu de l'API : les lectures sont des trames `etape`.
+
+    Trois propriétés d'un coup, et la première explique les deux autres : une
+    étape **n'est pas un fragment**. Le contrat SSE dit que la concaténation des
+    `delta` *est* le message final (`Redaction`, #693) ; y glisser « A lu
+    README.md » le ferait mentir, et un client qui recolle ses `delta` n'aurait
+    plus la trame `fin`. D'où une trame à elle, qui arrive **avant** le texte —
+    l'ordre réel des choses — et qui voyage **aussi** sur le message persisté,
+    pour être encore là au rechargement.
+    """
+
+    async def consulter(demande, projet_id):
+        return Lecture(libelle="A lu « README.md »", contenu="npm run dev")
+
+    class JugeQuiLit(ModelProvider):
+        """Il demande une lecture au tour de consultation, puis accorde."""
+
+        name = "juge-qui-lit"
+
+        def supports(self, model: str) -> bool:
+            return True
+
+        async def generate(self, prompt, *, model, system_prompt=None):
+            if system_prompt is not None and "tu décides ce qu'il faut LIRE" in system_prompt:
+                return f'{MARQUEUR_LECTURE} {{"outil": "lire", "chemin": "README.md"}}'
+            return juge.reponse
+
+    with TestClient(
+        create_app(
+            bus=bus,
+            chat_store=depot_chat,
+            orchestration_repondeur=RepondeurOrchestration(
+                lanceur=lanceur,
+                apercu=lambda projet_id=None: "Aucun run en cours.",
+                provider=JugeQuiLit(),
+                consultation=consulter,
+            ),
+        )
+    ) as client:
+        reponse = client.get(
+            f"/api/chat/{NOM_ORCHESTRATION}/flux", params={"contenu": "oui"}
+        )
+
+    trames = _trames(reponse)
+    genres = [t["type"] for t in trames]
+    assert FRAGMENT_CHAT_ETAPE in genres
+    assert genres.index(FRAGMENT_CHAT_ETAPE) < genres.index(FRAGMENT_CHAT_DELTA)
+    etape = next(t for t in trames if t["type"] == FRAGMENT_CHAT_ETAPE)
+    assert etape["etape"] == {"libelle": "A lu « README.md »", "detail": "npm run dev"}
+    # Elle n'a pas touché au texte : les `delta` seuls reconstituent la trame `fin`.
+    deltas = [t["delta"] for t in trames if t["type"] == FRAGMENT_CHAT_DELTA]
+    final = trames[-1]["message"]
+    assert "".join(deltas).strip() == final["contenu"]
+    # Et elle est **persistée** sur le message : le fil rouvert la retrouve.
+    assert final["etapes"] == [
+        {"libelle": "A lu « README.md »", "detail": "npm run dev"}
+    ]
+
+
 def test_le_flux_rend_la_reponse_de_l_orchestrateur_en_plusieurs_trames(
     bus, depot_chat, lanceur
 ) -> None:
@@ -2287,6 +2351,12 @@ def test_le_silence_n_est_pas_un_accord() -> None:
     # l'autre, ce qui est exactement ce que ce test protège — un répondeur qui
     # mémoriserait un run entre deux messages rouvrirait la porte que #685 a
     # fermée.
+    #
+    # #1223 en ajoute trois, du même ordre : `_consultation` (l'exécutant des
+    # lectures), `_roles` (l'équipe en clair) et `_attentes` (ce qui attend
+    # quelqu'un). Aucun ne retient quoi que ce soit d'un message à l'autre — ce
+    # qu'un tour a lu voyage sur **la réponse** (`ReponseChat.etapes`), donc sur
+    # le message persisté, jamais dans le répondeur.
     assert set(vars(repondeur)) == {
         "_lanceur",
         "_apercu",
@@ -2297,6 +2367,9 @@ def test_le_silence_n_est_pas_un_accord() -> None:
         "_sonde",
         "_equipe",
         "_recruteur",
+        "_consultation",
+        "_roles",
+        "_attentes",
     }
     assert repondeur._equipe is None and repondeur._recruteur is None
     assert vars(repondeur._conducteur) == {}

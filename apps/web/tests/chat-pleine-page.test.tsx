@@ -660,6 +660,7 @@ describe("le fil n'exécute rien (#697)", () => {
       reponseEnCours: {
         auteur: AGENT_ORCHESTRATION,
         texte: TEXTE_PIEGE,
+        etapes: [],
         figee: false,
       },
     });

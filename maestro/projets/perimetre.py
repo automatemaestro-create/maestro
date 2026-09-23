@@ -122,6 +122,31 @@ def motifs_compiles(motifs: Sequence[str]) -> tuple[re.Pattern[str], ...]:
     )
 
 
+def exclu_par(relatif: str, perimetre: Perimetre) -> bool:
+    """Le chemin `relatif` (POSIX, relatif à la racine) est-il retiré par `perimetre` ?
+
+    La question que pose un lecteur qui **tient déjà** le chemin — l'orchestrateur
+    qui va ouvrir un fichier du projet (#1223) —, là où `exclusions` répond à celle
+    d'un appelant qui part de la racine et veut la liste. Aucune seconde mécanique
+    de motifs : c'est `motifs_compiles` et le même `match` ancré, exposés sous la
+    forme où le lecteur les utilise.
+
+    ⚠ **Un chemin est exclu dès qu'un de ses parents l'est.** Un périmètre qui
+    retire `secrets/` retire `secrets/prod.key`, que le motif ne vise pas
+    directement (`**/secrets/**` le vise, `secrets` seul non) : le verdict se prend
+    donc sur le chemin **et sur chacun de ses préfixes**, faute de quoi la frontière
+    s'ouvrirait d'un segment de plus.
+    """
+    motifs = motifs_compiles(perimetre.exclus)
+    if not motifs:
+        return False
+    segments = [segment for segment in relatif.replace("\\", "/").split("/") if segment]
+    for profondeur in range(1, len(segments) + 1):
+        if _correspond("/".join(segments[:profondeur]), motifs):
+            return True
+    return False
+
+
 def _correspond(relatif: str, motifs: tuple[re.Pattern[str], ...]) -> bool:
     """`relatif` est-il visé par l'un des motifs ?"""
     return any(motif.match(relatif) for motif in motifs)

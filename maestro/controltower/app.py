@@ -418,6 +418,7 @@ from maestro.controltower.chat import (
     ServiceChat,
     recrutement_en_attente,
 )
+from maestro.controltower.consultation import Consultations, Demande, Lecture
 from maestro.controltower.decisions import decisions_du_run
 from maestro.controltower.equipe import EquipeRefusee, ServiceEquipe
 from maestro.controltower.events import (
@@ -472,6 +473,8 @@ from maestro.controltower.orchestration import (
     NOM_ORCHESTRATION,
     RepondeurOrchestration,
     apercu_de,
+    attentes_de,
+    detail_du_run,
     faits_des_runs,
 )
 from maestro.controltower.outillage import ServiceOutillage
@@ -492,6 +495,7 @@ from maestro.controltower.portee import (
     resoudre_projet_configuration,
 )
 from maestro.controltower.projets import (
+    ProjetIllisible,
     ProjetInconnu,
     ServiceProjets,
     detail_refus,
@@ -525,6 +529,7 @@ from maestro.outillage.questionnaire import Choix
 from maestro.poste import SondePoste
 from maestro.projets import (
     ApplicationRefusee,
+    Projet,
     RacineRefusee,
     VersionnementRefuse,
     canonique,
@@ -1922,6 +1927,59 @@ def create_app(
         agents = catalogue_du_projet(agents_store, projet_id)
         return None if agents is None else len(agents)
 
+    def roles_du_projet(projet_id: str | None) -> str:
+        """L'équipe du projet **en clair** pour le fil — rôles, agents, instances (#1223).
+
+        La même règle que la sonde du recrutement (`catalogue_du_projet`), lue
+        pour **dire** au lieu de compter : « qui travaille sur ce projet ? » ne
+        trouvait aucune réponse dans le prompt, où l'équipe n'existait que par un
+        `_sans_equipe` booléen. Rend `""` quand il n'y a rien à dire — aucun
+        projet, projet inconnu, dépôt illisible —, et la phrase qui dit qu'il n'y
+        a **personne** quand le catalogue est vide : c'est un fait, pas un vide.
+        """
+        if not projet_id or not projets.existe(projet_id):
+            return ""
+        agents = catalogue_du_projet(agents_store, projet_id)
+        if agents is None:
+            return ""
+        if not agents:
+            return (
+                "Équipe du projet : aucun agent recruté — personne ne peut prendre "
+                "une tâche de run aujourd'hui."
+            )
+        lignes = ["Équipe du projet (les agents vers qui les tâches sont routées) :"]
+        for agent in agents:
+            competences = ", ".join(sorted(agent.competences))
+            ligne = f"- {agent.role} « {agent.nom} » — modèle {agent.modele}"
+            if competences:
+                ligne += f" — compétences : {competences}"
+            lignes.append(ligne)
+        return "\n".join(lignes)
+
+    def projet_du_fil(projet_id: str) -> Projet | None:
+        """Le projet de la fenêtre en **entité**, ou `None` — le seul lecteur de projets.
+
+        `ServiceProjets.entite` et lui seul (#1223) : les lectures de
+        l'orchestrateur sont bornées à la racine que ce service déclare, et son
+        **périmètre** est ce qui ferme `.env` et `secrets/`. Relire la fiche à
+        côté ouvrirait une seconde définition de « où a-t-on le droit de lire ».
+        """
+        try:
+            return projets.entite(projet_id)
+        except (ValueError, ProjetInconnu, ProjetIllisible):
+            return None
+
+    consultations = Consultations(projet=projet_du_fil, detail=detail_du_run(state))
+
+    async def consulter(demande: Demande, projet_id: str | None) -> Lecture:
+        """Exécute une lecture du fil, **hors boucle** — elle touche le disque (#1223).
+
+        `asyncio.to_thread` pour la même raison que la création d'équipe juste
+        au-dessus : lire un fichier ou balayer un dossier est bloquant, et
+        l'API sert d'autres requêtes pendant qu'un fil réfléchit.
+        """
+        return await asyncio.to_thread(consultations.executer, demande, projet_id)
+
     async def creer_equipe_du_projet(
         projet_id: str, roles: Sequence[RoleValide], proposition_id: str = ""
     ) -> dict[str, Any]:
@@ -1963,6 +2021,12 @@ def create_app(
                 # créée par la même voie que l'étape d'équipe du parcours.
                 equipe=equipe_du_projet,
                 recruteur=creer_equipe_du_projet,
+                # Ce qui fait que l'orchestrateur **sait** (#1223) : les lectures
+                # qu'il demande (fichiers du projet, détail complet d'un run),
+                # l'équipe réelle et ce qui attend quelqu'un.
+                consultation=consulter,
+                roles=roles_du_projet,
+                attentes=attentes_de(state),
             )
         ),
         mailbox=mailbox,
