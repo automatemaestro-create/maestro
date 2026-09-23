@@ -156,8 +156,10 @@ cas de doute). Les **garde-fous** priment sur l'automatisation : suis les étape
      `<job>` est le nom rendu par l'étape 6 (`shellcheck`, `python-lint`, `pytest`, `mypy`,
      `web-build`, `desktop` ; `lint` et `test` désignent l'étage entier). **Ne rejoue pas la suite entière**
      — ni `--complet`, ni un `pytest -n auto` à la main : le filet cadre `pytest` sur le périmètre
-     du diff (~40 s au lieu de ~10 min), et c'est ici, en plein diagnostic d'un pipeline rouge, que
-     la différence se paye. Pour reboucler sur le seul test rouge de la trace, vise-le directement —
+     du diff (sous `maestro/**`, les suites qui nomment les modules touchés — #1242), et c'est ici,
+     en plein diagnostic d'un pipeline rouge, que la différence se paye. Ton correctif change
+     l'arbre, donc le filet rejoue : un `Verdict : VERT (déjà rendu)` ne peut suivre qu'un appel
+     sans correctif. Pour reboucler sur le seul test rouge de la trace, vise-le directement —
      et **choisis où il joue par famille de suite** (§8.4bis), jamais par habitude. Suite
      d'**outillage** (elle nomme un script du dépôt : `worktree.sh`, `lib.sh`, `run.sh`…) → le
      conteneur Linux, qui y vaut un facteur vingt :

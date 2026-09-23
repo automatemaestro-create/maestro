@@ -12,7 +12,15 @@
 #   bash scripts/ci/local.sh --only pytest,mypy # un sous-ensemble (noms de jobs ou d'étages)
 #   bash scripts/ci/local.sh --skip web-build
 #   bash scripts/ci/local.sh --strict           # code non nul aussi si un job n'a pas pu être joué
+#   bash scripts/ci/local.sh --rejouer          # rejoue même si l'arbre a déjà eu son vert
 #   bash scripts/ci/local.sh --list             # les jobs et leur commande
+#
+# UN VERT PAR ÉTAT DE L'ARBRE (#1242) — un vert retient l'EMPREINTE du contenu qu'il a vérifié ; le
+# même appel sur le même contenu s'abstient en le disant, au lieu de rejouer les mêmes contrôles
+# sur les mêmes fichiers. Mesuré sur 8 runs (20-23 septembre, 50 tickets) : le filet pesait 19 % du
+# temps d'un ticket, et 19 tickets sur 46 le relançaient à la clôture sur un arbre déjà vert. Le
+# moindre fichier qui bouge — commit, travail non commité, fichier nouveau — change l'empreinte, et
+# le filet rejoue.
 #
 # PÉRIMÈTRE DE PYTEST (ticket #214) — par défaut le filet ne joue que les suites que le diff
 # concerne, pas les 1100 tests du dépôt. Le raisonnement : la suite complète coûte 9 min 57 s en
@@ -131,6 +139,8 @@ JOBS_CONNUS="$ETAGE_LINT $ETAGE_TEST"
 JOBS_ONLY=""
 JOBS_SKIP=""
 STRICT=0
+#: 1 = joue même si ce contenu a déjà eu son vert (#1242).
+REJOUER=0
 #: « rapide » = pytest sur le périmètre du diff (défaut, #214) ; « complet » = la suite entière.
 MODE_PYTEST=rapide
 
@@ -153,6 +163,7 @@ Options :
                   « lint » et « test » sont acceptés et développés en leurs jobs.
   --skip <jobs>   Saute ces jobs (mêmes noms).
   --strict        Code de sortie non nul aussi si un job n'a pas pu être joué (outil absent).
+  --rejouer       Joue même si le contenu de l'arbre a déjà eu son vert avec ces options.
   --list          Affiche les jobs, leur étage et leur commande, puis sort.
   -h, --help      Cette aide.
 
@@ -162,7 +173,9 @@ Jobs : ${JOBS_CONNUS// /, }
 
 Le lint tourne toujours en entier. Le périmètre de pytest se déduit du diff avec origin/main,
 travail non commité compris :
-  maestro/**          les suites applicatives (celles qui ne pilotent aucun script du dépôt)
+  maestro/**          les suites qui NOMMENT le module (maestro.a.b, maestro/a/b.py,
+                      from maestro.a import b) ; une donnée, celles qui nomment le module qui
+                      la lit ; personne → les suites applicatives (#1242)
   scripts/**, .claude/**, .github/**  les suites qui NOMMENT le fichier modifié
   tests/test_*.py     elles-mêmes
   conftest.py, pyproject.toml, ou tout chemin non classé   la suite entière
@@ -193,6 +206,12 @@ Trois filets qui se partagent les cœurs, la mémoire et le démon docker renden
 des trois ne contrôle — une suite qui mesure de la simultanéité réelle rougit alors sans cause.
 MAESTRO_CI_FILE=0 joue sans attendre ; MAESTRO_CI_FILE_ATTENTE_MAX (défaut $VERROU_CI_MAX s) borne
 l'attente, au-delà de laquelle le filet joue QUAND MÊME en l'annonçant dans son résumé.
+
+UN VERT PAR ÉTAT DE L'ARBRE (#1242) : un vert sans job ignoré retient l'empreinte du contenu de
+l'arbre (fichiers suivis, travail non commité, fichiers nouveaux hors .gitignore) et les options
+qui l'ont rendu. Le même appel sur le même contenu s'abstient — sans prendre de tour dans la
+file — et redit le résumé de ce vert. Un commit qui ne change aucun fichier ne change rien ; le
+moindre fichier qui bouge rejoue. « --rejouer » passe outre.
 USAGE
 }
 
@@ -244,6 +263,7 @@ while [ $# -gt 0 ]; do
     --only) JOBS_ONLY="${2:-}"; shift ;;
     --skip) JOBS_SKIP="${2:-}"; shift ;;
     --strict) STRICT=1 ;;
+    --rejouer) REJOUER=1 ;;
     --rapide) MODE_PYTEST=rapide ;;
     --complet) MODE_PYTEST=complet ;;
     --conteneur) PYTEST_REGIME_DEMANDE=conteneur ;;
@@ -476,6 +496,9 @@ job_ruff() {
 # la suite, parce qu'elles attendent des processus.
 suites_toutes() { (cd "$RACINE" && find tests -maxdepth 1 -name 'test_*.py' 2>/dev/null | sort); }
 
+# Un nom est une DONNÉE, pas un motif : ses métacaractères ERE sont échappés avant usage.
+echappe_ere() { printf '%s' "$1" | sed 's,[][^$.*+?(){}|\\],\\&,g'; }
+
 # Même ancrage que `suites_nommant` ci-dessous, et pour une raison plus forte (#372) : ici le sens
 # de l'erreur est le DANGEREUX. L'applicatif est le complément de cet ensemble, donc une suite
 # classée « outillage » à tort en sort — et n'est plus jouée quand `maestro/**` bouge, sans que
@@ -489,7 +512,7 @@ suites_outillage() {
   while IFS= read -r script; do
     [ -n "$script" ] || continue
     base="$(basename "$script")"
-    motifs+=(-e "(^|[^A-Za-z0-9_])$(printf '%s' "$base" | sed 's,[][^$.*+?(){}|\\],\\&,g')")
+    motifs+=(-e "(^|[^A-Za-z0-9_])$(echappe_ere "$base")")
   done < <(cd "$RACINE" && find scripts -type f -name '*.sh' 2>/dev/null)
   [ "${#motifs[@]}" -gt 0 ] || return 0
   (cd "$RACINE" && grep -lE "${motifs[@]}" "${suites[@]}" 2>/dev/null | sort)
@@ -525,12 +548,62 @@ suites_nommant() {
   mapfile -t suites < <(suites_toutes)
   [ "${#suites[@]}" -gt 0 ] || return 0
   if [ "${2:-}" = ancre ]; then
-    # Le nom est une donnée, pas un motif : ses métacaractères ERE sont échappés avant usage.
-    motif="$(printf '%s' "$1" | sed 's,[][^$.*+?(){}|\\],\\&,g')"
+    motif="$(echappe_ere "$1")"
     (cd "$RACINE" && grep -lE -- "(^|[^A-Za-z0-9_])$motif" "${suites[@]}" 2>/dev/null | sort)
   else
     (cd "$RACINE" && grep -lF -- "$1" "${suites[@]}" 2>/dev/null | sort)
   fi
+}
+
+#: `module_de <chemin sous maestro/>` — son nom dotté : `maestro/a/b.py` → `maestro.a.b`. Un
+#: `__init__.py` rend le nom de son paquet, et un `__main__.py` aussi : `python -m maestro.a` est
+#: la seule façon de le nommer, et c'est lui qu'elle exécute.
+module_de() {
+  local module="${1%.py}"
+  module="${module%/__init__}"
+  module="${module%/__main__}"
+  printf '%s' "${module//\//.}"
+}
+
+#: `suites_nommant_module <chemin sous maestro/>` — les suites qui nomment ce module (#1242).
+#:
+#: Nommer un module, c'est l'écrire sous l'une des formes par lesquelles un test l'atteint :
+#:
+#:   - son nom dotté, `maestro.a.b` — un import, un `patch("maestro.a.b.f")`, un `-m maestro.a.b`.
+#:     Ancré des deux côtés : `maestro.a.b` ne matche ni `maestro.a.bc` ni `x.maestro.a.b`. Un
+#:     sous-module le PROLONGE (`maestro.a.b.c`) et le nomme donc : l'importer exécute le paquet,
+#:     et c'est ainsi qu'un `__init__.py` se trouve nommé ;
+#:   - son chemin de fichier, `maestro/a/b.py`, ou en segments pathlib `"maestro" / "a" / "b.py"`
+#:     — la forme des suites qui relisent une source ;
+#:   - `from maestro.a import b`, sur une ligne ou dans une liste entre parenthèses étalée sur
+#:     plusieurs (d'où le second `grep -z`, qui lit le fichier d'un bloc) : la seule forme qui ne
+#:     porte le module que par son dernier nom.
+#:
+#: Le lien est textuel, comme partout dans ce filet : il ne voit pas qu'un module de télémétrie
+#: touché casse le moteur dont le test ne le nomme pas. C'est la contrepartie assumée par #1242,
+#: et le pipeline de la PR, qui rejoue tout, la rattrape — voir `classe_module`.
+suites_nommant_module() {
+  local chemin="$1" module paquet feuille segments suites=() motifs=() liste=""
+  mapfile -t suites < <(suites_toutes)
+  [ "${#suites[@]}" -gt 0 ] || return 0
+  module="$(module_de "$chemin")"
+  segments="$(echappe_ere "$chemin" | sed "s,/,[\"'][[:space:]]*/[[:space:]]*[\"'],g")"
+  motifs=(
+    -e "(^|[^A-Za-z0-9_.])$(echappe_ere "$module")([^A-Za-z0-9_]|$)"
+    -e "(^|[^A-Za-z0-9_])$(echappe_ere "$chemin")"
+    -e "[\"']${segments}[\"']"
+  )
+  if [[ "$module" == *.* ]]; then
+    paquet="$(echappe_ere "${module%.*}")"
+    feuille="${module##*.}"
+    motifs+=(-e "from[[:space:]]+${paquet}[[:space:]]+import[[:space:]](.*[^A-Za-z0-9_])?${feuille}([^A-Za-z0-9_]|$)")
+    liste="from[[:space:]]+${paquet}[[:space:]]+import[[:space:]]*\\([^)]*[^A-Za-z0-9_]${feuille}[^A-Za-z0-9_]"
+  fi
+  (
+    cd "$RACINE" || exit 0
+    grep -lE "${motifs[@]}" "${suites[@]}" 2>/dev/null
+    [ -z "$liste" ] || grep -lzE -- "$liste" "${suites[@]}" 2>/dev/null
+  ) | sort -u
 }
 
 #: Résultat de `calcule_perimetre` : les suites à jouer (vide = aucune), pourquoi, et deux drapeaux.
@@ -627,6 +700,56 @@ classe_par_nom() { # <chemin> [raison de ne pas élargir]
   ajoute_raison RAISONS_TOUT "aucune suite ne nomme $base"
 }
 
+# La règle du nom, appliquée à un fichier de `maestro/` (#1242). Pose ses résultats dans
+# CHOISIES / RAISONS_CHOIX, comme `classe_par_nom`.
+#
+# Un MODULE vaut les suites qui le nomment (`suites_nommant_module`). Une DONNÉE — un playbook en
+# Markdown — vaut celles qui la citent, et à défaut celles qui nomment les modules qui la LISENT :
+# `playbook.md` n'est cité par aucune suite, mais `maestro/orchestrator/prompt.py` le charge par
+# son nom, et ce sont les suites de ce module qui verront la donnée changer.
+#
+# Personne ne répond : les suites APPLICATIVES, c'est-à-dire l'ancienne règle — un élargissement,
+# jamais une abstention. Pas la suite entière : les suites d'outillage pilotent des scripts, et un
+# module que personne ne nomme n'en devient pas un script ; c'est ce qui garde le verdict en
+# « Périmètre réduit ».
+#
+# Ce que ce tri a RENVERSÉ (docs/10 §8.4) : jusqu'à #1242, `maestro/**` jouait toutes les suites
+# applicatives, « jamais affinées à l'intérieur », parce que le couplage entre modules est réel et
+# invisible d'une recherche textuelle. Il l'est toujours — mesuré sur les 195 modules, le graphe
+# d'imports TRANSITIF de chaque suite atteint 115 suites par module en moyenne, soit plus que les
+# 105 applicatives : il ne réduirait rien. Mais ce couplage se paye désormais dans le pipeline de la
+# PR, qui rejoue tout (#165) et ne rougit que 7,7 % du temps, au lieu de peser 265 s à chaque filet.
+# La règle du nom ramène un diff de `maestro/**` de 105 suites à 44 en moyenne — mesuré sur les 76
+# derniers commits de `main` qui en touchent, dont 9 élargis faute de suite qui nomme le module.
+classe_module() { # <chemin> <suites applicatives>
+  local chemin="$1" base nommant="" lecteurs="" lecteur raison
+  base="$(basename "$chemin")"
+  raison="$(module_de "$chemin")"
+  case "$chemin" in
+    *.py) nommant="$(suites_nommant_module "$chemin")" ;;
+    *)
+      raison="$base"
+      nommant="$(suites_nommant "$base" ancre)"
+      if [ -z "$nommant" ]; then
+        while IFS= read -r lecteur; do
+          [ -n "$lecteur" ] || continue
+          nommant="$nommant$(suites_nommant_module "$lecteur")"$'\n'
+          lecteurs="${lecteurs:+$lecteurs + }$(module_de "$lecteur")"
+        done < <(cd "$RACINE" && grep -rlE --include='*.py' -- \
+          "(^|[^A-Za-z0-9_])$(echappe_ere "$base")" maestro 2>/dev/null | sort)
+        [ -z "$lecteurs" ] || raison="$base lu par $lecteurs"
+      fi
+      ;;
+  esac
+  if [ -n "$(printf '%s' "$nommant" | tr -d '[:space:]')" ]; then
+    CHOISIES="$CHOISIES$nommant"$'\n'
+    ajoute_raison RAISONS_CHOIX "$raison"
+    return 0
+  fi
+  CHOISIES="$CHOISIES$2"$'\n'
+  ajoute_raison RAISONS_CHOIX "aucune suite ne nomme $raison : suites applicatives"
+}
+
 calcule_perimetre() {
   PERIMETRE_SUITES=""
   PERIMETRE_MOTIF=""
@@ -665,13 +788,10 @@ calcule_perimetre() {
         PERIMETRE_TOUT=1
         ajoute_raison RAISONS_TOUT "$fichier (transverse)"
         ;;
-      # Le couplage à l'intérieur de `maestro/` est réel et invisible d'ici (un module de
-      # télémétrie touché casse le moteur sans que son test le nomme) : on ne raffine donc PAS
-      # par module — toutes les suites applicatives, 40 s, et aucun faux négatif.
+      # Les suites qui nomment le module, et les applicatives quand personne ne le nomme (#1242,
+      # le renversement et sa mesure sont à `classe_module`).
       maestro/*)
-        CHOISIES="$CHOISIES$applicatives"$'
-'
-        ajoute_raison RAISONS_CHOIX "maestro/** modifié"
+        classe_module "$fichier" "$applicatives"
         ;;
       # Prose et front : aucune suite pytest ne les lit (web-build couvre apps/web).
       docs/* | apps/web/*)
@@ -1001,6 +1121,122 @@ lance_job() {
   esac
 }
 
+# --- Un vert par état de l'arbre (#1242) -----------------------------------------------------------
+# Le dernier vert, retenu à côté des journaux qui le prouvent : son empreinte, les options qui l'ont
+# rendu, sa date et son résumé. Une abstention laisse ces journaux en place — ce sont ceux du verdict
+# qu'elle redit — et le lancement suivant qui JOUE les rase avec lui, comme tout le reste (#234) :
+# un rouge ne laisse derrière lui aucun vert à redire.
+VERT_REL="$LOG_DIR_REL/dernier-vert"
+VERT="$RACINE/$VERT_REL"
+#: L'empreinte du contenu au DÉPART du filet — celle qu'un vert retient, s'il est rendu.
+EMPREINTE=""
+
+# L'empreinte du CONTENU que le filet vérifie : chaque fichier suivi ou nouveau (hors .gitignore),
+# avec le hash de ce que le disque contient. Le contenu et non HEAD : un commit qui range le travail
+# déjà vérifié ne change aucun fichier — c'est le geste de `/ticket-ship`, juste avant que
+# `/ticket-finish` ne rappelle le filet —, alors que le moindre octet qui bouge, commité ou non,
+# change l'empreinte.
+#
+# Rien n'est relu qui n'ait bougé : pour un fichier que `git diff` ne signale pas, le blob de
+# l'index EST le contenu du disque. Seuls les fichiers modifiés et les nouveaux sont hachés, par
+# `hash-object` — sans `-w`, donc sans rien écrire dans le dépôt —, avec les filtres que `git add`
+# leur appliquerait : un fichier indexé ou non, commité ou non, rend le même hash, et l'empreinte ne
+# dépend que du contenu. Un fichier supprimé du disque en sort, comme d'un commit.
+empreinte_arbre() {
+  local sales presents chemin
+  git -C "$RACINE" rev-parse --verify --quiet HEAD >/dev/null 2>&1 || return 1
+  sales="$( {
+    git -C "$RACINE" diff --name-only -z
+    git -C "$RACINE" ls-files --others --exclude-standard -z
+  } 2>/dev/null | tr '\0' '\n' | LC_ALL=C sort -u)"
+  presents="$(while IFS= read -r chemin; do
+    [ -n "$chemin" ] && [ -f "$RACINE/$chemin" ] && printf '%s\n' "$chemin"
+  done <<<"$sales")"
+  {
+    git -C "$RACINE" ls-files -s -z 2>/dev/null | tr '\0' '\n' |
+      awk -F'\t' 'NR == FNR { sale[$0] = 1; next }
+                  !($2 in sale) { split($1, champ, " "); print champ[2] "\t" $2 }' \
+        <(printf '%s\n' "$sales") -
+    if [ -n "$presents" ]; then
+      paste <(printf '%s\n' "$presents" | git -C "$RACINE" hash-object --stdin-paths) \
+        <(printf '%s\n' "$presents")
+    fi
+  } | LC_ALL=C sort | git -C "$RACINE" hash-object --stdin
+}
+
+# Ce qu'un vert vérifie dépend aussi de la question posée : un « --only mypy » vert ne dit rien de
+# pytest, et un vert natif demandé ne vaut pas un vert en conteneur. Un vert ne vaut donc que pour
+# les MÊMES options — les jobs une fois développés, pour que « --only lint » et
+# « --only shellcheck,python-lint » se reconnaissent.
+cle_du_filet() {
+  printf 'mode=%s only=%s skip=%s regime=%s' \
+    "$MODE_PYTEST" "$JOBS_ONLY" "$JOBS_SKIP" "$PYTEST_REGIME_DEMANDE"
+}
+
+vert_retenu() {
+  [ -n "$EMPREINTE" ] && [ -f "$VERT" ] &&
+    grep -qxF "empreinte $EMPREINTE" "$VERT" &&
+    grep -qxF "cle $(cle_du_filet)" "$VERT"
+}
+
+# L'abstention se DIT, et redit le résumé du vert qu'elle reconduit : « rien n'a tourné » ne doit
+# jamais se lire comme « tout a tourné ». Le verdict porte sa propre mention, et la commande pour
+# passer outre.
+redit_le_vert() {
+  local date="?" reduit=0 ligne job statut detail
+  while IFS= read -r ligne; do
+    case "$ligne" in
+      "date "*) date="${ligne#date }" ;;
+      "perimetre-reduit "*) reduit="${ligne#perimetre-reduit }" ;;
+    esac
+  done <"$VERT"
+  printf '%sDéjà vert%s — le contenu de l'\''arbre n'\''a pas bougé depuis le vert du %s, rendu avec\n' \
+    "$C_G" "$C_0" "$date"
+  printf 'les mêmes options. Rien n'\''est rejoué ; ses journaux restent sous %s/.\n\n' "$LOG_DIR_REL"
+  printf '%sRésumé du vert reconduit%s\n' "$C_B" "$C_0"
+  while IFS= read -r ligne; do
+    case "$ligne" in "job "*) ;; *) continue ;; esac
+    ligne="${ligne#job }"
+    job="${ligne%%|*}"
+    statut="${ligne#*|}"
+    detail="${statut#*|}"
+    statut="${statut%%|*}"
+    printf '  %s %-12s %s  %s\n' "$(symbole "$statut")" "$job" "$(libelle "$statut")" "$detail"
+  done <"$VERT"
+  printf '\n'
+  if [ "$reduit" = 1 ]; then
+    printf '%sPérimètre réduit%s — pytest n'\''a joué que les suites concernées par le diff, sans seuil\n' "$C_Y" "$C_0"
+    printf 'de couverture. La suite entière : « --complet » ici, ou le pipeline de la PR (docs/10 §8).\n\n'
+  fi
+  printf '%sVerdict : VERT (déjà rendu)%s — rejouer quand même : bash scripts/ci/local.sh --rejouer\n' \
+    "$C_G" "$C_0"
+}
+
+# Un vert n'est retenu que s'il porte sur le contenu ACTUEL : un fichier modifié pendant que les
+# jobs tournaient laisse un verdict sur un état qui n'existe déjà plus, et le retenir le ferait
+# reconduire sur l'état suivant, jamais vérifié.
+retient_le_vert() {
+  local apres ligne reduit=0
+  [ -n "$EMPREINTE" ] || return 0
+  apres="$(empreinte_arbre 2>/dev/null)"
+  if [ "$apres" != "$EMPREINTE" ]; then
+    printf '%sArbre modifié pendant le filet%s — ce vert porte sur un contenu qui n'\''est déjà plus\n' \
+      "$C_Y" "$C_0"
+    printf 'celui du disque : il n'\''est pas retenu, et le prochain appel rejouera.\n\n'
+    return 0
+  fi
+  if [ "$MODE_PYTEST" != complet ] && [ "$PYTEST_JOUE" = 1 ] && [ "$PERIMETRE_REDUIT" = 1 ]; then
+    reduit=1
+  fi
+  {
+    printf 'empreinte %s\n' "$EMPREINTE"
+    printf 'cle %s\n' "$(cle_du_filet)"
+    printf 'date %s\n' "$(date '+%Y-%m-%d %H:%M')"
+    printf 'perimetre-reduit %s\n' "$reduit"
+    for ligne in ${RESULTATS[@]+"${RESULTATS[@]}"}; do printf 'job %s\n' "$ligne"; done
+  } >"$VERT" 2>/dev/null || true
+}
+
 # --- Déroulé -----------------------------------------------------------------------------------------
 RESULTATS=()
 NB_ECHECS=0
@@ -1092,6 +1328,15 @@ if [ "$MODE_PYTEST" = complet ]; then
   printf 'pytest  : suite entière + couverture (--complet)\n\n'
 else
   printf 'pytest  : périmètre du diff (--complet pour la suite entière et sa couverture)\n\n'
+fi
+
+# UN VERT PAR ÉTAT DE L'ARBRE (#1242) — avant la file, et c'est voulu : reconduire un vert ne lance
+# aucun job, il n'a donc aucun tour à attendre derrière un filet qui, lui, joue. L'empreinte est
+# prise ici même avec « --rejouer » : c'est elle qu'un vert retiendra.
+EMPREINTE="$(empreinte_arbre 2>/dev/null)" || EMPREINTE=""
+if [ "$REJOUER" = 0 ] && vert_retenu; then
+  redit_le_vert
+  exit 0
 fi
 
 # LA FILE (#745) — ici, et pas plus tôt. Après l'en-tête, pour qu'on sache ce qui attend avant de
@@ -1233,5 +1478,8 @@ if [ "$NB_JOUES" -eq 0 ]; then
   printf '%sVerdict : AUCUN JOB JOUÉ%s — élargir --only/--skip (jobs : %s).\n' "$C_Y" "$C_0" "$JOBS_CONNUS"
   exit 0
 fi
+# Seul un vert ENTIER se retient (#1242) : un job ignoré faute d'outil rejouera le jour où l'outil
+# est là, et un rouge ne laisse rien derrière lui — la table rase du lancement l'a effacé.
+retient_le_vert
 printf '%sVerdict : VERT%s — les contrôles de la CI passent en local.\n' "$C_G" "$C_0"
 exit 0

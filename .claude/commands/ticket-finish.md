@@ -251,10 +251,14 @@ avant de pousser. Un critère non tenu **ne bloque pas le merge**.
    ```
    bash scripts/ci/local.sh
    ```
-   Par défaut `pytest` ne joue que les **suites concernées par le diff**, sans seuil de couverture
-   (verdict annoncé PARTIEL) : ~40 s au lieu de ~10 min. **Ne le passe pas en `--complet`** et
-   n'invente aucune autre recette — le verdict complet est celui du pipeline de la PR (#165), pas
-   le tien.
+   Par défaut `pytest` ne joue que les **suites concernées par le diff** — sous `maestro/**`, celles
+   qui nomment les modules touchés (#1242) —, sans seuil de couverture (verdict annoncé
+   « Périmètre réduit »). **Ne le passe pas en `--complet`** et n'invente aucune autre recette — le
+   verdict complet est celui du pipeline de la PR (#165), pas le tien.
+   **Un vert déjà obtenu sur ce contenu n'est pas rejoué** (#1242) : si tu as fait passer le filet
+   pendant le développement et que rien n'a bougé depuis — un commit de ce même travail compris —,
+   il répond `Verdict : VERT (déjà rendu)` en quelques secondes. C'est un vert : poursuis, sans
+   `--rejouer`.
    **Best-effort, jamais bloquant** : un outil absent rend son job `IGNORÉ`, et un job rouge écrit
    son journal sous `.maestro/ci-local/<job>.log` (chemin relatif, cité par le script). Si l'échec
    vient de ton diff et se corrige en une passe, corrige-le et reprends à l'étape 4 ; sinon
