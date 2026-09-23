@@ -434,7 +434,9 @@ def test_la_reponse_donne_la_commande_et_le_fichier_lus_dans_le_projet(tmp_path:
     assert reponse.contenu.startswith("Le README du projet dit")
     # Et les deux lectures sont rattachées au message, dans l'ordre où elles ont eu lieu.
     assert [etape.libelle for etape in reponse.etapes] == [
-        "A listé « . »",
+        # La racine se **nomme** : « A listé « . » » est le chemin que le modèle a
+        # écrit, pas ce qu'il a consulté (relevé par le regard neuf de #1223).
+        "A listé la racine du projet",
         "A lu « README.md »",
     ]
 

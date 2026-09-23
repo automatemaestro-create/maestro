@@ -49,7 +49,6 @@
  * que `SourcesDuFil`.
  */
 
-import { BlocDeCode } from "@/components/chat/BlocDeCode";
 import { IconeBrief } from "@/components/Icones";
 import { CIBLE_MINIMALE } from "@/components/Primitives";
 import type { EtapeFil } from "@/lib/types";
@@ -103,13 +102,23 @@ export function EtapesDuFil({
                 <summary className={`${CIBLE_MINIMALE} cursor-pointer select-none`}>
                   {etape.libelle}
                 </summary>
-                {/* Ce que la lecture a rendu, tel quel, dans le **bloc de code du
-                    fil** (#697) et non dans un `<pre>` refait ici : c'est une
-                    matière brute (arborescence, extrait de fichier, trace), et
-                    c'est exactement ce que ce composant sait rendre — défilement
-                    interne, et le bouton « copier » qui fait qu'une commande lue
-                    dans le projet se reprend sans la retaper. */}
-                <BlocDeCode texte={etape.detail} langage="" ferme />
+                {/* Ce que la lecture a rendu, tel quel : une matière brute
+                    (arborescence, extrait de fichier, trace), qu'une mise en
+                    forme ferait dire autre chose. Le défilement est **dans** le
+                    bloc — une ligne longue ne pousse jamais la page.
+
+                    ⚠ **Pas de `BlocDeCode`, et c'est un choix corrigé sur pièces.**
+                    Le premier jet l'employait, pour son bouton « copier » : le
+                    regard neuf a relevé que son encadré bordé était alors *le
+                    seul élément encadré du fil*, que sa barre de pied occupait
+                    autant de hauteur que l'extrait qu'elle servait, et qu'il
+                    pliait le parti pris n°4 de la veille — « aucune `Carte`,
+                    aucun cadre ». Une surface creuse sans bord tient le second
+                    plan et aligne l'extrait sur le libellé qu'il éclaire. Le
+                    bouton « copier » est le prix, et il se paierait en cadre. */}
+                <pre className="mt-1 overflow-x-auto rounded-carte bg-surface-creuse p-2.5 text-micro">
+                  <code className="font-mono">{etape.detail}</code>
+                </pre>
               </details>
             )}
           </li>

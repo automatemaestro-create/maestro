@@ -300,7 +300,10 @@ class Consultations:
         """Les entrées d'un dossier, dossiers d'abord, bornées."""
         brut = demande.arguments.get("chemin", "")
         relatif = _relatif(brut)
-        libelle = f"A listé « {relatif or '.'} »"
+        # « A listé « . » » ne dit rien à qui regarde : le point est le chemin que
+        # le modèle a écrit, pas ce qu'il a consulté (relevé par le regard neuf de
+        # #1223). La racine se nomme, les sous-dossiers gardent leur chemin.
+        libelle = f"A listé « {relatif} »" if relatif else "A listé la racine du projet"
         cible = _sous(base, brut, projet)
         if cible is None:
             return Lecture(libelle=libelle, contenu=_HORS_RACINE.format(chemin=relatif))
@@ -467,7 +470,11 @@ def _relatif(brut: str) -> str:
     nettoye = brut.strip().replace("\\", "/").strip()
     while nettoye.startswith("./"):
         nettoye = nettoye[2:]
-    return nettoye.strip("/")
+    nettoye = nettoye.strip("/")
+    # « . » **est** la racine : le rendre tel quel ferait dire « A listé « . » » à
+    # une étape du fil, c'est-à-dire le chemin que le modèle a écrit plutôt que ce
+    # qu'il a consulté. La racine est la chaîne vide, partout dans ce module.
+    return "" if nettoye == "." else nettoye
 
 
 def _sous(base: Path, brut: str, projet: Projet) -> Path | None:
