@@ -61,7 +61,13 @@ from typing import TYPE_CHECKING, TextIO
 
 from maestro.controltower.donnees import Donnees, donnees_du_banc
 from maestro.scenarios import rapport as rapport_module
-from maestro.scenarios.api import ClientAPI, ErreurAPI, TransportHTTP, base_locale
+from maestro.scenarios.api import (
+    DELAI_RUN_S,
+    ClientAPI,
+    ErreurAPI,
+    TransportHTTP,
+    base_locale,
+)
 from maestro.scenarios.juge import Juge, JugeModele
 from maestro.scenarios.modele import (
     Journal,
@@ -88,12 +94,6 @@ if TYPE_CHECKING:
 #: jamais écrit, comme dans `maestro.controltower.purge` : un nom recopié survit à
 #: un renommage de module et envoie l'utilisateur sur une commande qui n'existe plus.
 MODULE = __package__ or "maestro.scenarios"
-
-#: Le délai laissé à un run pour se solder. Quinze minutes : un run réel décompose,
-#: exécute et agrège avec le vrai modèle, et le retex en a mesuré plusieurs au-delà
-#: de cinq. Ce n'est pas un plafond de dépense — c'est la borne au-delà de laquelle
-#: le banc cesse d'attendre et le dit.
-DELAI_RUN_S = 900.0
 
 #: Le geste qui allume la stack, nommé dans le refus — jamais deviné par l'appelant.
 GESTE_PREALABLE = "bash scripts/controltower/start.sh"
@@ -229,7 +229,9 @@ def main(
         return CODE_USAGE
 
     if client is None:
-        client = ClientAPI(TransportHTTP(base_locale()))
+        # `--delai` borne aussi les gestes que le modèle rédige (#1232) : une seule
+        # attente accordée au modèle, qu'il fasse un run ou qu'il rédige un playbook.
+        client = ClientAPI(TransportHTTP(base_locale()), delai_modele_s=options.delai_s)
     if not client.sante():
         print(
             f"Banc refusé : l'API de la Control Tower ne répond pas sur {base_locale()} — "
@@ -278,7 +280,8 @@ def main(
     print(
         f"Scénarios de référence — passage {horodatage} · "
         f"{', '.join(s.identifiant for s in choisis)} · "
-        f"délai par run {options.delai_s:.0f} s · atelier {atelier_resolu.racine}",
+        f"délai par run {options.delai_s:.0f} s, et par réponse que le modèle rédige · "
+        f"atelier {atelier_resolu.racine}",
         file=sortie,
     )
     rapport = jouer(

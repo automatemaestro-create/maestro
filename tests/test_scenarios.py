@@ -29,6 +29,7 @@ banc **pose bien les questions** et **rend bien le verdict** qu'il a mesuré.
 from __future__ import annotations
 
 import json
+import socket
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -37,6 +38,7 @@ from typing import Any
 import pytest
 from redis_factice import ClientSynchrone, ServeurFactice
 
+from maestro.controltower.acces import REGIME_OUVERT
 from maestro.controltower.donnees import Donnees, donnees_du_banc
 from maestro.controltower.state import (
     EXECUTION_ECHEC,
@@ -48,7 +50,16 @@ from maestro.controltower.state import (
 )
 from maestro.sandbox.en_place import DOSSIER_ATELIER
 from maestro.scenarios import banc, etat
-from maestro.scenarios.api import FIL, ClientAPI, ErreurAPI, Reponse, equipe_validee
+from maestro.scenarios.api import (
+    DELAI_REQUETE_S,
+    DELAI_RUN_S,
+    FIL,
+    ClientAPI,
+    ErreurAPI,
+    Reponse,
+    TransportHTTP,
+    equipe_validee,
+)
 from maestro.scenarios.juge import (
     MARQUEUR_POURQUOI,
     MARQUEUR_VERDICT,
@@ -137,6 +148,16 @@ def _role(nom: str = "dev") -> dict[str, Any]:
     }
 
 
+def _redige_par_le_modele(chemin: str) -> bool:
+    """Les routes dont le produit fait rédiger la réponse par le modèle — lu sur son code.
+
+    Le fil juge le message et rédige sa réponse ; la proposition d'équipe rédige un
+    playbook par rôle (#257). Le cadrage et le recrutement n'appellent aucun modèle
+    (`maestro.controltower.orchestration`) : ils répondent comme une déclaration.
+    """
+    return chemin == f"{FIL}/messages" or chemin.endswith("/equipe/proposition")
+
+
 class FausseAPI:
     """Le `Transport` du banc, au-dessus d'un modèle minimal du produit.
 
@@ -162,8 +183,11 @@ class FausseAPI:
         validations: list[dict[str, Any]] | None = None,
         sante: bool = True,
         espace: str = "commun",
+        duree_modele_s: float = 0.0,
     ) -> None:
         self._moteur = moteur
+        self._duree_modele_s = duree_modele_s
+        self.delais: list[tuple[str, float | None]] = []
         self._propose_un_run = propose_un_run
         self._propose_une_equipe = propose_une_equipe
         self._repropose = repropose_apres_recrutement
@@ -191,9 +215,13 @@ class FausseAPI:
         *,
         corps: Mapping[str, Any] | None = None,
         params: Mapping[str, str] | None = None,
+        delai_s: float | None = None,
     ) -> Reponse:
         """Route la requête vers la décision qu'elle porte."""
         self.appels.append((methode, chemin))
+        self.delais.append((chemin, delai_s))
+        if _redige_par_le_modele(chemin):
+            self._rediger(chemin, delai_s)
         if chemin == "/api/sante":
             if not self._sante:
                 raise ErreurAPI("API injoignable (test)", chemin=chemin)
@@ -223,6 +251,17 @@ class FausseAPI:
         if chemin.startswith("/api/validations/"):
             return self._decider(chemin.split("/")[3])
         raise AssertionError(f"la fausse API ne connaît pas {methode} {chemin}")
+
+    def _rediger(self, chemin: str, delai_s: float | None) -> None:
+        """Ce que fait le transport réel quand le modèle rédige plus longtemps qu'on l'attend.
+
+        La route dure `duree_modele_s` ; le client l'attend `delai_s`, ou le délai
+        ordinaire du transport s'il n'en demande aucun. Au-delà, la requête
+        tombe comme elle tombe sur le réseau (#1232).
+        """
+        accorde = DELAI_REQUETE_S if delai_s is None else delai_s
+        if self._duree_modele_s > accorde:
+            raise ErreurAPI(f"l'API n'a pas répondu en {accorde:g} s", chemin=chemin)
 
     # --- Les décisions ----------------------------------------------------
 
@@ -519,6 +558,106 @@ def test_s1_s2_et_s4_dotent_leur_projet_avant_de_demander(tmp_path: Path) -> Non
         chemins = [chemin for _m, chemin in api.appels]
         assert any(c.endswith("/equipe/proposition") for c in chemins), identifiant
         assert api.recrutements == [], f"{identifiant} ne passe pas par le recrutement du fil"
+
+
+# --- ①bis Le temps du modèle (#1232) ----------------------------------------
+
+
+def test_une_proposition_d_equipe_plus_lente_que_le_delai_ordinaire_ne_coupe_plus_s1(
+    tmp_path: Path,
+) -> None:
+    """Le passage du 2026-09-23 : la proposition d'équipe a dépassé 30 s, et S1 n'a
+    jamais envoyé sa demande. Le montage attend désormais le modèle."""
+    lente = DELAI_REQUETE_S + 15
+    api = FausseAPI(moteur=_moteur_qui_vide, duree_modele_s=lente)
+    issue, _ctx = _banc(tmp_path / "marge", api).jouer(_scenario("S1"))
+
+    assert issue.vert, issue.motif
+    assert ("POST", f"{FIL}/messages") in api.appels
+    assert {d for c, d in api.delais if _redige_par_le_modele(c)} == {DELAI_RUN_S}
+
+    # La contre-épreuve : le client d'avant, qui attendait le modèle comme le reste.
+    avant = FausseAPI(moteur=_moteur_qui_vide, duree_modele_s=lente)
+    montage = _banc(tmp_path / "avant", avant)
+
+    def contexte() -> Contexte:
+        ctx = montage.contexte()
+        ctx.client = ClientAPI(avant, delai_modele_s=DELAI_REQUETE_S)
+        return ctx
+
+    rapport = banc.jouer([_scenario("S1")], contexte, horodatage="x", horloge=lambda: 0.0)
+
+    assert rapport.resultats[0].empechement is True
+    assert f"n'a pas répondu en {DELAI_REQUETE_S:g} s" in rapport.resultats[0].motif
+    assert ("POST", f"{FIL}/messages") not in avant.appels
+
+
+def test_seuls_les_gestes_que_le_modele_redige_recoivent_sa_marge(tmp_path: Path) -> None:
+    """Une API figée doit encore arrêter vite tout le reste : déclarer, créer, trancher, lire.
+
+    S1 et S3 à eux deux passent par toutes les routes du fil — message, cadrage,
+    recrutement — et par les deux gestes d'équipe : la proposition, que le modèle
+    rédige, et la création, qu'il ne touche pas.
+    """
+    delais: list[tuple[str, float | None]] = []
+    for identifiant, moteur in (("S1", _moteur_qui_vide), ("S3", _moteur_muet)):
+        api = FausseAPI(moteur=moteur)
+        ctx = _banc(tmp_path / identifiant, api).contexte()
+        ctx.client = ClientAPI(api, delai_modele_s=321.0)
+        issue = _scenario(identifiant).jouer(ctx)
+        assert issue.vert, f"{identifiant} : {issue.motif}"
+        delais += api.delais
+
+    du_modele = [(c, d) for c, d in delais if _redige_par_le_modele(c)]
+    ordinaires = [(c, d) for c, d in delais if not _redige_par_le_modele(c)]
+    assert f"{FIL}/messages" in {c for c, _d in du_modele}
+    assert any(c.endswith("/equipe/proposition") for c, _d in du_modele)
+    assert {d for _c, d in du_modele} == {321.0}
+    assert {f"{FIL}/cadrage", f"{FIL}/recrutement"} <= {c for c, _d in ordinaires}
+    assert any(c.endswith("/equipe") for c, _d in ordinaires), "la création d'équipe"
+    assert {d for _c, d in ordinaires} == {None}, "le délai ordinaire du transport"
+
+
+def test_le_delai_par_run_borne_aussi_les_gestes_du_modele(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--delai` est l'attente accordée au modèle, qu'il fasse un run ou qu'il rédige."""
+    api = FausseAPI(moteur=_moteur_qui_vide)
+    monkeypatch.setattr(banc, "TransportHTTP", lambda _base: api)
+    sortie, erreur = _Muet(), _Muet()
+
+    code = banc.main(
+        ["--scenario", "S1", "--delai", "42"],
+        juge=_juge_oui(),
+        atelier=Atelier(tmp_path / "atelier"),
+        racine_rapports=tmp_path / "rapports",
+        horloge=lambda: 0.0,
+        dormir=lambda _s: None,
+        lancer_application=lambda _r, _p: (0, "bonjour"),
+        sortie=sortie,
+        erreur=erreur,
+    )
+
+    assert code == banc.CODE_VERT, erreur.texte + sortie.texte
+    assert {d for c, d in api.delais if _redige_par_le_modele(c)} == {42.0}
+
+
+def test_un_delai_depasse_n_est_pas_une_api_injoignable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Le rapport du 2026-09-23 disait « API injoignable (timed out) » d'une API qui
+    répondait, plus lentement que le banc ne l'attendait. Le délai de la requête
+    l'emporte sur celui du transport, et le message dit lequel a expiré."""
+    monkeypatch.setenv("MAESTRO_API_AUTH", REGIME_OUVERT)
+    with socket.socket() as muette:
+        muette.bind(("127.0.0.1", 0))
+        muette.listen(1)  # la connexion aboutit, aucune réponse ne vient
+        port = muette.getsockname()[1]
+        transport = TransportHTTP(f"http://127.0.0.1:{port}")
+        with pytest.raises(ErreurAPI) as leve:
+            transport.demander("POST", "/api/essai", delai_s=0.2)
+
+    assert "l'API n'a pas répondu en 0.2 s (POST /api/essai)" in str(leve.value)
+    assert "injoignable" not in str(leve.value)
+    assert leve.value.chemin == "/api/essai"
 
 
 def test_le_banc_approuve_l_arbitrage_de_son_propre_run(tmp_path: Path) -> None:

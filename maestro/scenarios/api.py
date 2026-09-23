@@ -45,9 +45,22 @@ from maestro.controltower.state import (
 #: offre depuis #666, donc la seule que le banc a le droit d'emprunter.
 FIL = f"/api/chat/{NOM_ORCHESTRATION}"
 
-#: Délai d'une requête HTTP ordinaire. Le suivi d'un run, lui, ne dépend pas de
+#: Délai d'une requête HTTP **ordinaire** : une réponse que l'API rend sans le
+#: modèle — déclarer, lire, créer, trancher. Court à dessein : une API figée doit
+#: arrêter le scénario vite, et le dire. Le suivi d'un run, lui, ne dépend pas de
 #: ce délai : il repose sur des lectures courtes répétées (`attendre_le_run`).
 DELAI_REQUETE_S = 30.0
+
+#: Le délai laissé à un run pour se solder. Quinze minutes : un run réel décompose,
+#: exécute et agrège avec le vrai modèle, et le retex en a mesuré plusieurs au-delà
+#: de cinq. Ce n'est pas un plafond de dépense — c'est la borne au-delà de laquelle
+#: le banc cesse d'attendre et le dit (`--delai` la règle).
+#:
+#: C'est aussi la borne d'une requête dont **le modèle rédige la réponse**
+#: (`ClientAPI`, #1232) : l'écran n'en impose aucune à ces routes, et le banc
+#: n'invente pas pour elles un second chiffre — il leur accorde ce qu'il accorde
+#: déjà au modèle pour un run entier.
+DELAI_RUN_S = 900.0
 
 #: L'intervalle entre deux lectures d'un run en vol. Une seconde : le run dure
 #: des minutes, et interroger plus souvent ne ferait que charger l'API qu'on
@@ -98,7 +111,10 @@ class Transport(Protocol):
         *,
         corps: Mapping[str, Any] | None = None,
         params: Mapping[str, str] | None = None,
-    ) -> Reponse: ...
+        delai_s: float | None = None,
+    ) -> Reponse:
+        """Joue la requête — `delai_s` la borne, `None` laissant le délai du transport."""
+        ...
 
 
 class TransportHTTP:
@@ -123,19 +139,27 @@ class TransportHTTP:
         """L'adresse de l'API que ce transport vise."""
         return self._base
 
-    def demander(  # pragma: no cover - la couche réseau ; les tests jouent une fausse API
+    def demander(
         self,
         methode: str,
         chemin: str,
         *,
         corps: Mapping[str, Any] | None = None,
         params: Mapping[str, str] | None = None,
+        delai_s: float | None = None,
     ) -> Reponse:
-        """Joue la requête et rend sa réponse — une panne réseau devient `ErreurAPI`."""
+        """Joue la requête et rend sa réponse — une panne réseau devient `ErreurAPI`.
+
+        Un délai dépassé **n'est pas** une API injoignable, et le message les
+        sépare (#1232) : « API injoignable (timed out) » a fait chercher une
+        panne de l'API là où elle répondait, mais plus lentement que le banc ne
+        l'attendait.
+        """
         import httpx2
 
+        delai = self._delai_s if delai_s is None else delai_s
         try:
-            with httpx2.Client(timeout=self._delai_s) as client:
+            with httpx2.Client(timeout=delai) as client:
                 brute = client.request(
                     methode,
                     f"{self._base}{chemin}",
@@ -143,7 +167,12 @@ class TransportHTTP:
                     params=dict(params or {}),
                     headers=dict(self._entetes),
                 )
-        except httpx2.HTTPError as echec:
+        except httpx2.TimeoutException as echec:
+            raise ErreurAPI(
+                f"l'API n'a pas répondu en {delai:g} s ({methode} {chemin})",
+                chemin=chemin,
+            ) from echec
+        except httpx2.HTTPError as echec:  # pragma: no cover - API éteinte, réseau coupé
             raise ErreurAPI(f"API injoignable ({echec})", chemin=chemin) from echec
         texte = brute.text
         try:
@@ -160,10 +189,30 @@ def base_locale(environnement: Mapping[str, str] | None = None) -> str:
 
 
 class ClientAPI:
-    """Les verbes du banc au-dessus d'un transport : un seul endroit qui connaît l'API."""
+    """Les verbes du banc au-dessus d'un transport : un seul endroit qui connaît l'API.
 
-    def __init__(self, transport: Transport) -> None:
+    ## Deux délais, selon qui rédige la réponse (#1232)
+
+    La plupart des routes répondent sans le modèle, et le délai ordinaire du
+    transport leur suffit. Deux ne le peuvent pas : `envoyer` (le fil juge le
+    message et rédige sa réponse) et `proposition_equipe` (un playbook rédigé par
+    rôle, #257). Elles durent ce que dure le modèle, et **l'écran ne les borne
+    pas** : un banc qui les coupait à 30 s jugeait un produit plus pressé que
+    celui qu'un utilisateur a sous les yeux. Mesuré le 2026-09-23 : la proposition
+    d'équipe a tenu en 17 s, puis ≈ 26 s, puis a dépassé 30 s sur la première
+    requête d'une API qui venait de démarrer — et S1 n'a jamais envoyé sa demande.
+
+    Ces deux verbes reçoivent donc `delai_modele_s`, la borne que le banc accorde
+    déjà au modèle pour un run (`--delai`, `DELAI_RUN_S`) : une borne contre une
+    API figée, pas une attente. Le classement se fait **ici, sur le code des
+    routes** — `trancher_cadrage` et `recruter` n'appellent aucun modèle et
+    gardent le délai ordinaire —, et il se revoit quand une route change de
+    nature.
+    """
+
+    def __init__(self, transport: Transport, *, delai_modele_s: float = DELAI_RUN_S) -> None:
         self._transport = transport
+        self._delai_modele_s = delai_modele_s
 
     # --- Le socle -------------------------------------------------------
 
@@ -175,9 +224,12 @@ class ClientAPI:
         corps: Mapping[str, Any] | None = None,
         params: Mapping[str, str] | None = None,
         attendus: Sequence[int] = (200, 201),
+        delai_s: float | None = None,
     ) -> Any:
         """Joue la requête et rend son corps — tout statut inattendu lève."""
-        reponse = self._transport.demander(methode, chemin, corps=corps, params=params)
+        reponse = self._transport.demander(
+            methode, chemin, corps=corps, params=params, delai_s=delai_s
+        )
         if reponse.statut not in attendus:
             raise ErreurAPI(
                 f"{methode} {chemin} → {reponse.statut} : {reponse.texte[:400]}",
@@ -224,9 +276,14 @@ class ClientAPI:
     # --- L'équipe -------------------------------------------------------
 
     def proposition_equipe(self, projet_id: str) -> dict[str, Any]:
-        """L'équipe que l'analyse du projet appelle (#1039) — rien n'est créé ici."""
+        """L'équipe que l'analyse du projet appelle (#1039) — rien n'est créé ici.
+
+        Le modèle en rédige les playbooks : la marge du modèle, pas le délai ordinaire.
+        """
         propose: dict[str, Any] = self._appel(
-            "POST", f"/api/projets/{projet_id}/equipe/proposition"
+            "POST",
+            f"/api/projets/{projet_id}/equipe/proposition",
+            delai_s=self._delai_modele_s,
         )
         return propose
 
@@ -251,11 +308,15 @@ class ClientAPI:
         return str(corps["conversation"]["id"])
 
     def envoyer(self, contenu: str, *, projet_id: str, conversation: str) -> dict[str, Any]:
-        """Envoie un message d'utilisateur et rend **la réponse de l'agent**."""
+        """Envoie un message d'utilisateur et rend **la réponse de l'agent**.
+
+        Le modèle la rédige : la marge du modèle, pas le délai ordinaire.
+        """
         corps = self._appel(
             "POST",
             f"{FIL}/messages",
             corps={"contenu": contenu, "projet_id": projet_id, "conversation": conversation},
+            delai_s=self._delai_modele_s,
         )
         return _reponse_de(corps, chemin=f"{FIL}/messages")
 
