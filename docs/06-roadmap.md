@@ -40,6 +40,7 @@ gantt
 > Le jalon **« Les scénarios de référence »** s'insère entre les deux (2026-09-21) : le produit se
 > juge sur ce qu'un utilisateur lui demande, joué avec le vrai modèle, pendant que le rail outillage
 > est gelé jusqu'au 2026-10-12 ([docs/40](./40-decision-rythme-et-scenarios-de-reference.md)).
+> Le 2026-09-23, les six tickets du flux d'un ticket (#1240 à #1245, #1239) sont exclus de ce gel.
 > Le jalon **« Rien de figé »** vient juste derrière (2026-09-21) : Maestro comprend n'importe quel
 > projet, propose, se laisse corriger et vérifie en exécutant. Le même jour, le mode démo quitte le
 > dépôt ([docs/41](./41-decision-maestro-juge-il-ne-bride-pas.md)).
@@ -572,7 +573,8 @@ rythme accéléré*. Comme les jalons nés d'une idée, il ne prend **pas de num
 | Milestone | Contenu | Échéance | Suivi |
 |---|---|---|---|
 | **Les scénarios de référence — le produit fait ce qu'on lui demande** | Quatre scénarios joués de bout en bout avec le vrai modèle, qui conditionnent le bouclage d'un jalon produit ; une action simple qui s'exécute | 2028-01-30 | #1148 et #1149, indépendants et **sans parent** ; #1146 dans « Avant l'installeur » |
-| *Outillage de la forge* (jalon existant, rail outillage) | Trois allègements du processus, seule exception au gel | 2027-09-15 | #1150, #1151, #1152 (nés assignés : ils écrivent sous `.claude/`) |
+| *Outillage de la forge* (jalon existant, rail outillage) | Trois allègements du processus, première exception au gel | 2027-09-15 | #1150, #1151, #1152 (nés assignés : ils écrivent sous `.claude/`) |
+| *Outillage de la forge* (ajout du 2026-09-23, #1239) | Le flux d'un ticket exerce ce qu'il livre et cesse de payer ce qui ne trouve rien, **exclu du gel** | 2027-09-15 | #1240 → #1241 → #1242 → #1243 → #1244 → #1245, `prio::haute`, nés assignés |
 | *Les scénarios de référence* (ajout du 2026-09-21, #1169) | Le mode démo quitte le dépôt ; le produit se vérifie sur le réel | 2028-01-30 | **#1156** — 5 lots (#1164–#1168) |
 
 **Le constat, mesuré.** Sur les 158 tickets fermés en septembre :
@@ -608,6 +610,11 @@ La démonstration est dans [docs/40](./40-decision-rythme-et-scenarios-de-refere
 **Le gel du rail outillage, jusqu'au 2026-10-12.**
 - **Ce qui passe** : #1150, #1151, #1152, et les pannes qui bloquent réellement le travail. Un
   incident de forge qui ne bloque pas se note, il ne devient pas un chantier.
+- **Ce qui passe aussi, depuis le 2026-09-23** (#1239, décision de la personne) : les six tickets
+  du flux d'un ticket, #1240 à #1245, en `prio::haute`. Chaque critère se clôt sur une preuve
+  exercée ; l'implémentation a une méthode ; le filet local et la relecture visuelle cessent de
+  payer ce qui ne trouve rien ; le temps loggé est mesuré ; les commandes de clôture maigrissent.
+  Les mesures et l'ordre sont dans [docs/40 §6](./40-decision-rythme-et-scenarios-de-reference.md).
 - **Ce qui est différé, pas abandonné** : #1052 (le plan d'un run traverse les jalons, 6 tickets) et
   #1129 (bibliothèque de références, regard de la personne par jalon, 5 tickets). Tous deux passent
   en `prio::basse`.
