@@ -207,26 +207,45 @@ saisie manuelle. Comme le statut, tout passe par la mutation `workItemUpdate` vi
 
 | Champ | Quand | Comment | Commande / helper |
 |---|---|---|---|
-| **Date de début** | `/ticket-start` | = jour du démarrage (aujourd'hui). Conservée si déjà posée. | `lib.sh begin <iid>` (groupé, §5) ; unitaire : `start-dates <iid>` |
+| **Date de début** | `/ticket-start` | = jour du démarrage (aujourd'hui). Conservée si déjà posée. Avec elle, l'**instant** du démarrage (`demarre`, UTC), posé une fois. | `lib.sh begin <iid>` (groupé, §5) ; unitaire : `start-dates <iid>` |
 | **Échéance** (due date) | `/ticket-start` | = début + délai dérivé de `prio::` : `haute` → 2 j, `moyenne` → 5 j, `basse` → 10 j (défaut `moyenne`). | `lib.sh begin <iid>` (groupé, §5) ; unitaire : `start-dates <iid>` |
-| **Temps passé** | `/ticket-finish` | **estimé automatiquement par l'agent** d'après la portée du travail (diff, commits, contexte) et loggé directement, sans confirmation. | `lib.sh log-time` (`get-time-spent <iid> --hors-import` pour l'idempotence) |
+| **Temps passé** | `/ticket-finish` | **mesuré** sur les transcripts des sessions Claude Code du ticket, en run comme en interactif, et loggé directement avec sa source dans le libellé — **jamais estimé** (#1244). | `lib.sh log-time-mesure <iid>` (mesure : `worktree.sh temps <iid>`) |
 
 - **Délais d'échéance ajustables** : surcharger `GL_DUE_DELAY_HAUTE` / `GL_DUE_DELAY_MOYENNE` /
   `GL_DUE_DELAY_BASSE` (en jours) dans l'environnement.
-- **Temps passé estimé par l'agent, pas mesuré** : le temps calendaire écoulé (`elapsed-days`) vaut
-  0 le jour même et n'est de toute façon pas de l'effort net. `/ticket-finish` demande donc à l'agent
-  qui clôt le ticket d'**estimer l'effort d'après la portée du travail** (diff, commits, contexte de
-  session) et de le logger **directement, sans confirmation** (choix explicite : pas de prompt à
-  chaque clôture). Le helper `elapsed-days` reste disponible comme repère.
+- **Temps passé mesuré, jamais estimé** (#1244, qui renverse l'estimation par l'agent). Jusque-là,
+  `/ticket-finish` faisait **estimer** l'effort par la session qui clôt, d'après la portée du
+  travail — et l'estimation n'avait aucun lien avec la durée réelle : « 4h » loggées sur #1226,
+  1 h 19 mesurées ; sur les dix tickets de #1199 à #1228 qui en portaient une, elle valait de 2 à 8
+  fois la mesure. Or chaque session Claude Code horodate chacune de ses lignes, et range son
+  transcript sous le répertoire de son worktree — la session interactive que `/ticket-start` y
+  relocalise comme celle d'un run, que `run.sh` y lance (§9.7). La mesure les **lit** :
+  - ce qui compte, ce sont les **tours** — d'un prompt (de la personne ou du pilote) au dernier
+    geste de la session qui le suit : réponse, appel ou retour d'outil, et la notification d'une
+    commande d'arrière-plan qu'elle attendait. L'attente de la **personne** entre deux prompts ne
+    compte pas, ce qui dispense de tout seuil de pause ;
+  - les tours sont **bornés par le démarrage du ticket** (`demarre`, posé par `begin`) : le
+    transcript déménage entier dans le worktree, et ce que la session a fait avant /ticket-start
+    n'est pas au ticket. Un ticket démarré avant #1244 se borne au jour de `debut` ;
+  - les sessions d'un ticket sont **unies**, pas additionnées (une reprise qui recopie son
+    historique, deux fenêtres), et les **agents du produit** que le banc ou la Control Tower lancent
+    dans le worktree (SDK Python, point d'entrée `sdk-py`) en sont écartés ;
+  - le libellé du log dit la source : `Cycle de dev — mesuré sur 2 session(s) Claude Code
+    (run+interactif), 7 tour(s)`.
+
+  Un ticket **sans session sur ce poste** (un transcript vit sur la machine qui l'a produit, ou un
+  ticket traité dans le clone principal) n'a rien à mesurer : `log-time-mesure` rend `3`, ne logge
+  rien et le dit. Ce n'est pas une invitation à estimer. `elapsed-days` reste un repère.
 - **Pas d'estimation prévisionnelle (`timeEstimate`)** : seul le temps *passé* est renseigné ; le
   champ Estimation reste disponible à la main dans GitLab si besoin.
-- **Idempotence** : ré-exécuter `/ticket-start` garde la date de début d'origine (ne la réinitialise
-  pas à aujourd'hui) et se contente de recalculer l'échéance. `/ticket-finish` vérifie le temps déjà
-  loggé (`get-time-spent <iid> --hors-import`) et **n'en rajoute pas** si un cycle est déjà
-  enregistré, pour ne pas doubler. ⚠ **`--hors-import` et non le total**, depuis que #400 rapatrie
-  l'historique de temps des tickets importés de GitLab (docs/27 §12.4) : leur total n'est jamais nul,
-  même avant qu'une session ait travaillé dessus, et le garde-fou avalerait sinon en silence le temps
-  de celle qui termine le ticket. Un historique repris n'est pas un cycle de dev déjà loggé.
+- **Idempotence** : ré-exécuter `/ticket-start` garde la date de début et l'instant d'origine (ne
+  les réinitialise pas) et se contente de recalculer l'échéance. `log-time-mesure` logge une
+  **différence** : la mesure, moins ce qui est déjà loggé **hors historique importé**
+  (`get-time-spent <iid> --hors-import`), arrondie à la minute. Rejoué, il n'ajoute que le travail
+  fait depuis — là où l'ancienne règle, « du temps est déjà loggé, n'en rajoute pas », perdait celui
+  d'une reprise. ⚠ **`--hors-import` et non le total**, depuis que #400 rapatrie l'historique de
+  temps des tickets importés de GitLab (docs/27 §12.4) : leur total n'est jamais nul, même avant
+  qu'une session ait travaillé dessus. Un historique repris n'est pas un cycle de dev déjà loggé.
 - **Temps d'un ticket importé** : le suivi maison de `lib.sh` et le commentaire de métadonnées de
   l'import (`maestro:meta v1`) sont deux formats distincts, et c'est la **lecture** qui les joint —
   le commentaire d'import reste l'archive, jamais réécrit ; le temps qu'il porte est recopié dans le
@@ -1217,15 +1236,15 @@ collision avec le paramètre `depot` de chaque test aux yeux de ruff (112 `F811`
   l'écran (`control-tower`, `verify`, `banc-mise-en-page`) et `/design-veille` montent ces mêmes
   états, et aucun ne renvoie à une démo : `TestDemoHorsDesTextes`
   ([`tests/test_audit_commandes.py`](../tests/test_audit_commandes.py)) le garde.
-- **Pull Request** (`.github/pull_request_template.md`) : checklist de definition
-  of done + rappel `Closes #`. La checklist est un **constat, pas un formulaire** :
-  `/ticket-finish` coche lui-même les cases qu'il a **effectivement vérifiées** (conventions de
-  branche/commit, tests et doc jugés d'après le diff, pipeline verte constatée via `lib.sh
-  pipeline-latest`) et laisse vides les autres — notamment « Pipeline CI verte », qui est
-  **normalement vide au premier passage** : la CI ne démarrant qu'avec la PR (§8), le pipeline
-  naît après le constat. En cas de re-exécution, il remet la checklist à jour dans la
-  description de la PR sans toucher au reste (idempotent) et **ne décoche jamais** une case déjà
-  cochée (elle peut venir d'un humain). Les cases restées vides sont l'affaire du relecteur.
+- **Pull Request** (`.github/pull_request_template.md`) : `Closes #` puis ce que la PR change et
+  pourquoi — la forme que `/ticket-finish` écrit (étape 8). **Pas de checklist** depuis #1244. Elle
+  portait quatre cases de *definition of done* que la clôture cochait sur constat, et elles
+  redisaient ce que d'autres vérifient mieux : la mergeabilité par `merge-mr` (§6 — PR prête qui
+  ferme son ticket, rien de non poussé, aucun conflit, pipeline vert **sur la tête de la PR**), le
+  contrat du ticket par la confrontation des critères (#968, §6), les conventions de commit par le
+  hook `commit-msg` (§2). Sa case « Pipeline CI verte » restait **vide dans le cas nominal** : la
+  CI ne démarrant qu'avec la PR (§8), le pipeline naissait après le constat. Une trace que personne
+  ne lit, ou qui redit une vérification faite ailleurs, n'est pas un garde-fou.
 
 ---
 
@@ -1315,13 +1334,13 @@ n'est donc plus une salle d'attente mais un **état de passage**, où le ticket 
    quand `/ticket-finish` seul en porte ~14 000 tokens (mesuré par #1239).
    `tests/test_audit_commandes.py` garde leur présence et leur ordre dans les deux textes.
 4. **`/ticket-finish`** — pousse la branche, ouvre (ou passe en "Ready") la PR avec
-   `Closes #<iid>`, **coche dans sa checklist les cases qu'il a pu vérifier** (§4), passe le
-   **statut** à `En revue`.
+   `Closes #<iid>` et ce qu'elle change (§4), passe le **statut** à `En revue` et logge le temps
+   passé, **mesuré** (§3.3).
    - **Raccourci « zéro friction » : [`/ticket-ship`](../.claude/commands/ticket-ship.md).** Quand
      le travail est terminé mais **pas encore committé**, `/ticket-ship` enchaîne **en une seule
      action** : il **commite d'office** les changements en attente (message Conventional Commits
-     généré + `Closes #<iid>`, **sans confirmation** — même parti pris que l'auto-estimation du temps,
-     §3.3) puis **délègue à `/ticket-finish`** (source unique du push/PR/statut/temps ; son étape de
+     généré + `Closes #<iid>`, **sans confirmation** — même parti pris que le log du temps, mesuré
+     sans rien demander, §3.3) puis **délègue à `/ticket-finish`** (source unique du push/PR/statut/temps ; son étape de
      commit est alors sans objet, l'arbre étant propre). Il **refuse** si l'arbre est **vide** (rien à
      committer → utiliser `/ticket-finish`) ou **en conflit**, et **jamais sur `main`**. Le hook
      `commit-msg` (§2) reste appliqué — pas de `--no-verify`. Pensé pour la **boucle d'orchestration**
@@ -1618,7 +1637,7 @@ Ce que chacun porte :
   « En cours » l'arrête (recalibrage ticket #63).
 - **Tests et doc livrés avec le lot** (#1150) — chaque lot écrit et fait passer les tests de ce
   qu'il livre, et met à jour la doc de ce qu'il change, **dans sa propre PR** ; ses critères
-  d'acceptation le disent, et la case « Tests » de la checklist de PR se coche. **Aucun lot ne
+  d'acceptation le disent, et leur confrontation au diff le consigne (§6). **Aucun lot ne
   porte que des tests.** Un lot se découpe de préférence en **tranche visible** — un morceau qui
   marche de bout en bout — plutôt qu'en couche, pour que chaque merge rende quelque chose à
   l'utilisateur. Seule exception, les lots nés avant #1150 qui portent « Tests différés →
@@ -1894,6 +1913,13 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
   `--check` rend le même verdict **sans rien écrire**. Le PUT porte le `sha` vérifié, si bien qu'une
   tête qui bouge entre le contrôle et le merge le fait **échouer** au lieu de passer en silence.
 
+  **Ces quatre prérequis ont rendu la checklist de la PR sans objet, et #1244 l'a retirée** (§4).
+  Ses cases « pipeline verte » et « conventions » redisaient les prérequis 4 et le hook
+  `commit-msg`, ses cases « tests » et « doc » ce que la confrontation des critères consigne sur le
+  ticket (plus bas) — et la première restait vide dans le cas nominal, le pipeline naissant de la
+  PR. Ce qui garde le merge est ce qui est **éprouvé**, jamais une case cochée : la clôture n'en coche
+  plus aucune, et rien ne réclame le gabarit d'avant (`doctor.sh` ne l'a jamais lu).
+
   ⚠ **`gh pr merge` reste refusé** — par la couche permissions **et** par `guard.sh` (§11.6) — et ce
   n'est pas une contradiction. Ces deux filets jugent le **texte de la commande qu'une session
   lance**, jamais ce qu'un script appelle en interne : le geste **nu** demeure donc impossible
@@ -1999,7 +2025,8 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
   la clôture** — ce que le dispositif rend difficile est l'absence de **trace**, jamais le merge.
 - **Aucune clôture sans que les critères d'acceptation aient été confrontés au diff livré** (#968).
   Les critères étaient écrits par `/ticket-create`, lus au cadrage — puis plus jamais regardés : la
-  checklist de PR juge le procédé, `merge-mr` la mergeabilité, et le merge fermait le ticket sans
+  checklist de PR (retirée depuis par #1244) jugeait le procédé, `merge-mr` la mergeabilité, et le
+  merge fermait le ticket sans
   que personne ait demandé « fait-il ce qu'il disait ? ». C'est le défaut que `/milestone-bilan`
   corrige au jalon (#759), ici à l'échelle du ticket, où l'occasion se détruit au merge (branche
   supprimée, worktree ramassé). À l'étape **4ter** de `/ticket-finish` — après la relecture
@@ -2223,7 +2250,7 @@ barre le geste **nu**, que plus personne n'a de raison de lancer.
   serveur ressort « not connected » **sans message**, `@playwright/mcp` exigeant Node ≥ 20.
 - **Texte long vers la forge : par un FICHIER et par les helpers.** Tout aller-retour
   lecture → réécriture d'une description passe par `get-description`/`set-description` (ticket) et
-  `get-mr-description`/`set-mr-description` (PR) — mettre à jour la checklist d'une PR, réécrire le
+  `get-mr-description`/`set-mr-description` (PR) — compléter la description d'une PR, réécrire le
   corps d'un ticket —, et la création par leurs pendants (#233) : `create-mr <iid> <fichier>` ouvre
   la PR **en Draft vers `main`** (titre lu dans le ticket via `issue-title`, description lue dans le
   fichier, idempotent — une PR ouverte est mise à jour au lieu d'échouer) et `issue-note <iid>
@@ -5354,6 +5381,14 @@ plus récente qui l'emporte, le repli sans registre, `CLAUDE_CONFIG_DIR` suivi p
 par les transcripts, la troncature annoncée et son échappatoire, et un identifiant rendu une seule
 fois ; puis, pour #424, l'avertissement de départ avec son identifiant tiré de l'environnement, son
 repli hors session, son silence sur le verdict `ICI`, et la cause portée par le pied de `sessions`.
+
+**Les mêmes transcripts mesurent le temps d'un ticket** (#1244) : `worktree.sh temps <iid>
+[--depuis <instant>]` en lit les horodatages et rend, en une ligne TSV, la durée des **tours** de
+ses sessions, leur nombre et leur régime — la règle est en §3.3, et c'est `lib.sh log-time-mesure`
+qui la logge à la clôture. Même adressage, même portée (ce poste), aucune seconde formule. Couvert
+par `test_worktree.py` : l'attente entre deux tours exclue, la notification d'une tâche qui prolonge
+son tour, la ligne méta qui ne le prolonge pas, les agents du produit écartés, le régime nommé, les
+sessions unies, la borne du démarrage, et le silence d'un ticket sans session.
 
 ---
 

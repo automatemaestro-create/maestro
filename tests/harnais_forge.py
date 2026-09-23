@@ -1040,6 +1040,11 @@ class Depot:
         reglages: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         environnement = os.environ.copy()
+        # Les transcripts Claude Code (#1244) se lisent sous `CLAUDE_CONFIG_DIR` avant `HOME`, et
+        # les worktrees sous `MAESTRO_WORKTREE_DIR` : sur un poste qui les pose, rediriger `HOME`
+        # seul ferait mesurer le VRAI travail de la machine, et le verdict dépendrait du poste.
+        for cle in ("CLAUDE_CONFIG_DIR", "MAESTRO_WORKTREE_DIR"):
+            environnement.pop(cle, None)
         environnement.update(
             {
                 "HOME": str(self.home),
@@ -1152,6 +1157,9 @@ def monte_depot(tmp_path: Path) -> Depot:
         # jugement incomplet, et une grille introuvable est une panne — sans elle, chaque
         # consignation de test échouerait en `1` au lieu d'éprouver ce qu'elle vise.
         "scripts/design/grille-relecture.tsv",
+        # `log-time-mesure` (#1244) demande la mesure à `worktree.sh temps`, qui seul sait où
+        # vivent les transcripts d'un ticket : la règle de l'adressage n'est écrite qu'une fois.
+        "scripts/git/worktree.sh",
     ):
         cible = racine / relatif
         cible.parent.mkdir(parents=True, exist_ok=True)

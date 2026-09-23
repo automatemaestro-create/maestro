@@ -129,8 +129,9 @@ propres tests** : il n'y a plus de lot final « tests + doc » ([docs/10 §5.1](
 /ticket-ship
 ```
 
-commite ce qui est en attente, pousse, ouvre la Pull Request (`Closes #<iid>`, checklist
-renseignée), passe le ticket « En revue » et loggue le temps. Aucun relecteur n'est désigné au
+commite ce qui est en attente, pousse, ouvre la Pull Request (`Closes #<iid>` et ce qu'elle
+change), passe le ticket « En revue » et loggue le temps, mesuré sur les sessions du ticket.
+Aucun relecteur n'est désigné au
 passage — voir §5. Si le commit est déjà fait, `/ticket-finish` fait la même chose sans l'étape de
 commit.
 
