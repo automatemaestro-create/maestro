@@ -197,7 +197,11 @@ ARBORESCENCE = {
     # node_modules) sont ignorés de git. Sans ça ils compteraient comme du travail non commité et
     # ramèneraient tout diff au périmètre maximal — le filet serait juste, mais pour de mauvaises
     # raisons, et ces tests ne prouveraient plus rien.
-    ".gitignore": ".venv/\n.tools/\nnode_modules/\n",
+    #
+    # `.maestro/` aussi, pour la même raison et depuis #1242 : les journaux du filet y vivent, avec
+    # l'empreinte de son dernier vert. Non ignorés, ils entraient dans le diff du lancement suivant
+    # — et dans l'empreinte, qui changeait donc à chaque passage du seul fait du filet lui-même.
+    ".gitignore": ".venv/\n.tools/\nnode_modules/\n.maestro/\n",
 }
 
 #: Le `pyproject.toml` du dépôt jetable. Son CONTENU n'a aucune importance — seule compte sa
@@ -454,6 +458,20 @@ class Clone:
         cible.parent.mkdir(parents=True, exist_ok=True)
         with cible.open("a", encoding="utf-8", newline="\n") as fichier:
             fichier.write(contenu)
+
+    def pose_et_pousse(self, fichiers: dict[str, str], message: str = "test: décor") -> None:
+        """Des fichiers COMMITÉS ET POUSSÉS — hors du diff, donc invisibles au périmètre.
+
+        C'est ce qui permet de poser une suite ou un module de décor sans qu'il entre lui-même dans
+        le périmètre par un autre chemin : l'assertion ne dirait plus rien de la règle éprouvée.
+        """
+        for chemin, contenu in fichiers.items():
+            cible = self.racine / chemin
+            cible.parent.mkdir(parents=True, exist_ok=True)
+            cible.write_text(contenu, encoding="utf-8", newline="\n")
+        self.git("add", "-A")
+        self.git("commit", "--quiet", "-m", message)
+        self.git("push", "--quiet", "origin", "main")
 
     def appels(self) -> list[str]:
         if not self.journal.exists():
@@ -790,19 +808,25 @@ def suites_jouees(appels: list[str]) -> list[str]:
     return [mot for mot in lances[0].split() if mot.startswith("tests/")]
 
 
-def test_une_modification_de_maestro_ne_joue_pas_l_outillage(clone: Clone) -> None:
-    """Le cas courant : on écrit du code applicatif, les tests qui pilotent des scripts n'ont rien
-    de neuf à dire — et ce sont eux qui coûtent 9 des 10 minutes."""
+def test_une_modification_de_maestro_ne_joue_que_les_suites_qui_nomment_le_module(
+    clone: Clone,
+) -> None:
+    """Le cas courant, et le renversement de #1242 : on écrit du code applicatif, et seules les
+    suites qui NOMMENT le module touché ont quelque chose de neuf à dire.
+
+    Jusqu'à #1242, `maestro/**` jouait toutes les suites applicatives — 105 sur 143 dans le vrai
+    dépôt, 265 s par filet — pour un verdict que le pipeline de la PR rend de toute façon en entier.
+    `test_horloge` est applicative et ne nomme pas `maestro.moteur` : elle n'est plus jouée.
+    """
     clone.equipe_tout()
     clone.modifie("maestro/moteur.py")
     acheve = clone.lance("--only", "pytest")
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
-    jouees = suites_jouees(clone.appels())
-    assert "tests/test_moteur.py" in jouees
-    # Une suite qui ne cite aucun script est APPLICATIVE par défaut : jamais sautée en silence.
-    assert "tests/test_horloge.py" in jouees
-    assert "tests/test_outillage.py" not in jouees
-    assert "maestro/** modifié" in ligne_du_job(acheve.stdout, "pytest")
+    assert suites_jouees(clone.appels()) == ["tests/test_moteur.py"]
+    ligne = ligne_du_job(acheve.stdout, "pytest")
+    assert "maestro.moteur" in ligne, ligne
+    # Le verdict le dit toujours : c'est un sous-ensemble, pas le vert du pipeline.
+    assert "Périmètre réduit" in acheve.stdout
 
 
 def test_une_modification_de_script_ne_joue_que_les_suites_qui_le_nomment(clone: Clone) -> None:
@@ -1098,6 +1122,303 @@ def test_complet_rejoue_toute_la_suite_avec_sa_couverture(clone: Clone) -> None:
     assert "Périmètre réduit" not in acheve.stdout
 
 
+# --- Le périmètre de maestro/** : la règle du nom (#1242) ----------------------------------------
+# `maestro/**` jouait toutes les suites applicatives, « jamais affinées à l'intérieur ». #1242 le
+# renverse : seules jouent les suites qui NOMMENT le module touché, et un module que personne ne
+# nomme ramène les applicatives — un élargissement, jamais une abstention. Le couplage invisible
+# d'une recherche textuelle se paye désormais dans le pipeline de la PR, qui rejoue tout.
+
+#: Un module de décor dans un paquet, et la donnée qu'il lit par son nom.
+PILOTES = {
+    "maestro/pilotes/__init__.py": "",
+    "maestro/pilotes/radio.py": (
+        "from pathlib import Path\n\n"
+        'CONSIGNE = Path(__file__).parent / "consigne.md"\n'
+    ),
+    "maestro/pilotes/consigne.md": "# Consigne\n",
+}
+
+
+@pytest.mark.parametrize(
+    ("forme", "texte"),
+    [
+        ("nom dotté", 'monkeypatch.setattr("maestro.pilotes.radio.CONSIGNE", None)\n'),
+        ("import dotté", "import maestro.pilotes.radio as radio\n"),
+        ("chemin", 'SOURCE = "maestro/pilotes/radio.py"\n'),
+        ("segments pathlib", 'SOURCE = RACINE / "maestro" / "pilotes" / "radio.py"\n'),
+        ("from … import", "from maestro.pilotes import radio\n"),
+        ("from … import (…)", "from maestro.pilotes import (\n    boussole,\n    radio,\n)\n"),
+    ],
+)
+def test_un_module_se_nomme_sous_chacune_de_ses_formes(
+    clone: Clone, forme: str, texte: str
+) -> None:
+    """Chaque forme par laquelle un test atteint un module le nomme — et le fait jouer."""
+    clone.equipe_tout()
+    clone.pose_et_pousse({**PILOTES, "tests/test_radio.py": texte}, f"test: {forme}")
+
+    clone.modifie("maestro/pilotes/radio.py")
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert suites_jouees(clone.appels()) == ["tests/test_radio.py"], forme
+    assert "maestro.pilotes.radio" in ligne_du_job(acheve.stdout, "pytest")
+
+
+def test_un_nom_de_module_ne_matche_pas_un_voisin(clone: Clone) -> None:
+    """Le motif prouvé sur des échantillons fautifs : chaque appât CONTIENT `radio` ou
+    `maestro.pilotes.radio` en sous-chaîne, et aucun ne nomme le module.
+
+    Un nom cherché en sous-chaîne tirerait `radiophare`, `radios` et `radio_x` dans le périmètre de
+    `radio.py` — le défaut que #372 a corrigé pour les scripts (`lib.sh` dans `hashlib.sha256`).
+    """
+    appats = {
+        "tests/test_radios.py": "import maestro.pilotes.radios\n",
+        "tests/test_radio_x.py": 'patch("maestro.pilotes.radio_x.emet")\n',
+        "tests/test_radiophare.py": "from maestro.pilotes import radiophare\n",
+        # La liste entre parenthèses se referme AVANT le mot : il n'en fait pas partie.
+        "tests/test_liste_close.py": (
+            "from maestro.pilotes import (\n    boussole,\n)\n\nradio = None\n"
+        ),
+        "tests/test_autre_paquet.py": "from maestro.autre import radio\n",
+    }
+    for chemin, texte in appats.items():
+        assert "radio" in texte, f"{chemin} : l'appât ne porte plus le mot, test désamorcé"
+    clone.equipe_tout()
+    clone.pose_et_pousse(
+        {**PILOTES, **appats, "tests/test_radio.py": "from maestro.pilotes import radio\n"}
+    )
+
+    clone.modifie("maestro/pilotes/radio.py")
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert suites_jouees(clone.appels()) == ["tests/test_radio.py"]
+
+
+@pytest.mark.parametrize(
+    ("fichier", "texte"),
+    [
+        # Importer `maestro.pilotes.radio` exécute `maestro/pilotes/__init__.py`.
+        ("maestro/pilotes/__init__.py", "from maestro.pilotes.radio import CONSIGNE\n"),
+        # `python -m maestro.pilotes` exécute `maestro/pilotes/__main__.py` — et ne le nomme pas
+        # autrement : c'est ainsi que les scénarios de référence se jouent (#1152).
+        ("maestro/pilotes/__main__.py", 'LANCE = ["python", "-m", "maestro.pilotes"]\n'),
+    ],
+)
+def test_un_paquet_est_nomme_par_ce_qui_l_execute(clone: Clone, fichier: str, texte: str) -> None:
+    clone.equipe_tout()
+    clone.pose_et_pousse({**PILOTES, fichier: "", "tests/test_radio.py": texte})
+
+    clone.modifie(fichier)
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert suites_jouees(clone.appels()) == ["tests/test_radio.py"]
+
+
+def test_un_module_que_personne_ne_nomme_elargit_aux_suites_applicatives(clone: Clone) -> None:
+    """Le sens de dérive du filet, tenu à l'intérieur de `maestro/` : un module qu'aucune suite ne
+    nomme ramène l'ANCIENNE règle — toutes les applicatives —, jamais une abstention.
+
+    Pas la suite entière non plus : les suites d'outillage pilotent des scripts, et le verdict
+    reste « Périmètre réduit ». Dans le vrai dépôt, 16 modules sur 195 sont dans ce cas.
+    """
+    clone.equipe_tout()
+    clone.pose_et_pousse({"maestro/orphelin.py": "def seul() -> None: ...\n"})
+    for suite in sorted((clone.racine / "tests").glob("test_*.py")):
+        assert "orphelin" not in suite.read_text(encoding="utf-8"), (
+            f"{suite.name} nomme le module : le test d'élargissement est désamorcé"
+        )
+
+    clone.modifie("maestro/orphelin.py")
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    jouees = suites_jouees(clone.appels())
+    # Les applicatives, qui ne nomment pas le module…
+    assert {"tests/test_moteur.py", "tests/test_horloge.py"} <= set(jouees), jouees
+    # …mais pas l'outillage, qui pilote des scripts.
+    assert "tests/test_outillage.py" not in jouees
+    assert "tests/test_empreinte.py" not in jouees
+    ligne = ligne_du_job(acheve.stdout, "pytest")
+    assert "aucune suite ne nomme maestro.orphelin" in ligne, ligne
+    assert "toute la suite" not in ligne
+    assert "Périmètre réduit" in acheve.stdout
+
+
+def test_une_donnee_de_maestro_vaut_les_suites_du_module_qui_la_lit(clone: Clone) -> None:
+    """Un playbook en Markdown n'est nommé par aucune suite : c'est le module qui le CHARGE qui
+    l'est, et ses suites verront la donnée changer."""
+    clone.equipe_tout()
+    clone.pose_et_pousse({**PILOTES, "tests/test_radio.py": "from maestro.pilotes import radio\n"})
+    for suite in sorted((clone.racine / "tests").glob("test_*.py")):
+        assert "consigne.md" not in suite.read_text(encoding="utf-8"), (
+            f"{suite.name} cite la donnée : le repli par son lecteur n'est plus éprouvé"
+        )
+
+    clone.modifie("maestro/pilotes/consigne.md", "une ligne de plus\n")
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert suites_jouees(clone.appels()) == ["tests/test_radio.py"]
+    assert "consigne.md lu par maestro.pilotes.radio" in ligne_du_job(acheve.stdout, "pytest")
+
+
+# --- Un vert par état de l'arbre (#1242) ----------------------------------------------------------
+# Mesuré sur 8 runs (20-23 septembre, 50 tickets) : le filet pesait 19 % du temps d'un ticket, et
+# 19 tickets sur 46 le relançaient à la clôture sur un arbre déjà vert. Un vert retient désormais
+# l'empreinte du CONTENU qu'il a vérifié : le même appel sur le même contenu s'abstient en le
+# disant, et le moindre fichier qui bouge rejoue.
+
+
+def vert_puis_rappel(clone: Clone, *args: str) -> subprocess.CompletedProcess[str]:
+    """Un premier filet vert sur `maestro/moteur.py`, puis le journal des outils vidé : ce que
+    le rappel joue se lit seul."""
+    clone.equipe_tout()
+    clone.modifie("maestro/moteur.py")
+    premier = clone.lance(*args)
+    assert premier.returncode == 0, premier.stdout + premier.stderr
+    assert "Verdict : VERT" in premier.stdout and "(partiel)" not in premier.stdout, premier.stdout
+    assert clone.appels(), "le premier filet devait jouer quelque chose"
+    clone.journal.unlink()
+    return premier
+
+
+def test_un_arbre_deja_vert_ne_rejoue_rien_et_le_dit(clone: Clone) -> None:
+    vert_puis_rappel(clone)
+
+    acheve = clone.lance()
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    # Aucun outil appelé : ni lint, ni pytest, ni sonde.
+    assert clone.appels() == []
+    assert "Déjà vert" in acheve.stdout
+    assert "Verdict : VERT (déjà rendu)" in acheve.stdout
+    assert "--rejouer" in acheve.stdout
+    # « Rien n'a tourné » ne doit pas se lire « tout a tourné » : le résumé reconduit est redit,
+    # périmètre réduit compris.
+    assert "maestro.moteur" in ligne_du_job(acheve.stdout, "pytest")
+    assert "Périmètre réduit" in acheve.stdout
+
+
+def test_un_commit_du_travail_deja_vert_ne_rejoue_pas(clone: Clone) -> None:
+    """Le geste de `/ticket-ship` : le travail vérifié non commité est commité, puis
+    `/ticket-finish` rappelle le filet. Aucun fichier n'a bougé : l'empreinte est celle du
+    CONTENU, pas de HEAD, et le vert tient."""
+    vert_puis_rappel(clone)
+    clone.git("add", "-A")
+    clone.git("commit", "--quiet", "-m", "feat: le travail vérifié")
+
+    acheve = clone.lance()
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "Verdict : VERT (déjà rendu)" in acheve.stdout
+    assert clone.appels() == []
+
+
+@pytest.mark.parametrize(
+    "mouvement",
+    ["travail non commité", "fichier nouveau", "commit", "fichier supprimé"],
+)
+def test_un_fichier_qui_bouge_rejoue(clone: Clone, mouvement: str) -> None:
+    vert_puis_rappel(clone)
+    if mouvement == "travail non commité":
+        clone.modifie("maestro/moteur.py", "# encore\n")
+    elif mouvement == "fichier nouveau":
+        clone.modifie("maestro/nouveau.py", "# nouveau\n")
+    elif mouvement == "commit":
+        clone.modifie("docs/10-workflow-git.md", "une phrase de plus\n")
+        clone.git("add", "-A")
+        clone.git("commit", "--quiet", "-m", "docs: une phrase")
+    else:
+        (clone.racine / "docs" / "10-workflow-git.md").unlink()
+
+    acheve = clone.lance()
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "Déjà vert" not in acheve.stdout, mouvement
+    assert "Verdict : VERT (déjà rendu)" not in acheve.stdout
+    assert lancements_pytest(clone.appels()), f"{mouvement} : pytest devait rejouer"
+
+
+def test_un_vert_ne_vaut_que_pour_les_memes_options(clone: Clone) -> None:
+    """Un « --only mypy » vert ne dit rien de pytest : un autre appel rejoue. Les options
+    s'entendent développées — « --only lint » et « --only shellcheck,python-lint » sont le même."""
+    vert_puis_rappel(clone, "--only", "mypy")
+    acheve = clone.lance("--only", "pytest")
+    assert "Déjà vert" not in acheve.stdout
+    assert lancements_pytest(clone.appels())
+
+    assert clone.lance("--only", "lint").returncode == 0
+    assert "Déjà vert" in clone.lance("--only", "shellcheck,python-lint").stdout
+
+
+def test_rejouer_passe_outre(clone: Clone) -> None:
+    vert_puis_rappel(clone)
+    acheve = clone.lance("--rejouer")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "Déjà vert" not in acheve.stdout
+    assert lancements_pytest(clone.appels())
+
+
+def test_un_vert_partiel_ne_se_retient_pas(clone: Clone) -> None:
+    """Un job ignoré faute d'outil rejouera le jour où l'outil est là : un vert partiel n'est
+    pas reconduit."""
+    clone.pose_shim("shellcheck", corps=SHIM_SHELLCHECK)     # le venv, lui, reste absent
+    assert "Verdict : VERT (partiel)" in clone.lance("--only", "lint").stdout
+
+    clone.equipe_tout()
+    acheve = clone.lance("--only", "lint")
+    assert "Déjà vert" not in acheve.stdout
+    assert "IGNORÉ" not in ligne_du_job(acheve.stdout, "python-lint")
+
+
+def test_un_rouge_efface_le_vert(clone: Clone) -> None:
+    """Rejoué et rouge, l'arbre n'a plus de vert à redire — même si le contenu n'a pas bougé
+    (un test instable, un outil mis à jour)."""
+    vert_puis_rappel(clone, "--only", "mypy")
+    rouge = clone.lance("--only", "mypy", "--rejouer", MAESTRO_FAUX_MYPY_CODE="1")
+    assert rouge.returncode == 1
+    clone.journal.unlink()
+
+    acheve = clone.lance("--only", "mypy")
+    assert "Déjà vert" not in acheve.stdout
+    assert any(appel.startswith("mypy ") for appel in clone.appels())
+
+
+def test_un_arbre_modifie_pendant_le_filet_ne_retient_pas_son_vert(clone: Clone) -> None:
+    """Le vert porte sur l'état du DÉPART. Un fichier qui bouge pendant que les jobs tournent le
+    rend caduc : le retenir le ferait reconduire sur un état jamais vérifié."""
+    clone.equipe_tout()
+    moteur = clone.racine / "maestro" / "moteur.py"
+    depart = moteur.read_bytes()
+    clone.pose_outil_venv(
+        "ruff",
+        corps="#!/usr/bin/env bash\nprintf '# pendant\\n' >> maestro/moteur.py\nexit 0\n",
+    )
+    acheve = clone.lance("--only", "python-lint")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "Arbre modifié pendant le filet" in acheve.stdout
+
+    # Retour au contenu du DÉPART, celui dont le vert aurait été retenu : s'il l'avait été, le
+    # rappel s'abstiendrait. Sans ce retour, l'arbre modifié rejouerait de toute façon, et le test
+    # passerait sans rien prouver.
+    moteur.write_bytes(depart)
+    clone.pose_outil_venv("ruff")
+    assert "Déjà vert" not in clone.lance("--only", "python-lint").stdout
+
+
+def test_l_abstention_ne_prend_jamais_de_tour(clone: Clone) -> None:
+    """Reconduire un vert ne lance aucun job : attendre derrière un filet qui joue serait absurde.
+    L'abstention se décide donc AVANT la file (#745)."""
+    vert_puis_rappel(clone, "--only", "mypy")
+    temoin = clone.tmp / "porteur.pris"
+    porteur = lance_porteur(clone, temoin, garde=True)
+    try:
+        attend(lambda: temoin.exists(), quoi="le porteur a pris le verrou")
+        resultat = clone.lance("--only", "mypy")
+    finally:
+        Path(f"{temoin}.stop").touch()
+        porteur.communicate(timeout=60)
+
+    assert resultat.returncode == 0, resultat.stdout
+    assert "Déjà vert" in resultat.stdout
+    assert "j'attends mon tour" not in resultat.stdout
+
+
 # --- Le plafond de workers pytest (#285) ----------------------------------------------------------
 # `-n auto` demande un worker par cœur logique — 16 sur le poste de mesure. La contrainte n'est pas
 # le CPU mais la MÉMOIRE : ~130 Mo par worker, soit ~2 Go à seize pour ~1,8 Go de RAM libre. Le
@@ -1145,7 +1466,9 @@ def test_le_plafond_de_workers_se_regle(clone: Clone) -> None:
     assert workers_pytest(lancements_pytest(clone.appels())[0]) == 2
 
     clone.journal.unlink()
-    acheve = clone.lance("--only", "pytest", MAESTRO_PYTEST_WORKERS="beaucoup")
+    # Même arbre, autre réglage : « --rejouer », sans quoi le filet reconduirait le vert du premier
+    # lancement sans rien jouer (#1242).
+    acheve = clone.lance("--only", "pytest", "--rejouer", MAESTRO_PYTEST_WORKERS="beaucoup")
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
     workers = workers_pytest(lancements_pytest(clone.appels())[0])
     assert workers is not None and 1 <= workers <= 8
@@ -1478,9 +1801,11 @@ def test_le_ramassage_s_eteint_et_ne_fait_jamais_echouer_le_job(clone: Clone) ->
     assert not _retirees(clone.appels()), "MAESTRO_PYTEST_GC=0 doit tout éteindre"
 
     clone.journal.unlink(missing_ok=True)
+    # Même arbre, autre docker : « --rejouer » (#1242), sinon le vert d'avant serait reconduit.
     recalcitrant = clone.lance(
         "--only",
         "pytest",
+        "--rejouer",
         MAESTRO_FAUX_DOCKER_INSPECT_CODE="1",
         MAESTRO_FAUX_DOCKER_IMAGES="maestro-pytest:vieille\\n",
         # Cibler `rmi` SEUL, et pas `MAESTRO_FAUX_DOCKER_CODE` : celui-ci fait aussi échouer le
@@ -1952,8 +2277,10 @@ def test_un_plantage_rattrape_par_une_relance_est_nomme_quand_le_moteur_repond(
 
     (clone.tmp / "docker-demarre").unlink()
     journal.write_text(_plantage("2000-01-01T00:00:00.000000000Z") + "\n", encoding="utf-8")
+    # Même arbre, autre démarrage : « --rejouer » (#1242), sinon le résumé redit serait celui du
+    # premier lancement — plantage compris.
     acheve = clone.lance(
-        "--only", "pytest",
+        "--only", "pytest", "--rejouer",
         MAESTRO_FAUX_DOCKER_TEMOIN=str(clone.tmp / "docker-demarre"),
         MAESTRO_DOCKER_JOURNAL_BACKEND=str(journal),
         **DEMON_ENDORMI,
@@ -2633,7 +2960,10 @@ def test_le_journal_fait_table_rase_a_chaque_lancement(clone: Clone) -> None:
     fossile = journal_ci(clone) / "pytest.log"
     fossile.write_text("verdict d'hier\n", encoding="utf-8", newline="\n")
 
-    acheve = clone.lance("--only", "mypy")
+    # « --rejouer » depuis #1242 : sur le même arbre, le filet reconduirait le vert sans rien jouer
+    # — et sans rien raser, ses journaux étant ceux du vert qu'il redit. La table rase est celle
+    # d'un lancement qui JOUE.
+    acheve = clone.lance("--only", "mypy", "--rejouer")
 
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
     assert not fossile.exists(), "un journal d'un job non joué survivrait au lancement suivant"

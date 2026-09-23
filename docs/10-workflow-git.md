@@ -2940,7 +2940,7 @@ partira au push), fichier par fichier :
 
 | Ce qui change | Ce qui se joue |
 |---|---|
-| `maestro/**` | toutes les suites **applicatives** |
+| `maestro/**` | les suites qui **nomment le module** ; une donnée, celles du module qui la lit ; personne → les suites **applicatives** (#1242, ci-dessous) |
 | `scripts/**`, `.claude/**`, `.github/**`, `.env.example`… | les suites qui **nomment** le fichier — à défaut, celles qui nomment le **chemin de son dossier** (ci-dessous) |
 | `tests/test_*.py` | elles-mêmes |
 | `tests/conftest.py`, `pyproject.toml`, `.node-version` | la suite entière |
@@ -3006,11 +3006,61 @@ Il ne matche pas `tests/test_*.py`, donc le classement le range dans « tout le 
 bon verdict par accident heureux plutôt que par règle : deux suites en dépendent, un tri plus fin
 devrait les retrouver, et se tromper ici rendrait vert un filet qui n'a pas regardé le code changé.
 
-**On n'affine pas à l'intérieur de `maestro/`.** Sélectionner par module supposerait de lire le
-graphe d'imports : le couplage y est réel et invisible d'une recherche textuelle (un module de
-télémétrie touché casse le moteur sans que le test du moteur le nomme). Toutes les suites
-applicatives, 40 s, aucun faux négatif — le gain qu'apporterait un tri plus fin ne vaut pas le
-risque de rendre un vert qui n'a pas regardé le code fautif.
+**À l'intérieur de `maestro/`, la règle du nom — renversée par #1242.** Jusque-là, on n'affinait
+pas : sélectionner par module supposait de lire le graphe d'imports, le couplage y est réel et
+invisible d'une recherche textuelle (un module de télémétrie touché casse le moteur sans que le
+test du moteur le nomme), et « toutes les suites applicatives, 40 s, aucun faux négatif » valait
+mieux qu'un vert qui n'aurait pas regardé le code fautif.
+
+Les deux prémisses ont bougé, mesurées sur 8 runs du 20 au 23 septembre (50 tickets) :
+
+- les « 40 s » étaient devenus **265 s** de pytest par filet, pour 105 suites applicatives sur 143 —
+  à peine 15 % de moins que le job pytest de la CI (312 s), qui rejoue tout de toute façon ;
+- le filet pesait **19 %** du temps d'un ticket, quand la CI ne rougit que **7,7 %** du temps et
+  que `/mr-fix` pèse 2,9 % du coût. Le faux négatif qu'on s'interdisait coûte un aller-retour de
+  pipeline de temps en temps ; la précaution coûtait quatre minutes à chaque ticket.
+
+Le graphe d'imports n'est pas la réponse, et c'est mesuré aussi : sur les 195 modules, la fermeture
+**transitive** des imports de chaque suite atteint en moyenne **115 suites** par module — plus que
+les 105 applicatives. Le couplage de `maestro/` est total ; le suivre ne réduirait rien. Le filet
+applique donc à `maestro/**` la règle qui vaut partout ailleurs, le **nom** :
+
+- un **module** vaut les suites qui le nomment — nom dotté (`maestro.a.b`, import comme cible de
+  `patch`), chemin de fichier (`maestro/a/b.py`, ou en segments pathlib), `from maestro.a import b`
+  sur une ligne ou dans une liste entre parenthèses. Ancré des deux côtés : `maestro.a.b` ne nomme
+  ni `maestro.a.bc` ni `maestro.a.b_x`. Un sous-module nomme son paquet (l'importer exécute son
+  `__init__.py`), et `python -m maestro.a` nomme son `__main__.py` ;
+- une **donnée** (un playbook en Markdown) vaut les suites qui la citent, à défaut celles du module
+  qui la **lit** par son nom (`playbook.md` → `maestro.orchestrator.prompt`) ;
+- **personne** : les suites applicatives — l'ancienne règle, un élargissement et jamais une
+  abstention. Pas la suite entière : le verdict reste « Périmètre réduit ». 16 modules sur 195 sont
+  dans ce cas.
+
+Sur les 76 derniers commits de `main` qui touchent `maestro/**`, le périmètre passe de 105 suites à
+**44 en moyenne**, élargissements compris (9 commits). Le couplage invisible se paye désormais là
+où il se voit en entier : dans le pipeline de la PR, verdict complet et condition de merge (#165).
+`tests/test_ci_local.py` garde chaque forme du nom, ses voisins qui ne doivent pas matcher, et
+l'élargissement.
+
+**Un vert par état de l'arbre (#1242).** Sur les mêmes 8 runs, **19 tickets sur 46** relançaient le
+filet à l'étape 5 de `/ticket-finish` alors qu'ils venaient d'en obtenir un vert — jusqu'à deux
+heures de verts rejoués sur des fichiers qui n'avaient pas bougé. Un vert **entier** (aucun job
+ignoré) retient donc, sous `.maestro/ci-local/dernier-vert`, l'empreinte de ce qu'il a vérifié et
+les options qui l'ont rendu ; rappelé avec les mêmes options sur la même empreinte, le filet
+**s'abstient en le disant** — « Déjà vert », le résumé du vert reconduit, puis
+`Verdict : VERT (déjà rendu)` avec la commande pour passer outre, `--rejouer`. Quatre choix tiennent
+la règle :
+
+- l'empreinte est celle du **contenu**, pas de HEAD : chaque fichier suivi ou nouveau (hors
+  `.gitignore`) avec le hash de ce que contient le disque, tel que `git add` l'écrirait. Commiter un
+  travail déjà vérifié — le geste de `/ticket-ship`, juste avant que `/ticket-finish` ne rappelle
+  le filet — ne change rien ; le moindre octet qui bouge, commité ou non, rejoue ;
+- un vert ne vaut que pour les **mêmes options** (jobs développés, mode, régime demandé) : un
+  `--only mypy` vert ne dit rien de pytest ;
+- l'abstention se décide **avant la file** (#745, ci-dessous) : elle ne lance aucun job, elle n'a
+  aucun tour à attendre ;
+- un vert n'est retenu que si l'arbre **n'a pas bougé pendant** les jobs, et un lancement qui joue
+  rase le vert précédent avec ses journaux : un rouge ne laisse aucun vert à redire.
 
 **La contrepartie est assumée et dite.** Jouer moins en local, c'est découvrir plus de rouges dans
 le pipeline, sur le runner partagé de l'équipe (§8.1). Elle est bornée : le **lint tourne toujours
