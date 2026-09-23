@@ -894,7 +894,7 @@ def gestes_manquants(texte: str) -> list[str]:
 
 
 def etape_6_de_ticket_start() -> str:
-    """L'étape 6 de `/ticket-start`, aplatie : la méthode se lit là, pas ailleurs dans le fichier."""
+    """L'étape 6 de `/ticket-start`, aplatie : la méthode se lit là, pas ailleurs."""
     plat = aplatir(lire(TICKET_START))
     debut = plat.index("6. **Résumé court, puis enchaîne immédiatement**")
     return plat[debut : plat.index("7. **Variantes", debut)]
