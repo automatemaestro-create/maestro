@@ -978,6 +978,108 @@ def test_un_fichier_que_personne_ne_nomme_elargit_au_lieu_de_sauter(clone: Clone
     assert "aucune suite ne nomme .mcp.json" in ligne_du_job(acheve.stdout, "pytest")
 
 
+# --- Une suite que la branche supprime (#1252) ----------------------------------------------------
+# `fichiers_modifies` liste aussi les suppressions, et le cas `tests/test_*.py` passait le chemin à
+# pytest sans voir qu'il n'existait plus : « file or directory not found », code 4, un rouge du
+# filet qui ne dit rien du code. Une suite supprimée ne se joue donc pas, mais sa suppression n'est
+# pas muette : ce qui pouvait s'adosser à elle se juge par la règle du nom, et personne ne la
+# nomme ⇒ la suite entière — le sens de dérive du filet.
+
+#: La suite que les tests de ce bloc suppriment. Commitée ET poussée d'abord : elle est dans
+#: `origin/main`, et sa suppression est donc la seule chose que le diff dit d'elle.
+SUITE_SUPPRIMEE = "tests/test_perimee.py"
+
+
+def supprime_la_suite(clone: Clone, mouvement: str, voisines: dict[str, str] | None = None) -> None:
+    """Pose `SUITE_SUPPRIMEE` (et ses voisines) dans `origin/main`, puis la supprime.
+
+    `travail` la retire de l'arbre sans rien committer — le cas du défaut ; `commit` la retire par
+    un commit non poussé, que le diff depuis le merge-base voit seul.
+    """
+    clone.pose_et_pousse(
+        {SUITE_SUPPRIMEE: "def aide() -> None: ...\n", **(voisines or {})},
+        message="test: une suite à supprimer",
+    )
+    if mouvement == "travail":
+        (clone.racine / SUITE_SUPPRIMEE).unlink()
+    else:
+        clone.git("rm", "--quiet", SUITE_SUPPRIMEE)
+        clone.git("commit", "--quiet", "-m", "test: suite supprimée")
+
+
+@pytest.mark.parametrize("mouvement", ["travail", "commit"])
+def test_une_suite_supprimee_n_est_jamais_passee_a_pytest(clone: Clone, mouvement: str) -> None:
+    """Le défaut de #1252 : la suite supprimée partait à pytest, qui sortait en code 4."""
+    clone.equipe_tout()
+    supprime_la_suite(clone, mouvement)
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert SUITE_SUPPRIMEE not in suites_jouees(clone.appels())
+
+
+def test_une_suite_supprimee_que_personne_ne_nomme_elargit_a_toute_la_suite(
+    clone: Clone,
+) -> None:
+    """Personne ne nomme la suite supprimée : on ne sait pas ce qui s'adossait à elle, donc on
+    élargit, et le motif le dit — jamais une abstention silencieuse."""
+    clone.equipe_tout()
+    supprime_la_suite(clone, "travail")
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert suites_jouees(clone.appels()) == []
+    ligne = ligne_du_job(acheve.stdout, "pytest")
+    assert "toute la suite" in ligne and "test_perimee.py supprimée" in ligne, ligne
+
+
+def test_une_suite_supprimee_joue_les_suites_qui_la_nomment(clone: Clone) -> None:
+    """Une suite qui importe la suite supprimée casse avec elle : c'est elle qu'on joue.
+
+    Le nom se cherche ancré DES DEUX CÔTÉS : `test_perimee_ailleurs` n'est pas `test_perimee`, et
+    une suite tirée au sort sur une sous-chaîne remplacerait l'élargissement par un faux vert
+    motivé (#375).
+    """
+    clone.equipe_tout()
+    supprime_la_suite(
+        clone,
+        "travail",
+        {
+            "tests/test_voisine.py": "from tests.test_perimee import aide\n",
+            "tests/test_homonyme.py": "def test_perimee_ailleurs() -> None: ...\n",
+        },
+    )
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert suites_jouees(clone.appels()) == ["tests/test_voisine.py"]
+    ligne = ligne_du_job(acheve.stdout, "pytest")
+    assert "toute la suite" not in ligne and "test_perimee.py supprimée" in ligne, ligne
+
+
+@pytest.mark.parametrize("mouvement", ["travail", "commit"])
+def test_une_suite_renommee_joue_la_nouvelle_et_juge_l_ancienne(
+    clone: Clone, mouvement: str
+) -> None:
+    """Un renommage est une suppression ET un ajout, pas une paire « ancien -> nouveau ».
+
+    Indexé sans commit, `git status --porcelain` le rendait en une ligne `ancien -> nouveau`,
+    passée telle quelle à pytest ; commité, `git diff --name-only` ne rendait que le nouveau nom,
+    et la voisine qui importait l'ancien n'était pas jouée.
+    """
+    clone.equipe_tout()
+    clone.pose_et_pousse(
+        {
+            SUITE_SUPPRIMEE: "def aide() -> None: ...\n",
+            "tests/test_voisine.py": "from tests.test_perimee import aide\n",
+        },
+        message="test: une suite à renommer",
+    )
+    clone.git("mv", SUITE_SUPPRIMEE, "tests/test_neuve.py")
+    if mouvement == "commit":
+        clone.git("commit", "--quiet", "-m", "test: suite renommée")
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert suites_jouees(clone.appels()) == ["tests/test_neuve.py", "tests/test_voisine.py"]
+
+
 # --- La coque de bureau : ni « non classée », ni sautée en silence (#948) -------------------------
 # `apps/desktop/` est arrivé dans le dépôt avec #923 et n'était nommé par aucun des quatre
 # mécanismes qui décident « qu'est-ce qui est vérifié, et par qui ». Côté périmètre, la
