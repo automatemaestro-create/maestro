@@ -35,6 +35,7 @@ import type {
   EntreeRegistreMcp,
   EtapeQuestionnaireOutillage,
   EtatAgent,
+  EtatMagasin,
   FilChat,
   FragmentChat,
   FriseRun,
@@ -190,13 +191,24 @@ export function urlEvenements(portee: PorteeProjet): string {
  * La classe est portée **à la source**, jamais relue dans le message : un texte
  * qu'on analyse pour deviner la panne cesse de dire vrai à la première
  * reformulation.
+ *
+ * `magasin` (#1206) : l'API tourne, mais elle a perdu son magasin d'événements —
+ * elle le **nomme** dans le corps de son 503 (`panne: "magasin"`), avec la
+ * panne, sa cause, le geste et sa commande. Présent, il dit une troisième panne,
+ * et c'est lui qu'on lit, jamais le `detail`.
  */
 export class ErreurApi extends Error {
   readonly chemin: string;
   readonly statut: number | null;
   readonly motif: string;
+  readonly magasin: EtatMagasin | null;
 
-  constructor(chemin: string, statut: number | null, motif = "") {
+  constructor(
+    chemin: string,
+    statut: number | null,
+    motif = "",
+    magasin: EtatMagasin | null = null,
+  ) {
     super(
       statut === null
         ? `${chemin} n'a pas répondu`
@@ -206,6 +218,7 @@ export class ErreurApi extends Error {
     this.chemin = chemin;
     this.statut = statut;
     this.motif = motif;
+    this.magasin = magasin;
   }
 
   /** L'API n'a pas répondu du tout : le `fetch` a rejeté. */
@@ -230,15 +243,53 @@ export function panneDe(e: unknown): PanneApi {
   return e instanceof Error ? e.message : String(e);
 }
 
-/** Le `detail` d'une réponse en échec, quand elle en porte un de lisible. */
-async function motifDe(reponse: Response): Promise<string> {
+/**
+ * Ce qu'une réponse en échec dit d'elle-même : son `detail` quand il est
+ * lisible, et le magasin quand l'API **nomme** cette panne-là (#1206).
+ */
+async function lectureEnEchec(
+  reponse: Response,
+): Promise<{ motif: string; magasin: EtatMagasin | null }> {
   try {
-    const contenu = (await reponse.json()) as { detail?: unknown };
-    return typeof contenu.detail === "string" ? contenu.detail : "";
+    const contenu = (await reponse.json()) as {
+      detail?: unknown;
+      panne?: unknown;
+      magasin?: unknown;
+    };
+    return {
+      motif: typeof contenu.detail === "string" ? contenu.detail : "",
+      magasin:
+        contenu.panne === PANNE_MAGASIN ? etatMagasinDe(contenu.magasin) : null,
+    };
   } catch {
     // corps non JSON (une page d'erreur d'un proxy, un corps vide) : pas de motif
-    return "";
+    return { motif: "", magasin: null };
   }
+}
+
+/** Le nom que l'API donne à la perte de son magasin dans un 503 (`magasin.PANNE_MAGASIN`). */
+const PANNE_MAGASIN = "magasin";
+
+/**
+ * L'état du magasin tel que l'API le rend, champ par champ — ou `null` s'il
+ * manque de quoi nommer la panne. Un champ inattendu ne se devine pas.
+ */
+function etatMagasinDe(brut: unknown): EtatMagasin | null {
+  if (typeof brut !== "object" || brut === null) return null;
+  const champ = (nom: string): string | null => {
+    const valeur = (brut as Record<string, unknown>)[nom];
+    return typeof valeur === "string" && valeur !== "" ? valeur : null;
+  };
+  const titre = champ("titre");
+  if (titre === null) return null;
+  return {
+    disponible: (brut as Record<string, unknown>).disponible === true,
+    lieu: champ("lieu"),
+    titre,
+    motif: champ("motif"),
+    geste: champ("geste"),
+    commande: champ("commande"),
+  };
 }
 
 async function chargerJson<T>(chemin: string): Promise<T> {
@@ -249,7 +300,8 @@ async function chargerJson<T>(chemin: string): Promise<T> {
     throw ErreurApi.injoignable(chemin);
   }
   if (!reponse.ok) {
-    throw new ErreurApi(chemin, reponse.status, await motifDe(reponse));
+    const { motif, magasin } = await lectureEnEchec(reponse);
+    throw new ErreurApi(chemin, reponse.status, motif, magasin);
   }
   return (await reponse.json()) as T;
 }

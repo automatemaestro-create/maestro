@@ -36,6 +36,7 @@ from maestro.controltower import (
 )
 from maestro.controltower.magasin import (
     COMMANDE_REDIS,
+    PANNE_MAGASIN,
     ROUTES_HORS_GARDE,
     Magasin,
     endpoint_lisible,
@@ -114,8 +115,10 @@ def test_la_sante_ne_repond_plus_ok_quand_le_magasin_manque():
     magasin = corps["magasin"]
     assert magasin["disponible"] is False
     assert magasin["lieu"] == "Redis, redis://127.0.0.1:6399/0"
-    assert "injoignable" in magasin["motif"]
-    assert COMMANDE_REDIS in magasin["geste"]
+    assert magasin["titre"] == "Magasin des événements injoignable"
+    assert "Error 10061" in magasin["motif"]
+    assert magasin["geste"] == "relancer Redis, l'API reprend seule"
+    assert magasin["commande"] == COMMANDE_REDIS
 
 
 def test_la_sante_dit_ok_quand_le_magasin_repond_et_que_l_historique_est_relu():
@@ -145,10 +148,15 @@ def test_un_ecran_ne_lit_plus_un_vide_mais_la_panne(route: str):
         reponse = client.get(route)
 
     assert reponse.status_code == 503
-    detail = reponse.json()["detail"]
-    # La panne, où elle a frappé, puis le geste — sur une ligne.
-    assert detail.startswith("Magasin des événements injoignable (Redis, redis://127.0.0.1:6399/0)")
-    assert COMMANDE_REDIS in detail
+    corps = reponse.json()
+    # La panne, où elle a frappé, puis le geste — sur une ligne, pour tout client.
+    assert corps["detail"].startswith(
+        "Magasin des événements injoignable (Redis, redis://127.0.0.1:6399/0) : "
+    )
+    assert corps["detail"].endswith(f"— relancer Redis, l'API reprend seule ({COMMANDE_REDIS})")
+    # Et nommée par un champ, que l'écran lit sans relire le texte.
+    assert corps["panne"] == PANNE_MAGASIN
+    assert corps["magasin"]["commande"] == COMMANDE_REDIS
     assert reponse.headers["retry-after"]
 
 

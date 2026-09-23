@@ -175,7 +175,14 @@ def test_sante(client):
     assert reponse.json() == {
         "statut": "ok",
         "espace": "commun",
-        "magasin": {"disponible": True, "lieu": None, "motif": None, "geste": None},
+        "magasin": {
+            "disponible": True,
+            "lieu": None,
+            "titre": None,
+            "motif": None,
+            "geste": None,
+            "commande": None,
+        },
     }
 
 

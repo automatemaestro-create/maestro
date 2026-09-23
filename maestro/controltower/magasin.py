@@ -56,6 +56,10 @@ DELAI_SONDE_S = 1.0
 #: qu'un écran qui lit dix routes d'un coup ne pingue pas dix fois.
 VALIDITE_SONDE_S = 1.0
 
+#: Le nom de la panne dans un refus de la garde (`panne` du corps du 503) — ce
+#: par quoi l'écran la reconnaît, sans lire le texte du `detail`.
+PANNE_MAGASIN = "magasin"
+
 #: Les routes que la garde laisse passer, **avec leur raison** — l'inventaire est
 #: fermé exprès : une route qu'on ajoutera demain est gardée sans qu'on y pense.
 ROUTES_HORS_GARDE: dict[str, str] = {
@@ -89,23 +93,42 @@ class EtatMagasin:
     disponible: bool
     #: Où il vit (« Redis, redis://127.0.0.1:6379/0 »), `None` s'il vit en process.
     lieu: str | None = None
-    #: Ce qui manque, en une phrase — `None` quand rien ne manque.
+    #: Le nom de la panne, en tête (« Magasin des événements injoignable ») —
+    #: `None` quand rien ne manque.
+    titre: str | None = None
+    #: Ce qu'on en sait et ce qu'elle coûte, en une phrase — `None` quand rien ne manque.
     motif: str | None = None
-    #: Ce qu'il y a à faire — `None` quand rien ne manque.
+    #: Ce qu'il y a à faire, en mots — `None` quand rien ne manque.
     geste: str | None = None
+    #: La commande exacte du geste, quand il en a une — séparée des mots pour que
+    #: l'écran la montre comme une commande, et non noyée dans la phrase.
+    commande: str | None = None
 
     def detail(self) -> str:
-        """Le motif d'un refus : la panne, puis le geste, en une ligne lisible."""
-        if self.motif is None:
+        """Le motif d'un refus, en une ligne lisible : la panne, où, pourquoi, puis le geste.
+
+        C'est le `detail` que tout client lit ; l'écran, lui, compose la même
+        chose à partir des champs (`en_json`), sans relire ce texte.
+        """
+        if self.titre is None:
             return ""
-        return f"{self.motif} — {self.geste}" if self.geste else self.motif
+        texte = self.titre if self.lieu is None else f"{self.titre} ({self.lieu})"
+        if self.motif:
+            texte = f"{texte} : {self.motif}"
+        if self.geste:
+            texte = f"{texte} — {self.geste}"
+            if self.commande:
+                texte = f"{texte} ({self.commande})"
+        return texte
 
     def en_json(self) -> dict[str, Any]:
         return {
             "disponible": self.disponible,
             "lieu": self.lieu,
+            "titre": self.titre,
             "motif": self.motif,
             "geste": self.geste,
+            "commande": self.commande,
         }
 
 
@@ -169,27 +192,28 @@ class Magasin:
             return EtatMagasin(
                 disponible=False,
                 lieu=self._lieu,
+                titre="Magasin des événements injoignable",
                 motif=(
-                    f"Magasin des événements injoignable ({self._lieu or 'magasin'}) : "
                     f"{panne}. Rien de ce que l'écran montrerait n'est à jour, et ce "
                     "que publient les runs est perdu tant qu'il manque"
                 ),
-                geste=f"relancer Redis ({COMMANDE_REDIS}) ; l'API reprend seule",
+                geste="relancer Redis, l'API reprend seule",
+                commande=COMMANDE_REDIS,
             )
         if not self._rejeu_fait:
             # Le magasin répond, mais l'historique n'est pas dans l'état servi :
             # soit il revient à l'instant (la pompe relit), soit sa relecture
             # échoue pour une autre raison — et c'est cette raison qu'on dit.
             if self._echec_rejeu is None:
-                motif = "Historique pas encore relu : le magasin répond, l'API relit son journal"
+                titre = "Historique pas encore relu"
+                motif = "le magasin répond, l'API relit son journal"
             else:
-                motif = (
-                    f"Historique illisible ({self._lieu or 'magasin'}) : "
-                    f"{self._echec_rejeu}. L'état servi serait celui d'une API neuve"
-                )
+                titre = "Historique illisible"
+                motif = f"{self._echec_rejeu}. L'état servi serait celui d'une API neuve"
             return EtatMagasin(
                 disponible=False,
                 lieu=self._lieu,
+                titre=titre,
                 motif=motif,
                 geste="l'API relit seule ; si la panne dure, voir le journal de maestro-api",
             )
@@ -241,7 +265,12 @@ class GardeMagasin:
         if etat.disponible:
             await self._app(scope, receive, send)
             return
-        corps = json.dumps({"detail": etat.detail()}, ensure_ascii=False).encode("utf-8")
+        # `detail` pour tout client, et la panne **nommée** à côté : l'écran la
+        # reconnaît par ce champ, jamais en relisant le texte (#996).
+        corps = json.dumps(
+            {"detail": etat.detail(), "panne": PANNE_MAGASIN, "magasin": etat.en_json()},
+            ensure_ascii=False,
+        ).encode("utf-8")
         await send(
             {
                 "type": "http.response.start",
