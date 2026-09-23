@@ -2942,7 +2942,7 @@ partira au push), fichier par fichier :
 |---|---|
 | `maestro/**` | les suites qui **nomment le module** ; une donnée, celles du module qui la lit ; personne → les suites **applicatives** (#1242, ci-dessous) |
 | `scripts/**`, `.claude/**`, `.github/**`, `.env.example`… | les suites qui **nomment** le fichier — à défaut, celles qui nomment le **chemin de son dossier** (ci-dessous) |
-| `tests/test_*.py` | elles-mêmes |
+| `tests/test_*.py` | elles-mêmes ; une suite **supprimée**, celles qui la **nomment**, et personne → la suite entière (#1252, ci-dessous) |
 | `tests/conftest.py`, `pyproject.toml`, `.node-version` | la suite entière |
 | `docs/**`, `apps/web/**`, prose de la racine | aucune suite pytest (`web-build` couvre le front) |
 | `apps/desktop/**` | les suites qui la **nomment**, et **aucune** s'il n'y en a pas (#948, ci-dessous) |
@@ -3005,6 +3005,19 @@ sautée en silence.
 Il ne matche pas `tests/test_*.py`, donc le classement le range dans « tout le reste » — et c'est le
 bon verdict par accident heureux plutôt que par règle : deux suites en dépendent, un tri plus fin
 devrait les retrouver, et se tromper ici rendrait vert un filet qui n'a pas regardé le code changé.
+
+**Une suite supprimée ne se joue pas, et sa suppression élargit plutôt que de se taire (#1252).** Le
+diff liste aussi les suppressions. Le cas `tests/test_*.py` passait donc à pytest une suite que la
+branche avait retirée, et pytest sortait en code 4 (« file or directory not found ») : un rouge du
+filet qui ne disait rien du code. S'abstenir en silence aurait été l'erreur inverse. Une suite
+pouvait s'adosser à celle qui disparaît, en l'important ou en la citant dans un inventaire. Ce
+sont donc les suites qui **nomment** sa racine qui se jouent (`test_x`, ancré des deux côtés,
+pour que `test_x_bis` ne compte pas). Si personne ne la nomme, on ne sait pas ce qui s'y adossait,
+et c'est la suite entière : le motif le dit (« test_x.py supprimée, qu'aucune suite ne nomme »).
+Mesuré au 2026-09-23 : 70 suites sur 144 sont nommées par une autre, et supprimer une suite est un
+geste rare. Un **renommage** se lit comme une suppression plus un ajout (`--no-renames`). Sans cela,
+`git status` le rendait en une ligne « ancien -> nouveau » que rien ne sait classer, et `git diff`
+ne rendait que le nouveau nom, si bien que ce qui s'adossait à l'ancien n'était plus jugé.
 
 **À l'intérieur de `maestro/`, la règle du nom — renversée par #1242.** Jusque-là, on n'affinait
 pas : sélectionner par module supposait de lire le graphe d'imports, le couplage y est réel et

@@ -328,12 +328,17 @@ node_bindir() {
 # Les chemins (relatifs à la racine) que la branche modifie par rapport à origin/main, TRAVAIL NON
 # COMMITÉ COMPRIS : c'est ce qui partira au push, donc ce sur quoi le pipeline se prononcera. Sert
 # au périmètre de pytest (#214) comme à celui de web-build.
+#
+# Les SUPPRESSIONS en font partie : un chemin rendu ici peut ne plus exister (#1252). Et un
+# renommage y figure comme une suppression plus un ajout (`--no-renames`) : sans quoi `status`
+# le rendait en une seule ligne « ancien -> nouveau », que personne ne sait classer, et `diff` ne
+# rendait que le nouveau nom, si bien que ce qui s'adossait à l'ancien n'était plus jugé.
 fichiers_modifies() {
   local base
   base="$(git -C "$RACINE" merge-base origin/main HEAD 2>/dev/null)"
   {
-    [ -n "$base" ] && git -C "$RACINE" diff --name-only "$base" -- 2>/dev/null
-    git -C "$RACINE" status --porcelain --untracked-files=all 2>/dev/null | cut -c4-
+    [ -n "$base" ] && git -C "$RACINE" diff --no-renames --name-only "$base" -- 2>/dev/null
+    git -C "$RACINE" status --porcelain --no-renames --untracked-files=all 2>/dev/null | cut -c4-
   } | tr -d '"' | grep -v '^[[:space:]]*$' | sort -u
 }
 
@@ -750,6 +755,37 @@ classe_module() { # <chemin> <suites applicatives>
   ajoute_raison RAISONS_CHOIX "aucune suite ne nomme $raison : suites applicatives"
 }
 
+# Une suite que la branche SUPPRIME (#1252). Passée à pytest, elle le faisait sortir en code 4
+# (« file or directory not found ») : un rouge qui ne dit rien du code. Elle ne se joue donc pas,
+# mais sa suppression n'est pas muette. Pose ses résultats dans CHOISIES / PERIMETRE_TOUT, comme
+# `classe_par_nom`.
+#
+# Ce qui peut casser avec elle, ce sont les suites qui s'y adossent : elles l'importent
+# (`tests.test_x`) ou la citent (`tests/test_x.py`, un inventaire), c'est-à-dire qu'elles NOMMENT
+# sa racine. Ancrée des deux côtés : `test_x_bis` n'est pas `test_x`, et une suite tirée au sort
+# sur une sous-chaîne remplacerait l'élargissement par un faux vert motivé (#375).
+#
+# Personne ne la nomme : on ne sait pas ce qui s'adossait à elle (un balayage de `tests/`, un
+# inventaire tenu hors des suites), donc la suite entière, le sens de dérive du filet. Mesuré au
+# 2026-09-23 : 70 suites sur 144 sont nommées par une autre. Supprimer l'une des 74 autres coûte la
+# suite entière, pour un geste rare.
+classe_suite_supprimee() { # <chemin>
+  local base motif nommant="" suites=()
+  base="$(basename "$1")"
+  motif="(^|[^A-Za-z0-9_])$(echappe_ere "${base%.py}")([^A-Za-z0-9_]|$)"
+  mapfile -t suites < <(suites_toutes)
+  if [ "${#suites[@]}" -gt 0 ]; then
+    nommant="$(cd "$RACINE" && grep -lE -- "$motif" "${suites[@]}" 2>/dev/null | sort)"
+  fi
+  if [ -n "$nommant" ]; then
+    CHOISIES="$CHOISIES$nommant"$'\n'
+    ajoute_raison RAISONS_CHOIX "$base supprimée"
+    return 0
+  fi
+  PERIMETRE_TOUT=1
+  ajoute_raison RAISONS_TOUT "$base supprimée, qu'aucune suite ne nomme"
+}
+
 calcule_perimetre() {
   PERIMETRE_SUITES=""
   PERIMETRE_MOTIF=""
@@ -780,9 +816,13 @@ calcule_perimetre() {
         ajoute_raison RAISONS_TOUT "$fichier (transverse)"
         ;;
       tests/test_*.py)
-        CHOISIES="$CHOISIES$fichier"$'
+        if [ -f "$RACINE/$fichier" ]; then
+          CHOISIES="$CHOISIES$fichier"$'
 '
-        ajoute_raison RAISONS_CHOIX "suite modifiée"
+          ajoute_raison RAISONS_CHOIX "suite modifiée"
+        else
+          classe_suite_supprimee "$fichier"
+        fi
         ;;
       tests/*)
         PERIMETRE_TOUT=1
