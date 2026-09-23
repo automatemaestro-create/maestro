@@ -45,7 +45,9 @@ from maestro.providers import claude as claude_mod
 #: - `PRUNE_*` et `DEV_NULL` : passage `20260922-115803`, le premier joué **avec**
 #:   la règle. Elles ont appris deux choses qu'aucun exemple écrit à la table
 #:   n'aurait données — un agent nomme les chemins exclus *pour les éviter*, et
-#:   il jette le bruit d'un `find` dans `/dev/null`.
+#:   il jette le bruit d'un `find` dans `/dev/null` ;
+#: - `TEST_F` : passage `20260922-164402`, la réserve R1 du bouclage (#1211) —
+#:   l'agent vérifie qu'un skill existe, et `test` n'était pas un verbe connu.
 COMMANDE_S3 = (
     "find . -not -path './.git*' -not -path './.maestro*' | sort; "
     'echo "---agents skills---"; find .agents -maxdepth 4'
@@ -64,6 +66,10 @@ COMMANDE_DEV_NULL = (
     'find / -iname "SKILL.md" 2>/dev/null | head -20'
 )
 COMMANDE_LS_ATELIER = "ls -la src; echo '---'; ls -la .maestro"
+COMMANDE_TEST_F = (
+    "ls -la .agents/skills/ 2>/dev/null; "
+    'test -f .agents/skills/mettre-en-route/SKILL.md && echo "skill present"'
+)
 COMMANDE_CD_RACINE = (
     'cd "/c/Users/Sam25/maestro-scenarios/20260922-121246/s3-sans-equipe" '
     "&& ls -la .maestro 2>/dev/null; find .maestro -maxdepth 3 2>/dev/null"
@@ -83,6 +89,7 @@ COMMANDE_CD_RACINE = (
         ("find / 2>/dev/null (c4a4c14806a3)", COMMANDE_DEV_NULL),
         ("ls atelier (c4a4c14806a3)", COMMANDE_LS_ATELIER),
         ("cd racine && ls (a71c7db011a4)", COMMANDE_CD_RACINE),
+        ("test -f du skill (20260922-164402)", COMMANDE_TEST_F),
     ],
 )
 def test_les_gestes_observes_sur_la_vraie_stack_sont_des_lectures(
@@ -123,6 +130,13 @@ def test_les_gestes_observes_sur_la_vraie_stack_sont_des_lectures(
         "ls src | sort | head -n 3",
         "cat README.md && ls src",
         "cat manquant.txt || ls",
+        "test -f .agents/skills/mettre-en-route/SKILL.md",
+        "[ -f .agents/skills/mettre-en-route/SKILL.md ] && echo ok",
+        "test -d src || ls",
+        "[ -e pyproject.toml ] && cat pyproject.toml",
+        "test -x scripts/run.sh",  # demander si l'on pourrait n'est pas le faire
+        "[ -w notes ]",
+        "[ ! -s notes.md ]",
     ],
 )
 def test_lister_chercher_ouvrir_ne_demande_personne(commande: str) -> None:
@@ -170,6 +184,8 @@ def test_chaque_sous_commande_git_declaree_lit_vraiment() -> None:
         "less README.md",  # ne rend jamais la main sans terminal
         "env",  # l'environnement d'un agent porte ses secrets (#109)
         "printenv",
+        "[[ -f notes.md ]]",  # mot-clé qui évalue ses opérandes (mesuré, #1211)
+        "[[ $x -eq 0 ]]",
     ],
 )
 def test_ce_qui_n_est_pas_une_lecture_garde_son_regime(commande: str) -> None:
@@ -300,6 +316,10 @@ def test_une_globale_qu_on_ne_sait_pas_lire_renvoie_a_l_arbitrage(commande: str)
         ("git branch -a", "git branch -d vieille"),
         ("git branch --list", "git branch --delete vieille"),
         ("git branch -vv", "git branch -M principale"),
+        # `-v` teste une variable, et bash évalue l'indice d'un tableau : la
+        # valeur de `y` fait exécuter ce qu'elle contient (mesuré, #1211).
+        ("test -f fichier", "test -v 'a[y]'"),
+        ("[ -e fichier ]", "[ -v 'a[y]' ]"),
     ],
 )
 def test_une_option_qui_ferait_ecrire_retire_la_dispense(lisant: str, ecrivant: str) -> None:
@@ -355,6 +375,7 @@ def _joue(hook, commande: str, outil: str = "Bash"):
         COMMANDE_DEV_NULL,
         COMMANDE_LS_ATELIER,
         COMMANDE_CD_RACINE,
+        COMMANDE_TEST_F,
     ],
 )
 def test_le_hook_laisse_lire_un_agent_dont_les_commandes_attendent_un_humain(
