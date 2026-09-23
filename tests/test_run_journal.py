@@ -359,14 +359,19 @@ def test_le_journal_d_un_run_ne_contient_que_le_sien():
 
 
 def test_un_journal_durable_illisible_ne_fait_pas_tomber_l_api():
-    """Le rejeu est best-effort : une panne de relecture laisse le journal vide,
-    l'API sert quand même — mais elle ne prétend pas avoir un historique."""
+    """Le rejeu est best-effort : une panne de relecture n'empêche pas l'API de
+    démarrer — mais elle ne prétend pas avoir un historique (#1206) : le journal
+    se refuse en 503 avec sa cause, au lieu d'une page vide qui passerait pour
+    « aucune entrée »."""
 
     class LogEnPanne(InMemoryEventLog):
         async def relire(self):  # type: ignore[override]
             raise RuntimeError("journal durable injoignable")
 
     with app_sur(LogEnPanne()) as client:
-        page = client.get("/api/journal", params={"projet": TRANSVERSE}).json()
+        reponse = client.get("/api/journal", params={"projet": TRANSVERSE})
+        sante = client.get("/api/sante").json()
 
-    assert page["total"] == 0
+    assert reponse.status_code == 503
+    assert "journal durable injoignable" in reponse.json()["detail"]
+    assert sante["statut"] == "degrade"
