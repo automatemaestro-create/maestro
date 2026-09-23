@@ -33,7 +33,10 @@ Aucun test ne démarre l'API, ne construit l'UI ni n'ouvre Edge.
   `captures.sh`. Même esprit que le `gh` factice de `tests/harnais_forge.py` : ce sont les
   DÉCISIONS du script qui sont testées, jamais Playwright ;
 * le **rendu** se joue sur des fixtures — un PNG et un webm de quelques octets, un JSON écrit sur
-  place.
+  place ;
+* l'**accord des origines** entre l'UI des captures et leur API (#1233) se juge sur l'app montée en
+  mémoire (`TestClient`), avec l'environnement que `captures.sh` donne à son API — aucun port
+  ouvert.
 
 ⚠ **Où chaque section peut répondre.** Les tests de la dérivation et du rendu tournent partout.
 Ceux du tournage exigent `node` : présent sur les postes (`.tools/node`, §Environnement Node) et
@@ -50,6 +53,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -58,6 +62,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from fastapi.testclient import TestClient
+
+from maestro.config import load_settings
+from maestro.controltower.acces import politique_depuis
+from maestro.controltower.app import create_app
 
 RACINE = Path(__file__).resolve().parent.parent
 BASH = shutil.which("bash")
@@ -1349,6 +1358,119 @@ def test_captures_sh_rouvre_l_etat_du_banc_avant_de_servir_l_api_reelle() -> Non
     ligne_api = next(ligne for ligne in code.splitlines() if etapes[-1] in ligne)
     assert "--etat-banc" in ligne_api, "l'API de captures ne sert pas le jeu de données du banc"
     assert "--api" in code and "--etat" in code, "captures.mjs n'apprend ni l'API ni l'état"
+
+
+# --- L'API des captures admet l'origine de l'UI qu'elles servent (#1233) --------------------------
+#
+# #638 a fermé l'API aux origines inconnues, et `captures.sh` lançait la sienne sans lui dire où il
+# servait son UI : elle retombait sur l'origine de `start.sh` (:3000) et refusait le navigateur des
+# captures (:3010) — dix pages « API injoignable », aucun parcours filmé. La garde lit les deux
+# côtés là où le script les écrit (le port de `next start` et l'origine de `--base` ;
+# l'environnement qu'il donne à l'API), puis rejoue le préflight du navigateur contre la VRAIE app,
+# sur un poste qui a réglé sa propre stack. Aucune liste d'origines n'est recopiée ici : c'est l'API
+# qui les résout.
+
+#: Un poste qui a réglé sa propre stack : l'API des captures ne doit rien en hériter.
+POSTE_REGLE = {"MAESTRO_PORT_UI": "3000", "MAESTRO_API_ORIGINES": "http://localhost:3000"}
+
+#: Deux lancements fautifs, sur lesquels la garde se prouve : celui d'avant #1233, qui ne dit rien
+#: du front, et celui qui ne donne que le port — un `MAESTRO_API_ORIGINES` du poste l'emporterait.
+API_SANS_SON_FRONT = {
+    "rien": '(cd "$RACINE" && nohup "$PYTHON" -m maestro.controltower.cli --port "$PORT_API"'
+    ' --etat-banc >"$LOG_DIR/api.log" 2>&1 &)',
+    "le port seul": '(cd "$RACINE" && MAESTRO_PORT_UI="$PORT_UI" nohup "$PYTHON"'
+    ' -m maestro.controltower.cli --port "$PORT_API" --etat-banc >"$LOG_DIR/api.log" 2>&1 &)',
+}
+
+#: Ce qui repère, dans le script, le lancement de l'API servie.
+LANCEMENT_API = "-m maestro.controltower.cli --port"
+
+
+def _instruction(code: str, marqueur: str) -> str:
+    """L'instruction du script qui porte `marqueur`, ses lignes de continuation jointes."""
+    return next(ligne for ligne in re.sub(r"\\\n", " ", code).splitlines() if marqueur in ligne)
+
+
+def _substituer(valeur: str, variables: dict[str, str]) -> str:
+    """`$NOM` et `${NOM}` remplacés ; une variable que la garde ne sait pas résoudre la fait
+    échouer, plutôt que de juger une valeur qu'elle n'a pas lue."""
+    rendu = re.sub(
+        r"\$\{(\w+)\}|\$(\w+)",
+        lambda m: variables.get(m.group(1) or m.group(2), m.group(0)),
+        valeur,
+    )
+    assert "$" not in rendu, f"valeur que la garde ne sait pas résoudre : {valeur!r}"
+    return rendu
+
+
+def _cote_ui(code: str, port_ui: int) -> tuple[str, str]:
+    """La variable du port que `next start` sert, et l'origine que le navigateur des captures
+    charge (`--base` de captures.mjs) quand ce port vaut `port_ui`."""
+    servie = re.search(r'next start --port "?\$\{?(\w+)', _instruction(code, "next start"))
+    assert servie, "captures.sh ne sert plus son UI par `next start --port`"
+    base = re.search(r'--base "([^"]+)"', code)
+    assert base, "captures.mjs n'apprend plus l'adresse de l'UI"
+    return servie.group(1), _substituer(base.group(1), {servie.group(1): str(port_ui)}).rstrip("/")
+
+
+def _environnement_de_l_api(instruction: str, variables: dict[str, str]) -> dict[str, str]:
+    """Les `NOM=valeur` qui préfixent le lancement de l'API, tels que bash les lui passe."""
+    mots = shlex.split(instruction)
+    affectations = (
+        mot.partition("=")
+        for mot in mots[: mots.index("-m")]
+        if re.fullmatch(r"[A-Za-z_]\w*=.*", mot)
+    )
+    return {nom: _substituer(valeur, variables) for nom, _, valeur in affectations}
+
+
+def _preflight(monkeypatch: pytest.MonkeyPatch, api: dict[str, str], origine: str):
+    """Le préflight d'un `GET /api/projets` venu de `origine`, tranché par l'app que l'API des
+    captures servirait : politique résolue comme en production, sur le poste réglé plus
+    l'environnement que le script lui donne."""
+    for nom, valeur in {**POSTE_REGLE, **api}.items():
+        monkeypatch.setenv(nom, valeur)
+    with TestClient(create_app(acces=politique_depuis(load_settings()))) as client:
+        return client.options(
+            "/api/projets",
+            headers={
+                "Origin": origine,
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": "authorization",
+            },
+        )
+
+
+@pytest.mark.parametrize("lancement", sorted(API_SANS_SON_FRONT))
+def test_la_garde_des_origines_attrape_une_api_lancee_sans_son_front(
+    monkeypatch: pytest.MonkeyPatch, lancement: str
+) -> None:
+    """Prouver la garde sur l'échantillon fautif avant de juger le script : chacun rend la panne
+    constatée par #1233, un `400` au préflight du navigateur des captures."""
+    code = _code_shell(CAPTURES_SH.read_text(encoding="utf-8"))
+    variable, origine = _cote_ui(code, 3010)
+    api = _environnement_de_l_api(API_SANS_SON_FRONT[lancement], {variable: "3010"})
+
+    reponse = _preflight(monkeypatch, api, origine)
+
+    assert reponse.status_code == 400
+    assert "access-control-allow-origin" not in reponse.headers
+
+
+@pytest.mark.parametrize("port_ui", [3010, 4321])
+def test_l_api_des_captures_admet_l_origine_de_l_ui_qu_elles_servent(
+    monkeypatch: pytest.MonkeyPatch, port_ui: int
+) -> None:
+    """Quels que soient les ports choisis : 3010 est le défaut, 4321 un
+    `MAESTRO_PORT_UI_CAPTURES` que personne n'a prévu."""
+    code = _code_shell(CAPTURES_SH.read_text(encoding="utf-8"))
+    variable, origine = _cote_ui(code, port_ui)
+    api = _environnement_de_l_api(_instruction(code, LANCEMENT_API), {variable: str(port_ui)})
+
+    reponse = _preflight(monkeypatch, api, origine)
+
+    assert reponse.status_code == 200, f"l'API des captures refuse l'origine de leur UI ({origine})"
+    assert reponse.headers["access-control-allow-origin"] == origine
 
 
 # ==================================================================================================
