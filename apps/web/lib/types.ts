@@ -2781,12 +2781,7 @@ export type DossierExplorateur = {
 
 /** Les origines qu'un point d'entrée de l'explorateur peut porter (#278). */
 export type OrigineDossier =
-  | "repertoire"
-  | "utilisateur"
-  | "recent"
-  | "projet"
-  | "volume"
-  | "configuree";
+  "repertoire" | "utilisateur" | "recent" | "projet" | "volume" | "configuree";
 
 /**
  * Le **répertoire des projets** (`GET`/`PUT /api/projets/repertoire`, #1022) :

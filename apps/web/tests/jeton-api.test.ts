@@ -30,11 +30,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   PORTEE_TOUS,
-  chargerSante,
   reassignerTache,
   televerserSources,
   urlEvenements,
 } from "@/lib/api";
+
+// La **vraie** sonde de santé : `tests/setup.ts` la remplace depuis que le shell
+// la lit (#1206), et c'est ici l'en-tête qu'elle pose qu'on regarde.
+const { chargerSante } =
+  await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
 
 const JETON = "jeton-de-test-638";
 
@@ -45,15 +49,17 @@ function poserJeton(valeur: string) {
 
 /** Un `fetch` muet qui retient ce qu'on lui a passé. */
 function espionFetch(corps: unknown = {}) {
-  const espion = vi.fn<(url: string | URL, init?: RequestInit) => Promise<Response>>(
-    async () => new Response(JSON.stringify(corps), { status: 200 }),
-  );
+  const espion = vi.fn<
+    (url: string | URL, init?: RequestInit) => Promise<Response>
+  >(async () => new Response(JSON.stringify(corps), { status: 200 }));
   vi.stubGlobal("fetch", espion);
   return espion;
 }
 
 /** Les en-têtes de l'appel retenu. */
-function entetesDe(espion: ReturnType<typeof espionFetch>): Record<string, string> {
+function entetesDe(
+  espion: ReturnType<typeof espionFetch>,
+): Record<string, string> {
   const init = espion.mock.calls[0]?.[1];
   return (init?.headers ?? {}) as Record<string, string>;
 }

@@ -61,6 +61,7 @@ import { ecrireConversationOuverte } from "@/lib/preferences";
 
 import { poserChemin, poserProjetActif } from "./aides";
 import { ECRANS, monterEcran, peuplerEtat } from "./ecrans";
+import { poserSante, SANTE_OK } from "./ecrans-reseau";
 import {
   BLOCS_MAX,
   CHIFFRES_MAX,
@@ -157,10 +158,9 @@ describe("les plafonds de la règle des trois places", () => {
       CHIFFRES_MAX,
       "le bandeau de tête ne se relève pas dans un fichier de test",
     ).toBe(regle.chiffres);
-    expect(
-      BLOCS_MAX,
-      "le corps ne se relève pas dans un fichier de test",
-    ).toBe(regle.blocs);
+    expect(BLOCS_MAX, "le corps ne se relève pas dans un fichier de test").toBe(
+      regle.blocs,
+    );
   });
 });
 
@@ -350,9 +350,41 @@ describe("les zones du shell (docs/35 §3)", () => {
     expect(zones.colonnes).toEqual([ZONE_CONVERSATION]);
     expect(zones.corps).toEqual([]);
     expect(zones.chiffres).toEqual([]);
-    expect(
-      document.getElementById(ID_COLONNE_CONVERSATION),
-    ).toHaveAttribute("hidden");
+    expect(document.getElementById(ID_COLONNE_CONVERSATION)).toHaveAttribute(
+      "hidden",
+    );
+  });
+
+  it("dit la perte du magasin hors de l'écran, sans y prendre de place (#1206)", async () => {
+    // Le bandeau système (variante C de #1206) est une zone du **shell** qui
+    // n'existe que tant que la panne est vraie. Ce qu'on épingle : il vit hors
+    // de `#contenu-principal` — l'écran n'en porte pas un bloc de plus — et il
+    // ne pose ni `<section>` ni `<aside>` : l'inventaire ci-dessus ne bouge pas.
+    poserSante({
+      statut: "degrade",
+      magasin: {
+        disponible: false,
+        lieu: "Redis, redis://127.0.0.1:6379/0",
+        titre: "Magasin des événements injoignable",
+        motif: "Error 10061. Rien de ce que l'écran montrerait n'est à jour",
+        geste: "relancer Redis, l'API reprend seule",
+        commande: "docker compose -f infra/docker-compose.yml up -d redis",
+      },
+    });
+    try {
+      const zones = await zonesDuShell("/", true);
+      const bandeau = (
+        await screen.findByText("Magasin des événements injoignable")
+      ).closest('[role="alert"]');
+      expect(bandeau).not.toBeNull();
+      expect(contenuPrincipal().contains(bandeau)).toBe(false);
+      expect(zones.anonymes).toEqual(["<aside>"]);
+      expect(zones.colonnes).toEqual([ZONE_CONVERSATION]);
+      expect(zones.corps).toEqual([]);
+      expect(zones.chiffres).toEqual([]);
+    } finally {
+      poserSante(SANTE_OK);
+    }
   });
 
   it("l'aside sans nom est bien le rail de navigation", async () => {

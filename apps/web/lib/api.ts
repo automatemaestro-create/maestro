@@ -461,7 +461,9 @@ export function chargerFriseExecution(runId: string): Promise<FriseRun> {
  * run seul suffit à désigner ce qu'on lit. Se recharge sur le pouls du shell,
  * cette lecture n'ayant pas de canal à elle.
  */
-export function chargerDecisionsExecution(runId: string): Promise<DecisionsRun> {
+export function chargerDecisionsExecution(
+  runId: string,
+): Promise<DecisionsRun> {
   return chargerJson<DecisionsRun>(
     `/api/executions/${encodeURIComponent(runId)}/decisions`,
   );
@@ -484,7 +486,9 @@ export function chargerAnalyticsCouts(options: {
   if (options.depuis !== undefined) params.set("depuis", options.depuis);
   if (options.pas !== undefined) params.set("pas", options.pas);
   params.set("projet", options.projet);
-  return chargerJson<AnalyticsCouts>(`/api/analytics/couts?${params.toString()}`);
+  return chargerJson<AnalyticsCouts>(
+    `/api/analytics/couts?${params.toString()}`,
+  );
 }
 
 /**
@@ -523,7 +527,8 @@ export function chargerJournal(
   if (options.tri !== undefined) params.set("tri", options.tri);
   if (options.ordre !== undefined) params.set("ordre", options.ordre);
   if (options.page !== undefined) params.set("page", String(options.page));
-  if (options.taille !== undefined) params.set("taille", String(options.taille));
+  if (options.taille !== undefined)
+    params.set("taille", String(options.taille));
   return chargerJson<PageJournal>(`/api/journal?${params.toString()}`);
 }
 
@@ -921,7 +926,9 @@ export async function ouvrirConversationChat(
   agent: string,
 ): Promise<ConversationChat> {
   const reponse = await appel(
-    cadreProjet(`${API_URL}/api/chat/${encodeURIComponent(agent)}/conversations`),
+    cadreProjet(
+      `${API_URL}/api/chat/${encodeURIComponent(agent)}/conversations`,
+    ),
     { method: "POST", headers: { "Content-Type": "application/json" } },
   );
   if (!reponse.ok) {
@@ -1223,7 +1230,9 @@ async function lireFluxChat(
     for (const ligne of bloc.split("\n")) {
       if (!ligne.startsWith("data:")) continue;
       try {
-        surTrame(JSON.parse(ligne.slice("data:".length).trim()) as FragmentChat);
+        surTrame(
+          JSON.parse(ligne.slice("data:".length).trim()) as FragmentChat,
+        );
       } catch {
         // trame illisible : on l'ignore, le fil persisté reste la vérité
       }

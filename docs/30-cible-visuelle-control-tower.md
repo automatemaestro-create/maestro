@@ -2862,9 +2862,13 @@ saisine ; demandés par `--etat`, ils sont refusés avec leur raison :
 
 - **`erreur`, une API qui répond en erreur.** Mesuré le 2026-09-22 : son magasin (Redis) coupé, au
   démarrage comme en cours de route (un relais TCP coupé entre l'API et Redis, le Redis partagé du
-  poste intact), la vraie API répond `200` sur chaque lecture d'écran, listes vides, et `/api/sante`
-  dit « ok ». Aucun écran n'affiche donc de 500 sur la vraie stack. C'est aussi un **constat
-  produit** : une API qui a perdu son magasin ne le dit à personne (#1206).
+  poste intact), la vraie API répondait `200` sur chaque lecture d'écran, listes vides, et
+  `/api/sante` disait « ok » — un **constat produit**, que #1206 a levé : elle refuse désormais ses
+  lectures en `503` nommé (`panne: "magasin"`), sa santé dit `"degrade"`, et l'écran nomme la panne
+  (à la porte d'entrée, et par le bandeau système du shell en cours de route). La vraie stack
+  **produit** donc cet état ; c'est le script qui ne le monte pas encore : #1206 l'a obtenu à la main,
+  `REDIS_URL` de la stack pointé sur un relais TCP qu'on coupe. L'ajouter à `--etat` est un geste
+  d'outillage, laissé à un ticket à part.
 - **`charge` au-delà du passage** : des listes de centaines de lignes, des noms de 80 caractères. La
   charge regardée est celle que le passage du banc a laissée ; rien n'est gonflé.
 

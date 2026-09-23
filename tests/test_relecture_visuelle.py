@@ -1795,7 +1795,7 @@ def test_le_plan_annonce_les_etats_de_la_vraie_stack_et_ceux_qu_elle_ne_produit_
     ).stdout.splitlines()
     manquants = non_couverts(depot, "120")
     assert set(manquants) == {"erreur", "charge"}
-    assert "l'API dit « ok » et sert des listes vides" in manquants["erreur"]
+    assert "ce script ne la monte pas encore" in manquants["erreur"]
     assert "rien n'est gonflé" in manquants["charge"]
     assert "non couverts" in plan and "jamais à imiter" in plan
     assert "démo" not in plan.lower() and "demo" not in plan.lower(), "plus un mot de la démo"
