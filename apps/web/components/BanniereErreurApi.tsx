@@ -53,9 +53,34 @@
  * variante C retenue par le regard neuf, consignée sur #1206 sous « ## Variante
  * retenue »). Quand le shell la dit, le bandeau d'écran de la même panne se tait
  * — un seul message à la fois (Carbon).
+ *
+ * ── Là où le contenu manque, la panne — jamais un vide (#1217) ─────────────
+ *
+ * Le bandeau dit la panne ; il ne suffit pas que l'écran la dise **aussi** à
+ * côté d'un « aucun événement », d'un « 0 » ou d'une tuile figée, qui se lisent
+ * comme ce que la lecture a rendu. C'est le parti pris 3 de la veille de #1206,
+ * d'après Primer (*Degraded experiences* : la section « cannot be loaded »
+ * **remplace** la liste au lieu de la vider). Deux pièces le portent :
+ *
+ * - `useEcranEnPanne` dit si l'écran est en panne — sa propre lecture a échoué,
+ *   **ou** le shell signale la perte du magasin, qui refuse toutes les lectures
+ *   alors que l'écran, déjà chargé, n'a rien relu ;
+ * - `ContenuIndisponible` prend alors la place de ce que l'écran **résume** :
+ *   ses états vides, ses comptes, ses chiffres de tête, ses index (le journal,
+ *   la liste des runs, le catalogue). Il ne répète pas la panne — le bandeau
+ *   l'a dite, plus haut — et ne promet pas de retour qu'aucune relecture ne
+ *   tiendrait.
+ *
+ * Ce qu'un écran porte **à traiter** — une demande d'arbitrage, un brief à
+ * corriger, un cadrage, le run qu'on a ouvert, un projet, une intégration du
+ * pool — reste sous le bandeau, qui le dit périmé : l'enlever emporterait une
+ * saisie en cours (le motif d'un refus) pour une panne de quelques secondes, et
+ * le geste, s'il part pendant la panne, dit lui-même son échec. Seul son vide
+ * cède la place.
  */
 
 import { IconeAlerte } from "@/components/Icones";
+import { EtatVide } from "@/components/Primitives";
 import { ErreurApi, type PanneApi } from "@/lib/api";
 import { useMagasinSignale } from "@/lib/magasin";
 import type { EtatMagasin } from "@/lib/types";
@@ -171,6 +196,52 @@ export function BandeauMagasin() {
     />
   );
 }
+
+/**
+ * L'écran est-il en panne ? — `erreur` est la panne de **sa** lecture, celle
+ * que son bandeau reçoit. Hors du shell (porte d'entrée, composant seul), seule
+ * elle compte : rien n'y signale le magasin.
+ */
+export function useEcranEnPanne(erreur: PanneApi | null): boolean {
+  const magasin = useMagasinSignale();
+  return erreur !== null || magasin !== null;
+}
+
+/**
+ * Ce qu'un écran en panne rend à la place de ce qu'il ne peut pas lire (#1217).
+ *
+ * `quoi` nomme ce qui manque, comme l'état vide nomme le projet (#281) :
+ * « le journal de Dépensio », jamais « les données ». La forme est celle de
+ * `EtatVide` — la place est réservée, elle n'est pas remplie —, et c'est l'icône
+ * d'alerte et le libellé qui disent que ce n'est **pas** un vide : aucune teinte
+ * `alerte` ici, elle appartient au bandeau, qui reste le seul message de la
+ * panne.
+ */
+export function ContenuIndisponible({ quoi }: { quoi: string }) {
+  return (
+    <EtatVide
+      icone={IconeAlerte}
+      message={`Impossible de lire ${quoi}.`}
+      releve={SUITE_INDISPONIBLE}
+    />
+  );
+}
+
+/**
+ * La même phrase, d'un tenant, pour un composant qui rend lui-même son état vide
+ * à partir d'un texte (`messageVide` du Kanban, du pipeline, de la frise).
+ */
+export function texteIndisponible(quoi: string): string {
+  return `Impossible de lire ${quoi}. ${SUITE_INDISPONIBLE}`;
+}
+
+/**
+ * Ce que l'écran sait de ce qui manque : rien, et c'est tout ce qu'il dit. Pas
+ * de « reviendra dès que… » — un écran qui ne relit qu'à l'ouverture tiendrait
+ * mal la promesse.
+ */
+const SUITE_INDISPONIBLE =
+  "Ce qui s'afficherait ici n'est pas connu tant que dure la panne décrite plus haut.";
 
 /**
  * L'habillage commun — icône, panne en gras, message et geste, annexe.

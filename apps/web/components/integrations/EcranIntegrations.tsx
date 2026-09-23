@@ -33,7 +33,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { BanniereErreurApi } from "@/components/BanniereErreurApi";
+import {
+  BanniereErreurApi,
+  useEcranEnPanne,
+} from "@/components/BanniereErreurApi";
 import { IconeAgent, IconeAlerte, IconeMcp } from "@/components/Icones";
 import { TuileChiffre } from "@/components/Primitives";
 import { chargerCatalogue, chargerPoolMcp, panneDe, type PanneApi } from "@/lib/api";
@@ -98,6 +101,10 @@ export function EcranIntegrations() {
 
   const agents = entreeParLibelle("Agents");
   const aRevoir = secretsARevoir(pool);
+  // En panne (#1217), les tuiles prennent le « — » de ce qu'on ne sait pas, et
+  // non le zéro d'un pool qu'on n'a pas lu, ni le compte d'avant la panne.
+  const enPanne = useEcranEnPanne(erreur);
+  const inconnu = chargement || enPanne;
 
   return (
     <>
@@ -117,7 +124,7 @@ export function EcranIntegrations() {
         <TuileChiffre
           libelle="Au pool projet"
           icone={IconeMcp}
-          valeur={chargement ? "—" : pool.length}
+          valeur={inconnu ? "—" : pool.length}
           detail="intégrations configurées pour ce projet"
         />
         <TuileChiffre
@@ -125,7 +132,11 @@ export function EcranIntegrations() {
           icone={IconeAgent}
           // « — » et non « 0 » quand le catalogue n'a pas répondu : un zéro
           // affirmerait qu'aucun agent n'utilise rien, ce qu'on ne sait pas.
-          valeur={usage.connu ? `${usage.agentsEquipes} / ${usage.agents}` : "—"}
+          valeur={
+            usage.connu && !enPanne
+              ? `${usage.agentsEquipes} / ${usage.agents}`
+              : "—"
+          }
           detail="agents ayant activé au moins une intégration"
           renvoi={
             agents ? { href: agents.href, libelle: "Voir les agents" } : undefined
@@ -134,9 +145,10 @@ export function EcranIntegrations() {
         <TuileChiffre
           libelle="Secrets à revoir"
           icone={IconeAlerte}
-          valeur={chargement ? "—" : aRevoir}
+          valeur={inconnu ? "—" : aRevoir}
           detail={
-            aRevoir === 0
+            // « Tous valides » est une réponse : elle ne se donne que lue.
+            aRevoir === 0 && !enPanne
               ? "tous les secrets du pool sont valides"
               : "intégrations dont un secret manque ou a expiré"
           }
@@ -146,6 +158,7 @@ export function EcranIntegrations() {
         pool={pool}
         erreur={poolErreur}
         chargement={chargement}
+        enPanne={enPanne}
         usage={usage}
         onChangement={() => void recharger()}
       />

@@ -53,7 +53,11 @@
 
 import { useMemo, useState } from "react";
 
-import { BanniereErreurApi } from "@/components/BanniereErreurApi";
+import {
+  BanniereErreurApi,
+  ContenuIndisponible,
+  useEcranEnPanne,
+} from "@/components/BanniereErreurApi";
 import { FilActivite } from "@/components/FilActivite";
 import {
   Bouton,
@@ -89,6 +93,11 @@ export default function PageJournal() {
   const { projet, portee, evenements: direct, connecte, erreur, revision } =
     useEtatGlobal();
   const historique = useJournal(portee, SANS_FILTRE, revision);
+  // La panne que le bandeau dit est celle de l'écran entier (#1217) : sous
+  // elle, ni « rien encore », ni « 0 événement(s) », ni un fil qui passerait
+  // pour complet — le journal manque, et c'est ce que l'écran rend à sa place.
+  const panne = erreur ?? historique.erreur;
+  const enPanne = useEcranEnPanne(panne);
 
   // L'historique d'abord, le direct qu'il n'a pas encore rattrapé par-dessus :
   // c'est ce qui fait qu'un rechargement ne perd rien **et** qu'un événement
@@ -145,7 +154,7 @@ export default function PageJournal() {
       {/* Celle du shell d'abord : elle couvre l'API entière, là où la seconde ne
           dit que la lecture du journal — mais un journal illisible sur une API
           par ailleurs debout ne doit pas passer pour un projet sans activité. */}
-      <BanniereErreurApi erreur={erreur ?? historique.erreur} />
+      <BanniereErreurApi erreur={panne} />
 
       {/* La région live de l'écran (#538) : le fil **non filtré**, pour que ce
           qui s'annonce soit l'arrivée d'événements et non le résultat d'une
@@ -168,105 +177,111 @@ export default function PageJournal() {
         <strong className="font-medium">{projet.nom}</strong>, du plus récent au
         plus ancien : il est relu à l&apos;ouverture de la page, et le temps réel
         s&apos;y ajoute au fil de l&apos;eau.{" "}
-        {tronque
+        {tronque && !enPanne
           ? `Les ${evenements.length} plus récents des ${historique.total} événements du projet sont affichés.`
           : "Un rechargement ne perd donc rien."}{" "}
         Il ne mélange jamais les fils de deux projets. L&apos;état de référence,
         lui, reste celui des tâches, des agents et des coûts.
       </Carte>
 
-      {!connecte && (
+      {!connecte && !enPanne && (
         // L'historique, lui, est là : ce qui s'arrête est l'ajout des lignes
         // suivantes. La barre supérieure porte déjà l'indicateur, mais nulle
-        // part ailleurs il n'explique un fil qui cesse d'avancer.
+        // part ailleurs il n'explique un fil qui cesse d'avancer. En panne,
+        // l'historique n'est justement **pas** là, et le bandeau dit déjà la
+        // coupure : cette ligne en serait un troisième message, et faux.
         <p className="text-sm text-amber-700 dark:text-amber-400">
           Flux temps réel interrompu — le journal ci-dessous reste lisible, il
           reprendra son avance à la reconnexion.
         </p>
       )}
 
-      <Carte
-        balise="section"
-        densite="aeree"
-        aria-label="Filtres du journal"
-        className="flex flex-col gap-3"
-      >
-        <div className="grid gap-3 @md:grid-cols-2 @3xl:grid-cols-4">
-          <Champ
-            id="journal-recherche"
-            libelle="Rechercher"
-            type="search"
-            name="recherche-journal"
-            autoComplete="off"
-            value={recherche}
-            onChange={(e) => setRecherche(e.target.value)}
-            placeholder="tâche, agent, détail…"
-          />
-          <ListeFiltre
-            id="journal-type"
-            libelle="Type d'événement"
-            tout="Tous les types"
-            options={types}
-            valeur={type}
-            surChoix={setType}
-          />
-          <ListeFiltre
-            id="journal-agent"
-            libelle="Agent"
-            tout="Tous les agents"
-            options={agents}
-            valeur={agent}
-            surChoix={setAgent}
-          />
-          <ListeFiltre
-            id="journal-tache"
-            libelle="Tâche"
-            tout="Toutes les tâches"
-            options={taches}
-            valeur={tache}
-            surChoix={setTache}
-          />
-        </div>
-
-        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-          <label className="flex items-center gap-2 text-xs font-medium text-neutral-600 dark:text-neutral-400">
-            <input
-              type="checkbox"
-              checked={notableSeul}
-              onChange={(e) => setNotableSeul(e.target.checked)}
-              className="size-4 rounded border-neutral-300 dark:border-neutral-700"
+      {/* Des filtres sur un fil qu'on n'a pas lu, et le compte de ce qu'on n'a
+          pas lu : la panne les retire avec la liste (#1217). */}
+      {!enPanne && (
+        <Carte
+          balise="section"
+          densite="aeree"
+          aria-label="Filtres du journal"
+          className="flex flex-col gap-3"
+        >
+          <div className="grid gap-3 @md:grid-cols-2 @3xl:grid-cols-4">
+            <Champ
+              id="journal-recherche"
+              libelle="Rechercher"
+              type="search"
+              name="recherche-journal"
+              autoComplete="off"
+              value={recherche}
+              onChange={(e) => setRecherche(e.target.value)}
+              placeholder="tâche, agent, détail…"
             />
-            Notable seulement
-            <span className="font-normal text-neutral-500 dark:text-neutral-500">
-              (ce que remonte la cloche)
-            </span>
-          </label>
-          {filtre && (
-            <Bouton
-              variante="contour"
-              ton="neutre"
-              taille="petite"
-              onClick={reinitialiser}
-            >
-              Réinitialiser les filtres
-            </Bouton>
-          )}
-        </div>
+            <ListeFiltre
+              id="journal-type"
+              libelle="Type d'événement"
+              tout="Tous les types"
+              options={types}
+              valeur={type}
+              surChoix={setType}
+            />
+            <ListeFiltre
+              id="journal-agent"
+              libelle="Agent"
+              tout="Tous les agents"
+              options={agents}
+              valeur={agent}
+              surChoix={setAgent}
+            />
+            <ListeFiltre
+              id="journal-tache"
+              libelle="Tâche"
+              tout="Toutes les tâches"
+              options={taches}
+              valeur={tache}
+              surChoix={setTache}
+            />
+          </div>
 
-        {/* Le compteur reste muet, mais l'écran ne l'est plus (#538) : la région
-            live est **au-dessus**, et elle n'annonce pas ce compteur-ci — elle
-            annonce le fil, agrégé sur la fenêtre de `lib/useAnnonce`. Ce que
-            refusait la note d'origine (« un bavard permanent ») était d'annoncer
-            chaque ligne ; « 12 nouveaux événements » toutes les cinq secondes est
-            l'inverse exact, et c'est ce que le ticket appelle annoncer un état
-            plutôt qu'un journal. Ce compteur-là suit les **filtres**, donc il
-            bougerait à chaque frappe : il n'a rien à faire dans une annonce. */}
-        <p className="text-xs text-neutral-500 dark:text-neutral-400">
-          {filtre
-            ? `${filtres.length} événement(s) sur ${evenements.length}`
-            : `${evenements.length} événement(s)`}
-        </p>
-      </Carte>
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+            <label className="flex items-center gap-2 text-xs font-medium text-neutral-600 dark:text-neutral-400">
+              <input
+                type="checkbox"
+                checked={notableSeul}
+                onChange={(e) => setNotableSeul(e.target.checked)}
+                className="size-4 rounded border-neutral-300 dark:border-neutral-700"
+              />
+              Notable seulement
+              <span className="font-normal text-neutral-500 dark:text-neutral-500">
+                (ce que remonte la cloche)
+              </span>
+            </label>
+            {filtre && (
+              <Bouton
+                variante="contour"
+                ton="neutre"
+                taille="petite"
+                onClick={reinitialiser}
+              >
+                Réinitialiser les filtres
+              </Bouton>
+            )}
+          </div>
+
+          {/* Le compteur reste muet, mais l'écran ne l'est plus (#538) : la région
+              live est **au-dessus**, et elle n'annonce pas ce compteur-ci — elle
+              annonce le fil, agrégé sur la fenêtre de `lib/useAnnonce`. Ce que
+              refusait la note d'origine (« un bavard permanent ») était d'annoncer
+              chaque ligne ; « 12 nouveaux événements » toutes les cinq secondes est
+              l'inverse exact, et c'est ce que le ticket appelle annoncer un état
+              plutôt qu'un journal. Ce compteur-là suit les **filtres**, donc il
+              bougerait à chaque frappe : il n'a rien à faire dans une annonce. */}
+          <p className="text-xs text-neutral-500 dark:text-neutral-400">
+            {filtre
+              ? `${filtres.length} événement(s) sur ${evenements.length}`
+              : `${evenements.length} événement(s)`}
+          </p>
+        </Carte>
+      )}
 
       {evenements.length === 0 && historique.chargement ? (
         // La première lecture est encore en vol : un « rien encore » affiché ici
@@ -274,6 +289,8 @@ export default function PageJournal() {
         <p className="text-sm text-neutral-500 dark:text-neutral-400">
           Lecture du journal…
         </p>
+      ) : enPanne ? (
+        <ContenuIndisponible quoi={`le journal de ${projet.nom}`} />
       ) : evenements.length === 0 ? (
         // Le vide du projet, et non celui d'un filtre : le distinguer est ce
         // qui évite de chercher une panne (le bandeau ci-dessus dit si le flux

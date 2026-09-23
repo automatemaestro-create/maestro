@@ -42,7 +42,11 @@
  * dit pas « moins », elle dit **où** — et `tests/sobriete.test.tsx` la garde.
  */
 
-import { BanniereErreurApi } from "@/components/BanniereErreurApi";
+import {
+  BanniereErreurApi,
+  ContenuIndisponible,
+  useEcranEnPanne,
+} from "@/components/BanniereErreurApi";
 import { BasculeDeVues, type VueBascule } from "@/components/BasculeDeVues";
 import {
   IconeAgents,
@@ -126,6 +130,11 @@ export default function PageCouts() {
     periode,
     portee,
   );
+  // En panne, les agrégats ne sont pas la dépense (#1217) : une première
+  // lecture qui échoue laissait « Chargement des agrégats… » pour toujours, une
+  // suivante laissait les compteurs d'avant, et un projet vide son « Rien
+  // encore ». La panne prend leur place, grand livre compris.
+  const enPanne = useEcranEnPanne(erreur);
 
   // L'estompage du rafraîchissement s'applique à **tout ce qui vient des
   // agrégats** — le corps comme la colonne de propriétés —, et à rien d'autre :
@@ -178,7 +187,9 @@ export default function PageCouts() {
           </button>
         ))}
       </nav>
-      {chargement || vue === null ? (
+      {enPanne ? (
+        <ContenuIndisponible quoi={`les coûts de ${projet.nom}`} />
+      ) : chargement || vue === null ? (
         <p className="text-sm text-neutral-500">Chargement des agrégats…</p>
       ) : (
         <>
@@ -272,7 +283,7 @@ export default function PageCouts() {
           </div>
         </>
       )}
-      <PanneauCouts couts={couts} />
+      {!enPanne && <PanneauCouts couts={couts} />}
     </>
   );
 }

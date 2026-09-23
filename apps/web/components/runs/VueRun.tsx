@@ -51,7 +51,12 @@
 import Link from "next/link";
 import { useState } from "react";
 
-import { BanniereErreurApi } from "@/components/BanniereErreurApi";
+import {
+  BanniereErreurApi,
+  ContenuIndisponible,
+  texteIndisponible,
+  useEcranEnPanne,
+} from "@/components/BanniereErreurApi";
 import { BasculeDeVues } from "@/components/BasculeDeVues";
 import { IconeFlecheGauche, IconeRuns } from "@/components/Icones";
 import { Kanban } from "@/components/Kanban";
@@ -149,11 +154,16 @@ export function VueRun({ runId }: { runId: string }) {
 
   const liste = entreeParLibelle("Runs");
 
+  // L'erreur du shell d'abord : quand l'API est éteinte les deux lectures
+  // échouent, et deux bannières identiques ne diraient pas deux choses.
+  const panne = erreur ?? erreurTaches;
+  // En panne (#1217), ni « aucun run » ni « aucune tâche » : le run déjà lu
+  // reste, avec ses gestes, mais ce qui n'a pas pu être lu le dit à sa place.
+  const enPanne = useEcranEnPanne(panne);
+
   return (
     <>
-      {/* L'erreur du shell d'abord : quand l'API est éteinte les deux lectures
-          échouent, et deux bannières identiques ne diraient pas deux choses. */}
-      <BanniereErreurApi erreur={erreur ?? erreurTaches} />
+      <BanniereErreurApi erreur={panne} />
 
       <section aria-label="Run">
         {liste && (
@@ -170,6 +180,10 @@ export function VueRun({ runId }: { runId: string }) {
 
         {chargement ? (
           <p className="text-sm text-neutral-500">Chargement du run…</p>
+        ) : run === undefined && enPanne ? (
+          // « Aucun run sur ce projet » sous le bandeau affirmerait ce que la
+          // lecture qui vient d'échouer n'a pas pu dire.
+          <ContenuIndisponible quoi={`le run ${runId}`} />
         ) : run === undefined ? (
           // Ni panne ni Kanban vide : le run n'est pas de ce projet, ou n'existe
           // pas. Le dire évite la lecture « ce run n'a rien fait », qui est le
@@ -217,7 +231,11 @@ export function VueRun({ runId }: { runId: string }) {
               // défaut d'origine du chantier.
               enAttenteHumaine={tachesArretees}
               revision={revision}
-              messageVide={messageVideDuRun(run, attente)}
+              messageVide={
+                enPanne
+                  ? texteIndisponible("les tâches de ce run")
+                  : messageVideDuRun(run, attente)
+              }
             />
           )}
 
@@ -235,7 +253,9 @@ export function VueRun({ runId }: { runId: string }) {
               messageVide={
                 chargementTaches
                   ? "Chargement des tâches de ce run…"
-                  : messageVideDuRun(run, attente)
+                  : enPanne
+                    ? texteIndisponible("les tâches de ce run")
+                    : messageVideDuRun(run, attente)
               }
             />
           )}
@@ -255,7 +275,9 @@ export function VueRun({ runId }: { runId: string }) {
               messageVide={
                 chargementTaches
                   ? "Chargement de l'activité de ce run…"
-                  : messageVideDuRun(run, attente)
+                  : enPanne
+                    ? texteIndisponible("l'activité de ce run")
+                    : messageVideDuRun(run, attente)
               }
             />
           )}

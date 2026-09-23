@@ -34,7 +34,7 @@ import { RegionArbitrage } from "@/components/RegionLive";
 import { ChoixProjet, EcranOuverture } from "@/components/projets/ChoixProjet";
 import { SelecteurProjet } from "@/components/projets/SelecteurProjet";
 import { ASCENSEUR_PAGE, ecouterDefilement } from "@/lib/ascenseur";
-import { FournisseurEtatGlobal } from "@/lib/etatGlobal";
+import { FournisseurEtatGlobal, useEtatGlobal } from "@/lib/etatGlobal";
 import { entreeParLibelle } from "@/lib/navigation";
 import { FournisseurProjetActif, useProjetActif } from "@/lib/etatProjetActif";
 import { FournisseurMagasin } from "@/lib/magasin";
@@ -188,8 +188,9 @@ function CadreControlTower({
     <FournisseurEtatGlobal key={projet.id} projet={projet}>
       {/* La sonde du magasin (#1206) : une pour toute l'application, lue par le
           bandeau système ci-dessous et par le bandeau d'écran, qui se tait
-          quand le shell dit déjà la même panne. */}
-      <FournisseurMagasin>
+          quand le shell dit déjà la même panne. Au retour du magasin, l'état
+          se relit (#1217) — sans quoi un écran dirait encore la panne. */}
+      <MagasinDuShell>
         {/* Le lien d'évitement (#537, WCAG 2.2 §2.4.1). Le produit n'en avait
           aucun (docs/30 §3.4) : au clavier, chaque écran commençait par
           **toutes les entrées** du menu (dix à l'époque, onze depuis #270),
@@ -356,7 +357,18 @@ function CadreControlTower({
           par-dessus lui (`z-40`/`z-50` contre `z-30`). */}
         <AssistantFlottant />
         <GuidePriseEnMain />
-      </FournisseurMagasin>
+      </MagasinDuShell>
     </FournisseurEtatGlobal>
   );
+}
+
+/**
+ * La sonde du magasin, branchée sur l'état du shell (#1217) : au retour d'un
+ * magasin perdu, l'état se relit, et le pouls avec lui. Un composant à part
+ * parce que la relecture vit **sous** `FournisseurEtatGlobal`, que ce fichier
+ * monte juste au-dessus.
+ */
+function MagasinDuShell({ children }: { children: React.ReactNode }) {
+  const { relire } = useEtatGlobal();
+  return <FournisseurMagasin auRetour={relire}>{children}</FournisseurMagasin>;
 }

@@ -41,7 +41,11 @@
 
 import { useState } from "react";
 
-import { BanniereErreurApi } from "@/components/BanniereErreurApi";
+import {
+  BanniereErreurApi,
+  ContenuIndisponible,
+  useEcranEnPanne,
+} from "@/components/BanniereErreurApi";
 import { CadrageDansLeFil } from "@/components/chat/CadrageDansLeFil";
 import { IconeObjectif } from "@/components/Icones";
 import { BadgeEtat, EtatVide } from "@/components/Primitives";
@@ -71,6 +75,7 @@ export function FilDeCadrage({
 
   const runs = runsEnAttente(executions);
   const courant = runs.find((r) => r.run_id === choisi) ?? runs[0];
+  const enPanne = useEcranEnPanne(erreur);
 
   if (chargement) {
     return <p className="text-sm text-neutral-500">Chargement du cadrage…</p>;
@@ -85,7 +90,15 @@ export function FilDeCadrage({
         <PropositionEnAttente demande={proposition} maintenant={maintenant} />
       )}
       {courant === undefined ? (
-        proposition === null && (
+        proposition === null &&
+        (enPanne ? (
+          // Pas « aucun cadrage en attente » sous le bandeau (#1217) : la
+          // lecture qui le dirait vient d'échouer. Un cadrage déjà lu reste —
+          // on est peut-être en train d'y répondre.
+          <ContenuIndisponible
+            quoi={`les cadrages en attente sur ${projet.nom}`}
+          />
+        ) : (
           // Sans renvoi (#1176) : cet état vide s'affiche **dans** la page du
           // fil, à côté de son composeur. Il renvoyait vers « Composer un
           // objectif », une entrée partie du menu avec #484 : le lien s'était
@@ -95,7 +108,7 @@ export function FilDeCadrage({
             message={`Aucun cadrage en attente sur ${projet.nom}. Écrivez votre demande dans le fil : l'orchestrateur vous en propose le cadrage ici, avant de lancer quoi que ce soit — c'est le moment où corriger coûte un message.`}
             icone={IconeObjectif}
           />
-        )
+        ))
       ) : (
         <>
           {runs.length > 1 && (

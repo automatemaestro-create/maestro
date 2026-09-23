@@ -57,7 +57,11 @@
 
 import { useMemo, useState } from "react";
 
-import { BanniereErreurApi } from "@/components/BanniereErreurApi";
+import {
+  BanniereErreurApi,
+  ContenuIndisponible,
+  useEcranEnPanne,
+} from "@/components/BanniereErreurApi";
 import { FilActivite } from "@/components/FilActivite";
 import { IconeJournal } from "@/components/Icones";
 import {
@@ -87,6 +91,10 @@ export function OngletLogs({ nom }: { nom: string }) {
   } = useEtatGlobal();
   // Le filtre `agent` est passé à l'API, pas appliqué après coup : voir l'en-tête.
   const historique = useJournal(portee, { agent: nom }, revision);
+  // Même règle que le Journal (#1217) : sous le bandeau, ni « rien encore », ni
+  // « 0 ligne(s) » — les lignes manquent, et l'onglet le dit à leur place.
+  const panne = erreur ?? historique.erreur;
+  const enPanne = useEcranEnPanne(panne);
 
   // L'historique d'abord, le direct qu'il n'a pas encore rattrapé par-dessus.
   // Celui-ci vient du shell, donc de tout le projet : c'est le seul endroit du
@@ -128,7 +136,7 @@ export function OngletLogs({ nom }: { nom: string }) {
       {/* Celle du shell d'abord : elle couvre l'API entière, là où la seconde ne
           dit que la lecture du journal — mais un journal illisible sur une API
           par ailleurs debout ne doit pas passer pour un agent qui n'a rien fait. */}
-      <BanniereErreurApi erreur={erreur ?? historique.erreur} />
+      <BanniereErreurApi erreur={panne} />
 
       <Carte balise="p" className="text-annexe text-neutral-600 dark:text-neutral-400">
         Ce que <strong className="font-medium">{nom}</strong> a fait sur{" "}
@@ -136,67 +144,72 @@ export function OngletLogs({ nom }: { nom: string }) {
         du plus récent au plus ancien : appels d&apos;outil, refus de permission,
         décisions et erreurs. L&apos;historique est relu à l&apos;ouverture de
         l&apos;onglet, et le temps réel s&apos;y ajoute au fil de l&apos;eau
-        {tronque
+        {tronque && !enPanne
           ? ` — les ${historique.evenements.length} plus récentes des ${historique.total} lignes de cet agent sont affichées.`
           : ", donc un rechargement ne perd rien."}
       </Carte>
 
-      {!connecte && (
+      {!connecte && !enPanne && (
         // L'historique, lui, est là : ce qui s'arrête est l'ajout des lignes
         // suivantes. La barre supérieure porte déjà l'indicateur, mais nulle part
-        // ailleurs il n'explique un fil qui cesse d'avancer.
+        // ailleurs il n'explique un fil qui cesse d'avancer. En panne, il n'est
+        // justement pas là, et le bandeau dit déjà la coupure.
         <p className="text-annexe text-amber-700 dark:text-amber-400">
           Flux temps réel interrompu — les lignes ci-dessous restent lisibles,
           elles reprendront leur avance à la reconnexion.
         </p>
       )}
 
-      <Carte
-        balise="section"
-        densite="aeree"
-        aria-label={`Filtres des logs de ${nom}`}
-        className="flex flex-col gap-3"
-      >
-        <div className="grid gap-3 @md:grid-cols-2">
-          <ListeFiltre
-            id="logs-niveau"
-            libelle="Niveau"
-            tout="Tous les niveaux"
-            options={niveaux}
-            valeur={niveau}
-            surChoix={setNiveau}
-          />
-          <ListeFiltre
-            id="logs-tache"
-            libelle="Tâche"
-            tout="Toutes les tâches"
-            options={taches}
-            valeur={tache}
-            surChoix={setTache}
-          />
-        </div>
+      {/* Des filtres sur des lignes qu'on n'a pas lues, et leur compte : la
+          panne les retire avec la liste (#1217). */}
+      {!enPanne && (
+        <Carte
+          balise="section"
+          densite="aeree"
+          aria-label={`Filtres des logs de ${nom}`}
+          className="flex flex-col gap-3"
+        >
+          <div className="grid gap-3 @md:grid-cols-2">
+            <ListeFiltre
+              id="logs-niveau"
+              libelle="Niveau"
+              tout="Tous les niveaux"
+              options={niveaux}
+              valeur={niveau}
+              surChoix={setNiveau}
+            />
+            <ListeFiltre
+              id="logs-tache"
+              libelle="Tâche"
+              tout="Toutes les tâches"
+              options={taches}
+              valeur={tache}
+              surChoix={setTache}
+            />
+          </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-          <p className="text-annexe text-neutral-500 dark:text-neutral-400">
-            {filtre
-              ? `${retenus.length} ligne(s) sur ${evenements.length}`
-              : `${evenements.length} ligne(s)`}
-          </p>
-          {filtre && (
-            <Bouton
-              variante="contour"
-              ton="neutre"
-              taille="petite"
-              onClick={() => {
-                setNiveau(TOUS);
-                setTache(TOUS);
-              }}
-            >
-              Réinitialiser les filtres
-            </Bouton>
-          )}
-        </div>
-      </Carte>
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+            <p className="text-annexe text-neutral-500 dark:text-neutral-400">
+              {filtre
+                ? `${retenus.length} ligne(s) sur ${evenements.length}`
+                : `${evenements.length} ligne(s)`}
+            </p>
+            {filtre && (
+              <Bouton
+                variante="contour"
+                ton="neutre"
+                taille="petite"
+                onClick={() => {
+                  setNiveau(TOUS);
+                  setTache(TOUS);
+                }}
+              >
+                Réinitialiser les filtres
+              </Bouton>
+            )}
+          </div>
+        </Carte>
+      )}
 
       <section aria-label={`Logs de ${nom}`} className="flex flex-col gap-4">
         <EnTeteSection titre="Journal de l'agent" icone={IconeJournal} />
@@ -206,6 +219,8 @@ export function OngletLogs({ nom }: { nom: string }) {
           <p className="text-corps text-neutral-500 dark:text-neutral-400">
             Lecture du journal de {nom}…
           </p>
+        ) : enPanne ? (
+          <ContenuIndisponible quoi={`le journal de ${nom}`} />
         ) : evenements.length === 0 ? (
           // Le silence de l'agent, et non celui d'un filtre : le distinguer est
           // ce qui évite de chercher une panne (le bandeau ci-dessus dit si le

@@ -15,7 +15,11 @@
 
 import { useState } from "react";
 
-import { BanniereErreurApi } from "@/components/BanniereErreurApi";
+import {
+  BanniereErreurApi,
+  ContenuIndisponible,
+  useEcranEnPanne,
+} from "@/components/BanniereErreurApi";
 import { ValidationBrief } from "@/components/brief/ValidationBrief";
 import { IconeObjectif } from "@/components/Icones";
 import { BadgeEtat, EtatVide } from "@/components/Primitives";
@@ -44,6 +48,7 @@ export function ValidationBriefs() {
   // vaut ici même si l'écran est en train de partir (`next.config.ts` redirige
   // `/brief`), ses composants restant montés par le fil du cadrage (#483).
   const lancer = entreeParLibelle(PAGE_DU_FIL);
+  const enPanne = useEcranEnPanne(erreur);
 
   return (
     <>
@@ -63,6 +68,11 @@ export function ValidationBriefs() {
       )}
       {chargement ? (
         <p className="text-sm text-neutral-500">Chargement des briefs…</p>
+      ) : courant === undefined && enPanne ? (
+        // Pas « aucun brief en attente » sous le bandeau (#1217) : la lecture
+        // qui le dirait vient d'échouer. Un brief déjà lu, lui, reste — on est
+        // peut-être en train de le corriger.
+        <ContenuIndisponible quoi={`les briefs en attente sur ${projet.nom}`} />
       ) : courant === undefined ? (
         <EtatVide
           message={`Aucun brief en attente sur ${projet.nom}. Un run lancé depuis la Control Tower s'arrête ici avant de décomposer : c'est le moment où corriger coûte un message.`}
