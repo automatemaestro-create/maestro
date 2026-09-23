@@ -293,6 +293,17 @@ utilisable pour la capacité suivante, celle que personne n'a encore écrite :
   compte vraiment dans `ouvrirDossier` est « c'est un répertoire » : les deux autres évitent une
   erreur, celle-là évite une exécution.
 
+**La capacité suivante est arrivée, et elle applique cette règle à la lettre** (#1224). Le récit de
+fin d'un run nomme les fichiers qu'il a produits, et le critère demande qu'ils s'ouvrent d'un
+geste : `montrerFichier` accepte donc ce qu'`ouvrirDossier` refuse — un **fichier**. La borne est
+levée sans que le risque le soit, parce que ce n'est pas la même action : `shell.showItemInFolder`
+**sélectionne** la cible dans l'explorateur, là où `shell.openPath` la **lance**. La garde qui
+compte a donc changé de forme sans changer de fond — « c'est un fichier », et rien ne s'exécute —,
+et les deux autres restent des évitements d'erreur. Le chemin, lui, vient du texte d'un modèle,
+donc du moins fiable qui soit : c'est exactement pourquoi la garde se juge sur l'action et non sur
+la provenance. Gardé par [`tests/test_coque_bureau.py`](../tests/test_coque_bureau.py), qui vérifie
+l'ouvreur employé **et** l'ordre des gardes, et prouve son motif sur un échantillon fautif.
+
 #### L'isolation d'exécution en distribution bureau : le défaut est le mode non isolé
 
 [docs/24 §4.6](./24-projets-locaux-et-poste-de-travail.md) l'avait écrit au cadrage, et **rien

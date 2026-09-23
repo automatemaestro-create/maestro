@@ -28,6 +28,8 @@
 // (`apps/web/lib/poste.ts`) — dans un onglet elle n'existe pas, et l'autre chemin reste.
 //
 //   - `ouvrirDossier` (#928) — montrer un dossier dans l'explorateur du système ;
+//   - `montrerFichier` (#1224) — révéler un FICHIER dans son dossier, sélectionné et jamais
+//     exécuté : le geste que le récit de fin d'un run pose sur chaque fichier qu'il nomme ;
 //   - `choisirDossier` (#938) — ouvrir le dialogue de dossier de l'OS DANS LA FENÊTRE.
 //
 // Le second est la capacité que docs/35 §2.4 nommait en premier, et il vaut la peine de dire
@@ -213,6 +215,50 @@ async function ouvrirDossier(chemin) {
 }
 
 /**
+ * Montrer un FICHIER dans son dossier (#1224) — le troisième verbe du pont, et celui qui
+ * n'exécute rien.
+ *
+ * `ouvrirDossier` refuse tout ce qui n'est pas un répertoire, et la raison est écrite au-dessus :
+ * `shell.openPath` sur un `.exe`, un `.bat` ou un `.lnk` reviendrait à l'EXÉCUTER, alors que la
+ * page est servie par un serveur local qu'un autre programme du poste peut atteindre. Ce verbe
+ * lève cette borne sans lever le risque, parce qu'il ne fait pas la même chose :
+ * `shell.showItemInFolder` **sélectionne** la cible dans l'explorateur et ne lance jamais rien.
+ * C'est le « Reveal in File Explorer » de VS Code, et c'est le geste que le récit de fin d'un run
+ * demande sur un fichier du livrable.
+ *
+ * Les deux premières gardes d'`ouvrirDossier` restent, et pour les mêmes raisons : chemin absolu
+ * (un relatif serait résolu contre la racine du dépôt) et cible existante (l'explorateur s'ouvre
+ * alors sur un dossier vide, sans rien dire, là où la page peut dire « fichier introuvable »).
+ * La troisième est **inversée** : c'est un fichier qu'on attend, un dossier se montrant déjà par
+ * l'autre verbe.
+ *
+ * Rend un booléen : `showItemInFolder` ne rapporte rien, donc le succès est « la cible existait et
+ * la demande est partie ». C'est exactement ce que la page a besoin de savoir pour choisir entre
+ * se taire et dire « Fichier introuvable ».
+ */
+function montrerFichier(chemin) {
+  if (typeof chemin !== 'string' || chemin.trim() === '') return false;
+  const cible = path.normalize(chemin);
+  if (!path.isAbsolute(cible)) {
+    process.stderr.write(`[coque] fichier non montré (chemin relatif) : ${chemin}\n`);
+    return false;
+  }
+  let etat;
+  try {
+    etat = fs.statSync(cible);
+  } catch {
+    process.stderr.write(`[coque] fichier non montré (introuvable) : ${cible}\n`);
+    return false;
+  }
+  if (!etat.isFile()) {
+    process.stderr.write(`[coque] fichier non montré (pas un fichier) : ${cible}\n`);
+    return false;
+  }
+  shell.showItemInFolder(cible);
+  return true;
+}
+
+/**
  * Ouvrir le dialogue de dossier de l'OS **dans la fenêtre** (#938) — le second verbe du pont.
  *
  * Rend le chemin choisi, ou `null`. **Annuler n'est pas une erreur** : fermer la fenêtre est un
@@ -294,10 +340,12 @@ function ouvrirFenetre() {
 let demarrageStack = Promise.resolve(0);
 
 async function demarrer() {
-  // Les deux canaux que la page puisse emprunter (#928, #938), armés avant qu'elle ne charge.
-  // `handle` et non `on` : la page attend une réponse — si le dossier s'est ouvert, quel chemin a
-  // été choisi —, et un canal à sens unique l'aurait laissée sans rien à afficher.
+  // Les trois canaux que la page puisse emprunter (#928, #938, #1224), armés avant qu'elle ne
+  // charge. `handle` et non `on` : la page attend une réponse — si le dossier s'est ouvert, si le
+  // fichier existait, quel chemin a été choisi —, et un canal à sens unique l'aurait laissée sans
+  // rien à afficher.
   ipcMain.handle('maestro:ouvrir-dossier', (_evenement, chemin) => ouvrirDossier(chemin));
+  ipcMain.handle('maestro:montrer-fichier', (_evenement, chemin) => montrerFichier(chemin));
   ipcMain.handle('maestro:choisir-dossier', (_evenement, depart) => choisirDossier(depart));
   ouvrirFenetre();
   await chargerAttente();

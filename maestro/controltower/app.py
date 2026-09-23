@@ -424,6 +424,7 @@ from maestro.controltower.events import (
     EVENEMENT_AGENT_CAPACITE,
     EVENEMENT_BRIEF_DECISION,
     EVENEMENT_BRIEF_REPONSES,
+    EVENEMENT_EXECUTION_STATUT,
     EVENEMENT_QUESTION_REPONSE,
     EVENEMENT_RENFORT_DECISION,
     EVENEMENT_TACHE_REASSIGNATION,
@@ -497,6 +498,7 @@ from maestro.controltower.projets import (
     detail_refus,
     statut_http,
 )
+from maestro.controltower.recit import ConteurDeFin, RedacteurRecit
 from maestro.controltower.state import (
     BRIEF_APPROUVE,
     BRIEF_REFUSE,
@@ -525,6 +527,7 @@ from maestro.outillage.questionnaire import Choix
 from maestro.poste import SondePoste
 from maestro.projets import (
     ApplicationRefusee,
+    Projet,
     RacineRefusee,
     VersionnementRefuse,
     canonique,
@@ -1406,6 +1409,7 @@ async def _pompe(
     rejouer: Callable[[], Awaitable[None]] | None = None,
     reprise_s: float = REPRISE_POMPE_S,
     reprise_max_s: float = REPRISE_POMPE_MAX_S,
+    sur_fin_de_run: Callable[[str], None] | None = None,
 ) -> None:
     """Le seul consommateur du bus : projette sur l'état, indexe, puis rediffuse.
 
@@ -1433,6 +1437,14 @@ async def _pompe(
     n'est pas une conséquence mais la **moitié** du remède : deux écrivains sans
     dédoublonnage — un `Event` n'a pas d'identifiant — auraient doublé chaque
     ligne du journal requêtable au lieu d'en perdre.
+
+    `sur_fin_de_run` (#1224) est appelé **après** la projection, et c'est tout ce
+    qui le justifie ici plutôt que dans un second abonné au bus : le récit de fin
+    lit ce que le run a fait dans `state`, et un abonné parallèle le lirait
+    parfois avant que l'événement y soit appliqué. Il reçoit un `run_id`, rend la
+    main tout de suite (le travail part dans une tâche), et **ne peut pas
+    arrêter la pompe** — une fin de run qui ne se raconte pas ne doit pas
+    interrompre le flux temps réel de tout le monde.
     """
     attente = reprise_s
     en_panne = False
@@ -1448,6 +1460,18 @@ async def _pompe(
                 state.appliquer(event)
                 journal.consigner(event)
                 diffusion.diffuser(event)
+                if (
+                    sur_fin_de_run is not None
+                    and event.type == EVENEMENT_EXECUTION_STATUT
+                    and event.statut in STATUTS_EXECUTION_TERMINAUX
+                    and event.run_id
+                ):
+                    try:
+                        sur_fin_de_run(event.run_id)
+                    except Exception:  # noqa: BLE001 — le flux passe avant le récit
+                        _LOGGER.exception(
+                            "Fin du run %s non racontée dans son fil.", event.run_id
+                        )
             return
         except asyncio.CancelledError:
             raise
@@ -1476,6 +1500,7 @@ def create_app(
     chat_repondeur: RepondeurChat | None = None,
     assistance_repondeur: RepondeurChat | None = None,
     orchestration_repondeur: RepondeurChat | None = None,
+    recit_redacteur: RedacteurRecit | None = None,
     analyseur: AnalyseurEchecs | None = None,
     redacteur_playbook: RedacteurPlaybook | None = None,
     generateur_agent: GenerateurDefinitionAgent | None = None,
@@ -1969,6 +1994,47 @@ def create_app(
         bus=bus,
     )
 
+    def projet_du_run(projet_id: str | None) -> Projet | None:
+        """Le projet d'un run — `None` s'il n'en relève d'aucun, ou s'il a disparu.
+
+        Un `None` et non une exception : un run hors projet est un cas normal
+        (#222), et un projet retiré après coup ne doit pas empêcher de raconter
+        ce que le run a fait. C'est la même asymétrie que l'annonce de #928, qui
+        écrit sa raison à la place du chemin plutôt que de se taire.
+        """
+        if not projet_id:
+            return None
+        try:
+            return projets.entite(projet_id)
+        except Exception:  # noqa: BLE001 — projet retiré, illisible, ou jamais déclaré
+            return None
+
+    # Le récit de fin d'un run (#1224) : il écrit dans le fil ci-dessus, donc il
+    # se construit après lui. Rien ne l'abonne au bus — c'est la pompe qui lui
+    # passe la main, une fois la projection à jour (voir `_pompe`).
+    conteur = ConteurDeFin(
+        chat=orchestration,
+        state=state,
+        agent=AGENT_ORCHESTRATION,
+        projet=projet_du_run,
+        redacteur=recit_redacteur,
+    )
+    # Les récits en vol, tenus par l'app : `asyncio.create_task` ne garde qu'une
+    # référence faible, et une tâche ramassée en cours de route perdrait le
+    # message sans rien dire.
+    recits: set[asyncio.Task[Any]] = set()
+
+    def raconter_la_fin(run_id: str) -> None:
+        """Lance le récit de `run_id` — sans faire attendre la pompe (#1224).
+
+        La rédaction est un appel modèle et la lecture du livrable touche le
+        disque : les faire dans la pompe figerait le flux temps réel de tous les
+        écrans pendant plusieurs secondes.
+        """
+        tache = asyncio.create_task(conteur.raconter(run_id))
+        recits.add(tache)
+        tache.add_done_callback(recits.discard)
+
     async def rejouer() -> None:
         """Relit le journal durable dans la projection — une seule fois par process."""
         try:
@@ -2021,7 +2087,15 @@ def create_app(
                     "La rejouer : python -m maestro.agents.reprise --check"
                 )
         pompe = asyncio.create_task(
-            _pompe(bus, state, diffusion, journal, magasin=magasin, rejouer=rejouer)
+            _pompe(
+                bus,
+                state,
+                diffusion,
+                journal,
+                magasin=magasin,
+                rejouer=rejouer,
+                sur_fin_de_run=raconter_la_fin,
+            )
         )
         try:
             yield
@@ -2029,6 +2103,11 @@ def create_app(
             # Les runs en vol s'arrêtent **avant** la pompe et le bus : leur
             # issue (annulation) a encore un canal pour être consignée.
             await executions.fermer()
+            # Les récits encore en vol s'arrêtent avec le reste : un appel modèle
+            # qui survivrait à l'arrêt écrirait dans un fil dont plus personne ne
+            # pompe les événements.
+            for recit in list(recits):
+                recit.cancel()
             pompe.cancel()
             with suppress(asyncio.CancelledError):
                 await pompe

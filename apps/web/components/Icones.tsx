@@ -463,6 +463,16 @@ export function IconeDossier(props: Props) {
   );
 }
 
+/** Un fichier du disque — le pendant de `IconeDossier` pour ce qui n'en est pas un. */
+export function IconeFichier(props: Props) {
+  return (
+    <Trait {...props}>
+      <path d="M13.5 3H7a1.5 1.5 0 0 0-1.5 1.5v15A1.5 1.5 0 0 0 7 21h10a1.5 1.5 0 0 0 1.5-1.5V8Z" />
+      <path d="M13.5 3v5H18.5" />
+    </Trait>
+  );
+}
+
 /** Un montant en dollars — l'ancien 💰. */
 export function IconeMonnaie(props: Props) {
   return (

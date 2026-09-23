@@ -57,6 +57,9 @@ class Atelier:
 
     def __init__(self, racine: Path) -> None:
         self._racine = racine
+        # Combien de fois chaque nom a déjà été servi : c'est ce qui donne au
+        # rejeu son propre dossier (voir `dossier`).
+        self._servis: dict[str, int] = {}
 
     @classmethod
     def pour(
@@ -71,8 +74,25 @@ class Atelier:
         return self._racine
 
     def dossier(self, nom: str) -> Path:
-        """Le dossier d'un scénario, créé s'il manque — vide, prêt à être semé."""
-        chemin = self._racine / nom
+        """Le dossier d'un scénario, créé s'il manque — vide, prêt à être semé.
+
+        ⚠ **Un dossier par tentative**, et c'est ce que `banc.jouer` promet déjà
+        en toutes lettres : *« un scénario rejoué déclare un autre projet
+        jetable »*. La promesse n'était pas tenue — le même nom rendait la même
+        racine —, et une racine déjà déclarée fait **refuser** la déclaration
+        (`POST /api/projets` → 422, « racine déjà déclarée par le projet … »).
+        Le rejeu d'un scénario non déterministe ne mesurait donc rien : il
+        mourait sur son premier appel. Mesuré le 2026-09-23 sur S5 (passage
+        `20260923-185330`), et vrai de S2 et S4 depuis qu'ils sont rejouables.
+
+        Le second appel rend donc `<nom>-2`, le troisième `<nom>-3`. Le premier
+        garde son nom nu : les pièces d'un rouge se lisent à l'œil nu, et
+        renommer le cas nominal pour la commodité du rejeu ferait payer le
+        lecteur pour un cas rare.
+        """
+        self._servis[nom] = self._servis.get(nom, 0) + 1
+        rang = self._servis[nom]
+        chemin = self._racine / (nom if rang == 1 else f"{nom}-{rang}")
         chemin.mkdir(parents=True, exist_ok=True)
         return chemin
 

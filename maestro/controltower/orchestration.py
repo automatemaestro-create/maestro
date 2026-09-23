@@ -1064,7 +1064,7 @@ def faits_des_runs(state: ControlTowerState) -> FaitsDesRuns:
         montres = retenus[:_RUNS_RACONTES]
         lignes = [_entete_des_runs(len(montres), len(retenus))]
         for execution in montres:
-            lignes.extend(_fiche_du_run(state, execution))
+            lignes.extend(fiche_du_run(state, execution))
         return "\n".join(lignes)
 
     return faits
@@ -1078,8 +1078,13 @@ def _entete_des_runs(montres: int, total: int) -> str:
     return f"Runs de ce fil et de ce projet, du plus récent au plus ancien ({compte}) :"
 
 
-def _fiche_du_run(state: ControlTowerState, execution: EtatExecution) -> list[str]:
+def fiche_du_run(state: ControlTowerState, execution: EtatExecution) -> list[str]:
     """Un run en quelques lignes : ce qu'il visait, où il en est, ce qu'ont fait ses tâches.
+
+    Publique depuis #1224 : le **récit de fin** (`controltower.recit`) la donne à
+    son rédacteur, et une seconde mise en forme écrite à côté finirait par
+    raconter un autre run que celui que le fil raconte quand on l'interroge.
+
 
     Ses tâches sont celles que le run a **portées** (`PorteeRun`, #473) et non
     celles dont le `run_id` le désigne : sur une relance, la seconde lecture

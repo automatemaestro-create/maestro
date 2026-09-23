@@ -235,7 +235,7 @@ def test_l_url_servie_est_celle_que_start_sh_ouvrirait(main_js):
     assert "const URL_UI = `http://localhost:${PORT_UI}`;" in main_js
 
 
-# --- Le pont : trois verbes nommés, et rien derrière un nom neutre -------------------------------
+# --- Le pont : quatre verbes nommés, et rien derrière un nom neutre ------------------------------
 
 
 def verbes_du_pont(preload: str) -> list[str]:
@@ -251,7 +251,12 @@ def test_le_pont_expose_des_verbes_nommes_et_pas_le_canal_lui_meme(preload_js):
     peut atteindre."""
     verbes = verbes_du_pont(preload_js)
 
-    assert verbes == ["ouvrirDossier", "choisirDossier", "cheminDuFichier"]
+    assert verbes == [
+        "ouvrirDossier",
+        "montrerFichier",
+        "choisirDossier",
+        "cheminDuFichier",
+    ]
     assert "invoke:" not in preload_js
     assert "ipcRenderer," not in objet(
         preload_js, "contextBridge.exposeInMainWorld('maestro', {"
@@ -294,6 +299,29 @@ def test_le_pont_n_ouvre_que_des_repertoires_existants(main_js):
     for garde in ("path.isAbsolute(cible)", "fs.statSync(cible)", "etat.isDirectory()"):
         assert garde in corps, garde
         assert corps.index(garde) < corps.index("shell.openPath(cible)"), garde
+
+
+def test_le_verbe_qui_montre_un_fichier_ne_l_execute_jamais(main_js):
+    """La borne d'`ouvrirDossier` est **levée sans lever le risque** (#1224).
+
+    Ce verbe accepte un fichier, là où l'autre le refuse — et il le peut parce
+    qu'il ne fait pas la même chose : `shell.showItemInFolder` *sélectionne* la
+    cible dans l'explorateur, quand `shell.openPath` la *lance*. Le contrôle
+    tient en deux moitiés indissociables : l'ouvreur employé, et les gardes qui
+    le précèdent.
+
+    ⚠ Le motif est prouvé sur un échantillon fautif : le corps d'`ouvrirDossier`,
+    lui, **ne** contient **pas** `showItemInFolder` — sans quoi ce test serait
+    vert sur n'importe quel fichier du dépôt qui nomme le bon symbole.
+    """
+    corps = objet(main_js, "function montrerFichier(chemin) {")
+
+    assert "shell.showItemInFolder(cible)" in corps
+    assert "shell.openPath" not in corps
+    for garde in ("path.isAbsolute(cible)", "fs.statSync(cible)", "etat.isFile()"):
+        assert garde in corps, garde
+        assert corps.index(garde) < corps.index("shell.showItemInFolder(cible)"), garde
+    assert "showItemInFolder" not in objet(main_js, "async function ouvrirDossier(chemin) {")
 
 
 def test_la_coque_ne_juge_jamais_si_un_chemin_est_declarable(main_js):
@@ -518,7 +546,12 @@ def test_le_front_teste_une_capacite_et_jamais_une_plateforme():
         r'typeof window\.maestro\?\.(\w+) === "function"', texte
     )
 
-    assert sorted(capacites) == ["cheminDuFichier", "choisirDossier", "ouvrirDossier"]
+    assert sorted(capacites) == [
+        "cheminDuFichier",
+        "choisirDossier",
+        "montrerFichier",
+        "ouvrirDossier",
+    ]
 
 
 def test_le_mot_electron_ne_sort_pas_du_dossier_de_la_coque():

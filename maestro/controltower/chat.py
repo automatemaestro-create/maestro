@@ -1107,6 +1107,27 @@ class ChatStore:
             )
         )
 
+    def conversation_du_run(self, agent: str, run_id: str) -> str | None:
+        """La conversation de `agent` **où ce run a été demandé** — `None` si aucune (#1224).
+
+        Le rattachement est celui de #268 : la réponse qui ouvre un run porte son
+        `run_id`, persisté. Le chercher ici plutôt que de le faire porter au run
+        évite un second registre à tenir d'accord avec le fil — le fil *est* la
+        mémoire du canal, et c'est déjà lui que l'annonce de fin (#928) croise
+        côté écran.
+
+        Les conversations sont parcourues **de la plus récente à la plus
+        ancienne** : un run vient d'être demandé, donc il est presque toujours
+        dans la première. Un run lancé depuis l'écran des exécutions n'est dans
+        aucune, et c'est un `None` — pas une anomalie.
+        """
+        if not run_id:
+            return None
+        for carte in self.conversations(agent):
+            if any(message.run_id == run_id for message in self.fil(agent, carte.id)):
+                return carte.id
+        return None
+
     def _touchee(self, agent: str, conversation: str) -> float:
         """Quand le fichier d'une conversation a été écrit pour la dernière fois.
 
@@ -1992,6 +2013,42 @@ class ServiceChat:
             conversation=fil,
             reponse=ReponseChat(contenu=contenu, recrutement=demande),
         )
+
+    async def raconter_la_fin(
+        self,
+        agent: Agent,
+        *,
+        contenu: str,
+        run_id: str,
+        conversation: str | None = None,
+    ) -> MessageChat:
+        """Pose dans le fil le **récit de fin** d'un run (#1224).
+
+        Le troisième verbe qui écrit au fil **sans que personne n'ait parlé** —
+        après `poser_question` (#1023) et `proposer_recrutement` (#1227) —, et
+        c'est le même patron : aucun message d'utilisateur, aucun appel modèle
+        ici, le texte étant composé par l'appelant (`controltower.recit`), qui
+        est le seul à avoir lu le livrable.
+
+        Le message **porte le `run_id`** du run qu'il raconte, comme la réponse
+        qui l'avait ouvert : c'est le rattachement de #268, donc ce qui fait que
+        le récit se relit dans la bonne conversation et que la carte sous la
+        bulle mène au run. Il n'en résulte aucun doublon d'annonce — `issuesDuFil`
+        ne retient qu'une fin par run, jamais une par message.
+
+        Le fil visé est celui de l'**orchestration** : comme partout ici, c'est
+        l'appelant qui le choisit en passant sa fiche.
+        """
+        fil = self._resoudre(agent, conversation)
+        return await self._persister_reponse(
+            agent,
+            conversation=fil,
+            reponse=ReponseChat(contenu=contenu, run_id=run_id),
+        )
+
+    def conversation_du_run(self, agent: str, run_id: str) -> str | None:
+        """La conversation de `agent` où `run_id` a été demandé — `None` si aucune (#1224)."""
+        return self._store.conversation_du_run(agent, run_id)
 
     async def diffuser(
         self,

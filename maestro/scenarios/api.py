@@ -320,6 +320,18 @@ class ClientAPI:
         )
         return _reponse_de(corps, chemin=f"{FIL}/messages")
 
+    def fil(self, conversation: str) -> list[dict[str, Any]]:
+        """Les messages **persistés** d'une conversation, dans l'ordre d'écriture (#1224).
+
+        La seule lecture du banc qui ne suive pas une requête qu'il a faite : le
+        récit de fin d'un run n'est la réponse à rien — personne ne l'a demandé,
+        il paraît quand le run se termine. Le relire dans le fil est donc la
+        seule façon de constater qu'il est là.
+        """
+        corps = self._appel("GET", FIL, params={"conversation": conversation})
+        messages: list[dict[str, Any]] = list((corps or {}).get("messages") or [])
+        return messages
+
     def recruter(
         self, *, conversation: str, validee: Mapping[str, Any], approuve: bool = True
     ) -> dict[str, Any]:

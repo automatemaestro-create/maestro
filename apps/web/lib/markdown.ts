@@ -33,6 +33,24 @@
  * de l'italique et des liens. Tout y est. Trois écarts volontaires à CommonMark,
  * chacun motivé par ce que **ce** produit voit passer :
  *
+ * ## Un lien peut viser un **fichier du poste** (#1224)
+ *
+ * Le récit de fin d'un run nomme les fichiers qu'il a produits, et le critère
+ * demande qu'ils s'ouvrent d'un geste. Ils vivent sur le disque, pas sur le web :
+ * un `file://` serait refusé par le navigateur comme par la coque (refus
+ * consigné dans la veille de #928). Une destination qui n'est pas une adresse
+ * `http(s)` mais un **chemin absolu** devient donc un nœud `fichier`, que le
+ * rendu transforme en geste et non en ancre.
+ *
+ * La forme `[libellé](<destination>)` de CommonMark est donc reconnue — un
+ * chemin contient des espaces (`C:\Mes projets\app.py`), et la forme nue
+ * s'arrête au premier blanc —, **et c'est la seule** qui puisse devenir un
+ * fichier. Les deux moitiés sont une seule décision : la forme bornée est ce
+ * qu'un chemin réclame, et la réserver au geste laisse la forme nue exactement
+ * comme elle était. Une destination relative (`/interne`, `page.html`) y reste
+ * donc du **texte lisible**, jamais un geste — ce que le filet de #697 tient
+ * depuis qu'il existe, et qu'on ne desserre pas pour se simplifier la vie.
+ *
  * 1. **`_` n'emphase pas.** `snake_case`, `run_id`, `tache_id`, `--max-budget-usd`
  *    traversent chaque réponse de l'orchestration ; traiter `_` comme un
  *    délimiteur mettrait la moitié d'un identifiant en italique une fois sur
@@ -62,7 +80,7 @@
  *   rendu de ne pas offrir la copie d'un bloc qui n'est pas fini d'arriver.
  */
 
-import { lienExterneSur } from "./liens";
+import { cheminLocalSur, lienExterneSur } from "./liens";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // L'arbre
@@ -77,6 +95,14 @@ export type Inline =
   | { type: "accent"; enfants: Inline[] }
   /** `href` est **déjà** passé par `lienExterneSur` : il est suivable ou absent. */
   | { type: "lien"; href: string; enfants: Inline[] }
+  /**
+   * Un **fichier du poste** (#1224) — `chemin` est déjà passé par
+   * `cheminLocalSur`, il est donc absolu ou absent. Ce n'est pas un `lien` :
+   * rien ne s'y navigue, et le rendu en fait un geste (`TexteMarkdown`), pas
+   * une ancre. Les confondre poserait un `href` que ni le navigateur ni la
+   * coque ne suivent.
+   */
+  | { type: "fichier"; chemin: string; enfants: Inline[] }
   /** Un retour à la ligne simple, à l'intérieur d'un même paragraphe. */
   | { type: "saut" };
 
@@ -256,6 +282,14 @@ function blocsDeLignes(lignes: string[]): Bloc[] {
  * Aucune classe ne contient `\n` : c'est ce qui borne l'analyse à la ligne et
  * garde le moteur d'expressions régulières linéaire (écart 2 de l'en-tête).
  *
+ * ⚠ Le lien a **deux formes**, et la première est arrivée avec le récit de fin
+ * d'un run (#1224) : `[libellé](<destination>)`, la forme de CommonMark pour une
+ * destination qui contient des **espaces**. Elle n'est pas un confort — un
+ * chemin de Windows en porte (`C:\Mes projets\app.py`), et la forme nue
+ * (`[^\s()]+`) le couperait au premier blanc, donc rendrait un chemin faux à un
+ * geste qui l'ouvre. Testée en premier, sans quoi la forme nue mangerait le
+ * `<` comme un caractère de destination.
+ *
  * ⚠ Une **source**, jamais une instance partagée : `inlineDe` se rappelle
  * lui-même sur le contenu d'un gras ou d'un libellé de lien, et un objet
  * `RegExp` global porte son `lastIndex` — la passe imbriquée déplacerait celui
@@ -264,7 +298,11 @@ function blocsDeLignes(lignes: string[]): Bloc[] {
  * lignes.
  */
 const MOTIF_MARQUE =
-  "`([^`\\n]+)`|\\[([^\\][\\n]*)\\]\\(([^\\s()]+)\\)|\\*\\*([^*\\n]+)\\*\\*|\\*([^*\\n]+)\\*";
+  "`([^`\\n]+)`" +
+  "|\\[([^\\][\\n]*)\\]\\(<([^<>\\n]+)>\\)" +
+  "|\\[([^\\][\\n]*)\\]\\(([^\\s()]+)\\)" +
+  "|\\*\\*([^*\\n]+)\\*\\*" +
+  "|\\*([^*\\n]+)\\*";
 
 /** Le contenu d'une ligne (ou d'un paragraphe), marques comprises. */
 function inlineDe(texte: string): Inline[] {
@@ -274,15 +312,37 @@ function inlineDe(texte: string): Inline[] {
 
   let trouve: RegExpExecArray | null;
   while ((trouve = marque.exec(texte)) !== null) {
-    const [entier, code, libelle, url, fort, accent] = trouve;
+    const [
+      entier,
+      code,
+      libelleBorne,
+      urlBornee,
+      libelleNu,
+      urlNue,
+      fort,
+      accent,
+    ] = trouve;
+    const libelle = libelleBorne ?? libelleNu;
+    const url = urlBornee ?? urlNue;
 
-    // Un lien dont l'adresse n'est pas suivable n'est pas un lien : on le laisse
-    // **tel qu'il a été écrit** plutôt que de poser un `href` mort ou dangereux.
+    // Une destination qui n'est ni suivable ni un chemin du poste n'est pas un
+    // lien : on la laisse **telle qu'elle a été écrite** plutôt que de poser un
+    // `href` mort ou dangereux, ou un geste qui n'ouvrirait rien.
     // `lienExterneSur` est le point de passage unique du produit (#192) — il
-    // écarte `javascript:`, `data:` et les adresses relatives. Le curseur ne
-    // bouge pas : le fragment repart avec le texte brut qui l'entoure.
+    // écarte `javascript:`, `data:` et les adresses relatives ; `cheminLocalSur`
+    // est son pendant pour ce qui ne sort pas (#1224), et n'accepte qu'un chemin
+    // **absolu**. Le curseur ne bouge pas : le fragment repart avec le texte
+    // brut qui l'entoure.
     const href = url === undefined ? null : lienExterneSur(url);
-    if (url !== undefined && href === null) continue;
+    // Un chemin du poste ne se reconnaît que dans la forme **bornée**
+    // (`[libellé](<…>)`). Ce n'est pas une précaution de plus, c'est la même
+    // décision que la forme elle-même : elle seule laisse passer les espaces
+    // d'un chemin, et la réserver au geste garde intacte la conduite de la
+    // forme nue — une destination relative (`/interne`) y reste du **texte
+    // lisible**, ce qu'un filet tient depuis #697 (`fil-lisible.test.tsx`).
+    const chemin =
+      urlBornee === undefined || href !== null ? null : cheminLocalSur(urlBornee);
+    if (url !== undefined && href === null && chemin === null) continue;
 
     if (trouve.index > curseur) {
       pousserTexte(noeuds, texte.slice(curseur, trouve.index));
@@ -291,6 +351,8 @@ function inlineDe(texte: string): Inline[] {
     if (code !== undefined) noeuds.push({ type: "code", texte: code });
     else if (href !== null)
       noeuds.push({ type: "lien", href, enfants: inlineDe(libelle) });
+    else if (chemin !== null)
+      noeuds.push({ type: "fichier", chemin, enfants: inlineDe(libelle) });
     else if (fort !== undefined)
       noeuds.push({ type: "fort", enfants: inlineDe(fort) });
     else noeuds.push({ type: "accent", enfants: inlineDe(accent) });

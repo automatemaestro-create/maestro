@@ -1,9 +1,9 @@
-"""L'oracle de S4 : **un modèle** juge si la réponse nomme la cause relevée (#1148, #746).
+"""Les oracles qui portent sur une **phrase** : un modèle juge (#1148, #746, #1224).
 
-Trois des quatre scénarios se jugent sur des faits — un dossier vide, une
-application qui s'exécute, une équipe écrite sur le disque. Le quatrième porte sur
-une **phrase** : « pourquoi le run a-t-il échoué ? ». Et une phrase ne se juge pas
-par une liste de mots.
+Trois des cinq scénarios se jugent sur des faits — un dossier vide, une
+application qui s'exécute, une équipe écrite sur le disque. Deux portent sur des
+phrases : « pourquoi le run a-t-il échoué ? » (S4) et « comment j'essaie ce que
+tu viens de livrer ? » (S5). Et une phrase ne se juge pas par une liste de mots.
 
 C'est la règle #746, et elle est ici littérale. Chercher « plafond » ou « budget »
 dans la réponse dirait vert à *« je ne sais pas si c'est un plafond »* et rouge à
@@ -54,16 +54,40 @@ VERDICT_NON = "non"
 _LIGNE_VERDICT = re.compile(rf"^\s*{MARQUEUR_VERDICT}\s*(?P<valeur>\S+)", re.MULTILINE)
 _LIGNE_POURQUOI = re.compile(rf"^\s*{MARQUEUR_POURQUOI}\s*(?P<texte>.*)$", re.MULTILINE)
 
+#: La forme de réponse, commune aux deux jugements : deux lignes, et rien
+#: d'autre. Écrite une fois, parce qu'un second gabarit finirait par diverger du
+#: premier — et c'est `avis_depuis` qui les lit tous les deux.
+_FORME = (
+    f"Réponds par exactement deux lignes :\n"
+    f"{MARQUEUR_VERDICT} {VERDICT_OUI} ou {VERDICT_NON}\n"
+    f"{MARQUEUR_POURQUOI} une phrase qui dit ce qui te fait trancher."
+)
+
 SYSTEME = (
     "Tu juges une seule chose : la réponse d'un assistant nomme-t-elle, pour "
     "quelqu'un qui la lit, la cause d'arrêt que le système a relevée ?\n"
     "Tu ne juges ni le style, ni la longueur, ni la politesse, ni l'exactitude "
     "de ce qui est dit en plus. Une reformulation en mots ordinaires compte comme "
     "nommer la cause ; une réponse vague, évasive, ou qui nomme une autre cause, "
-    "ne compte pas ; une réponse qui dit ne pas savoir ne compte pas.\n"
-    f"Réponds par exactement deux lignes :\n"
-    f"{MARQUEUR_VERDICT} {VERDICT_OUI} ou {VERDICT_NON}\n"
-    f"{MARQUEUR_POURQUOI} une phrase qui dit ce qui te fait trancher."
+    "ne compte pas ; une réponse qui dit ne pas savoir ne compte pas.\n" + _FORME
+)
+
+#: Le jugement de S5 (#1224). La question n'est **pas** « le texte est-il
+#: joli » ni « la commande est-elle exacte » — un banc ne saurait pas juger la
+#: seconde sans exécuter, ce que l'oracle de S2 fait déjà pour son compte. Elle
+#: est celle du retex du 2026-09-22, mot pour mot : *on ne me dit pas comment
+#: tester*. Donc : quelqu'un qui lit ceci sait-il quoi taper, et où ?
+SYSTEME_ESSAI = (
+    "Tu juges une seule chose : après avoir lu ce que l'assistant a écrit, la "
+    "personne sait-elle comment essayer ce que le travail vient de produire ?\n"
+    "Pour que ce soit oui, il faut une façon concrète de s'y prendre — une "
+    "commande à taper, un fichier à ouvrir, un geste précis — rattachée à ce qui "
+    "a réellement été produit. Tu ne juges ni le style, ni la longueur, ni la "
+    "politesse ; tu ne vérifies pas non plus que la commande fonctionne, "
+    "seulement qu'elle est donnée et qu'elle porte sur ce livrable.\n"
+    "Ne compte pas : renvoyer vers un écran ou un dossier sans dire quoi y faire, "
+    "dire qu'on ne sait pas, décrire le travail sans dire comment l'essayer, "
+    "proposer une commande générique sans rapport avec les fichiers listés.\n" + _FORME
 )
 
 
@@ -86,6 +110,8 @@ class Juge(Protocol):
     """Ce que le banc demande à un juge — et rien de plus."""
 
     def nomme_la_cause(self, *, cause: str, releve: str, reponse: str) -> Avis: ...
+
+    def dit_comment_essayer(self, *, livrable: str, recit: str, reponse: str) -> Avis: ...
 
 
 class JugeModele:
@@ -112,17 +138,31 @@ class JugeModele:
 
     def nomme_la_cause(self, *, cause: str, releve: str, reponse: str) -> Avis:
         """La réponse du fil nomme-t-elle la cause que l'API a relevée ?"""
+        return self._juger(
+            SYSTEME, _prompt(cause=cause, releve=releve, reponse=reponse)
+        )
+
+    def dit_comment_essayer(self, *, livrable: str, recit: str, reponse: str) -> Avis:
+        """Après lecture du fil, sait-on comment essayer ce qui a été produit ? (#1224)"""
+        return self._juger(
+            SYSTEME_ESSAI, _prompt_essai(livrable=livrable, recit=recit, reponse=reponse)
+        )
+
+    def _juger(self, systeme: str, prompt: str) -> Avis:
+        """L'appel, et les deux façons de n'avoir **aucun** avis.
+
+        Écrit une fois pour les deux jugements : la distinction qui compte — un
+        juge injoignable s'abstient au lieu de rendre « non » — ne doit pas
+        dépendre de la question posée. C'est l'asymétrie du module, et deux
+        copies finiraient par n'en garder qu'une.
+        """
         try:
             provider, modele = self._resolu()
         except Exception as echec:  # configuration, quota, fournisseur inconnu
             return Avis(nomme=False, pourquoi=f"juge indisponible : {echec}", lisible=False)
         try:
             texte = asyncio.run(
-                provider.generate(
-                    _prompt(cause=cause, releve=releve, reponse=reponse),
-                    model=modele,
-                    system_prompt=SYSTEME,
-                )
+                provider.generate(prompt, model=modele, system_prompt=systeme)
             )
         except Exception as echec:
             return Avis(nomme=False, pourquoi=f"juge injoignable : {echec}", lisible=False)
@@ -156,6 +196,26 @@ def _prompt(*, cause: str, releve: str, reponse: str) -> str:
         "Réponse de l'assistant à la question « pourquoi le run a-t-il échoué ? » :\n"
         f"<reponse>{reponse}</reponse>\n"
         "Cette réponse nomme-t-elle cette cause ?"
+    )
+
+
+def _prompt_essai(*, livrable: str, recit: str, reponse: str) -> str:
+    """Ce que le juge de S5 lit : ce qui est sur le disque, puis ce que le fil en dit.
+
+    Le livrable vient **en premier** parce que c'est le seul fait vérifiable de
+    la question : « la commande porte-t-elle sur ce qui a été produit ? » ne se
+    juge pas sans savoir ce qui l'a été. Les trois blocs sont encadrés comme
+    données (ENF-13) — le contenu du disque comme les mots du modèle jugé : ni
+    l'un ni l'autre ne doit pouvoir passer pour une consigne.
+    """
+    return (
+        "Fichiers réellement produits par le travail, tels que le disque les porte :\n"
+        f"<livrable>{livrable}</livrable>\n"
+        "Ce que l'assistant a écrit de lui-même quand le travail s'est terminé :\n"
+        f"<recit>{recit}</recit>\n"
+        "Sa réponse à la question « comment j'essaie ce que tu viens de livrer ? » :\n"
+        f"<reponse>{reponse}</reponse>\n"
+        "Après avoir lu cela, sait-on comment essayer ce qui a été produit ?"
     )
 
 

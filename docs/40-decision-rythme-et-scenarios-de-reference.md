@@ -152,6 +152,7 @@ modèle, par la porte d'entrée réelle (le fil de l'orchestrateur) :
 | S2 | Créer une petite application | Elle s'exécute, et **aucune commande n'a été soumise à la personne** (#1226 — le rapport du banc compte ce qu'il a tranché à sa place) |
 | S3 | Reprendre un projet existant sans équipe | Le fil propose l'équipe **avant** de dépenser ; validée d'un geste, elle est créée et le run demandé aboutit |
 | S4 | « Pourquoi le run a échoué ? » | La réponse nomme la cause réelle, jugée par un modèle, jamais par un lexique (#746) |
+| S5 | « Comment j'essaie ce que le run a livré ? » | La fin du run **se raconte dans le fil**, met en lien un fichier du livrable qui **existe sur le disque**, et dit comment l'essayer — jugé par un modèle (#1224) |
 
 **S3 a son comportement depuis #1146.** Sur un projet sans agent, le fil ne propose plus de run : il
 dit pourquoi (personne pour prendre les tâches) et propose l'équipe que l'analyse du projet appelle
@@ -171,8 +172,17 @@ joué au premier plan avec le vrai modèle, état sauvé dans l'atelier du passa
 ailleurs (celui du bouclage, par exemple) ne sauve rien : son état serait mêlé à celui de la stack
 qui l'a servi. Le détail est dans `maestro/scenarios/etat.py`.
 
+**S5 porte le dernier mètre** (#1224). Le retex du 2026-09-22 : la personne avait le lien du
+dossier — l'annonce de #928 le donne — et écrivait *« on ne me dit pas comment tester, pourtant on
+a généré une documentation »*. Le scénario demande un livrable exécutable, puis constate trois
+choses dans cet ordre : la fin du run **a écrit** dans le fil (un fait structurel, jamais un
+vocabulaire — un message de l'orchestrateur portant le `run_id`, après celui qui a ouvert le run),
+le récit met en lien un fichier qui **existe sur le disque** (un chemin cité qui ne mène à rien est
+un geste mort), et enfin la question « comment j'essaie ce que tu viens de livrer ? » reçoit une
+réponse dont un modèle juge qu'elle dit comment s'y prendre. Le détail est dans docs/05 §2.9.
+
 **Un jalon produit ne se boucle pas GO avec un scénario rouge** (#1152). Les scénarios ne sont pas
-en CI : un passage coûte du vrai modèle (le run du retex a coûté ~10 $). S2 et S4 ne sont pas
+en CI : un passage coûte du vrai modèle (le run du retex a coûté ~10 $). S2, S4 et S5 ne sont pas
 déterministes, donc un rouge se rejoue une fois avant d'être cru.
 
 **Le banc simule un utilisateur qui regarde son run, donc il tranche par acte** (#1197). Il
