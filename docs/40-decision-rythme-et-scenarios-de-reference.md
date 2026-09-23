@@ -148,7 +148,7 @@ modèle, par la porte d'entrée réelle (le fil de l'orchestrateur) :
 | | Scénario | Ce qui le rend vert |
 | --- | --- | --- |
 | S1 | Vider un dossier | Le dossier est vide hors périmètre exclu, sans outil écrit |
-| S2 | Créer une petite application | Elle s'exécute |
+| S2 | Créer une petite application | Elle s'exécute, et **aucune commande n'a été soumise à la personne** (#1226 — le rapport du banc compte ce qu'il a tranché à sa place) |
 | S3 | Reprendre un projet existant sans équipe | Le fil propose l'équipe **avant** de dépenser ; validée d'un geste, elle est créée et le run demandé aboutit |
 | S4 | « Pourquoi le run a échoué ? » | La réponse nomme la cause réelle, jugée par un modèle, jamais par un lexique (#746) |
 

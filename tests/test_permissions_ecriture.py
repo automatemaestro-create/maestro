@@ -121,7 +121,14 @@ def test_le_fichier_ecrit_porte_ask_en_objet_et_les_trois_listes(store):
 
     # Deux formes en sortie obligeraient chaque consommateur à savoir les
     # distinguer, pour n'économiser que quelques caractères sur le cas par défaut.
-    assert charge == {"allow": ["Read"], "ask": {"Bash": "humain"}, "deny": []}
+    # `portees` (#1226) est émise même vide, pour la raison symétrique : c'est sa
+    # présence qui dit « cette politique a été écrite depuis ce lot ».
+    assert charge == {
+        "allow": ["Read"],
+        "ask": {"Bash": "humain"},
+        "portees": {},
+        "deny": [],
+    }
 
 
 def test_le_fichier_ecrit_est_relisible_par_un_humain(store):
@@ -266,7 +273,12 @@ def test_la_route_ecrit_la_politique_et_la_rend(client, store):
     assert reponse.status_code == 200
     assert reponse.json() == {
         "agent": AGENT,
-        "permissions": {"allow": ["Read"], "ask": {"Bash": "auto"}, "deny": ["WebFetch"]},
+        "permissions": {
+            "allow": ["Read"],
+            "ask": {"Bash": "auto"},
+            "portees": {},
+            "deny": ["WebFetch"],
+        },
     }
     assert store.lire(AGENT).deny == ("WebFetch",)
 
@@ -276,7 +288,12 @@ def test_la_politique_ecrite_se_relit_sur_la_fiche(client):
 
     fiche = client.get(f"/api/catalogue/{AGENT}").json()
 
-    assert fiche["permissions"] == {"allow": [], "ask": {}, "deny": ["Bash"]}
+    assert fiche["permissions"] == {
+        "allow": [],
+        "ask": {},
+        "portees": {},
+        "deny": ["Bash"],
+    }
     assert fiche["permissions_erreur"] is None
 
 
@@ -285,7 +302,41 @@ def test_la_route_remplace_integralement(client):
 
     charge = client.put(f"/api/permissions/{AGENT}", json={"allow": ["Write"]}).json()
 
-    assert charge["permissions"] == {"allow": ["Write"], "ask": {}, "deny": []}
+    assert charge["permissions"] == {
+        "allow": ["Write"],
+        "ask": {},
+        "portees": {},
+        "deny": [],
+    }
+
+
+def test_la_portee_d_une_entree_fait_l_aller_retour_par_la_route(client):
+    """#1226 : un écran qui renvoie ce qu'il a lu ne doit pas perdre en chemin la
+    borne d'un cran. Sans `portees` dans le corps admis, enregistrer une
+    permission depuis la fiche transformerait « exécuter dans le projet » en
+    « exécuter n'importe où » — en silence, et sur un garde-fou."""
+    charge = client.put(
+        f"/api/permissions/{AGENT}",
+        json={"ask": {"Bash": "auto"}, "portees": {"Bash": "projet"}},
+    ).json()
+
+    assert charge["permissions"]["portees"] == {"Bash": "projet"}
+    relue = client.get(f"/api/catalogue/{AGENT}").json()["permissions"]
+    assert relue["portees"] == {"Bash": "projet"}
+
+
+def test_une_portee_refusee_laisse_le_fichier_d_avant(client, store):
+    """Même règle que pour un décideur inconnu : la cause exacte, et rien d'écrit."""
+    client.put(f"/api/permissions/{AGENT}", json={"ask": {"Bash": "auto"}})
+
+    reponse = client.put(
+        f"/api/permissions/{AGENT}",
+        json={"ask": {"Bash": "auto"}, "portees": {"Bash": "la lune"}},
+    )
+
+    assert reponse.status_code == 422
+    assert "portée" in reponse.json()["detail"]
+    assert store.lire(AGENT).decide("Bash").portee == ""
 
 
 def test_ask_est_acceptee_sous_ses_deux_formes(client):

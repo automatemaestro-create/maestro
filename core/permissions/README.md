@@ -51,6 +51,29 @@ chaud** à chaque tâche, comme les playbooks) :
   Fail-safe : pas de canal humain, ou canal en panne ⇒ **refus**. Un décideur
   inconnu dans le fichier est refusé avec sa cause — un garde-fou ne s'applique
   jamais à moitié.
+- **Une entrée `ask` peut être bornée par une portée** (#1226) : `portees` range,
+  à côté d'`ask` et par nom d'entrée, *où* le cran s'applique. Une seule est
+  évaluable — `projet`, « l'acte reste dans le dossier confié à l'agent »
+  (`maestro/portee.py`) —, et elle **borne** le cran au lieu d'en ajouter un
+  troisième :
+
+  ```json
+  { "ask": { "Bash": "auto" }, "portees": { "Bash": "projet" } }
+  ```
+
+  *dans* la portée l'entrée vaut ce qu'elle dit ; *dehors* — un chemin hors de la
+  racine, une installation ailleurs sur la machine, un effacement de ce que
+  l'agent n'a pas produit — le **défaut** (`humain`) reprend la main, un acte à la
+  fois. C'est la réponse que [docs/32 §8](../../docs/32-decision-cran-orchestrateur.md)
+  réservait à sa porte 2, *un acte dont le verdict dépend des arguments* : une
+  portée, jamais un décideur intermédiaire, jamais un modèle qui juge un appel
+  d'outil. Une portée inconnue, ou posée sur une entrée absente d'`ask`, est
+  refusée avec sa cause.
+
+  ⚠ La table est **écrite même vide**, et ce n'est pas cosmétique : sa présence
+  distingue une politique écrite depuis #1226 d'une politique écrite avant, et
+  c'est de cette distinction que dépend la correction unique des équipes déjà
+  créées (voir plus bas).
 - Liste absente = liste vide, `ask` comprise : un fichier écrit avant #580 se
   relit sous le régime d'hier. `ask` écrite en **liste** (`["Bash"]`, la forme
   d'avant #586) reste admise et vaut `humain` partout ; la relecture accepte les
@@ -253,3 +276,16 @@ pire qu'un garde-fou absent*.
 l'utilise au démarrage de l'API — idempotente, sans rien supprimer, et elle dit
 ce qu'elle a fait. À la main : `python -m maestro.agents.reprise [--check]
 [--projet <id>]` (`MAESTRO_REPRISE_AGENTS=0` pour s'en passer).
+
+**Les équipes proposées avant #1226 se corrigent sans être recréées.** Toute
+équipe dérivée d'un projet qui ne déclarait aucune commande a reçu
+`{"ask": {"Bash": "humain"}}` — c'est-à-dire **toujours**, sur un projet neuf —,
+si bien qu'un agent recruté pour écrire du code devait faire approuver le fait de
+le lancer : 14 demandes, 14 approbations sur le run mesuré le 2026-09-22.
+`PermissionStore.lire` corrige cette entrée-là, et elle seule, sur les politiques
+**de projet** : `Bash` en `humain` **sans portée déclarée** devient
+`auto` + portée `projet`. Trois bornes tiennent la porte — l'outil d'exécution
+seul, `humain` seul, et l'absence de la table `portees`, qui est le marqueur du
+« écrit avant ce lot ». Une personne qui choisit `humain` aujourd'hui depuis
+l'écran garde son `humain` : ce qu'elle enregistre porte la table, fût-elle vide.
+Les gabarits de la racine, eux, ne sont jamais touchés.

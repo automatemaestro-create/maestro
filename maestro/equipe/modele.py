@@ -48,6 +48,7 @@ from typing import Any
 from maestro.agents.permissions import EntreeArbitrage, PolitiqueOutils
 from maestro.decideur import DECIDEUR_DEFAUT, Decideur
 from maestro.outillage.modele import Piece
+from maestro.portee import PORTEES
 
 #: Version de la forme servie. Elle voyage dans la réponse pour la raison qui a
 #: fait naître `VERSION_ANALYSE` : un consommateur — #1040, l'écran qui montrera
@@ -98,12 +99,19 @@ class AutorisationProposee:
     un `allow` passe sans que personne tranche, un `deny` refuse sans que
     personne tranche. Sur un `ask`, l'absence vaut `humain` — *un cran non
     précisé escalade, il ne s'auto-approuve pas* (`DECIDEUR_DEFAUT`).
+
+    `portee` (#1226) dit **où** ce cran vaut, et n'a de sens que sur `ask` pour
+    la même raison. Vide : partout. C'est elle qui permet de proposer une
+    autorisation d'**exécuter dans le projet** sans proposer une autorisation
+    d'exécuter n'importe où — et la raison, juste à côté, est ce qui la rend
+    décidable par la personne qui valide l'équipe.
     """
 
     outil: str
     cran: str
     raison: str
     decideur: Decideur | None = None
+    portee: str = ""
 
     def __post_init__(self) -> None:
         # Frozen : mêmes précautions que `PolitiqueOutils.__post_init__`. On
@@ -119,6 +127,16 @@ class AutorisationProposee:
             raise ValueError(
                 f"un décideur ne se pose que sur le cran « ask » (reçu sur "
                 f"« {self.cran} » pour {self.outil!r})."
+            )
+        if self.cran != "ask" and self.portee:
+            raise ValueError(
+                f"une portée borne un arbitrage : elle ne se pose que sur le cran "
+                f"« ask » (reçue sur « {self.cran} » pour {self.outil!r})."
+            )
+        if self.portee and self.portee not in PORTEES:
+            raise ValueError(
+                f"portée d'autorisation inconnue : {self.portee!r} "
+                f"(attendues : {', '.join(PORTEES)})."
             )
 
     @property
@@ -140,6 +158,7 @@ class AutorisationProposee:
             "outil": self.outil,
             "cran": self.cran,
             "decideur": str(decideur) if decideur is not None else None,
+            "portee": self.portee,
             "raison": self.raison,
         }
 
@@ -245,7 +264,9 @@ class RolePropose:
         return PolitiqueOutils(
             allow=tuple(a.outil for a in self.autorisations if a.cran == "allow"),
             ask=tuple(
-                EntreeArbitrage(a.outil, a.decideur_effectif or DECIDEUR_DEFAUT)
+                EntreeArbitrage(
+                    a.outil, a.decideur_effectif or DECIDEUR_DEFAUT, a.portee
+                )
                 for a in self.autorisations
                 if a.cran == "ask"
             ),

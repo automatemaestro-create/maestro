@@ -63,6 +63,7 @@ from maestro.equipe import (
 from maestro.outillage.modele import Commande, Constats, Langage, Piece
 from maestro.outillage.questionnaire import Choix
 from maestro.outillage.recommandation import recommander
+from maestro.portee import PORTEE_PROJET
 
 PROJET = "prj-depensio"
 
@@ -287,13 +288,20 @@ def test_le_cran_auto_nomme_les_fichiers_du_projet_ou_les_commandes_ont_ete_lues
     execution = next(a for a in tests.autorisations if a.outil == OUTIL_EXECUTION)
     assert execution.cran == "ask"
     assert execution.decideur_effectif is Decideur.AUTO
+    assert execution.portee == PORTEE_PROJET
     assert "Makefile" in execution.raison
-    assert "ne les borne pas" in execution.raison
+    assert "ne le borne pas à celles-là" in execution.raison
 
 
 def test_une_commande_de_convention_n_est_pas_une_commande_lue() -> None:
     """La retenir ferait passer une supposition pour une lecture — l'exact travers
-    qu'`ORIGINES_COMMANDE` existe pour empêcher."""
+    qu'`ORIGINES_COMMANDE` existe pour empêcher.
+
+    ⚠ Depuis #1226, ce que ce relevé sépare n'est plus le **cran** — une équipe
+    validée exécute dans son projet quoi qu'il arrive — mais la **raison servie** :
+    une autorisation qui nomme la pièce qui l'a désignée se conteste en ouvrant
+    cette pièce. Une commande de convention n'en est pas une, donc elle n'est pas
+    citée."""
     constats = _constats(
         commandes=(
             Commande(
@@ -305,8 +313,10 @@ def test_une_commande_de_convention_n_est_pas_une_commande_lue() -> None:
     tests = _role(_propose(constats), "tests")
 
     execution = next(a for a in tests.autorisations if a.outil == OUTIL_EXECUTION)
-    assert execution.decideur_effectif is Decideur.HUMAIN
-    assert "aucune commande de ce rôle n'a été lue" in execution.raison
+    assert execution.decideur_effectif is Decideur.AUTO
+    assert execution.portee == PORTEE_PROJET
+    assert "pyproject.toml" not in execution.raison
+    assert "aucune n'a pu être lue" in execution.raison
 
 
 def test_la_politique_proposee_laisse_allow_ouvert_et_porte_le_decideur() -> None:
@@ -320,7 +330,11 @@ def test_la_politique_proposee_laisse_allow_ouvert_et_porte_le_decideur() -> Non
     assert politique.allow == ()
     assert politique.deny == ()
     assert [entree for entree in politique.ask] == [OUTIL_EXECUTION]
-    assert politique.decideur(OUTIL_EXECUTION) is Decideur.HUMAIN
+    assert politique.decideur(OUTIL_EXECUTION) is Decideur.AUTO
+    # La portée voyage avec le cran (#1226) : un `auto` servi sans elle serait une
+    # autorisation d'exécuter n'importe où, et ce n'est pas ce qui est proposé.
+    assert politique.decide(OUTIL_EXECUTION).portee == PORTEE_PROJET
+    assert politique.to_dict()["portees"] == {OUTIL_EXECUTION: PORTEE_PROJET}
 
 
 def test_la_politique_servie_ne_peut_pas_contredire_les_autorisations_detaillees() -> None:
@@ -361,12 +375,17 @@ def test_l_intention_dit_sous_quel_regime_le_role_execute() -> None:
     """#1102 : le playbook était écrit dans l'ignorance du cran de son agent, si
     bien qu'il lui ordonnait en premier geste une commande qu'une personne devait
     approuver. L'intention porte désormais le fait ; la règle qu'on en tire vit
-    dans le cadre de #257, et nulle part ailleurs."""
+    dans le cadre de #257, et nulle part ailleurs.
+
+    ⚠ Depuis #1226 le fait a changé de valeur — l'agent exécute dans son projet
+    sans attendre personne — et la **portée** le borne. L'intention doit porter
+    les deux : le régime seul ferait écrire un playbook qui croit tout permis."""
     dev = _role(_propose(_constats()), "dev")
 
     execution = next(a for a in dev.autorisations if a.outil == OUTIL_EXECUTION)
-    assert execution.decideur_effectif is Decideur.HUMAIN
-    assert equipe.REGIME_EXECUTION[Decideur.HUMAIN] in dev.intention
+    assert execution.decideur_effectif is Decideur.AUTO
+    assert equipe.REGIME_EXECUTION[Decideur.AUTO] in dev.intention
+    assert equipe.REGIME_PORTEE[PORTEE_PROJET] in dev.intention
 
 
 def test_l_intention_suit_le_cran_quand_le_projet_declare_ses_commandes() -> None:
@@ -438,20 +457,27 @@ def test_le_cadre_de_generation_interdit_de_faire_d_une_commande_le_premier_gest
     assert "il poursuit et le signale, il ne réessaie pas" in cadre
 
 
-def test_l_autorisation_humaine_dit_que_lire_n_attend_personne() -> None:
-    """La raison se relit dans l'écran de validation (#1040) : sans cette phrase,
-    « Bash : une personne tranche chaque appel » se lirait comme un agent qui ne
-    peut rien faire, alors qu'il lit son outillage sans demander personne.
+def test_sur_un_projet_neuf_le_dev_recoit_le_droit_d_executer_dans_le_projet() -> None:
+    """Le premier critère de #1226. Un projet neuf ne déclare aucune commande :
+    jusqu'ici le `dev` y recevait `humain`, et le run du 2026-09-22 a demandé
+    14 validations `Bash` pour 14 approbations — `mkdir`, `python`, `pytest`, et le
+    ménage des caches que ses propres exécutions venaient de produire.
 
-    ⚠ Elle disait « lire ne passe pas par cet outil » — vrai du geste attendu,
-    faux du geste constaté : #1197 a mesuré qu'un agent lit au shell quand même,
-    et la règle vit désormais dans l'exécution (`maestro.lecture`). La raison dit
-    donc ce qui est appliqué, pas ce qu'on aurait préféré."""
+    L'autorisation proposée dit désormais les deux moitiés, et la raison est ce
+    qui la rend décidable à la validation (#1040) : ce qu'il fait sans déranger
+    personne, et ce qui revient quand même à la personne."""
     dev = _role(_propose(_constats()), "dev")
 
     execution = next(a for a in dev.autorisations if a.outil == OUTIL_EXECUTION)
-    assert "lire" in execution.raison.lower()
-    assert "au shell" in execution.raison and "n'attend personne" in execution.raison
+    assert execution.cran == "ask"
+    assert execution.decideur_effectif is Decideur.AUTO
+    assert execution.portee == PORTEE_PROJET
+    assert execution.to_dict()["portee"] == PORTEE_PROJET
+    # Ce qu'il fait seul…
+    assert "sans vous demander de trancher chaque commande" in execution.raison
+    # …et ce qui vous revient quand même — les deux familles, nommées.
+    assert "sort du dossier du projet" in execution.raison
+    assert "effacerait ce que vous aviez posé là" in execution.raison
 
 
 # --- Les instances : combien, et pourquoi -----------------------------------

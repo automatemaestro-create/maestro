@@ -73,6 +73,7 @@ from maestro.equipe.modele import (
 from maestro.outillage.modele import Constats, Entree, Recommandation
 from maestro.outillage.questionnaire import Choix
 from maestro.outillage.recommandation import SKILL_PAR_USAGE
+from maestro.portee import PORTEE_PROJET
 
 #: L'orchestrateur, écarté **nommément** de toute équipe. Il n'a pas de gabarit
 #: (`maestro.equipe.gabarits`) et il n'en aura pas : c'est Maestro, et c'est lui
@@ -260,25 +261,47 @@ def _autorisations(
     return (_cran_execution(gabarit, constats),)
 
 
+#: Ce que la portée « projet » **garde** pour la personne, dit une fois et repris
+#: dans les deux raisons. Les deux moitiés sont celles du comportement attendu de
+#: #1226, et elles ne se paraphrasent pas d'un cas à l'autre : ce qui sort du
+#: dossier, et ce qui détruit ce que l'agent n'a pas produit.
+CE_QUI_VOUS_REVIENT = (
+    "⚠ Ce que vous gardez : un acte qui **sort du dossier du projet** — un chemin "
+    "au-dessus ou à côté, une installation ailleurs sur la machine — et un acte qui "
+    "**effacerait ce que vous aviez posé là** avant lui vous reviennent, un par un. "
+    "C'est vous qui décidez tout cela ici, à froid, et cela se révoque"
+)
+
+
 def _cran_execution(gabarit: Gabarit, constats: Constats) -> AutorisationProposee:
-    """Le cran proposé pour l'exécution de commandes — et **d'où il sort**.
+    """Le cran proposé pour l'exécution de commandes — et **ce qu'il borne**.
 
-    Deux cas, et c'est le **projet** qui les sépare, jamais le rôle :
+    Un rôle recruté pour un projet y **exécute son travail sans attendre
+    personne** : lancer ce qu'il écrit, le tester, créer ses dossiers, nettoyer ce
+    que ses exécutions ont produit. Le cran est donc `auto`, et sa **portée** est
+    le projet (#1226, `maestro.portee`) : ce qui sort du dossier ou détruit ce que
+    l'agent n'a pas produit revient à une personne, un acte à la fois.
 
-    - le projet **déclare** les commandes que ce rôle joue : `auto`, et la raison
-      nomme les fichiers où elles ont été lues. `auto` n'est pas « la machine
-      approuve » : l'appel passe **en étant tracé**, et la décision est la vôtre,
-      prise à froid (`maestro.decideur`, #716) ;
-    - aucune commande de ce rôle n'a été lue : `humain`. Ce qu'il lancerait, il
-      le composerait lui-même, et personne n'a rien décidé d'avance là-dessus.
-      La raison dit alors que **lire** n'attend personne (#1197) — le renvoi au
-      ticket reste ici, jamais dans la raison servie, qui s'adresse à quelqu'un
-      qui n'a pas ce dépôt sous les yeux (`tests/test_registre_de_langue.py`).
+    ⚠ **Ce n'était pas le cas, et le fait qui l'a corrigé est mesuré.** Jusqu'au
+    2026-09-22, un rôle dont le projet ne déclarait aucune commande recevait
+    `humain` — c'est-à-dire **toujours** sur un projet neuf. Le run `96d0c3482649`
+    a demandé 14 validations `Bash` et en a obtenu 14 : `mkdir`, `python`,
+    `pytest`, `python --version`, et le ménage des caches que ses propres
+    exécutions venaient de produire. Aucune ne sortait du projet.
+    [docs/32 §8](../../docs/32-decision-cran-orchestrateur.md) avait écrit
+    d'avance ce que dit un taux d'approbation de 1 — *ces actes-là méritaient
+    `auto`* — et ce que coûte le cas où le verdict dépend des arguments : une
+    **portée**, jamais un décideur intermédiaire.
 
-    ⚠ La raison le dit, parce que c'est vrai : `auto` **ne borne pas** les
-    commandes à celles qui ont été lues — un cran porte sur un outil, pas sur
-    ses arguments. C'est une autorisation d'exécuter, donnée d'avance et
-    révocable, et la taire ferait lire la proposition pour plus prudente qu'elle
+    Ce que le projet sépare n'est donc plus le cran mais la **raison**, et c'est
+    la règle 1 de ce module qui l'exige : quand le projet déclare les commandes de
+    ce rôle, la raison nomme les fichiers où elles ont été lues ; sinon elle dit
+    ce qu'elle autorise et ce qu'elle garde. Une autorisation se conteste en
+    ouvrant la pièce qui l'a désignée — quand il y en a une.
+
+    ⚠ La raison le dit, parce que c'est vrai : la portée borne **où** l'acte
+    tombe, pas **quelle** commande est lancée. Ce n'est pas une liste de commandes
+    permises, et la taire ferait lire la proposition pour plus prudente qu'elle
     n'est. C'est aussi pourquoi aucun rôle ne reçoit ici un cran plus fermé au
     nom de son métier : ce qu'un rôle ne doit pas *faire* vit dans son playbook,
     qui sait distinguer un `SELECT` d'un `DROP` — un cran ne le sait pas, et le
@@ -289,27 +312,28 @@ def _cran_execution(gabarit: Gabarit, constats: Constats) -> AutorisationPropose
         return AutorisationProposee(
             outil=OUTIL_EXECUTION,
             cran="ask",
-            decideur=Decideur.HUMAIN,
+            decideur=Decideur.AUTO,
+            portee=PORTEE_PROJET,
             raison=(
-                "aucune commande de ce rôle n'a été lue dans le projet : ce qu'il "
-                "lancerait, il le composerait lui-même. Personne n'a rien décidé "
-                "d'avance là-dessus, donc une personne tranche chaque appel. Cela "
-                "ne l'empêche pas de commencer : **lire** son projet et son "
-                "outillage — lister, chercher, ouvrir un fichier — n'attend "
-                "personne, au shell comme avec ses outils de lecture, parce que "
-                "lire n'est pas exécuter"
+                "ce rôle travaille dans le dossier de ce projet : il y lance ce "
+                "qu'il écrit, le teste, crée les dossiers dont il a besoin et "
+                "nettoie ce que ses exécutions ont produit — **sans vous demander "
+                "de trancher chaque commande**, qui passent en étant tracées. "
+                "Aucune commande n'est encore écrite dans le projet, donc aucune "
+                f"n'a pu être lue : c'est le travail qui vient. {CE_QUI_VOUS_REVIENT}"
             ),
         )
     return AutorisationProposee(
         outil=OUTIL_EXECUTION,
         cran="ask",
         decideur=Decideur.AUTO,
+        portee=PORTEE_PROJET,
         raison=(
             "les commandes de ce rôle sont écrites dans le projet et l'analyse les y "
-            f"a lues ({', '.join(declarees)}). Le cran « auto » les laisse passer "
-            "**en les traçant**, au lieu de vous faire arbitrer chaque exécution — "
-            "c'est vous qui le décidez ici, à froid, et cela se révoque. ⚠ Il ne les "
-            "borne pas à celles-là : un cran porte sur un outil, pas sur ses arguments"
+            f"a lues ({', '.join(declarees)}). Il les joue dans le dossier de ce "
+            "projet **en étant tracé**, au lieu de vous faire arbitrer chaque "
+            "exécution. ⚠ La portée dit **où** l'acte tombe, pas quelle commande "
+            f"est lancée : elle ne le borne pas à celles-là. {CE_QUI_VOUS_REVIENT}"
         ),
     )
 
@@ -339,9 +363,16 @@ def _commandes_declarees(gabarit: Gabarit, constats: Constats) -> tuple[str, ...
     ⚠ #1102 avait confié cette correction au **texte** du playbook, et #1197 a
     mesuré qu'elle n'avait pas suivi sur un vrai run : l'agent lisait au shell
     quand même. Elle vit désormais dans l'exécution (`maestro.lecture`), où une
-    commande qui ne fait que lire ne suspend plus rien. Ce cran-ci n'a toujours
-    pas bougé, et c'est le même motif : *ce qui autorise un outil est le geste
-    d'une personne*.
+    commande qui ne fait que lire ne suspend plus rien.
+
+    ⚠ **Ce que #1226 a changé, et ce qu'il n'a pas changé.** Le cran, lui, a fini
+    par bouger : il ne dépend plus de ce relevé, parce qu'une équipe validée est
+    déjà *le geste d'une personne* — elle autorise ce rôle à exécuter **dans ce
+    projet** (`_cran_execution`). Ce que ces gisements décident aujourd'hui est
+    la **raison servie**, pas le cran : une autorisation qui nomme la pièce qui
+    l'a désignée se conteste en ouvrant cette pièce, et c'est la règle 1 de ce
+    module. Le motif d'origine tient toujours pour ce qu'il bornait : une
+    commande que Maestro s'est écrite à lui-même n'autorise rien.
     """
     usages = {usage for usage, _ in gabarit.usages}
     endroits: list[str] = []
@@ -372,6 +403,18 @@ REGIME_EXECUTION: dict[Decideur, str] = {
     ),
     Decideur.AUTO: (
         " Ses commandes shell passent sans attendre personne, en étant tracées."
+    ),
+}
+
+#: Ce que la **portée** ajoute au régime, quand le cran en porte une (#1226).
+#: Un fait de plus, et non une consigne : le playbook a besoin de savoir que
+#: l'agent exécute librement *dans* le dossier du projet et que deux familles
+#: d'actes y font exception, sans quoi il ordonnerait de tout faire approuver —
+#: le défaut que #1102 avait déjà corrigé dans l'autre sens.
+REGIME_PORTEE: dict[str, str] = {
+    PORTEE_PROJET: (
+        " Cela vaut dans le dossier du projet : ce qui en sort, ou ce qui efface "
+        "ce qui s'y trouvait avant lui, attend l'accord d'une personne."
     ),
 }
 
@@ -414,23 +457,24 @@ def _intention(
 
 
 def _regime_execution(autorisations: Sequence[AutorisationProposee]) -> str:
-    """Ce que l'intention dit du cran proposé pour l'outil d'exécution.
+    """Ce que l'intention dit du cran proposé pour l'outil d'exécution, portée comprise.
 
     Vide quand le rôle n'a pas cet outil dans les mains, ou quand son cran ne
     désigne aucun décideur (`allow`, `deny` : personne ne tranche) : une phrase
     sur un régime qui ne s'applique pas serait pire que son absence.
     """
-    decideur = next(
+    execution = next(
         (
-            autorisation.decideur_effectif
+            autorisation
             for autorisation in autorisations
             if autorisation.outil == OUTIL_EXECUTION
         ),
         None,
     )
-    if decideur is None:
+    if execution is None or execution.decideur_effectif is None:
         return ""
-    return REGIME_EXECUTION.get(decideur, "")
+    regime = REGIME_EXECUTION.get(execution.decideur_effectif, "")
+    return regime + REGIME_PORTEE.get(execution.portee, "") if regime else ""
 
 
 def _ecarte(gabarit: Gabarit, constats: Constats) -> RoleEcarte:

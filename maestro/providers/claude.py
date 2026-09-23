@@ -55,10 +55,11 @@ from claude_agent_sdk.types import HookInput, SettingSource
 
 from maestro.acte import arguments_depuis
 from maestro.config import ConfigError, Settings
-from maestro.decideur import Decideur
+from maestro.decideur import DECIDEUR_DEFAUT, Decideur
 from maestro.deliberation import CreditArbitrage
 from maestro.detail_tache import EtapeTache
 from maestro.lecture import OUTIL_LECTURE, lecture_sans_arbitrage
+from maestro.portee import PorteeProjet, hors_de_portee
 from maestro.providers import blocage, courrier, decision, question
 from maestro.providers.activite import Geste, RegulateurActivite
 from maestro.providers.arbitrage import (
@@ -74,6 +75,7 @@ from maestro.providers.arbitrage import (
     motif_approbation,
     motif_attente,
     motif_auto,
+    motif_hors_portee,
     motif_panne,
     motif_refus,
     motif_sans_arbitre,
@@ -92,7 +94,7 @@ from maestro.providers.base import (
 )
 from maestro.providers.checklist import est_checklist, etapes_depuis_outil
 from maestro.sandbox.container import IsolationConfig
-from maestro.sandbox.en_place import FrontiereEcriture, frontiere_de
+from maestro.sandbox.en_place import FrontiereEcriture, frontiere_de, portee_de
 
 if TYPE_CHECKING:  # imports de typage seuls — pas de dépendance d'exécution vers agents
     from maestro.agents.mcp import ServeurMcp
@@ -660,6 +662,11 @@ class ClaudeProvider(ModelProvider):
         # par absence doit l'être ici par refus. Worktree et `mkdtemp()` n'en
         # reçoivent aucune : leur régime ne bouge pas.
         frontiere = frontiere_de(workspace, projet)
+        # La portée « projet » d'un cran d'arbitrage (#1226) : la racine est
+        # l'espace de travail, et ce qui s'y trouvait déjà n'est relevé que là où
+        # il n'y a ni fusion ni diff pour le rattraper. Rendue dans les trois
+        # régimes — un cran borné doit être évaluable partout où il est écrit.
+        portee = portee_de(workspace, projet)
         stderr = CollecteurStderr()
         serveurs = _serveurs_mcp(
             mcp_serveurs,
@@ -700,6 +707,7 @@ class ClaudeProvider(ModelProvider):
                                     self._arbitrage,
                                     credit_arbitrage,
                                     frontiere=frontiere,
+                                    portee=portee,
                                 )
                             ],
                             # Posée, jamais subie (#583) : la borne par défaut du
@@ -1159,6 +1167,7 @@ def _hook_permissions(
     credit: CreditArbitrage | None = None,
     *,
     frontiere: FrontiereEcriture | None = None,
+    portee: PorteeProjet | None = None,
 ) -> Callable[[HookInput, str | None, HookContext], Any]:
     """Le hook PreToolUse : applique la politique de l'agent, et **arme l'arbitrage** (#110, #583).
 
@@ -1183,6 +1192,17 @@ def _hook_permissions(
     humain : un `ask` sur `Write` ne s'arbitre pas pour un `.env`. Elle est le
     seul motif d'un hook **sans politique** (`politique=None`) : sans elle il
     n'y aurait rien à consulter, et le hook n'est alors même pas monté.
+
+    `portee` (#1226) est ce qui permet au hook d'appliquer la **portée** d'une
+    entrée `ask` (`maestro.agents.permissions.EntreeArbitrage.portee`). La
+    politique dit la règle — *ce cran vaut tant que l'acte reste dans le projet* —
+    et ne voit qu'un nom d'outil ; ce hook est le seul endroit où les **arguments**
+    de l'appel sont là, donc le seul qui puisse répondre. Hors de la portée, le
+    cran ne s'applique plus et le **défaut** reprend la main (`DECIDEUR_DEFAUT`) :
+    une portée borne un cran, elle n'en ajoute pas un troisième — c'est
+    exactement ce que [docs/32 §8](../../docs/32-decision-cran-orchestrateur.md)
+    réservait à sa porte 2. `None` : rien à évaluer, donc une portée déclarée
+    fait retomber sur le défaut, dans le sens sûr.
 
     Depuis #586, l'arbitrage a un **décideur** (`DecisionOutil.decideur`), et le
     hook en applique un lui-même : `auto` — celui qui ne désigne personne — est
@@ -1352,7 +1372,17 @@ def _hook_permissions(
             return {}
         if decision.verdict is Verdict.REFUS:
             return refuse(outil, decision.motif)
-        if decision.decideur is Decideur.AUTO:
+        # La portée borne le cran (#1226) : dedans il vaut ce qu'il dit, dehors
+        # c'est le défaut qui reprend la main. Évaluée ici et nulle part
+        # ailleurs, parce que c'est ici, et seulement ici, que les arguments de
+        # l'appel existent. Sans portée déclarée, `hors_de_portee` rend "" et
+        # tout ce qui suit est au bit près le régime d'avant ce lot.
+        sortie = hors_de_portee(
+            decision.portee, portee, outil, input_data.get("tool_input")
+        )
+        decideur = DECIDEUR_DEFAUT if sortie else decision.decideur
+        motif = motif_hors_portee(decision.motif, sortie) if sortie else decision.motif
+        if decideur is Decideur.AUTO:
             # Le cran qui ne désigne personne (#586) : rien à soumettre, donc
             # rien à attendre — et surtout aucun canal requis. Le faire passer
             # par `arbitre` le ferait refuser (`motif_sans_arbitre`) chez tout
@@ -1367,7 +1397,7 @@ def _hook_permissions(
             # n'y a pas d'acte à consigner. Ce que l'agent a fait reste visible
             # au fil temps réel, qui rend ses appels d'outils (#479).
             return {}
-        return await arbitre(outil, decision.motif, input_data.get("tool_input"))
+        return await arbitre(outil, motif, input_data.get("tool_input"))
 
     return hook
 

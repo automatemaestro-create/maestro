@@ -931,10 +931,19 @@ export type RevocationAdmissionMcp = {
  * ses entrées sont au défaut. Le type disait `string[]` jusqu'à #262, si bien
  * que l'écran plantait à la première politique servie ; la lecture, elle,
  * accepte encore les deux formes côté API.
+ *
+ * ⚠ `portees` (#1226) **borne** une entrée `ask` : `{"Bash": "projet"}` dit que
+ * le cran vaut tant que l'acte reste dans le dossier confié à l'agent, et que
+ * le défaut (`humain`) reprend la main dehors. Facultative ici, et à côté
+ * d'`ask` plutôt que dans ses valeurs, pour que rien de ce qui lit un décideur
+ * n'ait à distinguer deux encodages. Elle se **renvoie telle quelle** quand on
+ * réécrit une politique : l'omettre écrit une politique sans portée, ce qui est
+ * exactement ce que veut dire « repartir d'une politique vide » et rien d'autre.
  */
 export type PolitiquePermissions = {
   allow: string[];
   ask: Record<string, string>;
+  portees?: Record<string, string>;
   deny: string[];
 };
 
@@ -2598,6 +2607,7 @@ export type RapportGenerationOutillage = {
 export type PolitiqueEquipe = {
   allow: string[];
   ask: Record<string, string>;
+  portees?: Record<string, string>;
   deny: string[];
 };
 
@@ -2610,11 +2620,17 @@ export type PolitiqueEquipe = {
  * l'absence. La `raison` est le critère du ticket (#716) : un cran `auto` est
  * une décision humaine prise à froid, et une décision sans sa raison n'est
  * décidée par personne.
+ *
+ * `portee` (#1226) dit **où** ce cran vaut — `projet` : dans le dossier confié à
+ * l'agent, le défaut reprenant la main dehors. Vide : partout. Ce qui la rend
+ * décidable à la validation reste la `raison`, qui dit en toutes lettres ce que
+ * l'agent fait seul et ce qui revient quand même à la personne.
  */
 export type AutorisationEquipe = {
   outil: string;
   cran: string;
   decideur: string | null;
+  portee?: string;
   raison: string;
 };
 

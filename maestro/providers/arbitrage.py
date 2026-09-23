@@ -337,6 +337,24 @@ def motif_auto(outil: str) -> str:
     )
 
 
+def motif_hors_portee(motif_politique: str, sortie: str) -> str:
+    """Ce qu'on soumet à une personne quand l'appel **sort de la portée** du cran (#1226).
+
+    Deux moitiés, et il faut les deux. Celle de la politique dit ce qui est
+    écrit — quel outil, quel décideur, quelle portée —, celle de la portée dit ce
+    que **cet appel-ci** fait de plus : un chemin hors de la racine, une
+    installation ailleurs, un effacement de ce que l'agent n'a pas produit. Sans
+    la première, on lirait un refus sans règle ; sans la seconde, on relirait la
+    règle sans savoir ce qui l'a déclenchée, ce qui est exactement ce qu'on
+    reproche à un arbitrage qu'on ne peut pas trancher sur pièces.
+
+    Le décideur redevient le **défaut** à ce moment-là, et le texte le dit : une
+    portée borne un cran, elle n'en invente pas un troisième
+    (`maestro.agents.permissions.EntreeArbitrage`).
+    """
+    return f"{motif_politique} {sortie} Le décideur par défaut reprend donc la main."
+
+
 def motif_sans_arbitre(outil: str) -> str:
     """Le fail-safe : un acte à arbitrer, et personne à qui demander (EF-08, ENF-04).
 

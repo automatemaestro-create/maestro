@@ -105,6 +105,7 @@ def _section(resultat: Resultat) -> list[str]:
             f"- projet : `{resultat.projet_id or '—'}`",
             f"- racine : `{resultat.racine or '—'}`",
             f"- coût : {_cout(resultat.cout_usd)} · durée : {_duree(resultat.duree_s)}",
+            f"- {_arbitrages(resultat)}",
             "",
             "### Déroulé",
             "",
@@ -118,6 +119,25 @@ def _section(resultat: Resultat) -> list[str]:
         for rang, etape in enumerate(resultat.etapes, start=1)
     )
     return lignes
+
+
+def _arbitrages(resultat: Resultat) -> str:
+    """Ce que le banc a tranché à la place de la personne, **et combien de commandes**.
+
+    Une ligne dans chaque section, y compris quand il n'y a rien : « aucun »
+    est le fait qu'on vient vérifier depuis #1226, et une ligne absente se lirait
+    comme une ligne qu'on a oublié d'écrire. Le compte des **commandes** est
+    donné à part, parce que c'est celui-là qui dit si l'équipe travaille sans
+    déranger personne — une validation de tâche, elle, est attendue.
+    """
+    total = len(resultat.arbitrages)
+    if not total:
+        return "arbitrages tranchés par le banc : aucun"
+    commandes = resultat.validations_de_commande
+    return (
+        f"arbitrages tranchés par le banc : {total}, dont "
+        f"{commandes} validation(s) de commande"
+    )
 
 
 def _marque(resultat: Resultat) -> str:

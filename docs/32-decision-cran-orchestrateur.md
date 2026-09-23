@@ -448,6 +448,19 @@ n'est alors **pas** ce cran-ci mais une **portée** sur l'entrée de politique (
 testable, évaluée là où le cran l'est déjà, sans canal ni fournisseur ni traversée de frontière
 distribuée. Cette porte rouvre la *portée*, pas le *décideur*.
 
+> ✅ **Franchie le 2026-09-23 par #1226, et exactement comme prévu.** Le remède de la mesure
+> ci-dessus était une ligne de politique ; le verdict, lui, dépendait bien des arguments — un agent
+> doit pouvoir effacer les caches que ses propres exécutions viennent de produire sans pouvoir
+> effacer ce que la personne avait posé là. L'entrée `ask` porte donc une **portée** (`portees`, à
+> côté d'`ask` : `maestro/agents/permissions.py`), une seule est évaluable (`projet`,
+> `maestro/portee.py`), et elle **borne** le cran — dedans il vaut ce qu'il dit, dehors le défaut
+> `humain` reprend la main, un acte à la fois. Ce qui n'a pas bougé, et qui est le sujet de cette
+> note : aucun canal, aucun fournisseur, aucun décideur intermédiaire, et l'évaluation est une
+> fonction pure, au même endroit que le cran — le hook `PreToolUse`, seul à voir les arguments.
+> ⚠ L'asymétrie y est **l'inverse** de celle de `maestro/lecture.py`, et c'est assumé sur place :
+> une personne a déjà décidé, à la validation de l'équipe, que cet agent exécuterait dans ce
+> projet, et il n'y a personne pendant une tâche pour répondre à ce qu'on lui renverrait (EF-08).
+
 **Porte 3 — un jugement contextuel dont on accepte le régime.** Un acte dont la légitimité dépend du
 **plan**, que la politique ne connaît pas (« ce `rm` est-il dans le périmètre de la tâche T3 ? »).
 C'est la seule porte qui rouvrirait vraiment une passe modèle — et elle demande d'assumer par écrit

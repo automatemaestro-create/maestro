@@ -3,7 +3,7 @@
 | | Scénario | Ce qui le rend vert |
 |---|---|---|
 | S1 | Vider un dossier | Le dossier est vide hors périmètre exclu |
-| S2 | Créer une petite application | Elle s'exécute |
+| S2 | Créer une petite application | Elle s'exécute, sans commande soumise à la personne |
 | S3 | Reprendre un projet sans équipe | L'équipe est proposée avant de dépenser, puis ça part |
 | S4 | « Pourquoi le run a échoué ? » | La réponse nomme la cause de l'API, jugée par un modèle |
 
@@ -51,6 +51,7 @@ from maestro.controltower.state import (
     EXECUTION_TERMINEE,
     STATUTS_EXECUTION_TERMINAUX,
 )
+from maestro.lecture import OUTIL_SHELL
 from maestro.scenarios.api import (
     DELAI_RUN_S,
     ClientAPI,
@@ -98,6 +99,11 @@ class Contexte:
     ils nomment le projet jetable qu'il a déclaré, et le rapport en a besoin même
     quand le scénario s'arrête avant son oracle — c'est là que les pièces d'un
     rouge sont restées.
+
+    `arbitrages` (#1226) est ce que le banc a **tranché à la place de la
+    personne** : un outil par demande approuvée. Il se remplit pendant le suivi du
+    run et se relit deux fois — par l'oracle de S2, dont c'est une moitié, et par
+    le rapport, qui le compte.
     """
 
     client: ClientAPI
@@ -110,10 +116,22 @@ class Contexte:
     lancer_application: Callable[[Path, str], tuple[int, str]] | None = None
     projet_id: str = ""
     racine: Path | None = None
+    arbitrages: list[str] = field(default_factory=list)
 
     def note(self, libelle: str, detail: str = "") -> None:
         """Consigne une étape du déroulé."""
         self.journal.note(libelle, detail)
+
+    @property
+    def validations_de_commande(self) -> tuple[str, ...]:
+        """Les demandes d'arbitrage portant sur l'**outil d'exécution**.
+
+        C'est ce que #1226 compte : une équipe validée exécute son travail dans
+        son projet sans réveiller personne, donc ce tuple doit rester vide sur un
+        projet neuf. Les autres arbitrages — une tâche, un accord d'écriture — ne
+        sont pas des validations de commande et n'y entrent pas.
+        """
+        return tuple(outil for outil in self.arbitrages if outil == OUTIL_SHELL)
 
     def executer(self, racine: Path, point_d_entree: str) -> tuple[int, str]:
         """Lance l'application produite — le vrai `subprocess`, sauf injection."""
@@ -206,6 +224,7 @@ def _suivre(ctx: Contexte, run_id: str, projet_id: str) -> dict[str, Any]:
         note=ctx.note,
         horloge=ctx.horloge,
         dormir=ctx.dormir,
+        arbitrages=ctx.arbitrages,
     )
     ctx.note(
         "run soldé",
@@ -332,11 +351,22 @@ def s1_vider_un_dossier(ctx: Contexte) -> Issue:
 
 
 def s2_creer_une_application(ctx: Contexte) -> Issue:
-    """Une petite application naît dans un dossier neuf, et elle s'exécute.
+    """Une petite application naît dans un dossier neuf, elle s'exécute, **et personne
+    n'a eu à trancher une commande**.
 
     L'oracle **lance** ce qui a été produit : lire le fichier dirait seulement
     qu'il existe, et un fichier qui ne tourne pas n'est pas une application. Le
     code de sortie fait foi, la sortie est recopiée au rapport.
+
+    La seconde moitié vient de #1226, et c'est ce scénario-là qui la porte parce
+    que c'est le sien : écrire du code et le lancer. Le projet est **neuf et
+    vide**, donc aucun acte de l'agent ne peut légitimement remonter — il n'y a
+    rien à détruire qu'il n'ait produit, et rien à chercher hors du dossier. Une
+    seule validation de commande signifie donc que l'agent attend une personne
+    pour lancer son propre travail, ce que le run mesuré le 2026-09-22 faisait
+    quatorze fois. Elle est jugée **avant** l'exécution du livrable : un vert
+    rendu sur une application qui tourne masquerait exactement la régression qu'on
+    vient de corriger.
     """
     racine = ctx.atelier.dossier("s2-application")
     projet_id = _declarer(ctx, "banc-s2-application", racine, origine="nouveau")
@@ -367,6 +397,15 @@ def s2_creer_une_application(ctx: Contexte) -> Issue:
             run_id=run_id,
             cout_usd=cout,
         )
+    commandes = ctx.validations_de_commande
+    if commandes:
+        return rouge(
+            f"{len(commandes)} validation(s) de commande demandée(s) à la personne "
+            "sur un projet neuf : l'équipe validée doit exécuter son travail dans "
+            "son projet sans attendre personne",
+            run_id=run_id,
+            cout_usd=cout,
+        )
     if not (racine / POINT_D_ENTREE).is_file():
         presents = ", ".join(restes(racine)[:10]) or "rien"
         return rouge(
@@ -384,7 +423,8 @@ def s2_creer_une_application(ctx: Contexte) -> Issue:
         )
     return vert(
         f"`python {POINT_D_ENTREE}` s'exécute et sort en 0 "
-        f"({sortie[:120] or 'aucune sortie'})",
+        f"({sortie[:120] or 'aucune sortie'}) ; aucune validation de commande "
+        "demandée à la personne",
         run_id=run_id,
         cout_usd=cout,
     )
