@@ -369,9 +369,11 @@ class ConteurDeFin:
                 agent=self._agent, contexte=contexte_du_recit(self._state, execution, livrable)
             )
         except Exception:  # noqa: BLE001 — un modèle muet ne fabrique pas de prose
+            # Ce qui reste au fil est l'annonce de fin de #928 : le récit s'ajoute à elle,
+            # il ne la remplace pas — d'où un défaut lisible plutôt qu'un fil muet.
             _LOGGER.exception(
                 "Récit de fin non écrit pour le run %s : le rédacteur n'a pas répondu. "
-                "L'annonce de fin (#928) reste dans le fil et dans la cloche.",
+                "L'annonce de fin reste dans le fil et dans la cloche.",
                 execution.run_id,
             )
             return None
