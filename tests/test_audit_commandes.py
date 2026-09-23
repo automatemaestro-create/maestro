@@ -28,6 +28,13 @@ Deux autres, nées d'un renversement plutôt que d'un constat de l'audit :
   que le chantier #1156 retire (#1167) : le produit se vérifie sur la vraie stack, et un texte qui
   renvoie à un mode qu'on retire fait refaire le geste qu'on a banni.
 
+Une dernière, née d'un manque plutôt que d'une dérive :
+
+- `TestMethodeDImplementation` — l'étape 6 de `/ticket-start` et le prompt de run donnent à
+  l'implémentation sa méthode, trois gestes dans leur ordre (#1241, R2 de #1239) : lire le code et
+  ses tests, le test qui échoue d'abord, exercer avant de clore. C'était la seule phase du flux
+  sans consigne.
+
 **Le temps d'une phrase ne se juge pas par des mots.** « Au passé » n'a pas de forme lexicale
 fiable — « du temps de », « pendant la migration », « la version GitLab de cette boucle coûtait »
 ne partagent rien —, et juger un texte humain par un lexique est proscrit dans ce dépôt : il
@@ -830,3 +837,107 @@ class TestDemoHorsDesTextes:
         plat = aplatir(lire(relatif))
         manquantes = [origine for origine in _ORIGINES if origine not in plat]
         assert not manquantes, f"{relatif} ne dit pas d'où viennent les états : {manquantes}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# 7. La méthode d'implémentation (#1241, R2 de #1239)
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+TICKET_START = ".claude/commands/ticket-start.md"
+
+#: Les trois gestes, dans l'ordre où ils se jouent, et l'extrait qui porte chacun — les mêmes mots
+#: dans les deux textes, à la casse près (le prompt de run met ses verbes en capitales). L'ordre est
+#: la méthode : on lit avant d'écrire, le test échoue avant le correctif, et l'exercice clôt.
+_GESTES: tuple[tuple[str, str], ...] = (
+    ("lire avant d'écrire", "le code que le ticket touche et les tests qui le gardent"),
+    (
+        "le test qui échoue d'abord",
+        "écris d'abord le test qui reproduit le défaut et vois-le échouer, puis corrige jusqu'à le "
+        "voir passer",
+    ),
+    ("exercer avant de clore", "un critère se clôt sur une preuve exercée"),
+)
+_NOMS_DES_GESTES = [nom for nom, _ in _GESTES]
+
+#: Les deux textes tels qu'ils étaient avant #1241 (`git show 575611e:<fichier>`). Le prompt de run
+#: exerçait déjà chaque critère (#1240), sans rien dire de ce qui précède ; l'étape 6 s'arrêtait au
+#: cadrage.
+_METHODE_FAUTIVES: Mapping[str, str] = {
+    RUN_SH: (
+        "2. Implémente tous les critères d'acceptation du ticket, puis EXERCE chacun : un critère "
+        "se clôt\n   sur une preuve exercée — un test nommé que tu as joué et vu passer, ou une "
+        "observation sur la\n   vraie stack (le run, le passage du banc des scénarios, la capture "
+        "qui le montre) —, jamais sur un\n   fichier du diff."
+    ),
+    TICKET_START: (
+        "Le résumé cadre le travail, ce n'est **pas une demande de validation** : n'attends\n"
+        "   aucun « go » et commence tout de suite (les critères d'acceptation font foi). Ne "
+        "t'arrête pour\n   demander que si le ticket est réellement ambigu au point de ne pas "
+        "pouvoir commencer — la forme\n   d'un écran n'en est pas un cas : l'étape 7 la tranche "
+        "(#1009)."
+    ),
+}
+
+
+def gestes_manquants(texte: str) -> list[str]:
+    """Les gestes de la méthode absents du texte, ou venus avant celui qui les précède."""
+    plat = aplatir(texte).casefold()
+    manquants: list[str] = []
+    curseur = 0
+    for nom, extrait in _GESTES:
+        position = plat.find(extrait.casefold(), curseur)
+        if position == -1:
+            manquants.append(nom)
+        else:
+            curseur = position + len(extrait)
+    return manquants
+
+
+def etape_6_de_ticket_start() -> str:
+    """L'étape 6 de `/ticket-start`, aplatie : la méthode se lit là, pas ailleurs dans le fichier."""
+    plat = aplatir(lire(TICKET_START))
+    debut = plat.index("6. **Résumé court, puis enchaîne immédiatement**")
+    return plat[debut : plat.index("7. **Variantes", debut)]
+
+
+def etape_2_du_prompt_de_run() -> str:
+    """L'étape 2 du prompt de session de `run.sh`, aplatie : celle qui demande l'implémentation."""
+    plat = aplatir(lire(RUN_SH))
+    prompt = plat[plat.index("prompt_ticket() {") :]
+    debut = prompt.index("2. Implémente")
+    return prompt[debut : prompt.index("3. Clôture avec /ticket-ship", debut)]
+
+
+class TestMethodeDImplementation:
+    """L'implémentation a une méthode, dans `/ticket-start` et dans le prompt de run (#1241)."""
+
+    def test_le_lecteur_arrete_les_textes_d_avant_1241(self) -> None:
+        """L'échantillon fautif est le vrai, et le lecteur nomme exactement ce qui y manquait."""
+        assert gestes_manquants(_METHODE_FAUTIVES[RUN_SH]) == _NOMS_DES_GESTES[:2]
+        assert gestes_manquants(_METHODE_FAUTIVES[TICKET_START]) == _NOMS_DES_GESTES
+
+    def test_le_lecteur_exige_l_ordre_des_gestes(self) -> None:
+        """Les trois extraits présents mais à rebours : un correctif avant son test n'est pas la
+        méthode."""
+        a_rebours = " ".join(extrait for _, extrait in reversed(_GESTES))
+        assert gestes_manquants(a_rebours) == _NOMS_DES_GESTES[1:]
+
+    def test_l_etape_6_de_ticket_start_porte_la_methode(self) -> None:
+        manquants = gestes_manquants(etape_6_de_ticket_start())
+        assert not manquants, f"étape 6 de /ticket-start, geste(s) manquant(s) : {manquants}"
+
+    def test_le_prompt_de_run_porte_la_methode_a_l_etape_qui_demande_l_implementation(
+        self,
+    ) -> None:
+        manquants = gestes_manquants(etape_2_du_prompt_de_run())
+        assert not manquants, f"prompt de run, geste(s) manquant(s) : {manquants}"
+
+    def test_l_exercice_renvoie_a_la_preuve_exercee_sans_recopier_la_conduite(self) -> None:
+        """Le troisième geste est celui de #1240 : les deux textes y renvoient, et la conduite
+        reste à l'étape 4ter de la clôture — une seule source."""
+        etape = etape_6_de_ticket_start()
+        assert "(#1240)" in etape
+        assert "l'étape 4ter de `/ticket-finish`" in etape
+        assert "à son étape 4ter" in etape_2_du_prompt_de_run()
+        for texte in (etape, etape_2_du_prompt_de_run()):
+            assert "criteres-note" not in texte, "la conduite vit à l'étape 4ter, pas ici"

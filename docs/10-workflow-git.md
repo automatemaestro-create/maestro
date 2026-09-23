@@ -1306,7 +1306,14 @@ n'est donc plus une salle d'attente mais un **état de passage**, où le ticket 
      `MAESTRO_VEILLE_SIGNAL=0` éteint le signalement.
    Une fois le cadrage résumé, l'agent **enchaîne directement sur l'implémentation** — le résumé
    n'est pas une pause d'autorisation, aucun « go » n'est attendu.
-3. Développement sur la branche (commits `Refs #<iid>`).
+3. Développement sur la branche (commits `Refs #<iid>`), **avec une méthode** (#1241, R2 de #1239),
+   la même en run et en interactif — écrite à l'étape 6 de `/ticket-start` et à l'étape 2 du prompt
+   de run (§11) : **lire** le code et les tests que le ticket touche avant d'écrire ; pour un bug,
+   **le test qui reproduit le défaut s'écrit d'abord** et se voit échouer, puis le correctif le fait
+   passer ; **chaque critère s'exerce avant de clore**, sur une preuve exercée (§6, #1240). Trois
+   gestes et non une cérémonie : l'implémentation était la seule phase du flux sans consigne,
+   quand `/ticket-finish` seul en porte ~14 000 tokens (mesuré par #1239).
+   `tests/test_audit_commandes.py` garde leur présence et leur ordre dans les deux textes.
 4. **`/ticket-finish`** — pousse la branche, ouvre (ou passe en "Ready") la PR avec
    `Closes #<iid>`, **coche dans sa checklist les cases qu'il a pu vérifier** (§4), passe le
    **statut** à `En revue`.

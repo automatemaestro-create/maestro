@@ -2194,15 +2194,25 @@ lance_session() {
 # (`test_audit_commandes.py`) —, et `criteres-note` refuse un ✓ qui ne nomme aucune preuve.
 # Le banc s'y joue AU PREMIER PLAN : c'est un résultat que la session attend dans son tour, pas un
 # résultat différé.
+#
+# Et une MÉTHODE, à la même étape (#1241, R2 de #1239). L'implémentation, cœur du ticket, tenait en
+# une ligne — « Implémente tous les critères d'acceptation du ticket » — quand tout le reste du
+# texte chargé par ticket parlait de forge, de permissions et de traces. Trois gestes, pas une
+# cérémonie : lire le code et les tests qu'on touche, le test qui échoue d'abord pour un bug,
+# exercer avant de clore (l'exigence ci-dessus). L'étape 6 de `/ticket-start`, que la session vient
+# de jouer, porte la même ; le prompt la redit parce que c'est ici que l'implémentation est
+# demandée. `test_audit_commandes.py` garde les deux textes, leurs gestes et leur ordre.
 prompt_ticket() {
   cat <<PROMPT
 Tu traites intégralement le ticket GitHub #$1 de ce dépôt, seul et sans supervision humaine.
 
 1. Lance la commande /ticket-start $1.
-2. Implémente tous les critères d'acceptation du ticket, puis EXERCE chacun : un critère se clôt
-   sur une preuve exercée — un test nommé que tu as joué et vu passer, ou une observation sur la
-   vraie stack (le run, le passage du banc des scénarios, la capture qui le montre) —, jamais sur un
-   fichier du diff. Si ton diff touche le chemin des scénarios de référence, joue le banc AVANT de
+2. Implémente avec une méthode. LIS avant d'écrire : le code que le ticket touche et les tests qui
+   le gardent. Un bug commence par son test : écris D'ABORD le test qui reproduit le défaut et
+   vois-le échouer, puis corrige jusqu'à le voir passer. Implémente ainsi tous les critères
+   d'acceptation du ticket, puis EXERCE chacun : un critère se clôt sur une preuve exercée — un
+   test nommé que tu as joué et vu passer, ou une observation sur la vraie stack (le run, le
+   passage du banc des scénarios, la capture qui le montre) —, jamais sur un fichier du diff. Si ton diff touche le chemin des scénarios de référence, joue le banc AVANT de
    pousser, au premier plan, et consigne son verdict ; un banc injouable se dit « non joué » avec sa
    raison, jamais vert. La clôture que /ticket-ship enchaîne porte la conduite et la commande, à
    son étape 4ter.
