@@ -39,11 +39,20 @@
  * toutes lettres, une question se répond **dans le fil**, là où on a la
  * conversation qui l'a produite. Un second champ de réponse ici en ferait deux,
  * et celui de la cloche répondrait sans le contexte.
+ *
+ * **La carte de validation n'est plus écrite ici** (#1228) : c'est
+ * `components/CarteValidation`, en densité compacte, celle-là même que le
+ * tableau de bord, la page, l'en-tête d'un run et ses lectures denses montent.
+ * La recopie resserrée qui vivait dans ce fichier disait autre chose du même
+ * acte — le **titre de la tâche** au lieu de l'**acte** que #573 met en tête,
+ * pas d'arguments, pas de diff, et aucun motif de refus. Une demande ne se lit
+ * pas autrement selon la surface d'où on la tranche.
  */
 
 import Link from "next/link";
 import { useCallback, useRef, useState } from "react";
 
+import { CarteValidation } from "@/components/CarteValidation";
 import {
   IconeAgent,
   IconeBrief,
@@ -51,13 +60,14 @@ import {
   IconeNotifications,
 } from "@/components/Icones";
 import { LigneActivite } from "@/components/LigneActivite";
-import { BadgeEtat, Bouton, Carte, CIBLE_MINIMALE } from "@/components/Primitives";
+import { BadgeEtat, Carte, CIBLE_MINIMALE } from "@/components/Primitives";
 import { AnnonceIssueRun } from "@/components/runs/AnnonceIssueRun";
 import { resumeArbitrages } from "@/lib/annonces";
 import { PAGE_DU_CADRAGE, runsEnAttente } from "@/lib/brief";
 import { estNotableNotification, grouperEvenements } from "@/lib/evenements";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import { nomDuRun } from "@/lib/execution";
+import { useHorloge } from "@/lib/horloge";
 import {
   aDesIssuesNonLues,
   ecrireIssuesVues,
@@ -72,11 +82,7 @@ import {
   VALIDATION_EN_ATTENTE,
   type Question,
   type ResumeExecution,
-  type Validation,
 } from "@/lib/types";
-
-/** Décideur d'une validation, tel que fourni par le contexte global (#48). */
-type Decider = (tacheId: string, approuve: boolean) => Promise<void>;
 
 /**
  * Nombre de lignes d'activité récente rappelées dans le panneau — des lignes
@@ -129,6 +135,9 @@ export function CentreNotifications() {
   // plutôt que de relire le stockage à chaque rendu est ce qui fait disparaître
   // le point au moment où l'on ouvre, sans attendre le rendu suivant.
   const [issuesVues, setIssuesVues] = useState(() => lireIssuesVues());
+  // L'horloge partagée (#1228) : la carte de validation y lit « depuis quand
+  // ça attend », et une horloge par carte en ouvrirait une par demande.
+  const maintenant = useHorloge();
   const conteneur = useRef<HTMLDivElement>(null);
   const declencheur = useRef<HTMLButtonElement>(null);
   const surface = useRef<HTMLDivElement>(null);
@@ -323,9 +332,18 @@ export function CentreNotifications() {
                 <ul className="space-y-2">
                   {enAttente.map((validation) => (
                     <li key={validation.tache_id}>
-                      <CarteValidationCompacte
+                      {/* **La** carte du produit, en densité compacte (#1228) —
+                          plus une recopie resserrée. Elle apporte ici trois
+                          choses que la cloche n'avait pas : l'**acte** en tête
+                          quand il y en a un (#573 — « Rédiger le README »
+                          s'affichait au-dessus d'un `rm -rf`), ses arguments ou
+                          son diff, et le **motif** du refus, qui est ce qui
+                          réoriente l'agent (#1185). */}
+                      <CarteValidation
                         validation={validation}
                         decider={decider}
+                        maintenant={maintenant}
+                        densite="compacte"
                       />
                     </li>
                   ))}
@@ -515,92 +533,6 @@ function CarteQuestionCompacte({
         Répondre dans le fil
         <IconeFlecheDroite className="size-3 shrink-0" />
       </Link>
-    </Carte>
-  );
-}
-
-/**
- * Une demande de validation en version compacte, taillée pour la largeur du
- * panneau : mêmes informations et même flux de décision que la carte pleine du
- * tableau de bord (`PanneauValidations`), mais resserrés. La décision passe par
- * le `decider` du contexte — le moteur reprend ou annule la tâche —, la demande
- * quitte alors l'état « en attente » et disparaît de la liste (donc du badge).
- */
-function CarteValidationCompacte({
-  validation,
-  decider,
-}: {
-  validation: Validation;
-  decider: Decider;
-}) {
-  const [enCours, setEnCours] = useState(false);
-  const [erreur, setErreur] = useState<string | null>(null);
-
-  const surDecision = async (approuve: boolean) => {
-    setEnCours(true);
-    setErreur(null);
-    try {
-      await decider(validation.tache_id, approuve);
-      // Succès : la demande sort de « en attente » au rechargement et la carte
-      // se démonte — inutile de rétablir `enCours`. En cas d'échec seulement,
-      // on rend la main pour réessayer.
-    } catch (e) {
-      setErreur(e instanceof Error ? e.message : String(e));
-      setEnCours(false);
-    }
-  };
-
-  return (
-    <Carte densite="compacte" ton="attention">
-      <p className="text-annexe font-medium" title={validation.tache_id}>
-        {validation.titre || validation.tache_id}
-      </p>
-      {/* L'icône double le mot « Agent » : l'émoji 🤖 le portait seul, et une
-          ligne « 🤖 dev » ne disait rien à qui ne voyait pas le pictogramme. */}
-      <p className="mt-0.5 flex items-center gap-1 text-micro text-neutral-500 dark:text-neutral-400">
-        <IconeAgent className="size-3 shrink-0" />
-        Agent {validation.agent}
-        {validation.role ? ` · ${validation.role}` : ""}
-      </p>
-      {validation.description && (
-        <p className="mt-1 line-clamp-2 text-micro whitespace-pre-wrap text-neutral-600 dark:text-neutral-300">
-          {validation.description}
-        </p>
-      )}
-      {validation.raison && (
-        <p className="mt-1 text-micro text-amber-700 italic dark:text-amber-400">
-          Motif : {validation.raison}
-        </p>
-      )}
-      {/* Les primitives du socle et non deux `<button>` recopiés (#272) : ces
-          deux-là étaient les derniers `bg-emerald-600`/`border-rose-300` bruts
-          du canal des validations, c'est-à-dire exactement le contraste de
-          3,65:1 que #535 a retiré des dix-huit autres recopies. Le plancher de
-          cible est déclaré ici parce que la taille `petite` porte son propre pas
-          typographique (`text-annexe`) sans atteindre 24 px. */}
-      <div className="mt-2 flex gap-1.5">
-        <Bouton
-          taille="petite"
-          className={CIBLE_MINIMALE}
-          occupe={enCours}
-          onClick={() => void surDecision(true)}
-        >
-          {enCours ? "Envoi…" : "Approuver"}
-        </Bouton>
-        <Bouton
-          variante="contour"
-          ton="alerte"
-          taille="petite"
-          className={CIBLE_MINIMALE}
-          disabled={enCours}
-          onClick={() => void surDecision(false)}
-        >
-          Refuser
-        </Bouton>
-      </div>
-      {erreur && (
-        <p className="mt-1 text-micro font-medium text-alerte-texte">{erreur}</p>
-      )}
     </Carte>
   );
 }

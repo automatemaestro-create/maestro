@@ -43,7 +43,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import PageCouts from "@/app/couts/page";
 import PageJournal from "@/app/journal/page";
 import TableauDeBord from "@/app/page";
-import PageValidations from "@/app/validations/page";
+import { EcranValidations as PageValidations } from "@/components/EcranValidations";
 import { ValidationBriefs } from "@/components/brief/ValidationBriefs";
 import { FilChat } from "@/components/FilChat";
 import { ListeRuns } from "@/components/runs/ListeRuns";

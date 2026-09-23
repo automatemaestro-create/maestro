@@ -1175,7 +1175,11 @@ réécrivant pour qu'elle nomme la panne : la teinte est partie avec le texte,
 dans un fichier qu'on rouvrait de toute façon, et **644** depuis #939, qui a
 retiré de la page d'accueil le dernier bloc de commande du produit — sa paire
 partie avec lui, et avec elle le **manque du socle** `code`, dont c'était
-l'unique témoin. Ce ticket ne les
+l'unique témoin. Et **640** depuis #1228, qui a fait de la carte d'une demande
+de validation **un** composant : la recopie resserrée de la cloche portait
+trois paires de son côté, et le lien « Trancher → » ambre du nœud de pipeline
+une quatrième — les quatre sont parties avec les deux recopies, les cinq paires
+du diff ayant seulement changé de fichier. Ce ticket ne les
 migre pas — il pose le compte et **refuse la suivante** (`tests/couleurs.test.ts`),
 comme #832 l'a fait pour les contrôles de saisie et #534 pour le contraste. La
 689ᵉ est arrivée pendant l'attente de merge de ce lot (#894, une cinquième
@@ -1477,7 +1481,10 @@ fichier.
 
 **Résidu au 2026-09-20 : 165 écritures sur 59 fichiers** — 136 rayons, 28 ombres,
 1 écriture en ligne ; **164** depuis #939, dont le bloc de commande retiré de la
-page d'accueil portait un `rounded` nu. Le socle (`components/Primitives.tsx`) en est déjà sorti
+page d'accueil portait un `rounded` nu, et **162** depuis #1228 : la carte d'une
+demande de validation, devenue un composant unique, a replié ses deux
+`rounded-md` sur `rounded-controle` au passage — le même pixel, le nom du
+barème. Le socle (`components/Primitives.tsx`) en est déjà sorti
 pour ses huit rayons, qui ont pris leur nom de rôle à valeur constante ; ses
 trois ombres y restent, parce que les retirer changerait le rendu. Un manque du
 barème est **nommé et non toléré** : le voile du guide de prise en main

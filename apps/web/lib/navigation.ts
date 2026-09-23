@@ -220,3 +220,57 @@ export function hrefRun(runId: string): string | undefined {
   const runs = entreeParLibelle("Runs");
   return runs && `${runs.href}/${encodeURIComponent(runId)}`;
 }
+
+/**
+ * Le nom du paramètre qui porte **d'où l'on vient** (#1228). Un seul, écrit
+ * ici : deux surfaces qui l'épelleraient chacune de leur côté finiraient par
+ * n'en reconnaître qu'une sur deux.
+ */
+export const PARAM_RETOUR = "retour";
+
+/**
+ * Le même chemin, **augmenté du retour** : `…?retour=<d'où l'on vient>`.
+ *
+ * C'est le second critère de #1228 : la page d'un run ne laisse plus partir
+ * personne sans chemin de retour. Un lien qui mène encore aux validations —
+ * l'historique, la file entière — emmène son point de départ avec lui, et
+ * l'écran d'arrivée le rend (`lienDeRetour`).
+ *
+ * Le `retour` est **encodé** : il porte lui-même une requête (`?vue=pipeline`,
+ * la lecture d'où l'on venait), qui sans cela serait lue comme un paramètre de
+ * la page d'arrivée.
+ */
+export function hrefAvecRetour(href: string, retour: string): string {
+  const separateur = href.includes("?") ? "&" : "?";
+  return `${href}${separateur}${PARAM_RETOUR}=${encodeURIComponent(retour)}`;
+}
+
+/**
+ * Le chemin de retour qu'une page a reçu, ou `undefined`.
+ *
+ * **Interne, et vérifié comme tel** : un chemin absolu de ce site (`/…`), jamais
+ * un `//ailleurs.example` ni un `https://…`. Ce n'est pas une précaution
+ * théorique — un paramètre d'URL est la seule entrée de l'interface que
+ * personne du produit n'a écrite, et un lien de retour qui suivrait ce qu'on y
+ * met ferait de chaque écran une rampe de lancement vers ailleurs. Le refus est
+ * **silencieux** : sans retour valable, l'écran est celui d'avant ce ticket.
+ */
+export function cheminDeRetour(
+  valeur: string | string[] | undefined,
+): string | undefined {
+  const candidat = Array.isArray(valeur) ? valeur[0] : valeur;
+  if (typeof candidat !== "string") return undefined;
+  if (!candidat.startsWith("/") || candidat.startsWith("//")) return undefined;
+  return candidat;
+}
+
+/**
+ * Le libellé du lien de retour — dérivé de l'entrée de menu qui couvre ce
+ * chemin (`entreeCourante`), jamais écrit en dur : « Revenir aux Runs » suit la
+ * page si elle déménage, et un chemin qu'aucune entrée ne couvre rend un
+ * libellé qui tient quand même.
+ */
+export function libelleDeRetour(chemin: string): string {
+  const entree = entreeCourante(chemin.split("?")[0]);
+  return entree === undefined ? "Revenir d'où je viens" : `Revenir à « ${entree.libelle} »`;
+}

@@ -59,13 +59,15 @@
  * vit dans le commentaire « ## Veille de conception » du même ticket.
  */
 
-import Link from "next/link";
 import { useRef, useState, type MouseEvent } from "react";
 
 import {
+  GesteValidation,
+  type ArbitrageSurPlace,
+} from "@/components/CarteValidation";
+import {
   IconeAgent,
   IconeChrono,
-  IconeFlecheDroite,
   IconeJetons,
   IconePuce,
   IconeStatutAFaire,
@@ -88,16 +90,11 @@ import { detailDe } from "@/lib/detailTache";
 import {
   BadgeEtat,
   Carte,
-  CIBLE_MINIMALE,
   EnTeteSection,
   type Icone,
   type TonBadge,
 } from "@/components/Primitives";
-import { ATTENTES } from "@/components/runs/EtatRun";
-import {
-  ATTENTE_VALIDATION,
-  tacheArreteeSurUnHumain,
-} from "@/lib/execution";
+import { tacheArreteeSurUnHumain } from "@/lib/execution";
 import {
   formatCout,
   formatDuree,
@@ -105,7 +102,6 @@ import {
   formatTokens,
   libelleStatut,
 } from "@/lib/format";
-import { entreeParLibelle } from "@/lib/navigation";
 import {
   STATUT_EN_ATTENTE_VALIDATION,
   type EtatAgent,
@@ -146,10 +142,30 @@ type Props = {
    * — jamais une carte qui *devine* une attente qu'on ne lui a pas dite.
    */
   enAttenteHumaine?: ReadonlySet<string>;
+  /**
+   * De quoi **trancher sans quitter le tableau** (#1228) : la demande qui dort
+   * sur chaque tâche (`lib/validations.arbitragesEnAttente`) et le décideur.
+   *
+   * **Optionnelle**, comme sa voisine et pour la même raison : le Kanban se
+   * monte aussi là où les validations ne sont pas à portée. Absente, la carte
+   * dit qu'une tâche attend quelqu'un sans proposer de geste — c'est ce qu'elle
+   * faisait avant ce ticket, moins le lien qui emmenait ailleurs.
+   */
+  arbitrer?: ArbitrageSurPlace;
 };
 
 /** Le défaut de `enAttenteHumaine` — hissé pour ne pas en recréer un par rendu. */
 const AUCUNE_ATTENTE: ReadonlySet<string> = new Set<string>();
+
+/**
+ * Ce dont un clic **n'ouvre pas** le détail de la tâche. Les contrôles gardent
+ * leur geste — un clic sur le sélecteur de réassignation ou sur un lien ne doit
+ * pas ouvrir un panneau par-dessus l'action qu'on vient de lancer — et, depuis
+ * #1228, **le dialogue que la carte a elle-même ouvert** : trancher une
+ * validation sur place se fait dans un panneau monté dans la carte, et un clic
+ * dedans y remonterait sans cette exception.
+ */
+const SANS_OUVERTURE = "a, select, option, button, [role='dialog']";
 
 /**
  * Les colonnes du Kanban, dans l'ordre du flux de travail. Chaque statut porte
@@ -224,6 +240,7 @@ export function Kanban({
   projet,
   messageVide,
   enAttenteHumaine = AUCUNE_ATTENTE,
+  arbitrer,
 }: Props) {
   // Le panneau est tenu **ici**, pas dans la carte : il est modal (une tâche à
   // la fois), et une carte est un `<article>` cliquable au fond d'une colonne
@@ -351,6 +368,7 @@ export function Kanban({
                     tache,
                     enAttenteHumaine,
                   )}
+                  arbitrer={arbitrer}
                 />
               ))}
               {colonne.taches.length === 0 && (
@@ -386,6 +404,7 @@ function CarteTache({
   reassigner,
   ouvrir,
   attendUnHumain,
+  arbitrer,
 }: {
   tache: Tache;
   agents: EtatAgent[];
@@ -398,6 +417,8 @@ function CarteTache({
    * carte la ferait reposer une fois par tâche rendue.
    */
   attendUnHumain: boolean;
+  /** De quoi trancher cette attente sur place (#1228). */
+  arbitrer?: ArbitrageSurPlace;
 }) {
   const declencheur = useRef<HTMLButtonElement>(null);
 
@@ -459,15 +480,11 @@ function CarteTache({
   // passent le clavier et les lecteurs d'écran.
   const surClicCarte = (evenement: MouseEvent<HTMLElement>) => {
     if (!ouvrable) return;
-    if ((evenement.target as HTMLElement).closest("a, select, option, button")) {
+    if ((evenement.target as HTMLElement).closest(SANS_OUVERTURE)) {
       return;
     }
     ouvrir(tache, declencheur.current);
   };
-
-  // Où l'on tranche l'attente — la même entrée de navigation que le nœud de
-  // pipeline (`VuePipeline`), lue dans la table `ATTENTES` et jamais réécrite.
-  const validations = entreeParLibelle(ATTENTES[ATTENTE_VALIDATION].page);
 
   // La surface vient de `Carte` (#245, balise `article` par défaut) ; ne reste
   // ici que ce qui est propre à l'ouverture du panneau (#251) — le curseur et
@@ -506,30 +523,21 @@ function CarteTache({
           {nom}
         </p>
       )}
-      {/* Le geste qui lève l'attente est **ailleurs**, et la carte y mène —
-          exactement ce que le nœud de pipeline fait déjà (`VuePipeline`), et
-          pour la même raison : un arbitrage se tranche sur l'écran qui montre
-          de quoi trancher, pas dans une carte de 11 rem.
+      {/* ⚠ **Renversement de #1228**, le même qu'au nœud de pipeline et pour
+          les mêmes raisons : le geste était ailleurs et la carte y menait, sans
+          chemin de retour. Ce qui reste vrai est qu'un arbitrage ne se **lit**
+          pas dans 11 rem ; ce qui était faux est qu'il fallait pour autant
+          quitter l'écran. Le panneau porte la lecture, la carte porte le geste.
 
-          Il double le « Trancher → » de la bannière du run, à quelques
-          centimètres au-dessus, et c'est assumé (réserve du regard neuf) : la
-          bannière dit **qu'**une tâche attend, la carte dit **laquelle** — et
-          c'est ce qui manquait à l'écran, où l'attente s'annonçait en haut
-          pendant que le tableau du bas montrait une tâche au travail. */}
-      {attendUnHumain && validations && (
-        <p className="mt-1.5">
-          <Link
-            href={validations.href}
-            /* `text-attention-texte` et non la paire `amber-800`/`amber-300`
-               du nœud de pipeline : la couleur se choisit une fois, les deux
-               thèmes viennent avec le token (`tests/couleurs.test.ts`). Même
-               classe que le lien d'arbitrage de `CentreNotifications`. */
-            className={`inline-flex items-center gap-1 ${CIBLE_MINIMALE} text-annexe font-medium text-attention-texte hover:underline`}
-          >
-            {ATTENTES[ATTENTE_VALIDATION].action}
-            <IconeFlecheDroite className="size-3.5 shrink-0" />
-          </Link>
-        </p>
+          Il double le « Trancher » de la tête du run, à quelques centimètres
+          au-dessus, et c'est assumé (réserve du regard neuf) : la tête dit
+          **qu'**une tâche attend, la carte dit **laquelle** — et c'est ce qui
+          manquait à l'écran, où l'attente s'annonçait en haut pendant que le
+          tableau du bas montrait une tâche au travail. */}
+      {attendUnHumain && (
+        <div className="mt-1.5">
+          <GesteValidation tacheId={tache.id} arbitrer={arbitrer} />
+        </div>
       )}
       {/* Le ticket qui a motivé la tâche (#192) — absent : la carte est
           exactement celle d'avant, la marge partant avec le composant. */}

@@ -40,6 +40,18 @@
  *   aussi ce qui rend son démontage sans conséquence quand on regarde un autre
  *   onglet : il se relit à l'ouverture, il ne se perd pas.
  *
+ * ⚠ **Depuis #1228, cette vue ne se contente plus de montrer.** Une demande de
+ * validation qui retient ce run s'y **tranche sur place**, dans les trois
+ * lectures où elle se lisait : la tête la porte en entier, le nœud de pipeline
+ * et la carte du Kanban l'ouvrent dans un panneau. Le geste renvoyait jusque-là
+ * vers `/validations` — « je suis dans la page run pipeline et je dois trancher,
+ * ça me redirige et je ne sais pas comment revenir » (retour d'usage du
+ * 2026-09-22). La table `ATTENTES` de `components/runs/EtatRun` annonçait cette
+ * bascule en toutes lettres : « le jour où la vue d'un run portera ces gestes,
+ * c'est cette table qu'il faudra changer ». Elle ne change pas — la liste des
+ * runs et le tableau de bord acheminent toujours —, c'est la **tête** qui
+ * demande à ne plus l'acheminer (`surPlace`).
+ *
  * Le run lui-même est lu dans `executions`, la liste que le shell tient déjà pour
  * le projet actif : elle porte tout ce que la tête affiche (statut, vitalité,
  * progression, coût, attente) et se met à jour d'elle-même. Un run **absent** de
@@ -58,9 +70,19 @@ import {
   useEcranEnPanne,
 } from "@/components/BanniereErreurApi";
 import { BasculeDeVues } from "@/components/BasculeDeVues";
+import {
+  CarteValidation,
+  type ArbitrageSurPlace,
+} from "@/components/CarteValidation";
 import { IconeFlecheGauche, IconeRuns } from "@/components/Icones";
 import { Kanban } from "@/components/Kanban";
-import { Carte, CIBLE_MINIMALE, EtatVide } from "@/components/Primitives";
+import { PAGE_VALIDATIONS } from "@/components/PanneauValidations";
+import {
+  Carte,
+  CIBLE_MINIMALE,
+  EtatVide,
+  LienRenvoi,
+} from "@/components/Primitives";
 import { DecisionsRun } from "@/components/runs/DecisionsRun";
 import {
   Avancement,
@@ -90,9 +112,14 @@ import {
 } from "@/lib/execution";
 import { formatCout, formatHeureRelative } from "@/lib/format";
 import { useHorloge } from "@/lib/horloge";
-import { entreeParLibelle, hrefRun } from "@/lib/navigation";
-import type { ResumeExecution } from "@/lib/types";
+import {
+  entreeParLibelle,
+  hrefAvecRetour,
+  hrefRun,
+} from "@/lib/navigation";
+import type { ResumeExecution, Validation } from "@/lib/types";
 import { useTachesRun } from "@/lib/useTachesRun";
+import { arbitragesEnAttente, validationsDuRun } from "@/lib/validations";
 import {
   VUES_RUN,
   VUE_DECISIONS,
@@ -104,7 +131,18 @@ import {
   type VueRunCle,
 } from "@/lib/vuesRun";
 
-export function VueRun({ runId }: { runId: string }) {
+export function VueRun({
+  runId,
+  vueCible = VUE_RUN_DEFAUT,
+}: {
+  runId: string;
+  /**
+   * La lecture sur laquelle ouvrir (#1228) — le `?vue=` que la page a résolu.
+   * Elle ne sert qu'au **retour** depuis `/validations` : rien d'autre n'écrit
+   * ce paramètre, et changer d'onglet ne l'écrit pas non plus (`lib/vuesRun`).
+   */
+  vueCible?: VueRunCle;
+}) {
   const {
     projet,
     portee,
@@ -114,6 +152,7 @@ export function VueRun({ runId }: { runId: string }) {
     agents,
     evenements,
     reassigner,
+    decider,
     revision,
     chargement,
     erreur,
@@ -122,7 +161,7 @@ export function VueRun({ runId }: { runId: string }) {
   // La lecture affichée. `useState` et non une route : les trois vues portent le
   // *même* run, déjà chargé — une frontière de route ferait repartir la tête et
   // les autres lectures pour un changement de regard (`lib/vuesRun`).
-  const [vue, setVue] = useState<VueRunCle>(VUE_RUN_DEFAUT);
+  const [vue, setVue] = useState<VueRunCle>(vueCible);
 
   const run = executions.find((execution) => execution.run_id === runId);
   // `null` tant que le run n'est pas reconnu comme un run de ce projet : inutile
@@ -151,6 +190,29 @@ export function VueRun({ runId }: { runId: string }) {
     run === undefined || regimeDuRun(run, attendUneValidation) !== REGIME_SUSPENDU
       ? null
       : causeDAttente(run, attendUneValidation);
+
+  // **Ce que ce run attend de moi** (#1228), et de quoi le trancher : les
+  // demandes qui dorment sur ses tâches, la plus ancienne en tête, plus le
+  // décideur du contexte. Lues une fois ici pour les trois surfaces — la tête,
+  // le nœud de pipeline, la carte du Kanban —, comme `tachesArretees` juste
+  // au-dessus : trois lectures de la même file finiraient par ne plus compter
+  // la même chose.
+  const demandes = validationsDuRun(validations, tachesDuProjet, runId);
+  // La **tête** liste les demandes de *ce run* — elle répond à « que me
+  // demande-t-il ? ». Les deux lectures denses, elles, prennent la file du
+  // projet indexée par tâche : elles posent la question sur un **nœud** ou une
+  // **carte**, c'est-à-dire sur une tâche, et c'est déjà la portée de
+  // `tachesArretees` juste au-dessus, qui colore les mêmes boîtes. Deux portées
+  // pour un même fait donneraient une boîte ambre sans geste dessous.
+  const arbitrer: ArbitrageSurPlace = {
+    enAttente: arbitragesEnAttente(validations),
+    decider,
+  };
+  // D'où l'on repart quand un lien mène quand même aux validations (critère 2) :
+  // ce run **et la lecture ouverte**. Sans la seconde moitié, revenir d'un
+  // aller-retour rouvrirait le pipeline à qui lisait le Kanban.
+  const ici = hrefRun(runId);
+  const retour = ici === undefined ? undefined : `${ici}?vue=${vue}`;
 
   const liste = entreeParLibelle("Runs");
 
@@ -199,6 +261,9 @@ export function VueRun({ runId }: { runId: string }) {
             run={run}
             attendUneValidation={attendUneValidation}
             attente={attente}
+            demandes={demandes}
+            decider={decider}
+            retour={retour}
           />
         )}
       </section>
@@ -230,6 +295,8 @@ export function VueRun({ runId }: { runId: string }) {
               // (`lib/execution`). C'est le troisième critère de #491, et le
               // défaut d'origine du chantier.
               enAttenteHumaine={tachesArretees}
+              // …et de quoi la lever sans quitter le graphe (#1228).
+              arbitrer={arbitrer}
               revision={revision}
               messageVide={
                 enPanne
@@ -250,6 +317,8 @@ export function VueRun({ runId }: { runId: string }) {
               // liste, sa carte dirait « Travaille depuis 1 min » d'une tâche
               // que la tête du même écran dit en attente.
               enAttenteHumaine={tachesArretees}
+              // …et de quoi la lever sans quitter le tableau (#1228).
+              arbitrer={arbitrer}
               messageVide={
                 chargementTaches
                   ? "Chargement des tâches de ce run…"
@@ -367,10 +436,18 @@ function EnTeteRun({
   run,
   attendUneValidation,
   attente,
+  demandes,
+  decider,
+  retour,
 }: {
   run: ResumeExecution;
   attendUneValidation: boolean;
   attente: CauseAttente | null;
+  /** Les demandes qui retiennent ce run, la plus ancienne en tête (#1228). */
+  demandes: Validation[];
+  decider: ArbitrageSurPlace["decider"];
+  /** Où revenir si un lien mène quand même aux validations (#1228). */
+  retour: string | undefined;
 }) {
   const maintenant = useHorloge();
   const regime = regimeDuRun(run, attendUneValidation);
@@ -428,7 +505,17 @@ function EnTeteRun({
 
       <Avancement run={run} taille="ample" />
 
-      <LigneAttente run={run} attente={attente} className="mt-3" />
+      {/* `surPlace` quand la tête porte elle-même le geste (#1228) : le
+          « Trancher → » d'origine emmenait sur `/validations` et laissait sans
+          retour — c'est le défaut que le ticket corrige, et le laisser à côté
+          des cartes ci-dessous proposerait de partir pour faire ce qui est déjà
+          là. La phrase, elle, reste : elle dit *depuis quand* ça attend. */}
+      <LigneAttente
+        run={run}
+        attente={attente}
+        surPlace={demandes.length > 0}
+        className="mt-3"
+      />
       {/* Même ordre que dans la liste (`CarteRun`), et c'est le point : un run
           lu « Plafond de dépense atteint » dans la liste doit se lire pareil
           ici. */}
@@ -436,7 +523,73 @@ function EnTeteRun({
       <LigneInterruption run={run} regime={regime} className="mt-3" />
       <LignePause regime={regime} className="mt-3" />
       <GestesRun run={run} className="mt-3" />
+      <ArbitragesDuRun demandes={demandes} decider={decider} retour={retour} />
     </Carte>
+  );
+}
+
+/**
+ * Ce que ce run attend de moi, **décidable ici** (#1228, critère 1).
+ *
+ * La même carte qu'au tableau de bord et dans la cloche
+ * (`components/CarteValidation`), montée dans la tête du run : on voit l'acte,
+ * on approuve ou on refuse avec une raison, et l'on reste où l'on est. La tâche
+ * qui attendait repart sous les yeux — au pouls du shell, sans qu'aucun code
+ * ne l'orchestre : la demande tranchée quitte la file et sa carte se démonte.
+ *
+ * **Toutes les demandes du run, pas seulement la plus ancienne**, contrairement
+ * à l'aperçu du tableau de bord : là-bas la file est celle du projet entier et
+ * la règle des trois places impose de renvoyer pour le reste (docs/30 §4) ; ici
+ * elle est bornée à *ce* run, et c'est précisément la question qu'on est venu
+ * poser en l'ouvrant. Le bloc reste dans la carte de tête — aucune place de plus
+ * sur l'écran.
+ *
+ * Le renvoi vers la page, lui, **emmène son retour** : c'est le seul lien de la
+ * vue d'un run qui mène encore aux validations, et il ramène au run et à la
+ * lecture d'où l'on venait (critère 2).
+ */
+function ArbitragesDuRun({
+  demandes,
+  decider,
+  retour,
+}: {
+  demandes: Validation[];
+  decider: ArbitrageSurPlace["decider"];
+  retour: string | undefined;
+}) {
+  const maintenant = useHorloge();
+  const page = entreeParLibelle(PAGE_VALIDATIONS);
+  if (demandes.length === 0) return null;
+
+  return (
+    <div className="mt-3">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <p className="text-annexe font-medium text-attention-texte">
+          {demandes.length === 1
+            ? "1 demande attend votre arbitrage"
+            : `${demandes.length} demandes attendent votre arbitrage`}
+        </p>
+        {page && retour !== undefined && (
+          <LienRenvoi
+            renvoi={{
+              href: hrefAvecRetour(page.href, retour),
+              libelle: "Toute la file et l'historique",
+            }}
+          />
+        )}
+      </div>
+      <ul className="space-y-2">
+        {demandes.map((validation) => (
+          <li key={validation.tache_id} className="flex">
+            <CarteValidation
+              validation={validation}
+              decider={decider}
+              maintenant={maintenant}
+            />
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
