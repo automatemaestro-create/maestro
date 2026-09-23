@@ -363,7 +363,9 @@ const RESIDU = new Map<string, number>([
   ["components/OngletsAgent.tsx", 1],
   ["components/PanneauBriefs.tsx", 1],
   ["components/PanneauDetailTache.tsx", 1],
-  ["components/PanneauValidations.tsx", 1],
+  // Le `px-2 py-1.5` du diff et des arguments d'un acte, parti avec la carte
+  // dans son fichier (#1228) : il était inscrit sous `PanneauValidations`.
+  ["components/CarteValidation.tsx", 1],
   // Les deux pas que l'écran du poste vide assume : un `p-5` passé à une `Carte`
   // en `densite="aucune"`, et le pas de son encart. Le commentaire du fichier
   // dit pourquoi — « le pas de 1,25 rem de cet écran n'est aucun des trois » —,

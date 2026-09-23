@@ -119,6 +119,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from maestro.portee import PorteeProjet
 from maestro.projets.modele import Perimetre, Projet
 from maestro.projets.perimetre import motifs_compiles
 from maestro.projets.racine import RacineRefusee, canonique, chemin_dans_racine
@@ -435,6 +436,63 @@ def frontiere_de(workspace: Path | str, projet: Projet | None) -> FrontiereEcrit
     if not _meme_chemin(canonique(workspace), canonique(projet.racine)):
         return None
     return FrontiereEcriture.pour(projet.racine, projet.perimetre)
+
+
+def presents_de(racine: Path, perimetre: Perimetre) -> frozenset[str]:
+    """Ce qui se trouve **déjà** dans `racine` — chemins relatifs POSIX (#1226).
+
+    C'est l'oracle de « ce que l'agent n'a pas produit » : relevé avant qu'il ne
+    travaille, il dit ce que la personne avait posé là. Les **dossiers** y entrent
+    avec leurs fichiers (`src/` autant que `src/app.py`), parce qu'un `rm -rf src`
+    vise le dossier ; la racine elle-même y figure sous la chaîne vide, et
+    seulement si elle n'est pas vide — effacer un dossier vide ne détruit rien.
+
+    Même parcours que le recensement (`fichiers_du_perimetre`), donc les mêmes
+    bornes : les exclusions du périmètre ne sont pas descendues, l'atelier est
+    sauté, aucun lien symbolique n'est suivi. Un dossier **vide** n'en ressort pas
+    — un fichier seul y mène —, et c'est la même raison : il n'y a rien à perdre.
+
+    ⚠ Ce relevé est le **second** de la tâche : `EspaceEnPlace.derive` en fait
+    déjà un pour ses empreintes. Ils ne se partagent pas, et c'est un choix
+    mesuré : les faire partager demanderait de faire voyager l'espace de travail
+    jusqu'au fournisseur, dont le contrat ne prend qu'un chemin — chaque
+    fournisseur et chaque double porteraient alors un objet dont un seul régime a
+    l'usage. Le prix est un parcours de plus, borné par le périmètre (ni `.git`
+    ni `node_modules`) sur un projet **non versionné**, donc petit par
+    construction.
+    """
+    exclus = motifs_compiles(perimetre.exclus)
+    presents: set[str] = set()
+    for relatif in fichiers_du_perimetre(racine, exclus, hors=(DOSSIER_ATELIER,)):
+        presents.add(relatif)
+        morceaux = relatif.split("/")
+        presents.update(
+            "/".join(morceaux[: profondeur + 1]) for profondeur in range(len(morceaux) - 1)
+        )
+    if presents:
+        presents.add("")
+    return frozenset(presents)
+
+
+def portee_de(workspace: Path | str, projet: Projet | None) -> PorteeProjet:
+    """La portée « projet » de cette session — sa racine **est** l'espace de travail.
+
+    Toujours rendue, dans les trois régimes, et c'est ce qui rend le cran
+    `auto, portée projet` évaluable partout : ce que l'agent a sous les pieds est
+    le dossier où il travaille, qu'il s'agisse de la racine d'un projet non
+    versionné, d'un worktree ou d'un répertoire jetable.
+
+    Ce qui change d'un régime à l'autre est ce qu'on **protège** : seul le régime
+    en place relève ce qui s'y trouvait déjà. Un worktree et un `mkdtemp()` sont
+    des copies — ce qu'on y détruit ne se perd pas, la branche et le projet sont
+    ailleurs —, et y faire remonter un `rm` ferait attendre une personne pour
+    rien. L'écriture en place, elle, n'a ni fusion ni diff (docs/24 §2.4) : c'est
+    exactement là que la garde vaut.
+    """
+    racine = canonique(workspace)
+    if projet is None or not _meme_chemin(racine, canonique(projet.racine)):
+        return PorteeProjet(racine=racine)
+    return PorteeProjet(racine=racine, presents=presents_de(racine, projet.perimetre))
 
 
 def _meme_chemin(un: Path, autre: Path) -> bool:

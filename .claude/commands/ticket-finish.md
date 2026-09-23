@@ -37,8 +37,10 @@ rien : regarder n'est pas un verdict, c'est ce qui permet d'en rendre un.
 
 ⚠ **Et depuis #968, un ticket ne se clôt plus sans que ses critères d'acceptation aient été
 confrontés au diff livré** : la commande les lit, les confronte, et consigne **sur le ticket** ce
-qui est couvert, ce qui ne l'est pas — nommé, jamais coché — ou que le ticket n'en portait aucun
-(étape 4ter, avant le filet CI). Un critère non couvert **ne bloque pas le merge**.
+qui est tenu, ce qui ne l'est pas — nommé, jamais coché — ou que le ticket n'en portait aucun
+(étape 4ter, avant le filet CI). Depuis #1240, un critère se tient sur une **preuve exercée** — un
+test nommé qui passe, ou la vraie stack —, et un diff sur le chemin des scénarios joue le banc
+avant de pousser. Un critère non tenu **ne bloque pas le merge**.
 
 1. Détermine l'IID du ticket : utilise `$ARGUMENTS` s'il est fourni, sinon extrais-le du nom
    de la branche courante (`git branch --show-current`, motif `<type>/<iid>-<slug>`). Si
@@ -166,18 +168,42 @@ qui est couvert, ce qui ne l'est pas — nommé, jamais coché — ou que le tic
      le texte du ticket qui fait foi, jamais ta reformulation. Une ligne d'en-tête dit leur source :
      les cases garnies de « Critères d'acceptation » ou, pour un bug qui n'en a pas, sa section
      « Comportement attendu », comptée comme critère unique `C1` (arbitré sur #968).
-     **Confronte chacun au diff** que tu t'apprêtes à pousser (`git diff origin/main...HEAD`), puis
-     écris le constat avec l'outil `Write` dans `.maestro/session/criteres-<iid>.md`, une ligne de
+     **Exerce chacun** (#1240) : un critère se clôt sur une **preuve exercée**, plus sur un fichier
+     du diff — les bugs que le banc a trouvés au jalon (#1197, #1198, #1205, #1212) étaient tous
+     dans un diff que personne n'avait fait tourner. Deux preuves valent :
+     - **un test nommé qui passe** — tu l'as joué et vu passer ; la pièce donne son **nom** (la
+       fonction `test_…`, ou le fichier `*.test.tsx` d'une suite Vitest) et son **verdict** ;
+     - **une observation sur la vraie stack** — l'API ou l'UI servies par
+       `bash scripts/controltower/start.sh`, ou le banc des scénarios ; la pièce nomme le **run**
+       (`run <id>`), le **passage** du banc (l'horodatage de son rapport, `.maestro/scenarios/<h>/`)
+       ou la **capture** qui le montre.
+
+     **Le banc est dû quand le diff touche le chemin des scénarios** — la question le dit d'une
+     ligne `# banc  à jouer — …`. Joue alors, **avant de pousser**, le ou les scénarios dont ton
+     changement est sur le chemin (docs/40 §5), sur la stack de ce worktree :
+     ```
+     bash scripts/controltower/start.sh --etat-banc --rejouer=<S…> --no-browser
+     ```
+     Il coûte du vrai modèle (S2 : ~0,4 $, 1 min 30) et laisse son rapport sous
+     `.maestro/scenarios/<h>/`. Arrête la stack ensuite (`start.sh --stop`). Son verdict entre au
+     constat par une ligne **Banc** : `vert` ou `rouge` avec son passage — le verbe le relit dans le
+     rapport —, ou `non joué` avec sa raison (stack qui ne démarre pas, fournisseur injoignable, ou
+     aucun scénario n'emprunte ce que tu as touché). **Un banc injouable est nommé, jamais compté
+     vert** ; un rouge ne se rejoue pas jusqu'au vert.
+
+     Écris le constat avec l'outil `Write` dans `.maestro/session/criteres-<iid>.md`, une ligne de
      tableau par critère :
      ```
      | Critère | Réponse | Pièce |
      |---|---|---|
-     | C1 | ✓ couvert | `scripts/gitlab/lib.sh` — le verbe qui … |
-     | C2 | ✗ non couvert | aucun fichier du diff ne s'y rapporte : … |
-     | C3 | hors diff | commentaire de décision posé sur le ticket |
+     | C1 | ✓ tenu | `tests/test_x.py::test_le_verbe_rend_0` passé — dans `scripts/gitlab/lib.sh` |
+     | C2 | ✓ tenu | S2 vert au passage 20260923-154349, run `728afd3dae61` |
+     | C3 | ✗ non tenu | écrit dans `docs/…`, mais rien ne l'exerce : … |
+     | C4 | hors diff | commentaire de décision posé sur le ticket |
+     | Banc | vert | passage 20260923-154349 (S2) |
      ```
-     **✓** : un fichier du diff le porte, et la pièce le **nomme** (chemin ou nom de fichier).
-     **✗** : aucune pièce du diff ne le couvre — dis pourquoi. **hors diff** : le critère se tient
+     **✓** : la pièce **nomme sa preuve exercée**, et peut dire aussi ce qui l'implémente. **✗** :
+     rien ne l'a exercé, ou l'exercice a échoué — dis pourquoi. **hors diff** : le critère se tient
      ailleurs que dans un fichier (un geste de forge, une mesure) — dis ce qui le montre. Puis :
      ```
      bash scripts/gitlab/lib.sh criteres-note <iid> .maestro/session/criteres-<iid>.md
@@ -193,15 +219,18 @@ qui est couvert, ce qui ne l'est pas — nommé, jamais coché — ou que le tic
      à la clôture, ils seraient taillés sur ce qui a été livré (règle de `/milestone-bilan`).
    - **code `1`** (ticket introuvable, forge muette) : signale-le dans le résumé final et poursuis.
 
-   **Un critère non couvert est nommé, jamais coché.** Un ✓ sur une question jamais posée est pire
+   **Un critère non tenu est nommé, jamais coché.** Un ✓ sur une question jamais posée est pire
    qu'une case vide : c'est lui qui a laissé quatorze jalons se fermer sur « ça a été écrit ». Le
    verbe **garde la forme** du constat — son refus `5` tombe **avant toute écriture** : un `Cn` sans
-   réponse recevable, un ✓ dont la pièce ne nomme **aucun fichier du diff**, un constat sur un
-   ticket sans critère ou un `--aucun` sur un ticket qui en a. Il se répare en disant **✗** ou
-   **hors diff**, jamais en cochant pour passer. Ses autres refus : `4` fichier absent ou vide, `3`
-   iid inconnu ; un `1` (forge muette, base du diff introuvable) **ne bloque pas la clôture** —
-   signale-le. Le verbe est **idempotent** (empreinte `cksum`) : une clôture rejouée après un
-   pipeline rouge n'empile rien, un constat enrichi s'ajoute.
+   réponse recevable, un ✓ **sans preuve exercée** (aucun test défini dans l'arbre, passage ou run
+   nommé), un ✓ ou un Banc `vert` sur un passage dont le rapport ne l'est pas, un banc dû sans ligne
+   **Banc**, un constat sur un ticket sans critère ou un `--aucun` sur un ticket qui en a. Il se
+   répare en exerçant, ou en disant **✗** ou **hors diff**, jamais en cochant pour passer. Ses
+   autres refus : `4` fichier absent ou vide, `3` iid inconnu ; un `1` (forge muette, base du diff
+   introuvable) **ne bloque pas la clôture** — signale-le. Le verbe vérifie qu'un test nommé
+   **existe**, pas qu'il passe : le dire vert sans l'avoir vu passer est un ✓ fabriqué. Il est
+   **idempotent** (empreinte `cksum`) : une clôture rejouée après un pipeline rouge n'empile rien, un
+   constat enrichi s'ajoute.
 
    **Un ✗ n'empêche pas le merge** : ce que le dispositif rend difficile est l'absence de **trace**,
    jamais la livraison (règle de #935). Deux conduites, comme à l'étape 4bis :
@@ -211,10 +240,9 @@ qui est couvert, ce qui ne l'est pas — nommé, jamais coché — ou que le tic
    - **un manque qui dépasse ce ticket** : consigne-le ✗ avec ce que tu en fais, et **nomme-le
      dans le résumé final**. Ouvrir un ticket de suite reste une décision, pas un effet de bord.
 
-   **On ne demande pas, on joue** — à l'identique en run et en interactif : confronter est un
-   **constat**, pas un jugement sur l'opportunité de confronter. Et ce constat dit ce qui a été
-   **écrit**, pas ce qui a été **exercé** : un ✓ affirme qu'un fichier du diff porte le critère,
-   jamais qu'il fonctionne — l'exercice reste celui du pipeline et, au jalon, de `/milestone-bilan`.
+   **On ne demande pas, on joue** — à l'identique en run et en interactif : exercer est un
+   **constat**, pas un jugement sur l'opportunité d'exercer, et le banc dû se joue sans attendre
+   personne. Ce qui reste un jugement, et se consigne : **quel** scénario emprunte ton changement.
 
 5. **Filet CI local** — avant de pousser, rejoue en local ce que le pipeline de la PR jouera. Ne
    cherche pas toi-même quel outil s'applique : `scripts/ci/local.sh` est la **source unique** des
@@ -589,8 +617,9 @@ qui est couvert, ce qui ne l'est pas — nommé, jamais coché — ou que le tic
    dis-le en tête du résumé (quel motif, et qui l'a demandé). Et si l'étape 9.5 a joué, **nomme le
    ticket de reprise** (#608) — la PR qui portait le correctif vient d'être mergée, ce ticket est
    le seul endroit où il vit encore. Rends enfin la **confrontation des critères** de l'étape 4ter
-   sur sa propre ligne : le compte (`n ✓ · n ✗ · n hors diff`), **chaque critère ✗ nommé**, ou
-   « aucun critère — signalé sur le ticket ».
+   sur sa propre ligne : le compte (`n ✓ · n ✗ · n hors diff`), **chaque critère ✗ nommé**, le
+   **banc** s'il était dû (vert, rouge avec ses scénarios, ou non joué avec sa raison), ou « aucun
+   critère — signalé sur le ticket ».
 
    **Jamais de ✅ global.** Une clôture dont la PR est restée ouverte sur un pipeline rouge n'est
    pas « terminée avec une réserve » : elle est **inachevée**, et le dire avec ce mot-là est tout ce

@@ -32,7 +32,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import PageCouts from "@/app/couts/page";
 import PageJournal from "@/app/journal/page";
 import TableauDeBord from "@/app/page";
-import PageValidations from "@/app/validations/page";
+import { EcranValidations as PageValidations } from "@/components/EcranValidations";
 import { Kanban } from "@/components/Kanban";
 import { Shell } from "@/components/Shell";
 import { PORTEE_TOUS, urlEvenements } from "@/lib/api";

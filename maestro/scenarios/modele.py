@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from maestro.lecture import OUTIL_SHELL
+
 #: Le scénario a fait ce qu'on lui demandait, et son oracle l'a constaté.
 VERDICT_VERT = "vert"
 #: Il ne l'a pas fait, ou le banc n'a pas pu le mener jusqu'à son oracle.
@@ -103,9 +105,25 @@ def empeche(motif: str, **reste: Any) -> Issue:
     return Issue(verdict=VERDICT_ROUGE, motif=motif, empechement=True, **reste)
 
 
+#: L'outil dont une demande d'arbitrage fait une **validation de commande**.
+#: Repris de `maestro.lecture` et jamais réécrit : le banc compte ce que le hook
+#: du fournisseur suspend, et deux orthographes du même outil feraient un compte
+#: qui ne retombe jamais sur zéro.
+OUTIL_COMMANDE = OUTIL_SHELL
+
+
 @dataclass(frozen=True)
 class Resultat:
-    """Le rapport d'un scénario : verdict, coût, durée, `run_id` — et son déroulé."""
+    """Le rapport d'un scénario : verdict, coût, durée, `run_id` — et son déroulé.
+
+    `arbitrages` (#1226) porte l'**outil** de chaque demande que le banc a
+    tranchée à la place de la personne, dans l'ordre. Il est au rapport parce que
+    c'est une **mesure** : un scénario peut être vert et avoir coûté douze
+    interruptions à quelqu'un, et c'est très exactement ce que le run du
+    2026-09-22 a montré sans que rien ne le compte. Le déroulé les nommait déjà
+    une par une ; les compter est ce qui en fait un fait relisible d'un passage à
+    l'autre.
+    """
 
     identifiant: str
     titre: str
@@ -119,11 +137,17 @@ class Resultat:
     rejoue: bool = False
     empechement: bool = False
     etapes: tuple[Etape, ...] = ()
+    arbitrages: tuple[str, ...] = ()
 
     @property
     def vert(self) -> bool:
         """Ce scénario est-il vert ?"""
         return self.verdict == VERDICT_VERT
+
+    @property
+    def validations_de_commande(self) -> int:
+        """Combien de fois une **commande** a été soumise à la personne (#1226)."""
+        return sum(1 for outil in self.arbitrages if outil == OUTIL_COMMANDE)
 
     def to_dict(self) -> dict[str, Any]:
         """Le résultat en JSON — la forme que `/milestone-bilan` relira (#1152)."""
@@ -139,6 +163,8 @@ class Resultat:
             "cout_usd": self.cout_usd,
             "rejoue": self.rejoue,
             "empechement": self.empechement,
+            "arbitrages": list(self.arbitrages),
+            "validations_de_commande": self.validations_de_commande,
             "etapes": [e.to_dict() for e in self.etapes],
         }
 

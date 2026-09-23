@@ -102,6 +102,10 @@ from maestro.controltower.events import (
     InMemoryEventBus,
 )
 from maestro.controltower.orchestration import (
+    # Le marqueur de fin du contrat (#1222) : les tests l'écrivent comme le
+    # modèle l'écrira, et jamais en le recopiant à la main — un contrat en deux
+    # exemplaires finit par n'en être plus un.
+    _MARQUEUR_VERDICT,
     # Le texte du prompt lui-même est l'objet du critère 2 : il se lit ici, comme
     # `test_registre_de_langue` le lit déjà pour la consigne de registre.
     _PROMPT_ORCHESTRATION,
@@ -409,7 +413,15 @@ def test_un_verdict_inconnu_ne_vaut_pas_un_accord() -> None:
 
 
 def test_le_verdict_se_lit_aussi_dans_un_bloc_de_code() -> None:
-    """Les modèles encadrent volontiers un JSON qu'on leur a demandé nu."""
+    """Les modèles encadrent volontiers un JSON qu'on leur a demandé nu.
+
+    Le contrat a changé en #1222 — prose, puis une dernière ligne marquée — mais
+    ce que ce test garde n'a pas bougé d'un cran : **une demande approuvée
+    continue d'ouvrir son run**, même quand le modèle a répondu à l'ancien
+    contrat, et même préfacé. C'est le repli de `_LectureDuFlux.conclure`, et
+    c'est le seul filet qui empêche un changement de prompt de rendre le canal
+    muet sur un modèle faible.
+    """
     lanceur = LanceurEspion()
     corps = _verdict(VERDICT_ACCORD, "C'est parti.", OBJECTIF)
     repondeur, _ = _repondeur(f"Voici ma décision :\n```json\n{corps}\n```\n", lanceur=lanceur)
@@ -417,6 +429,22 @@ def test_le_verdict_se_lit_aussi_dans_un_bloc_de_code() -> None:
     asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil("oui")))
 
     assert lanceur.objectifs == [OBJECTIF]
+
+
+def test_un_json_nu_reste_lu_sans_rien_afficher_de_sa_structure() -> None:
+    """L'autre moitié du repli : un JSON **en tête** ne fuit pas à l'écran (#1222).
+
+    C'est la différence que fait le régime « machine » : le premier caractère non
+    blanc étant une accolade, rien n'est publié au fil de l'eau et c'est la seule
+    `reponse` de l'objet qui s'affiche — exactement le fil d'avant ce lot. Sans
+    cette distinction, brancher le direct aurait affiché du JSON à l'utilisateur
+    dès le premier modèle qui n'aurait pas suivi le nouveau contrat.
+    """
+    repondeur, _ = _repondeur(_verdict(VERDICT_ECHANGE, "Bonjour."))
+
+    reponse = asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil("bonjour")))
+
+    assert reponse.contenu == "Bonjour."
 
 
 def test_le_prompt_porte_le_fil_entier_et_l_etat() -> None:
@@ -1067,6 +1095,13 @@ def test_le_contexte_du_fil_ne_retient_que_ce_que_l_utilisateur_a_joint() -> Non
 
 
 def test_un_accord_ouvre_le_run_et_le_rattache() -> None:
+    """Le run part sur l'objectif approuvé, et le **champ** le porte (#1222).
+
+    Le rattachement est un champ depuis #268 ; jusqu'à #1222 une phrase le
+    redisait dans le texte (« Run run-42 ouvert… »), et c'est elle qu'on a
+    trouvée robotique. Ce qui s'affiche est désormais la seule voix du modèle —
+    l'identifiant se lit sous la bulle (`Suite`, docs/05 §2.9), d'où le champ.
+    """
     lanceur = LanceurEspion()
     repondeur, _ = _repondeur(
         _verdict(VERDICT_ACCORD, "C'est parti.", OBJECTIF), lanceur=lanceur
@@ -1075,10 +1110,10 @@ def test_un_accord_ouvre_le_run_et_le_rattache() -> None:
     reponse = asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil_approuve()))
 
     assert lanceur.objectifs == [OBJECTIF]
-    # Et la réponse porte le run : sans ce rattachement le fil dirait « c'est
-    # parti » sans dire vers quoi.
     assert reponse.run_id == "run-42"
-    assert "run-42" in reponse.contenu
+    # Et rien derrière les mots du modèle : ni identifiant récité, ni statut, ni
+    # « les tâches apparaîtront ».
+    assert reponse.contenu == "C'est parti."
 
 
 def test_l_objectif_lance_est_celui_qui_a_ete_approuve_pas_le_message_brut() -> None:
@@ -1387,6 +1422,199 @@ def test_sans_incrementeur_rien_n_est_publie_et_le_texte_est_le_meme() -> None:
     assert reponse.contenu.startswith("C'est parti.")
 
 
+# ── ④bis la réponse s'écrit au fur et à mesure (#1222) ────────────────────────
+
+
+def _dicte(reponse: str, nom: str = VERDICT_ECHANGE, objectif: str = "") -> str:
+    """Le **nouveau** contrat (#1222) : la prose, puis la dernière ligne marquée."""
+    charge = json.dumps({"verdict": nom, "objectif": objectif}, ensure_ascii=False)
+    return f"{reponse}\n{_MARQUEUR_VERDICT} {charge}"
+
+
+class JugeQuiStreame(ModelProvider):
+    """Un fournisseur qui rend sa réponse **par morceaux**, comme le vrai (#1222).
+
+    Le découpage est fait pour être méchant là où ça compte : les morceaux sont de
+    trois caractères, donc le marqueur de fin tombe **à cheval** sur plusieurs
+    d'entre eux. C'est le cas que la rétention de queue de `_LectureDuFlux` existe
+    pour tenir, et le seul qui distingue une vraie lecture de flux d'un `split`
+    sur le texte entier.
+
+    Il sait aussi l'aller simple, et il **note lequel des deux** on lui a demandé
+    (`allers_simples`) : c'est ce qui rend observable le seul choix que le
+    répondeur ait à faire ici — ouvrir le flux, ou juger en retenant (#1146).
+    """
+
+    name = "juge-qui-streame"
+
+    #: Assez court pour couper le marqueur, assez long pour rendre plusieurs
+    #: fragments d'une phrase — la taille est le sujet du double.
+    TAILLE = 3
+
+    def __init__(self, reponse: str) -> None:
+        self.reponse = reponse
+        self.prompts: list[str] = []
+        self.allers_simples: list[str] = []
+
+    def supports(self, model: str) -> bool:
+        return True
+
+    async def generate(self, prompt: str, *, model: str, system_prompt: str | None = None) -> str:
+        self.allers_simples.append(prompt)
+        return self.reponse
+
+    async def generate_stream(
+        self,
+        prompt: str,
+        *,
+        model: str,
+        system_prompt: str | None = None,
+        effort: str | None = None,
+    ):
+        self.prompts.append(prompt)
+        for debut in range(0, len(self.reponse), self.TAILLE):
+            yield self.reponse[debut : debut + self.TAILLE]
+
+
+def _en_flux(juge: ModelProvider, **kwargs) -> tuple[RepondeurOrchestration, list[str]]:
+    """Le répondeur monté sur `juge`, et la liste où ses incréments atterrissent."""
+    incremente: list[str] = []
+    repondeur = RepondeurOrchestration(provider=juge, **kwargs)
+    return repondeur, incremente
+
+
+def test_la_reponse_part_par_morceaux_avant_d_etre_entiere() -> None:
+    """Le cœur du ticket : « … répond… » ne couvre plus que l'avant-premier-mot.
+
+    Deux choses à la fois, et elles ne se séparent pas : il y a **plusieurs**
+    incréments (sans quoi la bulle se remplirait d'un coup, ce qui est le défaut
+    de départ), et leur concaténation est **exactement** la réponse — le contrat
+    SSE dont dépend un client qui recolle les `delta`.
+    """
+    juge = JugeQuiStreame(_dicte("Il reste deux runs en cours sur ce projet."))
+    repondeur, incremente = _en_flux(juge)
+
+    async def incrementer(delta: str) -> None:
+        incremente.append(delta)
+
+    reponse = asyncio.run(
+        repondeur.produire(AGENT_ORCHESTRATION, _fil("où en est-on ?"), incrementer=incrementer)
+    )
+
+    assert len(incremente) > 1
+    assert "".join(incremente).strip() == reponse.contenu
+    assert reponse.contenu == "Il reste deux runs en cours sur ce projet."
+
+
+def test_la_ligne_de_verdict_ne_s_affiche_jamais_meme_coupee_en_morceaux() -> None:
+    """Ce que le marqueur ne doit **jamais** laisser filer : sa propre première moitié.
+
+    Le découpage du double fait tomber `%%MAESTRO%%` à cheval sur quatre morceaux ;
+    sans la rétention de queue, les premiers seraient publiés avant que les
+    suivants ne les dénoncent, et l'utilisateur lirait « %%MAE » au bout de sa
+    réponse. La sonde le prouve sur un échantillon fautif juste après.
+    """
+    juge = JugeQuiStreame(_dicte("Bonjour.", VERDICT_ECHANGE))
+    repondeur, incremente = _en_flux(juge)
+
+    async def incrementer(delta: str) -> None:
+        incremente.append(delta)
+
+    asyncio.run(
+        repondeur.produire(AGENT_ORCHESTRATION, _fil("bonjour"), incrementer=incrementer)
+    )
+    publie = "".join(incremente)
+
+    assert "%" not in publie
+    assert "verdict" not in publie
+    # L'échantillon fautif : le même texte publié sans lecture de flux porterait
+    # bien ce que la sonde cherche — elle regarde donc au bon endroit.
+    assert "%" in _dicte("Bonjour.", VERDICT_ECHANGE)
+
+
+def test_une_proposition_streamee_garde_sa_carte() -> None:
+    """Critère 1 : ce qui s'écrit en direct arrive quand même **avec son geste**.
+
+    C'est le risque propre à ce lot : la prose part avant que le verdict ne soit
+    lu, donc rien ne garantit *a priori* que la demande de cadrage (#943) survive
+    au voyage. Elle ne voyage pas dans le texte — elle est un champ du message,
+    posé à la clôture —, et c'est exactement ce qui la rend insensible au
+    découpage du flux.
+    """
+    juge = JugeQuiStreame(
+        _dicte("Je peux ouvrir un run là-dessus. Je lance ?", VERDICT_PROPOSITION, OBJECTIF)
+    )
+    repondeur, _ = _en_flux(juge, lanceur=LanceurEspion())
+
+    reponse = asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil("crée-moi une app")))
+
+    assert reponse.proposition == OBJECTIF
+    assert reponse.contenu == "Je peux ouvrir un run là-dessus. Je lance ?"
+    # Et rien ne s'est ouvert : une proposition propose (#685).
+    assert reponse.run_id == ""
+
+
+def test_un_accord_streame_ouvre_le_run_sans_rien_ajouter_aux_mots_du_modele() -> None:
+    """Critère 3, sur la voie du direct : la dernière chose lue est du modèle.
+
+    Le texte affiché **est** ce qui a été publié, à la lettre. Si le code accolait
+    encore « Run run-42 ouvert… », l'égalité tomberait — et elle tomberait aussi
+    si l'ajout ne partait pas dans le flux, ce qui casserait le contrat SSE : une
+    seule assertion garde les deux.
+    """
+    juge = JugeQuiStreame(_dicte("C'est parti, je le confie à l'équipe.", VERDICT_ACCORD, OBJECTIF))
+    lanceur = LanceurEspion()
+    repondeur, incremente = _en_flux(juge, lanceur=lanceur)
+
+    async def incrementer(delta: str) -> None:
+        incremente.append(delta)
+
+    reponse = asyncio.run(
+        repondeur.produire(AGENT_ORCHESTRATION, _fil_approuve(), incrementer=incrementer)
+    )
+
+    assert lanceur.objectifs == [OBJECTIF]
+    assert reponse.run_id == "run-42"
+    assert reponse.contenu == "C'est parti, je le confie à l'équipe."
+    assert "".join(incremente).strip() == reponse.contenu
+
+
+def test_un_projet_sans_equipe_ne_publie_rien_avant_d_avoir_juge() -> None:
+    """La seule exception au direct, et elle se décide **avant** l'appel (#1146).
+
+    Le texte du juge y est *remplacé* par la proposition d'équipe : l'avoir déjà
+    affiché rendrait le remplacement impossible, et la bulle dirait « je lance ? »
+    au-dessus d'une carte qui dit le contraire. Le régime tient à `_sans_equipe`,
+    qui ne dépend que du projet — donc connu avant le premier morceau.
+    """
+    juge = JugeQuiStreame(_dicte("Je lance ?", VERDICT_PROPOSITION, OBJECTIF))
+    repondeur, incremente = _en_flux(
+        juge, lanceur=LanceurEspion(), equipe=lambda _projet: 0, recruteur=_recruteur_muet
+    )
+
+    async def incrementer(delta: str) -> None:
+        incremente.append(delta)
+
+    reponse = asyncio.run(
+        repondeur.produire(
+            AGENT_ORCHESTRATION, _fil("crée-moi une app"), incrementer=incrementer, projet_id="p1"
+        )
+    )
+
+    assert reponse.recrutement is not None
+    # Le flux n'a même pas été ouvert : c'est la décision, pas un filtrage après
+    # coup de ce qui en serait sorti.
+    assert juge.prompts == []
+    assert len(juge.allers_simples) == 1
+    assert "Je lance ?" not in "".join(incremente)
+    assert "".join(incremente).strip() == reponse.contenu
+
+
+async def _recruteur_muet(projet: str, roles, proposition: str) -> dict[str, Any]:
+    """Un recruteur qui n'est jamais appelé ici : la demande précède la validation."""
+    raise AssertionError("proposer une équipe ne la crée pas")
+
+
 # ── ⑤ les endpoints du fil global ─────────────────────────────────────────────
 
 
@@ -1639,6 +1867,45 @@ def test_le_flux_porte_les_lectures_en_trames_a_part_avant_le_texte(
     assert final["etapes"] == [
         {"libelle": "A lu « README.md »", "detail": "npm run dev"}
     ]
+
+
+def test_le_flux_rend_la_reponse_de_l_orchestrateur_en_plusieurs_trames(
+    bus, depot_chat, lanceur
+) -> None:
+    """Critère 1, à l'API : sur un fournisseur qui streame, le fil streame (#1222).
+
+    Le test précédent passe déjà avec un juge qui rend tout d'un bloc — les
+    fragments y viennent d'une réponse écrite en plusieurs `ecrire`. Celui-ci
+    monte un fournisseur qui **découpe vraiment**, et regarde ce que le client
+    reçoit : plusieurs trames pour une seule phrase, et la ligne de verdict
+    nulle part dedans.
+    """
+    juge = JugeQuiStreame(
+        _dicte("Je peux ouvrir un run là-dessus. Je lance ?", VERDICT_PROPOSITION, OBJECTIF)
+    )
+    with TestClient(
+        create_app(
+            bus=bus,
+            chat_store=depot_chat,
+            orchestration_repondeur=RepondeurOrchestration(lanceur=lanceur, provider=juge),
+        )
+    ) as client:
+        reponse = client.get(
+            f"/api/chat/{NOM_ORCHESTRATION}/flux",
+            params={"contenu": "Génère une application d'agenda"},
+        )
+
+    trames = _trames(reponse)
+    deltas = [t["delta"] for t in trames if t["type"] == FRAGMENT_CHAT_DELTA]
+    final = trames[-1]["message"]
+
+    assert len(deltas) > 1
+    assert "".join(deltas).strip() == final["contenu"]
+    assert final["contenu"] == "Je peux ouvrir un run là-dessus. Je lance ?"
+    # La demande de cadrage voyage jusqu'au message persisté : la carte arrive
+    # avec la réponse, si tard que la prose soit partie tôt.
+    assert final["proposition"] == OBJECTIF
+    assert _MARQUEUR_VERDICT not in reponse.text
 
 
 def test_un_contenu_vide_sort_en_422_sans_rien_persister(client_global, depot_chat) -> None:
@@ -2735,12 +3002,17 @@ def test_le_fil_garde_la_trace_des_bornes_posees(client_proposition) -> None:
     assert "2 tâches à la fois" in geste["contenu"]
 
 
-def test_un_run_sans_borne_le_dit_a_son_lancement(client_proposition) -> None:
-    """Critère 3 : l'illimité est un **choix affiché**, pas un oubli.
+def test_un_run_sans_borne_n_ajoute_rien_a_ce_qui_est_dit(client_proposition) -> None:
+    """#1222 renverse le récapitulatif d'après-coup de #990 (critère 3).
 
-    Même règle que la ligne `plan :` d'un run d'outillage (#286) — le régime
-    s'annonce dans les deux sens. C'est la réponse qui ouvre le run qui le dit,
-    et non le geste : celui-ci ne porte que ce qu'il a **ajouté**.
+    Le régime des bornes reste annoncé **dans les deux sens** — c'est la règle de
+    la ligne `plan :` d'un run d'outillage (#286) —, mais **au moment de lancer**,
+    sur la carte de cadrage qui le récapitule sans rien ouvrir
+    (`components/chat/DemandeDeCadrage`). Le redire une fois le run parti n'était
+    plus un choix affiché : c'était la seconde moitié de la phrase que la personne
+    a trouvée robotique (« … — aucune borne : le run ira jusqu'au bout. Les tâches
+    apparaîtront au tableau de bord… »), et elle venait après coup, quand plus
+    personne ne peut rien en faire.
     """
     reponse = client_proposition.post(
         f"/api/chat/{NOM_ORCHESTRATION}/cadrage", json={"approuve": True}
@@ -2748,19 +3020,25 @@ def test_un_run_sans_borne_le_dit_a_son_lancement(client_proposition) -> None:
 
     geste, repondu = reponse.json()["messages"]
     assert geste["contenu"] == "Oui, lance."
-    assert "aucune borne : le run ira jusqu'au bout" in repondu["contenu"]
+    assert repondu["contenu"] == "C'est parti."
 
 
-def test_un_run_borne_annonce_a_quoi_il_s_arretera(client_proposition) -> None:
-    """L'autre sens du même régime : ce qui borne se lit à l'ouverture."""
+def test_les_bornes_posees_restent_lisibles_dans_le_fil(client_proposition) -> None:
+    """Et ce qui a été posé, lui, reste visible — au geste qui l'a posé.
+
+    C'est la moitié du critère 3 de #1222 qui **n'est pas** un retrait : les faits
+    ne disparaissent pas, ils cessent d'être récités. Les bornes s'écrivent là où
+    quelqu'un les a choisies (`chat._geste_de_cadrage`), et le fil garde donc la
+    trace d'un run arrêté à 5 $ que quelqu'un avait voulu.
+    """
     reponse = client_proposition.post(
         f"/api/chat/{NOM_ORCHESTRATION}/cadrage",
         json={"approuve": True, "plafond_cout_usd": 5},
     )
 
-    _, repondu = reponse.json()["messages"]
-    assert "s'interrompt à 5,00 $" in repondu["contenu"]
-    assert "aucune borne" not in repondu["contenu"]
+    geste, repondu = reponse.json()["messages"]
+    assert "s'interrompt à 5,00 $" in geste["contenu"]
+    assert repondu["contenu"] == "C'est parti."
 
 
 def test_un_refus_ne_borne_rien_parce_qu_il_n_ouvre_rien(
@@ -3276,7 +3554,19 @@ def test_le_protocole_entier_equipe_proposee_validee_puis_run(
     celui de la **demande** — le corps du geste n'en porte aucun.
     """
     fil = client_sans_equipe.get(f"/api/chat/{NOM_ORCHESTRATION}").json()["messages"]
-    assert fil[-1]["recrutement"] == {"objectif": OBJECTIF, "projet_id": PROJET_SANS_EQUIPE}
+    # Les quatre champs de #1227 sont **vides** ici, et c'est le fait qui compte :
+    # aucun run n'attend cette demande — c'est un projet sans agent, pas un plan
+    # qui appelle un rôle absent. `run_id` vide est ce qui fait que l'équipe créée
+    # **repropose** le travail au lieu de laisser un run reprendre.
+    assert fil[-1]["recrutement"] == {
+        "objectif": OBJECTIF,
+        "projet_id": PROJET_SANS_EQUIPE,
+        "run_id": "",
+        "role": "",
+        "gabarit": "",
+        "raison": "",
+        "taches": [],
+    }
     assert fil[-1]["proposition"] == ""
 
     reponse = client_sans_equipe.post(

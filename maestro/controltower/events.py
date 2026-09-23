@@ -212,6 +212,24 @@ EVENEMENT_BRIEF_DECISION = "brief.decision"
 EVENEMENT_BRIEF_QUESTIONS = "brief.questions"
 EVENEMENT_BRIEF_REPONSES = "brief.reponses"
 
+#: `renfort.decision` (#1227) porte la **décision de compléter l'équipe** d'un run
+#: suspendu entre son plan et sa première tâche. Un seul type et non un couple
+#: `demande`/`decision` comme les trois canaux d'attente ci-dessus, et c'est une
+#: propriété du dispositif plutôt qu'une économie : la demande, elle, ne voyage pas
+#: sur le bus — elle est **écrite dans le fil** (`ServiceChat.proposer_recrutement`),
+#: où la carte d'équipe de #1146 la montre déjà et où le geste de validation sait
+#: déjà y répondre. Il n'y avait donc rien à publier, seulement à apprendre au run
+#: ce qui a été décidé de lui.
+#:
+#: `run_id` est la clé : un run n'a **qu'une** demande de renfort en vol (la
+#: confrontation a lieu une fois, après la décomposition), donc il n'y a pas
+#: d'identifiant de demande à inventer — celui qui aurait servi à distinguer deux
+#: attentes simultanées, comme `question_id` le fait pour les questions d'un agent
+#: qui en pose plusieurs. `statut` porte l'issue (`RENFORT_ACCORDE`/
+#: `RENFORT_DECLINE`) et `detail` la phrase écrite au fil, qui devient la ligne du
+#: journal du run.
+EVENEMENT_RENFORT_DECISION = "renfort.decision"
+
 #: `run.plan` (#490) porte le **graphe du run** — un nœud par tâche, ses
 #: dépendances, son ossature de checklist —, publié **une fois**, à l'instant où
 #: la décomposition rend son plan. Il ne dit rien de l'état : ni agent, ni

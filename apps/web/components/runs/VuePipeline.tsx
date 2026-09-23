@@ -54,7 +54,6 @@
  * c'est-à-dire ce qui tourne, ce qui y mène et ce qui en découle.
  */
 
-import Link from "next/link";
 import {
   useLayoutEffect,
   useRef,
@@ -63,12 +62,15 @@ import {
   type ReactNode,
 } from "react";
 
+import {
+  GesteValidation,
+  type ArbitrageSurPlace,
+} from "@/components/CarteValidation";
 import { AvancementEtapes } from "@/components/EtapesTache";
 import {
   IconeAgent,
   IconeArbitrage,
   IconeChrono,
-  IconeFlecheDroite,
   IconeGraphe,
   IconePuce,
   IconeStatutAssignee,
@@ -81,18 +83,15 @@ import { PanneauDetailTache } from "@/components/PanneauDetailTache";
 import {
   BadgeEtat,
   Carte,
-  CIBLE_MINIMALE,
   EnTeteSection,
   EtatVide,
   type Icone,
   type TonBadge,
   type TonCarte,
 } from "@/components/Primitives";
-import { ATTENTES } from "@/components/runs/EtatRun";
 import type { Reassigner } from "@/components/SelecteurReassignation";
 import { ChronoEnVol, LigneSigneDeVie } from "@/components/SigneDeVie";
 import { detailDe, normaliserEtapes } from "@/lib/detailTache";
-import { ATTENTE_VALIDATION } from "@/lib/execution";
 import { formatCout, formatDuree } from "@/lib/format";
 import {
   amorcesDeBranche,
@@ -111,7 +110,6 @@ import {
   NOEUD_TERMINE,
   type EtatNoeud,
 } from "@/lib/graphe";
-import { entreeParLibelle } from "@/lib/navigation";
 import {
   ARETE_ATTENDUE,
   ARETE_FRANCHIE,
@@ -291,6 +289,7 @@ export function VuePipeline({
   agents,
   reassigner,
   enAttenteHumaine,
+  arbitrer,
   revision,
   messageVide,
 }: {
@@ -308,6 +307,12 @@ export function VuePipeline({
   reassigner: Reassigner;
   /** Les tâches dont une validation dort (`lib/execution`) — le troisième critère. */
   enAttenteHumaine: ReadonlySet<string>;
+  /**
+   * De quoi **trancher sans quitter le graphe** (#1228) : les demandes qui
+   * dorment, par tâche, et le décideur. Absent → le nœud est celui d'avant ce
+   * ticket, qui se contentait de dire qu'il attendait.
+   */
+  arbitrer?: ArbitrageSurPlace;
   /** Le pouls du shell : une lecture du graphe par battement. */
   revision: number;
   /** Ce que dit le graphe **vide**, nommé par l'appelant comme pour le Kanban. */
@@ -352,6 +357,7 @@ export function VuePipeline({
       agents={agents}
       reassigner={reassigner}
       enAttenteHumaine={enAttenteHumaine}
+      arbitrer={arbitrer}
       cadrage={cadrage}
       cadrer={setCadrage}
     />
@@ -384,6 +390,7 @@ function GraphePipeline({
   agents,
   reassigner,
   enAttenteHumaine,
+  arbitrer,
   cadrage,
   cadrer,
 }: {
@@ -392,6 +399,7 @@ function GraphePipeline({
   agents: EtatAgent[];
   reassigner: Reassigner;
   enAttenteHumaine: ReadonlySet<string>;
+  arbitrer?: ArbitrageSurPlace;
   cadrage: Cadrage;
   cadrer: (cadrage: Cadrage) => void;
 }) {
@@ -513,6 +521,7 @@ function GraphePipeline({
                       tache={tacheParId.get(id)}
                       ouvrir={ouvrir}
                       survoler={setSurvole}
+                      arbitrer={arbitrer}
                     />
                   </li>
                 );
@@ -728,12 +737,14 @@ function NoeudCarte({
   tache,
   ouvrir,
   survoler,
+  arbitrer,
 }: {
   noeud: NoeudGraphe;
   etat: EtatNoeud;
   tache: Tache | undefined;
   ouvrir: (tache: Tache, declencheur: HTMLElement | null) => void;
   survoler: (id: string | null) => void;
+  arbitrer?: ArbitrageSurPlace;
 }) {
   const declencheur = useRef<HTMLButtonElement>(null);
   const apparence = APPARENCE[etat];
@@ -770,13 +781,18 @@ function NoeudCarte({
 
   const surClic = (evenement: MouseEvent<HTMLElement>) => {
     if (!ouvrable || tache === undefined) return;
-    if ((evenement.target as HTMLElement).closest("a, select, option, button")) {
+    // `[role='dialog']` depuis #1228 : le panneau qui tranche une validation est
+    // monté **dans** ce nœud, et un clic dedans rouvrirait le détail de la tâche
+    // par-dessus lui. Même exception qu'à la carte du Kanban (`SANS_OUVERTURE`).
+    if (
+      (evenement.target as HTMLElement).closest(
+        "a, select, option, button, [role='dialog']",
+      )
+    ) {
       return;
     }
     ouvrir(tache, declencheur.current);
   };
-
-  const validations = entreeParLibelle(ATTENTES[ATTENTE_VALIDATION].page);
 
   return (
     <Carte
@@ -824,20 +840,18 @@ function NoeudCarte({
         {apparence.libelle}
       </BadgeEtat>
 
-      {/* Le geste qui lève l'attente est **ailleurs**, et le nœud y mène : même
-          règle que la table `ATTENTES` (`components/runs/EtatRun`) — un
-          arbitrage se tranche sur l'écran qui montre de quoi trancher, pas dans
-          une boîte de 16 rem. */}
-      {etat === NOEUD_ATTENTE_HUMAIN && validations && (
-        <p className="mt-1.5">
-          <Link
-            href={validations.href}
-            className={`inline-flex items-center gap-1 ${CIBLE_MINIMALE} text-annexe font-medium text-amber-800 hover:underline dark:text-amber-300`}
-          >
-            {ATTENTES[ATTENTE_VALIDATION].action}
-            <IconeFlecheDroite className="size-3.5 shrink-0" />
-          </Link>
-        </p>
+      {/* ⚠ **Renversement de #1228.** Le geste était **ailleurs** et le nœud y
+          menait — « un arbitrage se tranche sur l'écran qui montre de quoi
+          trancher, pas dans une boîte de 16 rem ». La prémisse tenait et tient
+          encore : la boîte n'a toujours pas la place d'un diff, d'arguments et
+          d'un champ de motif. C'est la **conclusion** qui était fausse — on en
+          déduisait qu'il fallait *partir*, alors que le socle sait montrer ce
+          qui ne tient pas dans une carte sans la quitter (#251). Le nœud porte
+          donc le geste, et le panneau porte la lecture. */}
+      {etat === NOEUD_ATTENTE_HUMAIN && (
+        <div className="mt-1.5">
+          <GesteValidation tacheId={noeud.id} arbitrer={arbitrer} />
+        </div>
       )}
 
       <p className="mt-1.5 flex items-center gap-1 truncate text-annexe text-neutral-500 dark:text-neutral-400">

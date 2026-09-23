@@ -140,6 +140,13 @@ dans le playbook : il lit ce dont il a besoin — avec son outil de lecture, jam
 par le shell —, commence son travail, et ne demande une exécution que lorsqu'elle
 sert le livrable. Sur un refus, il poursuit et le signale, il ne réessaie pas.
 
+⚠ Si l'intention dit au contraire que ses commandes passent sans attendre
+personne **dans le dossier du projet**, n'écris pas l'inverse : il y lance ce
+qu'il écrit, le teste et nettoie ce que ses exécutions ont produit, sans rien
+faire approuver. Nomme alors les seules exceptions que l'intention donne — ce qui
+sort du dossier, ce qui efface ce qui s'y trouvait avant lui —, et dis qu'un
+refus se poursuit et se signale plutôt que de se réessayer.
+
 N'écris dans FOURNISSEUR et MODELE que des noms de la liste qui t'est donnée. Si
 rien n'y convient, laisse les deux lignes vides : l'agent prendra les réglages par
 défaut. Ne devine jamais un nom."""

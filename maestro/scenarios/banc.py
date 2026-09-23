@@ -172,6 +172,7 @@ def _une_tentative(
         rejoue=rejoue,
         empechement=issue.empechement,
         etapes=tuple(ctx.journal.etapes),
+        arbitrages=tuple(ctx.arbitrages),
     )
 
 

@@ -967,17 +967,17 @@ describe("ce qui attend un humain", () => {
     expect(within(pipeline).queryByText("En cours")).not.toBeInTheDocument();
   });
 
-  it("mène à l'écran qui porte le geste, plutôt que de le proposer sur place", async () => {
-    // Même règle que la table `ATTENTES` de la liste des runs : un arbitrage se
-    // tranche sur l'écran qui montre de quoi trancher, pas dans une boîte de 16 rem.
+  it("porte le geste sur le nœud, et n'emmène plus nulle part", async () => {
+    // ⚠ **Renversement de #1228.** Le nœud *menait* à `/validations` — « un
+    // arbitrage se tranche sur l'écran qui montre de quoi trancher, pas dans une
+    // boîte de 16 rem ». La boîte n'a toujours pas la place de le montrer ; le
+    // panneau, si, et il s'ouvre sans quitter le graphe.
     lecture.graphe = grapheDeReference();
     monter({ validations: [validationFactice({ tache_id: "api", statut: "en_attente" })] });
 
     const pipeline = await pipelineCharge();
-    expect(within(pipeline).getByRole("link", { name: /Trancher/ })).toHaveAttribute(
-      "href",
-      "/validations",
-    );
+    expect(within(pipeline).getByRole("button", { name: "Trancher" })).toBeTruthy();
+    expect(within(pipeline).queryByRole("link", { name: /Trancher/ })).toBeNull();
   });
 
   it("ne colore rien quand la validation a déjà été tranchée", async () => {

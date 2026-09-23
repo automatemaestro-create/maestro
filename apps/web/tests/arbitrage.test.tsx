@@ -29,7 +29,7 @@
 import { screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import PageValidations from "@/app/validations/page";
+import { EcranValidations as PageValidations } from "@/components/EcranValidations";
 import { ATTENTES } from "@/components/runs/EtatRun";
 import { attenteDepuis, attendUnHumain, runsEnAttente } from "@/lib/brief";
 import {

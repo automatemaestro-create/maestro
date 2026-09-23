@@ -18,9 +18,13 @@
  * 2. **les trois façons de dire « au travail » se taisent** — le mot « En
  *    cours », le signe de vie (dernier geste) et le chrono en vol
  *    (« Travaille depuis… ») ;
- * 3. **la carte dément sa colonne** — surface `attention` et lien vers l'écran
- *    où l'on tranche, qui est la variante retenue sur pièces (commentaire
- *    « ## Variante retenue » du ticket) ;
+ * 3. **la carte dément sa colonne** — surface `attention` et geste qui tranche,
+ *    qui est la variante retenue sur pièces (commentaire « ## Variante
+ *    retenue » du ticket). ⚠ Ce geste était un **lien** vers `/validations`
+ *    jusqu'à #1228, qui en fait un **bouton** : on tranche sur place et l'on
+ *    reste où l'on est. La prémisse d'origine — un arbitrage ne se *lit* pas
+ *    dans une carte de 11 rem — n'a pas changé ; ce qui a changé est qu'on n'a
+ *    plus besoin de quitter l'écran pour le lire (`PanneauValidation`) ;
  * 4. **rien ne bouge sur les autres cartes**, ni quand personne ne passe la
  *    liste des attentes : un Kanban monté sans elle rend la carte d'avant.
  *
@@ -33,11 +37,13 @@
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
+import type { ArbitrageSurPlace } from "@/components/CarteValidation";
 import { Kanban } from "@/components/Kanban";
 import {
   tacheArreteeSurUnHumain,
   tachesEnAttenteDeValidation,
 } from "@/lib/execution";
+import { arbitragesEnAttente } from "@/lib/validations";
 import {
   STATUT_EN_ATTENTE_VALIDATION,
   VALIDATION_APPROUVEE,
@@ -74,6 +80,7 @@ function tacheArretee() {
 function rendreKanban(
   taches = [tacheArretee()],
   enAttenteHumaine?: ReadonlySet<string>,
+  arbitrer?: ArbitrageSurPlace,
 ) {
   return render(
     <Kanban
@@ -82,8 +89,19 @@ function rendreKanban(
       reassigner={vi.fn()}
       projet={projetFactice()}
       enAttenteHumaine={enAttenteHumaine}
+      arbitrer={arbitrer}
     />,
   );
+}
+
+/** De quoi trancher la demande de `demo-t3` sur place (#1228). */
+function arbitrageDe(decider = vi.fn()): ArbitrageSurPlace {
+  return {
+    enAttente: arbitragesEnAttente([
+      validationFactice({ tache_id: "demo-t3", outil: "Bash" }),
+    ]),
+    decider,
+  };
 }
 
 /** La colonne d'un statut, repérée par son titre — même repère que `kanban.test`. */
@@ -140,16 +158,28 @@ describe("une tâche arrêtée sur un humain, au Kanban", () => {
 
   // --- ③ La carte dément sa colonne ----------------------------------------
 
-  it("prend la surface d'attention et mène là où l'on tranche", () => {
-    rendreKanban([tacheArretee()], new Set(["demo-t3"]));
+  it("prend la surface d'attention et porte le geste qui tranche", () => {
+    rendreKanban([tacheArretee()], new Set(["demo-t3"]), arbitrageDe());
 
     const carte = carteDe("Pipeline CI et déploiement de l'API");
     // L'ambre que `Carte ton="attention"` accorde déjà au nœud de pipeline —
     // la classe, pas la couleur : jsdom ne calcule aucun rendu.
     expect(carte.className).toMatch(/amber/);
 
-    const lien = within(carte).getByRole("link", { name: /Trancher/ });
-    expect(lien.getAttribute("href")).toBe("/validations");
+    // ⚠ **Un bouton, plus un lien** (#1228). C'est l'assertion qui garde le
+    // renversement : le lien menait à `/validations` et y laissait sans retour.
+    expect(within(carte).getByRole("button", { name: "Trancher" })).toBeTruthy();
+    expect(within(carte).queryByRole("link", { name: /Trancher/ })).toBeNull();
+  });
+
+  it("n'offre aucun geste quand l'écran ne passe pas de quoi trancher", () => {
+    // Le Kanban du tableau de bord, par exemple : la carte dit toujours qu'une
+    // tâche attend quelqu'un, elle ne fabrique pas un bouton sans demande.
+    rendreKanban([tacheArretee()], new Set(["demo-t3"]));
+
+    const carte = carteDe("Pipeline CI et déploiement de l'API");
+    expect(within(carte).getByText("Attente humaine")).toBeTruthy();
+    expect(within(carte).queryByRole("button", { name: "Trancher" })).toBeNull();
   });
 });
 
@@ -163,7 +193,7 @@ describe("ce qui ne bouge pas", () => {
     expect(within(carte).getByText("En cours")).toBeTruthy();
     expect(carte.querySelector("[data-signe-de-vie]")).not.toBeNull();
     expect(carte.querySelector("[data-chrono-en-vol]")).not.toBeNull();
-    expect(within(carte).queryByRole("link", { name: /Trancher/ })).toBeNull();
+    expect(within(carte).queryByRole("button", { name: "Trancher" })).toBeNull();
     expect(carte.className).not.toMatch(/amber/);
   });
 

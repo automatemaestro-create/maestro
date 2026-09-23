@@ -80,9 +80,18 @@ _ETAPE_REPRISE = "reprise"
 #: nommée « brief » sur le Kanban, alors que l'étape porte sur le run entier.
 _ETAPE_BRIEF = "brief"
 
+#: Étape du journal qui n'est pas une tâche : la **confrontation de l'équipe au
+#: plan** (#1227 — cf. `maestro.telemetry.costs.ETAPE_EQUIPE`). Deux lignes au
+#: plus par run, et elles portent sur le plan entier : le rôle qui manque, puis
+#: ce que la proposition de renfort a donné. Même raison d'être déclarée ici que
+#: `brief` : sans elle, la règle par défaut ferait une carte de tâche fantôme
+#: nommée « equipe » sur le Kanban.
+_ETAPE_EQUIPE = "equipe"
+
 #: Étapes rattachées au **run**, pas à une tâche : elles deviennent des activités
-#: d'agent sans `tache_id` (l'orchestrateur cadre puis planifie, le moteur reprend).
-_ETAPES_RUN = (_ETAPE_PLANIFICATION, _ETAPE_BRIEF, _ETAPE_REPRISE)
+#: d'agent sans `tache_id` (l'orchestrateur cadre, planifie puis confronte
+#: l'équipe au plan, le moteur reprend).
+_ETAPES_RUN = (_ETAPE_PLANIFICATION, _ETAPE_BRIEF, _ETAPE_REPRISE, _ETAPE_EQUIPE)
 
 #: Suffixe des étapes de validation humaine (cf. `LocalExecutor._valide_si_sensible`).
 _SUFFIXE_VALIDATION = ":validation"

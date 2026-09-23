@@ -14,8 +14,9 @@ Quatre choses. La personne les a demandées : elle a répondu « go » à une re
 nommait, avec pour objectif *un résultat de qualité et un rythme accéléré*. Rien n'a été tranché à sa
 place.
 
-1. **Le rail outillage est gelé jusqu'au 2026-10-12.** Il ne reçoit que #1150, #1151, #1152 et les
-   pannes qui bloquent réellement le travail.
+1. **Le rail outillage est gelé jusqu'au 2026-10-12.** Il ne reçoit que #1150, #1151, #1152, les
+   pannes qui bloquent réellement le travail et, depuis le 2026-09-23, les six tickets du flux d'un
+   ticket, #1240 à #1245 (§6).
 2. **Des scénarios de référence, joués avec le vrai modèle, conditionnent le bouclage d'un jalon
    produit.**
 3. **Un ticket porte une capacité visible pour l'utilisateur, et ses propres tests.** Il n'y a plus de
@@ -148,7 +149,7 @@ modèle, par la porte d'entrée réelle (le fil de l'orchestrateur) :
 | | Scénario | Ce qui le rend vert |
 | --- | --- | --- |
 | S1 | Vider un dossier | Le dossier est vide hors périmètre exclu, sans outil écrit |
-| S2 | Créer une petite application | Elle s'exécute |
+| S2 | Créer une petite application | Elle s'exécute, et **aucune commande n'a été soumise à la personne** (#1226 — le rapport du banc compte ce qu'il a tranché à sa place) |
 | S3 | Reprendre un projet existant sans équipe | Le fil propose l'équipe **avant** de dépenser ; validée d'un geste, elle est créée et le run demandé aboutit |
 | S4 | « Pourquoi le run a échoué ? » | La réponse nomme la cause réelle, jugée par un modèle, jamais par un lexique (#746) |
 
@@ -189,9 +190,41 @@ n'a rien à voir avec le banc : [docs/38 §5.6](./38-decision-outillage-universe
 Il court jusqu'au **2026-10-12**. Pendant le gel, le rail outillage ne reçoit que :
 - les trois allègements #1150, #1151 et #1152, qui **retirent** de la cérémonie au lieu d'en
   ajouter ;
-- les pannes qui bloquent réellement le travail.
+- les pannes qui bloquent réellement le travail ;
+- depuis le 2026-09-23, les six tickets du flux d'un ticket (ci-dessous).
 
 Un incident de forge qui ne bloque pas se note, il ne devient pas un chantier.
+
+### L'exception du 2026-09-23 : le flux d'un ticket (#1239)
+
+La personne a demandé si le flux qui traite un ticket était réglé pour la qualité et pour ne pas
+perdre de temps. L'analyse de #1239 a répondu par des mesures prises sur 8 runs, 50 tickets, 80 PR
+et 104 pipelines. Le flux est réglé pour la sûreté du merge, mais pas pour la qualité du
+fonctionnel :
+- **le fonctionnel ne s'exerce qu'au jalon.** #1197, #1198, #1205 et #1212 ont été trouvés par le
+  banc des scénarios, un à deux jours après le merge de ce qu'ils corrigent ;
+- **le temps part dans des vérifications qui trouvent peu.** Le filet local prend 19 % du temps d'un
+  ticket et se rejoue souvent après un vert. La relecture visuelle a coûté 6,3 h pour moins de
+  0,1 h de corrections. La clôture pèse 36 % du coût.
+
+La personne a retenu les six recommandations, en `prio::haute`, et les a **exclues du gel** :
+
+| Ordre | Ticket | Ce qu'il change |
+|---|---|---|
+| 1 | #1240 | chaque critère se clôt sur une preuve exercée (test nommé, ou vraie stack et banc), plus sur un fichier du diff |
+| 2 | #1241 | une méthode courte pour l'implémentation |
+| 3 | #1242 | le filet local ne rejoue pas un vert sur un arbre inchangé, et son périmètre se réduit vraiment |
+| 4 | #1243 | la relecture visuelle d'un ticket qui applique regarde l'après et les états nommés, sans seconde stack |
+| 5 | #1244 | le temps loggé est mesuré, et la PR ne porte plus de checklist qui redit `merge-mr` |
+| 6 | #1245 | les commandes de clôture ne portent que leur règle, et la démonstration part dans la doc |
+
+L'ordre suit les dépendances : #1241 reprend la preuve exercée de #1240, et #1245 comprime en
+dernier le texte que les cinq autres ont modifié. Les six écrivent sous `.claude/`, donc ils sont
+nés assignés et se traitent en interactif (docs/10 §11.7).
+
+La relecture de code reste écartée ; #1239 ne la rouvre pas. #969 l'a jugée sur mesure (5 bugs
+sur 42 visibles dans un diff), et les quatre bugs ci-dessus confirment ce verdict : aucun ne se
+lisait dans un diff, tous ont été trouvés en se servant du produit.
 
 Deux chantiers sont **différés, pas abandonnés**. Ils passent en `prio::basse` :
 - **#1052**, le plan d'un run qui traverse les jalons ;

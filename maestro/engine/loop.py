@@ -57,6 +57,16 @@ le brief **approuvé par un humain** (`humain`, décision D5). Dans ce dernier c
 s'arrête sur le brief — aucune tâche n'est créée tant que rien n'est tranché — et ce qui
 part en décomposition est le brief tel qu'il a été approuvé, corrections comprises.
 
+Entre le plan et la première tâche, l'**équipe est confrontée au plan** (#1227,
+[docs/42](../../docs/42-decision-equipe-ajustee-au-plan.md)) : quand la
+décomposition appelle un métier que l'équipe du projet n'a pas, le manque est
+consigné et — s'il y a un arbitre de renfort — proposé à une personne, qui accepte
+ou non (`maestro.engine.renfort`). C'est le seul arrêt de cette boucle qui ne peut
+**jamais** l'interrompre : un refus, un silence, un arbitre absent ou en panne
+laissent le run continuer avec l'équipe qu'il a, en le disant au journal. Un rôle
+recruté pendant l'attente prend ses tâches sans qu'une ligne du plan change —
+c'est le routage qui relit le dépôt d'agents, tâche par tâche.
+
 Avec une **messagerie inter-agents** injectée (#44, `mailbox=`), le relais entre
 tâches dépendantes devient un **handoff observable** (critère MVP n°7) : l'agent
 qui termine une tâche à dépendants **annonce** l'issue par message (diffusion,
@@ -105,6 +115,7 @@ from maestro.engine.executor import (
     ROLE_ORCHESTRATEUR,
     STATUT_BLOQUEE,
     STATUT_ECHEC,
+    STATUT_ROLE_MANQUANT,
     STATUT_TERMINEE,
     LocalExecutor,
     TaskExecutor,
@@ -114,7 +125,16 @@ from maestro.engine.executor import (
 from maestro.engine.guardrails import Guardrails
 from maestro.engine.pause import PorteExecution
 from maestro.engine.questions import ArbitreQuestion
+from maestro.engine.renfort import (
+    STATUT_RENFORT_DECLINE,
+    STATUT_RENFORT_RECRUTE,
+    STATUT_RENFORT_SANS_REPONSE,
+    ArbitreRenfort,
+    DecisionRenfort,
+    DemandeRenfort,
+)
 from maestro.engine.retry import RELANCE_DEFAUT, PolitiqueRelance
+from maestro.equipe.manque import ManqueAuPlan, manque_au_plan
 from maestro.messaging.handoff import HandoffRelais
 from maestro.messaging.mailbox import Mailbox
 from maestro.orchestrator.orchestrator import Orchestrator
@@ -130,7 +150,7 @@ from maestro.telemetry import (
     collect_usage,
     resume_controle_depense,
 )
-from maestro.telemetry.costs import ETAPE_BRIEF, RunCost, TaskCost
+from maestro.telemetry.costs import ETAPE_BRIEF, ETAPE_EQUIPE, RunCost, TaskCost
 
 __all__ = [
     "MODE_BRIEF_AUTO",
@@ -404,6 +424,7 @@ class OrchestrationEngine:
         tours_clarification: int | None = None,
         questionneur: ArbitreQuestion | None = None,
         bornes_question: BornesArbitrage | None = None,
+        arbitre_renfort: ArbitreRenfort | None = None,
     ) -> None:
         if max_parallele is not None and max_parallele < 1:
             raise ValueError(f"max_parallele doit être ≥ 1 (reçu : {max_parallele}).")
@@ -430,6 +451,18 @@ class OrchestrationEngine:
         # des garde-fous (#9) : c'est du câblage de déploiement (où la question est
         # posée), là où le *mode* est un choix du lancement (y a-t-il quelqu'un ?).
         self._arbitre_brief = arbitre_brief
+        # À qui proposer de **compléter l'équipe** quand le plan appelle un rôle
+        # qu'elle n'a pas (#1227) — en pratique
+        # `maestro.controltower.renfort.ArbitreRenfortControlTower`. None
+        # (défaut) : le manque est nommé au journal et le run continue avec
+        # l'équipe actuelle, c'est-à-dire la conduite d'avant ce lot. Même nature
+        # que les trois arbitres ci-dessus : du câblage de déploiement (*où* la
+        # proposition est posée), jamais un réglage du lancement.
+        self._arbitre_renfort = arbitre_renfort
+        # La borne de l'attente de renfort est celle d'un arbitrage (#1227) : le
+        # même temps humain, donc le même chiffre — cf. `maestro.engine.renfort`.
+        # Elle voyage sur la demande, l'arbitre la tient.
+        self._bornes_renfort = bornes_question or BornesArbitrage()
         # Garde-fous du run (#9) : retenus ici pour que le rapport dise quel contrôle
         # de dépense a tenu (#113). Le défaut laisse les plafonds inactifs. En mode
         # distribué (exécuteur injecté), les garde-fous s'appliquent côté worker :
@@ -502,6 +535,7 @@ class OrchestrationEngine:
         arbitre_clarification: ArbitreClarification | None = None,
         tours_clarification: int | None = None,
         questionneur: ArbitreQuestion | None = None,
+        arbitre_renfort: ArbitreRenfort | None = None,
     ) -> OrchestrationEngine:
         """Moteur par défaut : fournisseur et modèle issus de la config (#69).
 
@@ -577,6 +611,13 @@ class OrchestrationEngine:
         humain que celui d'un arbitrage, et lui donner un second réglage ferait
         deux chiffres à tenir d'accord pour une seule question — *combien laisse-
         t-on à qui répond ?*
+
+        `arbitre_renfort` (#1227) est **à qui** proposer de compléter l'équipe
+        quand le plan appelle un rôle qu'elle n'a pas — en pratique
+        `maestro.controltower.renfort.ArbitreRenfortControlTower`. None (défaut) :
+        le manque est nommé au journal et le run continue avec l'équipe actuelle.
+        Sa **borne** ne passe pas par ici non plus : c'est le même temps humain que
+        celui d'un arbitrage, et il n'a qu'un réglage.
         """
         from maestro.providers.factory import default_model, provider_from_settings
 
@@ -607,6 +648,7 @@ class OrchestrationEngine:
             tours_clarification=tours_clarification,
             questionneur=questionneur,
             bornes_question=BornesArbitrage.from_settings(settings),
+            arbitre_renfort=arbitre_renfort,
         )
 
     async def run(
@@ -685,6 +727,14 @@ class OrchestrationEngine:
         la première étape qui lit l'objectif : le **brief** et chacune de ses
         régénérations, ou le **plan** d'un run sans brief. Vide (le défaut), rien ne
         change.
+
+        Entre le plan et la première tâche, l'**équipe est confrontée au plan**
+        (#1227, `_confronte_equipe`) : quand celui-ci appelle un rôle que l'équipe
+        du projet n'a pas, le manque est consigné et — s'il y a un arbitre de
+        renfort — proposé à une personne, qui accepte ou non. Cette étape ne
+        s'arrête jamais sur un refus ni sur un silence : le run continue avec
+        l'équipe actuelle, en le disant. Sans projet, sans équipe ou sans manque,
+        elle ne fait rien et ne consigne rien.
         """
         journal = journal if journal is not None else RunJournal()
         mode_brief = mode_brief_valide(mode_brief)
@@ -718,6 +768,11 @@ class OrchestrationEngine:
                 else replace(task, projet_id=projet_id)
                 for task in tasks
             ]
+        # L'équipe confrontée au plan (#1227), **avant** la première tâche : c'est
+        # le seul moment où un recrutement change encore quelque chose. Elle ne
+        # touche ni au plan ni aux tâches — un rôle créé pendant l'attente est lu
+        # par le routage, tâche par tâche.
+        await self._confronte_equipe(objective, tasks, projet_id, journal)
         ordered = topological_order(tasks)
         dependants = _dependants_directs(ordered)
         # Boîte de diffusion ouverte avant toute exécution (pub/sub sans rejeu :
@@ -999,6 +1054,146 @@ class OrchestrationEngine:
             plan=noeuds_du_plan(tasks),
         )
         return usage, tasks
+
+    async def _confronte_equipe(
+        self,
+        objective: str,
+        tasks: Sequence[Task],
+        projet_id: str | None,
+        journal: RunJournal,
+    ) -> None:
+        """Confronte l'équipe du projet au plan, et propose de la compléter (#1227).
+
+        L'étape que #1227 ajoute entre la décomposition et l'exécution. Trois
+        choses, dans cet ordre, et l'ordre est la décision :
+
+        1. **le manque est calculé** sur l'équipe du projet et sur ce que le plan
+           demande (`manque_au_plan`, fonction pure) ;
+        2. **il est consigné** — toujours, même sans arbitre et même si personne ne
+           répond. C'est la ligne qui manquait au run du 2026-09-22 : *« aucune
+           modification de l'équipe n'a été suggérée »* était vrai jusque dans le
+           journal ;
+        3. **il est proposé**, s'il y a quelqu'un à qui le proposer et un poste à
+           pourvoir. La décision revient consignée à son tour.
+
+        Rien ne s'arrête ici, jamais. Un manque qu'aucun gabarit ne couvre, un
+        arbitre absent, un refus, une absence de réponse, un arbitre qui lève : le
+        run continue avec l'équipe actuelle, en le disant. C'est l'inverse du
+        brief (`BriefRefuse`), et pour une raison qui n'est pas une nuance de
+        style — un plan reste exécutable par l'équipe qu'on a, tandis qu'un brief
+        refusé n'a rien à décomposer.
+
+        **Hors projet, rien à confronter** : les tâches d'un run sans projet sont
+        routées sur le catalogue du câblage, dont l'équipe ne se recrute pas —
+        c'est le dépôt qui la livre. Même abstention sur un projet dont le dépôt
+        d'agents n'est pas branché (`None`) : « je ne sais pas qui prendra » n'est
+        pas « il manque quelqu'un », la règle de `_sans_equipe` côté fil (#1146).
+        """
+        if projet_id is None:
+            return
+        equipe = catalogue_du_projet(self._agents_store, projet_id, self._modele)
+        if not equipe:
+            return
+        manque = manque_au_plan(tasks, equipe)
+        if manque is None:
+            return
+        self._consigne_manque(manque, projet_id, journal)
+        if self._arbitre_renfort is None or not manque.recrutable:
+            return
+        demande = DemandeRenfort(
+            run_id=journal.run_id,
+            projet_id=projet_id,
+            objectif=objective,
+            manque=manque,
+            attente_s=self._bornes_renfort.attente_s,
+        )
+        try:
+            decision = await self._arbitre_renfort(demande)
+        except asyncio.CancelledError:
+            # Le run est annulé, pas la proposition : l'annulation doit remonter
+            # intacte, comme partout dans cette boucle.
+            raise
+        except Exception as echec:  # noqa: BLE001 — un canal muet ne condamne pas un plan
+            # Fail-safe dans le sens utile : ce qui est en jeu n'est pas un acte
+            # sensible mais une **amélioration** de l'équipe. Un bus refermé, une
+            # Control Tower arrêtée, un fil illisible — le plan reste exécutable
+            # par l'équipe qu'on a, et la cause s'écrit au journal.
+            decision = DecisionRenfort(
+                approuve=False,
+                detail=f"la proposition de renfort n'a pas abouti : {echec}",
+                sans_reponse=True,
+            )
+        self._consigne_renfort(manque, decision, projet_id, journal)
+
+    def _consigne_manque(
+        self, manque: ManqueAuPlan, projet_id: str, journal: RunJournal
+    ) -> None:
+        """Écrit au journal le rôle que le plan appelle et que l'équipe n'a pas.
+
+        Étape de **run** (`equipe`), comme la planification et le brief : elle ne
+        porte sur aucune tâche — le manque est celui du plan entier — et le pont
+        Control Tower en fait une activité d'orchestrateur, jamais une carte de
+        Kanban (`maestro.controltower.bridge`, `maestro.telemetry.costs`).
+
+        Usage nul : confronter des tags à des fiches ne sollicite aucun modèle.
+        Le statut est celui du rôle manquant au routage (#1041) — c'est le même
+        fait, constaté un cran plus tôt, et lui donner un mot de plus obligerait
+        trois lecteurs à traiter à l'identique deux mots pour une seule chose.
+        """
+        journal.consigne(
+            etape=ETAPE_EQUIPE,
+            nom="L'équipe confrontée au plan",
+            agent=ACTEUR_ORCHESTRATEUR,
+            role=ROLE_ORCHESTRATEUR,
+            statut=STATUT_ROLE_MANQUANT,
+            entree="",
+            sortie=manque.phrase(),
+            usage=StepUsage(),
+            projet_id=projet_id,
+        )
+
+    def _consigne_renfort(
+        self,
+        manque: ManqueAuPlan,
+        decision: DecisionRenfort,
+        projet_id: str,
+        journal: RunJournal,
+    ) -> None:
+        """Écrit au journal ce que la proposition de renfort a donné.
+
+        Une seconde ligne et non une réécriture de la première : le manque est un
+        **fait** (il a été constaté, il reste vrai même si personne n'a recruté),
+        l'issue est une **décision**. Fondre les deux ferait disparaître le constat
+        dès qu'on décline, c'est-à-dire exactement quand il faut pouvoir le relire.
+
+        Les trois issues portent leur statut : recrutée, refusée, ou sans réponse.
+        La dernière n'est pas un refus (cf. `DecisionRenfort`) — et le run repart
+        dans les trois cas.
+        """
+        statut = (
+            STATUT_RENFORT_RECRUTE
+            if decision.approuve
+            else STATUT_RENFORT_SANS_REPONSE
+            if decision.sans_reponse
+            else STATUT_RENFORT_DECLINE
+        )
+        suite = (
+            "le run reprend avec l'équipe complétée"
+            if decision.approuve
+            else "le run continue avec l'équipe actuelle"
+        )
+        detail = decision.detail.strip()
+        journal.consigne(
+            etape=ETAPE_EQUIPE,
+            nom=f"Renfort « {manque.manque.role} »",
+            agent=ACTEUR_ORCHESTRATEUR,
+            role=ROLE_ORCHESTRATEUR,
+            statut=statut,
+            entree="",
+            sortie=f"{detail} — {suite}" if detail else suite,
+            usage=StepUsage(),
+            projet_id=projet_id,
+        )
 
     def _equipe(self, projet_id: str | None) -> tuple[Agent, ...]:
         """L'équipe sur laquelle découper — celle du projet, sinon celle du câblage.

@@ -266,19 +266,28 @@ function apparence(
 /**
  * Ce qui retient le run, **depuis quand**, et le geste qui le lève. Ne rend rien
  * quand il n'attend personne : c'est le cas courant.
+ *
+ * `surPlace` (#1228) retire le **renvoi**, jamais la phrase : l'appelant dit
+ * qu'il porte lui-même le geste, et acheminer vers un autre écran proposerait de
+ * partir pour faire ce qui est déjà là. Un seul appelant le pose — la tête de la
+ * vue d'un run, quand elle affiche les demandes —, et c'est exactement ce que la
+ * table ci-dessus annonçait : « le jour où la vue d'un run portera ces gestes ».
+ * La liste des runs et le tableau de bord, eux, acheminent toujours.
  */
 export function LigneAttente({
   run,
   attente,
+  surPlace = false,
   className = "",
 }: {
   run: ResumeExecution;
   attente: CauseAttente | null;
+  surPlace?: boolean;
   className?: string;
 }) {
   const maintenant = useHorloge();
   if (attente === null) return null;
-  const page = entreeParLibelle(ATTENTES[attente].page);
+  const page = surPlace ? undefined : entreeParLibelle(ATTENTES[attente].page);
   return (
     <p
       className={`flex flex-wrap items-center gap-x-2 gap-y-1 text-annexe text-attention-texte ${className}`}

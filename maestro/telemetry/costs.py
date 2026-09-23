@@ -129,6 +129,17 @@ ETAPE_BRIEF = "brief"
 #: grand livre lui évite une entrée de tâche fantôme, sans rien changer au total.
 ETAPE_REPRISE = "reprise"
 
+#: Étape du journal qui n'appartient à aucune tâche : la **confrontation de
+#: l'équipe au plan** (#1227), entre la décomposition et la première tâche. Usage
+#: nul par construction — confronter des tags à des fiches ne sollicite aucun
+#: modèle —, mais **comptée dans le temps du run** (contrairement à
+#: `ETAPE_REPRISE`) : l'attente de qui décide occupe le run comme le reste, et un
+#: run suspendu quatre minutes sur un recrutement n'a pas duré quatre minutes de
+#: moins. À déclarer ici pour la raison d'`ETAPE_BRIEF` : sans cette ligne, la
+#: règle par défaut ouvrirait dans le grand livre une entrée de tâche fantôme
+#: nommée « equipe ».
+ETAPE_EQUIPE = "equipe"
+
 
 @dataclass(frozen=True)
 class TaskCost:
@@ -263,6 +274,11 @@ class RunCost:
                 # Marqueur de run (#96), rattaché à aucune tâche : rien à
                 # comptabiliser — les étapes qu'il annonce sont, elles, réintégrées
                 # au journal (`RunJournal.reconstitue`) et comptées à leur place.
+                continue
+            if record.etape == ETAPE_EQUIPE:
+                # La confrontation de l'équipe au plan (#1227) : une étape du run,
+                # sans usage et sans tâche. Son intervalle est déjà pris ci-dessus
+                # — c'est du temps de run, l'attente humaine comprise.
                 continue
             tache_id = record.etape.split(":", 1)[0]
             entree = entrees.get(tache_id)

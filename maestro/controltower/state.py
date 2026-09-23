@@ -121,6 +121,21 @@ VALIDATION_REFUSEE = "refusee"
 QUESTION_EN_ATTENTE = "en_attente"
 QUESTION_REPONDUE = "repondue"
 
+#: Statuts d'une **décision de renfort** (#1227), portés par `renfort.decision` :
+#: l'équipe a été complétée, ou elle ne l'a pas été. Deux et non trois — il n'y a
+#: pas de « sans réponse » sur ce canal, parce qu'une absence de réponse ne produit
+#: **aucun événement** : c'est l'arbitre qui renonce à la borne, et c'est le journal
+#: du run qui le dit (`maestro.engine.renfort`, `STATUT_RENFORT_SANS_REPONSE`).
+#: Émettre un troisième statut ferait publier « personne n'a répondu » sur un canal
+#: dont le seul producteur est un geste humain.
+#:
+#: ⚠ Ces deux-là ne sont pas ceux des validations (`approuvee`/`refusee`), et c'est
+#: exprès : une validation porte sur un **acte** que l'agent s'apprête à faire, un
+#: renfort sur une **équipe** qu'on crée ou non. Les mots se ressembleraient assez
+#: pour qu'on range les deux files ensemble, ce qu'elles ne sont pas.
+RENFORT_ACCORDE = "recrute"
+RENFORT_DECLINE = "decline"
+
 #: Statuts d'une **exécution** (#185, contrat #183) : en vol, menée à terme,
 #: interrompue par un humain, ou soldée en échec (au moins une tâche échouée, ou
 #: une planification impossible). Portés par l'événement `execution.statut` ;
