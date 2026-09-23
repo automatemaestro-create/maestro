@@ -85,6 +85,8 @@ Le décideur ne change pas. La personne continue de trancher ce qui **sort** du 
 
 [docs/05 §2.9](./05-interface-control-tower.md) décrit « La réponse s'écrit en direct (#695) » comme livré pour les trois surfaces de fil. Le transport l'est. Mais l'orchestrateur rend un JSON `{verdict, objectif, reponse}` qu'il attend en entier (`maestro/controltower/orchestration.py`, `_juger`), puis l'écrit **en un seul incrément**. Seul le chat direct avec un agent streame. Aucune décision n'est à défaire : un état est à rétablir (#1222), et le document le signale d'ici là.
 
+> **Rétabli le 2026-09-23 par #1222**, qui a inversé l'ordre des deux moitiés de la réponse (la prose, puis une dernière ligne marquée qui porte le verdict) et fait streamer le fournisseur compatible OpenAI. docs/05 §2.9 décrit l'état courant, avertissement retiré. Ce constat reste ici tel qu'il a été rendu : c'est lui qui a ouvert le lot.
+
 ## 5. Les arbitrages rendus par `/idee`, à contredire au besoin
 
 1. **Le renversement est tenu pour voulu.** La personne a dit attendre une proposition d'équipe après la décomposition, pas avant le run. Aucune question ne lui a été posée.

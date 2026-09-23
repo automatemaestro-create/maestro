@@ -79,6 +79,9 @@ class _ChatCompletionsHandler(BaseHTTPRequestHandler):
         if not self.path.endswith("/chat/completions"):
             self.send_error(404, "chemin inconnu")
             return
+        if corps.get("stream"):
+            self._servir_le_flux(corps)
+            return
         statut, payload = self.server.reponse_pour(corps)
         brut = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(statut)
@@ -86,6 +89,24 @@ class _ChatCompletionsHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(brut)))
         self.end_headers()
         self.wfile.write(brut)
+
+    def _servir_le_flux(self, corps):
+        """Le dialecte `stream: true` : des trames `data:`, puis `[DONE]` (#1222).
+
+        L'endpoint décide lui-même s'il refuse `stream_options` — c'est ce que le
+        vrai fait, et c'est la seule façon d'éprouver le rejeu sans l'option.
+        """
+        statut, trames = self.server.flux_pour(corps)
+        if statut >= 400:
+            self.send_error(statut, "option inconnue")
+            return
+        self.send_response(statut)
+        self.send_header("Content-Type", "text/event-stream")
+        self.end_headers()
+        for trame in trames:
+            charge = trame if isinstance(trame, str) else json.dumps(trame, ensure_ascii=False)
+            self.wfile.write(f"data: {charge}\n\n".encode())
+            self.wfile.flush()
 
     def log_message(self, *args):  # silencieux : pas de bruit dans la sortie des tests
         pass
@@ -98,12 +119,25 @@ def _payload_texte(contenu, *, usage=None):
     }
 
 
+def _trames_texte(*morceaux, usage=None):
+    """Le flux du dialecte : un `delta.content` par morceau, l'usage, puis `[DONE]`."""
+    trames = [{"choices": [{"delta": {"content": morceau}}]} for morceau in morceaux]
+    if usage is not None:
+        # La trame d'usage du dialecte : `choices` vide, `usage` rempli.
+        trames.append({"choices": [], "usage": usage})
+    return [*trames, "[DONE]"]
+
+
 @pytest.fixture()
 def endpoint():
     """Endpoint factice démarré sur un port libre ; `base_url` pointe dessus."""
     serveur = ThreadingHTTPServer(("127.0.0.1", 0), _ChatCompletionsHandler)
     serveur.requetes = []
     serveur.reponse_pour = lambda corps: (200, _payload_texte("PONG"))
+    serveur.flux_pour = lambda corps: (
+        200,
+        _trames_texte("PO", "NG", usage={"prompt_tokens": 12, "completion_tokens": 34}),
+    )
     thread = threading.Thread(target=serveur.serve_forever, daemon=True)
     thread.start()
     serveur.base_url = f"http://127.0.0.1:{serveur.server_address[1]}/v1"
@@ -225,6 +259,115 @@ def test_generate_refuse_un_endpoint_injoignable():
         _run(provider.generate("Bonjour", model="m"))
 
 
+# --- `generate_stream` : le dialecte en flux (#1222) -----------------------------------
+
+
+def _morceaux(provider, **kwargs) -> list[str]:
+    """Les incréments d'un `generate_stream`, drainés dans l'ordre."""
+
+    async def drainer():
+        return [morceau async for morceau in provider.generate_stream("Bonjour", **kwargs)]
+
+    return _run(drainer())
+
+
+def test_generate_stream_rend_les_morceaux_du_dialecte(endpoint):
+    """Critère 2 : ce fournisseur streame, et rend ce que l'endpoint a découpé.
+
+    L'invariant de la frontière tient par construction — on ne recoupe rien : la
+    concaténation est ce que `generate` aurait rendu, morceau pour morceau.
+    """
+    assert _morceaux(_provider(endpoint), model="m") == ["PO", "NG"]
+
+    requete = endpoint.requetes[-1]
+    assert requete["corps"]["stream"] is True
+    assert requete["corps"]["stream_options"] == {"include_usage": True}
+
+
+def test_generate_stream_compte_les_tokens_comme_l_aller_simple(endpoint):
+    """Streamer ne rend pas l'appel gratuit aux yeux du grand livre.
+
+    C'est la moitié invisible du lot, la même que celle que `ClaudeProvider`
+    tient depuis #693 : sans `stream_options`, l'endpoint n'enverrait aucune
+    trame d'usage et la dépense d'un fil diffusé disparaîtrait de la télémétrie.
+    """
+    with collect_usage() as collecteur:
+        assert _morceaux(_provider(endpoint), model="m") == ["PO", "NG"]
+
+    total = collecteur.total
+    assert total.appels == 1
+    assert total.tokens_entree == 12
+    assert total.tokens_sortie == 34
+    assert total.duree_api_ms is not None
+
+
+def test_generate_stream_rejoue_sans_l_option_quand_l_endpoint_la_refuse(endpoint):
+    """Le repli, et le fait qu'il ne coûte **rien à l'appelant** (#1222).
+
+    Un endpoint qui ne connaît pas `stream_options` répond 400 à l'ouverture,
+    donc avant le premier incrément : redemander le même flux sans l'option ne
+    peut pas faire voir deux fois la même phrase. Les tokens sont alors inconnus
+    — c'est ce que la télémétrie rapporte, et non un chiffre inventé.
+    """
+    vues = []
+
+    def flux(corps):
+        vues.append("stream_options" in corps)
+        if "stream_options" in corps:
+            return (400, [])
+        return (200, _trames_texte("PO", "NG"))
+
+    endpoint.flux_pour = flux
+
+    with collect_usage() as collecteur:
+        assert _morceaux(_provider(endpoint), model="m") == ["PO", "NG"]
+
+    assert vues == [True, False]
+    assert collecteur.total.tokens_sortie == 0
+
+
+def test_generate_stream_signale_une_erreur_http_clairement(endpoint):
+    """Un refus qui n'est **pas** celui de l'option reste une erreur franche.
+
+    La sonde prouve son motif sur l'échantillon d'à côté : le même chemin rend
+    les morceaux quand l'endpoint répond 200, donc ce qui rougit ici est bien le
+    statut et non une panne de lecture.
+    """
+    endpoint.flux_pour = lambda corps: (401, [])
+
+    with pytest.raises(OpenAICompatError, match="401"):
+        _morceaux(_provider(endpoint), model="m")
+
+
+def test_generate_stream_ignore_ce_qu_il_ne_sait_pas_lire(endpoint):
+    """Un flux se lit sur ce qu'on y reconnaît, jamais sur ce qu'on y refuse.
+
+    Commentaires de maintien de connexion, trames illisibles, `delta` sans
+    `content` (un rôle, un appel d'outil) : rien de cela n'est du texte à
+    afficher, et rien de cela ne doit couper une réponse à demi reçue.
+    """
+    endpoint.flux_pour = lambda corps: (
+        200,
+        [
+            ": ping",
+            "{pas du json",
+            {"choices": [{"delta": {"role": "assistant"}}]},
+            {"choices": [{"delta": {"content": "PO"}}]},
+            {"choices": [{"delta": {"content": "NG"}}]},
+            "[DONE]",
+        ],
+    )
+
+    assert _morceaux(_provider(endpoint), model="m") == ["PO", "NG"]
+
+
+def test_generate_stream_sans_cle_n_envoie_aucune_autorisation(endpoint):
+    """Le flux emprunte les mêmes en-têtes que l'aller simple — un seul endroit les écrit."""
+    _morceaux(_provider(endpoint), model="m")
+
+    assert endpoint.requetes[-1]["autorisation"] is None
+
+
 # --- Critère ② : bascule par configuration seule ---------------------------------------
 
 
@@ -326,7 +469,13 @@ def test_une_execution_aboutit_de_bout_en_bout_sur_l_endpoint_openai(endpoint, m
 
 
 class _Enregistreur(OpenAICompatProvider):
-    """Un fournisseur « openai » qui note le modèle qu'on lui demande, sans réseau."""
+    """Un fournisseur « openai » qui note le modèle qu'on lui demande, sans réseau.
+
+    ⚠ Il surcharge **les deux** générations depuis #1222 : ce fournisseur streame
+    désormais pour de vrai, si bien qu'un double qui n'aurait relayé que
+    `generate` laisserait `generate_stream` partir sur le réseau — et le fil de
+    l'orchestrateur, lui, passe par le flux.
+    """
 
     def __init__(self, reponse: str = "", *, modele_configure: str | None = None) -> None:
         super().__init__(Credentials())
@@ -337,6 +486,15 @@ class _Enregistreur(OpenAICompatProvider):
     async def generate(self, prompt, *, model, system_prompt=None, effort=None):
         self.modeles.append(model)
         return self.reponse
+
+    async def generate_stream(self, prompt, *, model, system_prompt=None, effort=None):
+        self.modeles.append(model)
+        # Deux morceaux : de quoi éprouver qu'un appelant les recolle, là où un
+        # morceau unique rendrait le flux indiscernable d'un aller simple.
+        moitie = len(self.reponse) // 2
+        for part in (self.reponse[:moitie], self.reponse[moitie:]):
+            if part:
+                yield part
 
 
 def test_la_fabrique_pose_le_modele_impose_sur_le_fournisseur():

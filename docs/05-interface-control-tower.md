@@ -2647,14 +2647,7 @@ rattache rien et ne laisse aucun cadre vide.
 > les trois lectures d'un run sont une **bascule** et non trois routes
 > (`apps/web/lib/vuesRun.ts`), il n'existe donc aucune URL qui ouvre une tâche.
 
-#### La réponse s'écrit en direct (#695)
-
-> ⚠ **Vrai pour le transport et pour le chat d'un agent, faux pour le fil de l'orchestrateur**
-> (relevé le 2026-09-23, [docs/42 §4.2](./42-decision-equipe-ajustee-au-plan.md)). L'orchestrateur
-> rend un JSON `{verdict, objectif, reponse}` qu'il attend en entier (`_juger`,
-> `maestro/controltower/orchestration.py`), puis l'écrit **en un seul incrément** : « … répond… »
-> y couvre toute la génération. Le fournisseur compatible OpenAI ne streame aucun fil. Rétabli par
-> **#1222**, qui réécrit cette section.
+#### La réponse s'écrit en direct (#695), **sur les trois fils et les deux fournisseurs** (#1222)
 
 Le lot 1 avait construit le canal de streaming (§6.5) et il a attendu son
 consommateur jusqu'ici. Deux raisons de ne pas le brancher, et **les deux sont
@@ -2701,6 +2694,65 @@ Implémentation : `apps/web/lib/useChat.ts` (la consommation), `apps/web/lib/api
 `apps/web/components/Conversation.tsx` (la bulle qui s'écrit, l'arrêt),
 `apps/web/app/chat/page.tsx`, `apps/web/lib/orchestration.ts` (nom du canal,
 accueil, amorces, lecture d'une mention).
+
+##### Le fil de l'orchestrateur écrit lui aussi, et sans phrase gabarit (#1222)
+
+Ce qui précède était vrai du transport et du chat d'un agent, **faux du fil de
+l'orchestrateur** : relevé le 2026-09-23 ([docs/42 §4.2](./42-decision-equipe-ajustee-au-plan.md)),
+d'après le retex du 2026-09-22 — *« je veux que la réponse s'affiche au fur et à
+mesure »*. Trois choses le tenaient immobile, et chacune a sa réponse.
+
+- **Le contrat de réponse mettait la phrase dans la structure.** Le modèle rendait
+  un seul objet JSON `{verdict, objectif, reponse}` : la phrase à afficher vivait
+  *dans* un objet qu'il fallait avoir entier pour la lire, si bien que « … répond… »
+  couvrait toute la génération. Le contrat est **inversé** : la réponse d'abord, en
+  clair, puis une **dernière ligne** `%%MAESTRO%% {"verdict": …, "objectif": …}` que
+  le canal retire (`_MARQUEUR_VERDICT`, `maestro/controltower/orchestration.py`).
+  Le jugement n'a pas changé d'endroit — c'est toujours le **même** appel qui rend
+  la réponse et la décision (#685) —, c'est leur **ordre** qui a changé, et il n'en
+  fallait pas plus pour que la première n'attende plus la seconde.
+- **Il fallait lire ce flux sans jamais laisser filer la dernière ligne.**
+  `_LectureDuFlux` publie la prose au fur et à mesure en retenant la queue qui
+  pourrait être le début du marqueur (au plus dix caractères, rendus dès que la
+  suite dément) : un fournisseur qui coupe `%%MAESTRO%%` en quatre morceaux — tous
+  le font — n'en affiche jamais la première moitié. ⚠ **Le repli n'est pas un
+  luxe** : une réponse qui *commence* par une accolade ou un bloc de code est lue
+  comme l'ancien contrat et **rien n'est publié au fil de l'eau**, exactement comme
+  avant ce lot. Un modèle qui n'a pas suivi la consigne dégrade donc le direct, il
+  ne casse jamais le fil — et une demande approuvée continue d'ouvrir son run,
+  fût-elle préfacée d'une phrase.
+- **Le fournisseur compatible OpenAI ne streamait aucun fil.** Il sert désormais
+  `stream: true` (`maestro/providers/openai_compat.py`), `stream_options` compris
+  pour que streamer ne rende pas l'appel gratuit aux yeux du grand livre — et
+  **rejoué une fois sans lui** si l'endpoint le refuse, ce qui est sûr parce que le
+  refus tombe avant le premier incrément.
+
+**Et le code n'accole plus de phrase fixe derrière les mots du modèle.** Le fil
+disait « C'est parti. Run 96d0c ouvert, statut « En cours » — aucune borne : le run
+ira jusqu'au bout. Les tâches apparaîtront au tableau de bord à mesure que la
+décomposition les produit. » : deux voix dans une même bulle, dont la seconde
+récite. Les faits n'ont pas disparu, ils ont retrouvé leur place —
+
+- l'**identifiant du run** est un champ du message depuis #268 (`run_id`), donc il
+  se lit sous la bulle (« Ce qui découle d'un échange est dans le fil », plus haut)
+  et il survit au rechargement, ce qu'une phrase ne fait pas mieux ;
+- les **bornes réellement posées** sont écrites par le **geste** qui les a posées
+  (`chat._geste_de_cadrage`), à l'endroit où quelqu'un les a choisies.
+
+⚠ **Ceci renverse un morceau de #990**, et seulement celui-là : le régime des bornes
+s'annonce toujours **dans les deux sens** — c'est la règle de la ligne `plan :` d'un
+run d'outillage (#286) —, mais **au moment de lancer**, sur la carte de cadrage qui
+le récapitule sans rien ouvrir (§2.7.5). Le redire une fois le run parti n'était plus
+un choix affiché : c'était un gabarit, arrivé quand plus personne ne peut rien en
+faire. Reste la seule phrase que le code écrive encore sur un lancement réussi —
+« C'est parti. » sur le chemin du **geste**, où aucun modèle n'a parlé et où le fil
+ne se persiste pas vide : elle n'est accolée à rien.
+
+Couverture : `tests/test_chat_global.py` (④bis — plusieurs incréments pour une
+phrase, le marqueur jamais affiché *prouvé sur un échantillon fautif*, la carte qui
+suit la prose, le lancement qui n'ajoute rien, et le projet sans équipe dont le flux
+n'est **pas même ouvert**), `tests/test_openai_provider.py` (le dialecte en flux, son
+usage, son repli), `apps/web/tests/chat-global.test.tsx` (⑤).
 
 #### Le fil se lit — Markdown, blocs de code, journées (#697)
 
