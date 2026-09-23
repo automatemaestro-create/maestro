@@ -22,6 +22,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { AssistantFlottant } from "@/components/AssistantFlottant";
+import { BandeauMagasin } from "@/components/BanniereErreurApi";
 import { BarreLaterale } from "@/components/BarreLaterale";
 import { BarreSuperieure } from "@/components/BarreSuperieure";
 import { BasculeTheme } from "@/components/BasculeTheme";
@@ -36,6 +37,7 @@ import { ASCENSEUR_PAGE, ecouterDefilement } from "@/lib/ascenseur";
 import { FournisseurEtatGlobal } from "@/lib/etatGlobal";
 import { entreeParLibelle } from "@/lib/navigation";
 import { FournisseurProjetActif, useProjetActif } from "@/lib/etatProjetActif";
+import { FournisseurMagasin } from "@/lib/magasin";
 import {
   ecouterConversationOuverte,
   ecouterRepliSidebar,
@@ -184,7 +186,11 @@ function CadreControlTower({
     // sidebar, lui, est **au-dessus** de la clé : c'est une préférence
     // d'affichage, elle ne change pas avec le projet.
     <FournisseurEtatGlobal key={projet.id} projet={projet}>
-      {/* Le lien d'évitement (#537, WCAG 2.2 §2.4.1). Le produit n'en avait
+      {/* La sonde du magasin (#1206) : une pour toute l'application, lue par le
+          bandeau système ci-dessous et par le bandeau d'écran, qui se tait
+          quand le shell dit déjà la même panne. */}
+      <FournisseurMagasin>
+        {/* Le lien d'évitement (#537, WCAG 2.2 §2.4.1). Le produit n'en avait
           aucun (docs/30 §3.4) : au clavier, chaque écran commençait par
           **toutes les entrées** du menu (dix à l'époque, onze depuis #270),
           puis la barre supérieure, avant d'atteindre quoi que ce soit de la
@@ -197,13 +203,13 @@ function CadreControlTower({
           focus, visible dès qu'il l'a. Le masquer par `display:none` ou
           `visibility:hidden` le sortirait de l'ordre de tabulation, c'est-à-dire
           le supprimerait ; `sr-only` le garde atteignable. */}
-      <a
-        href={`#${ID_CONTENU_PRINCIPAL}`}
-        className="sr-only focus:not-sr-only focus:absolute focus:top-3 focus:left-3 focus:z-50 focus:rounded-md focus:border focus:border-bord-fort focus:bg-surface focus:px-4 focus:py-2 focus:text-corps focus:font-medium focus:text-texte focus:shadow-lg"
-      >
-        Aller au contenu principal
-      </a>
-      {/* La seule région `aria-live="assertive"` de l'application (#538) : les
+        <a
+          href={`#${ID_CONTENU_PRINCIPAL}`}
+          className="sr-only focus:not-sr-only focus:absolute focus:top-3 focus:left-3 focus:z-50 focus:rounded-md focus:border focus:border-bord-fort focus:bg-surface focus:px-4 focus:py-2 focus:text-corps focus:font-medium focus:text-texte focus:shadow-lg"
+        >
+          Aller au contenu principal
+        </a>
+        {/* La seule région `aria-live="assertive"` de l'application (#538) : les
           demandes d'arbitrage humain interrompent, et elles doivent s'entendre
           quel que soit l'écran ouvert. Elle est **sous** la clé du projet, comme
           l'état qu'elle annonce : changer de projet remonte la région, donc son
@@ -212,15 +218,15 @@ function CadreControlTower({
           **Après** le lien d'évitement (#537) et pas avant : celui-ci doit
           rester le premier arrêt de la touche Tab, ce que seule sa position dans
           le DOM lui donne. La région, elle, n'est jamais focusable. */}
-      <RegionArbitrage />
-      {/* `min-h-0` tout le long (#248) : la hauteur définie posée par le
+        <RegionArbitrage />
+        {/* `min-h-0` tout le long (#248) : la hauteur définie posée par le
           `<body>` ne descend jusqu'aux pages que si chaque élément flex
           accepte de rétrécir sous son contenu — le `min-height:auto` par
           défaut le lui interdit, et un seul maillon manquant suffit à rendre
           la chaîne indéfinie. */}
-      <div className="flex min-h-0 flex-1">
-        <BarreLaterale repliee={repliee} />
-        {/* `data-ascenseur="page"` (#882, parti pris 1 de la veille #859) : cet
+        <div className="flex min-h-0 flex-1">
+          <BarreLaterale repliee={repliee} />
+          {/* `data-ascenseur="page"` (#882, parti pris 1 de la veille #859) : cet
             ascenseur-ci est celui de la **page**, et le socle le peint sans
             condition là où toutes les autres surfaces s'effacent au repos
             (`app/globals.css`, « L'ascenseur discret »). Un marqueur est
@@ -231,26 +237,37 @@ function CadreControlTower({
             `lib/ascenseur`, qui la nomme pour le JSX comme pour la sonde qui
             lit les octets de la feuille : renommée d'un seul côté, la barre de
             page redeviendrait tributaire du pointeur sans que rien ne casse. */}
-        <div
-          data-ascenseur={ASCENSEUR_PAGE}
-          className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto"
-        >
-          <BarreSuperieure
-            repliee={repliee}
-            basculerRepli={basculerRepli}
-            selecteurProjet={<SelecteurProjet />}
-            notifications={<CentreNotifications />}
-            theme={<BasculeTheme />}
-            aide={<MenuAide />}
-            conversationOuverte={colonneOuverte}
-            // Sur `/chat` le bouton **disparaît** — `BarreSuperieure` ne le rend
-            // que si la bascule lui est donnée. C'est plus juste que de le
-            // laisser inerte : on est déjà dans la conversation, il n'y a rien à
-            // déplier, et un bouton qui ne fait rien s'apprend comme un bouton
-            // cassé.
-            basculerConversation={surLeChat ? undefined : basculerConversation}
-          />
-          {/* `@container` : la sidebar prend de la largeur au contenu, donc les
+          <div
+            data-ascenseur={ASCENSEUR_PAGE}
+            className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto"
+          >
+            <BarreSuperieure
+              repliee={repliee}
+              basculerRepli={basculerRepli}
+              selecteurProjet={<SelecteurProjet />}
+              notifications={<CentreNotifications />}
+              theme={<BasculeTheme />}
+              aide={<MenuAide />}
+              conversationOuverte={colonneOuverte}
+              // Sur `/chat` le bouton **disparaît** — `BarreSuperieure` ne le rend
+              // que si la bascule lui est donnée. C'est plus juste que de le
+              // laisser inerte : on est déjà dans la conversation, il n'y a rien à
+              // déplier, et un bouton qui ne fait rien s'apprend comme un bouton
+              // cassé.
+              basculerConversation={
+                surLeChat ? undefined : basculerConversation
+              }
+            />
+            {/* Le bandeau **système** de la perte du magasin (#1206, variante C
+              retenue par le regard neuf) : directement sous la barre, comme
+              Carbon y place un message qui vaut pour tout le produit. Une zone
+              du **shell**, hors de `#contenu-principal` — inventoriée par
+              `frontiere-shell-ecran.test.tsx` —, rendue seulement tant que
+              la panne est vraie. Il défile avec le contenu et le pousse sans
+              le recouvrir : il déclare périmé ce qui est dessous, le cacher
+              serait taire ce qu'il dit. */}
+            <BandeauMagasin />
+            {/* `@container` : la sidebar prend de la largeur au contenu, donc les
               grilles des pages se calent sur la largeur **réelle** de cette
               zone (`@md:`, `@3xl:`…) et non sur celle de la fenêtre.
               `data-guide` : ancre de repli de la visite guidée (#122) quand la
@@ -295,7 +312,7 @@ function CadreControlTower({
               la barre supérieure y reste collée (`sticky`) comme quand c'était
               la fenêtre qui défilait, et l'ascenseur reste au bord de l'écran
               plutôt qu'au bord de la colonne centrée. */}
-          {/* `tabIndex={-1}` (#537) : sans lui, suivre le lien d'évitement
+            {/* `tabIndex={-1}` (#537) : sans lui, suivre le lien d'évitement
               déplace l'ancre du document mais **pas le focus** — Chrome et
               Firefox refusent de le poser sur un élément non focalisable, si
               bien que la tabulation suivante repartait de la barre latérale,
@@ -306,16 +323,16 @@ function CadreControlTower({
               la confirmation d'arrivée pour qui vient au clavier, et rien pour
               qui vient à la souris — plutôt qu'un `outline-none` sec, qui
               retirerait le seul signe que le saut a eu lieu. */}
-          <main
-            id={ID_CONTENU_PRINCIPAL}
-            tabIndex={-1}
-            data-guide="contenu"
-            className="@container mx-auto flex min-h-0 w-full max-w-screen-2xl flex-1 flex-col gap-6 px-4 pt-4 outline-none after:-mt-6 after:block after:h-24 after:shrink-0 focus-visible:outline-2 focus-visible:outline-sky-600 sm:px-6 sm:pt-6"
-          >
-            {children}
-          </main>
-        </div>
-        {/* La troisième zone (#925, docs/35 §3) : sœur de la colonne centrale,
+            <main
+              id={ID_CONTENU_PRINCIPAL}
+              tabIndex={-1}
+              data-guide="contenu"
+              className="@container mx-auto flex min-h-0 w-full max-w-screen-2xl flex-1 flex-col gap-6 px-4 pt-4 outline-none after:-mt-6 after:block after:h-24 after:shrink-0 focus-visible:outline-2 focus-visible:outline-sky-600 sm:px-6 sm:pt-6"
+            >
+              {children}
+            </main>
+          </div>
+          {/* La troisième zone (#925, docs/35 §3) : sœur de la colonne centrale,
             donc **hors** de `<main>` — c'est ce qui la tient hors du comptage de
             `sobriete.test.tsx`, qui ne recense que les blocs de
             `#contenu-principal`. Une zone du shell n'est pas un bloc de plus
@@ -329,16 +346,17 @@ function CadreControlTower({
             Après la colonne centrale dans le DOM, donc dernier dans l'ordre de
             tabulation : la conversation se consulte en marge du travail, elle ne
             se met pas devant. */}
-        <ColonneConversation
-          ouverte={colonneOuverte}
-          fermer={() => ecrireConversationOuverte(false)}
-        />
-      </div>
-      {/* Hors flux (position fixe) : la visite se superpose au shell entier, et
+          <ColonneConversation
+            ouverte={colonneOuverte}
+            fermer={() => ecrireConversationOuverte(false)}
+          />
+        </div>
+        {/* Hors flux (position fixe) : la visite se superpose au shell entier, et
           l'assistant (#123) flotte sur toutes les pages — la visite passant
           par-dessus lui (`z-40`/`z-50` contre `z-30`). */}
-      <AssistantFlottant />
-      <GuidePriseEnMain />
+        <AssistantFlottant />
+        <GuidePriseEnMain />
+      </FournisseurMagasin>
     </FournisseurEtatGlobal>
   );
 }

@@ -173,6 +173,10 @@ class ClientAsynchrone:
         self._sync = ClientSynchrone(serveur)
         self.serveur = serveur
 
+    async def ping(self) -> bool:
+        # La sonde du magasin de l'API (#1206) pingue le client du journal.
+        return self._sync.ping()
+
     async def rpush(self, cle: str, *valeurs: str | bytes) -> int:
         return self._sync.rpush(cle, *valeurs)
 

@@ -318,7 +318,7 @@ import asyncio
 import json
 import logging
 import os
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -456,6 +456,7 @@ from maestro.controltower.journal import (
     TRIS_JOURNAL,
     ServiceJournal,
 )
+from maestro.controltower.magasin import GardeMagasin, Magasin
 from maestro.controltower.orchestration import (
     AGENT_ORCHESTRATION,
     NOM_ORCHESTRATION,
@@ -1315,11 +1316,23 @@ def _detail_refus(exc: Exception) -> dict[str, Any]:
     return detail
 
 
+#: Attente entre deux reprises de la pompe après une perte du bus (#1206), en
+#: secondes : on repart vite, puis on espace jusqu'au plafond — un Redis éteint
+#: pour la nuit ne doit pas remplir le journal technique.
+REPRISE_POMPE_S = 1.0
+REPRISE_POMPE_MAX_S = 10.0
+
+
 async def _pompe(
     bus: EventBus,
     state: ControlTowerState,
     diffusion: Diffusion,
     journal: ServiceJournal,
+    *,
+    magasin: Magasin | None = None,
+    rejouer: Callable[[], Awaitable[None]] | None = None,
+    reprise_s: float = REPRISE_POMPE_S,
+    reprise_max_s: float = REPRISE_POMPE_MAX_S,
 ) -> None:
     """Le seul consommateur du bus : projette sur l'état, indexe, puis rediffuse.
 
@@ -1327,9 +1340,16 @@ async def _pompe(
     événement WebSocket, l'état REST le reflète déjà — le journal requêtable
     (#478) compris, d'où sa consignation **avant** la diffusion : un client qui
     recharge sur un événement qu'il vient de recevoir en direct doit le
-    retrouver dans son historique, jamais l'inverse. Une panne du **bus** arrête
-    le flux temps réel mais pas l'API : le REST continue de servir l'état déjà
-    projeté — la panne est tracée, pas avalée.
+    retrouver dans son historique, jamais l'inverse.
+
+    **Une panne du bus ne l'arrête plus** (#1206). Elle s'arrêtait pour de bon :
+    un Redis coupé puis relancé laissait l'API servir une projection figée,
+    sans flux, jusqu'au redémarrage — et sans le dire. Elle réessaie désormais,
+    en espaçant ses essais (`reprise_s` → `reprise_max_s`), et rejoue d'abord le
+    journal si le démarrage n'avait pas pu (`magasin.rejeu_fait`). La panne est
+    tracée une fois par coupure, pas à chaque essai ; pendant ce temps le
+    magasin la sert aux écrans (`GardeMagasin`). Un abonnement qui se **termine**
+    sans erreur est un bus refermé : la pompe s'arrête avec lui.
 
     ⚠ **Elle ne consigne plus au journal durable** (#699). Elle en fut le seul
     écrivain de #97 à ce lot, et c'est ce qui faisait dépendre la durabilité
@@ -1341,18 +1361,34 @@ async def _pompe(
     dédoublonnage — un `Event` n'a pas d'identifiant — auraient doublé chaque
     ligne du journal requêtable au lieu d'en perdre.
     """
-    try:
-        async for event in bus.subscribe():
-            state.appliquer(event)
-            journal.consigner(event)
-            diffusion.diffuser(event)
-    except asyncio.CancelledError:
-        raise
-    except Exception:
-        _LOGGER.exception(
-            "La pompe d'événements s'est arrêtée : flux temps réel interrompu "
-            "(le REST reste servi sur le dernier état projeté)."
-        )
+    attente = reprise_s
+    en_panne = False
+    while True:
+        try:
+            if magasin is not None and rejouer is not None and not magasin.rejeu_fait:
+                await rejouer()
+            async for event in bus.subscribe():
+                if en_panne:
+                    _LOGGER.info("La pompe d'événements a repris : flux temps réel rétabli.")
+                    en_panne = False
+                attente = reprise_s
+                state.appliquer(event)
+                journal.consigner(event)
+                diffusion.diffuser(event)
+            return
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            if magasin is not None:
+                magasin.oublier()
+            if not en_panne:
+                _LOGGER.exception(
+                    "La pompe d'événements a perdu le magasin : flux temps réel "
+                    "interrompu, l'API sert la panne et réessaie."
+                )
+                en_panne = True
+        await asyncio.sleep(attente)
+        attente = min(attente * 2, reprise_max_s)
 
 
 def create_app(
@@ -1582,6 +1618,9 @@ def create_app(
     """
     acces = acces if acces is not None else PolitiqueAcces.ouverte()
     event_log = event_log if event_log is not None else InMemoryEventLog()
+    # Ce que l'API sait de son magasin (#1206) : la sonde est celle du journal
+    # lui-même, donc un journal en process (les tests) ne tombe jamais.
+    magasin = Magasin(event_log.sonder, lieu=event_log.lieu())
     # Le mariage du transport et de la mémoire longue (#699), fait **ici** et une
     # seule fois : tout ce qui publie en aval — routes, services, hôte en process
     # — reçoit ce bus-là, donc consigne en publiant, sans que rien n'ait à s'en
@@ -1840,6 +1879,18 @@ def create_app(
         bus=bus,
     )
 
+    async def rejouer() -> None:
+        """Relit le journal durable dans la projection — une seule fois par process."""
+        try:
+            evenements = await event_log.relire()
+        except Exception as erreur:
+            magasin.rejeu_echoue(erreur)
+            raise
+        for event in evenements:
+            state.appliquer(event)
+            journal.consigner(event)
+        magasin.rejeu_abouti()
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Rejeu du journal durable (#97) **avant** d'ouvrir la pompe : la
@@ -1849,16 +1900,16 @@ def create_app(
         # qui fait de lui une vue de l'historique durable et non un second
         # stockage — et ce qui lui donne des rangs, donc des identifiants
         # d'entrée, stables d'un redémarrage à l'autre.
-        # Un journal illisible (Redis absent au démarrage…) est tracé sans bloquer
-        # l'API : elle repart sur la projection courante (vide en production).
+        # Un journal illisible (Redis absent au démarrage…) ne bloque pas l'API,
+        # mais il ne se tait plus (#1206) : tant que l'historique n'est pas relu,
+        # le magasin se dit indisponible, et la pompe retente le rejeu dès que
+        # le magasin revient.
         try:
-            for event in await event_log.relire():
-                state.appliquer(event)
-                journal.consigner(event)
+            await rejouer()
         except Exception:
             _LOGGER.exception(
-                "Rejeu du journal des événements impossible : démarrage sur la "
-                "projection courante (l'historique persisté n'a pas pu être relu)."
+                "Rejeu du journal des événements impossible : l'API sert la panne "
+                "du magasin et retentera dès qu'il répondra."
             )
         # Reprise des agents et réglages globaux dans le projet qui les utilise
         # (#1038, critère 2). Ici parce que c'est le seul moment où une
@@ -1879,7 +1930,9 @@ def create_app(
                     "globaux restent lisibles comme gabarits (rien n'est perdu). "
                     "La rejouer : python -m maestro.agents.reprise --check"
                 )
-        pompe = asyncio.create_task(_pompe(bus, state, diffusion, journal))
+        pompe = asyncio.create_task(
+            _pompe(bus, state, diffusion, journal, magasin=magasin, rejouer=rejouer)
+        )
         try:
             yield
         finally:
@@ -1905,6 +1958,10 @@ def create_app(
     # tranché par CORS sans jamais arriver au portier (un navigateur ne porte
     # pas d'`Authorization` sur un préflight), et un 401 du portier ressort avec
     # ses en-têtes CORS, donc la page peut en lire le motif.
+    # La garde du magasin (#1206) est montée **sous** le portier : une requête
+    # sans jeton est refusée pour ce motif-là d'abord, et un 503 ressort lui
+    # aussi avec ses en-têtes CORS, donc lisible par la page.
+    app.add_middleware(GardeMagasin, magasin=magasin)
     app.add_middleware(GardeAcces, politique=acces)
     # L'UI (apps/web, ticket #47) est servie sur une autre origine que l'API
     # (Next.js sur :3000, API sur :8000) : sans CORS le navigateur bloque les
@@ -1919,15 +1976,26 @@ def create_app(
     )
 
     @app.get("/api/sante")
-    async def sante() -> dict[str, str]:
-        """Vitalité du service (sonde de supervision), et l'**espace** qu'il sert (#1164).
+    async def sante() -> dict[str, Any]:
+        """Vitalité du service, l'**espace** qu'il sert (#1164) et son **magasin** (#1206).
 
         L'espace dit quelles données cette API voit — celles de sa copie de
         travail, ou le jeu du banc. Le banc des scénarios le lit avant de sauver
         l'état d'un passage : sauver les données d'une autre stack que celle où il
         a joué ferait rouvrir un état qui n'est pas le sien.
+
+        Le **statut** ne dit « ok » que si le magasin répond et que l'historique
+        a été relu ; sinon `"degrade"`, et `magasin` porte le motif et le geste.
+        La réponse reste un `200` : la purge, le lanceur, `start.sh` et le banc
+        lisent ici qu'**un process sert ce port**, et c'est vrai. Ce qui a cessé
+        est le « ok » menteur d'une API qui a perdu son magasin.
         """
-        return {"statut": "ok", "espace": espace_courant().nom}
+        etat = await magasin.etat()
+        return {
+            "statut": "ok" if etat.disponible else "degrade",
+            "espace": espace_courant().nom,
+            "magasin": etat.en_json(),
+        }
 
     @app.post("/api/extinction")
     async def eteindre() -> dict[str, Any]:

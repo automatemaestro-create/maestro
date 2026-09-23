@@ -150,6 +150,21 @@ vi.mock("@/lib/api", async (importOriginal) => {
     // cette déclaration. #256 lit la **même** réponse pour en tirer le
     // vocabulaire des compétences : une lecture, deux usages, un seul mock.
     chargerCatalogue: () => Promise.resolve(catalogueAgents()),
+    // #1206 : le shell sonde la santé de l'API pour dire la perte de son
+    // magasin. Défaut : un magasin qui répond — aucun bandeau système, et tout
+    // test écrit avant ce lot dit encore vrai.
+    chargerSante: () =>
+      Promise.resolve({
+        statut: "ok",
+        magasin: {
+          disponible: true,
+          lieu: null,
+          titre: null,
+          motif: null,
+          geste: null,
+          commande: null,
+        },
+      }),
   };
 });
 
@@ -187,7 +202,8 @@ beforeEach(() => {
   // et survivrait au test suivant, ce qu'on ne veut pas.
   oublierLesBrouillons();
   document.documentElement.removeAttribute("data-theme");
-  window.ResizeObserver = ResizeObserverFactice as unknown as typeof ResizeObserver;
+  window.ResizeObserver =
+    ResizeObserverFactice as unknown as typeof ResizeObserver;
   Element.prototype.scrollIntoView = () => {};
 });
 

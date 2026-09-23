@@ -33,7 +33,7 @@ maestro-run --publier --validation-ui "<objectif>"
 
 | Méthode | Chemin | Rôle |
 |---|---|---|
-| GET | `/api/sante` | vitalité du service, et l'espace de données qu'il sert (`espace`, #1164) |
+| GET | `/api/sante` | vitalité du service, l'espace de données qu'il sert (`espace`, #1164) et l'état de son **magasin** d'événements (`magasin`, #1206). Toujours `200` — les sondes y lisent « un process sert ce port » —, mais `statut` ne vaut `"ok"` que si le magasin répond et que l'historique a été relu ; sinon `"degrade"`, et `magasin` porte `titre`, `motif`, `geste` et `commande` |
 | GET | `/api/taches` | tâches : statut, agent assigné, coût détaillé — tokens, durée (source du Kanban). `?projet=` requis, `?run=` facultatif et **additif** (#473) : les tâches d'un run |
 | GET | `/api/agents` | le **parc** : libre/occupé, tâche courante, compteurs, coût cumulé. Les **exécutants** seulement — l'orchestration en est absente depuis #1028 (elle dépense et on lui parle, mais elle n'exécute aucune tâche ; sa dépense se lit sous `orchestration` dans la vue analytique) |
 | GET | `/api/fournisseurs` | catalogue des fournisseurs (#253 + #487) : **supporté par Maestro** (le registre du code — `modeles` annoncés et, par modèle, les `efforts` admis ; `modeles_libres` dit qu'un nom hors gamme reste recevable) × **présent ici** (la sonde du poste — CLI sur le `PATH`, serveur local qui répond, clé dans l'environnement ; `modeles_ici` est ce que la sonde a **vu**, jamais la gamme). `hors_registre` porte ce que le poste a de plus, `incertitudes` ce que la sonde ne peut pas savoir. Lecture seule et sans effet de bord : aucun binaire exécuté, aucun endpoint distant joint, aucune clé validée, aucune écriture |
@@ -48,6 +48,17 @@ maestro-run --publier --validation-ui "<objectif>"
 Types d'événements diffusés : `tache.statut`, `tache.reassignation`,
 `agent.activite`, `message.inter_agents`, `validation.demande`,
 `validation.decision` (forme : `Event.to_dict`).
+
+**Sans son magasin, l'API le dit** (#1206, `maestro/controltower/magasin.py`).
+Si le magasin d'événements (Redis, en mode serveur) ne répond plus, au démarrage
+comme en cours de route, les routes `/api/*` répondent `503` avec un `detail`
+lisible, `panne: "magasin"` et l'état du magasin champ par champ, que l'écran
+lit sans relire le texte. Deux routes y échappent, chacune pour une raison
+nommée dans `ROUTES_HORS_GARDE` : `/api/sante`, qui dit la panne, et
+`/api/extinction`, pour que l'arrêt reste possible. L'API **reprend seule**
+quand Redis revient : sa pompe réessaie et relit l'historique qu'elle n'avait
+pas pu relire. Relancer Redis suffit :
+`docker compose -f infra/docker-compose.yml up -d redis`.
 
 ## Tests
 

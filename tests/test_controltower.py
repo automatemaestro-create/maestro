@@ -168,10 +168,22 @@ def publie(client, bus, *events):
 
 
 def test_sante(client):
-    """La vitalité, et l'espace de données servi (#1164) — `commun` sous la suite."""
+    """La vitalité, l'espace de données servi (#1164) — `commun` sous la suite — et
+    le magasin (#1206) : un journal en process ne tombe jamais et n'a pas de lieu."""
     reponse = client.get("/api/sante")
     assert reponse.status_code == 200
-    assert reponse.json() == {"statut": "ok", "espace": "commun"}
+    assert reponse.json() == {
+        "statut": "ok",
+        "espace": "commun",
+        "magasin": {
+            "disponible": True,
+            "lieu": None,
+            "titre": None,
+            "motif": None,
+            "geste": None,
+            "commande": None,
+        },
+    }
 
 
 def test_cors_ouvert_pour_l_ui(client):

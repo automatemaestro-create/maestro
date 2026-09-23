@@ -336,7 +336,7 @@ options_start() {
 # Les états que la vraie stack NE PRODUIT PAS, avec leur raison — `nom <TAB> raison`. Ils sont nommés
 # partout où les autres se comptent (plan, couverture, saisine), et jamais imités (en-tête, §5).
 NON_COUVERTS="$(printf '%s\t%s\n%s\t%s' \
-  erreur "une API qui répond en erreur (500) : la vraie stack ne la produit sur aucun écran — son magasin (Redis) coupé, au démarrage comme en route, l'API dit « ok » et sert des listes vides (mesuré le 2026-09-22 ; ce silence est #1206)" \
+  erreur "une API qui répond en erreur : depuis #1206 la vraie stack la produit — son magasin (Redis) coupé, elle refuse ses lectures en 503 nommé —, mais ce script ne la monte pas encore ; à la main, REDIS_URL de la stack pointé sur un relais TCP qu'on coupe" \
   charge "au-delà de ce que le dernier passage du banc a laissé — des listes de centaines de lignes, des noms de 80 caractères : rien n'est gonflé")"
 
 # Le dossier des captures d'un état, RELATIF à la racine. L'état par défaut garde le chemin d'avant

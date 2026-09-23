@@ -26,6 +26,7 @@ import {
   type DetailExecution,
   type EntreeRegistreMcp,
   type IntegrationPoolMcp,
+  type Sante,
 } from "@/lib/types";
 
 import {
@@ -212,6 +213,29 @@ export function detailFactice(): DetailExecution {
   };
 }
 
+/** La santé d'une API dont le magasin répond — le défaut des écrans peuplés. */
+export const SANTE_OK: Sante = {
+  statut: "ok",
+  magasin: {
+    disponible: true,
+    lieu: null,
+    titre: null,
+    motif: null,
+    geste: null,
+    commande: null,
+  },
+};
+
+let santeCourante: Sante = SANTE_OK;
+
+/**
+ * La santé que rend `chargerSante` (#1206) — de quoi monter le shell sur une
+ * API qui a perdu son magasin. À remettre à `SANTE_OK` après usage.
+ */
+export function poserSante(sante: Sante): void {
+  santeCourante = sante;
+}
+
 /** Ce que `@/lib/api` doit rendre pour que les écrans se montent peuplés. */
 export function mocksApi() {
   return {
@@ -224,7 +248,7 @@ export function mocksApi() {
     // Ce que le setup ne couvre pas, et sans quoi plusieurs écrans se liraient
     // à l'état « bannière d'erreur ».
     chargerCatalogue: async () => CATALOGUE,
-    chargerSante: async () => ({ statut: "ok" }),
+    chargerSante: async () => santeCourante,
     chargerRegistreMcp: async () => REGISTRE,
     // La provenance décrit un miroir **moissonné** (#679) : c'est la ligne de
     // pied la plus fournie des trois états possibles, donc celle qui donne le

@@ -1,3 +1,5 @@
+"use client";
+
 /**
  * Le bandeau d'erreur commun à toutes les pages (#117) : chacune garde son
  * propre chargement, donc sa propre erreur, mais le message et son habillage ne
@@ -35,10 +37,28 @@
  *   un fond creux, `texte-secondaire` ne tient pas 4,5:1 (4,23:1 mesuré sur le
  *   fond voisin, `contraste.test.ts`). Son retrait est porté par la **taille**
  *   et la **police**, pas par une teinte plus pâle.
+ *
+ * ── La troisième panne : l'API a perdu son magasin (#1206) ─────────────────
+ *
+ * L'API tourne, mais sans son magasin d'événements (Redis) elle n'a rien d'à
+ * jour à servir : elle refuse ses lectures en `503` et **nomme** la panne dans
+ * le corps (`ErreurApi.magasin`). Ni « API injoignable » (elle a répondu), ni
+ * « l'API a répondu en erreur » et son « voir le journal » (le remède est
+ * ailleurs) : le bandeau dit le nom que le serveur lui donne, ce qu'elle coûte,
+ * et le geste qui la lève — la commande en annexe, comme un diagnostic.
+ *
+ * Elle se dit à **deux** endroits, d'une **seule** mise en forme (`Bandeau`) :
+ * à la porte d'entrée, par le bandeau d'écran, et dans l'application, par le
+ * bandeau système que le shell rend sous la barre supérieure (`BandeauMagasin`,
+ * variante C retenue par le regard neuf, consignée sur #1206 sous « ## Variante
+ * retenue »). Quand le shell la dit, le bandeau d'écran de la même panne se tait
+ * — un seul message à la fois (Carbon).
  */
 
 import { IconeAlerte } from "@/components/Icones";
 import { ErreurApi, type PanneApi } from "@/lib/api";
+import { useMagasinSignale } from "@/lib/magasin";
+import type { EtatMagasin } from "@/lib/types";
 
 /** Le service à relancer — celui que `start.sh` monte, et que la doc nomme. */
 const SERVICE_API = "maestro-api";
@@ -66,6 +86,7 @@ function contenuDe(erreur: PanneApi): Contenu {
       diagnostic: null,
     };
   }
+  if (erreur.magasin !== null) return contenuMagasin(erreur.magasin);
   if (erreur.statut === null) {
     return {
       panne: "API injoignable",
@@ -86,6 +107,23 @@ function contenuDe(erreur: PanneApi): Contenu {
 }
 
 /**
+ * La perte du magasin, telle que le serveur la nomme (#1206) — champ par champ,
+ * jamais relue dans son `detail`. La même pour la porte et pour le shell : c'est
+ * ce qui leur donne un seul vocabulaire et un seul ordre.
+ */
+function contenuMagasin(magasin: EtatMagasin): Contenu {
+  const annexe = [magasin.commande, magasin.lieu].filter(
+    (partie): partie is string => partie !== null,
+  );
+  return {
+    panne: magasin.titre ?? "Magasin des événements indisponible",
+    message: magasin.motif ?? "rien de ce que l'écran montre n'est à jour",
+    geste: magasin.geste === null ? null : `${magasin.geste}.`,
+    diagnostic: annexe.length === 0 ? null : annexe.join(" · "),
+  };
+}
+
+/**
  * Ce qui sépare le message du geste. Le motif vient du **serveur**, et il arrive
  * ponctué (« … de la démo (#978). ») aussi bien que nu : un point médian collé
  * derrière un point donnait « (#978). · voir le journal » — une scorie relevée à
@@ -97,13 +135,62 @@ function separateur(message: string): string {
 }
 
 export function BanniereErreurApi({ erreur }: { erreur: PanneApi | null }) {
+  const signalee = useMagasinSignale();
   if (erreur === null) return null;
-  const { panne, message, geste, diagnostic } = contenuDe(erreur);
+  // Un seul message à la fois (#1206) : quand le shell dit déjà la perte du
+  // magasin, l'écran ne la répète pas sous lui.
+  if (
+    erreur instanceof ErreurApi &&
+    erreur.magasin !== null &&
+    signalee !== null
+  ) {
+    return null;
+  }
   return (
-    <div
-      role="alert"
+    <Bandeau
+      contenu={contenuDe(erreur)}
       className="flex gap-2 rounded-md border border-alerte bg-alerte-creux px-3 py-2"
-    >
+    />
+  );
+}
+
+/**
+ * Le bandeau **système** de la perte du magasin (#1206), que le shell rend sous
+ * la barre supérieure pour tous les écrans : celui qui dit la panne quand elle
+ * survient en route, sur un écran déjà chargé qui ne relit rien de lui-même.
+ * Pleine largeur de la colonne centrale, sans arrondi ni croix : une panne
+ * encore vraie ne se congédie pas, elle part quand le magasin revient.
+ */
+export function BandeauMagasin() {
+  const perdu = useMagasinSignale();
+  if (perdu === null) return null;
+  return (
+    <Bandeau
+      contenu={contenuMagasin(perdu)}
+      className="flex gap-2 border-b border-alerte bg-alerte-creux p-3"
+    />
+  );
+}
+
+/**
+ * L'habillage commun — icône, panne en gras, message et geste, annexe.
+ *
+ * Chaque appelant passe ses classes **en toutes lettres** : le balayage des
+ * paddings (`tests/espacements.test.ts`) lit les littéraux, et une classe
+ * composée à la volée lui échapperait — un résidu qui disparaît du compte sans
+ * avoir été replié. Le bandeau système prend `p-3`, un pas du barème ; celui de
+ * l'écran garde le sien, inscrit au résidu.
+ */
+function Bandeau({
+  contenu,
+  className,
+}: {
+  contenu: Contenu;
+  className: string;
+}) {
+  const { panne, message, geste, diagnostic } = contenu;
+  return (
+    <div role="alert" className={className}>
       <IconeAlerte
         aria-hidden
         className="mt-0.5 size-4 shrink-0 text-alerte-texte"

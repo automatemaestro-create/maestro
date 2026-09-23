@@ -44,7 +44,11 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Sequence
-from urllib.parse import urlsplit, urlunsplit
+
+# Le geste et le point de connexion vivent avec la panne de l'API (#1206) : le
+# préflight et l'API en marche les disent avec les mêmes mots. Réexportés ici,
+# où ils sont nés (#186).
+from maestro.controltower.magasin import COMMANDE_REDIS, endpoint_lisible
 
 _USAGE = (
     "Usage : maestro-api [--hote <adresse>] [--port <port>] [--etat-banc] | "
@@ -60,27 +64,6 @@ PORT_DEFAUT = 8000
 #: injoignable (URL distante, VPN coupé) ferait autrement patienter le lanceur
 #: le temps du time-out TCP du système.
 DELAI_PING_S = 3.0
-
-#: Le geste exact quand le bus manque — l'instance déjà mutualisée avec la file
-#: de tâches et les boîtes aux lettres (infra/docker-compose.yml).
-COMMANDE_REDIS = "docker compose -f infra/docker-compose.yml up -d redis"
-
-
-def endpoint_lisible(url: str) -> str:
-    """L'URL Redis privée de ses identifiants — un diagnostic ne publie pas de mot de passe.
-
-    `REDIS_URL` peut porter un `user:motdepasse@` (elle est d'ailleurs listée
-    parmi les variables sensibles de `maestro.telemetry.redact`) ; le lanceur,
-    lui, a besoin de dire **où** il a frappé. On ne garde donc que le point de
-    connexion : schéma, hôte, port, base.
-    """
-    parties = urlsplit(url)
-    hote = parties.hostname or ""
-    if ":" in hote:  # IPv6 : les crochets font partie de l'écriture
-        hote = f"[{hote}]"
-    if parties.port:
-        hote = f"{hote}:{parties.port}"
-    return urlunsplit((parties.scheme, hote, parties.path, "", ""))
 
 
 def verifier_redis() -> int:

@@ -94,6 +94,7 @@ from maestro.controltower.events import (
     EventBus,
     RedisEventBus,
 )
+from maestro.controltower.magasin import endpoint_lisible
 from maestro.espace import espace_courant, nom_redis
 
 _LOGGER = logging.getLogger("maestro.controltower")
@@ -169,6 +170,19 @@ class EventLog(ABC):
     async def close(self) -> None:  # noqa: B027
         """Libère les ressources du journal (connexions) — no-op par défaut."""
 
+    # Hook optionnel, comme `close` : un journal en process ou dans un fichier
+    # local n'a pas de service à perdre en route. Seul un journal adossé à un
+    # service (Redis) peut devenir injoignable pendant que l'API tourne (#1206).
+    async def sonder(self) -> None:  # noqa: B027
+        """Lève si le journal ne répond plus — no-op par défaut (#1206)."""
+
+    def lieu(self) -> str | None:
+        """Où vit le journal, lisible et **sans secret** — `None` par défaut (#1206).
+
+        C'est ce que la panne nomme : un diagnostic doit dire où il a frappé.
+        """
+        return None
+
 
 class InMemoryEventLog(EventLog):
     """Journal en mémoire : une liste en process, aucune durabilité inter-redémarrage.
@@ -207,10 +221,19 @@ class RedisEventLog(EventLog):
         # mémoire des tests n'en a pas besoin).
         import redis.asyncio as redis_asyncio
 
-        self._client = redis_asyncio.Redis.from_url(url or REDIS_URL_DEFAUT)
+        self._url = url or REDIS_URL_DEFAUT
+        self._client = redis_asyncio.Redis.from_url(self._url)
         # Le journal de **l'espace de la stack** (#1164) : c'est lui que l'API
         # rejoue au démarrage, donc lui qui décide de ce qu'une stack voit.
         self._cle = cle if cle is not None else nom_redis(CLE_JOURNAL_EVENEMENTS)
+
+    async def sonder(self) -> None:
+        # Le même client que le journal : c'est **lui** qui doit répondre, pas
+        # une seconde connexion qui pourrait réussir à sa place.
+        await self._client.ping()
+
+    def lieu(self) -> str | None:
+        return f"Redis, {endpoint_lisible(self._url)}"
 
     async def consigner(self, event: Event) -> None:
         await self._client.rpush(self._cle, event.to_json())

@@ -39,9 +39,27 @@ export type Usage = {
   outils: string[];
 };
 
-/** La réponse de la sonde de vitalité (`GET /api/sante`) : `{ statut: "ok" }`. */
+/**
+ * L'état du magasin d'événements de l'API (#1206) — `magasin.EtatMagasin` côté
+ * serveur. `titre`, `motif`, `geste` et `commande` sont `null` quand rien ne manque.
+ */
+export type EtatMagasin = {
+  disponible: boolean;
+  lieu: string | null;
+  titre: string | null;
+  motif: string | null;
+  geste: string | null;
+  commande: string | null;
+};
+
+/**
+ * La réponse de la sonde de vitalité (`GET /api/sante`) : `statut` vaut `"ok"`,
+ * ou `"degrade"` quand l'API a perdu son magasin (#1206), que `magasin` détaille.
+ */
 export type Sante = {
   statut: string;
+  espace?: string;
+  magasin?: EtatMagasin;
 };
 
 /**
@@ -2763,12 +2781,7 @@ export type DossierExplorateur = {
 
 /** Les origines qu'un point d'entrée de l'explorateur peut porter (#278). */
 export type OrigineDossier =
-  | "repertoire"
-  | "utilisateur"
-  | "recent"
-  | "projet"
-  | "volume"
-  | "configuree";
+  "repertoire" | "utilisateur" | "recent" | "projet" | "volume" | "configuree";
 
 /**
  * Le **répertoire des projets** (`GET`/`PUT /api/projets/repertoire`, #1022) :
