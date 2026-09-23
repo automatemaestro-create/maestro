@@ -60,6 +60,7 @@ from maestro.equipe.gabarits import (
     Gabarit,
     Justification,
 )
+from maestro.equipe.manque import RoleManquant
 from maestro.equipe.modele import (
     ORIGINE_PLAYBOOK_GABARIT,
     ORIGINES_PLAYBOOK,
@@ -153,6 +154,91 @@ def proposer_equipe(
         roles=tuple(roles),
         ecartes=tuple(ecartes),
         source=dict(source) if source is not None else None,
+    )
+
+
+def proposer_renfort(
+    constats: Constats,
+    recommandation: Recommandation,
+    manque: RoleManquant,
+    raison: str,
+    *,
+    projet_id: str = "",
+    noms_pris: Sequence[str] = (),
+    source: Mapping[str, object] | None = None,
+) -> PropositionEquipe:
+    """Le **seul rôle** qui manque à une équipe pour exécuter un plan (#1227).
+
+    Le pendant de `proposer_equipe` sur l'autre question. Là-bas : *quelle équipe
+    ce projet appelle-t-il ?*, et la réponse se lit dans les constats. Ici : *qui
+    manque à l'équipe qu'il a déjà ?*, et la réponse a été calculée ailleurs
+    (`maestro.equipe.manque.manque_au_plan`) — sur le **plan**, pas sur le projet.
+
+    D'où le seul écart de fond entre les deux : la `raison` est **donnée** au lieu
+    d'être dérivée d'un constat. C'est la règle 1 du module tenue, pas contournée
+    — « rien sans son endroit » demande que le rôle porte ce qui le fait exister,
+    et ce qui le fait exister est ici le plan qu'on vient de payer, que l'appelant
+    est seul à connaître. La `Piece` reste `None` pour la même raison : aucun
+    fichier du projet ne désigne ce rôle, et en inventer un serait pire que de
+    n'en pas avoir (cf. `Justification`).
+
+    Tout le reste est **identique** : mêmes skills branchés par usage, mêmes
+    autorisations dérivées du projet avec leur raison, mêmes instances, même
+    intention pour #257, même nom rendu libre. C'est ce qui fait qu'un rôle
+    recruté en cours de run est un rôle de plein droit, et pas une fiche au
+    rabais.
+
+    `ecartes` porte l'orchestrateur **et** les rôles que l'équipe n'appelle pas
+    ici : ce ne serait pas la même liste que celle d'une proposition d'équipe
+    entière (elle ne dirait rien des rôles déjà en place), et la servir
+    laisserait croire qu'ils ont été examinés. Seul l'orchestrateur y reste, parce
+    que sa raison — *ce n'est pas un membre de l'équipe* — est vraie quel que soit
+    le moment (docs/37 §4.2).
+
+    Lève `ValueError` sur un manque sans gabarit : il n'y a alors aucun poste à
+    proposer, et l'appelant le sait avant d'appeler (`ManqueAuPlan.recrutable`).
+    Proposer quelque chose ici reviendrait à inventer un rôle.
+    """
+    gabarit = _gabarit_de(manque)
+    skills = _skills_recommandes(recommandation)
+    nom = _nom_libre(gabarit.nom, noms_pris)
+    role = _role(
+        gabarit,
+        nom,
+        Justification(raison=raison),
+        constats,
+        skills,
+    )
+    return PropositionEquipe(
+        id=nouvel_id(),
+        projet_id=projet_id,
+        faite_le=_maintenant(),
+        resume=_resume((role,), (ECARTE_ORCHESTRATEUR,)),
+        roles=(role,),
+        ecartes=(ECARTE_ORCHESTRATEUR,),
+        source=dict(source) if source is not None else None,
+    )
+
+
+def _gabarit_de(manque: RoleManquant) -> Gabarit:
+    """Le gabarit que `manque` désigne — lève si le manque n'en nomme aucun.
+
+    Résolu par son **nom de gabarit** (`Gabarit.nom`, le slug proposé), qui est
+    exactement ce que `role_manquant` y a mis : une seconde table d'équivalence
+    serait une table de plus à tenir d'accord avec l'ordre du catalogue.
+    """
+    if manque.gabarit is None:
+        raise ValueError(
+            f"aucun gabarit ne couvre {', '.join(manque.competences)} : il n'y a "
+            "pas de rôle à proposer, et en inventer un le ferait lire comme un "
+            "rôle du catalogue."
+        )
+    for gabarit in GABARITS:
+        if gabarit.nom == manque.gabarit:
+            return gabarit
+    raise ValueError(
+        f"gabarit inconnu : {manque.gabarit!r} (attendus : "
+        f"{', '.join(g.nom for g in GABARITS)})."
     )
 
 

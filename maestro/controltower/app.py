@@ -180,8 +180,12 @@ Endpoints :
   **autorisations proposées**, chacune avec sa raison, cran `auto` compris
   (#716). Corps vide : le projet est analysé ; avec les réponses du
   questionnaire d'outillage : l'équipe se dérive d'elles. `ecartes` nomme ce qui
-  n'est **pas** proposé — l'orchestrateur en fait partie par décision. **Rien
-  n'est créé** (`cree`, `validation`) : valider et créer est la route suivante ;
+  n'est **pas** proposé — l'orchestrateur en fait partie par décision. Avec
+  `renfort` (#1227) : **un seul rôle**, celui qu'un plan de run appelle et que
+  l'équipe n'a pas, justifié par ce plan et non par un constat — sans quoi il
+  serait `ecarte`, aucun constat d'un projet en Python ne désignant un designer.
+  **Rien n'est créé** (`cree`, `validation`) : valider et créer est la route
+  suivante ;
 - `POST /api/projets/{id}/equipe` — **crée** dans le projet l'équipe validée
   (#1040, docs/37) : par rôle gardé, sa fiche et son playbook (les skills
   branchés y sont nommés), sa politique d'autorisations et sa capacité. Le corps
@@ -257,7 +261,11 @@ Endpoints :
   personne pour prendre ses tâches. Le corps porte l'équipe retenue dans la forme
   de `POST /api/projets/{id}/equipe` ; la création passe par la même voie
   (#1040), puis le fil repropose le run demandé. Même paire rendue qu'un envoi ;
-  `409` quand rien n'attend ;
+  `409` quand rien n'attend. **Le même geste complète l'équipe d'un run
+  suspendu** (#1227) : quand la demande du fil porte un `run_id`, la décision est
+  publiée sur le bus (`renfort.decision`) et le run repart — accepté avec
+  l'équipe complétée, décliné avec celle qu'il a. Rien n'est reproposé alors : le
+  run tourne déjà ;
 - `GET  /api/chat/{agent}/flux` — la même réponse rendue **au fur et à mesure**
   (SSE, trames `debut`/`fragment`/`fin`/`interrompu`/`erreur`, #268) : un canal,
   valable pour les trois fils ; `?projet_id=` y porte le même rattachement que le
@@ -408,6 +416,7 @@ from maestro.controltower.chat import (
     RepondeurModele,
     ReponseIndisponible,
     ServiceChat,
+    recrutement_en_attente,
 )
 from maestro.controltower.decisions import decisions_du_run
 from maestro.controltower.equipe import EquipeRefusee, ServiceEquipe
@@ -416,6 +425,7 @@ from maestro.controltower.events import (
     EVENEMENT_BRIEF_DECISION,
     EVENEMENT_BRIEF_REPONSES,
     EVENEMENT_QUESTION_REPONSE,
+    EVENEMENT_RENFORT_DECISION,
     EVENEMENT_TACHE_REASSIGNATION,
     EVENEMENT_TACHE_REFERENCE,
     EVENEMENT_VALIDATION_DECISION,
@@ -495,6 +505,8 @@ from maestro.controltower.state import (
     EXECUTION_EN_ATTENTE_BRIEF,
     EXECUTION_EN_ATTENTE_REPONSES,
     QUESTION_REPONDUE,
+    RENFORT_ACCORDE,
+    RENFORT_DECLINE,
     STATUTS_EXECUTION_TERMINAUX,
     VALIDATION_APPROUVEE,
     VALIDATION_REFUSEE,
@@ -503,7 +515,8 @@ from maestro.controltower.state import (
 )
 from maestro.controltower.validation import ValidateurControlTower
 from maestro.engine.brief import MODE_BRIEF_AUTO, MODE_BRIEF_HUMAIN
-from maestro.equipe import RoleValide, SkillRetenu
+from maestro.engine.renfort import DecisionRenfort, DemandeRenfort
+from maestro.equipe import GABARITS, RoleManquant, RoleValide, SkillRetenu
 from maestro.espace import espace_courant
 from maestro.messaging import InMemoryMailbox, Mailbox, RedisMailbox
 from maestro.orchestrator.errors import BriefValidationError
@@ -997,6 +1010,60 @@ class QuestionnaireOutillageRequete(BaseModel):
     def choix_acquis(self) -> list[Choix]:
         """Les réponses en objets du domaine — `deduit`/`parce_que` recalculés."""
         return [Choix(cle=c.cle, valeur=c.valeur) for c in self.choix]
+
+
+class RenfortRequete(BaseModel):
+    """Le rôle manquant dont la carte du fil demande la proposition (#1227).
+
+    C'est la forme **servie** sur la demande de recrutement du fil
+    (`DemandeRecrutement.gabarit`/`raison`), rapportée telle quelle — même régime
+    que `RoleEquipeRequete` (#1040), et pour la même raison : ce que la personne
+    valide doit être ce qu'on lui a montré, et le manque n'est connu que du run
+    qui a écrit cette demande. Le serveur revalide le `gabarit` contre son
+    catalogue (422 sinon), donc rien d'inventé n'en sort.
+
+    `raison` est la justification affichée : le **plan** qui demande ce métier, et
+    les tâches qui l'attendent. Elle voyage parce qu'aucun constat du projet ne la
+    porte — c'est tout ce qui distingue un renfort d'une proposition d'équipe.
+    """
+
+    gabarit: str
+    raison: str = ""
+
+    def role_manquant(self) -> RoleManquant:
+        """Le manque en objet du domaine — compétences dérivées du gabarit.
+
+        Les compétences ne voyagent pas : elles sont celles du gabarit, que le
+        catalogue porte déjà (`Gabarit.competences`). Les laisser venir du
+        navigateur ferait deux sources pour ce que sait faire un rôle, et la
+        proposition pourrait annoncer un métier que la fiche créée n'aurait pas.
+        """
+        gabarit = next((g for g in GABARITS if g.nom == self.gabarit), None)
+        if gabarit is None:
+            raise ValueError(
+                f"gabarit de renfort inconnu : {self.gabarit!r} (attendus : "
+                f"{', '.join(g.nom for g in GABARITS)})."
+            )
+        return RoleManquant(
+            competences=gabarit.competences,
+            role=gabarit.role,
+            gabarit=gabarit.nom,
+            couvre=gabarit.competences,
+        )
+
+
+class PropositionEquipeRequete(QuestionnaireOutillageRequete):
+    """Le corps — facultatif — de `POST …/equipe/proposition`.
+
+    Les réponses du questionnaire (#1031), plus `renfort` (#1227) : demander **un
+    seul rôle**, celui qu'un plan appelle et que l'équipe n'a pas, au lieu de
+    l'équipe entière. Les deux ne se combinent pas en pratique — un renfort
+    s'adresse à un projet qui a déjà une équipe, donc déjà analysé — mais rien
+    n'a à l'interdire : `renfort` décide seul de ce qui est proposé, les choix
+    restent la provenance de la matière.
+    """
+
+    renfort: RenfortRequete | None = None
 
 
 class GenerationOutillageRequete(BaseModel):
@@ -1763,6 +1830,22 @@ def create_app(
         televersements=televersements,
     )
     diffusion = Diffusion()
+
+    async def proposer_un_renfort(demande: DemandeRenfort) -> DecisionRenfort:
+        """Propose au fil de compléter l'équipe d'un run, et attend (#1227).
+
+        Un arbitre **construit à l'appel**, et c'est le nœud que ce lot dénoue :
+        il écrit dans `orchestration`, le fil global, qui se construit plus bas
+        parce qu'il tient son lanceur du service d'exécutions… qui reçoit cet
+        arbitre. Même liaison tardive que `ouvrir_un_run` juste en dessous, et
+        elle est sûre pour la même raison : rien n'est appelé avant qu'un run
+        n'ait un plan, c'est-à-dire longtemps après que `create_app` a fini.
+        """
+        from maestro.controltower.renfort import ArbitreRenfortControlTower
+
+        arbitre = ArbitreRenfortControlTower(bus, orchestration, AGENT_ORCHESTRATION)
+        return await arbitre(demande)
+
     # Pilotage des exécutions (#185) : lance sur le bus et la projection de
     # cette app — le run est donc suivi par les mêmes rouages que n'importe
     # quelle orchestration observée.
@@ -1774,6 +1857,7 @@ def create_app(
         lecteur_sources=lecteur_sources,
         battements=battements,
         hote=hote_run,
+        arbitre_renfort=proposer_un_renfort,
     )
 
     async def ouvrir_un_run(
@@ -5508,6 +5592,18 @@ def create_app(
         création : elle se **raconte** dans le fil (rien n'a été créé, la demande
         reste posée), parce que le geste, lui, a bien eu lieu.
 
+        ⚠ **Un run peut attendre cette décision** (#1227) : quand la demande porte
+        un `run_id`, elle a été posée par un run suspendu entre son plan et sa
+        première tâche, et la décision lui est publiée sur le bus
+        (`renfort.decision`) juste après l'écriture au fil. L'ordre compte et c'est
+        le même que partout ici — le fil d'abord, la diffusion ensuite : un run qui
+        repartirait avant que sa trace soit écrite laisserait le fil en retard sur
+        ce qui se passe. L'issue est **dérivée du fil** et non du corps de la
+        requête : l'équipe est créée si le geste l'approuvait *et* que la réponse
+        ne repose pas la demande — c'est ce que fait le répondeur quand la création
+        échoue, et un run relancé sur une équipe qui n'existe pas serait le pire des
+        deux mondes.
+
         `422` sur une validation sans rôle (« ne pas recruter » se dit en
         déclinant) ou une conversation mal formée, `409` quand rien n'attend —
         le double clic ne crée pas deux équipes —, `404` hors catalogue, `502` si
@@ -5523,6 +5619,11 @@ def create_app(
             )
         fiche, service = _canal_chat(agent)
         fil = _conversation_demandee(service, fiche, requete.conversation)
+        # La demande **avant** le geste : c'est elle qui dit si un run attend, et
+        # le geste la solde (un message suit, donc `recrutement_en_attente` ne la
+        # rendra plus). La lire après serait la lire trop tard.
+        attente = recrutement_en_attente(service.fil(fiche.nom, fil))
+        en_attente = attente.recrutement if attente is not None else None
         try:
             geste, reponse = await service.recruter(
                 fiche,
@@ -5537,6 +5638,18 @@ def create_app(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except ReponseIndisponible as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
+        if en_attente is not None and en_attente.pendant_un_run:
+            recrutee = requete.approuve and reponse.recrutement is None
+            await bus.publish(
+                Event(
+                    type=EVENEMENT_RENFORT_DECISION,
+                    run_id=en_attente.run_id,
+                    projet_id=en_attente.projet_id,
+                    titre=en_attente.role,
+                    statut=RENFORT_ACCORDE if recrutee else RENFORT_DECLINE,
+                    detail=reponse.contenu,
+                )
+            )
         return {
             "agent": fiche.nom,
             "role": fiche.role,
@@ -5660,7 +5773,7 @@ def create_app(
 
     @app.post("/api/projets/{id_projet}/equipe/proposition")
     async def proposition_equipe(
-        id_projet: str, requete: QuestionnaireOutillageRequete | None = None
+        id_projet: str, requete: PropositionEquipeRequete | None = None
     ) -> dict[str, Any]:
         """L'équipe que ce projet appelle — **proposée**, jamais créée (#1039, docs/37).
 
@@ -5695,12 +5808,25 @@ def create_app(
         (`playbook_origine`) : une équipe entière perdue parce qu'un quota est
         épuisé serait une bien pire réponse.
 
+        **Une troisième demande depuis #1227** : `renfort` fait proposer **un seul
+        rôle**, celui qu'un plan appelle et que l'équipe n'a pas, justifié par le
+        plan et non par un constat. C'est ce que la carte du fil demande quand un
+        run l'attend — sans lui, le rôle manquant serait `ecarte` par l'analyse,
+        aucun constat d'un projet en Python ne justifiant un designer. Le gabarit
+        est revalidé contre le catalogue (422 sinon).
+
         404 si le projet est inconnu, 422 motivé si sa fiche est illisible ou si
         sa racine n'est plus un dossier lisible — jamais un 500.
         """
         choix = requete.choix_acquis() if requete is not None else []
+        renfort = requete.renfort if requete is not None else None
         try:
-            return await equipe.proposer(id_projet, choix)
+            return await equipe.proposer(
+                id_projet,
+                choix,
+                renfort=renfort.role_manquant() if renfort is not None else None,
+                raison=renfort.raison if renfort is not None else "",
+            )
         except (ValueError, ProjetInconnu) as exc:
             raise _refus_projet(exc) from exc
 

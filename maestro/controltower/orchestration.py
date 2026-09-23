@@ -602,6 +602,18 @@ _PHRASE_RECRUTEMENT = (
     "créé sans votre validation."
 )
 
+#: Ce qu'on répond à un refus de renfort **pendant un run** (#1227). Il ne se dit
+#: pas comme le refus d'une équipe entière : là-bas rien ne pouvait partir, ici le
+#: run continue — et c'est précisément ce qu'il faut dire, sans quoi la personne
+#: reste à se demander si elle vient d'annuler son travail. La nuance de qualité
+#: est nommée telle quelle : décliner n'est pas une erreur, c'est un arbitrage.
+_REFUS_PENDANT_UN_RUN = (
+    "Entendu : je ne recrute personne. Le run continue avec l'équipe actuelle — "
+    "les tâches qui demandaient « {role} » iront au rôle le plus proche, qui n'en "
+    "a pas le métier. Vous pourrez toujours recruter depuis les écrans d'agents du "
+    "projet et relancer ce travail."
+)
+
 #: Le même constat, quand le canal ne peut pas créer d'équipe lui-même (aucun
 #: recruteur câblé) : il ne propose pas une demande à laquelle aucun geste ne
 #: pourrait répondre, il dit où la créer.
@@ -1404,14 +1416,25 @@ class RepondeurOrchestration(RepondeurChat):
 
         `demande.projet_id` est le projet où l'équipe naît : celui dont la
         demande parlait, relu du fil par le service — jamais la fenêtre.
+
+        ⚠ **Une demande née pendant un run ne se conclut pas pareil** (#1227,
+        `DemandeRecrutement.pendant_un_run`), et c'est la seule différence : le run
+        tourne déjà, donc il n'y a rien à reproposer — ni sur un accord (lui rendre
+        son objectif ouvrirait un second run sur le même travail), ni sur un refus
+        (le run continue, et c'est ce qu'on dit). Ce que le run attend, lui, est la
+        **décision**, publiée sur le bus par la route qui a reçu le geste
+        (`maestro.controltower.renfort`) : ce module n'en sait rien et n'a pas à en
+        savoir plus — il écrit dans le fil, comme pour les deux autres issues.
         """
         redaction = Redaction(None)
         if not approuve:
             await redaction.ecrire(
-                "Entendu : je ne recrute personne, et je n'ouvre pas de run — sans "
-                "équipe, personne n'en prendrait les tâches. L'équipe se crée aussi "
-                "depuis les écrans d'agents du projet ; redites-moi votre demande "
-                "quand elle sera là."
+                _REFUS_PENDANT_UN_RUN.format(role=demande.role or "ce rôle")
+                if demande.pendant_un_run
+                else "Entendu : je ne recrute personne, et je n'ouvre pas de run — "
+                "sans équipe, personne n'en prendrait les tâches. L'équipe se crée "
+                "aussi depuis les écrans d'agents du projet ; redites-moi votre "
+                "demande quand elle sera là."
             )
             return ReponseChat(contenu=redaction.texte)
         if self._recruteur is None:
@@ -1431,6 +1454,16 @@ class RepondeurOrchestration(RepondeurChat):
             )
             return ReponseChat(contenu=redaction.texte, recrutement=demande)
         await redaction.ecrire(f"Équipe créée : {_composition(rapport)}. ")
+        if demande.pendant_un_run:
+            # Le run tourne déjà : il n'y a rien à proposer, seulement à dire que
+            # l'attente est levée. Lui reproposer son propre objectif ouvrirait un
+            # second run sur le même travail — et `trancher_cadrage` n'a aucun
+            # moyen de savoir qu'il ferait double emploi.
+            await redaction.ecrire(
+                "Le run reprend avec l'équipe complétée : les tâches qui demandaient "
+                "ces compétences iront au nouveau rôle."
+            )
+            return ReponseChat(contenu=redaction.texte)
         if self._lanceur is None:
             await redaction.ecrire(
                 "Je ne peux pas encore ouvrir de run depuis ce fil : aucune exécution "

@@ -20,8 +20,14 @@ garde ici :
    nommé**, parce qu'un signal qui dirait « personne ne couvre `sql`, `migration` »
    demanderait à qui le lit de traduire lui-même ;
 ④ **un agent ne recrute pas pendant un run** (§3.5 de
-   [docs/37](../docs/37-decision-equipe-sur-mesure.md)) : le manque est signalé au
-   fil, et recruter reste un geste validé hors du run.
+   [docs/31](../docs/31-decision-surface-ecriture-agents.md)) : le manque est
+   signalé au fil, et la tâche reste « à assigner ».
+
+⚠ La quatrième a été **précisée** par #1227, pas retirée : l'*orchestrateur*
+propose désormais de compléter l'équipe juste après la décomposition, et une
+personne accepte ou non (`tests/test_equipe_au_plan.py`). Ce qui vaut ici reste
+vrai — au **routage**, il est trop tard : la tâche part « à assigner », et c'est
+ce qu'on garde. Les deux dernières puces de docs/37 §3 sont, elles, renversées.
 
 Ni réseau ni appel modèle réel : fournisseur factice, dépôts jetables.
 """
@@ -337,12 +343,19 @@ def test_rien_a_combler_ne_nomme_aucun_poste() -> None:
 def test_la_phrase_du_manque_dit_les_trois_choses_qu_il_faut_pour_agir() -> None:
     """Ce qui manque, le poste que cela désigne, et que le recrutement ne se fait
     pas ici — sans la dernière, le lecteur d'un run peut croire que Maestro va
-    s'en charger, et la tâche resterait « à assigner » sans que personne bouge."""
+    s'en charger, et la tâche resterait « à assigner » sans que personne bouge.
+
+    ⚠ La phrase disait aussi « le recrutement se fait hors du run » jusqu'à #1227.
+    Elle ne le dit plus, parce que c'est devenu faux : l'orchestrateur propose de
+    compléter l'équipe **dans** le run, avant d'exécuter, et une phrase qui
+    renverrait ailleurs ferait chercher un écran là où un geste attend dans le
+    fil. Ce qui n'a pas bougé est ce qui comptait — un agent ne recrute pas
+    (docs/31 §3.5), et rien n'est créé sans accord (#1040)."""
     phrase = RoleManquant(competences=("sql",), role="Expert BDD", gabarit="donnees").phrase()
 
     assert "sql" in phrase
     assert "gabarit `donnees`" in phrase
-    assert "Le recrutement se fait hors du run" in phrase
+    assert "hors du run" not in phrase
 
 
 # --- ④ Le manque arrive au fil, et la tâche reste à assigner -----------------
@@ -393,7 +406,7 @@ def test_le_signal_est_consigne_au_nom_de_l_orchestrateur_et_ne_coute_rien(
         0,
         0,
     )
-    assert "Le recrutement se fait hors du run" in manque.sortie
+    assert "aucun rôle de l'équipe ne couvre" in manque.sortie
 
 
 def test_une_tache_d_un_projet_sans_agent_attend_quelqu_un(tmp_path: Path) -> None:

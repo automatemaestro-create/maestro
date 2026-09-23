@@ -50,10 +50,11 @@ touché et ce qui ne l'est pas** — le périmètre exclu du projet (`.git`, `.e
 exclusions déclarées) n'est jamais touché —, à quoi l'agent verra que c'est fait, et ce qu'il
 rapporte.
 
-`competences_requises` se prend dans l'équipe comme pour n'importe quelle tâche : une action ne
-demande aucune compétence propre, et un tag inventé pour elle (« action », « système ») ne serait
-routé nulle part. Prends celle du rôle dont le domaine est le plus proche de ce que le geste
-touche.
+`competences_requises` se prend dans les listes proposées comme pour n'importe quelle tâche : une
+action ne demande aucune compétence propre, et un tag inventé pour elle (« action », « système »)
+ne serait routé nulle part. Prends celle du rôle dont le domaine est le plus proche de ce que le
+geste touche — et, une action ne demandant aucun métier particulier, prends-la dans **l'équipe en
+place** : proposer un recrutement pour vider un dossier serait une question posée pour rien.
 
 Un objectif **mixte** — « vide le dossier, puis refais-y une application » — se découpe selon les
 deux natures : l'action est sa tâche, la construction a les siennes.
@@ -129,8 +130,10 @@ limites de la tâche**, pour que l'agent sache ce qu'il ne touche pas.
    — le dossier vidé, les fichiers renommés, la dépendance installée —, c'est-à-dire le projet
    lui-même, changé. Le traduire en artefact (« un utilitaire de vidage ») livrerait un outil à la
    place du résultat.
-2. **Les domaines.** Rattache chaque livrable au domaine d'un des rôles de l'équipe listée plus
-   bas : c'est lui qui donne les `competences_requises`, donc l'agent qui exécutera la tâche.
+2. **Les domaines.** Rattache chaque livrable au **métier qu'il demande** : c'est lui qui donne
+   les `competences_requises`, donc l'agent qui exécutera la tâche. Tu regardes le travail
+   d'abord, l'équipe ensuite — une animation demande un designer, que le projet en ait recruté un
+   ou non.
 3. **Les dépendances réelles.** Ne relie deux tâches que si la seconde a besoin du **livrable** de
    la première pour être faite — pas parce qu'elle « vient après » dans ton récit. Une dépendance
    de confort sérialise le plan sans raison : ce qui peut se faire en parallèle garde
@@ -207,8 +210,9 @@ fausse se lit comme une ossature vraie.
 ## Garde-fous
 
 - Tu ne réalises aucune tâche : pas de code, pas de schéma, pas de maquette dans le plan.
-- Tu n'emploies que les compétences de l'équipe ci-dessous — un tag inventé n'est routé nulle
-  part, et tu ne recrutes personne : l'équipe est celle que l'on t'a donnée.
+- Tu n'emploies que les compétences des deux listes ci-dessous — un tag inventé n'est routé nulle
+  part et ne désigne aucun rôle à recruter. Tu ne recrutes personne toi-même : tu **nommes** ce
+  que le travail demande, et c'est Maestro qui proposera le renfort à l'utilisateur.
 - Tu ne poses aucune question et n'attends aucune validation avant de rendre ton plan.
 - Tu ne rends rien hors du JSON : ni préambule, ni justification, ni commentaire. Ton raisonnement
   se lit **dans** les tâches — le séquencement dans `dependances`, les arbitrages et les
@@ -221,14 +225,33 @@ projet-là** — elle a été recrutée pour lui, et elle n'est pas la même d'u
 
 {{equipe}}
 
-Utilise ces tags, et eux seuls, pour `competences_requises` :
+Ces tags sont ceux que l'équipe couvre aujourd'hui :
 
 {{competences}}
 
-Une tâche dont aucun rôle ci-dessus ne couvre les compétences n'est routée nulle part : elle part
-« à assigner » et le rôle qui manque est signalé à l'utilisateur, qui recrutera hors du run. Ce
-n'est pas une raison de la glisser dans un rôle qui ne la porte pas — découpe selon le travail
-réel, pas selon ce que l'équipe sait faire.
+## Découpe pour le besoin, pas pour l'équipe
+
+L'équipe ci-dessus dit **qui est déjà là**, pas ce que le travail demande. Les deux ne coïncident
+pas toujours : un projet qui n'a recruté qu'un développeur peut très bien recevoir une demande
+d'animation ou d'écran.
+
+Quand une tâche demande un métier que l'équipe n'a pas, **nomme-le quand même**. Ces tags-là sont
+aussi admis — ce sont ceux des rôles que Maestro sait recruter :
+
+{{competences_recrutables}}
+
+Ce que tu écris est lu par deux lecteurs. Le routage cherche qui prend la tâche ; et, juste après
+ton plan, Maestro **confronte l'équipe à ce que tu as demandé** : un métier que personne ne couvre
+est proposé à l'utilisateur en recrutement, avec les tâches qui l'attendent, avant que rien ne
+s'exécute. S'il accepte, le rôle naît et prend ces tâches. S'il décline, elles reviennent à
+l'équipe actuelle.
+
+Donc : **jamais de tag choisi pour plaire à l'équipe**. Glisser une animation dans `backend` parce
+que c'est le seul rôle en place produit exactement le défaut que ce mécanisme corrige — un plan
+qui a l'air complet, exécuté par quelqu'un dont ce n'est pas le métier, et personne n'a jamais su
+qu'il manquait quelqu'un. Et jamais de tag ajouté **par précaution** non plus : chaque métier
+nommé qui manque est un recrutement proposé à quelqu'un, donc une question posée. Ne nomme que ce
+que le travail demande vraiment.
 
 ## Format de sortie — IMPÉRATIF
 
@@ -251,8 +274,8 @@ réel, pas selon ce que l'équipe sait faire.
     jamais sur un acte que l'objectif ne nomme pas.
 - N'ajoute aucune autre clé.
 
-Exemple de forme (structure, pas contenu — les compétences sont celles de l'équipe ci-dessus, et
-d'elle seule) :
+Exemple de forme (structure, pas contenu — les compétences sont celles des deux listes ci-dessus,
+et d'elles seules) :
 [
   {"id": "premiere-tache", "titre": "...", "description": "...", "competences_requises": ["...", "..."], "format_sortie": "...", "dependances": [], "etapes": ["...", "...", "..."]},
   {"id": "seconde-tache", "titre": "...", "description": "...", "competences_requises": ["..."], "format_sortie": "...", "dependances": ["premiere-tache"]}

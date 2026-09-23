@@ -56,6 +56,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from maestro.agents.catalog import GABARITS_DU_CODE, Agent
+from maestro.equipe.gabarits import GABARITS
 from maestro.orchestrator.schema import Clarification
 
 #: Fourchette visée par un objectif de **construction**. Guidage, pas une règle de
@@ -88,7 +89,7 @@ CHEMIN_PLAYBOOK = Path(__file__).resolve().parent / "playbook.md"
 CHEMIN_PLAYBOOK_BRIEF = Path(__file__).resolve().parent / "playbook_brief.md"
 
 #: Un marqueur dans le document : `{{min_taches}}`, `{{max_taches}}`, `{{roles}}`,
-#: `{{equipe}}`, `{{competences}}`.
+#: `{{equipe}}`, `{{competences}}`, `{{competences_recrutables}}`.
 _MARQUEUR = re.compile(r"\{\{\s*([a-z_]+)\s*\}\}")
 
 
@@ -97,7 +98,7 @@ def _valeurs(equipe: Sequence[Agent]) -> dict[str, str]:
 
     Volontairement **fermée** : un marqueur hors de cette table lève, plutôt que
     de partir tel quel dans le prompt système. Elle est calculée par appel depuis
-    #1041, et non plus figée au module : trois de ses cinq entrées décrivent
+    #1041, et non plus figée au module : quatre de ses six entrées décrivent
     l'équipe du projet, qui change d'un projet à l'autre.
 
     Les deux entrées de découpage (`min_taches`, `max_taches`) restent des
@@ -109,6 +110,7 @@ def _valeurs(equipe: Sequence[Agent]) -> dict[str, str]:
         "roles": _roles(equipe),
         "equipe": _bloc_equipe(equipe),
         "competences": _liste_competences(equipe),
+        "competences_recrutables": _liste_recrutables(equipe),
     }
 
 
@@ -145,6 +147,45 @@ def _liste_competences(equipe: Sequence[Agent]) -> str:
         tag for agent in equipe for tag in sorted(agent.competences)
     )
     return ", ".join(tags) + "."
+
+
+def _liste_recrutables(equipe: Sequence[Agent]) -> str:
+    """Les tags admis **en plus** de ceux de l'équipe : ceux qu'on sait recruter (#1227).
+
+    Le plan se taillait à l'équipe, jamais au besoin : le playbook interdisait
+    tout tag qu'un rôle en place ne portait pas, si bien qu'une animation de logo
+    demandée à un projet n'ayant qu'un développeur ressortait en quatre tâches
+    `backend`. Le rôle qui manquait n'était pas nommé, donc pas proposé
+    (mesuré sur le projet `p1`, 2026-09-22).
+
+    La source est **`maestro.equipe.gabarits`**, c'est-à-dire exactement ce que
+    Maestro sait proposer de recruter (`GABARITS`) : un tag nommé ici désigne
+    toujours un poste qui peut réellement naître. Une seconde liste écrite à côté
+    laisserait le modèle nommer un métier que personne ne saurait recruter, et le
+    manque ne serait alors ni comblé ni même compréhensible.
+
+    Les tags **déjà couverts par l'équipe** en sont retirés : ils sont juste
+    au-dessus dans le document, et les redire ferait deux listes se recoupant là
+    où le playbook oppose précisément *qui est là* et *qui manquerait*. Une équipe
+    qui couvre tout le catalogue rend donc une liste vide, et le document le dit
+    en une phrase plutôt qu'en laissant un blanc.
+    """
+    deja: frozenset[str] = (
+        frozenset().union(*(agent.competences for agent in equipe))
+        if equipe
+        else frozenset()
+    )
+    lignes = [
+        f"- **{gabarit.role}** (gabarit `{gabarit.nom}`) — {', '.join(restants)}"
+        for gabarit in GABARITS
+        if (restants := tuple(t for t in gabarit.competences if t not in deja))
+    ]
+    if not lignes:
+        return (
+            "Aucun : l'équipe couvre déjà tous les métiers que Maestro sait "
+            "recruter. Tiens-toi aux tags ci-dessus."
+        )
+    return "\n".join(lignes)
 
 
 def _lire_playbook(chemin: Path, equipe: Sequence[Agent]) -> str:
