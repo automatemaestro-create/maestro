@@ -78,17 +78,49 @@
  * - `ouvreUnTour` espace : `mt-3` s'ajoute au `gap-3` du fil pour faire les
  *   `gap-6` entre deux tours, et `first:mt-0` l'annule sur le premier message,
  *   qui n'ouvre rien ;
- * - `piedVisible` nomme : le pied « auteur · heure » ne se lit qu'au **dernier**
- *   message d'une suite, les autres le portent en `sr-only`. Le nom reste donc
- *   annoncé à **chaque** message (#483 — une bulle relue au lecteur d'écran n'a
- *   ni gauche ni droite), et l'œil ne le lit qu'une fois par tour.
+ * - `nomme` nomme : voir la section suivante — depuis #1225, l'auteur se nomme
+ *   **en tête** du tour et non plus à son pied.
  *
- * ⚠ Un pied masqué **ne passe pas par `Infobulle`** : le wrapper de celle-ci
- * porte `tabIndex={0}` (c'est sa raison d'être, #536), et un pied en `sr-only`
- * est toujours dans l'ordre de tabulation — on aurait donc un arrêt de clavier
- * par message groupé, sur du contenu qu'on ne voit pas. L'horodatage y reste un
- * `<time>` nu : ce que l'infobulle ajoute est la date **complète au survol**,
- * qui n'a pas de sens sur ce qui ne se survole pas.
+ * ## Ce que #1225 y change : un tour s'OUVRE par qui parle
+ *
+ * Variante **A**, retenue par le regard neuf sur trois brouillons rendus sur la
+ * vraie stack (choix consigné sur le ticket sous « ## Variante retenue »), contre
+ * quatre références capturées en direct le 2026-09-23 — Zulip (avatar + nom +
+ * heure en tête d'un groupe), Duck.ai (pastille + nom **au-dessus** de la
+ * réponse), ChatGPT et Perplexity (la demande en bulle, la réponse à plat).
+ *
+ * Le défaut mesuré : l'identité était un **pied**, posé sous le dernier message
+ * d'un tour et **aligné à droite** — c'est-à-dire du côté de la personne, sous
+ * une réponse alignée à gauche. Un tour d'agent commençait donc par du texte
+ * anonyme, et la seule chose qui disait qui parlait n'arrivait qu'après l'avoir
+ * lu.
+ *
+ * Quatre propriétés portent la décision :
+ *
+ * - **l'en-tête est au-dessus, le pied passe en `sr-only`.** Le nom reste
+ *   annoncé à **chaque** message (règle de #483 — une bulle relue au lecteur
+ *   d'écran n'a ni gauche ni droite) ; l'œil, lui, le lit une fois par tour, en
+ *   tête ;
+ * - **le médaillon est réservé à l'interlocuteur**, et c'est une réserve du
+ *   regard neuf tranchée ici : aucune des quatre références ne médaillonne
+ *   l'utilisateur — sa bulle pleine dit déjà que c'est lui. Il porte une
+ *   pastille d'**initiale** et jamais une image : docs/30 §6.1 interdit une
+ *   identité nouvelle ;
+ * - **l'en-tête porte l'état** (`etat`), à la place de l'heure : c'est le parti
+ *   pris 3 de la veille, d'après la ligne « Recherche terminée 3s » de
+ *   Perplexity et les annonces « Réflexion / Réponse terminée / Réponse
+ *   interrompue » de ChatGPT. Ce qu'un interlocuteur **fait en ce moment** se lit
+ *   donc à l'endroit exact où son nom s'écrit, et non dans une ligne d'italique
+ *   posée au pied du fil ;
+ * - **les actions du message sont hors de la bulle** (`actions`) : sur le fond
+ *   plein de la personne, une icône de second plan n'aurait pas de contraste à
+ *   elle. Elles s'alignent du côté du message.
+ *
+ * ⚠ Le pied **ne passe pas par `Infobulle`** : le wrapper de celle-ci porte
+ * `tabIndex={0}` (c'est sa raison d'être, #536), et un pied en `sr-only` est
+ * toujours dans l'ordre de tabulation — on aurait donc un arrêt de clavier par
+ * message, sur du contenu qu'on ne voit pas. L'horodatage y reste un `<time>`
+ * nu ; c'est l'**en-tête**, lui visible, qui porte l'infobulle de date complète.
  */
 
 import type { ReactNode } from "react";
@@ -96,16 +128,99 @@ import type { ReactNode } from "react";
 import { Infobulle } from "@/components/Infobulle";
 import { formatDateHeure, formatHeureCourte } from "@/lib/format";
 
+/**
+ * L'**initiale** qui tient lieu de médaillon (#1225). Aucune image : docs/30
+ * §6.1 refuse une identité nouvelle, et le produit n'a pas d'avatar. Le repli
+ * `?` couvre un nom vide, que rien n'interdit côté API.
+ */
+function initialeDe(auteur: string): string {
+  return (auteur.trim().charAt(0) || "?").toLocaleUpperCase("fr");
+}
+
+/**
+ * L'en-tête d'un tour : **qui parle**, et **ce qu'il fait en ce moment**.
+ *
+ * `aria-hidden` sur la pastille : elle répète l'initiale du nom qui la suit, et
+ * un lecteur d'écran l'annoncerait deux fois. Le nom, lui, est du vrai texte.
+ */
+export function EnTeteDeTour({
+  auteur,
+  utilisateur,
+  horodatage,
+  etat,
+}: {
+  auteur: string;
+  utilisateur: boolean;
+  horodatage?: string;
+  /** Ce qu'il fait en ce moment — prend la place de l'heure (#1225). */
+  etat?: ReactNode;
+}) {
+  const nom = utilisateur ? "vous" : auteur;
+  return (
+    <p
+      data-entete-de-tour=""
+      className={
+        "mb-1 flex items-center gap-1.5 text-annexe " +
+        (utilisateur ? "justify-end" : "")
+      }
+    >
+      {/* Le médaillon est réservé à l'interlocuteur : la bulle pleine dit déjà
+          que l'autre côté est la personne, et aucune des quatre références ne
+          médaillonne l'utilisateur (réserve du regard neuf, #1225). */}
+      {!utilisateur && (
+        <span
+          aria-hidden="true"
+          className="grid size-5 shrink-0 place-items-center rounded-pastille border border-bord bg-surface-creuse text-micro font-medium text-texte-secondaire"
+        >
+          {initialeDe(auteur)}
+        </span>
+      )}
+      <span className="min-w-0 truncate font-medium text-texte">{nom}</span>
+      {etat !== undefined ? (
+        <>
+          <Separateur />
+          {etat}
+        </>
+      ) : (
+        horodatage !== undefined && (
+          <>
+            <Separateur />
+            <Infobulle texte={formatDateHeure(horodatage)}>
+              <time
+                className="text-micro text-texte-secondaire"
+                dateTime={horodatage}
+              >
+                {formatHeureCourte(horodatage)}
+              </time>
+            </Infobulle>
+          </>
+        )
+      )}
+    </p>
+  );
+}
+
+/** Le point médian de l'en-tête — décoratif, jamais lu deux fois. */
+function Separateur() {
+  return (
+    <span aria-hidden="true" className="text-texte-secondaire">
+      ·
+    </span>
+  );
+}
+
 export function BulleFil({
   auteur,
   utilisateur = false,
   horodatage,
   pleineLargeur = false,
   ouvreUnTour = false,
-  piedVisible = true,
+  nomme = true,
+  etat,
+  actions,
   children,
 }: {
-  /** Le nom affiché au pied — remplacé par « vous » côté utilisateur. */
+  /** Le nom affiché en tête — remplacé par « vous » côté utilisateur. */
   auteur: string;
   utilisateur?: boolean;
   /** Horodatage ISO, quand le fil en connaît un (une saisie en cours, non). */
@@ -120,11 +235,16 @@ export function BulleFil({
    */
   ouvreUnTour?: boolean;
   /**
-   * Le pied nomme-t-il l'auteur **à l'œil** ? `false` le réserve aux lecteurs
-   * d'écran (`sr-only`) : c'est l'état d'un message qui n'est pas le dernier de
-   * sa suite (#876).
+   * Ce message nomme-t-il son auteur **à l'œil** ? C'est le premier message
+   * d'une suite qui le fait (#1225) ; les autres ne le portent qu'en `sr-only`.
+   * Défaut `true` — un fil qui ne groupe rien (le cadrage d'un run) nomme chaque
+   * message, exactement comme son pied le faisait avant ce lot.
    */
-  piedVisible?: boolean;
+  nomme?: boolean;
+  /** Ce que l'auteur fait en ce moment, dans l'en-tête, à la place de l'heure. */
+  etat?: ReactNode;
+  /** Les actions de ce message — hors de la bulle, du côté du message (#1225). */
+  actions?: ReactNode;
   children: ReactNode;
 }) {
   // La bulle, c'est-à-dire l'enveloppe posée sur la page : la personne, et le
@@ -133,15 +253,30 @@ export function BulleFil({
   return (
     <li
       className={
-        "flex " +
+        // Une **colonne** depuis #1225 : l'en-tête de tour, la bulle, puis les
+        // actions du message. Les deux qui encadrent la bulle sont hors d'elle
+        // — sur le fond plein de la personne, ni l'un ni l'autre n'aurait de
+        // contraste à lui.
+        "flex flex-col " +
         // `gap-6` entre deux tours, `gap-3` dedans : le fil porte le `gap-3`,
         // cette marge ajoute les 12 px qui manquent. `first:mt-0` parce que le
         // premier message du fil n'ouvre rien — il occupe une ligne.
-        (ouvreUnTour ? "mt-3 first:mt-0 " : "") +
-        (utilisateur ? "justify-end" : "justify-start")
+        (ouvreUnTour ? "mt-3 first:mt-0" : "")
       }
     >
+      {nomme && (
+        <EnTeteDeTour
+          auteur={auteur}
+          utilisateur={utilisateur}
+          horodatage={horodatage}
+          etat={etat}
+        />
+      )}
       <div
+        className={"flex " + (utilisateur ? "justify-end" : "justify-start")}
+      >
+      <div
+        data-bulle=""
         className={
           // `shadow-sm` est celle de `Carte` (`Primitives`) et pas une ombre
           // inventée ici : c'est la seule élévation du socle, et une bulle est
@@ -160,40 +295,35 @@ export function BulleFil({
         }
       >
         {children}
-        {/* `sr-only` **seul** quand le pied est masqué : ses déclarations
-            (position absolue, marge négative, écrêtage) se départageraient avec
-            un `mt-1`/`text-right` laissé à côté selon l'ordre de la feuille
+        {/* Le pied ne sert plus qu'au lecteur d'écran (#1225) : c'est
+            l'en-tête qui nomme à l'œil, et le nom reste annoncé à **chaque**
+            message (#483). `sr-only` **seul** : ses déclarations (position
+            absolue, marge négative, écrêtage) se départageraient avec un
+            `mt-1`/`text-right` laissé à côté selon l'ordre de la feuille
             Tailwind, et non selon celui de la chaîne. */}
-        <p
-          className={
-            piedVisible
-              ? "mt-1 text-right text-micro " +
-                (utilisateur ? "text-sur-ton" : "text-texte-secondaire")
-              : "sr-only"
-          }
-        >
+        <p className="sr-only">
           {utilisateur ? "vous" : auteur}
           {horodatage !== undefined && (
             <>
               {" · "}
-              {piedVisible ? (
-                <Infobulle texte={formatDateHeure(horodatage)}>
-                  <time dateTime={horodatage}>
-                    {formatHeureCourte(horodatage)}
-                  </time>
-                </Infobulle>
-              ) : (
-                // Pas d'`Infobulle` ici : voir l'avertissement de l'en-tête —
-                // son wrapper est focusable, et un pied masqué deviendrait un
-                // arrêt de tabulation invisible.
-                <time dateTime={horodatage}>
-                  {formatHeureCourte(horodatage)}
-                </time>
-              )}
+              {/* Pas d'`Infobulle` ici : voir l'avertissement de l'en-tête —
+                  son wrapper est focusable, et un pied masqué deviendrait un
+                  arrêt de tabulation invisible. */}
+              <time dateTime={horodatage}>{formatHeureCourte(horodatage)}</time>
             </>
           )}
         </p>
       </div>
+      </div>
+      {actions !== undefined && (
+        <div
+          className={
+            "mt-0.5 flex " + (utilisateur ? "justify-end" : "justify-start")
+          }
+        >
+          {actions}
+        </div>
+      )}
     </li>
   );
 }

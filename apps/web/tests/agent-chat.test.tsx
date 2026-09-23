@@ -149,7 +149,10 @@ describe("③ la réponse s'écrit (#264)", () => {
 
     // L'attente **avant le premier mot** seulement : un indicateur immobile sur
     // toute la génération ne distinguerait pas une réponse longue d'un blocage.
-    expect(screen.getByText("dev répond…")).toBeInTheDocument();
+    // Depuis #1225 elle prend la forme de l'en-tête du tour qui s'ouvre — le nom
+    // et l'état, à la place de l'heure —, d'où deux nœuds plutôt qu'une phrase.
+    expect(screen.getByText("dev")).toBeInTheDocument();
+    expect(screen.getByText("répond…")).toBeInTheDocument();
   });
 
   it("laisse le texte prendre le relais dès le premier incrément", () => {
@@ -167,7 +170,7 @@ describe("③ la réponse s'écrit (#264)", () => {
 
     expect(screen.getByText(/Je regarde le/)).toBeInTheDocument();
     // Dès qu'un incrément arrive, c'est le texte lui-même qui dit que ça travaille.
-    expect(screen.queryByText("dev répond…")).toBeNull();
+    expect(screen.queryByText("répond…")).toBeNull();
   });
 
   it("garde ce qui est arrivé d'une réponse interrompue, en le disant", () => {

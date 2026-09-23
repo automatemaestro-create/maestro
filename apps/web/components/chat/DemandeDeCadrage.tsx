@@ -72,6 +72,7 @@
 
 import { useState } from "react";
 
+import { CarteDuFil } from "@/components/chat/CarteDuFil";
 import { IconeChevronBas, IconeObjectif } from "@/components/Icones";
 import {
   BadgeEtat,
@@ -79,7 +80,6 @@ import {
   Carte,
   Champ,
   ChampTexte,
-  EnTeteSection,
 } from "@/components/Primitives";
 import {
   SAISIE_VIERGE,
@@ -164,30 +164,22 @@ export function DemandeDeCadrage({
   };
 
   return (
-    <Carte
-      balise="section"
-      ton="attention"
-      densite="aeree"
-      aria-label="Décision sur le cadrage"
+    <CarteDuFil
+      libelle="Décision sur le cadrage"
+      icone={IconeObjectif}
+      titre="Lancer ce run ?"
+      aside={
+        corrige ? (
+          <BadgeEtat ton="info">
+            Corrigé — c&apos;est cette version qui partira
+          </BadgeEtat>
+        ) : demande.horodatage ? (
+          <span className="text-annexe text-texte-secondaire">
+            proposé {formatHeureRelative(demande.horodatage, maintenant)}
+          </span>
+        ) : undefined
+      }
     >
-      <EnTeteSection
-        niveau={3}
-        icone={IconeObjectif}
-        titre="Lancer ce run ?"
-        ton="attention"
-        className="mb-3"
-        aside={
-          corrige ? (
-            <BadgeEtat ton="info">
-              Corrigé — c&apos;est cette version qui partira
-            </BadgeEtat>
-          ) : demande.horodatage ? (
-            <span className="text-annexe text-texte-secondaire">
-              proposé {formatHeureRelative(demande.horodatage, maintenant)}
-            </span>
-          ) : undefined
-        }
-      />
       <p className="mb-3 text-annexe text-texte-secondaire">
         Relisez, corrigez si besoin : <strong>c&apos;est cet objectif</strong>{" "}
         qui sera cadré puis décomposé en tâches. Rien ne part avant votre
@@ -319,6 +311,6 @@ export function DemandeDeCadrage({
           {refus}
         </p>
       )}
-    </Carte>
+    </CarteDuFil>
   );
 }

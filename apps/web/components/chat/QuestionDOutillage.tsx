@@ -59,14 +59,9 @@
 
 import { useState } from "react";
 
+import { CarteDuFil } from "@/components/chat/CarteDuFil";
 import { IconeCoche, IconeObjectif } from "@/components/Icones";
-import {
-  BadgeEtat,
-  Bouton,
-  Carte,
-  EnTeteSection,
-  classesCarte,
-} from "@/components/Primitives";
+import { BadgeEtat, Bouton, classesCarte } from "@/components/Primitives";
 import type { QuestionOutillage } from "@/lib/types";
 
 export function QuestionDOutillage({
@@ -102,24 +97,16 @@ export function QuestionDOutillage({
   };
 
   return (
-    <Carte
-      balise="section"
-      ton="attention"
-      densite="aeree"
-      aria-label="Question d'outillage"
+    <CarteDuFil
+      libelle="Question d'outillage"
+      icone={IconeObjectif}
+      titre={question.intitule}
+      aside={
+        <span className="text-annexe text-texte-secondaire">
+          question {question.rang} sur {question.total}
+        </span>
+      }
     >
-      <EnTeteSection
-        niveau={3}
-        icone={IconeObjectif}
-        titre={question.intitule}
-        ton="attention"
-        className="mb-3"
-        aside={
-          <span className="text-annexe text-texte-secondaire">
-            question {question.rang} sur {question.total}
-          </span>
-        }
-      />
       <div
         role="radiogroup"
         aria-label={question.intitule}
@@ -209,6 +196,6 @@ export function QuestionDOutillage({
           {refus}
         </p>
       )}
-    </Carte>
+    </CarteDuFil>
   );
 }

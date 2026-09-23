@@ -65,7 +65,8 @@
 import { useEffect, useId, useState } from "react";
 
 import { IconeAgents, IconeChevronBas } from "@/components/Icones";
-import { Bouton, Carte, EnTeteSection } from "@/components/Primitives";
+import { CarteDuFil } from "@/components/chat/CarteDuFil";
+import { Bouton, Carte } from "@/components/Primitives";
 import { refusDepuis, RefusMotive } from "@/components/projets/ExplorateurDossiers";
 import { LigneRole } from "@/components/projets/EtapeEquipe";
 import { proposerEquipe } from "@/lib/api";
@@ -212,32 +213,20 @@ export function EquipeDansLeFil({
   };
 
   return (
-    <Carte
-      balise="section"
-      ton="attention"
-      densite="aeree"
-      aria-label={
-        renfort === undefined ? "Équipe à valider" : "Renfort à valider"
+    /* Le nom du projet dans l'`aside` et non dans le titre : `EnTeteSection`
+       rend ses titres en capitales, et le nom perdrait sa casse à l'endroit
+       même où il sert à reconnaître son projet (constat du regard neuf de
+       #1104, repris tel quel). */
+    <CarteDuFil
+      libelle={renfort === undefined ? "Équipe à valider" : "Renfort à valider"}
+      icone={IconeAgents}
+      titre={
+        renfort === undefined ? "Recruter l'équipe ?" : "Compléter l'équipe ?"
+      }
+      aside={
+        <span className="text-annexe text-texte-secondaire">{nomProjet}</span>
       }
     >
-      {/* Le nom du projet dans l'`aside` et non dans le titre : `EnTeteSection`
-          rend ses titres en capitales, et le nom perdrait sa casse à l'endroit
-          même où il sert à reconnaître son projet (constat du regard neuf de
-          #1104, repris tel quel). */}
-      <EnTeteSection
-        niveau={3}
-        icone={IconeAgents}
-        titre={
-          renfort === undefined
-            ? "Recruter l'équipe ?"
-            : "Compléter l'équipe ?"
-        }
-        ton="attention"
-        className="mb-3"
-        aside={
-          <span className="text-annexe text-texte-secondaire">{nomProjet}</span>
-        }
-      />
 
       <PourquoiCeRole demande={demande} />
 
@@ -378,7 +367,7 @@ export function EquipeDansLeFil({
           {echec}
         </p>
       )}
-    </Carte>
+    </CarteDuFil>
   );
 }
 
