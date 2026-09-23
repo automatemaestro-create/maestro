@@ -454,6 +454,7 @@ def attendre_le_run(
     horloge: Callable[[], float] = time.monotonic,
     dormir: Callable[[float], None] = time.sleep,
     intervalle_s: float = INTERVALLE_SUIVI_S,
+    arbitrages: list[str] | None = None,
 ) -> dict[str, Any]:
     """Suit un run jusqu'à son issue et rend son détail — arbitrages tranchés au passage.
 
@@ -477,6 +478,14 @@ def attendre_le_run(
     la tâche **et** l'acte. Deux appels au même acte ne reviennent de toute façon
     pas ici, le moteur leur servant la décision qu'il a gardée.
 
+    `arbitrages` (#1226) reçoit l'**outil** de chaque demande tranchée, dans
+    l'ordre. Ce n'est pas une commodité de trace : un scénario dont l'oracle est
+    « personne n'a eu à trancher une commande » a besoin de compter ce que le banc
+    a tranché à la place de la personne, et le déroulé, lui, se lit mais ne se
+    compte pas. Une demande sans outil — validation de tâche, accord d'écriture —
+    y entre sous une chaîne vide : ce n'est pas une validation de commande, et la
+    taire ferait perdre le total.
+
     À l'expiration du délai, le dernier état lu est rendu tel quel : c'est à
     l'oracle de juger qu'un run encore en vol n'est pas un run abouti.
     """
@@ -497,6 +506,8 @@ def attendre_le_run(
                     tache = str(demande["tache_id"])
                     tranchees.add(cle_demande(demande))
                     client.decider(tache, approuve=True)
+                    if arbitrages is not None:
+                        arbitrages.append(str(demande.get("outil") or ""))
                     note(
                         "arbitrage approuvé",
                         f"{tache} — {demande.get('titre') or demande.get('outil') or ''}",

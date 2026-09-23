@@ -416,7 +416,15 @@ def test_une_politique_sans_ask_se_relit_a_l_identique():
 def test_to_dict_porte_toujours_les_trois_listes():
     # `ask` sort en **objet** depuis #586 : une seule forme en écriture, celle
     # qui porte l'entrée *et* son décideur, même quand toutes sont au défaut.
-    assert PolitiqueOutils().to_dict() == {"allow": [], "ask": {}, "deny": []}
+    # `portees` sort **toujours** depuis #1226, fût-elle vide : c'est sa présence
+    # qui distingue une politique écrite depuis ce lot d'une politique écrite
+    # avant, et c'est de cette distinction que dépend la correction unique.
+    assert PolitiqueOutils().to_dict() == {
+        "allow": [],
+        "ask": {},
+        "portees": {},
+        "deny": [],
+    }
 
 
 # --- ①ter Qui décide, par entrée `ask` (#586) -------------------------------------------
@@ -458,7 +466,7 @@ def test_une_entree_ask_reste_son_nom_d_outil():
     assert politique.decide("mcp__slack__send_message").decideur is Decideur.AUTO
     assert politique.decide("mcp__slackbot__envoyer").verdict is Verdict.PASSE
     assert json.dumps(politique.to_dict()) == json.dumps(
-        {"allow": [], "ask": {"mcp__slack": "auto"}, "deny": []}
+        {"allow": [], "ask": {"mcp__slack": "auto"}, "portees": {}, "deny": []}
     )
 
 

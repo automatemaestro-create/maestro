@@ -44,6 +44,17 @@ pas*) ; un cran **inconnu** est une erreur franche, comme toute politique douteu
 — le repli tolérant vit chez `decideur_depuis`, pour ce qui se relit après coup et
 ne peut plus être corrigé.
 
+Et depuis #1226, une entrée `ask` peut porter une **portée** : `portees` range,
+à côté d'`ask` et par nom d'entrée, *où* le cran s'applique. Une seule est
+évaluable — `projet`, « l'acte reste dans le dossier confié à l'agent »
+(`maestro.portee`) —, et elle **borne** le cran au lieu d'en ajouter un
+troisième : dedans, l'entrée vaut ce qu'elle dit ; dehors, le défaut reprend la
+main. C'est ce que [docs/32 §8](../../docs/32-decision-cran-orchestrateur.md)
+réservait à sa porte 2, *un acte dont le verdict dépend des arguments* — une
+portée, jamais un décideur intermédiaire, jamais un modèle qui juge un appel
+d'outil. Ce module ne l'évalue pas : il ne voit qu'un nom d'outil, et c'est le
+hook du fournisseur, seul à voir les arguments, qui la confronte au monde.
+
 ⚠ Un troisième cran, `orchestrateur`, a été retiré par #715 (décision de cadrage
 #647, [docs/32](../../docs/32-decision-cran-orchestrateur.md)) : il n'avait aucun
 canal en production, et promettait donc une décision là où il rendait un refus.
@@ -103,6 +114,8 @@ from typing import Any
 from maestro.agents.rangement import RangeParProjet
 from maestro.config import Settings, load_settings
 from maestro.decideur import DECIDEUR_DEFAUT, Decideur, decideur_depuis
+from maestro.lecture import OUTIL_SHELL
+from maestro.portee import PORTEE_PROJET, PORTEES
 
 #: Nom d'agent admissible comme fichier de stockage — même verrou que les
 #: dépôts voisins (`maestro.agents.mcp`, `store`) : slug sûr, jamais un chemin.
@@ -139,7 +152,7 @@ def _cite_serveur(entrees: Iterable[str], prefixe: str) -> bool:
 
 
 class EntreeArbitrage(str):
-    """Une entrée `ask` : le nom de l'outil, **et qui tranche son appel** (#586).
+    """Une entrée `ask` : le nom de l'outil, **qui tranche** (#586) et **où** (#1226).
 
     Sous-classe de `str` à dessein, et ce n'est pas une commodité d'écriture :
     l'entrée *est* son nom d'outil partout où ce module la manipulait déjà —
@@ -155,20 +168,33 @@ class EntreeArbitrage(str):
     peut porter qu'un cran (la forme objet a des clés uniques, la forme liste
     n'en porte aucun), et le dédoublonnage de `_liste_validee` garde ainsi son
     sens sans avoir à départager deux crans qui ne peuvent pas coexister.
+
+    `portee` (#1226) **borne** le cran au lieu d'en ajouter un troisième : dans
+    la portée, l'entrée s'applique telle qu'elle est écrite ; hors d'elle, le
+    **défaut** reprend la main (`DECIDEUR_DEFAUT`, `humain`). C'est la réponse
+    que [docs/32 §8](../../docs/32-decision-cran-orchestrateur.md) réservait à la
+    porte 2 — *un acte dont le verdict dépend des arguments* — et elle ne demande
+    ni canal, ni fournisseur, ni décideur intermédiaire : ce qui l'évalue est une
+    fonction pure (`maestro.portee`), au même endroit que le cran. Vide : le cran
+    vaut pour tout appel, c'est-à-dire le régime d'avant ce lot, au bit près.
     """
 
-    __slots__ = ("decideur",)
+    __slots__ = ("decideur", "portee")
 
     decideur: Decideur
+    portee: str
 
-    def __new__(cls, entree: str, decideur: Decideur = DECIDEUR_DEFAUT) -> EntreeArbitrage:
+    def __new__(
+        cls, entree: str, decideur: Decideur = DECIDEUR_DEFAUT, portee: str = ""
+    ) -> EntreeArbitrage:
         objet = super().__new__(cls, entree)
         objet.decideur = decideur
+        objet.portee = portee
         return objet
 
 
 def _entree_arbitrage(entree: str) -> EntreeArbitrage:
-    """Normalise une entrée `ask` — une chaîne nue vaut le cran par défaut.
+    """Normalise une entrée `ask` — une chaîne nue vaut le cran par défaut, sans portée.
 
     Le point de passage unique par lequel `PolitiqueOutils` s'assure que sa
     liste `ask` ne porte que des `EntreeArbitrage`, d'où qu'elle vienne : un
@@ -205,11 +231,18 @@ class DecisionOutil:
     vide sur `PASSE` : un appel qu'on laisse passer ou qu'on refuse d'office
     n'est soumis à personne, il n'a donc pas de décideur. Le nommer quand même
     ferait lire « humain » là où aucune personne n'a été ni ne sera sollicitée.
+
+    `portee` (#1226) dit **où ce décideur vaut**. Vide : partout. Renseignée,
+    c'est à l'appelant qui voit les **arguments** de l'appel de juger s'il y reste
+    (`maestro.portee`), et d'en tirer le défaut sinon — cette couche-ci ne connaît
+    que le nom de l'outil, et c'est très bien : la politique dit la règle, le hook
+    la confronte au monde.
     """
 
     verdict: Verdict
     motif: str = ""
     decideur: Decideur | None = None
+    portee: str = ""
 
 
 def _motif_deny(outil: str) -> str:
@@ -228,7 +261,7 @@ def _motif_allow(outil: str) -> str:
     )
 
 
-def _motif_ask(outil: str, decideur: Decideur) -> str:
+def _motif_ask(outil: str, decideur: Decideur, portee: str = "") -> str:
     """Le motif d'une mise en arbitrage — lu par celui qui tranche, et tracé.
 
     Il nomme l'**acte** (l'outil appelé) et jamais le titre de la tâche : c'est
@@ -240,10 +273,16 @@ def _motif_ask(outil: str, decideur: Decideur) -> str:
     l'endroit d'où la ligne vient — c'est-à-dire pas du tout, une fois la ligne
     relue. Le champ (`DecisionOutil.decideur`, `DemandeValidation.decideur`)
     reste la source ; ce texte est ce qui la rend lisible.
+
+    La **portée** (#1226) y entre quand l'entrée en porte une, et pour la même
+    raison que le décideur : « décideur auto » seul ferait lire un laissez-passer
+    là où le cran est borné, et c'est exactement ce que la personne qui a validé
+    l'équipe a décidé de garder.
     """
+    cadre = f", portée « {portee} »" if portee else ""
     return (
         f"outil {outil!r} soumis à arbitrage par la politique de permissions "
-        f"de l'agent (liste ask, décideur « {decideur} »)."
+        f"de l'agent (liste ask, décideur « {decideur} »{cadre})."
     )
 
 
@@ -321,8 +360,9 @@ class PolitiqueOutils:
             if _correspond(entree, outil):
                 return DecisionOutil(
                     Verdict.ARBITRAGE,
-                    _motif_ask(outil, entree.decideur),
+                    _motif_ask(outil, entree.decideur, entree.portee),
                     entree.decideur,
+                    entree.portee,
                 )
         if not self.allow or any(_correspond(entree, outil) for entree in self.allow):
             return DecisionOutil(Verdict.PASSE)
@@ -384,10 +424,23 @@ class PolitiqueOutils:
         qu'une forme, la seule qui porte l'information entière. Deux formes en
         sortie obligeraient chaque consommateur à savoir les distinguer, pour
         n'économiser que quelques caractères sur le cas par défaut.
+
+        `portees` (#1226) est **toujours émise**, fût-elle vide, et c'est la même
+        règle poussée d'un cran. Elle vit à côté d'`ask` plutôt que dans ses
+        valeurs pour deux raisons qui vont ensemble : imbriquer un objet là où il
+        y a une chaîne obligerait **chaque** consommateur — l'écran d'agents,
+        l'étape de validation d'équipe — à distinguer deux encodages pour un champ
+        vide sur presque toutes les entrées ; et c'est la **présence de la clé**,
+        et rien d'autre, qui distingue une politique écrite après ce lot d'une
+        politique écrite avant, ce dont dépend la correction unique de
+        `execution_cadree_au_projet`. Une portée n'y figure que si elle est posée :
+        une entrée sans portée n'a rien à dire, et l'écrire vide ferait lire une
+        décision là où il n'y en a pas.
         """
         return {
             "allow": list(self.allow),
             "ask": {str(entree): str(entree.decideur) for entree in self.ask},
+            "portees": {str(e): e.portee for e in self.ask if e.portee},
             "deny": list(self.deny),
         }
 
@@ -408,23 +461,34 @@ class PolitiqueOutils:
         """
         return cls(
             allow=tuple(str(entree) for entree in data.get("allow", ())),
-            ask=_ask_depuis(data.get("ask", ())),
+            ask=_ask_depuis(data.get("ask", ()), data.get("portees", {})),
             deny=tuple(str(entree) for entree in data.get("deny", ())),
         )
 
 
-def _ask_depuis(brut: Any) -> tuple[EntreeArbitrage, ...]:
-    """Relit la liste `ask` sous ses **deux** formes admises (#586).
+def _ask_depuis(brut: Any, portees: Any = None) -> tuple[EntreeArbitrage, ...]:
+    """Relit la liste `ask` sous ses **deux** formes admises (#586), portées comprises.
 
     Un mapping porte un cran par entrée ; toute autre séquence est la forme
     d'avant ce lot, où le cran n'existait pas — donc `humain` partout.
+
+    `portees` (#1226) est lue à côté, par nom d'entrée : absente, ou muette sur
+    une entrée, elle ne borne rien — le cran vaut pour tout appel, comme avant.
     """
+    cadres = portees if isinstance(portees, Mapping) else {}
     if isinstance(brut, Mapping):
         return tuple(
-            EntreeArbitrage(str(entree), decideur_depuis(cran))
+            EntreeArbitrage(
+                str(entree), decideur_depuis(cran), str(cadres.get(str(entree), ""))
+            )
             for entree, cran in brut.items()
         )
-    return tuple(EntreeArbitrage(str(entree)) for entree in brut)
+    return tuple(
+        EntreeArbitrage(
+            str(entree), DECIDEUR_DEFAUT, str(cadres.get(str(entree), ""))
+        )
+        for entree in brut
+    )
 
 
 class PermissionStore(RangeParProjet):
@@ -470,6 +534,14 @@ class PermissionStore(RangeParProjet):
         Lève `ValueError` (cause exacte, agent nommé) si le fichier est
         illisible ou la politique invalide : l'appelant (exécuteur, API) la
         mue en échec propre plutôt que d'exécuter sous une politique douteuse.
+
+        ⚠ Une politique **de projet** écrite avant #1226 est corrigée au passage
+        (`execution_cadree_au_projet`) : c'est ce qui fait que les équipes déjà
+        créées n'ont pas à l'être une seconde fois. Le fichier, lui, n'est pas
+        réécrit d'ici — un dépôt qui écrirait à la lecture n'en serait plus un —,
+        mais ce que servent l'exécution **et** les écrans est la même politique
+        corrigée, si bien qu'un enregistrement depuis l'écran la fixe sur le
+        disque. Les gabarits (`core/permissions/`) ne sont jamais touchés.
         """
         chemin = self._chemin(agent)
         if not chemin.is_file():
@@ -483,7 +555,10 @@ class PermissionStore(RangeParProjet):
                 f"politique de permissions illisible pour l'agent {agent!r} "
                 f"({chemin.name}) : {exc}"
             ) from exc
-        return politique_validee(data, agent=agent, source=chemin.name)
+        politique = politique_validee(data, agent=agent, source=chemin.name)
+        if self._gabarits is None or "portees" in data:
+            return politique
+        return execution_cadree_au_projet(politique)
 
     def ecrire(
         self, agent: str, politique: PolitiqueOutils | Mapping[str, Any]
@@ -584,10 +659,104 @@ def politique_validee(
             f"politique de permissions invalide pour l'agent {agent!r}"
             f'{ou} : objet {{"allow": [...], "ask": [...], "deny": [...]}} attendu.'
         )
+    ask = _ask_validee(data, agent=agent)
+    cadres = _portees_validees(data, ask, agent=agent)
     return PolitiqueOutils(
         allow=_liste_validee(data, "allow", agent=agent),
-        ask=_ask_validee(data, agent=agent),
+        ask=tuple(
+            EntreeArbitrage(str(entree), entree.decideur, cadres.get(str(entree), ""))
+            for entree in ask
+        ),
         deny=_liste_validee(data, "deny", agent=agent),
+    )
+
+
+def _portees_validees(
+    data: Mapping[str, Any], ask: Sequence[EntreeArbitrage], *, agent: str
+) -> dict[str, str]:
+    """La table `portees` du fichier, **confrontée aux entrées `ask`** (#1226).
+
+    Deux refus, et aucun des deux n'est une précaution de style :
+
+    - une **portée inconnue** est refusée avec la liste de ce qui est admis. Une
+      portée qu'on ne sait pas évaluer ne borne rien, donc elle *élargirait* le
+      cran qu'elle prétend resserrer — c'est le même motif qui fait refuser un
+      décideur inconnu, et la même source (`PORTEES`, jamais recopiée) ;
+    - une portée posée sur une entrée **absente d'`ask`** est refusée aussi : elle
+      ne s'appliquerait à rien, et laisser passer une règle sans effet est la
+      façon la plus sûre de croire qu'un garde-fou est posé quand il ne l'est pas.
+
+    Absente, elle vaut table vide : un fichier écrit avant ce lot se relit sous le
+    régime d'hier, au bit près.
+    """
+    brut = data.get("portees", {})
+    if not isinstance(brut, Mapping):
+        raise ValueError(
+            f"politique de permissions invalide pour l'agent {agent!r} : "
+            "portees doit être un objet {\"<outil>\": \"<portée>\"}."
+        )
+    connues = {str(entree) for entree in ask}
+    cadres: dict[str, str] = {}
+    for entree, portee in brut.items():
+        _valide_entree(entree, "portees", agent=agent)
+        if not isinstance(portee, str) or portee not in PORTEES:
+            admises = ", ".join(f"« {valeur} »" for valeur in PORTEES)
+            raise ValueError(
+                f"politique de permissions invalide pour l'agent {agent!r} : "
+                f"portée {portee!r} de l'entrée {entree!r} inconnue "
+                f"({admises} attendue(s))."
+            )
+        if entree not in connues:
+            raise ValueError(
+                f"politique de permissions invalide pour l'agent {agent!r} : "
+                f"portée posée sur {entree!r}, qui n'est pas une entrée ask — une "
+                "portée borne un cran, elle n'en crée pas."
+            )
+        cadres[str(entree)] = portee
+    return cadres
+
+
+def execution_cadree_au_projet(politique: PolitiqueOutils) -> PolitiqueOutils:
+    """La politique d'une équipe proposée **avant #1226**, corrigée — la même sinon.
+
+    Le fait : `maestro.equipe.proposition` posait `Bash: ask, humain` à tout rôle
+    dont le projet ne déclarait aucune commande, c'est-à-dire **toujours** sur un
+    projet neuf. Un agent recruté pour écrire du code devait donc faire approuver
+    le fait de le lancer — 14 demandes, 14 approbations sur le run mesuré le
+    2026-09-22. Les équipes déjà créées sur ce modèle se corrigent ici, **sans
+    être recréées** : la correction est le second critère du ticket.
+
+    Elle est volontairement étroite, et chaque borne tient une porte :
+
+    - **l'outil d'exécution seul** (`OUTIL_SHELL`). C'est le seul cran qu'une
+      équipe proposée pose, et le seul que l'observation nomme ;
+    - **`humain` seul**. Un `deny`, un `auto` ou une entrée qui couvre un serveur
+      MCP ne sont pas ce défaut-là et ne bougent pas ;
+    - **sans portée déclarée**. C'est le marqueur du « écrit avant ce lot » :
+      `to_dict` émet désormais `portees` de toute façon, donc une politique passée
+      par l'écran depuis ce lot porte la clé — même vide — et n'est plus touchée.
+      Une personne qui choisit `humain` aujourd'hui garde son `humain`.
+
+    Appelée par `PermissionStore.lire` sur les seules politiques **d'un projet** :
+    les gabarits du dépôt (`core/permissions/`) sont déjà en `Bash: auto` et n'ont
+    rien à corriger.
+    """
+    corrigees: list[EntreeArbitrage] = []
+    change = False
+    for entree in politique.ask:
+        if (
+            str(entree) == OUTIL_SHELL
+            and entree.decideur is Decideur.HUMAIN
+            and not entree.portee
+        ):
+            corrigees.append(EntreeArbitrage(str(entree), Decideur.AUTO, PORTEE_PROJET))
+            change = True
+            continue
+        corrigees.append(entree)
+    if not change:
+        return politique
+    return PolitiqueOutils(
+        allow=politique.allow, ask=tuple(corrigees), deny=politique.deny
     )
 
 

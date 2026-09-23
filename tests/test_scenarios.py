@@ -868,6 +868,87 @@ def test_s2_est_rouge_quand_rien_n_a_ete_ecrit(tmp_path: Path) -> None:
     assert POINT_D_ENTREE in issue.motif
 
 
+def test_s2_est_rouge_quand_une_commande_a_ete_soumise_a_la_personne(
+    tmp_path: Path,
+) -> None:
+    """Le second critère de #1226, et l'oracle qui le garde.
+
+    Le projet de S2 est **neuf et vide** : aucun acte de l'agent n'y a de raison
+    légitime de remonter — il n'y a rien à détruire qu'il n'ait produit, et rien à
+    chercher hors du dossier. Une validation de commande dit donc qu'il attend une
+    personne pour lancer son propre travail, ce que le run du 2026-09-22 faisait
+    quatorze fois. Elle est jugée **avant** l'exécution du livrable : un vert rendu
+    sur une application qui tourne masquerait exactement cette régression.
+    """
+
+    def moteur(run: RunFactice, racine: Path) -> None:
+        run.statut_en_attente = EXECUTION_EN_ATTENTE_ARBITRAGE
+        run.lectures_avant_la_fin = 2
+        _moteur_qui_ecrit_l_application(run, racine)
+
+    api = FausseAPI(
+        moteur=moteur,
+        validations=[
+            {
+                "tache_id": "t1",
+                "run_id": "run-1",
+                "statut": VALIDATION_EN_ATTENTE,
+                "titre": "lancer l'application",
+                "outil": "Bash",
+                "arguments": {"command": "python app.py"},
+            }
+        ],
+    )
+    montage = _banc(tmp_path, api, lanceur=lambda _r, _p: (0, "bonjour"))
+    issue, ctx = montage.jouer(_scenario("S2"))
+
+    assert not issue.vert
+    assert "validation(s) de commande" in issue.motif
+    assert ctx.validations_de_commande == ("Bash",)
+
+
+def test_s2_vert_dit_qu_aucune_commande_n_a_ete_soumise(tmp_path: Path) -> None:
+    """Un vert qui ne le dit pas ne se relit pas : le motif porte les deux moitiés
+    de l'oracle, l'application qui tourne et la personne qu'on n'a pas dérangée."""
+    api = FausseAPI(moteur=_moteur_qui_ecrit_l_application)
+    montage = _banc(tmp_path, api, lanceur=lambda _r, _p: (0, "bonjour"))
+    issue, ctx = montage.jouer(_scenario("S2"))
+
+    assert issue.vert, issue.motif
+    assert "aucune validation de commande" in issue.motif
+    assert ctx.arbitrages == []
+
+
+def test_une_validation_de_tache_n_est_pas_une_validation_de_commande(
+    tmp_path: Path,
+) -> None:
+    """S1 fait approuver l'acte que son objectif nomme, et c'est attendu (#1198).
+    Le compte de #1226 porte sur l'**outil d'exécution**, pas sur tout ce que le
+    banc tranche : les confondre rendrait S1 rouge pour avoir fait son travail."""
+
+    def moteur(run: RunFactice, racine: Path) -> None:
+        run.statut_en_attente = EXECUTION_EN_ATTENTE_ARBITRAGE
+        run.lectures_avant_la_fin = 2
+        _moteur_qui_vide(run, racine)
+
+    api = FausseAPI(
+        moteur=moteur,
+        validations=[
+            {
+                "tache_id": "t1",
+                "run_id": "run-1",
+                "statut": VALIDATION_EN_ATTENTE,
+                "titre": "vider le dossier",
+            }
+        ],
+    )
+    issue, ctx = _banc(tmp_path, api).jouer(_scenario("S1"))
+
+    assert issue.vert, issue.motif
+    assert ctx.arbitrages == [""]
+    assert ctx.validations_de_commande == ()
+
+
 def test_s2_lance_vraiment_l_application_par_defaut(tmp_path: Path) -> None:
     """Sans lanceur injecté, le banc exécute pour de vrai — le seul sous-process du banc."""
     api = FausseAPI(moteur=_moteur_qui_ecrit_l_application)
@@ -1183,6 +1264,29 @@ def test_le_rapport_markdown_dit_le_verdict_le_motif_et_le_deroule() -> None:
     assert "Empêchement" in texte
     assert "1. **projet déclaré** — prj-1" in texte
     assert "1,2500 $" in texte, "le montant suit le format du produit (#571)"
+
+
+def test_le_rapport_compte_ce_que_le_banc_a_tranche_a_la_place_de_la_personne() -> None:
+    """La mesure de #1226. Un scénario peut être vert **et** avoir coûté douze
+    interruptions à quelqu'un — c'est exactement ce que le run du 2026-09-22 a
+    montré sans que rien ne le compte. Le déroulé les nommait une par une ; les
+    compter est ce qui en fait un fait relisible d'un passage à l'autre."""
+    resultat = _resultat("S2", arbitrages=("Bash", "", "Bash"))
+
+    charge = resultat.to_dict()
+    texte = en_markdown(Rapport(horodatage="x", resultats=(resultat,)))
+
+    assert charge["arbitrages"] == ["Bash", "", "Bash"]
+    assert charge["validations_de_commande"] == 2
+    assert "3, dont 2 validation(s) de commande" in texte
+
+
+def test_le_rapport_dit_aussi_qu_aucun_arbitrage_n_a_ete_tranche() -> None:
+    """« Aucun » est le fait qu'on vient vérifier : une ligne absente se lirait
+    comme une ligne qu'on a oublié d'écrire."""
+    texte = en_markdown(Rapport(horodatage="x", resultats=(_resultat("S2"),)))
+
+    assert "arbitrages tranchés par le banc : aucun" in texte
 
 
 def test_un_scenario_sans_etape_le_dit_au_lieu_de_laisser_un_vide() -> None:

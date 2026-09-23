@@ -1223,10 +1223,16 @@ class PolitiquePermissionsRequete(BaseModel):
     `ask` accepte les deux formes que la lecture accepte (#586) — objet
     `{"<outil>": "<décideur>"}` ou liste, `humain` par défaut : un client qui
     renvoie ce qu'il a lu d'une politique d'avant ce lot n'a rien à convertir.
+
+    `portees` (#1226) est ici pour la raison qui la fait **toujours sortir** de
+    `to_dict` : un écran qui renvoie ce qu'il a lu ne doit pas perdre en chemin
+    la borne d'un cran. Un corps qui l'omet écrit une politique sans portée — ce
+    que veut dire, par exemple, « repartir d'une politique vide ».
     """
 
     allow: list[str] = []
     ask: dict[str, str] | list[str] = {}
+    portees: dict[str, str] = {}
     deny: list[str] = []
 
 
