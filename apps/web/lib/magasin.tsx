@@ -21,7 +21,7 @@
  * n'a pas de shell, c'est le bandeau d'écran qui la dit, seul.
  */
 
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 
 import { chargerSante } from "./api";
 import type { EtatMagasin } from "./types";
@@ -82,11 +82,26 @@ function useSondeMagasin(): EtatMagasin | null {
 }
 
 export function FournisseurMagasin({
+  auRetour,
   children,
 }: {
+  /**
+   * Appelé quand un magasin **perdu** répond de nouveau (#1217). Le shell y
+   * branche la relecture de son état : l'API a répondu tout du long, le flux
+   * ne s'est pas coupé, et rien d'autre ne ferait relire un écran resté sur la
+   * panne de sa dernière lecture — il la dirait encore, magasin revenu.
+   */
+  auRetour?: () => void;
   children: React.ReactNode;
 }) {
   const perdu = useSondeMagasin();
+  // Le verdict précédent, pour ne réagir qu'à la **transition** perdu → rendu,
+  // jamais à chaque sonde d'un magasin sain.
+  const precedent = useRef<EtatMagasin | null>(null);
+  useEffect(() => {
+    if (precedent.current !== null && perdu === null) auRetour?.();
+    precedent.current = perdu;
+  }, [perdu, auRetour]);
   return (
     <ContexteMagasin.Provider value={perdu}>
       {children}

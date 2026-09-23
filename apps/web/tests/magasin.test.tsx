@@ -17,9 +17,12 @@
  *    le ticket), sur la seule foi de `/api/sante` : c'est lui qui parle quand un
  *    écran déjà chargé ne relit rien. Et **un seul message à la fois** : quand
  *    il parle, le bandeau d'écran de la même panne se tait.
+ * ④ **Son retour se signale** (#1217) : l'API répondait tout du long, rien ne
+ *    ferait relire un écran resté sur la panne de sa dernière lecture — la sonde
+ *    prévient donc le shell, une fois, à la transition.
  */
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -27,7 +30,7 @@ import {
   BanniereErreurApi,
 } from "@/components/BanniereErreurApi";
 import { chargerRepertoireProjets, chargerTaches, ErreurApi } from "@/lib/api";
-import { FournisseurMagasin } from "@/lib/magasin";
+import { FournisseurMagasin, PAS_SONDE_MAGASIN_MS } from "@/lib/magasin";
 import type { EtatMagasin, Sante } from "@/lib/types";
 
 // La sonde de santé, pilotée test par test ; le reste du client est le vrai
@@ -228,5 +231,66 @@ describe("le bandeau système dit la panne en route", () => {
     );
 
     await waitFor(() => expect(screen.getAllByRole("alert")).toHaveLength(2));
+  });
+});
+
+// ④ ----------------------------------------------------------------------
+
+describe("au retour du magasin, le shell est prévenu (#1217)", () => {
+  const SAIN: EtatMagasin = {
+    ...PERDU,
+    disponible: true,
+    titre: null,
+    motif: null,
+  };
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Avance l'horloge factice et laisse React rendre ce que la sonde a posé. */
+  async function attendre(ms: number) {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+  }
+
+  it("une fois, à la transition perdu → rendu", async () => {
+    vi.useFakeTimers();
+    const auRetour = vi.fn();
+    sante({ statut: "degrade", magasin: PERDU });
+
+    render(
+      <FournisseurMagasin auRetour={auRetour}>
+        <BandeauMagasin />
+      </FournisseurMagasin>,
+    );
+    await attendre(0);
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(auRetour).not.toHaveBeenCalled();
+
+    sante({ statut: "ok", magasin: SAIN });
+    await attendre(PAS_SONDE_MAGASIN_MS);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(auRetour).toHaveBeenCalledTimes(1);
+
+    // Les sondes suivantes d'un magasin sain ne rappellent rien.
+    await attendre(PAS_SONDE_MAGASIN_MS * 2);
+    expect(auRetour).toHaveBeenCalledTimes(1);
+  });
+
+  it("jamais pour un magasin qui n'a pas manqué", async () => {
+    vi.useFakeTimers();
+    const auRetour = vi.fn();
+    sante({ statut: "ok", magasin: SAIN });
+
+    render(
+      <FournisseurMagasin auRetour={auRetour}>
+        <BandeauMagasin />
+      </FournisseurMagasin>,
+    );
+    await attendre(PAS_SONDE_MAGASIN_MS * 3);
+    expect(sonde.appels).toBeGreaterThan(1);
+    expect(auRetour).not.toHaveBeenCalled();
   });
 });

@@ -2084,6 +2084,21 @@ tuiles des Intégrations passent à « — », comme elles le faisaient pour un
 catalogue muet. `tests/ecran-en-panne.test.tsx` garde la règle écran par écran,
 et qu'un vrai vide — l'API répond, rien à montrer — reste un vide.
 
+La règle ne vaut que si la panne **se sait**, et deux moments la taisaient — vus
+sur la vraie stack à la relecture de #1217 :
+
+- **l'API coupée en route.** Un écran qui lit l'état du shell (`/`,
+  `/validations`, `/runs`) ne relisait rien tant que le flux ne revenait pas :
+  aucune lecture n'échouait, et il gardait ses valeurs et son « Rien encore »
+  sous la seule pastille « Reconnexion… ». `useControlTower` relit désormais à
+  **chaque coupure** du flux : sur une API tombée, la lecture échoue et le dit
+  (`tests/flux-coupe.test.ts`) ;
+- **le retour du magasin.** L'API répondait tout du long, le flux ne s'était pas
+  coupé : rien ne faisait relire un écran resté sur la panne de sa dernière
+  lecture, qui la disait encore, magasin revenu. `FournisseurMagasin` prévient à
+  la transition (`auRetour`), et le shell y branche `relire`
+  (`tests/magasin.test.tsx`, ④).
+
 Les pannes se regardent sur la vraie stack
 ([docs/41 §4](../../docs/41-decision-maestro-juge-il-ne-bride-pas.md)). **API
 injoignable** : `bash scripts/controltower/start.sh --couper-api` coupe l'API
@@ -2376,6 +2391,7 @@ le pixel — le bout en bout dans un vrai navigateur reste le rôle du skill
 | `tests/socle-visuel.test.tsx` | Le langage visuel (#245) : le jeu d'icônes (SVG à `currentColor`, toutes décoratives), les primitives et leurs deux thèmes, et **aucun émoji rendu** sur les écrans de la vague |
 | `tests/banniere-erreur.test.tsx` | La bannière que montent treize écrans **nomme la panne qui a eu lieu** (#996, voir « La bannière d'erreur » ci-dessus) : la lecture porte la classe (`chargerJson` distingue « rien n'a répondu » de « le serveur a répondu 4xx/5xx », garde le statut même sans corps exploitable, et relaie le `detail` que la lecture jetait), et l'écran ne fait que la lire — une API qui répond 500 ne dit plus « injoignable » ni « vérifier que le backend tourne ». Le contrôle qui porte le plus : une **chaîne** qui dit « a répondu 500 » n'est pas traitée comme une réponse du serveur, sans quoi la distinction reposerait sur un vocabulaire et se perdrait à la première reformulation. Plus le filet du socle : l'état porte une icône et un libellé, pas seulement une teinte |
 | `tests/ecran-en-panne.test.tsx` | **Sous la bannière, la panne — jamais un vide** (#1217, voir « La bannière d'erreur » ci-dessus) : écran par écran — tableau de bord, journal, coûts, validations, briefs, cadrage, runs, vue d'un run, logs d'un agent, agents, projets, intégrations —, une lecture qui échoue rend « Impossible de lire … » et **aucun** de leurs états vides, comptes ou tuiles, qu'ils n'aient rien lu ou qu'ils gardent les valeurs d'avant ; la **perte du magasin en route**, que l'écran n'a pas relue, compte autant, sur la seule foi du shell ; ce qui porte un geste (la demande d'arbitrage déjà lue) reste ; et un vrai vide — l'API répond, rien à montrer — reste un vide. Éprouvé sur le code d'avant : 19 rouges, les trois « vrai vide » verts |
+| `tests/flux-coupe.test.ts` | **Une coupure du flux relit l'état** (#1217) : sur le **vrai** `useControlTower` (le double du setup levé, le réseau débranché au `fetch`), une socket qui se ferme sur une API tombée pose la panne « rien n'a répondu », et sur une API debout ne change rien. Les deux lectures du démarrage sont attendues **terminées** avant la coupure : une lecture encore en vol échouait après elle et faisait passer le test sans la relecture qu'il garde — mesuré sur le hook d'avant, où les deux tests rougissent |
 | `tests/kanban.test.tsx` | La section Tâches qui prend la place (#248) : colonnes de la machine à états, colonne « Autres », **chaîne d'étirement entière** et défilement rendu à chaque colonne |
 | `tests/format.test.ts` | Les montants à deux décimales et leurs trois verdicts — « — », « 0,00 $US », « < 0,01 $US » —, l'exception des graduations d'axe, durées et tokens (#247) |
 | `tests/projet-actif.test.tsx` | La porte d'entrée : aucun écran n'est atteint sans projet actif, le choix retenu est confronté à l'état réel, et la page demandée revient sans redirection (#279) |

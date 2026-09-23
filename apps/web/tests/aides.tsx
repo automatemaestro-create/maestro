@@ -396,6 +396,8 @@ function etatParDefaut(): ControlTower {
       fin: "2026-07-28T10:05:00Z",
     }),
     reglerCapacite: async () => {},
+    // Le double ne relit rien : son état est celui qu'on pose (#1217).
+    relire: () => {},
   };
 }
 

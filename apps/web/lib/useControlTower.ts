@@ -11,7 +11,9 @@
  *
  * La connexion WebSocket se rétablit seule (backoff plafonné) et chaque
  * reconnexion recharge l'état — les événements manqués pendant la coupure
- * sont ainsi rattrapés.
+ * sont ainsi rattrapés. Chaque **coupure** le relit aussi (#1217) : si l'API
+ * est tombée avec le flux, c'est cette lecture qui échoue et qui le dit aux
+ * écrans, au lieu de les laisser sur leurs valeurs d'avant.
  *
  * **Tout ce qu'il rend est cadré sur une portée projet** (#281) : les lectures
  * la passent en paramètre et la socket la déclare à l'ouverture, si bien qu'un
@@ -190,6 +192,14 @@ export type ControlTower = {
     nom: string,
     reglage: { actif?: boolean; instances?: number },
   ) => Promise<void>;
+  /**
+   * Relit l'état, coalescé comme une rafale — et le pouls avec lui, donc les
+   * vues qui s'y abonnent (#1217). Pour ce que ce hook ne voit pas lui-même :
+   * le **retour du magasin** (#1206), que seule la sonde du shell constate. Le
+   * flux, lui, ne s'était pas coupé — l'API répondait tout du long —, et sans
+   * cette relecture un écran garderait la panne après qu'elle a cessé.
+   */
+  relire: () => void;
 };
 
 export function useControlTower(portee: PorteeProjet): ControlTower {
@@ -304,6 +314,13 @@ export function useControlTower(portee: PorteeProjet): ControlTower {
       socket.onclose = () => {
         setConnecte(false);
         if (abandonne) return;
+        // Une coupure du flux peut être celle de l'API entière : on relit, et
+        // c'est la lecture qui le dit (#1217). Sans elle, rien n'échouait — les
+        // écrans qui lisent cet état gardaient leurs valeurs, et leurs « aucun »,
+        // sous la seule pastille « Reconnexion… » de la barre. Une API qui répond
+        // rend la même chose qu'avant, et rien ne bouge. Coalescée comme une
+        // rafale, et au rythme du backoff : une relecture par tentative, au plus.
+        planifierRechargement();
         tentatives += 1;
         const delai = Math.min(1000 * 2 ** (tentatives - 1), RECONNEXION_MAX_MS);
         reconnexion = setTimeout(connecter, delai);
@@ -460,5 +477,6 @@ export function useControlTower(portee: PorteeProjet): ControlTower {
     reprendreRun,
     interrompreRun,
     reglerCapacite,
+    relire: planifierRechargement,
   };
 }
