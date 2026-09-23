@@ -658,6 +658,7 @@ describe("la réponse de l'orchestrateur s'écrit, et sa carte suit", () => {
       reponseEnCours: {
         auteur: AGENT_ORCHESTRATION,
         texte: "J'ouvrirais un run sur",
+        etapes: [],
         figee: false,
       },
     });
