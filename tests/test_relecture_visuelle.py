@@ -744,6 +744,10 @@ def test_fin_ne_retire_que_le_dossier_que_son_temoin_nomme_sous_l_atelier(
         (("42", "--etat"), "--etat attend un nom"),
         # Le geste de la démo (#978) : retiré par #1165, et DIT, plutôt qu'« option inconnue ».
         (("42", "--scenario", "vide"), "viennent de la vraie stack : --etat <nom>"),
+        # Le régime (#1243) : deux noms, et `--fin` arrête ce qui a été monté, quel qu'il soit.
+        (("42", "--regime"), "--regime attend decide ou applique"),
+        (("42", "--regime", "tout"), "régime inconnu « tout »"),
+        (("--fin", "--regime", "applique"), "--fin ne prend pas de régime"),
     ],
 )
 def test_les_usages_fautifs_sont_refuses(
@@ -970,6 +974,53 @@ def test_sans_argument_le_verbe_rend_son_usage(forge: Depot) -> None:
     acheve = forge.lib("relecture-note")
     assert acheve.returncode == 2
     assert "usage" in acheve.stderr
+
+
+def grille_de_la_session() -> str:
+    """La même grille, sous le titre que la saisine donne à un ticket qui applique (#1243)."""
+    return grille_remplie().replace("### Regard neuf — grille", "### Regard de la session — grille")
+
+
+def entete_poste(forge: Depot, iid: str) -> str:
+    """L'en-tête que le VERBE écrit — ce qui précède le jugement recopié."""
+    return corps_poste(forge, iid).split("### Regard ", 1)[0]
+
+
+def test_un_jugement_de_la_session_sans_avant_est_consigne_et_le_dit(forge: Depot) -> None:
+    """Un ticket qui applique se relit sans avant et se juge par la session (#1151, #1243) : le
+    verbe l'accepte, et son en-tête ne prétend ni regard neuf ni comparaison — il dit que l'avant va
+    à « ce que je n'ai pas pu voir ». Le juge se lit au titre du regard, une forme (#746)."""
+    forge.pose_etat(graphql=[regle_relecture("70")])
+    fichier = jugement(
+        forge,
+        "session.md",
+        grille_de_la_session()
+        + "\n### Ce que je n'ai pas pu voir\n\n- L'avant : non monté, le ticket applique.\n",
+    )
+    acheve = forge.lib("relecture-note", "70", fichier)
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    entete = entete_poste(forge, "70")
+    assert "jugé **par la session**" in entete
+    assert "l'**après seul**, sans stack « avant »" in entete
+    assert "« ce que je n'ai pas pu voir »" in entete
+    assert "regard neuf" not in entete.lower() and "avant/après" not in entete
+
+    # Contre-exemple : le regard neuf garde l'en-tête du régime complet.
+    forge.pose_etat(graphql=[regle_relecture("71")])
+    neuf = jugement(forge, "neuf.md", grille_remplie())
+    assert forge.lib("relecture-note", "71", neuf).returncode == 0
+    assert "**regard neuf**" in entete_poste(forge, "71")
+    assert "par la session" not in entete_poste(forge, "71")
+
+
+def test_une_grille_de_la_session_amputee_se_complete_sans_rien_retirer(forge: Depot) -> None:
+    """Le refus (`5`) tient pour la session comme pour le regard neuf ; seule la réparation change —
+    la session complète SA grille, elle ne recopie celle de personne."""
+    amputee = "\n".join(grille_de_la_session().splitlines()[:-1]) + "\n"
+    acheve = forge.lib("relecture-note", "72", jugement(forge, "amputee.md", amputee))
+    assert acheve.returncode == 5, acheve.stdout + acheve.stderr
+    assert "celle de la session" in acheve.stderr and "regard neuf" not in acheve.stderr
+    assert forge.appels() == [], "refusé avant toute lecture de forge"
 
 
 # =================================================================================================
@@ -1903,9 +1954,17 @@ def test_sans_ecran_rien_a_couvrir(depot: DepotRelecture) -> None:
 FAUSSE_LIB = """#!/usr/bin/env bash
 racine="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 [ "$1" = relecture-attente ] || exit 2
+mkdir -p "$racine/.maestro"
+printf '%s\\n' "$*" >>"$racine/.maestro/lib.log"
 cat "$racine/.maestro/attente.txt" 2>/dev/null
 exit "${MAESTRO_FAUSSE_ATTENTE_CODE:-0}"
 """
+
+
+def lectures_de_forge(depot: DepotRelecture) -> list[str]:
+    """Les allers vers la forge que le script a faits — ce qui se garde est leur NOMBRE (#602)."""
+    journal = depot.racine / ".maestro" / "lib.log"
+    return journal.read_text(encoding="utf-8").splitlines() if journal.exists() else []
 
 ATTENTE = (
     "## Rendu attendu\n"
@@ -2123,6 +2182,196 @@ def test_la_planche_nomme_la_capture_qu_elle_ecarte_au_plafond(tmp_path: Path) -
 
 
 # =================================================================================================
+# Le régime — complet pour un ticket qui décide, proportionné pour un ticket qui applique (#1243)
+# =================================================================================================
+# 6,3 h de relecture sur 13 tickets, pour moins de 0,1 h de corrections trouvées : un ticket qui
+# APPLIQUE une décision déjà prise se relit sur l'après seul, les états qu'il nomme, les deux
+# thèmes, jugé par la session. « Décide ou applique » est un jugement (#746) : le script n'en rend
+# aucun, il en lit l'ACTE — une décision consignée à l'écran, par les ancres que
+# `relecture-attente` tire déjà.
+
+#: L'attente d'un ticket qui ne porte aucune décision consignée à l'écran — il applique.
+SANS_DECISION = "## Rendu attendu\n- **Question** : combien a coûté ce run ?\n@@decisions@@\n"
+
+
+def depot_regime(racine: Path, attente: str = SANS_DECISION) -> DepotRelecture:
+    """Un écran retouché qui AURAIT un avant (il existe sur origin/main), le montage d'avant prêt à
+    servir, et la forge qui rend l'attente du ticket — tout ce qu'il faut pour voir l'avant NE PAS
+    se monter."""
+    depot = DepotRelecture(racine / "depot")
+    depot.recopie(GRILLE)
+    depot.ports(ports_libres(), 3036)
+    depot.ecris("scripts/gitlab/lib.sh", FAUSSE_LIB)
+    depot.ecris("scripts/git/worktree.sh", FAUX_WORKTREE)
+    depot.ecris(".maestro/attente.txt", attente)
+    ecran_retouche(depot)
+    return depot
+
+
+def regime_du_plan(
+    depot: DepotRelecture, iid: str, *options: str, env: dict[str, str] | None = None
+) -> tuple[str, str]:
+    """Le régime et son origine, tels que le plan TSV les rend à un appelant machine."""
+    for ligne in depot.joue("--plan", "--tsv", iid, *options, env=env).stdout.splitlines():
+        if ligne.startswith("# regime\t"):
+            _, regime, origine = ligne.split("\t")
+            return regime, origine
+    raise AssertionError("le plan ne dit pas son régime")
+
+
+def etats_de_la_couverture(depot: DepotRelecture, iid: str) -> list[str]:
+    lignes = tsv(depot.joue("--couverture", "--tsv", iid).stdout)
+    return list(dict.fromkeys(ligne[2] for ligne in lignes))
+
+
+def test_un_ticket_sans_decision_consignee_applique_et_ne_monte_pas_d_avant(
+    tmp_path: Path,
+) -> None:
+    """Le cœur du régime : ni `worktree.sh avant`, ni `npm ci`, ni seconde stack — l'après seul,
+    dans l'état par défaut. Et le plan dit pourquoi, pour que le régime se conteste."""
+    depot = depot_regime(tmp_path)
+    assert regime_du_plan(depot, "150") == (
+        "applique",
+        "aucune décision consignée à l'écran sur le ticket",
+    )
+    assert tsv(depot.joue("--plan", "--tsv", "150").stdout)[0][-1] == "-", "aucun avant évalué"
+    assert "avant      : aucun — le ticket applique une décision déjà prise" in depot.joue(
+        "--plan", "150"
+    ).stdout
+
+    prepare = depot.joue("150")
+    assert prepare.returncode == 0, prepare.stdout + prepare.stderr
+    assert journal_worktree(depot) == [], "ni worktree d'avant, ni npm ci"
+    [lance] = lances(depot.appels_start())
+    assert lance.startswith("--etat-banc --no-browser\t"), "l'après, dans l'état par défaut"
+    assert not temoin_avant(depot).exists()
+    assert "un autre état" in prepare.stdout and "seulement si la rubrique" in prepare.stdout
+    assert depot.temoin("150/.regime").read_text(encoding="utf-8").startswith("applique\t")
+
+
+def test_un_ticket_qui_porte_sa_decision_garde_le_regime_complet(tmp_path: Path) -> None:
+    """Contre-exemple : la veille et la variante retenue consignées font le ticket qui décide — son
+    avant se monte comme avant #1243."""
+    depot = depot_regime(tmp_path, ATTENTE)
+    regime, origine = regime_du_plan(depot, "151")
+    assert regime == "decide" and "décision consignée à l'écran" in origine
+    assert depot.joue("151").returncode == 0
+    assert journal_worktree(depot) == ["avant --sans-fetch 151"]
+
+
+def test_un_ticket_illisible_garde_le_regime_complet_par_prudence(tmp_path: Path) -> None:
+    """Un avant de trop se paie une minute ; un regard manqué ne se rattrape pas."""
+    depot = depot_regime(tmp_path)
+    regime, origine = regime_du_plan(depot, "152", env={"MAESTRO_FAUSSE_ATTENTE_CODE": "1"})
+    assert regime == "decide"
+    assert "ticket illisible (relecture-attente : code 1)" in origine and "par prudence" in origine
+
+
+def test_le_regime_impose_l_emporte_et_la_preparation_le_consigne(tmp_path: Path) -> None:
+    """`--regime` l'emporte sur le ticket, et ce que la préparation a monté se CONSIGNE : la suite
+    le relit sans option et sans la forge, et un second état reste dans le régime imposé."""
+    depot = depot_regime(tmp_path)
+    assert regime_du_plan(depot, "153", "--regime", "decide") == ("decide", "imposé par --regime")
+
+    assert depot.joue("153", "--regime", "decide").returncode == 0
+    assert journal_worktree(depot) == ["avant --sans-fetch 153"], "l'avant du régime complet"
+    lues = len(lectures_de_forge(depot))
+    regime, origine = regime_du_plan(depot, "153")
+    assert (regime, origine) == ("decide", "imposé par --regime (consigné par la préparation)")
+    assert len(lectures_de_forge(depot)) == lues, "la suite relit le témoin, pas la forge"
+
+    assert depot.joue("153", "--etat", "vide").returncode == 0
+    assert journal_worktree(depot) == ["avant --sans-fetch 153"] * 2, "le second état aussi"
+
+    # Et dans l'autre sens : un ticket qui porte sa décision, relu en régime proportionné.
+    decide = depot_regime(tmp_path / "decide", ATTENTE)
+    assert decide.joue("154", "--regime", "applique").returncode == 0
+    assert journal_worktree(decide) == []
+
+
+def test_un_ticket_qui_applique_ne_demande_que_les_etats_montes_ou_le_defaut(
+    tmp_path: Path,
+) -> None:
+    """Quels états le ticket nomme est un TEXTE que la session juge ; le script compte ce qu'elle a
+    MONTÉ ou capturé, et le défaut quand elle n'a rien monté. Rien de capturé n'est caché."""
+    depot = depot_regime(tmp_path)
+    assert etats_de_la_couverture(depot, "155") == ["peuple"], "le défaut, sans rien de monté"
+    assert depot.joue("155", "--etat", "vide").returncode == 0
+    assert etats_de_la_couverture(depot, "155") == ["vide"], "le ticket nommait l'état vide"
+    depot.capture(".maestro/relecture/155/couts-clair.png")
+    assert etats_de_la_couverture(depot, "155") == ["peuple", "vide"], "un état capturé est demandé"
+
+    lisible = depot.joue("--couverture", "155").stdout
+    assert (
+        "sans avant — l'après seul, rien n'est comparé à origin/main ; nommé dans « ce que je n'ai "
+        "pas pu voir »."
+    ) in lisible
+    assert "non demandés — le ticket ne les nomme pas, non ouverts : injoignable" in lisible
+
+    # Contre-exemple : un ticket qui décide demande les trois, capturés ou non.
+    decide = depot_regime(tmp_path / "decide", ATTENTE)
+    assert etats_de_la_couverture(decide, "156") == etats_du_script()
+    assert "sans avant" not in decide.joue("--couverture", "156").stdout
+
+
+def test_la_saisine_d_un_ticket_qui_applique_dit_l_avant_absent_et_qui_juge(
+    tmp_path: Path,
+) -> None:
+    """La saisine d'un ticket qui applique est le gabarit de la SESSION (#1151) : ses titres le
+    disent — `relecture-note` les relit —, l'avant y est « non monté », il va à « ce que je n'ai
+    pas pu voir », et les états que le ticket ne nomme pas n'y sont pas demandés. Un aller vers la
+    forge, pas deux : le régime et l'attente partagent la même lecture."""
+    depot = depot_regime(tmp_path)
+    depot.capture(".maestro/relecture/157/couts-clair.png")
+    resultat = depot.joue("--saisine", "157")
+    assert resultat.returncode == 0, resultat.stdout + resultat.stderr
+    saisine = (depot.racine / ".maestro" / "relecture" / "157" / "saisine.md").read_text(
+        encoding="utf-8"
+    )
+    assert "| `/couts` | clair |" in saisine and "| non monté — le ticket applique |" in saisine
+    # Lue normalisée : la saisine est repliée, et une phrase peut y être coupée n'importe où.
+    assert (
+        "**À reporter dans « ce que je n'ai pas pu voir »** : l'avant — non monté, le ticket "
+        "applique une décision déjà prise"
+    ) in " ".join(saisine.split())
+    assert "### État « vide »" not in saisine, "un état que le ticket ne nomme pas : pas demandé"
+    assert "non ouverts : vide, injoignable." in saisine
+    assert "### Regard de la session — grille" in saisine and "### Regard neuf" not in saisine
+    assert "la session remplit elle-même le gabarit" in resultat.stdout
+    assert lectures_de_forge(depot) == ["relecture-attente 157"]
+
+    # Contre-exemple : le ticket qui décide garde la saisine du regard neuf, ses trois états.
+    decide = depot_regime(tmp_path / "decide", ATTENTE)
+    decide.capture(".maestro/relecture/158/couts-clair.png")
+    assert decide.joue("--saisine", "158").returncode == 0
+    texte = (decide.racine / ".maestro" / "relecture" / "158" / "saisine.md").read_text(
+        encoding="utf-8"
+    )
+    assert "### Regard neuf — grille" in texte and "### État « vide » — aucune capture" in texte
+    assert "non monté" not in texte
+
+
+def test_la_planche_d_un_ticket_qui_applique_nomme_l_avant_absent(tmp_path: Path) -> None:
+    """L'avant absent se DIT sur la planche comme ailleurs — jamais « capture illisible »."""
+    depot = depot_regime(tmp_path)
+    depot.recopie(PLANCHE_PY, BUILD_PY)
+    depot.capture(".maestro/relecture/159/couts-clair.png")
+    resultat = depot.joue(
+        "--planche", "159", env={"PATH": python_sur_le_chemin(tmp_path / "bin")}
+    )
+    assert resultat.returncode == 0, resultat.stdout + resultat.stderr
+    paires = (depot.racine / ".maestro" / "relecture" / "159" / "paires.tsv").read_text(
+        encoding="utf-8"
+    )
+    assert "\tsans-avant" in paires
+    html = (depot.racine / ".maestro" / "relecture" / "159" / "planche.html").read_text(
+        encoding="utf-8"
+    )
+    assert "Pas d'avant : le ticket applique une décision déjà prise" in html
+    assert "Capture illisible" not in html
+
+
+# =================================================================================================
 # Le regard neuf, le skill, et les ancres que les commandes posent (#977, #978, #980)
 # =================================================================================================
 
@@ -2290,6 +2539,37 @@ def test_le_regime_est_ecrit_avec_ce_qui_a_ete_ecarte() -> None:
     assert section.count("**Écarté") >= 4, "un lot a perdu ce qu'il avait écarté"
     assert "(c) implémenter la variante la plus proche" in section
     assert "**écartée**" in section and "**retenue**" in section
+
+
+def test_les_deux_regimes_sont_decrits_la_ou_on_les_joue() -> None:
+    """Critère de #1243 : le skill et docs/30 §5.5–§5.8 décrivent les deux régimes. Les noms sont
+    LUS dans le script — un nom que le skill ne donnerait pas ferait de `--regime` un geste que
+    personne ne sait jouer —, et l'étape 7 de `/ticket-start` monte ses variantes dans le régime
+    complet : la veille n'y est pas forcément consignée quand le premier brouillon s'écrit."""
+    trouve = re.search(r'^REGIMES="([^"]+)"', RELECTURE_SH.read_text(encoding="utf-8"), re.M)
+    assert trouve, "REGIMES introuvable dans relecture-visuelle.sh"
+    regimes = trouve.group(1).split()
+    assert regimes == ["decide", "applique"]
+
+    skill = " ".join(SKILL.read_text(encoding="utf-8").split())
+    for regime in regimes:
+        assert f"| `{regime}` |" in skill, f"le régime « {regime} » n'est pas décrit par le skill"
+    assert "--regime decide|applique" in skill
+    assert "en régime **`applique`** (#1243), **le défaut seul**" in skill
+    assert "sous les titres qu'elle te donne** (`### Regard de la session — …`)" in skill
+
+    doc = DOC30.read_text(encoding="utf-8")
+    s55 = doc[doc.index("### 5.5 ") : doc.index("### 5.6 ")]
+    avant = doc[doc.index("#### L'avant : un second worktree") :]
+    avant = avant[: avant.index("\n#### ", 5)]
+    assert "#1243" in s55 and "#1243" in avant, "§5.5 et l'avant du §5.6 renvoient au régime"
+    regime = section_5_8()[section_5_8().index("#### La relecture se proportionne") :]
+    assert "(#1243)" in regime and "**Écarté" in regime
+    assert "**Mesuré en vrai**" in regime, "le prix se mesure, il ne s'estime pas (#418)"
+
+    assert "(#1243)" in etape_4bis()
+    start = " ".join(PROMPT_START.read_text(encoding="utf-8").split())
+    assert "bash scripts/design/relecture-visuelle.sh <iid> --regime decide" in start
 
 
 def test_claude_md_n_en_garde_qu_un_renvoi() -> None:

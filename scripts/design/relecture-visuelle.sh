@@ -9,6 +9,7 @@
 #   bash scripts/design/relecture-visuelle.sh --saisine <iid>         # ce que le regard neuf reçoit (#980)
 #   bash scripts/design/relecture-visuelle.sh --planche <iid>         # la planche HTML avant/après (#980)
 #   bash scripts/design/relecture-visuelle.sh --fin          # arrête les stacks et retire ce qu'elles ont posé
+#   bash scripts/design/relecture-visuelle.sh <iid> --regime applique  # le régime imposé (#1243, section 8)
 #
 # Le maillon qui manquait à la chaîne de docs/30 §5.1 : PERSONNE NE REGARDE LE RENDU. La décision et
 # ses raisons sont en docs/30 §5.6 ; ce qui l'APPELLE — l'étape 4bis de `/ticket-finish` — en §5.5. `verify` répond
@@ -77,10 +78,13 @@
 #   - `.maestro/relecture/<iid>/saisine.md`, `paires.tsv` et `planche.html` — le regard neuf et sa
 #     planche (section 7) ; la planche est recopiée au même chemin dans le CLONE PRINCIPAL, seule
 #     écriture de ce script hors du dépôt courant.
+#   - `.maestro/relecture/<iid>/.regime` et `.etats` — le régime de la relecture et les états montés
+#     (section 8), pour que la couverture, la saisine et la planche disent ce que la préparation a fait.
 #
 # Il ne commite rien, ne merge rien, et n'ÉCRIT dans aucune forge : il monte des processus locaux sur
-# les ports d'un worktree, et les arrête. Sa seule lecture de forge est celle de `--saisine` (section
-# 7), et elle passe par `lib.sh relecture-attente` — jamais par un `gh` écrit ici.
+# les ports d'un worktree, et les arrête. Sa seule lecture de forge est `lib.sh relecture-attente` —
+# jamais un `gh` écrit ici —, UNE fois par appel au plus : la saisine en tire l'attente (section 7), le
+# régime les décisions consignées (section 8), et un ticket sans écran ne la paie pas.
 #
 # --- 4. LE PRIX EST DU TEMPS DE MUR, ET IL S'ANNONCE (règle de #418) -------------------------------
 #
@@ -185,6 +189,30 @@
 # se construit ici et nulle part ailleurs (`nom_capture`), faute de quoi la planche et la saisine
 # finiraient par ne plus montrer les mêmes fichiers.
 #
+# --- 8. LE RÉGIME : complet pour un ticket qui DÉCIDE, proportionné pour un ticket qui APPLIQUE (#1243)
+#
+# Tout ce qui précède — l'avant, les trois états, le regard neuf — a été mesuré sur 13 tickets du 20 au
+# 23 septembre : 30 min en médiane entre le premier appel du skill et la note, 6,3 h en tout, pour
+# moins de 0,1 h de corrections trouvées. Un ticket qui APPLIQUE une décision déjà prise (critère du
+# §7.2 de `/design-veille`) se relit donc en régime proportionné : l'APRÈS SEUL — aucune seconde stack,
+# ni `worktree.sh avant`, ni `npm ci` —, les ÉTATS QU'IL NOMME (le défaut s'il n'en nomme aucun), les
+# deux thèmes, et le jugement rendu par la session (#1151). Un ticket qui DÉCIDE d'un écran garde le
+# régime complet : avant et après, les trois états, le regard neuf.
+#
+# « Décide ou applique » est un JUGEMENT, que ce script ne rend pas (#746) : il en lit l'ACTE. Un
+# ticket qui décide a consigné sa décision avant d'écrire une ligne — la veille (`## Veille de
+# conception`), puis le choix (`## Variante retenue`) —, et ce sont les ancres que `lib.sh
+# relecture-attente` tire déjà pour le regard neuf : une décision consignée → `decide`, aucune →
+# `applique`. Un ticket ILLISIBLE garde le régime complet, par prudence : un avant de trop se paie
+# une minute, un regard manqué ne se rattrape pas. La session peut imposer l'autre (`--regime`), et le
+# plan dit toujours d'où vient le régime.
+#
+# Ce que la préparation a fait se CONSIGNE (`<iid>/.regime`, `<iid>/.etats`) : la couverture, la
+# saisine et la planche le relisent au lieu de le redemander, et une préparation suivante le garde —
+# `--etat vide` sans `--regime` reste dans le régime imposé au premier montage. Quels états le ticket
+# nomme est un TEXTE (rubrique « États à couvrir », #976), que la session juge : ce script ne le lit
+# pas, il compte ceux qu'elle a MONTÉS ou capturés, et l'état par défaut quand elle n'en a monté aucun.
+#
 # Codes de retour : 0 = il y a à regarder · 3 = aucune surface visible (abstention nominale, pas une
 # panne) · 4 = `--saisine`/`--planche` sans aucune capture sur le disque · 1 = échec · 2 = usage.
 
@@ -198,6 +226,7 @@ TSV=0
 IID=""
 ETAT=""
 PARTIS_PRIS=""
+REGIME_OPTION=""
 
 usage() {
   cat <<'USAGE'
@@ -215,6 +244,11 @@ Options :
   --plan            N'écrit rien, ne démarre rien : dit seulement s'il y a matière, et laquelle.
   --etat <nom>      peuple (défaut) : l'état du dernier passage du banc · vide : une stack neuve et un
                     projet neuf · injoignable : l'API coupée sous la stack montée, l'UI servie.
+  --regime <nom>    decide : avant et après, les trois états, le regard neuf · applique : l'après
+                    seul, les états montés (le défaut sinon), jugé par la session. Sans lui, le
+                    régime consigné par la préparation, sinon celui du ticket : une décision
+                    consignée à l'écran (« ## Veille de conception », « ## Variante retenue ») le
+                    fait décider, aucune le fait appliquer, un ticket illisible garde « decide ».
   --couverture      N'écrit rien, ne démarre rien : croise écrans, états et thèmes avec les captures.
   --saisine         Écrit .maestro/relecture/<iid>/saisine.md (lecture seule de la forge) ; sa
                     dernière ligne est « SAISINE <chemin absolu> », à donner au sous-agent regard-neuf.
@@ -255,6 +289,18 @@ while [ $# -gt 0 ]; do
         usage >&2; exit 2
       fi
       ETAT="$2"; shift ;;
+    --regime)
+      if [ $# -lt 2 ] || [ -z "$2" ]; then
+        printf 'relecture-visuelle.sh : --regime attend decide ou applique.\n\n' >&2
+        usage >&2; exit 2
+      fi
+      case "$2" in
+        decide | applique) REGIME_OPTION="$2" ;;
+        *)
+          printf 'relecture-visuelle.sh : régime inconnu « %s » (decide ou applique).\n' "$2" >&2
+          exit 2 ;;
+      esac
+      shift ;;
     # Le geste de la démo (#978), retiré par #1165 : le dire vaut mieux qu'un « option inconnue ».
     --scenario)
       printf 'relecture-visuelle.sh : --scenario montait un état de la démo, retirée (#1165) — les états\n' >&2
@@ -356,6 +402,121 @@ dossier_captures() {
 nom_capture() { printf '%s-%s.png' "$1" "$2"; }
 # Son avant (#977), à côté : même clé, même thème, suffixe `-avant`.
 nom_capture_avant() { printf '%s-%s-avant.png' "$1" "$2"; }
+
+# --- Le régime (section 8 de l'en-tête) -------------------------------------------------------------
+REGIMES="decide applique"
+REGIME=""          # decide · applique — vide tant qu'aucun écran n'a été trouvé
+REGIME_SOURCE=""   # option · preparation · ticket
+REGIME_RAISON=""   # pourquoi ce régime, en une ligne — ce que le témoin garde
+
+# La lecture de l'attente du ticket (`lib.sh relecture-attente`), UNE fois par appel (#602) : le
+# régime en tire les décisions consignées, la saisine l'attente entière. Résultat en variables
+# globales — appelée en `$(…)`, la fonction tournerait dans un sous-shell et relirait la forge.
+ATTENTE_BRUTE=""
+CODE_ATTENTE=""
+lire_attente() {
+  [ -n "$CODE_ATTENTE" ] && return 0
+  CODE_ATTENTE=0
+  ATTENTE_BRUTE="$(bash "$LIB_SH" relecture-attente "$IID" 2>/dev/null)" || CODE_ATTENTE=$?
+  return 0
+}
+
+# Les décisions consignées à l'écran : le second bloc de l'attente, après `@@decisions@@`.
+decisions_de_l_attente() { printf '%s\n' "$ATTENTE_BRUTE" | awk 'p { print } /^@@decisions@@$/ { p = 1 }'; }
+
+temoin_regime() { printf '%s/%s/%s/.regime' "$RACINE" "$SOUS_DOSSIER" "$IID"; }
+temoin_etats() { printf '%s/%s/%s/.etats' "$RACINE" "$SOUS_DOSSIER" "$IID"; }
+
+# resoudre_regime : l'option, sinon ce que la préparation a consigné, sinon l'acte du ticket.
+resoudre_regime() {
+  local regime raison temoin
+  temoin="$(temoin_regime)"
+  if [ -n "$REGIME_OPTION" ]; then
+    REGIME="$REGIME_OPTION"; REGIME_SOURCE="option"; REGIME_RAISON="imposé par --regime"
+    return 0
+  fi
+  if [ -s "$temoin" ]; then
+    IFS=$'\t' read -r regime raison <"$temoin"
+    case " $REGIMES " in
+      *" $regime "*)
+        REGIME="$regime"; REGIME_SOURCE="preparation"; REGIME_RAISON="${raison:-?}"
+        return 0 ;;
+    esac
+  fi
+  REGIME_SOURCE="ticket"
+  lire_attente
+  if [ "$CODE_ATTENTE" -ne 0 ]; then
+    REGIME="decide"
+    REGIME_RAISON="ticket illisible (relecture-attente : code $CODE_ATTENTE) — le régime complet, par prudence"
+  elif [ -n "$(decisions_de_l_attente | tr -d '[:space:]')" ]; then
+    REGIME="decide"
+    REGIME_RAISON="le ticket porte une décision consignée à l'écran (« ## Veille de conception », « ## Variante retenue »)"
+  else
+    REGIME="applique"
+    REGIME_RAISON="aucune décision consignée à l'écran sur le ticket"
+  fi
+}
+
+# Ce que le régime regarde, en une ligne : le plan, la préparation, la couverture et la saisine
+# disent la même.
+description_regime() {
+  case "$REGIME" in
+    applique) printf "le ticket applique une décision déjà prise — l'après seul, les états qu'il nomme (le défaut sinon), les deux thèmes, jugé par la session" ;;
+    *) printf "le ticket décide d'un écran — avant et après, les trois états, les deux thèmes, jugé par le regard neuf" ;;
+  esac
+}
+
+# D'où vient le régime : c'est ce qui permet de le contester.
+origine_regime() {
+  case "$REGIME_SOURCE" in
+    preparation) printf '%s (consigné par la préparation)' "$REGIME_RAISON" ;;
+    *) printf '%s' "$REGIME_RAISON" ;;
+  esac
+}
+
+# consigne_regime : ce que la préparation vient de monter — le régime et l'état —, relu ensuite par
+# la couverture, la saisine et la planche (en-tête, §8). La raison de BASE est gardée, jamais celle
+# qu'on vient de relire, pour qu'un montage suivant ne l'enveloppe pas une fois de plus.
+consigne_regime() {
+  local dossier="$RACINE/$SOUS_DOSSIER/$IID"
+  mkdir -p "$dossier" 2>/dev/null
+  printf '%s\t%s\n' "$REGIME" "$REGIME_RAISON" >"$(temoin_regime)"
+  grep -qxF -- "$ETAT" "$(temoin_etats)" 2>/dev/null || printf '%s\n' "$ETAT" >>"$(temoin_etats)"
+}
+
+# etat_capture <iid> <etat> : au moins une capture sur le disque dans le dossier de cet état.
+etat_capture() {
+  local capture
+  for capture in "$RACINE/$(dossier_captures "$1" "$2")"/*.png; do
+    [ -s "$capture" ] && return 0
+  done
+  return 1
+}
+
+# etats_demandes <iid> : les états que cette relecture regarde, dans l'ordre de l'annonce. Tous pour
+# un ticket qui décide ; pour un ticket qui applique, ceux que la session a MONTÉS ou capturés — c'est
+# son jugement sur la rubrique « États à couvrir », rendu par un acte —, et le défaut si elle n'en a
+# monté aucun. Rien de capturé n'est jamais caché : un état capturé est un état demandé.
+etats_demandes() {
+  local iid="$1" etat demandes=""
+  if [ "$REGIME" != "applique" ]; then printf '%s' "$ETATS"; return 0; fi
+  for etat in $ETATS; do
+    if grep -qxF -- "$etat" "$(temoin_etats)" 2>/dev/null || etat_capture "$iid" "$etat"; then
+      demandes="${demandes}${demandes:+ }${etat}"
+    fi
+  done
+  printf '%s' "${demandes:-$ETAT_DEFAUT}"
+}
+
+# Les états que le régime ne demande pas — nommés, pour qu'on sache qu'ils n'ont pas été oubliés.
+etats_non_demandes() {
+  local demandes etat reste=""
+  demandes=" $(etats_demandes "$1") "
+  for etat in $ETATS; do
+    case "$demandes" in *" $etat "*) ;; *) reste="${reste}${reste:+ }${etat}" ;; esac
+  done
+  printf '%s' "$reste"
+}
 
 # --- Les projets de la vraie stack --------------------------------------------------------------------
 # Sans projet actif, le shell ne rend que sa porte d'entrée (#279) : la session pose l'identifiant d'un
@@ -606,12 +767,21 @@ plan_de() {
 }
 
 # --- L'avant : ce qu'origin/main sait servir --------------------------------------------------------
-AVANT_ETAT=""      # actif · eteint · indisponible
+AVANT_ETAT=""      # actif · eteint · indisponible · applique
 AVANT_SHA=""
 AVANT_RAISON=""
 ROUTES_AVANT=""
 
+# Le libellé de l'avant qu'un ticket qui applique ne monte pas (en-tête, §8) : le plan, la
+# préparation, la couverture et la saisine disent le même.
+AVANT_SANS_OBJET="aucun — le ticket applique une décision déjà prise : l'après seul (#1243)"
+
 evalue_avant() {
+  # Le régime d'abord : un avant qu'on ne montera pas n'a pas à être évalué.
+  if [ "$REGIME" = "applique" ]; then
+    AVANT_ETAT="applique"; AVANT_RAISON="le ticket applique une décision déjà prise"
+    return 0
+  fi
   if [ "${MAESTRO_RELECTURE_AVANT:-1}" = 0 ]; then
     AVANT_ETAT="eteint"; AVANT_RAISON="MAESTRO_RELECTURE_AVANT=0"
     return 0
@@ -679,6 +849,7 @@ retire_avant() {
 prepare_avant() {
   local debut sortie code chemin journal ligne
   case "$AVANT_ETAT" in
+    applique) dire "  avant      : $AVANT_SANS_OBJET"; return 0 ;;
     eteint) dire "  avant      : éteint ($AVANT_RAISON) — l'après seul"; return 0 ;;
     actif) ;;
     *) dire "  avant      : indisponible — $AVANT_RAISON ; l'après seul"; return 0 ;;
@@ -745,10 +916,11 @@ LIB_SH="$RACINE/scripts/gitlab/lib.sh"
 # paires_de <iid> <lignes du plan> : une ligne par écran, état et thème —
 # `etat <TAB> route <TAB> cle <TAB> theme <TAB> apres <TAB> avant`, où `apres` et `avant` sont le chemin
 # RELATIF de la capture quand elle est sur le disque, `-` sinon, et `avant` vaut `nouveau` pour un écran
-# absent d'origin/main. Toutes les combinaisons y sont, capturées ou non : ce qui manque se nomme.
+# absent d'origin/main, `sans-avant` quand le régime n'en monte pas (§8). Toutes les combinaisons des
+# états DEMANDÉS y sont, capturées ou non : ce qui manque se nomme.
 paires_de() {
   local iid="$1" lignes="$2" etat dossier route cle _origine _fichiers av theme apres avant
-  for etat in $ETATS; do
+  for etat in $(etats_demandes "$iid"); do
     dossier="$(dossier_captures "$iid" "$etat")"
     while IFS=$'\t' read -r route cle _origine _fichiers; do
       [ -z "$route" ] && continue
@@ -760,6 +932,7 @@ paires_de() {
         if [ ! -s "$RACINE/$avant" ]; then
           avant="-"
           [ "$av" = "nouveau" ] && avant="nouveau"
+          [ "$AVANT_ETAT" = "applique" ] && avant="sans-avant"
         fi
         printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$etat" "$route" "$cle" "$theme" "$apres" "$avant"
       done
@@ -769,7 +942,10 @@ paires_de() {
 
 # Le nombre de captures RÉELLEMENT sur le disque dans une liste de paires.
 compte_captures() {
-  awk -F'\t' '$5 != "-" { n++ } $6 != "-" && $6 != "nouveau" { n++ } END { print n + 0 }'
+  awk -F'\t' '
+    $5 != "-" { n++ }
+    $6 != "-" && $6 != "nouveau" && $6 != "sans-avant" { n++ }
+    END { print n + 0 }'
 }
 
 # La racine sous la forme que l'outil `Read` du sous-agent accepte (voir `chemin_natif`).
@@ -780,6 +956,7 @@ cellule_capture() {
   case "$1" in
     -) printf 'non capturé' ;;
     nouveau) printf 'écran nouveau — aucun avant' ;;
+    sans-avant) printf 'non monté — le ticket applique' ;;
     *) printf '`%s/%s`' "$2" "$1" ;;
   esac
 }
@@ -791,26 +968,52 @@ en_citation() { awk '{ print ($0 == "" ? ">" : "> " $0) }'; }
 # ecris_saisine <iid> <paires> <fichier> : la saisine du regard neuf. Rend 1 si la grille est
 # introuvable — une saisine sans grille ferait rendre un texte libre, c'est-à-dire ce que #980 retire.
 ecris_saisine() {
-  local iid="$1" paires="$2" sortie="$3" racine attente code_attente=0 rendu="" decisions="" etats
+  local iid="$1" paires="$2" sortie="$3" racine code_attente rendu="" decisions="" etats titre
   local etat du_etat nb route _cle theme apres avant libelle question source n nom raison
   if [ ! -f "$GRILLE" ]; then
     printf 'relecture-visuelle.sh : grille introuvable (%s) — pas de saisine.\n' "$GRILLE" >&2
     return 1
   fi
   racine="$(racine_native)"
-  attente="$(bash "$LIB_SH" relecture-attente "$iid" 2>/dev/null)" || code_attente=$?
+  # La lecture déjà faite par le régime, s'il l'a faite : un aller par appel (#602).
+  lire_attente
+  code_attente="$CODE_ATTENTE"
   if [ "$code_attente" -eq 0 ]; then
-    rendu="$(printf '%s\n' "$attente" | awk '/^@@decisions@@$/ { exit } { print }')"
-    decisions="$(printf '%s\n' "$attente" | awk 'p { print } /^@@decisions@@$/ { p = 1 }')"
+    rendu="$(printf '%s\n' "$ATTENTE_BRUTE" | awk '/^@@decisions@@$/ { exit } { print }')"
+    decisions="$(decisions_de_l_attente)"
   fi
   etats="$(printf '%s\n' "$paires" | cut -f1 | awk 'NF && !vu[$0]++')"
+  # Le titre du regard dit qui juge (§8) : c'est lui que `lib.sh relecture-note` relit.
+  titre="Regard neuf"
+  [ "$REGIME" = "applique" ] && titre="Regard de la session"
 
   {
-    printf '# Saisine du regard neuf — ticket #%s\n\n' "$iid"
+    if [ "$REGIME" = "applique" ]; then
+      printf '# Saisine de la relecture — ticket #%s\n\n' "$iid"
+    else
+      printf '# Saisine du regard neuf — ticket #%s\n\n' "$iid"
+    fi
     cat <<'TETE'
 Préparée par `scripts/design/relecture-visuelle.sh --saisine`. Tout ce que tu as à juger est ici, et
 rien d'autre n'est à lire : ouvre chaque capture nommée avec `Read` (les chemins sont absolus), puis
 rends le gabarit de la section 5, rempli.
+TETE
+    if [ "$REGIME" = "applique" ]; then
+      printf '\n**Régime : %s** (#1243) — %s.\n' "$(description_regime)" "$(origine_regime)"
+      cat <<'REGIME'
+Il n'y a pas d'avant : chaque capture se juge seule, et ce que la grille compare à l'avant se juge
+contre les autres écrans de cette saisine. Seuls les états que le ticket nomme ont été demandés, le
+défaut s'il n'en nomme aucun.
+
+**À reporter dans « ce que je n'ai pas pu voir »** : l'avant — non monté, le ticket applique une
+décision déjà prise, et rien n'a été comparé à `origin/main`.
+REGIME
+      nom="$(etats_non_demandes "$iid")"
+      [ -n "$nom" ] && printf 'Et les états que le ticket ne demande pas, non ouverts : %s.\n' "${nom// /, }"
+    else
+      printf '\n**Régime : %s** — %s.\n' "$(description_regime)" "$(origine_regime)"
+    fi
+    cat <<'TETE'
 
 ## 1. Les captures
 
@@ -888,14 +1091,14 @@ TETE
 
     printf '\n## 5. Le gabarit à rendre — rempli, et rien d'\''autre\n\n'
     printf 'Réponses permises : ✓, ✗ (avec écran · thème · état), ou « non vu » (avec ce qui manque).\n'
-    printf 'Recopie les titres `### Regard neuf — …` tels quels.\n\n'
-    printf '### Regard neuf — grille\n\n| Ligne | Réponse | Où, et ce qui se voit |\n|---|---|---|\n'
+    printf 'Recopie les titres `### %s — …` tels quels.\n\n' "$titre"
+    printf '### %s — grille\n\n| Ligne | Réponse | Où, et ce qui se voit |\n|---|---|---|\n' "$titre"
     while IFS=$'\t' read -r libelle _question _source; do
       case "$libelle" in '' | '#'*) continue ;; esac
       printf '| %s |  |  |\n' "$libelle"
     done <"$GRILLE"
 
-    printf '\n### Regard neuf — contre le rendu attendu\n\n'
+    printf '\n### %s — contre le rendu attendu\n\n' "$titre"
     if [ "$code_attente" -ne 0 ]; then
       printf "Rendu attendu illisible sur le ticket : non confronté.\n"
     elif [ -z "$(printf '%s' "$rendu" | tr -d '[:space:]')" ]; then
@@ -906,7 +1109,7 @@ TETE
       printf '| Question |  |  |\n| Référence |  |  |\n| Ce qui ne bouge pas |  |  |\n| États à couvrir |  |  |\n'
     fi
 
-    printf '\n### Regard neuf — contre les décisions déjà prises\n\n'
+    printf '\n### %s — contre les décisions déjà prises\n\n' "$titre"
     if [ "$code_attente" -ne 0 ] && [ -z "$PARTIS_PRIS" ]; then
       printf 'Décisions illisibles sur le ticket : non confrontées.\n'
     elif [ -z "$(printf '%s' "$decisions" | tr -d '[:space:]')" ] && [ -z "$PARTIS_PRIS" ]; then
@@ -938,8 +1141,13 @@ affiche_plan() {
   dire "Relecture visuelle du ticket #$iid"
   dire ""
   dire "  ports      : UI $PORT_UI · API $PORT_API"
+  if [ -n "$REGIME" ]; then
+    dire "  régime     : $(description_regime)"
+    dire "               ($REGIME : $(origine_regime) ; --regime decide|applique l'impose)"
+  fi
   case "$AVANT_ETAT" in
     actif)  dire "  avant      : $REF_AVANT (${AVANT_SHA:0:7}) — UI $PORT_UI_AVANT · API $PORT_API_AVANT" ;;
+    applique) dire "  avant      : $AVANT_SANS_OBJET" ;;
     eteint) dire "  avant      : éteint ($AVANT_RAISON) — l'après seul" ;;
     *)      dire "  avant      : indisponible — $AVANT_RAISON ; l'après seul" ;;
   esac
@@ -949,8 +1157,13 @@ affiche_plan() {
     dire "  captures   : $SOUS_DOSSIER/$iid/<ecran>-<theme>.png — chemin RELATIF, jamais absolu"
   fi
   dire "  thèmes     : clair, sombre — les deux, toujours (le socle en porte deux, on en garde deux)"
-  dire "  états      : ceux de la vraie stack — le premier par défaut, les autres par --etat <nom>,"
-  dire "               leurs captures sous $SOUS_DOSSIER/$iid/<état>/ :"
+  if [ "$REGIME" = "applique" ]; then
+    dire "  états      : ceux que la rubrique « États à couvrir » du ticket nomme, le premier sinon —"
+    dire "               aucun autre n'est demandé ; par --etat <nom>, captures sous $SOUS_DOSSIER/$iid/<état>/ :"
+  else
+    dire "  états      : ceux de la vraie stack — le premier par défaut, les autres par --etat <nom>,"
+    dire "               leurs captures sous $SOUS_DOSSIER/$iid/<état>/ :"
+  fi
   for e in $ETATS; do
     dire "$(printf '                 %-12s %s' "$e" "$(description_etat "$e")")"
   done
@@ -1007,6 +1220,10 @@ case "$MODE" in
       printf 'relecture-visuelle.sh : --fin ne prend pas d'\''état (il arrête la stack, quel que soit le sien).\n' >&2
       exit 2
     fi
+    if [ -n "$REGIME_OPTION" ]; then
+      printf 'relecture-visuelle.sh : --fin ne prend pas de régime (il arrête ce qui a été monté, quel qu'\''il soit).\n' >&2
+      exit 2
+    fi
     printf 'Fin de la relecture visuelle — ports UI %s · API %s\n' "$PORT_UI" "$PORT_API"
     # Les DEUX stacks avant tout retrait — et l'avant d'abord, ce qui laisse à ses processus le temps
     # de lâcher leurs fichiers pendant que l'après s'arrête : un dossier encore tenu résisterait au
@@ -1051,8 +1268,9 @@ case "$MODE" in
 esac
 ETAT="${ETAT:-$ETAT_DEFAUT}"
 
-# La couverture : pour chaque écran du plan, chaque état et chaque thème, la capture est-elle là ?
-# Lecture du disque seule — ni stack, ni navigateur, ni forge. Voir l'en-tête, §5 : elle CONSTATE.
+# La couverture : pour chaque écran du plan, chaque état DEMANDÉ et chaque thème, la capture est-elle
+# là ? Lecture du disque — ni stack, ni navigateur, et la forge une fois au plus, seulement quand
+# aucune préparation n'a consigné le régime (§8). Voir l'en-tête, §5 : elle CONSTATE.
 # La largeur VISIBLE d'une cellule est passée à la main : `printf '%-10s'` compte des octets sous une
 # locale C, et `✓`, `—` en pèsent trois chacun — le tableau se décalait d'une ligne à l'autre selon ce
 # qu'elle contenait (même piège que la vue de `run.sh`, #325).
@@ -1061,18 +1279,20 @@ ETAT="${ETAT:-$ETAT_DEFAUT}"
 cellule() { printf '%s%*s' "$1" "$((12 - $2))" ''; }
 
 affiche_couverture() {
-  local iid="$1" lignes="$2" route cle etat theme fichier marque clair sombre nom raison
+  local iid="$1" lignes="$2" route cle etat theme fichier marque clair sombre nom raison demandes
+  demandes="$(etats_demandes "$iid")"
   if [ "$TSV" = 1 ]; then
     printf '# route\tcle\tetat\tclair\tsombre\n'
+    printf '# regime\t%s\t%s\n' "$REGIME" "$(origine_regime)"
   else
     dire "Couverture de la relecture du ticket #$iid — captures sous $SOUS_DOSSIER/$iid/"
     dire ""
-    dire "  écran         $(for etat in $ETATS; do printf '%-12s' "$etat"; done)"
+    dire "  écran         $(for etat in $demandes; do printf '%-12s' "$etat"; done)"
   fi
   while IFS=$'\t' read -r route cle _origine _fichiers; do
     [ -z "$route" ] && continue
     marque=""
-    for etat in $ETATS; do
+    for etat in $demandes; do
       clair=0; sombre=0
       for theme in clair sombre; do
         fichier="$(dossier_captures "$iid" "$etat")/$(nom_capture "$cle" "$theme")"
@@ -1113,6 +1333,16 @@ affiche_couverture() {
     while IFS=$'\t' read -r nom raison; do
       [ -n "$nom" ] && dire "$(printf '    %-12s %s' "$nom" "$raison")"
     done <<<"$NON_COUVERTS"
+    dire ""
+    dire "  régime     : $(description_regime)"
+    dire "               ($REGIME : $(origine_regime))"
+    # Un ticket qui applique se relit sans avant (§8) : c'est une absence choisie, et elle se nomme
+    # dans le jugement comme les autres — le pied de la couverture est ce qu'il recopie.
+    if [ "$REGIME" = "applique" ]; then
+      dire "  sans avant — l'après seul, rien n'est comparé à $REF_AVANT ; nommé dans « ce que je n'ai pas pu voir »."
+      nom="$(etats_non_demandes "$iid")"
+      [ -n "$nom" ] && dire "  non demandés — le ticket ne les nomme pas, non ouverts : ${nom// /, }"
+    fi
   fi
 }
 
@@ -1123,6 +1353,10 @@ BRUT="$(plan_de "$IID")"
 LIGNES="$(printf '%s\n' "$BRUT" | grep -v $'^-\t' | sed '/^$/d' || true)"
 INDET="$(printf '%s\n' "$BRUT" | grep $'^-\t' || true)"
 NB="$(printf '%s\n' "$LIGNES" | sed '/^$/d' | wc -l | tr -d ' ')"
+
+# Le régime (§8) ne se demande que s'il y a un écran : un ticket sans surface visible ne paie pas
+# l'aller vers la forge pour apprendre qu'il n'y avait rien à regarder.
+[ "$NB" -gt 0 ] && resoudre_regime
 
 if [ "$MODE" = "couverture" ]; then
   if [ "$NB" -eq 0 ]; then
@@ -1136,7 +1370,8 @@ fi
 # L'avant se juge sur l'origin/main LOCAL en `--plan` — gratuit, hors réseau, comme le reste du plan.
 # La préparation, elle, va chercher le plus frais d'abord : c'est lui qu'on va servir, et un écran
 # mergé entre-temps ne doit pas y être annoncé nouveau. Best-effort : hors ligne, on sert ce qu'on a.
-if [ "$MODE" = "preparer" ] && [ "$NB" -gt 0 ] && [ "${MAESTRO_RELECTURE_AVANT:-1}" != 0 ]; then
+if [ "$MODE" = "preparer" ] && [ "$NB" -gt 0 ] && [ "${MAESTRO_RELECTURE_AVANT:-1}" != 0 ] \
+  && [ "$REGIME" != "applique" ]; then
   GIT_TERMINAL_PROMPT=0 git -C "$RACINE" fetch origin main >/dev/null 2>&1
 fi
 evalue_avant
@@ -1156,7 +1391,8 @@ if [ "$MODE" = "saisine" ] || [ "$MODE" = "planche" ]; then
   NB_CAPTURES="$(printf '%s\n' "$PAIRES" | compte_captures)"
   NB_PAIRES="$(printf '%s\n' "$PAIRES" | sed '/^$/d' | wc -l | tr -d ' ')"
   NB_PAIRES_VUES="$(printf '%s\n' "$PAIRES" \
-    | awk -F'\t' 'NF && ($5 != "-" || ($6 != "-" && $6 != "nouveau")) { n++ } END { print n + 0 }')"
+    | awk -F'\t' 'NF && ($5 != "-" || ($6 != "-" && $6 != "nouveau" && $6 != "sans-avant")) { n++ }
+      END { print n + 0 }')"
   DOSSIER="$SOUS_DOSSIER/$IID"
   if [ "$NB_CAPTURES" -eq 0 ]; then
     printf 'Relecture visuelle du ticket #%s — aucune capture sous %s/ : rien à juger.\n' "$IID" "$DOSSIER" >&2
@@ -1168,7 +1404,8 @@ if [ "$MODE" = "saisine" ] || [ "$MODE" = "planche" ]; then
   if [ "$MODE" = "saisine" ]; then
     SAISINE="$DOSSIER/saisine.md"
     ecris_saisine "$IID" "$PAIRES" "$RACINE/$SAISINE" || exit 1
-    printf 'Saisine du regard neuf — ticket #%s\n\n' "$IID"
+    printf 'Saisine de la relecture — ticket #%s\n\n' "$IID"
+    printf '  régime     : %s — %s\n' "$REGIME" "$(origine_regime)"
     printf '  captures   : %s — %s paire(s) sur %s en portent au moins une (écran × état × thème)\n' \
       "$NB_CAPTURES" "$NB_PAIRES_VUES" "$NB_PAIRES"
     if grep -q "^Le ticket n'a pas pu être lu" "$RACINE/$SAISINE"; then
@@ -1178,7 +1415,12 @@ if [ "$MODE" = "saisine" ] || [ "$MODE" = "planche" ]; then
     fi
     [ -n "$PARTIS_PRIS" ] && printf '  partis pris: %s, recopié tel quel\n' "$PARTIS_PRIS"
     printf '  grille     : scripts/design/grille-relecture.tsv\n'
-    printf '  ensuite    : sous-agent « regard-neuf », dont le prompt est ce seul chemin :\n'
+    if [ "$REGIME" = "applique" ]; then
+      # #1151 : un ticket qui applique est jugé par la session, sur la même grille — sans sous-agent.
+      printf '  ensuite    : la session remplit elle-même le gabarit, sous « ### Regard de la session » :\n'
+    else
+      printf '  ensuite    : sous-agent « regard-neuf », dont le prompt est ce seul chemin :\n'
+    fi
     printf 'SAISINE %s/%s\n' "$(racine_native)" "$SAISINE"
     exit 0
   fi
@@ -1227,6 +1469,7 @@ if [ "$TSV" = 1 ]; then
   # Les états de la vraie stack, et ceux qu'elle ne produit pas, en commentaire : un appelant machine
   # les lit, et un lecteur de TSV qui ignore les `#` n'y voit rien de changé.
   printf '# etats\t%s\n' "$ETATS"
+  [ -n "$REGIME" ] && printf '# regime\t%s\t%s\n' "$REGIME" "$(origine_regime)"
   while IFS=$'\t' read -r nom raison; do
     [ -n "$nom" ] && printf '# non-couvert\t%s\t%s\n' "$nom" "$raison"
   done <<<"$NON_COUVERTS"
@@ -1270,6 +1513,7 @@ if [ "$ETAT" = "injoignable" ]; then
   IFS=$'\t' read -r _iid ETAT_MONTE <"$TEMOIN_ETAT"
   dire "  panne      : l'API coupée sous l'état « ${ETAT_MONTE:-?} » — l'UI reste servie, rien n'est soldé"
   MAESTRO_PORT_API="$PORT_API" MAESTRO_PORT_UI="$PORT_UI" bash "$LANCEUR" --couper-api | sed 's/^/    /'
+  consigne_regime
   if [ -f "$TEMOIN_AVANT" ]; then
     IFS=$'\t' read -r _iid _chemin api_avant ui_avant <"$TEMOIN_AVANT"
     if [ -n "$api_avant" ] && [ -n "$ui_avant" ]; then
@@ -1300,6 +1544,7 @@ monte "$LANCEUR" "$PORT_API" "$PORT_UI" "${ARGS_ETAT[@]}" --no-browser || code=$
 if [ "$code" -eq 0 ]; then
   mkdir -p "$(dirname "$TEMOIN_ETAT")" 2>/dev/null
   printf '%s\t%s\n' "$IID" "$ETAT" >"$TEMOIN_ETAT"
+  consigne_regime
   dire ""
   dire "  ✓ prête : http://localhost:$PORT_UI — état « $ETAT »"
   case "$ETAT" in
@@ -1308,9 +1553,15 @@ if [ "$code" -eq 0 ]; then
   esac
   prepare_avant
   dire ""
-  dire "    à faire ensuite — poser le localStorage (guide vu, thème, projet actif ci-dessus) SUR CHAQUE"
-  dire "    ORIGINE servie, ouvrir chaque écran dans les deux thèmes, capturer l'après et l'avant côte à"
-  dire "    côte sous $CAPTURES/, puis l'état suivant (--etat <nom>), et pour finir :"
+  if [ "$REGIME" = "applique" ]; then
+    dire "    à faire ensuite — poser le localStorage (guide vu, thème, projet actif ci-dessus), ouvrir"
+    dire "    chaque écran dans les deux thèmes, capturer l'après sous $CAPTURES/ — un autre état"
+    dire "    (--etat <nom>) seulement si la rubrique « États à couvrir » du ticket le nomme —, et pour finir :"
+  else
+    dire "    à faire ensuite — poser le localStorage (guide vu, thème, projet actif ci-dessus) SUR CHAQUE"
+    dire "    ORIGINE servie, ouvrir chaque écran dans les deux thèmes, capturer l'après et l'avant côte à"
+    dire "    côte sous $CAPTURES/, puis l'état suivant (--etat <nom>), et pour finir :"
+  fi
   dire "        bash scripts/design/relecture-visuelle.sh --couverture $IID"
   dire "        bash scripts/design/relecture-visuelle.sh --fin"
   exit 0

@@ -2424,8 +2424,14 @@ gh_relecture_empreintes() {
 # Il dit POURQUOI il est là, et pas seulement ce qu'il porte. Un commentaire qui commence par un
 # jugement sans dire d'où il vient se lit, six mois plus tard, comme un avis de passage ; ce qu'on
 # veut qu'il dise est « la question a été posée à la clôture, et voici la réponse ».
+#
+# Le jugement ne vient pas toujours du même juge (#1151), ni du même régime (#1243) : un ticket qui
+# APPLIQUE une décision déjà prise est jugé par la session, sur l'après seul et les états qu'il nomme ;
+# un ticket qui DÉCIDE d'un écran, par le regard neuf, avant et après. L'en-tête le dit, sans quoi un
+# jugement sans avant se lirait comme une comparaison qui n'a pas eu lieu. Le juge se lit au titre que
+# la saisine a donné au regard (`gl_relecture_juge`) — une FORME, jamais un sens (#746).
 gl_relecture_section() {
-  local empreinte="$1" raison="${2:-0}"
+  local empreinte="$1" raison="${2:-0}" juge="${3:-neuf}"
   if [ "$raison" = 1 ]; then
     printf '## %s — NON JOUÉE — empreinte %s\n\n' "$GL_RELECTURE_ANCRE" "$empreinte"
     cat <<'ENTETE'
@@ -2438,6 +2444,19 @@ ENTETE
     return 0
   fi
   printf '## %s — empreinte %s\n\n' "$GL_RELECTURE_ANCRE" "$empreinte"
+  if [ "$juge" = "session" ]; then
+    cat <<'ENTETE'
+Le rendu des écrans touchés a été regardé avant la clôture, dans les **deux thèmes** (skill
+`relecture-visuelle`, #932), puis jugé **par la session** sur la **grille fixe** de la relecture
+(#980) : le ticket **applique** une décision déjà prise à l'écran (#1151). Son régime est
+proportionné (#1243) — l'**après seul**, sans stack « avant » : rien n'a été comparé à `origin/main`,
+et c'est à nommer dans « ce que je n'ai pas pu voir », avec les états que le ticket ne nommait pas.
+Ce qui suit est le jugement rendu — y compris ce qui n'a **pas** pu être vu, qui compte autant :
+*ne pas avoir regardé n'est pas avoir trouvé que tout va bien.*
+
+ENTETE
+    return 0
+  fi
   cat <<'ENTETE'
 Le rendu des écrans touchés a été regardé avant la clôture, dans les **deux thèmes** (skill
 `relecture-visuelle`, #932), puis jugé par un **regard neuf** sur la **grille fixe** de la relecture
@@ -2495,6 +2514,18 @@ gl_relecture_grille_manquante() {
     }
     END { for (i = 1; i <= n; i++) if (!(libelles[i] in repondu)) print libelles[i] }
   ' "$GL_RELECTURE_GRILLE" "$fichier"
+}
+
+# gl_relecture_juge <fichier> -> `session` quand le PREMIER regard du jugement porte le titre que la
+# saisine donne à un ticket qui applique (`### Regard de la session`), `neuf` sinon — le régime
+# complet, celui d'avant #1243. Le premier seulement : un jugement cite parfois un regard antérieur.
+gl_relecture_juge() {
+  local premier
+  premier="$(grep -m 1 '^### Regard ' "$1" 2>/dev/null)"
+  case "$premier" in
+    '### Regard de la session'*) printf 'session' ;;
+    *) printf 'neuf' ;;
+  esac
 }
 
 # gl_relecture_note [--raison] <iid> <fichier> -> CONSIGNE la relecture visuelle sur le ticket <iid>,
@@ -2561,8 +2592,13 @@ gl_relecture_note() {
       echo "gl_relecture_note : le jugement de $fichier ne porte pas sa grille entière — rien n'a été écrit." >&2
       echo "  Lignes sans réponse (✓, ✗ ou « non vu », dans un tableau « | <libellé> | <réponse> | … |) :" >&2
       printf '%s\n' "$manquantes" | sed 's/^/    - /' >&2
-      echo "  La grille est celle du regard neuf (skill « relecture-visuelle ») : la recopier telle" >&2
-      echo "  qu'il l'a rendue, jamais la compléter à sa place." >&2
+      if [ "$(gl_relecture_juge "$fichier")" = "session" ]; then
+        echo "  La grille est celle de la session (ticket qui applique, #1151) : la compléter sur ce" >&2
+        echo "  qu'elle a regardé, jamais en retirer une ligne." >&2
+      else
+        echo "  La grille est celle du regard neuf (skill « relecture-visuelle ») : la recopier telle" >&2
+        echo "  qu'il l'a rendue, jamais la compléter à sa place." >&2
+      fi
       return 5
     fi
   fi
@@ -2592,7 +2628,7 @@ gl_relecture_note() {
   # `.maestro/` (règle #234, docs/10 §8.5).
   local corps
   corps="$(mktemp "${TMPDIR:-/tmp}/maestro-relecture.XXXXXX")" || return 1
-  gl_relecture_section "$empreinte" "$raison" > "$corps"
+  gl_relecture_section "$empreinte" "$raison" "$(gl_relecture_juge "$fichier")" > "$corps"
   cat "$fichier" >> "$corps"
   printf '\n' >> "$corps"
   if ! gl_issue_note "$iid" "$corps" >/dev/null; then
