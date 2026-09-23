@@ -174,7 +174,7 @@ def test_le_contrat_json_de_l_orchestration_reste_intact():
     l'import, soit un contrat de réponse amputé. Le jour où quelqu'un « harmonise » les
     trois prompts en f-strings, c'est ce test qui le dit.
     """
-    assert '{"verdict": "proposition|accord|echange", "objectif": "...", "reponse": "..."}' in (
+    assert '%%MAESTRO%% {"verdict": "proposition|accord|echange", "objectif": "..."}' in (
         _PROMPT_ORCHESTRATION
     )
 

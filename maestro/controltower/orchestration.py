@@ -325,6 +325,44 @@ l'aveu pour ce qui manque vraiment — au-delà de la borne, ou hors de ce que l
 projection sait. L'honnêteté de #686 ne change pas de camp : elle se déplace de
 « je n'ai pas cette information » vers « je ne vois que les trois derniers runs ».
 
+## La réponse s'écrit pendant qu'elle est jugée (#1222)
+
+Ce canal rendait un seul objet JSON `{verdict, objectif, reponse}`, et c'est ce
+qui le tenait muet jusqu'au dernier mot : **la phrase à afficher vivait dans une
+structure qu'il fallait avoir entière pour la lire**. « … répond… » couvrait donc
+toute la génération, là où le chat d'un agent écrit en direct depuis #693 — même
+transport, même écran, même `Redaction`. Le retex du 2026-09-22 l'a dit en une
+phrase : *« je veux que la réponse s'affiche au fur et à mesure »*.
+
+Ce qui a changé n'est **pas** le nombre d'appels, ni qui juge, ni quand : c'est
+l'**ordre des deux moitiés**. Le modèle écrit d'abord sa réponse, en clair, puis
+une dernière ligne `%%MAESTRO%% {"verdict": …, "objectif": …}` que le canal retire
+avant d'afficher (`_MARQUEUR_VERDICT`, `_LectureDuFlux`). Un seul appel rend
+toujours les deux — séparer « juger » de « répondre » en ferait deux, dont le
+second devrait redire au premier ce qu'il vient de décider (`_Verdict`) —, mais le
+verdict ne retient plus la phrase, parce qu'il la suit.
+
+Deux voies ont été écartées, et pour la même raison :
+
+- **un appel d'outil** pour porter l'intention. C'est la forme la plus propre, et
+  le lot 2 (#1223) donnera des outils à ce même appel : mais `generate`/
+  `generate_stream` sont *texte seul* (`tools=[]`), l'exécution outillée passe par
+  `run_agent`, et `run_agent` est **refusée** par le fournisseur compatible OpenAI
+  (`UnsupportedCapability`). Y faire passer le fil aurait rendu le critère du
+  streaming inatteignable sur un Ollama local, c'est-à-dire sur le seul endpoint
+  que quelqu'un fait tourner chez lui ;
+- **un second appel** qui jugerait après coup ce que le premier a écrit. Deux fois
+  le quota, deux occasions de se contredire, et un verdict rendu sur un texte au
+  lieu d'une intention.
+
+⚠ **Le repli tient tout le reste.** Une réponse dont le premier caractère non blanc
+est `{` ou un bloc de code est lue comme l'**ancien** contrat : rien n'est publié
+au fil de l'eau, et c'est la `reponse` de l'objet qui s'affiche — exactement le fil
+d'avant ce lot. Un modèle qui n'a pas suivi la consigne dégrade donc le direct, il
+ne casse jamais le fil, et n'affiche jamais de JSON à l'utilisateur. Préfacé d'une
+phrase, l'objet est encore lu, mais pour son **verdict seul** : ce qui est déjà à
+l'écran n'y est pas repris, et une demande approuvée continue d'ouvrir son run.
+
 ## Ce qui est gardé, et par quoi (#688)
 
 `tests/test_chat_global.py` tient le tout, sans réseau, sans modèle et sans
@@ -457,10 +495,27 @@ VERDICT_ECHANGE = "echange"
 #: inattendu ne doit jamais pouvoir valoir un accord.
 VERDICTS = frozenset({VERDICT_PROPOSITION, VERDICT_ACCORD, VERDICT_ECHANGE})
 
+#: Le **marqueur de fin** : ce qui sépare la réponse affichée de la décision
+#: machine (#1222). Tout ce qui le précède est du texte pour l'utilisateur, tout
+#: ce qui le suit est l'objet JSON du verdict — et rien de tout cela ne s'affiche.
+#:
+#: Il existe parce que l'ancien contrat — un seul objet JSON `{verdict, objectif,
+#: reponse}` — ne pouvait pas s'afficher au fur et à mesure : la phrase à montrer
+#: vivait *dans* une structure qu'il fallait avoir entière pour la lire. Le
+#: verdict passe donc **après** la réponse, où il ne retient plus rien.
+#:
+#: Sa forme est choisie pour être reconnaissable **en cours de flux**, sur un
+#: préfixe et sans arbre : une suite ASCII qu'aucune phrase française ne produit,
+#: assez courte pour que la rétention de queue qu'elle impose (au plus
+#: `len(_MARQUEUR_VERDICT) - 1` caractères) ne se voie pas à l'écran.
+_MARQUEUR_VERDICT = "%%MAESTRO%%"
+
 #: Le cadre de l'orchestration : ce qu'elle est, et le contrat de sa réponse.
 #: Il existait depuis #268 « si un jour elle passe par un modèle » et n'avait
 #: jamais été branché ; #685 le branche et lui ajoute le verdict, puisque c'est le
-#: **même** appel qui rend la réponse et la décision.
+#: **même** appel qui rend la réponse et la décision. #1222 **inverse leur ordre**
+#: — la réponse d'abord, le verdict en dernière ligne — pour que la première
+#: puisse s'écrire à l'écran sans attendre le second.
 #:
 #: ⚠ **Concaténé, et non interpolé** : le contrat de réponse ci-dessous est un objet
 #: JSON, donc ce texte porte des accolades littérales qu'une f-string lirait comme des
@@ -486,9 +541,19 @@ ouvres JAMAIS un de ta propre initiative. Tu proposes, et c'est l'utilisateur qu
 accepte — c'est donc son accord, et non toi, qui décide si une demande mérite un
 run.
 
-Réponds toujours par un seul objet JSON, sans rien autour :
+Écris D'ABORD ta réponse à l'utilisateur, en clair et rien d'autre : c'est elle
+qui s'affiche, et elle s'affiche AU FUR ET À MESURE que tu l'écris. Pas de JSON,
+pas de préambule, pas de balise — la première phrase que tu écris est la première
+qu'il lit.
 
-{"verdict": "proposition|accord|echange", "objectif": "...", "reponse": "..."}
+Puis termine par une DERNIÈRE LIGNE, et une seule, de cette forme exacte :
+
+%%MAESTRO%% {"verdict": "proposition|accord|echange", "objectif": "..."}
+
+Cette ligne n'est jamais affichée : elle dit à l'interface quoi faire de ce que
+tu viens d'écrire. Elle vient en dernier, après le dernier mot de ta réponse, et
+rien ne la suit. Ne la mets jamais en tête, ni au milieu d'une phrase, ni dans un
+bloc de code, et n'écris nulle part ailleurs la suite de caractères %%MAESTRO%%.
 
 Le verdict :
 - "proposition" — le dernier message de l'utilisateur est une demande de travail,
@@ -522,8 +587,12 @@ L'objectif :
 
 La réponse : le texte affiché à l'utilisateur, en français, bref. Sur
 "proposition", il énonce l'objectif et demande explicitement l'accord. Sur
-"accord", il confirme que le run part. Sur "echange", il répond — en s'appuyant
-sur l'état de l'orchestration quand la question porte dessus.
+"accord", il confirme que le run part — et c'est TOUT ce qui sera dit : rien
+n'est ajouté derrière tes mots, ni identifiant, ni récapitulatif, ni « les tâches
+apparaîtront ». L'identifiant du run et ce qu'il a ouvert s'affichent d'eux-mêmes
+sous ta réponse ; ne les invente donc pas, tu ne les connais pas. Sur "echange",
+il répond — en s'appuyant sur l'état de l'orchestration quand la question porte
+dessus.
 
 Avant la conversation, tu reçois DES FAITS : l'état de l'orchestration, puis les
 runs de ce fil et de ce projet — statut, cause d'arrêt, issue, et chaque tâche
@@ -1175,6 +1244,142 @@ def _verdict_depuis(texte: str) -> _Verdict:
     )
 
 
+#: Ce par quoi une réponse **entière en JSON** commence — l'ancien contrat (#685),
+#: nu ou en bloc de code. Un premier caractère non blanc qui en fait partie fait
+#: basculer la lecture en régime retenu : voir `_LectureDuFlux`.
+_OUVERTURES_MACHINE = ("{", "`")
+
+
+class _LectureDuFlux:
+    """Sépare, **au fil des incréments**, ce qui s'affiche de ce qui décide (#1222).
+
+    Le modèle écrit sa réponse puis, en dernière ligne, `%%MAESTRO%%` suivi de
+    l'objet JSON du verdict (`_MARQUEUR_VERDICT`, `_PROMPT_ORCHESTRATION`). Cette
+    classe consomme les morceaux tels que le fournisseur les rend et décide, à
+    chaque fois, ce qui peut partir à l'écran **maintenant** — sans jamais y
+    laisser fuiter une accolade du bloc machine.
+
+    Deux régimes, et le premier caractère non blanc tranche une fois pour toutes :
+
+    - **prose** — le cas nominal. Les morceaux sont publiés au fur et à mesure,
+      à ceci près qu'on retient toujours la queue qui pourrait être le **début**
+      du marqueur (`%`, `%%M`, `%%MAES`…) : au plus `len(_MARQUEUR_VERDICT) - 1`
+      caractères, rendus dès que la suite dément. Marqueur complet vu : tout ce
+      qui suit est du JSON, plus rien n'est publié ;
+    - **machine** — la réponse commence par `{` ou un bloc de code, c'est-à-dire
+      par l'ancien contrat : un modèle qui répond en JSON malgré la consigne.
+      **Rien n'est publié en flux** ; à la clôture, `_verdict_depuis` lit l'objet
+      et sa `reponse` part en **un seul** incrément. C'est exactement le
+      comportement d'avant ce lot, et c'est ce qui fait qu'un modèle désobéissant
+      dégrade le direct sans jamais casser le fil.
+
+    Elle ne rase rien et ne réordonne rien : `Redaction` tient l'invariant du
+    contrat SSE (la concaténation des incréments *est* le texte final), et le lui
+    reprendre ici en donnerait deux gardiens.
+    """
+
+    def __init__(self) -> None:
+        self._brut: list[str] = []
+        # Ce qui est publiable mais pas encore parti : la queue qui pourrait
+        # amorcer le marqueur. Vide dès que la suite la dément.
+        self._retenu = ""
+        # `None` tant qu'aucun caractère non blanc n'est venu : le régime ne se
+        # décide pas sur des espaces.
+        self._machine: bool | None = None
+        self._coupe = False
+
+    def pousser(self, morceau: str) -> str:
+        """Le morceau consommé ; rend ce qui peut s'afficher **maintenant** (souvent `""`)."""
+        self._brut.append(morceau)
+        if self._coupe:
+            return ""
+        if self._machine is None:
+            candidat = (self._retenu + morceau).lstrip()
+            if not candidat:
+                self._retenu = ""
+                return ""
+            self._machine = candidat.startswith(_OUVERTURES_MACHINE)
+            self._retenu = "" if self._machine else candidat
+        elif self._machine:
+            return ""
+        else:
+            self._retenu += morceau
+        coupe = self._retenu.find(_MARQUEUR_VERDICT)
+        if coupe != -1:
+            # Le marqueur est là : ce qui le précède est la dernière prose, et
+            # plus rien ne sortira — le reste du flux est l'objet du verdict.
+            acquis, self._retenu, self._coupe = self._retenu[:coupe], "", True
+            return acquis
+        garde = _amorce_retenue(self._retenu)
+        acquis = self._retenu[: len(self._retenu) - garde]
+        self._retenu = self._retenu[len(self._retenu) - garde :]
+        return acquis
+
+    def conclure(self) -> tuple[str, _Verdict]:
+        """Le dernier morceau à publier, et le verdict — le flux étant terminé.
+
+        En régime prose, ce qui restait retenu n'était une amorce de marqueur que
+        par hypothèse : le flux fini, l'hypothèse tombe et le texte part. Le
+        verdict se lit alors dans ce qui suivait le marqueur.
+
+        **Pas de marqueur du tout** : le texte est retenté comme l'ancien contrat,
+        et seul le **verdict** en est repris — jamais sa `reponse`, qui est déjà
+        à l'écran et qu'aucun flux ne reprend. C'est le cas du modèle qui préface
+        son JSON d'une phrase : il a désobéi deux fois (ni la prose demandée, ni
+        l'objet nu qu'on ne demande plus), et ce que le canal garde de lui est ce
+        qui se rattrape — une demande approuvée continue d'ouvrir son run, ce que
+        #685 tenait déjà. Le prix est visible et assumé : ce tour-là affiche ce
+        que le modèle a écrit, JSON compris.
+
+        Ni marqueur ni contrat lisible : **échange**. Un modèle qui oublie sa
+        dernière ligne a quand même parlé, et ce qu'on ne comprend pas n'ouvre
+        jamais rien — l'asymétrie du module (`_verdict_depuis`).
+        """
+        texte = "".join(self._brut)
+        if self._machine:
+            verdict = _verdict_depuis(texte)
+            return verdict.reponse, verdict
+        reste, self._retenu = self._retenu, ""
+        avant, separe, apres = texte.partition(_MARQUEUR_VERDICT)
+        lu = _verdict_depuis(apres if separe else texte)
+        return reste, _Verdict(
+            nom=lu.nom,
+            # La réponse affichée est ce qui a été écrit **avant** le marqueur, et
+            # non le champ `reponse` d'un objet JSON : c'est le sens du nouveau
+            # contrat, et c'est aussi ce qui a déjà été publié.
+            reponse=avant.strip(),
+            objectif=lu.objectif,
+        )
+
+
+def _verdict_du_texte(texte: str) -> _Verdict:
+    """Le contrat lu sur une réponse **entière** — le même lecteur que le flux.
+
+    Un seul lecteur pour les deux voies (#1222) : `POST …/messages` n'attendrait
+    pas un autre format que `POST …/flux`, et deux analyses du même contrat
+    finiraient par diverger sur le cas qui compte — une prose qui traîne un
+    `%%MAESTRO%%` que l'une retire et l'autre affiche.
+    """
+    lecture = _LectureDuFlux()
+    lecture.pousser(texte)
+    return lecture.conclure()[1]
+
+
+def _amorce_retenue(texte: str) -> int:
+    """Combien de caractères de queue pourraient être le **début** du marqueur.
+
+    `0` quand la fin du texte ne ressemble à rien, sa longueur bornée par
+    `len(_MARQUEUR_VERDICT) - 1` sinon : le plus long suffixe de `texte` qui soit
+    un préfixe strict de `_MARQUEUR_VERDICT`. Sans cette retenue, un incrément
+    coupé au milieu du marqueur — ce que fait n'importe quel fournisseur — en
+    afficherait la première moitié avant que la seconde ne le dénonce.
+    """
+    for longueur in range(min(len(texte), len(_MARQUEUR_VERDICT) - 1), 0, -1):
+        if _MARQUEUR_VERDICT.startswith(texte[-longueur:]):
+            return longueur
+    return 0
+
+
 def _prompt(fil: Sequence[MessageChat], etat: str, faits: str = "") -> str:
     """Le fil rendu en prompt, précédé de ce que le canal sait de l'orchestration.
 
@@ -1277,25 +1482,44 @@ class RepondeurOrchestration(RepondeurChat):
         et s'arrête là. Le `LanceurRun` n'est alors pas atteint, et pas par une
         garde qu'il faudrait tenir : il n'existe qu'**un** chemin vers lui, et il
         part d'un verdict qui n'a pas été rendu.
+
+        **La réponse s'écrit pendant qu'elle vient** (#1222), sauf dans un cas,
+        et ce cas se connaît **avant** l'appel : un projet sans agent verra sa
+        réponse *remplacée* par la proposition d'équipe (#1146), et on ne
+        remplace pas ce qui est déjà à l'écran. Le régime se décide donc sur
+        `_sans_equipe`, qui ne dépend que du projet — jamais sur le verdict, qui
+        arrive trop tard pour décider s'il fallait le montrer. Tout le reste
+        s'**ajoute** derrière la réponse (l'avertissement d'un fil sans
+        exécution, la cause d'un lancement en échec) et ne demande rien.
         """
+        # Le texte du juge sera peut-être remplacé (#1146) : la question se pose
+        # **avant** l'appel, et sa réponse décide aussi du régime de publication.
+        retenue = self._sans_equipe(projet_id)
         redaction = Redaction(incrementer)
         try:
-            verdict = await self._juger(agent, fil, projet_id)
+            verdict = await self._juger(
+                agent, fil, projet_id, None if retenue else redaction
+            )
         except _JugeInjoignable as injoignable:
-            await redaction.ecrire(str(injoignable))
+            # Ce qui a pu être publié reste à l'écran — il a été dit, le retirer
+            # n'est pas au pouvoir de ce canal — et la cause s'écrit à sa suite.
+            await redaction.ecrire(f" {injoignable}" if redaction.texte else str(injoignable))
             return ReponseChat(contenu=redaction.texte)
         if (
             verdict.nom in (VERDICT_PROPOSITION, VERDICT_ACCORD)
             and verdict.objectif
             and self._lanceur is not None
-            and self._sans_equipe(projet_id)
+            and retenue
         ):
             # Personne pour prendre les tâches (#1146) : ni la proposition ni
             # l'accord ne tiennent, et le texte du juge — « je lance ? », « c'est
             # parti » — non plus. Il est remplacé **avant** d'être écrit, par la
             # phrase qui dit pourquoi et propose l'équipe.
             return await self._proposer_recrutement(redaction, verdict.objectif, projet_id)
-        await redaction.ecrire(verdict.reponse)
+        if not redaction.texte:
+            # Le flux l'a déjà écrite quand il a servi ; sinon, elle part d'un
+            # bloc — un juge retenu, ou un modèle qui a répondu en JSON.
+            await redaction.ecrire(verdict.reponse)
         if verdict.nom == VERDICT_ACCORD:
             # Un accord **tapé** ne porte aucune borne : le juge rend un
             # objectif, pas un formulaire. Les bornes viennent du geste
@@ -1371,6 +1595,12 @@ class RepondeurOrchestration(RepondeurChat):
             # proposition précéder ce lot (#1146) : la garde du verdict ne suffit
             # pas, et « c'est parti » n'a pas encore été écrit.
             return await self._proposer_recrutement(redaction, objectif.strip(), projet_id)
+        # La seule phrase du code sur un lancement qui réussit, et elle n'est
+        # **accolée à rien** (#1222) : ici aucun modèle n'a parlé — l'accord est un
+        # clic —, il faut donc bien que quelque chose accuse réception, et le fil
+        # ne se persiste pas vide (`ServiceChat._persister_reponse`). Ce qui a été
+        # retiré est ce qui *suivait* : l'identifiant du run et le régime des
+        # bornes, que le message et le geste portent déjà (`_ouvrir_un_run`).
         await redaction.ecrire("C'est parti.")
         return await self._ouvrir_un_run(
             redaction, objectif.strip(), projet_id, bornes, contexte_du_fil(fil)
@@ -1472,7 +1702,11 @@ class RepondeurOrchestration(RepondeurChat):
         return await self._conducteur.repondre(fil, question, valeur)
 
     async def _juger(
-        self, agent: Agent, fil: Sequence[MessageChat], projet_id: str | None
+        self,
+        agent: Agent,
+        fil: Sequence[MessageChat],
+        projet_id: str | None,
+        redaction: Redaction | None = None,
     ) -> _Verdict:
         """L'appel modèle — fournisseur résolu au premier usage (import local, comme #84).
 
@@ -1484,13 +1718,26 @@ class RepondeurOrchestration(RepondeurChat):
         — et le contrat de sortie n'est pas un texte que l'UI doit pouvoir
         réécrire.
 
+        **Avec une `redaction`, la réponse s'écrit pendant qu'elle est jugée**
+        (#1222) : l'appel passe par `generate_stream` et `_LectureDuFlux` publie
+        la prose au fur et à mesure, gardant pour elle la dernière ligne qui porte
+        le verdict. Le jugement n'est pas déplacé d'un cran — il reste rendu par
+        ce même appel —, c'est l'**ordre** dans lequel le modèle rend ses deux
+        moitiés qui a changé, et c'est tout ce qu'il fallait pour que la première
+        n'attende plus la seconde. Sans `redaction`, l'appel reste celui d'avant
+        (`generate`, texte entier) : c'est ce que `repondre` demande, et le seul
+        chemin d'un appelant qui n'a rien à afficher au fil de l'eau.
+
         Les trois façons de n'avoir **aucun** verdict lèvent `_JugeInjoignable`
         plutôt que de remonter (#686), et la **famille** de la cause se lit à
         l'endroit de l'échec : résoudre le fournisseur ne touche à aucun réseau,
-        donc ce qui casse là est un réglage ; `generate`, lui, part dehors, donc
-        ce qui casse là est une indisponibilité. Aucune chaîne n'est examinée pour
-        trancher — c'est la règle de `controltower.causes`, tenue ici par la
-        structure plutôt que par un `isinstance`.
+        donc ce qui casse là est un réglage ; la génération, elle, part dehors,
+        donc ce qui casse là est une indisponibilité. Aucune chaîne n'est examinée
+        pour trancher — c'est la règle de `controltower.causes`, tenue ici par la
+        structure plutôt que par un `isinstance`. Un flux qui **casse en cours**
+        est de cette seconde famille : ce qui a déjà été publié reste à l'écran et
+        la cause s'écrit à sa suite, parce que ce canal ne lève pas (voir la
+        classe) — et non parce que l'échec serait moins grave.
 
         Une **réponse vide** est rangée avec les indisponibilités et non avec les
         verdicts illisibles, et la frontière est nette : un texte hors contrat est
@@ -1527,23 +1774,43 @@ class RepondeurOrchestration(RepondeurChat):
         faits = (
             self._faits(projet_id, runs_du_fil(fil)) if self._faits is not None else ""
         )
+        prompt = _prompt(fil, etat, faits)
+        modele = self._modele or agent.modele
+        if redaction is None:
+            try:
+                texte = await self._provider.generate(
+                    prompt, model=modele, system_prompt=agent.prompt_systeme
+                )
+            except Exception as echec:  # noqa: BLE001 — la position classe, cf. docstring
+                raise _JugeInjoignable(
+                    f"le fournisseur de modèle n'a pas répondu ({cause_lisible(echec)})",
+                    _REPARATION_PASSAGERE,
+                ) from echec
+            if not (texte or "").strip():
+                raise _JugeInjoignable(
+                    "le fournisseur de modèle a rendu une réponse vide",
+                    _REPARATION_PASSAGERE,
+                )
+            return _verdict_du_texte(texte)
+        lecture = _LectureDuFlux()
         try:
-            texte = await self._provider.generate(
-                _prompt(fil, etat, faits),
-                model=self._modele or agent.modele,
-                system_prompt=agent.prompt_systeme,
-            )
+            async for morceau in self._provider.generate_stream(
+                prompt, model=modele, system_prompt=agent.prompt_systeme
+            ):
+                await redaction.ecrire(lecture.pousser(morceau))
         except Exception as echec:  # noqa: BLE001 — la position classe, cf. docstring
             raise _JugeInjoignable(
                 f"le fournisseur de modèle n'a pas répondu ({cause_lisible(echec)})",
                 _REPARATION_PASSAGERE,
             ) from echec
-        if not (texte or "").strip():
+        dernier, verdict = lecture.conclure()
+        await redaction.ecrire(dernier)
+        if not verdict.reponse.strip():
             raise _JugeInjoignable(
                 "le fournisseur de modèle a rendu une réponse vide",
                 _REPARATION_PASSAGERE,
             )
-        return _verdict_depuis(texte)
+        return verdict
 
     def _sans_equipe(self, projet_id: str | None) -> bool:
         """Le projet de la fenêtre n'a **personne** pour prendre les tâches (#1146).
@@ -1606,12 +1873,26 @@ class RepondeurOrchestration(RepondeurChat):
         deviné : `projet_id` est ce que la fenêtre a envoyé, `None` quand elle n'a
         pas de projet, et le run part alors sans projet comme avant ce lot.
 
-        **Le régime des bornes s'annonce dans les deux sens** (#990, critère 3),
-        et c'est la règle de la ligne `plan :` d'un run d'outillage (#286) : un
-        run borné dit à quoi il s'arrêtera, un run sans borne dit qu'il ira
-        jusqu'au bout. Taire le second ferait de l'illimité un oubli plutôt
-        qu'un choix — or c'est le défaut que ce ticket corrige, et il s'est
-        mesuré à 12,51 $.
+        **Un lancement qui réussit n'ajoute plus un mot** (#1222). Ce qui s'y
+        écrivait — « Run X ouvert, statut « En cours » — aucune borne : le run ira
+        jusqu'au bout. Les tâches apparaîtront au tableau de bord… » — venait se
+        coller derrière la phrase du modèle, et la personne l'a trouvé robotique :
+        deux voix dans une même bulle, dont la seconde récite. Les faits n'ont pas
+        disparu, ils ont retrouvé leur place :
+
+        - l'**identifiant du run** voyage sur `ReponseChat.run_id`, donc sur le
+          message persisté, donc sous la bulle (`Suite`, docs/05 §2.9) — il y
+          survit au rechargement, ce qu'une phrase ne fait pas mieux ;
+        - les **bornes réellement posées** sont écrites par le geste qui les a
+          posées (`chat._geste_de_cadrage`), à l'endroit où quelqu'un les a
+          choisies. Celles qu'on n'a pas posées n'ont rien à dire ici : le régime
+          s'annonce **au moment de lancer**, sur la carte de cadrage qui le
+          récapitule dans les deux sens (#990) — le redire après coup n'était plus
+          un choix affiché, c'était un gabarit.
+
+        Restent les phrases d'**empêchement** ci-dessous, et elles ne sont pas du
+        même ordre : rien ne s'est ouvert, le modèle ne peut pas le savoir, et
+        personne d'autre que ce code ne peut le dire.
         """
         if not objectif:
             await redaction.ecrire(
@@ -1635,14 +1916,4 @@ class RepondeurOrchestration(RepondeurChat):
             await redaction.ecrire(f" Le lancement a échoué : {echec}")
             return ReponseChat(contenu=redaction.texte)
 
-        run_id = str(resume.get("run_id", ""))
-        statut = str(resume.get("statut", ""))
-        await redaction.ecrire(f" Run {run_id} ouvert" if run_id else " Run ouvert")
-        if statut:
-            await redaction.ecrire(f", statut « {libelle_statut_execution(statut)} »")
-        await redaction.ecrire(f" — {bornes.en_phrase()}")
-        await redaction.ecrire(
-            ". Les tâches apparaîtront au tableau de bord à mesure que la "
-            "décomposition les produit."
-        )
-        return ReponseChat(contenu=redaction.texte, run_id=run_id)
+        return ReponseChat(contenu=redaction.texte, run_id=str(resume.get("run_id", "")))

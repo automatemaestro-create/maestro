@@ -486,10 +486,13 @@ def _geste_de_cadrage(
 
     Les **bornes** (#990) suivent exactement cette règle, et c'est pourquoi
     elles ne s'écrivent que lorsqu'il y en a : elles sont ce que le formulaire a
-    ajouté, et que ni la proposition ni la réponse à venir ne portent. Le régime
-    par défaut, lui, est annoncé par la réponse qui ouvre le run
-    (`orchestration._ouvrir_un_run`) — le dire ici aussi ferait répéter au
-    geste ce que le tour suivant énonce à la ligne près.
+    ajouté, et que ni la proposition ni la réponse à venir ne portent.
+
+    ⚠ Depuis #1222, **c'est la seule trace des bornes dans le fil** : la réponse
+    qui ouvrait le run n'en récapitule plus le régime (`orchestration._ouvrir_un_run`
+    dit pourquoi). Ce qui n'a pas été posé n'a donc rien à dire ici non plus — le
+    régime par défaut s'annonce au moment de lancer, sur la carte de cadrage qui
+    le porte dans les deux sens, et non après coup dans une phrase récitée.
     """
     if not approuve:
         return "Non, ne lance pas."

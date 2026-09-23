@@ -628,3 +628,97 @@ describe("la réponse s'écrit dans le fil", () => {
     expect(interrompre).toHaveBeenCalledTimes(1);
   });
 });
+
+// ── ⑤ l'orchestrateur écrit en direct, carte comprise (#1222) ────────────────
+
+describe("la réponse de l'orchestrateur s'écrit, et sa carte suit", () => {
+  const OBJECTIF = "Développer une application Windows d'agenda";
+
+  /** La réponse de l'orchestration qui **demande** l'accord, une fois persistée. */
+  function propositionPersistee() {
+    return messageFactice({
+      agent: AGENT_ORCHESTRATION,
+      auteur: AGENT_ORCHESTRATION,
+      contenu: `J'ouvrirais un run sur : « ${OBJECTIF} ». Je lance ?`,
+      horodatage: "2026-09-23T10:00:00Z",
+      proposition: OBJECTIF,
+    });
+  }
+
+  it("montre la phrase qui arrive sans encore rien offrir à trancher", () => {
+    // Pendant le flux, l'orchestrateur n'a pas fini sa phrase : le verdict est
+    // la **dernière** chose qu'il rend (#1222), donc il n'y a par construction
+    // rien à trancher tant que la bulle se remplit. Offrir la carte plus tôt
+    // demanderait de deviner une proposition qui n'est pas encore formulée.
+    poserFilAssistance({
+      messages: [messageFactice({ contenu: "Génère-moi une app d'agenda" })],
+      envoi: true,
+      reponseEnCours: {
+        auteur: AGENT_ORCHESTRATION,
+        texte: "J'ouvrirais un run sur",
+        figee: false,
+      },
+    });
+    monterLeChat();
+
+    expect(screen.getByText("J'ouvrirais un run sur")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "Décision sur le cadrage" }),
+    ).toBeNull();
+  });
+
+  it("pose la carte dès que la réponse a rejoint le fil", () => {
+    // Le critère du ticket : *une proposition arrive toujours avec sa carte*.
+    // Elle ne voyage pas dans le texte — c'est un champ du message persisté —,
+    // et c'est ce qui la rend insensible au découpage du flux : le direct
+    // n'ajoute pas un chemin par lequel elle pourrait se perdre.
+    poserFilAssistance({
+      messages: [
+        messageFactice({ contenu: "Génère-moi une app d'agenda" }),
+        propositionPersistee(),
+      ],
+      envoi: false,
+      reponseEnCours: null,
+    });
+    monterLeChat();
+
+    expect(
+      screen.getByRole("region", { name: "Décision sur le cadrage" }),
+    ).toBeInTheDocument();
+    expect(
+      (screen.getByLabelText("Objectif proposé") as HTMLTextAreaElement).value,
+    ).toBe(OBJECTIF);
+  });
+
+  it("ne récite plus l'identifiant du run : il se lit sous la bulle", () => {
+    // La moitié « ce que le code n'écrit plus » (critère 3). Le fil disait
+    // « C'est parti. Run run-42 ouvert, statut « En cours » — aucune borne… » ;
+    // il ne dit plus que les mots du modèle, et le rattachement se lit dans la
+    // suite de la bulle, qui le tient du champ persisté (#268).
+    poserFilAssistance({
+      messages: [
+        messageFactice({ contenu: "oui" }),
+        messageFactice({
+          agent: AGENT_ORCHESTRATION,
+          auteur: AGENT_ORCHESTRATION,
+          contenu: "C'est parti, je le confie à l'équipe.",
+          horodatage: "2026-09-23T10:01:00Z",
+          run_id: "run-42",
+        }),
+      ],
+    });
+    monterLeChat();
+
+    expect(
+      screen.getByText("C'est parti, je le confie à l'équipe."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/statut « En cours »/)).toBeNull();
+    expect(screen.queryByText(/aucune borne/)).toBeNull();
+    // L'échantillon qui prouve que la sonde regarde au bon endroit : le
+    // rattachement, lui, est bien rendu — par la suite de la bulle, dans le fil.
+    const fil = screen.getByRole("list", {
+      name: `Messages échangés avec ${INTERLOCUTEUR_ORCHESTRATION}`,
+    });
+    expect(within(fil).getByText("run-42")).toBeInTheDocument();
+  });
+});
