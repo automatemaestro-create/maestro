@@ -77,12 +77,14 @@ from maestro.equipe import (
     EquipeCreee,
     PropositionEquipe,
     Refus,
+    RoleManquant,
     RolePropose,
     RoleValide,
     avec_playbook,
     capacite,
     definition,
     proposer_equipe,
+    proposer_renfort,
     refus_de,
     skills_constates,
 )
@@ -164,7 +166,12 @@ class ServiceEquipe:
         self._playbooks = playbooks
 
     async def proposer(
-        self, id_projet: str, choix: Sequence[Choix] = ()
+        self,
+        id_projet: str,
+        choix: Sequence[Choix] = (),
+        *,
+        renfort: RoleManquant | None = None,
+        raison: str = "",
     ) -> dict[str, Any]:
         """L'équipe que ce projet appelle, playbooks compris — **rien n'est créé**.
 
@@ -181,9 +188,19 @@ class ServiceEquipe:
         4. les playbooks sont **écrits** par la mécanique de #257, un appel par
            rôle, tous en même temps.
 
+        `renfort` (#1227) change la **seule** étape 3 : au lieu de l'équipe que le
+        projet appelle, un unique rôle — celui que le plan d'un run demande et que
+        l'équipe n'a pas (`proposer_renfort`), justifié par `raison`. Les trois
+        autres étapes sont identiques, playbook écrit pour ce projet compris :
+        c'est ce qui fait qu'un rôle recruté en cours de run n'est pas une fiche au
+        rabais. Un rôle de renfort **n'est justifié par aucun constat** — un
+        designer ne l'est pas dans un projet en Python —, et c'est précisément
+        pourquoi il ne peut pas sortir de la dérivation ordinaire.
+
         Lève les refus **motivés** de ses couches (`ProjetInconnu`,
         `ProjetIllisible`, `RacineRefusee`) — jamais un 500 : un projet qu'on ne
-        sait pas lire n'est pas une panne.
+        sait pas lire n'est pas une panne. Et `ValueError` sur un renfort dont le
+        gabarit n'est pas au catalogue : c'est un 422, pas un rôle inventé.
         """
         projet = self._projets.entite(id_projet)
         acquis = [*choix, *deductions(choix)] if choix else []
@@ -192,13 +209,25 @@ class ServiceEquipe:
             if not acquis
             else self._matiere_choisie(projet, acquis)
         )
-        proposition = proposer_equipe(
-            constats,
-            recommandation,
-            projet_id=projet.id,
-            choix=acquis,
-            noms_pris=self._noms_pris(projet.id),
-            source=source,
+        proposition = (
+            proposer_renfort(
+                constats,
+                recommandation,
+                renfort,
+                raison,
+                projet_id=projet.id,
+                noms_pris=self._noms_pris(projet.id),
+                source=source,
+            )
+            if renfort is not None
+            else proposer_equipe(
+                constats,
+                recommandation,
+                projet_id=projet.id,
+                choix=acquis,
+                noms_pris=self._noms_pris(projet.id),
+                source=source,
+            )
         )
         return (await self._avec_playbooks(proposition)).to_dict()
 

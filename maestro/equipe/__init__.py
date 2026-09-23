@@ -39,10 +39,13 @@ Cinq modules, et la frontière entre eux est celle de ce qui décide :
   politique d'autorisations, sa capacité. Pur lui aussi — l'écriture est le seul
   verbe de `maestro.controltower.equipe` qui touche un dépôt ;
 - `maestro.equipe.manque` — le rôle qui **manquerait** à une équipe déjà créée
-  pour prendre une tâche (#1041). Le seul des cinq qui regarde un run en cours
-  plutôt qu'un projet qui naît, et il n'en recrute pas davantage : il nomme, le
-  moteur signale, et le recrutement reste un geste validé hors du run
-  (docs/37 §3.5).
+  pour prendre une tâche (#1041) ou pour exécuter un plan (`manque_au_plan`,
+  #1227). Le seul des cinq qui regarde un run en cours plutôt qu'un projet qui
+  naît, et il n'en recrute pas davantage : il nomme. Ce que le moteur en fait a
+  changé avec #1227 — il **propose** de compléter l'équipe avant d'exécuter, et
+  une personne accepte ou non (`maestro.engine.renfort`) ; les deux dernières
+  puces de docs/37 §3 sont renversées, celles de #1040 et de docs/31 §3.5 ne
+  bougent pas.
 
 ⚠ **La politique proposée laisse `allow` ouvert**, et c'est une décision. Une
 liste `allow` non vide est *fermée* (`maestro.agents.permissions`) : la remplir
@@ -98,8 +101,10 @@ from maestro.equipe.gabarits import (
     Justification,
 )
 from maestro.equipe.manque import (
+    ManqueAuPlan,
     RoleManquant,
     competences_non_couvertes,
+    manque_au_plan,
     role_manquant,
 )
 from maestro.equipe.modele import (
@@ -123,6 +128,7 @@ from maestro.equipe.proposition import (
     REGIME_PORTEE,
     avec_playbook,
     proposer_equipe,
+    proposer_renfort,
 )
 
 __all__ = [
@@ -151,6 +157,7 @@ __all__ = [
     "EquipeCreee",
     "Gabarit",
     "Justification",
+    "ManqueAuPlan",
     "PropositionEquipe",
     "Refus",
     "RoleEcarte",
@@ -163,9 +170,11 @@ __all__ = [
     "capacite",
     "competences_non_couvertes",
     "definition",
+    "manque_au_plan",
     "nouvel_id",
     "playbook_branche",
     "proposer_equipe",
+    "proposer_renfort",
     "refus_de",
     "role_manquant",
     "skills_constates",

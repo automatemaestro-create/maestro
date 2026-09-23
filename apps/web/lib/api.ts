@@ -1933,14 +1933,21 @@ export function reporterOutillage(id: string): Promise<Projet> {
  * dérive d'elles sans qu'aucun fichier soit ouvert. L'appel prend des secondes
  * sur un projet réel — la racine est lue, puis un playbook est rédigé par rôle
  * (#257).
+ *
+ * `renfort` (#1227) demande **un seul rôle** au lieu de l'équipe : celui qu'un
+ * plan appelle et que l'équipe n'a pas. Sans lui, ce rôle sortirait dans
+ * `ecartes` — aucun constat d'un projet en Python ne justifie un designer —, et
+ * c'est bien le plan qui le demande. Le gabarit et la raison sont ceux que la
+ * demande du fil portait : ce qu'on valide est ce qu'on a lu (#1040).
  */
 export function proposerEquipe(
   id: string,
   choix: ChoixOutillage[] = [],
+  renfort?: { gabarit: string; raison: string },
 ): Promise<PropositionEquipe> {
   return ecrireProjet<PropositionEquipe>(
     `/api/projets/${encodeURIComponent(id)}/equipe/proposition`,
-    { choix },
+    renfort === undefined ? { choix } : { choix, renfort },
     "proposition d'équipe indisponible",
   );
 }

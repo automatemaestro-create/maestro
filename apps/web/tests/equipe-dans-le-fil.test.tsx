@@ -20,6 +20,13 @@
  *    dans la forme de la création (#1040) ;
  * ⑤ **« Plus tard » est une issue nommée**, qui décline sans rien envoyer d'autre.
  *
+ * Depuis #1227, la **même** carte sert un second moment : un run suspendu entre
+ * son plan et sa première tâche, dont le plan appelle un métier que l'équipe n'a
+ * pas. Trois choses changent, et ce sont les trois que la seconde moitié de ce
+ * fichier garde — ce qui est demandé à l'API (un rôle, pas une équipe), ce qui se
+ * lit avant le geste (le rôle, la raison, les tâches qu'il prendrait), et ce que
+ * les boutons promettent : « Continuer sans » n'est pas « Plus tard ».
+ *
  * ⚠ Aucune géométrie ici (#308) et aucun jugement de rendu : ce que la carte
  * devient à 320 px est une mesure du banc, son rendu l'affaire de la relecture.
  */
@@ -53,7 +60,10 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...reel,
     chargerProjets: () => Promise.resolve(projetsDeclares()),
     chargerJournal: () => Promise.resolve(pageJournalCourante()),
-    proposerEquipe: (id: string) => proposerEquipe(id),
+    // Tous les arguments sont relayés : le troisième (#1227) décide si l'on
+    // demande l'équipe entière ou le seul rôle qu'un plan appelle.
+    proposerEquipe: (id: string, choix?: unknown, renfort?: unknown) =>
+      proposerEquipe(id, choix, renfort),
   };
 });
 
@@ -167,7 +177,8 @@ describe("la demande de recrutement, dans le fil", () => {
     expect(
       screen.queryByRole("region", { name: "Décision sur le cadrage" }),
     ).not.toBeInTheDocument();
-    expect(proposerEquipe).toHaveBeenCalledWith(PROJET);
+    // Aucun renfort : l'équipe entière, comme #1146 l'a posé.
+    expect(proposerEquipe).toHaveBeenCalledWith(PROJET, [], undefined);
   });
 
   it("ne pose rien sur un fil dont le dernier message ne demande pas d'équipe", async () => {
@@ -201,7 +212,9 @@ describe("la demande de recrutement, dans le fil", () => {
 
     const carte = await carteAttendue();
 
-    await waitFor(() => expect(proposerEquipe).toHaveBeenCalledWith("prj-autre0001"));
+    await waitFor(() =>
+      expect(proposerEquipe).toHaveBeenCalledWith("prj-autre0001", [], undefined),
+    );
     // Le nom de la fenêtre n'est pas prêté à un autre projet : on nomme l'identifiant.
     expect(within(carte).getAllByText(/prj-autre0001/).length).toBeGreaterThan(0);
   });
@@ -304,5 +317,133 @@ describe("ce que la validation envoie", () => {
     expect(
       within(carte).queryByRole("button", { name: /Créer l'équipe/ }),
     ).not.toBeInTheDocument();
+  });
+});
+
+// --- Le second moment : compléter une équipe pendant un run (#1227) ----------
+//
+// La **même** carte, réutilisée et non doublée. Trois choses changent, et ce sont
+// les trois qu'on garde : ce qui est demandé à l'API (un rôle, pas une équipe),
+// ce qui se lit avant le geste (le rôle, la raison, les tâches), et ce que les
+// deux boutons promettent — « Continuer sans » n'est pas « Plus tard ».
+
+/** La demande qu'un run suspendu pose dans le fil (#1227). */
+function demandeDeRenfort(): MessageChat {
+  return messageFactice({
+    agent: AGENT_ORCHESTRATION,
+    auteur: AGENT_ORCHESTRATION,
+    contenu: "Avant d'exécuter, une chose : le plan appelle un rôle absent…",
+    recrutement: {
+      objectif: "une petite animation du logo Maestro",
+      projet_id: PROJET,
+      run_id: "run-42",
+      role: "Designer",
+      gabarit: "interface",
+      raison: "le plan de ce travail demande design-system, ui, et aucun rôle de l'équipe ne le couvre.",
+      taches: ["Dessiner le logo stylisé", "Écrire le script d'animation"],
+    },
+  });
+}
+
+const RENFORT_PROPOSE: PropositionEquipe = {
+  ...PROPOSITION,
+  id: "equ-77",
+  resume: "Designer — 1 rôle(s), 1 instance(s)",
+  roles: [
+    role({
+      nom: "interface",
+      role: "Designer",
+      gabarit: "designer",
+      competences: ["ui", "ux"],
+      raison: "le plan de ce travail demande design-system, ui",
+      autorisations: [],
+      politique: { allow: [], ask: {}, deny: [] },
+    }),
+  ],
+  instances_total: 1,
+};
+
+describe("le renfort d'un run en cours", () => {
+  beforeEach(() => {
+    proposerEquipe.mockResolvedValue(RENFORT_PROPOSE);
+  });
+
+  it("demande le seul rôle que le plan appelle, jamais l'équipe entière", async () => {
+    poserFilAssistance({ messages: [demandeDeRenfort()] });
+    rendreAvecEtat(<PageChat />);
+
+    await screen.findByRole("region", { name: "Renfort à valider" });
+
+    await waitFor(() =>
+      expect(proposerEquipe).toHaveBeenCalledWith(PROJET, [], {
+        gabarit: "interface",
+        raison:
+          "le plan de ce travail demande design-system, ui, et aucun rôle de l'équipe ne le couvre.",
+      }),
+    );
+  });
+
+  it("dit le rôle, pourquoi, et les tâches qu'il prendrait", async () => {
+    poserFilAssistance({ messages: [demandeDeRenfort()] });
+    rendreAvecEtat(<PageChat />);
+
+    const carte = await screen.findByRole("region", { name: "Renfort à valider" });
+
+    expect(
+      within(carte).getByRole("heading", { name: "Compléter l'équipe ?" }),
+    ).toBeInTheDocument();
+    expect(within(carte).getByText("Designer")).toBeInTheDocument();
+    expect(within(carte).getByText(/aucun rôle de l'équipe ne le couvre/)).toBeInTheDocument();
+    // Les tâches sont **nommées** : « 2 tâches » ne dirait pas ce qu'on confie.
+    expect(within(carte).getByText(/Il prendrait/)).toBeInTheDocument();
+    expect(within(carte).getByText(/Dessiner le logo stylisé/)).toBeInTheDocument();
+    expect(within(carte).getByText(/Écrire le script d'animation/)).toBeInTheDocument();
+  });
+
+  it("promet « recruter » et « continuer sans », jamais « plus tard »", async () => {
+    const recruter = vi.fn(async () => {});
+    poserFilAssistance({ messages: [demandeDeRenfort()], recruter });
+    rendreAvecEtat(<PageChat />);
+    const carte = await screen.findByRole("region", { name: "Renfort à valider" });
+    await within(carte).findByText(/1 agent/);
+
+    // Décliner ne remet rien à plus tard : le run part avec l'équipe qu'on a.
+    expect(within(carte).queryByRole("button", { name: "Plus tard" })).not.toBeInTheDocument();
+    await userEvent.click(within(carte).getByRole("button", { name: "Continuer sans" }));
+
+    await waitFor(() => expect(recruter).toHaveBeenCalledWith(false));
+  });
+
+  it("envoie le rôle tel qu'il a été montré", async () => {
+    const recruter = vi.fn(async () => {});
+    poserFilAssistance({ messages: [demandeDeRenfort()], recruter });
+    rendreAvecEtat(<PageChat />);
+    const carte = await screen.findByRole("region", { name: "Renfort à valider" });
+    await within(carte).findByText(/1 agent/);
+
+    await userEvent.click(within(carte).getByRole("button", { name: "Recruter (1)" }));
+
+    await waitFor(() => expect(recruter).toHaveBeenCalledTimes(1));
+    const [approuve, roles, propositionId] = recruter.mock.calls[0] as unknown as [
+      boolean,
+      { nom: string; role: string; playbook: string }[],
+      string,
+    ];
+    expect(approuve).toBe(true);
+    expect(propositionId).toBe("equ-77");
+    expect(roles.map((r) => r.nom)).toEqual(["interface"]);
+  });
+
+  it("ne montre aucun « pourquoi ce rôle » sur une demande d'équipe entière", async () => {
+    proposerEquipe.mockResolvedValue(PROPOSITION);
+    poserFilAssistance({ messages: [demandeDeRecrutement()] });
+    rendreAvecEtat(<PageChat />);
+
+    const carte = await carteAttendue();
+    await within(carte).findByText(/2 agents/);
+
+    // Les raisons y sont rôle par rôle, dans le détail : une raison globale
+    // ferait double emploi.
+    expect(within(carte).queryByText(/Il prendrait/)).not.toBeInTheDocument();
   });
 });

@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * **L'équipe proposée dans le fil**, avec le geste qui la valide (#1146).
+ * **L'équipe proposée dans le fil**, avec le geste qui la valide (#1146, #1227).
  *
  * Un projet sans agent ne peut rien faire d'un run : chaque tâche part en repli
  * « à assigner » après que le cadrage et le plan ont été payés. Quand on demande
@@ -10,6 +10,27 @@
  * la valide, sans quitter la conversation. Validée, l'équipe est créée par la voie
  * de l'étape d'équipe (#1040), puis le fil repropose le travail demandé : c'est
  * la demande de cadrage (#943) qui prend le relais.
+ *
+ * ## Le second moment : compléter une équipe, pas la créer (#1227)
+ *
+ * La même carte sert quand un run **suspendu** attend : la décomposition vient
+ * d'écrire un plan qui appelle un métier que l'équipe n'a pas, et l'orchestrateur
+ * propose de la compléter avant d'exécuter. `demande.run_id` est le témoin, et
+ * trois choses en découlent — rien de plus :
+ *
+ * - le **pourquoi** se lit en tête (`PourquoiCeRole`) : le rôle, la raison (le
+ *   *plan*, pas le projet) et les tâches qui l'attendent. Sans elles, on validerait
+ *   un recrutement sans savoir ce qu'il change ;
+ * - la proposition demandée est celle de **ce rôle-là** (`renfort`), pas l'équipe
+ *   entière : une proposition ordinaire l'écarterait, aucun constat d'un projet en
+ *   Python ne justifiant un designer ;
+ * - le titre et les boutons disent *compléter*, jamais *recruter l'équipe*.
+ *
+ * ⚠ **Réutilisée, pas doublée** — c'est ce que le ticket demande, et ce n'est pas
+ * une économie de code : deux cartes pour un même geste finiraient par ne plus
+ * dire la même chose de ce qu'on crée (le défaut G10 du retex du 2026-09-11, celui
+ * qui a fait `lib/brief`, `lib/outillage` et `lib/questions`). Ce qui change ici
+ * est **ce qu'il y a à montrer**, et cela tient dans un en-tête et un mot.
  *
  * ## Rien d'inventé : deux formes déjà tranchées, composées
  *
@@ -96,6 +117,16 @@ export function EquipeDansLeFil({
   const [deplie, setDeplie] = useState(false);
   const [echec, setEchec] = useState<string | null>(null);
 
+  // Le renfort d'un run (#1227) : un seul rôle, celui que le plan appelle.
+  // Dérivé de la demande et non d'un second champ — `gabarit` renseigné est
+  // exactement ce que le moteur a calculé, et l'absence de gabarit veut dire
+  // qu'aucun rôle du catalogue ne couvrait le manque (le moteur ne propose alors
+  // rien, donc cette carte n'est pas montée).
+  const renfort =
+    demande.gabarit !== undefined && demande.gabarit !== ""
+      ? { gabarit: demande.gabarit, raison: demande.raison ?? "" }
+      : undefined;
+
   useEffect(() => {
     // `vivant` plutôt qu'un `AbortController`, comme l'étape d'équipe : ce qu'on
     // protège est l'écriture d'état sur une carte démontée — la demande a pu être
@@ -104,7 +135,7 @@ export function EquipeDansLeFil({
     const partir = async () => {
       try {
         const rendue = await propositionPourDemande(cle, () =>
-          proposerEquipe(demande.projet_id),
+          proposerEquipe(demande.projet_id, [], renfort),
         );
         if (!vivant) return;
         setProposition(rendue);
@@ -126,8 +157,14 @@ export function EquipeDansLeFil({
     // de création (même projet, nouveau message) garde la proposition déjà
     // composée et ce qu'on y a ajusté. Ce qui relance la proposition est le
     // projet — et, au montage suivant, une clé que la mémoire ne connaît pas.
+    //
+    // Le **gabarit** y entre depuis #1227, et il le doit : un même projet peut
+    // se voir proposer son équipe entière (aucun gabarit) puis, un run plus tard,
+    // un renfort (un gabarit). Sans lui, la seconde demande resservirait la
+    // proposition de la première — l'équipe complète là où un seul rôle est
+    // attendu.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [demande.projet_id]);
+  }, [demande.projet_id, demande.gabarit]);
 
   // Le projet **de la demande**, nommé dans sa casse. Le fil ne connaît que celui
   // de la fenêtre ; quand ce n'est pas le même, on nomme l'identifiant plutôt que
@@ -179,7 +216,9 @@ export function EquipeDansLeFil({
       balise="section"
       ton="attention"
       densite="aeree"
-      aria-label="Équipe à valider"
+      aria-label={
+        renfort === undefined ? "Équipe à valider" : "Renfort à valider"
+      }
     >
       {/* Le nom du projet dans l'`aside` et non dans le titre : `EnTeteSection`
           rend ses titres en capitales, et le nom perdrait sa casse à l'endroit
@@ -188,7 +227,11 @@ export function EquipeDansLeFil({
       <EnTeteSection
         niveau={3}
         icone={IconeAgents}
-        titre="Recruter l'équipe ?"
+        titre={
+          renfort === undefined
+            ? "Recruter l'équipe ?"
+            : "Compléter l'équipe ?"
+        }
         ton="attention"
         className="mb-3"
         aside={
@@ -196,15 +239,21 @@ export function EquipeDansLeFil({
         }
       />
 
+      <PourquoiCeRole demande={demande} />
+
       {chargement && (
         <p className="text-corps text-texte-secondaire">
-          Composition de l&apos;équipe — la racine est lue, puis un playbook est
-          rédigé par rôle…
+          {renfort === undefined
+            ? "Composition de l'équipe — la racine est lue, puis un playbook est rédigé par rôle…"
+            : "Composition du rôle — la racine est lue, puis son playbook est rédigé pour ce projet…"}
         </p>
       )}
 
       {refus !== null && (
-        <RefusMotive refus={refus} titre="Équipe indisponible" />
+        <RefusMotive
+          refus={refus}
+          titre={renfort === undefined ? "Équipe indisponible" : "Rôle indisponible"}
+        />
       )}
 
       {proposition !== null && roles.length === 0 && (
@@ -299,16 +348,22 @@ export function EquipeDansLeFil({
               occupe={enCours}
               onClick={() => void valider()}
             >
-              Créer l&apos;équipe ({total})
+              {renfort === undefined
+                ? `Créer l'équipe (${total})`
+                : `Recruter (${total})`}
             </Bouton>
           )}
+          {/* « Plus tard » là où rien n'attend, « Continuer sans » quand un run
+              attend : décliner n'y remet rien à plus tard, cela laisse partir
+              l'exécution avec l'équipe qu'on a — et c'est ce que le bouton doit
+              dire avant qu'on l'appuie, pas la phrase qui suivra dans le fil. */}
           <Bouton
             variante="contour"
             ton="neutre"
             disabled={enCours}
             onClick={() => void plusTard()}
           >
-            Plus tard
+            {renfort === undefined ? "Plus tard" : "Continuer sans"}
           </Bouton>
         </div>
       )}
@@ -324,6 +379,48 @@ export function EquipeDansLeFil({
         </p>
       )}
     </Carte>
+  );
+}
+
+/**
+ * **Pourquoi ce rôle**, quand un run attend (#1227) — muet le reste du temps.
+ *
+ * Trois faits, et ils viennent tous de la demande que le moteur a écrite dans le
+ * fil : le rôle, la raison (le **plan**, pas le projet) et les tâches qui
+ * l'attendent. Rien n'est recomposé ici — la raison affichée est *la* raison
+ * calculée (`ManqueAuPlan.raison`), et une seconde formulation côté navigateur
+ * serait une phrase à tenir d'accord avec elle.
+ *
+ * Les tâches sont **nommées** et non comptées : « 3 tâches » ne dit pas si l'on
+ * s'apprête à confier une animation à un développeur, et c'est exactement ce que
+ * ce recrutement existe pour éviter. La liste est celle du plan, qui tient en
+ * quelques lignes (`MAX_TASKS`) — il n'y a rien à replier.
+ *
+ * Muet sans `run_id` : la proposition d'une équipe entière porte ses raisons
+ * rôle par rôle, dans son détail (`LigneRole`), et une raison globale y ferait
+ * double emploi.
+ */
+function PourquoiCeRole({ demande }: { demande: DemandeRecrutement }) {
+  if (demande.run_id === undefined || demande.run_id === "") return null;
+  const taches = demande.taches ?? [];
+  return (
+    <div className="mb-3 flex flex-col gap-1">
+      <p className="text-corps text-texte">
+        <strong>{demande.role || "Un rôle absent de l'équipe"}</strong> —{" "}
+        {demande.raison ?? ""}
+      </p>
+      {taches.length > 0 && (
+        <p className="text-annexe text-texte-secondaire">
+          <span className="font-medium text-texte">Il prendrait</span> :{" "}
+          {taches.map((titre, index) => (
+            <span key={titre}>
+              {index > 0 && " · "}
+              {titre}
+            </span>
+          ))}
+        </p>
+      )}
+    </div>
   );
 }
 

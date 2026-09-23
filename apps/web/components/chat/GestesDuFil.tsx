@@ -165,11 +165,15 @@ export function useGestesDuFil(
         />
       )}
       {recrutement !== null && (
-        /* La `key` est le **projet** : une demande reposée après un refus de
-           création (même projet) garde la proposition déjà composée et ce qu'on
-           y avait ajusté, au lieu de redemander une analyse et N playbooks. */
+        /* La `key` est le **projet et le run** : une demande reposée après un
+           refus de création (même projet, même run) garde la proposition déjà
+           composée et ce qu'on y avait ajusté, au lieu de redemander une analyse
+           et N playbooks. Le run y entre depuis #1227 — un projet peut se voir
+           proposer son équipe entière avant tout run, puis un renfort pendant un
+           run, et les deux n'ont ni la même proposition ni les mêmes rôles
+           cochés. */
         <EquipeDansLeFil
-          key={recrutement.projet_id}
+          key={`${recrutement.projet_id}|${recrutement.run_id ?? ""}`}
           demande={recrutement}
           cle={`${recrutement.projet_id}|${messageRecrutement?.horodatage ?? ""}`}
           recruter={fil.recruter}

@@ -3481,7 +3481,19 @@ def test_le_protocole_entier_equipe_proposee_validee_puis_run(
     celui de la **demande** — le corps du geste n'en porte aucun.
     """
     fil = client_sans_equipe.get(f"/api/chat/{NOM_ORCHESTRATION}").json()["messages"]
-    assert fil[-1]["recrutement"] == {"objectif": OBJECTIF, "projet_id": PROJET_SANS_EQUIPE}
+    # Les quatre champs de #1227 sont **vides** ici, et c'est le fait qui compte :
+    # aucun run n'attend cette demande — c'est un projet sans agent, pas un plan
+    # qui appelle un rôle absent. `run_id` vide est ce qui fait que l'équipe créée
+    # **repropose** le travail au lieu de laisser un run reprendre.
+    assert fil[-1]["recrutement"] == {
+        "objectif": OBJECTIF,
+        "projet_id": PROJET_SANS_EQUIPE,
+        "run_id": "",
+        "role": "",
+        "gabarit": "",
+        "raison": "",
+        "taches": [],
+    }
     assert fil[-1]["proposition"] == ""
 
     reponse = client_sans_equipe.post(

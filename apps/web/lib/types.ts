@@ -2726,6 +2726,21 @@ export type PropositionEquipe = {
 export type DemandeRecrutement = {
   objectif: string;
   projet_id: string;
+  /**
+   * Le run qui **attend** cette décision (#1227) — vide quand la demande
+   * précède tout run (#1146). C'est le témoin qui distingue les deux moments :
+   * renseigné, le plan est déjà écrit, un seul rôle est proposé, et accepter ne
+   * relance rien puisque le run reprend de lui-même.
+   */
+  run_id?: string;
+  /** Le rôle que le plan appelle et que l'équipe n'a pas (#1227). */
+  role?: string;
+  /** Le gabarit dont ce rôle sort — ce que la carte rapporte pour l'obtenir. */
+  gabarit?: string;
+  /** Pourquoi ce rôle : le **plan**, et les tâches qui l'attendent (#1227). */
+  raison?: string;
+  /** Les tâches du plan qu'il prendrait, par leur intitulé (#1227). */
+  taches?: string[];
 };
 
 /** Un rôle validé, tel qu'il repart à la création (`RoleEquipeRequete`, #1040). */

@@ -620,21 +620,78 @@ class DemandeRecrutement:
     il est écrit **sur le message**, et non relu de la fenêtre au moment du geste,
     parce que c'est de lui que la phrase parle — une équipe validée depuis une
     fenêtre passée sur un autre projet naîtrait sinon dans ce dernier.
+
+    ## Deux moments, une seule demande (#1227)
+
+    La même forme sert deux situations, et les quatre derniers champs disent
+    laquelle :
+
+    - **avant le run** (#1146) — le projet n'a *aucun* agent, l'équipe entière est
+      proposée, et `run_id` est vide. Le geste crée l'équipe puis le fil
+      **repropose** le travail : c'est la demande de cadrage qui prend le relais ;
+    - **pendant le run** (#1227) — le plan appelle un rôle que l'équipe n'a pas.
+      `run_id` nomme le run qui attend, `role` le poste proposé, `gabarit` celui
+      dont il sort, `raison` pourquoi (le plan, pas le projet) et `taches` ce qu'il
+      prendrait. Le geste complète l'équipe et le run **reprend de lui-même** — il
+      n'y a rien à reproposer.
+
+    `gabarit` et `raison` sont ce que la carte **rapporte** à
+    `POST …/equipe/proposition` pour obtenir ce rôle-là et pas l'équipe entière :
+    un designer n'est justifié par aucun constat d'un projet en Python, donc une
+    proposition ordinaire l'écarterait — c'est le plan qui le demande, et le plan
+    n'est connu que d'ici. Même régime que `RoleEquipeRequete` (#1040) : ce qui
+    repart est ce qui a été servi, et le serveur revalide le gabarit contre son
+    catalogue.
+
+    Une seule forme plutôt que deux, parce que le geste est le même et que la
+    carte du fil est la même (`EquipeDansLeFil`, réutilisée et non doublée) : ce
+    qui change est ce qu'elle a à montrer, et c'est exactement ce que ces champs
+    portent. `run_id` est le témoin qui les sépare — *ce recrutement suspend-il un
+    run ?* —, jamais une phrase reconnue dans le contenu.
     """
 
     objectif: str
     projet_id: str
+    run_id: str = ""
+    role: str = ""
+    gabarit: str = ""
+    raison: str = ""
+    taches: tuple[str, ...] = ()
 
-    def to_dict(self) -> dict[str, str]:
+    @property
+    def pendant_un_run(self) -> bool:
+        """Ce recrutement suspend-il un run déjà ouvert ? (#1227)"""
+        return bool(self.run_id)
+
+    def to_dict(self) -> dict[str, Any]:
         """La demande en JSON — la forme du REST et du stockage."""
-        return {"objectif": self.objectif, "projet_id": self.projet_id}
+        return {
+            "objectif": self.objectif,
+            "projet_id": self.projet_id,
+            "run_id": self.run_id,
+            "role": self.role,
+            "gabarit": self.gabarit,
+            "raison": self.raison,
+            "taches": list(self.taches),
+        }
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> DemandeRecrutement:
-        """Relit une demande persistée, sans rien rejuger (même règle que `MessageChat`)."""
+        """Relit une demande persistée, sans rien rejuger (même règle que `MessageChat`).
+
+        Les quatre champs de #1227 sont **absents** des demandes écrites avant ce
+        lot : elles se relisent telles quelles, et un fil ancien garde exactement
+        la carte qu'il avait.
+        """
+        taches = data.get("taches")
         return cls(
             objectif=str(data.get("objectif") or ""),
             projet_id=str(data.get("projet_id") or ""),
+            run_id=str(data.get("run_id") or ""),
+            role=str(data.get("role") or ""),
+            gabarit=str(data.get("gabarit") or ""),
+            raison=str(data.get("raison") or ""),
+            taches=tuple(str(t) for t in taches) if isinstance(taches, list) else (),
         )
 
 
@@ -1894,6 +1951,46 @@ class ServiceChat:
             ) from exc
         return await self._persister_reponse(
             agent, conversation=fil, reponse=reponse
+        )
+
+    async def proposer_recrutement(
+        self,
+        agent: Agent,
+        *,
+        contenu: str,
+        demande: DemandeRecrutement | None = None,
+        conversation: str | None = None,
+    ) -> MessageChat:
+        """Pose dans le fil la demande de renfort d'un run — ou son issue (#1227).
+
+        Le pendant de `poser_question` sur l'autre demande qu'un fil peut recevoir
+        **sans que personne n'ait parlé** : la décomposition vient de constater
+        qu'un rôle manque au plan, et le run attend. Aucun message d'utilisateur
+        n'est écrit — personne n'a rien demandé —, et **aucun appel modèle** :
+        `contenu` et `demande` sont composés par l'appelant, qui est le seul à
+        connaître le manque (`maestro.controltower.renfort`).
+
+        `demande=None` écrit la **même** phrase sans offrir de geste, et c'est le
+        second usage : à l'échéance, le run est reparti sans renfort et il faut le
+        dire là où la demande avait été posée. Reposer la demande au lieu de la
+        clore laisserait au pied du fil un bouton « Créer l'équipe » qui
+        promettrait de faire reprendre un run déjà parti.
+
+        Le message part par le chemin unique des réponses d'agent
+        (`_persister_reponse`) : persisté, posté dans la messagerie, diffusé sur
+        le bus. C'est ce qui fait que la carte du fil (`EquipeDansLeFil`) et le
+        geste de validation (`recruter`) marchent sans une ligne de plus — la
+        demande est au même endroit, sur le dernier message, qu'elle vienne du
+        juge de l'orchestration ou d'un run.
+
+        Le fil visé est celui de l'**orchestration** : c'est l'appelant qui le
+        choisit en passant sa fiche, comme pour tout ce module.
+        """
+        fil = self._resoudre(agent, conversation)
+        return await self._persister_reponse(
+            agent,
+            conversation=fil,
+            reponse=ReponseChat(contenu=contenu, recrutement=demande),
         )
 
     async def diffuser(
