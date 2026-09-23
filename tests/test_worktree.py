@@ -25,6 +25,7 @@ import subprocess
 import sys
 from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -2983,3 +2984,219 @@ def test_gc_check_annonce_les_sessions_sans_rien_retirer(depot: Depot) -> None:
     assert "#152 à retirer" in acheve.stdout
     assert "1 session(s) conservée(s)" in acheve.stdout
     assert depot.worktree().exists(), "--check ne retire rien"
+
+
+# =================================================================================================
+# temps : le temps d'un ticket, MESURÉ sur les transcripts de ses sessions (#1244)
+# =================================================================================================
+# Le temps loggé à la clôture était estimé par la session ; il se lit désormais sur les horodatages
+# que chaque session écrit. Ce qui se compte, ce sont les TOURS — d'un prompt au dernier geste qui
+# le suit —, et jamais l'attente de la personne entre deux prompts. Les transcripts ci-dessous
+# reprennent la FORME des lignes réelles (ordre des clés compris) : c'est sur elle que le verbe
+# s'ancre, et un fixture plus permissif que la réalité ferait passer une lecture qui ne tient pas.
+
+T0 = datetime(2026, 9, 23, 8, 0, tzinfo=UTC)
+
+
+def _instant(minute: float) -> str:
+    """L'horodatage d'une ligne, à la milliseconde et en Z, comme le CLI l'écrit."""
+    return (T0 + timedelta(minutes=minute)).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def _ligne(genre: str, minute: float, session_id: str, entree: str) -> str:
+    """Une ligne de transcript de la forme réelle, pour un `genre` d'événement."""
+    commun = {"uuid": f"u-{genre}-{minute}", "timestamp": _instant(minute)}
+    queue = {"entrypoint": entree, "sessionId": session_id}
+    if genre == "reponse":
+        objet: dict[str, object] = {
+            "parentUuid": "p",
+            "isSidechain": False,
+            "message": {"model": "m", "type": "message", "role": "assistant", "content": []},
+            "type": "assistant",
+            **commun,
+            **queue,
+        }
+    else:
+        tete: dict[str, object] = {"parentUuid": "p", "isSidechain": False, "promptId": "x"}
+        contenu: object = "une demande"
+        suite: dict[str, object] = {}
+        if genre == "retour":
+            contenu = [{"tool_use_id": "toolu_1", "type": "tool_result", "content": "ok"}]
+            suite = {"toolUseResult": {"stdout": "ok"}}
+        elif genre == "prompt":
+            suite = {"origin": {"kind": "human"}}
+        elif genre == "notification":
+            contenu = "<task-notification>fini</task-notification>"
+            suite = {"origin": {"kind": "task-notification"}}
+        elif genre == "meta":
+            tete["isMeta"] = True
+            contenu = "<local-command-caveat>…</local-command-caveat>"
+        elif genre == "sous-agent":
+            tete["isSidechain"] = True
+        objet = {
+            **tete,
+            "type": "user",
+            "message": {"role": "user", "content": contenu},
+            **commun,
+            **suite,
+            **queue,
+        }
+    return json.dumps(objet, separators=(",", ":"), ensure_ascii=False)
+
+
+def _pose_session(
+    dossier: Path,
+    session_id: str,
+    evenements: list[tuple[str, float]],
+    entree: str = "claude-desktop",
+) -> Path:
+    """Écrit le transcript d'une session : `(genre, minute)` dans l'ordre du fichier."""
+    dossier.mkdir(parents=True, exist_ok=True)
+    fichier = dossier / f"{session_id}.jsonl"
+    lignes = [_ligne(genre, minute, session_id, entree) for genre, minute in evenements]
+    # Une ligne de titre, sans horodatage ni rôle : elle ne doit rien peser dans la mesure.
+    lignes.append(json.dumps({"type": "ai-title", "aiTitle": "Essai", "sessionId": session_id}))
+    fichier.write_text("\n".join(lignes) + "\n", encoding="utf-8", newline="\n")
+    return fichier
+
+
+def _temps(depot: Depot, *args: str) -> tuple[int, list[str], subprocess.CompletedProcess[str]]:
+    acheve = depot.lance("temps", *args)
+    champs = acheve.stdout.strip().split("\t") if acheve.stdout.strip() else []
+    return acheve.returncode, champs, acheve
+
+
+def test_temps_compte_les_tours_et_pas_l_attente_entre_eux(depot: Depot) -> None:
+    """LE test du ticket : deux tours séparés par deux heures d'attente valent leurs deux durées.
+
+    Estimer, c'était ne rien lire ; lire le temps « calendaire », ce serait compter la nuit. Les
+    tours comptent ce que la session a fait, et l'attente de la personne reste dehors.
+    """
+    _pose_session(
+        _bucket(depot, "152"),
+        "aaaa1244-0000-0000-0000-000000000001",
+        [("prompt", 0), ("reponse", 5), ("retour", 10), ("reponse", 12),
+         ("prompt", 120), ("reponse", 125), ("retour", 130)],
+    )
+    code, champs, acheve = _temps(depot, "152")
+    assert code == 0, acheve.stdout + acheve.stderr
+    assert champs == [str((12 + 10) * 60), "1", "2", "interactif"]
+
+
+def test_temps_une_notification_de_tache_prolonge_le_tour(depot: Depot) -> None:
+    """Une session qui attend SA commande d'arrière-plan travaille : le tour court jusqu'au retour.
+
+    Échantillon fautif : la même attente sous une ligne « human » ouvre un second tour, et les dix
+    minutes du filet CI disparaissent — c'est ce que la distinction d'origine empêche.
+    """
+    evenements = [("prompt", 0), ("reponse", 2), ("notification", 12), ("reponse", 13)]
+    _pose_session(_bucket(depot, "152"), "aaaa1244-0000-0000-0000-000000000002", evenements)
+    code, champs, _ = _temps(depot, "152")
+    assert code == 0
+    assert champs[:3] == [str(13 * 60), "1", "1"]
+
+    fautif = [("prompt", 0), ("reponse", 2), ("prompt", 12), ("reponse", 13)]
+    _pose_session(_bucket(depot, "153"), "aaaa1244-0000-0000-0000-000000000003", fautif)
+    _, champs, _ = _temps(depot, "153")
+    assert champs[:3] == [str(3 * 60), "1", "2"], "la sonde départage bien les deux origines"
+
+
+def test_temps_une_ligne_meta_ne_prolonge_pas_le_tour(depot: Depot) -> None:
+    """Le préambule d'une commande locale tapée après une heure d'attente n'est pas du travail.
+
+    Il porte l'heure où il est écrit : pris pour un geste, il étirerait le tour d'avant jusqu'à lui.
+    """
+    _pose_session(
+        _bucket(depot, "152"),
+        "aaaa1244-0000-0000-0000-000000000004",
+        [("prompt", 0), ("reponse", 10), ("meta", 60), ("sous-agent", 61), ("prompt", 61)],
+    )
+    _, champs, _ = _temps(depot, "152")
+    assert champs[:3] == [str(10 * 60), "1", "2"]
+
+
+def test_temps_ecarte_les_agents_du_produit(depot: Depot) -> None:
+    """Les agents que Maestro lance dans le worktree (SDK Python) ne sont pas des sessions du
+    ticket.
+
+    Dix-huit de leurs transcripts sur #1232 : comptés, ils feraient passer le banc des scénarios
+    pour du travail de développement.
+    """
+    dossier = _bucket(depot, "152")
+    _pose_session(
+        dossier, "aaaa1244-0000-0000-0000-000000000005", [("prompt", 0), ("reponse", 300)], "sdk-py"
+    )
+    _pose_session(
+        dossier, "aaaa1244-0000-0000-0000-000000000006", [("prompt", 0), ("reponse", 20)]
+    )
+    _, champs, _ = _temps(depot, "152")
+    assert champs == [str(20 * 60), "1", "1", "interactif"]
+
+    shutil.rmtree(dossier)
+    _pose_session(
+        dossier, "aaaa1244-0000-0000-0000-000000000005", [("prompt", 0), ("reponse", 300)], "sdk-py"
+    )
+    code, champs, acheve = _temps(depot, "152")
+    assert (code, champs) == (3, []), "des agents du produit seuls : rien à mesurer"
+    assert "agents du produit" in acheve.stderr
+
+
+def test_temps_nomme_le_regime_de_ses_sessions(depot: Depot) -> None:
+    """`sdk-cli` est le `claude -p` du pilote : un ticket commencé en run et fini à la main le
+    dit."""
+    dossier = _bucket(depot, "152")
+    _pose_session(
+        dossier, "aaaa1244-0000-0000-0000-000000000007", [("prompt", 0), ("reponse", 30)], "sdk-cli"
+    )
+    _, champs, _ = _temps(depot, "152")
+    assert champs[3] == "run"
+
+    _pose_session(
+        dossier, "aaaa1244-0000-0000-0000-000000000008", [("prompt", 60), ("reponse", 70)]
+    )
+    _, champs, _ = _temps(depot, "152")
+    assert champs == [str(40 * 60), "2", "2", "run+interactif"]
+
+
+def test_temps_unit_les_sessions_qui_se_recouvrent(depot: Depot) -> None:
+    """Une session reprise dont le CLI a recopié l'historique ne compte pas deux fois.
+
+    La somme des tours rendrait le double ; l'union, la durée réelle.
+    """
+    evenements = [("prompt", 0), ("reponse", 30)]
+    dossier = _bucket(depot, "152")
+    _pose_session(dossier, "aaaa1244-0000-0000-0000-000000000009", evenements)
+    reprise = [*evenements, ("prompt", 40), ("reponse", 50)]
+    _pose_session(dossier, "aaaa1244-0000-0000-0000-00000000000a", reprise)
+    _, champs, _ = _temps(depot, "152")
+    assert champs[:3] == [str(40 * 60), "2", "3"]
+
+
+def test_temps_depuis_ecarte_ce_qui_precede_le_demarrage(depot: Depot) -> None:
+    """Le transcript déménage entier dans le worktree : ce qui précède le démarrage n'est pas au
+    ticket.
+
+    Le tour qui ENJAMBE le démarrage compte en entier — c'est celui du /ticket-start.
+    """
+    _pose_session(
+        _bucket(depot, "152"),
+        "aaaa1244-0000-0000-0000-00000000000b",
+        [("prompt", 0), ("reponse", 10), ("prompt", 100), ("reponse", 130)],
+    )
+    _, champs, _ = _temps(depot, "152", "--depuis", _instant(110))
+    assert champs[:3] == [str(30 * 60), "1", "1"]
+
+    code, _, acheve = _temps(depot, "152", "--depuis", _instant(200))
+    assert code == 3
+    assert "depuis son démarrage" in acheve.stderr
+
+    code, _, _ = _temps(depot, "152", "--depuis", "pas une date")
+    assert code == 2
+
+
+def test_temps_sans_session_ne_rend_rien(depot: Depot) -> None:
+    """Pas de transcript, pas de mesure : le verbe le dit par son code, sans aucun chiffre."""
+    code, champs, acheve = _temps(depot, "152")
+    assert (code, champs) == (3, [])
+    assert "aucune session du ticket #152" in acheve.stderr
+    assert _temps(depot, "15x")[0] == 2

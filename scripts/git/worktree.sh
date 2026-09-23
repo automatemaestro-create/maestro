@@ -69,6 +69,7 @@ Un worktree git par ticket — deux tickets, deux sessions, un seul dépôt.
   bash scripts/git/worktree.sh remove <iid|chemin> [--force]
   bash scripts/git/worktree.sh gc [--check] [--auto] [--sauf <iid>] [--iid <iid>]
   bash scripts/git/worktree.sh sessions [<iid>|--tous]
+  bash scripts/git/worktree.sh temps <iid> [--depuis <instant>]
   bash scripts/git/worktree.sh avant [--retirer|--ramasser] [--sans-fetch] <iid>
 
 `avant` monte l'AVANT d'une relecture visuelle (#977) : un worktree DÉTACHÉ sur origin/main,
@@ -125,6 +126,13 @@ La reprise passe par l'IDENTIFIANT (`claude --resume <id>`), qui court-circuite 
 d'onglet vient du registre `<config>/sessions/<PID>.json`, qu'aucun redémarrage n'efface — il est
 indexé par PID, donc muet sur ce qui tourne encore, mais c'est la seule source du nom. Portée : ce
 que CETTE MACHINE a produit, comme `gc`.
+
+`temps` MESURE le temps de travail d'un ticket sur ces mêmes transcripts (#1244, docs/10 §3.3) :
+la somme des TOURS de ses sessions — d'un prompt au dernier geste de la session qui le suit —,
+sans l'attente de la personne entre deux prompts. Une ligne TSV : secondes, sessions, tours,
+régime (interactif, run, ou les deux). `--depuis` (instant ou date) écarte les tours finis avant
+le démarrage du ticket. Code 3 : aucune session du ticket sur ce poste — rien à mesurer.
+`lib.sh log-time-mesure` l'appelle à la clôture ; c'est lui qui logge.
 
 Options de création :
   --branche <nom>   Nom de branche imposé (par défaut : résolu depuis le ticket via lib.sh).
@@ -1559,6 +1567,192 @@ commande_sessions() {
   fi
 }
 
+# --- temps : le temps de travail d'un ticket, MESURÉ sur ses sessions (#1244) -----------------------
+# Le temps loggé à la clôture était une ESTIMATION de la session qui clôt (« 4h » sur #1226), sans
+# lien avec la durée réelle — alors que chaque session Claude Code horodate chacune de ses lignes.
+# Ce verbe les LIT, et c'est la source des deux régimes à la fois : une session de run (`claude -p`,
+# lancée par run.sh DANS le worktree) range son transcript au même endroit qu'une session
+# interactive relocalisée par /ticket-start (voir `sessions`). Le flux `<iid>.jsonl` du journal d'un
+# run n'en est que la copie au fil de l'eau ; lire les transcripts compte en une seule lecture un
+# ticket commencé en run et fini en interactif, ce que le journal seul ne verrait pas.
+#
+# CE QUI SE COMPTE, CE SONT LES TOURS. Un tour s'ouvre sur un prompt (celui de la personne, ou celui
+# du pilote) et se ferme sur le dernier geste de la session qui le suit — réponse, appel d'outil,
+# retour d'outil. Ce qui sépare deux tours est l'attente de la PERSONNE (une nuit, un déjeuner, une
+# autre fenêtre) : cela ne se compte pas, et c'est ce qui dispense de tout seuil de pause — un
+# chiffre qu'il aurait fallu choisir.
+#
+# Tout se lit sur la STRUCTURE de la ligne, jamais sur son texte (un motif échappé dans une chaîne
+# porte ses antislashs, et ne peut donc pas matcher). Trois sortes de lignes :
+#   - les GESTES prolongent le tour : une réponse (`"role":"assistant"`), un retour d'outil
+#     (`"tool_use_id":"`), et une NOTIFICATION DE TÂCHE (`"kind":"task-notification"`) — elle rend
+#     la main à une session qui attendait SA commande d'arrière-plan, un filet CI de dix minutes, et
+#     ce temps-là est du travail ;
+#   - les lignes `isMeta` (le texte déplié d'une commande, le préambule d'une commande locale),
+#     `isSidechain` (le prompt d'un sous-agent) et `isCompactSummary` (le résumé d'une compaction)
+#     ne comptent pour rien : ni prompt, ni geste. Un préambule écrit après une heure d'attente
+#     étirerait sinon le tour précédent jusqu'à lui ;
+#   - toute autre ligne « user » OUVRE un tour, origine inconnue comprise : dans le doute, mieux vaut
+#     ne pas compter une attente que la compter. Relevé sur les 600 transcripts les plus récents du poste
+# (2026-09-23) : 39 773 lignes « user » et 60 092 « assistant », toutes à ce motif et horodatées,
+# aucune ne portant deux clés `timestamp`.
+#
+# LES AGENTS DU PRODUIT NE SONT PAS DES SESSIONS DU TICKET. Quand le banc des scénarios ou la Control
+# Tower jouent dans le worktree, Maestro lance ses agents par le SDK Python, et le CLI range leurs
+# transcripts dans le même répertoire — dix-huit sur #1232, au point d'entrée `sdk-py`. Tout `sdk-*`
+# est écarté, sauf `sdk-cli` : c'est le `claude -p` du pilote d'un run.
+#
+# UNION, PAS SOMME : deux transcripts peuvent couvrir les mêmes instants (une session reprise dont le
+# CLI a recopié l'historique dans un fichier neuf, deux fenêtres sur le même ticket). Les tours de
+# toutes les sessions sont fusionnés avant d'être additionnés — la règle de « sous outil » dans
+# `journal.sh audit`.
+#
+# `--depuis` borne par le DÉMARRAGE du ticket (l'instant que `lib.sh begin` consigne) : un tour fini
+# avant ne compte pas. C'est nécessaire parce que le transcript déménage TOUT ENTIER dans le worktree
+# à la relocalisation : une session qui avait parlé d'autre chose avant /ticket-start emporte ce
+# passé avec elle. Le tour qui ENJAMBE le démarrage compte en entier — c'est celui du /ticket-start,
+# pré-vol compris.
+#
+# SEULES LES SESSIONS RANGÉES SOUS LE WORKTREE DU TICKET comptent. La session courante n'est pas
+# ajoutée d'office (`CLAUDE_CODE_SESSION_ID`) : essayé, elle comptait pour N'IMPORTE QUEL ticket
+# mesuré depuis elle — #1232 rendait le temps de la session qui travaillait sur #1244. Un ticket
+# traité `ICI`, dans le clone principal, n'a donc rien à mesurer : le verbe le dit (code 3), et
+# rien n'est estimé à la place.
+commande_temps() {
+  local iid="" depuis="" depuis_s=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -h|--help) usage; return 0 ;;
+      --depuis)
+        shift
+        depuis="${1:-}"
+        if [ -z "$depuis" ]; then erreur "--depuis attend un instant ou une date"; return 2; fi ;;
+      -*) printf 'Option inconnue : %s\n\n' "$1" >&2; usage >&2; return 2 ;;
+      *)
+        case "$1" in
+          ''|*[!0-9]*) erreur "iid attendu (un nombre), reçu « $1 »"; return 2 ;;
+        esac
+        iid="$1" ;;
+    esac
+    shift
+  done
+  if [ -z "$iid" ]; then erreur "iid manquant — temps <iid> [--depuis <instant>]"; return 2; fi
+  if [ -n "$depuis" ]; then
+    depuis_s="$(date -d "$depuis" +%s 2>/dev/null)" || {
+      erreur "--depuis : instant illisible « $depuis »"; return 2
+    }
+  fi
+
+  local dossier f
+  local -a fichiers=()
+  if [ -d "$(sessions_racine)" ]; then
+    while IFS= read -r dossier; do
+      [ -n "$dossier" ] || continue
+      for f in "$dossier"/*.jsonl; do
+        [ -f "$f" ] && fichiers+=("$f")
+      done
+    done < <(sessions_buckets "$iid" 2>/dev/null)
+  fi
+  if [ "${#fichiers[@]}" -eq 0 ]; then
+    printf 'aucune session du ticket #%s sur ce poste\n' "$iid" >&2
+    return 3
+  fi
+
+  # Le programme est passé en TEXTE et non chargé d'une variable : une affectation par `$(cat <<…)`
+  # coûterait un processus à CHAQUE appel de ce script, `create` et `gc` compris.
+  LC_ALL=C awk -v depuis="$depuis_s" -v iid="$iid" '
+    # _epoch : « 2026-09-23T17:06:18.643Z » -> secondes. La formule de `_epoch` dans `journal.sh`
+    # (AWK_AUDIT_EXTRAIT), recopiée parce que les deux programmes sont passés en texte à awk et
+    # qu aucun `-f` ne les relie ; même raison de l écrire à la main : `mktime` est une extension
+    # gawk, et l image du job pytest a `mawk`. Tout est en Z : aucun fuseau n entre dans le calcul.
+    function _epoch(s,   y, mo, dd, h, mi, se, ms, era, yoe, doy, doe, a) {
+      if (length(s) < 19) return -1
+      y = substr(s, 1, 4) + 0; mo = substr(s, 6, 2) + 0; dd = substr(s, 9, 2) + 0
+      h = substr(s, 12, 2) + 0; mi = substr(s, 15, 2) + 0; se = substr(s, 18, 2) + 0
+      ms = (substr(s, 20, 1) == ".") ? substr(s, 21, 3) + 0 : 0
+      a = y; if (mo <= 2) a -= 1
+      era = int((a >= 0 ? a : a - 399) / 400)
+      yoe = a - era * 400
+      doy = int((153 * (mo + (mo > 2 ? -3 : 9)) + 2) / 5) + dd - 1
+      doe = yoe * 365 + int(yoe / 4) - int(yoe / 100) + doy
+      return (era * 146097 + doe - 719468) * 86400 + h * 3600 + mi * 60 + se + ms / 1000
+    }
+    # La clé `"timestamp":"` fait 13 caractères : la valeur commence juste après.
+    function _ts(s,   p) {
+      p = index(s, "\"timestamp\":\"")
+      return (p == 0) ? -1 : _epoch(substr(s, p + 13, 24))
+    }
+    function _ferme_tour() {
+      if (d >= 0) { nt++; TD[nt] = d; TF[nt] = f }
+      d = -1; f = -1
+    }
+    # Un fichier se juge ENTIER, une fois lu : son point d entrée peut n apparaître qu après ses
+    # premières lignes, et c est lui qui décide si ses tours comptent.
+    function _ferme_fichier(   i, gardes) {
+      _ferme_tour()
+      if (fichier != "" && !(ep ~ /^sdk-/ && ep != "sdk-cli")) {
+        gardes = 0
+        for (i = 1; i <= nt; i++) {
+          if (TF[i] < depuis) continue
+          n++; D[n] = TD[i]; F[n] = TF[i]; gardes++
+        }
+        if (gardes > 0) {
+          sessions++; tours += gardes
+          if (ep == "sdk-cli") de_run = 1; else interactif = 1
+        }
+      }
+      nt = 0; ep = ""
+    }
+    BEGIN { d = -1; f = -1 }
+    FNR == 1 { _ferme_fichier(); fichier = FILENAME }
+    ep == "" && (p = index($0, "\"entrypoint\":\"")) > 0 {
+      ep = substr($0, p + 14); sub(/".*/, "", ep)
+    }
+    {
+      u = (index($0, "\"type\":\"user\",\"message\":{\"role\":\"user\"") > 0)
+      if (!u && index($0, "\"role\":\"assistant\"") == 0) next
+      t = _ts($0)
+      if (t < 0) next
+      if (u && index($0, "\"tool_use_id\":\"") == 0 && index($0, "\"kind\":\"task-notification\"") == 0) {
+        # Ni un retour d outil, ni une notification : un prompt, ou une ligne qui n est PAS un geste.
+        # Une ligne méta ne prolonge pas le tour non plus : le préambule d une commande locale
+        # (`/model` tapé après une heure d attente) porte l heure où il est écrit, et l étirerait
+        # jusqu à elle.
+        if (index($0, "\"isMeta\":true") > 0 || index($0, "\"isSidechain\":true") > 0 \
+            || index($0, "\"isCompactSummary\":true") > 0) next
+        _ferme_tour(); d = t; f = t
+        next
+      }
+      # Un GESTE : réponse, retour d outil, notification. Sans prompt devant lui (transcript
+      # tronqué), il ouvre son tour là où il commence.
+      if (d < 0) d = t
+      if (t > f) f = t
+    }
+    END {
+      _ferme_fichier()
+      if (sessions == 0) {
+        printf "aucun tour de session du ticket #%s%s\n", iid, \
+          (depuis > 0 ? " depuis son démarrage" : " (agents du produit seulement)") > "/dev/stderr"
+        exit 3
+      }
+      for (i = 2; i <= n; i++) {
+        x = D[i]; y = F[i]; j = i - 1
+        while (j >= 1 && D[j] > x) { D[j + 1] = D[j]; F[j + 1] = F[j]; j-- }
+        D[j + 1] = x; F[j + 1] = y
+      }
+      total = 0; cd = -1
+      for (i = 1; i <= n; i++) {
+        if (cd < 0) { cd = D[i]; cf = F[i]; continue }
+        if (D[i] <= cf) { if (F[i] > cf) cf = F[i]; continue }
+        total += cf - cd; cd = D[i]; cf = F[i]
+      }
+      if (cd >= 0) total += cf - cd
+      regime = (de_run && interactif) ? "run+interactif" : (de_run ? "run" : "interactif")
+      printf "%d\t%d\t%d\t%s\n", int(total + 0.5), sessions, tours, regime
+    }
+  ' "${fichiers[@]}"
+}
+
 # --- gc : ramasser les worktrees soldés (#197) ------------------------------------------------------
 # travail_non_sauvegarde <chemin> <branche> [sha] -> « <fichiers non commités> <commits non poussés> ».
 #
@@ -2220,6 +2414,7 @@ case "$cmd" in
   avant)       commande_avant "$@" ;;
   gc)          commande_gc "$@" ;;
   sessions)    commande_sessions "$@" ;;
+  temps)       commande_temps "$@" ;;
   -h|--help|'') usage ;;
   # Raccourci : un iid nu vaut `create <iid>`.
   *[!0-9]*)    printf 'Sous-commande inconnue : %s\n\n' "$cmd" >&2; usage >&2; exit 2 ;;

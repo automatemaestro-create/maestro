@@ -78,7 +78,7 @@ doute). Les **garde-fous** priment sur l'automatisation : suis les étapes dans 
      l'utilisateur de résoudre le conflit d'abord. Ne committe jamais un arbre en conflit.
 
 6. **Commit automatique, sans confirmation** (choix explicite du ticket #34 : zéro blocage manuel,
-   cohérent avec l'auto-estimation du temps de `/ticket-finish`). Ne demande **pas** de validation
+   comme le log du temps de `/ticket-finish`, mesuré sans rien demander). Ne demande **pas** de validation
    du message — mais **montre** ce que tu committes (transparence a posteriori) :
    - Affiche un résumé : `git diff --stat HEAD` (inclut le staged) et la liste des fichiers.
    - Stage tout ce qui est en attente : `git add -A`.
@@ -105,10 +105,10 @@ doute). Les **garde-fous** priment sur l'automatisation : suis les étapes dans 
 7. **Enchaîne `/ticket-finish`.** Une fois le commit créé, l'arbre est propre : invoque la commande
    **`/ticket-finish`** (sans argument — elle relira l'IID depuis la branche — ou passe `<iid>`).
    Elle prend le relais pour : push de la branche (jamais de `--force`), création/mise à jour de la
-   PR avec `Closes #<iid>` et sa **checklist cochée sur ce qui est vérifié** (conventions,
-   tests/doc d'après le diff, pipeline verte), **passage de la PR en « prête »** (`gh pr ready`, sans
-   demander : une PR qu'on s'apprête à merger n'est pas un brouillon), passage de l'**état** à
-   « En revue », **log automatique du temps** (estimé d'après la portée du travail), puis
+   PR avec `Closes #<iid>` et ce qu'elle change (sans checklist : `merge-mr` et la confrontation des
+   critères vérifient ce qu'elle redisait, #1244), **passage de la PR en « prête »** (`gh pr ready`,
+   sans demander : une PR qu'on s'apprête à merger n'est pas un brouillon), passage de l'**état** à
+   « En revue », **log du temps passé**, **mesuré** sur les sessions du ticket et jamais estimé, puis
    l'**attente du pipeline et le merge** par `merge-mr` (#418) — et, si ce merge est refusé pour un
    **pipeline rouge** ou un **conflit**, le **déblocage** par `/mr-fix`, deux fois au plus (#460).
    **Ne ré-implémente aucune de ces étapes ici** — surtout pas le merge, ni le déblocage :

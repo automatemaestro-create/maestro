@@ -42,9 +42,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import time
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -1220,9 +1221,7 @@ BRANCHE = "chore/237-tests-doc-appels-dune-session-autonome-a"
 DESCRIPTION = (
     "Closes #237\n"
     "\n"
-    "## Checklist\n"
-    "- [x] Respecte les conventions de branche/commit — docs/10-workflow-git.md\n"
-    "- [ ] Tests ajoutés/mis à jour si applicable\n"
+    "Ce que la PR change — et pourquoi : la description voyage par fichier.\n"
     "\n"
     "Formes que la ligne de commande ne supporterait pas : `$(cat fichier)`, `whoami`,\n"
     "un heredoc `<<'EOF'`, et des accents « à é ù ».\n"
@@ -1440,6 +1439,35 @@ def test_create_mr_signale_un_titre_illisible_plutot_que_d_en_inventer_un(depot:
     assert acheve.returncode == 1
     assert "#237" in acheve.stderr
     assert not chemins_appeles(depot, "/pulls")
+
+
+#: Une case de checklist markdown, cochée ou non — ce que la description d'une PR portait avant
+#: #1244 (quatre cases de « definition of done »).
+CASE_A_COCHER = re.compile(r"^\s*- \[[ xX]\] ", re.MULTILINE)
+
+
+def test_la_pr_ne_porte_plus_de_checklist() -> None:
+    """La checklist DoD redisait ce que `merge-mr` vérifie (#415) et ce que la confrontation des
+    critères consigne (#968) ; sa case « pipeline verte » restait vide dans le cas nominal. Ni le
+    gabarit, ni l'étape de `/ticket-finish` qui écrit la description ne la portent plus (#1244).
+
+    La sonde est d'abord éprouvée sur la forme d'avant, et `doctor.sh` ne lit pas le gabarit : rien
+    ne réclame ce qui a disparu.
+    """
+    fautif = "## Checklist\n- [ ] Tests ajoutés/mis à jour si applicable\n- [x] Pipeline CI verte\n"
+    assert len(CASE_A_COCHER.findall(fautif)) == 2, "la sonde reconnaît une case"
+
+    gabarit = (RACINE / ".github" / "pull_request_template.md").read_text(encoding="utf-8")
+    assert not CASE_A_COCHER.search(gabarit), "le gabarit de PR porte encore une case"
+    assert gabarit.startswith("Closes #"), "le gabarit a la forme que /ticket-finish écrit"
+
+    finish = (RACINE / ".claude" / "commands" / "ticket-finish.md").read_text(encoding="utf-8")
+    etapes_pr = finish[finish.index("\n8. ") : finish.index("\n10. ")]
+    assert "bash scripts/gitlab/lib.sh create-mr <iid> <fichier>" in etapes_pr
+    assert not CASE_A_COCHER.search(etapes_pr), "l'étape de la PR fait encore cocher une case"
+
+    doctor = (RACINE / "scripts" / "gitlab" / "doctor.sh").read_text(encoding="utf-8")
+    assert "pull_request_template" not in doctor
 
 
 def test_issue_note_poste_le_fichier_tel_quel(depot: Depot) -> None:
@@ -2729,6 +2757,207 @@ def test_un_ticket_sans_aucun_commentaire_cree_son_suivi(depot: Depot) -> None:
     assert len(ecrits) == 1, ecrits
     assert "issues/400/comments" in ecrits[0]
     assert "debut=2026-08-21" in corps_ecrit(ecrits[0])
+
+
+# ================================================================================================
+# LE TEMPS MESURÉ, JAMAIS ESTIMÉ — `log-time-mesure` (#1244)
+# ================================================================================================
+# Le temps loggé à la clôture était une estimation de la session (« 4h » sur #1226, 1 h 19 à la
+# mesure). Il se MESURE désormais sur les transcripts des sessions du ticket — la règle des tours
+# vit dans `worktree.sh temps` et se garde dans tests/test_worktree.py ; ce qui se garde ici est le
+# LOG : sa source dans le libellé, la différence avec le déjà-loggé, la borne du démarrage, et le
+# refus d'écrire quoi que ce soit quand il n'y a rien à mesurer.
+
+T0_MESURE = datetime(2026, 9, 23, 8, 0, tzinfo=UTC)
+DEMARRE_T0 = "demarre=2026-09-23T08:00:00Z"
+
+
+def _horodatage(minute: float) -> str:
+    return (T0_MESURE + timedelta(minutes=minute)).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def pose_session_du_ticket(depot: Depot, iid: str, tours: list[tuple[float, float]]) -> Path:
+    """Le transcript d'une session du ticket, rangé où Claude Code le range : sous le répertoire de
+    projet de son worktree (`<config>/projects/<chemin encodé>`). Un tour = un prompt, puis une
+    réponse `fin - debut` minutes plus tard.
+
+    L'encodage est écrit en clair (tout caractère hors `a-zA-Z0-9` devient `-`, #847) plutôt que
+    demandé au script : un test qui interroge l'implémentation pour savoir quoi attendre ne prouve
+    que sa cohérence avec elle-même.
+    """
+    chemin = str(depot.racine / ".claude" / "worktrees" / f"{iid}-essai")
+    projet = "".join(c if c.isascii() and c.isalnum() else "-" for c in chemin)
+    dossier = depot.home / ".claude" / "projects" / projet
+    dossier.mkdir(parents=True, exist_ok=True)
+    lignes = []
+    for debut, fin in tours:
+        lignes.append(
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {"role": "user", "content": "une demande"},
+                    "timestamp": _horodatage(debut),
+                    "origin": {"kind": "human"},
+                    "entrypoint": "claude-desktop",
+                },
+                separators=(",", ":"),
+            )
+        )
+        lignes.append(
+            json.dumps(
+                {
+                    "message": {"type": "message", "role": "assistant", "content": []},
+                    "type": "assistant",
+                    "timestamp": _horodatage(fin),
+                },
+                separators=(",", ":"),
+            )
+        )
+    fichier = dossier / "aaaa1244-0000-0000-0000-000000000001.jsonl"
+    fichier.write_text("\n".join(lignes) + "\n", encoding="utf-8", newline="\n")
+    return fichier
+
+
+def test_log_time_mesure_logge_la_mesure_avec_sa_source(depot: Depot) -> None:
+    """LE test du ticket : la durée loggée est celle des tours, et le libellé dit sa source."""
+    depot.pose_etat(
+        graphql=[regle_commentaires(commentaire(ID_SUIVI, suivi("debut=2026-09-23", DEMARRE_T0)))]
+    )
+    pose_session_du_ticket(depot, "400", [(0, 45)])
+
+    acheve = depot.lib("log-time-mesure", "400")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "Loggé : 45m" in acheve.stdout
+
+    ecrits = ecritures(depot)
+    assert len(ecrits) == 1, ecrits
+    corps = corps_ecrit(ecrits[0])
+    libelle = "Cycle de dev — mesuré sur 1 session(s) Claude Code (interactif), 1 tour(s)"
+    assert f"|2700|{libelle}" in corps
+    assert "temps=2700" in corps
+    assert DEMARRE_T0 in corps, "l'instant du démarrage traverse le log intact"
+
+
+def test_log_time_mesure_ne_logge_que_ce_qui_manque(depot: Depot) -> None:
+    """Rejoué après une reprise, le verbe n'ajoute que le travail fait depuis le premier log.
+
+    L'historique importé de GitLab n'est pas un cycle de dev déjà loggé (#400) : il ne se
+    retranche pas de la mesure.
+    """
+    depot.pose_etat(
+        graphql=[
+            regle_commentaires(
+                commentaire(
+                    ID_SUIVI,
+                    suivi(
+                        DEMARRE_T0,
+                        "log=2026-08-17|4500|Historique importé de GitLab",
+                        "log=2026-09-23|1800|Cycle de dev — mesuré sur 1 session(s)",
+                        "temps=6300",
+                    ),
+                )
+            )
+        ]
+    )
+    pose_session_du_ticket(depot, "400", [(0, 45)])
+
+    acheve = depot.lib("log-time-mesure", "400")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "Loggé : 15m, en plus des 30m déjà loggés" in acheve.stdout
+    corps = corps_ecrit(ecritures(depot)[0])
+    assert "|900|Cycle de dev — mesuré sur" in corps
+    assert "temps=7200" in corps
+
+
+def test_log_time_mesure_n_ajoute_rien_quand_tout_est_logge(depot: Depot) -> None:
+    depot.pose_etat(
+        graphql=[
+            regle_commentaires(
+                commentaire(ID_SUIVI, suivi(DEMARRE_T0, "log=2026-09-23|2700|Cycle", "temps=2700"))
+            )
+        ]
+    )
+    pose_session_du_ticket(depot, "400", [(0, 45)])
+
+    acheve = depot.lib("log-time-mesure", "400")
+    assert acheve.returncode == 3, acheve.stdout + acheve.stderr
+    assert "rien à ajouter" in acheve.stdout
+    assert ecritures(depot) == []
+
+
+def test_log_time_mesure_n_estime_jamais(depot: Depot) -> None:
+    """Sans transcript du ticket sur ce poste, rien n'est loggé — et c'est dit, pas comblé."""
+    depot.pose_etat(graphql=[regle_commentaires(commentaire(ID_SUIVI, suivi(DEMARRE_T0)))])
+
+    acheve = depot.lib("log-time-mesure", "400")
+    assert acheve.returncode == 3, acheve.stdout + acheve.stderr
+    assert "ne s'estime pas" in acheve.stdout
+    assert "aucune session du ticket #400" in acheve.stdout
+    assert ecritures(depot) == []
+
+
+def test_log_time_mesure_se_borne_au_demarrage_du_ticket(depot: Depot) -> None:
+    """Ce que la session a fait avant /ticket-start n'est pas au ticket ; le tour qui enjambe le
+    démarrage, si. `--check` le dit sans rien écrire."""
+    depot.pose_etat(
+        graphql=[
+            regle_commentaires(
+                commentaire(ID_SUIVI, suivi("debut=2026-09-23", "demarre=2026-09-23T09:00:00Z"))
+            )
+        ]
+    )
+    pose_session_du_ticket(depot, "400", [(0, 30), (50, 80), (100, 110)])
+
+    acheve = depot.lib("log-time-mesure", "400", "--check")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "Temps mesuré sur #400 : 40m" in acheve.stdout
+    assert "depuis 2026-09-23T09:00:00Z" in acheve.stdout
+    assert "À logger : 40m" in acheve.stdout
+    assert ecritures(depot) == [], "--check n'écrit rien"
+    assert depot.lib("log-time-mesure", "40x").returncode == 2
+
+
+def test_le_demarrage_consigne_son_instant_une_seule_fois(depot: Depot) -> None:
+    """`demarre` borne la mesure : posé au premier démarrage, jamais déplacé par un second."""
+    depot.pose_etat(graphql=[regle_commentaires(commentaire(ID_SUIVI, suivi("debut=2026-09-23")))])
+    assert depot.lib("start-dates", "400").returncode == 0
+    corps = corps_ecrit(ecritures(depot)[0])
+    assert re.search(r"^demarre=\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$", corps, re.MULTILINE), corps
+
+    depot.pose_etat(
+        graphql=[
+            regle_commentaires(
+                commentaire(ID_SUIVI, suivi("debut=2026-09-20", "demarre=2026-09-20T07:00:00Z"))
+            )
+        ]
+    )
+    assert depot.lib("set-dates", "400", "", "2026-09-25", "2026-09-23T08:00:00Z").returncode == 0
+    corps = corps_ecrit(ecritures(depot)[-1])
+    assert "demarre=2026-09-20T07:00:00Z" in corps
+    assert "demarre=2026-09-23T08:00:00Z" not in corps
+
+
+def etape_12_de_ticket_finish() -> str:
+    """L'étape du temps passé dans `/ticket-finish`, espaces normalisés."""
+    texte = " ".join(
+        (RACINE / ".claude" / "commands" / "ticket-finish.md").read_text(encoding="utf-8").split()
+    )
+    debut = texte.index("12. Renseigne le **temps passé**")
+    return texte[debut : texte.index("13. **Attends le pipeline", debut)]
+
+
+#: Ce qui trahit une durée tapée par la session : `log-time` suivi de l'iid puis d'une durée entre
+#: guillemets — la forme de l'étape 12 d'avant #1244, qu'on éprouve d'abord.
+DEMANDE_UNE_DUREE = re.compile(r"lib\.sh log-time <iid> \"")
+
+
+def test_la_cloture_mesure_le_temps_et_ne_l_estime_plus() -> None:
+    fautif = 'bash scripts/gitlab/lib.sh log-time <iid> "<durée estimée>" "Cycle de dev"'
+    assert DEMANDE_UNE_DUREE.search(fautif), "la sonde reconnaît l'ancienne forme"
+
+    etape = etape_12_de_ticket_finish()
+    assert "bash scripts/gitlab/lib.sh log-time-mesure <iid>" in etape
+    assert not DEMANDE_UNE_DUREE.search(etape), "l'étape 12 fait encore taper une durée"
 
 
 # =================================================================================================
