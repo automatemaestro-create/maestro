@@ -71,6 +71,8 @@ Sa règle centrale, elle, disparaît : *une hypothèse énoncée vaut mieux qu'u
 - **[docs/31 §3.5](./31-decision-surface-ecriture-agents.md) : un agent ne recrute pas pendant un run.** Une tâche qu'aucun rôle ne sait prendre est **signalée** (#1041). Recruter reste un geste validé hors du run.
 - **D5 : le brief est validé avant la décomposition.** L'équipe ne se forme pas dans un run, elle se forme à la création du projet.
 
+> ⚠ **Les deux puces qui précèdent sont renversées en partie le 2026-09-23** ([docs/42](./42-decision-equipe-ajustee-au-plan.md), #1227), à la demande de la personne. Après la décomposition, l'orchestrateur confronte l'équipe au plan et **propose** dans le fil le rôle qui manque. Accepté, le rôle est recruté **pendant le run**, avant l'exécution. Décliné ou sans réponse, le run continue avec l'équipe qu'il a. Ne bougent pas : un agent ne recrute jamais (docs/31 §3.5), rien n'est recruté sans accord (#1040), et le brief reste validé avant la décomposition (D5).
+
 ## 4. Les arbitrages rendus par `/idee`, à contredire au besoin
 
 1. **Les agents figés deviennent des gabarits de rôle**, pas des agents (§2.1). La demande est tenue à la lettre, puisque aucun projet ne naît avec un agent, et la matière n'est pas perdue.
