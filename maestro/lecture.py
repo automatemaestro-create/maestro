@@ -117,9 +117,12 @@ SUBSTITUTIONS = ("$(", "`")
 #: #1197 nomme — *lister, chercher, ouvrir un fichier* —, et rien de plus. Elle
 #: s'allonge sur des **gestes constatés**, jamais sur ce qu'on imagine qu'un
 #: agent pourrait taper : `cd` y est entré parce qu'un run réel a écrit
-#: `cd "<racine>" && ls -la .maestro`, et personne ne l'avait prévu.
+#: `cd "<racine>" && ls -la .maestro`, et personne ne l'avait prévu ; `test` et
+#: `[` parce que le passage `20260922-164402` a fait attendre un humain sur
+#: `ls -la .agents/skills/ 2>/dev/null; test -f …/SKILL.md && echo "skill present"`
+#: (#1211).
 #:
-#: Quatre absences sont des décisions, pas des oublis :
+#: Cinq absences sont des décisions, pas des oublis :
 #:
 #: - `sed` et `awk` **écrivent** (`sed -i`, `sed 's/…/…/w f'`, `print > "f"` dans
 #:   un programme awk, à l'abri des guillemets) : les reconnaître demanderait de
@@ -131,7 +134,11 @@ SUBSTITUTIONS = ("$(", "`")
 #:   passer échangerait une attente d'humain contre une attente sans fin ;
 #: - `env` et `printenv` sont des lectures, et pourtant non : l'environnement
 #:   d'un agent est l'endroit où vivent ses **secrets** (#109), et `env` sert
-#:   surtout à lancer une commande sous un autre environnement.
+#:   surtout à lancer une commande sous un autre environnement ;
+#: - `[[` n'est pas `[` : c'est un mot-clé de bash, qui **évalue** ses opérandes
+#:   arithmétiques — `[[ $x -eq 0 ]]` exécute la substitution que la *valeur* de
+#:   `x` contient, sans qu'aucun `$(` n'apparaisse dans le texte qu'on juge
+#:   (mesuré sous bash 5.2 pour #1211, là où `[ "$x" -eq 0 ]` reste inerte).
 VERBES_LECTURE: dict[str, frozenset[str]] = {
     # Se placer — `cd` ne touche à rien : il déplace le pied des chemins de sa
     # propre commande, et chaque maillon est jugé pour lui-même de toute façon.
@@ -153,6 +160,20 @@ VERBES_LECTURE: dict[str, frozenset[str]] = {
     "tail": frozenset(),
     "nl": frozenset(),
     "wc": frozenset(),
+    # Tester un fichier — son existence, sa nature, ses droits (`-f`, `-d`,
+    # `-e`, `-s`, `-x`, `-w`…) : le shell regarde le disque et rend un code,
+    # rien d'autre. `-x` et `-w` en sont : ils demandent si l'on *pourrait*,
+    # ils ne le font pas. `[` est le même builtin sous un autre nom ; son `]`
+    # final n'est pas exigé, parce qu'un `[` qui l'oublie échoue sans rien
+    # faire, et la seule question ici est *agit-il ?*.
+    #
+    # ⚠ `-v` en est retiré, et ce n'est pas un test de fichier : il demande si
+    # une **variable** existe, et bash évalue l'indice d'un tableau —
+    # `test -v "a[y]"` exécute la substitution que la valeur de `y` contient
+    # (mesuré sous bash 5.2 pour #1211). Les tests de variables ne sont pas
+    # l'affaire de ce module ; celui-là fait exécuter.
+    "test": frozenset({"-v"}),
+    "[": frozenset({"-v"}),
     # Chercher dedans
     "grep": frozenset(),
     "egrep": frozenset(),
