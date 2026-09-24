@@ -100,6 +100,14 @@ bus, mais elle avait été câblée côté API seulement. L'hôte détaché éta
 la vraie stack, aucun agent ne pouvait donc poser de question, jusqu'à ce que
 #1259 la branche ici, au même geste que les trois autres.
 
+La **proposition de renfort** (#1227) est la cinquième, arrivée avec #1260, et son
+absence a montré la même chose : sur la vraie stack, le moteur constatait qu'un
+rôle manquait au plan, le consignait, puis rendait la main faute d'arbitre —
+personne ne voyait rien, et les tâches du métier absent échouaient au routage.
+`ArbitreRenfortControlTower` publie la demande sur le même bus, l'API la relaie
+dans le fil (`RelaisRenfort`), et la décision revient par `renfort.decision`. Les
+deux hôtes câblent désormais le même arbitre.
+
 **Un seul bus les sert toutes**, guet d'annulation compris, et ce n'est
 pas une économie de style : `RedisEventBus.subscribe` ouvre un `pubsub` par appel
 sur un client partagé, si bien que cinq bus coûteraient cinq connexions là où
@@ -1044,6 +1052,7 @@ async def _derouler(ordre: OrdreRun, atelier: Path) -> RunReport:
         ArbitreClarificationControlTower,
     )
     from maestro.controltower.question import ArbitreQuestionControlTower
+    from maestro.controltower.renfort import ArbitreRenfortControlTower
     from maestro.controltower.validation import ValidateurControlTower
     from maestro.engine.guardrails import Guardrails
     from maestro.engine.loop import OrchestrationEngine
@@ -1067,8 +1076,9 @@ async def _derouler(ordre: OrdreRun, atelier: Path) -> RunReport:
         # (`ServiceExecutions._derouler`) : les plafonds sont un réglage du
         # **lancement**, donc ils voyagent dans l'ordre ; le **validateur** est un
         # câblage de déploiement, donc il se branche là où le run se déroule (#445).
-        # Idem pour les deux arbitres du brief : le **mode** voyage, l'**arbitre**
-        # se branche. Aucun n'est conditionné au mode — le moteur ignore
+        # Idem pour les deux arbitres du brief, et pour celui du renfort (#1260) :
+        # le **mode** voyage, l'**arbitre** se branche. Aucun n'est conditionné au
+        # mode — le moteur ignore
         # de lui-même un arbitre qu'il n'a pas à consulter (`loop.py`), et une
         # seconde règle ici serait une règle de plus à tenir d'accord avec la
         # sienne.
@@ -1098,6 +1108,13 @@ async def _derouler(ordre: OrdreRun, atelier: Path) -> RunReport:
             # demander. Même bus, même règle ; sa borne reste un réglage du
             # moteur (`MAESTRO_ARBITRAGE_ATTENTE`), comme côté API.
             questionneur=None if bus is None else ArbitreQuestionControlTower(bus),
+            # La proposition de renfort (#1227), **par le bus** depuis #1260 : la
+            # demande y est publiée, l'API la relaie dans le fil qui a lancé le
+            # run. Elle manquait ici, et c'était toute la panne : le moteur
+            # consignait le manque puis rendait la main, faute d'arbitre, et la
+            # personne ne voyait jamais rien. Sans bus, `None` : le run continue
+            # avec l'équipe actuelle, ses tâches au rôle le plus proche.
+            arbitre_renfort=None if bus is None else ArbitreRenfortControlTower(bus),
         )
         run = asyncio.create_task(
             moteur.run(

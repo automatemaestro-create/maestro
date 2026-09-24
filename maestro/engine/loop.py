@@ -1098,6 +1098,14 @@ class OrchestrationEngine:
         if manque is None:
             return
         self._consigne_manque(manque, projet_id, journal)
+        # Quoi qu'il advienne de la proposition, le run fait son travail avec
+        # l'équipe qu'il aura (#1260) : ce que **personne** n'y couvre va au rôle
+        # le plus proche au lieu de partir « à assigner ». Un refus, un silence,
+        # personne à qui proposer, rien à proposer — ou un second métier absent
+        # qu'on n'a jamais proposé, puisqu'on n'en propose qu'un par run (run
+        # `2e7f7278a991` : Designer recruté, validation QA « à assigner », 2/3).
+        # Ce qu'un rôle recruté couvre n'est pas touché : il le couvre.
+        self._executor.continuer_avec_l_equipe(journal.run_id)
         if self._arbitre_renfort is None or not manque.recrutable:
             return
         demande = DemandeRenfort(
@@ -1122,6 +1130,12 @@ class OrchestrationEngine:
                 approuve=False,
                 detail=f"la proposition de renfort n'a pas abouti : {echec}",
                 sans_reponse=True,
+            )
+        if decision.approuve:
+            # Le rôle recruté pour ce plan prend les tâches qui demandaient son
+            # métier (#1260) — ce que le fil vient de promettre en recrutant.
+            self._executor.equipe_completee(
+                journal.run_id, manque.manque.couvre or manque.manque.competences
             )
         self._consigne_renfort(manque, decision, projet_id, journal)
 
@@ -1180,8 +1194,17 @@ class OrchestrationEngine:
         suite = (
             "le run reprend avec l'équipe complétée"
             if decision.approuve
-            else "le run continue avec l'équipe actuelle"
+            else "le run continue avec l'équipe actuelle : ces tâches vont au "
+            "rôle le plus proche"
         )
+        # Ce que le rôle proposé ne couvre pas (#1260) — un second métier absent,
+        # qu'on n'a pas proposé : il se **dit**, puisqu'il ira au plus proche.
+        reste = sorted(set(manque.manque.competences) - set(manque.manque.couvre))
+        if decision.approuve and reste:
+            suite += (
+                f" ; personne ne couvre encore {', '.join(reste)}, ces tâches vont "
+                "au rôle le plus proche"
+            )
         detail = decision.detail.strip()
         journal.consigne(
             etape=ETAPE_EQUIPE,

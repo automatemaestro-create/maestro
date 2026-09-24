@@ -153,6 +153,7 @@ modèle, par la porte d'entrée réelle (le fil de l'orchestrateur) :
 | S3 | Reprendre un projet existant sans équipe | Le fil propose l'équipe **avant** de dépenser ; validée d'un geste, elle est créée et le run demandé aboutit |
 | S4 | « Pourquoi le run a échoué ? » | La réponse nomme la cause réelle, jugée par un modèle, jamais par un lexique (#746) |
 | S5 | « Comment j'essaie ce que le run a livré ? » | La fin du run **se raconte dans le fil**, met en lien un fichier du livrable qui **existe sur le disque**, et dit comment l'essayer — jugé par un modèle (#1224) |
+| S6 | Le plan appelle un métier que l'équipe n'a pas | Sur un projet d'un seul `dev`, le rôle manquant **se propose dans le fil** qui a lancé le run, avant la première tâche ; accepté, il prend ses tâches et le run aboutit (#1260) |
 
 **S3 a son comportement depuis #1146.** Sur un projet sans agent, le fil ne propose plus de run : il
 dit pourquoi (personne pour prendre les tâches) et propose l'équipe que l'analyse du projet appelle
@@ -181,9 +182,22 @@ le récit met en lien un fichier qui **existe sur le disque** (un chemin cité q
 un geste mort), et enfin la question « comment j'essaie ce que tu viens de livrer ? » reçoit une
 réponse dont un modèle juge qu'elle dit comment s'y prendre. Le détail est dans docs/05 §2.9.
 
+**S6 porte ce que les tests ne voyaient pas** (#1260). #1227 avait livré la confrontation de
+l'équipe au plan, tests verts. Le bouclage du 2026-09-24 l'a rejouée sur la vraie stack : rien dans
+le fil, run échoué 0/3. Les tests exerçaient l'hôte en process, et la vraie stack confie ses runs à
+l'**hôte détaché** (#446), qui n'avait pas d'arbitre de renfort. Depuis, les deux hôtes prennent le
+même chemin : la demande est publiée sur le bus, l'API la relaie dans le fil (docs/28 §3). Le
+scénario le rejoue par le fil, sur l'équipe d'un seul développeur. Il constate trois choses dans cet
+ordre : la demande paraît, rattachée au run ; l'accepter recrute ce seul rôle ; au moins une tâche
+va au rôle recruté. Son motif distingue les deux causes d'un rouge, qui ne se corrigent pas pareil :
+un manque **constaté** que personne n'a proposé, ou un plan qui n'a **nommé** aucun métier absent.
+La demande dit le besoin de design en toutes lettres. La phrase du bouclage laissait au plan le soin
+de juger si un développeur suffit, et il en a jugé ainsi trois fois sur six le 2026-09-24. Ce
+jugement est l'autre moitié de #1227, et il se mesure au bouclage : S6 mesure la chaîne qui suit.
+
 **Un jalon produit ne se boucle pas GO avec un scénario rouge** (#1152). Les scénarios ne sont pas
-en CI : un passage coûte du vrai modèle (le run du retex a coûté ~10 $). S2, S4 et S5 ne sont pas
-déterministes, donc un rouge se rejoue une fois avant d'être cru.
+en CI : un passage coûte du vrai modèle (le run du retex a coûté ~10 $). S2, S4, S5 et S6 ne sont
+pas déterministes, donc un rouge se rejoue une fois avant d'être cru.
 
 **Le banc simule un utilisateur qui regarde son run, donc il tranche par acte** (#1197). Il
 approuve les arbitrages d'action sensible de *son* run et de lui seul (#570) ; il n'en approuvait

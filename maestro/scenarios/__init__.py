@@ -3,7 +3,7 @@
     .venv/Scripts/python.exe -m maestro.scenarios [--scenario S1[,S3]] [--delai <s>]
                                                   [--nettoyer] [--liste]
 
-Quatre scénarios joués de bout en bout contre la **vraie stack** et le **vrai
+Six scénarios joués de bout en bout contre la **vraie stack** et le **vrai
 modèle**, par la porte d'entrée réelle — le fil de l'orchestrateur, proposition
 puis accord —, avec un verdict, un coût, une durée et un `run_id` par scénario
 (docs/40 §5). Il n'est **pas en CI** : un passage coûte du vrai modèle.
@@ -11,7 +11,7 @@ puis accord —, avec un verdict, un coût, une durée et un `run_id` par scéna
 Le détail vit dans les modules, chacun sur une question :
 
 - `banc` — le déroulé, le rejeu d'un rouge non déterministe, la ligne de commande ;
-- `scenarios` — les quatre scénarios et leurs oracles ;
+- `scenarios` — les scénarios et leurs oracles ;
 - `api` — la porte d'entrée : l'API de la Control Tower, en HTTP ;
 - `projets` — les projets jetables, et ce qu'on y lit après un run ;
 - `juge` — l'oracle de S4, rendu par un modèle et jamais par un lexique (#746) ;

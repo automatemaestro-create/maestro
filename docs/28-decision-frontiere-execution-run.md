@@ -86,7 +86,19 @@ si le flux se tarit, **lever** plutôt que d'approuver par défaut.
 | Réponses de clarification (#321) | `ArbitreClarificationControlTower` | `en_attente_reponses` | `POST …/brief/reponses` |
 | Validation d'action sensible (#9/#48) | `ValidateurControlTower` | — | `POST /api/validations/{id}/decision` |
 
-Aucune n'a de time-out : l'attente est « indéfinie […], jamais un time-out silencieux »
+**Une quatrième l'a rejointe depuis : la proposition de renfort** (#1227, #1260). Quand le plan
+appelle un métier que l'équipe du projet n'a pas, le run s'arrête entre son plan et sa première
+tâche. `ArbitreRenfortControlTower` publie `renfort.demande`, l'API la **relaie dans le fil** qui a
+lancé le run (`RelaisRenfort`, appelé par la pompe), et la réponse revient par `renfort.decision`,
+que publie `POST /api/chat/{agent}/recrutement`. Elle diffère des trois autres sur deux points : sa
+borne est tenue des deux côtés, sur la même date (à l'échéance, l'arbitre reprend le run et le
+relais le dit dans le fil), et son issue par défaut est « on continue avec l'équipe actuelle »,
+jamais un refus. #1227 l'avait d'abord fait écrire directement dans le fil par l'arbitre, ce qui ne
+marchait que dans le process de l'API. L'hôte détaché n'en recevait donc aucun, et le bouclage du
+2026-09-24 l'a constaté sur la vraie stack. **Un arbitre câblé d'un seul côté est une attente qui
+n'existe pas de l'autre** : les deux hôtes câblent désormais le même, par le bus.
+
+Aucune des trois premières n'a de time-out : l'attente est « indéfinie […], jamais un time-out silencieux »
 (`validation.py:88-91`). Le statut de la projection décrit cet état ; il ne le remplace pas. **Une
 tâche asyncio vivante est bloquée là**, potentiellement des dizaines de minutes — et c'est la
 fenêtre exacte où un run coûte le plus cher à perdre, puisqu'il porte un cadrage déjà payé.

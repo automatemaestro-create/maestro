@@ -275,14 +275,21 @@ class ClientAPI:
 
     # --- L'équipe -------------------------------------------------------
 
-    def proposition_equipe(self, projet_id: str) -> dict[str, Any]:
+    def proposition_equipe(
+        self, projet_id: str, *, renfort: Mapping[str, Any] | None = None
+    ) -> dict[str, Any]:
         """L'équipe que l'analyse du projet appelle (#1039) — rien n'est créé ici.
 
         Le modèle en rédige les playbooks : la marge du modèle, pas le délai ordinaire.
+
+        `renfort` (#1227) demande **le seul rôle** qu'un run a proposé dans le fil
+        — son gabarit et sa raison, tels que la demande les porte —, exactement
+        comme la carte du fil le rapporte à la route (`EquipeDansLeFil`).
         """
         propose: dict[str, Any] = self._appel(
             "POST",
             f"/api/projets/{projet_id}/equipe/proposition",
+            corps={"renfort": dict(renfort)} if renfort is not None else None,
             delai_s=self._delai_modele_s,
         )
         return propose

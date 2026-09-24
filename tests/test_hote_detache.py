@@ -1698,6 +1698,146 @@ def test_la_question_libre_d_un_agent_est_cablee_sur_le_bus_du_process(
     assert cable["questionneur"]._bus is bus
 
 
+# --- ⑤ bis Le renfort : l'équipe confrontée au plan, sur la vraie stack (#1260) --
+#
+# Le bouclage du 2026-09-24 : sur la vraie stack, le moteur consignait « il manque
+# un rôle Designer » puis rendait la main — `_derouler` ne lui passait aucun
+# arbitre de renfort. Rien n'arrivait dans le fil, la tâche de conception partait
+# « à assigner », le run finissait 0/3. Les tests de #1227 exerçaient le chemin en
+# process, le seul qui marchait.
+
+
+class BusPartage(InMemoryEventBus):
+    """Le Redis que l'hôte et l'API partagent : l'hôte referme **son client**, pas le serveur.
+
+    `_derouler` referme le bus de son process en partant ; en mémoire, ce serait
+    refermer celui de l'API avec lui, un couplage que le vrai Redis n'a pas.
+    """
+
+    async def close(self) -> None:
+        return None
+
+
+def _demande_renfort(run_id: str = RUN, *, attente_s: float = 30.0) -> Any:
+    """La demande du moteur de l'essai : un plan d'animation, une équipe d'un dev."""
+    from maestro.agents.catalog import Agent
+    from maestro.engine.renfort import DemandeRenfort
+    from maestro.equipe import manque_au_plan
+    from maestro.orchestrator.schema import Task
+
+    manque = manque_au_plan(
+        [
+            Task(
+                id="logo",
+                titre="Dessiner le logo stylisé",
+                description="…",
+                competences_requises=("ui", "design-system"),
+                format_sortie="SVG",
+            )
+        ],
+        [
+            Agent(
+                nom="dev",
+                role="Développeur",
+                competences=frozenset({"backend", "frontend"}),
+                modele="m",
+                prompt_systeme="…",
+            )
+        ],
+    )
+    assert manque is not None
+    return DemandeRenfort(
+        run_id=run_id,
+        projet_id="prj-7f3a",
+        objectif="Une petite animation du logo Maestro",
+        manque=manque,
+        attente_s=attente_s,
+    )
+
+
+def test_l_arbitre_de_renfort_est_cable_sur_le_bus_du_process(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Le premier critère de #1260 : l'hôte détaché reçoit un arbitre de renfort,
+    **par le bus**, comme le brief et la clarification — et le même bus."""
+    from maestro.controltower.renfort import ArbitreRenfortControlTower
+
+    bus = InMemoryEventBus()
+    cable = deroule(monkeypatch, bus, tmp_path)
+
+    assert isinstance(cable["arbitre_renfort"], ArbitreRenfortControlTower)
+    assert cable["arbitre_renfort"]._bus is bus
+
+
+def test_la_demande_d_un_run_detache_parait_dans_le_fil_et_la_decision_lui_revient(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Le chemin entier, de part et d'autre du bus, sans rien entre les deux.
+
+    L'arbitre est **celui que l'hôte détaché câble** ; l'API est l'app réelle —
+    sa pompe, son relais, sa route de recrutement. Ils ne partagent que le bus,
+    comme le process détaché et `maestro-api` ne partagent que Redis. La demande
+    paraît dans la conversation qui a lancé le run, la personne décline par le
+    geste du fil, et le run l'apprend.
+    """
+    from fastapi.testclient import TestClient
+
+    from maestro.controltower.app import create_app
+    from maestro.controltower.chat import ChatStore, MessageChat, recrutement_en_attente
+    from maestro.controltower.orchestration import NOM_ORCHESTRATION, RepondeurOrchestration
+
+    bus = BusPartage()
+    arbitre = deroule(monkeypatch, bus, tmp_path)["arbitre_renfort"]
+    depot = ChatStore(tmp_path / "chat")
+    depot.ajouter(
+        MessageChat(
+            agent=NOM_ORCHESTRATION,
+            conversation="origine",
+            auteur=NOM_ORCHESTRATION,
+            contenu="C'est parti.",
+            run_id=RUN,
+        )
+    )
+    app = create_app(
+        bus=bus, chat_store=depot, orchestration_repondeur=RepondeurOrchestration()
+    )
+    with TestClient(app) as client:
+        attente = client.portal.start_task_soon(arbitre, _demande_renfort())
+        _attendre(
+            lambda: recrutement_en_attente(depot.fil(NOM_ORCHESTRATION, "origine")),
+            "la demande de renfort n'a jamais paru dans le fil qui a lancé le run.",
+        )
+        pose = recrutement_en_attente(depot.fil(NOM_ORCHESTRATION, "origine"))
+        reponse = client.post(
+            f"/api/chat/{NOM_ORCHESTRATION}/recrutement",
+            json={"approuve": False, "conversation": "origine"},
+        )
+        decision = attente.result(timeout=DELAI_OBSERVATION_S)
+
+    assert pose is not None and pose.recrutement is not None
+    assert pose.recrutement.run_id == RUN
+    assert pose.recrutement.role == "Designer"
+    assert pose.recrutement.taches == ("Dessiner le logo stylisé",)
+    assert reponse.status_code == 201, reponse.text
+    # Décliné — une décision, pas un silence : le run repart avec l'équipe actuelle.
+    assert decision.approuve is False
+    assert decision.sans_reponse is False
+
+
+def test_sans_api_pour_relayer_le_run_detache_repart_a_l_echeance(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Le fail-safe dans le sens utile : une API arrêtée ne suspend pas le run.
+    Personne ne relaie la demande, l'arbitre renonce à sa borne, et le run
+    continue avec l'équipe actuelle — ce n'est pas un refus."""
+    arbitre = deroule(monkeypatch, BusPartage(), tmp_path)["arbitre_renfort"]
+
+    decision = asyncio.run(arbitre(_demande_renfort(attente_s=0.05)))
+
+    assert decision.approuve is False
+    assert decision.sans_reponse is True
+
+
 def test_les_plafonds_voyagent_avec_l_ordre_et_le_validateur_se_branche_ici(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1860,6 +2000,9 @@ def test_sans_bus_rien_n_est_cable_et_les_deux_fail_safes_prennent_la_main(
     # Sans canal, l'exécuteur ne sert pas le verbe de question du tout (#1023) :
     # mieux vaut qu'aucun agent ne la pose que la poser à personne.
     assert cable["questionneur"] is None
+    # Le renfort (#1260) n'a pas de fail-safe à lui : sans arbitre, le run
+    # continue avec l'équipe actuelle et ses tâches vont au rôle le plus proche.
+    assert cable["arbitre_renfort"] is None
 
     demande = DemandeValidation(
         task_id="t1",
