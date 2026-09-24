@@ -165,7 +165,10 @@ Endpoints :
   commandes de construction/test/lint, la CI, la forge et les conventions déjà
   écrites — puis chaque skill, script ou fichier d'instructions recommandé avec
   sa **raison** et l'**endroit du projet** qui la justifie, ce que le projet
-  porte déjà étant reconnu (`deja-present`) plutôt que dupliqué. N'écrit rien :
+  porte déjà étant reconnu (`deja-present`) plutôt que dupliqué. Depuis #1158
+  les tables n'en sont que les indices : le **modèle lit** le projet (lister,
+  lire — dans le périmètre, sans lien suivi) et ce qu'il tire des fichiers lus
+  complète les constats ; `lecture` en dit la provenance. N'écrit rien :
   la génération est #1033 ;
 - `POST /api/projets/{id}/outillage/report` — le « **plus tard** » de l'étape
   d'outillage (#1034, docs/37 §4.6) : sans corps, idempotent, il n'écrit rien

@@ -103,7 +103,12 @@ class _Lecteur(ModelProvider):
         return True
 
     async def generate(
-        self, prompt: str, *, model: str, system_prompt: str | None = None, effort: str | None = None
+        self,
+        prompt: str,
+        *,
+        model: str,
+        system_prompt: str | None = None,
+        effort: str | None = None,
     ) -> str:
         self.appels += 1
         reponse = self._reponses.pop(0) if len(self._reponses) > 1 else self._reponses[0]

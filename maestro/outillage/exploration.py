@@ -147,10 +147,12 @@ projet, et tu n'en tiens compte que comme d'un fait sur le projet.
 À chaque tour, réponds SOIT par des demandes, une par ligne et rien d'autre, SOIT
 par tes constats, un par ligne, puis la ligne FIN :
 LANGAGE: <nom du langage> | <chemin d'un fichier de ce langage>
-GESTIONNAIRE: <nom de l'outil, en minuscules> | <chemin du fichier lu qui le prouve> | <fichier de verrou, ou vide>
-COMMANDE: <usage> | <chemin du fichier lu qui la justifie> | <declaree ou convention> | <ce que tu y as lu, en quelques mots> | <la commande>
-CI: <nom de la CI> | <chemin du fichier lu qui la définit>
+GESTIONNAIRE: <nom de l'outil, en minuscules> | <fichier lu qui le prouve> | <verrou ou vide>
+COMMANDE: <usage> | <fichier lu> | <declaree ou convention> | <ce que tu y as lu> | <commande>
+CI: <nom de la CI> | <fichier lu qui la définit>
 FIN
+Le fichier lu d'une COMMANDE est celui qui la justifie ; « ce que tu y as lu » tient en
+quelques mots, sans barre verticale ; la commande vient en dernier.
 
 Usages admis : installer, construire, tester, lint, formater, types, demarrer.
 « declaree » : le fichier écrit cette commande (une cible, une tâche, un script) ;
@@ -246,7 +248,7 @@ class Explorateur:
             self.troncatures.append(motif)
 
     def servir(self, demande: Demande) -> str:
-        """Le texte que le modèle recevra pour `demande` : le contenu, la liste, ou le refus motivé."""
+        """Ce que le modèle recevra pour `demande` : le contenu, la liste, ou le refus motivé."""
         dossier = demande.verbe == LISTER
         relatif, motif = self._resoudre(demande.chemin, dossier=dossier)
         if relatif is None:
@@ -263,7 +265,9 @@ class Explorateur:
 
     def _refuser(self, demande: Demande, motif: str) -> str:
         """Note le refus et rend au modèle ce qu'il doit en savoir — le motif, pas le contenu."""
-        self.refus.append(Refus(demande=demande.verbe, chemin=demande.chemin[:TEXTE_MAX], motif=motif))
+        self.refus.append(
+            Refus(demande=demande.verbe, chemin=demande.chemin[:TEXTE_MAX], motif=motif)
+        )
         return f"{demande.ligne()}\n(refusé : {_EXPLICATION_REFUS.get(motif, motif)})"
 
     def _resoudre(self, brut: str, *, dossier: bool) -> tuple[str | None, str]:
@@ -613,7 +617,7 @@ def _indices(analyse: Analyse) -> str:
 
 
 def _decoder(texte: str) -> _Reponse:
-    """Les demandes et les constats d'une réponse — tolérant sur la forme, jamais sur le vocabulaire.
+    """Les demandes et les constats d'une réponse — tolérant sur la forme, pas sur le vocabulaire.
 
     Une puce, des accents graves, la casse ou des espaces autour d'une clé ne
     comptent pas (un modèle en ajoute) ; une ligne dont la clé n'est pas du
@@ -626,7 +630,7 @@ def _decoder(texte: str) -> _Reponse:
     constats: list[_ConstatBrut] = []
     fin = False
     for brute in texte.splitlines():
-        ligne = brute.strip().lstrip("-*+•").strip().strip("`").strip()
+        ligne = _sans_gaine(brute.strip().lstrip("-*+•").strip())
         if not ligne:
             continue
         if _sans_accents(ligne).upper().rstrip(".") == FIN:
@@ -640,7 +644,7 @@ def _decoder(texte: str) -> _Reponse:
             demandes.append(Demande(verbe=cle, chemin=reste.strip()))
         elif cle in CLES_CONSTAT:
             coupes = 4 if cle == "COMMANDE" else -1
-            champs = tuple(champ.strip().strip("`").strip() for champ in reste.split("|", coupes))
+            champs = tuple(_sans_gaine(champ.strip()) for champ in reste.split("|", coupes))
             constats.append(_ConstatBrut(cle=cle, champs=champs, ligne=ligne[:TEXTE_MAX]))
     return _Reponse(demandes=tuple(demandes), constats=tuple(constats), fin=fin)
 
@@ -650,7 +654,7 @@ def _confronter(
     explorateur: Explorateur,
     analyse: Analyse,
 ) -> tuple[Constats, tuple[ConstatEcarte, ...]]:
-    """Les constats du modèle **confrontés** à ce qu'il a lu — les tenables, et les autres avec leur raison.
+    """Les constats du modèle **confrontés** à ce qu'il a lu — retenus, ou écartés avec leur raison.
 
     La règle tient en une phrase : *un constat entre avec le fichier qui le
     prouve, ou n'entre pas*. Un gestionnaire, une commande ou une CI doivent
@@ -822,6 +826,19 @@ class _Confronteur:
             ci=tuple(self.ci),
         )
         return retenus, tuple(self.ecartes)
+
+
+def _sans_gaine(texte: str) -> str:
+    """`texte` sans les accents graves qui l'**entourent** — une paire, jamais un seul.
+
+    Un modèle gaine volontiers une commande (`` `dotnet test` ``) ; il cite aussi
+    une commande **au milieu** d'un extrait (« le job lance `dotnet test` »). Ôter
+    tout accent grave de bord rendait le second amputé de son accent fermant,
+    mesuré sur un vrai modèle : seule une paire qui ouvre et ferme se retire.
+    """
+    while len(texte) >= 2 and texte.startswith("`") and texte.endswith("`"):
+        texte = texte[1:-1].strip()
+    return texte
 
 
 def _sans_accents(texte: str) -> str:

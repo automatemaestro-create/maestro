@@ -233,7 +233,7 @@ def test_la_sonde_voit_une_ouverture_et_une_ecriture(tmp_path: Path) -> None:
 def test_les_tables_seules_ne_tirent_aucune_commande_d_une_solution_dotnet(
     tmp_path: Path,
 ) -> None:
-    """Le défaut du ticket, constaté avant d'être corrigé : les tables voient du C#, et rien d'autre.
+    """Le défaut du ticket, constaté avant d'être corrigé : les tables voient du C#, rien d'autre.
 
     Sans gestionnaire ni commande, les skills sont écartés « faute de commande
     constatée » — et c'est de là que l'équipe perdait son QA.
@@ -423,6 +423,29 @@ def test_ce_qui_ne_tient_pas_au_contrat_est_ecarte_ou_ramene_a_la_lecture_pruden
     assert "usage inconnu" in ecarte.raison
 
 
+def test_une_commande_gainee_se_degaine_et_un_extrait_garde_ses_accents_graves(
+    tmp_path: Path,
+) -> None:
+    """Mesuré sur un vrai modèle : « le job lance `dotnet test` » perdait son accent fermant.
+
+    Seule une **paire** d'accents graves qui entoure un champ se retire ; une
+    commande citée au milieu d'un extrait reste telle que le modèle l'a écrite.
+    """
+    lecteur = _Lecteur(
+        (
+            "LIRE: `Depensio.sln`",
+            "- `COMMANDE: tester | Depensio.sln | declaree | "
+            "le job lance `dotnet test` | `dotnet test``\nFIN",
+        )
+    )
+
+    tester = lire(analyser(projet_dotnet(tmp_path)), lecteur).constats.commande_de("tester")
+
+    assert tester is not None
+    assert tester.commande == "dotnet test"
+    assert tester.extrait == "le job lance `dotnet test`"
+
+
 def test_un_modele_qui_n_a_rien_a_ajouter_rend_une_lecture_sans_constat(tmp_path: Path) -> None:
     analyse = lire(analyser(projet_dotnet(tmp_path)), _Lecteur(("FIN",)))
 
@@ -542,7 +565,7 @@ def test_ni_env_ni_secrets_ne_sont_ouverts_meme_demandes(tmp_path: Path) -> None
 
 
 def test_le_perimetre_declare_du_projet_s_applique_a_la_lecture(tmp_path: Path) -> None:
-    """Pas seulement les deux gisements par défaut : ce que le projet exclut, la lecture l'exclut."""
+    """Pas seulement les deux gisements par défaut : ce que le projet exclut, la lecture aussi."""
     racine = projet_dotnet(tmp_path)
     ecrire(racine, "interne/notes.md", f"{SECRET}\n")
     lecteur = _Lecteur(("LIRE: interne/notes.md\nLISTER: interne", "FIN"))
@@ -617,7 +640,7 @@ def test_un_lien_symbolique_n_est_jamais_suivi(tmp_path: Path) -> None:
 def test_un_segment_qui_est_un_lien_est_refuse_sur_tout_poste(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """La même garde, jouée là où l'OS ne crée pas de lien : `is_symlink` fait foi, segment par segment."""
+    """La même garde là où l'OS ne crée pas de lien : `is_symlink` fait foi, segment par segment."""
     racine = projet_dotnet(tmp_path)
     vrai_is_symlink = Path.is_symlink
 
