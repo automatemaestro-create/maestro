@@ -595,7 +595,8 @@ def test_la_sonde_lit_une_ligne_dont_l_ecriture_passe_a_la_ligne():
         "    'celle-ci se ferme.\\n',\n"
         ");\n"
     )
-    assert lignes_imprimees(echantillon) == ["[coque] Maestro est déjà ouvert sur cette stack (UI :◇) — "]
+    attendue = "[coque] Maestro est déjà ouvert sur cette stack (UI :◇) — "
+    assert lignes_imprimees(echantillon) == [attendue]
 
 
 def test_les_lignes_que_le_skill_fait_guetter_sont_celles_que_la_coque_imprime(main_js):
