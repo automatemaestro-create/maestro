@@ -24,7 +24,7 @@ Quatre volets :
    navigation bornée à l'origine locale, et un pont qui n'expose que des verbes
    nommés (jamais `ipcRenderer`, jamais un `invoke(canal, …)` générique) ;
 ③ **le cycle de vie des processus** — `start.sh` source unique, l'arrêt qui
-   attend le démarrage en cours, l'instance unique, aucun argument de la coque
+   attend le démarrage en cours, l'instance unique **par stack** (#1275), aucun argument de la coque
    relayé au lanceur.
    C'est le premier critère d'acceptation : *se ferme sans laisser de processus
    derrière elle* ;
@@ -49,6 +49,7 @@ COQUE = RACINE / "apps" / "desktop"
 MAIN_JS = COQUE / "main.js"
 PRELOAD_JS = COQUE / "preload.js"
 DESKTOP_SH = RACINE / "scripts" / "controltower" / "desktop.sh"
+START_SH = RACINE / "scripts" / "controltower" / "start.sh"
 POSTE_TS = RACINE / "apps" / "web" / "lib" / "poste.ts"
 
 
@@ -65,6 +66,11 @@ def preload_js() -> str:
 @pytest.fixture(scope="module")
 def desktop_sh() -> str:
     return DESKTOP_SH.read_text(encoding="utf-8")
+
+
+@pytest.fixture(scope="module")
+def start_sh() -> str:
+    return START_SH.read_text(encoding="utf-8")
 
 
 # ==================================================================================================
@@ -433,6 +439,48 @@ def test_la_seconde_instance_ramene_la_fenetre_deja_ouverte(main_js):
 
     assert "fenetre.restore()" in corps
     assert "fenetre.focus()" in corps
+
+
+def test_le_verrou_d_instance_unique_se_prend_sur_le_profil_de_la_stack(main_js):
+    """#1275 — Electron tient `requestSingleInstanceLock` sur le dossier
+    `userData`, qui vaut `%APPDATA%/desktop` pour **toutes** les copies du dépôt
+    tant que rien ne le fixe : une fenêtre du clone principal (:3000) refusait
+    celle d'un worktree (:3073). Le profil se fixe donc par la stack, et
+    **avant** le verrou — fixé après, le verrou serait déjà pris sur le dossier
+    commun."""
+    assert "const STACK = `${PORT_API}-${PORT_UI}`;" in main_js
+    fixe = main_js.index("app.setPath('userData', ")
+    assert fixe < main_js.index("if (!app.requestSingleInstanceLock()) {")
+    assert "STACK" in objet(main_js[fixe:], "app.setPath(")
+
+
+def test_la_stack_du_verrou_est_celle_que_start_sh_demarre_et_arrete(main_js, start_sh):
+    """La frontière entre la coque et son lanceur : `start.sh` range l'état d'une
+    stack (jeton, chien de garde) sous `<api>-<ui>`, et son arrêt libère ces deux
+    ports. C'est donc ce couple qu'une seconde fenêtre couperait en se fermant —
+    et rien d'autre : deux copies sur les mêmes ports sont **une** stack, une
+    copie sur deux couples en porte deux. Réécrite d'un seul côté, la clé
+    refuserait une stack voisine, ou laisserait une seconde fenêtre arrêter la
+    stack de la première. Les défauts aussi : la stack par défaut de la coque doit
+    être celle du lanceur."""
+    assert 'ETAT_DIR="${TMPDIR:-/tmp}/maestro-controltower-${PORT_API}-${PORT_UI}"' in start_sh
+    assert "const STACK = `${PORT_API}-${PORT_UI}`;" in main_js
+    assert 'PORT_API="${MAESTRO_PORT_API:-8000}"' in start_sh
+    assert 'PORT_UI="${MAESTRO_PORT_UI:-3000}"' in start_sh
+    assert "const PORT_API_DEFAUT = '8000';" in main_js
+    assert "const PORT_UI_DEFAUT = '3000';" in main_js
+
+
+def test_la_stack_par_defaut_garde_le_profil_qu_elle_a_toujours_eu(main_js):
+    """Le stockage local de la fenêtre — thème, projet actif, brouillons, guide
+    déjà vu, colonne repliée — vit dans le profil. Déplacer celui de la stack par
+    défaut l'effacerait sans rien dire à l'ouverture suivante : seule une autre
+    stack prend un profil à part."""
+    assert "const PORT_UI = process.env.MAESTRO_PORT_UI || PORT_UI_DEFAUT;" in main_js
+    assert "const PORT_API = process.env.MAESTRO_PORT_API || PORT_API_DEFAUT;" in main_js
+    garde = objet(main_js, "if (STACK !== `${PORT_API_DEFAUT}-${PORT_UI_DEFAUT}`) {")
+    assert "app.setPath('userData', " in garde
+    assert main_js.count("app.setPath('userData', ") == 1
 
 
 # --- Le lanceur : ce qu'une coque ne peut pas faire pour elle-même --------------------------------
