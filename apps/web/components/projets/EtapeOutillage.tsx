@@ -13,9 +13,10 @@
  *
  * - un projet **existant** est analysé (`GET …/outillage/analyse`, #1030) : ce
  *   qu'on voit est ce que la lecture de la racine recommande ;
- * - un projet **neuf** n'a rien à analyser : Maestro pose les questions qui
- *   décident de son outillage (`POST …/outillage/questionnaire`, #1031), et les
- *   réponses produisent la **même** recommandation structurée
+ * - un projet **neuf** n'a rien à analyser : la personne le décrit avec ses mots,
+ *   Maestro le comprend et ne demande que ce qui manque
+ *   (`POST …/outillage/questionnaire`, #1031, sans catalogue depuis #1147), et ce
+ *   qu'il a compris produit la **même** recommandation structurée
  *   (`POST …/outillage/recommandation`).
  *
  * Les deux chemins se rejoignent sur `RecommandationOutillage`, et c'est pour
@@ -359,6 +360,9 @@ export function EtapeOutillage({
   const [resume, setResume] = useState("");
   const [question, setQuestion] = useState<QuestionOutillage | null>(null);
   const [choix, setChoix] = useState<ChoixOutillage[]>([]);
+  // Ce que Maestro a à dire avant la question (#1147) — une réponse à une question
+  // en retour, un doute levé. Vide le plus souvent.
+  const [message, setMessage] = useState("");
   const [retenus, setRetenus] = useState<Set<string>>(new Set());
   const [rapport, setRapport] = useState<RapportGenerationOutillage | null>(
     null,
@@ -386,6 +390,7 @@ export function EtapeOutillage({
           if (!vivant) return;
           setQuestion(etape.question);
           setChoix(etape.deductions);
+          setMessage(etape.message ?? "");
           if (etape.terminee) {
             const reco = await recommandationOutillage(
               projet.id,
@@ -413,22 +418,26 @@ export function EtapeOutillage({
   }, [neuf, projet.id, poser]);
 
   /**
-   * Une réponse part, la suite revient — et les réponses **acquises** repartent
-   * entières à chaque appel : le questionnaire est sans état côté serveur
-   * (#1031), c'est donc l'écran qui les tient.
+   * Une réponse part — une option, ou la phrase de la personne (`libre`, #1147) —,
+   * la suite revient. Les réponses **données** repartent entières à chaque appel :
+   * le questionnaire est sans état côté serveur (#1031), c'est donc l'écran qui
+   * les tient. Ce qui en a été compris revient avec la suite et **remplace** la
+   * compréhension précédente : le moteur la rend entière à chaque tour, et c'est
+   * elle que la recommandation et la génération reçoivent, sans rappeler le modèle.
    */
-  const repondre = async (valeur: string) => {
+  const repondre = async (valeur: string, libre: boolean) => {
     if (question === null) return;
-    const acquis: ChoixOutillage[] = [
-      ...choix,
-      { cle: question.cle, valeur, deduit: false, parce_que: "" },
+    const donnees: ChoixOutillage[] = [
+      ...choix.filter((c) => !c.deduit),
+      { cle: question.cle, valeur, deduit: false, parce_que: "", libre },
     ];
     setEnCours(true);
     try {
-      const etape = await questionOutillage(projet.id, acquis);
-      const tous = [...acquis, ...etape.deductions];
+      const etape = await questionOutillage(projet.id, donnees);
+      const tous = [...donnees, ...etape.deductions];
       setChoix(tous);
       setQuestion(etape.question);
+      setMessage(etape.message ?? "");
       if (etape.terminee) {
         const reco = await recommandationOutillage(projet.id, tous);
         poser(reco.recommandation);
@@ -536,9 +545,18 @@ export function EtapeOutillage({
         </p>
       )}
 
+      {message !== "" && question !== null && rapport === null && (
+        <p className="max-w-2xl text-annexe text-texte">{message}</p>
+      )}
+
       {question !== null && rapport === null && (
+        /* La `key` remet la carte à zéro d'une question à la suivante — même geste
+           et même raison qu'au pied du fil (`GestesDuFil`) : sans elle, la
+           sélection et le texte tapé de la question précédente survivraient. */
         <QuestionDOutillage
+          key={question.cle}
           question={question}
+          compris={choix.filter((c) => c.deduit)}
           repondre={repondre}
           enCours={enCours}
         />

@@ -10,12 +10,17 @@
  *
  * D'où trois gardes :
  *
- * 1. un projet neuf envoie ses réponses — données **et** déduites, le `tous` que
- *    l'écran tient — avec les chemins retenus ;
+ * 1. un projet neuf envoie ses réponses — données **et** ce qui en a été compris,
+ *    ce que l'écran tient — avec les chemins retenus ;
  * 2. un projet existant n'en envoie aucune : son outillage se dérive de son
  *    analyse, et y mêler des réponses qu'il n'a pas données n'aurait pas de sens ;
  * 3. un chemin retenu que la génération n'a pas reconnu se **nomme** dans le
  *    rapport à l'écran, comme ce qui n'a pas été écrasé.
+ *
+ * Et depuis #1147, le chemin de « p2 » : un projet neuf se **décrit avec ses mots**
+ * (la première question n'a pas d'options), Maestro dit ce qu'il a compris avant la
+ * question suivante, et ce qu'il comprend à chaque tour **remplace** ce qu'il avait
+ * compris au tour d'avant au lieu de s'y empiler.
  *
  * `genererOutillage` est ensuite joué pour de vrai, `fetch` simulé : les
  * réponses doivent atteindre le corps de la requête, pas seulement l'appel.
@@ -91,18 +96,58 @@ const RECOMMANDATION: RecommandationOutillage = {
   ecartes: [],
 };
 
-/** La réponse donnée à l'écran, puis celle que le serveur en déduit. */
-const DONNEE: ChoixOutillage = {
-  cle: "langages",
-  valeur: "typescript",
+/** Le projet, décrit avec les mots de la personne — ce que « p2 » n'a pas pu dire. */
+const DESCRIPTION = "Une application mobile Flutter pour réserver des terrains";
+
+/** Les réponses données à l'écran, puis ce que le moteur en a compris. */
+const DECRITE: ChoixOutillage = {
+  cle: "nature",
+  valeur: DESCRIPTION,
   deduit: false,
   parce_que: "",
+  libre: true,
 };
-const DEDUITE: ChoixOutillage = {
-  cle: "tests",
-  valeur: "vitest",
+const CLIQUEE: ChoixOutillage = {
+  cle: "forge",
+  valeur: "github",
+  deduit: false,
+  parce_que: "",
+  libre: false,
+};
+const COMPRISE: ChoixOutillage = {
+  cle: "tester",
+  valeur: "flutter test",
   deduit: true,
-  parce_que: "Déduit de « TypeScript »",
+  parce_que: "le lanceur livré avec Flutter",
+  sujet: "tests",
+};
+const FORGE_COMPRISE: ChoixOutillage = {
+  cle: "forge",
+  valeur: "github",
+  deduit: true,
+  parce_que: "votre réponse",
+  sujet: "forge",
+};
+
+const QUESTION_OUVERTE = {
+  cle: "nature",
+  intitule: "Qu'est-ce que ce projet ?",
+  options: [],
+  recommande: "",
+  pourquoi: "Dites-le avec vos mots.",
+  rang: 1,
+};
+
+const QUESTION_FORGE = {
+  cle: "forge",
+  intitule: "Où le code vivra-t-il ?",
+  options: [
+    { valeur: "github", libelle: "GitHub", raison: "Pull Requests et Actions" },
+    { valeur: "aucun", libelle: "Nulle part", raison: "le projet reste local" },
+  ],
+  recommande: "github",
+  pourquoi: "vous comptez le publier",
+  rang: 2,
 };
 
 function rapport(
@@ -129,32 +174,32 @@ function rapport(
 
 beforeEach(() => {
   vi.clearAllMocks();
-  questionOutillage.mockImplementation((_id: string, choix: ChoixOutillage[]) =>
-    Promise.resolve(
-      choix.length === 0
-        ? {
-            question: {
-              cle: "langages",
-              intitule: "Dans quel langage ?",
-              options: [
-                { valeur: "typescript", libelle: "TypeScript", raison: "web" },
-                { valeur: "python", libelle: "Python", raison: "service" },
-              ],
-              recommande: "typescript",
-              pourquoi: "c'est une application web",
-              rang: 1,
-              total: 6,
+  // Le moteur répond selon le nombre de réponses **données** : d'abord la question
+  // ouverte, puis — la description comprise — la forge, puis plus rien.
+  questionOutillage.mockImplementation((_id: string, choix: ChoixOutillage[]) => {
+    const donnees = choix.filter((c) => !c.deduit).length;
+    return Promise.resolve(
+      donnees === 0
+        ? { question: QUESTION_OUVERTE, deductions: [], terminee: false, message: "" }
+        : donnees === 1
+          ? {
+              question: QUESTION_FORGE,
+              deductions: [COMPRISE],
+              terminee: false,
+              message: "",
+            }
+          : {
+              question: null,
+              deductions: [COMPRISE, FORGE_COMPRISE],
+              terminee: true,
+              message: "",
             },
-            deductions: [],
-            terminee: false,
-          }
-        : { question: null, deductions: [DEDUITE], terminee: true },
-    ),
-  );
+    );
+  });
   recommandationOutillage.mockResolvedValue({
     projet_id: "prj-neuf",
     source: { type: "choix" },
-    choix: [DONNEE, DEDUITE],
+    choix: [DECRITE, CLIQUEE, COMPRISE, FORGE_COMPRISE],
     recommandation: RECOMMANDATION,
   });
   analyserOutillage.mockResolvedValue({
@@ -188,6 +233,71 @@ const generer = async () => {
   await userEvent.click(bouton);
 };
 
+/** Le projet décrit avec ses mots, puis la forge gardée : le questionnaire conclu. */
+const repondreAuQuestionnaire = async () => {
+  await userEvent.type(
+    await screen.findByRole("textbox", { name: "Votre réponse" }),
+    DESCRIPTION,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Envoyer ma réponse" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Garder ce choix" }),
+  );
+};
+
+describe("le questionnaire d'un projet neuf, dans l'étape d'outillage (#1147)", () => {
+  it("commence par une question ouverte : le projet se dit avec ses mots", async () => {
+    render(
+      <EtapeOutillage
+        projet={projetFactice({ id: "prj-neuf", origine: "nouveau" })}
+        onTermine={() => {}}
+      />,
+    );
+
+    await screen.findByText("Qu'est-ce que ce projet ?");
+    // Aucune liste de sortes de projet où il faudrait entrer.
+    expect(screen.queryByRole("radiogroup")).toBeNull();
+    const envoyer = screen.getByRole("button", { name: "Envoyer ma réponse" });
+    expect(envoyer).toBeDisabled();
+
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "Votre réponse" }),
+      DESCRIPTION,
+    );
+    await userEvent.click(envoyer);
+
+    expect(questionOutillage).toHaveBeenLastCalledWith("prj-neuf", [DECRITE]);
+    // Ce qui a été compris se lit avant la question suivante.
+    const [compris] = await screen.findAllByRole("list", {
+      name: "Ce que j'ai compris",
+    });
+    expect(compris).toHaveTextContent("tests flutter test");
+    expect(screen.getByText("Où le code vivra-t-il ?")).toBeInTheDocument();
+  });
+
+  it("renvoie les réponses données, et remplace ce qui avait été compris", async () => {
+    render(
+      <EtapeOutillage
+        projet={projetFactice({ id: "prj-neuf", origine: "nouveau" })}
+        onTermine={() => {}}
+      />,
+    );
+
+    await repondreAuQuestionnaire();
+
+    await waitFor(() => expect(recommandationOutillage).toHaveBeenCalledTimes(1));
+    // Au second tour, seules les réponses **données** repartent : la compréhension
+    // du tour d'avant n'est pas renvoyée comme si c'était une réponse.
+    expect(questionOutillage).toHaveBeenLastCalledWith("prj-neuf", [DECRITE, CLIQUEE]);
+    expect(recommandationOutillage).toHaveBeenCalledWith("prj-neuf", [
+      DECRITE,
+      CLIQUEE,
+      COMPRISE,
+      FORGE_COMPRISE,
+    ]);
+  });
+});
+
 describe("le bouton « Générer » de l'étape d'outillage", () => {
   it("envoie les réponses d'un projet neuf avec les chemins retenus", async () => {
     render(
@@ -197,18 +307,16 @@ describe("le bouton « Générer » de l'étape d'outillage", () => {
       />,
     );
 
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Garder ce choix" }),
-    );
+    await repondreAuQuestionnaire();
     await generer();
 
     await waitFor(() => expect(genererOutillage).toHaveBeenCalledTimes(1));
     const [id, retenus, choix] = genererOutillage.mock.calls[0];
     expect(id).toBe("prj-neuf");
     expect(retenus).toEqual(["AGENTS.md", SKILL_TESTS]);
-    // Les réponses **données et déduites** : celles d'où la liste a été dérivée,
-    // exactement ce que la recommandation a reçu.
-    expect(choix).toEqual([DONNEE, DEDUITE]);
+    // Les réponses **données et ce qui en a été compris** : ce d'où la liste a été
+    // dérivée, exactement ce que la recommandation a reçu.
+    expect(choix).toEqual([DECRITE, CLIQUEE, COMPRISE, FORGE_COMPRISE]);
     expect(choix).toEqual(recommandationOutillage.mock.calls[0][1]);
   });
 
@@ -282,9 +390,9 @@ describe("genererOutillage", () => {
   };
 
   it("transmet les réponses dans le corps, à côté des chemins retenus", async () => {
-    expect(await corpsEnvoye("prj-neuf", ["AGENTS.md"], [DONNEE, DEDUITE])).toEqual({
+    expect(await corpsEnvoye("prj-neuf", ["AGENTS.md"], [DECRITE, COMPRISE])).toEqual({
       retenus: ["AGENTS.md"],
-      choix: [DONNEE, DEDUITE],
+      choix: [DECRITE, COMPRISE],
     });
   });
 

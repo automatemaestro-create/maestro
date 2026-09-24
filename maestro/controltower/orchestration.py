@@ -540,7 +540,7 @@ from maestro.controltower.events import (
     ROLE_RUN,
     Event,
 )
-from maestro.controltower.outillage import ConducteurOutillage
+from maestro.controltower.outillage import ComprehensionModele, ConducteurOutillage
 from maestro.controltower.portee import PorteeProjet, PorteeRun
 
 # Les statuts de tâche viennent de leurs **deux** définitions, comme partout
@@ -2108,7 +2108,10 @@ class RepondeurOrchestration(RepondeurChat):
         # configuration, jamais épinglé. Un fournisseur **injecté** (les tests,
         # un câblage explicite) garde le modèle de la fiche.
         self._modele: str | None = None
-        self._conducteur = conducteur or ConducteurOutillage()
+        # Le questionnaire comprend par le **même** fournisseur que le fil (#1147) :
+        # un fournisseur injecté ici l'est pour les deux, et sans lui chacun résout
+        # celui du poste au premier usage.
+        self._conducteur = conducteur or ConducteurOutillage(ComprehensionModele(provider))
         self._sonde = sonde
 
     async def repondre(self, agent: Agent, fil: Sequence[MessageChat]) -> str:
@@ -2391,11 +2394,11 @@ class RepondeurOrchestration(RepondeurChat):
         quitter la conversation où l'on vient de déclarer son projet, ce que « sans
         formulaire à part » refuse.
 
-        **Aucun appel modèle**, comme pour le geste de cadrage et pour une raison de
-        plus : ici la suite du questionnaire est une fonction pure de ce que le fil
-        porte (`maestro.outillage.questionnaire`). Le juge de ce module n'est consulté que
-        sur ce qu'il est seul à savoir faire — dire si un message est une demande de
-        travail.
+        Le **juge** de ce module n'est pas consulté : il ne sait que dire si un
+        message est une demande de travail. Le questionnaire a son propre appel
+        (#1147, `ConducteurOutillage`) — celui qui comprend le projet à partir de ce
+        qui a été dit, conversation comprise — et il n'a lieu que si quelque chose
+        a été dit : un fil muet reçoit la question ouverte sans appel.
         """
         return await self._conducteur.ouvrir(fil)
 
@@ -2407,7 +2410,7 @@ class RepondeurOrchestration(RepondeurChat):
         question: QuestionOutillage,
         valeur: str,
     ) -> ReponseChat:
-        """Enchaîne sur le geste : ce qu'il déduit, puis la question suivante (#1031)."""
+        """Enchaîne sur la réponse — cliquée ou tapée : la suite, comprise (#1031, #1147)."""
         return await self._conducteur.repondre(fil, question, valeur)
 
     async def _juger(

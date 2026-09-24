@@ -35,22 +35,40 @@ c'est la seule chose que ce module emprunte :
   le défaut G10 du retex du 2026-09-11 ;
 - « ce qui attend » s'énonce **une seule fois** (`chat.question_en_attente`), pour les
   deux côtés — le geste qui répond et l'écran qui montre ;
-- le geste **ne repasse pas par le juge** : un clic sur une option n'est pas un texte à
-  reconnaître. Ici la raison est encore plus nette qu'en #1014 — la suite du
-  questionnaire est une **fonction pure** (`deductions`, `question_suivante`), donc un
-  appel modèle rendrait, au mieux, ce qu'on sait déjà.
+- le geste **ne repasse pas par le juge** de l'orchestration : un clic sur une option
+  n'est pas une demande de travail à reconnaître.
+
+## Le modèle comprend, le code vérifie (#1147)
+
+Jusqu'à #1147 la suite du questionnaire était une fonction pure sur un catalogue
+fermé — quatre natures, des tests déduits du langage, trois forges —, et un projet
+d'une autre sorte n'avait aucune réponse honnête. Elle est désormais **comprise** :
+à chaque tour, `ComprehensionModele` confie au modèle ce qui a été dit — la
+conversation, puis les réponses, cliquées ou tapées — et reçoit ce qu'il en a
+compris (les constats) et ce qui manque encore (les questions, options écrites pour
+ce projet). `maestro.outillage.questionnaire` lit cette réponse et ne croit rien sans
+le vérifier. Le prompt porte le registre de langue (#945) : ce qu'il fait écrire —
+intitulés, options, raisons — s'affiche à la personne.
+
+Un seul cas se passe du modèle : **rien n'a encore été dit**. La question est alors
+la question ouverte (« Qu'est-ce que ce projet ? »), sans options — il n'y a rien à
+comprendre, et un appel ne rendrait que ce qu'on sait déjà.
 
 ## Le fil est la seule mémoire, et c'est ce qui rend ce module si petit
 
-`ConducteurOutillage` **ne retient rien**. L'état du questionnaire est la suite des
-messages : `chat.choix_du_fil` la relit, `deductions` la complète, `question_suivante`
-en déduit la prochaine question. Trois conséquences qui tombent d'elles-mêmes, et
-qu'aucune garde n'a à tenir :
+`ConducteurOutillage` **ne retient rien** du questionnaire. Son état est la suite des
+messages : `chat.choix_du_fil` relit les réponses, le modèle les comprend, et ce qu'il
+a compris est **écrit sur le message** qui pose la question suivante
+(`MessageChat.comprehension`) — c'est ce que la conclusion relit pour écrire
+l'outillage, sans rappeler le modèle et donc sans risquer qu'il comprenne autre chose
+entre l'écran et l'écriture. Trois conséquences qui tombent d'elles-mêmes :
 
 - rouvrir la Control Tower, changer de poste, recharger la page ne perd rien ;
 - rouvrir un questionnaire en cours le **reprend** où il en est plutôt que d'en
   recommencer un second ;
-- revenir sur une réponse la corrige — `_repondues` garde la **dernière**.
+- revenir sur une réponse la corrige, **tapée** comme cliquée : une phrase écrite dans
+  la zone de saisie pendant qu'une question attend est la réponse à cette question
+  (`chat.ServiceChat._deposer`), et le modèle la lit dans l'ordre.
 
 C'est la propriété que `orchestration` tient déjà pour le cadrage, appliquée à un objet
 qui a plus d'un tour.
@@ -133,7 +151,14 @@ from pathlib import Path
 from typing import Any
 
 from maestro.agents.catalog import MODELE_EXECUTANT_DEFAUT
-from maestro.controltower.chat import MessageChat, ReponseChat, choix_du_fil
+from maestro.agents.playbook_du_code import registre
+from maestro.controltower.chat import (
+    UTILISATEUR,
+    MessageChat,
+    ReponseChat,
+    choix_du_fil,
+    transcription,
+)
 from maestro.controltower.projets import ServiceProjets
 from maestro.controltower.validation import appliquer_sous_validation
 from maestro.engine.guardrails import Validateur
@@ -149,16 +174,162 @@ from maestro.outillage import (
 from maestro.outillage.modele import Lecture, Recommandation
 from maestro.outillage.questionnaire import (
     Choix,
+    Comprehension,
     QuestionOutillage,
+    acquis_de,
+    comprehension_depuis_texte,
     constats_depuis_choix,
-    deductions,
-    question_suivante,
+    donnees,
+    question_ouverte,
     recommandation_depuis_choix,
+    reponses_en_texte,
     resume_des_choix,
+    schema_en_texte,
     source_manifeste_des_choix,
 )
 from maestro.projets import Projet
 from maestro.providers.base import ModelProvider
+
+#: Ce que le modèle lit de la conversation, au plus — les **derniers** caractères.
+#: Le fil de l'orchestration porte tout ce qu'on y a dit, runs compris ; la
+#: description du projet est presque toujours récente, et la borne évite qu'un fil
+#: de six mois fasse le prix de chaque question.
+CONVERSATION_MAX = 6000
+
+#: Le cadre de la compréhension d'un projet neuf (#1147). **Concaténé**, comme
+#: `_PROMPT_ORCHESTRATION` et pour la même raison : le contrat de réponse est un
+#: gabarit JSON, dont les accolades littérales se liraient comme des champs dans une
+#: f-string. Il porte le registre (#945) : intitulés, options et raisons s'affichent à
+#: la personne, donc ils la vouvoient.
+_PROMPT_COMPREHENSION = (
+    """\
+Tu aides Maestro à comprendre un projet NEUF — un dossier encore vide — pour lui écrire
+son outillage : les instructions que tout agent lira, et les commandes qui installent,
+construisent, testent, vérifient et lancent le projet. Tu ne vois aucun fichier : tu ne
+sais du projet que ce que la personne en a dit, dans la conversation et dans ses
+réponses.
+
+À chaque tour :
+1. Tire de ce qui a été dit les CONSTATS : ce qu'on sait du projet, et ce qui en découle
+   sans ambiguïté (un projet Flutter s'écrit en Dart, ses commandes vivent dans
+   pubspec.yaml, ses tests se lancent par flutter test). N'invente rien : un choix encore
+   ouvert n'est pas un constat.
+2. Ne pose que les QUESTIONS qui comblent un vrai manque : ce qui décide de l'outillage et
+   que rien de ce qui a été dit ne tranche. Une seule par sujet. Quand plus rien ne manque,
+   n'en pose aucune : c'est fini. Il n'y a pas de nombre de questions à atteindre.
+
+Les sujets, et la clé à employer pour chacun :
+"""
+    + schema_en_texte()
+    + """
+
+Pour "installer", "construire", "tester", "lint", "formater", "types" et "demarrer", la
+valeur est la commande exacte, telle qu'on la taperait. Pour "manifeste" et "ci", un
+chemin de fichier relatif au projet. La valeur "aucun" dit explicitement qu'il n'y en a
+pas (« pas de tests pour l'instant ») : ce n'est pas un manque. Un constat ne s'écrit que
+sous l'une de ces clés : hors d'elles, il ne nourrirait aucune entrée de l'outillage.
+
+Les réponses de la personne font foi. Une réponse CLIQUÉE vaut telle quelle, sauf si une
+réponse tapée plus tard la corrige. Une réponse TAPÉE est dite avec ses mots : comprends-la
+et traduis-la en constats. Si elle ne répond pas à la question — une question en retour,
+un doute —, réponds-y brièvement dans "message", et demande autrement ce qui manque.
+
+Les options d'une question sont écrites POUR CE PROJET : deux à quatre options plausibles
+pour ce qui a été dit, chacune avec une raison d'une ligne — ce que ce choix entraîne.
+"recommande" est la valeur de l'une d'elles, et "pourquoi" dit, en une seule phrase courte,
+ce qui, dans CE projet, la désigne. L'intitulé est une question courte — dix mots au plus :
+tout s'affiche sur une carte, parfois dans une colonne étroite.
+Ne justifie jamais un choix par ce que Maestro utilise lui-même : Maestro n'est pas le
+projet. Si rien ne désigne une option plutôt qu'une autre, dis-le. La personne peut
+toujours répondre autre chose avec ses mots : n'ajoute pas d'option « autre ».
+
+Réponds par un objet JSON et rien d'autre — ni texte autour, ni bloc de code :
+
+{"message": "...",
+ "constats": [{"cle": "...", "valeur": "...", "parce_que": "..."}],
+ "questions": [{"cle": "...", "intitule": "...",
+                "options": [{"valeur": "...", "libelle": "...", "raison": "..."}],
+                "recommande": "...", "pourquoi": "..."}]}
+
+- "message" : une phrase à la personne, facultative — vide s'il n'y a rien à dire ;
+- "constats" : TOUT ce qu'on sait à ce tour, réponses comprises, pas seulement ce qui est
+  nouveau ;
+- "parce_que" : ce qui, dans ce qui a été dit, établit le constat, en quelques mots ;
+- "questions" : dans l'ordre où les poser, vide quand plus rien ne manque. Tant que la
+  sorte de projet n'est pas dite, la seule question est "nature", sans options.
+
+"""
+    + registre()
+)
+
+
+class ComprehensionModele:
+    """Ce que Maestro comprend d'un projet neuf, demandé au modèle (#1147).
+
+    **Un appel par tour**, et c'est le prix de « rien de figé » : chaque réponse de la
+    personne — cliquée ou tapée — est relue avec tout ce qui a été dit avant, et le
+    modèle rend la compréhension **entière** (tous les constats, les questions qui
+    restent). C'est ce qui permet à une correction tapée de défaire un clic antérieur.
+
+    Le fournisseur est résolu **au premier usage**, comme celui des répondeurs du
+    chat : construire le service ne coûte rien et ne lève aucune erreur de
+    configuration. Un fournisseur **injecté** — un double de test, un câblage
+    explicite — est pris tel quel. Le modèle suit le fournisseur (#1173,
+    `modele_du_canal`) : `MAESTRO_MODEL` s'il est posé, sinon le défaut du canal.
+
+    Ce que rend le modèle est lu par `comprehension_depuis_texte`, qui ne croit rien
+    sans le vérifier ; un texte illisible lève `ComprehensionIllisible`, que l'appelant
+    traduit en réponse indisponible.
+    """
+
+    def __init__(self, provider: ModelProvider | None = None) -> None:
+        self._provider = provider
+
+    async def comprendre(
+        self, conversation: str, reponses: Sequence[Choix]
+    ) -> Comprehension:
+        """La compréhension de ce qui a été dit — `conversation` puis les `reponses`."""
+        from maestro.providers.factory import modele_du_canal, provider_from_settings
+
+        if self._provider is None:
+            self._provider = provider_from_settings()
+        fournisseur = self._provider
+        texte = await fournisseur.generate(
+            _prompt_de_comprehension(conversation, reponses),
+            model=modele_du_canal(MODELE_EXECUTANT_DEFAUT, fournisseur),
+            system_prompt=_PROMPT_COMPREHENSION,
+        )
+        return comprehension_depuis_texte(texte, reponses)
+
+
+def _prompt_de_comprehension(conversation: str, reponses: Sequence[Choix]) -> str:
+    """Le prompt d'utilisateur : ce qui a été dit, puis les réponses aux questions."""
+    dit = conversation.strip() or "(rien d'autre n'a été dit)"
+    return (
+        "## Ce qui a été dit dans la conversation\n\n"
+        f"{dit}\n\n"
+        "## Les réponses aux questions, dans l'ordre\n\n"
+        f"{reponses_en_texte(reponses)}\n"
+    )
+
+
+def _conversation_de(fil: Sequence[MessageChat]) -> str:
+    """Ce que le modèle lit du fil : la conversation, bornée à ses derniers caractères.
+
+    Les lignes sont celles de `chat.transcription` — même libellé par auteur, le
+    contenu des sources rangé sous le message qui les a portées, déjà encadré comme
+    donnée (ENF-13) : un cahier des charges joint **décrit** le projet, et c'est
+    exactement ce qu'on cherche ici. Seule la consigne finale de `transcription`
+    (« réponds au dernier message ») n'est pas reprise : elle s'adresse à un
+    répondeur, pas à qui comprend un projet.
+
+    Vide quand la personne n'a encore **rien dit** — c'est ce qui dispense d'appeler
+    le modèle pour ouvrir un questionnaire sur un fil muet.
+    """
+    if not any(m.auteur == UTILISATEUR and m.resume.strip() for m in fil):
+        return ""
+    corps = transcription(fil).split("\n\n", 1)[-1].rsplit("\n\n", 1)[0]
+    return corps if len(corps) <= CONVERSATION_MAX else "…" + corps[-CONVERSATION_MAX:]
 
 
 def _retenue(
@@ -202,30 +373,6 @@ def _retenue(
     )
 
 
-def _phrase_des_deductions(deduits: Sequence[Choix]) -> str:
-    """Ce que le fil dit des réponses que Maestro a conclues à notre place.
-
-    Elles se **lisent**, et ce n'est pas de la politesse : une question qu'on ne vous
-    pose pas et dont vous découvrez la réponse dans un fichier généré est une décision
-    prise sans vous. Chaque déduction sort donc avec sa cause, dans le message qui
-    suit le geste — l'endroit exact où l'on regarde déjà.
-
-    Vide quand il n'y en a pas : une phrase « aucune déduction » à chaque tour
-    apprendrait à ne plus lire ce paragraphe.
-    """
-    if not deduits:
-        return ""
-    lignes = [f"— {c.parce_que}" for c in deduits if c.parce_que]
-    if not lignes:
-        return ""
-    tete = (
-        "Du coup, une question ne se pose pas :"
-        if len(lignes) == 1
-        else f"Du coup, {len(lignes)} questions ne se posent pas :"
-    )
-    return tete + "\n" + "\n".join(lignes)
-
-
 def _phrase_de_la_question(question: QuestionOutillage) -> str:
     """Le texte du message qui porte une question — ce qu'on lit si rien ne s'affiche.
 
@@ -233,8 +380,11 @@ def _phrase_de_la_question(question: QuestionOutillage) -> str:
     qui reste quand on relit le fil ailleurs (un export, une lettre inter-agents, un
     client qui ne connaît pas le champ `question`). Il **redit** donc l'intitulé, et
     c'est voulu : un message vide dans un fil est un trou, et `ServiceChat` refuse de
-    toute façon une réponse vide.
+    toute façon une réponse vide. Une question sans option (la question ouverte) n'a
+    pas de proposition à dire : elle dit comment y répondre.
     """
+    if not question.options:
+        return f"{question.intitule}\n{question.pourquoi}"
     return (
         f"{question.intitule}\n"
         f"Je propose « {question.libelle_de(question.recommande)} » — "
@@ -275,48 +425,58 @@ def _phrase_de_conclusion(acquis: Sequence[Choix]) -> str:
 class ConducteurOutillage:
     """Conduit le questionnaire d'outillage d'un projet neuf dans un fil de chat.
 
-    **Aucun attribut, et c'est la propriété qui compte** : tout ce qu'il sait, il le
-    relit du fil qu'on lui passe. Il est donc sûr de le partager entre conversations,
-    la Control Tower n'en construit qu'un, et il ne peut pas se désaccorder de ce qui
-    est persisté — c'est la même garantie que `RepondeurOrchestration` tient pour une
-    proposition de run (« aucun état de session », #685), à ceci près qu'ici l'objet a
-    plusieurs tours et que la tentation d'en garder un bout est réelle.
+    **Aucun état du questionnaire, et c'est la propriété qui compte** : tout ce qu'il
+    sait, il le relit du fil qu'on lui passe. Son seul attribut est son
+    **collaborateur** — celui qui comprend (`ComprehensionModele`) —, jamais une
+    réponse, un tour ou une question en cours. Il est donc sûr de le partager entre
+    conversations, et il ne peut pas se désaccorder de ce qui est persisté — la même
+    garantie que `RepondeurOrchestration` tient pour une proposition de run (« aucun
+    état de session », #685).
 
-    Le **projet** n'y est pas non plus, et c'est le même raisonnement : la
-    recommandation ne dépend que des réponses (`recommandation_depuis_choix`), et le
-    projet ne sert qu'à dater la provenance dans le manifeste
-    (`source_manifeste_des_choix`, appelé par l'API qui, elle, sait de quel projet il
-    s'agit).
+    Le **projet** n'y est pas non plus : la recommandation ne dépend que des constats
+    (`recommandation_depuis_choix`), et le projet ne sert qu'à dater la provenance
+    dans le manifeste (`source_manifeste_des_choix`, appelé par l'API qui, elle, sait
+    de quel projet il s'agit).
     """
 
-    def acquis(self, fil: Sequence[MessageChat]) -> tuple[Choix, ...]:
-        """Les réponses que ce fil porte — celles données, **puis** celles qui en découlent.
+    def __init__(self, comprehension: ComprehensionModele | None = None) -> None:
+        self._comprehension = comprehension or ComprehensionModele()
 
-        L'ordre compte : les déductions se calculent sur les réponses données, et se
-        rangent après elles. C'est ce qui rend la relecture fidèle — on voit ce qui a
-        été choisi, puis ce que ça a entraîné.
-        """
-        donnes = list(choix_du_fil(fil))
-        return tuple([*donnes, *deductions(donnes)])
-
-    def _tour(self, fil: Sequence[MessageChat], prelude: str = "") -> ReponseChat:
+    async def _tour(self, fil: Sequence[MessageChat]) -> ReponseChat:
         """Le tour suivant : la question à poser, ou la conclusion. Jamais rien.
 
-        `prelude` est ce qu'on a à dire **avant** la question — les déductions que le
-        geste précédent vient d'entraîner. Il est préfixé plutôt que posé dans un
-        second message : deux messages d'agent d'affilée pour un seul tour
-        décaleraient la question du geste qui l'a appelée, et `question_en_attente`
-        ne lit que le **dernier** message.
+        Sur un fil où la personne n'a **rien dit**, la question ouverte, sans appeler
+        le modèle. Sinon le modèle comprend ce qui a été dit, et sa compréhension
+        voyage sur le message (`ReponseChat.comprehension`) : c'est elle que la
+        conclusion relira pour écrire l'outillage.
+
+        Ce que le modèle a à dire avant la question (`Comprehension.message`) est
+        **préfixé** au même message plutôt que posé dans un second : deux messages
+        d'agent d'affilée décaleraient la question du geste qui l'a appelée, et
+        `question_en_attente` ne lit que le **dernier** message.
+
+        Ce qu'il a **compris** ne se recopie pas dans le texte : il voyage sur le
+        message, et la carte le rend en tête de la question, une entrée par constat.
+        La relecture de #1147 l'a montré recopié en entier dans chaque bulle du fil,
+        un flot de clés qui noyait la question.
         """
-        donnes = list(choix_du_fil(fil))
-        acquis = [*donnes, *deductions(donnes)]
-        question = question_suivante(acquis)
-        if question is None:
-            corps = _phrase_de_conclusion(acquis)
-            return ReponseChat(contenu=_joint(prelude, corps))
+        reponses = choix_du_fil(fil)
+        conversation = _conversation_de(fil)
+        if not conversation and not reponses:
+            ouverte = question_ouverte()
+            return ReponseChat(contenu=_phrase_de_la_question(ouverte), question=ouverte)
+        comprise = await self._comprehension.comprendre(conversation, reponses)
+        acquis = acquis_de([*reponses, *comprise.constats])
+        suivante = comprise.question_suivante(rang=len(donnees(reponses)) + 1)
+        if suivante is None:
+            return ReponseChat(
+                contenu=_joint(comprise.message, _phrase_de_conclusion(acquis)),
+                comprehension=acquis,
+            )
         return ReponseChat(
-            contenu=_joint(prelude, _phrase_de_la_question(question)),
-            question=question,
+            contenu=_joint(comprise.message, _phrase_de_la_question(suivante)),
+            question=suivante,
+            comprehension=acquis,
         )
 
     async def ouvrir(self, fil: Sequence[MessageChat]) -> ReponseChat:
@@ -324,33 +484,30 @@ class ConducteurOutillage:
 
         Aucune différence entre les deux, et c'est la propriété qu'on veut : ouvrir
         un questionnaire déjà commencé repose la question là où il en est. Elle
-        découle du fil comme seule mémoire, elle n'est pas gardée.
+        découle du fil comme seule mémoire, elle n'est pas gardée. Ce qui a déjà été
+        dit dans la conversation compte : un projet décrit trois messages plus haut
+        n'a pas à l'être une seconde fois.
         """
-        return self._tour(fil)
+        return await self._tour(fil)
 
     async def repondre(
         self, fil: Sequence[MessageChat], question: QuestionOutillage, valeur: str
     ) -> ReponseChat:
-        """Le tour qui suit un geste : ce qu'il déduit, puis la question suivante.
+        """Le tour qui suit une réponse — cliquée ou tapée : la suite, comprise.
 
-        Le fil reçu contient **déjà** le geste (`ServiceChat` l'écrit avant d'appeler
-        le répondeur), donc `valeur` n'a pas à y être ajoutée ici : la relire du fil
-        est ce qui garantit que la suite se calcule sur ce qui est persisté, et non
-        sur un argument qui aurait pu ne jamais y arriver.
-
-        `question` sert à nommer ce que ce geste vient d'entraîner — les déductions
-        **nouvelles**, celles que la réponse à cette question-là a produites. Sans
-        elle, on redirait à chaque tour toutes les déductions du fil.
+        Le fil reçu contient **déjà** la réponse (`ServiceChat` l'écrit avant
+        d'appeler le répondeur), donc `valeur` n'a pas à y être ajoutée ici : la relire
+        du fil est ce qui garantit que la suite se calcule sur ce qui est persisté, et
+        non sur un argument qui aurait pu ne jamais y arriver. `question` et `valeur`
+        restent dans la signature du contrat de `RepondeurChat.repondre_question`.
         """
-        donnes = list(choix_du_fil(fil))
-        avant = {c.cle for c in deductions([c for c in donnes if c.cle != question.cle])}
-        nouvelles = tuple(c for c in deductions(donnes) if c.cle not in avant)
-        return self._tour(fil, prelude=_phrase_des_deductions(nouvelles))
+        del question, valeur  # relues du fil, voir ci-dessus
+        return await self._tour(fil)
 
 
 def _joint(prelude: str, corps: str) -> str:
-    """Colle le prélude au corps — sans ligne vide inutile quand il n'y en a pas."""
-    return f"{prelude}\n\n{corps}" if prelude else corps
+    """Colle le prélude au corps — sans ligne vide inutile quand l'un des deux manque."""
+    return "\n\n".join(morceau for morceau in (prelude, corps) if morceau)
 
 
 def _empreinte(indices: Analyse) -> str:
@@ -443,6 +600,10 @@ class ServiceOutillage:
     skills que l'écran a lus disparaîtraient à l'écriture, exactement le défaut
     de #1100. Une lecture **manquée** n'est jamais gardée : le prochain appel
     retente.
+
+    `comprehension` (#1147) est ce qui comprend un projet neuf — le modèle, derrière
+    `ComprehensionModele`. `None` en construit un qui résout le fournisseur configuré
+    au premier usage ; seule la voie du questionnaire l'appelle.
     """
 
     def __init__(
@@ -453,6 +614,7 @@ class ServiceOutillage:
         validateur: Validateur | None = None,
         provider: ModelProvider | None = None,
         modele: str = MODELE_EXECUTANT_DEFAUT,
+        comprehension: ComprehensionModele | None = None,
     ) -> None:
         self._projets = projets
         self._bornes = bornes
@@ -460,6 +622,7 @@ class ServiceOutillage:
         self._provider = provider
         self._modele = modele
         self._lues: dict[str, _LectureGardee] = {}
+        self._comprehension = comprehension or ComprehensionModele()
 
     async def analyser(self, id_projet: str) -> dict[str, Any]:
         """Analyse le projet `id_projet` et rend l'outillage recommandé (docs/38).
@@ -513,15 +676,15 @@ class ServiceOutillage:
         correspond à aucune entrée est rendu dans `retenus_inconnus`, jamais
         perdu en silence (`_retenue`).
 
-        `choix` (#1100) sont les réponses d'un projet **neuf** : elles tiennent
-        lieu d'analyse, par les **mêmes** fonctions que `recommandation` et que
-        la proposition d'équipe (`ServiceEquipe._matiere_choisie`). Une racine
-        neuve n'a rien à montrer — l'analyser rendait un outillage vide, et
-        l'écran, qui avait lu celui des réponses, voyait ses skills disparaître.
-        Ce sont les **réponses** qui voyagent, jamais les entrées ni leur
-        contenu : une réponse est une donnée d'entrée de la dérivation, au même
-        titre que la racine, et le quoi et le où restent dérivés ici. `source`
-        dit alors d'où sort l'outillage (`type: "choix"`, les réponses en
+        `choix` (#1100) sont les réponses d'un projet **neuf**, et depuis #1147 ce
+        qui en a été compris (les constats `deduit`, tels que le questionnaire les a
+        rendus) : ils tiennent lieu d'analyse, par les **mêmes** fonctions que
+        `recommandation` et que la proposition d'équipe
+        (`ServiceEquipe._matiere_choisie`). Le modèle **n'est pas rappelé** ici :
+        l'outillage écrit est celui que l'écran a montré, pas une seconde lecture
+        qui pourrait comprendre autre chose. Ce sont les **constats** qui voyagent,
+        jamais les entrées ni leur contenu : le quoi et le où restent dérivés ici.
+        `source` dit alors d'où sort l'outillage (`type: "choix"`, les constats en
         `reference`) et `analyse` est vide : il n'y en a pas eu.
 
         Rend le rapport dans les deux régimes, `application` portant le verdict
@@ -531,7 +694,7 @@ class ServiceOutillage:
         refusé, ce n'est pas une panne.
         """
         projet = self._projet(id_projet)
-        acquis = [*choix, *deductions(choix)] if choix else []
+        acquis = list(choix)
         if acquis:
             reference = ""
             constats = constats_depuis_choix(acquis)
@@ -617,29 +780,46 @@ class ServiceOutillage:
             self._provider = fournisseur
         return self._provider
 
-    def question(self, id_projet: str, choix: Sequence[Choix]) -> dict[str, Any]:
-        """La prochaine question du questionnaire, vu les réponses déjà acquises (#1031).
+    async def question(self, id_projet: str, choix: Sequence[Choix]) -> dict[str, Any]:
+        """La prochaine question du questionnaire, vu les réponses données (#1031, #1147).
 
         **Sans état** : l'appelant dit ce qu'il a, le service dit ce qui en découle.
         C'est ce qui permet au fil — qui tient ses réponses dans ses messages — et au
-        parcours de création (#1034) — qui les tiendra à l'écran — de servir du même
+        parcours de création (#1034) — qui les tient à l'écran — de servir du même
         questionnaire sans partager de session.
 
-        `deductions` rend les réponses que les choix donnés **entraînent**, chacune
-        avec sa cause : une question qu'on ne pose pas n'est pas une question qu'on
-        cache. `question` vaut `None` quand il n'y en a plus, et c'est alors
-        `recommandation` qui a quelque chose à dire.
+        Seules les réponses **données** (cliquées ou tapées) sont lues : des constats
+        `deduit` renvoyés par le client ne sont pas crus, ils sont recompris. Sans
+        aucune réponse, la question ouverte, sans appeler le modèle — la voie sans
+        état n'a pas de conversation à relire.
 
-        Le projet est résolu (404/422 motivés) sans que rien du disque soit lu : le
-        questionnaire ne regarde aucun fichier.
+        `deductions` rend ce qui a été **compris**, chaque constat avec sa cause : une
+        question qu'on ne pose pas n'est pas une question qu'on cache. `question` vaut
+        `None` quand plus rien ne manque, et c'est alors `recommandation` qui a
+        quelque chose à dire. `message` est ce que le modèle a à dire à la personne
+        avant la question — vide le plus souvent.
+
+        Le projet est résolu (404/422 motivés) sans que rien du disque soit lu, et
+        avant tout appel au modèle : le questionnaire ne regarde aucun fichier.
         """
         self._projet(id_projet)
-        deduits = deductions(choix)
-        suivante = question_suivante([*choix, *deduits])
+        reponses = donnees(choix)
+        if not reponses:
+            ouverte = question_ouverte()
+            return {
+                "question": ouverte.to_dict(),
+                "deductions": [],
+                "terminee": False,
+                "message": "",
+            }
+        comprise = await self._comprehension.comprendre("", reponses)
+        acquis = acquis_de([*reponses, *comprise.constats])
+        suivante = comprise.question_suivante(rang=len(reponses) + 1)
         return {
             "question": suivante.to_dict() if suivante is not None else None,
-            "deductions": [c.to_dict() for c in deduits],
+            "deductions": [c.to_dict() for c in acquis if c.deduit],
             "terminee": suivante is None,
+            "message": comprise.message,
         }
 
     def recommandation(self, id_projet: str, choix: Sequence[Choix]) -> dict[str, Any]:
@@ -652,15 +832,20 @@ class ServiceOutillage:
 
         Rendue à **tout moment**, questionnaire fini ou non : un client qui veut
         montrer ce qui se dessine au fil des réponses n'a pas à attendre la dernière.
-        Ce qui n'a pas été répondu ne justifie simplement aucune entrée — et
+        Ce qui n'est pas acquis ne justifie simplement aucune entrée — et
         `recommander` le dit, en écartant le skill correspondant avec sa raison.
+
+        `choix` porte les réponses **et** ce qui en a été compris (les `deduit` que
+        le questionnaire a rendus) : **aucun appel au modèle** ici, la recommandation
+        est une fonction de ce qu'on lui donne, et c'est ce qui garantit que la
+        génération écrira la même chose (`acquis_de` dit ce qui fait foi).
 
         `source` est le fragment de provenance du manifeste (docs/38 §4.1), le jumeau
         de celui qu'`Analyse.source_manifeste()` rend : c'est lui qui dira, six mois
         plus tard, que cet outillage vient de réponses et lesquelles.
         """
         projet = self._projet(id_projet)
-        acquis = [*choix, *deductions(choix)]
+        acquis = acquis_de(choix)
         return {
             "projet_id": projet.id,
             "source": source_manifeste_des_choix(projet.id, acquis),

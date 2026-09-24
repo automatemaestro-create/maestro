@@ -25,10 +25,10 @@ travaillent dans le projet :
     preparation.regime                 # "en-place" (c'est fait) | "branche" (attend la fusion)
     preparation.rapport.refuses        # ce qui n'a **pas** été écrasé, et où la neuve attend
 
-    from maestro.outillage import Choix, question_suivante, recommandation_depuis_choix
+    from maestro.outillage import Choix, question_ouverte, recommandation_depuis_choix
 
-    question_suivante([])              # « Quelle sorte de projet est-ce ? », recommandée
-    reco = recommandation_depuis_choix([Choix("nature", "service-api"), …])
+    question_ouverte()                 # « Qu'est-ce que ce projet ? » — sans options (#1147)
+    reco = recommandation_depuis_choix([Choix("tester", "flutter test", deduit=True), …])
     reco.entrees                       # la **même** forme que `analyse.recommandation`
 
     outillage = outillage_du_projet(projet)
@@ -46,10 +46,11 @@ Dix modules, et la frontière entre eux est celle du disque :
 
 - `maestro.outillage.modele` — les formes, **inertes** : elles décrivent et
   sérialisent, elles ne touchent à rien ;
-- `maestro.outillage.questionnaire` — le **lot 3** (#1031) : les questions qui
-  décident de l'outillage d'un projet **neuf**, et la mue de leurs réponses en
+- `maestro.outillage.questionnaire` — le **lot 3** (#1031), sans catalogue
+  depuis #1147 : le schéma de ce qui fait un outillage, la lecture vérifiée de ce
+  que le modèle a compris d'un projet **neuf**, et la mue des constats en
   `Constats`. C'est le pendant d'`analyse` — là-bas on lit un projet existant,
-  ici on le demande —, et les deux aboutissent au même `recommander` ;
+  ici on l'apprend de la personne —, et les deux aboutissent au même `recommander` ;
 - `maestro.outillage.detection` — les **tables** (extensions, gestionnaires, CI,
   forges, conventions) et les lecteurs de manifestes. Tout y est lu, **rien n'y
   est exécuté** ;
@@ -158,21 +159,21 @@ from maestro.outillage.modele import (
     nouvel_id,
 )
 from maestro.outillage.questionnaire import (
-    CATALOGUE,
-    QUESTIONS_MAX,
+    AUCUN,
     SOURCE_CHOIX,
+    SUJETS,
     Choix,
+    Comprehension,
+    ComprehensionIllisible,
     Option,
     QuestionOutillage,
-    cles_connues,
+    acquis_de,
+    comprehension_depuis_texte,
     constats_depuis_choix,
-    deductions,
-    options_admissibles,
-    question_suivante,
+    question_ouverte,
     recommandation_depuis_choix,
     resume_des_choix,
     source_manifeste_des_choix,
-    valeur_admissible,
 )
 from maestro.outillage.recommandation import DOSSIER_SKILLS, SKILL_PAR_USAGE, recommander
 from maestro.outillage.redaction import (
@@ -188,10 +189,10 @@ from maestro.outillage.redaction import (
 #: elles s'importent de `maestro.outillage.contexte`, nommément. Deux `Bornes`
 #: dans le même espace de noms se seraient servies l'une pour l'autre.
 __all__ = [
+    "AUCUN",
     "BALISE_DEBUT",
     "BALISE_FIN",
     "CADRE_LECTURE",
-    "CATALOGUE",
     "CHAMP_OUTILS",
     "CHEMIN_MANIFESTE",
     "DOSSIER_REFUSES",
@@ -204,12 +205,12 @@ __all__ = [
     "PORTEE_BLOC",
     "PORTEE_FICHIER",
     "PREFIXE_ID",
-    "QUESTIONS_MAX",
     "REGIME_BRANCHE",
     "REGIME_EN_PLACE",
     "ROLES_TRANSMIS",
     "SKILL_PAR_USAGE",
     "SOURCE_CHOIX",
+    "SUJETS",
     "USAGES",
     "VERSION_ANALYSE",
     "VERSION_MANIFESTE",
@@ -217,6 +218,8 @@ __all__ = [
     "Bornes",
     "Choix",
     "Commande",
+    "Comprehension",
+    "ComprehensionIllisible",
     "ConstatEcarte",
     "Constats",
     "DossierScripts",
@@ -240,20 +243,19 @@ __all__ = [
     "Recommandation",
     "Refus",
     "SkillDuProjet",
+    "acquis_de",
     "analyser",
-    "cles_connues",
     "completer",
+    "comprehension_depuis_texte",
     "constats_depuis_choix",
-    "deductions",
     "generer",
     "generer_outillage",
     "lire_le_projet",
     "nouvel_id",
     "nouvel_id_de_generation",
-    "options_admissibles",
     "outillage_du_projet",
     "portees_declarees",
-    "question_suivante",
+    "question_ouverte",
     "recommandation_depuis_choix",
     "recommander",
     "rediger",
@@ -261,5 +263,4 @@ __all__ = [
     "resume_des_choix",
     "sans_lecture",
     "source_manifeste_des_choix",
-    "valeur_admissible",
 ]

@@ -83,7 +83,6 @@ const QUESTION_OUTILLAGE: QuestionOutillage = {
   recommande: "typescript",
   pourquoi: "c'est une application web",
   rang: 1,
-  total: 6,
 };
 
 /** Le message qui pose la question d'outillage d'un projet neuf (#1031). */
