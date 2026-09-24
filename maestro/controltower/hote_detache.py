@@ -94,17 +94,23 @@ inter-process. Il n'y avait donc rien à réinventer, seulement à brancher —
 `ValidateurControlTower`, sur le bus de *ce* process, au geste près comme
 `ServiceExecutions._derouler` les branche sur celui de l'API.
 
-La **proposition de renfort** (#1227) les a rejoints avec #1260, et son absence a
-montré ce que coûte un arbitre oublié de ce côté : sur la vraie stack, le moteur
-constatait qu'un rôle manquait au plan, le consignait, puis rendait la main faute
-d'arbitre — personne ne voyait rien, et les tâches du métier absent échouaient au
-routage. `ArbitreRenfortControlTower` publie la demande sur le même bus, l'API la
-relaie dans le fil (`RelaisRenfort`), et la décision revient par
-`renfort.decision`. Les deux hôtes câblent désormais le même arbitre.
+Une **quatrième** attente est venue depuis : la question libre qu'un agent pose
+pendant sa tâche (#1023, `ArbitreQuestionControlTower`). Elle attend sur le même
+bus, mais elle avait été câblée côté API seulement. L'hôte détaché étant celui de
+la vraie stack, aucun agent ne pouvait donc poser de question, jusqu'à ce que
+#1259 la branche ici, au même geste que les trois autres.
 
-**Un seul bus les sert tous**, guet d'annulation compris, et ce n'est
+La **proposition de renfort** (#1227) est la cinquième, arrivée avec #1260, et son
+absence a montré la même chose : sur la vraie stack, le moteur constatait qu'un
+rôle manquait au plan, le consignait, puis rendait la main faute d'arbitre —
+personne ne voyait rien, et les tâches du métier absent échouaient au routage.
+`ArbitreRenfortControlTower` publie la demande sur le même bus, l'API la relaie
+dans le fil (`RelaisRenfort`), et la décision revient par `renfort.decision`. Les
+deux hôtes câblent désormais le même arbitre.
+
+**Un seul bus les sert toutes**, guet d'annulation compris, et ce n'est
 pas une économie de style : `RedisEventBus.subscribe` ouvre un `pubsub` par appel
-sur un client partagé, si bien que quatre bus coûteraient quatre connexions là où
+sur un client partagé, si bien que cinq bus coûteraient cinq connexions là où
 une suffit — dans un process qui vit des heures, c'est exactement la fuite que
 `_observer_ordres` refusait déjà pour son propre compte. C'est aussi la forme
 de l'API, qui n'a jamais eu qu'un `self._bus`. Les fabriques `arbitre_brief_redis`
@@ -852,7 +858,7 @@ def main(argv: Sequence[str] | None = None) -> int:
        humaine sûre au sens de #348 : suspendu sur son brief, ce process continue de
        dire qu'il est là, donc « personne n'a encore répondu » reste distinguable de
        « celui qui posait la question est mort » ;
-    4. **ouvrir le bus** (#445) — un seul pour les quatre abonnements qui suivent,
+    4. **ouvrir le bus** (#445) — un seul pour tous les abonnements qui suivent,
        et une ouverture qui ne peut pas échouer bruyamment (`_bus_du_run`) ;
     5. **écouter l'annulation** (#444) : le lanceur rend la main sur le témoin, et
        l'ordre peut suivre à la milliseconde — s'abonner après lui serait s'abonner
@@ -1033,8 +1039,8 @@ async def _derouler(ordre: OrdreRun, atelier: Path) -> RunReport:
       la première lecture coûterait un run tué par une panne de Redis.
 
     Le bus, lui, **apparaît ici depuis #445** — il n'est plus au seul usage du
-    guet : les trois attentes humaines s'y abonnent aussi, et un process qui vit
-    des heures n'a pas à ouvrir quatre connexions pour un canal. Il est ouvert par
+    guet : les attentes humaines s'y abonnent aussi, et un process qui vit
+    des heures n'a pas à ouvrir une connexion par attente. Il est ouvert par
     `_bus_du_run`, qui **ne lève pas** : ce qui était garanti tant que le guet
     l'ouvrait seul — aucune façon de manquer Redis ne peut emporter le run — reste
     donc vrai, et un `None` traverse tranquillement jusqu'aux fail-safes d'en face,
@@ -1045,6 +1051,7 @@ async def _derouler(ordre: OrdreRun, atelier: Path) -> RunReport:
         ArbitreBriefControlTower,
         ArbitreClarificationControlTower,
     )
+    from maestro.controltower.question import ArbitreQuestionControlTower
     from maestro.controltower.renfort import ArbitreRenfortControlTower
     from maestro.controltower.validation import ValidateurControlTower
     from maestro.engine.guardrails import Guardrails
@@ -1076,7 +1083,7 @@ async def _derouler(ordre: OrdreRun, atelier: Path) -> RunReport:
         # seconde règle ici serait une règle de plus à tenir d'accord avec la
         # sienne.
         #
-        # Sans bus, les trois sont `None` : les fail-safes d'en face refusent alors
+        # Sans bus, tous sont `None` : les fail-safes d'en face refusent alors
         # ce qu'ils ne peuvent pas faire trancher, et c'est tout ce qu'on veut d'eux
         # (cf. l'en-tête du module).
         garde_fous = Guardrails(
@@ -1095,6 +1102,12 @@ async def _derouler(ordre: OrdreRun, atelier: Path) -> RunReport:
             arbitre_clarification=(
                 None if bus is None else ArbitreClarificationControlTower(bus)
             ),
+            # La question libre d'un agent (#1023), câblée ici depuis #1259 :
+            # sans elle, l'exécuteur ne sert pas le verbe, et la vraie stack —
+            # dont c'est l'hôte par défaut — n'avait aucun agent qui puisse
+            # demander. Même bus, même règle ; sa borne reste un réglage du
+            # moteur (`MAESTRO_ARBITRAGE_ATTENTE`), comme côté API.
+            questionneur=None if bus is None else ArbitreQuestionControlTower(bus),
             # La proposition de renfort (#1227), **par le bus** depuis #1260 : la
             # demande y est publiée, l'API la relaie dans le fil qui a lancé le
             # run. Elle manquait ici, et c'était toute la panne : le moteur
@@ -1232,13 +1245,13 @@ async def _observer_ordres(
 
 
 def _bus_du_run() -> BusDurable | None:
-    """Le bus de ce process — **un seul**, pour le guet et les trois attentes (#445).
+    """Le bus de ce process — **un seul**, pour le guet et les attentes humaines (#445).
 
     Celui de la config, comme le battement et la publication : même Redis, même
     canal `maestro.evenements`, donc les mêmes demandes et les mêmes décisions que
     pour un run porté par l'API. Un seul objet parce qu'un seul suffit —
     `RedisEventBus.subscribe` ouvre un `pubsub` par appel sur un client partagé, si
-    bien que quatre abonnements concurrents tiennent sur une connexion.
+    bien que cinq abonnements concurrents tiennent sur une connexion.
 
     Il est **durable** depuis #699 (`bus_durable`) : ce que ce process publie est
     consigné au journal à l'instant où il le publie. C'est ici que la nuance
