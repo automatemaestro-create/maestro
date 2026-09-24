@@ -745,7 +745,7 @@ Ne bougent pas :
 - Son échéance tombe **strictement entre** ses voisins : **aucune autre échéance n'a bougé**. #1147
   est passé de `moyenne` à `haute` en rejoignant ce jalon.
 
-### Le retour d'expérience sur `p3` : un projet naît dans la conversation (2026-09-24)
+### Le retour d'expérience `p3` (2026-09-24)
 
 Le 2026-09-24, la personne crée le projet `p3` et y lance plusieurs runs : refaire la maquette et le
 site vitrine d'un kombucha. Elle rend dix constats, tous notés KO, avec captures. L'instruction
@@ -825,6 +825,93 @@ n'a bougé**.
 
 > ⚠ **Les critères de sortie du jalon sont dans sa description**, section `## Critères de sortie`
 > (C1 à C5). C'est elle qui fait foi au bouclage (docs/10 §3.4), pas ce résumé.
+
+---
+
+## « Indépendant du modèle » (2026-09-24)
+
+> Cette section précède « Le fil, un vrai interlocuteur » dans le fichier, par commodité de relecture.
+> Son rang dans la file est celui de son échéance, dit plus bas.
+
+Ce jalon est né le 2026-09-24. La checklist de chaque tâche restait à 0/N parce que Maestro la
+lisait dans un outil interne du CLI Claude, que celui-ci avait remplacé (#1291). La personne :
+
+> *« Il faut que tu t'en souviennes stp. Maestro est indépendant du modèle et des outils externes.
+> Analyse si on a d'autres dépendances. »*
+
+La règle est inscrite dans [CLAUDE.md](../CLAUDE.md) et écrite par
+[docs/44](./44-decision-maestro-possede-ses-contrats.md) (#1315). Comme les jalons nés d'une idée,
+celui-ci ne prend **pas de numéro de phase**.
+
+| Milestone | Contenu | Échéance | Suivi |
+|---|---|---|---|
+| **Indépendant du modèle — un agent travaille avec n'importe quel fournisseur, Maestro possède ses contrats** | Un agent sur un fournisseur autre que Claude travaille dans son projet, sous les mêmes garde-fous. Ce que Maestro observe ou impose à ses agents passe par ses propres contrats, et une montée de version du CLI Claude ne casse rien en silence. Le fournisseur choisi pour un agent est honoré, ou le run dit pourquoi | 2028-02-04 | **#1307**, 4 lots en séquence (#1308, #1309, #1310, #1311) ; **#1305**, **#1306**, **#1312**, sans parent |
+
+**Le constat** (analyse du 2026-09-24, en lecture seule, détail dans
+[docs/44 §2](./44-decision-maestro-possede-ses-contrats.md)) :
+- **L'orchestration est déjà indépendante.** Le fil, le planificateur, le classifieur, le récit et
+  l'outillage passent tous par l'abstraction des fournisseurs.
+- **Le travail des agents, lui, dépend de Claude.** Seul l'adaptateur Claude sert l'exécution avec
+  outils. Le vocabulaire des outils est celui du CLI Claude Code. Le point de contrôle des outils
+  est un hook de ce CLI. Des pannes sont reconnues à leur texte. Le fournisseur choisi pour un agent
+  est ignoré, et un agent sans outils retombe en silence sur du texte.
+
+**Le contenu :**
+- **#1307**, parent, 4 lots **en séquence** (chacun bâtit sur le précédent) :
+  - **#1308** : permissions, portée, frontière, équipes et playbooks parlent le vocabulaire de
+    Maestro. L'adaptateur Claude traduit ;
+  - **#1309** : un agent sur un fournisseur compatible OpenAI travaille dans son projet. Maestro
+    sert ses outils et conduit la boucle, sous les mêmes garde-fous ;
+  - **#1310** : les serveurs MCP d'un agent se montent par un client MCP de Maestro ;
+  - **#1311** : un fournisseur se configure et s'éprouve depuis les Paramètres, et un scénario de
+    référence joue un agent non-Claude. C'est le lot qui **décide d'un écran**.
+- **#1306** (bug) : le fournisseur choisi pour un agent est honoré, et aucun repli texte n'est muet.
+- **#1305** (bug) : les pannes se lisent dans les champs typés. Le plafond de tours n'est plus
+  reconnu depuis le SDK 0.2.159.
+- **#1312** : le contrat de l'adaptateur Claude se vérifie à chaque montée de version.
+
+**Rangés ailleurs, et pourquoi :**
+- **#1291** (la checklist devient un verbe de Maestro) et **#1304** (le point de contrôle ferme par
+  défaut, `Grep`/`Glob` confrontés au périmètre) restent au jalon courant, « Rien de figé ». Le
+  premier fait paraître chaque run cassé, le second est un garde-fou de secrets qui ne tient pas.
+- **#1313** (le serveur MCP navigateur à version connue) va à la Phase 9 : c'est un sujet
+  d'installation.
+- Des notes sur **#1279** (processus qui survivent à leur tâche), **#1270** (la liste des modèles
+  recopiée) et **#641** (la coque passe par `bash` ; Redis, donc Docker, par défaut).
+
+**La voie retenue est une boucle et des outils possédés par Maestro.** Brancher des agents CLI tiers
+par ACP ([docs/34](./34-decision-agent-cli-tiers-acp.md)) remplacerait une dépendance à un outil
+par une autre, et reste une option d'adaptateur. L'adaptateur Claude, par le SDK, reste de premier
+rang : c'est lui qui sert l'abonnement.
+
+**Une décision tombe**, et [docs/44](./44-decision-maestro-possede-ses-contrats.md) l'écrit :
+- elle renverse le `fournisseur` déclaratif de [docs/04 §4](./04-specifications-agents.md) ;
+- elle sort l'exécution outillée hors Claude du « différé » de
+  [docs/37](./37-decision-equipe-sur-mesure.md) et d'« Au-delà ».
+
+Ne bougent pas : les garde-fous, l'abonnement Claude, et les standards ouverts (MCP, git,
+`AGENTS.md`).
+
+**Place dans la file**, sur le rail produit :
+
+| Jalon | Échéance |
+| --- | --- |
+| « Rien de figé » | 2028-02-02 (inchangée) |
+| « Le run tient parole » | 2028-02-03 (inchangée) |
+| **« Indépendant du modèle »** | **2028-02-04** |
+| « Le niveau visuel » | 2028-02-05 (inchangée) |
+| Phase 9 | 2028-02-16 (inchangée) |
+
+- **Derrière « Rien de figé » et « Le run tient parole »** : ce que la personne voit cassé aujourd'hui
+  passe d'abord, et les deux bugs qui pressent (#1291, #1304) sont déjà au jalon courant.
+- **Devant « Le niveau visuel »** : l'écran des fournisseurs (#1311) se choisit avant qu'on habille
+  le produit.
+- **Devant la Phase 9** : on n'empaquette pas un produit dont le moteur ne sait agir qu'avec un
+  fournisseur.
+- Son échéance tombe **strictement entre** ses voisins : **aucune autre échéance n'a bougé**.
+
+> ⚠ **Les critères de sortie du jalon sont dans sa description**, section `## Critères de sortie`
+> (C1 à C3). C'est elle qui fait foi au bouclage (docs/10 §3.4), pas ce résumé.
 
 ---
 
@@ -931,6 +1018,7 @@ pendant le run et jamais recrutée sans accord. Elle renverse les deux dernière
 ## Au-delà (idées V3+)
 
 - **Des outils pour un fournisseur non-Anthropic, dans Maestro** (objectif O7). Aujourd'hui, seuls les modèles Claude exécutent avec outils : `openai_compat.py` ne fait que du texte. L'outillage généré par « L'équipe sur mesure » est universel par son **format** et se lit par tout agent sur le poste de l'utilisateur. L'exécuter avec outils **dans** Maestro par un autre fournisseur est un chantier à lui seul. Il a été **différé** par l'instruction de #1044 et n'a pas encore de ticket.
+  ⚠ **Sorti d'« Au-delà » le 2026-09-24** : c'est le jalon « Indépendant du modèle » et son chantier #1307 ([docs/44](./44-decision-maestro-possede-ses-contrats.md)).
 - Marketplace d'agents et de playbooks partageables.
 - **Catalogue étendu de fournisseurs** et **sélection automatique du modèle** par coût/latence/souveraineté (la couche d'abstraction, elle, existe dès la Phase 0 ; ici on enrichit le catalogue et l'auto-sélection).
 - Apprentissage des préférences de l'équipe (mémoire long terme enrichie).

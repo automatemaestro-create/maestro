@@ -297,6 +297,12 @@ l'agent répondrait en texte avec des outils dans les mains. Reste pour la suite
 l'**exécution multi-fournisseurs** (le champ `fournisseur` est déclaratif, le moteur
 exécute sur `MAESTRO_PROVIDER`).
 
+> ⚠ **Renversé le 2026-09-24** ([docs/44](./44-decision-maestro-possede-ses-contrats.md)), à la
+> demande de la personne : *« Maestro est indépendant du modèle et des outils externes. »* Le
+> `fournisseur` d'un agent n'est plus déclaratif. Il est honoré à l'exécution, ou le run dit pourquoi
+> il ne peut pas l'être (#1306). Un agent travaille avec tout fournisseur qui sait appeler des
+> outils (#1307). Ce paragraphe décrit l'état **présent** jusqu'à ce que ces tickets le réécrivent.
+
 ### 4.1 Régler un agent du code sans le dupliquer (#259)
 
 Créer un agent n'est pas la seule façon d'en changer un. Un agent **du code**
