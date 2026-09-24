@@ -63,11 +63,13 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from maestro.agents.catalog import MODELE_EXECUTANT_DEFAUT
 from maestro.agents.configuration import ConfigurationAgents
 from maestro.agents.store import NOMS_RESERVES
 from maestro.controltower.generation_agent import (
     INTENTION_MAX,
     GenerateurDefinitionAgent,
+    GenerationIndisponible,
 )
 from maestro.controltower.projets import ServiceProjets
 from maestro.equipe import (
@@ -88,6 +90,17 @@ from maestro.equipe import (
     refus_de,
     skills_constates,
 )
+from maestro.equipe.composition import (
+    CADRE_COMPOSITION,
+    MembreActuel,
+    corriger_equipe,
+    demande_valide,
+    lire_reponse,
+    prompt_composition,
+    prompt_correction,
+    proposer_equipe_composee,
+)
+from maestro.equipe.modele import ORIGINE_PLAYBOOK_ESQUISSE
 from maestro.outillage import Analyse, Bornes, analyser
 from maestro.outillage.modele import Constats, Recommandation
 from maestro.outillage.questionnaire import (
@@ -98,6 +111,7 @@ from maestro.outillage.questionnaire import (
     source_manifeste_des_choix,
 )
 from maestro.projets import Projet
+from maestro.providers.base import ModelProvider
 
 #: Ce qu'on écrit sur un rôle dont le playbook a bien été rédigé pour ce projet.
 #: Une phrase, parce que la vraie explication est l'`intention` que le rôle
@@ -131,6 +145,55 @@ class EquipeRefusee(ValueError):
         )
 
 
+class CompositeurEquipe:
+    """L'appel au modèle qui **compose** l'équipe d'un projet, ou la **corrige** (#1159).
+
+    Ce qu'on lui demande et ce qu'on fait de sa réponse sont dans
+    `maestro.equipe.composition`, pur ; ce verbe-ci ne fait qu'**écrire** — le seul
+    endroit de l'équipe qui connaisse un fournisseur pour composer, comme
+    `GenerateurDefinitionAgent` l'est pour les playbooks.
+
+    Le fournisseur est résolu **paresseusement**, comme celui de #257 : construire
+    le compositeur ne coûte rien et ne lève aucune erreur de configuration, ce dont
+    `create_app` dépend. Les tests en injectent un factice.
+
+    ⚠ Ce qu'il fait écrire **s'adresse à la personne** — les raisons des rôles et la
+    réponse à une correction sont lues telles quelles à l'étape d'équipe. Son cadre
+    porte donc le registre de langue (#945), et l'appel est rangé parmi les appels
+    conversationnels de la Control Tower (`tests/test_registre_de_langue.py`).
+    """
+
+    def __init__(
+        self,
+        *,
+        provider: ModelProvider | None = None,
+        modele: str = MODELE_EXECUTANT_DEFAUT,
+    ) -> None:
+        self._provider = provider
+        self._modele = modele
+
+    async def ecrire(self, prompt: str) -> str:
+        """Le texte que le modèle rend pour `prompt`, sous le cadre de composition.
+
+        Une réponse **vide** est un échec au même titre qu'une exception : un modèle
+        qui n'a rien dit n'a rien composé (même conduite que #257).
+        """
+        if self._provider is None:
+            from maestro.providers.factory import modele_du_canal, provider_from_settings
+
+            fournisseur = provider_from_settings()
+            # Le modèle suit le fournisseur configuré (#1173), résolu avant de
+            # retenir le fournisseur — un échec laisse tout à résoudre au prochain appel.
+            self._modele = modele_du_canal(self._modele, fournisseur)
+            self._provider = fournisseur
+        texte = await self._provider.generate(
+            prompt, model=self._modele, system_prompt=CADRE_COMPOSITION
+        )
+        if not (texte or "").strip():
+            raise RuntimeError("le fournisseur de modèle a rendu une réponse vide")
+        return texte
+
+
 class ServiceEquipe:
     """L'équipe qu'un projet déclaré appelle : proposée (#1039), puis créée (#1040).
 
@@ -146,6 +209,9 @@ class ServiceEquipe:
     `create_app` dépend. Les tests en injectent un factice — ou passent
     `playbooks=False` pour s'en tenir aux playbooks des gabarits.
 
+    `compositeur` (#1159) est l'appel qui **compose** l'équipe et la **corrige** en
+    langage naturel ; `None` en construit un, paresseusement lui aussi.
+
     `bornes` resserre la lecture de l'analyse, comme pour `ServiceOutillage` ;
     `None` laisse le défaut de `maestro.outillage`.
     """
@@ -157,12 +223,14 @@ class ServiceEquipe:
         *,
         bornes: Bornes | None = None,
         generateur: GenerateurDefinitionAgent | None = None,
+        compositeur: CompositeurEquipe | None = None,
         playbooks: bool = True,
     ) -> None:
         self._projets = projets
         self._gabarits = gabarits
         self._bornes = bornes
         self._generateur = generateur
+        self._compositeur = compositeur
         self._playbooks = playbooks
 
     async def proposer(
@@ -184,7 +252,12 @@ class ServiceEquipe:
            d'un projet réel prend des secondes : il est joué **hors de la boucle
            d'événements**, une route qui la bloquerait figeant les flux SSE des
            autres écrans ;
-        3. l'équipe est **dérivée** (fonction pure, `maestro.equipe`) ;
+        3. l'équipe est **composée par le modèle** pour le besoin réel du projet
+           (#1159, docs/41) — ses constats, ce que la personne a répondu, les
+           gabarits comme matière —, puis **vérifiée** (`maestro.equipe.composition`).
+           Une composition qui n'aboutit pas retombe sur les **règles** des gabarits
+           (`proposer_equipe`), et la proposition le dit avec sa cause
+           (`composition`) : une équipe perdue pour un quota épuisé serait pire ;
         4. les playbooks sont **écrits** par la mécanique de #257, un appel par
            rôle, tous en même temps.
 
@@ -220,16 +293,106 @@ class ServiceEquipe:
                 source=source,
             )
             if renfort is not None
-            else proposer_equipe(
+            else await self._composer(projet, constats, recommandation, acquis, source)
+        )
+        return (await self._avec_playbooks(proposition)).to_dict()
+
+    async def corriger(
+        self,
+        id_projet: str,
+        demande: str,
+        equipe: Sequence[MembreActuel],
+        choix: Sequence[Choix] = (),
+    ) -> dict[str, Any]:
+        """Ce que la personne demande de changer à l'équipe, **compris** — rien de créé (#1159).
+
+        « Ajoute quelqu'un pour la sécurité » : le modèle reçoit le projet, l'équipe
+        **telle qu'elle est à l'écran** (`equipe`, retraits compris) et la demande, et
+        rend les rôles à ajouter, ceux à retirer ou à remettre, et une phrase qui lui
+        répond. Les ajouts sont vérifiés comme une composition, puis leurs playbooks
+        **écrits pour ce projet** par #257 — un rôle ajouté par la parole est un rôle
+        de plein droit.
+
+        La demande est refusée **avant** tout appel si elle est vide ou trop longue
+        (`ValueError`, un 422). Un modèle qui ne répond pas, ou hors contrat, lève
+        `GenerationIndisponible` (un 502) : il n'y a **pas** de repli ici, aucune
+        règle ne comprend une phrase, et inventer une réponse serait pire que le
+        dire. L'équipe montrée reste intacte à l'écran.
+        """
+        phrase = demande_valide(demande)
+        projet = self._projets.entite(id_projet)
+        acquis = [*choix, *deductions(choix)] if choix else []
+        constats, recommandation, _source = (
+            await asyncio.to_thread(self._matiere_analysee, projet)
+            if not acquis
+            else self._matiere_choisie(projet, acquis)
+        )
+        try:
+            texte = await self._compositeur_actif().ecrire(
+                prompt_correction(
+                    constats, recommandation, acquis, phrase, equipe, nom_projet=projet.nom
+                )
+            )
+            correction = corriger_equipe(
+                constats,
+                recommandation,
+                lire_reponse(texte),
+                equipe=equipe,
+                noms_pris=self._noms_pris(projet.id),
+            )
+        except Exception as exc:  # noqa: BLE001 — toute panne d'appel est la même ici
+            raise GenerationIndisponible(
+                f"la demande n'a pas pu être comprise : {exc}"
+            ) from exc
+        ajouts = await self._roles_avec_playbooks(correction.ajouts)
+        return replace(correction, ajouts=ajouts).to_dict()
+
+    async def _composer(
+        self,
+        projet: Projet,
+        constats: Constats,
+        recommandation: Recommandation,
+        acquis: Sequence[Choix],
+        source: dict[str, Any],
+    ) -> PropositionEquipe:
+        """L'équipe composée par le modèle — ou par les règles des gabarits, dit comme tel.
+
+        Toute panne est rattrapée, `CompositionIllisible` comme le reste : du point de
+        vue de qui attend une équipe, un quota épuisé et une réponse inexploitable
+        produisent le même fait. La proposition des règles porte alors la **cause**
+        (`composition_raison`), que l'étape d'équipe affiche : la personne sait que
+        cette équipe ne vient pas d'un jugement sur son projet, et peut la corriger
+        avec ses mots — ou redemander la proposition.
+        """
+        noms_pris = self._noms_pris(projet.id)
+        try:
+            texte = await self._compositeur_actif().ecrire(
+                prompt_composition(constats, recommandation, acquis, nom_projet=projet.nom)
+            )
+            return proposer_equipe_composee(
+                constats,
+                recommandation,
+                lire_reponse(texte),
+                projet_id=projet.id,
+                noms_pris=noms_pris,
+                source=source,
+            )
+        except Exception as exc:  # noqa: BLE001 — toute panne d'appel est la même ici
+            regles = proposer_equipe(
                 constats,
                 recommandation,
                 projet_id=projet.id,
                 choix=acquis,
-                noms_pris=self._noms_pris(projet.id),
+                noms_pris=noms_pris,
                 source=source,
             )
-        )
-        return (await self._avec_playbooks(proposition)).to_dict()
+            return replace(
+                regles,
+                composition_raison=(
+                    "composée par les règles des cinq gabarits : la composition pour le "
+                    f"besoin de votre projet n'a pas abouti ({exc})"
+                ),
+            )
 
     def creer(
         self,
@@ -363,12 +526,19 @@ class ServiceEquipe:
         rien. Aucun ne peut faire tomber les autres — chacun rattrape son propre
         échec et retombe sur le playbook de son gabarit.
         """
-        if not self._playbooks or not proposition.roles:
+        if not proposition.roles:
             return proposition
-        rediges = await asyncio.gather(
-            *(self._playbook(role) for role in proposition.roles)
+        return replace(
+            proposition, roles=await self._roles_avec_playbooks(proposition.roles)
         )
-        return replace(proposition, roles=tuple(rediges))
+
+    async def _roles_avec_playbooks(
+        self, roles: Sequence[RolePropose]
+    ) -> tuple[RolePropose, ...]:
+        """Chaque rôle, son playbook écrit pour ce projet — en même temps, jamais à la suite."""
+        if not self._playbooks or not roles:
+            return tuple(roles)
+        return tuple(await asyncio.gather(*(self._playbook(role) for role in roles)))
 
     async def _playbook(self, role: RolePropose) -> RolePropose:
         """Le rôle, son playbook écrit par #257 — ou celui de son gabarit, dit comme tel.
@@ -389,14 +559,22 @@ class ServiceEquipe:
                 role.intention[:INTENTION_MAX]
             )
         except Exception as exc:  # noqa: BLE001 — toute panne d'appel est la même ici
+            # Le repli garde **son** origine (#1159) : un rôle composé hors des
+            # gabarits porte une esquisse, et elle ne devient pas un « playbook du
+            # gabarit » parce que la rédaction a échoué.
+            esquisse = role.playbook_origine == ORIGINE_PLAYBOOK_ESQUISSE
             return avec_playbook(
                 role,
                 role.playbook,
-                origine=ORIGINE_PLAYBOOK_GABARIT,
+                origine=ORIGINE_PLAYBOOK_ESQUISSE if esquisse else ORIGINE_PLAYBOOK_GABARIT,
                 raison=(
-                    f"playbook du gabarit « {role.gabarit} » : sa rédaction pour ce "
-                    f"projet n'a pas abouti ({exc}). Il reste modifiable, et une "
-                    "nouvelle proposition la retentera"
+                    (
+                        "esquisse écrite à partir du rôle et de sa raison"
+                        if esquisse
+                        else f"playbook du gabarit « {role.gabarit} »"
+                    )
+                    + f" : sa rédaction pour ce projet n'a pas abouti ({exc}). Il reste "
+                    "modifiable, et une nouvelle proposition la retentera"
                 ),
             )
         return avec_playbook(
@@ -411,6 +589,12 @@ class ServiceEquipe:
         if self._generateur is None:
             self._generateur = GenerateurDefinitionAgent()
         return self._generateur
+
+    def _compositeur_actif(self) -> CompositeurEquipe:
+        """Le compositeur de #1159, construit au premier usage (jamais au câblage)."""
+        if self._compositeur is None:
+            self._compositeur = CompositeurEquipe()
+        return self._compositeur
 
 
 def _porte_dans(racine: Path) -> Callable[[str], bool]:

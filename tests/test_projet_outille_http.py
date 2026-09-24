@@ -55,6 +55,7 @@ from maestro.agents.playbooks import PlaybookStore
 from maestro.agents.store import AgentStore, SurchargeStore
 from maestro.controltower import ControlTowerState, InMemoryEventBus, create_app
 from maestro.controltower.chat import ChatStore
+from maestro.controltower.equipe import CompositeurEquipe
 from maestro.controltower.generation_agent import GenerateurDefinitionAgent
 from maestro.controltower.projets import ServiceProjets
 from maestro.engine import RunReport
@@ -82,6 +83,18 @@ class _GenerateurHorsLigne(GenerateurDefinitionAgent):
     """
 
     async def proposer(self, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("hors ligne (test)")
+
+
+class _CompositeurHorsLigne(CompositeurEquipe):
+    """Un compositeur d'équipe qui ne répond jamais (#1159) — zéro appel modèle.
+
+    La proposition retombe sur les **règles** des gabarits et le dit
+    (`composition.origine == "regles"`) : c'est le repli promis par la route, et
+    c'est l'équipe dont cette suite éprouve le chemin HTTP jusqu'au disque.
+    """
+
+    async def ecrire(self, prompt: str) -> str:
         raise RuntimeError("hors ligne (test)")
 
 
@@ -134,6 +147,7 @@ def _app(tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents) -> FastAP
         mcp=gabarits.mcp,
         capacites=gabarits.capacites,
         generateur_agent=_GenerateurHorsLigne(),
+        compositeur_equipe=_CompositeurHorsLigne(),
     )
 
 
@@ -866,6 +880,7 @@ def fil_reel(
         mcp=gabarits.mcp,
         capacites=gabarits.capacites,
         generateur_agent=_GenerateurHorsLigne(),
+        compositeur_equipe=_CompositeurHorsLigne(),
         chat_store=ChatStore(tmp_path / "chat"),
         fabrique_moteur=moteur,
     )

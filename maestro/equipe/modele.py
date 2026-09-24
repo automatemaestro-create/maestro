@@ -73,11 +73,27 @@ CRANS: tuple[str, ...] = ("allow", "ask", "deny")
 #: le document du rôle figé sert de repli. La distinction est **servie**, jamais
 #: tue : un playbook générique et un playbook écrit pour le projet ne valent pas
 #: la même chose, et rien ne permettrait de les distinguer à la lecture.
+#:
+#: `esquisse` (#1159) : un rôle **composé par le modèle hors des gabarits** — une
+#: application mobile, un pipeline d'apprentissage, la sécurité — n'a aucun document
+#: de repli. Tant que sa rédaction n'a pas abouti, il porte une esquisse écrite à
+#: partir de son libellé, de sa raison et de ses compétences, sur le socle commun
+#: des rôles (`maestro.equipe.composition.playbook_esquisse`). Ce n'est pas un
+#: playbook de gabarit, et il ne se sert pas sous ce nom.
 ORIGINE_PLAYBOOK_GENERE = "genere"
 ORIGINE_PLAYBOOK_GABARIT = "gabarit"
+ORIGINE_PLAYBOOK_ESQUISSE = "esquisse"
 ORIGINES_PLAYBOOK: frozenset[str] = frozenset(
-    {ORIGINE_PLAYBOOK_GENERE, ORIGINE_PLAYBOOK_GABARIT}
+    {ORIGINE_PLAYBOOK_GENERE, ORIGINE_PLAYBOOK_GABARIT, ORIGINE_PLAYBOOK_ESQUISSE}
 )
+
+#: Qui a **composé** l'équipe proposée (#1159, docs/41). `modele` : le modèle a lu
+#: les constats du projet et ce que la personne a dit, et a choisi les rôles — le
+#: mécanisme principal. `regles` : les règles des cinq gabarits, le repli quand la
+#: composition par le modèle n'a pas abouti, **dit comme tel** avec sa cause. Vide :
+#: la question ne se pose pas (un renfort, dont le poste vient du plan, #1227).
+ORIGINE_COMPOSITION_MODELE = "modele"
+ORIGINE_COMPOSITION_REGLES = "regles"
 
 
 def nouvel_id() -> str:
@@ -338,6 +354,13 @@ class PropositionEquipe:
     `resume` tient en une ligne, pour la raison qui vaut déjà pour celui d'une
     analyse : c'est la phrase qu'on relit à côté d'une équipe dont on se demande
     d'où elle sort.
+
+    `composition_origine` et `composition_raison` (#1159) disent **qui** a choisi
+    les rôles — le modèle, ou les règles des gabarits en repli — et, pour le repli,
+    pourquoi. Une équipe composée par des règles parce que le modèle n'a pas
+    répondu ne vaut pas une équipe composée pour le besoin du projet, et rien ne
+    permettrait de les distinguer à la lecture : c'est la raison d'être de
+    `playbook_origine`, un cran plus haut.
     """
 
     id: str
@@ -347,6 +370,8 @@ class PropositionEquipe:
     roles: tuple[RolePropose, ...] = ()
     ecartes: tuple[RoleEcarte, ...] = ()
     source: dict[str, Any] | None = None
+    composition_origine: str = ""
+    composition_raison: str = ""
 
     @property
     def instances_total(self) -> int:
@@ -370,6 +395,10 @@ class PropositionEquipe:
             "faite_le": self.faite_le,
             "resume": self.resume,
             "source": self.source,
+            "composition": {
+                "origine": self.composition_origine,
+                "raison": self.composition_raison,
+            },
             "roles": [role.to_dict() for role in self.roles],
             "ecartes": [ecarte.to_dict() for ecarte in self.ecartes],
             "instances_total": self.instances_total,
