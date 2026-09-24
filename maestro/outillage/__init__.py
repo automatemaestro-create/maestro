@@ -42,7 +42,7 @@ critère de #1031 : les réponses de l'utilisateur deviennent des `Constats`
 donc **pas deux chemins** de « ce qu'il faut à ce projet » à tenir d'accord — ce
 que #1033 génère vient de la même fonction, quelle que soit sa provenance.
 
-Neuf modules, et la frontière entre eux est celle du disque :
+Dix modules, et la frontière entre eux est celle du disque :
 
 - `maestro.outillage.modele` — les formes, **inertes** : elles décrivent et
   sérialisent, elles ne touchent à rien ;
@@ -54,7 +54,12 @@ Neuf modules, et la frontière entre eux est celle du disque :
   forges, conventions) et les lecteurs de manifestes. Tout y est lu, **rien n'y
   est exécuté** ;
 - `maestro.outillage.analyse` — le parcours borné de la racine, en lecture
-  seule, et la mise en constats ;
+  seule, et la mise en constats — des **indices** depuis #1158, que `completer`
+  enrichit sans jamais en retirer ;
+- `maestro.outillage.exploration` — la **lecture du projet par le modèle**
+  (#1158) : deux verbes, `LISTER` et `LIRE`, servis ici dans le périmètre et sans
+  jamais suivre un lien, puis chaque constat du modèle confronté à ce qu'il a lu.
+  Un modèle qui ne répond pas laisse l'analyse aux indices, et le dit ;
 - `maestro.outillage.recommandation` — des constats à l'outillage proposé,
   chaque entrée avec sa raison et l'endroit du projet qui la justifie ;
 - `maestro.outillage.contexte` — ce qu'un agent en reçoit, **dérivé du manifeste
@@ -93,7 +98,7 @@ deux via `maestro.controltower.outillage`.
 
 from __future__ import annotations
 
-from maestro.outillage.analyse import analyser, resume
+from maestro.outillage.analyse import analyser, completer, resume
 from maestro.outillage.contexte import (
     BALISE_DEBUT,
     BALISE_FIN,
@@ -113,6 +118,12 @@ from maestro.outillage.ecriture import (
     generer_outillage,
     nouvel_id_de_generation,
 )
+from maestro.outillage.exploration import (
+    CADRE_LECTURE,
+    Explorateur,
+    lire_le_projet,
+    sans_lecture,
+)
 from maestro.outillage.generation import (
     DOSSIER_REFUSES,
     ETATS_ECRITURE,
@@ -123,6 +134,7 @@ from maestro.outillage.generation import (
 )
 from maestro.outillage.modele import (
     ETATS_ENTREE,
+    ETATS_LECTURE,
     ORIGINES_COMMANDE,
     PREFIXE_ID,
     USAGES,
@@ -130,6 +142,7 @@ from maestro.outillage.modele import (
     Analyse,
     Bornes,
     Commande,
+    ConstatEcarte,
     Constats,
     DossierScripts,
     Ecarte,
@@ -137,9 +150,11 @@ from maestro.outillage.modele import (
     Forge,
     Gestionnaire,
     Langage,
+    Lecture,
     Parcours,
     Piece,
     Recommandation,
+    Refus,
     nouvel_id,
 )
 from maestro.outillage.questionnaire import (
@@ -175,6 +190,7 @@ from maestro.outillage.redaction import (
 __all__ = [
     "BALISE_DEBUT",
     "BALISE_FIN",
+    "CADRE_LECTURE",
     "CATALOGUE",
     "CHAMP_OUTILS",
     "CHEMIN_MANIFESTE",
@@ -182,6 +198,7 @@ __all__ = [
     "DOSSIER_SKILLS",
     "ETATS_ECRITURE",
     "ETATS_ENTREE",
+    "ETATS_LECTURE",
     "GENERE_PAR",
     "ORIGINES_COMMANDE",
     "PORTEE_BLOC",
@@ -200,15 +217,18 @@ __all__ = [
     "Bornes",
     "Choix",
     "Commande",
+    "ConstatEcarte",
     "Constats",
     "DossierScripts",
     "Ecarte",
     "Ecriture",
     "Entree",
+    "Explorateur",
     "Fichier",
     "Forge",
     "Gestionnaire",
     "Langage",
+    "Lecture",
     "NonTransmis",
     "Option",
     "OutillageDuProjet",
@@ -218,13 +238,16 @@ __all__ = [
     "QuestionOutillage",
     "Rapport",
     "Recommandation",
+    "Refus",
     "SkillDuProjet",
     "analyser",
     "cles_connues",
+    "completer",
     "constats_depuis_choix",
     "deductions",
     "generer",
     "generer_outillage",
+    "lire_le_projet",
     "nouvel_id",
     "nouvel_id_de_generation",
     "options_admissibles",
@@ -236,6 +259,7 @@ __all__ = [
     "rediger",
     "resume",
     "resume_des_choix",
+    "sans_lecture",
     "source_manifeste_des_choix",
     "valeur_admissible",
 ]
