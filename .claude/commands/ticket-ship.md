@@ -4,174 +4,71 @@ argument-hint: "[issue-iid] (optionnel si le nom de la branche courante le conti
 allowed-tools: Bash(bash:*), Bash(git:*), Bash(gh:*), Bash(mkdir:*), Bash(.venv/Scripts/python.exe:*), Bash(.venv/bin/python:*), ExitWorktree, Skill, AskUserQuestion, Read, Edit, Write
 ---
 
-Tu vas clôturer le ticket courant **en une seule action** : committer les changements en attente
-(message généré, sans confirmation) puis enchaîner **`/ticket-finish`** (push + PR prête + état
-« En revue » + log du temps + **merge**). C'est le pendant « zéro friction » de `/ticket-finish`,
-pensé pour la boucle d'orchestration : là où `/ticket-finish` suppose un commit déjà fait et demande
-confirmation avant d'en créer un, `/ticket-ship` **commite d'office** ce qui est en attente puis
-délègue la suite à `/ticket-finish`.
+Tu clôtures le ticket courant **en une action** : tu commites d'office ce qui est en attente, puis tu
+enchaînes **`/ticket-finish`**, qui va jusqu'au **merge** (#418). Les garde-fous priment sur
+l'automatisation : arrête-toi, en disant pourquoi, dès qu'un contrôle échoue. La raison de chaque
+étape vit dans [docs/10 §6.1](../../docs/10-workflow-git.md) (#1245).
 
-⚠ **Depuis #418 (chantier #413), « clore » veut dire « merger ».** La chaîne va jusqu'au bout, ce
-qui a un prix en temps de mur : le pipeline naît **après** la PR et tourne 2-4 min, donc la commande
-ne rend plus la main dans la seconde qui suit le commit. L'attente est **bornée** (15 min pour un
-run qui tourne, **jusqu'à 30 min** quand le run n'est pas encore né — #595, docs/10 §8.9) et
-**annoncée** pendant qu'elle dure. Elle n'est pas non plus une promesse : un pipeline rouge ou un
-conflit laisse la PR **ouverte** et le ticket **« En revue »**, et c'est un état normal — jamais un
-✅ global.
+La chaîne attend un pipeline, borné et **annoncé** : 2-4 min, jusqu'à 30 s'il n'est pas encore né.
+Un pipeline rouge ou un conflit est d'abord réparé par `/mr-fix`, deux fois au plus (#460), et
+l'attente s'allonge d'autant. Ce qui n'est pas débloqué laisse la PR ouverte et le ticket « En
+revue » : un état normal, jamais un ✅ global. En run, l'attente et le merge sont au pilote.
 
-⚠ **Depuis #460, ces deux causes-là sont d'abord réparées.** Un pipeline rouge ou un conflit avec
-`origin/main` fait enchaîner `/ticket-finish` sur `/mr-fix`, **deux fois au plus**, avant de rendre
-la PR à un humain — donc l'attente peut s'allonger d'un pipeline ou deux. C'est le prix de ce que
-la commande promet, et il s'annonce plutôt qu'il ne se masque. Ce qui n'a pas bougé : ce que
-`/mr-fix` n'a pas su débloquer laisse la PR ouverte et le ticket « En revue ».
+1. **L'IID** : `$ARGUMENTS`, sinon la branche (`<type>/<iid>-<slug>`), sinon demande-le.
 
-⚠ **En run autonome, cette attente se paie sur le quota du run** : une session pilotée par
-`/orchestrate` reste ouverte 2-4 min sans rien faire. Le lot 5 du même chantier (#419) part de
-l'hypothèse inverse — « aucune session ne merge, aucune n'attend un pipeline », le pilote tenant sa
-propre file de merge — et c'est **lui** qui possède le prompt des sessions de run, donc lui qui
-arbitre. Les deux mécanismes ne se marchent pas dessus pour autant : une PR mergée ici n'entre
-jamais dans la file du pilote (elle n'est plus « En revue »), et une PR laissée ouverte y entre
-normalement. Ne te dispense pas de l'attente de ton propre chef.
+2. `bash scripts/gitlab/lib.sh require` — s'il échoue, arrête-toi et relaie son message.
 
-Cette commande est autosuffisante (réf. complète `docs/10-workflow-git.md`, à n'ouvrir qu'en cas de
-doute). Les **garde-fous** priment sur l'automatisation : suis les étapes dans l'ordre et
-**arrête-toi (en expliquant pourquoi)** dès qu'un contrôle échoue, plutôt que de forcer la suite.
+3. **Jamais sur `main`** : sur `main` (ou `master`), arrête-toi — il faut d'abord `/ticket-start
+   <iid>`.
 
-1. Détermine l'IID du ticket : utilise `$ARGUMENTS` s'il est fourni, sinon extrais-le du nom de la
-   branche courante (`git branch --show-current`, motif `<type>/<iid>-<slug>`). Si aucun IID ne
-   peut être déterminé, demande-le à l'utilisateur avant de continuer.
-
-2. Vérifie les pré-requis : `bash scripts/gitlab/lib.sh require`. Si ça échoue, arrête-toi et
-   relaie son message : il nomme la commande d'authentification de la forge active (`gh auth login`,
-).
-
-3. **Garde-fou « jamais sur `main` ».** Vérifie la branche courante (`git branch --show-current`).
-   Si c'est `main` (ou `master`), **arrête-toi immédiatement** : on ne committe jamais sur `main`.
-   Rappelle qu'il faut démarrer un ticket (`/ticket-start <iid>`) pour obtenir une branche.
-
-4. **Garde-fou de clôture : ce ticket est-il bien celui de la session ?** Le contrôle vient **avant
-   le commit**, et pas seulement avant le push : le message généré à l'étape 6 porte
-   `Closes #<iid>`, donc un iid étranger ferait **fermer le ticket d'un autre** au merge.
+4. **Garde-fou de clôture, avant le commit** — le message portera `Closes #<iid>`, et un iid
+   étranger fermerait le ticket d'un autre au merge :
    ```
    bash scripts/gitlab/lib.sh close-guard <iid> || verdict=$?
    ```
-   Le helper n'écrit rien ; son verdict, lui, **arrête la commande** :
-   - `0` → cohérent, poursuis.
-   - `3` → la branche courante porte un **autre** ticket : **arrête-toi**, dis lequel, et propose
-     de shipper *celui-là* ou de revenir sur la branche du ticket visé
-     (`bash scripts/gitlab/lib.sh branch-for <iid>`).
-   - `4` → le ticket est assigné à **quelqu'un d'autre** : **arrête-toi** et nomme la personne.
-   - `5` → branche sans iid (nom hors convention) : **arrête-toi**, la cohérence est invérifiable
-     (le cas `main` est déjà refusé à l'étape 3).
-   - `1` → verdict **partiel** (ticket illisible) : le contrôle local est passé, signale-le et
-     poursuis.
-   Un refus n'est **franchissable que sur demande explicite** de l'utilisateur (reprise assumée
-   d'un ticket laissé en plan), jamais en silence — et il est alors rappelé dans le résumé final.
-   `/ticket-finish` rejouera ce même contrôle à son étape 3 : c'est voulu (il est sans effet de
-   bord et reste ainsi autosuffisant quand on l'appelle seul).
+   `0` poursuis · `3` la branche porte un **autre** ticket (dis lequel ; `lib.sh branch-for <iid>`)
+   · `4` assigné à **quelqu'un d'autre** (nomme-le) · `5` branche sans iid · `1` verdict partiel :
+   signale-le et poursuis. Sur `3`/`4`/`5`, arrête-toi : un refus ne se franchit que **sur demande
+   explicite**, rappelée au résumé. `/ticket-finish` rejoue ce contrôle, sans effet de bord.
 
-5. **Contrôle de l'arbre de travail** (`git status --porcelain`) — deux refus possibles :
-   - **Arbre vide** (aucun changement en attente) : arrête-toi. Il n'y a rien à committer ; si le
-     travail est déjà committé, c'est `/ticket-finish` qu'il faut lancer, pas `/ticket-ship`.
-   - **Conflit en cours** (fusion/rebase non résolu : `git ls-files --unmerged` non vide, ou lignes
-     `UU`/`AA`/`DD`/`AU`/`UA`/`DU`/`UD` dans `git status --porcelain`) : arrête-toi et demande à
-     l'utilisateur de résoudre le conflit d'abord. Ne committe jamais un arbre en conflit.
+5. **L'arbre** (`git status --porcelain`) — deux refus : **vide** (rien à committer : c'est
+   `/ticket-finish` qu'il faut lancer) ; **en conflit** (`git ls-files --unmerged` non vide, ou
+   `UU`/`AA`/`DD`/`AU`/`UA`/`DU`/`UD`) : demande de le résoudre d'abord.
 
-6. **Commit automatique, sans confirmation** (choix explicite du ticket #34 : zéro blocage manuel,
-   comme le log du temps de `/ticket-finish`, mesuré sans rien demander). Ne demande **pas** de validation
-   du message — mais **montre** ce que tu committes (transparence a posteriori) :
-   - Affiche un résumé : `git diff --stat HEAD` (inclut le staged) et la liste des fichiers.
-   - Stage tout ce qui est en attente : `git add -A`.
-   - Rédige un message **Conventional Commits** d'après la portée réelle du diff :
-     - en-tête `<type>(<scope>): <description impérative>` — `type` ∈
-       `feat`/`fix`/`chore`/`docs`/`refactor`/`test`/`ci`/`build`/`perf` (cohérent avec le préfixe
-       de branche : `feat/`→`feat`, `fix/`→`fix`, `chore/`→`chore`, `docs/`→`docs`), `scope`
-       optionnel (module/dossier concerné) ;
-     - corps optionnel (le *pourquoi*, pas le *quoi*) ;
-     - pied **`Closes #<iid>`** — `/ticket-ship` est l'action terminale du cycle de dev, donc le
-       commit porte `Closes` (et non `Refs`) : GitHub fermera le ticket au merge.
-   - Committe directement, **hook `commit-msg` respecté** (il valide en-tête + `Closes #<iid>`).
-     Le message passe par un **fichier** : écris-le avec l'outil `Write` dans **`.maestro/session/`**
-     (l'atelier de session, gitignoré ; `mkdir -p .maestro/session` s'il manque) et passe-le en
-     chemin **relatif** — ni le scratchpad de session ni `/tmp`, chemins absolus qu'une session de
-     run se voit refuser (#962) ; jamais un heredoc, jamais `-m "$(…)"`, la couche permissions
-     découpant une commande sur ses sauts de ligne et ne matchant aucune substitution (#233). Puis :
-     ```
-     git commit -F <fichier>
-     ```
-     **N'utilise jamais `--no-verify`** : si le hook refuse le message, corrige le message et
-     réessaie — ne le contourne pas.
+6. **Commit, sans confirmation** (#34), mais **montré** : `git diff --stat HEAD` et la liste des
+   fichiers, puis `git add -A`. Message Conventional Commits d'après la portée réelle du diff :
+   `<type>(<scope>): <description impérative>` (type cohérent avec le préfixe de branche), corps
+   optionnel (le pourquoi), pied **`Closes #<iid>`** — GitHub fermera le ticket au merge. Le message
+   s'écrit avec `Write` dans `.maestro/session/` (`mkdir -p .maestro/session` s'il manque), en chemin
+   relatif — ni le scratchpad de session ni `/tmp`, ni heredoc, ni `-m "$(…)"` :
+   ```
+   git commit -F <fichier>
+   ```
+   **Jamais `--no-verify`** : un message refusé par le hook se corrige.
 
-7. **Enchaîne `/ticket-finish`.** Une fois le commit créé, l'arbre est propre : invoque la commande
-   **`/ticket-finish`** (sans argument — elle relira l'IID depuis la branche — ou passe `<iid>`).
-   Elle prend le relais pour : push de la branche (jamais de `--force`), création/mise à jour de la
-   PR avec `Closes #<iid>` et ce qu'elle change (sans checklist : `merge-mr` et la confrontation des
-   critères vérifient ce qu'elle redisait, #1244), **passage de la PR en « prête »** (`gh pr ready`,
-   sans demander : une PR qu'on s'apprête à merger n'est pas un brouillon), passage de l'**état** à
-   « En revue », **log du temps passé**, **mesuré** sur les sessions du ticket et jamais estimé, puis
-   l'**attente du pipeline et le merge** par `merge-mr` (#418) — et, si ce merge est refusé pour un
-   **pipeline rouge** ou un **conflit**, le **déblocage** par `/mr-fix`, deux fois au plus (#460).
-   **Ne ré-implémente aucune de ces étapes ici** — surtout pas le merge, ni le déblocage :
-   `/ticket-finish` en est la source unique, et son étape de commit sera sans objet (arbre déjà
-   propre), elle passera directement au push.
-   **Lis son verdict de merge** : c'est lui qui ouvre ton résumé (étape 9), et c'est aussi lui qui
-   dit, à l'étape 8, si le lot que tu viens de shipper est mergé ou seulement « En revue ». Un
-   ticket mergé **au terme d'un déblocage** est mergé sans réserve : c'est le même `merge-mr` qui a
-   tranché, avec les mêmes quatre prérequis.
-   ⚠ **Elle regarde aussi l'écran avant de pousser** (#935) : si le diff a touché une **surface
-   visible**, `/ticket-finish` joue la relecture visuelle (#932) et **consigne sur le ticket** ce qui
-   a été vu — ou la raison de ne pas l'avoir regardé. `/ticket-ship` en hérite **sans une ligne à
-   elle**, exactement comme du ramassage du worktree ci-dessous ; ne la rejoue pas ici. Le prix est
-   d'environ une minute sur un ticket d'interface, et de **rien du tout** sur les autres : la
-   question ne se pose pas quand le diff ne touche aucun écran.
-   ⚠ **Elle confronte aussi les critères d'acceptation au diff** (#968) : avant de pousser,
-   `/ticket-finish` consigne **sur le ticket** chaque critère tenu sur sa preuve exercée (#1240),
-   non tenu — nommé, jamais coché —, ou l'absence de tout critère, et joue le banc quand le diff
-   touche le chemin des scénarios. `/ticket-ship` en hérite **sans une ligne à elle** ; ne la
-   rejoue pas ici. Un critère non tenu ne bloque pas le merge.
-   ⚠ **Sur un merge réussi, elle te ramène dans le clone principal** (#519) : son dernier geste est
-   de sortir du worktree du ticket pour le retirer, lui et sa branche locale. Ne t'en étonne pas et
-   ne le rejoue pas — les étapes 8 et 9 se jouent très bien de là, les helpers `lib.sh` visant le
-   dépôt d'où qu'on les appelle.
+7. **Enchaîne `/ticket-finish`** (sans argument, ou `<iid>`). Il prend tout le reste : push, PR
+   (`Closes #<iid>`, sans checklist), PR levée en « prête », « En revue », temps mesuré, attente du
+   pipeline et merge par `merge-mr`, et, sur un pipeline rouge ou un conflit, le déblocage par
+   `/mr-fix`. **Ne ré-implémente aucune de ces étapes ici** — ni le merge, ni le déblocage.
+   Il hérite aussi, **sans une ligne à elle** ici, de trois gestes à ne pas rejouer : la
+   **relecture visuelle** quand le diff touche un écran (#935), la confrontation des **critères
+   d'acceptation au diff** (#968) — un critère non tenu ne bloque pas le merge —, et, sur un merge
+   réussi, le retour au **clone principal** après le ramassage du worktree (#519). Lis son
+   **verdict de merge** : il ouvre ton résumé et décide de l'étape 8.
 
-8. **Sous-ticket d'un parent de suivi ?** Vérifie : `bash scripts/gitlab/lib.sh parent-of <iid>`.
-   Si un parent est trouvé (convention `docs/10-workflow-git.md` §5.1), prépare l'**annonce de la
-   suite** pour le résumé final :
-   - Liste les lots : `bash scripts/gitlab/lib.sh subtickets <iid-parent>`. **N'écris rien dans la
-     description du parent** : depuis #389 les lots sont des sub-issues natives, et la coche de la
-     table est **dérivée de l'état** de chaque lot (fermé = coché) — il n'y a plus de checklist à
-     tenir au fil de l'eau, donc plus de synchronisation à faire ici. La lecture peut rendre le lot
-     que tu viens de shipper encore « En revue » quelques secondes après le merge, le workflow
-     `issues: closed` (#377) étant asynchrone : c'est le **verdict du merge** (étape 7) qui fait foi
-     pour ton résumé, jamais cette table.
-   - Demande les lots ouverts que rien ne bloque :
-     `bash scripts/gitlab/lib.sh startables <iid-parent>` (les lots marqués « (parallèle) » ne se
-     bloquent pas entre eux — docs/10 §5.1). S'il en reste, annonce-les **démarrables dès
-     maintenant** — « prochain lot : `/ticket-start <iid-suivant>` (rien à attendre : le lot shippé
-     est mergé, ou au pire « En revue », et les lots sont mergeables seuls depuis `main`) » — et,
-     s'il y en a plusieurs, précise qu'ils sont **prenables en parallèle** par d'autres personnes.
-   - Si le lot shippé est le **dernier encore ouvert**, annonce le parent **fermé** si le merge a
-     eu lieu, **à fermer au merge** sinon : depuis #515, la fermeture du dernier lot ferme le parent
-     dans la foulée, par l'événement `issues: closed` (docs/10 §5.1). Ce n'est toujours **pas
-     `/ticket-ship` qui ferme** — il ne ferme rien, pas même le parent —, et c'est ce qui permet de
-     l'annoncer sans rien vérifier : la fermeture suit le merge, quel qu'en soit l'auteur. Ne
-     propose donc aucun geste manuel ; si le parent est encore ouvert quelques instants plus tard,
-     c'est l'événement qui n'est pas passé (secret absent, run rouge), pas un oubli à rattraper à la
-     main — `bash scripts/gitlab/lib.sh ferme-parent <iid-du-lot>` est le rattrapage.
+8. **Sous-ticket ?** `bash scripts/gitlab/lib.sh parent-of <iid>`. Si un parent est trouvé :
+   `bash scripts/gitlab/lib.sh startables <iid-parent>` donne les lots ouverts que rien ne bloque.
+   Annonce-les démarrables maintenant (`/ticket-start <iid-suivant>`), prenables en parallèle s'il
+   y en a plusieurs. Si le lot shippé était le **dernier ouvert**, annonce le parent fermé (merge
+   fait) ou à fermer au merge : sa fermeture suit celle du dernier lot, par l'événement (#515). **Tu
+   ne fermes rien** et n'écris rien sur le parent ; le verdict du merge fait foi, jamais la table des
+   lots, que le workflow met à jour en différé. Parent resté ouvert : `lib.sh ferme-parent
+   <iid-du-lot>` est le rattrapage.
 
-9. Résumé final : reprends le résumé produit par `/ticket-finish` — **verdict du merge en tête**
-   (mergé, ou la cause **telle que `merge-mr` l'a rendue** et la suite qu'elle appelle), l'**issue
-   du déblocage** s'il a eu lieu, sur sa propre ligne (⊘ non tenté · ✅ tenté et abouti · ❌ tenté
-   sans succès — jamais fondue dans le verdict du merge, #460), lien de la
-   PR, temps loggé — et préfixe-le du **commit créé** (hash court + en-tête). Pour un sous-ticket,
-   ajoute l'annonce de l'étape 8 (prochain lot démarrable dès maintenant, ou parent fermé si
-   c'était le dernier). Sur un merge réussi, reprends aussi ce que son **ramassage** a retiré —
-   worktree et branche locale — ou la cause de son abstention, et dis que la session travaille
-   désormais depuis le **clone principal** (#519) : une commande « zéro friction » qui change de
-   répertoire sans le dire fait découvrir la surprise au premier chemin relatif qui ne résout plus.
-   **Jamais de ✅ global** : un ticket dont la PR est restée ouverte sur un pipeline rouge n'est pas
-   « shippé avec une réserve », il est **inachevé**, et le résumé doit le dire avec ce mot-là — un
-   verdict qui masque son blocage est exactement ce que #303 a supprimé ailleurs.
-   Rappelle qu'**aucun merge non vérifié** n'a lieu (#417, chantier #413) : `/ticket-ship` ne ferme
-   ni ne force-push jamais une PR, et ne merge **jamais hors de `merge-mr`**, qui éprouve ses quatre
-   prérequis avant de merger.
+9. **Résumé** : le **commit créé** (hash court et en-tête), puis celui de `/ticket-finish` —
+   **verdict du merge en tête** (mergé, ou la cause telle que `merge-mr` l'a rendue), l'**issue du
+   déblocage** sur sa propre ligne (⊘ non tenté · ✅ abouti · ❌ sans succès), le lien de la PR, le
+   temps loggé, le ramassage ou sa cause, et le fait que la session travaille désormais depuis le
+   **clone principal**. Pour un sous-ticket, l'annonce de l'étape 8. **Jamais de ✅ global** : une
+   PR restée ouverte est **inachevée**. `/ticket-ship` ne ferme ni ne force-push jamais, et ne merge
+   jamais hors de `merge-mr` : **aucun merge non vérifié** (#417).

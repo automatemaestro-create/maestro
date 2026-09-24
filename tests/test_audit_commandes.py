@@ -28,12 +28,18 @@ Deux autres, nées d'un renversement plutôt que d'un constat de l'audit :
   que le chantier #1156 retire (#1167) : le produit se vérifie sur la vraie stack, et un texte qui
   renvoie à un mode qu'on retire fait refaire le geste qu'on a banni.
 
-Une dernière, née d'un manque plutôt que d'une dérive :
+Une autre, née d'un manque plutôt que d'une dérive :
 
 - `TestMethodeDImplementation` — l'étape 6 de `/ticket-start` et le prompt de run donnent à
   l'implémentation sa méthode, trois gestes dans leur ordre (#1241, R2 de #1239) : lire le code et
   ses tests, le test qui échoue d'abord, exercer avant de clore. C'était la seule phase du flux
   sans consigne.
+
+Et la dernière, née d'une mesure (#1245, R5 de #1239) :
+
+- `TestBudgetDesTextesDeCloture` — les textes que relit la phase la plus chère d'un ticket ont un
+  budget, gardé comme celui de `CLAUDE.md` : `/ticket-finish` pesait 16 560 tokens, dont
+  l'histoire de chaque étape, et la démonstration est partie dans docs/10 §6.1.
 
 **Le temps d'une phrase ne se juge pas par des mots.** « Au passé » n'a pas de forme lexicale
 fiable — « du temps de », « pendant la migration », « la version GitLab de cette boucle coûtait »
@@ -238,11 +244,6 @@ FORGE_ADMISES: Mapping[str, tuple[Admise, ...]] = {
         Admise("la version GitLab de cette boucle coûtait", _PASSE),
         Admise("pré-cochée sur GitLab, `delete_branch_on_merge` sur GitHub", _DEUX_FORGES),
     ),
-    ".claude/commands/mr-fix.md": (
-        Admise("mesure du 2026-08-07 côté GitLab", _PASSE),
-        Admise("du temps de la CI GitLab", _PASSE),
-        Admise("cas observé du temps de GitLab", _PASSE),
-    ),
     ".claude/commands/mr-review.md": (
         Admise("normalisé vers le vocabulaire GitLab", _VOCABULAIRE),
         Admise("(Pendant la migration, `origin` pointait encore sur GitLab", _PASSE),
@@ -255,10 +256,6 @@ FORGE_ADMISES: Mapping[str, tuple[Admise, ...]] = {
     ),
     ".claude/commands/setup.md": (
         Admise("l'étape `runner` a disparu avec l'outillage GitLab", _PASSE),
-    ),
-    ".claude/commands/ticket-finish.md": (
-        Admise("est parti avec la CI GitLab (#344", _PASSE),
-        Admise("normalisé vers le vocabulaire GitLab pour que ses appelants", _VOCABULAIRE),
     ),
     RUN_SH: (
         Admise("troisième support après le champ natif de GitLab et les six labels", _PASSE),
@@ -939,3 +936,142 @@ class TestMethodeDImplementation:
         assert "à son étape 4ter" in etape_2_du_prompt_de_run()
         for texte in (etape, etape_2_du_prompt_de_run()):
             assert "criteres-note" not in texte, "la conduite vit à l'étape 4ter, pas ici"
+
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# 8. Le budget des textes de clôture (#1245, R5 de #1239)
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+TICKET_FINISH = ".claude/commands/ticket-finish.md"
+SKILL_RELECTURE = ".claude/skills/relecture-visuelle/SKILL.md"
+
+#: Ce que pesaient les textes sur `origin/main` le 2026-09-24 (`eff32e3`), avant #1245, au compteur
+#: du dépôt. De `/ticket-ship` à la fin d'un ticket, une session passait 20 % de ses tours et 36 % de
+#: son coût, à 375 k tokens de contexte par tour (#1239) — et relisait à chaque clôture l'histoire de
+#: chaque étape. Recopié ici parce que le job de CI clone sans historique.
+AVANT_1245: Mapping[str, int] = {
+    TICKET_FINISH: 16_560,
+    ".claude/commands/ticket-ship.md": 4_882,
+    ".claude/commands/mr-fix.md": 6_491,
+    TICKET_START: 7_808,
+    SKILL_RELECTURE: 11_159,
+}
+
+#: Le budget de chaque texte : sa taille au jour de #1245, plus une marge de l'ordre de 10 % — la
+#: place d'une règle nouvelle, pas celle d'une démonstration qui reviendrait. `/ticket-finish` est en
+#: outre plafonné par le critère de #1245 : au plus un tiers de ce qu'il pesait.
+BUDGETS_CLOTURE_TOKENS: Mapping[str, int] = {
+    TICKET_FINISH: 5_500,
+    ".claude/commands/ticket-ship.md": 2_000,
+    ".claude/commands/mr-fix.md": 3_400,
+    TICKET_START: 5_700,
+    SKILL_RELECTURE: 6_100,
+}
+
+#: Où chaque texte range sa démonstration : la section qu'il cite, et qui l'indexe.
+DOC_DE_LA_DEMONSTRATION: Mapping[str, str] = {
+    TICKET_FINISH: "docs/10 §6.1",
+    ".claude/commands/ticket-ship.md": "docs/10 §6.1",
+    ".claude/commands/mr-fix.md": "§6.1",
+    TICKET_START: "§6.1",
+    SKILL_RELECTURE: "docs/30 §5.5 à §5.8",
+}
+
+
+def verifier_budget_de_cloture(relatif: str, texte: str, budget: int) -> int:
+    """Le coût du texte s'il tient dans son budget ; sinon lève, en disant de combien et quoi faire."""
+    cout = estimer_tokens(texte)
+    if cout > budget:
+        raise BudgetDepasse(
+            f"{relatif} coûte {cout} tokens pour un budget de {budget} "
+            f"(BUDGETS_CLOTURE_TOKENS, #1245) : {cout - budget} de trop, relus à chaque clôture. "
+            "La commande porte la règle et l'ordre des gestes ; la démonstration (mesures, "
+            "incidents, pistes écartées, histoire) va dans la doc qu'elle cite — docs/10 §6.1 "
+            "l'indexe. Relever le budget est une décision qui se prend en connaissant ce coût."
+        )
+    return cout
+
+
+def section_6_1() -> str:
+    """docs/10 §6.1, aplatie : la règle de #1245 et l'index de la démonstration.
+
+    Bornée sur le texte brut : `aplatir` retire les `#` de tête, donc les titres qui la bornent.
+    """
+    texte = DOCS_10.read_text(encoding="utf-8")
+    debut = texte.index("\n### 6.1 ")
+    return aplatir(texte[debut : texte.index("\n## 7. Prérequis", debut)])
+
+
+#: Une étape numérotée d'une commande : en tête de ligne, `N.`, `Nbis.` ou `Nter.`.
+_ETAPE = re.compile(r"^(\d+(?:bis|ter)?)\. ", re.M)
+#: Une ligne de l'index : `| N |`, `| Nbis |` ou `| Nter |` en tête de ligne.
+_LIGNE_D_INDEX = re.compile(r"^\| (\d+(?:bis|ter)?) \|", re.M)
+
+
+def etapes(texte: str) -> list[str]:
+    return _ETAPE.findall(texte)
+
+
+def index_de_ticket_finish() -> list[str]:
+    """Les étapes que l'index de docs/10 §6.1 range, dans son ordre, pour `/ticket-finish`."""
+    texte = DOCS_10.read_text(encoding="utf-8")
+    debut = texte.index("#### Où vit la raison de chaque étape de `/ticket-finish`")
+    fin = texte.index("\n#### ", debut + 1)
+    return _LIGNE_D_INDEX.findall(texte[debut:fin])
+
+
+class TestBudgetDesTextesDeCloture:
+    """Les textes de clôture ne reprennent pas le poids que #1245 leur a retiré."""
+
+    @pytest.mark.parametrize("relatif", sorted(BUDGETS_CLOTURE_TOKENS))
+    def test_chaque_texte_tient_sous_son_budget(self, relatif: str) -> None:
+        """Le fichier réel passe dessous ; le plancher prouve qu'il a bien été lu."""
+        cout = verifier_budget_de_cloture(relatif, lire(relatif), BUDGETS_CLOTURE_TOKENS[relatif])
+        assert cout > 1_000, f"{relatif} lu presque vide : ce n'est pas le texte chargé"
+
+    def test_a_un_token_pres_la_garde_leve(self) -> None:
+        """La paire qui prouve que la garde n'est pas creuse, sur le texte réel."""
+        texte = lire(TICKET_FINISH)
+        cout = estimer_tokens(texte)
+        assert verifier_budget_de_cloture(TICKET_FINISH, texte, cout) == cout
+        with pytest.raises(BudgetDepasse):
+            verifier_budget_de_cloture(TICKET_FINISH, texte, cout - 1)
+
+    def test_le_message_nomme_le_texte_le_budget_et_la_doc(self) -> None:
+        with pytest.raises(BudgetDepasse) as leve:
+            verifier_budget_de_cloture("x.md", "x" * 30, 3)
+        message = str(leve.value)
+        assert "x.md coûte 10 tokens pour un budget de 3" in message
+        assert "BUDGETS_CLOTURE_TOKENS" in message and "#1245" in message
+        assert "docs/10 §6.1" in message
+
+    def test_les_budgets_tiennent_le_critere_de_1245(self) -> None:
+        """`/ticket-finish` au plus au tiers de ce qu'il pesait ; aucun budget ne rend aux autres
+        le poids d'avant — sans quoi la garde laisserait revenir ce qu'elle existe pour tenir."""
+        assert set(BUDGETS_CLOTURE_TOKENS) == set(AVANT_1245) == set(DOC_DE_LA_DEMONSTRATION)
+        assert BUDGETS_CLOTURE_TOKENS[TICKET_FINISH] * 3 <= AVANT_1245[TICKET_FINISH]
+        for relatif, budget in BUDGETS_CLOTURE_TOKENS.items():
+            assert budget < AVANT_1245[relatif], relatif
+
+    @pytest.mark.parametrize("relatif", sorted(DOC_DE_LA_DEMONSTRATION))
+    def test_chaque_texte_cite_la_doc_de_sa_demonstration(self, relatif: str) -> None:
+        """Une règle retirée d'une commande n'est pas perdue si la commande dit où la lire."""
+        citee = DOC_DE_LA_DEMONSTRATION[relatif]
+        assert citee in aplatir(lire(relatif)), f"{relatif} ne cite plus {citee}"
+
+    def test_la_section_6_1_nomme_les_cinq_textes(self) -> None:
+        section = section_6_1()
+        for nom in ("/ticket-finish", "/ticket-ship", "/mr-fix", "/ticket-start"):
+            assert f"`{nom}`" in section, nom
+        assert "`relecture-visuelle`" in section
+        assert "BUDGETS_CLOTURE_TOKENS" in section, "la doc nomme la garde qui tient la règle"
+
+    def test_l_index_range_chaque_etape_de_ticket_finish(self) -> None:
+        """L'index suit la commande, étape par étape : une étape ajoutée sans sa raison rougit.
+
+        L'échantillon fautif d'abord : une étape de plus dans la commande se verrait.
+        """
+        commande = etapes(lire(TICKET_FINISH))
+        assert commande[:6] == ["1", "2", "3", "4", "4bis", "4ter"], "lecteur d'étapes creux"
+        assert etapes(lire(TICKET_FINISH) + "\n16. Une étape de plus.\n") != index_de_ticket_finish()
+        assert index_de_ticket_finish() == commande
