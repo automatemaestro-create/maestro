@@ -48,6 +48,10 @@ dependencies = [
     # jamais un `ImportError` au démarrage du moteur.
     "python-docx>=1.1",
     "pypdf>=4.0",
+    # Troisième convertisseur (#1163) : les classeurs `.xlsx`, lus par leur contenu.
+    # Même régime que les deux autres — chargé paresseusement, une absence rend
+    # « ignoré : convertisseur-absent ». Import : `openpyxl`.
+    "openpyxl>=3.1",
 ]
 
 [project.optional-dependencies]
@@ -156,7 +160,7 @@ ignore_missing_imports = true
 # ils sont importés paresseusement — un poste sans eux doit rendre « ignoré :
 # convertisseur-absent », pas une erreur de typage.
 [[tool.mypy.overrides]]
-module = ["docx.*", "pypdf.*"]
+module = ["docx.*", "pypdf.*", "openpyxl.*"]
 ignore_missing_imports = true
 
 # `@shared_task` (celery, non typé) rendrait la tâche « untyped » aux yeux du

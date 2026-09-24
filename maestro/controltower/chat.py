@@ -215,7 +215,7 @@ from maestro.sources import (
     Source,
     composer_sources,
     contexte_markdown,
-    extraire_sources,
+    lecteur_par_defaut,
     sources_depuis,
     sources_en_liste,
 )
@@ -1763,8 +1763,9 @@ class ServiceChat:
         )
         # Injectable pour la même raison qu'au lancement (#317) : une source `url`
         # part sur le réseau, et `tests/conftest.py` (#195) exige qu'aucun test
-        # n'en ait besoin.
-        self._lecteur = lecteur_sources if lecteur_sources is not None else extraire_sources
+        # n'en ait besoin. Le défaut montre les images au modèle du poste
+        # (#1163) — c'est par le fil qu'une maquette rejoint un brief.
+        self._lecteur = lecteur_sources if lecteur_sources is not None else lecteur_par_defaut()
         # Les générations en vol, par identifiant d'échange (#695) : c'est le seul
         # état que le service garde entre deux requêtes, et il ne dure que le temps
         # d'un flux — `diffuser` l'inscrit à l'ouverture et le retire dans son

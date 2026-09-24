@@ -486,6 +486,15 @@ dans le contexte : un seul format à tracer, à masquer et à chiffrer en tokens
 > S'y ajoute ce que la proposition n'avait pas : un **rapport de lecture**
 > ([§6.8](./05-interface-control-tower.md)), sans lequel « ce qui est entré dans le contexte »
 > resterait invisible.
+>
+> **#1163 lève la liste de formats** que #316 avait posée (six extensions) : c'est le contenu qui
+> décide. Tout texte se lit (JSON, YAML, CSV, code…), une page `.html` est ramenée à son texte, un
+> classeur `.xlsx` passe par **openpyxl**, et les images sont bien « laissées au modèle » comme la
+> proposition le voulait — mais **au moment de la lecture** : le modèle du poste regarde l'image
+> (`ModelProvider.generate_with_images`) et en rend le Markdown, qui entre au contexte comme toute
+> source. Le brief reste ainsi dans le format unique, et un fournisseur qui ne voit pas le **dit**
+> au rapport au lieu de taire l'image. Ce qui reste illisible (binaire opaque, porteur de secrets,
+> image trop grosse) se nomme avec sa raison ([§6.8](./05-interface-control-tower.md)).
 
 ### 3.3 L'étape *brief* : le vrai gain *(livrée — #318, #320, #321, #322)*
 

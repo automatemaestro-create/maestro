@@ -1708,9 +1708,10 @@ def create_app(
     écrire dix mégaoctets sur le disque de qui joue la suite.
 
     `lecteur_sources` (#316) lit la matière d'un objectif et rend son rapport de
-    lecture — par défaut `extraire_sources`. Injectable parce qu'une source `url`
-    part sur le réseau : `tests/conftest.py` (#195) exige qu'aucun test n'en ait
-    besoin.
+    lecture — par défaut `lecteur_par_defaut()`, qui montre en plus les images au
+    modèle du poste (#1163). Injectable parce qu'une source `url` part sur le
+    réseau et qu'une image part au modèle : `tests/conftest.py` (#195, #782) exige
+    qu'aucun test n'ait besoin ni de l'un ni de l'autre.
 
     `sonde_poste` (#487) est ce qui répond à « qu'est-ce qui est déjà installé
     ici ? » pour `GET /api/fournisseurs` — par défaut `SondePoste()`, qui lit le

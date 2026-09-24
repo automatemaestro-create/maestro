@@ -96,6 +96,18 @@ def pdf_minimal(chemin: Path) -> None:
     chemin.write_bytes(bytes(sortie))
 
 
+def binaire(base: Path, nom: str) -> Source:
+    """Une source `fichier` **opaque** : ni texte, ni image, ni document convertible (#1163).
+
+    Depuis #1163 le format ne se juge plus au nom : un `.png` qui contient du texte
+    se lit. Ce qui reste illisible est un binaire — un octet nul dans ses premiers
+    octets —, et c'est lui qui porte désormais les tests de la ligne « ignoré ».
+    """
+    chemin = base / nom
+    chemin.write_bytes(b"PK\x03\x04\x14\x00\x00\x00binaire opaque")
+    return Source(type=TYPE_FICHIER, nom=nom, chemin=str(chemin))
+
+
 def url_rendant(texte: str) -> Callable[[str], str]:
     """Un récupérateur d'URL de test qui rend toujours `texte` (aucun réseau)."""
     return lambda _url: texte
@@ -206,13 +218,16 @@ def test_un_perimetre_explicite_restreint_le_dossier(tmp_path: Path) -> None:
     assert [entree.nom for entree in lecture.entrees] == ["a.md"]
 
 
-def test_tout_autre_format_est_ignore_en_le_disant(tmp_path: Path) -> None:
-    """Le cœur du critère 1 : un format non géré **se voit**, il ne disparaît pas."""
-    lecture = seule(extraire_sources([fichier(tmp_path, "maquette.png", "\x89PNG")]))
+def test_ce_qui_ne_se_lit_pas_est_ignore_en_le_disant(tmp_path: Path) -> None:
+    """Le cœur du critère 1 : ce qu'on ne sait pas lire **se voit**, il ne disparaît pas.
+
+    Depuis #1163, c'est un binaire opaque — plus un format jugé à son extension.
+    """
+    lecture = seule(extraire_sources([binaire(tmp_path, "archive.zip")]))
 
     assert lecture.etat == ETAT_IGNORE
-    assert lecture.motif == "format-non-gere"
-    assert ".png" in lecture.message
+    assert lecture.motif == "binaire-opaque"
+    assert ".zip" in lecture.message
     assert lecture.markdown == ""
 
 
@@ -311,7 +326,7 @@ def test_le_rapport_dit_lu_ignore_et_tronque_avec_le_total(tmp_path: Path) -> No
     rapport = extraire_sources(
         [
             fichier(tmp_path, "lu.md", "Contenu"),
-            fichier(tmp_path, "image.png", "binaire"),
+            binaire(tmp_path, "archive.zip"),
             fichier(tmp_path, "gros.txt", "mot " * 4000),
         ],
         garde_fous=GardeFousExtraction(tokens_max_source=200),
@@ -390,7 +405,7 @@ def test_un_dossier_trop_fourni_est_tronque_en_le_disant(tmp_path: Path) -> None
 def test_un_dossier_rend_une_ligne_par_fichier_meme_ignore(tmp_path: Path) -> None:
     """Ce qui est ignoré **dans** un dossier se voit aussi — sinon il disparaît d'un décompte."""
     (tmp_path / "lu.md").write_text("Alpha", encoding="utf-8")
-    (tmp_path / "maquette.png").write_bytes(b"\x89PNG")
+    binaire(tmp_path, "archive.zip")
 
     lecture = seule(
         extraire_sources([Source(type=TYPE_DOSSIER, nom="refs", chemin=str(tmp_path))])
@@ -398,7 +413,7 @@ def test_un_dossier_rend_une_ligne_par_fichier_meme_ignore(tmp_path: Path) -> No
 
     etats = {entree.nom: (entree.etat, entree.motif) for entree in lecture.entrees}
     assert etats["lu.md"] == (ETAT_LU, "")
-    assert etats["maquette.png"] == (ETAT_IGNORE, "format-non-gere")
+    assert etats["archive.zip"] == (ETAT_IGNORE, "binaire-opaque")
     assert lecture.tokens == sum(entree.tokens for entree in lecture.entrees)
 
 
@@ -417,12 +432,12 @@ def test_un_dossier_introuvable_ou_vide_est_ignore(tmp_path: Path) -> None:
 def test_la_synthese_rend_une_ligne_par_source_et_le_total(tmp_path: Path) -> None:
     """Le rapport se lit à l'œil nu — c'est ce qu'on montre avant de lancer."""
     rapport = extraire_sources(
-        [fichier(tmp_path, "lu.md", "Contenu"), fichier(tmp_path, "img.png", "x")]
+        [fichier(tmp_path, "lu.md", "Contenu"), binaire(tmp_path, "archive.zip")]
     )
 
     synthese = rapport.synthese()
-    assert "lu.md" in synthese and "img.png" in synthese
-    assert "ignoré : format-non-gere" in synthese
+    assert "lu.md" in synthese and "archive.zip" in synthese
+    assert "ignoré : binaire-opaque" in synthese
     assert f"Total estimé : {rapport.tokens} tokens." in synthese
 
 
@@ -525,12 +540,12 @@ def test_le_contexte_porte_le_rapport_de_lecture_et_le_cout(tmp_path: Path) -> N
     """Le modèle doit savoir ce qui **n'est pas** entré : sinon il conclut sur un trou."""
     rendu = contexte_markdown(
         extraire_sources(
-            [fichier(tmp_path, "lu.md", "Contenu"), fichier(tmp_path, "img.png", "x")]
+            [fichier(tmp_path, "lu.md", "Contenu"), binaire(tmp_path, "archive.zip")]
         )
     )
 
     assert "### Rapport de lecture" in rendu
-    assert "ignoré : format-non-gere" in rendu
+    assert "ignoré : binaire-opaque" in rendu
     assert "Coût estimé" in rendu
 
 
@@ -545,10 +560,10 @@ def test_une_source_fournie_mais_illisible_se_nomme_dans_le_contexte(tmp_path: P
     La personne a joint un document. Le modèle doit savoir qu'il était attendu, et
     pourquoi il manque, au lieu de travailler comme si on ne lui avait rien donné.
     """
-    rendu = contexte_markdown(extraire_sources([fichier(tmp_path, "img.png", "x")]))
+    rendu = contexte_markdown(extraire_sources([binaire(tmp_path, "archive.zip")]))
 
-    assert "`img.png`" in rendu
-    assert "ignoré : format-non-gere" in rendu
+    assert "`archive.zip`" in rendu
+    assert "ignoré : binaire-opaque" in rendu
     assert "Aucune de ces sources n'a pu être lue" in rendu
     # Rien n'a été lu, donc aucun bloc de contenu n'est ouvert.
     assert "### Contenu" not in rendu

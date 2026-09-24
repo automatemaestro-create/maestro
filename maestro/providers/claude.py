@@ -25,7 +25,8 @@ ambiant.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
+import base64
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
@@ -86,6 +87,7 @@ from maestro.providers.base import (
     AuthMode,
     CollecteurStderr,
     Credentials,
+    ImageJointe,
     McpServerUnavailable,
     ModeleDisponible,
     ModelProvider,
@@ -407,6 +409,39 @@ class ClaudeProvider(ModelProvider):
         )
         async for morceau in _stream_response(prompt, options, stderr=stderr):
             yield morceau
+
+    async def generate_with_images(
+        self,
+        prompt: str,
+        *,
+        images: Sequence[ImageJointe],
+        model: str,
+        system_prompt: str | None = None,
+    ) -> str:
+        """`generate`, les images jointes au message : le CLI les montre au modèle (#1163).
+
+        Mêmes options que `generate` — texte seul, `tools=[]`, collecte du stderr.
+        Ce qui change est la **forme du prompt** : une chaîne ne porte que du
+        texte, alors que le mode d'entrée en flux du SDK (`--input-format
+        stream-json`) accepte un message utilisateur fait de **blocs de contenu**
+        de l'API Anthropic, blocs `image` compris (`_message_avec_images`). C'est
+        le seul chemin par lequel une image atteint le modèle sans lui donner un
+        outil de lecture de fichiers — que `generate` s'interdit, et qu'une image
+        venue de l'extérieur ne justifie pas.
+        """
+        stderr = CollecteurStderr()
+        options = ClaudeAgentOptions(
+            model=model,
+            system_prompt=system_prompt,
+            env=self._auth_env(),
+            tools=[],
+            stderr=stderr,
+            setting_sources=sans_reglages_du_poste(),
+            skills=sans_skills_du_poste(),
+        )
+        return await _collect_response(
+            _message_avec_images(prompt, images), options, stderr=stderr
+        )
 
     async def run_agent(
         self,
@@ -1453,8 +1488,38 @@ def _avec_stderr(exc: _E, stderr: CollecteurStderr | None) -> _E:
     return attache_stderr(exc, stderr.resume())
 
 
+async def _message_avec_images(
+    prompt: str, images: Sequence[ImageJointe]
+) -> AsyncIterator[dict[str, Any]]:
+    """Le message utilisateur d'un appel qui montre des images — le flux d'entrée du SDK (#1163).
+
+    **Un seul** message : les images d'abord, le texte ensuite, dans le même tour.
+    Deux messages feraient deux tours, et le modèle répondrait au premier sans
+    avoir lu la consigne. La forme des blocs est celle de l'API Anthropic
+    (`{"type": "image", "source": {"type": "base64", …}}`), que le CLI relaie telle
+    quelle ; les octets voyagent en base64 parce que le flux est du JSON.
+    """
+    contenu: list[dict[str, Any]] = [
+        {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": image.type_media,
+                "data": base64.b64encode(image.octets).decode("ascii"),
+            },
+        }
+        for image in images
+    ]
+    contenu.append({"type": "text", "text": prompt})
+    yield {
+        "type": "user",
+        "message": {"role": "user", "content": contenu},
+        "parent_tool_use_id": None,
+    }
+
+
 async def _collect_response(
-    prompt: str,
+    prompt: str | AsyncIterable[dict[str, Any]],
     options: ClaudeAgentOptions,
     *,
     plafond_tours: int | None = None,
