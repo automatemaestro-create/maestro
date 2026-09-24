@@ -413,6 +413,25 @@ ligne —, et il ne peut jamais coûter la réponse : sans fournisseur, hors con
 lecture en échec, on rend ce qu'on a et le juge répond avec le contexte seul,
 c'est-à-dire exactement le fil d'avant ce lot.
 
+## Ce que les tâches ont rendu, et le livrable qu'on lit (#1263)
+
+Au bouclage du 2026-09-24, dans une conversation neuve sur le projet de S5, « Comment
+je fais pour tester ce projet ? » a reçu `python app.py` et le nom du README —
+puis *« je n'ai toutefois pas lu son contenu exact […] il faudra ouvrir ces
+fichiers »*. Le README était lisible. L'orchestrateur avait fait une lecture, celle
+du run, et elle ne disait de chaque tâche soldée que « détail : démarrage de la
+tâche » : le moteur consigne ce que la tâche a rendu (`sortie`), mais le pont le
+jetait, et le dernier détail vu restait celui du début.
+
+Deux causes, deux gestes. La **matière** : le texte rendu voyage désormais en
+`Event.resultat`, à côté de `detail`, et les faits comme le détail d'un run le
+portent — le détail en donne une part à chaque tâche (`_BUDGET_DES_RESULTATS`), les
+faits en gardent 300 caractères, comme d'un détail. La **consigne** : le tour de
+lecture sait qu'une question sur le livré se répond avec le livrable, qu'un fichier
+nommé se lit tout de suite, et qu'il ne s'arrête pas sur une lecture qui nomme un
+fichier sans en donner le contenu. Ce qu'il lit reste son jugement ; la matière
+qu'on lui donne, elle, est un fait.
+
 ## Ce qui est gardé, et par quoi (#688)
 
 `tests/test_chat_global.py` tient le tout, sans réseau, sans modèle et sans
@@ -479,6 +498,7 @@ from maestro.controltower.chat import (
     transcription,
 )
 from maestro.controltower.consultation import (
+    DETAIL_MAX,
     LECTURES_PAR_TOUR,
     Demande,
     Lecture,
@@ -490,6 +510,7 @@ from maestro.controltower.events import (
     EVENEMENT_EXECUTION_STATUT,
     EVENEMENT_TACHE_STATUT,
     ROLE_RUN,
+    Event,
 )
 from maestro.controltower.outillage import ConducteurOutillage
 from maestro.controltower.portee import PorteeProjet, PorteeRun
@@ -657,11 +678,12 @@ dessus.
 
 Avant la conversation, tu reçois DES FAITS : l'état de l'orchestration, puis les
 runs de ce fil et de ce projet — statut, cause d'arrêt, issue, et chaque tâche
-avec son détail. Réponds AVEC ces faits ; n'envoie jamais vers un écran chercher
-ce que tu as déjà sous les yeux. À « pourquoi le run a échoué ? », nomme le run,
-son statut et la cause telle qu'elle est écrite là — le détail d'une tâche la
-porte souvent mieux que l'issue du run, qui n'est parfois qu'un décompte — puis
-dis le geste qui y répond.
+avec son détail et, une fois soldée, ce qu'elle a rendu (ce qu'elle a fait, les
+fichiers qu'elle dit avoir écrits). Réponds AVEC ces faits ; n'envoie jamais vers
+un écran chercher ce que tu as déjà sous les yeux. À « pourquoi le run a
+échoué ? », nomme le run, son statut et la cause telle qu'elle est écrite là — le
+détail d'une tâche la porte souvent mieux que l'issue du run, qui n'est parfois
+qu'un décompte — puis dis le geste qui y répond.
 
 Cette lecture est BORNÉE : seulement les runs les plus récents, un nombre limité
 de tâches, des détails tronqués, et elle le signale quand elle coupe. Ce qui n'y
@@ -709,6 +731,17 @@ Demande une lecture dès que la réponse gagnerait à s'appuyer sur le projet r�
 « comment je teste ce qui a été livré ? », « où est le code de X ? », « qu'est-ce
 que le run a produit ? », « pourquoi cette tâche a échoué ? » (le détail que tu
 vois est tronqué, `detail` le rend entier).
+
+Une question sur ce qu'un run a LIVRÉ — comment le tester, le lancer, s'en
+servir — se répond avec le livrable lui-même, pas avec le récit du run : lis ses
+fichiers (le README, le point d'entrée, le manifeste qui porte les commandes).
+Quand les faits ou ce que tu viens de lire NOMMENT un fichier qui porte la
+réponse, demande-le tout de suite, dans ce tour, à côté du détail du run si tu
+en as aussi besoin. Si rien ne nomme de fichier, liste la racine du projet. Ne
+t'arrête jamais sur une lecture qui nomme un fichier sans en donner le contenu :
+l'orchestrateur ne doit pas renvoyer l'utilisateur ouvrir un fichier que tu
+pouvais lire. On te rappellera une fois avec ce que tu viens de lire, pour suivre
+la piste qu'une première lecture ouvre.
 
 Si rien n'a besoin d'être lu — une salutation, un accord, une demande de travail,
 une question à laquelle ce que tu as déjà répond —, écris exactement :
@@ -1224,10 +1257,10 @@ def fiche_du_run(state: ControlTowerState, execution: EtatExecution) -> list[str
     if not taches:
         lignes.append("  tâches : aucune tâche connue de ce run.")
         return lignes
-    details = _details_des_taches(execution)
+    issues = _dernieres_issues(execution)
     lignes.append(f"  tâches ({len(taches)}) :")
     lignes.extend(
-        f"    · {_ligne_de_tache(tache, details.get(tache.id, ''))}"
+        f"    · {_ligne_de_tache(tache, issues.get(tache.id))}"
         for tache in taches[:_TACHES_RACONTEES]
     )
     reste = len(taches) - _TACHES_RACONTEES
@@ -1244,8 +1277,8 @@ def fiche_du_run(state: ControlTowerState, execution: EtatExecution) -> list[str
     return lignes
 
 
-def _ligne_de_tache(tache: EtatTache, detail: str) -> str:
-    """Une tâche en une ligne : ce qu'elle est, où elle en est, ce qu'elle a dit.
+def _ligne_de_tache(tache: EtatTache, issue: Event | None) -> str:
+    """Une tâche en une ligne : ce qu'elle est, où elle en est, ce qu'elle a dit et rendu.
 
     Le porteur est son **rôle** avant son nom d'agent, parce que c'est le rôle
     qui porte le repli du routeur : une tâche que personne n'a pu prendre a pour
@@ -1255,16 +1288,22 @@ def _ligne_de_tache(tache: EtatTache, detail: str) -> str:
     Le détail est **nommé** (« détail : ») et non simplement ajouté à la suite :
     il porte lui-même des tirets cadratins — « aucun agent dans ce catalogue —
     l'équipe reste à recruter » —, et sans l'étiquette il se confondrait avec les
-    champs qui le précèdent.
+    champs qui le précèdent. Le résultat l'est aussi (« résultat : », #1263), et
+    pour une raison de plus : c'est ce qu'une tâche soldée a **rendu**, pas ce
+    qu'on a dit d'elle, et c'est lui qui nomme les fichiers qu'un tour de lecture
+    ira ouvrir.
     """
     morceaux = [f"{tache.id} « {tache.titre} »" if tache.titre else tache.id]
     morceaux.append(libelle_statut_tache(tache.statut) if tache.statut else "statut inconnu")
     porteur = tache.role or tache.agent
     if porteur:
         morceaux.append(porteur)
-    borne = _borne(detail)
-    if borne:
-        morceaux.append(f"détail : {borne}")
+    detail = _borne(issue.detail) if issue is not None else ""
+    if detail:
+        morceaux.append(f"détail : {detail}")
+    resultat = _borne(issue.resultat) if issue is not None else ""
+    if resultat:
+        morceaux.append(f"résultat : {resultat}")
     return " — ".join(morceaux)
 
 
@@ -1282,24 +1321,29 @@ def _issue_du_run(execution: EtatExecution) -> str:
     return ""
 
 
-def _details_des_taches(execution: EtatExecution) -> dict[str, str]:
-    """Le dernier détail écrit par chaque tâche du run — son erreur, le plus souvent.
+def _dernieres_issues(execution: EtatExecution) -> dict[str, Event]:
+    """Le dernier `tache.statut` de chaque tâche du run — ce qu'elle a dit, et ce qu'elle a rendu.
 
     Lu dans les **événements du run** et non sur `EtatTache`, qui n'en porte
-    aucun : ce qu'une tâche échouée a à dire voyage dans le `detail` de son
+    rien : ce qu'une tâche échouée a à dire voyage dans le `detail` de son
     `tache.statut`, où `bridge` recopie son `erreur`. C'est là, et nulle part
     ailleurs, qu'était la cause réelle de l'essai du 2026-09-21 — « aucun agent
     dans ce catalogue — l'équipe reste à recruter » — pendant que l'issue du run
-    n'annonçait qu'un décompte.
+    n'annonçait qu'un décompte. Ce qu'une tâche **soldée** a rendu y voyage
+    aussi, en `resultat`, depuis #1263.
 
-    Le dernier vu fait foi : une tâche qui repart puis retombe parle de sa
-    dernière chute, jamais de l'avant-dernière.
+    Le dernier vu fait foi, **vide compris** : une tâche qui repart puis retombe
+    parle de sa dernière chute, jamais de l'avant-dernière, et une tâche qui a
+    réussi ne se raconte plus par son démarrage. Avant #1263 on retenait le
+    dernier détail *non vide* — or l'issue d'une réussite n'en porte aucun, si
+    bien que chaque tâche soldée se lisait « détail : démarrage de la tâche »,
+    la phrase de son début, et que c'est tout ce qu'une lecture de run en disait.
     """
-    details: dict[str, str] = {}
+    issues: dict[str, Event] = {}
     for event in execution.evenements:
-        if event.type == EVENEMENT_TACHE_STATUT and event.tache_id and event.detail:
-            details[event.tache_id] = event.detail
-    return details
+        if event.type == EVENEMENT_TACHE_STATUT and event.tache_id:
+            issues[event.tache_id] = event
+    return issues
 
 
 def _borne(texte: str) -> str:
@@ -1315,6 +1359,40 @@ def _borne(texte: str) -> str:
     return f"{propre[:_DETAIL_MAX].rstrip()}… (tronqué)"
 
 
+#: Ce que les **résultats** des tâches peuvent occuper, en tout, dans le détail
+#: d'un run (#1263) : les deux tiers de ce que la lecture rend
+#: (`consultation.DETAIL_MAX`), le reste allant aux en-têtes, aux détails et à
+#: l'issue. Partagé entre les tâches qui ont rendu quelque chose, pour que chacune
+#: y garde sa place : une coupe en fin de texte ferait disparaître les dernières
+#: derrière un premier compte rendu bavard, et « le résultat de chaque tâche »
+#: deviendrait « celui des premières ».
+_BUDGET_DES_RESULTATS = DETAIL_MAX * 2 // 3
+
+#: La part qu'un résultat garde quoi qu'il arrive — de quoi dire ce qui a été fait
+#: et les fichiers écrits, sur un run qui en compterait des dizaines. Au-delà, la
+#: lecture entière coupe, et elle le dit (`consultation`).
+_PART_MINIMALE_D_UN_RESULTAT = 400
+
+
+def _resultat_en_retrait(resultat: str, part: int) -> str:
+    """Le résultat d'une tâche sous son en-tête : borné à `part`, coupé en le disant, en retrait.
+
+    Il garde ses lignes — un compte rendu d'agent est souvent une petite liste de
+    fichiers —, mais chacune est mise en retrait sous la tâche : sans quoi sa
+    deuxième ligne se lirait comme une tâche de plus, ou comme un champ du run.
+    """
+    texte = resultat.strip()
+    if len(texte) > part:
+        texte = (
+            f"{texte[:part].rstrip()}\n"
+            f"… (résultat coupé à {part} caractères sur {len(resultat.strip())})"
+        )
+    premiere, *suite = texte.splitlines()
+    return "\n".join(
+        [f"  résultat : {premiere}", *(f"    {ligne}" if ligne.strip() else "" for ligne in suite)]
+    )
+
+
 def detail_du_run(state: ControlTowerState) -> Callable[[str], str]:
     """Le détail **complet** d'un run — ce que la borne de `faits_des_runs` coupe (#1223).
 
@@ -1324,6 +1402,13 @@ def detail_du_run(state: ControlTowerState) -> Callable[[str], str]:
     tronqué »*. Il n'entre jamais dans le prompt de lui-même : il faut que le
     modèle l'ait **demandé**, ce qui est la différence entre un contexte qui
     grossit à chaque message et une lecture payée quand elle sert.
+
+    Depuis #1263 il porte **ce que chaque tâche soldée a rendu** — le texte que
+    l'agent a remis au moteur, et qui nomme d'ordinaire les fichiers écrits. Au
+    bouclage du 2026-09-24, il ne disait de chaque tâche soldée que « détail :
+    démarrage de la tâche » ; l'orchestrateur a lu cette matière pauvre, puis
+    renvoyé la personne ouvrir un README qu'il aurait pu lire. Chaque résultat
+    reçoit sa part de `_BUDGET_DES_RESULTATS`, et une part atteinte se dit.
 
     Rend `""` sur un run inconnu, que `consultation` traduit en « aucun run … ».
     """
@@ -1344,10 +1429,16 @@ def detail_du_run(state: ControlTowerState) -> Callable[[str], str]:
         if issue:
             lignes.append(f"issue : {issue}")
         taches = state.taches(run=PorteeRun.run(execution.run_id))
-        details = _details_des_taches(execution)
+        issues = _dernieres_issues(execution)
         if not taches:
             lignes.append("tâches : aucune tâche connue de ce run.")
             return "\n".join(lignes)
+        rendus = [
+            issues[tache.id].resultat
+            for tache in taches
+            if tache.id in issues and issues[tache.id].resultat.strip()
+        ]
+        part = max(_PART_MINIMALE_D_UN_RESULTAT, _BUDGET_DES_RESULTATS // max(1, len(rendus)))
         lignes.append(f"tâches ({len(taches)}) :")
         for tache in taches:
             entete = f"- {tache.id} « {tache.titre} »" if tache.titre else f"- {tache.id}"
@@ -1357,9 +1448,14 @@ def detail_du_run(state: ControlTowerState) -> Callable[[str], str]:
             if porteur:
                 entete += f" — {porteur}"
             lignes.append(entete)
-            detail_tache = details.get(tache.id, "").strip()
+            derniere = issues.get(tache.id)
+            if derniere is None:
+                continue
+            detail_tache = derniere.detail.strip()
             if detail_tache:
                 lignes.append(f"  détail : {detail_tache}")
+            if derniere.resultat.strip():
+                lignes.append(_resultat_en_retrait(derniere.resultat, part))
         return "\n".join(lignes)
 
     return detail
