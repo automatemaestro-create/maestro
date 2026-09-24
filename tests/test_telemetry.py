@@ -144,6 +144,38 @@ def test_redact_masque_les_motifs_de_cles_hors_environnement(monkeypatch):
     assert MARQUEUR_SECRET in texte
 
 
+def test_redact_masque_un_bloc_de_cle_privee_entier():
+    # Une clé SSH ou TLS ne se reconnaît pas à un préfixe mais à son bloc : depuis
+    # que la lecture des sources se fait par le contenu (#1163), un `id_rsa` sans
+    # extension entre comme du texte, et c'est ce motif qui l'arrête (#1264).
+    cle = (
+        "-----BEGIN RSA PRIVATE KEY-----\n"
+        "MIIEowIBAAKCAQEAsecret1264\nligne2secrete\n"
+        "-----END RSA PRIVATE KEY-----"
+    )
+    texte = redact_secrets(f"avant\n{cle}\naprès")
+    assert "secret1264" not in texte
+    assert "ligne2secrete" not in texte
+    assert texte == f"avant\n{MARQUEUR_SECRET}\naprès"
+
+
+def test_redact_masque_une_cle_privee_coupee_avant_sa_fin():
+    # Une lecture tronquée peut couper le bloc avant sa ligne `END` : ce qui suit
+    # l'en-tête est masqué jusqu'au bout plutôt que laissé en clair.
+    texte = redact_secrets("-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjE-coupee")
+    assert "b3BlbnNzaC1rZXktdjE" not in texte
+    assert MARQUEUR_SECRET in texte
+
+
+def test_redact_laisse_un_certificat_et_une_cle_publique_intacts():
+    # Un certificat ou une clé publique n'est pas un secret : les masquer ferait
+    # disparaître du contexte ce qu'un livrable publie à dessein.
+    public = "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYI\n-----END PUBLIC KEY-----"
+    certificat = "-----BEGIN CERTIFICATE-----\nMIIBszCCAVmg\n-----END CERTIFICATE-----"
+    assert redact_secrets(public) == public
+    assert redact_secrets(certificat) == certificat
+
+
 def test_redact_laisse_le_texte_ordinaire_intact():
     assert redact_secrets("bonjour le monde") == "bonjour le monde"
     assert redact_secrets("") == ""

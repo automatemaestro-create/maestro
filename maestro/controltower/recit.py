@@ -30,9 +30,12 @@ la bulle qui dit *voilà ce que c'est, et voilà comment l'essayer*.
 se déduit pas d'un catalogue de gabarits de projet (#1169) : elle se lit dans ce
 que le run a écrit. La lecture passe par la **chaîne d'ingestion existante**
 (`maestro.sources.extraction`, #316) avec une source `dossier` sur la racine du
-projet — donc par les mêmes plafonds, le même parcours qui ne suit aucun lien
-symbolique, le même respect du **périmètre** du projet (les gisements de secrets
-de docs/24 §2.5 en sont exclus d'office) et le même encadrement de données
+projet. Elle lit par le contenu depuis #1163 : le point d'entrée, le
+`package.json` ou le `.svg` d'un livrable sans README entrent comme ses
+documents (#1264). Elle passe donc par les mêmes plafonds, le même parcours qui
+ne suit aucun lien symbolique, le même respect du **périmètre** du projet (les
+gisements de secrets de docs/24 §2.5 en sont exclus d'office, un porteur de
+secrets se nomme sans se lire) et le même encadrement de données
 (`contexte_markdown`, ENF-13). Aucune seconde chaîne de lecture n'est ouverte
 ici, et aucun nom de fichier n'est privilégié : c'est le modèle qui reconnaît un
 mode d'emploi dans ce qu'il lit.
@@ -98,15 +101,29 @@ _LOGGER = logging.getLogger(__name__)
 #: explorateur, et l'explorateur, lui, s'ouvre d'un geste (#928).
 FICHIERS_OFFERTS_MAX = 12
 
+#: Le budget de lecture du livrable, en tokens estimés : ~12 000 couvrent
+#: largement un livrable de run ; au-delà, le rapport le **dit** (`limite`), et
+#: le modèle le lit.
+TOKENS_LIVRABLE = 12_000
+
 #: Ce qu'on accepte de lire du livrable pour en tirer le mode d'emploi. Plus
 #: serré que le défaut d'ingestion (#316) parce que ce n'est pas la même
 #: question : un objectif embarque des documents à analyser, ici on cherche
-#: comment lancer ce qui vient d'être écrit. Trente fichiers et ~12 000 tokens
-#: couvrent largement un livrable de run ; au-delà, le rapport le **dit**
-#: (`limite`), et le modèle le lit.
+#: comment lancer ce qui vient d'être écrit.
+#:
+#: ⚠ **Aucun fichier ne prend plus du tiers du budget** (#1264). La lecture se
+#: fait par le contenu depuis #1163 — le code et les manifestes entrent, plus
+#: seulement les documents —, et un livrable porte alors des fichiers **générés**
+#: aussi lourds qu'inutiles au récit : le `package-lock.json` d'un `npm install`
+#: se trie avant `package.json` et pèse des dizaines de milliers de tokens. Avec
+#: un plafond par fichier égal au budget entier, il le prenait tout, et le
+#: manifeste qui porte `npm start` sortait `budget-epuise`. Borner la part d'**un**
+#: fichier ne privilégie aucun nom (#1169) : le gros fichier entre tronqué, en le
+#: disant, et ce qui le suit est lu. Un tiers laisse encore quelque 300 lignes à
+#: un point d'entrée, de quoi atteindre son `if __name__ == "__main__"`.
 GARDE_FOUS_LIVRABLE = GardeFousExtraction(
-    tokens_max_source=12_000,
-    tokens_max_total=12_000,
+    tokens_max_source=TOKENS_LIVRABLE // 3,
+    tokens_max_total=TOKENS_LIVRABLE,
     nb_max_fichiers_dossier=30,
 )
 
