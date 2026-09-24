@@ -535,9 +535,13 @@ _VALEUR = "◇"
 
 
 def lignes_imprimees(main: str) -> list[str]:
-    """Les lignes `[coque] …` que la coque écrit sur sa sortie, valeurs interpolées neutralisées."""
+    """Les lignes `[coque] …` que la coque écrit sur sa sortie, valeurs interpolées neutralisées.
+
+    Le texte peut commencer à la ligne suivant la parenthèse (`\\(\\s*`) : c'est la forme que
+    prend un appel trop long pour une ligne, et la sonde ne voyait pas la ligne du verrou de #1287.
+    """
     litteraux = re.findall(
-        r"""(?:process\.(?:stdout|stderr)\.write|retenir)\((?:'\w+',\s*)?"""
+        r"""(?:process\.(?:stdout|stderr)\.write|retenir)\(\s*(?:'\w+',\s*)?"""
         r"""(['`])(\[coque\][^'`]*)\1""",
         main,
     )

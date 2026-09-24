@@ -15,7 +15,9 @@ indépendante du fournisseur :
   fournisseur depuis son signal natif), capacité non supportée
   (`UnsupportedCapability`), serveur MCP indisponible (`McpServerUnavailable`,
   #104 — déclaration, secret ou serveur à corriger : relancer coûterait sans
-  rien changer).
+  rien changer), message du flux fournisseur au-delà de son plafond de lecture
+  (`PlafondFluxDepasse`, #1277 — le fichier trop gros que l'agent a lu est
+  encore sur le disque à la tentative suivante).
 
 Les deux autres échecs *jamais relancés* du cahier des charges n'atteignent pas
 cette classification par construction : le **time-out d'échéance ferme** (#64)
@@ -34,6 +36,7 @@ from dataclasses import dataclass
 
 from maestro.providers.base import (
     McpServerUnavailable,
+    PlafondFluxDepasse,
     TurnLimitReached,
     UnsupportedCapability,
 )
@@ -79,16 +82,22 @@ def est_transitoire(erreur: BaseException) -> bool:
 
     Classification par exclusion : les seules causes **non transitoires** qui
     remontent en exception de la réalisation sont les plafonds (coût du run,
-    tours de l'exécution agentique), une capacité que le fournisseur n'a pas et
-    un serveur MCP indisponible (#104 : déclaration, secret ou serveur à
-    corriger) — relancer reproduirait le même échec. Tout le reste (crash du
-    sous-processus SDK, erreur immédiate du CLI, coupure réseau…) est un aléa
-    fournisseur : présumé transitoire, c'est la cible d'ENF-06.
+    tours de l'exécution agentique, lecture du flux fournisseur), une capacité
+    que le fournisseur n'a pas et un serveur MCP indisponible (#104 :
+    déclaration, secret ou serveur à corriger) — relancer reproduirait le même
+    échec. Tout le reste (crash du sous-processus SDK, erreur immédiate du CLI,
+    coupure réseau…) est un aléa fournisseur : présumé transitoire, c'est la
+    cible d'ENF-06.
+
+    Le plafond du flux (#1277) est la leçon de la présomption : un dépassement
+    passait pour un « crash du sous-processus », donc pour un aléa, alors que
+    le message trop gros venait d'un fichier que chaque tentative relisait.
     """
     return not isinstance(
         erreur,
         PlafondDepenseDepasse
         | TurnLimitReached
+        | PlafondFluxDepasse
         | UnsupportedCapability
         | McpServerUnavailable,
     )

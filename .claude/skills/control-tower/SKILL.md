@@ -26,12 +26,13 @@ fenêtre** — au premier plan, il tiendrait l'appel jusqu'à son plafond.
   dans la fenêtre, sur son écran d'attente.
 - **Fermer la fenêtre arrête la stack** — API et UI, runs en vol soldés : la coque
   joue `start.sh --stop` avant de sortir. Rien d'autre à faire.
-- `[coque] Maestro est déjà ouvert — cette fenêtre se ferme.`, sans la ligne
-  `[coque] Maestro — UI…` : **rien ne s'est ouvert**. Le verrou d'instance unique vaut pour
-  **le poste**, pas pour les ports — mesuré le 2026-09-24, une fenêtre du clone
-  principal (:3000) a refusé celle d'un worktree (:3073). La fenêtre en place
-  revient au premier plan ; si elle sert une autre copie, le dire : ouvrir celle-ci
-  demande de fermer l'autre, ce qui arrête sa stack.
+- `[coque] Maestro est déjà ouvert sur cette stack (UI :<port> · API :<port>) — …`,
+  sans la ligne `[coque] Maestro — UI…` : **rien ne s'est ouvert**, une fenêtre sert
+  déjà ces ports. Le verrou d'instance unique vaut pour **la stack** — son couple de
+  ports —, plus pour le poste (#1287) : une copie lancée sur les ports que
+  `worktree.sh ensure` lui a donnés s'ouvre à côté de celle du clone principal. La
+  fenêtre en place revient au premier plan ; si elle sert une autre copie, le dire :
+  ouvrir celle-ci sur les mêmes ports demande de fermer l'autre, ce qui arrête sa stack.
 - Premier lancement : Electron s'installe à la demande, **taille annoncée** avant
   de télécharger (docs/35 §2.3).
 - Ports : la coque lit `MAESTRO_PORT_API` et `MAESTRO_PORT_UI`. Une session
