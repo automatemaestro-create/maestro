@@ -42,14 +42,18 @@ from maestro.controltower.projets import ServiceProjets
 from maestro.outillage import (
     CHEMIN_MANIFESTE,
     DOSSIER_SKILLS,
+    Choix,
     Commande,
     Constats,
     Entree,
     Gestionnaire,
     Piece,
     Recommandation,
+    constats_depuis_choix,
     generer_outillage,
+    recommandation_depuis_choix,
     recommander,
+    source_manifeste_des_choix,
 )
 from maestro.outillage.verification import (
     A_VERIFIER,
@@ -592,7 +596,66 @@ def _git(racine: Path, *arguments: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# ② Une pile que les tables ne connaissent pas, par la route de l'écran         #
+# ② Une pile que les tables ne connaissent pas                                  #
+# --------------------------------------------------------------------------- #
+
+
+def test_un_projet_neuf_sur_une_pile_inconnue_ecrit_les_commandes_comprises_et_jouees(
+    tmp_path: Path,
+) -> None:
+    """Les commandes d'un projet neuf viennent de ce que le modèle a compris (#1147), et se jouent.
+
+    Flutter : aucune table de Maestro ne l'a jamais connu. Le dossier porte déjà son
+    `pubspec.yaml` — la personne l'a créé — : les commandes comprises se jouent, et
+    l'outillage les écrit avec leur verdict, sans aucune commande d'une autre pile.
+    """
+    racine = _racine(tmp_path, "pubspec.yaml")
+    compris = [
+        Choix(cle=cle, valeur=valeur, deduit=True, parce_que="compris de la conversation")
+        for cle, valeur in (
+            ("nature", "une application mobile"),
+            ("langages", "Dart"),
+            ("manifeste", "pubspec.yaml"),
+            ("gestionnaire", "flutter"),
+            ("installer", "flutter pub get"),
+            ("tester", "flutter test"),
+            ("lint", "flutter analyze"),
+        )
+    ]
+    constats = constats_depuis_choix(compris)
+    joueur = _Joueur(
+        {"flutter analyze": execution.Execution(code=1, sortie="3 issues found", duree_s=4)}
+    )
+
+    preparation = generer_outillage(
+        _projet(racine),
+        constats,
+        recommandation_depuis_choix(compris),
+        source=source_manifeste_des_choix("prj-0000beef", compris),
+        horodatage=QUAND,
+        verificateur=Verificateur(joueur=joueur, interprete=FAUX_BASH),
+    )
+
+    assert [commande for commande, _, _ in joueur.joues] == [
+        "flutter pub get",
+        "flutter test",
+        "flutter analyze",
+    ]
+    verdicts = {v.commande: v.etat for v in preparation.rapport.verifications}
+    assert verdicts == {
+        "flutter pub get": VERIFIEE,
+        "flutter test": VERIFIEE,
+        "flutter analyze": ECHOUEE,
+    }
+    agents = (racine / "AGENTS.md").read_text(encoding="utf-8")
+    assert "**Vérifiée**" in _ligne(agents, "flutter test")
+    assert "⚠ **Échouée**" in _ligne(agents, "flutter analyze")
+    for table in ("uv sync", "npm ci", "pytest", "ruff check .", "npx vitest run"):
+        assert f"`{table}`" not in agents
+
+
+# --------------------------------------------------------------------------- #
+# ② …et par la route de l'écran, sur un projet existant lu par le modèle       #
 # --------------------------------------------------------------------------- #
 
 #: Ce que le modèle répond sur une solution .NET (#1158) — aucune table ne la connaît.

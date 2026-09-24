@@ -6705,7 +6705,15 @@ leur contenu : une réponse est une donnée d'entrée de la dérivation, au mêm
                     "etat": "ecrit", "refuse_vers": "" }],
     "ecrits": ["AGENTS.md", "CLAUDE.md", ".agents/skills/lancer-les-tests/SKILL.md"],
     // CE QUI N'A PAS ÉTÉ ÉCRASÉ, et où la version neuve attend.
-    "refuses": [], "ignores": [], "retires": []
+    "refuses": [], "ignores": [], "retires": [],
+    // CE QUE VALENT LES COMMANDES ÉCRITES (#1160) : chacune jouée avant, dans une copie,
+    // dans l'ordre où elle l'a été. `verifiee`, `echouee` (code + fin de sortie), `a-verifier`
+    // (pas jouée, ou sans verdict : `raison` dit pourquoi). Les mêmes que le manifeste garde.
+    "verifications": [
+      { "usage": "tester", "commande": "pytest", "etat": "echouee",
+        "raison": "elle a rendu la main en erreur (code 1)", "code": 1,
+        "sortie": "…2 failed, 10 passed", "duree_s": 9.8 }
+    ]
   },
   // UN CHEMIN RETENU QUI NE DÉSIGNE AUCUNE ENTRÉE (#1100) : rendu, jamais perdu en silence.
   "retenus_inconnus": [],
@@ -6728,6 +6736,22 @@ duplique rien : ce que le manifeste déclare déjà à jour n'est pas réécrit.
 Un refus d'écriture est **une ligne du rapport, jamais une exception** : il ne doit pas exister
 d'état où une partie de l'outillage est posée et où personne ne sait laquelle. `404`/`422` comme
 l'analyse, plus le worktree qui ne se monte pas et la fusion refusée (racine occupée, conflit).
+
+**Chaque commande écrite est jouée avant** (#1160, docs/38 §4.1). La route joue, dans une **copie**
+de l'arbre qu'elle outille (le périmètre du projet, sans `.maestro/`), les commandes que `AGENTS.md`
+et les skills vont écrire — l'installation d'abord —, puis écrit chacune avec son verdict. Elle dure
+donc le temps d'une installation et d'une suite de tests : jusqu'à 5 min par commande et 15 min en
+tout, un démarrage étant observé 15 s (`Delais`). Ne sont **pas** jouées, et reviennent
+`a-verifier` avec leur raison : un projet encore vide, une commande dont le fichier n'existe pas
+encore, une commande que la portée « projet » renvoie à une personne (`sudo`, `pip install`, un
+chemin hors du projet — `maestro.portee`), et tout, sur un poste sans bash. Le code de retour fait
+foi, jamais le texte de la sortie.
+
+L'écran rend ce verdict **commande par commande**, dans la forme retenue sur pièces
+(`VerificationsOutillage`, variante A de #1160) : sur la page, la phrase de compte puis une ligne
+par commande dans l'ordre joué, un badge à glyphe et mot devant, l'échec déployé sur place (son
+code puis les 12 dernières lignes de sa sortie), la raison sous ce qui n'a pas été joué ; au pied
+de la conversation, le compte en badges chiffrés et la même liste dépliée à la demande (#1104).
 
 #### Le report — `POST /api/projets/{id}/outillage/report`
 

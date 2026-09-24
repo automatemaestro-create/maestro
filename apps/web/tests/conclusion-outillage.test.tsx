@@ -413,6 +413,59 @@ describe("ce que le geste envoie à la génération", () => {
       within(carte).queryByRole("button", { name: /Écrire l'outillage/ }),
     ).not.toBeInTheDocument();
   });
+
+  it("dit le verdict des commandes écrites : le compte d'abord, le détail à la demande (#1160)", async () => {
+    genererOutillage.mockResolvedValue(
+      rapportFactice({
+        verifications: [
+          {
+            usage: "installer",
+            commande: "uv sync",
+            etat: "verifiee",
+            raison: "elle a rendu la main sans erreur",
+            code: 0,
+            sortie: "Resolved 12 packages",
+            duree_s: 3.1,
+          },
+          {
+            usage: "tester",
+            commande: "pytest",
+            etat: "echouee",
+            raison: "elle a rendu la main en erreur (code 1)",
+            code: 1,
+            sortie: "2 failed, 10 passed",
+            duree_s: 8.4,
+          },
+        ],
+      }),
+    );
+    poserFilAssistance({ messages: filConclu() });
+    rendreAvecEtat(<PageChat />);
+
+    const carte = await carteAttendue();
+    await userEvent.click(
+      within(carte).getByRole("button", { name: "Écrire l'outillage (2)" }),
+    );
+
+    // Le récapitulatif se lit sans rien ouvrir — l'échec compris (#1104).
+    const controle = await within(carte).findByRole("button", {
+      name: "2 commandes",
+    });
+    expect(within(carte).getByText("1 vérifiée")).toBeInTheDocument();
+    expect(within(carte).getByText("1 échouée")).toBeInTheDocument();
+    expect(within(carte).queryByText("2 failed, 10 passed")).toBeNull();
+    expect(controle).toHaveAttribute("aria-expanded", "false");
+
+    await userEvent.click(controle);
+
+    // Déplié, c'est la liste retenue pour la page — la même, pas une seconde.
+    expect(controle).toHaveAttribute("aria-expanded", "true");
+    const liste = within(carte).getByRole("list", {
+      name: "Verdict de chaque commande",
+    });
+    expect(within(liste).getByText("code 1")).toBeInTheDocument();
+    expect(within(liste).getByText("2 failed, 10 passed")).toBeInTheDocument();
+  });
 });
 
 // ===========================================================================

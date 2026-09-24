@@ -192,11 +192,7 @@ export function ListeVerifications({
                 <span className="text-annexe text-alerte-texte">
                   {v.code !== null ? `code ${v.code}` : "sans code de retour"}
                 </span>
-                {v.sortie !== "" && (
-                  <pre className="max-h-40 overflow-auto rounded-controle border border-bord bg-surface-creuse p-2 font-mono text-micro whitespace-pre-wrap break-all text-texte">
-                    {v.sortie}
-                  </pre>
-                )}
+                {v.sortie !== "" && <FinDeSortie sortie={v.sortie} />}
               </>
             )}
             {etat === "a-verifier" && v.raison !== "" && (
@@ -208,6 +204,38 @@ export function ListeVerifications({
         );
       })}
     </ul>
+  );
+}
+
+/**
+ * Les lignes de sortie montrées sous un échec : **la fin**, là où une commande dit
+ * pourquoi elle a échoué — le moteur en garde davantage au manifeste.
+ */
+export const LIGNES_DE_SORTIE = 12;
+
+/**
+ * La fin de la sortie d'une commande en échec, **sans zone qui défile** : une boîte
+ * défilante devrait être atteignable au clavier (WCAG 2.1.1, le constat
+ * d'`EditeurPlaybook`), et une sortie de 4 000 caractères pousserait le rapport
+ * hors de l'écran. On en montre donc les dernières lignes, les lignes longues
+ * repliées sur place, et l'on dit où lire le reste.
+ */
+function FinDeSortie({ sortie }: { sortie: string }) {
+  const lignes = sortie.split("\n");
+  const coupee = lignes.length > LIGNES_DE_SORTIE;
+  const visibles = lignes.slice(-LIGNES_DE_SORTIE).join("\n");
+  return (
+    <>
+      <pre className="rounded-carte border border-bord bg-surface-creuse p-2.5 font-mono text-micro whitespace-pre-wrap break-all text-texte">
+        {coupee ? `…\n${visibles}` : visibles}
+      </pre>
+      {coupee && (
+        <span className="text-micro text-texte-secondaire">
+          Les {LIGNES_DE_SORTIE} dernières lignes — la sortie gardée est dans{" "}
+          <code className="font-mono">.maestro/outillage/manifeste.json</code>.
+        </span>
+      )}
+    </>
   );
 }
 
