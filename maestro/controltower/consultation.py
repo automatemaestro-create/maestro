@@ -16,7 +16,7 @@ toutes en lecture seule :
 | `lister` | les entrées d'un dossier du projet |
 | `chercher` | les lignes du projet qui contiennent un texte |
 | `lire` | le contenu d'un fichier du projet |
-| `detail` | le détail **complet** d'un run et de ses tâches, sans troncature |
+| `detail` | le détail **complet** d'un run et de ses tâches, dont ce qu'elles ont rendu |
 
 ## Le protocole est du texte, et c'est une décision
 
@@ -114,7 +114,14 @@ _FICHIERS_BALAYES_MAX = 2_000
 #: La longueur d'un `detail`. Bien au-delà des 300 caractères de `faits_des_runs`
 #: — c'est tout l'objet du verbe — mais pas sans borne : une trace Python entière
 #: ferait un prompt que personne ne paie deux fois.
-_DETAIL_MAX = 6_000
+#:
+#: Publique depuis #1263, et portée de 6 000 à 12 000 : le détail rend désormais
+#: **ce que chaque tâche a rendu**, et `orchestration.detail_du_run` y taille la
+#: part de chaque résultat sur cette borne — une coupe en fin de texte ferait
+#: disparaître les dernières tâches derrière un premier compte rendu bavard. C'est
+#: l'ordre de grandeur d'un `lire` (`_OCTETS_MAX`), payé seulement quand on le
+#: demande.
+DETAIL_MAX = 12_000
 
 #: Les extensions qu'un `chercher` ouvre. Ce n'est pas une liste de langages :
 #: c'est la frontière entre « du texte » et « un binaire », et elle se trompe
@@ -181,8 +188,9 @@ def catalogue() -> str:
         '{"outil": "chercher", "motif": "npm run", "chemin": "."}\n'
         f"- `{OUTIL_LIRE}` — le contenu d'un fichier du projet. "
         '{"outil": "lire", "chemin": "README.md"}\n'
-        f"- `{OUTIL_DETAIL}` — le détail COMPLET d'un run et de ses tâches, sans "
-        'troncature. {"outil": "detail", "run_id": "…"}\n'
+        f"- `{OUTIL_DETAIL}` — le détail COMPLET d'un run et de ses tâches, dont ce "
+        "que chaque tâche soldée a rendu (ce qu'elle a fait, les fichiers qu'elle "
+        'dit avoir écrits). {"outil": "detail", "run_id": "…"}\n'
         "\n"
         f"Une demande = une ligne qui commence par {MARQUEUR_LECTURE}, suivie d'un "
         "objet JSON, et rien d'autre sur la ligne :\n"
@@ -415,8 +423,8 @@ class Consultations:
             return Lecture(
                 libelle=libelle, contenu=f"Aucun run « {run_id} » dans la projection."
             )
-        if len(texte) > _DETAIL_MAX:
-            texte = f"{texte[:_DETAIL_MAX].rstrip()}\n… (détail coupé)"
+        if len(texte) > DETAIL_MAX:
+            texte = f"{texte[:DETAIL_MAX].rstrip()}\n… (détail coupé)"
         return Lecture(libelle=libelle, contenu=texte)
 
     # --- la frontière ------------------------------------------------------

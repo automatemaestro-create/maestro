@@ -549,6 +549,18 @@ class Event:
     # définition de la même forme ici serait deux contrats à tenir d'accord pour
     # une seule carte. None partout ailleurs, pour la raison d'`etapes`/`liens`.
     recrutement: dict[str, Any] | None = None
+    # Ce que la tâche a **rendu** en se soldant (#1263) : le texte que l'agent a
+    # remis au moteur (`TaskResult.sortie`), porté par le seul `tache.statut` de
+    # son issue et vide partout ailleurs — un début de tâche n'a encore rien
+    # rendu. Chaîne vide plutôt que `None`, pour la raison de `cause`/`outil` : un
+    # seul événement en parle, et « cette tâche n'a rien rendu » est un fait.
+    #
+    # Il voyage **à côté** de `detail`, jamais dedans : `detail` est la phrase
+    # qu'une frise affiche sans rien composer (l'erreur d'une issue, le
+    # « démarrage de la tâche » d'un début), et un compte rendu d'agent de vingt
+    # lignes n'en est pas une. Avant lui, le pont le jetait, et la lecture d'un run
+    # ne savait dire d'une tâche soldée que son démarrage.
+    resultat: str = ""
     horodatage: str = field(default_factory=_horodatage)
 
     def to_dict(self) -> dict[str, Any]:
@@ -597,6 +609,7 @@ class Event:
             "echeance": self.echeance,
             "etape_run": self.etape_run,
             "recrutement": dict(self.recrutement) if self.recrutement is not None else None,
+            "resultat": self.resultat,
             "horodatage": self.horodatage,
         }
 
@@ -718,6 +731,10 @@ class Event:
                 if isinstance(data.get("recrutement"), Mapping)
                 else None
             ),
+            # Même régime que `cause` (#1263) : le texte passe tel quel. Un
+            # événement émis avant ce lot n'en porte pas, et sa tâche se relit
+            # comme avant — sans rien dire de ce qu'elle a rendu.
+            resultat=str(data.get("resultat") or ""),
             horodatage=data.get("horodatage", ""),
         )
 

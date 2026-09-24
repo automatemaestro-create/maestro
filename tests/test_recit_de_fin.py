@@ -18,7 +18,9 @@ Couvre :
 ① **la lecture du livrable** — elle passe par la chaîne d'ingestion (#316), donc
    elle respecte le périmètre du projet (un `.env` n'entre pas), rend des
    chemins **absolus** prêts à devenir des liens, et ne lève jamais sur une
-   racine disparue ;
+   racine disparue. Depuis #1264, elle lit aussi un livrable **sans README** —
+   son point d'entrée, son `.svg`, son manifeste, même derrière un fichier
+   généré qui pèse tout le budget —, sans qu'aucun secret n'atteigne le récit ;
 ② **l'idempotence sur le fil** — `deja_raconte` est prouvé sur un échantillon
    fautif : un fil qui n'a que le message de lancement n'est **pas** raconté, et
    c'est ce qui fait que le test suivant veut dire quelque chose ;
@@ -77,7 +79,7 @@ from maestro.controltower.state import (
 from maestro.messaging import InMemoryMailbox
 from maestro.projets.modele import Perimetre, Projet
 from maestro.projets.store import ProjetStore
-from maestro.sources.extraction import RapportLecture
+from maestro.sources.extraction import ETAT_LU, ETAT_TRONQUE, RapportLecture
 
 RUN = "run-1224"
 RECIT = (
@@ -205,6 +207,121 @@ def test_le_livrable_est_lu_par_la_chaine_d_ingestion_perimetre_compris(tmp_path
     assert all(".env" not in chemin for chemin in livrable.chemins)
     assert "python app.py" in livrable.contexte
     assert "secret-a-ne-pas-lire" not in livrable.contexte
+
+
+@pytest.mark.parametrize(
+    ("nom", "contenu", "attendu"),
+    [
+        (
+            "app.py",
+            "import sys\n\n\ndef main():\n    print('bonjour')\n\n\n"
+            "if __name__ == '__main__':\n    sys.exit(main())\n",
+            "if __name__ == '__main__':",
+        ),
+        (
+            "logo-anime.svg",
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
+            '<path d="M10 90 L10 10 L50 60 L90 10 L90 90"><animate attributeName="opacity" '
+            'values="1;0.2;1" dur="2s" repeatCount="indefinite"/></path></svg>\n',
+            'repeatCount="indefinite"',
+        ),
+    ],
+)
+def test_un_livrable_sans_readme_se_lit_par_ce_qu_il_contient(
+    tmp_path: Path, nom: str, contenu: str, attendu: str
+) -> None:
+    """Le livrable de S2 (`app.py` seul) et celui du logo animé (#1264).
+
+    Le constat du bouclage du 2026-09-24 : un livrable sans README se racontait
+    « sans avoir pu être lu », la lecture ne connaissant que les documents. Le
+    récit doit tenir une commande **lue** dans le livrable — ici, dans le point
+    d'entrée lui-même, puisqu'il n'y a rien d'autre.
+    """
+    racine = tmp_path / "livrable"
+    racine.mkdir()
+    (racine / nom).write_text(contenu, encoding="utf-8")
+
+    livrable = lire_le_livrable(racine, Perimetre())
+
+    etats = {e.nom: e.etat for lecture in livrable.rapport.lectures for e in lecture.entrees}
+    assert etats == {nom: ETAT_LU}
+    assert attendu in livrable.contexte
+    assert livrable.chemins == (str(racine / nom),)
+
+
+def test_le_manifeste_se_lit_meme_derriere_un_fichier_genere(tmp_path: Path) -> None:
+    """Un `package-lock.json` ne mange pas le budget avant `package.json` (#1264).
+
+    L'échantillon est celui de tout livrable Node après `npm install` : le verrou
+    se trie **avant** le manifeste (`-` précède `.`), pèse des dizaines de
+    milliers de tokens, et un plafond par fichier égal au budget entier le
+    laissait tout prendre — `package.json` sortait `budget-epuise` et la commande
+    `npm start` n'atteignait jamais le récit. Aucun nom n'est privilégié pour
+    autant : c'est la part d'**un** fichier qui est bornée, quel qu'il soit.
+    """
+    racine = tmp_path / "node"
+    racine.mkdir()
+    (racine / "index.js").write_text(
+        "require('http').createServer().listen(3000);\n", encoding="utf-8"
+    )
+    verrou = "".join(
+        f'    "node_modules/paquet-{rang}": {{"version": "1.0.{rang}", '
+        f'"integrity": "sha512-{"A" * 86}=="}},\n'
+        for rang in range(600)
+    )
+    (racine / "package-lock.json").write_text(
+        '{\n  "packages": {\n' + verrou + "  }\n}\n", encoding="utf-8"
+    )
+    (racine / "package.json").write_text(
+        '{"name": "demo", "scripts": {"start": "node index.js"}}\n', encoding="utf-8"
+    )
+
+    livrable = lire_le_livrable(racine, Perimetre())
+
+    etats = {e.nom: e.etat for lecture in livrable.rapport.lectures for e in lecture.entrees}
+    assert etats["package.json"] == ETAT_LU
+    assert etats["package-lock.json"] == ETAT_TRONQUE
+    assert '"start": "node index.js"' in livrable.contexte
+
+
+def test_aucun_secret_du_livrable_n_atteint_le_recit(tmp_path: Path) -> None:
+    """Lire le code n'ouvre pas la porte aux secrets — les trois frontières tiennent.
+
+    Le périmètre écarte `.env` et `secrets/` sans les ouvrir ; `porte_des_secrets`
+    nomme un `.npmrc` ou un `.pem` sans les lire ; et un fichier qu'aucun nom ne
+    signale — une clé SSH `id_rsa`, sans extension, que la lecture par le contenu
+    (#1163) prend pour du texte — voit sa clé masquée avant d'entrer dans le
+    prompt. Chaque secret est écrit, lisible, et n'apparaît nulle part.
+    """
+    racine = tmp_path / "livrable"
+    (racine / "config" / "secrets").mkdir(parents=True)
+    (racine / "app.py").write_text("print('bonjour')\n", encoding="utf-8")
+    (racine / ".env").write_text("JETON=secret-du-env-1264\n", encoding="utf-8")
+    (racine / "config" / "secrets" / "cle.txt").write_text(
+        "secret-du-dossier-1264\n", encoding="utf-8"
+    )
+    (racine / ".npmrc").write_text(
+        "//registry/:_authToken=secret-du-npmrc-1264\n", encoding="utf-8"
+    )
+    (racine / "deploiement.pem").write_text("secret-du-pem-1264\n", encoding="utf-8")
+    (racine / "id_rsa").write_text(
+        "-----BEGIN OPENSSH PRIVATE KEY-----\n"
+        "b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABsecret-de-la-cle-1264\n"
+        "-----END OPENSSH PRIVATE KEY-----\n",
+        encoding="utf-8",
+    )
+
+    livrable = lire_le_livrable(racine, Perimetre())
+
+    assert "print('bonjour')" in livrable.contexte
+    for secret in (
+        "secret-du-env-1264",
+        "secret-du-dossier-1264",
+        "secret-du-npmrc-1264",
+        "secret-du-pem-1264",
+        "secret-de-la-cle-1264",
+    ):
+        assert secret not in livrable.contexte, secret
 
 
 def test_une_racine_disparue_rend_un_livrable_vide_sans_lever(tmp_path: Path) -> None:
