@@ -1,13 +1,59 @@
 ---
 name: control-tower
-description: Démarrer (ou arrêter) la Control Tower en local — la vraie stack sur Redis, vide ou sur l'état laissé par le banc — en nettoyant les anciennes sessions
+description: Lancer Maestro dans sa fenêtre de bureau (coque Electron), ou la Control Tower dans un onglet pour le mode web et les vérifications pilotées — la vraie stack sur Redis, vide ou sur l'état laissé par le banc —, et l'arrêter
 ---
 
-# Lancer la Control Tower en local
+# Lancer Maestro en local
 
-Quand l'utilisateur veut **regarder** la Control Tower (« lance la control
-tower », « démarre l'UI »…), passer par le script dédié — ne pas réécrire de
-lanceur ad hoc :
+## Le geste par défaut : la fenêtre de bureau (#923, #1273)
+
+Quand l'utilisateur veut **se servir** de Maestro (« lance Maestro », « lance la
+control tower », « démarre l'UI »…), ouvrir sa **fenêtre native** — ni onglet de
+navigateur, ni lanceur ad hoc :
+
+```bash
+bash scripts/controltower/desktop.sh
+```
+
+**À jouer en tâche de fond** (Bash `run_in_background: true`) : `desktop.sh` se
+termine par un `exec` d'Electron et ne rend la main qu'à la **fermeture de la
+fenêtre** — au premier plan, il tiendrait l'appel jusqu'à son plafond.
+
+- **La ligne `[coque] Maestro — UI :<port> · API :<port>` confirme l'ouverture**
+  et nomme la stack à laquelle la fenêtre est attachée : la relayer (lire la
+  sortie de la tâche de fond quelques secondes après le lancement). La sortie de
+  `start.sh` suit, relayée par la coque ; un démarrage en échec s'affiche aussi
+  dans la fenêtre, sur son écran d'attente.
+- **Fermer la fenêtre arrête la stack** — API et UI, runs en vol soldés : la coque
+  joue `start.sh --stop` avant de sortir. Rien d'autre à faire.
+- `[coque] Maestro est déjà ouvert — cette fenêtre se ferme.`, sans la ligne
+  `[coque] Maestro — UI…` : **rien ne s'est ouvert**. Le verrou d'instance unique vaut pour
+  **le poste**, pas pour les ports — mesuré le 2026-09-24, une fenêtre du clone
+  principal (:3000) a refusé celle d'un worktree (:3073). La fenêtre en place
+  revient au premier plan ; si elle sert une autre copie, le dire : ouvrir celle-ci
+  demande de fermer l'autre, ce qui arrête sa stack.
+- Premier lancement : Electron s'installe à la demande, **taille annoncée** avant
+  de télécharger (docs/35 §2.3).
+- Ports : la coque lit `MAESTRO_PORT_API` et `MAESTRO_PORT_UI`. Une session
+  relocalisée dans un worktree ne les hérite pas : passer ceux que
+  `worktree.sh ensure` a annoncés,
+  `env MAESTRO_PORT_API=<api> MAESTRO_PORT_UI=<ui> bash scripts/controltower/desktop.sh`.
+
+Rien n'est à réimplémenter : la coque (`apps/desktop/main.js`) joue
+`start.sh --no-browser` au démarrage et `start.sh --stop` à la fermeture, et
+`desktop.sh` lui donne le Node du dépôt, Electron et le bash natif (docs/35 §2).
+`python -m maestro.lanceur` (#640) n'est **pas** le geste d'un clone de
+développement : il sert un front construit, pour le produit installé (#641).
+
+## Le mode web et les vérifications : `start.sh`
+
+`start.sh` seul ouvre la Control Tower **dans un onglet du navigateur** : c'est le
+**mode web**, de premier ordre (D3, docs/35), mais plus le geste proposé par
+défaut. On y vient quand on la veut dans un navigateur, et pour les
+**vérifications pilotées** : `--no-browser` pour le skill `verify` et les
+captures, et les états de la section plus bas (`--etat-banc`, `--etat-neuf`,
+`--couper-api`), que la fenêtre ne relaie pas — elle sert toujours les données de
+la copie (#1168).
 
 ```bash
 bash scripts/controltower/start.sh
@@ -16,11 +62,12 @@ bash scripts/controltower/start.sh
 Le script fait tout : il **termine d'abord les anciennes sessions** (uniquement
 les processus qui écoutent sur :8000/API et :3000/UI), démarre l'API, puis
 l'UI Next.js (`apps/web`) pointée dessus, attend que les deux répondent, et
-**ouvre une fenêtre de navigateur** sur l'UI.
+**ouvre un onglet de navigateur** sur l'UI.
 
-**Quand la fenêtre est isolée, la fermer arrête l'API et l'UI** (#149) : un chien
-de garde détaché la surveille et libère les ports dès sa disparition. Le script,
-lui, rend la main tout de suite — il ne bloque pas sur le navigateur.
+**Quand la fenêtre du navigateur est isolée, la fermer arrête l'API et l'UI**
+(#149) : un chien de garde détaché la surveille et libère les ports dès sa
+disparition. Le script, lui, rend la main tout de suite — il ne bloque pas sur le
+navigateur.
 
 Ce n'est vrai que si le navigateur ouvert est un **Chromium** (fenêtre isolée) ;
 avec un défaut hors Chromium (Firefox, Safari), la page s'ouvre dans la session
@@ -29,7 +76,8 @@ script **dit lequel des deux** sur sa dernière ligne — `arrêt : fermer la fe
 du navigateur (ou …--stop)` ou `arrêt : bash scripts/controltower/start.sh
 --stop`. Relayer cette ligne telle quelle.
 
-À la fin, donner à l'utilisateur l'URL : **http://localhost:3000**.
+En mode web, donner à la fin l'URL : **http://localhost:3000** (le port de l'UI
+de la copie).
 
 ## La vraie stack, toujours (#186, #1156)
 
@@ -40,9 +88,10 @@ stack à monter pour vérifier le produit — ni pour le travail d'écran, ni po
 `verify`, ni pour les captures —, et c'est une décision : un scénario factice
 montre ce qu'on a scénarisé, pas ce que le produit fait (#1156).
 
-**Redis est donc requis, et rien ne s'y substitue.** S'il manque, le script
-s'arrête **avant d'avoir touché à quoi que ce soit** (ni session en place
-arrêtée, ni service démarré) et donne le geste exact :
+**Redis est donc requis, et rien ne s'y substitue** — pour la fenêtre comme pour
+l'onglet. S'il manque, `start.sh` s'arrête **avant d'avoir touché à quoi que ce
+soit** (ni session en place arrêtée, ni service démarré) et donne le geste exact,
+que la coque relaie aussi dans sa fenêtre :
 
 ```bash
 docker compose -f infra/docker-compose.yml up -d redis
@@ -63,9 +112,9 @@ démarrer. Deux stacks lancées depuis deux copies ne se voient pas.
 
 | Ce qu'on veut voir | D'où il vient | Le geste |
 | ------------------ | ------------- | -------- |
-| **vide** | une stack **neuve** | `start.sh` dans un worktree qui n'a encore rien servi ; ailleurs, la purge (plus bas) |
+| **vide** | une stack **neuve** | `start.sh --etat-neuf` (le banc de la copie remis à neuf, #1165) ; les données de la copie elles-mêmes, par la purge (plus bas) |
 | **peuplé**, **charge** (listes et textes longs) | l'**état laissé par le banc** des scénarios (#1148) | `start.sh --etat-banc` |
-| **erreur** | une **vraie panne** | l'API coupée, l'UI restant servie (l'écran dit « injoignable »), ou une API qui répond en erreur (#996) |
+| **erreur** | une **vraie panne** | `start.sh --couper-api` : l'API seule tombe, l'UI reste servie (l'écran dit « injoignable ») ; ce n'est pas un arrêt, rien n'est soldé |
 
 `--etat-banc` sert, par l'API réelle, l'état que le dernier passage du banc a
 laissé : rouvert à chaque démarrage **sans rien rejouer**, dans un jeu de données
@@ -107,10 +156,13 @@ Suivi : `GET /api/executions` (récents d'abord). Annulation :
 `POST /api/executions/<run_id>/annuler` (`409` si le run est déjà soldé, `404`
 s'il est inconnu). Contrat complet : doc 05 §6.1 ; usage : doc 07 §6.10 et §6.11.
 
-## Options du script
+## Options de `start.sh`
 
 - Arrêt : fermer la fenêtre du navigateur, ou
   `bash scripts/controltower/start.sh --stop` (qui ferme aussi cette fenêtre).
+- Une fenêtre de bureau ouverte sert déjà ces ports : `start.sh` y **remplacerait
+  sa stack** (il termine d'abord les sessions en place). Pour vérifier à côté, le
+  faire depuis une autre copie, ou fermer la fenêtre d'abord.
 - `--no-browser` : démarre sans ouvrir de fenêtre — donc **sans arrêt
   automatique**. À utiliser quand on pilote soi-même un navigateur (skill
   `verify`) ou qu'on veut juste la stack en tâche de fond.

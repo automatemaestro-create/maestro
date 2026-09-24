@@ -473,6 +473,85 @@ def test_la_coque_et_le_lanceur_lisent_les_memes_variables_de_port(main_js):
     assert "process.env.MAESTRO_PORT_API" in main_js
 
 
+# --- Le skill qui la lance (#1273) ----------------------------------------------------------------
+#
+# Une session qui veut « lancer Maestro » charge le skill `control-tower`. Il la mène à la fenêtre,
+# et lui fait guetter sur la sortie de la tâche de fond les lignes que la coque imprime : ces
+# lignes sont une frontière entre deux textes, et une coque qui en change une ferait guetter à la
+# session une ligne qui ne vient plus jamais.
+
+SKILL_CONTROL_TOWER = RACINE / ".claude" / "skills" / "control-tower" / "SKILL.md"
+
+#: Ce qui tient lieu de valeur : `${PORT_UI}` dans la coque, `<port>` dans le skill.
+_VALEUR = "◇"
+
+
+def lignes_imprimees(main: str) -> list[str]:
+    """Les lignes `[coque] …` que la coque écrit sur sa sortie, valeurs interpolées neutralisées."""
+    litteraux = re.findall(
+        r"""(?:process\.(?:stdout|stderr)\.write|retenir)\((?:'\w+',\s*)?"""
+        r"""(['`])(\[coque\][^'`]*)\1""",
+        main,
+    )
+    return [re.sub(r"\$\{[^}]*\}", _VALEUR, texte).removesuffix("\\n") for _, texte in litteraux]
+
+
+def lignes_guettees(skill: str) -> list[str]:
+    """Les lignes `[coque] …` que le skill cite entre accents graves, valeurs neutralisées."""
+    return [
+        re.sub(r"<[^>]*>", _VALEUR, texte) for texte in re.findall(r"`(\[coque\][^`]*)`", skill)
+    ]
+
+
+def orphelines(guettees: list[str], imprimees: list[str]) -> list[str]:
+    """Les lignes guettées qu'aucune ligne imprimée ne rend — un `…` final vaut « commence par »."""
+    return [
+        ligne
+        for ligne in guettees
+        if not any(
+            imprimee.startswith(ligne.removesuffix("…"))
+            if ligne.endswith("…")
+            else imprimee == ligne
+            for imprimee in imprimees
+        )
+    ]
+
+
+def premier_geste(skill: str) -> str:
+    """La commande du premier bloc `bash` du skill : celle qu'une session joue d'abord."""
+    return re.search(r"```bash\n(.*?)\n```", skill, re.S).group(1).strip()
+
+
+def test_la_sonde_des_lignes_guettees_voit_une_ligne_que_la_coque_n_imprime_pas(main_js):
+    """La moitié fautive d'abord : une ligne inventée, ou une ligne réelle dont on aurait changé un
+    mot, est une orpheline — sans quoi le balayage rendrait « tout va bien » sans rien comparer."""
+    imprimees = lignes_imprimees(main_js)
+
+    assert "[coque] Maestro — UI :◇ · API :◇" in imprimees
+    assert orphelines(["[coque] Maestro — port :◇"], imprimees) == ["[coque] Maestro — port :◇"]
+    assert orphelines(["[coque] Maestro est ouvert…"], imprimees) == ["[coque] Maestro est ouvert…"]
+    assert orphelines(["[coque] Maestro — UI…"], imprimees) == []
+
+
+def test_les_lignes_que_le_skill_fait_guetter_sont_celles_que_la_coque_imprime(main_js):
+    skill = SKILL_CONTROL_TOWER.read_text(encoding="utf-8")
+    guettees = lignes_guettees(skill)
+
+    assert "[coque] Maestro — UI :◇ · API :◇" in guettees, "le skill ne dit plus quoi guetter"
+    assert not orphelines(guettees, lignes_imprimees(main_js))
+
+
+def test_le_premier_geste_du_skill_est_la_fenetre_et_non_l_onglet():
+    """Le skill d'avant #1273 ne connaissait que `start.sh` : un onglet de navigateur, reproché deux
+    fois. L'échantillon fautif est son premier bloc, tel qu'il était."""
+    avant = "Quand on veut **regarder**…\n\n```bash\nbash scripts/controltower/start.sh\n```\n"
+    assert premier_geste(avant) != "bash scripts/controltower/desktop.sh"
+
+    geste = premier_geste(SKILL_CONTROL_TOWER.read_text(encoding="utf-8"))
+    assert geste == "bash scripts/controltower/desktop.sh"
+    assert (RACINE / geste.split()[-1]).is_file()
+
+
 # ==================================================================================================
 # ④ ENF-12 : aucun embranchement de code applicatif (docs/35 §2.5)
 # ==================================================================================================
