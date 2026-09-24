@@ -169,7 +169,9 @@ et "instances" selon ce qu'elle demande, et dis-lui dans "reponse" ce que tu as 
 ou, si sa demande ne porte pas sur l'équipe ou reste ambiguë, ce qu'il te faudrait
 savoir, sans rien changer. Ne devine jamais : ne change que ce qu'elle a demandé.
 
-Les raisons et la réponse s'adressent à la personne.
+Les raisons — celles des rôles écartés comprises — et la réponse sont lues telles
+quelles par la personne : adresse-toi à elle, « vous avez répondu », « vos réponses »,
+jamais « la personne » ni « l'utilisateur » à la troisième personne.
 
 """
 

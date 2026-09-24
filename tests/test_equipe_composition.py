@@ -492,6 +492,9 @@ def test_le_cadre_porte_le_registre_et_ouvre_la_liste_des_roles() -> None:
     assert registre() in CADRE_COMPOSITION
     assert "pas une liste fermée" in cadre
     assert "Ne propose jamais l'orchestrateur" in cadre
+    # Relevé à la relecture de #1159 sur la vraie stack : des raisons parlaient de
+    # « la personne » à la troisième personne, sous les yeux de la personne même.
+    assert "jamais « la personne »" in cadre
 
 
 def test_le_prompt_de_composition_porte_les_constats_les_reponses_et_la_matiere() -> None:
