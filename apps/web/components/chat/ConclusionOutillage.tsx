@@ -13,7 +13,9 @@
  * Les réponses vont désormais jusqu'à la génération **par le même corps que l'étape
  * de création** — `{retenus, choix}` sur `POST …/outillage/generation` (#1033, #1100) :
  * une seule route écrit l'outillage d'un projet, et elle ne sait pas de quelle
- * surface viennent les réponses.
+ * surface viennent les réponses. Depuis #1147, `choix` porte aussi **ce que Maestro a
+ * compris** (la compréhension de la conclusion) : c'est elle qui fait l'outillage, et
+ * aucune des deux routes ne rappelle le modèle.
  *
  * ## La forme vient d'une veille et d'un choix consigné
  *
@@ -66,7 +68,6 @@ import {
 import {
   genererOutillage,
   recommandationOutillage,
-  questionOutillage,
   reporterOutillage,
 } from "@/lib/api";
 import { useEtatGlobal } from "@/lib/etatGlobal";
@@ -146,15 +147,13 @@ export function useConclusionOutillage(
     let vivant = true;
     const partir = async () => {
       try {
-        // C'est le **moteur** qui dit qu'il n'y a plus de question, pas l'écran :
-        // des réponses sans question en attente peuvent aussi être un
-        // questionnaire interrompu (502 après l'écriture du geste), et la
-        // différence ne se lit pas dans le fil. `terminee` la tranche.
-        const etape = await questionOutillage(projet.id, choix);
-        if (!vivant || !etape.terminee) return;
-        // Les réponses **données** suffisent : le moteur y ajoute ses déductions
-        // (`recommandation_depuis_choix`), ici comme à la génération. Les lui
-        // renvoyer déduites lui ferait les recalculer sur elles-mêmes.
+        // La fin du questionnaire se **lit** sur le fil depuis #1147 : la
+        // conclusion porte ce que Maestro a compris (`choixAValider`). Un
+        // questionnaire interrompu (502 après le geste) n'a pas de conclusion,
+        // donc rien n'arrive ici. On ne redemande pas au moteur s'il a fini :
+        // il comprendrait une seconde fois, et pourrait comprendre autre chose.
+        // Ce qui part est ce qui a été compris, et la recommandation n'appelle
+        // pas le modèle : ce qu'on écrira est ce qu'on montre.
         const reco = await recommandationOutillage(projet.id, choix);
         if (!vivant) return;
         setMatiere({

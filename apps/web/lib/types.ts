@@ -1181,6 +1181,10 @@ export type Fournisseur = {
  * vente. C'est elle que la carte pose sous le libellé de l'option, et elle y va
  * option par option : la veille de #1031 l'a retenue du sondage de Slack Block Kit,
  * où chaque ligne porte son explication plutôt qu'une légende commune.
+ *
+ * Depuis #1147 les options sont **écrites pour le projet** par le modèle : `valeur`
+ * est la valeur concrète du sujet (une commande, un fichier), pas un code de
+ * catalogue — l'écran n'en connaît aucune d'avance.
  */
 export type OptionOutillage = {
   valeur: string;
@@ -1192,15 +1196,16 @@ export type OptionOutillage = {
  * Une question qui décide de l'outillage d'un projet neuf
  * (`QuestionOutillage.to_dict`, #1031).
  *
- * `recommande` est la valeur que Maestro propose, `pourquoi` **ce qui l'a
- * désignée** — les deux voyagent ensemble parce que séparés ils mentent : une
- * recommandation sans sa cause se lit comme un défaut arbitraire.
+ * `recommande` est la valeur que Maestro propose, `pourquoi` **ce qui, dans ce
+ * projet, l'a désignée** — les deux voyagent ensemble parce que séparés ils
+ * mentent : une recommandation sans sa cause se lit comme un défaut arbitraire.
  *
- * `total` est le **plafond** de questions, jamais le nombre restant : il ne bouge
- * pas d'une question à l'autre, là où le nombre restant dépendrait des déductions à
- * venir et ferait reculer la barre sous les yeux. `rang` compte les questions
- * réellement **posées** — les déduites ne le sont pas, les compter creuserait des
- * trous que personne ne peut expliquer.
+ * Une question **sans options** (la première, « Qu'est-ce que ce projet ? ») se
+ * répond avec ses mots seulement ; toutes les autres le permettent aussi (#1147).
+ *
+ * Il n'y a plus de `total` : le plafond fixe de #1031 est retiré, le questionnaire
+ * s'arrête quand plus rien ne manque. `rang` dit combien de réponses précèdent
+ * celle-ci, plus un — jamais combien il en reste, que personne ne sait d'avance.
  */
 export type QuestionOutillage = {
   cle: string;
@@ -1209,21 +1214,26 @@ export type QuestionOutillage = {
   recommande: string;
   pourquoi: string;
   rang: number;
-  total: number;
 };
 
 /**
- * Une réponse d'outillage acquise (`Choix.to_dict`, #1031).
+ * Une réponse d'outillage, ou un constat compris (`Choix.to_dict`, #1031, #1147).
  *
- * `deduit` distingue les deux façons dont une réponse est acquise : quelqu'un l'a
- * choisie, ou elle **découlait** d'une réponse antérieure — `parce_que` porte alors
- * sa cause. Une question qu'on ne pose pas n'est pas une question qu'on cache.
+ * Trois provenances : **cliquée** (une option), **tapée** (`libre` : ce que la
+ * personne a dit avec ses mots, enregistré tel quel), **comprise** (`deduit` : ce
+ * que le modèle a tiré de tout ce qui a été dit, `parce_que` portant sa cause).
+ * `sujet` est le nom du sujet à l'écran (« tests », « forge ») — servi par le
+ * moteur, seul à tenir le schéma de l'outillage ; `commande` dit que la valeur est
+ * une commande, que l'écran rend en chasse fixe.
  */
 export type ChoixOutillage = {
   cle: string;
   valeur: string;
   deduit: boolean;
   parce_que: string;
+  libre?: boolean;
+  sujet?: string;
+  commande?: boolean;
 };
 
 /* ⚠ La **recommandation** d'outillage ne se déclare pas ici, et elle n'est plus un
@@ -1306,6 +1316,11 @@ export type MessageChat = {
   question?: QuestionOutillage | null;
   /** La réponse d'outillage que ce message porte (#1031) — `null` : aucune. */
   choix?: ChoixOutillage | null;
+  /**
+   * Ce que Maestro a compris du projet à ce tour (#1147) — sur une question
+   * d'outillage ou la conclusion du questionnaire ; absent ou vide ailleurs.
+   */
+  comprehension?: ChoixOutillage[];
   /** L'équipe que ce message demande de valider (#1146) — `null` : aucune. */
   recrutement?: DemandeRecrutement | null;
   /** L'équipe qu'un geste a créée, portée par la réponse (#1262) — `null` : aucune. */
@@ -2547,16 +2562,18 @@ export type AnalyseOutillage = {
  * Une étape du questionnaire d'un projet neuf
  * (`POST /api/projets/{id}/outillage/questionnaire`, #1031).
  *
- * `question` est `null` quand il n'y en a plus — `terminee` le dit alors, et
- * c'est la recommandation qui a quelque chose à montrer. `deductions` porte les
- * réponses que les choix donnés **entraînent**, chacune avec sa cause : une
- * question qu'on ne pose pas n'est pas une question qu'on cache, et l'écran les
- * rend acquises au même titre que celles qu'on a choisies.
+ * `question` est `null` quand plus rien ne manque — `terminee` le dit alors, et
+ * c'est la recommandation qui a quelque chose à montrer. `deductions` porte ce que
+ * Maestro a **compris** des réponses données (#1147), chaque constat avec sa cause :
+ * l'écran le montre (« Ce que j'ai compris ») et le renvoie à la recommandation et à
+ * la génération, qui ne rappellent pas le modèle. `message` est ce que Maestro a à
+ * dire avant la question — vide le plus souvent.
  */
 export type EtapeQuestionnaireOutillage = {
   question: QuestionOutillage | null;
   deductions: ChoixOutillage[];
   terminee: boolean;
+  message?: string;
 };
 
 /**

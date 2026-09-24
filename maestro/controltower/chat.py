@@ -207,7 +207,7 @@ from maestro.messaging import (
     AgentMessage,
     Mailbox,
 )
-from maestro.outillage.questionnaire import Choix, QuestionOutillage
+from maestro.outillage.questionnaire import REPONSE_LIBRE_MAX, Choix, QuestionOutillage
 from maestro.providers.base import ModelProvider
 from maestro.sources import (
     DepotTeleversements,
@@ -462,6 +462,26 @@ def choix_du_fil(fil: Sequence[MessageChat]) -> tuple[Choix, ...]:
     recharger la page ne perd rien et ne reprend rien deux fois.
     """
     return tuple(m.choix for m in fil if m.choix is not None)
+
+
+def _question_repondue(
+    fil: Sequence[MessageChat],
+) -> tuple[QuestionOutillage, str] | None:
+    """La question d'outillage à laquelle le dernier message **répond par une frappe** (#1147).
+
+    Le dernier message est de l'utilisateur et porte une réponse libre, et celui
+    d'avant posait la question de ce sujet : c'est la forme exacte que `_deposer`
+    écrit quand on tape pendant qu'une question attend. Lue **structurellement**,
+    comme `choix_du_fil` — jamais en reconnaissant une réponse dans le texte.
+    """
+    if len(fil) < 2:
+        return None
+    dernier, avant = fil[-1], fil[-2]
+    if dernier.auteur != UTILISATEUR or dernier.choix is None or not dernier.choix.libre:
+        return None
+    if avant.question is None or avant.question.cle != dernier.choix.cle:
+        return None
+    return avant.question, dernier.choix.valeur
 
 
 def _geste_de_reponse(question: QuestionOutillage, valeur: str) -> str:
@@ -912,6 +932,13 @@ class MessageChat:
     `run_id` pour une équipe : un fait que la bulle porte, et que le fil récitait
     auparavant dans une phrase du code. `None` partout ailleurs et sur une ligne
     écrite avant ce lot.
+
+    `comprehension` (#1147) accompagne une question d'outillage ou la conclusion
+    du questionnaire : **ce que Maestro a compris** du projet à ce tour, en constats
+    (`Choix` déduits, et les réponses cliquées qui font foi). Persistée parce que
+    c'est elle que la conclusion relit pour écrire l'outillage : rappeler le modèle
+    à ce moment-là pourrait comprendre autre chose que ce que l'écran a montré.
+    Vide partout ailleurs et sur une ligne écrite avant ce lot.
     """
 
     agent: str
@@ -930,6 +957,7 @@ class MessageChat:
     contexte: str = ""
     conversation: str = CONVERSATION_ORIGINE
     etapes: tuple[EtapeFil, ...] = ()
+    comprehension: tuple[Choix, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         """Réémet le message en dict JSON-sérialisable (la forme du REST).
@@ -957,6 +985,7 @@ class MessageChat:
             "sources": sources_en_liste(self.sources),
             "rapport": self.rapport.to_dict() if self.rapport is not None else None,
             "etapes": [etape.to_dict() for etape in self.etapes],
+            "comprehension": [c.to_dict() for c in self.comprehension],
         }
 
     @property
@@ -1028,6 +1057,11 @@ class MessageChat:
             rapport=rapport_depuis(rapport) if isinstance(rapport, Mapping) else None,
             contexte=str(data.get("contexte") or ""),
             etapes=etapes_depuis(data.get("etapes")),
+            comprehension=tuple(
+                Choix.from_dict(c)
+                for c in data.get("comprehension") or ()
+                if isinstance(c, Mapping)
+            ),
         )
 
 
@@ -1108,6 +1142,9 @@ class ReponseChat:
 
     `equipe` (#1262) ne demande rien non plus : c'est ce qu'un geste de
     recrutement a créé, porté comme `run_id` porte ce qu'un accord a ouvert.
+
+    `comprehension` (#1147) ne demande rien non plus : ce que le questionnaire a
+    compris du projet à ce tour, qui voyage jusqu'au message (`MessageChat`).
     """
 
     contenu: str
@@ -1118,6 +1155,7 @@ class ReponseChat:
     recrutement: DemandeRecrutement | None = None
     equipe: EquipeRecrutee | None = None
     etapes: tuple[EtapeFil, ...] = ()
+    comprehension: tuple[Choix, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1581,19 +1619,18 @@ class RepondeurChat(ABC):
         question: QuestionOutillage,
         valeur: str,
     ) -> ReponseChat:
-        """La réponse au **geste** qui répond à une question d'outillage (#1031).
+        """La réponse à une question d'outillage — un geste, ou une frappe (#1031, #1147).
 
         Le second point d'extension « acte » du canal, jumeau de
-        `trancher_cadrage` : un clic sur une option n'est pas un texte à
-        reconnaître, c'est une réponse, et aucun appel modèle n'a lieu ici. Le
-        questionnaire est déterministe — ses déductions et sa question suivante
-        se calculent —, si bien que faire juger ce tour coûterait un appel pour
-        rendre ce qu'une fonction pure sait déjà.
+        `trancher_cadrage` : une réponse n'est pas une demande de travail à
+        reconnaître, et le juge de l'orchestration n'est pas consulté. La suite
+        est celle du **questionnaire** : depuis #1147 elle se comprend (le
+        conducteur confie ce qui a été dit au modèle), elle ne se calcule plus
+        sur un catalogue.
 
-        `question` est celle que le fil portait, **relue du fil** et non refaite
-        depuis le catalogue : c'est celle qu'on a eue sous les yeux, et le
-        catalogue a pu changer entre-temps. `valeur` est l'option retenue, déjà
-        vérifiée admissible par l'appelant.
+        `question` est celle que le fil portait, **relue du fil** : c'est celle
+        qu'on a eue sous les yeux. `valeur` est la réponse — une option déjà
+        vérifiée par l'appelant, ou la phrase de la personne.
 
         Par défaut, un répondeur **ne pose aucune question**, donc n'a rien à
         recevoir : il le dit plutôt que de le laisser deviner. Seul celui qui
@@ -1781,8 +1818,15 @@ class RepondeurScripte(RepondeurChat):
     """Répondeur sans modèle : une réponse déterministe qui reflète le fil.
 
     Le levier des tests d'API (#83) — même contrat que le répondeur réel, zéro
-    réseau.
+    réseau. `conducteur` (#1147) est le questionnaire qu'il conduit : depuis que
+    le questionnaire **comprend** par le modèle, un test qui le joue passe un
+    conducteur sur un faux fournisseur ; sans lui, le conducteur par défaut
+    résout le fournisseur du poste au premier usage (et la suite de tests le
+    refuse, `FournisseurDuPosteRefuse`).
     """
+
+    def __init__(self, conducteur: ConducteurOutillage | None = None) -> None:
+        self._conducteur_injecte = conducteur
 
     async def repondre(self, agent: Agent, fil: Sequence[MessageChat]) -> str:
         dernier = fil[-1].contenu if fil else ""
@@ -1801,16 +1845,14 @@ class RepondeurScripte(RepondeurChat):
     async def ouvrir_questionnaire(
         self, agent: Agent, fil: Sequence[MessageChat]
     ) -> ReponseChat:
-        """Conduit le questionnaire d'outillage, **pour de vrai**, sans modèle (#1031).
+        """Conduit le questionnaire d'outillage, **pour de vrai** (#1031, #1147).
 
-        Le seul verbe de ce répondeur qui ne soit pas scripté, et c'est voulu : le
-        questionnaire est une fonction pure de ce que le fil porte
-        (`maestro.outillage.questionnaire`), donc un double n'a rien à simuler — il
-        joue le mécanisme réel, questions, recommandations et déductions comprises.
+        Le seul verbe de ce répondeur qui ne soit pas scripté, et c'est voulu : il
+        joue le conducteur réel — question ouverte, compréhension, conclusion.
         Une version scriptée aurait éprouvé un comportement qui ressemble au produit
         sans être le sien, et c'est exactement ce que le dépôt refuse ailleurs
         (« deux vocabulaires pour le même contrat finissent par diverger de ce que
-        l'API sert »).
+        l'API sert »). Le **modèle**, lui, est celui du conducteur injecté.
         """
         return await self._conducteur().ouvrir(fil)
 
@@ -1822,19 +1864,20 @@ class RepondeurScripte(RepondeurChat):
         question: QuestionOutillage,
         valeur: str,
     ) -> ReponseChat:
-        """Enchaîne sur le geste : ce qu'il déduit, puis la question suivante (#1031)."""
+        """Enchaîne sur la réponse : la suite, comprise (#1031, #1147)."""
         return await self._conducteur().repondre(fil, question, valeur)
 
-    @staticmethod
-    def _conducteur() -> ConducteurOutillage:
-        """Le conducteur du questionnaire, importé **au besoin**.
+    def _conducteur(self) -> ConducteurOutillage:
+        """Le conducteur du questionnaire — l'injecté, sinon un conducteur par défaut.
 
         Import différé, et c'est une nécessité de structure plutôt qu'une
         optimisation : `controltower.outillage` importe ce module-ci (il a besoin
         de `MessageChat` et de `choix_du_fil`), donc l'importer en tête créerait un
-        cycle. Le conducteur est sans état, en construire un par appel ne coûte
-        rien.
+        cycle. Le conducteur ne garde aucun état du questionnaire, en construire un
+        par appel ne coûte rien.
         """
+        if self._conducteur_injecte is not None:
+            return self._conducteur_injecte
         from maestro.controltower.outillage import ConducteurOutillage
 
         return ConducteurOutillage()
@@ -2033,13 +2076,14 @@ class ServiceChat:
         agent: Agent,
         *,
         valeur: str,
+        libre: bool = False,
         conversation: str | None = None,
     ) -> tuple[MessageChat, MessageChat]:
         """Répond à la question d'outillage en attente ; rend la paire (geste, réponse).
 
         Jumeau de `trancher_cadrage` sur l'autre demande du canal, et **la même
         forme qu'`envoyer`** : un message d'utilisateur, puis la réponse. Ce qui
-        change est que le contenu vient d'un geste, et que la suite se calcule au
+        change est que le contenu vient d'un geste, et que la suite se comprend au
         lieu de se juger.
 
         La question à laquelle on répond est **lue du fil**, jamais passée par
@@ -2048,9 +2092,16 @@ class ServiceChat:
         donc pas un paramètre — elle est celle de la question en attente, et un
         écran ne peut pas se tromper de question parce qu'il n'en désigne aucune.
 
-        `valeur` est refusée (`ValueError`) si elle n'est pas une option de cette
-        question-là : le fil est la seule mémoire du canal, une valeur fantaisiste
-        y resterait et se relirait à chaque tour.
+        Deux sortes de réponses (#1147) :
+
+        - **une option** (`libre=False`) : `valeur` est refusée (`ValueError`) si elle
+          n'en est pas une de cette question-là — le fil est la seule mémoire du
+          canal, une valeur fantaisiste y resterait comme un constat ;
+        - **avec ses mots** (`libre=True`) : toute phrase non vide est acceptée,
+          bornée (`REPONSE_LIBRE_MAX`), et enregistrée telle quelle. C'est le choix
+          « Autre chose » de la carte (variante retenue de #1147, d'après le contrat
+          `AskUserQuestion` : « use the user's custom text as the answer value »).
+          Ce n'est pas un constat : le tour suivant la comprend.
 
         `QuestionIntrouvable` quand rien n'attend — c'est le `409` de l'API, et il
         couvre le double geste comme le geste tardif.
@@ -2062,17 +2113,31 @@ class ServiceChat:
                 f"aucune question d'outillage en attente sur le fil {agent.nom}."
             )
         question = demande.question
-        if not any(o.valeur == valeur for o in question.options):
+        if libre:
+            valeur = " ".join(valeur.split())[:REPONSE_LIBRE_MAX]
+            if not valeur:
+                raise ValueError("réponse vide : écrivez ce que vous voulez répondre.")
+        elif not question.options:
+            raise ValueError(
+                "cette question se répond avec vos mots : elle n'a pas d'options."
+            )
+        elif not any(o.valeur == valeur for o in question.options):
             offertes = ", ".join(o.valeur for o in question.options)
             raise ValueError(
                 f"réponse hors des options posées : {valeur!r} "
-                f"(attendu l'une de : {offertes})."
+                f"(attendu l'une de : {offertes}), ou répondez avec vos mots."
             )
+        # Une réponse **avec ses mots** s'écrit telle quelle, comme une phrase tapée
+        # dans la zone de saisie : ce sont les mots de la personne, et la relecture
+        # de #1147 a montré ce que coûtait « Question → … » — la première réponse
+        # donnant son titre au fil, celui-ci prenait la question de Maestro pour nom
+        # et la description du projet disparaissait sous les points de suspension.
+        # Un clic, lui, s'écrit toujours avec sa question (#1031).
         geste = await self._deposer(
             agent,
-            _geste_de_reponse(question, valeur),
+            valeur if libre else _geste_de_reponse(question, valeur),
             conversation=fil,
-            choix=Choix(cle=question.cle, valeur=valeur),
+            choix=Choix(cle=question.cle, valeur=valeur, libre=libre),
         )
         try:
             reponse = await self._repondeur.repondre_question(
@@ -2550,11 +2615,28 @@ class ServiceChat:
         second chemin d'écriture parce que c'est la règle du module : un message
         d'utilisateur se persiste, s'achemine et se diffuse d'une seule façon,
         qu'il vienne d'une frappe ou d'un clic.
+
+        ⚠ **Une frappe répond aussi** (#1147). Un message tapé pendant qu'une
+        question d'outillage attend **est** la réponse à cette question, avec les
+        mots de la personne : il porte alors un `Choix` libre sur le sujet de la
+        question, et `_repondre` le confie au questionnaire plutôt qu'au juge. Avant
+        #1147, la même phrase faisait disparaître la carte — la question n'était
+        plus le dernier message — et n'était enregistrée nulle part : corriger une
+        réponse en l'écrivant la perdait. D'après *Intercom* (veille de #1147) : la
+        zone de saisie reste une réponse valable quand aucune option ne convient.
         """
         contenu = contenu.strip()
         declarees = list(sources or ())
         if not contenu and not declarees:
             raise ValueError("message vide : rien à envoyer à l'agent.")
+        if choix is None and contenu:
+            attente = question_en_attente(self._store.fil(agent.nom, conversation))
+            if attente is not None and attente.question is not None:
+                choix = Choix(
+                    cle=attente.question.cle,
+                    valeur=" ".join(contenu.split())[:REPONSE_LIBRE_MAX],
+                    libre=True,
+                )
 
         matiere, rapport = await self._lire(declarees)
         message = MessageChat(
@@ -2591,15 +2673,28 @@ class ServiceChat:
         (#694), et non tout ce que l'agent a jamais entendu : c'est ce qui donne
         son sens à « ouvrir une conversation neuve » — repartir de zéro avec le
         même agent, ce qu'un fil éternel rendait impossible.
+
+        Un message qui **répond** à une question d'outillage (#1147, voir
+        `_deposer`) n'est pas jugé : il est confié au questionnaire, comme un geste
+        sur la carte. La réponse n'est alors pas diffusée par incréments — elle
+        vient d'un tour de compréhension, pas d'une rédaction.
         """
+        fil = self._store.fil(agent.nom, conversation)
+        repondue = _question_repondue(fil)
         try:
-            reponse = await self._repondeur.produire(
-                agent,
-                self._store.fil(agent.nom, conversation),
-                incrementer=incrementer,
-                etapeur=etapeur,
-                projet_id=projet_id,
-            )
+            if repondue is not None:
+                question, valeur = repondue
+                reponse = await self._repondeur.repondre_question(
+                    agent, fil, question=question, valeur=valeur
+                )
+            else:
+                reponse = await self._repondeur.produire(
+                    agent,
+                    fil,
+                    incrementer=incrementer,
+                    etapeur=etapeur,
+                    projet_id=projet_id,
+                )
         except Exception as exc:
             raise ReponseIndisponible(
                 f"l'agent {agent.nom} n'a pas pu répondre : {exc}"
@@ -2616,9 +2711,9 @@ class ServiceChat:
         Partagée par `_repondre` (une réponse jugée), `trancher_cadrage` (une
         réponse exécutée, #943), `repondre_question` (#1031) et `recruter`
         (#1146) : ce qu'un répondeur rend se persiste, s'achemine et se diffuse
-        toujours de la même façon, et c'est ici que les sept champs du contrat
+        toujours de la même façon, et c'est ici que les huit champs du contrat
         (`run_id`, `tache_id`, `proposition`, `question`, `recrutement`,
-        `equipe`, `etapes`) passent du répondeur au message.
+        `equipe`, `etapes`, `comprehension`) passent du répondeur au message.
         """
         texte = reponse.contenu.strip()
         if not texte:
@@ -2638,6 +2733,7 @@ class ServiceChat:
             recrutement=reponse.recrutement,
             equipe=reponse.equipe,
             etapes=reponse.etapes,
+            comprehension=reponse.comprehension,
         )
         await self._acheminer(message, agent, type_message=MESSAGE_REPONSE)
         return message

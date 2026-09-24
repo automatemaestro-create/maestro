@@ -6618,23 +6618,48 @@ si la fiche est illisible ou si la racine n'est plus un dossier lisible — jama
 
 #### Le questionnaire d'un projet neuf — deux voies, sans état
 
-`POST …/projets/{id}/outillage/questionnaire` prend `{"choix": [{"cle": "nature", "valeur":
-"service-api"}]}` et rend `{"question": …, "deductions": […], "terminee": false}`. La voie est
-**sans état** : le client dit ce qu'il a, l'API dit ce qui en découle — c'est ce qui permet au fil
-(qui tient ses réponses dans ses messages) et au parcours de création (qui les tient à l'écran) de
-servir du même questionnaire sans partager de session.
+**Sans catalogue depuis #1147** ([docs/41](./41-decision-maestro-juge-il-ne-bride-pas.md)). La
+première question est **ouverte** — « Qu'est-ce que ce projet ? », sans options — et se répond avec
+ses mots. Le modèle comprend ensuite ce qui a été dit, en tire les **constats** (sorte de projet,
+langage, manifeste, gestionnaire, commande de chaque usage, forge, CI, convention — des valeurs
+libres, `flutter test` ou `terraform validate`), et ne pose que les questions qui comblent un vrai
+manque, avec des options écrites pour ce projet. Il n'y a plus de plafond : une compréhension sans
+question est la conclusion. Son prompt porte le registre de langue (#945), et ce qu'il rend est
+lu et vérifié par `maestro/outillage/questionnaire.py` — un sujet tranché d'un clic n'est pas
+redemandé (des mots, eux, peuvent ne pas avoir tranché : le modèle en juge), une recommandation hors
+des options est ramenée dedans, la question ouverte passe en tête tant qu'on ne sait pas ce qu'est
+le projet, et un constat hors du schéma est écarté (il ne nourrirait aucune entrée, et l'écran n'en
+aurait que la clé à montrer). Une réponse avec ses mots s'écrit au fil **telle quelle**, comme une
+phrase tapée dans la zone de saisie ; un clic, avec sa question. Chaque choix rendu nomme son
+`sujet` pour l'écran et dit s'il est une `commande` (rendue en chasse fixe).
 
-**Une question dont la réponse se déduit d'une autre ne se pose pas** — mais elle ne se cache pas
-non plus : `deductions` rend chaque réponse entraînée **avec sa cause**, et elle compte comme une
-réponse à part entière. `POST …/outillage/recommandation` rend, à tout moment,
-`{"projet_id", "source", "choix", "recommandation"}` — la recommandation ayant **exactement** la
-forme de celle de l'analyse ci-dessus.
+`POST …/projets/{id}/outillage/questionnaire` prend `{"choix": [{"cle": "nature", "valeur": "Une
+application mobile Flutter…", "libre": true}]}` et rend `{"question": …, "deductions": […],
+"terminee": false, "message": ""}`. La voie est **sans état** : le client dit ce qu'il a, l'API dit
+ce qui en découle — c'est ce qui permet au fil (qui tient ses réponses dans ses messages) et au
+parcours de création (qui les tient à l'écran) de servir du même questionnaire sans partager de
+session. Seules les réponses **données** (`deduit: false`) sont lues ; sans aucune, la question
+ouverte revient **sans appel au modèle**. `deductions` rend ce qui a été **compris**, chaque constat
+avec sa cause (`parce_que`) ; `message` ce que Maestro a à dire avant la question. Un fournisseur
+injoignable ou une compréhension illisible est un `502` nommé, jamais une question inventée.
+
+`POST …/outillage/recommandation` rend, à tout moment, `{"projet_id", "source", "choix",
+"recommandation"}` — la recommandation ayant **exactement** la forme de celle de l'analyse
+ci-dessus. Elle reçoit les réponses **et** ce qui en a été compris, et **n'appelle pas le modèle** :
+ce que l'écran montre est ce que la génération écrira. Une réponse tapée n'est jamais un constat par
+elle-même ; la compréhension fait foi, les réponses cliquées complètent les sujets qu'elle tairait.
 
 Dans le fil : `POST /api/chat/{agent}/outillage/questionnaire` pose la première question (ou
-**reprend** là où l'on en est — idempotente, le fil étant la seule mémoire du canal), et
-`POST /api/chat/{agent}/outillage` répond d'un geste. La question visée n'est pas dans le corps —
-c'est celle qui attend —, si bien qu'un geste tardif ou un double clic tombe sur `409` au lieu de
-répondre à une question déjà tranchée. `422` sur une valeur hors des options posées.
+**reprend** là où l'on en est — idempotente, le fil étant la seule mémoire du canal ; ce qui a déjà
+été dit dans la conversation est repris), et `POST /api/chat/{agent}/outillage` répond d'un geste :
+`{"valeur": "github"}` pour une option, `{"valeur": "…", "libre": true}` pour une réponse avec ses
+mots. La question visée n'est pas dans le corps — c'est celle qui attend —, si bien qu'un geste
+tardif ou un double clic tombe sur `409` au lieu de répondre à une question déjà tranchée. `422` sur
+une valeur hors des options posées, sur une réponse libre vide, ou sur une option donnée à une
+question qui n'en a pas. **Une phrase tapée dans la zone de saisie** (`POST …/messages`,
+`POST …/flux`) pendant qu'une question attend **est** la réponse à cette question : le message porte
+un `choix` libre sur son sujet, et la suite vient du questionnaire, pas du juge. Chaque message qui
+pose une question — et la conclusion — porte `comprehension` : ce que Maestro a compris à ce tour.
 
 **Et la voie du fil écrit** (#1104). Elle conduisait le questionnaire, le concluait sur « rien n'est
 écrit tant que vous ne l'avez pas validé »… et rien ne validait : le pied du fil redevenait vide dès
@@ -6645,7 +6670,8 @@ quelle surface viennent les réponses. Ce qui a changé tient en deux choses : u
 conversation ([`ConclusionOutillage`](../apps/web/components/chat/ConclusionOutillage.tsx), montée
 comme les trois autres gestes par `GestesDuFil`, donc aussi dans la colonne de conversation), et une
 phrase de conclusion qui dit **où** se donne la validation qu'elle promet. Les réponses se relisent
-là où elles vivent — le champ `choix` des messages, seule mémoire du canal —, et le **projet visé est
+là où elles vivent — le champ `choix` des messages, et depuis #1147 la `comprehension` de la
+conclusion, qui part avec elles —, et le **projet visé est
 celui de la fenêtre** : le fil est transverse (#281), ses messages n'en portent aucun, d'où une carte
 qui le nomme avant d'écrire. Joué de bout en bout par
 [`tests/test_outillage_voie_du_fil.py`](../tests/test_outillage_voie_du_fil.py).

@@ -623,7 +623,9 @@ constate, pas une propriété acquise.
 > ⚠ **Renversé en partie le 2026-09-21** ([docs/41](./41-decision-maestro-juge-il-ne-bride-pas.md),
 > chantier #1155). Deux mécanismes sont renversés :
 > - le questionnaire de #1031, **borné, à options fermées et sans modèle**. Un projet neuf se
->   décrit avec les mots de la personne (#1147) ;
+>   décrit avec les mots de la personne (#1147, **livré**) : le modèle en tire les constats, ne
+>   pose que les questions qui manquent, avec des options écrites pour ce projet, et une réponse
+>   tapée — dans la carte ou dans la zone de saisie — est enregistrée. Plus de plafond ;
 > - les tables de détection de #1030, qui fixaient ce que l'analyse savait reconnaître. Le modèle
 >   lit le projet, et les tables deviennent des indices (#1158).
 >
@@ -643,7 +645,7 @@ de la règle à la ligne qui l'exécute, et à la suite qui la garde.
 | --- | --- | --- |
 | #1030 — analyse d'un projet existant | Le dossier de scripts se **constate** (§3.4) ; ce qu'elle recommande remplit `source` du manifeste (§4.1) | [`maestro/outillage/analyse.py`](../maestro/outillage/analyse.py), `detection.py`, `modele.py`, `recommandation.py` ; `GET /api/projets/{id}/outillage/analyse` ([docs/05 §6.20](./05-interface-control-tower.md)) |
 | #1158 — le projet se lit (renverse les tables de #1030) | Les tables deviennent des **indices** : le modèle lit le projet par deux verbes servis dans le périmètre, et chaque constat qu'il rend est confronté à ce qu'il a lu. Le format de §3 à §5 et `recommander` ne bougent pas | [`maestro/outillage/exploration.py`](../maestro/outillage/exploration.py), `analyse.completer`, `modele.Lecture` ; [`tests/test_outillage_lecture.py`](../tests/test_outillage_lecture.py) |
-| #1031 — choix d'un projet neuf | Les choix remplissent `source` de la même façon ; l'arbre de §3.6 est la cible | [`maestro/outillage/questionnaire.py`](../maestro/outillage/questionnaire.py) — les réponses deviennent des `Constats`, et c'est le `recommander` de #1030 qui tranche : **pas deux chemins** |
+| #1031 — choix d'un projet neuf | Les choix remplissent `source` de la même façon ; l'arbre de §3.6 est la cible | [`maestro/outillage/questionnaire.py`](../maestro/outillage/questionnaire.py) — ce que le modèle a compris des réponses (#1147, `ComprehensionModele` dans `maestro/controltower/outillage.py`) devient des `Constats`, et c'est le `recommander` de #1030 qui tranche : **pas deux chemins** |
 | #1032 — les agents lisent l'outillage | §5 en entier, et `setting_sources=[]` comme condition (§5.3). **Fait**, mesuré en §5.4 | [`maestro/outillage/contexte.py`](../maestro/outillage/contexte.py) (ce qui est transmis), [`maestro/providers/claude.py`](../maestro/providers/claude.py) (ce qui n'entre pas), `maestro/agents/runtime.py` (le message de la tâche) |
 | #1033 — génération | §3.6 pour l'arbre, §4.2 pour les quatre cas, et le nom d'atelier réservé (§4.3) | [`maestro/outillage/redaction.py`](../maestro/outillage/redaction.py) (le texte), `generation.py` (les quatre cas), `ecriture.py` (le régime de [docs/24 §2.4](./24-projets-locaux-et-poste-de-travail.md)) ; `POST …/outillage/generation` |
 | #1034 — parcours de création | L'étape d'outillage écrit ce que §3.6 décrit, et reste reportable ([docs/37 §4.6](./37-decision-equipe-sur-mesure.md)) | `apps/web/components/projets/EtapeOutillage.tsx` ; `POST …/outillage/report`, et `outillage.a_faire` sur la fiche du projet |

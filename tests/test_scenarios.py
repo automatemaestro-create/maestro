@@ -11,6 +11,11 @@ intérêt, et c'est aussi ce qui le rend impossible à jouer en CI. Cette suite
   soldent. Un `moteur` injecté lui dit ce qu'un run **fait** au disque ;
 - **un faux juge**, parce que l'oracle de S4 est un appel modèle (#746).
 
+Le **flux** d'une réponse (#1265) a deux doubles, parce qu'il a deux moitiés : la
+fausse API le rend trame par trame et datée (`rythme`), ce qui éprouve les
+oracles du direct et des lectures ; une fausse API **sur le réseau** (`_ApiSSE`)
+le sert pour de bon, ce qui éprouve le transport réel qui date chaque trame.
+
 Cinq choses sont vérifiées ici, et ce sont celles que le ticket demande :
 
 ① le **déroulé** de chacun des quatre scénarios, par les appels exacts qu'il fait ;
@@ -30,8 +35,12 @@ from __future__ import annotations
 
 import json
 import socket
-from collections.abc import Callable, Mapping, Sequence
+import threading
+import time
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +48,13 @@ import pytest
 from redis_factice import ClientSynchrone, ServeurFactice
 
 from maestro.controltower.acces import REGIME_OUVERT
+from maestro.controltower.chat import (
+    FRAGMENT_CHAT_DEBUT,
+    FRAGMENT_CHAT_DELTA,
+    FRAGMENT_CHAT_ERREUR,
+    FRAGMENT_CHAT_ETAPE,
+    FRAGMENT_CHAT_FIN,
+)
 from maestro.controltower.donnees import Donnees, donnees_du_banc
 from maestro.controltower.state import (
     EXECUTION_ECHEC,
@@ -54,9 +70,12 @@ from maestro.scenarios.api import (
     DELAI_REQUETE_S,
     DELAI_RUN_S,
     FIL,
+    IMAGE_S,
     ClientAPI,
+    Echange,
     ErreurAPI,
     Reponse,
+    Trame,
     TransportHTTP,
     equipe_validee,
 )
@@ -84,11 +103,13 @@ from maestro.scenarios.rapport import (
     en_markdown,
 )
 from maestro.scenarios.scenarios import (
+    NOTE_S5,
     POINT_D_ENTREE,
     SCENARIOS,
     Contexte,
     Scenario,
     _fichiers_lies,
+    _le_direct,
     _recit_de_fin,
     par_identifiant,
 )
@@ -153,11 +174,29 @@ def _role(nom: str = "dev") -> dict[str, Any]:
 def _redige_par_le_modele(chemin: str) -> bool:
     """Les routes dont le produit fait rédiger la réponse par le modèle — lu sur son code.
 
-    Le fil juge le message et rédige sa réponse ; la proposition d'équipe rédige un
-    playbook par rôle (#257). Le cadrage et le recrutement n'appellent aucun modèle
-    (`maestro.controltower.orchestration`) : ils répondent comme une déclaration.
+    Le fil juge le message et rédige sa réponse, qu'elle soit rendue d'un coup
+    (`…/messages`) ou au fil de l'eau (`…/flux`, #1265) ; la proposition d'équipe
+    rédige un playbook par rôle (#257). Le cadrage et le recrutement n'appellent
+    aucun modèle (`maestro.controltower.orchestration`) : ils répondent comme une
+    déclaration.
     """
-    return chemin == f"{FIL}/messages" or chemin.endswith("/equipe/proposition")
+    return chemin in (f"{FIL}/messages", f"{FIL}/flux") or chemin.endswith(
+        "/equipe/proposition"
+    )
+
+
+#: Les trois cadences auxquelles la fausse API rend les incréments d'une réponse
+#: (#1265) : **au fil de l'eau** (le produit de #1222), **d'un bloc** (une seule
+#: trame, le fil d'avant), et **en rafale** — plusieurs trames, toutes reçues dans
+#: la même image d'écran, ce que rend un transport qui tamponne ou une réponse
+#: débitée après coup.
+RYTHME_DIRECT = "direct"
+RYTHME_BLOC = "bloc"
+RYTHME_RAFALE = "rafale"
+
+#: Ce que l'orchestrateur de la fausse API lit avant de répondre, par défaut : une
+#: étape, comme le produit de #1223 en publie une par lecture.
+LECTURES_PAR_DEFAUT = (f"A lu « {NOTE_S5} »",)
 
 
 class FausseAPI:
@@ -177,6 +216,12 @@ class FausseAPI:
     lot — la fin ne dit rien —, et c'est la moitié qui rend l'oracle de S5
     opposable : sans elle, « le fil porte un récit » serait vrai de n'importe
     quel fil.
+
+    `rythme`, `lectures` et `lectures_persistees` (#1265) disent comment une
+    réponse **par le flux** arrive : à quelle cadence ses incréments sont reçus,
+    quelles étapes l'orchestrateur publie avant d'écrire, et si le message rangé
+    dans le fil les garde. Leurs défauts sont le produit d'aujourd'hui ; chacun
+    s'écarte pour faire le défaut que l'oracle doit voir.
     """
 
     def __init__(
@@ -194,9 +239,15 @@ class FausseAPI:
         sante: bool = True,
         espace: str = "commun",
         duree_modele_s: float = 0.0,
+        rythme: str = RYTHME_DIRECT,
+        lectures: tuple[str, ...] = LECTURES_PAR_DEFAUT,
+        lectures_persistees: bool = True,
     ) -> None:
         self._moteur = moteur
         self._duree_modele_s = duree_modele_s
+        self._rythme = rythme
+        self._lectures = lectures
+        self._lectures_persistees = lectures_persistees
         self.delais: list[tuple[str, float | None]] = []
         self._propose_un_run = propose_un_run
         self._propose_une_equipe = propose_une_equipe
@@ -282,6 +333,54 @@ class FausseAPI:
         if chemin.startswith("/api/validations/"):
             return self._decider(chemin.split("/")[3])
         raise AssertionError(f"la fausse API ne connaît pas {methode} {chemin}")
+
+    def flux(
+        self,
+        chemin: str,
+        *,
+        corps: Mapping[str, Any] | None = None,
+        delai_s: float | None = None,
+    ) -> Echange:
+        """`POST …/flux` : la même décision que `…/messages`, rendue trame par trame (#1265).
+
+        C'est le même échange dans le produit — même persistance, même réponse —,
+        et c'est pourquoi la décision est reprise de `_message` au lieu d'être
+        réécrite : seul le **rendu** change. Les trames viennent dans l'ordre de
+        l'API (`debut`, les `etape`, les `fragment`, `fin`), chacune datée comme
+        le transport réel la date à sa réception.
+        """
+        self.appels.append(("POST", chemin))
+        self.delais.append((chemin, delai_s))
+        self._conversation = str((corps or {}).get("conversation") or self._conversation)
+        if _redige_par_le_modele(chemin):
+            self._rediger(chemin, delai_s)
+        if chemin != f"{FIL}/flux":
+            raise AssertionError(f"la fausse API ne diffuse pas {chemin}")
+        demande, reponse = self._message(corps or {}).corps["messages"]
+        etapes = [{"libelle": libelle, "detail": "…"} for libelle in self._lectures]
+        # `reponse` est le message **rangé** dans le fil (`_paire`) : ce qu'on y
+        # pose est ce qu'une relecture du fil rendra.
+        reponse["horodatage"] = f"h{len(self.fils.get(self._conversation, []))}"
+        reponse["etapes"] = etapes if self._lectures_persistees else []
+        trames = [Trame(0.01, {"type": FRAGMENT_CHAT_DEBUT, "message": demande})]
+        trames += [Trame(0.5, {"type": FRAGMENT_CHAT_ETAPE, "etape": e}) for e in etapes]
+        trames += [
+            Trame(instant, {"type": FRAGMENT_CHAT_DELTA, "delta": delta})
+            for instant, delta in self._increments(str(reponse["contenu"]))
+        ]
+        trames.append(Trame(9.0, {"type": FRAGMENT_CHAT_FIN, "message": reponse}))
+        return Echange(statut=200, envoi=0.0, trames=tuple(trames))
+
+    def _increments(self, contenu: str) -> list[tuple[float, str]]:
+        """Les incréments de `contenu` et l'instant de leur réception, selon `rythme`."""
+        if self._rythme == RYTHME_BLOC:
+            return [(1.0, contenu)]
+        morceaux = [contenu[debut : debut + 4] for debut in range(0, len(contenu), 4)]
+        # Une rafale : quelques microsecondes entre deux trames — ce que mesure un
+        # client derrière un transport qui a tout tamponné. Le direct : un cinquième
+        # de seconde, la cadence d'un modèle qui rédige.
+        pas = 1e-5 if self._rythme == RYTHME_RAFALE else 0.2
+        return [(1.0 + rang * pas, morceau) for rang, morceau in enumerate(morceaux)]
 
     def _rediger(self, chemin: str, delai_s: float | None) -> None:
         """Ce que fait le transport réel quand le modèle rédige plus longtemps qu'on l'attend.
@@ -1333,6 +1432,325 @@ def test_un_lien_vers_un_fichier_hors_de_la_racine_n_est_pas_du_livrable(
 
     assert _fichiers_lies(dedans, racine) == ["app.py"]
     assert _fichiers_lies(dehors, racine) == []
+
+
+# --- S5 — le direct du fil et la visibilité de ses lectures (#1265) -----------
+
+
+def test_s5_pose_ses_questions_par_le_flux_que_l_ecran_emprunte(tmp_path: Path) -> None:
+    """C1 se mesure où l'écran le voit : `POST …/flux`, jamais la paire de `…/messages`.
+
+    La demande de travail garde sa route — ce n'est pas elle qu'on mesure ici —, et
+    les deux questions posées après le run passent par le flux, comme depuis
+    l'écran (`apps/web/lib/useChat.ts`).
+    """
+    api = FausseAPI(moteur=_moteur_qui_ecrit_l_application, recit=RECIT_COMPLET)
+    issue, _ctx = _banc(tmp_path, api).jouer(_scenario("S5"))
+
+    assert issue.vert, issue.motif
+    envois = [c for _m, c in api.appels if c in (f"{FIL}/messages", f"{FIL}/flux")]
+    assert envois == [f"{FIL}/messages", f"{FIL}/flux", f"{FIL}/flux"]
+
+
+def test_s5_est_vert_quand_la_reponse_s_ecrit_en_direct_et_ses_lectures_se_voient(
+    tmp_path: Path,
+) -> None:
+    """Le produit de #1222 et #1223 : des incréments étalés, des lectures gardées au fil."""
+    api = FausseAPI(moteur=_moteur_qui_ecrit_l_application, recit=RECIT_COMPLET)
+    issue, ctx = _banc(tmp_path, api).jouer(_scenario("S5"))
+
+    assert issue.vert, issue.motif
+    assert "en direct" in issue.motif
+    assert "1 lecture(s)" in issue.motif
+    libelles = [e.libelle for e in ctx.journal.etapes]
+    assert "réponse reçue en direct" in libelles
+    assert "lectures du fil" in libelles
+
+
+def test_s5_est_rouge_quand_la_reponse_arrive_d_un_bloc(tmp_path: Path) -> None:
+    """Une seule trame porte tout le texte : l'attente a couvert la réponse entière.
+
+    C'est le fil d'avant #1222, et le défaut qu'aucun scénario ne voyait : le banc
+    lisait la paire rendue d'un coup. Constaté **avant** de saisir le juge — ce
+    qui se constate ne se demande pas à un modèle.
+    """
+    api = FausseAPI(
+        moteur=_moteur_qui_ecrit_l_application, recit=RECIT_COMPLET, rythme=RYTHME_BLOC
+    )
+    juge = _juge_oui()
+    issue, _ctx = _banc(tmp_path, api, juge=juge).jouer(_scenario("S5"))
+
+    assert not issue.vert
+    assert not issue.empechement
+    assert "d'un bloc" in issue.motif
+    assert "1 incrément" in issue.motif
+    assert juge.saisines == []
+
+
+def test_s5_est_rouge_quand_les_increments_arrivent_en_rafale(tmp_path: Path) -> None:
+    """Plusieurs trames, toutes reçues dans la même image : à l'écran, c'est un bloc.
+
+    Ce que rend un transport qui tamponne, ou une réponse découpée après avoir été
+    écrite entière : compter les trames dirait « direct », regarder quand elles
+    arrivent dit le contraire.
+    """
+    api = FausseAPI(
+        moteur=_moteur_qui_ecrit_l_application, recit=RECIT_COMPLET, rythme=RYTHME_RAFALE
+    )
+    issue, _ctx = _banc(tmp_path, api).jouer(_scenario("S5"))
+
+    assert not issue.vert
+    assert "d'un bloc" in issue.motif
+    assert "même image" in issue.motif
+
+
+def test_s5_est_rouge_quand_la_reponse_sur_un_fichier_ne_lit_rien(tmp_path: Path) -> None:
+    """Une note déposée après le run, et une réponse sans aucune lecture : C2 n'est pas tenu.
+
+    Le contenu de la note n'est dans aucun contexte de l'orchestrateur — ni la
+    conversation, ni le récit, ni les faits du run —, donc une réponse qui ne l'a
+    pas lue ne s'est pas fondée sur le projet réel.
+    """
+    api = FausseAPI(moteur=_moteur_qui_ecrit_l_application, recit=RECIT_COMPLET, lectures=())
+    issue, _ctx = _banc(tmp_path, api).jouer(_scenario("S5"))
+
+    assert not issue.vert
+    assert not issue.empechement
+    assert "sans rien lire" in issue.motif
+
+
+def test_s5_est_rouge_quand_les_lectures_ne_restent_pas_dans_le_fil(tmp_path: Path) -> None:
+    """Vues pendant qu'il répond, perdues au rechargement : la moitié persistée de #1223."""
+    api = FausseAPI(
+        moteur=_moteur_qui_ecrit_l_application, recit=RECIT_COMPLET, lectures_persistees=False
+    )
+    issue, _ctx = _banc(tmp_path, api).jouer(_scenario("S5"))
+
+    assert not issue.vert
+    assert "ne restent pas dans le fil" in issue.motif
+    assert f"A lu « {NOTE_S5} »" in issue.motif, "le rouge nomme ce qui s'est perdu"
+
+
+def test_une_lecture_se_reconnait_a_sa_structure_jamais_a_son_libelle(tmp_path: Path) -> None:
+    """#746 : l'oracle compte des étapes, il ne cherche pas « A lu » dans leur texte."""
+    api = FausseAPI(
+        moteur=_moteur_qui_ecrit_l_application,
+        recit=RECIT_COMPLET,
+        lectures=("Consulté la note déposée", "Parcouru le dossier"),
+    )
+    issue, _ctx = _banc(tmp_path, api).jouer(_scenario("S5"))
+
+    assert issue.vert, issue.motif
+    assert "2 lecture(s)" in issue.motif
+
+
+def test_la_note_est_deposee_apres_le_recit_et_reste_hors_du_livrable(tmp_path: Path) -> None:
+    """La question qui demande de lire porte sur ce que **personne** n'a encore vu.
+
+    Écrite après le récit, la note ne peut être dans aucun contexte ; et le juge de
+    « comment essayer » lit le livrable du run, dont elle ne fait pas partie.
+    """
+    api = FausseAPI(moteur=_moteur_qui_ecrit_l_application, recit=RECIT_COMPLET)
+    juge = _juge_oui()
+    issue, ctx = _banc(tmp_path, api, juge=juge).jouer(_scenario("S5"))
+
+    assert issue.vert, issue.motif
+    assert ctx.racine is not None and (ctx.racine / NOTE_S5).is_file()
+    assert NOTE_S5 not in juge.saisines[0]["livrable"]
+    assert NOTE_S5 not in RECIT_COMPLET
+    envois = [e.detail for e in ctx.journal.etapes if e.libelle == "demande envoyée"]
+    assert NOTE_S5 in envois[-1], "la dernière question porte sur la note"
+
+
+def test_le_flux_recoit_la_marge_du_modele(tmp_path: Path) -> None:
+    """Le fil rédige la réponse diffusée comme la réponse rendue d'un coup (#1232)."""
+    api = FausseAPI(moteur=_moteur_qui_ecrit_l_application, recit=RECIT_COMPLET)
+    ctx = _banc(tmp_path, api).contexte()
+    ctx.client = ClientAPI(api, delai_modele_s=321.0)
+
+    assert _scenario("S5").jouer(ctx).vert
+    assert {d for c, d in api.delais if c == f"{FIL}/flux"} == {321.0}
+
+
+def _echange(*instants: float, envoi: float = 0.0) -> Echange:
+    """Un échange dont les incréments sont reçus aux `instants` donnés."""
+    trames = [Trame(i, {"type": FRAGMENT_CHAT_DELTA, "delta": "x"}) for i in instants]
+    trames.append(Trame(max(instants, default=0.0), {"type": FRAGMENT_CHAT_FIN, "message": {}}))
+    return Echange(statut=200, envoi=envoi, trames=tuple(trames))
+
+
+def test_une_image_d_ecran_separe_le_direct_d_une_rafale() -> None:
+    """Deux incréments reçus dans la même image s'affichent ensemble — pas au-delà."""
+    assert _echange().images == 0
+    assert _echange(1.0).images == 1
+    assert _echange(1.0, 1.0 + IMAGE_S / 2).images == 1
+    assert _echange(1.0, 1.0 + IMAGE_S).images == 2
+    assert _echange(1.0, 1.2, 1.4, 1.6).images == 4
+
+
+def test_l_attente_ne_couvre_que_le_temps_avant_le_premier_increment() -> None:
+    """L'attente se mesure de l'envoi au premier incrément ; l'écriture, du premier au dernier."""
+    echange = _echange(13.0, 14.5, 16.0, envoi=0.0)
+
+    assert echange.attente_s == pytest.approx(13.0)
+    assert echange.ecriture_s == pytest.approx(3.0)
+    assert _le_direct(echange) == ""
+    assert _echange().attente_s is None
+
+
+def test_le_direct_ne_se_juge_que_sur_les_increments_qui_portent_du_texte() -> None:
+    """Une trame `fragment` vide n'ajoute rien à l'écran : elle ne compte pas."""
+    trames = (
+        Trame(1.0, {"type": FRAGMENT_CHAT_DELTA, "delta": ""}),
+        Trame(2.0, {"type": FRAGMENT_CHAT_DELTA, "delta": "Tout le texte."}),
+        Trame(2.0, {"type": FRAGMENT_CHAT_FIN, "message": {"contenu": "Tout le texte."}}),
+    )
+    echange = Echange(statut=200, envoi=0.0, trames=trames)
+
+    assert len(echange.increments) == 1
+    assert "d'un bloc" in _le_direct(echange)
+
+
+# --- Le flux sur le réseau : le transport réel date ce qu'il reçoit (#1265) ------
+
+
+#: Une réponse du fil telle que l'API la diffuse : ouverture, une lecture, trois
+#: incréments, clôture.
+TRAMES_SSE: tuple[dict[str, Any], ...] = (
+    {"type": FRAGMENT_CHAT_DEBUT, "message": {"auteur": "utilisateur", "contenu": "?"}},
+    {"type": FRAGMENT_CHAT_ETAPE, "etape": {"libelle": "A lu « app.py »", "detail": "print()"}},
+    {"type": FRAGMENT_CHAT_DELTA, "delta": "Lancez "},
+    {"type": FRAGMENT_CHAT_DELTA, "delta": "`python app.py`"},
+    {"type": FRAGMENT_CHAT_DELTA, "delta": "."},
+    {
+        "type": FRAGMENT_CHAT_FIN,
+        "message": {"auteur": "orchestrateur", "contenu": "Lancez `python app.py`."},
+    },
+)
+
+
+@contextmanager
+def _api_sse(
+    trames: Sequence[Mapping[str, Any]], *, pause_s: float, bloc: bool = False
+) -> Iterator[str]:
+    """Une fausse API **sur le réseau** : elle sert le flux d'une réponse, au rythme dit.
+
+    Ce que les doubles en mémoire ne peuvent pas éprouver : que le transport réel
+    lit le flux au fur et à mesure et date chaque trame **à sa réception**. `bloc`
+    écrit toutes les trames d'une seule écriture — ce qu'un serveur qui a tout
+    tamponné envoie —, sinon chacune part seule, `pause_s` après la précédente.
+    """
+    lignes = [f"data: {json.dumps(t, ensure_ascii=False)}\n\n".encode() for t in trames]
+
+    class Gestionnaire(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:  # noqa: N802 - nom imposé par http.server
+            self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            if bloc:
+                self.wfile.write(b"".join(lignes))
+                return
+            for ligne in lignes:
+                self.wfile.write(ligne)
+                self.wfile.flush()
+                time.sleep(pause_s)
+
+        def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+            return None
+
+    serveur = ThreadingHTTPServer(("127.0.0.1", 0), Gestionnaire)
+    fil = threading.Thread(target=serveur.serve_forever, daemon=True)
+    fil.start()
+    try:
+        yield f"http://127.0.0.1:{serveur.server_address[1]}"
+    finally:
+        serveur.shutdown()
+        serveur.server_close()
+
+
+def test_une_api_qui_streame_sur_le_reseau_est_vue_en_direct(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Le transport réel lit le flux au fil de l'eau : trois incréments, trois images."""
+    monkeypatch.setenv("MAESTRO_API_AUTH", REGIME_OUVERT)
+    with _api_sse(TRAMES_SSE, pause_s=0.05) as base:
+        echange = ClientAPI(TransportHTTP(base)).envoyer_en_direct(
+            "Comment j'essaie ?", projet_id="p", conversation="c"
+        )
+
+    assert [t.type for t in echange.trames] == [str(t["type"]) for t in TRAMES_SSE]
+    assert len(echange.increments) == 3
+    assert echange.images == 3
+    assert echange.ecriture_s >= 0.05
+    assert _le_direct(echange) == ""
+    assert [e["libelle"] for e in echange.etapes] == ["A lu « app.py »"]
+    assert echange.reponse["contenu"] == "Lancez `python app.py`."
+
+
+def test_une_api_qui_rend_tout_d_un_bloc_sur_le_reseau_est_rouge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Les mêmes trois incréments, écrits d'un coup : reçus ensemble, donc un bloc."""
+    monkeypatch.setenv("MAESTRO_API_AUTH", REGIME_OUVERT)
+    with _api_sse(TRAMES_SSE, pause_s=0.0, bloc=True) as base:
+        echange = ClientAPI(TransportHTTP(base)).envoyer_en_direct(
+            "Comment j'essaie ?", projet_id="p", conversation="c"
+        )
+
+    assert len(echange.increments) == 3
+    assert echange.images == 1
+    assert "d'un bloc" in _le_direct(echange)
+
+
+def test_un_flux_qui_se_clot_sur_une_erreur_est_un_empechement() -> None:
+    """La trame `erreur` dit qu'aucune réponse ne viendra : ce n'est pas un rouge du fil."""
+
+    class ApiSansReponse:
+        def flux(self, chemin: str, **reste: Any) -> Echange:
+            return Echange(
+                statut=200,
+                trames=(
+                    Trame(0.0, {"type": FRAGMENT_CHAT_DEBUT, "message": {}}),
+                    Trame(0.1, {"type": FRAGMENT_CHAT_ERREUR, "delta": "quota épuisé"}),
+                ),
+            )
+
+    with pytest.raises(ErreurAPI) as leve:
+        ClientAPI(ApiSansReponse()).envoyer_en_direct("?", projet_id="p", conversation="c")
+
+    assert "quota épuisé" in str(leve.value)
+    assert leve.value.chemin == f"{FIL}/flux"
+
+
+def test_un_flux_refuse_leve_avec_son_statut() -> None:
+    """Un 422 part avant la première trame : c'est un statut, comme sur les autres routes."""
+
+    class ApiQuiRefuse:
+        def flux(self, chemin: str, **reste: Any) -> Echange:
+            return Echange(statut=422, texte="message vide")
+
+    with pytest.raises(ErreurAPI) as leve:
+        ClientAPI(ApiQuiRefuse()).envoyer_en_direct("", projet_id="p", conversation="c")
+
+    assert leve.value.statut == 422
+    assert "message vide" in str(leve.value)
+
+
+def test_un_flux_coupe_avant_sa_fin_leve() -> None:
+    """Sans trame `fin`, la réponse n'est pas complète : rien à juger."""
+
+    class ApiCoupee:
+        def flux(self, chemin: str, **reste: Any) -> Echange:
+            return Echange(
+                statut=200,
+                trames=(Trame(0.1, {"type": FRAGMENT_CHAT_DELTA, "delta": "Lan"}),),
+            )
+
+    with pytest.raises(ErreurAPI) as leve:
+        ClientAPI(ApiCoupee()).envoyer_en_direct("?", projet_id="p", conversation="c")
+
+    assert "sans sa trame de fin" in str(leve.value)
 
 
 # --- S6 — le plan appelle un métier que l'équipe n'a pas (#1260) --------------

@@ -11,9 +11,9 @@
  * Ce module est le miroir exact de ce que l'API tient
  * (`maestro/controltower/chat.py` : `question_en_attente`, `choix_du_fil`), et c'est
  * délibéré : l'écran ne **déduit** rien du questionnaire, il lit ce que le fil porte.
- * Toute la logique — quelles options, quelle recommandation, quelle déduction — vit
- * côté moteur (`maestro/projets/outillage.py`), parce qu'elle décide de fichiers
- * qu'on écrira dans le projet de quelqu'un.
+ * Toute la logique — quelles questions, quelles options, ce qui est compris — vit
+ * côté moteur (`maestro/outillage/questionnaire.py` et le modèle depuis #1147),
+ * parce qu'elle décide de fichiers qu'on écrira dans le projet de quelqu'un.
  *
  * ## Et comment on **nomme** ce que l'outillage contient (#1104)
  *
@@ -50,11 +50,13 @@ export function questionEnAttente(messages: MessageChat[]): MessageChat | null {
 }
 
 /**
- * Les réponses d'outillage acquises sur ce fil, dans l'ordre où elles sont venues.
+ * Les réponses d'outillage données sur ce fil, dans l'ordre où elles sont venues —
+ * cliquées ou tapées (#1147).
  *
  * Lues **structurellement**, sur le champ `choix` des messages, jamais dans leur
  * texte : reconnaître « oui, Vitest » dans une phrase serait le lexique que ce canal
- * a retiré (#685).
+ * a retiré (#685). Une phrase tapée pendant qu'une question attend porte son `choix`
+ * libre, posé par le moteur : c'est lui qui la relie à la question, pas l'écran.
  *
  * L'écran s'en sert pour montrer ce qui a déjà été décidé — il n'en **déduit** pas la
  * question suivante, qui vient du moteur avec le message.
@@ -66,27 +68,33 @@ export function choixDuFil(messages: MessageChat[]): ChoixOutillage[] {
 }
 
 /**
- * Les réponses d'un questionnaire **dont plus aucune question n'attend** —
- * `null` quand une question est posée, ou qu'aucune réponse n'a été donnée (#1104).
+ * Les réponses d'un questionnaire **conclu**, et ce qui en a été compris — `null`
+ * tant qu'il ne l'est pas (#1104, #1147).
  *
  * C'est le troisième état du même questionnaire, à côté des deux que ce module
  * énonçait déjà : une question **attend** (`questionEnAttente`), des réponses ont
- * été **données** (`choixDuFil`)… et il arrive un moment où les secondes existent
- * sans la première. Jusqu'à ce lot, ce moment n'était lu nulle part : le fil
- * concluait sur « rien n'est écrit tant que vous ne l'avez pas validé » et aucune
- * surface n'offrait de quoi valider.
+ * été **données** (`choixDuFil`)… et il arrive un moment où le questionnaire est
+ * fini. Ce moment se **lit** sur le fil depuis #1147 : le dernier message d'agent qui
+ * porte une compréhension ne pose plus de question. C'est la conclusion — et la
+ * compréhension qu'elle porte est ce qu'on écrit, sans redemander au moteur de
+ * comprendre une seconde fois (il pourrait comprendre autre chose que ce que
+ * l'écran a montré).
  *
- * ⚠ Il ne dit **pas** que le questionnaire est fini — cela, c'est le moteur qui le
- * dit (`terminee`, `POST …/outillage/questionnaire`), et l'écran le lui demande
- * plutôt que de le déduire. Un geste dont la suite n'a pas pu être produite (502
- * après l'écriture du geste) laisse exactement cette trace : des réponses, aucune
- * question. La différence entre « conclu » et « interrompu » n'est pas lisible dans
- * le fil, elle l'est dans les réponses — donc elle se demande.
+ * Un geste dont la suite n'a pas pu être produite (502 après l'écriture du geste)
+ * laisse des réponses sans conclusion : le dernier message compris pose encore sa
+ * question, donc rien n'est à valider — « interrompu » ne se lit plus comme
+ * « conclu ».
  */
 export function choixAValider(messages: MessageChat[]): ChoixOutillage[] | null {
   if (questionEnAttente(messages) !== null) return null;
-  const choix = choixDuFil(messages);
-  return choix.length > 0 ? choix : null;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    const compris = message.comprehension;
+    if (compris === undefined || compris.length === 0) continue;
+    if (message.question) return null;
+    return [...choixDuFil(messages), ...compris];
+  }
+  return null;
 }
 
 /**

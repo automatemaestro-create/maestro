@@ -490,7 +490,11 @@ from maestro.controltower.orchestration import (
     detail_du_run,
     faits_des_runs,
 )
-from maestro.controltower.outillage import ServiceOutillage
+from maestro.controltower.outillage import (
+    ComprehensionModele,
+    ConducteurOutillage,
+    ServiceOutillage,
+)
 from maestro.controltower.persistence import (
     SUPPORT_SQLITE,
     BusDurable,
@@ -540,7 +544,7 @@ from maestro.espace import espace_courant
 from maestro.messaging import InMemoryMailbox, Mailbox, RedisMailbox
 from maestro.orchestrator.errors import BriefValidationError
 from maestro.orchestrator.schema import validate_brief
-from maestro.outillage.questionnaire import Choix
+from maestro.outillage.questionnaire import Choix, ComprehensionIllisible
 from maestro.poste import SondePoste
 from maestro.projets import (
     ApplicationRefusee,
@@ -995,26 +999,46 @@ class ReponseOutillageRequete(BaseModel):
     tardif et le double clic, exactement ce que le `409` existe pour attraper.
 
     `conversation` a le sens qu'il a partout ailleurs sur ce canal.
+
+    `libre` (#1147) dit que `valeur` est une réponse **avec ses mots** — le choix
+    « Autre chose » de la carte — et non une option : toute phrase non vide est
+    alors acceptée, et le questionnaire la comprend au tour suivant.
     """
 
     valeur: str
+    libre: bool = False
     conversation: str | None = None
 
 
 class ChoixOutillageRequete(BaseModel):
-    """Une réponse déjà acquise, telle qu'elle voyage vers les routes sans état (#1031).
+    """Une réponse, ou un constat compris, tel qu'il voyage vers les routes sans état (#1031).
 
-    La forme de `maestro.outillage.questionnaire.Choix` : `cle` et `valeur` disent la
-    réponse, `deduit` et `parce_que` disent qu'elle a été conclue plutôt que donnée.
-    Les deux derniers sont **rendus** par l'API et **acceptés** en entrée sans être
-    crus : `deductions` les recalcule de toute façon, si bien qu'un client n'a jamais
-    à les tenir à jour.
+    La forme de `maestro.outillage.questionnaire.Choix` : `cle` et `valeur` disent ce
+    que vaut le sujet ; `libre` qu'il a été dit avec des mots plutôt que cliqué ;
+    `deduit` et `parce_que` qu'il a été **compris** par le questionnaire plutôt que
+    donné (#1147).
+
+    Les constats compris voyagent **et font foi** vers la recommandation, la
+    génération et l'équipe : ce sont eux que l'écran a montrés, et rappeler le modèle
+    à l'écriture pourrait comprendre autre chose. La route du questionnaire, elle, ne
+    lit que les réponses **données** et recomprend le reste.
     """
 
     cle: str
     valeur: str
     deduit: bool = False
     parce_que: str = ""
+    libre: bool = False
+
+    def en_choix(self) -> Choix:
+        """Le choix du domaine, tel qu'il a été envoyé."""
+        return Choix(
+            cle=self.cle,
+            valeur=self.valeur,
+            deduit=self.deduit,
+            parce_que=self.parce_que,
+            libre=self.libre,
+        )
 
 
 class QuestionnaireOutillageRequete(BaseModel):
@@ -1029,8 +1053,8 @@ class QuestionnaireOutillageRequete(BaseModel):
     choix: list[ChoixOutillageRequete] = []
 
     def choix_acquis(self) -> list[Choix]:
-        """Les réponses en objets du domaine — `deduit`/`parce_que` recalculés."""
-        return [Choix(cle=c.cle, valeur=c.valeur) for c in self.choix]
+        """Les réponses et les constats en objets du domaine, tels qu'envoyés."""
+        return [c.en_choix() for c in self.choix]
 
 
 class RenfortRequete(BaseModel):
@@ -1144,8 +1168,8 @@ class GenerationOutillageRequete(BaseModel):
     choix: list[ChoixOutillageRequete] = []
 
     def choix_acquis(self) -> list[Choix]:
-        """Les réponses en objets du domaine — `deduit`/`parce_que` recalculés."""
-        return [Choix(cle=c.cle, valeur=c.valeur) for c in self.choix]
+        """Les réponses et les constats en objets du domaine, tels qu'envoyés."""
+        return [c.en_choix() for c in self.choix]
 
 
 class SkillEquipeRequete(BaseModel):
@@ -1591,6 +1615,7 @@ def create_app(
     hote_run: HoteRun | None = None,
     sonde_poste: SondePoste | None = None,
     acces: PolitiqueAcces | None = None,
+    comprehension: ComprehensionModele | None = None,
 ) -> FastAPI:
     """Construit l'app FastAPI de la Control Tower autour d'un bus et d'un état.
 
@@ -1853,8 +1878,16 @@ def create_app(
     # projet versionné est une action sensible au sens exact de EF-37, et elle
     # passe donc par le canal de validation de toujours — la demande sort sur le
     # bus, l'écran la montre, `POST /api/validations/{tache}/decision` la tranche.
+    # Le questionnaire d'un projet neuf **comprend** par le modèle (#1147) : un seul
+    # `ComprehensionModele` pour ses deux voies — celle sans état rangée sous le
+    # projet, celle du fil de l'orchestration. Injecté par les tests (un faux
+    # fournisseur), résolu sur celui du poste au premier usage sinon.
+    comprehension = comprehension if comprehension is not None else ComprehensionModele()
     outillage = ServiceOutillage(
-        projets, validateur=ValidateurControlTower(bus), provider=lecteur_outillage
+        projets,
+        validateur=ValidateurControlTower(bus),
+        provider=lecteur_outillage,
+        comprehension=comprehension,
     )
     # La projection part du catalogue **hors projet** : les agents rangés à la
     # racine du dépôt. Vide sur un poste neuf depuis #1042 — les cinq rôles du
@@ -2124,6 +2157,7 @@ def create_app(
                 consultation=consulter,
                 roles=roles_du_projet,
                 attentes=attentes_de(state),
+                conducteur=ConducteurOutillage(comprehension),
             )
         ),
         mailbox=mailbox,
@@ -5944,16 +5978,16 @@ def create_app(
         geste tardif ou un double clic tombe sur le `409` au lieu de répondre à une
         question déjà tranchée.
 
-        `422` si la valeur n'est pas une option de la question posée : le fil est la
-        seule mémoire du canal, une valeur fantaisiste y resterait. `409` quand rien
-        n'attend, `404` hors catalogue, `502` si la suite n'a pas pu être produite
-        (le geste, lui, reste acquis au fil).
+        `422` si la valeur n'est pas une option de la question posée — sauf réponse
+        **avec ses mots** (`libre`, #1147), acceptée dès qu'elle n'est pas vide. `409`
+        quand rien n'attend, `404` hors catalogue, `502` si la suite n'a pas pu être
+        produite (le geste, lui, reste acquis au fil).
         """
         fiche, service = _canal_chat(agent)
         fil = _conversation_demandee(service, fiche, requete.conversation)
         try:
             geste, reponse = await service.repondre_question(
-                fiche, valeur=requete.valeur, conversation=fil
+                fiche, valeur=requete.valeur, libre=requete.libre, conversation=fil
             )
         except QuestionIntrouvable as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -5984,11 +6018,22 @@ def create_app(
         et un projet déclaré est la seule chose qu'elles prennent du dehors. `404` sur
         un projet inconnu, `422` sur un identifiant mal formé — les mêmes refus que
         `GET …/outillage/analyse`, traduits par la même fonction.
+
+        Depuis #1147 la suite se **comprend** (un appel au modèle dès qu'une réponse a
+        été donnée) : un fournisseur injoignable ou une compréhension illisible est un
+        `502`, jamais une question inventée à sa place.
         """
         try:
-            return outillage.question(id_projet, requete.choix_acquis())
+            return await outillage.question(id_projet, requete.choix_acquis())
+        except ComprehensionIllisible as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
         except (ValueError, ProjetInconnu) as exc:
             raise _refus_projet(exc) from exc
+        except Exception as exc:  # noqa: BLE001 — le fournisseur, pas la requête
+            raise HTTPException(
+                status_code=502,
+                detail=f"le projet n'a pas pu être compris : {exc}",
+            ) from exc
 
     @app.post("/api/projets/{id_projet}/outillage/recommandation")
     async def recommandation_outillage(

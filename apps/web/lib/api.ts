@@ -1050,10 +1050,14 @@ export async function recruterDansLeFil(
  * Un `409` n'est pas une panne, comme sur le cadrage : la question a reçu sa réponse
  * entre-temps, ou la conversation a repris. L'appelant recharge plutôt qu'il ne
  * réessaie.
+ *
+ * `libre` (#1147) dit que `valeur` est une réponse **avec ses mots** — le choix
+ * « Autre chose » de la carte — et non une option : le moteur l'enregistre telle
+ * quelle et la comprend au tour suivant.
  */
 export async function repondreQuestionOutillage(
   agent: string,
-  reponseChoisie: { valeur: string; conversation?: string },
+  reponseChoisie: { valeur: string; libre?: boolean; conversation?: string },
 ): Promise<MessageChat[]> {
   const reponse = await appel(
     `${API_URL}/api/chat/${encodeURIComponent(agent)}/outillage`,
@@ -1062,6 +1066,7 @@ export async function repondreQuestionOutillage(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         valeur: reponseChoisie.valeur,
+        libre: reponseChoisie.libre ?? false,
         conversation: reponseChoisie.conversation,
       }),
     },
