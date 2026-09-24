@@ -159,6 +159,8 @@ Les lots 1 à 6 ont livré **sans tests**, par la convention de découpage ([doc
 
 **Différé, et pourquoi.** L'**exécution outillée par un fournisseur non-Anthropic dans Maestro** reste hors du jalon. Le format de l'outillage est universel, et un autre agent le lit sur le poste de l'utilisateur. Mais dans Maestro, seuls les modèles Claude ont des outils : `openai_compat.py` ne fait que du texte. C'est l'objectif O7 ([docs/00](./00-cahier-des-charges.md)), un chantier à lui seul, noté dans [docs/06](./06-roadmap.md) « Au-delà ».
 
+> ⚠ **Plus différé depuis le 2026-09-24** ([docs/44](./44-decision-maestro-possede-ses-contrats.md)). L'exécution outillée hors Claude a son jalon, « Indépendant du modèle », et son chantier, #1307 : un vocabulaire d'outils propre à Maestro, une boucle et des outils servis par Maestro, un client MCP, la configuration d'un fournisseur.
+
 ## 6. La place dans la file
 
 Sur le rail produit, l'échéance d'un jalon **est** son rang (`current-milestone` trie par `DUE_DATE`) :
