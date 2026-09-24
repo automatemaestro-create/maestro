@@ -536,8 +536,22 @@ de venir du playbook. Boucle complète, garde-fous et limites :
 
 ### 6.10 — Lancer la Control Tower en local : la vraie stack (tickets #186, #1168)
 
-Le lancement local tient en une commande, qui démarre l'API, l'UI Next.js, ouvre le
-navigateur et arrête tout à la fermeture de la fenêtre (#149, #200) :
+**Pour se servir de Maestro, on ouvre sa fenêtre de bureau** (#923, #1273,
+[docs/35 §2](./35-decision-poste-de-bureau-et-disposition.md)) :
+
+```bash
+# Fenêtre native (coque Electron) sur la stack locale réelle — ne rend la main qu'à sa fermeture
+bash scripts/controltower/desktop.sh
+```
+
+La coque joue `start.sh --no-browser` au démarrage et `start.sh --stop` quand on ferme la
+fenêtre : fermer la fenêtre arrête la stack. La ligne
+`[coque] Maestro — UI :<port> · API :<port>` confirme l'ouverture. Electron s'installe au
+premier lancement, taille annoncée.
+
+`start.sh` seul ouvre la même stack **dans un onglet du navigateur** : c'est le mode web, et
+l'outil des vérifications pilotées (`--no-browser`, les états plus bas). Il démarre l'API,
+l'UI Next.js, ouvre le navigateur et arrête tout à la fermeture de la fenêtre (#149, #200) :
 
 ```bash
 # La vraie stack : maestro-api sur Redis, journal durable des événements (§6.8)
