@@ -48,6 +48,9 @@ gantt
 > devant « Rien de figé ». L'orchestrateur y répond en direct, sait tout ce que Maestro sait et
 > raconte la fin d'un run. La personne n'y tranche plus que ce qui exige son arbitrage, et l'équipe
 > s'ajuste au plan pendant le run ([docs/42](./42-decision-equipe-ajustee-au-plan.md)).
+> Le jalon **« Le run tient parole »** suit « Rien de figé » (2026-09-21) : ce qui se passe pendant
+> un run, et ce que le fil sait faire. Depuis le 2026-09-24, il porte aussi le **bilan d'un run
+> terminé**, jugé sur pièces.
 
 ---
 
@@ -1012,6 +1015,126 @@ pendant le run et jamais recrutée sans accord. Elle renverse les deux dernière
 
 > ⚠ **Les critères de sortie du jalon sont dans sa description**, section `## Critères de sortie`
 > (C1 à C8). C'est elle qui fait foi au bouclage (docs/10 §3.4), pas ce résumé.
+
+---
+
+## « Le run tient parole » — il vérifie, se rattrape, et le fil agit (2026-09-21)
+
+Ce jalon est né le 2026-09-21 d'un balayage « rien de figé » du moteur, de l'API et de l'interface.
+La personne avait demandé d'**anticiper le besoin** et de faire sauter les bridages. Il complète
+« Rien de figé », qui porte les premières minutes d'un projet : celui-ci vise ce qui se passe
+**pendant** un run, et ce que le fil sait **faire**. Comme les jalons nés d'une idée, il ne prend
+**pas de numéro de phase**.
+
+| Milestone | Contenu | Échéance | Suivi |
+|---|---|---|---|
+| **Le run tient parole — il vérifie, se rattrape, et le fil agit** | Une tâche n'est terminée qu'une fois vérifiée, un échec se rattrape au lieu de barrer la suite, et le fil agit sur les runs au lieu de seulement en proposer. Un run terminé se juge sur pièces, et Maestro le dit à la personne | 2028-02-03 | **#1177** à **#1185**, sans parent ; **#1281**, 3 lots (#1282 ∥, #1284 ∥, #1285) ; retour `p3` : **#1297**, **#1298**, **#1299**, sans parent |
+
+**Le constat** (description du jalon) :
+- un run déclare « Terminée » toute tâche qui rend quelque chose ;
+- il s'arrête à la première panne ;
+- il jette le travail en vol au plafond de dépense ;
+- il échoue là où il pourrait proposer le prérequis qui manque ;
+- le fil, seule porte d'entrée, ne sait que proposer un run.
+
+**Le contenu d'origine**, neuf tickets sans parent :
+- **#1177** : une tâche n'est « Terminée » qu'une fois ses critères vérifiés en l'exécutant, et un
+  échec revient à son agent, preuve à l'appui ;
+- **#1178** : une tâche en échec se rattrape. L'orchestrateur lit la cause, retente autrement ou
+  redécoupe, et la suite du run repart ;
+- **#1179** : l'orchestrateur met en pause, reprend, annule et relance un run depuis le fil ;
+- **#1180** : le fil sait sur quel projet il travaille ;
+- **#1181** : un prérequis qui manque en cours de run se propose dans le fil ;
+- **#1182** : au plafond de dépense, le run se suspend et demande ;
+- **#1183** : depuis le fil, on répond à la question d'un agent et on tranche une validation ;
+- **#1184** : un accord tapé porte ses bornes, et une proposition vient avec son estimation ;
+- **#1185** : un refus dit pourquoi, et l'agent repart de là.
+
+**Ce que le retour d'expérience sur `p3` y a rangé** (#1300, détaillé dans la section « Rien de
+figé ») : **#1297** (les flèches du pipeline se lisent), **#1298** (le run dit pourquoi ses tâches
+passent une à une) et **#1299** (les tâches indépendantes tournent de front).
+
+### Le bilan d'un run terminé, sur pièces (2026-09-24)
+
+Le chantier est né d'un run réel, instruit par [`/idee`](../.claude/commands/idee.md) (#1013) et
+consigné par #1286. Le 2026-09-24, la personne a fait surveiller le run `3fe501fc0878` (projet
+`p3`, un site vitrine), puis a demandé si Maestro avait un moyen d'**auditer ses runs**. Il n'en
+avait pas.
+
+**Ce que le run a montré** :
+- la maquette a échoué trois fois à l'identique, sur le plafond de flux du SDK (#1277), pendant que
+  le moteur la tenait pour un aléa ;
+- le **récit de fin** a recopié ce libellé, « échec transitoire », et a conseillé de relancer.
+  Une relance aurait échoué de la même façon ;
+- il a fallu une enquête à la main pour trouver #1277 à #1280, en croisant l'API, les transcripts
+  des agents et un rejeu des commandes contre la portée : aucun écran n'en montrait rien.
+
+La cause est dans le code. Le récit de fin est déjà un appel au modèle, mais il ne voit que le
+dernier détail de chaque tâche, coupé à 300 caractères : ni les relances, ni les arbitrages, ni
+l'usage. Et un appel laissé passer par le cran `auto` ne garde pas son acte dans le journal.
+
+**Le contenu** — **#1281**, parent, trois lots :
+- **#1282** (parallèle) : le journal garde l'**acte** de chaque appel arbitré (outil et arguments,
+  rédigés et bornés), pas seulement son issue. Sans cette pièce, aucun bilan ne peut dire qu'un
+  agent est sorti de son projet ;
+- **#1284** (parallèle) : à la fin de tout run, Maestro rend un **bilan sur pièces** : ce qui a été
+  livré, ce qui a failli et pourquoi, les actes sortis du projet ou accordés sans personne, la
+  consommation sans résultat, et quoi changer. Chaque constat cite ses pièces, et un constat sans
+  pièce est écarté. Le récit de fin s'y appuie ;
+- **#1285** (après #1284) : la vue d'un run montre son bilan, chaque constat relié à ses pièces.
+  C'est le lot qui **décide d'un écran**.
+
+**Ce qu'il ne renverse pas**, sans note de décision puisqu'aucune décision ne tombe :
+- **[docs/41](./41-decision-maestro-juge-il-ne-bride-pas.md) est prolongé.** Le modèle lit les
+  pièces du run, sans catalogue fermé de défauts connus. Et la vérification des pièces citées tient
+  le rôle de « l'exécution vérifie ».
+- **[docs/32](./32-decision-cran-orchestrateur.md) §b tient** : aucun modèle ne garde un modèle. Le
+  bilan est rendu **après** le run. Il ne tranche aucun appel d'outil, ne change aucun cran,
+  n'accorde ni ne refuse rien. Ce qu'il recommande, une personne le décide.
+- **Les garde-fous restent où ils sont** : frontière d'écriture, portée « projet » (dont #1278
+  corrige le jugement sous Windows), arbitrage des actes.
+- Aucun document du domaine n'est rendu faux à ce stade : les lots réécrivent ce qu'ils changent.
+
+**Les arbitrages rendus** :
+- **une capacité du produit**, pas une commande de dépôt : c'est l'utilisateur de Maestro qui en a
+  besoin, et le rail outillage est gelé jusqu'au 2026-10-12 ;
+- le bilan est **automatique à la fin de chaque run**, parce qu'on ne demande pas un audit dont on
+  ignore avoir besoin. Son coût est compté dans celui du run ;
+- **pièces du journal seulement**, pas de transcript de fournisseur (vision agnostique). Ce qui
+  manque au journal s'y ajoute (#1282).
+
+**Différé** :
+- les suites du bilan jouées depuis le fil (relancer une tâche corrigée, ajouter un outil à un
+  agent) attendent #1179 et #1181 ;
+- le journal au-delà de 200 événements reste à instruire. #1284 lit le journal durable, pas une
+  projection plafonnée.
+
+**Les voisins** : #1178 diagnostique un échec **pendant** le run pour agir, le bilan juge le run
+entier **après coup**. Quand les deux existeront, le bilan lira le diagnostic de #1178 comme une
+pièce au lieu de le refaire. Les quatre défauts trouvés en surveillant le run de `p3` sont rangés
+dans « Rien de figé » : #1277 (livré le 2026-09-24) et #1278 en `haute`, #1279 et #1280 en
+`moyenne`. #1291 (les agents n'avaient plus d'outil pour cocher leur checklist) explique un constat
+que le bilan aurait relevé sur ce même run.
+
+**Place dans la file**, sur le rail produit :
+
+| Jalon | Échéance |
+| --- | --- |
+| « Le fil, un vrai interlocuteur » | 2028-01-31 |
+| « Rien de figé » | 2028-02-02 |
+| **« Le run tient parole »** | **2028-02-03** (inchangée) |
+| « Le niveau visuel » | 2028-02-05 |
+| Phase 9 | 2028-02-16 |
+
+- **Derrière « Rien de figé »** : un projet se comprend et s'outille avant que ses runs ne tiennent
+  parole.
+- **Devant « Le niveau visuel »**, pour l'argument qui y a placé les jalons précédents : on
+  n'habille pas une capacité qui va changer.
+- **Le bilan n'a déplacé aucune échéance.** Il rejoint ce jalon parce qu'il sert son « il vérifie » :
+  le run juge ce qu'il a tenu, et c'est le pendant après coup de #1177 et de #1178.
+
+> ⚠ **Ce jalon n'a pas encore de section `## Critères de sortie`** dans sa description. Elle est à
+> poser avant son bouclage (docs/10 §3.4) : un jalon sans critères ne se boucle pas.
 
 ---
 
