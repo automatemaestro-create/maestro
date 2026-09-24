@@ -58,6 +58,7 @@ from maestro.config import ConfigError, Settings
 from maestro.decideur import DECIDEUR_DEFAUT, Decideur
 from maestro.deliberation import CreditArbitrage
 from maestro.detail_tache import EtapeTache
+from maestro.familles_claude import familles_claude
 from maestro.lecture import OUTIL_LECTURE, lecture_sans_arbitrage
 from maestro.portee import PorteeProjet, hors_de_portee
 from maestro.providers import blocage, courrier, decision, question
@@ -222,17 +223,19 @@ class ClaudeProvider(ModelProvider):
     #: Préfixe des identifiants de modèles Claude (ex. `claude-opus-5`).
     _MODEL_PREFIX: ClassVar[str] = "claude-"
 
-    #: Gamme annoncée au catalogue (#253) — ce que l'UI proposera. Elle **n'est
-    #: pas** la définition de ce que le fournisseur accepte : `supports()` reste
-    #: le préfixe `claude-`, si bien qu'un modèle plus récent que cette liste
-    #: s'exécute encore en le nommant à la main. Annoncer une gamme sert à
-    #: proposer, jamais à interdire — et c'est pourquoi `MODELES_LIBRES` est vrai.
-    MODELES: ClassVar[tuple[ModeleDisponible, ...]] = (
-        ModeleDisponible("claude-opus-5", "Opus 5", EFFORTS),
-        ModeleDisponible("claude-opus-4-8", "Opus 4.8", EFFORTS),
-        ModeleDisponible("claude-sonnet-5", "Sonnet 5", EFFORTS),
-        ModeleDisponible("claude-haiku-4-5", "Haiku 4.5", EFFORTS),
-        ModeleDisponible("claude-fable-5", "Fable 5", EFFORTS),
+    #: Gamme annoncée au catalogue (#253) — ce que l'UI proposera : la **dernière
+    #: version de chaque famille** (#1270), lue dans `familles-claude.tsv`, la source
+    #: que les runs `/orchestrate` lisent aussi. Elle n'est plus écrite ici : une
+    #: liste recopiée avait gardé Opus 5 et Fable 5 au formulaire après la sortie
+    #: d'Opus 5.5 et de Fable 5.1, sans que rien ne le dise.
+    #:
+    #: Elle **n'est pas** la définition de ce que le fournisseur accepte : `supports()`
+    #: reste le préfixe `claude-`, si bien qu'une version antérieure — ou plus récente
+    #: que le fichier — s'exécute encore en la nommant à la main. Annoncer une gamme
+    #: sert à proposer, jamais à interdire — et c'est pourquoi `MODELES_LIBRES` est vrai.
+    MODELES: ClassVar[tuple[ModeleDisponible, ...]] = tuple(
+        ModeleDisponible(famille.identifiant, famille.libelle, EFFORTS)
+        for famille in familles_claude()
     )
 
     #: Un modèle hors gamme reste exécutable (cf. `MODELES`) — il n'aura

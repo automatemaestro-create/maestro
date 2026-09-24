@@ -11,7 +11,11 @@ requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = [
     # Moteur d'agents (cf. docs/02-stack-technique.md §2). Import : `claude_agent_sdk`.
-    "claude-agent-sdk>=0.1.0",
+    # Le SDK embarque son CLI, et c'est lui qui sert — ou refuse — un modèle : le
+    # plancher est la première version dont le CLI sert la dernière Opus de
+    # `maestro/providers/familles-claude.tsv` (0.2.158 → CLI 2.1.280, qu'exige Opus 5.5 ;
+    # #1270). Une ligne de famille qui monte peut exiger de relever ce plancher.
+    "claude-agent-sdk>=0.2.158",
     # Chargement du .env local (non versionné).
     "python-dotenv>=1.0.0",
     # Validation du schéma de tâche de l'orchestrateur (packages/shared, draft 2020-12).
@@ -130,6 +134,10 @@ include = ["maestro*"]
 # sont chargés à l'**import** du module, donc un playbook oublié ici ne casse pas un
 # appel isolé — il casse `import maestro.orchestrator`, et seulement en roue installée.
 "maestro.orchestrator" = ["playbook*.md"]
+# La dernière version de chaque famille Claude (#1269, #1270) : `maestro.familles_claude`
+# la lit à l'import des agents, de la config et du fournisseur Claude. Absente d'une
+# roue, aucun modèle ne se nommerait — et `run.sh` la lit au même chemin.
+"maestro.providers" = ["familles-claude.tsv"]
 
 [tool.ruff]
 line-length = 100

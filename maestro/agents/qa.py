@@ -17,6 +17,7 @@ n'a pas encore de rétro-boucle automatique, le verdict éclaire la décision hu
 
 from __future__ import annotations
 
+from maestro.agents.catalog import MODELE_EXECUTANT_DEFAUT
 from maestro.agents.playbook_du_code import CONSIGNE_RENDU_COMPTE, playbook_du_code
 from maestro.agents.runtime import DEFAULT_TOOLS, RoleProfile
 
@@ -30,13 +31,13 @@ from maestro.agents.runtime import DEFAULT_TOOLS, RoleProfile
 #: dans la même case, alors qu'ils n'appellent pas la même décision.
 _SYSTEM_PROMPT = playbook_du_code("qa")
 
-#: Profil du QA : modèle par défaut du POC (Claude Sonnet, cf. docs/04 §2), outils
+#: Profil du QA : modèle par défaut des exécutants (dernière Opus, #1270), outils
 #: fichiers + shell (docs/02 §7 : permissions scopées), consignes de revue sur tableau
 #: noir et de verdict explicite. `nom` correspond à l'agent `qa` du catalogue.
 QA_PROFILE = RoleProfile(
     nom="qa",
     role="QA / Testeur",
-    modele="claude-sonnet-5",
+    modele=MODELE_EXECUTANT_DEFAUT,
     outils=DEFAULT_TOOLS,
     prompt_systeme=_SYSTEM_PROMPT,
     intro_tache="Tâche de qualité (tests, validation, revue) à réaliser de bout en bout :",

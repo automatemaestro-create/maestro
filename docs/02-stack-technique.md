@@ -11,7 +11,7 @@
 |---------|------------------|------------------------|
 | **Abstraction fournisseur** | **Couche « model gateway »** (interface `ModelProvider`, style **LiteLLM**) — choix fournisseur + modèle par agent | Proxy LiteLLM, ou runtime agnostique (LangGraph, Pydantic AI) |
 | **Moteur d'agents** | **Claude Agent SDK** (Python *ou* TypeScript) — runtime des agents **Claude** derrière l'abstraction | LangGraph, CrewAI, AutoGen/AG2 |
-| **Modèles** | **POC : Claude** — Opus (orchestrateur), Sonnet (workers), Haiku (routage/classif.) | **Tout fournisseur via la couche** : OpenAI, Google, modèles ouverts/locaux |
+| **Modèles** | **POC : Claude** — Opus, dernière version (orchestrateur et agents, #1270), Haiku (routage/classif.) | **Tout fournisseur via la couche** : OpenAI, Google, modèles ouverts/locaux |
 | **Orchestration de flux** | Agent SDK natif → **LangGraph** si flux d'état complexes | CrewAI (rôles), AutoGen (conversations) |
 | **File de tâches / durabilité** | **Temporal** (durable) ou Celery/BullMQ + Redis (simple) | RabbitMQ, AWS SQS |
 | **Backend / API** | **FastAPI** (Python) | NestJS / Fastify (Node) |

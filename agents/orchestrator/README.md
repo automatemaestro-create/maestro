@@ -1,7 +1,9 @@
 # agent Orchestrateur (Chef de projet)
 
 Décompose un objectif en tâches, planifie les dépendances, assigne et synthétise.
-Modèle : Opus. Voir
+Modèle : la dernière version d'Opus, lue dans
+[`maestro/providers/familles-claude.tsv`](../../maestro/providers/familles-claude.tsv) (#1270 ;
+`ANTHROPIC_MODEL` ou `MAESTRO_MODEL` l'emportent). Voir
 [`docs/04-specifications-agents.md`](../../docs/04-specifications-agents.md) (§3.1 : fiche du
 rôle ; §1 : structure d'un playbook).
 

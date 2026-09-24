@@ -5975,8 +5975,9 @@ valeur à **chaque** session et le run brûlerait son plan en échecs jumeaux.
 Épingler un identifiant figé avait son revers : `claude-opus-5` a continué de servir après la sortie
 d'Opus 5.5 sans que rien ne le dise. Le dépôt tient donc la **dernière version de chaque famille**
 dans une source unique, [`maestro/providers/familles-claude.tsv`](../maestro/providers/familles-claude.tsv)
-(`famille`, `identifiant`, `libellé`), que le catalogue du produit a vocation à lire aussi (#1270)
-plutôt qu'à tenir une seconde liste. Une version sort : on y remplace l'identifiant de sa famille,
+(`famille`, `identifiant`, `libellé`), que le produit lit aussi depuis #1270 (`maestro.familles_claude` :
+défaut du Chef de projet et des agents, gamme du choix du modèle, classifieur ; docs/04 §2) plutôt
+que de tenir une seconde liste. Une version sort : on y remplace l'identifiant de sa famille,
 nulle part ailleurs.
 
 - **Résolution.** Le défaut est la famille `opus` ; `--modele opus|sonnet|fable|haiku` (casse

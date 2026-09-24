@@ -699,12 +699,15 @@ function ChampsDuModele({
             </select>
           ) : (
             <>
+              {/* Vide, l'agent suit le défaut de l'exécution — la dernière
+                  Opus (#1270) : un nom en exemple ici vieillirait en silence
+                  et laisserait croire qu'il est ce défaut. */}
               <input
                 type="text"
                 value={champs.modele}
                 onChange={(e) => changerModele(e.target.value)}
                 disabled={desactive}
-                placeholder="claude-sonnet-5"
+                placeholder="défaut de l’exécution"
                 list={modeles.length > 0 ? idModeles : undefined}
                 aria-describedby={catalogue ? idPoste : undefined}
                 className={CLASSE_CHAMP + " font-mono"}
