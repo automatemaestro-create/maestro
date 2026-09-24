@@ -120,6 +120,17 @@ qu'on la joue dans le clone principal, dans un worktree ou dans le conteneur du
 filet local (qui monte un worktree tel quel), et un test qui compare un nom Redis
 rendrait deux verdicts. `commun` est l'espace sans préfixe, celui de la CI ; les
 tests qui exercent la séparation posent eux-mêmes `MAESTRO_ESPACE`.
+
+Neuvième garde-fou (#1160) : **aucun test ne joue les commandes d'un projet sans
+le dire**. Depuis que l'outillage est vérifié en l'exécutant, toute génération —
+une quarantaine de tests l'appellent, par l'API ou directement — joue `npm ci`,
+`pytest`, `npm run dev` dans une copie du projet. Le verdict dépendrait alors des
+outils installés sur le poste (npm ici, pas là), et un test d'écriture paierait une
+installation réseau. La garde retire **l'interpréteur** (`maestro.sandbox.
+verification.interprete` rend `None`) : chaque commande sort « à vérifier » avec la
+raison du poste sans bash — un vrai chemin du produit, instantané, le même partout.
+Un test qui veut un verdict passe son propre `joueur` au `Verificateur` ; un test qui
+veut **vraiment** jouer une commande le dit avec `@pytest.mark.commandes_jouees`.
 """
 
 from __future__ import annotations
@@ -214,6 +225,11 @@ CAUSE_FOURNISSEUR_DU_POSTE = (
 )
 
 
+#: Le marqueur par lequel un test dit qu'il veut VRAIMENT jouer des commandes du projet dans
+#: une copie de vérification (#1160) — la garde qui retire l'interpréteur s'efface alors.
+MARQUEUR_COMMANDES_JOUEES = "commandes_jouees"
+
+
 class FournisseurDuPosteRefuse(RuntimeError):
     """Levée par la garde à la place de la lecture des réglages du poste par la fabrique (#782).
 
@@ -263,6 +279,12 @@ def pytest_configure(config: pytest.Config) -> None:
         f"{MARQUEUR_FOURNISSEUR_DU_POSTE}: ce test résout VOLONTAIREMENT le fournisseur de "
         "modèle configuré sur le poste (#782) — la garde de tests/conftest.py s'efface ; à "
         "réserver à un test qui n'appelle aucun modèle réel.",
+    )
+    config.addinivalue_line(
+        "markers",
+        f"{MARQUEUR_COMMANDES_JOUEES}: ce test joue VOLONTAIREMENT des commandes dans une copie "
+        "de vérification de l'outillage (#1160) — la garde de tests/conftest.py qui retire "
+        "l'interpréteur s'efface.",
     )
     # Poste sans git : le `skipif` de chaque module reste la bonne réponse.
     if not git_manquant_en_ci(dict(os.environ), shutil.which("git")):
@@ -534,3 +556,21 @@ def _pas_de_fournisseur_du_poste(request: pytest.FixtureRequest, monkeypatch: py
         f"{CAUSE_FOURNISSEUR_DU_POSTE}",
         pytrace=False,
     )
+
+
+@pytest.fixture(autouse=True)
+def _pas_de_commande_du_projet_jouee(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Retire l'interpréteur des commandes du projet, sauf au test qui le demande (#1160).
+
+    Ce qui est remplacé est `maestro.sandbox.verification.interprete`, que le
+    `Verificateur` relit **à chaque appel** : c'est la seule porte par laquelle une
+    génération joue une commande sans qu'on lui ait passé de `joueur`. Sans bash, la
+    vérification rend « à vérifier » pour chaque commande, sans copier ni jouer quoi
+    que ce soit — un chemin réel du produit, et le même sur tous les postes. Un test
+    qui passe au `Verificateur` son propre `interprete` n'est pas concerné.
+    """
+    if request.node.get_closest_marker(MARQUEUR_COMMANDES_JOUEES) is not None:
+        return
+    monkeypatch.setattr("maestro.sandbox.verification.interprete", lambda: None)

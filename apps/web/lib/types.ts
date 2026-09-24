@@ -2593,6 +2593,26 @@ export type ReponseRecommandationOutillage = {
 };
 
 /**
+ * Le verdict d'une commande que l'outillage écrit — jouée avant de l'être (#1160,
+ * `maestro.outillage.verification.Verification`).
+ *
+ * `etat` vaut `verifiee` (jouée, rendue sans erreur — un démarrage : il tournait
+ * encore au bout de sa fenêtre), `echouee` (jouée, rendue en erreur : `code` et la
+ * fin de `sortie` le disent) ou `a-verifier` (pas jouée, ou sans verdict : `raison`
+ * dit pourquoi). Chaîne et non union fermée : un état qu'une API plus récente
+ * ajouterait se lit « à vérifier » plutôt que de casser l'écran.
+ */
+export type VerificationOutillage = {
+  usage: string;
+  commande: string;
+  etat: string;
+  raison: string;
+  code: number | null;
+  sortie: string;
+  duree_s: number;
+};
+
+/**
  * Ce que la génération a fait, fichier par fichier
  * (`POST /api/projets/{id}/outillage/generation`, #1033, docs/38 §4.2).
  *
@@ -2620,6 +2640,11 @@ export type RapportGenerationOutillage = {
     refuses: string[];
     ignores: string[];
     retires: string[];
+    /**
+     * Le verdict de chaque commande écrite, dans l'ordre où elles ont été jouées
+     * (#1160). Absent d'une API antérieure : l'écran n'en montre alors rien.
+     */
+    verifications?: VerificationOutillage[];
   };
   /**
    * Les chemins retenus qui ne désignaient **aucune** entrée (#1100) : lus à

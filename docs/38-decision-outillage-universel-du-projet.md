@@ -306,9 +306,26 @@ par quelle version :
       "empreinte": "sha256:…", "genere_le": "…" },
     { "chemin": ".agents/skills/lancer-les-tests/scripts/tests.sh", "role": "script", "portee": "fichier",
       "empreinte": "sha256:…", "genere_le": "…" }
+  ],
+  "verifications": [                           // #1160 : chaque commande écrite, jouée avant
+    { "usage": "installer", "commande": "uv sync", "etat": "verifiee",
+      "raison": "elle a rendu la main sans erreur", "code": 0, "sortie": "…", "duree_s": 4.2 },
+    { "usage": "tester", "commande": "pytest", "etat": "echouee",
+      "raison": "elle a rendu la main en erreur (code 1)", "code": 1, "sortie": "…2 failed", "duree_s": 9.8 },
+    { "usage": "lint", "commande": "pip install -e .", "etat": "a-verifier",
+      "raison": "pas jouée — commande hors de la portée « projet » : …", "code": null, "sortie": "", "duree_s": 0 }
   ]
 }
 ```
+
+`verifications` (#1160) est une clé **ajoutée** à la version 1, pas une version 2 : un lecteur de la
+version 1 l'ignore sans rien perdre, là où monter la version ferait refuser toute régénération par une
+version antérieure de Maestro. Chaque commande que l'outillage écrit y porte son verdict — `verifiee`,
+`echouee` avec la fin de sa sortie, ou `a-verifier` avec sa raison (projet encore vide, fichier de la
+commande absent, commande que la portée « projet » renvoie à une personne, délai sans verdict, poste
+sans bash). Elle est jouée **dans une copie** de l'arbre outillé, jamais dans la racine ni dans le
+worktree qu'on commite ([`maestro/sandbox/verification.py`](../maestro/sandbox/verification.py)), et le
+même verdict se lit à côté de la commande dans `AGENTS.md` et dans son `SKILL.md`.
 
 Trois propriétés à ne pas défaire :
 
@@ -629,8 +646,10 @@ constate, pas une propriété acquise.
 > - les tables de détection de #1030, qui fixaient ce que l'analyse savait reconnaître. Le modèle
 >   lit le projet, et les tables deviennent des indices (#1158).
 >
-> Les commandes écrites sans exécution sont vérifiées avant d'être écrites (#1160). Le format
-> arrêté par cette note (§3 à §5) ne bouge pas, ni le `recommander` commun aux deux chemins.
+> Les commandes écrites sans exécution sont vérifiées avant d'être écrites (#1160, **livré**) :
+> chacune est jouée dans une copie du projet, et son verdict va au texte, au manifeste (§4.1) et
+> au rapport. Le format arrêté par cette note (§3 à §5) ne bouge pas, ni le `recommander` commun
+> aux deux chemins.
 >
 > ⚠ **Renversé en partie le 2026-09-24** ([docs/43 §2.2](./43-decision-un-projet-nait-dans-la-conversation.md)).
 > La ligne #1034 ne tient plus : l'outillage n'est plus une étape du parcours de création. Un projet
@@ -648,6 +667,7 @@ de la règle à la ligne qui l'exécute, et à la suite qui la garde.
 | #1031 — choix d'un projet neuf | Les choix remplissent `source` de la même façon ; l'arbre de §3.6 est la cible | [`maestro/outillage/questionnaire.py`](../maestro/outillage/questionnaire.py) — ce que le modèle a compris des réponses (#1147, `ComprehensionModele` dans `maestro/controltower/outillage.py`) devient des `Constats`, et c'est le `recommander` de #1030 qui tranche : **pas deux chemins** |
 | #1032 — les agents lisent l'outillage | §5 en entier, et `setting_sources=[]` comme condition (§5.3). **Fait**, mesuré en §5.4 | [`maestro/outillage/contexte.py`](../maestro/outillage/contexte.py) (ce qui est transmis), [`maestro/providers/claude.py`](../maestro/providers/claude.py) (ce qui n'entre pas), `maestro/agents/runtime.py` (le message de la tâche) |
 | #1033 — génération | §3.6 pour l'arbre, §4.2 pour les quatre cas, et le nom d'atelier réservé (§4.3) | [`maestro/outillage/redaction.py`](../maestro/outillage/redaction.py) (le texte), `generation.py` (les quatre cas), `ecriture.py` (le régime de [docs/24 §2.4](./24-projets-locaux-et-poste-de-travail.md)) ; `POST …/outillage/generation` |
+| #1160 — vérifier en exécutant (renverse la « convention » écrite sans être jouée) | Chaque commande écrite est jouée avant, dans une copie de l'arbre outillé, sous la portée « projet » (`maestro.portee`) ; son verdict va au texte, à `verifications` (§4.1) et au rapport | [`maestro/outillage/verification.py`](../maestro/outillage/verification.py) (quelles commandes, quel verdict), [`maestro/sandbox/verification.py`](../maestro/sandbox/verification.py) (la copie, bash, l'arrêt de l'arbre) ; [`tests/test_outillage_verification.py`](../tests/test_outillage_verification.py) ; l'écran : [`VerificationsOutillage.tsx`](../apps/web/components/projets/VerificationsOutillage.tsx) |
 | #1034 — parcours de création | L'étape d'outillage écrit ce que §3.6 décrit, et reste reportable ([docs/37 §4.6](./37-decision-equipe-sur-mesure.md)) | `apps/web/components/projets/EtapeOutillage.tsx` ; `POST …/outillage/report`, et `outillage.a_faire` sur la fiche du projet |
 | #1035 — tests + doc | Les faits de §2 se revérifient ; §7 dit lesquels | [`tests/test_outillage_analyse.py`](../tests/test_outillage_analyse.py), [`test_outillage_questionnaire.py`](../tests/test_outillage_questionnaire.py), [`test_outillage_generation.py`](../tests/test_outillage_generation.py), [`test_outillage_contexte.py`](../tests/test_outillage_contexte.py), [`test_outillage_skills_ref.py`](../tests/test_outillage_skills_ref.py) ; [docs/24 §2.6](./24-projets-locaux-et-poste-de-travail.md) et [docs/05 §6.20](./05-interface-control-tower.md) |
 

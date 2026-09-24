@@ -375,6 +375,113 @@ describe("le bouton « Générer » de l'étape d'outillage", () => {
   });
 });
 
+describe("le verdict des commandes écrites, dans le rapport (#1160)", () => {
+  it("annonce avant le geste que chaque commande sera jouée", async () => {
+    render(
+      <EtapeOutillage
+        projet={projetFactice({ origine: "existant" })}
+        onTermine={() => {}}
+      />,
+    );
+
+    expect(
+      await screen.findByText(/Chaque commande est jouée dans une copie du projet/),
+    ).toBeInTheDocument();
+  });
+
+  it("rend chaque commande dans l'ordre joué, l'échec déployé sur place", async () => {
+    genererOutillage.mockResolvedValue(
+      rapport({
+        rapport: {
+          ...rapport().rapport,
+          verifications: [
+            {
+              usage: "installer",
+              commande: "pip install -r requirements.txt",
+              etat: "a-verifier",
+              raison:
+                "pas jouée — commande hors de la portée « projet » : `pip` installe hors du dossier du projet. Une personne tranche.",
+              code: null,
+              sortie: "",
+              duree_s: 0,
+            },
+            {
+              usage: "tester",
+              commande: "bash scripts/test.sh",
+              etat: "verifiee",
+              raison: "elle a rendu la main sans erreur",
+              code: 0,
+              sortie: "6 passed",
+              duree_s: 0.4,
+            },
+            {
+              usage: "lint",
+              commande: "bash scripts/lint.sh",
+              etat: "echouee",
+              raison: "elle a rendu la main en erreur (code 1)",
+              code: 1,
+              sortie: "app.py:3:1: E302 expected 2 blank lines",
+              duree_s: 0.3,
+            },
+          ],
+        },
+      }),
+    );
+    render(
+      <EtapeOutillage
+        projet={projetFactice({ origine: "existant" })}
+        onTermine={() => {}}
+      />,
+    );
+
+    await generer();
+
+    const liste = await screen.findByRole("list", {
+      name: "Verdict de chaque commande",
+    });
+    // Tout est visible sans geste : c'est ce que la variante A a tranché.
+    expect(
+      screen.getByText(/3 commandes/).closest("p"),
+    ).toHaveTextContent(
+      "3 commandes écrites dans l'outillage : 1 vérifiée, 1 échouée, 1 à vérifier.",
+    );
+    const lignes = liste.querySelectorAll(":scope > li");
+    expect([...lignes].map((li) => li.querySelector("code")?.textContent)).toEqual([
+      "pip install -r requirements.txt",
+      "bash scripts/test.sh",
+      "bash scripts/lint.sh",
+    ]);
+    expect(lignes[2]).toHaveTextContent("échouée");
+    expect(lignes[2]).toHaveTextContent("code 1");
+    expect(lignes[2]).toHaveTextContent("app.py:3:1: E302 expected 2 blank lines");
+    // Une vérifiée n'a que sa ligne : ni sa sortie, ni sa raison.
+    expect(lignes[1]).not.toHaveTextContent("6 passed");
+    expect(lignes[1]).not.toHaveTextContent("sans erreur");
+    // Ce qui n'a pas été joué dit pourquoi, en phrase, et ses accents graves sont du code.
+    expect(lignes[0]).toHaveTextContent("à vérifier");
+    expect(lignes[0]).toHaveTextContent("Pas jouée — commande hors de la portée");
+    expect(lignes[0]).toHaveTextContent("hors du dossier du projet");
+    expect(lignes[0].querySelectorAll("code")[1]?.textContent).toBe("pip");
+    expect(lignes[0]).not.toHaveTextContent("`");
+  });
+
+  it("ne rend rien de plus quand l'API ne porte aucun verdict", async () => {
+    render(
+      <EtapeOutillage
+        projet={projetFactice({ origine: "existant" })}
+        onTermine={() => {}}
+      />,
+    );
+
+    await generer();
+
+    await screen.findByText(/2 fichiers écrits/);
+    expect(
+      screen.queryByRole("list", { name: "Verdict de chaque commande" }),
+    ).toBeNull();
+  });
+});
+
 describe("genererOutillage", () => {
   /** La vraie fonction, `fetch` simulé : ce qui compte est le corps envoyé. */
   const corpsEnvoye = async (

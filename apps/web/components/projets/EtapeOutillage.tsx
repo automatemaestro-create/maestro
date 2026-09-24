@@ -72,6 +72,11 @@
  * Un projet versionné y gagne en plus l'accord humain sur la fusion
  * (docs/24 §2.4), et la requête attend cette décision — d'où un bouton qui reste
  * occupé, sans délai annoncé.
+ *
+ * Depuis #1160, la génération **joue** chaque commande avant de l'écrire, dans une
+ * copie du projet : la requête dure donc le temps d'une installation et d'une suite
+ * de tests, et la promesse le dit avant le geste. Le rapport rend ensuite le verdict
+ * de chaque commande, dans la forme retenue sur pièces (`VerificationsOutillage`).
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -109,6 +114,10 @@ import type {
 } from "@/lib/types";
 
 import { refusDepuis, RefusMotive } from "./ExplorateurDossiers";
+import {
+  CompteVerifications,
+  ListeVerifications,
+} from "./VerificationsOutillage";
 
 /**
  * Une entrée recommandée : ce qu'on écrira, **pourquoi**, et d'où ça sort.
@@ -262,16 +271,21 @@ function EnTeteListe({
       <p className="text-annexe text-texte-secondaire">
         Rien n&apos;est écrasé : un fichier déjà là que Maestro n&apos;a pas
         écrit n&apos;est pas touché, et un fichier modifié depuis n&apos;est pas
-        réécrit.
+        réécrit. Chaque commande est jouée dans une copie du projet avant
+        d&apos;être écrite, et son verdict vous sera montré.
       </p>
     </div>
   );
 }
 
-/** Ce que la génération a fait — quatre listes plutôt qu'un « ok » (docs/38 §4.2). */
+/**
+ * Ce que la génération a fait — quatre listes plutôt qu'un « ok » (docs/38 §4.2), et,
+ * depuis #1160, le verdict de chaque commande écrite (`VerificationsOutillage`).
+ */
 function RapportGeneration({ rapport }: { rapport: RapportGenerationOutillage }) {
   const { ecrits, refuses, ignores } = rapport.rapport;
   const inconnus = rapport.retenus_inconnus ?? [];
+  const verifications = rapport.rapport.verifications ?? [];
   return (
     <div className="flex flex-col gap-2">
       <p className="text-corps text-texte">
@@ -327,6 +341,14 @@ function RapportGeneration({ rapport }: { rapport: RapportGenerationOutillage })
         <p className="text-annexe text-alerte-texte" role="alert">
           Rien n&apos;a été écrit : {rapport.rapport.refus}
         </p>
+      )}
+      {/* La variante A de #1160, retenue sur pièces : la liste à plat, dans l'ordre
+          joué, l'échec déployé sur place — voir `VerificationsOutillage`. */}
+      {verifications.length > 0 && (
+        <div className="mt-2 flex flex-col gap-2">
+          <CompteVerifications verifications={verifications} />
+          <ListeVerifications verifications={verifications} />
+        </div>
       )}
     </div>
   );

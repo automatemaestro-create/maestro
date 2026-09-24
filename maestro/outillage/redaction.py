@@ -41,6 +41,13 @@ réel.
    « constaté » irait ouvrir un fichier absent, et `AGENTS.md` est le premier
    fichier qu'il lit. Le registre se décide **une fois**, sur la source
    (`_depuis_les_reponses`), jamais en devinant fichier par fichier.
+5. **Une commande écrite porte son verdict** (#1160). Chaque commande a été jouée
+   avant d'être écrite (`maestro.outillage.verification`), et ce qu'on en sait se
+   lit à côté d'elle, dans `AGENTS.md` comme dans son `SKILL.md` : **vérifiée**,
+   **échouée** — jamais présentée comme une convention qui marche, sa sortie
+   renvoyée au manifeste —, ou **à vérifier** avec la raison. Le verdict entre
+   dans le texte par sa `raison`, qui est déterministe (ni durée ni date) : la
+   propriété 1 tient. Sans verdicts donnés, le texte est celui d'avant, au bit près.
 
 ## Ce que ce module ne décide pas
 
@@ -51,7 +58,7 @@ réel.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -61,6 +68,7 @@ from maestro.outillage.detection import CHEMIN_MANIFESTE
 from maestro.outillage.modele import Commande, Constats, Entree, Recommandation
 from maestro.outillage.questionnaire import SOURCE_CHOIX
 from maestro.outillage.recommandation import DOSSIER_SKILLS, SKILL_PAR_USAGE, USAGES_VERIFICATION
+from maestro.outillage.verification import ECHOUEE, VERIFIEE, Verification
 
 #: Les portées d'un fichier généré (docs/38 §4.1, champ `portee`) : le fichier
 #: entier quand Maestro l'écrit, le seul bloc délimité quand il s'invite dans un
@@ -180,6 +188,7 @@ def rediger(
     *,
     portees: Mapping[str, str] | None = None,
     source: Mapping[str, Any] | None = None,
+    verifications: Sequence[Verification] = (),
 ) -> tuple[Fichier, ...]:
     """Les fichiers à écrire pour l'outillage que `recommandation` retient.
 
@@ -211,18 +220,31 @@ def rediger(
     « constatés » — dans `AGENTS.md` comme dans chaque `SKILL.md` (#1105). Sans
     `source`, le registre est celui d'une analyse : c'est ce que rend une
     rédaction dont personne n'a dit d'où elle sort.
+
+    `verifications` sont les verdicts des commandes, jouées avant d'être écrites
+    (#1160, propriété 5) : chacune est dite à côté de sa commande. Une commande
+    sans verdict est écrite comme avant.
     """
     declarees = portees or {}
     index = _index_des_skills(recommandation)
+    verdicts = _verdicts_par_commande(verifications)
     fichiers: list[Fichier] = []
     for entree in recommandation.entrees:
         declaree = declarees.get(entree.chemin)
         if entree.etat == "deja-present" and declaree is None:
             continue
-        fichier = _fichier(entree, constats, index, declaree, source)
+        fichier = _fichier(entree, constats, index, declaree, source, verdicts)
         if fichier is not None:
             fichiers.append(fichier)
     return tuple(fichiers)
+
+
+def _verdicts_par_commande(verifications: Sequence[Verification]) -> dict[str, Verification]:
+    """Le verdict de chaque commande, par son texte — le premier l'emporte."""
+    verdicts: dict[str, Verification] = {}
+    for verification in verifications:
+        verdicts.setdefault(verification.commande, verification)
+    return verdicts
 
 
 def _fichier(
@@ -231,6 +253,7 @@ def _fichier(
     index: tuple[tuple[str, str], ...],
     declaree: str | None,
     source: Mapping[str, Any] | None = None,
+    verdicts: Mapping[str, Verification] | None = None,
 ) -> Fichier | None:
     """Le fichier que rend une entrée recommandée, ou `None` si son type n'en rend pas.
 
@@ -245,7 +268,7 @@ def _fichier(
             chemin=entree.chemin,
             role="instructions",
             portee=portee,
-            contenu=texte_instructions(constats, index, source),
+            contenu=texte_instructions(constats, index, source, verdicts=verdicts),
         )
     if entree.type == "pont":
         return Fichier(chemin=entree.chemin, role="pont", portee=portee, contenu=TEXTE_PONT)
@@ -254,7 +277,7 @@ def _fichier(
             chemin=entree.chemin,
             role="skill",
             portee=portee,
-            contenu=texte_skill(entree, source=source),
+            contenu=texte_skill(entree, source=source, verdicts=verdicts),
         )
     if entree.type == "script":
         return Fichier(
@@ -334,6 +357,8 @@ def texte_instructions(
     constats: Constats,
     index: tuple[tuple[str, str], ...],
     source: Mapping[str, Any] | None = None,
+    *,
+    verdicts: Mapping[str, Verification] | None = None,
 ) -> str:
     """Le texte d'`AGENTS.md` — les six sections de docs/38 §3.1, dans l'ordre.
 
@@ -347,16 +372,20 @@ def texte_instructions(
     lu, ou impliqué par des réponses. Il se calcule une fois et descend, plutôt
     que d'être relu dans chaque corps — deux lectures du même champ, c'est deux
     occasions de diverger.
+
+    `verdicts` (#1160) — commande → son verdict — met à côté de chaque commande ce
+    que Maestro en a su en la jouant (propriété 5).
     """
     implique = _depuis_les_reponses(source)
+    connus = verdicts or {}
     blocs = [
         "# AGENTS.md",
         "",
         "Les instructions de ce projet, pour tout agent qui y travaille.",
         "",
         *_section("Le projet", _corps_projet(constats, source, implique)),
-        *_section("Monter et lancer", _corps_monter(constats, implique)),
-        *_section("Vérifier", _corps_verifier(constats, implique)),
+        *_section("Monter et lancer", _corps_monter(constats, implique, connus)),
+        *_section("Vérifier", _corps_verifier(constats, implique, connus)),
         *_section("Conventions", _corps_conventions(constats, implique)),
         *_section("L'outillage de ce projet", _corps_outillage(constats, index)),
         *_section("Ce qu'un agent ne touche pas", [f"- {ligne}" for ligne in INTOUCHABLES]),
@@ -458,12 +487,16 @@ def _ligne_origine(source: Mapping[str, Any]) -> str:
     )
 
 
-def _corps_monter(constats: Constats, implique: bool = False) -> list[str]:
+def _corps_monter(
+    constats: Constats,
+    implique: bool = False,
+    verdicts: Mapping[str, Verification] | None = None,
+) -> list[str]:
     """Installer, construire, démarrer — les commandes, avec leur source ou leur attente."""
     lignes = [
-        _ligne_commande(constats, "installer", "Installer les dépendances", implique),
-        _ligne_commande(constats, "construire", "Construire", implique),
-        _ligne_commande(constats, "demarrer", "Démarrer en local", implique),
+        _ligne_commande(constats, "installer", "Installer les dépendances", implique, verdicts),
+        _ligne_commande(constats, "construire", "Construire", implique, verdicts),
+        _ligne_commande(constats, "demarrer", "Démarrer en local", implique, verdicts),
     ]
     presentes = [ligne for ligne in lignes if ligne]
     if not presentes:
@@ -474,12 +507,16 @@ def _corps_monter(constats: Constats, implique: bool = False) -> list[str]:
     return ["Depuis la **racine du projet** :", "", *presentes]
 
 
-def _corps_verifier(constats: Constats, implique: bool = False) -> list[str]:
+def _corps_verifier(
+    constats: Constats,
+    implique: bool = False,
+    verdicts: Mapping[str, Verification] | None = None,
+) -> list[str]:
     """Tests, style, formatage, types — et ce qu'il faut savoir d'une suite partielle."""
     lignes = [
-        _ligne_commande(constats, "tester", "Tests", implique),
+        _ligne_commande(constats, "tester", "Tests", implique, verdicts),
         *(
-            _ligne_commande(constats, usage, libelle, implique)
+            _ligne_commande(constats, usage, libelle, implique, verdicts)
             for usage, libelle in (
                 ("lint", "Style"),
                 ("formater", "Formatage"),
@@ -576,7 +613,11 @@ def _corps_outillage(constats: Constats, index: tuple[tuple[str, str], ...]) -> 
 
 
 def _ligne_commande(
-    constats: Constats, usage: str, libelle: str, implique: bool = False
+    constats: Constats,
+    usage: str,
+    libelle: str,
+    implique: bool = False,
+    verdicts: Mapping[str, Verification] | None = None,
 ) -> str:
     """Une ligne « **Libellé** : `commande` — lu dans `fichier` », ou "" sans constat.
 
@@ -585,11 +626,37 @@ def _ligne_commande(
     le projet n'écrit nulle part. Elle peut donc être fausse sur un projet qui
     fait autrement, et la recopier sans le dire ferait passer une supposition pour
     une lecture.
+
+    Son **verdict** suit la provenance quand la commande a été jouée (#1160) : la
+    provenance dit d'où on la tient, le verdict si elle marche.
     """
     commande = constats.commande_de(usage)
     if commande is None:
         return ""
-    return f"- **{libelle}** : `{commande.commande}` — {_provenance(commande, implique)}."
+    ligne = f"- **{libelle}** : `{commande.commande}` — {_provenance(commande, implique)}."
+    verdict = (verdicts or {}).get(commande.commande)
+    return f"{ligne} {texte_verdict(verdict)}" if verdict is not None else ligne
+
+
+def texte_verdict(verdict: Verification) -> str:
+    """Ce que le texte écrit dit d'une commande jouée — une phrase, déterministe (#1160).
+
+    Trois formes, une par verdict, et l'échec est la seule qui **prévient** : une
+    commande qui a échoué reste écrite — c'est celle que le projet déclare, et un
+    agent doit savoir comment le projet se teste même quand ses tests sont rouges —,
+    mais jamais comme une convention qui marche. Sa sortie n'est pas recopiée ici :
+    elle varie d'un passage à l'autre et casserait la propriété 1 ; elle est au
+    manifeste, qu'on nomme.
+    """
+    raison = verdict.raison.rstrip(". ")
+    if verdict.etat == VERIFIEE:
+        return f"**Vérifiée** quand Maestro a écrit cet outillage : {raison}."
+    if verdict.etat == ECHOUEE:
+        return (
+            f"⚠ **Échouée** quand Maestro a écrit cet outillage : {raison}. Ne la tiens "
+            f"pas pour acquise — sa sortie est gardée dans `{CHEMIN_MANIFESTE}`."
+        )
+    return f"**À vérifier** : {raison}."
 
 
 def _provenance(commande: Commande, implique: bool = False) -> str:
@@ -612,7 +679,12 @@ def _provenance(commande: Commande, implique: bool = False) -> str:
     return f"déclarée dans `{commande.chemin}`{extrait}"
 
 
-def texte_skill(entree: Entree, *, source: Mapping[str, Any] | None = None) -> str:
+def texte_skill(
+    entree: Entree,
+    *,
+    source: Mapping[str, Any] | None = None,
+    verdicts: Mapping[str, Verification] | None = None,
+) -> str:
     """Le `SKILL.md` d'un skill recommandé — frontmatter minimal, puis quoi faire.
 
     Le frontmatter porte les deux champs **requis** par la spécification Agent
@@ -627,6 +699,10 @@ def texte_skill(entree: Entree, *, source: Mapping[str, Any] | None = None) -> s
     `source` décide du registre de la ligne qui nomme l'endroit du skill
     (propriété 4) — « Constaté dans … » pour une analyse, « À créer : … » pour des
     réponses. C'est le seul endroit d'un `SKILL.md` qui parle du disque.
+
+    `verdicts` (#1160) ajoute une section « Ce que Maestro en a vérifié » : le
+    verdict de chaque commande du bloc, dans son ordre. Sans verdict pour aucune
+    d'elles, la section n'existe pas.
     """
     nom = entree.nom
     raison = _raison_stable(entree)
@@ -661,6 +737,17 @@ def texte_skill(entree: Entree, *, source: Mapping[str, Any] | None = None) -> s
                 else f"Constaté dans {endroit}. Si le projet a changé depuis, c'est ce "
                 "fichier qui fait foi, pas celui-ci."
             ),
+        ]
+    connus = verdicts or {}
+    jouees = [
+        (commande, connus[commande]) for commande in entree.commandes if commande in connus
+    ]
+    if jouees:
+        lignes += [
+            "",
+            "## Ce que Maestro en a vérifié",
+            "",
+            *(f"- `{commande}` — {texte_verdict(verdict)}" for commande, verdict in jouees),
         ]
     if _usages_couverts(nom):
         lignes += ["", _rappel_usages(nom)]
