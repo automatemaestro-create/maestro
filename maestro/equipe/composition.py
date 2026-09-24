@@ -144,7 +144,7 @@ Réponds par UN SEUL objet JSON, sans rien autour :
 {
   "roles": [
     {
-      "nom": "identifiant court en minuscules, chiffres et tirets",
+      "nom": "identifiant court en minuscules, chiffres et tirets, autre qu'un rôle type",
       "role": "le libellé du rôle, en quelques mots",
       "competences": ["trois à six tags courts, en minuscules"],
       "raison": "une phrase : pourquoi ce projet appelle ce rôle",
@@ -594,7 +594,7 @@ def _roles_verifies(
         if not competences:
             rejets.append(f"« {libelle} », proposé sans aucune compétence")
             continue
-        nom = _nom_libre(slug or (gabarit.nom if gabarit is not None else "role"), pris)
+        nom = _nom_libre(_nom_de_base(slug, libelle, gabarit), pris)
         pris.append(nom)
         roles.append(
             _role_compose(
@@ -602,6 +602,25 @@ def _roles_verifies(
             )
         )
     return roles, rejets
+
+
+def _nom_de_base(slug: str, libelle: str, gabarit: Gabarit | None) -> str:
+    """Le nom à rendre libre : celui du modèle, sauf s'il est **réservé**.
+
+    Relevé sur la vraie stack : le modèle nomme volontiers un rôle comme l'agent du
+    code dont il descend (`developpeur`, `qa`, `devops`), noms que le dépôt réserve
+    (`NOMS_RESERVES`). Les suffixer donnait `developpeur-2` — libre, mais illisible
+    à l'étape d'équipe. On retombe donc, dans l'ordre, sur le nom du **gabarit**
+    (`dev`, `tests`, `infra` — c'est la raison d'être de `Gabarit.nom`), puis sur le
+    libellé ; le suffixe ne sert qu'en dernier recours.
+    """
+    candidats = (
+        slug,
+        gabarit.nom if gabarit is not None else "",
+        _slug(libelle),
+    )
+    libres = [c for c in candidats if c and c not in NOMS_RESERVES]
+    return libres[0] if libres else (slug or "role")
 
 
 def _role_compose(

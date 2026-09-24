@@ -412,6 +412,35 @@ def test_un_nom_pris_ou_reserve_est_rendu_libre() -> None:
     assert not set(noms) & NOMS_RESERVES
 
 
+@pytest.mark.parametrize(
+    ("nom", "role", "gabarit", "attendu"),
+    [
+        ("developpeur", "Développeur backend Python", "developpeur", "dev"),
+        ("qa", "QA / Testeur", "qa", "tests"),
+        ("devops", "DevOps", "devops", "infra"),
+        ("developpeur", "Développeur mobile", "", "developpeur-mobile"),
+    ],
+)
+def test_un_nom_reserve_retombe_sur_un_nom_parlant_plutot_que_sur_un_suffixe(
+    nom: str, role: str, gabarit: str, attendu: str
+) -> None:
+    """Relevé sur la vraie stack (2026-09-24) : le modèle nomme volontiers un rôle
+    comme l'agent du code dont il descend — `developpeur`, `qa`, `devops` —, noms que
+    le dépôt réserve. Le suffixe les rendait libres mais illisibles
+    (`developpeur-2`). Le rôle prend le nom de son gabarit, ou son libellé."""
+    brut = {
+        "nom": nom,
+        "role": role,
+        "raison": "le projet l'appelle",
+        "gabarit": gabarit,
+        "competences": ["code"],
+    }
+
+    (propose,) = _compose(brut, constats=_constats_mobile()).roles
+
+    assert propose.nom == attendu
+
+
 def test_les_gabarits_non_retenus_sont_ecartes_nommement_sans_promettre_de_geste() -> None:
     """Un gabarit que le modèle n'a pas retenu est nommé, avec la raison qu'il en donne
     — ou une raison qui dit que c'est son jugement. Aucune ne promet un geste (#1159)."""
