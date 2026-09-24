@@ -74,6 +74,7 @@ from pathlib import Path
 from typing import Protocol
 
 from maestro.agents.catalog import Agent
+from maestro.agents.playbook_du_code import registre
 from maestro.controltower.chat import UTILISATEUR, MessageChat, ServiceChat
 from maestro.controltower.state import (
     STATUTS_EXECUTION_TERMINAUX,
@@ -120,6 +121,15 @@ TITRE_LIVRABLE = "Le livrable du run, tel qu'il est sur le disque"
 #: une destination qui peut contenir des espaces, et `apps/web/lib/markdown.ts`
 #: la reconnaît : un chemin de Windows (`C:\\Mes projets\\app.py`) ne se met pas
 #: entre parenthèses nues sans se couper au premier blanc.
+#:
+#: ⚠ Il finit par le **registre** (#945, #1261), servi par sa source unique
+#: (`playbook_du_code.registre()`) comme les autres prompts qui parlent à la
+#: personne. Sans lui, le récit tutoyait : la consigne tutoie le modèle, lui demande
+#: d'écrire « à la deuxième personne », et rien ne lui disait laquelle — il rendait
+#: donc celle dans laquelle on s'adressait à lui, dans un fil qui vouvoie partout
+#: ailleurs. Le filet qui garde qu'aucun prompt de ce genre ne l'oublie est
+#: `tests/test_registre_de_langue.py`, qui range chaque appel au modèle de la
+#: Control Tower.
 SYSTEME = (
     "Tu es l'orchestrateur de Maestro. Un run que cette personne t'a demandé "
     "vient de se terminer, et tu lui écris — dans le fil où elle l'a demandé — "
@@ -143,7 +153,9 @@ SYSTEME = (
     "\n"
     "Pas de salutation, pas de formule de politesse finale, pas de titre de "
     "niveau 1. Ne récite ni le statut, ni le coût, ni l'identifiant du run : "
-    "ils sont déjà affichés juste à côté de ton message."
+    "ils sont déjà affichés juste à côté de ton message.\n"
+    "\n"
+    + registre()
 )
 
 

@@ -22,7 +22,15 @@ produit sert le porte**. Les deux moitiés comptent autant —
   peut pas l'oublier (il porte déjà `{{socle}}`). Trois phrases écrites à trois endroits
   finiraient par en faire trois registres, ce qui est exactement le défaut d'origine ;
 - *tout* : les deux chemins d'exécution des rôles (texte du catalogue, playbook outillé) **et**
-  les trois prompts conversationnels de la Control Tower, qui ne passent par aucun playbook.
+  les prompts conversationnels de la Control Tower, qui ne passent par aucun playbook.
+
+⚠ **« Tout » ne se tient pas par une liste qu'on complète** (#1261). Le récit de fin d'un run
+(#1224) est arrivé après cette suite, a parlé à la personne, et l'a tutoyée : la liste des
+prompts conversationnels ne le comptait pas, et rien ne l'obligeait à le compter. Ce qui
+l'oblige désormais est un balayage des **appels au modèle** de la Control Tower : chacun y est
+inscrit, soit avec le prompt conversationnel qu'il sert, soit avec la raison pour laquelle ce
+qu'il fait écrire ne s'adresse pas à la personne. Un appel neuf non inscrit fait rougir — la
+question se pose donc au moment où l'on écrit l'appel, pas au retex suivant.
 
 ⚠ Ce qui est vérifié ici est que la **consigne** est servie, jamais ce qu'un modèle en fait : le
 registre d'une réponse est du jugement, pas de la plomberie (même partage que l'aveu d'ignorance
@@ -32,6 +40,7 @@ de #748). On peut le lui demander sans ambiguïté, et c'est tout ce qui se test
 from __future__ import annotations
 
 import ast
+import inspect
 import re
 from pathlib import Path
 
@@ -44,6 +53,8 @@ from maestro.controltower.assistance import _PROMPT_ASSISTANCE
 from maestro.controltower.chat import _CADRE_CONVERSATION
 from maestro.controltower.generation_agent import _CADRE_GENERATION
 from maestro.controltower.orchestration import _PROMPT_ORCHESTRATION
+from maestro.controltower.recit import SYSTEME as _SYSTEME_RECIT
+from maestro.providers.base import ModelProvider
 
 #: Les prompts **conversationnels** de la Control Tower : ceux qui parlent à un humain sans
 #: passer par un playbook de rôle, donc sans socle pour leur porter le registre.
@@ -51,6 +62,7 @@ CONVERSATIONNELS = {
     "assistant (#123)": _PROMPT_ASSISTANCE,
     "orchestration (#685)": _PROMPT_ORCHESTRATION,
     "cadre de conversation d'un agent (#85)": _CADRE_CONVERSATION,
+    "récit de fin d'un run (#1224)": _SYSTEME_RECIT,
 }
 
 
@@ -161,6 +173,155 @@ def test_le_generateur_prescrit_le_registre_au_playbook_qu_il_ecrit():
     c'est en conversation directe qu'on le verrait.
     """
     assert "vouvoie l'utilisateur" in _CADRE_GENERATION
+
+
+# --- Aucun appel au modèle n'échappe à la question (#1261) ----------------------------
+#
+# `CONVERSATIONNELS` garde ce qu'il nomme, et ne peut rien pour ce qu'il ne nomme pas : c'est
+# ainsi que le récit de fin (#1224) a tutoyé la personne dans un fil qui la vouvoie. Le filet
+# part donc de l'autre bout — de chaque endroit où la Control Tower **fait écrire un modèle** —
+# et exige que chacun ait été rangé d'un côté ou de l'autre.
+
+#: Les appels au modèle qui font écrire **à la personne**, chacun avec le prompt de
+#: `CONVERSATIONNELS` qu'il sert. Clé : `<module>::<fonction englobante>`.
+APPELS_CONVERSATIONNELS = {
+    "assistance_documentee.py::RepondeurAssistanceDocumentee._appeler": "assistant (#123)",
+    "chat.py::RepondeurModele.repondre": "cadre de conversation d'un agent (#85)",
+    "chat.py::RepondeurModele.produire": "cadre de conversation d'un agent (#85)",
+    "orchestration.py::RepondeurOrchestration._juger": "orchestration (#685)",
+    "recit.py::RedacteurModele.rediger": "récit de fin d'un run (#1224)",
+}
+
+#: Les appels au modèle dont ce qu'ils font écrire ne s'adresse **pas** à la personne, chacun
+#: avec sa raison. Une entrée de plus se justifie, elle ne s'ajoute pas : si la réponse du
+#: modèle finit dans un fil, sous les yeux de quelqu'un, l'appel est conversationnel.
+APPELS_HORS_CONVERSATION = {
+    "orchestration.py::RepondeurOrchestration._demandes": (
+        "le tour de lecture (#1223) : des lignes de demande ou `RIEN`, que le code exécute "
+        "et que personne ne lit"
+    ),
+    "generation_agent.py::GenerateurDefinitionAgent._generer": (
+        "écrit le playbook d'un agent, qui prescrit lui-même le registre "
+        "(`test_le_generateur_prescrit_le_registre_au_playbook_qu_il_ecrit`)"
+    ),
+    "auto_amelioration.py::_AppelModele._generer": (
+        "réécrit un playbook — un document proposé en brouillon, pas une réponse dans un fil"
+    ),
+}
+
+
+def _points_d_entree_du_modele() -> frozenset[str]:
+    """Les méthodes du fournisseur qui font écrire un modèle sous un prompt système.
+
+    **Dérivées** de `ModelProvider`, jamais listées : une méthode d'appel ajoutée à la
+    frontière entre d'office dans le balayage, et c'est la frontière qui dit ce qu'est un
+    appel au modèle — pas ce test.
+    """
+    return frozenset(
+        nom
+        for nom, membre in inspect.getmembers(ModelProvider, inspect.isfunction)
+        if "system_prompt" in inspect.signature(membre).parameters
+    )
+
+
+def _appels_au_modele(source: str, points: frozenset[str]) -> set[str]:
+    """Les fonctions d'un module qui appellent le modèle, en `Classe.methode` englobante.
+
+    L'**AST**, pas les lignes : un `generate(` de docstring ou de commentaire n'appelle
+    rien. La clé est la fonction englobante et non la ligne, qui bouge à chaque retouche du
+    module ; deux appels dans la même fonction (le bloc et le flux d'un même répondeur) y
+    servent le même prompt, et ne font qu'une entrée.
+    """
+    trouves: set[str] = set()
+
+    def descendre(noeud: ast.AST, chemin: tuple[str, ...]) -> None:
+        for enfant in ast.iter_child_nodes(noeud):
+            if isinstance(enfant, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
+                descendre(enfant, (*chemin, enfant.name))
+                continue
+            if (
+                isinstance(enfant, ast.Call)
+                and isinstance(enfant.func, ast.Attribute)
+                and enfant.func.attr in points
+            ):
+                trouves.add(".".join(chemin) or "<module>")
+            descendre(enfant, chemin)
+
+    descendre(ast.parse(source), ())
+    return trouves
+
+
+def _appels_de_la_control_tower() -> set[str]:
+    points = _points_d_entree_du_modele()
+    racine = _RACINE / "maestro" / "controltower"
+    return {
+        f"{chemin.relative_to(racine).as_posix()}::{fonction}"
+        for chemin in sorted(racine.rglob("*.py"))
+        for fonction in _appels_au_modele(chemin.read_text(encoding="utf-8"), points)
+    }
+
+
+def test_le_balayage_connait_les_points_d_entree_du_modele():
+    # Si la dérivation ne trouvait plus rien, le balayage passerait à vide — et en silence.
+    assert {"generate", "generate_stream", "run_agent"} <= _points_d_entree_du_modele()
+
+
+def test_le_balayage_voit_un_appel_au_modele_et_ignore_sa_mention():
+    """Le motif prouvé sur un échantillon fautif avant de balayer le dépôt.
+
+    Le fautif est la forme exacte du défaut de #1261 : une méthode de rédacteur qui fait
+    écrire le modèle. L'innocent en a les mots — dans une docstring, un commentaire, une
+    chaîne — sans appeler quoi que ce soit.
+    """
+    fautif = (
+        "class Redacteur:\n"
+        "    async def rediger(self, provider):\n"
+        "        return await provider.generate('x', model='m', system_prompt=SYSTEME)\n"
+        "async def libre(p):\n"
+        "    async for m in p.generate_stream('x', model='m'):\n"
+        "        pass\n"
+    )
+    innocent = (
+        "class Redacteur:\n"
+        "    async def rediger(self, provider):\n"
+        "        '''Appelle provider.generate(prompt, system_prompt=SYSTEME).'''\n"
+        "        # provider.generate(...) plus tard\n"
+        "        return 'generate'\n"
+    )
+    points = _points_d_entree_du_modele()
+    assert _appels_au_modele(fautif, points) == {"Redacteur.rediger", "libre"}
+    assert _appels_au_modele(innocent, points) == set()
+
+
+def test_chaque_appel_au_modele_de_la_control_tower_est_range():
+    """Tout endroit qui fait écrire un modèle dit s'il parle à la personne (#1261).
+
+    Dans les deux sens : un appel **neuf** non rangé fait rougir, et une entrée qui ne
+    correspond plus à aucun appel aussi — une inscription qui survit à son appel
+    protège autre chose que ce qu'elle nomme.
+    """
+    ranges = set(APPELS_CONVERSATIONNELS) | set(APPELS_HORS_CONVERSATION)
+    trouves = _appels_de_la_control_tower()
+    neufs = sorted(trouves - ranges)
+    assert not neufs, (
+        "appel au modèle non rangé — s'il fait écrire à la personne, son prompt sert "
+        "`registre()` et il entre dans APPELS_CONVERSATIONNELS ; sinon, sa raison entre "
+        "dans APPELS_HORS_CONVERSATION :\n" + "\n".join(neufs)
+    )
+    assert not sorted(ranges - trouves), "entrée sans appel : " + ", ".join(
+        sorted(ranges - trouves)
+    )
+
+
+def test_un_appel_ne_se_range_pas_des_deux_cotes():
+    assert not set(APPELS_CONVERSATIONNELS) & set(APPELS_HORS_CONVERSATION)
+
+
+@pytest.mark.parametrize("appel", sorted(APPELS_CONVERSATIONNELS))
+def test_chaque_appel_conversationnel_sert_un_prompt_garde(appel):
+    # Le lien qui fait de l'inventaire autre chose qu'une liste de noms : l'appel nomme le
+    # prompt, et le prompt est éprouvé plus haut (`test_chaque_prompt_conversationnel_…`).
+    assert APPELS_CONVERSATIONNELS[appel] in CONVERSATIONNELS
 
 
 # --- Ce que la composition ne doit pas casser -----------------------------------------
