@@ -384,28 +384,31 @@ class _Arbre:
                 start_new_session=True,
             )
             return cls(process, None)
-        process = subprocess.Popen(  # noqa: S603 - argv construit ici
-            list(argv),
-            cwd=cwd,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            env=env,
-            creationflags=(
-                subprocess.CREATE_NO_WINDOW
-                | subprocess.CREATE_NEW_PROCESS_GROUP
-                | _CREATE_SUSPENDED
-            ),
-        )
-        try:
-            job = _ranger_puis_reprendre(process.pid)
-        except OSError:
-            # Une commande qu'on ne peut pas relâcher ne rendrait jamais la main :
-            # elle est arrêtée tout de suite, et l'appelant en fait un verdict.
-            process.kill()
-            process.wait()
-            raise
-        return cls(process, job)
+        else:
+            # Le `else` explicite : mypy n'écarte une branche de plateforme que dans
+            # un `if`/`else`, jamais après un `return` — sous Linux, ces noms n'existent pas.
+            process = subprocess.Popen(  # noqa: S603 - argv construit ici
+                list(argv),
+                cwd=cwd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                env=env,
+                creationflags=(
+                    subprocess.CREATE_NO_WINDOW
+                    | subprocess.CREATE_NEW_PROCESS_GROUP
+                    | _CREATE_SUSPENDED
+                ),
+            )
+            try:
+                job = _ranger_puis_reprendre(process.pid)
+            except OSError:
+                # Une commande qu'on ne peut pas relâcher ne rendrait jamais la main :
+                # elle est arrêtée tout de suite, et l'appelant en fait un verdict.
+                process.kill()
+                process.wait()
+                raise
+            return cls(process, job)
 
     def arreter(self) -> None:
         """Arrête la commande **et sa descendance** — jamais elle seule (#291)."""
@@ -415,15 +418,16 @@ class _Arbre:
             except (OSError, ProcessLookupError):
                 pass
             return
-        if self._job is not None and _terminer_job(self._job):
-            return
-        # Sans job (refusé par le système) : l'arbre des parents, faute de mieux.
-        subprocess.run(  # noqa: S603 - argv fixe, aucun shell
-            ["taskkill", "/PID", str(self.process.pid), "/T", "/F"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
+        else:
+            if self._job is not None and _terminer_job(self._job):
+                return
+            # Sans job (refusé par le système) : l'arbre des parents, faute de mieux.
+            subprocess.run(  # noqa: S603 - argv fixe, aucun shell
+                ["taskkill", "/PID", str(self.process.pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
 
     def fermer(self) -> None:
         """Rend la poignée du job et le tube de sortie — ce qui vit encore meurt avec."""
