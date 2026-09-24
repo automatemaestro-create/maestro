@@ -4,9 +4,19 @@ Le maillon qui fait **entrer** les sources dans le contexte. Lot 1 (#315) les a
 déclarées, typées, résolues et plafonnées **en octets** ; personne ne les lisait.
 Ici elles deviennent du texte — et le cadrage veut ce texte **modeste et
 éprouvé** ([docs/24 §3.2](../../docs/24-projets-locaux-et-poste-de-travail.md)) :
-`.md`/`.txt` directement, `.docx`/`.pdf` par convertisseur, **tout ramené à du
-Markdown**. Un seul format en aval, donc un seul format à tracer, à masquer
-(`redact_secrets`) et à chiffrer en tokens.
+**tout ramené à du Markdown**. Un seul format en aval, donc un seul format à
+tracer, à masquer (`redact_secrets`) et à chiffrer en tokens.
+
+**Quel qu'en soit le format** depuis #1163, et sans liste d'extensions : c'est le
+**contenu** qui décide. Des octets de texte se lisent comme du texte — Markdown,
+JSON, YAML, CSV, code, sans extension —, une page `.html` est ramenée au texte
+(`html_en_texte`), un `.docx`, un `.pdf` et un classeur `.xlsx` passent par leur
+convertisseur, et une image — reconnue à sa signature — est **regardée par le
+modèle** (`maestro.sources.images`), qui en rend le Markdown. Ce qui reste est
+réellement illisible (un binaire opaque, une image trop grosse ou qu'aucun
+modèle ne peut regarder) et se **nomme avec sa raison**. Lire davantage n'ouvre
+pas la porte aux secrets : un fichier qui en porte (`porte_des_secrets`, la règle
+du masquage du projet) n'entre jamais dans le contexte d'un modèle.
 
 Trois principes, et ce sont eux qui décident du reste.
 
@@ -65,17 +75,28 @@ par le brief (#318). Il est mergeable seul.
 
 from __future__ import annotations
 
+import codecs
+import datetime
 import math
 import re
 import urllib.request
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
+from functools import partial
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
 from maestro.projets.modele import Perimetre
 from maestro.projets.perimetre import motifs_compiles
+from maestro.projets.secrets import porte_des_secrets
+from maestro.sources.images import (
+    MOTIF_VISION_INDISPONIBLE,
+    ImageNonVue,
+    LecteurImagesModele,
+    LireImage,
+    type_image,
+)
 from maestro.sources.modele import (
     TYPE_DOSSIER,
     TYPE_FICHIER,
@@ -97,11 +118,36 @@ ETAT_IGNORE = "ignore"
 #: trace que personne n'ouvre.
 ETATS: tuple[str, ...] = (ETAT_LU, ETAT_TRONQUE, ETAT_IGNORE)
 
-#: Extensions lues **directement** : leur contenu est déjà du texte.
-EXTENSIONS_TEXTE: frozenset[str] = frozenset({".md", ".markdown", ".txt", ".text"})
+#: Extensions passant par un **convertisseur** (cf. `_CONVERTISSEURS`) : des
+#: formats dont les octets ne sont pas du texte, mais dont on sait extraire le
+#: contenu. Ce n'est **pas** la liste de ce qui se lit (#1163) : tout fichier dont
+#: les octets sont du texte se lit sans y figurer, et une image se reconnaît à sa
+#: signature (`maestro.sources.images.type_image`).
+EXTENSIONS_CONVERTIES: frozenset[str] = frozenset({".docx", ".pdf", ".xlsx", ".xlsm"})
 
-#: Extensions passant par un **convertisseur** (cf. `_CONVERTISSEURS`).
-EXTENSIONS_CONVERTIES: frozenset[str] = frozenset({".docx", ".pdf"})
+#: Extensions d'une page enregistrée : son texte se lit, ramené par
+#: `html_en_texte` comme celui d'une page récupérée — du balisage dans le
+#: contexte, c'est du budget dépensé en chevrons. Sur l'**extension** et non sur
+#: le contenu : un Markdown qui cite `<html>` dans un exemple ne doit pas se faire
+#: convertir (même borne que `_ressemble_a_du_html`).
+EXTENSIONS_HTML: frozenset[str] = frozenset({".html", ".htm", ".xhtml"})
+
+#: Ce qu'on regarde d'un fichier pour décider s'il est du texte : ses premiers
+#: octets, comme `git` — un octet nul y signe un binaire. Au-delà, un binaire
+#: sans octet nul est une rareté, et le lire coûterait au pire des tokens, jamais
+#: une fuite (les porteurs de secrets sont écartés avant).
+OCTETS_SONDE = 8000
+
+#: Les marques d'ordre d'octets des encodages **larges** : un texte UTF-16 ou
+#: UTF-32 (ce qu'écrit la redirection de PowerShell) porte des octets nuls sans
+#: être un binaire. UTF-32 d'abord : sa marque petit-boutiste commence par celle
+#: d'UTF-16.
+_MARQUES_LARGES: tuple[tuple[bytes, str], ...] = (
+    (codecs.BOM_UTF32_LE, "utf-32"),
+    (codecs.BOM_UTF32_BE, "utf-32"),
+    (codecs.BOM_UTF16_LE, "utf-16"),
+    (codecs.BOM_UTF16_BE, "utf-16"),
+)
 
 #: Les deux schémas qu'une source `url` peut porter — même filtre que
 #: `maestro.references` et que la résolution (#315), et pour la même raison :
@@ -144,13 +190,22 @@ class GardeFousExtraction:
       qu'un fichier énorme ne soit pas d'abord chargé en mémoire pour être
       ensuite tronqué ;
     - `nb_max_fichiers_dossier` — un dossier de références est une source, pas
-      une arborescence à aspirer.
+      une arborescence à aspirer ;
+    - `images_max` (#1163) — combien d'images on montre au modèle pour une même
+      lecture. Chacune est un **appel au modèle**, payé au moment où la source
+      est lue, donc avant que le run n'ait de budget où se ranger (ENF-07) ; et
+      un dossier de maquettes en porte vite plus qu'un brief n'en demande. Les
+      suivantes se nomment (`images-plafond`), elles ne disparaissent pas.
+
+    Une image, elle, ne se tronque pas : au-delà de `octets_max_lus`, elle n'est
+    pas envoyée du tout, et le rapport le dit (`trop-volumineux`).
     """
 
     tokens_max_source: int | None = 20_000
     tokens_max_total: int | None = 60_000
     octets_max_lus: int | None = 4 * 1024 * 1024
     nb_max_fichiers_dossier: int | None = 50
+    images_max: int | None = 20
 
     def __post_init__(self) -> None:
         for nom, valeur in (
@@ -158,6 +213,7 @@ class GardeFousExtraction:
             ("tokens_max_total", self.tokens_max_total),
             ("octets_max_lus", self.octets_max_lus),
             ("nb_max_fichiers_dossier", self.nb_max_fichiers_dossier),
+            ("images_max", self.images_max),
         ):
             if valeur is not None and valeur <= 0:
                 raise ValueError(f"{nom} doit être > 0 (reçu : {valeur}).")
@@ -177,10 +233,11 @@ class Lecture:
       marqueur de troncature à sa fin : ce qui manque doit se voir dans le
       contexte lui-même, pas seulement dans le rapport ;
     - `ignore` — `markdown` est vide et `motif` porte un **code stable et court**
-      (`format-non-gere`, `convertisseur-absent`, `source-absente`,
-      `budget-epuise`…), `message` la phrase lisible. Même contrat que
-      `SourceRefusee` (#315) : un code que l'UI sait traduire, un message qu'un
-      humain sait lire.
+      (`binaire-opaque`, `convertisseur-absent`, `source-absente`, `secret`,
+      `vision-indisponible`, `budget-epuise`…), `message` la phrase lisible. Même
+      contrat que `SourceRefusee` (#315) : un code que l'UI sait traduire, un
+      message qu'un humain sait lire. (`format-non-gere` n'est plus émis depuis
+      #1163 ; un rapport persisté qui le porte se relit tel quel.)
 
     `entrees` porte les lectures **filles** d'une source `dossier` — une par
     fichier parcouru, avec son propre état. C'est ce qui fait qu'un `.png` posé
@@ -379,6 +436,7 @@ def extraire_sources(
     garde_fous: GardeFousExtraction | None = None,
     perimetre: Perimetre | None = None,
     recuperer_url: Callable[[str], str] | None = None,
+    lire_image: LireImage | None = None,
 ) -> RapportLecture:
     """Le rapport de lecture de `sources` — **une `Lecture` par source**, dans l'ordre.
 
@@ -396,10 +454,18 @@ def extraire_sources(
     `recuperer_url` permet d'injecter la récupération réseau (par défaut
     `recuperer_url_http`) : c'est ce qui rend ce module testable **sans réseau**,
     comme l'exige `tests/conftest.py` (#195).
+
+    `lire_image` (#1163) est le modèle qui **regarde** les images
+    (`maestro.sources.images`). Il n'a **pas** de défaut ici, à dessein : regarder
+    est un appel au modèle, et une lecture qui ne l'a pas demandé — le livrable
+    d'un run relu pour son récit (#1224), par exemple — ne doit pas se mettre à
+    le payer. Sans lui, une image ressort « non regardée » avec sa raison, jamais
+    tue. La lecture des services, elle, le branche (`lecteur_par_defaut`).
     """
     garde_fous = garde_fous if garde_fous is not None else GardeFousExtraction()
     perimetre = perimetre if perimetre is not None else Perimetre()
     recuperer = recuperer_url if recuperer_url is not None else recuperer_url_http
+    regard = _Regard(lire=lire_image, plafond=garde_fous.images_max)
 
     lectures: list[Lecture] = []
     consomme = 0
@@ -415,10 +481,23 @@ def extraire_sources(
             perimetre=perimetre,
             recuperer_url=recuperer,
             restant=restant,
+            regard=regard,
         )
         consomme += lecture.tokens
         lectures.append(lecture)
     return RapportLecture(lectures=tuple(lectures))
+
+
+def lecteur_par_defaut() -> Callable[[Sequence[Source]], RapportLecture]:
+    """La lecture des services : `extraire_sources`, les images montrées au modèle du poste.
+
+    C'est ce que lisent le fil (`ServiceChat`) et le lancement d'un run
+    (`ServiceExecutions`) quand rien d'autre n'est injecté — les deux portes par
+    lesquelles une source rejoint un brief. Un **seul** lecteur d'images par
+    service, construit ici : sa résolution paresseuse du fournisseur (#1163) se
+    fait une fois, à la première image, et pas à chaque message.
+    """
+    return partial(extraire_sources, lire_image=LecteurImagesModele())
 
 
 def contexte_markdown(rapport: RapportLecture, *, titre: str = "Sources fournies") -> str:
@@ -513,6 +592,7 @@ def _extraire_une(
     perimetre: Perimetre,
     recuperer_url: Callable[[str], str],
     restant: int | None,
+    regard: _Regard,
 ) -> Lecture:
     """La lecture d'une source, aiguillée par son type."""
     if source.type == TYPE_URL:
@@ -520,9 +600,11 @@ def _extraire_une(
             source, garde_fous=garde_fous, recuperer_url=recuperer_url, restant=restant
         )
     if source.type == TYPE_DOSSIER:
-        return _lire_dossier(source, garde_fous=garde_fous, perimetre=perimetre, restant=restant)
+        return _lire_dossier(
+            source, garde_fous=garde_fous, perimetre=perimetre, restant=restant, regard=regard
+        )
     if source.type == TYPE_FICHIER:
-        return _lire_fichier_source(source, garde_fous=garde_fous, restant=restant)
+        return _lire_fichier_source(source, garde_fous=garde_fous, restant=restant, regard=regard)
     return _ignoree(
         source,
         "type-inconnu",
@@ -531,7 +613,7 @@ def _extraire_une(
 
 
 def _lire_fichier_source(
-    source: Source, *, garde_fous: GardeFousExtraction, restant: int | None
+    source: Source, *, garde_fous: GardeFousExtraction, restant: int | None, regard: _Regard
 ) -> Lecture:
     """La lecture d'une source `fichier` — son chemin résolu par #315."""
     chemin = Path(source.chemin) if source.chemin else None
@@ -543,6 +625,8 @@ def _lire_fichier_source(
         type_source=source.type,
         garde_fous=garde_fous,
         restant=restant,
+        regard=regard,
+        racine=chemin.parent,
     )
 
 
@@ -553,11 +637,20 @@ def _lire_fichier(
     type_source: str,
     garde_fous: GardeFousExtraction,
     restant: int | None,
+    regard: _Regard,
+    racine: Path,
 ) -> Lecture:
     """La lecture d'un fichier du disque, quel que soit ce qui l'a désigné.
 
     Partagée par la source `fichier` et par chaque entrée d'une source `dossier` :
-    c'est le même travail, et deux copies divergeraient sur la liste des formats.
+    c'est le même travail, et deux copies divergeraient sur ce qui se lit.
+
+    L'aiguillage se fait **sur le contenu** (#1163), dans cet ordre : un porteur de
+    secrets n'est jamais ouvert ; un format à convertisseur passe par lui ; sinon
+    les octets décident — une signature d'image part au modèle qui regarde, un
+    octet nul signe un binaire opaque, et tout le reste est du texte (une page
+    `.html` ramenée au sien). `racine` est ce contre quoi se juge un dossier
+    `secrets/` : celle du dossier parcouru, ou le dossier du fichier.
     """
     if not chemin.is_file():
         return Lecture(
@@ -567,20 +660,54 @@ def _lire_fichier(
             motif="source-absente",
             message=f"Fichier introuvable ou illisible : {chemin.name}.",
         )
-    extension = chemin.suffix.lower()
-    if extension not in EXTENSIONS_TEXTE and extension not in EXTENSIONS_CONVERTIES:
+    if porte_des_secrets(chemin, racine):
+        # Avant toute ouverture : la règle est celle du masquage du projet
+        # (`maestro.projets.secrets`), et lire tous les formats ne doit pas
+        # rouvrir ce que la liste d'extensions fermait par accident.
         return Lecture(
             nom=nom,
             type=type_source,
             etat=ETAT_IGNORE,
-            motif="format-non-gere",
+            motif="secret",
             message=(
-                f"Format {extension or '(sans extension)'} non géré — "
-                f"formats lus : {', '.join(sorted(EXTENSIONS_TEXTE | EXTENSIONS_CONVERTIES))}."
+                f"{chemin.name} porte des secrets (fichier d'environnement, de "
+                "jetons ou de clés) : il n'entre jamais dans le contexte d'un modèle."
             ),
         )
+    extension = chemin.suffix.lower()
     try:
-        texte, tronque_octets = _texte_du_fichier(chemin, extension, garde_fous)
+        if extension in _CONVERTISSEURS:
+            texte, tronque_octets = _CONVERTISSEURS[extension](chemin, garde_fous.octets_max_lus)
+        else:
+            brut, tronque_octets = _octets_bornes(chemin, garde_fous.octets_max_lus)
+            type_media = type_image(brut[:16])
+            if type_media is not None:
+                return _lire_image(
+                    brut,
+                    chemin=chemin,
+                    nom=nom,
+                    type_source=type_source,
+                    type_media=type_media,
+                    entiere=not tronque_octets,
+                    garde_fous=garde_fous,
+                    restant=restant,
+                    regard=regard,
+                )
+            if _est_binaire(brut[:OCTETS_SONDE]):
+                return Lecture(
+                    nom=nom,
+                    type=type_source,
+                    etat=ETAT_IGNORE,
+                    motif="binaire-opaque",
+                    message=(
+                        f"Fichier binaire ({extension or 'sans extension'}) : ni texte, ni "
+                        "image, ni document que la lecture sait convertir "
+                        f"({', '.join(sorted(EXTENSIONS_CONVERTIES))}) — {chemin.name}."
+                    ),
+                )
+            texte = _decoder(brut)
+            if extension in EXTENSIONS_HTML:
+                texte = html_en_texte(texte)
     except _ConvertisseurAbsent as exc:
         return Lecture(
             nom=nom,
@@ -620,12 +747,105 @@ def _lire_fichier(
     )
 
 
+@dataclass
+class _Regard:
+    """Le modèle qui regarde les images d'une lecture, et ce qu'il en a déjà vu (#1163).
+
+    Mutable **à dessein**, et le seul état de ce module : le plafond d'images vaut
+    pour toute une lecture, dossiers compris, donc son compte doit traverser les
+    sources — exactement comme le budget de tokens, qui voyage lui en argument
+    parce qu'il se déduit des lectures déjà rendues.
+    """
+
+    lire: LireImage | None
+    plafond: int | None
+    vues: int = 0
+
+
+def _lire_image(
+    brut: bytes,
+    *,
+    chemin: Path,
+    nom: str,
+    type_source: str,
+    type_media: str,
+    entiere: bool,
+    garde_fous: GardeFousExtraction,
+    restant: int | None,
+    regard: _Regard,
+) -> Lecture:
+    """La lecture d'une image : ce que le modèle y voit, ou la raison pour laquelle il n'a rien vu.
+
+    Quatre raisons de ne pas regarder, et chacune se dit : l'image dépasse les
+    octets lus (elle ne se lit pas en partie), aucun modèle n'est branché sur
+    cette lecture, le plafond d'images est atteint, ou le lecteur refuse
+    (`ImageNonVue`, avec son motif). Un modèle qui **échoue** en regardant est
+    une cinquième ligne, `vision-en-echec`, qui n'emporte pas les sources
+    suivantes.
+    """
+
+    def non_vue(motif: str, message: str) -> Lecture:
+        return Lecture(nom=nom, type=type_source, etat=ETAT_IGNORE, motif=motif, message=message)
+
+    if not entiere:
+        return non_vue(
+            "trop-volumineux",
+            f"Image de {_taille_lisible(chemin.stat().st_size)} : une image ne se lit pas en "
+            f"partie, et {chemin.name} dépasse les "
+            f"{_taille_lisible(garde_fous.octets_max_lus or 0)} que la lecture accepte.",
+        )
+    if regard.lire is None:
+        return non_vue(
+            MOTIF_VISION_INDISPONIBLE,
+            f"Image non regardée : aucun modèle capable de voir n'est branché sur cette "
+            f"lecture ({chemin.name}).",
+        )
+    if regard.plafond is not None and regard.vues >= regard.plafond:
+        return non_vue(
+            "images-plafond",
+            f"Plafond de {regard.plafond} images montrées au modèle atteint : "
+            f"{chemin.name} n'a pas été regardée.",
+        )
+    regard.vues += 1
+    try:
+        texte = regard.lire(brut, type_media, nom)
+    except ImageNonVue as exc:
+        return non_vue(exc.motif, str(exc))
+    except Exception as exc:  # noqa: BLE001 — un modèle en panne n'emporte pas la lecture
+        # Même régime qu'un convertisseur tiers : le lecteur est injectable et
+        # lève ce que son fournisseur lève (CLI mort, endpoint qui refuse l'image,
+        # délai). La cause est dite en une ligne ; la trace n'a pas sa place dans
+        # un rapport montré à la personne.
+        cause = " ".join(str(exc).split())[:200]
+        return non_vue(
+            "vision-en-echec",
+            f"Image non regardée ({type(exc).__name__}){f' : {cause}' if cause else ''}.",
+        )
+    if not texte.strip():
+        return non_vue("sans-texte", f"Le modèle n'a rien rendu de {chemin.name}.")
+    return _bornee(
+        _ENTETE_IMAGE + texte.strip(),
+        nom=nom,
+        type_source=type_source,
+        garde_fous=garde_fous,
+        restant=restant,
+    )
+
+
+def _taille_lisible(octets: int) -> str:
+    """Une taille en Kio ou Mio — la même unité que les plafonds qu'elle côtoie."""
+    if octets < 1024 * 1024:
+        return f"{octets / 1024:.0f} Kio"
+    return f"{octets / (1024 * 1024):.1f} Mio"
+
+
 def _lire_dossier(
     source: Source,
     *,
     garde_fous: GardeFousExtraction,
     perimetre: Perimetre,
     restant: int | None,
+    regard: _Regard,
 ) -> Lecture:
     """La lecture d'une source `dossier` : ses fichiers, **selon son périmètre**.
 
@@ -636,8 +856,8 @@ def _lire_dossier(
     projet, et deux moteurs de motifs divergeraient (c'est déjà arrivé, #226).
 
     Le dossier rend **une lecture par fichier** dans `entrees` : c'est ce qui fait
-    qu'un format non géré posé au milieu des maquettes se voit, au lieu de
-    disparaître dans un décompte.
+    qu'un binaire posé au milieu des maquettes se voit, au lieu de disparaître
+    dans un décompte.
     """
     racine = Path(source.chemin) if source.chemin else None
     nom = source.nom or (racine.name if racine else "")
@@ -683,6 +903,8 @@ def _lire_dossier(
             type_source=source.type,
             garde_fous=garde_fous,
             restant=restant_fichier,
+            regard=regard,
+            racine=racine,
         )
         consomme += entree.tokens
         entrees.append(entree)
@@ -803,23 +1025,30 @@ def _parcourir(racine: Path, exclus: tuple[re.Pattern[str], ...]) -> Iterator[tu
                 yield relatif, entree
 
 
-def _texte_du_fichier(
-    chemin: Path, extension: str, garde_fous: GardeFousExtraction
-) -> tuple[str, bool]:
-    """Le texte brut d'un fichier et le fait qu'on l'ait coupé **en octets**.
+def _octets_bornes(chemin: Path, plafond: int | None) -> tuple[bytes, bool]:
+    """Les octets d'un fichier, coupés à `plafond`, et le fait qu'on les ait coupés.
 
-    La coupe en octets a lieu avant toute mesure : un `.txt` de 10 Mio ne doit
-    pas être d'abord chargé entier en mémoire pour être ensuite tronqué à
-    quelques milliers de tokens.
+    La coupe a lieu avant toute mesure : un `.txt` de 10 Mio ne doit pas être
+    d'abord chargé entier en mémoire pour être ensuite tronqué à quelques milliers
+    de tokens. Un octet de plus que le plafond est lu, de quoi **savoir** qu'il y
+    en avait davantage.
     """
-    if extension in EXTENSIONS_CONVERTIES:
-        return _CONVERTISSEURS[extension](chemin), False
-    plafond = garde_fous.octets_max_lus
     with chemin.open("rb") as fichier:
         brut = fichier.read(plafond + 1) if plafond is not None else fichier.read()
     if plafond is not None and len(brut) > plafond:
-        return _decoder(brut[:plafond]), True
-    return _decoder(brut), False
+        return brut[:plafond], True
+    return brut, False
+
+
+def _est_binaire(debut: bytes) -> bool:
+    """Les premiers octets d'un fichier signent-ils un binaire ? Un octet nul, comme `git`.
+
+    Sauf derrière une marque d'encodage large : un texte UTF-16 porte un octet nul
+    sur deux sans cesser d'être un texte.
+    """
+    if any(debut.startswith(marque) for marque, _ in _MARQUES_LARGES):
+        return False
+    return b"\x00" in debut
 
 
 def _decoder(brut: bytes) -> str:
@@ -827,8 +1056,14 @@ def _decoder(brut: bytes) -> str:
 
     `utf-8-sig` (la BOM de Windows est retirée plutôt que rendue en `\\ufeff` au
     premier caractère) et `errors="replace"` : une coupe en plein caractère
-    multi-octets est la règle, pas l'exception, quand on tronque en octets.
+    multi-octets est la règle, pas l'exception, quand on tronque en octets. Une
+    marque UTF-16 ou UTF-32 fait décoder dans son encodage (#1163) : c'est ce
+    qu'écrit une redirection PowerShell, et le lire en UTF-8 rendrait un
+    caractère sur deux illisible.
     """
+    for marque, encodage in _MARQUES_LARGES:
+        if brut.startswith(marque):
+            return brut.decode(encodage, errors="replace")
     return brut.decode("utf-8-sig", errors="replace")
 
 
@@ -1042,13 +1277,15 @@ class _HtmlVersTexte(HTMLParser):
         return re.sub(r"\n{3,}", "\n\n", brut).strip()
 
 
-def _convertir_docx(chemin: Path) -> str:
+def _convertir_docx(chemin: Path, _plafond: int | None) -> tuple[str, bool]:
     """Un `.docx` en Markdown : titres, paragraphes, tableaux (python-docx).
 
     Les styles « Heading N » de Word deviennent des `#` : c'est la seule
     structure qu'un cahier des charges porte vraiment, et c'est celle qui aide un
     modèle à situer un passage. Le reste (gras, couleurs, images) tombe — le
     format unique voulu par [docs/24 §3.2] est du Markdown, pas une reproduction.
+    Le document est lu entier : un traitement de texte tient dans la mémoire, et
+    c'est le plafond de tokens qui le coupe ensuite.
     """
     try:
         import docx
@@ -1069,7 +1306,7 @@ def _convertir_docx(chemin: Path) -> str:
             cellules = [cellule.text.strip().replace("|", "\\|") for cellule in rangee.cells]
             if any(cellules):
                 lignes.append("| " + " | ".join(cellules) + " |")
-    return "\n\n".join(lignes)
+    return "\n\n".join(lignes), False
 
 
 def _niveau_de_titre(style: str) -> int:
@@ -1083,7 +1320,7 @@ def _niveau_de_titre(style: str) -> int:
     return min(int(correspondance.group(1)), 6) if correspondance else 0
 
 
-def _convertir_pdf(chemin: Path) -> str:
+def _convertir_pdf(chemin: Path, _plafond: int | None) -> tuple[str, bool]:
     """Un `.pdf` en Markdown : une section par page (pypdf).
 
     Le découpage par page est conservé — c'est la seule structure qu'un PDF
@@ -1103,16 +1340,100 @@ def _convertir_pdf(chemin: Path) -> str:
         texte = (page.extract_text() or "").strip()
         if texte:
             pages.append(f"## Page {numero}\n\n{texte}")
-    return "\n\n".join(pages)
+    return "\n\n".join(pages), False
+
+
+def _convertir_xlsx(chemin: Path, plafond: int | None) -> tuple[str, bool]:
+    """Un classeur `.xlsx` en Markdown : une section par feuille, une rangée par ligne (#1163).
+
+    openpyxl en **lecture seule** (les lignes arrivent au fil de l'eau, le
+    classeur n'est jamais monté entier en mémoire) et en **valeurs calculées** :
+    un tableur se lit par ce qu'il affiche, pas par ses formules. Les lignes
+    vides tombent, les cellules vides de fin de ligne aussi — une feuille de
+    trois colonnes utiles n'a pas à en coûter vingt.
+
+    `plafond` borne le texte produit comme `octets_max_lus` borne un fichier
+    texte : un export de cent mille lignes pèse peu compressé et beaucoup une
+    fois déplié. Au-delà, la conversion s'arrête et le **dit** (le second
+    élément rendu), exactement comme la coupe en octets d'un `.txt`.
+    """
+    try:
+        import openpyxl
+    except ImportError as exc:  # pragma: no cover - dépend de l'installation
+        raise _ConvertisseurAbsent(
+            "Lecture des .xlsx indisponible : le paquet `openpyxl` n'est pas installé."
+        ) from exc
+    classeur = openpyxl.load_workbook(str(chemin), read_only=True, data_only=True)
+    lignes: list[str] = []
+    longueur = 0
+    try:
+        for feuille in classeur.worksheets:
+            rangees: list[str] = []
+            for valeurs in feuille.iter_rows(values_only=True):
+                cellules = [_cellule(valeur) for valeur in valeurs]
+                while cellules and not cellules[-1]:
+                    cellules.pop()
+                if not cellules:
+                    continue
+                rangee = "| " + " | ".join(cellules) + " |"
+                if plafond is not None and longueur + len(rangee) > plafond:
+                    lignes.extend(_feuille(feuille.title, rangees))
+                    return "\n".join(lignes).strip(), True
+                rangees.append(rangee)
+                longueur += len(rangee) + 1
+            lignes.extend(_feuille(feuille.title, rangees))
+    finally:
+        classeur.close()
+    return "\n".join(lignes).strip(), False
+
+
+def _feuille(titre: str, rangees: Sequence[str]) -> list[str]:
+    """Les lignes Markdown d'une feuille : son titre, puis ses rangées — rien si elle est vide."""
+    if not rangees:
+        return []
+    return [f"## Feuille : {titre}", "", *rangees, ""]
+
+
+def _cellule(valeur: object) -> str:
+    """Le texte d'une cellule de tableur, prêt à entrer dans une rangée Markdown.
+
+    Une date se rend au jour (l'heure de minuit qu'openpyxl y accroche n'apprend
+    rien), un nombre entier sans sa virgule, et le reste tel que la cellule
+    l'affiche — une barre verticale échappée et les sauts de ligne aplatis, faute
+    de quoi une cellule casserait la rangée qui la porte.
+    """
+    if valeur is None:
+        return ""
+    if isinstance(valeur, datetime.datetime) and valeur.time() == datetime.time():
+        texte = valeur.date().isoformat()
+    elif isinstance(valeur, datetime.date | datetime.datetime | datetime.time):
+        texte = valeur.isoformat()
+    elif isinstance(valeur, float) and valeur.is_integer():
+        texte = str(int(valeur))
+    else:
+        texte = str(valeur)
+    return " ".join(texte.split()).replace("|", "\\|")
 
 
 #: Les convertisseurs par extension. Une table plutôt qu'une cascade de `if` :
 #: ajouter un format, c'est ajouter une ligne ici et une entrée dans
-#: `EXTENSIONS_CONVERTIES`, jamais toucher à l'aiguillage.
-_CONVERTISSEURS: dict[str, Callable[[Path], str]] = {
+#: `EXTENSIONS_CONVERTIES`, jamais toucher à l'aiguillage. Chacun reçoit le
+#: plafond d'octets lus et rend son texte **et** le fait qu'il l'a coupé : celui
+#: qui peut produire plus de texte qu'il n'en lit (un tableur) se borne lui-même.
+_CONVERTISSEURS: dict[str, Callable[[Path, int | None], tuple[str, bool]]] = {
     ".docx": _convertir_docx,
     ".pdf": _convertir_pdf,
+    ".xlsx": _convertir_xlsx,
+    ".xlsm": _convertir_xlsx,
 }
+
+#: L'en-tête d'une image lue : ce qui suit est **ce que le modèle a vu**, pas
+#: l'image. Sans lui, le brief citerait la transcription comme s'il avait regardé
+#: lui-même, et une erreur de lecture passerait pour un fait du document.
+_ENTETE_IMAGE = (
+    "*Image regardée par le modèle — ce qui suit est ce qu'il y a vu, pas l'image "
+    "elle-même.*\n\n"
+)
 
 #: Ce qu'on écrit **dans le contenu** à l'endroit de la coupe. Dans le contenu et
 #: pas seulement dans le rapport : le modèle qui lit le contexte doit savoir que

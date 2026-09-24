@@ -246,6 +246,23 @@ class ModelSpec:
 
 
 @dataclass(frozen=True)
+class ImageJointe:
+    """Une image montrée au modèle, telle qu'elle est sur le disque (#1163).
+
+    Les **octets** et non un chemin : la frontière ne lit pas le disque, et c'est
+    ce qui laisse le fournisseur l'envoyer à un endpoint distant comme à un CLI
+    local, sans que l'un ou l'autre ait à savoir où l'image était rangée.
+    `type_media` est le type MIME reconnu à la signature du fichier
+    (`maestro.sources.images.type_image`), jamais déduit du nom ; `nom` sert au
+    modèle à situer ce qu'il regarde.
+    """
+
+    octets: bytes
+    type_media: str
+    nom: str = ""
+
+
+@dataclass(frozen=True)
 class ModeleDisponible:
     """Un modèle qu'un fournisseur annonce servir, et les efforts qu'il y admet (#253).
 
@@ -453,6 +470,37 @@ class ModelProvider(ABC):
         )
         if texte:
             yield texte
+
+    async def generate_with_images(
+        self,
+        prompt: str,
+        *,
+        images: Sequence[ImageJointe],
+        model: str,
+        system_prompt: str | None = None,
+    ) -> str:
+        """Le même appel que `generate`, avec des **images** montrées au modèle (#1163).
+
+        Ce qui fait lire une maquette, un schéma ou une photo de tableau blanc
+        joints à un objectif : le modèle les regarde et en rend le texte
+        (`maestro.sources.images`). Le prompt et les images partent dans le **même**
+        message, les images d'abord — c'est l'ordre que recommandent les
+        fournisseurs qui les acceptent.
+
+        **Capacité optionnelle, et refusée par défaut** — comme `run_agent` et à
+        l'inverse de `generate_stream` : un fournisseur qui ne sait pas voir ne
+        peut pas simuler la vue, et rendre du texte sans l'image serait pire que
+        rien, puisque le brief croirait l'avoir lue. Il lève donc
+        `UnsupportedCapability`, que la lecture des sources mue en ligne
+        « image non regardée » du rapport, **avec le nom du fournisseur** : c'est
+        l'agnosticisme de modèle (O7) — dire ce qu'on ne peut pas faire ici plutôt
+        que le taire. Un fournisseur qui la surcharge peut encore échouer sur un
+        modèle qui ne voit pas (un endpoint qui refuse l'image) : l'erreur remonte
+        alors telle quelle, et c'est l'endpoint qui a jugé, pas une liste.
+        """
+        raise UnsupportedCapability(
+            f"Le fournisseur {self.name!r} ne sait pas montrer une image au modèle."
+        )
 
     async def run_agent(
         self,

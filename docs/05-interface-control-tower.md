@@ -5061,7 +5061,7 @@ personne n'a lu.
       "type": "fichier",             // fichier | dossier | url
       "etat": "lu",                  // lu | tronque | ignore
       "tokens": 4200,
-      "motif": "",                   // `ignore` : code stable (format-non-gere, source-absente…)
+      "motif": "",                   // `ignore` : code stable (binaire-opaque, source-absente, secret…)
       "message": "",                 // `ignore` : la phrase lisible
       "limite": "",                  // `tronque` : la limite atteinte (« 20000 tokens (plafond par source) »)
       "entrees": []                  // `dossier` : une lecture **par fichier** parcouru
@@ -5078,14 +5078,37 @@ jamais comme consigne (`contexte_markdown`, ENF-13), et c'est le brief (#318) qu
 
 Le régime des deux étapes est **opposé, à dessein** : la résolution **refuse** (une saisie se
 corrige avant de dépenser), l'extraction **ignore ou tronque en le disant** (un contenu n'est pas
-encore connu de qui l'a joint). C'est pourquoi un `.png` déposé au milieu d'un dossier de maquettes
+encore connu de qui l'a joint). C'est pourquoi un binaire déposé au milieu d'un dossier de maquettes
 ne fait échouer aucun lancement et apparaît quand même, ligne à ligne, dans `entrees`.
+
+**Ce qui se lit, depuis #1163 : tout ce qui se lit.** Aucune liste d'extensions — c'est le
+**contenu** qui décide. Des octets de texte se lisent comme du texte (Markdown, JSON, YAML, CSV,
+code, fichier sans extension, UTF-16 compris) ; une page `.html` est ramenée à son texte ; un
+`.docx`, un `.pdf` et un classeur `.xlsx` passent par leur convertisseur (une section par feuille,
+une rangée par ligne) ; une **image** (PNG, JPEG, GIF, WebP, reconnue à sa signature) est
+**regardée par le modèle** du poste, qui en rend le texte, la structure et les données — ce que le
+brief lit est cette transcription, annoncée comme telle. Ce qui reste se nomme avec sa raison :
+
+| motif | ce qui s'est passé |
+|---|---|
+| `binaire-opaque` | ni texte, ni image, ni document convertible (un octet nul en tête) |
+| `secret` | un porteur de secrets (`.env*`, `.npmrc`, `.pem`, `.key`…, la règle du masquage du projet) : jamais ouvert, même joint à la main |
+| `trop-volumineux` | une image au-delà des octets lus (`octets_max_lus`) : une image ne se lit pas en partie |
+| `vision-indisponible` | aucun modèle capable de voir : le fournisseur configuré ne sait pas montrer une image (nommé), ou aucun n'a pu être résolu |
+| `vision-en-echec` | le modèle a échoué en regardant (un endpoint qui refuse l'image, par exemple) — sa cause, en une ligne |
+| `images-plafond` | au-delà de `images_max` images montrées au modèle pour une même lecture (20 par défaut) : chacune est un appel payé avant que le run n'ait de budget |
+| `vue-au-lancement` | l'**aperçu** (§6.9), gratuit, ne montre pas l'image au modèle : le lancement la regardera |
+
+`format-non-gere` n'est plus émis ; un rapport persisté qui le porte se relit tel quel, avec la
+phrase de son époque.
 
 Implémentation : [`maestro/sources/`](../maestro/sources/) — `modele` (la forme), `resolution`
 (#315 : ce qu'une déclaration devient, et ce qui la fait refuser), `extraction` (#316 : tout ramené
-au Markdown) et `televersement` (#317 : le dépôt des octets reçus). Couverture :
-[`tests/test_sources.py`](../tests/test_sources.py) et
-[`tests/test_extraction_sources.py`](../tests/test_extraction_sources.py) pour le socle ; les tests
+au Markdown), `images` (#1163 : l'image regardée par le modèle, `ModelProvider.generate_with_images`)
+et `televersement` (#317 : le dépôt des octets reçus). Couverture :
+[`tests/test_sources.py`](../tests/test_sources.py),
+[`tests/test_extraction_sources.py`](../tests/test_extraction_sources.py) et
+[`tests/test_sources_tous_formats.py`](../tests/test_sources_tous_formats.py) pour le socle ; les tests
 propres aux **routes** de ce §6.8 sont différés au lot final de la phase (#323), comme ceux des
 autres lots.
 
@@ -5435,11 +5458,12 @@ laisse donc pas un demi-tour de conversation derrière lui. L'`index` est ce qui
 rendre le refus **sur la source fautive** plutôt qu'en bloc.
 
 **Ce qui est refusé et ce qui est seulement dit** — même partage qu'au §6.9, et il compte
-particulièrement ici : une **image** se joint comme n'importe quel fichier (le critère l'exige), mais
-l'extraction ne lit aujourd'hui que le texte, le Markdown, le `.docx` et le `.pdf`. Une image
-ressort donc `ignore` / `format-non-gere` **dans le rapport**, en `201` — un constat, pas une faute.
-C'est exactement ce que le rapport existe pour dire, et c'est pourquoi l'écran ne promet nulle part
-qu'une image sera lue.
+particulièrement ici : une **image** se joint comme n'importe quel fichier (le critère l'exige).
+Depuis #1163 elle est **regardée par le modèle** du poste à l'envoi, et ce qu'il y voit entre au
+contexte du message — donc au brief d'un run lancé depuis le fil. Ce qui reste illisible (un
+binaire opaque, une image qu'aucun modèle configuré ne voit) ressort `ignore` **dans le rapport**,
+avec son motif (§6.8), en `201` — un constat, pas une faute. C'est exactement ce que le rapport
+existe pour dire, et c'est pourquoi l'écran ne promet nulle part d'avance ce qui sera lu.
 
 **Un message sans texte mais avec des sources est accepté** : déposer un cahier des charges *est* le
 message. Sans texte **ni** sources, c'est toujours un `422` (« message vide »).

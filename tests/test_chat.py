@@ -44,6 +44,7 @@ couverte dans `tests/test_controltower.py` (section ⑧), sources comprises.
 import asyncio
 import io
 import json
+from functools import partial
 from pathlib import Path
 
 import pytest
@@ -75,6 +76,7 @@ from maestro.providers.base import ModelProvider
 from maestro.sources import (
     DepotTeleversements,
     SourceRefusee,
+    extraire_sources,
     racine_ingestion,
 )
 
@@ -487,7 +489,7 @@ def _ingestion_jetable(tmp_path, monkeypatch):
     return racine
 
 
-def _service_a_sources(tmp_path, *, garde_fous=None, repondeur=None):
+def _service_a_sources(tmp_path, *, garde_fous=None, repondeur=None, lecteur=None):
     """Le service câblé pour recevoir des sources — dépôt de téléversement injecté.
 
     Deux jeux de plafonds, à dessein : le **dépôt** reste permissif (il plafonne
@@ -507,6 +509,7 @@ def _service_a_sources(tmp_path, *, garde_fous=None, repondeur=None):
         bus=bus,
         televersements=depot,
         garde_fous_ingestion=garde_fous,
+        lecteur_sources=lecteur,
     )
     return service, store, mailbox, bus, depot
 
@@ -670,12 +673,12 @@ def test_un_refus_est_un_value_error_et_reste_distinct_du_message_vide(tmp_path)
     asyncio.run(scenario())
 
 
-def test_un_format_non_gere_est_ignore_au_rapport_et_ne_refuse_rien(tmp_path):
+def test_un_binaire_opaque_est_ignore_au_rapport_et_ne_refuse_rien(tmp_path):
     """« Rien à lire ici » et « je refuse de lire ça » ne se disent jamais pareil.
 
-    Une image se joint comme n'importe quel fichier — la chaîne est unique — mais
-    l'extraction ne lit que le texte, le Markdown, le `.docx` et le `.pdf` : elle
-    ressort **ligne du rapport**, avec son motif, et le message part quand même.
+    Un fichier se joint comme n'importe quel autre — la chaîne est unique. Depuis
+    #1163 tout ce qui se lit se lit ; ce qui reste, un binaire opaque, ressort
+    **ligne du rapport**, avec son motif, et le message part quand même.
     """
 
     async def scenario():
@@ -683,21 +686,54 @@ def test_un_format_non_gere_est_ignore_au_rapport_et_ne_refuse_rien(tmp_path):
 
         message, _ = await service.envoyer(
             _agent(),
-            "La maquette :",
-            [_televerser(depot, "maquette.png", b"\x89PNG\r\n\x1a\n binaire")],
+            "L'archive :",
+            [_televerser(depot, "livrable.zip", b"PK\x03\x04\x14\x00\x00\x00 binaire")],
         )
 
         (lecture,) = message.rapport.lectures
-        assert lecture.etat == "ignore" and lecture.motif == "format-non-gere"
+        assert lecture.etat == "ignore" and lecture.motif == "binaire-opaque"
         assert lecture.tokens == 0
         # Rien de lu, mais quelque chose de joint (#1172) : le contexte le nomme,
         # avec son motif, et n'ouvre aucun bloc de contenu. L'agent sait qu'une
-        # maquette était attendue, au lieu de répondre comme si on ne lui avait
+        # archive était attendue, au lieu de répondre comme si on ne lui avait
         # rien donné.
-        assert "maquette.png" in message.contexte
-        assert "format-non-gere" in message.contexte
+        assert "livrable.zip" in message.contexte
+        assert "binaire-opaque" in message.contexte
         assert "### Contenu" not in message.contexte
         assert len(store.fil("qa")) == 2  # le message et sa réponse
+
+    asyncio.run(scenario())
+
+
+def test_une_image_jointe_au_fil_est_regardee_et_entre_au_contexte(tmp_path):
+    """#1163 : une maquette jointe dans le fil est lue par le modèle qui regarde.
+
+    C'est par le fil qu'une source rejoint un brief (#1172) : ce que le modèle a vu
+    dans l'image entre donc au contexte du message, encadré comme les autres
+    sources — et c'est ce contexte que le lancement d'un run confie à l'hôte.
+    """
+    vus = []
+
+    def regard(octets, type_media, nom):
+        vus.append((type_media, nom))
+        return "Écran d'accueil : un bouton « Lancer » en haut à droite."
+
+    async def scenario():
+        service, _, _, _, depot = _service_a_sources(
+            tmp_path, lecteur=partial(extraire_sources, lire_image=regard)
+        )
+
+        message, _ = await service.envoyer(
+            _agent(),
+            "La maquette :",
+            [_televerser(depot, "maquette.png", b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR")],
+        )
+
+        (lecture,) = message.rapport.lectures
+        assert lecture.etat == "lu"
+        assert vus == [("image/png", "maquette.png")]
+        assert "bouton « Lancer »" in message.contexte
+        assert "## Sources fournies" in message.contexte
 
     asyncio.run(scenario())
 
