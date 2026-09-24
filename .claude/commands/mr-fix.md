@@ -40,7 +40,8 @@ qu'un contrôle échoue. La raison de chaque étape vit dans
      poursuis sur le pipeline.
    - **`3`** : résous maintenant, par `git merge origin/main` — **jamais `git rebase`**, qui
      appellerait un force-push. Chaque fichier est une décision de contenu : jamais un côté en bloc
-     (`--ours`/`--theirs`) pour effacer les marqueurs. **Pas clair : `git merge --abort`**, branche
+     (`--ours`/`--theirs`) pour effacer les marqueurs, et relis le résultat. **Pas clair : `git
+     merge --abort`**, branche
      intacte, dis pourquoi et arrête-toi **sans merger**. Résolu : `git add -A`, commit et push
      comme à l'étape 9, puis vérifie que le verdict retombe à `0` et continue — ce merge a pu
      casser le pipeline.

@@ -26,7 +26,8 @@ revue » : un état normal, jamais un ✅ global. En run, l'attente et le merge 
    ```
    bash scripts/gitlab/lib.sh close-guard <iid> || verdict=$?
    ```
-   `0` poursuis · `3` la branche porte un **autre** ticket (dis lequel ; `lib.sh branch-for <iid>`)
+   `0` poursuis · `3` la branche porte un **autre** ticket (dis lequel, propose de shipper celui-là
+   ou de revenir sur la bonne branche, `lib.sh branch-for <iid>`)
    · `4` assigné à **quelqu'un d'autre** (nomme-le) · `5` branche sans iid · `1` verdict partiel :
    signale-le et poursuis. Sur `3`/`4`/`5`, arrête-toi : un refus ne se franchit que **sur demande
    explicite**, rappelée au résumé. `/ticket-finish` rejoue ce contrôle, sans effet de bord.
@@ -62,13 +63,14 @@ revue » : un état normal, jamais un ✅ global. En run, l'attente et le merge 
    y en a plusieurs. Si le lot shippé était le **dernier ouvert**, annonce le parent fermé (merge
    fait) ou à fermer au merge : sa fermeture suit celle du dernier lot, par l'événement (#515). **Tu
    ne fermes rien** et n'écris rien sur le parent ; le verdict du merge fait foi, jamais la table des
-   lots, que le workflow met à jour en différé. Parent resté ouvert : `lib.sh ferme-parent
-   <iid-du-lot>` est le rattrapage.
+   lots, que le workflow met à jour en différé. Ne propose aucun geste manuel : un parent encore
+   ouvert quelques instants plus tard dit que l'événement n'est pas passé, et `lib.sh ferme-parent
+   <iid-du-lot>` en est le rattrapage.
 
 9. **Résumé** : le **commit créé** (hash court et en-tête), puis celui de `/ticket-finish` —
    **verdict du merge en tête** (mergé, ou la cause telle que `merge-mr` l'a rendue), l'**issue du
    déblocage** sur sa propre ligne (⊘ non tenté · ✅ abouti · ❌ sans succès), le lien de la PR, le
-   temps loggé, le ramassage ou sa cause, et le fait que la session travaille désormais depuis le
-   **clone principal**. Pour un sous-ticket, l'annonce de l'étape 8. **Jamais de ✅ global** : une
+   temps loggé ; sur un merge réussi, le ramassage ou sa cause, et le fait que la session travaille
+   désormais depuis le **clone principal**. Pour un sous-ticket, l'annonce de l'étape 8. **Jamais de ✅ global** : une
    PR restée ouverte est **inachevée**. `/ticket-ship` ne ferme ni ne force-push jamais, et ne merge
    jamais hors de `merge-mr` : **aucun merge non vérifié** (#417).

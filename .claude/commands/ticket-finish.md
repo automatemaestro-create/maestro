@@ -17,10 +17,10 @@ merge), arrête-toi et demande si un point n'est pas clair.
    ```
    bash scripts/gitlab/lib.sh close-guard <iid> || verdict=$?
    ```
-   `0` poursuis · `3` la branche porte un **autre** ticket (`lib.sh branch-for <iid>` donne la
-   bonne) · `4` ticket assigné à **quelqu'un d'autre**, nomme-le · `5` branche sans iid · `1`
-   verdict partiel : signale-le et poursuis. Sur `3`/`4`/`5`, arrête-toi : un refus ne se franchit
-   que **sur demande explicite**, rappelée en tête du résumé.
+   `0` poursuis · `1` partiel : signale-le et poursuis. Sinon arrête-toi : `3` la branche porte un
+   **autre** ticket (propose de clôturer celui-là, ou `lib.sh branch-for <iid>`) · `4` ticket
+   assigné à **quelqu'un d'autre**, nomme-le · `5` branche sans iid. Un refus ne se franchit que
+   **sur demande explicite**, rappelée en tête du résumé.
 
 4. **Le reste à committer.** Arbre sale : montre `git diff --stat`, propose un message Conventional
    Commits (pied `Refs #<iid>`, docs/10 §2) et **demande confirmation**. Message écrit avec `Write`
@@ -49,7 +49,8 @@ merge), arrête-toi et demande si un point n'est pas clair.
    **grille** entière — réparé en rejouant le regard neuf du skill pour un ticket qui décide d'un
    écran, en complétant ta propre grille pour tout autre. Un `1` (forge muette) ne bloque pas.
    Nomme au résumé la ligne `PLANCHE <chemin>`. Un constat corrigeable ici se corrige, puis reprends
-   à l'étape 4 ; un constat qui appelle son propre ticket se nomme dans le jugement.
+   à l'étape 4 ; un constat qui appelle son propre ticket se nomme dans le jugement, avec sa suite
+   — ouvrir le ticket reste une décision, pas un effet de bord de la clôture.
 
 4ter. **Le ticket fait-il ce qu'il disait ?**
    ```
@@ -92,9 +93,10 @@ merge), arrête-toi et demande si un point n'est pas clair.
    **Un critère non tenu est nommé, jamais coché.** `criteres-note` refuse (`5`) un ✓ sans preuve
    exercée ou sur un passage non vert, un banc dû sans ligne **Banc** : on répare en exerçant, ou en
    disant ✗ ou hors diff, jamais en cochant pour passer. Il vérifie qu'un test **existe**, pas qu'il
-   passe : le dire vert sans l'avoir vu passer est un ✓ fabriqué. **Un ✗ n'empêche pas le merge** :
-   corrige ce qui se corrige ici, puis reprends à l'étape 4 ; ce qui dépasse le ticket se consigne
-   ✗ avec sa suite, et se nomme au résumé. **On ne demande pas, on joue**, à l'identique en run et
+   passe : le dire vert sans l'avoir vu passer est un ✓ fabriqué. Son `1` (forge muette) ne bloque
+   pas : signale-le. **Un ✗ n'empêche pas le merge** : corrige ce qui se corrige ici, puis reprends
+   à l'étape 4 ; ce qui dépasse le ticket se consigne ✗ avec sa suite, et se nomme au résumé —
+   ouvrir un ticket reste une décision. **On ne demande pas, on joue**, à l'identique en run et
    en interactif, banc dû compris ; seul le choix du scénario reste un jugement, et se consigne.
 
 5. **Filet CI local**, source unique des contrôles locaux :
@@ -114,17 +116,18 @@ merge), arrête-toi et demande si un point n'est pas clair.
    réponse, pousse quand même. **Ne rebase jamais de toi-même** (force-push, docs/10 §6).
 
 7. **Pousse la branche.** `git push -u origin <nom-de-la-branche>`, nom lu à l'étape 1, jamais une
-   substitution `$(…)`. Jamais `--force` : un push rejeté s'explique. Bloqué sur des identifiants
-   (Windows) : `GIT_TERMINAL_PROMPT=0 git -c credential.helper='' -c
-   credential.helper='!gh auth git-credential' push -u origin <nom-de-la-branche>` ; refusé en run
-   (préfixe de variable), il se signale, sans variante inventée.
+   substitution `$(…)`. Jamais `--force` : un push rejeté, arrête-toi et explique pourquoi. Bloqué
+   sur des identifiants (Windows) : `GIT_TERMINAL_PROMPT=0 git -c credential.helper='' -c
+   credential.helper='!gh auth git-credential' push -u origin <nom-de-la-branche>` ; ce repli
+   refusé (préfixe de variable, #235), signale-le, sans variante inventée.
 
 8. **La description de la PR s'écrit dans un fichier**, jamais sur la ligne de commande.
    1. PR déjà ouverte ? `bash scripts/gitlab/lib.sh mr-iid` (code 1 si aucune).
    2. Fichier écrit avec `Write` dans `.maestro/session/`, en chemin relatif — ni le scratchpad de
       session ni `/tmp`, ni heredoc. Aucune PR : `Closes #<iid>`, une ligne vide, puis ce que la PR
-      change et pourquoi. PR ouverte : pars de sa description, relue par `lib.sh get-mr-description
-      <mr> > <fichier>` (jamais `gh pr view | python`, mojibake), car `create-mr` la remplace.
+      change et pourquoi. PR ouverte : relis sa description par `lib.sh get-mr-description <mr> >
+      <fichier>` (jamais `gh pr view | python`, mojibake) et n'y ajoute que ce que 9.3 demande —
+      `create-mr` la remplace entière ; rien à ajouter, passe à 9.2.
 
    **La PR ne porte pas de checklist** (#1244).
 
@@ -146,8 +149,8 @@ merge), arrête-toi et demande si un point n'est pas clair.
       ```
       bash scripts/gitlab/lib.sh reste-claude <iid-du-ticket> <chemin-du-fichier>
       ```
-      Nomme ce ticket au résumé. Ne contourne pas le blocage (ni redirection, ni `cp`, ni script) :
-      il empêche une boucle sans surveillance de réécrire les instructions de la suivante.
+      Nomme ce ticket au résumé. Ne contourne jamais le blocage (ni redirection, ni `cp`, ni
+      script tiers).
 
 10. **Aucun relecteur** : n'appelle ni `lib.sh set-reviewer` ni `gh pr edit --add-reviewer` (#196).
 
@@ -181,9 +184,10 @@ merge), arrête-toi et demande si un point n'est pas clair.
         closed` : ne pose rien. Worktree et branche partent à l'**étape 14**.
       - `3` → verdict pas encore rendu (run en cours, absent, périmé).
         **Repasse une fois, pas plus** : `pipeline-wait` puis `merge-mr`. Toujours `3` : PR
-        ouverte, « En revue », dis-le (« pas encore né », avec sa durée) — quelqu'un repassera, ou
-        le drain d'un run (#419). **N'enchaîne jamais sur `/mr-fix` ici** : un pipeline pas né n'a
-        rien à réparer.
+        ouverte, « En revue », dis-le — quelqu'un repassera, ou le drain d'un run (#419). Si
+        `merge-mr` dit le pipeline « pas encore né », nomme-le ainsi, avec sa durée et le geste
+        `gh workflow run` disponible, non posé. **N'enchaîne jamais sur `/mr-fix` ici** : un
+        pipeline pas né n'a rien à réparer.
       - `4` → **pipeline rouge** · `5` → **conflit avec `origin/main`** → **enchaîne sur `/mr-fix
         <numéro>`, sans demander**, sans rien corriger toi-même (13.3).
       - `6` → **anomalie** (PR absente, fermée, brouillon, sans `Closes`, commits non poussés) :
@@ -196,8 +200,9 @@ merge), arrête-toi et demande si un point n'est pas clair.
       - **Annonce l'attente** : « je lance `/mr-fix` : nouvelle attente de pipeline ».
       - **Ne repasse pas `merge-mr` derrière lui** : son étape 12 l'appelle déjà, et rendrait `7`
         (un `6` fabriqué avant #593).
-      - **Deux tentatives au plus**, la seconde seulement si la première a fait bouger la PR. Ce
-        plafond est le tien : `MAESTRO_ORCHESTRATE_MRFIX_MAX` borne les sessions d'un run (#420).
+      - **Deux tentatives au plus**, la seconde seulement si la première a fait bouger la PR —
+        rejouer sur un état inchangé est un abandon, et le résumé le dit ainsi. Ce plafond est le
+        tien : `MAESTRO_ORCHESTRATE_MRFIX_MAX` borne les sessions d'un run (#420).
       - Au-delà, ou si `/mr-fix` s'arrête avant son merge : PR ouverte, « En revue », cause rendue.
 
       ⚠ **En run autonome, n'enchaîne rien** : `guard.sh` refuse `pipeline-wait` et `merge-mr`, et
@@ -225,7 +230,8 @@ merge), arrête-toi et demande si un point n'est pas clair.
 
 15. Termine par un résumé : en tête, un refus de l'étape 3 **franchi sur demande** (lequel, qui) ;
    puis le **verdict du merge**, l'**issue du déblocage** sur sa propre ligne, le **ramassage**, le
-   lien de la PR, le filet CI s'il n'était pas vert, le retard sur `origin/main`, le **temps** loggé
+   lien de la PR, le filet CI s'il n'était pas vert (quel job, pourquoi tu as poussé quand même),
+   les signalements (`1` d'un verbe), le retard sur `origin/main`, le **temps** loggé
    (ou pourquoi rien), le **ticket de reprise** de 9.3, la planche, et la **confrontation des
    critères** sur sa ligne (`n ✓ · n ✗ · n hors diff`, chaque critère ✗ nommé, le banc s'il était
    dû, ou « aucun critère — signalé sur le ticket »).

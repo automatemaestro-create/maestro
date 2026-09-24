@@ -39,8 +39,8 @@ de chaque étape : `docs/10-workflow-git.md` §5 et §6.1, à n'ouvrir qu'en cas
      indépendants font des tickets sans parent ; **une** capacité qui dépasse une session fait du
      ticket le parent, et ses lots — 1-3 critères chacun, mergeables seuls, **chacun avec ses
      tests** (#1150) — se créent selon `/ticket-create` et se rattachent (`lib.sh issue-link
-     <parent> <lot> [--parallele]`, puis `lib.sh subticket-order`). C'est une **vraie pause** :
-     attends la décision.
+     <parent> <lot> [--parallele]`, puis `lib.sh subticket-order`), puis on démarre le premier
+     lot. C'est une **vraie pause** : attends la décision.
    - **Branche sans préfixe** (pas de label `type::`) : déduis le type, ou demande s'il est ambigu.
 
 2. **Worktree du ticket** (docs/10 §9) — le clone principal reste sur `main` :

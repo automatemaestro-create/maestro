@@ -1461,7 +1461,7 @@ def test_la_session_ne_charge_que_les_serveurs_du_run(depot: Depot) -> None:
 
 
 def test_la_session_reprise_porte_aussi_les_serveurs_du_run(depot: Depot) -> None:
-    """Deux invocations de `claude` : la reprise est la plus oubliable (même raison que l'effort)."""
+    """Deux invocations de `claude` : la reprise est la plus oubliable, comme pour l'effort."""
     depot.ticket(130, "Ticket interrompu")
     journal = depot.racine.parent / "args-mcp-reprise"
     claude = _claude_stub(depot, f"""
@@ -1513,7 +1513,7 @@ def test_la_liste_retenue_est_dite_avec_sa_raison() -> None:
         ligne = re.search(rf"^\| `{re.escape(nom)}` \| ([^|]+) \| ([^|]+) \|$", section, re.M)
         assert ligne, f"{nom} n'a pas sa ligne dans docs/10 §11.3"
         verdict, raison = (partie.strip() for partie in ligne.groups())
-        assert ("retenu" in verdict) == (nom in run), f"{nom} : « {verdict} » contredit mcp.run.json"
+        assert ("retenu" in verdict) == (nom in run), f"{nom} : « {verdict} » contredit le run"
         assert len(raison) > 20, f"{nom} : la raison manque"
 
 

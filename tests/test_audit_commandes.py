@@ -946,9 +946,9 @@ TICKET_FINISH = ".claude/commands/ticket-finish.md"
 SKILL_RELECTURE = ".claude/skills/relecture-visuelle/SKILL.md"
 
 #: Ce que pesaient les textes sur `origin/main` le 2026-09-24 (`eff32e3`), avant #1245, au compteur
-#: du dépôt. De `/ticket-ship` à la fin d'un ticket, une session passait 20 % de ses tours et 36 % de
-#: son coût, à 375 k tokens de contexte par tour (#1239) — et relisait à chaque clôture l'histoire de
-#: chaque étape. Recopié ici parce que le job de CI clone sans historique.
+#: du dépôt. De `/ticket-ship` à la fin d'un ticket, une session passait 20 % de ses tours et 36 %
+#: de son coût, à 375 k tokens de contexte par tour (#1239) — et relisait à chaque clôture
+#: l'histoire de chaque étape. Recopié ici parce que le job de CI clone sans historique.
 AVANT_1245: Mapping[str, int] = {
     TICKET_FINISH: 16_560,
     ".claude/commands/ticket-ship.md": 4_882,
@@ -958,8 +958,8 @@ AVANT_1245: Mapping[str, int] = {
 }
 
 #: Le budget de chaque texte : sa taille au jour de #1245, plus une marge de l'ordre de 10 % — la
-#: place d'une règle nouvelle, pas celle d'une démonstration qui reviendrait. `/ticket-finish` est en
-#: outre plafonné par le critère de #1245 : au plus un tiers de ce qu'il pesait.
+#: place d'une règle nouvelle, pas celle d'une démonstration qui reviendrait. `/ticket-finish` est
+#: en outre plafonné par le critère de #1245 : au plus un tiers de ce qu'il pesait.
 BUDGETS_CLOTURE_TOKENS: Mapping[str, int] = {
     TICKET_FINISH: 5_500,
     ".claude/commands/ticket-ship.md": 2_000,
@@ -979,7 +979,8 @@ DOC_DE_LA_DEMONSTRATION: Mapping[str, str] = {
 
 
 def verifier_budget_de_cloture(relatif: str, texte: str, budget: int) -> int:
-    """Le coût du texte s'il tient dans son budget ; sinon lève, en disant de combien et quoi faire."""
+    """Le coût du texte s'il tient dans son budget ; sinon lève, en disant de combien et quoi
+    faire."""
     cout = estimer_tokens(texte)
     if cout > budget:
         raise BudgetDepasse(
@@ -1073,5 +1074,6 @@ class TestBudgetDesTextesDeCloture:
         """
         commande = etapes(lire(TICKET_FINISH))
         assert commande[:6] == ["1", "2", "3", "4", "4bis", "4ter"], "lecteur d'étapes creux"
-        assert etapes(lire(TICKET_FINISH) + "\n16. Une étape de plus.\n") != index_de_ticket_finish()
+        fautive = etapes(lire(TICKET_FINISH) + "\n16. Une étape de plus.\n")
+        assert fautive != index_de_ticket_finish(), "une étape sans ligne d'index se verrait"
         assert index_de_ticket_finish() == commande

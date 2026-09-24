@@ -104,7 +104,7 @@ browser_take_screenshot  filename: .maestro/relecture/<iid>/<ecran>-<theme>-avan
 ```
 
 L'après et l'avant se jugent **en paire**, même écran, même thème : ce qui a changé, et si le
-changement a abîmé ce qui allait. Un écran nouveau n'a que son après. En régime **`applique`**, les
+changement a abîmé ce qui allait. Un écran nouveau n'a que son après : dis-le dans le jugement. En régime **`applique`**, les
 deux lignes `-avant` ne se jouent pas : chaque capture se juge seule, et l'avant non monté va à « ce
 que je n'ai pas pu voir ».
 
@@ -260,8 +260,8 @@ bash scripts/design/relecture-visuelle.sh --planche <iid>
 
 `.maestro/relecture/<iid>/planche.html`, autonome (captures en `data:`, plafond
 `MAESTRO_RELECTURE_PLANCHE_MAX`, 25 Mio), recopiée **dans le clone principal** au même chemin — le
-worktree sera ramassé après le merge. Rien ne part vers la forge. **Nomme au résumé** la dernière
-ligne, `PLANCHE <chemin>`.
+worktree sera ramassé après le merge. Rien ne part vers la forge. Elle se rejoue après une
+correction, comme la saisine. **Nomme au résumé** la dernière ligne, `PLANCHE <chemin>`.
 
 **Puis consigne-le sur le ticket — toujours**, même quand tout va : c'est ce qui sépare « regardé,
 rien à signaler » de « personne n'y a pensé » (#935).
@@ -283,9 +283,10 @@ pour tout autre, en complétant sa grille. Une `--raison` n'en porte pas.
 
 ## Le prix, et le run
 
-Le prix s'annonce plutôt qu'il ne se masque : `--plan` ~2 s, une stack ~20 à 30 s, ~4 s par écran
-et par thème, `--fin` quelques secondes ; en régime `decide`, l'avant (~1 min au premier montage),
-chaque autre état (~1 min) et le regard neuf (~2 min, ~1,3 $). Mesures datées : docs/30 §5.6 et §5.8.
+Le prix s'annonce plutôt qu'il ne se masque : `--plan` ~2 à 5 s, une stack ~20 à 30 s, ~4 s par
+écran et par thème, chaque autre état ~1 min (un redémarrage), `--fin` ~3 s ; en régime `decide`,
+l'avant (~1 min au premier montage, `--fin` ~27 s avec lui) et le regard neuf (~2 min, ~1,3 $).
+Mesures datées : docs/30 §5.6 et §5.8.
 
 En session de run, **rien ne change** : `mcp__chrome-maestro`, `start.sh` et
 `relecture-visuelle.sh` sont dans son allowlist, l'outil `Agent` n'est soumis à aucune règle, et

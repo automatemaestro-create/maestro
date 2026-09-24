@@ -2231,14 +2231,20 @@ compteur du dépôt (`estimer_tokens`, celui du budget de `CLAUDE.md`) :
 
 | texte | avant | après |
 |---|---|---|
-| `/ticket-finish` | 48,6 Ko · 16 560 tokens | 15,4 Ko · 5 248 tokens (32 %) |
-| `/ticket-ship` | 14,3 Ko · 4 882 tokens | 5,3 Ko · 1 817 tokens (37 %) |
-| `/mr-fix` | 19,1 Ko · 6 491 tokens | 9,1 Ko · 3 100 tokens (48 %) |
-| `/ticket-start` | 22,9 Ko · 7 808 tokens | 15,1 Ko · 5 144 tokens (66 %) |
-| skill `relecture-visuelle` | 32,7 Ko · 11 159 tokens | 16,2 Ko · 5 512 tokens (49 %) |
+| `/ticket-finish` | 48,6 Ko · 16 560 tokens | 15,9 Ko · 5 415 tokens (33 %) |
+| `/ticket-ship` | 14,3 Ko · 4 882 tokens | 5,5 Ko · 1 885 tokens (39 %) |
+| `/mr-fix` | 19,1 Ko · 6 491 tokens | 9,2 Ko · 3 110 tokens (48 %) |
+| `/ticket-start` | 22,9 Ko · 7 808 tokens | 15,1 Ko · 5 155 tokens (66 %) |
+| skill `relecture-visuelle` | 32,7 Ko · 11 159 tokens | 16,3 Ko · 5 551 tokens (50 %) |
 
 `/ticket-start` maigrit moins : son étape 7 (les variantes d'un ticket qui décide d'un écran) est
 presque entièrement de la règle, et `tests/test_design_veille.py` en garde chaque geste.
+
+**Aucune règle perdue, vérifié par une relecture indépendante** : un sous-agent a confronté chaque
+texte d'avant à celui d'après, puis à la doc qu'il cite, et n'a trouvé aucun garde-fou de sûreté
+manquant. Il a relevé une douzaine de règles de conduite amincies — suite d'un constat qui « reste
+une décision », `1` d'un verbe à signaler, arrêt sur un push rejeté, résumé conditionné au merge,
+planche rejouée après correction… —, rendues aux textes avant le merge.
 
 **Ce qui le garde** : [`tests/test_audit_commandes.py`](../tests/test_audit_commandes.py),
 `BUDGETS_CLOTURE_TOKENS` — un budget par texte, sa taille au jour de #1245 plus ~10 %, et pour
