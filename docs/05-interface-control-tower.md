@@ -6387,10 +6387,41 @@ regarde aucun fichier. Seule `…/generation` écrit dans le dossier de quelqu'u
     // comme un fait du projet. Les commandes y sont par DÉCISION (docs/38 §3.5).
     "ecartes": [{ "type": "commande", "nom": "toutes", "raison": "aucun format de commande…" }]
   },
+  // LA LECTURE DU PROJET PAR LE MODÈLE (#1158) — la provenance de ce que les
+  // tables ne connaissaient pas. `etat` : `lue` | `inachevee` (tours épuisés) |
+  // `indisponible` (le modèle n'a pas répondu : les constats restent ceux des
+  // tables, `motif` dit pourquoi). `retenus` est ce qu'elle a AJOUTÉ aux constats,
+  // `ecartes` ce que le modèle a rendu sans le fichier lu qui le prouve.
+  "lecture": { "etat": "lue", "motif": "", "tours": 2,
+               "lus": ["Depensio.sln", "tests/Api.Tests/Api.Tests.csproj"], "listes": ["."],
+               "refus": [{ "demande": "LIRE", "chemin": ".env", "motif": "hors-perimetre" }],
+               "tronque": false, "troncatures": [], "tronques": [],
+               "retenus": { "langages": [], "gestionnaires": [{ "nom": "dotnet", "…": "…" }],
+                            "commandes": [{ "usage": "tester", "commande": "dotnet test",
+                                            "chemin": "tests/Api.Tests/Api.Tests.csproj", "…": "…" }],
+                            "ci": [] },
+               "ecartes": [] },
   "source_manifeste": { "type": "analyse", "projet_id": "prj-7f3a",
                         "reference": "ana-3c9f0011", "resume": "Python, TypeScript ; …" }
 }
 ```
+
+**Les tables ne sont que des indices** (#1158, [docs/41](./41-decision-maestro-juge-il-ne-bride-pas.md)).
+Le parcours ci-dessus ne reconnaît que ce qu'il connaît — une solution .NET, un `justfile` ou un
+`gleam.toml` en sortaient sans commande. Le **modèle lit** ensuite le projet
+([`maestro/outillage/exploration.py`](../maestro/outillage/exploration.py)) par deux verbes,
+`LISTER` et `LIRE`, que Maestro sert lui-même : dans le périmètre déclaré (préfixe par préfixe, et
+sous la casse réelle du chemin), sans suivre aucun lien, sans rien exécuter, et bornés par
+`lectures_max`, `octets_par_lecture_max`, `entrees_par_liste_max` et `tours_max` — qui voyagent dans
+`bornes`. Chaque constat qu'il rend est **confronté** à ce qu'il a lu avant d'entrer dans `constats` :
+il s'**ajoute** aux indices, n'en retire aucun, et `recommandation` est refaite sur l'ensemble. Une
+lecture coupée le dit au modèle et dans `lecture.troncatures`. `parcours.extensions` compte
+**toutes** les extensions vues — l'indice qui montre au modèle qu'il y a des `.csproj` avant qu'il
+ouvre quoi que ce soit. La dernière lecture **réussie** est gardée tant que le projet n'a pas bougé
+(même relevé, mêmes fichiers lus à la taille et à la date près) : la génération écrit ce que l'écran
+a montré au lieu de redemander au modèle. Gardé par
+[`tests/test_outillage_lecture.py`](../tests/test_outillage_lecture.py) et
+[`tests/test_projet_outille_http.py`](../tests/test_projet_outille_http.py).
 
 **Lecture seule, bornée, et sans jamais exécuter le projet.** Les trois promesses sont dans la
 réponse plutôt que dans une docstring, et elles sont mesurées **sur les appels** par

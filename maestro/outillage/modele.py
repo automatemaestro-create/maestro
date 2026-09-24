@@ -22,6 +22,11 @@ ne pas confondre :
   chemin du projet d'où elle sort), et son `etat` dit si le projet la porte
   **déjà** — reconnue, jamais dupliquée.
 
+Et, depuis #1158, **la lecture** (`Lecture`, `Refus`, `ConstatEcarte`) : ce que
+le modèle a ouvert du projet et ce qu'il en a tiré. Elle est la **provenance** des
+constats que les tables ne connaissaient pas — un constat du modèle n'entre dans
+`Constats` qu'avec le fichier qu'il a lu pour le dire.
+
 `Analyse.source_manifeste()` rend le fragment `source` du manifeste de
 [docs/38 §4.1](../../docs/38-decision-outillage-universel-du-projet.md) : c'est
 le seul endroit où la forme de ce fragment est écrite côté analyse, et c'est
@@ -77,6 +82,14 @@ ORIGINES_COMMANDE: frozenset[str] = frozenset({"declaree", "convention"})
 #: au lieu d'en disparaître.
 ETATS_ENTREE: frozenset[str] = frozenset({"a-generer", "a-completer", "deja-present"})
 
+#: Ce qu'est devenue la **lecture du projet par le modèle** (#1158). `lue` : le
+#: modèle a conclu, et ses constats ont été confrontés à ce qu'il a lu ;
+#: `inachevee` : il n'a pas conclu dans les tours servis ; `indisponible` : il
+#: n'a pas répondu (fournisseur injoignable ou absent, réponse vide ou hors
+#: contrat). Dans les deux derniers cas l'analyse **reste** celle des indices —
+#: elle ne s'efface pas derrière un appel manqué, et elle le dit.
+ETATS_LECTURE: frozenset[str] = frozenset({"lue", "inachevee", "indisponible"})
+
 
 def nouvel_id() -> str:
     """Un identifiant d'analyse neuf, de la forme `ana-<8 hex>`."""
@@ -97,12 +110,24 @@ class Bornes:
     `octets_par_fichier_max` ne borne que les fichiers **nommés** que l'analyse
     ouvre (les manifestes, la CI, les conventions) : le parcours, lui, ne lit
     aucun contenu — il compte des extensions et retient des chemins.
+
+    Les quatre dernières bornent la **lecture par le modèle** (#1158), qui est
+    une autre question : ce que le modèle lit entre dans son prompt, et c'est la
+    taille d'un prompt qu'elles tiennent, pas celle d'un manifeste qu'on analyse.
+    `lectures_max` compte tout ce qui lui est servi du disque (un dossier listé,
+    un fichier lu), `octets_par_lecture_max` coupe un fichier lu — la coupure
+    lui est dite, et à l'appelant aussi —, `entrees_par_liste_max` coupe un
+    dossier listé, `tours_max` le nombre d'échanges avant qu'il doive conclure.
     """
 
     fichiers_max: int = 20_000
     profondeur_max: int = 8
     octets_par_fichier_max: int = 256 * 1024
     ignores: tuple[str, ...] = ()
+    lectures_max: int = 24
+    octets_par_lecture_max: int = 12_000
+    entrees_par_liste_max: int = 200
+    tours_max: int = 6
 
     def to_dict(self) -> dict[str, Any]:
         """Les bornes en JSON, `lecture_seule`/`execution` compris.
@@ -112,12 +137,18 @@ class Bornes:
         constantes parce qu'elles ne sont pas négociables — aucun appel ne peut
         les changer, et une analyse qui exécuterait quoi que ce soit du projet
         ne serait pas une analyse bornée différemment, ce serait autre chose.
+        Elles valent pour la lecture par le modèle comme pour le parcours : le
+        modèle ne reçoit que deux verbes, et aucun n'exécute.
         """
         return {
             "fichiers_max": self.fichiers_max,
             "profondeur_max": self.profondeur_max,
             "octets_par_fichier_max": self.octets_par_fichier_max,
             "ignores": list(self.ignores),
+            "lectures_max": self.lectures_max,
+            "octets_par_lecture_max": self.octets_par_lecture_max,
+            "entrees_par_liste_max": self.entrees_par_liste_max,
+            "tours_max": self.tours_max,
             "lecture_seule": True,
             "execution": "aucune",
         }
@@ -131,6 +162,12 @@ class Parcours:
     `fichier-trop-gros`) : une analyse tronquée qui ne le dirait pas se lirait
     comme un projet plus petit qu'il n'est, et c'est le genre d'erreur qu'on ne
     voit jamais — il manque des constats, pas des messages.
+
+    `extensions` compte **toutes** les extensions vues, et pas seulement celles
+    que `LANGAGE_PAR_EXTENSION` connaît (#1158) : c'est l'indice qui dit au
+    modèle, avant qu'il ouvre quoi que ce soit, qu'il y a douze `.csproj` ou un
+    `gleam.toml` dans ce projet — la table ne décide plus de ce qui se voit.
+    Les plus fréquentes d'abord, plafonnées (`EXTENSIONS_MAX`).
     """
 
     fichiers_vus: int = 0
@@ -138,11 +175,17 @@ class Parcours:
     profondeur_atteinte: int = 0
     troncatures: tuple[str, ...] = ()
     ignores_rencontres: tuple[str, ...] = ()
+    extensions: tuple[tuple[str, int], ...] = ()
 
     @property
     def tronque(self) -> bool:
         """L'analyse s'est-elle arrêtée avant d'avoir tout vu ?"""
         return bool(self.troncatures)
+
+    def fichiers_d_extension(self, extension: str) -> int:
+        """Le nombre de fichiers vus portant `extension` (`.cs`), 0 si aucun."""
+        voulue = extension.lower()
+        return next((compte for ext, compte in self.extensions if ext == voulue), 0)
 
     def to_dict(self) -> dict[str, Any]:
         """Le parcours en JSON."""
@@ -153,6 +196,10 @@ class Parcours:
             "tronque": self.tronque,
             "troncatures": list(self.troncatures),
             "ignores_rencontres": list(self.ignores_rencontres),
+            "extensions": [
+                {"extension": extension, "fichiers": compte}
+                for extension, compte in self.extensions
+            ],
         }
 
 
@@ -411,12 +458,112 @@ class Recommandation:
 
 
 @dataclass(frozen=True)
+class Refus:
+    """Une demande de lecture du modèle que l'explorateur n'a **pas** servie (#1158).
+
+    `motif` est un code court (`hors-perimetre`, `hors-racine`, `lien-symbolique`,
+    `dossier-ignore`, `introuvable`, `pas-un-fichier`, `pas-un-dossier`,
+    `lectures-max`) : c'est la trace qu'un `.env` a été **demandé** et **refusé**,
+    ce qui se lit autrement qu'un `.env` jamais demandé — et les deux autrement
+    qu'un `.env` lu.
+    """
+
+    demande: str
+    chemin: str
+    motif: str
+
+    def to_dict(self) -> dict[str, Any]:
+        """Le refus en JSON."""
+        return {"demande": self.demande, "chemin": self.chemin, "motif": self.motif}
+
+
+@dataclass(frozen=True)
+class ConstatEcarte:
+    """Un constat que le modèle a rendu et que la confrontation au disque a écarté (#1158).
+
+    `ligne` est ce que le modèle a écrit, telle quelle ; `raison` dit ce qui lui
+    manquait — le plus souvent, un fichier cité qu'il n'avait pas lu. Un constat
+    écarté reste **dans la réponse** : il dit ce que le modèle croyait, et
+    pourquoi Maestro ne l'a pas retenu.
+    """
+
+    ligne: str
+    raison: str
+
+    def to_dict(self) -> dict[str, Any]:
+        """Le constat écarté en JSON."""
+        return {"ligne": self.ligne, "raison": self.raison}
+
+
+@dataclass(frozen=True)
+class Lecture:
+    """La lecture du projet **par le modèle** — ce qu'il a ouvert, et ce qui en est resté (#1158).
+
+    C'est la **provenance** des constats qui ne sortent pas des tables : ce que
+    `retenus` porte a été proposé par le modèle, puis confronté à ce qu'il a
+    effectivement lu (`lus`) — un constat qui cite un fichier non lu sort dans
+    `ecartes`, jamais dans les constats. Tout le reste de `Analyse.constats`
+    vient des tables, qui ne sont plus que des indices.
+
+    Les bornes de la lecture sont celles de `Bornes` ; celles qui ont **mordu**
+    sont nommées dans `troncatures` (`fichier-tronque`, `liste-tronquee`,
+    `lectures-max`, `tours-max`), et les chemins coupés dans `tronques`. Une
+    lecture tronquée qui ne le dirait pas se lirait comme un projet mieux lu
+    qu'il ne l'a été.
+
+    `refus` garde chaque demande que l'explorateur n'a pas servie : c'est là que
+    se lit qu'un `.env` demandé n'a pas été ouvert.
+    """
+
+    etat: str
+    motif: str = ""
+    tours: int = 0
+    lus: tuple[str, ...] = ()
+    listes: tuple[str, ...] = ()
+    refus: tuple[Refus, ...] = ()
+    troncatures: tuple[str, ...] = ()
+    tronques: tuple[str, ...] = ()
+    retenus: Constats = field(default_factory=Constats)
+    ecartes: tuple[ConstatEcarte, ...] = ()
+
+    @property
+    def tronque(self) -> bool:
+        """La lecture s'est-elle arrêtée, ou a-t-elle coupé un fichier, avant d'avoir tout vu ?"""
+        return bool(self.troncatures)
+
+    def to_dict(self) -> dict[str, Any]:
+        """La lecture en JSON — `retenus` réduit aux constats que le modèle peut rendre."""
+        return {
+            "etat": self.etat,
+            "motif": self.motif,
+            "tours": self.tours,
+            "lus": list(self.lus),
+            "listes": list(self.listes),
+            "refus": [refus.to_dict() for refus in self.refus],
+            "tronque": self.tronque,
+            "troncatures": list(self.troncatures),
+            "tronques": list(self.tronques),
+            "retenus": {
+                "langages": [langage.to_dict() for langage in self.retenus.langages],
+                "gestionnaires": [g.to_dict() for g in self.retenus.gestionnaires],
+                "commandes": [commande.to_dict() for commande in self.retenus.commandes],
+                "ci": [piece.to_dict() for piece in self.retenus.ci],
+            },
+            "ecartes": [ecarte.to_dict() for ecarte in self.ecartes],
+        }
+
+
+@dataclass(frozen=True)
 class Analyse:
     """L'analyse d'un projet existant et l'outillage qu'elle recommande (#1030).
 
     `resume` est la phrase que le manifeste garde (`source.resume`, docs/38
     §4.1) : elle tient en une ligne parce qu'elle est destinée à être relue six
     mois plus tard, à côté d'un outillage dont on se demande d'où il sort.
+
+    `lecture` (#1158) est `None` tant que le modèle n'a pas été convié — c'est
+    le cas de `analyser`, qui ne rend que les **indices** des tables — et porte
+    la lecture du projet par le modèle sinon, y compris quand elle a échoué.
     """
 
     id: str
@@ -428,6 +575,7 @@ class Analyse:
     parcours: Parcours = field(default_factory=Parcours)
     constats: Constats = field(default_factory=Constats)
     recommandation: Recommandation = field(default_factory=Recommandation)
+    lecture: Lecture | None = None
 
     def source_manifeste(self) -> dict[str, Any]:
         """Le fragment `source` du manifeste d'outillage (docs/38 §4.1).
@@ -457,5 +605,6 @@ class Analyse:
             "parcours": self.parcours.to_dict(),
             "constats": self.constats.to_dict(),
             "recommandation": self.recommandation.to_dict(),
+            "lecture": self.lecture.to_dict() if self.lecture is not None else None,
             "source_manifeste": self.source_manifeste(),
         }
