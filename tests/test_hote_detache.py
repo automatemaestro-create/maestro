@@ -86,6 +86,7 @@ from maestro.controltower.events import (
 from maestro.controltower.executions import ServiceExecutions
 from maestro.controltower.hote import DemarrageHoteRate, OrdreRun
 from maestro.controltower.hote_detache import HoteRunDetache
+from maestro.controltower.question import ArbitreQuestionControlTower
 from maestro.controltower.state import (
     EXECUTION_ANNULEE,
     EXECUTION_ECHEC,
@@ -108,6 +109,7 @@ from maestro.engine.brief import (
     DemandeClarification,
 )
 from maestro.engine.guardrails import DemandeValidation
+from maestro.engine.questions import DemandeQuestion
 from maestro.orchestrator.errors import OrchestratorError
 from maestro.orchestrator.schema import Brief
 from maestro.references import ReferenceTicket
@@ -1678,6 +1680,24 @@ def test_le_meme_bus_sert_le_guet_et_les_trois_arbitres(
     assert cable["guardrails"].validateur._bus is bus
 
 
+def test_la_question_libre_d_un_agent_est_cablee_sur_le_bus_du_process(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """La quatrième attente humaine (#1023) passe la frontière comme les trois autres.
+
+    Avant #1259, `_derouler` ne la câblait pas : `OrchestrationEngine.default`
+    recevait `questionneur=None`, et l'exécuteur ne sert alors pas le verbe du
+    tout. Or l'hôte détaché est celui de la vraie stack depuis #446 : aucun agent
+    ne pouvait poser de question libre, alors que l'hôte `process` le pouvait.
+    Le bus est vérifié par identité, pour la raison du test précédent.
+    """
+    bus = InMemoryEventBus()
+    cable = deroule(monkeypatch, bus, tmp_path)
+
+    assert isinstance(cable["questionneur"], ArbitreQuestionControlTower)
+    assert cable["questionneur"]._bus is bus
+
+
 def test_les_plafonds_voyagent_avec_l_ordre_et_le_validateur_se_branche_ici(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1771,6 +1791,32 @@ def test_un_bus_referme_sans_decision_fait_lever_le_brief_et_les_clarifications(
     assert RUN in str(reponses.value)
 
 
+def test_un_bus_referme_sans_reponse_fait_lever_la_question(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """L'agent reprend sur son hypothèse — il ne reçoit pas une réponse inventée.
+
+    L'arbitre **lève**, et c'est l'exécuteur qui fait de cette levée une reprise
+    consignée (`maestro.controltower.question`). Éprouvé sur l'arbitre tel que
+    l'hôte l'a câblé, pour la même raison qu'au-dessus : ce que #1259 pouvait
+    casser, c'est le branchement.
+    """
+    cable = deroule(monkeypatch, BusQuiSeReferme(), tmp_path)
+
+    with pytest.raises(RuntimeError) as sans_reponse:
+        asyncio.run(
+            cable["questionneur"](
+                DemandeQuestion(
+                    question_id="q-1",
+                    question="Quelle base de données ?",
+                    hypothese="SQLite",
+                    run_id=RUN,
+                )
+            )
+        )
+    assert "q-1" in str(sans_reponse.value)
+
+
 def test_un_bus_referme_sans_decision_fait_refuser_l_action_sensible(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1811,6 +1857,9 @@ def test_sans_bus_rien_n_est_cable_et_les_deux_fail_safes_prennent_la_main(
     assert cable["arbitre_brief"] is None
     assert cable["arbitre_clarification"] is None
     assert cable["guardrails"].validateur is None
+    # Sans canal, l'exécuteur ne sert pas le verbe de question du tout (#1023) :
+    # mieux vaut qu'aucun agent ne la pose que la poser à personne.
+    assert cable["questionneur"] is None
 
     demande = DemandeValidation(
         task_id="t1",
