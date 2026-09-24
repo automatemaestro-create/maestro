@@ -2210,6 +2210,106 @@ la consigne reste la règle première — « jamais de force-push, jamais de fer
 merge non vérifié** ». Le `deny` sur `gh pr merge` n'a pas bougé avec #413 et n'a pas à bouger : il
 barre le geste **nu**, que plus personne n'a de raison de lancer.
 
+### 6.1 Les textes de clôture : la règle dans la commande, la démonstration ici (#1245)
+
+**Le fait** (#1239, recommandation R5, retenue le 2026-09-23). De `/ticket-ship` à la fin d'un
+ticket, une session passe **20 % de ses tours et 36 % de son coût**, avec un contexte de 375 k tokens
+par tour contre 241 k avant. Ce qu'elle y relisait n'était pas que des règles : `/ticket-finish`
+pesait 48,6 Ko — 90 renvois à des tickets, 12 « depuis #… » —, soit l'histoire de chaque étape,
+redite à chaque clôture. `CLAUDE.md` pose la règle inverse depuis #965 : la règle ici, jamais sa
+démonstration.
+
+**La règle.** Les textes que joue la clôture — `/ticket-finish`, `/ticket-ship`, `/mr-fix`,
+`/ticket-start` et le skill `relecture-visuelle` — portent **la règle et l'ordre des gestes** : ce
+qu'on joue, dans quel ordre, ce qu'on s'interdit, ce que chaque code de retour appelle. Un
+garde-fou y reste : c'est une règle. Ce qui les justifie — mesures, incidents, pistes écartées,
+renversements — vit dans la doc, à la section que l'index ci-dessous nomme, et chaque texte cite la
+doc où lire la sienne.
+
+**Mesuré** le 2026-09-24, `origin/main` (`eff32e3`) contre la branche de #1245, en octets et au
+compteur du dépôt (`estimer_tokens`, celui du budget de `CLAUDE.md`) :
+
+| texte | avant | après |
+|---|---|---|
+| `/ticket-finish` | 48,6 Ko · 16 560 tokens | 15,9 Ko · 5 415 tokens (33 %) |
+| `/ticket-ship` | 14,3 Ko · 4 882 tokens | 5,5 Ko · 1 885 tokens (39 %) |
+| `/mr-fix` | 19,1 Ko · 6 491 tokens | 9,2 Ko · 3 110 tokens (48 %) |
+| `/ticket-start` | 22,9 Ko · 7 808 tokens | 15,1 Ko · 5 155 tokens (66 %) |
+| skill `relecture-visuelle` | 32,7 Ko · 11 159 tokens | 16,3 Ko · 5 551 tokens (50 %) |
+
+`/ticket-start` maigrit moins : son étape 7 (les variantes d'un ticket qui décide d'un écran) est
+presque entièrement de la règle, et `tests/test_design_veille.py` en garde chaque geste.
+
+**Aucune règle perdue, vérifié par une relecture indépendante** : un sous-agent a confronté chaque
+texte d'avant à celui d'après, puis à la doc qu'il cite, et n'a trouvé aucun garde-fou de sûreté
+manquant. Il a relevé une douzaine de règles de conduite amincies — suite d'un constat qui « reste
+une décision », `1` d'un verbe à signaler, arrêt sur un push rejeté, résumé conditionné au merge,
+planche rejouée après correction… —, rendues aux textes avant le merge.
+
+**Ce qui le garde** : [`tests/test_audit_commandes.py`](../tests/test_audit_commandes.py),
+`BUDGETS_CLOTURE_TOKENS` — un budget par texte, sa taille au jour de #1245 plus ~10 %, et pour
+`/ticket-finish` au plus le tiers de ce qu'il pesait. Même contrat que le budget de `CLAUDE.md` : le
+dépassement **lève**, il ne tronque rien, et c'est une décision — déplacer la démonstration ici, ou
+relever le budget en connaissant ce coût. La même suite exige que chaque texte cite la doc de sa
+démonstration, et que l'index de `/ticket-finish` ci-dessous en range chaque étape.
+
+**Écarté, avec sa raison :**
+
+- **Découper les commandes en fichiers chargés à la demande.** Une commande se joue en entier, dans
+  l'ordre : ce qu'elle délègue déjà (le skill `relecture-visuelle`, `/mr-fix`) l'est parce que c'est
+  un métier à part, pas pour alléger un texte.
+- **Maigrir en retirant des garde-fous.** Un garde-fou est une règle ; ce qui est parti, c'est ce qui
+  le justifie.
+- **Un budget en octets.** Le compteur est celui de `CLAUDE.md` (#965) : un seul étalon pour les
+  textes qu'une session paie à chaque tour.
+
+#### Où vit la raison de chaque étape de `/ticket-finish`
+
+| étape | la règle, dans la commande | la raison, dans la doc |
+|---|---|---|
+| 1 | l'IID, de l'argument ou de la branche | §1 (nommage des branches) |
+| 2 | forge authentifiée | §7 |
+| 3 | `close-guard` avant toute écriture | §6 (garde-fou de clôture) |
+| 4 | commit montré, confirmé, message par fichier | §2 ; §11.7 (#233, #962) |
+| 4bis | relecture visuelle, consignée sur le ticket | docs/30 §5.5 (#935), §5.6, §5.8 (#1151, #1243) |
+| 4ter | critères exercés, banc dû, constat consigné | §6 (#968, #1240) ; docs/40 §5 |
+| 5 | filet CI local, jamais bloquant | §8.4 (#214, #1242) |
+| 6 | retard sur `origin/main`, jamais de rebase d'office | §6 (`behind-main`) |
+| 7 | push nu, jamais forcé | §6 ; §11.7 (#233, #235) |
+| 8 | description par fichier, sans checklist | §11.7 (#233) ; §4 (#1244) |
+| 9 | `create-mr`, brouillon levé, reste sous `.claude/` | §6 (#415, #418) ; §11.7 (#608) |
+| 10 | aucun relecteur | §6 (#196) |
+| 11 | « En revue » | §3 |
+| 12 | temps mesuré | §3.3 (#1244) |
+| 13 | attente, merge, déblocage | §6 (`merge-mr`, #417, #593) ; §8.3 (#460) ; §8.9 (#595) ; §11.11 (le pilote) |
+| 14 | ramassage sur `0` | §9.2 (#519) |
+| 15 | résumé, jamais un ✅ global | §6 ; §8.3 (#303) |
+
+#### Où vit celle des autres textes
+
+| texte | la raison, dans la doc |
+|---|---|
+| `/ticket-ship` | ci-dessus pour tout ce qu'il délègue ; commit sans confirmation : §5 (#34) ; sous-tickets et parent qui se ferme : §5.1 (#389, #515) |
+| `/mr-fix` | §8.3 en entier (l'ordre, `merge-tree`, la résolution par merge) ; §8.4 et §8.4bis (le rejeu local) ; §8.8 et §8.9 (le pipeline requis, sa naissance) ; §6 (`merge-mr`) |
+| `/ticket-start` | §5, §5.1 (découpage), §9.1 (le worktree), §9.2, §9.4, §9.5 (ce qu'`ensure` ramasse et remet à niveau) ; docs/40 §3 (#1151) ; docs/30 §5.8 (#1009, les variantes) |
+| skill `relecture-visuelle` | docs/30 §5.5 (déclencheur, consignation), §5.6 (plan, ports, ce qu'il écrit, prix, l'avant), §5.8 (états, regard neuf, régime) |
+
+#### Ce qui ne vivait que dans les commandes
+
+Trois constats n'avaient pas encore de place dans la doc ; ils la trouvent ici.
+
+- **Un push peut ne déclencher aucun pipeline** (`/mr-fix`, étape 5) — observé sur la MR 31, du
+  temps de la forge précédente, sur un push interrompu. D'où le déclenchement manuel, par `gh run
+  rerun` ou `gh workflow run ci.yml --ref <branche>`, et sa limite : un run lancé ainsi diagnostique
+  la branche, il ne satisfait pas le contrôle requis sur la PR — seul un nouveau push le fait.
+- **Actions sépare `status` (en cours) et `conclusion` (issue)** là où les étapes de `/mr-fix` n'ont
+  qu'un état ; `pipeline-latest` les recompose en une valeur (`success`, `failed`, `pending`…). Un
+  `gh run list --branch` verrait bien le run de la PR, mais ne rendrait pas un verdict comparable :
+  d'où l'interdit de remplacer le helper par un appel direct.
+- **La naissance tardive d'un pipeline, en chiffres** (`/ticket-finish`, 13.1) : le 2026-08-26,
+  l'événement `pull_request` a mis 18 à 20 min à déclencher la CI sur trois PR consécutives — rien
+  de rouge, rien en conflit. La mécanique de l'attente est au §8.9.
+
 ---
 
 ## 7. Prérequis
@@ -5912,6 +6012,37 @@ n'a plus de quoi se calculer, et **aucun plafond de remplacement n'a été inven
 « raisonnable » recréerait exactement le défaut qu'on vient de supprimer, un ticket tué en plein
 travail, mais côté pilote et sans même une raison lisible. Ce blocage-là redevient donc ce qu'il
 était avant d'être outillé : un run qu'on arrête par `STOP` ou par Ctrl-C.
+
+**Les serveurs MCP d'une session sont épinglés, eux aussi (#1245).** Même motif que le modèle et
+l'effort : sans consigne, une session de run chargeait tous les serveurs que le poste connaît —
+ceux du projet (`.mcp.json` : `chrome-maestro`, `figma-officiel`), un serveur du poste (`chrome`)
+et un connecteur du compte claude.ai (« Claude Docs »). Mesuré sur les 69 sessions des runs du 20
+au 23 septembre : les quatre chargés à chaque session ; `chrome-maestro` appelé 1 791 fois,
+`chrome` 10 fois — sept sondes `list_pages` et trois pages ouvertes à côté du navigateur du dépôt
+—, `figma-officiel` (37 outils) et « Claude Docs » **jamais**. `run.sh` passe donc
+`--strict-mcp-config --mcp-config scripts/orchestrate/mcp.run.json`, aux deux invocations du CLI
+(session neuve et reprise), et ce fichier ne déclare que ce qu'une session appelle :
+
+| serveur | en run | raison |
+|---|---|---|
+| `chrome-maestro` | **retenu** | le navigateur du dépôt, sur le profil du worktree : relecture visuelle (docs/30 §5.5), variantes et veille de `/ticket-start` (étape 7) |
+| `figma-officiel` | écarté | il sert à explorer avant de brouillonner (docs/30 §5.1), jamais appelé en run ; son OAuth est un geste humain ([docs/21](./21-configuration-mcp.md)) |
+| `chrome` (poste) | écarté | doublon du navigateur du dépôt, hors du profil dédié : ses appels en run revenaient à `chrome-maestro` (l'UI du worktree), ou à `gh` et `WebFetch` (deux pages GitHub) |
+| connecteurs du compte | écartés | rien, dans un ticket, ne les appelle |
+
+L'entrée de `chrome-maestro` est celle de `.mcp.json` **à l'identique** : la définition vit là, le
+fichier du run n'en fait qu'une **sélection**, et [`tests/test_orchestrate.py`](../tests/test_orchestrate.py)
+garde les deux (l'égalité des entrées, les options aux deux invocations). `--strict-mcp-config`
+écarte **toute** autre configuration — projet, poste, compte — ; les variables `${…}` de l'entrée
+restent développées (vérifié le 2026-09-24), donc le profil de navigateur du worktree
+(`MAESTRO_CHROME_PROFILE`) vaut toujours. Le fichier est vérifié avant le premier ticket : absent,
+le run refuse de partir (code `2`) plutôt que de voir le CLI refuser chaque session. **Le gain**,
+mesuré le 2026-09-24 sur deux sessions jumelles (même prompt, deux requêtes) : ~2 600 tokens
+d'entrée de moins par requête une fois les serveurs connectés (59 629 contre 62 260) — peu à
+l'échelle d'un contexte de clôture, mais payé à chaque requête de chaque session ; l'essentiel du
+gain de #1245 est dans les textes de clôture (§6.1). **Ajouter un serveur au run** est un geste en
+deux temps : le déclarer dans `.mcp.json`, puis le recopier dans `mcp.run.json` avec sa raison dans
+ce tableau.
 
 **La console dit ce que la session fabrique (#176) — et depuis #240, où en est le plan.** En
 `--output-format json`, le CLI n'écrit qu'à la fin : entre la ligne `[n/N] #<iid> — …` et le verdict,

@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "chrome-maestro": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "scripts/mcp/playwright-mcp.mjs",
+        "--browser=chrome",
+        "--user-data-dir=${MAESTRO_CHROME_PROFILE:-.maestro/chrome-profile}"
+      ]
+    }
+  }
+}

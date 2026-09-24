@@ -59,6 +59,8 @@ SCRIPTS = (
     "scripts/orchestrate/pilote.sh",
     "scripts/orchestrate/journal.sh",
     "scripts/orchestrate/settings.run.json",
+    # Les serveurs MCP d'une session (#1245) : le run refuse de partir sans lui.
+    "scripts/orchestrate/mcp.run.json",
     # La lecture des blocs de permissions et le matching des règles, partagés depuis #789 entre
     # `journal.sh refus` et `ecart-run.sh` : sans eux dans le dépôt jetable, le classement des
     # refus n'a plus de `matche()` et retombe en « inclassé » — un vert qui ne garderait plus rien.
@@ -1420,6 +1422,99 @@ def test_l_effort_traverse_le_lancement_detache(depot: Depot) -> None:
     corps = lanceur.read_text(encoding="utf-8")
     commande = next(ligne for ligne in corps.splitlines() if ligne.startswith("bash "))
     assert "--effort max" in commande
+
+
+# =====================================================================================
+# Les serveurs MCP d'une session, épinglés par le dépôt (#1245)
+# =====================================================================================
+#
+# Même provenance à protéger que l'effort : sans `--strict-mcp-config`, une session chargeait tout
+# ce que le poste connaît — le projet, le poste, le compte —, quatre serveurs dont deux jamais
+# appelés en run sur 69 sessions (docs/10 §11.3). Le bouchon note les arguments reçus ; le fichier
+# du run est une SÉLECTION de `.mcp.json`, jamais une seconde définition.
+
+MCP_RUN = RACINE / "scripts/orchestrate/mcp.run.json"
+MCP_DEPOT = RACINE / ".mcp.json"
+DOC_WORKFLOW = RACINE / "docs/10-workflow-git.md"
+
+
+def _serveurs_mcp(chemin: Path) -> dict[str, dict]:
+    return json.loads(chemin.read_text(encoding="utf-8"))["mcpServers"]
+
+
+def _config_mcp_recue(recus: list[str]) -> str:
+    assert "--strict-mcp-config" in recus, "sans lui, les serveurs du poste et du compte suivent"
+    config = recus[recus.index("--mcp-config") + 1]
+    assert config.replace("\\", "/").endswith("scripts/orchestrate/mcp.run.json"), config
+    return config
+
+
+def test_la_session_ne_charge_que_les_serveurs_du_run(depot: Depot) -> None:
+    depot.ticket(130, "Ticket a traiter")
+    depot.mr("feat/130-ticket-a-traiter", "opened")
+    journal = depot.racine.parent / "args-mcp"
+    claude = _claude_note_les_arguments(depot, journal)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "mcp", env={"MAESTRO_CLAUDE_BIN": claude})
+    assert r.returncode == 0, r.stdout + r.stderr
+    _config_mcp_recue(journal.read_text(encoding="utf-8").splitlines())
+
+
+def test_la_session_reprise_porte_aussi_les_serveurs_du_run(depot: Depot) -> None:
+    """Deux invocations de `claude` : la reprise est la plus oubliable, comme pour l'effort."""
+    depot.ticket(130, "Ticket interrompu")
+    journal = depot.racine.parent / "args-mcp-reprise"
+    claude = _claude_stub(depot, f"""
+        if printf '%s\\n' "$@" | grep -q -- '--resume'; then
+          printf '%s\\n' "$@" > "{journal}"
+          printf '{{"is_error":false,"subtype":"success","total_cost_usd":2}}'; exit 0
+        fi
+        printf '{{"is_error":true,"total_cost_usd":1,"result":"Claude AI usage limit reached"}}'
+        exit 1
+    """)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    depot.lance("run.sh", "--plan", plan, "--run-id", "mcp-reprise",
+                env={"MAESTRO_CLAUDE_BIN": claude, "MAESTRO_ORCHESTRATE_PALIER": "1"})
+    _config_mcp_recue(journal.read_text(encoding="utf-8").splitlines())
+
+
+def test_les_serveurs_du_run_sont_annonces_dans_l_apercu(depot: Depot) -> None:
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--dry-run", "--plan", plan, "--run-id", "mcp-plan")
+    assert "--strict-mcp-config --mcp-config scripts/orchestrate/mcp.run.json" in r.stdout
+
+
+def test_sans_son_fichier_mcp_le_run_refuse_de_partir(depot: Depot) -> None:
+    """Absent, le CLI refuserait chaque session : le run brûlerait son plan en échecs jumeaux."""
+    (depot.racine / "scripts/orchestrate/mcp.run.json").unlink()
+    r = depot.lance("run.sh", "--dry-run")
+    assert r.returncode == 2
+    assert "mcp.run.json introuvable" in r.stderr
+
+
+def test_les_serveurs_du_run_sont_une_selection_de_ceux_du_depot() -> None:
+    """Une entrée recopiée qui divergerait lancerait en run un autre navigateur qu'en interactif."""
+    run, depot = _serveurs_mcp(MCP_RUN), _serveurs_mcp(MCP_DEPOT)
+    assert "chrome-maestro" in run, "le navigateur du dépôt est ce que le run appelle"
+    for nom, entree in run.items():
+        assert nom in depot, f"{nom} n'est pas déclaré dans .mcp.json, source des définitions"
+        assert entree == depot[nom], f"l'entrée de {nom} diverge de .mcp.json"
+    assert set(depot) - set(run), "une sélection qui garde tout ne sélectionne rien"
+
+
+def test_la_liste_retenue_est_dite_avec_sa_raison() -> None:
+    """Chaque serveur du dépôt a sa ligne en docs/10 §11.3 : retenu s'il est dans le run, écarté
+    sinon, et chaque ligne dit pourquoi."""
+    texte = DOC_WORKFLOW.read_text(encoding="utf-8")
+    debut = texte.index("**Les serveurs MCP d'une session sont épinglés, eux aussi (#1245).**")
+    section = texte[debut : texte.index("**La console dit ce que la session fabrique", debut)]
+    run = _serveurs_mcp(MCP_RUN)
+    for nom in _serveurs_mcp(MCP_DEPOT):
+        ligne = re.search(rf"^\| `{re.escape(nom)}` \| ([^|]+) \| ([^|]+) \|$", section, re.M)
+        assert ligne, f"{nom} n'a pas sa ligne dans docs/10 §11.3"
+        verdict, raison = (partie.strip() for partie in ligne.groups())
+        assert ("retenu" in verdict) == (nom in run), f"{nom} : « {verdict} » contredit le run"
+        assert len(raison) > 20, f"{nom} : la raison manque"
 
 
 # =====================================================================================

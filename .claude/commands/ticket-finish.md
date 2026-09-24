@@ -4,609 +4,246 @@ argument-hint: "[issue-iid] (optionnel si le nom de la branche courante le conti
 allowed-tools: Bash(bash:*), Bash(git:*), Bash(gh:*), Bash(mkdir:*), Bash(.venv/Scripts/python.exe:*), Bash(.venv/bin/python:*), ExitWorktree, Skill, AskUserQuestion, Read, Edit, Write
 ---
 
-Tu vas clôturer le cycle de développement de la branche courante selon les règles de Maestro
-(résumées ci-dessous — cette commande est autosuffisante ; réf. complète `docs/10-workflow-git.md`,
-non chargée automatiquement, à n'ouvrir qu'en cas de doute). Arrête-toi et demande confirmation
-avant toute action qui modifie l'état partagé (push, création/mise à jour de PR, merge) si un point
-n'est pas clair.
+Tu clôtures le ticket de la branche courante, **jusqu'au merge**. Cette commande porte la règle et
+l'ordre des gestes ; la raison de chaque étape vit dans la doc, indexée par étape en
+[docs/10 §6.1](../../docs/10-workflow-git.md) (#1245). Avant une écriture partagée (push, PR,
+merge), arrête-toi et demande si un point n'est pas clair.
 
-⚠ **Depuis #418 (chantier #413), cette commande va jusqu'au merge** : elle passe la PR en « prête »,
-**attend le pipeline** puis appelle `merge-mr`. Deux conséquences à assumer plutôt qu'à masquer —
-elle ne rend plus la main dans la seconde (l'attente est bornée — 15 min pour un run qui tourne,
-**jusqu'à 30 min** quand le run n'est pas encore né (#595, docs/10 §8.9) — et annoncée pendant
-qu'elle dure), et **la revue avant merge disparaît de fait** (docs/10 §6). Ce qui disparaît est l'attente
-d'un humain pour *vérifier*, pas la vérification : les quatre prérequis vivent dans `merge-mr`
-(#415), et **aucun merge non vérifié** n'a lieu (#417).
+1. **L'IID** : `$ARGUMENTS`, sinon la branche (`<type>/<iid>-<slug>`), sinon demande-le.
 
-⚠ **Et depuis #460, un refus pour une cause RÉPARABLE se répare au lieu de se signaler** : sur un
-pipeline rouge (`4`) ou un conflit avec `origin/main` (`5`), la commande enchaîne d'elle-même sur
-`/mr-fix`, **deux fois au plus** — exactement ce qu'un run autonome fait d'office depuis #420, où
-la même cause était traitée par le pilote pendant qu'ici on se contentait de la proposer à un
-humain. L'attente s'allonge d'autant, et se dit plutôt que de se masquer (étape 13.3).
+2. `bash scripts/gitlab/lib.sh require` — arrête-toi si la forge n'est pas authentifiée.
 
-⚠ **Et depuis #519, un merge réussi emporte son worktree** : la commande sort du worktree du ticket
-(`ExitWorktree`) puis retire worktree et branche locale, comme le pilote d'un run le fait depuis
-#438 — le ménage n'attend plus le prochain `/ticket-start` (étape 14). Conséquence à connaître : la
-session **finit dans le clone principal**, pas là où elle a travaillé. C'est le but.
-
-⚠ **Et depuis #935, un ticket d'interface ne se clôt plus sans que son rendu ait été regardé** : si
-le diff a touché une **surface visible**, la commande joue la relecture visuelle (#932) **avant** le
-filet CI, et consigne **sur le ticket** ce qui a été vu — ou la raison de ne pas l'avoir regardé
-(étape 4bis, `docs/30 §5.5`). Elle est **muette** quand il n'y a aucun écran, et elle ne demande
-rien : regarder n'est pas un verdict, c'est ce qui permet d'en rendre un.
-
-⚠ **Et depuis #968, un ticket ne se clôt plus sans que ses critères d'acceptation aient été
-confrontés au diff livré** : la commande les lit, les confronte, et consigne **sur le ticket** ce
-qui est tenu, ce qui ne l'est pas — nommé, jamais coché — ou que le ticket n'en portait aucun
-(étape 4ter, avant le filet CI). Depuis #1240, un critère se tient sur une **preuve exercée** — un
-test nommé qui passe, ou la vraie stack —, et un diff sur le chemin des scénarios joue le banc
-avant de pousser. Un critère non tenu **ne bloque pas le merge**.
-
-1. Détermine l'IID du ticket : utilise `$ARGUMENTS` s'il est fourni, sinon extrais-le du nom
-   de la branche courante (`git branch --show-current`, motif `<type>/<iid>-<slug>`). Si
-   aucun IID ne peut être déterminé, demande-le à l'utilisateur.
-
-2. Vérifie les pré-requis : `bash scripts/gitlab/lib.sh require` ; arrête-toi si non authentifié.
-
-3. **Garde-fou de clôture : cette session traite-t-elle bien ce ticket ?** À plusieurs, rien
-   n'empêchait jusqu'ici un `/ticket-finish <iid>` lancé depuis la branche d'un *autre* ticket de
-   basculer ce ticket-là « En revue », d'y poser une PR et le temps d'un travail qui n'est pas le
-   sien. Ce contrôle vient **avant toute écriture** (commit, push, PR, état, temps) :
+3. **Garde-fou de clôture**, avant toute écriture :
    ```
    bash scripts/gitlab/lib.sh close-guard <iid> || verdict=$?
    ```
-   Le helper est **consultatif** — il n'écrit rien — mais son verdict, lui, est **bloquant** ici :
-   - `0` → cohérent (la branche porte bien ce ticket, qui n'appartient pas à quelqu'un d'autre) :
-     poursuis sans rien dire de plus.
-   - `3` → **arrête-toi** : la branche courante porte un **autre** ticket. Dis lequel, et propose
-     soit de clôturer *ce* ticket-là, soit de revenir sur la branche du ticket visé
-     (`bash scripts/gitlab/lib.sh branch-for <iid>`).
-   - `4` → **arrête-toi** : le ticket est assigné à **quelqu'un d'autre**. Nomme la personne : le
-     clôturer à sa place lui poserait une PR et un temps qu'elle n'a pas demandés.
-   - `5` → **arrête-toi** : la branche ne porte aucun iid (`main`, nom hors convention), donc la
-     cohérence est invérifiable — et sur `main` il n'y a de toute façon rien à clôturer.
-   - `1` → verdict **partiel** (ticket illisible, forge injoignable) : le contrôle local est
-     passé, **signale-le** et poursuis.
-   Un refus (`3`/`4`/`5`) n'est **franchissable que sur demande explicite** de l'utilisateur — par
-   exemple la reprise assumée d'un ticket laissé en plan par quelqu'un qui a lâché le sujet. Dans
-   ce cas seulement, continue et mentionne-le dans le résumé final. Jamais de contournement
-   silencieux.
+   `0` poursuis · `1` partiel : signale-le et poursuis. Sinon arrête-toi : `3` la branche porte un
+   **autre** ticket (propose de clôturer celui-là, ou `lib.sh branch-for <iid>`) · `4` ticket
+   assigné à **quelqu'un d'autre**, nomme-le · `5` branche sans iid. Un refus ne se franchit que
+   **sur demande explicite**, rappelée en tête du résumé.
 
-4. Regarde `git status --porcelain`. S'il reste des changements non commités :
-   - montre un résumé (`git diff --stat`),
-   - propose un message de commit **Conventional Commits** : en-tête `<type>(<scope>): <résumé impératif>`
-     (types : `feat`/`fix`/`chore`/`docs`/`refactor`/`test`/`ci`/`build`/`perf` ; `scope` optionnel)
-     et pied `Refs #<iid>` (le hook `commit-msg` refuse tout message hors convention ; détail
-     `docs/10-workflow-git.md` §2),
-   - demande confirmation à l'utilisateur avant de committer.
-   Le message passe par un **fichier**, écrit avec l'outil `Write` dans **`.maestro/session/`**
-   (l'atelier de session, gitignoré, monté par `worktree.sh` ; ailleurs, `mkdir -p .maestro/session`)
-   puis `git commit -F .maestro/session/<fichier>` en chemin **relatif** — ni le scratchpad de
-   session ni `/tmp` : ce sont des chemins absolus, première cause de refus d'une session de run
-   (#962). Jamais `-m` sur plusieurs lignes ni `-m "$(…)"` : même refus que pour la description de
-   PR (#233).
-   Ne commite jamais silencieusement sans montrer ce qui va être committé.
+4. **Le reste à committer.** Arbre sale : montre `git diff --stat`, propose un message Conventional
+   Commits (pied `Refs #<iid>`, docs/10 §2) et **demande confirmation**. Message écrit avec `Write`
+   dans `.maestro/session/`, puis `git commit -F .maestro/session/<fichier>` en chemin relatif — ni
+   le scratchpad de session ni `/tmp`, jamais `-m` multi-ligne ni `$(…)`.
 
-4bis. **Le rendu a-t-il été regardé ?** (#935, chantier #930, `docs/30 §5.5`). Un ticket qui a
-   touché une **surface visible** ne se clôt plus sans que son écran ait été ouvert — ou sans que la
-   raison de ne pas l'avoir ouvert soit **enregistrée sur le ticket**. C'est le pendant, à la
-   clôture, de ce que #714 pose au démarrage : là-bas on demande *ce qu'on vise*, quand rien n'est
-   écrit ; ici l'écran existe, et personne ne demandait plus s'il avait été regardé.
-
-   Commence par la question, qui ne coûte rien et ne démarre rien (~2 s) :
+4bis. **Le rendu a-t-il été regardé ?**
    ```
    bash scripts/design/relecture-visuelle.sh --plan <iid>
    ```
-   Elle dérive les écrans **des fichiers que ce ticket a touchés** — commits de la branche *et*
-   travail non commité (#544 via #932). C'est un **constat**, pas la prédiction textuelle de
-   `touche-surface` (#714), qui rate 12 tickets sur 33 (`docs/30 §5.2`) : à la clôture on a le
-   diff, donc mieux — et rien ici n'**exige** que le motif textuel ait parlé.
+   - **code `3` — aucune surface visible** : ne le mentionne pas, n'appelle aucun verbe, passe à
+     l'étape 5. L'abstention nominale est muette.
+   - **code `0`** : joue le skill `relecture-visuelle` (outil `Skill`), source unique de la
+     séquence, sans la recopier. Le plan dit le régime et qui juge (#1243) : le regard neuf pour un
+     ticket qui **décide** d'un écran, la session pour tout autre.
 
-   - **code `3` — aucune surface visible.** Il n'y a rien à regarder et rien à dire : **ne le
-     mentionne pas**, n'appelle aucun verbe, passe à l'étape 5. L'abstention nominale est muette
-     (règle de `gc --auto`).
-   - **code `0` — il y a des écrans.** **Joue le skill `relecture-visuelle`** (outil `Skill`), qui
-     porte la séquence entière : la **vraie stack** sur les ports du worktree — l'état réel du
-     dernier passage du banc, une stack neuve, l'API coupée (#1165), jamais un scénario factice —,
-     `localStorage`, chaque écran dans les **deux thèmes**, captures **relues**, puis `--fin`. Un
-     état que la vraie stack ne produit pas est **nommé non couvert** dans la note de relecture,
-     jamais imité. Ne la recopie jamais ici — une recette
-     recopiée dans un prompt fige l'outil au jour où elle a été écrite (#310), et le skill en est la
-     source unique. **Qui juge dépend du ticket** (#1151, docs/40 §3) : le sous-agent `regard-neuf`
-     pour un ticket qui **décide** d'un écran (critère du §7.2 de `/design-veille`), la **session
-     elle-même** pour tout autre ticket, sur la même grille. **Ce qu'on regarde aussi** (#1243) :
-     l'après seul et les états que le ticket nomme quand il applique, avant et après et les trois
-     états quand il décide — le plan annonce ce régime. Le skill porte les deux conduites.
-
-   ⚠ **On ne demande pas, on joue** — et c'est la différence avec la veille, qui ne se joue que pour
-   un ticket qui décide d'un écran. Une veille est un **jugement** sur l'opportunité de
-   chercher des références, et elle coûte des recherches web ; regarder l'écran qu'on vient d'écrire
-   est un **constat**, il coûte ~50 s pour trois écrans, et le verdict — *est-ce que ça a l'air
-   juste ?* — reste entier, il est seulement rendu après avoir regardé plutôt qu'avant. Le
-   mécanisme vaut donc **à l'identique en run et en interactif** : il n'y a personne à qui demander
-   dans un run, et il n'y avait rien à demander.
-
-   **Puis consigne — c'est le geste qui manquait, et celui qu'il ne faut pas sauter.** Le jugement
-   d'une session meurt avec sa console (#608, #795) : ce qui survit est ce qui est écrit sur le
-   ticket.
+   **On ne demande pas, on joue**, à l'identique en run et en interactif. Puis consigne, toujours :
    ```
    bash scripts/gitlab/lib.sh relecture-note <iid> .maestro/relecture/<iid>/jugement.md
    ```
-   Et si la relecture **n'a pas eu lieu** — stack qui ne démarre pas, écran qu'on n'a pas su
-   atteindre, geste abandonné pour une raison quelconque —, alors écris cette raison (outil `Write`)
-   et enregistre-la, plutôt que de la taire :
+   ou, si la relecture n'a pas eu lieu, sa raison (écrite avec `Write`) :
    ```
    bash scripts/gitlab/lib.sh relecture-note --raison <iid> <fichier-de-la-raison>
    ```
-   Le verbe est **idempotent** (empreinte `cksum` : un rejeu à l'identique est muet, un jugement
-   enrichi s'ajoute), donc une clôture rejouée après un pipeline rouge n'empile rien. Ses refus
-   tombent **avant toute écriture** : `4` fichier absent ou vide, `3` iid inconnu, `5` jugement
-   sans sa **grille** entière (#980) — qui se répare en rejouant le regard neuf du skill pour un
-   ticket qui décide d'un écran, et en complétant ta propre grille pour tout autre. Un `1` (forge muette) **ne bloque pas la clôture** — signale-le dans le
-   résumé final. Et **nomme dans ce résumé la planche** que le skill a écrite (la ligne
-   `PLANCHE <chemin>` de `relecture-visuelle.sh --planche`) : c'est sa copie dans le clone
-   principal, la seule qui survit au ramassage de l'étape 14, et la seule façon pour une personne
-   de **voir** ce que le texte consigné juge.
+   Refus avant toute écriture : `4` fichier absent ou vide, `3` iid inconnu, `5` jugement sans sa
+   **grille** entière — réparé en rejouant le regard neuf du skill pour un ticket qui décide d'un
+   écran, en complétant ta propre grille pour tout autre. Un `1` (forge muette) ne bloque pas.
+   Nomme au résumé la ligne `PLANCHE <chemin>`. Un constat corrigeable ici se corrige, puis reprends
+   à l'étape 4 ; un constat qui appelle son propre ticket se nomme dans le jugement, avec sa suite
+   — ouvrir le ticket reste une décision, pas un effet de bord de la clôture.
 
-   Deux conduites à ne pas confondre selon ce que tu as vu :
-   - **un constat corrigeable ici** (un contraste qui saute en thème sombre, un bloc qui déborde) :
-     corrige, puis **reprends à l'étape 4** — c'est précisément pourquoi cette étape passe **avant**
-     le filet CI : ce qui change le diff passe avant le verdict qui le juge (même ordre que
-     `/mr-fix`, qui résout le conflit avant de diagnostiquer le pipeline).
-   - **un constat qui appelle son propre ticket** : nomme-le dans le jugement avec ce que tu en
-     fais. Un constat sans suite est un constat perdu ; ouvrir le ticket reste une décision, pas un
-     effet de bord de la clôture.
-
-4ter. **Le ticket fait-il ce qu'il disait ?** (#968). Les critères d'acceptation sont écrits par
-   `/ticket-create`, lus au cadrage par `/ticket-start` — et plus personne ne les regardait :
-   `merge-mr` juge la **mergeabilité**, jamais le **contrat** du ticket. C'est le défaut que `/milestone-bilan` corrige au jalon (#759), ici à
-   l'échelle du ticket, et sans rattrapage possible : après le merge, la branche est supprimée et le
-   worktree ramassé. Commence par la question, qui ne coûte qu'une lecture :
+4ter. **Le ticket fait-il ce qu'il disait ?**
    ```
    bash scripts/gitlab/lib.sh criteres <iid>
    ```
-   - **code `0` — il y a des critères.** Ils sortent numérotés (`C1`, `C2`, …), mot pour mot : c'est
-     le texte du ticket qui fait foi, jamais ta reformulation. Une ligne d'en-tête dit leur source :
-     les cases garnies de « Critères d'acceptation » ou, pour un bug qui n'en a pas, sa section
-     « Comportement attendu », comptée comme critère unique `C1` (arbitré sur #968).
-     **Exerce chacun** (#1240) : un critère se clôt sur une **preuve exercée**, plus sur un fichier
-     du diff — les bugs que le banc a trouvés au jalon (#1197, #1198, #1205, #1212) étaient tous
-     dans un diff que personne n'avait fait tourner. Deux preuves valent :
-     - **un test nommé qui passe** — tu l'as joué et vu passer ; la pièce donne son **nom** (la
-       fonction `test_…`, ou le fichier `*.test.tsx` d'une suite Vitest) et son **verdict** ;
-     - **une observation sur la vraie stack** — l'API ou l'UI servies par
-       `bash scripts/controltower/start.sh`, ou le banc des scénarios ; la pièce nomme le **run**
-       (`run <id>`), le **passage** du banc (l'horodatage de son rapport, `.maestro/scenarios/<h>/`)
-       ou la **capture** qui le montre.
+   - **code `0`** : les critères, `C1`, `C2`… mot pour mot (un bug sans critères : « Comportement
+     attendu » vaut `C1`). **Exerce chacun** (#1240) : un critère se clôt sur une preuve exercée,
+     plus sur un fichier du diff. Deux preuves valent : **un test nommé qui passe**, joué et vu
+     passer (la pièce donne son nom et son verdict) ; **une observation sur la vraie stack**, API ou
+     UI de `start.sh` ou banc des scénarios (la pièce nomme le run, le passage ou la capture).
 
-     **Le banc est dû quand le diff touche le chemin des scénarios** — la question le dit d'une
-     ligne `# banc  à jouer — …`. Joue alors, **avant de pousser**, le ou les scénarios dont ton
-     changement est sur le chemin (docs/40 §5), sur la stack de ce worktree :
+     **Le banc est dû** quand la question l'annonce (`# banc  à jouer`) : joue **avant de pousser**
+     les scénarios dont ton changement est sur le chemin (docs/40 §5), puis `start.sh --stop` :
      ```
      bash scripts/controltower/start.sh --etat-banc --rejouer=<S…> --no-browser
      ```
-     Il coûte du vrai modèle (S2 : ~0,4 $, 1 min 30) et laisse son rapport sous
-     `.maestro/scenarios/<h>/`. Arrête la stack ensuite (`start.sh --stop`). Son verdict entre au
-     constat par une ligne **Banc** : `vert` ou `rouge` avec son passage — le verbe le relit dans le
-     rapport —, ou `non joué` avec sa raison (stack qui ne démarre pas, fournisseur injoignable, ou
-     aucun scénario n'emprunte ce que tu as touché). **Un banc injouable est nommé, jamais compté
-     vert** ; un rouge ne se rejoue pas jusqu'au vert.
+     Son verdict entre par une ligne **Banc** : `vert`/`rouge` avec son passage, ou `non joué` avec
+     sa raison. **Un banc injouable est nommé, jamais compté vert** ; un rouge ne se rejoue pas
+     jusqu'au vert.
 
-     Écris le constat avec l'outil `Write` dans `.maestro/session/criteres-<iid>.md`, une ligne de
-     tableau par critère :
+     Constat écrit avec `Write` dans `.maestro/session/criteres-<iid>.md`, une ligne par critère :
      ```
      | Critère | Réponse | Pièce |
      |---|---|---|
-     | C1 | ✓ tenu | `tests/test_x.py::test_le_verbe_rend_0` passé — dans `scripts/gitlab/lib.sh` |
-     | C2 | ✓ tenu | S2 vert au passage 20260923-154349, run `728afd3dae61` |
-     | C3 | ✗ non tenu | écrit dans `docs/…`, mais rien ne l'exerce : … |
-     | C4 | hors diff | commentaire de décision posé sur le ticket |
+     | C1 | ✓ tenu | `tests/test_x.py::test_rend_0` passé |
+     | C2 | ✗ non tenu | écrit dans `docs/…`, rien ne l'exerce |
+     | C3 | hors diff | décision consignée sur le ticket |
      | Banc | vert | passage 20260923-154349 (S2) |
      ```
-     **✓** : la pièce **nomme sa preuve exercée**, et peut dire aussi ce qui l'implémente. **✗** :
-     rien ne l'a exercé, ou l'exercice a échoué — dis pourquoi. **hors diff** : le critère se tient
-     ailleurs que dans un fichier (un geste de forge, une mesure) — dis ce qui le montre. Puis :
+     ✓ : la pièce **nomme sa preuve exercée**. ✗ : rien ne l'a exercé, ou l'exercice a échoué, dis
+     pourquoi. hors diff : dis ce qui le montre. Puis :
      ```
      bash scripts/gitlab/lib.sh criteres-note <iid> .maestro/session/criteres-<iid>.md
      ```
-   - **code `3` — aucun critère écrit** (ni case garnie, ni « Comportement attendu »). Ce n'est pas
-     l'abstention muette de la relecture sans écran : un ticket sans écran n'avait rien à faire
-     regarder, un ticket sans critère avait quelque chose à tenir et ne l'a pas écrit — c'est le
-     manque lui-même (arbitré sur #968). **Signale-le** sur le ticket, puis dans le résumé final :
-     ```
-     bash scripts/gitlab/lib.sh criteres-note --aucun <iid>
-     ```
-     ⚠ **N'écris pas les critères toi-même pour pouvoir confronter**, et ne le propose pas : rédigés
-     à la clôture, ils seraient taillés sur ce qui a été livré (règle de `/milestone-bilan`).
-   - **code `1`** (ticket introuvable, forge muette) : signale-le dans le résumé final et poursuis.
+   - **code `3` — aucun critère écrit** : Signale-le par `bash scripts/gitlab/lib.sh
+     criteres-note --aucun <iid>`, puis au résumé. N'écris pas les critères toi-même, ni ne le
+     propose : écrits à la clôture, ils seraient taillés sur le livré.
+   - **code `1`** : signale-le et poursuis.
 
-   **Un critère non tenu est nommé, jamais coché.** Un ✓ sur une question jamais posée est pire
-   qu'une case vide : c'est lui qui a laissé quatorze jalons se fermer sur « ça a été écrit ». Le
-   verbe **garde la forme** du constat — son refus `5` tombe **avant toute écriture** : un `Cn` sans
-   réponse recevable, un ✓ **sans preuve exercée** (aucun test défini dans l'arbre, passage ou run
-   nommé), un ✓ ou un Banc `vert` sur un passage dont le rapport ne l'est pas, un banc dû sans ligne
-   **Banc**, un constat sur un ticket sans critère ou un `--aucun` sur un ticket qui en a. Il se
-   répare en exerçant, ou en disant **✗** ou **hors diff**, jamais en cochant pour passer. Ses
-   autres refus : `4` fichier absent ou vide, `3` iid inconnu ; un `1` (forge muette, base du diff
-   introuvable) **ne bloque pas la clôture** — signale-le. Le verbe vérifie qu'un test nommé
-   **existe**, pas qu'il passe : le dire vert sans l'avoir vu passer est un ✓ fabriqué. Il est
-   **idempotent** (empreinte `cksum`) : une clôture rejouée après un pipeline rouge n'empile rien, un
-   constat enrichi s'ajoute.
+   **Un critère non tenu est nommé, jamais coché.** `criteres-note` refuse (`5`) un ✓ sans preuve
+   exercée ou sur un passage non vert, un banc dû sans ligne **Banc** : on répare en exerçant, ou en
+   disant ✗ ou hors diff, jamais en cochant pour passer. Il vérifie qu'un test **existe**, pas qu'il
+   passe : le dire vert sans l'avoir vu passer est un ✓ fabriqué. Son `1` (forge muette) ne bloque
+   pas : signale-le. **Un ✗ n'empêche pas le merge** : corrige ce qui se corrige ici, puis reprends
+   à l'étape 4 ; ce qui dépasse le ticket se consigne ✗ avec sa suite, et se nomme au résumé —
+   ouvrir un ticket reste une décision. **On ne demande pas, on joue**, à l'identique en run et
+   en interactif, banc dû compris ; seul le choix du scénario reste un jugement, et se consigne.
 
-   **Un ✗ n'empêche pas le merge** : ce que le dispositif rend difficile est l'absence de **trace**,
-   jamais la livraison (règle de #935). Deux conduites, comme à l'étape 4bis :
-   - **un manque corrigeable ici** (la doc que le critère demandait, le test qu'il nommait) :
-     corrige, puis **reprends à l'étape 4** — c'est pourquoi cette étape passe **avant** le filet CI :
-     ce qui peut changer le diff passe avant le verdict qui le juge (arbitré sur #968) ;
-   - **un manque qui dépasse ce ticket** : consigne-le ✗ avec ce que tu en fais, et **nomme-le
-     dans le résumé final**. Ouvrir un ticket de suite reste une décision, pas un effet de bord.
-
-   **On ne demande pas, on joue** — à l'identique en run et en interactif : exercer est un
-   **constat**, pas un jugement sur l'opportunité d'exercer, et le banc dû se joue sans attendre
-   personne. Ce qui reste un jugement, et se consigne : **quel** scénario emprunte ton changement.
-
-5. **Filet CI local** — avant de pousser, rejoue en local ce que le pipeline de la PR jouera. Ne
-   cherche pas toi-même quel outil s'applique : `scripts/ci/local.sh` est la **source unique** des
-   contrôles locaux (#214, `docs/10-workflow-git.md` §8.4), il lit les jobs dans
-   `.github/workflows/ci.yml` et déduit du diff ce qui les concerne.
+5. **Filet CI local**, source unique des contrôles locaux :
    ```
    bash scripts/ci/local.sh
    ```
-   Par défaut `pytest` ne joue que les **suites concernées par le diff** — sous `maestro/**`, celles
-   qui nomment les modules touchés (#1242) —, sans seuil de couverture (verdict annoncé
-   « Périmètre réduit »). **Ne le passe pas en `--complet`** et n'invente aucune autre recette — le
-   verdict complet est celui du pipeline de la PR (#165), pas le tien.
-   **Un vert déjà obtenu sur ce contenu n'est pas rejoué** (#1242) : si tu as fait passer le filet
-   pendant le développement et que rien n'a bougé depuis — un commit de ce même travail compris —,
-   il répond `Verdict : VERT (déjà rendu)` en quelques secondes. C'est un vert : poursuis, sans
-   `--rejouer`.
-   **Best-effort, jamais bloquant** : un outil absent rend son job `IGNORÉ`, et un job rouge écrit
-   son journal sous `.maestro/ci-local/<job>.log` (chemin relatif, cité par le script). Si l'échec
-   vient de ton diff et se corrige en une passe, corrige-le et reprends à l'étape 4 ; sinon
-   **signale-le dans le résumé final** et poursuis la clôture — c'est la PR qui portera le verdict.
+   Périmètre du diff : ni `--complet` ni autre recette, le verdict complet est celui de la PR.
+   `Verdict : VERT (déjà rendu)` est un vert : poursuis sans `--rejouer`. Jamais bloquant : un rouge
+   de ton diff corrigeable en une passe se corrige (reprends à l'étape 4), sinon il se signale au
+   résumé (journal `.maestro/ci-local/<job>.log`) et tu poursuis.
 
-6. **Avant de pousser, regarde si la branche a pris du retard sur `origin/main`** — à plusieurs,
-   `CLAUDE.md`, `docs/10-workflow-git.md` et `scripts/gitlab/lib.sh` sont touchés par presque tous
-   les tickets, et sans ce contrôle le conflit n'apparaît que dans l'UI de la forge, après coup :
+6. **Retard sur `origin/main`**, consultatif :
    ```
    bash scripts/gitlab/lib.sh behind-main || echo "verdict=$? (3=en retard, 4=+conflit probable)"
    ```
-   Le helper est **consultatif** : il n'écrit rien et ne rebase jamais, et son code de retour
-   n'interrompt donc pas la clôture (`0` à jour, `3` en retard sans fichier commun, `4` en retard
-   **avec conflit probable** — les fichiers modifiés des deux côtés sont listés). **Ne rebase
-   jamais de toi-même** : un rebase réécrit
-   l'historique d'une branche déjà poussée et appellerait un force-push, interdit par les
-   garde-fous (`docs/10-workflow-git.md` §6). Selon le constat :
-   - `0` → rien à dire, poursuis.
-   - `3` → **signale-le** dans le résumé final (« n commits de retard, rebase serein possible »)
-     et poursuis la clôture : la forge mergera sans difficulté.
-   - `4` → **signale-le et propose le rebase à l'utilisateur** (`git fetch origin main && git
-     rebase origin/main`), en nommant les fichiers concernés. La clôture **n'est pas bloquée** :
-     s'il ne se prononce pas, pousse quand même et laisse la mention dans le résumé — c'est le
-     relecteur ou l'auteur qui tranchera, la PR affichant le conflit.
+   `3` : au résumé. `4` : au résumé avec les fichiers, et propose le rebase à l'utilisateur ; sans
+   réponse, pousse quand même. **Ne rebase jamais de toi-même** (force-push, docs/10 §6).
 
-7. **Pousse la branche.** Il n'y a plus rien à allumer avant : la CI tourne sur les exécutants
-   hébergés de GitHub, et l'outillage de runner de projet — trois scripts, 1 146 lignes, et la
-   machine qu'il fallait laisser allumée — est parti avec la CI GitLab (#344, docs/10 §8).
-   `git push -u origin <nom-de-la-branche>` : `git push -u origin <nom-de-la-branche>` — **écris le nom lu à
-   l'étape 1**, jamais `$(git branch --show-current)` : la couche permissions ne sait matcher
-   aucune **substitution de commande**, et refuserait un `git push` par ailleurs autorisé (#233).
-   Ne fais jamais de `--force` ici — si le push est rejeté, arrête-toi et explique pourquoi plutôt
-   que de forcer.
-   Si le push **reste bloqué** sur une demande d'identifiants (typique sous Windows avec Git
-   Credential Manager), relance-le en forçant `gh` comme credential helper :
-   `GIT_TERMINAL_PROMPT=0 git -c credential.helper='' -c credential.helper='!gh auth git-credential' push -u origin <nom-de-la-branche>`
-   (ce repli garde un **préfixe de variable d'environnement**, immatchable lui aussi — c'est le
-   domaine de #235, pas de ce lot : s'il est refusé, signale-le au lieu d'inventer une variante).
+7. **Pousse la branche.** `git push -u origin <nom-de-la-branche>`, nom lu à l'étape 1, jamais une
+   substitution `$(…)`. Jamais `--force` : un push rejeté, arrête-toi et explique pourquoi. Bloqué
+   sur des identifiants (Windows) : `GIT_TERMINAL_PROMPT=0 git -c credential.helper='' -c
+   credential.helper='!gh auth git-credential' push -u origin <nom-de-la-branche>` ; ce repli
+   refusé (préfixe de variable, #235), signale-le, sans variante inventée.
 
-8. **Prépare la description de la PR — dans un FICHIER, jamais sur la ligne de commande.** Elle
-   fait par nature plusieurs lignes : la couche permissions découpe une commande sur ses sauts de
-   ligne et la refuse, puis refuse aussi les deux replis naturels (`--body "$(cat …)"`,
-   `D="$(cat …)"; … "$D"`) — aucune règle ne peut matcher une **substitution de commande**. C'est ce
-   qui a fait tomber 8 sessions autonomes sur 16 (#233), et toujours ici, sur la **dernière action
-   du ticket** : tout est commité, rien ne le déclare. Le fichier n'est pas un contournement, c'est
-   la forme normale (#232).
+8. **La description de la PR s'écrit dans un fichier**, jamais sur la ligne de commande.
+   1. PR déjà ouverte ? `bash scripts/gitlab/lib.sh mr-iid` (code 1 si aucune).
+   2. Fichier écrit avec `Write` dans `.maestro/session/`, en chemin relatif — ni le scratchpad de
+      session ni `/tmp`, ni heredoc. Aucune PR : `Closes #<iid>`, une ligne vide, puis ce que la PR
+      change et pourquoi. PR ouverte : relis sa description par `lib.sh get-mr-description <mr> >
+      <fichier>` (jamais `gh pr view | python`, mojibake) et n'y ajoute que ce que 9.3 demande —
+      `create-mr` la remplace entière ; rien à ajouter, passe à 9.2.
 
-   1. **Une PR ouverte existe-t-elle déjà pour cette branche ?**
-      ```
-      bash scripts/gitlab/lib.sh mr-iid
-      ```
-      (sans argument : la branche courante ; code 1 + message si aucune PR ouverte). Le verbe garde
-      son nom `mr-iid` des deux côtés — c'est le **contrat de `lib.sh`**, normalisé vers le
-      vocabulaire GitLab pour que ses appelants ne bougent pas (cf. son en-tête) : seul le mot
-      change dans les prompts, jamais le nom d'un verbe.
-   2. **Écris le fichier** dans **`.maestro/session/`** (l'atelier de session : gitignoré, ce n'est
-      pas un livrable ; `mkdir -p .maestro/session` s'il manque), et passe-le à l'étape 9 en chemin
-      **relatif** — ni le scratchpad de session ni `/tmp`, chemins absolus qu'une session de run se
-      voit refuser (#962). **Écris-le avec l'outil `Write`** — pas avec `cat`/`echo`/un heredoc, qui
-      rejoueraient exactement le problème que cette étape évite.
-      - **Aucune PR** : `Closes #<iid>`, une ligne vide, puis **ce que la PR change et pourquoi**, en
-        quelques lignes — la forme du gabarit `.github/pull_request_template.md`.
-      - **PR déjà ouverte** : pars de l'**existant**, `create-mr` remplaçant la description
-        entière. Relis-la **via le helper** — `bash scripts/gitlab/lib.sh get-mr-description <mr> >
-        <fichier>` — et n'y change rien, sauf ce que le point 9.3 demande d'ajouter. Si rien ne
-        change, passe directement au point 9.2. N'improvise **jamais** une lecture du type
-        `gh pr view --json body | python` : elle corrompt l'UTF-8 en mojibake (« â€” » au lieu de
-        « — ») — voir #141.
-
-   **La PR ne porte pas de checklist** (#1244). Ses quatre cases redisaient ce que d'autres
-   vérifient mieux : la **mergeabilité** par `merge-mr` — PR prête qui ferme son ticket, rien de non
-   poussé, aucun conflit, pipeline vert **sur la tête de la PR** (#415, **aucun merge non vérifié**,
-   #417) —, le **contrat du ticket** par la confrontation des critères de l'étape 4ter (#968), les
-   conventions de commit par le hook `commit-msg`. Et sa case « pipeline verte » restait vide dans le
-   cas nominal : le pipeline naît de la PR.
+   **La PR ne porte pas de checklist** (#1244).
 
 9. **Crée (ou mets à jour) la PR.**
-
-   1. **Un seul appel, plat et court**, dans les deux cas :
+   1. Un appel, idempotent (PR en Draft, titre lu sur le ticket) :
       ```
       bash scripts/gitlab/lib.sh create-mr <iid> <fichier>
       ```
-      Le helper ouvre la PR en **Draft** vers `main`, **titre lu depuis le ticket**, description
-      lue depuis le fichier, et imprime son URL. Il est **idempotent** : si une PR ouverte existe
-      déjà pour la branche, il met sa description à jour au lieu d'échouer. La suppression de la
-      branche source au merge est un **réglage du dépôt** des deux côtés (`doctor.sh` le vérifie),
-      pas une option de cet appel.
-   2. **Passe la PR en « prête » — sans demander.** `create-mr` l'ouvre en Draft ; c'est ici
-      qu'on la lève :
+   2. **Lève le brouillon, sans demander** — lancer `/ticket-finish`, c'est déclarer le travail
+      fini ; sans effet sur une PR prête, et pas une promesse : `merge-mr` juge.
       ```
       gh pr ready <numéro>
       ```
-      La question qui se posait ici — « le travail est-il réellement prêt pour la revue ? » — a
-      disparu avec #418 : la commande s'apprête à **merger** cette PR à l'étape 13, et une PR qu'on
-      merge n'est pas un brouillon. Ce n'est pas la question qui a été escamotée, c'est sa réponse
-      qui est devenue certaine — lancer `/ticket-finish`, c'est déclarer le travail fini.
-      L'appel est **sans effet sur une PR déjà prête** : un « already ready for review » est un
-      constat, pas un échec. Et ce n'est **pas** une promesse de merge : le brouillon n'est qu'**un**
-      des quatre prérequis de `merge-mr`, qui refusera toujours une PR levée mais rouge, en conflit,
-      ou qui ne ferme pas son ticket (#415).
-   3. **T'es-tu fait refuser une écriture sous `.claude/` pendant ce ticket ?** (#608, docs/10
-      §11.7.) Si oui — et seulement si oui —, **deux gestes, jamais l'un à la place de l'autre** :
-      - **RENDS** le correctif intégral dans la description de la PR, sous une section
-        `## Reste à appliquer à la main` : contenu de remplacement complet (pas « modifier la ligne
-        12 », mais l'avant et l'après), fichier par fichier. C'est là qu'il se **relit** — tu
-        l'ajoutes au fichier préparé à l'étape 8, avant l'appel du point 1.
-      - **CONSIGNE-LE** dans un ticket de reprise, parce que c'est ce qui lui **survit** : écris le
-        correctif dans un fichier avec l'outil `Write` (dans `.maestro/session/`), puis
-        ```
-        bash scripts/gitlab/lib.sh reste-claude <iid-du-ticket> <chemin-du-fichier>
-        ```
-        Le ticket de reprise naît **assigné** — donc hors des plans d'un run, qui s'y ferait
-        refuser la même écriture — et avec son **état** ; rejoué sur le même ticket source, il
-        **complète** le même ticket de reprise au lieu d'en ouvrir un second. **Nomme-le dans ton
-        résumé final** (étape 15).
+   3. **Une écriture sous `.claude/` t'a été refusée ?** (#608) Deux gestes, jamais l'un sans
+      l'autre. **Rends** le correctif intégral dans la description, sous la section
+      `## Reste à appliquer à la main` (avant et après complets, fichier par fichier, avant 9.1).
+      **Consigne-le** dans un ticket de reprise, qui survit au merge — correctif écrit avec `Write`
+      dans `.maestro/session/`, puis :
+      ```
+      bash scripts/gitlab/lib.sh reste-claude <iid-du-ticket> <chemin-du-fichier>
+      ```
+      Nomme ce ticket au résumé. Ne contourne jamais le blocage (ni redirection, ni `cp`, ni
+      script tiers).
 
-      ⚠ **C'est ici que le geste est le plus facile à oublier, et ici qu'il coûte le plus cher** :
-      depuis #418 cette commande **merge** la PR quelques minutes plus tard (étape 13), et la
-      description où le correctif était rendu se ferme avec elle — plus rien ne la rouvre. Rien
-      n'échoue, rien n'est rouge, le ticket passe « Terminé » : c'est ce qui rend la perte
-      **invisible** (run `20260827-094044` : trois tickets, deux résidus, mergés en vingt minutes,
-      encore en place le lendemain). Le ticket, lui, vit après le merge.
+10. **Aucun relecteur** : n'appelle ni `lib.sh set-reviewer` ni `gh pr edit --add-reviewer` (#196).
 
-      ⚠ **Et ne contourne pas le blocage** pour t'éviter ces deux gestes : ni `printf > fichier`,
-      ni `cp`, ni script tiers. Il vient du **CLI**, pas de l'allowlist, et c'est lui qui empêche
-      une boucle sans surveillance de réécrire les instructions que la boucle suivante exécutera.
-
-10. **Ne pose aucun relecteur sur la PR** (#196) — la désignation d'un relecteur est un **geste
-   humain**, jamais automatique : n'appelle pas `lib.sh set-reviewer` et n'utilise pas
-   `gh pr edit --add-reviewer`. Le helper reste disponible pour une pose explicite, sur demande.
-   La revue reste **best-effort** — aucune approbation n'est exigée pour merger, ce que le merge
-   exige étant les prérequis de `merge-mr` et non un avis (**aucun merge non vérifié**, #417) ; la
-   visibilité des PR en attente est portée par la **file de revue** en tête de `/backlog` (la plus
-   ancienne d'abord).
-
-11. Fais passer l'**état** du ticket à « En revue » (le cycle de vie est porté par le champ Status
-   du projet — voir `docs/10-workflow-git.md` §3) :
+11. **État « En revue »**, dans le champ Status (docs/10 §3) ; vérifie qu'il réussit :
    ```
    bash scripts/gitlab/lib.sh set-workflow <iid> "En revue"
    ```
-   Le helper résout le work item depuis l'iid et **dérive les GID des six labels par nom** (pas de
-   GID en dur), puis ajoute la cible et **retire les cinq autres dans le même appel** — l'exclusion
-   mutuelle des labels scopés est Premium, donc rien ne l'assurerait à notre place. Vérifie que la
-   commande réussit. Ne touche pas aux labels `agent::*` / `prio::*` / `type::*`.
 
-12. Renseigne le **temps passé** — **mesuré, jamais estimé**, sans demander (#1244, docs/10 §3.3) :
+12. Renseigne le **temps passé**, mesuré, jamais estimé, sans demander (#1244) :
    ```
    bash scripts/gitlab/lib.sh log-time-mesure <iid>
    ```
-   Le verbe lit les transcripts des sessions Claude Code du ticket — en run comme en interactif,
-   ils sont rangés sous son worktree —, en compte les **tours** depuis le démarrage du ticket (pas
-   l'attente de la personne entre deux prompts), et logge ce qui n'est pas encore loggé, **la source
-   dans le libellé**. Rejoué, il n'ajoute que le travail fait depuis. **N'estime rien toi-même** :
-   « 4h » avaient été estimées sur #1226, 1 h 19 mesurées. Code `3` (aucune session du ticket sur ce
-   poste, ou rien de neuf) : rien n'est loggé, et c'est la bonne issue — ne logge pas de durée à la
-   main à sa place. Recopie ses lignes dans le résumé final.
+   Il compte les tours des sessions du ticket et logge ce qui ne l'est pas, sa source au libellé.
+   Code `3` : rien de loggé, c'est la bonne issue — aucune durée à la main. Recopie ses lignes.
 
-13. **Attends le pipeline, merge — et débloque ce qui est réparable** (#418 puis #460, chantier
-   #413) — c'est ici que la clôture se termine vraiment. L'étape a été placée **après** l'état « En revue » et le log du temps, et pas
-   avant : l'attente dure quelques minutes, et une session qui meurt pendant ce créneau doit
-   laisser un ticket **lisible** (poussé, PR ouverte et prête, « En revue ») plutôt qu'un ticket
-   resté « En cours » que plus personne ne réclame — c'est le mode de panne de #327.
+13. **Attends le pipeline, merge, débloque ce qui est réparable** (#418, #460). Placée après « En
+   revue » : une session qui meurt pendant l'attente laisse un ticket lisible.
 
-   1. **Annonce l'attente, puis attends.** La CI ne se déclenche qu'à partir de la PR (#165) et tu
-      viens tout juste de la pousser : le run **naît après** la PR, donc aucun verdict n'est encore
-      rendu à cet instant.
+   1. **Annonce l'attente** (« 2-4 min, 15 s'il tourne, 30 s'il n'est pas né »), puis :
       ```
       bash scripts/gitlab/lib.sh pipeline-wait <branche> || verdict=$?
       ```
-      **Dis-le avant de lancer l'appel** — « pipeline attendu : 2-4 min en régime normal, jusqu'à
-      15 min s'il tourne, jusqu'à 30 min s'il n'est pas encore né » : une commande qui ne rend pas
-      la main pendant trois minutes sans avoir prévenu passe pour bloquée. `pipeline-wait` **n'écrit
-      nulle part, ne relance rien et ne juge rien** (#416) ; ses codes (`0` vert, `3` verdict
-      terminal non vert, `4` plafond atteint, `5` aucun pipeline et aucun n'est dû, `6` **pas encore
-      né alors qu'une PR le rend dû**) servent à **formuler**, jamais à décider. Enchaîne sur
-      `merge-mr` **dans tous les cas** : deux endroits qui disent « mergeable » valent moins qu'un,
-      et c'est `merge-mr` qui tranche.
-
-      ⚠ **Le `6` est le verdict de #595, et il n'est pas un échec.** Le 2026-08-26, l'événement
-      `pull_request` a mis 18 à 20 min à déclencher la CI sur trois PR consécutives (docs/10 §8.9) —
-      rien de rouge, rien en conflit, juste un run qui n'était pas encore né. Le verbe attend
-      désormais jusqu'à 30 min dans ce cas précis, donc il aboutit tout seul ; s'il rend quand même
-      `6`, **note la durée** pour le résumé (étape 15) et enchaîne sur `merge-mr`, qui rendra `3`.
-      Le remède manuel que le verbe imprime — `gh workflow run ci.yml --ref <branche>` — n'est
-      **pas** à jouer d'office : il vérifie `refs/heads/<branche>` et non la ref de merge de la PR,
-      donc il substituerait en silence une vérification plus faible à celle qu'on attendait.
-      Mentionne-le dans le résumé comme le geste disponible, sans le poser.
-   2. **Merge** :
+      Ses codes formulent, ils ne décident pas : enchaîne sur `merge-mr` **dans tous les cas**. Un
+      `6` (pas encore né) : note la durée ; le `gh workflow run` qu'il imprime vérifierait la
+      branche, pas sa ref de merge — nomme-le au résumé, ne le joue pas (#595).
+   2. **Merge** — jamais `gh pr merge`, en `deny` et dans `guard.sh` (#417) :
       ```
       bash scripts/gitlab/lib.sh merge-mr <iid> || verdict=$?
       ```
-      Jamais `gh pr merge` : le geste **nu** reste en `deny` côté permissions **et** dans
-      `guard.sh`, et ce n'est pas une contradiction — ces filets jugent le **texte de la commande
-      que tu lances**, pas ce qu'un script appelle en interne (#417). Le code de retour décide de
-      la suite, et lui seul :
-      - `0` → **mergé** (squash). Le ticket se ferme par son `Closes`, et son état passe
-        « Terminé » tout seul via le workflow `issues: closed` (#377) : **ne pose rien**, ne
-        repasse pas `set-workflow`, ne ferme rien à la main. La branche distante part avec le merge
-        (`delete_branch_on_merge`, #384) ; la branche locale et le worktree, eux, partent à
-        l'**étape 14** — que seul ce verdict déclenche, avec le `7` (#519, #593).
-      - `3` → le verdict n'est **pas encore rendu** : run en cours, absent, ou **périmé** — un vert
-        porté par un commit antérieur au tien. C'est `merge-mr` qui compare les sha et rend ce `3`
-        (docs/10 §6). `pipeline-wait`, lui, **sait depuis #595 quel run il attend** dès qu'une PR
-        est ouverte : il écarte celui de la push précédente au lieu d'en faire un `0`, donc la
-        reprise ci-dessous **attend enfin quelque chose** — avant, les deux appels rendaient le même
-        verdict pour la même raison, sans qu'une seconde se soit écoulée. **Repasse une fois,
-        pas plus** — `pipeline-wait <branche>` puis `merge-mr <iid>` à nouveau. Toujours `3` :
-        laisse la PR **ouverte**, le ticket **« En revue »**, et dis-le — quelqu'un repassera, ou
-        le drain de fin de run (#419).
-
-        ⚠ **N'enchaîne JAMAIS sur `/mr-fix` ici** (#595), même quand l'attente s'éternise : une PR
-        dont le pipeline **n'existe pas encore** n'a ni conflit ni job rouge, donc rien que `/mr-fix`
-        sache réparer — les deux tentatives seraient consommées pour rien. `merge-mr` dit « pipeline
-        pas encore né » dans ses deux formes (aucun run pour la branche, ou dernier run sur un sha
-        antérieur) : dans les deux cas le run de la tête vient, et le résumé le **nomme** au lieu de
-        parler d'« attente » — avec sa durée, et en disant que le geste disponible est un
-        `gh workflow run ci.yml --ref <branche>` que tu n'as pas posé.
+      - `0` → **mergé**. Le ticket se ferme par son `Closes`, « Terminé » vient du workflow `issues:
+        closed` : ne pose rien. Worktree et branche partent à l'**étape 14**.
+      - `3` → verdict pas encore rendu (run en cours, absent, périmé).
+        **Repasse une fois, pas plus** : `pipeline-wait` puis `merge-mr`. Toujours `3` : PR
+        ouverte, « En revue », dis-le — quelqu'un repassera, ou le drain d'un run (#419). Si
+        `merge-mr` dit le pipeline « pas encore né », nomme-le ainsi, avec sa durée et le geste
+        `gh workflow run` disponible, non posé. **N'enchaîne jamais sur `/mr-fix` ici** : un
+        pipeline pas né n'a rien à réparer.
       - `4` → **pipeline rouge** · `5` → **conflit avec `origin/main`** → **enchaîne sur `/mr-fix
-        <numéro>`, sans demander** (#460). Ne corrige rien toi-même : réparer un pipeline ou
-        résoudre un conflit est un métier à part, et c'est le sien — invoque la commande, elle est
-        autosuffisante. Ces deux causes sont les seules **réparables** des sept, et un run autonome
-        les fait réparer d'office depuis #420 : laisser la clôture interactive *proposer* ce que le
-        pilote *fait* traitait la même cause de deux façons selon l'appelant. Le détail est à
-        l'étape 13.3.
-      - `6` → **anomalie** : PR absente, fermée sans merge, encore brouillon, sans `Closes`, ou
-        commits non poussés. **Nomme-la telle que le helper l'a rendue**, et ne la contourne pas —
-        ni un `gh pr ready` « au cas où », ni un push de rattrapage, ni un merge par un autre
-        chemin. Un `6` dit qu'une hypothèse de la clôture est fausse : le remède est de la regarder.
-        ⚠ **Ce n'est pas le `6` de 13.1** : les deux tables partagent leurs chiffres (#595), et
-        celui de `pipeline-wait` dit « pas encore né », ce qui n'est pas une anomalie. Lis le code
-        dans la table du verbe qui vient de le rendre.
-      - `7` → **la PR était déjà mergée** — quelqu'un d'autre l'a fait passer dans `main` pendant
-        que tu travaillais (une session voisine, un `/mr-fix`, le drain d'un run). Ce n'est **pas
-        une anomalie et il n'y a rien à faire** : le ticket est fermé par son `Closes`, son état
-        passe « Terminé » par le workflow `issues: closed`. Traite-le comme un `0` **à un mot
-        près** — le ménage de l'**étape 14** a lieu (la branche et le worktree sont tout aussi
-        inutiles), mais le résumé dit « déjà mergée » et non « mergée » : t'attribuer un merge que
-        tu n'as pas fait est ce qui rendrait le compte rendu faux (#593).
-      - `1`/`2` → prérequis outil manquant / usage : signale-le, ne merge pas.
-   3. **Le déblocage — sur `4` et `5` seulement** (#460). `/mr-fix` traite les deux blocages dans
-      l'ordre qui est le sien (conflit d'abord, pipeline ensuite) et, depuis #418, **merge ce qu'il
-      vient de débloquer**. Quatre choses à tenir :
-      - **Annonce l'attente avant de lancer.** `/mr-fix` attend un pipeline à son tour, qui
-        s'ajoute à celle de 13.1 : dis-le — « pipeline rouge, je lance `/mr-fix` : nouvelle
-        attente de pipeline ». #418 a choisi d'annoncer cette attente plutôt que de la masquer ;
-        elle s'allonge ici, la règle ne change pas.
-      - **Ne repasse pas `merge-mr` derrière lui.** Son étape 12 *est* l'appel à `merge-mr`, donc
-        son verdict de merge est le tien — le relire n'ajouterait aucune vérification : sur une PR
-        qu'il vient de merger, `merge-mr` rend `7` (déjà mergée), c'est-à-dire un appel qui ne peut
-        rien apprendre. Depuis #593 il ne fabrique plus de fausse anomalie — il rendait `6` —, mais
-        la règle ne change pas pour autant : la question a déjà été posée et tranchée.
-      - **Deux tentatives au plus**, et la seconde n'est due que si la première a **fait bouger la
-        PR** — correctif poussé, conflit résolu, run relancé. Rejouer la commande sur un état
-        inchangé ne peut rendre que le même verdict : c'est un abandon, pas une seconde tentative,
-        et le résumé le dit ainsi. Ce plafond est **le tien**, écrit ici : la variable
-        `MAESTRO_ORCHESTRATE_MRFIX_MAX` borne les sessions qu'un **run** ouvre (#420) et ne se lit
-        pas depuis une clôture interactive — deux plafonds de même valeur, jamais le même réglage.
-      - **Au-delà — ou sur un arrêt de `/mr-fix` avant son merge** (résolution pas claire abandonnée
-        par `git merge --abort`, échec d'infrastructure, tentatives internes épuisées) : la PR reste
-        **ouverte**, le ticket **« En revue »**, et tu rends la cause. C'est un état normal, pas un
-        échec.
+        <numéro>`, sans demander**, sans rien corriger toi-même (13.3).
+      - `6` → **anomalie** (PR absente, fermée, brouillon, sans `Closes`, commits non poussés) :
+        nomme-la, ne la contourne pas — c'est un geste humain. Ce n'est pas le `6` de
+        `pipeline-wait`.
+      - `7` → **déjà mergée**, par un autre : comme un `0`, étape 14 comprise, mais dis « déjà
+        mergée » (#593).
+      - `1`/`2` → outil ou usage : signale-le, ne merge pas.
+   3. **Le déblocage, sur `4` et `5` seulement.** `/mr-fix` résout, puis merge ce qu'il débloque.
+      - **Annonce l'attente** : « je lance `/mr-fix` : nouvelle attente de pipeline ».
+      - **Ne repasse pas `merge-mr` derrière lui** : son étape 12 l'appelle déjà, et rendrait `7`
+        (un `6` fabriqué avant #593).
+      - **Deux tentatives au plus**, la seconde seulement si la première a fait bouger la PR —
+        rejouer sur un état inchangé est un abandon, et le résumé le dit ainsi. Ce plafond est le
+        tien : `MAESTRO_ORCHESTRATE_MRFIX_MAX` borne les sessions d'un run (#420).
+      - Au-delà, ou si `/mr-fix` s'arrête avant son merge : PR ouverte, « En revue », cause rendue.
 
-      ⚠ **En run autonome, n'enchaîne rien.** Une session de run n'atteint jamais ce verdict : dès
-      13.1, `guard.sh` refuse `pipeline-wait` (et `merge-mr`), et ce refus **est** la fin normale de
-      ta clôture — PR ouverte et prête, ticket « En revue », rien d'autre à faire. Le déblocage y
-      appartient au **pilote**, qui ouvre lui-même les sessions `/mr-fix` (#420) : en lancer une
-      d'ici ferait tourner deux remédiations sur la même PR, et attendrait un pipeline sur le quota
-      du run — les deux choses que ce garde-fou existe pour empêcher.
+      ⚠ **En run autonome, n'enchaîne rien** : `guard.sh` refuse `pipeline-wait` et `merge-mr`, et
+      ce refus est la fin normale de ta clôture. Le déblocage y appartient au **pilote** (#420).
+   4. **Jamais** de force-push, de PR fermée, de cycle de vie reposé, ni de relance en boucle. Un
+      refus de merge n'est pas un échec du ticket : c'est un état normal.
 
-   4. **Ce qui ne bouge dans aucun de ces cas** : tu ne force-pushes pas, tu ne fermes pas la PR,
-      tu ne repasses pas le cycle de vie et tu ne relances rien en boucle — le déblocage de 13.3
-      est **borné à deux tentatives**, et c'est la seule relance prévue. Un refus de merge n'est
-      **pas** un échec du ticket — le travail est poussé, la PR est ouverte et prête, le ticket est
-      « En revue ». C'est un état normal, et il a un nom.
-
-14. **Ramasse le worktree et la branche — sur `0` seulement** (#519, docs/10 §9.2). Le merge vient
-   de rendre ce worktree inutile, et cette session est la première à le savoir : le ménage n'attend
-   plus le prochain `/ticket-start` ni un `/branch-cleanup` explicite. Il vient **après** le verdict
-   du merge et ne le change jamais — si l'un de ces gestes échoue, un ticket mergé reste un ticket
-   mergé, et l'échec se dit au lieu de devenir une réserve sur le merge.
-
-   **N'entreprends rien sur `3`/`4`/`5`/`6`** : la PR est encore ouverte, donc le travail vit encore
-   dans ce worktree. Passe directement au résumé.
-
-   1. **Sors du worktree** avec l'outil **`ExitWorktree`**, `action: "keep"` — il te ramène au clone
-      principal, la position d'où le pilote d'un run ramasse depuis #438, et c'est tout ce qu'on lui
-      demande. **Jamais `action: "remove"`**, pour deux raisons indépendantes : le tool ne retire que
-      les worktrees qu'`EnterWorktree` a *créés* dans la session, or celui-ci a été créé par
-      `worktree.sh create` et seulement *rejoint* ; et même s'il le pouvait, il court-circuiterait
-      tous les garde-fous du ramassage — confirmation du merge par la forge (#197), mesure du travail non
-      sauvegardé contre le sha de merge (#438), pose de « Terminé » (#275), rattrapage des coquilles
-      (#422). **On sort du worktree avec `ExitWorktree`, on nettoie avec les verbes du dépôt.**
-      S'il répond qu'aucune session de worktree n'est active — la session n'y est pas *entrée* par
-      `EnterWorktree`, elle y a démarré (verdict `ICI` de `/ticket-start`) —, **n'insiste pas** :
-      reste où tu es, joue quand même 14.2, et relaie ce que `gc` répondra.
-   2. **Retire le worktree, puis purge la branche** — les deux verbes du pilote, **dans cet ordre**,
-      qui est le seul point non négociable ici (`git branch -D` refuse une branche encore empruntée
-      par un worktree, #305) :
+14. **Ramasse le worktree et la branche — sur `0` seulement** (et `7` ; #519). Ce ménage ne change
+   jamais le verdict du merge. **N'entreprends rien sur `3`/`4`/`5`/`6`** : le travail vit encore
+   dans ce worktree.
+   1. **Sors du worktree** : `ExitWorktree`, `action: "keep"`. **Jamais `action: "remove"`**, qui
+      court-circuiterait les garde-fous du ramassage. Aucune session de worktree active (verdict
+      `ICI`) : reste où tu es et joue 14.2.
+   2. **Retire le worktree, puis purge la branche**, dans cet ordre (`git branch -D` refuse une
+      branche encore empruntée) :
       ```
       bash scripts/git/worktree.sh gc --iid <iid>
       bash scripts/gitlab/lib.sh cleanup-merged --auto <branche>
       ```
-      Si l'un des deux s'abstient, **n'invente aucun contournement** : la garde qui compte est celle
-      de `gc`, et un worktree porteur de travail **non sauvegardé** est gardé exprès — un merge dit
-      ce qui est parti sur `origin/main`, jamais ce qui est resté sur le disque. Ne la double pas
-      d'une vérification à toi : deux formules qui divergeraient se remarqueraient trop tard, et
-      c'est la garde qui perdrait.
-   3. **Rends-en compte dans le résumé** : ce qui a été retiré, ou la **cause que `gc` a nommée** en
-      s'abstenant. Une abstention n'est pas un échec de la clôture — c'est un travail que personne
-      n'attend plus là, et ce résumé est le dernier endroit où l'information atteint quelqu'un.
+      Une abstention ne se contourne pas : `gc` garde exprès un travail **non sauvegardé**.
+   3. Rends-en compte : ce qui a été retiré, ou la cause nommée par `gc`.
 
-   ⚠ **En run autonome, cette étape ne se joue jamais** : `guard.sh` refuse `pipeline-wait` et
-   `merge-mr` dès 13.1, donc le verdict `0` n'y est pas atteint. C'est le **pilote** qui ramasse
-   après son propre merge (#438) — les deux ramassages sont exclusifs par construction, et il n'y a
-   aucun drapeau à tenir d'accord.
+   ⚠ **En run autonome, elle ne se joue jamais** : `guard.sh` refuse le merge, et le pilote ramasse
+   après le sien (#438).
 
-15. Termine par un résumé : **le verdict du merge en tête** (table ci-dessous), l'**issue du
-   déblocage** si l'étape 13.3 a joué — sur sa **propre ligne**, jamais fondue dans celle du
-   merge —, ce que le **ramassage** de l'étape 14 a retiré (ou la cause de son abstention), le
-   lien de la PR, le **verdict du filet CI local** s'il n'était pas vert (étape 5 — quel job,
-   et pourquoi tu as poussé quand même), le **retard éventuel sur `origin/main`** relevé à
-   l'étape 6 (et le rebase proposé si un conflit est probable), et le **temps** de l'étape 12 —
-   mesuré et loggé avec sa source, ou la raison pour laquelle rien ne l'a été. Si un refus du
-   garde-fou de l'étape 3 a été **franchi sur demande explicite**,
-   dis-le en tête du résumé (quel motif, et qui l'a demandé). Et si l'étape 9.3 a joué, **nomme le
-   ticket de reprise** (#608) — la PR qui portait le correctif vient d'être mergée, ce ticket est
-   le seul endroit où il vit encore. Rends enfin la **confrontation des critères** de l'étape 4ter
-   sur sa propre ligne : le compte (`n ✓ · n ✗ · n hors diff`), **chaque critère ✗ nommé**, le
-   **banc** s'il était dû (vert, rouge avec ses scénarios, ou non joué avec sa raison), ou « aucun
-   critère — signalé sur le ticket ».
+15. Termine par un résumé : en tête, un refus de l'étape 3 **franchi sur demande** (lequel, qui) ;
+   puis le **verdict du merge**, l'**issue du déblocage** sur sa propre ligne, le **ramassage**, le
+   lien de la PR, le filet CI s'il n'était pas vert (quel job, pourquoi tu as poussé quand même),
+   les signalements (`1` d'un verbe), le retard sur `origin/main`, le **temps** loggé
+   (ou pourquoi rien), le **ticket de reprise** de 9.3, la planche, et la **confrontation des
+   critères** sur sa ligne (`n ✓ · n ✗ · n hors diff`, chaque critère ✗ nommé, le banc s'il était
+   dû, ou « aucun critère — signalé sur le ticket »).
 
-   **Jamais de ✅ global.** Une clôture dont la PR est restée ouverte sur un pipeline rouge n'est
-   pas « terminée avec une réserve » : elle est **inachevée**, et le dire avec ce mot-là est tout ce
-   qui sépare ce résumé du faux verdict que #303 a supprimé ailleurs.
    | Issue | À rapporter |
    |---|---|
-   | **Mergé** (`0`, du premier appel **ou** au terme du déblocage) | « PR #N mergée (squash) — #<iid> fermé, état « Terminé » posé par le workflow `issues: closed` » ; puis le **ramassage** de l'étape 14 — worktree et branche locale retirés, ou la cause que `gc` a nommée en s'abstenant (travail non sauvegardé : gardé, c'est voulu) —, et le fait que la session travaille désormais depuis le **clone principal** (#519) |
-   | **Déblocage** (étape 13.3) | ⊘ **non tenté** — le verdict n'était pas réparable (`3`/`6`/`1`/`2`), ou un run autonome l'interdisait · ✅ **tenté et abouti** — ce que `/mr-fix` a réparé (conflit résolu, job remis au vert) et le nombre de tentatives · ❌ **tenté sans succès** — sur quel arrêt `/mr-fix` s'est arrêté, et combien de tentatives ont été consommées |
-   | **Déjà mergé** (`7`) | « PR #N **déjà mergée** — dans `main` sans que ce soit mon fait » : le ticket est fermé et son état posé comme pour un `0`, le **ramassage** de l'étape 14 a lieu de même, et le mot « déjà » est ce qui empêche le résumé de s'attribuer un merge qu'il n'a pas commis (#593) |
-   | **Non mergé** (`3`/`4`/`5`/`6`) | la **cause telle que `merge-mr` l'a rendue** (jamais reformulée en « il faudra revoir ça »), l'**état laissé** — PR **ouverte** et prête, ticket **« En revue »** — et la **suite** : repasser plus tard sur `3`, le geste humain nommé sur `6`, et sur `4`/`5` ce que le déblocage n'a pas su lever |
+   | **Mergé** (`0`, d'emblée ou après déblocage) | « PR #N mergée — #<iid> fermé, « Terminé » posé par le workflow » ; worktree et branche retirés, ou la cause de `gc` ; la session est dans le **clone principal** |
+   | **Déjà mergé** (`7`) | « PR #N **déjà mergée** » ; ramassage comme pour un `0` |
+   | **Non mergé** (`3`-`6`) | la cause rendue par `merge-mr`, l'état laissé (PR prête, « En revue ») et la suite : repasser sur `3`, le geste humain sur `6`, ce que le déblocage n'a pas levé sur `4`/`5` |
+   | **Déblocage** | ⊘ **non tenté** (verdict non réparable, ou run) · ✅ **abouti** (ce qui a été réparé, tentatives) · ❌ **sans succès** (où il s'est arrêté, tentatives) |
 
-   **« Non tenté » et « refusé » ne se disent pas du même mot** — c'est la distinction que #303 a
-   établie pour `/mr-fix`, et elle vaut ici mot pour mot : le premier est la conséquence de **ton**
-   abandon (ou d'un verdict qui n'appelait aucune réparation), le second est un verdict sur **la
-   PR**. Les confondre ferait chercher un problème de PR là où il y a une remédiation inachevée.
-
-   Rappelle enfin qu'**aucun merge non vérifié** n'a lieu (#417) : ce qui a mergé — ou refusé de
-   merger — est `bash scripts/gitlab/lib.sh merge-mr <iid>` et ses quatre prérequis, jamais toi.
-   Cela reste vrai **après un déblocage** : ce qui merge alors est le `merge-mr` de l'étape 12 de
-   `/mr-fix`, avec les mêmes quatre prérequis, jamais `/mr-fix` lui-même.
+   **Jamais de ✅ global** : une PR restée ouverte laisse la clôture **inachevée**, dis-le de ce mot.
+   **« Non tenté » et « refusé »** ne se confondent pas : l'un est ton abandon, l'autre un verdict
+   sur la PR. Ce qui merge, ou refuse, est `merge-mr` et ses quatre prérequis, jamais toi : **aucun
+   merge non vérifié** (#417).

@@ -506,6 +506,18 @@ case "$EFFORT" in
     ;;
 esac
 
+# Les serveurs MCP d'une session s'épinglent comme le modèle et l'effort (#1245, docs/10 §11.3) :
+# sans `--strict-mcp-config`, une session charge ceux du projet (`.mcp.json`), ceux du poste et les
+# connecteurs du compte — quatre serveurs sur 69 sessions mesurées, dont Figma (37 outils) et les
+# docs claude.ai jamais appelés. Le fichier retenu est vérifié AVANT le premier ticket : absent, le
+# CLI refuserait chaque session, et le run brûlerait son plan en échecs jumeaux.
+MCP_RUN="$RACINE/scripts/orchestrate/mcp.run.json"
+if [ ! -f "$MCP_RUN" ]; then
+  printf 'run.sh : %s introuvable — les serveurs MCP des sessions de run y sont déclarés (#1245).\n' \
+    "$MCP_RUN" >&2
+  exit 2
+fi
+
 # Le plafond de dépense ne devient une option de session que s'il a été DEMANDÉ (#286) : c'est
 # `OPT_BUDGET` — vide par défaut — qui part au CLI, jamais `--max-budget-usd ""`. `0` y vaut « pas
 # de plafond », seule façon d'annuler une variable d'environnement déjà posée, et le repli évite
@@ -2011,6 +2023,7 @@ lance_session() {
         --output-format stream-json --verbose \
         --permission-mode acceptEdits \
         --settings "$RACINE/scripts/orchestrate/settings.run.json" \
+        --strict-mcp-config --mcp-config "$MCP_RUN" \
         ${OPT_BUDGET+"${OPT_BUDGET[@]}"} \
         --model "$MODELE" \
         --effort "$EFFORT" </dev/null ) 2>"$RUN_DIR/$iid.log" | formate_flux "$iid" "$dest"
@@ -2027,6 +2040,7 @@ lance_session() {
       --output-format stream-json --verbose \
       --permission-mode acceptEdits \
       --settings "$RACINE/scripts/orchestrate/settings.run.json" \
+      --strict-mcp-config --mcp-config "$MCP_RUN" \
       ${OPT_BUDGET+"${OPT_BUDGET[@]}"} \
       --model "$MODELE" \
       --effort "$EFFORT" </dev/null ) 2>"$RUN_DIR/$iid.log" | formate_flux "$iid" "$dest"
@@ -3014,6 +3028,7 @@ if [ "$DRY" = 1 ]; then
   printf '                        --permission-mode acceptEdits --model %s --effort %s%s\n' \
     "$MODELE" "$EFFORT" \
     "$([ -n "$BUDGET" ] && printf ' --max-budget-usd %s' "$BUDGET")"
+  printf '                        --strict-mcp-config --mcp-config scripts/orchestrate/mcp.run.json\n'
   printf '  3. verdict            PR ouverte ET cycle de vie « En revue » (lu dans %s, pas dans la sortie)\n' "$(gl_forge_nom)"
   printf '  4. limite d'\''usage    attente jusqu'\''au reset, puis réouverture de la même session Claude\n'
   printf '  5. sur échec          lots suivants du même parent sautés, run poursuivi\n'
