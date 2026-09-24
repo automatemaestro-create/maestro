@@ -317,10 +317,9 @@ class Verificateur:
         """
         motif = portee.commande_hors_portee(commande.commande).replace(f" ({copie})", "")
         if motif:
-            return _a_verifier(
-                commande,
-                f"Maestro ne la joue pas sans vous, elle revient à une personne ({motif})",
-            )
+            # Le motif de la portée dit déjà qu'une personne tranche : ne pas le redire
+            # (relevé par le regard neuf de #1160).
+            return _a_verifier(commande, f"Maestro ne la joue pas sans vous — {motif}")
         reste = self.delais.total_s - (time.monotonic() - debut)
         if reste <= 0:
             return _a_verifier(

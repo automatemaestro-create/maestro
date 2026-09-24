@@ -60,6 +60,10 @@ import { CarteDuFil } from "@/components/chat/CarteDuFil";
 import { IconeChevronBas, IconeDossier } from "@/components/Icones";
 import { BadgeEtat, Bouton, Carte } from "@/components/Primitives";
 import {
+  ListeVerifications,
+  RecapitulatifVerifications,
+} from "@/components/projets/VerificationsOutillage";
+import {
   genererOutillage,
   recommandationOutillage,
   questionOutillage,
@@ -385,7 +389,8 @@ function CompteAEcrire({
         {projet.racine}
       </code>{" "}
       : {comptesParNature(gardes)}. Rien n&apos;est écrasé : un fichier déjà là
-      que Maestro n&apos;a pas écrit n&apos;est pas touché.
+      que Maestro n&apos;a pas écrit n&apos;est pas touché. Chaque commande est
+      jouée avant d&apos;être écrite.
     </p>
   );
 }
@@ -463,10 +468,18 @@ function LigneRetenue({
  * que #1031 a écarté. Ce qui reste est ce qu'une conversation doit dire : ce qui
  * a été écrit et où, et **ce qui ne l'a pas été** — taire un fichier non écrasé
  * ferait passer une non-écriture pour une écriture.
+ *
+ * Et depuis #1160, **ce que valent les commandes écrites** : le compte en badges
+ * (un échec s'y lit sans rien ouvrir, en couleur d'alerte), puis la liste de la
+ * page — la même, jamais une seconde — dépliée à la demande. C'est la forme repliée
+ * que le choix de #1160 a écartée pour la page et réservée à ce pied (#1104).
  */
 function RapportCourt({ rapport }: { rapport: RapportGenerationOutillage }) {
   const { ecrits, refuses, cible, refus } = rapport.rapport;
   const inconnus = rapport.retenus_inconnus ?? [];
+  const verifications = rapport.rapport.verifications ?? [];
+  const [deplie, setDeplie] = useState(false);
+  const idDetail = useId();
   return (
     <div className="flex flex-col gap-2">
       <p className="text-corps text-texte">
@@ -496,6 +509,32 @@ function RapportCourt({ rapport }: { rapport: RapportGenerationOutillage }) {
         <p className="text-annexe text-alerte-texte" role="alert">
           Rien n&apos;a été écrit : {refus}
         </p>
+      )}
+      {/* Le verdict de chaque commande écrite (#1160) : ici le récapitulatif en
+          badges, la liste retenue pour la page se dépliant sous le même contrôle
+          que « Ce qui sera écrit » — à gauche, hors du bouton flottant (#990). */}
+      {verifications.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <Bouton
+              variante="discret"
+              ton="neutre"
+              taille="petite"
+              icone={IconeChevronBas}
+              aria-expanded={deplie}
+              aria-controls={idDetail}
+              onClick={() => setDeplie((ouvert) => !ouvert)}
+            >
+              {verifications.length} commande{verifications.length > 1 ? "s" : ""}
+            </Bouton>
+            <RecapitulatifVerifications verifications={verifications} />
+          </div>
+          {deplie && (
+            <div id={idDetail}>
+              <ListeVerifications verifications={verifications} />
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
