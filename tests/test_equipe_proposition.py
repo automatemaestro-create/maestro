@@ -218,6 +218,19 @@ def test_un_role_ecarte_nomme_ce_qui_manque_dans_le_projet() -> None:
     assert "bornes de l'analyse" in ecarte.raison
 
 
+def test_un_role_ecarte_ne_promet_aucun_geste() -> None:
+    """#1159 : la raison d'un écarté disait « Vous pouvez l'ajouter à la validation »,
+    alors que l'écran ne permettait que de décocher ce qui était proposé.
+
+    La raison dit désormais le **fait** seulement ; le geste, c'est l'écran qui
+    l'offre qui le nomme, à côté de son contrôle. Une phrase servie à deux surfaces
+    (l'étape d'équipe et la carte du fil) ne peut pas promettre ce que l'une d'elles
+    n'a pas."""
+    for ecarte in _propose(_constats()).ecartes:
+        assert "validation" not in ecarte.raison, ecarte.nom
+        assert "Vous pouvez" not in ecarte.raison, ecarte.nom
+
+
 def test_du_sql_constate_fait_proposer_le_role_base_de_donnees() -> None:
     constats = _constats(
         langages=(

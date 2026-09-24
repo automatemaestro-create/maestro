@@ -93,6 +93,27 @@ class McpServerUnavailable(RuntimeError):
     """
 
 
+class PlafondFluxDepasse(RuntimeError):
+    """Levée quand un seul message du flux du fournisseur dépasse ce qu'il accepte de lire (#1277).
+
+    Un fournisseur qui dialogue avec un sous-processus lit sa sortie message par
+    message, sous un plafond (le `max_buffer_size` de l'Agent SDK). Le franchir
+    tue la session. Chaque fournisseur mue son signal natif en cette exception,
+    comme `TurnLimitReached`, pour que le moteur la reconnaisse **sans présumer du
+    fournisseur**.
+
+    Non transitoire par nature, et c'est ce qui l'a fait naître : le message trop
+    gros vient de ce que l'agent a lu — une capture d'écran relue par `Read`, dans
+    le run qui l'a révélé —, et ce fichier est **toujours sur le disque** à la
+    tentative suivante. Relancer le relit et retombe à l'identique : le run
+    `3fe501fc0878` a brûlé ainsi deux tentatives de plus et 2 millions de tokens,
+    puis s'est vu raconter un « échec transitoire ». Jamais relancée (ENF-06).
+
+    Le message dit ce qui a débordé et de combien : c'est la cause de l'échec de
+    la tâche, telle que le journal, l'écran et le récit de fin la liront.
+    """
+
+
 #: Nombre de lignes de stderr conservées d'un CLI fournisseur en échec (#346) :
 #: les **dernières**, celles qui portent la cause immédiate. Un stderr de CLI peut
 #: faire des milliers de lignes ; le journal d'un run est relu à l'écran, pas archivé.

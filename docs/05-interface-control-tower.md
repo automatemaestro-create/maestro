@@ -318,6 +318,17 @@ introuvable ramène à la porte **avec son motif** au lieu d'échouer. Trois vid
 confondre, ici encore : une API muette n'est pas une absence de projet (on laisse réessayer, et le
 choix retenu reprend dès que l'API répond).
 
+> ⚠ **Renversé le 2026-09-24** ([docs/43 §2.1](./43-decision-un-projet-nait-dans-la-conversation.md),
+> #1293), à la demande de la personne. Le projet actif n'est plus *relu au démarrage*.
+> - Chaque démarrage arrive sur le choix du projet, avec « Reprendre *le dernier projet* » en tête,
+>   atteint en un geste.
+> - La colonne de conversation y est ouverte ; la fermer vaut pour la session.
+>
+> Un réglage ancien (projet retenu, colonne fermée) ramenait sinon la Control Tower d'avant l'atelier.
+> Ce qui ne bouge pas : la garde de shell, le motif d'un projet introuvable, et le changement de
+> projet au sélecteur dans une session. Ce paragraphe décrit l'état **présent** jusqu'à ce que #1293
+> le réécrive.
+
 **Le sélecteur** (#280) tient dans la barre supérieure, contre le titre de page — on lit « ce
 projet-ci, cette page-là ». Il affiche le projet actif **et sa racine** (deux clones d'un même
 dépôt portent volontiers le même nom ; c'est le chemin qui dit sur lequel on travaille), et
@@ -6251,8 +6262,22 @@ sans agent, son analyse lui propose une équipe, l'utilisateur la valide*.
   **analysé** (#1030) — le cas d'un projet existant. Corps portant les `choix` du questionnaire
   d'outillage (#1031) : l'équipe se dérive de ces **réponses**, sans qu'aucun fichier soit ouvert —
   le cas d'un projet neuf. Même dérivation dans les deux cas, et `source` dit laquelle a servi.
+  **Depuis #1159** ([docs/41](./41-decision-maestro-juge-il-ne-bride-pas.md)), c'est le **modèle**
+  qui compose l'équipe pour le besoin réel du projet — ses constats, ce que la personne a répondu,
+  les cinq gabarits comme matière et non comme liste fermée —, puis l'exécution **vérifie** ce qu'il
+  a écrit (raison obligatoire, gabarit et skills confrontés à ce qui existe, preuve confrontée à ce
+  que l'analyse a lu, instances bornées, orchestrateur jamais recruté). Un modèle qui ne répond pas
+  fait retomber sur les **règles** des gabarits, et `composition` le dit, avec sa cause.
+- `POST /api/projets/{id}/equipe/correction` → `CorrectionEquipe` (#1159). La personne corrige
+  l'équipe proposée **avec ses mots** — « ajoute quelqu'un pour la sécurité » — depuis l'étape
+  d'équipe. Corps : `demande` (une phrase, 500 caractères au plus), `equipe` (l'équipe **telle que
+  l'écran la montre** : `nom`, `role`, `retenu`, `instances`) et les `choix` d'un projet neuf. Rien
+  n'est créé : l'écran applique la correction à ce qu'il montre, et la création reste la route
+  suivante. `422` sur une demande vide ou trop longue (refusée **avant** tout appel), **`502`** si le
+  modèle ne répond pas — une correction n'a pas de repli, aucune règle ne comprend une phrase.
 - `POST /api/projets/{id}/equipe` → `EquipeCreee`, **201**. Le corps rapporte la proposition **telle
-  que l'API l'a servie**, rôles retirés ou instances ajustées.
+  que l'API l'a servie**, rôles retirés ou instances ajustées, rôles ajoutés par une correction
+  compris.
 
 `404` si le projet est inconnu, `422` motivé s'il est illisible, si sa racine ne l'est plus, ou si
 l'équipe est refusée — jamais un `500`.
@@ -6266,11 +6291,17 @@ l'équipe est refusée — jamais un `500`.
   "faite_le": "2026-09-21T10:12:44+00:00",
   "resume": "Développeur ×2, QA / Testeur — 2 rôle(s), 3 instance(s) ; 4 rôle(s) écarté(s)",
   "source": { "origine": "analyse", "analyse_id": "ana-4c21" },  // repris tel quel
+  // QUI a composé l'équipe (#1159) : "modele" — pour le besoin de CE projet —, ou
+  // "regles" — les cinq gabarits, le repli quand le modèle n'a pas abouti, `raison`
+  // disant pourquoi. Vide sur un renfort (#1227), dont le poste vient du plan.
+  "composition": { "origine": "modele", "raison": "" },
   "roles": [
     { "nom": "dev",                    // le slug de la FICHE qui sera créée…
       "role": "Développeur",
       "gabarit": "developpeur",        // …jamais celui du gabarit : le playbook du
-                                       // code le masquerait (docs/04 §2)
+                                       // code le masquerait (docs/04 §2). Vide pour
+                                       // un rôle composé HORS des gabarits (#1159) —
+                                       // mobile, apprentissage, sécurité…
       "competences": ["api", "backend", "frontend", "refactor"],
       "raison": "le projet est écrit en Python (62 % des fichiers de code vus) : …",
       // L'ENDROIT du projet qui le justifie — le fichier lu, pas une phrase. `null`
@@ -6280,9 +6311,11 @@ l'équipe est refusée — jamais un `500`.
       "raison_instances": "2 langages substantiels (Python 62 %, TypeScript 31 %) : …",
       "outils": ["Read", "Write", "Edit", "Glob", "Grep", "Bash", "TodoWrite"],
       "playbook": "…",                 // celui qu'on lit à l'écran, et qui sera écrit
-      "playbook_origine": "genere",    // "genere" (écrit pour CE projet, #257) ou
-                                       // "gabarit" (la rédaction n'a pas abouti) :
-                                       // les deux ne valent pas la même chose
+      "playbook_origine": "genere",    // "genere" (écrit pour CE projet, #257),
+                                       // "gabarit" (la rédaction n'a pas abouti) ou
+                                       // "esquisse" (idem, pour un rôle hors gabarit :
+                                       // son libellé, sa raison et le socle, #1159) —
+                                       // ils ne valent pas la même chose
       "playbook_raison": "…", "intention": "Un agent « Développeur » pour un projet …",
       "skills": [ { "nom": "mettre-en-route", "chemin": ".agents/skills/mettre-en-route/SKILL.md",
                     "etat": "a-generer",   // un skill que l'outillage n'a pas encore
@@ -6306,17 +6339,33 @@ l'équipe est refusée — jamais un `500`.
   ],
   // Ce qui n'est PAS proposé, avec sa raison : sans cette liste, « pas de rôle base
   // de données » se lirait comme un oubli de Maestro plutôt que comme un fait du
-  // projet. L'orchestrateur y figure PAR DÉCISION (docs/37 §4.2).
+  // projet. L'orchestrateur y figure PAR DÉCISION (docs/37 §4.2). La raison dit le
+  // FAIT seulement, jamais un geste (#1159) : elle sert deux surfaces qui n'offrent
+  // pas les mêmes contrôles, et c'est l'écran qui nomme le sien.
   "ecartes": [
     { "nom": "orchestrateur", "role": "Orchestrateur",
       "raison": "l'orchestrateur n'est pas un membre de l'équipe : c'est Maestro, …" },
     { "nom": "donnees", "role": "Base de données",
-      "raison": "rien dans les bornes de l'analyse ne justifie un rôle « Base de données » : aucun fichier SQL n'a été vu, … Vous pouvez l'ajouter à la validation si le projet en a besoin" }
+      "raison": "l'application ne stocke rien côté serveur d'après vos réponses" }
   ],
   "instances_total": 3,
   // LES DEUX PROMESSES DU TICKET, rendues lisibles par l'appelant — pas des
   // réglages : aucun appel ne peut les changer.
   "cree": false, "validation": "requise"
+}
+```
+
+```jsonc
+// CorrectionEquipe — POST …/equipe/correction (#1159)
+{
+  "reponse": "J'ai ajouté un rôle Sécurité à votre équipe, chargé de l'audit des dépendances…",
+  // Des rôles proposés DE PLEIN DROIT : même forme qu'un rôle de la proposition,
+  // playbook écrit pour ce projet, autorisations avec leur raison.
+  "ajouts": [ { "nom": "securite", "role": "Sécurité", "gabarit": "", "…": "…" } ],
+  "retraits": [],                     // des noms de l'équipe MONTRÉE, et eux seuls
+  "remis": [],
+  "instances": {},                    // { "dev": 2 }
+  "cree": false
 }
 ```
 
@@ -6375,6 +6424,17 @@ des skills au format Agent Skills dans `.agents/skills/`, et un **manifeste**
 `.maestro/outillage/manifeste.json` — et ce que ça change au chantier des projets locaux est à
 [docs/24 §2.6](./24-projets-locaux-et-poste-de-travail.md). Ici : les routes, et les trois règles
 qu'elles portent.
+
+> ⚠ **Le chemin de création change** ([docs/43 §2.2 et §2.3](./43-decision-un-projet-nait-dans-la-conversation.md),
+> 2026-09-24), à la demande de la personne.
+> - Un projet **naît dans la conversation** (#1294), et son outillage s'y construit **pièce par
+>   pièce**, chaque pièce sur accord (#1161). L'étape `EtapeOutillage` du formulaire quitte le chemin
+>   de création.
+> - Les deux ponts ne s'écrivent plus d'office : `AGENTS.md` seul, un pont pour un client utilisé
+>   qui ne le lit pas nativement (#1295).
+>
+> Cette section décrit l'état **présent** jusqu'à ce que ces lots la réécrivent. Les routes et leurs
+> trois règles restent la matière des deux chemins.
 
 **Six routes, deux voies, une seule recommandation.** Un projet **existant** est analysé, un projet
 **neuf** est questionné — et les deux aboutissent à la *même* forme `recommandation`, produite par
