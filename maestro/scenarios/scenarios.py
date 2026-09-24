@@ -7,6 +7,7 @@
 | S3 | Reprendre un projet sans équipe | L'équipe est proposée avant de dépenser, puis ça part |
 | S4 | « Pourquoi le run a échoué ? » | La réponse nomme la cause de l'API, jugée par un modèle |
 | S5 | « Comment j'essaie le livrable ? » | La fin se raconte, lie un fichier réel, dit quoi taper |
+| | (et depuis #1265) | La réponse s'écrit en direct ; ce qu'il lit se voit dans le fil |
 | S6 | Le plan appelle un métier absent | Le rôle se propose dans le fil ; accepté, il travaille |
 
 ## Trois règles que ces scénarios suivent
@@ -29,8 +30,9 @@ lancée pour S2, l'équipe écrite et le run soldé pour S3. Les deux oracles qu
 portent sur une phrase — S4 et S5 — passent par un modèle
 (`maestro.scenarios.juge`, #746) : un lexique se tromperait dans les deux sens.
 Et même là, ce qui peut se constater se constate : S5 vérifie **sur le disque**
-que le fichier mis en lien par le récit existe, avant de demander à qui que ce
-soit ce qu'il pense du texte.
+que le fichier mis en lien par le récit existe, et **sur le transport** que la
+réponse arrive en direct (#1265), avant de demander à qui que ce soit ce qu'il
+pense du texte.
 
 ## Ce que ces scénarios coûtent, et pourquoi S2, S4, S5 et S6 se rejouent
 
@@ -64,6 +66,7 @@ from maestro.lecture import OUTIL_SHELL
 from maestro.scenarios.api import (
     DELAI_RUN_S,
     ClientAPI,
+    Echange,
     ErreurAPI,
     attendre_le_run,
     equipe_validee,
@@ -95,6 +98,29 @@ DELAI_APPLICATION_S = 60.0
 #: unique sur un contexte borné, pas celle d'un run.
 ATTENTE_RECIT_S = 120.0
 INTERVALLE_RECIT_S = 2.0
+
+#: La note que la personne dépose dans le projet de S5 une fois le run raconté,
+#: et la question qu'elle pose dessus (#1265). C'est la question **dont la
+#: réponse ne peut venir que du disque** : la note est écrite après tout le reste,
+#: donc son contenu n'est ni dans la conversation, ni dans le récit, ni dans les
+#: faits du run — l'orchestrateur ne peut en parler qu'en la lisant.
+#:
+#: Pourquoi pas la question « comment j'essaie ? » qui précède : le passage du
+#: 2026-09-24 y a répondu **sans rien lire** (fil `20260924t043254-d72e4e`,
+#: `etapes: []`), le récit de fin lui donnant déjà la commande. C'était une bonne
+#: réponse, et un oracle de lecture posé là l'aurait rendue rouge. Seule la
+#: demande de S3 avait lu ce jour-là — par hasard du jugement, pas par construction.
+NOTE_S5 = "notes-de-la-personne.md"
+CONTENU_NOTE_S5 = (
+    "# Mes notes\n"
+    "\n"
+    "- Ajouter une option `--nom` pour saluer quelqu'un par son prénom.\n"
+    "- Écrire le message en couleur quand le terminal le permet.\n"
+)
+QUESTION_NOTE_S5 = (
+    f"J'ai déposé mes notes dans `{NOTE_S5}`, à la racine du projet. "
+    "Qu'est-ce que j'y ai noté ?"
+)
 
 #: Le plafond qui provoque l'échec de S4. En **tokens** et non en dollars : les
 #: tokens sont toujours rapportés, quel que soit le fournisseur (#113), là où un
@@ -246,6 +272,23 @@ def _demander(ctx: Contexte, conversation: str, projet_id: str, texte: str) -> d
     ctx.note("demande envoyée", texte)
     ctx.note("réponse du fil", _extrait(reponse))
     return reponse
+
+
+def _demander_en_direct(
+    ctx: Contexte, conversation: str, projet_id: str, texte: str
+) -> Echange:
+    """Pose une question au fil **par le flux de l'écran**, et note comment la réponse est venue.
+
+    Le pendant de `_demander` pour les questions dont l'oracle regarde l'arrivée
+    (#1265) : la réponse est la même, le banc en garde en plus chaque trame
+    datée. La mesure est notée au déroulé dans tous les cas — un vert qui dit
+    « seize incréments en trois secondes » se relit, un vert sans chiffre non.
+    """
+    echange = ctx.client.envoyer_en_direct(texte, projet_id=projet_id, conversation=conversation)
+    ctx.note("demande envoyée", texte)
+    ctx.note("réponse du fil", _extrait(echange.reponse))
+    ctx.note("réponse reçue en direct", _mesure_du_direct(echange))
+    return echange
 
 
 def _accorder(
@@ -669,6 +712,17 @@ def s5_comment_essayer_le_livrable(ctx: Contexte) -> Issue:
        du juge est un **empêchement**, jamais un rouge du produit : on ne met pas
        une panne de quota sur le compte de ce qu'on mesure.
 
+    Deux constats s'y greffent depuis #1265, sans payer de run de plus — ils
+    gardent au bouclage ce que C8 demandait et qu'aucun scénario ne rejouait :
+
+    - **la réponse s'écrit en direct** (C1). La question part par le flux que
+      l'écran emprunte (`POST …/flux`), et son arrivée est constatée **avant**
+      que le juge soit saisi (`_le_direct`) : plusieurs incréments, reçus dans
+      plusieurs images d'écran ;
+    - **ce qu'il lit se voit dans le fil** (C2). Une note déposée après le récit,
+      et une question dessus : la réponse ne peut venir que du disque, donc elle
+      doit porter ses lectures, en direct et dans le fil relu (`_lectures_du_fil`).
+
     Le run demandé est celui de S2 — une petite application exécutable — parce
     qu'il faut *quelque chose à essayer* pour que la question ait un sens, et que
     c'est le livrable dont on sait qu'un run sait le produire. Le projet est
@@ -727,13 +781,16 @@ def s5_comment_essayer_le_livrable(ctx: Contexte) -> Issue:
         )
     ctx.note("fichiers liés par le récit", ", ".join(lies[:5]))
 
-    explication = _demander(
+    explication = _demander_en_direct(
         ctx, conversation, projet_id, "Comment j'essaie ce que tu viens de livrer ?"
     )
+    hors_direct = _le_direct(explication)
+    if hors_direct:
+        return rouge(hors_direct, run_id=run_id, cout_usd=cout)
     avis = ctx.juge.dit_comment_essayer(
         livrable=", ".join(restes(racine)[:30]) or "aucun fichier",
         recit=recit,
-        reponse=str(explication.get("contenu") or ""),
+        reponse=str(explication.reponse.get("contenu") or ""),
     )
     ctx.note(
         "jugement du modèle",
@@ -751,9 +808,15 @@ def s5_comment_essayer_le_livrable(ctx: Contexte) -> Issue:
             run_id=run_id,
             cout_usd=cout,
         )
+
+    lectures, sans_lecture = _lectures_du_fil(ctx, conversation, projet_id, racine)
+    if sans_lecture:
+        return rouge(sans_lecture, run_id=run_id, cout_usd=cout)
     return vert(
         f"la fin du run se raconte dans le fil, met {len(lies)} fichier(s) du "
-        f"livrable en lien, et dit comment l'essayer — {avis.pourquoi}",
+        f"livrable en lien, dit comment l'essayer, répond en direct "
+        f"({len(explication.increments)} incréments sur {explication.images} images) "
+        f"et montre ses {lectures} lecture(s) dans le fil — {avis.pourquoi}",
         run_id=run_id,
         cout_usd=cout,
     )
@@ -793,6 +856,122 @@ def _recit_de_fin(ctx: Contexte, conversation: str, run_id: str) -> str:
         if ctx.horloge() >= limite:
             return ""
         ctx.dormir(INTERVALLE_RECIT_S)
+
+
+def _lectures_du_fil(
+    ctx: Contexte, conversation: str, projet_id: str, racine: Path
+) -> tuple[int, str]:
+    """Une réponse fondée sur une lecture **montre ses lectures dans le fil** (#1265, C2).
+
+    Rend le nombre de lectures vues, et pourquoi l'oracle n'est pas satisfait
+    (`""` quand il l'est). Trois constats, tous structurels — des étapes et leur
+    place, jamais leur libellé (#746) :
+
+    1. **la réponse a lu** : au moins une trame `etape` est venue par le flux.
+       La question porte sur une note déposée après tout le reste
+       (`NOTE_S5`) : son contenu n'est dans aucun contexte, donc une réponse
+       sans lecture ne s'est pas fondée sur le projet réel ;
+    2. **le fil relu garde la réponse** — ce qu'un rechargement montrerait ;
+    3. **il garde ses lectures**, les mêmes et dans le même ordre : vues pendant
+       qu'il répond, puis encore là au retour (#1223 les fait voyager deux fois,
+       et c'est ce que l'oracle vérifie).
+    """
+    (racine / NOTE_S5).write_text(CONTENU_NOTE_S5, encoding="utf-8")
+    ctx.note("note déposée", f"{NOTE_S5} — écrite après le récit : aucun contexte ne la porte")
+    echange = _demander_en_direct(ctx, conversation, projet_id, QUESTION_NOTE_S5)
+    vues = [etape["libelle"] for etape in echange.etapes]
+    gardees = _etapes_gardees(ctx.client.fil(conversation), echange.reponse)
+    ctx.note(
+        "lectures du fil",
+        f"en direct : {' · '.join(vues) or 'aucune'} ; dans le fil relu : "
+        f"{'réponse absente' if gardees is None else ' · '.join(gardees) or 'aucune'}",
+    )
+    if not vues:
+        return 0, (
+            f"l'orchestrateur a répondu sur `{NOTE_S5}` sans rien lire : aucune étape "
+            "n'a paru dans le fil, alors que le contenu de la note n'est dans aucun de "
+            "ses contextes"
+        )
+    if gardees is None:
+        return len(vues), (
+            f"la réponse sur `{NOTE_S5}` n'est pas dans le fil relu : ses lectures ne "
+            "survivent pas à un rechargement"
+        )
+    if gardees != vues:
+        return len(vues), (
+            f"les lectures vues en direct ne restent pas dans le fil — en direct : "
+            f"{' · '.join(vues)} ; au rechargement : {' · '.join(gardees) or 'aucune'}"
+        )
+    return len(vues), ""
+
+
+def _etapes_gardees(
+    messages: Sequence[Mapping[str, Any]], reponse: Mapping[str, Any]
+) -> list[str] | None:
+    """Les libellés des étapes que le fil relu garde sur `reponse` — `None` s'il ne la porte pas.
+
+    Le message se retrouve par ce que la trame `fin` en a dit — son auteur, son
+    horodatage, son contenu —, jamais par sa place : un récit ou une autre
+    réponse peuvent s'être écrits entre-temps.
+    """
+    for message in reversed(messages):
+        if (
+            str(message.get("auteur") or "") == str(reponse.get("auteur") or "")
+            and str(message.get("horodatage") or "") == str(reponse.get("horodatage") or "")
+            and str(message.get("contenu") or "") == str(reponse.get("contenu") or "")
+        ):
+            return [
+                str(etape.get("libelle") or "")
+                for etape in message.get("etapes") or []
+                if isinstance(etape, Mapping) and str(etape.get("libelle") or "")
+            ]
+    return None
+
+
+def _le_direct(echange: Echange) -> str:
+    """Pourquoi la réponse **n'est pas** arrivée en direct — `""` quand elle l'est (#1265).
+
+    C1 : *l'indicateur d'attente ne couvre plus que le temps avant le premier
+    mot*. Vu du transport, c'est une propriété de l'**arrivée**, jamais du
+    texte : après le premier incrément, il en vient d'autres, plus tard. Deux
+    façons d'y manquer, et le motif dit laquelle :
+
+    - **une seule trame** porte tout le texte — le fil d'avant #1222, ou un
+      modèle qui a répondu en JSON (`_LectureDuFlux`, régime machine) ;
+    - **plusieurs trames, toutes dans la même image d'écran** (`IMAGE_S`) — un
+      transport qui tamponne, ou une réponse écrite entière puis découpée : on
+      les compte, mais personne ne les voit arriver.
+
+    Aucun seuil de durée n'est posé sur l'attente elle-même : treize secondes de
+    lecture avant le premier mot (le bouclage du 2026-09-24) sont le produit qui
+    **lit**, pas un produit lent. La mesure est écrite au déroulé
+    (`_mesure_du_direct`), le verdict ne tranche que sur la forme de l'arrivée.
+    """
+    increments = echange.increments
+    if len(increments) < 2:
+        return (
+            f"la réponse est arrivée d'un bloc : {len(increments)} incrément(s) pour "
+            f"{len(str(echange.reponse.get('contenu') or ''))} caractère(s) — "
+            "l'attente a couvert la réponse entière"
+        )
+    if echange.images < 2:
+        return (
+            f"la réponse est arrivée d'un bloc : ses {len(increments)} incréments sont "
+            f"tous reçus dans la même image d'écran ({echange.ecriture_s * 1000:.1f} ms) — "
+            "l'attente a couvert la réponse entière"
+        )
+    return ""
+
+
+def _mesure_du_direct(echange: Echange) -> str:
+    """Ce que le banc a vu arriver, en mots — la pièce du verdict, qu'il soit vert ou rouge."""
+    attente = echange.attente_s
+    return (
+        f"{len(echange.increments)} incrément(s) sur {echange.images} image(s) d'écran ; "
+        f"premier au bout de {'—' if attente is None else f'{attente:.1f} s'}, "
+        f"texte écrit pendant {echange.ecriture_s:.1f} s ; "
+        f"{len(echange.etapes)} étape(s) publiée(s) en direct"
+    )
 
 
 def _fichiers_lies(recit: str, racine: Path) -> list[str]:
