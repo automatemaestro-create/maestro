@@ -94,9 +94,15 @@ inter-process. Il n'y avait donc rien à réinventer, seulement à brancher —
 `ValidateurControlTower`, sur le bus de *ce* process, au geste près comme
 `ServiceExecutions._derouler` les branche sur celui de l'API.
 
-**Un seul bus les sert tous les quatre**, guet d'annulation compris, et ce n'est
+Une **quatrième** attente est venue depuis : la question libre qu'un agent pose
+pendant sa tâche (#1023, `ArbitreQuestionControlTower`). Elle attend sur le même
+bus, mais elle avait été câblée côté API seulement. L'hôte détaché étant celui de
+la vraie stack, aucun agent ne pouvait donc poser de question, jusqu'à ce que
+#1259 la branche ici, au même geste que les trois autres.
+
+**Un seul bus les sert toutes**, guet d'annulation compris, et ce n'est
 pas une économie de style : `RedisEventBus.subscribe` ouvre un `pubsub` par appel
-sur un client partagé, si bien que quatre bus coûteraient quatre connexions là où
+sur un client partagé, si bien que cinq bus coûteraient cinq connexions là où
 une suffit — dans un process qui vit des heures, c'est exactement la fuite que
 `_observer_ordres` refusait déjà pour son propre compte. C'est aussi la forme
 de l'API, qui n'a jamais eu qu'un `self._bus`. Les fabriques `arbitre_brief_redis`
@@ -844,7 +850,7 @@ def main(argv: Sequence[str] | None = None) -> int:
        humaine sûre au sens de #348 : suspendu sur son brief, ce process continue de
        dire qu'il est là, donc « personne n'a encore répondu » reste distinguable de
        « celui qui posait la question est mort » ;
-    4. **ouvrir le bus** (#445) — un seul pour les quatre abonnements qui suivent,
+    4. **ouvrir le bus** (#445) — un seul pour tous les abonnements qui suivent,
        et une ouverture qui ne peut pas échouer bruyamment (`_bus_du_run`) ;
     5. **écouter l'annulation** (#444) : le lanceur rend la main sur le témoin, et
        l'ordre peut suivre à la milliseconde — s'abonner après lui serait s'abonner
@@ -1025,8 +1031,8 @@ async def _derouler(ordre: OrdreRun, atelier: Path) -> RunReport:
       la première lecture coûterait un run tué par une panne de Redis.
 
     Le bus, lui, **apparaît ici depuis #445** — il n'est plus au seul usage du
-    guet : les trois attentes humaines s'y abonnent aussi, et un process qui vit
-    des heures n'a pas à ouvrir quatre connexions pour un canal. Il est ouvert par
+    guet : les attentes humaines s'y abonnent aussi, et un process qui vit
+    des heures n'a pas à ouvrir une connexion par attente. Il est ouvert par
     `_bus_du_run`, qui **ne lève pas** : ce qui était garanti tant que le guet
     l'ouvrait seul — aucune façon de manquer Redis ne peut emporter le run — reste
     donc vrai, et un `None` traverse tranquillement jusqu'aux fail-safes d'en face,
@@ -1037,6 +1043,7 @@ async def _derouler(ordre: OrdreRun, atelier: Path) -> RunReport:
         ArbitreBriefControlTower,
         ArbitreClarificationControlTower,
     )
+    from maestro.controltower.question import ArbitreQuestionControlTower
     from maestro.controltower.validation import ValidateurControlTower
     from maestro.engine.guardrails import Guardrails
     from maestro.engine.loop import OrchestrationEngine
@@ -1061,12 +1068,12 @@ async def _derouler(ordre: OrdreRun, atelier: Path) -> RunReport:
         # **lancement**, donc ils voyagent dans l'ordre ; le **validateur** est un
         # câblage de déploiement, donc il se branche là où le run se déroule (#445).
         # Idem pour les deux arbitres du brief : le **mode** voyage, l'**arbitre**
-        # se branche. Aucun des trois n'est conditionné au mode — le moteur ignore
+        # se branche. Aucun n'est conditionné au mode — le moteur ignore
         # de lui-même un arbitre qu'il n'a pas à consulter (`loop.py`), et une
         # seconde règle ici serait une règle de plus à tenir d'accord avec la
         # sienne.
         #
-        # Sans bus, les trois sont `None` : les fail-safes d'en face refusent alors
+        # Sans bus, tous sont `None` : les fail-safes d'en face refusent alors
         # ce qu'ils ne peuvent pas faire trancher, et c'est tout ce qu'on veut d'eux
         # (cf. l'en-tête du module).
         garde_fous = Guardrails(
@@ -1085,6 +1092,12 @@ async def _derouler(ordre: OrdreRun, atelier: Path) -> RunReport:
             arbitre_clarification=(
                 None if bus is None else ArbitreClarificationControlTower(bus)
             ),
+            # La question libre d'un agent (#1023), câblée ici depuis #1259 :
+            # sans elle, l'exécuteur ne sert pas le verbe, et la vraie stack —
+            # dont c'est l'hôte par défaut — n'avait aucun agent qui puisse
+            # demander. Même bus, même règle ; sa borne reste un réglage du
+            # moteur (`MAESTRO_ARBITRAGE_ATTENTE`), comme côté API.
+            questionneur=None if bus is None else ArbitreQuestionControlTower(bus),
         )
         run = asyncio.create_task(
             moteur.run(
@@ -1215,13 +1228,13 @@ async def _observer_ordres(
 
 
 def _bus_du_run() -> BusDurable | None:
-    """Le bus de ce process — **un seul**, pour le guet et les trois attentes (#445).
+    """Le bus de ce process — **un seul**, pour le guet et les attentes humaines (#445).
 
     Celui de la config, comme le battement et la publication : même Redis, même
     canal `maestro.evenements`, donc les mêmes demandes et les mêmes décisions que
     pour un run porté par l'API. Un seul objet parce qu'un seul suffit —
     `RedisEventBus.subscribe` ouvre un `pubsub` par appel sur un client partagé, si
-    bien que quatre abonnements concurrents tiennent sur une connexion.
+    bien que cinq abonnements concurrents tiennent sur une connexion.
 
     Il est **durable** depuis #699 (`bus_durable`) : ce que ce process publie est
     consigné au journal à l'instant où il le publie. C'est ici que la nuance
