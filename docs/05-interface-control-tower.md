@@ -3003,6 +3003,45 @@ l'équipe, les attentes), `maestro/controltower/chat.py` (`EtapeFil`, le canal
 `apps/web/lib/useChat.ts`. Gardé par `tests/test_consultation_orchestrateur.py`,
 `tests/test_chat_global.py` et `apps/web/tests/etapes-du-fil.test.tsx`.
 
+#### Il lit le livrable, et la lecture d'un run dit ce que ses tâches ont rendu (#1263) — **livré**
+
+Au bouclage du 2026-09-24, dans une conversation neuve sur le projet de S5 (un
+`app.py` et un `README.md` livrés par un run), « Comment je fais pour tester ce
+projet ? » a reçu `python app.py` et le nom du README, puis *« je n'ai toutefois
+pas lu son contenu exact ni celui d'app.py […] il faudra ouvrir ces fichiers »*. Le
+README était lisible. L'orchestrateur n'avait lu que le run, et cette lecture ne
+disait de chaque tâche soldée que « détail : démarrage de la tâche ».
+
+- **Ce qu'une tâche a rendu voyage jusqu'à la lecture.** Le moteur consigne depuis
+  toujours le texte que l'agent lui remet (`sortie`) ; le pont le jetait, et le
+  dernier détail vu restait celui du début. Il voyage désormais dans son propre
+  champ, `resultat`, porté par le seul `tache.statut` de l'issue — **à côté** de
+  `detail`, qui reste l'erreur d'une issue ou la phrase d'un début, et que la frise
+  affiche tel quel. Un événement émis avant ce lot n'en porte pas, et se relit
+  comme avant.
+- **Le dernier `tache.statut` d'une tâche parle pour elle, vide compris** : une
+  tâche réussie ne se raconte plus par son démarrage.
+- **La lecture `detail` rend le résultat de chaque tâche soldée**, en retrait sous
+  sa tâche, et chacune y garde sa part : les résultats partagent les deux tiers de
+  la borne de la lecture (12 000 caractères), avec un plancher par tâche, et une
+  part atteinte se dit (« … (résultat coupé à … caractères sur …) »). Une coupe en
+  fin de texte aurait fait disparaître les dernières tâches derrière un premier
+  compte rendu bavard. Les **faits** que chaque prompt reçoit en gardent 300
+  caractères, comme d'un détail : c'est ce qui permet au premier tour de lecture de
+  voir nommés les fichiers livrés.
+- **Le tour de lecture sait qu'une question sur le livré se répond avec le
+  livrable** — le README, le point d'entrée —, qu'un fichier nommé se demande tout
+  de suite, et qu'il ne s'arrête pas sur une lecture qui nomme un fichier sans en
+  donner le contenu. Ce qu'il lit reste son jugement ; la matière qu'on lui donne,
+  elle, est un fait.
+
+Gardé par `tests/test_consultation_orchestrateur.py` §⑦ : le run rejoué par son
+**journal** et par le pont (poser les champs à la main laisserait passer le pont
+qui jetait la sortie), et la question du bouclage posée à un faux fournisseur **qui
+suit la piste** — il ne demande à lire que les fichiers que le canal lui montre
+nommés, et ne répond qu'avec ce qu'il a lu : sans le résultat des tâches, il rend
+l'aveu du bouclage mot pour mot.
+
 #### La fin d'un run s'annonce dans le fil, et remet son livrable (#928) — **livré**
 
 Le constat le plus net du retex du 2026-09-11 (G1) : *un run qui se termine ne

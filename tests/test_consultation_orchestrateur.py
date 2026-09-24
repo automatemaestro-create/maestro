@@ -26,7 +26,11 @@ Ce que cette suite tient, et rien d'autre :
    fournisseur, sur un texte hors contrat ou sur une lecture qui lève, le canal
    répond comme avant ce lot ;
 ⑥ **l'équipe et les attentes** (critère 3) — rôles, agents, contenu des
-   validations et des questions en attente, dans le prompt du juge.
+   validations et des questions en attente, dans le prompt du juge ;
+⑦ **ce que les tâches ont rendu** (#1263) — le texte qu'une tâche soldée rend
+   au moteur traverse le journal, le pont et la projection jusqu'à la lecture
+   du run, et un lecteur qui suit la piste va lire le livrable au lieu de
+   renvoyer la personne l'ouvrir.
 
 Aucun réseau, aucun modèle, aucun moteur : le fournisseur est un double, le
 projet un dossier temporaire, la projection une `ControlTowerState` nue.
@@ -36,10 +40,12 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from pathlib import Path
 
 import pytest
 
+from maestro.controltower.bridge import evenements_depuis_step
 from maestro.controltower.chat import UTILISATEUR, EtapeFil, MessageChat
 from maestro.controltower.consultation import (
     LECTURES_PAR_TOUR,
@@ -55,6 +61,7 @@ from maestro.controltower.consultation import (
     demandes_de,
 )
 from maestro.controltower.events import (
+    EVENEMENT_EXECUTION_STATUT,
     EVENEMENT_QUESTION_DEMANDE,
     EVENEMENT_TACHE_STATUT,
     EVENEMENT_VALIDATION_DEMANDE,
@@ -66,10 +73,12 @@ from maestro.controltower.orchestration import (
     RepondeurOrchestration,
     attentes_de,
     detail_du_run,
+    faits_des_runs,
 )
-from maestro.controltower.state import ControlTowerState
+from maestro.controltower.state import EXECUTION_EN_COURS, EXECUTION_TERMINEE, ControlTowerState
 from maestro.projets.modele import Perimetre, Projet
 from maestro.providers.base import ModelProvider
+from maestro.telemetry import RunJournal, StepUsage
 
 # --------------------------------------------------------------- le harnais
 
@@ -670,6 +679,284 @@ def test_le_prompt_porte_l_equipe_reelle_et_le_contenu_des_attentes() -> None:
 def test_sans_attente_le_bloc_disparait_du_prompt() -> None:
     """Un vide ne s'annonce pas : l'aperçu le dit déjà (règle de #1157)."""
     assert attentes_de(ControlTowerState())("prj-essai") == ""
+
+
+# ------------------------------------------ ⑦ ce que les tâches ont rendu (#1263)
+
+RUN_LIVRE = "run-s5"
+
+#: Ce qu'un agent rend en soldant sa tâche, dans la forme réelle d'une `sortie` :
+#: ce qu'il a fait et les fichiers qu'il a écrits. Il **nomme** le README sans en
+#: donner la commande de test — seule la lecture du fichier l'apprend, et c'est
+#: ce qui fait de la question « comment je teste ? » une question de lecture.
+RENDU_APPLICATION = (
+    "J'ai créé `app.py` à la racine : lancé par `python app.py`, il affiche une "
+    "ligne puis se termine sans erreur."
+)
+RENDU_README = "J'ai rédigé `README.md`, qui dit comment lancer et tester l'application."
+
+#: Ce que le README livré porte, et que rien d'autre ne dit.
+COMMANDE_DU_README = "python -m unittest test_app"
+
+
+def _livrer(racine: Path) -> None:
+    """Le livrable du run sur le disque : le point d'entrée, et le README qui dit la commande."""
+    (racine / "app.py").write_text('print("Bonjour depuis le livrable")\n', encoding="utf-8")
+    (racine / "README.md").write_text(
+        "# Petite application\n\n## Lancer\n\n    python app.py\n\n"
+        f"## Tester\n\n    {COMMANDE_DU_README}\n",
+        encoding="utf-8",
+    )
+
+
+def _projection_du_run_livre(
+    rendus: list[tuple[str, str, str]], projet_id: str | None = "prj-essai"
+) -> ControlTowerState:
+    """La projection d'un run qui a livré, rejouée **par son journal** et par le pont.
+
+    Le chemin est celui de la vraie Control Tower : le moteur consigne le début
+    puis l'issue de chaque tâche dans un `RunJournal`, le pont
+    (`evenements_depuis_step`) en fait des événements, la projection les
+    applique. Poser les champs à la main laisserait passer un pont qui ne fait
+    pas voyager ce que la tâche a rendu — le défaut exact du bouclage du
+    2026-09-24.
+    """
+    state = ControlTowerState()
+    state.appliquer(
+        Event(
+            type=EVENEMENT_EXECUTION_STATUT,
+            run_id=RUN_LIVRE,
+            statut=EXECUTION_EN_COURS,
+            description="Créer une petite application Python exécutable, avec son mode d'emploi",
+            projet_id=projet_id,
+        )
+    )
+    journal = RunJournal(run_id=RUN_LIVRE)
+    for tache_id, titre, rendu in rendus:
+        journal.consigne(
+            etape=f"{tache_id}:debut", nom=titre, agent="dev", role="Développeur",
+            statut="en_cours", entree="", sortie="démarrage de la tâche",
+            usage=StepUsage(), projet_id=projet_id,
+        )
+        journal.consigne(
+            etape=tache_id, nom=titre, agent="dev", role="Développeur",
+            statut="terminee", entree="la consigne de la tâche", sortie=rendu,
+            usage=StepUsage(cout_usd=0.01), projet_id=projet_id,
+        )
+    for record in journal.records:
+        for event in evenements_depuis_step(record.to_dict()):
+            state.appliquer(event)
+    state.appliquer(
+        Event(
+            type=EVENEMENT_EXECUTION_STATUT,
+            run_id=RUN_LIVRE,
+            statut=EXECUTION_TERMINEE,
+            detail=f"{len(rendus)}/{len(rendus)} tâche(s) réussie(s)",
+            projet_id=projet_id,
+        )
+    )
+    return state
+
+
+def _lecture_du_run(state: ControlTowerState) -> Lecture:
+    return Consultations(detail=detail_du_run(state)).executer(
+        Demande(outil=OUTIL_DETAIL, arguments={"run_id": RUN_LIVRE}), None
+    )
+
+
+def test_le_pont_fait_voyager_ce_que_la_tache_a_rendu_et_seulement_sur_son_issue() -> None:
+    """Le moteur consigne la `sortie` d'une tâche soldée ; le pont la jetait.
+
+    Elle voyage dans un champ à elle (`resultat`) et non dans `detail`, qui reste
+    ce qu'il était — l'erreur d'une issue, la phrase d'un début — et que la frise
+    affiche tel quel. Le début d'une tâche n'a rien rendu : il n'en porte pas. Et
+    le champ survit au journal durable, qui relit les événements en JSON.
+    """
+    (debut,) = evenements_depuis_step(
+        {"run_id": "r", "etape": "t1:debut", "nom": "Écrire l'application",
+         "statut": "en_cours", "sortie": "démarrage de la tâche"}
+    )
+    (issue,) = evenements_depuis_step(
+        {"run_id": "r", "etape": "t1", "nom": "Écrire l'application",
+         "statut": "terminee", "sortie": RENDU_APPLICATION, "erreur": None}
+    )
+
+    assert debut.resultat == ""
+    assert issue.type == EVENEMENT_TACHE_STATUT
+    assert issue.resultat == RENDU_APPLICATION
+    assert issue.detail == ""
+    assert Event.from_json(issue.to_json()).resultat == RENDU_APPLICATION
+
+
+def test_la_lecture_d_un_run_rend_le_resultat_de_chaque_tache_soldee() -> None:
+    """Critère 1 : le verbe `detail` rend ce que chaque tâche soldée a produit.
+
+    Au bouclage, pour chaque tâche soldée, la lecture ne rendait que « détail :
+    démarrage de la tâche » — le dernier détail vu, celui du début. L'orchestrateur
+    a lu une matière pauvre et s'est arrêté là.
+    """
+    state = _projection_du_run_livre(
+        [
+            ("t1", "Écrire l'application", RENDU_APPLICATION),
+            ("t2", "Rédiger le README", RENDU_README),
+        ]
+    )
+
+    lecture = _lecture_du_run(state)
+
+    assert f"résultat : {RENDU_APPLICATION}" in lecture.contenu
+    assert f"résultat : {RENDU_README}" in lecture.contenu
+    # Une tâche soldée ne se raconte plus par son démarrage.
+    assert "démarrage de la tâche" not in lecture.contenu
+
+
+def test_un_resultat_sur_plusieurs_lignes_reste_sous_sa_tache() -> None:
+    """Un rendu d'agent est souvent un petit compte rendu : il garde ses lignes, en retrait.
+
+    Sans retrait, sa deuxième ligne se lirait comme une tâche de plus — ou comme
+    un champ du run.
+    """
+    rendu = "J'ai livré deux fichiers :\n- app.py\n- README.md"
+    state = _projection_du_run_livre([("t1", "Écrire l'application", rendu)])
+
+    contenu = _lecture_du_run(state).contenu
+
+    assert "résultat : J'ai livré deux fichiers :" in contenu
+    assert "\n    - app.py\n    - README.md" in contenu
+
+
+def test_chaque_tache_garde_sa_place_quand_les_resultats_sont_longs() -> None:
+    """« De chaque tâche » : un premier rendu bavard ne pousse pas les suivants hors de la lecture.
+
+    La lecture entière est bornée (`consultation`), et une borne qui coupe à la
+    fin ferait disparaître les dernières tâches derrière la première. Chaque
+    résultat reçoit donc sa part, et une part atteinte se **dit**.
+    """
+    rendus = [
+        (f"t{rang}", f"Tâche {rang}", f"Rendu de la tâche {rang}. " + "détail " * 700)
+        for rang in range(1, 7)
+    ]
+    state = _projection_du_run_livre(rendus)
+
+    contenu = _lecture_du_run(state).contenu
+
+    for rang in range(1, 7):
+        assert f"résultat : Rendu de la tâche {rang}." in contenu
+    assert "résultat coupé" in contenu
+    assert "(détail coupé)" not in contenu
+
+
+def test_les_faits_d_un_run_disent_ce_qu_une_tache_a_rendu_et_non_qu_elle_a_demarre() -> None:
+    """Le même défaut, un cran plus haut : le bloc de faits que chaque prompt reçoit.
+
+    C'est lui que le tour de lecture voit **avant** de rien demander : s'il nomme
+    les fichiers rendus, le premier tour peut aller les lire sans attendre le
+    second.
+    """
+    state = _projection_du_run_livre([("t1", "Écrire l'application", RENDU_APPLICATION)])
+
+    faits = faits_des_runs(state)("prj-essai", ())
+
+    assert f"résultat : {RENDU_APPLICATION}" in faits
+    assert "démarrage de la tâche" not in faits
+
+
+class FournisseurQuiSuitLaPiste(ModelProvider):
+    """Faux fournisseur à outils **sans script** : il lit ce qu'on lui montre, puis demande.
+
+    À chaque tour de lecture, il demande les fichiers que le prompt **nomme**
+    (faits des runs, lectures déjà faites) et qu'il n'a pas encore lus ; à
+    défaut, le détail d'un run dont il voit la fiche et qu'il n'a pas relu ;
+    sinon, `RIEN`. C'est la conduite d'un modèle qui suit la piste, et c'est ce
+    qui rend le test honnête : il ne lit le README que si le canal lui en a
+    montré le chemin.
+
+    Le juge répond avec ce qui est dans son prompt : la commande du README s'il
+    l'a sous les yeux, sinon l'aveu relevé au bouclage du 2026-09-24 — il renvoie
+    la personne ouvrir les fichiers.
+    """
+
+    name = "fournisseur-qui-suit-la-piste"
+    _FICHIER = re.compile(r"[\w./-]+\.(?:md|py|toml|json|txt)\b")
+    _RUN = re.compile(r"^- Run (\S+)", re.MULTILINE)
+    _LU = re.compile(r"^A lu « (.+?) » :", re.MULTILINE)
+
+    def __init__(self, commande: str) -> None:
+        self.commande = commande
+        self.prompts_juge: list[str] = []
+
+    def supports(self, model: str) -> bool:
+        return True
+
+    async def generate(
+        self, prompt: str, *, model: str, system_prompt: str | None = None
+    ) -> str:
+        if system_prompt is not None and "tu décides ce qu'il faut LIRE" in system_prompt:
+            return self._demandes(prompt)
+        self.prompts_juge.append(prompt)
+        if self.commande in prompt:
+            return f"Le README livré le dit : `{self.commande}`."
+        return (
+            "Le run a livré app.py et un README ; je n'ai pas lu leur contenu, il "
+            "faudra ouvrir ces fichiers dans votre dossier de projet."
+        )
+
+    def _demandes(self, prompt: str) -> str:
+        lus = set(self._LU.findall(prompt))
+        a_lire = [chemin for chemin in dict.fromkeys(self._FICHIER.findall(prompt))
+                  if chemin not in lus]
+        if a_lire:
+            return "\n".join(_demande(OUTIL_LIRE, chemin=chemin) for chemin in a_lire)
+        runs = [run for run in self._RUN.findall(prompt)
+                if f"A relu le run « {run} »" not in prompt]
+        if runs:
+            return _demande(OUTIL_DETAIL, run_id=runs[0])
+        return "RIEN"
+
+
+def test_a_comment_tester_la_reponse_s_appuie_sur_le_readme_lu_et_ne_renvoie_pas_aux_fichiers(
+    tmp_path: Path,
+) -> None:
+    """Critère 2, joué de bout en bout — la question du bouclage, dans une conversation neuve.
+
+    Un projet dont le README donne la commande de test, le run qui l'a livré
+    rejoué par son journal, et un lecteur qui ne lit que ce qu'on lui montre. La
+    réponse doit porter la commande **lue**, et non renvoyer ouvrir les fichiers :
+    c'est ce que le fil a répondu au bouclage, faute d'avoir vu nommé ce que le
+    run avait produit.
+    """
+    racine = tmp_path / "projet"
+    racine.mkdir()
+    _livrer(racine)
+    state = _projection_du_run_livre(
+        [
+            ("t1", "Écrire l'application", RENDU_APPLICATION),
+            ("t2", "Rédiger le README", RENDU_README),
+        ]
+    )
+    fournisseur = FournisseurQuiSuitLaPiste(COMMANDE_DU_README)
+    consultations = Consultations(
+        projet=lambda _id: _projet(racine), detail=detail_du_run(state)
+    )
+
+    reponse = asyncio.run(
+        RepondeurOrchestration(
+            provider=fournisseur,
+            consultation=_appel(consultations),
+            faits=faits_des_runs(state),
+        ).produire(
+            AGENT_ORCHESTRATION,
+            _fil("Comment je fais pour tester ce projet ?"),
+            projet_id="prj-essai",
+        )
+    )
+
+    assert COMMANDE_DU_README in reponse.contenu
+    assert "ouvrir ces fichiers" not in reponse.contenu
+    # Elle s'appuie sur ce qui a été lu : le README est dans les étapes du message,
+    # et son contenu dans le prompt du juge.
+    assert "A lu « README.md »" in [etape.libelle for etape in reponse.etapes]
+    assert COMMANDE_DU_README in fournisseur.prompts_juge[-1]
 
 
 # ------------------------------------------------------------------ outillage
