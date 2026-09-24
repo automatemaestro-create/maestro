@@ -692,7 +692,7 @@ Comme les jalons nés d'une idée, il ne prend **pas de numéro de phase**.
 
 | Milestone | Contenu | Échéance | Suivi |
 |---|---|---|---|
-| **Rien de figé — Maestro comprend le projet, propose, vérifie** | Un projet de n'importe quelle sorte se crée ou s'importe sans entrer dans une case : le modèle le comprend, propose son outillage et son équipe, se laisse corriger en langage naturel, et vérifie en l'exécutant ce qu'il écrit | 2028-02-02 | **#1155** — 6 lots (#1158, #1147, #1159, #1160, #1161, #1162) ; **#1163**, sans parent |
+| **Rien de figé — Maestro comprend le projet, propose, vérifie** | Un projet de n'importe quelle sorte se crée ou s'importe sans entrer dans une case : le modèle le comprend, propose son outillage et son équipe, se laisse corriger en langage naturel, et vérifie en l'exécutant ce qu'il écrit. Depuis le 2026-09-24, il **naît dans la conversation** | 2028-02-02 | **#1155** — 7 lots (#1158, #1147, #1159, #1294, #1160, #1161, #1162) ; **#1163**, sans parent ; retour `p3` : **#1290**, **#1291**, **#1292**, **#1293**, **#1295**, sans parent |
 
 **Le constat.** Les premières minutes d'un projet, son outillage puis son équipe, passaient par des
 fonctions pures appliquées à des tables fermées. Le modèle en était écarté à dessein, alors qu'il
@@ -748,8 +748,86 @@ Ne bougent pas :
 - Son échéance tombe **strictement entre** ses voisins : **aucune autre échéance n'a bougé**. #1147
   est passé de `moyenne` à `haute` en rejoignant ce jalon.
 
+### Le retour d'expérience sur `p3` : un projet naît dans la conversation (2026-09-24)
+
+Le 2026-09-24, la personne crée le projet `p3` et y lance plusieurs runs : refaire la maquette et le
+site vitrine d'un kombucha. Elle rend dix constats, tous notés KO, avec captures. L'instruction
+[`/idee`](../.claude/commands/idee.md) (#1013) les a consignés par #1300. Chaque cause a été établie
+dans le code et **vérifiée sur l'état réel** des runs, lu par l'API.
+
+> *« Moi, j'aurais préféré que le démarrage d'un projet commence dans le chat, en interactif : le chat
+> me pose des questions, me propose des choix, et au fur et à mesure on peut générer l'outillage.
+> Donc une conversation intelligente, pas des choix proposés au début. »*
+
+**Ce qui entre dans ce jalon :**
+- **Trois bugs**, rangés ici pour être pris en premier, comme #1277 à #1280. Ils font paraître chaque
+  run cassé :
+  - **#1290** : un run fini restait « En cours » dans sa vue, et le fil montrait la carte du run
+    d'avant. L'événement de fin de run partait **sans projet**, et la diffusion par projet l'écartait ;
+  - **#1291** : les checklists restaient à « 0/N · relevé incomplet ». Le CLI embarqué par le SDK
+    ne monte plus `TodoWrite` par défaut, il le remplace par `TaskCreate`/`TaskUpdate`, et les agents
+    n'avaient plus d'outil pour cocher ;
+  - **#1292** : le jeton d'API s'écrivait en clair dans le journal d'accès.
+- **Le démarrage et la création** :
+  - **#1293** : chaque démarrage arrive sur le choix du projet, « Reprendre » en tête, conversation
+    ouverte. L'« ancienne Control Tower » était l'effet de réglages retenus par le profil de la coque
+    (projet retenu, colonne fermée), pas un vieux build ;
+  - **#1294**, nouveau lot 4/7 de #1155 : un projet **naît dans la conversation**. L'orchestrateur
+    comprend ce qu'on veut faire, propose nom, dossier et versionnement, et le déclare sur accord ;
+  - **#1161**, recadré, lot 6/7 : l'outillage **se construit dans la conversation**, pièce par
+    pièce, chaque pièce sur accord, et se corrige en langage naturel ;
+  - **#1295** : un projet n'a qu'un `AGENTS.md`. Un pont ne s'écrit que pour un client utilisé qui ne
+    le lit pas nativement (Claude Code le lit depuis sa v2.1.277).
+- Le jalon gagne un critère **C5** : *un projet naît dans la conversation, et son outillage s'y écrit
+  au fur et à mesure, chaque pièce sur accord.*
+
+**Ce qui va au jalon « Le run tient parole »** (2028-02-03), qui tient la parole du run sur ce qu'il
+montre et sur sa façon d'exécuter :
+- **#1297** : les flèches du pipeline se lisent. Une légende dit qu'une flèche est une
+  **dépendance** et ce que dit sa couleur, une dépendance redondante s'estompe, et aucune flèche ne
+  passe sous une carte ;
+- **#1298** : le run dit pourquoi ses tâches passent une à une (projet non versionné, un seul agent,
+  chaîne de dépendances), et propose de versionner le projet ;
+- **#1299** : les tâches indépendantes tournent de front. Le plan les dégage, et un agent en prend
+  plusieurs sur un projet versionné.
+
+**L'ordre dans #1155** : #1147 (en cours) → #1294 → #1160 → #1161 → #1162.
+- #1294 passe **devant #1160**, parce que c'est ce que la personne a demandé, et que #1160 n'en
+  dépend pas.
+- #1294 réutilise le moteur de questions de #1147. #1161 réutilise la vérification par l'exécution
+  de #1160.
+- #1293, #1295 et les trois bugs sont indépendants les uns des autres.
+
+**Des décisions tombent, à la demande de la personne**, et
+[docs/43](./43-decision-un-projet-nait-dans-la-conversation.md) les écrit :
+- le projet actif n'est plus relu au démarrage ([docs/05 §2.0.1](./05-interface-control-tower.md)) ;
+- l'outillage n'est plus une étape de formulaire ([docs/37 §4 point 6](./37-decision-equipe-sur-mesure.md),
+  [docs/38 §8](./38-decision-outillage-universel-du-projet.md)) ;
+- les deux ponts ne s'écrivent plus d'office ([docs/38 §3.2](./38-decision-outillage-universel-du-projet.md)).
+
+Ne bougent pas :
+- le garde-fou « une tâche à la fois » d'un projet non versionné (#839) ;
+- rien ne s'écrit sans accord ;
+- la frontière d'écriture ;
+- le `recommander` commun aux deux chemins.
+
+**Le gel du rail outillage est maintenu jusqu'au 2026-10-12.** La personne demandait de le lever si
+c'était recommandé, et ce ne l'est pas :
+- les dix constats sont du produit, et aucun ticket d'outillage ouvert n'y répond (#1052 et #1129
+  différés, #1060, #1008, #1218, #985) ;
+- la voie d'exception reste ouverte : une panne qui bloque le travail passe, comme #1239 ;
+- le gel ne vise que l'outillage **de la forge**. L'outillage que Maestro écrit dans un projet est du
+  produit, et n'a jamais été gelé.
+
+Un incident d'outillage relevé en chemin **est noté**, pas ticketé : le skill `control-tower` dit
+encore que le verrou de la coque vaut « pour le poste », alors que #1275 le borne à la copie. Il ne
+bloque rien.
+
+**Place dans la file** : inchangée. Les tickets rejoignent des jalons existants, et **aucune échéance
+n'a bougé**.
+
 > ⚠ **Les critères de sortie du jalon sont dans sa description**, section `## Critères de sortie`
-> (C1 à C4). C'est elle qui fait foi au bouclage (docs/10 §3.4), pas ce résumé.
+> (C1 à C5). C'est elle qui fait foi au bouclage (docs/10 §3.4), pas ce résumé.
 
 ---
 
@@ -863,7 +941,7 @@ La personne avait demandé d'**anticiper le besoin** et de faire sauter les brid
 
 | Milestone | Contenu | Échéance | Suivi |
 |---|---|---|---|
-| **Le run tient parole — il vérifie, se rattrape, et le fil agit** | Une tâche n'est terminée qu'une fois vérifiée, un échec se rattrape au lieu de barrer la suite, et le fil agit sur les runs au lieu de seulement en proposer. Un run terminé se juge sur pièces, et Maestro le dit à la personne | 2028-02-03 | **#1177** à **#1185**, sans parent ; **#1281**, 3 lots (#1282 ∥, #1284 ∥, #1285) |
+| **Le run tient parole — il vérifie, se rattrape, et le fil agit** | Une tâche n'est terminée qu'une fois vérifiée, un échec se rattrape au lieu de barrer la suite, et le fil agit sur les runs au lieu de seulement en proposer. Un run terminé se juge sur pièces, et Maestro le dit à la personne | 2028-02-03 | **#1177** à **#1185**, sans parent ; **#1281**, 3 lots (#1282 ∥, #1284 ∥, #1285) ; retour `p3` : **#1297**, **#1298**, **#1299**, sans parent |
 
 **Le constat** (description du jalon) :
 - un run déclare « Terminée » toute tâche qui rend quelque chose ;
@@ -884,6 +962,10 @@ La personne avait demandé d'**anticiper le besoin** et de faire sauter les brid
 - **#1183** : depuis le fil, on répond à la question d'un agent et on tranche une validation ;
 - **#1184** : un accord tapé porte ses bornes, et une proposition vient avec son estimation ;
 - **#1185** : un refus dit pourquoi, et l'agent repart de là.
+
+**Ce que le retour d'expérience sur `p3` y a rangé** (#1300, détaillé dans la section « Rien de
+figé ») : **#1297** (les flèches du pipeline se lisent), **#1298** (le run dit pourquoi ses tâches
+passent une à une) et **#1299** (les tâches indépendantes tournent de front).
 
 ### Le bilan d'un run terminé, sur pièces (2026-09-24)
 
@@ -942,8 +1024,10 @@ l'usage. Et un appel laissé passer par le cran `auto` ne garde pas son acte dan
 
 **Les voisins** : #1178 diagnostique un échec **pendant** le run pour agir, le bilan juge le run
 entier **après coup**. Quand les deux existeront, le bilan lira le diagnostic de #1178 comme une
-pièce au lieu de le refaire. Les quatre défauts trouvés sur `p3` sont rangés dans « Rien de figé » :
-#1277 et #1278 en `haute`, #1279 et #1280 en `moyenne`.
+pièce au lieu de le refaire. Les quatre défauts trouvés en surveillant le run de `p3` sont rangés
+dans « Rien de figé » : #1277 (livré le 2026-09-24) et #1278 en `haute`, #1279 et #1280 en
+`moyenne`. #1291 (les agents n'avaient plus d'outil pour cocher leur checklist) explique un constat
+que le bilan aurait relevé sur ce même run.
 
 **Place dans la file**, sur le rail produit :
 

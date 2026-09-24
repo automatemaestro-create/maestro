@@ -156,15 +156,15 @@ consulte (`maestro.equipe.gabarits`), personne ne les instancie. Leurs playbooks
 — ils servent de **repli** au rôle proposé tant que la rédaction pour ce projet-là n'a pas abouti,
 et la proposition dit toujours laquelle des deux origines elle porte.
 
-| Gabarit | Rôle | Compétences (tags) | Modèle conseillé (défaut POC — Claude) | Rôle proposé |
+| Gabarit | Rôle | Compétences (tags) | Modèle par défaut (Claude) | Rôle proposé |
 |-------|------|--------------------|------------------|------|
-| 💻 Développeur | Code applicatif | `backend`, `frontend`, `api`, `refactor` | Sonnet | `dev` — toujours proposé, et le seul qui se démultiplie (une instance par langage substantiel, plafond 3) |
-| 🗄️ Base de données | Schéma, migrations, requêtes | `sql`, `schema`, `migration`, `data` | Sonnet | `donnees` — du SQL constaté |
-| ⚙️ DevOps | CI/CD, infra, déploiement | `ci-cd`, `infra`, `deploy`, `docker` | Sonnet | `infra` — une CI, une construction ou une forge |
-| 🎨 Designer | UI/UX, maquettes, design system | `ui`, `ux`, `design-system`, `figma` | Sonnet | `interface` — un langage d'écran, ou une nature déclarée |
-| 🧪 QA / Testeur | Tests, validation, revue | `tests`, `e2e`, `review`, `qa` | Sonnet (ou Haiku pour checks simples) | `tests` — une commande de test, de style, de format ou de types |
+| 💻 Développeur | Code applicatif | `backend`, `frontend`, `api`, `refactor` | Opus, dernière version | `dev` — toujours proposé, et le seul qui se démultiplie (une instance par langage substantiel, plafond 3) |
+| 🗄️ Base de données | Schéma, migrations, requêtes | `sql`, `schema`, `migration`, `data` | Opus, dernière version | `donnees` — du SQL constaté |
+| ⚙️ DevOps | CI/CD, infra, déploiement | `ci-cd`, `infra`, `deploy`, `docker` | Opus, dernière version | `infra` — une CI, une construction ou une forge |
+| 🎨 Designer | UI/UX, maquettes, design system | `ui`, `ux`, `design-system`, `figma` | Opus, dernière version | `interface` — un langage d'écran, ou une nature déclarée |
+| 🧪 QA / Testeur | Tests, validation, revue | `tests`, `e2e`, `review`, `qa` | Opus, dernière version | `tests` — une commande de test, de style, de format ou de types |
 
-Le **Chef de projet** (`planning`, `routing`, `synthesis` — Opus) n'y figure plus, et ce n'est pas un
+Le **Chef de projet** (`planning`, `routing`, `synthesis` — Opus, dernière version) n'y figure plus, et ce n'est pas un
 oubli : il n'exécute aucune tâche, il les découpe (§3.1), et il n'est **jamais** un membre de
 l'équipe — c'est Maestro, et c'est lui qui recrute (docs/37 §4.2). Chaque proposition l'écarte
 **nommément**, avec sa raison : l'écarter en silence laisserait croire qu'aucun projet n'en a.
@@ -184,7 +184,9 @@ avec les gabarits — c'est son repli de câblage (`catalogue_hors_projet`) : `m
 c'en est le complément — il n'y a pas d'équipe où chercher. Dans un projet, en revanche, il y en a
 une : une équipe **vide** y laisse la tâche « à assigner » plutôt que de retomber ici.
 
-> **Le fournisseur est configurable par agent** (voir §4 et [stack §2](./02-stack-technique.md)). Les modèles ci-dessus sont le **défaut Claude du POC** ; on peut affecter à chaque agent un autre fournisseur/modèle (OpenAI, Google, ouvert/local) **sans changer son rôle ni son playbook** — c'est l'objet de la couche d'abstraction.
+> **Le défaut est la dernière version d'Opus, pour tous** (#1270) : le Chef de projet, chaque gabarit et tout agent qu'aucun réglage ne fixe — un agent écrit par une validation d'équipe ne porte pas de modèle, il suit ce défaut à l'exécution. Rien ne l'écrit en dur : il se lit dans [`maestro/providers/familles-claude.tsv`](../maestro/providers/familles-claude.tsv), la source que les runs `/orchestrate` lisent aussi (#1269), et le choix du modèle d'un agent y prend sa gamme (la dernière version de chaque famille). Une nouvelle version sort : on change la ligne de sa famille, et tout le produit y passe. Le classifieur du routage reste sur Haiku, sa dernière version, par le même fichier : il route, il ne fait pas le travail. Un réglage l'emporte toujours — le modèle d'un agent, sa surcharge, `ANTHROPIC_MODEL` pour le Chef de projet (un nom de famille comme `opus` s'y résout, un identifiant complet épingle une version), `MAESTRO_MODEL` pour tous. Le CLI qu'embarque `claude-agent-sdk` doit servir ces modèles : `pyproject.toml` en pose le plancher (0.2.158, CLI 2.1.280, qu'exige Opus 5.5).
+>
+> **Le fournisseur est configurable par agent** (voir §4 et [stack §2](./02-stack-technique.md)). Les modèles ci-dessus sont le **défaut Claude** ; on peut affecter à chaque agent un autre fournisseur/modèle (OpenAI, Google, ouvert/local) **sans changer son rôle ni son playbook** — c'est l'objet de la couche d'abstraction.
 
 > **Le plafond de tours l'est aussi** (#239) : chaque profil peut porter le sien (`RoleProfile.plafond_tours`), passé au fournisseur à chaque exécution outillée. Il vit sur le profil parce qu'un tour n'a pas de coût comparable d'un rôle à l'autre : la boucle *rendre → regarder → reprendre* du Designer consomme jusqu'à **~71 000 tokens le tour** (mesuré sur `concepts-esquisses`) contre **~10 000** pour une tâche de validation — facteur 7. Une borne unique protégeait donc mal les uns en bridant les autres : elle avait dû être relevée globalement après un `error_max_turns` qui a coûté un livrable — la tâche runbook du pilote MCP/Slack, coupée à **41 tours** pour **0,80 $** dépensés en pure perte, jamais relancée (ENF-06), [docs/15 §4.3](./15-pilote-mcp-slack.md) —, au prix de la protection de tous les autres.
 >

@@ -318,6 +318,17 @@ introuvable ramène à la porte **avec son motif** au lieu d'échouer. Trois vid
 confondre, ici encore : une API muette n'est pas une absence de projet (on laisse réessayer, et le
 choix retenu reprend dès que l'API répond).
 
+> ⚠ **Renversé le 2026-09-24** ([docs/43 §2.1](./43-decision-un-projet-nait-dans-la-conversation.md),
+> #1293), à la demande de la personne. Le projet actif n'est plus *relu au démarrage*.
+> - Chaque démarrage arrive sur le choix du projet, avec « Reprendre *le dernier projet* » en tête,
+>   atteint en un geste.
+> - La colonne de conversation y est ouverte ; la fermer vaut pour la session.
+>
+> Un réglage ancien (projet retenu, colonne fermée) ramenait sinon la Control Tower d'avant l'atelier.
+> Ce qui ne bouge pas : la garde de shell, le motif d'un projet introuvable, et le changement de
+> projet au sélecteur dans une session. Ce paragraphe décrit l'état **présent** jusqu'à ce que #1293
+> le réécrive.
+
 **Le sélecteur** (#280) tient dans la barre supérieure, contre le titre de page — on lit « ce
 projet-ci, cette page-là ». Il affiche le projet actif **et sa racine** (deux clones d'un même
 dépôt portent volontiers le même nom ; c'est le chemin qui dit sur lequel on travaille), et
@@ -3003,6 +3014,45 @@ l'équipe, les attentes), `maestro/controltower/chat.py` (`EtapeFil`, le canal
 `apps/web/lib/useChat.ts`. Gardé par `tests/test_consultation_orchestrateur.py`,
 `tests/test_chat_global.py` et `apps/web/tests/etapes-du-fil.test.tsx`.
 
+#### Il lit le livrable, et la lecture d'un run dit ce que ses tâches ont rendu (#1263) — **livré**
+
+Au bouclage du 2026-09-24, dans une conversation neuve sur le projet de S5 (un
+`app.py` et un `README.md` livrés par un run), « Comment je fais pour tester ce
+projet ? » a reçu `python app.py` et le nom du README, puis *« je n'ai toutefois
+pas lu son contenu exact ni celui d'app.py […] il faudra ouvrir ces fichiers »*. Le
+README était lisible. L'orchestrateur n'avait lu que le run, et cette lecture ne
+disait de chaque tâche soldée que « détail : démarrage de la tâche ».
+
+- **Ce qu'une tâche a rendu voyage jusqu'à la lecture.** Le moteur consigne depuis
+  toujours le texte que l'agent lui remet (`sortie`) ; le pont le jetait, et le
+  dernier détail vu restait celui du début. Il voyage désormais dans son propre
+  champ, `resultat`, porté par le seul `tache.statut` de l'issue — **à côté** de
+  `detail`, qui reste l'erreur d'une issue ou la phrase d'un début, et que la frise
+  affiche tel quel. Un événement émis avant ce lot n'en porte pas, et se relit
+  comme avant.
+- **Le dernier `tache.statut` d'une tâche parle pour elle, vide compris** : une
+  tâche réussie ne se raconte plus par son démarrage.
+- **La lecture `detail` rend le résultat de chaque tâche soldée**, en retrait sous
+  sa tâche, et chacune y garde sa part : les résultats partagent les deux tiers de
+  la borne de la lecture (12 000 caractères), avec un plancher par tâche, et une
+  part atteinte se dit (« … (résultat coupé à … caractères sur …) »). Une coupe en
+  fin de texte aurait fait disparaître les dernières tâches derrière un premier
+  compte rendu bavard. Les **faits** que chaque prompt reçoit en gardent 300
+  caractères, comme d'un détail : c'est ce qui permet au premier tour de lecture de
+  voir nommés les fichiers livrés.
+- **Le tour de lecture sait qu'une question sur le livré se répond avec le
+  livrable** — le README, le point d'entrée —, qu'un fichier nommé se demande tout
+  de suite, et qu'il ne s'arrête pas sur une lecture qui nomme un fichier sans en
+  donner le contenu. Ce qu'il lit reste son jugement ; la matière qu'on lui donne,
+  elle, est un fait.
+
+Gardé par `tests/test_consultation_orchestrateur.py` §⑦ : le run rejoué par son
+**journal** et par le pont (poser les champs à la main laisserait passer le pont
+qui jetait la sortie), et la question du bouclage posée à un faux fournisseur **qui
+suit la piste** — il ne demande à lire que les fichiers que le canal lui montre
+nommés, et ne répond qu'avec ce qu'il a lu : sans le résultat des tâches, il rend
+l'aveu du bouclage mot pour mot.
+
 #### La fin d'un run s'annonce dans le fil, et remet son livrable (#928) — **livré**
 
 Le constat le plus net du retex du 2026-09-11 (G1) : *un run qui se termine ne
@@ -4363,10 +4413,12 @@ fournisseur au registre suffit à l'y faire apparaître.
   "fournisseurs": [
     {
       "nom": "claude",                       // la clé du REGISTRE, à écrire dans `fournisseur`
-      "modeles": [                           // la gamme ANNONCÉE (peut être vide)
+      "modeles": [                           // la gamme ANNONCÉE (peut être vide) ; chez Claude, la
+                                             // dernière version de chaque famille, lue dans
+                                             // maestro/providers/familles-claude.tsv (#1270)
         {
-          "nom": "claude-opus-5",            // la chaîne exacte attendue par le fournisseur
-          "libelle": "Opus 5",               // repli sur `nom` s'il n'y en a pas
+          "nom": "claude-opus-5-5",          // la chaîne exacte attendue par le fournisseur
+          "libelle": "Opus 5.5",             // repli sur `nom` s'il n'y en a pas
           "efforts": ["low", "medium", "high", "xhigh", "max"]
                                              // VIDE = « ce modèle ne se règle pas en effort »,
                                              // jamais « on ne sait pas » ; vide aussi hors gamme
@@ -6374,6 +6426,17 @@ des skills au format Agent Skills dans `.agents/skills/`, et un **manifeste**
 `.maestro/outillage/manifeste.json` — et ce que ça change au chantier des projets locaux est à
 [docs/24 §2.6](./24-projets-locaux-et-poste-de-travail.md). Ici : les routes, et les trois règles
 qu'elles portent.
+
+> ⚠ **Le chemin de création change** ([docs/43 §2.2 et §2.3](./43-decision-un-projet-nait-dans-la-conversation.md),
+> 2026-09-24), à la demande de la personne.
+> - Un projet **naît dans la conversation** (#1294), et son outillage s'y construit **pièce par
+>   pièce**, chaque pièce sur accord (#1161). L'étape `EtapeOutillage` du formulaire quitte le chemin
+>   de création.
+> - Les deux ponts ne s'écrivent plus d'office : `AGENTS.md` seul, un pont pour un client utilisé
+>   qui ne le lit pas nativement (#1295).
+>
+> Cette section décrit l'état **présent** jusqu'à ce que ces lots la réécrivent. Les routes et leurs
+> trois règles restent la matière des deux chemins.
 
 **Six routes, deux voies, une seule recommandation.** Un projet **existant** est analysé, un projet
 **neuf** est questionné — et les deux aboutissent à la *même* forme `recommandation`, produite par

@@ -188,8 +188,9 @@ C'est l'étape 5c.
    - **Il parle à la Control Tower réelle**, sur son port, par le fil de l'orchestrateur et avec le
      vrai modèle. Joue-le **après** 5a et 5b : `verify` relance et arrête la stack sur ces mêmes
      ports, et un redémarrage pendant le passage couperait ses runs.
-   - **Il dure bien plus qu'un appel** — un run peut prendre quinze minutes, et il y a quatre
-     scénarios : lance-le en arrière-plan, et attends sa fin avant l'étape 6.
+   - **Il dure bien plus qu'un appel** — un run peut passer la demi-heure depuis que les agents
+     tournent sur la dernière Opus (#1270), et il y a plusieurs scénarios : lance-le en
+     arrière-plan, et attends sa fin avant l'étape 6.
    - **Il coûte du vrai modèle** (~10 $ le passage du retex). C'est le prix du bouclage d'un jalon
      produit, décidé (docs/40 §5) : ne le saute pas pour l'économiser, et ne le réduis pas par
      `--scenario` — un passage partiel n'est pas le passage.

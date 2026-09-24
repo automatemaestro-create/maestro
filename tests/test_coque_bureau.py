@@ -537,9 +537,8 @@ _VALEUR = "◇"
 def lignes_imprimees(main: str) -> list[str]:
     """Les lignes `[coque] …` que la coque écrit sur sa sortie, valeurs interpolées neutralisées.
 
-    Un blanc est admis après la parenthèse : une écriture trop longue pour une ligne passe à la
-    suivante (le verrou d'instance de #1275), et elle n'en est pas moins imprimée. Une ligne
-    composée de plusieurs littéraux ne se lit que par le premier, d'où le `…` du skill.
+    Le texte peut commencer à la ligne suivant la parenthèse (`\\(\\s*`) : c'est la forme que
+    prend un appel trop long pour une ligne, et la sonde ne voyait pas la ligne du verrou de #1287.
     """
     litteraux = re.findall(
         r"""(?:process\.(?:stdout|stderr)\.write|retenir)\(\s*(?:'\w+',\s*)?"""

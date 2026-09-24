@@ -51,16 +51,20 @@ FIL = f"/api/chat/{NOM_ORCHESTRATION}"
 #: ce délai : il repose sur des lectures courtes répétées (`attendre_le_run`).
 DELAI_REQUETE_S = 30.0
 
-#: Le délai laissé à un run pour se solder. Quinze minutes : un run réel décompose,
-#: exécute et agrège avec le vrai modèle, et le retex en a mesuré plusieurs au-delà
-#: de cinq. Ce n'est pas un plafond de dépense — c'est la borne au-delà de laquelle
-#: le banc cesse d'attendre et le dit (`--delai` la règle).
+#: Le délai laissé à un run pour se solder. Quarante minutes : un run réel décompose,
+#: exécute et agrège avec le vrai modèle, et ce modèle est depuis #1270 la dernière
+#: Opus pour chaque agent, plus lent et plus soigneux que Sonnet. Quinze minutes
+#: suffisaient sur Sonnet ; sur Opus 5.5, S6 (un Designer recruté en cours de run,
+#: qui dessine, anime puis vérifie son rendu) a été coupé à 18 min encore en vol, et
+#: rejoué sans borne serrée il a abouti en 31 min 18 s (passage 20260924-185935).
+#: Ce n'est pas un plafond de dépense — c'est la borne au-delà de laquelle le banc
+#: cesse d'attendre et le dit (`--delai` la règle).
 #:
 #: C'est aussi la borne d'une requête dont **le modèle rédige la réponse**
 #: (`ClientAPI`, #1232) : l'écran n'en impose aucune à ces routes, et le banc
 #: n'invente pas pour elles un second chiffre — il leur accorde ce qu'il accorde
 #: déjà au modèle pour un run entier.
-DELAI_RUN_S = 900.0
+DELAI_RUN_S = 2400.0
 
 #: L'intervalle entre deux lectures d'un run en vol. Une seconde : le run dure
 #: des minutes, et interroger plus souvent ne ferait que charger l'API qu'on

@@ -4,9 +4,10 @@ Importer ce paquet enregistre les fournisseurs câblés (Claude, et tout endpoin
 compatible OpenAI) et expose l'interface publique. Le moteur d'agents ne dépend
 que de ces symboles, jamais d'un SDK fournisseur en direct :
 
+    from maestro.familles_claude import derniere_version
     from maestro.providers import Credentials, ModelSpec, resolve_provider
 
-    spec = ModelSpec(provider="claude", model="claude-opus-5")
+    spec = ModelSpec(provider="claude", model=derniere_version("opus"))
     provider = resolve_provider(spec, Credentials())
     texte = await provider.generate("Bonjour", model=spec.model)
 
@@ -38,6 +39,7 @@ from maestro.providers.base import (
     ModeleDisponible,
     ModelProvider,
     ModelSpec,
+    PlafondFluxDepasse,
     TurnLimitReached,
     UnsupportedCapability,
     attache_stderr,
@@ -70,6 +72,7 @@ __all__ = [
     "ModeleDisponible",
     "OpenAICompatError",
     "OpenAICompatProvider",
+    "PlafondFluxDepasse",
     "ProviderFactory",
     "TurnLimitReached",
     "UnknownProviderError",

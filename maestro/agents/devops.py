@@ -17,6 +17,7 @@ validation humaine avant toute application réelle.
 
 from __future__ import annotations
 
+from maestro.agents.catalog import MODELE_EXECUTANT_DEFAUT
 from maestro.agents.playbook_du_code import CONSIGNE_RENDU_COMPTE, playbook_du_code
 from maestro.agents.runtime import DEFAULT_TOOLS, RoleProfile
 
@@ -29,14 +30,14 @@ from maestro.agents.runtime import DEFAULT_TOOLS, RoleProfile
 #: restant entier, runbook et plan de retour arrière *étant* le livrable.
 _SYSTEM_PROMPT = playbook_du_code("devops")
 
-#: Profil du DevOps : modèle par défaut du POC (Claude Sonnet, cf. docs/04 §2), outils
+#: Profil du DevOps : modèle par défaut des exécutants (dernière Opus, #1270), outils
 #: fichiers + shell (docs/02 §7 : permissions scopées), consignes de validation locale
 #: et de déploiement soumis à validation humaine. `nom` correspond à l'agent `devops`
 #: du catalogue.
 DEVOPS_PROFILE = RoleProfile(
     nom="devops",
     role="DevOps",
-    modele="claude-sonnet-5",
+    modele=MODELE_EXECUTANT_DEFAUT,
     outils=DEFAULT_TOOLS,
     prompt_systeme=_SYSTEM_PROMPT,
     intro_tache="Tâche d'infrastructure (CI/CD, déploiement) à réaliser de bout en bout :",
