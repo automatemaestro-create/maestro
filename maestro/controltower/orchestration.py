@@ -432,6 +432,33 @@ nommé se lit tout de suite, et qu'il ne s'arrête pas sur une lecture qui nomme
 fichier sans en donner le contenu. Ce qu'il lit reste son jugement ; la matière
 qu'on lui donne, elle, est un fait.
 
+## Sur les chemins du geste, le modèle parle et les cartes portent les faits (#1262)
+
+#1222 avait retiré le récital qui suivait un lancement ; restaient les phrases
+que le code écrivait **à la place** du modèle là où la personne agit d'un geste :
+« C'est parti. », la proposition d'équipe, « Équipe créée : … Je reprends votre
+demande : « … ». Je lance ? », trois refus. Dans une même conversation, deux
+voix : celle du modèle, qui s'adapte, et celle du code, qui récite — relevé sur
+le réel au passage du banc du 2026-09-24 (S3).
+
+Le partage est désormais le même partout :
+
+- les **faits** sont des champs du message, donc des cartes — le run ouvert
+  (`run_id`), la demande reproposée (`proposition`), l'équipe à valider
+  (`recrutement`), l'équipe créée (`equipe`) ;
+- la **parole** est celle du modèle : sur un geste, `rediger` lui donne ce qui
+  vient de se passer et il écrit la réponse (`_PROMPT_REDACTION`) ; sur une
+  demande d'un projet sans agent, il reçoit le fait avant de répondre
+  (`_fait_sans_equipe`) et l'écrit lui-même, **en direct** — sa réponse n'est
+  plus retenue pour être remplacée ;
+- les **empêchements** restent au code — objectif perdu, rien de branché, moteur
+  ou création qui refusent, modèle muet (`_PHRASE_SANS_REDACTION`) : rien ne
+  s'est fait, et lui seul le sait.
+
+Le prix est écrit : un appel modèle court par geste. Il ne retarde rien de ce
+que le geste décide — le run part, l'équipe est créée **avant** que le modèle
+n'écrive —, et un modèle muet ne défait aucun geste.
+
 ## Ce qui est gardé, et par quoi (#688)
 
 `tests/test_chat_global.py` tient le tout, sans réseau, sans modèle et sans
@@ -488,6 +515,7 @@ from maestro.controltower.causes import (
 from maestro.controltower.chat import (
     UTILISATEUR,
     DemandeRecrutement,
+    EquipeRecrutee,
     EtapeFil,
     Etapeur,
     Incrementeur,
@@ -660,6 +688,14 @@ demande irréversible (vider, supprimer, écraser) se propose comme les autres :
 réponse dit qu'elle est irréversible et ce qu'elle touchera, puis demande
 l'accord.
 
+Un projet qui n'a AUCUN agent ne peut pas prendre de run : personne n'en
+prendrait les tâches, et il échouerait après avoir payé son cadrage. Quand les
+faits te le disent, une demande de travail — ou un accord — garde son verdict et
+son objectif : c'est l'équipe, et non le run, qui sera proposée à la place. Mais
+ta réponse ne propose pas le run et n'annonce pas qu'il part : elle dit qu'il
+faut d'abord une équipe et pourquoi, puis ce que les faits disent de la suite. Le
+travail sera reproposé une fois l'équipe là, sans rien à retaper.
+
 L'objectif :
 - sur "proposition", l'objectif que tu enverrais au run — une phrase complète et
   autonome, qui reformule la demande sans rien inventer ;
@@ -809,39 +845,56 @@ Consultation = Callable[[Demande, str | None], Awaitable[Lecture]]
 #: une profondeur qu'aucune question de fil n'a demandée.
 _TOURS_DE_LECTURE = 2
 
-#: Ce que le canal dit quand il propose l'équipe au lieu du run (#1146). Les trois
-#: moments du critère, dans l'ordre : pourquoi pas de run (personne pour prendre
-#: les tâches, et ce que ça coûterait), ce qui est proposé à la place, et ce qui
-#: suit la validation — la demande reprise, sans rien retaper.
-_PHRASE_RECRUTEMENT = (
-    "Avant de lancer « {objectif} », il faut une équipe : ce projet n'a encore "
-    "aucun agent, donc personne pour prendre les tâches d'un run — il échouerait "
-    "après avoir payé son cadrage. Je vous propose l'équipe que son analyse "
-    "appelle, juste en dessous : validez-la, en retirant un rôle ou en ajustant "
-    "ses instances si besoin, et je vous proposerai aussitôt le run. Rien n'est "
-    "créé sans votre validation."
+#: La consigne de **rédaction** (#1262) — l'appel qui donne la parole au fil quand
+#: personne n'a rien tapé : un geste vient d'avoir ses suites (accord, refus,
+#: équipe validée ou déclinée), ou le travail en cours fait parler le fil de
+#: lui-même (le renfort d'un run, #1227). Ce qui s'est passé arrive en **faits**,
+#: et ce qui revient est un message, rien d'autre.
+#:
+#: Elle remplace les phrases que le code écrivait à la place du modèle sur ces
+#: chemins-là (`_PHRASE_RECRUTEMENT`, « Équipe créée : … Je reprends votre
+#: demande … Je lance ? », les trois refus, « C'est parti. ») : deux voix dans une
+#: même conversation, dont l'une récitait. Le partage est désormais net — les
+#: **faits** passent par les champs du message, donc par les cartes (`run_id`,
+#: `proposition`, `recrutement`, `equipe`), la **parole** par cette consigne, et
+#: les **empêchements** restent au code, parce que lui seul sait que rien ne s'est
+#: fait (`_ouvrir_un_run`, `_PHRASE_SANS_REDACTION`).
+#:
+#: ⚠ Concaténée comme `_PROMPT_ORCHESTRATION`, et elle finit par le **registre**
+#: (#945) : c'est un prompt qui parle à la personne, et `test_registre_de_langue`
+#: range son appel parmi les conversationnels.
+_PROMPT_REDACTION = (
+    """\
+Tu es l'orchestrateur de Maestro : tu reçois les demandes de l'utilisateur, tu les
+cadres, tu les confies à l'équipe d'agents du projet et tu en rends compte.
+
+Il vient de se passer quelque chose dans le fil que tu tiens avec lui, et c'est à
+toi d'en parler : il a répondu d'un GESTE (un bouton) à ce que tu lui proposais, ou
+le travail en cours te fait prendre la parole de toi-même. Ce qui s'est passé
+t'est donné sous « Ce qui vient de se passer » : ce sont des FAITS, déjà
+accomplis, et c'est tout ce que tu en sais.
+
+Écris le message que tu lui adresses maintenant, et rien d'autre : en français,
+en clair, bref — une à trois phrases —, sans JSON, sans balise, sans titre.
+
+- Parle depuis ces faits et depuis eux seuls : n'invente ni identifiant, ni
+  nombre, ni suite qui n'y soit pas, et ne dis jamais fait ce qui ne l'est pas.
+- Ce que les faits disent affiché sous ton message (une carte, une équipe, un
+  run) s'y lit déjà : ne le recopie pas, dis ce que cela change pour lui et ce
+  qu'il peut faire ensuite.
+- Tu parles dans une conversation déjà ouverte : pas de salutation, pas de
+  formule de politesse finale, pas de phrase toute faite.
+
+"""
+    + registre()
 )
 
-#: Ce qu'on répond à un refus de renfort **pendant un run** (#1227). Il ne se dit
-#: pas comme le refus d'une équipe entière : là-bas rien ne pouvait partir, ici le
-#: run continue — et c'est précisément ce qu'il faut dire, sans quoi la personne
-#: reste à se demander si elle vient d'annuler son travail. La nuance de qualité
-#: est nommée telle quelle : décliner n'est pas une erreur, c'est un arbitrage.
-_REFUS_PENDANT_UN_RUN = (
-    "Entendu : je ne recrute personne. Le run continue avec l'équipe actuelle — "
-    "les tâches qui demandaient « {role} » iront au rôle le plus proche, qui n'en "
-    "a pas le métier. Vous pourrez toujours recruter depuis les écrans d'agents du "
-    "projet et relancer ce travail."
-)
-
-#: Le même constat, quand le canal ne peut pas créer d'équipe lui-même (aucun
-#: recruteur câblé) : il ne propose pas une demande à laquelle aucun geste ne
-#: pourrait répondre, il dit où la créer.
-_PHRASE_SANS_RECRUTEUR = (
-    "Je ne lance pas « {objectif} » : ce projet n'a encore aucun agent, donc "
-    "personne pour prendre les tâches d'un run. Créez son équipe depuis les "
-    "écrans d'agents du projet, puis redites-moi votre demande."
-)
+#: Ce que le fil écrit quand le modèle n'a pas pu rédiger (#1262) — l'empêchement,
+#: et lui seul. Rien n'est fabriqué à la place des mots manquants (la règle du
+#: récit de fin, #1224) ; mais un geste a eu lieu et le fil ne se persiste pas
+#: vide, donc ce qui s'écrit est la **cause** du silence. Les faits, eux, restent
+#: où ils sont : sur la carte (le run ouvert, l'équipe créée, la demande reposée).
+_PHRASE_SANS_REDACTION = "Je ne peux pas rédiger mon message pour l'instant : {cause}."
 
 
 def contexte_du_fil(fil: Sequence[MessageChat]) -> str:
@@ -1062,24 +1115,137 @@ def _accord(nombre: int, singulier: str, pluriel: str) -> str:
     return f"{nombre} {singulier if nombre <= 1 else pluriel}"
 
 
-def _composition(rapport: Mapping[str, Any]) -> str:
-    """L'équipe créée en une ligne — « Développeur ×2 · QA — 3 agents » (#1146).
+# --- Ce que la rédaction reçoit : les faits d'un geste (#1262) ---------------
+#
+# Du texte **pour le modèle**, jamais pour le fil : chaque fonction dit ce qui
+# vient de se passer, ce que l'écran affiche déjà sous la réponse, et ce que la
+# personne peut faire ensuite. Le modèle en tire sa phrase ; rien de ce qui suit
+# n'est écrit tel quel dans la conversation.
 
-    Lue dans le **rapport de création** (`EquipeCreee.to_dict`) et non dans ce qui
-    a été demandé : le fil dit ce qui existe désormais dans le projet, comme
-    l'étape d'équipe du parcours de création (« la liste, jamais un ok »).
+
+def _faits_du_refus(objectif: str) -> str:
+    """Le run proposé a été refusé d'un geste — rien n'est ouvert."""
+    return (
+        f"L'utilisateur a refusé, d'un geste, le run que tu lui proposais sur : "
+        f"« {objectif} ». Rien n'a été ouvert. La conversation reprend : il peut "
+        "dire ce qu'il faut changer, ou passer à autre chose."
+    )
+
+
+def _faits_du_lancement(objectif: str) -> str:
+    """Le run proposé a été accepté d'un geste — et il est ouvert.
+
+    Ce qu'un run fait **d'abord** est dit en toutes lettres : sans lui, le modèle
+    comblait — « le développeur a commencé à rédiger le fichier », écrit sur le
+    réel (passage du banc du 2026-09-24) alors que le run cadrait encore.
     """
-    agents = [a for a in rapport.get("agents") or () if isinstance(a, Mapping)]
-    roles = " · ".join(
-        f"{a.get('role') or a.get('nom')} ×{a['instances']}"
-        if int(a.get("instances") or 1) > 1
-        else str(a.get("role") or a.get("nom"))
-        for a in agents
+    return (
+        f"L'utilisateur a accepté, d'un geste, de lancer le run sur : « {objectif} ». "
+        "Le run est ouvert : il commence par cadrer le travail et le découper en "
+        "tâches, que l'équipe prendra ensuite — rien n'est encore écrit dans le "
+        "projet. Son identifiant et son avancement s'affichent d'eux-mêmes juste "
+        "sous ton message."
     )
-    total = int(rapport.get("instances_total") or 0) or sum(
-        int(a.get("instances") or 1) for a in agents
+
+
+def _faits_sans_equipe(objectif: str, *, recrutable: bool) -> str:
+    """L'accord est tombé sur un projet sans agent : pas de run, l'équipe d'abord."""
+    suite = (
+        "À la place, l'équipe que l'analyse du projet appelle lui est proposée "
+        "juste sous ton message : il peut la relire, l'ajuster puis la valider "
+        "d'un geste — rien n'est créé sans sa validation —, et ce run lui sera "
+        "alors reproposé sans qu'il ait à le redire."
+        if recrutable
+        else "Aucun recrutement n'est branché sur ce fil : l'équipe se crée depuis "
+        "les écrans d'agents du projet, après quoi il pourra redire sa demande."
     )
-    return f"{roles} — {_accord(total, 'agent', 'agents')}"
+    return (
+        f"L'utilisateur a accepté, d'un geste, de lancer le run sur : « {objectif} ». "
+        "Mais ce projet n'a encore AUCUN agent : un run n'aurait personne pour "
+        "prendre ses tâches, et échouerait après avoir payé son cadrage. Il n'a "
+        f"donc PAS été ouvert. {suite}"
+    )
+
+
+def _faits_d_une_equipe_declinee(demande: DemandeRecrutement) -> str:
+    """L'équipe — ou le renfort — a été déclinée d'un geste : personne n'est recruté."""
+    if demande.pendant_un_run:
+        return (
+            f"L'utilisateur a décliné, d'un geste, le renfort « {demande.role or 'ce rôle'} » "
+            f"que le run sur « {demande.objectif} » proposait de recruter. Personne "
+            "n'est recruté. Le run continue avec l'équipe actuelle : les tâches qui "
+            "demandaient ce rôle iront au rôle le plus proche, qui n'en a pas le "
+            "métier. Ce rôle peut toujours se recruter depuis les écrans d'agents du "
+            "projet, et ce travail se relancer ensuite."
+        )
+    return (
+        "L'utilisateur a décliné, d'un geste, l'équipe que tu lui proposais pour : "
+        f"« {demande.objectif} ». Aucun agent n'a été créé, et aucun run n'est "
+        "ouvert : sans équipe, personne n'en prendrait les tâches. L'équipe peut "
+        "aussi se créer depuis les écrans d'agents du projet ; il pourra alors "
+        "redire sa demande."
+    )
+
+
+def _faits_d_une_equipe_creee(
+    demande: DemandeRecrutement, equipe: EquipeRecrutee, *, lancable: bool
+) -> str:
+    """L'équipe validée est créée : le run reprend, ou la demande est reproposée."""
+    creee = (
+        "L'utilisateur a validé, d'un geste, l'équipe que tu lui proposais : elle est "
+        f"créée dans le projet — {equipe.composition()} — et s'affiche juste sous "
+        "ton message."
+    )
+    if demande.pendant_un_run:
+        return (
+            f"{creee} Le run sur « {demande.objectif} » attendait ce renfort : il "
+            "reprend avec l'équipe complétée, et les tâches qui demandaient ce rôle "
+            "iront au nouveau venu."
+        )
+    if not lancable:
+        return (
+            f"{creee} Aucune exécution n'est branchée sur ce fil : le run demandé, "
+            f"« {demande.objectif} », ne peut pas y être ouvert."
+        )
+    return (
+        f"{creee} Sa demande d'origine lui est reproposée juste en dessous, sur : "
+        f"« {demande.objectif} » ; il peut la lancer, l'amender ou la borner d'un "
+        "geste. Aucun run n'est encore ouvert."
+    )
+
+
+def _fait_sans_equipe(*, recrutable: bool) -> str:
+    """Le bloc de contexte du juge sur un projet sans agent (#1146, #1262).
+
+    Un **fait**, et la règle qui en découle vit dans `_PROMPT_ORCHESTRATION` :
+    c'est ce qui laisse le modèle écrire lui-même, et en direct, ce qu'il y a à
+    dire — là où le canal remplaçait sa réponse par une phrase à lui.
+    """
+    if recrutable:
+        return (
+            "Recrutement : ce projet n'a encore AUCUN agent. Sur une demande de "
+            "travail, l'équipe que l'analyse du projet appelle sera proposée juste "
+            "sous ta réponse — l'utilisateur la relira, l'ajustera et la validera "
+            "d'un geste ; rien n'est créé sans sa validation."
+        )
+    return (
+        "Recrutement : ce projet n'a encore AUCUN agent, et aucun recrutement n'est "
+        "branché sur ce fil : l'équipe se crée depuis les écrans d'agents du projet, "
+        "après quoi l'utilisateur pourra redire sa demande."
+    )
+
+
+def _prompt_de_redaction(fil: Sequence[MessageChat], faits: str) -> str:
+    """Ce que la rédaction lit : les faits d'abord, puis la conversation s'il y en a une.
+
+    Les faits en tête, comme le contexte du juge (`_prompt`) : la transcription
+    se ferme sur la consigne de réponse, et un fait glissé après elle se lirait
+    comme une instruction de plus.
+    """
+    blocs = [f"Ce qui vient de se passer :\n{faits}"]
+    if fil:
+        blocs.append(transcription(fil))
+    return "\n\n".join(blocs)
 
 
 def apercu_de(state: ControlTowerState) -> ApercuOrchestration:
@@ -1679,11 +1845,11 @@ def _signature(demande: Demande) -> tuple[str, tuple[tuple[str, str], ...]]:
 def _avec_etapes(reponse: ReponseChat, etapes: tuple[EtapeFil, ...]) -> ReponseChat:
     """La même réponse, portant les étapes du tour — sans toucher au reste.
 
-    Les deux voies de `produire` qui délèguent (`_proposer_recrutement`,
-    `_ouvrir_un_run`) rendent une `ReponseChat` qu'elles composent entièrement :
-    leur passer les étapes ferait traverser à chacune une donnée dont elle n'a
-    rien à faire. On les pose donc **là où le tour est connu**, en un seul
-    endroit, et `replace` garantit qu'aucun autre champ ne bouge.
+    La voie de `produire` qui délègue (`_ouvrir_un_run`, partagée avec le geste
+    de cadrage) rend une `ReponseChat` qu'elle compose entièrement : lui passer
+    les étapes lui ferait traverser une donnée dont elle n'a rien à faire. On les
+    pose donc **là où le tour est connu**, et `replace` garantit qu'aucun autre
+    champ ne bouge.
     """
     return replace(reponse, etapes=etapes) if etapes else reponse
 
@@ -1697,12 +1863,19 @@ class _Contexte:
     **deux** appels d'un tour les reçoivent — celui qui décide des lectures et
     celui qui répond — et que les construire deux fois les ferait diverger d'un
     message à l'autre sur le même tour.
+
+    `recrutement` (#1262) est le cinquième, et il ne parle que d'un projet **sans
+    agent** (`_fait_sans_equipe`) : c'est ce que le juge doit savoir pour écrire
+    lui-même qu'il faut d'abord une équipe, au lieu de voir sa réponse remplacée
+    par une phrase du canal. Il n'est qu'un texte de prompt — la décision de
+    proposer l'équipe se prend sur `_sans_equipe`, jamais sur cette chaîne.
     """
 
     etat: str = ""
     equipe: str = ""
     attentes: str = ""
     faits: str = ""
+    recrutement: str = ""
 
 
 class _LectureDuFlux:
@@ -1846,17 +2019,20 @@ def _prompt(
     glisser un fait après elle le ferait lire comme une instruction de plus.
 
     Cinq blocs, dans l'ordre où l'on interroge : l'**état** (ce qui tourne, #683),
-    l'**équipe** (qui peut le prendre, #1223), les **attentes** (ce qui est
-    bloqué et pourquoi, #1223), les **faits des runs** (ce qu'ils ont fait,
-    #1157), puis les **lectures** du tour (ce qu'on vient d'aller chercher,
-    #1223). Les quatre premiers sont sus, le dernier est allé se chercher : il
-    vient donc en dernier, au plus près de la conversation qu'il sert.
+    l'**équipe** (qui peut le prendre, #1223) suivie, sur un projet qui n'en a
+    aucune, de ce que le canal proposera à la place du run (#1262), les
+    **attentes** (ce qui est bloqué et pourquoi, #1223), les **faits des runs**
+    (ce qu'ils ont fait, #1157), puis les **lectures** du tour (ce qu'on vient
+    d'aller chercher, #1223). Les quatre premiers sont sus, le dernier est allé
+    se chercher : il vient donc en dernier, au plus près de la conversation qu'il
+    sert.
     """
     entete = [
         bloc
         for bloc in (
             f"État de l'orchestration : {contexte.etat}" if contexte.etat else "",
             contexte.equipe,
+            contexte.recrutement,
             contexte.attentes,
             contexte.faits,
             lectures,
@@ -1976,53 +2152,48 @@ class RepondeurOrchestration(RepondeurChat):
         réponse se fait avec ce qu'elle a — la seule chose qu'un empêchement de
         lecture ne doit jamais coûter est la réponse elle-même.
 
-        **La réponse s'écrit pendant qu'elle vient** (#1222), sauf dans un cas,
-        et ce cas se connaît **avant** l'appel : un projet sans agent verra sa
-        réponse *remplacée* par la proposition d'équipe (#1146), et on ne
-        remplace pas ce qui est déjà à l'écran. Le régime se décide donc sur
-        `_sans_equipe`, qui ne dépend que du projet — jamais sur le verdict, qui
-        arrive trop tard pour décider s'il fallait le montrer. Tout le reste
-        s'**ajoute** derrière la réponse (l'avertissement d'un fil sans
-        exécution, la cause d'un lancement en échec) et ne demande rien.
+        **La réponse s'écrit pendant qu'elle vient** (#1222), et depuis #1262
+        **toujours** : la seule exception était le projet sans agent, dont la
+        réponse était retenue puis *remplacée* par la proposition d'équipe
+        (`_PHRASE_RECRUTEMENT`, #1146) — la voix du code à la place de celle du
+        modèle. Le modèle reçoit désormais le fait (`_fait_sans_equipe`) et la
+        règle (`_PROMPT_ORCHESTRATION`), et écrit lui-même qu'il faut d'abord une
+        équipe ; le canal, lui, ne décide que de la **structure** — la demande de
+        recrutement à la place de la demande de cadrage, sur `_sans_equipe` et
+        jamais sur ce que le modèle a écrit. Tout le reste s'**ajoute** derrière
+        la réponse (l'avertissement d'un fil sans exécution, la cause d'un
+        lancement en échec) et ne demande rien.
         """
-        # Le texte du juge sera peut-être remplacé (#1146) : la question se pose
-        # **avant** l'appel, et sa réponse décide aussi du régime de publication.
-        retenue = self._sans_equipe(projet_id)
+        sans_equipe = self._sans_equipe(projet_id)
         redaction = Redaction(incrementer)
-        contexte = self._contexte(fil, projet_id)
+        contexte = self._contexte(fil, projet_id, sans_equipe=sans_equipe)
         lectures, etapes = await self._consulter(agent, fil, contexte, projet_id, etapeur)
         try:
-            verdict = await self._juger(
-                agent,
-                fil,
-                projet_id,
-                contexte,
-                lectures,
-                None if retenue else redaction,
-            )
+            verdict = await self._juger(agent, fil, contexte, lectures, redaction)
         except _JugeInjoignable as injoignable:
             # Ce qui a pu être publié reste à l'écran — il a été dit, le retirer
             # n'est pas au pouvoir de ce canal — et la cause s'écrit à sa suite.
             await redaction.ecrire(f" {injoignable}" if redaction.texte else str(injoignable))
             return ReponseChat(contenu=redaction.texte, etapes=etapes)
+        if not redaction.texte:
+            # Le flux l'a déjà écrite quand il a servi ; sinon, elle part d'un
+            # bloc — un modèle qui a répondu en JSON.
+            await redaction.ecrire(verdict.reponse)
         if (
             verdict.nom in (VERDICT_PROPOSITION, VERDICT_ACCORD)
             and verdict.objectif
             and self._lanceur is not None
-            and retenue
+            and sans_equipe
         ):
             # Personne pour prendre les tâches (#1146) : ni la proposition ni
-            # l'accord ne tiennent, et le texte du juge — « je lance ? », « c'est
-            # parti » — non plus. Il est remplacé **avant** d'être écrit, par la
-            # phrase qui dit pourquoi et propose l'équipe.
-            return _avec_etapes(
-                await self._proposer_recrutement(redaction, verdict.objectif, projet_id),
-                etapes,
+            # l'accord ne tiennent. Le modèle le savait et l'a dit ; ce qui change
+            # ici est ce que le message **demande** — l'équipe, pas le run —, et
+            # rien de ce qu'il dit.
+            return ReponseChat(
+                contenu=redaction.texte,
+                recrutement=self._demande_d_equipe(verdict.objectif, projet_id),
+                etapes=etapes,
             )
-        if not redaction.texte:
-            # Le flux l'a déjà écrite quand il a servi ; sinon, elle part d'un
-            # bloc — un juge retenu, ou un modèle qui a répondu en JSON.
-            await redaction.ecrire(verdict.reponse)
         if verdict.nom == VERDICT_ACCORD:
             # Un accord **tapé** ne porte aucune borne : le juge rend un
             # objectif, pas un formulaire. Les bornes viennent du geste
@@ -2065,12 +2236,22 @@ class RepondeurOrchestration(RepondeurChat):
     ) -> ReponseChat:
         """Exécute la décision prise **au geste** sur une proposition (#943).
 
-        Aucun appel modèle ici, et c'est le sujet : la question que le juge
-        tranche — « ce message est-il un accord ? » — n'a plus lieu d'être quand
-        l'accord est un clic. Le chemin vers le lanceur reste **unique** dans son
-        esprit : il part d'une décision explicite de l'utilisateur, jamais d'un
-        silence ni d'un texte reconnu. Ce qui change est la façon dont la
-        décision arrive, pas ce qui l'autorise.
+        Aucun **juge** ici, et c'est le sujet : la question qu'il tranche — « ce
+        message est-il un accord ? » — n'a plus lieu d'être quand l'accord est un
+        clic. Le chemin vers le lanceur reste **unique** dans son esprit : il part
+        d'une décision explicite de l'utilisateur, jamais d'un silence ni d'un
+        texte reconnu. Ce qui change est la façon dont la décision arrive, pas ce
+        qui l'autorise.
+
+        La décision exécutée, **le modèle en parle** (#1262, `rediger`) : il reçoit
+        ce qui vient de se passer et écrit la réponse. C'est le sort de « C'est
+        parti. », la dernière phrase que le code écrivait sur un lancement réussi
+        (docs/05 §2.9) : elle n'était accolée à rien depuis #1222, mais elle restait
+        la même à chaque lancement — une phrase toute faite dans un fil où tout le
+        reste est dit par l'orchestrateur. L'ordre est tenu : le run **d'abord**,
+        parce que le clic est l'accord et que rien ne doit attendre un modèle pour
+        l'honorer ; la parole ensuite, sur un run qui existe. L'identifiant, lui,
+        ne passe pas par les mots — il est sur le message (`run_id`), sous la bulle.
 
         `objectif` est ce qui **part** : la proposition telle quelle, ou la
         version amendée à l'écran. Elle ne peut pas traverser un tour de
@@ -2088,28 +2269,34 @@ class RepondeurOrchestration(RepondeurChat):
         l'utilisateur reformule. C'est la symétrie du brief refusé (§6.10) à
         ceci près qu'il n'y a pas encore de run à annuler. Les bornes y sont
         ignorées, comme l'objectif : il n'y a rien à borner.
+
+        Un lancement **empêché** (objectif perdu, aucune exécution branchée,
+        moteur qui refuse) ne fait pas parler le modèle : rien ne s'est ouvert, et
+        seul ce code le sait — c'est la phrase d'empêchement de `_ouvrir_un_run`
+        qui s'écrit, seule.
         """
-        redaction = Redaction(None)
+        objectif = objectif.strip()
         if not approuve:
-            await redaction.ecrire(
-                "Entendu, je n'ouvre rien. Dites-moi ce qu'il faut changer et je "
-                "vous proposerai autre chose."
+            return ReponseChat(
+                contenu=await self.rediger(agent, fil, faits=_faits_du_refus(objectif))
             )
-            return ReponseChat(contenu=redaction.texte)
         if self._sans_equipe(projet_id):
             # L'équipe a pu disparaître entre la proposition et le clic, ou la
-            # proposition précéder ce lot (#1146) : la garde du verdict ne suffit
-            # pas, et « c'est parti » n'a pas encore été écrit.
-            return await self._proposer_recrutement(redaction, objectif.strip(), projet_id)
-        # La seule phrase du code sur un lancement qui réussit, et elle n'est
-        # **accolée à rien** (#1222) : ici aucun modèle n'a parlé — l'accord est un
-        # clic —, il faut donc bien que quelque chose accuse réception, et le fil
-        # ne se persiste pas vide (`ServiceChat._persister_reponse`). Ce qui a été
-        # retiré est ce qui *suivait* : l'identifiant du run et le régime des
-        # bornes, que le message et le geste portent déjà (`_ouvrir_un_run`).
-        await redaction.ecrire("C'est parti.")
-        return await self._ouvrir_un_run(
-            redaction, objectif.strip(), projet_id, bornes, contexte_du_fil(fil)
+            # proposition précéder #1146 : la garde du verdict ne suffit pas. Aucun
+            # run ne part ; c'est l'équipe que le message demande, et le modèle dit
+            # pourquoi.
+            demande = self._demande_d_equipe(objectif, projet_id)
+            faits = _faits_sans_equipe(objectif, recrutable=demande is not None)
+            return ReponseChat(
+                contenu=await self.rediger(agent, fil, faits=faits), recrutement=demande
+            )
+        lance = await self._ouvrir_un_run(
+            Redaction(None), objectif, projet_id, bornes, contexte_du_fil(fil)
+        )
+        if not lance.run_id:
+            return lance
+        return replace(
+            lance, contenu=await self.rediger(agent, fil, faits=_faits_du_lancement(objectif))
         )
 
     async def recruter(
@@ -2124,19 +2311,26 @@ class RepondeurOrchestration(RepondeurChat):
     ) -> ReponseChat:
         """Crée l'équipe validée, puis **reprend** la demande d'origine (#1146).
 
-        Aucun appel modèle : la validation est un clic, et la suite se déduit.
-        Trois issues, et aucune n'ouvre de run — un run part sur son propre
-        accord, jamais par ricochet d'un recrutement :
+        Aucun juge : la validation est un clic, et la suite se déduit. Trois
+        issues, et aucune n'ouvre de run — un run part sur son propre accord,
+        jamais par ricochet d'un recrutement :
 
-        - **déclinée** — rien n'est créé, rien n'est ouvert, et la phrase dit
+        - **déclinée** — rien n'est créé, rien n'est ouvert, et le modèle dit
           pourquoi le run n'est pas proposé à la place : il n'aurait personne ;
-        - **créée** — la réponse dit qui a été recruté, puis **repropose** le run
-          sur l'objectif que la demande portait (`ReponseChat.proposition`) : la
-          demande de cadrage de #943 prend le relais, avec ses bornes ;
+        - **créée** — l'équipe est sur le message (`ReponseChat.equipe`, sous la
+          bulle), le run est **reproposé** sur l'objectif que la demande portait
+          (`ReponseChat.proposition`) — la demande de cadrage de #943 prend le
+          relais, avec ses bornes —, et le modèle en parle ;
         - **refusée** (`EquipeRefusee`, projet illisible…) — rien n'a été créé
           (la création vérifie tout avant d'écrire), la cause est dite, et la
           demande est **reposée** telle quelle pour qu'on puisse corriger et
           valider à nouveau sans retaper sa demande.
+
+        **Les faits sur les cartes, la parole au modèle** (#1262) : le fil
+        écrivait « Équipe créée : Développeur — 1 agent. Je reprends votre demande :
+        « … ». Je lance ? » et trois refus, tous composés ici. Restent au code les
+        seuls **empêchements** — aucun recrutement branché, une création refusée —,
+        parce que rien ne s'est fait et que lui seul le sait.
 
         `demande.projet_id` est le projet où l'équipe naît : celui dont la
         demande parlait, relu du fil par le service — jamais la fenêtre.
@@ -2150,17 +2344,13 @@ class RepondeurOrchestration(RepondeurChat):
         (`maestro.controltower.renfort`) : ce module n'en sait rien et n'a pas à en
         savoir plus — il écrit dans le fil, comme pour les deux autres issues.
         """
-        redaction = Redaction(None)
         if not approuve:
-            await redaction.ecrire(
-                _REFUS_PENDANT_UN_RUN.format(role=demande.role or "ce rôle")
-                if demande.pendant_un_run
-                else "Entendu : je ne recrute personne, et je n'ouvre pas de run — "
-                "sans équipe, personne n'en prendrait les tâches. L'équipe se crée "
-                "aussi depuis les écrans d'agents du projet ; redites-moi votre "
-                "demande quand elle sera là."
+            return ReponseChat(
+                contenu=await self.rediger(
+                    agent, fil, faits=_faits_d_une_equipe_declinee(demande)
+                )
             )
-            return ReponseChat(contenu=redaction.texte)
+        redaction = Redaction(None)
         if self._recruteur is None:
             await redaction.ecrire(
                 "Je ne peux pas créer d'équipe depuis ce fil : aucun recrutement n'y "
@@ -2177,27 +2367,19 @@ class RepondeurOrchestration(RepondeurChat):
                 "puis validez-la à nouveau — ou remettez à plus tard."
             )
             return ReponseChat(contenu=redaction.texte, recrutement=demande)
-        await redaction.ecrire(f"Équipe créée : {_composition(rapport)}. ")
-        if demande.pendant_un_run:
-            # Le run tourne déjà : il n'y a rien à proposer, seulement à dire que
-            # l'attente est levée. Lui reproposer son propre objectif ouvrirait un
-            # second run sur le même travail — et `trancher_cadrage` n'a aucun
-            # moyen de savoir qu'il ferait double emploi.
-            await redaction.ecrire(
-                "Le run reprend avec l'équipe complétée : les tâches qui demandaient "
-                "ces compétences iront au nouveau rôle."
-            )
-            return ReponseChat(contenu=redaction.texte)
-        if self._lanceur is None:
-            await redaction.ecrire(
-                "Je ne peux pas encore ouvrir de run depuis ce fil : aucune exécution "
-                "n'y est branchée."
-            )
-            return ReponseChat(contenu=redaction.texte)
-        await redaction.ecrire(
-            f"Je reprends votre demande : « {demande.objectif} ». Je lance ?"
+        equipe = EquipeRecrutee.du_rapport(rapport, demande.projet_id)
+        lancable = self._lanceur is not None
+        faits = _faits_d_une_equipe_creee(demande, equipe, lancable=lancable)
+        # Pendant un run, rien à reproposer : lui rendre son propre objectif
+        # ouvrirait un second run sur le même travail — et `trancher_cadrage` n'a
+        # aucun moyen de savoir qu'il ferait double emploi. Sans lanceur non plus :
+        # le geste mènerait à un lancement impossible.
+        propose = demande.objectif if lancable and not demande.pendant_un_run else ""
+        return ReponseChat(
+            contenu=await self.rediger(agent, fil, faits=faits),
+            proposition=propose,
+            equipe=equipe,
         )
-        return ReponseChat(contenu=redaction.texte, proposition=demande.objectif)
 
     async def ouvrir_questionnaire(
         self, agent: Agent, fil: Sequence[MessageChat]
@@ -2232,10 +2414,9 @@ class RepondeurOrchestration(RepondeurChat):
         self,
         agent: Agent,
         fil: Sequence[MessageChat],
-        projet_id: str | None,
-        contexte: _Contexte | None = None,
-        lectures: str = "",
-        redaction: Redaction | None = None,
+        contexte: _Contexte,
+        lectures: str,
+        redaction: Redaction,
     ) -> _Verdict:
         """L'appel modèle — fournisseur résolu au premier usage (import local, comme #84).
 
@@ -2249,15 +2430,15 @@ class RepondeurOrchestration(RepondeurChat):
         — et le contrat de sortie n'est pas un texte que l'UI doit pouvoir
         réécrire.
 
-        **Avec une `redaction`, la réponse s'écrit pendant qu'elle est jugée**
-        (#1222) : l'appel passe par `generate_stream` et `_LectureDuFlux` publie
-        la prose au fur et à mesure, gardant pour elle la dernière ligne qui porte
-        le verdict. Le jugement n'est pas déplacé d'un cran — il reste rendu par
-        ce même appel —, c'est l'**ordre** dans lequel le modèle rend ses deux
+        **La réponse s'écrit pendant qu'elle est jugée** (#1222) : l'appel passe
+        par `generate_stream` et `_LectureDuFlux` publie la prose au fur et à
+        mesure dans `redaction`, gardant pour elle la dernière ligne qui porte le
+        verdict. Le jugement n'est pas déplacé d'un cran — il reste rendu par ce
+        même appel —, c'est l'**ordre** dans lequel le modèle rend ses deux
         moitiés qui a changé, et c'est tout ce qu'il fallait pour que la première
-        n'attende plus la seconde. Sans `redaction`, l'appel reste celui d'avant
-        (`generate`, texte entier) : c'est ce que `repondre` demande, et le seul
-        chemin d'un appelant qui n'a rien à afficher au fil de l'eau.
+        n'attende plus la seconde. Il n'y a plus d'appel « en bloc » : il ne
+        servait qu'au projet sans agent, dont la réponse était retenue pour être
+        remplacée, et #1262 l'a rendue au modèle.
 
         Les trois façons de n'avoir **aucun** verdict lèvent `_JugeInjoignable`
         plutôt que de remonter (#686), et la **famille** de la cause se lit à
@@ -2281,49 +2462,22 @@ class RepondeurOrchestration(RepondeurChat):
         phrase de réparation vraie — corriger la configuration suffit, sans
         redémarrer la Control Tower.
         """
-        if self._provider is None:
-            from maestro.providers.factory import modele_du_canal, provider_from_settings
-
-            try:
-                fournisseur = provider_from_settings()
-                # Le modèle avec le fournisseur (#1173) : `claude-sonnet-5` n'a de
-                # sens que chez Claude. Un modèle manquant est un réglage absent,
-                # donc de la même famille que le fournisseur manquant, et il se dit
-                # comme tel.
-                self._modele = modele_du_canal(agent.modele, fournisseur)
-                self._provider = fournisseur
-            except Exception as echec:  # noqa: BLE001 — la position classe, cf. docstring
-                raise _JugeInjoignable(
-                    f"aucun fournisseur de modèle n'est utilisable "
-                    f"({cause_lisible(echec)})",
-                    await reparation_configuration(self._sonde),
-                ) from echec
-        # Le contexte est **celui du tour** quand `produire` l'a construit : les
-        # deux appels d'un même message doivent voir le même état, faute de quoi
-        # le second jugerait sur une projection que le premier ne connaissait
-        # pas. `repondre`, qui n'en construit aucun, le fait relire ici.
-        vu = contexte if contexte is not None else self._contexte(fil, projet_id)
-        prompt = _prompt(fil, vu, lectures)
+        try:
+            fournisseur = self._fournisseur(agent)
+        except Exception as echec:  # noqa: BLE001 — la position classe, cf. docstring
+            raise _JugeInjoignable(
+                f"aucun fournisseur de modèle n'est utilisable ({cause_lisible(echec)})",
+                await reparation_configuration(self._sonde),
+            ) from echec
+        # Le contexte est **celui du tour** : `produire` l'a construit pour les
+        # deux appels d'un même message, qui doivent voir le même état — faute de
+        # quoi le second jugerait sur une projection que le premier ne
+        # connaissait pas.
+        prompt = _prompt(fil, contexte, lectures)
         modele = self._modele or agent.modele
-        if redaction is None:
-            try:
-                texte = await self._provider.generate(
-                    prompt, model=modele, system_prompt=agent.prompt_systeme
-                )
-            except Exception as echec:  # noqa: BLE001 — la position classe, cf. docstring
-                raise _JugeInjoignable(
-                    f"le fournisseur de modèle n'a pas répondu ({cause_lisible(echec)})",
-                    _REPARATION_PASSAGERE,
-                ) from echec
-            if not (texte or "").strip():
-                raise _JugeInjoignable(
-                    "le fournisseur de modèle a rendu une réponse vide",
-                    _REPARATION_PASSAGERE,
-                )
-            return _verdict_du_texte(texte)
         lecture = _LectureDuFlux()
         try:
-            async for morceau in self._provider.generate_stream(
+            async for morceau in fournisseur.generate_stream(
                 prompt, model=modele, system_prompt=agent.prompt_systeme
             ):
                 await redaction.ecrire(lecture.pousser(morceau))
@@ -2341,7 +2495,9 @@ class RepondeurOrchestration(RepondeurChat):
             )
         return verdict
 
-    def _contexte(self, fil: Sequence[MessageChat], projet_id: str | None) -> _Contexte:
+    def _contexte(
+        self, fil: Sequence[MessageChat], projet_id: str | None, *, sans_equipe: bool
+    ) -> _Contexte:
         """Ce que le canal sait de l'orchestration, lu **une fois par message** (#1223).
 
         Les quatre lectures passent par le **même** projet de fenêtre, donc par la
@@ -2352,6 +2508,11 @@ class RepondeurOrchestration(RepondeurChat):
         Aucune ne lève : une sonde qui casse **éclaire**, elle ne décide de rien
         (même règle que `_sans_equipe`). Un bloc manquant coûte une réponse moins
         informée ; une exception coûterait la réponse.
+
+        `sans_equipe` (#1262) est le verdict de `_sans_equipe`, pris **une fois**
+        par l'appelant : il décide de ce que le message demandera, et le même
+        compte doit donc dire au modèle ce qu'il en est — deux lectures de la sonde
+        pourraient se contredire d'un appel à l'autre.
         """
         # Les quatre sondes sont liées à des variables locales avant d'être
         # appelées : c'est ce qui permet de les passer à `_sans_echec` sans
@@ -2371,6 +2532,11 @@ class RepondeurOrchestration(RepondeurChat):
             # de répondre « pourquoi le run a échoué ? » sans envoyer vers un écran.
             faits=(
                 _sans_echec(lambda: faits(projet_id, runs_du_fil(fil))) if faits else ""
+            ),
+            recrutement=(
+                _fait_sans_equipe(recrutable=self._recruteur is not None)
+                if sans_equipe
+                else ""
             ),
         )
 
@@ -2480,17 +2646,29 @@ class RepondeurOrchestration(RepondeurChat):
         ici on se tait, parce qu'un fournisseur absent n'a pas deux causes ni deux
         phrases, et que celle du juge arrive une ligne plus loin.
         """
-        if self._provider is not None:
-            return True
-        from maestro.providers.factory import modele_du_canal, provider_from_settings
-
         try:
-            fournisseur = provider_from_settings()
-            self._modele = modele_du_canal(agent.modele, fournisseur)
-            self._provider = fournisseur
+            self._fournisseur(agent)
         except Exception:  # noqa: BLE001 — l'empêchement se dit au juge, pas ici
             return False
         return True
+
+    def _fournisseur(self, agent: Agent) -> ModelProvider:
+        """Le fournisseur, résolu **au premier usage** — lève ce que la fabrique lève.
+
+        Une seule résolution pour les trois appels du canal (le tour de lecture, le
+        juge, la rédaction d'un geste), chacun disant l'empêchement à sa façon. Le
+        modèle suit le fournisseur (#1173) : `claude-sonnet-5` n'a de sens que chez
+        Claude, et un modèle manquant est un réglage absent, de la même famille
+        que le fournisseur manquant. Un échec **ne se mémorise pas** : l'appel
+        suivant retente, si bien que corriger la configuration suffit.
+        """
+        if self._provider is None:
+            from maestro.providers.factory import modele_du_canal, provider_from_settings
+
+            fournisseur = provider_from_settings()
+            self._modele = modele_du_canal(agent.modele, fournisseur)
+            self._provider = fournisseur
+        return self._provider
 
     def _sans_equipe(self, projet_id: str | None) -> bool:
         """Le projet de la fenêtre n'a **personne** pour prendre les tâches (#1146).
@@ -2508,22 +2686,63 @@ class RepondeurOrchestration(RepondeurChat):
         except Exception:  # noqa: BLE001 — la sonde éclaire, elle ne décide de rien
             return False
 
-    async def _proposer_recrutement(
-        self, redaction: Redaction, objectif: str, projet_id: str | None
-    ) -> ReponseChat:
-        """Propose l'équipe au lieu du run — la demande et la phrase qui dit pourquoi.
+    def _demande_d_equipe(
+        self, objectif: str, projet_id: str | None
+    ) -> DemandeRecrutement | None:
+        """L'équipe à demander au lieu du run — `None` quand aucun geste n'y répondrait.
 
         Ne s'appelle que derrière `_sans_equipe`, donc avec un projet. Sans
-        recruteur, le constat est dit sans demande : poser une demande à laquelle
-        aucun geste ne peut répondre serait promettre ce qu'on sait impossible.
+        recruteur, pas de demande : poser une demande à laquelle aucun geste ne
+        peut répondre serait promettre ce qu'on sait impossible. Le constat, lui,
+        est dit par le modèle, qui a reçu le fait (`_fait_sans_equipe`,
+        `_faits_sans_equipe`) — depuis #1262, plus aucune phrase du canal ne le
+        dit à sa place.
         """
         if self._recruteur is None or not projet_id:
-            await redaction.ecrire(_PHRASE_SANS_RECRUTEUR.format(objectif=objectif))
-            return ReponseChat(contenu=redaction.texte)
-        await redaction.ecrire(_PHRASE_RECRUTEMENT.format(objectif=objectif))
-        return ReponseChat(
-            contenu=redaction.texte,
-            recrutement=DemandeRecrutement(objectif=objectif, projet_id=projet_id),
+            return None
+        return DemandeRecrutement(objectif=objectif, projet_id=projet_id)
+
+    async def rediger(
+        self, agent: Agent, fil: Sequence[MessageChat], *, faits: str
+    ) -> str:
+        """La parole du fil sur des faits — un geste, ou le renfort d'un run (#1262).
+
+        Un appel au modèle sous `_PROMPT_REDACTION`, qui reçoit ce qui vient de se
+        passer (`faits`) puis la conversation : c'est lui qui écrit ce que le fil
+        dit, là où le code récitait « C'est parti. », la proposition d'équipe, la
+        reprise d'une demande et trois refus. **Pas de flux** : les gestes passent
+        par le REST, qui rend la paire d'un coup, et le renfort part de la pompe,
+        où aucune requête n'attend de morceaux (même raison que le récit de fin,
+        #1224).
+
+        **Ne lève jamais** — la règle du canal (#686). Un modèle qui ne peut pas
+        rédiger n'est remplacé par aucune phrase gabarit : le fil dit la **cause**
+        du silence (`_PHRASE_SANS_REDACTION`), et les faits restent sur la carte.
+
+        Le texte rendu passe par le **lecteur du contrat** (`_verdict_du_texte`) :
+        un modèle qui répondrait au contrat du juge — une ligne `%%MAESTRO%%`, un
+        objet JSON — n'affiche jamais sa structure dans le fil. Ce n'est pas un
+        second contrat, c'est le même lecteur, qui sait déjà ne rien laisser fuir.
+        """
+        try:
+            fournisseur = self._fournisseur(agent)
+        except Exception as echec:  # noqa: BLE001 — l'empêchement se dit, cf. docstring
+            return _PHRASE_SANS_REDACTION.format(
+                cause=f"aucun fournisseur de modèle n'est utilisable ({cause_lisible(echec)})"
+            )
+        try:
+            texte = await fournisseur.generate(
+                _prompt_de_redaction(fil, faits),
+                model=self._modele or agent.modele,
+                system_prompt=_PROMPT_REDACTION,
+            )
+        except Exception as echec:  # noqa: BLE001 — l'empêchement se dit, cf. docstring
+            return _PHRASE_SANS_REDACTION.format(
+                cause=f"le fournisseur de modèle n'a pas répondu ({cause_lisible(echec)})"
+            )
+        redige = _verdict_du_texte(texte or "").reponse
+        return redige or _PHRASE_SANS_REDACTION.format(
+            cause="le fournisseur de modèle a rendu une réponse vide"
         )
 
     async def _ouvrir_un_run(

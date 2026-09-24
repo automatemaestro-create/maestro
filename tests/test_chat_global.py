@@ -53,6 +53,9 @@ Couvre :
    déplacer atteignent le juge comme les autres demandes, et une action proposée
    se répond d'un geste qui ouvre le run dans le projet de la fenêtre — le chemin
    de S1, que le banc des scénarios joue sur la vraie stack.
+⑫ **le fil n'écrit plus de phrase fixe sur les chemins du geste** (#1262) :
+   accord, refus, équipe validée ou déclinée, renfort — ce que le fil dit est ce
+   que le modèle a rédigé, à la lettre, et les faits sont des champs du message.
 
 Ce que ces tests **ne** peuvent pas tenir, et l'assument : la qualité du jugement
 lui-même. Le juge est un double, donc « cette phrase est-elle une demande de
@@ -1068,7 +1071,8 @@ def test_les_pieces_jointes_de_la_conversation_partent_avec_le_run() -> None:
 def test_le_geste_d_accord_emporte_aussi_les_pieces_jointes() -> None:
     """Le bouton ouvre le même run que l'accord tapé, sources comprises."""
     lanceur = LanceurEspion()
-    repondeur = RepondeurOrchestration(lanceur=lanceur)
+    # Un fournisseur injecté : depuis #1262 le modèle parle après le geste.
+    repondeur = RepondeurOrchestration(lanceur=lanceur, provider=JugeQuiRedige())
 
     asyncio.run(
         repondeur.trancher_cadrage(
@@ -1441,8 +1445,9 @@ class JugeQuiStreame(ModelProvider):
     sur le texte entier.
 
     Il sait aussi l'aller simple, et il **note lequel des deux** on lui a demandé
-    (`allers_simples`) : c'est ce qui rend observable le seul choix que le
-    répondeur ait à faire ici — ouvrir le flux, ou juger en retenant (#1146).
+    (`allers_simples`) : c'est ce qui rend observable que le juge ne passe plus
+    jamais en bloc — le projet sans agent, qui retenait sa réponse (#1146), écrit
+    en direct depuis #1262.
     """
 
     name = "juge-qui-streame"
@@ -1579,35 +1584,10 @@ def test_un_accord_streame_ouvre_le_run_sans_rien_ajouter_aux_mots_du_modele() -
     assert "".join(incremente).strip() == reponse.contenu
 
 
-def test_un_projet_sans_equipe_ne_publie_rien_avant_d_avoir_juge() -> None:
-    """La seule exception au direct, et elle se décide **avant** l'appel (#1146).
-
-    Le texte du juge y est *remplacé* par la proposition d'équipe : l'avoir déjà
-    affiché rendrait le remplacement impossible, et la bulle dirait « je lance ? »
-    au-dessus d'une carte qui dit le contraire. Le régime tient à `_sans_equipe`,
-    qui ne dépend que du projet — donc connu avant le premier morceau.
-    """
-    juge = JugeQuiStreame(_dicte("Je lance ?", VERDICT_PROPOSITION, OBJECTIF))
-    repondeur, incremente = _en_flux(
-        juge, lanceur=LanceurEspion(), equipe=lambda _projet: 0, recruteur=_recruteur_muet
-    )
-
-    async def incrementer(delta: str) -> None:
-        incremente.append(delta)
-
-    reponse = asyncio.run(
-        repondeur.produire(
-            AGENT_ORCHESTRATION, _fil("crée-moi une app"), incrementer=incrementer, projet_id="p1"
-        )
-    )
-
-    assert reponse.recrutement is not None
-    # Le flux n'a même pas été ouvert : c'est la décision, pas un filtrage après
-    # coup de ce qui en serait sorti.
-    assert juge.prompts == []
-    assert len(juge.allers_simples) == 1
-    assert "Je lance ?" not in "".join(incremente)
-    assert "".join(incremente).strip() == reponse.contenu
+# Le projet sans agent n'est plus une exception au direct (#1262) : sa réponse
+# n'est plus retenue pour être remplacée, le modèle reçoit le fait et l'écrit
+# lui-même — voir la section ⑫
+# (`test_la_demande_sur_un_projet_sans_equipe_s_ecrit_en_direct_avec_les_mots_du_modele`).
 
 
 async def _recruteur_muet(projet: str, roles, proposition: str) -> dict[str, Any]:
@@ -2613,10 +2593,14 @@ def test_le_module_n_expose_aucun_juge_lexical() -> None:
 def _repondeur_qui_propose(
     lanceur: LanceurEspion | None = None,
 ) -> RepondeurOrchestration:
-    """Un répondeur dont le juge propose — l'état de départ de tous ces tests."""
+    """Un répondeur dont le juge propose — l'état de départ de tous ces tests.
+
+    Son fournisseur rédige aussi (#1262) : après un geste, c'est le modèle qui
+    parle, et ce qu'il rédige (`REDIGE`) est ce que le fil doit dire, à la lettre.
+    """
     return RepondeurOrchestration(
         lanceur=lanceur,
-        provider=JugeScripte(_verdict(VERDICT_PROPOSITION, _propose(), OBJECTIF)),
+        provider=JugeQuiRedige(_verdict(VERDICT_PROPOSITION, _propose(), OBJECTIF)),
     )
 
 
@@ -2794,7 +2778,9 @@ def test_un_refus_au_geste_n_ouvre_rien_et_laisse_parler(
     geste, repondu = reponse.json()["messages"]
     assert geste["contenu"] == "Non, ne lance pas."
     assert lanceur.objectifs == []
-    assert "je n'ouvre rien" in repondu["contenu"]
+    # « Entendu, je n'ouvre rien… » était écrit par le code : c'est le modèle
+    # qui répond, et rien ne s'ajoute à ce qu'il a dit (#1262).
+    assert repondu["contenu"] == REDIGE
 
 
 def test_le_geste_est_ecrit_au_fil_car_le_fil_est_la_seule_memoire(
@@ -3013,6 +2999,9 @@ def test_un_run_sans_borne_n_ajoute_rien_a_ce_qui_est_dit(client_proposition) ->
     a trouvée robotique (« … — aucune borne : le run ira jusqu'au bout. Les tâches
     apparaîtront au tableau de bord… »), et elle venait après coup, quand plus
     personne ne peut rien en faire.
+
+    Depuis #1262, la première moitié — « C'est parti. » — n'est plus écrite non
+    plus : ce que le fil dit est ce que le modèle a rédigé, et rien d'autre.
     """
     reponse = client_proposition.post(
         f"/api/chat/{NOM_ORCHESTRATION}/cadrage", json={"approuve": True}
@@ -3020,7 +3009,7 @@ def test_un_run_sans_borne_n_ajoute_rien_a_ce_qui_est_dit(client_proposition) ->
 
     geste, repondu = reponse.json()["messages"]
     assert geste["contenu"] == "Oui, lance."
-    assert repondu["contenu"] == "C'est parti."
+    assert repondu["contenu"] == REDIGE
 
 
 def test_les_bornes_posees_restent_lisibles_dans_le_fil(client_proposition) -> None:
@@ -3038,7 +3027,7 @@ def test_les_bornes_posees_restent_lisibles_dans_le_fil(client_proposition) -> N
 
     geste, repondu = reponse.json()["messages"]
     assert "s'interrompt à 5,00 $" in geste["contenu"]
-    assert repondu["contenu"] == "C'est parti."
+    assert repondu["contenu"] == REDIGE
 
 
 def test_un_refus_ne_borne_rien_parce_qu_il_n_ouvre_rien(
@@ -3247,11 +3236,16 @@ def _repondeur_sans_equipe(
     recruteur: RecruteurEspion | None = None,
     equipe: Any = None,
 ) -> RepondeurOrchestration:
-    """Le répondeur d'un projet sans agent : la sonde dit zéro tant que rien n'est créé."""
+    """Le répondeur d'un projet sans agent : la sonde dit zéro tant que rien n'est créé.
+
+    Son fournisseur rédige aussi (#1262) : ce que le fil dit après un geste est
+    `REDIGE`, et ce que ces tests-ci gardent est la **structure** — les mots ont
+    leur propre section (⑫).
+    """
     recruteur = recruteur if recruteur is not None else RecruteurEspion()
     return RepondeurOrchestration(
         lanceur=lanceur,
-        provider=JugeScripte(verdict),
+        provider=JugeQuiRedige(verdict),
         equipe=equipe if equipe is not None else recruteur.compte,
         recruteur=recruteur,
     )
@@ -3263,8 +3257,9 @@ def test_un_projet_sans_equipe_se_voit_proposer_son_equipe_et_non_un_run() -> No
     L'échantillon fautif est le fil de l'essai : la proposition d'un run
     (`proposition` posée, « Je lance ? ») sur un projet où `GET /api/agents`
     rendait `[]`. Le test lit la **structure** de la réponse — plus de demande de
-    cadrage, une demande de recrutement qui porte l'objectif et le projet — puis
-    ce que la phrase dit : aucun agent, donc personne pour les tâches.
+    cadrage, une demande de recrutement qui porte l'objectif et le projet. Ce que
+    la réponse **dit**, c'est le modèle qui l'écrit depuis #1262, sur le fait
+    qu'il reçoit : la section ⑫ le garde.
     """
     lanceur = LanceurEspion()
     repondeur = _repondeur_sans_equipe(
@@ -3283,10 +3278,6 @@ def test_un_projet_sans_equipe_se_voit_proposer_son_equipe_et_non_un_run() -> No
     assert reponse.recrutement == DemandeRecrutement(
         objectif=OBJECTIF, projet_id=PROJET_SANS_EQUIPE
     )
-    assert "aucun agent" in reponse.contenu
-    assert "personne pour prendre les tâches" in reponse.contenu
-    # Le « Je lance ? » du juge n'est pas écrit : il contredirait la phrase.
-    assert _propose() not in reponse.contenu
     assert lanceur.objectifs == []
 
 
@@ -3356,14 +3347,13 @@ def test_un_accord_tape_sur_un_projet_sans_equipe_n_ouvre_aucun_run() -> None:
     assert lanceur.objectifs == []
     assert reponse.run_id == ""
     assert reponse.recrutement is not None
-    assert "C'est parti" not in reponse.contenu
 
 
 def test_le_geste_de_cadrage_sur_un_projet_sans_equipe_propose_l_equipe() -> None:
     """La seconde garde : une équipe retirée entre la proposition et le clic.
 
     Sans elle, un accord au bouton ouvrirait le run que le verdict n'aurait plus
-    proposé — et « c'est parti » serait écrit juste avant l'échec.
+    proposé — et le fil dirait qu'il part juste avant l'échec.
     """
     lanceur = LanceurEspion()
     repondeur = _repondeur_sans_equipe(_verdict(VERDICT_ECHANGE, "sans objet"), lanceur=lanceur)
@@ -3382,11 +3372,15 @@ def test_le_geste_de_cadrage_sur_un_projet_sans_equipe_propose_l_equipe() -> Non
     assert reponse.recrutement == DemandeRecrutement(
         objectif=OBJECTIF, projet_id=PROJET_SANS_EQUIPE
     )
-    assert "C'est parti" not in reponse.contenu
+    assert reponse.run_id == ""
 
 
 def test_sans_recruteur_le_manque_est_dit_sans_demande() -> None:
-    """Pas de demande à laquelle aucun geste ne pourrait répondre : le canal dit où créer."""
+    """Pas de demande à laquelle aucun geste ne pourrait répondre.
+
+    Où créer l'équipe, c'est le modèle qui le dit depuis #1262, sur le fait qu'il
+    reçoit (section ⑫, `test_sans_recruteur_le_modele_sait_ou_se_cree_l_equipe`).
+    """
     lanceur = LanceurEspion()
     repondeur = RepondeurOrchestration(
         lanceur=lanceur,
@@ -3402,7 +3396,6 @@ def test_sans_recruteur_le_manque_est_dit_sans_demande() -> None:
 
     assert reponse.recrutement is None
     assert reponse.proposition == ""
-    assert "écrans d'agents" in reponse.contenu
     assert lanceur.objectifs == []
 
 
@@ -3415,7 +3408,8 @@ def test_l_equipe_validee_est_creee_puis_la_demande_d_origine_est_reproposee() -
 
     Proposé, pas ouvert : valider une équipe n'est pas accorder un run (#685).
     La réponse porte donc une demande de cadrage sur l'objectif d'origine — celui
-    de la demande de recrutement, pas un texte à retaper.
+    de la demande de recrutement, pas un texte à retaper — et l'équipe créée,
+    comme un fait (#1262) : le fil ne la récite plus.
     """
     lanceur = LanceurEspion()
     recruteur = RecruteurEspion()
@@ -3435,7 +3429,8 @@ def test_l_equipe_validee_est_creee_puis_la_demande_d_origine_est_reproposee() -
     )
 
     assert recruteur.appels == [(PROJET_SANS_EQUIPE, _roles_valides(), "equ-42")]
-    assert "Équipe créée : Développeur ×2 · QA — 3 agents" in reponse.contenu
+    assert reponse.equipe is not None
+    assert reponse.equipe.composition() == "Développeur ×2 · QA — 3 agents"
     assert reponse.proposition == OBJECTIF
     assert reponse.recrutement is None
     assert lanceur.objectifs == []
@@ -3455,7 +3450,7 @@ def test_decliner_l_equipe_ne_cree_rien_et_n_ouvre_rien() -> None:
     assert recruteur.appels == []
     assert lanceur.objectifs == []
     assert reponse.proposition == "" and reponse.recrutement is None
-    assert "je ne recrute personne" in reponse.contenu
+    assert reponse.equipe is None
 
 
 def test_une_equipe_refusee_est_racontee_et_la_demande_reste_posee() -> None:
@@ -3643,3 +3638,373 @@ def test_decliner_au_geste_laisse_le_fil_sans_demande(client_sans_equipe, recrut
     assert geste["contenu"] == "Pas d'équipe pour l'instant."
     assert recruteur.appels == []
     assert repondu["recrutement"] is None and repondu["proposition"] == ""
+
+
+# ── ⑫ le fil n'écrit plus de phrase fixe sur les chemins du geste (#1262) ─────
+#
+# Réserve R3 du bouclage de « Le fil, un vrai interlocuteur » (critère C3) : après
+# #1222, le code écrivait encore dans le fil « C'est parti. », la proposition
+# d'équipe (`_PHRASE_RECRUTEMENT`), « Équipe créée : … Je reprends votre demande :
+# « … ». Je lance ? » et trois refus. Deux voix dans une même conversation — celle
+# du modèle, qui s'adapte, et celle du code, qui récite.
+#
+# Ce qui se garde ici tient en une égalité, posée chemin par chemin : ce que le fil
+# dit **est** ce que le modèle a rédigé, au caractère près — rien devant, rien
+# derrière. Les faits, eux, passent par les champs du message (`run_id`,
+# `proposition`, `recrutement`, `equipe`), c'est-à-dire par les cartes ; et le
+# modèle les **reçoit**, sans quoi il écrirait sur ce qu'il ne sait pas.
+
+#: Ce que le double rédige : une phrase qu'aucun gabarit du code ne contient, si
+#: bien que `contenu == REDIGE` prouve à la fois que le modèle a parlé et que le
+#: code n'a rien ajouté.
+REDIGE = "Très bien : je m'en occupe, et je vous tiens au courant ici."
+
+
+class JugeQuiRedige(ModelProvider):
+    """Juge **et** rédacteur : le verdict à l'appel qui juge, la phrase à celui qui rédige.
+
+    Les deux se distinguent par leur prompt système, et c'est le seul endroit où
+    le canal les sépare : le double le lit donc là, sans connaître le texte de la
+    consigne de rédaction — il suffit qu'elle ne soit ni celle du juge ni celle du
+    tour de lecture. Il note ce que la rédaction a reçu (`redactions`) : les faits
+    du geste doivent y être.
+    """
+
+    name = "juge-qui-redige"
+
+    def __init__(self, verdict: str = "", *, redaction: str = REDIGE) -> None:
+        self.verdict = verdict or _verdict(VERDICT_ECHANGE, "sans objet")
+        self.redaction = redaction
+        self.redactions: list[str] = []
+        self.systemes_de_redaction: list[str | None] = []
+        self.jugements: list[str] = []
+
+    def supports(self, model: str) -> bool:
+        return True
+
+    async def generate(
+        self, prompt: str, *, model: str, system_prompt: str | None = None
+    ) -> str:
+        if system_prompt == _PROMPT_ORCHESTRATION:
+            self.jugements.append(prompt)
+            return self.verdict
+        self.redactions.append(prompt)
+        self.systemes_de_redaction.append(system_prompt)
+        return self.redaction
+
+
+class RedacteurEnPanne(JugeQuiRedige):
+    """Le juge répond, la rédaction tombe — le quota s'épuise entre les deux."""
+
+    async def generate(
+        self, prompt: str, *, model: str, system_prompt: str | None = None
+    ) -> str:
+        if system_prompt == _PROMPT_ORCHESTRATION:
+            return self.verdict
+        raise RuntimeError("quota épuisé")
+
+
+def _fil_du_geste(geste: str) -> list[MessageChat]:
+    """Le fil tel que le geste le laisse : la demande, la proposition, puis l'acte."""
+    return _fil("Génère une application d'agenda", _propose(), geste)
+
+
+def _demande_de_renfort() -> DemandeRecrutement:
+    """Une demande née **pendant un run** (#1227) : le plan appelle un Designer."""
+    return DemandeRecrutement(
+        objectif=OBJECTIF,
+        projet_id=PROJET_SANS_EQUIPE,
+        run_id="run-7",
+        role="Designer",
+        gabarit="interface",
+        raison="le plan de ce travail demande ui, et aucun rôle de l'équipe ne le couvre.",
+        taches=("Dessiner le logo stylisé",),
+    )
+
+
+def test_un_refus_au_geste_se_dit_avec_les_mots_du_modele() -> None:
+    """« Entendu, je n'ouvre rien… » était écrit par le code : c'est le modèle qui répond."""
+    juge = JugeQuiRedige()
+    lanceur = LanceurEspion()
+    repondeur = RepondeurOrchestration(lanceur=lanceur, provider=juge)
+
+    reponse = asyncio.run(
+        repondeur.trancher_cadrage(
+            AGENT_ORCHESTRATION,
+            _fil_du_geste("Non, ne lance pas."),
+            approuve=False,
+            objectif=OBJECTIF,
+        )
+    )
+
+    assert reponse.contenu == REDIGE
+    assert lanceur.objectifs == [] and reponse.run_id == ""
+    # Le modèle sait ce qu'on a refusé, et il a la conversation sous les yeux.
+    [redaction] = juge.redactions
+    assert OBJECTIF in redaction
+    assert "Non, ne lance pas." in redaction
+    # Et ce n'est pas le juge qui rédige : un geste n'est pas un texte à rejuger.
+    assert juge.jugements == []
+
+
+def test_un_accord_au_geste_ouvre_le_run_puis_le_modele_en_parle() -> None:
+    """Le sort de « C'est parti. » (docs/05 §2.9) : remplacé par la parole du modèle.
+
+    Le run part **d'abord** — le clic est l'accord, et rien n'attend un modèle pour
+    l'honorer —, puis le modèle accuse réception en sachant que le run est ouvert.
+    L'identifiant ne lui est pas donné à recopier : il se lit sous la bulle.
+    """
+    juge = JugeQuiRedige()
+    lanceur = LanceurEspion()
+    repondeur = RepondeurOrchestration(lanceur=lanceur, provider=juge)
+
+    reponse = asyncio.run(
+        repondeur.trancher_cadrage(
+            AGENT_ORCHESTRATION, _fil_du_geste("Oui, lance."), approuve=True, objectif=OBJECTIF
+        )
+    )
+
+    assert lanceur.objectifs == [OBJECTIF]
+    assert reponse.run_id == "run-42"
+    assert reponse.contenu == REDIGE
+    [redaction] = juge.redactions
+    assert OBJECTIF in redaction
+    assert "run-42" not in redaction
+
+
+def test_un_lancement_en_echec_au_geste_se_dit_sans_faire_parler_le_modele() -> None:
+    """L'empêchement reste au code : rien ne s'est ouvert, et lui seul le sait."""
+
+    async def lanceur_qui_echoue(
+        objectif: str,
+        projet_id: str | None = None,
+        bornes: BornesRun = AUCUNE_BORNE,
+        contexte_sources: str = "",
+    ) -> dict[str, str]:
+        raise RuntimeError("moteur arrêté")
+
+    juge = JugeQuiRedige()
+    repondeur = RepondeurOrchestration(lanceur=lanceur_qui_echoue, provider=juge)
+
+    reponse = asyncio.run(
+        repondeur.trancher_cadrage(AGENT_ORCHESTRATION, [], approuve=True, objectif=OBJECTIF)
+    )
+
+    assert reponse.run_id == ""
+    assert reponse.contenu.startswith("Le lancement a échoué")
+    assert "moteur arrêté" in reponse.contenu
+    assert juge.redactions == []
+
+
+def test_un_redacteur_muet_ne_defait_pas_le_geste_et_dit_pourquoi_il_se_tait() -> None:
+    """Rien n'est fabriqué à sa place : l'empêchement est nommé, le run reste ouvert.
+
+    La règle du récit de fin (#1224) — un modèle muet n'écrit pas une phrase
+    gabarit —, à ceci près qu'ici le fil ne se persiste pas vide : ce qui s'écrit
+    est donc la **cause** du silence, et les faits restent sur la carte.
+    """
+    lanceur = LanceurEspion()
+    repondeur = RepondeurOrchestration(lanceur=lanceur, provider=RedacteurEnPanne())
+
+    reponse = asyncio.run(
+        repondeur.trancher_cadrage(AGENT_ORCHESTRATION, [], approuve=True, objectif=OBJECTIF)
+    )
+
+    assert lanceur.objectifs == [OBJECTIF]
+    assert reponse.run_id == "run-42"
+    assert "quota épuisé" in reponse.contenu
+    assert "C'est parti" not in reponse.contenu
+
+
+def test_un_accord_au_geste_sur_un_projet_sans_equipe_se_dit_avec_les_mots_du_modele() -> None:
+    """La proposition d'équipe (`_PHRASE_RECRUTEMENT`) n'est plus récitée."""
+    juge = JugeQuiRedige()
+    lanceur = LanceurEspion()
+    repondeur = RepondeurOrchestration(
+        lanceur=lanceur, provider=juge, equipe=lambda _projet: 0, recruteur=RecruteurEspion()
+    )
+
+    reponse = asyncio.run(
+        repondeur.trancher_cadrage(
+            AGENT_ORCHESTRATION,
+            _fil_du_geste("Oui, lance."),
+            approuve=True,
+            objectif=OBJECTIF,
+            projet_id=PROJET_SANS_EQUIPE,
+        )
+    )
+
+    assert lanceur.objectifs == []
+    assert reponse.recrutement == DemandeRecrutement(
+        objectif=OBJECTIF, projet_id=PROJET_SANS_EQUIPE
+    )
+    assert reponse.contenu == REDIGE
+    [redaction] = juge.redactions
+    assert OBJECTIF in redaction
+
+
+def test_l_equipe_creee_se_lit_sur_la_carte_et_la_reprise_avec_les_mots_du_modele() -> None:
+    """« Équipe créée : … Je reprends votre demande : « … ». Je lance ? » ne s'écrit plus.
+
+    Les trois faits ont chacun leur champ : l'équipe créée (`equipe`, sous la
+    bulle), la demande reprise (`proposition`, la carte de cadrage), et le modèle
+    reçoit la composition pour en parler s'il y a lieu.
+    """
+    from maestro.controltower.chat import EquipeRecrutee
+
+    juge = JugeQuiRedige()
+    recruteur = RecruteurEspion()
+    repondeur = RepondeurOrchestration(
+        lanceur=LanceurEspion(), provider=juge, equipe=recruteur.compte, recruteur=recruteur
+    )
+
+    reponse = asyncio.run(
+        repondeur.recruter(
+            AGENT_ORCHESTRATION,
+            _fil_du_geste("Je valide cette équipe : Développeur ×2 · QA."),
+            demande=_demande(),
+            approuve=True,
+            roles=_roles_valides(),
+        )
+    )
+
+    assert reponse.contenu == REDIGE
+    assert reponse.proposition == OBJECTIF
+    assert reponse.equipe == EquipeRecrutee(
+        projet_id=PROJET_SANS_EQUIPE, roles=(("Développeur", 2), ("QA", 1))
+    )
+    [redaction] = juge.redactions
+    assert "Développeur ×2 · QA — 3 agents" in redaction
+    assert OBJECTIF in redaction
+
+
+def test_decliner_l_equipe_se_dit_avec_les_mots_du_modele() -> None:
+    juge = JugeQuiRedige()
+    recruteur = RecruteurEspion()
+    repondeur = RepondeurOrchestration(
+        lanceur=LanceurEspion(), provider=juge, equipe=recruteur.compte, recruteur=recruteur
+    )
+
+    reponse = asyncio.run(
+        repondeur.recruter(
+            AGENT_ORCHESTRATION,
+            _fil_du_geste("Pas d'équipe pour l'instant."),
+            demande=_demande(),
+            approuve=False,
+            roles=(),
+        )
+    )
+
+    assert recruteur.appels == []
+    assert reponse.contenu == REDIGE
+    assert reponse.equipe is None and reponse.proposition == ""
+    [redaction] = juge.redactions
+    assert OBJECTIF in redaction
+
+
+def test_decliner_un_renfort_pendant_un_run_se_dit_avec_les_mots_du_modele() -> None:
+    """`_REFUS_PENDANT_UN_RUN` ne s'écrit plus : le modèle sait que le run continue."""
+    juge = JugeQuiRedige()
+    recruteur = RecruteurEspion()
+    repondeur = RepondeurOrchestration(provider=juge, recruteur=recruteur)
+
+    reponse = asyncio.run(
+        repondeur.recruter(
+            AGENT_ORCHESTRATION,
+            _fil_du_geste("Pas d'équipe pour l'instant."),
+            demande=_demande_de_renfort(),
+            approuve=False,
+            roles=(),
+        )
+    )
+
+    assert reponse.contenu == REDIGE
+    # Rien à reproposer : le run tourne déjà, et un second run ferait double emploi.
+    assert reponse.proposition == "" and reponse.recrutement is None
+    [redaction] = juge.redactions
+    assert "Designer" in redaction
+    assert OBJECTIF in redaction
+
+
+def test_un_renfort_recrute_pendant_un_run_se_lit_sur_la_carte() -> None:
+    from maestro.controltower.chat import EquipeRecrutee
+
+    juge = JugeQuiRedige()
+    recruteur = RecruteurEspion()
+    repondeur = RepondeurOrchestration(provider=juge, recruteur=recruteur)
+    designer = RoleValide(
+        nom="interface", role="Designer", competences=("ui",), playbook="Tu dessines."
+    )
+
+    reponse = asyncio.run(
+        repondeur.recruter(
+            AGENT_ORCHESTRATION,
+            _fil_du_geste("Je valide cette équipe : Designer."),
+            demande=_demande_de_renfort(),
+            approuve=True,
+            roles=[designer],
+        )
+    )
+
+    assert reponse.contenu == REDIGE
+    assert reponse.equipe == EquipeRecrutee(
+        projet_id=PROJET_SANS_EQUIPE, roles=(("Designer", 1),)
+    )
+    assert reponse.proposition == ""
+    [redaction] = juge.redactions
+    assert "Designer — 1 agent" in redaction
+
+
+def test_la_demande_sur_un_projet_sans_equipe_s_ecrit_en_direct_avec_les_mots_du_modele() -> None:
+    """Le texte du juge n'est plus **remplacé** : il est informé, puis il s'écrit en direct.
+
+    Avant ce ticket, la réponse d'un projet sans agent était retenue puis remplacée
+    par `_PHRASE_RECRUTEMENT` — la seule exception au direct de #1222. Le modèle
+    reçoit désormais le fait (aucun agent, l'équipe proposée sous sa réponse) et
+    écrit lui-même ce qu'il faut en dire ; la demande de recrutement, elle, reste
+    un champ du message.
+    """
+    ecrit = "Il faut d'abord une équipe pour ce projet : je vous la propose juste en dessous."
+    juge = JugeQuiStreame(_dicte(ecrit, VERDICT_PROPOSITION, OBJECTIF))
+    repondeur, incremente = _en_flux(
+        juge, lanceur=LanceurEspion(), equipe=lambda _projet: 0, recruteur=_recruteur_muet
+    )
+
+    async def incrementer(delta: str) -> None:
+        incremente.append(delta)
+
+    reponse = asyncio.run(
+        repondeur.produire(
+            AGENT_ORCHESTRATION, _fil("crée-moi une app"), incrementer=incrementer, projet_id="p1"
+        )
+    )
+
+    assert reponse.recrutement == DemandeRecrutement(objectif=OBJECTIF, projet_id="p1")
+    assert reponse.proposition == ""
+    assert reponse.contenu == ecrit
+    # En direct : plusieurs incréments, et aucun appel retenu pour être remplacé.
+    assert len(incremente) > 1
+    assert "".join(incremente).strip() == ecrit
+    assert juge.allers_simples == []
+    # Le modèle savait : le fait est dans son prompt, et la règle dans sa consigne.
+    [prompt] = juge.prompts
+    assert "aucun agent" in prompt.lower()
+
+
+def test_sans_recruteur_le_modele_sait_ou_se_cree_l_equipe() -> None:
+    """`_PHRASE_SANS_RECRUTEUR` ne s'écrit plus : le fait est donné, le modèle le dit."""
+    juge = JugeQuiRedige(_verdict(VERDICT_PROPOSITION, "Il faut d'abord une équipe.", OBJECTIF))
+    lanceur = LanceurEspion()
+    repondeur = RepondeurOrchestration(lanceur=lanceur, provider=juge, equipe=lambda _p: 0)
+
+    reponse = asyncio.run(
+        repondeur.produire(
+            AGENT_ORCHESTRATION, _fil("Ajoute la pagination"), projet_id=PROJET_SANS_EQUIPE
+        )
+    )
+
+    assert reponse.contenu == "Il faut d'abord une équipe."
+    assert reponse.recrutement is None and reponse.proposition == ""
+    assert lanceur.objectifs == []
+    [prompt] = juge.jugements
+    assert "écrans d'agents" in prompt
