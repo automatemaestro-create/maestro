@@ -1223,7 +1223,8 @@ export type QuestionOutillage = {
  * personne a dit avec ses mots, enregistré tel quel), **comprise** (`deduit` : ce
  * que le modèle a tiré de tout ce qui a été dit, `parce_que` portant sa cause).
  * `sujet` est le nom du sujet à l'écran (« tests », « forge ») — servi par le
- * moteur, seul à tenir le schéma de l'outillage.
+ * moteur, seul à tenir le schéma de l'outillage ; `commande` dit que la valeur est
+ * une commande, que l'écran rend en chasse fixe.
  */
 export type ChoixOutillage = {
   cle: string;
@@ -1232,6 +1233,7 @@ export type ChoixOutillage = {
   parce_que: string;
   libre?: boolean;
   sujet?: string;
+  commande?: boolean;
 };
 
 /* ⚠ La **recommandation** d'outillage ne se déclare pas ici, et elle n'est plus un

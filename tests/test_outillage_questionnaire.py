@@ -240,8 +240,21 @@ def test_une_recommandation_hors_des_options_est_ramenee_dans_la_liste() -> None
     assert question.recommande == "github"
 
 
-def test_une_question_deja_repondue_n_est_pas_reposee() -> None:
-    """C'est ce qui fait converger le questionnaire sans plafond, tapé ou cliqué."""
+def test_un_sujet_tranche_d_un_clic_n_est_pas_redemande() -> None:
+    """Un clic tranche : c'est ce qui fait converger le questionnaire sans plafond."""
+    reponses = [Choix("nature", DESCRIPTION_FLUTTER, libre=True), Choix("forge", "github")]
+    brut = {**FLUTTER_TOUR_1, "questions": [QUESTION_FORGE, QUESTION_CI]}
+
+    comprise = comprehension_depuis_texte(json.dumps(brut), reponses)
+
+    assert [q.cle for q in comprise.questions] == ["ci"]
+
+
+def test_des_mots_qui_ne_tranchent_pas_laissent_le_modele_redemander() -> None:
+    """Vu sur la vraie stack : tapé pendant « Où déclarer pytest ? », « pas de forge pour
+    l'instant » répondait à autre chose. Le modèle l'a dit — « je repose cette question »
+    — et le code, qui fermait tout sujet répondu, posait une autre question que celle
+    annoncée. Des mots se comprennent ; le modèle juge s'ils ont tranché."""
     reponses = [
         Choix("nature", DESCRIPTION_FLUTTER, libre=True),
         Choix("forge", "on verra", libre=True),
@@ -250,7 +263,7 @@ def test_une_question_deja_repondue_n_est_pas_reposee() -> None:
 
     comprise = comprehension_depuis_texte(json.dumps(brut), reponses)
 
-    assert [q.cle for q in comprise.questions] == ["ci"]
+    assert [q.cle for q in comprise.questions] == ["forge", "ci"]
 
 
 def test_tant_que_la_sorte_de_projet_n_est_pas_dite_seule_la_question_ouverte_se_pose() -> None:
@@ -280,6 +293,80 @@ def test_une_question_mal_formee_est_ecartee_et_ses_options_nettoyees() -> None:
 
     assert question.intitule == "Où ?"
     assert [(o.valeur, o.libelle) for o in question.options] == [("github", "github")]
+
+
+def test_un_sujet_nomme_par_son_libelle_retrouve_sa_cle() -> None:
+    """Vu sur la vraie stack : le modèle a rangé `flutter analyze` sous « verification ».
+
+    Rangée sous le libellé, la commande ne nourrissait plus aucun constat, et le skill
+    de vérification disparaissait de la recommandation sans que personne le voie.
+    """
+    brut = {
+        "constats": [
+            _constat("nature", "Une application mobile"),
+            _constat("verification", "flutter analyze"),
+            _constat("Tests", "flutter test"),
+            _constat("langage", "Dart"),
+            _constat("intégration continue", ".github/workflows/ci.yml"),
+            _constat("plateforme", "Android d'abord"),
+        ],
+        "questions": [{**QUESTION_FORGE, "cle": "Forge"}],
+    }
+
+    comprise = comprehension_depuis_texte(json.dumps(brut), [])
+
+    assert {c.cle: c.valeur for c in comprise.constats} == {
+        "nature": "Une application mobile",
+        "lint": "flutter analyze",
+        "tester": "flutter test",
+        "langages": "Dart",
+        "ci": ".github/workflows/ci.yml",
+    }
+    assert comprise.questions[0].cle == "forge"
+    constats = constats_depuis_choix(comprise.constats)
+    lint = constats.commande_de("lint")
+    assert lint is not None and lint.commande == "flutter analyze"
+
+
+def test_un_constat_hors_du_schema_ne_se_montre_pas() -> None:
+    """Vu à la relecture de #1147 : « point_entree » s'affichait tel quel dans la carte.
+
+    Hors du schéma, un constat ne nourrit aucune entrée de l'outillage, et l'écran n'en
+    aurait que la clé à montrer. « Ce que j'ai compris » dit ce qui sera écrit : il ne
+    le porte pas. Une réponse **cliquée** sur un tel sujet, elle, est une réponse donnée
+    — son nom se lit alors en mots, jamais en clé.
+    """
+    brut = {
+        "constats": [
+            _constat("nature", "Une application mobile"),
+            _constat("point_entree", "lib/main.dart"),
+            _constat("plateforme", "Android d'abord"),
+        ]
+    }
+
+    comprise = comprehension_depuis_texte(json.dumps(brut), [])
+
+    assert [c.cle for c in comprise.constats] == ["nature"]
+    assert Choix("point_entree", "lib/main.dart").to_dict()["sujet"] == "point entree"
+
+
+def test_un_constat_qui_est_une_commande_le_dit() -> None:
+    """L'écran rend une commande en chasse fixe, comme dans les options : « dart format . »
+    en romain gras se lisait comme une fin de phrase (relecture de #1147)."""
+    assert Choix("tester", "flutter test", deduit=True).to_dict()["commande"] is True
+    assert Choix("installer", "flutter pub get").to_dict()["commande"] is True
+    assert Choix("langages", "Dart", deduit=True).to_dict()["commande"] is False
+    # Une phrase tapée sur ce sujet n'est pas une commande : ce sont les mots de la personne.
+    tapee = Choix("construire", "Le code sera sur GitHub", libre=True)
+    assert tapee.to_dict()["commande"] is False
+
+
+def test_les_sujets_se_nomment_d_une_seule_forme() -> None:
+    """Des noms, pas un mélange de noms et d'infinitifs (relecture de #1147 : « manifeste »,
+    « gestionnaire » à côté d'« installer », « construire », « démarrer »)."""
+    assert SUJETS["installer"] == "installation"
+    assert SUJETS["construire"] == "construction"
+    assert SUJETS["demarrer"] == "démarrage"
 
 
 def test_un_constat_tient_sur_une_ligne_bornee() -> None:
@@ -316,6 +403,7 @@ def test_un_choix_dit_sa_provenance_et_nomme_son_sujet() -> None:
         "parce_que": "",
         "libre": True,
         "sujet": SUJETS["forge"],
+        "commande": False,
     }
     assert Choix.from_dict(tape.to_dict()) == tape
     assert Choix.from_dict({"cle": "x", "valeur": "y"}).to_dict()["sujet"] == "x"
@@ -465,6 +553,9 @@ def test_le_prompt_porte_le_registre_et_interdit_la_pile_de_maestro() -> None:
     assert "Ne justifie jamais un choix par ce que Maestro utilise lui-même" in systeme
     assert "écrites POUR CE PROJET" in systeme
     assert "Il n'y a pas de nombre de questions à atteindre" in systeme
+    # Relecture de #1147 : une question de trois lignes et une justification de cinq
+    # faisaient déborder la carte de la colonne de conversation.
+    assert "une question courte" in systeme and "une seule phrase courte" in systeme
     for cle in SUJETS:
         assert f'"{cle}"' in systeme  # le schéma est cité, une seule fois écrit
 
@@ -497,14 +588,11 @@ def test_la_question_suivante_porte_ce_qui_a_ete_compris() -> None:
     assert reponse.question is not None and reponse.question.rang == 2
     compris = {c.cle: c.valeur for c in reponse.comprehension}
     assert compris["langages"] == "Dart" and compris["tester"] == "flutter test"
-    assert (
-        "Ce que j'ai compris : sorte de projet : Une application mobile Flutter"
-        in reponse.contenu
-    )
-    assert "tests : flutter test" in reponse.contenu
-    assert reponse.contenu.index("Ce que j'ai compris") < reponse.contenu.index(
-        reponse.question.intitule
-    )
+    # Elle voyage sur le message, et c'est la carte qui la rend — le texte de la
+    # bulle ne la recopie pas (relecture de #1147 : le même flot de clés, recopié à
+    # chaque question du fil, noyait la question elle-même).
+    assert "Ce que j'ai compris" not in reponse.contenu
+    assert reponse.contenu.startswith(reponse.question.intitule)
 
 
 def test_le_message_du_modele_precede_la_question() -> None:
@@ -514,6 +602,19 @@ def test_le_message_du_modele_precede_la_question() -> None:
     reponse = asyncio.run(_conducteur(faux).ouvrir([_message(UTILISATEUR, DESCRIPTION_FLUTTER)]))
 
     assert reponse.contenu.startswith("Une CI rejoue vos tests à chaque changement.")
+
+
+def test_un_message_sans_rien_de_compris_ne_laisse_pas_de_blanc() -> None:
+    """Vu sur la vraie stack : message du modèle, rien de compris, question ouverte."""
+    faux = FauxModele({"message": "Dites-moi d'abord ce qu'est ce projet.", "constats": []})
+
+    reponse = asyncio.run(_conducteur(faux).ouvrir([_message(UTILISATEUR, "Bonjour")]))
+
+    assert reponse.question == question_ouverte()
+    assert "\n\n\n" not in reponse.contenu
+    assert reponse.contenu.startswith(
+        "Dites-moi d'abord ce qu'est ce projet.\n\nQu'est-ce que ce projet ?"
+    )
 
 
 def test_on_s_arrete_quand_plus_rien_ne_manque_et_il_n_y_a_pas_de_plafond() -> None:
@@ -626,7 +727,12 @@ def test_une_reponse_avec_ses_mots_devient_un_choix_enregistre(
     geste, suite = reponse.json()["messages"]
     assert geste["choix"]["valeur"] == DESCRIPTION_FLUTTER
     assert geste["choix"]["libre"] is True and geste["choix"]["deduit"] is False
-    assert geste["contenu"] == f"Qu'est-ce que ce projet ? → {DESCRIPTION_FLUTTER}"
+    # Les mots de la personne, tels quels — comme une phrase tapée dans la zone de
+    # saisie. Relecture de #1147 : écrit « Question → … », le fil prenait pour titre la
+    # question de Maestro, et la description du projet disparaissait sous « … ».
+    assert geste["contenu"] == DESCRIPTION_FLUTTER
+    (conversation,) = client_chat.get("/api/chat/qa/conversations").json()["conversations"]
+    assert conversation["titre"].startswith("Une application mobile Flutter")
     assert suite["question"]["cle"] == "forge"
     assert [o["valeur"] for o in suite["question"]["options"]] == ["github", "gitlab", "aucun"]
     assert {c["cle"] for c in suite["comprehension"]} >= {"langages", "tester"}
@@ -657,6 +763,7 @@ def test_une_phrase_tapee_dans_le_fil_repond_a_la_question_qui_attend(
         "parce_que": "",
         "libre": True,
         "sujet": SUJETS["forge"],
+        "commande": False,
     }
     # Confiée au questionnaire, pas au juge : la suite est la question comprise d'après.
     assert suite["question"]["cle"] == "ci"

@@ -169,7 +169,6 @@ from maestro.outillage.questionnaire import (
     QuestionOutillage,
     acquis_de,
     comprehension_depuis_texte,
-    compris_en_phrase,
     constats_depuis_choix,
     donnees,
     question_ouverte,
@@ -218,8 +217,8 @@ Les sujets, et la clé à employer pour chacun :
 Pour "installer", "construire", "tester", "lint", "formater", "types" et "demarrer", la
 valeur est la commande exacte, telle qu'on la taperait. Pour "manifeste" et "ci", un
 chemin de fichier relatif au projet. La valeur "aucun" dit explicitement qu'il n'y en a
-pas (« pas de tests pour l'instant ») : ce n'est pas un manque. Tu peux relever un autre
-constat utile sous une clé courte de ton choix.
+pas (« pas de tests pour l'instant ») : ce n'est pas un manque. Un constat ne s'écrit que
+sous l'une de ces clés : hors d'elles, il ne nourrirait aucune entrée de l'outillage.
 
 Les réponses de la personne font foi. Une réponse CLIQUÉE vaut telle quelle, sauf si une
 réponse tapée plus tard la corrige. Une réponse TAPÉE est dite avec ses mots : comprends-la
@@ -228,9 +227,11 @@ un doute —, réponds-y brièvement dans "message", et demande autrement ce qui
 
 Les options d'une question sont écrites POUR CE PROJET : deux à quatre options plausibles
 pour ce qui a été dit, chacune avec une raison d'une ligne — ce que ce choix entraîne.
-"recommande" est la valeur de l'une d'elles, et "pourquoi" dit ce qui, dans CE projet, la
-désigne. Ne justifie jamais un choix par ce que Maestro utilise lui-même : Maestro n'est
-pas le projet. Si rien ne désigne une option plutôt qu'une autre, dis-le. La personne peut
+"recommande" est la valeur de l'une d'elles, et "pourquoi" dit, en une seule phrase courte,
+ce qui, dans CE projet, la désigne. L'intitulé est une question courte — dix mots au plus :
+tout s'affiche sur une carte, parfois dans une colonne étroite.
+Ne justifie jamais un choix par ce que Maestro utilise lui-même : Maestro n'est pas le
+projet. Si rien ne désigne une option plutôt qu'une autre, dis-le. La personne peut
 toujours répondre autre chose avec ses mots : n'ajoute pas d'option « autre ».
 
 Réponds par un objet JSON et rien d'autre — ni texte autour, ni bloc de code :
@@ -363,18 +364,6 @@ def _retenue(
     )
 
 
-def _phrase_du_compris(acquis: Sequence[Choix]) -> str:
-    """« Ce que j'ai compris : … » — vide quand rien ne l'est encore.
-
-    Ce que Maestro a conclu à la place de la personne se **lit**, et ce n'est pas de
-    la politesse : un constat qu'on découvre dans un fichier généré est une décision
-    prise sans vous. Il se lit dans le message qui pose la question suivante —
-    l'endroit exact où l'on regarde déjà, et d'où l'on peut le corriger avec ses mots.
-    """
-    compris = compris_en_phrase(acquis)
-    return f"Ce que j'ai compris : {compris}." if compris else ""
-
-
 def _phrase_de_la_question(question: QuestionOutillage) -> str:
     """Le texte du message qui porte une question — ce qu'on lit si rien ne s'affiche.
 
@@ -452,10 +441,15 @@ class ConducteurOutillage:
         voyage sur le message (`ReponseChat.comprehension`) : c'est elle que la
         conclusion relira pour écrire l'outillage.
 
-        Ce que le modèle a à dire avant la question (`Comprehension.message`), puis ce
-        qu'il a compris, sont **préfixés** au même message plutôt que posés dans un
-        second : deux messages d'agent d'affilée décaleraient la question du geste qui
-        l'a appelée, et `question_en_attente` ne lit que le **dernier** message.
+        Ce que le modèle a à dire avant la question (`Comprehension.message`) est
+        **préfixé** au même message plutôt que posé dans un second : deux messages
+        d'agent d'affilée décaleraient la question du geste qui l'a appelée, et
+        `question_en_attente` ne lit que le **dernier** message.
+
+        Ce qu'il a **compris** ne se recopie pas dans le texte : il voyage sur le
+        message, et la carte le rend en tête de la question, une entrée par constat.
+        La relecture de #1147 l'a montré recopié en entier dans chaque bulle du fil,
+        un flot de clés qui noyait la question.
         """
         reponses = choix_du_fil(fil)
         conversation = _conversation_de(fil)
@@ -465,14 +459,13 @@ class ConducteurOutillage:
         comprise = await self._comprehension.comprendre(conversation, reponses)
         acquis = acquis_de([*reponses, *comprise.constats])
         suivante = comprise.question_suivante(rang=len(donnees(reponses)) + 1)
-        prelude = _joint(comprise.message, _phrase_du_compris(acquis))
         if suivante is None:
             return ReponseChat(
                 contenu=_joint(comprise.message, _phrase_de_conclusion(acquis)),
                 comprehension=acquis,
             )
         return ReponseChat(
-            contenu=_joint(prelude, _phrase_de_la_question(suivante)),
+            contenu=_joint(comprise.message, _phrase_de_la_question(suivante)),
             question=suivante,
             comprehension=acquis,
         )
@@ -504,8 +497,8 @@ class ConducteurOutillage:
 
 
 def _joint(prelude: str, corps: str) -> str:
-    """Colle le prélude au corps — sans ligne vide inutile quand il n'y en a pas."""
-    return f"{prelude}\n\n{corps}" if prelude else corps
+    """Colle le prélude au corps — sans ligne vide inutile quand l'un des deux manque."""
+    return "\n\n".join(morceau for morceau in (prelude, corps) if morceau)
 
 
 class ServiceOutillage:

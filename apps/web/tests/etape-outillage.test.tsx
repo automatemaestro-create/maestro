@@ -268,8 +268,10 @@ describe("le questionnaire d'un projet neuf, dans l'étape d'outillage (#1147)",
 
     expect(questionOutillage).toHaveBeenLastCalledWith("prj-neuf", [DECRITE]);
     // Ce qui a été compris se lit avant la question suivante.
-    expect(await screen.findByText(/Ce que j'ai compris/)).toBeInTheDocument();
-    expect(screen.getByText(/tests : flutter test/)).toBeInTheDocument();
+    const [compris] = await screen.findAllByRole("list", {
+      name: "Ce que j'ai compris",
+    });
+    expect(compris).toHaveTextContent("tests flutter test");
     expect(screen.getByText("Où le code vivra-t-il ?")).toBeInTheDocument();
   });
 

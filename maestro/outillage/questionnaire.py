@@ -27,7 +27,8 @@ admissibles. Il tient deux choses, et seulement elles :
 - **la lecture de ce que le modèle a compris** (`comprehension_depuis_texte`), qui ne
   croit rien sans le vérifier : une question sans intitulé est écartée, une
   recommandation absente des options est ramenée dedans, une question sur un sujet
-  auquel la personne a **déjà** répondu n'est pas reposée.
+  que la personne a **tranché d'un clic** n'est pas reposée (des mots, eux, peuvent
+  ne pas avoir tranché : le modèle en juge).
 
 Le modèle, lui, comprend : il lit ce qui a été dit, en tire les constats, et ne pose que
 les questions qui comblent un vrai manque, avec des options écrites **pour ce projet**.
@@ -78,6 +79,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -114,18 +116,20 @@ SUJET_NATURE = "nature"
 #: catalogue de réponses : les valeurs sont libres. C'est la forme des `Constats` que
 #: `recommander` lit, écrite une fois : le prompt du modèle la cite, `constats_depuis_choix`
 #: la mue, et l'écran nomme un constat par elle (`Choix.to_dict` porte le `sujet`).
+#: Des **noms**, d'une seule forme : la relecture de #1147 a vu « installer » et
+#: « construire » à côté de « manifeste » et « gestionnaire » dans la même carte.
 SUJETS: dict[str, str] = {
     SUJET_NATURE: "sorte de projet",
     "langages": "langage",
     "manifeste": "manifeste",
     "gestionnaire": "gestionnaire",
-    "installer": "installer",
-    "construire": "construire",
+    "installer": "installation",
+    "construire": "construction",
     "tester": "tests",
     "lint": "vérification",
     "formater": "formatage",
     "types": "types",
-    "demarrer": "démarrer",
+    "demarrer": "démarrage",
     "forge": "forge",
     "ci": "intégration continue",
     "conventions": "convention de commit",
@@ -153,8 +157,12 @@ def _une_ligne(texte: str, borne: int) -> str:
 
 
 def sujet_de(cle: str) -> str:
-    """Le nom qu'on donne à un sujet — la clé elle-même s'il est hors du schéma."""
-    return SUJETS.get(cle, cle)
+    """Le nom qu'on donne à un sujet — sa clé **en mots** s'il est hors du schéma.
+
+    Hors du schéma, seule une réponse **cliquée** arrive jusqu'à l'écran (un constat ne
+    s'y lit pas, voir `_constats_lus`) : « point_entree » s'y lit « point entree ».
+    """
+    return SUJETS.get(cle) or " ".join(re.split(r"[_-]+", cle)).strip() or cle
 
 
 @dataclass(frozen=True)
@@ -276,7 +284,13 @@ class Choix:
     libre: bool = False
 
     def to_dict(self) -> dict[str, Any]:
-        """La forme du REST et du message de chat — le `sujet` nommé pour l'écran."""
+        """La forme du REST et du message de chat — le `sujet` nommé pour l'écran.
+
+        `commande` dit que la valeur est une commande (un des `USAGES`) : l'écran la rend
+        alors en chasse fixe, comme dans les options — « dart format . » en romain se
+        lisait comme une fin de phrase (relecture de #1147). Jamais pour une réponse
+        tapée : ce sont les mots de la personne, pas une commande.
+        """
         return {
             "cle": self.cle,
             "valeur": self.valeur,
@@ -284,6 +298,7 @@ class Choix:
             "parce_que": self.parce_que,
             "libre": self.libre,
             "sujet": sujet_de(self.cle),
+            "commande": self.cle in USAGES and not self.libre,
         }
 
     @classmethod
@@ -387,20 +402,43 @@ def _objet_json(texte: str) -> Mapping[str, Any]:
     return objet
 
 
+def _forme_de_cle(brute: Any) -> str:
+    """Une clé de sujet : courte, en minuscules, sans accents, espaces ni ponctuation."""
+    sans_accents = "".join(
+        c
+        for c in unicodedata.normalize("NFD", str(brute or "").strip().lower())
+        if unicodedata.category(c) != "Mn"
+    )
+    return re.sub(r"[^a-z0-9_-]+", "-", sans_accents).strip("-")[:40]
+
+
+#: Le **nom** d'un sujet du schéma, ramené à sa clé. Mesuré sur la vraie stack : le
+#: modèle a rangé `flutter analyze` sous « verification » — le nom de `lint` — et la
+#: commande ne nourrissait plus aucun constat. Ce n'est pas un catalogue de réponses :
+#: c'est le schéma lu dans les deux sens, écrit une fois (`SUJETS`).
+_CLE_DU_NOM: dict[str, str] = {_forme_de_cle(nom): cle for cle, nom in SUJETS.items()}
+
+
 def _cle(brute: Any) -> str:
-    """Une clé de sujet : courte, en minuscules, sans espaces ni ponctuation superflue."""
-    return re.sub(r"[^a-z0-9_-]+", "-", str(brute or "").strip().lower()).strip("-")[:40]
+    """La clé d'un sujet tel que le modèle l'a écrit — son nom d'écran ramené à sa clé."""
+    forme = _forme_de_cle(brute)
+    return forme if forme in SUJETS else _CLE_DU_NOM.get(forme, forme)
 
 
 def _constats_lus(brut: Any) -> tuple[Choix, ...]:
-    """Les constats d'une compréhension, validés — le dernier d'un même sujet l'emporte."""
+    """Les constats d'une compréhension, validés — le dernier d'un même sujet l'emporte.
+
+    Un constat **hors du schéma** est écarté : il ne nourrirait aucune entrée de
+    l'outillage, et la carte, qui dit ce qui sera écrit, n'en aurait que la clé à
+    montrer (« point_entree », relecture de #1147).
+    """
     lus: dict[str, Choix] = {}
     for entree in brut if isinstance(brut, list) else ():
         if not isinstance(entree, Mapping):
             continue
         cle = _cle(entree.get("cle"))
         valeur = _une_ligne(entree.get("valeur") or "", VALEUR_MAX)
-        if not cle or not valeur:
+        if cle not in SUJETS or not valeur:
             continue
         lus[cle] = Choix(
             cle=cle,
@@ -428,14 +466,16 @@ def _options_lues(brut: Any) -> tuple[Option, ...]:
     return tuple(vues.values())
 
 
-def _questions_lues(brut: Any, repondus: set[str]) -> tuple[QuestionOutillage, ...]:
-    """Les questions d'une compréhension, validées — celles déjà répondues écartées.
+def _questions_lues(brut: Any, tranches: set[str]) -> tuple[QuestionOutillage, ...]:
+    """Les questions d'une compréhension, validées — celles déjà tranchées écartées.
 
-    Une question sur un sujet auquel la personne a **déjà** répondu n'est pas reposée,
-    quelle que soit la façon dont elle a répondu : c'est ce qui fait converger le
-    questionnaire sans plafond. Une réponse tapée peu claire se comprend au tour
-    suivant ; si elle ne suffit pas, le modèle demande **autre chose**, pas la même
-    chose une seconde fois.
+    Un sujet tranché **d'un clic** n'est pas redemandé : c'est ce qui fait converger le
+    questionnaire sans plafond. Des **mots**, eux, se comprennent, et c'est le modèle
+    qui juge s'ils ont tranché — vu sur la vraie stack (relecture de #1147), une phrase
+    tapée pendant une question répondait à une autre ; le modèle annonçait « je repose
+    cette question » et le code, qui fermait tout sujet répondu, en posait une autre.
+    Redemander après des mots ne boucle pas : chaque tour attend une réponse de la
+    personne, qui peut toujours trancher d'un clic.
 
     Une recommandation absente des options est ramenée sur la première : sinon le
     bouton serait armé sur une valeur que la liste n'offre pas.
@@ -446,7 +486,7 @@ def _questions_lues(brut: Any, repondus: set[str]) -> tuple[QuestionOutillage, .
             continue
         cle = _cle(entree.get("cle"))
         intitule = _une_ligne(entree.get("intitule") or "", VALEUR_MAX)
-        if not cle or not intitule or cle in repondus or cle in lues:
+        if not cle or not intitule or cle in tranches or cle in lues:
             continue
         options = _options_lues(entree.get("options"))
         recommande = str(entree.get("recommande") or "").strip()
@@ -466,18 +506,19 @@ def _questions_lues(brut: Any, repondus: set[str]) -> tuple[QuestionOutillage, .
 def comprehension_depuis_texte(texte: str, reponses: Sequence[Choix]) -> Comprehension:
     """Ce que le modèle a compris, **lu et vérifié** — la frontière entre son texte et le fil.
 
-    `reponses` sont les réponses données (`donnees`) : elles décident des questions
-    qu'on ne repose pas. Tant que la sorte de projet n'est ni dite ni comprise, la
-    seule question est la question ouverte — quoi que le modèle ait proposé d'autre :
-    demander la CI d'un projet dont on ne sait pas ce qu'il est, c'est poser des
-    questions au hasard.
+    `reponses` sont les réponses données (`donnees`) : celles **cliquées** décident des
+    questions qu'on ne repose pas (`_questions_lues`). Tant que la sorte de projet n'est
+    ni dite ni comprise, la seule question est la question ouverte — quoi que le modèle
+    ait proposé d'autre : demander la CI d'un projet dont on ne sait pas ce qu'il est,
+    c'est poser des questions au hasard.
 
     Lève `ComprehensionIllisible` sur un texte qui ne porte pas d'objet JSON.
     """
     objet = _objet_json(texte)
     repondus = {c.cle for c in donnees(reponses)}
+    tranches = {c.cle for c in donnees(reponses) if not c.libre}
     constats = _constats_lus(objet.get("constats"))
-    questions = _questions_lues(objet.get("questions"), repondus)
+    questions = _questions_lues(objet.get("questions"), tranches)
     connus = repondus | {c.cle for c in constats}
     if SUJET_NATURE not in connus:
         questions = (question_ouverte(),)
@@ -521,15 +562,6 @@ def acquis_de(choix: Sequence[Choix]) -> tuple[Choix, ...]:
         if not choisi.deduit and not choisi.libre and choisi.cle and choisi.valeur:
             acquis.setdefault(choisi.cle, choisi)
     return tuple(acquis.values())
-
-
-def compris_en_phrase(choix: Sequence[Choix]) -> str:
-    """« langage : Dart · tests : flutter test · forge : github » — ce qui a été compris.
-
-    Vide quand rien ne l'est. C'est la ligne que le fil écrit en toutes lettres, et que
-    la carte rend de son côté depuis les mêmes constats (`sujet` de chacun).
-    """
-    return " · ".join(f"{sujet_de(c.cle)} : {c.valeur}" for c in acquis_de(choix))
 
 
 # --------------------------------------------------------------------------- #
@@ -697,5 +729,10 @@ def recommandation_depuis_choix(choix: Sequence[Choix]) -> Recommandation:
 
 
 def schema_en_texte() -> str:
-    """Les sujets du schéma, un par ligne, tels que le prompt du modèle les cite."""
-    return "\n".join(f'- "{cle}" : {nom}' for cle, nom in SUJETS.items())
+    """Les sujets du schéma, un par ligne, tels que le prompt du modèle les cite.
+
+    La **clé** d'abord, le nom entre parenthèses et désigné comme tel : la forme
+    `"lint" : vérification` a fait écrire au modèle la clé « verification » (vraie stack,
+    #1147) — `_cle` la rattrape, le prompt ne l'invite plus.
+    """
+    return "\n".join(f'- clé "{cle}" (à l\'écran : {nom})' for cle, nom in SUJETS.items())

@@ -57,13 +57,17 @@
  *   *Intercom* (« customers can still write a reply in the composer ») : une phrase
  *   tapée là est enregistrée comme la réponse à cette question ;
  * - **« Ce que j'ai compris » se lit en tête** : c'est ce qui répond à « Maestro
- *   l'a-t-il compris ? », et ce qu'on corrige avec ses mots s'il se trompe ;
+ *   l'a-t-il compris ? », et ce qu'on corrige avec ses mots s'il se trompe. Une
+ *   entrée par constat, la valeur en relief — correction du regard neuf de la
+ *   relecture, qui lisait un seul flot de clés et de valeurs à égalité ;
+ * - **une option montre ce qu'elle écrira** (`flutter build apk`) quand son nom
+ *   (« Android uniquement ») ne le dit pas — seconde correction de la même relecture ;
  * - **plus de « question N sur 6 »** : le plafond fixe est retiré, le questionnaire
  *   s'arrête quand plus rien ne manque, et un total que personne ne connaît d'avance
  *   mentirait.
  */
 
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { CarteDuFil } from "@/components/chat/CarteDuFil";
 import { IconeCoche, IconeObjectif } from "@/components/Icones";
@@ -78,9 +82,35 @@ import type { ChoixOutillage, QuestionOutillage } from "@/lib/types";
 /** La sélection « Autre chose » — une valeur qu'aucune option générée ne porte. */
 const AUTRE = "\u0000autre";
 
-/** Ce que Maestro a compris, en une ligne : « tests : flutter test · forge : github ». */
-function enPhrase(compris: ChoixOutillage[]): string {
-  return compris.map((c) => `${c.sujet ?? c.cle} : ${c.valeur}`).join(" · ");
+/**
+ * Jusqu'où « Ce que j'ai compris » reste déplié même dans une carte étroite : trois
+ * entrées tiennent en deux lignes dans la colonne de conversation (320 px), sans
+ * repousser le titre de la question hors du fil (voir `ComprisDuProjet`).
+ */
+const COMPRIS_DEPLIE_MAX = 3;
+
+/** Un nom ou une valeur réduits à leurs lettres et chiffres — de quoi les comparer. */
+function reduit(texte: string): string {
+  return texte.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+/**
+ * La valeur concrète d'une option, **quand son nom ne la dit pas déjà** (#1147).
+ *
+ * Le modèle écrit la valeur (ce qui sera écrit dans l'outillage : `flutter build
+ * apk`, `.github/workflows/ci.yml`) et un nom pour la lire (« Android uniquement »,
+ * « GitHub Actions »). Constat du regard neuf sur la vraie stack : « Quelle commande
+ * de build ? » coiffait trois plateformes, et la commande qui serait écrite n'était
+ * lisible nulle part. Quand le nom la redit (« GitHub » / `github`), on la tait.
+ *
+ * « aucun » aussi : ce n'est pas une valeur à lire, et le nom dit déjà qu'il n'y a
+ * rien (troisième relecture : un « aucun » gris à la place d'une commande).
+ */
+function valeurDite(valeur: string, libelle: string): string | null {
+  const brute = reduit(valeur);
+  return brute === reduit(libelle) || brute === "aucun" || brute === "aucune"
+    ? null
+    : valeur;
 }
 
 export function QuestionDOutillage({
@@ -123,6 +153,18 @@ export function QuestionDOutillage({
   const avecSesMots = choisi === AUTRE;
   const texte = libre.trim();
 
+  // Choisir « Autre chose » agrandit la carte d'un champ, **sous** le bas du fil :
+  // mesuré sur la vraie stack, le bouton d'envoi passait alors sous la zone de
+  // saisie tant qu'on ne faisait pas défiler. On amène le geste sous les yeux — le
+  // plus court déplacement (`nearest`), rien si tout est déjà visible. La question
+  // ouverte n'en a pas besoin : son champ est là dès l'affichage.
+  const gestes = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (avecSesMots && !ouverte) {
+      gestes.current?.scrollIntoView?.({ block: "nearest" });
+    }
+  }, [avecSesMots, ouverte]);
+
   const surReponse = async () => {
     setRefus(null);
     try {
@@ -146,12 +188,7 @@ export function QuestionDOutillage({
       titre={question.intitule}
     >
       {compris.length > 0 && (
-        <p className="mb-3 min-w-0 break-words text-annexe text-texte-secondaire">
-          <span className="font-medium text-texte">
-            Ce que j&apos;ai compris :
-          </span>{" "}
-          {enPhrase(compris)}
-        </p>
+        <ComprisDuProjet compris={compris} id={`${idChamp}-compris`} />
       )}
       {ouverte ? (
         <p className="mb-2 min-w-0 break-words text-annexe text-texte-secondaire">
@@ -168,6 +205,7 @@ export function QuestionDOutillage({
               key={option.valeur}
               actif={option.valeur === choisi}
               libelle={option.libelle}
+              valeur={valeurDite(option.valeur, option.libelle)}
               raison={option.raison}
               badge={option.valeur === question.recommande}
               pourquoi={
@@ -198,7 +236,16 @@ export function QuestionDOutillage({
           placeholder="Une application mobile Flutter, une infrastructure Terraform…"
         />
       )}
-      <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2">
+      {/* `scroll-mb-44` : au pied du fil, le composeur est `sticky` **dans** le même
+          ascenseur (`Conversation`, à quai à 64 px du bas quand le flottant passe),
+          si bien que le navigateur tient pour visible un bouton qu'il recouvre.
+          La marge — la hauteur du composeur et de sa bande, arrondie au-dessus —
+          fait remonter le geste au-dessus de lui. Hors du fil (l'étape de
+          création), elle ne coûte qu'un défilement un peu plus généreux. */}
+      <div
+        ref={gestes}
+        className="mt-4 flex scroll-mb-44 flex-wrap items-center gap-x-3 gap-y-2"
+      >
         <Bouton
           occupe={enCours}
           disabled={avecSesMots && texte === ""}
@@ -222,6 +269,84 @@ export function QuestionDOutillage({
 }
 
 /**
+ * « Ce que j'ai compris » — une entrée par constat, le sujet en retrait et la valeur
+ * en relief, jamais coupés l'un de l'autre d'une ligne à la suivante.
+ *
+ * C'est la correction du regard neuf de la relecture de #1147, qui lisait un seul
+ * flot de clés et de valeurs à égalité (« types » en fin de ligne, « : aucun » sur la
+ * suivante). Une entrée passe à la ligne **entière** ; seule une valeur plus large
+ * que la carte se coupe, à l'intérieur d'elle-même.
+ *
+ * ⚠ **Dans une carte étroite, elle passe à un second niveau** (seconde relecture) :
+ * dans la colonne de conversation (320 px), la carte dépassait la hauteur du fil, et
+ * le fil, calé en bas, poussait hors du champ le titre de la question — la seule
+ * chose qu'il faut y lire d'abord. Sous le seuil `@md` du **conteneur** (la carte,
+ * pas la fenêtre : la même carte vit au pied de `/chat` et dans la colonne), la liste
+ * se replie derrière un `<details>` qui en dit le compte. C'est le recours de docs/30
+ * §4 — un second niveau, **jamais un retrait d'information**. Au-dessus du seuil, la
+ * liste est dépliée, sans geste.
+ *
+ * ⚠ **Seulement quand elle est longue** (troisième relecture) : un seul constat replié
+ * dans la colonne, lu ouvert au même moment sur `/chat`, faisait lire la même carte de
+ * deux façons — pour une ligne qui ne menaçait rien. Jusqu'à `COMPRIS_DEPLIE_MAX`
+ * entrées, la liste est dépliée partout.
+ */
+function ComprisDuProjet({
+  compris,
+  id,
+}: {
+  compris: ChoixOutillage[];
+  id: string;
+}) {
+  // Une commande en chasse fixe, comme la valeur d'une option : en romain gras,
+  // « dart format . » se lisait comme une fin de phrase (troisième relecture).
+  const entrees = compris.map((c) => (
+    <li key={c.cle} className="min-w-0 break-words">
+      <span className="text-texte-secondaire">{c.sujet ?? c.cle}</span>{" "}
+      {c.commande ? (
+        <code className="font-mono text-texte">{c.valeur}</code>
+      ) : (
+        <span className="font-medium text-texte">{c.valeur}</span>
+      )}
+    </li>
+  ));
+  const liste = "flex min-w-0 flex-wrap gap-x-4 gap-y-1 text-annexe";
+  if (compris.length <= COMPRIS_DEPLIE_MAX) {
+    return (
+      <div className="mb-3 flex min-w-0 flex-col gap-1">
+        <p id={id} className="text-annexe font-medium text-texte">
+          Ce que j&apos;ai compris
+        </p>
+        <ul aria-labelledby={id} className={liste}>
+          {entrees}
+        </ul>
+      </div>
+    );
+  }
+  return (
+    <div className="@container mb-3 min-w-0">
+      <div className="hidden min-w-0 flex-col gap-1 @md:flex">
+        <p id={id} className="text-annexe font-medium text-texte">
+          Ce que j&apos;ai compris
+        </p>
+        <ul aria-labelledby={id} className={liste}>
+          {entrees}
+        </ul>
+      </div>
+      <details className="min-w-0 @md:hidden">
+        <summary className="cursor-pointer text-annexe font-medium text-texte">
+          Ce que j&apos;ai compris · {compris.length} constat
+          {compris.length > 1 ? "s" : ""}
+        </summary>
+        <ul aria-label="Ce que j'ai compris" className={`mt-1 ${liste}`}>
+          {entrees}
+        </ul>
+      </details>
+    </div>
+  );
+}
+
+/**
  * Une ligne du choix : un bouton `radio`, sa coche, son libellé et sa raison.
  *
  * `classesCarte` plutôt qu'un padding et un rayon écrits à la main : c'est le recours
@@ -238,6 +363,7 @@ export function QuestionDOutillage({
 function LigneDeChoix({
   actif,
   libelle,
+  valeur = null,
   raison,
   badge = false,
   pourquoi = "",
@@ -246,6 +372,8 @@ function LigneDeChoix({
 }: {
   actif: boolean;
   libelle: string;
+  /** Ce que l'option écrira, quand son nom ne le dit pas (`valeurDite`). */
+  valeur?: string | null;
   raison: string;
   /** La ligne est la recommandation de Maestro. */
   badge?: boolean;
@@ -278,6 +406,11 @@ function LigneDeChoix({
       <span className="flex min-w-0 flex-col gap-0.5">
         <span className="flex flex-wrap items-center gap-2">
           <span className="text-corps font-medium text-texte">{libelle}</span>
+          {valeur !== null && (
+            <code className="min-w-0 break-words font-mono text-annexe text-texte-secondaire">
+              {valeur}
+            </code>
+          )}
           {badge && <BadgeEtat ton="info">Recommandé</BadgeEtat>}
         </span>
         {/* La raison de l'option, sur **toutes** les lignes — c'est elle qui dit ce

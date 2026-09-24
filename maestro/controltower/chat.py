@@ -2014,9 +2014,15 @@ class ServiceChat:
                 f"réponse hors des options posées : {valeur!r} "
                 f"(attendu l'une de : {offertes}), ou répondez avec vos mots."
             )
+        # Une réponse **avec ses mots** s'écrit telle quelle, comme une phrase tapée
+        # dans la zone de saisie : ce sont les mots de la personne, et la relecture
+        # de #1147 a montré ce que coûtait « Question → … » — la première réponse
+        # donnant son titre au fil, celui-ci prenait la question de Maestro pour nom
+        # et la description du projet disparaissait sous les points de suspension.
+        # Un clic, lui, s'écrit toujours avec sa question (#1031).
         geste = await self._deposer(
             agent,
-            _geste_de_reponse(question, valeur),
+            valeur if libre else _geste_de_reponse(question, valeur),
             conversation=fil,
             choix=Choix(cle=question.cle, valeur=valeur, libre=libre),
         )

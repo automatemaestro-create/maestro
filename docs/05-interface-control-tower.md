@@ -6412,9 +6412,13 @@ langage, manifeste, gestionnaire, commande de chaque usage, forge, CI, conventio
 libres, `flutter test` ou `terraform validate`), et ne pose que les questions qui comblent un vrai
 manque, avec des options écrites pour ce projet. Il n'y a plus de plafond : une compréhension sans
 question est la conclusion. Son prompt porte le registre de langue (#945), et ce qu'il rend est
-lu et vérifié par `maestro/outillage/questionnaire.py` — une question déjà répondue n'est pas
-reposée, une recommandation hors des options est ramenée dedans, la question ouverte passe en tête
-tant qu'on ne sait pas ce qu'est le projet.
+lu et vérifié par `maestro/outillage/questionnaire.py` — un sujet tranché d'un clic n'est pas
+redemandé (des mots, eux, peuvent ne pas avoir tranché : le modèle en juge), une recommandation hors
+des options est ramenée dedans, la question ouverte passe en tête tant qu'on ne sait pas ce qu'est
+le projet, et un constat hors du schéma est écarté (il ne nourrirait aucune entrée, et l'écran n'en
+aurait que la clé à montrer). Une réponse avec ses mots s'écrit au fil **telle quelle**, comme une
+phrase tapée dans la zone de saisie ; un clic, avec sa question. Chaque choix rendu nomme son
+`sujet` pour l'écran et dit s'il est une `commande` (rendue en chasse fixe).
 
 `POST …/projets/{id}/outillage/questionnaire` prend `{"choix": [{"cle": "nature", "valeur": "Une
 application mobile Flutter…", "libre": true}]}` et rend `{"question": …, "deductions": […],

@@ -20,7 +20,7 @@
  * Aucun rendu jugé ici : c'est l'affaire de la relecture visuelle.
  */
 
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -50,7 +50,14 @@ const FORGE: QuestionOutillage = {
 
 const COMPRIS: ChoixOutillage[] = [
   { cle: "langages", valeur: "Dart", deduit: true, parce_que: "Flutter", sujet: "langage" },
-  { cle: "tester", valeur: "flutter test", deduit: true, parce_que: "SDK", sujet: "tests" },
+  {
+    cle: "tester",
+    valeur: "flutter test",
+    deduit: true,
+    parce_que: "SDK",
+    sujet: "tests",
+    commande: true,
+  },
 ];
 
 describe("la question d'outillage", () => {
@@ -132,12 +139,78 @@ describe("la question d'outillage", () => {
       />,
     );
 
-    expect(screen.getByText(/Ce que j'ai compris/).parentElement).toHaveTextContent(
-      "Ce que j'ai compris : langage : Dart · tests : flutter test",
-    );
+    // Une entrée par constat — le sujet et sa valeur ensemble, jamais coupés l'un de
+    // l'autre (constat du regard neuf sur la vraie stack) —, la valeur en relief.
+    // Courte, la liste se lit dépliée **partout** : un seul rendu, sans second
+    // niveau — la troisième relecture a vu un seul constat replié dans la colonne,
+    // lu ouvert au même moment sur /chat.
+    const compris = screen.getByRole("list", { name: "Ce que j'ai compris" });
+    const entrees = within(compris).getAllByRole("listitem");
+    expect(entrees.map((e) => e.textContent)).toEqual(["langage Dart", "tests flutter test"]);
+    expect(within(entrees[0]).getByText("Dart")).toHaveClass("font-medium");
+    // Une commande se lit en chasse fixe, comme dans les options (relecture de
+    // #1147 : « dart format . » en romain gras se lisait comme une fin de phrase).
+    const commande = within(entrees[1]).getByText("flutter test");
+    expect(commande.tagName).toBe("CODE");
+    expect(commande).toHaveClass("font-mono");
+    expect(document.querySelector("details")).toBeNull();
     expect(
       screen.getByText(/répondre dans la zone de saisie/),
     ).toBeInTheDocument();
+  });
+
+  it("④ une longue liste passe à un second niveau dans une carte étroite seulement", () => {
+    const long: ChoixOutillage[] = ["langages", "manifeste", "installer", "tester", "lint"].map(
+      (cle) => ({ cle, valeur: `v-${cle}`, deduit: true, parce_que: "", sujet: cle }),
+    );
+    render(
+      <QuestionDOutillage question={FORGE} compris={long} repondre={() => Promise.resolve()} />,
+    );
+
+    // Deux rendus du même contenu, que la largeur de la **carte** départage (jsdom
+    // ne l'évalue pas) : déplié dans une carte large, derrière un second niveau dans
+    // une carte étroite — la colonne de conversation, où la carte dépassait le fil.
+    const [large, etroite] = screen.getAllByRole("list", { name: "Ce que j'ai compris" });
+    for (const liste of [large, etroite]) {
+      expect(within(liste).getAllByRole("listitem")).toHaveLength(5);
+    }
+    expect(large.parentElement).toHaveClass("@md:flex");
+    const second = etroite.closest("details");
+    expect(second).toHaveClass("@md:hidden");
+    expect(second?.querySelector("summary")).toHaveTextContent(
+      "Ce que j'ai compris · 5 constats",
+    );
+  });
+
+  it("⑤ montre la valeur concrète d'une option quand son nom ne la dit pas", () => {
+    // Vu sur la vraie stack : « Quelle commande de build ? » coiffait « Android
+    // uniquement » — la commande qui serait écrite n'était lisible nulle part.
+    render(
+      <QuestionDOutillage
+        question={{
+          ...FORGE,
+          intitule: "Quelle commande de build ?",
+          options: [
+            { valeur: "flutter build apk", libelle: "Android uniquement", raison: "un magasin" },
+            { valeur: "GitHub", libelle: "GitHub", raison: "la forge" },
+            { valeur: "conventional-commits", libelle: "Conventional Commits", raison: "" },
+            { valeur: "aucun", libelle: "Aucun manifeste", raison: "rien à déclarer" },
+            { valeur: "aucune", libelle: "Pas de tests pour l'instant", raison: "" },
+          ],
+          recommande: "flutter build apk",
+        }}
+        repondre={() => Promise.resolve()}
+      />,
+    );
+
+    const [android, github, conventions, manifeste, tests] = screen.getAllByRole("radio");
+    expect(within(android).getByText("flutter build apk")).toHaveClass("font-mono");
+    expect(github.querySelector(".font-mono")).toBeNull();
+    expect(conventions.querySelector(".font-mono")).toBeNull();
+    // « aucun » n'est pas une valeur à lire : le nom dit déjà qu'il n'y a rien
+    // (troisième relecture : un « aucun » gris à la place d'une commande).
+    expect(manifeste.querySelector(".font-mono")).toBeNull();
+    expect(tests.querySelector(".font-mono")).toBeNull();
   });
 
   it("④ hors du fil, elle ne renvoie à aucune zone de saisie", () => {
@@ -145,6 +218,27 @@ describe("la question d'outillage", () => {
 
     expect(screen.queryByText(/zone de saisie/)).toBeNull();
     expect(screen.queryByText(/Ce que j'ai compris/)).toBeNull();
+  });
+
+  it("② ouvrir « Autre chose » amène le champ et son geste sous les yeux", async () => {
+    // Vu sur la vraie stack : le champ agrandit la carte sous le bas du fil, et le
+    // bouton d'envoi passait sous la zone de saisie tant qu'on ne faisait pas défiler.
+    const vus: Element[] = [];
+    const avant = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      vus.push(this);
+    };
+    try {
+      render(<QuestionDOutillage question={FORGE} repondre={() => Promise.resolve()} />);
+      expect(vus).toHaveLength(0);
+
+      await userEvent.click(screen.getAllByRole("radio")[2]);
+
+      const geste = screen.getByRole("button", { name: "Envoyer ma réponse" });
+      expect(vus.some((el) => el.contains(geste))).toBe(true);
+    } finally {
+      Element.prototype.scrollIntoView = avant;
+    }
   });
 
   it("dit le refus du moteur sans perdre ce qui a été écrit", async () => {
