@@ -1299,6 +1299,18 @@ class _GenerateurHorsLigne:
         raise RuntimeError("hors ligne (test)")
 
 
+class _CompositeurHorsLigne:
+    """Un compositeur d'équipe qui ne répond jamais (#1159) — zéro appel modèle.
+
+    La proposition ordinaire retombe alors sur les règles des gabarits, dites comme
+    telles : c'est l'équipe que ces tests confrontent au renfort, et le fournisseur
+    du poste reste hors de portée (#782).
+    """
+
+    async def ecrire(self, prompt: str) -> str:
+        raise RuntimeError("hors ligne (test)")
+
+
 def _client_de_projet(tmp_path: Path, atelier: Path) -> Any:
     """L'app réelle, projets bornés à l'atelier, générateur hors ligne."""
     from fastapi.testclient import TestClient
@@ -1316,6 +1328,7 @@ def _client_de_projet(tmp_path: Path, atelier: Path) -> Any:
             ),
             agents_store=AgentStore(tmp_path / "agents"),
             generateur_agent=_GenerateurHorsLigne(),
+            compositeur_equipe=_CompositeurHorsLigne(),
         )
     )
 

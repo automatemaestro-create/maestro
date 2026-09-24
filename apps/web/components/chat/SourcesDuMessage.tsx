@@ -21,14 +21,15 @@
  *   la zone de dépôt entoure la saisie plutôt que de vivre à côté. Le bouton
  *   reste, parce qu'un dépôt à la souris n'est pas atteignable au clavier ;
  * - **rien n'est promis sur ce qui sera lu.** Une image se dépose comme un
- *   `.md` — la chaîne d'ingestion est unique, le critère l'exige — mais elle
- *   ressort « Ignoré / format-non-gere » du rapport, parce que l'extraction ne
- *   lit aujourd'hui que le texte, le Markdown, le `.docx` et le `.pdf`. Cet
- *   écran **ne redit pas cette liste** : elle vit côté backend
- *   (`EXTENSIONS_TEXTE`/`EXTENSIONS_CONVERTIES`), et la recopier ici en ferait
- *   une seconde table à tenir d'accord — exactement ce que `lib/sources.ts`
- *   refuse déjà pour les motifs de refus. Ce qui a réellement été lu se lit là
- *   où c'est vrai : dans le rapport, sous le message ;
+ *   `.md` — la chaîne d'ingestion est unique, le critère l'exige. Depuis #1163
+ *   la lecture ne suit plus de liste de formats (le texte se lit, un tableur
+ *   par son contenu, une image par le modèle qui la regarde), mais ce qui reste
+ *   illisible existe encore — un binaire opaque, une image qu'aucun modèle du
+ *   poste ne voit. Cet écran **ne dit donc pas d'avance** ce qui sera lu : ce
+ *   jugement vit côté backend, et le recopier ici en ferait une seconde table à
+ *   tenir d'accord — exactement ce que `lib/sources.ts` refuse déjà pour les
+ *   motifs de refus. Ce qui a réellement été lu se lit là où c'est vrai : dans
+ *   le rapport, sous le message ;
  * - **un refus s'affiche sur la source qu'il vise.** L'API rend un `index` quand
  *   le refus en désigne une (#315) ; le taire obligerait à tout relire pour
  *   savoir quoi retirer.

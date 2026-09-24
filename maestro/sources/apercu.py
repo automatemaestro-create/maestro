@@ -49,6 +49,7 @@ from typing import IO, Any
 from maestro.config import Settings, load_settings
 from maestro.engine.guardrails import GardeFousIngestion
 from maestro.sources.extraction import GardeFousExtraction, RapportLecture, extraire_sources
+from maestro.sources.images import lire_image_en_apercu
 from maestro.sources.modele import TYPE_FICHIER, Source, SourceRefusee
 from maestro.sources.resolution import emplacement_ingestion, resoudre_sources
 
@@ -115,8 +116,14 @@ def apercu_sources(
         if fichiers:
             emplacement_ingestion(RUN_APERCU, settings=reglages, creer=True)
             _deposer(sources, fichiers, garde_fous=garde_fous)
+        # Les images ne sont **pas** montrées au modèle (#1163) : regarder est un
+        # appel payant, et l'aperçu est gratuit. Elles ressortent nommées, avec ce
+        # que fera le lancement (`vue-au-lancement`), plutôt que payées d'avance.
         return extraire_sources(
-            sources, garde_fous=garde_fous_extraction, recuperer_url=recuperer_url
+            sources,
+            garde_fous=garde_fous_extraction,
+            recuperer_url=recuperer_url,
+            lire_image=lire_image_en_apercu,
         )
     finally:
         # `ignore_errors` : un aperçu qui n'arrive pas à faire son ménage ne doit

@@ -2734,11 +2734,46 @@ export type PropositionEquipe = {
   faite_le: string;
   resume: string;
   source: Record<string, unknown> | null;
+  /**
+   * Qui a composé l'équipe (#1159) : `modele` — le modèle, pour le besoin du
+   * projet ; `regles` — les règles des cinq gabarits, le repli quand le modèle
+   * n'a pas abouti, `raison` disant pourquoi. Absent d'une proposition servie
+   * avant #1159.
+   */
+  composition?: { origine: string; raison: string };
   roles: RoleEquipe[];
   ecartes: RoleEcarteEquipe[];
   instances_total: number;
   cree: boolean;
   validation: string;
+};
+
+/**
+ * Un rôle de l'équipe **telle que l'étape la montre**, envoyé avec une demande
+ * de correction (`MembreEquipeRequete`, #1159) : ce que la personne a pu régler.
+ */
+export type MembreEquipe = {
+  nom: string;
+  role: string;
+  retenu: boolean;
+  instances: number;
+};
+
+/**
+ * Ce qu'une demande en langage naturel change à l'équipe montrée
+ * (`POST /api/projets/{id}/equipe/correction`, #1159) — rien n'est créé.
+ *
+ * `ajouts` sont des rôles proposés de plein droit (playbook écrit pour ce
+ * projet) ; `retraits`, `remis` et `instances` ne nomment que des rôles de
+ * l'équipe montrée ; `reponse` est la phrase à afficher à la personne.
+ */
+export type CorrectionEquipe = {
+  reponse: string;
+  ajouts: RoleEquipe[];
+  retraits: string[];
+  remis: string[];
+  instances: Record<string, number>;
+  cree: boolean;
 };
 
 /**

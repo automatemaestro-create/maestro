@@ -109,11 +109,19 @@ export function libelleSource(motif: string): string {
  *
  * La distinction est le critère 3 du ticket : « rien à lire ici » et « je refuse
  * de lire ça » ne s'affichent jamais pareil. Les premiers sont des constats
- * (format non géré, page injoignable) et se rangent dans le rapport ; les
+ * (binaire opaque, page injoignable) et se rangent dans le rapport ; les
  * seconds sont des refus et remontent au geste qui les a provoqués.
+ *
+ * Un motif absent d'ici s'affiche par la **phrase du backend** (`message`), et
+ * c'est voulu pour ceux que #1163 a introduits (`binaire-opaque`,
+ * `vision-indisponible`, `vue-au-lancement`, `secret`…) : leur phrase nomme le
+ * fichier, le fournisseur ou la taille en cause, qu'une phrase générique
+ * perdrait. `format-non-gere` en est sorti pour la même raison : le backend ne
+ * l'émet plus (tout ce qui se lit se lit), et un rapport ancien qui le porte se
+ * relit avec la phrase de son époque plutôt qu'avec une liste de formats
+ * devenue fausse.
  */
 const MOTIFS_LECTURE: Record<string, string> = {
-  "format-non-gere": "Format non géré — seuls le texte, le Markdown, le .docx et le .pdf sont lus.",
   "convertisseur-absent": "Convertisseur absent sur le backend pour ce format.",
   "source-absente": "Aucun octet n'est arrivé : le fichier n'a pas été téléversé.",
   "budget-epuise": "Budget de lecture épuisé par les sources précédentes.",

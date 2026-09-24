@@ -58,8 +58,15 @@ const LANCEUR = path.join(RACINE, 'scripts', 'controltower', 'start.sh');
 
 // Mêmes défauts que `start.sh`, et surtout mêmes VARIABLES : `worktree.sh ensure` les pose par
 // worktree (#152), sans quoi deux sessions se disputeraient la fenêtre et les ports.
-const PORT_UI = process.env.MAESTRO_PORT_UI || '3000';
-const PORT_API = process.env.MAESTRO_PORT_API || '8000';
+const PORT_UI_DEFAUT = '3000';
+const PORT_API_DEFAUT = '8000';
+const PORT_UI = process.env.MAESTRO_PORT_UI || PORT_UI_DEFAUT;
+const PORT_API = process.env.MAESTRO_PORT_API || PORT_API_DEFAUT;
+
+// La stack que cette fenêtre sert, nommée comme `start.sh` la nomme : son état
+// (`maestro-controltower-<api>-<ui>`), ses journaux et le profil de son navigateur portent ce
+// couple, et son arrêt libère ces deux ports. C'est la clé du verrou d'instance unique (§ plus bas).
+const STACK = `${PORT_API}-${PORT_UI}`;
 
 // L'URL est celle que `start.sh` ouvrirait : « localhost » et non « 127.0.0.1 ». Les deux noms
 // désignent la même stack, mais pas la même ORIGINE au sens du navigateur — s'en écarter ici
@@ -385,11 +392,32 @@ function armerArret() {
   });
 }
 
-// Une seconde instance partagerait la stack de la première et l'arrêterait en se fermant. Elle
-// sort donc tout de suite — par `app.exit`, avant que `before-quit` ne soit armé : passer par
-// l'arrêt couperait la stack que la première fenêtre est en train de servir.
+// Le profil de la fenêtre, et avec lui le VERROU D'INSTANCE UNIQUE (#1275). Electron tient ce
+// verrou sur le dossier `userData`, qui vaut `%APPDATA%/desktop` (le nom du paquet) pour TOUTES
+// les copies du dépôt tant que rien ne le fixe : une fenêtre du clone principal (:3000) refusait
+// donc celle d'un worktree (:3073), alors que chaque worktree a sa stack (docs/10 §9, #1164). Le
+// verrou garde ce qu'une seconde instance casserait — LA STACK —, donc il en prend la clé.
+//
+// Pas la racine de la copie : deux copies sur les mêmes ports sont UNE stack, et l'arrêt de l'une
+// (qui libère les ports) couperait celle de l'autre ; une copie sur deux couples en porte deux, que
+// `start.sh` sait tenir séparées.
+//
+// La stack par défaut garde le profil qu'elle a toujours eu : le stockage local de la fenêtre y
+// vit — thème, projet actif, brouillons, guide déjà vu —, et le déplacer l'effacerait sans rien
+// dire. Toute autre stack prend le sien, à part. Fixé AVANT le verrou : après, il serait déjà pris
+// sur le dossier commun.
+if (STACK !== `${PORT_API_DEFAUT}-${PORT_UI_DEFAUT}`) {
+  app.setPath('userData', path.join(app.getPath('appData'), 'maestro-coque', STACK));
+}
+
+// Une seconde instance DE LA MÊME STACK partagerait les ports de la première et l'arrêterait en se
+// fermant. Elle sort donc tout de suite — par `app.exit`, avant que `before-quit` ne soit armé :
+// passer par l'arrêt couperait la stack que la première fenêtre est en train de servir.
 if (!app.requestSingleInstanceLock()) {
-  process.stderr.write('[coque] Maestro est déjà ouvert — cette fenêtre se ferme.\n');
+  process.stderr.write(
+    `[coque] Maestro est déjà ouvert sur cette stack (UI :${PORT_UI} · API :${PORT_API}) — ` +
+      'sa fenêtre revient au premier plan, celle-ci se ferme.\n',
+  );
   app.exit(0);
 } else {
   app.on('second-instance', () => {
@@ -402,5 +430,5 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 // Diagnostic : les ports servis, pour que le terminal dise d'emblée à quelle stack cette fenêtre
-// est attachée — deux worktrees en ouvrent deux.
+// est attachée — deux worktrees, donc deux couples de ports, en ouvrent deux (#1275).
 process.stdout.write(`[coque] Maestro — UI :${PORT_UI} · API :${PORT_API}\n`);

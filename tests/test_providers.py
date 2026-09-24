@@ -151,6 +151,61 @@ def test_claude_generate_n_expose_aucun_outil(monkeypatch):
     assert vu["tools"] == []
 
 
+def test_claude_montre_les_images_dans_un_message_en_flux(monkeypatch):
+    # #1163 : une image atteint le modèle par le mode d'entrée en flux du SDK — un seul
+    # message utilisateur, les blocs `image` de l'API Anthropic d'abord, le texte
+    # ensuite — et toujours sans outil (`tools=[]`), comme `generate`.
+    import base64
+
+    from maestro.providers.base import ImageJointe
+
+    class FakeTextBlock:
+        def __init__(self, text):
+            self.text = text
+
+    class FakeAssistantMessage:
+        def __init__(self, content):
+            self.content = content
+
+    vu: dict[str, object] = {}
+
+    async def fake_query(*, prompt, options):
+        assert not isinstance(prompt, str), "une image ne voyage pas dans une chaîne"
+        vu["messages"] = [message async for message in prompt]
+        vu["tools"] = options.tools
+        vu["system"] = options.system_prompt
+        yield FakeAssistantMessage([FakeTextBlock("Un bouton « Lancer ».")])
+
+    monkeypatch.setattr(claude_mod, "query", fake_query)
+    monkeypatch.setattr(claude_mod, "AssistantMessage", FakeAssistantMessage)
+    monkeypatch.setattr(claude_mod, "TextBlock", FakeTextBlock)
+
+    provider = ClaudeProvider(Credentials())
+    texte = asyncio.run(
+        provider.generate_with_images(
+            "Décris-la.",
+            images=[ImageJointe(octets=b"\x89PNG-octets", type_media="image/png", nom="m.png")],
+            model="claude-opus-5",
+            system_prompt="Tu regardes.",
+        )
+    )
+
+    assert texte == "Un bouton « Lancer »."
+    (message,) = vu["messages"]
+    assert message["type"] == "user"
+    image, consigne = message["message"]["content"]
+    assert image == {
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": "image/png",
+            "data": base64.b64encode(b"\x89PNG-octets").decode("ascii"),
+        },
+    }
+    assert consigne == {"type": "text", "text": "Décris-la."}
+    assert vu["tools"] == [] and vu["system"] == "Tu regardes."
+
+
 def test_run_agent_est_optionnel_et_refuse_par_defaut():
     # Capacité optionnelle (ticket #4) : un fournisseur qui ne l'implémente pas la refuse.
     class TextOnly(ModelProvider):

@@ -47,14 +47,17 @@
  *
  * ## Retirer, ajouter, ajuster — ce que chacun veut dire ici
  *
- * *Retirer*, c'est décocher ; *ajuster*, c'est le nombre d'instances ; *ajouter*,
- * c'est recocher — exactement le partage que l'étape d'outillage a posé (#1034 :
- * « tout arrive retenu, corriger c'est décocher », et *ajouter* y désigne la case
- * qu'on recoche). Un rôle que l'analyse a **écarté** n'a pas de case : elle n'a
- * composé pour lui ni playbook, ni skills, ni autorisations — justement parce
- * qu'elle l'écartait. Le recruter quand même est donc la création d'agent
- * ordinaire, dans les écrans d'agents du projet, là où le second critère du
- * ticket envoie déjà pour revoir l'équipe (#1038). La liste des écartés le dit.
+ * *Retirer*, c'est décocher ; *ajuster*, c'est le nombre d'instances — le partage
+ * que l'étape d'outillage a posé (#1034 : « tout arrive retenu, corriger c'est
+ * décocher »). *Ajouter* ou *changer* un rôle se **dit** depuis #1159 : l'équipe
+ * est composée par le modèle pour le besoin du projet, et la personne la corrige
+ * avec ses mots au pied de la liste (« ajoute quelqu'un pour la sécurité »). Le
+ * rôle demandé est composé pour ce projet, playbook compris, et atterrit dans la
+ * liste comme une ligne de plus, retenue et signalée — rien n'est créé avant la
+ * validation. Un rôle **écarté** n'a toujours pas de case : il n'a ni playbook ni
+ * autorisations tant qu'on ne l'a pas demandé, et la liste des écartés renvoie au
+ * champ, qui est le geste réel (critère de #1159 : aucun texte ne promet un geste
+ * que l'écran n'offre pas).
  *
  * ## Ce que l'écran ne décide pas
  *
@@ -66,17 +69,23 @@
  * bouton qui reste occupé, sans délai annoncé.
  */
 
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 
 import {
   BadgeEtat,
   Bouton,
   Carte,
+  Champ,
   CLASSE_CONTROLE,
   EnTeteSection,
 } from "@/components/Primitives";
-import { creerEquipe, proposerEquipe } from "@/lib/api";
-import { compteAgents, rolesValides } from "@/lib/equipe";
+import { corrigerEquipe, creerEquipe, proposerEquipe } from "@/lib/api";
+import {
+  appliquerCorrection,
+  compteAgents,
+  membresMontres,
+  rolesValides,
+} from "@/lib/equipe";
 import type {
   AutorisationEquipe,
   ChoixOutillage,
@@ -120,6 +129,29 @@ const SENS_DECIDEUR: Record<string, string> = {
 };
 
 /**
+ * Une raison servie, ses `**…**` rendus en **gras** au lieu d'être recopiés.
+ *
+ * Les raisons d'autorisation (`maestro.equipe.proposition`) soulignent ce que la
+ * personne garde avec la convention Markdown, et l'écran affichait les
+ * astérisques tels quels (relevé par le regard neuf de #1159). Un nombre impair
+ * de marqueurs laisse le texte intact : mieux vaut deux astérisques visibles
+ * qu'une moitié de phrase mise en gras par erreur.
+ */
+export function avecGras(texte: string): ReactNode[] {
+  const morceaux = texte.split("**");
+  if (morceaux.length % 2 === 0) return [texte];
+  return morceaux.map((morceau, index) =>
+    index % 2 === 1 ? (
+      <strong key={index} className="font-medium text-texte">
+        {morceau}
+      </strong>
+    ) : (
+      morceau
+    ),
+  );
+}
+
+/**
  * Une autorisation proposée, **dépliée** : le cran, l'outil, qui tranche, et la
  * raison. C'est la moitié « et pourquoi ? » du critère du ticket, et c'est
  * pourquoi elle n'est jamais derrière un pli.
@@ -149,7 +181,7 @@ function LigneAutorisation({ autorisation }: { autorisation: AutorisationEquipe 
         </span>
       </span>
       <span className="min-w-0 break-words text-annexe text-texte-secondaire">
-        {autorisation.raison}
+        {avecGras(autorisation.raison)}
       </span>
     </li>
   );
@@ -177,6 +209,7 @@ export function LigneRole({
   changerInstances,
   fige,
   prefixe = "equipe",
+  ajoute = false,
 }: {
   role: RoleEquipe;
   retenu: boolean;
@@ -185,6 +218,11 @@ export function LigneRole({
   changerInstances: (valeur: number) => void;
   fige: boolean;
   prefixe?: string;
+  /**
+   * Le rôle vient d'une demande de la personne, pas de la proposition (#1159) —
+   * dit par un **mot** (« ajouté à votre demande »), jamais par la couleur seule.
+   */
+  ajoute?: boolean;
 }) {
   const idCase = `${prefixe}-${role.nom}`;
   const idInstances = `${prefixe}-${role.nom}-instances`;
@@ -219,14 +257,24 @@ export function LigneRole({
         </span>
         <span className="col-start-3 row-start-1 flex flex-wrap items-center gap-2">
           <BadgeEtat contour>{role.nom}</BadgeEtat>
+          {ajoute && (
+            <BadgeEtat ton="info" contour>
+              ajouté à votre demande
+            </BadgeEtat>
+          )}
           {/* D'où ce rôle descend (docs/37 §2.1) : les agents figés sont
-              devenus des gabarits, et la filiation se lit. */}
+              devenus des gabarits, et la filiation se lit. Un rôle composé pour
+              le besoin du projet hors des gabarits (#1159) n'en porte pas. */}
           {role.gabarit !== "" && (
             <BadgeEtat contour>gabarit {role.gabarit}</BadgeEtat>
           )}
-          {role.playbook_origine === "gabarit" && (
+          {/* Un playbook qui n'a pas été écrit pour ce projet se dit : celui
+              d'un gabarit, ou l'esquisse d'un rôle qui n'en a pas (#1159). */}
+          {role.playbook_origine !== "genere" && (
             <BadgeEtat ton="attention" contour>
-              playbook générique
+              {role.playbook_origine === "esquisse"
+                ? "playbook esquissé"
+                : "playbook générique"}
             </BadgeEtat>
           )}
         </span>
@@ -316,7 +364,9 @@ export function LigneRole({
           <summary className="min-h-6 cursor-pointer">
             Voir le playbook ({role.playbook_origine === "genere"
               ? "écrit pour ce projet"
-              : "celui du gabarit"}
+              : role.playbook_origine === "esquisse"
+                ? "une esquisse"
+                : "celui du gabarit"}
             )
           </summary>
           <p className="mt-1 text-micro">{role.playbook_raison}</p>
@@ -403,6 +453,108 @@ function EnTeteListe({
   );
 }
 
+/**
+ * **Ce qui manque, dit avec ses mots** (#1159) — un champ, un bouton, et la phrase
+ * que le modèle rend.
+ *
+ * ## La forme vient d'une veille et d'un choix consignés sur #1159
+ *
+ * Commentaires « Veille de conception » et « Variante retenue » : *CrewAI Crew
+ * Studio* (un composeur contre l'équipe, dont ce qu'on dit atterrit sur l'équipe)
+ * et *Cursor Plan Mode* (la proposition relue, puis corrigée, puis un seul geste
+ * en pied). La retenue est **A — au pied de la liste**, choisie par le regard neuf
+ * contre deux autres directions rendues sur la vraie stack. Ce qu'elle tranche :
+ *
+ * - **l'ordre de la question** : les rôles et leurs raisons, le repli des écartés,
+ *   *puis* ce qui manque, *puis* « Créer l'équipe ». La variante qui mettait le
+ *   champ en tête a été écartée — on y demandait ce qui manque avant d'avoir
+ *   montré ce qui est là — comme celle qui en faisait une ligne de la liste, lue
+ *   comme « ajouter une ligne » et placée avant les écartés ;
+ * - **un seul champ, dans la carte** : ni colonne, ni fil à part — la
+ *   conversation appartient au shell (#929), et la règle des trois places compte
+ *   l'étape comme un bloc ;
+ * - **la réponse tient en une ligne, détachée des boutons** (réserve du regard
+ *   neuf) : elle se lit comme ce que Maestro a fait de la demande, y compris
+ *   quand il n'a pas compris — le champ garde alors le texte, pour qu'on
+ *   reformule ;
+ * - **le bouton est secondaire** (`contour`) et dit l'acte : le seul geste qui
+ *   crée reste « Créer l'équipe », en pied.
+ */
+function DemandeSurLEquipe({
+  demande,
+  changer,
+  envoyer,
+  enCours,
+  fige,
+  reponse,
+  refus,
+}: {
+  demande: string;
+  changer: (valeur: string) => void;
+  envoyer: () => void;
+  enCours: boolean;
+  fige: boolean;
+  reponse: string | null;
+  refus: RefusProjet | null;
+}) {
+  return (
+    <form
+      aria-label="Corriger l'équipe avec vos mots"
+      className="flex flex-col gap-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        envoyer();
+      }}
+    >
+      <div className="flex flex-wrap items-end gap-2">
+        <Champ
+          id="equipe-demande"
+          libelle={
+            <>
+              {/* La question pèse plus que le repli des écartés juste au-dessus
+                  (réserve du regard neuf) : tokens du socle, pas de style à part. */}
+              <span className="text-corps text-texte">
+                Il manque quelqu&apos;un, ou un rôle ne convient pas ?
+              </span>{" "}
+              Dites-le avec vos mots.
+            </>
+          }
+          placeholder="Par exemple : ajoute quelqu'un pour la sécurité"
+          value={demande}
+          onChange={(e) => changer(e.target.value)}
+          disabled={fige}
+          maxLength={500}
+          className="min-w-0 flex-1 basis-72"
+        />
+        <Bouton
+          type="submit"
+          variante="contour"
+          ton="neutre"
+          occupe={enCours}
+          disabled={fige || demande.trim() === ""}
+        >
+          {enCours ? "Composition…" : "Ajouter ou corriger"}
+        </Bouton>
+      </div>
+      {/* Une surface en retrait, et non du texte courant : la phrase se lit
+          comme la réponse à la demande, jamais comme une légende de la rangée
+          de boutons qui suit (réserve du regard neuf). */}
+      {reponse !== null && (
+        <Carte
+          balise="p"
+          densite="compacte"
+          ton="creuse"
+          role="status"
+          className="text-annexe text-texte"
+        >
+          <span className="font-medium">Maestro :</span> {reponse}
+        </Carte>
+      )}
+      {refus && <RefusMotive refus={refus} titre="Demande non traitée" />}
+    </form>
+  );
+}
+
 /** Ce que la validation a créé — la liste, jamais un « ok » (docs/38 §4.2). */
 function RapportCreation({ rapport }: { rapport: RapportCreationEquipe }) {
   return (
@@ -461,6 +613,13 @@ export function EtapeEquipe({
   const [chargement, setChargement] = useState(true);
   const [enCours, setEnCours] = useState(false);
   const [refus, setRefus] = useState<RefusProjet | null>(null);
+  // La correction en langage naturel (#1159) : la demande en cours de saisie, la
+  // phrase rendue par le modèle, et les lignes nées d'une demande.
+  const [demande, setDemande] = useState("");
+  const [reponse, setReponse] = useState<string | null>(null);
+  const [ajoutes, setAjoutes] = useState<Set<string>>(new Set());
+  const [enCorrection, setEnCorrection] = useState(false);
+  const [refusCorrection, setRefusCorrection] = useState<RefusProjet | null>(null);
 
   useEffect(() => {
     // `vivant` plutôt qu'un `AbortController`, comme l'étape d'outillage : ce
@@ -504,6 +663,37 @@ export function EtapeEquipe({
     setRetenus(
       retenir ? new Set((proposition?.roles ?? []).map((r) => r.nom)) : new Set(),
     );
+
+  // La correction s'applique à **ce que l'écran montre** (cases et instances
+  // comprises) et y atterrit : lignes ajoutées, décochées, recochées. Rien n'est
+  // créé — la validation reste le seul geste qui écrit (#1040).
+  const corriger = async () => {
+    if (proposition === null || demande.trim() === "") return;
+    setEnCorrection(true);
+    setRefusCorrection(null);
+    try {
+      const montree = { roles: proposition.roles, retenus, instances };
+      const correction = await corrigerEquipe(
+        projet.id,
+        demande,
+        membresMontres(montree),
+        choix,
+      );
+      const apres = appliquerCorrection(montree, correction);
+      setProposition({ ...proposition, roles: apres.roles });
+      setRetenus(new Set(apres.retenus));
+      setInstances({ ...apres.instances });
+      setAjoutes((avant) => new Set([...avant, ...apres.ajoutes]));
+      setReponse(correction.reponse);
+      // Le champ ne se vide que si quelque chose a changé : une demande que le
+      // modèle n'a pas comprise reste là, pour qu'on la reformule.
+      if (apres.change) setDemande("");
+    } catch (erreur) {
+      setRefusCorrection(refusDepuis(erreur));
+    } finally {
+      setEnCorrection(false);
+    }
+  };
 
   const valider = async () => {
     if (proposition === null) return;
@@ -550,18 +740,31 @@ export function EtapeEquipe({
           Votre projet n&apos;a encore <strong>aucun agent</strong>. Voici
           l&apos;équipe que son analyse appelle : chaque rôle avec ce qui le
           justifie, ce qu&apos;il branche de votre outillage et ce qu&apos;il
-          aura le droit de faire. Retirez, ajustez, puis validez —{" "}
-          <strong>ou remettez à plus tard</strong> : le projet reste utilisable,
-          et l&apos;équipe se crée depuis les écrans d&apos;agents.
+          aura le droit de faire. Retirez, ajustez, dites ce qui manque, puis
+          validez — <strong>ou remettez à plus tard</strong> : le projet reste
+          utilisable, et l&apos;équipe se crée depuis les écrans d&apos;agents.
         </p>
       )}
 
       {/* La phrase qu'on relit six mois plus tard à côté d'une équipe dont on se
-          demande d'où elle sort. */}
+          demande d'où elle sort. Elle compte ce que l'**analyse** a proposé :
+          après une demande, elle le dit, pour ne pas contredire le compte de la
+          liste (réserve du regard neuf, #1159). Composée par les règles des
+          gabarits — le repli quand le modèle n'a pas abouti —, elle le dit
+          aussi, avec sa cause : ce n'est pas une équipe jugée pour ce projet. */}
       {proposition !== null && proposition.resume !== "" && rapport === null && (
         <p className="text-annexe text-texte">
           <span className="font-medium">Ce que l&apos;analyse en déduit :</span>{" "}
           {proposition.resume}
+          {reponse !== null && (
+            <span className="text-texte-secondaire"> — avant vos demandes</span>
+          )}
+          {proposition.composition?.origine === "regles" &&
+            proposition.composition.raison !== "" && (
+              <span className="block text-attention-texte">
+                {proposition.composition.raison}.
+              </span>
+            )}
         </p>
       )}
 
@@ -592,7 +795,8 @@ export function EtapeEquipe({
                 changerInstances={(valeur) =>
                   setInstances((avant) => ({ ...avant, [role.nom]: valeur }))
                 }
-                fige={enCours}
+                fige={enCours || enCorrection}
+                ajoute={ajoutes.has(role.nom)}
               />
             ))}
           </ul>
@@ -614,20 +818,26 @@ export function EtapeEquipe({
                   </li>
                 ))}
               </ul>
-              {/* Où recruter un rôle que l'analyse n'a pas proposé. Il n'y a
-                  rien à cocher pour lui ici : un rôle écarté n'a ni playbook,
-                  ni skills, ni autorisations — la proposition ne les a pas
-                  composés, justement parce qu'elle l'écartait. Le créer est
-                  donc le geste ordinaire de création d'agent, là où le ticket
-                  envoie déjà pour revoir l'équipe. */}
+              {/* Le geste, nommé à côté du contrôle qui le porte (#1159) : la
+                  raison servie d'un écarté ne dit que le fait, parce qu'elle
+                  sert aussi la carte du fil, qui n'a pas ce champ. Un rôle
+                  écarté n'a ni playbook ni autorisations — c'est la demande qui
+                  les fait composer, pour ce projet. */}
               <p className="mt-2">
-                Pour en recruter un quand même, créez-le depuis les écrans
-                d&apos;agents du projet : vous y choisirez son playbook, ses
-                autorisations et sa capacité, comme pour n&apos;importe quel
-                agent.
+                Pour en ajouter un quand même, dites-le ci-dessous : il sera
+                composé pour votre projet, playbook compris.
               </p>
             </details>
           )}
+          <DemandeSurLEquipe
+            demande={demande}
+            changer={setDemande}
+            envoyer={() => void corriger()}
+            enCours={enCorrection}
+            fige={enCours || enCorrection}
+            reponse={reponse}
+            refus={refusCorrection}
+          />
         </>
       )}
 
@@ -639,7 +849,7 @@ export function EtapeEquipe({
         {rapport === null ? (
           <>
             <Bouton
-              disabled={!pret || retenus.size === 0}
+              disabled={!pret || retenus.size === 0 || enCorrection}
               occupe={enCours}
               onClick={() => void valider()}
             >

@@ -359,6 +359,15 @@ tels qu'ils sont, et un **manifeste** `.maestro/outillage/manifeste.json` qui di
 écrit, depuis quelle analyse ou quels choix, et par quelle version. Les formats sont ouverts : un
 autre agent que Claude sait les lire.
 
+> ⚠ **Deux points changent le 2026-09-24** ([docs/43](./43-decision-un-projet-nait-dans-la-conversation.md)),
+> à la demande de la personne :
+> - les deux ponts ne s'écrivent plus d'office. `AGENTS.md` suffit, et un pont ne s'écrit que pour
+>   un client utilisé qui ne le lit pas nativement (#1295) ;
+> - créer un projet ne commence plus par une étape d'outillage : le projet naît dans la conversation,
+>   et son outillage s'y construit pièce par pièce (#1294, #1161).
+>
+> Ce paragraphe décrit l'état **présent** jusqu'à ce que ces lots le réécrivent.
+
 **D'où il sort — deux voies, une seule recommandation.** Un projet **existant** est *analysé*
 (#1030) : sa racine est parcourue en lecture seule, bornes explicites et aucune exécution du code du
 projet, et l'analyse rend ce qu'elle recommande avec, pour chaque entrée, le fichier du projet qui
@@ -486,6 +495,15 @@ dans le contexte : un seul format à tracer, à masquer et à chiffrer en tokens
 > S'y ajoute ce que la proposition n'avait pas : un **rapport de lecture**
 > ([§6.8](./05-interface-control-tower.md)), sans lequel « ce qui est entré dans le contexte »
 > resterait invisible.
+>
+> **#1163 lève la liste de formats** que #316 avait posée (six extensions) : c'est le contenu qui
+> décide. Tout texte se lit (JSON, YAML, CSV, code…), une page `.html` est ramenée à son texte, un
+> classeur `.xlsx` passe par **openpyxl**, et les images sont bien « laissées au modèle » comme la
+> proposition le voulait — mais **au moment de la lecture** : le modèle du poste regarde l'image
+> (`ModelProvider.generate_with_images`) et en rend le Markdown, qui entre au contexte comme toute
+> source. Le brief reste ainsi dans le format unique, et un fournisseur qui ne voit pas le **dit**
+> au rapport au lieu de taire l'image. Ce qui reste illisible (binaire opaque, porteur de secrets,
+> image trop grosse) se nomme avec sa raison ([§6.8](./05-interface-control-tower.md)).
 
 ### 3.3 L'étape *brief* : le vrai gain *(livrée — #318, #320, #321, #322)*
 
