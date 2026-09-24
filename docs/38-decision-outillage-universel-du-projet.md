@@ -313,7 +313,7 @@ par quelle version :
     { "usage": "tester", "commande": "pytest", "etat": "echouee",
       "raison": "elle a rendu la main en erreur (code 1)", "code": 1, "sortie": "…2 failed", "duree_s": 9.8 },
     { "usage": "lint", "commande": "pip install -e .", "etat": "a-verifier",
-      "raison": "Maestro ne la joue pas sans vous — …", "code": null, "sortie": "", "duree_s": 0 }
+      "raison": "pas jouée — commande hors de la portée « projet » : …", "code": null, "sortie": "", "duree_s": 0 }
   ]
 }
 ```

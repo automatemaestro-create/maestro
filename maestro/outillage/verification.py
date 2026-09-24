@@ -317,15 +317,15 @@ class Verificateur:
         """
         motif = portee.commande_hors_portee(commande.commande).replace(f" ({copie})", "")
         if motif:
-            # Le motif de la portée dit déjà qu'une personne tranche : ne pas le redire
-            # (relevé par le regard neuf de #1160).
-            return _a_verifier(commande, f"Maestro ne la joue pas sans vous — {motif}")
+            # Le motif de la portée dit déjà qu'une personne tranche : la raison ne dit
+            # que le fait, « pas jouée » (relevé deux fois par le regard neuf de #1160).
+            return _a_verifier(commande, f"pas jouée — {motif}")
         reste = self.delais.total_s - (time.monotonic() - debut)
         if reste <= 0:
             return _a_verifier(
                 commande,
-                "le temps alloué à la vérification de cet outillage était épuisé avant "
-                "son tour",
+                "le temps alloué à la vérification de cet outillage était épuisé : rien "
+                "de plus n'a été joué",
             )
         demarrage = commande.usage == USAGE_DEMARRER
         delai = self.delais.demarrage_s if demarrage else min(self.delais.commande_s, reste)
@@ -360,19 +360,25 @@ def _injouable(
     lui-même quand il sera écrit), le poste ensuite.
     """
     if vide:
+        # « Le dossier est vide » se lisait juste sous « 7 fichiers écrits dans … » et
+        # le contredisait (regard neuf de #1160) : ce qui manque est le projet, pas des
+        # fichiers — l'outillage, lui, vient d'y être écrit.
         return (
-            "le dossier du projet est encore vide, rien ne peut encore la jouer ; elle "
-            "le sera à la prochaine écriture de l'outillage"
+            "le projet n'a encore aucun fichier en dehors de son outillage : rien ne "
+            "peut s'y jouer avant, tout le sera à la prochaine écriture de l'outillage"
         )
+    # Des raisons **neutres en nombre** : l'écran dit une seule fois celle que plusieurs
+    # commandes partagent (« Les 5 commandes à vérifier, pour une même raison : … »),
+    # et un « elle » y renvoyait à une commande quand la phrase en comptait cinq.
     if commande.chemin and not (racine / PurePosixPath(commande.chemin)).exists():
         return (
-            f"`{commande.chemin}` n'existe pas encore dans le projet ; elle sera jouée "
-            "quand il existera, à la prochaine écriture de l'outillage"
+            f"`{commande.chemin}` n'existe pas encore dans le projet : à jouer quand il "
+            "existera, à la prochaine écriture de l'outillage"
         )
     if interprete is None:
         return (
-            "aucun bash n'a été trouvé sur ce poste pour la jouer — celui que les agents "
-            "utilisent (Git Bash sous Windows)"
+            "aucun bash n'a été trouvé sur ce poste pour jouer les commandes — celui que "
+            "les agents utilisent (Git Bash sous Windows)"
         )
     return ""
 

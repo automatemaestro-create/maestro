@@ -263,9 +263,14 @@ def test_un_projet_neuf_encore_vide_ecrit_ses_commandes_a_verifier_et_le_dit(
 
     assert joueur.joues == []
     assert {v.etat for v in preparation.rapport.verifications} == {A_VERIFIER}
-    assert all("encore vide" in v.raison for v in preparation.rapport.verifications)
+    assert all(
+        "aucun fichier en dehors de son outillage" in v.raison
+        for v in preparation.rapport.verifications
+    )
     agents = (racine / "AGENTS.md").read_text(encoding="utf-8")
-    assert "**À vérifier** : le dossier du projet est encore vide" in _ligne(agents, "npm ci")
+    assert "**À vérifier** : le projet n'a encore aucun fichier en dehors de son outillage" in (
+        _ligne(agents, "npm ci")
+    )
 
 
 def test_une_commande_dont_le_fichier_n_existe_pas_encore_est_a_verifier(
@@ -279,7 +284,7 @@ def test_une_commande_dont_le_fichier_n_existe_pas_encore_est_a_verifier(
     assert joueur.joues == []
     raisons = {v.raison for v in preparation.rapport.verifications}
     assert raisons == {
-        "`pyproject.toml` n'existe pas encore dans le projet ; elle sera jouée quand il "
+        "`pyproject.toml` n'existe pas encore dans le projet : à jouer quand il "
         "existera, à la prochaine écriture de l'outillage"
     }
 
@@ -302,7 +307,7 @@ def test_une_commande_hors_de_la_portee_du_projet_n_est_pas_jouee(tmp_path: Path
     verdicts = {v.commande: v for v in preparation.rapport.verifications}
     for commande in ("pip install -e .", "ruff check ../voisin"):
         assert verdicts[commande].etat == A_VERIFIER
-        assert verdicts[commande].raison.startswith("Maestro ne la joue pas sans vous")
+        assert verdicts[commande].raison.startswith("pas jouée — commande hors de la portée")
         # La copie est un chemin temporaire : il n'a rien à faire dans `AGENTS.md`.
         assert execution.PREFIXE_COPIE not in verdicts[commande].raison
     assert "installe hors du dossier du projet" in verdicts["pip install -e ."].raison

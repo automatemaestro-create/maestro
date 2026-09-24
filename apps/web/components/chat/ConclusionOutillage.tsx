@@ -528,8 +528,11 @@ function RapportCourt({ rapport }: { rapport: RapportGenerationOutillage }) {
             </Bouton>
             <RecapitulatifVerifications verifications={verifications} />
           </div>
+          {/* Un filet sépare le compte de la liste : sans lui, à 277 px, le badge
+              « 1 à vérifier » du compte et le « à vérifier » de la première ligne
+              s'empilaient sans qu'on voie où finissait l'un (regard neuf de #1160). */}
           {deplie && (
-            <div id={idDetail}>
+            <div id={idDetail} className="border-t border-bord pt-2">
               <ListeVerifications verifications={verifications} />
             </div>
           )}

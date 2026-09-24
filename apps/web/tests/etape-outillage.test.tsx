@@ -400,7 +400,7 @@ describe("le verdict des commandes écrites, dans le rapport (#1160)", () => {
               commande: "pip install -r requirements.txt",
               etat: "a-verifier",
               raison:
-                "Maestro ne la joue pas sans vous — `pip` installe hors du dossier du projet",
+                "pas jouée — commande hors de la portée « projet » : `pip` installe hors du dossier du projet. Une personne tranche.",
               code: null,
               sortie: "",
               duree_s: 0,
@@ -457,8 +457,9 @@ describe("le verdict des commandes écrites, dans le rapport (#1160)", () => {
     // Une vérifiée n'a que sa ligne : ni sa sortie, ni sa raison.
     expect(lignes[1]).not.toHaveTextContent("6 passed");
     expect(lignes[1]).not.toHaveTextContent("sans erreur");
-    // Ce qui n'a pas été joué dit pourquoi, et ses accents graves sont du code.
+    // Ce qui n'a pas été joué dit pourquoi, en phrase, et ses accents graves sont du code.
     expect(lignes[0]).toHaveTextContent("à vérifier");
+    expect(lignes[0]).toHaveTextContent("Pas jouée — commande hors de la portée");
     expect(lignes[0]).toHaveTextContent("hors du dossier du projet");
     expect(lignes[0].querySelectorAll("code")[1]?.textContent).toBe("pip");
     expect(lignes[0]).not.toHaveTextContent("`");

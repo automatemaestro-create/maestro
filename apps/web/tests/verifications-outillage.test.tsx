@@ -19,6 +19,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   CompteVerifications,
+  enPhrase,
   LIGNES_DE_SORTIE,
   ListeVerifications,
   RecapitulatifVerifications,
@@ -56,7 +57,57 @@ describe("le verdict des commandes écrites", () => {
     );
     const ligne = screen.getByRole("listitem");
     expect(ligne).toHaveTextContent("à vérifier");
-    expect(ligne).toHaveTextContent("un état futur");
+    expect(ligne).toHaveTextContent("Un état futur.");
+  });
+
+  it("dit une seule fois la raison que toutes les commandes à vérifier partagent", () => {
+    const raison =
+      "le projet n'a encore aucun fichier en dehors de son outillage : rien ne peut s'y jouer avant";
+    render(
+      <ListeVerifications
+        verifications={["npm ci", "npm test", "npm run lint"].map((commande) =>
+          verification({ commande, etat: "a-verifier", raison, code: null }),
+        )}
+      />,
+    );
+
+    // Une fois, en tête de liste — minuscule après le deux-points, point final —,
+    // jamais trois fois à l'identique.
+    expect(screen.getAllByText(/aucun fichier en dehors de son outillage/)).toHaveLength(1);
+    expect(
+      screen.getByText(/Les 3 commandes à vérifier, pour une même raison/),
+    ).toHaveTextContent(
+      "pour une même raison : le projet n'a encore aucun fichier en dehors de son outillage : rien ne peut s'y jouer avant.",
+    );
+    expect(screen.getAllByRole("listitem")).toHaveLength(3);
+  });
+
+  it("garde chaque raison sur sa ligne quand elles diffèrent", () => {
+    render(
+      <ListeVerifications
+        verifications={[
+          verification({ commande: "a", etat: "a-verifier", raison: "une raison" }),
+          verification({ commande: "b", etat: "a-verifier", raison: "une autre" }),
+        ]}
+      />,
+    );
+
+    const lignes = screen.getAllByRole("listitem");
+    expect(lignes[0]).toHaveTextContent("Une raison.");
+    expect(lignes[1]).toHaveTextContent("Une autre.");
+    expect(screen.queryByText(/pour une même raison/)).toBeNull();
+  });
+
+  it("met une raison du moteur en phrase, sans doubler sa ponctuation", () => {
+    expect(enPhrase("pas jouée — une personne tranche.")).toBe(
+      "Pas jouée — une personne tranche.",
+    );
+    expect(enPhrase("elle a rendu la main")).toBe("Elle a rendu la main.");
+    expect(enPhrase("  ")).toBe("");
+    // Les guillemets français ne restent jamais seuls en bout de ligne.
+    expect(enPhrase("hors de la portée « projet » : pip")).toBe(
+      "Hors de la portée « projet » : pip.",
+    );
   });
 
   it("garde en texte un accent grave orphelin", () => {

@@ -26,7 +26,11 @@
  *   d'après *pre-commit.ci* (« exit code: 1 », puis la sortie, sous la seule ligne
  *   en échec). La variante qui repliait la liste a été écartée sur pièces : la
  *   commande qui échoue et sa sortie passaient derrière un clic ;
- * - **ce qui n'a pas été joué dit pourquoi, sur sa ligne** — jamais une légende ;
+ * - **ce qui n'a pas été joué dit pourquoi, sur sa ligne** — jamais une légende,
+ *   **sauf** une raison que toutes les commandes « à vérifier » partagent : elle se
+ *   dit alors une fois, en tête de liste (`raisonCommune`). Amendement consigné sur
+ *   le ticket (second « Variante retenue » de #1160) après la relecture : cinq lignes
+ *   identiques sous un projet neuf se lisaient comme cinq problèmes ;
  * - **la réussite en retrait** : « vérifiée » en ton neutre, comme GitHub Actions
  *   laisse ses réussites en gris ; l'échec seul porte la couleur d'alerte
  *   (correction du regard neuf).
@@ -164,46 +168,105 @@ export function CompteVerifications({
 }
 
 /**
+ * Une raison du moteur en phrase : majuscule en tête, ponctuation finale. Le moteur les
+ * écrit en minuscule pour qu'elles s'insèrent dans `AGENTS.md` après « À vérifier : »
+ * ; seules, elles se lisaient sans majuscule ni point à côté d'une autre qui en avait
+ * (regard neuf de #1160).
+ */
+export function enPhrase(raison: string): string {
+  const nette = raison.trim();
+  if (nette === "") return nette;
+  return ponctuee(nette.charAt(0).toLocaleUpperCase("fr") + nette.slice(1));
+}
+
+/**
+ * Une raison ponctuée sans changer sa casse — celle qui suit un deux-points —, ses
+ * guillemets français tenus à leur mot par une espace insécable : à 277 px, « « »
+ * restait seul en fin de ligne (second regard neuf de #1160).
+ */
+export function ponctuee(raison: string): string {
+  const nette = raison.trim().replace(/« /g, "« ").replace(/ »/g, " »");
+  if (nette === "") return nette;
+  return /[.!?…]$/.test(nette) ? nette : `${nette}.`;
+}
+
+/**
+ * La raison que **toutes** les commandes « à vérifier » partagent, s'il y en a au moins
+ * deux — `null` sinon. Dite alors une fois, en tête de liste, plutôt que répétée à
+ * l'identique sous chaque ligne : cinq fois la même phrase sous un projet neuf se
+ * lisaient comme cinq problèmes (regard neuf de #1160). Des raisons qui diffèrent
+ * restent chacune sur sa ligne.
+ */
+export function raisonCommune(verifications: VerificationOutillage[]): string | null {
+  const raisons = verifications
+    .filter((v) => etatConnu(v.etat) === "a-verifier")
+    .map((v) => v.raison.trim());
+  if (raisons.length < 2 || raisons[0] === "") return null;
+  return raisons.every((r) => r === raisons[0]) ? raisons[0] : null;
+}
+
+/**
  * La liste de contrôle : une ligne par commande, dans l'ordre joué, et sous l'échec
  * son code puis la fin de sa sortie, sous « à vérifier » sa raison.
+ *
+ * Une **sous-grille** aligne toutes les commandes sur la même verticale, quelle que
+ * soit la largeur de leur badge, et garde badge et commande sur la même ligne jusque
+ * dans la colonne de conversation : à 277 px, un badge seul sur sa ligne s'empilait
+ * sous le récapitulatif (regard neuf de #1160). Le détail d'une ligne prend toute la
+ * largeur, pour qu'une sortie ne tienne pas dans une demi-colonne.
  */
 export function ListeVerifications({
   verifications,
 }: {
   verifications: VerificationOutillage[];
 }) {
+  const commune = raisonCommune(verifications);
   return (
-    <ul className="flex flex-col gap-2" aria-label="Verdict de chaque commande">
-      {verifications.map((v) => {
-        const etat = etatConnu(v.etat);
-        const verdict = verdictDe(v.etat);
-        return (
-          <li key={v.commande} className="flex min-w-0 flex-col gap-1">
-            <div className="flex min-w-0 flex-wrap items-center gap-2">
+    <div className="flex flex-col gap-2">
+      {commune !== null && (
+        <p className="text-annexe text-texte-secondaire">
+          Les {compterVerifications(verifications)["a-verifier"]} commandes à
+          vérifier, pour une même raison : <TexteAvecCode texte={ponctuee(commune)} />
+        </p>
+      )}
+      <ul
+        className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-2 gap-y-2"
+        aria-label="Verdict de chaque commande"
+      >
+        {verifications.map((v) => {
+          const etat = etatConnu(v.etat);
+          const verdict = verdictDe(v.etat);
+          return (
+            <li
+              key={v.commande}
+              className="col-span-2 grid grid-cols-subgrid items-center gap-y-1"
+            >
               <BadgeEtat contour ton={verdict.ton} icone={verdict.icone}>
                 {verdict.libelle}
               </BadgeEtat>
-              <code className="min-w-0 font-mono text-annexe break-all text-texte">
+              {/* `break-words` : une commande se replie entre ses mots, et seul un mot
+                  plus long que la colonne se coupe (« require / ments.txt » à 277 px). */}
+              <code className="min-w-0 font-mono text-annexe break-words text-texte">
                 {v.commande}
               </code>
-            </div>
-            {etat === "echouee" && (
-              <>
-                <span className="text-annexe text-alerte-texte">
-                  {v.code !== null ? `code ${v.code}` : "sans code de retour"}
+              {etat === "echouee" && (
+                <div className="col-span-2 flex min-w-0 flex-col gap-1">
+                  <span className="text-annexe text-alerte-texte">
+                    {v.code !== null ? `code ${v.code}` : "sans code de retour"}
+                  </span>
+                  {v.sortie !== "" && <FinDeSortie sortie={v.sortie} />}
+                </div>
+              )}
+              {etat === "a-verifier" && v.raison !== "" && commune === null && (
+                <span className="col-span-2 text-annexe text-texte-secondaire">
+                  <TexteAvecCode texte={enPhrase(v.raison)} />
                 </span>
-                {v.sortie !== "" && <FinDeSortie sortie={v.sortie} />}
-              </>
-            )}
-            {etat === "a-verifier" && v.raison !== "" && (
-              <span className="text-annexe text-texte-secondaire">
-                <TexteAvecCode texte={v.raison} />
-              </span>
-            )}
-          </li>
-        );
-      })}
-    </ul>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
 
@@ -226,7 +289,10 @@ function FinDeSortie({ sortie }: { sortie: string }) {
   const visibles = lignes.slice(-LIGNES_DE_SORTIE).join("\n");
   return (
     <>
-      <pre className="rounded-carte border border-bord bg-surface-creuse p-2.5 font-mono text-micro whitespace-pre-wrap break-all text-texte">
+      {/* `break-words` et non `break-all` : à 320 px, `break-all` coupait les mots de
+          la sortie en plein milieu (« blank li / nes », relecture de #1160) ; ici seul
+          un mot plus long que la ligne se coupe. */}
+      <pre className="rounded-carte border border-bord bg-surface-creuse p-2.5 font-mono text-micro whitespace-pre-wrap break-words text-texte">
         {coupee ? `…\n${visibles}` : visibles}
       </pre>
       {coupee && (
