@@ -21,12 +21,15 @@ from dataclasses import dataclass
 from typing import Any
 
 from maestro.agents.catalog import Agent
+from maestro.familles_claude import derniere_version
 from maestro.orchestrator.schema import Task
 from maestro.providers.base import ModelProvider
 
 #: Modèle léger par défaut du classifieur (docs/01 §3.2 : « un modèle rapide,
-#: ex. Haiku »). Indépendant du rôle : remplaçable sans toucher au routage.
-MODELE_CLASSIFIEUR = "claude-haiku-4-5"
+#: ex. Haiku ») — la dernière version de la famille, lue dans `familles-claude.tsv`
+#: comme celle des agents (#1270). Le classifieur reste léger : il route, il ne fait
+#: pas le travail. Indépendant du rôle : remplaçable sans toucher au routage.
+MODELE_CLASSIFIEUR = derniere_version("haiku")
 
 CLASSIFIER_SYSTEM_PROMPT = """\
 Tu es le routeur de Maestro : on te soumet UNE tâche et une liste d'agents \

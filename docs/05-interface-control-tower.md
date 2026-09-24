@@ -4413,10 +4413,12 @@ fournisseur au registre suffit à l'y faire apparaître.
   "fournisseurs": [
     {
       "nom": "claude",                       // la clé du REGISTRE, à écrire dans `fournisseur`
-      "modeles": [                           // la gamme ANNONCÉE (peut être vide)
+      "modeles": [                           // la gamme ANNONCÉE (peut être vide) ; chez Claude, la
+                                             // dernière version de chaque famille, lue dans
+                                             // maestro/providers/familles-claude.tsv (#1270)
         {
-          "nom": "claude-opus-5",            // la chaîne exacte attendue par le fournisseur
-          "libelle": "Opus 5",               // repli sur `nom` s'il n'y en a pas
+          "nom": "claude-opus-5-5",          // la chaîne exacte attendue par le fournisseur
+          "libelle": "Opus 5.5",             // repli sur `nom` s'il n'y en a pas
           "efforts": ["low", "medium", "high", "xhigh", "max"]
                                              // VIDE = « ce modèle ne se règle pas en effort »,
                                              // jamais « on ne sait pas » ; vide aussi hors gamme
