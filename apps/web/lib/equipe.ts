@@ -11,6 +11,8 @@
 
 import type {
   AutorisationEquipe,
+  CorrectionEquipe,
+  MembreEquipe,
   MessageChat,
   PropositionEquipe,
   RoleEquipe,
@@ -103,6 +105,67 @@ export function rolesValides(
       })),
       politique: r.politique,
     }));
+}
+
+/** L'équipe **telle qu'une étape la montre** : ses lignes, ses cases, ses instances. */
+export type EquipeMontree = {
+  roles: RoleEquipe[];
+  retenus: ReadonlySet<string>;
+  instances: Readonly<Record<string, number>>;
+};
+
+/**
+ * L'équipe montrée, dans la forme d'une demande de correction (#1159) — cases et
+ * instances comprises, retraits aussi : « remets les tests » n'a de sens que si
+ * le modèle sait qu'ils ont été retirés.
+ */
+export function membresMontres(equipe: EquipeMontree): MembreEquipe[] {
+  return equipe.roles.map((r) => ({
+    nom: r.nom,
+    role: r.role,
+    retenu: equipe.retenus.has(r.nom),
+    instances: equipe.instances[r.nom] ?? r.instances,
+  }));
+}
+
+/**
+ * L'équipe montrée, la correction **appliquée** (#1159) — rien n'est créé.
+ *
+ * La correction atterrit sur l'équipe elle-même (veille consignée sur #1159,
+ * d'après *Crew Studio*) : un rôle ajouté devient une ligne de plus, **retenue**,
+ * en fin de liste — l'ordre de la proposition ne bouge pas (variante retenue A) ;
+ * un retrait décoche, une remise recoche, une instance change le compteur. Un
+ * ajout dont le nom est déjà montré est ignoré — l'API les rend libres, et une
+ * seconde ligne du même nom perdrait sa case (même `id`). `ajoutes` nomme les
+ * lignes nées de la demande, que l'écran signale comme telles ; `change` dit si
+ * la demande a touché quoi que ce soit.
+ */
+export function appliquerCorrection(
+  equipe: EquipeMontree,
+  correction: CorrectionEquipe,
+): EquipeMontree & { ajoutes: string[]; change: boolean } {
+  const montres = new Set(equipe.roles.map((r) => r.nom));
+  const ajouts = correction.ajouts.filter((r) => !montres.has(r.nom));
+  const retenus = new Set(equipe.retenus);
+  for (const nom of correction.retraits) retenus.delete(nom);
+  for (const nom of [...correction.remis, ...ajouts.map((r) => r.nom)]) {
+    retenus.add(nom);
+  }
+  return {
+    roles: [...equipe.roles, ...ajouts],
+    retenus,
+    instances: {
+      ...equipe.instances,
+      ...Object.fromEntries(ajouts.map((r) => [r.nom, r.instances])),
+      ...correction.instances,
+    },
+    ajoutes: ajouts.map((r) => r.nom),
+    change:
+      ajouts.length > 0 ||
+      correction.retraits.length > 0 ||
+      correction.remis.length > 0 ||
+      Object.keys(correction.instances).length > 0,
+  };
 }
 
 /** « Développeur ×2 · QA » — l'équipe gardée, en une ligne. */

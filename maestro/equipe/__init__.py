@@ -25,13 +25,18 @@ seulement : une équipe *branche* les skills que l'outillage a recommandés
 ait à les distinguer — un projet analysé (#1030) et un projet neuf dont on a
 recueilli les choix (#1031) rendent la même paire `Constats` / `Recommandation`.
 
-Cinq modules, et la frontière entre eux est celle de ce qui décide :
+Six modules, et la frontière entre eux est celle de ce qui décide :
 
 - `maestro.equipe.modele` — les formes, **inertes** : elles décrivent et
   sérialisent, elles ne touchent à rien ;
 - `maestro.equipe.gabarits` — les cinq rôles que Maestro sait proposer, dérivés
   des agents figés devenus **gabarits** (docs/37 §2.1), et la règle qui dit si
-  ce projet-là en appelle un ;
+  ce projet-là en appelle un. Depuis #1159 ce n'est plus qu'une **matière** et un
+  **repli** : c'est le modèle qui compose ;
+- `maestro.equipe.composition` (#1159, docs/41) — l'équipe composée par le
+  **modèle** pour le besoin réel du projet, et corrigée en langage naturel : ce
+  qu'on lui demande, et la **vérification** de ce qu'il répond. Pur lui aussi —
+  l'appel vit dans `maestro.controltower.equipe` (`CompositeurEquipe`) ;
 - `maestro.equipe.proposition` — des constats et de l'outillage à l'équipe, avec
   pour chaque rôle sa raison, son endroit, ses instances et ses autorisations ;
 - `maestro.equipe.creation` (#1040) — de l'équipe **validée** aux trois artefacts

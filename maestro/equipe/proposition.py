@@ -62,6 +62,7 @@ from maestro.equipe.gabarits import (
 )
 from maestro.equipe.manque import RoleManquant
 from maestro.equipe.modele import (
+    ORIGINE_COMPOSITION_REGLES,
     ORIGINE_PLAYBOOK_GABARIT,
     ORIGINES_PLAYBOOK,
     AutorisationProposee,
@@ -155,6 +156,7 @@ def proposer_equipe(
         roles=tuple(roles),
         ecartes=tuple(ecartes),
         source=dict(source) if source is not None else None,
+        composition_origine=ORIGINE_COMPOSITION_REGLES,
     )
 
 
@@ -251,8 +253,9 @@ def _role(
     skills: Mapping[str, Entree],
 ) -> RolePropose:
     """Le rôle proposé pour ce gabarit : ses skills, ses instances, ses autorisations."""
-    branches = _skills_du_role(gabarit, skills)
-    autorisations = _autorisations(gabarit, constats)
+    outils = profil_outille(gabarit.agent).outils
+    branches = skills_par_usages(gabarit.usages, skills)
+    autorisations = autorisations_du_role(outils, gabarit.usages, constats)
     instances, raison_instances = (
         gabarit.instances_selon(constats)
         if gabarit.instances_selon is not None
@@ -269,14 +272,19 @@ def _role(
         raison_instances=raison_instances,
         playbook=gabarit.playbook_de_repli(),
         playbook_origine=ORIGINE_PLAYBOOK_GABARIT,
-        playbook_raison=(
-            f"playbook du gabarit « {gabarit.gabarit} » : sa rédaction pour ce projet "
-            "n'a pas encore eu lieu"
-        ),
-        intention=_intention(gabarit, constats, branches, autorisations),
-        outils=profil_outille(gabarit.agent).outils,
+        playbook_raison=raison_playbook_gabarit(gabarit.gabarit),
+        intention=intention_du_role(gabarit.role, constats, branches, autorisations),
+        outils=outils,
         skills=branches,
         autorisations=autorisations,
+    )
+
+
+def raison_playbook_gabarit(gabarit: str) -> str:
+    """Ce qu'on dit d'un playbook de gabarit **avant** que sa rédaction ait été tentée."""
+    return (
+        f"playbook du gabarit « {gabarit} » : sa rédaction pour ce projet "
+        "n'a pas encore eu lieu"
     )
 
 
@@ -293,17 +301,21 @@ def _skills_recommandes(recommandation: Recommandation) -> dict[str, Entree]:
     }
 
 
-def _skills_du_role(
-    gabarit: Gabarit, skills: Mapping[str, Entree]
+def skills_par_usages(
+    usages: Sequence[tuple[str, str]], skills: Mapping[str, Entree]
 ) -> tuple[SkillBranche, ...]:
-    """Les skills du projet que ce rôle branche — par usage, jamais par nom.
+    """Les skills du projet qu'un rôle branche — par usage, jamais par nom.
+
+    `usages` porte, pour chaque usage, la raison pour laquelle **ce rôle-là** le
+    branche : celles d'un gabarit (`Gabarit.usages`), ou celles qu'un rôle
+    composé par le modèle a nommées (`maestro.equipe.composition`, #1159).
 
     Un usage que la recommandation a écarté (aucune commande constatée) ne
     produit **rien** : le rôle n'est pas branché sur un skill qui n'existera
     pas, et c'est la recommandation qui porte déjà la raison de son absence.
     """
     branches: list[SkillBranche] = []
-    for usage, raison in gabarit.usages:
+    for usage, raison in usages:
         nom_skill = SKILL_PAR_USAGE.get(usage, ("", ""))[0]
         entree = skills.get(nom_skill)
         if entree is None:
@@ -320,10 +332,14 @@ def _skills_du_role(
     return tuple(branches)
 
 
-def _autorisations(
-    gabarit: Gabarit, constats: Constats
+def autorisations_du_role(
+    outils: Sequence[str], usages: Sequence[tuple[str, str]], constats: Constats
 ) -> tuple[AutorisationProposee, ...]:
     """Les autorisations proposées pour ce rôle — chacune avec sa raison.
+
+    Elles ne dépendent que de ce que le rôle **tient** (`outils`) et des usages
+    qu'il branche : un rôle composé par le modèle hors des gabarits (#1159) les
+    reçoit donc exactement comme un rôle de gabarit, par la même règle.
 
     **Aucune entrée `allow`, et c'est une décision.** Une liste `allow` non vide
     est *fermée* (`PolitiqueOutils`) : la remplir avec les outils du profil
@@ -341,10 +357,9 @@ def _autorisations(
     profil lisent et écrivent dans un espace de travail déjà borné par la
     frontière d'écriture (#839).
     """
-    outils = profil_outille(gabarit.agent).outils
     if OUTIL_EXECUTION not in outils:
         return ()
-    return (_cran_execution(gabarit, constats),)
+    return (_cran_execution(usages, constats),)
 
 
 #: Ce que la portée « projet » **garde** pour la personne, dit une fois et repris
@@ -359,7 +374,9 @@ CE_QUI_VOUS_REVIENT = (
 )
 
 
-def _cran_execution(gabarit: Gabarit, constats: Constats) -> AutorisationProposee:
+def _cran_execution(
+    usages: Sequence[tuple[str, str]], constats: Constats
+) -> AutorisationProposee:
     """Le cran proposé pour l'exécution de commandes — et **ce qu'il borne**.
 
     Un rôle recruté pour un projet y **exécute son travail sans attendre
@@ -393,7 +410,7 @@ def _cran_execution(gabarit: Gabarit, constats: Constats) -> AutorisationPropose
     qui sait distinguer un `SELECT` d'un `DROP` — un cran ne le sait pas, et le
     poser bloquerait `ls` sans empêcher quoi que ce soit.
     """
-    declarees = _commandes_declarees(gabarit, constats)
+    declarees = _commandes_declarees(usages, constats)
     if not declarees:
         return AutorisationProposee(
             outil=OUTIL_EXECUTION,
@@ -424,7 +441,9 @@ def _cran_execution(gabarit: Gabarit, constats: Constats) -> AutorisationPropose
     )
 
 
-def _commandes_declarees(gabarit: Gabarit, constats: Constats) -> tuple[str, ...]:
+def _commandes_declarees(
+    usages_du_role: Sequence[tuple[str, str]], constats: Constats
+) -> tuple[str, ...]:
     """Les endroits du projet où les commandes de ce rôle ont été **lues**.
 
     Deux gisements, et les deux comptent : une commande que le projet *déclare*
@@ -460,7 +479,7 @@ def _commandes_declarees(gabarit: Gabarit, constats: Constats) -> tuple[str, ...
     module. Le motif d'origine tient toujours pour ce qu'il bornait : une
     commande que Maestro s'est écrite à lui-même n'autorise rien.
     """
-    usages = {usage for usage, _ in gabarit.usages}
+    usages = {usage for usage, _ in usages_du_role}
     endroits: list[str] = []
     for commande in constats.commandes:
         if commande.usage in usages and commande.origine == ORIGINE_DECLAREE:
@@ -505,11 +524,18 @@ REGIME_PORTEE: dict[str, str] = {
 }
 
 
-def _intention(
-    gabarit: Gabarit,
+#: Le nombre de compétences qu'une intention nomme pour un rôle composé (#1159). Borné
+#: parce que l'intention l'est (`INTENTION_MAX`, #257) et que le régime d'exécution,
+#: qui la ferme, serait le premier coupé.
+COMPETENCES_DANS_L_INTENTION = 5
+
+
+def intention_du_role(
+    role: str,
     constats: Constats,
     skills: Sequence[SkillBranche],
     autorisations: Sequence[AutorisationProposee],
+    competences: Sequence[str] = (),
 ) -> str:
     """La phrase d'où #257 écrira le playbook de ce rôle — *pour ce projet*.
 
@@ -528,11 +554,19 @@ def _intention(
     qu'on relit pour juger un playbook qu'on trouve à côté de la plaque, et un
     playbook sans la phrase dont il est né ne se juge pas (`DefinitionProposee`
     garde la sienne pour la même raison).
+
+    `competences` ne sert qu'aux rôles **composés par le modèle** (#1159) : un
+    libellé comme « Sécurité » ne dit pas à #257 sur quoi porte le métier, là où
+    le playbook d'un gabarit a déjà son document. Vide — le cas d'un gabarit —,
+    la phrase est celle d'avant, au caractère près.
     """
     langages = ", ".join(langage.nom for langage in constats.langages[:3])
     noms = ", ".join(skill.nom for skill in skills)
+    metier = ", ".join(competences[:COMPETENCES_DANS_L_INTENTION])
     morceaux = [
-        f"Un agent « {gabarit.role} » pour un projet",
+        f"Un agent « {role} »",
+        f" ({metier})" if metier else "",
+        " pour un projet",
         f" écrit en {langages}" if langages else "",
         ". Il travaille dans le dossier du projet",
         f" et appelle les skills du projet : {noms}" if noms else "",
@@ -570,14 +604,18 @@ def _ecarte(gabarit: Gabarit, constats: Constats) -> RoleEcarte:
     cela, « pas de rôle base de données » se lirait comme un oubli de l'analyse
     plutôt que comme un fait du projet. Elle rappelle aussi que l'analyse a des
     bornes — un projet tronqué peut porter ce que l'analyse n'a pas vu.
+
+    ⚠ Elle ne dit **aucun geste** (#1159). Elle promettait « vous pouvez l'ajouter à
+    la validation » quand l'écran ne permettait que de décocher ; et elle est servie
+    à deux surfaces (l'étape d'équipe, la carte du fil) qui n'offrent pas les mêmes
+    contrôles. Le geste se nomme à côté du contrôle qui le porte, par l'écran.
     """
     return RoleEcarte(
         nom=gabarit.nom,
         role=gabarit.role,
         raison=(
             f"rien dans les bornes de l'analyse ne justifie un rôle « {gabarit.role} » : "
-            f"{_manque(gabarit)}. Vous pouvez l'ajouter à la validation si le projet en "
-            "a besoin"
+            f"{_manque(gabarit)}"
         ),
     )
 
