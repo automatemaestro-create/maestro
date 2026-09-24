@@ -271,8 +271,10 @@ export type Chat = {
    *
    * Le geste et la suite rejoignent le fil comme un tour ordinaire, exactement
    * comme le cadrage : le fil reste la seule mémoire du questionnaire.
+   *
+   * `libre` (#1147) : `valeur` est une réponse avec ses mots, pas une option.
    */
-  repondreQuestion: (valeur: string) => Promise<void>;
+  repondreQuestion: (valeur: string, libre?: boolean) => Promise<void>;
   /**
    * Valide — ou décline — l'équipe que le fil propose à un projet sans agent
    * (#1146). `roles` est l'équipe gardée, `propositionId` la proposition dont
@@ -634,11 +636,12 @@ export function useChat(agent: string, projetId: string | null = null): Chat {
    * et l'API la relit. Un écran ne peut donc pas se tromper de question.
    */
   const repondreQuestion = useCallback(
-    async (valeur: string) => {
+    async (valeur: string, libre = false) => {
       setEnvoi(true);
       try {
         const paire = await repondreQuestionOutillage(agent, {
           valeur,
+          libre,
           conversation,
         });
         setDirects((gardes) => [...gardes, ...paire]);

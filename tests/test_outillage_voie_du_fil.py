@@ -42,12 +42,61 @@ from fastapi.testclient import TestClient
 
 from maestro.controltower import ControlTowerState, InMemoryEventBus, create_app
 from maestro.controltower.chat import ChatStore
+from maestro.controltower.outillage import ComprehensionModele
 from maestro.controltower.projets import ServiceProjets
 from maestro.outillage import CHEMIN_MANIFESTE
 from maestro.projets import ProjetStore
+from maestro.providers.base import ModelProvider
 
 #: Le fil de l'orchestration : le seul qui conduise un questionnaire d'outillage.
 FIL = "orchestrateur"
+
+#: Ce qu'un modèle comprend d'une vitrine web, selon ce qui a déjà été répondu.
+_CONSTATS = [
+    {"cle": "nature", "valeur": "Un site vitrine", "parce_que": "vous l'avez décrit ainsi"},
+    {"cle": "langages", "valeur": "TypeScript", "parce_que": "un site Astro"},
+    {"cle": "manifeste", "valeur": "package.json", "parce_que": "le manifeste de npm"},
+    {"cle": "gestionnaire", "valeur": "npm", "parce_que": "le gestionnaire d'Astro"},
+    {"cle": "installer", "valeur": "npm ci", "parce_que": "installe les dépendances"},
+    {"cle": "tester", "valeur": "npx vitest run", "parce_que": "le lanceur d'Astro"},
+    {"cle": "demarrer", "valeur": "npm run dev", "parce_que": "le serveur de dev d'Astro"},
+]
+_FORGE = {
+    "cle": "forge",
+    "intitule": "Où le code vivra-t-il ?",
+    "options": [
+        {"valeur": "github", "libelle": "GitHub", "raison": "Pull Requests et Actions."},
+        {"valeur": "aucun", "libelle": "Nulle part", "raison": "Le projet reste local."},
+    ],
+    "recommande": "github",
+    "pourquoi": "Vous avez parlé de le publier : il lui faut une forge.",
+}
+
+
+class _Comprend(ModelProvider):
+    """Un faux modèle qui comprend **selon ce qui a été répondu** — les deux voies d'accord.
+
+    La réponse dépend du prompt, jamais de l'ordre des appels : le fil et l'étape de
+    création posent la même question au même point, et c'est ce que ③ compare.
+    """
+
+    name = "faux-comprend"
+
+    def supports(self, model: str) -> bool:
+        return True
+
+    async def generate(
+        self,
+        prompt: str,
+        *,
+        model: str,
+        system_prompt: str | None = None,
+        effort: str | None = None,
+    ) -> str:
+        if "- forge (" not in prompt:
+            return json.dumps({"constats": _CONSTATS, "questions": [_FORGE]})
+        forge = {"cle": "forge", "valeur": "github", "parce_que": "votre réponse"}
+        return json.dumps({"constats": [*_CONSTATS, forge], "questions": []})
 
 
 @pytest.fixture()
@@ -69,10 +118,10 @@ def atelier(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def client(tmp_path: Path, atelier: Path) -> Iterator[TestClient]:
     """L'app réelle : fil persisté dans `tmp_path`, projets bornés à l'atelier.
 
-    Aucun modèle n'est appelé, et ce n'est pas un aménagement de test : la suite
-    d'un questionnaire est une **fonction pure** de ce que le fil porte
-    (`maestro.outillage.questionnaire`), donc le répondeur de l'orchestration la
-    calcule sans juge (`ouvrir_questionnaire`, `repondre_question`).
+    Depuis #1147 le questionnaire **comprend** par le modèle : un faux fournisseur
+    le remplace, injecté une fois pour les deux voies (`create_app(comprehension=…)`)
+    — le répondeur de l'orchestration ne consulte toujours pas son juge pour la
+    suite d'un questionnaire (`ouvrir_questionnaire`, `repondre_question`).
     """
     app = create_app(
         bus=InMemoryEventBus(),
@@ -81,6 +130,7 @@ def client(tmp_path: Path, atelier: Path) -> Iterator[TestClient]:
         projets=ServiceProjets(
             ProjetStore(tmp_path / "depot"), racines_exploration=(atelier,)
         ),
+        comprehension=ComprehensionModele(_Comprend()),
     )
     with TestClient(app) as client:
         yield client
@@ -101,8 +151,9 @@ def _repondre_dans_le_fil(client: TestClient) -> str:
     """Le questionnaire joué **dans le fil**, jusqu'à sa conclusion ; rend son texte.
 
     On répond ce que Maestro propose — le geste par défaut de la carte (« Garder
-    ce choix »). Les clés ne sont donc pas écrites ici : ce que ce test garde est
-    le **chemin**, pas le catalogue de questions, qui a ses propres suites.
+    ce choix ») —, et avec ses mots quand la question n'a pas d'options (la
+    première, « Qu'est-ce que ce projet ? », #1147). Ce que ce test garde est le
+    **chemin**, pas les questions, qui ont leurs propres suites.
     """
     ouverture = client.post(f"/api/chat/{FIL}/outillage/questionnaire")
     assert ouverture.status_code == 201, ouverture.text
@@ -113,23 +164,29 @@ def _repondre_dans_le_fil(client: TestClient) -> str:
         question = message.get("question")
         if question is None:
             return str(message["contenu"])
-        geste = client.post(
-            f"/api/chat/{FIL}/outillage", json={"valeur": question["recommande"]}
+        corps = (
+            {"valeur": question["recommande"]}
+            if question["options"]
+            else {"valeur": "Un site vitrine pour un club de padel", "libre": True}
         )
+        geste = client.post(f"/api/chat/{FIL}/outillage", json=corps)
         assert geste.status_code == 201, geste.text
         _, message = geste.json()["messages"]
     raise AssertionError("le questionnaire du fil ne s'est pas conclu")
 
 
 def _choix_du_fil(client: TestClient) -> list[dict[str, Any]]:
-    """Les réponses telles que le fil les porte — ce que l'écran relit (`choixDuFil`).
+    """Les réponses et ce qui en a été compris — ce que l'écran relit (`choixAValider`).
 
-    Lues sur le champ `choix` des messages et **jamais dans leur texte** : c'est
-    la règle du canal (#685), et c'est ce qui fait que ces réponses-là sont
-    exactement celles qui partiront à la génération.
+    Lues sur les champs `choix` et `comprehension` des messages et **jamais dans
+    leur texte** : c'est la règle du canal (#685). Depuis #1147 la conclusion
+    porte ce que le modèle a compris, et c'est **elle** qui part à la génération —
+    sans rappeler le modèle, donc sans risquer qu'il comprenne autre chose.
     """
     fil = client.get(f"/api/chat/{FIL}").json()["messages"]
-    return [m["choix"] for m in fil if m.get("choix")]
+    donnees = [m["choix"] for m in fil if m.get("choix")]
+    compris = next((m["comprehension"] for m in reversed(fil) if m.get("comprehension")), [])
+    return [*donnees, *compris]
 
 
 def _manifeste(racine: Path) -> dict[str, Any]:
@@ -227,18 +284,21 @@ def test_le_fil_et_l_ecran_de_creation_ecrivent_le_meme_outillage(
     choix = _choix_du_fil(client)
 
     # Les mêmes réponses, rejouées par la voie sans état : ce que l'étape de
-    # création aurait accumulé à l'écran.
-    acquis: list[dict[str, Any]] = []
-    for c in choix:
+    # création accumule à l'écran — les réponses données, puis ce qui en a été
+    # compris au dernier tour.
+    donnees: list[dict[str, Any]] = []
+    for c in (c for c in choix if not c["deduit"]):
         etape = client.post(
-            f"/api/projets/{projet}/outillage/questionnaire", json={"choix": acquis}
+            f"/api/projets/{projet}/outillage/questionnaire", json={"choix": donnees}
         ).json()
         assert etape["question"] is not None, "le fil a posé plus de questions"
         assert etape["question"]["cle"] == c["cle"]
-        acquis = [*acquis, {"cle": c["cle"], "valeur": c["valeur"]}]
-    assert client.post(
-        f"/api/projets/{projet}/outillage/questionnaire", json={"choix": acquis}
-    ).json()["terminee"]
+        donnees = [*donnees, {"cle": c["cle"], "valeur": c["valeur"], "libre": c["libre"]}]
+    fin = client.post(
+        f"/api/projets/{projet}/outillage/questionnaire", json={"choix": donnees}
+    ).json()
+    assert fin["terminee"]
+    acquis = [*donnees, *fin["deductions"]]
 
     par_le_fil = client.post(
         f"/api/projets/{projet}/outillage/recommandation", json={"choix": choix}

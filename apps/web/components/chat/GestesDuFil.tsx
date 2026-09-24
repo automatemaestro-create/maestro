@@ -65,7 +65,8 @@
  * - **l'ordre**, qui est celui de #1025 étendu par #1031 : ce qui est le plus
  *   loin de la saisie est ce qui a le moins à voir avec elle. Les questions
  *   d'agents d'abord — elles portent sur un travail déjà en vol ; la question
- *   d'outillage ensuite — elle se répond d'un choix, pas d'une frappe ; la
+ *   d'outillage ensuite — elle se répond d'un choix, ou avec ses mots, et depuis
+ *   #1147 la zone de saisie juste dessous répond aussi (la carte le dit) ; la
  *   demande de cadrage en dernier, parce que c'est la seule qui remplace
  *   vraiment la zone de saisie, son objectif étant éditable ;
  * - **les trois ne s'excluent pas.** Un fil peut porter une question d'agent
@@ -152,7 +153,9 @@ export function useGestesDuFil(
         <QuestionDOutillage
           key={outillage.question.cle}
           question={outillage.question}
+          compris={outillage.comprehension ?? []}
           repondre={fil.repondreQuestion}
+          depuisLeFil
           enCours={fil.envoi}
         />
       )}

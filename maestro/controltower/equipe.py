@@ -93,7 +93,6 @@ from maestro.outillage.modele import Constats, Recommandation
 from maestro.outillage.questionnaire import (
     Choix,
     constats_depuis_choix,
-    deductions,
     recommandation_depuis_choix,
     source_manifeste_des_choix,
 )
@@ -203,7 +202,9 @@ class ServiceEquipe:
         gabarit n'est pas au catalogue : c'est un 422, pas un rôle inventé.
         """
         projet = self._projets.entite(id_projet)
-        acquis = [*choix, *deductions(choix)] if choix else []
+        # Les réponses d'un projet neuf arrivent avec ce qui en a été compris (#1147) :
+        # rien ne se re-déduit ici, et le modèle n'est pas rappelé.
+        acquis = list(choix)
         constats, recommandation, source = (
             await asyncio.to_thread(self._matiere_analysee, projet)
             if not acquis

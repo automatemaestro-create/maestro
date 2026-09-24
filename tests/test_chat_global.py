@@ -2372,7 +2372,12 @@ def test_le_silence_n_est_pas_un_accord() -> None:
         "_attentes",
     }
     assert repondeur._equipe is None and repondeur._recruteur is None
-    assert vars(repondeur._conducteur) == {}
+    # #1147 donne au conducteur un collaborateur, et un seul : celui qui comprend
+    # le projet (le modèle). La garantie est poussée d'un cran de plus : il ne
+    # porte que son fournisseur — **le même** que celui du juge —, jamais une
+    # réponse, un tour ou une question en cours.
+    assert set(vars(repondeur._conducteur)) == {"_comprehension"}
+    assert vars(repondeur._conducteur._comprehension) == {"_provider": juge}
     assert repondeur._modele is None
 
 

@@ -25,8 +25,12 @@
  *    déjà écrit n'a rien à valider ;
  * ⑤ **un questionnaire interrompu n'est pas un questionnaire conclu** : des
  *    réponses sans question en attente peuvent aussi être un geste dont la suite
- *    n'a pas pu être produite. C'est le moteur qui tranche (`terminee`), pas
- *    l'écran.
+ *    n'a pas pu être produite. Depuis #1147 la différence se **lit** sur le fil —
+ *    la conclusion porte ce que Maestro a compris, l'interruption non — et le
+ *    moteur n'est plus interrogé : il comprendrait une seconde fois, et pourrait
+ *    comprendre autre chose que ce que la personne a lu.
+ * ⑥ **ce qui part est ce qui a été compris** (#1147) : les réponses données et la
+ *    compréhension que porte la conclusion, jamais une seconde lecture.
  *
  * ⚠ Aucune géométrie ici (#308), aucun jugement de rendu : ce que la carte
  * devient à 320 px est une mesure du banc, et son rendu l'affaire de la
@@ -112,23 +116,34 @@ const RECOMMANDATION: RecommandationOutillage = {
   ecartes: [],
 };
 
-/** Les réponses **données** que le fil porte — les déductions viennent du moteur. */
+/** Les réponses **données** que le fil porte — la première tapée, la seconde cliquée. */
 const CHOIX: ChoixOutillage[] = [
-  { cle: "nature", valeur: "service", deduit: false, parce_que: "" },
-  { cle: "langages", valeur: "python", deduit: false, parce_que: "" },
+  {
+    cle: "nature",
+    valeur: "Un service de réservation en Python",
+    deduit: false,
+    parce_que: "",
+    libre: true,
+  },
+  { cle: "forge", valeur: "github", deduit: false, parce_que: "", libre: false },
+];
+
+/** Ce que Maestro en a compris — porté par la conclusion (#1147). */
+const COMPRIS: ChoixOutillage[] = [
+  { cle: "langages", valeur: "Python", deduit: true, parce_que: "vous l'avez dit", sujet: "langage" },
+  { cle: "tester", valeur: "pytest", deduit: true, parce_que: "le standard Python", sujet: "tests" },
 ];
 
 const QUESTION: QuestionOutillage = {
-  cle: "tests",
-  intitule: "Comment lancez-vous vos tests ?",
+  cle: "ci",
+  intitule: "Qu'est-ce qui vérifiera le code ?",
   options: [
-    { valeur: "pytest", libelle: "pytest", raison: "le standard Python" },
-    { valeur: "aucun", libelle: "Aucun", raison: "pas encore de tests" },
+    { valeur: ".github/workflows/ci.yml", libelle: "GitHub Actions", raison: "sur chaque PR" },
+    { valeur: "aucun", libelle: "Rien", raison: "pas encore de CI" },
   ],
-  recommande: "pytest",
-  pourquoi: "c'est un service Python",
+  recommande: ".github/workflows/ci.yml",
+  pourquoi: "le code vivra sur GitHub",
   rang: 3,
-  total: 6,
 };
 
 /** Un geste de réponse : le message d'utilisateur qui porte un `choix`. */
@@ -141,13 +156,14 @@ function geste(choix: ChoixOutillage): MessageChat {
   });
 }
 
-/** Le message de conclusion : plus aucune question, et le compte annoncé. */
+/** Le message de conclusion : plus aucune question, ce qui a été compris, le compte. */
 function conclusion(): MessageChat {
   return messageFactice({
     agent: AGENT_ORCHESTRATION,
     auteur: AGENT_ORCHESTRATION,
     contenu:
       "C'est tout ce qu'il me fallait. L'outillage recommandé : 2 entrée(s)…",
+    comprehension: COMPRIS,
   });
 }
 
@@ -271,22 +287,31 @@ describe("la conclusion du questionnaire, au pied du fil", () => {
     expect(questionOutillage).not.toHaveBeenCalled();
   });
 
-  // ⑤ Un questionnaire **interrompu** laisse la même trace qu'un questionnaire
-  // conclu — des réponses, aucune question. La différence ne se lit pas dans le
-  // fil : c'est le moteur qui la tranche.
-  it("ne l'offre pas quand le moteur dit que le questionnaire n'est pas fini", async () => {
-    questionOutillage.mockResolvedValue({
-      question: QUESTION,
-      deductions: [],
-      terminee: false,
+  // ⑤ Un questionnaire **interrompu** — le geste est au fil, sa suite n'a pas pu
+  // être produite (502) — n'a pas de conclusion : la dernière compréhension est
+  // celle d'une question. La différence se lit sur le fil (#1147), et le moteur
+  // n'est pas rappelé pour la trancher.
+  it("ne l'offre pas quand le questionnaire a été interrompu", async () => {
+    poserFilAssistance({
+      messages: [
+        geste(CHOIX[0]),
+        messageFactice({
+          agent: AGENT_ORCHESTRATION,
+          auteur: AGENT_ORCHESTRATION,
+          contenu: "Qu'est-ce qui vérifiera le code ?",
+          question: QUESTION,
+          comprehension: COMPRIS,
+        }),
+        geste(CHOIX[1]),
+      ],
     });
-    poserFilAssistance({ messages: filConclu() });
     rendreAvecEtat(<PageChat />);
 
-    await waitFor(() => expect(questionOutillage).toHaveBeenCalled());
+    await screen.findByRole("region", { name: "Chat global" });
     expect(
       screen.queryByRole("region", { name: "Outillage à écrire" }),
     ).not.toBeInTheDocument();
+    expect(questionOutillage).not.toHaveBeenCalled();
     // La recommandation n'a même pas été demandée : il n'y a rien à proposer.
     expect(recommandationOutillage).not.toHaveBeenCalled();
   });
@@ -327,11 +352,18 @@ describe("ce que le geste envoie à la génération", () => {
     await waitFor(() => expect(genererOutillage).toHaveBeenCalledTimes(1));
     // Le cœur du ticket : sans `choix`, le serveur rederiverait l'outillage de
     // l'analyse d'une racine vide et n'écrirait aucun des skills lus à l'écran.
+    // Depuis #1147 ils portent aussi ce qui a été compris — la conclusion le
+    // tient —, et c'est exactement ce que la recommandation a reçu.
     expect(genererOutillage).toHaveBeenCalledWith(
       "prj-7f3a1c2b",
       ["AGENTS.md", SKILL_TESTS],
-      CHOIX,
+      [...CHOIX, ...COMPRIS],
     );
+    expect(recommandationOutillage).toHaveBeenCalledWith("prj-7f3a1c2b", [
+      ...CHOIX,
+      ...COMPRIS,
+    ]);
+    expect(questionOutillage).not.toHaveBeenCalled();
   });
 
   it("n'envoie que ce qui est resté coché", async () => {
@@ -354,7 +386,7 @@ describe("ce que le geste envoie à la génération", () => {
     expect(genererOutillage).toHaveBeenCalledWith(
       "prj-7f3a1c2b",
       ["AGENTS.md"],
-      CHOIX,
+      [...CHOIX, ...COMPRIS],
     );
   });
 

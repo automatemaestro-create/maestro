@@ -56,6 +56,7 @@ from maestro.agents.store import AgentStore, SurchargeStore
 from maestro.controltower import ControlTowerState, InMemoryEventBus, create_app
 from maestro.controltower.chat import ChatStore
 from maestro.controltower.generation_agent import GenerateurDefinitionAgent
+from maestro.controltower.outillage import ComprehensionModele
 from maestro.controltower.projets import ServiceProjets
 from maestro.engine import RunReport
 from maestro.equipe.modele import ORIGINE_PLAYBOOK_GABARIT
@@ -63,15 +64,73 @@ from maestro.outillage import CHEMIN_MANIFESTE
 from maestro.projets import ProjetStore
 from maestro.providers.base import ModelProvider
 
-#: Les réponses du bouclage du 2026-09-21 (#1100), telles que l'écran les a données.
+#: Les réponses du bouclage du 2026-09-21 (#1100), telles que l'écran les donne depuis
+#: #1147 : le projet décrit avec ses mots, puis les options cliquées.
+DESCRIPTION_DU_BILAN = "Une application web de réservation, en TypeScript"
 REPONSES_DU_BILAN: dict[str, str] = {
-    "nature": "application-web",
-    "langages": "typescript",
-    "tests": "vitest",
     "forge": "github",
-    "ci": "github-actions",
+    "ci": ".github/workflows/ci.yml",
     "conventions": "conventional-commits",
 }
+
+#: Ce qu'un modèle comprend de la description du bilan — la pile que #1031 déduisait
+#: de ses tables, écrite ici comme le modèle la rendrait.
+_CONSTATS_DU_BILAN = [
+    ("nature", "Une application web"),
+    ("langages", "TypeScript"),
+    ("manifeste", "package.json"),
+    ("gestionnaire", "npm"),
+    ("installer", "npm ci"),
+    ("tester", "npx vitest run"),
+    ("lint", "npm run lint"),
+    ("types", "npx tsc --noEmit"),
+    ("demarrer", "npm run dev"),
+]
+
+
+class _ComprendLeBilan(ModelProvider):
+    """Un faux modèle qui comprend le projet du bilan, **selon ce qui a été répondu**.
+
+    Sa réponse dépend du prompt — les sujets déjà répondus —, jamais de l'ordre des
+    appels : chaque route peut le rappeler sans décaler ce qu'il comprend.
+    """
+
+    name = "faux-bilan"
+
+    def supports(self, model: str) -> bool:
+        return True
+
+    async def generate(
+        self,
+        prompt: str,
+        *,
+        model: str,
+        system_prompt: str | None = None,
+        effort: str | None = None,
+    ) -> str:
+        repondus = [cle for cle in REPONSES_DU_BILAN if f"- {cle} (" in prompt]
+        constats = [
+            {"cle": cle, "valeur": valeur, "parce_que": "compris de la description"}
+            for cle, valeur in _CONSTATS_DU_BILAN
+        ] + [
+            {"cle": cle, "valeur": REPONSES_DU_BILAN[cle], "parce_que": "votre réponse"}
+            for cle in repondus
+        ]
+        questions = [
+            {
+                "cle": cle,
+                "intitule": f"Et {cle} ?",
+                "options": [
+                    {"valeur": valeur, "libelle": valeur, "raison": "ce que ça entraîne"},
+                    {"valeur": "aucun", "libelle": "Rien", "raison": "pas pour l'instant"},
+                ],
+                "recommande": valeur,
+                "pourquoi": "ce qui, dans ce projet, le désigne",
+            }
+            for cle, valeur in REPONSES_DU_BILAN.items()
+            if cle not in repondus
+        ]
+        return json.dumps({"message": "", "constats": constats, "questions": questions})
 
 
 class _GenerateurHorsLigne(GenerateurDefinitionAgent):
@@ -134,6 +193,7 @@ def _app(tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents) -> FastAP
         mcp=gabarits.mcp,
         capacites=gabarits.capacites,
         generateur_agent=_GenerateurHorsLigne(),
+        comprehension=ComprehensionModele(_ComprendLeBilan()),
     )
 
 
@@ -186,22 +246,25 @@ def _projet_neuf(client: TestClient, atelier: Path) -> tuple[str, Path]:
 def _repondre_au_questionnaire(client: TestClient, projet: str) -> list[dict[str, Any]]:
     """Le questionnaire joué comme l'écran : une question, sa réponse, la suite.
 
-    Les réponses acquises repartent **entières** à chaque appel (le questionnaire
-    est sans état côté serveur), déductions comprises — c'est le `tous` que
-    `EtapeOutillage` tient et renvoie à la génération.
+    Les réponses **données** repartent entières à chaque appel (le questionnaire est
+    sans état côté serveur), et ce qui en a été compris au dernier tour les rejoint
+    — c'est ce qu'`EtapeOutillage` tient et renvoie à la génération (#1147). La
+    première question est ouverte : on y répond avec ses mots.
     """
-    acquis: list[dict[str, Any]] = []
-    for _ in range(len(REPONSES_DU_BILAN) + 1):
+    donnees: list[dict[str, Any]] = []
+    for _ in range(len(REPONSES_DU_BILAN) + 2):
         etape = client.post(
-            f"/api/projets/{projet}/outillage/questionnaire", json={"choix": acquis}
+            f"/api/projets/{projet}/outillage/questionnaire", json={"choix": donnees}
         )
         assert etape.status_code == 200, etape.text
         corps = etape.json()
-        acquis = [*acquis, *corps["deductions"]]
         if corps["terminee"]:
-            return acquis
-        cle = corps["question"]["cle"]
-        acquis.append({"cle": cle, "valeur": REPONSES_DU_BILAN[cle]})
+            return [*donnees, *corps["deductions"]]
+        question = corps["question"]
+        if not question["options"]:
+            donnees.append({"cle": question["cle"], "valeur": DESCRIPTION_DU_BILAN, "libre": True})
+        else:
+            donnees.append({"cle": question["cle"], "valeur": REPONSES_DU_BILAN[question["cle"]]})
     raise AssertionError("le questionnaire ne s'est pas conclu")
 
 
@@ -338,8 +401,8 @@ def test_le_manifeste_d_un_projet_neuf_dit_que_l_outillage_vient_des_reponses(
     source = _manifeste(racine)["source"]
     assert source["type"] == "choix"
     assert source["projet_id"] == projet
-    assert "langages=typescript" in source["reference"]
-    assert "tests=vitest" in source["reference"]
+    assert "langages=TypeScript" in source["reference"]
+    assert "tester=npx vitest run" in source["reference"]
     # La réponse le redit, et elle n'invente pas une analyse qui n'a pas eu lieu.
     assert corps["source"] == source
     assert corps["analyse"] == ""

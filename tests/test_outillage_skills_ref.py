@@ -56,7 +56,6 @@ from maestro.outillage import (
     Choix,
     analyser,
     constats_depuis_choix,
-    deductions,
     generer_outillage,
     recommandation_depuis_choix,
     source_manifeste_des_choix,
@@ -387,14 +386,21 @@ def test_un_projet_neuf_questionne_rend_lui_aussi_des_skills_valides(tmp_path: P
     """
     racine = tmp_path / "projets" / "neuf"
     racine.mkdir(parents=True)
-    donnes = [
-        Choix("nature", "service-api"),
-        Choix("langages", "python"),
+    # Un service Python, tel que le questionnaire l'a compris (#1147) : une phrase
+    # tapée, les constats du modèle, puis les options cliquées.
+    acquis = [
+        Choix("nature", "Un service qui répond à des appels HTTP, en Python", libre=True),
+        Choix("langages", "Python", deduit=True),
+        Choix("manifeste", "pyproject.toml", deduit=True),
+        Choix("gestionnaire", "uv", deduit=True),
+        Choix("installer", "uv sync", deduit=True),
+        Choix("tester", "pytest", deduit=True),
+        Choix("lint", "ruff check .", deduit=True),
+        Choix("demarrer", "uv run python -m app", deduit=True),
         Choix("forge", "github"),
-        Choix("ci", "github-actions"),
+        Choix("ci", ".github/workflows/ci.yml"),
         Choix("conventions", "conventional-commits"),
     ]
-    acquis = [*donnes, *deductions(donnes)]
     projet = Projet(id="prj-0000dead", nom="Neuf", racine=racine.as_posix())
 
     generer_outillage(

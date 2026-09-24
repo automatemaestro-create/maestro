@@ -213,24 +213,31 @@ def _recommandation() -> Recommandation:
 
 
 def _choix_du_projet_neuf() -> list[Choix]:
-    """Les réponses des étapes de reproduction de #1105, dans leur ordre.
+    """Les réponses des étapes de reproduction de #1105, dans leur forme de #1147.
 
-    Celles du bouclage du 2026-09-21 : les options recommandées d'un projet neuf
-    « application web ». Elles passent par le vrai `constats_depuis_choix` plutôt
-    que par des constats fabriqués — c'est cette mue-là qui donne aux commandes
-    leur `origine: convention` et leur chemin « où elle vivra », donc c'est elle
-    qui expose le texte au défaut du ticket.
+    Celles du bouclage du 2026-09-21 : un projet neuf « application web » en
+    TypeScript. Depuis #1147 elles arrivent comme le questionnaire les rend — la
+    pile comprise par le modèle (`deduit`), la forge, la CI et la convention
+    cliquées. Elles passent par le vrai `constats_depuis_choix` plutôt que par des
+    constats fabriqués — c'est cette mue-là qui donne aux commandes leur
+    `origine: convention` et leur chemin « où elle vivra », donc c'est elle qui
+    expose le texte au défaut du ticket.
     """
+    compris = [
+        ("nature", "Une application web"),
+        ("langages", "TypeScript"),
+        ("manifeste", "package.json"),
+        ("gestionnaire", "npm"),
+        ("installer", "npm ci"),
+        ("tester", "npx vitest run"),
+        ("lint", "npm run lint"),
+        ("types", "npx tsc --noEmit"),
+    ]
     return [
-        Choix(cle=cle, valeur=valeur)
-        for cle, valeur in (
-            ("nature", "application-web"),
-            ("langages", "typescript"),
-            ("tests", "vitest"),
-            ("forge", "github"),
-            ("ci", "github-actions"),
-            ("conventions", "conventional-commits"),
-        )
+        *(Choix(cle=cle, valeur=valeur, deduit=True) for cle, valeur in compris),
+        Choix("forge", "github"),
+        Choix("ci", ".github/workflows/ci.yml"),
+        Choix("conventions", "conventional-commits"),
     ]
 
 
@@ -471,12 +478,12 @@ def test_un_projet_neuf_ne_dit_jamais_constate_d_un_fichier_qui_n_existe_pas() -
     assert "- **Gestionnaires** : npm (`package.json`, à créer)." in agents
     assert (
         "- **Installer les dépendances** : `npm ci` — attendue une fois "
-        "`package.json` créé (réponse « langages » = typescript)." in agents
+        "`package.json` créé (compris de vos réponses)." in agents
     )
     assert "`.github/workflows/ci.yml`, à créer" in agents
     assert "Ces conventions viennent des réponses données à Maestro" in agents
     assert "- à créer : `CONTRIBUTING.md` — convention de message de commit" in agents
-    assert "À créer : `package.json` (réponse « tests » = vitest)." in skill
+    assert "À créer : `package.json` (compris de vos réponses)." in skill
 
     # Aucune part de langage : rien n'a été compté sur un dossier vide.
     projet = agents.split("## Le projet\n\n", 1)[1].split("\n## ", 1)[0]
