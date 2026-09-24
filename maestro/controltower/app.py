@@ -165,7 +165,10 @@ Endpoints :
   commandes de construction/test/lint, la CI, la forge et les conventions déjà
   écrites — puis chaque skill, script ou fichier d'instructions recommandé avec
   sa **raison** et l'**endroit du projet** qui la justifie, ce que le projet
-  porte déjà étant reconnu (`deja-present`) plutôt que dupliqué. N'écrit rien :
+  porte déjà étant reconnu (`deja-present`) plutôt que dupliqué. Depuis #1158
+  les tables n'en sont que les indices : le **modèle lit** le projet (lister,
+  lire — dans le périmètre, sans lien suivi) et ce qu'il tire des fichiers lus
+  complète les constats ; `lecture` en dit la provenance. N'écrit rien :
   la génération est #1033 ;
 - `POST /api/projets/{id}/outillage/report` — le « **plus tard** » de l'étape
   d'outillage (#1034, docs/37 §4.6) : sans corps, idempotent, il n'écrit rien
@@ -548,6 +551,7 @@ from maestro.projets import (
     valider_racine,
 )
 from maestro.providers.arbitrage import OUTIL_ARBITRAGE
+from maestro.providers.base import ModelProvider
 from maestro.providers.blocage import OUTIL_BLOCAGE
 from maestro.providers.courrier import OUTIL_COURRIER
 from maestro.providers.decision import OUTIL_DECISION
@@ -1570,6 +1574,7 @@ def create_app(
     redacteur_playbook: RedacteurPlaybook | None = None,
     generateur_agent: GenerateurDefinitionAgent | None = None,
     compositeur_equipe: CompositeurEquipe | None = None,
+    lecteur_outillage: ModelProvider | None = None,
     capacites: CapacityStore | None = None,
     mcp: McpStore | None = None,
     registre_mcp: RegistreMcp | None = None,
@@ -1661,6 +1666,13 @@ def create_app(
     réel (`POST …/equipe/proposition`) et la corrige en langage naturel
     (`POST …/equipe/correction`). Par défaut il résout son fournisseur par
     config ; les tests en injectent un factice.
+
+    `lecteur_outillage` (#1158) est le fournisseur de modèle qui **lit** un projet
+    existant pour `GET /api/projets/{id}/outillage/analyse` et la génération qui
+    en découle : il demande à lister et lire, dans le périmètre du projet, et
+    ses constats sont confrontés à ce qu'il a lu. Par défaut il est résolu par
+    config au premier usage ; sans fournisseur, l'analyse reste celle des tables
+    et le dit. Les tests en injectent un factice.
 
     `capacites` (#86) est le dépôt du contrôle de capacité servi par
     `POST /api/agents/{nom}/capacite` — par défaut celui de la config
@@ -1840,7 +1852,9 @@ def create_app(
     # projet versionné est une action sensible au sens exact de EF-37, et elle
     # passe donc par le canal de validation de toujours — la demande sort sur le
     # bus, l'écran la montre, `POST /api/validations/{tache}/decision` la tranche.
-    outillage = ServiceOutillage(projets, validateur=ValidateurControlTower(bus))
+    outillage = ServiceOutillage(
+        projets, validateur=ValidateurControlTower(bus), provider=lecteur_outillage
+    )
     # La projection part du catalogue **hors projet** : les agents rangés à la
     # racine du dépôt. Vide sur un poste neuf depuis #1042 — les cinq rôles du
     # code n'y sont plus —, et c'est voulu : le parc d'agents se peuple projet par
@@ -5127,16 +5141,23 @@ def create_app(
         chemin, jamais dupliqué. `ecartes` nomme ce qui n'est pas recommandé et
         pourquoi — les commandes le sont par décision (docs/38 §3.5).
 
+        **Les tables ne sont que des indices** (#1158) : le modèle lit ensuite le
+        projet — deux verbes, lister et lire, servis dans le périmètre, sans lien
+        suivi ni rien d'exécuté — et ce qu'il en tire complète les constats, chacun
+        avec le fichier qu'il a lu. `lecture` dit ce qu'il a ouvert, ce qui lui a
+        été refusé, ce qui a été coupé et ce qui a été écarté ; un modèle qui ne
+        répond pas laisse l'analyse aux tables, `lecture.etat` le dit.
+
         **Rien n'est écrit** : la génération est #1033. 404 si le projet est
         inconnu, 422 motivé si sa fiche est illisible ou si sa racine n'est plus
         un dossier lisible — jamais un 500.
 
-        Joué **hors de la boucle d'événements** : parcourir un projet réel prend
-        des secondes, et une route qui bloquerait la boucle figerait les flux
-        SSE des autres écrans.
+        Le parcours est joué **hors de la boucle d'événements** : parcourir un
+        projet réel prend des secondes, et une route qui bloquerait la boucle
+        figerait les flux SSE des autres écrans.
         """
         try:
-            return await asyncio.to_thread(outillage.analyser, id_projet)
+            return await outillage.analyser(id_projet)
         except (ValueError, ProjetInconnu) as exc:
             raise _refus_projet(exc) from exc
 

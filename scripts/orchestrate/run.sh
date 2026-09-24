@@ -74,6 +74,8 @@
 # Trois ménages, tous best-effort, tous muets quand il n'y a rien à faire et aucun fatal : `main`
 # remise à niveau sur `origin/main` (#283, fast-forward seul, MAESTRO_SYNC_MAIN=0 pour l'éteindre),
 # worktrees soldés ramassés (#197), vieux journaux purgés (#198). Aucun ne tourne en `--dry-run`.
+# Et avant eux, avant même d'arrêter les runs en vol, une vérification qui, elle, est fatale : le CLI
+# installé sert-il le modèle du run (#1269) ? Sinon chaque session échouerait à l'identique.
 #
 # --- La file de merge : au fil de l'eau pendant le run, drain en fin de run (#419, parent #413) -------
 # Un run laissait N PR ouvertes derrière lui, et c'est la raison d'être du chantier : il les MERGE
@@ -317,9 +319,18 @@ TIMEOUT_BRUT="${MAESTRO_ORCHESTRATE_TIMEOUT:-}"
 # le CLI, et sa cible bouge d'une version à l'autre : sur 2.1.215 elle valait encore
 # `claude-opus-4-8`. Un alias fait donc décider la version installée sur le poste à la place du
 # dépôt — deux machines ne traitent plus le backlog avec le même modèle, et le journal d'un run ne
-# dit pas sur quoi il a tourné. `MAESTRO_ORCHESTRATE_MODELE` et `--modele` restent libres d'y
-# remettre un alias, en connaissance de cause.
-MODELE="${MAESTRO_ORCHESTRATE_MODELE:-claude-opus-5}"
+# dit pas sur quoi il a tourné.
+#
+# Épingler un identifiant figé avait son revers (#1269) : `claude-opus-5` a continué de servir après
+# la sortie d'Opus 5.5 sans que rien ne le dise. Le dépôt tient donc la DERNIÈRE VERSION DE CHAQUE
+# FAMILLE dans une source unique, `maestro/providers/familles-claude.tsv`, que le catalogue du
+# produit peut lire aussi. Le défaut est la famille `opus` ; `--modele opus|sonnet|fable|haiku`
+# s'y résout de même ; un identifiant complet (`claude-…`) passe tel quel. C'est TOUJOURS le dépôt
+# qui résout une famille, jamais l'alias du CLI. Un autre nom court part tel quel au CLI, qui le
+# résout lui-même — en connaissance de cause : la ligne `plan :` le dit, et la sonde nomme le modèle
+# servi.
+MODELE_DEMANDE="${MAESTRO_ORCHESTRATE_MODELE:-opus}"
+FAMILLES_MODELES="$RACINE/maestro/providers/familles-claude.tsv"
 # L'effort s'épingle pour la même raison que le modèle (#217), et il était le dernier réglage de
 # session à ne pas l'être : `run.sh` ne passait AUCUN `--effort`, si bien que le niveau venait de
 # `~/.claude/settings.json` du poste — donc du poste, pas du dépôt. Le mécanisme est le même que
@@ -396,7 +407,10 @@ Options :
   --timeout <durée>    Délai maximal par ticket : 45m, 90m, 2700… Par défaut AUCUN : un délai
                        tue la session EN PLEIN TRAVAIL, sans commit ni PR, et fait sauter les
                        lots suivants du même parent. 0 (ou vide) vaut « pas de délai ».
-  --modele <modèle>    Modèle des sessions. Défaut : claude-opus-5.
+  --modele <modèle>    Modèle des sessions : une famille (opus, sonnet, fable, haiku), résolue
+                       en sa dernière version par maestro/providers/familles-claude.tsv, ou un
+                       identifiant complet (claude-…), passé tel quel. Défaut : opus. Vérifié
+                       auprès du CLI installé avant le premier ticket.
   --effort <niveau>    Effort de raisonnement des sessions : low, medium, high, xhigh, max.
                        Défaut : xhigh.
   --plan <fichier>     Utilise un plan déjà calculé (TSV de queue.sh) au lieu d'en calculer un.
@@ -460,7 +474,7 @@ while [ $# -gt 0 ]; do
     --concurrence-max) CONCURRENCE_MAX="${2:-3}"; shift ;;
     --budget) BUDGET="${2:-}"; shift ;;
     --timeout) TIMEOUT_BRUT="${2:-}"; shift ;;
-    --modele | --model) MODELE="${2:-claude-opus-5}"; shift ;;
+    --modele | --model) MODELE_DEMANDE="${2:-opus}"; shift ;;
     --effort) EFFORT="${2:-xhigh}"; shift ;;
     --plan) PLAN_IMPOSE="${2:-}"; shift ;;
     --sans-merge) MERGE=0 ;;
@@ -495,9 +509,10 @@ while [ $# -gt 0 ]; do
 done
 
 # L'effort est un ENSEMBLE FERMÉ de cinq niveaux, là où un nom de modèle est une chaîne ouverte
-# (d'où l'absence de contrôle équivalent sur `--modele`) : une faute de frappe se voit donc, et il
-# vaut mieux la voir ici qu'au premier ticket. Le CLI refuserait la valeur à CHAQUE session, et le
-# run brûlerait son plan en échecs identiques avant que personne ne lise la cause.
+# (d'où un contrôle d'une autre nature sur `--modele` : la sonde du CLI, plus bas) : une faute de
+# frappe se voit donc, et il vaut mieux la voir ici qu'au premier ticket. Le CLI refuserait la
+# valeur à CHAQUE session, et le run brûlerait son plan en échecs identiques avant que personne ne
+# lise la cause.
 case "$EFFORT" in
   low | medium | high | xhigh | max) ;;
   *)
@@ -2525,6 +2540,102 @@ if [ "$TUER_SEUL" = 1 ]; then
   exit 0
 fi
 
+# --- Le modèle, vérifié auprès du CLI installé (#1269) ------------------------------------------------
+# Un modèle que le CLI installé ne sert pas fait échouer la PREMIÈRE session en quelques secondes, et
+# l'échec fait sauter les lots suivants de son parent (§11.5). Mesuré deux fois : le 2026-09-04
+# (#858, CLI 2.1.215, `claude-fable-5-1` exige 2.1.251) et le 2026-09-24 (CLI 2.1.260,
+# `claude-opus-5-5` → « API Error: 400 Claude Code 2.1.260 does not support this model; version
+# 2.1.280 or newer is required »). Aucune table « modèle → version minimale » ne le dirait mieux que
+# le CLI lui-même, et elle vieillirait comme l'identifiant figé qu'on vient de retirer : on lui POSE
+# donc la question, par une requête minimale sous le régime des sessions (même modèle, même effort,
+# réglages du poste), avant de tuer quoi que ce soit, de résoudre une reprise ou de détacher.
+#
+# Trois issues, et une seule refuse :
+#   · servi — le run part, et la ligne dit par quel CLI (le modèle servi s'il diffère du demandé) ;
+#   · limite d'usage — ce n'est pas un verdict sur le modèle : le run part, et attendra le reset
+#     comme pour un ticket (le dire vaut mieux que refuser un run qui aurait marché) ;
+#   · tout autre échec — le CLI le rendrait à CHAQUE session : refusé, code 2, avec sa réponse, la
+#     version installée, la version requise quand sa réponse en nomme une autre, et ce qui débloque.
+#
+# La requête ne coûte presque rien (quelques milliers de jetons en cache, aucun outil) et part d'un
+# répertoire neutre : ni le CLAUDE.md ni les réglages du dépôt, qui ne décident pas du modèle, mais
+# ceux du poste, qui peuvent en décider (authentification, variables) comme pour une session.
+# `MAESTRO_ORCHESTRATE_SONDE_MODELE=0` l'éteint — le harnais de tests le fait, ses bouchons de
+# `claude` jouant des scénarios de ticket.
+SONDE_MODELE="${MAESTRO_ORCHESTRATE_SONDE_MODELE:-1}"
+case "$SONDE_MODELE" in 0 | non | off | false) SONDE_MODELE=0 ;; *) SONDE_MODELE=1 ;; esac
+SONDE_DELAI_S="${MAESTRO_ORCHESTRATE_SONDE_DELAI:-120}"
+case "$SONDE_DELAI_S" in '' | *[!0-9]*) SONDE_DELAI_S=120 ;; esac
+
+# familles_connues : les familles du fichier, séparées par des virgules — pour les messages.
+familles_connues() {
+  awk -F'\t' '{ sub(/\r$/, "") } /^#/ || NF < 2 { next } { printf "%s%s", (n++ ? ", " : ""), $1 }' \
+    "$FAMILLES_MODELES" 2>/dev/null
+}
+
+# version_cli : « 2.1.281 » — le numéro que le CLI installé donne de lui-même, vide s'il se tait.
+version_cli() {
+  "$CLAUDE_BIN" --version 2>/dev/null </dev/null | grep -oE '[0-9]+(\.[0-9]+)+' | head -1
+}
+
+# sonde_modele : pose la question au CLI. Rend 0 si le modèle est servi, 1 s'il n'a pas pu le savoir
+# (limite d'usage : le run part quand même), 2 si le run doit être refusé — le refus est déjà écrit
+# sur stderr.
+sonde_modele() {
+  # Dans le temporaire du système et non sous `.maestro/` (#234, docs/10 §8.5) : personne ne relit
+  # ces deux fichiers — la réponse utile est recopiée dans le message, et ils sont retirés aussitôt.
+  # C'est aussi le répertoire neutre d'où part la requête.
+  local tmp="${TMPDIR:-/tmp}" sortie erreurs code message version requise servi
+  sortie="$(mktemp "$tmp/maestro-sonde.XXXXXX" 2>/dev/null)" || sortie="$tmp/maestro-sonde.$$"
+  erreurs="$sortie.err"
+  local -a delai=()
+  [ "$SONDE_DELAI_S" -gt 0 ] && command -v timeout >/dev/null 2>&1 && delai=(timeout "$SONDE_DELAI_S")
+  ( cd "$tmp" && ${delai[@]+"${delai[@]}"} "$CLAUDE_BIN" -p 'Réponds seulement : ok' \
+      --model "$MODELE" --effort "$EFFORT" \
+      --output-format json --tools '' --no-session-persistence --strict-mcp-config \
+      --system-prompt 'Sonde du modèle avant un run : réponds seulement « ok ».' </dev/null ) \
+    >"$sortie" 2>"$erreurs"
+  code=$?
+  version="$(version_cli)"
+
+  if [ "$code" -eq 0 ] && [ "$(champ_json "$sortie" is_error)" != true ]; then
+    # Le modèle SERVI est la première clé de `modelUsage` : il ne diffère du demandé que pour un nom
+    # que le CLI a résolu lui-même — et c'est alors ce qu'il faut savoir.
+    servi="$(grep -oE '"modelUsage"[[:space:]]*:[[:space:]]*\{[[:space:]]*"[^"]+"' "$sortie" 2>/dev/null |
+      head -1 | sed 's/.*"\([^"]*\)"$/\1/')"
+    printf 'modèle : %s servi par le CLI installé%s%s\n' "$MODELE" \
+      "$([ -n "$version" ] && printf ' (Claude Code %s)' "$version")" \
+      "$([ -n "$servi" ] && [ "$servi" != "$MODELE" ] && printf ' — modèle servi : %s' "$servi")"
+    rm -f "$sortie" "$erreurs"
+    return 0
+  fi
+
+  if limite_atteinte "$sortie" "$erreurs"; then
+    printf '%smodèle : %s non vérifié%s — la limite d'\''usage est atteinte ; le run part et attendra le reset.\n' \
+      "$C_Y" "$MODELE" "$C_0"
+    rm -f "$sortie" "$erreurs"
+    return 1
+  fi
+
+  message="$(champ_json "$sortie" result)"
+  [ -n "$message" ] || message="$(grep -v '^[[:space:]]*$' "$erreurs" 2>/dev/null | tail -1)"
+  [ "$code" -eq 124 ] && message="aucune réponse en $(duree_lisible "$SONDE_DELAI_S")"
+  # La version requise, quand la réponse en nomme une autre que celle installée — lue comme un
+  # numéro, jamais comme une phrase : le libellé de l'erreur n'est pas un contrat.
+  requise="$(printf '%s\n' "$message" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | grep -vxF "${version:-_}" | head -1)"
+  {
+    printf 'run.sh : le modèle %s est refusé par le CLI installé — le run ne part pas.\n' "$MODELE"
+    printf '  aucune session lancée, aucun run arrêté, aucun lot sauté.\n'
+    printf '  réponse du CLI    %s\n' "${message:-(aucune, code $code)}"
+    printf '  CLI installé      %s\n' "$([ -n "$version" ] && printf 'Claude Code %s' "$version" || printf '(version illisible)')"
+    [ -n "$requise" ] && printf '  version requise   %s ou plus récente\n' "$requise"
+    printf '  débloquer         claude update — puis relancer ; ou --modele <famille|claude-…>\n'
+    printf '                    (familles du dépôt : %s)\n' "$(familles_connues)"
+  } >&2
+  rm -f "$sortie" "$erreurs"
+  return 2
+}
+
 # --- Préflight ---------------------------------------------------------------------------------------
 gl_require || exit 1
 
@@ -2550,7 +2661,56 @@ if [ "$DRY" = 0 ] && ! command -v "$CLAUDE_BIN" >/dev/null 2>&1; then
   exit 1
 fi
 
+# La résolution du modèle (#1269). Un identifiant complet passe tel quel ; une famille du fichier se
+# résout en sa dernière version ; tout autre nom court part au CLI, qui le résout lui-même. Le
+# fichier n'est exigé que pour ce qui n'est pas un identifiant complet — et c'est là qu'il FAUT
+# refuser : sans lui, le défaut `opus` partirait au CLI comme alias, et le run retomberait sans un
+# mot dans ce que #206 a retiré (le poste décide du modèle). `\r` retiré : le fichier peut être
+# extrait en CRLF sous Windows (`core.autocrlf`).
+MODELE_ORIGINE=''
+case "$MODELE_DEMANDE" in
+  claude-*) MODELE="$MODELE_DEMANDE" ;;
+  *)
+    if [ ! -r "$FAMILLES_MODELES" ]; then
+      printf 'run.sh : %s introuvable — c'\''est lui qui dit la dernière version de chaque famille (#1269).\n' \
+        "$FAMILLES_MODELES" >&2
+      printf '  « %s » n'\''est pas un identifiant complet : --modele claude-… s'\''en passe.\n' \
+        "$MODELE_DEMANDE" >&2
+      exit 2
+    fi
+    # Par ENVIRON, jamais par `-v`, qui interprète les échappements de la valeur (#340).
+    MODELE="$(FAMILLE_CHERCHEE="$MODELE_DEMANDE" awk -F'\t' '
+      { sub(/\r$/, "") }
+      /^#/ || NF < 2 { next }
+      tolower($1) == tolower(ENVIRON["FAMILLE_CHERCHEE"]) { print $2; exit }' "$FAMILLES_MODELES")"
+    if [ -n "$MODELE" ]; then
+      MODELE_ORIGINE="dernière version de la famille $(printf '%s' "$MODELE_DEMANDE" | tr 'A-Z' 'a-z')"
+    else
+      MODELE="$MODELE_DEMANDE"
+      MODELE_ORIGINE="résolu par le CLI, hors des familles du dépôt : $(familles_connues)"
+    fi
+    ;;
+esac
+
 if arret_demande; then exit 0; fi
+
+# La sonde du modèle (#1269), AVANT la place nette : un run refusé ne doit avoir arrêté personne.
+# Un run détaché la joue ici, dans le processus appelant — c'est lui que regarde celui qui lance, et
+# un refus découvert dans une console déjà ouverte serait la panne qu'on corrige. Le run détaché ne
+# la rejoue pas : l'appelant lui transmet, par l'environnement et jamais par le lanceur (qui doit
+# rester rejouable tel quel, donc revérifier), le modèle qu'il vient de voir servi.
+if [ "$DRY" = 0 ] && [ "$SONDE_MODELE" = 1 ]; then
+  if [ -n "${MAESTRO_ORCHESTRATE_MODELE_SONDE:-}" ] && [ "$MAESTRO_ORCHESTRATE_MODELE_SONDE" = "$MODELE" ]; then
+    printf 'modèle : %s servi par le CLI installé — vérifié au lancement, avant le détachement\n' "$MODELE"
+  else
+    sonde_modele; code_sonde=$?
+    [ "$code_sonde" -eq 2 ] && exit 2
+    # Seul un modèle VU servi se transmet : après une limite d'usage, le run détaché repose la
+    # question, la fenêtre ayant pu se rouvrir entre-temps.
+    [ "$code_sonde" -eq 0 ] && [ "$DETACH" = 1 ] && export MAESTRO_ORCHESTRATE_MODELE_SONDE="$MODELE"
+  fi
+fi
+[ "$DETACH" = 1 ] || unset MAESTRO_ORCHESTRATE_MODELE_SONDE
 
 # --- La place nette : un seul run à la fois (#213) ----------------------------------------------------
 # AVANT la résolution de `--resume`, et l'ordre n'est pas indifférent : `status.sh --reprenables`
@@ -2969,8 +3129,10 @@ if grep -q '^# milestone	' "$PLAN" 2>/dev/null; then
   IFS=$'\t' read -r _ ms_titre ms_rail < <(grep -m1 '^# milestone	' "$PLAN")
   printf 'milestone : %s · rail %s\n' "$ms_titre" "$ms_rail"
 fi
-printf 'plan : %s ticket(s) · modèle %s · effort %s · %s · %s · %s\n' \
-  "$nb_plan" "$MODELE" "$EFFORT" \
+# Le modèle y est dit EN TOUTES LETTRES, avec d'où il vient (#1269) : « opus » ne dit pas sur quoi le
+# run a tourné, l'identifiant résolu si — et c'est ce qu'on relira dans `run.log`.
+printf 'plan : %s ticket(s) · modèle %s%s · effort %s · %s · %s · %s\n' \
+  "$nb_plan" "$MODELE" "$([ -n "$MODELE_ORIGINE" ] && printf ' (%s)' "$MODELE_ORIGINE")" "$EFFORT" \
   "$([ -n "$BUDGET" ] && printf 'budget %s $/ticket' "$BUDGET" || printf 'budget illimité')" \
   "$([ "$TIMEOUT_S" -gt 0 ] && printf 'timeout %s/ticket' "$(duree_lisible "$TIMEOUT_S")" || printf 'sans délai')" \
   "$(concurrence_libelle)"
@@ -3021,7 +3183,9 @@ fi
 
 if [ "$DRY" = 1 ]; then
   printf 'Mode --dry-run : rien n'\''a été lancé — « main » elle-même reste où elle est (#283 : un\n'
-  printf 'vrai run l'\''avance d'\''abord sur origin/main, fetch + fast-forward, lib.sh sync-main).\n\n'
+  printf 'vrai run l'\''avance d'\''abord sur origin/main, fetch + fast-forward, lib.sh sync-main).\n'
+  printf 'Le modèle n'\''a pas été vérifié : un vrai run demande d'\''abord au CLI installé s'\''il sert %s,\n' "$MODELE"
+  printf 'et refuse de partir sinon (#1269).\n\n'
   printf 'Chaque ticket aurait été traité ainsi —\n'
   printf '  1. worktree dédié     bash scripts/git/worktree.sh <iid>\n'
   printf '  2. session dédiée     %s -p … --session-id <uuid> --settings scripts/orchestrate/settings.run.json\n' "$CLAUDE_BIN"

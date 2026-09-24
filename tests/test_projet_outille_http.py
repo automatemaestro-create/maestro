@@ -98,6 +98,38 @@ class _CompositeurHorsLigne(CompositeurEquipe):
         raise RuntimeError("hors ligne (test)")
 
 
+class _Lecteur(ModelProvider):
+    """Le modèle qui lit un projet existant (#1158) : il rejoue un script, et compte ses appels.
+
+    Sans script, il ne répond jamais — le lecteur « hors ligne » de cette suite :
+    l'analyse reste alors celle des tables, ce que la route promet elle-même, et
+    les tests d'avant #1158 gardent leur vérité sans appeler de modèle.
+    """
+
+    name = "lecteur-factice"
+
+    def __init__(self, *reponses: str | BaseException) -> None:
+        self._reponses = list(reponses) or [RuntimeError("hors ligne (test)")]
+        self.appels = 0
+
+    def supports(self, model: str) -> bool:
+        return True
+
+    async def generate(
+        self,
+        prompt: str,
+        *,
+        model: str,
+        system_prompt: str | None = None,
+        effort: str | None = None,
+    ) -> str:
+        self.appels += 1
+        reponse = self._reponses.pop(0) if len(self._reponses) > 1 else self._reponses[0]
+        if isinstance(reponse, BaseException):
+            raise reponse
+        return reponse
+
+
 @pytest.fixture()
 def atelier(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Le dossier où naissent les projets, sous un dossier utilisateur factice.
@@ -127,12 +159,20 @@ def gabarits(tmp_path: Path) -> ConfigurationAgents:
     )
 
 
-def _app(tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents) -> FastAPI:
+def _app(
+    tmp_path: Path,
+    atelier: Path,
+    gabarits: ConfigurationAgents,
+    lecteur: ModelProvider | None = None,
+) -> FastAPI:
     """L'app réelle, projets bornés à l'atelier, dépôts d'agents temporaires.
 
     Une **projection neuve** à chaque appel, les dépôts restant les mêmes : c'est
     exactement ce qu'est un redémarrage de l'API, et c'est la moitié du défaut de
     #1101 qu'un seul process ne peut pas voir.
+
+    `lecteur` est le modèle qui lit un projet existant (#1158) ; le défaut ne
+    répond jamais, et l'analyse reste celle des tables.
     """
     return create_app(
         bus=InMemoryEventBus(),
@@ -148,6 +188,7 @@ def _app(tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents) -> FastAP
         capacites=gabarits.capacites,
         generateur_agent=_GenerateurHorsLigne(),
         compositeur_equipe=_CompositeurHorsLigne(),
+        lecteur_outillage=lecteur if lecteur is not None else _Lecteur(),
     )
 
 
@@ -246,12 +287,133 @@ def test_l_analyse_rend_les_constats_et_la_recommandation_sans_rien_ecrire(
     assert corps["recommandation"]["entrees"], "une analyse de projet réel recommande"
     assert all(e["raison"] for e in corps["recommandation"]["entrees"])
     assert _fichiers(racine) == avant
+    # Le modèle de cette suite ne répond pas : l'analyse reste aux tables, et le dit.
+    assert corps["lecture"]["etat"] == "indisponible"
+    assert "hors ligne" in corps["lecture"]["motif"]
 
 
 def test_l_analyse_d_un_projet_inconnu_est_un_404(client: TestClient) -> None:
     reponse = client.get("/api/projets/prj-00000000/outillage/analyse")
 
     assert reponse.status_code == 404, reponse.text
+
+
+#: Ce que le modèle répond sur la solution .NET de `_projet_dotnet` (#1158).
+LECTURE_DOTNET: tuple[str, ...] = (
+    "LIRE: Depensio.sln\nLIRE: tests/Api.Tests/Api.Tests.csproj",
+    "GESTIONNAIRE: dotnet | Depensio.sln |\n"
+    "COMMANDE: construire | Depensio.sln | convention | solution .NET | dotnet build\n"
+    "COMMANDE: tester | tests/Api.Tests/Api.Tests.csproj | convention | xunit | dotnet test\n"
+    "FIN",
+)
+
+
+def _projet_dotnet(client: TestClient, atelier: Path) -> tuple[str, Path]:
+    """Une solution .NET non versionnée — une pile qu'aucune table de détection ne connaît."""
+    racine = atelier / "depensio-net"
+    fichiers = {
+        "Depensio.sln": 'Project("{FAE0}") = "Api", "src\\Api\\Api.csproj", "{1}"\n',
+        "src/Api/Api.csproj": '<Project Sdk="Microsoft.NET.Sdk.Web" />\n',
+        "src/Api/Program.cs": "var app = WebApplication.Create();\n",
+        "tests/Api.Tests/Api.Tests.csproj": '<PackageReference Include="xunit" />\n',
+    }
+    for chemin, contenu in fichiers.items():
+        (racine / chemin).parent.mkdir(parents=True, exist_ok=True)
+        (racine / chemin).write_text(contenu, encoding="utf-8")
+    return _declarer(client, racine, origine="existant"), racine
+
+
+def test_l_analyse_d_une_solution_dotnet_nomme_ses_commandes_par_la_lecture(
+    tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents
+) -> None:
+    """#1158, par la route de l'écran : la lecture nomme ce qu'aucune table ne connaissait."""
+    lecteur = _Lecteur(*LECTURE_DOTNET)
+    with TestClient(_app(tmp_path, atelier, gabarits, lecteur)) as client:
+        projet, racine = _projet_dotnet(client, atelier)
+        avant = _fichiers(racine)
+
+        reponse = client.get(f"/api/projets/{projet}/outillage/analyse")
+
+    assert reponse.status_code == 200, reponse.text
+    corps = reponse.json()
+    commandes = {c["usage"]: c for c in corps["constats"]["commandes"]}
+    assert commandes["tester"]["commande"] == "dotnet test"
+    assert commandes["tester"]["chemin"] == "tests/Api.Tests/Api.Tests.csproj"
+    assert commandes["construire"]["chemin"] == "Depensio.sln"
+    assert [g["nom"] for g in corps["constats"]["gestionnaires"]] == ["dotnet"]
+    assert corps["lecture"]["etat"] == "lue"
+    assert set(corps["lecture"]["lus"]) == {"Depensio.sln", "tests/Api.Tests/Api.Tests.csproj"}
+    skills = {e["nom"] for e in corps["recommandation"]["entrees"] if e["type"] == "skill"}
+    assert {"lancer-les-tests", "construire-le-projet"} <= skills
+    assert _fichiers(racine) == avant
+
+
+def test_la_generation_ecrit_ce_que_la_lecture_a_montre_sans_relire_le_projet(
+    tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents
+) -> None:
+    """Ce que l'écran a lu est ce qui s'écrit : la lecture est gardée, pas redemandée au modèle.
+
+    Un modèle n'est pas tenu de répondre deux fois pareil ; relire entre l'analyse
+    et l'écriture ferait disparaître des skills que l'écran avait montrés — le
+    défaut de #1100, par une autre porte.
+    """
+    lecteur = _Lecteur(*LECTURE_DOTNET)
+    with TestClient(_app(tmp_path, atelier, gabarits, lecteur)) as client:
+        projet, racine = _projet_dotnet(client, atelier)
+        analyse = client.get(f"/api/projets/{projet}/outillage/analyse").json()
+        appels = lecteur.appels
+        retenus = [
+            e["chemin"]
+            for e in analyse["recommandation"]["entrees"]
+            if e["etat"] != "deja-present"
+        ]
+
+        reponse = client.post(
+            f"/api/projets/{projet}/outillage/generation", json={"retenus": retenus}
+        )
+
+    assert reponse.status_code == 200, reponse.text
+    corps = reponse.json()
+    assert lecteur.appels == appels == 2, "la génération a relu le projet au lieu de le reprendre"
+    assert corps["analyse"] == analyse["id"]
+    assert corps["retenus_inconnus"] == []
+    skill = (racine / ".agents/skills/lancer-les-tests/SKILL.md").read_text(encoding="utf-8")
+    assert "dotnet test" in skill
+
+
+def test_un_projet_qui_a_bouge_est_relu(
+    tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents
+) -> None:
+    """La lecture gardée ne survit pas à un fichier lu qui change — même sans changer de nom."""
+    lecteur = _Lecteur(*LECTURE_DOTNET, *LECTURE_DOTNET)
+    with TestClient(_app(tmp_path, atelier, gabarits, lecteur)) as client:
+        projet, racine = _projet_dotnet(client, atelier)
+        premiere = client.get(f"/api/projets/{projet}/outillage/analyse").json()
+        csproj = racine / "tests/Api.Tests/Api.Tests.csproj"
+        csproj.write_text('<PackageReference Include="NUnit" />\n' * 3, encoding="utf-8")
+
+        seconde = client.get(f"/api/projets/{projet}/outillage/analyse").json()
+
+    assert lecteur.appels == 4
+    assert seconde["id"] != premiere["id"]
+
+
+def test_une_lecture_manquee_n_est_pas_gardee(
+    tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents
+) -> None:
+    """Un quota épuisé une fois ne condamne pas le projet aux tables : le prochain appel relit."""
+    lecteur = _Lecteur(RuntimeError("quota épuisé"), *LECTURE_DOTNET)
+    with TestClient(_app(tmp_path, atelier, gabarits, lecteur)) as client:
+        projet, _ = _projet_dotnet(client, atelier)
+        manquee = client.get(f"/api/projets/{projet}/outillage/analyse").json()
+
+        reprise = client.get(f"/api/projets/{projet}/outillage/analyse").json()
+
+    assert manquee["lecture"]["etat"] == "indisponible"
+    assert "quota épuisé" in manquee["lecture"]["motif"]
+    assert not any(c["usage"] == "tester" for c in manquee["constats"]["commandes"])
+    assert reprise["lecture"]["etat"] == "lue"
+    assert any(c["commande"] == "dotnet test" for c in reprise["constats"]["commandes"])
 
 
 # --- ② La génération : l'existant par son analyse, le neuf par ses réponses ----
