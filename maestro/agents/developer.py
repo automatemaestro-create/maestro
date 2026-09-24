@@ -14,6 +14,7 @@ que ce qui est propre au rôle.
 
 from __future__ import annotations
 
+from maestro.agents.catalog import MODELE_EXECUTANT_DEFAUT
 from maestro.agents.playbook_du_code import CONSIGNE_RENDU_COMPTE, playbook_du_code
 from maestro.agents.runtime import DEFAULT_TOOLS, RoleProfile
 
@@ -26,13 +27,13 @@ from maestro.agents.runtime import DEFAULT_TOOLS, RoleProfile
 #: des dettes et des risques constatés.
 _SYSTEM_PROMPT = playbook_du_code("developpeur")
 
-#: Profil du Développeur : modèle par défaut du POC (Claude Sonnet, cf. docs/04 §2),
+#: Profil du Développeur : modèle par défaut des exécutants (dernière Opus, #1270),
 #: outils fichiers + shell (docs/02 §7 : permissions scopées), consignes de
 #: matérialisation du livrable. `nom` correspond à l'agent `developpeur` du catalogue.
 DEVELOPER_PROFILE = RoleProfile(
     nom="developpeur",
     role="Développeur",
-    modele="claude-sonnet-5",
+    modele=MODELE_EXECUTANT_DEFAUT,
     outils=DEFAULT_TOOLS,
     prompt_systeme=_SYSTEM_PROMPT,
     intro_tache="Tâche de développement à réaliser de bout en bout :",

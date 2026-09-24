@@ -32,6 +32,7 @@ from maestro.agents import (
     AgentRuntime,
     RoleProfile,
 )
+from maestro.agents.catalog import MODELE_EXECUTANT_DEFAUT
 from maestro.providers.base import ModelProvider, UnsupportedCapability
 from maestro.sandbox import ProducedFile
 
@@ -156,7 +157,8 @@ def test_profil_developpeur_transmet_modele_prompt_et_outils():
     asyncio.run(runtime.execute("Tâche", format_sortie="Un module Python"))
 
     (call,) = provider.calls
-    assert call["model"] == "claude-sonnet-5"
+    # Le modèle du profil, qui est le défaut des exécutants — la dernière Opus (#1270).
+    assert call["model"] == MODELE_EXECUTANT_DEFAUT
     assert "Bash" in call["tools"] and "Write" in call["tools"]
     assert "Développeur" in (call["system_prompt"] or "")
     # La consigne de format de sortie est bien injectée dans le prompt.

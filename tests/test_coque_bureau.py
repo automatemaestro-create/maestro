@@ -585,6 +585,19 @@ def test_la_sonde_des_lignes_guettees_voit_une_ligne_que_la_coque_n_imprime_pas(
     assert orphelines(["[coque] Maestro — UI…"], imprimees) == []
 
 
+def test_la_sonde_lit_une_ligne_dont_l_ecriture_passe_a_la_ligne():
+    """Avant ce correctif, `write(` suivi d'un saut de ligne rendait la ligne invisible : le skill
+    ne pouvait plus guetter le refus du verrou d'instance, quoi qu'il en cite."""
+    echantillon = (
+        "process.stderr.write(\n"
+        "  `[coque] Maestro est déjà ouvert sur cette stack (UI :${PORT_UI}) — ` +\n"
+        "    'celle-ci se ferme.\\n',\n"
+        ");\n"
+    )
+    attendue = "[coque] Maestro est déjà ouvert sur cette stack (UI :◇) — "
+    assert lignes_imprimees(echantillon) == [attendue]
+
+
 def test_les_lignes_que_le_skill_fait_guetter_sont_celles_que_la_coque_imprime(main_js):
     skill = SKILL_CONTROL_TOWER.read_text(encoding="utf-8")
     guettees = lignes_guettees(skill)

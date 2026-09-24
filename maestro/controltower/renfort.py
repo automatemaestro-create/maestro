@@ -39,6 +39,15 @@ fil**, sur la carte d'équipe de #1146 (`EquipeDansLeFil`), et le geste qui y
 répond est celui de #1146 (`recrutement_en_attente`, `POST …/recrutement`). Rien
 n'est doublé — la demande voyage seulement sur le bus avant d'y arriver.
 
+**Les mots ne voyagent pas avec elle** (#1262). La demande portait sa phrase,
+composée ici (« Avant d'exécuter « … », une chose : le plan que je viens d'écrire
+appelle un rôle… »), et c'était la dernière voix du code dans un fil où tout le
+reste est dit par l'orchestrateur. Le relais transmet désormais des **faits** —
+le rôle, sa raison, les tâches, l'échéance — et c'est le répondeur du fil qui
+rédige (`ServiceChat.proposer_recrutement`, `RepondeurChat.rediger`) ; ce que
+l'écran doit lire sans phrase est sur la carte. L'échéance passée se dit de la
+même façon.
+
 ## 2. La borne est tenue des deux côtés, sur la même date
 
 Chez les trois aînés, l'attente est indéfinie et c'est l'appelant qui renonce.
@@ -87,32 +96,68 @@ from maestro.telemetry import redact_secrets
 
 _LOGGER = logging.getLogger(__name__)
 
-#: Ce que le fil dit en posant la demande. Une phrase, et elle porte les quatre
-#: choses qu'il faut pour décider : ce qui a été demandé, le rôle qui manque, la
-#: raison (le **plan**, pas le projet), et ce qui se passe si l'on ne répond pas.
-#:
-#: La dernière n'est pas une politesse : sans elle, une personne qui revient dix
-#: minutes plus tard ne saurait pas si son run l'attend encore. C'est la même
-#: information que l'hypothèse d'une question d'agent (#1023) — *voici ce qui se
-#: passera sans vous* —, et pour la même raison.
-PHRASE_RENFORT = (
-    "Avant d'exécuter « {objectif} », une chose : le plan que je viens d'écrire "
-    "appelle un rôle que votre équipe n'a pas. {raison}\n\n"
-    "Je vous propose de le recruter, juste en dessous — relisez son playbook, "
-    "ajustez ses instances, rien n'est créé sans votre validation. Si vous "
-    "déclinez, ou si vous ne répondez pas d'ici {attente:g} s, le run continue "
-    "avec l'équipe actuelle et ces tâches iront au rôle le plus proche."
-)
+def _faits_du_renfort(demande: DemandeRecrutement, attente_s: float) -> str:
+    """Ce que le fil doit dire en posant la demande — des faits, pour le modèle (#1262).
+
+    Les quatre choses qu'il faut pour décider : ce qui a été demandé, le rôle qui
+    manque, la raison (le **plan**, pas le projet), et ce qui se passe si l'on ne
+    répond pas. La dernière n'est pas une politesse : sans elle, une personne qui
+    revient dix minutes plus tard ne saurait pas si son run l'attend encore —
+    c'est l'hypothèse d'une question d'agent (#1023), *voici ce qui se passera
+    sans vous*. Le modèle en fait sa phrase ; rien d'ici n'est écrit tel quel.
+    """
+    taches = (
+        " Les tâches qui l'attendent : "
+        + ", ".join(f"« {titre} »" for titre in demande.taches)
+        + "."
+        if demande.taches
+        else ""
+    )
+    return (
+        f"Le run que l'utilisateur a lancé sur « {demande.objectif} » vient d'écrire "
+        f"son plan, et ce plan appelle un rôle que l'équipe du projet n'a pas : "
+        f"« {demande.role} ». Pourquoi : {demande.raison}{taches} Le run attend "
+        "avant d'exécuter : tu lui proposes de recruter ce rôle, et la carte qui le "
+        "propose — son playbook, ses instances, le geste qui le valide — s'affiche "
+        "juste sous ton message ; rien n'est créé sans sa validation. S'il décline, "
+        f"ou s'il ne répond pas d'ici {_duree(attente_s)}, le run continue avec "
+        "l'équipe actuelle et ces tâches iront au rôle le plus proche."
+    )
+
+
+def _duree(secondes: float) -> str:
+    """Une attente dite comme on la dirait — « 10 min », « 45 s » —, pas en secondes brutes."""
+    if secondes >= 60:
+        return f"{round(secondes / 60)} min"
+    return f"{round(secondes)} s"
+
+
+def _faits_sans_reponse(demande: DemandeRecrutement) -> str:
+    """Ce que le fil doit dire à l'échéance — le run est reparti sans renfort (#1262).
+
+    « Tu avais proposé » et non « ta proposition » : sur le réel, le modèle a lu la
+    seconde comme la proposition de l'utilisateur et lui a écrit « votre
+    proposition… est restée sans réponse ». La proposition est celle du fil.
+    """
+    return (
+        f"Tu avais proposé à l'utilisateur de recruter « {demande.role} » pour le run "
+        f"sur « {demande.objectif} », et il n'a pas répondu avant l'échéance. Aucun "
+        "rôle n'a été recruté, et le run a continué avec l'équipe actuelle — ces "
+        "tâches sont allées au rôle le plus proche. Ce rôle peut se recruter depuis "
+        "les écrans d'agents du projet, et ce travail se relancer ensuite. La "
+        "proposition n'est plus affichée : le run est déjà reparti."
+    )
 
 
 def evenement_demande(demande: DemandeRenfort, *, maintenant: datetime | None = None) -> Event:
     """La demande de renfort d'un run, telle qu'elle traverse le bus (#1260).
 
-    Elle porte **tout** ce que le relais écrira, déjà composé : la phrase
-    (`detail`) et la demande que la carte du fil lira (`recrutement`). Le relais
-    n'a donc rien à juger ni à recomposer — il ne connaît pas le manque, seulement
-    sa forme publiée, et c'est ce qui laisse la raison montrée être *la* raison
-    calculée par le moteur.
+    Elle porte ce que le relais transmettra au fil : la demande que la carte
+    lira (`recrutement`) — rôle, raison, tâches — et son échéance. Le relais n'a
+    rien à juger ni à recomposer — il ne connaît pas le manque, seulement sa forme
+    publiée, et c'est ce qui laisse la raison montrée être *la* raison calculée
+    par le moteur. `detail` porte le manque en une ligne (`ManqueAuPlan.phrase`),
+    pour le journal durable : c'est le constat, pas une phrase du fil (#1262).
 
     Secrets expurgés de ce qui vient d'un humain (l'objectif), comme la question
     d'un agent (#1023) : l'événement part au journal durable. La borne est posée
@@ -137,9 +182,7 @@ def evenement_demande(demande: DemandeRenfort, *, maintenant: datetime | None = 
         agent=ACTEUR_RUN,
         role=ROLE_RUN,
         titre=recrutement.role,
-        detail=PHRASE_RENFORT.format(
-            objectif=objectif, raison=raison, attente=demande.attente_s
-        ),
+        detail=demande.manque.phrase(),
         recrutement=recrutement.to_dict(),
         echeance=(naissance + timedelta(seconds=demande.attente_s)).isoformat(
             timespec="seconds"
@@ -250,9 +293,10 @@ class RelaisRenfort:
         await asyncio.sleep(0)
         try:
             conversation = self._fil.conversation_du_run(self._agent.nom, event.run_id)
+            attente = self._attente(event)
             await self._fil.proposer_recrutement(
                 self._agent,
-                contenu=event.detail,
+                faits=_faits_du_renfort(demande, attente),
                 demande=demande,
                 conversation=conversation,
             )
@@ -303,18 +347,13 @@ class RelaisRenfort:
         Le message **ne repose pas la demande** (`demande=None`) : la laisser
         offrirait un bouton « Créer l'équipe » qui promettrait de faire reprendre
         un run déjà parti. Ce qu'il reste à faire — recruter pour la prochaine
-        fois — se fait depuis les écrans d'agents du projet, et la phrase le dit.
+        fois — se fait depuis les écrans d'agents du projet : c'est un des faits
+        que le répondeur reçoit (`_faits_sans_reponse`), et il le dit.
         """
         with suppress(Exception):
             await self._fil.proposer_recrutement(
                 self._agent,
-                contenu=(
-                    f"Personne n'a répondu : je n'ai recruté aucun rôle "
-                    f"« {demande.role} », et le run a continué avec "
-                    "l'équipe actuelle — ces tâches sont allées au rôle le plus "
-                    "proche. Vous pouvez recruter ce rôle depuis les écrans "
-                    "d'agents du projet, puis relancer ce travail."
-                ),
+                faits=_faits_sans_reponse(demande),
                 conversation=conversation,
             )
 

@@ -21,6 +21,7 @@ humain a fourni le token OAuth (`FIGMA_OAUTH_TOKEN`, docs/20) : il crée et lit 
 
 from __future__ import annotations
 
+from maestro.agents.catalog import MODELE_EXECUTANT_DEFAUT
 from maestro.agents.playbook_du_code import CONSIGNE_RENDU_COMPTE, playbook_du_code
 from maestro.agents.runtime import DEFAULT_TOOLS, RoleProfile
 
@@ -34,7 +35,7 @@ from maestro.agents.runtime import DEFAULT_TOOLS, RoleProfile
 #: **chiffrées** plutôt qu'invoquées, et conduite à tenir quand la charte manque.
 _SYSTEM_PROMPT = playbook_du_code("designer")
 
-#: Profil du Designer : modèle par défaut du POC (Claude Sonnet, cf. docs/04 §2), outils
+#: Profil du Designer : modèle par défaut des exécutants (dernière Opus, #1270), outils
 #: fichiers + shell (docs/02 §7 : permissions scopées) — les outils Figma arrivent par
 #: la déclaration MCP versionnée (core/mcp/designer.json, serveur officiel #128), pas
 #: par ce profil. Consignes de conformité à la charte et d'évolution soumise à accord. `nom`
@@ -42,7 +43,7 @@ _SYSTEM_PROMPT = playbook_du_code("designer")
 DESIGNER_PROFILE = RoleProfile(
     nom="designer",
     role="Designer",
-    modele="claude-sonnet-5",
+    modele=MODELE_EXECUTANT_DEFAUT,
     outils=DEFAULT_TOOLS,
     prompt_systeme=_SYSTEM_PROMPT,
     intro_tache="Tâche de design (écrans, maquettes, composants) à réaliser de bout en bout :",

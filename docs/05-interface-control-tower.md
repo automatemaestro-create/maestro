@@ -2848,15 +2848,72 @@ s'annonce toujours **dans les deux sens** — c'est la règle de la ligne `plan 
 run d'outillage (#286) —, mais **au moment de lancer**, sur la carte de cadrage qui
 le récapitule sans rien ouvrir (§2.7.5). Le redire une fois le run parti n'était plus
 un choix affiché : c'était un gabarit, arrivé quand plus personne ne peut rien en
-faire. Reste la seule phrase que le code écrive encore sur un lancement réussi —
-« C'est parti. » sur le chemin du **geste**, où aucun modèle n'a parlé et où le fil
-ne se persiste pas vide : elle n'est accolée à rien.
+faire. Restait une phrase sur un lancement réussi — « C'est parti. » sur le chemin
+du **geste** —, et #1262 a tranché son sort ci-dessous : **remplacée**.
 
 Couverture : `tests/test_chat_global.py` (④bis — plusieurs incréments pour une
 phrase, le marqueur jamais affiché *prouvé sur un échantillon fautif*, la carte qui
-suit la prose, le lancement qui n'ajoute rien, et le projet sans équipe dont le flux
-n'est **pas même ouvert**), `tests/test_openai_provider.py` (le dialecte en flux, son
-usage, son repli), `apps/web/tests/chat-global.test.tsx` (⑤).
+suit la prose, le lancement qui n'ajoute rien), `tests/test_openai_provider.py` (le
+dialecte en flux, son usage, son repli), `apps/web/tests/chat-global.test.tsx` (⑤).
+
+##### Sur les chemins du geste aussi, le modèle parle et les cartes portent les faits (#1262)
+
+#1222 avait retiré le récital qui **suivait** un lancement. Il restait, sur les
+chemins où la personne agit d'un **geste** plutôt que d'une phrase, des textes que
+le code écrivait **à la place** du modèle — vus sur le réel au passage du banc du
+2026-09-24 (S3) : « C'est parti. » après un accord au bouton ; la proposition
+d'équipe d'un projet sans agent (« Avant de lancer « … », il faut une équipe : ce
+projet n'a encore aucun agent… Rien n'est créé sans votre validation. »), qui
+*remplaçait* la réponse du modèle ; « Équipe créée : Développeur — 1 agent. Je
+reprends votre demande : « … ». Je lance ? » ; trois refus (« Entendu, je n'ouvre
+rien… », « Entendu : je ne recrute personne… » avant et pendant un run) ; et, côté
+renfort (#1227), la demande posée par un run et son échéance passée. Dans une même
+conversation, la personne lisait deux voix : celle du modèle, qui s'adapte, et
+celle du code, qui récite.
+
+Le partage est désormais le même partout dans le fil de l'orchestrateur :
+
+- les **faits** sont des champs du message, donc des cartes — le run ouvert
+  (`run_id`, sous la bulle), la demande reproposée (`proposition`, la carte de
+  cadrage), l'équipe à valider (`recrutement`, `EquipeDansLeFil`) et, nouveau,
+  l'**équipe créée** (`equipe`, `chat.EquipeRecrutee`) : « Équipe créée : Développeur
+  ×2 · QA — 3 agents » se lit **sous la bulle**, dans la suite du message, comme le
+  run qu'une réponse a ouvert, avec son renvoi vers l'écran des agents ;
+- la **parole** est celle du modèle. Sur un geste, le canal lui donne *ce qui vient
+  de se passer* et il écrit la réponse (`RepondeurOrchestration.rediger`,
+  `_PROMPT_REDACTION`, registre compris) ; le renfort d'un run passe par le même
+  verbe (`ServiceChat.proposer_recrutement` transmet des faits, le répondeur du fil
+  rédige). Sur une demande tapée pour un projet sans agent, le modèle **reçoit le
+  fait** avant de répondre et écrit lui-même qu'il faut d'abord une équipe —
+  **en direct** : sa réponse n'est plus retenue pour être remplacée, et le projet
+  sans agent cesse d'être la seule exception au direct de #1222 ;
+- les **empêchements** restent au code — objectif perdu, rien de branché, moteur ou
+  création qui refusent, modèle qui ne peut pas rédiger (« Je ne peux pas rédiger
+  mon message pour l'instant : … », la cause et rien d'autre) : rien ne s'est fait,
+  et lui seul le sait. Un modèle muet **ne défait aucun geste** — le run reste
+  ouvert, l'équipe créée — et rien n'est fabriqué à la place de ses mots (la règle
+  du récit de fin, #1224).
+
+**Le sort de « C'est parti. » : remplacée par la parole du modèle.** Elle avait
+été gardée par #1222 pour une raison juste — sur un accord au bouton, aucun modèle
+n'avait parlé, et le fil ne se persiste pas vide — et cette raison tombe dès que le
+geste a sa rédaction : le modèle accuse réception lui-même, sur un run **déjà
+ouvert** (le lanceur passe d'abord : le clic est l'accord, et rien n'attend un
+modèle pour l'honorer), sans en recopier l'identifiant qui se lit sous la bulle.
+La garder aurait fait d'elle la dernière phrase identique à chaque lancement, dans
+un fil où tout le reste est dit par l'orchestrateur ; la question du rendu attendu
+— *chaque message se lit-il comme écrit par l'orchestrateur ?* — n'admettait pas
+d'exception. Le prix est écrit : un appel modèle court par geste, qui ne retarde
+rien de ce que le geste décide.
+
+Couverture : `tests/test_chat_global.py` (⑫ — sur chaque chemin du geste, ce que
+le fil dit **est** ce que le modèle a rédigé, à la lettre, et le modèle a reçu les
+faits ; un lancement empêché ne le fait pas parler ; un rédacteur muet ne défait
+rien ; la demande d'un projet sans agent s'écrit en direct), `tests/test_equipe_au_plan.py`
+(③ le relais du renfort transmet des faits, ④ la décision publiée au run porte ce
+qui a été recruté, pas les mots), `tests/test_registre_de_langue.py` (la consigne de
+rédaction porte le registre, et son appel est rangé), `apps/web/tests/chat-global.test.tsx`
+(l'équipe créée se lit sous la bulle, sans phrase du code).
 
 #### Le fil se lit — Markdown, blocs de code, journées (#697)
 
@@ -3013,6 +3070,45 @@ l'équipe, les attentes), `maestro/controltower/chat.py` (`EtapeFil`, le canal
 `Etapeur`, la trame `etape`), `apps/web/components/chat/EtapesDuFil.tsx`,
 `apps/web/lib/useChat.ts`. Gardé par `tests/test_consultation_orchestrateur.py`,
 `tests/test_chat_global.py` et `apps/web/tests/etapes-du-fil.test.tsx`.
+
+#### Il lit le livrable, et la lecture d'un run dit ce que ses tâches ont rendu (#1263) — **livré**
+
+Au bouclage du 2026-09-24, dans une conversation neuve sur le projet de S5 (un
+`app.py` et un `README.md` livrés par un run), « Comment je fais pour tester ce
+projet ? » a reçu `python app.py` et le nom du README, puis *« je n'ai toutefois
+pas lu son contenu exact ni celui d'app.py […] il faudra ouvrir ces fichiers »*. Le
+README était lisible. L'orchestrateur n'avait lu que le run, et cette lecture ne
+disait de chaque tâche soldée que « détail : démarrage de la tâche ».
+
+- **Ce qu'une tâche a rendu voyage jusqu'à la lecture.** Le moteur consigne depuis
+  toujours le texte que l'agent lui remet (`sortie`) ; le pont le jetait, et le
+  dernier détail vu restait celui du début. Il voyage désormais dans son propre
+  champ, `resultat`, porté par le seul `tache.statut` de l'issue — **à côté** de
+  `detail`, qui reste l'erreur d'une issue ou la phrase d'un début, et que la frise
+  affiche tel quel. Un événement émis avant ce lot n'en porte pas, et se relit
+  comme avant.
+- **Le dernier `tache.statut` d'une tâche parle pour elle, vide compris** : une
+  tâche réussie ne se raconte plus par son démarrage.
+- **La lecture `detail` rend le résultat de chaque tâche soldée**, en retrait sous
+  sa tâche, et chacune y garde sa part : les résultats partagent les deux tiers de
+  la borne de la lecture (12 000 caractères), avec un plancher par tâche, et une
+  part atteinte se dit (« … (résultat coupé à … caractères sur …) »). Une coupe en
+  fin de texte aurait fait disparaître les dernières tâches derrière un premier
+  compte rendu bavard. Les **faits** que chaque prompt reçoit en gardent 300
+  caractères, comme d'un détail : c'est ce qui permet au premier tour de lecture de
+  voir nommés les fichiers livrés.
+- **Le tour de lecture sait qu'une question sur le livré se répond avec le
+  livrable** — le README, le point d'entrée —, qu'un fichier nommé se demande tout
+  de suite, et qu'il ne s'arrête pas sur une lecture qui nomme un fichier sans en
+  donner le contenu. Ce qu'il lit reste son jugement ; la matière qu'on lui donne,
+  elle, est un fait.
+
+Gardé par `tests/test_consultation_orchestrateur.py` §⑦ : le run rejoué par son
+**journal** et par le pont (poser les champs à la main laisserait passer le pont
+qui jetait la sortie), et la question du bouclage posée à un faux fournisseur **qui
+suit la piste** — il ne demande à lire que les fichiers que le canal lui montre
+nommés, et ne répond qu'avec ce qu'il a lu : sans le résultat des tâches, il rend
+l'aveu du bouclage mot pour mot.
 
 #### La fin d'un run s'annonce dans le fil, et remet son livrable (#928) — **livré**
 
@@ -4374,10 +4470,12 @@ fournisseur au registre suffit à l'y faire apparaître.
   "fournisseurs": [
     {
       "nom": "claude",                       // la clé du REGISTRE, à écrire dans `fournisseur`
-      "modeles": [                           // la gamme ANNONCÉE (peut être vide)
+      "modeles": [                           // la gamme ANNONCÉE (peut être vide) ; chez Claude, la
+                                             // dernière version de chaque famille, lue dans
+                                             // maestro/providers/familles-claude.tsv (#1270)
         {
-          "nom": "claude-opus-5",            // la chaîne exacte attendue par le fournisseur
-          "libelle": "Opus 5",               // repli sur `nom` s'il n'y en a pas
+          "nom": "claude-opus-5-5",          // la chaîne exacte attendue par le fournisseur
+          "libelle": "Opus 5.5",             // repli sur `nom` s'il n'y en a pas
           "efforts": ["low", "medium", "high", "xhigh", "max"]
                                              // VIDE = « ce modèle ne se règle pas en effort »,
                                              // jamais « on ne sait pas » ; vide aussi hors gamme

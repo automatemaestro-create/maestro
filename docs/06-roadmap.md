@@ -48,6 +48,9 @@ gantt
 > devant « Rien de figé ». L'orchestrateur y répond en direct, sait tout ce que Maestro sait et
 > raconte la fin d'un run. La personne n'y tranche plus que ce qui exige son arbitrage, et l'équipe
 > s'ajuste au plan pendant le run ([docs/42](./42-decision-equipe-ajustee-au-plan.md)).
+> Le jalon **« Le run tient parole »** suit « Rien de figé » (2026-09-21) : ce qui se passe pendant
+> un run, et ce que le fil sait faire. Depuis le 2026-09-24, il porte aussi le **bilan d'un run
+> terminé**, jugé sur pièces.
 
 ---
 
@@ -745,7 +748,7 @@ Ne bougent pas :
 - Son échéance tombe **strictement entre** ses voisins : **aucune autre échéance n'a bougé**. #1147
   est passé de `moyenne` à `haute` en rejoignant ce jalon.
 
-### Le retour d'expérience sur `p3` : un projet naît dans la conversation (2026-09-24)
+### Le retour d'expérience `p3` (2026-09-24)
 
 Le 2026-09-24, la personne crée le projet `p3` et y lance plusieurs runs : refaire la maquette et le
 site vitrine d'un kombucha. Elle rend dix constats, tous notés KO, avec captures. L'instruction
@@ -825,6 +828,93 @@ n'a bougé**.
 
 > ⚠ **Les critères de sortie du jalon sont dans sa description**, section `## Critères de sortie`
 > (C1 à C5). C'est elle qui fait foi au bouclage (docs/10 §3.4), pas ce résumé.
+
+---
+
+## « Indépendant du modèle » (2026-09-24)
+
+> Cette section précède « Le fil, un vrai interlocuteur » dans le fichier, par commodité de relecture.
+> Son rang dans la file est celui de son échéance, dit plus bas.
+
+Ce jalon est né le 2026-09-24. La checklist de chaque tâche restait à 0/N parce que Maestro la
+lisait dans un outil interne du CLI Claude, que celui-ci avait remplacé (#1291). La personne :
+
+> *« Il faut que tu t'en souviennes stp. Maestro est indépendant du modèle et des outils externes.
+> Analyse si on a d'autres dépendances. »*
+
+La règle est inscrite dans [CLAUDE.md](../CLAUDE.md) et écrite par
+[docs/44](./44-decision-maestro-possede-ses-contrats.md) (#1315). Comme les jalons nés d'une idée,
+celui-ci ne prend **pas de numéro de phase**.
+
+| Milestone | Contenu | Échéance | Suivi |
+|---|---|---|---|
+| **Indépendant du modèle — un agent travaille avec n'importe quel fournisseur, Maestro possède ses contrats** | Un agent sur un fournisseur autre que Claude travaille dans son projet, sous les mêmes garde-fous. Ce que Maestro observe ou impose à ses agents passe par ses propres contrats, et une montée de version du CLI Claude ne casse rien en silence. Le fournisseur choisi pour un agent est honoré, ou le run dit pourquoi | 2028-02-04 | **#1307**, 4 lots en séquence (#1308, #1309, #1310, #1311) ; **#1305**, **#1306**, **#1312**, sans parent |
+
+**Le constat** (analyse du 2026-09-24, en lecture seule, détail dans
+[docs/44 §2](./44-decision-maestro-possede-ses-contrats.md)) :
+- **L'orchestration est déjà indépendante.** Le fil, le planificateur, le classifieur, le récit et
+  l'outillage passent tous par l'abstraction des fournisseurs.
+- **Le travail des agents, lui, dépend de Claude.** Seul l'adaptateur Claude sert l'exécution avec
+  outils. Le vocabulaire des outils est celui du CLI Claude Code. Le point de contrôle des outils
+  est un hook de ce CLI. Des pannes sont reconnues à leur texte. Le fournisseur choisi pour un agent
+  est ignoré, et un agent sans outils retombe en silence sur du texte.
+
+**Le contenu :**
+- **#1307**, parent, 4 lots **en séquence** (chacun bâtit sur le précédent) :
+  - **#1308** : permissions, portée, frontière, équipes et playbooks parlent le vocabulaire de
+    Maestro. L'adaptateur Claude traduit ;
+  - **#1309** : un agent sur un fournisseur compatible OpenAI travaille dans son projet. Maestro
+    sert ses outils et conduit la boucle, sous les mêmes garde-fous ;
+  - **#1310** : les serveurs MCP d'un agent se montent par un client MCP de Maestro ;
+  - **#1311** : un fournisseur se configure et s'éprouve depuis les Paramètres, et un scénario de
+    référence joue un agent non-Claude. C'est le lot qui **décide d'un écran**.
+- **#1306** (bug) : le fournisseur choisi pour un agent est honoré, et aucun repli texte n'est muet.
+- **#1305** (bug) : les pannes se lisent dans les champs typés. Le plafond de tours n'est plus
+  reconnu depuis le SDK 0.2.159.
+- **#1312** : le contrat de l'adaptateur Claude se vérifie à chaque montée de version.
+
+**Rangés ailleurs, et pourquoi :**
+- **#1291** (la checklist devient un verbe de Maestro) et **#1304** (le point de contrôle ferme par
+  défaut, `Grep`/`Glob` confrontés au périmètre) restent au jalon courant, « Rien de figé ». Le
+  premier fait paraître chaque run cassé, le second est un garde-fou de secrets qui ne tient pas.
+- **#1313** (le serveur MCP navigateur à version connue) va à la Phase 9 : c'est un sujet
+  d'installation.
+- Des notes sur **#1279** (processus qui survivent à leur tâche), **#1270** (la liste des modèles
+  recopiée) et **#641** (la coque passe par `bash` ; Redis, donc Docker, par défaut).
+
+**La voie retenue est une boucle et des outils possédés par Maestro.** Brancher des agents CLI tiers
+par ACP ([docs/34](./34-decision-agent-cli-tiers-acp.md)) remplacerait une dépendance à un outil
+par une autre, et reste une option d'adaptateur. L'adaptateur Claude, par le SDK, reste de premier
+rang : c'est lui qui sert l'abonnement.
+
+**Une décision tombe**, et [docs/44](./44-decision-maestro-possede-ses-contrats.md) l'écrit :
+- elle renverse le `fournisseur` déclaratif de [docs/04 §4](./04-specifications-agents.md) ;
+- elle sort l'exécution outillée hors Claude du « différé » de
+  [docs/37](./37-decision-equipe-sur-mesure.md) et d'« Au-delà ».
+
+Ne bougent pas : les garde-fous, l'abonnement Claude, et les standards ouverts (MCP, git,
+`AGENTS.md`).
+
+**Place dans la file**, sur le rail produit :
+
+| Jalon | Échéance |
+| --- | --- |
+| « Rien de figé » | 2028-02-02 (inchangée) |
+| « Le run tient parole » | 2028-02-03 (inchangée) |
+| **« Indépendant du modèle »** | **2028-02-04** |
+| « Le niveau visuel » | 2028-02-05 (inchangée) |
+| Phase 9 | 2028-02-16 (inchangée) |
+
+- **Derrière « Rien de figé » et « Le run tient parole »** : ce que la personne voit cassé aujourd'hui
+  passe d'abord, et les deux bugs qui pressent (#1291, #1304) sont déjà au jalon courant.
+- **Devant « Le niveau visuel »** : l'écran des fournisseurs (#1311) se choisit avant qu'on habille
+  le produit.
+- **Devant la Phase 9** : on n'empaquette pas un produit dont le moteur ne sait agir qu'avec un
+  fournisseur.
+- Son échéance tombe **strictement entre** ses voisins : **aucune autre échéance n'a bougé**.
+
+> ⚠ **Les critères de sortie du jalon sont dans sa description**, section `## Critères de sortie`
+> (C1 à C3). C'est elle qui fait foi au bouclage (docs/10 §3.4), pas ce résumé.
 
 ---
 
@@ -928,9 +1018,130 @@ pendant le run et jamais recrutée sans accord. Elle renverse les deux dernière
 
 ---
 
+## « Le run tient parole » — il vérifie, se rattrape, et le fil agit (2026-09-21)
+
+Ce jalon est né le 2026-09-21 d'un balayage « rien de figé » du moteur, de l'API et de l'interface.
+La personne avait demandé d'**anticiper le besoin** et de faire sauter les bridages. Il complète
+« Rien de figé », qui porte les premières minutes d'un projet : celui-ci vise ce qui se passe
+**pendant** un run, et ce que le fil sait **faire**. Comme les jalons nés d'une idée, il ne prend
+**pas de numéro de phase**.
+
+| Milestone | Contenu | Échéance | Suivi |
+|---|---|---|---|
+| **Le run tient parole — il vérifie, se rattrape, et le fil agit** | Une tâche n'est terminée qu'une fois vérifiée, un échec se rattrape au lieu de barrer la suite, et le fil agit sur les runs au lieu de seulement en proposer. Un run terminé se juge sur pièces, et Maestro le dit à la personne | 2028-02-03 | **#1177** à **#1185**, sans parent ; **#1281**, 3 lots (#1282 ∥, #1284 ∥, #1285) ; retour `p3` : **#1297**, **#1298**, **#1299**, sans parent |
+
+**Le constat** (description du jalon) :
+- un run déclare « Terminée » toute tâche qui rend quelque chose ;
+- il s'arrête à la première panne ;
+- il jette le travail en vol au plafond de dépense ;
+- il échoue là où il pourrait proposer le prérequis qui manque ;
+- le fil, seule porte d'entrée, ne sait que proposer un run.
+
+**Le contenu d'origine**, neuf tickets sans parent :
+- **#1177** : une tâche n'est « Terminée » qu'une fois ses critères vérifiés en l'exécutant, et un
+  échec revient à son agent, preuve à l'appui ;
+- **#1178** : une tâche en échec se rattrape. L'orchestrateur lit la cause, retente autrement ou
+  redécoupe, et la suite du run repart ;
+- **#1179** : l'orchestrateur met en pause, reprend, annule et relance un run depuis le fil ;
+- **#1180** : le fil sait sur quel projet il travaille ;
+- **#1181** : un prérequis qui manque en cours de run se propose dans le fil ;
+- **#1182** : au plafond de dépense, le run se suspend et demande ;
+- **#1183** : depuis le fil, on répond à la question d'un agent et on tranche une validation ;
+- **#1184** : un accord tapé porte ses bornes, et une proposition vient avec son estimation ;
+- **#1185** : un refus dit pourquoi, et l'agent repart de là.
+
+**Ce que le retour d'expérience sur `p3` y a rangé** (#1300, détaillé dans la section « Rien de
+figé ») : **#1297** (les flèches du pipeline se lisent), **#1298** (le run dit pourquoi ses tâches
+passent une à une) et **#1299** (les tâches indépendantes tournent de front).
+
+### Le bilan d'un run terminé, sur pièces (2026-09-24)
+
+Le chantier est né d'un run réel, instruit par [`/idee`](../.claude/commands/idee.md) (#1013) et
+consigné par #1286. Le 2026-09-24, la personne a fait surveiller le run `3fe501fc0878` (projet
+`p3`, un site vitrine), puis a demandé si Maestro avait un moyen d'**auditer ses runs**. Il n'en
+avait pas.
+
+**Ce que le run a montré** :
+- la maquette a échoué trois fois à l'identique, sur le plafond de flux du SDK (#1277), pendant que
+  le moteur la tenait pour un aléa ;
+- le **récit de fin** a recopié ce libellé, « échec transitoire », et a conseillé de relancer.
+  Une relance aurait échoué de la même façon ;
+- il a fallu une enquête à la main pour trouver #1277 à #1280, en croisant l'API, les transcripts
+  des agents et un rejeu des commandes contre la portée : aucun écran n'en montrait rien.
+
+La cause est dans le code. Le récit de fin est déjà un appel au modèle, mais il ne voit que le
+dernier détail de chaque tâche, coupé à 300 caractères : ni les relances, ni les arbitrages, ni
+l'usage. Et un appel laissé passer par le cran `auto` ne garde pas son acte dans le journal.
+
+**Le contenu** — **#1281**, parent, trois lots :
+- **#1282** (parallèle) : le journal garde l'**acte** de chaque appel arbitré (outil et arguments,
+  rédigés et bornés), pas seulement son issue. Sans cette pièce, aucun bilan ne peut dire qu'un
+  agent est sorti de son projet ;
+- **#1284** (parallèle) : à la fin de tout run, Maestro rend un **bilan sur pièces** : ce qui a été
+  livré, ce qui a failli et pourquoi, les actes sortis du projet ou accordés sans personne, la
+  consommation sans résultat, et quoi changer. Chaque constat cite ses pièces, et un constat sans
+  pièce est écarté. Le récit de fin s'y appuie ;
+- **#1285** (après #1284) : la vue d'un run montre son bilan, chaque constat relié à ses pièces.
+  C'est le lot qui **décide d'un écran**.
+
+**Ce qu'il ne renverse pas**, sans note de décision puisqu'aucune décision ne tombe :
+- **[docs/41](./41-decision-maestro-juge-il-ne-bride-pas.md) est prolongé.** Le modèle lit les
+  pièces du run, sans catalogue fermé de défauts connus. Et la vérification des pièces citées tient
+  le rôle de « l'exécution vérifie ».
+- **[docs/32](./32-decision-cran-orchestrateur.md) §b tient** : aucun modèle ne garde un modèle. Le
+  bilan est rendu **après** le run. Il ne tranche aucun appel d'outil, ne change aucun cran,
+  n'accorde ni ne refuse rien. Ce qu'il recommande, une personne le décide.
+- **Les garde-fous restent où ils sont** : frontière d'écriture, portée « projet » (dont #1278
+  corrige le jugement sous Windows), arbitrage des actes.
+- Aucun document du domaine n'est rendu faux à ce stade : les lots réécrivent ce qu'ils changent.
+
+**Les arbitrages rendus** :
+- **une capacité du produit**, pas une commande de dépôt : c'est l'utilisateur de Maestro qui en a
+  besoin, et le rail outillage est gelé jusqu'au 2026-10-12 ;
+- le bilan est **automatique à la fin de chaque run**, parce qu'on ne demande pas un audit dont on
+  ignore avoir besoin. Son coût est compté dans celui du run ;
+- **pièces du journal seulement**, pas de transcript de fournisseur (vision agnostique). Ce qui
+  manque au journal s'y ajoute (#1282).
+
+**Différé** :
+- les suites du bilan jouées depuis le fil (relancer une tâche corrigée, ajouter un outil à un
+  agent) attendent #1179 et #1181 ;
+- le journal au-delà de 200 événements reste à instruire. #1284 lit le journal durable, pas une
+  projection plafonnée.
+
+**Les voisins** : #1178 diagnostique un échec **pendant** le run pour agir, le bilan juge le run
+entier **après coup**. Quand les deux existeront, le bilan lira le diagnostic de #1178 comme une
+pièce au lieu de le refaire. Les quatre défauts trouvés en surveillant le run de `p3` sont rangés
+dans « Rien de figé » : #1277 (livré le 2026-09-24) et #1278 en `haute`, #1279 et #1280 en
+`moyenne`. #1291 (les agents n'avaient plus d'outil pour cocher leur checklist) explique un constat
+que le bilan aurait relevé sur ce même run.
+
+**Place dans la file**, sur le rail produit :
+
+| Jalon | Échéance |
+| --- | --- |
+| « Le fil, un vrai interlocuteur » | 2028-01-31 |
+| « Rien de figé » | 2028-02-02 |
+| **« Le run tient parole »** | **2028-02-03** (inchangée) |
+| « Le niveau visuel » | 2028-02-05 |
+| Phase 9 | 2028-02-16 |
+
+- **Derrière « Rien de figé »** : un projet se comprend et s'outille avant que ses runs ne tiennent
+  parole.
+- **Devant « Le niveau visuel »**, pour l'argument qui y a placé les jalons précédents : on
+  n'habille pas une capacité qui va changer.
+- **Le bilan n'a déplacé aucune échéance.** Il rejoint ce jalon parce qu'il sert son « il vérifie » :
+  le run juge ce qu'il a tenu, et c'est le pendant après coup de #1177 et de #1178.
+
+> ⚠ **Ce jalon n'a pas encore de section `## Critères de sortie`** dans sa description. Elle est à
+> poser avant son bouclage (docs/10 §3.4) : un jalon sans critères ne se boucle pas.
+
+---
+
 ## Au-delà (idées V3+)
 
 - **Des outils pour un fournisseur non-Anthropic, dans Maestro** (objectif O7). Aujourd'hui, seuls les modèles Claude exécutent avec outils : `openai_compat.py` ne fait que du texte. L'outillage généré par « L'équipe sur mesure » est universel par son **format** et se lit par tout agent sur le poste de l'utilisateur. L'exécuter avec outils **dans** Maestro par un autre fournisseur est un chantier à lui seul. Il a été **différé** par l'instruction de #1044 et n'a pas encore de ticket.
+  ⚠ **Sorti d'« Au-delà » le 2026-09-24** : c'est le jalon « Indépendant du modèle » et son chantier #1307 ([docs/44](./44-decision-maestro-possede-ses-contrats.md)).
 - Marketplace d'agents et de playbooks partageables.
 - **Catalogue étendu de fournisseurs** et **sélection automatique du modèle** par coût/latence/souveraineté (la couche d'abstraction, elle, existe dès la Phase 0 ; ici on enrichit le catalogue et l'auto-sélection).
 - Apprentissage des préférences de l'équipe (mémoire long terme enrichie).

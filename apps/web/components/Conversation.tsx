@@ -299,6 +299,7 @@ import {
 import { TexteMarkdown } from "@/components/chat/TexteMarkdown";
 import { RefusSource } from "@/components/composer/RefusSource";
 import {
+  IconeAgents,
   IconeArret,
   IconeEnvoyer,
   IconeFlecheBas,
@@ -321,6 +322,7 @@ import { mesureDesMessages } from "@/lib/annonces";
 import { ErreurReponse, ErreurSource } from "@/lib/api";
 import { useBrouillon } from "@/lib/brouillons";
 import { ascenseurDe, estEnBas, positionEnBas } from "@/lib/defilement";
+import { equipeCreeeEnUneLigne } from "@/lib/equipe";
 import { estSolde } from "@/lib/execution";
 import { issuesDuFil } from "@/lib/issueRun";
 import { useEtatGlobal } from "@/lib/etatGlobal";
@@ -1687,12 +1689,19 @@ function Bulle({
  * deux champs sont vides), et ne doit pas laisser un cadre vide sous sa bulle —
  * même règle que le détail d'une tâche (`lib/detailTache`) et que les sources
  * d'un message (#482).
+ *
+ * **L'équipe qu'un geste a créée** (`equipe`, #1262) s'y lit au même titre que
+ * le run qu'une réponse a ouvert, et pour la même raison : c'est un fait, que le
+ * fil récitait dans une phrase du code (« Équipe créée : Développeur — 1 agent. »)
+ * à côté des mots du modèle. Même ligne, même jeton, même renvoi — ici vers
+ * l'écran des agents, où l'équipe se relit.
  */
 function Suite({ message }: { message: MessageChat }) {
   const { taches, validations, executions } = useEtatGlobal();
   const runId = message.run_id ?? "";
   const tacheId = message.tache_id ?? "";
-  if (runId === "" && tacheId === "") return null;
+  const equipe = message.equipe ?? null;
+  if (runId === "" && tacheId === "" && equipe === null) return null;
 
   // Un run **soldé** ne porte plus de tâches « ouvertes » (#928) : le compte
   // restait affiché tel quel après la fin, et « 2 tâches ouvertes » sous un run
@@ -1711,12 +1720,16 @@ function Suite({ message }: { message: MessageChat }) {
   );
   const run = runId === "" ? undefined : hrefRun(runId);
   const arbitrages = entreeParLibelle("Validations");
+  const agents = entreeParLibelle("Agents");
 
   // Le renvoi vers la tâche, c'est le renvoi vers son run : les trois lectures
   // d'un run (pipeline, Kanban, journal) sont une bascule et non trois routes
   // (`lib/vuesRun`), il n'y a donc pas d'URL qui ouvre une tâche.
   const renvois: Renvoi[] = [];
   if (run !== undefined) renvois.push({ href: run, libelle: "Voir le run" });
+  if (equipe !== null && agents !== undefined) {
+    renvois.push({ href: agents.href, libelle: "Voir les agents" });
+  }
   if (enAttente.length > 0 && arbitrages !== undefined) {
     renvois.push({
       href: arbitrages.href,
@@ -1734,6 +1747,12 @@ function Suite({ message }: { message: MessageChat }) {
   return (
     <div className="mt-2 flex flex-col gap-1 border-t border-bord pt-2">
       <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-micro text-texte-secondaire">
+        {equipe !== null && (
+          <span className="inline-flex items-center gap-1">
+            <IconeAgents className="size-3.5 shrink-0" />
+            Équipe créée : {equipeCreeeEnUneLigne(equipe)}
+          </span>
+        )}
         {runId !== "" && (
           <span className="inline-flex items-center gap-1">
             <IconeRuns className="size-3.5 shrink-0" />

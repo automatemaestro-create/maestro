@@ -26,10 +26,15 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 
 from maestro.agents.playbook_du_code import socle
+from maestro.familles_claude import derniere_version
 
-#: Modèle par défaut des exécutants au POC (Claude Sonnet, cf. docs/04 §2). Le rôle
-#: est indépendant du fournisseur/modèle : on peut le remplacer sans le toucher.
-MODELE_EXECUTANT_DEFAUT = "claude-sonnet-5"
+#: Modèle par défaut des exécutants : la **dernière version d'Opus** (#1270, docs/04
+#: §2), lue dans `familles-claude.tsv` — jamais un identifiant recopié, pour qu'une
+#: nouvelle version y fasse passer tous les agents d'un coup. Il vaut pour tout
+#: agent qu'aucun réglage ne fixe (gabarits, agents d'équipe, fil, assistant) ; une
+#: surcharge ou `MAESTRO_MODEL` l'emportent. Le rôle est indépendant du
+#: fournisseur/modèle : on peut le remplacer sans le toucher.
+MODELE_EXECUTANT_DEFAUT = derniere_version("opus")
 
 
 @dataclass(frozen=True)

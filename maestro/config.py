@@ -12,6 +12,8 @@ from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
+from maestro.familles_claude import resoudre_famille
+
 # Charge .env s'il existe, sans écraser une variable déjà présente dans le shell.
 load_dotenv(override=False)
 
@@ -31,6 +33,10 @@ class Settings:
     """
 
     anthropic_api_key: str | None
+    #: Modèle du Chef de projet chez Claude (`ANTHROPIC_MODEL`), toujours un identifiant
+    #: complet. Vide ou absent : la **dernière version d'Opus** (#1270), lue dans
+    #: `familles-claude.tsv` ; un nom de famille (`opus`, `sonnet`…) s'y résout de même, un
+    #: identifiant complet reste un choix épinglé.
     anthropic_model: str
     #: Sélecteur brut du mode d'auth Claude (`CLAUDE_AUTH_MODE`), ou None si absent.
     #: Interprété par la couche fournisseur ; None ⇒ déduction (cf. précédence).
@@ -231,7 +237,9 @@ class Settings:
         raw_provider = os.getenv("MAESTRO_PROVIDER")
         return cls(
             anthropic_api_key=os.getenv("ANTHROPIC_API_KEY") or None,
-            anthropic_model=os.getenv("ANTHROPIC_MODEL", "claude-opus-5"),
+            anthropic_model=resoudre_famille(
+                (os.getenv("ANTHROPIC_MODEL") or "").strip() or "opus"
+            ),
             claude_auth_mode=raw_mode.strip().lower() if raw_mode and raw_mode.strip() else None,
             claude_oauth_token=os.getenv("CLAUDE_CODE_OAUTH_TOKEN") or None,
             database_url=os.getenv("DATABASE_URL") or None,

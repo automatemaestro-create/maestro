@@ -12,6 +12,7 @@
 import type {
   AutorisationEquipe,
   CorrectionEquipe,
+  EquipeRecrutee,
   MembreEquipe,
   MessageChat,
   PropositionEquipe,
@@ -105,6 +106,20 @@ export function rolesValides(
       })),
       politique: r.politique,
     }));
+}
+
+/**
+ * « Développeur ×2 · QA — 3 agents » — l'équipe qu'un geste a **créée** (#1262).
+ *
+ * Les formules de `composition` et `compteAgents`, appliquées au fait que la
+ * réponse porte (`EquipeRecrutee`) et non à la proposition : ce qui se lit sous
+ * la bulle est ce qui existe désormais dans le projet.
+ */
+export function equipeCreeeEnUneLigne(equipe: EquipeRecrutee): string {
+  const roles = equipe.roles
+    .map((r) => (r.instances > 1 ? `${r.role} ×${r.instances}` : r.role))
+    .join(" · ");
+  return `${roles} — ${compteAgents(equipe.instances_total)}`;
 }
 
 /** L'équipe **telle qu'une étape la montre** : ses lignes, ses cases, ses instances. */
