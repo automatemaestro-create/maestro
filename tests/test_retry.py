@@ -35,6 +35,7 @@ from maestro.engine.retry import est_transitoire
 from maestro.orchestrator import Orchestrator
 from maestro.providers.base import (
     ModelProvider,
+    PlafondFluxDepasse,
     TurnLimitReached,
     UnsupportedCapability,
 )
@@ -167,6 +168,7 @@ def test_la_classification_distingue_transitoire_et_non_transitoire():
     assert not est_transitoire(PlafondDepenseDepasse("plafond de dépense dépassé"))
     assert not est_transitoire(TurnLimitReached("plafond de tours atteint"))
     assert not est_transitoire(UnsupportedCapability("pas d'exécution outillée"))
+    assert not est_transitoire(PlafondFluxDepasse("plafond du flux fournisseur dépassé"))
 
 
 def test_la_politique_valide_ses_bornes_et_deroule_son_backoff():
@@ -193,6 +195,31 @@ def test_un_plafond_de_tours_n_est_jamais_relance():
     (resultat,) = report.resultats
     assert resultat.statut == STATUT_ECHEC
     assert "plafond de tours" in (resultat.erreur or "")
+    assert provider.appels == 1
+    assert _relances(journal) == []
+
+
+def test_un_depassement_du_plafond_du_flux_n_est_jamais_relance():
+    # #1277 : le message trop gros venait d'une capture que l'agent relisait, et
+    # elle est toujours sur le disque à la tentative suivante. Une seule
+    # exécution, et l'échec ne se dit pas « transitoire » : c'est ce texte que
+    # l'écran et le récit de fin liront.
+    provider = ErreurFixeProvider(
+        PlafondFluxDepasse(
+            "plafond du flux fournisseur dépassé (Buffer size 1186282 exceeds limit "
+            "1048576) : l'échec n'est pas relancé."
+        )
+    )
+    journal = RunJournal()
+    engine = _engine(
+        exec_provider=provider, relance=PolitiqueRelance(max_tentatives=3, backoff_s=0)
+    )
+    report = asyncio.run(engine.run("Objectif", journal=journal))
+
+    (resultat,) = report.resultats
+    assert resultat.statut == STATUT_ECHEC
+    assert "plafond du flux fournisseur" in (resultat.erreur or "")
+    assert "transitoire" not in (resultat.erreur or "")
     assert provider.appels == 1
     assert _relances(journal) == []
 

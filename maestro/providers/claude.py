@@ -37,6 +37,7 @@ from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     ClaudeSDKClient,
+    CLIJSONDecodeError,
     EffortLevel,
     HookContext,
     HookJSONOutput,
@@ -91,6 +92,7 @@ from maestro.providers.base import (
     McpServerUnavailable,
     ModeleDisponible,
     ModelProvider,
+    PlafondFluxDepasse,
     TurnLimitReached,
     attache_stderr,
 )
@@ -123,6 +125,36 @@ _MCP_CONNEXION_MAX_S: float = 60.0
 
 #: Période du sondage de statut pendant l'attente de connexion des serveurs MCP.
 _MCP_SONDAGE_S: float = 0.5
+
+#: Le plafond de lecture du flux du CLI, en octets : le `max_buffer_size` de
+#: l'Agent SDK, **posé ici et jamais subi** (#1277). Le défaut du SDK est 1 Mio
+#: (`_DEFAULT_MAX_BUFFER_SIZE`), et une seule capture d'écran relue par `Read` le
+#: franchit — le geste normal d'un Designer ou d'une QA qui vérifie un rendu.
+#:
+#: Mesuré sur les transcripts du run `3fe501fc0878` : un PNG de 331 886 octets
+#: (1440 × 3325) a fait une ligne de flux de 1 186 283 octets. Le CLI ne relaie
+#: pas le fichier tel quel : il le redimensionne (2 000 px au plus — ici
+#: 866 × 2000, plus lourd que l'original), l'encode en base64 (592 708 octets) et
+#: l'écrit **deux fois** dans le même message, en bloc `image` du résultat
+#: d'outil pour le modèle et en `tool_use_result` pour l'appelant. La taille du
+#: fichier ne dit donc pas celle du message.
+#:
+#: Ce qui borne un message légitime, c'est l'API : ce qu'il porte part dans une
+#: requête, plafonnée à 32 Mo, et le CLI le recopie deux fois — d'où 64 Mio.
+#: Au-delà, l'API l'aurait refusé de toute façon ; en deçà, rien de ce qu'un
+#: outil de lecture rend ne tombe. Ce n'est pas une réservation : le SDK
+#: n'accumule que ce que la ligne porte, et le plafond reste le garde-fou contre
+#: un sous-processus qui écrirait sans jamais passer à la ligne.
+#:
+#: Le même pour **toutes** les sessions du fournisseur, chemin texte compris :
+#: une règle qui ne vaudrait que pour `run_agent` laisserait le prochain chemin
+#: qui montre une image retomber sur le défaut.
+PLAFOND_FLUX_OCTETS = 64 * 1024 * 1024
+
+#: Ce qui distingue, parmi les `CLIJSONDecodeError` du SDK, le dépassement du
+#: plafond de lecture d'une ligne réellement illisible : le SDK lève la même
+#: classe pour les deux, et seul ce libellé les sépare (`subprocess_cli.py`).
+_MARQUEUR_PLAFOND_FLUX = "exceeded maximum buffer size"
 
 def sans_reglages_du_poste() -> list[SettingSource]:
     """**Aucune source de réglages de fichiers** (#1032, docs/38 §5.3).
@@ -367,6 +399,7 @@ class ClaudeProvider(ModelProvider):
             effort=self._effort_sdk(model, effort),
             setting_sources=sans_reglages_du_poste(),
             skills=sans_skills_du_poste(),
+            max_buffer_size=PLAFOND_FLUX_OCTETS,
         )
         return await _collect_response(prompt, options, stderr=stderr)
 
@@ -406,6 +439,7 @@ class ClaudeProvider(ModelProvider):
             effort=self._effort_sdk(model, effort),
             setting_sources=sans_reglages_du_poste(),
             skills=sans_skills_du_poste(),
+            max_buffer_size=PLAFOND_FLUX_OCTETS,
         )
         async for morceau in _stream_response(prompt, options, stderr=stderr):
             yield morceau
@@ -438,6 +472,7 @@ class ClaudeProvider(ModelProvider):
             stderr=stderr,
             setting_sources=sans_reglages_du_poste(),
             skills=sans_skills_du_poste(),
+            max_buffer_size=PLAFOND_FLUX_OCTETS,
         )
         return await _collect_response(
             _message_avec_images(prompt, images), options, stderr=stderr
@@ -730,6 +765,8 @@ class ClaudeProvider(ModelProvider):
             strict_mcp_config=True,
             setting_sources=sans_reglages_du_poste(),
             skills=sans_skills_du_poste(),
+            # Une capture relue par `Read` dépasse le défaut du SDK (#1277).
+            max_buffer_size=PLAFOND_FLUX_OCTETS,
             hooks=(
                 {
                     "PreToolUse": [
@@ -1474,6 +1511,30 @@ def _erreur_plafond(plafond_tours: int | None, detail: object) -> TurnLimitReach
     return TurnLimitReached(f"plafond de tours atteint ({borne}) : {detail}")
 
 
+def _depassement_flux(exc: BaseException) -> PlafondFluxDepasse | None:
+    """L'erreur typée d'un message de flux au-delà du plafond de lecture — `None` sinon (#1277).
+
+    Le SDK signale le dépassement par une `CLIJSONDecodeError`, la classe qu'il
+    lève aussi pour une ligne réellement illisible : seul son libellé les sépare
+    (`_MARQUEUR_PLAFOND_FLUX`). Une ligne illisible reste ce qu'elle était — un
+    aléa du sous-processus, laissé à la relance.
+
+    Le message recopie la mesure du SDK (taille lue, plafond) sans la
+    reformuler : c'est le fait, et un libellé qu'on réécrirait cesserait d'être
+    exact au premier changement du SDK. Le reste dit ce qu'un humain doit en
+    faire, et surtout ce qu'il ne doit pas en conclure : ce n'est pas un aléa.
+    """
+    if not isinstance(exc, CLIJSONDecodeError) or _MARQUEUR_PLAFOND_FLUX not in exc.line:
+        return None
+    return PlafondFluxDepasse(
+        f"plafond du flux fournisseur dépassé ({exc.original_error}) : un seul "
+        "message de la session porte plus que ce que Maestro accepte de lire, le "
+        "plus souvent une image ou un document que l'agent vient de lire. Ce "
+        "fichier est toujours sur le disque et une nouvelle tentative le "
+        "relirait : l'échec n'est pas relancé."
+    )
+
+
 def _avec_stderr(exc: _E, stderr: CollecteurStderr | None) -> _E:
     """Accroche à `exc` ce que le CLI a écrit sur stderr — ou la mention qu'il s'est tu (#346).
 
@@ -1538,7 +1599,10 @@ async def _collect_response(
     garde-fou déterministe (jamais relancé) sans lire d'erreur propre au SDK.
     `plafond_tours` est la borne posée par l'appelant — `None` quand il n'en pose
     pas, ce qui est le défaut depuis #494 comme ce l'a toujours été sur le chemin
-    texte : elle nomme la limite dans le message (#239).
+    texte : elle nomme la limite dans le message (#239). Le dépassement du
+    **plafond de lecture du flux** suit le même régime (#1277,
+    `_depassement_flux`) : mué en `PlafondFluxDepasse`, jamais relancé, sur les
+    trois chemins de collecte.
 
     `stderr` (#346) est le collecteur branché sur les options : tout échec repart
     avec ce que le CLI a écrit, faute de quoi l'exception du SDK renvoie à un flux
@@ -1561,6 +1625,8 @@ async def _collect_response(
     except Exception as exc:
         if _MARQUEUR_MAX_TURNS in str(exc):
             raise _avec_stderr(_erreur_plafond(plafond_tours, exc), stderr) from exc
+        if (depassement := _depassement_flux(exc)) is not None:
+            raise _avec_stderr(depassement, stderr) from exc
         _avec_stderr(exc, stderr)
         raise
     return "".join(parts)
@@ -1618,6 +1684,8 @@ async def _stream_response(
     except Exception as exc:
         if _MARQUEUR_MAX_TURNS in str(exc):
             raise _avec_stderr(_erreur_plafond(None, exc), stderr) from exc
+        if (depassement := _depassement_flux(exc)) is not None:
+            raise _avec_stderr(depassement, stderr) from exc
         _avec_stderr(exc, stderr)
         raise
     if not diffuse and parts:
@@ -1691,6 +1759,8 @@ async def _collect_response_pilotee(
                         raise _erreur_plafond(plafond_tours, detail)
                     raise RuntimeError(f"Claude Code returned an error result: {detail}")
     except Exception as exc:
+        if (depassement := _depassement_flux(exc)) is not None:
+            raise _avec_stderr(depassement, stderr) from exc
         _avec_stderr(exc, stderr)
         raise
     return "".join(parts)
