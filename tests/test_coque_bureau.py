@@ -535,9 +535,14 @@ _VALEUR = "◇"
 
 
 def lignes_imprimees(main: str) -> list[str]:
-    """Les lignes `[coque] …` que la coque écrit sur sa sortie, valeurs interpolées neutralisées."""
+    """Les lignes `[coque] …` que la coque écrit sur sa sortie, valeurs interpolées neutralisées.
+
+    Un blanc est admis après la parenthèse : une écriture trop longue pour une ligne passe à la
+    suivante (le verrou d'instance de #1275), et elle n'en est pas moins imprimée. Une ligne
+    composée de plusieurs littéraux ne se lit que par le premier, d'où le `…` du skill.
+    """
     litteraux = re.findall(
-        r"""(?:process\.(?:stdout|stderr)\.write|retenir)\((?:'\w+',\s*)?"""
+        r"""(?:process\.(?:stdout|stderr)\.write|retenir)\(\s*(?:'\w+',\s*)?"""
         r"""(['`])(\[coque\][^'`]*)\1""",
         main,
     )
@@ -579,6 +584,18 @@ def test_la_sonde_des_lignes_guettees_voit_une_ligne_que_la_coque_n_imprime_pas(
     assert orphelines(["[coque] Maestro — port :◇"], imprimees) == ["[coque] Maestro — port :◇"]
     assert orphelines(["[coque] Maestro est ouvert…"], imprimees) == ["[coque] Maestro est ouvert…"]
     assert orphelines(["[coque] Maestro — UI…"], imprimees) == []
+
+
+def test_la_sonde_lit_une_ligne_dont_l_ecriture_passe_a_la_ligne():
+    """Avant ce correctif, `write(` suivi d'un saut de ligne rendait la ligne invisible : le skill
+    ne pouvait plus guetter le refus du verrou d'instance, quoi qu'il en cite."""
+    echantillon = (
+        "process.stderr.write(\n"
+        "  `[coque] Maestro est déjà ouvert sur cette stack (UI :${PORT_UI}) — ` +\n"
+        "    'celle-ci se ferme.\\n',\n"
+        ");\n"
+    )
+    assert lignes_imprimees(echantillon) == ["[coque] Maestro est déjà ouvert sur cette stack (UI :◇) — "]
 
 
 def test_les_lignes_que_le_skill_fait_guetter_sont_celles_que_la_coque_imprime(main_js):
